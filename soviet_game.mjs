@@ -57,14 +57,23 @@ function clearCommands() {
   }
 }
 
+// キャンバス内部座標をビューポート座標に変換
+function canvasToViewport(canvasX, canvasY, canvasInfo) {
+  const { rect, width, height } = canvasInfo;
+  const viewportX = rect.x + (canvasX / width) * rect.w;
+  const viewportY = rect.y + (canvasY / height) * rect.h;
+  return { viewportX, viewportY };
+}
+
 // コマンドを実行してスクリーンショットを撮る
 async function executeCommand(page, command, canvasInfo) {
   if (command.action === 'retry') {
-    // ゲームオーバー時のRETRYボタン：キャンバス中央をクリック
+    // ゲームオーバー時のRETRYボタン：横中央、縦73%あたり
     const centerX = canvasInfo.width / 2;
-    const centerY = canvasInfo.height / 2;
-    console.log(`Executing: RETRY (click center at ${centerX}, ${centerY})`);
-    await page.mouse.click(centerX, centerY);
+    const centerY = canvasInfo.height * 0.73;
+    const { viewportX, viewportY } = canvasToViewport(centerX, centerY, canvasInfo);
+    console.log(`Executing: RETRY (canvas center ${centerX},${centerY} -> viewport ${viewportX.toFixed(0)},${viewportY.toFixed(0)})`);
+    await page.mouse.click(viewportX, viewportY);
     await page.waitForTimeout(1000);
     await page.screenshot({ path: SCREENSHOT_PATH });
     console.log(`Screenshot saved to ${SCREENSHOT_PATH}`);
@@ -77,12 +86,13 @@ async function executeCommand(page, command, canvasInfo) {
   const clampedX = Math.max(0, Math.min(x, canvasInfo.width));
   const clampedY = Math.max(0, Math.min(y, canvasInfo.height));
 
-  console.log(`Executing: click at (${clampedX}, ${clampedY})`);
+  const { viewportX, viewportY } = canvasToViewport(clampedX, clampedY, canvasInfo);
+  console.log(`Executing: click at canvas (${clampedX}, ${clampedY}) -> viewport (${viewportX.toFixed(0)}, ${viewportY.toFixed(0)})`);
 
   // マウスを移動してクリック
-  await page.mouse.move(clampedX, clampedY, { steps: 3 });
+  await page.mouse.move(viewportX, viewportY, { steps: 3 });
   await page.waitForTimeout(100);
-  await page.mouse.click(clampedX, clampedY);
+  await page.mouse.click(viewportX, viewportY);
 
   // 少し待つ
   await page.waitForTimeout(500);
@@ -98,9 +108,7 @@ async function runGameController() {
     args: ['--start-maximized']
   });
 
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 720 }
-  });
+  const context = await browser.newContext();
 
   const page = await context.newPage();
 
@@ -109,11 +117,16 @@ async function runGameController() {
   await page.goto(URL, { waitUntil: 'networkidle' });
   await page.waitForTimeout(5000);
 
-  // Canvas情報を取得
+  // Canvas情報を取得（内部解像度 + ビューポート上の位置・サイズ）
   const canvasInfo = await page.evaluate(() => {
     const canvas = document.querySelector('canvas');
     if (canvas) {
-      return { width: canvas.width, height: canvas.height };
+      const rect = canvas.getBoundingClientRect();
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height }
+      };
     }
     return null;
   });
@@ -129,7 +142,8 @@ async function runGameController() {
   console.log(`Format: "x,y" per line, "retry" for game over, or JSON [{"x":100,"y":200},...]`);
 
   // ゲーム開始クリック
-  await page.mouse.click(canvasInfo.width / 2, canvasInfo.height * 0.3);
+  const startClick = canvasToViewport(canvasInfo.width / 2, canvasInfo.height * 0.3, canvasInfo);
+  await page.mouse.click(startClick.viewportX, startClick.viewportY);
   await page.waitForTimeout(1000);
 
   // 初期スクリーンショット
