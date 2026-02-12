@@ -4,21 +4,21 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 TARGET="$SCRIPT_DIR/soviet_now.png"
-LAST_MOD=""
+LAST_HASH=""
 
 while true; do
-	# soviet_now.png の最終更新時刻を取得
-	CURRENT_MOD=$(stat -f "%m" "$TARGET" 2>/dev/null || echo "0")
+	# soviet_now.png のハッシュ値を取得
+	CURRENT_HASH=$(md5 -q "$TARGET" 2>/dev/null || echo "")
 
-	if [ "$CURRENT_MOD" = "$LAST_MOD" ]; then
+	if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
 		# 更新されていない → 実行
 		PROMPT=$(cat "./PROMPT_US.md" 2>/dev/null || echo "")
 		ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-haiku-4-5-20251001" claude -p "'$PROMPT'" --model=Haiku --permission-mode=acceptEdits
 	else
 		# 更新された → スキップ
-		echo "soviet_now.png が更新されたためスキップします"
+		EC="soviet_now.png が更新されたためスキップします"
 	fi
 
-	LAST_MOD="$CURRENT_MOD"
+	LAST_HASH="$CURRENT_HASH"
 	sleep 30
 done
