@@ -4,6 +4,40 @@ import fs from 'fs';
 const URL = 'https://43469.play.unityroom.com/?expires=1770895465&salt=204822083100176348322172862835957129961&sig=9e18bdbb430a5b26db652e81c2c8f992f314ce7b';
 const COMMAND_FILE = 'commands.txt';
 const SCREENSHOT_PATH = 'soviet_now.png';
+const NEXT_BLOCK_PATH = 'next_block.png';
+const BOARD_PATH = 'board.png';
+
+// Canvas内部座標でのクロップ領域定義 (1280x720基準)
+const CROP_REGIONS = {
+  next: { x: 1000, y: 0, width: 280, height: 200 },
+  board: { x: 360, y: 30, width: 590, height: 650 },
+};
+
+// Canvas内部領域をビューポートのclip座標に変換
+function canvasRegionToClip(region, canvasInfo) {
+  const { rect, width, height } = canvasInfo;
+  return {
+    x: rect.x + (region.x / width) * rect.w,
+    y: rect.y + (region.y / height) * rect.h,
+    width: (region.width / width) * rect.w,
+    height: (region.height / height) * rect.h,
+  };
+}
+
+// 全スクリーンショット撮影（全体 + クロップ）
+async function takeAllScreenshots(page, canvasInfo) {
+  await page.screenshot({ path: SCREENSHOT_PATH });
+
+  if (canvasInfo) {
+    const nextClip = canvasRegionToClip(CROP_REGIONS.next, canvasInfo);
+    await page.screenshot({ path: NEXT_BLOCK_PATH, clip: nextClip });
+
+    const boardClip = canvasRegionToClip(CROP_REGIONS.board, canvasInfo);
+    await page.screenshot({ path: BOARD_PATH, clip: boardClip });
+  }
+
+  console.log(`Screenshots saved: ${SCREENSHOT_PATH}, ${NEXT_BLOCK_PATH}, ${BOARD_PATH}`);
+}
 
 // コマンドファイルから操作を読み取る
 function readCommands() {
@@ -75,8 +109,7 @@ async function executeCommand(page, command, canvasInfo) {
     console.log(`Executing: RETRY (canvas center ${centerX},${centerY} -> viewport ${viewportX.toFixed(0)},${viewportY.toFixed(0)})`);
     await page.mouse.click(viewportX, viewportY);
     await page.waitForTimeout(1000);
-    await page.screenshot({ path: SCREENSHOT_PATH });
-    console.log(`Screenshot saved to ${SCREENSHOT_PATH}`);
+    await takeAllScreenshots(page, canvasInfo);
     return;
   }
 
@@ -97,9 +130,8 @@ async function executeCommand(page, command, canvasInfo) {
   // 少し待つ
   await page.waitForTimeout(500);
 
-  // スクリーンショットを撮る
-  await page.screenshot({ path: SCREENSHOT_PATH });
-  console.log(`Screenshot saved to ${SCREENSHOT_PATH}`);
+  // スクリーンショット撮影（全体 + クロップ）
+  await takeAllScreenshots(page, canvasInfo);
 }
 
 async function runGameController() {
@@ -146,9 +178,9 @@ async function runGameController() {
   await page.mouse.click(startClick.viewportX, startClick.viewportY);
   await page.waitForTimeout(1000);
 
-  // 初期スクリーンショット
-  await page.screenshot({ path: SCREENSHOT_PATH });
-  console.log('Initial screenshot saved');
+  // 初期スクリーンショット（全体 + クロップ）
+  await takeAllScreenshots(page, canvasInfo);
+  console.log('Initial screenshots saved');
 
   // メインループ：コマンドファイルを監視
   let lastCommands = [];
