@@ -12,8 +12,8 @@ COMMANDS="commands.txt"
 AI_TIMEOUT=300
 
 # OBSERVE以外で使うモデル（primary / fallback）
-MODEL_PRIMARY="opencode:glmflash"
-MODEL_FALLBACK="glm"
+MODEL_PRIMARY="glm"
+MODEL_FALLBACK="opencode:glmflash"
 
 mkdir -p tmp
 [ -f "$STATE_FILE" ] || echo "WAIT_READY" > "$STATE_FILE"
@@ -26,9 +26,73 @@ log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
 #--- スピナー表示（AI応答待ち中） ---
 _spinner_pid=0
+
+# ジョークコマンドをランダムに表示（低確率）
+_maybe_show_joke() {
+    # 約10%の確率で発動
+    [ $((RANDOM % 10)) -ne 0 ] && return
+    printf '\r\033[K' >&2
+
+    # 利用可能なジョークを収集
+    local jokes=()
+    command -v sl       &>/dev/null && jokes+=("sl")
+    command -v fortune  &>/dev/null && command -v cowsay &>/dev/null && jokes+=("fortune_cowsay")
+    command -v toilet   &>/dev/null && jokes+=("toilet")
+    command -v figlet   &>/dev/null && jokes+=("figlet")
+    command -v nyancat  &>/dev/null && jokes+=("nyancat")
+    command -v aafire   &>/dev/null && jokes+=("aafire")
+    command -v boxes    &>/dev/null && command -v fortune &>/dev/null && jokes+=("boxes")
+    command -v genact   &>/dev/null && jokes+=("genact")
+    command -v cmatrix  &>/dev/null && jokes+=("cmatrix")
+    command -v lolcat   &>/dev/null && command -v fortune &>/dev/null && jokes+=("lolcat")
+    command -v tty-clock &>/dev/null && jokes+=("tty-clock")
+    [ ${#jokes[@]} -eq 0 ] && return
+
+    local pick="${jokes[$((RANDOM % ${#jokes[@]}))]}"
+
+    # フルスクリーン系は代替バッファを使って画面を汚さない
+    local fullscreen=0
+    case "$pick" in nyancat|aafire|cmatrix|tty-clock) fullscreen=1 ;; esac
+    [ "$fullscreen" -eq 1 ] && tput smcup >&2 2>/dev/null
+
+    case "$pick" in
+        sl)
+            timeout 4 sl -l >&2 2>/dev/null || true ;;
+        fortune_cowsay)
+            fortune 2>/dev/null | cowsay >&2 2>/dev/null || true
+            sleep 2 ;;
+        toilet)
+            echo "THINKING..." | toilet --gay 2>/dev/null >&2 || true
+            sleep 1 ;;
+        figlet)
+            echo "THINKING..." | figlet >&2 2>/dev/null || true
+            sleep 1 ;;
+        nyancat)
+            timeout 4 nyancat >&2 2>/dev/null || true ;;
+        aafire)
+            timeout 4 aafire >&2 2>/dev/null || true ;;
+        boxes)
+            fortune 2>/dev/null | boxes >&2 2>/dev/null || true
+            sleep 2 ;;
+        genact)
+            timeout 5 genact >&2 2>/dev/null || true ;;
+        cmatrix)
+            timeout 4 cmatrix -b >&2 2>/dev/null || true ;;
+        lolcat)
+            fortune 2>/dev/null | lolcat >&2 2>/dev/null || true
+            sleep 2 ;;
+        tty-clock)
+            timeout 4 tty-clock -scC 1 >&2 2>/dev/null || true ;;
+    esac
+
+    [ "$fullscreen" -eq 1 ] && tput rmcup >&2 2>/dev/null
+    printf '\r\033[K' >&2
+}
+
 start_spinner() {
     local label="$1"
     (
+        _maybe_show_joke
         local frames=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
         local i=0 start=$SECONDS
         while true; do
@@ -73,7 +137,13 @@ run_cmd() {
     # AIコマンドをバックグラウンドで起動
     case "$type" in
 	glm)
-       opencode run "'$prompt'" --agent="zai" & ;;
+        opencode run "'$prompt'" --agent="zai" & ;;
+    gemini)
+        gemini -p "$prompt" -y -s & ;;
+    gemini-flash)
+        gemini -p "$prompt" -y -s --model=gemini-2.5-flash & ;;
+    gemini-flash-light)
+        gemini -p "$prompt" -y -s --model=gemini-2.5-flash-light & ;;
     glmclaude)
         env ANTHROPIC_BASE_URL=http://localhost:8787 \
             ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-4.6v \
@@ -172,33 +242,49 @@ while true; do
 
     #--- 目（特別: 画像認識モデル） ---
     OBSERVE)
-        # game_state.json の cursor/next が両方 false → ゲームオーバー確定
-        if python3 -c "import json; d=json.load(open('game_state.json')); exit(0 if d.get('gameOver') else 1)" 2>/dev/null; then
-            log "game_state.json判定: GAME OVER (cursor=false, next=false)"
-            echo -e "# 盤面観察\n\nGAME_OVER: true\n理由: cursor/nextが検出できない（ゲームオーバー画面）" > tmp/observe.md
+        rm -f tmp/observe.md
+        observe_ok=false
+
+        # OBSERVE用モデルリスト
+        observe_models=("gemini" "sonnet" "glmclaude")
+        observe_max=6
+        for i in $(seq 0 $((observe_max - 1))); do
+            model="${observe_models[$((i % ${#observe_models[@]}))]}"
+            rm -f tmp/observe.md
+            log "[OBSERVE] try $((i+1))/$observe_max: $model"
+            run_cmd "$model" "$(build_prompt prompts/observe.md)"
+            if grep -q 'GAME_OVER:' tmp/observe.md 2>/dev/null; then
+                log "[OBSERVE] $model OK"
+                observe_ok=true
+                break
+            fi
+            log "[OBSERVE] $model → 出力なし"
+        done
+
+        if ! $observe_ok; then
+            log "[OBSERVE] 全モデル失敗 → DECIDE続行"
+            echo -e "OBSERVE失敗（画像読み取り不可）\nGAME_OVER: false" > tmp/observe.md
+        fi
+
+        if is_game_over; then
+            log "AI判定: GAME OVER"
             set_state "GAME_OVER"
         else
-            # 前回のobserve結果をクリア（ゲームオーバー誤引継ぎ防止）
-            rm -f tmp/observe.md
-            run_ai OBSERVE glmclaude claude\
-                prompts/observe.md tmp/observe.md
-            # AIのOBSERVE結果からゲームオーバー判定
-            if is_game_over; then
-                log "AI判定: GAME OVER"
-                set_state "GAME_OVER"
-            else
-                set_state "DECIDE"
-            fi
+            set_state "DECIDE"
         fi ;;
 
     #--- 頭（分析+計画を1ステップで） ---
     DECIDE)
+        cat tmp/observe.md
         run_ai DECIDE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
             prompts/decide.md tmp/plan.md tmp/observe.md STRATEGY.md think.md
         set_state "EXECUTE" ;;
 
     #--- 手（機械的にドロップ） ---
     EXECUTE)
+        cat think.md
+        cat tmp/plan.md
+
         coord=$(grep -oE '[0-9]+,[0-9]+' tmp/plan.md 2>/dev/null | head -1)
         [ -z "$coord" ] && coord="650,350"
         x=$(echo "$coord" | cut -d',' -f1)

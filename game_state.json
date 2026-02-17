@@ -1,5 +1,4 @@
 {
-  "cursor": true,
-  "next": false,
-  "gameOver": false
+  "cursor": false,
+  "next": true
 }

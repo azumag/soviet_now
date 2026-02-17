@@ -149,27 +149,20 @@ while true; do
         fi ;;
 
     "OBSERVE")
-        # game_state.json の gameOver フラグで先行判定
-        if python3 -c "import json; d=json.load(open('$GAME_STATE')); exit(0 if d.get('gameOver') else 1)" 2>/dev/null; then
-            echo "[!] game_state.json判定: GAME OVER (cursor=false, next=false)"
-            echo -e "# 盤面観察\n\nGAME_OVER: true\n理由: cursor/nextが検出できない（ゲームオーバー画面）" > tmp/observe.md
-            set_state "GAME_OVER"
-        else
-            # 前回のobserve結果をクリア（ゲームオーバー誤引継ぎ防止）
-            rm -f tmp/observe.md
-            if run_ai "prompts/observe.md" "tmp/observe.md"; then
-                # AIのOBSERVE結果からゲームオーバー判定
-                if is_game_over; then
-                    echo "[!] AI判定: GAME OVER"
-                    set_state "GAME_OVER"
-                else
-                    set_state "ANALYZE"
-                fi
+        # 前回のobserve結果をクリア（ゲームオーバー誤引継ぎ防止）
+        rm -f tmp/observe.md
+        if run_ai "prompts/observe.md" "tmp/observe.md"; then
+            # AIのOBSERVE結果からゲームオーバー判定
+            if is_game_over; then
+                echo "[!] AI判定: GAME OVER"
+                set_state "GAME_OVER"
             else
-                echo "[SKIP] OBSERVE失敗 → デフォルトで続行"
-                echo "OBSERVE失敗 - スクリーンショット確認不可" > tmp/observe.md
                 set_state "ANALYZE"
             fi
+        else
+            echo "[SKIP] OBSERVE失敗 → デフォルトで続行"
+            echo "OBSERVE失敗 - スクリーンショット確認不可" > tmp/observe.md
+            set_state "ANALYZE"
         fi ;;
 
     "ANALYZE")

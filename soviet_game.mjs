@@ -6,9 +6,6 @@ const URL = 'https://unityroom.com/games/sorengame';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
 
-// ゲームオーバー判定: 連続N回 cursor=false & next=false で確定
-const GAME_OVER_THRESHOLD = 3;
-let noObjectCount = 0;
 
 
 // WebGL Draw Callフックからカーソル/NEXTの存在を検出（ループのタイミング制御用）
@@ -86,15 +83,8 @@ async function takeScreenshots(page) {
 async function updateGameState(page) {
   const gameState = await extractGameStateFromDrawCalls(page);
   if (gameState) {
-    // 連続で cursor=false & next=false ならゲームオーバー
-    if (!gameState.cursor && !gameState.next) {
-      noObjectCount++;
-    } else {
-      noObjectCount = 0;
-    }
-    gameState.gameOver = noObjectCount >= GAME_OVER_THRESHOLD;
     fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(gameState, null, 2));
-    console.log(`State: cursor=${gameState.cursor}, next=${gameState.next}, gameOver=${gameState.gameOver} (count=${noObjectCount}/${GAME_OVER_THRESHOLD})`);
+    console.log(`State: cursor=${gameState.cursor}, next=${gameState.next}`);
   }
   await takeScreenshots(page);
   return gameState;
@@ -169,8 +159,6 @@ async function executeCommand(page, command, canvasInfo) {
     const { viewportX, viewportY } = canvasToViewport(centerX, centerY, canvasInfo);
     console.log(`Executing: RETRY (canvas center ${centerX},${centerY} -> viewport ${viewportX.toFixed(0)},${viewportY.toFixed(0)})`);
     await page.mouse.click(viewportX, viewportY);
-    // retry後はカウンターリセット（gameOver固着防止）
-    noObjectCount = 0;
     await page.waitForTimeout(1000);
     await updateGameState(page);
     return;
