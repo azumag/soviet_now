@@ -6,6 +6,10 @@ const URL = 'https://unityroom.com/games/sorengame';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
 
+// ゲームオーバー判定: 連続N回 cursor=false & next=false で確定
+const GAME_OVER_THRESHOLD = 3;
+let noObjectCount = 0;
+
 
 // WebGL Draw Callフックからカーソル/NEXTの存在を検出（ループのタイミング制御用）
 // 盤面分析はAIのOBSERVEフェーズがスクリーンショットから行う
@@ -78,12 +82,19 @@ async function takeScreenshots(page) {
   }
 }
 
-// ゲーム状態を更新（cursor/nextの有無のみ）+ スクリーンショット
+// ゲーム状態を更新（cursor/nextの有無 + ゲームオーバー判定）+ スクリーンショット
 async function updateGameState(page) {
   const gameState = await extractGameStateFromDrawCalls(page);
   if (gameState) {
+    // 連続で cursor=false & next=false ならゲームオーバー
+    if (!gameState.cursor && !gameState.next) {
+      noObjectCount++;
+    } else {
+      noObjectCount = 0;
+    }
+    gameState.gameOver = noObjectCount >= GAME_OVER_THRESHOLD;
     fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(gameState, null, 2));
-    console.log(`State: cursor=${gameState.cursor}, next=${gameState.next}`);
+    console.log(`State: cursor=${gameState.cursor}, next=${gameState.next}, gameOver=${gameState.gameOver} (count=${noObjectCount}/${GAME_OVER_THRESHOLD})`);
   }
   await takeScreenshots(page);
   return gameState;
@@ -158,6 +169,8 @@ async function executeCommand(page, command, canvasInfo) {
     const { viewportX, viewportY } = canvasToViewport(centerX, centerY, canvasInfo);
     console.log(`Executing: RETRY (canvas center ${centerX},${centerY} -> viewport ${viewportX.toFixed(0)},${viewportY.toFixed(0)})`);
     await page.mouse.click(viewportX, viewportY);
+    // retry後はカウンターリセット（gameOver固着防止）
+    noObjectCount = 0;
     await page.waitForTimeout(1000);
     await updateGameState(page);
     return;
@@ -294,7 +307,11 @@ async function runGameController() {
 
   // Step 1: メインページからゲームiframeのURLを取得
   console.log('Loading main page to find game iframe URL...');
-  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  try {
+    await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  } catch (e) {
+    console.log(`Navigation warning: ${e.message.split('\n')[0]} — waiting for page to settle...`);
+  }
   await page.waitForTimeout(10000);
 
   const gameFrame = page.frames().find(f => f.url().includes('no_bg=true'));
@@ -306,7 +323,11 @@ async function runGameController() {
   // Step 2: ゲームURLに直接ナビゲート（フルスクリーン表示）
   if (gameUrl) {
     console.log(`Found game URL, navigating directly for full-screen display...`);
-    await page.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    try {
+      await page.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    } catch (e) {
+      console.log(`Game navigation warning: ${e.message.split('\n')[0]} — waiting...`);
+    }
     await page.waitForTimeout(10000);
   }
 
