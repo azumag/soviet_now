@@ -24,13 +24,29 @@ commands_empty() { [ -z "$(tr -d '[:space:]' < "$COMMANDS" 2>/dev/null)" ]; }
 is_game_over() { grep -q 'GAME_OVER: true' tmp/observe.md 2>/dev/null; }
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
+#--- 履歴保存（rm の代わりに mv でタイムスタンプ付き保存） ---
+save_to_history() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    mkdir -p tmp/history
+    local ts=$(date '+%Y%m%d_%H%M%S')
+    local base=$(basename "$file")
+    mv "$file" "tmp/history/${ts}_${base}"
+}
+save_all_to_history() {
+    for f in tmp/observe.md tmp/plan.md tmp/think.md tmp/analyze.md; do
+        save_to_history "$f"
+    done
+}
+clear_history() { rm -rf tmp/history; }
+
 #--- スピナー表示（AI応答待ち中） ---
 _spinner_pid=0
 
 # ジョークコマンドをランダムに表示（低確率）
 _maybe_show_joke() {
     # 約10%の確率で発動
-    [ $((RANDOM % 10)) -ne 0 ] && return
+    [ $((RANDOM % 20)) -ne 0 ] && return
     printf '\r\033[K' >&2
 
     # 利用可能なジョークを収集
@@ -222,6 +238,19 @@ wait_commands_done() {
 #=== メインループ ===
 log "=== Soviet Game Resolver ==="
 READY_WAIT=0
+_last_headline=""
+
+# headlineが変化した時だけsayする
+say_headline_if_changed() {
+    local cur
+    # local cur
+    # cur=$(cat tmp/headline.md 2>/dev/null) || return
+    # [ -z "$cur" ] && return
+    # if [ "$cur" != "$_last_headline" ]; then
+    #     _last_headline="$cur"
+    #     echo "$cur" | say -v taro &
+    # fi
+}
 
 while true; do
     state=$(head -n 1 "$STATE_FILE" 2>/dev/null | tr -d '\n\r')
@@ -242,7 +271,7 @@ while true; do
 
     #--- 目（特別: 画像認識モデル） ---
     OBSERVE)
-        rm -f tmp/observe.md
+        save_all_to_history
         observe_ok=false
 
         # OBSERVE用モデルリスト
@@ -261,6 +290,8 @@ while true; do
             log "[OBSERVE] $model → 出力なし"
         done
 
+        say_headline_if_changed
+
         if ! $observe_ok; then
             log "[OBSERVE] 全モデル失敗 → DECIDE続行"
             echo -e "OBSERVE失敗（画像読み取り不可）\nGAME_OVER: false" > tmp/observe.md
@@ -278,6 +309,7 @@ while true; do
         cat tmp/observe.md
         run_ai DECIDE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
             prompts/decide.md tmp/plan.md tmp/observe.md STRATEGY.md think.md
+        say_headline_if_changed
         set_state "EXECUTE" ;;
 
     #--- 手（機械的にドロップ） ---
@@ -294,6 +326,7 @@ while true; do
         echo "${x},350" > "$COMMANDS"
         wait_commands_done
         sleep 3
+        say_headline_if_changed
         set_state "WAIT_READY" ;;
 
     #--- ゲームオーバー振り返り ---
@@ -301,6 +334,7 @@ while true; do
         run_ai GAME_OVER "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
             prompts/postmortem.md "" tmp/observe.md STRATEGY.md think.md
         # 本当にgameOverか再確認してからretry
+        cat tmp/postmortem.md
         sleep 2
         if is_game_over; then
             log "confirmed game over → retry"
@@ -310,6 +344,10 @@ while true; do
         else
             log "false positive game over → skip retry"
         fi
+	    say_headline_if_changed
+        # 履歴クリーンアップ（postmortemで使用済み）
+        clear_history
+        rm -f tmp/observe.md tmp/plan.md tmp/think.md tmp/analyze.md
         set_state "WAIT_READY" ;;
 
     *)  log "Unknown: $state"
