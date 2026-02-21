@@ -64,7 +64,12 @@ save_to_history() {
     mv "$file" "tmp/history/${ts}_${base}"
 }
 save_all_to_history() {
-    for f in tmp/plan.md tmp/think.md tmp/state_snapshot.json tmp/board_analysis.md; do
+    # game_state.jsonはコピーして保存（元ファイルは残す）
+    if [ -f "$GAME_STATE" ]; then
+        mkdir -p tmp/history
+        cp "$GAME_STATE" "tmp/history/$(date '+%Y%m%d_%H%M%S')_game_state.json"
+    fi
+    for f in tmp/plan.md tmp/think.md tmp/board_analysis.md; do
         save_to_history "$f"
     done
 }
@@ -253,9 +258,6 @@ while true; do
     DECIDE)
         save_all_to_history
 
-        # 現在の状態スナップショットを保存
-        cp "$GAME_STATE" tmp/state_snapshot.json 2>/dev/null
-
         # 盤面空間解析（マージ可否・着地予測・推奨ドロップ）
         python3 analyze_board.py "$GAME_STATE" tmp/board_analysis.md 2>/dev/null
 
@@ -286,7 +288,7 @@ while true; do
 
     #--- ゲームオーバー振り返り ---
     GAME_OVER)
-        run_ai GAME_OVER sonnet "$MODEL_PRIMARY" \
+        run_ai GAME_OVER opus "$MODEL_PRIMARY" \
             prompts/postmortem.md "" "$GAME_STATE" STRATEGY.md think.md
         [ -f tmp/postmortem.md ] && cat tmp/postmortem.md
         sleep 2
@@ -301,7 +303,7 @@ while true; do
         fi
 
         clear_history
-        rm -f tmp/plan.md tmp/think.md tmp/state_snapshot.json
+        rm -f tmp/plan.md tmp/think.md tmp/board_analysis.md
         set_state "WAIT_READY" ;;
 
     *)  log "Unknown: $state"
