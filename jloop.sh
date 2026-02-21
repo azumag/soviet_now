@@ -236,8 +236,15 @@ while true; do
         # MOVE状態でなければ待つ（DROP中など）
         if ! is_move_state; then
             SETTLE_WAIT=0
+            NOMOVE_WAIT=$((${NOMOVE_WAIT:-0} + 1))
+            if [ "$NOMOVE_WAIT" -ge 15 ]; then
+                cur_state=$(python3 -c "import json; print(json.load(open('$GAME_STATE')).get('state','?'))" 2>/dev/null)
+                log "waiting for MOVE (current: $cur_state, ${NOMOVE_WAIT}s)"
+                NOMOVE_WAIT=0
+            fi
             sleep 1; continue
         fi
+        NOMOVE_WAIT=0
 
         # 盤面静止を待つ（ピースが落ち着くまで）
         settled=$(is_board_settled)
@@ -307,7 +314,48 @@ while true; do
 
         clear_history
         rm -f tmp/plan.md tmp/think.md tmp/board_analysis.md
-        set_state "WAIT_READY" ;;
+        set_state "WAIT_RESTART" ;;
+
+    #--- リトライ後のゲーム再起動待ち ---
+    WAIT_RESTART)
+        # game_state.jsonがMOVEかつpieces少(新ゲーム開始)になるまで待つ
+        rs=$(python3 -c "
+import json
+try:
+    d = json.load(open('$GAME_STATE'))
+    s = d.get('state','')
+    n = len(d.get('pieces',[]))
+    # 新ゲーム: MOVE状態でピースが少ない（リトライ直後）
+    if s == 'MOVE' and n <= 2:
+        print('ready')
+    elif s == 'GAMEOVER' or s == 'STOP':
+        print('still_over')
+    else:
+        print('waiting')
+except:
+    print('waiting')
+" 2>/dev/null)
+
+        case "$rs" in
+        ready)
+            log "new game detected → resuming"
+            SETTLE_WAIT=0
+            set_state "WAIT_READY" ;;
+        still_over)
+            # まだGAMEOVER状態 → retryがまだ効いていない
+            RESTART_WAIT=$((${RESTART_WAIT:-0} + 1))
+            if [ "$RESTART_WAIT" -ge 30 ]; then
+                log "RESTART TIMEOUT: re-sending retry"
+                echo "retry" > "$COMMANDS"
+                wait_commands_done
+                RESTART_WAIT=0
+            fi
+            sleep 2 ;;
+        *)
+            # 初期化中（DROP等の中間状態）
+            RESTART_WAIT=0
+            sleep 2 ;;
+        esac ;;
 
     *)  log "Unknown: $state"
         set_state "WAIT_READY" ;;
