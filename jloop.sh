@@ -41,15 +41,16 @@ is_move_state() {
 # 盤面が静止しているか判定（全ピースの速度が小さい）
 is_board_settled() {
     python3 -c "
-import json, sys
+import json
 try:
     d = json.load(open('$GAME_STATE'))
     pieces = d.get('pieces', [])
     if not pieces:
-        print('true'); sys.exit()
-    max_v = max(abs(p.get('vx',0))**2 + abs(p.get('vy',0))**2 for p in pieces)
-    print('true' if max_v < 0.1 else 'false')
-except:
+        print('true')
+    else:
+        max_v = max(abs(p.get('vx',0))**2 + abs(p.get('vy',0))**2 for p in pieces)
+        print('true' if max_v < 0.1 else 'false')
+except Exception:
     print('false')
 " 2>/dev/null
 }
