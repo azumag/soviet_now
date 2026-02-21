@@ -1,0 +1,293 @@
+import { chromium } from 'playwright';
+import fs from 'fs';
+import http from 'http';
+import path from 'path';
+import sharp from 'sharp';
+
+const BUILD_DIR = 'sorengame/build';
+const COMMAND_FILE = 'commands.txt';
+const GAME_STATE_PATH = 'game_state.json';
+const SERVE_PORT = 8080;
+
+// MIME types for Unity WebGL build
+const MIME_TYPES = {
+  '.html': 'text/html',
+  '.js': 'application/javascript',
+  '.css': 'text/css',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.data': 'application/octet-stream',
+  '.wasm': 'application/wasm',
+  '.gz': null, // handled specially
+};
+
+// Custom static file server that handles .gz files with correct Content-Encoding
+function startServer() {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      let filePath = path.join(BUILD_DIR, req.url === '/' ? 'index.html' : req.url);
+      filePath = decodeURIComponent(filePath);
+
+      if (!fs.existsSync(filePath)) {
+        res.writeHead(404);
+        res.end('Not found');
+        return;
+      }
+
+      const ext = path.extname(filePath);
+
+      const noCache = {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      };
+
+      if (ext === '.gz') {
+        // Serve .gz files with Content-Encoding: gzip and correct Content-Type
+        const innerExt = path.extname(filePath.slice(0, -3)); // e.g. .js from .js.gz
+        const contentType = MIME_TYPES[innerExt] || 'application/octet-stream';
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'Content-Encoding': 'gzip',
+          ...noCache,
+        });
+      } else {
+        const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+        res.writeHead(200, { 'Content-Type': contentType, ...noCache });
+      }
+
+      fs.createReadStream(filePath).pipe(res);
+    });
+
+    server.listen(SERVE_PORT, () => {
+      resolve(server);
+    });
+  });
+}
+
+// Read commands from commands.txt (same format as soviet_game.mjs)
+function readCommands() {
+  try {
+    if (!fs.existsSync(COMMAND_FILE)) return [];
+    const content = fs.readFileSync(COMMAND_FILE, 'utf-8').trim();
+    if (!content) return [];
+
+    const lines = content.split('\n').filter(l => l.trim());
+    const commands = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.toLowerCase() === 'retry') {
+        commands.push({ action: 'retry' });
+      } else if (trimmed.startsWith('[')) {
+        try {
+          commands.push(...JSON.parse(trimmed));
+        } catch (e) {
+          console.log('Failed to parse JSON:', trimmed);
+        }
+      } else {
+        // x,y format (canvas coords) — convert to game X coord
+        const parts = trimmed.split(',').map(s => parseInt(s.trim()));
+        if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+          // Convert canvas X (410-830 range) to game X (-3 to +3 range)
+          const boardL = 410, boardR = 830;
+          const gameX = ((parts[0] - boardL) / (boardR - boardL)) * 6 - 3;
+          const clampedX = Math.max(-3.0, Math.min(3.0, gameX));
+          commands.push({ action: 'drop', x: clampedX });
+        }
+      }
+    }
+    return commands;
+  } catch (e) {
+    console.error('Error reading commands:', e);
+    return [];
+  }
+}
+
+function clearCommands() {
+  try { fs.writeFileSync(COMMAND_FILE, ''); } catch (e) {}
+}
+
+// Take screenshots from the page (same output files as soviet_game.mjs)
+async function takeScreenshots(page) {
+  try {
+    const buf = await page.screenshot();
+    await Promise.all([
+      fs.promises.writeFile('soviet_now.png', buf),
+      sharp(buf).extract({ left: 300, top: 0, width: 650, height: 720 }).toFile('board.png'),
+      sharp(buf).extract({ left: 980, top: 60, width: 180, height: 300 }).toFile('next_block.png'),
+    ]);
+    console.log('Screenshots updated');
+  } catch (e) {
+    console.error('Screenshot error:', e.message);
+  }
+}
+
+// Get game state from JS Bridge
+async function getGameState(page) {
+  try {
+    const state = await page.evaluate(() => window.__sorenGameState);
+    return state || null;
+  } catch (e) {
+    console.error('Error getting game state:', e.message);
+    return null;
+  }
+}
+
+// Write game state to JSON file for AI loop
+function writeGameState(state) {
+  if (!state) return;
+  fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(state, null, 2));
+}
+
+// Execute a command via JS Bridge
+async function executeCommand(page, command) {
+  if (command.action === 'retry') {
+    console.log('Executing: RETRY');
+    await page.evaluate(() => { window.__sorenCommand = 'RETRY'; });
+    await page.waitForTimeout(2000);
+  } else if (command.action === 'drop') {
+    console.log(`Executing: DROP at x=${command.x.toFixed(3)}`);
+    await page.evaluate((x) => { window.__sorenCommand = 'DROP:' + x; }, command.x);
+    await page.waitForTimeout(3000);
+  }
+
+  // Update state + screenshots after command
+  const state = await getGameState(page);
+  writeGameState(state);
+  await takeScreenshots(page);
+  return state;
+}
+
+async function runLocalController() {
+  // Check build directory exists
+  if (!fs.existsSync(BUILD_DIR)) {
+    console.error(`Build directory not found: ${BUILD_DIR}`);
+    console.error('Please build the Unity WebGL project first (File → Build Settings → Build)');
+    process.exit(1);
+  }
+
+  // Start local server
+  console.log(`Starting local server for ${BUILD_DIR} on port ${SERVE_PORT}...`);
+  let server;
+  try {
+    server = await startServer();
+    console.log(`Server started on port ${SERVE_PORT}`);
+  } catch (e) {
+    console.error('Failed to start server:', e.message);
+    process.exit(1);
+  }
+
+  // Cleanup on exit
+  process.on('SIGINT', () => {
+    console.log('\nShutting down...');
+    server.close();
+    process.exit(0);
+  });
+
+  const browser = await chromium.launch({
+    headless: false,
+    args: ['--window-size=1280,720'],
+  });
+
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 720 },
+    deviceScaleFactor: 1,
+  });
+
+  const page = await context.newPage();
+
+  console.log('=== Soren Local Game Controller ===');
+  console.log(`Navigating to http://localhost:${SERVE_PORT}...`);
+
+  await page.goto(`http://localhost:${SERVE_PORT}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  // Wait for Unity canvas to initialize
+  let canvasReady = false;
+  for (let i = 0; i < 60; i++) {
+    canvasReady = await page.evaluate(() => {
+      const canvas = document.getElementById('unity-canvas') || document.querySelector('canvas');
+      return canvas && canvas.width > 300;
+    });
+    if (canvasReady) break;
+    console.log(`Waiting for Unity canvas init... (${i + 1}/60)`);
+    await page.waitForTimeout(1000);
+  }
+
+  if (!canvasReady) {
+    console.error('Unity canvas failed to initialize!');
+    await browser.close();
+    server.close();
+    return;
+  }
+
+  console.log('Unity canvas ready');
+
+  // Wait for JS Bridge to be active
+  let bridgeReady = false;
+  for (let i = 0; i < 30; i++) {
+    const state = await getGameState(page);
+    if (state && state.state) {
+      bridgeReady = true;
+      console.log(`JS Bridge active, game state: ${state.state}`);
+      break;
+    }
+    console.log(`Waiting for JS Bridge... (${i + 1}/30)`);
+    await page.waitForTimeout(1000);
+  }
+
+  if (!bridgeReady) {
+    console.error('JS Bridge not responding. Is SorenBridge component attached in the scene?');
+    await browser.close();
+    server.close();
+    return;
+  }
+
+  // Click to start the game
+  await page.mouse.click(640, 360);
+  await page.waitForTimeout(2000);
+
+  // Initial state
+  const initialState = await getGameState(page);
+  writeGameState(initialState);
+  await takeScreenshots(page);
+  console.log('Initial game state saved');
+  console.log(`Watching for commands in: ${COMMAND_FILE}`);
+
+  // Main loop: poll commands and game state
+  let processedCount = 0;
+  let idleCount = 0;
+  const STATE_REFRESH_INTERVAL = 4;
+
+  while (true) {
+    const commands = readCommands();
+
+    if (commands.length > processedCount) {
+      idleCount = 0;
+      for (let i = processedCount; i < commands.length; i++) {
+        await executeCommand(page, commands[i]);
+        processedCount++;
+
+        if (i === commands.length - 1) {
+          clearCommands();
+          processedCount = 0;
+        }
+      }
+    } else {
+      idleCount++;
+      if (idleCount >= STATE_REFRESH_INTERVAL) {
+        idleCount = 0;
+        const state = await getGameState(page);
+        writeGameState(state);
+        await takeScreenshots(page);
+        if (state) {
+          console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);
+        }
+      }
+    }
+
+    await page.waitForTimeout(500);
+  }
+}
+
+runLocalController().catch(console.error);

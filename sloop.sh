@@ -14,6 +14,8 @@ AI_TIMEOUT=300
 # OBSERVE以外で使うモデル（primary / fallback）
 MODEL_PRIMARY="glm"
 MODEL_FALLBACK="opencode:glmflash"
+# MODEL_PRIMARY="opus"
+# MODEL_FALLBACK="sonnet"
 
 mkdir -p tmp
 [ -f "$STATE_FILE" ] || echo "WAIT_READY" > "$STATE_FILE"
@@ -276,6 +278,7 @@ while true; do
 
         # OBSERVE用モデルリスト
         observe_models=("gemini" "sonnet" "glmclaude")
+        # observe_models=("opus" "sonnet")
         observe_max=6
         for i in $(seq 0 $((observe_max - 1))); do
             model="${observe_models[$((i % ${#observe_models[@]}))]}"
@@ -331,7 +334,7 @@ while true; do
 
     #--- ゲームオーバー振り返り ---
     GAME_OVER)
-        run_ai GAME_OVER "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
+        run_ai GAME_OVER sonnet "$MODEL_PRIMARY" \
             prompts/postmortem.md "" tmp/observe.md STRATEGY.md think.md
         # 本当にgameOverか再確認してからretry
         cat tmp/postmortem.md

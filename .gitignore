@@ -1,4 +1,7 @@
 node_modules/
 .env
 .DS_Store
+._*
 tmp/
+sorengame/
+.claude/

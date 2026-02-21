@@ -4,7 +4,7 @@ import sharp from 'sharp';
 
 const URL = 'https://unityroom.com/games/sorengame';
 const COMMAND_FILE = 'commands.txt';
-const GAME_STATE_PATH = 'game_state.json';
+// const GAME_STATE_PATH = 'tmp/game_state.json';
 
 
 
@@ -83,7 +83,7 @@ async function takeScreenshots(page) {
 async function updateGameState(page) {
   const gameState = await extractGameStateFromDrawCalls(page);
   if (gameState) {
-    fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(gameState, null, 2));
+    // fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(gameState, null, 2));
     console.log(`State: cursor=${gameState.cursor}, next=${gameState.next}`);
   }
   await takeScreenshots(page);
