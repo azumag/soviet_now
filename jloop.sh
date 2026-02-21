@@ -258,8 +258,11 @@ while true; do
     DECIDE)
         save_all_to_history
 
-        # 盤面空間解析（マージ可否・着地予測・推奨ドロップ）
-        python3 analyze_board.py "$GAME_STATE" tmp/board_analysis.md 2>/dev/null
+        # DECIDE時点のスナップショット（AI思考中にgame_state.jsonが変わっても安全）
+        cp "$GAME_STATE" tmp/state_snapshot.json 2>/dev/null
+
+        # 盤面空間解析（スナップショットを使用）
+        python3 analyze_board.py tmp/state_snapshot.json tmp/board_analysis.md 2>/dev/null
 
         run_ai DECIDE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
             prompts/jdecide.md tmp/plan.md tmp/board_analysis.md STRATEGY.md think.md
