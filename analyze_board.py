@@ -19,7 +19,6 @@ DROP_X_MAX = 3.2
 FLOOR_Y = -5.0
 DROP_Y = 4.25
 DEADLINE_Y = 2.5
-MERGE_TOLERANCE = 1.3  # 接触判定の余裕係数
 
 # 解析するX位置 (0.2刻み)
 SAMPLE_XS = [round(-3.2 + i * 0.2, 1) for i in range(33)]  # -3.2 to 3.2
@@ -30,76 +29,106 @@ def load_game_state(path):
         return json.load(f)
 
 
-def get_landing_y(drop_x, drop_r, pieces):
-    """drop_x に半径 drop_r のピースを落とした時の着地Y（中心座標）を計算。
+def get_landing_info(drop_x, drop_r, pieces):
+    """drop_x に半径 drop_r のピースを落とした時の着地Y と最初に衝突するピースIDを返す。
     円-円衝突と床衝突の最大値を取る。"""
     landing_y = FLOOR_Y + drop_r  # 床
+    hit_id = None  # None = 床に着地
 
     for p in pieces:
         px, py, pr = p["x"], p["y"], p["r"]
         combined_r = drop_r + pr
         dx = drop_x - px
         if abs(dx) < combined_r:
-            # 垂直落下時の衝突Y = ピース中心Y + sqrt(合計半径² - 水平差²)
             collision_y = py + math.sqrt(combined_r ** 2 - dx ** 2)
-            landing_y = max(landing_y, collision_y)
+            if collision_y > landing_y:
+                landing_y = collision_y
+                hit_id = p["id"]
 
-    return landing_y
+    return landing_y, hit_id
 
 
 def analyze_drops(pieces, next_type, next_r):
-    """全サンプルXについて着地Y・マージ可否を計算"""
+    """全サンプルXについて着地Y・マージ可否を計算。
+    マージ判定は3段階:
+      DIRECT = 最初に衝突するのがターゲット自身（確実マージ）
+      NEAR   = 着地後にターゲットと接触圏内（高確率マージ）
+      NO     = 到達不能
+    """
     same_type = [p for p in pieces if p["type"] == next_type]
+    target_ids = {p["id"] for p in same_type}
     results = []
 
     for x in SAMPLE_XS:
         if x < DROP_X_MIN - 0.01 or x > DROP_X_MAX + 0.01:
             continue
 
-        ly = get_landing_y(x, next_r, pieces)
+        ly, hit_id = get_landing_info(x, next_r, pieces)
 
         # 各同typeピースへのマージ判定
         merges = []
         for t in same_type:
+            contact_r = next_r + t["r"]  # 厳密接触距離
             dist = math.sqrt((x - t["x"]) ** 2 + (ly - t["y"]) ** 2)
-            threshold = (next_r + t["r"]) * MERGE_TOLERANCE
+
+            if hit_id == t["id"]:
+                # 最初の衝突相手がターゲット → 確実マージ
+                grade = "DIRECT"
+            elif dist < contact_r * 1.1:
+                # 着地後にターゲットとほぼ接触 → 高確率マージ
+                grade = "NEAR"
+            else:
+                grade = "NO"
+
             merges.append({
                 "id": t["id"],
                 "tx": t["x"],
                 "ty": t["y"],
                 "tr": t["r"],
                 "dist": round(dist, 3),
-                "threshold": round(threshold, 3),
-                "ok": dist < threshold,
+                "contact_r": round(contact_r, 3),
+                "grade": grade,
             })
 
-        has_merge = any(m["ok"] for m in merges)
+        best_grade = "NO"
+        best_merge_dist = None
+        for m in merges:
+            if m["grade"] == "DIRECT":
+                best_grade = "DIRECT"
+                best_merge_dist = m["dist"]
+                break
+            elif m["grade"] == "NEAR" and best_grade != "DIRECT":
+                best_grade = "NEAR"
+                if best_merge_dist is None or m["dist"] < best_merge_dist:
+                    best_merge_dist = m["dist"]
 
-        # マージ最短距離（近いほど確実）
-        best_merge_ratio = None
-        if has_merge:
-            for m in merges:
-                if m["ok"]:
-                    ratio = m["dist"] / m["threshold"]  # 0〜1, 小さいほど確実
-                    if best_merge_ratio is None or ratio < best_merge_ratio:
-                        best_merge_ratio = ratio
+        has_merge = best_grade in ("DIRECT", "NEAR")
 
         # スコア計算
         sc = 0
-        if has_merge:
-            # マージ距離が近いほど高スコア (100〜150)
-            sc += 100 + (1 - best_merge_ratio) * 50
-        if ly > DEADLINE_Y:
-            sc -= 500  # デッドライン超え
-        sc -= ly * 10  # 低い方が良い
+        if best_grade == "DIRECT":
+            # 直撃マージは最優先。着地高さペナルティを大幅軽減
+            sc += 200
+            if best_merge_dist is not None:
+                sc += max(0, 50 - best_merge_dist * 10)
+            sc -= max(0, ly - DEADLINE_Y) * 100  # デッドライン超えのみペナルティ
+        elif best_grade == "NEAR":
+            sc += 130
+            if best_merge_dist is not None:
+                sc += max(0, 30 - best_merge_dist * 10)
+            sc -= ly * 5  # 軽い高さペナルティ
+        else:
+            sc -= ly * 10  # 低い場所優先
         sc -= abs(x) * 2  # 中央寄せ
+        if ly > DEADLINE_Y:
+            sc -= 500  # デッドライン超えは常にペナルティ
 
         results.append({
             "x": round(x, 1),
             "landing_y": round(ly, 3),
             "merges": merges,
             "has_merge": has_merge,
-            "merge_ratio": round(best_merge_ratio, 3) if best_merge_ratio is not None else None,
+            "merge_grade": best_grade,
             "score": round(sc, 1),
         })
 
@@ -202,32 +231,42 @@ def format_report(state, results, same_type, pieces):
         out.append(f"盤面にtype{nt}なし → マージ不可。低い場所に整理して置け。")
     else:
         for target in same_type:
-            # このターゲットに対するベストドロップを探す
-            best_yes = None
+            # このターゲットに対するベストドロップを探す (DIRECT > NEAR > NO)
+            best_direct = None
+            best_near = None
             best_no = None
             for r in results:
                 for m in r["merges"]:
                     if m["id"] != target["id"]:
                         continue
-                    if m["ok"]:
-                        if best_yes is None or m["dist"] < best_yes["dist"]:
-                            best_yes = {"x": r["x"], "ly": r["landing_y"], "dist": m["dist"]}
+                    info = {"x": r["x"], "ly": r["landing_y"], "dist": m["dist"], "cr": m["contact_r"]}
+                    if m["grade"] == "DIRECT":
+                        if best_direct is None or m["dist"] < best_direct["dist"]:
+                            best_direct = info
+                    elif m["grade"] == "NEAR":
+                        if best_near is None or m["dist"] < best_near["dist"]:
+                            best_near = info
                     else:
                         if best_no is None or m["dist"] < best_no["dist"]:
-                            best_no = {"x": r["x"], "ly": r["landing_y"], "dist": m["dist"], "th": m["threshold"]}
+                            best_no = info
 
-            if best_yes:
+            if best_direct:
                 out.append(
                     f"  → id{target['id']} at ({target['x']:+.2f},{target['y']:+.2f}): "
-                    f"[YES] DROP:{best_yes['x']:.1f} 着地y={best_yes['ly']:.2f} 距離={best_yes['dist']:.2f}"
+                    f"[YES-直撃] DROP:{best_direct['x']:.1f} 着地y={best_direct['ly']:.2f} 距離={best_direct['dist']:.2f}"
+                )
+            elif best_near:
+                out.append(
+                    f"  → id{target['id']} at ({target['x']:+.2f},{target['y']:+.2f}): "
+                    f"[YES-近接] DROP:{best_near['x']:.1f} 着地y={best_near['ly']:.2f} 距離={best_near['dist']:.2f}"
                 )
             else:
                 info = ""
                 if best_no:
-                    info = f" 最接近x={best_no['x']:.1f} 着地y={best_no['ly']:.2f} 距離={best_no['dist']:.2f}>閾値{best_no['th']:.2f}"
+                    info = f" 最接近x={best_no['x']:.1f} 距離={best_no['dist']:.2f}>接触距離{best_no['cr']:.2f}"
                 out.append(
                     f"  → id{target['id']} at ({target['x']:+.2f},{target['y']:+.2f}): "
-                    f"[NO] 他ピースに阻まれて到達不能{info}"
+                    f"[NO] 到達不能{info}"
                 )
     out.append("")
 
@@ -244,16 +283,17 @@ def format_report(state, results, same_type, pieces):
 
     # ドロップ推奨ランキング
     out.append("## ドロップ推奨ランキング TOP10")
-    out.append("| 順位 | X座標  | 着地Y  | マージ | 信頼度 | スコア |")
-    out.append("|------|--------|--------|--------|--------|--------|")
+    out.append("| 順位 | X座標  | 着地Y  | マージ   | スコア |")
+    out.append("|------|--------|--------|----------|--------|")
     for i, r in enumerate(results[:10]):
-        if r["has_merge"]:
-            mg = "[YES]"
-            conf = f"{(1-r['merge_ratio'])*100:.0f}%"
+        grade = r["merge_grade"]
+        if grade == "DIRECT":
+            mg = "[直撃]"
+        elif grade == "NEAR":
+            mg = "[近接]"
         else:
-            mg = "  -  "
-            conf = "  -  "
-        out.append(f"| {i+1:>4d} | {r['x']:+5.1f} | {r['landing_y']:+6.2f} | {mg} | {conf:>5s} | {r['score']:+6.1f} |")
+            mg = "  -   "
+        out.append(f"| {i+1:>4d} | {r['x']:+5.1f} | {r['landing_y']:+6.2f} | {mg} | {r['score']:+6.1f} |")
     out.append("")
 
     # 高さマップ (主要位置)
@@ -272,10 +312,15 @@ def format_report(state, results, same_type, pieces):
     if results:
         best = results[0]
         out.append(f"## 推奨ドロップ: DROP:{best['x']:.1f}")
-        if best["has_merge"]:
-            merge_targets = [m for m in best["merges"] if m["ok"]]
+        grade = best["merge_grade"]
+        if grade == "DIRECT":
+            merge_targets = [m for m in best["merges"] if m["grade"] == "DIRECT"]
             ids = ",".join(f"id{m['id']}" for m in merge_targets)
-            out.append(f"理由: type{nt}マージ可能({ids}), 着地y={best['landing_y']:.2f}")
+            out.append(f"理由: type{nt}直撃マージ({ids}), 着地y={best['landing_y']:.2f}")
+        elif grade == "NEAR":
+            merge_targets = [m for m in best["merges"] if m["grade"] == "NEAR"]
+            ids = ",".join(f"id{m['id']}" for m in merge_targets)
+            out.append(f"理由: type{nt}近接マージ({ids}), 着地y={best['landing_y']:.2f}")
         else:
             out.append(f"理由: 最も低い着地点(y={best['landing_y']:.2f}), 中央寄り")
 
