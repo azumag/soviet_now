@@ -64,7 +64,7 @@ save_to_history() {
     mv "$file" "tmp/history/${ts}_${base}"
 }
 save_all_to_history() {
-    for f in tmp/plan.md tmp/think.md tmp/state_snapshot.json; do
+    for f in tmp/plan.md tmp/think.md tmp/state_snapshot.json tmp/board_analysis.md; do
         save_to_history "$f"
     done
 }
@@ -256,19 +256,11 @@ while true; do
         # 現在の状態スナップショットを保存
         cp "$GAME_STATE" tmp/state_snapshot.json 2>/dev/null
 
-        # 状態サマリをログ表示
-        python3 -c "
-import json
-d = json.load(open('$GAME_STATE'))
-n = d.get('next', {})
-nn = d.get('nextNext', {})
-ps = d.get('pieces', [])
-top_y = max((p['y'] for p in ps), default=-5)
-print(f'  pieces={len(ps)} score={d.get(\"score\",0)} next=type{n.get(\"type\",\"?\")} nextNext=type{nn.get(\"type\",\"?\")} topY={top_y:.1f}')
-" 2>/dev/null
+        # 盤面空間解析（マージ可否・着地予測・推奨ドロップ）
+        python3 analyze_board.py "$GAME_STATE" tmp/board_analysis.md 2>/dev/null
 
         run_ai DECIDE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
-            prompts/jdecide.md tmp/plan.md "$GAME_STATE" STRATEGY.md think.md
+            prompts/jdecide.md tmp/plan.md tmp/board_analysis.md STRATEGY.md think.md
 
         set_state "EXECUTE" ;;
 
