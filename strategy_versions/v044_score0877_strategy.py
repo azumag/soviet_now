@@ -9,19 +9,21 @@
 # AI改変禁止: decide() シグネチャ,if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v048: 旗側max_y管理の根本的修正と高度危機回避の優先順位変更(2026-02-25)
-#       - 履歴分析: ターン43-47でmax_y=0.88→2.47に急増しゲームオーバー危機
-#       - 履歴分析: Turn 52で旗側max_y=2.96,反対側max_y=1.89だが旗側変更されず
-#       - 履歴分析: Turn 45,49,51,54でマージ可能だが「高度危機回避」優先でマージ見逃し
-#       - 履歴分析: Turn 46でreactive_pairs=4と高いが旗側回避機能せず、右側max_y=2.47に到達
-#       - 旗側max_y管理の根本的修正: 旗側max_y>1.2なら即時旗側変更(v047: 条件付き→即時)
-#       - 旗側変更条件の簡素化: reactive_pairs<=2なら旗側変更(v047: 条件複雑化→簡素化)
-#       - 高度危機回避の優先順位変更: マージ戦略より後ろに配置(v047: マージ優先→危機回避優先)
-#       - 高度危機回避の旗側考慮: 旗側max_y>1.2かつreactive_pairs<=2なら旗側回避
-#       - クールダウン中旗側回避の緩和: max_y>0.4で無効化(v047: 0.6→0.4)
-#       - 旗側マージフィルタリングの強化: 旗側max_y>1.3かつreactive_pairs<=2なら旗側マージ回避
-#       - 反応器情報旗側変更活用: reactive_pairs>2なら旗側変更抑制(v047: 0→2)
-#       - 反応器情報高度危機回避活用: reactive_pairs>2なら旗側回避無効化(v048新規)
+# v045: 旗側変更の抑制と反応器活用の強化(2026-02-25)
+#       - 履歴分析: turn 52-63で高度危機回避連続でmax_y=0.73→2.57急増(致命的)
+#       - 履歴分析: turn 58-61でmerge_available=trueだが危機回避優先でマージ見逃し
+#       - 履歴分析: 旗側変更がturn 12, 16, 57, 62で頻発(過多)
+#       - 履歴分析: 最終盤面でtype9+が左右散在(旗側集約失敗)
+#       - 履歴分析: reactor_reactive_pairs=1と低く、大型ピースが到達不能
+#       - 旗側変更条件の厳格化: 旗側max_y>1.5かつ反対側max_y<0.8なら旗側変更(v044: 1.5/1.0→1.5/0.8)
+#       - 旗側変更クールダウンの延長: 3ターン(v044: 2→3,頻発抑制)
+#       - 反応器活用の強化: reactive_pairs>0なら旗側変更を抑制(v045新規)
+#       - マージ閾値の緩和: v036の閾値を踏襲(max_y>2.0:-15, max_y>1.5:-8, max_y>1.0:-5)
+#       - 高度危機回避の旗側考慮: 旗側max_y>1.5なら旗側回避を優先(v045新規)
+#       - クールダウン中旗側回避の厳格化: max_y>0.5でのみ発動(v044: 0.8→0.5)
+#       - 大型ピース旗側配置の改善: reactive_pairs>0なら旗側を維持(v045新規)
+#       - 大型ピース旗側max_y管理: 旗側max_y>1.0なら旗側変更検討(v044維持)
+#       - シェイク戦略の発動条件緩和: 無マージ4ターンで発動(v044: 3→4)
 
 # モジュールレベル変数(試合内の状態保持)
 _flag_side = None  # 旗側: "left" または "right"
@@ -70,9 +72,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_r = next_piece.get("r", 0.5)
     reactor = analysis.get("reactor", {})
-
-    # 反応器情報の取得
-    reactive_pairs = len(reactor.get("reactive_pairs", []))
+    reactive_pairs = reactor.get("reactive_pairs", 0)
 
     # 現在の最高到達位置を取得
     max_y = max([p["y"] for p in pieces]) if pieces else 0.0
@@ -98,33 +98,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     mergeable_results = []
     for r in results:
         grade = r.get("merge_grade", "NO")
-        # v046修正: gradeが文字列であることを確認
-        if (
-            isinstance(grade, str)
-            and grade in ["DIRECT", "NEAR"]
-            and r.get("has_merge", False)
-        ):
+        if grade in ["DIRECT", "NEAR"] and r.get("has_merge", False):
             mergeable_results.append(r)
 
     if mergeable_results:
-        # v048改善: 旗側マージフィルタリングの強化(旗側max_y>1.3かつreactive_pairs<=2なら旗側マージ回避)
-        if _flag_side is not None and reactive_pairs <= 2:
-            left_max_y = calculate_side_max_y(pieces, "left")
-            right_max_y = calculate_side_max_y(pieces, "right")
-            flag_side_max_y = left_max_y if _flag_side == "left" else right_max_y
-
-            # 旗側マージをフィルタリング
-            if flag_side_max_y > 1.3:
-                filtered_results = []
-                for r in mergeable_results:
-                    x = r["x"]
-                    is_flag_side = (_flag_side == "left" and x < 0) or (
-                        _flag_side == "right" and x > 0
-                    )
-                    if not is_flag_side:
-                        filtered_results.append(r)
-                mergeable_results = filtered_results
-
         # v045改善: 致命時マージ戦略(max_y>2.0ならscore>-15のマージを許容)
         if max_y > 2.0:
             valid_merges = [r for r in mergeable_results if r.get("score", 0) > -15]
@@ -186,14 +163,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
             _last_drop_x = x
             return {"x": x, "reason": f"マージ x={x:.2f} (score={score:.1f})"}
 
-    # --- v048改善: 旗側max_y管理の根本的修正(旗側max_y>1.2なら即時旗側変更) ---
+    # --- v045改善: 旗側変更ロジックの厳格化と反応器活用(旗側max_y>1.5かつ反対側max_y<0.8なら旗側変更) ---
     if _flag_side is not None and _flag_change_cooldown == 0:
         left_max_y = calculate_side_max_y(pieces, "left")
         right_max_y = calculate_side_max_y(pieces, "right")
         flag_side_max_y = left_max_y if _flag_side == "left" else right_max_y
+        opposite_side_max_y = right_max_y if _flag_side == "left" else left_max_y
 
-        # v048改善: reactive_pairs<=2なら旗側max_y>1.2で即時旗側変更
-        if reactive_pairs <= 2 and flag_side_max_y > 1.2:
+        # v045改善: 反応器活用: reactive_pairs>0なら旗側変更を抑制
+        if reactive_pairs > 0:
+            pass  # 旗側変更しない
+        elif flag_side_max_y > 1.5 and opposite_side_max_y < 0.8:
+            _flag_side = "right" if _flag_side == "left" else "left"
+            _flag_change_cooldown = 3  # v045改善: 3ターンに延長
+            target_x = 2.8 if _flag_side == "right" else -2.8
+            _consecutive_no_merge += 1
+            _last_drop_x = target_x
+            return {
+                "x": target_x,
+                "reason": f"旗側変更(危機) x={target_x:.2f} (旗側max_y={flag_side_max_y:.2f},反対側={opposite_side_max_y:.2f})",
+            }
+
+    # --- v045改善: 旗側max_y管理の強化(旗側max_y>1.3かつ反対側max_y<1.2なら旗側変更) ---
+    if _flag_side is not None and _flag_change_cooldown == 0:
+        left_max_y = calculate_side_max_y(pieces, "left")
+        right_max_y = calculate_side_max_y(pieces, "right")
+        flag_side_max_y = left_max_y if _flag_side == "left" else right_max_y
+        opposite_side_max_y = right_max_y if _flag_side == "left" else left_max_y
+
+        # v045改善: 反応器活用: reactive_pairs>0なら旗側変更を抑制
+        if reactive_pairs > 0:
+            pass  # 旗側変更しない
+        elif flag_side_max_y > 1.3 and opposite_side_max_y < 1.2:
             _flag_side = "right" if _flag_side == "left" else "left"
             _flag_change_cooldown = 3
             target_x = 2.8 if _flag_side == "right" else -2.8
@@ -201,27 +202,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
             _last_drop_x = target_x
             return {
                 "x": target_x,
-                "reason": f"旗側変更(緊急) x={target_x:.2f} (旗側max_y={flag_side_max_y:.2f})",
+                "reason": f"旗側変更(危機) x={target_x:.2f} (旗側max_y={flag_side_max_y:.2f})",
             }
 
-    # --- v048改善: 旗側max_y管理の緩和(旗側max_y>1.0かつmax_y>0.6なら旗側変更) ---
+    # --- v045改善: 旗側max_y管理の緩和(旗側max_y>1.1かつmax_y>0.6なら旗側変更) ---
     if _flag_side is not None and _flag_change_cooldown == 0:
         left_max_y = calculate_side_max_y(pieces, "left")
         right_max_y = calculate_side_max_y(pieces, "right")
         flag_side_max_y = left_max_y if _flag_side == "left" else right_max_y
         opposite_side_max_y = right_max_y if _flag_side == "left" else left_max_y
 
-        # v048改善: reactive_pairs<=2で旗側変更を検討
-        if reactive_pairs <= 2:
-            if (
-                max_y > 0.6
-                and flag_side_max_y > 1.0
-                and flag_side_max_y > opposite_side_max_y
-            ):
-                _flag_side = "right" if _flag_side == "left" else "left"
-                _flag_change_cooldown = 3
+        # v045改善: 反応器活用: reactive_pairs>0なら旗側変更を抑制
+        if reactive_pairs > 0:
+            pass  # 旗側変更しない
+        elif (
+            max_y > 0.6
+            and flag_side_max_y > 1.1
+            and flag_side_max_y > opposite_side_max_y
+        ):
+            _flag_side = "right" if _flag_side == "left" else "left"
+            _flag_change_cooldown = 3
 
-    # --- v048改善: クールダウン中旗側回避の根本的改善 ---
+    # --- v045改善: クールダウン中旗側回避の厳格化(max_y>0.5でのみ発動) ---
     if _flag_side is not None:
         left_max_y = calculate_side_max_y(pieces, "left")
         right_max_y = calculate_side_max_y(pieces, "right")
@@ -233,8 +235,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             flag_side_max_y = right_max_y
             opposite_side_max_y = left_max_y
 
-        # v048改善: max_y>0.4でクールダウン中旗側回避を無効化(v047: 0.6→0.4)
-        if max_y <= 0.4:
+        # v045改善: max_y>0.5でクールダウン中旗側回避を発動
+        if max_y <= 0.5:
             if flag_side_max_y > 1.0 and flag_side_max_y > opposite_side_max_y:
                 target_x = 2.8 if _flag_side == "left" else -2.8
                 _consecutive_no_merge += 1
@@ -244,15 +246,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     "reason": f"クールダウン中旗側回避 x={target_x:.2f} (旗側max_y={flag_side_max_y:.2f},反対側max_y={opposite_side_max_y:.2f})",
                 }
 
-    # --- v048改善: 高度危機回避の旗側考慮と反応器情報活用 ---
+    # --- v045改善: 高度危機回避の旗側考慮(旗側max_y>1.5なら旗側回避を優先) ---
     if max_y > 1.0:
         left_max_y = calculate_side_max_y(pieces, "left")
         right_max_y = calculate_side_max_y(pieces, "right")
 
-        # v048改善: 旗側max_y>1.2かつreactive_pairs<=2なら旗側回避を優先
-        if _flag_side is not None and reactive_pairs <= 2:
+        # v045改善: 旗側max_y>1.5なら旗側回避を優先
+        if _flag_side is not None:
             flag_side_max_y = left_max_y if _flag_side == "left" else right_max_y
-            if flag_side_max_y > 1.2:
+            if flag_side_max_y > 1.5:
                 # 旗側回避(反対側にドロップ)
                 target_x = -2.8 if _flag_side == "left" else 2.8
                 _consecutive_no_merge += 1
@@ -292,14 +294,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         left_max_y = calculate_side_max_y(pieces, "left")
         right_max_y = calculate_side_max_y(pieces, "right")
 
-        # v048改善: reactive_pairs<=2なら旗側max_y>1.0で旗側変更
+        # v045改善: reactive_pairs>0なら旗側を維持
+        if reactive_pairs > 0:
+            # 旗側に配置
+            target_x = -2.8 if _flag_side == "left" else 2.8
+            _last_drop_x = target_x
+            return {
+                "x": target_x,
+                "reason": f"大型ピース旗側 x={target_x:.2f} (旗側={_flag_side})",
+            }
+
+        # v045改善: 旗側max_y>1.0なら旗側変更してから配置
         flag_side_max_y = left_max_y if _flag_side == "left" else right_max_y
         opposite_side_max_y = right_max_y if _flag_side == "left" else left_max_y
 
-        if reactive_pairs <= 2:
-            if flag_side_max_y > 1.0 and opposite_side_max_y < 0.8:
-                _flag_side = "right" if _flag_side == "left" else "left"
-                _flag_change_cooldown = 3
+        if flag_side_max_y > 1.0 and opposite_side_max_y < 0.8:
+            _flag_side = "right" if _flag_side == "left" else "left"
+            _flag_change_cooldown = 3
 
         lower_side = "left" if left_max_y < right_max_y else "right"
         target_x = 2.8 if lower_side == "right" else -2.8
