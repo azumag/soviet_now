@@ -82,23 +82,107 @@ node soviet_local.mjs &
 bash sloop.sh
 ```
 
-## ゲーム実行環境
+## セットアップ
 
-### ローカルビルド (推奨)
+### 前提条件
+
+- **ゲームソースコード**: [ソ連パズル（BOOTH）](https://chemicalpudding.booth.pm/items/5222746) から購入・ダウンロード
+- **Unity**: 2022.3.62f3 LTS (Unity Hub 経由でインストール)
+- **Unity WebGL Build Support**: Unity Hub → Installs → Add Modules → WebGL Build Support
+- **Node.js**: v18+ (Playwright 依存)
+- **Python**: 3.10+ (`analyze_board.py`, `strategy.py` 用)
+
+### 1. ゲームのビルド
+
+本プロジェクトはゲームの Unity ソースコードに **JS Bridge を注入した改造ビルド**を使用する。
+JS Bridge (`SorenBridge.cs` + `SorenBridge.jslib`) が Unity と Playwright の間で盤面データとコマンドを双方向通信する。
+
+> **詳細は `sorengame/BUILD_GUIDE.md` を参照。** 以下は概要のみ。
+
+#### ソースコード展開
+
+BOOTH からダウンロードした ZIP を展開。**日本語ファイル名を含むため `ditto` を使用する**（`unzip` は文字化けする）:
 
 ```bash
-node soviet_local.mjs     # localhost:8080 で Unity WebGL をサーブ + Playwright 操作
+ditto -x -k --sequesterRsrc soren-game.zip /tmp/soren-original/
+ditto -x -k --sequesterRsrc soren-game-fixed.zip /tmp/soren-fixed/
 ```
 
-- `sorengame/build/` の Unity WebGL ビルドを HTTP サーブ
-- `.gz` ファイルを `Content-Encoding: gzip` 付きで配信
-- `commands.txt` をポーリングしてゲーム操作
-- `game_state.json` に盤面データを自動書き出し
+#### アセット補完
 
-### オンライン版
+展開済みプロジェクト (`sorengame/_extracted/soren-game-fixed/`) には以下が不足している。**2つの ZIP から補完が必要**:
+
+| 補完元 | コピー対象 | 理由 |
+|--------|-----------|------|
+| `soren-game.zip` | `Texture/Republic/` (001-016.png + .meta) | Prefab の GUID が元 ZIP のテクスチャを参照 |
+| `soren-game.zip` | `Texture/Stage/`, `Texture/Hammer and Sickle/` | UI 背景・槌鎌マーク |
+| `soren-game.zip` | `Assets/TextMesh Pro/` | TMP シェーダー（なければテキストがマゼンタ） |
+| `soren-game-fixed.zip` | `Texture/` (Background, Circle, Effect, Flag Animation) | テクスチャ補完 |
+| `soren-game-fixed.zip` | `Sound/` (BGM, SE) | 音声ファイル（日本語ファイル名） |
+
+#### JS Bridge 注入
+
+本リポジトリの以下のファイルがブリッジ機構:
+
+- `Assets/SORENGAMEFIXED/Script/SorenBridge.cs` — Unity 側: `MainManager.GetBridgeState()` / `ExecuteBridgeCommand()` を 0.1秒ごとに呼び出し
+- `Assets/Plugins/WebGL/SorenBridge.jslib` — JS 側: `window.__sorenGameState` / `window.__sorenCommand` を介してブラウザとやり取り
+- `Assets/Editor/WebGLBuilder.cs` — ビルド時に `SorenBridge` コンポーネントを Main Manager に自動アタッチ
+
+#### ビルド実行
+
+**macOS NAS 上ではビルド不可**（`._*` リソースフォークファイルが il2cpp エラーを引き起こす）。必ずローカルディスクで作業:
 
 ```bash
-node soviet_game.mjs      # unityroom.com 版を Playwright で操作
+# ローカルにコピー + AppleDouble 除去
+rm -rf /tmp/soren-unity
+cp -R sorengame/_extracted/soren-game-fixed/* /tmp/soren-unity/
+dot_clean /tmp/soren-unity/
+
+# バッチビルド
+WEBGL_BUILD_PATH=/tmp/soren-build \
+/Applications/Unity/Hub/Editor/2022.3.62f3/Unity.app/Contents/MacOS/Unity \
+  -quit -batchmode -nographics \
+  -projectPath /tmp/soren-unity \
+  -buildTarget WebGL \
+  -executeMethod WebGLBuilder.BuildWebGL \
+  -logFile /tmp/unity_build.log
+
+# ビルド結果をデプロイ
+cp -R /tmp/soren-build/* sorengame/build/
+```
+
+#### トラブルシューティング
+
+| 症状 | 原因 | 解決策 |
+|------|------|--------|
+| マゼンタの国旗ピース | `Texture/Republic/` 未配置 | `soren-game.zip` から Republic/ をコピー |
+| マゼンタの UI テキスト | `TextMesh Pro/` 未配置 | `soren-game.zip` から `Assets/TextMesh Pro/` をコピー |
+| il2cpp コンパイルエラー | NAS 上の `._*` ファイル | ローカルディスクにコピー + `dot_clean` |
+| unzip で音声ファイル破損 | 日本語ファイル名の文字化け | `ditto -x -k --sequesterRsrc` を使用 |
+| wasm-opt SIGABRT | Library キャッシュ不整合 | `rm -rf /tmp/soren-unity/Library` して再ビルド |
+
+### 2. Node.js 依存インストール
+
+```bash
+npm install        # playwright, sharp 等
+npx playwright install chromium
+```
+
+### 3. 起動
+
+```bash
+# ゲーム起動 (ローカルビルド)
+node soviet_local.mjs &
+
+# AI ループ開始 (いずれか選択)
+bash eloop.sh      # 自己改善ループ (推奨)
+bash jloop.sh      # JSON構造データ版
+bash sloop.sh      # 画像認識版 (レガシー)
+```
+
+オンライン版 (unityroom.com) を使う場合:
+```bash
+node soviet_game.mjs &
 ```
 
 ## コマンドインターフェース
@@ -118,7 +202,7 @@ echo '[{"action":"cmd","value":"FIXUI"}]' > commands.txt
 
 ### game_state.json
 
-JS Bridge (`SorenBridge.cs` + `SorenBridge.jslib`) 経由で Unity から読み出した構造データ。
+JS Bridge 経由で Unity から読み出した構造データ。
 
 ```json
 {
@@ -135,15 +219,6 @@ JS Bridge (`SorenBridge.cs` + `SorenBridge.jslib`) 経由で Unity から読み�
 - `type`: 1-16 (共和国番号、1=最小、16=ソ連)
 - `pieces`: 全ピースの位置・半径・速度・回転
 - `shapes`: ピース種別ごとの凸ポリゴン頂点
-
-## Unity WebGL ビルド
-
-詳細は `sorengame/BUILD_GUIDE.md` を参照。
-
-- Unity 2022.3.62f3 LTS
-- NAS 上ではビルド不可。`/tmp/soren-unity` にコピーして `dot_clean` 後にビルド
-- アセット補完: 2つの ZIP からテクスチャ + TMP フォルダ
-- commit 前に `dot_clean ./` を実行
 
 ## 戦略: 人工化学フレームワーク
 
