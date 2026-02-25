@@ -91,6 +91,59 @@ bash sloop.sh
 - **Unity WebGL Build Support**: Unity Hub → Installs → Add Modules → WebGL Build Support
 - **Node.js**: v18+ (Playwright 依存)
 - **Python**: 3.10+ (`analyze_board.py`, `strategy.py` 用)
+- **LLM CLI ツール** (AI ループで使用):
+  - [opencode](https://github.com/opencode-ai/opencode) — GLM 系モデルをエージェントとして実行
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) — Anthropic Claude を CLI から実行
+  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`) — Google Gemini を CLI から実行
+
+### LLM モデル設定
+
+AI ループ (`eloop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツールを統一的に呼び分ける `run_cmd()` 関数を持つ。
+
+#### モデル変数
+
+`eloop.sh` / `jloop.sh` の冒頭で使用モデルを設定:
+
+```bash
+MODEL_PRIMARY="glm"              # 主要モデル
+MODEL_FALLBACK="opencode:glmflash"  # フォールバック
+```
+
+`run_ai()` は PRIMARY でまず実行し、期待出力が得られなければ FALLBACK に切り替える。
+
+#### モデルスペックと CLI マッピング
+
+`run_cmd()` はスペック文字列を解析して対応する CLI を呼び出す:
+
+| スペック | CLI コマンド | 説明 |
+|---------|------------|------|
+| `glm` | `opencode run --agent="zai"` | GLM-4.7 (zhipu) — **zai エージェント**として設定済み |
+| `opencode:glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash (軽量フォールバック) |
+| `opencode:<agent>` | `opencode run --agent="<agent>"` | 任意の opencode エージェント |
+| `sonnet` | `claude -p --model=sonnet --permission-mode=acceptEdits` | Claude Sonnet |
+| `opus` | `claude -p --model=opus --permission-mode=acceptEdits` | Claude Opus |
+| `claude` | `claude -p --model=Haiku --permission-mode=acceptEdits` | Claude Haiku |
+| `gemini` | `gemini -p -y -s` | Gemini (デフォルトモデル) |
+| `gemini-flash` | `gemini -p -y -s --model=gemini-2.5-flash` | Gemini 2.5 Flash |
+
+#### opencode のエージェント設定
+
+opencode は `.opencode/agents/` ディレクトリにエージェント設定ファイルを配置して使用する。本プロジェクトでは:
+
+- **zai** — GLM-4.7 (zhipu/glm-4.7) を使用するメインエージェント。`MODEL_PRIMARY="glm"` で呼び出される
+- **glmflash** — GLM-4-Flash を使用する軽量エージェント。`MODEL_FALLBACK="opencode:glmflash"` で呼び出される
+
+`opencode run --agent="zai"` のように `--agent` フラグでエージェント名を指定すると、対応するモデル設定で LLM が実行される。
+
+#### Claude Code の使い方
+
+Claude Code (`claude`) は `-p` (パイプモード) でプロンプトを渡し、`--permission-mode=acceptEdits` でファイル編集を自動許可する:
+
+```bash
+claude -p "$prompt" --model=sonnet --permission-mode=acceptEdits
+```
+
+対話的に使う場合は引数なしで `claude` を実行。本プロジェクトの `CLAUDE.md` が自動読み込みされ、プロジェクト固有の指示が適用される。
 
 ### 1. ゲームのビルド
 
