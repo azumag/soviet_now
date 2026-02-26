@@ -72,7 +72,8 @@ run_opencode() {
   local raw_file
   raw_file=$(mktemp /tmp/oc_raw_XXXXXXXX)
 
-  script -q "$raw_file" opencode run --agent "$agent" "$(cat "$prompt_file")" > /dev/null 2>&1
+  # bash -c でラップ + UTF-8ロケール指定（script -q の安定性とエンコーディング問題を回避）
+  LC_ALL=en_US.UTF-8 script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" > /dev/null 2>&1
 
   local cleaned
   cleaned=$(cat "$raw_file" \
