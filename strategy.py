@@ -12,9 +12,9 @@
 # [BEST:604] v0: ランダム配置（ベースライン）
 # [BEST:1486] v1: マージ重視戦略（DIRECT/NEAR優先、高度管理、ドリフト最小化）
 # [BEST:1615] v3: 重量バランス導入版 - ピースタイプに応じた重量化、フェーズ制導入、高度管理調整
-# v6: 重量バランス復活・散在抑制版 - v3の重量計算復活、HIGHフェーズ閾値調整、タイプ別マージ優先、散在ピースペナルティ導入
 # v7: 散在抑制削除・マージ強化版 - count_scattered_pieces()削除（ロジックエラー修正）、HIGHフェーズでマージ重視強化、シンプル化
-# v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バalance振り子パターンを解消、フェーズ閾値0.8/1.8調整
+# v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バランス振り子パターンを解消、フェーズ閾値0.8/1.8調整
+# v9: HIGHフェーズマージ強化版 - v8の構造を維持、HIGHフェーズmerge_mult 0.8→1.0、height_mult 3.0→2.2、マージなしペナルティ緩和
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
@@ -33,7 +33,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v5のロジック + v6/v7の閾値調整）
+    # フェーズ判定（v8の閾値0.8/1.8を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
@@ -44,10 +44,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     else:
         phase = "HIGH"
-        height_mult = 3.0
-        merge_mult = 0.8
+        height_mult = 2.2  # v9: 3.0→2.2に引き下げ（高度管理緩和）
+        merge_mult = 1.0  # v9: 0.8→1.0に引き上げ（マージ優先強化）
 
-    # 左右バランス計算（カウントベース）
+    # 左右バランス計算（カウントベース、シンプルで十分）
     left_count = sum(1 for p in pieces if p["x"] < 0)
     right_count = len(pieces) - left_count
     balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
@@ -80,10 +80,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 150.0 * merge_mult
             reasons.append("FAR_MERGE")
         else:
-            # マージなしはペナルティ（フェーズに応じて強化）
+            # マージなしはペナルティ（v9: HIGH倍率を緩和）
             no_merge_penalty = 200.0
             if phase == "HIGH":
-                no_merge_penalty *= 2.0
+                no_merge_penalty *= 1.5  # v9: 2.0→1.5に引き下げ
             elif phase == "MEDIUM":
                 no_merge_penalty *= 1.5
             score -= no_merge_penalty
@@ -93,7 +93,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # 高盤面での追加ペナルティ
         if phase == "HIGH":
-            height_penalty *= 2.0
+            height_penalty *= 1.5  # v9: 2.0→1.5に引き下げ（高度管理緩和）
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.3

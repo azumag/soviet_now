@@ -11,13 +11,14 @@
 # --- 変更履歴 ---
 # [BEST:604] v0: ランダム配置（ベースライン）
 # [BEST:1486] v1: マージ重視戦略（DIRECT/NEAR優先、高度管理、ドリフト最小化）
-# v3: 重量バランス導入版 - ピースタイプに応じた重み付け、フェーズ制導入、高度管理調整
-# v4: フェーズ制廃止・統合版 - 動的危険度係数、SMALL_GAP削除、カウントベースバランス復活
-# v5: フェーズ制復活・簡素化版 - 動的危険度係数廃止、シンプル3フェーズ制、マージ高度バランス調整
+# [BEST:1615] v3: 重量バランス導入版 - ピースタイプに応じた重量化、フェーズ制導入、高度管理調整
+# v6: 重量バランス復活・散在抑制版 - v3の重量計算復活、HIGHフェーズ閾値調整、タイプ別マージ優先、散在ピースペナルティ導入
+# v7: 散在抑制削除・マージ強化版 - count_scattered_pieces()削除（ロジックエラー修正）、HIGHフェーズでマージ重視強化、シンプル化
+# v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バalance振り子パターンを解消、フェーズ閾値0.8/1.8調整
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """シンプル3フェーズ制で、マージと高度のバランスを最適化する."""
+    """フェーズ制でマージと高度のバランスを最適化する."""
 
     results = analysis.get("results", [])
 
@@ -32,17 +33,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（シンプル3区分）
-    if max_y < 1.0:
-        phase = "LOW"  # 低盤面: マージ重視
+    # フェーズ判定（v5のロジック + v6/v7の閾値調整）
+    if max_y < 0.8:
+        phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
-    elif max_y < 2.0:
-        phase = "MEDIUM"  # 中盤: マージ+高度管理
+    elif max_y < 1.8:
+        phase = "MEDIUM"
         height_mult = 2.0
         merge_mult = 1.0
     else:
-        phase = "HIGH"  # 高盤面: 高度管理重視
+        phase = "HIGH"
         height_mult = 3.0
         merge_mult = 0.8
 
@@ -116,7 +117,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら、中央寄せでチャンスを残す
+        # 5. nextNextが同じタイプなら中央寄せボーナス
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 40.0
             score += center_bonus
