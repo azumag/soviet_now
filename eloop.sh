@@ -195,11 +195,16 @@ run_ai() {
 }
 
 #--- strategy.py バリデーション ---
+# 結果を VALIDATE_ERROR に格納（リトライ用）
+VALIDATE_ERROR=""
+
 validate_strategy() {
 	log "[VALIDATE] strategy.py をチェック中..."
+	VALIDATE_ERROR=""
 
 	# 1. decide() の存在チェック
-	if ! python3 - <<'PYEOF' 2>&1; then
+	local sig_out
+	sig_out=$(python3 - <<'PYEOF' 2>&1
 import importlib.util, sys, inspect
 spec = importlib.util.spec_from_file_location('strategy', 'strategy.py')
 mod = importlib.util.module_from_spec(spec)
@@ -214,7 +219,10 @@ if len(params) < 2:
     sys.exit(1)
 print(f'OK: decide({", ".join(params)})')
 PYEOF
-		log "[VALIDATE] decide() シグネチャチェック失敗"
+)
+	if [ $? -ne 0 ]; then
+		VALIDATE_ERROR="decide()シグネチャチェック失敗: $sig_out"
+		log "[VALIDATE] $VALIDATE_ERROR"
 		return 1
 	fi
 
@@ -223,12 +231,14 @@ PYEOF
 		local test_out
 		test_out=$(python3 strategy.py "$GAME_STATE" 2>&1)
 		if [ $? -ne 0 ]; then
-			log "[VALIDATE] テスト実行失敗: $test_out"
+			VALIDATE_ERROR="テスト実行失敗: $test_out"
+			log "[VALIDATE] $VALIDATE_ERROR"
 			return 1
 		fi
 		# JSON出力チェック
 		if ! echo "$test_out" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'x' in d" 2>/dev/null; then
-			log "[VALIDATE] テスト出力にxフィールドなし: $test_out"
+			VALIDATE_ERROR="テスト出力にxフィールドなし: $test_out"
+			log "[VALIDATE] $VALIDATE_ERROR"
 			return 1
 		fi
 		log "[VALIDATE] テスト実行OK"
@@ -439,24 +449,58 @@ while true; do
 	#--- Step 4: 履歴アーカイブ ---
 	archive_history "$SCORE"
 
-	#--- Step 5: AI で strategy.py 改善 ---
+	#--- Step 5+6: AI で strategy.py 改善 (バリデーション失敗時リトライ) ---
 	log "[IMPROVE] AI による strategy.py 改善..."
 
 	# バックアップ
 	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
 
-	run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
-		prompts/improve_strategy.md "$STRATEGY_FILE" \
-		"$STRATEGY_FILE" "$HISTORY_FILE" "$GAME_STATE"
+	IMPROVE_OK=false
+	MAX_IMPROVE_RETRIES=3
 
-	#--- Step 6: バリデーション ---
-	if validate_strategy; then
-		log "[IMPROVE] バリデーション成功 → 新strategy採用"
-		rm -f "${STRATEGY_FILE}.bak"
-		# 変更履歴を直近3バージョン + BESTタグ付きにトリミング
-		python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
-	else
-		log "[IMPROVE] バリデーション失敗 → 前バージョンに復元"
+	for retry in $(seq 1 "$MAX_IMPROVE_RETRIES"); do
+		if [ "$retry" -eq 1 ]; then
+			# 初回: 通常の改善プロンプト
+			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
+				prompts/improve_strategy.md "$STRATEGY_FILE" \
+				"$STRATEGY_FILE" "$HISTORY_FILE" "$GAME_STATE"
+		else
+			# リトライ: エラー内容を伝えて修正させる
+			log "[IMPROVE] リトライ $retry/$MAX_IMPROVE_RETRIES (エラー: $VALIDATE_ERROR)"
+
+			# 修正プロンプトを一時ファイルに作成
+			FIX_PROMPT_FILE=$(mktemp /tmp/eloop_fix_prompt.XXXXXX)
+			cat > "$FIX_PROMPT_FILE" <<FIXEOF
+strategy.py のバリデーションが失敗した。以下のエラーを修正せよ。
+
+## エラー内容
+$VALIDATE_ERROR
+
+## 修正ルール
+- strategy.py を修正して上記エラーを解消せよ
+- decide(game_state, analysis) のシグネチャは変更禁止
+- if __name__ == "__main__" ブロックは変更禁止
+- decide() は必ず {"x": float, "reason": str} を返すこと
+- Write ツールで strategy.py に書き込むこと
+FIXEOF
+			run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
+				"$FIX_PROMPT_FILE" "$STRATEGY_FILE" \
+				"$STRATEGY_FILE"
+			rm -f "$FIX_PROMPT_FILE"
+		fi
+
+		# バリデーション
+		if validate_strategy; then
+			log "[IMPROVE] バリデーション成功 → 新strategy採用"
+			rm -f "${STRATEGY_FILE}.bak"
+			python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
+			IMPROVE_OK=true
+			break
+		fi
+	done
+
+	if [ "$IMPROVE_OK" = false ]; then
+		log "[IMPROVE] ${MAX_IMPROVE_RETRIES}回リトライ後もバリデーション失敗 → 前バージョンに復元"
 		mv "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
 	fi
 
