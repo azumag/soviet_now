@@ -11,16 +11,17 @@
 # --- Henkou rireki ---
 # [BEST:2325] v19: CRITICAL phase do-nyuu ban
 # [BEST:2335] v42: v19 fukkatsu
-# v50-v55: MEDIUM phase has_merge joken shippai - v53-v54 de MEDIUM phase ni has_merge joken wo do-nyuu (height_penalty_factor=0.6, drift_penalty_factor=0.8) shita ga, sukoa wa v42 (2335) kara v54 (706) made teimen ka. has_merge joken ha "merge ga aru baai penalty wo kanwa suru" to iu kangaedakedo, "hinkitsu na merge (koudou ga takai, drift ga ookii) wo shuutoku suru" kekka to nari, zentaise no sukoa wo teimen saseteita. v55 de has_merge joken wo sakujo shi, v42 no shimpuru kouzou (penalty kanwa nashi, futsuu no merge scoring) ni kanzen fukkatsu suru. CRITICAL phase ha v19 no sekkei wo iji (merge_mult=0.6 de merge yuusen).
+# v50-v55: MEDIUM phase has_merge joken shippai - v53-v54 de MEDIUM phase ni has_merge joken wo do-nyuu (height_penalty_factor=0.6, drift_penalty_factor=0.8) shita ga, sukoa wa v42 (2335) kara v54 (706) made teimen ka. has_merge joken ha "merge ga aru baai penalty wo kanwa suru" to iu kangaedakedo, "hinkitsu na merge (koudou ga takai, drift ga ookii) wo shuutoku suru" kekka to nari, zentaise no sukoa wo teimen saseteita. v55 de has_merge joken wo sakujo shi, v42 no shimpulu kouzou (penalty kanwa nashi, futsuu no merge scoring) ni kanzen fukkatsu suru. CRITICAL phase ha v19 no sekkei wo iji (merge_mult=0.6 de merge yuusen).
 # v56-v58: has_merge joken no furiko - v56 de reactive_pairs joken wo do-nyuu, v57 de has_merge joken wo sai-do-nyuu, v58 de has_merge joken wo sakujo. has_merge joken ha fukkusu kai shippai shiteiru (v50-v55, v57) no de, kono element wo do-nyuu suru no wa yame.
-# v59: HIGH phase kouki koudou kanwa-ban - v58 no shippai (sukoa 1146, HIGH phase de score_delta=0 de 21 turn kan zen teimen) wo uke, HIGH phase kouki de koudou kanwa wo sai-shishou. v56 no fukutsu na joken bun-ki (reactive_pairs>=3) wo sakujo shi, max_y>2.5 to iu shimpuru na joken dake de koudou kanwa wo kanwa shite chain reaction kikai wo saidaika. v57 no has_merge joken ni yoru furiko pattern wo kaihi (has_merge joken nashi, NO_MERGE_PENALTI nai). v42 no ganjina kihon kouzou wo iji shi, code ryuu wa yaku 115-gyou de v42 no shimpuru kouzou wo iji.
-# v60: reactive_pairs katsuyou - v59 no shippai (sukoa 771, HIGH phase de merge rate 0%・HIGH_PHASE_LATE_RELAX hataki 1-kai dake) wo uke, max_y>2.5 joken (hataki 1-kai dake, kouka nashi) wo sakujo shi, reactive_pairs katsuyou de merge sokushin. v42 no shimpuru kouzou (DIRECT=1200/NEAR=600/FAR=200, height_penalty=50*height_mult, drift_penalty=30, balance hosei) wo kanzen iji. HIGH phase de reactive_pairs >= 3 no baai, height_multiplier wo 35.0 ni kanwa (chain reaction chu no merge yuusen). MEDIUM/HIGH phase de merge nashi position ni karuku no NO_MERGE_PENALTI (-50) wo tsuika (v12 no kousei youso wo keiryou-ka). has_merge joken no furiko pattern wo kaihou (reactive_pairs joken de merge sokushin). v31 no reactive_pairs katsuyou to v12 no merge nashi penalty no seikou youso wo v42 no ganjina kouzou ni tougou. code ryuu wa yaku 130-gyou de v59 no 115-gyou kara fukutsu-ka naku seikou youso wo tougou
-# v61: v42 kanzen fukkatsu-ban - v60 no shippai (sukoa 1063, CRITICAL phase de merge available=false to NO_MERGE_PENALTI (-50) ga shinkushuuka) wo uke, v42 no shimpuru kouzou e kanzen fukkatsu. v60 de tsuika shita NO_MERGE_PENALTI wo sakujo (v42 ha kono penalty nashi de 2335 point wo tassei). v60 de tsuika shita reactive_pairs joken bun-ki (HIGH phase de height_multiplier=35.0 kanwa) wo sakujo (v59 no shippai pattern to onaji). v42 no seikou shita seikaku chi wo kanzen iji: DIRECT=1200/NEAR=600/FAR=200, height_penalty=50*height_mult, drift_penalty=30 (phase bunnki nashi), balance_strength: LOW=20/MEDIUM=30/HIGH=40/CRITICAL=fuka, center_bonus: CRITICAL=60/others=50. Code ryuu wa yaku 100-gyou ni genshou, v42 no "simpuru kote kouzou" wo kanzen fukkatsu
-# v62: merge bonus sakugen/koudou kanwa kouka - v61 no shippai (sukoa 1783, HIGH phase de 81% score_delta=0, CRITICAL phase de game over) wo uke, v42 no "merge bonus kajou / koudou kanwa fujuubun" na kadai wo kouzouteki ni kaiketsu. has_merge/reactive_pairs joken no furiko pattern wo kaihi (tsuika shinai). v42 no merge bonus (1200/600/200) wo 70% sakugen (840/420/140) shi, HIGH phase height_multiplier wo 2.6→4.0 ni kyokuka (50*4.0*2.0=400). HIGH phase height penalty wo 60% zouchi (landing_y>0.5 de ×3.2). Code ryuu wa yaku 100-gyou de v61 no onaji kazu, shimpuru kouzou wo iji
+# v59: HIGH phase kouki koudou kanwa-ban - v58 no shippai (sukoa 1146, HIGH phase de score_delta=0 de 21 turn kan zen teimen) wo uke, HIGH phase kouki de koudou kanwa wo sai-shishou. v56 no fukutsu na joken bun-ki (reactive_pairs>=3) wo sakujo shi, max_y>2.5 to iu shimpuru na joken dake de koudou kanwa wo kanwa shite chain reaction kikai wo saidaika. v57 no has_merge joken ni yoru furiko pattern wo kaihi (has_merge joken nashi, NO_MERGE_PENALTI nai). v42 no ganjina kihon kouzou wo iji shi, code ryuu wa yaku 115-gyou de v42 no shimpulu kouzou wo iji.
+# v60: reactive_pairs katsuyou - v59 no shippai (sukoa 771, HIGH phase de merge rate 0%・HIGH_PHASE_LATE_RELAX hataki 1-kai dake) wo uke, max_y>2.5 joken (hataki 1-kai dake, kouka nashi) wo sakujo shi, reactive_pairs katsuyou de merge sokushin. v42 no shimpulu kouzou (DIRECT=1200/NEAR=600/FAR=200, height_penalty=50*height_mult, drift_penalty=30, balance hosei) wo kanzen iji. HIGH phase de reactive_pairs >= 3 no baai, height_multiplier wo 35.0 ni kanwa (chain reaction chu no merge yuusen). MEDIUM/HIGH phase de merge nashi position ni karuku no NO_MERGE_PENALTI (-50) wo tsuika (v12 no kousei youso wo keiryou-ka). has_merge joken no furiko pattern wo kaihou (reactive_pairs joken de merge sokushin). v31 no reactive_pairs katsuyou to v12 no merge nashi penalty no seikou youso wo v42 no ganjina kouzou ni tougou. code ryuu wa yaku 130-gyou de v59 no 115-gyou kara fukutsu-ka naku seikou youso wo tougou
+# v61: v42 kanzen fukkatsu-ban - v60 no shippai (sukoa 1063, CRITICAL phase de merge available=false to NO_MERGE_PENALTI (-50) ga shinkushuuka) wo uke, v42 no shimpulu kouzou e kanzen fukkatsu. v60 de tsuika shita NO_MERGE_PENALTI wo sakujo (v42 ha kono penalty nashi de 2335 point wo tassei). v60 de tsuika shita reactive_pairs joken bun-ki (HIGH phase de height_multiplier=35.0 kanwa) wo sakujo (v59 no shippai pattern to onaji). v42 no seikou shita seikaku chi wo kanzen iji: DIRECT=1200/NEAR=600/FAR=200, height_penalty=50*height_mult, drift_penalty=30 (phase bunnki nashi), balance_strength: LOW=20/MEDIUM=30/HIGH=40/CRITICAL=fuka, center_bonus: CRITICAL=60/others=50. Code ryuu wa yaku 100-gyou ni genshou, v42 no "simpulu kote kouzou" wo kanzen fukkatsu
+# v62: merge bonus sakugen/koudou kanwa kouka - v61 no shippai (sukoa 1783, HIGH phase de 81% score_delta=0, CRITICAL phase de game over) wo uke, v42 no "merge bonus kajou / koudou kanwa fujuubun" na kadai wo kouzouteki ni kaiketsu. has_merge/reactive_pairs joken no furiko pattern wo kaihi (tsuika shinai). v42 no merge bonus (1200/600/200) wo 70% sakugen (840/420/140) shi, HIGH phase height_multiplier wo 2.6→4.0 ni kyokuka (50*4.0*2.0=400). HIGH phase height penalty wo 60% zouchi (landing_y>0.5 de ×3.2). Code ryuu wa yaku 100-gyou de v61 no onaji kazu, shimpulu kouzou wo iji
+# v63: v42完全復活版 - v62の失敗（スコア1783、HIGHフェーズで81%のscore_delta=0、CRITICALフェーズでgame over）を受けて、v42のシンプルかつ頑健な構造に完全復活。merge bonusをv42の値に戻す（DIRECT=1200/NEAR=600/FAR=200）、HIGHフェーズのheight_multを2.6に戻す、HIGHフェーズのheight_penaltyを2.0に戻す。NO_MERGE_PENALTIやreactive_pairsによる過度な複雑化を排除し、v42の基本構造を維持。コード量は約110行に削減
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42のシンプル構造を維持しつつ、merge bonus過剰とHIGHフェーズ高度管理不足を構造的に改善"""
+    """v42のシンプルかつ頑健な構造を採用し、v62の過度な複雑化を排除"""
 
     results = analysis.get("results", [])
 
@@ -31,11 +32,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_score = -float("inf")
     best_reason = ""
 
-    # banmen jouhou
+    # 盤面情報
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # phase handei (v42 no shikichi wo iji - HIGH phase height_multiplier dake kyouka)
+    # フェーズ判定
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
@@ -46,14 +47,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 4.0  # v62: v42 no 2.6 kara kyokuka (koudou kanwa kyoka)
+        height_mult = 2.6
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0
-        merge_mult = 0.6  # CRITICAL: merge yuusen
+        merge_mult = 0.6
 
-    # tsugi no piece jouhou
+    # 次のピース情報
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
@@ -69,22 +70,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # 1. merge grade ni yoru sukou (v62: v42 no 70% ni sakugen)
+        # 1. マージグレードによるスコア
         if merge_grade == "DIRECT":
-            score += 840.0 * merge_mult  # v62: 1200→840 (70% sakugen)
+            score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 420.0 * merge_mult  # v62: 600→420 (70% sakugen)
+            score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 140.0 * merge_mult  # v62: 200→140 (70% sakugen)
+            score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. koudou ni yoru penalty (v62: HIGH phase height penalty wo 60% zouchi)
+        # 2. 高度によるペナルティ
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 3.2  # v62: v42 no 2.0 kara 60% zouchi (2.0→3.2)
+            height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5
@@ -94,17 +95,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # 3. drift ni yoru penalty (v42 no kachi chi wo iji - phase bunnki nashi)
+        # 3. ドリフトによるペナルティ
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. sayuu baransho (v42 no kachi chi wo iji)
+        # 4. 左右バランス補正
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0
         elif phase == "MEDIUM":
             balance_strength = 30.0
-        # CRITICAL phase dewa baransho fuka (merge yuusen)
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -113,22 +113,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNext ga onaji type nara chuuyuse bonus (v42 no kachi chi wo iji)
+        # 5. nextNextが同じタイプなら中央寄せボーナス
         if next_next_type == next_type:
-            if phase == "CRITICAL":
-                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 60.0
-            else:
-                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # sukou kou shin
+        # スコア更新
         if score > best_score:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
-    # anzen na hanni ni kurippu
+    # 安全な範囲内にクリップ
     best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
 
@@ -140,7 +137,7 @@ if __name__ == "__main__":
     import json
     import sys
 
-    # sutandaronesuto tesuto you
+    # スタンドアロンテスト用
     gs_path = sys.argv[1] if len(sys.argv) > 1 else "game_state.json"
 
     try:
@@ -149,7 +146,7 @@ if __name__ == "__main__":
         print(json.dumps({"error": str(e)}))
         sys.exit(1)
 
-    # analyze_board kara kaiseki data shutoku
+    # analyze_board から解析データ取得
     try:
         from analyze_board import analyze_drops, calc_reactor_state
 
