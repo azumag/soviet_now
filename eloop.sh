@@ -451,6 +451,141 @@ except:
 	return 1
 }
 
+#--- ラジオトーク（AI改善の待ち時間に再生） ---
+RADIO_AGENT="zai"
+RADIO_FALLBACK="glmflash"
+RADIO_SAY_RATE=120
+_radio_pid=0
+
+# ANSIエスケープ除去
+_strip_ansi() {
+	perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x09\x0b-\x0d\x0e-\x1f]//g' | tr -d '\r'
+}
+
+# opencode run を疑似TTY付きで実行してテキスト取得
+_run_opencode_radio() {
+	local agent="$1" prompt_file="$2"
+	local raw_file
+	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
+	script -q "$raw_file" opencode run --agent "$agent" "$(cat "$prompt_file")" > /dev/null 2>&1
+	cat "$raw_file" \
+		| _strip_ansi \
+		| grep -v '^>' \
+		| grep -v '^\^D' \
+		| sed '/^[[:space:]]*$/d'
+	rm -f "$raw_file"
+}
+
+# バックグラウンドでラジオトーク生成→再生
+start_radio_talk() {
+	local score="$1" turns="$2" game_num="$3" best_score="$4"
+
+	(
+		local prompt_file
+		prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+
+		# 直近の戦略の変更履歴を収集
+		local history_context=""
+		for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3); do
+			local vname
+			vname=$(basename "$vf")
+			local cl
+			cl=$(grep -A5 '変更履歴' "$vf" 2>/dev/null | head -8 || true)
+			history_context+="$vname: $cl"$'\n'
+		done
+
+		cat > "$prompt_file" <<RADIOPROMPT
+あなたは深夜のゲーム実況ラジオのパーソナリティです。
+一人でずっと喋り続ける、脱線大好き、でも愛があるタイプです。
+
+【状況】
+「ソ連スイカゲーム」をAIが自動プレイしています。
+たった今、ゲーム${game_num}回目が終了しました。
+結果: スコア${score}点、${turns}ターンでゲームオーバー。
+現在の最高スコア: ${best_score}点。
+
+国旗の進化ルート（小さい順）:
+  レベル1 アルメニア → レベル2 エストニア → レベル3 ラトビア → レベル4 リトアニア
+  → レベル5 グルジア → レベル6 アゼルバイジャン → レベル7 タジキスタン
+  → レベル8 キルギス → レベル9 ベラルーシ → レベル10 ウズベキスタン
+  → レベル11 トルクメニスタン → レベル12 ウクライナ → レベル13 カザフスタン
+  → レベル14 ロシア → レベル15 ソ連（ゴール!）
+
+最近の戦略履歴:
+${history_context}
+
+いまAIが次の試合に向けて作戦を練り直しています。6分くらいかかります。
+その間、リスナーを楽しませるトークをしてください。
+
+【トーク構成（全部入れること。たっぷり喋る）】
+
+1. 試合結果の振り返り（国名をたくさん使って具体的に）
+   - 今回のスコアと最高スコアの比較。喜ぶ or 悔しがる or 呆れる
+   - ${turns}ターンという長さについてコメント
+   - 「今回はアルメニアとエストニアの合体はうまくいったけど、グルジアあたりで詰まったのかな」のように国名を交えて推測する
+   - 最近の戦略がどんな方針だったか、どの国旗を重視していたか触れる
+   - レベル12以降（ウクライナ、カザフスタン、ロシア）まで到達できたか想像する
+
+2. 今回の試合で関わったであろう国々の話
+   - 登場する国（アルメニア、エストニア、ラトビアなど）の豆知識
+   - その国の料理、文化、有名人、観光地、歴史エピソードなど
+   - 「ちなみにアルメニアって世界最古のワイン生産地なんですよ」みたいな
+
+3. たわいない雑談
+   - AIが自分で自分の脳みそを書き換えてる件について哲学的に考える
+   - ことわざや格言を引用（日本のでも世界のでもOK）
+   - 最近の世の中の話題に軽く触れる
+   - ダジャレや冗談を挟む
+
+4. ソ連・共産主義ネタ（さりげなく）
+   - 「同志」「五カ年計画」「人民の勝利」などの言い回しをスパイス的に
+   - ソ連時代の面白エピソードや都市伝説
+
+5. 次の試合への期待
+   - AIがどんな作戦を考えてくるか予想
+   - リスナーへの語りかけ
+   - 「さて、そろそろAIの作戦会議も終わる頃でしょうか」で締める
+
+【出力ルール】
+- 4000〜6000文字の長さにする。とにかくたくさん喋る。短いのは絶対ダメ
+- プログラミング用語やコード上の変数名は絶対に使わない
+- ピースは必ず国名で呼ぶ
+- 話し言葉で書く。「ですます」と「だよね」を混ぜたカジュアルなトーン
+- 感情豊かに。嬉しい、悔しい、驚き、呆れ、笑い、しみじみなど
+- マークダウンや記号は使わない。読み上げ用のプレーンテキストのみ
+- 出力はトーク本文のみ。前置きや補足説明は不要
+RADIOPROMPT
+
+		log "[RADIO] トーク生成中..."
+		local talk
+		talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
+		if [ -z "$talk" ]; then
+			talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$prompt_file")
+		fi
+		rm -f "$prompt_file"
+
+		if [ -n "$talk" ]; then
+			echo "$talk" > tmp/radio_talk.txt
+			log "[RADIO] トーク開始"
+			killall say 2>/dev/null
+			say -r "$RADIO_SAY_RATE" "$talk"
+			log "[RADIO] トーク終了"
+		else
+			log "[RADIO] トーク生成失敗"
+		fi
+	) &
+	_radio_pid=$!
+}
+
+stop_radio_talk() {
+	if [ "${_radio_pid:-0}" -ne 0 ]; then
+		kill "$_radio_pid" 2>/dev/null
+		wait "$_radio_pid" 2>/dev/null
+		_radio_pid=0
+	fi
+	killall say 2>/dev/null
+}
+
 #=== メインループ ===
 log "=== Soren Evolution Loop (eloop) ==="
 log "MODEL_PRIMARY=$MODEL_PRIMARY MODEL_FALLBACK=$MODEL_FALLBACK"
@@ -518,6 +653,10 @@ while true; do
 	#--- Step 5+6: AI で strategy.py 改善 (バリデーション失敗時リトライ) ---
 	log "[IMPROVE] AI による strategy.py 改善..."
 
+	# ラジオトーク開始（AI改善と並行してバックグラウンド再生）
+	BEST_SCORE_NOW=$(cat best_score.txt 2>/dev/null || echo 0)
+	start_radio_talk "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY" "$BEST_SCORE_NOW"
+
 	# バックアップ
 	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
 
@@ -579,6 +718,9 @@ FIXEOF
 		log "[IMPROVE] ${MAX_IMPROVE_RETRIES}回リトライ後もバリデーション失敗 → 前バージョンに復元"
 		mv "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
 	fi
+
+	# ラジオトーク停止（AI改善完了）
+	stop_radio_talk
 
 	#--- Step 7: git commit & push ---
 	log "[GIT] コミット&プッシュ..."
