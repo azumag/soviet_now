@@ -481,6 +481,12 @@ _run_opencode_radio() {
 start_radio_talk() {
 	local score="$1" turns="$2" game_num="$3" best_score="$4"
 
+	# 前の生成プロセスがまだ動いていたら止める（sayは残す）
+	if [ "${_radio_pid:-0}" -ne 0 ] && kill -0 "$_radio_pid" 2>/dev/null; then
+		kill "$_radio_pid" 2>/dev/null
+		wait "$_radio_pid" 2>/dev/null
+	fi
+
 	(
 		local prompt_file
 		prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
@@ -653,13 +659,10 @@ RADIOPROMPT
 }
 
 stop_radio_talk() {
-	# ラジオ生成プロセスのみ停止（まだ生成中なら中断）
-	# say は殺さない → watch_strategy.sh が新トークを準備できるまで再生し続ける
-	if [ "${_radio_pid:-0}" -ne 0 ]; then
-		kill "$_radio_pid" 2>/dev/null
-		wait "$_radio_pid" 2>/dev/null
-		_radio_pid=0
-	fi
+	# 何もしない: ラジオ生成・再生はバックグラウンドで自然に完了させる
+	# say は watch_strategy.sh が新トーク準備完了時に切り替える
+	# 次の start_radio_talk 呼び出し時に前のプロセスが残っていても問題ない
+	_radio_pid=0
 }
 
 #=== メインループ ===

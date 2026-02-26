@@ -9,13 +9,13 @@
 # AI改変禁止: decide() シグネチャ,if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v36: v19復活・シンプル化版 - v35の失敗（chain reaction活用による複雑化、スコア1666点）を受けて、reactive_pairs条件分岐を完全に削除し、v19の成功構造に復活。v19（2325点）のシンプルかつ堅実な戦略を踏襲しつつ、不要なロジックを削除してコードを簡素化。
 # v37: HIGHフェーズマージ優先版 - v36の失敗（スコア1072点、HIGHフェーズでマージ率37%）を受けて、HIGHフェーズでのマージ機会確保戦略を導入。履歴分析でHIGHフェーズ（16ターン）でHIGH_TOWER決定が10回を特定、高度管理が優先されすぎている。v19のシンプル構造を維持しつつ、HIGHフェーズでhas_mergeがある場合、height_penaltyを60%に緩和し、drift_penaltyも70%に緩和（v29/v30の成功要素を改良）。v19のマージボーナス（DIRECT=1200/NEAR=600/FAR=200）とheight_mult設定を維持。コード量約135行でシンプル化。
 # v38: マージ率向上・シンプル化版 - v37の失敗（スコア938点、MEDIUMフェーズでマージ率5.3%、HIGHフェーズでマージ率16.7%）を受けて、v37のhas_merge条件分岐を削除し、v19のシンプル構造に復活。履歴分析でhas_merge=Trueのケースがほとんどないを特定、v37の複雑な条件分岐は効果なし。マージボーナスを強化（DIRECT=1500/NEAR=800/FAR=300）し、MEDIUMフェーズでマージなし位置に-100ペナルティ、HIGHフェーズでマージなし位置に-200ペナルティを追加（v30のNO_MERGE_OPPORTUNITYペナルティを改良）。v19のフェーズ構造（LOW/MEDIUM/HIGH/CRITICAL）を維持しつつ、マージ率向上を最優先。コード量約125行で更にシンプル化。
+# v39: マージ強制・ボーナス強化版 - v38の失敗（スコア912点、HIGHフェーズでマージ率0%、MEDIUMフェーズでマージ率0%）を受けて、v38のマージなしペナルティが機能していないことを特定。履歴分析でHIGH_TOWER_NO_MERGEが16回選択され、マージなし位置が支配的。マージなしペナルティを大幅に強化（HIGH: -500、MEDIUM: -300）し、マージボーナスも強化（DIRECT: 1800/NEAR: 900/FAR: 400）。v19のシンプル構造を維持しつつ、マージ強制を最大化。コード量約120行で更にシンプル化。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v19のシンプル構造をベースに、マージボーナス強化とマージなしペナルティでマージ率向上"""
+    """v19のシンプル構造をベースに、マージなしペナルティ大幅強化とマージボーナス強化でマージ率を最大化"""
 
     results = analysis.get("results", [])
 
@@ -65,15 +65,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # 1. マージグレードによるスコア（v38: マージボーナス強化）
+        # 1. マージグレードによるスコア（v39: マージボーナス強化）
         if merge_grade == "DIRECT":
-            score += 1500.0 * merge_mult  # v38: 1200→1500に強化
+            score += 1800.0 * merge_mult  # v39: 1500→1800に強化（1.5倍）
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 800.0 * merge_mult  # v38: 600→800に強化
+            score += 900.0 * merge_mult  # v39: 800→900に強化
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 300.0 * merge_mult  # v38: 200→300に強化
+            score += 400.0 * merge_mult  # v39: 300→400に強化
             reasons.append("FAR_MERGE")
 
         # 2. 高度によるスコア（v38: v19のシンプル構造に戻す）
@@ -130,14 +130,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # 6. v38: マージなしペナルティ（MEDIUM/HIGHフェーズでマージを強制）
+        # 6. v39: マージなしペナルティ大幅強化（MEDIUM/HIGHフェーズでマージを強制的に選択）
         if not has_merge:
             if phase == "HIGH":
-                score -= 200.0  # HIGHフェーズでマージを強制
+                score -= 500.0  # v39: 200→500に大幅強化
                 if "NO_MERGE" not in reasons:
                     reasons.append("NO_MERGE")
             elif phase == "MEDIUM":
-                score -= 100.0  # MEDIUMフェーズでマージを促進
+                score -= 300.0  # v39: 100→300に強化
                 if "NO_MERGE" not in reasons:
                     reasons.append("NO_MERGE")
 
