@@ -17,8 +17,16 @@ AI_AGENT="zai"
 AI_FALLBACK="glmflash"
 SAY_VOICE=""  # macOS say のボイス（空ならデフォルト）
 SAY_RATE=120  # 読み上げ速度
+SAY_PID=""    # 現在再生中の say プロセスID
 
 mkdir -p tmp
+
+# Ctrl+C で say も止める
+cleanup() {
+  [[ -n "$SAY_PID" ]] && kill "$SAY_PID" 2>/dev/null
+  exit 0
+}
+trap cleanup INT TERM
 
 # --- ユーティリティ ---
 log() {
@@ -56,7 +64,7 @@ run_opencode() {
   local agent="$1"
   local prompt_file="$2"
   local raw_file
-  raw_file=$(mktemp /tmp/oc_raw_XXXXXX.txt)
+  raw_file=$(mktemp /tmp/oc_raw_XXXXXXXX)
 
   # script で疑似TTY を与えて実行（opencode は TTY がないとハングする）
   script -q "$raw_file" opencode run --agent "$agent" "$(cat "$prompt_file")" > /dev/null 2>&1
@@ -80,7 +88,7 @@ generate_commentary() {
 
   # プロンプトをファイルに書き出す（引数が長すぎる場合の対策）
   local prompt_file
-  prompt_file=$(mktemp /tmp/oc_prompt_XXXXXX.txt)
+  prompt_file=$(mktemp /tmp/oc_prompt_XXXXXXXX)
 
   cat > "$prompt_file" <<'PROMPT_END'
 あなたはゲーム実況の解説者です。
@@ -134,14 +142,21 @@ PROMPT_END
   return 1
 }
 
-# say で読み上げ
+# say で読み上げ（前の再生を止めてから新しく開始）
 speak() {
   local text="$1"
+  # 前の say が動いていたら止める
+  if [[ -n "$SAY_PID" ]]; then
+    kill "$SAY_PID" 2>/dev/null
+    wait "$SAY_PID" 2>/dev/null
+    SAY_PID=""
+  fi
   local say_args=(-r "$SAY_RATE")
   if [[ -n "$SAY_VOICE" ]]; then
     say_args+=(-v "$SAY_VOICE")
   fi
   say "${say_args[@]}" "$text" &
+  SAY_PID=$!
 }
 
 # --- メイン処理: strategy.py 変更時のハンドラ ---
@@ -223,13 +238,10 @@ log "strategy.py を監視開始..."
 log "Ctrl+C で停止"
 
 # fswatch で strategy.py を監視
-# -1: 1イベントずつ処理（バッチしない）
 # --event Updated: ファイル更新イベントのみ
-fswatch --event Updated -0 "$STRATEGY" | while IFS= read -r -d '' event; do
-  # 短い間隔で複数イベントが来ることがあるのでデバウンス
+fswatch --event Updated "$STRATEGY" | while IFS= read -r event; do
+  # デバウンス: 1秒待って連続イベントをまとめる
   sleep 1
-  # 溜まったイベントを消費
-  while IFS= read -r -d '' -t 0.1 _; do :; done
 
   on_strategy_changed
 done
