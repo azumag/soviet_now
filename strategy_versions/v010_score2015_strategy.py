@@ -12,10 +12,9 @@
 # [BEST:604] v0: ランダム配置（ベースライン）
 # [BEST:1486] v1: マージ重視戦略（DIRECT/NEAR優先、高度管理、ドリフト最小化）
 # [BEST:1615] v3: 重量バランス導入版 - ピースタイプに応じた重量化、フェーズ制導入、高度管理調整
-# [BEST:2015] v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バランス振り子パターンを解消、フェーズ閾値0.8/1.8調整
+# v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バランス振り子パターンを解消、フェーズ閾値0.8/1.8調整
 # v9: HIGHフェーズマージ強化版 - v8の構造を維持、HIGHフェーズmerge_mult 0.8→1.0、height_mult 3.0→2.2、マージなしペナルティ緩和
 # v10: reactor活用・二段階スコアリング版 - reactor情報活用、マージあり/なしでスコアリングを分ける、HIGHフェーズ高度管理微強化
-# v11: HIGHフェーズ高度管理強化版 - v10の高度管理緩和を修正、reactorチェインボーナス削除（未使用）、マージなし時のheight_penalty/no_merge_penaltyを強化
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
@@ -45,7 +44,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     else:
         phase = "HIGH"
-        height_mult = 2.4
+        height_mult = 2.4  # v10: 2.2→2.4に微増（高度管理強化）
         merge_mult = 1.0
 
     # 左右バランス計算（カウントベース）
@@ -59,7 +58,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # reactor情報（v10で活用開始、v11でチェインボーナス削除）
+    # reactor情報（v10で新規活用）
     reactor = analysis.get("reactor", {})
     reactive_pairs_raw = reactor.get("reactive_pairs", 0)
     reactive_pairs = (
@@ -79,7 +78,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === 二段階スコアリング ===
+        # === v10: 二段階スコアリング ===
         # マージがある場合とない場合で、異なるスコアリングを行う
 
         if merge_grade in ("DIRECT", "NEAR", "FAR"):
@@ -87,18 +86,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
             # 1. マージグレードによるスコア（重点）
             if merge_grade == "DIRECT":
-                score += 1300.0 * merge_mult
+                score += 1300.0 * merge_mult  # v10: 1200→1300に強化
                 reasons.append("DIRECT_MERGE")
             elif merge_grade == "NEAR":
-                score += 700.0 * merge_mult
+                score += 700.0 * merge_mult  # v10: 600→700に強化
                 reasons.append("NEAR_MERGE")
             elif merge_grade == "FAR":
-                score += 200.0 * merge_mult
+                score += 200.0 * merge_mult  # v10: 150→200に強化
                 reasons.append("FAR_MERGE")
 
             # 2. 高度によるスコア（軽減：マージがあるならある程度許容）
             if phase == "HIGH":
-                height_penalty = landing_y * 30.0
+                height_penalty = landing_y * 30.0  # v10: 通常の60%（高度管理緩和）
             elif phase == "MEDIUM":
                 height_penalty = landing_y * 25.0
             else:
@@ -115,13 +114,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             drift_penalty = (abs(drift_x) + drift_unc) * 25.0
             score -= drift_penalty
 
+            # 4. reactorチェインボーナス（v10新規）
+            # reactive_pairs >= 4 ならチェイン中なので、マージをさらに優先
+            if reactive_pairs >= 4:
+                score += 300.0
+                reasons.append("REACTOR_CHAIN")
+
         else:
             # --- マージがない場合：高度・ドリフト・バランスを厳しく評価 ---
 
             # 1. マージなしペナルティ（フェーズに応じて強化）
             no_merge_penalty = 200.0
             if phase == "HIGH":
-                no_merge_penalty *= 2.0  # v11: 1.6→2.0に強化
+                no_merge_penalty *= 1.6  # v10: 1.5→1.6に微増
             elif phase == "MEDIUM":
                 no_merge_penalty *= 1.5
             score -= no_merge_penalty
@@ -129,9 +134,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 2. 高度によるスコア（厳しく）
             height_penalty = landing_y * 60.0 * height_mult
 
-            # 高盤面での追加ペナルティ（v11強化）
+            # 高盤面での追加ペナルティ
             if phase == "HIGH":
-                height_penalty *= 1.8  # v11: 1.5→1.8に強化
+                height_penalty *= 1.5
                 reasons.append("HIGH_TOWER")
             elif phase == "MEDIUM" and landing_y > 0.5:
                 height_penalty *= 1.3
@@ -142,13 +147,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= height_penalty
 
             # 3. ドリフトによるペナルティ（厳しく）
-            drift_penalty = (abs(drift_x) + drift_unc) * 35.0
+            drift_penalty = (abs(drift_x) + drift_unc) * 35.0  # v10: 30→35に強化
             score -= drift_penalty
 
             # 4. 左右バランス補正（フェーズに応じて強化）
             balance_strength = 20.0
             if phase == "HIGH":
-                balance_strength = 40.0
+                balance_strength = 40.0  # v10: 35→40に強化
             elif phase == "MEDIUM":
                 balance_strength = 25.0
 
