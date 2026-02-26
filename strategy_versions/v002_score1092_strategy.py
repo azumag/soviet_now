@@ -11,6 +11,7 @@
 # --- 変更履歴 ---
 # [BEST:1212] v001: 初期版 - analysis["results"]のスコア最大を選ぶだけのベースライン
 # [BEST:584] v002: 危機対応・マージ優先戦略追加
+# v003: スコアリング関数の全面的改善。連続的なマージ評価、左右バランス考慮、強力な高さペナルティ
 
 
 def _calc_max_y(pieces: list) -> float:
@@ -20,22 +21,21 @@ def _calc_max_y(pieces: list) -> float:
     return max(p.get("y", -5.0) for p in pieces)
 
 
-def _find_safe_drop_x(pieces: list) -> float:
-    """ピースが少ないエリアの中央Xを返す."""
+def _calc_balance_score(pieces: list, x: float) -> float:
+    """左右バランスを計算。高い側へのドロップをペナルティ."""
     if not pieces:
         return 0.0
 
-    left_pieces = [p for p in pieces if p["x"] < -0.5]
-    right_pieces = [p for p in pieces if p["x"] > 0.5]
-    center_pieces = [p for p in pieces if -0.5 <= p["x"] <= 0.5]
+    left_max = max((p["y"] for p in pieces if p["x"] < 0), default=-5.0)
+    right_max = max((p["y"] for p in pieces if p["x"] > 0), default=-5.0)
 
-    # どちらかが少ない方へ
-    if len(left_pieces) < len(right_pieces):
-        return -2.0
-    elif len(right_pieces) < len(left_pieces):
-        return 2.0
-    else:
-        return 0.0
+    # 高い側へのドロップをペナルティ
+    if x < 0 and left_max > right_max:
+        return (left_max - right_max) * 100
+    elif x > 0 and right_max > left_max:
+        return (right_max - left_max) * 100
+
+    return 0.0
 
 
 def _find_merge_candidate(results: list) -> dict:
@@ -68,23 +68,37 @@ def _find_same_type_drop(results: list, pieces: list, next_type: int) -> dict:
     return best
 
 
-def _score_candidate(r: dict, max_y: float, is_crisis: bool) -> float:
-    """候補をスコアリングする."""
+def _score_candidate(r: dict, max_y: float, is_crisis: bool, pieces: list) -> float:
+    """候補をスコアリングする。バランスと高さを考慮."""
     base_score = r.get("score", 0)
 
-    # マージボーナス
-    if r.get("merge_grade") == "DIRECT":
+    # 連続的なマージボーナス
+    merge_grade = r.get("merge_grade", "NO")
+    if merge_grade == "DIRECT":
+        base_score += 2000
+    elif merge_grade == "NEAR":
         base_score += 1000
-    elif r.get("merge_grade") == "NEAR":
+    elif merge_grade == "CLOSE":
         base_score += 500
 
-    # 危機状態での高さペナルティ
+    # 危機状態での高さペナルティを強化
     if is_crisis:
-        base_score -= r.get("landing_y", -5) * 200
+        # 高さが高いほど厳しいペナルティ
+        landing_y = r.get("landing_y", -5)
+        base_score -= landing_y * 500
 
-    # 着地位置が高いペナルティ
+        # max_y以上のドロップは厳禁
+        if landing_y > max_y:
+            base_score -= 2000
+
+    # 左右バランスペナルティ
+    x = r.get("x", 0)
+    balance_penalty = _calc_balance_score(pieces, x)
+    base_score -= balance_penalty
+
+    # 常時：着地位置が高いペナルティ
     if r.get("landing_y", -5) > max_y:
-        base_score -= 100
+        base_score -= 300
 
     return base_score
 
@@ -107,7 +121,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         return {"x": 0.0, "reason": "データなし"}
 
     max_y = _calc_max_y(pieces)
-    is_crisis = max_y > 2.0
+    is_crisis = max_y > 1.8  # 危機閾値を下げて早期対策
 
     # 危機状態：マージ可能な手を優先
     if is_crisis:
@@ -127,12 +141,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         }
 
     # 全候補をスコアリング
-    scored = [(r, _score_candidate(r, max_y, is_crisis)) for r in results]
+    scored = [(r, _score_candidate(r, max_y, is_crisis, pieces)) for r in results]
     best_result, best_score = max(scored, key=lambda x: x[1])
+
+    # バランス考慮をreasonに追加
+    balance_penalty = _calc_balance_score(pieces, best_result["x"])
 
     return {
         "x": best_result["x"],
-        "reason": f"総合スコア x={best_result['x']:.2f} (score={best_score:.1f})",
+        "reason": f"総合スコア x={best_result['x']:.2f} (score={best_score:.1f}, balance={-balance_penalty:.0f})",
     }
 
 

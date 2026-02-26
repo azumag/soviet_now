@@ -12,6 +12,7 @@
 # [BEST:1212] v001: 初期版 - analysis["results"]のスコア最大を選ぶだけのベースライン
 # [BEST:584] v002: 危機対応・マージ優先戦略追加
 # v003: スコアリング関数の全面的改善。連続的なマージ評価、左右バランス考慮、強力な高さペナルティ
+# v004: 旗側管理導入・危機閾値改善・マージ重視化。大型ピースの旗側集約、危機閾値1.8→0.8、マージ優先度大幅強化
 
 
 def _calc_max_y(pieces: list) -> float:
@@ -21,21 +22,21 @@ def _calc_max_y(pieces: list) -> float:
     return max(p.get("y", -5.0) for p in pieces)
 
 
-def _calc_balance_score(pieces: list, x: float) -> float:
-    """左右バランスを計算。高い側へのドロップをペナルティ."""
-    if not pieces:
-        return 0.0
+def _determine_flag_side(pieces: list) -> int:
+    """旗側を決定する。最も大きいピース(type >= 8)が多い側を旗側とする."""
+    large_pieces = [p for p in pieces if p.get("type", 0) >= 8]
+    if not large_pieces:
+        return 1  # デフォルトは右側
 
-    left_max = max((p["y"] for p in pieces if p["x"] < 0), default=-5.0)
-    right_max = max((p["y"] for p in pieces if p["x"] > 0), default=-5.0)
+    left_count = sum(1 for p in large_pieces if p["x"] < 0)
+    right_count = len(large_pieces) - left_count
 
-    # 高い側へのドロップをペナルティ
-    if x < 0 and left_max > right_max:
-        return (left_max - right_max) * 100
-    elif x > 0 and right_max > left_max:
-        return (right_max - left_max) * 100
-
-    return 0.0
+    if right_count > left_count:
+        return 1  # 右側が旗
+    elif left_count > right_count:
+        return -1  # 左側が旗
+    else:
+        return 1  # 同数ならデフォルト右側
 
 
 def _find_merge_candidate(results: list) -> dict:
@@ -46,59 +47,54 @@ def _find_merge_candidate(results: list) -> dict:
     return None
 
 
-def _find_same_type_drop(results: list, pieces: list, next_type: int) -> dict:
-    """同typeのピース近くにドロップする候補を探す."""
-    same_type_pieces = [p for p in pieces if p["type"] == next_type]
-    if not same_type_pieces:
-        return None
+def _score_candidate(
+    r: dict, flag_side: int, max_y: float, is_crisis: bool, pieces: list
+) -> float:
+    """候補をスコアリングする。
 
-    target_y = max(p["y"] for p in same_type_pieces)
-    best = None
-    best_dist = float("inf")
-
-    for r in results:
-        # 着地位置が同typeピースのy座標以下
-        if r.get("landing_y", -10) <= target_y:
-            # 同typeピースとの距離を計算
-            min_dist = min(((r["x"] - p["x"]) ** 2) ** 0.5 for p in same_type_pieces)
-            if min_dist < best_dist:
-                best_dist = min_dist
-                best = r
-
-    return best
-
-
-def _score_candidate(r: dict, max_y: float, is_crisis: bool, pieces: list) -> float:
-    """候補をスコアリングする。バランスと高さを考慮."""
+    評価項目（優先順位順）:
+    1. マージ可能性（最重要）
+    2. 着地位置（低いほど良い）
+    3. 旗側配置（大型ピース集約のため）
+    4. 大型ピースへの近接（集約強化）
+    """
     base_score = r.get("score", 0)
 
-    # 連続的なマージボーナス
+    # マージボーナス（最重要）
     merge_grade = r.get("merge_grade", "NO")
     if merge_grade == "DIRECT":
-        base_score += 2000
+        base_score += 5000  # 直接接触マージは超優先
     elif merge_grade == "NEAR":
-        base_score += 1000
+        base_score += 3000  # 近接マージも優先
     elif merge_grade == "CLOSE":
-        base_score += 500
+        base_score += 1000  # 閉鎖距離マージ
+    elif merge_grade == "NO" and r.get("has_merge", False):
+        base_score += 500  # マージ可能だが遠い
 
-    # 危機状態での高さペナルティを強化
-    if is_crisis:
-        # 高さが高いほど厳しいペナルティ
-        landing_y = r.get("landing_y", -5)
-        base_score -= landing_y * 500
-
-        # max_y以上のドロップは厳禁
-        if landing_y > max_y:
-            base_score -= 2000
-
-    # 左右バランスペナルティ
+    # 旗側ボーナス（大型ピース集約）
     x = r.get("x", 0)
-    balance_penalty = _calc_balance_score(pieces, x)
-    base_score -= balance_penalty
+    if (flag_side == 1 and x > 0) or (flag_side == -1 and x < 0):
+        base_score += 800
+    elif x == 0:
+        base_score += 400  # 中央は中間スコア
 
-    # 常時：着地位置が高いペナルティ
-    if r.get("landing_y", -5) > max_y:
-        base_score -= 300
+    # 大型ピース(type 8+)への近接ボーナス
+    landing_y = r.get("landing_y", -5)
+    for p in pieces:
+        if p.get("type", 0) >= 8 and p["y"] > -3:
+            dist = ((x - p["x"]) ** 2 + (landing_y - p["y"]) ** 2) ** 0.5
+            if dist < 2.0:
+                base_score += (2.0 - dist) * 200
+
+    # 高さペナルティ（危機時は強化）
+    if is_crisis:
+        # 危機時：着地位置が高いと厳しいペナルティ
+        base_score -= landing_y * 2000
+        if landing_y > max_y:
+            base_score -= 5000  # max_y以上は致命的
+    else:
+        # 通常時：高さペナルティは緩やか
+        base_score -= landing_y * 100
 
     return base_score
 
@@ -115,15 +111,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
     """
     results = analysis.get("results", [])
     pieces = game_state.get("pieces", [])
-    next_type = game_state.get("next", {}).get("type", 0)
 
     if not results:
         return {"x": 0.0, "reason": "データなし"}
 
     max_y = _calc_max_y(pieces)
-    is_crisis = max_y > 1.8  # 危機閾値を下げて早期対策
+    flag_side = _determine_flag_side(pieces)
 
-    # 危機状態：マージ可能な手を優先
+    # 危機閾値を大幅に下げて早期対策（1.8 → 0.8）
+    is_crisis = max_y > 0.8
+
+    # 危機状態：直接マージ可能な手を最優先
     if is_crisis:
         merge_candidate = _find_merge_candidate(results)
         if merge_candidate:
@@ -132,24 +130,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 "reason": f"危機マージ優先 x={merge_candidate['x']:.2f} (grade={merge_candidate.get('merge_grade', 'NO')})",
             }
 
-    # 同typeのピース近くにドロップ
-    same_type_drop = _find_same_type_drop(results, pieces, next_type)
-    if same_type_drop:
-        return {
-            "x": same_type_drop["x"],
-            "reason": f"同type近接 x={same_type_drop['x']:.2f} (type={next_type})",
-        }
-
-    # 全候補をスコアリング
-    scored = [(r, _score_candidate(r, max_y, is_crisis, pieces)) for r in results]
+    # 全候補をスコアリング（旗側・マージ・高さを総合評価）
+    scored = [
+        (r, _score_candidate(r, flag_side, max_y, is_crisis, pieces)) for r in results
+    ]
     best_result, best_score = max(scored, key=lambda x: x[1])
 
-    # バランス考慮をreasonに追加
-    balance_penalty = _calc_balance_score(pieces, best_result["x"])
+    # 評価要因をreasonに記載
+    merge_grade = best_result.get("merge_grade", "NO")
+    is_flag_side = (flag_side == 1 and best_result["x"] > 0) or (
+        flag_side == -1 and best_result["x"] < 0
+    )
+    side_str = "旗側" if is_flag_side else "対側"
 
     return {
         "x": best_result["x"],
-        "reason": f"総合スコア x={best_result['x']:.2f} (score={best_score:.1f}, balance={-balance_penalty:.0f})",
+        "reason": f"総合スコア x={best_result['x']:.2f} (grade={merge_grade}, {side_str}, score={best_score:.0f})",
     }
 
 
