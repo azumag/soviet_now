@@ -13,8 +13,9 @@
 # [BEST:584] v002: 危機対応・マージ優先戦略追加
 # [BEST:453] v003: スコアリング関数の全面的改善。連続的なマージ評価、左右バランス考慮、強力な高さペナルティ
 # [BEST:721] v004: 旗側管理導入・危機閾値改善・マージ重視化。大型ピースの旗側集約、危機閾値1.8→0.8、マージ優先度大幅強化
-# v005: 戦略簡素化。旗側ボーナス削除・近接ボーナス削除・高さペナルティ強化・危機閾値0.5化。analysisのbase_scoreを尊重し、高さ抑制を最優先
+# [BEST:1961] v005: 戦略簡素化。旗側ボーナス削除・近接ボーナス削除・高さペナルティ強化・危機閾値0.5化。analysisのbase_scoreを尊重し、高さ抑制を最優先
 # v006: 高さペナルティ係数調整。通常時5000→2000に緩和し、危機時2000+追加ペナルティに分割。通常時はマージを優先し、危機時は高さ抑制を優先するフェーズ別戦略へ
+# v007: v006の強化版。通常時は高さペナルティ係数1000に緩和してマージ優先、危機時は係数5000に強化して高さ抑制最優先。v005の成功体験（analysisのscore尊重、高さ抑制最優先）をベースにフェーズ別戦略を明確化
 
 
 def _calc_max_y(pieces: list) -> float:
@@ -48,7 +49,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     for r in results:
         base_score = r.get("score", 0)
 
-        # マージボーナス（分析スコアを尊重）
+        # マージボーナス（analysisのbase_scoreを尊重）
         merge_grade = r.get("merge_grade", "NO")
         if merge_grade == "DIRECT":
             base_score += 5000
@@ -59,16 +60,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "NO" and r.get("has_merge", False):
             base_score += 500
 
-        # 高さペナルティ（危機時は強化）
+        # 高さペナルティ（危機時は強化、通常時は緩和）
         landing_y = r.get("landing_y", -5)
         if is_crisis:
-            # 危機時：高さペナルティ強化（2000ベース + 追加）
-            base_score -= landing_y * 2000
+            # 危機時：高さペナルティ強化（5000）
+            base_score -= landing_y * 5000
             if landing_y > max_y:
-                base_score -= 5000  # max_y以上は致命的
+                base_score -= 10000  # max_y以上は致命的
         else:
-            # 通常時：高さペナルティ緩和（マージ優先）
-            base_score -= landing_y * 2000
+            # 通常時：高さペナルティ緩和（1000）→ マージ優先
+            base_score -= landing_y * 1000
 
         scored.append((r, base_score))
 
