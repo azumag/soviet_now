@@ -11,6 +11,7 @@ STRATEGY="strategy.py"
 VERSIONS_DIR="strategy_versions"
 BEST_SCORE_FILE="best_score.txt"
 COMMENTARY_FILE="tmp/strategy_commentary.txt"
+PAST_TOPICS_FILE="tmp/past_watch_topics.txt"
 
 # --- 設定 ---
 AI_AGENT="zai"
@@ -91,10 +92,45 @@ generate_commentary() {
   local prompt_file
   prompt_file=$(mktemp /tmp/oc_prompt_XXXXXXXX)
 
-  cat > "$prompt_file" <<'PROMPT_END'
+  # ランダムテーマを選ぶ（毎回違う切り口にする）
+  local themes=(
+    "今回は料理と食文化の話を多めに。各国の名物料理や食べ物の話で脱線して"
+    "今回は音楽の話を多めに。各国の民族音楽、有名な作曲家、ポップカルチャーの話で脱線して"
+    "今回はスポーツの話を多めに。各国のサッカー、オリンピック、格闘技など運動の話で脱線して"
+    "今回は歴史上の人物の話を多めに。各国の英雄、指導者、科学者、芸術家の話で脱線して"
+    "今回は地理と自然の話を多めに。各国の山、川、気候、絶景スポットの話で脱線して"
+    "今回は映画やアニメの話を多めに。ソ連の映画、各国のエンタメ、ゲーム実況文化の話で脱線して"
+    "今回は言語と言葉の話を多めに。各国の言語の特徴、面白い表現、翻訳の難しさの話で脱線して"
+    "今回は宇宙と科学の話を多めに。ソ連の宇宙開発、ガガーリン、各国の科学者の話で脱線して"
+    "今回は動物の話を多めに。各国の国獣、珍しい動物、動物にまつわることわざの話で脱線して"
+    "今回は建築と街並みの話を多めに。各国の世界遺産、有名な建物、都市の雰囲気の話で脱線して"
+    "今回は恋愛と人間関係の話を多めに。各国の恋愛事情、結婚式の文化、友情の話で脱線して"
+    "今回は失敗と挫折の話を多めに。歴史上の大失敗、そこからの復活劇、失敗の名言で脱線して"
+    "今回は祭りと行事の話を多めに。各国のお祭り、伝統行事、新年の祝い方の話で脱線して"
+    "今回は鉄道と旅の話を多めに。シベリア鉄道、各国の交通事情、旅行の話で脱線して"
+    "今回は哲学と思想の話を多めに。マルクス、ドストエフスキー、人生の意味、AIの存在意義の話で脱線して"
+  )
+  local theme="${themes[$((RANDOM % ${#themes[@]}))]}"
+
+  # 過去のトーク内容を取得（直近5回分）
+  local past_topics=""
+  if [[ -f "$PAST_TOPICS_FILE" ]]; then
+    past_topics=$(tail -5 "$PAST_TOPICS_FILE")
+  fi
+
+  cat > "$prompt_file" <<PROMPT_END
 あなたは深夜のゲーム実況ラジオのパーソナリティです。
 一人でずっと喋り続けるのが得意で、脱線しまくるけど最終的にはちゃんと戻ってくるタイプです。
 リスナーはAIがパズルゲームを自動プレイしているのを眺めながら、あなたのトークを聞いています。
+
+【今回の脱線テーマ指定】
+${theme}
+
+【過去のトークで既に話した内容（これらは避けて、新しいネタにすること）】
+${past_topics:-まだ過去のトークはありません。自由に話してください。}
+PROMPT_END
+
+  cat >> "$prompt_file" <<'PROMPT_END'
 
 【ゲーム概要】
 「ソ連スイカゲーム」は、旧ソ連の構成国の国旗をモチーフにした落ちものパズルです。
@@ -260,7 +296,21 @@ on_strategy_changed() {
   echo "$commentary"
   log "---------------"
 
-  # 5. 読み上げ
+  # 5. 過去トーク記録（全体から抽出して保存、直近10件保持）
+  local total_lines
+  total_lines=$(echo "$commentary" | wc -l | tr -d ' ')
+  local mid=$((total_lines / 2))
+  local q3=$((total_lines * 3 / 4))
+  local snippet_top snippet_mid snippet_end
+  snippet_top=$(echo "$commentary" | sed -n '2,3p' | tr '\n' ' ' | cut -c1-60)
+  snippet_mid=$(echo "$commentary" | sed -n "${mid},$((mid+1))p" | tr '\n' ' ' | cut -c1-60)
+  snippet_end=$(echo "$commentary" | sed -n "${q3},$((q3+1))p" | tr '\n' ' ' | cut -c1-60)
+  local summary
+  summary="[$(date '+%H:%M')] 序盤:${snippet_top} / 中盤:${snippet_mid} / 終盤:${snippet_end}"
+  echo "$summary" >> "$PAST_TOPICS_FILE"
+  tail -10 "$PAST_TOPICS_FILE" > "${PAST_TOPICS_FILE}.tmp" && mv "${PAST_TOPICS_FILE}.tmp" "$PAST_TOPICS_FILE"
+
+  # 6. 読み上げ
   speak "$commentary"
   log "読み上げ開始"
 }

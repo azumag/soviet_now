@@ -455,6 +455,7 @@ except:
 RADIO_AGENT="zai"
 RADIO_FALLBACK="glmflash"
 RADIO_SAY_RATE=120
+PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
 _radio_pid=0
 
 # ANSIエスケープ除去
@@ -494,9 +495,41 @@ start_radio_talk() {
 			history_context+="$vname: $cl"$'\n'
 		done
 
+		# ランダムテーマを選ぶ（毎回違う切り口にする）
+		local themes=(
+			"今回は料理と食文化の話を多めに。各国の名物料理や食べ物の話で脱線して"
+			"今回は音楽の話を多めに。各国の民族音楽、有名な作曲家、ポップカルチャーの話で脱線して"
+			"今回はスポーツの話を多めに。各国のサッカー、オリンピック、格闘技など運動の話で脱線して"
+			"今回は歴史上の人物の話を多めに。各国の英雄、指導者、科学者、芸術家の話で脱線して"
+			"今回は地理と自然の話を多めに。各国の山、川、気候、絶景スポットの話で脱線して"
+			"今回は映画やアニメの話を多めに。ソ連の映画、各国のエンタメ、ゲーム実況文化の話で脱線して"
+			"今回は言語と言葉の話を多めに。各国の言語の特徴、面白い表現、翻訳の難しさの話で脱線して"
+			"今回は宇宙と科学の話を多めに。ソ連の宇宙開発、ガガーリン、各国の科学者の話で脱線して"
+			"今回は動物の話を多めに。各国の国獣、珍しい動物、動物にまつわることわざの話で脱線して"
+			"今回は建築と街並みの話を多めに。各国の世界遺産、有名な建物、都市の雰囲気の話で脱線して"
+			"今回は恋愛と人間関係の話を多めに。各国の恋愛事情、結婚式の文化、友情の話で脱線して"
+			"今回は失敗と挫折の話を多めに。歴史上の大失敗、そこからの復活劇、失敗の名言で脱線して"
+			"今回は祭りと行事の話を多めに。各国のお祭り、伝統行事、新年の祝い方の話で脱線して"
+			"今回は鉄道と旅の話を多めに。シベリア鉄道、各国の交通事情、旅行の話で脱線して"
+			"今回は哲学と思想の話を多めに。マルクス、ドストエフスキー、人生の意味、AIの存在意義の話で脱線して"
+		)
+		local theme="${themes[$((RANDOM % ${#themes[@]}))]}"
+
+		# 過去のトーク内容を取得（直近5回分、重複回避用）
+		local past_topics=""
+		if [ -f "$PAST_RADIO_TOPICS" ]; then
+			past_topics=$(tail -5 "$PAST_RADIO_TOPICS")
+		fi
+
 		cat > "$prompt_file" <<RADIOPROMPT
 あなたは深夜のゲーム実況ラジオのパーソナリティです。
 一人でずっと喋り続ける、脱線大好き、でも愛があるタイプです。
+
+【今回の脱線テーマ指定】
+${theme}
+
+【過去のトークで既に話した内容（これらのネタは避けて、新しい話題にすること）】
+${past_topics:-まだ過去のトークはありません。自由に話してください。}
 
 【状況】
 「ソ連スイカゲーム」をAIが自動プレイしています。
@@ -566,6 +599,18 @@ RADIOPROMPT
 
 		if [ -n "$talk" ]; then
 			echo "$talk" > tmp/radio_talk.txt
+			# 過去トーク記録（全体から序盤/中盤/終盤を抽出、直近10件保持）
+			local total_lines mid q3 snippet_top snippet_mid snippet_end
+			total_lines=$(echo "$talk" | wc -l | tr -d ' ')
+			mid=$((total_lines / 2))
+			q3=$((total_lines * 3 / 4))
+			snippet_top=$(echo "$talk" | sed -n '2,3p' | tr '\n' ' ' | cut -c1-60)
+			snippet_mid=$(echo "$talk" | sed -n "${mid},$((mid+1))p" | tr '\n' ' ' | cut -c1-60)
+			snippet_end=$(echo "$talk" | sed -n "${q3},$((q3+1))p" | tr '\n' ' ' | cut -c1-60)
+			local summary
+			summary="[$(date '+%H:%M')] Game#${game_num} ${score}pts 序盤:${snippet_top} / 中盤:${snippet_mid} / 終盤:${snippet_end}"
+			echo "$summary" >> "$PAST_RADIO_TOPICS"
+			tail -10 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 			log "[RADIO] トーク開始"
 			killall say 2>/dev/null
 			say -r "$RADIO_SAY_RATE" "$talk"
