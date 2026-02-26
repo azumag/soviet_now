@@ -31,17 +31,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
 ## 参照データの読み方
 
-以下のデータはこのプロンプトに自動で埋め込まれている。ファイルを自分で読みに行く必要はない。
+以下のファイルだけがこのプロンプトに埋め込まれている。これ以外のファイルは存在しないものとして扱え。
 
-### strategy.py (現在版)
-現在の decide() ロジック。改善対象。
+**禁止: 埋め込みデータ以外のファイルを絶対に読むな。** README.md、STRATEGY.md、best_strategy.md、その他一切のファイルを読んではならない。提供データのみで判断せよ。
 
-### game_history/latest.jsonl (ターン履歴)
+### 1. strategy.py (現在の戦略コード)
+改善対象の decide() ロジック。
+
+### 2. game_history/latest.jsonl (直近1試合のターン履歴)
 各行がJSON: `{"turn", "score", "score_delta", "piece_count", "max_y", "next_type", "decision_x", "decision_reason", "merge_available", "best_merge_grade", "reactor_reactive_pairs", ...}`
 
-
-### game_state.json (最終盤面)
+### 3. game_state.json (最終盤面)
 ゲームオーバー時の盤面。散在・到達不能ピースの分析に使用。
+
+### 4. 直近3バージョンの戦略 (strategy_versions/v*_strategy.py)
+過去3試合分の strategy.py。スコアがファイル名に含まれる（例: v005_score1200_strategy.py）。
+どのバージョンが高スコアだったか比較し、良かった戦略の要素を取り入れ、悪かった変更を避けよ。
+
+### 5. 殿堂入り戦略 (strategy_versions/best_score*_strategy.py)
+ハイスコア達成時の strategy.py。スコアがファイル名に含まれる。
+最も成功した戦略構造の参考にせよ。ただし盲目的にコピーするな。なぜそれが高スコアだったかを分析し、本質的な要素だけを取り入れよ。
 
 ## ★★★ 最重要0: 同じ改善を繰り返すな ★★★
 

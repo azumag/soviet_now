@@ -458,12 +458,22 @@ while true; do
 	IMPROVE_OK=false
 	MAX_IMPROVE_RETRIES=3
 
+	# 直近3バージョン + 殿堂入り戦略を収集
+	PAST_STRATEGY_FILES=""
+	for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3); do
+		PAST_STRATEGY_FILES="$PAST_STRATEGY_FILES $vf"
+	done
+	HALL_OF_FAME_FILES=""
+	for hf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
+		[ -f "$hf" ] && HALL_OF_FAME_FILES="$HALL_OF_FAME_FILES $hf"
+	done
+
 	for retry in $(seq 1 "$MAX_IMPROVE_RETRIES"); do
 		if [ "$retry" -eq 1 ]; then
 			# 初回: 通常の改善プロンプト
 			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
 				prompts/improve_strategy.md "$STRATEGY_FILE" \
-				"$STRATEGY_FILE" "$HISTORY_FILE" "$GAME_STATE"
+				"$STRATEGY_FILE" "$HISTORY_FILE" "$GAME_STATE" $PAST_STRATEGY_FILES $HALL_OF_FAME_FILES
 		else
 			# リトライ: エラー内容を伝えて修正させる
 			log "[IMPROVE] リトライ $retry/$MAX_IMPROVE_RETRIES (エラー: $VALIDATE_ERROR)"

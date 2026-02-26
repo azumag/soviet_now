@@ -25,7 +25,7 @@ Soviet/Soren パズルゲーム（スイカゲーム風・ソ連共和国旗）�
 ### jloop.sh — JSON-based State Loop
 - 毎ターン AI (LLM) を呼び出して盤面判断→ドロップ
 - `analyze_board.py` で盤面解析 → AI プロンプト → `tmp/plan.md` / `tmp/plan.json`
-- AI 戦略: `STRATEGY.md`, 思考ログ: `think.md`
+- 思考ログ: `think.md`
 
 ### sloop.sh — Simple State Loop (レガシー)
 - 画像認識ベースの OBSERVE → DECIDE → EXECUTE ループ
@@ -44,4 +44,4 @@ Soviet/Soren パズルゲーム（スイカゲーム風・ソ連共和国旗）�
 | `strategy_runner.py` | eloop内側ループ: 1試合自律プレイ + JSONL履歴記録 |
 | `eloop.sh` | eloop外側ループ: 試合→AI改善→バリデーション→リトライ |
 | `analyze_board.py` | 盤面解析 (マージ判定・着地予測・反応器状態) |
-| `STRATEGY.md` | 現在の戦略方針 (jloop用、AI自動更新) |
+| ~~`STRATEGY.md`~~ | 廃止（jloop用、git履歴に残存） |
