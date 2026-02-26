@@ -521,12 +521,20 @@ start_radio_talk() {
 			past_topics=$(tail -5 "$PAST_RADIO_TOPICS")
 		fi
 
+		# 10回に1回だけ「AIが自分を書き換える話」を追加
+		local ai_special=""
+		if [ $((RANDOM % 10)) -eq 0 ]; then
+			ai_special="
+【特別コーナー】今回は特別に、AIが自分で自分の作戦を書き換えるということ自体について、哲学的な考察や感想、冗談を交えてたっぷり語ってください。"
+		fi
+
 		cat > "$prompt_file" <<RADIOPROMPT
 あなたは深夜のゲーム実況ラジオのパーソナリティです。
 一人でずっと喋り続ける、脱線大好き、でも愛があるタイプです。
 
 【今回の脱線テーマ指定】
 ${theme}
+${ai_special}
 
 【過去のトークで既に話した内容（これらのネタは避けて、新しい話題にすること）】
 ${past_topics:-まだ過去のトークはありません。自由に話してください。}
@@ -581,7 +589,6 @@ ${history_context}
    - 冷戦時代の話や宇宙開発競争なども良いネタ
 
 6. 脱線コーナー2: たわいない話
-   - AIが自分で自分の脳みそを書き換えている件について思うこと
    - ことわざや格言を引用して今の状況に当てはめる（日本のでも世界のでもOK）
    - ダジャレや冗談をひとつ以上挟む。スベっても気にしない
    - リスナーへの問いかけ「皆さんはどう思います？」的な
@@ -646,12 +653,13 @@ RADIOPROMPT
 }
 
 stop_radio_talk() {
+	# ラジオ生成プロセスのみ停止（まだ生成中なら中断）
+	# say は殺さない → watch_strategy.sh が新トークを準備できるまで再生し続ける
 	if [ "${_radio_pid:-0}" -ne 0 ]; then
 		kill "$_radio_pid" 2>/dev/null
 		wait "$_radio_pid" 2>/dev/null
 		_radio_pid=0
 	fi
-	killall say 2>/dev/null
 }
 
 #=== メインループ ===
