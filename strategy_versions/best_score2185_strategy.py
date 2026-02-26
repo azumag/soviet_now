@@ -12,13 +12,14 @@
 # [BEST:604] v0: ランダム配置（ベースライン）
 # [BEST:1486] v1: マージ重視戦略（DIRECT/NEAR優先、高度管理、ドリフト最小化）
 # [BEST:1615] v3: 重量バランス導入版 - ピースタイプに応じた重量化、フェーズ制導入、高度管理調整
-# v7: 散在抑制削除・マージ強化版 - count_scattered_pieces()削除（ロジックエラー修正）、HIGHフェーズでマージ重視強化、シンプル化
-# v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バランス振り子パターンを解消、フェーズ閾値0.8/1.8調整
-# v9: HIGHフェーズマージ強化版 - v8の構造を維持、HIGHフェーズmerge_mult 0.8→1.0、height_mult 3.0→2.2、マージなしペナルティ緩和
+# [BEST:2015] v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バランス振り子パターンを解消、フェーズ閾値0.8/1.8調整
+# [BEST:2185] v10: reactor活用・二段階スコアリング版 - reactor情報活用、マージあり/なしでスコアリングを分ける、HIGHフェーズ高度管理微強化
+# v11: HIGHフェーズ高度管理強化版 - v10の高度管理緩和を修正、reactorチェインボーナス削除（未使用）、マージなし時のheight_penalty/no_merge_penaltyを強化
+# v12: 一貫性重視・シンプル化版 - 二段階スコアリング廃止、v8の構造に戻しつつマージボーナス強化、HIGHフェーズ高度管理緩和、左右バランス計算簡素化
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """フェーズ制でマージと高度のバランスを最適化する."""
+    """v8の成功構造をベースに、二段階スコアリングを廃止して一貫性を確保する."""
 
     results = analysis.get("results", [])
 
@@ -44,10 +45,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     else:
         phase = "HIGH"
-        height_mult = 2.2  # v9: 3.0→2.2に引き下げ（高度管理緩和）
-        merge_mult = 1.0  # v9: 0.8→1.0に引き上げ（マージ優先強化）
+        height_mult = 2.4  # v11の2.4を維持
+        merge_mult = 1.0
 
-    # 左右バランス計算（カウントベース、シンプルで十分）
+    # 左右バランス計算（簡素化：カウントベースだがv8と同じ）
     left_count = sum(1 for p in pieces if p["x"] < 0)
     right_count = len(pieces) - left_count
     balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
@@ -69,31 +70,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # 1. マージグレードによるスコア（フェーズに応じて重み付け）
+        # 1. マージグレードによるスコア（ボーナスとして扱う）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += 1350.0 * merge_mult  # v12: 1300→1350に微増
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 750.0 * merge_mult  # v12: 700→750に微増
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 150.0 * merge_mult
+            score += 250.0 * merge_mult  # v12: 200→250に微増
             reasons.append("FAR_MERGE")
         else:
-            # マージなしはペナルティ（v9: HIGH倍率を緩和）
+            # マージなしはペナルティ（v12: v11の2.0を緩和して1.6に）
             no_merge_penalty = 200.0
             if phase == "HIGH":
-                no_merge_penalty *= 1.5  # v9: 2.0→1.5に引き下げ
+                no_merge_penalty *= 1.6  # v11: 2.0→1.6に緩和
             elif phase == "MEDIUM":
                 no_merge_penalty *= 1.5
             score -= no_merge_penalty
 
-        # 2. 高度によるスコア（フェーズに応じて重み付け）
+        # 2. 高度によるスコア（v8/v10に近づける、一貫性確保）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # 高盤面での追加ペナルティ
+        # 高盤面での追加ペナルティ（v12: v11の1.8倍は過剰、v8の1.5倍に戻す）
         if phase == "HIGH":
-            height_penalty *= 1.5  # v9: 2.0→1.5に引き下げ（高度管理緩和）
+            height_penalty *= 1.5  # v11: 1.8→1.5に緩和
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.3
@@ -107,7 +108,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（フェーズに応じて強化）
+        # 4. 左右バランス補正（v8と同様）
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 35.0
