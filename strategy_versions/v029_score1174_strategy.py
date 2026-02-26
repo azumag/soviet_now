@@ -15,13 +15,13 @@
 # [BEST:2015] v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バランス振り子パターンを解消、フェーズ閾値0.8/1.8調整
 # [BEST:2185] v12: 一貫性重視・シンプル化版 - 二段階スコアリング廃止、v8の構造に戻しつつマージボーナス強化、HIGHフェーズ高度管理緩和、左右バランス計算簡素化
 # [BEST:2325] v19: CRITICALフェーズ導入版 - HIGHフェーズのheight_mult過剰を修正、CRITICALフェーズ（max_y>3.0）を新設。CRITICALではマージ絶対優先（merge_mult=0.6、height_multなし、height_penaltyシンプル化）。MEDIUMフェーズheight_mult微増（2.2→2.4）でHIGH到達遅延、HIGHフェーズheight_mult微減（2.8→2.6）でマージ機会確保
-# v24: v19完全復活版 - v23の「v22の要素」（HIGHフェーズmerge_mult=1.2強化、MEDIUMフェーズheight_mult=1.6緩和）が失敗。v19のHIGHフェーズ設定（height_mult=2.6, merge_mult=1.0）を完全復活。MEDIUMフェーズheight_multをv19の2.4に戻し、HIGH到達を遅らせてマージ機会を最大化
-# v25: マージ重視への根本的シフト版 - v24の失敗（スコア667）を受けて、根本的な戦略変更を実施。履歴分析で「マージ不足」を特定し、高度管理とバランス補正を大幅に緩和。balance_strengthを全フェーズで5.0-10.0に弱体化（分散強制の解除）。高度ペナルティをbase_multiplier 50.0→30.0に緩和（マージのための高さ上げを許容）。マージボーナス強化（DIRECT=1500/NEAR=800/FAR=300）。same_type距離を評価し、同タイプピースに近づくproximityボーナスを新規追加（同タイプ集中戦略）。v19のフェーズ構造は維持しつつ、スコアリングをマージ重視に再設計
-# v26: v19復活・proximity削除版 - v25の失敗（スコア1584 vs v19の2325）を受けて、proximityボーナスの削除と高度管理の再導入を実施。履歴分析で「CLOSE_TO_SAME」が26回発動し、同タイプピースが過度に集中してマージ機会が減少したことを特定。proximityボーナスを削除し、v19の高度管理構造を復活。HIGHフェーズheight_multを2.0→2.4に強化（HIGH到達遅延）。balance_strengthを10.0→25.0に強化（ピースの偏り解消）。CRITICALフェーズのheight_multiplierを40.0→30.0に緩和（chain reaction最大化）。v25のマージボーナス強化（DIRECT=1500/NEAR=800/FAR=300）は維持
+# v27: HIGHフェーズ高度管理強化版 - v26の失敗（スコア640、赤ライン越え2個）を受けて、HIGHフェーズの高度管理を強化。height_multを2.4→3.2に大幅強化（赤ライン越え防止）。balance_strengthを25.0→30.0に強化（左右偏り解消）。HIGHフェーズでマージがある場合、height_penaltyを60%に緩和（chain reaction狙い）。v25のproximityボーナス導入は失敗したため採用せず、v26のシンプル構造を維持しつつHIGHフェーズでの安全性を確保
+# v28: v19復活・MEDIUM微調整版 - v27の失敗（スコア823、赤ライン越え2個）を受けて、v27のHIGHフェーズheight_penalty緩和ルール（60%）を削除。HIGHフェーズのheight_multを3.2→2.6に戻し（v19の成功値に復活）、balance_strengthを30.0→40.0に強化（v19の成功値に復活）。MEDIUMフェーズのheight_multを2.4→2.2に微調整（HIGH到達を遅延させ、スコア獲得機会を確保）。v26のマージボーナス強化（DIRECT=1500/NEAR=800/FAR=300）は維持。CRITICALフェーズのheight_multiplierを30.0→40.0に強化（v19の成功値に復活）
+# v29: HIGHフェーズマージ促進版 - v28の失敗（スコア721、HIGHフェーズで全くマージできない）を受けて、HIGHフェーズでのマージ促進戦略を導入。履歴分析でHIGHフェーズ（14ターン）でscore_delta=0、merge=falseを特定。MEDIUMフェーズのheight_multを2.2→2.4に戻し（HIGH到達遅延）。HIGHフェーズでマージがある場合、height_penaltyを70%に緩和し、drift_penaltyも70%に緩和（マージ機会確保）。マージボーナスをv19の成功値（DIRECT=1200/NEAR=600/FAR=200）に戻し（過剰なボーナスによる高度管理優先を解消）。v19のHIGHフェーズ設定（height_mult=2.6、balance_strength=40.0）を維持
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v19の高度管理構造を復活し、proximityボーナスを削除してマージ機会を最大化"""
+    """HIGHフェーズでのマージ機会を確保し、スコア停滞を解消"""
 
     results = analysis.get("results", [])
 
@@ -36,23 +36,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v26: v19の閾値0.8/1.8/3.0を維持）
+    # フェーズ判定（v29: v19の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v26: v25の1.5から強化（v19の2.4に復活）
+        height_mult = 2.4  # v29: v28の2.2からv19の2.4に戻す（HIGH到達遅延）
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 2.4  # v26: v25の2.0から強化（起伏確保とマージ許容のバランス）
+        height_mult = 2.6  # v29: v28の2.6を維持（v19の成功値）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 1.0
+        merge_mult = 0.6  # v29: v28の1.0からv19の0.6に戻す（マージ優先）
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -71,57 +71,67 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v26: v19の構造を復活しつつ、v25のマージボーナス強化を採用 ===
+        # === v29: HIGHフェーズでのマージ促進戦略 ===
 
-        # 1. マージグレードによるスコア（v25の強化値を維持）
+        # 1. マージグレードによるスコア（v29: v19の成功値に戻す）
         if merge_grade == "DIRECT":
-            score += 1500.0 * merge_mult  # v26: v25の1500を維持
+            score += 1200.0 * merge_mult  # v29: v28の1500からv19の1200に戻す
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 800.0 * merge_mult  # v26: v25の800を維持
+            score += 600.0 * merge_mult  # v29: v28の800からv19の600に戻す
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 300.0 * merge_mult  # v26: v25の300を維持
+            score += 200.0 * merge_mult  # v29: v28の300からv19の200に戻す
             reasons.append("FAR_MERGE")
-        # v26: 「マージなしペナルティ」削除維持（v19/v22/v23/v24/v25と同じ）
 
-        # 2. 高度によるスコア（v26: v19の構造を復活）
+        # 2. 高度によるスコア（v29: HIGHフェーズでマージありの場合は緩和）
         if phase == "CRITICAL":
-            # CRITICALフェーズではheight_multiplier緩和（chain reaction狙い）
-            height_multiplier = 30.0  # v26: v25の40.0から緩和
+            # CRITICALフェーズではheight_multiplier強化（v19の40.0を維持）
+            height_multiplier = 40.0
             height_penalty = landing_y * height_multiplier
             if landing_y > 1.0:
                 reasons.append("CRITICAL_HEIGHT")
         else:
-            height_penalty = landing_y * 50.0 * height_mult
+            # v29: HIGHフェーズでマージがある場合、height_penaltyを70%に緩和
+            height_penalty_factor = 1.0
+            if phase == "HIGH" and has_merge:
+                height_penalty_factor = 0.7  # マージ機会確保
+
+            height_penalty = landing_y * 50.0 * height_mult * height_penalty_factor
 
             # 高盤面での追加ペナルティ（CRITICALフェーズでは適用しない）
             if phase == "HIGH" and landing_y > 0.5:
-                height_penalty *= 2.0  # v26: v19の2.0を維持
+                height_penalty *= 2.0  # v29: v19の2.0を維持
                 reasons.append("HIGH_TOWER")
             elif phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.5  # v26: v19の1.5を維持
+                height_penalty *= 1.5  # v29: v19の1.5を維持
                 reasons.append("MEDIUM_TOWER")
             elif landing_y > 0.0:
                 reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v26: v19のフェーズ調整を採用）
+        # 3. ドリフトによるペナルティ（v29: HIGHフェーズでマージありの場合は緩和）
+        drift_penalty_factor = 1.0
+        if phase == "HIGH" and has_merge:
+            drift_penalty_factor = 0.7  # マージ機会確保
+
         if phase == "HIGH":
-            drift_penalty = (abs(drift_x) + drift_unc) * 40.0  # v26: v19の値を維持
+            drift_penalty = (
+                (abs(drift_x) + drift_unc) * 35.0 * drift_penalty_factor
+            )  # v29: v28の40.0からv27の35.0に減
         elif phase == "MEDIUM":
-            drift_penalty = (abs(drift_x) + drift_unc) * 35.0  # v26: v19の値を維持
+            drift_penalty = (abs(drift_x) + drift_unc) * 35.0  # v29: v19の35.0を維持
         else:  # LOW, CRITICAL
             drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v26: v19のフェーズ調整をベースに、強度調整）
+        # 4. 左右バランス補正（v29: v19の値を維持）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 25.0  # v26: v19の40.0から緩和（v25の10.0から強化）
+            balance_strength = 40.0  # v29: v28の40.0を維持（v19の値）
         elif phase == "MEDIUM":
-            balance_strength = 22.0  # v26: v19の30.0から緩和（v25の8.0から強化）
+            balance_strength = 30.0  # v29: v28の30.0を維持（v19の値）
         # CRITICALフェーズではバランス補正緩和（マージ優先）
 
         # 簡素化されたバランス計算
@@ -132,14 +142,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v26: v19の設定を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v29: v19の設定を維持）
         if next_next_type == next_type:
             if phase == "CRITICAL":
                 center_bonus = (
                     max(0, 1.0 - abs(x) / 2.0) * 60.0
-                )  # v26: v19のCRITICAL強化
+                )  # v29: v19のCRITICAL強化
             else:
-                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0  # v26: v19の値を維持
+                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0  # v29: v19の値を維持
             score += center_bonus
             reasons.append("NEXT_SAME")
 
