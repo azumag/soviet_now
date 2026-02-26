@@ -10,10 +10,11 @@
 
 # --- 変更履歴 ---
 # v36: v19復活・シンプル化版 - v35の失敗（chain reaction活用による複雑化、スコア1666点）を受けて、reactive_pairs条件分岐を完全に削除し、v19の成功構造に復活。v19（2325点）のシンプルかつ堅実な戦略を踏襲しつつ、不要なロジックを削除してコードを簡素化。
+# v37: HIGHフェーズマージ優先版 - v36の失敗（スコア1072点、HIGHフェーズでマージ率37%）を受けて、HIGHフェーズでのマージ機会確保戦略を導入。履歴分析でHIGHフェーズ（16ターン）でHIGH_TOWER決定が10回を特定、高度管理が優先されすぎている。v19のシンプル構造を維持しつつ、HIGHフェーズでhas_mergeがある場合、height_penaltyを60%に緩和し、drift_penaltyも70%に緩和（v29/v30の成功要素を改良）。v19のマージボーナス（DIRECT=1200/NEAR=600/FAR=200）とheight_mult設定を維持。コード量約135行でシンプル化。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v19の成功構造をベースに、シンプル化して堅実性を向上"""
+    """v19の成功構造をベースに、HIGHフェーズでマージがある場合に高度管理を緩和"""
 
     results = analysis.get("results", [])
 
@@ -35,16 +36,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v19の成功値
+        height_mult = 2.4  # v19: HIGH到達遅延
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 2.6  # v19の成功値
+        height_mult = 2.6  # v19: マージ機会確保
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0
-        merge_mult = 0.6  # v19の成功値
+        merge_mult = 0.6  # v19: マージ優先
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -58,6 +59,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")
+        has_merge = result.get("has_merge", False)
 
         score = 0.0
         reasons = []
@@ -73,31 +75,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるスコア（v19の成功構造）
+        # 2. 高度によるスコア（v37: HIGHフェーズでマージがある場合は緩和）
         if phase == "CRITICAL":
-            # CRITICALフェーズではheight_multiplier強化
+            # CRITICALフェーズではheight_multiplier強化（v19の40.0を維持）
             height_penalty = landing_y * 40.0
             if landing_y > 1.0:
                 reasons.append("CRITICAL_HEIGHT")
         else:
-            # HIGH/MEDIUM/LOWフェーズ
-            height_penalty = landing_y * 50.0 * height_mult
+            # v37: HIGHフェーズでマージがある場合、height_penaltyを60%に緩和
+            height_penalty_factor = 1.0
+            if phase == "HIGH" and has_merge:
+                height_penalty_factor = 0.6  # マージ機会確保
 
-            # 高盤面での追加ペナルティ（v19の成功値）
+            height_penalty = landing_y * 50.0 * height_mult * height_penalty_factor
+
+            # 高盤面での追加ペナルティ（CRITICALフェーズでは適用しない）
             if phase == "HIGH" and landing_y > 0.5:
-                height_penalty *= 2.0
+                height_penalty *= 2.0  # v19の成功値
                 reasons.append("HIGH_TOWER")
             elif phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.5
+                height_penalty *= 1.5  # v19の成功値
                 reasons.append("MEDIUM_TOWER")
             elif landing_y > 0.0:
                 reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v19の成功値）
+        # 3. ドリフトによるペナルティ（v37: HIGHフェーズでマージがある場合は緩和）
+        drift_penalty_factor = 1.0
+        if phase == "HIGH" and has_merge:
+            drift_penalty_factor = 0.7  # マージ機会確保
+
         if phase == "HIGH":
-            drift_penalty = (abs(drift_x) + drift_unc) * 40.0  # v19の成功値
+            drift_penalty = (
+                (abs(drift_x) + drift_unc) * 40.0 * drift_penalty_factor
+            )  # v19の成功値
         elif phase == "MEDIUM":
             drift_penalty = (abs(drift_x) + drift_unc) * 35.0  # v19の成功値
         else:  # LOW, CRITICAL
