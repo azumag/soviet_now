@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""analyze_board.py - 盤面空間解析プリプロセッサ
+"""analyze_board.py - 盤面空間解析プリプロセッサ (人工化学モデル対応版)
+
+ゲームを空間的反応器 (S=ピース種, R=A+A→B, A=物理エンジン) として解析。
 game_state.json を空間解析し、マージ可否・着地予測・推奨ドロップを計算。
-LLMが幾何学計算をしなくて済むように前処理する。
+物理挙動（回転・転がり・爆発衝撃波）を考慮した予測を含む。
 
 Usage: python3 analyze_board.py [game_state.json] [output.md]
 """
@@ -14,14 +16,225 @@ import sys
 # --- 定数 ---
 WALL_LEFT = -3.5
 WALL_RIGHT = 3.5
-DROP_X_MIN = -3.2
-DROP_X_MAX = 3.2
+DROP_X_MIN = -3.0
+DROP_X_MAX = 3.0
 FLOOR_Y = -5.0
 DROP_Y = 4.25
 DEADLINE_Y = 2.5
 
-# 解析するX位置 (0.2刻み)
-SAMPLE_XS = [round(-3.2 + i * 0.2, 1) for i in range(33)]  # -3.2 to 3.2
+# 物理定数（Unity 2D Physics準拠）
+GRAVITY = 9.81
+EXPLOSION_FORCE = 450.0
+EXPLOSION_RADIUS = 2.0
+MASS_MULTIPLIER = 10.0  # RepublicController: mass *= 10
+
+# 解析するX位置 (0.2刻み) + マージターゲット付近の精密サンプル
+BASE_XS = [round(-3.0 + i * 0.2, 1) for i in range(31)]  # -3.0 to 3.0
+
+
+# --- 物理予測関数 ---
+
+def estimate_polygon_drift(drop_x, landing_y, hit_id, next_r, pieces, shapes, next_type):
+    """ポリゴン形状を考慮した着地後のドリフト推定。
+    凸ポリゴンは着地後に回転・転がりを起こし、最終位置がdrop_xからずれる。
+
+    戻り値: (drift_x, drift_uncertainty)
+      drift_x: 推定ドリフト量（正=右方向）
+      drift_uncertainty: 不確実性（大きいほど予測不能）
+    """
+    shape_key = str(next_type)
+    if shape_key not in shapes:
+        return 0.0, 0.0  # 形状データなし → ドリフトなし
+
+    verts = shapes[shape_key]
+    if len(verts) < 3:
+        return 0.0, 0.0
+
+    # ポリゴンの非円形度を計算（円からの偏差）
+    dists = [math.sqrt(v[0]**2 + v[1]**2) for v in verts]
+    mean_r = sum(dists) / len(dists)
+    variance = sum((d - mean_r)**2 for d in dists) / len(dists)
+    eccentricity = math.sqrt(variance) / mean_r if mean_r > 0 else 0
+
+    # 非円形度が高いほどドリフトが大きい
+    # 着地面の傾斜を推定（ヒットしたピースの位置からの相対角度）
+    slope = 0.0
+    if hit_id is not None:
+        hit_piece = next((p for p in pieces if p["id"] == hit_id), None)
+        if hit_piece:
+            dx = drop_x - hit_piece["x"]
+            # ピース表面の傾斜: 中心からずれるほど急斜面
+            norm_dx = dx / (next_r + hit_piece["r"]) if (next_r + hit_piece["r"]) > 0 else 0
+            slope = norm_dx  # -1〜+1, 正=右下がり斜面
+
+    # ドリフト推定: 斜面方向 × 非円形度 × 半径
+    drift_x = slope * eccentricity * next_r * 2.0
+
+    # 壁際での反射
+    estimated_x = drop_x + drift_x
+    if estimated_x < WALL_LEFT + next_r:
+        drift_x = (WALL_LEFT + next_r) - drop_x
+    elif estimated_x > WALL_RIGHT - next_r:
+        drift_x = (WALL_RIGHT - next_r) - drop_x
+
+    # 不確実性: 非円形度と着地高さに比例
+    uncertainty = eccentricity * next_r * 1.5
+
+    return round(drift_x, 3), round(uncertainty, 3)
+
+
+def estimate_explosion_displacement(merge_x, merge_y, pieces, exclude_ids=None):
+    """マージ爆発衝撃波による周囲ピースの移動予測。
+    Unity: AddExplosionForce2D(origin, 450, 2.0, ForceMode2D.Impulse)
+
+    戻り値: [(piece_id, dx, dy, new_contact_pairs), ...]
+    """
+    if exclude_ids is None:
+        exclude_ids = set()
+
+    displacements = []
+    for p in pieces:
+        if p["id"] in exclude_ids:
+            continue
+        dx = p["x"] - merge_x
+        dy = p["y"] - merge_y
+        dist = math.sqrt(dx**2 + dy**2)
+        if dist >= EXPLOSION_RADIUS or dist < 0.01:
+            continue
+
+        # forceFalloff = 1 - (distance / explosionRadius)
+        falloff = 1.0 - dist / EXPLOSION_RADIUS
+        # 推定質量: r^2に比例 × MASS_MULTIPLIER
+        mass = (p["r"] ** 2) * MASS_MULTIPLIER * 3.14
+        # impulse → velocity = force * falloff / mass
+        if mass < 0.01:
+            continue
+        force_magnitude = EXPLOSION_FORCE * falloff / mass
+        # 方向
+        ndx = dx / dist
+        ndy = dy / dist
+        # 推定変位量（impulse後に重力で減衰、簡易推定0.3秒分）
+        disp_x = ndx * force_magnitude * 0.3
+        disp_y = ndy * force_magnitude * 0.3 - 0.5 * GRAVITY * 0.09  # 重力減衰
+        # 壁・床でクランプ
+        new_x = max(WALL_LEFT + p["r"], min(WALL_RIGHT - p["r"], p["x"] + disp_x))
+        new_y = max(FLOOR_Y + p["r"], p["y"] + disp_y)
+        actual_dx = new_x - p["x"]
+        actual_dy = new_y - p["y"]
+
+        if abs(actual_dx) > 0.05 or abs(actual_dy) > 0.05:
+            displacements.append({
+                "id": p["id"],
+                "type": p["type"],
+                "dx": round(actual_dx, 2),
+                "dy": round(actual_dy, 2),
+                "new_x": round(new_x, 2),
+                "new_y": round(new_y, 2),
+            })
+
+    # 爆発後に新たなマージペアが生まれるか検査
+    new_merges = []
+    moved = {d["id"]: d for d in displacements}
+    for i, p1 in enumerate(pieces):
+        if p1["id"] in exclude_ids:
+            continue
+        for p2 in pieces[i+1:]:
+            if p2["id"] in exclude_ids:
+                continue
+            if p1["type"] != p2["type"]:
+                continue
+            # 移動後座標
+            x1 = moved[p1["id"]]["new_x"] if p1["id"] in moved else p1["x"]
+            y1 = moved[p1["id"]]["new_y"] if p1["id"] in moved else p1["y"]
+            x2 = moved[p2["id"]]["new_x"] if p2["id"] in moved else p2["x"]
+            y2 = moved[p2["id"]]["new_y"] if p2["id"] in moved else p2["y"]
+            # 移動前距離
+            old_dist = math.sqrt((p1["x"]-p2["x"])**2 + (p1["y"]-p2["y"])**2)
+            # 移動後距離
+            new_dist = math.sqrt((x1-x2)**2 + (y1-y2)**2)
+            contact_r = p1["r"] + p2["r"]
+            if new_dist < contact_r * 1.2 and old_dist >= contact_r * 1.2:
+                new_merges.append((p1["id"], p2["id"], p1["type"]))
+
+    return displacements, new_merges
+
+
+def calc_reactor_state(pieces):
+    """人工化学としての反応器状態を解析。
+    - 分子種ごとの濃度（個数）
+    - 反応可能ペア数（接触圏内の同type）
+    - パイプライン健全性（type連鎖の接続性）
+    - 空間的分離度
+    """
+    if not pieces:
+        return {}
+
+    # 分子種カウント
+    type_count = {}
+    for p in pieces:
+        type_count[p["type"]] = type_count.get(p["type"], 0) + 1
+
+    # 反応可能ペア数（同typeで接触圏内 ×1.5）
+    reactive_pairs = []
+    near_pairs = []
+    for i, p1 in enumerate(pieces):
+        for p2 in pieces[i+1:]:
+            if p1["type"] != p2["type"]:
+                continue
+            dist = math.sqrt((p1["x"]-p2["x"])**2 + (p1["y"]-p2["y"])**2)
+            contact_r = p1["r"] + p2["r"]
+            if dist < contact_r * 1.1:
+                reactive_pairs.append((p1["id"], p2["id"], p1["type"]))
+            elif dist < contact_r * 2.0:
+                near_pairs.append((p1["id"], p2["id"], p1["type"], round(dist - contact_r, 2)))
+
+    # パイプライン健全性: 連続するtype間の距離
+    types_present = sorted(type_count.keys())
+    pipeline = []
+    for t in types_present:
+        t_next = t + 1
+        if t_next not in type_count:
+            continue
+        # type t と type t+1 の最近接距離
+        ps_t = [p for p in pieces if p["type"] == t]
+        ps_tn = [p for p in pieces if p["type"] == t_next]
+        min_dist = float("inf")
+        for a in ps_t:
+            for b in ps_tn:
+                d = math.sqrt((a["x"]-b["x"])**2 + (a["y"]-b["y"])**2)
+                if d < min_dist:
+                    min_dist = d
+        pipeline.append((t, t_next, round(min_dist, 2)))
+
+    # 空間的分離度: LEFT vs RIGHT の分子分布
+    left_types = {}
+    right_types = {}
+    for p in pieces:
+        bucket = left_types if p["x"] < 0 else right_types
+        bucket[p["type"]] = bucket.get(p["type"], 0) + 1
+
+    return {
+        "type_count": type_count,
+        "reactive_pairs": reactive_pairs,
+        "near_pairs": near_pairs,
+        "pipeline": pipeline,
+        "left_types": left_types,
+        "right_types": right_types,
+    }
+
+
+def build_sample_xs(pieces, next_type):
+    """基本サンプル + マージターゲット座標の精密サンプルを生成"""
+    xs = set(BASE_XS)
+    same_type = [p for p in pieces if p["type"] == next_type]
+    for p in same_type:
+        tx = p["x"]
+        # ターゲット座標を中心に±0.3を0.05刻みで追加
+        for offset in range(-6, 7):
+            candidate = round(tx + offset * 0.05, 2)
+            if DROP_X_MIN <= candidate <= DROP_X_MAX:
+                xs.add(candidate)
+    return sorted(xs)
 
 
 def load_game_state(path):
@@ -48,34 +261,143 @@ def get_landing_info(drop_x, drop_r, pieces):
     return landing_y, hit_id
 
 
-def analyze_drops(pieces, next_type, next_r):
+def has_obstruction(drop_x, drop_r, target, pieces):
+    """DIRECT判定時に、ターゲットの上方にドロップ経路を妨害するピースがないか確認。
+    厳密な衝突判定では検出されないが、実際のゲームでは干渉する
+    ギリギリのピースを安全マージン(20%)で検出する。"""
+    MARGIN = 1.2
+    for p in pieces:
+        if p["id"] == target["id"]:
+            continue
+        # ターゲットより上にあるピースのみチェック
+        if p["y"] + p["r"] < target["y"]:
+            continue
+        # ドロップ経路との干渉チェック（マージン付き）
+        margin_r = (drop_r + p["r"]) * MARGIN
+        if abs(drop_x - p["x"]) < margin_r:
+            return True
+    return False
+
+
+# --- マージ確率・スコア定数 ---
+MERGE_PROB = {"DIRECT": 0.90, "NEAR": 0.50, "NO": 0.0}
+# ゲームスコア: typeN同士マージ → typeN+1 のスコア (概算: type^2)
+MERGE_SCORE = {i: i * i for i in range(1, 17)}
+
+# 同type近接ペアのシェイク確率 (距離/接触距離 の比に基づく)
+SHAKE_BASE_PROB = 0.15
+
+
+def calc_chain_potential(merge_x, merge_y, merged_type, pieces):
+    """マージ後ピース(typeN+1)が既存の同typeとさらに連鎖する期待値を計算。
+    マージ後ピースは2つの中間座標に出現する。"""
+    chain_type = merged_type + 1
+    if chain_type > 16:
+        return 0.0
+    chain_targets = [p for p in pieces if p["type"] == chain_type]
+    if not chain_targets:
+        return 0.0
+    best_ev = 0.0
+    for ct in chain_targets:
+        dist = math.sqrt((merge_x - ct["x"]) ** 2 + (merge_y - ct["y"]) ** 2)
+        # 連鎖確率: 距離が近いほど高い
+        if dist < 0.5:
+            prob = 0.6
+        elif dist < 1.5:
+            prob = 0.3
+        elif dist < 3.0:
+            prob = 0.1
+        else:
+            prob = 0.0
+        ev = prob * MERGE_SCORE.get(chain_type, 0)
+        if ev > best_ev:
+            best_ev = ev
+    return best_ev
+
+
+def calc_shake_ev(drop_x, landing_y, next_r, pieces):
+    """小ピースドロップによるシェイク効果の期待値。
+    着地点の下方に同type近接ペアがあれば、揺れでマージする可能性を計算。"""
+    ev = 0.0
+    # 着地点より下にある同typeペアを探す
+    type_groups = {}
+    for p in pieces:
+        if p["y"] < landing_y:
+            type_groups.setdefault(p["type"], []).append(p)
+
+    for t, group in type_groups.items():
+        if len(group) < 2:
+            continue
+        # ペア間の距離をチェック
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                a, b = group[i], group[j]
+                dist = math.sqrt((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2)
+                contact_r = a["r"] + b["r"]
+                gap_ratio = dist / contact_r if contact_r > 0 else 99
+                if gap_ratio < 2.0:  # 接触距離の2倍以内 → シェイクで動く可能性
+                    # 着地点からの距離でシェイク効果が減衰
+                    mid_x = (a["x"] + b["x"]) / 2
+                    mid_y = (a["y"] + b["y"]) / 2
+                    shake_dist = math.sqrt((drop_x - mid_x) ** 2 + (landing_y - mid_y) ** 2)
+                    if shake_dist < 3.0:
+                        prob = SHAKE_BASE_PROB * (1.0 - gap_ratio / 2.0) * max(0, 1.0 - shake_dist / 3.0)
+                        ev += prob * MERGE_SCORE.get(t, 0)
+    return ev
+
+
+def analyze_drops(pieces, next_type, next_r, shapes=None):
     """全サンプルXについて着地Y・マージ可否を計算。
+    物理挙動（ドリフト・爆発衝撃波）を考慮した拡張版。
+
     マージ判定は3段階:
-      DIRECT = 最初に衝突するのがターゲット自身（確実マージ）
+      DIRECT = 最初に衝突するのがターゲット自身で、経路上に妨害なし（確実マージ）
       NEAR   = 着地後にターゲットと接触圏内（高確率マージ）
       NO     = 到達不能
     """
+    if shapes is None:
+        shapes = {}
     same_type = [p for p in pieces if p["type"] == next_type]
     target_ids = {p["id"] for p in same_type}
+    sample_xs = build_sample_xs(pieces, next_type)
     results = []
 
-    for x in SAMPLE_XS:
+    for x in sample_xs:
         if x < DROP_X_MIN - 0.01 or x > DROP_X_MAX + 0.01:
             continue
 
         ly, hit_id = get_landing_info(x, next_r, pieces)
 
-        # 各同typeピースへのマージ判定
+        # ポリゴン形状によるドリフト推定
+        drift_x, drift_unc = estimate_polygon_drift(
+            x, ly, hit_id, next_r, pieces, shapes, next_type
+        )
+        # ドリフト後の推定最終X
+        settled_x = x + drift_x
+
+        # 各同typeピースへのマージ判定（ドリフト考慮）
         merges = []
         for t in same_type:
             contact_r = next_r + t["r"]  # 厳密接触距離
-            dist = math.sqrt((x - t["x"]) ** 2 + (ly - t["y"]) ** 2)
+            # 静的着地位置での距離
+            dist_static = math.sqrt((x - t["x"]) ** 2 + (ly - t["y"]) ** 2)
+            # ドリフト後の距離
+            dist_drifted = math.sqrt((settled_x - t["x"]) ** 2 + (ly - t["y"]) ** 2)
+            # マージ判定は両方の距離を考慮（どちらかで接触すればマージ可能）
+            dist = min(dist_static, dist_drifted)
 
             if hit_id == t["id"]:
-                # 最初の衝突相手がターゲット → 確実マージ
-                grade = "DIRECT"
+                # 最初の衝突相手がターゲット → 妨害チェック
+                if has_obstruction(x, next_r, t, pieces):
+                    # 経路上に妨害ピースあり → 降格
+                    grade = "NEAR" if dist < contact_r * 1.3 else "NO"
+                else:
+                    grade = "DIRECT"
             elif dist < contact_r * 1.1:
                 # 着地後にターゲットとほぼ接触 → 高確率マージ
+                grade = "NEAR"
+            elif dist_drifted < contact_r * 1.3 and drift_unc > 0:
+                # ドリフトで接触する可能性あり → 低確率NEAR
                 grade = "NEAR"
             else:
                 grade = "NO"
@@ -104,32 +426,66 @@ def analyze_drops(pieces, next_type, next_r):
 
         has_merge = best_grade in ("DIRECT", "NEAR")
 
-        # スコア計算
-        sc = 0
-        if best_grade == "DIRECT":
-            # 直撃マージは最優先。着地高さペナルティを大幅軽減
-            sc += 200
-            if best_merge_dist is not None:
-                sc += max(0, 50 - best_merge_dist * 10)
-            sc -= max(0, ly - DEADLINE_Y) * 100  # デッドライン超えのみペナルティ
-        elif best_grade == "NEAR":
-            sc += 130
-            if best_merge_dist is not None:
-                sc += max(0, 30 - best_merge_dist * 10)
-            sc -= ly * 5  # 軽い高さペナルティ
-        else:
-            sc -= ly * 10  # 低い場所優先
-        sc -= abs(x) * 2  # 中央寄せ
+        # --- 期待値ベーススコア計算 ---
+        merge_ev = 0.0
+        chain_ev = 0.0
+        explosion_ev = 0.0
+        best_merge_target = None
+
+        # マージ期待値: P(merge) × score
+        for m in merges:
+            prob = MERGE_PROB.get(m["grade"], 0.0)
+            if prob > 0:
+                score_val = MERGE_SCORE.get(next_type, 0)
+                ev = prob * score_val
+                if ev > merge_ev:
+                    merge_ev = ev
+                    best_merge_target = m
+
+        # 連鎖期待値 + 爆発衝撃波期待値
+        if best_merge_target and best_grade in ("DIRECT", "NEAR"):
+            # マージ後ピースは2つの中間に出現
+            merged_x = (x + best_merge_target["tx"]) / 2
+            merged_y = (ly + best_merge_target["ty"]) / 2
+            chain_ev = MERGE_PROB[best_grade] * calc_chain_potential(
+                merged_x, merged_y, next_type, pieces
+            )
+
+            # 爆発衝撃波によるボーナスマージ予測
+            exclude = {best_merge_target["id"]}  # マージ消滅ピース
+            _, explosion_merges = estimate_explosion_displacement(
+                merged_x, merged_y, pieces, exclude
+            )
+            for _, _, etype in explosion_merges:
+                explosion_ev += MERGE_PROB[best_grade] * 0.3 * MERGE_SCORE.get(etype, 0)
+
+        # シェイク期待値: 着地衝撃で下層ピースがマージする可能性
+        shake_ev = calc_shake_ev(x, ly, next_r, pieces)
+
+        # 総合期待値
+        total_ev = merge_ev + chain_ev + shake_ev + explosion_ev
+
+        # デッドライン超えペナルティ
         if ly > DEADLINE_Y:
-            sc -= 500  # デッドライン超えは常にペナルティ
+            total_ev -= 500
+
+        # ドリフト不確実性ペナルティ（大きいほど予測不能）
+        if drift_unc > 0.3:
+            total_ev -= drift_unc * 10
 
         results.append({
-            "x": round(x, 1),
+            "x": round(x, 2),
             "landing_y": round(ly, 3),
+            "drift_x": drift_x,
+            "drift_unc": drift_unc,
             "merges": merges,
             "has_merge": has_merge,
             "merge_grade": best_grade,
-            "score": round(sc, 1),
+            "score": round(total_ev, 1),
+            "merge_ev": round(merge_ev, 1),
+            "chain_ev": round(chain_ev, 1),
+            "shake_ev": round(shake_ev, 1),
+            "explosion_ev": round(explosion_ev, 1),
         })
 
     results.sort(key=lambda r: r["score"], reverse=True)
@@ -183,14 +539,16 @@ def ascii_board(pieces):
     return "\n".join(lines)
 
 
-def format_report(state, results, same_type, pieces):
-    """解析結果をMarkdownレポートに整形"""
+def format_report(state, results, same_type, pieces, reactor=None):
+    """解析結果をMarkdownレポートに整形（人工化学モデル対応版）"""
     nxt = state.get("next", {})
     nn = state.get("nextNext", {})
     nt, nr = nxt.get("type", 0), nxt.get("r", 0.5)
     nnt, nnr = nn.get("type", 0), nn.get("r", 0.5)
     score = state.get("score", 0)
     top_y = max((p["y"] for p in pieces), default=-5)
+    if reactor is None:
+        reactor = {}
 
     out = []
     out.append("# 盤面解析レポート")
@@ -219,10 +577,20 @@ def format_report(state, results, same_type, pieces):
     out.append("```")
     out.append("")
 
-    # ピース一覧
+    # ピース一覧（物理状態付き）
     out.append("## ピース一覧 (上→下)")
     for p in sorted(pieces, key=lambda p: -p["y"]):
-        out.append(f"  id{p['id']:>3d}  type{p['type']:>2d}  r={p['r']:.3f}  ({p['x']:+.2f}, {p['y']:+.2f})")
+        phys = ""
+        vx, vy = p.get("vx", 0), p.get("vy", 0)
+        av = p.get("av", 0)
+        angle = p.get("angle", 0)
+        if abs(vx) > 0.1 or abs(vy) > 0.1:
+            phys += f" v=({vx:+.1f},{vy:+.1f})"
+        if abs(av) > 1.0:
+            phys += f" av={av:+.0f}"
+        if angle != 0:
+            phys += f" {angle:.0f}deg"
+        out.append(f"  id{p['id']:>3d}  type{p['type']:>2d}  r={p['r']:.3f}  ({p['x']:+.2f}, {p['y']:+.2f}){phys}")
     out.append("")
 
     # マージ判定
@@ -253,12 +621,12 @@ def format_report(state, results, same_type, pieces):
             if best_direct:
                 out.append(
                     f"  → id{target['id']} at ({target['x']:+.2f},{target['y']:+.2f}): "
-                    f"[YES-直撃] DROP:{best_direct['x']:.1f} 着地y={best_direct['ly']:.2f} 距離={best_direct['dist']:.2f}"
+                    f"[YES-直撃] DROP:{best_direct['x']:.2f} 着地y={best_direct['ly']:.2f} 距離={best_direct['dist']:.2f}"
                 )
             elif best_near:
                 out.append(
                     f"  → id{target['id']} at ({target['x']:+.2f},{target['y']:+.2f}): "
-                    f"[YES-近接] DROP:{best_near['x']:.1f} 着地y={best_near['ly']:.2f} 距離={best_near['dist']:.2f}"
+                    f"[YES-近接] DROP:{best_near['x']:.2f} 着地y={best_near['ly']:.2f} 距離={best_near['dist']:.2f}"
                 )
             else:
                 info = ""
@@ -274,17 +642,20 @@ def format_report(state, results, same_type, pieces):
     nn_same = [p for p in pieces if p["type"] == nnt]
     out.append(f"## 次手情報 (nextNext=type{nnt})")
     if not nn_same:
-        out.append(f"盤面にtype{nnt}なし")
+        out.append(f"盤面にtype{nnt}なし → nextNextマージ保護不要")
     else:
+        out.append(f"⚠ 盤面にtype{nnt}あり → nextNextでマージ可能！今回のドロップで以下のピースの上・隣に積むな:")
         for t in nn_same:
-            out.append(f"  id{t['id']} at ({t['x']:+.2f},{t['y']:+.2f})")
-        out.append("→ 今回のドロップで上記付近を塞がないよう注意")
+            out.append(f"  🛡 id{t['id']} at ({t['x']:+.2f},{t['y']:+.2f}) — この付近を塞ぐとnextNextマージ機会を失う")
+        # 今回のnextTypeと同じ場合は特に警告
+        if nt == nnt:
+            out.append(f"  ⚠⚠ next=nextNext=type{nt} — 今回マージできても、マージ後ピース(type{nt+1})付近も確認せよ")
     out.append("")
 
     # ドロップ推奨ランキング
-    out.append("## ドロップ推奨ランキング TOP10")
-    out.append("| 順位 | X座標  | 着地Y  | マージ   | スコア |")
-    out.append("|------|--------|--------|----------|--------|")
+    out.append("## ドロップ推奨ランキング TOP10 (期待値ベース)")
+    out.append("| 順位 | X座標   | 着地Y  | ドリフト | マージ   | 期待値 | 内訳(マージ/連鎖/シェイク/爆発) |")
+    out.append("|------|---------|--------|---------|----------|--------|-------------------------------|")
     for i, r in enumerate(results[:10]):
         grade = r["merge_grade"]
         if grade == "DIRECT":
@@ -293,7 +664,13 @@ def format_report(state, results, same_type, pieces):
             mg = "[近接]"
         else:
             mg = "  -   "
-        out.append(f"| {i+1:>4d} | {r['x']:+5.1f} | {r['landing_y']:+6.2f} | {mg} | {r['score']:+6.1f} |")
+        m_ev = r.get("merge_ev", 0)
+        c_ev = r.get("chain_ev", 0)
+        s_ev = r.get("shake_ev", 0)
+        e_ev = r.get("explosion_ev", 0)
+        drift = r.get("drift_x", 0)
+        drift_s = f"{drift:+.2f}" if abs(drift) > 0.02 else "  0  "
+        out.append(f"| {i+1:>4d} | {r['x']:+6.2f} | {r['landing_y']:+6.2f} | {drift_s} | {mg} | {r['score']:+6.1f} | {m_ev:.1f} / {c_ev:.1f} / {s_ev:.1f} / {e_ev:.1f} |")
     out.append("")
 
     # 高さマップ (主要位置)
@@ -308,21 +685,78 @@ def format_report(state, results, same_type, pieces):
     out.extend(hm)
     out.append("")
 
+    # 物理予測（TOP3のドリフト警告）
+    drift_warns = [r for r in results[:5] if abs(r.get("drift_x", 0)) > 0.1]
+    if drift_warns:
+        out.append("## 物理予測: 着地後ドリフト警告")
+        for r in drift_warns[:3]:
+            d = r["drift_x"]
+            u = r.get("drift_unc", 0)
+            direction = "右" if d > 0 else "左"
+            out.append(f"  x={r['x']:+.2f} → 着地後{direction}に{abs(d):.2f}ドリフト (不確実性:{u:.2f})")
+        out.append("")
+
+    # 反応器状態レポート（人工化学分析）
+    if reactor:
+        out.append("## 反応器状態 (人工化学分析)")
+
+        # 分子種分布
+        tc = reactor.get("type_count", {})
+        if tc:
+            species = " ".join(f"t{t}:{c}" for t, c in sorted(tc.items()))
+            out.append(f"分子種: {species}")
+
+        # 反応可能ペア
+        rp = reactor.get("reactive_pairs", [])
+        if rp:
+            out.append(f"即時反応可能: {len(rp)}ペア")
+            for a, b, t in rp:
+                out.append(f"  id{a}+id{b} (type{t}) → type{t+1}に反応可能")
+
+        # 近接ペア（触媒で反応誘導可能）
+        np_ = reactor.get("near_pairs", [])
+        if np_:
+            out.append(f"触媒誘導可能: {len(np_)}ペア")
+            for a, b, t, gap in np_[:5]:
+                out.append(f"  id{a}+id{b} (type{t}) gap={gap:.2f} → シェイク/押し込みでマージ可能")
+
+        # パイプライン健全性
+        pl = reactor.get("pipeline", [])
+        if pl:
+            out.append("パイプライン:")
+            for t1, t2, d in pl:
+                status = "OK" if d < 3.0 else "WARN" if d < 5.0 else "BROKEN"
+                out.append(f"  type{t1}→{t2}: 距離{d:.1f} [{status}]")
+
+        # 左右バランス
+        lt = reactor.get("left_types", {})
+        rt = reactor.get("right_types", {})
+        left_big = sum(v for k, v in lt.items() if k >= 8)
+        right_big = sum(v for k, v in rt.items() if k >= 8)
+        if left_big + right_big > 0:
+            out.append(f"大型ピース分布: LEFT={left_big} RIGHT={right_big}")
+
+        out.append("")
+
     # 最終推奨
     if results:
         best = results[0]
-        out.append(f"## 推奨ドロップ: DROP:{best['x']:.1f}")
+        drift_note = ""
+        if abs(best.get("drift_x", 0)) > 0.1:
+            d = best["drift_x"]
+            drift_note = f", ドリフト{'右' if d>0 else '左'}{abs(d):.2f}"
+        out.append(f"## 推奨ドロップ: DROP:{best['x']:.2f}")
         grade = best["merge_grade"]
         if grade == "DIRECT":
             merge_targets = [m for m in best["merges"] if m["grade"] == "DIRECT"]
             ids = ",".join(f"id{m['id']}" for m in merge_targets)
-            out.append(f"理由: type{nt}直撃マージ({ids}), 着地y={best['landing_y']:.2f}")
+            out.append(f"理由: type{nt}直撃マージ({ids}), 着地y={best['landing_y']:.2f}{drift_note}")
         elif grade == "NEAR":
             merge_targets = [m for m in best["merges"] if m["grade"] == "NEAR"]
             ids = ",".join(f"id{m['id']}" for m in merge_targets)
-            out.append(f"理由: type{nt}近接マージ({ids}), 着地y={best['landing_y']:.2f}")
+            out.append(f"理由: type{nt}近接マージ({ids}), 着地y={best['landing_y']:.2f}{drift_note}")
         else:
-            out.append(f"理由: 最も低い着地点(y={best['landing_y']:.2f}), 中央寄り")
+            out.append(f"理由: 最も低い着地点(y={best['landing_y']:.2f}), 中央寄り{drift_note}")
 
     return "\n".join(out)
 
@@ -341,12 +775,14 @@ def main():
         return
 
     pieces = state.get("pieces", [])
+    shapes = state.get("shapes", {})
     nxt = state.get("next", {})
     nt = nxt.get("type", 0)
     nr = nxt.get("r", 0.5)
 
-    results, same_type = analyze_drops(pieces, nt, nr)
-    report = format_report(state, results, same_type, pieces)
+    results, same_type = analyze_drops(pieces, nt, nr, shapes)
+    reactor = calc_reactor_state(pieces)
+    report = format_report(state, results, same_type, pieces, reactor)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w") as f:
@@ -356,7 +792,7 @@ def main():
     if results:
         best = results[0]
         mg = "merge" if best["has_merge"] else "no-merge"
-        print(f"  → 推奨 DROP:{best['x']:.1f} (着地y={best['landing_y']:.2f}, {mg}) → {out_path}")
+        print(f"  → 推奨 DROP:{best['x']:.2f} (着地y={best['landing_y']:.2f}, {mg}) → {out_path}")
     else:
         print(f"  → 解析完了 → {out_path}")
 

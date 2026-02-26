@@ -140,12 +140,24 @@ function writeGameState(state) {
   fs.writeFileSync(GAME_STATE_PATH, JSON.stringify(state, null, 2));
 }
 
+// Check if state has changed (compare relevant fields)
+function stateChanged(prev, curr) {
+  if (!prev || !curr) return true;
+  return prev.state !== curr.state ||
+         prev.score !== curr.score ||
+         JSON.stringify(prev.pieces) !== JSON.stringify(curr.pieces);
+}
+
 // Execute a command via JS Bridge
 async function executeCommand(page, command) {
   if (command.action === 'retry') {
     console.log('Executing: RETRY');
     await page.evaluate(() => { window.__sorenCommand = 'RETRY'; });
     await page.waitForTimeout(2000);
+  } else if (command.action === 'cmd') {
+    console.log(`Executing: ${command.value}`);
+    await page.evaluate((v) => { window.__sorenCommand = v; }, command.value);
+    await page.waitForTimeout(1000);
   } else if (command.action === 'drop') {
     console.log(`Executing: DROP at x=${command.x.toFixed(3)}`);
     await page.evaluate((x) => { window.__sorenCommand = 'DROP:' + x; }, command.x);
@@ -223,6 +235,13 @@ async function runLocalController() {
 
   console.log('Unity canvas ready');
 
+  // Capture browser console for debugging
+  page.on('console', msg => {
+    if (msg.type() === 'error' || msg.type() === 'warning' || msg.text().includes('FIXUI')) {
+      console.log(`[BROWSER ${msg.type().toUpperCase()}] ${msg.text()}`);
+    }
+  });
+
   // Wait for JS Bridge to be active
   let bridgeReady = false;
   for (let i = 0; i < 30; i++) {
@@ -256,16 +275,17 @@ async function runLocalController() {
 
   // Main loop: poll commands and game state
   let processedCount = 0;
-  let idleCount = 0;
-  const STATE_REFRESH_INTERVAL = 4;
+  let lastState = null;
+  const STATE_CHECK_INTERVAL = 3;
 
+  let checkCount = 0;
   while (true) {
     const commands = readCommands();
 
     if (commands.length > processedCount) {
-      idleCount = 0;
       for (let i = processedCount; i < commands.length; i++) {
-        await executeCommand(page, commands[i]);
+        const state = await executeCommand(page, commands[i]);
+        lastState = state;
         processedCount++;
 
         if (i === commands.length - 1) {
@@ -274,19 +294,22 @@ async function runLocalController() {
         }
       }
     } else {
-      idleCount++;
-      if (idleCount >= STATE_REFRESH_INTERVAL) {
-        idleCount = 0;
+      checkCount++;
+      if (checkCount >= STATE_CHECK_INTERVAL) {
+        checkCount = 0;
         const state = await getGameState(page);
-        writeGameState(state);
-        await takeScreenshots(page);
-        if (state) {
-          console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);
+        if (stateChanged(lastState, state)) {
+          writeGameState(state);
+          await takeScreenshots(page);
+          if (state) {
+            console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);
+          }
         }
+        lastState = state;
       }
     }
 
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
   }
 }
 

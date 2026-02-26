@@ -100,27 +100,33 @@ run_cmd() {
 	local type="${spec%%:*}" agent="${spec#*:}"
 	[ "$type" = "$agent" ] && agent=""
 
+	# プロンプトを一時ファイルに書き出し（シェルエスケープ問題を回避）
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_prompt.XXXXXX)
+	printf '%s' "$prompt" >"$prompt_file"
+	log "[CMD] prompt to $prompt_file ($(wc -c <"$prompt_file" | tr -d ' ') bytes)"
+
 	case "$type" in
 	glm)
-		opencode run "'$prompt'" --agent="zai" &
+		opencode run "$(cat "$prompt_file")" --agent="zai" &
 		;;
 	gemini)
-		gemini -p "$prompt" -y -s &
+		gemini -p "$(cat "$prompt_file")" -y -s &
 		;;
 	gemini-flash)
-		gemini -p "$prompt" -y -s --model=gemini-2.5-flash &
+		gemini -p "$(cat "$prompt_file")" -y -s --model=gemini-2.5-flash &
 		;;
 	sonnet)
-		claude -p "$prompt" --model=sonnet --permission-mode=acceptEdits &
+		claude -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits &
 		;;
 	opus)
-		claude -p "$prompt" --model=opus --permission-mode=acceptEdits &
+		claude -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits &
 		;;
 	claude)
-		claude -p "$prompt" --model=Haiku --permission-mode=acceptEdits &
+		claude -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits &
 		;;
 	opencode)
-		opencode run "'$prompt'" --agent="${agent:-glmflash}" &
+		opencode run "$(cat "$prompt_file")" --agent="${agent:-glmflash}" &
 		;;
 	esac
 	local cmd_pid=$!
@@ -140,6 +146,9 @@ run_cmd() {
 	wait "$timer_pid" 2>/dev/null
 	trap - INT
 
+	# 一時プロンプトファイルを削除
+	rm -f "$prompt_file"
+
 	return $ret
 }
 
@@ -154,24 +163,34 @@ run_ai() {
 		return 1
 	fi
 
-	[ -n "$expect" ] && rm -f "$expect"
+	# expectファイルの変更検出用にタイムスタンプを記録 (rm -f は行わない — AI失敗時にファイルが消えるのを防止)
+	local expect_mtime_before=""
+	if [ -n "$expect" ] && [ -f "$expect" ]; then
+		expect_mtime_before=$(stat -f '%m' "$expect" 2>/dev/null)
+	fi
 
 	log "[$label] primary=$primary"
 	run_cmd "$primary" "$prompt"
 	if [ -n "$expect" ]; then
-		[ -s "$expect" ] && {
+		local expect_mtime_after=""
+		[ -f "$expect" ] && expect_mtime_after=$(stat -f '%m' "$expect" 2>/dev/null)
+		if [ -s "$expect" ] && [ "$expect_mtime_after" != "$expect_mtime_before" ]; then
 			log "[$label] primary OK ($expect written)"
 			return 0
-		}
+		fi
 	else
 		[ $? -eq 0 ] && return 0
 	fi
 
 	log "[$label] primary failed → fallback=$fallback"
 	run_cmd "$fallback" "$prompt"
-	if [ -n "$expect" ] && [ ! -s "$expect" ]; then
-		log "[$label] fallback also failed ($expect not written)"
-		return 1
+	if [ -n "$expect" ]; then
+		local expect_mtime_fb=""
+		[ -f "$expect" ] && expect_mtime_fb=$(stat -f '%m' "$expect" 2>/dev/null)
+		if [ ! -s "$expect" ] || [ "$expect_mtime_fb" = "$expect_mtime_before" ]; then
+			log "[$label] fallback also failed ($expect not written)"
+			return 1
+		fi
 	fi
 }
 
@@ -226,6 +245,17 @@ save_strategy_version() {
 	version_file=$(printf "%s/v%03d_score%04d_strategy.py" "$STRATEGY_VERSIONS_DIR" "$GAME_NUM" "$score")
 	cp "$STRATEGY_FILE" "$version_file"
 	log "[VERSION] saved: $version_file"
+
+	# 直近3戦略のみ保持（古いものを削除、殿堂入りbest_*は除く）
+	local total
+	total=$(ls -1 "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | wc -l | tr -d ' ')
+	local delete_count=$((total - 3))
+	if [ "$delete_count" -gt 0 ]; then
+		ls -1 "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py | sort | head -n "$delete_count" | while read -r f; do
+			rm -f "$f"
+			log "[VERSION] pruned: $(basename "$f")"
+		done
+	fi
 }
 
 #--- ベスト管理 ---
@@ -239,6 +269,29 @@ update_best() {
 		echo "$current_score" >best_score.txt
 		cp "$STRATEGY_FILE" "$BEST_STRATEGY_FILE"
 		cp "$GAME_STATE" best_game_state.json
+
+		# 殿堂入り保存（スコアをファイル名に）
+		local hall_file
+		hall_file=$(printf "%s/best_score%04d_strategy.py" "$STRATEGY_VERSIONS_DIR" "$current_score")
+		cp "$STRATEGY_FILE" "$hall_file"
+		log "[HALL OF FAME] saved: $hall_file"
+
+		# strategy.py の変更履歴に [BEST:スコア] タグを付与
+		python3 tag_best_changelog.py "$STRATEGY_FILE" "$current_score" 2>/dev/null
+		python3 tag_best_changelog.py "$hall_file" "$current_score" 2>/dev/null
+		python3 tag_best_changelog.py "$BEST_STRATEGY_FILE" "$current_score" 2>/dev/null
+
+		# 殿堂入りも直近3つのみ保持（スコア順でソートし上位3つを残す）
+		local best_total
+		best_total=$(ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py 2>/dev/null | wc -l | tr -d ' ')
+		local best_delete=$((best_total - 3))
+		if [ "$best_delete" -gt 0 ]; then
+			ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py | sort | head -n "$best_delete" | while read -r f; do
+				rm -f "$f"
+				log "[HALL OF FAME] pruned: $(basename "$f")"
+			done
+		fi
+
 		return 0
 	else
 		log "Score: $current_score (best: $best_score)"
@@ -327,6 +380,12 @@ log "=== Soren Evolution Loop (eloop) ==="
 log "MODEL_PRIMARY=$MODEL_PRIMARY MODEL_FALLBACK=$MODEL_FALLBACK"
 log "strategy.py → strategy_runner.py → AI改善 → repeat"
 
+# 前回中断時のリカバリ: .bak が残っていて strategy.py がない場合は復元
+if [ ! -f "$STRATEGY_FILE" ] && [ -f "${STRATEGY_FILE}.bak" ]; then
+	log "[RECOVER] $STRATEGY_FILE が消失 → ${STRATEGY_FILE}.bak から復元"
+	cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
+fi
+
 # 初期バリデーション
 if [ ! -f "$STRATEGY_FILE" ]; then
 	log "ERROR: $STRATEGY_FILE が見つかりません"
@@ -388,12 +447,14 @@ while true; do
 
 	run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
 		prompts/improve_strategy.md "$STRATEGY_FILE" \
-		"$STRATEGY_FILE" "$HISTORY_FILE" "$BEST_STRATEGY_FILE" "$GAME_STATE"
+		"$STRATEGY_FILE" "$HISTORY_FILE" "$GAME_STATE"
 
 	#--- Step 6: バリデーション ---
 	if validate_strategy; then
 		log "[IMPROVE] バリデーション成功 → 新strategy採用"
 		rm -f "${STRATEGY_FILE}.bak"
+		# 変更履歴を直近3バージョン + BESTタグ付きにトリミング
+		python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
 	else
 		log "[IMPROVE] バリデーション失敗 → 前バージョンに復元"
 		mv "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
