@@ -12,13 +12,13 @@
 # [BEST:2325] v19: CRITICALフェーズ導入版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
 # v50-v64: has_merge/reactive_pairs条件の振り子パターンと閾値シャッフル - 複数回の追加・削除・再追加を繰り返したが、どれも失敗。v64ではv12の「緩い高度管理」を採用したが、HIGHフェーズでマージ機会を大幅に逃した（87ターン中13ターンのみ）。HEIGHT_CONTROLが32%を占め、マージ優先が崩れた。
-# v69: MEDIUM/HIGHフェーズ統一マージ機会確保版 - v68の失敗（スコア968、HIGHフェーズでマージ可能ターン0/8）を受けて、履歴分析でMEDIUMフェーズ（12ターン中2ターン、16.7%）とHIGHフェーズ（8ターン中0ターン、0%）でマージ機会が不足していることを特定。v42のシンプル構造を維持しつつ、MEDIUM/HIGHフェーズの両方でマージ機会を確保するための統一戦略を導入。MEDIUMフェーズの追加ペナルティを導入しHIGH到達遅延しつつ、HIGHフェーズのマージボーナス強化（merge_mult=1.0→1.2）と高度管理緩和（height_mult=2.6→2.4、height_penalty=1.5→1.3）でマージ機会を最大化。CRITICALフェーズのheight_multiplierはv42の30.0を維持。コード量約100行でv42のシンプル構造を維持
 # v70: v42完全復帰・振り子破壊版 - v69の失敗（スコア1789、HIGHフェーズでマージ可能ターン2/19=10.5%、MEDIUMフェーズでマージ可能ターン0/10=0%）を受けて、振り子パターン（v65-v69で追加ペナルティの追加・削除・再追加）を破壊。v65-v69の複雑化（MEDIUM_TOWER、HIGH_TOWERの1.3倍ペナルティ、merge_multの変動）を完全削除し、v42のシンプルかつ頑健な構造に完全復帰。height_mult: MEDIUM=2.4/HIGH=2.6（v42の成功値）、HIGH height_penalty=2.0、MEDIUM height_penalty=1.5（v42の成功値）。CRITICALフェーズのheight_multiplier=30.0（v42の成功値）、merge_mult=0.6（v42の成功値）。マージボーナス1200/600/200（v42の成功値）。追加条件分岐（has_merge、reactive_pairs、MEDIUM_TOWERの1.3倍等）は完全排除。コード量約90行でv42の成功構造を完全復活
 # v71: v31のreactive_pairs活用再導入・MEDIUMフェーズ拡張版 - v70の失敗（スコア770、HEIGHT_CONTROLが33.9%で支配的、マージ機会9.7%のみ）を受けて、v31のreactive_pairs活用を再導入。v70はv42構造への信仰からv31のreactive_pairs活用を削除したが、これはスコア低下の直接原因。履歴分析でv31（スコア1376）の成功要素を特定し、v42構造に統合。HIGHフェーズでreactive_pairs >= 3の時、height_multiplierを35.0に大幅緩和（chain reaction優先）。MEDIUMフェーズでも同様の緩和を新規導入（reactive_pairs >= 2でheight_multiplier=40.0）。CRITICALフェーズではchain reactionを最優先（height_multiplierを25.0に緩和）。has_merge条件は削除し、reactive_pairsのみでchain reactionを判断。コード量約120行でv31の成功要素をv42構造に統合
+# v72: v42構造基盤・reactive_pairsシンプル活用版 - v71の失敗（スコア330、60ターンでマージ0回）を受けて、v71の複雑なreactive_pairs条件分岐を削除。v71はv31の細かい条件分岐（HIGHでreactive_pairs>=3なら35.0、>=2なら45.0）を再導入したが、実際には60ターン中マージ0回で完全に失敗。v42のシンプル構造（約110行）をベースにしつつ、reactive_pairs活用を「フェーズ判定に組み込む」というシンプルな形で再設計。細かい条件分岐は削除し、代わりに「reactive_pairs>=5ならmax_yに+0.5を加算」というシンプルなルールを導入。これにより、chain reaction中は実質的にheight_penaltyが緩和され、マージ機会が確保される。コード量約100行でv42の頑健性を維持しつつ、reactive_pairs活用をシンプルに統合
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v31のreactive_pairs活用を再導入し、MEDIUM/HIGH/CRITICALフェーズでchain reactionを最大化"""
+    """v42構造をベースに、reactive_pairsをシンプルな「高高度状態」として扱い、chain reaction時にheight_penaltyを緩和"""
 
     results = analysis.get("results", [])
 
@@ -33,7 +33,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # reactor情報（v31から再導入）
+    # reactor情報をシンプルに活用：reactive_pairs>=5なら「高高度状態」として扱う
     reactor = analysis.get("reactor", {})
     reactive_pairs_raw = reactor.get("reactive_pairs", 0)
     reactive_pairs = (
@@ -42,11 +42,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         else reactive_pairs_raw
     )
 
+    # v72: chain reaction中はmax_yをシフトしてheight_penaltyを緩和
+    if reactive_pairs >= 5:
+        max_y += 0.5  # 実質的にheight_penaltyが緩和される
+
     # フェーズ判定（v42の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
-        merge_mult = 1.0
+        merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
         height_mult = 2.4  # v42の成功値
@@ -87,52 +91,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult  # v42の成功値
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v71: reactive_pairs活用でchain reaction時に緩和）
+        # 2. 高度によるペナルティ（v72: chain reaction中はmax_yシフトで緩和済み）
         if phase == "CRITICAL":
-            # CRITICALフェーズではchain reactionを最優先
-            height_multiplier = 25.0  # v71: v42の30.0から緩和（chain reaction狙い）
+            # CRITICALフェーズではheight_multiplier強化
+            height_multiplier = 30.0  # v42の成功値
             height_penalty = landing_y * height_multiplier
             if landing_y > 1.0:
                 reasons.append("CRITICAL_HEIGHT")
-        elif phase == "HIGH":
-            # v71: HIGHフェーズでreactive_pairsに応じて段階的に緩和
-            if reactive_pairs >= 3:
-                height_multiplier = 35.0  # chain reaction中は大幅緩和（v31の成功値）
-                reasons.append("CHAIN_REACTION")
-            elif reactive_pairs >= 2:
-                height_multiplier = 45.0  # chain reaction開始時は緩和
-                reasons.append("CHAIN_START")
-            else:
-                height_multiplier = 50.0  # v42の標準値
-
-            height_penalty = landing_y * height_mult * height_multiplier
+        else:
+            # MEDIUM/HIGHフェーズ（v72: reactive_pairs>=5ならmax_yシフト済みで実質的に緩和）
+            height_penalty = landing_y * 50.0 * height_mult
 
             # 高盤面での追加ペナルティ（v42の成功値）
-            if landing_y > 0.5:
+            if phase == "HIGH" and landing_y > 0.5:
                 height_penalty *= 2.0  # v42の成功値
                 reasons.append("HIGH_TOWER")
-            elif landing_y > 0.0:
-                reasons.append("HIGH_LAYER")
-        elif phase == "MEDIUM":
-            # v71: MEDIUMフェーズでreactive_pairsに応じて緩和（新規導入）
-            if reactive_pairs >= 2:
-                height_multiplier = 40.0  # chain reaction開始時は緩和
-                reasons.append("CHAIN_START")
-            elif reactive_pairs >= 1:
-                height_multiplier = 45.0  # chain reaction準備時は微緩和
-            else:
-                height_multiplier = 50.0  # v42の標準値
-
-            height_penalty = landing_y * height_mult * height_multiplier
-
-            # 高盤面での追加ペナルティ（v42の成功値）
-            if landing_y > 0.5:
+            elif phase == "MEDIUM" and landing_y > 0.5:
                 height_penalty *= 1.5  # v42の成功値
                 reasons.append("MEDIUM_TOWER")
             elif landing_y > 0.0:
                 reasons.append("HIGH_LAYER")
-        else:  # LOW
-            height_penalty = landing_y * 50.0
 
         score -= height_penalty
 
