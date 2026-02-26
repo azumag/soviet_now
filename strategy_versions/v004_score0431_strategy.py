@@ -11,13 +11,15 @@
 # --- 変更履歴 ---
 # [BEST:604] v0: ランダム配置（ベースライン）
 # [BEST:1486] v1: マージ重視戦略（DIRECT/NEAR優先、高度管理、ドリフト最小化）
+# v2: 高度管理強化版 - SMALL_PIECE_GAP削除、段階的強化、左右バランス導入、reactorチェイン削除
 # v3: 重量バランス導入版 - ピースタイプに応じた重み付け、フェーズ制導入、高度管理調整
 # v4: フェーズ制廃止・統合版 - 動的危険度係数、SMALL_GAP削除、カウントベースバランス復活
-# v5: フェーズ制復活・簡素化版 - 動的危険度係数廃止、シンプル3フェーズ制、マージ高度バランス調整
+
+import math
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """シンプル3フェーズ制で、マージと高度のバランスを最適化する."""
+    """マージ一貫重視、動的危険度評価で配置する."""
 
     results = analysis.get("results", [])
 
@@ -32,28 +34,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（シンプル3区分）
-    if max_y < 1.0:
-        phase = "LOW"  # 低盤面: マージ重視
-        height_mult = 1.0
-        merge_mult = 1.2
-    elif max_y < 2.0:
-        phase = "MEDIUM"  # 中盤: マージ+高度管理
-        height_mult = 2.0
-        merge_mult = 1.0
-    else:
-        phase = "HIGH"  # 高盤面: 高度管理重視
-        height_mult = 3.0
-        merge_mult = 0.8
-
-    # 左右バランス計算（カウントベース）
+    # 左右バランス計算（カウントベースに戻す）
     left_count = sum(1 for p in pieces if p["x"] < 0)
     right_count = len(pieces) - left_count
     balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
 
+    # 動的危険度係数（max_yに応じて滑らかに変化）
+    # max_y < 0.5: 安全（係数1.0）
+    # max_y = 1.0: 予備警告（係数1.5）
+    # max_y = 2.0: 危険（係数2.0）
+    # max_y = 3.0: 危機（係数3.0）
+    danger_factor = 1.0 + max(0, (max_y + 0.5) ** 1.5) * 0.4
+
     # 次のピース情報
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
+    next_radius = next_piece.get("r", 0.5)
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
@@ -68,57 +64,48 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # 1. マージグレードによるスコア（フェーズに応じて重み付け）
+        # 1. マージグレードによるスコア（一貫して重視）
+        # 危険な盤面でもマージ優先（フェーズ制廃止）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += 1200.0
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 600.0
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 150.0 * merge_mult
+            score += 150.0
             reasons.append("FAR_MERGE")
         else:
-            # マージなしはペナルティ（フェーズに応じて強化）
-            no_merge_penalty = 200.0
-            if phase == "HIGH":
-                no_merge_penalty *= 2.0
-            elif phase == "MEDIUM":
-                no_merge_penalty *= 1.5
+            # マージなしはペナルティ（危険度に応じて強化）
+            no_merge_penalty = 150.0 * danger_factor
             score -= no_merge_penalty
 
-        # 2. 高度によるスコア（フェーズに応じて重み付け）
-        height_penalty = landing_y * 50.0 * height_mult
+        # 2. 高度によるスコア（危険度係数で動的に調整）
+        # 着地Yがmax_yに近いほど危険（盤面を高くする）
+        height_from_top = max_y - landing_y + 0.5  # max_yよりどれだけ低い位置か
+        height_penalty = landing_y * 50.0 * danger_factor
 
-        # 高盤面での追加ペナルティ
-        if phase == "HIGH":
-            height_penalty *= 2.0
-            reasons.append("HIGH_TOWER")
-        elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.3
-            reasons.append("MEDIUM_TOWER")
-        elif landing_y > 0.0:
+        # max_yに近い位置への配置は追加ペナルティ
+        if height_from_top < 1.0:
+            height_penalty *= 1.5  # 盤面頂点付近なら1.5倍
+            reasons.append("TOP_LAYER")
+        elif height_from_top < 2.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
         # 3. ドリフトによるペナルティ
-        drift_penalty = (abs(drift_x) + drift_unc) * 30.0
+        drift_penalty = (abs(drift_x) + drift_unc) * 35.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（フェーズに応じて強化）
-        balance_strength = 20.0
-        if phase == "HIGH":
-            balance_strength = 35.0
-        elif phase == "MEDIUM":
-            balance_strength = 25.0
-
-        balance_penalty = x * balance_bias * balance_strength
+        # 4. 左右バランス補正（危険度に応じて強化）
+        balance_penalty = x * balance_bias * 25.0 * (1.0 + (danger_factor - 1.0) * 0.5)
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら、中央寄せでチャンスを残す
+        # 5. nextNextが同じタイプなら、配置位置を中央寄せにしてチャンスを残す
         if next_next_type == next_type:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 40.0
+            # 中央寄せ（|x|が小さいほど良い）
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 35.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
