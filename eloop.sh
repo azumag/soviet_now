@@ -575,12 +575,31 @@ start_radio_talk() {
 			"各国の軍事パレードと式典の話。赤の広場、独立記念日のパレード、軍楽隊の音楽で脱線して"
 			"各国の郵便と手紙の話。切手コレクション、国際郵便、文通文化で脱線して"
 		)
-		local theme="${themes[$((RANDOM % ${#themes[@]}))]}"
+		# 過去に使ったテーマを除外してランダム選択
+		local past_themes_file="tmp/.past_radio_themes.txt"
+		local available_themes=()
+		local past_theme_list=""
+		[ -f "$past_themes_file" ] && past_theme_list=$(cat "$past_themes_file")
+		for t in "${themes[@]}"; do
+			local t_key="${t%%。*}"  # 最初の「。」までをキーに
+			if ! echo "$past_theme_list" | grep -qF "$t_key"; then
+				available_themes+=("$t")
+			fi
+		done
+		# 全テーマ使い切ったらリセット
+		if [ ${#available_themes[@]} -eq 0 ]; then
+			available_themes=("${themes[@]}")
+			> "$past_themes_file"
+		fi
+		local theme="${available_themes[$((RANDOM % ${#available_themes[@]}))]}"
+		# 選んだテーマを記録（直近20件保持）
+		echo "${theme%%。*}" >> "$past_themes_file"
+		tail -20 "$past_themes_file" > "${past_themes_file}.tmp" && mv "${past_themes_file}.tmp" "$past_themes_file"
 
-		# 過去のトーク内容を取得（直近10回分、重複回避用）
+		# 過去のトーク内容を取得（直近10件分、重複回避用）
 		local past_topics=""
 		if [ -f "$PAST_RADIO_TOPICS" ]; then
-			past_topics=$(tail -10 "$PAST_RADIO_TOPICS")
+			past_topics=$(cat "$PAST_RADIO_TOPICS")
 		fi
 
 		# 10回に1回だけ「AIが自分を書き換える話」を追加
@@ -681,6 +700,7 @@ $([ "$include_strategy_history" = true ] && echo '7. 作戦変更の解説コー
 - ソ連っぽい言い回しをさりげなく混ぜる。やりすぎず、スパイス程度に
 - マークダウンや記号は使わない。読み上げ用のプレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要
+- トーク本文の最後に必ず改行して「===SUMMARY===」と1行書き、その次の行に今回話した主な話題を30文字以内で要約すること（例: アルメニア料理とバイカル湖の話）。これは重複回避に使うので必ず出力すること
 RADIOPROMPT
 
 		log "[RADIO] トーク生成中..."
@@ -705,9 +725,8 @@ RADIOPROMPT
 			# 本文のみをファイルに保存・sayに渡す
 			echo "$talk_body" > tmp/radio_talk.txt
 
-			# 過去トーク記録（AI生成の要約、直近10件保持）
-			echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts:" >> "$PAST_RADIO_TOPICS"
-			echo "$talk_summary" >> "$PAST_RADIO_TOPICS"
+			# 過去トーク記録（1行1レコード、直近10件保持）
+			echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts: ${talk_summary}" >> "$PAST_RADIO_TOPICS"
 			tail -10 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
 			log "[RADIO] say_enqueue に登録 (${#talk_body}文字)"

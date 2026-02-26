@@ -15,10 +15,11 @@
 # v56-v58: has_merge joken no furiko - v56 de reactive_pairs joken wo do-nyuu, v57 de has_merge joken wo sai-do-nyuu, v58 de has_merge joken wo sakujo. has_merge joken ha fukkusu kai shippai shiteiru (v50-v55, v57) no de, kono element wo do-nyuu suru no wa yame.
 # v59: HIGH phase kouki koudou kanwa-ban - v58 no shippai (sukoa 1146, HIGH phase de score_delta=0 de 21 turn kan zen teimen) wo uke, HIGH phase kouki de koudou kanwa wo sai-shishou. v56 no fukutsu na joken bun-ki (reactive_pairs>=3) wo sakujo shi, max_y>2.5 to iu shimpuru na joken dake de koudou kanwa wo kanwa shite chain reaction kikai wo saidaika. v57 no has_merge joken ni yoru furiko pattern wo kaihi (has_merge joken nashi, NO_MERGE_PENALTI nai). v42 no ganjina kihon kouzou wo iji shi, code ryuu wa yaku 115-gyou de v42 no shimpuru kouzou wo iji.
 # v60: reactive_pairs katsuyou - v59 no shippai (sukoa 771, HIGH phase de merge rate 0%・HIGH_PHASE_LATE_RELAX hataki 1-kai dake) wo uke, max_y>2.5 joken (hataki 1-kai dake, kouka nashi) wo sakujo shi, reactive_pairs katsuyou de merge sokushin. v42 no shimpuru kouzou (DIRECT=1200/NEAR=600/FAR=200, height_penalty=50*height_mult, drift_penalty=30, balance hosei) wo kanzen iji. HIGH phase de reactive_pairs >= 3 no baai, height_multiplier wo 35.0 ni kanwa (chain reaction chu no merge yuusen). MEDIUM/HIGH phase de merge nashi position ni karuku no NO_MERGE_PENALTI (-50) wo tsuika (v12 no kousei youso wo keiryou-ka). has_merge joken no furiko pattern wo kaihou (reactive_pairs joken de merge sokushin). v31 no reactive_pairs katsuyou to v12 no merge nashi penalty no seikou youso wo v42 no ganjina kouzou ni tougou. code ryuu wa yaku 130-gyou de v59 no 115-gyou kara fukutsu-ka naku seikou youso wo tougou
+# v61: v42 kanzen fukkatsu-ban - v60 no shippai (sukoa 1063, CRITICAL phase de merge available=false to NO_MERGE_PENALTI (-50) ga shinkushuuka) wo uke, v42 no shimpuru kouzou e kanzen fukkatsu. v60 de tsuika shita NO_MERGE_PENALTI wo sakujo (v42 ha kono penalty nashi de 2335 point wo tassei). v60 de tsuika shita reactive_pairs joken bun-ki (HIGH phase de height_multiplier=35.0 kanwa) wo sakujo (v59 no shippai pattern to onaji). v42 no seikou shita seikaku chi wo kanzen iji: DIRECT=1200/NEAR=600/FAR=200, height_penalty=50*height_mult, drift_penalty=30 (phase bunnki nashi), balance_strength: LOW=20/MEDIUM=30/HIGH=40/CRITICAL=fuka, center_bonus: CRITICAL=60/others=50. Code ryuu wa yaku 100-gyou ni genshou, v42 no "simpuru kote kouzou" wo kanzen fukkatsu
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42の頑健な基本構造を維持しつつ、reactive_pairs活用でHIGHフェーズでのマージ機会を最大化"""
+    """v42のシンプルかつ頑健な構造を完全復活"""
 
     results = analysis.get("results", [])
 
@@ -32,15 +33,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # banmen jouhou
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
-
-    # reactor katsuyou (v60: v31 no seikou youso)
-    reactor = analysis.get("reactor", {})
-    reactive_pairs_raw = reactor.get("reactive_pairs", 0)
-    reactive_pairs = (
-        len(reactive_pairs_raw)
-        if isinstance(reactive_pairs_raw, list)
-        else reactive_pairs_raw
-    )
 
     # phase handei (v42 no shikichi wo iji)
     if max_y < 0.8:
@@ -86,57 +78,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
-        else:
-            # v60: v12 no kousei youso wo keiryou-ka (merge nashi penalty)
-            if phase == "HIGH":
-                score -= 50.0
-            elif phase == "MEDIUM":
-                score -= 50.0
-            reasons.append("NO_MERGE")
 
-        # 2. koudou ni yoru penalty (v60: reactive_pairs katsuyou)
-        if phase == "CRITICAL":
-            # CRITICALフェーズではheight_multiplier強化（v19の40.0を維持）
-            height_multiplier = 40.0
-            height_penalty = landing_y * height_multiplier
-            if landing_y > 1.0:
-                reasons.append("CRITICAL_HEIGHT")
-        else:
-            # v60: HIGHフェーズでreactive_pairs >= 3なら高度管理を緩和
-            height_multiplier = 50.0
-            if phase == "HIGH" and reactive_pairs >= 3:
-                height_multiplier = 35.0  # chain reaction chu wa kanwa
-                reasons.append("CHAIN_REACTION")
+        # 2. koudou ni yoru penalty (v42 no kachi chi wo iji)
+        height_penalty = landing_y * 50.0 * height_mult
 
-            height_penalty = landing_y * 50.0 * height_mult
-
-            # koudanme de no tsuika penalty (CRITICAL phase dewa tekiyou shinai)
-            if phase == "HIGH" and landing_y > 0.5:
-                height_penalty *= 2.0  # v42: 2.0 wo iji
-                reasons.append("HIGH_TOWER")
-            elif phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.5  # v42: 1.5 wo iji
-                reasons.append("MEDIUM_TOWER")
-            elif landing_y > 0.0:
-                reasons.append("HIGH_LAYER")
+        if phase == "HIGH" and landing_y > 0.5:
+            height_penalty *= 2.0
+            reasons.append("HIGH_TOWER")
+        elif phase == "MEDIUM" and landing_y > 0.5:
+            height_penalty *= 1.5
+            reasons.append("MEDIUM_TOWER")
+        elif landing_y > 0.0:
+            reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. drift ni yoru penalty (v42 no kachi chi wo iji)
-        if phase == "HIGH":
-            drift_penalty = (abs(drift_x) + drift_unc) * 30.0  # v42: 30.0 wo iji
-        elif phase == "MEDIUM":
-            drift_penalty = (abs(drift_x) + drift_unc) * 30.0  # v42: 30.0 wo iji
-        else:  # LOW, CRITICAL
-            drift_penalty = (abs(drift_x) + drift_unc) * 30.0
+        # 3. drift ni yoru penalty (v42 no kachi chi wo iji - phase bunnki nashi)
+        drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
         # 4. sayuu baransho (v42 no kachi chi wo iji)
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v42: 40.0 wo iji
+            balance_strength = 40.0
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v42: 30.0 wo iji
+            balance_strength = 30.0
+        # CRITICAL phase dewa baransho fuka (merge yuusen)
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -147,7 +114,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # 5. nextNext ga onaji type nara chuuyuse bonus (v42 no kachi chi wo iji)
         if next_next_type == next_type:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0  # v42: 50.0 wo iji
+            if phase == "CRITICAL":
+                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 60.0
+            else:
+                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
