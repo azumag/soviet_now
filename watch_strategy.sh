@@ -12,27 +12,60 @@ VERSIONS_DIR="strategy_versions"
 BEST_SCORE_FILE="best_score.txt"
 COMMENTARY_FILE="tmp/strategy_commentary.txt"
 PAST_TOPICS_FILE="tmp/past_watch_topics.txt"
+LOCK_FILE="tmp/.watch_strategy.lock"
+LAST_HASH_FILE="tmp/.watch_strategy_hash"
+SAY_PID_FILE="tmp/.watch_say.pid"
 
 # --- 設定 ---
 AI_AGENT="zai"
 AI_FALLBACK="glmflash"
 SAY_VOICE=""  # macOS say のボイス（空ならデフォルト）
 SAY_RATE=120  # 読み上げ速度
-LOCK_FILE="tmp/.watch_strategy.lock"
+MIN_COMMENTARY_LEN=200  # これより短い生成結果はゴミとみなす
 
 mkdir -p tmp
 
-# Ctrl+C で say も止める
+# Ctrl+C でクリーンアップ
 cleanup() {
-  killall say 2>/dev/null
+  _kill_my_say
   rm -f "$LOCK_FILE"
   exit 0
 }
 trap cleanup INT TERM
 
+# --- say 管理（自分が起動したsayだけ制御する） ---
+_kill_my_say() {
+  if [[ -f "$SAY_PID_FILE" ]]; then
+    local pid
+    pid=$(cat "$SAY_PID_FILE" 2>/dev/null)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+    fi
+    rm -f "$SAY_PID_FILE"
+  fi
+}
+
+_start_say() {
+  local text="$1"
+  # 読み上げ開始の直前に全ての say を止める（eloop のラジオ含む）
+  killall say 2>/dev/null
+  local say_args=(-r "$SAY_RATE")
+  if [[ -n "$SAY_VOICE" ]]; then
+    say_args+=(-v "$SAY_VOICE")
+  fi
+  say "${say_args[@]}" "$text" &
+  echo $! > "$SAY_PID_FILE"
+}
+
 # --- ユーティリティ ---
 log() {
   echo "[$(date '+%H:%M:%S')] $*" >&2
+}
+
+# strategy.py のコンテンツハッシュ（空行・末尾空白を無視）
+_content_hash() {
+  sed '/^[[:space:]]*$/d' "$STRATEGY" | md5 -q 2>/dev/null || md5sum "$STRATEGY" | cut -d' ' -f1
 }
 
 # 最新N個のバージョンファイルを取得（v0XX_score* のみ、新しい順）
@@ -52,7 +85,6 @@ get_best_strategy() {
       return
     fi
   fi
-  # フォールバック: best_score* の最新
   ls -t "$VERSIONS_DIR"/best_score*_strategy.py 2>/dev/null | head -1
 }
 
@@ -68,10 +100,8 @@ run_opencode() {
   local raw_file
   raw_file=$(mktemp /tmp/oc_raw_XXXXXXXX)
 
-  # script で疑似TTY を与えて実行（opencode は TTY がないとハングする）
   script -q "$raw_file" opencode run --agent "$agent" "$(cat "$prompt_file")" > /dev/null 2>&1
 
-  # ANSIエスケープ除去 → ヘッダー行("> agent · model")を除去 → 空行トリム
   local cleaned
   cleaned=$(cat "$raw_file" \
     | strip_ansi \
@@ -83,16 +113,43 @@ run_opencode() {
   echo "$cleaned"
 }
 
+# 生成結果が読み上げに値する内容かチェック
+is_valid_commentary() {
+  local text="$1"
+  local len=${#text}
+
+  # 短すぎる
+  if [[ $len -lt $MIN_COMMENTARY_LEN ]]; then
+    log "生成結果が短すぎる (${len}文字 < ${MIN_COMMENTARY_LEN})"
+    return 1
+  fi
+
+  # ファイルパスだけ
+  if echo "$text" | grep -qE '^(/[^ ]+[[:space:]]*)+$'; then
+    log "生成結果がファイルパスのみ"
+    return 1
+  fi
+
+  # 日本語がほぼ含まれていない（ひらがな・カタカナが10文字未満）
+  local jp_count
+  jp_count=$(echo "$text" | perl -ne 'print' | grep -oP '[\p{Hiragana}\p{Katakana}]' 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "${jp_count:-0}" -lt 10 ]]; then
+    log "生成結果に日本語がほぼない (${jp_count}文字)"
+    return 1
+  fi
+
+  return 0
+}
+
 # AIに解説を生成させる
 generate_commentary() {
   local diff_content="$1"
   local context="$2"
 
-  # プロンプトをファイルに書き出す（引数が長すぎる場合の対策）
   local prompt_file
   prompt_file=$(mktemp /tmp/oc_prompt_XXXXXXXX)
 
-  # ランダムテーマを選ぶ（毎回違う切り口にする）
+  # ランダムテーマを選ぶ
   local themes=(
     "今回は料理と食文化の話を多めに。各国の名物料理や食べ物の話で脱線して"
     "今回は音楽の話を多めに。各国の民族音楽、有名な作曲家、ポップカルチャーの話で脱線して"
@@ -150,6 +207,8 @@ PROMPT_END
 いまAIの作戦（strategy.py）が自動的に書き換わりました。
 以下の差分と参考情報をもとに、10分くらい読み上げられる長さのトークを書いてください。
 
+【重要】出力にファイルパスを含めないこと。純粋なトーク文章のみを出力すること。
+
 【トークの構成（この順番で、全部入れること）】
 
 1. 導入: 「さあ、作戦が更新されましたよ」的な入り
@@ -182,7 +241,7 @@ PROMPT_EXTRA
 - 冗談やダジャレも入れてOK。スベっても気にしない
 - ソ連のゲームなので、ところどころ共産主義っぽい言い回しをさりげなく混ぜる（例:「同志」「人民」「五カ年計画」「労働者の勝利」「プロレタリアート」「革命」など）。やりすぎず、スパイス程度に
 - マークダウンや記号は使わない。読み上げ用のプレーンテキストのみ
-- 出力はトーク本文のみ。前置きや補足説明は不要
+- 出力はトーク本文のみ。前置きや補足説明は不要。ファイルパスは絶対に含めないこと
 
 PROMPT_RULES
 
@@ -197,7 +256,7 @@ PROMPT_RULES
 
   local result
   result=$(run_opencode "$AI_AGENT" "$prompt_file")
-  if [[ -n "$result" ]]; then
+  if [[ -n "$result" ]] && is_valid_commentary "$result"; then
     rm -f "$prompt_file"
     echo "$result"
     return 0
@@ -205,28 +264,15 @@ PROMPT_RULES
 
   log "フォールバック: $AI_FALLBACK で再試行..."
   result=$(run_opencode "$AI_FALLBACK" "$prompt_file")
-  if [[ -n "$result" ]]; then
+  if [[ -n "$result" ]] && is_valid_commentary "$result"; then
     rm -f "$prompt_file"
     echo "$result"
     return 0
   fi
 
   rm -f "$prompt_file"
-  log "AI解説生成に失敗しました"
-  echo "strategy.pyが更新されましたが、解説の生成に失敗しました。"
+  log "AI解説生成に失敗しました（有効な結果が得られず）"
   return 1
-}
-
-# say で読み上げ（前の再生を止めてから新しく開始）
-speak() {
-  local text="$1"
-  # 前の say が動いていたら全部止める
-  killall say 2>/dev/null
-  local say_args=(-r "$SAY_RATE")
-  if [[ -n "$SAY_VOICE" ]]; then
-    say_args+=(-v "$SAY_VOICE")
-  fi
-  say "${say_args[@]}" "$text" &
 }
 
 # --- メイン処理: strategy.py 変更時のハンドラ ---
@@ -239,6 +285,18 @@ on_strategy_changed() {
   touch "$LOCK_FILE"
   trap 'rm -f "$LOCK_FILE"' RETURN
 
+  # コンテンツハッシュで実質的な変更かチェック
+  local current_hash
+  current_hash=$(_content_hash)
+  local last_hash=""
+  [[ -f "$LAST_HASH_FILE" ]] && last_hash=$(cat "$LAST_HASH_FILE" 2>/dev/null)
+
+  if [[ "$current_hash" == "$last_hash" ]]; then
+    log "コンテンツに実質的な変更なし。スキップ。"
+    return
+  fi
+  echo "$current_hash" > "$LAST_HASH_FILE"
+
   log "strategy.py の変更を検出!"
 
   # 1. 直前のバージョンとのdiff生成
@@ -250,8 +308,11 @@ on_strategy_changed() {
   local diff_content=""
   if [[ -n "$latest_version" && -f "$latest_version" ]]; then
     diff_content=$(diff -u "$latest_version" "$STRATEGY" 2>/dev/null || true)
-    if [[ -z "$diff_content" ]]; then
-      log "差分なし（最新バージョンと同一）。スキップ。"
+    # 実質的な差分があるかチェック（空行やスペースだけの差分を除外）
+    local real_changes
+    real_changes=$(echo "$diff_content" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
+    if [[ "$real_changes" -lt 2 ]]; then
+      log "実質的な差分なし（空行変更のみ）。スキップ。"
       return
     fi
   else
@@ -262,21 +323,18 @@ on_strategy_changed() {
   # 2. 過去3バージョンとベストの比較コンテキスト作成
   local context=""
 
-  # 過去バージョンの変更履歴ヘッダー抽出
   local i=0
   while IFS= read -r vfile; do
     [[ -z "$vfile" ]] && continue
     i=$((i + 1))
     local vname
     vname=$(basename "$vfile")
-    # 変更履歴セクションを抽出
     local changelog
     changelog=$(grep -A5 '変更履歴' "$vfile" 2>/dev/null | head -8 || echo "(履歴なし)")
     context+="--- 過去バージョン${i}: ${vname} ---"$'\n'
     context+="$changelog"$'\n\n'
   done <<< "$recent_versions"
 
-  # ベストスコアstrategyとの比較
   local best_file
   best_file=$(get_best_strategy)
   if [[ -n "$best_file" && -f "$best_file" ]]; then
@@ -291,14 +349,16 @@ on_strategy_changed() {
     context+="差分(先頭60行):"$'\n'"$best_diff"$'\n'
   fi
 
-  # 現在のベストスコア
   if [[ -f "$BEST_SCORE_FILE" ]]; then
     context+=$'\n'"現在のベストスコア: $(cat "$BEST_SCORE_FILE")"
   fi
 
   # 3. AI解説生成
   local commentary
-  commentary=$(generate_commentary "$diff_content" "$context")
+  if ! commentary=$(generate_commentary "$diff_content" "$context"); then
+    log "解説生成失敗。読み上げなし。"
+    return
+  fi
 
   # 4. 保存 & 表示
   echo "$commentary" > "$COMMENTARY_FILE"
@@ -306,7 +366,7 @@ on_strategy_changed() {
   echo "$commentary"
   log "---------------"
 
-  # 5. 過去トーク記録（全体から抽出して保存、直近10件保持）
+  # 5. 過去トーク記録
   local total_lines
   total_lines=$(echo "$commentary" | wc -l | tr -d ' ')
   local mid=$((total_lines / 2))
@@ -320,20 +380,22 @@ on_strategy_changed() {
   echo "$summary" >> "$PAST_TOPICS_FILE"
   tail -10 "$PAST_TOPICS_FILE" > "${PAST_TOPICS_FILE}.tmp" && mv "${PAST_TOPICS_FILE}.tmp" "$PAST_TOPICS_FILE"
 
-  # 6. 読み上げ
-  speak "$commentary"
-  log "読み上げ開始"
+  # 6. 読み上げ（有効な内容がある時だけ）
+  _start_say "$commentary"
+  log "読み上げ開始 (${#commentary}文字)"
 }
 
 # --- メインループ ---
 log "strategy.py を監視開始..."
 log "Ctrl+C で停止"
 
+# 起動時のハッシュを記録（起動直後の誤検知を防ぐ）
+_content_hash > "$LAST_HASH_FILE"
+
 # fswatch で strategy.py を監視
-# --event Updated: ファイル更新イベントのみ
 fswatch --event Updated "$STRATEGY" | while IFS= read -r event; do
-  # デバウンス: 1秒待って連続イベントをまとめる
-  sleep 1
+  # デバウンス: 10秒待って連続イベントをまとめる
+  sleep 10
 
   on_strategy_changed
 done
