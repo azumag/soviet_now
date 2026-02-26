@@ -108,6 +108,16 @@ if _is_preempted; then
     exit 0
 fi
 
+# --- ロック内: 既存sayプロセス終了待ち（PIDファイル漏れ対策） ---
+while pgrep -x say >/dev/null 2>&1; do
+    if _is_preempted; then
+        _log "say待機中にプリエンプト → 諦め"
+        exit 0
+    fi
+    _log "既存sayプロセス検出 → 終了待ち"
+    sleep 1
+done
+
 # --- ロック内: say開始 + PID記録（アトミック） ---
 _log "say開始 (rate=${RATE})"
 nohup say -r "$RATE" -f "$MY_CONTENT" > /dev/null 2>&1 &
