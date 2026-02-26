@@ -51,7 +51,69 @@ wait_commands_done() {
 	echo "" >"$COMMANDS"
 }
 
-#--- スピナー ---
+#--- ジョークコマンドをランダムに表示 ---
+_maybe_show_joke() {
+	# 約10%の確率で発動
+	[ $((RANDOM % 10)) -ne 0 ] && return
+	printf '\r\033[K' >&2
+
+	# 利用可能なジョークを収集
+	local jokes=()
+	command -v sl       &>/dev/null && jokes+=("sl")
+	command -v fortune  &>/dev/null && command -v cowsay &>/dev/null && jokes+=("fortune_cowsay")
+	command -v toilet   &>/dev/null && jokes+=("toilet")
+	command -v figlet   &>/dev/null && jokes+=("figlet")
+	command -v nyancat  &>/dev/null && jokes+=("nyancat")
+	command -v aafire   &>/dev/null && jokes+=("aafire")
+	command -v boxes    &>/dev/null && command -v fortune &>/dev/null && jokes+=("boxes")
+	command -v genact   &>/dev/null && jokes+=("genact")
+	command -v cmatrix  &>/dev/null && jokes+=("cmatrix")
+	command -v lolcat   &>/dev/null && command -v fortune &>/dev/null && jokes+=("lolcat")
+	command -v tty-clock &>/dev/null && jokes+=("tty-clock")
+	[ ${#jokes[@]} -eq 0 ] && return
+
+	local pick="${jokes[$((RANDOM % ${#jokes[@]}))]}"
+
+	# フルスクリーン系は代替バッファを使って画面を汚さない
+	local fullscreen=0
+	case "$pick" in nyancat|aafire|cmatrix|tty-clock) fullscreen=1 ;; esac
+	[ "$fullscreen" -eq 1 ] && tput smcup >&2 2>/dev/null
+
+	case "$pick" in
+		sl)
+			timeout 4 sl -l >&2 2>/dev/null || true ;;
+		fortune_cowsay)
+			fortune 2>/dev/null | cowsay >&2 2>/dev/null || true
+			sleep 2 ;;
+		toilet)
+			echo "THINKING..." | toilet --gay 2>/dev/null >&2 || true
+			sleep 1 ;;
+		figlet)
+			echo "THINKING..." | figlet >&2 2>/dev/null || true
+			sleep 1 ;;
+		nyancat)
+			timeout 4 nyancat >&2 2>/dev/null || true ;;
+		aafire)
+			timeout 4 aafire >&2 2>/dev/null || true ;;
+		boxes)
+			fortune 2>/dev/null | boxes >&2 2>/dev/null || true
+			sleep 2 ;;
+		genact)
+			timeout 5 genact >&2 2>/dev/null || true ;;
+		cmatrix)
+			timeout 4 cmatrix -b >&2 2>/dev/null || true ;;
+		lolcat)
+			fortune 2>/dev/null | lolcat >&2 2>/dev/null || true
+			sleep 2 ;;
+		tty-clock)
+			timeout 4 tty-clock -scC 1 >&2 2>/dev/null || true ;;
+	esac
+
+	[ "$fullscreen" -eq 1 ] && tput rmcup >&2 2>/dev/null
+	printf '\r\033[K' >&2
+}
+
+#--- スピナー (ジョーク付き) ---
 _spinner_pid=0
 start_spinner() {
 	local label="$1"
@@ -65,6 +127,10 @@ start_spinner() {
 				"${frames[i % ${#frames[@]}]}" "$label" "$m" "$s" >&2
 			sleep 0.12
 			((i++))
+			# 約600回(≒72秒)ごとにジョーク判定
+			if [ $((i % 600)) -eq 0 ]; then
+				_maybe_show_joke
+			fi
 		done
 	) &
 	_spinner_pid=$!
@@ -329,6 +395,8 @@ wait_for_move() {
 		fi
 		sleep 2
 		waited=$((waited + 2))
+		# 待ち時間中にジョーク
+		[ $((waited % 10)) -eq 0 ] && _maybe_show_joke
 	done
 	log "TIMEOUT: MOVE状態待ち"
 	return 1
@@ -376,6 +444,8 @@ except:
 		esac
 		sleep 2
 		waited=$((waited + 2))
+		# 待ち時間中にジョーク
+		[ $((waited % 10)) -eq 0 ] && _maybe_show_joke
 	done
 	log "WARNING: 新ゲーム検知タイムアウト"
 	return 1
@@ -529,5 +599,6 @@ FIXEOF
 		}
 	fi
 
+	_maybe_show_joke
 	sleep 2
 done
