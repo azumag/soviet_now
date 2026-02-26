@@ -11,13 +11,12 @@
 # --- 変更履歴 ---
 # [BEST:604] v0: ランダム配置（ベースライン）
 # v1: マージ重視戦略（DIRECT/NEAR優先、高度管理、ドリフト最小化）
-# v2: 高度管理強化版 - SMALL_PIECE_GAP削除、段階的強化、左右バランス導入、reactorチェイン削除
 
 import math
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """マージ優先、高度管理強化、左右バランスで配置する."""
+    """マージ可能ならマージ優先、なければ高さ管理・ドリフト最小化で配置する."""
 
     # 全サンプルX座標の物理情報から最適位置を選択
     results = analysis.get("results", [])
@@ -30,18 +29,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_score = -float("inf")
     best_reason = ""
 
-    # 盤面の最大高度
-    max_y = (
-        max([p["y"] for p in game_state.get("pieces", [])])
-        if game_state.get("pieces")
-        else -4.0
+    reactor_pairs_raw = analysis.get("reactor", {}).get("reactive_pairs", 0)
+    reactor_pairs = (
+        len(reactor_pairs_raw)
+        if isinstance(reactor_pairs_raw, list)
+        else reactor_pairs_raw
     )
-
-    # 左右バランス計算
-    pieces = game_state.get("pieces", [])
-    left_count = sum(1 for p in pieces if p["x"] < 0)
-    right_count = len(pieces) - left_count
-    balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
 
     for result in results:
         x = result["x"]
@@ -65,23 +58,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 100.0
             reasons.append("FAR_MERGE")
         else:
-            # マージなしはペナルティ（高い盤面では強化）
-            no_merge_penalty = 200.0
-            if max_y > 1.0:
-                no_merge_penalty *= 2.0
-            if max_y > 2.0:
-                no_merge_penalty *= 2.0
-            score -= no_merge_penalty
+            # マージなしはペナルティ（ただし他要素で補正可）
+            score -= 200.0
 
-        # 2. 高度によるスコア（低いほど良い）- 段階的強化
+        # 2. 高度によるスコア（低いほど良い）
+        # 盤面の最大高度に応じて重みを変動
+        max_y = (
+            max([p["y"] for p in game_state.get("pieces", [])])
+            if game_state.get("pieces")
+            else -4.0
+        )
         height_penalty = landing_y * 50.0
 
-        # 高い盤面では高度ペナルティを段階的に強化
-        if max_y > 1.0:
-            height_penalty *= 2.0
-            reasons.append("DANGER_TOWER")
+        # 高い盤面では高度ペナルティを強化
         if max_y > 2.0:
-            height_penalty *= 1.5  # max_y > 2.0ではさらに1.5倍（合計3倍）
+            height_penalty *= 2.0
+            reasons.append("HIGH_TOWER")
 
         score -= height_penalty
 
@@ -89,9 +81,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（ピースが多い側への配置をペナルティ）
-        balance_penalty = x * balance_bias * 20.0
-        score -= abs(balance_penalty)
+        # 4. reactor reactive_pairs が多い時は、近接配置をボーナス
+        if reactor_pairs >= 4 and merge_grade in ("DIRECT", "NEAR"):
+            score += 200.0
+            reasons.append("REACTOR_CHAIN")
+
+        # 5. 次のピースタイプを考慮（小さいピースは高い位置の隙間に配置可能）
+        next_piece = game_state.get("next", {})
+        next_type = next_piece.get("type", 0)
+        next_radius = next_piece.get("r", 0.5)
+
+        # 小さいピース（r < 0.6）は、高い位置の隙間に入りやすいので高度ペナルティを軽減
+        if next_radius < 0.6 and landing_y > -1.0:
+            score += 50.0
+            reasons.append("SMALL_PIECE_GAP")
 
         # スコア更新
         if score > best_score:
