@@ -19,7 +19,7 @@ Soviet/Soren パズルゲーム（スイカゲーム風・ソ連共和国旗）�
 - `strategy.py` が1試合を自律プレイ、試合後に AI が `strategy.py` を改善するメタ学習ループ
 - `strategy_runner.py`: 内側ループ (game_state.json → analyze_board.py → strategy.decide() → commands.txt)
 - `strategy_versions/` にバージョン履歴、`game_history/` にターンログ (JSONL)
-- `best_strategy.py` / `best_score.txt` でハイスコア管理
+- `best_score.txt` でハイスコア管理
 - AI改善後にバリデーション (decide() 存在・シグネチャ・テスト実行)、失敗時は自動復元
 
 ### jloop.sh — JSON-based State Loop

@@ -2,8 +2,9 @@
 """analyze_board.py - 盤面空間解析プリプロセッサ (人工化学モデル対応版)
 
 ゲームを空間的反応器 (S=ピース種, R=A+A→B, A=物理エンジン) として解析。
-game_state.json を空間解析し、マージ可否・着地予測・推奨ドロップを計算。
+game_state.json を空間解析し、マージ可否・着地予測を計算。
 物理挙動（回転・転がり・爆発衝撃波）を考慮した予測を含む。
+スコアリング・戦略評価は strategy.py 側の責任。
 
 Usage: python3 analyze_board.py [game_state.json] [output.md]
 """
@@ -279,73 +280,6 @@ def has_obstruction(drop_x, drop_r, target, pieces):
     return False
 
 
-# --- マージ確率・スコア定数 ---
-MERGE_PROB = {"DIRECT": 0.90, "NEAR": 0.50, "NO": 0.0}
-# ゲームスコア: typeN同士マージ → typeN+1 のスコア (概算: type^2)
-MERGE_SCORE = {i: i * i for i in range(1, 17)}
-
-# 同type近接ペアのシェイク確率 (距離/接触距離 の比に基づく)
-SHAKE_BASE_PROB = 0.15
-
-
-def calc_chain_potential(merge_x, merge_y, merged_type, pieces):
-    """マージ後ピース(typeN+1)が既存の同typeとさらに連鎖する期待値を計算。
-    マージ後ピースは2つの中間座標に出現する。"""
-    chain_type = merged_type + 1
-    if chain_type > 16:
-        return 0.0
-    chain_targets = [p for p in pieces if p["type"] == chain_type]
-    if not chain_targets:
-        return 0.0
-    best_ev = 0.0
-    for ct in chain_targets:
-        dist = math.sqrt((merge_x - ct["x"]) ** 2 + (merge_y - ct["y"]) ** 2)
-        # 連鎖確率: 距離が近いほど高い
-        if dist < 0.5:
-            prob = 0.6
-        elif dist < 1.5:
-            prob = 0.3
-        elif dist < 3.0:
-            prob = 0.1
-        else:
-            prob = 0.0
-        ev = prob * MERGE_SCORE.get(chain_type, 0)
-        if ev > best_ev:
-            best_ev = ev
-    return best_ev
-
-
-def calc_shake_ev(drop_x, landing_y, next_r, pieces):
-    """小ピースドロップによるシェイク効果の期待値。
-    着地点の下方に同type近接ペアがあれば、揺れでマージする可能性を計算。"""
-    ev = 0.0
-    # 着地点より下にある同typeペアを探す
-    type_groups = {}
-    for p in pieces:
-        if p["y"] < landing_y:
-            type_groups.setdefault(p["type"], []).append(p)
-
-    for t, group in type_groups.items():
-        if len(group) < 2:
-            continue
-        # ペア間の距離をチェック
-        for i in range(len(group)):
-            for j in range(i + 1, len(group)):
-                a, b = group[i], group[j]
-                dist = math.sqrt((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2)
-                contact_r = a["r"] + b["r"]
-                gap_ratio = dist / contact_r if contact_r > 0 else 99
-                if gap_ratio < 2.0:  # 接触距離の2倍以内 → シェイクで動く可能性
-                    # 着地点からの距離でシェイク効果が減衰
-                    mid_x = (a["x"] + b["x"]) / 2
-                    mid_y = (a["y"] + b["y"]) / 2
-                    shake_dist = math.sqrt((drop_x - mid_x) ** 2 + (landing_y - mid_y) ** 2)
-                    if shake_dist < 3.0:
-                        prob = SHAKE_BASE_PROB * (1.0 - gap_ratio / 2.0) * max(0, 1.0 - shake_dist / 3.0)
-                        ev += prob * MERGE_SCORE.get(t, 0)
-    return ev
-
-
 def analyze_drops(pieces, next_type, next_r, shapes=None):
     """全サンプルXについて着地Y・マージ可否を計算。
     物理挙動（ドリフト・爆発衝撃波）を考慮した拡張版。
@@ -426,53 +360,6 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
 
         has_merge = best_grade in ("DIRECT", "NEAR")
 
-        # --- 期待値ベーススコア計算 ---
-        merge_ev = 0.0
-        chain_ev = 0.0
-        explosion_ev = 0.0
-        best_merge_target = None
-
-        # マージ期待値: P(merge) × score
-        for m in merges:
-            prob = MERGE_PROB.get(m["grade"], 0.0)
-            if prob > 0:
-                score_val = MERGE_SCORE.get(next_type, 0)
-                ev = prob * score_val
-                if ev > merge_ev:
-                    merge_ev = ev
-                    best_merge_target = m
-
-        # 連鎖期待値 + 爆発衝撃波期待値
-        if best_merge_target and best_grade in ("DIRECT", "NEAR"):
-            # マージ後ピースは2つの中間に出現
-            merged_x = (x + best_merge_target["tx"]) / 2
-            merged_y = (ly + best_merge_target["ty"]) / 2
-            chain_ev = MERGE_PROB[best_grade] * calc_chain_potential(
-                merged_x, merged_y, next_type, pieces
-            )
-
-            # 爆発衝撃波によるボーナスマージ予測
-            exclude = {best_merge_target["id"]}  # マージ消滅ピース
-            _, explosion_merges = estimate_explosion_displacement(
-                merged_x, merged_y, pieces, exclude
-            )
-            for _, _, etype in explosion_merges:
-                explosion_ev += MERGE_PROB[best_grade] * 0.3 * MERGE_SCORE.get(etype, 0)
-
-        # シェイク期待値: 着地衝撃で下層ピースがマージする可能性
-        shake_ev = calc_shake_ev(x, ly, next_r, pieces)
-
-        # 総合期待値
-        total_ev = merge_ev + chain_ev + shake_ev + explosion_ev
-
-        # デッドライン超えペナルティ
-        if ly > DEADLINE_Y:
-            total_ev -= 500
-
-        # ドリフト不確実性ペナルティ（大きいほど予測不能）
-        if drift_unc > 0.3:
-            total_ev -= drift_unc * 10
-
         results.append({
             "x": round(x, 2),
             "landing_y": round(ly, 3),
@@ -481,14 +368,8 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
             "merges": merges,
             "has_merge": has_merge,
             "merge_grade": best_grade,
-            "score": round(total_ev, 1),
-            "merge_ev": round(merge_ev, 1),
-            "chain_ev": round(chain_ev, 1),
-            "shake_ev": round(shake_ev, 1),
-            "explosion_ev": round(explosion_ev, 1),
         })
 
-    results.sort(key=lambda r: r["score"], reverse=True)
     return results, same_type
 
 
@@ -652,25 +533,17 @@ def format_report(state, results, same_type, pieces, reactor=None):
             out.append(f"  ⚠⚠ next=nextNext=type{nt} — 今回マージできても、マージ後ピース(type{nt+1})付近も確認せよ")
     out.append("")
 
-    # ドロップ推奨ランキング
-    out.append("## ドロップ推奨ランキング TOP10 (期待値ベース)")
-    out.append("| 順位 | X座標   | 着地Y  | ドリフト | マージ   | 期待値 | 内訳(マージ/連鎖/シェイク/爆発) |")
-    out.append("|------|---------|--------|---------|----------|--------|-------------------------------|")
-    for i, r in enumerate(results[:10]):
+    # マージ可能ドロップ候補
+    merge_results = [r for r in results if r["has_merge"]]
+    out.append(f"## マージ可能ドロップ候補 ({len(merge_results)}件)")
+    out.append("| X座標   | 着地Y  | ドリフト | マージ   |")
+    out.append("|---------|--------|---------|----------|")
+    for r in merge_results[:10]:
         grade = r["merge_grade"]
-        if grade == "DIRECT":
-            mg = "[直撃]"
-        elif grade == "NEAR":
-            mg = "[近接]"
-        else:
-            mg = "  -   "
-        m_ev = r.get("merge_ev", 0)
-        c_ev = r.get("chain_ev", 0)
-        s_ev = r.get("shake_ev", 0)
-        e_ev = r.get("explosion_ev", 0)
+        mg = "[直撃]" if grade == "DIRECT" else "[近接]"
         drift = r.get("drift_x", 0)
         drift_s = f"{drift:+.2f}" if abs(drift) > 0.02 else "  0  "
-        out.append(f"| {i+1:>4d} | {r['x']:+6.2f} | {r['landing_y']:+6.2f} | {drift_s} | {mg} | {r['score']:+6.1f} | {m_ev:.1f} / {c_ev:.1f} / {s_ev:.1f} / {e_ev:.1f} |")
+        out.append(f"| {r['x']:+6.2f} | {r['landing_y']:+6.2f} | {drift_s} | {mg} |")
     out.append("")
 
     # 高さマップ (主要位置)
@@ -738,9 +611,19 @@ def format_report(state, results, same_type, pieces, reactor=None):
 
         out.append("")
 
-    # 最終推奨
+    # 最終推奨 (DIRECT > NEAR > 最低着地点)
+    best = None
     if results:
-        best = results[0]
+        directs = [r for r in results if r["merge_grade"] == "DIRECT"]
+        nears = [r for r in results if r["merge_grade"] == "NEAR"]
+        if directs:
+            best = min(directs, key=lambda r: next((m["dist"] for m in r["merges"] if m["grade"] == "DIRECT"), 99))
+        elif nears:
+            best = min(nears, key=lambda r: next((m["dist"] for m in r["merges"] if m["grade"] == "NEAR"), 99))
+        else:
+            best = min(results, key=lambda r: r["landing_y"])
+
+    if best:
         drift_note = ""
         if abs(best.get("drift_x", 0)) > 0.1:
             d = best["drift_x"]
@@ -789,12 +672,8 @@ def main():
         f.write(report)
 
     # 要約を標準出力
-    if results:
-        best = results[0]
-        mg = "merge" if best["has_merge"] else "no-merge"
-        print(f"  → 推奨 DROP:{best['x']:.2f} (着地y={best['landing_y']:.2f}, {mg}) → {out_path}")
-    else:
-        print(f"  → 解析完了 → {out_path}")
+    merge_count = sum(1 for r in results if r["has_merge"])
+    print(f"  → {len(results)}候補解析 (マージ可能={merge_count}) → {out_path}")
 
 
 if __name__ == "__main__":

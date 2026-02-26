@@ -56,7 +56,6 @@ eloop.sh (外側ループ)
 | `prompts/improve_strategy.md` | AI改善用プロンプト |
 | `strategy_versions/` | strategy.py のバージョン履歴 |
 | `game_history/` | 試合ごとのターンログ (JSONL) |
-| `best_strategy.py` | 最高スコア時の strategy.py |
 | `best_score.txt` | ハイスコア記録 |
 
 ### jloop.sh — JSON-based State Loop
@@ -71,7 +70,7 @@ bash jloop.sh
 **ステートマシン:** `WAIT_READY → DECIDE → EXECUTE → WAIT_READY`
 - DECIDE: `analyze_board.py` で盤面解析 → AI にプロンプト → `tmp/plan.md` / `tmp/plan.json` 出力
 - EXECUTE: plan からドロップ座標抽出 → `commands.txt` 書き込み
-- GAME_OVER: AI に振り返り → `STRATEGY.md` 更新 → retry
+- GAME_OVER: AI に振り返り → retry
 
 ### sloop.sh — Simple State Loop (レガシー)
 
@@ -363,5 +362,4 @@ JS Bridge 経由で Unity から読み出した構造データ。
 
 ### 関連文献
 
-- `STRATEGY.md` — 49個の確定済み原則 + 核心戦略 (AI が自動更新)
-- `best_strategy.md` — ハイスコア時の戦略スナップショット
+- `strategy_versions/best_score*_strategy.py` — ハイスコア時の戦略 (殿堂入り)

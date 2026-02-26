@@ -13,7 +13,6 @@ AI_TIMEOUT=600
 
 # strategy 関連
 STRATEGY_FILE="strategy.py"
-BEST_STRATEGY_FILE="best_strategy.py"
 STRATEGY_VERSIONS_DIR="strategy_versions"
 HISTORY_DIR="game_history"
 HISTORY_FILE="$HISTORY_DIR/latest.jsonl"
@@ -277,8 +276,6 @@ update_best() {
 	if [ "${current_score:-0}" -gt "${best_score:-0}" ]; then
 		log "🏆 NEW HIGH SCORE: $current_score (prev: $best_score)"
 		echo "$current_score" >best_score.txt
-		cp "$STRATEGY_FILE" "$BEST_STRATEGY_FILE"
-		cp "$GAME_STATE" best_game_state.json
 
 		# 殿堂入り保存（スコアをファイル名に）
 		local hall_file
@@ -289,7 +286,6 @@ update_best() {
 		# strategy.py の変更履歴に [BEST:スコア] タグを付与
 		python3 tag_best_changelog.py "$STRATEGY_FILE" "$current_score" 2>/dev/null
 		python3 tag_best_changelog.py "$hall_file" "$current_score" 2>/dev/null
-		python3 tag_best_changelog.py "$BEST_STRATEGY_FILE" "$current_score" 2>/dev/null
 
 		# 殿堂入りも直近3つのみ保持（スコア順でソートし上位3つを残す）
 		local best_total
