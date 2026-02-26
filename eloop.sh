@@ -481,13 +481,16 @@ _run_opencode_radio() {
 start_radio_talk() {
 	local score="$1" turns="$2" game_num="$3" best_score="$4"
 
-	# 前の生成プロセスがまだ動いていたら止める（sayは残す）
+	# 前の生成プロセスがまだ動いていたら止める（sayはnohupで独立しているので残る）
 	if [ "${_radio_pid:-0}" -ne 0 ] && kill -0 "$_radio_pid" 2>/dev/null; then
 		kill "$_radio_pid" 2>/dev/null
 		wait "$_radio_pid" 2>/dev/null
 	fi
 
 	(
+		# サブシェルがTERMで殺されてもsay(nohup)は生き残る
+		trap 'exit 0' TERM
+
 		local prompt_file
 		prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
 
@@ -647,9 +650,14 @@ RADIOPROMPT
 			summary="[$(date '+%H:%M')] Game#${game_num} ${score}pts 序盤:${snippet_top} / 中盤:${snippet_mid} / 終盤:${snippet_end}"
 			echo "$summary" >> "$PAST_RADIO_TOPICS"
 			tail -10 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
-			log "[RADIO] トーク開始"
+			log "[RADIO] トーク開始 (${#talk}文字)"
 			killall say 2>/dev/null
-			say -r "$RADIO_SAY_RATE" "$talk"
+			# sayをnohupで独立プロセスとして起動（サブシェル終了でもsayが死なないように）
+			nohup say -r "$RADIO_SAY_RATE" "$talk" > /dev/null 2>&1 &
+			local say_pid=$!
+			echo "$say_pid" > tmp/.radio_say.pid
+			# sayの完了を待つ（ただしサブシェルが殺されてもsayは生き残る）
+			wait "$say_pid" 2>/dev/null
 			log "[RADIO] トーク終了"
 		else
 			log "[RADIO] トーク生成失敗"
