@@ -1,13 +1,13 @@
 #!/bin/bash
-# say_enqueue.sh - トークンベースのsayキュー（最新が勝つ・プリエンプション付き）
+# say_enqueue.sh - flockベースのsayキュー（最新が勝つ・プリエンプション付き）
 #
 # 使い方: ./say_enqueue.sh <content_file> [rate]
 #
 # 動作:
 #   1. コンテンツを登録し、ユニークトークンで「自分の番」を主張
-#   2. 前のsayがまだ再生中なら、終了を待つ
-#   3. 待っている間に別の呼び出しがトークンを上書きしたら → 諦めて終了
-#   4. 前のsay終了後、トークンがまだ自分のものなら → say開始
+#   2. flockで排他ロックを取得し、前のsay終了を待つ
+#   3. ロック取得後、トークンがまだ自分のものなら → say開始
+#   4. 別の呼び出しがトークンを上書きしていたら → 諦めて終了
 #
 # eloop.sh と watch_strategy.sh の両方から呼ばれる。
 # sayはnohupで起動するため、このスクリプトが殺されてもsayは生き残る。
@@ -23,6 +23,7 @@ RATE="${2:-120}"
 
 PID_FILE="$QUEUE_DIR/pid"
 TOKEN_FILE="$QUEUE_DIR/token"
+LOCK_FILE="$QUEUE_DIR/lock"
 
 if [ ! -s "$CONTENT_FILE" ]; then
     echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
@@ -51,6 +52,7 @@ _is_preempted() {
 _log "queued (token=${MY_TOKEN})"
 
 # --- 前のsayの終了を待つ（プリエンプションチェック付き） ---
+# flockの外でポーリング: ロック取得前にプリエンプトされたら早期終了
 while [ -f "$PID_FILE" ]; do
     PREV_PID=$(cat "$PID_FILE" 2>/dev/null)
     if [ -z "$PREV_PID" ] || ! kill -0 "$PREV_PID" 2>/dev/null; then
@@ -64,18 +66,44 @@ while [ -f "$PID_FILE" ]; do
     sleep 1
 done
 
-# --- 最終プリエンプションチェック ---
-if _is_preempted; then
-    _log "最終チェックでプリエンプト → 諦め"
+# --- flockで排他ロックを取得してからsay開始 ---
+# これにより「プリエンプションチェック → say起動 → PID書き込み」がアトミックになる
+exec 9>"$LOCK_FILE"
+if ! flock -w 30 9; then
+    _log "ロック取得タイムアウト → 諦め"
     rm -f "$MY_CONTENT"
     exit 0
 fi
 
-# --- say開始（nohupで独立プロセスとして） ---
+# --- ロック内: 前のsayが残っていたら殺す ---
+if [ -f "$PID_FILE" ]; then
+    PREV_PID=$(cat "$PID_FILE" 2>/dev/null)
+    if [ -n "$PREV_PID" ] && kill -0 "$PREV_PID" 2>/dev/null; then
+        _log "前のsay (PID=$PREV_PID) がまだ再生中 → 終了を待機"
+        # ロック内なので他のプロセスは割り込めない
+        while kill -0 "$PREV_PID" 2>/dev/null; do
+            sleep 1
+        done
+    fi
+    rm -f "$PID_FILE"
+fi
+
+# --- ロック内: 最終プリエンプションチェック ---
+if _is_preempted; then
+    _log "最終チェックでプリエンプト → 諦め"
+    rm -f "$MY_CONTENT"
+    flock -u 9
+    exit 0
+fi
+
+# --- ロック内: say開始 ---
 _log "say開始 (rate=${RATE})"
 nohup say -r "$RATE" -f "$MY_CONTENT" > /dev/null 2>&1 &
 SAY_PID=$!
 echo "$SAY_PID" > "$PID_FILE"
+
+# ロック解放（say起動+PID記録が完了したので安全）
+flock -u 9
 
 # sayの完了をポーリングで待つ
 # このスクリプトが殺されてもsayはnohupで生き残る
