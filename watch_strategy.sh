@@ -14,12 +14,10 @@ COMMENTARY_FILE="tmp/strategy_commentary.txt"
 PAST_TOPICS_FILE="tmp/past_watch_topics.txt"
 LOCK_FILE="tmp/.watch_strategy.lock"
 LAST_HASH_FILE="tmp/.watch_strategy_hash"
-SAY_PID_FILE="tmp/.watch_say.pid"
 
 # --- 設定 ---
 AI_AGENT="zai"
 AI_FALLBACK="glmflash"
-SAY_VOICE=""  # macOS say のボイス（空ならデフォルト）
 SAY_RATE=120  # 読み上げ速度
 MIN_COMMENTARY_LEN=200  # これより短い生成結果はゴミとみなす
 
@@ -27,36 +25,10 @@ mkdir -p tmp
 
 # Ctrl+C でクリーンアップ
 cleanup() {
-  _kill_my_say
   rm -f "$LOCK_FILE"
   exit 0
 }
 trap cleanup INT TERM
-
-# --- say 管理（自分が起動したsayだけ制御する） ---
-_kill_my_say() {
-  if [[ -f "$SAY_PID_FILE" ]]; then
-    local pid
-    pid=$(cat "$SAY_PID_FILE" 2>/dev/null)
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null
-      wait "$pid" 2>/dev/null
-    fi
-    rm -f "$SAY_PID_FILE"
-  fi
-}
-
-_start_say() {
-  local text="$1"
-  # 読み上げ開始の直前に全ての say を止める（eloop のラジオ含む）
-  killall say 2>/dev/null
-  local say_args=(-r "$SAY_RATE")
-  if [[ -n "$SAY_VOICE" ]]; then
-    say_args+=(-v "$SAY_VOICE")
-  fi
-  say "${say_args[@]}" "$text" &
-  echo $! > "$SAY_PID_FILE"
-}
 
 # --- ユーティリティ ---
 log() {
@@ -380,9 +352,10 @@ on_strategy_changed() {
   echo "$summary" >> "$PAST_TOPICS_FILE"
   tail -10 "$PAST_TOPICS_FILE" > "${PAST_TOPICS_FILE}.tmp" && mv "${PAST_TOPICS_FILE}.tmp" "$PAST_TOPICS_FILE"
 
-  # 6. 読み上げ（有効な内容がある時だけ）
-  _start_say "$commentary"
-  log "読み上げ開始 (${#commentary}文字)"
+  # 6. say_enqueue で読み上げ（前のトークが終わるまで待つ、プリエンプション対応）
+  log "読み上げキュー登録 (${#commentary}文字)"
+  ./say_enqueue.sh "$COMMENTARY_FILE" "$SAY_RATE"
+  # say_enqueue がプリエンプトされた場合は何も読み上げずに戻る
 }
 
 # --- メインループ ---

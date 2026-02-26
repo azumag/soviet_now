@@ -488,9 +488,6 @@ start_radio_talk() {
 	fi
 
 	(
-		# サブシェルがTERMで殺されてもsay(nohup)は生き残る
-		trap 'exit 0' TERM
-
 		local prompt_file
 		prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
 
@@ -650,14 +647,9 @@ RADIOPROMPT
 			summary="[$(date '+%H:%M')] Game#${game_num} ${score}pts 序盤:${snippet_top} / 中盤:${snippet_mid} / 終盤:${snippet_end}"
 			echo "$summary" >> "$PAST_RADIO_TOPICS"
 			tail -10 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
-			log "[RADIO] トーク開始 (${#talk}文字)"
-			killall say 2>/dev/null
-			# sayをnohupで独立プロセスとして起動（サブシェル終了でもsayが死なないように）
-			nohup say -r "$RADIO_SAY_RATE" "$talk" > /dev/null 2>&1 &
-			local say_pid=$!
-			echo "$say_pid" > tmp/.radio_say.pid
-			# sayの完了を待つ（ただしサブシェルが殺されてもsayは生き残る）
-			wait "$say_pid" 2>/dev/null
+			log "[RADIO] say_enqueue に登録 (${#talk}文字)"
+			# say_enqueue.sh が前のsay終了を待ち、プリエンプション対応で再生
+			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE"
 			log "[RADIO] トーク終了"
 		else
 			log "[RADIO] トーク生成失敗"
