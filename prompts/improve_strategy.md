@@ -3,6 +3,7 @@
 ## ゲーム概要
 - 目標: スコア最大化
 
+
 ## strategy.py のインターフェース契約（変更禁止）
 
 ```python
@@ -17,7 +18,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     Returns:
         {"x": float, "reason": str}  # x は -3.0〜+3.0
 
-    NOTE: analysis["results"] にはスコアリング情報(score, merge_ev等)は含まれない。
+    NOTE: analysis["results"] には
     物理的事実（着地Y、マージグレード、ドリフト等）のみ提供される。
     スコアリング・評価ロジックは decide() 内で自由に設計すること。
     """
