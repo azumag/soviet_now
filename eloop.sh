@@ -491,6 +491,10 @@ start_radio_talk() {
 	fi
 
 	(
+		# eloopラジオ再生中フラグ（watch_strategy.shが二重再生を回避するために参照）
+		touch tmp/.radio_active
+		trap 'rm -f tmp/.radio_active' EXIT
+
 		local prompt_file
 		prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
 
@@ -709,10 +713,12 @@ RADIOPROMPT
 }
 
 stop_radio_talk() {
-	# 何もしない: ラジオ生成・再生はバックグラウンドで自然に完了させる
+	# ラジオ生成・再生はバックグラウンドで自然に完了させる
 	# say は watch_strategy.sh が新トーク準備完了時に切り替える
 	# 次の start_radio_talk 呼び出し時に前のプロセスが残っていても問題ない
 	_radio_pid=0
+	# フラグのクリーンアップ（サブシェルのtrap EXITで消えるが、安全のため）
+	rm -f tmp/.radio_active
 }
 
 #=== メインループ ===

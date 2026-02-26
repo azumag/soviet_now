@@ -325,6 +325,12 @@ PROMPT_RULES
 
 # --- メイン処理: strategy.py 変更時のハンドラ ---
 on_strategy_changed() {
+  # eloopのラジオトークが再生中なら二重再生を避けてスキップ
+  if [[ -f "tmp/.radio_active" ]]; then
+    log "eloopラジオ再生中 → スキップ"
+    return
+  fi
+
   # ロックで多重実行を防止
   if [[ -f "$LOCK_FILE" ]]; then
     log "処理中のためスキップ"
@@ -429,6 +435,11 @@ on_strategy_changed() {
   tail -10 "$PAST_TOPICS_FILE" > "${PAST_TOPICS_FILE}.tmp" && mv "${PAST_TOPICS_FILE}.tmp" "$PAST_TOPICS_FILE"
 
   # 6. say_enqueue で読み上げ（前のトークが終わるまで待つ、プリエンプション対応）
+  # AI生成中にeloopラジオが始まった場合の再チェック
+  if [[ -f "tmp/.radio_active" ]]; then
+    log "eloopラジオが開始された → 読み上げスキップ"
+    return
+  fi
   log "読み上げキュー登録 (${#commentary_body}文字)"
   ./say_enqueue.sh "$COMMENTARY_FILE" "$SAY_RATE"
   # say_enqueue がプリエンプトされた場合は何も読み上げずに戻る
