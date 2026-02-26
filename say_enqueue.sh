@@ -4,13 +4,12 @@
 # 使い方: ./say_enqueue.sh <content_file> [rate]
 #
 # 動作:
-#   1. コンテンツを登録し、ユニークトークンで「自分の番」を主張
-#   2. 前のsayがまだ再生中なら、終了を待つ（プリエンプションチェック付き）
-#   3. mkdirアトミックロックを取得
-#   4. ロック内でトークンチェック → say起動 → PID記録（アトミック）
-#
-# eloop.sh と watch_strategy.sh の両方から呼ばれる。
-# sayはnohupで起動するため、このスクリプトが殺されてもsayは生き残る。
+#   1. コンテンツコピー + トークン登録
+#   2. mkdirロック取得（待機 + プリエンプション確認）
+#   3. ロック内: 前のsay PID待ち + プリエンプション確認
+#   4. ロック内: nohup say起動 + PID記録
+#   5. ロック解放
+#   6. say完了待ち + クリーンアップ
 
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -34,9 +33,6 @@ fi
 MY_TOKEN="${BASHPID:-$$}_${RANDOM}_$(date +%s)"
 MY_CONTENT="$QUEUE_DIR/content_${MY_TOKEN}.txt"
 
-# 古いコンテンツファイルを掃除（1時間以上前のもの）
-find "$QUEUE_DIR" -name 'content_*.txt' -mmin +60 -delete 2>/dev/null
-
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
 
@@ -50,22 +46,14 @@ _is_preempted() {
 }
 
 # mkdirロック: アトミックな排他制御（macOS互換）
-# 古いロック（5分以上前）は自動削除（プロセスが死んだ場合の対策）
 _acquire_lock() {
     local max_wait=60 waited=0
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
-        # ロックが古すぎたら強制解除
-        if [ -d "$LOCK_DIR" ]; then
-            local lock_age
-            lock_age=$(( $(date +%s) - $(stat -f '%m' "$LOCK_DIR" 2>/dev/null || echo 0) ))
-            if [ "$lock_age" -gt 300 ]; then
-                _log "古いロックを強制解除 (${lock_age}秒)"
-                rmdir "$LOCK_DIR" 2>/dev/null
-                continue
-            fi
-        fi
         if [ "$waited" -ge "$max_wait" ]; then
             return 1
+        fi
+        if _is_preempted; then
+            return 2
         fi
         sleep 0.5
         waited=$((waited + 1))
@@ -77,29 +65,24 @@ _release_lock() {
     rmdir "$LOCK_DIR" 2>/dev/null
 }
 
-# クリーンアップ: 終了時にロック解放
-trap '_release_lock' EXIT
+# クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
+_cleanup() {
+    _release_lock
+    rm -f "$MY_CONTENT"
+}
+trap '_cleanup' EXIT
 
 _log "queued (token=${MY_TOKEN})"
 
-# --- 前のsayの終了を待つ（プリエンプションチェック付き） ---
-while [ -f "$PID_FILE" ]; do
-    PREV_PID=$(cat "$PID_FILE" 2>/dev/null)
-    if [ -z "$PREV_PID" ] || ! kill -0 "$PREV_PID" 2>/dev/null; then
-        break  # 前のsayは終了済み
-    fi
-    if _is_preempted; then
-        _log "待機中にプリエンプト → 諦め"
-        rm -f "$MY_CONTENT"
-        exit 0
-    fi
-    sleep 1
-done
-
 # --- mkdirロックで排他制御 ---
-if ! _acquire_lock; then
-    _log "ロック取得タイムアウト → 諦め"
-    rm -f "$MY_CONTENT"
+_acquire_lock
+lock_ret=$?
+if [ "$lock_ret" -ne 0 ]; then
+    if [ "$lock_ret" -eq 2 ]; then
+        _log "ロック待ち中にプリエンプト → 諦め"
+    else
+        _log "ロック取得タイムアウト → 諦め"
+    fi
     exit 0
 fi
 
@@ -109,6 +92,10 @@ if [ -f "$PID_FILE" ]; then
     if [ -n "$PREV_PID" ] && kill -0 "$PREV_PID" 2>/dev/null; then
         _log "前のsay (PID=$PREV_PID) がまだ再生中 → 終了待ち"
         while kill -0 "$PREV_PID" 2>/dev/null; do
+            if _is_preempted; then
+                _log "say待ち中にプリエンプト → 諦め"
+                exit 0
+            fi
             sleep 1
         done
     fi
@@ -118,7 +105,6 @@ fi
 # --- ロック内: 最終プリエンプションチェック ---
 if _is_preempted; then
     _log "最終チェックでプリエンプト → 諦め"
-    rm -f "$MY_CONTENT"
     exit 0
 fi
 
@@ -138,4 +124,4 @@ while kill -0 "$SAY_PID" 2>/dev/null; do
 done
 
 _log "say終了"
-rm -f "$PID_FILE" "$MY_CONTENT"
+rm -f "$PID_FILE"

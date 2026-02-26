@@ -482,7 +482,7 @@ _run_opencode_radio() {
 
 # バックグラウンドでラジオトーク生成→再生
 start_radio_talk() {
-	local score="$1" turns="$2" game_num="$3" best_score="$4"
+	local score="$1" turns="$2" game_num="$3" best_score="$4" diff_content="${5:-}"
 
 	# 前の生成プロセスがまだ動いていたら止める（sayはnohupで独立しているので残る）
 	if [ "${_radio_pid:-0}" -ne 0 ] && kill -0 "$_radio_pid" 2>/dev/null; then
@@ -491,10 +491,6 @@ start_radio_talk() {
 	fi
 
 	(
-		# eloopラジオ再生中フラグ（watch_strategy.shが二重再生を回避するために参照）
-		touch tmp/.radio_active
-		trap 'rm -f tmp/.radio_active' EXIT
-
 		local prompt_file
 		prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
 
@@ -618,6 +614,9 @@ ${past_topics:-まだ過去のトークはありません。自由に話して�
 最近の戦略履歴:
 ${history_context}
 
+【作戦変更の差分】
+${diff_content:-差分情報なし}
+
 いまAIが次の試合に向けて作戦を練り直しています。6分くらいかかります。
 その間、リスナーを楽しませるトークをしてください。
 
@@ -650,9 +649,10 @@ ${history_context}
    - 深夜なら怪談・星座・夜食の話、朝なら目覚まし・朝食・通勤の話、昼なら食事・昼寝の話、夕方ならビール・夕焼けの話、夜なら酒・映画・一日の振り返り
    - ことわざや格言、ダジャレも交える
 
-7. 戦略の歴史を振り返るコーナー
-   - これまでの戦略の変遷を語る（上の戦略履歴を参考に）
-   - スコアの浮き沈みをドラマチックに語る
+7. 作戦変更の解説コーナー
+   - 上の差分を参考に、何が変わったか国名を使って具体的に解説
+   - 前の作戦とどこが違うか、どの国旗の扱いが変わったか
+   - これまでの戦略の変遷を振り返り、スコアの浮き沈みをドラマチックに語る
 
 8. 次の試合への展望
    - AIがどんな作戦を持ってくるか予想
@@ -714,8 +714,6 @@ RADIOPROMPT
 
 stop_radio_talk() {
 	# ラジオ生成・再生はバックグラウンドで自然に完了させる
-	# サブシェルの trap EXIT が .radio_active を消すので、ここでは触らない
-	# （先に消すと watch_strategy が後追い再生してしまう）
 	_radio_pid=0
 }
 
@@ -786,9 +784,20 @@ while true; do
 	#--- Step 5+6: AI で strategy.py 改善 (バリデーション失敗時リトライ) ---
 	log "[IMPROVE] AI による strategy.py 改善..."
 
+	# strategy.py の差分を生成（直前のバージョンと比較）
+	STRATEGY_DIFF=""
+	PREV_VERSION=$(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | sed -n '2p')
+	LATEST_VERSION=$(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -1)
+	if [ -n "$PREV_VERSION" ] && [ -f "$PREV_VERSION" ] && [ -n "$LATEST_VERSION" ] && [ -f "$LATEST_VERSION" ]; then
+		STRATEGY_DIFF=$(diff -u "$PREV_VERSION" "$LATEST_VERSION" 2>/dev/null || true)
+		# 実質的な差分がなければクリア
+		REAL_CHANGES=$(echo "$STRATEGY_DIFF" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
+		[ "${REAL_CHANGES:-0}" -lt 2 ] && STRATEGY_DIFF=""
+	fi
+
 	# ラジオトーク開始（AI改善と並行してバックグラウンド再生）
 	BEST_SCORE_NOW=$(cat best_score.txt 2>/dev/null || echo 0)
-	start_radio_talk "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY" "$BEST_SCORE_NOW"
+	start_radio_talk "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY" "$BEST_SCORE_NOW" "$STRATEGY_DIFF"
 
 	# バックアップ
 	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
