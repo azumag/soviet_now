@@ -114,7 +114,7 @@ while pgrep -x say >/dev/null 2>&1; do
         _log "say待機中にプリエンプト → 諦め"
         exit 0
     fi
-    _log "既存sayプロセス検出 → 終了待ち"
+    [ "${_say_wait_logged:-0}" -eq 0 ] && _log "既存sayプロセス検出 → 終了待ち" && _say_wait_logged=1
     sleep 1
 done
 

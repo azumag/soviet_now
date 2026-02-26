@@ -16,10 +16,11 @@
 # v59: HIGH phase kouki koudou kanwa-ban - v58 no shippai (sukoa 1146, HIGH phase de score_delta=0 de 21 turn kan zen teimen) wo uke, HIGH phase kouki de koudou kanwa wo sai-shishou. v56 no fukutsu na joken bun-ki (reactive_pairs>=3) wo sakujo shi, max_y>2.5 to iu shimpuru na joken dake de koudou kanwa wo kanwa shite chain reaction kikai wo saidaika. v57 no has_merge joken ni yoru furiko pattern wo kaihi (has_merge joken nashi, NO_MERGE_PENALTI nai). v42 no ganjina kihon kouzou wo iji shi, code ryuu wa yaku 115-gyou de v42 no shimpuru kouzou wo iji.
 # v60: reactive_pairs katsuyou - v59 no shippai (sukoa 771, HIGH phase de merge rate 0%・HIGH_PHASE_LATE_RELAX hataki 1-kai dake) wo uke, max_y>2.5 joken (hataki 1-kai dake, kouka nashi) wo sakujo shi, reactive_pairs katsuyou de merge sokushin. v42 no shimpuru kouzou (DIRECT=1200/NEAR=600/FAR=200, height_penalty=50*height_mult, drift_penalty=30, balance hosei) wo kanzen iji. HIGH phase de reactive_pairs >= 3 no baai, height_multiplier wo 35.0 ni kanwa (chain reaction chu no merge yuusen). MEDIUM/HIGH phase de merge nashi position ni karuku no NO_MERGE_PENALTI (-50) wo tsuika (v12 no kousei youso wo keiryou-ka). has_merge joken no furiko pattern wo kaihou (reactive_pairs joken de merge sokushin). v31 no reactive_pairs katsuyou to v12 no merge nashi penalty no seikou youso wo v42 no ganjina kouzou ni tougou. code ryuu wa yaku 130-gyou de v59 no 115-gyou kara fukutsu-ka naku seikou youso wo tougou
 # v61: v42 kanzen fukkatsu-ban - v60 no shippai (sukoa 1063, CRITICAL phase de merge available=false to NO_MERGE_PENALTI (-50) ga shinkushuuka) wo uke, v42 no shimpuru kouzou e kanzen fukkatsu. v60 de tsuika shita NO_MERGE_PENALTI wo sakujo (v42 ha kono penalty nashi de 2335 point wo tassei). v60 de tsuika shita reactive_pairs joken bun-ki (HIGH phase de height_multiplier=35.0 kanwa) wo sakujo (v59 no shippai pattern to onaji). v42 no seikou shita seikaku chi wo kanzen iji: DIRECT=1200/NEAR=600/FAR=200, height_penalty=50*height_mult, drift_penalty=30 (phase bunnki nashi), balance_strength: LOW=20/MEDIUM=30/HIGH=40/CRITICAL=fuka, center_bonus: CRITICAL=60/others=50. Code ryuu wa yaku 100-gyou ni genshou, v42 no "simpuru kote kouzou" wo kanzen fukkatsu
+# v62: merge bonus sakugen/koudou kanwa kouka - v61 no shippai (sukoa 1783, HIGH phase de 81% score_delta=0, CRITICAL phase de game over) wo uke, v42 no "merge bonus kajou / koudou kanwa fujuubun" na kadai wo kouzouteki ni kaiketsu. has_merge/reactive_pairs joken no furiko pattern wo kaihi (tsuika shinai). v42 no merge bonus (1200/600/200) wo 70% sakugen (840/420/140) shi, HIGH phase height_multiplier wo 2.6→4.0 ni kyokuka (50*4.0*2.0=400). HIGH phase height penalty wo 60% zouchi (landing_y>0.5 de ×3.2). Code ryuu wa yaku 100-gyou de v61 no onaji kazu, shimpuru kouzou wo iji
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42のシンプルかつ頑健な構造を完全復活"""
+    """v42のシンプル構造を維持しつつ、merge bonus過剰とHIGHフェーズ高度管理不足を構造的に改善"""
 
     results = analysis.get("results", [])
 
@@ -34,7 +35,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # phase handei (v42 no shikichi wo iji)
+    # phase handei (v42 no shikichi wo iji - HIGH phase height_multiplier dake kyouka)
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
@@ -45,7 +46,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 2.6
+        height_mult = 4.0  # v62: v42 no 2.6 kara kyokuka (koudou kanwa kyoka)
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -68,22 +69,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # 1. merge grade ni yoru sukou (v42 no kachi chi wo iji)
+        # 1. merge grade ni yoru sukou (v62: v42 no 70% ni sakugen)
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += 840.0 * merge_mult  # v62: 1200→840 (70% sakugen)
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 420.0 * merge_mult  # v62: 600→420 (70% sakugen)
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            score += 140.0 * merge_mult  # v62: 200→140 (70% sakugen)
             reasons.append("FAR_MERGE")
 
-        # 2. koudou ni yoru penalty (v42 no kachi chi wo iji)
+        # 2. koudou ni yoru penalty (v62: HIGH phase height penalty wo 60% zouchi)
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 2.0
+            height_penalty *= 3.2  # v62: v42 no 2.0 kara 60% zouchi (2.0→3.2)
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5
