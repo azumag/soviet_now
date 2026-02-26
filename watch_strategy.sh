@@ -16,13 +16,13 @@ COMMENTARY_FILE="tmp/strategy_commentary.txt"
 AI_AGENT="zai"
 AI_FALLBACK="glmflash"
 SAY_VOICE=""  # macOS say のボイス（空ならデフォルト）
-SAY_RATE=250  # 読み上げ速度
+SAY_RATE=120  # 読み上げ速度
 
 mkdir -p tmp
 
 # --- ユーティリティ ---
 log() {
-  echo "[$(date '+%H:%M:%S')] $*"
+  echo "[$(date '+%H:%M:%S')] $*" >&2
 }
 
 # 最新N個のバージョンファイルを取得（v0XX_score* のみ、新しい順）
