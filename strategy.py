@@ -12,13 +12,13 @@
 # [BEST:2325] v19: CRITICALフェーズ導入版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版 - v41の失敗（スコア558）を受けて、v41がv31から取り入れたreactive_pairsとhas_mergeによる複雑な条件分岐を削除。v19のシンプル構造（DIRECT=1200/NEAR=600/FAR=200、height_penalty=50*height_mult、drift_penalty=30）に復活。v19のCRITICALフェーズ（merge_mult=0.6）を維持。コード量削減（約140行→約110行）で頑健性を確保
 # v50-v64: has_merge/reactive_pairs条件の振り子パターンと閾値シャッフル - 複数回の追加・削除・再追加を繰り返したが、どれも失敗。v64ではv12の「緩い高度管理」を採用したが、HIGHフェーズでマージ機会を大幅に逃した（87ターン中13ターンのみ）。HEIGHT_CONTROLが32%を占め、マージ優先が崩れた。
-# v73: v42完全復帰版 - v72の失敗（スコア887、HEIGHT_CONTROLが約70%で支配的、HIGHフェーズでマージ関連の理由がほぼ皆無）を受けて、reactive_pairs活用を完全削除。v72のreactive_pairs>=5条件は履歴で2回しか出現せず、効果が限定的。履歴分析でv31→v42→v71→v72の振り子パターンを確認し、reactive_pairs活用は本質的な解決になっていないことを特定。v42のシンプルかつ頑健な構造（約100行）への完全復帰。v19の成功値を維持：マージボーナス1200/600/200、height_mult(MEDIUM=2.4/HIGH=2.6）、HIGH height_penalty=2.0、MEDIUM height_penalty=1.5、CRITICAL height_multiplier=30.0、CRITICAL merge_mult=0.6。reactive_pairs活用を完全排除し、v42の成功構造を完全復活
 # v74: chain reaction緩和導入版 - v73の失敗（スコア1328、マージ機会9.3%のみ、HEIGHT_CONTROLが33.3%で支配的）を受けて、振り子パターン（reactive_pairs追加/削除）を避け、v31の成功要素「chain reaction中に高度管理緩和」をシンプルに再導入。v73はv42構造を完全復活したが、chain reaction中の高度管理緩和が欠けており、マージ機会が減少したことが原因。v74では、v42のシンプル構造（約100行）を維持しつつ、HIGHフェーズでreactor_reactive_pairsまたはnear_pairsが一定数以上の時、height_multiplierを35.0に緩和しchain reactionを優先。reactive_pairs条件分岐の複雑化（v31/v71/v72の失敗）を避け、reactive_pairs>=3またはnear_pairs>=5のシンプルな条件に統合。has_mergeがある場合、drift_penalty_factorを0.6に緩和してマージ機会を確保。drift_penaltyを一律35.0に統一し、balance_penaltyを一律30.0に統一し、スコアリングの一貫性を確保。コード量約95行でv42の頑健性とv31のchain reaction管理を統合
 # v75: HIGHフェーズ一律緩和版 - v74の失敗（スコア1150、HIGHフェーズ7ターンでマージ0回、reactive_pairs>=3なのにマージ未選択）を受けて、振り子パターン（reactive_pairs追加/削除）を完全解消し、reactive_pairs条件を完全削除。v74のchain reaction条件（reactive_pairs>=3またはnear_pairs>=5）はHIGHフェーズでほとんど発動せず（HIGHフェーズ7ターン全てでreactive_pairs>=3なのにマージ0回）、chain reaction中の高度管理緩和が機能していなかった。v75では、v42のシンプル構造（約100行）を維持しつつ、HIGHフェーズ全体でheight_multiplierを一律35.0に緩和しマージ機会を確保。reactive_pairs条件を完全削除し、chain reaction中のhas_mergeによるdrift_penalty緩和も削除し、シンプルで一貫性のある高度管理緩和を実現。drift_penaltyを一律30.0に戻し、balance_penaltyを一律30.0に維持し、v42の頑健性を維持しつつHIGHフェーズでのマージ機会を最大化。コード量約85行でv42の頑健性とシンプルな一貫性のある緩和戦略を統合
+# v76: v42完全復活版 - v75の失敗（スコア828、HIGHフェーズ一律緩和が効果なし、HEIGHT_CONTROLが23回で支配的）を受けて、v75の一律化（height_multiplier=35.0, balance_strength=30.0）を削除し、v42のフェーズごとの設定に完全復活。履歴分析でHIGHフェーズ（4ターン）でマージ25%のみ、MEDIUMフェーズ（5ターン）でマージ0回を確認。v75の一律緩和はマージ機会を増やすどころか、v42の2335点から828点に大幅低下。振り子パターン（v31→v42→v74→v75、v29→v30→v31→v42）の根本原因は「HIGHフェーズ一律緩和」という発想自体の誤り。v42のシンプル構造（約110行）を完全復活し、フェーズごとの設定を再導入：HIGHフェーズheight_multiplier=50.0（v42の値）、balance_strength（LOW=20.0/MEDIUM=30.0/HIGH=40.0）。一律化を削除し、v42の頑健なフェーズ制を維持
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42のシンプル構造をベースに、HIGHフェーズ全体で高度管理を一律緩和してマージ機会を最大化"""
+    """v42のシンプル構造に完全復活し、フェーズごとの設定を再導入"""
 
     results = analysis.get("results", [])
 
@@ -78,7 +78,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult  # v42: v19の200を維持
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v75: HIGHフェーズ全体で一律緩和）
+        # 2. 高度によるペナルティ（v42: フェーズごとの設定を復活）
         if phase == "CRITICAL":
             # CRITICALフェーズではheight_multiplier強化（v42: v19の30.0を維持）
             height_multiplier = 30.0
@@ -86,11 +86,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if landing_y > 1.0:
                 reasons.append("CRITICAL_HEIGHT")
         else:
-            # v75: HIGHフェーズ全体でheight_multiplierを一律35.0に緩和
-            if phase == "HIGH":
-                height_multiplier = 35.0  # HIGHフェーズ一律緩和
-            else:  # LOW, MEDIUM
-                height_multiplier = 50.0
+            # v42: 全フェーズでheight_multiplier=50.0（一律化削除）
+            height_multiplier = 50.0
 
             height_penalty = landing_y * height_mult * height_multiplier
 
@@ -106,12 +103,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v75: 一律30.0に戻し、シンプル化）
+        # 3. ドリフトによるペナルティ（v42: 全フェーズで30.0）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v74: 一律30.0を維持）
-        balance_strength = 30.0
+        # 4. 左右バランス補正（v42: フェーズごとの設定を復活）
+        balance_strength = 20.0
+        if phase == "HIGH":
+            balance_strength = 40.0  # v42: v19の40.0を復活
+        elif phase == "MEDIUM":
+            balance_strength = 30.0  # v42: v19の30.0を復活
+        # CRITICALフェーズではバランス補正緩和（マージ優先）
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
