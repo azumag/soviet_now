@@ -13,13 +13,14 @@
 # [BEST:1486] v1: マージ重視戦略（DIRECT/NEAR優先、高度管理、ドリフト最小化）
 # [BEST:1615] v3: 重量バランス導入版 - ピースタイプに応じた重量化、フェーズ制導入、高度管理調整
 # [BEST:2015] v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バランス振り子パターンを解消、フェーズ閾値0.8/1.8調整
-# v9: HIGHフェーズマージ強化版 - v8の構造を維持、HIGHフェーズmerge_mult 0.8→1.0、height_mult 3.0→2.2、マージなしペナルティ緩和
-# v10: reactor活用・二段階スコアリング版 - reactor情報活用、マージあり/なしでスコアリングを分ける、HIGHフェーズ高度管理微強化
 # v11: HIGHフェーズ高度管理強化版 - v10の高度管理緩和を修正、reactorチェインボーナス削除（未使用）、マージなし時のheight_penalty/no_merge_penaltyを強化
+# [BEST:2185] v12: 一貫性重視・シンプル化版 - 二段階スコアリング廃止、v8の構造に戻しつつマージボーナス強化、HIGHフェーズ高度管理緩和、左右バランス計算簡素化
+# v13: マージ積極化・reactor活用版 - v12をベースにマージボーナス大幅強化、HIGHフェーズ高度ペナルティ緩和、reactive_pairs活用でチェイン中のマージ優先
+# v14: v13回帰・シンプル構造版 - v13のマージボーナス強化は逆効果、HIGHフェーズ高度管理緩和も失敗、reactorチェインボーナス削除（v11で削除された要素の再導入は振り子パターン）、v12の成功構造に戻す
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """reactor情報を活用し、マージあり/なしで二段階のスコアリングを行う."""
+    """v12の成功構造をベースに、v13の過剰な変更を元に戻す。"""
 
     results = analysis.get("results", [])
 
@@ -45,10 +46,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     else:
         phase = "HIGH"
-        height_mult = 2.4
+        height_mult = 2.4  # v12の2.4に戻す（v13の2.0緩和は高層化を許容した）
         merge_mult = 1.0
 
-    # 左右バランス計算（カウントベース）
+    # 左右バランス計算（簡素化：カウントベースだがv8と同じ）
     left_count = sum(1 for p in pieces if p["x"] < 0)
     right_count = len(pieces) - left_count
     balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
@@ -58,15 +59,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
-
-    # reactor情報（v10で活用開始、v11でチェインボーナス削除）
-    reactor = analysis.get("reactor", {})
-    reactive_pairs_raw = reactor.get("reactive_pairs", 0)
-    reactive_pairs = (
-        len(reactive_pairs_raw)
-        if isinstance(reactive_pairs_raw, list)
-        else reactive_pairs_raw
-    )
 
     for result in results:
         x = result["x"]
@@ -79,83 +71,55 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === 二段階スコアリング ===
-        # マージがある場合とない場合で、異なるスコアリングを行う
-
-        if merge_grade in ("DIRECT", "NEAR", "FAR"):
-            # --- マージがある場合：マージ優先、高度ペナルティ軽減 ---
-
-            # 1. マージグレードによるスコア（重点）
-            if merge_grade == "DIRECT":
-                score += 1300.0 * merge_mult
-                reasons.append("DIRECT_MERGE")
-            elif merge_grade == "NEAR":
-                score += 700.0 * merge_mult
-                reasons.append("NEAR_MERGE")
-            elif merge_grade == "FAR":
-                score += 200.0 * merge_mult
-                reasons.append("FAR_MERGE")
-
-            # 2. 高度によるスコア（軽減：マージがあるならある程度許容）
-            if phase == "HIGH":
-                height_penalty = landing_y * 30.0
-            elif phase == "MEDIUM":
-                height_penalty = landing_y * 25.0
-            else:
-                height_penalty = landing_y * 20.0
-
-            if phase == "HIGH" and landing_y > 0.5:
-                reasons.append("HIGH_TOWER")
-            elif landing_y > 0.0:
-                reasons.append("HIGH_LAYER")
-
-            score -= height_penalty
-
-            # 3. ドリフトによるペナルティ（軽め）
-            drift_penalty = (abs(drift_x) + drift_unc) * 25.0
-            score -= drift_penalty
-
+        # 1. マージグレードによるスコア（v12の値に戻す）
+        if merge_grade == "DIRECT":
+            score += 1350.0 * merge_mult  # v13: 1450→1350に戻す
+            reasons.append("DIRECT_MERGE")
+        elif merge_grade == "NEAR":
+            score += 750.0 * merge_mult  # v13: 850→750に戻す
+            reasons.append("NEAR_MERGE")
+        elif merge_grade == "FAR":
+            score += 250.0 * merge_mult  # v13: 350→250に戻す
+            reasons.append("FAR_MERGE")
         else:
-            # --- マージがない場合：高度・ドリフト・バランスを厳しく評価 ---
-
-            # 1. マージなしペナルティ（フェーズに応じて強化）
-            no_merge_penalty = 200.0
+            # マージなしはペナルティ（v12の値に戻す）
+            no_merge_penalty = 200.0  # v13: 250→200に戻す
             if phase == "HIGH":
-                no_merge_penalty *= 2.0  # v11: 1.6→2.0に強化
+                no_merge_penalty *= 1.6
             elif phase == "MEDIUM":
                 no_merge_penalty *= 1.5
             score -= no_merge_penalty
 
-            # 2. 高度によるスコア（厳しく）
-            height_penalty = landing_y * 60.0 * height_mult
+        # 2. 高度によるスコア（v12のロジックに戻す）
+        height_penalty = landing_y * 50.0 * height_mult
 
-            # 高盤面での追加ペナルティ（v11強化）
-            if phase == "HIGH":
-                height_penalty *= 1.8  # v11: 1.5→1.8に強化
-                reasons.append("HIGH_TOWER")
-            elif phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.3
-                reasons.append("MEDIUM_TOWER")
-            elif landing_y > 0.0:
-                reasons.append("HIGH_LAYER")
+        # 高盤面での追加ペナルティ（v12の1.5倍に戻す）
+        if phase == "HIGH":
+            height_penalty *= 1.5  # v13: 1.3→1.5に戻す
+            reasons.append("HIGH_TOWER")
+        elif phase == "MEDIUM" and landing_y > 0.5:
+            height_penalty *= 1.3
+            reasons.append("MEDIUM_TOWER")
+        elif landing_y > 0.0:
+            reasons.append("HIGH_LAYER")
 
-            score -= height_penalty
+        score -= height_penalty
 
-            # 3. ドリフトによるペナルティ（厳しく）
-            drift_penalty = (abs(drift_x) + drift_unc) * 35.0
-            score -= drift_penalty
+        # 3. ドリフトによるペナルティ
+        drift_penalty = (abs(drift_x) + drift_unc) * 30.0
+        score -= drift_penalty
 
-            # 4. 左右バランス補正（フェーズに応じて強化）
-            balance_strength = 20.0
-            if phase == "HIGH":
-                balance_strength = 40.0
-            elif phase == "MEDIUM":
-                balance_strength = 25.0
+        # 4. 左右バランス補正（v12と同様）
+        balance_strength = 20.0
+        if phase == "HIGH":
+            balance_strength = 35.0
+        elif phase == "MEDIUM":
+            balance_strength = 25.0
 
-            balance_penalty = x * balance_bias * balance_strength
-            score -= abs(balance_penalty)
+        balance_penalty = x * balance_bias * balance_strength
+        score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（共通）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v12維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 40.0
             score += center_bonus
