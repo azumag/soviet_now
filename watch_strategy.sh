@@ -4,7 +4,7 @@
 # 使い方: ./watch_strategy.sh
 # 停止: Ctrl+C
 
-set -euo pipefail
+set -uo pipefail
 cd "$(dirname "$0")"
 
 STRATEGY="strategy.py"
@@ -46,13 +46,43 @@ get_best_strategy() {
   ls -t "$VERSIONS_DIR"/best_score*_strategy.py 2>/dev/null | head -1
 }
 
+# ANSIエスケープコード・制御文字を除去（macOS互換: perl使用）
+strip_ansi() {
+  perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x09\x0b-\x0d\x0e-\x1f]//g' | tr -d '\r'
+}
+
+# opencode run を疑似TTY付きで実行し、AI応答テキストだけを返す
+run_opencode() {
+  local agent="$1"
+  local prompt_file="$2"
+  local raw_file
+  raw_file=$(mktemp /tmp/oc_raw_XXXXXX.txt)
+
+  # script で疑似TTY を与えて実行（opencode は TTY がないとハングする）
+  script -q "$raw_file" opencode run --agent "$agent" "$(cat "$prompt_file")" > /dev/null 2>&1
+
+  # ANSIエスケープ除去 → ヘッダー行("> agent · model")を除去 → 空行トリム
+  local cleaned
+  cleaned=$(cat "$raw_file" \
+    | strip_ansi \
+    | grep -v '^>' \
+    | grep -v '^\^D' \
+    | sed '/^[[:space:]]*$/d' \
+  )
+  rm -f "$raw_file"
+  echo "$cleaned"
+}
+
 # AIに解説を生成させる
 generate_commentary() {
   local diff_content="$1"
   local context="$2"
 
-  local prompt
-  prompt=$(cat <<'PROMPT_END'
+  # プロンプトをファイルに書き出す（引数が長すぎる場合の対策）
+  local prompt_file
+  prompt_file=$(mktemp /tmp/oc_prompt_XXXXXX.txt)
+
+  cat > "$prompt_file" <<'PROMPT_END'
 あなたはゲーム実況の解説者です。
 「ソ連スイカゲーム」というパズルゲームをAIが自動プレイしています。
 このゲームは、同じ種類のピースをくっつけると合体してより大きなピースになる落ちものパズルです。
@@ -72,29 +102,33 @@ generate_commentary() {
 - 出力は解説文のみ。前置きや補足説明は不要
 
 PROMPT_END
-)
 
-  prompt+=$'\n\n【差分】\n'"$diff_content"
-  prompt+=$'\n\n【参考: 過去バージョンとの比較コンテキスト】\n'"$context"
+  echo "" >> "$prompt_file"
+  echo "【差分】" >> "$prompt_file"
+  echo "$diff_content" >> "$prompt_file"
+  echo "" >> "$prompt_file"
+  echo "【参考: 過去バージョンとの比較コンテキスト】" >> "$prompt_file"
+  echo "$context" >> "$prompt_file"
 
   log "AI解説生成中 (agent: $AI_AGENT)..."
 
   local result
-  if result=$(opencode run --agent "$AI_AGENT" "$prompt" 2>/dev/null); then
-    if [[ -n "$result" ]]; then
-      echo "$result"
-      return 0
-    fi
+  result=$(run_opencode "$AI_AGENT" "$prompt_file")
+  if [[ -n "$result" ]]; then
+    rm -f "$prompt_file"
+    echo "$result"
+    return 0
   fi
 
   log "フォールバック: $AI_FALLBACK で再試行..."
-  if result=$(opencode run --agent "$AI_FALLBACK" "$prompt" 2>/dev/null); then
-    if [[ -n "$result" ]]; then
-      echo "$result"
-      return 0
-    fi
+  result=$(run_opencode "$AI_FALLBACK" "$prompt_file")
+  if [[ -n "$result" ]]; then
+    rm -f "$prompt_file"
+    echo "$result"
+    return 0
   fi
 
+  rm -f "$prompt_file"
   log "AI解説生成に失敗しました"
   echo "strategy.pyが更新されましたが、解説の生成に失敗しました。"
   return 1
