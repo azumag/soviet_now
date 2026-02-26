@@ -714,11 +714,9 @@ RADIOPROMPT
 
 stop_radio_talk() {
 	# ラジオ生成・再生はバックグラウンドで自然に完了させる
-	# say は watch_strategy.sh が新トーク準備完了時に切り替える
-	# 次の start_radio_talk 呼び出し時に前のプロセスが残っていても問題ない
+	# サブシェルの trap EXIT が .radio_active を消すので、ここでは触らない
+	# （先に消すと watch_strategy が後追い再生してしまう）
 	_radio_pid=0
-	# フラグのクリーンアップ（サブシェルのtrap EXITで消えるが、安全のため）
-	rm -f tmp/.radio_active
 }
 
 #=== メインループ ===

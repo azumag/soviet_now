@@ -326,8 +326,10 @@ PROMPT_RULES
 # --- メイン処理: strategy.py 変更時のハンドラ ---
 on_strategy_changed() {
   # eloopのラジオトークが再生中なら二重再生を避けてスキップ
+  # ただしハッシュは更新して、フラグ解除後の後追い再生を防ぐ
   if [[ -f "tmp/.radio_active" ]]; then
     log "eloopラジオ再生中 → スキップ"
+    _content_hash > "$LAST_HASH_FILE"
     return
   fi
 
