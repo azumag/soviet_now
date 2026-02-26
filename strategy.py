@@ -14,10 +14,11 @@
 # [BEST:2335] v43: HIGHフェーズmerge促進版 - v42のHIGHフェーズでのマージ率低迷（15%）を改善。HIGHフェーズでhas_merge=trueの場合、height_penaltyを50%に緩和してマージ位置を選択しやすくする。v31の複雑なreactive_pairsロジックは採用せず、シンプルなhas_merge条件のみで改善。v19/v42のシンプル構造を維持しつつ、HIGHフェーズでのマージ機会確保を強化
 # v44: MEDIUM/HIGHフェーズmergeボーナス強化版 - v43の失敗（スコア1861、HIGHフェーズでマージ率低迷）を受けて、has_mergeによる複雑な条件分岐を削除し、パラメータ調整のみでマージを促進。MEDIUMフェーズのmerge_multを1.0→1.2に強化（中期段階でより多くマージを誘発）。HIGHフェーズのmerge_multを1.0→1.2に強化（マージ機会確保）。HIGHフェーズのheight_multを2.6→2.2に緩和（高度管理を緩和してマージ優先）。v19のシンプル構造（DIRECT=1200/NEAR=600/FAR=200）を維持
 # v45: HIGHフェーズ高度管理大幅緩和版 - v44の失敗（スコア1766、HIGHフェーズでHEIGHT_CONTROLが78%選択されマージ機会を逃し続ける）を受けて、HIGHフェーズのheight_multiplierを50.0→30.0に大幅緩和し、マージ可能な位置を選択しやすくする。CRITICALフェーズのheight_multiplierを40.0→50.0に強化し、マージ絶対優先を徹底。MEDIUMフェーズのheight_multを2.4→2.2に微調整（HIGH到達を少し遅延）。v42のシンプル構造を維持、has_merge/reactive_pairsの複雑な条件分岐は追加しない
+# v46: HIGH_TOWER追加ペナルティ削除・mergeボーナス強化版 - v45の失敗（スコア1395、HIGHフェーズ14ターンでscore_delta=0、HIGH_TOWER追加ペナルティ2.0倍がマージ機会を完全に潰している）を受けて、HIGH_TOWERの追加ペナルティを2.0倍から削除（v12の1.5倍にもしない、完全に削除）。HIGHフェーズのmerge_multを1.2→1.5に強化し、height_multiplierを30.0→20.0に緩和。MEDIUMフェーズのmerge_multを1.2→1.5に強化（HIGH到達遅延）、height_multiplierを35.0→30.0に緩和。バランス補正をv12の構造に近づけ（HIGH=35.0、MEDIUM=25.0、LOW=20.0）。ドリフトペナルティをv19の設定に戻す。v42のシンプル構造を維持
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42のシンプル構造をベースに、HIGHフェーズでの高度管理を大幅緩和してマージ機会を確保"""
+    """HIGH_TOWER追加ペナルティを完全に削除し、マージボーナスを強化してHIGHフェーズでのスコア停滞を解消"""
 
     results = analysis.get("results", [])
 
@@ -39,12 +40,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.2  # v45: v42の2.4から微調整（HIGH到達少し遅延）
-        merge_mult = 1.2  # v45: v44の1.2を維持
+        height_mult = 2.4  # v46: v42の2.4を維持
+        merge_mult = 1.5  # v46: v45の1.2から強化（HIGH到達遅延）
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 2.2  # v45: v44の2.2を維持
-        merge_mult = 1.2  # v45: v44の1.2を維持
+        height_mult = 2.6  # v46: v42の2.6を維持
+        merge_mult = 1.5  # v46: v45の1.2から強化（HIGHフェーズでのマージ促進）
     else:
         phase = "CRITICAL"
         height_mult = 1.0
@@ -77,51 +78,54 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v45: HIGHフェーズのheight_multiplierを大幅緩和）
+        # 2. 高度によるペナルティ（v46: HIGH_TOWERの追加ペナルティを完全に削除）
         if phase == "CRITICAL":
-            # v45: CRITICALフェーズではheight_multiplier強化（v19の40.0から50.0に強化）
-            height_multiplier = 50.0
+            # v46: v19の40.0に戻す
+            height_multiplier = 40.0
             height_penalty = landing_y * height_multiplier
             if landing_y > 1.0:
                 reasons.append("CRITICAL_HEIGHT")
         else:
-            # v45: HIGHフェーズでheight_multiplierを大幅緩和（50.0→30.0）
+            # v46: HIGHフェーズでheight_multiplierを大幅緩和（30.0→20.0）
             if phase == "HIGH":
-                height_multiplier = 30.0  # マージ機会確保のため大幅緩和
+                height_multiplier = 20.0  # マージ機会確保のため大幅緩和
             elif phase == "MEDIUM":
-                height_multiplier = 35.0
+                height_multiplier = 30.0  # v46: v42の35.0から緩和
             else:  # LOW
                 height_multiplier = 50.0
 
             height_penalty = landing_y * height_multiplier * height_mult
 
-            # 高盤面での追加ペナルティ（CRITICALフェーズでは適用しない）
+            # v46: HIGH_TOWERの追加ペナルティ2.0倍を完全に削除
+            # v45のHIGH_TOWER追加ペナルティがHIGHフェーズでのマージ機会を完全に潰していた
+            # MEDIUM_TOWERの追加ペナルティは1.5倍から1.3倍に緩和（v12に近づける）
             if phase == "HIGH" and landing_y > 0.5:
-                height_penalty *= 2.0  # v19の追加ペナルティを維持
-                reasons.append("HIGH_TOWER")
+                # v46: HIGH_TOWER追加ペナルティを削除（2.0倍から削除）
+                # これにより、landing_yのペナルティは height_penalty = landing_y * 20.0 * 2.6 のみ
+                reasons.append("HIGH_LAYER")  # HIGH_TOWERからHIGH_LAYERに変更
             elif phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.5
+                height_penalty *= 1.3  # v46: 1.5から1.3に緩和
                 reasons.append("MEDIUM_TOWER")
             elif landing_y > 0.0:
                 reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ
+        # 3. ドリフトによるペナルティ（v46: v19の設定に戻す）
         if phase == "HIGH":
-            drift_penalty = (abs(drift_x) + drift_unc) * 30.0  # v19の30.0に戻す
+            drift_penalty = (abs(drift_x) + drift_unc) * 30.0  # v46: v19の30.0に戻す
         elif phase == "MEDIUM":
             drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         else:  # LOW, CRITICAL
             drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正
+        # 4. 左右バランス補正（v46: v12の構造に近づける）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0
+            balance_strength = 35.0  # v46: v42の40.0からv12の35.0に緩和
         elif phase == "MEDIUM":
-            balance_strength = 30.0
+            balance_strength = 25.0  # v46: v42の30.0からv12の25.0に緩和
         # CRITICALフェーズではバランス補正緩和（マージ優先）
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
@@ -134,9 +138,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 5. nextNextが同じタイプなら中央寄せボーナス
         if next_next_type == next_type:
             if phase == "CRITICAL":
-                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 60.0  # v19のCRITICAL強化
+                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 60.0
             else:
-                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0  # v19の値
+                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
