@@ -80,6 +80,8 @@ run_opencode() {
     | strip_ansi \
     | grep -v '^>' \
     | grep -v '^\^D' \
+    | grep -v '^/[^ ]*$' \
+    | grep -v '^[[:space:]]*/Users/' \
     | sed '/^[[:space:]]*$/d' \
   )
   rm -f "$raw_file"
