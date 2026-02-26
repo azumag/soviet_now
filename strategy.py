@@ -14,10 +14,11 @@
 # v50-v55: MEDIUM phase has_merge joken shippai - v53-v54 de MEDIUM phase ni has_merge joken wo do-nyuu (height_penalty_factor=0.6, drift_penalty_factor=0.8) shita ga, sukoa wa v42 (2335) kara v54 (706) made teimen ka. has_merge joken ha "merge ga aru baai penalty wo kanwa suru" to iu kangaedakedo, "hinkitsu na merge (koudou ga takai, drift ga ookii) wo shuutoku suru" kekka to nari, zentaise no sukoa wo teimen saseteita. v55 de has_merge joken wo sakujo shi, v42 no shimpuru kouzou (penalty kanwa nashi, futsuu no merge scoring) ni kanzen fukkatsu suru. CRITICAL phase ha v19 no sekkei wo iji (merge_mult=0.6 de merge yuusen).
 # v56: HIGHフェーズchain reaction支援版 - v42の失敗（スコア1593、HIGHフェーズでscore_delta停滞）を受けて、HIGHフェーズ後半でchain reactionの可能性がある場合、高度管理を緩和するシンプルな条件を導入。v31の複雑な条件分岐ではなく、max_y > 2.5かつreactive_pairs >= 3の場合、height_multiplierを35.0に大幅緩和し、drift_penaltyも0.7に緩和してchain reaction中にマージを優先。v19の基本構造（フェーズ閾値0.8/1.8/3.0、merge_mult、height_mult）は維持。コード量増加を最小限に抑え（約110行→約120行）、v42のシンプル構造を維持しつつchain reactionの機会を最大化
 # v57: HIGHフェーズマージ優先版 - v56の失敗（スコア676、非マージ戦略57%・chain reaction条件は24ターン目のみ発動）を受けて、chain reactionの複雑な条件分岐を削除し、v42のシンプル構造をベースにマージ優先戦略を導入。履歴分析でMEDIUM_TOWER/HIGH_TOWERが計10回あり、マージ機会を逃していることを特定。v42のheight_multiplier（50.0）とdrift_penalty（30.0）を維持しつつ、HIGHフェーズでhas_merge=trueの場合、height_penalty_factor=0.7に緩和してマージ機会確保。NEAR_MERGEボーナスを600→750に強化（マージ重視）。HIGHフェーズでマージなしの場合、軽量のNO_MERGE_PENALTY（-100）を追加してマージをプッシュ（強制ではなく軽く誘導）。v42の頑健な構造を維持し、コード量は約115行
+# v58: v42完全復活版 - v57の失敗（スコア1146、マージ率約33%・NO_MERGE_PENALTY発動10%）を受けて、v42のシンプル構造に完全復活。v50-v57の「has_merge条件によるpenalty緩和」「NO_MERGE_PENALTY追加」「NEAR_MERGEボーナス強化」といった、マージ促進を意図した複雑な条件分岐を全て削除。振り子パターン（has_merge条件の追加→削除→再追加）を停止し、v42の頑健な構造（DIRECT=1200/NEAR=600/FAR=200、height_penalty=50*height_mult、drift_penalty=30、balance補正）を復活。v57のマージ率低下（約4%）は、has_merge条件とNO_MERGE_PENALTYが高度管理を混乱させたためと判断し、シンプル構造への復活を優先
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42のシンプル構造をベースに、HIGHフェーズでのマージ機会確保を強化"""
+    """v42のシンプルかつ頑健な構造を採用し、v50-v57の複雑化を排除"""
 
     results = analysis.get("results", [])
 
@@ -62,58 +63,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")
-        has_merge = result.get("has_merge", False)
 
         score = 0.0
         reasons = []
 
-        # 1. merge grade ni yoru sukou (v57: NEAR_MERGE wo kyouka)
+        # 1. merge grade ni yoru sukou (v42: no kachi chi wo iji)
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 750.0 * merge_mult  # v57: 600→750 ni kyouka (merge juushi)
+            score += 600.0 * merge_mult  # v42: 600 wo iji
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. koudou ni yoru penalty (v57: HIGHフェーズ de has_merge baai wa kanwa)
-        if phase == "CRITICAL":
-            # CRITICAL: height_penalty shimpuru-ka (merge yuusen)
-            height_penalty = landing_y * 40.0
-            if landing_y > 1.0:
-                reasons.append("CRITICAL_HEIGHT")
-        else:
-            # v57: HIGHフェーズ de has_merge ga aru baai, height_penalty wo 70% ni kanwa
-            height_penalty_factor = 1.0
-            if phase == "HIGH" and has_merge:
-                height_penalty_factor = 0.7  # has_merge toki wa kanwa
+        # 2. koudou ni yoru penalty (v42: shimpuru na kouzou wo iji)
+        height_penalty = landing_y * 50.0 * height_mult
 
-            height_penalty = landing_y * height_mult * 50.0 * height_penalty_factor
-
-            # koudanme de no tsuika penalty (CRITICAL phase dewa tekiyou shinai)
-            if phase == "HIGH" and landing_y > 0.5:
-                height_penalty *= 2.0  # v57: v19 no 2.0 wo iji
-                reasons.append("HIGH_TOWER")
-            elif phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.5  # v57: v19 no 1.5 wo iji
-                reasons.append("MEDIUM_TOWER")
-            elif landing_y > 0.0:
-                reasons.append("HIGH_LAYER")
+        # koudanme de no tsuika penalty (CRITICAL phase dewa tekiyou shinai)
+        if phase == "HIGH" and landing_y > 0.5:
+            height_penalty *= 2.0  # v42: 2.0 wo iji
+            reasons.append("HIGH_TOWER")
+        elif phase == "MEDIUM" and landing_y > 0.5:
+            height_penalty *= 1.5  # v42: 1.5 wo iji
+            reasons.append("MEDIUM_TOWER")
+        elif landing_y > 0.0:
+            reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. drift ni yoru penalty (v57: v19 no 30.0 wo iji)
+        # 3. drift ni yoru penalty (v42: 30.0 wo iji)
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. sayuu baransho
+        # 4. sayuu baransho (v42: no kachi chi wo iji)
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0
+            balance_strength = 40.0  # v42: 40.0 wo iji
         elif phase == "MEDIUM":
-            balance_strength = 30.0
+            balance_strength = 30.0  # v42: 30.0 wo iji
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -122,17 +111,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNext ga onaji type nara chuuyuse bonus
+        # 5. nextNext ga onaji type nara chuuyuse bonus (v42: 50.0 wo iji)
         if next_next_type == next_type:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0  # v42: 50.0 wo iji
             score += center_bonus
             reasons.append("NEXT_SAME")
-
-        # 6. v57: HIGHフェーズ de merge nai baai, karuryou no penalty wo kaifa
-        if phase == "HIGH" and not has_merge:
-            score -= 100.0  # NO_MERGE_PENALTY (kyouryoku na puusyu)
-            if "NO_MERGE_PENALTY" not in reasons:
-                reasons.append("NO_MERGE_PENALTY")
 
         # sukou kou shin
         if score > best_score:
