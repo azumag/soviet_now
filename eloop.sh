@@ -460,7 +460,15 @@ while true; do
 		mv "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
 	fi
 
-	#--- Step 7: retry → 新ゲーム ---
+	#--- Step 7: git commit & push ---
+	log "[GIT] コミット&プッシュ..."
+	git add -A
+	git commit -m "eloop Game #${GAME_NUM_DISPLAY}: score=${SCORE}, turns=${TURNS}" 2>/dev/null && \
+		git push 2>/dev/null && \
+		log "[GIT] push完了" || \
+		log "[GIT] 変更なし or push失敗"
+
+	#--- Step 8: retry → 新ゲーム ---
 	if is_game_over; then
 		send_retry
 	else

@@ -9,7 +9,7 @@
 # AI改変禁止: decide() シグネチャ,if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# [BEST:1212] v001: 初期版 - analysis["results"]のスコア最大を選ぶだけのベースライン
+# v001: 初期版 - analysis["results"]のスコア最大を選ぶだけのベースライン
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
