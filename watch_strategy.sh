@@ -17,13 +17,14 @@ AI_AGENT="zai"
 AI_FALLBACK="glmflash"
 SAY_VOICE=""  # macOS say のボイス（空ならデフォルト）
 SAY_RATE=120  # 読み上げ速度
-SAY_PID=""    # 現在再生中の say プロセスID
+LOCK_FILE="tmp/.watch_strategy.lock"
 
 mkdir -p tmp
 
 # Ctrl+C で say も止める
 cleanup() {
-  [[ -n "$SAY_PID" ]] && kill "$SAY_PID" 2>/dev/null
+  killall say 2>/dev/null
+  rm -f "$LOCK_FILE"
   exit 0
 }
 trap cleanup INT TERM
@@ -145,22 +146,25 @@ PROMPT_END
 # say で読み上げ（前の再生を止めてから新しく開始）
 speak() {
   local text="$1"
-  # 前の say が動いていたら止める
-  if [[ -n "$SAY_PID" ]]; then
-    kill "$SAY_PID" 2>/dev/null
-    wait "$SAY_PID" 2>/dev/null
-    SAY_PID=""
-  fi
+  # 前の say が動いていたら全部止める
+  killall say 2>/dev/null
   local say_args=(-r "$SAY_RATE")
   if [[ -n "$SAY_VOICE" ]]; then
     say_args+=(-v "$SAY_VOICE")
   fi
   say "${say_args[@]}" "$text" &
-  SAY_PID=$!
 }
 
 # --- メイン処理: strategy.py 変更時のハンドラ ---
 on_strategy_changed() {
+  # ロックで多重実行を防止
+  if [[ -f "$LOCK_FILE" ]]; then
+    log "処理中のためスキップ"
+    return
+  fi
+  touch "$LOCK_FILE"
+  trap 'rm -f "$LOCK_FILE"' RETURN
+
   log "strategy.py の変更を検出!"
 
   # 1. 直前のバージョンとのdiff生成
