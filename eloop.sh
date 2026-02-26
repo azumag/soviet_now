@@ -521,10 +521,10 @@ start_radio_talk() {
 		)
 		local theme="${themes[$((RANDOM % ${#themes[@]}))]}"
 
-		# 過去のトーク内容を取得（直近5回分、重複回避用）
+		# 過去のトーク内容を取得（直近10回分、重複回避用）
 		local past_topics=""
 		if [ -f "$PAST_RADIO_TOPICS" ]; then
-			past_topics=$(tail -5 "$PAST_RADIO_TOPICS")
+			past_topics=$(tail -10 "$PAST_RADIO_TOPICS")
 		fi
 
 		# 10回に1回だけ「AIが自分を書き換える話」を追加
@@ -623,6 +623,9 @@ ${history_context}
 - ソ連っぽい言い回しをさりげなく混ぜる。やりすぎず、スパイス程度に
 - マークダウンや記号は使わない。読み上げ用のプレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要
+- トーク本文の最後に、区切り行 ===SUMMARY=== を入れ、その後に今回のトーク内容の要約を書くこと
+- 要約には: 話した国名、脱線で触れた具体的なエピソード・人名・料理名・地名、ジョークのネタ を含める
+- 要約は3〜5行、各行50文字程度。箇条書きでOK
 RADIOPROMPT
 
 		log "[RADIO] トーク生成中..."
@@ -634,20 +637,25 @@ RADIOPROMPT
 		rm -f "$prompt_file"
 
 		if [ -n "$talk" ]; then
-			echo "$talk" > tmp/radio_talk.txt
-			# 過去トーク記録（全体から序盤/中盤/終盤を抽出、直近10件保持）
-			local total_lines mid q3 snippet_top snippet_mid snippet_end
-			total_lines=$(echo "$talk" | wc -l | tr -d ' ')
-			mid=$((total_lines / 2))
-			q3=$((total_lines * 3 / 4))
-			snippet_top=$(echo "$talk" | sed -n '2,3p' | tr '\n' ' ' | cut -c1-60)
-			snippet_mid=$(echo "$talk" | sed -n "${mid},$((mid+1))p" | tr '\n' ' ' | cut -c1-60)
-			snippet_end=$(echo "$talk" | sed -n "${q3},$((q3+1))p" | tr '\n' ' ' | cut -c1-60)
-			local summary
-			summary="[$(date '+%H:%M')] Game#${game_num} ${score}pts 序盤:${snippet_top} / 中盤:${snippet_mid} / 終盤:${snippet_end}"
-			echo "$summary" >> "$PAST_RADIO_TOPICS"
+			# トーク本文と要約を分離
+			local talk_body talk_summary
+			talk_body=$(echo "$talk" | sed '/^===SUMMARY===/,$d')
+			talk_summary=$(echo "$talk" | sed -n '/^===SUMMARY===/,$ p' | tail -n +2)
+
+			# 要約が取れなかった場合のフォールバック
+			if [ -z "$talk_summary" ]; then
+				talk_summary="(要約なし)"
+			fi
+
+			# 本文のみをファイルに保存・sayに渡す
+			echo "$talk_body" > tmp/radio_talk.txt
+
+			# 過去トーク記録（AI生成の要約、直近10件保持）
+			echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts:" >> "$PAST_RADIO_TOPICS"
+			echo "$talk_summary" >> "$PAST_RADIO_TOPICS"
 			tail -10 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
-			log "[RADIO] say_enqueue に登録 (${#talk}文字)"
+
+			log "[RADIO] say_enqueue に登録 (${#talk_body}文字)"
 			# say_enqueue.sh が前のsay終了を待ち、プリエンプション対応で再生
 			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE"
 			log "[RADIO] トーク終了"

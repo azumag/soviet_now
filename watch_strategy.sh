@@ -141,10 +141,10 @@ generate_commentary() {
   )
   local theme="${themes[$((RANDOM % ${#themes[@]}))]}"
 
-  # 過去のトーク内容を取得（直近5回分）
+  # 過去のトーク内容を取得（直近10回分）
   local past_topics=""
   if [[ -f "$PAST_TOPICS_FILE" ]]; then
-    past_topics=$(tail -5 "$PAST_TOPICS_FILE")
+    past_topics=$(tail -10 "$PAST_TOPICS_FILE")
   fi
 
   cat > "$prompt_file" <<PROMPT_END
@@ -214,6 +214,9 @@ PROMPT_EXTRA
 - ソ連のゲームなので、ところどころ共産主義っぽい言い回しをさりげなく混ぜる（例:「同志」「人民」「五カ年計画」「労働者の勝利」「プロレタリアート」「革命」など）。やりすぎず、スパイス程度に
 - マークダウンや記号は使わない。読み上げ用のプレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要。ファイルパスは絶対に含めないこと
+- トーク本文の最後に、区切り行 ===SUMMARY=== を入れ、その後に今回のトーク内容の要約を書くこと
+- 要約には: 話した国名、脱線で触れた具体的なエピソード・人名・料理名・地名、ジョークのネタ を含める
+- 要約は3〜5行、各行50文字程度。箇条書きでOK
 
 PROMPT_RULES
 
@@ -332,28 +335,28 @@ on_strategy_changed() {
     return
   fi
 
-  # 4. 保存 & 表示
-  echo "$commentary" > "$COMMENTARY_FILE"
+  # 4. トーク本文と要約を分離
+  local commentary_body commentary_summary
+  commentary_body=$(echo "$commentary" | sed '/^===SUMMARY===/,$d')
+  commentary_summary=$(echo "$commentary" | sed -n '/^===SUMMARY===/,$ p' | tail -n +2)
+
+  # 要約が取れなかった場合のフォールバック
+  if [[ -z "$commentary_summary" ]]; then
+    commentary_summary="(要約なし)"
+  fi
+
+  # 本文のみを保存 & 表示
+  echo "$commentary_body" > "$COMMENTARY_FILE"
   log "--- AI解説 ---"
-  echo "$commentary"
+  echo "$commentary_body"
   log "---------------"
 
-  # 5. 過去トーク記録
-  local total_lines
-  total_lines=$(echo "$commentary" | wc -l | tr -d ' ')
-  local mid=$((total_lines / 2))
-  local q3=$((total_lines * 3 / 4))
-  local snippet_top snippet_mid snippet_end
-  snippet_top=$(echo "$commentary" | sed -n '2,3p' | tr '\n' ' ' | cut -c1-60)
-  snippet_mid=$(echo "$commentary" | sed -n "${mid},$((mid+1))p" | tr '\n' ' ' | cut -c1-60)
-  snippet_end=$(echo "$commentary" | sed -n "${q3},$((q3+1))p" | tr '\n' ' ' | cut -c1-60)
-  local summary
-  summary="[$(date '+%H:%M')] 序盤:${snippet_top} / 中盤:${snippet_mid} / 終盤:${snippet_end}"
-  echo "$summary" >> "$PAST_TOPICS_FILE"
+  # 5. 過去トーク記録（AI生成の要約、直近10件保持）
+  echo "[$(date '+%H:%M')] ${commentary_summary}" >> "$PAST_TOPICS_FILE"
   tail -10 "$PAST_TOPICS_FILE" > "${PAST_TOPICS_FILE}.tmp" && mv "${PAST_TOPICS_FILE}.tmp" "$PAST_TOPICS_FILE"
 
   # 6. say_enqueue で読み上げ（前のトークが終わるまで待つ、プリエンプション対応）
-  log "読み上げキュー登録 (${#commentary}文字)"
+  log "読み上げキュー登録 (${#commentary_body}文字)"
   ./say_enqueue.sh "$COMMENTARY_FILE" "$SAY_RATE"
   # say_enqueue がプリエンプトされた場合は何も読み上げずに戻る
 }

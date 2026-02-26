@@ -12,10 +12,11 @@
 # [BEST:2325] v19: CRITICALフェーズ導入版 - HIGHフェーズのheight_mult過剰を修正、CRITICALフェーズ（max_y>3.0）を新設。CRITICALではマージ絶対優先（merge_mult=0.6、height_multなし、height_penaltyシンプル化）。MEDIUMフェーズheight_mult微増（2.2→2.4）でHIGH到達遅延、HIGHフェーズheight_mult微減（2.8→2.6）でマージ機会確保
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版 - v41の失敗（スコア558）を受けて、v41がv31から取り入れたreactive_pairsとhas_mergeによる複雑な条件分岐を削除。v19のシンプル構造（DIRECT=1200/NEAR=600/FAR=200、height_penalty=50*height_mult、drift_penalty=30）に復活。v19のCRITICALフェーズ（merge_mult=0.6）を維持。コード量削減（約140行→約110行）で頑健性を確保
 # v48: マージ機会最大化版 - v47の失敗（スコア984、HIGHフェーズでHIGH_LAYER支配的、マージ可能ターンは5回のみ）を受けて、v42のシンプル構造をベースにheight_multiplierを導入し、全フェーズでマージ機会を最大化。height_multiplier: LOW=30.0/MEDIUM=30.0/HIGH=25.0/CRITICAL=50.0。HIGH_TOWERペナルティを2.0倍→1.5倍に緩和、MEDIUM_TOWERを1.5倍→1.3倍に緩和。balance_strength、merge_mult、center_bonusはv42の値を維持。複雑な条件分岐（has_merge/reactive_pairs）を追加せず、シンプルなスコアリングで頑健性を確保
+# v49: v42完全復活・高度管理強化版 - v48の失敗（スコア960、max_y=2.99で赤ライン越え）を受けて、v42のシンプル構造へ完全復帰。height_multiplier削除、height_penalty=50*height_multに統一。MEDIUM_TOWERペナルティを1.3倍→v42の1.5倍に強化、HIGH_TOWERペナルティをv42の2.0倍に復活。NEAR_MERGEボーナスを600→400に減らし、過度な楽観性を排除（履歴でNEAR_MERGE判定5回中0回マージ）。v42のシンプルかつ頑健な構造を維持
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42のシンプル構造をベースにheight_multiplierを導入し、全フェーズでマージ機会を最大化"""
+    """v42のシンプル構造へ完全復帰し、高度管理を強化"""
 
     results = analysis.get("results", [])
 
@@ -64,38 +65,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # 1. マージグレードによるスコア（v42と同じ）
+        # 1. マージグレードによるスコア（v49: NEAR_MERGE減らして楽観性排除）
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 400.0 * merge_mult  # v49: 600→400に減らし、過度な楽観性排除
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v48: height_multiplierを導入）
+        # 2. 高度によるペナルティ（v49: v42のシンプル構造へ完全復帰）
         if phase == "CRITICAL":
-            height_multiplier = 50.0
-            height_penalty = landing_y * height_multiplier
+            height_penalty = landing_y * 40.0  # v49: v42と同じ
             if landing_y > 1.0:
                 reasons.append("CRITICAL_HEIGHT")
         else:
-            if phase == "HIGH":
-                height_multiplier = 25.0
-            elif phase == "MEDIUM":
-                height_multiplier = 30.0
-            else:  # LOW
-                height_multiplier = 30.0
+            height_penalty = (
+                landing_y * 50.0 * height_mult
+            )  # v49: height_multiplier削除、v42と同じ
 
-            height_penalty = landing_y * height_multiplier * height_mult
-
+            # 高盤面での追加ペナルティ（v49: v42の2.0倍/1.5倍に復活）
             if phase == "HIGH" and landing_y > 0.5:
-                height_penalty *= 1.5
-                reasons.append("HIGH_LAYER")
+                height_penalty *= 2.0  # v49: v42の2.0倍に復活
+                reasons.append("HIGH_TOWER")
             elif phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.3
+                height_penalty *= 1.5  # v49: v48の1.3倍からv42の1.5倍に強化
                 reasons.append("MEDIUM_TOWER")
             elif landing_y > 0.0:
                 reasons.append("HIGH_LAYER")
