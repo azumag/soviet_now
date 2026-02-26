@@ -12,9 +12,9 @@
 # [BEST:604] v0: ランダム配置（ベースライン）
 # [BEST:1486] v1: マージ重視戦略（DIRECT/NEAR優先、高度管理、ドリフト最小化）
 # [BEST:1615] v3: 重量バランス導入版 - ピースタイプに応じた重み付け、フェーズ制導入、高度管理調整
-# v4: フェーズ制廃止・統合版 - 動的危険度係数、SMALL_GAP削除、カウントベースバランス復活
 # v5: フェーズ制復活・簡素化版 - 動的危険度係数廃止、シンプル3フェーズ制、マージ高度バランス調整
 # v6: 重量バランス復活・散在抑制版 - v3の重量計算復活、HIGHフェーズ閾値調整、タイプ別マージ優先、散在ピースペナルティ導入
+# v7: 散在抑制削除・マージ強化版 - count_scattered_pieces()削除（ロジックエラー修正）、HIGHフェーズでマージ重視強化、シンプル化
 
 # ピースタイプごとの重み（おおよその面積や重さを反映）
 PIECE_WEIGHTS = {
@@ -81,27 +81,8 @@ def get_phase(max_y: float) -> str:
         return "HIGH"  # 高盤面: 高度管理重視
 
 
-def count_scattered_pieces(result: dict) -> int:
-    """散在ピース数を計算（同タイプピース同士が離れすぎている数）"""
-    merges = result.get("merges", [])
-    if not merges:
-        return 0
-
-    next_type_str = str(result.get("merge_target_type", None))
-    if not next_type_str:
-        return 0
-
-    # 同タイプで距離3.0以上のペアをカウント
-    scattered = 0
-    for m in merges:
-        if m.get("type") == next_type_str and m.get("distance", 999) > 3.0:
-            scattered += 1
-
-    return max(0, scattered - 1)  # 少なくとも1つはOK
-
-
 def decide(game_state: dict, analysis: dict) -> dict:
-    """重量バランス、散在抑制、タイプ別マージ優先で配置する."""
+    """重量バランス、フェーズ制、マージ優先で配置する."""
 
     results = analysis.get("results", [])
 
@@ -116,10 +97,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # 重量バランス計算（v3から復活）
+    # 重量バランス計算（v3から維持）
     balance_bias = calc_weight_balance(pieces)
 
-    # フェーズ判定（HIGH閾値を0.8に調整）
+    # フェーズ判定（HIGH閾値0.8を維持）
     phase = get_phase(max_y)
 
     # 次と次の次のピース情報
@@ -131,7 +112,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 次のピースのマージ重要度
     merge_importance = MERGE_IMPORTANCE.get(next_type, 1.0)
 
-    # フェーズに応じた重み設定
+    # フェーズに応じた重み設定（v6から調整）
     if phase == "LOW":
         merge_weight = 1.2
         height_weight = 0.8
@@ -143,10 +124,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         no_merge_base = 250.0
         balance_strength = 22.0
     else:  # HIGH
-        merge_weight = 0.9  # マージ重視を維持
-        height_weight = 1.5
-        no_merge_base = 350.0
-        balance_strength = 28.0
+        merge_weight = 1.1  # v6: 0.9→1.1に強化（マージ優先）
+        height_weight = 1.3  # v6: 1.5→1.3に緩和（高度抑制緩和）
+        no_merge_base = 300.0  # v6: 350.0→300.0に緩和
+        balance_strength = 26.0  # v6: 28.0→26.0に緩和
 
     for result in results:
         x = result["x"]
@@ -174,15 +155,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # マージなしはペナルティ
             score -= no_merge_base
 
-        # 2. 散在ピースペナルティ
-        scattered = count_scattered_pieces(result)
-        if scattered > 0:
-            scattered_penalty = scattered * 100.0 * merge_importance
-            score -= scattered_penalty
-            if scattered > 2:
-                reasons.append(f"SCATTERED_{scattered}")
-
-        # 3. 高度によるスコア（フェーズに応じて重み付け）
+        # 2. 高度によるスコア（フェーズに応じて重み付け）
         height_penalty = landing_y * 50.0 * height_weight
 
         if phase == "HIGH":
@@ -196,15 +169,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # 4. ドリフトによるペナルティ
+        # 3. ドリフトによるペナルティ
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 5. 重量バランス補正
+        # 4. 重量バランス補正
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 6. nextNextが同じタイプなら、中央寄せでチャンスを残す
+        # 5. nextNextが同じタイプなら、中央寄せでチャンスを残す
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 35.0
             score += center_bonus
