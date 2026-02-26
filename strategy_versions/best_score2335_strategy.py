@@ -11,11 +11,10 @@
 # --- 変更履歴 ---
 # [BEST:2325] v19: CRITICALフェーズ導入版 - HIGHフェーズのheight_mult過剰を修正、CRITICALフェーズ（max_y>3.0）を新設。CRITICALではマージ絶対優先（merge_mult=0.6、height_multなし、height_penaltyシンプル化）。MEDIUMフェーズheight_mult微増（2.2→2.4）でHIGH到達遅延、HIGHフェーズheight_mult微減（2.8→2.6）でマージ機会確保
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版 - v41の失敗（スコア558）を受けて、v41がv31から取り入れたreactive_pairsとhas_mergeによる複雑な条件分岐を削除。v19のシンプル構造（DIRECT=1200/NEAR=600/FAR=200、height_penalty=50*height_mult、drift_penalty=30）に復活。v19のCRITICALフェーズ（merge_mult=0.6）を維持。コード量削減（約140行→約110行）で頑健性を確保
-# [BEST:2335] v43: HIGHフェーズmerge促進版 - v42のHIGHフェーズでのマージ率低迷（15%）を改善。HIGHフェーズでhas_merge=trueの場合、height_penaltyを50%に緩和してマージ位置を選択しやすくする。v31の複雑なreactive_pairsロジックは採用せず、シンプルなhas_merge条件のみで改善。v19/v42のシンプル構造を維持しつつ、HIGHフェーズでのマージ機会確保を強化
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v19/v42のシンプル構造を維持しつつ、HIGHフェーズでマージ機会を優先"""
+    """v19のシンプルかつ頑健な構造を採用し、v31/v29の過度な複雑化を排除"""
 
     results = analysis.get("results", [])
 
@@ -30,7 +29,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v42の閾値を維持）
+    # フェーズ判定
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
@@ -60,12 +59,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")
-        has_merge = result.get("has_merge", False)
 
         score = 0.0
         reasons = []
 
-        # 1. マージグレードによるスコア（v42の値を維持）
+        # 1. マージグレードによるスコア
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -76,30 +74,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v43: HIGHフェーズでhas_mergeなら緩和）
-        if phase == "CRITICAL":
-            # CRITICALフェーズではheight_multiplier強化（v42の40.0を維持）
-            height_multiplier = 40.0
-            height_penalty = landing_y * height_multiplier
-            if landing_y > 1.0:
-                reasons.append("CRITICAL_HEIGHT")
-        else:
-            # v43: HIGHフェーズでhas_mergeがある場合、height_penaltyを50%に緩和
-            height_penalty_factor = 1.0
-            if phase == "HIGH" and has_merge:
-                height_penalty_factor = 0.5  # マージ機会確保
+        # 2. 高度によるペナルティ
+        height_penalty = landing_y * 50.0 * height_mult
 
-            height_penalty = landing_y * 50.0 * height_mult * height_penalty_factor
-
-            # 高盤面での追加ペナルティ（CRITICALフェーズでは適用しない）
-            if phase == "HIGH" and landing_y > 0.5:
-                height_penalty *= 2.0
-                reasons.append("HIGH_TOWER")
-            elif phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.5
-                reasons.append("MEDIUM_TOWER")
-            elif landing_y > 0.0:
-                reasons.append("HIGH_LAYER")
+        if phase == "HIGH" and landing_y > 0.5:
+            height_penalty *= 2.0
+            reasons.append("HIGH_TOWER")
+        elif phase == "MEDIUM" and landing_y > 0.5:
+            height_penalty *= 1.5
+            reasons.append("MEDIUM_TOWER")
+        elif landing_y > 0.0:
+            reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
@@ -123,12 +108,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # 5. nextNextが同じタイプなら中央寄せボーナス
         if next_next_type == next_type:
-            if phase == "CRITICAL":
-                center_bonus = (
-                    max(0, 1.0 - abs(x) / 2.0) * 60.0
-                )  # v42のCRITICAL強化を維持
-            else:
-                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
