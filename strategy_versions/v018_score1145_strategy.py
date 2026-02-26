@@ -14,13 +14,13 @@
 # [BEST:1615] v3: 重量バランス導入版 - ピースタイプに応じた重量化、フェーズ制導入、高度管理調整
 # [BEST:2015] v8: 重量バランス削除・フェーズ制再設計 - v5のロジックをベースに、重量バランス振り子パターンを解消、フェーズ閾値0.8/1.8調整
 # [BEST:2185] v12: 一貫性重視・シンプル化版 - 二段階スコアリング廃止、v8の構造に戻しつつマージボーナス強化、HIGHフェーズ高度管理緩和、左右バランス計算簡素化
-# v13: マージ積極化・reactor活用版 - v12をベースにマージボーナス大幅強化、HIGHフェーズ高度ペナルティ緩和、reactive_pairs活用でチェイン中のマージ優先
-# v14: v13回帰・シンプル構造版 - v13のマージボーナス強化は逆効果、HIGHフェーズ高度管理緩和も失敗、reactorチェインボーナス削除（v11で削除された要素の再導入は振り子パターン）、v12の成功構造に戻す
-# v15: フェーズ役割分担強化版 - v12の振り子（高度管理とマージのトレードオフ）を解消するため、HIGHフェーズで高度管理絶対優先、LOWフェーズでマージ優先。HIGH: merge_mult=0.5/height_mult=3.0/追加ペナルティ=2.0、MEDIUM: 維持、LOW: merge_mult=1.3
+# v16: v15過剰反応修正版 - v15のHIGHフェーズ高度管理強化は過剰反応でHIGHフェーズでのマージ機会を犠牲にした。v12の成功構造に戻し、バランスを調整。HIGH: merge_mult=0.9/height_mult=2.6/追加ペナルティ=1.7/ドリフトペナルティ35/マージなし1.3
+# v17: 振り子解消・シンプル構造版 - v16の複雑なフェーズごとの条件分岐を削減し、v12の成功構造をベースにシンプル化。「マージなしペナルティ」削除（マージボーナスだけで十分）、フェーズごとの役割分担を緩和、一貫したスコアリングに
+# v18: ブレイクスルー版 - HIGHフェーズへの到達を遅らせ、マージ機会を増やす。MEDIUMフェーズ高度管理強化（height_mult=2.2/追加ペナルティ1.5）、HIGHフェーズ高度管理強化（height_mult=2.8/追加ペナルティ2.0）、ドリフト/バランス補正強化（HIGH:40.0）、マージボーナスv12に戻す（DIRECT=1200/NEAR=600/FAR=200）
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """フェーズごとに明確な役割分担: LOW=マージ優先、MEDIUM=バランス、HIGH=高度管理絶対優先"""
+    """v12の成功構造をベースに、HIGHフェーズへの到達を遅らせてマージ機会を増やす"""
 
     results = analysis.get("results", [])
 
@@ -35,19 +35,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v8の閾値0.8/1.8を維持）
+    # フェーズ判定（v12の閾値0.8/1.8を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
-        merge_mult = 1.3  # v15: LOWフェーズでマージ優先（v12の1.2から微増）
+        merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.0
-        merge_mult = 1.0  # v15: MEDIUMフェーズはバランス（v12の1.0を維持）
+        height_mult = 2.2  # v18: MEDIUMフェーズ高度管理強化（v12の2.0→2.2）
+        merge_mult = 1.0
     else:
         phase = "HIGH"
-        height_mult = 3.0  # v15: HIGHフェーズで高度管理強化（v12の2.4から50%増）
-        merge_mult = 0.5  # v15: HIGHフェーズではマージボーナス半減（高度管理絶対優先）
+        height_mult = 2.8  # v18: HIGHフェーズ高度管理強化（v12の2.4→2.8）
+        merge_mult = 1.0
 
     # 左右バランス計算（簡素化：カウントベース）
     left_count = sum(1 for p in pieces if p["x"] < 0)
@@ -71,40 +71,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # 1. マージグレードによるスコア（フェーズで役割分担）
+        # 1. マージグレードによるスコア（v18: v12に戻す）
         if merge_grade == "DIRECT":
-            score += 1350.0 * merge_mult  # v15: merge_multでフェーズごとに調整
+            score += 1200.0 * merge_mult  # v18: v12に戻す（v17の1000から増）
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 750.0 * merge_mult
+            score += 600.0 * merge_mult  # v18: v12に戻す（v17の500から増）
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 250.0 * merge_mult
+            score += 200.0 * merge_mult  # v18: v12に戻す（v17の200から維持）
             reasons.append("FAR_MERGE")
-        else:
-            # マージなしはペナルティ（HIGHフェーズで厳しく、LOWフェーズで緩く）
-            no_merge_penalty = 200.0
-            if phase == "HIGH":
-                no_merge_penalty *= (
-                    2.0  # v15: HIGHフェーズでは厳しく罰（v12の1.6から強化）
-                )
-            elif phase == "MEDIUM":
-                no_merge_penalty *= 1.5
-            else:  # LOW
-                no_merge_penalty *= 1.2  # v15: LOWフェーズでは緩く（マージ優先なので）
-            score -= no_merge_penalty
+        # v18: 「マージなしペナルティ」削除維持 - HIGHフェーズでのマージ機会が少ないため
 
-        # 2. 高度によるスコア（フェーズで役割分担）
+        # 2. 高度によるスコア（フェーズで調整）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # 高盤面での追加ペナルティ（HIGHフェーズで厳しく）
-        if phase == "HIGH":
-            height_penalty *= (
-                2.0  # v15: HIGHフェーズ追加ペナルティ強化（v12の1.5から増）
-            )
+        # 高盤面での追加ペナルティ（v18: MEDIUM/HIGHフェーズで強化）
+        if phase == "HIGH" and landing_y > 0.5:
+            height_penalty *= 2.0  # v18: v12の1.5から強化
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.3
+            height_penalty *= 1.5  # v18: v12の1.3から強化
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
@@ -113,31 +100,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # 3. ドリフトによるペナルティ（フェーズで調整）
         if phase == "HIGH":
+            drift_penalty = (abs(drift_x) + drift_unc) * 40.0  # v18: HIGHフェーズで強化
+        elif phase == "MEDIUM":
             drift_penalty = (
                 abs(drift_x) + drift_unc
-            ) * 40.0  # v15: HIGHフェーズで厳しく
+            ) * 35.0  # v18: MEDIUMフェーズで強化
         else:
-            drift_penalty = (abs(drift_x) + drift_unc) * 30.0  # v12の30.0を維持
+            drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v12と同様だがHIGHで強化）
+        # 4. 左右バランス補正（フェーズで調整）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 45.0  # v15: HIGHフェーズでさらに強化（v12の35.0から増）
+            balance_strength = 40.0  # v18: HIGHフェーズで強化
         elif phase == "MEDIUM":
-            balance_strength = 25.0
+            balance_strength = 30.0  # v18: MEDIUMフェーズで強化
 
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（LOWフェーズで強化）
+        # 5. nextNextが同じタイプなら中央寄せボーナス
         if next_next_type == next_type:
-            if phase == "LOW":
-                center_bonus = (
-                    max(0, 1.0 - abs(x) / 2.0) * 60.0
-                )  # v15: LOWフェーズで強化
-            else:
-                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 40.0  # v12の40.0を維持
+            center_bonus = (
+                max(0, 1.0 - abs(x) / 2.0) * 50.0
+            )  # v18: 中央寄せボーナス強化（v12の40.0から増）
             score += center_bonus
             reasons.append("NEXT_SAME")
 
