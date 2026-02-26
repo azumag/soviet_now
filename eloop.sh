@@ -494,15 +494,21 @@ start_radio_talk() {
 		local prompt_file
 		prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
 
-		# 直近の戦略の変更履歴を収集
+		# 10回に1回だけ戦略履歴・差分・解説コーナーを含める
+		local include_strategy_history=false
+		[ $((RANDOM % 10)) -eq 0 ] && include_strategy_history=true
+
+		# 直近の戦略の変更履歴を収集（10回に1回のみ）
 		local history_context=""
-		for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3); do
-			local vname
-			vname=$(basename "$vf")
-			local cl
-			cl=$(grep -A5 '変更履歴' "$vf" 2>/dev/null | head -8 || true)
-			history_context+="$vname: $cl"$'\n'
-		done
+		if [ "$include_strategy_history" = true ]; then
+			for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3); do
+				local vname
+				vname=$(basename "$vf")
+				local cl
+				cl=$(grep -A5 '変更履歴' "$vf" 2>/dev/null | head -8 || true)
+				history_context+="$vname: $cl"$'\n'
+			done
+		fi
 
 		# 現在時刻を取得して時間帯を判定
 		local current_hour current_time time_period time_mood
@@ -611,13 +617,16 @@ ${past_topics:-まだ過去のトークはありません。自由に話して�
   → レベル11 トルクメニスタン → レベル12 ウクライナ → レベル13 カザフスタン
   → レベル14 ロシア → レベル15 ソ連（ゴール!）
 
+$([ "$include_strategy_history" = true ] && cat <<HISTORY_BLOCK
 最近の戦略履歴:
 ${history_context}
 
 【作戦変更の差分】
 ${diff_content:-差分情報なし}
 
-いまAIが次の試合に向けて作戦を練り直しています。6分くらいかかります。
+HISTORY_BLOCK
+)
+いまAIが次の試合に向けて作戦を練り直しています。
 その間、リスナーを楽しませるトークをしてください。
 
 【トーク構成（全セクション必須。各セクションしっかり長く喋ること）】
@@ -649,11 +658,11 @@ ${diff_content:-差分情報なし}
    - 深夜なら怪談・星座・夜食の話、朝なら目覚まし・朝食・通勤の話、昼なら食事・昼寝の話、夕方ならビール・夕焼けの話、夜なら酒・映画・一日の振り返り
    - ことわざや格言、ダジャレも交える
 
-7. 作戦変更の解説コーナー
+$([ "$include_strategy_history" = true ] && echo '7. 作戦変更の解説コーナー
    - 上の差分を参考に、何が変わったか国名を使って具体的に解説
    - 前の作戦とどこが違うか、どの国旗の扱いが変わったか
    - これまでの戦略の変遷を振り返り、スコアの浮き沈みをドラマチックに語る
-
+')
 8. 次の試合への展望
    - AIがどんな作戦を持ってくるか予想
    - リスナーへの語りかけと応援
