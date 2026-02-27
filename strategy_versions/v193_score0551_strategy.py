@@ -25,25 +25,24 @@
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42高度管理パッケージ採用・HIGHフェーズマージ優先版
+    """v42/v128統合・MEDIUM高度管理・HIGHマージ優先版
 
-    v193の失敗（スコア551、MEDIUMフェーズ高度管理不足・HIGHフェーズHIGH_TOWER発動率高・HIGHフェーズマージ率25%）を受けて、
-    v42の「高度管理パッケージ全体」を採用し、v128のHIGHフェーズ設定を統合するブレイクスルーを実施。
+    v192の失敗（スコア1235、HIGHフェーズheight_mult=2.6が強すぎ・HIGHフェーズマージ率17%）を受けて、
+    v42のMEDIUMフェーズ高度管理とv128のHIGHフェーズ設定を統合するブレイクスルーを実施。
 
-    v193履歴分析で確認した問題:
-    - TOWERペナルティ閾値0.5が緩すぎ（v42の0.3は厳しい）
-    - バランス補正強度が強すぎ（v42は35.0/25.0/15.0、v193は40.0/30.0/20.0）
-    - MEDIUMフェーズMEDIUM_TOWER発動率が高すぎ（23%、7/31ターン）
-    - HIGHフェーズHIGH_TOWER発動率が高い（25%、3/12ターン）、マージ機会損失
-    - v191の失敗（TOWERペナルティ閾値0.3のみ採用でバランス補正がv128の強さ）を踏まえ、v42の「高度管理パッケージ全体」が必要
+    v192履歴分析とv128（スコア3689）の比較から特定した問題:
+    - v192のHIGHフェーズheight_mult=2.6は盤面上昇を強く抑制しすぎ、マージ機会を損なう
+    - v192のHIGHフェーズマージ率は17%（5/17ターン）と低い
+    - v128のHIGHフェーズheight_mult=1.8はHIGHフェーズでのマージ優先を可能にする（スコア3689）
+    - v192のTOWERペナルティ閾値0.3は厳しすぎ、MEDIUM_TOWERが支配的になる
 
     解決策:
-    - TOWERペナルティ閾値をv42の0.3に厳しく（v193の0.5から）
-    - バランス補正強度をv42の値に戻す（HIGH=35.0/MEDIUM=25.0/LOW=15.0）
-    - HIGH_TOWER倍率をv42の2.0倍に強化（v193のv128値1.3倍から）
-    - MEDIUMフェーズheight_mult=2.4を維持（v42の成功値、v128でも採用）
-    - HIGHフェーズheight_mult=1.8を維持（v128の成功値、v193で採用済み）
-    - v42の「高度管理パッケージ全体」を採用
+    - MEDIUMフェーズheight_multはv42の2.4を維持（v128でも採用されている値）
+    - HIGHフェーズheight_multはv128の1.8を採用（v192のv42値2.6は強すぎ）
+    - TOWERペナルティ閾値はv128の0.5を採用（v192のv42値0.3は厳しすぎ）
+    - MEDIUM_TOWER倍率はv42の1.5倍を採用（v191の2.0倍は強すぎ）
+    - HIGH_TOWER倍率はv128の1.3倍を採用
+    - v42とv128の成功要素を統合（MEDIUM高度管理 + HIGHマージ優先）
     """
 
     results = analysis.get("results", [])
@@ -59,23 +58,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v42の閾値0.8/1.8/3.0を維持）
+    # フェーズ判定（v193: v42の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v42の成功値を維持
+        height_mult = 2.4  # v193: v42の2.4を維持（v128でも採用されている値）
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v128の成功値を維持
+        height_mult = 1.8  # v193: v128の1.8を採用（v192のv42値2.6は強すぎ）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v42の成功値を維持
+        merge_mult = 0.6  # v193: v42の0.6を維持
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -93,44 +92,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v194: v42高度管理パッケージ採用・HIGHフェーズマージ優先 ===
+        # === v193: v42/v128統合・MEDIUM高度管理・HIGHマージ優先 ===
 
-        # 1. マージグレードによるスコア（v42の値を維持）
+        # 1. マージグレードによるスコア（v193: v42の値を維持）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += 1200.0 * merge_mult  # v193: v42の1200を維持
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 600.0 * merge_mult  # v193: v42の600を維持
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            score += 200.0 * merge_mult  # v193: v42の200を維持
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ
+        # 2. 高度によるペナルティ（v193: v42のMEDIUM height_multとv128のHIGH height_mult）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # TOWERペナルティ（v42の高度管理パッケージ全体を採用）
-        if phase == "HIGH" and landing_y > 0.3:  # v42: 閾値0.3を採用
-            height_penalty *= 2.0  # v42: 2.0倍を採用
+        # TOWERペナルティ（v193: v128の設定を採用）
+        if phase == "HIGH" and landing_y > 0.5:
+            height_penalty *= 1.3  # v193: v128の1.3倍を採用
             reasons.append("HIGH_TOWER")
-        elif phase == "MEDIUM" and landing_y > 0.3:  # v42: 閾値0.3を採用
-            height_penalty *= 1.5  # v42: 1.5倍を採用
+        elif phase == "MEDIUM" and landing_y > 0.5:
+            height_penalty *= 1.5  # v193: v42の1.5倍を採用
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v42: 一律30.0を維持）
+        # 3. ドリフトによるペナルティ（v193: 一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v42: v42の値を採用）
-        balance_strength = 15.0
+        # 4. 左右バランス補正（v193: v128の値を採用）
+        balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 35.0  # v42: 35.0を採用（v193の40.0から減）
+            balance_strength = 40.0  # v193: v128の40.0を採用
         elif phase == "MEDIUM":
-            balance_strength = 25.0  # v42: 25.0を採用（v193の30.0から減）
+            balance_strength = 30.0  # v193: v128の30.0を採用
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -139,7 +138,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v42: 一律50.0を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v193: 一律50.0を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
