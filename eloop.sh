@@ -502,6 +502,12 @@ start_radio_talk() {
 			twitch_comments=$(cat "tmp/twitch_comments.txt")
 		fi
 
+		# 最新ニュース読み込み
+		local news_headlines=""
+		if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
+			news_headlines=$(cat "tmp/news.txt")
+		fi
+
 		# 10回に1回だけ戦略履歴・差分・解説コーナーを含める
 		local include_strategy_history=false
 		[ $((RANDOM % 10)) -eq 0 ] && include_strategy_history=true
@@ -653,6 +659,14 @@ ${diff_content:-差分情報なし}
 
 HISTORY_BLOCK
 )
+$([ -n "$news_headlines" ] && cat <<NEWS_BLOCK
+【最新ニュース（実際の本日のニュース見出し）】
+以下は本日の実際のニュースです。トークの中で自然に触れてコメントしてください。
+---
+${news_headlines}
+---
+NEWS_BLOCK
+)
 $([ -n "$twitch_comments" ] && cat <<CHAT_BLOCK
 【リスナーからのコメント（Twitchチャット）】
 以下はリスナーが実際に送ったコメントです。トークの中で自然に拾って返事してください。
@@ -672,7 +686,7 @@ CHAT_BLOCK
 1. 時間帯に合わせたオープニング
    - 「${time_period}の${current_time}、ゲーム${game_num}回目が終わりました！」的な入り
    - 今の時間帯ならではの一言（深夜なら「眠いけど興奮」、朝なら「朝から熱い」、昼なら「ランチ食べました?」）
-   - できれば最新のニュースを仕入れてきて一言コメント
+   - 上に載せた最新ニュースから1つ選んで一言コメント（ニュースがあれば）
 
 2. 試合結果の詳細な振り返り（国名をたくさん使って具体的に）
    - 今回の${score}点と最高スコア${best_score}点の比較。感情たっぷりに喜ぶ or 悔しがる or 呆れる
@@ -680,8 +694,8 @@ CHAT_BLOCK
    - 「序盤はアルメニアとエストニアの合体で順調だったと思うけど、中盤でラトビアとリトアニアの置き場所に困ったんじゃないかな」のように試合展開を国名で想像する
    - 最近の戦略がどんな方針だったか、どの国旗の扱いを重視していたか
 
-3. 今回ピックアップする国の深掘りトーク（2〜3か国選んでじっくり）
-   - 15か国の中から2〜3か国選んで、それぞれ詳しく語る
+3. 今回ピックアップする国の深掘りトーク（1か国選んでじっくり）
+   - 15か国の中から1か国選んで、それぞれ詳しく語る
    - その国の料理（具体的なメニュー名まで）、競技、ゲーム、書籍、歴史、文化、有名人、観光地
    - 歴史エピソード（独立の経緯、ソ連時代の話、現在の様子）
 
@@ -859,6 +873,10 @@ while true; do
 	# Twitchコメント差分取得（デーモンが常駐収集した分をfetch）
 	log "[TWITCH] コメントfetch..."
 	./twitch_chat.sh fetch
+
+	# 最新ニュース取得
+	log "[NEWS] ニュース取得..."
+	./fetch_news.sh
 
 	# ラジオトーク開始（AI改善と並行してバックグラウンド再生）
 	BEST_SCORE_NOW=$(cat best_score.txt 2>/dev/null || echo 0)
