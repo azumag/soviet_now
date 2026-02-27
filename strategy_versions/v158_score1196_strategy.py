@@ -24,14 +24,20 @@
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """HIGH_TOWERペナルティを完全削除し、一律構造で盤面均衡を最大化。
+    """v158の戦略
 
-    予測に依存したHIGH_TOWERのような条件分岐を削除し、代わりに：
-    1. 一律のheight_penaltyのみで高度管理
-    2. ピース分布の均一性を評価する新規指標
-    3. analysis["reactor"]["near_pairs"]を活用したマージ促進
+    v157の失敗原因を履歴分析で特定：
+    1. HIGHフェーズでのマージ率が極めて低い（27ターン中0回）
+    2. HIGH_LAYER判断が支配的（HIGHフェーズで44%）
+    3. MEDIUMフェーズでのMEDIUM_TOWER連続で高度管理が緩和されすぎ、盤面が上昇し加速
 
-    予測精度に依存せず、物理的事実に基づく一律構造で頑健性を確保。
+    v128の成功要素（3689点）に基づき、HIGHフェーズ高度管理を微調整：
+    - HIGHフェーズのheight_mult: v128の1.8から1.6に微調整
+    - HIGH_TOWERペナルティ: v128の1.3倍を維持
+    - v42のシンプル構造（マージボーナス、ドリフト、バランス補正、中央寄せ）を継持
+
+    個別のゲーム運によるスコア変動を考慮しつつ、一律構造でv42の頑健性を維持し、
+    HIGHフェーズでのマージ機会を最大化する。
     """
 
     results = analysis.get("results", [])
@@ -47,33 +53,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v42の閾値0.8/1.8/3.0を維持）
+    # フェーズ判定（v128の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v159: MEDIUMで高度管理強化、HIGH到達遅延
+        height_mult = 2.4  # v158: v42の2.4を維持
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.4  # v159: v128の1.8とv157の1.2の中間、均衡
-        merge_mult = 1.2  # v159: HIGHフェーズでマージ優先
+        height_mult = 1.6  # v158: v128の1.8から1.6に微調整、マージ機会最大化
+        merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v159: v42の0.6を維持
+        merge_mult = 0.6  # v158: v42の0.6を維持
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
-
-    # reactor情報取得
-    reactor = analysis.get("reactor", {})
-    near_pairs = reactor.get("near_pairs", [])
 
     for result in results:
         x = result["x"]
@@ -85,9 +87,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v159: 一律構造・盤面均衡最大化 ===
+        # === v158: v128ベース・HIGHフェーズ高度管理微調整 ===
 
-        # 1. マージグレードによるスコア（一律ボーナス、ペナルティなし）
+        # 1. マージグレードによるスコア（v158: v42の強力な値を維持）
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -98,70 +100,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（一律、HIGH_TOWERの追加倍率なし）
+        # 2. 高度によるペナルティ（v158: v128のHIGH_TOWERペナルティを維持）
         height_penalty = landing_y * 50.0 * height_mult
-        if landing_y > 0.0:
+
+        # HIGH_TOWERペナルティ（v158: v128の1.3倍を採用）
+        if phase == "HIGH" and landing_y > 0.5:
+            height_penalty *= 1.3
+            reasons.append("HIGH_TOWER")
+        elif phase == "MEDIUM" and landing_y > 0.5:
+            height_penalty *= 1.5  # v158: v42の1.5倍を維持
+            reasons.append("MEDIUM_TOWER")
+        elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
+
         score -= height_penalty
 
-        # 3. ピース分布の均一性ボーナス（v159: 新規）
-        # 左中右のピース数を計算し、均等であるほどボーナス
-        left_count = sum(1 for p in pieces if p["x"] < -1.0)
-        center_count = sum(1 for p in pieces if -1.0 <= p["x"] < 1.0)
-        right_count = sum(1 for p in pieces if p["x"] >= 1.0)
-        total = len(pieces)
-        if total > 0:
-            expected = total / 3.0
-            # 均一性を測る指標（0が均一）
-            distribution_penalty = (
-                (
-                    abs(left_count - expected)
-                    + abs(center_count - expected)
-                    + abs(right_count - expected)
-                )
-                / total
-                * 20.0
-            )
-            score -= distribution_penalty
-
-        # 4. 同typeピースへの距離ボーナス（v159: 新規）
-        # near_pairs情報を活用、予測に依存せずマージ機会確保
-        if near_pairs:
-            for pair in near_pairs:
-                # near_pairsはタプル形式: (id1, id2, type, gap)
-                pair_id1, pair_id2, pair_type, gap = pair
-                # ピース位置を取得
-                p1 = next((p for p in pieces if p["id"] == pair_id1), None)
-                p2 = next((p for p in pieces if p["id"] == pair_id2), None)
-                if p1 and p2:
-                    mid_x = (p1["x"] + p2["x"]) / 2
-                    dx = x - mid_x
-                    distance_bonus = max(0, 1.0 - abs(dx) / 2.0) * 30.0
-                    score += distance_bonus
-                    if distance_bonus > 10.0:
-                        reasons.append("NEAR_PAIR")
-
-        # 5. ドリフトによるペナルティ（一律）
+        # 3. ドリフトによるペナルティ（v158: v42の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 6. 左右バランス補正（一律、HIGH_TOWER削除でバランス補正を維持）
+        # 4. 左右バランス補正（v158: v42の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 30.0  # v159: HIGH_TOWER削除でバランス補正強化
+            balance_strength = 40.0  # v158: v42の40.0を維持
         elif phase == "MEDIUM":
-            balance_strength = 30.0
+            balance_strength = 30.0  # v158: v42の30.0を維持
 
-        left_count_balance = sum(1 for p in pieces if p["x"] < 0)
-        right_count = len(pieces) - left_count_balance
-        balance_bias = (right_count - left_count_balance) / (
-            len(pieces) if pieces else 1
-        )
+        left_count = sum(1 for p in pieces if p["x"] < 0)
+        right_count = len(pieces) - left_count
+        balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
 
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 7. nextNextが同じタイプなら中央寄せボーナス
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v158: v42の一律50.0を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
@@ -185,7 +157,7 @@ if __name__ == "__main__":
     import json
     import sys
 
-    # スタンドアロンテスト用
+    # スタンドアローンスト用
     gs_path = sys.argv[1] if len(sys.argv) > 1 else "game_state.json"
 
     try:
