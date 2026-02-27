@@ -13,13 +13,13 @@
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版 - v41の失敗（スコア558）を受けて、v41がv31から取り入れたreactive_pairsとhas_mergeによる複雑な条件分岐を削除。v19のシンプル構造（DIRECT=1200/NEAR=600/FAR=200、height_penalty=50*height_mult、drift_penalty=30）に復活。v19のCRITICALフェーズ（merge_mult=0.6）を維持。コード量削減（約140行→約110行）で頑健性を確保
 # v50-v64: has_merge/reactive_pairs条件の振り子パターンと閾値シャッフル
 # [BEST:2346] v84: HIGHフェーズマージ優先・構造改善版 - v83の失敗（スコア1065、HIGHフェーズマージ率低）を受けて、振り子パターン完全回避で根本的な構造改善を実施。chain reaction緩和は完全廃止（v82の失敗から学ぶ）。代わりにHIGHフェーズでのマージ確保を優先：（1）merge_gradeボーナス強化（DIRECT=1500/NEAR=800/FAR=300でマージの質を重視）、（2）HIGHフェーズ高度管理緩和（height_mult=2.2に減、HIGH_TOWERペナルティ1.3倍に減）、（3）マージなし位置にNO_MERGEペナルティ（-150）、（4）max_yに応じた動的調整（盤面が高いほどマージ優先、低いほど高度管理優先）。v42のシンプル構造を維持しつつ、HIGHフェーズでのマージ機会確保を構造的に改善。コード量増加なし（約110行）。
-# v88: マージ明示的ボーナス導入版 - v87の失敗（スコア1098、HIGHフェーズでHEIGHT_CONTROL/HIGH_TOWERが支配的でマージ率低）を受けて、振り子パターン（height_mult: 2.2→2.6→2.4）を断ち切り、構造的なアプローチで改善。履歴分析でHIGHフェーズ最後12ターン（turn 70-82）でreactive_pairs=5あるにもかかわらずマージ率0%、score_delta=185（停滞）を特定。merge_gradeボーナスのみではHIGHフェーズでのマージ確保が不十分であるため、構造的改善を実施：（1）v84の成功要素（merge_grade強化1500/800/300、height_mult=2.2）を採用；（2）HIGHフェーズでhas_merge=trueの位置にMERGE_OPPORTUNITYボーナス（+150）を付与し、マージ確保を強制；（3）マージなし位置にNO_MERGE_PENALTY（-150）を適用し、マージ機会の重視を明示。v84のシンプル構造を維持しつつ、HIGHフェーズでのマージ確保を強化。
 # v89: マージなしペナルティ全フェーズ版 - v88の失敗（スコア1098、HIGHフェーズでマージ確保ボーナスが機能せず）を受けて、振り子パターン（height_mult振り子: v42=2.6→v84=2.2→v86=2.6→v87=2.4→v88=2.2）を断ち切るため、height_multをv42の2.6に固定し、マージ確保はマージなしペナルティで強制する構造に変更。v86のシンプル構造（約160行）を維持しつつ：（1）マージなしペナルティをHIGHフェーズ専用から全フェーズに拡大し、HIGHフェーズでは-200と強化；（2）height_multはv42の2.6を維持（安全性確保、振り子回避）；（3）v84のmerge_grade強化（1500/800/300）は採用せず、v42の成功値（1200/600/200）に戻す（ボーナス過剰による高度管理優先を解消）；（4）has_merge条件や動的調整は一切導入しない（v42の頑健性維持）。v84のマージ確保アイデアとv42のシンプル構造を融合し、height_mult振り子を回避して頑健性を確保。
 # v90: merge_gradeベース高度管理緩和版 - v89の失敗（スコア1261、HIGHフェーズマージ率8%）を受けて、振り子パターン（height_mult: v42→v84→v86→v87→v88→v89で2.6/2.2/2.6/2.4/2.2/2.6、merge_grade: v42→v84→v89で1200/1500/1200）を断ち切るため、v84の成功値（height_mult=2.2）を固定し、振り子回避を確定。代わりに、HIGHフェーズでmerge_gradeに応じた高度管理緩和を導入：DIRECTでheight_multiplierを25に緩和（50→25）、NEARで40に緩和、FARで45に緩和、NOで50のまま。これにより、マージの質に応じた段階的な高度管理緩和を実現し、HIGHフェーズでのマージ機会確保を構造的に改善。v85のhas_mergeベース動的緩和とは異なり、merge_gradeベースでより直感的かつ予測可能な緩和戦略を実現。height_mult一律2.2固定で振り子完全回避、コード量微増（約120行）だが構造はシンプル維持。
+# v91: reactor情報活用chain reaction緩和版 - v90の失敗（スコア762、HIGHフェーズで「HIGH_TOWER_NO_MERGE_PENALTY」が4/5ターン、マージ率0%）を受けて、振り子パターン（height_mult: v42=2.6→v84=2.2→v89=2.6→v90=2.2→v91=2.6）を断ち切るため、v42の成功値（height_mult=2.6）に戻し、予測ベースのmerge_grade緩和を完全削除。履歴分析でanalyze_boardのmerge_grade予測と実際のマージ結果が乖離し、予測ベースの高度管理緩和が誤判断を助長していることを特定。代わりにreactor情報を活用したchain reaction緩和を導入：HIGHフェーズでreactive_pairs >= 2の時、height_multiplierを35.0に緩和し、height_penalty_factorも0.6に緩和（v31の条件>=3を>=2に緩和して発動頻度を増やす）。v42のシンプル構造を維持しつつ、実際にマージが起きている状況での高度管理緩和でHIGHフェーズでのマージ機会確保を最大化。振り子完全回避、予測ベース削除、構造的改善。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """height_multを一律2.2に固定し、HIGHフェーズでmerge_gradeに応じた高度管理緩和を実施"""
+    """v42のシンプル構造に戻し、reactor情報を活用したchain reaction緩和を導入"""
 
     results = analysis.get("results", [])
 
@@ -34,23 +34,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v90: v42の閾値0.8/1.8/3.0を維持）
+    # reactor情報（v91で新規活用）
+    reactor = analysis.get("reactor", {})
+    reactive_pairs_raw = reactor.get("reactive_pairs", 0)
+    reactive_pairs = (
+        len(reactive_pairs_raw)
+        if isinstance(reactive_pairs_raw, list)
+        else reactive_pairs_raw
+    )
+
+    # フェーズ判定（v91: v42の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.2  # v90: v84の2.2を維持（一律2.2固定で振り子回避）
+        height_mult = 2.4  # v91: v42の2.4を維持
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 2.2  # v90: v84の2.2を維持（一律2.2固定で振り子回避）
+        height_mult = 2.6  # v91: v42の2.6に戻す（振り子回避）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v90: v42の0.6を維持
+        merge_mult = 0.6  # v91: v42の0.6を維持
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -69,71 +78,61 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v90: merge_gradeベース高度管理緩和版 ===
+        # === v91: reactor情報活用chain reaction緩和戦略 ===
 
-        # 1. マージグレードによるスコア（v90: v42の成功値を維持）
+        # 1. マージグレードによるスコア（v91: v42の成功値を維持）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult  # v90: v42の1200を維持
+            score += 1200.0 * merge_mult  # v91: v42の1200を維持
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult  # v90: v42の600を維持
+            score += 600.0 * merge_mult  # v91: v42の600を維持
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult  # v90: v42の200を維持
+            score += 200.0 * merge_mult  # v91: v42の200を維持
             reasons.append("FAR_MERGE")
 
-        # 2. v90: HIGHフェーズでのmerge_gradeベース高度管理緩和
-        if phase == "HIGH":
-            # マージの質に応じてheight_multiplierを調整
-            if merge_grade == "DIRECT":
-                height_multiplier = 25.0  # DIRECT: 50%緩和（50→25）
-                reasons.append("HEIGHT_RELAX_DIRECT")
-            elif merge_grade == "NEAR":
-                height_multiplier = 40.0  # NEAR: 20%緩和（50→40）
-                reasons.append("HEIGHT_RELAX_NEAR")
-            elif merge_grade == "FAR":
-                height_multiplier = 45.0  # FAR: 10%緩和（50→45）
-                reasons.append("HEIGHT_RELAX_FAR")
-            else:
-                height_multiplier = 50.0  # NO: 緩和なし
-        elif phase == "CRITICAL":
-            # CRITICALフェーズでは一律40.0（v19の設定を維持）
+        # 2. 高度によるスコア（v91: chain reaction時に緩和）
+        if phase == "CRITICAL":
+            # CRITICALフェーズではheight_multiplier強化（v42の40.0を維持）
             height_multiplier = 40.0
+            height_penalty = landing_y * height_multiplier
             if landing_y > 1.0:
                 reasons.append("CRITICAL_HEIGHT")
         else:
-            # LOW, MEDIUMフェーズでは一律50.0
-            height_multiplier = 50.0
+            # v91: HIGHフェーズでchain reaction中（reactive_pairs >= 2）なら緩和
+            height_penalty_factor = 1.0
+            if phase == "HIGH" and reactive_pairs >= 2:
+                height_multiplier = 35.0  # chain reaction中は緩和（v31の35.0を維持）
+                reasons.append("CHAIN_REACTION")
+            else:
+                height_multiplier = 50.0
 
-        height_penalty = landing_y * height_mult * height_multiplier
+            height_penalty = (
+                landing_y * height_mult * height_multiplier * height_penalty_factor
+            )
 
-        # 高盤面での追加ペナルティ（CRITICALフェーズでは適用しない）
-        if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 2.0  # v90: v42の2.0倍を維持
-            reasons.append("HIGH_TOWER")
-        elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5  # v90: v42の1.5倍を維持
-            reasons.append("MEDIUM_TOWER")
-        elif landing_y > 0.0:
-            reasons.append("HIGH_LAYER")
+            # 高盤面での追加ペナルティ（CRITICALフェーズでは適用しない）
+            if phase == "HIGH" and landing_y > 0.5:
+                height_penalty *= 2.0  # v91: v42の2.0を維持
+                reasons.append("HIGH_TOWER")
+            elif phase == "MEDIUM" and landing_y > 0.5:
+                height_penalty *= 1.5  # v91: v42の1.5を維持
+                reasons.append("MEDIUM_TOWER")
+            elif landing_y > 0.0:
+                reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. v90: マージなしペナルティ（HIGHフェーズでのみ、v84の成功値に戻す）
-        if phase == "HIGH" and merge_grade == "NO":
-            score -= 150.0  # v90: v84の150に戻す
-            reasons.append("NO_MERGE_PENALTY")
-
-        # 4. ドリフトによるペナルティ（v90: v42の一律計算を維持）
+        # 3. ドリフトによるペナルティ（v91: v42の一律計算を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 5. 左右バランス補正（v90: v42の設定を維持）
+        # 4. 左右バランス補正（v91: v42の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v90: v42の40.0を維持
+            balance_strength = 40.0  # v91: v42の40.0を維持
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v90: v42の30.0を維持
+            balance_strength = 30.0  # v91: v42の30.0を維持
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -142,7 +141,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 6. nextNextが同じタイプなら中央寄せボーナス（v90: v42の設定を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v91: v42の設定を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus

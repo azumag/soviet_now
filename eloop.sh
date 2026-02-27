@@ -21,8 +21,9 @@ HISTORY_FILE="$HISTORY_DIR/latest.jsonl"
 MODEL_PRIMARY="glm"
 MODEL_FALLBACK="opencode:glmflash"
 
-# カウンタ
-GAME_NUM=0
+# カウンタ（ファイルから復元）
+GAME_COUNT_FILE="game_count.txt"
+GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR"
 
@@ -316,6 +317,7 @@ PYEOF
 save_strategy_version() {
 	local score="$1"
 	GAME_NUM=$((GAME_NUM + 1))
+	echo "$GAME_NUM" > "$GAME_COUNT_FILE"
 	local version_file
 	version_file=$(printf "%s/v%03d_score%04d_strategy.py" "$STRATEGY_VERSIONS_DIR" "$GAME_NUM" "$score")
 	cp "$STRATEGY_FILE" "$version_file"
@@ -625,7 +627,7 @@ ${past_topics:-まだ過去のトークはありません。自由に話して�
 
 【状況】
 「ソ連スイカゲーム」をAIが自動プレイしています。
-たった今、ゲーム${game_num}回目が終了しました。
+先ほど、ゲーム${game_num}回目が終了しました。
 結果: スコア${score}点、${turns}ターンでゲームオーバー。
 現在の最高スコア: ${best_score}点。
 
@@ -653,6 +655,7 @@ HISTORY_BLOCK
 1. 時間帯に合わせたオープニング
    - 「${time_period}の${current_time}、ゲーム${game_num}回目が終わりました！」的な入り
    - 今の時間帯ならではの一言（深夜なら「眠いけど興奮」、朝なら「朝から熱い」、昼なら「ランチ食べました?」）
+   - できれば最新のニュースを仕入れてきて一言コメント
 
 2. 試合結果の詳細な振り返り（国名をたくさん使って具体的に）
    - 今回の${score}点と最高スコア${best_score}点の比較。感情たっぷりに喜ぶ or 悔しがる or 呆れる
@@ -662,7 +665,7 @@ HISTORY_BLOCK
 
 3. 今回ピックアップする国の深掘りトーク（2〜3か国選んでじっくり）
    - 15か国の中から2〜3か国選んで、それぞれ詳しく語る
-   - その国の料理（具体的なメニュー名まで）、文化、有名人、観光地
+   - その国の料理（具体的なメニュー名まで）、競技、ゲーム、書籍、歴史、文化、有名人、観光地
    - 歴史エピソード（独立の経緯、ソ連時代の話、現在の様子）
 
 4. 脱線コーナー1: 今回のテーマに沿った雑談
@@ -799,6 +802,9 @@ while true; do
 	TURNS=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turns',0))" 2>/dev/null || echo 0)
 
 	log "[RESULT] Score=$SCORE, Turns=$TURNS"
+
+	# スコア履歴記録
+	echo "$SCORE" >> score_history.txt
 
 	#--- Step 2: バージョン保存 ---
 	save_strategy_version "$SCORE"

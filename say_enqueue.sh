@@ -36,6 +36,9 @@ MY_CONTENT="$QUEUE_DIR/content_${MY_TOKEN}.txt"
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
 
+# 読み上げ修正: "AI" → "エーアイ"
+sed -i '' 's/AI/エーアイ/g' "$MY_CONTENT"
+
 # トークン登録（最後に書いた者が勝つ）
 echo "$MY_TOKEN" > "$TOKEN_FILE"
 
