@@ -1,7 +1,7 @@
 #!/bin/bash
 # say_enqueue.sh - mkdirロックベースのsayキュー（最新が勝つ・プリエンプション付き）
 #
-# 使い方: ./say_enqueue.sh <content_file> [rate]
+# 使い方: ./say_enqueue.sh <content_file> [rate] [pre_delay_sec]
 #
 # 動作:
 #   1. コンテンツコピー + トークン登録
@@ -119,6 +119,19 @@ while pgrep -x say >/dev/null 2>&1; do
     fi
     [ "${_say_wait_logged:-0}" -eq 0 ] && _log "既存sayプロセス検出 → 終了待ち" && _say_wait_logged=1
     sleep 1
+done
+
+# --- ロック内: トーク開始前の間（ロック外でやると他がすり抜けるのでロック内で） ---
+PRE_DELAY="${3:-30}"
+_log "トーク開始まで ${PRE_DELAY}秒 待機..."
+waited_pre=0
+while [ "$waited_pre" -lt "$PRE_DELAY" ]; do
+    if _is_preempted; then
+        _log "待機中にプリエンプト → 諦め"
+        exit 0
+    fi
+    sleep 1
+    waited_pre=$((waited_pre + 1))
 done
 
 # --- ロック内: say開始 + PID記録（アトミック） ---
