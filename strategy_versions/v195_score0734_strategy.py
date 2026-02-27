@@ -25,31 +25,23 @@
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """MEDIUMフェーズ高度管理緩和・HIGHマージ優先徹底版
+    """v128設定回帰・MEDIUM高度管理維持版
 
-    v195の失敗（スコア734、MEDIUMフェーズ高度管理が支配的すぎる）を受けて、
-    MEDIUMフェーズの高度管理を根本的に緩和するブレイクスルーを実施。
+    v194の失敗（スコア1417、v128スコア3689の半分以下）を受けて、
+    振り子パターンを根本的に解消するブレイクスルーを実施。
 
-    v195履歴分析で特定した問題:
-    - MEDIUMフェーズが7ターンしか持続せず、その71%（5/7ターン）がMEDIUM_TOWERで高度管理が支配的
-    - MEDIUMフェーズのheight_mult=2.4（v42/v128値）では盤面上昇が速すぎ、すぐにHIGHフェーズに到達
-    - HIGHフェーズが1ターンのみで、CRITICALフェーズに遷移
-    - CRITICALフェーズでHIGH_LAYER（高度管理）が選ばれ、マージできずゲームオーバー
-    - v194（スコア1417）もv195（スコア734）も、v128スコア3689の半分以下
+    v194履歴分析で特定した問題:
+    - v194はv42パッケージ（閾値0.3、HIGH_TOWER 2.0倍）を採用したが、v128設定（閾値0.5、HIGH_TOWER 1.3倍）よりもスコアが半分以下（1417 vs 3689）
+    - v194のHIGH_TOWER発動率が低すぎる（6/85ターン=7%）、v128は適度に発動し高度管理を実現
+    - v194のTOWERペナルティ閾値0.3が厳しすぎ、HIGH_LAYERが支配的（11回/85ターン）
+    - v42パッケージのMEDIUM_TOWER発動率（v194は11/85ターン=13%）はv128よりも高いが、これは閾値0.3が厳しすぎてHIGH_LAYERとHIGH_TOWERの中間を制御しているため
+    - v193（スコア551）もv128設定と同じだがスコアが低いのは、他の要因（乱数、ピース配列）の可能性があるが、戦略的にはv128設定が最も成功した設定であることは明確
 
-    根本原因:
-    - v128設定はHIGHフェーズでのマージ優先には成功したが、MEDIUMフェーズのheight_mult=2.4が強すぎ
-    - MEDIUMフェーズでの高度管理が強すぎると、盤面が急速に上昇しHIGHフェーズに到達する
-    - MEDIUMフェーズの持続期間が短すぎると、HIGHフェーズでのマージ機会を確保できない
-
-    解決策（振り子パターン解消の第三の選択肢）:
-    - MEDIUMフェーズheight_multを2.4から1.8に大幅に引き下げ：MEDIUMフェーズの高度管理を緩和し、持続期間を改善
-    - TOWERペナルティ閾値を0.5から0.4に微調整：v128の0.5は緩すぎ、v194の0.3は厳しすぎ、中間値の0.4を採用
-    - HIGHフェーズheight_mult=1.8を維持（v128の成功値）：HIGHフェーズでのマージ優先を徹底
-    - HIGH_TOWER倍率1.3倍を維持（v128の成功値）：HIGHフェーズでのマージ優先を維持
-    - バランス補正強度v128のHIGH=40.0/MEDIUM=30.0を維持
-    - マージボーナスv42のDIRECT=1200/NEAR=600/FAR=200を維持
-    - ドリフトペナルティ一律30.0を維持
+    解決策:
+    - v128設定への完全回帰：TOWERペナルティ閾値0.5、HIGH_TOWER倍率1.3倍、バランス補正強度40.0/30.0/20.0
+    - v42のMEDIUMフェーズ高度管理を維持：height_mult=2.4、MEDIUM_TOWER倍率1.5倍
+    - v128のHIGHフェーズ設定を維持：height_mult=1.8、HIGH_TOWER倍率1.3倍
+    - v42とv128の成功要素を統合しつつ、振り子パターンを解消
     """
 
     results = analysis.get("results", [])
@@ -72,11 +64,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.8  # v196: MEDIUMフェーズ高度管理緩和（v42/v128の2.4から1.8へ大幅に引き下げ）
+        height_mult = 2.4  # v42の成功値を維持
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v196: v128の1.8を維持（HIGHフェーズでのマージ優先を徹底）
+        height_mult = 1.8  # v128の成功値を維持
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -99,7 +91,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v196: MEDIUMフェーズ高度管理緩和・HIGHマージ優先徹底 ===
+        # === v195: v128設定回帰・MEDIUM高度管理維持 ===
 
         # 1. マージグレードによるスコア（v42の値を維持）
         if merge_grade == "DIRECT":
@@ -115,16 +107,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 2. 高度によるペナルティ
         height_penalty = landing_y * 50.0 * height_mult
 
-        # TOWERペナルティ（v196: 閾値0.4に微調整）
-        if (
-            phase == "HIGH" and landing_y > 0.4
-        ):  # v196: 閾値0.4（v128の0.5とv194の0.3の中間値）
-            height_penalty *= 1.3  # v196: v128の1.3倍を維持
+        # TOWERペナルティ（v128設定を採用）
+        if phase == "HIGH" and landing_y > 0.5:  # v128: 閾値0.5を採用
+            height_penalty *= 1.3  # v128: 1.3倍を採用
             reasons.append("HIGH_TOWER")
-        elif (
-            phase == "MEDIUM" and landing_y > 0.4
-        ):  # v196: 閾値0.4（v128の0.5とv194の0.3の中間値）
-            height_penalty *= 1.5  # v196: v42の1.5倍を維持
+        elif phase == "MEDIUM" and landing_y > 0.5:  # v128: 閾値0.5を採用
+            height_penalty *= 1.5  # v42: 1.5倍を採用
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
@@ -138,9 +126,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 4. 左右バランス補正（v128の値を採用）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v196: v128の40.0を維持
+            balance_strength = 40.0  # v128: 40.0を採用
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v196: v128の30.0を維持
+            balance_strength = 30.0  # v128: 30.0を採用
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
