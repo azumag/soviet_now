@@ -122,7 +122,7 @@ while pgrep -x say >/dev/null 2>&1; do
 done
 
 # --- ロック内: トーク開始前の間（ロック外でやると他がすり抜けるのでロック内で） ---
-PRE_DELAY="${3:-30}"
+PRE_DELAY="${3:-60}"
 _log "トーク開始まで ${PRE_DELAY}秒 待機..."
 waited_pre=0
 while [ "$waited_pre" -lt "$PRE_DELAY" ]; do
