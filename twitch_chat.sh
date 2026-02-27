@@ -7,7 +7,6 @@
 #   ./twitch_chat.sh stop              - デーモン停止
 #   ./twitch_chat.sh status            - 動作状況表示
 
-set -uo pipefail
 cd "$(dirname "$0")"
 
 CHAT_DIR="tmp/.twitch_chat"
@@ -22,61 +21,6 @@ CMD="${1:-fetch}"
 CHANNEL="${2:-azumagbanjo}"
 
 _log() { echo "[twitch_chat $(date '+%H:%M:%S')] $*" >&2; }
-
-#--- デーモン: IRC常駐 + PING/PONG + 自動再接続 ---
-_daemon() {
-    local channel="$1"
-    _log "daemon start (channel=#${channel})"
-
-    while true; do
-        local nick="justinfan$((RANDOM % 90000 + 10000))"
-        _log "IRC接続中... (nick=$nick)"
-
-        # 入力用FIFO + 出力用FIFO
-        local fifo_in="$CHAT_DIR/fifo_in"
-        local fifo_out="$CHAT_DIR/fifo_out"
-        rm -f "$fifo_in" "$fifo_out"
-        mkfifo "$fifo_in" "$fifo_out"
-
-        # nc: fifo_in → IRC → fifo_out
-        nc irc.chat.twitch.tv 6667 < "$fifo_in" > "$fifo_out" 2>/dev/null &
-        local nc_pid=$!
-
-        # 入力fifoをfd3で開きっぱなし
-        exec 3>"$fifo_in"
-
-        # IRC認証・JOIN送信
-        echo "NICK $nick" >&3
-        echo "JOIN #${channel}" >&3
-
-        # 出力fifoを読み取るループ（ncが死ぬと read が EOF で抜ける）
-        while IFS= read -r line; do
-            # PING/PONG処理
-            if [[ "$line" == PING* ]]; then
-                echo "PONG :tmi.twitch.tv" >&3 2>/dev/null
-                continue
-            fi
-
-            # PRIVMSG を抽出して raw.log に追記
-            if [[ "$line" == *"PRIVMSG"* ]]; then
-                local user msg
-                user=$(echo "$line" | sed 's/^:\([^!]*\)!.*/\1/')
-                msg=$(echo "$line" | sed 's/^.*PRIVMSG [^ ]* ://')
-                # サニタイズ: 制御文字 + シェルメタ文字除去
-                msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
-                user=$(echo "$user" | tr -d '`$\\{}|;<>&')
-                echo "${user}: ${msg}" >> "$RAW_LOG"
-            fi
-        done < "$fifo_out"
-
-        exec 3>&-
-        wait "$nc_pid" 2>/dev/null
-        rm -f "$fifo_in" "$fifo_out"
-
-        _log "IRC切断 → 10秒後に再接続"
-        sleep 10
-    done
-}
 
 #--- start ---
 _start() {
@@ -95,11 +39,10 @@ _start() {
     > "$RAW_LOG"
     echo "0" > "$OFFSET_FILE"
 
-    # デーモン起動
-    _daemon "$CHANNEL" &
+    # デーモンを別スクリプトとしてバックグラウンド起動
+    nohup bash ./twitch_chat_daemon.sh "$CHANNEL" > /dev/null 2>&1 &
     local dpid=$!
     echo "$dpid" > "$PID_FILE"
-    disown "$dpid"
     _log "daemon起動 (PID=$dpid)"
 }
 
@@ -173,7 +116,6 @@ _stop() {
         fi
         rm -f "$PID_FILE"
     fi
-    rm -f "$CHAT_DIR/irc_fifo"
 }
 
 #--- status ---
