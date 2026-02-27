@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Soren eloop Score Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a1a;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
+    padding: 20px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 1.6em;
+    margin-bottom: 12px;
+    color: #ff6b6b;
+    letter-spacing: 2px;
+    background: #111127;
+    padding: 12px 20px;
+    border-radius: 10px;
+    border: 1px solid #222;
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .stats-bar {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .stat {
+    text-align: center;
+    background: #111127;
+    padding: 10px 24px;
+    border-radius: 10px;
+    border: 1px solid #222;
+    flex: 1;
+    min-width: 140px;
+  }
+  .stat-label {
+    font-size: 0.75em;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .stat-value { font-size: 1.8em; font-weight: bold; }
+  .stat-value.best { color: #ffd700; }
+  .stat-value.avg { color: #4ecdc4; }
+  .stat-value.games { color: #a78bfa; }
+  .stat-value.recent { color: #f97316; }
+  .chart-container {
+    position: relative;
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+    background: #111127;
+    border-radius: 12px;
+    padding: 20px 20px 10px 20px;
+    border: 1px solid #222;
+  }
+  canvas { width: 100%; display: block; }
+  .footer {
+    text-align: center;
+    margin-top: 10px;
+    font-size: 0.75em;
+    color: #555;
+  }
+  .refresh-indicator {
+    position: fixed;
+    top: 10px;
+    right: 16px;
+    font-size: 0.7em;
+    color: #555;
+  }
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin-top: 10px;
+    font-size: 0.8em;
+    flex-wrap: wrap;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>SOREN eloop Score Dashboard</h1>
+<div class="stats-bar">
+  <div class="stat"><div class="stat-label">Best Score</div><div class="stat-value best" id="best">-</div></div>
+  <div class="stat"><div class="stat-label">Average</div><div class="stat-value avg" id="avg">-</div></div>
+  <div class="stat"><div class="stat-label">Games</div><div class="stat-value games" id="games">-</div></div>
+  <div class="stat"><div class="stat-label">Recent 10 Avg</div><div class="stat-value recent" id="recent">-</div></div>
+</div>
+<div class="chart-container">
+  <canvas id="chart"></canvas>
+  <div class="legend">
+    <div class="legend-item"><span class="legend-dot" style="background:#4ecdc4"></span> Score</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#ffd700"></span> Best</div>
+    <div class="legend-item"><span class="legend-dot" style="background:rgba(255,107,107,0.8)"></span> 10-game Moving Avg</div>
+    <div class="legend-item"><span class="legend-dot" style="background:rgba(78,205,196,0.15)"></span> Overall Avg</div>
+  </div>
+</div>
+<div class="refresh-indicator" id="refreshInfo"></div>
+<div class="footer">Auto-reload every 10s</div>
+<script>
+const SCORES = [{"game":1,"score":1212},{"game":2,"score":584},{"game":3,"score":468},{"game":4,"score":1092},{"game":5,"score":453},{"game":6,"score":721},{"game":7,"score":1961},{"game":8,"score":382},{"game":9,"score":604},{"game":10,"score":1486},{"game":11,"score":890},{"game":12,"score":431},{"game":13,"score":1615},{"game":14,"score":643},{"game":15,"score":673},{"game":16,"score":817},{"game":17,"score":979},{"game":18,"score":2015},{"game":19,"score":1036},{"game":20,"score":2185},{"game":21,"score":1505},{"game":22,"score":1046},{"game":23,"score":1241},{"game":24,"score":1073},{"game":25,"score":909},{"game":26,"score":1145},{"game":27,"score":2325},{"game":28,"score":1204},{"game":29,"score":1115},{"game":30,"score":1442},{"game":31,"score":1888},{"game":32,"score":667},{"game":33,"score":1584},{"game":34,"score":640},{"game":35,"score":823},{"game":36,"score":721},{"game":37,"score":1174},{"game":38,"score":1213},{"game":39,"score":1376},{"game":40,"score":483},{"game":41,"score":1624},{"game":42,"score":586},{"game":43,"score":1666},{"game":44,"score":1072},{"game":45,"score":938},{"game":46,"score":912},{"game":47,"score":1305},{"game":48,"score":1540},{"game":49,"score":558},{"game":50,"score":2335},{"game":51,"score":1861},{"game":52,"score":1766},{"game":53,"score":1395},{"game":54,"score":984},{"game":55,"score":709},{"game":56,"score":1060},{"game":57,"score":657},{"game":58,"score":667},{"game":59,"score":1020},{"game":60,"score":1319},{"game":61,"score":757},{"game":62,"score":706},{"game":63,"score":1593},{"game":64,"score":676},{"game":65,"score":1146},{"game":66,"score":1225},{"game":67,"score":771},{"game":68,"score":1063},{"game":69,"score":1783},{"game":70,"score":1687},{"game":71,"score":969},{"game":72,"score":1379},{"game":73,"score":1641},{"game":74,"score":1244},{"game":75,"score":964},{"game":76,"score":1073},{"game":77,"score":1789},{"game":78,"score":770},{"game":79,"score":330},{"game":80,"score":887},{"game":81,"score":1328},{"game":82,"score":1150},{"game":83,"score":828},{"game":84,"score":752},{"game":85,"score":908},{"game":86,"score":560},{"game":87,"score":1984},{"game":88,"score":1186},{"game":89,"score":1293},{"game":90,"score":674},{"game":91,"score":1065},{"game":92,"score":823},{"game":93,"score":1291},{"game":94,"score":2346},{"game":95,"score":1098},{"game":96,"score":649},{"game":97,"score":1261},{"game":98,"score":762},{"game":99,"score":1006},{"game":100,"score":1251},{"game":101,"score":1115},{"game":102,"score":1170},{"game":103,"score":932},{"game":104,"score":693},{"game":105,"score":673},{"game":106,"score":480},{"game":107,"score":817},{"game":108,"score":2322},{"game":109,"score":801},{"game":110,"score":1005},{"game":111,"score":748},{"game":112,"score":1000},{"game":113,"score":718},{"game":114,"score":1186},{"game":115,"score":1104},{"game":116,"score":699},{"game":117,"score":928},{"game":118,"score":1125},{"game":119,"score":1616},{"game":120,"score":727},{"game":121,"score":973},{"game":122,"score":1371},{"game":123,"score":442},{"game":124,"score":1209},{"game":125,"score":916},{"game":126,"score":1694},{"game":127,"score":1291},{"game":128,"score":724},{"game":129,"score":3689},{"game":130,"score":665},{"game":131,"score":915},{"game":132,"score":1183},{"game":133,"score":1445},{"game":134,"score":1264},{"game":135,"score":772},{"game":136,"score":484},{"game":137,"score":743},{"game":138,"score":835},{"game":139,"score":488},{"game":140,"score":467},{"game":141,"score":1168},{"game":142,"score":1004},{"game":143,"score":1053},{"game":144,"score":787},{"game":145,"score":2716},{"game":146,"score":608},{"game":147,"score":704},{"game":148,"score":1209},{"game":149,"score":2276},{"game":150,"score":741},{"game":151,"score":835},{"game":152,"score":704},{"game":153,"score":1405},{"game":154,"score":1258},{"game":155,"score":1049},{"game":156,"score":870},{"game":157,"score":843},{"game":158,"score":1196},{"game":159,"score":593},{"game":160,"score":1007},{"game":161,"score":1063},{"game":162,"score":961},{"game":163,"score":2997},{"game":164,"score":959},{"game":165,"score":1707},{"game":166,"score":1473},{"game":167,"score":872},{"game":168,"score":2109},{"game":169,"score":784},{"game":170,"score":1355},{"game":171,"score":662},{"game":172,"score":773},{"game":173,"score":456},{"game":174,"score":831},{"game":175,"score":760},{"game":176,"score":817},{"game":177,"score":1652},{"game":178,"score":566},{"game":179,"score":1479},{"game":180,"score":682},{"game":181,"score":1120},{"game":182,"score":1241},{"game":183,"score":1386},{"game":184,"score":564},{"game":185,"score":707},{"game":186,"score":755},{"game":187,"score":540},{"game":188,"score":1427},{"game":189,"score":778},{"game":190,"score":809},{"game":191,"score":2072},{"game":192,"score":1235},{"game":193,"score":551},{"game":194,"score":1417},{"game":195,"score":734},{"game":196,"score":1584},{"game":197,"score":645}];
+
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+
+function movingAvg(scores, w) {
+  return scores.map((_, i) => {
+    const sl = scores.slice(Math.max(0, i - w + 1), i + 1);
+    return sl.reduce((s, d) => s + d.score, 0) / sl.length;
+  });
+}
+
+function drawChart(scores) {
+  if (!scores.length) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const W = rect.width - 40;
+  const H = Math.min(500, window.innerHeight - 260);
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const maxScore = Math.max(...scores.map(d => d.score));
+  const avgScore = scores.reduce((s, d) => s + d.score, 0) / scores.length;
+  const recent10 = scores.slice(-10);
+  const recent10Avg = recent10.reduce((s, d) => s + d.score, 0) / recent10.length;
+  const ma = movingAvg(scores, 10);
+
+  document.getElementById('best').textContent = maxScore;
+  document.getElementById('avg').textContent = Math.round(avgScore);
+  document.getElementById('games').textContent = scores.length;
+  document.getElementById('recent').textContent = Math.round(recent10Avg);
+
+  const padL = 55, padR = 20, padT = 20, padB = 40;
+  const cW = W - padL - padR, cH = H - padT - padB;
+  const yMax = Math.ceil(maxScore / 500) * 500 + 200;
+  const xScale = i => padL + (i / (scores.length - 1 || 1)) * cW;
+  const yScale = v => padT + cH - (v / yMax) * cH;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = '#1e1e3a'; ctx.lineWidth = 1;
+  ctx.font = '11px monospace'; ctx.fillStyle = '#555';
+  for (let i = 0; i <= 5; i++) {
+    const v = (yMax / 5) * i, y = yScale(v);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillText(Math.round(v), 4, y + 4);
+  }
+
+  // X labels
+  const xi = Math.max(1, Math.ceil(scores.length / 15));
+  ctx.fillStyle = '#555';
+  for (let i = 0; i < scores.length; i += xi)
+    ctx.fillText(scores[i].game, xScale(i) - 6, H - 8);
+
+  // Avg band
+  ctx.fillStyle = 'rgba(78,205,196,0.08)';
+  ctx.fillRect(padL, yScale(avgScore) - 1, cW, 2);
+  ctx.fillStyle = 'rgba(78,205,196,0.3)'; ctx.font = '10px monospace';
+  ctx.fillText('avg ' + Math.round(avgScore), padL + 4, yScale(avgScore) - 5);
+
+  // Best line
+  ctx.strokeStyle = 'rgba(255,215,0,0.3)'; ctx.setLineDash([6, 4]);
+  ctx.beginPath(); ctx.moveTo(padL, yScale(maxScore)); ctx.lineTo(W - padR, yScale(maxScore)); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = 'rgba(255,215,0,0.5)';
+  ctx.fillText('best ' + maxScore, padL + 4, yScale(maxScore) - 5);
+
+  // Bars
+  for (let i = 0; i < scores.length; i++) {
+    const x = xScale(i), y = yScale(scores[i].score);
+    const bW = Math.max(1.5, cW / scores.length * 0.5);
+    const ratio = scores[i].score / yMax;
+    ctx.fillStyle = `rgba(${Math.round(78+ratio*177)},${Math.round(205-ratio*105)},${Math.round(196-ratio*100)},0.6)`;
+    ctx.fillRect(x - bW/2, y, bW, yScale(0) - y);
+  }
+
+  // Dots
+  for (let i = 0; i < scores.length; i++) {
+    ctx.beginPath();
+    ctx.arc(xScale(i), yScale(scores[i].score), 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = scores[i].score === maxScore ? '#ffd700' : '#4ecdc4';
+    ctx.fill();
+  }
+
+  // MA line
+  ctx.strokeStyle = 'rgba(255,107,107,0.8)'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ma.forEach((v, i) => { const x = xScale(i), y = yScale(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.stroke();
+
+  // Best highlight
+  const bi = scores.findIndex(d => d.score === maxScore);
+  if (bi >= 0) {
+    const bx = xScale(bi), by = yScale(maxScore);
+    ctx.beginPath(); ctx.arc(bx, by, 6, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 12px monospace';
+    ctx.fillText(maxScore, bx + 10, by - 4);
+  }
+}
+
+drawChart(SCORES);
+window.addEventListener('resize', () => drawChart(SCORES));
+
+// 10秒ごとにページ自体をリロード（ファイルが更新されていれば新データが表示される）
+setTimeout(() => location.reload(), 10000);
+document.getElementById('refreshInfo').textContent = 'Auto-reload 10s | ' + new Date().toLocaleTimeString();
+</script>
+</body>
+</html>

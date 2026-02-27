@@ -1136,6 +1136,9 @@ while true; do
 	# スコア履歴記録
 	echo "$SCORE" >> score_history.txt
 
+	# ダッシュボード更新
+	./generate_dashboard.sh 2>/dev/null &
+
 	#--- Step 2: バージョン保存 ---
 	save_strategy_version "$SCORE"
 
