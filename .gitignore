@@ -5,3 +5,4 @@ node_modules/
 tmp/
 sorengame/
 .claude/
+.cocoindex_code/
