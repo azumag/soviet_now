@@ -19,27 +19,26 @@
 # v129-v137: HIGH_TOWERペナルティの振り子パターン（v134:削除→v136:1.2倍→v137:2.0倍）- 一律のHIGH_TOWERペナルティが「削除すると高度管理不十分」「再導入するとマージ機会損失」の振り子を繰り返している。
 # [BEST:3689] v128: HIGHフェーズマージ優先版 - v127の失敗（スコア724、HIGHフェーズ10ターン中9ターンでマージ不可）を受けて、HIGHフェーズでのマージ機会損失を特定。履歴分析でv127の高度管理がHIGHフェーズで過剰に強化されていることが原因を特定（HIGHフェーズのdecision_reasonはHIGH_TOWERが1回だが、HIGH_LAYERが5回で高度管理が支配的）。（1）HIGHフェーズ高度管理大幅緩和：height_multをv42の2.6から1.8に大幅に引き下げ（v84の2.2よりも緩和し、マージ優先を徹底）。（2）マージボーナス強化：v42の強力な値（DIRECT=1200/NEAR=600/FAR=200）を維持し、高度管理緩和と組み合わせてマージをHIGHフェーズの主要目標にする。（3）HIGHフェーズHIGH_TOWERペナルティ緩和：v84の1.3倍を維持し、height_mult大幅緩和と相乗効果。（4）v42のシンプル構造を維持：NO_MERGEペナルティの「入れるか入れないか」の振り子を回避し、第三の選択肢（マージボーナス強化・高度管理大幅緩和）を採用。振り子パターン（NO_MERGEペナルティ、height_multiplier微調整）をHIGHフェーズでのマージ優先徹底で解消。コード量維持（約110行）。
 # v172-v174: TOWERペナルティ振り子パターン（復帰→緩和→削除→復帰）
+# v184: マージボーナス削除・高度管理徹底版 - v183の失敗（スコア1386、マージ予測精度低・HIGHフェーズ失敗）を受けて、マージボーナスを完全削除し、高度管理を徹底的に強化するブレイクスルーを実施。（1）マージボーナス完全削除：v183で確認したマージ予測精度（誤検出率36%）の低さから、マージボーナスは誤判断を助長しスコアを低下させていることが判明。マージ予測を前提としない戦略へ転換。（2）高度管理徹底強化：height_multはv42の値（HIGH=2.6/MEDIUM=2.4）を維持しつつ、HIGH_TOWERペナルティの閾値を0.5から0.3に厳しくし、高盤面での抑制を強化。（3）ドリフトペナルティ強化：v42の一律30.0から40.0に増加し、ピースの着地位置をより正確に制御。（4）バランス補正強化：v42のHIGH=40.0/MEDIUM=30.0からHIGH=50.0/MEDIUM=40.0に増加し、盤面の左右バランスをより厳格に管理。（5）盤面を低く保ち偶発的なマージを促進：マージ予測に依存せず、盤面を低く保つことでchain reactionの可能性を高める。（6）v42のシンプル構造を維持：高度管理、TOWERペナルティ、ドリフトペナルティ、バランス補正のシンプル構造を維持。マージボーナス削除でコード量削減（約110行→約95行）。（7）振り子パターン解消：マージ予測を前提としないことで、v42→v128→v182→v42→v183という「height_mult微調整」と「マージボーナスの有無」の振り子を根本的に解消。失敗（スコア564）：履歴分析でv184の失敗原因を特定：（1）マージボーナス削除により、偶発的なマージを促進するインセンティブが消失：マージ予測を前提としない戦略へ転換したが、盤面を低く保つ高度管理のみでは、偶発的なマージを十分に促進できない。（2）盤面スコアがないため、単に高度管理に集中していて、盤面の密度を無視している：ピースを分散させ、盤面の密度を下げる傾向があり、偶発的なマージの可能性が低下。（3）盤面がv42やv128よりも高くなっている：max_yがturn 67で2.89まで上昇し、v42やv128よりも盤面が高い。高度管理を強化したにもかかわらず、盤面を低く保つことができていない。（4）v128の成功原因の再分析：v128のスコア3689は「height_mult=1.8でHEIGHT_CONTROLの効果を高めた」だけでなく、「マージボーナスが偶発的なマージを促進した」側面もあった。マージボーナスはマージ予測が不正確でも、密な配置を促進することで偶発的なマージを促進していた。（5）振り子パターン解消には、マージ予測を前提としないが、偶発的なマージを促進する盤面スコア導入が必要。
 # v185: 盤面スコア導入・密度重視版 - v184の失敗（スコア564、偶発的なマージ促進インセンティブ消失・盤面密度無視）を受けて、マージ予測を前提としない盤面スコアを導入するブレイクスルーを実施。（1）盤面スコア導入：着地位置周辺のピース密度を評価し、密な配置をボーナス。マージ予測に依存せず、偶発的なマージの可能性を高める。density_score = sum(exp(-distance)) for each piece within 1.0 distance。（2）盤面密度ボーナス強化：密度ボーナスを150.0とし、密度重視を明確化。MEDIUMフェーズで盤面を低く保ちつつ密な配置、HIGHフェーズで偶発的なマージを促進。（3）v184の構造を維持：マージボーナス削除、高度管理強化（height_mult HIGH=2.6/MEDIUM=2.4、HIGH_TOWER閾値0.3）、ドリフトペナルティ強化（40.0）を維持。（4）バランス補正改善：重心ベースの計算に変更（より正確なバランス評価）。（5）振り子パターン解消：盤面スコア導入により、マージ予測を前提としない戦略へブレイクスルー。偶発的なマージを促進するインセンティブを復活。コード量微増（約95行→約100行）。失敗（スコア707）：履歴分析でv185の失敗原因を特定：（1）density_bonusが着地位置の高さを考慮していない：density_bonusはdistanceのみで計算しているため、高層（y>2.0）でピースを固めても大きなボーナスになり、盤面上昇を加速させる悪循環。（2）max_yが3.71まで上昇：turn 67でmax_y=3.71に達し、v184(2.89)よりも盤面が高い。HIGHフェーズでMEDIUM_TOWERが11回頻発し、高層での配置抑制が機能していない。（3）densityボーナスが高層配置を助長：v185のdensity_bonus = 150.0 * (1.0 - distance)は着地位置yを考慮していないため、高層での密な配置を過度に評価している。（4）v128の成功要素とv184の高度管理強化の統合が必要：v128のheight_mult=1.8はHIGHフェーズでマージ機会確保に有効だが、マージ予測精度が低いため、densityボーナスのようなマージ予測不要のインセンティブと組み合わせる必要がある。（5）振り子パターン解消には、密度ボーナスの高さ依存化とheight_multの適切化が必要。
-# v186: 高さ依存密度ボーナス導入版 - v185の失敗（スコア707、density_bonusが高層配置を助長）を受けて、密度ボーナスの高さ依存化とheight_multの適切化を実施。（1）密度ボーナスの高さ依存化：density_bonusに高度減衰係数を導入し、高層ほど密度ボーナスを抑制。height_factor = max(0, 1.0 - landing_y / 3.0)で、y=0で1.0、y=1.5で0.5、y=3.0で0.0。（2）height_multの適切化：v128(1.8)とv184(2.6)の中間値2.2を採用し、v128のマージ機会確保とv184の高度管理強化のバランスをとる。（3）HIGH_TOWERペナルティ閾値適切化：v184の0.3から0.5に緩和し、v128の成功要素（1.3倍）と組み合わせることで、適切な高層抑制を実現。（4）マージボーナス削除維持：v184/v185の方針を継続（予測精度低のため）。（5）重心ベースバランス補正維持：v185の改善点を維持。（6）振り子パターン解消：密度ボーナスの高さ依存化により、v185の「高層配置助長」とv184の「高度管理強化」の矛盾を解消。height_multの適切化により、v128(1.8)とv184(2.6)の振り子を回避。コード量微増（約100行→約105行）。失敗（スコア755）：履歴分析でv186の失敗原因を特定：（1）densityボーナスの副作用で高層配置が助長：HIGH_LAYERとMEDIUM_TOWERが36.1%と支配的。densityボーナスは着地位置周辺の密度をボーナスとするが、高層での密な配置を過度に評価し、HIGH_LAYER/MEDIUM_TOWER判断を誘発している。（2）densityボーナスが盤面を複雑化：densityボーナスは着地位置周辺のピースを全て走査し、距離計算を行うため計算コストが高い。また、高さ依存係数の導入でロジックが複雑化。（3）振り子パターン（v184-v186）が継続：マージボーナス削除とdensityボーナス追加/高さ依存化で、堂々巡りを繰り返している。「削除すると偶発的なマージ促進インセンティブ消失」「追加すると高層配置助長」という矛盾を解消できない。（4）v128の成功構造の再確認：v128のスコア3689は「マージボーナス（補助的）+ height_mult=1.8（HIGHフェーズ緩和）」のシンプルな構造で達成。マージボーナスは主要な判断指標ではなく、補助的な役割で十分。height_mult=1.8は盤面を低く保ちつつマージ機会を確保。（5）振り子パターン解消には、v128の成功構造への完全復帰が必要。
-# v187: v128完全復帰・density削除版 - v186の失敗（スコア755、densityボーナス副作用・振り子パターン）を受けて、v128の成功構造に完全復帰するブレイクスルーを実施。（1）densityボーナス完全削除：v184-v186の振り子パターンを解消。densityボーナスは高層配置を助長する副作用があり、HIGH_LAYER/MEDIUM_TOWERが36.1%と支配的。v128のシンプルな構造に復帰。（2）マージボーナス復帰：v128の成功構造を復帰。マージボーナス（DIRECT=1200/NEAR=600/FAR=200）は主要な判断指標ではなく、補助的な役割。マージボーナスは密な配置を促進し、偶発的なマージを確保するインセンティブとして機能。（3）HIGHフェーズheight_mult=1.8に緩和：v128の成功構造を復帰。盤面を低く保ちつつマージ機会を確保。v186のheight_mult=2.2と比較し、v128の1.8を維持することで、HIGHフェーズでのマージ機会確保と高度管理のバランスをとる。（4）HIGH_TOWERペナルティ閾値0.5に緩和：v128の成功構造を復帰。v186の0.5を維持し、v128の1.3倍を採用。（5）ドリフトペナルティ30.0に復帰：v128の成功構造を復帰。v186の40.0から30.0に戻す。（6）バランス補正を左右カウントベースに戻す：v128のシンプルな構造を復帰。重心ベースは理論的に正確だが、v128のスコア3689を達成したカウントベースの方が実績がある。（7）v42のシンプル構造を維持：マージボーナス（DIRECT=1200/NEAR=600/FAR=200）、高度管理（height_mult MEDIUM=2.4/HIGH=1.8）、TOWERペナルティ（HIGH=1.3倍/MEDIUM=1.5倍、閾値0.5）、ドリフトペナルティ（30.0）、バランス補正（HIGH=40.0/MEDIUM=30.0/LOW=20.0）のシンプル構造を維持。振り子パターン（v184-v186）をv128完全復帰で解消。コード量削減（約105行→約110行）。
+# v186: 高さ依存密度ボーナス導入版 - v185の失敗（スコア707、density_bonusが高層配置を助長）を受けて、密度ボーナスの高さ依存化とheight_multの適切化を実施。（1）密度ボーナスの高さ依存化：density_bonusに高度減衰係数を導入し、高層ほど密度ボーナスを抑制。height_factor = max(0, 1.0 - landing_y / 3.0)で、y=0で1.0、y=1.5で0.5、y=3.0で0.0。（2）height_multの適切化：v128(1.8)とv184(2.6)の中間値2.2を採用し、v128のマージ機会確保とv184の高度管理強化のバランスをとる。（3）HIGH_TOWERペナルティ閾値適切化：v184の0.3から0.5に緩和し、v128の成功要素（1.3倍）と組み合わせることで、適切な高層抑制を実現。（4）マージボーナス削除維持：v184/v185の方針を継続（予測精度低いため）。（5）重心ベースバランス補正維持：v185の改善点を維持。（6）振り子パターン解消：密度ボーナスの高さ依存化により、v185の「高層配置助長」とv184の「高度管理強化」の矛盾を解消。height_multの適切化により、v128(1.8)とv184(2.6)の振り子を回避。コード量微増（約100行→約105行）。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v128完全復帰・density削除版
+    """高さ依存密度ボーナス導入版
 
-    v186の失敗（スコア755、densityボーナス副作用・振り子パターン）を受けて、
-    v128の成功構造に完全復帰するブレイクスルーを実施。
+    v185の失敗（スコア707、density_bonusが高層配置を助長）を受けて、
+    密度ボーナスの高さ依存化とheight_multの適切化を実施。
 
-    v186履歴分析で確認した問題:
-    - densityボーナスの副作用で高層配置が助長（HIGH_LAYER/MEDIUM_TOWERが36.1%）
-    - densityボーナスが盤面を複雑化
-    - 振り子パターン（v184-v186）が継続
+    v185履歴分析で確認した問題:
+    - density_bonusが着地位置の高さを考慮していない
+    - max_yが3.71まで上昇、HIGHフェーズでMEDIUM_TOWERが11回頻発
+    - densityボーナスが高層配置を助長
 
     解決策:
-    - densityボーナス完全削除
-    - マージボーナス復帰（補助的役割）
-    - HIGHフェーズheight_mult=1.8に緩和
-    - v128のシンプル構造に完全復帰
+    - 密度ボーナスの高さ依存化（height_factor導入）
+    - height_multの適切化（v128とv184の中間値2.2）
+    - HIGH_TOWERペナルティ閾値適切化（0.3→0.5）
     """
 
     results = analysis.get("results", [])
@@ -55,23 +54,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v128: v42の閾値0.8/1.8/3.0を維持）
+    # フェーズ判定（v186: v128の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
-        merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v187: v128の2.4を維持
-        merge_mult = 1.0
+        height_mult = 2.2  # v186: v128(1.8)とv184(2.6)の中間値
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v187: v128の1.8を維持、HIGHフェーズ高度管理大幅緩和
-        merge_mult = 1.0
+        height_mult = 2.2  # v186: v128(1.8)とv184(2.6)の中間値
     else:
         phase = "CRITICAL"
-        height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v187: v42の0.6を維持
+        height_mult = 2.2  # v186: CRITICALでも高度管理維持
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -84,59 +79,72 @@ def decide(game_state: dict, analysis: dict) -> dict:
         landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
-        merge_grade = result.get("merge_grade", "NO")
 
         score = 0.0
         reasons = []
 
-        # === v187: v128完全復帰・density削除 ===
+        # === v186: 高さ依存密度ボーナス導入 ===
 
-        # 1. マージグレードによるスコア（v187: v128の値を維持）
-        if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
-            reasons.append("DIRECT_MERGE")
-        elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
-            reasons.append("NEAR_MERGE")
-        elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
-            reasons.append("FAR_MERGE")
-        # v187: マージボーナスは補助的役割として維持。主要な判断指標ではない。
+        # 0. 盤面スコア（密度ボーナス）- v186: 高さ依存化
+        # 着地位置周辺のピース密度を評価し、密な配置をボーナス
+        # 高さ依存係数で高層ほど密度ボーナスを抑制
+        density_bonus = 0.0
+        for p in pieces:
+            distance = ((p["x"] - x) ** 2 + (p["y"] - landing_y) ** 2) ** 0.5
+            if distance < 1.0:
+                # 距離に応じた指数減衰（近いピースほど大きなボーナス）
+                density_bonus += 150.0 * (1.0 - distance)
 
-        # 2. 高度によるペナルティ（v187: v128のHIGHフェーズheight_mult=1.8を維持）
+        # 高さ依存係数（v186: 新規導入）
+        # y=0で1.0、y=1.5で0.5、y=3.0で0.0
+        height_factor = max(0, 1.0 - landing_y / 3.0)
+
+        # 高さ依存で密度ボーナスを抑制
+        density_bonus *= height_factor
+
+        if density_bonus > 50.0:
+            score += density_bonus
+            reasons.append("DENSITY")
+        elif density_bonus > 10.0:
+            reasons.append("MODERATE_DENSITY")
+
+        # 1. 高度によるペナルティ（v186: v184の基本構造を維持、height_mult=2.2）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v187: v128の設定を維持）
-        if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v187: v128の1.3倍を維持
+        # TOWERペナルティ（v186: v184の0.3から0.5に緩和、v128の1.3倍を採用）
+        if phase == "HIGH" and landing_y > 0.5:  # v186: 閾値緩和（0.3→0.5）
+            height_penalty *= 1.3  # v186: v128の1.3倍を採用
             reasons.append("HIGH_TOWER")
-        elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5  # v187: v42の1.5倍を維持
+        elif phase == "MEDIUM" and landing_y > 0.5:  # v186: 閾値統一（0.3→0.5）
+            height_penalty *= 1.5  # v186: v42の1.5倍を維持
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v187: v128の30.0を維持）
-        drift_penalty = (abs(drift_x) + drift_unc) * 30.0
+        # 2. ドリフトによるペナルティ（v186: v184の40.0を維持）
+        drift_penalty = (abs(drift_x) + drift_unc) * 40.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v187: v128の左右カウントベースを維持）
-        balance_strength = 20.0
+        # 3. 左右バランス補正（v186: v185の重心ベース計算を維持）
+        # 重心のx座標を計算
+        if pieces:
+            center_of_mass_x = sum(p["x"] for p in pieces) / len(pieces)
+        else:
+            center_of_mass_x = 0.0
+
+        # 重心から遠い位置へのドロップをペナルティ（バランス改善）
+        balance_strength = 30.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v187: v128の40.0を維持
+            balance_strength = 60.0  # v186: HIGHフェーズでバランス重要
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v187: v128の30.0を維持
+            balance_strength = 50.0
 
-        left_count = sum(1 for p in pieces if p["x"] < 0)
-        right_count = len(pieces) - left_count
-        balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
+        balance_penalty = abs(x - center_of_mass_x) * balance_strength
+        score -= balance_penalty
 
-        balance_penalty = x * balance_bias * balance_strength
-        score -= abs(balance_penalty)
-
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v187: v128の一律50.0を維持）
+        # 4. nextNextが同じタイプなら中央寄せボーナス（v186: v184の一律50.0を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
