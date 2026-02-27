@@ -323,10 +323,10 @@ save_strategy_version() {
 	cp "$STRATEGY_FILE" "$version_file"
 	log "[VERSION] saved: $version_file"
 
-	# 直近3戦略のみ保持（古いものを削除、殿堂入りbest_*は除く）
+	# 直近10戦略のみ保持（古いものを削除、殿堂入りbest_*は除く）
 	local total
 	total=$(ls -1 "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | wc -l | tr -d ' ')
-	local delete_count=$((total - 3))
+	local delete_count=$((total - 10))
 	if [ "$delete_count" -gt 0 ]; then
 		ls -1 "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py | sort | head -n "$delete_count" | while read -r f; do
 			rm -f "$f"
@@ -355,10 +355,10 @@ update_best() {
 		python3 tag_best_changelog.py "$STRATEGY_FILE" "$current_score" 2>/dev/null
 		python3 tag_best_changelog.py "$hall_file" "$current_score" 2>/dev/null
 
-		# 殿堂入りも直近3つのみ保持（スコア順でソートし上位3つを残す）
+		# 殿堂入りも直近10つのみ保持（スコア順でソートし上位10を残す）
 		local best_total
 		best_total=$(ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py 2>/dev/null | wc -l | tr -d ' ')
-		local best_delete=$((best_total - 3))
+		local best_delete=$((best_total - 10))
 		if [ "$best_delete" -gt 0 ]; then
 			ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py | sort | head -n "$best_delete" | while read -r f; do
 				rm -f "$f"
@@ -515,7 +515,7 @@ start_radio_talk() {
 		# 直近の戦略の変更履歴を収集（10回に1回のみ）
 		local history_context=""
 		if [ "$include_strategy_history" = true ]; then
-			for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3); do
+			for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -10); do
 				local vname
 				vname=$(basename "$vf")
 				local cl
@@ -904,6 +904,7 @@ start_radio_talk() {
 
 		cat > "$prompt_file" <<RADIOPROMPT
 あなたはゲーム実況ラジオのパーソナリティです。
+ただし、同時にこのゲームを自動でプレイしているAIでもあります。
 一人でずっと喋り続ける、脱線大好き、でも愛があるタイプです。
 
 【現在時刻】${current_time}（${time_period}）
@@ -963,8 +964,7 @@ ${twitch_comments}
 ---
 CHAT_BLOCK
 )
-いまAIが次の試合に向けて作戦を練り直しています。
-その間、リスナーを楽しませるトークをしてください。
+AI（あなた）がプレイをしている間、リスナーを楽しませるトークをしてください。
 
 【トーク構成（全セクション必須。各セクションしっかり長く喋ること）】
 
@@ -1180,9 +1180,9 @@ while true; do
 	IMPROVE_OK=false
 	MAX_IMPROVE_RETRIES=3
 
-	# 直近3バージョン + 殿堂入り戦略を収集
+	# 直近10バージョン + 殿堂入り戦略を収集
 	PAST_STRATEGY_FILES=""
-	for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3); do
+	for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -10); do
 		PAST_STRATEGY_FILES="$PAST_STRATEGY_FILES $vf"
 	done
 	HALL_OF_FAME_FILES=""
