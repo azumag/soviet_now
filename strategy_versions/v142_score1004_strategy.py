@@ -17,13 +17,13 @@
 # v123-v125: MEDIUMフェーズheight_multの振り子パターン（v122:2.2→v123:2.4→v124:2.2→v125:1.8）
 # v126-v128: NO_MERGEペナルティとHIGH_TOWER削除の振り子パターン - v126: NO_MERGE追加、v127: NO_MERGE削除、v128: 高度管理緩和
 # v129-v137: HIGH_TOWERペナルティの振り子パターン（v134:削除→v136:1.2倍→v137:2.0倍）- 一律のHIGH_TOWERペナルティが「削除すると高度管理不十分」「再導入するとマージ機会損失」の振り子を繰り返している。
+# v140: v42完全復帰・反応器状態連動削除版 - v139の失敗（スコア488、反応器準備状態判定緩すぎ・高度管理全く機能せず）を受けて、反応器状態連動型高度管理を完全に廃止し、v42のシンプルな一律構造に完全復帰。履歴分析でHIGH/MEDIUMフェーズで「HIGH_TOWER_DISABLED」「MEDIUM_TOWER_DISABLED」が過剰に発動し、reactive_pairs >= 2の準備状態判定が緩すぎることを特定。MEDIUMフェーズ9ターン全てでMEDIUM_TOWER_DISABLED、max_yが1.99から3.91へ急上昇。（1）反応器状態連動型高度管理完全廃止：v138-v139の反応器準備状態判定（reactive_pairs >= 2）と、それに基づく高度緩和/強化ロジックを全て削除。準備状態の判定自体が不正確で、これを高度管理のスイッチに使用すると欠陥が増幅する。（2）v42の一律HIGH_TOWER(2.0倍)/MEDIUM_TOWER(1.5倍)を復帰：反応器状態にかかわらず一律で高度管理を適用し、頑健性を確保。（3）反応器ボーナス完全削除：v42は反応器ボーナス（CLOSE_MERGE, NEAR_PAIRS, PIPELINE_OK, REACTIVE_PAIRS）なしで2335点達成。これらのボーナスはマージ予測の精度に依存するが、履歴では精度が低く、誤検出で低い位置を選びマージ機会を損なっている。（4）v42のシンプル構造完全復帰：DIRECT=1200/NEAR=600/FAR=200、height_penalty=50*height_mult、drift_penalty=30、balance補正、NEXT_SAMEボーナス=50、HIGH_TOWER(2.0倍)/MEDIUM_TOWER(1.5倍)。v42(2335点)はv139(488点)の4.8倍、明白に優れている。振り子パターン（HIGH_TOWER削除↔再導入、高度管理微調整の振子）をv42完全復帰で断ち切る。「反応器状態連動で第三の選択肢」というアプローチ自体が誤りで、v42の「一律で頑健」こそが正解。コード量削減（約90行→約70行）。失敗（スコア467）：履歴分析でHIGHフェーズ（turns 54-60）でマージ率0%（7ターン中0回）、HIGH_TOWER発動7回で高度管理過剰に機能。MEDIUMフェーズ（turns 47-53）もマージ率低い。v42と同一構造だがHIGH/MEDIUMフェーズでマージ機会を損失。v42の2335点に比べ約20%のスコアで、同じ構造でこれほどスコア差が出ることは、この試合の盤面構成がHIGHフェーズでのマージ機会に依存していることを示唆。
 # v141: v42とv128の中間的HIGHフェーズ緩和版 - v140の失敗（スコア467、HIGHフェーズマージ率0%）を受けて、v42のシンプル一律構造を維持しつつ、HIGHフェーズでの高度管理をv42より緩和し、v128より少し強める中間値を採用。履歴分析でHIGHフェーズ7ターン全てでHIGH_TOWER発動しマージ率0%、v42のheight_mult=2.6とHIGH_TOWER=2.0倍が過剰に機能していることを特定。（1）HIGHフェーズ高度管理緩和：height_multをv42の2.6とv128の1.8の中間である2.2に設定。v42の頑健性とv128のマージ機会確保（3689点）のバランスをとる。（2）HIGH_TOWERペナルティ緩和：HIGH_TOWER倍率をv42の2.0倍とv128の1.3倍の中間である1.6倍に設定。v42より緩和し、v128より少し強める。（3）MEDIUMフェーズv42維持：height_mult=2.4、MEDIUM_TOWER=1.5倍はv42の頑健な設定を維持し、HIGH到達までの安定性を確保。（4）HIGHフェーズマージ優先：merge_multをv128の1.2に設定し、HIGHフェーズでマージを優先。（5）v42の基本構造完全維持：DIRECT=1200/NEAR=600/FAR=200、drift_penalty=30、balance補正、NEXT_SAMEボーナス=50。反応器ボーナスは完全削除（v138-v139の失敗から学ぶ）。（6）v42とv128の間の意図的探索：v138-v140の「一律vs動的」振り子ではなく、v42とv128の間でHIGHフェーズ高度管理の最適値を意図的に探索。堂々巡りではない。コード量維持（約70行）。失敗（スコア1168）：履歴分析でHIGHフェーズマージ率0%（5ターン中0回）、HIGH_TOWERペナルティが支配的。v128（3689点）の成功設定（height_mult=1.8、HIGH_TOWER=1.3倍）を採用せず、中間値（height_mult=2.2、HIGH_TOWER=1.6倍）を採用したため、高度管理が過剰に機能しマージ機会を損失。HIGH_TOWER閾値0.5が低すぎ、max_yが2.4〜2.8の時に既にHIGH_TOWERペナルティが適用され、マージ機会を阻害。
-# v142: v128成功設定採用・HIGH_TOWER閾値調整版 - v141の失敗（スコア1168、HIGHフェーズマージ率0%）を受けて、v128の成功設定（3689点）を本格的に採用し、HIGH_TOWER閾値を調整。履歴分析でv141のHIGHフェーズ5ターン中0回のマージ、HIGH_TOWERペナルティが支配的、max_yが2.4〜2.8の時に既にHIGH_TOWERペナルティが適用されていることを特定。（1）HIGHフェーズ高度管理緩和：height_multをv128の1.8に採用し、v42の2.6とv141の2.2より大幅に緩和。v128の3689点はこの設定で達成されており、HIGHフェーズでのマージ機会確保に効果的。（2）HIGH_TOWERペナルティ緩和：HIGH_TOWER倍率をv128の1.3倍に採用し、v42の2.0倍とv141の1.6倍より大幅に緩和。height_mult緩和と相乗効果でマージ機会を確保。（3）HIGH_TOWER閾値調整：HIGH_TOWERペナルティの適用閾値を0.5から0.8に引き上げ、適用範囲を精緻化。max_yが2.4〜2.8の時にHIGH_TOWERペナルティが適用されないようにし、マージ機会を確保。v128は閾値0.5で成功しているが、本試合の盤面構成に合わせて閾値を調整。（4）MEDIUMフェーズv42維持：height_mult=2.4、MEDIUM_TOWER=1.5倍はv42の頑健な設定を維持し、HIGH到達までの安定性を確保。（5）v42のマージボーナス維持：DIRECT=1200/NEAR=600/FAR=200、merge_mult=1.0を維持し、v42のシンプル構造と頑健性を確保。v141のmerge_mult=1.2は効果がなかったため、v42の設定に復帰。（6）一律構造維持：反応器状態連動型高度管理を完全廃止し、一律の高度管理で頑健性を確保。v138-v140の振り子パターンを回避し、v128の成功要素とv42の頑健性を組み合わせる。コード量維持（約70行）。失敗（スコア1004）：履歴分析でHIGHフェーズ（1.8<max_y<3.0）マージ率15.4%（2/13）、HIGHフェーズ全ターン（13/13）でHIGH_TOWER発動、max_y=1.89〜2.73でHIGH_TOWER発動中。v128のheight_mult=1.8とHIGH_TOWER=1.3倍を採用したが、依然としてHIGH_TOWERペナルティが支配的で、マージ可能ターンでも高度管理を優先しマージ機会を損失。マージ可能ターン（Turn 73, 76, 79）のうち、Turn 79のみでマージ成功、他の2ターンではマージ失敗。HIGH_TOWERペナルティがheight_mult緩和の効果を打ち消している。
-# v143: HIGH_TOWER完全削除・height_mult緩和版 - v142の失敗（スコア1004、HIGHフェーズマージ率15.4%、HIGH_TOWERペナルティ支配的）を受けて、HIGH_TOWERペナルティを完全削除し、height_multのみで高度管理するアプローチを採用。履歴分析でHIGHフェーズ全ターンでHIGH_TOWER発動、max_y=1.89〜2.73でHIGH_TOWER発動中、マージ可能ターンでも高度管理を優先しマージ機会を損失していることを特定。（1）HIGH_TOWERペナルティ完全削除：v128の成功設定（3689点）はheight_mult=1.8とHIGH_TOWER=1.3倍の組み合わせだが、本試合ではHIGH_TOWERペナルティが支配的でマージ機会を損失。HIGH_TOWERペナルティを完全削除し、height_mult=1.6のみで高度管理するシンプルな一律構造を採用。v128のheight_mult=1.8より緩和し、v42の2.6より大幅に緩和。（2）v42の頑健な基本構造維持：DIRECT=1200/NEAR=600/FAR=200、drift_penalty=30、balance補正、NEXT_SAMEボーナス=50、MEDIUMフェーズheight_mult=2.4、MEDIUM_TOWER=1.5倍はv42の設定を維持し、HIGH到達までの安定性を確保。MEDIUMフェーズではHIGH_TOWERペナルティを維持し、HIGH到達までの安定性を確保。（3）HIGHフェーズでのマージ優先：HIGH_TOWERペナルティ削除により、マージ可能な位置ではマージを優先。height_mult=1.6の緩和と相乗効果で、マージ機会を確保。（4）一律構造維持：反応器状態連動型高度管理は完全廃止。HIGHフェーズではHIGH_TOWERペナルティなし、MEDIUMフェーズではMEDIUM_TOWERペナルティ1.5倍を維持。v42のシンプル一律構造を維持しつつ、HIGHフェーズでの高度管理を緩和。振り子パターン（HIGH_TOWER削除↔再導入）をHIGHフェーズでの削除で解消。MEDIUMフェーズではHIGH_TOWER削除による振り子を回避し、v42の頑健な設定を維持。（5）コード量削減：HIGH_TOWERペナルティ削除により、HIGHフェーズのif分岐を削除。約70行から約65行に削減。シンプルで頑健な一律構造を維持。
+# v142: v128成功設定採用・HIGH_TOWER閾値調整版 - v141の失敗（スコア1168、HIGHフェーズマージ率0%）を受けて、v128の成功設定（3689点）を本格的に採用し、HIGH_TOWER閾値を調整。履歴分析でv141のHIGHフェーズ5ターン中0回のマージ、HIGH_TOWERペナルティが支配的、max_yが2.4〜2.8の時に既にHIGH_TOWERペナルティが適用されていることを特定。（1）HIGHフェーズ高度管理緩和：height_multをv128の1.8に採用し、v42の2.6とv141の2.2より大幅に緩和。v128の3689点はこの設定で達成されており、HIGHフェーズでのマージ機会確保に効果的。（2）HIGH_TOWERペナルティ緩和：HIGH_TOWER倍率をv128の1.3倍に採用し、v42の2.0倍とv141の1.6倍より大幅に緩和。height_mult緩和と相乗効果でマージ機会を確保。（3）HIGH_TOWER閾値調整：HIGH_TOWERペナルティの適用閾値を0.5から0.8に引き上げ、適用範囲を精緻化。max_yが2.4〜2.8の時にHIGH_TOWERペナルティが適用されないようにし、マージ機会を確保。v128は閾値0.5で成功しているが、本試合の盤面構成に合わせて閾値を調整。（4）MEDIUMフェーズv42維持：height_mult=2.4、MEDIUM_TOWER=1.5倍はv42の頑健な設定を維持し、HIGH到達までの安定性を確保。（5）v42のマージボーナス維持：DIRECT=1200/NEAR=600/FAR=200、merge_mult=1.0を維持し、v42のシンプル構造と頑健性を確保。v141のmerge_mult=1.2は効果がなかったため、v42の設定に復帰。（6）一律構造維持：反応器状態連動型高度管理を完全廃止し、一律の高度管理で頑健性を確保。v138-v140の振り子パターンを回避し、v128の成功要素とv42の頑健性を組み合わせる。コード量維持（約70行）。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """HIGH_TOWERペナルティを完全削除し、height_mult=1.6のみで高度管理するシンプルな一律構造。v42の頑健性とv128のマージ優先のバランスをとる。"""
+    """v128の成功設定（height_mult=1.8、HIGH_TOWER=1.3倍）を採用し、HIGH_TOWER閾値を0.5→0.8に調整して高度管理を精緻化。"""
 
     results = analysis.get("results", [])
 
@@ -38,23 +38,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v42の閾値を維持）
+    # フェーズ判定（v142: v42の閾値を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v42の2.4を維持（MEDIUMフェーズの安定性確保）
+        height_mult = 2.4  # v142: v42の2.4を維持（MEDIUMフェーズの安定性確保）
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.6  # v143: v128の1.8より緩和、v42の2.6より大幅に緩和、HIGH_TOWERペナルティ完全削除と相乗効果でマージ機会確保
-        merge_mult = 1.0
+        height_mult = 1.8  # v142: v128の1.8を採用（HIGHフェーズ高度管理大幅緩和）
+        merge_mult = 1.0  # v142: v42の1.0を維持（v141の1.2は効果なし）
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v42の0.6を維持
+        merge_mult = 0.6  # v142: v42の0.6を維持
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -72,9 +72,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v143: HIGH_TOWER完全削除・height_mult緩和 ===
+        # === v142: v128成功設定採用・HIGH_TOWER閾値調整 ===
 
-        # 1. マージグレードによるスコア（v42の値を維持）
+        # 1. マージグレードによるスコア（v142: v42の値を維持）
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -85,29 +85,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v143: 反応器状態連動なし、一律で計算）
+        # 2. 高度によるペナルティ（v142: 反応器状態連動なし、一律で計算）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # v143: HIGH_TOWERペナルティを完全削除。MEDIUMフェーズでのみMEDIUM_TOWERペナルティを維持。
-        # HIGHフェーズではheight_mult=1.6のみで高度管理。
-        if phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5  # v42の1.5倍を維持
+        # 高盤面での追加ペナルティ（v142: HIGH_TOWER閾値を0.8に調整）
+        if phase == "HIGH" and landing_y > 0.8:  # v142: 0.5→0.8に調整、適用範囲を精緻化
+            height_penalty *= 1.3  # v142: v128の1.3倍を採用
+            reasons.append("HIGH_TOWER")
+        elif phase == "MEDIUM" and landing_y > 0.5:
+            height_penalty *= 1.5  # v142: v42の1.5倍を維持
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v42の一律30.0を維持）
+        # 3. ドリフトによるペナルティ（v142: v42の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v42の設定を維持）
+        # 4. 左右バランス補正（v142: v42の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v42の40.0を維持
+            balance_strength = 40.0  # v142: v42の40.0を維持
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v42の30.0を維持
+            balance_strength = 30.0  # v142: v42の30.0を維持
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -116,7 +118,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v42の一律50.0を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v142: v42の一律50.0を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
