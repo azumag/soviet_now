@@ -1,5 +1,5 @@
 #!/bin/bash
-# fetch_news.sh - Yahoo News RSSからランダムにニュースを取得
+# fetch_news.sh - Yahoo News RSS 複数カテゴリからランダムにニュースを取得
 # 出力: tmp/news.txt (ニュース見出し+本文要約 3件)
 # 過去に使った見出しは除外して同じニュースを繰り返さない
 
@@ -8,25 +8,53 @@ mkdir -p tmp
 
 OUTFILE="tmp/news.txt"
 PAST_NEWS="tmp/.past_news_titles.txt"
-RSS_URL="https://news.yahoo.co.jp/rss/topics/top-picks.xml"
 
-# RSS取得
-xml=$(curl -s --max-time 10 "$RSS_URL" 2>/dev/null)
-if [ -z "$xml" ]; then
-    rm -f "$OUTFILE"
-    exit 0
-fi
+# 複数カテゴリの RSS を使い候補を増やす
+RSS_URLS=(
+    "https://news.yahoo.co.jp/rss/topics/top-picks.xml"
+    "https://news.yahoo.co.jp/rss/topics/domestic.xml"
+    "https://news.yahoo.co.jp/rss/topics/world.xml"
+    "https://news.yahoo.co.jp/rss/topics/business.xml"
+    "https://news.yahoo.co.jp/rss/topics/entertainment.xml"
+    "https://news.yahoo.co.jp/rss/topics/sports.xml"
+    "https://news.yahoo.co.jp/rss/topics/it.xml"
+    "https://news.yahoo.co.jp/rss/topics/science.xml"
+)
 
-# item の title と link を抽出
-# 各itemから "title\tlink" のペアを作る
-items=$(echo "$xml" | awk '
-    /<item>/  { in_item=1; title=""; link="" }
-    /<\/item>/ { if (in_item && title && link) print title "\t" link; in_item=0 }
-    in_item && /<title>/ { gsub(/.*<title>/, ""); gsub(/<\/title>.*/, ""); title=$0 }
-    in_item && /<link>/  { gsub(/.*<link>/, ""); gsub(/<\/link>.*/, ""); link=$0 }
-')
+# ランダムに3カテゴリ選ぶ（毎回違うジャンルから取得）
+selected_urls=()
+indices=()
+for i in "${!RSS_URLS[@]}"; do indices+=("$i"); done
 
-if [ -z "$items" ]; then
+# シャッフル
+for ((i=${#indices[@]}-1; i>0; i--)); do
+    j=$((RANDOM % (i+1)))
+    tmp=${indices[$i]}
+    indices[$i]=${indices[$j]}
+    indices[$j]=$tmp
+done
+
+# 先頭3つ選択
+for k in 0 1 2; do
+    selected_urls+=("${RSS_URLS[${indices[$k]}]}")
+done
+
+# 複数RSSから記事を収集
+all_items=""
+for url in "${selected_urls[@]}"; do
+    xml=$(curl -s --max-time 5 "$url" 2>/dev/null)
+    [ -z "$xml" ] && continue
+
+    items=$(echo "$xml" | awk '
+        /<item>/  { in_item=1; title=""; link="" }
+        /<\/item>/ { if (in_item && title && link) print title "\t" link; in_item=0 }
+        in_item && /<title>/ { gsub(/.*<title>/, ""); gsub(/<\/title>.*/, ""); title=$0 }
+        in_item && /<link>/  { gsub(/.*<link>/, ""); gsub(/<\/link>.*/, ""); link=$0 }
+    ')
+    [ -n "$items" ] && all_items="${all_items}${items}"$'\n'
+done
+
+if [ -z "$all_items" ]; then
     rm -f "$OUTFILE"
     exit 0
 fi
@@ -35,7 +63,7 @@ fi
 past_titles=""
 [ -f "$PAST_NEWS" ] && past_titles=$(cat "$PAST_NEWS")
 
-# 過去に使ったものを除外（RSS内の重複タイトルも除外）
+# 過去に使ったものを除外（タイトル重複も除外）
 available=""
 seen_titles=""
 while IFS=$'\t' read -r title link; do
@@ -47,10 +75,12 @@ while IFS=$'\t' read -r title link; do
         available="${available}${title}\t${link}\n"
     fi
     seen_titles="${seen_titles}${title}\n"
-done <<< "$items"
+done <<< "$all_items"
 
-# 全部使い切ったらリセット（RSS内の重複タイトルも除外）
+# 全部使い切ったら履歴をクリアしてやり直し
 if [ -z "$available" ]; then
+    > "$PAST_NEWS"
+    past_titles=""
     available=""
     seen_titles=""
     while IFS=$'\t' read -r title link; do
@@ -60,8 +90,7 @@ if [ -z "$available" ]; then
         fi
         available="${available}${title}\t${link}\n"
         seen_titles="${seen_titles}${title}\n"
-    done <<< "$items"
-    > "$PAST_NEWS"
+    done <<< "$all_items"
 fi
 
 # シャッフルして3件選ぶ
@@ -95,8 +124,8 @@ ${desc}
     fi
 done <<< "$selected"
 
-# 過去記録は直近50件保持
-tail -50 "$PAST_NEWS" > "${PAST_NEWS}.tmp" && mv "${PAST_NEWS}.tmp" "$PAST_NEWS"
+# 過去記録は直近100件保持（候補が多いので余裕を持たせる）
+tail -100 "$PAST_NEWS" > "${PAST_NEWS}.tmp" && mv "${PAST_NEWS}.tmp" "$PAST_NEWS"
 
 if [ -n "$result" ]; then
     echo "$result" > "$OUTFILE"
