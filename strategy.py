@@ -9,16 +9,16 @@
 # AI改変禁止: decide() シグネチャ,if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# [BEST:2325] v19: CRITICALフェーズ導入版
-# [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
+# [BEST:2325] v19: CRITICALフェーズ導入版 - HIGHフェーズのheight_mult過剰を修正、CRITICALフェーズ（max_y>3.0）を新設。CRITICALではマージ絶対優先（merge_mult=0.6、height_multなし、height_penaltyシンプル化）。MEDIUMフェーズheight_mult微増（2.2→2.4）でHIGH到達遅延、HIGHフェーズheight_mult微減（2.8→2.6）でマージ機会確保
+# [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版 - v41の失敗（スコア558）を受けて、v41がv31から取り入れたreactive_pairsとhas_mergeによる複雑な条件分岐を削除。v19のシンプル構造（DIRECT=1200/NEAR=600/FAR=200、height_penalty=50*height_mult、drift_penalty=30）に復活。v19のCRITICALフェーズ（merge_mult=0.6）を維持。コード量削減（約140行→約110行）で頑健性を確保
 # v50-v64: has_merge/reactive_pairs条件の振り子パターンと閾値シャッフル
-# v83: v42完全復活・高度管理中間値版 - v82の失敗（スコア674、HIGHフェーズ8ターン短縮）を受けて、振り子パターンを完全停止。v82のchain reaction緩和ロジックを完全削除し、v42のシンプル構造に完全復活。HIGHフェーズのheight_multを中間値（2.5）に調整、HIGH_TOWERペナルティも中間値（1.8）に設定。しかし履歴分析でHIGHフェーズでのマージ率は依然として低く、HEIGHT_CONTROLが支配的。
 # v84: HIGHフェーズマージ優先・構造改善版 - v83の失敗（スコア1065、HIGHフェーズマージ率低）を受けて、振り子パターン完全回避で根本的な構造改善を実施。chain reaction緩和は完全廃止（v82の失敗から学ぶ）。代わりにHIGHフェーズでのマージ確保を優先：（1）merge_gradeボーナス強化（DIRECT=1500/NEAR=800/FAR=300でマージの質を重視）、（2）HIGHフェーズ高度管理緩和（height_mult=2.2に減、HIGH_TOWERペナルティ1.3倍に減）、（3）マージなし位置にNO_MERGEペナルティ（-150）、（4）max_yに応じた動的調整（盤面が高いほどマージ優先、低いほど高度管理優先）。v42のシンプル構造を維持しつつ、HIGHフェーズでのマージ機会確保を構造的に改善。コード量増加なし（約110行）。
 # v85: merge_grade動的緩和版 - v84の失敗（スコア823、HIGH/CRITICALフェーズマージ率20%/3%）を受けて、NO_MERGEペナルティ（-150）の効果なさを確認し削除。代わりにmerge_gradeに応じた動的な緩和係数を導入：マージ品質が高いほどheight_penaltyとdrift_penaltyを緩和（DIRECT:20%/50%、NEAR:50%/70%、FAR:80%/90%）。CRITICALフェーズでは緩和を強化（DIRECT:10%/30%、NEAR:30%/50%、FAR:50%/70%）。v42の成功値（DIRECT=1200/NEAR=600/FAR=200、height_mult HIGH=2.6/MEDIUM=2.4）に復帰し、動的緩和でマージ機会確保。振り子パターン完全回避（has_merge/reactive_pairs条件不使用）。コード量微増（約120行）だが構造はシンプル維持。
+# v86: 動的緩和削除・v42復帰版 - v85の失敗（スコア1291、動的緩和係数が誤判断を助長）を受けて、動的緩和係数を完全削除。履歴分析でMEDIUMフェーズのNEAR_MERGE判断ターンの77%で実際にマージしていないことを特定（analyze_boardのmerge_grade予測と実際の結果の乖離）。予測ベースの高度管理緩和は危険であるため、v42のシンプル構造に完全復帰：height_penaltyとdrift_penaltyはマージ品質にかかわらず一律で計算。動的緩和のような複雑な条件分岐を削除し、頑健性を確保。コード量削減（227行→166行）。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """merge_gradeに応じた動的緩和でマージ機会確保"""
+    """動的緩和を削除し、v42のシンプル構造に完全復帰"""
 
     results = analysis.get("results", [])
 
@@ -33,23 +33,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v85: v42の閾値0.8/1.8/3.0を維持）
+    # フェーズ判定（v86: v42の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v85: v42の2.4を維持
+        height_mult = 2.4  # v86: v42の2.4を維持
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 2.6  # v85: v42の2.6に復帰（v84の2.2から）
+        height_mult = 2.6  # v86: v42の2.6を維持
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v85: v42の0.6を維持
+        merge_mult = 0.6  # v86: v42の0.6を維持
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -67,93 +67,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v85: merge_grade動的緩和戦略 ===
+        # === v86: 動的緩和削除・v42完全復帰 ===
 
-        # 1. マージグレードによるスコア（v85: v42の値に復帰）
+        # 1. マージグレードによるスコア（v86: v42の値を維持）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult  # v85: v42の1200に復帰
+            score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult  # v85: v42の600に復帰
+            score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult  # v85: v42の200に復帰
+            score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # v85: NO_MERGEペナルティ削除（v84の-150は効果なし）
+        # 2. 高度によるペナルティ（v86: 動的緩和なし、一律で計算）
+        height_penalty = landing_y * 50.0 * height_mult
 
-        # 2. 高度によるペナルティ（v85: merge_gradeに応じた動的緩和）
-        if phase == "CRITICAL":
-            # CRITICALフェーズでは緩和を強化（マージ絶対優先）
-            if merge_grade == "DIRECT":
-                height_adjust = 0.1
-            elif merge_grade == "NEAR":
-                height_adjust = 0.3
-            elif merge_grade == "FAR":
-                height_adjust = 0.5
-            else:  # NO
-                height_adjust = 1.0
-
-            height_penalty = landing_y * 40.0 * height_adjust
-            if landing_y > 1.0:
-                reasons.append("CRITICAL_HEIGHT")
-        else:
-            # 通常フェーズ：マージ品質に応じて緩和
-            if merge_grade == "DIRECT":
-                height_adjust = 0.2
-            elif merge_grade == "NEAR":
-                height_adjust = 0.5
-            elif merge_grade == "FAR":
-                height_adjust = 0.8
-            else:  # NO
-                height_adjust = 1.0
-
-            height_penalty = landing_y * 50.0 * height_mult * height_adjust
-
-            # 高盤面での追加ペナルティ（CRITICALフェーズでは適用しない）
-            if phase == "HIGH" and landing_y > 0.5:
-                height_penalty *= 2.0  # v85: v42の2.0を維持
-                reasons.append("HIGH_TOWER")
-            elif phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.5  # v85: v42の1.5を維持
-                reasons.append("MEDIUM_TOWER")
-            elif landing_y > 0.0:
-                reasons.append("HIGH_LAYER")
+        # 高盤面での追加ペナルティ（v86: v42の設定を維持）
+        if phase == "HIGH" and landing_y > 0.5:
+            height_penalty *= 2.0
+            reasons.append("HIGH_TOWER")
+        elif phase == "MEDIUM" and landing_y > 0.5:
+            height_penalty *= 1.5
+            reasons.append("MEDIUM_TOWER")
+        elif landing_y > 0.0:
+            reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v85: merge_gradeに応じた動的緩和）
-        if phase == "CRITICAL":
-            # CRITICALフェーズでは緩和を強化
-            if merge_grade == "DIRECT":
-                drift_adjust = 0.3
-            elif merge_grade == "NEAR":
-                drift_adjust = 0.5
-            elif merge_grade == "FAR":
-                drift_adjust = 0.7
-            else:  # NO
-                drift_adjust = 1.0
-        else:
-            # 通常フェーズ：マージ品質に応じて緩和
-            if merge_grade == "DIRECT":
-                drift_adjust = 0.5
-            elif merge_grade == "NEAR":
-                drift_adjust = 0.7
-            elif merge_grade == "FAR":
-                drift_adjust = 0.9
-            else:  # NO
-                drift_adjust = 1.0
-
-        drift_penalty = (abs(drift_x) + drift_unc) * 30.0 * drift_adjust
+        # 3. ドリフトによるペナルティ（v86: 動的緩和なし、一律で計算）
+        drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v85: v42の値を維持）
+        # 4. 左右バランス補正（v86: v42の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v85: v42の40.0を維持
+            balance_strength = 40.0
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v85: v42の30.0を維持
-        # CRITICALフェーズではバランス補正緩和（マージ優先）
+            balance_strength = 30.0
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -162,14 +113,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v85: v42の設定を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v86: v42の設定を維持）
         if next_next_type == next_type:
-            if phase == "CRITICAL":
-                center_bonus = (
-                    max(0, 1.0 - abs(x) / 2.0) * 60.0
-                )  # v85: v42のCRITICAL強化
-            else:
-                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0  # v85: v42の基本値
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
