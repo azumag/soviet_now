@@ -20,7 +20,7 @@
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """merge_availableに基づく動的調整で予測信頼度を考慮した戦略"""
+    """v42のシンプル構造をベースに、v84のマージ重視を採用。動的調整は削除。"""
 
     results = analysis.get("results", [])
 
@@ -65,83 +65,45 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")
-        has_merge = result.get("has_merge", False)
 
         score = 0.0
         reasons = []
 
-        # === v115: merge_availableに基づく動的調整 ===
+        # === v116: v42シンプル構造 + v84マージ重視 ===
 
-        # 1. マージグレードによるスコア（merge_availableで動的に調整）
-        if has_merge:
-            # merge_available=true: 予測正確、マージボーナス強化
-            merge_boost = 1.5  # v84の強化値相当
-            if merge_grade == "DIRECT":
-                score += 1500.0 * merge_mult * merge_boost  # v84の1500
-                reasons.append("DIRECT_MERGE")
-            elif merge_grade == "NEAR":
-                score += 800.0 * merge_mult * merge_boost  # v84の800
-                reasons.append("NEAR_MERGE")
-            elif merge_grade == "FAR":
-                score += 300.0 * merge_mult * merge_boost  # v84の300
-                reasons.append("FAR_MERGE")
-        else:
-            # merge_available=false: 予測不正確、マージボーナス弱化
-            merge_boost = 0.5  # v42の値に係数0.5（実質600/300/100）
-            if merge_grade == "DIRECT":
-                score += 1200.0 * merge_mult * merge_boost  # 実質600
-                reasons.append("DIRECT_MERGE")
-            elif merge_grade == "NEAR":
-                score += 600.0 * merge_mult * merge_boost  # 実質300
-                reasons.append("NEAR_MERGE")
-            elif merge_grade == "FAR":
-                score += 200.0 * merge_mult * merge_boost  # 実質100
-                reasons.append("FAR_MERGE")
+        # 1. マージグレードによるスコア（v84の強化値を一律採用）
+        if merge_grade == "DIRECT":
+            score += 1500.0 * merge_mult  # v84の1500
+            reasons.append("DIRECT_MERGE")
+        elif merge_grade == "NEAR":
+            score += 800.0 * merge_mult  # v84の800
+            reasons.append("NEAR_MERGE")
+        elif merge_grade == "FAR":
+            score += 300.0 * merge_mult  # v84の300
+            reasons.append("FAR_MERGE")
 
-        # 2. 高度によるスコア（merge_availableで動的に調整）
-        if phase == "CRITICAL":
-            height_multiplier = 40.0  # v19/v42の40.0
-            height_penalty = landing_y * height_multiplier
-            if landing_y > 1.0:
-                reasons.append("CRITICAL_HEIGHT")
-        elif phase == "HIGH":
-            height_multiplier = 50.0
-            height_penalty = landing_y * height_mult * height_multiplier
+        # 2. 高度によるスコア（v42の一律計算）
+        height_penalty = landing_y * 50.0 * height_mult
 
-            # HIGH_TOWERペナルティ1.5倍（v114の1.3倍は緩すぎた）
-            if landing_y > 0.5:
-                height_penalty *= 1.5  # v115: v113の1.5倍を採用
-                reasons.append("HIGH_TOWER")
-            elif landing_y > 0.0:
-                reasons.append("HIGH_LAYER")
-        else:
-            # LOW, MEDIUMフェーズでは一律50.0
-            height_multiplier = 50.0
-            height_penalty = landing_y * height_mult * height_multiplier
-
-            if phase == "MEDIUM" and landing_y > 0.5:
-                height_penalty *= 1.5
-                reasons.append("MEDIUM_TOWER")
-            elif landing_y > 0.0:
-                reasons.append("HIGH_LAYER")
-
-        # merge_availableに基づく高度管理調整
-        if has_merge:
-            # merge_available=true: 高度管理緩和
-            height_penalty *= 0.9
-        else:
-            # merge_available=false: 高度管理強化
-            height_penalty *= 1.1
+        # HIGH_TOWERペナルティ（v42の2.0倍とv84の1.3倍の中間）
+        if phase == "HIGH" and landing_y > 0.5:
+            height_penalty *= 1.7  # v116: v42(2.0)とv84(1.3)の中間
+            reasons.append("HIGH_TOWER")
+        elif phase == "MEDIUM" and landing_y > 0.5:
+            height_penalty *= 1.5  # v42の1.5倍を維持
+            reasons.append("MEDIUM_TOWER")
+        elif landing_y > 0.0:
+            reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. NO_MERGEペナルティ削除（merge_available=falseで自然と高度管理優先になるため不要）
+        # 3. NO_MERGEペナルティ削除（v114の判断通り、誤判断を招くため）
 
-        # 4. ドリフトによるペナルティ（v42の一律30.0を採用）
+        # 4. ドリフトによるペナルティ（v42の一律30.0）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 5. 左右バランス補正（v42のシンプル構造を採用）
+        # 5. 左右バランス補正（v42の設定）
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0  # v42の40.0
@@ -156,7 +118,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 6. nextNextが同じタイプなら中央寄せボーナス（v42の設定を採用）
+        # 6. nextNextが同じタイプなら中央寄せボーナス（v42の設定）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
