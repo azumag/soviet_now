@@ -1258,6 +1258,9 @@ FIXEOF
 		}
 	fi
 
+	# ゲーム再開 → ダッシュボード非表示に更新
+	./generate_dashboard.sh 2>/dev/null &
+
 	_maybe_show_joke
 	sleep 2
 done
