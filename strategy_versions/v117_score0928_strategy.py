@@ -14,13 +14,13 @@
 # v50-v64: has_merge/reactive_pairs条件の振り子パターンと閾値シャッフル
 # [BEST:2346] v84: HIGHフェーズマージ優先・構造改善版 - v83の失敗（スコア1065、HIGHフェーズマージ率低）を受けて、振り子パターン完全回避で根本的な構造改善を実施。chain reaction緩和は完全廃止（v82の失敗から学ぶ）。代わりにHIGHフェーズでのマージ確保を優先：（1）merge_gradeボーナス強化（DIRECT=1500/NEAR=800/FAR=300でマージの質を重視）、（2）HIGHフェーズ高度管理緩和（height_mult=2.2に減、HIGH_TOWERペナルティ1.3倍に減）、（3）マージなし位置にNO_MERGEペナルティ（-150）、（4）max_yに応じた動的調整（盤面が高いほどマージ優先、低いほど高度管理優先）。v42のシンプル構造を維持しつつ、HIGHフェーズでのマージ機会確保を構造的に改善。コード量増加なし（約110行）。
 # v93-v96: 振り子パターン（一律緩和→reactive_pairs活用→NO_MERGEペナルティ廃止→NO_MERGEペナルティ復活）- v93: height_multiplier 50.0→35.0、v94: 35.0→25.0、v95: reactive_pairs>=4で15.0・NO_MERGEペナルティ廃止、v96: reactive_pairs>=2で25.0・NO_MERGEペナルティ-150復活。v96にはreactive_pairsがlist型の時のバグがありturn 54以降でエラー発生。
+# v115: merge_available動的調整版 - v114の失敗（スコア1186、履歴でmerge_available=trueは24回中2回のみ、merge_available=falseでも実際にマージ発生が7回あり）を受けて、merge_grade強化・弱化の振り子パターンを解消するため、merge_availableに基づく動的調整を導入。（1）merge_available=trueの時はマージボーナス強化（v84の1500/800/300を採用）し、高度管理緩和（height_penalty * 0.9）。（2）merge_available=falseの時はマージボーナス弱化（v42の1200/600/200に係数0.5をかけ、実質600/300/100）し、高度管理強化（height_penalty * 1.1）。（3）NO_MERGEペナルティ不要（merge_available=falseで自然と高度管理優先になる）。（4）HIGH_TOWERペナルティ1.5倍を採用（v114の1.3倍は緩すぎた）。v42のシンプル構造をベースに、予測信頼度に基づく動的調整を導入。コード量微増（約120行）。
 # v116: v42シンプル構造 + v84マージ重視・動的調整削除版 - v115の失敗（スコア699、max_yが3.37まで急上昇）を受けて、merge_available動的調整を削除し、v84の強化値（1500/800/300）を一律採用。HIGH_TOWERペナルティはv42の2.0倍とv84の1.3倍の中間1.7倍を採用。v42のシンプル構造（約110行）をベースに、v84のマージ重視を採用。
 # v117: v42完全復帰・振り子全廃版 - v116の失敗（スコア699、振り子パターン再発：merge_grade強化1500/800/300はv114で「過剰」と判断、HIGH_TOWER閾値シャッフル1.7倍はv42の2.0倍とv84の1.3倍の中間、merge_available動的調整の振り子v115導入→v116削除）を受けて、全ての振り子要素を削除しv42のシンプル構造に完全復帰。（1）merge_gradeをv42の値（1200/600/200）に一律採用。（2）HIGH_TOWERペナルティをv42の2.0倍に一律採用。（3）動的調整を全廃（一律で計算）。（4）v42の成功構造（DIRECT=1200/NEAR=600/FAR=200、HIGH_TOWER=2.0倍、drift_penalty=30.0）を完全採用。コード量削減（約110行）。予測信頼度の問題を回避し、シンプルかつ頑健な戦略に復帰。
-# v118: v42シンプル構造 + v84高度管理緩和版 - v117の失敗（スコア928、履歴でHIGH_TOWERペナルティ7回出現・max_yが2.87まで上昇、HEIGHT_CONTROLが50%を占める）を受けて、高度管理が過剰であることを特定し、v84のHIGHフェーズ高度管理緩和を採用。（1）HIGHフェーズのheight_multiplierを50.0から45.0に緩和（v42の厳格な高度管理からv84の緩和へ中間の値）。（2）HIGHフェーズのheight_multを2.6から2.4に緩和（v42の2.6からv84の2.2の中間）。（3）HIGH_TOWERペナルティを2.0倍から1.5倍に緩和（v42の2.0倍からv84の1.3倍の中間）。（4）merge_gradeはv42の値（1200/600/200）を維持（v116の失敗から学び、強化は過剰）。（5）動的調整は全廃（一律で計算）。v42のシンプル構造（約110行）をベースに、v84のHIGHフェーズ高度管理緩和を採用。コード量変更なし（約110行）。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42のシンプル構造を維持しつつ、v84のHIGHフェーズ高度管理緩和を採用。"""
+    """v42のシンプル構造に完全復帰。振り子パターン全廃。"""
 
     results = analysis.get("results", [])
 
@@ -46,7 +46,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 2.4  # v118: v42の2.6からv84の2.2の中間（v84のHIGHフェーズ高度管理緩和を採用）
+        height_mult = 2.6
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -81,18 +81,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("FAR_MERGE")
 
         # 2. 高度によるペナルティ（一律で計算、動的調整なし）
-        if phase == "HIGH":
-            height_penalty = (
-                landing_y * 45.0 * height_mult
-            )  # v118: v42の50.0からv84の高度管理緩和を採用
-        else:
-            height_penalty = (
-                landing_y * 50.0 * height_mult
-            )  # LOW/MEDIUM/CRITICALはv42のまま
+        height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v42の2.0倍からv84の1.3倍の中間）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.5  # v118: v42の2.0倍から緩和
+            height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5

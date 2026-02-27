@@ -35,9 +35,9 @@ _start() {
         rm -f "$PID_FILE"
     fi
 
-    # ログ初期化
-    > "$RAW_LOG"
-    echo "0" > "$OFFSET_FILE"
+    # ログファイルが無い場合のみ作成（再起動時は既存ログを引き継ぐ）
+    [ -f "$RAW_LOG" ] || touch "$RAW_LOG"
+    [ -f "$OFFSET_FILE" ] || echo "0" > "$OFFSET_FILE"
 
     # デーモンを別スクリプトとしてバックグラウンド起動
     nohup bash ./twitch_chat_daemon.sh "$CHANNEL" > /dev/null 2>&1 &
