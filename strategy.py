@@ -14,13 +14,13 @@
 # v50-v64: has_merge/reactive_pairs条件の振り子パターンと閾値シャッフル
 # [BEST:2346] v84: HIGHフェーズマージ優先・構造改善版 - v83の失敗（スコア1065、HIGHフェーズマージ率低）を受けて、振り子パターン完全回避で根本的な構造改善を実施。chain reaction緩和は完全廃止（v82の失敗から学ぶ）。代わりにHIGHフェーズでのマージ確保を優先：（1）merge_gradeボーナス強化（DIRECT=1500/NEAR=800/FAR=300でマージの質を重視）、（2）HIGHフェーズ高度管理緩和（height_mult=2.2に減、HIGH_TOWERペナルティ1.3倍に減）、（3）マージなし位置にNO_MERGEペナルティ（-150）、（4）max_yに応じた動的調整（盤面が高いほどマージ優先、低いほど高度管理優先）。v42のシンプル構造を維持しつつ、HIGHフェーズでのマージ機会確保を構造的に改善。コード量増加なし（約110行）。
 # v93-v96: 振り子パターン（一律緩和→reactive_pairs活用→NO_MERGEペナルティ廃止→NO_MERGEペナルティ復活）- v93: height_multiplier 50.0→35.0、v94: 35.0→25.0、v95: reactive_pairs>=4で15.0・NO_MERGEペナルティ廃止、v96: reactive_pairs>=2で25.0・NO_MERGEペナルティ-150復活。v96にはreactive_pairsがlist型の時のバグがありturn 54以降でエラー発生。
-# v120: MEDIUM高度管理緩和・HIGHマージ強化版 - v119の失敗（スコア1616、HIGHフェーズ2ターンのみ・MEDIUMフェーズHEIGHT_CONTROL支配・Turn 88でCRITICAL到達max_y=3.19）を受けて、MEDIUMフェーズの高度管理が過剰であることを特定。履歴分析でHIGHフェーズはheight_mult=2.6が大きすぎてHIGH_TOWERペナルティが重くなり、マージよりも高度管理を優先していることを確認。v84のマージボーナス強化（DIRECT=1500/NEAR=800/FAR=300）を採用しつつ、v115の失敗（動的調整問題）を回避。（1）MEDIUMフェーズのheight_multiplierを50.0から35.0に緩和（v84/v42の50.0から緩和し、HIGHフェーズへの到達を少し遅らせるがマージ機会を増やす）。（2）HIGHフェーズのmerge_gradeをv84の1500/800/300に強化（v119の1200/600/200から強化、マージ優先）。（3）HIGHフェーズのheight_multiplierを30.0に維持（v119の緩和を維持）。（4）HIGHフェーズのheight_multを2.6から2.2に下げてHIGH_TOWERペナルティを軽減（マージ位置を選択しやすくする）。（5）HIGH_TOWERペナルティをv119の1.3倍に維持。（6）左右バランス補正を強化（MEDIUMフェーズでbalance_strengthを30.0から45.0、HIGHフェーズで40.0から60.0に強化、左右の片寄りを防ぐ）。（7）drift_penaltyとcenter_bonusは一律値に統一（フェーズ調整廃止）。v42のシンプル構造（約110行）をベースに、v84のマージボーナス強化とMEDIUMフェーズ高度管理緩和を採用。コード量微増（約115行）。
 # v121: v42完全復帰・HIGH_TOWER強化版 - v120の失敗（スコア727、Turn 6でCRITICAL到達max_y=3.08・履歴でマージ予測NEAR_MERGEが2回失敗・HIGH_TOWERペナルティ支配的）を受けて、マージボーナス強化が予測ミスを誘発し、HIGHフェーズ高度管理緩和がCRITICAL到達を早めていることを特定。振り子パターン回避のため、v84/v120のマージボーナス強化（1500/800/300）とHIGHフェーズheight_multiplier緩和（25.0-35.0）を完全削除。v42のシンプル構造に完全復帰：（1）merge_gradeをv42の値（1200/600/200）に戻す（予測ミス時のペナルティ軽減）。（2）HIGHフェーズのheight_multiplierを50.0に戻す（v42の厳格な高度管理でCRITICAL到達を遅延）。（3）HIGH_TOWERペナルティを2.0倍に戻す（v120の1.3倍から強化）。（4）height_multiplierの一律調整を廃止（v120の35.0ではなく一律50.0）。（5）balance_strengthとcenter_bonusは一律値に統一（v120の一律化維持）。v42のシンプル構造（約110行）を完全復帰。コード量削減（约105行）。
 # v122: MEDIUMフェーズ緩和・フェーズ役割明確化版 - v121の失敗（スコア973、HIGH_TOWERペナルティ支配でマージ機会が損なわれる）を受けて、MEDIUMフェーズの高度管理を緩和し、フェーズごとの役割分担を明確にする。（1）MEDIUMフェーズのheight_multを2.4から2.2に緩和（v84の2.2を採用）。（2）HIGHフェーズのheight_multを2.6に維持（v42の2.6を採用）。（3）CRITICALフェーズのheight_multを1.0に設定し、merge_multを0.6に強化（マージ優先）。（4）フェーズ調整を廃止し、一律で計算する。v42のシンプル構造を維持しつつ、フェーズごとの役割分担を明確にする。コード量変更なし（约105行）。
+# v123: reactive_pairs活用・MEDIUMフェーズ復帰版 - v122の失敗（スコア1371、HIGH_TOWERペナルティ支配でマージ機会損失）を受けて、reactive_pairs情報を活用しマージ機会を確保。履歴分析でTurn 67（reactive_pairs=5）とTurn 90-91（reactive_pairs=4）でHIGH_TOWERペナルティが出ておりマージ機会を損なっていることを特定。（1）MEDIUMフェーズのheight_multを2.2から2.4に戻す（v42の2.4に復帰、v122の緩和は過剰）。（2）HIGHフェーズでreactive_pairs>=2の時はHIGH_TOWERペナルティを無効化（マージ可能状態を尊重）。（3）reactive_pairsはanalysis["reactor"]["reactive_pairs"]から取得。v42のシンプル構造（約110行）を維持しつつ、reactive_pairs条件のみ追加。コード量微増（約115行）。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v42のシンプル構造に完全復帰し、フェーズごとの役割分担を明確にする。"""
+    """v42のシンプル構造をベースに、reactive_pairs活用でマージ機会確保。"""
 
     results = analysis.get("results", [])
 
@@ -42,7 +42,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.2  # v122: v84の2.2に緩和（v42の2.4から）
+        height_mult = 2.4  # v123: v122の2.2からv42の2.4に戻す
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
@@ -50,8 +50,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult = 1.0  # v122: height_multなし（マージ優先）
-        merge_mult = 0.6  # v122: マージボーナス強調
+        height_mult = 1.0
+        merge_mult = 0.6
+
+    # reactor情報（reactive_pairs取得）
+    reactor = analysis.get("reactor", {})
+    reactive_pairs = reactor.get("reactive_pairs", 0)
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -80,13 +84,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（フェーズで調整）
+        # 2. 高度によるペナルティ
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ
+        # v123: HIGH_TOWERペナルティの条件化
+        # reactive_pairs >= 2の時はマージ機会があるためHIGH_TOWERペナルティを無効化
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 2.0
-            reasons.append("HIGH_TOWER")
+            if reactive_pairs < 2:
+                height_penalty *= 2.0
+                reasons.append("HIGH_TOWER")
+            # reactive_pairs >= 2の場合はHIGH_TOWERペナルティを適用しない
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5
             reasons.append("MEDIUM_TOWER")

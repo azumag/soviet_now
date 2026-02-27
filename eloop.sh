@@ -894,6 +894,12 @@ start_radio_talk() {
 		echo "$soviet_key" >> "$past_soviet_file"
 		tail -60 "$past_soviet_file" > "${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
 
+		# 前回のラジオトーク内容を取得（コメント文脈用）
+		local prev_radio_talk=""
+		if [ -f "tmp/radio_talk.txt" ]; then
+			prev_radio_talk=$(cat tmp/radio_talk.txt)
+		fi
+
 		# 10回に1回だけ「AIが自分を書き換える話」を追加
 		local ai_special=""
 		if [ $((RANDOM % 10)) -eq 0 ]; then
@@ -944,6 +950,15 @@ $([ -n "$news_headlines" ] && cat <<NEWS_BLOCK
 ${news_headlines}
 ---
 NEWS_BLOCK
+)
+$([ -n "$twitch_comments" ] && cat <<CONTEXT_BLOCK
+【コメントの文脈情報（リスナーのコメントが何に対する反応かを推測するための参考情報）】
+■ 前回のラジオトーク内容:
+${prev_radio_talk:-（前回トークなし）}
+
+■ 最近の話題一覧:
+${past_topics:-まだ過去のトークはありません。}
+CONTEXT_BLOCK
 )
 $([ -n "$twitch_comments" ] && cat <<CHAT_BLOCK
 【リスナーからのコメント（Twitchチャット）】
@@ -998,6 +1013,8 @@ $([ "$include_strategy_history" = true ] && echo '5. 作戦変更の解説コー
 $([ -n "$twitch_comments" ] && echo '6. リスナーコメント返しコーナー
    - 上に載せたTwitchコメントを拾って、一つずつ返事する
    - 「○○さんがこう言ってくれてますね」のように名前を呼んで反応する
+   - コメントが前回のトーク内容のどの話題に対する反応なのか、上の文脈情報から推測して返事すること
+   - 例: 「脱線したお話面白い」→ 前回のトークで語った具体的な話題に触れながら返す
    - コメントに共感したり、ツッコんだり、膨らませたり、自然なラジオトーク風に
    - コメントがなかった場合はこのセクションは省略してOK
 ')
