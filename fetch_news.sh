@@ -1,11 +1,13 @@
 #!/bin/bash
 # fetch_news.sh - Yahoo News RSSからランダムにニュースを取得
 # 出力: tmp/news.txt (ニュース見出し+本文要約 3件)
+# 過去に使った見出しは除外して同じニュースを繰り返さない
 
 cd "$(dirname "$0")"
 mkdir -p tmp
 
 OUTFILE="tmp/news.txt"
+PAST_NEWS="tmp/.past_news_titles.txt"
 RSS_URL="https://news.yahoo.co.jp/rss/topics/top-picks.xml"
 
 # RSS取得
@@ -29,13 +31,39 @@ if [ -z "$items" ]; then
     exit 0
 fi
 
+# 過去に使った見出しを読み込み
+past_titles=""
+[ -f "$PAST_NEWS" ] && past_titles=$(cat "$PAST_NEWS")
+
+# 過去に使ったものを除外
+available=""
+while IFS=$'\t' read -r title link; do
+    [ -z "$title" ] && continue
+    if ! echo "$past_titles" | grep -qF "$title"; then
+        available="${available}${title}\t${link}\n"
+    fi
+done <<< "$items"
+
+# 全部使い切ったらリセット
+if [ -z "$available" ]; then
+    available=""
+    while IFS=$'\t' read -r title link; do
+        [ -z "$title" ] && continue
+        available="${available}${title}\t${link}\n"
+    done <<< "$items"
+    > "$PAST_NEWS"
+fi
+
 # シャッフルして3件選ぶ
-selected=$(echo "$items" | sort -R | head -3)
+selected=$(echo -e "$available" | grep -v '^$' | sort -R | head -3)
 
 # 各ニュースの見出し＋本文要約を取得
 result=""
 while IFS=$'\t' read -r title link; do
     [ -z "$title" ] && continue
+
+    # 使用済みとして記録
+    echo "$title" >> "$PAST_NEWS"
 
     # リンク先のog:descriptionから本文要約を取得
     desc=""
@@ -56,6 +84,9 @@ ${desc}
 "
     fi
 done <<< "$selected"
+
+# 過去記録は直近50件保持
+tail -50 "$PAST_NEWS" > "${PAST_NEWS}.tmp" && mv "${PAST_NEWS}.tmp" "$PAST_NEWS"
 
 if [ -n "$result" ]; then
     echo "$result" > "$OUTFILE"
