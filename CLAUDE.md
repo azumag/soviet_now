@@ -1,6 +1,6 @@
 # Soren Game Project
 
-Soviet/Soren パズルゲーム（スイカゲーム風・ソ連共和国旗）の AI 自動プレイプロジェクト。
+Soviet/Soren パズルゲーム（ソ連共和国旗）の AI 自動プレイプロジェクト。
 
 ## Unity WebGL ビルド
 

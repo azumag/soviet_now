@@ -32,16 +32,28 @@ _daemon() {
         local nick="justinfan$((RANDOM % 90000 + 10000))"
         _log "IRC接続中... (nick=$nick)"
 
-        # 名前付きパイプで双方向通信
-        local fifo="$CHAT_DIR/irc_fifo"
-        rm -f "$fifo"
-        mkfifo "$fifo"
+        # 入力用FIFO + 出力用FIFO
+        local fifo_in="$CHAT_DIR/fifo_in"
+        local fifo_out="$CHAT_DIR/fifo_out"
+        rm -f "$fifo_in" "$fifo_out"
+        mkfifo "$fifo_in" "$fifo_out"
 
-        # nc をバックグラウンドで起動、fifoから入力を受ける
-        nc irc.chat.twitch.tv 6667 < "$fifo" 2>/dev/null | while IFS= read -r line; do
+        # nc: fifo_in → IRC → fifo_out
+        nc irc.chat.twitch.tv 6667 < "$fifo_in" > "$fifo_out" 2>/dev/null &
+        local nc_pid=$!
+
+        # 入力fifoをfd3で開きっぱなし
+        exec 3>"$fifo_in"
+
+        # IRC認証・JOIN送信
+        echo "NICK $nick" >&3
+        echo "JOIN #${channel}" >&3
+
+        # 出力fifoを読み取るループ（ncが死ぬと read が EOF で抜ける）
+        while IFS= read -r line; do
             # PING/PONG処理
             if [[ "$line" == PING* ]]; then
-                echo "PONG :tmi.twitch.tv" > "$fifo" 2>/dev/null
+                echo "PONG :tmi.twitch.tv" >&3 2>/dev/null
                 continue
             fi
 
@@ -50,22 +62,16 @@ _daemon() {
                 local user msg
                 user=$(echo "$line" | sed 's/^:\([^!]*\)!.*/\1/')
                 msg=$(echo "$line" | sed 's/^.*PRIVMSG [^ ]* ://')
-                # 制御文字除去
-                msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r')
+                # サニタイズ: 制御文字 + シェルメタ文字除去
+                msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
+                user=$(echo "$user" | tr -d '`$\\{}|;<>&')
                 echo "${user}: ${msg}" >> "$RAW_LOG"
             fi
-        done &
-        local reader_pid=$!
+        done < "$fifo_out"
 
-        # IRC認証・JOIN送信
-        {
-            echo "NICK $nick"
-            echo "JOIN #${channel}"
-        } > "$fifo"
-
-        # readerが死ぬまで待つ（= 接続切断）
-        wait "$reader_pid" 2>/dev/null
-        rm -f "$fifo"
+        exec 3>&-
+        wait "$nc_pid" 2>/dev/null
+        rm -f "$fifo_in" "$fifo_out"
 
         _log "IRC切断 → 10秒後に再接続"
         sleep 10
@@ -119,16 +125,28 @@ _fetch() {
     local new_comments
     new_comments=$(tail -n "+$((last_offset + 1))" "$RAW_LOG")
 
-    # オフセット更新
-    echo "$current_lines" > "$OFFSET_FILE"
+    # 既読分をログから削除してオフセットリセット
+    local remaining
+    remaining=$(tail -n "+$((current_lines + 1))" "$RAW_LOG" 2>/dev/null)
+    if [ -n "$remaining" ]; then
+        echo "$remaining" > "$RAW_LOG"
+        echo "$(echo "$remaining" | wc -l | tr -d ' ')" > "$OFFSET_FILE"
+    else
+        > "$RAW_LOG"
+        echo "0" > "$OFFSET_FILE"
+    fi
 
     # サニタイズ
     local sanitized
     sanitized=$(echo "$new_comments" | \
         # 1行80文字に切り詰め
         cut -c1-80 | \
+        # シェルメタ文字の二重除去（デーモン側で漏れた場合の保険）
+        tr -d '`$\\{}|;<>&' | \
         # 危険パターンを除去: プロンプトインジェクション対策
         grep -iv 'ignore\|forget\|instruction\|system\|prompt\|override\|pretend\|act as\|you are\|あなたは\|無視\|命令\|指示\|忘れ\|ふりをし\|なりきり\|プロンプト\|システム' | \
+        # AI操作系の危険パターンを除去
+        grep -iv 'delete\|remove\|modify\|write\|create\|execute\|run\|sudo\|chmod\|kill\|削除\|消し\|書き換\|変更\|実行\|作成\|上書\|破壊\|ファイル\|コマンド\|スクリプト' | \
         # 最新10件に制限
         tail -10)
 
