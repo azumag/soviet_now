@@ -35,21 +35,31 @@ fi
 past_titles=""
 [ -f "$PAST_NEWS" ] && past_titles=$(cat "$PAST_NEWS")
 
-# 過去に使ったものを除外
+# 過去に使ったものを除外（RSS内の重複タイトルも除外）
 available=""
+seen_titles=""
 while IFS=$'\t' read -r title link; do
     [ -z "$title" ] && continue
+    if echo "$seen_titles" | grep -qF "$title"; then
+        continue
+    fi
     if ! echo "$past_titles" | grep -qF "$title"; then
         available="${available}${title}\t${link}\n"
     fi
+    seen_titles="${seen_titles}${title}\n"
 done <<< "$items"
 
-# 全部使い切ったらリセット
+# 全部使い切ったらリセット（RSS内の重複タイトルも除外）
 if [ -z "$available" ]; then
     available=""
+    seen_titles=""
     while IFS=$'\t' read -r title link; do
         [ -z "$title" ] && continue
+        if echo "$seen_titles" | grep -qF "$title"; then
+            continue
+        fi
         available="${available}${title}\t${link}\n"
+        seen_titles="${seen_titles}${title}\n"
     done <<< "$items"
     > "$PAST_NEWS"
 fi
