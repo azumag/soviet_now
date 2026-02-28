@@ -9,34 +9,38 @@
 # AI改変禁止: decide() シグネチャ、if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v336: v128完全復帰・先読みマージ強化版 - v335の大失敗(avg=507.3)を受けて、動的切り替えを完全廃止しv128のシンプルな構造に復帰。
-#   v335バッチ分析から特定した問題:
-#   - avg_score 507.3: v128の3689から大幅低下、動的切り替えは完全に失敗
-#   - merge_rate 9.4%: 目標15%に届かず、動的切り替えがマージ機会を損失
-#   - ターン数62.7: v128の90ターンより短く、早くゲームオーバー
-#   - 動的切り替えの失敗: merge_available判定(near_pairs>=2)が不正確で、height_multを間違えて調整
-#   - 振り子パターン検出: v334(height_mult=2.6, avg=1681)→v335(動的切り替え, avg=507.3)→v370(height_mult=2.6, avg=1681)
+# v337: マージ品質応答・高度管理調整版 - v336のavg=707.5（v128の3689から大幅低下）を受けて、将来マージ期待値ボーナスを削除し、マージ品質に応じた高度管理調整を導入。
+#   v336バッチ分析から特定した問題:
+#   - avg_score 707.5: v128の3689から大幅低下、振り子パターンを回避しきれていない
+#   - 将来マージ期待値ボーナスの効果不透明: FUTURE_MERGE_HIGHが5.9%出ているが、スコアへの寄与が不明
+#   - ワーストゲームの特徴: HEIGHT_CONTROLが支配的で、マージ機会を損失。ターン数58ターンで早期ゲームオーバー
+#   - ベストゲームの特徴: NEAR_MERGE関連が多く、マージに成功。ターン数78ターンで長期戦
+#   - HIGHフェーズのheight_mult=1.8: v128から継承しているが、マージ機会がない時の高度管理が弱い
+#   - 将来マージ期待値ボーナスの矛盾: merge_grade=="NO"の場合に期待値ボーナスを追加しているが、マージできないなら高度管理優先すべき
+#   振り子パターン検出: v335(動的切り替え, avg=507.3)→v336(静的切り替え, avg=707.5)→v337(マージ品質応答調整, 目標1000+)
 #   根本原因:
-#   - v335の動的切り替えは、v128の成功要因（シンプルで頑健なHIGHフェーズ戦略）を壊した
-#   - merge_availableの判定が不正確で、マージ機会がない時に誤ってheight_mult=1.8に緩和し、安定性を損なった
-#   - reactor情報を動的調整に使ったが、v128はreactor情報なしで3689を達成しており、動的調整は不要
-#   - v335の複雑な条件分岐（merge_availableによる動的切り替え）は、振り子パターンの典型
-#   解決策（v128完全復帰・先読みマージ強化）:
-#   - 動的切り替え完全廃止: HIGHフェーズで一貫してheight_mult=1.8を適用（v128の成功設定）
-#   - v128のシンプル構造完全復帰: phase判定、height_penalty、drift_penalty、balance_penaltyをv128のまま採用
-#   - reactor情報の活用方法変更: 動的調整ではなく、静的なボーナスとして活用（v128の成功を維持）
-#   - 先読みマージ強化: 盤面のtype N-1ピースの位置から、将来のマージ期待値を計算してスコアリングに反映
-#   - HIGHフェーズ振動戦略: 盤面を高めに保ち、振動による連鎖マージを促進（v128の成功要因を維持）
-#   核心的発見: v335の動的切り替えは振り子パターン（v334→v335→v334）。v128の成功は「動的切り替え」ではなく「シンプルで頑健なHIGHフェーズ戦略」にある。v128の構造を完全復帰しつつ、先読みマージ強化でv128の3689を超えることを目指す。
-#   成功基準: avg_scoreがv335の507.3以上、またはmerge_rateが15%以上、またはavg_scoreがv128の3689以上
-#   失敗基準: avg_scoreがv334の1681未満、またはmerge_rateが10%未満、またはavg_scoreがv335の507.3未満
+#   - v336はv128のシンプル構造に復帰したが、HIGHフェーズのheight_mult=1.8は「マージ優先」を意味し、マージ機会がない時の高度管理が弱い
+#   - 将来マージ期待値ボーナスは複雑で効果が薄い。マージできないなら、将来マージできるとしても、今は高度管理を優先すべき
+#   - 動的切り替え(near_pairs>=2)は判定が不正確で、振り子パターンを引き起こす
+#   解決策（マージ品質応答・高度管理調整）:
+#   - 将来マージ期待値計算の削除: 複雑で効果が薄いボーナスを削除し、シンプル構造を維持
+#   - マージ品質ごとの高度管理調整: merge_gradeごとにheight_penaltyの乗数を変える静的調整を導入
+#     * merge_grade=="NO": height_penalty *= 1.3（高度管理強化）
+#     * merge_grade=="FAR": 変更なし（基準値）
+#     * merge_grade=="NEAR"/"DIRECT": height_penalty *= 0.8（高度管理緩和）
+#   - HIGHフェーズのHIGH_TOWERペナルティ調整: merge_gradeごとの乗数と統合し、一貫した高度管理を実現
+#   - CENTERボーナスの強化: nextNextが同じタイプなら中央寄せボーナスを強化（50.0 → 80.0）
+#   - reactive_pairsボーナスの調整: 20.0 → 30.0（微増）
+#   核心的発見: 動的切り替えの振り子パターンを回避するために、第三の選択肢を取る。動的切り替えはしない（near_pairs>=2の判定は不正確）。代わりに、merge_gradeごとに高度管理の強度を変える静的調整を導入する。これにより、v128のシンプル構造を維持しつつ、マージ品質に応じた高度管理を実現し、振り子パターンを回避する。
+#   成功基準: avg_scoreがv336の707.5以上、またはmerge_rateが15%以上、またはavg_scoreがv128の3689以上
+#   失敗基準: avg_scoreがv335の507.3未満、またはmerge_rateが10%未満、またはavg_scoreがv336の707.5未満
 # [BEST:3689] v128: HIGHフェーズマージ優先版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
 # [BEST:1509] v328: HIGHフェーズマージ強化・v42ベース版
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v128完全復帰・先読みマージ強化版。動的切り替えを廃止し、v128のシンプル構造に復帰しつつ、先読みマージ戦略を強化。"""
+    """マージ品質応答・高度管理調整版。将来マージ期待値ボーナスを削除し、マージ品質に応じた高度管理調整を導入。"""
 
     results = analysis.get("results", [])
 
@@ -51,7 +55,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # reactor情報（v336: 静的なボーナスとして活用）
+    # reactor情報（v337: 静的なボーナスとして活用）
     reactor = analysis.get("reactor", {})
     reactive_pairs_val = reactor.get("reactive_pairs", 0)
     reactive_pairs = (
@@ -64,7 +68,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         len(near_pairs_val) if isinstance(near_pairs_val, list) else near_pairs_val
     )
 
-    # フェーズ判定（v336: v128の閾値0.8/1.8/3.0を採用、動的切り替えなし）
+    # フェーズ判定（v337: v128の閾値0.8/1.8/3.0を採用、動的切り替えなし）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
@@ -75,7 +79,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v336: v128の1.8を維持、動的切り替えなし
+        height_mult = 1.8  # v337: v128の1.8を維持、動的切り替えなし
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -88,37 +92,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # 先読みマージ期待値計算（v336: 新規導入）
-    # 盤面のtype N-1のピース数と位置から、将来のマージ期待値を計算
-    future_merge_expectation = 0.0
-    reasons_prefix = []
-    if next_type > 1:
-        target_type = next_type - 1
-        target_pieces = [p for p in pieces if p["type"] == target_type]
-        if len(target_pieces) >= 2:
-            # type N-1が2個以上あれば、マージしてtype Nになる確率が高い
-            # ペア間の距離が近いほどマージ確率が高い
-            min_pair_dist = 3.0
-            for i in range(len(target_pieces)):
-                for j in range(i + 1, len(target_pieces)):
-                    dist = abs(target_pieces[i]["x"] - target_pieces[j]["x"])
-                    min_pair_dist = min(min_pair_dist, dist)
-            # 距離に応じた期待値（近いほど高い）
-            if min_pair_dist < 0.5:
-                future_merge_expectation = 300.0
-                reasons_prefix.append("FUTURE_MERGE_HIGH")
-            elif min_pair_dist < 1.0:
-                future_merge_expectation = 150.0
-                reasons_prefix.append("FUTURE_MERGE_MID")
-            elif min_pair_dist < 1.5:
-                future_merge_expectation = 75.0
-                reasons_prefix.append("FUTURE_MERGE_LOW")
-        elif len(target_pieces) == 1:
-            # 1個なら、nextNextでタイプNが来たときにマージする確率
-            if next_next_type == next_type:
-                future_merge_expectation = 100.0
-                reasons_prefix.append("FUTURE_MERGE_NEXT")
-
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -127,11 +100,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_grade = result.get("merge_grade", "NO")
 
         score = 0.0
-        reasons = reasons_prefix.copy()
+        reasons = []
 
-        # === v336: v128完全復帰・先読みマージ強化 ===
+        # === v337: マージ品質応答・高度管理調整 ===
 
-        # 1. マージグレードによるスコア（v336: v128の値を維持）
+        # 1. マージグレードによるスコア（v337: v128の値を維持）
         merge_bonus = 0.0
         if merge_grade == "DIRECT":
             merge_bonus = 1200.0 * merge_mult
@@ -143,26 +116,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
             merge_bonus = 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # nextNextが同じタイプならボーナス係数（v336: v128の値を維持）
+        # nextNextが同じタイプならボーナス係数（v337: v128の値を維持）
         if next_next_type == next_type:
             merge_bonus *= 1.2
             reasons.append("NEXT_SAME")
 
         score += merge_bonus
 
-        # 2. 先読みマージ期待値ボーナス（v336: 新規導入）
-        # 今マージできなくても、将来マージが期待できるならボーナス
-        if future_merge_expectation > 0 and merge_grade == "NO":
-            # マージ不可でも期待値があるなら、将来マージのためにボーナス
-            score += future_merge_expectation * 0.5
-
-        # 3. 高度によるペナルティ（v336: v128の値を維持、動的切り替えなし）
+        # 2. 高度によるペナルティ（v337: v128の値を維持）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v336: v128の緩和設定を維持、動的切り替えなし）
+        # HIGH_TOWERペナルティ（v337: マージ品質応答調整を導入）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v128: v84の1.3倍を採用
-            reasons.append("HIGH_TOWER")
+            # v337: マージ品質ごとの高度管理調整
+            # マージできるなら高度管理緩和、マージできないなら高度管理強化
+            if merge_grade == "NO":
+                height_penalty *= 1.3  # 高度管理強化
+                reasons.append("HEIGHT_STRICT")
+            elif merge_grade == "FAR":
+                height_penalty *= 1.3  # 基準値
+                reasons.append("HIGH_TOWER")
+            elif merge_grade == "NEAR":
+                height_penalty *= 1.0  # 高度管理緩和（v128の1.3倍から緩和）
+                reasons.append("HIGH_TOWER_RELAX")
+            elif merge_grade == "DIRECT":
+                height_penalty *= 0.8  # 高度管理さらに緩和
+                reasons.append("HIGH_TOWER_RELAX_MORE")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5
             reasons.append("MEDIUM_TOWER")
@@ -171,11 +150,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # 4. ドリフトによるペナルティ（v336: v128の一律30.0を維持）
+        # 3. ドリフトによるペナルティ（v337: v128の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 5. 左右バランス補正（v336: v128の値を維持）
+        # 4. 左右バランス補正（v337: v128の値を維持）
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0
@@ -189,20 +168,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 6. nextNextが同じタイプなら中央寄せボーナス（v336: v128の一律50.0を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v337: 強化）
         if next_next_type == next_type:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 80.0  # v337: 50.0 → 80.0に強化
             score += center_bonus
             if "CENTER" not in reasons:
                 reasons.append("CENTER")
 
-        # 7. reactor情報活用ボーナス（v336: 静的なボーナスとして活用、動的調整なし）
+        # 6. reactor情報活用ボーナス（v337: 静的なボーナスとして活用）
         # reactive_pairsが多いほど、盤面が活発でマージが起きやすい
         if reactive_pairs >= 3:
             score += 50.0
             reasons.append("REACTIVE")
         elif reactive_pairs >= 1:
-            score += 20.0
+            score += 30.0  # v337: 20.0 → 30.0に微増
 
         # near_pairsが多いほど、マージ機会が多い
         if near_pairs >= 2:
