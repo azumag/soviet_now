@@ -11,21 +11,8 @@
 # --- 変更履歴 ---
 # [BEST:3689] v128: HIGHフェーズマージ優先版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
-# v230: 期待値的マージ戦略版 - v229の失敗（avg=1161.4、stddev=311.3、HEIGHT_CONTROL支配的）を受けて、振り子パターンを根本的に解消するブレイクスルーを実施。
-#   v229バッチ分析から特定した問題:
-#   - HEIGHT_CONTROLが28.8%と過度に支配的、マージ戦略が弱い（NEAR_MERGE 7.9%、DIRECT_MERGE 2.0%）
-#   - 高スコア群vs低スコア群で決定的な違いがない、戦略が不安定（stddev=311.3）
-#   - 振り子パターン（HIGH_TOWER、height_mult、マージボーナス）をパラメータ調整だけで解決しようとしている
-#   根本原因:
-#   - マージ機会の「期待値」が考慮されていない: 「今マージできるか」だけでなく、「この位置に置いたら将来マージが起きる確率」を考慮すべき
-#   - next/nextNextの「マージ先予約」が十分に活用されていない
-#   解決策（振り子パターン解消・期待値的マージ戦略）:
-#   - マージ期待値関数を導入: 盤面のtype N-1ペアの数・距離・位置から、「この位置に置いたら将来マージが起きる期待値」を計算
-#   - next/nextNextマージ先予約を強化: 盤面のtype N-1ペアの数が多い場合、その重心付近にボーナスを付与
-#   - マージ期待値とマージグレードを統合: DIRECTマージ+高期待値 > NEARマージ+低期待値 という判断を実現
-#   - v42/v128の成功要素（マージボーナス=1200/600/200、height_mult=2.4/1.8）を維持しつつ、期待値的判断を追加
-#   - HEIGHT_CONTROLをマージ期待値で上書き: マージ期待値が一定以上の場合、HEIGHT_CONTROLではなくMERGE_EXPECTATIONを理由にする
-#   - 振り子パターン解消: パラメータ調整ではなく、新しい情報源（期待値）を追加することでバランスを取る
+# v274 (1805): v229ベース - シンプル構造で1805点達成
+# v231: v230期待値係数強化版 - 期待値係数を15.0→20.0に強化し、期待値ボーナスの影響力を向上
 import math
 
 
@@ -77,8 +64,10 @@ def calculate_merge_expectation(pieces, x, next_type, next_next_type, reactor):
     # ペアの数と重心からの距離から期待値を計算
     # ペアの数が多いほど期待値が高い
     # 重心から近いほど期待値が高い
-    pair_count_bonus = min(len(pairs) * 15.0, 75.0)  # 最大75点（5ペア）
-    distance_bonus = max(0, 3.0 - dist_to_center) * 10.0  # 最大30点
+    pair_count_bonus = min(len(pairs) * 20.0, 75.0)  # 最大75点（v231: 15.0→20.0に強化）
+    distance_bonus = (
+        max(0, 3.0 - dist_to_center) * 15.0
+    )  # 最大45点（v231: 10.0→15.0に強化）
 
     expectation = pair_count_bonus + distance_bonus
 
@@ -86,27 +75,21 @@ def calculate_merge_expectation(pieces, x, next_type, next_next_type, reactor):
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v230: 期待値的マージ戦略版
+    """v231: v230期待値係数強化版
 
-    v229の失敗（avg=1161.4、stddev=311.3、HEIGHT_CONTROL支配的）を受けて、
-    振り子パターンを根本的に解消するブレイクスルーを実施。
+    v230の成功構造を維持しつつ、期待値係数を強化し、期待値機能の影響力を向上。
 
-    v229バッチ分析から特定した問題:
-    - HEIGHT_CONTROLが28.8%と過度に支配的、マージ戦略が弱い（NEAR_MERGE 7.9%、DIRECT_MERGE 2.0%）
-    - 高スコア群vs低スコア群で決定的な違いがない、戦略が不安定（stddev=311.3）
-    - 振り子パターン（HIGH_TOWER、height_mult、マージボーナス）をパラメータ調整だけで解決しようとしている
+    v230の問題点（バッチ分析から特定）:
+    - 期待値ボーナス（max 500点）に対し、期待値自体が最大105点に制限
+    - 期待値係数15.0では、ペアボーナスmax75点 + 距離ボーナスmax30点 = 105点
+    - マージボーナス（DIRECT=1200/NEAR=600/FAR=200）と比較して影響力が弱い
 
-    根本原因:
-    - マージ機会の「期待値」が考慮されていない: 「今マージできるか」だけでなく、「この位置に置いたら将来マージが起きる確率」を考慮すべき
-    - next/nextNextの「マージ先予約」が十分に活用されていない
-
-    解決策（振り子パターン解消・期待値的マージ戦略）:
-    - マージ期待値関数を導入: 盤面のtype N-1ペアの数・距離・位置から、「この位置に置いたら将来マージが起きる期待値」を計算
-    - next/nextNextマージ先予約を強化: 盤面のtype N-1ペアの数が多い場合、その重心付近にボーナスを付与
-    - マージ期待値とマージグレードを統合: DIRECTマージ+高期待値 > NEARマージ+低期待値 という判断を実現
-    - v42/v128の成功要素（マージボーナス=1200/600/200、height_mult=2.4/1.8）を維持しつつ、期待値的判断を追加
-    - HEIGHT_CONTROLをマージ期待値で上書き: マージ期待値が一定以上の場合、HEIGHT_CONTROLではなくMERGE_EXPECTATIONを理由にする
-    - 振り子パターン解消: パラメータ調整ではなく、新しい情報源（期待値）を追加することでバランスを取る
+    解決策（期待値係数強化）:
+    - ペアボーナス係数: 15.0 → 20.0（ペア数の重要度を強化）
+    - 距離ボーナス係数: 10.0 → 15.0（重心からの距離の重要度を強化）
+    - 期待値最大値: 75点 + 45点 = 120点（期待値ボーナスmax 600点まで強化）
+    - v274のシンプル構造を維持：期待値機能を追加しつつシンプルさを保つ
+    - 高度ペナルティ緩和条件緩和：期待値40.0以上で緩和（v230の50.0→40.0に変更）
     """
 
     results = analysis.get("results", [])
@@ -132,17 +115,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        # v230: v42の2.4を採用（MEDIUMフェーズでのマージ機会確保）
-        height_mult = 2.4
+        height_mult = 2.4  # v274: v42の2.4を採用
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        # v230: v128の1.8を採用（HIGHフェーズでのマージ優先徹底）
-        height_mult = 1.8
+        height_mult = 1.8  # v274: v128の1.8を採用
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        # v42の設定: CRITICALではマージ絶対優先（height_multなし、merge_mult=0.6）
         height_mult = 1.0
         merge_mult = 0.6
 
@@ -162,14 +142,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v230: マージ期待値計算 ===
+        # === v231: マージ期待値計算（期待値係数強化）===
         merge_expectation = calculate_merge_expectation(
             pieces, x, next_type, next_next_type, reactor
         )
 
         # マージ期待値ボーナス（期待値が高いほどボーナスが大きい）
         if merge_expectation > 20.0:
-            score += merge_expectation * 5.0  # 最大500点
+            score += (
+                merge_expectation * 5.0
+            )  # 最大600点（v231: max 105点*5=525点→max 120点*5=600点）
             if merge_expectation > 50.0:
                 reasons.append("HIGH_EXPECTATION")
             else:
@@ -189,19 +171,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 2. 高度によるペナルティ（v42の一律50.0を維持）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # === v230: マージ期待値が高い場合、高度ペナルティを緩和 ===
-        if merge_expectation > 50.0:
+        # === v231: マージ期待値が高い場合、高度ペナルティを緩和（条件緩和）===
+        if merge_expectation > 40.0:  # v231: v230の50.0→40.0に緩和
             # 高い期待値がある場合、高度ペナルティを50%緩和
             height_penalty *= 0.5
 
-        # === v230: HIGH_TOWERペナルティ簡素化（HIGHフェーズのみ1.3倍） ===
+        # === HIGH_TOWERペナルティ簡素化（HIGHフェーズのみ1.3倍）===
         # MEDIUMフェーズではHIGH_TOWERペナルティを廃止（マージ優先徹底）
         if phase == "HIGH" and landing_y > 0.5:
-            # v230: v128の1.3倍を採用（HIGHフェーズでの高度管理）
             height_penalty *= 1.3
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            # v230: v42の1.5倍を採用（MEDIUMフェーズでの適度な高度管理）
+            # v274: v42の1.5倍を採用（MEDIUMフェーズでの適度な高度管理）
             height_penalty *= 1.5
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
@@ -233,7 +214,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # === v230: マージ期待値が高い場合、HEIGHT_CONTROLを上書き ===
+        # === マージ期待値が高い場合、HEIGHT_CONTROLを上書き ===
         if not reasons and merge_expectation > 30.0:
             reasons.append("MERGE_EXPECTATION")
         elif not reasons:
