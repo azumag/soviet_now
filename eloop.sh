@@ -9,7 +9,7 @@ cd "$SCRIPT_DIR"
 
 COMMANDS="commands.txt"
 GAME_STATE="game_state.json"
-AI_TIMEOUT=900
+AI_TIMEOUT=1200
 
 # strategy 関連
 STRATEGY_FILE="strategy.py"
@@ -484,7 +484,7 @@ _run_opencode_radio() {
 
 # バックグラウンドでラジオトーク生成→再生
 start_radio_talk() {
-	local score="$1" turns="$2" game_num="$3" best_score="$4" diff_content="${5:-}"
+	local score="$1" turns="$2" game_num="$3" best_score="$4" diff_content="${5:-}" soviet_created="${6:-false}"
 
 	# 前の生成プロセスがまだ動いていたら止める（sayはnohupで独立しているので残る）
 	if [ "${_radio_pid:-0}" -ne 0 ] && kill -0 "$_radio_pid" 2>/dev/null; then
@@ -638,7 +638,7 @@ start_radio_talk() {
 			"荘子の話。胡蝶の夢、無用の用、役に立たないことの価値、老荘思想の自由さを深掘りして"
 			"トロッコ問題の話。5人を救うために1人を犠牲にするか、功利主義vs義務論、自動運転のAIにどう組み込むかを深掘りして"
 			# --- 思想・イデオロギー ---
-			"マルクスの資本論の話。剰余価値、労働者の疎外、150年後の今も議論される理由、マルクスが借金まみれだった皮肉を深掘りして"
+			"マルクスの資本論の話。剰余価値、労働者の疎外、150年後の今も議論される理由、マルクスが借金まみれだった矛盾を深掘りして"
 			"アナーキズムの話。バクーニン、クロポトキン、国家なき社会の夢、パリ・コミューン72日間の実験を深掘りして"
 			"加速主義の話。資本主義を加速させて崩壊させろという思想、ニック・ランド、シリコンバレーとの接点を深掘りして"
 			"ポストモダニズムの話。大きな物語の終焉、リオタール、デリダの脱構築、なぜ理系に嫌われるのかを深掘りして"
@@ -693,7 +693,7 @@ start_radio_talk() {
 			"物部氏と蘇我氏の話。仏教受容を巡る古代日本最大の宗教戦争、物部守屋の敗北、日本の運命を変えた戦いを深掘りして"
 			# --- 政治・権力 ---
 			"マキャベリの君主論の話。目的は手段を正当化する、メディチ家への献上、なぜ500年後も読まれるかを深掘りして"
-			"フランス革命の話。自由・平等・博愛の裏側、恐怖政治、ギロチンの発明者自身が処刑された皮肉を深掘りして"
+			"フランス革命の話。自由・平等・博愛の裏側、恐怖政治、ギロチンの発明者自身が処刑された因果を深掘りして"
 			"チャーチルの話。戦時宰相の名演説、ガリポリの大失敗、ノーベル文学賞、酒とジョークの日々を深掘りして"
 			"明治維新の話。侍が自らの階級を廃止した奇妙な革命、岩倉使節団の衝撃、和魂洋才の矛盾を深掘りして"
 			# --- 宗教・信仰 ---
@@ -895,6 +895,10 @@ ${past_topics:-まだ過去のトークはありません。自由に話して�
 先ほど、ゲーム${game_num}回目が終了しました。
 結果: スコア${score}点、${turns}ターンでゲームオーバー。
 現在の最高スコア: ${best_score}点。
+$([ "$soviet_created" = "true" ] && echo '
+【特大ニュース】今回の試合でソ連が建国されました！
+レベル15のソ連ピースが誕生した歴史的な試合です。
+この偉業をトークの中で盛大に祝ってください。')
 
 国旗の進化ルート（小さい順）:
   レベル1 アルメニア → レベル2 エストニア → レベル3 ラトビア → レベル4 リトアニア
@@ -958,14 +962,14 @@ AI（あなた）がプレイをしている間、リスナーを楽しませる
      * 関連する小ネタや派生話（同じトピック内で自然に広がる範囲で）
      * ソ連っぽい言い回しもスパイス程度に
    - 重要: あれもこれもと話題を並べない。1つのトピックで聞き手が「詳しくなった」と感じるくらい深く
-   - ちょっと皮肉っぽい視点を混ぜる。褒めるだけじゃなく「でもよく考えるとおかしくない?」的なツッコミや、世の中の矛盾を笑い飛ばす感じで
+   - ちょっと斜めからの視点を混ぜる。褒めるだけじゃなく「でもよく考えるとおかしくない?」的なツッコミや、世の中の矛盾を笑い飛ばす感じで
    - ことわざ、格言、ダジャレも自然に混ぜてOK
 
 4. ソ連・共産主義ネタコーナー（1つのネタを深く語る）
    - 今回のソ連ネタ指定: ${soviet_theme}
    - このトピックを表面的に紹介するのではなく、背景・経緯・逸話まで掘り下げること
    - 共産主義っぽい言い回しを自然に使う
-   - ここでもちょっと皮肉っぽい視点を忘れずに
+   - ここでもちょっと斜めからのツッコミを忘れずに
 
 $([ "$include_strategy_history" = true ] && echo '5. 作戦変更の解説コーナー
    - 上の差分を参考に、何が変わったか国名を使って具体的に解説
@@ -1071,6 +1075,49 @@ stop_radio_talk() {
 	_radio_pid=0
 }
 
+generate_soviet_celebration() {
+	local score="$1" turns="$2" game_num="$3"
+	local current_time
+	current_time=$(date '+%H:%M')
+
+	local celebration_prompt_file
+	celebration_prompt_file=$(mktemp /tmp/eloop_celebration_XXXXXXXX)
+	cat > "$celebration_prompt_file" <<CELEBPROMPT
+あなたはゲーム実況ラジオのパーソナリティ兼AIプレイヤーです。
+
+【緊急ニュース】ソ連が建国されました！
+
+ゲーム「ソ連ゲーム」で、ついにレベル15の「ソ連」ピースが誕生しました！
+アルメニアから始まりロシアまで14段階のマージを経てようやく到達する究極のゴールです。
+ゲーム${game_num}回目、スコア${score}点、${turns}ターンでの偉業。現在時刻: ${current_time}。
+
+【ルール】
+- 500〜1000文字程度の短い祝賀トーク
+- ソ連建国の興奮と感動を全力で表現
+- 国旗の進化ルート（アルメニア→エストニア→…→ロシア→ソ連）を振り返る
+- 大げさな宣言調も交えて
+- 話し言葉で、感情豊かに
+- マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
+- 出力はトーク本文のみ。前置きや補足説明は不要
+CELEBPROMPT
+
+	log "[CELEBRATION] ソ連建国祝賀トーク生成中..."
+	local celebration_talk
+	celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
+	if [ -z "$celebration_talk" ]; then
+		celebration_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$celebration_prompt_file")
+	fi
+	rm -f "$celebration_prompt_file"
+
+	if [ -n "$celebration_talk" ]; then
+		echo "$celebration_talk" > tmp/radio_celebration.txt
+		log "[CELEBRATION] 祝賀トーク say_enqueue (--no-preempt, ${#celebration_talk}文字)"
+		./say_enqueue.sh --no-preempt tmp/radio_celebration.txt "$RADIO_SAY_RATE" 0
+	else
+		log "[CELEBRATION] 祝賀トーク生成失敗"
+	fi
+}
+
 #=== メインループ ===
 log "=== Soren Evolution Loop (eloop) ==="
 log "MODEL_PRIMARY=$MODEL_PRIMARY MODEL_FALLBACK=$MODEL_FALLBACK"
@@ -1127,8 +1174,21 @@ while true; do
 
 	SCORE=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('score',0))" 2>/dev/null || echo 0)
 	TURNS=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turns',0))" 2>/dev/null || echo 0)
+	SOVIET_CREATED=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet_created',False) else 'false')" 2>/dev/null || echo "false")
 
 	log "[RESULT] Score=$SCORE, Turns=$TURNS"
+
+	# ソ連建国チェック
+	if [ "$SOVIET_CREATED" = "true" ]; then
+		log "[RESULT] !!! SOVIET CREATED !!! ソ連建国達成！"
+		# say は strategy_runner.py 内で既に停止済み
+		# ゲーム音声を30秒間聞かせてから祝賀トーク
+		log "[CELEBRATION] ゲーム音声を30秒間再生中..."
+		sleep 30
+		generate_soviet_celebration "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY"
+		# フラグファイル削除
+		rm -f tmp/.soviet_created
+	fi
 
 	# スコア履歴記録
 	echo "$SCORE" >> score_history.txt
@@ -1169,7 +1229,7 @@ while true; do
 
 	# ラジオトーク開始（AI改善と並行してバックグラウンド再生）
 	BEST_SCORE_NOW=$(cat best_score.txt 2>/dev/null || echo 0)
-	start_radio_talk "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY" "$BEST_SCORE_NOW" "$STRATEGY_DIFF"
+	start_radio_talk "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY" "$BEST_SCORE_NOW" "$STRATEGY_DIFF" "$SOVIET_CREATED"
 
 	# バックアップ
 	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"

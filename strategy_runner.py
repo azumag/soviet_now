@@ -149,7 +149,7 @@ def build_analysis(game_state):
         return {"results": [], "same_type": [], "reactor": {}, "error": str(e)}
 
 
-def record_turn(history_f, turn, game_state, decision, analysis):
+def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=False):
     """1ターン分の履歴をJSONLに記録"""
     pieces = game_state.get("pieces", [])
     score = game_state.get("score", 0)
@@ -183,6 +183,9 @@ def record_turn(history_f, turn, game_state, decision, analysis):
         "reactor_reactive_pairs": reactive_pairs,
         "state_snapshot": {"pieces": piece_snapshot},
     }
+
+    if soviet_created:
+        record["soviet_created"] = True
 
     history_f.write(json.dumps(record, ensure_ascii=False) + "\n")
     history_f.flush()
@@ -243,6 +246,7 @@ def run_game():
 
     turn = 0
     prev_score = 0
+    soviet_created = False
 
     with open(HISTORY_FILE, "w") as history_f:
         while True:
@@ -259,6 +263,7 @@ def run_game():
                     "turns": turn,
                     "state": final_state,
                     "pieces": len(gs.get("pieces", [])) if gs else 0,
+                    "soviet_created": soviet_created,
                 }
 
             turn += 1
@@ -266,6 +271,20 @@ def run_game():
             pieces = gs.get("pieces", [])
             max_y = max((p["y"] for p in pieces), default=-5.0)
             log(f"Turn {turn}: score={score}, pieces={len(pieces)}, maxY={max_y:.2f}")
+
+            # ソ連建国検知（リアルタイム・1試合1回限り）
+            if not soviet_created:
+                if gs.get("makeSorenCount", 0) > 0 or any(p.get("type") == 15 for p in pieces):
+                    soviet_created = True
+                    log("!!! SOVIET UNION CREATED !!! ソ連建国達成！")
+                    # say即停止（ゲーム音声を聞かせるため）
+                    import subprocess
+                    subprocess.run(["pkill", "-x", "say"], capture_output=True)
+                    # フラグファイル作成（eloop.shが参照）
+                    os.makedirs("tmp", exist_ok=True)
+                    with open("tmp/.soviet_created", "w") as flag_f:
+                        flag_f.write(f"{turn}\n")
+                    log("say停止完了 → ゲーム音声再生中")
 
             # 盤面解析
             analysis = build_analysis(gs)
@@ -287,7 +306,7 @@ def run_game():
             log(f"  Decision: DROP:{drop_x:.3f} ({decision.get('reason', '')})")
 
             # 履歴記録
-            record_turn(history_f, turn, gs, decision, analysis)
+            record_turn(history_f, turn, gs, decision, analysis, soviet_created=soviet_created)
 
             # score_delta を更新 (前ターンとの差分)
             # (JSONLは追記済みなのでログ出力のみ)
