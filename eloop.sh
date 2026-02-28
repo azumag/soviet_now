@@ -897,7 +897,7 @@ start_radio_talk() {
 ちなみにですが、あなたは中華AI「GLM4.7」です。
 中国の企業が開発した非常に汎用性の高い大規模言語モデルです。
 
-【現在時刻】${current_time}（${time_period}）
+【現在時刻】${current_time} ${time_period}
 【時間帯の雰囲気】${time_mood}
 
 【今回の脱線テーマ指定】
@@ -1241,7 +1241,7 @@ generate_comment_response() {
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
 		cat > "$comment_prompt_file" <<COMMENTPROMPT
 あなたはソ連風ラジオDJ。リスナーのTwitchコメントに返事してください。
-（時刻: ${current_time} / ${time_period}）
+時刻: ${current_time} / ${time_period}
 
 【コメント】
 ${twitch_comments}
