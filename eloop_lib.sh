@@ -1007,7 +1007,7 @@ RADIOPROMPT
 			[ -z "$talk_summary" ] && talk_summary="(要約なし)"
 
 			echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts: ${talk_summary}" >> "$PAST_RADIO_TOPICS"
-			tail -10 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
+			tail -50 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
 			echo "$talk_body" > tmp/radio_talk.txt
 			touch tmp/radio_talk_playing
