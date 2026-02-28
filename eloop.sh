@@ -18,7 +18,7 @@ HISTORY_DIR="game_history"
 HISTORY_FILE="$HISTORY_DIR/latest.jsonl"
 
 # バッチサイズ（環境変数で上書き可）
-BATCH_SIZE=${BATCH_SIZE:-5}
+BATCH_SIZE=${BATCH_SIZE:-4}
 
 # 使用モデル
 MODEL_PRIMARY="glm"
