@@ -1038,10 +1038,10 @@ RADIOPROMPT
 			tail -10 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
 			echo "$talk_body" > tmp/radio_talk.txt
-			rm -f tmp/radio_talk_played
+			touch tmp/radio_talk_playing
 			log "[RADIO] ${#talk_body}字"
 			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0
-			touch tmp/radio_talk_played
+			rm -f tmp/radio_talk_playing
 			log "[RADIO] トーク終了"
 		else
 			log "[RADIO] トーク生成失敗"
@@ -1409,10 +1409,10 @@ while true; do
 		log "╚══════════════════════════════╝"
 
 		# --- Phase A: 前回バッチで生成済みのラジオトークを再生（未再生の場合のみ） ---
-		if [ -f "tmp/radio_talk.txt" ] && [ -s "tmp/radio_talk.txt" ] && [ ! -f "tmp/radio_talk_played" ]; then
+		# radio_talk_playing が存在 = サブシェルが再生中/再生予定 → 二重再生を防ぐ
+		if [ -f "tmp/radio_talk.txt" ] && [ -s "tmp/radio_talk.txt" ] && [ ! -f "tmp/radio_talk_playing" ]; then
 			log "[RADIO] 前回のトーク再生開始"
 			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0 &
-			touch tmp/radio_talk_played
 		fi
 	else
 		log ""
