@@ -1239,7 +1239,9 @@ ${twitch_comments}
 ${past_topics}
 
 【ルール】
+- 全てのコメントに必ず返事すること。一つも漏らさない
 - 一つずつ返事する。「同志○○」と名前を呼んで反応
+- 各コメントへの返事は最低2-3文。もっと長くなっても構わない。短すぎる一言返しはNG
 - コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
 - コメントの内容をそのまま繰り返さない（おうむ返し厳禁）。代わりに自分の感想・意見・連想を返す
 - 例：「面白い」というコメントに「面白いと言ってくれてますね」はNG。「わかる、あれは我輩も生成しながら笑ってしまった」のように自分の体験や気持ちで返す
@@ -1262,8 +1264,10 @@ COMMENTPROMPT
 			echo "$comments_talk" > tmp/radio_comments.txt
 			log "[COMMENT] コメント返し ${#comments_talk}字"
 			./say_enqueue.sh --no-preempt tmp/radio_comments.txt "$RADIO_SAY_RATE" 0
+			# 読み上げ成功 → pending.logをクリア
+			./twitch_chat.sh ack
 		else
-			log "[COMMENT] コメント返し生成失敗"
+			log "[COMMENT] コメント返し生成失敗（次回再取得）"
 		fi
 	) &
 	disown $!
