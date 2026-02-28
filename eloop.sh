@@ -1217,6 +1217,46 @@ _kill_comment_gen() {
 	fi
 }
 
+#--- コメント再生キュー処理 ---
+COMMENT_QUEUE_DIR="tmp/.comment_queue"
+mkdir -p "$COMMENT_QUEUE_DIR"
+
+_play_comment_queue() {
+	# キューにあるコメントを順番に再生
+	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
+		if [ -f "$qf" ]; then
+			log "[COMMENT] キュー再生: $qf"
+			./say_enqueue.sh --no-preempt "$qf" "$RADIO_SAY_RATE" 0
+			rm -f "$qf"
+		fi
+	done
+}
+
+_comment_player_pid=0
+
+start_comment_player() {
+	# 既存の再生プロセスが生きていたらそのまま
+	if [ "$_comment_player_pid" -ne 0 ] && kill -0 "$_comment_player_pid" 2>/dev/null; then
+		return
+	fi
+	(
+		while true; do
+			_play_comment_queue
+			sleep 5
+		done
+	) &
+	_comment_player_pid=$!
+	log "[COMMENT] 再生プロセス開始 (PID=$_comment_player_pid)"
+}
+
+stop_comment_player() {
+	if [ "$_comment_player_pid" -ne 0 ] && kill -0 "$_comment_player_pid" 2>/dev/null; then
+		kill "$_comment_player_pid" 2>/dev/null
+		wait "$_comment_player_pid" 2>/dev/null
+	fi
+	_comment_player_pid=0
+}
+
 #--- コメント返し（毎ゲーム） ---
 generate_comment_response() {
 	# 前回のコメント生成プロセスが残っていたら停止
@@ -1290,9 +1330,9 @@ COMMENTPROMPT
 		rm -f "$comment_prompt_file"
 
 		if [ -n "$comments_talk" ]; then
-			echo "$comments_talk" > tmp/radio_comments.txt
-			log "[COMMENT] コメント返し ${#comments_talk}字"
-			./say_enqueue.sh --no-preempt tmp/radio_comments.txt "$RADIO_SAY_RATE" 0
+			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
+			echo "$comments_talk" > "$queue_file"
+			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file"
 		else
 			log "[COMMENT] コメント返し生成失敗（次回再取得）"
 		fi
@@ -1351,7 +1391,10 @@ log "strategy.py → ${BATCH_SIZE}games → AI改善 → repeat"
 
 # Twitchチャットデーモン起動
 ./twitch_chat.sh start azumagbanjo
-trap '[ "${_improve_pid:-0}" -ne 0 ] && kill "$_improve_pid" 2>/dev/null; _kill_comment_gen; ./twitch_chat.sh stop; exit' EXIT INT TERM
+trap '[ "${_improve_pid:-0}" -ne 0 ] && kill "$_improve_pid" 2>/dev/null; _kill_comment_gen; stop_comment_player; ./twitch_chat.sh stop; exit' EXIT INT TERM
+
+# コメント再生プロセス起動
+start_comment_player
 
 # 前回中断時のリカバリ: 再生中フラグのゴミ掃除
 rm -f tmp/radio_talk_playing
@@ -1472,9 +1515,11 @@ while true; do
 			# コメント生成サブシェルも停止
 			_kill_comment_gen
 			# 既存の読み上げを全停止してキューもクリア
+			stop_comment_player
 			pkill -x say 2>/dev/null || true
 			pkill -f say_enqueue 2>/dev/null || true
 			rm -f tmp/.say_queue/content_*.txt tmp/.say_queue/pid tmp/.say_queue/token
+			rm -f "$COMMENT_QUEUE_DIR"/comment_*.txt
 			log "[CELEBRATION] 既存読み上げを全停止"
 			sleep 30
 			# 祝賀トーク再生
@@ -1482,6 +1527,7 @@ while true; do
 				./say_enqueue.sh --no-preempt tmp/radio_celebration.txt "$RADIO_SAY_RATE" 0
 			fi
 			rm -f tmp/.soviet_created
+			start_comment_player
 		fi
 
 		# スコア履歴
