@@ -123,6 +123,12 @@ def load_strategy_module():
     return mod
 
 
+def get_strategy_hash():
+    """strategy.py のMD5ハッシュ（先頭8文字）を返す"""
+    with open("strategy.py", "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()[:8]
+
+
 def build_analysis(game_state):
     """analyze_board の関数を呼んで analysis dict を構築"""
     try:
@@ -150,7 +156,7 @@ def build_analysis(game_state):
         return {"results": [], "same_type": [], "reactor": {}, "error": str(e)}
 
 
-def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=False):
+def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=False, strategy_hash=None):
     """1ターン分の履歴をJSONLに記録"""
     pieces = game_state.get("pieces", [])
     score = game_state.get("score", 0)
@@ -182,6 +188,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=
         "merge_available": has_merge,
         "best_merge_grade": best_grade,
         "reactor_reactive_pairs": reactive_pairs,
+        "strategy_hash": strategy_hash,
         "state_snapshot": {"pieces": piece_snapshot},
     }
 
@@ -235,6 +242,8 @@ def run_game():
     # strategy.py ロード
     try:
         strategy = load_strategy_module()
+        strategy_hash = get_strategy_hash()
+        log(f"Strategy hash: {strategy_hash}")
         if not hasattr(strategy, "decide"):
             log("ERROR: strategy.py に decide() がありません")
             return {"error": "no decide function", "score": 0, "turns": 0}
@@ -320,7 +329,7 @@ def run_game():
             log(f"  x={drop_x:+.2f} {short_reason}")
 
             # 履歴記録
-            record_turn(history_f, turn, gs, decision, analysis, soviet_created=soviet_created)
+            record_turn(history_f, turn, gs, decision, analysis, soviet_created=soviet_created, strategy_hash=strategy_hash)
 
             # score_delta を更新 (前ターンとの差分)
             # (JSONLは追記済みなのでログ出力のみ)
