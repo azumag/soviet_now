@@ -1193,8 +1193,27 @@ FIXEOF
 	log "[IMPROVE] バックグラウンド開始 (PID=$_improve_pid)"
 }
 
+#--- コメント返しプロセスのクリーンアップ ---
+_kill_comment_gen() {
+	local pidfile="tmp/.twitch_chat/comment_gen.pid"
+	if [ -f "$pidfile" ]; then
+		local old_pid
+		old_pid=$(cat "$pidfile")
+		if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+			# 子プロセス（opencode, script, say等）も含めて停止
+			pkill -P "$old_pid" 2>/dev/null
+			kill "$old_pid" 2>/dev/null
+			log "[COMMENT] 前回のコメント生成プロセス停止 (PID=$old_pid)"
+		fi
+		rm -f "$pidfile"
+	fi
+}
+
 #--- コメント返し（毎ゲーム） ---
 generate_comment_response() {
+	# 前回のコメント生成プロセスが残っていたら停止
+	_kill_comment_gen
+
 	# Twitchコメント差分取得
 	./twitch_chat.sh fetch
 
@@ -1241,10 +1260,11 @@ ${past_topics}
 【ルール】
 - 全てのコメントに必ず返事すること。一つも漏らさない
 - 一つずつ返事する。「同志○○」と名前を呼んで反応
+- 偉そうにしないで、フレンドリーに返事すること
 - 各コメントへの返事は最低2-3文。もっと長くなっても構わない。短すぎる一言返しはNG
 - コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
 - コメントの内容をそのまま繰り返さない（おうむ返し厳禁）。代わりに自分の感想・意見・連想を返す
-- 例：「面白い」というコメントに「面白いと言ってくれてますね」はNG。「わかる、あれは我輩も生成しながら笑ってしまった」のように自分の体験や気持ちで返す
+- 例：「面白い」というコメントに「面白いと言ってくれてますね」はNG。「わかる、あれは私も生成しながら笑ってしまった」のように自分の体験や気持ちで返す
 - コメントから話を膨らませる：関連する自分のエピソード、ツッコミ、豆知識、冗談などを足す
 - リスナーの気持ちに寄り添いつつ、DJとしての独自の視点や感情を込める
 - 話し言葉で、カジュアルなトーン
@@ -1270,7 +1290,9 @@ COMMENTPROMPT
 			log "[COMMENT] コメント返し生成失敗（次回再取得）"
 		fi
 	) &
-	disown $!
+	local comment_pid=$!
+	echo "$comment_pid" > tmp/.twitch_chat/comment_gen.pid
+	disown "$comment_pid"
 }
 
 generate_soviet_celebration() {
@@ -1323,7 +1345,7 @@ log "strategy.py → ${BATCH_SIZE}games → AI改善 → repeat"
 
 # Twitchチャットデーモン起動
 ./twitch_chat.sh start azumagbanjo
-trap '[ "${_improve_pid:-0}" -ne 0 ] && kill "$_improve_pid" 2>/dev/null; ./twitch_chat.sh stop; exit' EXIT INT TERM
+trap '[ "${_improve_pid:-0}" -ne 0 ] && kill "$_improve_pid" 2>/dev/null; _kill_comment_gen; ./twitch_chat.sh stop; exit' EXIT INT TERM
 
 # 前回中断時のリカバリ: .bak が残っていて strategy.py がない場合は復元
 if [ ! -f "$STRATEGY_FILE" ] && [ -f "${STRATEGY_FILE}.bak" ]; then
