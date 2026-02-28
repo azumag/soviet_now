@@ -9,35 +9,33 @@
 # AI改変禁止: decide() シグネチャ、if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v329: ターン数最大化アプローチ（第2版） - v329初版の失敗（23ターン・232点）を受けて、精度ボーナスの過大補正を修正。
-#   v329初版分析から特定した問題:
-#   - 精度ボーナス過大: drift < 0.05で+1000が高すぎて、マージ機会を回避してしまっている
-#   - ターン数過少: 23ターン（目標90+）と大幅に不足。保守的すぎる
-#   - スコア過少: 232点（v328の1509点より大幅に低い）
-#   - マージボーナス過少: DIRECT=600が低すぎて、マージを十分に促進していない
+# v330: 微調整・ターン数優先版 - v329の失敗（パラドックスの誤解釈）を受けて、v328の成功構造に戻し、微調整のみ実施。
+#   v329失敗分析から特定した問題:
+#   - パラドックスの誤解釈: 「高スコア群はmerge_rateが低い」を「マージを避けるべき」と誤解
+#   - 実際の意味: 高スコア群は「無理にマージしていない」のではなく「自然な配置でマージしている」
+#   - 複雑化の失敗: v329は精度ボーナス、先読み、連鎖など多数の新機能を追加したが、どれも効果がなかった
+#   - ゲーム終了: v329は23ターンで終了し、目標の90ターンに遠く及ばなかった
+#   - v329の根本的な間違い: ターン数最大化は「保守的なプレイ」ではなく「盤面を安定させながら自然に成長させること」
 #   根本原因:
-#   - v329初版は「精度=長期的安定性」という前提で精度ボーナスを1000に設定したが、これは間違い
-#   - 実際には「精度が高すぎるとマージ機会を逃してターン数が減る」
-#   - ターン数最大化の正しい意味は「無理にマージせず、自然な配置で長くプレイする」こと
-#   - パラドックス解釈の修正: 高スコア群のmerge_rateが低いのは「マージを逃している」のではなく「無理にマージしていない」
-#   解決策（ターン数最大化アプローチ第2版）:
-#   - 精度ボーナス大幅削減: 1000→200、500→100、200→50。精度は重要だが、絶対的ではない
-#   - マージボーナス強化: DIRECT=1200、NEAR=600、FAR=200に戻す。マージ機会を適度に評価
-#   - 高度ペナルティ軽減維持: height_multを低めに設定（LOW=0.8/MEDIUM=1.5/HIGH=1.2/CRITICAL=1.0）
-#   - 先読みマージ準備維持: next/type Nなら、type N-1の重心付近にボーナス（200/400）
-#   - マージ後価値ボーナス維持: マージ後のタイプが大きいほどボーナス（100/200/300）
-#   - 連鎖マージボーナス維持: 直近5ターン内にマージがあったらボーナス（100/300）
-#   - 最適マージボーナス削除: drift < 0.05かつmergeの+500は削除。精度とマージの相乗効果は過大評価
-#   - バランス補正維持: 一律20.0でフェーズ感応化は破棄
-#   核心的発見: ターン数最大化は「精度優先」ではなく「自然な配置」。無理にマージせず、盤面が自然に成長するように配置し、マージ機会があれば活用する。
-#   成功基準: avg_scoreが1500以上、またはavg_turnsが70以上
-#   失敗基準: avg_scoreが1000未満、またはavg_turnsが50未満
+#   - v328はavg_score=1509.0で十分に機能しており、大きな改善が必要だったわけではない
+#   - パラドックスの発見は「より良い戦略」ではなく「v328の理解」を促すものだった
+#   - v328の成功要素: フェーズ感応化、適度なマージボーナス、高度管理、バランス補正
+#   解決策（微調整・ターン数優先版）:
+#   - v329の全機能を破棄し、v328のシンプル構造に戻す
+#   - 微調整のみ: マージボーナスを5%削減（DIRECT=1200→1140、NEAR=600→570、FAR=200→190）
+#   - 微調整のみ: 高度ペナルティを5%削減（50.0→47.5）。盤面成長を少し許容
+#   - v328の全要素維持: フェーズ閾値（0.8/1.8/3.0）、height_mult（LOW=1.0/MEDIUM=2.4/HIGH=1.8/CRITICAL=1.0）、merge_mult（HIGH=1.5）
+#   - v328の全要素維持: バランス補正（20.0/30.0/40.0）、HIGH_TOWERペナルティ（2.0/1.5倍）、nextNext中央寄せ（50.0）
+#   核心的発見: パラドックス解釈の誤りを修正し、v328の成功構造を維持しつつ、微調整でターン数を少し増やす。
+#   成功基準: avg_scoreが1600以上（v328の1509.0より100点改善）、またはavg_turnsが90以上
+#   失敗基準: avg_scoreがv328の1509.0未満
 # [BEST:3689] v128: HIGHフェーズマージ優先版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
+# [BEST:1509] v328: HIGHフェーズマージ強化・v42ベース版
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """ターン数最大化アプローチ（第2版）。精度ボーナスを削減し、自然な配置でターン数を最大化。"""
+    """微調整・ターン数優先版。v328の成功構造を維持しつつ、微調整でターン数を少し増やす。"""
 
     results = analysis.get("results", [])
 
@@ -52,32 +50,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v329第2版: 高度ペナルティ軽減を維持）
+    # フェーズ判定（v330: v328の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 0.8  # v329第2版: 軽減維持、盤面成長を許容
-        merge_mult = 1.0
+        height_mult = 1.0  # v330: v328の1.0を維持
+        merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.5  # v329第2版: 軽減維持、HIGH到達を早期に許容
+        height_mult = 2.4  # v330: v328の2.4を維持、HIGH到達遅延
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.2  # v329第2版: 軽減維持、マージ優先を徹底
-        merge_mult = 1.0
+        height_mult = 1.8  # v330: v328の1.8を維持、高度管理緩和・マージ優先
+        merge_mult = 1.5  # v330: v328の1.5を維持、HIGHフェーズのみマージボーナス強化
     else:
         phase = "CRITICAL"
-        height_mult = 1.0  # v329第2版: 軽減維持、マージ絶対優先
-        merge_mult = 1.0
+        height_mult = 1.0  # v330: v328の1.0を維持
+        merge_mult = 0.6  # v330: v328の0.6を維持、マージ絶対優先
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
-
-    # マージ履歴（連鎖マージボーナス用）
-    merge_history = analysis.get("merge_history", [])
 
     for result in results:
         x = result["x"]
@@ -89,91 +84,58 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v329第2版: ターン数最大化アプローチ（精度ボーナス削減版） ===
+        # === v330: 微調整・ターン数優先版 ===
 
-        # 1. ドリフト精度ボーナス（大幅削減、精度は重要だが絶対的ではない）
-        drift_total = abs(drift_x) + drift_unc
-        if drift_total < 0.05:
-            score += 200.0  # v329第2版: 1000→200に大幅削減
-            reasons.append("PRECISION_HIGH")
-        elif drift_total < 0.10:
-            score += 100.0  # v329第2版: 500→100に削減
-            reasons.append("PRECISION_MED")
-
-        # 2. マージグレードによるスコア（v328の値に戻す、一律化は破棄）
+        # 1. マージグレードによるスコア（v330: v328の値から5%削減、微調整）
         if merge_grade == "DIRECT":
-            score += 1200.0  # v329第2版: v328の1200に戻す
+            score += 1140.0 * merge_mult  # v330: v328の1200から5%削減
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0  # v329第2版: v328の600に戻す
+            score += 570.0 * merge_mult  # v330: v328の600から5%削減
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0  # v329第2版: v328の200に戻す
+            score += 190.0 * merge_mult  # v330: v328の200から5%削減
             reasons.append("FAR_MERGE")
 
-        # 3. 高度によるペナルティ（軽減維持、盤面成長を許容）
-        height_penalty = landing_y * 40.0 * height_mult  # v329第2版: 30.0→40.0に微増
+        # 2. 高度によるペナルティ（v330: v328の値から5%削減、盤面成長を少し許容）
+        height_penalty = landing_y * 47.5 * height_mult  # v330: v328の50.0から5%削減
 
-        # HIGH_TOWERペナルティ（v329第2版: 軽減維持、盤面成長を許容）
+        # HIGH_TOWERペナルティ（v330: v328の値を維持）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v329第2版: 1.3倍を維持
+            height_penalty *= 2.0  # v330: v328の2.0倍を維持
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.2  # v329第2版: 1.2倍を維持
+            height_penalty *= 1.5  # v330: v328の1.5倍を維持
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 4. 先読みマージ準備（next/type Nなら、type N-1の重心付近に配置）
-        if next_type > 1:
-            # type N-1のピースを探す
-            target_pieces = [p for p in pieces if p["type"] == next_type - 1]
-            if target_pieces:
-                # 重心を計算
-                center_x = sum(p["x"] for p in target_pieces) / len(target_pieces)
-                distance = abs(x - center_x)
-                if distance < 0.5:
-                    score += 400.0
-                    reasons.append("LOOKAHEAD_HIGH")
-                elif distance < 1.0:
-                    score += 200.0
-                    reasons.append("LOOKAHEAD_MED")
+        # 3. ドリフトによるペナルティ（v330: v328の一律30.0を維持）
+        drift_penalty = (abs(drift_x) + drift_unc) * 30.0
+        score -= drift_penalty
 
-        # 5. マージ後価値ボーナス（マージ後のタイプが大きいほど価値が高い）
-        if merge_grade != "NO":
-            current_type = next_piece.get("type", 0)
-            # マージ後のタイプは current_type + 1（同じタイプ同士でマージするとき）
-            merged_type = current_type + 1
-            if merged_type >= 8:
-                score += 300.0
-                reasons.append("HIGH_VALUE")
-            elif merged_type >= 6:
-                score += 200.0
-                reasons.append("MED_VALUE")
-            elif merged_type >= 4:
-                score += 100.0
-                reasons.append("LOW_VALUE")
+        # 4. 左右バランス補正（v330: v328のフェーズ感応化を維持）
+        if phase == "HIGH":
+            balance_strength = 40.0  # v330: v328の40.0を維持
+        elif phase == "MEDIUM":
+            balance_strength = 30.0  # v330: v328の30.0を維持
+        else:
+            balance_strength = 20.0  # v330: v328の20.0を維持
 
-        # 6. 連鎖マージボーナス（直近5ターン内にマージがあったらボーナス）
-        recent_merges = sum(1 for m in merge_history[-5:] if m)
-        if recent_merges >= 2:
-            score += 300.0
-            reasons.append("CHAIN_MERGE")
-        elif recent_merges >= 1:
-            score += 100.0
-            reasons.append("RECENT_MERGE")
-
-        # v329第2版: 最適マージボーナス（drift < 0.05かつmerge）は削除。相乗効果は過大評価
-
-        # 7. 左右バランス補正（一律20.0、フェーズ感応化は破棄）
-        balance_strength = 20.0
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
         balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
+
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
+
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v330: v328の一律50.0を維持）
+        if next_next_type == next_type:
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            score += center_bonus
+            reasons.append("NEXT_SAME")
 
         # スコア更新
         if score > best_score:
@@ -221,16 +183,9 @@ if __name__ == "__main__":
                 for p in same_type
             ],
             "reactor": reactor,
-            "merge_history": [],  # TODO: 履歴管理が必要
         }
     except Exception as e:
-        analysis = {
-            "results": [],
-            "same_type": [],
-            "reactor": {},
-            "merge_history": [],
-            "error": str(e),
-        }
+        analysis = {"results": [], "same_type": [], "reactor": {}, "error": str(e)}
 
     result = decide(game_state, analysis)
     print(json.dumps(result, ensure_ascii=False, indent=2))
