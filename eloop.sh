@@ -1162,6 +1162,13 @@ FIXEOF
 				rm -f "$fix_prompt_file"
 			fi
 
+			# strategy.py が実際に変更されたかチェック
+			if diff -q "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" >/dev/null 2>&1; then
+				log "[IMPROVE] 差分なし (retry $retry/3) → AIがファイルを変更しなかった"
+				VALIDATE_ERROR="AIが strategy.py を変更しなかった。必ず strategy.py を編集して改善すること。"
+				continue
+			fi
+
 			if validate_strategy; then
 				log "[IMPROVE] バリデーション成功"
 				# 改善前後の差分を取得（ラジオトーク用）
@@ -1177,7 +1184,7 @@ FIXEOF
 		done
 
 		if [ "$improve_ok" = false ]; then
-			log "[IMPROVE] バリデーション失敗 → 復元"
+			log "[IMPROVE] 改善失敗（差分なし or バリデーション失敗） → 復元"
 			mv "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
 		fi
 
