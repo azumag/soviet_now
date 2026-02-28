@@ -507,6 +507,7 @@ _run_opencode_radio() {
 # バックグラウンドでラジオトーク生成→再生
 start_radio_talk() {
 	local score="$1" turns="$2" game_num="$3" best_score="$4" diff_content="${5:-}" soviet_created="${6:-false}"
+	local batch_scores="${7:-}" batch_start_game="${8:-}" batch_end_game="${9:-}" batch_num="${10:-}"
 
 	# 前の生成プロセスがまだ動いていたら止める（sayはnohupで独立しているので残る）
 	if [ "${_radio_pid:-0}" -ne 0 ] && kill -0 "$_radio_pid" 2>/dev/null; then
@@ -915,12 +916,13 @@ ${past_topics:-まだ過去のトークはありません。自由に話して�
 
 【状況】
 「ソ連ゲーム」をAIが自動プレイしています。
-先ほど、ゲーム${game_num}回目が終了しました。
-結果: スコア${score}点、${turns}ターンでゲームオーバー。
+$([ -n "$batch_num" ] && echo "バッチ#${batch_num}（ゲーム#${batch_start_game}〜#${batch_end_game}の${BATCH_SIZE:-10}試合）が完了しました。")
+$([ -n "$batch_scores" ] && echo "各試合のスコア:${batch_scores}")
+直近の試合: ゲーム${game_num}回目、スコア${score}点、${turns}ターン。
 現在の最高スコア: ${best_score}点。
 $([ "$soviet_created" = "true" ] && echo '
-【特大ニュース】今回の試合でソ連が建国されました！
-レベル15のソ連ピースが誕生した歴史的な試合です。
+【特大ニュース】今バッチの中でソ連が建国されました！
+レベル15のソ連ピースが誕生した歴史的なバッチです。
 この偉業をトークの中で盛大に祝ってください。')
 
 国旗の進化ルート（小さい順）:
@@ -970,9 +972,10 @@ AI（あなた）がプレイをしている間、リスナーを楽しませる
    - 今の時間帯ならではの一言（深夜なら「眠いけど興奮」、朝なら「朝から熱い」、昼なら「ランチ食べました?」）
    - 上に載せた最新ニュースから1つ選んで、本文の内容を踏まえて感想・考察・ツッコミを3〜5文でしっかり語る（ニュースがあれば）
 
-2. 試合結果の振り返り（国名をたくさん使って具体的に）
-   - 今回の${score}点と最高スコア${best_score}点の比較。感情たっぷりに喜ぶ or 悔しがる or 呆れる
-   - ${turns}ターンという長さについて。短ければ「早すぎでしょ」、長ければ「粘りましたね」
+2. バッチ全体の振り返り（国名をたくさん使って具体的に）
+   - ${BATCH_SIZE:-10}試合分のスコアの浮き沈みをドラマチックに語る。良かった試合・悪かった試合に触れる
+   - 最高スコア${best_score}点との比較。感情たっぷりに喜ぶ or 悔しがる or 呆れる
+   - バッチ全体の傾向（安定してたか、ムラがあったか、尻上がりだったか等）
    - 最近の戦略がどんな方針だったか
 
 3. 雑談コーナー: 今回のテーマを深掘り
@@ -1187,7 +1190,7 @@ FIXEOF
 		local last_score best_score_now
 		last_score=$(echo "$batch_scores" | awk '{print $NF}')
 		best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
-		start_radio_talk "${last_score:-0}" "$turns_snapshot" "$game_num_snapshot" "$best_score_now" "$strategy_diff" "$batch_soviet"
+		start_radio_talk "${last_score:-0}" "$turns_snapshot" "$game_num_snapshot" "$best_score_now" "$strategy_diff" "$batch_soviet" "$batch_scores" "$batch_start_game" "$batch_end_game" "$batch_num"
 	) &
 	_improve_pid=$!
 	log "[IMPROVE] バックグラウンド開始 (PID=$_improve_pid)"
@@ -1413,10 +1416,11 @@ while true; do
 		log "║  Batch #${BATCH_NUM} (${BATCH_SIZE} games)         ║"
 		log "╚══════════════════════════════╝"
 
-		# --- Phase A: 前回バッチで生成済みのラジオトークを再生 ---
-		if [ -f "tmp/radio_talk.txt" ] && [ -s "tmp/radio_talk.txt" ]; then
+		# --- Phase A: 前回バッチで生成済みのラジオトークを再生（未再生の場合のみ） ---
+		if [ -f "tmp/radio_talk.txt" ] && [ -s "tmp/radio_talk.txt" ] && [ ! -f "tmp/radio_talk_played" ]; then
 			log "[RADIO] 前回のトーク再生開始"
 			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0 &
+			touch tmp/radio_talk_played
 		fi
 	else
 		log ""
