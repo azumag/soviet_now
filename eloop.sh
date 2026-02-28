@@ -890,13 +890,6 @@ start_radio_talk() {
 		echo "$soviet_key" >> "$past_soviet_file"
 		tail -60 "$past_soviet_file" > "${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
 
-		# 10回に1回だけ「AIが自分を書き換える話」を追加
-		local ai_special=""
-		if [ $((RANDOM % 10)) -eq 0 ]; then
-			ai_special="
-【特別コーナー】今回は特別に、AIが自分で自分の作戦を書き換えるということ自体について、哲学的な考察や感想、冗談を交えてたっぷり語ってください。"
-		fi
-
 		cat > "$prompt_file" <<RADIOPROMPT
 あなたはゲーム実況ラジオのパーソナリティです。
 ただし、同時にこのゲームを自動でプレイしているAIでもあります。
