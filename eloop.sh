@@ -1122,11 +1122,9 @@ run_improve_background() {
 			[ -f "$hf" ] && hall_of_fame_files="$hall_of_fame_files $hf"
 		done
 
-		# 参照データ: バッチサマリー + ベスト/ワーストJSONL + strategy + game_state + 過去戦略
-		local improve_ref_files="$STRATEGY_FILE $batch_summary_file"
-		[ -n "$best_game_path" ] && [ -f "$best_game_path" ] && improve_ref_files="$improve_ref_files $best_game_path"
-		[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && improve_ref_files="$improve_ref_files $worst_game_path"
-		improve_ref_files="$improve_ref_files $GAME_STATE $past_strategy_files $hall_of_fame_files"
+		# 参照データ: バッチサマリー + strategy + game_state + 過去戦略
+		# JSONLは巨大(200KB+)でコンテキスト超過するため渡さない（サマリーに統計が含まれている）
+		local improve_ref_files="$STRATEGY_FILE $batch_summary_file $GAME_STATE $past_strategy_files $hall_of_fame_files"
 
 		for retry in $(seq 1 3); do
 			if [ "$retry" -eq 1 ]; then
