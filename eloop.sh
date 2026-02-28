@@ -530,9 +530,8 @@ start_radio_talk() {
 			news_headlines=$(cat "tmp/news.txt")
 		fi
 
-		# 10回に1回だけ戦略履歴・差分・解説コーナーを含める
-		local include_strategy_history=false
-		[ $((RANDOM % 10)) -eq 0 ] && include_strategy_history=true
+		# 戦略履歴・差分・解説コーナーを毎回含める
+		local include_strategy_history=true
 
 		# 直近の戦略の変更履歴を収集（10回に1回のみ）
 		local history_context=""
@@ -1005,7 +1004,7 @@ $([ "$include_strategy_history" = true ] && echo '5. 作戦変更の解説コー
    - 「さて、そろそろAIの作戦会議も終わる頃でしょうか」
 
 【出力ルール】
-- 4000文字以上書くこと。これは絶対に守る。短いトークは禁止。ラジオ番組なので間を持たせる
+- 8000文字以上書くこと。これは絶対に守る。短いトークは禁止。ラジオ番組なので間を持たせる
 - プログラミング用語やコード上の変数名は絶対に使わない
 - ピースは必ず国名で呼ぶ
 - 話し言葉で書く。「ですます」と「だよね」を混ぜたカジュアルなトーン
@@ -1287,7 +1286,7 @@ generate_soviet_celebration() {
 ゲーム${game_num}回目、スコア${score}点、${turns}ターンでの偉業。現在時刻: ${current_time}。
 
 【ルール】
-- 500〜1000文字程度の短い祝賀トーク
+- 2000文字程度の祝賀トーク
 - ソ連建国の興奮と感動を全力で表現
 - 国旗の進化ルート（アルメニア→エストニア→…→ロシア→ソ連）を振り返る
 - 大げさな宣言調も交えて

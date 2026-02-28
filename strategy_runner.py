@@ -248,6 +248,12 @@ def run_game():
     prev_score = 0
     soviet_created = False
 
+    # 前回のソ連フラグをクリア（ゲーム開始時に毎回リセット）
+    try:
+        os.remove("tmp/.soviet_created")
+    except FileNotFoundError:
+        pass
+
     with open(HISTORY_FILE, "w") as history_f:
         while True:
             # MOVE状態待ち
@@ -274,9 +280,11 @@ def run_game():
 
             # ソ連建国検知（リアルタイム・1試合1回限り）
             if not soviet_created:
-                if gs.get("makeSorenCount", 0) > 0 or any(p.get("type") == 15 for p in pieces):
+                # type==15 のピースがボード上（y < 4.0）に存在するかチェック
+                soviet_pieces = [p for p in pieces if p.get("type") == 15 and p.get("y", 10) < 4.0]
+                if gs.get("makeSorenCount", 0) > 0 or (len(soviet_pieces) > 0 and score >= 3000):
                     soviet_created = True
-                    log("!!! SOVIET UNION CREATED !!! ソ連建国達成！")
+                    log(f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} soviet_pieces={len(soviet_pieces)} makeSorenCount={gs.get('makeSorenCount', 0)}")
                     # say即停止（ゲーム音声を聞かせるため）
                     import subprocess
                     subprocess.run(["pkill", "-x", "say"], capture_output=True)
@@ -285,6 +293,8 @@ def run_game():
                     with open("tmp/.soviet_created", "w") as flag_f:
                         flag_f.write(f"{turn}\n")
                     log("say停止完了 → ゲーム音声再生中")
+                elif len(soviet_pieces) > 0:
+                    log(f"WARNING: type-15 piece detected but score too low ({score}<3000), ignoring (possible false positive)")
 
             # 盤面解析
             analysis = build_analysis(gs)
