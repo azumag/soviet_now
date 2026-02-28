@@ -456,7 +456,7 @@ except:
 #--- ラジオトーク（AI改善の待ち時間に再生） ---
 RADIO_AGENT="zai"
 RADIO_FALLBACK="glmflash"
-RADIO_SAY_RATE=120
+RADIO_SAY_RATE=140
 PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
 _radio_pid=0
 
