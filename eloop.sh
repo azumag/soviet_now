@@ -1206,8 +1206,9 @@ generate_comment_response() {
 	# 前回のコメント生成プロセスが残っていたら停止
 	_kill_comment_gen
 
-	# Twitchコメント差分取得
+	# Twitchコメント差分取得 → 即ack（サブシェルkill時の重複防止）
 	./twitch_chat.sh fetch
+	./twitch_chat.sh ack
 
 	local twitch_comments=""
 	if [ -f "tmp/twitch_comments.txt" ] && [ -s "tmp/twitch_comments.txt" ]; then
@@ -1276,8 +1277,6 @@ COMMENTPROMPT
 			echo "$comments_talk" > tmp/radio_comments.txt
 			log "[COMMENT] コメント返し ${#comments_talk}字"
 			./say_enqueue.sh --no-preempt tmp/radio_comments.txt "$RADIO_SAY_RATE" 0
-			# 読み上げ成功 → pending.logをクリア
-			./twitch_chat.sh ack
 		else
 			log "[COMMENT] コメント返し生成失敗（次回再取得）"
 		fi
@@ -1450,6 +1449,11 @@ while true; do
 		if [ "$SOVIET_CREATED" = "true" ]; then
 			log "!!! SOVIET CREATED !!!"
 			BATCH_SOVIET=true
+			# 既存の読み上げを全停止してキューもクリア
+			pkill -x say 2>/dev/null || true
+			pkill -f say_enqueue 2>/dev/null || true
+			rm -f tmp/.say_queue/content_*.txt tmp/.say_queue/pid tmp/.say_queue/token
+			log "[CELEBRATION] 既存読み上げを全停止"
 			sleep 30
 			generate_soviet_celebration "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY"
 			rm -f tmp/.soviet_created
