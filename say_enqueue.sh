@@ -1,7 +1,9 @@
 #!/bin/bash
 # say_enqueue.sh - mkdirロックベースのsayキュー（最新が勝つ・プリエンプション付き）
 #
-# 使い方: ./say_enqueue.sh <content_file> [rate] [pre_delay_sec]
+# 使い方: ./say_enqueue.sh [--no-preempt] <content_file> [rate] [pre_delay_sec]
+#
+# --no-preempt: プリエンプションチェックをスキップ（コメント読み上げ等、途中で切られたくない場合）
 #
 # 動作:
 #   1. コンテンツコピー + トークン登録
@@ -14,10 +16,17 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
+# --no-preempt フラグ処理
+NO_PREEMPT=false
+if [ "${1:-}" = "--no-preempt" ]; then
+    NO_PREEMPT=true
+    shift
+fi
+
 QUEUE_DIR="tmp/.say_queue"
 mkdir -p "$QUEUE_DIR"
 
-CONTENT_FILE="${1:?Usage: say_enqueue.sh <content_file> [rate]}"
+CONTENT_FILE="${1:?Usage: say_enqueue.sh [--no-preempt] <content_file> [rate]}"
 RATE="${2:-120}"
 
 PID_FILE="$QUEUE_DIR/pid"
@@ -45,6 +54,7 @@ echo "$MY_TOKEN" > "$TOKEN_FILE"
 _log() { echo "[say_enqueue $(date '+%H:%M:%S')] $*" >&2; }
 
 _is_preempted() {
+    [ "$NO_PREEMPT" = true ] && return 1
     [ "$(cat "$TOKEN_FILE" 2>/dev/null)" != "$MY_TOKEN" ]
 }
 

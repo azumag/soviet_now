@@ -940,6 +940,7 @@ $([ -n "$twitch_comments" ] && echo '6. リスナーコメント返しコーナ�
    - コメントに共感したり、ツッコんだり、膨らませたり、自然なラジオトーク風に
    - コメントがなかった場合はこのセクションは省略してOK
    - 人の名前を呼ぶときは、名前の後ろに「同志」をつけるとソ連っぽさが出ていいかもしれませんね
+   - 【重要】コメント返しは「===COMMENTS===」の後に書くこと（下の出力ルール参照）
 ')
 7. 時間帯に合わせたエンディング
    - 深夜なら「おやすみなさい」、朝なら「いってらっしゃい」、昼なら「午後も頑張りましょう」的な
@@ -955,7 +956,14 @@ $([ -n "$twitch_comments" ] && echo '6. リスナーコメント返しコーナ�
 - ソ連っぽい言い回しをさりげなく混ぜる。やりすぎず、スパイス程度に。ただし「同志」は使いすぎないこと（トーク全体で最大1回まで）
 - マークダウンや記号は使わない。読み上げ用のプレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要
-- トーク本文の最後に必ず改行して「===SUMMARY===」と1行書き、その次の行に今回話した主な話題を30文字以内で要約すること（例: アルメニア料理とバイカル湖の話）。これは重複回避に使うので必ず出力すること
+- 【出力構造】以下の順序で出力すること:
+  1. トーク本文（試合結果・雑談・ソ連ネタ・エンディング）
+  2. 「===COMMENTS===」（コメントがある場合のみ）
+  3. リスナーコメント返し本文（コメントがある場合のみ）
+  4. 「===SUMMARY===」
+  5. 要約（30文字以内）
+- コメントがない場合は ===COMMENTS=== セクションは省略してよい
+- ===SUMMARY=== は必ず出力すること（重複回避に使う）
 RADIOPROMPT
 
 		log "[RADIO] トーク生成中..."
@@ -967,9 +975,13 @@ RADIOPROMPT
 		rm -f "$prompt_file"
 
 		if [ -n "$talk" ]; then
-			# トーク本文と要約を分離
-			local talk_body talk_summary
-			talk_body=$(echo "$talk" | sed '/^===SUMMARY===/,$d')
+			# トーク本文・コメント返し・要約を分離
+			local talk_body talk_comments talk_summary
+			# ===COMMENTS=== より前がトーク本文
+			talk_body=$(echo "$talk" | sed '/^===COMMENTS===/,$d' | sed '/^===SUMMARY===/,$d')
+			# ===COMMENTS=== と ===SUMMARY=== の間がコメント返し
+			talk_comments=$(echo "$talk" | sed -n '/^===COMMENTS===/,/^===SUMMARY===/p' | sed '1d;$d')
+			# ===SUMMARY=== 以降が要約
 			talk_summary=$(echo "$talk" | sed -n '/^===SUMMARY===/,$ p' | tail -n +2)
 
 			# 要約が取れなかった場合のフォールバック
@@ -977,16 +989,21 @@ RADIOPROMPT
 				talk_summary="(要約なし)"
 			fi
 
-			# 本文のみをファイルに保存・sayに渡す
-			echo "$talk_body" > tmp/radio_talk.txt
-
 			# 過去トーク記録（1行1レコード、直近10件保持）
 			echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts: ${talk_summary}" >> "$PAST_RADIO_TOPICS"
 			tail -10 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
-			log "[RADIO] say_enqueue に登録 (${#talk_body}文字)"
-			# say_enqueue.sh が前のsay終了を待ち、プリエンプション対応で再生
-			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE"
+			# コメント返しがあれば先にプリエンプト不可で再生
+			if [ -n "$talk_comments" ]; then
+				echo "$talk_comments" > tmp/radio_comments.txt
+				log "[RADIO] コメント返し say_enqueue (--no-preempt, ${#talk_comments}文字)"
+				./say_enqueue.sh --no-preempt tmp/radio_comments.txt "$RADIO_SAY_RATE" 0
+			fi
+
+			# トーク本文をsay_enqueueで再生（プリエンプト可）
+			echo "$talk_body" > tmp/radio_talk.txt
+			log "[RADIO] トーク本文 say_enqueue (${#talk_body}文字)"
+			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0
 			log "[RADIO] トーク終了"
 		else
 			log "[RADIO] トーク生成失敗"

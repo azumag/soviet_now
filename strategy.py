@@ -11,36 +11,44 @@
 # --- 変更履歴 ---
 # [BEST:3689] v128: HIGHフェーズマージ優先版 - v127の失敗（スコア724、HIGHフェーズ10ターン中9ターンでマージ不可）を受けて、HIGHフェーズでのマージ機会損失を特定。履歴分析でv127の高度管理がHIGHフェーズで過剰に強化されていることが原因を特定（HIGHフェーズのdecision_reasonはHIGH_TOWERが1回だが、HIGH_LAYERが5回で高度管理が支配的）。（1）HIGHフェーズ高度管理大幅緩和：height_multをv42の2.6から1.8に大幅に引き下げ（v84の2.2よりも緩和し、マージ優先を徹底）。（2）マージボーナス強化：v42の強力な値（DIRECT=1200/NEAR=600/FAR=200）を維持し、高度管理緩和と相乗効果。（3）HIGHフェーズHIGH_TOWERペナルティ緩和：v84の1.3倍を維持し、height_mult大幅緩和と相乗効果。（4）v42のシンプル構造を維持：NO_MERGEペナルティの「入れるか入れないか」の振り子を回避し、第三の選択肢（マージボーナス強化・高度管理大幅緩和）を採用。振り子パターン（NO_MERGEペナルティ、height_multiplier微調整）をHIGHフェーズでのマージ優先徹底で解消。コード量維持（約110行）。
 # v172-v174: TOWERペナルティ振り子パターン（復帰→緩和→削除→復帰）
-# v205-v207: 指数関数マージボーナススケーリングの失敗パターン - v205（スコア702）、v206（スコア1176）、v207（スコア1710）で、指数スケーリング（2x~50x）による過剰なマージインセンティブが、盤面の急激な上昇を引き起こし、HIGH_TOWERペナルティを過剰にトリガー。MEDIUMフェーズのheight_mult=2.4（v207）はMEDIUM→HIGHへの遷移を急激にし、HIGHフェーズでのマージ機会を損失。
-# v208: v128回帰・MEDIUM遷移改善版 - v205-v207の失敗（指数スケーリング過剰、HIGH_TOWER100%発動、CRITICAL到達）を受けて、振り子パターンを回避しv128の成功構造への回帰を実施。v207履歴分析で特定した問題: - 指数スケーリング（2x~50x）が過剰で盤面が高くなりすぎた - MEDIUMフェーズheight_mult=2.4がMEDIUM→HIGH遷移を急激にし、HIGHフェーズ期間が短縮 - CRITICALフェーズ到達（max_y=3.54）でゲーム終了 - HIGH_TOWERがHIGHフェーズで100%発動しマージ機会を損失 根本原因: - v128の成功構造（固定マージボーナス、シンプルなルール）を複雑な指数スケーリングで破壊した - MEDIUMフェーズのheight_mult=2.4はv42の遺産で、HIGHへの遷移を急激にする - v128のシンプルさが重要：固定マージボーナス（DIRECT=1200/NEAR=600/FAR=200）、height_mult=1.8（HIGH/LOW）、フェーズごとの明確なルール 解決策（振り子パターン解消のブレイクスルー）: - 指数関数スケーリングを完全に削除：v128の固定マージボーナスに回帰（DIRECT=1200/NEAR=600/FAR=200） - MEDIUMフェーズheight_multを2.4→1.8に引き下げ：MEDIUM→HIGH遷移を滑らかにし、HIGHフェーズ期間を確保 - v128の成功構造を維持：HIGHフェーズheight_mult=1.8、TOWER閾値0.5、HIGH_TOWERペナルティ1.3倍（v207の0.5倍緩和は失敗） - v128のバランス補正強度（HIGH=40.0/MEDIUM=30.0/LOW=20.0）を維持 - v128のMEDIUM_TOWERペナルティ（1.5倍）を維持 - ドリフトペナルティ一律30.0を維持 - nextNextが同じタイプなら中央寄せボーナス50.0を維持 - v128のシンプル構造（約110行）を完全に回帰し、MEDIUM height_multの調整のみ実施
+# v205-v207: 指数関数マージボーナススケーリングの失敗パターン - v205（スコア702）、v206（スコア1176）、v207（スコア1710）で、指数スケーリング（2x~50x）による過剰なマージインセンティブが、盤面の急激な上昇を引き起こし、HIGH_TOWERペナルティを過剰にトリガー。MEDIUMフェーズのheight_mult=2.4（v207）はMEDIUM→HIGHへの遷移を急激にし、HIGHフェーズ期間を短縮。
+# v208: v128回帰・MEDIUM遷移改善版 - v205-v207の失敗（指数スケーリング過剰、HIGH_TOWER100%発動、CRITICAL到達）を受けて、振り子パターンを回避しv128の成功構造への回帰を実施。v207履歴分析で特定した問題: - 指数スケーリング（2x~50x）が過剰で盤面が高くなりすぎた - MEDIUMフェーズheight_mult=2.4がMEDIUM→HIGH遷移を急激にし、HIGHフェーズ期間が短縮 - CRITICALフェーズ到達（max_y=3.54）でゲーム終了 - HIGH_TOWERがHIGHフェーズで100%発動しマージ機会を損失 根本原因: - v128の成功構造（固定マージボーナス、シンプルなルール）を複雑な指数スケーリングで破壊した - MEDIUMフェーズのheight_mult=2.4はv42の遺産で、HIGHへの遷移を急激にする 解決策（振り子パターン解消のブレイクスルー）: - 指数関数スケーリングを完全に削除：v128の固定マージボーナスに回帰（DIRECT=1200/NEAR=600/FAR=200） - MEDIUMフェーズheight_multを2.4→1.8に引き下げ：MEDIUM→HIGH遷移を滑らかにし、HIGHフェーズ期間を確保 - v128の成功構造を維持：HIGHフェーズheight_mult=1.8、TOWER閾値0.5、HIGH_TOWERペナルティ1.3倍（v207の0.5倍緩和は失敗） - v128のバランス補正強度（HIGH=40.0/MEDIUM=30.0/LOW=20.0）を維持 - v128のMEDIUM_TOWERペナルティ（1.5倍）を維持 - ドリフトペナルティ一律30.0を維持 - nextNextが同じタイプなら中央寄せボーナス50.0を維持 - v128のシンプル構造（約110行）を完全に回帰し、MEDIUM height_multの調整のみ実施
+# v209: v208動作版 - v208と同じ設定だがスコア1574（v208の1710より低下）。履歴分析でHIGHフェーズ期間が極端に短い（9ターン、9.8%）、HIGH_TOWER発動率が高い（77.8%）。Turn 73-91でスコア伸び悩み（score_delta=0）、max_yが1.5〜2.29の間で推移。Turn 92でCRITICAL到達（max_y=3.15）。v128（スコア3689）と比較して大幅に低い。v128のHIGH_TOWERペナルティ1.3倍は、v128では機能していたが、現在のピース配列では過剰な可能性がある。
+# v210: HIGH_TOWER緩和・マージグレード高度制限導入版 - v209の失敗（スコア1574、HIGHフェーズ期間短縮・HIGH_TOWER発動率高）を受けて、HIGHフェーズでのマージ機会確保を目的にブレイクスルーを実施。v209履歴分析で特定した問題: - HIGHフェーズ期間が9ターンしかない（9.8%）、v128ではもっと長かった - HIGH_TOWER発動率が77.8%（7/9ターン）、マージ優先が機能していない - Turn 73-91でスコア伸び悩み（score_delta=0）、max_yが1.5〜2.29の間で推移 - Turn 92でCRITICAL到達（max_y=3.15）でゲーム終了 - v128のHIGH_TOWERペナルティ1.3倍は、v128では機能していたが、現在のピース配列では過剰な可能性がある 解決策（振り子パターン解消のブレイクスルー）: - HIGH_TOWERペナルティを1.3倍から1.1倍に緩和：マージ機会を確保 - マージグレードによる高度制限を導入：DIRECTマージでは高度制限なし、NEARマージでは高度制限緩和、FARマージでは高度制限緩和 - MEDIUMフェーズheight_multを2.4→2.2に微調整：MEDIUM→HIGH遷移をスムーズに - v128の成功構造を維持：HIGHフェーズheight_mult=1.8、TOWER閾値0.5 - v128のバランス補正強度（HIGH=40.0/MEDIUM=30.0/LOW=20.0）を維持 - v128のMEDIUM_TOWERペナルティ（1.5倍）を維持 - ドリフトペナルティ一律30.0を維持 - nextNextが同じタイプなら中央寄せボーナス50.0を維持 - v128のシンプル構造（約110行）を維持しつつ、マージグレード高度制限を追加（約120行）
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v128回帰・MEDIUM遷移改善版
+    """HIGH_TOWER緩和・マージグレード高度制限導入版
 
-    v205-v207の失敗（指数スケーリング過剰、HIGH_TOWER100%発動、CRITICAL到達）を受けて、
-    v128の成功構造への回帰を実施。
+    v209の失敗（スコア1574、HIGHフェーズ期間短縮・HIGH_TOWER発動率高）を受けて、
+    HIGHフェーズでのマージ機会確保を目的にブレイクスルーを実施。
 
-    v207履歴分析で特定した問題:
-    - 指数スケーリング（2x~50x）が過剰で盤面が高くなりすぎた
-    - MEDIUMフェーズheight_mult=2.4がMEDIUM→HIGH遷移を急激にし、HIGHフェーズ期間が短縮
-    - CRITICALフェーズ到達（max_y=3.54）でゲーム終了
-    - HIGH_TOWERがHIGHフェーズで100%発動しマージ機会を損失
+    v209履歴分析で特定した問題:
+    - HIGHフェーズ期間が9ターンしかない（9.8%）、v128ではもっと長かった
+    - HIGH_TOWER発動率が77.8%（7/9ターン）、マージ優先が機能していない
+    - Turn 73-91でスコア伸び悩み（score_delta=0）、max_yが1.5〜2.29の間で推移
+    - Turn 92でCRITICAL到達（max_y=3.15）でゲーム終了
+    - v128のHIGH_TOWERペナルティ1.3倍は、v128では機能していたが、現在のピース配列では過剰な可能性がある
 
     根本原因:
-    - v128の成功構造（固定マージボーナス、シンプルなルール）を複雑な指数スケーリングで破壊した
-    - MEDIUMフェーズのheight_mult=2.4はv42の遺産で、HIGHへの遷移を急激にする
-    - v128のシンプルさが重要：固定マージボーナス、height_mult=1.8、フェーズごとの明確なルール
+    - v128のHIGH_TOWERペナルティ（1.3倍）は、v128ではうまく機能していたが、
+      現在のピース配列では過剰に作用し、マージ機会を阻害している可能性がある
+    - HIGHフェーズでのマージグレードによる高度制限がなく、一律の高度制限が強すぎる
+    - MEDIUMフェーズのheight_mult=2.4がMEDIUM→HIGH遷移を少し急激にしている可能性がある
 
     解決策（振り子パターン解消のブレイクスルー）:
-    - 指数関数スケーリングを完全に削除：v128の固定マージボーナスに回帰（DIRECT=1200/NEAR=600/FAR=200）
-    - MEDIUMフェーズheight_multを2.4→1.8に引き下げ：MEDIUM→HIGH遷移を滑らかにし、HIGHフェーズ期間を確保
-    - v128の成功構造を維持：HIGHフェーズheight_mult=1.8、TOWER閾値0.5、HIGH_TOWERペナルティ1.3倍
+    - HIGH_TOWERペナルティを1.3倍から1.1倍に緩和：マージ機会を確保
+    - マージグレードによる高度制限を導入：
+      - DIRECTマージ: 高度制限なし（標準的なheight_penalty）
+      - NEARマージ: 高度制限緩和（height_multiplier=0.8）
+      - FARマージ: 高度制限緩和（height_multiplier=0.6）
+    - MEDIUMフェーズheight_multを2.4→2.2に微調整：MEDIUM→HIGH遷移をスムーズに
+    - v128の成功構造を維持：HIGHフェーズheight_mult=1.8、TOWER閾値0.5
     - v128のバランス補正強度（HIGH=40.0/MEDIUM=30.0/LOW=20.0）を維持
     - v128のMEDIUM_TOWERペナルティ（1.5倍）を維持
     - ドリフトペナルティ一律30.0を維持
     - nextNextが同じタイプなら中央寄せボーナス50.0を維持
-    - v128のシンプル構造（約110行）を完全に回帰
+    - v128のシンプル構造（約110行）を維持しつつ、マージグレード高度制限を追加（約120行）
     """
 
     results = analysis.get("results", [])
@@ -63,16 +71,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.8  # v208: v42の2.4→v128の1.8に引き下げ（MEDIUM→HIGH遷移改善）
+        height_mult = 2.2  # v210: v208の2.4→2.2に微調整（MEDIUM→HIGH遷移改善）
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v208: v128の1.8を維持
+        height_mult = 1.8  # v210: v128の1.8を維持
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v208: v42の0.6を維持
+        merge_mult = 0.6  # v210: v42の0.6を維持
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -90,9 +98,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v208: v128回帰・MEDIUM遷移改善 ===
+        # === v210: HIGH_TOWER緩和・マージグレード高度制限 ===
 
-        # 1. マージグレードによるスコア（v128の固定値を維持、指数スケーリング削除）
+        # 1. マージグレードによるスコア（v128の固定値を維持）
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -103,17 +111,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v128一律ルール、height_penalty係数40.0）
-        height_penalty = landing_y * 40.0 * height_mult
+        # 2. マージグレードによる高度制限（v210: 新規導入）
+        # DIRECTマージ: 高度制限なし、標準的なheight_penalty
+        # NEARマージ: 高度制限緩和（height_multiplier=0.8）
+        # FARマージ: 高度制限緩和（height_multiplier=0.6）
+        if merge_grade == "DIRECT":
+            height_multiplier = 1.0  # 標準的な高度制限
+        elif merge_grade == "NEAR":
+            height_multiplier = 0.8  # 緩和
+        elif merge_grade == "FAR":
+            height_multiplier = 0.6  # 緩和
+        else:  # NOマージ
+            height_multiplier = 1.0  # 標準的な高度制限
 
-        # HIGH_TOWERペナルティ（v128: 1.3倍緩和を復帰、マージ機会確保）
-        if phase == "HIGH" and landing_y > 0.5:  # v128の閾値0.5を維持
-            height_penalty *= 1.3  # v208: v128の1.3倍を復帰（v207の0.5倍緩和は失敗）
+        height_penalty = landing_y * 40.0 * height_mult * height_multiplier
+
+        # HIGH_TOWERペナルティ（v210: v128の1.3倍から1.1倍に緩和）
+        if phase == "HIGH" and landing_y > 0.5:  # v210: v128の閾値0.5を維持
+            height_penalty *= 1.1  # v210: v128の1.3倍から1.1倍に緩和
             reasons.append("HIGH_TOWER")
-        elif phase == "MEDIUM" and landing_y > 0.5:  # v42の閾値0.5を維持
-            height_penalty *= (
-                1.5  # v208: v42の1.5倍を維持（MEDIUMフェーズ高度管理確保）
-            )
+        elif phase == "MEDIUM" and landing_y > 0.5:  # v210: v42の閾値0.5を維持
+            height_penalty *= 1.5  # v210: v42の1.5倍を維持
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
@@ -127,9 +145,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 4. 左右バランス補正（v128の値を維持）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v208: v128の40.0を維持
+            balance_strength = 40.0  # v210: v128の40.0を維持
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v208: v128の30.0を維持
+            balance_strength = 30.0  # v210: v128の30.0を維持
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
