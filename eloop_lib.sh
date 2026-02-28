@@ -1282,8 +1282,19 @@ check_and_harvest_improvement() {
 
 			if [ "$hash_before" != "$hash_now" ]; then
 				log "[IMPROVE] 戦略更新検出: $hash_before -> $hash_now"
+				# 戦略が変わった → 蓄積データは旧戦略のものなので破棄
+				# 新戦略での試合データだけが次の改善に有意義
+				local acc_count_discarded=0
+				if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+					acc_count_discarded=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+				fi
+				_clear_accumulated_data
+				if [ "${acc_count_discarded:-0}" -gt 0 ]; then
+					log "[IMPROVE] 蓄積${acc_count_discarded}試合を破棄 (旧戦略のデータ)"
+				fi
 			else
 				log "[IMPROVE] 戦略変更なし (改善失敗 or 差分なし)"
+				# 戦略が変わっていない → 蓄積データはそのまま有効
 			fi
 
 			_write_improve_state "idle" "0" ""
