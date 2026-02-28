@@ -1347,6 +1347,9 @@ log "strategy.py → ${BATCH_SIZE}games → AI改善 → repeat"
 ./twitch_chat.sh start azumagbanjo
 trap '[ "${_improve_pid:-0}" -ne 0 ] && kill "$_improve_pid" 2>/dev/null; _kill_comment_gen; ./twitch_chat.sh stop; exit' EXIT INT TERM
 
+# 前回中断時のリカバリ: 再生中フラグのゴミ掃除
+rm -f tmp/radio_talk_playing
+
 # 前回中断時のリカバリ: .bak が残っていて strategy.py がない場合は復元
 if [ ! -f "$STRATEGY_FILE" ] && [ -f "${STRATEGY_FILE}.bak" ]; then
 	log "[RECOVER] .bak から復元"
