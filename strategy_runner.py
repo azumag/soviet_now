@@ -12,6 +12,7 @@
 Usage: python3 strategy_runner.py
 """
 
+import hashlib
 import importlib
 import importlib.util
 import json
