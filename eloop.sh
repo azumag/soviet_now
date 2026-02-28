@@ -909,7 +909,7 @@ ${past_topics:-まだ過去のトークはありません。自由に話して�
 
 【状況】
 「ソ連ゲーム」をAIが自動プレイしています。
-$([ -n "$batch_num" ] && echo "バッチ#${batch_num}（ゲーム#${batch_start_game}〜#${batch_end_game}の${BATCH_SIZE:-10}試合）が完了しました。")
+$([ -n "$batch_num" ] && echo "バッチ#${batch_num} ゲーム#${batch_start_game}〜#${batch_end_game}の${BATCH_SIZE:-10}試合が完了しました。")
 $([ -n "$batch_scores" ] && echo "各試合のスコア:${batch_scores}")
 直近の試合: ゲーム${game_num}回目、スコア${score}点、${turns}ターン。
 現在の最高スコア: ${best_score}点。
@@ -1322,8 +1322,7 @@ CELEBPROMPT
 
 	if [ -n "$celebration_talk" ]; then
 		echo "$celebration_talk" > tmp/radio_celebration.txt
-		log "[CELEBRATION] ${#celebration_talk}字"
-		./say_enqueue.sh --no-preempt tmp/radio_celebration.txt "$RADIO_SAY_RATE" 0
+		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
 		log "[CELEBRATION] 祝賀トーク生成失敗"
 	fi
@@ -1449,13 +1448,20 @@ while true; do
 		if [ "$SOVIET_CREATED" = "true" ]; then
 			log "!!! SOVIET CREATED !!!"
 			BATCH_SOVIET=true
+			# 先に祝賀トークを生成（LLM呼び出しに時間がかかるので）
+			generate_soviet_celebration "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY"
+			# コメント生成サブシェルも停止
+			_kill_comment_gen
 			# 既存の読み上げを全停止してキューもクリア
 			pkill -x say 2>/dev/null || true
 			pkill -f say_enqueue 2>/dev/null || true
 			rm -f tmp/.say_queue/content_*.txt tmp/.say_queue/pid tmp/.say_queue/token
 			log "[CELEBRATION] 既存読み上げを全停止"
 			sleep 30
-			generate_soviet_celebration "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY"
+			# 祝賀トーク再生
+			if [ -f "tmp/radio_celebration.txt" ] && [ -s "tmp/radio_celebration.txt" ]; then
+				./say_enqueue.sh --no-preempt tmp/radio_celebration.txt "$RADIO_SAY_RATE" 0
+			fi
 			rm -f tmp/.soviet_created
 		fi
 
