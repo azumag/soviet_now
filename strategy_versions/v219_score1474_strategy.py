@@ -13,39 +13,37 @@
 # v172-v174: TOWERペナルティ振り子パターン（復帰→緩和→削除→復帰）
 # v205-v207: 指数関数マージボーナススケーリングの失敗パターン - v205（スコア702）、v206（スコア1176）、v207（スコア1710）で、指数スケーリング（2x~50x）による過剰なマージインセンティブが、盤面の急激な上昇を引き起こし、HIGH_TOWERペナルティを過剰にトリガー。MEDIUMフェーズのheight_mult=2.4（v207）はMEDIUM→HIGHへの遷移を急激にし、HIGHフェーズ期間を短縮。
 # v208-v214: v128完全回帰・MEDIUM_TOWER完全削除版の失敗パターン - v213（スコア1228）、v214（スコア1350）はMEDIUM_TOWERを削除したがスコアはv128の1/3以下。v215（スコア435）ではMEDIUM height_multを2.4にしたが更に悪化。根本原因はv128のheight_penalty係数50.0が現在のピース配列では過剰で、MEDIUMフェーズを短縮していること。
-# v218: 反応ペア動的height_penalty係数・マージボーナス強化版 - v217の失敗（スコア1064、36ターンで終了、HIGH_TOWER/HIGH_LAYERが79%支配）を受けて、振り子パターンを完全回避し、反応ペア情報をスコアリングの核心に据えるブレイクスルーを実施。解決策：（1）height_penalty係数の動的調整を導入：反応ペアが少ない（reactive_pairs < 8）: 20.0（緩和、積極的に落とす）、反応ペアが多い（reactive_pairs >= 8）: 50.0（厳格、慎重に選ぶ）、（2）マージボーナス強化：DIRECT=1800/NEAR=900/FAR=300（v217の1.5倍補正をベース値に統合）、（3）高度管理マルチプライヤ緩和：MEDIUM=1.4、HIGH=1.6（v217の1.6/1.8から緩和）、（4）HIGH_TOWERペナルティ完全削除：v217の段階的緩和も削除し、単純化、（5）v128のシンプル構造を維持：フェーズ判定、balance_strength、drift_penalty等。v218はスコア2452を記録。
-# v219: v218スコア2452版 - v218の設定を維持しつつ、スコア2452を達成。
-# v220: 反応ペア数高度管理細分化・HIGHフェーズv128回帰版 - v219の失敗（スコア1474、74ターンで終了、CRITICALフェーズ到達）を受けて、反応ペア動的height_penalty係数の問題を特定。v219履歴分析で特定した問題: - 反応ペア数が74ターン中一度も8以上に達していない（常に0-4の範囲） - 結果としてheight_penalty係数は常に20.0（緩和モード）で固定され、高度管理が弱すぎる - HIGHフェーズのheight_mult=1.6はv128の1.8よりも緩和しすぎており、盤面が高くなりすぎている（max_y=3.44でCRITICAL到達） - score_deltaが小さく（最大45点）、大きな連鎖が発生していない 根本原因: - v218の反応ペア閾値8は高すぎて、実際のゲームでは機能していない - 反応ペア数に応じた高度管理の細分化が不十分（2段階のみ） - HIGHフェーズのheight_multを1.6に緩和しすぎた結果、v128よりも盤面が高くなりすぎている 解決策（振り子パターン解消のブレイクスルー）: - 反応ペア数を4段階に細分化：（0-1個: height_mult緩和・height_penalty=20.0）、（2-3個: 標準・height_penalty=35.0）、（4-7個: 強化・height_penalty=45.0）、（8以上: 最強化・height_penalty=50.0） - HIGHフェーズのheight_multをv128の1.8に回帰：反応ペア数に応じて1.4-2.0の範囲で調整 - MEDIUMフェーズもheight_mult細分化：反応ペア数に応じて1.2-1.8の範囲で調整 - v218のマージボーナス強化（DIRECT=1800/NEAR=900/FAR=300）を維持 - v218のHIGH_TOWERペナルティ完全削除を維持 - v128のシンプル構造を維持しつつ、反応ペア数に応じた高度管理を細分化。
+# v216: v215失敗の分析・v128とのパラメータ差異特定版 - v215（スコア435）、v216（スコア962）の失敗原因を特定。v215/v216は「v128完全回帰」を主張しなが、実際には3つの変更で高度管理を弱体化：（1）height_penalty係数をv128の50.0→40.0に25%弱体化、（2）MEDIUM height_multをv128の2.4→1.8に25%弱体化、（3）MEDIUM_TOWERペナルティを削除。これらの変更が盤面の急上昇を招き、スコアを74%低下させた。
+# v217: HIGH_TOWER段階的緩和・反応ペア考慮・v128再構成版 - v216の失敗（スコア962、v128の3689点に対し74%低下）を受けて、根本的なアプローチ変更を実施。履歴分析でHIGHフェーズでHIGH_TOWERが38%発動し、マージ機会を阻害していることを特定。v128のMEDIUM height_mult=2.4とMEDIUM_TOWER=1.5xは現在のピース配列では過剰。解決策：（1）v128のheight_penalty係数50.0を維持しつつ、HIGH_TOWERを段階的に緩和（HIGHフェーズ初期=1.1x、max_y上昇に伴い1.3x→1.1x→1.0xへ）、（2）反応ペアが少ない（reactive_pairs < 8）場合にマージボーナス強化（1.5x）、マージ機会を最大化、（3）HIGHフェーズでのバランス重視（balance_strength=60.0）でドリフト・振動を活用し、連鎖反応を誘発、（4）MEDIUMフェーズのheight_multを2.4→1.6に緩和し、MEDIUM_TOWERを削除、MEDIUMフェーズ期間を確保、（5）中央寄せボーナスを段階的に導入（max_y < 1.2で有効）。v128のシンプル構造を維持しつつ、反応ペア・HIGH_TOWER段階的緩和を追加（約130行）。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """反応ペア数高度管理細分化・HIGHフェーズv128回帰版
+    """反応ペア動的height_penalty係数・マージボーナス強化版
 
-    v219の失敗（スコア1474、74ターンで終了、CRITICALフェーズ到達）を受けて、
-    反応ペア動的height_penalty係数の問題を特定し、根本的な改善を実施。
+    v217の失敗（スコア1064、36ターンで終了、HIGH_TOWER/HIGH_LAYERが79%支配）を受けて、
+    振り子パターンを完全回避し、反応ペア情報をスコアリングの核心に据えるブレイクスルーを実施。
 
-    v219履歴分析で特定した問題:
-    - 反応ペア数が74ターン中一度も8以上に達していない（常に0-4の範囲）
-    - 結果としてheight_penalty係数は常に20.0（緩和モード）で固定され、高度管理が弱すぎる
-    - HIGHフェーズのheight_mult=1.6はv128の1.8よりも緩和しすぎており、盤面が高くなりすぎている（max_y=3.44でCRITICAL到達）
-    - score_deltaが小さく（最大45点）、大きな連鎖が発生していない
+    v217履歴分析で特定した問題:
+    - 36ターンしか持続せず、max_y=2.92で終了
+    - decision_reasonがHIGH_TOWER/HIGH_LAYERが27/34ターン（79%）、高度管理が支配的
+    - マージ機会が4回のみ（Turn 10, 21, 25, 26）、Turn 26以降はスコア増加0
+    - 反応ペア情報を補正係数1.5xにしか使っておらず、スコアリングの核心ではない
+    - height_penalty係数50.0は固定値で、反応ペアの有無にかかわらず一律
 
     根本原因:
-    - v218の反応ペア閾値8は高すぎて、実際のゲームでは機能していない
-    - 反応ペア数に応じた高度管理の細分化が不十分（2段階のみ）
-    - HIGHフェーズのheight_multを1.6に緩和しすぎた結果、v128よりも盤面が高くなりすぎている
+    - v217は反応ペア情報を取得したが、height_penalty係数は50.0の固定値のまま
+    - 反応ペアが少ない時は「これ以上積めばマージできる」という物理的期待があるため、
+      height_penaltyを緩和して積極的にピースを落とすべきだが、固定係数では不可能
+    - マージボーナス（DIRECT=1200）はheight_penalty（height_mult×50.0）に対して弱すぎる
 
     解決策（振り子パターン解消のブレイクスルー）:
-    - 反応ペア数を4段階に細分化：
-      * 0-1個: height_mult緩和・height_penalty=20.0（マージ機会を増やすために積極的に積む）
-      * 2-3個: 標準・height_penalty=35.0
-      * 4-7個: 強化・height_penalty=45.0
-      * 8以上: 最強化・height_penalty=50.0
-    - HIGHフェーズのheight_multをv128の1.8に回帰：反応ペア数に応じて1.4-2.0の範囲で調整
-    - MEDIUMフェーズもheight_mult細分化：反応ペア数に応じて1.2-1.8の範囲で調整
-    - v218のマージボーナス強化（DIRECT=1800/NEAR=900/FAR=300）を維持
-    - v218のHIGH_TOWERペナルティ完全削除を維持
-    - v128のシンプル構造を維持しつつ、反応ペア数に応じた高度管理を細分化
+    - height_penalty係数の動的調整を導入：
+      * 反応ペアが少ない（reactive_pairs < 8）: 20.0（緩和、積極的に落とす）
+      * 反応ペアが多い（reactive_pairs >= 8）: 50.0（厳格、慎重に選ぶ）
+    - マージボーナス強化：DIRECT=1800/NEAR=900/FAR=300（v217の1.5倍補正をベース値に統合）
+    - 高度管理マルチプライヤ緩和：MEDIUM=1.4、HIGH=1.6（v217の1.6/1.8から緩和）
+    - HIGH_TOWERペナルティ完全削除：v217の段階的緩和も削除し、単純化
+    - v128のシンプル構造を維持：フェーズ判定、balance_strength、drift_penalty等
     """
 
     results = analysis.get("results", [])
@@ -61,7 +59,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # リアクター状態を取得
+    # リアクター状態を取得（v218: 反応ペア情報をスコアリングの核心に）
     reactor = analysis.get("reactor", {})
     reactive_pairs_raw = reactor.get("reactive_pairs", 0)
     # reactive_pairsがリストの場合は長さを取得、整数の場合はそのまま使用
@@ -71,69 +69,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
         else reactive_pairs_raw
     )
 
-    # v220: 反応ペア数に応じた高度管理の細分化
-    if reactive_pairs <= 1:
-        # 反応ペア少ない：マージ機会を増やすために積極的に積む
-        height_penalty_coeff = 20.0
-        if max_y < 0.8:
-            height_mult = 1.0
-        elif max_y < 1.8:
-            height_mult = 1.2  # v218の1.4から緩和
-        elif max_y < 3.0:
-            height_mult = 1.4  # HIGHフェーズでも緩和
-        else:
-            height_mult = 1.0
-        penalty_reason = "VERY_LOW_REACTIVE"
-    elif reactive_pairs <= 3:
-        # 標準的な高度管理
-        height_penalty_coeff = 35.0
-        if max_y < 0.8:
-            height_mult = 1.0
-        elif max_y < 1.8:
-            height_mult = 1.4
-        elif max_y < 3.0:
-            height_mult = 1.6
-        else:
-            height_mult = 1.0
+    # v218: height_penalty係数の動的調整（反応ペアに応じて）
+    if reactive_pairs < 8:
+        height_penalty_coeff = 20.0  # 反応ペア少ない：緩和、積極的に落とす
         penalty_reason = "LOW_REACTIVE"
-    elif reactive_pairs < 8:
-        # 反応ペア多い：高度管理強化
-        height_penalty_coeff = 45.0
-        if max_y < 0.8:
-            height_mult = 1.0
-        elif max_y < 1.8:
-            height_mult = 1.6
-        elif max_y < 3.0:
-            height_mult = 1.8  # v128の1.8に回帰
-        else:
-            height_mult = 1.0
-        penalty_reason = "HIGH_REACTIVE"
     else:
-        # 反応ペア非常に多い：高度管理最強化
-        height_penalty_coeff = 50.0
-        if max_y < 0.8:
-            height_mult = 1.0
-        elif max_y < 1.8:
-            height_mult = 1.8
-        elif max_y < 3.0:
-            height_mult = 2.0
-        else:
-            height_mult = 1.0
-        penalty_reason = "VERY_HIGH_REACTIVE"
+        height_penalty_coeff = 50.0  # 反応ペア多い：厳格、慎重に選ぶ
+        penalty_reason = "HIGH_REACTIVE"
 
-    # フェーズ判定（マージマルチプライヤ用）
+    # フェーズ判定（v128の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
+        height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
+        height_mult = 1.4  # v218: v217の1.6から緩和
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
+        height_mult = 1.6  # v218: v217の1.8から緩和
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        merge_mult = 0.6
+        height_mult = 1.0  # CRITICAL: height_multなし
+        merge_mult = 0.6  # v217: v128の0.6を維持
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -151,26 +111,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v220: 反応ペア数高度管理細分化・HIGHフェーズv128回帰 ===
+        # === v218: 反応ペア動的height_penalty係数・マージボーナス強化 ===
 
-        # 1. マージグレードによるスコア（v218の強化値を維持）
+        # 1. マージグレードによるスコア（v218: マージボーナス強化）
         if merge_grade == "DIRECT":
-            score += 1800.0 * merge_mult
+            score += 1800.0 * merge_mult  # v218: 1200→1800（1.5倍）
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 900.0 * merge_mult
+            score += 900.0 * merge_mult  # v218: 600→900（1.5倍）
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 300.0 * merge_mult
+            score += 300.0 * merge_mult  # v218: 200→300（1.5倍）
             reasons.append("FAR_MERGE")
 
         # height_penalty係数に応じた理由を追加
         reasons.append(penalty_reason)
 
-        # 2. 高度によるペナルティ（v220: 反応ペア数に応じた動的調整）
+        # 2. 高度によるペナルティ（v218: height_penalty係数動的調整）
         height_penalty = landing_y * height_penalty_coeff * height_mult
 
-        # v220: HIGH_TOWERペナルティ完全削除を維持
+        # v218: HIGH_TOWERペナルティ完全削除（v217の段階的緩和も削除）
         if landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
@@ -183,9 +143,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 4. 左右バランス補正（v128の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0
+            balance_strength = 40.0  # v128: v128の40.0を維持
         elif phase == "MEDIUM":
-            balance_strength = 30.0
+            balance_strength = 30.0  # v128: v128の30.0を維持
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
