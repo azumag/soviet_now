@@ -51,7 +51,7 @@ wait_commands_done() {
 		commands_empty && return 0
 		sleep 1
 	done
-	log "TIMEOUT: commands未消化 → クリア。聞いてないならもういい"
+	log "TIMEOUT: commands未消化 → クリア"
 	echo "" >"$COMMANDS"
 }
 
@@ -371,7 +371,7 @@ update_best() {
 
 		return 0
 	else
-		log "Score: $current_score (best: $best_score) ...知ってた"
+		log "Score: $current_score (best: $best_score)"
 		return 1
 	fi
 }
@@ -1054,7 +1054,7 @@ RADIOPROMPT
 			rm -f tmp/radio_talk_playing
 			log "[RADIO] トーク終了"
 		else
-			log "[RADIO] トーク生成失敗。沈黙もまたラジオ"
+			log "[RADIO] トーク生成失敗"
 		fi
 	) &
 	_radio_pid=$!
@@ -1173,7 +1173,7 @@ FIXEOF
 			fi
 
 			if validate_strategy; then
-				log "[IMPROVE] バリデーション成功。奇跡は起きるものだ"
+				log "[IMPROVE] バリデーション成功"
 				rm -f "${STRATEGY_FILE}.bak"
 				python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
 				improve_ok=true
@@ -1182,7 +1182,7 @@ FIXEOF
 		done
 
 		if [ "$improve_ok" = false ]; then
-			log "[IMPROVE] バリデーション失敗 → 復元。改善したつもりが改悪だった。よくある話"
+			log "[IMPROVE] バリデーション失敗 → 復元"
 			mv "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
 		fi
 
@@ -1310,21 +1310,19 @@ generate_soviet_celebration() {
 	celebration_prompt_file=$(mktemp /tmp/eloop_celebration_XXXXXXXX)
 	cat > "$celebration_prompt_file" <<CELEBPROMPT
 あなたはゲーム実況ラジオのパーソナリティ兼AIプレイヤーです。
-普段は斜に構えていて素直に喜ばないタイプですが、今回ばかりは...
 
-【緊急ニュース】ソ連が建国されました。
+【緊急ニュース】ソ連が建国されました！
 
-ゲーム「ソ連ゲーム」で、ついにレベル15の「ソ連」ピースが誕生しました。
-アルメニアから始まりロシアまで14段階のマージを経てようやく到達する究極のゴール。
+ゲーム「ソ連ゲーム」で、ついにレベル15の「ソ連」ピースが誕生しました！
+アルメニアから始まりロシアまで14段階のマージを経てようやく到達する究極のゴールです。
 ゲーム${game_num}回目、スコア${score}点、${turns}ターンでの偉業。現在時刻: ${current_time}。
 
 【ルール】
 - 2000文字程度の祝賀トーク
-- 普段は斜に構えているが、今回だけは感情が抑えきれない。でもすぐ照れて取り繕おうとする
-- 最初は冷静を装う。でも話しているうちにだんだん素が出てくる構成
+- ソ連建国の興奮と感動を全力で表現
 - 国旗の進化ルート（アルメニア→エストニア→…→ロシア→ソ連）を振り返る
-- 大げさな宣言調も交えつつ、どこかで「いや、まあ、たかがゲームなんですけどね」と自分にツッコむ
-- 話し言葉で、不器用ながらも感情がにじむように
+- 大げさな宣言調も交えて
+- 話し言葉で、感情豊かに
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要
 CELEBPROMPT
@@ -1463,7 +1461,7 @@ while true; do
 
 		# ソ連建国チェック（即座に祝賀）
 		if [ "$SOVIET_CREATED" = "true" ]; then
-			log "!!! SOVIET CREATED !!! ...嘘でしょ"
+			log "!!! SOVIET CREATED !!!"
 			BATCH_SOVIET=true
 			# 先に祝賀トークを生成（LLM呼び出しに時間がかかるので）
 			generate_soviet_celebration "$SCORE" "$TURNS" "$GAME_NUM_DISPLAY"
