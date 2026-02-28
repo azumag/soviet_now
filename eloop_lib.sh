@@ -387,7 +387,10 @@ save_strategy_version() {
 	echo "$GAME_NUM" > "$GAME_COUNT_FILE"
 	local version_file
 	version_file=$(printf "%s/v%03d_score%04d_strategy.py" "$STRATEGY_VERSIONS_DIR" "$GAME_NUM" "$score")
-	cp "$STRATEGY_FILE" "$version_file"
+	# スナップショットがあれば試合時の戦略を保存 (裏の改善で書き換わっていても正確)
+	local src="${STRATEGY_FILE}.game_snapshot"
+	[ ! -f "$src" ] && src="$STRATEGY_FILE"
+	cp "$src" "$version_file"
 	log "[VERSION] saved: $version_file"
 
 	local total
@@ -412,7 +415,10 @@ update_best() {
 
 		local hall_file
 		hall_file=$(printf "%s/best_score%04d_strategy.py" "$STRATEGY_VERSIONS_DIR" "$current_score")
-		cp "$STRATEGY_FILE" "$hall_file"
+		# スナップショットがあれば試合時の戦略を保存 (裏の改善で書き換わっていても正確)
+		local src="${STRATEGY_FILE}.game_snapshot"
+		[ ! -f "$src" ] && src="$STRATEGY_FILE"
+		cp "$src" "$hall_file"
 		log "[HALL OF FAME] saved: $hall_file"
 
 		python3 tag_best_changelog.py "$STRATEGY_FILE" "$current_score" 2>/dev/null
@@ -1348,26 +1354,11 @@ trigger_adaptive_improvement() {
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
 
 	if [ "$status" = "running" ]; then
-		local pid
-		pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
-
-		# PID再利用チェック付きの生存確認
-		local pid_alive=false
-		if [ "${pid:-0}" -ne 0 ] && kill -0 "$pid" 2>/dev/null; then
-			local pid_cmd
-			pid_cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-			echo "$pid_cmd" | grep -q "eloop_improve" && pid_alive=true
-		fi
-
-		if [ "$pid_alive" = true ]; then
-			# まだ実行中 → 蓄積
-			log "[IMPROVE] 改善実行中 (PID=$pid), データ蓄積"
-			accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
-			return
-		fi
-		# プロセス終了済み or stale → idle化
-		_write_improve_state "idle" "0" ""
-		IMPROVE_PID=0
+		# 改善中 (終了済みでも次のループ冒頭の check_and_harvest で検知する)
+		# → 今回のデータを蓄積して終了。次のゲーム後に改善開始
+		log "[IMPROVE] 改善中, データ蓄積"
+		accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
+		return
 	fi
 
 	# idle → 改善開始

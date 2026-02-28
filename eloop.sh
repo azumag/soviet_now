@@ -18,6 +18,10 @@ play_one_game() {
 	log ""
 	log "── Game #${game_num_display} ──"
 
+	# 試合開始時の strategy.py をスナップショット保存
+	# (裏で改善が strategy.py を書き換えても、この試合で使った戦略を正確に保存できる)
+	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.game_snapshot"
+
 	# strategy_runner.py で1試合プレイ
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
@@ -106,6 +110,9 @@ post_game_bookkeeping() {
 
 #=== 次の試合準備 ===
 prepare_next_game() {
+	# 試合時スナップショットのクリーンアップ
+	rm -f "${STRATEGY_FILE}.game_snapshot"
+
 	if is_game_over; then
 		send_retry
 	else
