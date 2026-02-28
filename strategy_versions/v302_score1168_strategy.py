@@ -12,21 +12,6 @@
 # [BEST:3689] v128: HIGHフェーズマージ優先版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
 # v274 (1805): v229ベース - シンプル構造で1805点達成
-# v278: 期待値的マージ戦略版 - v229の失敗（avg=1161.4、stddev=311.3、HEIGHT_CONTROL支配的）を受けて、振り子パターンを根本的に解消するブレイクスルーを実施。
-#   v229バッチ分析から特定した問題:
-#   - HEIGHT_CONTROLが28.8%と過度に支配的、マージ戦略が弱い（NEAR_MERGE 7.9%、DIRECT_MERGE 2.0%）
-#   - 高スコア群vs低スコア群で決定的な違いがない、戦略が不安定（stddev=311.3）
-#   - 振り子パターン（HIGH_TOWER、height_mult、マージボーナス）をパラメータ調整だけで解決しようとしている
-#   根本原因:
-#   - マージ機会の「期待値」が考慮されていない: 「今マージできるか」だけでなく、「この位置に置いたら将来マージが起きる確率」を考慮すべき
-#   - next/nextNextの「マージ先予約」が十分に活用されていない
-#   解決策（振り子パターン解消・期待値的マージ戦略）:
-#   - マージ期待値関数を導入: 盤面のtype N-1ペアの数・距離・位置から、「この位置に置いたら将来マージが起きる期待値」を計算
-#   - next/nextNextマージ先予約を強化: 盤面のtype N-1ペアの数が多い場合、その重心付近にボーナスを付与
-#   - マージ期待値とマージグレードを統合: DIRECTマージ+高期待値 > NEARマージ+低期待値 という判断を実現
-#   - v42/v128の成功要素（マージボーナス=1200/600/200、height_mult=2.4/1.8）を維持しつつ、期待値的判断を追加
-#   - HEIGHT_CONTROLをマージ期待値で上書き: マージ期待値が一定以上の場合、HEIGHT_CONTROLではなくMERGE_EXPECTATIONを理由にする
-#   - 振り子パターン解消: パラメータ調整ではなく、新しい情報源（期待値）を追加することでバランスを取る
 # v285: v284の失敗修正・シンプル濃度管理版 - v284の失敗（score=1537、merge_rate=4.3%、期待値機能不発動）を受けて、複雑な期待値機能を廃止し、シンプルな濃度管理戦略に完全転換。
 #   v284バッチ分析から特定した問題:
 #   - 期待値機能が不発動: calculate_merge_expectation()の閾値20.0が高すぎ、23ターン中1回しか発動しない
@@ -60,89 +45,82 @@
 #   - 期待値ボーナス追加: 期待値20.0以上で期待値×5.0のボーナス（最大135×5=675点、v278のmax 105×5=525点より強化）
 #   - v128のシンプル構造を維持: HIGHフェーズheight_mult=1.8、HIGH_TOWERペナルティ1.3倍、マージボーナス=1200/600/200
 #   - 近接ペアボーナスとマージグレードボーナスの重複を最小化: 近接ペアは「将来のマージ」、マージグレードは「今のマージ」
+# v287: v286の失敗修正・シンプル近接ペア密度管理版 - v286の失敗（avg=1232.4、stddev=482.5、HIGH_EXPECTATION発動率3.0%）を受けて、複雑な期待値機能を完全に削除し、シンプルな近接ペア密度管理に完全転換。
+#   v286バッチ分析から特定した問題:
+#   - 期待値機能不発動: HIGH_EXPECTATIONが303ターン中9回のみ発動（3.0%）
+#   - 複雑さの割に効果が低い: HIGH_EXPECTATIONのavg_score_delta=28.5点と低い
+#   - 振り子パターンの再発: v278→v284で期待値機能を導入→微調整→失敗、v285で削除→v286で簡素化再導入、という完全な振り子
+#   根本原因:
+#   - 期待値機能自体が複雑すぎて、発動条件（閾値20.0）が合わないと発動しない
+#   - ペア重心からの距離計算は計算コストが高い割に、実際のマージ率向上への寄与が低い
+#   - "閾値調整"という振り子は、期待値機能自体に構造的な問題があることを示唆している
+#   解決策（シンプル近接ペア密度管理版）:
+#   - 期待値機能完全削除: ペア重心からの距離計算や期待値ボーナス（>20.0の閾値判定）を完全に削除
+#   - 近接ペア数ボーナスのみ採用: 距離1.5以内の近接ペア数に応じた直接的ボーナス（1ペア=200点、2ペア=400点、3ペア=600点、最大600点）
+#   - 常時発動ボーナス: 閾値判定がないため、近接ペアがある限り常に発動し、判断の一貫性が向上
+#   - v42/v128の成功要素を維持: マージボーナス=1200/600/200、HIGHフェーズheight_mult=1.8、HIGH_TOWERペナルティ1.3倍
+#   - 振り子パターン完全解消: 期待値機能の「入れるか入れないか」の振り子を完全に排除し、シンプル濃度管理で徹底
+#   - 人工化学理論との整合: "同typeピースの空間的密度を最大化"という基本原則に忠実な実装
 
 import math
 
 
-def calculate_merge_expectation(pieces, x, next_type):
-    """マージ期待値を計算（近接ペア重視・簡素化版）
+def count_nearby_pairs(pieces, next_type):
+    """type N-1の近接ペア数をカウント
 
-    v278の期待値機能を近接ペアに焦点を当てて簡素化。
-    距離1.5以内の近接ペアのみをカウントし、ペア重心からの距離を考慮する。
+    距離1.5以内の近接ペアのみをカウントするシンプルな実装。
 
     Args:
         pieces: 全ピースのリスト
-        x: ピースを置くX座標
         next_type: 次のピースタイプ
 
     Returns:
-        expectation: マージ期待値（0〜135）
+        pair_count: 近接ペア数
     """
     if next_type == 0:
-        return 0.0
+        return 0
 
     # type N-1のピースを抽出
     target_type = next_type - 1
     if target_type < 1:
         target_type = 13  # ループする場合
 
-    # type N-1のピースを抽出
     type_minus_1_pieces = [p for p in pieces if p["type"] == target_type]
 
     if not type_minus_1_pieces:
-        return 0.0
+        return 0
 
     # type N-1の近接ペアを検出（距離1.5以内）
-    pairs = []
+    pair_count = 0
     for i, p1 in enumerate(type_minus_1_pieces):
         for p2 in type_minus_1_pieces[i + 1 :]:
             dist = math.sqrt((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2)
             if dist < 1.5:
-                pairs.append((p1, p2, dist))
+                pair_count += 1
 
-    if not pairs:
-        return 0.0
-
-    # 近接ペア数ボーナス（v278の15.0×Nを採用）
-    pair_count_bonus = min(len(pairs) * 200.0, 600.0)  # 最大600点（3ペア）
-
-    # ペアの重心を計算
-    center_x = sum((p1["x"] + p2["x"]) / 2 for p1, p2, _ in pairs) / len(pairs)
-    center_y = sum((p1["y"] + p2["y"]) / 2 for p1, p2, _ in pairs) / len(pairs)
-
-    # ペアの重心からの距離を計算（距離が近いほど期待値が高い）
-    dist_to_center = math.sqrt((x - center_x) ** 2 + (0 - center_y) ** 2)
-
-    # 距離ボーナス（v278の10.0を採用し、最大45点）
-    distance_bonus = max(0, 3.0 - dist_to_center) * 15.0
-
-    expectation = pair_count_bonus + distance_bonus
-
-    return min(expectation, 135.0)
+    return pair_count
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v286: v285の失敗修正・近接ペア期待値版
+    """v298: v287の強化版・ペアボーナス強化とマージ優先抑制版
 
-    v285の失敗（avg=1056、stddev=271.2、merge_rate=11.9%）を受けて、
-    ペア数ボーナスが有効に機能していない問題を修正し、近接ペア期待値を簡素化して再導入する。
+    v287の失敗（avg=1319.2、stddev=661.9、PAIR_COUNT発動率不明、HEIGHT_CONTROL支配21.7%）を受けて、
+    ペアボーナスを強化し、マージ機会がある場合はHEIGHT_CONTROLを抑制する。
 
-    v285バッチ分析から特定した問題:
-    - ペア数 ≠ マージ率: PAIR_COUNT_6が多いにもかかわらず、低スコア群（score=827）でmerge_rate=9.7%と低い。
-    - ペア重心情報の欠如: v278の成功要素（近接ペア重心からの距離）を完全に削除してしまった
-    - 振り子パターンの繰り返し: v278→v284で期待値係数・閾値を微調整し、v285で完全に削除して「シンプル濃度管理」に転換したが、これもまた振り子
+    v287バッチ分析から特定した問題:
+    - PAIR_COUNT発動率が低い: type N-1のピースがない場合や距離1.5以内のペアがない場合、ボーナスが発動しない
+    - HEIGHT_CONTROLが支配的: 21.7%の決定でHEIGHT_CONTROLが選択され、マージ優先が弱い
+    - ペアボーナスが弱い: 1ペア=200点、2ペア=400点、3ペア=600点（最大600点）ではマージボーナス（1200/600/200点）に劣る
 
     根本原因:
-    - 近接ペアのみカウントすべき: 距離1.5以内の近接ペアだけがマージ可能性を正確に反映する。離れたペアはカウントしない
-    - ペア重心からの距離が重要: 近接ペアが多いだけでなく、その重心に近い位置に置くかどうかが重要
+    - ペアボーナスの強度不足: マージボーナスと比較して、ペアボーナスが弱すぎるため、マージ機会より高度管理が優先される
+    - マージ機会でのHEIGHT_CONTROL発動: merge_gradeが"NO"でないにもかかわらず、HEIGHT_CONTROLが発動してマージ機会を損失する
 
-    解決策（近接ペア期待値の簡素化再導入）:
-    - 近接ペアのみカウント: type N-1のピースから、距離1.5以内の近接ペアを検出
-    - 近接ペア数に応じたボーナス: 1ペア=200点、2ペア=400点、3ペア=600点（v278の15.0×Nと同等）
-    - ペア重心からの距離ボーナス: 近接ペアの重心からの距離に応じて最大45点（v278の10.0と同等）
-    - 期待値ボーナス追加: 期待値20.0以上で期待値×5.0のボーナス（最大135×5=675点、v278のmax 105×5=525点より強化）
-    - v128のシンプル構造を維持: HIGHフェーズheight_mult=1.8、HIGH_TOWERペナルティ1.3倍、マージボーナス=1200/600/200
-    - 近接ペアボーナスとマージグレードボーナスの重複を最小化: 近接ペアは「将来のマージ」、マージグレードは「今のマージ」
+    解決策（ペアボーナス強化とマージ優先抑制）:
+    - ペアボーナス強化: 1ペア=400点、2ペア=800点、3ペア=1200点（最大1200点、2倍強化）
+    - マージ機会でのHEIGHT_CONTROL抑制: merge_gradeが"NO"でない場合、HEIGHT_CONTROLを発動しない
+    - v42/v128の成功要素維持: マージボーナス=1200/600/200、HIGHフェーズheight_mult=1.8、HIGH_TOWERペナルティ1.3倍
+    - 振り子パターン解消: 複雑な期待値機能の「入れるか入れないか」ではなく、シンプルなボーナス強化でマージ優先を徹底
     """
 
     results = analysis.get("results", [])
@@ -165,11 +143,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v128: v42の2.4を維持
+        height_mult = 2.4  # v287: v42の2.4を維持
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v128: HIGHフェーズ高度管理大幅緩和（v42の2.6から1.8へ、マージ優先を徹底）
+        height_mult = 1.8  # v287: v128の1.8を採用（HIGHフェーズ高度管理大幅緩和）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -182,6 +160,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
+    # === v287: type N-1の近接ペア数をカウント（期待値機能完全削除版）===
+    pair_count = count_nearby_pairs(pieces, next_type)
+
+    # v298: 全結果でマージ機会があるかトラッキング
+    has_merge_opportunity = False
+
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -189,19 +173,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")
 
+        # v298: マージ機会があればトラッキング
+        if merge_grade != "NO":
+            has_merge_opportunity = True
+
         score = 0.0
         reasons = []
 
-        # === v286: マージ期待値計算（近接ペア重視・簡素化版）===
-        merge_expectation = calculate_merge_expectation(pieces, x, next_type)
-
-        # マージ期待値ボーナス（期待値が高いほどボーナスが大きい）
-        if merge_expectation > 20.0:
-            score += merge_expectation * 5.0  # 最大675点
-            if merge_expectation > 50.0:
-                reasons.append("HIGH_EXPECTATION")
+        # === v298: 近接ペア数ボーナス強化版（v287の2倍強化）===
+        if pair_count > 0:
+            pair_bonus = min(pair_count * 400.0, 1200.0)  # 最大1200点（3ペア）
+            score += pair_bonus
+            if pair_count >= 3:
+                reasons.append(f"PAIR_COUNT_{pair_count}")
             else:
-                reasons.append("MERGE_EXPECTATION")
+                reasons.append(f"PAIR_COUNT_{pair_count}")
 
         # === v42/v128成功要素統合: 強力なマージボーナス ===
         if merge_grade == "DIRECT":
@@ -217,13 +203,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 2. 高度によるペナルティ（v42の一律50.0を維持）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # === v128: HIGH_TOWERペナルティ緩和（v84の1.3倍を採用）===
-        # v286: v128の設定を維持（HIGHフェーズで高度管理大幅緩和との相乗効果）
+        # === v287: HIGH_TOWERペナルティ緩和（v128の1.3倍を採用）===
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v128: v84の1.3倍を採用（v42の2.0倍から減、height_mult大幅緩和と相乗効果）
+            height_penalty *= 1.3  # v287: v128の1.3倍を採用（v42の2.0倍から減）
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5  # v128: v42の1.5倍を維持
+            height_penalty *= 1.5  # v287: v42の1.5倍を維持
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
@@ -237,9 +222,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 4. 左右バランス補正（v42の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v128: v42の40.0を維持
+            balance_strength = 40.0  # v287: v42の40.0を維持
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v128: v42の30.0を維持
+            balance_strength = 30.0  # v287: v42の30.0を維持
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -254,10 +239,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # === v286: マージ期待値が低い場合、HEIGHT_CONTROLを理由にする ===
-        if not reasons and merge_expectation > 30.0:
-            reasons.append("MERGE_EXPECTATION")
-        elif not reasons:
+        # === v298: マージ機会がない場合のみ、HEIGHT_CONTROLを理由にする ===
+        if not reasons and not has_merge_opportunity:
             reasons.append("HEIGHT_CONTROL")
 
         # スコア更新
