@@ -1,0 +1,88 @@
+#!/bin/bash
+# soren_loop.sh - Soren Evolution Loop 親スクリプト
+#
+# ユーザーが実行するエントリーポイント。安定した薄いラッパー。
+# eloop.sh が AI 改善で書き換わっても、このスクリプトは生き残り、
+# 次のイテレーションで自動的に新しいコードを読み込む。
+#
+# アーキテクチャ:
+#   soren_loop.sh (このファイル) — メインループ、初期化、クリーンアップ
+#   eloop_lib.sh  — 共通ライブラリ (ヘルパー/ラジオ/コメント/AI/バリデーション)
+#   eloop.sh      — 1試合のゲームプレイ関数 (毎試合 source で最新版を読み込み)
+#   eloop_improve.sh — バックグラウンド改善サブプロセス
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# --- 共通ライブラリ読み込み ---
+source ./eloop_lib.sh
+
+# --- グローバル状態 ---
+GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+IMPROVE_PID=0
+
+# --- 初期化 ---
+log "=== Soren Evolution Loop ==="
+log "strategy.py → 1game → adaptive improve → repeat"
+
+# Twitchチャットデーモン起動
+./twitch_chat.sh start azumagbanjo
+
+# クリーンアップ trap
+trap 'cleanup_all; exit' EXIT INT TERM
+
+# コメント再生プロセス起動
+start_comment_player
+
+# 前回中断時のリカバリ
+rm -f tmp/radio_talk_playing
+recover_strategy_backup
+
+# 初期バリデーション
+if [ ! -f "$STRATEGY_FILE" ]; then
+	log "ERROR: $STRATEGY_FILE が見つかりません"
+	exit 1
+fi
+if ! validate_strategy; then
+	log "ERROR: 初期バリデーション失敗"
+	exit 1
+fi
+
+# 前回中断した改善プロセスの状態復元
+check_and_harvest_improvement
+
+# MOVE状態待ち
+wait_for_move || {
+	log "ゲームが起動していません"
+	exit 1
+}
+
+# --- メインループ: 1試合ずつ ---
+while true; do
+	# eloop.sh を毎回 source (AI が書き換えた場合に反映)
+	source ./eloop.sh
+
+	# 前回の改善が完了したか確認
+	check_and_harvest_improvement
+
+	# 前回の改善で生成済みラジオトークがあれば再生
+	if [ -f "tmp/radio_talk.txt" ] && [ -s "tmp/radio_talk.txt" ] && [ ! -f "tmp/radio_talk_playing" ]; then
+		log "[RADIO] 前回のトーク再生開始"
+		(./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0; rm -f tmp/radio_talk.txt) &
+	fi
+
+	# 1試合プレイ
+	play_one_game
+
+	# 後処理 (スコア記録, バージョン保存, git commit 等)
+	post_game_bookkeeping
+
+	# アダプティブ改善トリガー
+	trigger_adaptive_improvement
+
+	# 次の試合準備
+	prepare_next_game
+
+	_maybe_show_joke
+	sleep 2
+done

@@ -39,14 +39,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
 ### 1. strategy.py (現在の戦略コード)
 改善対象の decide() ロジック。
 
-### 2. batch_summary.txt (直近バッチN試合の統計サマリー)
-複数試合の横断分析。以下を含む:
+### 2. batch_summary.txt (直近の試合統計サマリー)
+試合の横断分析（1試合〜複数試合）。以下を含む:
 - スコア統計 (min/max/avg/median/stddev)
 - decision_reason の全体分布と avg_score_delta
 - 高スコア群 vs 低スコア群の比較（reason分布・merge_rate・max_y推移の違い）
 
 ### 3. ベストゲーム/ワーストゲームの詳細JSONL (各1試合)
-バッチ中の最高スコア試合と最低スコア試合のターン履歴。
+最高スコア試合と最低スコア試合のターン履歴（1試合のみの場合は同一）。
 各行がJSON: `{"turn", "score", "score_delta", "piece_count", "max_y", "next_type", "decision_x", "decision_reason", "merge_available", "best_merge_grade", "reactor_reactive_pairs", ...}`
 この2試合を対比して「何が違ったか」を分析せよ。
 
@@ -112,7 +112,7 @@ strategy.py 冒頭の `# --- 変更履歴 ---` を全て読み、以下をチェ
 
 ## 分析→改善の手順
 
-1. **バッチ全体の傾向分析**: batch_summary.txt から
+1. **試合の傾向分析**: batch_summary.txt から
    - スコアのばらつき（stddevが大きいなら戦略が不安定）
    - decision_reason の分布と avg_score_delta の相関（どの判断が効果的か）
    - 高スコア群 vs 低スコア群で何が違うか
