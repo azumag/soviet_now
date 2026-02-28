@@ -37,7 +37,7 @@ POLL_INTERVAL = 0.5       # ポーリング間隔(秒)
 SETTLE_REQUIRED = 2       # 静止確認回数
 COMMAND_TIMEOUT = 20      # commands.txt 消化待ちタイムアウト(秒)
 MOVE_TIMEOUT = 120        # MOVE状態待ちタイムアウト(秒)
-DROP_WAIT = 2.0           # ドロップ後の待ち時間(秒)
+DROP_WAIT = 1.0           # ドロップ後の待ち時間(秒)
 
 
 def log(msg):
@@ -95,7 +95,7 @@ def game_x_to_canvas(game_x):
 def write_drop_command(game_x):
     """ドロップコマンドをcommands.txtに書き込み"""
     cx = game_x_to_canvas(game_x)
-    log(f"DROP game_x={game_x:.3f} → canvas={cx},350")
+    log(f"DROP {game_x:+.2f} → {cx}")
     with open(COMMANDS, "w") as f:
         f.write(f"{cx},350\n")
 
@@ -257,7 +257,7 @@ def run_game():
                 # GAMEOVER or TIMEOUT
                 final_state = get_state_field(gs) if gs else "UNKNOWN"
                 final_score = gs.get("score", 0) if gs else 0
-                log(f"=== 試合終了: state={final_state}, score={final_score}, turns={turn} ===")
+                log(f"END s={final_score} t={turn} ({final_state})")
                 return {
                     "score": final_score,
                     "turns": turn,
@@ -270,7 +270,7 @@ def run_game():
             score = gs.get("score", 0)
             pieces = gs.get("pieces", [])
             max_y = max((p["y"] for p in pieces), default=-5.0)
-            log(f"Turn {turn}: score={score}, pieces={len(pieces)}, maxY={max_y:.2f}")
+            log(f"T{turn} s={score} p={len(pieces)} y={max_y:.1f}")
 
             # ソ連建国検知（リアルタイム・1試合1回限り）
             if not soviet_created:
@@ -303,7 +303,10 @@ def run_game():
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
             decision["x"] = drop_x
 
-            log(f"  Decision: DROP:{drop_x:.3f} ({decision.get('reason', '')})")
+            reason = decision.get("reason", "")
+            # reason を短縮表示（30文字まで）
+            short_reason = reason[:30] if len(reason) > 30 else reason
+            log(f"  x={drop_x:+.2f} {short_reason}")
 
             # 履歴記録
             record_turn(history_f, turn, gs, decision, analysis, soviet_created=soviet_created)
@@ -312,7 +315,7 @@ def run_game():
             # (JSONLは追記済みなのでログ出力のみ)
             delta = score - prev_score
             if delta > 0:
-                log(f"  Score +{delta} (total: {score})")
+                log(f"  +{delta} → {score}")
             prev_score = score
 
             # コマンド書き込み

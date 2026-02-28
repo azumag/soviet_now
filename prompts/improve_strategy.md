@@ -38,17 +38,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
 ### 1. strategy.py (現在の戦略コード)
 改善対象の decide() ロジック。
 
-### 2. game_history/latest.jsonl (直近1試合のターン履歴)
-各行がJSON: `{"turn", "score", "score_delta", "piece_count", "max_y", "next_type", "decision_x", "decision_reason", "merge_available", "best_merge_grade", "reactor_reactive_pairs", ...}`
+### 2. batch_summary.txt (直近バッチN試合の統計サマリー)
+複数試合の横断分析。以下を含む:
+- スコア統計 (min/max/avg/median/stddev)
+- decision_reason の全体分布と avg_score_delta
+- 高スコア群 vs 低スコア群の比較（reason分布・merge_rate・max_y推移の違い）
 
-### 3. game_state.json (最終盤面)
+### 3. ベストゲーム/ワーストゲームの詳細JSONL (各1試合)
+バッチ中の最高スコア試合と最低スコア試合のターン履歴。
+各行がJSON: `{"turn", "score", "score_delta", "piece_count", "max_y", "next_type", "decision_x", "decision_reason", "merge_available", "best_merge_grade", "reactor_reactive_pairs", ...}`
+この2試合を対比して「何が違ったか」を分析せよ。
+
+### 4. game_state.json (最終盤面)
 ゲームオーバー時の盤面。散在・到達不能ピースの分析に使用。
 
-### 4. 直近3バージョンの戦略 (strategy_versions/v*_strategy.py)
-過去3試合分の strategy.py。スコアがファイル名に含まれる（例: v005_score1200_strategy.py）。
+### 5. 直近10バージョンの戦略 (strategy_versions/v*_strategy.py)
+過去の strategy.py。スコアがファイル名に含まれる（例: v005_score1200_strategy.py）。
 どのバージョンが高スコアだったか比較し、良かった戦略の要素を取り入れ、悪かった変更を避けよ。
 
-### 5. 殿堂入り戦略 (strategy_versions/best_score*_strategy.py)
+### 6. 殿堂入り戦略 (strategy_versions/best_score*_strategy.py)
 ハイスコア達成時の strategy.py。スコアがファイル名に含まれる。
 最も成功した戦略構造の参考にせよ。ただし盲目的にコピーするな。なぜそれが高スコアだったかを分析し、本質的な要素だけを取り入れよ。
 
@@ -103,13 +111,18 @@ strategy.py 冒頭の `# --- 変更履歴 ---` を全て読み、以下をチェ
 
 ## 分析→改善の手順
 
-1. **履歴分析**: latest.jsonl を全ターン分析
+1. **バッチ全体の傾向分析**: batch_summary.txt から
+   - スコアのばらつき（stddevが大きいなら戦略が不安定）
+   - decision_reason の分布と avg_score_delta の相関（どの判断が効果的か）
+   - 高スコア群 vs 低スコア群で何が違うか
 
-
-2. **最終盤面分析**: game_state.json
-
+2. **ベスト vs ワーストの対比**: 詳細JSONL 2試合を比較
+   - 同じ decision_reason でもスコアの伸びが違うターンはどこか
+   - 盤面の高さ推移(max_y)の違い
+   - merge_available 率の違い
 
 3. **構造的問題の特定**: strategy.py のロジック構造を批判的に分析
+   - バッチデータが示す「効果のない判断」に対応するロジックはどれか
    - 互いに矛盾・重複する条件はないか
    - 情報を十分に活用しているか
 
