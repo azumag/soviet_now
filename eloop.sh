@@ -131,8 +131,8 @@ start_spinner() {
 				"${frames[i % ${#frames[@]}]}" "$label" "$m" "$s" >&2
 			sleep 0.12
 			((i++))
-			# 約600回(≒72秒)ごとにジョーク判定
-			if [ $((i % 600)) -eq 0 ]; then
+			# 約60回ごとにジョーク判定
+			if [ $((i % 60)) -eq 0 ]; then
 				_maybe_show_joke
 			fi
 		done
