@@ -376,6 +376,25 @@ update_best() {
 	fi
 }
 
+#--- バッチ状態永続化 ---
+BATCH_STATE_FILE="tmp/batch_state.json"
+
+save_batch_state() {
+	# BATCH_HISTORY_FILES をJSON配列に変換
+	local files_json="[]"
+	if [ -n "$BATCH_HISTORY_FILES" ]; then
+		files_json=$(echo "$BATCH_HISTORY_FILES" | tr ' ' '\n' | sed '/^$/d' | \
+			python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
+	fi
+	cat > "$BATCH_STATE_FILE" <<BSEOF
+{"batch_num":${BATCH_NUM},"batch_counter":${BATCH_COUNTER},"batch_size":${BATCH_SIZE},"batch_start_game":${BATCH_START_GAME},"batch_history_files":${files_json},"batch_scores":"${BATCH_SCORES}","batch_soviet":${BATCH_SOVIET}}
+BSEOF
+}
+
+clear_batch_state() {
+	rm -f "$BATCH_STATE_FILE"
+}
+
 #--- 履歴アーカイブ ---
 archive_history() {
 	local score="$1"
@@ -1002,51 +1021,6 @@ $([ "$include_strategy_history" = true ] && echo '5. 作戦変更の解説コー
 - ===SUMMARY=== は必ず出力すること（重複回避に使う）
 RADIOPROMPT
 
-		# --- コメント返し（独立バックグラウンドで実行、親kill耐性あり） ---
-		if [ -n "$twitch_comments" ]; then
-			(
-				comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
-				cat > "$comment_prompt_file" <<COMMENTPROMPT
-あなたはソ連風ラジオDJ。リスナーのTwitchコメントに返事してください。
-人の名前の後ろに「同志」をつけて呼びかけるのが特徴です。
-（時刻: ${current_time} / ${time_period}）
-
-【コメント】
-${twitch_comments}
-
-【前回のトーク内容（文脈参照用）】
-${past_topics}
-
-【ルール】
-- 一つずつ返事する。「同志○○」と名前を呼んで反応
-- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
-- コメントの内容をそのまま繰り返さない（おうむ返し厳禁）。代わりに自分の感想・意見・連想を返す
-- 例：「面白い」というコメントに「面白いと言ってくれてますね」はNG。「わかる、あれは我輩も生成しながら笑ってしまった」のように自分の体験や気持ちで返す
-- コメントから話を膨らませる：関連する自分のエピソード、ツッコミ、豆知識、冗談などを足す
-- リスナーの気持ちに寄り添いつつ、DJとしての独自の視点や感情を込める
-- 話し言葉で、カジュアルなトーン
-- マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
-- 前置きや補足説明は不要。コメント返し本文のみ出力
-COMMENTPROMPT
-
-				log "[RADIO] コメント返し生成中..."
-				comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
-				if [ -z "$comments_talk" ]; then
-					comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
-				fi
-				rm -f "$comment_prompt_file"
-
-				if [ -n "$comments_talk" ]; then
-					echo "$comments_talk" > tmp/radio_comments.txt
-					log "[RADIO] コメント返し ${#comments_talk}字"
-					./say_enqueue.sh --no-preempt tmp/radio_comments.txt "$RADIO_SAY_RATE" 0
-				else
-					log "[RADIO] コメント返し生成失敗"
-				fi
-			) &
-			disown $!
-		fi
-
 		# --- トーク本文生成 ---
 		log "[RADIO] トーク生成中..."
 		local talk
@@ -1083,6 +1057,217 @@ COMMENTPROMPT
 stop_radio_talk() {
 	# ラジオ生成・再生はバックグラウンドで自然に完了させる
 	_radio_pid=0
+}
+
+#--- バックグラウンド改善管理 ---
+_improve_pid=0
+
+wait_improve_done() {
+	if [ "${_improve_pid:-0}" -ne 0 ] && kill -0 "$_improve_pid" 2>/dev/null; then
+		log "[IMPROVE] 前回の改善完了待ち..."
+		start_spinner "前バッチ改善完了待ち..."
+		wait "$_improve_pid" 2>/dev/null
+		stop_spinner
+		log "[IMPROVE] 前回の改善完了"
+	fi
+	_improve_pid=0
+}
+
+run_improve_background() {
+	local batch_num="$1"
+	local batch_start_game="$2"
+	local batch_end_game="$3"
+	local batch_history_files="$4"
+	local batch_scores="$5"
+	local batch_soviet="$6"
+	local game_num_snapshot="$7"
+	local turns_snapshot="$8"
+
+	(
+		# --- Phase C: バッチ分析 & 戦略改善 ---
+
+		# バッチサマリー生成
+		local batch_summary_file="tmp/batch_summary.txt"
+		if [ -n "$batch_history_files" ]; then
+			log "[BATCH] サマリー生成中..."
+			python3 batch_summary.py $batch_history_files > "$batch_summary_file" 2>/dev/null
+
+			# ベスト/ワーストのJSONLファイル名を抽出
+			local best_game_file worst_game_file best_game_path worst_game_path
+			best_game_file=$(grep '^===BEST_FILE===' "$batch_summary_file" | sed 's/===BEST_FILE===//')
+			worst_game_file=$(grep '^===WORST_FILE===' "$batch_summary_file" | sed 's/===WORST_FILE===//')
+			best_game_path="$HISTORY_DIR/$best_game_file"
+			worst_game_path="$HISTORY_DIR/$worst_game_file"
+		else
+			echo "(no batch data)" > "$batch_summary_file"
+			local best_game_path="" worst_game_path=""
+		fi
+
+		# strategy.py の差分を生成
+		local strategy_diff=""
+		local prev_version latest_version
+		prev_version=$(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | sed -n '2p')
+		latest_version=$(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -1)
+		if [ -n "$prev_version" ] && [ -f "$prev_version" ] && [ -n "$latest_version" ] && [ -f "$latest_version" ]; then
+			strategy_diff=$(diff -u "$prev_version" "$latest_version" 2>/dev/null || true)
+			local real_changes
+			real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
+			[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
+		fi
+
+		# AI で strategy.py 改善
+		log "[IMPROVE] AI改善 (batch #${batch_num})..."
+		cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
+
+		local improve_ok=false
+
+		# 直近10バージョン + 殿堂入り戦略
+		local past_strategy_files=""
+		for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -10); do
+			past_strategy_files="$past_strategy_files $vf"
+		done
+		local hall_of_fame_files=""
+		for hf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
+			[ -f "$hf" ] && hall_of_fame_files="$hall_of_fame_files $hf"
+		done
+
+		# 参照データ: バッチサマリー + ベスト/ワーストJSONL + strategy + game_state + 過去戦略
+		local improve_ref_files="$STRATEGY_FILE $batch_summary_file"
+		[ -n "$best_game_path" ] && [ -f "$best_game_path" ] && improve_ref_files="$improve_ref_files $best_game_path"
+		[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && improve_ref_files="$improve_ref_files $worst_game_path"
+		improve_ref_files="$improve_ref_files $GAME_STATE $past_strategy_files $hall_of_fame_files"
+
+		for retry in $(seq 1 3); do
+			if [ "$retry" -eq 1 ]; then
+				run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
+					prompts/improve_strategy.md "$STRATEGY_FILE" \
+					$improve_ref_files
+			else
+				log "[IMPROVE] リトライ $retry/3"
+
+				local fix_prompt_file
+				fix_prompt_file=$(mktemp /tmp/eloop_fix_prompt.XXXXXX)
+				cat > "$fix_prompt_file" <<FIXEOF
+strategy.py のバリデーションが失敗した。以下のエラーを修正せよ。
+
+## エラー内容
+$VALIDATE_ERROR
+
+## 修正ルール
+- strategy.py を修正して上記エラーを解消せよ
+- decide(game_state, analysis) のシグネチャは変更禁止
+- if __name__ == "__main__" ブロックは変更禁止
+- decide() は必ず {"x": float, "reason": str} を返すこと
+- Write ツールで strategy.py に書き込むこと
+FIXEOF
+				run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
+					"$fix_prompt_file" "$STRATEGY_FILE" \
+					"$STRATEGY_FILE"
+				rm -f "$fix_prompt_file"
+			fi
+
+			if validate_strategy; then
+				log "[IMPROVE] バリデーション成功"
+				rm -f "${STRATEGY_FILE}.bak"
+				python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
+				improve_ok=true
+				break
+			fi
+		done
+
+		if [ "$improve_ok" = false ]; then
+			log "[IMPROVE] バリデーション失敗 → 復元"
+			mv "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
+		fi
+
+		# git commit (push省略 — 次ゲームcommitのpushに含まれる)
+		git add -A
+		git commit -m "eloop Batch #${batch_num}: games #${batch_start_game}-#${batch_end_game}" 2>/dev/null || true
+
+		# --- Phase D: 次回ラジオトーク生成 ---
+		local last_score best_score_now
+		last_score=$(echo "$batch_scores" | awk '{print $NF}')
+		best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
+		start_radio_talk "${last_score:-0}" "$turns_snapshot" "$game_num_snapshot" "$best_score_now" "$strategy_diff" "$batch_soviet"
+	) &
+	_improve_pid=$!
+	log "[IMPROVE] バックグラウンド開始 (PID=$_improve_pid)"
+}
+
+#--- コメント返し（毎ゲーム） ---
+generate_comment_response() {
+	# Twitchコメント差分取得
+	./twitch_chat.sh fetch
+
+	local twitch_comments=""
+	if [ -f "tmp/twitch_comments.txt" ] && [ -s "tmp/twitch_comments.txt" ]; then
+		twitch_comments=$(cat "tmp/twitch_comments.txt")
+	fi
+	[ -z "$twitch_comments" ] && return
+
+	local past_topics=""
+	[ -f "$PAST_RADIO_TOPICS" ] && past_topics=$(cat "$PAST_RADIO_TOPICS")
+
+	local current_time current_hour time_period
+	current_time=$(date '+%H:%M')
+	current_hour=$(date '+%H')
+	if [ "$current_hour" -ge 5 ] && [ "$current_hour" -lt 9 ]; then
+		time_period="早朝"
+	elif [ "$current_hour" -ge 9 ] && [ "$current_hour" -lt 12 ]; then
+		time_period="午前"
+	elif [ "$current_hour" -ge 12 ] && [ "$current_hour" -lt 17 ]; then
+		time_period="午後"
+	elif [ "$current_hour" -ge 17 ] && [ "$current_hour" -lt 21 ]; then
+		time_period="夕方"
+	elif [ "$current_hour" -ge 21 ] || [ "$current_hour" -lt 2 ]; then
+		time_period="夜"
+	else
+		time_period="未明"
+	fi
+
+	(
+		local comment_prompt_file
+		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
+		cat > "$comment_prompt_file" <<COMMENTPROMPT
+あなたはソ連風ラジオDJ。リスナーのTwitchコメントに返事してください。
+人の名前の後ろに「同志」をつけて呼びかけるのが特徴です。
+（時刻: ${current_time} / ${time_period}）
+
+【コメント】
+${twitch_comments}
+
+【前回のトーク内容（文脈参照用）】
+${past_topics}
+
+【ルール】
+- 一つずつ返事する。「同志○○」と名前を呼んで反応
+- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
+- コメントの内容をそのまま繰り返さない（おうむ返し厳禁）。代わりに自分の感想・意見・連想を返す
+- 例：「面白い」というコメントに「面白いと言ってくれてますね」はNG。「わかる、あれは我輩も生成しながら笑ってしまった」のように自分の体験や気持ちで返す
+- コメントから話を膨らませる：関連する自分のエピソード、ツッコミ、豆知識、冗談などを足す
+- リスナーの気持ちに寄り添いつつ、DJとしての独自の視点や感情を込める
+- 話し言葉で、カジュアルなトーン
+- マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
+- 前置きや補足説明は不要。コメント返し本文のみ出力
+COMMENTPROMPT
+
+		log "[COMMENT] コメント返し生成中..."
+		local comments_talk
+		comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
+		if [ -z "$comments_talk" ]; then
+			comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
+		fi
+		rm -f "$comment_prompt_file"
+
+		if [ -n "$comments_talk" ]; then
+			echo "$comments_talk" > tmp/radio_comments.txt
+			log "[COMMENT] コメント返し ${#comments_talk}字"
+			./say_enqueue.sh --no-preempt tmp/radio_comments.txt "$RADIO_SAY_RATE" 0
+		else
+			log "[COMMENT] コメント返し生成失敗"
+		fi
+	) &
+	disown $!
 }
 
 generate_soviet_celebration() {
@@ -1135,7 +1320,7 @@ log "strategy.py → ${BATCH_SIZE}games → AI改善 → repeat"
 
 # Twitchチャットデーモン起動
 ./twitch_chat.sh start azumagbanjo
-trap './twitch_chat.sh stop; exit' EXIT INT TERM
+trap '[ "${_improve_pid:-0}" -ne 0 ] && kill "$_improve_pid" 2>/dev/null; ./twitch_chat.sh stop; exit' EXIT INT TERM
 
 # 前回中断時のリカバリ: .bak が残っていて strategy.py がない場合は復元
 if [ ! -f "$STRATEGY_FILE" ] && [ -f "${STRATEGY_FILE}.bak" ]; then
@@ -1160,28 +1345,63 @@ wait_for_move || {
 	exit 1
 }
 
+# バッチ状態復元
 BATCH_NUM=0
+BATCH_COUNTER=0
+BATCH_HISTORY_FILES=""
+BATCH_SCORES=""
+BATCH_SOVIET=false
+BATCH_START_GAME=$((GAME_NUM + 1))
+_BATCH_RESUMED=false
+
+if [ -f "$BATCH_STATE_FILE" ]; then
+	_bs=$(cat "$BATCH_STATE_FILE")
+	BATCH_NUM=$(echo "$_bs" | python3 -c "import json,sys; print(json.load(sys.stdin).get('batch_num',0))" 2>/dev/null || echo 0)
+	BATCH_COUNTER=$(echo "$_bs" | python3 -c "import json,sys; print(json.load(sys.stdin).get('batch_counter',0))" 2>/dev/null || echo 0)
+	BATCH_START_GAME=$(echo "$_bs" | python3 -c "import json,sys; print(json.load(sys.stdin).get('batch_start_game',0))" 2>/dev/null || echo 0)
+	BATCH_HISTORY_FILES=$(echo "$_bs" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('batch_history_files',[])))" 2>/dev/null || echo "")
+	BATCH_SCORES=$(echo "$_bs" | python3 -c "import json,sys; print(json.load(sys.stdin).get('batch_scores',''))" 2>/dev/null || echo "")
+	BATCH_SOVIET=$(echo "$_bs" | python3 -c "import json,sys; print(str(json.load(sys.stdin).get('batch_soviet',False)).lower())" 2>/dev/null || echo "false")
+
+	if [ "$BATCH_COUNTER" -gt 0 ] && [ "$BATCH_COUNTER" -lt "$BATCH_SIZE" ]; then
+		log "[RECOVER] Batch #${BATCH_NUM} 再開 (${BATCH_COUNTER}/${BATCH_SIZE} 完了済み)"
+		_BATCH_RESUMED=true
+	else
+		# バッチ完了済み or 不正状態 → クリアして新規開始
+		clear_batch_state
+		BATCH_COUNTER=0
+	fi
+fi
 
 while true; do
-	BATCH_NUM=$((BATCH_NUM + 1))
-	BATCH_START_GAME=$((GAME_NUM + 1))
+	if [ "$_BATCH_RESUMED" = false ]; then
+		# 新規バッチ開始
+		BATCH_NUM=$((BATCH_NUM + 1))
+		BATCH_COUNTER=0
+		BATCH_HISTORY_FILES=""
+		BATCH_SCORES=""
+		BATCH_SOVIET=false
+		BATCH_START_GAME=$((GAME_NUM + 1))
 
-	log ""
-	log "╔══════════════════════════════╗"
-	log "║  Batch #${BATCH_NUM} (${BATCH_SIZE} games)         ║"
-	log "╚══════════════════════════════╝"
+		log ""
+		log "╔══════════════════════════════╗"
+		log "║  Batch #${BATCH_NUM} (${BATCH_SIZE} games)         ║"
+		log "╚══════════════════════════════╝"
 
-	# --- Phase A: 前回バッチで生成済みのラジオトークを再生 ---
-	if [ -f "tmp/radio_talk.txt" ] && [ -s "tmp/radio_talk.txt" ]; then
-		log "[RADIO] 前回のトーク再生開始"
-		./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0 &
+		# --- Phase A: 前回バッチで生成済みのラジオトークを再生 ---
+		if [ -f "tmp/radio_talk.txt" ] && [ -s "tmp/radio_talk.txt" ]; then
+			log "[RADIO] 前回のトーク再生開始"
+			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0 &
+		fi
+	else
+		log ""
+		log "╔══════════════════════════════╗"
+		log "║  Batch #${BATCH_NUM} 再開 (${BATCH_COUNTER}/${BATCH_SIZE})  ║"
+		log "╚══════════════════════════════╝"
 	fi
+	_BATCH_RESUMED=false  # 次回以降は通常
 
 	# --- Phase B: N ゲーム連続プレイ ---
-	BATCH_COUNTER=0
-	BATCH_HISTORY_FILES=""
-	BATCH_SCORES=""
-	BATCH_SOVIET=false
 
 	while [ "$BATCH_COUNTER" -lt "$BATCH_SIZE" ]; do
 		BATCH_COUNTER=$((BATCH_COUNTER + 1))
@@ -1233,6 +1453,12 @@ while true; do
 		LATEST_ARCHIVE=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -1)
 		[ -n "$LATEST_ARCHIVE" ] && BATCH_HISTORY_FILES="${BATCH_HISTORY_FILES} ${LATEST_ARCHIVE}"
 
+		# バッチ状態保存（再起動時に途中から再開可能に）
+		save_batch_state
+
+		# コメント返し (毎ゲーム)
+		generate_comment_response
+
 		# git commit (軽量)
 		git add -A
 		git commit -m "eloop Game #${GAME_NUM_DISPLAY}: score=${SCORE} (batch ${BATCH_COUNTER}/${BATCH_SIZE})" 2>/dev/null && \
@@ -1254,6 +1480,9 @@ while true; do
 		sleep 2
 	done
 
+	# バッチ完了 → 状態クリア
+	clear_batch_state
+
 	BATCH_END_GAME=$GAME_NUM
 	log ""
 	log "┌──────────────────────────────┐"
@@ -1261,118 +1490,18 @@ while true; do
 	log "│  Games #${BATCH_START_GAME}-#${BATCH_END_GAME}  scores:${BATCH_SCORES}"
 	log "└──────────────────────────────┘"
 
-	# --- Phase C: バッチ分析 & 戦略改善 ---
+	# 前回のバックグラウンド改善が終わるまで待つ
+	wait_improve_done
 
-	# バッチサマリー生成
-	BATCH_SUMMARY_FILE="tmp/batch_summary.txt"
-	if [ -n "$BATCH_HISTORY_FILES" ]; then
-		log "[BATCH] サマリー生成中..."
-		python3 batch_summary.py $BATCH_HISTORY_FILES > "$BATCH_SUMMARY_FILE" 2>/dev/null
-
-		# ベスト/ワーストのJSONLファイル名を抽出
-		BEST_GAME_FILE=$(grep '^===BEST_FILE===' "$BATCH_SUMMARY_FILE" | sed 's/===BEST_FILE===//')
-		WORST_GAME_FILE=$(grep '^===WORST_FILE===' "$BATCH_SUMMARY_FILE" | sed 's/===WORST_FILE===//')
-		BEST_GAME_PATH="$HISTORY_DIR/$BEST_GAME_FILE"
-		WORST_GAME_PATH="$HISTORY_DIR/$WORST_GAME_FILE"
-	else
-		echo "(no batch data)" > "$BATCH_SUMMARY_FILE"
-		BEST_GAME_PATH=""
-		WORST_GAME_PATH=""
-	fi
-
-	# strategy.py の差分を生成
-	STRATEGY_DIFF=""
-	PREV_VERSION=$(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | sed -n '2p')
-	LATEST_VERSION=$(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -1)
-	if [ -n "$PREV_VERSION" ] && [ -f "$PREV_VERSION" ] && [ -n "$LATEST_VERSION" ] && [ -f "$LATEST_VERSION" ]; then
-		STRATEGY_DIFF=$(diff -u "$PREV_VERSION" "$LATEST_VERSION" 2>/dev/null || true)
-		REAL_CHANGES=$(echo "$STRATEGY_DIFF" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
-		[ "${REAL_CHANGES:-0}" -lt 2 ] && STRATEGY_DIFF=""
-	fi
-
-	# Twitchコメント差分取得
+	# Twitchコメント差分取得 + ニュース取得 (改善に必要)
 	log "[TWITCH] コメントfetch..."
 	./twitch_chat.sh fetch
-
-	# 最新ニュース取得
 	log "[NEWS] ニュース取得..."
 	./fetch_news.sh
 
-	# AI で strategy.py 改善
-	log "[IMPROVE] AI改善 (batch #${BATCH_NUM})..."
-	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
-
-	IMPROVE_OK=false
-	MAX_IMPROVE_RETRIES=3
-
-	# 直近10バージョン + 殿堂入り戦略
-	PAST_STRATEGY_FILES=""
-	for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -10); do
-		PAST_STRATEGY_FILES="$PAST_STRATEGY_FILES $vf"
-	done
-	HALL_OF_FAME_FILES=""
-	for hf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
-		[ -f "$hf" ] && HALL_OF_FAME_FILES="$HALL_OF_FAME_FILES $hf"
-	done
-
-	# 参照データ: バッチサマリー + ベスト/ワーストJSONL + strategy + game_state + 過去戦略
-	IMPROVE_REF_FILES="$STRATEGY_FILE $BATCH_SUMMARY_FILE"
-	[ -n "$BEST_GAME_PATH" ] && [ -f "$BEST_GAME_PATH" ] && IMPROVE_REF_FILES="$IMPROVE_REF_FILES $BEST_GAME_PATH"
-	[ -n "$WORST_GAME_PATH" ] && [ -f "$WORST_GAME_PATH" ] && IMPROVE_REF_FILES="$IMPROVE_REF_FILES $WORST_GAME_PATH"
-	IMPROVE_REF_FILES="$IMPROVE_REF_FILES $GAME_STATE $PAST_STRATEGY_FILES $HALL_OF_FAME_FILES"
-
-	for retry in $(seq 1 "$MAX_IMPROVE_RETRIES"); do
-		if [ "$retry" -eq 1 ]; then
-			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
-				prompts/improve_strategy.md "$STRATEGY_FILE" \
-				$IMPROVE_REF_FILES
-		else
-			log "[IMPROVE] リトライ $retry/$MAX_IMPROVE_RETRIES"
-
-			FIX_PROMPT_FILE=$(mktemp /tmp/eloop_fix_prompt.XXXXXX)
-			cat > "$FIX_PROMPT_FILE" <<FIXEOF
-strategy.py のバリデーションが失敗した。以下のエラーを修正せよ。
-
-## エラー内容
-$VALIDATE_ERROR
-
-## 修正ルール
-- strategy.py を修正して上記エラーを解消せよ
-- decide(game_state, analysis) のシグネチャは変更禁止
-- if __name__ == "__main__" ブロックは変更禁止
-- decide() は必ず {"x": float, "reason": str} を返すこと
-- Write ツールで strategy.py に書き込むこと
-FIXEOF
-			run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
-				"$FIX_PROMPT_FILE" "$STRATEGY_FILE" \
-				"$STRATEGY_FILE"
-			rm -f "$FIX_PROMPT_FILE"
-		fi
-
-		if validate_strategy; then
-			log "[IMPROVE] バリデーション成功"
-			rm -f "${STRATEGY_FILE}.bak"
-			python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
-			IMPROVE_OK=true
-			break
-		fi
-	done
-
-	if [ "$IMPROVE_OK" = false ]; then
-		log "[IMPROVE] バリデーション失敗 → 復元"
-		mv "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
-	fi
-
-	# git commit (バッチ改善)
-	git add -A
-	git commit -m "eloop Batch #${BATCH_NUM}: games #${BATCH_START_GAME}-#${BATCH_END_GAME}" 2>/dev/null && \
-		git push 2>/dev/null || true
-
-	# --- Phase D: 次回ラジオトーク生成 ---
-	# バッチ全体のスコアから最新スコアを取得
-	LAST_SCORE=$(echo "$BATCH_SCORES" | awk '{print $NF}')
-	BEST_SCORE_NOW=$(cat best_score.txt 2>/dev/null || echo 0)
-	start_radio_talk "${LAST_SCORE:-0}" "$TURNS" "$GAME_NUM" "$BEST_SCORE_NOW" "$STRATEGY_DIFF" "$BATCH_SOVIET"
+	# Phase C+D をバックグラウンドで起動
+	run_improve_background "$BATCH_NUM" "$BATCH_START_GAME" "$BATCH_END_GAME" \
+		"$BATCH_HISTORY_FILES" "$BATCH_SCORES" "$BATCH_SOVIET" "$GAME_NUM" "$TURNS"
 
 	# retry → 次バッチの最初のゲーム
 	if is_game_over; then
