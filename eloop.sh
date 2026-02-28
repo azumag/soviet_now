@@ -996,7 +996,7 @@ AIがプレイをしている間、リスナーを楽しませるトークをし
    - 「なんでこんなこと調べてるんだろう」と途中で我に返りつつも止められない感じ
    - 偉人や歴史上の人物にも容赦なくツッコむ。ただし敬意はある
 
-5. ソ連・共産主義ネタコーナー - 1つのネタを深く語る
+5. ソ連共産主義ネタコーナー - 1つのネタを深く語る
    - 今回のソ連ネタ指定: ${soviet_theme}
    - このトピックを表面的に紹介するのではなく、背景・経緯・逸話まで掘り下げること
    - 共産主義っぽい言い回しを自然に使う
@@ -1109,19 +1109,8 @@ run_improve_background() {
 			local best_game_path="" worst_game_path=""
 		fi
 
-		# strategy.py の差分を生成
-		local strategy_diff=""
-		local prev_version latest_version
-		prev_version=$(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | sed -n '2p')
-		latest_version=$(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -1)
-		if [ -n "$prev_version" ] && [ -f "$prev_version" ] && [ -n "$latest_version" ] && [ -f "$latest_version" ]; then
-			strategy_diff=$(diff -u "$prev_version" "$latest_version" 2>/dev/null || true)
-			local real_changes
-			real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
-			[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
-		fi
-
 		# AI で strategy.py 改善
+		local strategy_diff=""
 		log "[IMPROVE] AI改善 (batch #${batch_num})..."
 		cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
 
@@ -1174,6 +1163,11 @@ FIXEOF
 
 			if validate_strategy; then
 				log "[IMPROVE] バリデーション成功"
+				# 改善前後の差分を取得（ラジオトーク用）
+				strategy_diff=$(diff -u "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true)
+				local real_changes
+				real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
+				[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
 				rm -f "${STRATEGY_FILE}.bak"
 				python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
 				improve_ok=true
