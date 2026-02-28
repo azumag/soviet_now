@@ -60,14 +60,11 @@ _is_preempted() {
 
 # mkdirロック: アトミックな排他制御（macOS互換）
 _acquire_lock() {
-    # --no-preempt: 必ず再生したいのでロック待ちを長くする (5分)
+    # --no-preempt: 必ず再生したいのでタイムアウトなし
     # 通常: 30秒でタイムアウト
     local max_wait=60 waited=0
-    if [ "$NO_PREEMPT" = true ]; then
-        max_wait=600
-    fi
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
-        if [ "$waited" -ge "$max_wait" ]; then
+        if [ "$NO_PREEMPT" = false ] && [ "$waited" -ge "$max_wait" ]; then
             return 1
         fi
         if _is_preempted; then
