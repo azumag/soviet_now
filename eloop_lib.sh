@@ -1201,11 +1201,18 @@ COMMENTPROMPT
 # IMPROVE_PID はグローバル変数として soren_loop.sh で管理
 cleanup_all() {
 	log "クリーンアップ中..."
+	# 状態ファイルからPIDを復元 (IMPROVE_PIDが0でも状態ファイルにPIDがある場合)
+	if [ "${IMPROVE_PID:-0}" -eq 0 ] && [ -f "$IMPROVE_STATE_FILE" ]; then
+		local _cleanup_pid
+		_cleanup_pid=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('pid',0))" 2>/dev/null || echo 0)
+		[ "${_cleanup_pid:-0}" -ne 0 ] && IMPROVE_PID=$_cleanup_pid
+	fi
 	# 改善プロセス停止
 	if [ "${IMPROVE_PID:-0}" -ne 0 ] && kill -0 "$IMPROVE_PID" 2>/dev/null; then
 		kill "$IMPROVE_PID" 2>/dev/null
 		wait "$IMPROVE_PID" 2>/dev/null
 	fi
+	_write_improve_state "idle" "0" ""
 	# コメント関連停止
 	_kill_comment_gen
 	stop_comment_player
@@ -1247,8 +1254,27 @@ check_and_harvest_improvement() {
 	if [ "$status" = "running" ]; then
 		local pid
 		pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
-		if [ "${pid:-0}" -ne 0 ] && ! kill -0 "$pid" 2>/dev/null; then
-			# プロセス完了 → harvest
+
+		# IMPROVE_PID を状態ファイルから同期 (再起動時の復元)
+		if [ "${IMPROVE_PID:-0}" -eq 0 ] && [ "${pid:-0}" -ne 0 ]; then
+			IMPROVE_PID=$pid
+		fi
+
+		# PID再利用チェック: eloop_improve.sh のプロセスかどうか確認
+		local pid_alive=false
+		if [ "${pid:-0}" -ne 0 ] && kill -0 "$pid" 2>/dev/null; then
+			# プロセスが存在する場合、eloop_improve.sh のプロセスか確認
+			local pid_cmd
+			pid_cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+			if echo "$pid_cmd" | grep -q "eloop_improve"; then
+				pid_alive=true
+			else
+				log "[IMPROVE] PID=$pid は別プロセス ($pid_cmd) → stale状態クリア"
+			fi
+		fi
+
+		if [ "$pid_alive" = false ]; then
+			# プロセス完了 or stale → harvest
 			local hash_before
 			hash_before=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null)
 			local hash_now
@@ -1313,13 +1339,22 @@ trigger_adaptive_improvement() {
 	if [ "$status" = "running" ]; then
 		local pid
 		pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
+
+		# PID再利用チェック付きの生存確認
+		local pid_alive=false
 		if [ "${pid:-0}" -ne 0 ] && kill -0 "$pid" 2>/dev/null; then
+			local pid_cmd
+			pid_cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+			echo "$pid_cmd" | grep -q "eloop_improve" && pid_alive=true
+		fi
+
+		if [ "$pid_alive" = true ]; then
 			# まだ実行中 → 蓄積
 			log "[IMPROVE] 改善実行中 (PID=$pid), データ蓄積"
 			accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
 			return
 		fi
-		# プロセス終了済み → idle化
+		# プロセス終了済み or stale → idle化
 		_write_improve_state "idle" "0" ""
 		IMPROVE_PID=0
 	fi
@@ -1347,8 +1382,6 @@ trigger_adaptive_improvement() {
 		log "[IMPROVE] 蓄積データ統合: ${acc_count}試合 + 今回1試合"
 	fi
 
-	_clear_accumulated_data
-
 	# Twitchコメント・ニュース取得
 	log "[TWITCH] コメントfetch..."
 	./twitch_chat.sh fetch
@@ -1363,6 +1396,13 @@ trigger_adaptive_improvement() {
 	./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" &
 	IMPROVE_PID=$!
 
-	_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash"
-	log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count:-0}+1 試合)"
+	# 起動成功を確認してから蓄積データをクリア (即死した場合はデータを保持)
+	if kill -0 "$IMPROVE_PID" 2>/dev/null; then
+		_clear_accumulated_data
+		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash"
+		log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count:-0}+1 試合)"
+	else
+		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死) → 蓄積データ保持"
+		IMPROVE_PID=0
+	fi
 }

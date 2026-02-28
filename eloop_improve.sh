@@ -105,7 +105,6 @@ FIXEOF
 	if validate_strategy; then
 		log "[IMPROVE] バリデーション成功"
 		strategy_diff=$(diff -u "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true)
-		local real_changes
 		real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
 		[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
 		rm -f "${STRATEGY_FILE}.bak"
