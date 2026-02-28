@@ -104,12 +104,19 @@ if [ -f "$PID_FILE" ]; then
     PREV_PID=$(cat "$PID_FILE" 2>/dev/null)
     if [ -n "$PREV_PID" ] && kill -0 "$PREV_PID" 2>/dev/null; then
         _log "前のsay (PID=$PREV_PID) がまだ再生中 → 終了待ち"
+        _prev_wait=0
         while kill -0 "$PREV_PID" 2>/dev/null; do
             if _is_preempted; then
                 _log "say待ち中にプリエンプト → 諦め"
                 exit 0
             fi
             sleep 1
+            _prev_wait=$((_prev_wait + 1))
+            # --no-preempt: 前のsayが長すぎる場合はその完了だけ待ってから進む
+            if [ "$NO_PREEMPT" = true ] && [ "$_prev_wait" -ge 60 ]; then
+                _log "前のsay待ち${_prev_wait}秒超 → 完了を待って進む"
+                break
+            fi
         done
     fi
     rm -f "$PID_FILE"
@@ -122,6 +129,10 @@ if _is_preempted; then
 fi
 
 # --- ロック内: 既存sayプロセス終了待ち（PIDファイル漏れ対策） ---
+# --no-preempt の場合: 最大30秒待ち、それを超えたら現在のsay終了を待って即再生
+# （ラジオが連続すると永遠にブロックされる問題の対策）
+_say_pgrep_wait=0
+_say_pgrep_max=30
 while pgrep -x say >/dev/null 2>&1; do
     if _is_preempted; then
         _log "say待機中にプリエンプト → 諦め"
@@ -129,6 +140,19 @@ while pgrep -x say >/dev/null 2>&1; do
     fi
     [ "${_say_wait_logged:-0}" -eq 0 ] && _log "既存sayプロセス検出 → 終了待ち" && _say_wait_logged=1
     sleep 1
+    _say_pgrep_wait=$((_say_pgrep_wait + 1))
+    if [ "$NO_PREEMPT" = true ] && [ "$_say_pgrep_wait" -ge "$_say_pgrep_max" ]; then
+        _log "既存say ${_say_pgrep_wait}秒超過 → 現在のsay終了待ちに切り替え"
+        # 現在再生中のsay PIDを取得し、そのプロセスだけ待つ
+        _current_say_pid=$(pgrep -x say | head -1)
+        if [ -n "$_current_say_pid" ]; then
+            while kill -0 "$_current_say_pid" 2>/dev/null; do
+                sleep 1
+            done
+        fi
+        _log "現在のsay終了 → コメント再生へ"
+        break
+    fi
 done
 
 # --- ロック内: トーク開始前の間（ロック外でやると他がすり抜けるのでロック内で） ---
