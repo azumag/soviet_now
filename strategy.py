@@ -59,12 +59,32 @@
 #   核心的発見: v3689の成功は「MEDIUMで高度管理強化してHIGH到達遅延、HIGHで高度管理緩和してマージ優先」というフェーズ感応化にある。v325の一律化は振り子パターンの典型。
 #   成功基準: avg_scoreがv3689の70%以上（約2500以上）、またはavg_scoreがv325の2.5倍以上（約2500以上）
 #   失敗基準: avg_scoreがv325の993.5未満、または盤面崩壊で即敗北率が30%以上
+# v327: タイプ別高度ボーナス・マージ先読み版 - v326の失敗（avg=693.2、HEIGHT_CONTROL支配31.0%）を受けて、v3689の「形」のコピーではなく「本質」を採用。
+#   v326バッチ分析から特定した問題:
+#   - HEIGHT_CONTROL支配: 31.0%で支配的。マージ以外の戦略が支配的で、マージ率が低い（高スコア群10.4%、低スコア群8.7%）
+#   - マージボーナス不足: v3689の値（DIRECT=1200）を採用したが、盤面が高くなるとマージ機会が減り効果がない
+#   - ターン数差が最大要因: ベスト82ターン・merge_rate=8.5% vs ワースト53ターン・merge_rate=5.7%。ターン数の差がスコア差の最大要因
+#   - max_y推移の違い: 高スコア群は終盤avg=1.14、低スコア群は終盤avg=1.67。低スコア群の方が盤面が高くなっている
+#   - 振り子パターン継続: v321→v322→v323→v324→v325→v326と、マージボーナスと高度管理の間で振り子を続けている
+#   根本原因:
+#   - v326はv3689の「形」（マージボーナスの値、height_multの値）をコピーしたが、成功の「本質」を理解していない
+#   - v3689が成功した真の理由は: (1) 盤面が高くなりすぎないように制御しつつマージ機会を逃さないバランス、(2) 小さいピースを下層に、大きいピースを上層に配置する物理的なピース配置、(3) 振動マージや連鎖を狙う動的な戦略
+#   - v326はこれらを考慮しておらず、単純にマージボーナスと高度ペナルティのバランスを調整しただけ
+#   解決策（タイプ別高度ボーナス・マージ先読み）:
+#   - 小さいピースを下層に配置するボーナスを導入: ピースタイプが小さいほど、下層でマージした時に大きなボーナスを与える（type 1でlanding_y=-4.0時+400、type 12でlanding_y=0.0時+0）
+#   - 次のピースのマージ先読み戦略を導入: next/type Nなら、盤面のtype N-1ピースの重心付近にボーナスを与え、将来のマージを促進（重心距離1.0以下で+200、0.5以下で+400）
+#   - 次の次のピースも考慮: nextNext/type Mなら、盤面のtype M-1ピースの重心付近にボーナスを与え、次のターンの連鎖マージを促進（重心距離1.0以下で+100、0.5以下で+200）
+#   - HIGH_TOWERペナルティを緩和: v128の1.3倍を採用し、高スコア群のmax_y=1.14程度を許容（v42の2.0倍は過剰）
+#   - v3689のフェーズ感応化を維持: height_mult（MEDIUM=2.4/HIGH=1.8）とマージボーナス（DIRECT=1200/NEAR=600/FAR=200）は維持
+#   核心的発見: マージの「質」を高めるために、(1) 小さいピースは下層でマージさせるべき（物理的に重いので下に沈むべき）、(2) 次のピースがtype Nなら、今のうちにtype N-1の近くに置いて将来のマージを予約する。これらによりマージ率を上げ、ターン数を増やし、スコアを向上させる。
+#   成功基準: avg_scoreが1000以上、またはマージ決定率が15%以上、またはavg_turnsが70以上
+#   失敗基準: avg_scoreがv326の693.2未満、または盤面崩壊で即敗北率が30%以上
 # [BEST:3689] v128: HIGHフェーズマージ優先版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v3689構造回帰版。MEDIUMで高度管理強化してHIGH到達遅延、HIGHで高度管理緩和してマージ優先徹底。"""
+    """タイプ別高度ボーナス・マージ先読み版。小さいピースを下層に、次/次の次のマージ先読み戦略を導入。"""
 
     results = analysis.get("results", [])
 
@@ -79,29 +99,57 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v326: v3689の閾値0.8/1.8/3.0を採用）
+    # フェーズ判定（v327: v3689の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 1.0  # v326: v3689の1.0を採用
+        height_mult = 1.0  # v327: v3689の1.0を維持
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v326: v3689の2.4を採用、HIGH到達遅延
+        height_mult = 2.4  # v327: v3689の2.4を維持、HIGH到達遅延
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v326: v3689の1.8を採用、高度管理緩和・マージ優先
+        height_mult = 1.8  # v327: v3689の1.8を維持、高度管理緩和・マージ優先
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult = 1.0  # v326: v3689の1.0を採用
-        merge_mult = 0.6  # v326: v3689の0.6を採用、マージ絶対優先
+        height_mult = 1.0  # v327: v3689の1.0を維持
+        merge_mult = 0.6  # v327: v3689の0.6を維持、マージ絶対優先
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
+
+    # v327: 次のピースのマージ先読み - next/type Nなら、盤面のtype N-1の重心を計算
+    next_merge_target_type = next_type - 1
+    next_merge_pieces = [p for p in pieces if p["type"] == next_merge_target_type]
+    next_merge_center = None
+    if next_merge_pieces:
+        next_merge_center_x = sum(p["x"] for p in next_merge_pieces) / len(
+            next_merge_pieces
+        )
+        next_merge_center_y = sum(p["y"] for p in next_merge_pieces) / len(
+            next_merge_pieces
+        )
+        next_merge_center = (next_merge_center_x, next_merge_center_y)
+
+    # v327: 次の次のピースのマージ先読み - nextNext/type Mなら、盤面のtype M-1の重心を計算
+    next_next_merge_target_type = next_next_type - 1
+    next_next_merge_pieces = [
+        p for p in pieces if p["type"] == next_next_merge_target_type
+    ]
+    next_next_merge_center = None
+    if next_next_merge_pieces:
+        next_next_merge_center_x = sum(p["x"] for p in next_next_merge_pieces) / len(
+            next_next_merge_pieces
+        )
+        next_next_merge_center_y = sum(p["y"] for p in next_next_merge_pieces) / len(
+            next_next_merge_pieces
+        )
+        next_next_merge_center = (next_next_merge_center_x, next_next_merge_center_y)
 
     for result in results:
         x = result["x"]
@@ -113,46 +161,94 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v326: v3689構造回帰 ===
+        # === v327: タイプ別高度ボーナス・マージ先読み ===
 
-        # 1. マージグレードによるスコア（v326: v3689の値を採用）
+        # 1. マージグレードによるスコア（v327: v3689の値を維持）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult  # v326: v3689の1200を採用
+            score += 1200.0 * merge_mult  # v327: v3689の1200を維持
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult  # v326: v3689の600を採用
+            score += 600.0 * merge_mult  # v327: v3689の600を維持
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult  # v326: v3689の200を採用
+            score += 200.0 * merge_mult  # v327: v3689の200を維持
             reasons.append("FAR_MERGE")
-        # v326: v325の一律強化（3000/1000/300）は失敗。v3689のフェーズ感応化を採用
+        # v327: v3689のマージボーナスを維持
 
-        # 2. 高度によるペナルティ（v326: v3689のフェーズ感応化）
+        # 2. v327: タイプ別高度ボーナス - 小さいピースを下層に配置するボーナス
+        # 小さいピース（低type番号）ほど重いので、下層でマージした時に大きなボーナスを与える
+        # type 1でlanding_y=-4.0時+400、type 12でlanding_y=0.0時+0
+        # ピースタイプが小さいほど、下層でマージする価値が高い
+        if merge_grade != "NO":
+            # マージするピースのタイプを推定（mergesリストから取得）
+            merges = result.get("merges", [])
+            for merge_info in merges:
+                merge_type = merge_info.get("target_type", 0)
+                if merge_type > 0:
+                    # typeが小さいほど、下層でマージした時に大きなボーナス
+                    # type 1: landing_y=-4.0時+400、landing_y=0.0時+0
+                    # type 12: landing_y=-4.0時+34、landing_y=0.0時+0
+                    type_bonus = (
+                        13.0 - merge_type
+                    ) / 12.0  # type 1で1.0、type 12で0.083
+                    height_bonus = (
+                        type_bonus * max(0, -landing_y - 0.5) * 400.0
+                    )  # 下層ほど大きなボーナス
+                    score += height_bonus
+                    reasons.append("SMALL_PIECE_DEEP")
+
+        # 3. v327: 次のピースのマージ先読みボーナス - next/type Nなら、盤面のtype N-1の重心付近にボーナス
+        if next_merge_center:
+            next_merge_dist = (
+                (x - next_merge_center[0]) ** 2
+                + (landing_y - next_merge_center[1]) ** 2
+            ) ** 0.5
+            if next_merge_dist <= 0.5:
+                score += 400.0
+                reasons.append("NEXT_MERGE_CLOSE")
+            elif next_merge_dist <= 1.0:
+                score += 200.0
+                reasons.append("NEXT_MERGE_NEAR")
+
+        # 4. v327: 次の次のピースのマージ先読みボーナス - nextNext/type Mなら、盤面のtype M-1の重心付近にボーナス
+        if next_next_merge_center:
+            next_next_merge_dist = (
+                (x - next_next_merge_center[0]) ** 2
+                + (landing_y - next_next_merge_center[1]) ** 2
+            ) ** 0.5
+            if next_next_merge_dist <= 0.5:
+                score += 200.0
+                reasons.append("NEXT_NEXT_MERGE_CLOSE")
+            elif next_next_merge_dist <= 1.0:
+                score += 100.0
+                reasons.append("NEXT_NEXT_MERGE_NEAR")
+
+        # 5. 高度によるペナルティ（v327: v3689のフェーズ感応化を維持）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v326: v3689の設定を採用）
+        # HIGH_TOWERペナルティ（v327: v128の緩和設定を採用）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v326: v3689の1.3倍を採用
+            height_penalty *= 1.3  # v327: v128の1.3倍を採用（v42の2.0倍は過剰）
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5  # v326: v3689の1.5倍を採用
+            height_penalty *= 1.5  # v327: v3689の1.5倍を維持
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v326: v3689の一律30.0を採用）
+        # 6. ドリフトによるペナルティ（v327: v3689の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v326: v3689のフェーズ感応化）
+        # 7. 左右バランス補正（v327: v3689のフェーズ感応化を維持）
         if phase == "HIGH":
-            balance_strength = 40.0  # v326: v3689の40.0を採用
+            balance_strength = 40.0  # v327: v3689の40.0を維持
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v326: v3689の30.0を採用
+            balance_strength = 30.0  # v327: v3689の30.0を維持
         else:
-            balance_strength = 20.0  # v326: v3689の20.0を採用
+            balance_strength = 20.0  # v327: v3689の20.0を維持
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -161,7 +257,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v326: v3689の一律50.0を採用）
+        # 8. nextNextが同じタイプなら中央寄せボーナス（v327: v3689の一律50.0を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
