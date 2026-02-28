@@ -1046,8 +1046,10 @@ RADIOPROMPT
 			tail -10 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
 			echo "$talk_body" > tmp/radio_talk.txt
+			rm -f tmp/radio_talk_played
 			log "[RADIO] ${#talk_body}字"
 			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0
+			touch tmp/radio_talk_played
 			log "[RADIO] トーク終了"
 		else
 			log "[RADIO] トーク生成失敗"
