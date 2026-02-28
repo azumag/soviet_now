@@ -1052,7 +1052,7 @@ RADIOPROMPT
 			touch tmp/radio_talk_playing
 			log "[RADIO] ${#talk_body}字"
 			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0
-			rm -f tmp/radio_talk_playing
+			rm -f tmp/radio_talk_playing tmp/radio_talk.txt
 			log "[RADIO] トーク終了"
 		else
 			log "[RADIO] トーク生成失敗"
@@ -1417,7 +1417,7 @@ while true; do
 		# radio_talk_playing が存在 = サブシェルが再生中/再生予定 → 二重再生を防ぐ
 		if [ -f "tmp/radio_talk.txt" ] && [ -s "tmp/radio_talk.txt" ] && [ ! -f "tmp/radio_talk_playing" ]; then
 			log "[RADIO] 前回のトーク再生開始"
-			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0 &
+			(./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0; rm -f tmp/radio_talk.txt) &
 		fi
 	else
 		log ""
