@@ -999,12 +999,13 @@ $([ "$include_strategy_history" = true ] && echo '5. 作戦変更の解説コー
 - ===SUMMARY=== は必ず出力すること（重複回避に使う）
 RADIOPROMPT
 
-		# --- コメント返し（トーク生成とは独立して先に実行） ---
+		# --- コメント返し（独立バックグラウンドで実行、親kill耐性あり） ---
 		if [ -n "$twitch_comments" ]; then
-			local comment_prompt_file
-			comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
-			cat > "$comment_prompt_file" <<COMMENTPROMPT
+			(
+				comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
+				cat > "$comment_prompt_file" <<COMMENTPROMPT
 あなたはソ連風ラジオDJ。リスナーのTwitchコメントに返事してください。
+人の名前の後ろに「同志」をつけて呼びかけるのが特徴です。
 （時刻: ${current_time} / ${time_period}）
 
 【コメント】
@@ -1022,21 +1023,22 @@ ${past_topics}
 - 前置きや補足説明は不要。コメント返し本文のみ出力
 COMMENTPROMPT
 
-			log "[RADIO] コメント返し生成中..."
-			local comments_talk
-			comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
-			if [ -z "$comments_talk" ]; then
-				comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
-			fi
-			rm -f "$comment_prompt_file"
+				log "[RADIO] コメント返し生成中..."
+				comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
+				if [ -z "$comments_talk" ]; then
+					comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
+				fi
+				rm -f "$comment_prompt_file"
 
-			if [ -n "$comments_talk" ]; then
-				echo "$comments_talk" > tmp/radio_comments.txt
-				log "[RADIO] コメント返し say_enqueue (--no-preempt, ${#comments_talk}文字)"
-				./say_enqueue.sh --no-preempt tmp/radio_comments.txt "$RADIO_SAY_RATE" 0
-			else
-				log "[RADIO] コメント返し生成失敗"
-			fi
+				if [ -n "$comments_talk" ]; then
+					echo "$comments_talk" > tmp/radio_comments.txt
+					log "[RADIO] コメント返し say_enqueue (--no-preempt, ${#comments_talk}文字)"
+					./say_enqueue.sh --no-preempt tmp/radio_comments.txt "$RADIO_SAY_RATE" 0
+				else
+					log "[RADIO] コメント返し生成失敗"
+				fi
+			) &
+			disown $!
 		fi
 
 		# --- トーク本文生成 ---
