@@ -12,19 +12,6 @@
 # [BEST:3689] v128: HIGHフェーズマージ優先版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
 # v274 (1805): v229ベース - シンプル構造で1805点達成
-# v298: v287の強化版・ペアボーナス強化とマージ優先抑制版 - v287の失敗（avg=1319.2、stddev=661.9、PAIR_COUNT発動率不明、HEIGHT_CONTROL支配21.7%）を受けて、ペアボーナスを強化し、マージ機会がある場合はHEIGHT_CONTROLを抑制する。
-#   v287バッチ分析から特定した問題:
-#   - PAIR_COUNT発動率が低い: type N-1のピースがない場合や距離1.5以内のペアがない場合、ボーナスが発動しない
-#   - HEIGHT_CONTROLが支配的: 21.7%の決定でHEIGHT_CONTROLが選択され、マージ優先が弱い
-#   - ペアボーナスが弱い: 1ペア=200点、2ペア=400点、3ペア=600点（最大600点）ではマージボーナス（1200/600/200点）に劣る
-#   根本原因:
-#   - ペアボーナスの強度不足: マージボーナスと比較して、ペアボーナスが弱すぎるため、マージ機会より高度管理が優先される
-#   - マージ機会でのHEIGHT_CONTROL発動: merge_gradeが"NO"でないにもかかわらず、HEIGHT_CONTROLが発動してマージ機会を損失する
-#   解決策（ペアボーナス強化とマージ優先抑制）:
-#   - ペアボーナス強化: 1ペア=400点、2ペア=800点、3ペア=1200点（最大1200点、2倍強化）
-#   - マージ機会でのHEIGHT_CONTROL抑制: merge_gradeが"NO"でない場合、HEIGHT_CONTROLを発動しない
-#   - v42/v128の成功要素維持: マージボーナス=1200/600/200、HIGHフェーズheight_mult=1.8、HIGH_TOWERペナルティ1.3倍
-#   - 振り子パターン解消: �雑な期待値機能の「入れるか入れないか」ではなく、シンプルなボーナス強化でマージ優先を徹底
 # v299: v298の失敗修正・v128完全復帰版 - v298の失敗（avg=953.0、stddev=262.5、PAIR_COUNT発動率1.8%のみ）を受けて、PAIR_COUNTロジックが不要であることを確認し、v128のシンプル構造に完全復帰する。
 #   v298バッチ分析から特定した問題:
 #   - PAIR_COUNT機能ほぼ不発動: PAIR_COUNT_2_HIGH_TOWERが5回（1.8%）のみ発動。count_nearby_pairs()関数が複雑化しているが、ほとんど機能していない
@@ -56,10 +43,26 @@
 #   - HIGHフェーズ高度管理緩和: height_multを1.8から1.5に下げ、マージ機会の確保を優先
 #   - HIGH_TOWERペナルティ緩和: 1.3倍から1.2倍に下げ、マージ機会の確保を優先
 #   - マージ機会がある場合、HEIGHT_CONTROLを発動しないように設定: reason生成時にマージ理由がある場合はHEIGHT_CONTROLを追加しない
+# v313: v128構造完全復帰版 - v309の失敗（avg=1122.2、stddev=221.6、HEIGHT_CONTROL支配21.5%、マージ決定率20%）を受けて、振り子パターンを解消し、v42の動的バランス調整とv128のマージ優先を統合。
+#   v309バッチ分析から特定した問題:
+#   - マージボーナス過強化のパラドックス: DIRECT=1500/NEAR=800にもかかわらず、マージ決定率は20%程度。かえってマージ機会損失を招いている
+#   - バランス補正一律化の副作用: v42の段階的設定（LOW=20.0/HIGH=40.0/MEDIUM=30.0）が盤面の状態に応じた適切な調整を可能にしていた。一律20.0は盤面応答性を削いでいる
+#   - HIGHフェーズheight_mult緩和の失敗: v128の1.8がマージ機会確保に最適だった、v309の1.5では高度管理が緩すぎ盤面が崩壊している
+#   - 振り子パターン: v299→v309で「v128復帰」→「調整」のサイクルを繰り返し、v128の成功要素を損なっている
+#   根本原因:
+#   - �数パラメータ同時調整の失敗: v309の「バランス補正一律化 + マージボーナス強化 + 高度管理緩和」が、v128の成功バランス（マージボーナス強度 vs 高度管理緩和度 vs バランス補正動的調整）を崩した
+#   - v42の動的バランス調整の喪失: 段階的なbalance_strengthは、盤面の状態に応じた適切な調整を可能にしていた。一律化はこの盤面応答性を削いだ
+#   - マージ機会抑制ロジックの複雑化: 「マージ理由がある場合はHEIGHT_CONTROLを発動しない」は、v128のシンプル構造を複雑化させるだけ
+#   解決策（v128基本構造への完全復帰）:
+#   - マージボーナス: v128の値（DIRECT=1200、NEAR=600、FAR=200）に完全復帰
+#   - 高度管理: v128の設定（height_mult HIGH=1.8、HIGH_TOWERペナルティ1.3倍）に完全復帰
+#   - バランス補正: v42の段階的設定（LOW=20.0、HIGH=40.0、MEDIUM=30.0）に完全復帰
+#   - マージ機会抑制ロジック削除: v309で追加した「マージ理由がある場合はHEIGHT_CONTROLを発動しない」を削除し、v128のシンプルなreason生成に復帰
+#   - v42の動的バランス調整とv128のマージ優先を統合: 実証済みの2つの成功要素を組み合わせ、安定した高スコアを目指す
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """HIGHフェーズでマージを優先し、高度管理を大幅に緩和。マージをHIGHフェーズの主要目標にする。"""
+    """v128基本構造への完全復帰版。v42の動的バランス調整とv128のマージ優先を統合。"""
 
     results = analysis.get("results", [])
 
@@ -74,7 +77,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v42の閾値0.8/1.8/3.0を維持）
+    # フェーズ判定（v42/v128の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
@@ -85,7 +88,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.5  # v309: HIGHフェーズ高度管理緩和（v128の1.8から1.5へ、マージ機会確保を優先）
+        height_mult = 1.8  # v128: HIGHフェーズ高度管理大幅緩和（v42の2.6から1.8へ、マージ優先を徹底）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -108,26 +111,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v309: バランス補正緩和・マージボーナス強化 ===
+        # === v128: HIGHフェーズマージ優先 ===
 
-        # 1. マージグレードによるスコア（v309: マージボーナス強化）
+        # 1. マージグレードによるスコア（v128: v42の強力な値を維持）
         if merge_grade == "DIRECT":
-            score += 1500.0 * merge_mult  # v309: 1200→1500に強化
+            score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 800.0 * merge_mult  # v309: 600→800に強化
+            score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
-        # v309: マージボーナス強化により、バランス補正や高度管理ペナルティに対してマージが優先される
+        # v128: NO_MERGEペナルティの「入れるか入れないか」の振り子を回避し、第三の選択肢（高度管理大幅緩和）を採用
 
         # 2. 高度によるペナルティ（v128: HIGHフェーズ高度管理大幅緩和）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v309: 緩和設定）
+        # HIGH_TOWERペナルティ（v128: v84の緩和設定を維持）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.2  # v309: 1.3→1.2に緩和、マージ機会確保を優先
+            height_penalty *= 1.3  # v128: v84の1.3倍を採用（v42の2.0倍から減、height_mult大幅緩和と相乗効果）
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5  # v128: v42の1.5倍を維持
@@ -141,11 +144,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v309: 緩和設定）
-        balance_strength = (
-            20.0  # v309: 全フェーズ一律20.0に統一（HIGH=40.0→20.0、MEDIUM=30.0→20.0）
-        )
-        # v309: バランス補正の強度を緩和し、マージ機会の確保を優先
+        # 4. 左右バランス補正（v42の段階的設定を維持）
+        balance_strength = 20.0
+        if phase == "HIGH":
+            balance_strength = 40.0  # v128: v42の40.0を維持
+        elif phase == "MEDIUM":
+            balance_strength = 30.0  # v128: v42の30.0を維持
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -160,15 +164,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # スコア更新（v309: マージ機会がある場合、HEIGHT_CONTROLを発動しない）
+        # スコア更新（v128: シンプルなreason生成）
         if score > best_score:
             best_score = score
             best_x = x
-            # v309: マージ理由がある場合はHEIGHT_CONTROLを発動しない
-            if reasons:
-                best_reason = "_".join(reasons)
-            else:
-                best_reason = "HEIGHT_CONTROL"
+            best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
     # 安全な範囲内にクリップ
     best_x = max(-3.0, min(3.0, best_x))
