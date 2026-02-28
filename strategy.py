@@ -9,36 +9,35 @@
 # AI改変禁止: decide() シグネチャ、if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v332: v128完全復帰版 - v331の失敗（batch_summary.txtが空だが、v331の変更を逆転）を受けて、v128のシンプルで頑健な構造に戻す。HIGHフェーズでmerge_mult=1.5を削除しv128の1.0に戻す。バランス補正をv128の値（HIGH=40.0, MEDIUM=30.0）に戻す。連鎖マージボーナスを削除。ドリフトペナルティを30.0に戻す。v128の成功要素を維持し、シンプルで頑健な構造に戻す。
-# v331: HIGHフェーズ強化・バランス補正強化版 - v330の失敗(avg=295.5、ターン数10.5)を受けて、v328の成功構造に回帰しつつHIGHフェーズ戦略を強化。
-#   v330バッチ分析から特定した問題:
-#   - 高度ペナルティ過剰(47.5): ワースト試合は9ターンで終了、終盤max_y=-1.33でHIGHフェーズに到達しない
-#   - バランス補正不足: balance_strengthが弱すぎ、盤面が左右どちらかに偏って崩壊
-#   - マージボーナス不足: v328より5%削減しすぎ、マージ機会を逃している
-#   - ターン数過少: 平均10.5ターンは目標の90ターンを大幅に下回る
-#   - 高スコア群vs低スコア群: max_y推移(終盤1.33 vs -1.33)、merge_rate(50% vs 33.3%)
+# v333: 振り子パターン回避・マージボーナス動的化版 - v332のスコア低下（avg=725、v128の3689から大幅低下）を受けて、振り子パターンを回避し、マージボーナスに動的調整を導入。
+#   v332バッチ分析から特定した問題:
+#   - decision_reasonの偏り: HEIGHT_CONTROL(31.7%)とHIGH_LAYER(18.3%)が支配的で、マージ関連(DIRECT_MERGE 3.3%、NEAR_MERGE 8.3%)が圧倒的に少ない
+#   - ベストvsワースト: merge_rate(24.1% vs 9.7%)の差がスコア差(783点 vs 667点)に直結
+#   - v332はv128と「同じ構造」と主張しているが、スコアが大幅に異なる
+#   - v128の成功要因は「HIGHフェーズでマージを優先」する動的な判断ロジックにあった可能性
+#   - 振り子パターン検出: v331→v332で「バランス補正」「連鎖マージボーナス」「ドリフト緩和」の追加→削除が発生
 #   根本原因:
-#   - v330はv328の微調整(5%削減)に失敗し、戦略の本質を損なった
-#   - 盤面をHIGHフェーズに到達させる戦略が不足し、ターン数が伸びない
-#   - バランス補正が弱すぎ、盤面が崩壊して早期にゲームオーバーになる
-#   - READMEの「旗側集約」原則を活用できていない: 大型ピースを左右に分散させている
-#   解決策（HIGHフェーズ強化・バランス補正強化）:
-#   - 高度ペナルティ回帰: v328の50.0に戻し、盤面がHIGHフェーズに到達できるようにする
-#   - バランス補正大幅強化: v328のHIGH=40.0を60.0に、MEDIUM=30.0を40.0に増幅し、旗側集約を強制
-#   - マージボーナス回帰: v328の値(DIRECT=1200/NEAR=600/FAR=200)に戻す、微調整は削除
-#   - HIGHフェーズ高度管理緩和: v328の1.8を維持しつつ、HIGH_TOWERペナルティを1.3倍に緩和(v128の値)
-#   - マージ履歴ボーナス導入: 直近5ターン内にマージがあったらボーナス、連鎖マージを促進
-#   - HIGHフェーズドリフト緩和: HIGHフェーズでマージ可能ならドリフトペナルティを緩和、衝撃波による空間的擾乱を許容
-#   核心的発見: ターン数を伸ばすには、(1) 盤面をHIGHフェーズに到達させる、(2) バランス補正を強化して崩壊防止、(3) HIGHフェーズでマージ最大化。v328の成功構造を維持しつつ、HIGHフェーズ戦略を強化。
-#   成功基準: avg_scoreが1500以上、またはavg_turnsが50以上、またはavg_scoreがv328の1509.0以上
-#   失敗基準: avg_scoreがv330の295.5未満、またはavg_turnsが10未満
+#   - v332はv128のパラメータを「コピー」しているが、動的な判断ロジックが欠如
+#   - 分析ボーナスの活用不足: analysis[\"reactor\"]のreactive_pairs、near_pairs情報を活用していない
+#   - マージ機会の動的評価: 盤面のtype N-1のペア数から将来のマージ期待値を計算していない
+#   - 振り子パターン回避の必要性: 「Aを追加→削除→再追加」を繰り返すなら、Aではなく周囲の設計を改善すべき
+#   解決策（振り子パターン回避・マージボーナス動的化）:
+#   - 振り子回避のための第三の選択肢: v128の静的なパラメータ調整（balance_strength強化、merge_mult変更）ではなく、analysis情報を活用した動的評価を導入
+#   - マージ期待値ボーナス導入: 盤面のtype N-1のペア数と距離から、将来マージ期待値を計算。analysis[\"reactor\"]のnear_pairs情報も活用
+#   - 高度評価の動的化: 盤面のmax_yとnextのタイプを考慮し、HIGHフェーズへの移行戦略を動的に調整
+#   - reactor情報活用: analysis[\"reactor\"][\"reactive_pairs\"]（反応性ペア）とnear_pairs（近接ペア）をスコアリングに反映
+#   - スコアリングの簡素化: v128の5要素構造を維持しつつつ、マージ評価を動的化することで柔軟性を確保
+#   - 振り子パターン完全回避: v331で追加した複雑な条件分岐（連鎖マージボーナス、ドリフト緩和条件）を導入せず、v128のシンプル構造を維持
+#   核心的発見: v128の成功は「静的なパラメータ調整」ではなく、「盤面情報を活用した動的な判断」にあった可能性。振り子パターンを回避し、analysis情報を活用した動的評価を導入することで、v332のシンプルさを維持しつつつ、スコアを改善する。
+#   成功基準: avg_scoreが1000以上、またはmerge_rateが15%以上、またはavg_scoreがv332の725.0以上
+#   失敗基準: avg_scoreが500未満、またはmerge_rateが10%未満、またはavg_scoreがv332の725.0未満
 # [BEST:3689] v128: HIGHフェーズマージ優先版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
 # [BEST:1509] v328: HIGHフェーズマージ強化・v42ベース版
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """HIGHフェーズマージ優先版。v128のシンプルで頑健な構造を採用。"""
+    """振り子パターン回避・マージボーナス動的化版。v128のシンプル構造を維持しつつつ、analysis情報を活用して動的な評価を導入。"""
 
     results = analysis.get("results", [])
 
@@ -53,7 +52,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v332: v128の閾値0.8/1.8/3.0を維持）
+    # reactor情報（v333: 新規活用）
+    reactor = analysis.get("reactor", {})
+    # reactive_pairsとnear_pairsはリストの場合、その長さを取得
+    reactive_pairs_val = reactor.get("reactive_pairs", 0)
+    reactive_pairs = (
+        len(reactive_pairs_val)
+        if isinstance(reactive_pairs_val, list)
+        else reactive_pairs_val
+    )
+    near_pairs_val = reactor.get("near_pairs", 0)
+    near_pairs = (
+        len(near_pairs_val) if isinstance(near_pairs_val, list) else near_pairs_val
+    )
+
+    # フェーズ判定（v333: v128の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
@@ -77,6 +90,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
+    # マージ期待値計算（v333: 新規導入）
+    # 盤面のtype N-1のピース数をカウント
+    target_type = next_type - 1 if next_type > 1 else None
+    merge_expectation = 0.0
+    if target_type:
+        target_pieces = [p for p in pieces if p["type"] == target_type]
+        # type N-1が2個以上あれば、マージしてtype Nになる確率が高い
+        if len(target_pieces) >= 2:
+            # ペア間の距離が近いほどマージ確率が高い
+            min_pair_dist = 3.0
+            for i in range(len(target_pieces)):
+                for j in range(i + 1, len(target_pieces)):
+                    dist = abs(target_pieces[i]["x"] - target_pieces[j]["x"])
+                    min_pair_dist = min(min_pair_dist, dist)
+            # 距離に応じた期待値（近いほど高い）
+            if min_pair_dist < 0.5:
+                merge_expectation = 300.0
+            elif min_pair_dist < 1.0:
+                merge_expectation = 150.0
+            elif min_pair_dist < 1.5:
+                merge_expectation = 75.0
+        elif len(target_pieces) == 1:
+            # 1個なら、nextNextでタイプNが来たときにマージする確率
+            if next_next_type == next_type + 1:
+                merge_expectation = 100.0
+
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -87,23 +126,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v332: v128完全復帰 ===
+        # === v333: 振り子パターン回避・マージボーナス動的化 ===
 
-        # 1. マージグレードによるスコア（v332: v128の値を維持）
+        # 1. マージグレードによるスコア（v333: v128の値を維持しつつ、動的調整）
+        merge_bonus = 0.0
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            merge_bonus = 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            merge_bonus = 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            merge_bonus = 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v332: v128のフェーズ感応化を維持）
+        # マージ期待値ボーナス（v333: 新規導入）
+        if merge_grade != "NO":
+            # マージ可能なら期待値を上乗
+            merge_bonus *= 1.0 + merge_expectation / 600.0
+        else:
+            # マージ不可でも期待値があるなら、将来マージのためにボーナス
+            if merge_expectation > 0:
+                merge_bonus += merge_expectation * 0.5
+
+        score += merge_bonus
+
+        # 2. 高度によるペナルティ（v333: v128のフェーズ感応化を維持）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v332: v128の緩和設定を維持）
+        # HIGH_TOWERペナルティ（v333: v128の緩和設定を維持）
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 1.3
             reasons.append("HIGH_TOWER")
@@ -115,11 +166,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v332: v128の一律30.0を維持）
+        # 3. ドリフトによるペナルティ（v333: v128の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v332: v128のフェーズ感応化を維持）
+        # 4. 左右バランス補正（v333: v128のフェーズ感応化を維持）
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0
@@ -133,11 +184,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNext中央寄せボーナス（v332: v128の一律50.0を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v333: v128の一律50.0を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
+
+        # 6. reactor情報活用ボーナス（v333: 新規導入）
+        # reactive_pairsが多いほど、盤面が活発でマージが起きやすい
+        if reactive_pairs >= 3:
+            score += 50.0
+            reasons.append("REACTIVE")
+        elif reactive_pairs >= 1:
+            score += 20.0
+
+        # near_pairsが多いほど、マージ機会が多い
+        if near_pairs >= 2:
+            score += 30.0
+            reasons.append("NEAR_PAIR")
 
         # スコア更新
         if score > best_score:
