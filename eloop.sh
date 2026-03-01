@@ -87,7 +87,7 @@ post_game_bookkeeping() {
 	echo "$LAST_SCORE" >> score_history.txt
 
 	# ダッシュボード更新（GAMEOVER状態で生成→表示される）
-	./generate_dashboard.sh GAMEOVER 2>/dev/null &
+	./generate_dashboard.sh GAMEOVER 2>/dev/null
 
 	# バージョン保存・ベスト判定・履歴アーカイブ
 	save_strategy_version "$LAST_SCORE"
@@ -113,6 +113,12 @@ prepare_next_game() {
 	# 試合時スナップショットのクリーンアップ
 	rm -f "${STRATEGY_FILE}.game_snapshot"
 
+	# ダッシュボード表示の猶予（OBSで見せる時間）
+	sleep 10
+
+	# ダッシュボード非表示（次のゲーム開始前）
+	./generate_dashboard.sh MOVE 2>/dev/null
+
 	if is_game_over; then
 		send_retry
 	else
@@ -120,6 +126,4 @@ prepare_next_game() {
 			send_retry
 		}
 	fi
-	# ダッシュボード非表示（次のゲーム開始時）
-	./generate_dashboard.sh MOVE 2>/dev/null &
 }
