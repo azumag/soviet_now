@@ -9,34 +9,27 @@
 # AI改変禁止: decide() シグネチャ、if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v339: v128の成功構造復帰 - batch_summary.txtの分析から、reactive_pairs/near_pairsボーナスの効果が低い（avg_score_deltaが低い）ことを特定。v128（BEST:3689）の構造に戻す：マージボーナスを弱化（DIRECT=1200/NEAR=600/FAR=200）、NEXT_SAME中央ボーナスを弱化（80.0→50.0）、reactive_pairs/near_pairsボーナスを削除。これによりHEIGHT_CONTROLの支配を緩和し、よりバランスの取れた戦略に。batch_summary.txtのdecision_reason分布（HEIGHT_CONTROL: 17.3%の支配的）とベストゲームの比較から、高度管理とマージのバランス改善が重要であることが判明。
-#   batch_summary.txtの分析結果:
-#   - reactive_pairsのavg_score_delta: 7.5（非常に低い）
-#   - near_pairsのavg_score_delta: 31.8（高いが頻度が低い）
-#   - HEIGHT_CONTROLが17.3%で支配（バランス不均衡）
-#   - ベストゲーム（score=1981）の特徴: merge_rate=21.3%、NEAR_MERGE頻繁、max_y推移が良好
-#   - v128（BEST:3689）の構造: height_mult HIGH=1.8、merge_bonus DIRECT=1200/NEAR=600/FAR=200、NEXT_SAME=50.0、reactive_pairs/near_pairsボーナスなし
-#   根本原因:
-#   - v338のreactive_pairs/near_pairsボーナスは期待通りの効果がなかった（avg_score_deltaが低い）
-#   - NEXT_SAME中央ボーナスが強すぎて中央寄せが過剰（80.0）
-#   - マージボーナスが強すぎて高度管理が軽視された（1500/800/300）
-#   - HEIGHT_CONTROLが17.3%で支配的（バランス不均衡）
-#   解決策（v339: v128構造復帰）:
-#   - reactive_pairsボーナス削除（効果が低い）
-#   - near_pairsボーナス削除（効果が低い）
-#   - NEXT_SAME中央ボーナス弱化（80.0→50.0）
-#   - マージボーナス弱化（1500/800/300→1200/600/200）
-#   - v128の成功構造を維持: height_mult HIGH=1.8、merge_mult HIGH=1.0、CRITICAL merge_mult=0.6
-#   核心的発現: batch_summary.txtのデータに基づき、効果のないボーナスを削除し、v128の成功構造に復帰することでバランスを改善する
-#   成功基準: avg_scoreがv338の1425.2以上、またはmerge_rateが16%以上、またはavg_scoreがv128の3689以上
-#   失敗基準: avg_scoreがv338の1425.2未満、またはmerge_rateが15%未満
+# v340: マージ優先・高度管理緩和版 - v339の失敗（avg_score=1179.4、HEIGHT_CONTROL支配）を受けて、根本的な問題を特定。v339はv128のheight_mult=1.8が強すぎてHEIGHT_CONTROLが支配的になったことが原因。v338のマージボーナス強化は正しい方向だったが、reactive_pairs/near_pairsボーナスの追加が複雑化を招いた。そこで、マージボーナス強化（DIRECT=1500/NEAR=800/FAR=300）を維持しつつ、reactive_pairs/near_pairsボーナスを削除し、HIGHフェーズのheight_multを1.8から1.7に緩和。CENTER_PAIRボーナス（次の2ピースが同じ場合の中央寄せ）は効果が薄いため削除。これにより、マージを優先しつつHEIGHT_CONTROLの支配を抑制し、v339のシンプルさを維持。
+#   根本原因の特定:
+#   - v128のheight_mult=1.8 + HIGH_TOWERペナルティ1.3倍の組み合わせで、HIGHフェーズでマージを優先しすぎていなかった
+#   - v338のマージボーナス強化（DIRECT=1500/NEAR=800/FAR=300）は正しい方向だったが、reactive_pairs/near_pairsボーナスの追加が複雑化を招いた
+#   - CENTER_PAIRボーナスは効果が薄く、コード行数増加の原因
+#   改善策（マージ優先・高度管理緩和）:
+#   - マージボーナス強化: v338の値を採用（DIRECT=1500/NEAR=800/FAR=300）
+#   - HIGHフェーズheight_mult緩和: 1.8 → 1.7（v128より緩和、v42の2.6よりは強い）
+#   - CENTER_PAIRボーナス削除: 次の2ピースが同じ場合の中央寄せボーナスは削除
+#   - reactive_pairs/near_pairsボーナス削除: v338の複雑化要因を削除
+#   核心的発見: v338のマージボーナス強化を維持しつつ、複雑化要因を削除することで、マージ優先とシンプルさを両立させる。height_multの微調整（1.7）でHEIGHT_CONTROLの支配を抑制。
+#   成功基準: avg_scoreがv339の1179.4以上、またはmerge_rateが15%以上、またはavg_scoreがv338の1425.2以上
+#   失敗基準: avg_scoreがv339の1179.4未満、またはmerge_rateが11%未満、またはavg_scoreがv338の1425.2未満
 # [BEST:3689] v128: HIGHフェーズマージ優先版
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
 # [BEST:1509] v328: HIGHフェーズマージ強化・v42ベース版
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v128の成功構造を復帰し、バランスの取れた戦略を実現"""
+    """マージを優先しつつ、高度管理を緩和。v338のマージボーナス強化を維持し、複雑化要因を削除。"""
+
     results = analysis.get("results", [])
 
     if not results:
@@ -50,7 +43,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v339: v128の閾値0.8/1.8/3.0を維持）
+    # フェーズ判定（v340: v128の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
@@ -61,7 +54,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v339: v128の1.8を維持
+        height_mult = 1.7  # v340: v128の1.8から1.7に緩和、HEIGHT_CONTROLの支配を抑制
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -84,25 +77,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v339: v128構造復帰 ===
+        # === v340: マージ優先・高度管理緩和 ===
 
-        # 1. マージグレードによるスコア（v339: v128の弱い値を維持）
+        # 1. マージグレードによるスコア（v340: v338のマージボーナス強化を採用）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += 1500.0 * merge_mult  # v340: v338の1500.0を採用
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 800.0 * merge_mult  # v340: v338の800.0を採用
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            score += 300.0 * merge_mult  # v340: v338の300.0を採用
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v339: v128の設定を維持）
+        # 2. 高度によるペナルティ（v340: height_multを1.7に緩和）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v339: v128の緩和設定を維持）
+        # HIGH_TOWERペナルティ（v340: v128の1.3倍を維持）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v339: v128の1.3倍を維持
+            height_penalty *= 1.3  # v340: v128の1.3倍を維持
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5
@@ -112,11 +105,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v339: v128の一律30.0を維持）
+        # 3. ドリフトによるペナルティ（v340: v128の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v339: v128の設定を維持）
+        # 4. 左右バランス補正（v340: v128の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0
@@ -129,12 +122,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
-
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v339: v128の弱い値を維持）
-        if next_next_type == next_type:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0  # v339: 80.0→50.0に弱化
-            score += center_bonus
-            reasons.append("NEXT_SAME")
 
         # スコア更新
         if score > best_score:
