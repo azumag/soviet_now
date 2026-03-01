@@ -277,8 +277,11 @@ async function runLocalController() {
   let processedCount = 0;
   let lastState = null;
   const STATE_CHECK_INTERVAL = 3;
+  const NULL_STATE_WARN_THRESHOLD = 10;
+  const NULL_STATE_RELOAD_THRESHOLD = 30;
 
   let checkCount = 0;
+  let nullStateCount = 0;
   while (true) {
     const commands = readCommands();
 
@@ -286,6 +289,7 @@ async function runLocalController() {
       for (let i = processedCount; i < commands.length; i++) {
         const state = await executeCommand(page, commands[i]);
         lastState = state;
+        if (state) nullStateCount = 0;
         processedCount++;
 
         if (i === commands.length - 1) {
@@ -298,14 +302,46 @@ async function runLocalController() {
       if (checkCount >= STATE_CHECK_INTERVAL) {
         checkCount = 0;
         const state = await getGameState(page);
-        if (stateChanged(lastState, state)) {
-          writeGameState(state);
-          await takeScreenshots(page);
-          if (state) {
+
+        if (!state) {
+          nullStateCount++;
+          if (nullStateCount === NULL_STATE_WARN_THRESHOLD) {
+            console.warn(`[BRIDGE] game state null ${nullStateCount} times in a row — JS Bridge may be broken`);
+          }
+          if (nullStateCount >= NULL_STATE_RELOAD_THRESHOLD) {
+            console.warn(`[BRIDGE] game state null ${nullStateCount} times — reloading page to recover`);
+            try {
+              await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+              // Wait for Unity + Bridge to re-init
+              for (let i = 0; i < 30; i++) {
+                const s = await getGameState(page);
+                if (s && s.state) {
+                  console.log(`[BRIDGE] Recovered after reload, state: ${s.state}`);
+                  lastState = s;
+                  writeGameState(s);
+                  await takeScreenshots(page);
+                  break;
+                }
+                await page.waitForTimeout(1000);
+              }
+            } catch (e) {
+              console.error(`[BRIDGE] Reload failed: ${e.message}`);
+            }
+            nullStateCount = 0;
+          }
+        } else {
+          if (nullStateCount >= NULL_STATE_WARN_THRESHOLD) {
+            console.log(`[BRIDGE] game state recovered after ${nullStateCount} null reads`);
+          }
+          nullStateCount = 0;
+
+          if (stateChanged(lastState, state)) {
+            writeGameState(state);
+            await takeScreenshots(page);
             console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);
           }
+          lastState = state;
         }
-        lastState = state;
       }
     }
 
