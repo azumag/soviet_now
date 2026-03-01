@@ -18,6 +18,9 @@ cat > score_dashboard.html <<HTMLEOF
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Soren eloop Score Dashboard</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -127,7 +130,7 @@ cat > score_dashboard.html <<HTMLEOF
 </div>
 </div>
 
-<div class="refresh-indicator" id="refreshInfo"></div>
+<div class="refresh-indicator" id="refreshInfo">Generated: $(date '+%H:%M:%S') | State: ${GAME_STATE}</div>
 <script>
 const GAME_STATE = "${GAME_STATE}";
 const SCORES = [${SCORES_JSON}];
@@ -233,7 +236,7 @@ function drawChart(scores) {
 if (isGameOver) drawChart(SCORES);
 window.addEventListener('resize', () => { if (isGameOver) drawChart(SCORES); });
 
-setTimeout(() => location.reload(), 3000);
+setTimeout(() => location.reload(), 2000);
 </script>
 </body>
 </html>

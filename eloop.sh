@@ -87,7 +87,8 @@ post_game_bookkeeping() {
 	echo "$LAST_SCORE" >> score_history.txt
 
 	# ダッシュボード更新（GAMEOVER状態で生成→表示される）
-	./generate_dashboard.sh GAMEOVER 2>/dev/null
+	log "[DASHBOARD] Generating GAMEOVER dashboard..."
+	./generate_dashboard.sh GAMEOVER || log "[DASHBOARD] ERROR: generate_dashboard.sh GAMEOVER failed"
 
 	# バージョン保存・ベスト判定・履歴アーカイブ
 	save_strategy_version "$LAST_SCORE"
@@ -117,7 +118,8 @@ prepare_next_game() {
 	sleep 10
 
 	# ダッシュボード非表示（次のゲーム開始前）
-	./generate_dashboard.sh MOVE 2>/dev/null
+	log "[DASHBOARD] Generating MOVE dashboard (hiding)..."
+	./generate_dashboard.sh MOVE || log "[DASHBOARD] ERROR: generate_dashboard.sh MOVE failed"
 
 	if is_game_over; then
 		send_retry
