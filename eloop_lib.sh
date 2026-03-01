@@ -537,6 +537,17 @@ start_radio_talk() {
 			time_period="未明"; time_mood="未明の放送。世界が静まった時間帯に一人でゲームを回し続ける虚しさ。哲学的になるのは逃避"
 		fi
 
+		# 10回に1回、日付情報を追加して日付にちなんだトークを促す
+		local date_info=""
+		if [ $((RANDOM % 10)) -eq 0 ]; then
+			local today_date today_month today_day
+			today_date=$(date '+%Y年%m月%d日')
+			today_month=$(date '+%-m')
+			today_day=$(date '+%-d')
+			date_info="【今日の日付】${today_date}
+今日は${today_month}月${today_day}日です。この日付にちなんだ歴史的な出来事・記念日・誕生日などを調べて、トークのどこかで自然に触れてください。「今日は何の日かというと…」のような導入で。ソ連・旧ソ連圏に関係する出来事なら最高ですが、無理に結びつけなくても構いません。"
+		fi
+
 		# ランダムテーマを選ぶ
 		local themes=(
 			# --- 食文化（細分化） ---
@@ -907,6 +918,7 @@ AIが実況してるという状況自体のバカバカしさを自覚しつつ
 
 【現在時刻】${current_time} ${time_period}
 【時間帯の雰囲気】${time_mood}
+${date_info}
 
 【今回の脱線テーマ指定】
 ${theme}
