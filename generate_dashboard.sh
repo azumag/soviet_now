@@ -1,10 +1,7 @@
 #!/bin/bash
 # score_history.txt を読み込んで score_dashboard.html を生成する
-# game_state.json の state を見て GAMEOVER 時のみ表示、それ以外は完全透明
+# GAMEOVER/STOP 時のみダッシュボード表示、それ以外は透明な空ページ
 cd "$(dirname "$0")"
-
-# スコアデータをJSON配列に変換 (1行1スコア形式)
-SCORES_JSON=$(awk 'NF && /^[0-9]+$/ { n++; print "{\"game\":" n ",\"score\":" $1 "}" }' score_history.txt | paste -sd, -)
 
 # ゲーム状態を取得（引数があればそれを使用、なければ game_state.json から）
 if [ -n "$1" ]; then
@@ -12,6 +9,21 @@ if [ -n "$1" ]; then
 else
 	GAME_STATE=$(python3 -c "import json; print(json.load(open('game_state.json')).get('state',''))" 2>/dev/null || echo "")
 fi
+
+# MOVE等（非GAMEOVER）なら空HTMLを書いて終了
+if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ]; then
+	cat > score_dashboard.html <<'EMPTYEOF'
+<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+<body style="background:transparent"></body></html>
+EMPTYEOF
+	echo "Generated score_dashboard.html (state=${GAME_STATE}, hidden)"
+	exit 0
+fi
+
+# --- GAMEOVER/STOP: フルダッシュボード生成 ---
+
+# スコアデータをJSON配列に変換 (1行1スコア形式)
+SCORES_JSON=$(awk 'NF && /^[0-9]+$/ { n++; print "{\"game\":" n ",\"score\":" $1 "}" }' score_history.txt | paste -sd, -)
 
 cat > score_dashboard.html <<HTMLEOF
 <!DOCTYPE html>
@@ -29,26 +41,6 @@ cat > score_dashboard.html <<HTMLEOF
     color: #e0e0e0;
     font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
     padding: 20px;
-  }
-  #dashboard {
-    transition: opacity 0.5s ease;
-  }
-  #dashboard.hidden {
-    display: none;
-  }
-  h1 {
-    text-align: center;
-    font-size: 1.6em;
-    margin-bottom: 12px;
-    color: #ff6b6b;
-    letter-spacing: 2px;
-    background: rgba(17,17,39,0.9);
-    padding: 12px 20px;
-    border-radius: 10px;
-    border: 1px solid #333;
-    max-width: 1400px;
-    margin-left: auto;
-    margin-right: auto;
   }
   .stats-bar {
     display: flex;
@@ -130,15 +122,9 @@ cat > score_dashboard.html <<HTMLEOF
 </div>
 </div>
 
-<div class="refresh-indicator" id="refreshInfo">Generated: $(date '+%H:%M:%S') | State: ${GAME_STATE}</div>
+<div class="refresh-indicator" id="refreshInfo">Generated: $(date '+%H:%M:%S')</div>
 <script>
-const GAME_STATE = "${GAME_STATE}";
 const SCORES = [${SCORES_JSON}];
-
-const isGameOver = (GAME_STATE === "GAMEOVER" || GAME_STATE === "STOP");
-if (!isGameOver) {
-  document.getElementById('dashboard').classList.add('hidden');
-}
 
 const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
@@ -233,10 +219,8 @@ function drawChart(scores) {
   }
 }
 
-if (isGameOver) drawChart(SCORES);
-window.addEventListener('resize', () => { if (isGameOver) drawChart(SCORES); });
-
-setTimeout(() => location.reload(), 2000);
+drawChart(SCORES);
+window.addEventListener('resize', () => drawChart(SCORES));
 </script>
 </body>
 </html>
