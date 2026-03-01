@@ -6,8 +6,12 @@ cd "$(dirname "$0")"
 # スコアデータをJSON配列に変換 (1行1スコア形式)
 SCORES_JSON=$(awk 'NF && /^[0-9]+$/ { n++; print "{\"game\":" n ",\"score\":" $1 "}" }' score_history.txt | paste -sd, -)
 
-# ゲーム状態を取得
-GAME_STATE=$(python3 -c "import json; print(json.load(open('game_state.json')).get('state',''))" 2>/dev/null || echo "")
+# ゲーム状態を取得（引数があればそれを使用、なければ game_state.json から）
+if [ -n "$1" ]; then
+	GAME_STATE="$1"
+else
+	GAME_STATE=$(python3 -c "import json; print(json.load(open('game_state.json')).get('state',''))" 2>/dev/null || echo "")
+fi
 
 cat > score_dashboard.html <<HTMLEOF
 <!DOCTYPE html>

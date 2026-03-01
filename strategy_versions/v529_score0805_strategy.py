@@ -66,14 +66,10 @@
 #   核心的発見: v418の単純化アプローチは正しいが、距離係数が厳しすぎて広範囲でのマージ機会を見逃している。距離係数を緩和し、ドリフトペナルティを最小限に抑えることで、マージを絶対優先できる。
 #   成功基準: scoreがv412の1345を上回る、またはHIGH_LAYER_FUTURE_MERGEの割合が45%以上
 #   失敗基準: scoreがv418の988以下、または改善が見られない
-# v420: v128成功構造復活・先読みボーナス慎重追加版 - v419の失敗（score=1156、v412の1345を大幅に下回る）を受けて、v419の振り子パターン（左右バランス補正の完全削除→削除のまま、type N-1がない時の不自然なcenter_x=0.0設定）を特定。v419のbatch_summary.txtでFUTURE_MERGEが62.7%を占めるが、実際のマージ（DIRECT/NEAR/FAR）はわずか4.5%で、先読みボーナスが支配的すぎて実際のマージを見逃していることを確認。v128（score=3689）の成功構造をベースに復活：（1）マージボーナスをv128の強力な値（DIRECT=1200/NEAR=600/FAR=200）に戻す（v419の2500/1500/800は過剰で、FAR_MERGEの評価が不適切）、（2）v128のHIGHフェーズ高度管理緩和（height_mult=1.8）を採用、（3）左右バランス補正を復活（v419の完全削除は盤面偏りを無視し失敗）、（4）先読みマージボーナスを慎重に追加：type N-1が0個の場合はボーナスを付与しない（v419の不自然なcenter_x=0.0を回避）、距離係数をv419の2.0より緩やかに広げる（max(0, 3.0 - distance)）、ボーナス重みはv128のシンプル構造を尊重してtype * 10.0に設定、type N-1が1個以上の場合にのみ追加ボーナスtype * 5.0を付与。v128のシンプルで堅牢な構造を維持しつつ、v419の先読みマージのアイデアを慎重に統合。振り子パターン（左右バランス補正の削除と復活）を第三の選択肢（v128の成功構造をベースに先読みボーナスを慎重に追加）で解決。
-#   根本的発見: v419の失敗は「左右バランス補正を削除したことで盤面が極端に偏った」と「type N-1がない時に不自然にcenter_x=0.0としたことで、盤面の実際の分布を無視した先読みボーナスが計算された」の2点。v128の成功構造（マージボーナス強力、HIGHフェーズ高度管理緩和、バランス補正維持）を土台にし、先読みボーナスを「type N-1がある場合にのみ付与する」という慎重な条件で追加することで、実際のマージと将来のマージの両方を評価できる。
-#   成功基準: scoreがv412の1345を上回る、または実際のマージ率（DIRECT/NEAR/FAR）が20%以上
-#   失敗基準: scoreがv419の1156以下、または先読みボーナスがv419のように支配的（50%以上）になる
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v420: v128成功構造復活・先読みボーナス慎重追加版"""
+    """v419: マージ絶対優先・超単純化版"""
 
     results = analysis.get("results", [])
 
@@ -86,29 +82,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
     # 盤面情報
     pieces = game_state.get("pieces", [])
-    max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v128の閾値0.8/1.8/3.0を採用）
-    if max_y < 0.8:
-        phase = "LOW"
-        height_mult = 1.0
-        merge_mult = 1.2
-    elif max_y < 1.8:
-        phase = "MEDIUM"
-        height_mult = 2.4  # v128の2.4を維持
-        merge_mult = 1.0
-    elif max_y < 3.0:
-        phase = "HIGH"
-        height_mult = (
-            1.8  # v420: v128のHIGHフェーズ高度管理緩和（1.8）を採用（マージ優先を徹底）
-        )
-        merge_mult = 1.0
-    else:
-        phase = "CRITICAL"
-        height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v420: v128の0.6を維持
-
-    # nextNextピース情報
+    # nextNextピース情報（先読みマージボーナス計算用）
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
@@ -116,7 +91,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
     for result in results:
         x = result["x"]
-        landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")
@@ -124,79 +98,52 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v420: v128成功構造復活 ===
+        # === v419: マージ絶対優先・超単純化 ===
 
-        # 1. マージグレードによるスコア（v420: v128の強力な値に戻す）
+        # 1. マージグレードによるスコア（v419: 超増強）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult  # v420: v128の1200に戻す（v419の2500は過剰）
+            score += 2500.0  # v419: 2000から2500に超増強
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult  # v420: v128の600に戻す（v419の1500は過剰）
+            score += 1500.0  # v419: 1000から1500に超増強
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult  # v420: v128の200に戻す（v419の800は過剰）
+            score += 800.0  # v419: 600から800に超増強
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v420: v128の設定を維持）
-        height_penalty = landing_y * 50.0 * height_mult
+        # 2. v419: 高度ペナルティは完全削除（v418から維持）
 
-        # HIGH_TOWERペナルティ（v420: v128の1.3倍を採用）
-        if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v420: v128の1.3倍を採用（HIGHフェーズ高度管理緩和）
-            reasons.append("HIGH_TOWER")
-        elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5  # v420: v128の1.5倍を維持
-            reasons.append("MEDIUM_TOWER")
-        elif landing_y > 0.0:
-            reasons.append("HIGH_LAYER")
-
-        score -= height_penalty
-
-        # 3. ドリフトによるペナルティ（v420: v128の一律30.0を維持）
-        drift_penalty = (abs(drift_x) + drift_unc) * 30.0
+        # 3. ドリフトによるペナルティ（v419: 最小限に軽減）
+        drift_penalty = (abs(drift_x) + drift_unc) * 10.0  # v419: 20.0から10.0に最小限に軽減
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v420: v419の完全削除を撤回し、v128の設定を復活）
-        balance_strength = 20.0
-        if phase == "HIGH":
-            balance_strength = 40.0  # v420: v128の40.0を維持
-        elif phase == "MEDIUM":
-            balance_strength = 30.0  # v420: v128の30.0を維持
+        # 4. v419: 左右バランス補正を完全削除（マージの邪魔をしない）
 
-        left_count = sum(1 for p in pieces if p["x"] < 0)
-        right_count = len(pieces) - left_count
-        balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
+        # 5. v419: nextNext中央寄せボーナスを完全削除（マージより優先しない）
 
-        balance_penalty = x * balance_bias * balance_strength
-        score -= abs(balance_penalty)
-
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v420: v128の設定を維持）
-        if next_next_type == next_type:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
-            score += center_bonus
-            reasons.append("NEXT_SAME")
-
-        # 6. 先読みマージボーナス（v420: type N-1がある場合にのみ慎重に追加）
+        # 6. 先読みマージボーナス（v419: 距離係数を緩和して広範囲で適用）
         future_merge_bonus = 0.0
         for target_type in [next_type, next_next_type]:
             if target_type > 1:
                 prev_type_pieces = [p for p in pieces if p["type"] == target_type - 1]
 
-                # v420: type N-1が0個の場合はボーナスを付与しない（v419の不自然なcenter_x=0.0を回避）
-                if len(prev_type_pieces) >= 1:
+                # type N-1が0個でも適用（center_xを0として計算）
+                if prev_type_pieces:
                     center_x = sum(p["x"] for p in prev_type_pieces) / len(
                         prev_type_pieces
                     )
-                    distance = abs(x - center_x)
+                else:
+                    center_x = 0.0
 
-                    # v420: 距離係数を広げる: max(0, 3.0 - distance) （v419の2.0より緩和）
-                    bonus = (
-                        max(0, 3.0 - distance) * target_type * 10.0
-                    )  # v420: v128のシンプル構造を尊重し、type * 10.0に設定
-                    future_merge_bonus += bonus
+                distance = abs(x - center_x)
 
-                    # v420: type N-1が1個以上の場合、追加ボーナス（type * 5.0）
-                    future_merge_bonus += target_type * 5.0
+                # v419: 距離係数を緩和: max(0, 2.0 - distance) （v418の1.5から2.0へ）
+                bonus = max(0, 2.0 - distance) * target_type * 15.0
+                future_merge_bonus += bonus
+
+                # v419: type N-1が1個以上の場合、追加ボーナス（マージ機会確保）
+                if len(prev_type_pieces) >= 1:
+                    future_merge_bonus += target_type * 10.0
 
         if future_merge_bonus > 0:
             score += future_merge_bonus

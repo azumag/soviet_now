@@ -86,8 +86,8 @@ post_game_bookkeeping() {
 	# スコア履歴
 	echo "$LAST_SCORE" >> score_history.txt
 
-	# ダッシュボード更新
-	./generate_dashboard.sh 2>/dev/null &
+	# ダッシュボード更新（GAMEOVER状態で生成→表示される）
+	./generate_dashboard.sh GAMEOVER 2>/dev/null &
 
 	# バージョン保存・ベスト判定・履歴アーカイブ
 	save_strategy_version "$LAST_SCORE"
@@ -120,5 +120,6 @@ prepare_next_game() {
 			send_retry
 		}
 	fi
-	./generate_dashboard.sh 2>/dev/null &
+	# ダッシュボード非表示（次のゲーム開始時）
+	./generate_dashboard.sh MOVE 2>/dev/null &
 }
