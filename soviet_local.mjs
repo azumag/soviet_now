@@ -333,11 +333,23 @@ async function runLocalController() {
             console.warn(`[BRIDGE] game state null ${nullStateCount} times — reloading page to recover`);
             try {
               await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-              // Wait for Unity + Bridge to re-init
-              for (let i = 0; i < 30; i++) {
+              // Wait for Unity canvas + Bridge to re-init
+              for (let i = 0; i < 60; i++) {
                 const s = await getGameState(page);
                 if (s && s.state) {
                   console.log(`[BRIDGE] Recovered after reload, state: ${s.state}`);
+                  // Re-inject best score
+                  try {
+                    const bestScore = parseInt(fs.readFileSync('best_score.txt', 'utf-8').trim(), 10);
+                    if (bestScore > 0) {
+                      await page.evaluate((sc) => { window.__sorenCommand = 'SET_RECORD:' + sc; }, bestScore);
+                      console.log(`[BRIDGE] Re-injected best score: ${bestScore}`);
+                      await page.waitForTimeout(500);
+                    }
+                  } catch (e2) { /* ignore */ }
+                  // Click to start game
+                  await page.mouse.click(640, 360);
+                  await page.waitForTimeout(2000);
                   lastState = s;
                   writeGameState(s);
                   await takeScreenshots(page);
