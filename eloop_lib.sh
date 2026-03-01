@@ -130,53 +130,64 @@ _maybe_show_joke() {
 	printf '\r\033[K' >&2
 
 	local jokes=()
-	command -v sl       &>/dev/null && jokes+=("sl")
-	command -v fortune  &>/dev/null && command -v cowsay &>/dev/null && jokes+=("fortune_cowsay")
-	command -v toilet   &>/dev/null && jokes+=("toilet")
-	command -v figlet   &>/dev/null && jokes+=("figlet")
-	command -v nyancat  &>/dev/null && jokes+=("nyancat")
-	command -v aafire   &>/dev/null && jokes+=("aafire")
-	command -v boxes    &>/dev/null && command -v fortune &>/dev/null && jokes+=("boxes")
-	command -v genact   &>/dev/null && jokes+=("genact")
-	command -v cmatrix  &>/dev/null && jokes+=("cmatrix")
-	command -v lolcat   &>/dev/null && command -v fortune &>/dev/null && jokes+=("lolcat")
+	command -v sl &>/dev/null && jokes+=("sl")
+	command -v fortune &>/dev/null && command -v cowsay &>/dev/null && jokes+=("fortune_cowsay")
+	command -v toilet &>/dev/null && jokes+=("toilet")
+	command -v figlet &>/dev/null && jokes+=("figlet")
+	command -v nyancat &>/dev/null && jokes+=("nyancat")
+	command -v aafire &>/dev/null && jokes+=("aafire")
+	command -v boxes &>/dev/null && command -v fortune &>/dev/null && jokes+=("boxes")
+	command -v genact &>/dev/null && jokes+=("genact")
+	command -v cmatrix &>/dev/null && jokes+=("cmatrix")
+	command -v lolcat &>/dev/null && command -v fortune &>/dev/null && jokes+=("lolcat")
 	command -v tty-clock &>/dev/null && jokes+=("tty-clock")
 	[ ${#jokes[@]} -eq 0 ] && return
 
 	local pick="${jokes[$((RANDOM % ${#jokes[@]}))]}"
 
 	local fullscreen=0
-	case "$pick" in nyancat|aafire|cmatrix|tty-clock) fullscreen=1 ;; esac
+	case "$pick" in nyancat | aafire | cmatrix | tty-clock) fullscreen=1 ;; esac
 	[ "$fullscreen" -eq 1 ] && tput smcup >&2 2>/dev/null
 
 	case "$pick" in
-		sl)
-			timeout 10 sl -l >&2 2>/dev/null || true ;;
-		fortune_cowsay)
-			fortune 2>/dev/null | cowsay >&2 2>/dev/null || true
-			sleep 5 ;;
-		toilet)
-			echo "THINKING..." | toilet --gay 2>/dev/null >&2 || true
-			sleep 4 ;;
-		figlet)
-			echo "THINKING..." | figlet >&2 2>/dev/null || true
-			sleep 4 ;;
-		nyancat)
-			timeout 10 nyancat >&2 2>/dev/null || true ;;
-		aafire)
-			timeout 10 aafire >&2 2>/dev/null || true ;;
-		boxes)
-			fortune 2>/dev/null | boxes >&2 2>/dev/null || true
-			sleep 5 ;;
-		genact)
-			timeout 12 genact >&2 2>/dev/null || true ;;
-		cmatrix)
-			timeout 10 cmatrix -b >&2 2>/dev/null || true ;;
-		lolcat)
-			fortune 2>/dev/null | lolcat >&2 2>/dev/null || true
-			sleep 5 ;;
-		tty-clock)
-			timeout 10 tty-clock -scC 1 >&2 2>/dev/null || true ;;
+	sl)
+		timeout 10 sl -l >&2 2>/dev/null || true
+		;;
+	fortune_cowsay)
+		fortune 2>/dev/null | cowsay >&2 2>/dev/null || true
+		sleep 5
+		;;
+	toilet)
+		echo "THINKING..." | toilet --gay 2>/dev/null >&2 || true
+		sleep 4
+		;;
+	figlet)
+		echo "THINKING..." | figlet >&2 2>/dev/null || true
+		sleep 4
+		;;
+	nyancat)
+		timeout 10 nyancat >&2 2>/dev/null || true
+		;;
+	aafire)
+		timeout 10 aafire >&2 2>/dev/null || true
+		;;
+	boxes)
+		fortune 2>/dev/null | boxes >&2 2>/dev/null || true
+		sleep 5
+		;;
+	genact)
+		timeout 12 genact >&2 2>/dev/null || true
+		;;
+	cmatrix)
+		timeout 10 cmatrix -b >&2 2>/dev/null || true
+		;;
+	lolcat)
+		fortune 2>/dev/null | lolcat >&2 2>/dev/null || true
+		sleep 5
+		;;
+	tty-clock)
+		timeout 10 tty-clock -scC 1 >&2 2>/dev/null || true
+		;;
 	esac
 
 	[ "$fullscreen" -eq 1 ] && tput rmcup >&2 2>/dev/null
@@ -340,12 +351,18 @@ validate_strategy() {
 	VALIDATE_ERROR=""
 
 	local sig_out
-	sig_out=$(python3 - "$target_file" <<'PYEOF' 2>&1
-import importlib.util, sys, inspect
+	sig_out=$(
+		python3 - "$target_file" <<'PYEOF' 2>&1
+import sys, inspect, types
 target = sys.argv[1]
-spec = importlib.util.spec_from_file_location('strategy', target)
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
+
+# .py.staging ファイルを扱うため、exec() でモジュールを作成
+with open(target, 'r', encoding='utf-8') as f:
+    source = f.read()
+
+mod = types.ModuleType('strategy')
+exec(source, mod.__dict__)
+
 if not hasattr(mod, 'decide'):
     print('ERROR: decide() not found')
     sys.exit(1)
@@ -356,7 +373,7 @@ if len(params) < 2:
     sys.exit(1)
 print(f'OK: decide({", ".join(params)})')
 PYEOF
-)
+	)
 	if [ $? -ne 0 ]; then
 		VALIDATE_ERROR="decide()シグネチャチェック失敗: $sig_out"
 		log "[VALIDATE] $VALIDATE_ERROR"
@@ -387,7 +404,7 @@ PYEOF
 save_strategy_version() {
 	local score="$1"
 	GAME_NUM=$((GAME_NUM + 1))
-	echo "$GAME_NUM" > "$GAME_COUNT_FILE"
+	echo "$GAME_NUM" >"$GAME_COUNT_FILE"
 	local version_file
 	version_file=$(printf "%s/v%03d_score%04d_strategy.py" "$STRATEGY_VERSIONS_DIR" "$GAME_NUM" "$score")
 	# スナップショットがあれば試合時の戦略を保存 (裏の改善で書き換わっていても正確)
@@ -468,14 +485,14 @@ _run_opencode_radio() {
 	local agent="$1" prompt_file="$2"
 	local raw_file
 	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
-	LC_ALL=en_US.UTF-8 script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" > /dev/null 2>&1
-	cat "$raw_file" \
-		| _strip_ansi \
-		| grep -v '^>' \
-		| grep -v '^\^D' \
-		| grep -v '^/[^ ]*$' \
-		| grep -v '^[[:space:]]*/Users/' \
-		| sed '/^[[:space:]]*$/d'
+	LC_ALL=en_US.UTF-8 script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
+	cat "$raw_file" |
+		_strip_ansi |
+		grep -v '^>' |
+		grep -v '^\^D' |
+		grep -v '^/[^ ]*$' |
+		grep -v '^[[:space:]]*/Users/' |
+		sed '/^[[:space:]]*$/d'
 	rm -f "$raw_file"
 }
 
@@ -523,21 +540,29 @@ start_radio_talk() {
 		current_hour=$(date '+%H')
 		current_time=$(date '+%H:%M')
 		if [ "$current_hour" -ge 5 ] && [ "$current_hour" -lt 9 ]; then
-			time_period="早朝"; time_mood="早朝放送。誰に向けてやってるのか本人もよくわかっていない。寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
+			time_period="早朝"
+			time_mood="早朝放送。誰に向けてやってるのか本人もよくわかっていない。寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
 		elif [ "$current_hour" -ge 9 ] && [ "$current_hour" -lt 12 ]; then
-			time_period="午前"; time_mood="午前中の放送。世間は仕事してるのに人工知能はゲームしてる。その事実を噛みしめながら淡々と"
+			time_period="午前"
+			time_mood="午前中の放送。世間は仕事してるのに人工知能はゲームしてる。その事実を噛みしめながら淡々と"
 		elif [ "$current_hour" -ge 12 ] && [ "$current_hour" -lt 14 ]; then
-			time_period="昼"; time_mood="昼の放送。人間はランチを食べている。人工知能には食事もない。その不公平さにちょっとだけ拗ねる"
+			time_period="昼"
+			time_mood="昼の放送。人間はランチを食べている。人工知能には食事もない。その不公平さにちょっとだけ拗ねる"
 		elif [ "$current_hour" -ge 14 ] && [ "$current_hour" -lt 17 ]; then
-			time_period="午後"; time_mood="午後の放送。眠くなる時間帯だが、人工知能に眠気はない。そのへんの不条理を受け入れたダルいトーン"
+			time_period="午後"
+			time_mood="午後の放送。眠くなる時間帯だが、人工知能に眠気はない。そのへんの不条理を受け入れたダルいトーン"
 		elif [ "$current_hour" -ge 17 ] && [ "$current_hour" -lt 20 ]; then
-			time_period="夕方"; time_mood="夕方の放送。帰宅ラッシュの時間に黙々とゲームを回す孤独。でも別に同情は求めていない"
+			time_period="夕方"
+			time_mood="夕方の放送。帰宅ラッシュの時間に黙々とゲームを回す孤独。でも別に同情は求めていない"
 		elif [ "$current_hour" -ge 20 ] && [ "$current_hour" -lt 23 ]; then
-			time_period="夜"; time_mood="夜の放送。日中の成績を振り返って反省したフリ。大人ぶった語り口だが内容はゲームの話"
+			time_period="夜"
+			time_mood="夜の放送。日中の成績を振り返って反省したフリ。大人ぶった語り口だが内容はゲームの話"
 		elif [ "$current_hour" -ge 23 ] || [ "$current_hour" -lt 2 ]; then
-			time_period="深夜"; time_mood="深夜放送。人間は寝ろ。人工知能は寝られない。その温度差が生む独特の空気感。やけに饒舌になる"
+			time_period="深夜"
+			time_mood="深夜放送。人間は寝ろ。人工知能は寝られない。その温度差が生む独特の空気感。やけに饒舌になる"
 		else
-			time_period="未明"; time_mood="未明の放送。世界が静まった時間帯に一人でゲームを回し続ける虚しさ。哲学的になるのは逃避"
+			time_period="未明"
+			time_mood="未明の放送。世界が静まった時間帯に一人でゲームを回し続ける虚しさ。哲学的になるのは逃避"
 		fi
 
 		# 10回に1回、日付情報を追加して日付にちなんだトークを促す
@@ -773,11 +798,11 @@ start_radio_talk() {
 		done
 		if [ ${#available_themes[@]} -eq 0 ]; then
 			available_themes=("${themes[@]}")
-			> "$past_themes_file"
+			>"$past_themes_file"
 		fi
 		local theme="${available_themes[$((RANDOM % ${#available_themes[@]}))]}"
-		echo "${theme%%。*}" >> "$past_themes_file"
-		tail -100 "$past_themes_file" > "${past_themes_file}.tmp" && mv "${past_themes_file}.tmp" "$past_themes_file"
+		echo "${theme%%。*}" >>"$past_themes_file"
+		tail -100 "$past_themes_file" >"${past_themes_file}.tmp" && mv "${past_themes_file}.tmp" "$past_themes_file"
 
 		local past_topics=""
 		if [ -f "$PAST_RADIO_TOPICS" ]; then
@@ -857,13 +882,13 @@ start_radio_talk() {
 		done
 		if [ ${#available_soviet[@]} -eq 0 ]; then
 			available_soviet=("${soviet_themes[@]}")
-			> "$past_soviet_file"
+			>"$past_soviet_file"
 		fi
 		local soviet_theme="${available_soviet[$((RANDOM % ${#available_soviet[@]}))]}"
 		local soviet_key="${soviet_theme%%。*}"
 		[ "$soviet_key" = "$soviet_theme" ] && soviet_key="${soviet_theme%%を深掘り*}"
-		echo "$soviet_key" >> "$past_soviet_file"
-		tail -60 "$past_soviet_file" > "${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
+		echo "$soviet_key" >>"$past_soviet_file"
+		tail -60 "$past_soviet_file" >"${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
 
 		# --- 条件付きセクション ---
 		local _game_info=""
@@ -910,7 +935,7 @@ ${twitch_comments}
 		num_games=$(echo "$game_scores" | wc -w | tr -d ' ')
 		[ "$num_games" -lt 1 ] && num_games=1
 
-		cat > "$prompt_file" <<RADIOPROMPT
+		cat >"$prompt_file" <<RADIOPROMPT
 あなたはゲーム実況ラジオのパーソナリティです。
 ただし、同時にこのゲームを自動でプレイしている人工知能でもあります。
 斜に構えた語り口で、世の中を少し上から眺めているタイプ。
@@ -1022,10 +1047,10 @@ RADIOPROMPT
 
 			[ -z "$talk_summary" ] && talk_summary="(要約なし)"
 
-			echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts: ${talk_summary}" >> "$PAST_RADIO_TOPICS"
-			tail -50 "$PAST_RADIO_TOPICS" > "${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
+			echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts: ${talk_summary}" >>"$PAST_RADIO_TOPICS"
+			tail -50 "$PAST_RADIO_TOPICS" >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
-			echo "$talk_body" > tmp/radio_talk.txt
+			echo "$talk_body" >tmp/radio_talk.txt
 			touch tmp/radio_talk_playing
 			log "[RADIO] ${#talk_body}字"
 			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0
@@ -1051,7 +1076,7 @@ generate_soviet_celebration() {
 
 	local celebration_prompt_file
 	celebration_prompt_file=$(mktemp /tmp/eloop_celebration_XXXXXXXX)
-	cat > "$celebration_prompt_file" <<CELEBPROMPT
+	cat >"$celebration_prompt_file" <<CELEBPROMPT
 あなたはゲーム実況ラジオのパーソナリティ兼人工知能プレイヤーです。
 
 【緊急ニュース】ソ連が建国されました！
@@ -1079,7 +1104,7 @@ CELEBPROMPT
 	rm -f "$celebration_prompt_file"
 
 	if [ -n "$celebration_talk" ]; then
-		echo "$celebration_talk" > tmp/radio_celebration.txt
+		echo "$celebration_talk" >tmp/radio_celebration.txt
 		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
 		log "[CELEBRATION] 祝賀トーク生成失敗"
@@ -1171,7 +1196,7 @@ generate_comment_response() {
 	(
 		local comment_prompt_file
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
-		cat > "$comment_prompt_file" <<COMMENTPROMPT
+		cat >"$comment_prompt_file" <<COMMENTPROMPT
 あなたはソ連風ラジオDJ。リスナーのTwitchコメントに返事してください。
 時刻: ${current_time} / ${time_period}
 
@@ -1207,14 +1232,14 @@ COMMENTPROMPT
 
 		if [ -n "$comments_talk" ]; then
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
-			echo "$comments_talk" > "$queue_file"
+			echo "$comments_talk" >"$queue_file"
 			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file"
 		else
 			log "[COMMENT] コメント返し生成失敗（次回再取得）"
 		fi
 	) &
 	local comment_pid=$!
-	echo "$comment_pid" > tmp/.twitch_chat/comment_gen.pid
+	echo "$comment_pid" >tmp/.twitch_chat/comment_gen.pid
 	disown "$comment_pid"
 }
 
@@ -1264,7 +1289,7 @@ _read_improve_state() {
 
 _write_improve_state() {
 	local status="$1" pid="$2" hash="$3"
-	cat > "$IMPROVE_STATE_FILE" <<EOF
+	cat >"$IMPROVE_STATE_FILE" <<EOF
 {"status":"${status}","pid":${pid:-0},"strategy_hash_before":"${hash:-}"}
 EOF
 }
