@@ -77,17 +77,22 @@ for retry in $(seq 1 3); do
 			prompts/improve_strategy.md "$STAGING_FILE" \
 			$improve_ref_files
 	else
-		log "[IMPROVE] リトライ $retry/3"
+		log "[IMPROVE] リトライ $retry/3 (前回エラー: ${VALIDATE_ERROR:0:80})"
+
+		# stagingをオリジナルに戻してからリトライ
+		cp "$STRATEGY_FILE" "$STAGING_FILE"
 
 		fix_prompt_file=$(mktemp /tmp/eloop_fix_prompt.XXXXXX)
 		cat > "$fix_prompt_file" <<FIXEOF
-strategy.py.staging のバリデーションが失敗した。以下のエラーを修正せよ。
+前回の strategy.py.staging 改善でバリデーションが失敗した。strategy.py.staging はオリジナルに戻してある。
+以下のエラーを踏まえて、改めて改善せよ。
 
-## エラー内容
+## 前回のエラー
 $VALIDATE_ERROR
 
 ## 修正ルール
-- strategy.py.staging を修正して上記エラーを解消せよ
+- strategy.py.staging を改善して上記エラーを回避せよ
+- 既存のロジックを維持した上で、新しいロジックを追加する形で改善すること
 - decide(game_state, analysis) のシグネチャは変更禁止
 - if __name__ == "__main__" ブロックは変更禁止
 - decide() は必ず {"x": float, "reason": str} を返すこと
@@ -95,7 +100,7 @@ $VALIDATE_ERROR
 FIXEOF
 		run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
 			"$fix_prompt_file" "$STAGING_FILE" \
-			"$STAGING_FILE"
+			$improve_ref_files
 		rm -f "$fix_prompt_file"
 	fi
 
