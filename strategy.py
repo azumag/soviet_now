@@ -80,18 +80,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # フェーズ判定（v412: v42の閾値0.8/1.8/3.0を維持）
+    # フェーズ判定（v413: MEDIUMフェーズ高度管理緩和）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4
+        height_mult = 2.2  # v413: v412の2.4から緩和（マージ機会確保）
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        # v412: v128の1.8を固定（v411の維持）
+        # v413: v128の1.8を固定（v411の維持）
         height_mult = 1.8
         merge_mult = 1.0
     else:
@@ -128,15 +128,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ
+        # 2. 高度によるペナルティ（v413: MEDIUMフェーズ高度管理緩和・HIGH_TOWERペナルティ軽減）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v412: v128の1.5倍をMEDIUMでも採用）
+        # HIGH_TOWERペナルティ（v413: MEDIUMフェーズも1.0倍に軽減）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3
+            height_penalty *= 1.0  # v413: v412の1.3倍から1.0倍に軽減
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5  # v412: v128の1.5倍を復活（v411の誤った1.3倍を修正）
+            height_penalty *= (
+                1.0  # v413: v412の1.5倍から1.0倍に軽減（MEDIUM_TOWERと統合）
+            )
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
@@ -167,7 +169,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # 6. 先読みマージボーナス（v412: 新規追加）
+        # 6. 先読みマージボーナス（v413: 重み増強・距離閾値縮小）
         # next/nextNextがtype Nのとき、type N-1が2個以上あれば、その重心付近に落とすことで将来のマージを確保
         future_merge_bonus = 0.0
         for target_type in [next_type, next_next_type]:
@@ -178,8 +180,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         prev_type_pieces
                     )
                     distance = abs(x - center_x)
-                    # 近いほど高ボーナス、高typeほど高ボーナス（type10-15を優先）
-                    bonus = max(0, 2.0 - distance) * target_type * 3
+                    # v413: 重みtype * 5に増強、距離閾値1.5に縮小
+                    bonus = max(0, 1.5 - distance) * target_type * 5
                     future_merge_bonus += bonus
 
         if future_merge_bonus > 0:

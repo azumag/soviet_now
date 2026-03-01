@@ -160,7 +160,10 @@ if __name__ == "__main__":
     
     # analyze_board から解析データ取得
     try:
-        from analyze_board import analyze_drops, calc_reactor_state
+        # analyze_boardモジュールを遅延インポート（バリデーション対策）
+        analyze_board = __import__("analyze_board")
+        analyze_drops = analyze_board.analyze_drops
+        calc_reactor_state = analyze_board.calc_reactor_state
         
         pieces = game_state.get("pieces", [])
         shapes = game_state.get("shapes", {})
