@@ -106,6 +106,19 @@ FIXEOF
 		continue
 	fi
 
+	# 行数チェック: 既存ロジックの無断削除を防止
+	original_lines=$(grep -c '' "$STRATEGY_FILE" 2>/dev/null || echo 0)
+	staging_lines=$(grep -c '' "$STAGING_FILE" 2>/dev/null || echo 0)
+	# コメント行を除いたコード行数で比較
+	original_code=$(grep -v '^\s*#' "$STRATEGY_FILE" | grep -v '^\s*$' | wc -l | tr -d ' ')
+	staging_code=$(grep -v '^\s*#' "$STAGING_FILE" | grep -v '^\s*$' | wc -l | tr -d ' ')
+	min_code=$((original_code * 80 / 100))  # 80%未満ならリジェクト
+	if [ "$staging_code" -lt "$min_code" ]; then
+		log "[IMPROVE] コード行数が大幅に減少: ${original_code}行→${staging_code}行 (最低${min_code}行必要)"
+		VALIDATE_ERROR="コード行数が大幅に減少した (${original_code}→${staging_code}行)。既存ロジックを削除せず、新しいロジックを追加する形で改善せよ。削除は avg_score_delta が負のロジックのみ許可。"
+		continue
+	fi
+
 	# stagingファイルを直接バリデーション (strategy.pyには触らない)
 	if validate_strategy "$STAGING_FILE"; then
 		log "[IMPROVE] バリデーション成功"
