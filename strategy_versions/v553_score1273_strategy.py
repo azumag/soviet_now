@@ -128,14 +128,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # 6. type N-1の存在による追加ボーナス（v542: v128の設定を維持）
-        # v540/v128では単純なtype N-1存在チェックのみ
-        if next_type > 1:
-            prev_type_pieces = [p for p in pieces if p["type"] == next_type - 1]
-            if len(prev_type_pieces) >= 1:
-                score += next_type * 5.0  # v128: type N-1があれば追加ボーナス
-                reasons.append("TYPE_PREV")
-
         # スコア更新
         if score > best_score:
             best_score = score
