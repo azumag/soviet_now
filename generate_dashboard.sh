@@ -14,7 +14,9 @@ fi
 if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ]; then
 	cat > score_dashboard.html <<'EMPTYEOF'
 <!DOCTYPE html><html><head><meta charset="UTF-8"></head>
-<body style="background:transparent"></body></html>
+<body style="background:transparent">
+<script>setTimeout(function(){ location.reload(); }, 2000);</script>
+</body></html>
 EMPTYEOF
 	echo "Generated score_dashboard.html (state=${GAME_STATE}, hidden)"
 	exit 0
@@ -221,6 +223,9 @@ function drawChart(scores) {
 
 drawChart(SCORES);
 window.addEventListener('resize', () => drawChart(SCORES));
+
+// 2秒ごとにリロード（ファイル変更検知用）
+setTimeout(function(){ location.reload(); }, 2000);
 </script>
 </body>
 </html>
