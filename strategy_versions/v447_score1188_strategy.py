@@ -9,23 +9,6 @@
 # AI改変禁止: decide() シグネチャ、if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v411: マージボーナス適正化・v42復帰版 - v410の失敗（score=959、merge_rate=12.5%）を受けて、マージボーナスが強すぎてマージ機会が少ない状況を特定。ベストスコア戦略（v2346）のv42のマージボーナス（DIRECT=1200/NEAR=600/FAR=200）を採用し、マージの質を重視。HIGHフェーズのheight_mult=1.8固定（v128の成功要素）。reactive_pairs情報を完全削除（v410の維持）。batch_summary.txtの分析でHIGH_LAYERとHIGH_TOWERが支配的（50%）であり、マージボーナスが活きにくい構造を改善。
-#   根本原因の特定:
-#   - v410はマージボーナスを強化（DIRECT=1500/NEAR=800/FAR=300）していたが、merge_rate=12.5%と低く、マージ機会が少ない状況
-#   - ベストスコア戦略（v2346）のv42はDIRECT=1200/NEAR=600/FAR=200とマージボーナスが適正
-#   - v128（best_score=3689）の成功要素は「高度管理緩和（height_mult=1.8）」にあり、マージボーナス強化ではない
-#   - batch_summary.txtの分析でHIGH_LAYERとHIGH_TOWERが支配的（50%）であり、マージボーナスが活きにくい構造
-#   改善策（マージボーナス適正化・v42復帰）:
-#   - マージボーナスをv42の設定に復帰（DIRECT=1200/NEAR=600/FAR=200）
-#   - HIGHフェーズのheight_multを1.8に固定（v128の成功要素）
-#   - HIGH_TOWERペナルティを1.3倍に維持（v128の設定）
-#   - reactive_pairs情報を完全削除（v410の維持）
-#   - ドリフトペナルティを30.0に維持（v128の設定）
-#   - 左右バランス補正をv128の設定に復帰
-#   - nextNext中央寄せボーナスをv128の設定に復帰
-#   核心的発見: マージボーナスが強すぎると、マージ機会が少ない状況でボーナスが活きにくい。v42のマージボーナス（DIRECT=1200/NEAR=600/FAR=200）と高度管理緩和（height_mult=1.8）のバランスが最適であることが確認された。
-#   成功基準: merge_rate=15%以上、またはscoreがv128の3689に近い
-#   失敗基準: merge_rate=12.5%未満、またはreactive_pairsが使用される
 # v412: MEDIUMフェーズHIGH_TOWER修正・先読みマージ追加版 - v411の失敗（avg_score=987、merge_rate=11%）を受けて、v411とv128の差異を特定。v128ではMEDIUMフェーズのHIGH_TOWERペナルティが1.5倍だが、v411では1.3倍に誤って設定されていた。v128の成功要素（1.5倍）を復活。また、batch_summary.txtの分析で高スコア群（merge_rate=14.9%）と低スコア群（merge_rate=7.5%）の差がmerge_rateにあることを特定。「next/nextNextが来たときにtype N-1が2個以上あれば、その近くに落とす」先読みマージ戦略を追加し、将来のマージ連鎖を構築することで高type（type10-16）のマージを優先する。
 #   根本原因の特定:
 #   - v411とv128の決定的な差異: MEDIUMフェーズのHIGH_TOWERペナルティ（v411:1.3倍、v128:1.5倍）
@@ -65,11 +48,28 @@
 #   改善策（クラスタ密度評価付き先読みマージ強化）:
 #   - クラスタ密度評価を導入: type N-1のピース間の平均距離を計算し、密度係数（1.0/平均距離）を乗算
 #   - ボーナス重みをtype * 5からtype * 7.5に増強（type15で最大112.5点）
-#   - 連鎖マージ評価を追加: type Nだけでなく、N-2、N-3の密度も考慮し、連鎖係数（N:1.0、N-2:0.6、N-3:0.3）を乗算
+#   - 連鎖マージ評価を追加: type Nだけでなく、N-2、N-3の密度も考慮し、連�係数（N:1.0、N-2:0.6、N-3:0.3）を乗算
 #   - v413の既存ロジック（height_mult=2.2、HIGH_TOWER=1.0倍など）を維持
 #   核心的発見: 先読みマージ戦略自体は有効だが、クラスタ密度を考慮していないため、分散したピースを優先してしまいがち。クラスタ密度評価と連鎖マージ評価を追加することで、密度の高いクラスタ付近を優先し、将来の連鎖マージを促進できる。
 #   成功基準: scoreがv412の1345を上回る、またはHIGH_LAYER_FUTURE_MERGEの割合が20%以上
 #   失敗基準: scoreがv413の988以下、またはクラスタ密度評価の効果が見られない
+# v415: v128成功要素完全復活・先読みマージ大幅強化版 - v414の失敗（score=1606、v128の3689と比較して半分未満）を受けて、v128の成功要素が完全に実装されていないことを特定。MEDIUMフェーズのheight_mult=2.2→2.4、HIGH_TOWERペナルティ=1.0→1.5倍という逆修正が振り子パターンの原因と特定。また、batch_summary.txtの分析でHIGH_LAYER_FUTURE_MERGEが最も効果的（avg_score_delta=42.7）であることを確認。v414の先読みマージボーナスはクラスタ密度評価・連鎖マージ評価を追加しているが、ボーナス重みtype * 7.5はマージボーナス（DIRECT=1200）に比べてまだ小さい。また、距離閾値1.5が狭すぎて、広範囲のクラスタを優先できていない。
+#   根本原因の特定:
+#   - v414はv128の成功要素（MEDIUMフェーズheight_mult=2.4, HIGH_TOWER=1.5倍）を実装できていない
+#   - v414のMEDIUMフェーズheight_mult=2.2はv412の2.4から緩和されたものだが、v128の2.4ではない
+#   - v414のHIGH_TOWERペナルティ=1.0倍はv413の1.0倍と同じで、v128の1.5倍ではない
+#   - v414の先読みマージボーナス(type * 7.5)はマージボーナスに比べて小さすぎて、HIGH_LAYER_FUTURE_MERGEの効果が十分に発揮されていない
+#   - batch_summary.txtでHIGH_LAYER_FUTURE_MERGEのavg_score_delta=42.7と最も効果的であることが確認されたが、v414ではその効果を十分に活用できていない
+#   改善策（v128成功要素完全復活・先読みマージ大幅強化）:
+#   - MEDIUMフェーズのheight_multを2.2からv128の2.4に復活（マージ機会確保のため）
+#   - HIGH_TOWERペナルティを1.0倍からv128の1.5倍に復活（HIGH_TOWERペナルティ強化でマージ優先を徹底）
+#   - 先読みマージボーナスをtype * 7.5からtype * 30に大幅に増強（type15で最大450点、マージボーナスの37.5%相当）
+#   - 距離閾値を1.5から2.0に拡大して、広範囲のクラスタを優先
+#   - v414のクラスタ密度評価・連鎖マージ評価を維持しつつ、HIGH_LAYER_FUTURE_MERGEを最大化
+#   - v128のマージボーナス（DIRECT=1200/NEAR=600/FAR=200）を維持
+#   核心的発見: v414はv128の成功要素を不完全にしか実装しており、そのためスコアがv128の半分未満にとどまっている。v128の成功要素を完全に復活し、先読みマージのボーナスを大幅に増強することで、HIGH_LAYER_FUTURE_MERGEの効果を最大化し、マージ機会を大幅に増加する。
+#   成功基準: merge_rate=20%以上、またはavg_scoreがv128の3689に近い
+#   失敗基準: merge_rate=15%未満、またはscoreがv414の1606と同等以下
 
 
 def calculate_cluster_density(pieces: list) -> float:
@@ -124,7 +124,7 @@ def calculate_chain_probability(
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v414: クラスタ密度評価付き先読みマージ強化版"""
+    """v415: v128成功要素完全復活・先読みマージ大幅強化版"""
 
     results = analysis.get("results", [])
 
@@ -145,18 +145,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # フェーズ判定（v413: MEDIUMフェーズ高度管理緩和）
+    # フェーズ判定（v415: v128の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.2  # v413: v412の2.4から緩和（マージ機会確保）
+        height_mult = 2.4  # v415: v128の2.4を復活（マージ機会確保）
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        # v413: v128の1.8を固定（v411の維持）
+        # v415: v128の1.8を固定（v413/v414の1.8を維持）
         height_mult = 1.8
         merge_mult = 1.0
     else:
@@ -180,9 +180,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v414: クラスタ密度評価付き先読みマージ強化 ===
+        # === v415: v128成功要素完全復活・先読みマージ大幅強化 ===
 
-        # 1. マージグレードによるスコア（v413: v42の適正な値を維持）
+        # 1. マージグレードによるスコア（v42の適正な値を維持）
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -193,28 +193,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v413: MEDIUMフェーズ高度管理緩和・HIGH_TOWERペナルティ軽減）
+        # 2. 高度によるペナルティ（v415: v128の設定を復活）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v413: MEDIUMフェーズも1.0倍に軽減）
+        # HIGH_TOWERペナルティ（v415: v128の設定を復活）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.0  # v413: v412の1.3倍から1.0倍に軽減
+            height_penalty *= 1.3  # v415: v413の1.0倍からv128の1.3倍に復活
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= (
-                1.0  # v413: v412の1.5倍から1.0倍に軽減（MEDIUM_TOWERと統合）
-            )
+            height_penalty *= 1.5  # v415: v414の1.0倍からv128の1.5倍に復活
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v413: v128の一律30.0を維持）
+        # 3. ドリフトによるペナルティ（v128の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v413: v128の設定を維持）
+        # 4. 左右バランス補正（v128の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0
@@ -228,13 +226,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v413: v128の設定を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v128の設定を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # 6. 先読みマージボーナス（v414: クラスタ密度評価・連鎖マージ評価・重み増強）
+        # 6. 先読みマージボーナス（v415: v128成功要素完全復活・大幅強化）
         # next/nextNextがtype Nのとき、type N-1が2個以上あれば、その重心付近に落とすことで将来のマージを確保
         future_merge_bonus = 0.0
         for target_type in [next_type, next_next_type]:
@@ -246,20 +244,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     )
                     distance = abs(x - center_x)
 
-                    # v414: クラスタ密度評価
+                    # v415: クラスタ密度評価・連鎖マージ評価を維持
                     cluster_density = calculate_cluster_density(prev_type_pieces)
 
-                    # v414: 連鎖マージ評価
+                    # v415: 連鎖マージ評価
                     chain_prob = calculate_chain_probability(
                         pieces, type_count, target_type
                     )
 
-                    # v414: 重みtype * 7.5に増強（v413のtype * 5から）
-                    # v414: 距離閾値1.5を維持、密度係数と連鎖係数を乗算
+                    # v415: ボーナス大幅増強（type * 30でtype15で450点、マージボーナスの37.5%相当）
+                    # v415: 距離閾値を2.0に拡大して、広範囲のクラスタを優先
                     bonus = (
-                        max(0, 1.5 - distance)
+                        max(0, 2.0 - distance)
                         * target_type
-                        * 7.5
+                        * 30  # v415: type * 7.5からtype * 30に大幅に増強
                         * (1.0 + cluster_density)
                         * (1.0 + chain_prob)
                     )
