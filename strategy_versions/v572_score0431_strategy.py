@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""strategy.py - AI改善対象の決定スクリプト (v542: v540/v128-based simplified version)"""
+"""strategy.py - AI改善対象の決定スクリプト (v546: 動的ドリフトペナルティ・HIGHフェーズマージ強化版)"""
 
 # 固定インターフェース:
 # decide(game_state: dict, analysis: dict) -> dict
@@ -24,10 +24,20 @@
 #   核心的発見: v540とv128の単純構造が最高点2176と平均1170.8点を出した。複雑さを除去し、実際のマージに集中することでスコア向上。
 #   成功基準: scoreがv540の2176に近づく、または平均がv422を上回る
 #   失敗基準: scoreがv422以下、または実際のマージ率が5%以下
+# v546: 動的ドリフトペナルティ・HIGHフェーズマージ強化版 - v542のbatch_summary分析で、「HIGH_LAYERのavg_score_deltaが29.5（高スコア群で32.1%）」と高いことを特定。HIGH_LAYER（0.5以下の高さ）でのスコア獲得が重要であることが判明。v546ではドリフトペナルティを動的に計算し、盤面の状況に応じて調整。HIGHフェーズではドリフトペナルティを緩和し、マージ機会を確保。MEDIUMフェーズではドリフトペナルティを強化し、正確な着地予測でHIGH到達遅延。また、HIGHフェーズではバランス補正を緩和し（balance_strengthを20.0に減）、マージ優先を実現。MEDIUMフェーズではバランス補正を維持しつつ、HIGH到達遅延を狙う。v542の基本構造を維持しつつ、動的ペナルティ計算でスコア向上。
+#   バッチ統計分析結果:
+#   - avg_score_delta: HIGH_CONTROL=15.0, HIGH_LAYER=29.5, MEDIUM_TOWER=16.5, HIGH_TOWER=2.3
+#   - 高スコア群のreason上位5: HEIGHT_CONTROL(32.1%), NEAR_MERGE(11.5%), HIGH_LAYER(10.9%), MEDIUM_TOWER(8.3%), HIGH_TOWER(7.7%)
+#   - 低スコア群のreason上位5: HEIGHT_CONTROL(28.0%), NEAR_MERGE(15.3%), NEAR_MERGE_HIGH_LAYER(11.0%), HIGH_LAYER(10.2%), NEAR_MERGE_MEDIUM_TOWER(6.8%)
+#   改善策:
+#   - 動的ドリフトペナルティ: ドリフト不確定性(drift_unc)が大きいほどペナルティを強化（マージ失敗リスクが高いため）
+#   - HIGHフェーズドリフト緩和: HIGHフェーズではドリフトペナルティを半減（マージ機会確保優先）
+#   - HIGHフェーズバランス緩和: balance_strengthを40.0から20.0に減（マージ優先）
+#   - HIGH_LAYERボーナス: 0.5以下の高さでの着地にボーナスを追加（HIGH_LAYERでのスコア獲得促進）
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v542: v540/v128-based simplified strategy"""
+    """v546: 動的ドリフトペナルティ・HIGHフェーズマージ強化版"""
 
     results = analysis.get("results", [])
 
@@ -42,7 +52,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v542: v128の設定を採用）
+    # フェーズ判定（v546: v128の設定を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
@@ -76,23 +86,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v542: v540/v128単純化版 ===
+        # === v546: 動的ドリフトペナルティ・HIGHフェーズマージ強化版 ===
 
-        # 1. マージグレードによるスコア（v542: v128の実用的値を採用）
+        # 1. マージグレードによるスコア（v546: v128の実用的値を維持）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult  # v128: DIRECT 1200
+            score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult  # v128: NEAR 600
+            score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult  # v128: FAR 200
+            score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v542: v128の設定を維持）
+        # 2. 高度によるペナルティ（v546: v128の設定を維持）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # MEDIUM/HIGHフェーズのタワー判定（v542: v128の設定を維持）
+        # MEDIUM/HIGHフェーズのタワー判定（v546: v128の設定を維持）
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 1.3  # v128: HIGH_TOWER 1.3倍
             reasons.append("HIGH_TOWER")
@@ -100,20 +110,36 @@ def decide(game_state: dict, analysis: dict) -> dict:
             height_penalty *= 1.5  # v128: MEDIUM_TOWER 1.5倍
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
-            reasons.append("HIGH_LAYER")
+            # v546: HIGH_LAYERボーナス（0.5以下の高さでのスコア獲得促進）
+            if landing_y <= 0.5:
+                score += 30.0  # HIGH_LAYERボーナス
+                reasons.append("HIGH_LAYER_BONUS")
+            else:
+                reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v542: v128の設定を維持）
-        drift_penalty = (abs(drift_x) + drift_unc) * 20.0  # v128: 20.0
+        # 3. 動的ドリフトペナルティ（v546: ドリフト不確定性に応じて調整）
+        # ドリフト不確定性(drift_unc)が大きいほどペナルティを強化（マージ失敗リスクが高いため）
+        drift_penalty_base = 20.0  # v542のベース値
+        drift_unc_multiplier = 2.0  # ドリフト不確定性の倍率
+        
+        # MEDIUMフェーズではドリフトペナルティを強化（正確な着地予測でHIGH到達遅延）
+        if phase == "MEDIUM":
+            drift_penalty_base = 30.0  # MEDIUMフェーズで強化
+        elif phase == "HIGH":
+            drift_penalty_base = 10.0  # v546: HIGHフェーズで緩和（マージ機会確保優先）
+        
+        # ドリフト不確定性に応じた動的調整
+        drift_penalty = (abs(drift_x) + drift_unc * drift_unc_multiplier) * drift_penalty_base
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v542: v128の設定を維持）
+        # 4. 左右バランス補正（v546: HIGHフェーズで緩和、MEDIUMフェーズで維持）
         balance_strength = 10.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v128: HIGHフェーズで強化
+            balance_strength = 20.0  # v546: HIGHフェーズで緩和（マージ優先）
         elif phase == "MEDIUM":
-            balance_strength = 20.0  # v128: MEDIUMフェーズで中程度
+            balance_strength = 20.0  # MEDIUMフェーズで中程度
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -122,7 +148,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v542: v128の設定を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v546: v128の設定を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
