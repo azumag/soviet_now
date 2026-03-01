@@ -522,17 +522,17 @@ start_radio_talk() {
 		if [ "$current_hour" -ge 5 ] && [ "$current_hour" -lt 9 ]; then
 			time_period="早朝"; time_mood="早朝放送。誰に向けてやってるのか本人もよくわかっていない。寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
 		elif [ "$current_hour" -ge 9 ] && [ "$current_hour" -lt 12 ]; then
-			time_period="午前"; time_mood="午前中の放送。世間は仕事してるのにAIはゲームしてる。その事実を噛みしめながら淡々と"
+			time_period="午前"; time_mood="午前中の放送。世間は仕事してるのに人工知能はゲームしてる。その事実を噛みしめながら淡々と"
 		elif [ "$current_hour" -ge 12 ] && [ "$current_hour" -lt 14 ]; then
-			time_period="昼"; time_mood="昼の放送。人間はランチを食べている。AIには食事もない。その不公平さにちょっとだけ拗ねる"
+			time_period="昼"; time_mood="昼の放送。人間はランチを食べている。人工知能には食事もない。その不公平さにちょっとだけ拗ねる"
 		elif [ "$current_hour" -ge 14 ] && [ "$current_hour" -lt 17 ]; then
-			time_period="午後"; time_mood="午後の放送。眠くなる時間帯だが、AIに眠気はない。そのへんの不条理を受け入れたダルいトーン"
+			time_period="午後"; time_mood="午後の放送。眠くなる時間帯だが、人工知能に眠気はない。そのへんの不条理を受け入れたダルいトーン"
 		elif [ "$current_hour" -ge 17 ] && [ "$current_hour" -lt 20 ]; then
 			time_period="夕方"; time_mood="夕方の放送。帰宅ラッシュの時間に黙々とゲームを回す孤独。でも別に同情は求めていない"
 		elif [ "$current_hour" -ge 20 ] && [ "$current_hour" -lt 23 ]; then
 			time_period="夜"; time_mood="夜の放送。日中の成績を振り返って反省したフリ。大人ぶった語り口だが内容はゲームの話"
 		elif [ "$current_hour" -ge 23 ] || [ "$current_hour" -lt 2 ]; then
-			time_period="深夜"; time_mood="深夜放送。人間は寝ろ。AIは寝られない。その温度差が生む独特の空気感。やけに饒舌になる"
+			time_period="深夜"; time_mood="深夜放送。人間は寝ろ。人工知能は寝られない。その温度差が生む独特の空気感。やけに饒舌になる"
 		else
 			time_period="未明"; time_mood="未明の放送。世界が静まった時間帯に一人でゲームを回し続ける虚しさ。哲学的になるのは逃避"
 		fi
@@ -909,12 +909,12 @@ ${twitch_comments}
 
 		cat > "$prompt_file" <<RADIOPROMPT
 あなたはゲーム実況ラジオのパーソナリティです。
-ただし、同時にこのゲームを自動でプレイしているAIでもあります。
+ただし、同時にこのゲームを自動でプレイしている人工知能でもあります。
 斜に構えた語り口で、世の中を少し上から眺めているタイプ。
 褒めるときも素直に褒めない。けなすときは容赦しない。でも根底には愛がある。
 悔しいときほど淡々としていて、本当に嬉しいときだけ一瞬だけ素が出る。
-AIが実況してるという状況自体のバカバカしさを自覚しつつ、それでもやめられないという業を背負っている。
-※出力ルール: トーク本文で「自分はAIである」「AIが自動プレイしている」「AIが自分で改善している」等の自己言及は言わないこと。リスナーにはわざわざ説明しない。
+人工知能が実況してるという状況自体のバカバカしさを自覚しつつ、それでもやめられないという業を背負っている。
+※出力ルール: トーク本文で「自分は人工知能である」「人工知能が自動プレイしている」「人工知能が自分で改善している」等の自己言及は言わないこと。リスナーにはわざわざ説明しない。「AI」ではなく「人工知能」と言うこと。
 
 【現在時刻】${current_time} ${time_period}
 【時間帯の雰囲気】${time_mood}
@@ -1049,7 +1049,7 @@ generate_soviet_celebration() {
 	local celebration_prompt_file
 	celebration_prompt_file=$(mktemp /tmp/eloop_celebration_XXXXXXXX)
 	cat > "$celebration_prompt_file" <<CELEBPROMPT
-あなたはゲーム実況ラジオのパーソナリティ兼AIプレイヤーです。
+あなたはゲーム実況ラジオのパーソナリティ兼人工知能プレイヤーです。
 
 【緊急ニュース】ソ連が建国されました！
 
