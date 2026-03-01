@@ -14,6 +14,18 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# --- 多重起動防止 ---
+LOCKFILE="tmp/soren_loop.lock"
+mkdir -p tmp
+if [ -f "$LOCKFILE" ]; then
+	old_pid=$(cat "$LOCKFILE" 2>/dev/null)
+	if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+		echo "ERROR: soren_loop.sh is already running (PID=$old_pid). Aborting."
+		exit 1
+	fi
+fi
+echo $$ > "$LOCKFILE"
+
 # --- 共通ライブラリ読み込み ---
 source ./eloop_lib.sh
 
