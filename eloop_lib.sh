@@ -1013,7 +1013,7 @@ ${_comments_section}
    - 最後まで素直にならない。でもほんの少しだけ、次への期待がにじむ程度に
 
 【出力ルール】
-- 6000文字以上書くこと。これは絶対に守る。短いトークは禁止。ラジオ番組なので間を持たせる
+- 6000文字以上、10000文字以下で書くこと。短すぎも長すぎも禁止
 - プログラミング用語やコード上の変数名は絶対に使わない
 - ピースは必ず国名で呼ぶ
 - 話し言葉で書く。常にですます調を使うこと。「〜だ」「〜である」は禁止
@@ -1050,12 +1050,62 @@ RADIOPROMPT
 			echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts: ${talk_summary}" >>"$PAST_RADIO_TOPICS"
 			tail -50 "$PAST_RADIO_TOPICS" >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
-			echo "$talk_body" >tmp/radio_talk.txt
-			touch tmp/radio_talk_playing
-			log "[RADIO] ${#talk_body}字"
-			./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0
-			rm -f tmp/radio_talk_playing tmp/radio_talk.txt
-			log "[RADIO] トーク終了"
+			# 繰り返しループ検出 & 10000文字上限
+			talk_body=$(python3 -c "
+import sys
+text = sys.stdin.read()
+# 連続する同一行を検出して最初の出現以降をカット
+lines = text.split('\n')
+seen_repeat = 0
+cut_at = len(lines)
+for i in range(1, len(lines)):
+    if lines[i].strip() and lines[i] == lines[i-1]:
+        seen_repeat += 1
+        if seen_repeat >= 3:
+            cut_at = i - 2
+            break
+    else:
+        seen_repeat = 0
+# 同一フレーズ(20文字以上)が5回以上出現したらそこでカット
+from collections import Counter
+chunk_size = 20
+chunks = [text[i:i+chunk_size] for i in range(0, len(text)-chunk_size)]
+freq = Counter(chunks)
+repeat_phrase = None
+for phrase, count in freq.most_common(1):
+    if count >= 5 and len(phrase.strip()) > 5:
+        repeat_phrase = phrase
+        break
+result = '\n'.join(lines[:cut_at])
+if repeat_phrase:
+    # 3回目の出現以降をカット
+    idx = 0
+    for _ in range(3):
+        idx = result.find(repeat_phrase, idx)
+        if idx == -1:
+            break
+        idx += len(repeat_phrase)
+    if idx > 0:
+        result = result[:idx]
+# 上限
+if len(result) > 10000:
+    result = result[:10000]
+print(result, end='')
+" <<< "$talk_body")
+			if [ ${#talk_body} -lt 100 ]; then
+				log "[RADIO] WARNING: 繰り返し除去後が短すぎる(${#talk_body}字)、スキップ"
+				talk_body=""
+			fi
+			if [ -n "$talk_body" ]; then
+				echo "$talk_body" >tmp/radio_talk.txt
+				touch tmp/radio_talk_playing
+				log "[RADIO] ${#talk_body}字"
+				./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0
+				rm -f tmp/radio_talk_playing tmp/radio_talk.txt
+				log "[RADIO] トーク終了"
+			else
+				log "[RADIO] トーク生成失敗(繰り返し除去で空)"
+			fi
 		else
 			log "[RADIO] トーク生成失敗"
 		fi
