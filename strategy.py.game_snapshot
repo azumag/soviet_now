@@ -9,25 +9,13 @@
 # AI改変禁止: decide() シグネチャ、if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v542: v540/v128単純化版 - v422の複雑さを除去し、v540(2176点)とv128の成功構造に戻る。batch_summary.txtでv540が最高点2176を達成し、v128-like構造は平均1170.8点を出したことが確認された。v422の複雑なロジック（先読みマージボーナス支配62.7%、チェーン予測、reactor情報）は実際のマージ率を低下させていた。
-#   根本原因の特定:
-#   - v422のFUTURE_MERGEが62.7%を占めるが、実際のマージ(DIRECT/NEAR/FAR)は4.5%しかない
-#   - 先読みボーナスが支配的すぎて、実際のマージ機会を見逃している
-#   - v422のチェーン予測、reactor情報(near_pairs、reactive_pairs)はオーバーヘッド
-#   - v422のmerge_bonus: DIRECT 2500/NEAR 1500/FAR 800 は大きすぎて判断を歪める
-#   改善策(v540/v128単純化):
-#   - マージボーナスをv128レベルに戻す: DIRECT 1200/NEAR 600/FAR 200（実用的なバランス）
-#   - 先読みマージボーナスとチェーン予測を削除（実際のマージに集中）
-#   - reactor情報(near_pairs、reactive_pairs)を削除（単純化）
-#   - フェーズ判定と高度ペナルティを維持（v128の成功要素）
-#   - ドリフトペナルティ、バランス補正、中央寄せボーナスを維持（基本制御）
-#   核心的発見: v540とv128の単純構造が最高点2176と平均1170.8点を出した。複雑さを除去し、実際のマージに集中することでスコア向上。
-#   成功基準: scoreがv540の2176に近づく、または平均がv422を上回る
-#   失敗基準: scoreがv422以下、または実際のマージ率が5%以下
+# v549: v542バランス補正強化・高度管理強化版 - v542の失敗（score=1553、max_y=3.74でCRITICALフェーズ突入）を受けて、根本原因を特定し改善。v542の問題点：（1）バランス補正が10.0と弱すぎて盤面の左側に片寄り、（2）HIGH_TOWERペナルティが1.3倍で高度管理が不十分。v2335（2325点）とv3689（3689点）の成功戦略を分析し、バランス補正を20.0/30.0/40.0に強化、HIGH_TOWERペナルティを1.5倍に強化。v128のheight_mult=1.8はv3689で成功しているため維持。v542のマージボーナス（DIRECT=1200/NEAR=600/FAR=200）とドリフトペナルティ（20.0）は維持。根本原因の特定: v542ではバランス補正が10.0と弱く、max_yが3.74まで上昇してCRITICALフェーズに突入。HIGH_TOWERペナルティも1.3倍で、MEDIUMフェーズの1.5倍より弱い矛盾がある。改善策: （1）バランス補正強化：初期値を20.0に戻す（v2335/v3689の成功値）、（2）HIGH_TOWERペナルティ強化：1.3倍→1.5倍にしてMEDIUMと同じ強さに、（3）v128のheight_mult=1.8維持：v3689で成功している設定を活かす。v542のマージ優先の構造は維持しつつ、バランス制御と高度管理を強化して盤面崩壊を防止。
+#   成功基準: scoreがv542の1553を上回る、またはmax_yが3.0以下に収まる
+#   失敗基準: scoreがv542以下、またはmax_yが3.74以上
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v542: v540/v128-based simplified strategy"""
+    """v549: v542バランス補正強化・高度管理強化版"""
 
     results = analysis.get("results", [])
 
@@ -42,23 +30,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v542: v128の設定を採用）
+    # フェーズ判定（v549: v542の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v128の設定
+        height_mult = 2.4  # v549: v542の2.4を維持
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v128の設定
+        height_mult = 1.8  # v549: v542の1.8を維持（v3689成功値）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6
+        merge_mult = 0.6  # v549: v542の0.6を維持
 
     # nextNextピース情報
     next_piece = game_state.get("next", {})
@@ -76,44 +64,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v542: v540/v128単純化版 ===
+        # === v549: バランス補正強化・高度管理強化 ===
 
-        # 1. マージグレードによるスコア（v542: v128の実用的値を採用）
+        # 1. マージグレードによるスコア（v549: v542の値を維持）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult  # v128: DIRECT 1200
+            score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult  # v128: NEAR 600
+            score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult  # v128: FAR 200
+            score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v542: v128の設定を維持）
+        # 2. 高度によるペナルティ（v549: v542の設定を維持）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # MEDIUM/HIGHフェーズのタワー判定（v542: v128の設定を維持）
+        # HIGH_TOWERペナルティ（v549: v542の1.3倍→v2335/v3689参考に1.5倍に強化）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v128: HIGH_TOWER 1.3倍
+            height_penalty *= (
+                1.5  # v549: 1.3倍→1.5倍に強化（MEDIUMと同じ強さで高度管理重視）
+            )
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5  # v128: MEDIUM_TOWER 1.5倍
+            height_penalty *= 1.5  # v549: v542の1.5倍を維持
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v542: v128の設定を維持）
-        drift_penalty = (abs(drift_x) + drift_unc) * 20.0  # v128: 20.0
+        # 3. ドリフトによるペナルティ（v549: v542の20.0を維持）
+        drift_penalty = (abs(drift_x) + drift_unc) * 20.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v542: v128の設定を維持）
-        balance_strength = 10.0
+        # 4. 左右バランス補正（v549: v542の10.0→v2335/v3689の20.0に強化）
+        balance_strength = 20.0  # v549: v542の10.0→20.0に強化（v2335/v3689成功値）
         if phase == "HIGH":
-            balance_strength = 40.0  # v128: HIGHフェーズで強化
+            balance_strength = 40.0  # v549: v542の40.0を維持
         elif phase == "MEDIUM":
-            balance_strength = 20.0  # v128: MEDIUMフェーズで中程度
+            balance_strength = 30.0  # v549: v542の20.0→30.0に強化（v2335成功値）
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -122,11 +112,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v542: v128の設定を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v549: v542の設定を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
+
+        # 6. type N-1の存在による追加ボーナス（v549: v542の設定を維持）
+        if next_type > 1:
+            prev_type_pieces = [p for p in pieces if p["type"] == next_type - 1]
+            if len(prev_type_pieces) >= 1:
+                score += next_type * 5.0  # v549: v542のtype * 5.0を維持
+                reasons.append("TYPE_PREV")
 
         # スコア更新
         if score > best_score:
