@@ -56,13 +56,54 @@
 #   核心的発見: reactive_pairsは「盤面の動的特性」の指標。動的な盤面（reactive_pairs多い）では高度管理を緩和してマージを優先し、静的な盤面（reactive_pairs少ない）では高度管理を強化することで、ベストゲームの成功要因（reactive_pairs増加→スコア上昇）を構造的に再現。マージチェーン期待値を導入することで、将来の連鎖マージの可能性をスコアリングに反映。
 #   成功基準: avg_scoreがv341の1265.0以上、またはHEIGHT_CONTROL占有率が25%以下、またはavg_scoreがv128の3689以上
 #   失敗基準: avg_scoreがv341の1265.0未満、またはHEIGHT_CONTROL占有率が28%以上
-# [BEST:3689] v128: HIGHフェーズマージ優先版
-# [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版
-# [BEST:1509] v328: HIGHフェーズマージ強化・v42ベース版
+# v343: v128復帰・マージチェーン期待値強化版 - v342の失敗（avg_score=1914.7、HEIGHT_CONTROL支配13.1%、CHAIN_POTENTIAL avg_score_delta=24.0）を受けて、根本的な問題を特定。v342はheight_mult_modifierを導入したが、静的盤面でheight_mult=1.8*1.2=2.16と強すぎる問題を特定。また、マージチェーン期待値の係数が小さすぎる（50.0/30.0）ため、効果が表れていない。ベストゲーム（score=2495）のターン推移を分析すると、静的盤面での判断が重要であり、reactive_pairsが0のターンが多いことが分かる。v128（avg_score=3689、HIGHフェーズheight_mult=1.8固定）のシンプル構造が最適であることが分かる。また、マージチェーン期待値の係数を強化（100.0/60.0）することで、将来の連鎖マージの可能性をよりスコアリングに反映できる。
+#   根本原因の特定:
+#   - v342はheight_mult_modifierを導入したが、静的盤面でheight_multが1.8*1.2=2.16と強すぎる問題を特定
+#   - マージチェーン期待値の係数が小さすぎる（50.0/30.0）のため、効果が表れていない
+#   - tower_penalty_multが大きすぎる（1.5/1.3/1.2/1.1）のため、HIGH_TOWERペナルティが過剰
+#   - ベストゲームのターン推移分析で、静的盤面での判断が重要であることが分かる
+#   - v128（avg_score=3689、HIGHフェーズheight_mult=1.8固定）のシンプル構造が最適であることが分かる
+#   改善策（v128復帰・マージチェーン期待値強化）:
+#   - height_mult_modifierを削除し、v128の固定値（HIGHフェーズ=1.8）に戻す
+#   - マージチェーン期待値の係数を強化:
+#     * next_chain_expectation: 50.0 → 100.0 (2倍)
+#     * next_next_chain_expectation: 30.0 → 60.0 (2倍)
+#   - tower_penalty_multを緩和:
+#     * MEDIUM_TOWER: 1.5 → 1.3
+#     * HIGH_TOWER: 2.0 → 1.3
+#   - HIGH_TOWER: 1.3 → 1.1
+#   - v128の成功要素を維持:
+#     * マージボーナス強化 (DIRECT=1500/NEAR=800/FAR=300)
+#     * シンプルな構造（複雑化要素なし）
+#     * 左右バランス補正（v128の設定を維持）
+#   核心的発見: v342の動的高度管理は逆効果であり、v128のシンプル構造に復帰すべき。マージチェーン期待値の係数を強化することで、将来の連鎖マージの可能性をよりスコアリングに反映。ベストゲームでも静的盤面での判断が重要であることから、v128のシンプルな構造が最適である。
+#   成功基準: avg_scoreがv342の1914.7以上、またはavg_scoreがv128の3689以上、またはHEIGHT_CONTROL占有率が10%以下
+#   失敗基準: avg_scoreがv342の1914.7未満、またはHEIGHT_CONTROL占有率が15%以上
+# v407: マージチェーン期待値係数低減版 - v343の失敗（score=1277、CHAIN_POTENTIAL支配45.8%）を受けて、係数を低減したが、依然としてCHAIN_POTENTIALが支配的（83%以上）。v128（best_score=3689）のコードを調査した結果、v128は「chain reaction緩和は完全廃止」としており、将来的な連鎖期待を完全に考慮しないシンプルな構造で成功していたことが判明。マージチェーン期待値はv342で導入されたが、これはv128のシンプル構造を破壊し、パフォーマンスを低下させている根本原因。
+#   根本原因の特定:
+#   - v128（best_score=3689）は将来的な連鎖期待を完全に考慮しないシンプル構造
+#   - v342で導入されたマージチェーン期待値は、v128のシンプル構造を破壊
+#   - マージチェーン期待値係数を低減（50.0/30.0）しても、CHAIN_POTENTIALが支配的（83%以上）
+#   - 将来的な連鎖期待をスコアリングに含めること自体が、現在のポジショニング判断を阻害
+#   - v128の成功は即時的な判断（マージ・高度管理・バランス）に基づいている
+#   改善策（マージチェーン期待値完全削除）:
+#   - マージチェーン期待値の計算関数calc_chain_expectation()を完全削除
+#   - マージチェーン期待値ボーナスを完全削除（マージあり・なし共に削除）
+#   - next/nextNextピース情報をスコアリングから完全削除
+#   - v128のシンプル構造を完全復帰:
+#     * HIGHフェーズheight_mult=1.8固定
+#     * マージボーナス強化 (DIRECT=1500/NEAR=800/FAR=300)
+#     * 左右バランス補正（v128の設定を維持）
+#     * HIGH_TOWERペナルティ: 1.3倍
+#     * ドリフトペナルティ: 30.0
+#     * nextNextが同じタイプなら中央寄せボーナス（v128の設定を維持）
+#   核心的発見: v128（best_score=3689）は将来的な連鎖期待を完全に考慮しないシンプル構造で成功。マージチェーン期待値をスコアリングに含めることは、現在のポジショニング判断を阻害し、パフォーマンスを低下させる。即時的な判断（マージ・高度管理・バランス）のみに集中すべき。
+#   成功基準: CHAIN_POTENTIALが0%、またはscoreがv128の3689に近い
+#   失敗基準: CHAIN_POTENTIALが使用される、またはscoreがv343の1277未満
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """動的高度管理とマージチェーン期待値を導入。reactive_pairsに応じたheight_multの動的調整で、動的盤面ではマージ優先、静的盤面では高度管理強化。"""
+    """v128のシンプル構造に完全復帰し、マージチェーン期待値を完全削除。静的盤面ではheight_mult=1.8（固定）で安定した高度管理、即時的な判断（マージ・高度管理・バランス）のみに集中。v342で導入されたマージチェーン期待値はパフォーマンスを低下させたため、v128（best_score=3689）の成功構造を完全復帰。"""
 
     results = analysis.get("results", [])
 
@@ -77,91 +118,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # reactor情報（v342: 動的高度管理のため盤面の動的特性を活用）
+    # reactor情報
     reactor = analysis.get("reactor", {})
-    reactive_pairs_val = reactor.get("reactive_pairs", 0)
-    reactive_pairs = (
-        len(reactive_pairs_val)
-        if isinstance(reactive_pairs_val, list)
-        else reactive_pairs_val
-    )
 
-    # 次のピース情報（v342: マージチェーン期待値計算用）
+    # nextNextピース情報（中央寄せボーナス計算用）
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # マージチェーン期待値の計算（v342: type N-1のペア数とtype Nの存在から将来マージ可能性を評価）
-    def calc_chain_expectation(pieces, target_type):
-        """target_typeのマージチェーン期待値を計算"""
-        if target_type <= 1:
-            return 0.0  # type1はマージ不可
-
-        # type N-1のピースをカウント
-        type_n_minus_1_count = sum(1 for p in pieces if p["type"] == target_type - 1)
-
-        # type Nが既に存在するか
-        has_type_n = any(p["type"] == target_type for p in pieces)
-
-        # マージチェーン期待値: type N-1が多いほど、type Nが生成される可能性が高い
-        # type Nが既に存在すれば、マージ後の連鎖可能性が高まる
-        if type_n_minus_1_count == 0:
-            return 0.0
-        elif type_n_minus_1_count == 1:
-            base_expectation = 1.0
-        elif type_n_minus_1_count == 2:
-            base_expectation = 2.5  # 2個あれば必ずマージしてtype Nが生成される
-        else:
-            base_expectation = 4.0  # 3個以上あれば連鎖期待が高い
-
-        # type Nが既に存在すれば、連鎖期待値を倍増
-        if has_type_n:
-            base_expectation *= 1.5
-
-        return base_expectation
-
-    # nextとnextNextのマージチェーン期待値
-    next_chain_expectation = calc_chain_expectation(pieces, next_type)
-    next_next_chain_expectation = calc_chain_expectation(pieces, next_next_type)
-
-    # reactive_pairsに基づくheight_multの動的調整（v342: 動的高度管理）
-    # 静的盤面では高度管理強化、動的盤面では緩和
-    if reactive_pairs == 0:
-        # 静的盤面: 高度管理強化（v128の1.8より強い）
-        height_mult_modifier = 1.2  # ベースheight_multを1.2倍に強化
-        tower_penalty_mult = 1.5  # HIGH_TOWERペナルティ強化
-    elif reactive_pairs <= 2:
-        # 標準: v128と同等
-        height_mult_modifier = 1.0
-        tower_penalty_mult = 1.3
-    elif reactive_pairs <= 4:
-        # 緩和: v341の1.5よりやや強い
-        height_mult_modifier = 0.9
-        tower_penalty_mult = 1.2
-    else:
-        # 動的盤面（reactive_pairs>=5）: 大幅緩和、マージ優先
-        height_mult_modifier = 0.8
-        tower_penalty_mult = 1.1
-
-    # フェーズ判定（v342: v128の閾値0.8/1.8/3.0を維持）
+    # フェーズ判定（v128: 0.8/1.8/3.0の閾値）
     if max_y < 0.8:
         phase = "LOW"
-        height_mult_base = 1.0 * height_mult_modifier
+        height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult_base = 2.4 * height_mult_modifier
+        height_mult = 2.4
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        # v342: v128の1.8をベースに動的調整
-        height_mult_base = 1.8 * height_mult_modifier
+        # v408: v128の1.8を固定値で使用（v342のheight_mult_modifier削除）
+        height_mult = 1.8
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult_base = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v128の0.6を維持
+        height_mult = 1.0
+        merge_mult = 0.6
 
     for result in results:
         x = result["x"]
@@ -173,9 +156,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v342: 動的高度管理・マージチェーン期待値 ===
+        # === v408: v128復帰・マージチェーン期待値完全削除 ===
 
-        # 1. マージグレードによるスコア（v342: v341の強力な値を維持）
+        # 1. マージグレードによるスコア（v408: v341の強力な値を維持）
         if merge_grade == "DIRECT":
             score += 1500.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -186,43 +169,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 300.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # マージチェーン期待値ボーナス（v342: 将来の連鎖マージの可能性をスコアに反映）
-        if merge_grade != "NO":
-            chain_bonus = (next_chain_expectation * 50.0) + (
-                next_next_chain_expectation * 30.0
-            )
-            score += chain_bonus
-            if chain_bonus > 50.0:
-                reasons.append("CHAIN")
-        else:
-            # マージなしの場合、チェーン期待値が高いならペナルティを軽減
-            chain_relief = (next_chain_expectation * 30.0) + (
-                next_next_chain_expectation * 20.0
-            )
-            if chain_relief > 0:
-                score += chain_relief
-                reasons.append("CHAIN_POTENTIAL")
+        # 2. 高度によるペナルティ（v408: v128の固定値）
+        height_penalty = landing_y * 50.0 * height_mult
 
-        # 2. 高度によるペナルティ（v342: 動的高度管理を適用）
-        height_penalty = landing_y * 50.0 * height_mult_base
-
-        # HIGH_TOWERペナルティ（v342: 動的調整を適用）
+        # HIGH_TOWERペナルティ（v408: v128の設定に復帰）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= tower_penalty_mult  # 動的調整
+            # v408: HIGH_TOWERペナルティ1.3倍を維持
+            height_penalty *= 1.3
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5
+            height_penalty *= 1.3
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v342: v128の一律30.0を維持）
+        # 3. ドリフトによるペナルティ（v408: v128の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v342: v128の設定を維持）
+        # 4. 左右バランス補正（v408: v128の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0
@@ -236,7 +203,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v342: v128の設定を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v408: v128の設定を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
