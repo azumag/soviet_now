@@ -154,6 +154,15 @@ async function executeCommand(page, command) {
     console.log('Executing: RETRY');
     await page.evaluate(() => { window.__sorenCommand = 'RETRY'; });
     await page.waitForTimeout(2000);
+    // Re-inject best score after scene reload
+    try {
+      const bestScore = parseInt(fs.readFileSync('best_score.txt', 'utf-8').trim(), 10);
+      if (bestScore > 0) {
+        await page.evaluate((s) => { window.__sorenCommand = 'SET_RECORD:' + s; }, bestScore);
+        console.log(`Re-injected best score record: ${bestScore}`);
+        await page.waitForTimeout(500);
+      }
+    } catch (e) { /* ignore */ }
   } else if (command.action === 'cmd') {
     console.log(`Executing: ${command.value}`);
     await page.evaluate((v) => { window.__sorenCommand = v; }, command.value);
@@ -260,6 +269,18 @@ async function runLocalController() {
     await browser.close();
     server.close();
     return;
+  }
+
+  // Inject best score record from best_score.txt
+  try {
+    const bestScore = parseInt(fs.readFileSync('best_score.txt', 'utf-8').trim(), 10);
+    if (bestScore > 0) {
+      await page.evaluate((s) => { window.__sorenCommand = 'SET_RECORD:' + s; }, bestScore);
+      console.log(`Injected best score record: ${bestScore}`);
+      await page.waitForTimeout(500);
+    }
+  } catch (e) {
+    console.log('No best_score.txt found, skipping record injection');
   }
 
   // Click to start the game
