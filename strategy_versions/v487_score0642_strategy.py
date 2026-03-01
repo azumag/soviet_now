@@ -9,20 +9,6 @@
 # AI改変禁止: decide() シグネチャ、if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v414: クラスタ密度評価付き先読みマージ強化版 - v413の失敗（score=988、v412の1345を下回る）を受けて、batch_summary.txtの分析でHIGH_LAYER_FUTURE_MERGEが最も効果的（avg_score_delta=18.7）であることを特定。v413の先読みマージボーナスはクラスタ密度を考慮しておらず、type * 5の重みも不足（type15で最大75点）。クラスタ密度評価（type N-1のピース間の平均距離の逆数）を導入し、ボーナス重みをtype * 7.5に増強。また、連鎖マージ評価（type N-2、N-3の密度も考慮）を追加し、将来のマージ連鎖の可能性を評価。密度が高いクラスタ付近を優先し、連鎖マージを促進することで、高typeのマージを加速させる。
-#   根本原因の特定:
-#   - v413の先読みマージボーナスは距離のみを考慮しておらず、クラスタ密度を無視
-#   - type * 5の重みが不足（type15で75点 vs マージボーナス1200）
-#   - マージ連鎖の可能性（type N-2、N-3など）を評価していない
-#   - batch_summary.txtでHIGH_LAYER_FUTURE_MERGEが最も効果的
-#   改善策（クラスタ密度評価付き先読みマージ強化）:
-#   - クラスタ密度評価を導入: type N-1のピース間の平均距離を計算し、密度係数（1.0/平均距離）を乗算
-#   - ボーナス重みをtype * 5からtype * 7.5に増強（type15で最大112.5点）
-#   - 連鎖マージ評価を追加: type Nだけでなく、N-2、N-3の密度も考慮し、連鎖係数（N:1.0、N-2:0.6、N-3:0.3）を乗算
-#   - v413の既存ロジック（height_mult=2.2、HIGH_TOWER=1.0倍など）を維持
-#   核心的発見: 先読みマージ戦略自体は有効だが、クラスタ密度を考慮していないため、分散したピースを優先してしまいがち。クラスタ密度評価と連鎖マージ評価を追加することで、密度の高いクラスタ付近を優先し、将来の連鎖マージを促進できる。
-#   成功基準: scoreがv412の1345を上回る、またはHIGH_LAYER_FUTURE_MERGEの割合が20%以上
-#   失敗基準: scoreがv413の988以下、またはクラスタ密度評価の効果が見られない
 # v415: 先読みマージ優先化・高度ペナルティ緩和版 - v414の失敗（score=988、v412の1345を下回る）を受けて、batch_summary.txtの分析でHIGH_LAYER_FUTURE_MERGEが最も効果的（avg_score_delta=18.7）であることが再確認されたが、v414のクラスタ密度評価は実装されているものの、ボーナスが相対的に小さく、高度ペナルティが支配的になっていることを特定。先読みマージボーナスの重みをtype * 7.5からtype * 10に増強し、MEDIUMフェーズのheight_multを2.2から1.8に緩和してマージ機会をさらに確保。また、FAR_MERGEのボーナスを200から300に増強し、FARマージも優先するように変更。さらに、先読みマージボーナスの適用条件を緩和し、type N-1が1個以上でも適用（ただし、密度係数を0.7倍に軽減）。
 #   根本原因の特定:
 #   - v414の先読みマージボーナスはtype * 7.5で、最大でtype15で112.5点。しかし、高度ペナルティはlanding_y * 50 * height_multで、高度2.0であれば100点以上になるため、相対的に小さい
@@ -59,6 +45,24 @@
 #   核心的発見: 高度ペナルティが依然として支配的で、先読みマージボーナスが打ち消されている。高度ペナルティを大幅に緩和し、先読みマージボーナスの適用条件を完全に緩和することで、先読みマージをより積極的に活用できる。
 #   成功基準: scoreがv412の1345を上回る、またはHIGH_LAYER_FUTURE_MERGEの割合が30%以上
 #   失敗基準: scoreがv415の988以下、または改善が見られない
+# v417: マージボーナス大幅増強・高度管理極端緩和版 - v416の失敗（score=988、v412の1345を下回る）を受けて、batch_summary.txtの分析でHIGH_LAYER_FUTURE_MERGEが最も効果的（avg_score_delta=18.7）であることが再確認されたが、v416のマージボーナスと先読みマージボーナスは高度ペナルティに対して依然として小さいことを特定。v416では先読みマージボーナスがtype * 12で最大180点、高度ペナルティは高度2.0で150点だが、ドリフトやバランスのペナルティも加わると、マージボーナスが打ち消されてしまう。さらに、クラスタ密度係数の軽減（0個: 0.4倍、1個: 0.6倍）が過剰で、密度がない場合のボーナスが小さすぎる。マージボーナスと先読みマージボーナスを大幅に増強し、高度ペナルティを極端に緩和し、クラスタ密度係数の軽減を緩和することで、マージを最優先する。
+#   根本原因の特定:
+#   - v416のマージボーナスはDIRECT 1200点、NEAR 600点、FAR 400点。高度ペナルティ（高度2.0で150点）+ ドリフトペナルティ（約30点）+ バランスペナルティ（約30点）で210点になるため、マージボーナスが相対的に小さい
+#   - v416の先読みマージボーナスはtype * 12で最大180点だが、クラスタ密度係数や連鎖係数が小さいと、実際のボーナスはさらに小さくなる
+#   - v416のクラスタ密度係数の軽減（0個: 0.4倍、1個: 0.6倍）が過剰で、密度がない場合のボーナスが小さすぎる
+#   - v416の連鎖マージ係数（N-2: 0.6、N-3: 0.3）が小さく、連鎖マージの評価が不十分
+#   - v416のMEDIUMフェーズのheight_mult=1.5が依然として高く、マージより高度管理が優先されている
+#   - batch_summary.txtでHIGH_LAYER_FUTURE_MERGEが最も効果的だが、v416ではボーナスが小さくて効果が発揮されていない
+#   改善策（マージボーナス大幅増強・高度管理極端緩和）:
+#   - マージボーナスを大幅に増強: DIRECT 1200→1350点、NEAR 600→700点、FAR 400→500点（マージを最優先）
+#   - 先読みマージボーナスの重みをtype * 12からtype * 15に増強（type15で最大225点）
+#   - MEDIUMフェーズのheight_multを1.5から1.3に緩和（高度2.0で130点のペナルティ、v416の150点からさらに緩和）
+#   - クラスタ密度係数の軽減を緩和: 0個: 0.4→0.5倍、1個: 0.6→0.8倍（密度がない場合のボーナスを増強）
+#   - 連鎖マージ係数を増強: N-2: 0.6→0.8倍、N-3: 0.3→0.5倍（連鎖マージの評価を強化）
+#   - v416の既存ロジック（HIGH_TOWERペナルティ0.8倍など）を維持
+#   核心的発見: マージボーナスと先読みマージボーナスが高度ペナルティに対して依然として小さく、マージが最優先されていない。マージボーナスを大幅に増強し、高度ペナルティを極端に緩和することで、マージを最優先できる。
+#   成功基準: scoreがv412の1345を上回る、またはHIGH_LAYER_FUTURE_MERGEの割合が35%以上
+#   失敗基準: scoreがv416の988以下、または改善が見られない
 
 
 def calculate_cluster_density(pieces: list) -> float:
@@ -97,23 +101,23 @@ def calculate_chain_probability(
         density_1 = calculate_cluster_density(type_minus_1_pieces)
         chain_coeff += density_1 * 1.0
 
-    # type N-2のクラスタ密度（連鎖係数0.6）
+    # type N-2のクラスタ密度（連鎖係数0.8: v417で増強）
     type_minus_2_pieces = [p for p in pieces if p["type"] == target_type - 2]
     if type_minus_2_pieces and len(type_minus_2_pieces) >= 2:
         density_2 = calculate_cluster_density(type_minus_2_pieces)
-        chain_coeff += density_2 * 0.6
+        chain_coeff += density_2 * 0.8  # v417: v416の0.6から0.8に増強
 
-    # type N-3のクラスタ密度（連鎖係数0.3）
+    # type N-3のクラスタ密度（連鎖係数0.5: v417で増強）
     type_minus_3_pieces = [p for p in pieces if p["type"] == target_type - 3]
     if type_minus_3_pieces and len(type_minus_3_pieces) >= 2:
         density_3 = calculate_cluster_density(type_minus_3_pieces)
-        chain_coeff += density_3 * 0.3
+        chain_coeff += density_3 * 0.5  # v417: v416の0.3から0.5に増強
 
     return chain_coeff
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v416: 高度ペナルティ大幅緩和・先読みマージ適用条件完全緩和版"""
+    """v417: マージボーナス大幅増強・高度管理極端緩和版"""
 
     results = analysis.get("results", [])
 
@@ -134,18 +138,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # フェーズ判定（v416: 高度ペナルティ大幅緩和）
+    # フェーズ判定（v417: 高度管理極端緩和）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.5  # v416: v415の1.8から緩和（高度2.0で150点のペナルティ）
+        height_mult = 1.3  # v417: v416の1.5から緩和（高度2.0で130点のペナルティ）
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        # v416: v415の1.8を維持
         height_mult = 1.8
         merge_mult = 1.0
     else:
@@ -169,39 +172,39 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v416: 高度ペナルティ大幅緩和・先読みマージ適用条件完全緩和 ===
+        # === v417: マージボーナス大幅増強・高度管理極端緩和 ===
 
-        # 1. マージグレードによるスコア（v416: FAR_MERGEボーナス増強）
+        # 1. マージグレードによるスコア（v417: ボーナス大幅増強）
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += 1350.0 * merge_mult  # v417: 1200から1350に増強
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 700.0 * merge_mult  # v417: 600から700に増強
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 400.0 * merge_mult  # v416: 300から400に増強（FARマージをより優先）
+            score += 500.0 * merge_mult  # v417: 400から500に増強
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ（v416: MEDIUMフェーズ高度管理緩和）
+        # 2. 高度によるペナルティ（v417: MEDIUMフェーズ高度管理極端緩和）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v416: 0.8倍に軽減）
+        # HIGH_TOWERペナルティ（v417: 0.8倍を維持）
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 0.8  # v416: v415の1.0倍から0.8倍に軽減
+            height_penalty *= 0.8
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 0.8  # v416: v415の1.0倍から0.8倍に軽減
+            height_penalty *= 0.8
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v416: v415の一律30.0を維持）
+        # 3. ドリフトによるペナルティ（v417: v416の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v416: v415の設定を維持）
+        # 4. 左右バランス補正（v417: v416の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0
@@ -215,21 +218,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v416: v415の設定を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v417: v416の設定を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # 6. 先読みマージボーナス（v416: 重み増強・適用条件完全緩和）
-        # next/nextNextがtype Nのとき、type N-1が0個以上でも適用（v416: 1個以上から緩和）
+        # 6. 先読みマージボーナス（v417: 重み増強・密度係数緩和）
+        # next/nextNextがtype Nのとき、type N-1が0個以上でも適用
         future_merge_bonus = 0.0
         for target_type in [next_type, next_next_type]:
-            # v416: type N-1が0個以上でも適用（適用条件を完全に緩和）
             if target_type > 1:
                 prev_type_pieces = [p for p in pieces if p["type"] == target_type - 1]
 
-                # v416: type N-1が0個でも適用（center_xを0として計算）
+                # type N-1が0個でも適用（center_xを0として計算）
                 if prev_type_pieces:
                     center_x = sum(p["x"] for p in prev_type_pieces) / len(
                         prev_type_pieces
@@ -239,30 +241,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 distance = abs(x - center_x)
 
-                # v416: クラスタ密度評価（v415を維持）
+                # クラスタ密度評価（v417: 密度係数の軽減を緩和）
                 if prev_type_pieces:
                     cluster_density = calculate_cluster_density(prev_type_pieces)
                 else:
                     cluster_density = 0.0
 
-                # v416: type N-1が0個の場合、密度係数を0.4倍に軽減
-                # v416: type N-1が1個の場合、密度係数を0.6倍に軽減（v415の0.7倍からさらに緩和）
+                # v417: type N-1が0個の場合、密度係数を0.5倍に緩和（v416の0.4から）
+                # v417: type N-1が1個の場合、密度係数を0.8倍に緩和（v416の0.6から）
                 if len(prev_type_pieces) == 0:
-                    cluster_density *= 0.4
+                    cluster_density *= 0.5  # v417: v416の0.4から0.5に緩和
                 elif len(prev_type_pieces) == 1:
-                    cluster_density *= 0.6
+                    cluster_density *= 0.8  # v417: v416の0.6から0.8に緩和
 
-                # v416: 連鎖マージ評価（v415を維持）
+                # v417: 連鎖マージ評価（係数を増強）
                 chain_prob = calculate_chain_probability(
                     pieces, type_count, target_type
                 )
 
-                # v416: 重みtype * 12に増強（v415の10から）
-                # v416: 距離閾値1.5を維持、密度係数と連鎖係数を乗算
+                # v417: 重みtype * 15に増強（v416の12から）
+                # v417: 距離閾値1.5を維持、密度係数と連鎖係数を乗算
                 bonus = (
                     max(0, 1.5 - distance)
                     * target_type
-                    * 12.0  # v416: v415の10から12に増強
+                    * 15.0  # v417: v416の12から15に増強
                     * (1.0 + cluster_density)
                     * (1.0 + chain_prob)
                 )
