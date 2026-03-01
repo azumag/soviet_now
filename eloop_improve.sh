@@ -46,9 +46,13 @@ else
 fi
 
 # AI で strategy.py 改善
+# ゲーム実行中にstrategy.pyが壊れないよう、一時ファイルで作業し、
+# バリデーション成功後にのみアトミックに差し替える
 strategy_diff=""
 log "[IMPROVE] AI改善 (${NUM_GAMES}試合分)..."
-cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak"
+
+STAGING_FILE="${STRATEGY_FILE}.staging"
+cp "$STRATEGY_FILE" "$STAGING_FILE"
 
 improve_ok=false
 
@@ -62,62 +66,62 @@ for hf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
 	[ -f "$hf" ] && hall_of_fame_files="$hall_of_fame_files $hf"
 done
 
-# 参照データ
-improve_ref_files="$STRATEGY_FILE $batch_summary_file"
+# 参照データ (AIにはstagingファイルを編集させる)
+improve_ref_files="$STAGING_FILE $batch_summary_file"
 [ -n "$best_game_path" ] && [ -f "$best_game_path" ] && improve_ref_files="$improve_ref_files $best_game_path"
 improve_ref_files="$improve_ref_files $GAME_STATE $past_strategy_files $hall_of_fame_files"
 
 for retry in $(seq 1 3); do
 	if [ "$retry" -eq 1 ]; then
 		run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
-			prompts/improve_strategy.md "$STRATEGY_FILE" \
+			prompts/improve_strategy.md "$STAGING_FILE" \
 			$improve_ref_files
 	else
 		log "[IMPROVE] リトライ $retry/3"
 
 		fix_prompt_file=$(mktemp /tmp/eloop_fix_prompt.XXXXXX)
 		cat > "$fix_prompt_file" <<FIXEOF
-strategy.py のバリデーションが失敗した。以下のエラーを修正せよ。
+strategy.py.staging のバリデーションが失敗した。以下のエラーを修正せよ。
 
 ## エラー内容
 $VALIDATE_ERROR
 
 ## 修正ルール
-- strategy.py を修正して上記エラーを解消せよ
+- strategy.py.staging を修正して上記エラーを解消せよ
 - decide(game_state, analysis) のシグネチャは変更禁止
 - if __name__ == "__main__" ブロックは変更禁止
 - decide() は必ず {"x": float, "reason": str} を返すこと
-- Write ツールで strategy.py に書き込むこと
+- Write ツールで strategy.py.staging に書き込むこと
 FIXEOF
 		run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
-			"$fix_prompt_file" "$STRATEGY_FILE" \
-			"$STRATEGY_FILE"
+			"$fix_prompt_file" "$STAGING_FILE" \
+			"$STAGING_FILE"
 		rm -f "$fix_prompt_file"
 	fi
 
 	# 差分チェック
-	if diff -q "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" >/dev/null 2>&1; then
+	if diff -q "$STRATEGY_FILE" "$STAGING_FILE" >/dev/null 2>&1; then
 		log "[IMPROVE] 差分なし (retry $retry/3)"
-		VALIDATE_ERROR="AIが strategy.py を変更しなかった。必ず strategy.py を編集して改善すること。"
+		VALIDATE_ERROR="AIが strategy.py.staging を変更しなかった。必ず strategy.py.staging を編集して改善すること。"
 		continue
 	fi
 
-	if validate_strategy; then
+	# stagingファイルを直接バリデーション (strategy.pyには触らない)
+	if validate_strategy "$STAGING_FILE"; then
 		log "[IMPROVE] バリデーション成功"
-		strategy_diff=$(diff -u "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true)
+		strategy_diff=$(diff -u "$STRATEGY_FILE" "$STAGING_FILE" 2>/dev/null || true)
 		real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
 		[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
-		rm -f "${STRATEGY_FILE}.bak"
+		# バリデーション成功 → アトミックに差し替え
+		mv "$STAGING_FILE" "$STRATEGY_FILE"
 		python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
 		improve_ok=true
 		break
 	fi
 done
 
-if [ "$improve_ok" = false ]; then
-	log "[IMPROVE] 改善失敗 → 復元"
-	mv "${STRATEGY_FILE}.bak" "$STRATEGY_FILE"
-fi
+# 失敗してもstrategy.pyは一切触っていないので復元不要
+rm -f "$STAGING_FILE"
 
 # git commit
 # ゲーム範囲を算出してコミットメッセージに含める

@@ -179,7 +179,7 @@ type1=200, type2=190, type3=180, ..., type8=110, ..., type12=40, type13=30, type
 
 ## 出力
 
-strategy.py を**上書き**で出力せよ。Write ツールで `strategy.py` に書き込むこと。
+改善した戦略コードを**上書き**で出力せよ。Write ツールで、このプロンプトに埋め込まれた戦略ファイル（`strategy.py` または `strategy.py.staging`）と同じパスに書き込むこと。
 
 注意:
 - `if __name__ == "__main__"` ブロックは元のまま維持すること

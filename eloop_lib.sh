@@ -334,13 +334,16 @@ run_ai() {
 VALIDATE_ERROR=""
 
 validate_strategy() {
-	log "[VALIDATE] checking..."
+	# 引数でファイルパスを指定可能 (デフォルト: strategy.py)
+	local target_file="${1:-strategy.py}"
+	log "[VALIDATE] checking $target_file..."
 	VALIDATE_ERROR=""
 
 	local sig_out
-	sig_out=$(python3 - <<'PYEOF' 2>&1
+	sig_out=$(python3 - "$target_file" <<'PYEOF' 2>&1
 import importlib.util, sys, inspect
-spec = importlib.util.spec_from_file_location('strategy', 'strategy.py')
+target = sys.argv[1]
+spec = importlib.util.spec_from_file_location('strategy', target)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 if not hasattr(mod, 'decide'):
@@ -362,7 +365,7 @@ PYEOF
 
 	if [ -f "$GAME_STATE" ]; then
 		local test_out
-		test_out=$(python3 strategy.py "$GAME_STATE" 2>&1)
+		test_out=$(python3 "$target_file" "$GAME_STATE" 2>&1)
 		if [ $? -ne 0 ]; then
 			VALIDATE_ERROR="テスト実行失敗: $test_out"
 			log "[VALIDATE] $VALIDATE_ERROR"
@@ -1372,6 +1375,15 @@ trigger_adaptive_improvement() {
 		log "[IMPROVE] 改善中, データ蓄積"
 		accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
 		return
+	fi
+
+	# idle → 改善開始の前に、既存の eloop_improve プロセスが残っていないか確認
+	local stale_pids
+	stale_pids=$(pgrep -f "eloop_improve" 2>/dev/null || true)
+	if [ -n "$stale_pids" ]; then
+		log "[IMPROVE] WARNING: 既存の eloop_improve プロセス検出 (PIDs: $stale_pids) → kill"
+		echo "$stale_pids" | xargs kill 2>/dev/null || true
+		sleep 1
 	fi
 
 	# idle → 改善開始
