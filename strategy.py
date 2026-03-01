@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""strategy.py - AI改善対象の決定スクリプト (v548: HIGH_LAYERでのNEAR_MERGE優先・マージ品質に応じたドリフト調整版)"""
+"""strategy.py - AI改善対象の決定スクリプト (v550: v548/v582構造復元版)"""
 
 # 固定インターフェース:
 # decide(game_state: dict, analysis: dict) -> dict
@@ -48,9 +48,8 @@
 #   成功基準: scoreがv540の2176に近づく、または平均がv422を上回る
 #   失敗基準: scoreがv422以下、または実際のマージ率が5%以下
 
-
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v548: HIGH_LAYERでのNEAR_MERGE優先・マージ品質に応じたドリフト調整版"""
+    """v550: v548/v582構造復元版 - v549の破損を修正し、v582(2362点)の構造に戻す"""
 
     results = analysis.get("results", [])
 
@@ -64,6 +63,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 盤面情報
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
+    piece_count = len(pieces)
+    
+    # reactor情報を取得（v549: 追加）
+    reactor = analysis.get("reactor", {})
 
     # フェーズ判定（v548: v128の設定を維持）
     if max_y < 0.8:
