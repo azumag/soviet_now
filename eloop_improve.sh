@@ -121,7 +121,7 @@ FIXEOF
 	min_code=$((original_code * 80 / 100))  # 80%未満ならリジェクト
 	if [ "$staging_code" -lt "$min_code" ]; then
 		log "[IMPROVE] コード行数が大幅に減少: ${original_code}行→${staging_code}行 (最低${min_code}行必要)"
-		VALIDATE_ERROR="コード行数が大幅に減少した (${original_code}→${staging_code}行)。既存ロジックを削除せず、新しいロジックを追加する形で改善せよ。削除は avg_score_delta が負のロジックのみ許可。"
+		VALIDATE_ERROR="行数ハードゲート失敗: コード行数が ${original_code}→${staging_code}行 に減少（最低${min_code}行必要）。既存コードを一切削除・書き直しするな。改善とは既存コードに新しいロジックを追加すること。行数は増えるのが正常。既存のdecide()にボーナス/ペナルティ/条件分岐を追加する形で改善せよ。"
 		continue
 	fi
 
