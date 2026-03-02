@@ -31,6 +31,9 @@ PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
 
 IMPROVE_STATE_FILE="tmp/improve_state.json"
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
+ROLLING_SCORES_FILE="tmp/rolling_scores.json"
+REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
+MIN_GAMES_BEFORE_IMPROVE=5
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" tmp
@@ -1331,6 +1334,113 @@ recover_strategy_backup() {
 	fi
 }
 
+#=== ローリングスコア & リグレッション検知 ===
+
+update_rolling_scores() {
+	local score="$1"
+	local strategy_hash
+	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
+
+	python3 -c "
+import json, os
+rs_file = '$ROLLING_SCORES_FILE'
+if os.path.exists(rs_file):
+    with open(rs_file) as f:
+        rs = json.load(f)
+else:
+    rs = {}
+
+h = '$strategy_hash'
+if h not in rs:
+    rs[h] = {'scores': [], 'prev_hash': ''}
+rs[h]['scores'].append(int('$score'))
+# 最大20試合分を保持
+rs[h]['scores'] = rs[h]['scores'][-20:]
+
+with open(rs_file, 'w') as f:
+    json.dump(rs, f)
+" 2>/dev/null
+}
+
+check_regression() {
+	# 新戦略が5試合以上で旧戦略の85%未満ならリグレッション
+	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
+	local strategy_hash
+	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
+
+	local result
+	result=$(python3 -c "
+import json, os
+rs_file = '$ROLLING_SCORES_FILE'
+if not os.path.exists(rs_file):
+    print('OK')
+    exit()
+
+with open(rs_file) as f:
+    rs = json.load(f)
+
+current_hash = '$strategy_hash'
+if current_hash not in rs:
+    print('OK')
+    exit()
+
+current_scores = rs[current_hash]['scores']
+if len(current_scores) < $MIN_GAMES_BEFORE_IMPROVE:
+    print('OK')  # データ不足
+    exit()
+
+# 前の戦略のスコアを探す (revert_strategy.pyのハッシュ)
+revert_file = 'tmp/revert_strategy.py'
+if not os.path.exists(revert_file):
+    print('OK')
+    exit()
+
+import subprocess
+prev_hash = subprocess.run(['python3', 'extract_decide_hash.py', revert_file],
+    capture_output=True, text=True).stdout.strip()
+
+if not prev_hash or prev_hash == current_hash:
+    print('OK')
+    exit()
+
+if prev_hash not in rs or len(rs[prev_hash]['scores']) < 3:
+    print('OK')  # 前の戦略のデータ不足
+    exit()
+
+prev_avg = sum(rs[prev_hash]['scores']) / len(rs[prev_hash]['scores'])
+curr_avg = sum(current_scores) / len(current_scores)
+
+if prev_avg > 0 and curr_avg < prev_avg * 0.85:
+    print(f'REGRESSION:prev_avg={prev_avg:.0f},curr_avg={curr_avg:.0f},prev_hash={prev_hash}')
+else:
+    print('OK')
+" 2>/dev/null)
+
+	if echo "$result" | grep -q '^REGRESSION:'; then
+		log "[REGRESSION] リグレッション検知: $result"
+		log "[REGRESSION] tmp/revert_strategy.py に自動リバート"
+
+		# リジェクトハッシュに記録
+		echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
+		# 最新20件のみ保持
+		if [ -f "$REJECTED_HASHES_FILE" ]; then
+			tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
+			mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
+		fi
+
+		# リバート実行
+		cp "tmp/revert_strategy.py" "$STRATEGY_FILE"
+		log "[REGRESSION] リバート完了"
+
+		git add -A
+		git commit -m "eloop Auto-revert: regression detected ($result)" 2>/dev/null || true
+
+		return 0  # リグレッション検知
+	fi
+
+	return 1  # 問題なし
+}
+
 #=== 改善ステート管理 ===
 
 _read_improve_state() {
@@ -1385,8 +1495,33 @@ check_and_harvest_improvement() {
 
 			if [ "$hash_before" != "$hash_now" ]; then
 				log "[IMPROVE] 戦略更新検出: $hash_before -> $hash_now"
+
+				# リバート用候補はeloop_improve.shが tmp/revert_strategy.py に保存済み
+				# ローリングスコアで新戦略のprev_hashを記録
+				local new_decide_hash
+				new_decide_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+				if [ -n "$new_decide_hash" ] && [ -f "$ROLLING_SCORES_FILE" ]; then
+					local prev_decide_hash=""
+					if [ -f "tmp/revert_strategy.py" ]; then
+						prev_decide_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
+					fi
+					python3 -c "
+import json, os
+rs_file = '$ROLLING_SCORES_FILE'
+if os.path.exists(rs_file):
+    with open(rs_file) as f:
+        rs = json.load(f)
+else:
+    rs = {}
+h = '$new_decide_hash'
+if h not in rs:
+    rs[h] = {'scores': [], 'prev_hash': '$prev_decide_hash'}
+with open(rs_file, 'w') as f:
+    json.dump(rs, f)
+" 2>/dev/null
+				fi
+
 				# 戦略が変わった → 蓄積データは旧戦略のものなので破棄
-				# 新戦略での試合データだけが次の改善に有意義
 				local acc_count_discarded=0
 				if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 					acc_count_discarded=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
@@ -1444,21 +1579,41 @@ _clear_accumulated_data() {
 }
 
 trigger_adaptive_improvement() {
-	# まず現在の状態を確認
+	# Step 1: 常にデータを蓄積 & ローリングスコア更新
+	accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
+	update_rolling_scores "$LAST_SCORE"
+
+	# Step 2: リグレッション検知 (新戦略が旧戦略の85%未満なら自動リバート)
+	if check_regression; then
+		# リグレッション検知 → リバート済み、蓄積データクリア
+		_clear_accumulated_data
+		return
+	fi
+
+	# Step 3: 改善プロセス実行中?
 	local state
 	state=$(_read_improve_state)
 	local status
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
 
 	if [ "$status" = "running" ]; then
-		# 改善中 (終了済みでも次のループ冒頭の check_and_harvest で検知する)
-		# → 今回のデータを蓄積して終了。次のゲーム後に改善開始
-		log "[IMPROVE] 改善中, データ蓄積"
-		accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
+		log "[IMPROVE] 改善中, データ蓄積済み"
 		return
 	fi
 
-	# idle → 改善開始の前に、既存の eloop_improve プロセスが残っていないか確認
+	# Step 4: 最低5試合ゲート
+	local acc_data
+	acc_data=$(_read_accumulated_data)
+	local acc_count
+	acc_count=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null)
+
+	if [ "${acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then
+		log "[IMPROVE] 蓄積 ${acc_count:-0}/${MIN_GAMES_BEFORE_IMPROVE} 試合 → 待機"
+		return
+	fi
+
+	# Step 5: idle → 改善開始
+	# 既存の eloop_improve プロセスが残っていないか確認
 	local stale_pids
 	stale_pids=$(pgrep -f "eloop_improve" 2>/dev/null || true)
 	if [ -n "$stale_pids" ]; then
@@ -1467,28 +1622,13 @@ trigger_adaptive_improvement() {
 		sleep 1
 	fi
 
-	# idle → 改善開始
-	local all_history_files="$LAST_ARCHIVE_FILE"
-	local all_scores="$LAST_SCORE"
-	local any_soviet="$LAST_SOVIET"
+	# 蓄積データから履歴ファイル・スコアを統合
+	local all_history_files all_scores any_soviet
+	all_history_files=$(echo "$acc_data" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('files',[])))" 2>/dev/null)
+	all_scores=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('scores',''))" 2>/dev/null)
+	any_soviet=$(echo "$acc_data" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet',False) else 'false')" 2>/dev/null)
 
-	# 蓄積データがあれば統合
-	local acc_data
-	acc_data=$(_read_accumulated_data)
-	local acc_count
-	acc_count=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null)
-
-	if [ "${acc_count:-0}" -gt 0 ]; then
-		local acc_files acc_scores acc_soviet
-		acc_files=$(echo "$acc_data" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('files',[])))" 2>/dev/null)
-		acc_scores=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('scores',''))" 2>/dev/null)
-		acc_soviet=$(echo "$acc_data" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet',False) else 'false')" 2>/dev/null)
-
-		all_history_files="$acc_files $LAST_ARCHIVE_FILE"
-		all_scores="$acc_scores $LAST_SCORE"
-		[ "$acc_soviet" = "true" ] && any_soviet="true"
-		log "[IMPROVE] 蓄積データ統合: ${acc_count}試合 + 今回1試合"
-	fi
+	log "[IMPROVE] ${acc_count}試合分のデータで改善開始"
 
 	# Twitchコメント・ニュース取得
 	log "[TWITCH] コメントfetch..."
@@ -1509,7 +1649,7 @@ trigger_adaptive_improvement() {
 	if kill -0 "$IMPROVE_PID" 2>/dev/null; then
 		_clear_accumulated_data
 		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash"
-		log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count:-0}+1 試合)"
+		log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count} 試合)"
 	else
 		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死) → 蓄積データ保持"
 		IMPROVE_PID=0

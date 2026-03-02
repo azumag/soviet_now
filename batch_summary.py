@@ -145,22 +145,24 @@ def main():
         for reason, avg_d in g["reason_avg_delta"].items():
             all_reason_deltas[reason].append(avg_d)
 
-    # 高スコア vs 低スコアの比較
-    mid = len(sorted_games) // 2
-    low_half = sorted_games[:mid] if mid > 0 else sorted_games[:1]
-    high_half = sorted_games[mid:] if mid > 0 else sorted_games[:1]
+    # 高スコア vs 低スコアの比較 (N>=3のときのみ意味のある比較が可能)
+    show_high_low_comparison = len(sorted_games) >= 3
+    if show_high_low_comparison:
+        mid = len(sorted_games) // 2
+        low_half = sorted_games[:mid] if mid > 0 else sorted_games[:1]
+        high_half = sorted_games[mid:] if mid > 0 else sorted_games[:1]
 
-    low_merge_rate = sum(g["merge_rate"] for g in low_half) / len(low_half) if low_half else 0
-    high_merge_rate = sum(g["merge_rate"] for g in high_half) / len(high_half) if high_half else 0
+        low_merge_rate = sum(g["merge_rate"] for g in low_half) / len(low_half) if low_half else 0
+        high_merge_rate = sum(g["merge_rate"] for g in high_half) / len(high_half) if high_half else 0
 
-    low_reasons = Counter()
-    high_reasons = Counter()
-    for g in low_half:
-        for r, c in g["reason_dist"].items():
-            low_reasons[r] += c
-    for g in high_half:
-        for r, c in g["reason_dist"].items():
-            high_reasons[r] += c
+        low_reasons = Counter()
+        high_reasons = Counter()
+        for g in low_half:
+            for r, c in g["reason_dist"].items():
+                low_reasons[r] += c
+        for g in high_half:
+            for r, c in g["reason_dist"].items():
+                high_reasons[r] += c
 
     # 出力
     print("=" * 60)
@@ -185,23 +187,27 @@ def main():
         avg_delta = round(sum(all_reason_deltas[reason]) / len(all_reason_deltas[reason]), 1) if all_reason_deltas[reason] else 0
         print(f"  {reason}: {count}回 ({pct}%), avg_score_delta={avg_delta}")
 
-    print(f"\n## 高スコア群 vs 低スコア群の比較")
-    print(f"  高スコア群 (上位{len(high_half)}試合): avg_score={round(sum(g['score'] for g in high_half) / len(high_half))}, merge_rate={round(high_merge_rate, 1)}%")
-    print(f"  低スコア群 (下位{len(low_half)}試合): avg_score={round(sum(g['score'] for g in low_half) / len(low_half))}, merge_rate={round(low_merge_rate, 1)}%")
+    if show_high_low_comparison:
+        print(f"\n## 高スコア群 vs 低スコア群の比較")
+        print(f"  高スコア群 (上位{len(high_half)}試合): avg_score={round(sum(g['score'] for g in high_half) / len(high_half))}, merge_rate={round(high_merge_rate, 1)}%")
+        print(f"  低スコア群 (下位{len(low_half)}試合): avg_score={round(sum(g['score'] for g in low_half) / len(low_half))}, merge_rate={round(low_merge_rate, 1)}%")
 
-    print(f"\n  高スコア群の reason 上位5:")
-    high_total = sum(high_reasons.values())
-    for reason, count in high_reasons.most_common(5):
-        print(f"    {reason}: {round(count / high_total * 100, 1)}%")
+        print(f"\n  高スコア群の reason 上位5:")
+        high_total = sum(high_reasons.values())
+        for reason, count in high_reasons.most_common(5):
+            print(f"    {reason}: {round(count / high_total * 100, 1)}%")
 
-    print(f"  低スコア群の reason 上位5:")
-    low_total = sum(low_reasons.values())
-    for reason, count in low_reasons.most_common(5):
-        print(f"    {reason}: {round(count / low_total * 100, 1)}%")
+        print(f"  低スコア群の reason 上位5:")
+        low_total = sum(low_reasons.values())
+        for reason, count in low_reasons.most_common(5):
+            print(f"    {reason}: {round(count / low_total * 100, 1)}%")
 
-    print(f"\n## max_y 推移 (盤面の高さ)")
-    print(f"  高スコア群: 序盤avg={round(sum(g['early_avg_max_y'] for g in high_half) / len(high_half), 2)}, 終盤avg={round(sum(g['late_avg_max_y'] for g in high_half) / len(high_half), 2)}")
-    print(f"  低スコア群: 序盤avg={round(sum(g['early_avg_max_y'] for g in low_half) / len(low_half), 2)}, 終盤avg={round(sum(g['late_avg_max_y'] for g in low_half) / len(low_half), 2)}")
+        print(f"\n## max_y 推移 (盤面の高さ)")
+        print(f"  高スコア群: 序盤avg={round(sum(g['early_avg_max_y'] for g in high_half) / len(high_half), 2)}, 終盤avg={round(sum(g['late_avg_max_y'] for g in high_half) / len(high_half), 2)}")
+        print(f"  低スコア群: 序盤avg={round(sum(g['early_avg_max_y'] for g in low_half) / len(low_half), 2)}, 終盤avg={round(sum(g['late_avg_max_y'] for g in low_half) / len(low_half), 2)}")
+    else:
+        print(f"\n## 高スコア群 vs 低スコア群の比較")
+        print(f"  (N<3のためスキップ — 意味のある比較には3試合以上必要)")
 
     print(f"\n## ベスト試合")
     for g in reversed(best_games):

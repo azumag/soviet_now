@@ -54,6 +54,12 @@ log "[IMPROVE] AI改善 (${NUM_GAMES}試合分)..."
 STAGING_FILE="${STRATEGY_FILE}.staging"
 cp "$STRATEGY_FILE" "$STAGING_FILE"
 
+# リバート用に改善前のstrategy.pyを保存
+cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
+
+# 改善前のdecide()ハッシュを記録
+HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+
 improve_ok=false
 
 # 直近10バージョン + 殿堂入り戦略
@@ -92,8 +98,7 @@ $VALIDATE_ERROR
 
 ## 修正ルール
 - strategy.py.staging を改善して上記エラーを回避せよ
-- **既存コードは一切削除するな。新しいロジックを追加する形で改善せよ**
-- **行数ハードゲート: コード行数が元の80%未満だと自動リジェクトされる。コードを短くする改善は通らない**
+- 1回の改善で1つの変更のみ。シンプルに保て
 - decide(game_state, analysis) のシグネチャは変更禁止
 - if __name__ == "__main__" ブロックは変更禁止
 - decide() は必ず {"x": float, "reason": str} を返すこと
@@ -112,22 +117,29 @@ FIXEOF
 		continue
 	fi
 
-	# 行数チェック: 既存ロジックの無断削除を防止
-	original_lines=$(grep -c '' "$STRATEGY_FILE" 2>/dev/null || echo 0)
-	staging_lines=$(grep -c '' "$STAGING_FILE" 2>/dev/null || echo 0)
-	# コメント行を除いたコード行数で比較
-	original_code=$(grep -v '^\s*#' "$STRATEGY_FILE" | grep -v '^\s*$' | wc -l | tr -d ' ')
-	staging_code=$(grep -v '^\s*#' "$STAGING_FILE" | grep -v '^\s*$' | wc -l | tr -d ' ')
-	min_code=$((original_code * 80 / 100))  # 80%未満ならリジェクト
-	if [ "$staging_code" -lt "$min_code" ]; then
-		log "[IMPROVE] コード行数が大幅に減少: ${original_code}行→${staging_code}行 (最低${min_code}行必要)"
-		VALIDATE_ERROR="行数ハードゲート失敗: コード行数が ${original_code}→${staging_code}行 に減少（最低${min_code}行必要）。既存コードを一切削除・書き直しするな。改善とは既存コードに新しいロジックを追加すること。行数は増えるのが正常。既存のdecide()にボーナス/ペナルティ/条件分岐を追加する形で改善せよ。"
-		continue
-	fi
-
 	# stagingファイルを直接バリデーション (strategy.pyには触らない)
 	if validate_strategy "$STAGING_FILE"; then
 		log "[IMPROVE] バリデーション成功"
+
+		# ハッシュベース反復防止: 最近リジェクトされたハッシュと同一なら拒否
+		HASH_STAGING=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
+		REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
+
+		if [ -n "$HASH_STAGING" ] && [ -f "$REJECTED_HASHES_FILE" ]; then
+			if grep -qF "$HASH_STAGING" "$REJECTED_HASHES_FILE"; then
+				log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み)"
+				VALIDATE_ERROR="この変更は過去にリジェクトされた戦略と同一 (hash=$HASH_STAGING)。別のアプローチを試せ。"
+				continue
+			fi
+		fi
+
+		# 改善前と同一ハッシュなら差分なしとして扱う
+		if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ]; then
+			log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
+			VALIDATE_ERROR="decide()関数の本体に実質的な変更がない (コメントのみの変更)。ロジックを変更せよ。"
+			continue
+		fi
+
 		strategy_diff=$(diff -u "$STRATEGY_FILE" "$STAGING_FILE" 2>/dev/null || true)
 		real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
 		[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
