@@ -2,11 +2,21 @@
 # show_random_info.sh - eloopの出力からランダムにピックアップして面白く表示
 #
 # Usage: ./show_random_info.sh [回数(default:1)]
+#        ./show_random_info.sh loop [間隔秒(default:5)]
 
 SCRIPT_DIR="${0:a:h}"
 cd "$SCRIPT_DIR"
 
-ROUNDS=${1:-1}
+LOOP_MODE=false
+LOOP_INTERVAL=5
+
+if [[ "$1" == "loop" ]]; then
+	LOOP_MODE=true
+	LOOP_INTERVAL=${2:-5}
+	ROUNDS=999999999
+else
+	ROUNDS=${1:-1}
+fi
 
 #=== ネタ収集 ===
 
@@ -135,7 +145,6 @@ if scores:
 detect_renderers() {
 	renderers=()
 	(( $+commands[cowsay] )) && renderers+=("cowsay")
-	(( $+commands[toilet] )) && renderers+=("toilet")
 	(( $+commands[figlet] )) && renderers+=("figlet")
 	(( $+commands[boxes] ))  && renderers+=("boxes")
 	(( $+commands[lolcat] )) && renderers+=("lolcat")
@@ -143,9 +152,7 @@ detect_renderers() {
 }
 
 random_cowsay_char() {
-	local chars=("${(@f)$(cowsay -l 2>/dev/null | tail -n +2)}")
-	# cowsay -l はスペース区切りなので展開
-	local all=( ${=chars} )
+	local all=("${(@f)$(cowsay -l 2>/dev/null)}")
 	if (( ${#all} > 0 )); then
 		echo "${all[$((RANDOM % ${#all} + 1))]}"
 	else
@@ -153,51 +160,99 @@ random_cowsay_char() {
 	fi
 }
 
+# テキストが ASCII のみか判定
+is_ascii() {
+	[[ "$1" == ${~:-[[:ascii:]]#} ]]
+}
+
+# 全角対応の枠表示 (python3 で表示幅を正しく計算)
 ascii_frame() {
 	local text="$1"
-	local w=60
-	local border=$(printf '═%.0s' {1..$((w + 2))})
-	echo "╔${border}╗"
-	echo "$text" | fold -s -w $w | while IFS= read -r line; do
-		printf '║ %-'${w}'s ║\n' "$line"
-	done
-	echo "╚${border}╝"
+	python3 -c "
+import unicodedata, sys
+
+def display_width(s):
+    w = 0
+    for c in s:
+        cat = unicodedata.east_asian_width(c)
+        w += 2 if cat in ('F', 'W') else 1
+    return w
+
+def wrap_lines(text, max_w):
+    result = []
+    for raw_line in text.split('\n'):
+        if display_width(raw_line) <= max_w:
+            result.append(raw_line)
+            continue
+        cur = ''
+        cur_w = 0
+        for ch in raw_line:
+            cw = 2 if unicodedata.east_asian_width(ch) in ('F','W') else 1
+            if cur_w + cw > max_w:
+                result.append(cur)
+                cur = ch
+                cur_w = cw
+            else:
+                cur += ch
+                cur_w += cw
+        if cur:
+            result.append(cur)
+    return result
+
+W = 58
+text = sys.stdin.read().rstrip('\n')
+lines = wrap_lines(text, W)
+
+border = '═' * (W + 2)
+print(f'╔{border}╗')
+for line in lines:
+    pad = W - display_width(line)
+    print(f'║ {line}{\" \" * pad} ║')
+print(f'╚{border}╝')
+" <<< "$text"
 }
 
 render_snippet() {
 	local text="$1"
 	detect_renderers
-	local pick="${renderers[$((RANDOM % ${#renderers} + 1))]}"
+
+	# 日本語を含むかチェック → figlet は ASCII のみ
+	local has_multibyte=false
+	if ! is_ascii "$text"; then
+		has_multibyte=true
+	fi
+
+	# 日本語テキストの場合は ascii_frame / cowsay / boxes に絞る
+	local usable=()
+	for r in "${renderers[@]}"; do
+		if $has_multibyte && [[ "$r" == "figlet" ]]; then
+			continue
+		fi
+		usable+=("$r")
+	done
+	(( ${#usable} == 0 )) && usable=("ascii_frame")
+
+	local pick="${usable[$((RANDOM % ${#usable} + 1))]}"
 
 	case "$pick" in
 	cowsay)
 		local char=$(random_cowsay_char)
 		if (( $+commands[lolcat] )) && (( RANDOM % 2 == 0 )); then
-			echo "$text" | cowsay -f "$char" 2>/dev/null | lolcat 2>/dev/null
+			echo "$text" | cowsay -f "$char" 2>/dev/null | lolcat 2>/dev/null || ascii_frame "$text"
 		else
-			echo "$text" | cowsay -f "$char" 2>/dev/null
+			echo "$text" | cowsay -f "$char" 2>/dev/null || ascii_frame "$text"
 		fi
-		;;
-	toilet)
-		local short="$text"
-		(( ${#short} > 30 )) && short="${short[1,27]}..."
-		local fonts=("big" "standard" "small" "smslant" "mini" "future" "pagga")
-		local filters=("--gay" "--metal" "" "--border")
-		local font="${fonts[$((RANDOM % ${#fonts} + 1))]}"
-		local filter="${filters[$((RANDOM % ${#filters} + 1))]}"
-		toilet -f "$font" ${=filter} "$short" 2>/dev/null || echo "$text"
 		;;
 	figlet)
 		local short="$text"
 		(( ${#short} > 30 )) && short="${short[1,27]}..."
 		if (( $+commands[lolcat] )) && (( RANDOM % 2 == 0 )); then
-			figlet "$short" 2>/dev/null | lolcat 2>/dev/null
+			figlet "$short" 2>/dev/null | lolcat 2>/dev/null || ascii_frame "$text"
 		else
-			figlet "$short" 2>/dev/null
+			figlet "$short" 2>/dev/null || ascii_frame "$text"
 		fi
 		;;
 	boxes)
-		# 利用可能なデザインからランダム選択
 		local avail_designs=("${(@f)$(boxes -l 2>/dev/null | grep '^ *[a-z]' | awk '{print $1}' | head -20)}")
 		if (( ${#avail_designs} > 0 )); then
 			local design="${avail_designs[$((RANDOM % ${#avail_designs} + 1))]}"
@@ -224,8 +279,11 @@ if (( ${#snippets} == 0 )); then
 	exit 0
 fi
 
-for round in {1..$ROUNDS}; do
-	# 毎ラウンド再収集（ランダム要素入りのネタが変わる）
+local _round=0
+while (( _round < ROUNDS )); do
+	(( _round++ ))
+
+	# 毎ラウンド再収集
 	collect_snippets
 
 	# 1〜3個ランダムピック
@@ -235,23 +293,25 @@ for round in {1..$ROUNDS}; do
 	# 重複なしでピック
 	local selected=()
 	local used=()
-	for i in {1..$pick_count}; do
-		local attempts=0
-		while (( attempts < 20 )); do
-			local idx=$(( RANDOM % ${#snippets} + 1 ))
-			if (( ! ${used[(Ie)$idx]} )); then
-				used+=($idx)
-				selected+=("${snippets[$idx]}")
-				break
-			fi
-			(( attempts++ ))
-		done
+	local _p=0
+	while (( _p < pick_count )); do
+		local idx=$(( RANDOM % ${#snippets} + 1 ))
+		if (( ! ${used[(Ie)$idx]} )); then
+			used+=($idx)
+			selected+=("${snippets[$idx]}")
+			(( _p++ ))
+		fi
 	done
 
 	# 結合して表示
-	local combined="${(j:\n:)selected}"
+	local combined="${(pj:\n:)selected}"
 	render_snippet "$combined"
 
-	# 複数ラウンドなら間を空ける
-	(( ROUNDS > 1 && round < ROUNDS )) && sleep 3
+	# 次の表示まで待つ
+	if $LOOP_MODE; then
+		sleep "$LOOP_INTERVAL"
+	elif (( _round < ROUNDS )); then
+		sleep 2
+	fi
 done
+exit 0
