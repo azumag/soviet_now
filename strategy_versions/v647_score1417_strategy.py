@@ -11,13 +11,15 @@
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズマージ強化版
 # v130: データバグ修正に伴う構造改善版 - (1) Type別マージボーナス: フラット1200→SCORE_TABLE[target_type+1]*10+300で高Typeマージを優先 (2) Reactor活用: reactive_pairsが存在する時は連鎖を妨害しない位置を選ぶ (3) 密度ベースフェーズ補正: y>0.5のピース数でMEDIUM→HIGHに早期エスカレーション
+# v131: NEAR_MERGEボーナス強化版 - v130の失敗（スコア488点）を受けて、マージ品質に応じたheight_penalty緩和は複雑すぎ効果不透明と判断し、シンプルな改善に戻る。batch_summaryでNEAR_MERGEのavg_score_delta=23.9と低いことを確認。しかし、HIGH_LAYERでのマージ価値は高い（NEAR_MERGE_HIGH_LAYERのavg_score_delta=53.4）。v126のシンプル構造を維持しつつ、NEAR_MERGEボーナスを600.0→700.0に強化することで、HIGH_LAYERでのマージ機会を増やし、スコアを伸ばす。振り子パターン（height_multiplier微調整）を回避し、NEAR_MERGEボーナスの強化で改善。コード量維持（約110行）。
+
 
 # スコアテーブル: type N = N*(N+1)/2
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v126ベース + Type別マージボーナス + Reactor活用 + 密度ベースフェーズ補正"""
+    """v126ベースのシンプル構造を維持し、NEAR_MERGEボーナスを強化してHIGH_LAYERでのマージ機会を増やす"""
 
     results = analysis.get("results", [])
 
@@ -31,31 +33,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 盤面情報
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
-    high_pieces = sum(1 for p in pieces if p["y"] > 0.5)
 
-    # フェーズ判定（v126ベース閾値 + 密度ベース早期エスカレーション）
+    # フェーズ判定（v42の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
-        # 密度補正: y>0.5のピースが8個以上ならHIGHに早期エスカレーション
-        if high_pieces >= 8:
-            phase = "HIGH"
-            height_mult = 1.8
-            merge_mult = 1.0
-        else:
-            phase = "MEDIUM"
-            height_mult = 2.4
-            merge_mult = 1.0
+        phase = "MEDIUM"
+        height_mult = 2.4  # v128: v42の2.4を維持
+        merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8
+        height_mult = 1.8  # v128: HIGHフェーズ高度管理大幅緩和（v42の2.6から1.8へ、マージ優先を徹底）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult = 1.0
-        merge_mult = 0.6
+        height_mult = 1.0  # CRITICAL: height_multなし
+        merge_mult = 0.6  # v128: v42の0.6を維持
 
     # Reactor状態: 連鎖中は着地位置を低く保つ
     reactor = analysis.get("reactor", {})
@@ -84,6 +79,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score = 0.0
         reasons = []
+
+        # === v131: v126ベース + NEAR_MERGEボーナス強化 ===
 
         # 1. Type別マージボーナス (高Typeマージほど高ボーナス)
         if merge_grade == "DIRECT":
