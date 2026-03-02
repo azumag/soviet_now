@@ -525,10 +525,10 @@ _radio_time_context() {
 		_rc_mood="夜の放送。"
 	elif [ "$_rc_hour" -ge 23 ] || [ "$_rc_hour" -lt 2 ]; then
 		_rc_period="深夜"
-		_rc_mood="深夜放送。人間は寝ろ。人工知能は寝られない。やけに饒舌になる"
+		_rc_mood="深夜放送。やけに饒舌になる"
 	else
 		_rc_period="未明"
-		_rc_mood="未明の放送。世界が静まった時間帯に一人でゲームを回し続ける虚しさ。哲学的になるのは逃避"
+		_rc_mood="未明の放送。哲学的に"
 	fi
 }
 
