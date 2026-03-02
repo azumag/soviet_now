@@ -20,7 +20,7 @@
   LOW      (max_y < 0.8) : 序盤。マージ優先 (merge_mult=1.2)
   MEDIUM   (0.8 ≤ max_y < 1.8) : 中盤。高度管理を強化 (height_mult=2.4)
   HIGH     (1.8 ≤ max_y < 3.0) : 終盤。マージ機会確保 (height_mult=1.8)
-  CRITICAL (3.0 ≤ max_y) : 危険。マージ抑制しとにかく低く (merge_mult=0.6)
+  CRITICAL (3.0 ≤ max_y) : 危険。DIRECTマージ最優先で盤面圧縮 (NEAR は慎重に)
 """
 
 # 固定インターフェース:
@@ -32,11 +32,11 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズマージ強化版
-# v139: 同type集約ボーナス追加版 - result["merges"]の個別距離データを活用した新ロジック。
-# 現状HEIGHT_CONTROL(23.2%)の局面では同typeピースへの近さを無視して最低着地点を選んでいる。
-# 各ドロップ候補のmergesリスト(analyze_board提供)から同typeピースへの距離を集計し、
-# 近くに同typeが多いほどボーナスを付与。マージ不可の局面でも将来のマージ確率が高い
-# 位置を選択できるようになる。既存のスコアリングは一切変更せず、新評価軸の追加のみ。
+# v139: 同type集約ボーナス追加版 - mergesの個別距離データで将来マージ確率を評価
+# v140: CRITICALフェーズマージ戦略反転 — merge_mult=0.6(マージ抑制)を廃止。
+# マージは2個→1個でネット-1ピース=盤面圧縮の最良手段。CRITICALこそマージ優先すべき。
+# ただしNEAR(成功率68.5%)は失敗→即死リスクがあるため、DIRECTのみ1.5倍ボーナス、
+# NEARは通常の0.5倍に据え置き。merge_gradeごとに分岐するCRITICAL専用ロジック。
 
 # マージ結果のスコア: type N のマージで N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -44,7 +44,7 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v139: 同type集約ボーナス — mergesの距離データで将来マージ確率を評価
+    """v140: CRITICALフェーズDIRECTマージ最優先 + 同type集約ボーナス
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -92,7 +92,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     else:
         phase = "CRITICAL"
         height_mult = 1.0     # CRITICALでは高度ペナルティ基本値のみ
-        merge_mult = 0.6      # マージボーナスを40%減。とにかく低い場所に置く
+        merge_mult = 1.0      # v140: マージ抑制を廃止 (DIRECT/NEAR個別制御に移行)
 
     # --- Reactor状態 (連鎖反応の検出) ---
     # reactive_pairs: 接触圏内の同typeペア数。連鎖中は盤面が不安定なので
@@ -134,11 +134,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # DIRECT: ターゲットに直撃 (成功率95.7%)
         # NEAR:   着地後に接触圏内 (成功率68.5%)
         # FAR:    ドリフトで接触する可能性あり (低確率)
+        #
+        # v140: CRITICALフェーズではマージ=盤面圧縮(2個→1個)なので最優先。
+        # ただしNEARは失敗→即死リスクがあるため、DIRECTのみ1.5倍強化。
         if merge_grade == "DIRECT":
-            score += type_merge_bonus * merge_mult
+            direct_mult = 1.5 if phase == "CRITICAL" else 1.0  # v140: CRITICAL時DIRECT強化
+            score += type_merge_bonus * merge_mult * direct_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += type_merge_bonus * 0.5 * merge_mult
+            near_mult = 0.3 if phase == "CRITICAL" else 0.5  # v140: CRITICAL時NEARは慎重に
+            score += type_merge_bonus * near_mult * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += type_merge_bonus * 0.17 * merge_mult
