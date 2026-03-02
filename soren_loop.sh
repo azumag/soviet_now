@@ -79,6 +79,9 @@ while true; do
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
 
+	# ゲーム番号を毎試合読み直す
+	GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+
 	# 前回の改善が完了したか確認
 	check_and_harvest_improvement
 
