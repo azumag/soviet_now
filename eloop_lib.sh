@@ -38,7 +38,7 @@ mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" tmp
 #=== コアヘルパー ===
 
 commands_empty() { [ -z "$(tr -d '[:space:]' <"$COMMANDS" 2>/dev/null)" ]; }
-log() { echo "[$(date '+%H:%M:%S')] $*"; }
+log() { echo -e "\n[$(date '+%H:%M:%S')] $*"; }
 
 is_game_over() {
 	local s

@@ -9,6 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 INTERVAL="${1:-15}"
+# 数値でなければデフォルトに戻す
+case "$INTERVAL" in
+	''|*[!0-9]*) INTERVAL=15 ;;
+esac
 
 # --- 多重起動防止 ---
 LOCKFILE="tmp/joke_loop.lock"
@@ -62,7 +66,8 @@ show_joke() {
 
 	case "$pick" in
 	sl)
-		timeout 10 sl -l 2>/dev/null || true
+		# sl はターミナル制御コードで直接描画するので /dev/tty に出力
+		timeout 10 sl -l </dev/tty >/dev/tty 2>/dev/tty || true
 		;;
 	fortune_cowsay)
 		fortune 2>/dev/null | cowsay 2>/dev/null || true
