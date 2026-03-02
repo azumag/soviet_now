@@ -22,7 +22,7 @@
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """HIGHフェーズでマージ品質に応じたheight_penalty緩和を導入"""
+    """HIGHフェーズでマージを優先し、HIGH_TOWERペナルティを微緩和してHIGH_LAYERでのマージ機会を向上"""
 
     results = analysis.get("results", [])
 
@@ -71,9 +71,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v130: HIGHフェーズでのマージ品質に応じたheight_penalty緩和 ===
+        # === v129: HIGHフェーズマージ優先・HIGH_TOWER微緩和 ===
 
-        # 1. マージグレードによるスコア（v130: v42の強力な値を維持）
+        # 1. マージグレードによるスコア（v129: v42の強力な値を維持）
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -83,45 +83,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+        # v129: HIGH_TOWERペナルティを微緩和し、HIGH_LAYERでのマージ機会を向上
 
-        # 2. 高度によるペナルティ（v130: HIGHフェーズでマージ品質に応じた緩和を導入）
+        # 2. 高度によるペナルティ（v129: v128の設定を維持）
         height_penalty = landing_y * 50.0 * height_mult
 
-        # HIGH_TOWERペナルティ（v130: v129の1.1倍を維持）
+        # HIGH_TOWERペナルティ（v129: v128の1.3倍から1.1倍に緩和）
         if phase == "HIGH" and landing_y > 0.5:
-            # v130: マージ品質に応じたheight_penalty緩和
-            # マージ品質が高いほど、HIGH_LAYERでのマージを促進
-            if merge_grade == "DIRECT":
-                height_penalty *= 0.5  # DIRECTマージでheight_penaltyを50%に減
-                reasons.append("DIRECT_MERGE_HEIGHT_RELAX")
-            elif merge_grade == "NEAR":
-                height_penalty *= 0.7  # NEARマージでheight_penaltyを70%に減
-                reasons.append("NEAR_MERGE_HEIGHT_RELAX")
-            elif merge_grade == "FAR":
-                height_penalty *= 0.85  # FARマージでheight_penaltyを85%に減
-                reasons.append("FAR_MERGE_HEIGHT_RELAX")
-            else:
-                # マージなしの場合はheight_penaltyを100%（変更なし）
-                height_penalty *= 1.1
-                reasons.append("HIGH_TOWER")
+            height_penalty *= 1.1  # v129: HIGH_TOWERを1.3倍から1.1倍に緩和、HIGH_LAYERでのマージ機会向上
+            reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5  # v130: v42の1.5倍を維持
+            height_penalty *= 1.5  # v129: v42の1.5倍を維持
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ（v130: v42の一律30.0を維持）
+        # 3. ドリフトによるペナルティ（v129: v42の一律30.0を維持）
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正（v130: v42の設定を維持）
+        # 4. 左右バランス補正（v129: v42の設定を維持）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0  # v130: v42の40.0を維持
+            balance_strength = 40.0  # v129: v42の40.0を維持
         elif phase == "MEDIUM":
-            balance_strength = 30.0  # v130: v42の30.0を維持
+            balance_strength = 30.0  # v129: v42の30.0を維持
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -130,7 +118,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス（v130: v42の一律50.0を維持）
+        # 5. nextNextが同じタイプなら中央寄せボーナス（v129: v42の一律50.0を維持）
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
