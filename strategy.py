@@ -10,16 +10,17 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズマージ強化版
-# v136: MEDIUMフェーズ高度管理強化・スコア安定版 - v135のスコア分散（avg=863.5, min=647, max=1017, stddev=136.6）を受けて、batch_summary分析でMEDIUMフェーズheight_mult=2.2の緩和がスコア分散を助長していることを特定。高スコア群（avg=983）vs 低スコア群（avg=744）で239点差があり、安定性が不足。v42/v128の成功構造（MEDIUMフェーズheight_mult=2.4）を採用し、HIGHフェーズへの移行期での高度管理を強化することで、スコア安定性を向上させる。v135のHIGHフェーズ設定（height_mult=1.8、HIGH_TOWERペナルティ1.3倍）を維持しつつ、MEDIUMフェーズをv42の成功値に戻すことで、v128の成功構造に近づき、スコア分散を抑制しつつ平均スコアを向上。単一パラメータ調整で振り子パターン回避。コード量維持（約110行）。
-# v137: 左右の高さバランス補正追加版 - v136のスコア分散（avg=1008.1, stddev=395.1）を受けて、batch_summary分析とベストゲーム（1916点）の左右高さバランスを確認。ベストゲームでは終盤（turn 80-90）まで左右の最大Y座標の差が0.00〜0.94と良好に保たれていること、高スコア群がMEDIUM_TOWER_REACTOR_PROTECTを12.2%使用（低スコア群6.7%）していることを特定。v136の「ピース数バランス」のみの評価を補完し、「左右の高さバランス」を新規追加：左右の最大Y座標の差を計算し、低い側にピースを配置した場合に（高さ差×20.0）のボーナスを与える。これにより、盤面の左右で高さが不均衡な場合に、低い側への配置を優先的に選択し、盤面の均一性と安定性を向上させる。単一の新規評価基準追加のみで、振り子パターン回避。コード量微増（約120行）。
-# v138: 左右の高さバランス補正強化版 - v137のスコア分散（avg=1008.1, stddev=395.1）を受けて、batch_summary分析で高スコア群（avg=1302）vs 低スコア群（avg=715）で587点差があり、安定性が不足。高スコア群ほど左右バランスが良好（ベストゲームでは終盤まで左右の最大Y座標の差が0.00〜0.94）であり、補正を強化することでスコア安定性を向上させる。v137の左右の高さバランス補正のボーナス係数を20.0→25.0に微増し、盤面の均一性をより強く促進。v137のシンプル構造を維持しつつ、単一パラメータ調整で振り子パターン回避。コード量維持（約120行）。
-
-# スコアテーブル: type N = N*(N+1)/2
-SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
+# v139: v128構造復帰・有害機能除去版 - v138のデータ分析で以下を特定:
+# (1) HEIGHT_BALANCE: ワーストゲーム(475点)で29/58ターン(50%)発動、ベストゲーム(1492点)で0回。有害。
+# (2) Reactor保護: avg_score_delta=0.8〜10.1、複雑さに見合わない。
+# (3) Type別マージボーナス: 小type mergeを過小評価 (type1→310 vs v128固定1200)。
+# (4) NEAR merge成功率68.5% (DIRECT 95.7%) — HIGHフェーズでNEARを追いかけて危険位置に配置するリスク。
+# 対策: v128の実績構造(固定マージボーナス1200/600/200)に復帰し、HEIGHT_BALANCE・Reactor保護を除去。
+# HIGHフェーズでのNEAR mergeボーナスを0.4倍に抑制し、失敗時の配置リスクを軽減。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v138: 左右の高さバランス補正を強化し、スコア安定性を向上"""
+    """v139: v128構造復帰 + HEIGHT_BALANCE除去 + HIGHフェーズNEAR抑制"""
 
     results = analysis.get("results", [])
 
@@ -41,24 +42,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v136: v42の2.4に戻す（スコア安定性向上）
+        height_mult = 2.4
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v135: v128の1.8に戻す（HIGHフェーズマージ機会確保）
+        height_mult = 1.8
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v128: v42の0.6を維持
-
-    # Reactor状態: 連鎖中は着地位置を低く保つ
-    reactor = analysis.get("reactor", {})
-    reactive_pairs = reactor.get("reactive_pairs", [])
-    if isinstance(reactive_pairs, list):
-        reactor_penalty_scale = len(reactive_pairs)
-    else:
-        reactor_penalty_scale = 0
+        height_mult = 1.0
+        merge_mult = 0.6
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
@@ -66,9 +59,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # Type別マージボーナス計算: マージ結果type (next_type+1) のスコア価値に基づく
-    merge_result_type = min(next_type + 1, 16)
-    type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
+    # 左右バランス (ループ外で1回だけ計算)
+    left_count = sum(1 for p in pieces if p["x"] < 0)
+    right_count = len(pieces) - left_count
+    balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
 
     for result in results:
         x = result["x"]
@@ -80,24 +74,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # === v131: v126ベース + NEAR_MERGEボーナス強化 ===
-
-        # 1. Type別マージボーナス (高Typeマージほど高ボーナス)
+        # 1. マージボーナス (v128の固定値に復帰)
         if merge_grade == "DIRECT":
-            score += type_merge_bonus * merge_mult
+            score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += type_merge_bonus * 0.5 * merge_mult
+            # HIGHフェーズではNEAR成功率68.5%のリスクを反映し抑制
+            near_mult = 0.4 if phase == "HIGH" else 0.5
+            score += 600.0 * near_mult * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += type_merge_bonus * 0.17 * merge_mult
+            score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ
+        # 2. 高度ペナルティ
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v133: v42/v128の1.3倍に戻す（v126の1.1倍から強化）
+            height_penalty *= 1.3
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5
@@ -107,59 +101,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # 3. Reactor保護: 連鎖進行中は高い位置への着地をさらにペナルティ
-        if reactor_penalty_scale > 0 and landing_y > 0.0:
-            score -= landing_y * 20.0 * reactor_penalty_scale
-            if "REACTOR_PROTECT" not in reasons:
-                reasons.append("REACTOR_PROTECT")
-
-        # 4. ドリフトによるペナルティ
+        # 3. ドリフトペナルティ
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 5. 左右バランス補正
+        # 4. 左右ピース数バランス補正
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0
         elif phase == "MEDIUM":
             balance_strength = 30.0
 
-        left_count = sum(1 for p in pieces if p["x"] < 0)
-        right_count = len(pieces) - left_count
-        balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
-
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 6. nextNextが同じタイプなら中央寄せボーナス
+        # 5. nextNextが同じタイプなら中央寄せボーナス
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
-
-        # 7. 左右の高さバランス補正（v138: ボーナス係数を25.0に強化）
-        left_max_y = (
-            max([p["y"] for p in pieces if p["x"] < 0])
-            if any(p["x"] < 0 for p in pieces)
-            else -4.0
-        )
-        right_max_y = (
-            max([p["y"] for p in pieces if p["x"] > 0])
-            if any(p["x"] > 0 for p in pieces)
-            else -4.0
-        )
-
-        # 低い側に配置した場合にボーナス（高い側から低い側への高さ差に応じて）
-        if x < 0 and left_max_y < right_max_y:
-            height_balance_bonus = (right_max_y - left_max_y) * 25.0  # v138: 20.0→25.0に強化
-            score += height_balance_bonus
-            if height_balance_bonus > 0:
-                reasons.append("HEIGHT_BALANCE_LEFT")
-        elif x > 0 and right_max_y < left_max_y:
-            height_balance_bonus = (left_max_y - right_max_y) * 25.0  # v138: 20.0→25.0に強化
-            score += height_balance_bonus
-            if height_balance_bonus > 0:
-                reasons.append("HEIGHT_BALANCE_RIGHT")
 
         # スコア更新
         if score > best_score:
