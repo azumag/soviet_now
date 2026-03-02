@@ -293,9 +293,10 @@ show_sl() {
 show_fullscreen() {
 	local cmds=()
 	(( $+commands[nyancat] ))   && cmds+=("nyancat")
-	(( $+commands[cmatrix] ))   && cmds+=("cmatrix")
-	(( $+commands[tty-clock] )) && cmds+=("tty-clock")
-	(( $+commands[genact] ))    && cmds+=("genact")
+	(( $+commands[cmatrix] ))       && cmds+=("cmatrix")
+	(( $+commands[tty-clock] ))     && cmds+=("tty-clock")
+	(( $+commands[asciiquarium] ))  && cmds+=("asciiquarium")
+	(( $+commands[genact] ))        && cmds+=("genact")
 	(( ${#cmds} == 0 )) && return 1
 
 	local cmd="${cmds[$((RANDOM % ${#cmds} + 1))]}"
@@ -307,11 +308,15 @@ show_fullscreen() {
 		printf '\033[0m\n'
 		;;
 	cmatrix)
-		TERM=vt100 timeout 10 cmatrix -b 2>/dev/null || true
+		timeout 10 cmatrix -b 2>/dev/null || true
 		printf '\033[0m\n'
 		;;
 	tty-clock)
-		TERM=vt100 timeout 8 tty-clock -sC 1 2>/dev/null || true
+		timeout 8 tty-clock -sC 1 2>/dev/null || true
+		printf '\033[0m\n'
+		;;
+	asciiquarium)
+		timeout 10 asciiquarium 2>/dev/null || true
 		printf '\033[0m\n'
 		;;
 	genact)
