@@ -115,6 +115,37 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 		acc_scores=$(python3 -c "import json; print(json.load(open('tmp/accumulated_games.json')).get('scores',''))" 2>/dev/null)
 	fi
 
+	# --- ローリングスコア & リグレッション ---
+	local rolling_hash="" rolling_count=0 rolling_avg="" rolling_prev_avg=""
+	local rejected_count=0
+	if [[ -f tmp/rolling_scores.json ]] && [[ -f strategy.py ]]; then
+		eval $(python3 -c "
+import json, os, subprocess
+rs = json.load(open('tmp/rolling_scores.json'))
+h = subprocess.run(['python3', 'extract_decide_hash.py', 'strategy.py'],
+    capture_output=True, text=True).stdout.strip()
+if h and h in rs:
+    scores = rs[h]['scores']
+    prev_h = rs[h].get('prev_hash', '')
+    avg = sum(scores)/len(scores) if scores else 0
+    print(f'rolling_hash={h[:8]}')
+    print(f'rolling_count={len(scores)}')
+    print(f'rolling_avg={avg:.0f}')
+    if prev_h and prev_h in rs and rs[prev_h]['scores']:
+        prev_scores = rs[prev_h]['scores']
+        prev_avg = sum(prev_scores)/len(prev_scores)
+        print(f'rolling_prev_avg={prev_avg:.0f}')
+" 2>/dev/null)
+	fi
+	[[ -f tmp/rejected_hashes.txt ]] && rejected_count=$(wc -l < tmp/rejected_hashes.txt | tr -d ' ')
+
+	# --- リバートバックアップ ---
+	local revert_available=false
+	[[ -f tmp/revert_strategy.py ]] && revert_available=true
+
+	# --- 最低試合ゲート ---
+	local min_games=5
+
 	# --- スコア情報 ---
 	local best_score=$(cat best_score.txt 2>/dev/null || echo "?")
 	local game_count=$(cat game_count.txt 2>/dev/null || echo "?")
@@ -158,20 +189,26 @@ if scores:
 	local say_locked=false
 	[[ -d tmp/.say_queue/.lock ]] && say_locked=true
 
-	# --- ラジオトーク状態 ---
+	# --- ラジオコーナー状態 ---
 	local radio_status="idle"
-	local radio_text_len=0
-	if [[ -f tmp/radio_talk_playing ]]; then
-		radio_status="playing"
-	elif [[ -f tmp/radio_talk.txt ]] && [[ -s tmp/radio_talk.txt ]]; then
-		radio_status="ready"
-		radio_text_len=$(wc -c < tmp/radio_talk.txt | tr -d ' ')
+	local radio_corner=""
+
+	# opencode (ラジオ生成AI) のプロセスがあるかチェック
+	local radio_gen_pid=$(pgrep -f "eloop_radio" 2>/dev/null | head -1)
+	if [[ -n "$radio_gen_pid" ]]; then
+		radio_status="generating"
 	fi
 
-	# ラジオ生成中かチェック (eloop_improve.sh 内で生成)
-	if $imp_alive && [[ "$radio_status" == "idle" ]]; then
-		# 改善プロセスが動いていてまだラジオが無い → 生成待ちかも
-		radio_status="pending"
+	# say が動いていればラジオ再生中かも (say_running で判定済み)
+	if $say_running && [[ "$radio_status" != "generating" ]]; then
+		radio_status="playing"
+	fi
+
+	# 過去ラジオトピックスから最新コーナー種別を取得
+	if [[ -f tmp/past_radio_topics.txt ]] && [[ -s tmp/past_radio_topics.txt ]]; then
+		local last_radio_line=$(tail -1 tmp/past_radio_topics.txt)
+		# [corner_name] を抽出
+		radio_corner=$(echo "$last_radio_line" | grep -o '\[.*\]' | tr -d '[]')
 	fi
 
 	# --- コメントキュー状態 ---
@@ -246,9 +283,33 @@ if scores:
 		printf "    ${C_DIM}○${C_RESET} Improve     ${C_DIM}IDLE${C_RESET}\n"
 	fi
 
-	# 蓄積ゲーム
+	# 蓄積ゲーム (最低試合ゲート付き)
 	if (( acc_count > 0 )); then
-		printf "    ${C_MAGENTA}◆${C_RESET} Queued      ${C_MAGENTA}${acc_count} games${C_RESET}  ${C_DIM}[${acc_scores}]${C_RESET}\n"
+		local gate_color="$C_MAGENTA"
+		(( acc_count >= min_games )) && gate_color="$C_GREEN"
+		printf "    ${gate_color}◆${C_RESET} Queued      ${gate_color}${acc_count}/${min_games} games${C_RESET}  ${C_DIM}[${acc_scores}]${C_RESET}\n"
+	fi
+
+	# ローリングスコア
+	if [[ -n "$rolling_hash" ]] && (( rolling_count > 0 )); then
+		local ratio_info=""
+		if [[ -n "$rolling_prev_avg" ]] && (( rolling_prev_avg > 0 )); then
+			local pct=$(( rolling_avg * 100 / rolling_prev_avg ))
+			local pct_color="$C_DIM"
+			(( pct >= 100 )) && pct_color="$C_GREEN"
+			(( pct < 85 )) && pct_color="$C_RED"
+			ratio_info="  ${pct_color}${pct}% vs prev${C_RESET}"
+		fi
+		printf "    ${C_BLUE}▸${C_RESET} Rolling     ${C_DIM}${rolling_hash}${C_RESET}  ${C_DIM}n=${rolling_count} avg=${rolling_avg}${C_RESET}${ratio_info}\n"
+	fi
+
+	# リバート・リジェクト情報
+	if $revert_available || (( rejected_count > 0 )); then
+		local revert_info=""
+		$revert_available && revert_info="${C_DIM}revert=ready${C_RESET}"
+		local reject_info=""
+		(( rejected_count > 0 )) && reject_info="  ${C_DIM}rejected=${rejected_count}${C_RESET}"
+		printf "    ${C_DIM}▸${C_RESET} Safety      ${revert_info}${reject_info}\n"
 	fi
 
 	echo ""
@@ -267,19 +328,21 @@ if scores:
 		echo ""
 	fi
 
-	# ラジオ
+	# ラジオコーナー
+	local corner_label="${radio_corner:-?}"
 	case "$radio_status" in
 		playing)
-			printf "    ${C_GREEN}📻${C_RESET} Radio       ${C_GREEN}PLAYING${C_RESET}\n"
+			printf "    ${C_GREEN}📻${C_RESET} Radio       ${C_GREEN}PLAYING${C_RESET}  ${C_DIM}[${corner_label}]${C_RESET}\n"
 			;;
-		ready)
-			printf "    ${C_YELLOW}📻${C_RESET} Radio       ${C_YELLOW}READY${C_RESET}  ${C_DIM}${radio_text_len}chars waiting${C_RESET}\n"
-			;;
-		pending)
-			printf "    ${C_CYAN}📻${C_RESET} Radio       ${C_CYAN}GENERATING${C_RESET}\n"
+		generating)
+			printf "    ${C_CYAN}📻${C_RESET} Radio       ${C_CYAN}GENERATING${C_RESET}  ${C_DIM}PID=${radio_gen_pid}${C_RESET}\n"
 			;;
 		*)
-			printf "    ${C_DIM}📻${C_RESET} Radio       ${C_DIM}IDLE${C_RESET}\n"
+			if [[ -n "$radio_corner" ]]; then
+				printf "    ${C_DIM}📻${C_RESET} Radio       ${C_DIM}IDLE${C_RESET}  ${C_DIM}last=[${corner_label}]${C_RESET}\n"
+			else
+				printf "    ${C_DIM}📻${C_RESET} Radio       ${C_DIM}IDLE${C_RESET}\n"
+			fi
 			;;
 	esac
 
@@ -318,7 +381,11 @@ if scores:
 
 	# === セクション: Strategy & Scores ===
 	printf "  ${C_BOLD}STRATEGY${C_RESET}\n"
-	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}${strategy_ver:-strategy.py}${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}\n"
+	local decide_hash_display=""
+	if [[ -n "$rolling_hash" ]]; then
+		decide_hash_display="  ${C_DIM}decide=${rolling_hash}${C_RESET}"
+	fi
+	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}${strategy_ver:-strategy.py}${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}${decide_hash_display}\n"
 	printf "    ${C_WHITE}▸${C_RESET} Games       ${C_BOLD}#${game_count}${C_RESET}  ${C_DIM}best=${C_RESET}${C_BOLD}${best_score}${C_RESET}\n"
 	[[ -n "$last_scores" ]] && \
 		printf "    ${C_WHITE}▸${C_RESET} Recent      ${C_DIM}${last_scores}${C_RESET}\n"
