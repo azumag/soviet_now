@@ -240,7 +240,6 @@ if scores:
 		printf "    ${C_YELLOW}⟳${C_RESET} Improve     ${C_YELLOW}RUNNING${C_RESET}  ${C_DIM}PID=${imp_pid}${C_RESET}"
 		[[ -n "$imp_elapsed" ]] && printf "  ${C_DIM}${imp_elapsed}${C_RESET}"
 		echo ""
-		[[ -n "$imp_hash" ]] && printf "                    ${C_DIM}hash: ${imp_hash} → ${strategy_hash}${C_RESET}\n"
 	elif [[ "$imp_status" == "running" ]] && ! $imp_alive; then
 		printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead)${C_RESET}\n"
 	else
@@ -319,7 +318,7 @@ if scores:
 
 	# === セクション: Strategy & Scores ===
 	printf "  ${C_BOLD}STRATEGY${C_RESET}\n"
-	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}${strategy_ver:-strategy.py}${C_RESET}  ${C_DIM}${strategy_lines}L  hash=${strategy_hash}${C_RESET}\n"
+	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}${strategy_ver:-strategy.py}${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}\n"
 	printf "    ${C_WHITE}▸${C_RESET} Games       ${C_BOLD}#${game_count}${C_RESET}  ${C_DIM}best=${C_RESET}${C_BOLD}${best_score}${C_RESET}\n"
 	[[ -n "$last_scores" ]] && \
 		printf "    ${C_WHITE}▸${C_RESET} Recent      ${C_DIM}${last_scores}${C_RESET}\n"
@@ -339,8 +338,17 @@ if scores:
 }
 
 #=== 実行 ===
+printf '\033[?25l'          # カーソル非表示
+trap 'printf "\033[?25h\033[0m"; exit' EXIT INT TERM
+printf '\033[2J'            # 初回だけ画面クリア
 while true; do
-	printf '\033[2J\033[H'
-	show_status
+	# 出力をバッファし、各行に行末クリア(\033[K)を付けて一括描画
+	local buf
+	buf=$(show_status)
+	printf '\033[H'
+	echo "$buf" | while IFS= read -r line; do
+		printf '%s\033[K\n' "$line"
+	done
+	printf '\033[J'         # 残り行を消去
 	sleep "$WATCH_INTERVAL"
 done
