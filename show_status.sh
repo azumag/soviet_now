@@ -337,18 +337,22 @@ if scores:
 	echo ""
 }
 
+#=== 描画ヘルパー: 各行に行末クリアを付与 ===
+CLR=$'\033[K'
+
+render() {
+	local buf=""
+	while IFS= read -r line; do
+		buf+="${line}${CLR}"$'\n'
+	done
+	printf '\033[H%s\033[J' "$buf"
+}
+
 #=== 実行 ===
 printf '\033[?25l'          # カーソル非表示
 trap 'printf "\033[?25h\033[0m"; exit' EXIT INT TERM
 printf '\033[2J'            # 初回だけ画面クリア
 while true; do
-	# 出力をバッファし、各行に行末クリア(\033[K)を付けて一括描画
-	local buf
-	buf=$(show_status)
-	printf '\033[H'
-	echo "$buf" | while IFS= read -r line; do
-		printf '%s\033[K\n' "$line"
-	done
-	printf '\033[J'         # 残り行を消去
+	show_status | render
 	sleep "$WATCH_INTERVAL"
 done
