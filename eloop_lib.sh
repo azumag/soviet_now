@@ -1822,8 +1822,24 @@ trigger_adaptive_improvement() {
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
 
 	if [ "$status" = "running" ]; then
-		log "[IMPROVE] 改善中, データ蓄積済み"
-		return
+		# PIDが本当に生きているか確認 (stale検出)
+		local running_pid
+		running_pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
+		local still_alive=false
+		if [ "${running_pid:-0}" -ne 0 ] && kill -0 "$running_pid" 2>/dev/null; then
+			local pid_cmd
+			pid_cmd=$(ps -p "$running_pid" -o command= 2>/dev/null || echo "")
+			if echo "$pid_cmd" | grep -q "eloop_improve"; then
+				still_alive=true
+			fi
+		fi
+		if [ "$still_alive" = true ]; then
+			log "[IMPROVE] 改善中 (PID=$running_pid), データ蓄積済み"
+			return
+		else
+			log "[IMPROVE] stale検出: PID=$running_pid は既に終了 → harvest & 続行"
+			check_and_harvest_improvement
+		fi
 	fi
 
 	# Step 4: 最低10試合ゲート
