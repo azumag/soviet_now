@@ -157,18 +157,33 @@ if h and h in rs:
 	local strategy_ver=$(ls -1t strategy_versions/v[0-9]*_strategy.py 2>/dev/null | head -1 | xargs basename 2>/dev/null)
 	local strategy_lines=$(wc -l < strategy.py 2>/dev/null | tr -d ' ')
 
-	# --- スコアグラフ ---
-	local score_graph=""
+	# --- スコアグラフ (3行×40ポイント) ---
+	local score_graph_raw="" graph_lo="" graph_hi=""
 	if [[ -f score_history.txt ]] && (( $(wc -l < score_history.txt | tr -d ' ') >= 5 )); then
-		score_graph=$(tail -20 score_history.txt | python3 -c "
+		score_graph_raw=$(tail -40 score_history.txt | python3 -c "
 import sys
 scores = [int(l.strip()) for l in sys.stdin if l.strip().isdigit()]
 if scores:
     lo, hi = min(scores), max(scores)
-    bars = '▁▂▃▄▅▆▇█'
-    r = hi - lo if hi != lo else 1
-    print(''.join(bars[min(int((s-lo)/r*7),7)] for s in scores))
+    bars = ' ▁▂▃▄▅▆▇█'
+    r = max(hi - lo, 1)
+    rows = 3
+    levels = [min(int((s - lo) / r * (rows * 8)), rows * 8) for s in scores]
+    # first line: metadata
+    print(f'{lo} {hi} {len(scores)}')
+    for row in range(rows - 1, -1, -1):
+        line = ''
+        for l in levels:
+            v = l - row * 8
+            if v >= 8: line += '█'
+            elif v > 0: line += bars[v]
+            else: line += ' '
+        print(line.rstrip())
 " 2>/dev/null)
+		if [[ -n "$score_graph_raw" ]]; then
+			graph_lo=$(head -1 <<< "$score_graph_raw" | awk '{print $1}')
+			graph_hi=$(head -1 <<< "$score_graph_raw" | awk '{print $2}')
+		fi
 	fi
 
 	# --- say (TTS) 状態 ---
@@ -410,8 +425,24 @@ if scores:
 	printf "    ${C_WHITE}▸${C_RESET} Games       ${C_BOLD}#${game_count}${C_RESET}  ${C_DIM}best=${C_RESET}${C_BOLD}${best_score}${C_RESET}${avg_display}\n"
 	[[ -n "$last_scores" ]] && \
 		printf "    ${C_WHITE}▸${C_RESET} Recent      ${C_DIM}${last_scores}${C_RESET}\n"
-	[[ -n "$score_graph" ]] && \
-		printf "    ${C_WHITE}▸${C_RESET} Trend       ${score_graph}  ${C_DIM}(last 20)${C_RESET}\n"
+	if [[ -n "$score_graph_raw" ]]; then
+		local graph_n=$(head -1 <<< "$score_graph_raw" | awk '{print $3}')
+		local graph_lines=()
+		while IFS= read -r gline; do
+			graph_lines+=("$gline")
+		done <<< "$(tail -n +2 <<< "$score_graph_raw")"
+		local gi=0
+		for gline in "${graph_lines[@]}"; do
+			if (( gi == 0 )); then
+				printf "    ${C_WHITE}▸${C_RESET} Trend   %4s ${C_GREEN}%s${C_RESET}\n" "${graph_hi}" "$gline"
+			elif (( gi == ${#graph_lines[@]} - 1 )); then
+				printf "            %4s ${C_GREEN}%s${C_RESET}  ${C_DIM}(last ${graph_n})${C_RESET}\n" "${graph_lo}" "$gline"
+			else
+				printf "                 ${C_GREEN}%s${C_RESET}\n" "$gline"
+			fi
+			(( gi++ ))
+		done
+	fi
 
 	# バッチサマリ
 	if [[ -f tmp/batch_summary.txt ]] && [[ -s tmp/batch_summary.txt ]]; then
