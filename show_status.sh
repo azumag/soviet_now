@@ -298,7 +298,7 @@ if scores:
 			local pct_color="$C_DIM"
 			(( pct >= 100 )) && pct_color="$C_GREEN"
 			(( pct < 80 )) && pct_color="$C_RED"
-			ratio_info="  ${pct_color}${pct}% vs prev${C_RESET}"
+			ratio_info="  ${pct_color}${pct}%% vs prev${C_RESET}"
 		fi
 		printf "    ${C_BLUE}▸${C_RESET} Rolling     ${C_DIM}${rolling_hash}${C_RESET}  ${C_DIM}n=${rolling_count} avg=${rolling_avg}${C_RESET}${ratio_info}\n"
 	fi
