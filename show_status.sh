@@ -1,19 +1,14 @@
 #!/bin/zsh
 # show_status.sh - eloop 全体のステータス表示
 #
-# Usage: ./show_status.sh          # 1回表示
-#        ./show_status.sh watch    # 継続監視 (5秒間隔)
-#        ./show_status.sh watch 3  # 継続監視 (3秒間隔)
+# Usage: ./show_status.sh       # 10秒間隔で常時表示
+#        ./show_status.sh 3    # 3秒間隔で常時表示
 
 SCRIPT_DIR="${0:a:h}"
 cd "$SCRIPT_DIR"
 
-WATCH_MODE=false
-WATCH_INTERVAL=5
-if [[ "$1" == "watch" ]]; then
-	WATCH_MODE=true
-	WATCH_INTERVAL=${2:-5}
-fi
+WATCH_INTERVAL=${1:-10}
+
 
 #=== 色定義 ===
 C_RESET='\033[0m'
@@ -344,12 +339,8 @@ if scores:
 }
 
 #=== 実行 ===
-if $WATCH_MODE; then
-	while true; do
-		printf '\033[2J\033[H'
-		show_status
-		sleep "$WATCH_INTERVAL"
-	done
-else
+while true; do
+	printf '\033[2J\033[H'
 	show_status
-fi
+	sleep "$WATCH_INTERVAL"
+done
