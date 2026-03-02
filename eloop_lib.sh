@@ -1222,6 +1222,8 @@ generate_comment_response() {
 	local twitch_comments=""
 	if [ -f "tmp/twitch_comments.txt" ] && [ -s "tmp/twitch_comments.txt" ]; then
 		twitch_comments=$(cat "tmp/twitch_comments.txt")
+		# コメント返し担当が取得したので、ラジオトークと重複しないようクリア
+		rm -f "tmp/twitch_comments.txt"
 	fi
 	[ -z "$twitch_comments" ] && return
 
