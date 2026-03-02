@@ -80,7 +80,6 @@ print(f\"{len(d.get('pieces',[]))} pieces / {d.get('score',0)} pts / {d.get('sta
 		local clines=("${(@f)$(cat tmp/twitch_comments.txt)}")
 		if (( ${#clines} > 0 )); then
 			local cline="${clines[$((RANDOM % ${#clines} + 1))]}"
-			(( ${#cline} > 80 )) && cline="${cline[1,77]}..."
 			snippets+=("Chat: $cline")
 		fi
 	fi

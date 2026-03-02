@@ -386,7 +386,28 @@ if scores:
 		decide_hash_display="  ${C_DIM}decide=${rolling_hash}${C_RESET}"
 	fi
 	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}${strategy_ver:-strategy.py}${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}${decide_hash_display}\n"
-	printf "    ${C_WHITE}▸${C_RESET} Games       ${C_BOLD}#${game_count}${C_RESET}  ${C_DIM}best=${C_RESET}${C_BOLD}${best_score}${C_RESET}\n"
+	# 全体平均と直近平均
+	local all_avg="" recent_avg=""
+	if [[ -f score_history.txt ]] && [[ -s score_history.txt ]]; then
+		all_avg=$(awk '{s+=$1}END{printf "%.0f", s/NR}' score_history.txt 2>/dev/null)
+		local total_lines=$(wc -l < score_history.txt | tr -d ' ')
+		if (( total_lines >= 30 )); then
+			recent_avg=$(tail -30 score_history.txt | awk '{s+=$1}END{printf "%.0f", s/NR}' 2>/dev/null)
+		fi
+	fi
+
+	local avg_display=""
+	if [[ -n "$all_avg" ]]; then
+		avg_display="  ${C_DIM}avg=${C_RESET}${all_avg}"
+		if [[ -n "$recent_avg" ]]; then
+			local avg_color="$C_DIM"
+			(( recent_avg > all_avg )) && avg_color="$C_GREEN"
+			(( recent_avg < all_avg )) && avg_color="$C_RED"
+			avg_display+="  ${C_DIM}last30=${C_RESET}${avg_color}${recent_avg}${C_RESET}"
+		fi
+	fi
+
+	printf "    ${C_WHITE}▸${C_RESET} Games       ${C_BOLD}#${game_count}${C_RESET}  ${C_DIM}best=${C_RESET}${C_BOLD}${best_score}${C_RESET}${avg_display}\n"
 	[[ -n "$last_scores" ]] && \
 		printf "    ${C_WHITE}▸${C_RESET} Recent      ${C_DIM}${last_scores}${C_RESET}\n"
 	[[ -n "$score_graph" ]] && \
