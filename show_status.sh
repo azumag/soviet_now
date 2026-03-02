@@ -9,6 +9,8 @@ cd "$SCRIPT_DIR"
 
 WATCH_INTERVAL=${1:-10}
 
+#=== レイアウト幅 (タイトル罫線に合わせる) ===
+W=57
 
 #=== 色定義 ===
 C_RESET='\033[0m'
@@ -67,8 +69,6 @@ _file_age() {
 
 #=== メイン表示 ===
 show_status() {
-	local now=$(date '+%Y-%m-%d %H:%M:%S')
-
 	# --- 改善プロセス状態 ---
 	local imp_status="idle" imp_pid=0 imp_hash=""
 	if [[ -f tmp/improve_state.json ]]; then
@@ -157,10 +157,12 @@ if h and h in rs:
 	local strategy_ver=$(ls -1t strategy_versions/v[0-9]*_strategy.py 2>/dev/null | head -1 | xargs basename 2>/dev/null)
 	local strategy_lines=$(wc -l < strategy.py 2>/dev/null | tr -d ' ')
 
-	# --- スコアグラフ (3行×40ポイント) ---
+	# --- スコアグラフ (3行) ---
+	# graph prefix "    ▸ Trend  XXXX " = 19 → graph_width = W - 19
+	local graph_width=$(( W - 19 ))
 	local score_graph_raw="" graph_lo="" graph_hi=""
 	if [[ -f score_history.txt ]] && (( $(wc -l < score_history.txt | tr -d ' ') >= 5 )); then
-		score_graph_raw=$(tail -40 score_history.txt | python3 -c "
+		score_graph_raw=$(tail -${graph_width} score_history.txt | python3 -c "
 import sys
 scores = [int(l.strip()) for l in sys.stdin if l.strip().isdigit()]
 if scores:
@@ -260,12 +262,14 @@ if scores:
 	local twitch_latest=""
 	if [[ -f tmp/twitch_comments.txt ]] && [[ -s tmp/twitch_comments.txt ]]; then
 		twitch_latest=$(tail -1 tmp/twitch_comments.txt)
-		(( ${#twitch_latest} > 60 )) && twitch_latest="${twitch_latest[1,57]}..."
+		# "    ▸ Latest     " = 18 → text max = W-18
+		local max_tw=$(( W - 18 ))
+		(( ${#twitch_latest} > max_tw )) && twitch_latest="${twitch_latest[1,$((max_tw-3))]]}..."
 	fi
 
 	# ========== 描画 ==========
 	echo ""
-	printf "${C_BOLD}${C_CYAN}━━━ SOREN STATUS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}  ${C_DIM}${now}${C_RESET}\n"
+	printf "${C_BOLD}${C_CYAN}━━━ SOREN STATUS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
 	echo ""
 
 	# === セクション: Core ===
@@ -302,7 +306,11 @@ if scores:
 	if (( acc_count > 0 )); then
 		local gate_color="$C_MAGENTA"
 		(( acc_count >= min_games )) && gate_color="$C_GREEN"
-		printf "    ${gate_color}◆${C_RESET} Queued      ${gate_color}${acc_count}/${min_games} games${C_RESET}  ${C_DIM}[${acc_scores}]${C_RESET}\n"
+		# "    ◆ Queued      X/XX games  []" = prefix 30 + scores + 1
+		local max_scores=$(( W - 31 ))
+		local scores_display="${acc_scores}"
+		(( ${#scores_display} > max_scores )) && scores_display="${scores_display[1,$((max_scores-2)))]}.."
+		printf "    ${gate_color}◆${C_RESET} Queued      ${gate_color}${acc_count}/${min_games} games${C_RESET}  ${C_DIM}[%s]${C_RESET}\n" "${scores_display}"
 	fi
 
 	# ローリングスコア
@@ -396,11 +404,11 @@ if scores:
 
 	# === セクション: Strategy & Scores ===
 	printf "  ${C_BOLD}STRATEGY${C_RESET}\n"
-	local decide_hash_display=""
-	if [[ -n "$rolling_hash" ]]; then
-		decide_hash_display="  ${C_DIM}decide=${rolling_hash}${C_RESET}"
-	fi
-	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}${strategy_ver:-strategy.py}${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}${decide_hash_display}\n"
+	# "    ▸ Version     " = 18, "  XXXL" = 6 → version name max = W-24
+	local ver_display="${strategy_ver:-strategy.py}"
+	local max_ver=$(( W - 24 ))
+	(( ${#ver_display} > max_ver )) && ver_display="${ver_display[1,$((max_ver-2)))]}.."
+	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}%s${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}\n" "${ver_display}"
 	# 全体平均と直近平均
 	local all_avg="" recent_avg=""
 	if [[ -f score_history.txt ]] && [[ -s score_history.txt ]]; then
@@ -426,7 +434,6 @@ if scores:
 	[[ -n "$last_scores" ]] && \
 		printf "    ${C_WHITE}▸${C_RESET} Recent      ${C_DIM}${last_scores}${C_RESET}\n"
 	if [[ -n "$score_graph_raw" ]]; then
-		local graph_n=$(head -1 <<< "$score_graph_raw" | awk '{print $3}')
 		local graph_lines=()
 		while IFS= read -r gline; do
 			graph_lines+=("$gline")
@@ -434,11 +441,11 @@ if scores:
 		local gi=0
 		for gline in "${graph_lines[@]}"; do
 			if (( gi == 0 )); then
-				printf "    ${C_WHITE}▸${C_RESET} Trend   %4s ${C_GREEN}%s${C_RESET}\n" "${graph_hi}" "$gline"
+				printf "    ${C_WHITE}▸${C_RESET} Trend  %4s ${C_GREEN}%s${C_RESET}\n" "${graph_hi}" "$gline"
 			elif (( gi == ${#graph_lines[@]} - 1 )); then
-				printf "            %4s ${C_GREEN}%s${C_RESET}  ${C_DIM}(last ${graph_n})${C_RESET}\n" "${graph_lo}" "$gline"
+				printf "           %4s ${C_GREEN}%s${C_RESET}\n" "${graph_lo}" "$gline"
 			else
-				printf "                 ${C_GREEN}%s${C_RESET}\n" "$gline"
+				printf "                ${C_GREEN}%s${C_RESET}\n" "$gline"
 			fi
 			(( gi++ ))
 		done
@@ -448,11 +455,14 @@ if scores:
 	if [[ -f tmp/batch_summary.txt ]] && [[ -s tmp/batch_summary.txt ]]; then
 		local summary_age=$(_file_age tmp/batch_summary.txt)
 		local summary_line=$(grep -v '^$' tmp/batch_summary.txt | grep -v '^===' | head -1)
-		printf "    ${C_WHITE}▸${C_RESET} Summary     ${C_DIM}${summary_line}  (${summary_age})${C_RESET}\n"
+		# "    ▸ Summary     " = 18, "  (XXX)" ~= 9 → text max = W-27
+		local max_summ=$(( W - 27 ))
+		(( ${#summary_line} > max_summ )) && summary_line="${summary_line[1,$((max_summ-2)))]}.."
+		printf "    ${C_WHITE}▸${C_RESET} Summary     ${C_DIM}%s  (%s)${C_RESET}\n" "${summary_line}" "${summary_age}"
 	fi
 
 	echo ""
-	printf "${C_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
+	printf "${C_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
 	echo ""
 }
 
