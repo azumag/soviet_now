@@ -166,10 +166,8 @@ else
 	git commit -m "eloop Improve after ${NUM_GAMES} games (scores: ${SCORES})" 2>/dev/null || true
 fi
 
-# --- Phase D: ラジオトーク生成 ---
-best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
-start_radio_talk "${last_score:-0}" "$TURNS_SNAPSHOT" "$GAME_NUM_SNAPSHOT" "$best_score_now" \
-	"$strategy_diff" "$SOVIET" "$SCORES" "" "" ""
-
-# ラジオトーク終了を待つ (サブシェル内で完結するため)
-wait
+# --- Phase D: 戦略解説コーナー (変更があった場合のみ) ---
+if [ -n "$strategy_diff" ]; then
+	best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
+	start_radio_corner_strategy "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now"
+fi

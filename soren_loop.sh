@@ -47,7 +47,6 @@ trap 'cleanup_all; exit' EXIT INT TERM
 start_comment_player
 
 # 前回中断時のリカバリ
-rm -f tmp/radio_talk_playing
 recover_strategy_backup
 
 # 初期バリデーション
@@ -82,11 +81,8 @@ while true; do
 	# 前回の改善が完了したか確認
 	check_and_harvest_improvement
 
-	# 前回の改善で生成済みラジオトークがあれば再生
-	if [ -f "tmp/radio_talk.txt" ] && [ -s "tmp/radio_talk.txt" ] && [ ! -f "tmp/radio_talk_playing" ]; then
-		log "[RADIO] 前回のトーク再生開始"
-		(./say_enqueue.sh tmp/radio_talk.txt "$RADIO_SAY_RATE" 0; rm -f tmp/radio_talk.txt) &
-	fi
+	# ゲーム開始時ラジオコーナー (バックグラウンド、プリエンプト可)
+	start_random_radio_corner &
 
 	# 1試合プレイ
 	play_one_game

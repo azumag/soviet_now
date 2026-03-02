@@ -64,6 +64,16 @@ _acquire_lock() {
     # 通常: 30秒でタイムアウト
     local max_wait=60 waited=0
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+        # stale lock検出: ロックが120秒以上前なら強制解除
+        if [ -d "$LOCK_DIR" ]; then
+            local lock_age
+            lock_age=$(( $(date +%s) - $(stat -f %m "$LOCK_DIR" 2>/dev/null || echo 0) ))
+            if [ "$lock_age" -gt 120 ]; then
+                _log "stale lock検出 (${lock_age}秒前) → 強制解除"
+                rmdir "$LOCK_DIR" 2>/dev/null
+                continue
+            fi
+        fi
         if [ "$NO_PREEMPT" = false ] && [ "$waited" -ge "$max_wait" ]; then
             return 1
         fi
