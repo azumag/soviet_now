@@ -952,7 +952,7 @@ ${date_info}
 ${theme}
 ${ai_special}
 
-【過去のトークで既に話した内容 - これらのネタは避けて、新しい話題にすること】
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止。同じエピソードを別の角度から語るのも禁止】
 ${past_topics:-まだ過去のトークはありません。自由に話してください。}
 
 【状況】
@@ -1028,7 +1028,8 @@ ${_comments_section}
 - 【出力構造】以下の順序で出力すること:
   1. トーク本文
   2. 「===SUMMARY===」
-  3. 要約 30文字以内
+  3. 要約1行目: トークで言及した固有名詞・人名・事件名・概念名をカンマ区切りで全て列挙（例: マイルス・デイヴィス, Kind of Blue, パリ・コミューン, インターナショナル）
+  4. 要約2行目: 30文字以内の一言要約
 - ===SUMMARY=== は必ず出力すること
 RADIOPROMPT
 
@@ -1048,7 +1049,7 @@ RADIOPROMPT
 			[ -z "$talk_summary" ] && talk_summary="(要約なし)"
 
 			echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts: ${talk_summary}" >>"$PAST_RADIO_TOPICS"
-			tail -50 "$PAST_RADIO_TOPICS" >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
+			tail -100 "$PAST_RADIO_TOPICS" >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
 			# 繰り返しループ検出 & 10000文字上限
 			talk_body=$(python3 -c "
