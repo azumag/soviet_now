@@ -305,7 +305,7 @@ while (( _round < ROUNDS )); do
 
 	# 結合して表示
 	local combined="${(pj:\n:)selected}"
-	render_snippet "$combined"
+	render_snippet "$combined" 2>/dev/null | grep -v "^Try \`"
 
 	# 次の表示まで待つ
 	if $LOOP_MODE; then
