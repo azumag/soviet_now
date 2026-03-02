@@ -13,14 +13,13 @@
 # v134: MEDIUMフェーズ高度管理緩和版 - v133の失敗（スコア分散大きく、avg=1066.9, min=373, max=2242）を受けて、batch_summary分析でMEDIUMフェーズでのマージ機会損失を特定。MEDIUM_TOWER_REACTOR_PROTECTのavg_score_delta=7.4と比較的高いが、頻度が減少傾向。v133でHIGHフェーズを1.9に緩和したことによるバランス崩れを修正し、MEDIUMフェーズのheight_multをv42の2.4から2.2に緩和して、HIGHフェーズへの移行期でのマージ選択肢を増やす。v126のシンプル構造を維持しつつ、MEDIUMフェーズにターゲットを絞った単一パラメータ調整。振り子パターン回避。コード量維持（約110行）。
 # v135: HIGHフェーズマージ機会確保版 - v134のスコア分散（avg=826.5, min=319, max=1834）を受けて、batch_summary分析でHIGHフェーズでのマージ機会不足を特定。HIGH_TOWER_REACTOR_PROTECTのavg_score_delta=2.2と低いが、NEAR_MERGEのavg_score_delta=28.0と高価値。v134のHIGHフェーズheight_mult=1.9ではマージ機会が不足しており、ベスト戦略v128（2346点）のHIGHフェーズ高度管理（height_mult=1.8）を取り入れることで改善。v134のMEDIUMフェーズ緩和（2.2）を維持しつつ、HIGHフェーズheight_multを1.9→1.8に戻し、HIGH_TOWERペナルティ1.3倍を維持。v128の成功構造をベースにしつつ、v134のMEDIUMフェーズ緩和を組み合わせることで、HIGHフェーズでのマージ率向上と高度管理のバランス改善。コード量維持（約110行）。
 # v136: MEDIUMフェーズ高度管理強化・スコア安定版 - v135のスコア分散（avg=863.5, min=647, max=1017, stddev=136.6）を受けて、batch_summary分析でMEDIUMフェーズheight_mult=2.2の緩和がスコア分散を助長していることを特定。高スコア群（avg=983）vs 低スコア群（avg=744）で239点差があり、安定性が不足。v42/v128の成功構造（MEDIUMフェーズheight_mult=2.4）を採用し、HIGHフェーズへの移行期での高度管理を強化することで、スコア安定性を向上させる。v135のHIGHフェーズ設定（height_mult=1.8、HIGH_TOWERペナルティ1.3倍）を維持しつつ、MEDIUMフェーズをv42の成功値に戻すことで、v128の成功構造に近づき、スコア分散を抑制しつつ平均スコアを向上。単一パラメータ調整で振り子パターン回避。コード量維持（約110行）。
-# v137: HIGHフェーズマージ機会強化・分散抑制版 - v136のスコア分散（avg=1583.2, stddev=736.2, range=780-3150）を受けて、batch_summary分析で高スコア群（avg=2182）vs 低スコア群（avg=984）で1198点差を特定。HIGHフェーズでのマージ機会不足が分散の主因。NEAR_MERGEのavg_score_delta=28.0と高価値だが、HIGHフェーズではmerge_mult=1.0では検出不足。HIGHフェーズheight_multを1.8→1.7に緩和し、merge_multを1.0→1.1に強化することで、NEAR_MERGE with HIGH_LAYER_REACTOR_PROTECT（avg_score_delta=61.3）の検出精度を向上し、スコア分散を抑制しつつ平均スコアを維持。v136のMEDIUMフェーズ設定（height_mult=2.4）を維持。単一パラメータ調整で振り子パターン回避。コード量維持（約110行）。
 
 # スコアテーブル: type N = N*(N+1)/2
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v137: HIGHフェーズマージ機会強化・分散抑制版 - HIGHフェーズheight_multを1.8→1.7に緩和し、merge_multを1.0→1.1に強化"""
+    """v136: MEDIUMフェーズheight_multをv42の2.4に戻し、スコア安定性を向上"""
 
     results = analysis.get("results", [])
 
@@ -46,8 +45,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.7  # v137: 高度管理緩和（マージ機会確保）
-        merge_mult = 1.1  # v137: マージ優先度強化（NEAR_MERGE検出向上）
+        height_mult = 1.8  # v135: v128の1.8に戻す（HIGHフェーズマージ機会確保）
+        merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL: height_multなし
