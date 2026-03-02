@@ -346,22 +346,8 @@ build_actions() {
 do_one_round() {
 	build_actions
 
-	# 重み付き: data=50%, fortune=20%, sl=15%, fullscreen=15%
-	local roll=$(( RANDOM % 100 ))
-	local action
-
-	if (( roll < 50 )); then
-		action="data"
-	elif (( roll < 70 )) && (( $+commands[fortune] )); then
-		action="fortune"
-	elif (( roll < 85 )) && (( $+commands[sl] )); then
-		action="sl"
-	else
-		# fullscreen があればそれ、なければ data
-		local has_fs=false
-		for a in "${actions[@]}"; do [[ "$a" == "fullscreen" ]] && has_fs=true; done
-		$has_fs && action="fullscreen" || action="data"
-	fi
+	# 均等抽選
+	local action="${actions[$((RANDOM % ${#actions} + 1))]}"
 
 	case "$action" in
 	data)

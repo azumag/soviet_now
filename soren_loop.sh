@@ -87,8 +87,8 @@ while true; do
 		fetch_and_play_news &
 	fi
 
-	# ラジオトーク (3ゲームに1回、バックグラウンド)
-	if (( GAME_NUM % 3 == 0 )); then
+	# ラジオトーク (5ゲームに1回、バックグラウンド)
+	if (( GAME_NUM % 5 == 0 )); then
 		start_random_radio_corner &
 	fi
 
