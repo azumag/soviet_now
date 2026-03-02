@@ -42,7 +42,7 @@ DROP_WAIT = 1.0           # ドロップ後の待ち時間(秒)
 
 
 def log(msg):
-    print(f"\n[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 def load_game_state():
@@ -326,7 +326,7 @@ def run_game():
             reason = decision.get("reason", "")
             # reason を短縮表示（30文字まで）
             short_reason = reason[:30] if len(reason) > 30 else reason
-            log(f"  x={drop_x:+.2f} {short_reason}")
+            print(f"  x={drop_x:+.2f} {short_reason}", flush=True)
 
             # 履歴記録
             record_turn(history_f, turn, gs, decision, analysis, soviet_created=soviet_created, strategy_hash=strategy_hash)
@@ -335,7 +335,7 @@ def run_game():
             # (JSONLは追記済みなのでログ出力のみ)
             delta = score - prev_score
             if delta > 0:
-                log(f"  +{delta} → {score}")
+                print(f"  +{delta} → {score}", flush=True)
             prev_score = score
 
             # コマンド書き込み
