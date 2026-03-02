@@ -295,12 +295,11 @@ def run_game():
             log(f"T{turn} s={score} p={len(pieces)} y={max_y:.1f}")
 
             # ソ連建国検知（リアルタイム・1試合1回限り）
+            # type 15 = ロシア、type 16 = ソ連。makeSorenCount はロシア同士マージ(→ソ連生成)時にインクリメントされる
             if not soviet_created:
-                # type==15 のピースがボード上（y < 4.0）に存在するかチェック
-                soviet_pieces = [p for p in pieces if p.get("type") == 15 and p.get("y", 10) < 4.0]
-                if gs.get("makeSorenCount", 0) > 0 or (len(soviet_pieces) > 0 and score >= 3000):
+                if gs.get("makeSorenCount", 0) > 0:
                     soviet_created = True
-                    log(f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} soviet_pieces={len(soviet_pieces)} makeSorenCount={gs.get('makeSorenCount', 0)}")
+                    log(f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} makeSorenCount={gs.get('makeSorenCount', 0)}")
                     # say即停止（ゲーム音声を聞かせるため）
                     import subprocess
                     subprocess.run(["pkill", "-x", "say"], capture_output=True)
@@ -309,8 +308,6 @@ def run_game():
                     with open("tmp/.soviet_created", "w") as flag_f:
                         flag_f.write(f"{turn}\n")
                     log("say停止完了 → ゲーム音声再生中")
-                elif len(soviet_pieces) > 0:
-                    log(f"WARNING: type-15 piece detected but score too low ({score}<3000), ignoring (possible false positive)")
 
             # 盤面解析
             analysis = build_analysis(gs)

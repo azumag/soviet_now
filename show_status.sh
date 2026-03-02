@@ -144,7 +144,7 @@ if h and h in rs:
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 最低試合ゲート ---
-	local min_games=5
+	local min_games=10
 
 	# --- スコア情報 ---
 	local best_score=$(cat best_score.txt 2>/dev/null || echo "?")
@@ -297,7 +297,7 @@ if scores:
 			local pct=$(( rolling_avg * 100 / rolling_prev_avg ))
 			local pct_color="$C_DIM"
 			(( pct >= 100 )) && pct_color="$C_GREEN"
-			(( pct < 85 )) && pct_color="$C_RED"
+			(( pct < 80 )) && pct_color="$C_RED"
 			ratio_info="  ${pct_color}${pct}% vs prev${C_RESET}"
 		fi
 		printf "    ${C_BLUE}▸${C_RESET} Rolling     ${C_DIM}${rolling_hash}${C_RESET}  ${C_DIM}n=${rolling_count} avg=${rolling_avg}${C_RESET}${ratio_info}\n"
