@@ -82,8 +82,13 @@ while true; do
 	# 前回の改善が完了したか確認
 	check_and_harvest_improvement
 
-	# ゲーム開始時ラジオコーナー (バックグラウンド、プリエンプト可)
-	start_random_radio_corner &
+	# ニュース取得 & ニュースコーナー (毎ゲーム、バックグラウンド)
+	fetch_and_play_news &
+
+	# ラジオトーク (3ゲームに1回、バックグラウンド)
+	if (( GAME_NUM % 3 == 0 )); then
+		start_random_radio_corner &
+	fi
 
 	# 1試合プレイ
 	play_one_game

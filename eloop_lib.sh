@@ -1187,6 +1187,23 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "${best_score}" "strategy"
 }
 
+#=== ニュース: 毎ゲーム取得 & 再生 ===
+
+fetch_and_play_news() {
+	log "[NEWS] ニュース取得..."
+	./fetch_news.sh 2>/dev/null
+
+	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
+		local game_num
+		game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+		local score
+		score=$(python3 -c "import json; print(json.load(open('$GAME_STATE')).get('score', 0))" 2>/dev/null || echo 0)
+		start_radio_corner_news "$game_num" "$score"
+	else
+		log "[NEWS] ニュースなし、スキップ"
+	fi
+}
+
 #=== ラジオトーク: ディスパッチャー ===
 
 start_random_radio_corner() {
@@ -1195,10 +1212,8 @@ start_random_radio_corner() {
 	local score
 	score=$(python3 -c "import json; print(json.load(open('$GAME_STATE')).get('score', 0))" 2>/dev/null || echo 0)
 
+	# ニュースは毎ゲーム別途実行するので、ここでは除外
 	local candidates=("theme" "soviet" "recap")
-	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
-		candidates+=("news")
-	fi
 
 	local pick="${candidates[$((RANDOM % ${#candidates[@]}))]}"
 	log "[RADIO] コーナー選択: ${pick}"
@@ -1206,7 +1221,6 @@ start_random_radio_corner() {
 	case "$pick" in
 	theme)   start_radio_corner_theme "$game_num" "$score" ;;
 	soviet)  start_radio_corner_soviet "$game_num" "$score" ;;
-	news)    start_radio_corner_news "$game_num" "$score" ;;
 	recap)   start_radio_corner_recap "$game_num" "$score" ;;
 	esac
 }
@@ -1318,13 +1332,13 @@ start_comment_player() {
 
 	(
 		# サブシェル内でPIDファイルを自分のPIDで上書き
-		echo $BASHPID > "$COMMENT_PLAYER_PID_FILE" 2>/dev/null || echo $$ > "$COMMENT_PLAYER_PID_FILE"
+		# NOTE: local はサブシェル直下では使えない (関数内でのみ有効)
+		_cp_my_pid=${BASHPID:-$$}
+		echo "$_cp_my_pid" > "$COMMENT_PLAYER_PID_FILE" 2>/dev/null
 		while true; do
 			# PIDファイルが自分のPIDでなくなったら終了（別プレイヤーに交代された）
-			local _my_pid=${BASHPID:-$$}
-			local _file_pid
-			_file_pid=$(cat "$COMMENT_PLAYER_PID_FILE" 2>/dev/null)
-			if [ "$_file_pid" != "$_my_pid" ]; then
+			_cp_file_pid=$(cat "$COMMENT_PLAYER_PID_FILE" 2>/dev/null)
+			if [ "$_cp_file_pid" != "$_cp_my_pid" ]; then
 				exit 0
 			fi
 			_play_comment_queue
