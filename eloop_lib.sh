@@ -1271,14 +1271,31 @@ _kill_comment_gen() {
 	fi
 }
 
+COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
+
 _play_comment_queue() {
 	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
 		if [ -f "$qf" ]; then
+			# 重複チェック: 同じ内容を再度再生しない
+			local file_hash
+			file_hash=$(md5 -q "$qf" 2>/dev/null)
+			if [ -n "$file_hash" ] && grep -qF "$file_hash" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null; then
+				echo "[_play_comment_queue $(date '+%H:%M:%S')] 重複スキップ: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
+				rm -f "$qf"
+				continue
+			fi
+
 			# 再生前にリネームして他プレイヤーとの二重再生を防ぐ
 			local playing_file="${qf%.txt}.playing"
 			if mv "$qf" "$playing_file" 2>/dev/null; then
-				log "[COMMENT] キュー再生: $qf"
+				echo "[_play_comment_queue $(date '+%H:%M:%S')] 再生開始: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
+				# ハッシュを記録（再生開始前に記録して、kill時にも重複防止）
+				echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"
+				# ハッシュファイルを最新50件に制限
+				tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
+					mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
 				./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0
+				echo "[_play_comment_queue $(date '+%H:%M:%S')] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
 				rm -f "$playing_file"
 			fi
 		fi
@@ -1295,10 +1312,21 @@ start_comment_player() {
 		if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
 			return
 		fi
+		# PIDファイルはあるがプロセスは死んでいる → 古いPIDをkillしようとして残った孤児も掃除
 	fi
 	mkdir -p "$(dirname "$COMMENT_PLAYER_PID_FILE")"
+
 	(
+		# サブシェル内でPIDファイルを自分のPIDで上書き
+		echo $BASHPID > "$COMMENT_PLAYER_PID_FILE" 2>/dev/null || echo $$ > "$COMMENT_PLAYER_PID_FILE"
 		while true; do
+			# PIDファイルが自分のPIDでなくなったら終了（別プレイヤーに交代された）
+			local _my_pid=${BASHPID:-$$}
+			local _file_pid
+			_file_pid=$(cat "$COMMENT_PLAYER_PID_FILE" 2>/dev/null)
+			if [ "$_file_pid" != "$_my_pid" ]; then
+				exit 0
+			fi
 			_play_comment_queue
 			sleep 5
 		done
@@ -1394,7 +1422,15 @@ COMMENTPROMPT
 		if [ -n "$comments_talk" ]; then
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
 			echo "$comments_talk" >"$queue_file"
-			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file"
+			# 生成直後に重複チェック（同じ内容のキューファイルがないか）
+			local new_hash
+			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
+			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
+				log "[COMMENT] 重複コメント返し検出 → 破棄 (hash=$new_hash)"
+				rm -f "$queue_file"
+			else
+				log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file"
+			fi
 		else
 			log "[COMMENT] コメント返し生成失敗（次回再取得）"
 		fi

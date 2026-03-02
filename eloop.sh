@@ -99,6 +99,7 @@ post_game_bookkeeping() {
 	LAST_ARCHIVE_FILE=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -1)
 
 	# コメント返し
+	start_comment_player  # プレイヤーが死んでいたら再起動
 	generate_comment_response
 
 	# git commit

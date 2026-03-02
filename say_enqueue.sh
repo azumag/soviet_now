@@ -51,7 +51,7 @@ sed -i '' 's/AI/エーアイ/g' "$MY_CONTENT"
 # トークン登録（最後に書いた者が勝つ）
 echo "$MY_TOKEN" > "$TOKEN_FILE"
 
-_log() { echo "[say_enqueue $(date '+%H:%M:%S')] $*" >&2; }
+_log() { echo "[say_enqueue $(date '+%H:%M:%S')] $*" >&2; echo "[say_enqueue $(date '+%H:%M:%S') PID=$$/${BASHPID:-?}] $* | file=$CONTENT_FILE token=$MY_TOKEN" >> tmp/.say_queue/debug.log; }
 
 _is_preempted() {
     [ "$NO_PREEMPT" = true ] && return 1
