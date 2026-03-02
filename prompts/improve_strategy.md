@@ -40,7 +40,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 ## コード方針
 
 - **簡素化歓迎**: 効果のないコードは積極的に削除せよ。短くシンプルなコードが良い戦略
-- **v128 (3689点) が最高スコア**: 79行のシンプルな5要素スコアリング。複雑化=改善ではない
+- **v126 (3689点) が最高スコア**: シンプルな5要素スコアリング。複雑化=改善ではない
 - **データに基づく判断**: batch_summary の avg_score_delta が負のロジックは削除候補
 
 ## 参照データの読み方
@@ -64,8 +64,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
 - `analysis["results"]`: 全サンプルX座標の着地Y、マージグレード、ドリフト等
 - `analysis["results"][N]["merges"]`: 各同typeピースへのマージ距離・グレード
 - `analysis["reactor"]`: 盤面の同typeペア距離、パイプライン健全性
+  - `reactor["reactive_pairs"]`: 進行中の連鎖反応ペアのリスト。これが存在する時は連鎖を妨害しない着地位置を選ぶべき
 - `game_state["pieces"]`: 全ピースの位置・type・速度
 - `game_state["next"]`/`["nextNext"]`: 次と次の次のピース
+
+## Type別マージ価値
+
+マージ結果のスコア: `SCORE_TABLE[type] = type * (type + 1) / 2`
+- type1→type2 マージ: スコア+3 (低価値)
+- type8→type9 マージ: スコア+45 (中価値)
+- type14→type15 マージ: スコア+120 (最高価値)
+高Typeのマージほど価値が高い。マージボーナスをType依存にすることで高Typeマージを積極的に狙える。
+
+## 振り子パターンに注意
+
+以下のパターンは過去に何度も往復して成果が出なかった。これらの方向の変更は避けよ:
+- height_mult の微調整 (2.2→2.4→2.6→2.4→...): フェーズ閾値自体を変えるか別アプローチを
+- NO_MERGEペナルティの追加/削除: マージ予測精度が低いため効果不安定
+- reactive_pairs による条件分岐の追加/削除: 型がlistの場合のバグに注意
+- has_merge フラグによる条件分岐: マージ予測精度に依存して不安定
+
+`tmp/change_log.txt` に過去の変更diffが記録されている。同じ方向の変更を繰り返すな。
 
 ## 出力
 

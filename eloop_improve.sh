@@ -147,6 +147,19 @@ FIXEOF
 		strategy_diff=$(diff -u "$STRATEGY_FILE" "$STAGING_FILE" 2>/dev/null || true)
 		real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
 		[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
+		# 変更履歴ログに記録 (振り子パターン防止)
+		if [ -n "$strategy_diff" ]; then
+			{
+				echo "=== $(date '+%Y-%m-%d %H:%M') Game#${GAME_NUM_SNAPSHOT} scores=${SCORES} ==="
+				echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | head -20
+				echo ""
+			} >> "$CHANGE_LOG_FILE"
+			# 最新50エントリのみ保持
+			if [ -f "$CHANGE_LOG_FILE" ] && [ "$(wc -l < "$CHANGE_LOG_FILE")" -gt 500 ]; then
+				tail -500 "$CHANGE_LOG_FILE" > "$CHANGE_LOG_FILE.tmp"
+				mv "$CHANGE_LOG_FILE.tmp" "$CHANGE_LOG_FILE"
+			fi
+		fi
 		# バリデーション成功 → アトミックに差し替え
 		mv "$STAGING_FILE" "$STRATEGY_FILE"
 		python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
