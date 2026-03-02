@@ -79,7 +79,7 @@ CHANGE_LOG_FILE="tmp/change_log.txt"
 improve_ref_files="$STAGING_FILE $batch_summary_file"
 [ -f "$CHANGE_LOG_FILE" ] && improve_ref_files="$improve_ref_files $CHANGE_LOG_FILE"
 [ -f "tmp/advice.md" ] && [ -s "tmp/advice.md" ] && improve_ref_files="$improve_ref_files tmp/advice.md"
-[ -n "$best_game_path" ] && [ -f "$best_game_path" ] && improve_ref_files="$improve_ref_files $best_game_path"
+[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && improve_ref_files="$improve_ref_files $worst_game_path"
 improve_ref_files="$improve_ref_files $GAME_STATE $past_strategy_files $hall_of_fame_files"
 
 for retry in $(seq 1 3); do
