@@ -660,6 +660,11 @@ _radio_generate_and_play() {
 		return 1
 	fi
 
+	# コメント等が再生中なら終了まで待つ（重なり防止）
+	while pgrep -x say >/dev/null 2>&1; do
+		sleep 2
+	done
+
 	local talk_file
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 	echo "$talk_body" >"$talk_file"
@@ -1288,6 +1293,10 @@ _kill_comment_gen() {
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
 _play_comment_queue() {
+	# ラジオ等が再生中なら終了まで待つ（重なり防止）
+	while pgrep -x say >/dev/null 2>&1; do
+		sleep 2
+	done
 	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
 		if [ -f "$qf" ]; then
 			# 重複チェック: 同じ内容を再度再生しない

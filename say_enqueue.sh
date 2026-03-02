@@ -189,4 +189,5 @@ while kill -0 "$SAY_PID" 2>/dev/null; do
 done
 
 _log "say終了"
-rm -f "$PID_FILE"
+# 自分のPIDの場合のみ削除（他プロセスが上書きした場合は残す）
+[ "$(cat "$PID_FILE" 2>/dev/null)" = "$SAY_PID" ] && rm -f "$PID_FILE"
