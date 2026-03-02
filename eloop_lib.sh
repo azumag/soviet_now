@@ -1493,6 +1493,7 @@ trigger_adaptive_improvement() {
 	# Twitchコメント・ニュース取得
 	log "[TWITCH] コメントfetch..."
 	./twitch_chat.sh fetch
+	./twitch_chat.sh ack
 	log "[NEWS] ニュース取得..."
 	./fetch_news.sh
 
