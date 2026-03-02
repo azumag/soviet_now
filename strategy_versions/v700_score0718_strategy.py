@@ -10,16 +10,16 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズマージ強化版
-# v132: HIGHフェーズ高度管理強化版 - v131の失敗（スコア1013点）を受けて、HIGHフェーズheight_multをv42の2.6に復活させることで高度管理を強化。v42の成功構造（HIGH=2.6/MEDIUM=2.4）を維持しつつ、v131のHIGHフェーズ緩和（1.8）を元に戻す。これによりHIGHフェーズでマージを優先しつつ、過度な高度緩和を回避する。コード量維持（約110行）。
 # v133: HIGH_TOWERペナルティ微調整・HIGHフェーズ高度管理微緩和版 - v132の失敗（スコア不明）を受けて、v126のHIGH_TOWERペナルティ（1.1倍）をv42/v128の1.3倍に戻し、HIGH_TOWER状況でのマージペナルティを強める。ただし、HIGHフェーズのheight_multをv132の1.8から1.9に微緩和してマージ機会を確保する。v86の失敗（HIGH_TOWER 1.3倍でマージ機会損失）とv126の成功（HIGH_TOWER 1.1倍）のバランスを調整。batch_summaryでHIGH_TOWER_REACTOR_PROTECTのavg_score_delta=3.9と低いことを確認し、HIGH_TOWERでのマージ価値が低い状況を改善。コード量維持（約110行）。
 # v134: MEDIUMフェーズ高度管理緩和版 - v133の失敗（スコア分散大きく、avg=1066.9, min=373, max=2242）を受けて、batch_summary分析でMEDIUMフェーズでのマージ機会損失を特定。MEDIUM_TOWER_REACTOR_PROTECTのavg_score_delta=7.4と比較的高いが、頻度が減少傾向。v133でHIGHフェーズを1.9に緩和したことによるバランス崩れを修正し、MEDIUMフェーズのheight_multをv42の2.4から2.2に緩和して、HIGHフェーズへの移行期でのマージ選択肢を増やす。v126のシンプル構造を維持しつつ、MEDIUMフェーズにターゲットを絞った単一パラメータ調整。振り子パターン回避。コード量維持（約110行）。
+# v135: HIGHフェーズマージ機会確保版 - v134のスコア分散（avg=826.5, min=319, max=1834）を受けて、batch_summary分析でHIGHフェーズでのマージ機会不足を特定。HIGH_TOWER_REACTOR_PROTECTのavg_score_delta=2.2と低いが、NEAR_MERGEのavg_score_delta=28.0と高価値。v134のHIGHフェーズheight_mult=1.9ではマージ機会が不足しており、ベスト戦略v128（2346点）のHIGHフェーズ高度管理（height_mult=1.8）を取り入れることで改善。v134のMEDIUMフェーズ緩和（2.2）を維持しつつ、HIGHフェーズheight_multを1.9→1.8に戻し、HIGH_TOWERペナルティ1.3倍を維持。v128の成功構造をベースにしつつ、v134のMEDIUMフェーズ緩和を組み合わせることで、HIGHフェーズでのマージ率向上と高度管理のバランス改善。コード量維持（約110行）。
 
 # スコアテーブル: type N = N*(N+1)/2
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v126ベースのシンプル構造を維持し、NEAR_MERGEボーナスを強化してHIGH_LAYERでのマージ機会を増やす"""
+    """v135: v134のMEDIUMフェーズ緩和を維持しつつ、v128のHIGHフェーズ高度管理に戻し、マージ機会を確保"""
 
     results = analysis.get("results", [])
 
@@ -45,7 +45,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.9  # v133: v132の1.8から1.9に微緩和（マージ機会確保）
+        height_mult = 1.8  # v135: v128の1.8に戻す（HIGHフェーズマージ機会確保）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
