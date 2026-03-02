@@ -264,7 +264,7 @@ if scores:
 		twitch_latest=$(tail -1 tmp/twitch_comments.txt)
 		# "    ▸ Latest     " = 18 → text max = W-18
 		local max_tw=$(( W - 18 ))
-		(( ${#twitch_latest} > max_tw )) && twitch_latest="${twitch_latest[1,$((max_tw-3))]]}..."
+		(( ${#twitch_latest} > max_tw )) && twitch_latest="${twitch_latest[1,$((max_tw-3))]}..."
 	fi
 
 	# ========== 描画 ==========
@@ -306,11 +306,11 @@ if scores:
 	if (( acc_count > 0 )); then
 		local gate_color="$C_MAGENTA"
 		(( acc_count >= min_games )) && gate_color="$C_GREEN"
-		# "    ◆ Queued      X/XX games  []" = prefix 30 + scores + 1
-		local max_scores=$(( W - 31 ))
+		local count_label="${acc_count}/${min_games} games"
+		local max_scores=$(( W - 22 - ${#count_label} ))
 		local scores_display="${acc_scores}"
-		(( ${#scores_display} > max_scores )) && scores_display="${scores_display[1,$((max_scores-2)))]}.."
-		printf "    ${gate_color}◆${C_RESET} Queued      ${gate_color}${acc_count}/${min_games} games${C_RESET}  ${C_DIM}[%s]${C_RESET}\n" "${scores_display}"
+		(( ${#scores_display} > max_scores )) && scores_display="${scores_display[1,$((max_scores-2))]}.."
+		printf "    ${gate_color}◆${C_RESET} Queued      ${gate_color}%s${C_RESET}  ${C_DIM}[%s]${C_RESET}\n" "${count_label}" "${scores_display}"
 	fi
 
 	# ローリングスコア
@@ -407,7 +407,7 @@ if scores:
 	# "    ▸ Version     " = 18, "  XXXL" = 6 → version name max = W-24
 	local ver_display="${strategy_ver:-strategy.py}"
 	local max_ver=$(( W - 24 ))
-	(( ${#ver_display} > max_ver )) && ver_display="${ver_display[1,$((max_ver-2)))]}.."
+	(( ${#ver_display} > max_ver )) && ver_display="${ver_display[1,$((max_ver-2))]}.."
 	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}%s${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}\n" "${ver_display}"
 	# 全体平均と直近平均
 	local all_avg="" recent_avg=""
@@ -457,7 +457,7 @@ if scores:
 		local summary_line=$(grep -v '^$' tmp/batch_summary.txt | grep -v '^===' | head -1)
 		# "    ▸ Summary     " = 18, "  (XXX)" ~= 9 → text max = W-27
 		local max_summ=$(( W - 27 ))
-		(( ${#summary_line} > max_summ )) && summary_line="${summary_line[1,$((max_summ-2)))]}.."
+		(( ${#summary_line} > max_summ )) && summary_line="${summary_line[1,$((max_summ-2))]}.."
 		printf "    ${C_WHITE}▸${C_RESET} Summary     ${C_DIM}%s  (%s)${C_RESET}\n" "${summary_line}" "${summary_age}"
 	fi
 
