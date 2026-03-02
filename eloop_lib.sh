@@ -1746,7 +1746,7 @@ trigger_adaptive_improvement() {
 	accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
 	update_rolling_scores "$LAST_SCORE"
 
-	# Step 2: リグレッション検知 (新戦略が旧戦略の85%未満なら自動リバート)
+	# Step 2: リグレッション検知 (新戦略が旧戦略の80%未満なら自動リバート)
 	if check_regression; then
 		# リグレッション検知 → リバート済み、蓄積データクリア
 		_clear_accumulated_data
@@ -1764,7 +1764,7 @@ trigger_adaptive_improvement() {
 		return
 	fi
 
-	# Step 4: 最低5試合ゲート
+	# Step 4: 最低10試合ゲート
 	local acc_data
 	acc_data=$(_read_accumulated_data)
 	local acc_count
