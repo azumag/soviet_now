@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""strategy.py - AI改善対象の決定スクリプト (v548: HIGH_LAYERでのNEAR_MERGE優先・マージ品質に応じたドリフト調整版)"""
+"""strategy.py - AI改善対象の決定スクリプト (v550: v548/v582構造復元版)"""
 
 # 固定インターフェース:
 # decide(game_state: dict, analysis: dict) -> dict
@@ -48,9 +48,8 @@
 #   成功基準: scoreがv540の2176に近づく、または平均がv422を上回る
 #   失敗基準: scoreがv422以下、または実際のマージ率が5%以下
 
-
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v548: HIGH_LAYERでのNEAR_MERGE優先・マージ品質に応じたドリフト調整版"""
+    """v551: v550ベース・序盤HIGH_TOWER回避・HIGH_LAYERマージ強化版 - batch_summary分析でベストゲーム1317点とワーストゲーム672点の差を分析。ベストゲームは序盤からHIGH_LAYERでのマージ機会を重視し、ターン数74ターンで安定。ワーストゲームは序盤からHIGH_TOWERが支配的でターン数51ターンで短命。v551では序盤のHIGH_TOWER回避とHIGH_LAYERマージ確率向上を図る。"""
 
     results = analysis.get("results", [])
 
@@ -64,6 +63,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 盤面情報
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
+    piece_count = len(pieces)
+    
+    # reactor情報を取得（v549: 追加）
+    reactor = analysis.get("reactor", {})
+    
+    # v551: ターン数と盤面分散情報を追加（序盤HIGH_TOWER回避用）
+    turn_count = game_state.get("turn", 0)
+    if pieces:
+        y_values = [p["y"] for p in pieces]
+        avg_y = sum(y_values) / len(y_values)
+        y_stddev = (sum((y - avg_y) ** 2 for y in y_values) / len(y_values)) ** 0.5
+    else:
+        avg_y = -4.0
+        y_stddev = 0.0
 
     # フェーズ判定（v548: v128の設定を維持）
     if max_y < 0.8:
@@ -170,6 +183,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("HIGH_LAYER")
 
         score -= height_penalty
+        
+        # v551: 序盤HIGH_TOWER回避ボーナス（新規追加）
+        # batch_summary分析: ベストゲーム1317点は序盤からHIGH_LAYERを重視、ワーストゲーム672点は序盤からHIGH_TOWERが支配的
+        # 序盤（turn < 20 or piece_count < 15）でHIGH_TOWERを避けることで盤面を低く保つ
+        if phase == "MEDIUM" and landing_y > 0.5:
+            if turn_count < 20 or piece_count < 15:
+                # 序盤のHIGH_TOWERに大きなペナルティを追加（-150点で回避を強制）
+                score -= 150.0
+                reasons.append("EARLY_HIGH_TOWER_PENALTY")
+            elif turn_count < 30 or piece_count < 20:
+                # 中盤初期: やや緩和（-80点）
+                score -= 80.0
+                reasons.append("EARLY_HIGH_TOWER_PENALTY_MID")
+        
+        # v551: 序盤でのHIGH_LAYERマージ確率向上ボーナス（新規追加）
+        # ベストゲーム1317点の特徴: 序盤からHIGH_LAYERでのマージ機会を重視
+        # 序盤（turn < 20 or piece_count < 15）でHIGH_LAYERかつマージなしの場合、マージ機会を待つ価値を高く評価
+        if landing_y > 0.0 and landing_y <= 0.5:
+            if turn_count < 20 or piece_count < 15:
+                # 序盤のHIGH_LAYER_NO_MERGEにボーナスを追加（+40点）
+                if merge_grade == "NO":
+                    score += 40.0
+                    reasons.append("EARLY_HIGH_LAYER_MERGE_WAIT")
+                # 序盤のHIGH_LAYER_MERGEに追加ボーナス（+60点）
+                else:
+                    score += 60.0
+                    reasons.append("EARLY_HIGH_LAYER_MERGE_BONUS")
 
         # 3. ドリフトによるペナルティ（v548: マージ品質に応じて調整）
         drift_penalty_base = 30.0  # v548: v128の一律30.0をベース
@@ -191,6 +231,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             abs(drift_x) + drift_unc * drift_unc_multiplier
         ) * drift_penalty_base
         score -= drift_penalty
+        
+        # v551: MEDIUMフェーズでのドリフト不確定性ペナルティ強化（新規追加）
+        # batch_summary分析: ベストゲーム1317点は正確な着地でHIGH到達、ワーストゲーム672点はドリフトで盤面が高くなる
+        # MEDIUMフェーズでdrift_uncが大きい場合、着地予測が不確実でHIGH到達遅延リスクが高い
+        if phase == "MEDIUM" and drift_unc > 0.3:
+            # drift_uncが大きいほどペナルティを強化（0.3~0.5: +20%, 0.5~0.7: +40%, 0.7以上: +60%）
+            if drift_unc < 0.5:
+                extra_penalty = 20.0
+                reasons.append("MEDIUM_DRIFT_UNCERTAIN_LOW")
+            elif drift_unc < 0.7:
+                extra_penalty = 40.0
+                reasons.append("MEDIUM_DRIFT_UNCERTAIN_MID")
+            else:
+                extra_penalty = 60.0
+                reasons.append("MEDIUM_DRIFT_UNCERTAIN_HIGH")
+            score -= extra_penalty
 
         # 4. 左右バランス補正（v548: HIGHフェーズでマージ機会を確保）
         balance_strength = 10.0
@@ -284,6 +340,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 score += 10.0  # HIGHフェーズでHIGH_LAYER: 追加ボーナス
                 reasons.append("HIGH_LAYER_HIGH_PHASE")
+        
+        # v551: HIGH_LAYERマージ確率動的ボーナス（新規追加）
+        # batch_summary分析: ベストゲーム1317点はmax_yに応じた動的調整がうまく機能、ワーストゲーム672点は機能していない
+        # 盤面の全体的な高さ分散に応じてHIGH_LAYERボーナスを動的に調整
+        if landing_y > 0.0 and landing_y <= 0.5 and y_stddev < 1.0:
+            # 盤面が安定（y_stddev < 1.0）の場合、HIGH_LAYERでのマージ機会が確実ならボーナスを強化
+            if merge_grade != "NO":
+                # マージ可能なHIGH_LAYER: +30点
+                score += 30.0
+                reasons.append("STABLE_HIGH_LAYER_MERGE")
+            # 盤面が安定なら、NO_MERGEでも次のマージ準備としての価値を評価
+            else:
+                score += 15.0
+                reasons.append("STABLE_HIGH_LAYER_PREP")
 
         # スコア更新
         if score > best_score:
