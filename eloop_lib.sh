@@ -28,6 +28,7 @@ RADIO_AGENT="zai"
 RADIO_FALLBACK="glmflash"
 RADIO_SAY_RATE=140
 PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
+PAST_NEWS_READ="tmp/.past_news_read.txt"
 
 IMPROVE_STATE_FILE="tmp/improve_state.json"
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
@@ -648,8 +649,19 @@ _radio_generate_and_play() {
 
 	local talk_body talk_summary
 	talk_body=$(echo "$talk" | sed '/^===SUMMARY===/,$d')
-	talk_summary=$(echo "$talk" | sed -n '/^===SUMMARY===/,$ p' | tail -n +2)
+	talk_summary=$(echo "$talk" | sed -n '/^===SUMMARY===/,$ p' | tail -n +2 | sed '/^===SELECTED_NEWS===/,$d')
 	[ -z "$talk_summary" ] && talk_summary="(要約なし)"
+
+	# ニュースコーナーの場合、選んだニュースを既読リストに記録
+	if [ "$corner_name" = "news" ]; then
+		local selected_news
+		selected_news=$(echo "$talk" | sed -n '/^===SELECTED_NEWS===/,$ p' | tail -n +2 | head -1)
+		if [ -n "$selected_news" ]; then
+			echo "$selected_news" >>"$PAST_NEWS_READ"
+			tail -30 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
+			log "[RADIO:news] 既読記録: ${selected_news}"
+		fi
+	fi
 
 	echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}" >>"$PAST_RADIO_TOPICS"
 	tail -100 "$PAST_RADIO_TOPICS" >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
@@ -1083,6 +1095,25 @@ start_radio_corner_news() {
 	fi
 	[ -z "$news_headlines" ] && return 1
 
+	# 過去に読んだニュース見出しリスト
+	local past_news_read=""
+	[ -f "$PAST_NEWS_READ" ] && past_news_read=$(cat "$PAST_NEWS_READ")
+
+	# 全ニュースが既読なら読む意味がないのでスキップ
+	local has_unread=false
+	while IFS= read -r line; do
+		[[ "$line" != ■* ]] && continue
+		local title="${line#■ }"
+		if [ -n "$title" ] && ! grep -qF "$title" "$PAST_NEWS_READ" 2>/dev/null; then
+			has_unread=true
+			break
+		fi
+	done <<< "$news_headlines"
+	if [ "$has_unread" = false ]; then
+		log "[NEWS] 全ニュースが既読 → スキップ"
+		return 1
+	fi
+
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
 	cat >"$prompt_file" <<PROMPT
@@ -1092,10 +1123,13 @@ $(_radio_persona_block)
 【時間帯の雰囲気】${_rc_mood}
 
 【最新ニュース - 実際の本日のニュース】
-以下は本日の実際のニュースです。1つ選んで、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
+以下は本日の実際のニュースです。「既に読んだニュース」以外から1つ選んで、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
 ---
 ${news_headlines}
 ---
+
+【既に読んだニュース - 絶対に選ばないこと】
+${past_news_read:-（なし）}
 
 【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
 ${past_topics}
@@ -1105,12 +1139,17 @@ ${past_topics}
 【トーク構成】
 1. 時間帯に合わせた軽いオープニング（2-3文）
 2. ニュースコーナー
+   - 「既に読んだニュース」に含まれない記事から1つ選ぶこと
    - ニュースから1つ選んで、本文の内容を踏まえて5-8文で深く語る
    - 単なる冷笑やツッコミで終わらせず、「なぜこうなったのか」「この先どうなるのか」「歴史的に見るとどういう位置づけか」など自分なりの洞察や意見を述べる
    - 斜に構えつつも知性を感じさせる分析を
 3. 軽いクロージング（1-2文）
 
 $(_radio_output_rules 1000 2000)
+
+最後に以下の形式で選んだニュースの見出しを出力すること:
+===SELECTED_NEWS===
+（選んだニュースの見出し1行）
 PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news"
 }

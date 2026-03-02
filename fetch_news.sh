@@ -78,6 +78,7 @@ done <<< "$all_items"
 # 全部使い切ったら履歴をクリアしてやり直し
 if [ -z "$available" ]; then
     > "$PAST_NEWS"
+    > "tmp/.past_news_read.txt"
     past_titles=""
     available=""
     seen_titles=""

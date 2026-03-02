@@ -82,8 +82,10 @@ while true; do
 	# 前回の改善が完了したか確認
 	check_and_harvest_improvement
 
-	# ニュース取得 & ニュースコーナー (毎ゲーム、バックグラウンド)
-	fetch_and_play_news &
+	# ニュース取得 & ニュースコーナー (3ゲームに1回、バックグラウンド)
+	if (( GAME_NUM % 3 == 1 )); then
+		fetch_and_play_news &
+	fi
 
 	# ラジオトーク (3ゲームに1回、バックグラウンド)
 	if (( GAME_NUM % 3 == 0 )); then
