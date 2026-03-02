@@ -272,57 +272,47 @@ show_sl() {
 		"-l"
 		"-F"
 		"-c"
-		"-a -l"
-		"-a -F"
-		"-a -c"
-		"-l -F"
-		"-l -c"
-		"-F -c"
-		"-a -l -F"
-		"-a -l -c"
-		"-a -F -c"
-		"-l -F -c"
-		"-a -l -F -c"
+		"-al"
+		"-aF"
+		"-ac"
+		"-lF"
+		"-lc"
+		"-Fc"
+		"-alF"
+		"-alc"
+		"-aFc"
+		"-lFc"
+		"-alFc"
 	)
 	local opts="${sl_combos[$((RANDOM % ${#sl_combos} + 1))]}"
-	tput smcup 2>/dev/null
-	eval "timeout 15 sl ${opts}" 2>/dev/null || true
-	tput rmcup 2>/dev/null
+	sl ${opts} 2>/dev/null </dev/null || true
 }
 
 #=== フルスクリーン系コマンド ===
 
 show_fullscreen() {
 	local cmds=()
-	(( $+commands[nyancat] )) && cmds+=("nyancat")
-	(( $+commands[aafire] ))  && cmds+=("aafire")
-	(( $+commands[cmatrix] )) && cmds+=("cmatrix")
+	(( $+commands[nyancat] ))   && cmds+=("nyancat")
+	(( $+commands[cmatrix] ))   && cmds+=("cmatrix")
 	(( $+commands[tty-clock] )) && cmds+=("tty-clock")
-	(( $+commands[genact] ))  && cmds+=("genact")
+	(( $+commands[genact] ))    && cmds+=("genact")
 	(( ${#cmds} == 0 )) && return 1
 
 	local cmd="${cmds[$((RANDOM % ${#cmds} + 1))]}"
 
+	# TERM=vt100 で代替バッファ (smcup/rmcup) を無効化し、メイン画面に直接描画させる
 	case "$cmd" in
 	nyancat)
-		tput smcup 2>/dev/null
-		timeout 10 nyancat 2>/dev/null || true
-		tput rmcup 2>/dev/null
-		;;
-	aafire)
-		tput smcup 2>/dev/null
-		timeout 10 aafire 2>/dev/null || true
-		tput rmcup 2>/dev/null
+		TERM=vt100 timeout 10 nyancat 2>/dev/null || true
+		printf '\033[0m\n'
 		;;
 	cmatrix)
-		tput smcup 2>/dev/null
-		timeout 10 cmatrix -b 2>/dev/null || true
-		tput rmcup 2>/dev/null
+		TERM=vt100 timeout 10 cmatrix -b 2>/dev/null || true
+		printf '\033[0m\n'
 		;;
 	tty-clock)
-		tput smcup 2>/dev/null
-		timeout 8 tty-clock -scC 1 2>/dev/null || true
-		tput rmcup 2>/dev/null
+		TERM=vt100 timeout 8 tty-clock -sC 1 2>/dev/null || true
+		printf '\033[0m\n'
 		;;
 	genact)
 		timeout 12 genact 2>/dev/null || true
@@ -341,11 +331,10 @@ build_actions() {
 
 	# フルスクリーン系が1つでもあれば
 	local has_fs=false
-	(( $+commands[nyancat] ))  && has_fs=true
-	(( $+commands[aafire] ))   && has_fs=true
-	(( $+commands[cmatrix] ))  && has_fs=true
+	(( $+commands[nyancat] ))   && has_fs=true
+	(( $+commands[cmatrix] ))   && has_fs=true
 	(( $+commands[tty-clock] )) && has_fs=true
-	(( $+commands[genact] ))   && has_fs=true
+	(( $+commands[genact] ))    && has_fs=true
 	$has_fs && actions+=("fullscreen")
 }
 
