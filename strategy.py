@@ -10,16 +10,18 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズマージ強化版
-# v136: MEDIUMフェーズ高度管理強化・スコア安定版 - v135のスコア分散（avg=863.5, min=647, max=1017, stddev=136.6）を受けて、batch_summary分析でMEDIUMフェーズheight_mult=2.2の緩和がスコア分散を助長していることを特定。高スコア群（avg=983）vs 低スコア群（avg=744）で239点差があり、安定性が不足。v42/v128の成功構造（MEDIUMフェーズheight_mult=2.4）を採用し、HIGHフェーズへの移行期での高度管理を強化することで、スコア安定性を向上させる。v135のHIGHフェーズ設定（height_mult=1.8、HIGH_TOWERペナルティ1.3倍）を維持しつつ、MEDIUMフェーズをv42の成功値に戻すことで、v128の成功構造に近づき、スコア分散を抑制しつつ平均スコアを向上。単一パラメータ調整で振り子パターン回避。コード量維持（約110行）。
-# v137: 左右の高さバランス補正追加版 - v136のスコア分散（avg=1008.1, stddev=395.1）を受けて、batch_summary分析とベストゲーム（1916点）の左右高さバランスを確認。ベストゲームでは終盤（turn 80-90）まで左右の最大Y座標の差が0.00〜0.94と良好に保たれていること、高スコア群がMEDIUM_TOWER_REACTOR_PROTECTを12.2%使用（低スコア群6.7%）していることを特定。v136の「ピース数バランス」のみの評価を補完し、「左右の高さバランス」を新規追加：左右の最大Y座標の差を計算し、低い側にピースを配置した場合に（高さ差×20.0）のボーナスを与える。これにより、盤面の左右で高さが不均衡な場合に、低い側への配置を優先的に選択し、盤面の均一性と安定性を向上させる。単一の新規評価基準追加のみで、振り子パターン回避。コード量微増（約120行）。
-# v138: 左右の高さバランス補正強化版 - v137のスコア分散（avg=1008.1, stddev=395.1）を受けて、batch_summary分析で高スコア群（avg=1302）vs 低スコア群（avg=715）で587点差があり、安定性が不足。高スコア群ほど左右バランスが良好（ベストゲームでは終盤まで左右の最大Y座標の差が0.00〜0.94）であり、補正を強化することでスコア安定性を向上させる。v137の左右の高さバランス補正のボーナス係数を20.0→25.0に微増し、盤面の均一性をより強く促進。v137のシンプル構造を維持しつつ、単一パラメータ調整で振り子パターン回避。コード量維持（約120行）。
+# v139: 同type集約ボーナス追加版 - result["merges"]の個別距離データを活用した新ロジック。
+# 現状HEIGHT_CONTROL(23.2%)の局面では同typeピースへの近さを無視して最低着地点を選んでいる。
+# 各ドロップ候補のmergesリスト(analyze_board提供)から同typeピースへの距離を集計し、
+# 近くに同typeが多いほどボーナスを付与。マージ不可の局面でも将来のマージ確率が高い
+# 位置を選択できるようになる。既存のスコアリングは一切変更せず、新評価軸の追加のみ。
 
 # スコアテーブル: type N = N*(N+1)/2
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v138: 左右の高さバランス補正を強化し、スコア安定性を向上"""
+    """v139: 同type集約ボーナス — mergesの距離データで将来マージ確率を評価"""
 
     results = analysis.get("results", [])
 
@@ -137,29 +139,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # 7. 左右の高さバランス補正（v138: ボーナス係数を25.0に強化）
-        left_max_y = (
-            max([p["y"] for p in pieces if p["x"] < 0])
-            if any(p["x"] < 0 for p in pieces)
-            else -4.0
-        )
-        right_max_y = (
-            max([p["y"] for p in pieces if p["x"] > 0])
-            if any(p["x"] > 0 for p in pieces)
-            else -4.0
-        )
-
-        # 低い側に配置した場合にボーナス（高い側から低い側への高さ差に応じて）
-        if x < 0 and left_max_y < right_max_y:
-            height_balance_bonus = (right_max_y - left_max_y) * 25.0  # v138: 20.0→25.0に強化
-            score += height_balance_bonus
-            if height_balance_bonus > 0:
-                reasons.append("HEIGHT_BALANCE_LEFT")
-        elif x > 0 and right_max_y < left_max_y:
-            height_balance_bonus = (left_max_y - right_max_y) * 25.0  # v138: 20.0→25.0に強化
-            score += height_balance_bonus
-            if height_balance_bonus > 0:
-                reasons.append("HEIGHT_BALANCE_RIGHT")
+        # 7. 同type集約ボーナス (v139: mergesの距離データを活用)
+        # 各同typeピースへの距離を見て、近くに多いほどボーナス
+        # マージ判定済みのものも含め、将来マージ確率の高い位置を優先
+        cluster_bonus = 0.0
+        for m in result.get("merges", []):
+            dist = m.get("dist", 99)
+            contact_r = m.get("contact_r", 1.0)
+            # 接触距離の3倍以内なら近接とみなしボーナス
+            proximity_limit = contact_r * 3.0
+            if dist < proximity_limit:
+                # 近いほど高ボーナス (距離0で最大、proximity_limitで0)
+                cluster_bonus += (1.0 - dist / proximity_limit) * 80.0
+        if cluster_bonus > 0:
+            score += cluster_bonus
+            reasons.append("CLUSTER")
 
         # スコア更新
         if score > best_score:
