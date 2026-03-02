@@ -1471,6 +1471,11 @@ ${past_topics}
 - 話し言葉で、カジュアルなトーン
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 前置きや補足説明は不要。コメント返し本文のみ出力
+- コメントの中にゲーム戦略へのアドバイスが含まれていた場合、言い訳せず真摯に受け止め、「次の戦略改善に取り入れます」と具体的に説明すること
+- 戦略アドバイスがあった場合、トーク本文の後に以下の形式で出力すること:
+  ===ADVICE===
+  （アドバイス内容を1-3行で要約。コメント主の名前も記載）
+- 戦略アドバイスがなければ ===ADVICE=== は出力しない
 COMMENTPROMPT
 
 		log "[COMMENT] コメント返し生成中..."
@@ -1482,6 +1487,25 @@ COMMENTPROMPT
 		rm -f "$comment_prompt_file"
 
 		if [ -n "$comments_talk" ]; then
+			# 戦略アドバイスを抽出して tmp/advice.md に追記
+			local advice_part
+			advice_part=$(echo "$comments_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
+			if [ -n "$advice_part" ]; then
+				{
+					echo "## $(date '+%Y-%m-%d %H:%M') リスナーアドバイス"
+					echo "$advice_part"
+					echo ""
+				} >> tmp/advice.md
+				# 最新30エントリ程度に制限
+				if [ -f tmp/advice.md ] && [ "$(wc -l < tmp/advice.md)" -gt 150 ]; then
+					tail -150 tmp/advice.md > tmp/advice.md.tmp
+					mv tmp/advice.md.tmp tmp/advice.md
+				fi
+				log "[COMMENT] 戦略アドバイス検出 → tmp/advice.md に追記"
+				# トーク本文からアドバイス部分を除去
+				comments_talk=$(echo "$comments_talk" | sed '/^===ADVICE===/,$ d')
+			fi
+
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
 			echo "$comments_talk" >"$queue_file"
 			# 生成直後に重複チェック（同じ内容のキューファイルがないか）
