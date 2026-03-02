@@ -1565,7 +1565,7 @@ with open(rs_file, 'w') as f:
 }
 
 check_regression() {
-	# 新戦略が10試合以上で旧戦略の80%未満ならリグレッション
+	# 新戦略が10試合以上で旧戦略の85%未満ならリグレッション
 	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
@@ -1612,7 +1612,7 @@ if prev_hash not in rs or len(rs[prev_hash]['scores']) < 3:
 prev_avg = sum(rs[prev_hash]['scores']) / len(rs[prev_hash]['scores'])
 curr_avg = sum(current_scores) / len(current_scores)
 
-if prev_avg > 0 and curr_avg < prev_avg * 0.80:
+if prev_avg > 0 and curr_avg < prev_avg * 0.85:
     print(f'REGRESSION:prev_avg={prev_avg:.0f},curr_avg={curr_avg:.0f},prev_hash={prev_hash}')
 else:
     print('OK')
@@ -1785,7 +1785,7 @@ trigger_adaptive_improvement() {
 	accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
 	update_rolling_scores "$LAST_SCORE"
 
-	# Step 2: リグレッション検知 (新戦略が旧戦略の80%未満なら自動リバート)
+	# Step 2: リグレッション検知 (新戦略が旧戦略の85%未満なら自動リバート)
 	if check_regression; then
 		# リグレッション検知 → リバート済み、蓄積データクリア
 		_clear_accumulated_data
