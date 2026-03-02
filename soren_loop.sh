@@ -71,7 +71,10 @@ wait_for_move || {
 
 # --- メインループ: 1試合ずつ ---
 while true; do
-	# eloop.sh を毎回 source (AI が書き換えた場合に反映)
+	# eloop_lib.sh / eloop.sh を毎回 source (書き換え時に反映)
+	if ! source ./eloop_lib.sh 2>/dev/null; then
+		log "WARNING: eloop_lib.sh の読み込みに失敗 (前回の定義で続行)"
+	fi
 	if ! source ./eloop.sh 2>/dev/null; then
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
