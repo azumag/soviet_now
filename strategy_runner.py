@@ -326,7 +326,7 @@ def run_game():
             reason = decision.get("reason", "")
             # reason を短縮表示（30文字まで）
             short_reason = reason[:30] if len(reason) > 30 else reason
-            print(f"  x={drop_x:+.2f} {short_reason}", flush=True)
+            print(f"  x={drop_x:+.2f}\n  {short_reason}", flush=True)
 
             # 履歴記録
             record_turn(history_f, turn, gs, decision, analysis, soviet_created=soviet_created, strategy_hash=strategy_hash)
