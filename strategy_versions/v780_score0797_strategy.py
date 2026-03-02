@@ -7,7 +7,7 @@
   - ボード: x ∈ [-3.0, +3.0], 床 y=-4.48, デッドライン y=3.32
   - プレイヤーが制御できるのはドロップX座標のみ
 
-決定ロジック (7つの評価軸):
+決定ロジック (8つの評価軸):
   1. マージボーナス   — 即座にマージできる位置に高得点 (DIRECT > NEAR > FAR)
   2. 高度ペナルティ   — 着地位置が高いほど減点 (フェーズで重み変動)
   3. Reactor保護      — 連鎖進行中は高い位置を回避
@@ -15,6 +15,7 @@
   5. 左右バランス補正 — ピース数の偏りを是正する方向にボーナス
   6. nextNext中央寄せ — 次の次と同typeなら中央に寄せてマージ準備
   7. 同type集約       — 同typeピースが近くに多い位置にボーナス (将来マージ準備)
+  8. 盤面整理度スコア — 盤面全体の同type集約度を評価 (v141: 新規追加)
 
 フェーズ (盤面の最高Y座標で判定):
   LOW      (max_y < 0.8) : 序盤。マージ優先 (merge_mult=1.2)
@@ -37,14 +38,75 @@
 # マージは2個→1個でネット-1ピース=盤面圧縮の最良手段。CRITICALこそマージ優先すべき。
 # ただしNEAR(成功率68.5%)は失敗→即死リスクがあるため、DIRECTのみ1.5倍ボーナス、
 # NEARは通常の0.5倍に据え置き。merge_gradeごとに分岐するCRITICAL専用ロジック。
+# v141: 盤面整理度スコア追加 - 盤面全体の同type集約度を評価。各typeの最短ペア距離を計算し、
+# 近くに集まっているtypeほどボーナス。同typeが分散している盤面をペナルティして、将来のマージ機会を損なう配置を抑制。
 
 # マージ結果のスコア: type N のマージで N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
+def calculate_board_clustering(pieces):
+    """v141: 盤面全体の同type集約度を計算
+
+    各typeの最短ペア距離を計算し、距離が小さいほどボーナスを与える。
+    同typeが近くに集まっている盤面は、将来のマージ確率が高い。
+
+    Args:
+        pieces: 全ピースのリスト [{id, type, x, y, ...}, ...]
+
+    Returns:
+        clustering_score: 集約度スコア（高いほど同typeが集まっている）
+    """
+    if not pieces:
+        return 0.0
+
+    # typeごとのピースリストを作成
+    type_pieces = {}
+    for p in pieces:
+        ptype = p["type"]
+        if ptype not in type_pieces:
+            type_pieces[ptype] = []
+        type_pieces[ptype].append(p)
+
+    clustering_score = 0.0
+
+    # 各typeについて最短ペア距離を計算
+    for ptype, piece_list in type_pieces.items():
+        # ピースが1つ以下なら集約度は計算不可
+        if len(piece_list) < 2:
+            continue
+
+        # 全ペアの距離を計算し、最短距離を見つける
+        min_dist = float("inf")
+        for i in range(len(piece_list)):
+            for j in range(i + 1, len(piece_list)):
+                p1 = piece_list[i]
+                p2 = piece_list[j]
+                dist = ((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2) ** 0.5
+                if dist < min_dist:
+                    min_dist = dist
+
+        # 最短距離に基づいてスコアを計算
+        # 距離が小さいほど高いボーナス（同typeが集まっている）
+        # 距離が大きいほどペナルティ（同typeが分散している）
+        # ピース数で重み付け（大typeの集約を優先）
+        piece_count = len(piece_list)
+        if min_dist < 1.0:
+            # 非常に近い：強いボーナス
+            clustering_score += (1.0 - min_dist) * 100.0 * piece_count
+        elif min_dist < 3.0:
+            # 近い：普通のボーナス
+            clustering_score += (1.0 - min_dist / 3.0) * 50.0 * piece_count
+        else:
+            # 離れている：ペナルティ
+            clustering_score -= (min_dist - 3.0) * 20.0 * piece_count
+
+    return clustering_score
+
+
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v140: CRITICALフェーズDIRECTマージ最優先 + 同type集約ボーナス
+    """v141: CRITICALフェーズDIRECTマージ最優先 + 同type集約ボーナス + 盤面整理度スコア
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -116,8 +178,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merge_result_type = min(next_type + 1, 16)
     type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
+    # --- v141: 盤面整理度スコア計算 ---
+    # 盤面全体の同type集約度を計算（全ドロップ候補で共通）
+    current_clustering = calculate_board_clustering(pieces)
+
     # =======================================================================
-    #  各ドロップ候補 (x座標) を7つの評価軸でスコアリング
+    #  各ドロップ候補 (x座標) を8つの評価軸でスコアリング
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -221,6 +287,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if cluster_bonus > 0:
             score += cluster_bonus
             reasons.append("CLUSTER")
+
+        # ----- 評価軸 8: 盤面整理度スコア (v141: 新規追加) -----
+        # 盤面全体の同type集約度を評価。同typeが近くに集まっているほどボーナス。
+        # 盤面全体の整理度スコア（全候補で共通）をそのまま加算。
+        # 集約度が高い（同typeが近くに集まっている）場合は、盤面が整理されており、
+        # 将来のマージ機会が多いのでボーナス。
+        # 集約度が低い（同typeが分散している）場合は、盤面が整理されておらず、
+        # 将来のマージ機会が少ないのでペナルティ。
+        score += current_clustering
+        if current_clustering > 100.0:
+            reasons.append("BOARD_CLUSTERED")
+        elif current_clustering < -50.0:
+            reasons.append("BOARD_SCATTERED")
 
         # ----- 最良候補の更新 -----
         if score > best_score:
