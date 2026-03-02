@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""strategy.py - AI改善対象の決定スクリプト (v548: HIGH_LAYERでのNEAR_MERGE優先・マージ品質に応じたドリフト調整版)"""
+"""strategy.py - AI改善対象の決定スクリプト (v550: v548/v582構造復元版)"""
 
 # 固定インターフェース:
 # decide(game_state: dict, analysis: dict) -> dict
@@ -9,19 +9,6 @@
 # AI改変禁止: decide() シグネチャ、if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v548: HIGH_LAYERでのNEAR_MERGE優先・マージ品質に応じたドリフト調整版 - v547のbatch_summary分析で、「HIGH_LAYER_BONUSのavg_score_deltaが19.9で非常に高い」ことが確認された。また、「HIGH_LAYERのavg_score_deltaが6.7と低く、HIGH_LAYER_BONUSと大きな乖離がある」ことが判明。v548では以下の改善を実施：
-#   1. HIGH_LAYERでのNEAR_MERGE優先: DIRECT/NEARマージでHIGH_LAYERボーナスをさらに強化（0.5以下:100点→150点、0.5-0.8:50点→75点、0.8-1.0:20点→30点）。これにより、HIGH_LAYERでマージ品質の高い位置を優先するようになる
-#   2. マージ品質に応じたドリフトペナルティ調整: DIRECTならペナルティを0.5倍、NEARなら0.7倍、NO_MERGEなら1.0倍。これにより、HIGH/MEDIUMフェーズでマージ品質が高い位置を優先するようになる
-#   3. HIGHフェーズのバランス補正動的最適化: バランス補正をphaseとマージ品質に応じて調整（HIGHフェーズでDIRECTなら15.0、NEARなら20.0、NO_MERGEなら30.0）。これにより、HIGHフェーズでマージ機会を確保するようになる
-#   バッチ統計分析結果:
-#   - HIGH_LAYER_BONUS: avg_score_delta=19.9（非常に高い）
-#   - HIGH_LAYER: avg_score_delta=6.7（低い）
-#   - 高スコア群のmerge_rate: 14.8%（低スコア群の11.6%より高い）
-#   - ベストゲーム(1558点)の特徴: NEAR_MERGE_HIGH_LAYER_BONUSが頻繁に見られる
-#   改善策:
-#   - HIGH_LAYERボーナス強化: マージ品質が高い場合にさらにボーナスを与える
-#   - ドリフトペナルティ調整: マージ品質に応じてペナルティを調整
-#   - バランス補正動的最適化: HIGHフェーズでマージ機会を確保
 # v547: HIGH_LAYER強化・ドリフト簡略化版 - v546のbatch_summary分析で、「HIGH_LAYER_BONUSのavg_score_deltaが19.9で非常に高い」ことを特定。HIGH_LAYER_BONUSは機能しているが、ボーナス値が30点と小さすぎる（merge_bonusのDIRECT 1200点と比較して小さすぎる）。また、HIGH_LAYERのavg_score_deltaが6.7と低く、HIGH_LAYER_BONUS（19.9）と大きく乖離している。v547ではHIGH_LAYERボーナスを段階的に強化し（0.5以下:100点、0.5-0.8:50点、0.8-1.0:20点）、HIGH_LAYER全体の価値を高める。また、ドリフトペナルティの動的調整を削除し、v128の一律30.0に戻すことでシンプル化。HIGH_TOWERペナルティを1.3倍から1.5倍に強化し、バランス補正をv128の40.0に戻すことで、v546のHIGH_LAYERボーナスの成功要素とv128のバランス補正の成功要素を組み合わせる。さらに、next/nextNextのタイプを考慮したマージ期待値ボーナスを追加し、将来のマージが期待できる位置を優先する。
 #   バッチ統計分析結果:
 #   - HIGH_LAYER_BONUS: 11.3%, avg_score_delta=19.9 (非常に高い)
@@ -61,9 +48,8 @@
 #   成功基準: scoreがv540の2176に近づく、または平均がv422を上回る
 #   失敗基準: scoreがv422以下、または実際のマージ率が5%以下
 
-
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v548: HIGH_LAYERでのNEAR_MERGE優先・マージ品質に応じたドリフト調整版"""
+    """v550: v548/v582構造復元版 - v549の破損を修正し、v582(2362点)の構造に戻す"""
 
     results = analysis.get("results", [])
 
@@ -77,6 +63,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 盤面情報
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
+    piece_count = len(pieces)
+    
+    # reactor情報を取得（v549: 追加）
+    reactor = analysis.get("reactor", {})
 
     # フェーズ判定（v548: v128の設定を維持）
     if max_y < 0.8:
@@ -282,6 +272,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_expectation > 0:
             score += merge_expectation
             reasons.append("MERGE_EXPECT")
+
+        # 7. HIGH_LAYERでのマージ確率向上ボーナス（v548: ベストゲーム分析に基づく新機能）
+        # ベストゲーム(1558点)でNEAR_MERGE_HIGH_LAYER_BONUSが頻繁に見られることから、
+        # HIGH_LAYERでのマージ確率向上を図るため、max_yに応じた動的調整を追加
+        if landing_y > 0.0 and landing_y <= 0.5:
+            # HIGH_LAYER_LOW: max_yが低いほどボーナスを強化
+            if max_y < 1.0:
+                score += 25.0  # LOWフェーズでHIGH_LAYER: 追加ボーナス
+                reasons.append("HIGH_LAYER_LOW_PHASE")
+            elif max_y < 2.0:
+                score += 15.0  # MEDIUMフェーズでHIGH_LAYER: 追加ボーナス
+                reasons.append("HIGH_LAYER_MID_PHASE")
+            else:
+                score += 10.0  # HIGHフェーズでHIGH_LAYER: 追加ボーナス
+                reasons.append("HIGH_LAYER_HIGH_PHASE")
 
         # スコア更新
         if score > best_score:

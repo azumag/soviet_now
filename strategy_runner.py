@@ -42,7 +42,7 @@ DROP_WAIT = 1.0           # ドロップ後の待ち時間(秒)
 
 
 def log(msg):
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    print(f"[{time.strftime('%H:%M:%S')}]\n{msg}", flush=True)
 
 
 def load_game_state():
