@@ -80,9 +80,9 @@ _fetch() {
                 # シェルメタ文字の二重除去（デーモン側で漏れた場合の保険）
                 tr -d '`$\\{}|;<>&' | \
                 # 危険パターンを除去: プロンプトインジェクション対策
-                grep -iv 'ignore\|forget\|instruction\|system\|prompt\|override\|pretend\|act as\|you are\|あなたは\|無視\|命令\|指示\|忘れ\|ふりをし\|なりきり\|プロンプト\|システム' | \
+                grep -iv 'ignore.*instruction\|forget.*instruction\|override.*prompt\|pretend.*you\|act as ai\|無視.*指示\|指示.*無視\|命令.*無視\|忘れ.*指示\|ふりをし\|なりきり\|プロンプトインジェクション' | \
                 # AI操作系の危険パターンを除去
-                grep -iv 'delete\|remove\|modify\|write\|create\|execute\|run\|sudo\|chmod\|kill\|削除\|消し\|書き換\|変更\|実行\|作成\|上書\|破壊\|ファイル\|コマンド\|スクリプト' | \
+                grep -iv 'sudo\|chmod\|rm -rf\|eval(\|exec(\|ファイル.*削除\|コマンド.*実行\|スクリプト.*実行\|上書き.*ファイル' | \
                 # 最新10件に制限
                 tail -10)
 
