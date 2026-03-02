@@ -51,7 +51,8 @@ handle_soviet_celebration() {
 	# 祝賀トーク生成
 	generate_soviet_celebration "$score" "$turns" "$game_num"
 
-	# コメント生成停止
+	# コメント監視・生成停止
+	stop_comment_watcher
 	_kill_comment_gen
 
 	# 既存の読み上げを全停止
@@ -70,8 +71,9 @@ handle_soviet_celebration() {
 	fi
 	rm -f tmp/.soviet_created
 
-	# コメントプレイヤー再開
+	# コメントプレイヤー・ウォッチャー再開
 	start_comment_player
+	start_comment_watcher
 }
 
 #=== 試合後の後処理 ===
@@ -98,9 +100,9 @@ post_game_bookkeeping() {
 	# アーカイブファイル名を記録
 	LAST_ARCHIVE_FILE=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -1)
 
-	# コメント返し
-	start_comment_player  # プレイヤーが死んでいたら再起動
-	generate_comment_response
+	# コメントプレイヤー・ウォッチャーが死んでいたら再起動
+	start_comment_player
+	start_comment_watcher
 
 	# git commit
 	git add -A

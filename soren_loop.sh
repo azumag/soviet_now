@@ -43,9 +43,11 @@ log "strategy.py → 1game → adaptive improve → repeat"
 # クリーンアップ trap
 trap 'cleanup_all; exit' EXIT INT TERM
 
-# 前回の孤児コメントプレイヤーを掃除してから起動
+# 前回の孤児コメントプレイヤー/ウォッチャーを掃除してから起動
 stop_comment_player
+stop_comment_watcher
 start_comment_player
+start_comment_watcher
 
 # 前回中断時のリカバリ
 recover_strategy_backup

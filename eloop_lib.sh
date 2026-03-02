@@ -36,6 +36,8 @@ ROLLING_SCORES_FILE="tmp/rolling_scores.json"
 REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
 MIN_GAMES_BEFORE_IMPROVE=10
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
+COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
+COMMENT_WATCHER_INTERVAL=10
 
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" tmp
 
@@ -1525,6 +1527,73 @@ COMMENTPROMPT
 	disown "$comment_pid"
 }
 
+#=== コメント監視デーモン ===
+# 10秒ごとにTwitchコメントをポーリングし、新コメントがあれば即座に生成→キュー追加
+
+start_comment_watcher() {
+	# 既存ウォッチャーが生存中なら重複起動しない
+	if [ -f "$COMMENT_WATCHER_PID_FILE" ]; then
+		local existing_pid
+		existing_pid=$(cat "$COMMENT_WATCHER_PID_FILE" 2>/dev/null)
+		if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+			return
+		fi
+	fi
+	mkdir -p "$(dirname "$COMMENT_WATCHER_PID_FILE")"
+
+	(
+		_cw_my_pid=${BASHPID:-$$}
+		echo "$_cw_my_pid" > "$COMMENT_WATCHER_PID_FILE" 2>/dev/null
+		while true; do
+			# PIDファイルが自分でなくなったら終了
+			_cw_file_pid=$(cat "$COMMENT_WATCHER_PID_FILE" 2>/dev/null)
+			if [ "$_cw_file_pid" != "$_cw_my_pid" ]; then
+				exit 0
+			fi
+
+			# コメント生成が進行中なら今回はスキップ
+			local gen_pidfile="tmp/.twitch_chat/comment_gen.pid"
+			local gen_running=false
+			if [ -f "$gen_pidfile" ]; then
+				local gen_pid
+				gen_pid=$(cat "$gen_pidfile" 2>/dev/null)
+				if [ -n "$gen_pid" ] && kill -0 "$gen_pid" 2>/dev/null; then
+					gen_running=true
+				fi
+			fi
+
+			if [ "$gen_running" = "false" ]; then
+				# コメントがあるか軽量チェック（fetchして確認）
+				./twitch_chat.sh fetch 2>/dev/null
+				if [ -f "tmp/twitch_comments.txt" ] && [ -s "tmp/twitch_comments.txt" ]; then
+					log "[COMMENT-WATCHER] 新コメント検出 → 生成開始"
+					# generate_comment_response はfetch済みファイルを使い、ack→生成→キュー追加
+					generate_comment_response
+				fi
+			fi
+
+			sleep "$COMMENT_WATCHER_INTERVAL"
+		done
+	) &
+	local wpid=$!
+	echo "$wpid" > "$COMMENT_WATCHER_PID_FILE"
+	disown "$wpid"
+	log "[COMMENT] ウォッチャー開始 (PID=$wpid, interval=${COMMENT_WATCHER_INTERVAL}s)"
+}
+
+stop_comment_watcher() {
+	if [ -f "$COMMENT_WATCHER_PID_FILE" ]; then
+		local wpid
+		wpid=$(cat "$COMMENT_WATCHER_PID_FILE" 2>/dev/null)
+		if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
+			kill "$wpid" 2>/dev/null
+			wait "$wpid" 2>/dev/null
+			log "[COMMENT] ウォッチャー停止 (PID=$wpid)"
+		fi
+		rm -f "$COMMENT_WATCHER_PID_FILE"
+	fi
+}
+
 #=== プロセス管理 ===
 
 # IMPROVE_PID はグローバル変数として soren_loop.sh で管理
@@ -1543,6 +1612,7 @@ cleanup_all() {
 	fi
 	_write_improve_state "idle" "0" ""
 	# コメント関連停止
+	stop_comment_watcher
 	_kill_comment_gen
 	stop_comment_player
 	# Twitchチャット停止
