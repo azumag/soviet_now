@@ -1202,7 +1202,7 @@ fetch_and_play_news() {
 		local game_num
 		game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 		local score
-		score=$(python3 -c "import json; print(json.load(open('$GAME_STATE')).get('score', 0))" 2>/dev/null || echo 0)
+		score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
 		start_radio_corner_news "$game_num" "$score"
 	else
 		log "[NEWS] ニュースなし、スキップ"
@@ -1215,7 +1215,7 @@ start_random_radio_corner() {
 	local game_num
 	game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	local score
-	score=$(python3 -c "import json; print(json.load(open('$GAME_STATE')).get('score', 0))" 2>/dev/null || echo 0)
+	score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
 
 	# ニュースは毎ゲーム別途実行するので、ここでは除外
 	local candidates=("theme" "soviet" "recap")
