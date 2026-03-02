@@ -10,9 +10,9 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズマージ強化版
-# v131: NEAR_MERGEボーナス強化版 - v130の失敗（スコア488点）を受けて、マージ品質に応じたheight_penalty緩和は複雑すぎ効果不透明と判断し、シンプルな改善に戻る。batch_summaryでNEAR_MERGEのavg_score_delta=23.9と低いことを確認。しかし、HIGH_LAYERでのマージ価値は高い（NEAR_MERGE_HIGH_LAYERのavg_score_delta=53.4）。v126のシンプル構造を維持しつつ、NEAR_MERGEボーナスを600.0→700.0に強化することで、HIGH_LAYERでのマージ機会を増やし、スコアを伸ばす。振り子パターン（height_multiplier微調整）を回避し、NEAR_MERGEボーナスの強化で改善。コード量維持（約110行）。
 # v132: HIGHフェーズ高度管理強化版 - v131の失敗（スコア1013点）を受けて、HIGHフェーズheight_multをv42の2.6に復活させることで高度管理を強化。v42の成功構造（HIGH=2.6/MEDIUM=2.4）を維持しつつ、v131のHIGHフェーズ緩和（1.8）を元に戻す。これによりHIGHフェーズでマージを優先しつつ、過度な高度緩和を回避する。コード量維持（約110行）。
 # v133: HIGH_TOWERペナルティ微調整・HIGHフェーズ高度管理微緩和版 - v132の失敗（スコア不明）を受けて、v126のHIGH_TOWERペナルティ（1.1倍）をv42/v128の1.3倍に戻し、HIGH_TOWER状況でのマージペナルティを強める。ただし、HIGHフェーズのheight_multをv132の1.8から1.9に微緩和してマージ機会を確保する。v86の失敗（HIGH_TOWER 1.3倍でマージ機会損失）とv126の成功（HIGH_TOWER 1.1倍）のバランスを調整。batch_summaryでHIGH_TOWER_REACTOR_PROTECTのavg_score_delta=3.9と低いことを確認し、HIGH_TOWERでのマージ価値が低い状況を改善。コード量維持（約110行）。
+# v134: MEDIUMフェーズ高度管理緩和版 - v133の失敗（スコア分散大きく、avg=1066.9, min=373, max=2242）を受けて、batch_summary分析でMEDIUMフェーズでのマージ機会損失を特定。MEDIUM_TOWER_REACTOR_PROTECTのavg_score_delta=7.4と比較的高いが、頻度が減少傾向。v133でHIGHフェーズを1.9に緩和したことによるバランス崩れを修正し、MEDIUMフェーズのheight_multをv42の2.4から2.2に緩和して、HIGHフェーズへの移行期でのマージ選択肢を増やす。v126のシンプル構造を維持しつつ、MEDIUMフェーズにターゲットを絞った単一パラメータ調整。振り子パターン回避。コード量維持（約110行）。
 
 # スコアテーブル: type N = N*(N+1)/2
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
@@ -41,7 +41,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v128: v42の2.4を維持
+        height_mult = 2.2  # v134: v42の2.4→2.2に緩和（マージ機会確保）
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
