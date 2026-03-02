@@ -91,9 +91,12 @@ cat > score_dashboard.html <<HTMLEOF
   }
   .stat-value { font-size: 1.8em; font-weight: bold; }
   .stat-value.best { color: #ffd700; }
+  .stat-value.second { color: #c0c0c0; }
+  .stat-value.third { color: #cd7f32; }
   .stat-value.avg { color: #4ecdc4; }
   .stat-value.games { color: #a78bfa; }
   .stat-value.recent { color: #f97316; }
+  .rank-label { font-size: 0.6em; vertical-align: super; margin-right: 2px; }
   .chart-container {
     position: relative;
     width: 100%;
@@ -128,7 +131,9 @@ cat > score_dashboard.html <<HTMLEOF
 
 <div id="dashboard">
 <div class="stats-bar">
-  <div class="stat"><div class="stat-label">Best Score</div><div class="stat-value best" id="best">-</div></div>
+  <div class="stat"><div class="stat-label">1st Best</div><div class="stat-value best" id="best">-</div></div>
+  <div class="stat"><div class="stat-label">2nd Best</div><div class="stat-value second" id="second">-</div></div>
+  <div class="stat"><div class="stat-label">3rd Best</div><div class="stat-value third" id="third">-</div></div>
   <div class="stat"><div class="stat-label">Average</div><div class="stat-value avg" id="avg">-</div></div>
   <div class="stat"><div class="stat-label">Games</div><div class="stat-value games" id="games">-</div></div>
   <div class="stat"><div class="stat-label">Recent 10 Avg</div><div class="stat-value recent" id="recent">-</div></div>
@@ -168,13 +173,19 @@ function drawChart(scores) {
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  const maxScore = Math.max(...scores.map(d => d.score));
+  const sorted = scores.map(d => d.score).sort((a, b) => b - a);
+  const unique = [...new Set(sorted)];
+  const maxScore = unique[0] || 0;
+  const secondScore = unique[1] || '-';
+  const thirdScore = unique[2] || '-';
   const avgScore = scores.reduce((s, d) => s + d.score, 0) / scores.length;
   const recent10 = scores.slice(-10);
   const recent10Avg = recent10.reduce((s, d) => s + d.score, 0) / recent10.length;
   const ma = movingAvg(scores, 10);
 
   document.getElementById('best').textContent = maxScore;
+  document.getElementById('second').textContent = secondScore;
+  document.getElementById('third').textContent = thirdScore;
   document.getElementById('avg').textContent = Math.round(avgScore);
   document.getElementById('games').textContent = scores.length;
   document.getElementById('recent').textContent = Math.round(recent10Avg);
@@ -222,7 +233,10 @@ function drawChart(scores) {
   for (let i = 0; i < scores.length; i++) {
     ctx.beginPath();
     ctx.arc(xScale(i), yScale(scores[i].score), 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = scores[i].score === maxScore ? '#ffd700' : '#4ecdc4';
+    ctx.fillStyle = scores[i].score === maxScore ? '#ffd700'
+                  : scores[i].score === secondScore ? '#c0c0c0'
+                  : scores[i].score === thirdScore ? '#cd7f32'
+                  : '#4ecdc4';
     ctx.fill();
   }
 
@@ -231,14 +245,22 @@ function drawChart(scores) {
   ma.forEach((v, i) => { const x = xScale(i), y = yScale(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
   ctx.stroke();
 
-  const bi = scores.findIndex(d => d.score === maxScore);
-  if (bi >= 0) {
-    const bx = xScale(bi), by = yScale(maxScore);
-    ctx.beginPath(); ctx.arc(bx, by, 6, 0, Math.PI * 2);
-    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 12px monospace';
-    ctx.fillText(maxScore, bx + 10, by - 4);
-  }
+  // Highlight top 3 scores on chart
+  const rankMarkers = [
+    { score: maxScore, color: '#ffd700', label: '1st' },
+    { score: secondScore, color: '#c0c0c0', label: '2nd' },
+    { score: thirdScore, color: '#cd7f32', label: '3rd' },
+  ];
+  rankMarkers.forEach(r => {
+    if (typeof r.score !== 'number') return;
+    const ri = scores.findIndex(d => d.score === r.score);
+    if (ri < 0) return;
+    const rx = xScale(ri), ry = yScale(r.score);
+    ctx.beginPath(); ctx.arc(rx, ry, 6, 0, Math.PI * 2);
+    ctx.strokeStyle = r.color; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = r.color; ctx.font = 'bold 12px monospace';
+    ctx.fillText(r.score, rx + 10, ry - 4);
+  });
 }
 
 drawChart(SCORES);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""strategy.py - AI改善対象の決定スクリプト (v550: v548/v582構造復元版)"""
+"""strategy.py - AI改善対象の決定スクリプト (v602: v551ベース・マージ品質重視・早期ペナルティ緩和版)"""
 
 # 固定インターフェース:
 # decide(game_state: dict, analysis: dict) -> dict
@@ -9,19 +9,7 @@
 # AI改変禁止: decide() シグネチャ、if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# v547: HIGH_LAYER強化・ドリフト簡略化版 - v546のbatch_summary分析で、「HIGH_LAYER_BONUSのavg_score_deltaが19.9で非常に高い」ことを特定。HIGH_LAYER_BONUSは機能しているが、ボーナス値が30点と小さすぎる（merge_bonusのDIRECT 1200点と比較して小さすぎる）。また、HIGH_LAYERのavg_score_deltaが6.7と低く、HIGH_LAYER_BONUS（19.9）と大きく乖離している。v547ではHIGH_LAYERボーナスを段階的に強化し（0.5以下:100点、0.5-0.8:50点、0.8-1.0:20点）、HIGH_LAYER全体の価値を高める。また、ドリフトペナルティの動的調整を削除し、v128の一律30.0に戻すことでシンプル化。HIGH_TOWERペナルティを1.3倍から1.5倍に強化し、バランス補正をv128の40.0に戻すことで、v546のHIGH_LAYERボーナスの成功要素とv128のバランス補正の成功要素を組み合わせる。さらに、next/nextNextのタイプを考慮したマージ期待値ボーナスを追加し、将来のマージが期待できる位置を優先する。
-#   バッチ統計分析結果:
-#   - HIGH_LAYER_BONUS: 11.3%, avg_score_delta=19.9 (非常に高い)
-#   - HIGH_LAYER: 7.0%, avg_score_delta=6.7 (低い)
-#   - 乖離: HIGH_LAYER_BONUSは有効だが、HIGH_LAYER全体の価値が低い
-#   - 高スコア群のmerge_rate: 14.8% (低スコア群の11.6%より高い)
-#   - ベストゲーム(1558点)の特徴: NEAR_MERGE_HIGH_LAYER_BONUSが頻繁に見られる
-#   改善策:
-#   - HIGH_LAYERボーナス強化: 0.5以下:100点（v546の30点から3.3倍）、0.5-0.8:50点、0.8-1.0:20点
-#   - ドリフトペナルティ簡略化: v128の一律30.0に戻す (abs(drift_x) + drift_unc) * 30.0
-#   - HIGH_TOWERペナルティ強化: 1.3倍から1.5倍に（v128の1.5倍に近づける）
-#   - バランス補正強化: v128の40.0に戻す（HIGHフェーズでバランスを重視）
-#   - マージ期待値ボーナス: next/nextNextのタイプを考慮し、将来のマージが期待できる位置にボーナス
+# v550: v549ベース・ reactor情報統合・HIGH_LAYERマージ強化版 - v549のbatch_summary分析で、「reactor情報がほとんど使用されず、HIGH_LAYERマージが不足している」ことを特定。v550ではreactor情報を統合し、HIGH_LAYERでのマージを優先する。
 # v546: 動的ドリフトペナルティ・HIGHフェーズマージ強化版 - v542のbatch_summary分析で、「HIGH_LAYERのavg_score_deltaが29.5（高スコア群で32.1%）」と高いことを特定。HIGH_LAYER（0.5以下の高さ）でのスコア獲得が重要であることが判明。v546ではドリフトペナルティを動的に計算し、盤面の状況に応じて調整。HIGHフェーズではドリフトペナルティを緩和し、マージ機会を確保。MEDIUMフェーズではドリフトペナルティを強化し、正確な着地予測でHIGH到達遅延。また、HIGHフェーズではバランス補正を緩和し（balance_strengthを20.0に減）、マージ優先を実現。MEDIUMフェーズではバランス補正を維持しつつ、HIGH到達遅延を狙う。v542の基本構造を維持しつつ、動的ペナルティ計算でスコア向上。
 #   バッチ統計分析結果:
 #   - avg_score_delta: HIGH_CONTROL=15.0, HIGH_LAYER=29.5, MEDIUM_TOWER=16.5, HIGH_TOWER=2.3
@@ -49,7 +37,7 @@
 #   失敗基準: scoreがv422以下、または実際のマージ率が5%以下
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v551: v550ベース・序盤HIGH_TOWER回避・HIGH_LAYERマージ強化版 - batch_summary分析でベストゲーム1317点とワーストゲーム672点の差を分析。ベストゲームは序盤からHIGH_LAYERでのマージ機会を重視し、ターン数74ターンで安定。ワーストゲームは序盤からHIGH_TOWERが支配的でターン数51ターンで短命。v551では序盤のHIGH_TOWER回避とHIGH_LAYERマージ確率向上を図る。"""
+    """v602: v551ベース・マージ品質重視・早期ペナルティ緩和版 - batch_summary分析で「高スコア群のmerge_rateが10.9%、低スコア群が14.4%」と逆転を特定。DRIFT_NO_MERGEが12.0%を占めるがavg_score_delta=13.1と低く、マージ機会を見逃している。v602では早期HIGH_TOWERペナルティを緩和し（-150→-50）、EARLY_HIGH_LAYER_MERGE_WAITを削除して「待つ」を抑制。HIGH_LAYERマージボーナスを強化し（DIRECT:150→200, NEAR:100→150）、マージ品質に応じたドリフト調整を強化。v128の「即時重視・複雑さ排除」の思想を復活し、少ないが高品質なマージを優先。"""
 
     results = analysis.get("results", [])
 
@@ -136,20 +124,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             height_penalty *= 1.5  # v128: MEDIUM_TOWER 1.5倍
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
-            # v548: HIGH_LAYERでのNEAR_MERGE優先
+            # v602: HIGH_LAYERでのNEAR_MERGE優先・品質重視強化版
             if landing_y <= 0.5:
-                # v548: マージ品質に応じてHIGH_LAYERボーナスを調整
+                # v602: マージ品質に応じてHIGH_LAYERボーナスを強化（品質重視）
                 if merge_grade == "DIRECT":
-                    score += 150.0  # v548: DIRECTならさらに強化（100→150）
+                    score += 200.0  # v602: DIRECTを強化（150→200）
                     reasons.append("HIGH_LAYER_LOW_DIRECT")
                 elif merge_grade == "NEAR":
-                    score += 100.0  # v548: NEARなら強化（100→100）
+                    score += 150.0  # v602: NEARを強化（100→150）
                     reasons.append("HIGH_LAYER_LOW_NEAR")
                 elif merge_grade == "FAR":
-                    score += 75.0  # v548: FARなら中程度（50→75）
+                    score += 75.0  # v602: FARは中程度維持（75）
                     reasons.append("HIGH_LAYER_LOW_FAR")
                 else:
-                    score += 100.0  # v548: NO_MERGEならデフォルト（100）
+                    score += 80.0  # v602: NO_MERGEは抑制（100→80）
                     reasons.append("HIGH_LAYER_LOW")
             elif landing_y <= 0.8:
                 # v548: マージ品質に応じてHIGH_LAYERボーナスを調整
@@ -184,46 +172,36 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
         
-        # v551: 序盤HIGH_TOWER回避ボーナス（新規追加）
-        # batch_summary分析: ベストゲーム1317点は序盤からHIGH_LAYERを重視、ワーストゲーム672点は序盤からHIGH_TOWERが支配的
-        # 序盤（turn < 20 or piece_count < 15）でHIGH_TOWERを避けることで盤面を低く保つ
+        # v602: 序盤HIGH_TOWER回避ボーナス（緩和版）
+        # batch_summary分析: 高スコア群merge_rate=10.9%、低スコア群merge_rate=14.4%で逆転
+        # EARLY_HIGH_TOWER_PENALTYが過激すぎて良いマージ機会を回避している
+        # 序盤（turn < 20 or piece_count < 15）でHIGH_TOWERを避けるが、過剰な回避を抑制
         if phase == "MEDIUM" and landing_y > 0.5:
             if turn_count < 20 or piece_count < 15:
-                # 序盤のHIGH_TOWERに大きなペナルティを追加（-150点で回避を強制）
-                score -= 150.0
+                # v602: 序盤のHIGH_TOWERペナルティを緩和（-150→-50）- 過激な回避を抑制
+                score -= 50.0
                 reasons.append("EARLY_HIGH_TOWER_PENALTY")
             elif turn_count < 30 or piece_count < 20:
-                # 中盤初期: やや緩和（-80点）
-                score -= 80.0
+                # 中盤初期: やや緩和（-80→-40）
+                score -= 40.0
                 reasons.append("EARLY_HIGH_TOWER_PENALTY_MID")
-        
-        # v551: 序盤でのHIGH_LAYERマージ確率向上ボーナス（新規追加）
-        # ベストゲーム1317点の特徴: 序盤からHIGH_LAYERでのマージ機会を重視
-        # 序盤（turn < 20 or piece_count < 15）でHIGH_LAYERかつマージなしの場合、マージ機会を待つ価値を高く評価
-        if landing_y > 0.0 and landing_y <= 0.5:
-            if turn_count < 20 or piece_count < 15:
-                # 序盤のHIGH_LAYER_NO_MERGEにボーナスを追加（+40点）
-                if merge_grade == "NO":
-                    score += 40.0
-                    reasons.append("EARLY_HIGH_LAYER_MERGE_WAIT")
-                # 序盤のHIGH_LAYER_MERGEに追加ボーナス（+60点）
-                else:
-                    score += 60.0
-                    reasons.append("EARLY_HIGH_LAYER_MERGE_BONUS")
 
-        # 3. ドリフトによるペナルティ（v548: マージ品質に応じて調整）
+        # v602: EARLY_HIGH_LAYER_MERGE_WAIT削除 - 「待つ」を抑制し、マージ確率向上
+        # v551の「序盤HIGH_LAYER_NO_MERGEに+40点」はマージ率低下を招いたため削除
+
+        # 3. ドリフトによるペナルティ（v602: マージ品質に応じて強化調整）
         drift_penalty_base = 30.0  # v548: v128の一律30.0をベース
         drift_unc_multiplier = 2.0  # ドリフト不確定性の倍率
 
-        # v548: マージ品質に応じた動的調整
+        # v602: マージ品質に応じた動的調整・強化版
         if merge_grade == "DIRECT":
-            drift_penalty_base *= 0.5  # v548: DIRECTなら緩和（0.5倍）
+            drift_penalty_base *= 0.4  # v602: DIRECTをさらに緩和（0.5→0.4）
             reasons.append("DRIFT_DIRECT")
         elif merge_grade == "NEAR":
-            drift_penalty_base *= 0.7  # v548: NEARなら少し緩和（0.7倍）
+            drift_penalty_base *= 0.6  # v602: NEARを緩和（0.7→0.6）
             reasons.append("DRIFT_NEAR")
         else:
-            # v548: NO_MERGEならベース値そのまま
+            # v602: NO_MERGEならベース値そのまま（ペナルティ重視）
             reasons.append("DRIFT_NO_MERGE")
 
         # ドリフト不確定性に応じた動的調整
@@ -232,20 +210,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
         ) * drift_penalty_base
         score -= drift_penalty
         
-        # v551: MEDIUMフェーズでのドリフト不確定性ペナルティ強化（新規追加）
-        # batch_summary分析: ベストゲーム1317点は正確な着地でHIGH到達、ワーストゲーム672点はドリフトで盤面が高くなる
-        # MEDIUMフェーズでdrift_uncが大きい場合、着地予測が不確実でHIGH到達遅延リスクが高い
+        # v602: MEDIUMフェーズでのドリフト不確定性ペナルティ（緩和版）
+        # v551の分析: ベストゲームは正確な着地でHIGH到達だが、ペナルティが強すぎてマージ機会を逃している
+        # v602ではマージ品質に応じてペナルティを緩和し、ドリフト不確定性があってもマージを優先
         if phase == "MEDIUM" and drift_unc > 0.3:
-            # drift_uncが大きいほどペナルティを強化（0.3~0.5: +20%, 0.5~0.7: +40%, 0.7以上: +60%）
-            if drift_unc < 0.5:
-                extra_penalty = 20.0
-                reasons.append("MEDIUM_DRIFT_UNCERTAIN_LOW")
-            elif drift_unc < 0.7:
-                extra_penalty = 40.0
-                reasons.append("MEDIUM_DRIFT_UNCERTAIN_MID")
+            # v602: マージ品質に応じてペナルティを調整
+            if merge_grade == "DIRECT":
+                # DIRECTならペナルティ大幅緩和（マージ優先）
+                if drift_unc < 0.5:
+                    extra_penalty = 5.0  # 20.0→5.0
+                elif drift_unc < 0.7:
+                    extra_penalty = 10.0  # 40.0→10.0
+                else:
+                    extra_penalty = 15.0  # 60.0→15.0
+                reasons.append("MEDIUM_DRIFT_UNCERTAIN_DIRECT")
+            elif merge_grade == "NEAR":
+                # NEARならペナルティ緩和
+                if drift_unc < 0.5:
+                    extra_penalty = 10.0  # 20.0→10.0
+                elif drift_unc < 0.7:
+                    extra_penalty = 20.0  # 40.0→20.0
+                else:
+                    extra_penalty = 30.0  # 60.0→30.0
+                reasons.append("MEDIUM_DRIFT_UNCERTAIN_NEAR")
             else:
-                extra_penalty = 60.0
-                reasons.append("MEDIUM_DRIFT_UNCERTAIN_HIGH")
+                # NO_MERGEなら従来通りのペナルティ（マージ機会を逃すペナルティ）
+                if drift_unc < 0.5:
+                    extra_penalty = 20.0
+                    reasons.append("MEDIUM_DRIFT_UNCERTAIN_LOW")
+                elif drift_unc < 0.7:
+                    extra_penalty = 40.0
+                    reasons.append("MEDIUM_DRIFT_UNCERTAIN_MID")
+                else:
+                    extra_penalty = 60.0
+                    reasons.append("MEDIUM_DRIFT_UNCERTAIN_HIGH")
             score -= extra_penalty
 
         # 4. 左右バランス補正（v548: HIGHフェーズでマージ機会を確保）
