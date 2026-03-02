@@ -80,7 +80,7 @@ def analyze_game(turns, filepath):
     score_deltas_by_reason = defaultdict(list)
     for i in range(1, len(turns)):
         delta = turns[i].get("score", 0) - turns[i - 1].get("score", 0)
-        reason = turns[i].get("decision_reason", "unknown")
+        reason = turns[i - 1].get("decision_reason", "unknown")
         score_deltas_by_reason[reason].append(delta)
 
     merge_rate = round(merge_count / num_turns * 100, 1) if num_turns > 0 else 0

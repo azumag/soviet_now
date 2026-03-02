@@ -72,8 +72,12 @@ for hf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
 	[ -f "$hf" ] && hall_of_fame_files="$hall_of_fame_files $hf"
 done
 
+# 変更履歴ファイル (振り子パターン防止)
+CHANGE_LOG_FILE="tmp/change_log.txt"
+
 # 参照データ (AIにはstagingファイルを編集させる)
 improve_ref_files="$STAGING_FILE $batch_summary_file"
+[ -f "$CHANGE_LOG_FILE" ] && improve_ref_files="$improve_ref_files $CHANGE_LOG_FILE"
 [ -n "$best_game_path" ] && [ -f "$best_game_path" ] && improve_ref_files="$improve_ref_files $best_game_path"
 improve_ref_files="$improve_ref_files $GAME_STATE $past_strategy_files $hall_of_fame_files"
 

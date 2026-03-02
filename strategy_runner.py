@@ -156,7 +156,7 @@ def build_analysis(game_state):
         return {"results": [], "same_type": [], "reactor": {}, "error": str(e)}
 
 
-def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=False, strategy_hash=None):
+def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=False, strategy_hash=None, score_delta=0):
     """1ターン分の履歴をJSONLに記録"""
     pieces = game_state.get("pieces", [])
     score = game_state.get("score", 0)
@@ -164,8 +164,14 @@ def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=
     nxt = game_state.get("next", {})
 
     results = analysis.get("results", [])
-    best_grade = results[0].get("merge_grade", "NO") if results else "NO"
-    has_merge = results[0].get("has_merge", False) if results else False
+
+    # chosen_x に最も近い result を参照（results[0]は最左端なので不正確）
+    chosen_x = decision.get("x", 0.0)
+    chosen_result = None
+    if results:
+        chosen_result = min(results, key=lambda r: abs(r["x"] - chosen_x))
+    best_grade = chosen_result.get("merge_grade", "NO") if chosen_result else "NO"
+    has_merge = chosen_result.get("has_merge", False) if chosen_result else False
 
     reactor = analysis.get("reactor", {})
     reactive_pairs = len(reactor.get("reactive_pairs", []))
@@ -179,7 +185,7 @@ def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=
     record = {
         "turn": turn,
         "score": score,
-        "score_delta": 0,  # 前ターンとの差分は呼び出し側で更新
+        "score_delta": score_delta,
         "piece_count": len(pieces),
         "max_y": round(max_y, 2),
         "next_type": nxt.get("type", 0),
@@ -328,12 +334,12 @@ def run_game():
             short_reason = reason[:30] if len(reason) > 30 else reason
             print(f"  x={drop_x:+.2f}\n  {short_reason}", flush=True)
 
-            # 履歴記録
-            record_turn(history_f, turn, gs, decision, analysis, soviet_created=soviet_created, strategy_hash=strategy_hash)
-
-            # score_delta を更新 (前ターンとの差分)
-            # (JSONLは追記済みなのでログ出力のみ)
+            # score_delta を計算 (前ターンとの差分) — record_turn の前に計算
             delta = score - prev_score
+
+            # 履歴記録
+            record_turn(history_f, turn, gs, decision, analysis, soviet_created=soviet_created, strategy_hash=strategy_hash, score_delta=delta)
+
             if delta > 0:
                 print(f"  +{delta} → {score}", flush=True)
             prev_score = score

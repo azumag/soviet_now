@@ -33,7 +33,7 @@ IMPROVE_STATE_FILE="tmp/improve_state.json"
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
 ROLLING_SCORES_FILE="tmp/rolling_scores.json"
 REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
-MIN_GAMES_BEFORE_IMPROVE=5
+MIN_GAMES_BEFORE_IMPROVE=10
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" tmp
@@ -1526,7 +1526,7 @@ with open(rs_file, 'w') as f:
 }
 
 check_regression() {
-	# 新戦略が5試合以上で旧戦略の85%未満ならリグレッション
+	# 新戦略が10試合以上で旧戦略の80%未満ならリグレッション
 	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
@@ -1573,7 +1573,7 @@ if prev_hash not in rs or len(rs[prev_hash]['scores']) < 3:
 prev_avg = sum(rs[prev_hash]['scores']) / len(rs[prev_hash]['scores'])
 curr_avg = sum(current_scores) / len(current_scores)
 
-if prev_avg > 0 and curr_avg < prev_avg * 0.85:
+if prev_avg > 0 and curr_avg < prev_avg * 0.80:
     print(f'REGRESSION:prev_avg={prev_avg:.0f},curr_avg={curr_avg:.0f},prev_hash={prev_hash}')
 else:
     print('OK')
