@@ -1,5 +1,27 @@
 #!/usr/bin/env python3
-"""strategy.py - AI改善対象の決定スクリプト"""
+"""strategy.py - ソ連パズルゲームの AI ドロップ位置決定スクリプト
+
+ゲーム概要:
+  - ピースをドロップし、同type同士が接触するとマージ (N+N → N+1)
+  - スコアテーブル: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
+  - ボード: x ∈ [-3.0, +3.0], 床 y=-4.48, デッドライン y=3.32
+  - プレイヤーが制御できるのはドロップX座標のみ
+
+決定ロジック (7つの評価軸):
+  1. マージボーナス   — 即座にマージできる位置に高得点 (DIRECT > NEAR > FAR)
+  2. 高度ペナルティ   — 着地位置が高いほど減点 (フェーズで重み変動)
+  3. Reactor保護      — 連鎖進行中は高い位置を回避
+  4. ドリフトペナルティ — ポリゴン形状による着地後のズレを減点
+  5. 左右バランス補正 — ピース数の偏りを是正する方向にボーナス
+  6. nextNext中央寄せ — 次の次と同typeなら中央に寄せてマージ準備
+  7. 同type集約       — 同typeピースが近くに多い位置にボーナス (将来マージ準備)
+
+フェーズ (盤面の最高Y座標で判定):
+  LOW      (max_y < 0.8) : 序盤。マージ優先 (merge_mult=1.2)
+  MEDIUM   (0.8 ≤ max_y < 1.8) : 中盤。高度管理を強化 (height_mult=2.4)
+  HIGH     (1.8 ≤ max_y < 3.0) : 終盤。マージ機会確保 (height_mult=1.8)
+  CRITICAL (3.0 ≤ max_y) : 危険。マージ抑制しとにかく低く (merge_mult=0.6)
+"""
 
 # 固定インターフェース:
 # decide(game_state: dict, analysis: dict) -> dict
@@ -16,12 +38,28 @@
 # 近くに同typeが多いほどボーナスを付与。マージ不可の局面でも将来のマージ確率が高い
 # 位置を選択できるようになる。既存のスコアリングは一切変更せず、新評価軸の追加のみ。
 
-# スコアテーブル: type N = N*(N+1)/2
+# マージ結果のスコア: type N のマージで N*(N+1)/2 点獲得
+# 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v139: 同type集約ボーナス — mergesの距離データで将来マージ確率を評価"""
+    """v139: 同type集約ボーナス — mergesの距離データで将来マージ確率を評価
+
+    Args:
+        game_state: ゲーム状態 (pieces, next, nextNext, score 等)
+        analysis: analyze_board.py の解析結果
+            - results: 各ドロップX候補ごとの着地情報
+                - x: ドロップX座標
+                - landing_y: 推定着地Y座標 (高い=危険)
+                - drift_x/drift_unc: ポリゴン形状による着地後ドリフト
+                - merge_grade: 最良マージ判定 (DIRECT/NEAR/FAR/NO)
+                - merges: 各同typeピースへの個別距離・マージ判定
+            - reactor: 反応器状態 (reactive_pairs, near_pairs 等)
+
+    Returns:
+        {"x": ドロップX座標, "reason": 選択理由}
+    """
 
     results = analysis.get("results", [])
 
@@ -32,29 +70,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_score = -float("inf")
     best_reason = ""
 
-    # 盤面情報
+    # --- 盤面情報の収集 ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定（v42の閾値0.8/1.8/3.0を維持）
+    # --- フェーズ判定 ---
+    # 盤面の最高Y座標で4段階に分類。フェーズごとに高度ペナルティとマージボーナスの
+    # 重みを変える。LOW: マージ狙い / MEDIUM-HIGH: 高度管理 / CRITICAL: 生存優先
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 1.0
-        merge_mult = 1.2
+        height_mult = 1.0     # 低い盤面では高度ペナルティ弱め
+        merge_mult = 1.2      # マージボーナス20%増で積極的に狙う
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v136: v42の2.4に戻す（スコア安定性向上）
+        height_mult = 2.4     # 高度ペナルティを強化して盤面上昇を抑制
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v135: v128の1.8に戻す（HIGHフェーズマージ機会確保）
+        height_mult = 1.8     # HIGHでは少し緩和してマージ機会を確保
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult = 1.0  # CRITICAL: height_multなし
-        merge_mult = 0.6  # v128: v42の0.6を維持
+        height_mult = 1.0     # CRITICALでは高度ペナルティ基本値のみ
+        merge_mult = 0.6      # マージボーナスを40%減。とにかく低い場所に置く
 
-    # Reactor状態: 連鎖中は着地位置を低く保つ
+    # --- Reactor状態 (連鎖反応の検出) ---
+    # reactive_pairs: 接触圏内の同typeペア数。連鎖中は盤面が不安定なので
+    # 高い位置への配置をさらにペナルティする
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
     if isinstance(reactive_pairs, list):
@@ -62,29 +104,36 @@ def decide(game_state: dict, analysis: dict) -> dict:
     else:
         reactor_penalty_scale = 0
 
-    # 次のピース情報
+    # --- 次のピース情報 ---
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # Type別マージボーナス計算: マージ結果type (next_type+1) のスコア価値に基づく
+    # --- Type別マージボーナス計算 ---
+    # マージ結果のtype (next_type+1) が高いほどスコア価値が高い
+    # 例: type1マージ → bonus=330, type5マージ → bonus=510, type14マージ → bonus=1660
     merge_result_type = min(next_type + 1, 16)
     type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
+    # =======================================================================
+    #  各ドロップ候補 (x座標) を7つの評価軸でスコアリング
+    # =======================================================================
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
-        merge_grade = result.get("merge_grade", "NO")
+        merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
 
         score = 0.0
         reasons = []
 
-        # === v131: v126ベース + NEAR_MERGEボーナス強化 ===
-
-        # 1. Type別マージボーナス (高Typeマージほど高ボーナス)
+        # ----- 評価軸 1: マージボーナス -----
+        # analyze_board が判定した merge_grade に応じてボーナス
+        # DIRECT: ターゲットに直撃 (成功率95.7%)
+        # NEAR:   着地後に接触圏内 (成功率68.5%)
+        # FAR:    ドリフトで接触する可能性あり (低確率)
         if merge_grade == "DIRECT":
             score += type_merge_bonus * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -95,34 +144,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += type_merge_bonus * 0.17 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # 2. 高度によるペナルティ
+        # ----- 評価軸 2: 高度ペナルティ -----
+        # 着地Y座標が高いほど大きなペナルティ。フェーズのheight_multで重み調整。
+        # さらにHIGH/MEDIUMで着地が高い(>0.5)場合は追加倍率
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v133: v42/v128の1.3倍に戻す（v126の1.1倍から強化）
+            height_penalty *= 1.3   # HIGH_TOWER: デッドライン接近でさらに厳しく
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5
+            height_penalty *= 1.5   # MEDIUM_TOWER: MEDIUMでの高い着地を強く抑制
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
 
-        # 3. Reactor保護: 連鎖進行中は高い位置への着地をさらにペナルティ
+        # ----- 評価軸 3: Reactor保護 -----
+        # 連鎖反応(reactive_pairs)が進行中は、高い位置に落とすと
+        # 連鎖を妨害するリスクがある。ペア数に比例してペナルティ増加
         if reactor_penalty_scale > 0 and landing_y > 0.0:
             score -= landing_y * 20.0 * reactor_penalty_scale
             if "REACTOR_PROTECT" not in reasons:
                 reasons.append("REACTOR_PROTECT")
 
-        # 4. ドリフトによるペナルティ
+        # ----- 評価軸 4: ドリフトペナルティ -----
+        # ポリゴン形状のピースは着地後に転がる。ドリフト量と不確実性が大きいほど
+        # 狙った位置からズレるリスクが高い
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 5. 左右バランス補正
+        # ----- 評価軸 5: 左右バランス補正 -----
+        # 左右のピース数の偏りを是正する方向にボーナス。
+        # balance_bias > 0 なら右が多い → 左(x<0)に置くとペナルティ減
+        # フェーズが高いほど balance_strength を強くして偏りを厳しく制御
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0
+            balance_strength = 40.0   # 終盤は左右バランスが崩れると即ゲームオーバー
         elif phase == "MEDIUM":
             balance_strength = 30.0
 
@@ -133,35 +191,39 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 6. nextNextが同じタイプなら中央寄せボーナス
+        # ----- 評価軸 6: nextNext中央寄せ -----
+        # nextNextが今のnextと同typeなら、次もマージチャンスがある。
+        # 中央付近に置いておけば次ターンでどちらの方向にもマージしやすい
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # 7. 同type集約ボーナス (v139: mergesの距離データを活用)
-        # 各同typeピースへの距離を見て、近くに多いほどボーナス
-        # マージ判定済みのものも含め、将来マージ確率の高い位置を優先
+        # ----- 評価軸 7: 同type集約ボーナス (v139) -----
+        # analyze_board の merges リストには、この x に落とした場合の
+        # 各同typeピースまでの距離(dist)と接触距離(contact_r)が入っている。
+        # 今すぐマージできなくても、同typeピースの近くに落とせば
+        # 将来の物理移動・爆発衝撃波でマージする確率が上がる。
+        # → 接触距離の3倍以内にいる同typeピースごとにボーナス加算
         cluster_bonus = 0.0
         for m in result.get("merges", []):
             dist = m.get("dist", 99)
             contact_r = m.get("contact_r", 1.0)
-            # 接触距離の3倍以内なら近接とみなしボーナス
-            proximity_limit = contact_r * 3.0
+            proximity_limit = contact_r * 3.0  # この範囲内なら「近い」とみなす
             if dist < proximity_limit:
-                # 近いほど高ボーナス (距離0で最大、proximity_limitで0)
+                # 線形減衰: 距離0で最大80pt、proximity_limitで0pt
                 cluster_bonus += (1.0 - dist / proximity_limit) * 80.0
         if cluster_bonus > 0:
             score += cluster_bonus
             reasons.append("CLUSTER")
 
-        # スコア更新
+        # ----- 最良候補の更新 -----
         if score > best_score:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
-    # 安全な範囲内にクリップ
+    # ドロップ範囲 [-3.0, +3.0] にクリップ
     best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
 
