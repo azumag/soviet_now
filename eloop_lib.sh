@@ -498,7 +498,7 @@ _run_opencode_radio() {
 
 #=== ラジオトーク ===
 
-_radio_pid=0
+: "${_radio_pid:=0}"
 
 start_radio_talk() {
 	local score="$1" turns="$2" game_num="$3" best_score="$4" diff_content="${5:-}" soviet_created="${6:-false}"
@@ -1188,9 +1188,10 @@ _play_comment_queue() {
 	done
 }
 
-_comment_player_pid=0
+: "${_comment_player_pid:=0}"
 
 start_comment_player() {
+	# 既存プレイヤーが生存中なら重複起動しない
 	if [ "$_comment_player_pid" -ne 0 ] && kill -0 "$_comment_player_pid" 2>/dev/null; then
 		return
 	fi
