@@ -12,7 +12,7 @@
 # [BEST:3689] v126: v42ベース・HIGHフェーズマージ強化版
 # v130: データバグ修正に伴う構造改善版 - (1) Type別マージボーナス: フラット1200→SCORE_TABLE[target_type+1]*10+300で高Typeマージを優先 (2) Reactor活用: reactive_pairsが存在する時は連鎖を妨害しない位置を選ぶ (3) 密度ベースフェーズ補正: y>0.5のピース数でMEDIUM→HIGHに早期エスカレーション
 # v131: NEAR_MERGEボーナス強化版 - v130の失敗（スコア488点）を受けて、マージ品質に応じたheight_penalty緩和は複雑すぎ効果不透明と判断し、シンプルな改善に戻る。batch_summaryでNEAR_MERGEのavg_score_delta=23.9と低いことを確認。しかし、HIGH_LAYERでのマージ価値は高い（NEAR_MERGE_HIGH_LAYERのavg_score_delta=53.4）。v126のシンプル構造を維持しつつ、NEAR_MERGEボーナスを600.0→700.0に強化することで、HIGH_LAYERでのマージ機会を増やし、スコアを伸ばす。振り子パターン（height_multiplier微調整）を回避し、NEAR_MERGEボーナスの強化で改善。コード量維持（約110行）。
-
+# v132: HIGHフェーズ高度管理強化版 - v131の失敗（スコア1013点）を受けて、HIGHフェーズheight_multをv42の2.6に復活させることで高度管理を強化。v42の成功構造（HIGH=2.6/MEDIUM=2.4）を維持しつつ、v131のHIGHフェーズ緩和（1.8）を元に戻す。これによりHIGHフェーズでマージを優先しつつ、過度な高度緩和を回避する。コード量維持（約110行）。
 
 # スコアテーブル: type N = N*(N+1)/2
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
@@ -45,7 +45,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v128: HIGHフェーズ高度管理大幅緩和（v42の2.6から1.8へ、マージ優先を徹底）
+        height_mult = 2.6  # v132: v42の2.6に復活（v131の1.8→2.6）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
