@@ -204,7 +204,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 # 併合後のtype (merged_type) のピースが盤面上にあるか確認
                 # 連鎖判定距離: typeの半径 + ピースの半径 (0.5〜2.0程度)
-                chain_distance = 2.5  # 連鎖判定の閾値（調整可能）
+                chain_distance = 3.0  # v150: 2.5→3.0に緩和
 
                 for p in pieces:
                     if p.get("type") == merged_type:

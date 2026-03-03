@@ -1570,9 +1570,10 @@ start_comment_watcher() {
 				fi
 			fi
 
+			# 生成中でもfetchしてpending.logに蓄積（raw.logの肥大化防止 + 即応答準備）
+			./twitch_chat.sh fetch 2>/dev/null
+
 			if [ "$gen_running" = "false" ]; then
-				# コメントがあるか軽量チェック（fetchして確認）
-				./twitch_chat.sh fetch 2>/dev/null
 				if [ -f "tmp/twitch_comments.txt" ] && [ -s "tmp/twitch_comments.txt" ]; then
 					log "[COMMENT-WATCHER] 新コメント検出 → 生成開始"
 					# generate_comment_response はfetch済みファイルを使い、ack→生成→キュー追加
