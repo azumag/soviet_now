@@ -500,6 +500,7 @@ _run_opencode_radio() {
 		grep -v '^\^D' |
 		grep -v '^/[^ ]*$' |
 		grep -v '^[[:space:]]*/Users/' |
+		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
 		sed '/^[[:space:]]*$/d'
 	rm -f "$raw_file"
 }
@@ -605,9 +606,143 @@ _radio_output_rules() {
 RULES
 }
 
+_radio_parse_output_to_files() {
+	local body_file="$1" summary_file="$2" selected_news_file="$3"
+	local parser_file
+	parser_file=$(mktemp /tmp/eloop_radio_parser_XXXXXXXX.py)
+	cat >"$parser_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+body_path, summary_path, selected_path = sys.argv[1:4]
+raw = sys.stdin.read().replace("\r", "")
+
+raw = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw)
+raw = re.sub(
+    r"</?(?:arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>",
+    "",
+    raw,
+    flags=re.IGNORECASE,
+)
+
+lines = [line.strip() for line in raw.splitlines()]
+clean_lines = []
+for line in lines:
+    if not line:
+        continue
+    if line.startswith("```"):
+        continue
+    if line == "^D":
+        continue
+    if re.fullmatch(r"/[^ ]*", line):
+        continue
+    if line.startswith("/Users/"):
+        continue
+    if re.fullmatch(r"</?[^>]+>", line):
+        continue
+    clean_lines.append(line)
+
+def marker_positions(marker):
+    return [idx for idx, line in enumerate(clean_lines) if line == marker]
+
+summary_pos = marker_positions("===SUMMARY===")
+selected_pos = marker_positions("===SELECTED_NEWS===")
+main_lines = clean_lines[: selected_pos[0]] if selected_pos else clean_lines
+
+selected_news = ""
+if selected_pos:
+    for line in clean_lines[selected_pos[0] + 1 :]:
+        if not line or line.startswith("==="):
+            continue
+        selected_news = line
+        break
+selected_news = re.sub(r"</?[A-Za-z_][^>]*>", "", selected_news).strip()
+selected_news = re.sub(r"\s+", " ", selected_news)[:240]
+
+summary = ""
+if summary_pos:
+    summary_lines = []
+    for line in main_lines[summary_pos[0] + 1 :]:
+        if line.startswith("==="):
+            break
+        if not line:
+            continue
+        summary_lines.append(line)
+        if len(summary_lines) >= 2:
+            break
+    if summary_lines:
+        summary = " / ".join(summary_lines)
+summary = re.sub(r"</?[A-Za-z_][^>]*>", "", summary).strip()
+summary = re.sub(r"\s+", " ", summary)[:220]
+
+segments = []
+start = 0
+for idx, line in enumerate(main_lines):
+    if line == "===SUMMARY===":
+        segments.append(main_lines[start:idx])
+        start = idx + 1
+segments.append(main_lines[start:])
+
+def score_segment(seg):
+    txt = " ".join(seg).strip()
+    if not txt:
+        return -1
+    punct = len(re.findall(r"[。.!?！？]", txt))
+    return len(txt) + punct * 80
+
+body_lines = []
+if segments:
+    best = max(segments, key=score_segment)
+    body_lines = [line for line in best if line and not line.startswith("===")]
+
+if body_lines:
+    head = body_lines[0]
+    if ("," in head or "、" in head) and not re.search(r"[。.!?！？]", head):
+        body_lines = body_lines[1:]
+    elif head.count(",") + head.count("、") >= 4 and len(head) <= 180 and len(body_lines) >= 2:
+        body_lines = body_lines[1:]
+
+body = "\n".join(body_lines).strip()
+body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
+
+if len(body) < 100:
+    if summary_pos and summary_pos[0] < len(main_lines):
+        before_summary = [line for line in main_lines[: summary_pos[0]] if not line.startswith("===")]
+        body = "\n".join(before_summary).strip()
+    if len(body) < 100:
+        fallback_lines = [line for line in main_lines if not line.startswith("===")]
+        body = "\n".join(fallback_lines).strip()
+    body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
+
+clean_body_lines = [line.strip() for line in body.splitlines() if line.strip()]
+if clean_body_lines:
+    head = clean_body_lines[0]
+    if ("," in head or "、" in head) and not re.search(r"[。.!?！？]", head):
+        clean_body_lines = clean_body_lines[1:]
+    elif head.count(",") + head.count("、") >= 4 and len(head) <= 180 and len(clean_body_lines) >= 2:
+        clean_body_lines = clean_body_lines[1:]
+body = "\n".join(clean_body_lines).strip()
+
+body = re.sub(r"\n{3,}", "\n\n", body)
+if len(body) > 12000:
+    body = body[:12000]
+
+Path(body_path).write_text(body, encoding="utf-8")
+Path(summary_path).write_text(summary, encoding="utf-8")
+Path(selected_path).write_text(selected_news, encoding="utf-8")
+PY
+	python3 "$parser_file" "$body_file" "$summary_file" "$selected_news_file"
+	local rc=$?
+	rm -f "$parser_file"
+	return $rc
+}
+
 _radio_past_topics_block() {
 	local past_topics=""
-	[ -f "$PAST_RADIO_TOPICS" ] && past_topics=$(cat "$PAST_RADIO_TOPICS")
+	if [ -f "$PAST_RADIO_TOPICS" ]; then
+		past_topics=$(grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null | tail -80)
+	fi
 	echo "${past_topics:-まだ過去のトークはありません。自由に話してください。}"
 }
 
@@ -688,15 +823,17 @@ _radio_generate_and_play() {
 		return 1
 	fi
 
-	local talk_body talk_summary
-	talk_body=$(echo "$talk" | sed '/^===SUMMARY===/,$d')
-	talk_summary=$(echo "$talk" | sed -n '/^===SUMMARY===/,$ p' | tail -n +2 | sed '/^===SELECTED_NEWS===/,$d')
+	local talk_body talk_summary selected_news parse_dir
+	parse_dir=$(mktemp -d /tmp/eloop_radio_parse_XXXXXXXX)
+	printf '%s' "$talk" | _radio_parse_output_to_files "$parse_dir/body.txt" "$parse_dir/summary.txt" "$parse_dir/selected_news.txt"
+	talk_body=$(cat "$parse_dir/body.txt" 2>/dev/null)
+	talk_summary=$(cat "$parse_dir/summary.txt" 2>/dev/null)
+	selected_news=$(cat "$parse_dir/selected_news.txt" 2>/dev/null)
+	rm -rf "$parse_dir"
 	[ -z "$talk_summary" ] && talk_summary="(要約なし)"
 
 	# ニュースコーナーの場合、選んだニュースを既読リストに記録
 	if [ "$corner_name" = "news" ]; then
-		local selected_news
-		selected_news=$(echo "$talk" | sed -n '/^===SELECTED_NEWS===/,$ p' | tail -n +2 | head -1)
 		if [ -n "$selected_news" ]; then
 			echo "$selected_news" >>"$PAST_NEWS_READ"
 			tail -30 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
@@ -704,8 +841,10 @@ _radio_generate_and_play() {
 		fi
 	fi
 
-	echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}" >>"$PAST_RADIO_TOPICS"
-	tail -100 "$PAST_RADIO_TOPICS" >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
+	{
+		[ -f "$PAST_RADIO_TOPICS" ] && grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null || true
+		echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
+	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
 	talk_body=$(echo "$talk_body" | _radio_dedup_text)
 	if [ ${#talk_body} -lt 100 ]; then
