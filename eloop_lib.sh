@@ -1371,7 +1371,7 @@ COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
 _play_comment_queue() {
 	# .playing ファイルのリカバリ（前回kill等で残った孤児を再キュー）
-	for orphan in "$COMMENT_QUEUE_DIR"/comment_*.playing 2>/dev/null; do
+	for orphan in "$COMMENT_QUEUE_DIR"/comment_*.playing; do
 		[ -f "$orphan" ] || continue
 		local recovered="${orphan%.playing}.txt"
 		mv "$orphan" "$recovered" 2>/dev/null
