@@ -79,6 +79,7 @@ done <<< "$all_items"
 if [ -z "$available" ]; then
     > "$PAST_NEWS"
     > "tmp/.past_news_read.txt"
+    > "tmp/.past_news_read_keys.txt"
     past_titles=""
     available=""
     seen_titles=""

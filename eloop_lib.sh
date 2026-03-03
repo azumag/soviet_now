@@ -525,7 +525,7 @@ _radio_time_context() {
 	_rc_time=$(date '+%H:%M')
 	if [ "$_rc_hour" -ge 5 ] && [ "$_rc_hour" -lt 9 ]; then
 		_rc_period="早朝"
-		_rc_mood="早朝放送。誰に向けてやってるのか本人もよくわかっていない。寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
+		_rc_mood="早朝放送。静かな時間帯に合わせて、寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
 	elif [ "$_rc_hour" -ge 9 ] && [ "$_rc_hour" -lt 12 ]; then
 		_rc_period="午前"
 		_rc_mood="午前中の放送。人工知能はいつでも全力"
@@ -807,7 +807,10 @@ PY
 }
 
 _filter_unread_news_blocks() {
-	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" <<'PY'
+	local news_tmp
+	news_tmp=$(mktemp /tmp/eloop_news_blocks_XXXXXXXX)
+	cat >"$news_tmp"
+	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$news_tmp" <<'PY'
 import os
 import re
 import sys
@@ -815,7 +818,11 @@ import unicodedata
 
 past_title_file = sys.argv[1]
 past_key_file = sys.argv[2]
-news_text = sys.stdin.read()
+news_file = sys.argv[3]
+news_text = ""
+if os.path.exists(news_file):
+    with open(news_file, encoding="utf-8", errors="ignore") as f:
+        news_text = f.read()
 
 def key(s: str) -> str:
     s = unicodedata.normalize("NFKC", s).strip().lower()
@@ -867,6 +874,7 @@ for b in blocks:
 
 print("\n\n".join(out))
 PY
+	rm -f "$news_tmp"
 }
 
 _resolve_selected_news_title() {
@@ -969,9 +977,22 @@ _radio_generate_and_play() {
 	# ニュースコーナーの場合、選んだニュースを既読リストに記録
 	if [ "$corner_name" = "news" ]; then
 		if [ -n "$selected_news" ]; then
-			echo "$selected_news" >>"$PAST_NEWS_READ"
-			tail -30 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
-			log "[RADIO:news] 既読記録: ${selected_news}"
+			local selected_key
+			selected_news=$(_resolve_selected_news_title "$selected_news" "tmp/news.txt")
+			selected_key=$(_news_title_key "$selected_news")
+			if [ -z "$selected_key" ]; then
+				log "[RADIO:news] 既読記録スキップ: タイトル解決失敗"
+			elif grep -qxF "$selected_news" "$PAST_NEWS_READ" 2>/dev/null || grep -qxF "$selected_key" "$PAST_NEWS_READ_KEYS" 2>/dev/null; then
+				log "[RADIO:news] 重複ニュース検出 → スキップ: ${selected_news}"
+				_radio_clear_state "$corner_name"
+				return 1
+			else
+				echo "$selected_news" >>"$PAST_NEWS_READ"
+				echo "$selected_key" >>"$PAST_NEWS_READ_KEYS"
+				tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
+				tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
+				log "[RADIO:news] 既読記録: ${selected_news}"
+			fi
 		fi
 	fi
 
@@ -1500,17 +1521,10 @@ start_radio_corner_news() {
 	local past_news_read=""
 	[ -f "$PAST_NEWS_READ" ] && past_news_read=$(cat "$PAST_NEWS_READ")
 
-	# 全ニュースが既読なら読む意味がないのでスキップ
-	local has_unread=false
-	while IFS= read -r line; do
-		[[ "$line" != ■* ]] && continue
-		local title="${line#■ }"
-		if [ -n "$title" ] && ! grep -qF "$title" "$PAST_NEWS_READ" 2>/dev/null; then
-			has_unread=true
-			break
-		fi
-	done <<< "$news_headlines"
-	if [ "$has_unread" = false ]; then
+	# 正規化キーで未読のみ抽出（表記揺れを吸収）
+	local unread_news_headlines=""
+	unread_news_headlines=$(printf '%s\n' "$news_headlines" | _filter_unread_news_blocks)
+	if [ -z "$unread_news_headlines" ]; then
 		log "[NEWS] 全ニュースが既読 → スキップ"
 		return 1
 	fi
@@ -1526,7 +1540,7 @@ $(_radio_persona_block)
 【最新ニュース - 実際の本日のニュース】
 以下は本日の実際のニュースです。「既に読んだニュース」以外から1つ選んで、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
 ---
-${news_headlines}
+${unread_news_headlines}
 ---
 
 【既に読んだニュース - 絶対に選ばないこと】
