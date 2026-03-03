@@ -34,8 +34,6 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズ併合強化版
-# v141: 盤面整理度スコア追加 - 盤面全体の同type集約度を評価。各typeの最短ペア距離を計算し、
-# 近くに集まっているtypeほどボーナス。同typeが分散している盤面をペナルティして、将来の併合機会を損なう配置を抑制。
 # v142: 併合品質に応じたクラスタリング重み動的調整 - v141では盤面クラスタリングスコアを一律に全ドロップ候補に加算していたため、
 # 併合品質と無関係にクラスタリングだけを優先する危険性があった。v142では併合品質(DIRECT/NEAR/FAR/NO)に応じて
 # クラスタリングスコアの重みを動的に調整：DIRECTで×1.3強化（高品質併合×整理された盤面）、
@@ -43,6 +41,9 @@
 # これにより盤面クラスタリング(将来の併合確率)と即時併合のトレードオフを適切に調整。
 # v143: 盤面平坦度スコア追加 - 盤面のY座標の分散（標準偏差）を計算し、分散が小さいほどボーナス。
 # 平坦な盤面はピースが均一に配置され、隙間が少なく、連鎖反応が起きやすい。
+# v146: 盤面平坦度スコアの動的調整版 - v143の一律加算を盤面の高さ（max_y）に応じた動的調整に変更。
+# LOWフェーズでは平坦度を無視（flatness_weight=0.0）し、HIGH/CRITICALフェーズでは平坦度を重視（flatness_weight=1.0-2.0）することで、
+# 盤面の状態に応じた戦略切り替えを実現し、スコア安定性を向上させる。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -153,7 +154,11 @@ def calculate_board_flatness(pieces):
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v143: 盤面平坦度スコア追加版
+    """v146: 盤面平坦度スコアの動的調整版
+
+    盤面平坦度スコアを盤面の高さ（max_y）に応じて動的に調整する。
+    LOWフェーズでは平坦度を無視し、HIGH/CRITICALフェーズでは平坦度を重視することで、
+    盤面の状態に応じた戦略切り替えを実現し、スコア安定性を向上させる。
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -232,6 +237,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- v143: 盤面平坦度スコア計算 ---
     # 盤面全体のY座標分散を計算（全ドロップ候補で共通）
     current_flatness = calculate_board_flatness(pieces)
+
+    # --- v146: 盤面平坦度スコアの動的調整 ---
+    # 盤面が高いほど平坦度を重視（盤面の状態に応じた戦略切り替え）
+    # LOWフェーズでは平坦度を無視し、HIGH/CRITICALフェーズでは平坦度を重視
+    if max_y < 0.8:          # LOWフェーズ
+        flatness_weight = 0.0  # 低い盤面では平坦度は無視（併合優先）
+    elif max_y < 1.8:        # MEDIUMフェーズ
+        flatness_weight = 0.5  # 中程度に考慮
+    elif max_y < 3.0:        # HIGHフェーズ
+        flatness_weight = 1.0  # 重要だが絶対的ではない
+    else:                   # CRITICALフェーズ
+        flatness_weight = 2.0  # 非常に重要（平坦でないと崩れる）
 
     # =======================================================================
     #  各ドロップ候補 (x座標) を9つの評価軸でスコアリング
@@ -367,15 +384,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             elif current_clustering < -50.0:
                 reasons.append("BOARD_SCATTERED")
 
-        # ----- 評価軸 9: 盤面平坦度スコア (v143: 新規追加) -----
-        # 盤面全体のY座標分散（標準偏差）を計算し、分散が小さいほどボーナスを与える。
-        # 平坦な盤面はピースが均一に配置され、隙間が少なく、連鎖反応が起きやすい。
-        # 全ドロップ候補で共通のスコアなので一律に加算。
-        score += current_flatness * 1.0  # v143: 平坦度スコアを一律加算
-        if current_flatness > 50.0:
+        # ----- 評価軸 9: 盤面平坦度スコア (v146: 動的調整版) -----
+        # v143では盤面平坦度スコアを一律に加算していたが、v146では盤面の高さ（max_y）に応じて
+        # 動的に調整：LOWフェーズでは平坦度を無視、HIGH/CRITICALフェーズでは平坦度を重視
+        # 盤面が高いほど平坦さが生存に直結するため、盤面の状態に応じた戦略切り替えを実現
+        score += current_flatness * flatness_weight
+        if flatness_weight > 1.0:
+            reasons.append("BOARD_FLAT_CRITICAL")
+        elif flatness_weight > 0.5:
             reasons.append("BOARD_FLAT")
-        elif current_flatness < -30.0:
-            reasons.append("BOARD_ROUGH")
+        elif flatness_weight > 0.0:
+            reasons.append("BOARD_FLAT_MEDIUM")
+        # flatness_weight=0.0 (LOWフェーズ) ではreasonに追加しない
 
         # ----- 最良候補の更新 -----
         if score > best_score:
