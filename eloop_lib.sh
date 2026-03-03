@@ -31,6 +31,7 @@ RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"all
 RADIO_SAY_RATE=150
 PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
 PAST_NEWS_READ="tmp/.past_news_read.txt"
+PAST_NEWS_READ_KEYS="tmp/.past_news_read_keys.txt"
 
 IMPROVE_STATE_FILE="tmp/improve_state.json"
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
@@ -786,7 +787,137 @@ if repeat_phrase:
 if len(result) > 10000:
     result = result[:10000]
 print(result, end='')
-"
+	"
+}
+
+_news_title_key() {
+	local title="$1"
+	python3 - "$title" <<'PY'
+import re
+import sys
+import unicodedata
+
+s = sys.argv[1] if len(sys.argv) > 1 else ""
+s = unicodedata.normalize("NFKC", s).strip().lower()
+s = re.sub(r'[\s\u3000]+', '', s)
+s = ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('P', 'S'))
+s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
+print(s[:240])
+PY
+}
+
+_filter_unread_news_blocks() {
+	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" <<'PY'
+import os
+import re
+import sys
+import unicodedata
+
+past_title_file = sys.argv[1]
+past_key_file = sys.argv[2]
+news_text = sys.stdin.read()
+
+def key(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s).strip().lower()
+    s = re.sub(r'[\s\u3000]+', '', s)
+    s = ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('P', 'S'))
+    s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
+    return s[:240]
+
+past_keys = set()
+if os.path.exists(past_title_file):
+    for ln in open(past_title_file, encoding="utf-8", errors="ignore"):
+        t = ln.strip()
+        if not t:
+            continue
+        k = key(t)
+        if k:
+            past_keys.add(k)
+if os.path.exists(past_key_file):
+    for ln in open(past_key_file, encoding="utf-8", errors="ignore"):
+        k = ln.strip()
+        if k:
+            past_keys.add(k)
+
+blocks = []
+current = []
+for line in news_text.splitlines():
+    if line.startswith("■ "):
+        if current:
+            blocks.append(current)
+        current = [line]
+    elif current:
+        current.append(line)
+if current:
+    blocks.append(current)
+
+seen = set()
+out = []
+for b in blocks:
+    title = b[0][2:].strip()
+    k = key(title)
+    if not k:
+        continue
+    if k in seen:
+        continue
+    if k in past_keys:
+        continue
+    seen.add(k)
+    out.append("\n".join(b).rstrip())
+
+print("\n\n".join(out))
+PY
+}
+
+_resolve_selected_news_title() {
+	local selected_title="$1" news_file="$2"
+	python3 - "$selected_title" "$news_file" <<'PY'
+import os
+import re
+import sys
+import unicodedata
+
+selected = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+news_file = sys.argv[2] if len(sys.argv) > 2 else ""
+
+def key(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s).strip().lower()
+    s = re.sub(r'[\s\u3000]+', '', s)
+    s = ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('P', 'S'))
+    s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
+    return s[:240]
+
+titles = []
+if os.path.exists(news_file):
+    with open(news_file, encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if line.startswith("■ "):
+                titles.append(line[2:].strip())
+
+if not selected:
+    print("")
+    raise SystemExit(0)
+if not titles:
+    print(selected)
+    raise SystemExit(0)
+
+sel_key = key(selected)
+for t in titles:
+    if t.strip() == selected:
+        print(t)
+        raise SystemExit(0)
+for t in titles:
+    if key(t) == sel_key and sel_key:
+        print(t)
+        raise SystemExit(0)
+for t in titles:
+    tk = key(t)
+    if sel_key and (sel_key in tk or tk in sel_key):
+        print(t)
+        raise SystemExit(0)
+
+print(selected)
+PY
 }
 
 # 自分のコーナーの状態ファイルだけ安全に削除 (並列実行の競合防止)
