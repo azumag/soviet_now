@@ -40,6 +40,11 @@
 # 新しい評価軸「連鎖併合ボーナス」を追加し、併合後にさらに連鎖できる可能性を評価する。
 # result["merges"]から最良の併合ターゲットを取得し、併合後のtype (next_type+1) の周囲に同じtypeのピースがないか確認。
 # 連鎖可能性が高い位置にボーナスを与えることで、高スコア群の戦略（NEAR_MERGE_HIGH_LAYER等のavg_score_delta=36.4）を再現。
+# v151: MEDIUMフェーズ高度管理緩和・chain_merge_bonus強化版 - batch_summary分析でHEIGHT_CONTROLのavg_score_delta=1.9と非常に低いこと、
+# NEAR_MERGE関連（特にCHAIN_MERGE付き）がavg_score_delta=34.6〜52.1と高価値であることを確認。
+# HEIGHT_CONTROLが頻繁に選択されるが価値が低い問題を解決するため、MEDIUMフェーズheight_multを2.2→1.8に緩和して併合機会を増加。
+# 同時にchain_merge_bonusの係数を150.0→200.0に強化し、連鎖併合の可能性をより重視する。
+# これによりHEIGHT_CONTROLの選択率を減らし、高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を増やすことでスコア向上を目指す。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -47,12 +52,13 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v149: v148ベース・連鎖併合ボーナス追加版
+    """v151: MEDIUMフェーズ高度管理緩和・chain_merge_bonus強化版
 
-    batch_summary分析でHEIGHT_CONTROLのavg_score_delta=0.7と低いこと、NEAR_MERGE関連が正の効果があることを確認。
-    新しい評価軸「連鎖併合ボーナス」を追加し、併合後にさらに連鎖できる可能性を評価する。
-    result["merges"]から最良の併合ターゲットを取得し、併合後のtype (next_type+1) の周囲に同じtypeのピースがないか確認。
-    連鎖可能性が高い位置にボーナスを与えることで、高スコア群の戦略（NEAR_MERGE_HIGH_LAYER等のavg_score_delta=36.4）を再現。
+    batch_summary分析でHEIGHT_CONTROLのavg_score_delta=1.9と非常に低いこと、
+    NEAR_MERGE関連（特にCHAIN_MERGE付き）がavg_score_delta=34.6〜52.1と高価値であることを確認。
+    HEIGHT_CONTROLが頻繁に選択されるが価値が低い問題を解決するため、MEDIUMフェーズheight_multを2.2→1.8に緩和して併合機会を増加。
+    同時にchain_merge_bonusの係数を150.0→200.0に強化し、連鎖併合の可能性をより重視する。
+    これによりHEIGHT_CONTROLの選択率を減らし、高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を増やすことでスコア向上を目指す。
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -89,7 +95,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 併合ボーナス20%増で積極的に狙う
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.2  # v148: v147の2.3→v42(2.4)とv145(2.2)の中間値2.2に緩和、併合機会確保
+        height_mult = 1.8  # v151: height_multを2.2→1.8に緩和、併合機会確保
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
@@ -190,10 +196,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- 評価軸 6: 連鎖併合ボーナス (v149: 新規追加) -----
+        # ----- 評価軸 6: 連鎖併合ボーナス (v149: 新規追加, v151: 強化) -----
         # 併合が成功した場合、連鎖してさらに併合できるか評価
         # result["merges"]から最良の併合ターゲットを取得
         # 併合後のtype (merged_type) の周囲に同じtypeのピースがないか確認
+        # v151: chain_merge_bonusの係数を150.0→200.0に強化
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -204,14 +211,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 # 併合後のtype (merged_type) のピースが盤面上にあるか確認
                 # 連鎖判定距離: typeの半径 + ピースの半径 (0.5〜2.0程度)
-                chain_distance = 2.5  # 連鎖判定の閾値（調整可能）
+                chain_distance = 3.0  # v150: 2.5→3.0に緩和、v151: 維持
 
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
                         if dist < chain_distance:
                             # 連鎖可能性がある: 距離が近いほど大きなボーナス
-                            chain_bonus = (chain_distance - dist) * 150.0  # 係数150.0（調整可能）
+                            # v151: 係数を150.0→200.0に強化し、連鎖併合をより重視
+                            chain_bonus = (chain_distance - dist) * 200.0
                             score += chain_bonus
                             reasons.append("CHAIN_MERGE")
                             break  # 1つ見つかれば十分
