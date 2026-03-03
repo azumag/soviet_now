@@ -1761,6 +1761,13 @@ for p in pieces:
 if ys:
     print(f"y_range(min,max)=({min(ys):.3f}, {max(ys):.3f})")
 
+max_type = max(type_counter) if type_counter else 0
+type14 = type_counter.get(14, 0)
+type15 = type_counter.get(15, 0)
+type16 = type_counter.get(16, 0)
+print(f"max_type={max_type}, type14_count={type14}, type15_count={type15}, type16_count={type16}")
+print("type_hint: type15=ロシア, type16=ソ連")
+
 top_types = ", ".join(f"type{t}x{c}" for t, c in type_counter.most_common(8))
 print(f"type_count_top={top_types if top_types else '（不明）'}")
 
@@ -1849,6 +1856,7 @@ generate_comment_response() {
 
 	【現在のゲーム盤面サマリ（game_state.json）】
 	${game_board_context:-（取得失敗）}
+	※これはコメント生成時点のスナップショットです。実際の読み上げ時には盤面が進行している可能性があります。
 
 	【ルール】
 	- 全てのコメントに必ず返事すること。一つも漏らさない
@@ -1872,6 +1880,7 @@ generate_comment_response() {
 	- コメントの中にゲーム戦略へのアドバイスが含まれていた場合、言い訳せず真摯に受け止め、「次の戦略改善に取り入れます」と具体的に説明すること
 	- 盤面への言及（例: 右が高い、左が詰まってる、次の駒が弱い、typeが偏ってる等）があれば、必ずゲーム盤面サマリを参照して具体的に返すこと
 	- 盤面サマリだけで断定できない場合は、断定せずに「今の盤面を見る限りは〜」として慎重に返すこと
+	- 「ロシアできた」「ソ連できた」系の報告は、まず祝意を示すこと。盤面サマリに type15/type16 が見えない場合でも、反映ラグの可能性を明示して断定否定しないこと
 	- 戦略アドバイスがあった場合、トーク本文の後に以下の形式で出力すること:
   ===ADVICE===
   （アドバイス内容を1-3行で要約。コメント主の名前も記載）
