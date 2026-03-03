@@ -31,17 +31,27 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズ併合強化版
-# v152: CHAIN_MERGE大幅強化版 - batch_summary分析でNEAR_MERGE_HIGH_LAYER_CHAIN_MERGEのavg_score_delta=56.0と非常に高いことを確認。
-# v151でchain_merge_bonusを200.0に強化したが、CHAIN_MERGEの選択率はまだ低い（5.8%）。CHAIN_MERGEをさらに強化し、HEIGHT_CONTROLの選択率を減らすことでスコア向上を目指す。
-# chain_merge_bonusの係数を200.0→300.0に大幅強化し、chain_distanceを3.0→3.5に緩和して、より広範囲の連鎖可能性を評価する。
 # v153: CHAIN_MERGE超強化版 - batch_summary分析でNEAR_MERGE_HIGH_LAYER_CHAIN_MERGEのavg_score_delta=44.7、
 # NEAR_MERGE_CHAIN_MERGEのavg_score_delta=58.7と非常に高いことを確認。
 # v152でchain_merge_bonusを300.0に強化したが、CHAIN_MERGEの選択率はまだ低い（16.4%）。
 # CHAIN_MERGEをさらに強化し、HEIGHT_CONTROL（選択率27.4%、avg_score_delta=2.0）の選択率を減らすことでスコア向上を目指す。
 # chain_merge_bonusの係数を300.0→400.0に超強化し、chain_distanceを3.5→4.0にさらに緩和して、
 # より広範囲の連鎖可能性を評価し、CHAIN_MERGE選択率を15%以上に引き上げる。
-# v154: 動的連鎖併合ボーナス版 - v153のCHAIN_MERGE選択率がまだ低い(約20%)こと、HEIGHT_CONTROL(26.5%, avg_score_delta=2.9)が依然として選択されていることから、着地高に応じてCHAIN_MERGEの判定距離とボーナス係数を動的に調整するロジックを追加。
-# landing_yが高いほどchain_distance_maxを拡大（3.5 + landing_y*0.5）し、chain_bonus_multiplierも強化（400.0 + landing_y*100.0）することで、HIGH_LAYER状況でのCHAIN_MERGE選択を強制的に誘導し、HEIGHT_CONTROLを減らす。構造的変更で振り子パターンを回避。
+# v155: 動的パラメータ強化版
+# batch_summary分析でHEIGHT_CONTROLが22.3%(avg_score_delta=2.0)と最多だが効果が薄いこと、
+# NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE等がavg_score_delta=44.7〜70.3と高価値だがCHAIN_MERGE全体の選択率が約20%にとどまっていることを確認。
+# v154の動的調整ロジックを採用し、調整係数を強化してCHAIN_MERGEの選択率を高めることで、HEIGHT_CONTROLを減らしスコア向上を目指す。
+# chain_distance_maxの調整係数を0.5→0.6に強化し、chain_bonus_multiplierの調整係数を100.0→150.0に強化することで、
+# より広範囲の連鎖可能性を評価し、より強力なボーナスを与える。構造変更なしで振り子パターンを回避。
+# 例: landing_y=0.0 → distance_max=3.5, multiplier=400.0
+# 例: landing_y=1.0 → distance_max=4.1, multiplier=550.0
+# 例: landing_y=2.0 → distance_max=4.7, multiplier=700.0
+# 例: landing_y=3.0 → distance_max=5.3, multiplier=850.0
+# v155: 動的パラメータ強化版 - batch_summary分析でHEIGHT_CONTROLが22.3%(avg_score_delta=2.0)と最多だが効果が薄いこと、
+# NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE等がavg_score_delta=44.7〜70.3と高価値だがCHAIN_MERGE全体の選択率が約20%にとどまっていることを確認。
+# v154の動的調整ロジックは採用済みだが、調整係数を強化してCHAIN_MERGEの選択率を高めることで、HEIGHT_CONTROLを減らしスコア向上を目指す。
+# chain_distance_maxの調整係数を0.5→0.6に強化し、chain_bonus_multiplierの調整係数を100.0→150.0に強化することで、
+# より広範囲の連鎖可能性を評価し、より強力なボーナスを与える。構造変更なしで振り子パターンを回避。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -49,12 +59,13 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v154: 動的連鎖併合ボーナス版
+    """v155: 動的パラメータ強化版
 
-    v153のCHAIN_MERGE選択率がまだ低い(約20%)こと、HEIGHT_CONTROL(26.5%, avg_score_delta=2.9)が依然として選択されていることから、
-    着地高に応じてCHAIN_MERGEの判定距離とボーナス係数を動的に調整するロジックを追加。
-    landing_yが高いほどchain_distance_maxを拡大（3.5 + landing_y*0.5）し、chain_bonus_multiplierも強化（400.0 + landing_y*100.0）することで、
-    HIGH_LAYER状況でのCHAIN_MERGE選択を強制的に誘導し、HEIGHT_CONTROLを減らす。
+    batch_summary分析でHEIGHT_CONTROLが22.3%(avg_score_delta=2.0)と最多だが効果が薄いこと、
+    NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE等がavg_score_delta=44.7〜70.3と高価値だがCHAIN_MERGE全体の選択率が約20%にとどまっていることを確認。
+    v154の動的調整ロジックを採用し、調整係数を強化してCHAIN_MERGEの選択率を高めることで、HEIGHT_CONTROLを減らしスコア向上を目指す。
+    chain_distance_maxの調整係数を0.5→0.6に強化し、chain_bonus_multiplierの調整係数を100.0→150.0に強化することで、
+    より広範囲の連鎖可能性を評価し、より強力なボーナスを与える。構造変更なしで振り子パターンを回避。
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -192,7 +203,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- 評価軸 6: 連鎖併合ボーナス (v154: 動的調整版) -----
+        # ----- 評価軸 6: 連鎖併合ボーナス (v155: 動的パラメータ強化版) -----
         # 併合が成功した場合、連鎖してさらに併合できるか評価
         # v154: 着地高に応じてCHAIN_MERGEの判定距離とボーナス係数を動的に調整
         # landing_yが高いほど、より広範囲で連鎖可能性を評価し、ボーナスも強化
@@ -204,13 +215,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v154: 動的パラメータ計算
+                # v155: 動的パラメータ計算
                 # 着地が高いほど、判定距離を拡大し、ボーナスを強化
                 # 例: landing_y=0.0 → chain_distance_max=3.5, multiplier=400.0
-                # 例: landing_y=1.0 → chain_distance_max=4.0, multiplier=500.0
-                # 例: landing_y=2.0 → chain_distance_max=4.5, multiplier=600.0
-                chain_distance_max = 3.5 + max(0, landing_y) * 0.5
-                chain_bonus_multiplier = 400.0 + max(0, landing_y) * 100.0
+                # 例: landing_y=1.0 → chain_distance_max=4.1, multiplier=550.0
+                # 例: landing_y=2.0 → chain_distance_max=4.7, multiplier=700.0
+                # 例: landing_y=3.0 → chain_distance_max=5.3, multiplier=850.0
+                chain_distance_max = 3.5 + max(0, landing_y) * 0.6
+                chain_bonus_multiplier = 400.0 + max(0, landing_y) * 150.0
 
                 # 併合後のtype (merged_type) のピースが盤面上にあるか確認
                 for p in pieces:
