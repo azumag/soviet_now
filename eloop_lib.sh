@@ -500,6 +500,8 @@ _run_opencode_radio() {
 		_strip_ansi |
 		grep -v '^>' |
 		grep -v '^\^D' |
+		grep -v '^Script started on ' |
+		grep -v '^Script done on ' |
 		grep -v '^/[^ ]*$' |
 		grep -v '^[[:space:]]*/Users/' |
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
@@ -516,6 +518,23 @@ _run_claude_radio() {
 	fi
 	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL)"
 	claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>/dev/null
+}
+
+_clean_comment_talk() {
+	printf '%s\n' "$1" |
+		grep -Eiv '^[[:space:]]*(assistant|analysis|final|tool_call|tool_result)[[:space:]]*$' |
+		grep -Eiv '^[[:space:]]*(agent|model|provider)[[:space:]]*[:=].*$' |
+		grep -Eiv '^[[:space:]]*(zai|glmflash|sonnet|claude|opencode)[[:space:]]*$' |
+		sed '/^[[:space:]]*$/d'
+}
+
+_is_valid_comment_talk() {
+	local talk="$1"
+	local compact
+	compact=$(printf '%s' "$talk" | tr -d '[:space:]')
+	[ ${#compact} -ge 24 ] || return 1
+	printf '%s' "$talk" | grep -Eq '[。！？]' || return 1
+	return 0
 }
 
 #=== ラジオトーク: 共通ヘルパー ===
@@ -2036,11 +2055,26 @@ COMMENTPROMPT
 		log "[COMMENT] コメント返し生成中..."
 		local comments_talk
 		comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
+		comments_talk=$(_clean_comment_talk "$comments_talk")
+		if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
+			log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → fallback"
+			comments_talk=""
+		fi
 		if [ -z "$comments_talk" ]; then
 			comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
+			comments_talk=$(_clean_comment_talk "$comments_talk")
+			if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
+				log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback"
+				comments_talk=""
+			fi
 		fi
 		if [ -z "$comments_talk" ]; then
 			comments_talk=$(_run_claude_radio "$comment_prompt_file")
+			comments_talk=$(_clean_comment_talk "$comments_talk")
+			if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
+				log "[COMMENT] claude 出力が不正/短文のため破棄"
+				comments_talk=""
+			fi
 		fi
 		rm -f "$comment_prompt_file"
 
@@ -2064,16 +2098,21 @@ COMMENTPROMPT
 				comments_talk=$(echo "$comments_talk" | sed '/^===ADVICE===/,$ d')
 			fi
 
-			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
-			echo "$comments_talk" >"$queue_file"
-			# 生成直後に重複チェック（同じ内容のキューファイルがないか）
-			local new_hash
-			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
-			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
-				log "[COMMENT] 重複コメント返し検出 → 破棄 (hash=$new_hash)"
-				rm -f "$queue_file"
+			comments_talk=$(_clean_comment_talk "$comments_talk")
+			if ! _is_valid_comment_talk "$comments_talk"; then
+				log "[COMMENT] 最終本文が不正/短文のため破棄"
 			else
-				log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file"
+				local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
+				echo "$comments_talk" >"$queue_file"
+				# 生成直後に重複チェック（同じ内容のキューファイルがないか）
+				local new_hash
+				new_hash=$(md5 -q "$queue_file" 2>/dev/null)
+				if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
+					log "[COMMENT] 重複コメント返し検出 → 破棄 (hash=$new_hash)"
+					rm -f "$queue_file"
+				else
+					log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file"
+				fi
 			fi
 		else
 			log "[COMMENT] コメント返し生成失敗（次回再取得）"
