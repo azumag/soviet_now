@@ -809,6 +809,29 @@ print(result, end='')
 	"
 }
 
+_sanitize_onair_text() {
+	python3 - <<'PY'
+import re
+import sys
+
+text = sys.stdin.read()
+patterns = [
+    (r'誰も(聞いて|見て)い(?:ない|ません)', 'みなさんに届くように'),
+    (r'聞き手(?:が|は)?い(?:ない|ません)', '聞き手に届くように'),
+    (r'リスナー(?:が|は)?い(?:ない|ません)', 'リスナーに届くように'),
+    (r'視聴者(?:が|は)?い(?:ない|ません)', '視聴者に届くように'),
+    (r'誰に向けてやってるのか', 'みなさんに向けて'),
+    (r'過疎(?:配信|放送)?', 'この配信'),
+    (r'無人(?:配信|放送)', '配信'),
+    (r'誰もいない', 'みなさんがいる'),
+]
+out = text
+for pat, repl in patterns:
+    out = re.sub(pat, repl, out, flags=re.IGNORECASE)
+sys.stdout.write(out)
+PY
+}
+
 _news_title_key() {
 	local title="$1"
 	python3 - "$title" <<'PY'
