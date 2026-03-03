@@ -192,7 +192,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 併合ボーナス20%増で積極的に狙う
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # 高度ペナルティを強化して盤面上昇を抑制
+        height_mult = 2.2  # v145: 高度管理を微緩和し、併合機会を確保
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
@@ -267,7 +267,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += type_merge_bonus * near_mult * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += type_merge_bonus * 0.17 * merge_mult
+            score += type_merge_bonus * 0.20 * merge_mult  # v145: FAR併合ボーナス微強化 (0.17→0.20)
             reasons.append("FAR_MERGE")
 
         # ----- 評価軸 2: 高度ペナルティ -----
