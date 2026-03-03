@@ -383,34 +383,37 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     return lines
 
 
-def render_decision_patterns(reasons, max_rows=8, bar_w=30):
-    # Simplify compound reasons: take primary keyword
-    simplified = []
-    for r in reasons:
-        # Take first meaningful component
-        parts = r.split("_")
-        # Group by primary pattern
-        if "NEAR_MERGE" in r:
-            simplified.append("NEAR_MERGE")
-        elif "HEIGHT_BALANCE" in r:
-            side = "L" if "LEFT" in r else "R" if "RIGHT" in r else ""
-            simplified.append(f"H_BAL_{side}" if side else "H_BALANCE")
-        elif "HEIGHT_CONTROL" in r:
-            simplified.append("HEIGHT_CTRL")
-        elif "HIGH_TOWER" in r:
-            simplified.append("HIGH_TOWER")
-        elif "HIGH_LAYER" in r:
-            simplified.append("HIGH_LAYER")
-        elif "MEDIUM_TOWER" in r:
-            simplified.append("MED_TOWER")
-        elif "CLUSTER" in r:
-            simplified.append("CLUSTER")
-        elif "NEXT_SAME" in r:
-            simplified.append("NEXT_SAME")
-        else:
-            simplified.append(r[:15])
+# Rotating palette for dynamic color assignment
+_COLOR_PALETTE = [118, 37, 75, 196, 208, 220, 141, 222, 33, 170, 82, 214, 51, 183, 46]
 
-    counter = Counter(simplified)
+
+def _tokenize_reason(reason):
+    """Split compound reason like 'NEAR_MERGE_HIGH_TOWER' into keyword tokens.
+
+    Recognizes multi-word tokens (e.g. NEAR_MERGE, HIGH_TOWER) by greedy
+    matching from left to right."""
+    parts = reason.split("_")
+    tokens = []
+    i = 0
+    while i < len(parts):
+        # Try 2-word token first (e.g. NEAR+MERGE, HIGH+TOWER)
+        if i + 1 < len(parts):
+            two = parts[i] + "_" + parts[i + 1]
+            tokens.append(two)
+            i += 2
+        else:
+            tokens.append(parts[i])
+            i += 1
+    return tokens
+
+
+def render_decision_patterns(reasons, max_rows=8, bar_w=30):
+    # Decompose compound reasons into individual keyword tokens
+    counter = Counter()
+    for r in reasons:
+        for token in _tokenize_reason(r):
+            counter[token] += 1
+
     top = counter.most_common(max_rows)
 
     if not top:
@@ -418,27 +421,27 @@ def render_decision_patterns(reasons, max_rows=8, bar_w=30):
 
     max_count = top[0][1]
 
-    pattern_colors = {
-        "NEAR_MERGE": fg256(118),
-        "HEIGHT_CTRL": fg256(37),
-        "H_BAL_L": fg256(75),
-        "H_BAL_R": fg256(75),
-        "H_BALANCE": fg256(75),
-        "HIGH_TOWER": fg256(196),
-        "HIGH_LAYER": fg256(208),
-        "MED_TOWER": fg256(220),
-        "CLUSTER": fg256(141),
-        "NEXT_SAME": fg256(222),
-    }
+    # Assign colors dynamically from palette (stable across restarts via hashlib)
+    def keyword_color(kw):
+        import hashlib
+        h = int(hashlib.md5(kw.encode()).hexdigest(), 16)
+        return fg256(_COLOR_PALETTE[h % len(_COLOR_PALETTE)])
 
     total = sum(c for _, c in top)
     lines = [f"  {BOLD}Decision Patterns{RST} {DIM}(recent {len(reasons)} turns){RST}"]
     # label 13 + sep 1 + bar 30 + space + count/pct 12 = 57
     for label, count in top:
-        color = pattern_colors.get(label, C_GREY)
+        color = keyword_color(label)
         bar = block_bar(count, max_count, bar_w, color)
         pct = count / total * 100 if total > 0 else 0
-        lines.append(f" {label:<13}│{bar} {count:>4} {DIM}{pct:>4.0f}%{RST}")
+        # Auto-shorten long labels: remove vowels from second word, then truncate
+        disp = label
+        if len(disp) > 13 and "_" in disp:
+            parts = disp.split("_", 1)
+            shortened = parts[1].translate(str.maketrans("", "", "AEIOU"))
+            disp = parts[0] + "_" + shortened
+        disp = disp[:13]
+        lines.append(f" {disp:<13}│{bar} {count:>4} {DIM}{pct:>4.0f}%{RST}")
     return lines
 
 
