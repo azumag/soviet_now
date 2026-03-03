@@ -178,7 +178,7 @@ async function executeCommand(page, command, canvasInfo) {
   await page.waitForTimeout(100);
   await page.mouse.click(viewportX, viewportY);
 
-  // ピースが着地+マージ演出が完了するまで待つ
+  // ピースが着地+併合演出が完了するまで待つ
   await page.waitForTimeout(3000);
 
   // ゲーム状態を更新

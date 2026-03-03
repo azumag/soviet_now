@@ -9,12 +9,12 @@
 # AI改変禁止: decide() シグネチャ,if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# [BEST:2325] v19: CRITICALフェーズ導入版 - HIGHフェーズのheight_mult過剰を修正、CRITICALフェーズ（max_y>3.0）を新設。CRITICALではマージ絶対優先（merge_mult=0.6、height_multなし、height_penaltyシンプル化）。MEDIUMフェーズheight_mult微増（2.2→2.4）でHIGH到達遅延、HIGHフェーズheight_mult微減（2.8→2.6）でマージ機会確保
+# [BEST:2325] v19: CRITICALフェーズ導入版 - HIGHフェーズのheight_mult過剰を修正、CRITICALフェーズ（max_y>3.0）を新設。CRITICALでは併合絶対優先（merge_mult=0.6、height_multなし、height_penaltyシンプル化）。MEDIUMフェーズheight_mult微増（2.2→2.4）でHIGH到達遅延、HIGHフェーズheight_mult微減（2.8→2.6）で併合機会確保
 # [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版 - v41の失敗（スコア558）を受けて、v41がv31から取り入れたreactive_pairsとhas_mergeによる複雑な条件分岐を削除。v19のシンプル構造（DIRECT=1200/NEAR=600/FAR=200、height_penalty=50*height_mult、drift_penalty=30）に復活。v19のCRITICALフェーズ（merge_mult=0.6）を維持。コード量削減（約140行→約110行）で頑健性を確保
 # v50-v64: has_merge/reactive_pairs条件の振り子パターンと閾値シャッフル
-# [BEST:2346] v84: HIGHフェーズマージ優先・構造改善版 - v83の失敗（スコア1065、HIGHフェーズマージ率低）を受けて、振り子パターン完全回避で根本的な構造改善を実施。chain reaction緩和は完全廃止（v82の失敗から学ぶ）。代わりにHIGHフェーズでのマージ確保を優先：（1）merge_gradeボーナス強化（DIRECT=1500/NEAR=800/FAR=300でマージの質を重視）、（2）HIGHフェーズ高度管理緩和（height_mult=2.2に減、HIGH_TOWERペナルティ1.3倍に減）、（3）マージなし位置にNO_MERGEペナルティ（-150）、（4）max_yに応じた動的調整（盤面が高いほどマージ優先、低いほど高度管理優先）。v42のシンプル構造を維持しつつ、HIGHフェーズでのマージ機会確保を構造的に改善。コード量増加なし（約110行）。
-# v85: merge_grade動的緩和版 - v84の失敗（スコア823、HIGH/CRITICALフェーズマージ率20%/3%）を受けて、NO_MERGEペナルティ（-150）の効果なさを確認し削除。代わりにmerge_gradeに応じた動的な緩和係数を導入：マージ品質が高いほどheight_penaltyとdrift_penaltyを緩和（DIRECT:20%/50%、NEAR:50%/70%、FAR:80%/90%）。CRITICALフェーズでは緩和を強化（DIRECT:10%/30%、NEAR:30%/50%、FAR:50%/70%）。v42の成功値（DIRECT=1200/NEAR=600/FAR=200、height_mult HIGH=2.6/MEDIUM=2.4）に復帰し、動的緩和でマージ機会確保。振り子パターン完全回避（has_merge/reactive_pairs条件不使用）。コード量微増（約120行）だが構造はシンプル維持。
-# v86: 動的緩和削除・v42復帰版 - v85の失敗（スコア1291、動的緩和係数が誤判断を助長）を受けて、動的緩和係数を完全削除。履歴分析でMEDIUMフェーズのNEAR_MERGE判断ターンの77%で実際にマージしていないことを特定（analyze_boardのmerge_grade予測と実際の結果の乖離）。予測ベースの高度管理緩和は危険であるため、v42のシンプル構造に完全復帰：height_penaltyとdrift_penaltyはマージ品質にかかわらず一律で計算。動的緩和のような複雑な条件分岐を削除し、頑健性を確保。コード量削減（227行→166行）。
+# [BEST:2346] v84: HIGHフェーズ併合優先・構造改善版 - v83の失敗（スコア1065、HIGHフェーズ併合率低）を受けて、振り子パターン完全回避で根本的な構造改善を実施。chain reaction緩和は完全廃止（v82の失敗から学ぶ）。代わりにHIGHフェーズでの併合確保を優先：（1）merge_gradeボーナス強化（DIRECT=1500/NEAR=800/FAR=300で併合の質を重視）、（2）HIGHフェーズ高度管理緩和（height_mult=2.2に減、HIGH_TOWERペナルティ1.3倍に減）、（3）併合なし位置にNO_MERGEペナルティ（-150）、（4）max_yに応じた動的調整（盤面が高いほど併合優先、低いほど高度管理優先）。v42のシンプル構造を維持しつつ、HIGHフェーズでの併合機会確保を構造的に改善。コード量増加なし（約110行）。
+# v85: merge_grade動的緩和版 - v84の失敗（スコア823、HIGH/CRITICALフェーズ併合率20%/3%）を受けて、NO_MERGEペナルティ（-150）の効果なさを確認し削除。代わりにmerge_gradeに応じた動的な緩和係数を導入：併合品質が高いほどheight_penaltyとdrift_penaltyを緩和（DIRECT:20%/50%、NEAR:50%/70%、FAR:80%/90%）。CRITICALフェーズでは緩和を強化（DIRECT:10%/30%、NEAR:30%/50%、FAR:50%/70%）。v42の成功値（DIRECT=1200/NEAR=600/FAR=200、height_mult HIGH=2.6/MEDIUM=2.4）に復帰し、動的緩和で併合機会確保。振り子パターン完全回避（has_merge/reactive_pairs条件不使用）。コード量微増（約120行）だが構造はシンプル維持。
+# v86: 動的緩和削除・v42復帰版 - v85の失敗（スコア1291、動的緩和係数が誤判断を助長）を受けて、動的緩和係数を完全削除。履歴分析でMEDIUMフェーズのNEAR_MERGE判断ターンの77%で実際に併合していないことを特定（analyze_boardのmerge_grade予測と実際の結果の乖離）。予測ベースの高度管理緩和は危険であるため、v42のシンプル構造に完全復帰：height_penaltyとdrift_penaltyは併合品質にかかわらず一律で計算。動的緩和のような複雑な条件分岐を削除し、頑健性を確保。コード量削減（227行→166行）。
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
@@ -69,7 +69,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # === v86: 動的緩和削除・v42完全復帰 ===
 
-        # 1. マージグレードによるスコア（v86: v42の値を維持）
+        # 1. 併合グレードによるスコア（v86: v42の値を維持）
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")

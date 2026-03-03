@@ -52,7 +52,7 @@ Soviet/Soren パズルゲーム（ソ連共和国旗）の AI 自動プレイプ
 | `eloop.sh` | 1試合の関数群 (毎試合source、AI書き換え可) |
 | `eloop_lib.sh` | 共通ライブラリ (ヘルパー/ラジオ/AI実行/バリデーション) |
 | `eloop_improve.sh` | バックグラウンド改善サブプロセス |
-| `analyze_board.py` | 盤面解析 (マージ判定・着地予測・反応器状態) |
+| `analyze_board.py` | 盤面解析 (併合判定・着地予測・反応器状態) |
 | ~~`STRATEGY.md`~~ | 廃止（jloop用、git履歴に残存） |
 
 ### Codex review

@@ -295,7 +295,7 @@ def run_game():
             log(f"T{turn} s={score} p={len(pieces)} y={max_y:.1f}")
 
             # ソ連建国検知（リアルタイム・1試合1回限り）
-            # type 15 = ロシア、type 16 = ソ連。makeSorenCount はロシア同士マージ(→ソ連生成)時にインクリメントされる
+            # type 15 = ロシア、type 16 = ソ連。makeSorenCount はロシア同士併合(→ソ連生成)時にインクリメントされる
             if not soviet_created:
                 if gs.get("makeSorenCount", 0) > 0:
                     soviet_created = True

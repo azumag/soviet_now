@@ -220,7 +220,7 @@ def main():
     print("  v128成功時: HEIGHT_CONTROL(25), NEAR_MERGE_HIGH_LAYER(11), HIGH_TOWER(10)")
     print("  v160失敗時: HIGH_LAYER支配（大量のNEAR_PAIR付与）")
 
-    print("\n[マージ予測精度]")
+    print("\n[併合予測精度]")
     print(
         f"  v128: merge_available {analysis['merge_available_count']}回、スコア獲得は限定的"
     )
@@ -230,7 +230,7 @@ def main():
 
     print("\n[改善の優先順位]")
     print(
-        "  1. HIGHフェーズでマージ機会を確保（height_mult=1.8を維持し、HIGH_TOWERを1.3倍に固定）"
+        "  1. HIGHフェーズで併合機会を確保（height_mult=1.8を維持し、HIGH_TOWERを1.3倍に固定）"
     )
     print("  2. 振り子パターン回避（v128の成功設定に固定）")
     print("  3. decision_reasonの簡素化（v159の複雑なNEAR_PAIR連鎖を回避）")

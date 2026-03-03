@@ -261,7 +261,7 @@ while true; do
     WAIT_READY)
         if commands_empty; then
             READY_WAIT=$((READY_WAIT + 1))
-            # 4秒(2回)待ってからOBSERVEへ（ピース着地・マージ演出の猶予）
+            # 4秒(2回)待ってからOBSERVEへ（ピース着地・併合演出の猶予）
             if [ $READY_WAIT -ge 2 ]; then
                 READY_WAIT=0
                 set_state "OBSERVE"

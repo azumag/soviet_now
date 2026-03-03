@@ -2,26 +2,26 @@
 """strategy.py - ソ連パズルゲームの AI ドロップ位置決定スクリプト
 
 ゲーム概要:
-  - ピースをドロップし、同type同士が接触するとマージ (N+N → N+1)
+  - ピースをドロップし、同type同士が接触すると併合 (N+N → N+1)
   - スコアテーブル: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
   - ボード: x ∈ [-3.0, +3.0], 床 y=-4.48, デッドライン y=3.32
   - プレイヤーが制御できるのはドロップX座標のみ
 
 決定ロジック (8つの評価軸):
-  1. マージボーナス   — 即座にマージできる位置に高得点 (DIRECT > NEAR > FAR)
+  1. 併合ボーナス   — 即座に併合できる位置に高得点 (DIRECT > NEAR > FAR)
   2. 高度ペナルティ   — 着地位置が高いほど減点 (フェーズで重み変動)
   3. Reactor保護      — 連鎖進行中は高い位置を回避
   4. ドリフトペナルティ — ポリゴン形状による着地後のズレを減点
   5. 左右バランス補正 — ピース数の偏りを是正する方向にボーナス
-  6. nextNext中央寄せ — 次の次と同typeなら中央に寄せてマージ準備
-  7. 同type集約       — 同typeピースが近くに多い位置にボーナス (将来マージ準備)
+  6. nextNext中央寄せ — 次の次と同typeなら中央に寄せて併合準備
+  7. 同type集約       — 同typeピースが近くに多い位置にボーナス (将来併合準備)
   8. 盤面整理度スコア — 盤面全体の同type集約度を評価 (v141: 新規追加)
 
 フェーズ (盤面の最高Y座標で判定):
-  LOW      (max_y < 0.8) : 序盤。マージ優先 (merge_mult=1.2)
+  LOW      (max_y < 0.8) : 序盤。併合優先 (merge_mult=1.2)
   MEDIUM   (0.8 ≤ max_y < 1.8) : 中盤。高度管理を強化 (height_mult=2.4)
-  HIGH     (1.8 ≤ max_y < 3.0) : 終盤。マージ機会確保 (height_mult=1.8)
-  CRITICAL (3.0 ≤ max_y) : 危険。DIRECTマージ最優先で盤面圧縮 (NEAR は慎重に)
+  HIGH     (1.8 ≤ max_y < 3.0) : 終盤。併合機会確保 (height_mult=1.8)
+  CRITICAL (3.0 ≤ max_y) : 危険。DIRECT併合最優先で盤面圧縮 (NEAR は慎重に)
 """
 
 # 固定インターフェース:
@@ -32,16 +32,16 @@
 # AI改変禁止: decide() シグネチャ,if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# [BEST:3689] v126: v42ベース・HIGHフェーズマージ強化版
-# v139: 同type集約ボーナス追加版 - mergesの個別距離データで将来マージ確率を評価
-# v140: CRITICALフェーズマージ戦略反転 — merge_mult=0.6(マージ抑制)を廃止。
-# マージは2個→1個でネット-1ピース=盤面圧縮の最良手段。CRITICALこそマージ優先すべき。
+# [BEST:3689] v126: v42ベース・HIGHフェーズ併合強化版
+# v139: 同type集約ボーナス追加版 - mergesの個別距離データで将来併合確率を評価
+# v140: CRITICALフェーズ併合戦略反転 — merge_mult=0.6(併合抑制)を廃止。
+# 併合は2個→1個でネット-1ピース=盤面圧縮の最良手段。CRITICALこそ併合優先すべき。
 # ただしNEAR(成功率68.5%)は失敗→即死リスクがあるため、DIRECTのみ1.5倍ボーナス、
 # NEARは通常の0.5倍に据え置き。merge_gradeごとに分岐するCRITICAL専用ロジック。
 # v141: 盤面整理度スコア追加 - 盤面全体の同type集約度を評価。各typeの最短ペア距離を計算し、
-# 近くに集まっているtypeほどボーナス。同typeが分散している盤面をペナルティして、将来のマージ機会を損なう配置を抑制。
+# 近くに集まっているtypeほどボーナス。同typeが分散している盤面をペナルティして、将来の併合機会を損なう配置を抑制。
 
-# マージ結果のスコア: type N のマージで N*(N+1)/2 点獲得
+# 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
@@ -50,7 +50,7 @@ def calculate_board_clustering(pieces):
     """v141: 盤面全体の同type集約度を計算
 
     各typeの最短ペア距離を計算し、距離が小さいほどボーナスを与える。
-    同typeが近くに集まっている盤面は、将来のマージ確率が高い。
+    同typeが近くに集まっている盤面は、将来の併合確率が高い。
 
     Args:
         pieces: 全ピースのリスト [{id, type, x, y, ...}, ...]
@@ -106,7 +106,7 @@ def calculate_board_clustering(pieces):
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v141: CRITICALフェーズDIRECTマージ最優先 + 同type集約ボーナス + 盤面整理度スコア
+    """v141: CRITICALフェーズDIRECT併合最優先 + 同type集約ボーナス + 盤面整理度スコア
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -115,8 +115,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 - x: ドロップX座標
                 - landing_y: 推定着地Y座標 (高い=危険)
                 - drift_x/drift_unc: ポリゴン形状による着地後ドリフト
-                - merge_grade: 最良マージ判定 (DIRECT/NEAR/FAR/NO)
-                - merges: 各同typeピースへの個別距離・マージ判定
+                - merge_grade: 最良併合判定 (DIRECT/NEAR/FAR/NO)
+                - merges: 各同typeピースへの個別距離・併合判定
             - reactor: 反応器状態 (reactive_pairs, near_pairs 等)
 
     Returns:
@@ -137,24 +137,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
     # --- フェーズ判定 ---
-    # 盤面の最高Y座標で4段階に分類。フェーズごとに高度ペナルティとマージボーナスの
-    # 重みを変える。LOW: マージ狙い / MEDIUM-HIGH: 高度管理 / CRITICAL: 生存優先
+    # 盤面の最高Y座標で4段階に分類。フェーズごとに高度ペナルティと併合ボーナスの
+    # 重みを変える。LOW: 併合狙い / MEDIUM-HIGH: 高度管理 / CRITICAL: 生存優先
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0     # 低い盤面では高度ペナルティ弱め
-        merge_mult = 1.2      # マージボーナス20%増で積極的に狙う
+        merge_mult = 1.2      # 併合ボーナス20%増で積極的に狙う
     elif max_y < 1.8:
         phase = "MEDIUM"
         height_mult = 2.4     # 高度ペナルティを強化して盤面上昇を抑制
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8     # HIGHでは少し緩和してマージ機会を確保
+        height_mult = 1.8     # HIGHでは少し緩和して併合機会を確保
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0     # CRITICALでは高度ペナルティ基本値のみ
-        merge_mult = 1.0      # v140: マージ抑制を廃止 (DIRECT/NEAR個別制御に移行)
+        merge_mult = 1.0      # v140: 併合抑制を廃止 (DIRECT/NEAR個別制御に移行)
 
     # --- Reactor状態 (連鎖反応の検出) ---
     # reactive_pairs: 接触圏内の同typeペア数。連鎖中は盤面が不安定なので
@@ -172,9 +172,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # --- Type別マージボーナス計算 ---
-    # マージ結果のtype (next_type+1) が高いほどスコア価値が高い
-    # 例: type1マージ → bonus=330, type5マージ → bonus=510, type14マージ → bonus=1660
+    # --- Type別併合ボーナス計算 ---
+    # 併合結果のtype (next_type+1) が高いほどスコア価値が高い
+    # 例: type1併合 → bonus=330, type5併合 → bonus=510, type14併合 → bonus=1660
     merge_result_type = min(next_type + 1, 16)
     type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
@@ -195,13 +195,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # ----- 評価軸 1: マージボーナス -----
+        # ----- 評価軸 1: 併合ボーナス -----
         # analyze_board が判定した merge_grade に応じてボーナス
         # DIRECT: ターゲットに直撃 (成功率95.7%)
         # NEAR:   着地後に接触圏内 (成功率68.5%)
         # FAR:    ドリフトで接触する可能性あり (低確率)
         #
-        # v140: CRITICALフェーズではマージ=盤面圧縮(2個→1個)なので最優先。
+        # v140: CRITICALフェーズでは併合=盤面圧縮(2個→1個)なので最優先。
         # ただしNEARは失敗→即死リスクがあるため、DIRECTのみ1.5倍強化。
         if merge_grade == "DIRECT":
             direct_mult = 1.5 if phase == "CRITICAL" else 1.0  # v140: CRITICAL時DIRECT強化
@@ -263,8 +263,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score -= abs(balance_penalty)
 
         # ----- 評価軸 6: nextNext中央寄せ -----
-        # nextNextが今のnextと同typeなら、次もマージチャンスがある。
-        # 中央付近に置いておけば次ターンでどちらの方向にもマージしやすい
+        # nextNextが今のnextと同typeなら、次も併合チャンスがある。
+        # 中央付近に置いておけば次ターンでどちらの方向にも併合しやすい
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
@@ -273,8 +273,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- 評価軸 7: 同type集約ボーナス (v139) -----
         # analyze_board の merges リストには、この x に落とした場合の
         # 各同typeピースまでの距離(dist)と接触距離(contact_r)が入っている。
-        # 今すぐマージできなくても、同typeピースの近くに落とせば
-        # 将来の物理移動・爆発衝撃波でマージする確率が上がる。
+        # 今すぐ併合できなくても、同typeピースの近くに落とせば
+        # 将来の物理移動・爆発衝撃波で併合する確率が上がる。
         # → 接触距離の3倍以内にいる同typeピースごとにボーナス加算
         cluster_bonus = 0.0
         for m in result.get("merges", []):
@@ -292,9 +292,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 盤面全体の同type集約度を評価。同typeが近くに集まっているほどボーナス。
         # 盤面全体の整理度スコア（全候補で共通）をそのまま加算。
         # 集約度が高い（同typeが近くに集まっている）場合は、盤面が整理されており、
-        # 将来のマージ機会が多いのでボーナス。
+        # 将来の併合機会が多いのでボーナス。
         # 集約度が低い（同typeが分散している）場合は、盤面が整理されておらず、
-        # 将来のマージ機会が少ないのでペナルティ。
+        # 将来の併合機会が少ないのでペナルティ。
         score += current_clustering
         if current_clustering > 100.0:
             reasons.append("BOARD_CLUSTERED")
