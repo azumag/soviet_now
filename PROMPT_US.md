@@ -7,9 +7,9 @@
   - `board.pieces`: 盤面上の全ピース（位置・国名・level）
   - `board.columnHeights`: 各カラムの高さ（%）→ 低いカラムに優先的に落とす
   - `board.dangerLevel`: 危険度（"low"/"medium"/"high"/"critical"）→ "high"以上なら最も低いカラムへ
-  - `board.mergePairs`: 併合可能なペア（同じ国旗が近くにある）
+  - `board.mergePairs`: 併合可能なペア（同じ国が近くにある）
   - `gameOver`: ゲームオーバー検出（true/false）
-- 国旗名は level 順: armenia(1), estonia(2), latvia(3), lithuania(4), georgia(5), azerbaijan(6), tajik(7), kyrgyz(8), belarus(9), uzbek(10), turkmen(11), ukraine(12), kazakh(13), russia(14), ussr(15)
+- 国名は level 順: armenia(1), estonia(2), latvia(3), lithuania(4), georgia(5), azerbaijan(6), tajik(7), kyrgyz(8), belarus(9), uzbek(10), turkmen(11), ukraine(12), kazakh(13), russia(14), ussr(15)
 - `gameOver: true` のときは `retry` コマンドを書き込め（画像確認不要）
 - 画像分析は game_state.json の補助として使うこと：
   - `soviet_now.png` → 全体俯瞰・デッドラインまでの余裕を確認する
