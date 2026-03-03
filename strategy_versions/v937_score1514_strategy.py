@@ -7,12 +7,13 @@
   - ボード: x ∈ [-3.0, +3.0], 床 y=-4.48, デッドライン y=3.32
   - プレイヤーが制御できるのはドロップX座標のみ
 
-決定ロジック (5つの評価軸):
-  1. 併合ボーナス   — 即座に併合できる位置に高得点 (DIRECT > NEAR > FAR)
-  2. 高度ペナルティ   — 着地位置が高いほど減点 (フェーズで重み変動)
-  3. ドリフトペナルティ — ポリゴン形状による着地後のズレを減点
-  4. 左右バランス補正 — ピース数の偏りを是正する方向にボーナス
-  5. nextNext中央寄せ — 次の次と同typeなら中央に寄せて併合準備
+決定ロジック (6つの評価軸):
+  1. 併合ボーナス        — 即座に併合できる位置に高得点 (DIRECT > NEAR > FAR)
+  2. 高度ペナルティ      — 着地位置が高いほど減点 (フェーズで重み変動)
+  3. ドリフトペナルティ    — ポリゴン形状による着地後のズレを減点
+  4. 左右バランス補正    — ピース数の偏りを是正する方向にボーナス
+  5. nextNext中央寄せ    — 次の次と同typeなら中央に寄せて併合準備
+  6. 連鎖併合ボーナス    — 併合後にさらに連鎖できる可能性を評価 (v149: 新規追加)
 
 フェーズ (盤面の最高Y座標で判定):
   LOW      (max_y < 0.8) : 序盤。併合優先 (merge_mult=1.2)
@@ -35,6 +36,10 @@
 # v42のシンプルな5要素構造に完全回帰。MEDIUMフェーズheight_multをv147の2.3からv42(2.4)とv145(2.2)の中間値2.2に緩和し、併合機会を確保。
 # バランス補正を強化（盤面が高いほどbalance_strengthを大きく）し、盤面の不均一性を抑制。
 # 説明可能でシンプルな構造で、v42の成功を再現しつつ、v147のデータ洞察を活用。
+# v149: 連鎖併合ボーナス追加版 - batch_summary分析でHEIGHT_CONTROLのavg_score_delta=0.7と低いこと、NEAR_MERGE関連が正の効果があることを確認。
+# 新しい評価軸「連鎖併合ボーナス」を追加し、併合後にさらに連鎖できる可能性を評価する。
+# result["merges"]から最良の併合ターゲットを取得し、併合後のtype (next_type+1) の周囲に同じtypeのピースがないか確認。
+# 連鎖可能性が高い位置にボーナスを与えることで、高スコア群の戦略（NEAR_MERGE_HIGH_LAYER等のavg_score_delta=36.4）を再現。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -42,12 +47,12 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v148: v42構造回帰・バランス補正強化版
+    """v149: v148ベース・連鎖併合ボーナス追加版
 
-    v147の失敗（スコア分散stddev=330.6、平均1008.3点）を受けて、v141〜v147で追加した複雑な機能（9つの評価軸）を全て削除し、
-    v42のシンプルな5要素構造に完全回帰。MEDIUMフェーズheight_multをv147の2.3からv42(2.4)とv145(2.2)の中間値2.2に緩和し、併合機会を確保。
-    バランス補正を強化（盤面が高いほどbalance_strengthを大きく）し、盤面の不均一性を抑制。
-    説明可能でシンプルな構造で、v42の成功を再現しつつ、v147のデータ洞察を活用。
+    batch_summary分析でHEIGHT_CONTROLのavg_score_delta=0.7と低いこと、NEAR_MERGE関連が正の効果があることを確認。
+    新しい評価軸「連鎖併合ボーナス」を追加し、併合後にさらに連鎖できる可能性を評価する。
+    result["merges"]から最良の併合ターゲットを取得し、併合後のtype (next_type+1) の周囲に同じtypeのピースがないか確認。
+    連鎖可能性が高い位置にボーナスを与えることで、高スコア群の戦略（NEAR_MERGE_HIGH_LAYER等のavg_score_delta=36.4）を再現。
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -107,8 +112,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merge_result_type = min(next_type + 1, 16)
     type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
+    # --- v149: 併合後のtypeを事前計算（連鎖判定用） ---
+    merged_type = min(next_type + 1, 16)
+
     # =======================================================================
-    #  各ドロップ候補 (x座標) を5つの評価軸でスコアリング
+    #  各ドロップ候補 (x座標) を6つの評価軸でスコアリング
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -181,6 +189,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
+
+        # ----- 評価軸 6: 連鎖併合ボーナス (v149: 新規追加) -----
+        # 併合が成功した場合、連鎖してさらに併合できるか評価
+        # result["merges"]から最良の併合ターゲットを取得
+        # 併合後のtype (merged_type) の周囲に同じtypeのピースがないか確認
+        if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
+            merges = result["merges"]
+            if merges:
+                # 最良の併合ターゲット（距離が最も近い）を取得
+                best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
+                target_x = best_merge.get("x", 0)
+                target_y = best_merge.get("y", 0)
+
+                # 併合後のtype (merged_type) のピースが盤面上にあるか確認
+                # 連鎖判定距離: typeの半径 + ピースの半径 (0.5〜2.0程度)
+                chain_distance = 2.5  # 連鎖判定の閾値（調整可能）
+
+                for p in pieces:
+                    if p.get("type") == merged_type:
+                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                        if dist < chain_distance:
+                            # 連鎖可能性がある: 距離が近いほど大きなボーナス
+                            chain_bonus = (chain_distance - dist) * 150.0  # 係数150.0（調整可能）
+                            score += chain_bonus
+                            reasons.append("CHAIN_MERGE")
+                            break  # 1つ見つかれば十分
 
         # ----- 最良候補の更新 -----
         if score > best_score:
