@@ -609,7 +609,7 @@ RULES
 _radio_parse_output_to_files() {
 	local body_file="$1" summary_file="$2" selected_news_file="$3"
 	local parser_file
-	parser_file=$(mktemp /tmp/eloop_radio_parser_XXXXXXXX.py)
+	parser_file=$(mktemp /tmp/eloop_radio_parser_XXXXXXXX)
 	cat >"$parser_file" <<'PY'
 import re
 import sys
@@ -707,10 +707,13 @@ body = "\n".join(body_lines).strip()
 body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
 
 if len(body) < 100:
+    used_before_summary = False
     if summary_pos and summary_pos[0] < len(main_lines):
         before_summary = [line for line in main_lines[: summary_pos[0]] if not line.startswith("===")]
-        body = "\n".join(before_summary).strip()
-    if len(body) < 100:
+        if before_summary:
+            body = "\n".join(before_summary).strip()
+            used_before_summary = True
+    if len(body) < 100 and not used_before_summary:
         fallback_lines = [line for line in main_lines if not line.startswith("===")]
         body = "\n".join(fallback_lines).strip()
     body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
