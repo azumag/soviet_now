@@ -26,7 +26,7 @@ GAME_COUNT_FILE="game_count.txt"
 
 RADIO_AGENT="zai"
 RADIO_FALLBACK="glmflash"
-RADIO_SAY_RATE=140
+RADIO_SAY_RATE=150
 PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
 PAST_NEWS_READ="tmp/.past_news_read.txt"
 
