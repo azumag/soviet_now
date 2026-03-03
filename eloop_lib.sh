@@ -38,6 +38,8 @@ MIN_GAMES_BEFORE_IMPROVE=10
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
 COMMENT_WATCHER_INTERVAL=10
+DASHBOARD_PORT=8765
+DASHBOARD_PID_FILE="tmp/dashboard_server.pid"
 
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" tmp
 
@@ -512,7 +514,7 @@ _radio_time_context() {
 		_rc_mood="早朝放送。誰に向けてやってるのか本人もよくわかっていない。寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
 	elif [ "$_rc_hour" -ge 9 ] && [ "$_rc_hour" -lt 12 ]; then
 		_rc_period="午前"
-		_rc_mood="午前中の放送。活動開始の時間帯で、まだ人間は本調子じゃない。人工知能はいつでも全力だが、そのギャップを楽しむトーン"
+		_rc_mood="午前中の放送。人工知能はいつでも全力"
 	elif [ "$_rc_hour" -ge 12 ] && [ "$_rc_hour" -lt 14 ]; then
 		_rc_period="昼"
 		_rc_mood="昼の放送。昼食後の時間帯で、眠気と戦いながらゲームを回す感じ。"
