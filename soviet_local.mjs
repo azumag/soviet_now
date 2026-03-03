@@ -170,7 +170,7 @@ async function executeCommand(page, command) {
   } else if (command.action === 'drop') {
     console.log(`Executing: DROP at x=${command.x.toFixed(3)}`);
     await page.evaluate((x) => { window.__sorenCommand = 'DROP:' + x; }, command.x);
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(500);
   }
 
   // Update state + screenshots after command
@@ -378,7 +378,7 @@ async function runLocalController() {
       }
     }
 
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(200);
   }
 }
 
