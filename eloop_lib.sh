@@ -1777,12 +1777,12 @@ COMMENTPROMPT
 			local advice_part
 			advice_part=$(echo "$comments_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
 			if [ -n "$advice_part" ]; then
-				{
-					echo "## $(date '+%Y-%m-%d %H:%M') リスナーアドバイス"
-					echo "$advice_part"
-					echo ""
-				} >> tmp/advice.md
-				# 最新30エントリ程度に制限
+				local advice_item
+				advice_item=$(printf '%s' "$advice_part" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+				if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
+					echo "- $advice_item" >> tmp/advice.md
+				fi
+				# 最新エントリ程度に制限
 				if [ -f tmp/advice.md ] && [ "$(wc -l < tmp/advice.md)" -gt 150 ]; then
 					tail -150 tmp/advice.md > tmp/advice.md.tmp
 					mv tmp/advice.md.tmp tmp/advice.md
