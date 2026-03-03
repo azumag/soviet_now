@@ -32,6 +32,11 @@ source ./eloop_lib.sh
 # --- グローバル状態 ---
 GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 IMPROVE_PID=0
+# 配信演出の頻度 (必要ならここだけ調整)
+NEWS_INTERVAL=4
+NEWS_PHASE=1
+RADIO_INTERVAL=6
+RADIO_PHASE=0
 
 # --- 初期化 ---
 log "=== Soren Evolution Loop ==="
@@ -87,13 +92,13 @@ while true; do
 	# 前回の改善が完了したか確認
 	check_and_harvest_improvement
 
-	# ニュース取得 & ニュースコーナー (3ゲームに1回、バックグラウンド)
-	if (( GAME_NUM % 3 == 1 )); then
+	# ニュース取得 & ニュースコーナー (4ゲームに1回、バックグラウンド)
+	if (( GAME_NUM % NEWS_INTERVAL == NEWS_PHASE )); then
 		fetch_and_play_news &
 	fi
 
-	# ラジオトーク (5ゲームに1回、バックグラウンド)
-	if (( GAME_NUM % 5 == 0 )); then
+	# ラジオトーク (6ゲームに1回、バックグラウンド)
+	if (( GAME_NUM % RADIO_INTERVAL == RADIO_PHASE )); then
 		start_random_radio_corner &
 	fi
 
