@@ -34,11 +34,11 @@ CANVAS_X_MIN = 410
 CANVAS_X_MAX = 830
 
 # タイミング
-POLL_INTERVAL = 0.5       # ポーリング間隔(秒)
-SETTLE_REQUIRED = 2       # 静止確認回数
+POLL_INTERVAL = 0.15      # ポーリング間隔(秒)
+SETTLE_REQUIRED = 1       # 静止確認回数
 COMMAND_TIMEOUT = 20      # commands.txt 消化待ちタイムアウト(秒)
 MOVE_TIMEOUT = 120        # MOVE状態待ちタイムアウト(秒)
-DROP_WAIT = 1.0           # ドロップ後の待ち時間(秒)
+DROP_WAIT = 0.3           # ドロップ後の待ち時間(秒)
 
 
 def log(msg):
