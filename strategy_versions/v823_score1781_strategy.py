@@ -128,6 +128,7 @@ def calculate_board_flatness(pieces):
 
     # 標準偏差を計算
     import math
+
     mean_y = sum(y_values) / len(y_values)
     variance = sum((y - mean_y) ** 2 for y in y_values) / len(y_values)
     std_dev = math.sqrt(variance)
@@ -187,20 +188,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 重みを変える。LOW: 併合狙い / MEDIUM-HIGH: 高度管理 / CRITICAL: 生存優先
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 1.0     # 低い盤面では高度ペナルティ弱め
-        merge_mult = 1.2      # 併合ボーナス20%増で積極的に狙う
+        height_mult = 1.0  # 低い盤面では高度ペナルティ弱め
+        merge_mult = 1.2  # 併合ボーナス20%増で積極的に狙う
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4     # 高度ペナルティを強化して盤面上昇を抑制
+        height_mult = 2.2  # v145: 高度管理を微緩和し、併合機会を確保
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8     # HIGHでは少し緩和して併合機会を確保
+        height_mult = 1.8  # HIGHでは少し緩和して併合機会を確保
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult = 1.0     # CRITICALでは高度ペナルティ基本値のみ
-        merge_mult = 1.0      # v140: 併合抑制を廃止 (DIRECT/NEAR個別制御に移行)
+        height_mult = 1.0  # CRITICALでは高度ペナルティ基本値のみ
+        merge_mult = 0.6  # v144: CRITICALフェーズ併合抑制の復活 (v810/v812ベース)
 
     # --- Reactor状態 (連鎖反応の検出) ---
     # reactive_pairs: 接触圏内の同typeペア数。連鎖中は盤面が不安定なので
@@ -254,15 +255,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v140: CRITICALフェーズでは併合=盤面圧縮(2個→1個)なので最優先。
         # ただしNEARは失敗→即死リスクがあるため、DIRECTのみ1.5倍強化。
         if merge_grade == "DIRECT":
-            direct_mult = 1.5 if phase == "CRITICAL" else 1.0  # v140: CRITICAL時DIRECT強化
+            direct_mult = (
+                1.5 if phase == "CRITICAL" else 1.0
+            )  # v140: CRITICAL時DIRECT強化
             score += type_merge_bonus * merge_mult * direct_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            near_mult = 0.3 if phase == "CRITICAL" else 0.5  # v140: CRITICAL時NEARは慎重に
+            near_mult = (
+                0.3 if phase == "CRITICAL" else 0.5
+            )  # v140: CRITICAL時NEARは慎重に
             score += type_merge_bonus * near_mult * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += type_merge_bonus * 0.17 * merge_mult
+            score += type_merge_bonus * 0.20 * merge_mult  # v145: FAR併合ボーナス微強化 (0.17→0.20)
             reasons.append("FAR_MERGE")
 
         # ----- 評価軸 2: 高度ペナルティ -----
@@ -271,10 +276,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3   # HIGH_TOWER: デッドライン接近でさらに厳しく
+            height_penalty *= 1.3  # HIGH_TOWER: デッドライン接近でさらに厳しく
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5   # MEDIUM_TOWER: MEDIUMでの高い着地を強く抑制
+            height_penalty *= 1.5  # MEDIUM_TOWER: MEDIUMでの高い着地を強く抑制
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
@@ -301,7 +306,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # フェーズが高いほど balance_strength を強くして偏りを厳しく制御
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 40.0   # 終盤は左右バランスが崩れると即ゲームオーバー
+            balance_strength = 40.0  # 終盤は左右バランスが崩れると即ゲームオーバー
         elif phase == "MEDIUM":
             balance_strength = 30.0
 
@@ -349,12 +354,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # DIRECT併合時に整理された盤面を優先し、併合できない候補では盤面整理を優先しないようにする。
         clustering_mult = 0.0
         if merge_grade == "DIRECT":
-            clustering_mult = 1.3   # v142: 高品質併合×整理された盤面を強化
+            clustering_mult = 1.3  # v142: 高品質併合×整理された盤面を強化
         elif merge_grade == "NEAR":
-            clustering_mult = 0.8   # v142: 不確実な併合で盤面整理を緩和
+            clustering_mult = 0.8  # v142: 不確実な併合で盤面整理を緩和
         elif merge_grade in ("FAR", "NO"):
-            clustering_mult = 0.0   # v142: 併合できない候補では盤面整理を無視
-        
+            clustering_mult = 0.0  # v142: 併合できない候補では盤面整理を無視
+
         score += current_clustering * clustering_mult
         if clustering_mult > 0.0:
             if current_clustering > 100.0:
