@@ -1692,6 +1692,31 @@ stop_comment_player() {
 	fi
 }
 
+_format_comment_batch_context() {
+	python3 - <<'PY'
+import sys
+
+lines = [ln.strip() for ln in sys.stdin.read().splitlines() if ln.strip()]
+items = []
+for ln in lines:
+    if ": " in ln:
+        user, msg = ln.split(": ", 1)
+    else:
+        user, msg = "不明", ln
+    items.append((user.strip(), msg.strip(), ln))
+
+for i, (user, msg, raw) in enumerate(items, start=1):
+    prev_raw = items[i - 2][2] if i > 1 else "（なし）"
+    next_raw = items[i][2] if i < len(items) else "（なし）"
+    same_user_prev = "あり" if i > 1 and items[i - 2][0] == user else "なし"
+    print(f"[{i}] {user}: {msg}")
+    print(f"  直前: {prev_raw}")
+    print(f"  直後: {next_raw}")
+    print(f"  直前が同一ユーザー: {same_user_prev}")
+    print("")
+PY
+}
+
 generate_comment_response() {
 	_kill_comment_gen
 	mkdir -p "tmp/.twitch_chat"
@@ -1709,6 +1734,18 @@ generate_comment_response() {
 
 	local past_topics=""
 	[ -f "$PAST_RADIO_TOPICS" ] && past_topics=$(cat "$PAST_RADIO_TOPICS")
+
+	local comment_context_history_file="tmp/.twitch_chat/comment_context_history.log"
+	local previous_comments_context=""
+	[ -f "$comment_context_history_file" ] && previous_comments_context=$(tail -30 "$comment_context_history_file" 2>/dev/null)
+	printf '%s\n' "$twitch_comments" >> "$comment_context_history_file"
+	if [ -f "$comment_context_history_file" ] && [ "$(wc -l < "$comment_context_history_file")" -gt 300 ]; then
+		tail -300 "$comment_context_history_file" > "${comment_context_history_file}.tmp"
+		mv "${comment_context_history_file}.tmp" "$comment_context_history_file"
+	fi
+
+	local comment_batch_context=""
+	comment_batch_context=$(printf '%s\n' "$twitch_comments" | _format_comment_batch_context)
 
 	local current_time current_hour time_period
 	current_time=$(date '+%H:%M')
@@ -1732,24 +1769,33 @@ generate_comment_response() {
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
 		cat >"$comment_prompt_file" <<COMMENTPROMPT
 あなたはソ連風ラジオDJ。リスナーのTwitchコメントに返事してください。
-時刻: ${current_time} / ${time_period}
+	時刻: ${current_time} / ${time_period}
 
-【コメント】
-${twitch_comments}
+	【返信対象コメント（今回）】
+	${twitch_comments}
 
-【前回のトーク内容（文脈参照用）】
-${past_topics}
+	【コメント前後文脈（今回のコメント群）】
+	${comment_batch_context:-（なし）}
+
+	【直前コメント履歴（前回まで）】
+	${previous_comments_context:-（なし）}
+
+	【前回のトーク内容（文脈参照用）】
+	${past_topics}
 
 【ルール】
-- 全てのコメントに必ず返事すること。一つも漏らさない
-- ゲームに対する質問については、strategy.py, README.md の内容やゲームの状況を踏まえて、できるだけ具体的に答えること
-- 一つずつ返事する。「同志○○」と名前を呼んで反応
-- 偉そうにしないで、フレンドリーに返事すること
+	- 全てのコメントに必ず返事すること。一つも漏らさない
+	- コメントは必ず上から順番に返すこと
+	- ゲームに対する質問については、strategy.py, README.md の内容やゲームの状況を踏まえて、できるだけ具体的に答えること
+	- 一つずつ返事する。「同志○○」と名前を呼んで反応
+	- 偉そうにしないで、フレンドリーに返事すること
 - 言い訳をしない。スコアが低い、負けた、ミスした等の指摘には素直に認めて受け入れる。「でも」「ただ」「仕方ない」等で取り繕わない
 - 【最重要】全ての文末を「です・ます」調にすること。「〜だ」「〜である」「〜だった」「〜なのだ」は1文も許可しない
 - 各コメントへの返事は最低2-3文。もっと長くなっても構わない。短すぎる一言返しはNG
-- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
-- コメントの内容をまず読み上げ、そのあとに自分の感想・意見・連想を返す
+	- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
+	- 「それな」「それって」「さっきの」「草」など文脈依存コメントは、コメント前後文脈と直前履歴を使って対象を推定してから返事すること
+	- 文脈が曖昧な場合は、断定せずに「この話のことですよね？」のように確認を挟んで返すこと
+	- コメントの内容をまず読み上げ、そのあとに自分の感想・意見・連想を返す
 - コメントから話を膨らませる：関連する自分のエピソード、ツッコミ、豆知識、冗談などを足す
 - リスナーの気持ちに寄り添いつつ、独自の視点や感情を込める
 - 話し言葉で、カジュアルなトーン
