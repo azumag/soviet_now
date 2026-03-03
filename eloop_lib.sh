@@ -2002,6 +2002,27 @@ else:
 
 	if echo "$result" | grep -q '^REGRESSION:'; then
 		log "[REGRESSION] リグレッション検知: $result"
+		# 進行中の改善プロセスがあれば停止して、リバート後の再上書きを防ぐ
+		local running_pid=0
+		if [ -f "$IMPROVE_STATE_FILE" ]; then
+			running_pid=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('pid',0))" 2>/dev/null || echo 0)
+		fi
+		if [ "${running_pid:-0}" -eq 0 ] && [ "${IMPROVE_PID:-0}" -ne 0 ]; then
+			running_pid="$IMPROVE_PID"
+		fi
+		if [ "${running_pid:-0}" -ne 0 ] && kill -0 "$running_pid" 2>/dev/null; then
+			local pid_cmd
+			pid_cmd=$(ps -p "$running_pid" -o command= 2>/dev/null || echo "")
+			if echo "$pid_cmd" | grep -q "eloop_improve"; then
+				log "[REGRESSION] 改善プロセス停止 (PID=$running_pid)"
+				kill "$running_pid" 2>/dev/null || true
+				wait "$running_pid" 2>/dev/null || true
+			else
+				log "[REGRESSION] PID=$running_pid は改善プロセスではないため停止スキップ: $pid_cmd"
+			fi
+		fi
+		IMPROVE_PID=0
+		_write_improve_state "idle" "0" ""
 		log "[REGRESSION] tmp/revert_strategy.py に自動リバート"
 
 		# リジェクトハッシュに記録
