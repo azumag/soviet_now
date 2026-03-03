@@ -680,10 +680,7 @@ _radio_generate_and_play() {
 		return 1
 	fi
 
-	# コメント等が再生中なら終了まで待つ（重なり防止）
-	while pgrep -x say >/dev/null 2>&1; do
-		sleep 2
-	done
+	# say待ちは say_enqueue.sh 内で行われるため、ここでは不要
 
 	local talk_file
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
@@ -1339,7 +1336,13 @@ _kill_comment_gen() {
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
 _play_comment_queue() {
-	# say待ちは say_enqueue.sh 内で行われるため、ここでは不要
+	# .playing ファイルのリカバリ（前回kill等で残った孤児を再キュー）
+	for orphan in "$COMMENT_QUEUE_DIR"/comment_*.playing 2>/dev/null; do
+		[ -f "$orphan" ] || continue
+		local recovered="${orphan%.playing}.txt"
+		mv "$orphan" "$recovered" 2>/dev/null
+		echo "[_play_comment_queue $(date '+%H:%M:%S')] リカバリ: $orphan → $recovered" >> tmp/.say_queue/debug.log
+	done
 	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
 		if [ -f "$qf" ]; then
 			# 重複チェック: 同じ内容を再度再生しない
