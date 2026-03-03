@@ -651,6 +651,14 @@ print(result, end='')
 "
 }
 
+# 自分のコーナーの状態ファイルだけ安全に削除 (並列実行の競合防止)
+_radio_clear_state() {
+	local my_corner="$1"
+	local current
+	current=$(cat tmp/.radio_state 2>/dev/null) || return 0
+	case "$current" in *":${my_corner}:"*) rm -f tmp/.radio_state ;; esac
+}
+
 _radio_generate_and_play() {
 	local prompt_file="$1" game_num="$2" score="$3" corner_name="$4"
 	shift 4
@@ -676,7 +684,7 @@ _radio_generate_and_play() {
 
 	if [ -z "$talk" ]; then
 		log "[RADIO:${corner_name}] トーク生成失敗"
-		rm -f tmp/.radio_state
+		_radio_clear_state "$corner_name"
 		return 1
 	fi
 
@@ -702,7 +710,7 @@ _radio_generate_and_play() {
 	talk_body=$(echo "$talk_body" | _radio_dedup_text)
 	if [ ${#talk_body} -lt 100 ]; then
 		log "[RADIO:${corner_name}] WARNING: 繰り返し除去後が短すぎる(${#talk_body}字)、スキップ"
-		rm -f tmp/.radio_state
+		_radio_clear_state "$corner_name"
 		return 1
 	fi
 
@@ -719,7 +727,7 @@ _radio_generate_and_play() {
 		./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
 	fi
 	rm -f "$talk_file"
-	rm -f tmp/.radio_state
+	_radio_clear_state "$corner_name"
 	log "[RADIO:${corner_name}] トーク終了"
 }
 
@@ -1346,7 +1354,7 @@ CELEBPROMPT
 		echo "playing:celebration:$(date +%s)" > tmp/.radio_state
 		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
-		rm -f tmp/.radio_state
+		_radio_clear_state "celebration"
 		log "[CELEBRATION] 祝賀トーク生成失敗"
 	fi
 }

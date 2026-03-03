@@ -69,6 +69,7 @@ handle_soviet_celebration() {
 	if [ -f "tmp/radio_celebration.txt" ] && [ -s "tmp/radio_celebration.txt" ]; then
 		./say_enqueue.sh --no-preempt tmp/radio_celebration.txt "$RADIO_SAY_RATE" 0
 	fi
+	rm -f tmp/.radio_state
 	rm -f tmp/.soviet_created
 
 	# コメントプレイヤー・ウォッチャー再開

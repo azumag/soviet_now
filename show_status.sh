@@ -196,14 +196,11 @@ if h and h in rs:
 			fi
 		fi
 	fi
-	# フォールバック: 状態ファイルがないがsayが動いていれば再生中
-	if [[ "$radio_status" == "idle" ]] && $say_running; then
-		radio_status="playing"
-	fi
+	# 注: sayフォールバックは廃止 (コメント再生との区別不可のため状態ファイルのみで判定)
 	# コーナー名が取れなかった場合、過去トピックスから取得
 	if [[ -z "$radio_corner" ]] && [[ -f tmp/past_radio_topics.txt ]] && [[ -s tmp/past_radio_topics.txt ]]; then
 		local last_radio_line=$(tail -1 tmp/past_radio_topics.txt)
-		radio_corner=$(echo "$last_radio_line" | grep -o '\[.*\]' | tr -d '[]')
+		radio_corner=$(echo "$last_radio_line" | grep -oE '\[[a-z_]+\]' | tail -1 | tr -d '[]')
 	fi
 
 	# --- コメントキュー状態 ---
