@@ -31,11 +31,6 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズ併合強化版
-# v148: v42構造回帰・バランス補正強化版 - v147の失敗（スコア分散stddev=330.6、平均1008.3点）を受けて、
-# v141〜v147で追加した複雑な機能（盤面クラスタリング/平坦度スコア等9つの評価軸）を全て削除し、
-# v42のシンプルな5要素構造に完全回帰。MEDIUMフェーズheight_multをv147の2.3からv42(2.4)とv145(2.2)の中間値2.2に緩和し、併合機会を確保。
-# バランス補正を強化（盤面が高いほどbalance_strengthを大きく）し、盤面の不均一性を抑制。
-# 説明可能でシンプルな構造で、v42の成功を再現しつつ、v147のデータ洞察を活用。
 # v149: 連鎖併合ボーナス追加版 - batch_summary分析でHEIGHT_CONTROLのavg_score_delta=0.7と低いこと、NEAR_MERGE関連が正の効果があることを確認。
 # 新しい評価軸「連鎖併合ボーナス」を追加し、併合後にさらに連鎖できる可能性を評価する。
 # result["merges"]から最良の併合ターゲットを取得し、併合後のtype (next_type+1) の周囲に同じtypeのピースがないか確認。
@@ -45,6 +40,9 @@
 # HEIGHT_CONTROLが頻繁に選択されるが価値が低い問題を解決するため、MEDIUMフェーズheight_multを2.2→1.8に緩和して併合機会を増加。
 # 同時にchain_merge_bonusの係数を150.0→200.0に強化し、連鎖併合の可能性をより重視する。
 # これによりHEIGHT_CONTROLの選択率を減らし、高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を増やすことでスコア向上を目指す。
+# v152: CHAIN_MERGE大幅強化版 - batch_summary分析でNEAR_MERGE_HIGH_LAYER_CHAIN_MERGEのavg_score_delta=56.0と非常に高いことを確認。
+# v151でchain_merge_bonusを200.0に強化したが、CHAIN_MERGEの選択率はまだ低い（5.8%）。CHAIN_MERGEをさらに強化し、HEIGHT_CONTROLの選択率を減らすことでスコア向上を目指す。
+# chain_merge_bonusの係数を200.0→300.0に大幅強化し、chain_distanceを3.0→3.5に緩和して、より広範囲の連鎖可能性を評価する。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -52,13 +50,12 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v151: MEDIUMフェーズ高度管理緩和・chain_merge_bonus強化版
+    """v152: CHAIN_MERGE大幅強化版
 
-    batch_summary分析でHEIGHT_CONTROLのavg_score_delta=1.9と非常に低いこと、
-    NEAR_MERGE関連（特にCHAIN_MERGE付き）がavg_score_delta=34.6〜52.1と高価値であることを確認。
-    HEIGHT_CONTROLが頻繁に選択されるが価値が低い問題を解決するため、MEDIUMフェーズheight_multを2.2→1.8に緩和して併合機会を増加。
-    同時にchain_merge_bonusの係数を150.0→200.0に強化し、連鎖併合の可能性をより重視する。
-    これによりHEIGHT_CONTROLの選択率を減らし、高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を増やすことでスコア向上を目指す。
+    batch_summary分析でNEAR_MERGE_HIGH_LAYER_CHAIN_MERGEのavg_score_delta=56.0と非常に高いことを確認。
+    v151でchain_merge_bonusを200.0に強化したが、CHAIN_MERGEの選択率はまだ低い（5.8%）。
+    CHAIN_MERGEをさらに強化し、HEIGHT_CONTROLの選択率を減らすことでスコア向上を目指す。
+    chain_merge_bonusの係数を200.0→300.0に大幅強化し、chain_distanceを3.0→3.5に緩和して、より広範囲の連鎖可能性を評価する。
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -196,11 +193,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- 評価軸 6: 連鎖併合ボーナス (v149: 新規追加, v151: 強化) -----
+        # ----- 評価軸 6: 連鎖併合ボーナス (v149: 新規追加, v151/v152: 強化) -----
         # 併合が成功した場合、連鎖してさらに併合できるか評価
         # result["merges"]から最良の併合ターゲットを取得
         # 併合後のtype (merged_type) の周囲に同じtypeのピースがないか確認
-        # v151: chain_merge_bonusの係数を150.0→200.0に強化
+        # v152: chain_merge_bonusの係数を200.0→300.0に大幅強化
+        # v152: chain_distanceを3.0→3.5に緩和
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -211,15 +209,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 # 併合後のtype (merged_type) のピースが盤面上にあるか確認
                 # 連鎖判定距離: typeの半径 + ピースの半径 (0.5〜2.0程度)
-                chain_distance = 3.0  # v150: 2.5→3.0に緩和、v151: 維持
+                chain_distance = 3.5  # v152: 3.0→3.5に緩和、より広範囲の連鎖可能性を評価
 
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
                         if dist < chain_distance:
                             # 連鎖可能性がある: 距離が近いほど大きなボーナス
-                            # v151: 係数を150.0→200.0に強化し、連鎖併合をより重視
-                            chain_bonus = (chain_distance - dist) * 200.0
+                            # v152: 係数を200.0→300.0に大幅強化し、連鎖併合をさらに重視
+                            chain_bonus = (chain_distance - dist) * 300.0
                             score += chain_bonus
                             reasons.append("CHAIN_MERGE")
                             break  # 1つ見つかれば十分
