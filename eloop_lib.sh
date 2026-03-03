@@ -38,9 +38,6 @@ MIN_GAMES_BEFORE_IMPROVE=10
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
 COMMENT_WATCHER_INTERVAL=10
-DASHBOARD_PORT=8765
-DASHBOARD_PID_FILE="tmp/dashboard_server.pid"
-
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" tmp
 
 #=== コアヘルパー ===

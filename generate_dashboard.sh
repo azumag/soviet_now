@@ -13,29 +13,10 @@ fi
 # MOVE等（非GAMEOVER）なら空HTMLを書いて終了
 if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ]; then
 	cat > score_dashboard.html <<'EMPTYEOF'
-<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta http-equiv="refresh" content="2">
+</head>
 <body style="background:transparent">
-<script>
-// OBS CEFはlocation.reload()でキャッシュを読む場合があるため、
-// XHRでファイルを直接再読み込みしてページ全体を差し替える
-function reloadFromDisk() {
-  try {
-    var xhr = new XMLHttpRequest();
-    var filePath = 'file:///Users/azumag/work/sandbox/soren/score_dashboard.html';
-    xhr.open('GET', filePath + '?t=' + Date.now(), true);
-    xhr.onload = function() {
-      if (xhr.status === 0 || xhr.status === 200) {
-        document.open();
-        document.write(xhr.responseText);
-        document.close();
-      }
-    };
-    xhr.onerror = function() { location.reload(); };
-    xhr.send();
-  } catch(e) { location.reload(); }
-}
-setTimeout(reloadFromDisk, 2000);
-</script>
 </body></html>
 EMPTYEOF
 	echo "Generated score_dashboard.html (state=${GAME_STATE}, hidden)"
@@ -52,6 +33,7 @@ cat > score_dashboard.html <<HTMLEOF
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="refresh" content="2">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -266,24 +248,7 @@ function drawChart(scores) {
 drawChart(SCORES);
 window.addEventListener('resize', () => drawChart(SCORES));
 
-// 2秒ごとにディスクからファイルを再読み込み（OBS CEFキャッシュ回避）
-function reloadFromDisk() {
-  try {
-    var xhr = new XMLHttpRequest();
-    var filePath = 'file:///Users/azumag/work/sandbox/soren/score_dashboard.html';
-    xhr.open('GET', filePath + '?t=' + Date.now(), true);
-    xhr.onload = function() {
-      if (xhr.status === 0 || xhr.status === 200) {
-        document.open();
-        document.write(xhr.responseText);
-        document.close();
-      }
-    };
-    xhr.onerror = function() { location.reload(); };
-    xhr.send();
-  } catch(e) { location.reload(); }
-}
-setTimeout(reloadFromDisk, 2000);
+// meta http-equiv="refresh" handles auto-reload
 </script>
 </body>
 </html>
