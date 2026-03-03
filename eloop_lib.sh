@@ -27,6 +27,7 @@ RADIO_AGENT="zai"
 RADIO_FALLBACK="glmflash"
 RADIO_OPENCODE_TIMEOUT=180
 RADIO_CLAUDE_MODEL="sonnet"
+RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 RADIO_SAY_RATE=150
 PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
 PAST_NEWS_READ="tmp/.past_news_read.txt"
@@ -487,7 +488,7 @@ _run_opencode_radio() {
 	local raw_file
 	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
 	timeout "${RADIO_OPENCODE_TIMEOUT}" \
-		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
+		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$RADIO_OPENCODE_PERMISSION' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then
 		log "[RADIO] opencode timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)"
