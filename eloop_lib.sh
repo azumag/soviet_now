@@ -1339,10 +1339,7 @@ _kill_comment_gen() {
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
 _play_comment_queue() {
-	# ラジオ等が再生中なら終了まで待つ（重なり防止）
-	while pgrep -x say >/dev/null 2>&1; do
-		sleep 2
-	done
+	# say待ちは say_enqueue.sh 内で行われるため、ここでは不要
 	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
 		if [ -f "$qf" ]; then
 			# 重複チェック: 同じ内容を再度再生しない
