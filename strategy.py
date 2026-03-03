@@ -37,6 +37,9 @@
 # HIGHフェーズでのNEAR_MERGE機会を積極的に確保。batch_summaryでNEAR_MERGEの平均スコアデルタが33〜51点と高いことを確認。
 # 盤面クラスタリング/平坦度は、v142/v146での動的調整が複雑すぎ効果不透明と判断し、削除。
 # v126の成功構造をベースにしつつ、HIGHフェーズでの併合機会確保を強化。コード量削減（約240行→約140行）。
+# v148: NEAR_MERGEボーナス強化版 - v147の失敗（NEAR_MERGE選択率6.4%）を受けて、batch_summary分析でNEAR_MERGEのavg_score_delta=33〜51点と高いことを確認。
+# v126のシンプル構造を維持しつつ、NEAR_MERGEボーナスを0.5→0.6に強化することで、HIGH_LAYERでの併合機会を増やし、スコアを伸ばす。
+# 振り子パターンを回避し、単一パラメータ調整で実現。コード量維持（約140行）。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -44,12 +47,11 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v147: v126構造復帰・HIGHフェーズ積極化版
+    """v148: NEAR_MERGEボーナス強化版
 
-    v126のシンプルな5要素構造に完全復帰し、HIGHフェーズでのNEAR_MERGE機会を確保。
-    v141〜v143で追加した盤面整理度/平坦度スコアは複雑すぎ効果不透明と判断し、削除。
-    MEDIUMフェーズのheight_multをv126の2.4に戻し、HIGHフェーズheight_multをv126の1.8に戻すことで、
-    バランスの取れた高度管理と積極的な併合戦略を実現。
+    v147の失敗（NEAR_MERGE選択率6.4%）を受けて、batch_summary分析でNEAR_MERGEのavg_score_delta=33〜51点と高いことを確認。
+    v126のシンプル構造を維持しつつ、NEAR_MERGEボーナスを0.5→0.6に強化することで、HIGH_LAYERでの併合機会を増やし、スコアを伸ばす。
+    振り子パターンを回避し、単一パラメータ調整で実現。
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -150,8 +152,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
             near_mult = (
-                0.3 if phase == "CRITICAL" else 0.5
-            )  # v140: CRITICAL時NEARは慎重に
+                0.3 if phase == "CRITICAL" else 0.6
+            )  # v148: NEAR_MERGEボーナス強化 (0.5→0.6)
             score += type_merge_bonus * near_mult * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
