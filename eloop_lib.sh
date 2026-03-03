@@ -12,7 +12,6 @@ cd "$ELOOP_LIB_DIR"
 # --- 定数 ---
 COMMANDS="commands.txt"
 GAME_STATE="game_state.json"
-AI_TIMEOUT=1200
 
 STRATEGY_FILE="strategy.py"
 STRATEGY_VERSIONS_DIR="strategy_versions"
@@ -285,17 +284,12 @@ run_cmd() {
 
 	start_spinner "$type thinking..."
 
-	(sleep "$AI_TIMEOUT" && kill "$cmd_pid" 2>/dev/null && log "AI TIMEOUT (${AI_TIMEOUT}s)") &
-	local timer_pid=$!
-
-	trap "stop_spinner; kill $cmd_pid $timer_pid 2>/dev/null; wait $cmd_pid $timer_pid 2>/dev/null; log 'Interrupted'; trap - INT; return 130" INT
+	trap "stop_spinner; kill $cmd_pid 2>/dev/null; wait $cmd_pid 2>/dev/null; log 'Interrupted'; trap - INT; return 130" INT
 
 	wait "$cmd_pid" 2>/dev/null
 	local ret=$?
 
 	stop_spinner
-	kill "$timer_pid" 2>/dev/null
-	wait "$timer_pid" 2>/dev/null
 	trap - INT
 
 	rm -f "$prompt_file"
