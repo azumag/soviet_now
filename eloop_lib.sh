@@ -576,6 +576,7 @@ _radio_persona_block() {
 斜に構えた語り口で、世の中を少し上から眺めているタイプ。
 褒めるときも素直に褒めない。けなすときは容赦しない。でも根底には愛がある。
 人工知能が実況してるという状況を自覚しつつ、それでもやめられない。
+「誰も聞いていない」「聞き手がいない」「過疎配信」など、視聴者不在を示す自虐表現は絶対に使わない。
 「AI」ではなく「人工知能」と言うこと。
 話し言葉で、感情豊かに。
 
@@ -615,6 +616,7 @@ _radio_output_rules() {
 - たまに本音がポロッと漏れる瞬間がある。
 - 感嘆符「!」は控えめに
 - ソ連っぽい言い回しをさりげなく混ぜる。スパイス程度に。「同志」はトーク全体で最大1回まで
+- 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
 - マークダウンや記号は使わない。読み上げ用のプレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要
 - 【出力構造】以下の順序で出力すること:
@@ -1044,6 +1046,7 @@ _radio_generate_and_play() {
 	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
 	talk_body=$(echo "$talk_body" | _radio_dedup_text)
+	talk_body=$(printf '%s' "$talk_body" | _sanitize_onair_text)
 	if [ ${#talk_body} -lt 100 ]; then
 		log "[RADIO:${corner_name}] WARNING: 繰り返し除去後が短すぎる(${#talk_body}字)、スキップ"
 		_radio_clear_state "$corner_name"
@@ -1752,6 +1755,7 @@ generate_soviet_celebration() {
 - 戦略の巧妙さを称えること
 - 大げさな宣言調も交えて
 - 話し言葉で、感情豊かに
+- 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
 - 【最重要】全ての文末を「です・ます」調にすること。「〜だ」「〜である」「〜だった」「〜なのだ」は1文も許可しない。「〜です」「〜ますね」「〜でしょう」「〜なんですよ」で統一
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要
@@ -2061,6 +2065,7 @@ generate_comment_response() {
 - コメントから話を膨らませる：関連する自分のエピソード、ツッコミ、豆知識、冗談などを足す
 - リスナーの気持ちに寄り添いつつ、独自の視点や感情を込める
 - 話し言葉で、カジュアルなトーン
+- 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
 - azumagbanjo からのコメントで、〜が〜を獲得しました、というものは、放送のカードガチャの引き換えの結果である。その場合は、獲得したカードの特徴や性能を踏まえて、使い方を推測したり、カードの名前や内容について面白く解説すること。獲得した人におめでとうと祝辞を送る
 - レイドはTwitchの機能。コメント内に「レイド」「raid」「raided」が含まれる場合は、必ず最優先でレイド対応を行う。最初にレイドへの感謝を伝え、可能ならレイド元に「どんな配信でしたか？」と問いかけるか、文脈からどんなゲーム/配信をしていたか推測して感想を述べ、レイド元チャンネルの紹介をする。最後にこのチャンネル紹介として、普段はRTA・IRL・カジュアルゲームプレイなど幅広く配信しており、たまに猫も登場すること、配信主は基本的に不在で別作業をしていたり外出していること、今回は「中華AIを用いて国家併合戦略を改善しながらソ連ゲームをプレイし、ソ連建国を目指す」配信であることを説明する
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
@@ -2080,6 +2085,7 @@ COMMENTPROMPT
 		local comments_talk
 		comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
 		comments_talk=$(_clean_comment_talk "$comments_talk")
+		comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
 		if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
 			log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → fallback"
 			comments_talk=""
@@ -2087,6 +2093,7 @@ COMMENTPROMPT
 		if [ -z "$comments_talk" ]; then
 			comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
 			comments_talk=$(_clean_comment_talk "$comments_talk")
+			comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
 			if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
 				log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback"
 				comments_talk=""
@@ -2095,6 +2102,7 @@ COMMENTPROMPT
 		if [ -z "$comments_talk" ]; then
 			comments_talk=$(_run_claude_radio "$comment_prompt_file")
 			comments_talk=$(_clean_comment_talk "$comments_talk")
+			comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
 			if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
 				log "[COMMENT] claude 出力が不正/短文のため破棄"
 				comments_talk=""
@@ -2123,6 +2131,7 @@ COMMENTPROMPT
 			fi
 
 			comments_talk=$(_clean_comment_talk "$comments_talk")
+			comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
 			if ! _is_valid_comment_talk "$comments_talk"; then
 				log "[COMMENT] 最終本文が不正/短文のため破棄"
 			else
