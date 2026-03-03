@@ -33,13 +33,17 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズ併合強化版
-# v139: 同type集約ボーナス追加版 - mergesの個別距離データで将来併合確率を評価
 # v140: CRITICALフェーズ併合戦略反転 — merge_mult=0.6(併合抑制)を廃止。
 # 併合は2個→1個でネット-1ピース=盤面圧縮の最良手段。CRITICALこそ併合優先すべき。
 # ただしNEAR(成功率68.5%)は失敗→即死リスクがあるため、DIRECTのみ1.5倍ボーナス、
 # NEARは通常の0.5倍に据え置き。merge_gradeごとに分岐するCRITICAL専用ロジック。
 # v141: 盤面整理度スコア追加 - 盤面全体の同type集約度を評価。各typeの最短ペア距離を計算し、
 # 近くに集まっているtypeほどボーナス。同typeが分散している盤面をペナルティして、将来の併合機会を損なう配置を抑制。
+# v142: 併合品質に応じたクラスタリング重み動的調整 - v141では盤面クラスタリングスコアを一律に全ドロップ候補に加算していたため、
+# 併合品質と無関係にクラスタリングだけを優先する危険性があった。v142では併合品質(DIRECT/NEAR/FAR/NO)に応じて
+# クラスタリングスコアの重みを動的に調整：DIRECTで×1.3強化（高品質併合×整理された盤面）、
+# NEARで×0.8緩和（不確実な併合×整理された盤面）、FAR/NOで×0.0無視（併合できない候補で盤面整理優先を回避）。
+# これにより盤面クラスタリング(将来の併合確率)と即時併合のトレードオフを適切に調整。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -106,7 +110,7 @@ def calculate_board_clustering(pieces):
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v141: CRITICALフェーズDIRECT併合最優先 + 同type集約ボーナス + 盤面整理度スコア
+    """v142: 併合品質に応じたクラスタリング重み動的調整版
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -288,18 +292,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += cluster_bonus
             reasons.append("CLUSTER")
 
-        # ----- 評価軸 8: 盤面整理度スコア (v141: 新規追加) -----
-        # 盤面全体の同type集約度を評価。同typeが近くに集まっているほどボーナス。
-        # 盤面全体の整理度スコア（全候補で共通）をそのまま加算。
-        # 集約度が高い（同typeが近くに集まっている）場合は、盤面が整理されており、
-        # 将来の併合機会が多いのでボーナス。
-        # 集約度が低い（同typeが分散している）場合は、盤面が整理されておらず、
-        # 将来の併合機会が少ないのでペナルティ。
-        score += current_clustering
-        if current_clustering > 100.0:
-            reasons.append("BOARD_CLUSTERED")
-        elif current_clustering < -50.0:
-            reasons.append("BOARD_SCATTERED")
+        # ----- 評価軸 8: 盤面整理度スコア (v142: 併合品質に応じた動的調整版) -----
+        # v141では盤面クラスタリングスコアを一律に全ドロップ候補に加算していた。
+        # v142では併合品質(DIRECT/NEAR/FAR/NO)に応じて動的に調整：
+        #   - DIRECT併合候補：×1.3強化（高品質併合×整理された盤面で最強相乗効果）
+        #   - NEAR併合候補：×0.8緩和（不確実な併合で盤面整理を優先しない）
+        #   - FAR/NO併合候補：×0.0無視（併合できない候補で盤面整理を優先するのを回避）
+        #
+        # これにより盤面クラスタリング(将来の併合確率)と即時併合のトレードオフを適切に調整。
+        # DIRECT併合時に整理された盤面を優先し、併合できない候補では盤面整理を優先しないようにする。
+        clustering_mult = 0.0
+        if merge_grade == "DIRECT":
+            clustering_mult = 1.3   # v142: 高品質併合×整理された盤面を強化
+        elif merge_grade == "NEAR":
+            clustering_mult = 0.8   # v142: 不確実な併合で盤面整理を緩和
+        elif merge_grade in ("FAR", "NO"):
+            clustering_mult = 0.0   # v142: 併合できない候補では盤面整理を無視
+        
+        score += current_clustering * clustering_mult
+        if clustering_mult > 0.0:
+            if current_clustering > 100.0:
+                reasons.append("BOARD_CLUSTERED")
+            elif current_clustering < -50.0:
+                reasons.append("BOARD_SCATTERED")
 
         # ----- 最良候補の更新 -----
         if score > best_score:
