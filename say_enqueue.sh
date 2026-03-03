@@ -48,8 +48,12 @@ cp "$CONTENT_FILE" "$MY_CONTENT"
 # 読み上げ修正: "AI" → "エーアイ"
 sed -i '' 's/AI/エーアイ/g' "$MY_CONTENT"
 
-# トークン登録（最後に書いた者が勝つ）
-echo "$MY_TOKEN" > "$TOKEN_FILE"
+# トークン登録（通常リクエストのみ）
+# --no-preempt は「途中で切られない」用途なので、
+# 他の通常リクエストをプリエンプトしないようトークンを更新しない。
+if [ "$NO_PREEMPT" = false ]; then
+    echo "$MY_TOKEN" > "$TOKEN_FILE"
+fi
 
 _log() { echo "[say_enqueue $(date '+%H:%M:%S')] $*" >&2; echo "[say_enqueue $(date '+%H:%M:%S') PID=$$/${BASHPID:-?}] $* | file=$CONTENT_FILE token=$MY_TOKEN" >> tmp/.say_queue/debug.log; }
 
