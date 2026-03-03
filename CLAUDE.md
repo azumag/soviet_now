@@ -55,6 +55,18 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `analyze_board.py` | 盤面解析 (併合判定・着地予測・反応器状態) |
 | ~~`STRATEGY.md`~~ | 廃止（jloop用、git履歴に残存） |
 
+
+# 実装計画立案時のルール
+- ユーザーに計画を提示する前に、 codex コマンドで計画のレビュー>を行うこと
+- 本質的でない指摘は無視しても良い
+```
+# initial plan review
+codex exec "please review: {plan_full_path}"
+
+# updated plan review
+codex exec resule --last "plan updated: {plan_full_path}"
+```
+
 ### Codex review
 ```
 codex exec "PROMPT"
