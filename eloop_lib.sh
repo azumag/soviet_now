@@ -37,7 +37,7 @@ MIN_GAMES_BEFORE_IMPROVE=10
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
 COMMENT_WATCHER_INTERVAL=10
-mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" tmp
+mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "tmp/.twitch_chat" tmp
 
 #=== コアヘルパー ===
 
@@ -1419,6 +1419,7 @@ stop_comment_player() {
 
 generate_comment_response() {
 	_kill_comment_gen
+	mkdir -p "tmp/.twitch_chat"
 
 	./twitch_chat.sh fetch
 	./twitch_chat.sh ack
