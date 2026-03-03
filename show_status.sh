@@ -175,25 +175,34 @@ if h and h in rs:
 	local say_locked=false
 	[[ -d tmp/.say_queue/.lock ]] && say_locked=true
 
-	# --- ラジオコーナー状態 ---
-	local radio_status="idle"
-	local radio_corner=""
-
-	# opencode (ラジオ生成AI) のプロセスがあるかチェック
-	local radio_gen_pid=$(pgrep -f "eloop_radio" 2>/dev/null | head -1)
-	if [[ -n "$radio_gen_pid" ]]; then
-		radio_status="generating"
+	# --- ラジオコーナー状態 (状態ファイルベース) ---
+	local radio_status="idle" radio_corner="" radio_elapsed=""
+	if [[ -f tmp/.radio_state ]]; then
+		local radio_line=$(cat tmp/.radio_state 2>/dev/null)
+		local radio_mode=${radio_line%%:*}
+		local rest=${radio_line#*:}
+		radio_corner=${rest%%:*}
+		local radio_ts=${rest##*:}
+		if [[ -n "$radio_ts" ]]; then
+			local age=$(( $(date +%s) - radio_ts ))
+			if (( age > 600 )); then
+				# 10分以上前 → stale
+				radio_status="idle"
+			else
+				radio_status="$radio_mode"
+				if (( age < 60 )); then radio_elapsed="${age}s"
+				else radio_elapsed="$(( age / 60 ))m$(( age % 60 ))s"
+				fi
+			fi
+		fi
 	fi
-
-	# say が動いていればラジオ再生中かも (say_running で判定済み)
-	if $say_running && [[ "$radio_status" != "generating" ]]; then
+	# フォールバック: 状態ファイルがないがsayが動いていれば再生中
+	if [[ "$radio_status" == "idle" ]] && $say_running; then
 		radio_status="playing"
 	fi
-
-	# 過去ラジオトピックスから最新コーナー種別を取得
-	if [[ -f tmp/past_radio_topics.txt ]] && [[ -s tmp/past_radio_topics.txt ]]; then
+	# コーナー名が取れなかった場合、過去トピックスから取得
+	if [[ -z "$radio_corner" ]] && [[ -f tmp/past_radio_topics.txt ]] && [[ -s tmp/past_radio_topics.txt ]]; then
 		local last_radio_line=$(tail -1 tmp/past_radio_topics.txt)
-		# [corner_name] を抽出
 		radio_corner=$(echo "$last_radio_line" | grep -o '\[.*\]' | tr -d '[]')
 	fi
 
@@ -203,11 +212,18 @@ if h and h in rs:
 		comment_queue_count=$(find tmp/.comment_queue -name 'comment_*.txt' 2>/dev/null | wc -l | tr -d ' ')
 	fi
 
-	# コメント生成プロセス
+	# コメント生成プロセス (PIDファイル + 状態ファイル)
 	local comment_gen_running=false comment_gen_pid=""
 	if [[ -f tmp/.twitch_chat/comment_gen.pid ]]; then
 		comment_gen_pid=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null)
 		if [[ -n "$comment_gen_pid" ]] && kill -0 "$comment_gen_pid" 2>/dev/null; then
+			comment_gen_running=true
+		fi
+	fi
+	if ! $comment_gen_running && [[ -f tmp/.comment_gen_state ]]; then
+		local cg_line=$(cat tmp/.comment_gen_state 2>/dev/null)
+		local cg_ts=${cg_line##*:}
+		if [[ -n "$cg_ts" ]] && (( $(date +%s) - cg_ts < 300 )); then
 			comment_gen_running=true
 		fi
 	fi
@@ -322,12 +338,14 @@ if h and h in rs:
 
 	# ラジオコーナー
 	local corner_label="${radio_corner:-?}"
+	local elapsed_label=""
+	[[ -n "$radio_elapsed" ]] && elapsed_label=" ${radio_elapsed}"
 	case "$radio_status" in
 		playing)
-			printf "    ${C_GREEN}📻${C_RESET} Radio       ${C_GREEN}PLAYING${C_RESET}  ${C_DIM}[${corner_label}]${C_RESET}\n"
+			printf "    ${C_GREEN}📻${C_RESET} Radio       ${C_GREEN}PLAYING${C_RESET}  ${C_DIM}[${corner_label}]${elapsed_label}${C_RESET}\n"
 			;;
 		generating)
-			printf "    ${C_CYAN}📻${C_RESET} Radio       ${C_CYAN}GENERATING${C_RESET}  ${C_DIM}PID=${radio_gen_pid}${C_RESET}\n"
+			printf "    ${C_CYAN}📻${C_RESET} Radio       ${C_CYAN}GENERATING${C_RESET}  ${C_DIM}[${corner_label}]${elapsed_label}${C_RESET}\n"
 			;;
 		*)
 			if [[ -n "$radio_corner" ]]; then

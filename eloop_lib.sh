@@ -662,6 +662,7 @@ _radio_generate_and_play() {
 		shift
 	done
 
+	echo "generating:${corner_name}:$(date +%s)" > tmp/.radio_state
 	log "[RADIO:${corner_name}] トーク生成中..."
 	local talk
 	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
@@ -675,6 +676,7 @@ _radio_generate_and_play() {
 
 	if [ -z "$talk" ]; then
 		log "[RADIO:${corner_name}] トーク生成失敗"
+		rm -f tmp/.radio_state
 		return 1
 	fi
 
@@ -700,6 +702,7 @@ _radio_generate_and_play() {
 	talk_body=$(echo "$talk_body" | _radio_dedup_text)
 	if [ ${#talk_body} -lt 100 ]; then
 		log "[RADIO:${corner_name}] WARNING: 繰り返し除去後が短すぎる(${#talk_body}字)、スキップ"
+		rm -f tmp/.radio_state
 		return 1
 	fi
 
@@ -708,6 +711,7 @@ _radio_generate_and_play() {
 	local talk_file
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 	echo "$talk_body" >"$talk_file"
+	echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
 	log "[RADIO:${corner_name}] ${#talk_body}字"
 	if [ "$no_preempt" = true ]; then
 		./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
@@ -715,6 +719,7 @@ _radio_generate_and_play() {
 		./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
 	fi
 	rm -f "$talk_file"
+	rm -f tmp/.radio_state
 	log "[RADIO:${corner_name}] トーク終了"
 }
 
@@ -1324,6 +1329,7 @@ generate_soviet_celebration() {
 - 出力はトーク本文のみ。前置きや補足説明は不要
 CELEBPROMPT
 
+	echo "generating:celebration:$(date +%s)" > tmp/.radio_state
 	log "[CELEBRATION] 生成中..."
 	local celebration_talk
 	celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
@@ -1337,8 +1343,10 @@ CELEBPROMPT
 
 	if [ -n "$celebration_talk" ]; then
 		echo "$celebration_talk" >tmp/radio_celebration.txt
+		echo "playing:celebration:$(date +%s)" > tmp/.radio_state
 		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
+		rm -f tmp/.radio_state
 		log "[CELEBRATION] 祝賀トーク生成失敗"
 	fi
 }
@@ -1513,6 +1521,7 @@ ${past_topics}
 - 戦略アドバイスがなければ ===ADVICE=== は出力しない
 COMMENTPROMPT
 
+		echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
 		log "[COMMENT] コメント返し生成中..."
 		local comments_talk
 		comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
@@ -1558,6 +1567,7 @@ COMMENTPROMPT
 		else
 			log "[COMMENT] コメント返し生成失敗（次回再取得）"
 		fi
+		rm -f tmp/.comment_gen_state
 	) &
 	local comment_pid=$!
 	echo "$comment_pid" >tmp/.twitch_chat/comment_gen.pid
