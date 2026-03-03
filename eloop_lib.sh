@@ -1693,7 +1693,7 @@ stop_comment_player() {
 }
 
 _format_comment_batch_context() {
-	python3 - <<'PY'
+	python3 -c '
 import sys
 
 lines = [ln.strip() for ln in sys.stdin.read().splitlines() if ln.strip()]
@@ -1714,6 +1714,68 @@ for i, (user, msg, raw) in enumerate(items, start=1):
     print(f"  直後: {next_raw}")
     print(f"  直前が同一ユーザー: {same_user_prev}")
     print("")
+'
+}
+
+_build_comment_game_context() {
+	local gs_file="${1:-$GAME_STATE}"
+	python3 - "$gs_file" <<'PY'
+import json
+import sys
+from collections import Counter
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        gs = json.load(f)
+except Exception:
+    print("（game_state.json を読めませんでした）")
+    raise SystemExit(0)
+
+state = gs.get("state", "?")
+score = gs.get("score", 0)
+record = gs.get("record", 0)
+piece_count = gs.get("pieceCount", len(gs.get("pieces", [])))
+make_soren = gs.get("makeSorenCount", 0)
+next_t = gs.get("next", {}).get("type", "?")
+next_next_t = gs.get("nextNext", {}).get("type", "?")
+pieces = gs.get("pieces", [])
+
+print(f"state={state}, score={score}, record={record}, pieceCount={piece_count}, makeSorenCount={make_soren}")
+print(f"next.type={next_t}, nextNext.type={next_next_t}")
+
+if not pieces:
+    print("盤面ピース情報: （なし）")
+    raise SystemExit(0)
+
+ys = []
+type_counter = Counter()
+for p in pieces:
+    t = p.get("type")
+    y = p.get("y")
+    if isinstance(t, int):
+        type_counter[t] += 1
+    if isinstance(y, (int, float)):
+        ys.append(float(y))
+
+if ys:
+    print(f"y_range(min,max)=({min(ys):.3f}, {max(ys):.3f})")
+
+top_types = ", ".join(f"type{t}x{c}" for t, c in type_counter.most_common(8))
+print(f"type_count_top={top_types if top_types else '（不明）'}")
+
+pieces_with_xy = []
+for p in pieces:
+    x = p.get("x")
+    y = p.get("y")
+    t = p.get("type")
+    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+        pieces_with_xy.append((float(y), float(x), t))
+pieces_with_xy.sort(reverse=True)
+
+print("top_y_pieces:")
+for y, x, t in pieces_with_xy[:6]:
+    print(f"  type={t}, x={x:.3f}, y={y:.3f}")
 PY
 }
 
@@ -1734,6 +1796,8 @@ generate_comment_response() {
 
 	local past_topics=""
 	[ -f "$PAST_RADIO_TOPICS" ] && past_topics=$(cat "$PAST_RADIO_TOPICS")
+	local game_board_context=""
+	game_board_context=$(_build_comment_game_context "$GAME_STATE")
 
 	local comment_context_history_file="tmp/.twitch_chat/comment_context_history.log"
 	local previous_comments_context=""
@@ -1783,7 +1847,10 @@ generate_comment_response() {
 	【前回のトーク内容（文脈参照用）】
 	${past_topics}
 
-【ルール】
+	【現在のゲーム盤面サマリ（game_state.json）】
+	${game_board_context:-（取得失敗）}
+
+	【ルール】
 	- 全てのコメントに必ず返事すること。一つも漏らさない
 	- コメントは必ず上から順番に返すこと
 	- ゲームに対する質問については、strategy.py, README.md の内容やゲームの状況を踏まえて、できるだけ具体的に答えること
@@ -1802,8 +1869,10 @@ generate_comment_response() {
 - azumagbanjo からのコメントで、〜が〜を獲得しました、というものは、放送のカードガチャの引き換えの結果である。その場合は、獲得したカードの特徴や性能を踏まえて、使い方を推測したり、カードの名前や内容について面白く解説すること。獲得した人におめでとうと祝辞を送る
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 前置きや補足説明は不要。コメント返し本文のみ出力
-- コメントの中にゲーム戦略へのアドバイスが含まれていた場合、言い訳せず真摯に受け止め、「次の戦略改善に取り入れます」と具体的に説明すること
-- 戦略アドバイスがあった場合、トーク本文の後に以下の形式で出力すること:
+	- コメントの中にゲーム戦略へのアドバイスが含まれていた場合、言い訳せず真摯に受け止め、「次の戦略改善に取り入れます」と具体的に説明すること
+	- 盤面への言及（例: 右が高い、左が詰まってる、次の駒が弱い、typeが偏ってる等）があれば、必ずゲーム盤面サマリを参照して具体的に返すこと
+	- 盤面サマリだけで断定できない場合は、断定せずに「今の盤面を見る限りは〜」として慎重に返すこと
+	- 戦略アドバイスがあった場合、トーク本文の後に以下の形式で出力すること:
   ===ADVICE===
   （アドバイス内容を1-3行で要約。コメント主の名前も記載）
 - 戦略アドバイスがなければ ===ADVICE=== は出力しない
