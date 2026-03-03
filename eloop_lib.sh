@@ -25,6 +25,8 @@ GAME_COUNT_FILE="game_count.txt"
 
 RADIO_AGENT="zai"
 RADIO_FALLBACK="glmflash"
+RADIO_OPENCODE_TIMEOUT=30
+RADIO_CLAUDE_MODEL="sonnet"
 RADIO_SAY_RATE=150
 PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
 PAST_NEWS_READ="tmp/.past_news_read.txt"
@@ -484,7 +486,14 @@ _run_opencode_radio() {
 	local agent="$1" prompt_file="$2"
 	local raw_file
 	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
-	LC_ALL=en_US.UTF-8 script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
+	timeout "${RADIO_OPENCODE_TIMEOUT}" \
+		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
+	local rc=$?
+	if [ $rc -eq 124 ]; then
+		log "[RADIO] opencode timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)"
+		rm -f "$raw_file"
+		return 1
+	fi
 	cat "$raw_file" |
 		_strip_ansi |
 		grep -v '^>' |
@@ -493,6 +502,17 @@ _run_opencode_radio() {
 		grep -v '^[[:space:]]*/Users/' |
 		sed '/^[[:space:]]*$/d'
 	rm -f "$raw_file"
+}
+
+_run_claude_radio() {
+	local prompt_file="$1"
+	local prompt
+	prompt=$(cat "$prompt_file" 2>/dev/null)
+	if [ -z "$prompt" ]; then
+		return 1
+	fi
+	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL)"
+	claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>/dev/null
 }
 
 #=== ラジオトーク: 共通ヘルパー ===
@@ -647,6 +667,9 @@ _radio_generate_and_play() {
 	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
 	if [ -z "$talk" ]; then
 		talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$prompt_file")
+	fi
+	if [ -z "$talk" ]; then
+		talk=$(_run_claude_radio "$prompt_file")
 	fi
 	rm -f "$prompt_file"
 
@@ -1307,6 +1330,9 @@ CELEBPROMPT
 	if [ -z "$celebration_talk" ]; then
 		celebration_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$celebration_prompt_file")
 	fi
+	if [ -z "$celebration_talk" ]; then
+		celebration_talk=$(_run_claude_radio "$celebration_prompt_file")
+	fi
 	rm -f "$celebration_prompt_file"
 
 	if [ -n "$celebration_talk" ]; then
@@ -1492,6 +1518,9 @@ COMMENTPROMPT
 		comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
 		if [ -z "$comments_talk" ]; then
 			comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
+		fi
+		if [ -z "$comments_talk" ]; then
+			comments_talk=$(_run_claude_radio "$comment_prompt_file")
 		fi
 		rm -f "$comment_prompt_file"
 
