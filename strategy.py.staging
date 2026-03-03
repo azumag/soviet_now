@@ -7,16 +7,13 @@
   - ボード: x ∈ [-3.0, +3.0], 床 y=-4.48, デッドライン y=3.32
   - プレイヤーが制御できるのはドロップX座標のみ
 
-決定ロジック (9つの評価軸):
+決定ロジック (5つの評価軸):
   1. 併合ボーナス   — 即座に併合できる位置に高得点 (DIRECT > NEAR > FAR)
   2. 高度ペナルティ   — 着地位置が高いほど減点 (フェーズで重み変動)
   3. Reactor保護      — 連鎖進行中は高い位置を回避
   4. ドリフトペナルティ — ポリゴン形状による着地後のズレを減点
   5. 左右バランス補正 — ピース数の偏りを是正する方向にボーナス
   6. nextNext中央寄せ — 次の次と同typeなら中央に寄せて併合準備
-  7. 同type集約       — 同typeピースが近くに多い位置にボーナス (将来併合準備)
-  8. 盤面整理度スコア — 盤面全体の同type集約度を評価 (v141: 新規追加)
-  9. 盤面平坦度スコア — 盤面のY座標分散を評価 (v143: 新規追加)
 
 フェーズ (盤面の最高Y座標で判定):
   LOW      (max_y < 0.8) : 序盤。併合優先 (merge_mult=1.2)
@@ -34,131 +31,25 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズ併合強化版
-# v142: 併合品質に応じたクラスタリング重み動的調整 - v141では盤面クラスタリングスコアを一律に全ドロップ候補に加算していたため、
-# 併合品質と無関係にクラスタリングだけを優先する危険性があった。v142では併合品質(DIRECT/NEAR/FAR/NO)に応じて
-# クラスタリングスコアの重みを動的に調整：DIRECTで×1.3強化（高品質併合×整理された盤面）、
-# NEARで×0.8緩和（不確実な併合×整理された盤面）、FAR/NOで×0.0無視（併合できない候補で盤面整理優先を回避）。
-# これにより盤面クラスタリング(将来の併合確率)と即時併合のトレードオフを適切に調整。
-# v143: 盤面平坦度スコア追加 - 盤面のY座標の分散（標準偏差）を計算し、分散が小さいほどボーナス。
-# 平坦な盤面はピースが均一に配置され、隙間が少なく、連鎖反応が起きやすい。
-# v146: 盤面平坦度スコアの動的調整版 - v143の一律加算を盤面の高さ（max_y）に応じた動的調整に変更。
-# LOWフェーズでは平坦度を無視（flatness_weight=0.0）し、HIGH/CRITICALフェーズでは平坦度を重視（flatness_weight=1.0-2.0）することで、
-# 盤面の状態に応じた戦略切り替えを実現し、スコア安定性を向上させる。
+# v147: v126構造復帰・HIGHフェーズ積極化版 - v146の失敗（平均1334.4点、分散大きい、NEAR_MERGE選択率6.4%）を受けて、
+# v126のシンプルな5要素構造に完全復帰。v141〜v143で追加した盤面整理度/平坦度スコアを削除し、
+# MEDIUMフェーズのheight_multをv126の2.4に戻し、HIGHフェーズheight_multをv126の1.8に戻すことで、
+# HIGHフェーズでのNEAR_MERGE機会を積極的に確保。batch_summaryでNEAR_MERGEの平均スコアデルタが33〜51点と高いことを確認。
+# 盤面クラスタリング/平坦度は、v142/v146での動的調整が複雑すぎ効果不透明と判断し、削除。
+# v126の成功構造をベースにしつつ、HIGHフェーズでの併合機会確保を強化。コード量削減（約240行→約140行）。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
-def calculate_board_clustering(pieces):
-    """v141: 盤面全体の同type集約度を計算
-
-    各typeの最短ペア距離を計算し、距離が小さいほどボーナスを与える。
-    同typeが近くに集まっている盤面は、将来の併合確率が高い。
-
-    Args:
-        pieces: 全ピースのリスト [{id, type, x, y, ...}, ...]
-
-    Returns:
-        clustering_score: 集約度スコア（高いほど同typeが集まっている）
-    """
-    if not pieces:
-        return 0.0
-
-    # typeごとのピースリストを作成
-    type_pieces = {}
-    for p in pieces:
-        ptype = p["type"]
-        if ptype not in type_pieces:
-            type_pieces[ptype] = []
-        type_pieces[ptype].append(p)
-
-    clustering_score = 0.0
-
-    # 各typeについて最短ペア距離を計算
-    for ptype, piece_list in type_pieces.items():
-        # ピースが1つ以下なら集約度は計算不可
-        if len(piece_list) < 2:
-            continue
-
-        # 全ペアの距離を計算し、最短距離を見つける
-        min_dist = float("inf")
-        for i in range(len(piece_list)):
-            for j in range(i + 1, len(piece_list)):
-                p1 = piece_list[i]
-                p2 = piece_list[j]
-                dist = ((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2) ** 0.5
-                if dist < min_dist:
-                    min_dist = dist
-
-        # 最短距離に基づいてスコアを計算
-        # 距離が小さいほど高いボーナス（同typeが集まっている）
-        # 距離が大きいほどペナルティ（同typeが分散している）
-        # ピース数で重み付け（大typeの集約を優先）
-        piece_count = len(piece_list)
-        if min_dist < 1.0:
-            # 非常に近い：強いボーナス
-            clustering_score += (1.0 - min_dist) * 100.0 * piece_count
-        elif min_dist < 3.0:
-            # 近い：普通のボーナス
-            clustering_score += (1.0 - min_dist / 3.0) * 50.0 * piece_count
-        else:
-            # 離れている：ペナルティ
-            clustering_score -= (min_dist - 3.0) * 20.0 * piece_count
-
-    return clustering_score
-
-
-def calculate_board_flatness(pieces):
-    """v143: 盤面の平坦度を計算
-
-    盤面のY座標の分散（標準偏差）を計算し、分散が小さいほどボーナスを与える。
-    平坦な盤面はピースが均一に配置され、隙間が少なく、連鎖反応が起きやすい。
-
-    Args:
-        pieces: 全ピースのリスト [{id, type, x, y, ...}, ...]
-
-    Returns:
-        flatness_score: 平坦度スコア（高いほど盤面が平坦）
-    """
-    if not pieces or len(pieces) < 2:
-        return 0.0
-
-    # Y座標のリストを作成
-    y_values = [p["y"] for p in pieces]
-
-    # 標準偏差を計算
-    import math
-
-    mean_y = sum(y_values) / len(y_values)
-    variance = sum((y - mean_y) ** 2 for y in y_values) / len(y_values)
-    std_dev = math.sqrt(variance)
-
-    # 平坦度スコア：標準偏差が小さいほど高いボーナス
-    # 標準偏差が0.5以下：強いボーナス（非常に平坦）
-    # 標準偏差が1.5以下：普通のボーナス（平坦）
-    # 標準偏差が2.5以上：ペナルティ（不均一）
-
-    flatness_score = 0.0
-    if std_dev < 0.5:
-        # 非常に平坦：強いボーナス
-        flatness_score = (0.5 - std_dev) * 200.0
-    elif std_dev < 1.5:
-        # 平坦：普通のボーナス
-        flatness_score = (1.5 - std_dev) * 50.0
-    elif std_dev > 2.5:
-        # 不均一：ペナルティ
-        flatness_score = -(std_dev - 2.5) * 50.0
-
-    return flatness_score
-
-
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v146: 盤面平坦度スコアの動的調整版
+    """v147: v126構造復帰・HIGHフェーズ積極化版
 
-    盤面平坦度スコアを盤面の高さ（max_y）に応じて動的に調整する。
-    LOWフェーズでは平坦度を無視し、HIGH/CRITICALフェーズでは平坦度を重視することで、
-    盤面の状態に応じた戦略切り替えを実現し、スコア安定性を向上させる。
+    v126のシンプルな5要素構造に完全復帰し、HIGHフェーズでのNEAR_MERGE機会を確保。
+    v141〜v143で追加した盤面整理度/平坦度スコアは複雑すぎ効果不透明と判断し、削除。
+    MEDIUMフェーズのheight_multをv126の2.4に戻し、HIGHフェーズheight_multをv126の1.8に戻すことで、
+    バランスの取れた高度管理と積極的な併合戦略を実現。
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -197,16 +88,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 併合ボーナス20%増で積極的に狙う
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.2  # v145: 高度管理を微緩和し、併合機会を確保
+        height_mult = 2.4  # v147: v126の2.4に復帰（高度管理強化）
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # HIGHでは少し緩和して併合機会を確保
+        height_mult = 1.8  # v147: v126の1.8に復帰（併合機会確保）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICALでは高度ペナルティ基本値のみ
-        merge_mult = 0.6  # v144: CRITICALフェーズ併合抑制の復活 (v810/v812ベース)
+        merge_mult = 0.6  # v147: v126の0.6を維持（CRITICALフェーズ併合抑制）
 
     # --- Reactor状態 (連鎖反応の検出) ---
     # reactive_pairs: 接触圏内の同typeペア数。連鎖中は盤面が不安定なので
@@ -230,28 +121,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merge_result_type = min(next_type + 1, 16)
     type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
-    # --- v141: 盤面整理度スコア計算 ---
-    # 盤面全体の同type集約度を計算（全ドロップ候補で共通）
-    current_clustering = calculate_board_clustering(pieces)
-
-    # --- v143: 盤面平坦度スコア計算 ---
-    # 盤面全体のY座標分散を計算（全ドロップ候補で共通）
-    current_flatness = calculate_board_flatness(pieces)
-
-    # --- v146: 盤面平坦度スコアの動的調整 ---
-    # 盤面が高いほど平坦度を重視（盤面の状態に応じた戦略切り替え）
-    # LOWフェーズでは平坦度を無視し、HIGH/CRITICALフェーズでは平坦度を重視
-    if max_y < 0.8:          # LOWフェーズ
-        flatness_weight = 0.0  # 低い盤面では平坦度は無視（併合優先）
-    elif max_y < 1.8:        # MEDIUMフェーズ
-        flatness_weight = 0.5  # 中程度に考慮
-    elif max_y < 3.0:        # HIGHフェーズ
-        flatness_weight = 1.0  # 重要だが絶対的ではない
-    else:                   # CRITICALフェーズ
-        flatness_weight = 2.0  # 非常に重要（平坦でないと崩れる）
-
     # =======================================================================
-    #  各ドロップ候補 (x座標) を9つの評価軸でスコアリング
+    #  各ドロップ候補 (x座標) を5つの評価軸でスコアリング
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -284,7 +155,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += type_merge_bonus * near_mult * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += type_merge_bonus * 0.20 * merge_mult  # v145: FAR併合ボーナス微強化 (0.17→0.20)
+            score += type_merge_bonus * 0.20 * merge_mult
             reasons.append("FAR_MERGE")
 
         # ----- 評価軸 2: 高度ペナルティ -----
@@ -293,7 +164,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # HIGH_TOWER: デッドライン接近でさらに厳しく
+            height_penalty *= 2.0  # HIGH_TOWER: デッドライン接近でさらに厳しく
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5  # MEDIUM_TOWER: MEDIUMでの高い着地を強く抑制
@@ -341,61 +212,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
-
-        # ----- 評価軸 7: 同type集約ボーナス (v139) -----
-        # analyze_board の merges リストには、この x に落とした場合の
-        # 各同typeピースまでの距離(dist)と接触距離(contact_r)が入っている。
-        # 今すぐ併合できなくても、同typeピースの近くに落とせば
-        # 将来の物理移動・爆発衝撃波で併合する確率が上がる。
-        # → 接触距離の3倍以内にいる同typeピースごとにボーナス加算
-        cluster_bonus = 0.0
-        for m in result.get("merges", []):
-            dist = m.get("dist", 99)
-            contact_r = m.get("contact_r", 1.0)
-            proximity_limit = contact_r * 3.0  # この範囲内なら「近い」とみなす
-            if dist < proximity_limit:
-                # 線形減衰: 距離0で最大80pt、proximity_limitで0pt
-                cluster_bonus += (1.0 - dist / proximity_limit) * 80.0
-        if cluster_bonus > 0:
-            score += cluster_bonus
-            reasons.append("CLUSTER")
-
-        # ----- 評価軸 8: 盤面整理度スコア (v142: 併合品質に応じた動的調整版) -----
-        # v141では盤面クラスタリングスコアを一律に全ドロップ候補に加算していた。
-        # v142では併合品質(DIRECT/NEAR/FAR/NO)に応じて動的に調整：
-        #   - DIRECT併合候補：×1.3強化（高品質併合×整理された盤面で最強相乗効果）
-        #   - NEAR併合候補：×0.8緩和（不確実な併合で盤面整理を優先しない）
-        #   - FAR/NO併合候補：×0.0無視（併合できない候補で盤面整理を優先するのを回避）
-        #
-        # これにより盤面クラスタリング(将来の併合確率)と即時併合のトレードオフを適切に調整。
-        # DIRECT併合時に整理された盤面を優先し、併合できない候補では盤面整理を優先しないようにする。
-        clustering_mult = 0.0
-        if merge_grade == "DIRECT":
-            clustering_mult = 1.3  # v142: 高品質併合×整理された盤面を強化
-        elif merge_grade == "NEAR":
-            clustering_mult = 0.8  # v142: 不確実な併合で盤面整理を緩和
-        elif merge_grade in ("FAR", "NO"):
-            clustering_mult = 0.0  # v142: 併合できない候補では盤面整理を無視
-
-        score += current_clustering * clustering_mult
-        if clustering_mult > 0.0:
-            if current_clustering > 100.0:
-                reasons.append("BOARD_CLUSTERED")
-            elif current_clustering < -50.0:
-                reasons.append("BOARD_SCATTERED")
-
-        # ----- 評価軸 9: 盤面平坦度スコア (v146: 動的調整版) -----
-        # v143では盤面平坦度スコアを一律に加算していたが、v146では盤面の高さ（max_y）に応じて
-        # 動的に調整：LOWフェーズでは平坦度を無視、HIGH/CRITICALフェーズでは平坦度を重視
-        # 盤面が高いほど平坦さが生存に直結するため、盤面の状態に応じた戦略切り替えを実現
-        score += current_flatness * flatness_weight
-        if flatness_weight > 1.0:
-            reasons.append("BOARD_FLAT_CRITICAL")
-        elif flatness_weight > 0.5:
-            reasons.append("BOARD_FLAT")
-        elif flatness_weight > 0.0:
-            reasons.append("BOARD_FLAT_MEDIUM")
-        # flatness_weight=0.0 (LOWフェーズ) ではreasonに追加しない
 
         # ----- 最良候補の更新 -----
         if score > best_score:
