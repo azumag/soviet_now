@@ -7,7 +7,7 @@
   - ボード: x ∈ [-3.0, +3.0], 床 y=-4.48, デッドライン y=3.32
   - プレイヤーが制御できるのはドロップX座標のみ
 
-決定ロジック (8つの評価軸):
+決定ロジック (9つの評価軸):
   1. 併合ボーナス   — 即座に併合できる位置に高得点 (DIRECT > NEAR > FAR)
   2. 高度ペナルティ   — 着地位置が高いほど減点 (フェーズで重み変動)
   3. Reactor保護      — 連鎖進行中は高い位置を回避
@@ -16,6 +16,7 @@
   6. nextNext中央寄せ — 次の次と同typeなら中央に寄せて併合準備
   7. 同type集約       — 同typeピースが近くに多い位置にボーナス (将来併合準備)
   8. 盤面整理度スコア — 盤面全体の同type集約度を評価 (v141: 新規追加)
+  9. 盤面平坦度スコア — 盤面のY座標分散を評価 (v143: 新規追加)
 
 フェーズ (盤面の最高Y座標で判定):
   LOW      (max_y < 0.8) : 序盤。併合優先 (merge_mult=1.2)
@@ -33,10 +34,6 @@
 
 # --- 変更履歴 ---
 # [BEST:3689] v126: v42ベース・HIGHフェーズ併合強化版
-# v140: CRITICALフェーズ併合戦略反転 — merge_mult=0.6(併合抑制)を廃止。
-# 併合は2個→1個でネット-1ピース=盤面圧縮の最良手段。CRITICALこそ併合優先すべき。
-# ただしNEAR(成功率68.5%)は失敗→即死リスクがあるため、DIRECTのみ1.5倍ボーナス、
-# NEARは通常の0.5倍に据え置き。merge_gradeごとに分岐するCRITICAL専用ロジック。
 # v141: 盤面整理度スコア追加 - 盤面全体の同type集約度を評価。各typeの最短ペア距離を計算し、
 # 近くに集まっているtypeほどボーナス。同typeが分散している盤面をペナルティして、将来の併合機会を損なう配置を抑制。
 # v142: 併合品質に応じたクラスタリング重み動的調整 - v141では盤面クラスタリングスコアを一律に全ドロップ候補に加算していたため、
@@ -44,6 +41,8 @@
 # クラスタリングスコアの重みを動的に調整：DIRECTで×1.3強化（高品質併合×整理された盤面）、
 # NEARで×0.8緩和（不確実な併合×整理された盤面）、FAR/NOで×0.0無視（併合できない候補で盤面整理優先を回避）。
 # これにより盤面クラスタリング(将来の併合確率)と即時併合のトレードオフを適切に調整。
+# v143: 盤面平坦度スコア追加 - 盤面のY座標の分散（標準偏差）を計算し、分散が小さいほどボーナス。
+# 平坦な盤面はピースが均一に配置され、隙間が少なく、連鎖反応が起きやすい。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -109,8 +108,51 @@ def calculate_board_clustering(pieces):
     return clustering_score
 
 
+def calculate_board_flatness(pieces):
+    """v143: 盤面の平坦度を計算
+
+    盤面のY座標の分散（標準偏差）を計算し、分散が小さいほどボーナスを与える。
+    平坦な盤面はピースが均一に配置され、隙間が少なく、連鎖反応が起きやすい。
+
+    Args:
+        pieces: 全ピースのリスト [{id, type, x, y, ...}, ...]
+
+    Returns:
+        flatness_score: 平坦度スコア（高いほど盤面が平坦）
+    """
+    if not pieces or len(pieces) < 2:
+        return 0.0
+
+    # Y座標のリストを作成
+    y_values = [p["y"] for p in pieces]
+
+    # 標準偏差を計算
+    import math
+    mean_y = sum(y_values) / len(y_values)
+    variance = sum((y - mean_y) ** 2 for y in y_values) / len(y_values)
+    std_dev = math.sqrt(variance)
+
+    # 平坦度スコア：標準偏差が小さいほど高いボーナス
+    # 標準偏差が0.5以下：強いボーナス（非常に平坦）
+    # 標準偏差が1.5以下：普通のボーナス（平坦）
+    # 標準偏差が2.5以上：ペナルティ（不均一）
+
+    flatness_score = 0.0
+    if std_dev < 0.5:
+        # 非常に平坦：強いボーナス
+        flatness_score = (0.5 - std_dev) * 200.0
+    elif std_dev < 1.5:
+        # 平坦：普通のボーナス
+        flatness_score = (1.5 - std_dev) * 50.0
+    elif std_dev > 2.5:
+        # 不均一：ペナルティ
+        flatness_score = -(std_dev - 2.5) * 50.0
+
+    return flatness_score
+
+
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v142: 併合品質に応じたクラスタリング重み動的調整版
+    """v143: 盤面平坦度スコア追加版
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -186,8 +228,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 盤面全体の同type集約度を計算（全ドロップ候補で共通）
     current_clustering = calculate_board_clustering(pieces)
 
+    # --- v143: 盤面平坦度スコア計算 ---
+    # 盤面全体のY座標分散を計算（全ドロップ候補で共通）
+    current_flatness = calculate_board_flatness(pieces)
+
     # =======================================================================
-    #  各ドロップ候補 (x座標) を8つの評価軸でスコアリング
+    #  各ドロップ候補 (x座標) を9つの評価軸でスコアリング
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -315,6 +361,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("BOARD_CLUSTERED")
             elif current_clustering < -50.0:
                 reasons.append("BOARD_SCATTERED")
+
+        # ----- 評価軸 9: 盤面平坦度スコア (v143: 新規追加) -----
+        # 盤面全体のY座標分散（標準偏差）を計算し、分散が小さいほどボーナスを与える。
+        # 平坦な盤面はピースが均一に配置され、隙間が少なく、連鎖反応が起きやすい。
+        # 全ドロップ候補で共通のスコアなので一律に加算。
+        score += current_flatness * 1.0  # v143: 平坦度スコアを一律加算
+        if current_flatness > 50.0:
+            reasons.append("BOARD_FLAT")
+        elif current_flatness < -30.0:
+            reasons.append("BOARD_ROUGH")
 
         # ----- 最良候補の更新 -----
         if score > best_score:
