@@ -1795,12 +1795,14 @@ PROMPT
 
 fetch_and_play_news() {
 	local game_num="$1" score="$2"
+	# 旧呼び出し（引数なし）でも、起動時点の値を固定して後段に渡す
+	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+
 	log "[NEWS] ニュース取得..."
 	./fetch_news.sh 2>/dev/null
 
 	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
-		[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-		[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
 		start_radio_corner_news "$game_num" "$score"
 	else
 		log "[NEWS] ニュースなし、スキップ"
