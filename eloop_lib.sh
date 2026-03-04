@@ -2218,7 +2218,6 @@ _build_comment_game_context() {
 	python3 - "$gs_file" <<'PY'
 import json
 import sys
-from collections import Counter
 
 path = sys.argv[1]
 try:
@@ -2231,54 +2230,8 @@ except Exception:
 state = gs.get("state", "?")
 score = gs.get("score", 0)
 record = gs.get("record", 0)
-piece_count = gs.get("pieceCount", len(gs.get("pieces", [])))
-make_soren = gs.get("makeSorenCount", 0)
-next_t = gs.get("next", {}).get("type", "?")
-next_next_t = gs.get("nextNext", {}).get("type", "?")
-pieces = gs.get("pieces", [])
-
-print(f"state={state}, score={score}, record={record}, pieceCount={piece_count}, makeSorenCount={make_soren}")
-print(f"next.type={next_t}, nextNext.type={next_next_t}")
-
-if not pieces:
-    print("盤面ピース情報: （なし）")
-    raise SystemExit(0)
-
-ys = []
-type_counter = Counter()
-for p in pieces:
-    t = p.get("type")
-    y = p.get("y")
-    if isinstance(t, int):
-        type_counter[t] += 1
-    if isinstance(y, (int, float)):
-        ys.append(float(y))
-
-if ys:
-    print(f"y_range(min,max)=({min(ys):.3f}, {max(ys):.3f})")
-
-max_type = max(type_counter) if type_counter else 0
-type14 = type_counter.get(14, 0)
-type15 = type_counter.get(15, 0)
-type16 = type_counter.get(16, 0)
-print(f"max_type={max_type}, type14_count={type14}, type15_count={type15}, type16_count={type16}")
-print("type_hint: type15=ロシア, type16=ソ連")
-
-top_types = ", ".join(f"type{t}x{c}" for t, c in type_counter.most_common(8))
-print(f"type_count_top={top_types if top_types else '（不明）'}")
-
-pieces_with_xy = []
-for p in pieces:
-    x = p.get("x")
-    y = p.get("y")
-    t = p.get("type")
-    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
-        pieces_with_xy.append((float(y), float(x), t))
-pieces_with_xy.sort(reverse=True)
-
-print("top_y_pieces:")
-for y, x, t in pieces_with_xy[:6]:
-    print(f"  type={t}, x={x:.3f}, y={y:.3f}")
+print("この値はコメント生成時点の参考メモ。盤面の厳密照合には使わないこと。")
+print(f"state={state}, score={score}, record={record}")
 PY
 }
 
@@ -2306,8 +2259,8 @@ generate_comment_response() {
 
 	local past_topics=""
 	[ -f "$PAST_RADIO_TOPICS" ] && past_topics=$(cat "$PAST_RADIO_TOPICS")
-	local game_board_context=""
-	game_board_context=$(_build_comment_game_context "$GAME_STATE")
+	local game_state_context=""
+	game_state_context=$(_build_comment_game_context "$GAME_STATE")
 
 	local comment_context_history_file="tmp/.twitch_chat/comment_context_history.log"
 	local previous_comments_context=""
@@ -2357,9 +2310,9 @@ generate_comment_response() {
 	【前回のトーク内容（文脈参照用）】
 	${past_topics}
 
-	【現在のゲーム盤面サマリ（game_state.json）】
-	${game_board_context:-（取得失敗）}
-	※これはコメント生成時点のスナップショットです。実際の読み上げ時には盤面が進行している可能性があります。
+	【現在のゲーム状態メモ（game_state.json）】
+	${game_state_context:-（取得失敗）}
+	※これはコメント生成時点の参考値です。実際の読み上げ時には状況が進行している可能性があります。
 
 	【ルール】
 	- 全てのコメントに必ず返事すること。一つも漏らさない
@@ -2384,9 +2337,10 @@ generate_comment_response() {
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 前置きや補足説明は不要。コメント返し本文のみ出力
 		- コメントの中にゲーム戦略へのアドバイスが含まれていた場合、言い訳せず真摯に受け止め、「次の戦略改善に取り入れます」と具体的に説明すること
-	- 盤面への言及（例: 右が高い、左が詰まってる、次の駒が弱い、typeが偏ってる等）があれば、必ずゲーム盤面サマリを参照して具体的に返すこと
-	- 盤面サマリだけで断定できない場合は、断定せずに「今の盤面を見る限りは〜」として慎重に返すこと
-	- 「ロシアできた」「ソ連できた」系の報告は、まず祝意を示すこと。盤面サマリに type15/type16 が見えない場合でも、反映ラグの可能性を明示して断定否定しないこと
+		- 盤面への言及（例: 右が高い、左が詰まってる、次の駒が弱い等）は、厳密検証せず「今のことなんですね」と受け止めて返すこと
+		- 盤面の位置・駒タイプ・配置を断定しないこと。断定が必要な聞かれ方でも「配信の流れ上そう見えますね」など柔らかく返すこと
+		- score / ハイスコアを聞かれた時だけ、上の game_state メモ（score, record）を使って答えること
+		- 「ロシアできた」「ソ連できた」系の報告は、まず祝意を示すこと。未反映の可能性があるため断定否定しないこと
 	- 戦略アドバイスがあった場合、トーク本文の後に以下の形式で出力すること:
   ===ADVICE===
   （アドバイス内容を1-3行で要約。コメント主の名前も記載）
