@@ -2314,10 +2314,17 @@ generate_comment_response() {
 	${game_state_context:-（取得失敗）}
 	※これはコメント生成時点の参考値です。実際の読み上げ時には状況が進行している可能性があります。
 
+	【配信UI説明メモ】
+	- 左のグラフウィンドウ: show_status_g.sh（内部で status_dashboard.py を表示）
+	  主な内容: Header, Score Timeline, Score Distribution, Strategy Comparison, Decision Patterns
+	- 右のステータスウィンドウ: show_status.sh
+	  主な内容: loop/worker稼働, improve状態, キュー負荷, コメント生成/再生状態, live state/score/pieces
+
 	【ルール】
 	- 全てのコメントに必ず返事すること。一つも漏らさない
 	- コメントは必ず上から順番に返すこと
 	- ゲームに対する質問については、strategy.py, README.md の内容やゲームの状況を踏まえて、できるだけ具体的に答えること
+	- グラフやステータス表示について質問されたら、必ず最初に「左は show_status_g.sh、右は show_status.sh」と明言してから説明すること
 	- 一つずつ返事する。「同志○○」と名前を呼んで反応
 	- 偉そうにしないで、フレンドリーに返事すること
 - 言い訳をしない。スコアが低い、負けた、ミスした等の指摘には素直に認めて受け入れる。「でも」「ただ」「仕方ない」等で取り繕わない
