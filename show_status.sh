@@ -148,7 +148,17 @@ if h and h in rs:
 
 	# --- スコア情報 ---
 	local best_score=$(cat best_score.txt 2>/dev/null || echo "?")
-	local game_count=$(cat game_count.txt 2>/dev/null || echo "?")
+	local game_count_raw=$(cat game_count.txt 2>/dev/null || echo "0")
+	local game_count_num=0
+	[[ "$game_count_raw" == <-> ]] && game_count_num=$game_count_raw
+	local score_history_count=0
+	if [[ -f score_history.txt ]]; then
+		score_history_count=$(wc -l < score_history.txt 2>/dev/null | tr -d ' ')
+		[[ "$score_history_count" == <-> ]] || score_history_count=0
+	fi
+	# 表示上の試合数は「スコア履歴との整合」を優先（手動編集や中断復帰時のずれ対策）
+	local game_count=$game_count_num
+	(( score_history_count > game_count )) && game_count=$score_history_count
 	local last_scores=""
 	[[ -f score_history.txt ]] && last_scores=$(tail -5 score_history.txt 2>/dev/null | tr '\n' ' ')
 
@@ -414,7 +424,11 @@ if h and h in rs:
 		fi
 	fi
 
-	printf "    ${C_WHITE}▸${C_RESET} Games       ${C_BOLD}#${game_count}${C_RESET}  ${C_DIM}best=${C_RESET}${C_BOLD}${best_score}${C_RESET}${avg_display}\n"
+	local live_game_hint=""
+	if $loop_running && [[ "$game_state" != "GAMEOVER" ]]; then
+		live_game_hint="  ${C_DIM}(now #$((game_count + 1)))${C_RESET}"
+	fi
+	printf "    ${C_WHITE}▸${C_RESET} Games       ${C_BOLD}#${game_count}${C_RESET}${live_game_hint}  ${C_DIM}best=${C_RESET}${C_BOLD}${best_score}${C_RESET}${avg_display}\n"
 	[[ -n "$last_scores" ]] && \
 		printf "    ${C_WHITE}▸${C_RESET} Recent      ${C_DIM}${last_scores}${C_RESET}\n"
 
