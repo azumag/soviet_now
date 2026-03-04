@@ -210,10 +210,12 @@ else
 fi
 
 # --- Phase D: 戦略解説コーナー (変更があった場合のみ) ---
+# 改善ジョブ自体は先に完了扱いにし、ラジオは非同期で流す。
 if [ -n "$strategy_diff" ]; then
 	_improve_progress "radio" "95" "strategy_commentary"
 	best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
-	start_radio_corner_strategy "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now"
+	_improve_progress "done" "100" "awaiting_harvest"
+	start_radio_corner_strategy "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now" &
+else
+	_improve_progress "done" "100" "awaiting_harvest"
 fi
-
-_improve_progress "done" "100" "awaiting_harvest"
