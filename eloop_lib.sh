@@ -34,6 +34,9 @@ PAST_NEWS_READ="tmp/.past_news_read.txt"
 PAST_NEWS_READ_KEYS="tmp/.past_news_read_keys.txt"
 
 IMPROVE_STATE_FILE="tmp/improve_state.json"
+IMPROVE_AI_LOG_FILE="tmp/improve_ai.log"
+IMPROVE_AI_LOG_KEEP_LINES=2000
+IMPROVE_AI_LOG_TRIM_LINES=4000
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
 ROLLING_SCORES_FILE="tmp/rolling_scores.json"
 REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
@@ -63,6 +66,16 @@ mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$
 
 commands_empty() { [ -z "$(tr -d '[:space:]' <"$COMMANDS" 2>/dev/null)" ]; }
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
+_trim_log_file() {
+	local f="$1" keep="${2:-2000}" trim="${3:-4000}"
+	[ -n "$f" ] || return 0
+	[ -f "$f" ] || return 0
+	local n
+	n=$(wc -l <"$f" 2>/dev/null | tr -d ' ')
+	[ "${n:-0}" -le "$trim" ] && return 0
+	local tmpf="${f}.tmp"
+	tail -n "$keep" "$f" >"$tmpf" 2>/dev/null && mv "$tmpf" "$f" 2>/dev/null || true
+}
 
 is_game_over() {
 	local s
@@ -271,33 +284,70 @@ run_cmd() {
 	local spec="$1" prompt="$2"
 	local type="${spec%%:*}" agent="${spec#*:}"
 	[ "$type" = "$agent" ] && agent=""
+	local target="$type"
+	[ -n "$agent" ] && target="${type}:${agent}"
+	local cmd_log_file="${RUN_CMD_LOG_FILE:-}"
+	local cmd_log_tag="${RUN_CMD_LOG_TAG:-$type}"
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_prompt.XXXXXX)
 	printf '%s' "$prompt" >"$prompt_file"
 	log "[CMD] $(wc -c <"$prompt_file" | tr -d ' ')B → $type"
+	if [ -n "$cmd_log_file" ]; then
+		mkdir -p "$(dirname "$cmd_log_file")" 2>/dev/null || true
+		_trim_log_file "$cmd_log_file" "$IMPROVE_AI_LOG_KEEP_LINES" "$IMPROVE_AI_LOG_TRIM_LINES"
+		printf '[%s] [AI:%s] START spec=%s target=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" >>"$cmd_log_file" 2>/dev/null || true
+	fi
 
 	case "$type" in
 	glm)
-		opencode run "$(cat "$prompt_file")" --agent="zai" &
+		if [ -n "$cmd_log_file" ]; then
+			opencode run "$(cat "$prompt_file")" --agent="zai" >>"$cmd_log_file" 2>&1 &
+		else
+			opencode run "$(cat "$prompt_file")" --agent="zai" &
+		fi
 		;;
 	gemini)
-		gemini -p "$(cat "$prompt_file")" -y -s &
+		if [ -n "$cmd_log_file" ]; then
+			gemini -p "$(cat "$prompt_file")" -y -s >>"$cmd_log_file" 2>&1 &
+		else
+			gemini -p "$(cat "$prompt_file")" -y -s &
+		fi
 		;;
 	gemini-flash)
-		gemini -p "$(cat "$prompt_file")" -y -s --model=gemini-2.5-flash &
+		if [ -n "$cmd_log_file" ]; then
+			gemini -p "$(cat "$prompt_file")" -y -s --model=gemini-2.5-flash >>"$cmd_log_file" 2>&1 &
+		else
+			gemini -p "$(cat "$prompt_file")" -y -s --model=gemini-2.5-flash &
+		fi
 		;;
 	sonnet)
-		claude -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits &
+		if [ -n "$cmd_log_file" ]; then
+			claude -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+		else
+			claude -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits &
+		fi
 		;;
 	opus)
-		claude -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits &
+		if [ -n "$cmd_log_file" ]; then
+			claude -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+		else
+			claude -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits &
+		fi
 		;;
 	claude)
-		claude -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits &
+		if [ -n "$cmd_log_file" ]; then
+			claude -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+		else
+			claude -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits &
+		fi
 		;;
 	opencode)
-		opencode run "$(cat "$prompt_file")" --agent="${agent:-glmflash}" &
+		if [ -n "$cmd_log_file" ]; then
+			opencode run "$(cat "$prompt_file")" --agent="${agent:-glmflash}" >>"$cmd_log_file" 2>&1 &
+		else
+			opencode run "$(cat "$prompt_file")" --agent="${agent:-glmflash}" &
+		fi
 		;;
 	esac
 	local cmd_pid=$!
@@ -308,6 +358,10 @@ run_cmd() {
 
 	wait "$cmd_pid" 2>/dev/null
 	local ret=$?
+	if [ -n "$cmd_log_file" ]; then
+		printf '[%s] [AI:%s] END rc=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$ret" >>"$cmd_log_file" 2>/dev/null || true
+		_trim_log_file "$cmd_log_file" "$IMPROVE_AI_LOG_KEEP_LINES" "$IMPROVE_AI_LOG_TRIM_LINES"
+	fi
 
 	stop_spinner
 	trap - INT
@@ -335,28 +389,38 @@ run_ai() {
 	fi
 
 	log "[$label] primary=$primary"
+	local prev_cmd_log_tag="${RUN_CMD_LOG_TAG:-}"
+	RUN_CMD_LOG_TAG="${label}:primary"
 	run_cmd "$primary" "$prompt"
+	local primary_ret=$?
 	if [ -n "$expect" ]; then
 		local expect_mtime_after=""
 		[ -f "$expect" ] && expect_mtime_after=$(stat -f '%m' "$expect" 2>/dev/null)
 		if [ -s "$expect" ] && [ "$expect_mtime_after" != "$expect_mtime_before" ]; then
+			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 			log "[$label] primary OK ($expect written)"
 			return 0
 		fi
 	else
-		[ $? -eq 0 ] && return 0
+		[ "$primary_ret" -eq 0 ] && {
+			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+			return 0
+		}
 	fi
 
 	log "[$label] primary failed → fallback=$fallback"
+	RUN_CMD_LOG_TAG="${label}:fallback"
 	run_cmd "$fallback" "$prompt"
 	if [ -n "$expect" ]; then
 		local expect_mtime_fb=""
 		[ -f "$expect" ] && expect_mtime_fb=$(stat -f '%m' "$expect" 2>/dev/null)
 		if [ ! -s "$expect" ] || [ "$expect_mtime_fb" = "$expect_mtime_before" ]; then
+			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 			log "[$label] fallback also failed ($expect not written)"
 			return 1
 		fi
 	fi
+	if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 }
 
 #=== strategy.py バリデーション ===
@@ -3171,9 +3235,14 @@ _start_improvement_job() {
 	# 戦略ハッシュ記録
 	local strategy_hash
 	strategy_hash=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+	local improve_ai_log="$IMPROVE_AI_LOG_FILE"
+	mkdir -p "$(dirname "$improve_ai_log")" 2>/dev/null || true
+	: >"$improve_ai_log"
+	printf '[%s] [IMPROVE] job start reason=%s game=%s scores=%s\n' \
+		"$(date '+%H:%M:%S')" "$reason" "${GAME_NUM:-?}" "${all_scores:-}" >>"$improve_ai_log" 2>/dev/null || true
 
 	# バックグラウンド改善開始
-	./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" &
+	RUN_CMD_LOG_FILE="$improve_ai_log" ./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" &
 	IMPROVE_PID=$!
 
 	# 起動成功を確認してから状態更新

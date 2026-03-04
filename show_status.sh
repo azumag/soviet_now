@@ -99,6 +99,15 @@ print(f'imp_progress={int(d.get(\"progress\",0) or 0)}')
 		imp_alive=true
 		imp_elapsed=$(_pid_elapsed "$imp_pid")
 	fi
+	local improve_ai_log="tmp/improve_ai.log"
+	local imp_ai_source="" imp_ai_latest="" imp_ai_age=""
+	if [[ -f "$improve_ai_log" ]] && [[ -s "$improve_ai_log" ]]; then
+		imp_ai_source=$(tail -n 200 "$improve_ai_log" 2>/dev/null | grep '\[AI:.*\] START' | tail -1 | sed -E 's/^\[[0-9:]+\] \[AI:[^]]+\] START //')
+		imp_ai_latest=$(tail -n 200 "$improve_ai_log" 2>/dev/null | grep -v '\[AI:.*\] START' | grep -v '\[AI:.*\] END' | grep -v '^[[:space:]]*$' | tail -1)
+		imp_ai_source=$(printf '%s' "$imp_ai_source" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x1f]//g')
+		imp_ai_latest=$(printf '%s' "$imp_ai_latest" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x1f]//g')
+		imp_ai_age=$(_file_age "$improve_ai_log")
+	fi
 
 	# --- soren_loop 状態 ---
 	local loop_running=false loop_pid=""
@@ -301,8 +310,28 @@ if h and h in rs:
 		local imp_bar
 		imp_bar=$(_bar_meter "${imp_progress:-0}" 100 12)
 		printf "    ${C_WHITE}▸${C_RESET} ImproveProg ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d%%${C_RESET}\n" "$imp_bar" "${imp_progress:-0}"
+		if [[ -n "$imp_ai_source" ]]; then
+			local src_display="$imp_ai_source"
+			local max_src=$(( W - 20 ))
+			(( ${#src_display} > max_src )) && src_display="${src_display[1,$((max_src-2))]}.."
+			printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
+		fi
+		if [[ -n "$imp_ai_latest" ]]; then
+			local ai_display="$imp_ai_latest"
+			local max_ai=$(( W - 24 ))
+			(( ${#ai_display} > max_ai )) && ai_display="${ai_display[1,$((max_ai-2))]}.."
+			printf "    ${C_WHITE}▸${C_RESET} AIOutput    ${C_DIM}%s${C_RESET}" "$ai_display"
+			[[ -n "$imp_ai_age" ]] && printf "  ${C_DIM}(%s)${C_RESET}" "$imp_ai_age"
+			echo ""
+		fi
 	elif [[ "$imp_status" == "running" ]] && ! $imp_alive; then
 		printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead, %d%% %s)${C_RESET}\n" "${imp_progress:-0}" "${imp_phase_label}"
+		if [[ -n "$imp_ai_source" ]]; then
+			local src_display="$imp_ai_source"
+			local max_src=$(( W - 20 ))
+			(( ${#src_display} > max_src )) && src_display="${src_display[1,$((max_src-2))]}.."
+			printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
+		fi
 	else
 		printf "    ${C_DIM}○${C_RESET} Improve     ${C_DIM}IDLE${C_RESET}\n"
 	fi

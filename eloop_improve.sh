@@ -25,6 +25,11 @@ IMPROVE_STATE_JSON=$(_read_improve_state)
 IMPROVE_BASE_HASH=$(echo "$IMPROVE_STATE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null || echo "")
 [ -z "$IMPROVE_BASE_HASH" ] && IMPROVE_BASE_HASH=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
 IMPROVE_STARTED_AT=$(echo "$IMPROVE_STATE_JSON" | python3 -c "import json,sys,time; print(int(json.load(sys.stdin).get('started_at', int(time.time()))))" 2>/dev/null || date +%s)
+RUN_CMD_LOG_FILE="${RUN_CMD_LOG_FILE:-$IMPROVE_AI_LOG_FILE}"
+mkdir -p "$(dirname "$RUN_CMD_LOG_FILE")" 2>/dev/null || true
+_trim_log_file "$RUN_CMD_LOG_FILE" "$IMPROVE_AI_LOG_KEEP_LINES" "$IMPROVE_AI_LOG_TRIM_LINES"
+printf '[%s] [IMPROVE] attached pid=%s game=%s\n' "$(date '+%H:%M:%S')" "$IMPROVE_SELF_PID" "${GAME_NUM_SNAPSHOT:-?}" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
+export RUN_CMD_LOG_FILE
 
 _improve_progress() {
 	local phase="$1" progress="$2" detail="$3"
