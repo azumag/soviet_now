@@ -169,6 +169,11 @@ _fetch_nolock() {
                 # 最新10件に制限
                 tail -10)
 
+            # 同一行の重複を除去（多重接続/再送対策）
+            if [ -n "$new_sanitized" ]; then
+                new_sanitized=$(printf '%s\n' "$new_sanitized" | awk 'NF && !seen[$0]++')
+            fi
+
             # 新規サニタイズ済みコメントをpending.logに追記
             if [ -n "$new_sanitized" ]; then
                 echo "$new_sanitized" >> "$PENDING_LOG"
@@ -179,6 +184,17 @@ _fetch_nolock() {
 
     # pending.log全体（前回未ack分 + 今回新規分）をOUTFILEに出力
     if [ -f "$PENDING_LOG" ] && [ -s "$PENDING_LOG" ]; then
+        # pending全体の同一行も正規化
+        local before_count after_count pending_tmp
+        before_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
+        pending_tmp=$(mktemp /tmp/twitch_pending_dedup_XXXXXXXX)
+        awk 'NF && !seen[$0]++' "$PENDING_LOG" > "$pending_tmp"
+        mv "$pending_tmp" "$PENDING_LOG"
+        after_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
+        if [ "${after_count:-0}" -lt "${before_count:-0}" ]; then
+            _log "fetch: pending重複を$((before_count - after_count))件除去"
+        fi
+
         # pending.logも最新10件に制限
         tail -10 "$PENDING_LOG" > "$OUTFILE"
         local pending_count
