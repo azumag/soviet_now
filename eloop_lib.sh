@@ -846,7 +846,42 @@ out = text
 for pat, repl in patterns:
     out = re.sub(pat, repl, out, flags=re.IGNORECASE)
 sys.stdout.write(out)
-"
+	"
+}
+
+_ensure_radio_intro() {
+	local text="$1" corner_name="${2:-}"
+	[ -z "$text" ] && return 1
+
+	_radio_time_context
+	local greet
+	if [ "$_rc_hour" -ge 5 ] && [ "$_rc_hour" -lt 11 ]; then
+		greet="おはようございます"
+	elif [ "$_rc_hour" -ge 17 ] || [ "$_rc_hour" -lt 2 ]; then
+		greet="こんばんは"
+	else
+		greet="こんにちは"
+	fi
+
+	local head
+	head=$(printf '%s\n' "$text" | head -n 3)
+	if printf '%s\n' "$head" | grep -Eq '現在時刻|[0-2][0-9]:[0-5][0-9]|おはよう|こんにちは|こんばんは'; then
+		printf '%s' "$text"
+		return 0
+	fi
+
+	local intro_line
+	intro_line="${greet}、${_rc_period}の放送です。現在時刻は${_rc_time}です。"
+
+	# ニュースはタイトル行を先頭に維持し、その直後に挨拶を補完
+	if [ "$corner_name" = "news" ] && printf '%s\n' "$text" | head -n 1 | grep -Fq '今回取り上げるニュースタイトルは'; then
+		local first_line rest
+		first_line=$(printf '%s\n' "$text" | head -n 1)
+		rest=$(printf '%s\n' "$text" | tail -n +2)
+		printf '%s\n%s\n%s' "$first_line" "$intro_line" "$rest"
+	else
+		printf '%s\n%s' "$intro_line" "$text"
+	fi
 }
 
 _news_title_key() {
@@ -1107,6 +1142,11 @@ ${talk_body}"
 			talk_body="$fallback_body"
 		fi
 	fi
+
+	# 挨拶・時刻言及が抜けた出力を補完（ニュースはタイトル行を先頭維持）
+	local talk_with_intro
+	talk_with_intro=$(_ensure_radio_intro "$talk_body" "$corner_name")
+	[ -n "$talk_with_intro" ] && talk_body="$talk_with_intro"
 
 	if [ ${#talk_body} -lt 100 ]; then
 		local debug_dump
