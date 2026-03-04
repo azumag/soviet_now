@@ -7,13 +7,12 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (6 evaluation axes):
+Decision Logic (5 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
   2. Height penalty - Penalty for high landing position (varies by phase)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -36,6 +35,7 @@ Phases (determined by board max Y):
 # v157: Dynamic parameter adjustment - Adopt v154's dynamic adjustment logic with enhanced coefficients to promote CHAIN_MERGE and reduce HEIGHT_CONTROL
 # v158: Height penalty relaxation - Reduce MEDIUM height_mult: 1.8->1.6, HIGH height_mult: 1.8->1.5, restore v154's fixed parameters (remove dynamic adjustment)
 # v159: Massive CHAIN_MERGE bonus increase - Restore v157's height penalties (MEDIUM: 1.8, HIGH: 1.8) and dynamic adjustment, then 3x CHAIN_MERGE bonuses (400.0->1200.0, 200.0->600.0, 100.0->300.0) to force merge selection
+# v999: Simplify v42/v126 structure - Remove CHAIN_MERGE evaluation logic, restore MEDIUM height_mult=2.4, HIGH height_mult=2.6, remove pendulum pattern
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
