@@ -1918,21 +1918,31 @@ _kill_comment_gen() {
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
-_play_comment_queue() {
-	# .playing ファイルのリカバリ（前回kill等で残った孤児を再キュー）
+_recover_orphan_comment_playing_files() {
+	# say が実行中なら .playing は現役の可能性が高いので触らない
+	if [ -f "tmp/.say_queue/pid" ]; then
+		local spid
+		spid=$(cat "tmp/.say_queue/pid" 2>/dev/null)
+		if [ -n "$spid" ] && kill -0 "$spid" 2>/dev/null; then
+			return
+		fi
+	fi
 	for orphan in "$COMMENT_QUEUE_DIR"/comment_*.playing; do
 		[ -f "$orphan" ] || continue
 		local recovered="${orphan%.playing}.txt"
 		mv "$orphan" "$recovered" 2>/dev/null
-		echo "[_play_comment_queue $(date '+%H:%M:%S')] リカバリ: $orphan → $recovered" >> tmp/.say_queue/debug.log
+		echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] リカバリ: $orphan → $recovered" >> tmp/.say_queue/debug.log
 	done
+}
+
+_play_comment_queue() {
 	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
 		if [ -f "$qf" ]; then
 			# 重複チェック: 同じ内容を再度再生しない
 			local file_hash
 			file_hash=$(md5 -q "$qf" 2>/dev/null)
 			if [ -n "$file_hash" ] && grep -qF "$file_hash" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null; then
-				echo "[_play_comment_queue $(date '+%H:%M:%S')] 重複スキップ: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] 重複スキップ: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
 				rm -f "$qf"
 				continue
 			fi
@@ -1940,14 +1950,14 @@ _play_comment_queue() {
 			# 再生前にリネームして他プレイヤーとの二重再生を防ぐ
 			local playing_file="${qf%.txt}.playing"
 			if mv "$qf" "$playing_file" 2>/dev/null; then
-				echo "[_play_comment_queue $(date '+%H:%M:%S')] 再生開始: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] 再生開始: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
 				# ハッシュを記録（再生開始前に記録して、kill時にも重複防止）
 				echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"
 				# ハッシュファイルを最新50件に制限
 				tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
 					mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
 				./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0
-				echo "[_play_comment_queue $(date '+%H:%M:%S')] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
 				rm -f "$playing_file"
 			fi
 		fi
@@ -1964,6 +1974,10 @@ _is_comment_worker_healthy() {
 	pid=$(cat "$pid_file" 2>/dev/null)
 	[ -n "$pid" ] || return 1
 	kill -0 "$pid" 2>/dev/null || return 1
+	# ttl<=0 の場合は PID 生存のみでヘルシー判定
+	if [ "$ttl" -le 0 ]; then
+		return 0
+	fi
 
 	[ -f "$heartbeat_file" ] || return 1
 	local hb now age
@@ -1978,8 +1992,8 @@ _is_comment_worker_healthy() {
 }
 
 start_comment_player() {
-	# 既存プレイヤーが生存中なら重複起動しない（PID + heartbeat で判定）
-	if _is_comment_worker_healthy "$COMMENT_PLAYER_PID_FILE" "$COMMENT_PLAYER_HEARTBEAT_FILE" "$COMMENT_WORKER_HEALTH_TTL"; then
+	# 既存プレイヤーが生存中なら重複起動しない（再生中はheartbeatが止まり得るためPID優先）
+	if _is_comment_worker_healthy "$COMMENT_PLAYER_PID_FILE" "$COMMENT_PLAYER_HEARTBEAT_FILE" 0; then
 		return
 	fi
 	if [ -f "$COMMENT_PLAYER_PID_FILE" ]; then
@@ -1998,6 +2012,7 @@ start_comment_player() {
 		# NOTE: local はサブシェル直下では使えない (関数内でのみ有効)
 		_cp_my_pid=${BASHPID:-$$}
 		echo "$_cp_my_pid" > "$COMMENT_PLAYER_PID_FILE" 2>/dev/null
+		_recover_orphan_comment_playing_files
 		while true; do
 			# PIDファイルが自分のPIDでなくなったら終了（別プレイヤーに交代された）
 			_cp_file_pid=$(cat "$COMMENT_PLAYER_PID_FILE" 2>/dev/null)

@@ -32,6 +32,8 @@ RATE="${2:-120}"
 PID_FILE="$QUEUE_DIR/pid"
 TOKEN_FILE="$QUEUE_DIR/token"
 LOCK_DIR="$QUEUE_DIR/.lock"
+LOCK_OWNER_FILE="$LOCK_DIR/owner_pid"
+LOCK_HEARTBEAT_FILE="$LOCK_DIR/heartbeat"
 
 if [ ! -s "$CONTENT_FILE" ]; then
     echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
@@ -62,18 +64,36 @@ _is_preempted() {
     [ "$(cat "$TOKEN_FILE" 2>/dev/null)" != "$MY_TOKEN" ]
 }
 
+_touch_lock_heartbeat() {
+    [ -d "$LOCK_DIR" ] || return 0
+    echo "${BASHPID:-$$}" > "$LOCK_OWNER_FILE" 2>/dev/null || true
+    date +%s > "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true
+}
+
 # mkdirロック: アトミックな排他制御（macOS互換）
 _acquire_lock() {
     # --no-preempt: 必ず再生したいのでタイムアウトなし
     # 通常: 30秒でタイムアウト
     local max_wait=60 waited=0
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
-        # stale lock検出: ロックが120秒以上前なら強制解除
+        # stale lock検出: 所有PIDが死んでおり、heartbeatも古い場合のみ強制解除
         if [ -d "$LOCK_DIR" ]; then
-            local lock_age
-            lock_age=$(( $(date +%s) - $(stat -f %m "$LOCK_DIR" 2>/dev/null || echo 0) ))
-            if [ "$lock_age" -gt 120 ]; then
-                _log "stale lock検出 (${lock_age}秒前) → 強制解除"
+            local lock_owner lock_hb now lock_age owner_alive=false
+            lock_owner=$(cat "$LOCK_OWNER_FILE" 2>/dev/null || true)
+            if [ -n "$lock_owner" ] && kill -0 "$lock_owner" 2>/dev/null; then
+                owner_alive=true
+            fi
+            lock_hb=$(cat "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true)
+            case "$lock_hb" in
+            ''|*[!0-9]*)
+                lock_hb=$(stat -f %m "$LOCK_DIR" 2>/dev/null || echo 0)
+                ;;
+            esac
+            now=$(date +%s)
+            lock_age=$((now - lock_hb))
+            if [ "$owner_alive" = false ] && [ "$lock_age" -gt 120 ]; then
+                _log "stale lock検出 (owner=${lock_owner:-?}, ${lock_age}秒) → 強制解除"
+                rm -f "$LOCK_OWNER_FILE" "$LOCK_HEARTBEAT_FILE" 2>/dev/null
                 rmdir "$LOCK_DIR" 2>/dev/null
                 continue
             fi
@@ -87,10 +107,12 @@ _acquire_lock() {
         sleep 0.5
         waited=$((waited + 1))
     done
+    _touch_lock_heartbeat
     return 0
 }
 
 _release_lock() {
+    rm -f "$LOCK_OWNER_FILE" "$LOCK_HEARTBEAT_FILE" 2>/dev/null
     rmdir "$LOCK_DIR" 2>/dev/null
 }
 
@@ -121,6 +143,7 @@ if [ -f "$PID_FILE" ]; then
     if [ -n "$PREV_PID" ] && kill -0 "$PREV_PID" 2>/dev/null; then
         _log "前のsay (PID=$PREV_PID) がまだ再生中 → 終了待ち"
         while kill -0 "$PREV_PID" 2>/dev/null; do
+            _touch_lock_heartbeat
             if _is_preempted; then
                 _log "say待ち中にプリエンプト → 諦め"
                 exit 0
@@ -143,6 +166,7 @@ fi
 _say_pgrep_wait=0
 _say_pgrep_max=30
 while pgrep -x say >/dev/null 2>&1; do
+    _touch_lock_heartbeat
     if _is_preempted; then
         _log "say待機中にプリエンプト → 諦め"
         exit 0
@@ -169,6 +193,7 @@ PRE_DELAY="${3:-60}"
 _log "トーク開始まで ${PRE_DELAY}秒 待機..."
 waited_pre=0
 while [ "$waited_pre" -lt "$PRE_DELAY" ]; do
+    _touch_lock_heartbeat
     if _is_preempted; then
         _log "待機中にプリエンプト → 諦め"
         exit 0
