@@ -2584,8 +2584,11 @@ else:
 
 h = '$strategy_hash'
 if h not in rs:
-    rs[h] = {'scores': [], 'prev_hash': ''}
+    rs[h] = {'scores': [], 'prev_hash': '', 'games_total': 0}
+if 'games_total' not in rs[h]:
+    rs[h]['games_total'] = len(rs[h].get('scores', []))
 rs[h]['scores'].append(int('$score'))
+rs[h]['games_total'] += 1
 # 最大20試合分を保持
 rs[h]['scores'] = rs[h]['scores'][-20:]
 
@@ -2792,7 +2795,9 @@ else:
     rs = {}
 h = '$new_decide_hash'
 if h not in rs:
-    rs[h] = {'scores': [], 'prev_hash': '$prev_decide_hash'}
+    rs[h] = {'scores': [], 'prev_hash': '$prev_decide_hash', 'games_total': 0}
+elif 'games_total' not in rs[h]:
+    rs[h]['games_total'] = len(rs[h].get('scores', []))
 with open(rs_file, 'w') as f:
     json.dump(rs, f)
 " 2>/dev/null

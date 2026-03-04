@@ -354,8 +354,8 @@ def render_score_distribution(scores, bar_w=40):
 
 
 def render_strategy_comparison(rolling, current_hash, max_rows=7):
-    bar_w = 38
-    # hash8 + space + n3 + sep + bar38 + space + avg7 = 8+1+3+1+38+1+5 = 57
+    bar_w = 36
+    # marker1 + hash8 + space + n4 + sep + bar36 + space + avg5 = 57
 
     entries = []
     for h, data in rolling.items():
@@ -363,7 +363,12 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
         if not sc:
             continue
         avg = sum(sc) / len(sc)
-        entries.append((h[:8], len(sc), avg))
+        games_total = data.get("games_total", len(sc))
+        try:
+            games_total = int(games_total)
+        except Exception:
+            games_total = len(sc)
+        entries.append((h[:8], games_total, avg))
 
     entries.sort(key=lambda x: -x[2])
     entries = entries[:max_rows]
@@ -373,13 +378,13 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
 
     max_avg = max(e[2] for e in entries) if entries else 1
 
-    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(rolling scores){RST}"]
+    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(avg:rolling20 / n:total){RST}"]
     for h8, n, avg in entries:
         is_current = current_hash.startswith(h8) if current_hash else False
         color = C_GREEN if is_current else C_BLUE
         marker = "►" if is_current else " "
         bar = block_bar(avg, max_avg, bar_w, color)
-        lines.append(f"{marker}{color}{h8}{RST} {DIM}{n:>2}{RST}│{bar} {int(avg):>5}")
+        lines.append(f"{marker}{color}{h8}{RST} {DIM}{n:>4}{RST}│{bar} {int(avg):>5}")
     return lines
 
 
