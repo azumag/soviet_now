@@ -29,13 +29,14 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
+ # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # v151-v155: CHAIN_MERGE enhanced versions (coefficients 200.0->300.0->400.0, chain_distance 3.0->3.5->4.0->4.5->5.0)
 # v154: Merge target density evaluation - Fixed issue with existing CHAIN_MERGE logic
 # v155: Dynamic parameter adjustment version - chain_distance=5.0, chain_bonus=450.0 fixed, but uses dynamic adjustment logic
 # v157: Revert to v153 settings - height_multiplier 40.0->50.0, lost v155's dynamic adjustment
 # v158: Restore v155 dynamic adjustment + reduce height penalty - Reintroduce v155's dynamic adjustment logic (chain_distance_max=5.0+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0), and reduce height_multiplier from 50.0 to 45.0 to promote merge opportunities. This balances HEIGHT_CONTROL (selected 27.3% with low avg_score_delta=1.6) and CHAIN_MERGE (selected 8.2% with high avg_score_delta=29.7) by lowering height penalty while keeping dynamic chain merge bonuses.
+# v159: Reduce chain distance and height penalty to increase CHAIN_MERGE selection - Based on v158 analysis showing HEIGHT_CONTROL overuse (27.3% selection, avg_score_delta=2.2) and CHAIN_MERGE underuse (8.2% selection, avg_score_delta=29.7). Reduce chain_distance from (5.0+landing_y*0.6) to (4.0+landing_y*0.4) to make CHAIN_MERGE more applicable, and reduce height_multiplier from 45.0 to 40.0 to reduce HEIGHT_CONTROL influence. This targeted adjustment aims to increase CHAIN_MERGE selection rate while avoiding pendulum pattern.
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -43,16 +44,17 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v158: Restore v155 dynamic adjustment + reduce height penalty
+    """v159: Reduce chain distance and height penalty to increase CHAIN_MERGE selection
 
-    v157 lost v155's dynamic adjustment advantage and only changed height_multiplier.
-    Reintroduce v155's successful dynamic adjustment logic while slightly reducing height penalty:
-    - chain_distance = 5.0 + landing_y * 0.6 (dynamic expansion)
-    - chain_bonus_multiplier = 450.0 + landing_y * 150.0 (dynamic bonus)
-    - height_multiplier: 50.0 -> 45.0 (reduced to promote merge opportunities)
+    v158 analysis showed HEIGHT_CONTROL overuse (27.3% selection, avg_score_delta=2.2)
+    and CHAIN_MERGE underuse (8.2% selection, avg_score_delta=29.7).
+    This version makes targeted adjustments to increase CHAIN_MERGE applicability:
+    - chain_distance = 4.0 + landing_y * 0.4 (reduced from 5.0 + landing_y * 0.6)
+    - chain_bonus_multiplier = 450.0 + landing_y * 150.0 (unchanged from v158)
+    - height_multiplier: 45.0 -> 40.0 (reduced to minimize HEIGHT_CONTROL influence)
     - MEDIUM height_mult: 1.8 (v155 value)
     - HIGH height_mult: 1.8 (v155 value)
-    This balances HEIGHT_CONTROL (27.3% selection rate with low avg_score_delta=1.6) and CHAIN_MERGE (8.2% selection rate with high avg_score_delta=29.7).
+    This aims to increase CHAIN_MERGE selection rate while avoiding pendulum pattern.
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -145,9 +147,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v158: height_multiplier reduced from 50.0 to 45.0 to promote merge opportunities
+        # v159: height_multiplier reduced from 45.0 to 40.0 to minimize HEIGHT_CONTROL influence
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
-        height_penalty = landing_y * 45.0 * height_mult
+        height_penalty = landing_y * 40.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -191,11 +193,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v158: dynamic adjustment restored from v155) -----
-        # v158: Reintroduce v155's dynamic adjustment logic with reduced height penalty
-        # chain_distance_max = 5.0 + landing_y * 0.6 (expands as landing_y increases)
-        # chain_bonus_multiplier = 450.0 + landing_y * 150.0 (bonus increases as landing_y increases)
-        # This promotes CHAIN_MERGE in HIGH_LAYER situations and reduces HEIGHT_CONTROL selection
+        # ----- evaluation axis 6: chain merge bonus (v159: increased CHAIN_MERGE applicability) -----
+        # v159: Reduce chain_distance to make CHAIN_MERGE more applicable, keep chain_bonus_multiplier unchanged
+        # chain_distance_max = 4.0 + landing_y * 0.4 (reduced from v158 to increase applicability)
+        # chain_bonus_multiplier = 450.0 + landing_y * 150.0 (unchanged from v158)
+        # This aims to increase CHAIN_MERGE selection rate from 8.2% and reduce HEIGHT_CONTROL from 27.3%
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -204,12 +206,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v158: Dynamic adjustment - chain_distance_max and chain_bonus_multiplier expand as landing_y increases
-                # Example: landing_y=0.0 -> distance_max=5.0, multiplier=450.0
-                # Example: landing_y=1.0 -> distance_max=5.6, multiplier=600.0
-                # Example: landing_y=2.0 -> distance_max=6.2, multiplier=750.0
-                # Example: landing_y=3.0 -> distance_max=6.8, multiplier=900.0
-                chain_distance_max = 5.0 + landing_y * 0.6
+                # v159: Dynamic adjustment - chain_distance_max and chain_bonus_multiplier expand as landing_y increases
+                # Example: landing_y=0.0 -> distance_max=4.0, multiplier=450.0
+                # Example: landing_y=1.0 -> distance_max=4.4, multiplier=600.0
+                # Example: landing_y=2.0 -> distance_max=4.8, multiplier=750.0
+                # Example: landing_y=3.0 -> distance_max=5.2, multiplier=900.0
+                chain_distance_max = 4.0 + landing_y * 0.4
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
