@@ -41,6 +41,9 @@ REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
 MIN_GAMES_BEFORE_IMPROVE=10
 MIN_GAMES_FOR_BEST_ROLLBACK=10
+RANK_LCB_Z=1.28
+REGRESSION_COMPOSITE_RATIO=0.90
+REGRESSION_P25_RATIO=0.90
 STRATEGY_HASH_ARCHIVE_DIR="strategy_versions/by_hash"
 HASH_ARCHIVE_KEEP_TOP=10
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
@@ -2630,37 +2633,64 @@ _pick_best_rollback_candidate() {
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
 
 	local ranked
-	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" <<'PY'
+	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" <<'PY'
 import json
 import sys
+import math
 
-rs_file, current_hash, min_games = sys.argv[1], sys.argv[2], int(sys.argv[3])
+rs_file, current_hash, min_games, lcb_z = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4])
 rs = json.load(open(rs_file))
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def metrics(scores):
+    n = len(scores)
+    mean = sum(scores) / n
+    p25 = quantile(scores, 0.25)
+    p50 = quantile(scores, 0.50)
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in scores) / n
+        std = math.sqrt(var)
+    else:
+        std = 0.0
+    lcb = mean - lcb_z * (std / math.sqrt(n))
+    composite = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    return composite, p50, p25, lcb, n
 
 rows = []
 for h, data in rs.items():
     if h == current_hash:
         continue
-    scores = data.get("scores", [])
+    scores = [int(x) for x in data.get("scores", [])]
     if len(scores) < min_games:
         continue
-    avg = sum(scores) / len(scores)
-    rows.append((avg, len(scores), h))
+    comp, p50, p25, lcb, n = metrics(scores)
+    rows.append((comp, p50, p25, lcb, n, h))
 
-rows.sort(key=lambda x: (x[0], x[1]), reverse=True)
-for avg, n, h in rows:
-    print(f"{h}|{avg:.1f}|{n}")
+rows.sort(key=lambda x: (x[0], x[1], x[2], x[4]), reverse=True)
+for comp, p50, p25, lcb, n, h in rows:
+    print(f"{h}|{comp:.2f}|{p50:.1f}|{p25:.1f}|{lcb:.1f}|{n}")
 PY
 )
 	[ -z "$ranked" ] && return 1
 
-	local line h avg n candidate_file
+	local line h comp p50 p25 lcb n candidate_file
 	while IFS= read -r line; do
 		[ -z "$line" ] && continue
-		IFS='|' read -r h avg n <<<"$line"
+		IFS='|' read -r h comp p50 p25 lcb n <<<"$line"
 		candidate_file=$(_find_strategy_file_by_hash "$h")
 		if [ -n "$candidate_file" ]; then
-			echo "${h}|${avg}|${n}|${candidate_file}"
+			echo "${h}|${comp}|${p50}|${p25}|${lcb}|${n}|${candidate_file}"
 			return 0
 		fi
 	done <<EOF
@@ -2674,21 +2704,48 @@ _prune_hash_archive_by_ranking() {
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
 
 	local ranked_hashes
-	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
+	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" <<'PY'
 import json
 import sys
+import math
 
-rs_file, min_games, keep_top = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+rs_file, min_games, keep_top, lcb_z = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4])
 rs = json.load(open(rs_file))
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def composite_score(scores):
+    n = len(scores)
+    mean = sum(scores) / n
+    p25 = quantile(scores, 0.25)
+    p50 = quantile(scores, 0.50)
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in scores) / n
+        std = math.sqrt(var)
+    else:
+        std = 0.0
+    lcb = mean - lcb_z * (std / math.sqrt(n))
+    return 0.55 * p50 + 0.30 * p25 + 0.15 * lcb, p50, p25, n
+
 rows = []
 for h, data in rs.items():
-    scores = data.get("scores", [])
+    scores = [int(x) for x in data.get("scores", [])]
     if len(scores) < min_games:
         continue
-    avg = sum(scores) / len(scores)
-    rows.append((avg, len(scores), h))
-rows.sort(key=lambda x: (x[0], x[1]), reverse=True)
-for _, _, h in rows[:keep_top]:
+    comp, p50, p25, n = composite_score(scores)
+    rows.append((comp, p50, p25, n, h))
+rows.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
+for _, _, _, _, h in rows[:keep_top]:
     print(h)
 PY
 )
@@ -2752,7 +2809,7 @@ with open(rs_file, 'w') as f:
 }
 
 check_regression() {
-	# 新戦略が10試合以上で「平均最高ハッシュ」の85%未満ならリグレッション
+	# 新戦略が十分試行数で、LCB+中央値+分位点ベースの比較で劣化していればリグレッション
 	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
 	REGRESSION_ROLLBACK_DONE=0
 	REGRESSION_ROLLBACK_HASH=""
@@ -2760,50 +2817,102 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 -c "
-import json, os
-rs_file = '$ROLLING_SCORES_FILE'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P25_RATIO" <<'PY'
+import json
+import math
+import os
+import sys
+
+rs_file = sys.argv[1]
+current_hash = sys.argv[2]
+min_games_current = int(sys.argv[3])
+min_games_candidates = int(sys.argv[4])
+lcb_z = float(sys.argv[5])
+composite_ratio = float(sys.argv[6])
+p25_ratio = float(sys.argv[7])
+
 if not os.path.exists(rs_file):
-    print('OK')
-    exit()
+    print("OK")
+    raise SystemExit
 
 with open(rs_file) as f:
     rs = json.load(f)
 
-current_hash = '$strategy_hash'
 if current_hash not in rs:
-    print('OK')
-    exit()
+    print("OK")
+    raise SystemExit
 
-current_scores = rs[current_hash]['scores']
-if len(current_scores) < $MIN_GAMES_BEFORE_IMPROVE:
-    print('OK')  # データ不足
-    exit()
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
 
-# 比較基準は「平均最高ハッシュ」（現戦略を除外、最低試行数あり）
+def metrics(scores):
+    n = len(scores)
+    mean = sum(scores) / n
+    p25 = quantile(scores, 0.25)
+    p50 = quantile(scores, 0.50)
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in scores) / n
+        std = math.sqrt(var)
+    else:
+        std = 0.0
+    lcb = mean - lcb_z * (std / math.sqrt(n))
+    composite = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    return {
+        "composite": composite,
+        "p50": p50,
+        "p25": p25,
+        "lcb": lcb,
+        "n": n,
+    }
+
+current_scores = [int(x) for x in rs[current_hash].get("scores", [])]
+if len(current_scores) < min_games_current:
+    print("OK")
+    raise SystemExit
+
+current = metrics(current_scores)
+
 candidates = []
 for h, data in rs.items():
     if h == current_hash:
         continue
-    scores = data.get('scores', [])
-    if len(scores) < $MIN_GAMES_FOR_BEST_ROLLBACK:
+    scores = [int(x) for x in data.get("scores", [])]
+    if len(scores) < min_games_candidates:
         continue
-    avg = sum(scores) / len(scores)
-    candidates.append((avg, len(scores), h))
+    m = metrics(scores)
+    candidates.append((m["composite"], m["p50"], m["p25"], m["n"], h, m))
 
 if not candidates:
-    print('OK')  # 比較基準不足
-    exit()
+    print("OK")
+    raise SystemExit
 
-candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
-best_avg, best_n, best_hash = candidates[0]
-curr_avg = sum(current_scores) / len(current_scores)
+candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
+best_comp, _, _, best_n, best_hash, best = candidates[0]
+curr_comp = current["composite"]
 
-if best_avg > 0 and curr_avg < best_avg * 0.85:
-    print(f'REGRESSION:best_avg={best_avg:.0f},curr_avg={curr_avg:.0f},best_hash={best_hash},best_n={best_n}')
+is_comp_regression = best_comp > 0 and curr_comp < best_comp * composite_ratio
+is_p25_regression = best["p25"] > 0 and current["p25"] < best["p25"] * p25_ratio
+
+if is_comp_regression and is_p25_regression:
+    print(
+        "REGRESSION:"
+        f"best_hash={best_hash},best_comp={best_comp:.1f},curr_comp={curr_comp:.1f},"
+        f"best_p25={best['p25']:.1f},curr_p25={current['p25']:.1f},"
+        f"best_n={best_n},curr_n={current['n']}"
+    )
 else:
-    print('OK')
-" 2>/dev/null)
+    print("OK")
+PY
+	2>/dev/null)
 
 	if echo "$result" | grep -q '^REGRESSION:'; then
 		log "[REGRESSION] リグレッション検知: $result"
@@ -2839,15 +2948,15 @@ else:
 		fi
 
 		# リバート先選定:
-		# 1) ローリング平均で最良(十分試行数)かつ実ファイルが見つかる戦略
+		# 1) LCB+中央値+分位点の合成スコアで最良(十分試行数)かつ実ファイルが見つかる戦略
 		# 2) 見つからなければ従来どおり直前戦略(tmp/revert_strategy.py)
 		local rollback_file="" rollback_note="" rollback_hash=""
 		local best_candidate
 		best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
 		if [ -n "$best_candidate" ]; then
-			local best_avg best_n
-			IFS='|' read -r rollback_hash best_avg best_n rollback_file <<<"$best_candidate"
-			rollback_note="best_avg hash=${rollback_hash} avg=${best_avg} n=${best_n}"
+			local best_comp best_p50 best_p25 best_lcb best_n
+			IFS='|' read -r rollback_hash best_comp best_p50 best_p25 best_lcb best_n rollback_file <<<"$best_candidate"
+			rollback_note="best_comp hash=${rollback_hash} comp=${best_comp} p50=${best_p50} p25=${best_p25} lcb=${best_lcb} n=${best_n}"
 		elif [ -f "tmp/revert_strategy.py" ]; then
 			rollback_file="tmp/revert_strategy.py"
 			rollback_note="previous_strategy"
