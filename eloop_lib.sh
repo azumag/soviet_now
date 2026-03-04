@@ -1063,6 +1063,16 @@ _radio_generate_and_play() {
 		echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
 	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
+	# ニュースは選択タイトルを必ず先頭で読み上げる
+	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+		local title_line
+		title_line="今回取り上げるニュースタイトルは「${selected_news}」です。"
+		if ! printf '%s\n' "$talk_body" | head -n 2 | grep -Fq "$selected_news"; then
+			talk_body="${title_line}
+${talk_body}"
+		fi
+	fi
+
 	local talk_body_parsed talk_body_sanitized talk_body_dedup
 	talk_body_parsed="$talk_body"
 	talk_body_sanitized=$(printf '%s' "$talk_body_parsed" | _sanitize_onair_text)
@@ -1702,8 +1712,9 @@ ${past_topics}
 【トーク構成】
 1. 時間帯に合わせた軽いオープニング（2-3文）
 2. ニュースコーナー
-   - 「既に読んだニュース」に含まれない記事から1つ選ぶこと
-   - ニュースから1つ選んで、本文の内容を踏まえて5-8文で深く語る
+	   - 「既に読んだニュース」に含まれない記事から1つ選ぶこと
+	   - ニュース本文に入る前に、選んだニュースタイトルを1文で必ず読み上げること
+	   - ニュースから1つ選んで、本文の内容を踏まえて5-8文で深く語る
    - 単なる冷笑やツッコミで終わらせず、「なぜこうなったのか」「この先どうなるのか」「歴史的に見るとどういう位置づけか」など自分なりの洞察や意見を述べる
    - 斜に構えつつも知性を感じさせる分析を
 3. 軽いクロージング（1-2文）
