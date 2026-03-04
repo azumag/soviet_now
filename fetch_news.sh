@@ -8,6 +8,7 @@ mkdir -p tmp
 
 OUTFILE="tmp/news.txt"
 PAST_NEWS="tmp/.past_news_titles.txt"
+PAST_NEWS_LINKS="tmp/.past_news_links.txt"
 
 # 複数カテゴリの RSS を使い候補を増やす
 RSS_URLS=(
@@ -60,41 +61,41 @@ fi
 # 過去に使った見出しを読み込み
 past_titles=""
 [ -f "$PAST_NEWS" ] && past_titles=$(cat "$PAST_NEWS")
+past_links=""
+[ -f "$PAST_NEWS_LINKS" ] && past_links=$(cat "$PAST_NEWS_LINKS")
 
-# 過去に使ったものを除外（タイトル重複も除外）
-available=""
+# 過去に使ったものを除外（タイトル/URL重複も除外）
+available_file=$(mktemp /tmp/eloop_news_available_XXXXXXXX)
 seen_titles=""
+seen_links=""
 while IFS=$'\t' read -r title link; do
     [ -z "$title" ] && continue
-    if echo "$seen_titles" | grep -qF "$title"; then
+    [ -z "$link" ] && continue
+    if printf '%s\n' "$seen_titles" | grep -qxF "$title"; then
         continue
     fi
-    if ! echo "$past_titles" | grep -qF "$title"; then
-        available="${available}${title}\t${link}\n"
+    if printf '%s\n' "$seen_links" | grep -qxF "$link"; then
+        continue
+    fi
+    if printf '%s\n' "$past_links" | grep -qxF "$link"; then
+        continue
+    fi
+    if ! printf '%s\n' "$past_titles" | grep -qxF "$title"; then
+        printf '%s\t%s\n' "$title" "$link" >>"$available_file"
     fi
     seen_titles="${seen_titles}${title}\n"
+    seen_links="${seen_links}${link}\n"
 done <<< "$all_items"
 
-# 全部使い切ったら履歴をクリアしてやり直し
-if [ -z "$available" ]; then
-    > "$PAST_NEWS"
-    > "tmp/.past_news_read.txt"
-    > "tmp/.past_news_read_keys.txt"
-    past_titles=""
-    available=""
-    seen_titles=""
-    while IFS=$'\t' read -r title link; do
-        [ -z "$title" ] && continue
-        if echo "$seen_titles" | grep -qF "$title"; then
-            continue
-        fi
-        available="${available}${title}\t${link}\n"
-        seen_titles="${seen_titles}${title}\n"
-    done <<< "$all_items"
+# 新規候補がない場合は履歴を維持したままスキップ
+if [ ! -s "$available_file" ]; then
+    rm -f "$available_file" "$OUTFILE"
+    exit 0
 fi
 
 # シャッフルして3件選ぶ
-selected=$(echo -e "$available" | grep -v '^$' | sort -R | head -3)
+selected=$(sort -R "$available_file" | head -3)
+rm -f "$available_file"
 
 # 各ニュースの見出し＋本文要約を取得
 result=""
@@ -103,6 +104,7 @@ while IFS=$'\t' read -r title link; do
 
     # 使用済みとして記録
     echo "$title" >> "$PAST_NEWS"
+    echo "$link" >> "$PAST_NEWS_LINKS"
 
     # リンク先のog:descriptionから本文要約を取得
     desc=""
@@ -126,6 +128,7 @@ done <<< "$selected"
 
 # 過去記録は直近100件保持（候補が多いので余裕を持たせる）
 tail -100 "$PAST_NEWS" > "${PAST_NEWS}.tmp" && mv "${PAST_NEWS}.tmp" "$PAST_NEWS"
+tail -200 "$PAST_NEWS_LINKS" > "${PAST_NEWS_LINKS}.tmp" && mv "${PAST_NEWS_LINKS}.tmp" "$PAST_NEWS_LINKS"
 
 if [ -n "$result" ]; then
     echo "$result" > "$OUTFILE"
