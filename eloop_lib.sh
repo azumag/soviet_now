@@ -42,6 +42,9 @@ REGRESSION_ROLLBACK_HASH=""
 MIN_GAMES_BEFORE_IMPROVE=10
 MIN_GAMES_FOR_BEST_ROLLBACK=10
 RANK_LCB_Z=1.28
+RANK_WEIGHT_P50=0.55
+RANK_WEIGHT_P25=0.30
+RANK_WEIGHT_LCB=0.15
 REGRESSION_COMPOSITE_RATIO=0.90
 REGRESSION_P25_RATIO=0.90
 STRATEGY_HASH_ARCHIVE_DIR="strategy_versions/by_hash"
@@ -2633,12 +2636,18 @@ _pick_best_rollback_candidate() {
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
 
 	local ranked
-	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" <<'PY'
+	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
 import json
 import sys
 import math
 
-rs_file, current_hash, min_games, lcb_z = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4])
+rs_file = sys.argv[1]
+current_hash = sys.argv[2]
+min_games = int(sys.argv[3])
+lcb_z = float(sys.argv[4])
+w_p50 = float(sys.argv[5])
+w_p25 = float(sys.argv[6])
+w_lcb = float(sys.argv[7])
 rs = json.load(open(rs_file))
 
 def quantile(vals, p):
@@ -2664,7 +2673,7 @@ def metrics(scores):
     else:
         std = 0.0
     lcb = mean - lcb_z * (std / math.sqrt(n))
-    composite = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    composite = w_p50 * p50 + w_p25 * p25 + w_lcb * lcb
     return composite, p50, p25, lcb, n
 
 rows = []
@@ -2704,12 +2713,18 @@ _prune_hash_archive_by_ranking() {
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
 
 	local ranked_hashes
-	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" <<'PY'
+	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
 import json
 import sys
 import math
 
-rs_file, min_games, keep_top, lcb_z = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4])
+rs_file = sys.argv[1]
+min_games = int(sys.argv[2])
+keep_top = int(sys.argv[3])
+lcb_z = float(sys.argv[4])
+w_p50 = float(sys.argv[5])
+w_p25 = float(sys.argv[6])
+w_lcb = float(sys.argv[7])
 rs = json.load(open(rs_file))
 
 def quantile(vals, p):
@@ -2735,7 +2750,7 @@ def composite_score(scores):
     else:
         std = 0.0
     lcb = mean - lcb_z * (std / math.sqrt(n))
-    return 0.55 * p50 + 0.30 * p25 + 0.15 * lcb, p50, p25, n
+    return w_p50 * p50 + w_p25 * p25 + w_lcb * lcb, p50, p25, n
 
 rows = []
 for h, data in rs.items():
@@ -2817,7 +2832,7 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P25_RATIO" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P25_RATIO" <<'PY'
 import json
 import math
 import os
@@ -2828,8 +2843,11 @@ current_hash = sys.argv[2]
 min_games_current = int(sys.argv[3])
 min_games_candidates = int(sys.argv[4])
 lcb_z = float(sys.argv[5])
-composite_ratio = float(sys.argv[6])
-p25_ratio = float(sys.argv[7])
+w_p50 = float(sys.argv[6])
+w_p25 = float(sys.argv[7])
+w_lcb = float(sys.argv[8])
+composite_ratio = float(sys.argv[9])
+p25_ratio = float(sys.argv[10])
 
 if not os.path.exists(rs_file):
     print("OK")
@@ -2865,7 +2883,7 @@ def metrics(scores):
     else:
         std = 0.0
     lcb = mean - lcb_z * (std / math.sqrt(n))
-    composite = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    composite = w_p50 * p50 + w_p25 * p25 + w_lcb * lcb
     return {
         "composite": composite,
         "p50": p50,
