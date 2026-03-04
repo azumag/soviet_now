@@ -813,7 +813,7 @@ print(result, end='')
 }
 
 _sanitize_onair_text() {
-	python3 - <<'PY'
+	python3 -c "
 import re
 import sys
 
@@ -832,7 +832,7 @@ out = text
 for pat, repl in patterns:
     out = re.sub(pat, repl, out, flags=re.IGNORECASE)
 sys.stdout.write(out)
-PY
+"
 }
 
 _news_title_key() {
