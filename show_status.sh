@@ -67,6 +67,17 @@ _file_age() {
 	fi
 }
 
+_bar_meter() {
+	local value="$1" max="$2" width="$3"
+	(( max <= 0 )) && max=1
+	(( value < 0 )) && value=0
+	local filled=$(( value * width / max ))
+	(( filled > width )) && filled=$width
+	local empty=$(( width - filled ))
+	printf "%${filled}s" "" | tr ' ' '█'
+	printf "%${empty}s" "" | tr ' ' '·'
+}
+
 #=== メイン表示 ===
 show_status() {
 	# --- 改善プロセス状態 ---
@@ -264,14 +275,18 @@ if h and h in rs:
 		printf "    ${C_RED}○${C_RESET} Loop        ${C_DIM}STOPPED${C_RESET}\n"
 	fi
 
-	# ゲーム状態
-	local state_color="$C_DIM"
-	case "$game_state" in
-		MOVE)     state_color="$C_GREEN" ;;
-		GAMEOVER) state_color="$C_RED" ;;
-		STOP)     state_color="$C_RED" ;;
-	esac
-	printf "    ${C_WHITE}▸${C_RESET} Game        ${state_color}${game_state}${C_RESET}  ${C_DIM}score=${game_score} pieces=${game_pieces}${C_RESET}\n"
+	# ワーカー稼働メーター（show_status_g にはない運用系指標）
+	local workers_online=0
+	$loop_running && workers_online=$((workers_online + 1))
+	if [[ "$imp_status" == "running" ]] && $imp_alive; then
+		workers_online=$((workers_online + 1))
+	fi
+	$say_running && workers_online=$((workers_online + 1))
+	$twitch_running && workers_online=$((workers_online + 1))
+	$comment_gen_running && workers_online=$((workers_online + 1))
+	local workers_bar
+	workers_bar=$(_bar_meter "$workers_online" 5 12)
+	printf "    ${C_WHITE}▸${C_RESET} Workers     ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/5 online${C_RESET}\n" "$workers_bar" "$workers_online"
 
 	# 改善プロセス
 	if [[ "$imp_status" == "running" ]] && $imp_alive; then
@@ -295,18 +310,12 @@ if h and h in rs:
 		printf "    ${gate_color}◆${C_RESET} Queued      ${gate_color}%s${C_RESET}  ${C_DIM}[%s]${C_RESET}\n" "${count_label}" "${scores_display}"
 	fi
 
-	# ローリングスコア
-	if [[ -n "$rolling_hash" ]] && (( rolling_count > 0 )); then
-		local ratio_info=""
-		if [[ -n "$rolling_prev_avg" ]] && (( rolling_prev_avg > 0 )); then
-			local pct=$(( rolling_avg * 100 / rolling_prev_avg ))
-			local pct_color="$C_DIM"
-			(( pct >= 100 )) && pct_color="$C_GREEN"
-			(( pct < 80 )) && pct_color="$C_RED"
-			ratio_info="  ${pct_color}${pct}%% vs prev${C_RESET}"
-		fi
-		printf "    ${C_BLUE}▸${C_RESET} Rolling     ${C_DIM}${rolling_hash}${C_RESET}  ${C_DIM}n=${rolling_count} avg=${rolling_avg}${C_RESET}${ratio_info}\n"
-	fi
+	# キュー負荷メーター（show_status_g にはない運用系指標）
+	local queue_total=$(( acc_count + comment_queue_count + twitch_pending ))
+	local queue_bar
+	queue_bar=$(_bar_meter "$queue_total" 30 12)
+	printf "    ${C_BLUE}▸${C_RESET} QueueMeter  ${C_DIM}[%s]${C_RESET}  ${C_DIM}A=%d C=%d T=%d${C_RESET}\n" \
+		"$queue_bar" "$acc_count" "$comment_queue_count" "$twitch_pending"
 
 	# リバート・リジェクト情報
 	if $revert_available || (( rejected_count > 0 )); then
@@ -393,30 +402,20 @@ if h and h in rs:
 	local max_ver=$(( W - 24 ))
 	(( ${#ver_display} > max_ver )) && ver_display="${ver_display[1,$((max_ver-2))]}.."
 	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}%s${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}\n" "${ver_display}"
-	# 全体平均と直近平均
-	local all_avg="" recent_avg=""
-	if [[ -f score_history.txt ]] && [[ -s score_history.txt ]]; then
-		all_avg=$(awk '{s+=$1}END{printf "%.0f", s/NR}' score_history.txt 2>/dev/null)
-		local total_lines=$(wc -l < score_history.txt | tr -d ' ')
-		if (( total_lines >= 30 )); then
-			recent_avg=$(tail -30 score_history.txt | awk '{s+=$1}END{printf "%.0f", s/NR}' 2>/dev/null)
-		fi
-	fi
+	# show_status_g と重複しない運用グラフ
+	local ops_health=$(( workers_online * 20 ))
+	(( ops_health < 0 )) && ops_health=0
+	(( ops_health > 100 )) && ops_health=100
+	local ops_bar
+	ops_bar=$(_bar_meter "$ops_health" 100 12)
+	printf "    ${C_WHITE}▸${C_RESET} OpsHealth   ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/100${C_RESET}\n" "$ops_bar" "$ops_health"
 
-	local avg_display=""
-	if [[ -n "$all_avg" ]]; then
-		avg_display="  ${C_DIM}avg=${C_RESET}${all_avg}"
-		if [[ -n "$recent_avg" ]]; then
-			local avg_color="$C_DIM"
-			(( recent_avg > all_avg )) && avg_color="$C_GREEN"
-			(( recent_avg < all_avg )) && avg_color="$C_RED"
-			avg_display+="  ${C_DIM}last30=${C_RESET}${avg_color}${recent_avg}${C_RESET}"
-		fi
-	fi
-
-	printf "    ${C_WHITE}▸${C_RESET} Games       ${C_BOLD}#${game_count}${C_RESET}  ${C_DIM}best=${C_RESET}${C_BOLD}${best_score}${C_RESET}${avg_display}\n"
-	[[ -n "$last_scores" ]] && \
-		printf "    ${C_WHITE}▸${C_RESET} Recent      ${C_DIM}${last_scores}${C_RESET}\n"
+	local reject_bar
+	reject_bar=$(_bar_meter "$rejected_count" 20 12)
+	local revert_label="none"
+	$revert_available && revert_label="ready"
+	printf "    ${C_WHITE}▸${C_RESET} Rollback    ${C_DIM}[%s]${C_RESET}  ${C_DIM}rej=%d revert=%s${C_RESET}\n" \
+		"$reject_bar" "$rejected_count" "$revert_label"
 
 	# バッチサマリ
 	if [[ -f tmp/batch_summary.txt ]] && [[ -s tmp/batch_summary.txt ]]; then
