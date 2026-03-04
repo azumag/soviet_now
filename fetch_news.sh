@@ -83,8 +83,9 @@ while IFS=$'\t' read -r title link; do
     if ! printf '%s\n' "$past_titles" | grep -qxF "$title"; then
         printf '%s\t%s\n' "$title" "$link" >>"$available_file"
     fi
-    seen_titles="${seen_titles}${title}\n"
-    seen_links="${seen_links}${link}\n"
+    # NOTE: 文字列中に実改行を入れて保持（\n リテラルだと重複判定できない）
+    seen_titles="${seen_titles}${title}"$'\n'
+    seen_links="${seen_links}${link}"$'\n'
 done <<< "$all_items"
 
 # 新規候補がない場合は履歴を維持したままスキップ
@@ -93,8 +94,8 @@ if [ ! -s "$available_file" ]; then
     exit 0
 fi
 
-# シャッフルして3件選ぶ
-selected=$(sort -R "$available_file" | head -3)
+# シャッフルして3件選ぶ（保険としてタイトル重複を再除外）
+selected=$(sort -R "$available_file" | awk -F '\t' '!seen[$1]++' | head -3)
 rm -f "$available_file"
 
 # 各ニュースの見出し＋本文要約を取得
