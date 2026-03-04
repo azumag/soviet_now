@@ -37,6 +37,8 @@ IMPROVE_STATE_FILE="tmp/improve_state.json"
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
 ROLLING_SCORES_FILE="tmp/rolling_scores.json"
 REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
+REGRESSION_ROLLBACK_DONE=0
+REGRESSION_ROLLBACK_HASH=""
 MIN_GAMES_BEFORE_IMPROVE=10
 MIN_GAMES_FOR_BEST_ROLLBACK=10
 STRATEGY_HASH_ARCHIVE_DIR="strategy_versions/by_hash"
@@ -2649,6 +2651,8 @@ with open(rs_file, 'w') as f:
 check_regression() {
 	# 新戦略が10試合以上で「平均最高ハッシュ」の85%未満ならリグレッション
 	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
+	REGRESSION_ROLLBACK_DONE=0
+	REGRESSION_ROLLBACK_HASH=""
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
@@ -2758,6 +2762,8 @@ else:
 		local rolled_hash
 		rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+		REGRESSION_ROLLBACK_DONE=1
+		REGRESSION_ROLLBACK_HASH="$rolled_hash"
 		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 
 		git add -A
@@ -2908,6 +2914,55 @@ _clear_accumulated_data() {
 	rm -f "$ACCUMULATED_GAMES_FILE"
 }
 
+_start_improvement_job() {
+	local all_history_files="$1" all_scores="$2" any_soviet="$3" acc_count="$4" reason="$5"
+
+	# 既存の eloop_improve プロセスが残っていないか確認
+	local stale_pids
+	stale_pids=$(pgrep -f "eloop_improve" 2>/dev/null || true)
+	if [ -n "$stale_pids" ]; then
+		log "[IMPROVE] WARNING: 既存の eloop_improve プロセス検出 (PIDs: $stale_pids) → kill"
+		echo "$stale_pids" | xargs kill 2>/dev/null || true
+		sleep 1
+	fi
+
+	if [ "$reason" = "post_regression" ]; then
+		log "[IMPROVE] 回帰ロールバック直後の即時改善を開始"
+	else
+		log "[IMPROVE] ${acc_count}試合分のデータで改善開始"
+	fi
+
+	# Twitchコメント・ニュース取得
+	log "[TWITCH] コメントfetch..."
+	./twitch_chat.sh fetch
+	./twitch_chat.sh ack
+	log "[NEWS] ニュース取得..."
+	./fetch_news.sh
+
+	# 戦略ハッシュ記録
+	local strategy_hash
+	strategy_hash=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+
+	# バックグラウンド改善開始
+	./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" &
+	IMPROVE_PID=$!
+
+	# 起動成功を確認してから状態更新
+	if kill -0 "$IMPROVE_PID" 2>/dev/null; then
+		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash"
+		if [ "$reason" = "post_regression" ]; then
+			log "[IMPROVE] 回帰ロールバック後の改善開始 (PID=$IMPROVE_PID, base=${REGRESSION_ROLLBACK_HASH:-unknown})"
+		else
+			log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count} 試合)"
+		fi
+		return 0
+	else
+		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死)"
+		IMPROVE_PID=0
+		return 1
+	fi
+}
+
 trigger_adaptive_improvement() {
 	# Step 1: 常にデータを蓄積 & ローリングスコア更新
 	accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
@@ -2917,6 +2972,10 @@ trigger_adaptive_improvement() {
 	if check_regression; then
 		# リグレッション検知 → リバート済み、蓄積データクリア
 		_clear_accumulated_data
+		# ロールバック成功時は、ロールバック戦略をベースに即時改善を走らせる
+		if [ "${REGRESSION_ROLLBACK_DONE:-0}" -eq 1 ]; then
+			_start_improvement_job "" "" "false" "0" "post_regression" || true
+		fi
 		return
 	fi
 
@@ -2959,45 +3018,13 @@ trigger_adaptive_improvement() {
 	fi
 
 	# Step 5: idle → 改善開始
-	# 既存の eloop_improve プロセスが残っていないか確認
-	local stale_pids
-	stale_pids=$(pgrep -f "eloop_improve" 2>/dev/null || true)
-	if [ -n "$stale_pids" ]; then
-		log "[IMPROVE] WARNING: 既存の eloop_improve プロセス検出 (PIDs: $stale_pids) → kill"
-		echo "$stale_pids" | xargs kill 2>/dev/null || true
-		sleep 1
-	fi
-
 	# 蓄積データから履歴ファイル・スコアを統合
 	local all_history_files all_scores any_soviet
 	all_history_files=$(echo "$acc_data" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('files',[])))" 2>/dev/null)
 	all_scores=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('scores',''))" 2>/dev/null)
 	any_soviet=$(echo "$acc_data" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet',False) else 'false')" 2>/dev/null)
-
-	log "[IMPROVE] ${acc_count}試合分のデータで改善開始"
-
-	# Twitchコメント・ニュース取得
-	log "[TWITCH] コメントfetch..."
-	./twitch_chat.sh fetch
-	./twitch_chat.sh ack
-	log "[NEWS] ニュース取得..."
-	./fetch_news.sh
-
-	# 戦略ハッシュ記録
-	local strategy_hash
-	strategy_hash=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
-
-	# バックグラウンド改善開始
-	./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" &
-	IMPROVE_PID=$!
-
-	# 起動成功を確認してから蓄積データをクリア (即死した場合はデータを保持)
-	if kill -0 "$IMPROVE_PID" 2>/dev/null; then
+	if _start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "normal"; then
+		# 通常改善のみ、起動成功後に蓄積をクリア (即死時は保持)
 		_clear_accumulated_data
-		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash"
-		log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count} 試合)"
-	else
-		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死) → 蓄積データ保持"
-		IMPROVE_PID=0
 	fi
 }
