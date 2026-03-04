@@ -2525,7 +2525,7 @@ with open(rs_file, 'w') as f:
 }
 
 check_regression() {
-	# 新戦略が10試合以上で旧戦略の85%未満ならリグレッション
+	# 新戦略が10試合以上で「平均最高ハッシュ」の85%未満ならリグレッション
 	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
@@ -2551,29 +2551,27 @@ if len(current_scores) < $MIN_GAMES_BEFORE_IMPROVE:
     print('OK')  # データ不足
     exit()
 
-# 前の戦略のスコアを探す (revert_strategy.pyのハッシュ)
-revert_file = 'tmp/revert_strategy.py'
-if not os.path.exists(revert_file):
-    print('OK')
+# 比較基準は「平均最高ハッシュ」（現戦略を除外、最低試行数あり）
+candidates = []
+for h, data in rs.items():
+    if h == current_hash:
+        continue
+    scores = data.get('scores', [])
+    if len(scores) < $MIN_GAMES_FOR_BEST_ROLLBACK:
+        continue
+    avg = sum(scores) / len(scores)
+    candidates.append((avg, len(scores), h))
+
+if not candidates:
+    print('OK')  # 比較基準不足
     exit()
 
-import subprocess
-prev_hash = subprocess.run(['python3', 'extract_decide_hash.py', revert_file],
-    capture_output=True, text=True).stdout.strip()
-
-if not prev_hash or prev_hash == current_hash:
-    print('OK')
-    exit()
-
-if prev_hash not in rs or len(rs[prev_hash]['scores']) < 3:
-    print('OK')  # 前の戦略のデータ不足
-    exit()
-
-prev_avg = sum(rs[prev_hash]['scores']) / len(rs[prev_hash]['scores'])
+candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+best_avg, best_n, best_hash = candidates[0]
 curr_avg = sum(current_scores) / len(current_scores)
 
-if prev_avg > 0 and curr_avg < prev_avg * 0.85:
-    print(f'REGRESSION:prev_avg={prev_avg:.0f},curr_avg={curr_avg:.0f},prev_hash={prev_hash}')
+if best_avg > 0 and curr_avg < best_avg * 0.85:
+    print(f'REGRESSION:best_avg={best_avg:.0f},curr_avg={curr_avg:.0f},best_hash={best_hash},best_n={best_n}')
 else:
     print('OK')
 " 2>/dev/null)
