@@ -38,13 +38,15 @@ ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
 ROLLING_SCORES_FILE="tmp/rolling_scores.json"
 REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
 MIN_GAMES_BEFORE_IMPROVE=10
+MIN_GAMES_FOR_BEST_ROLLBACK=10
+STRATEGY_HASH_ARCHIVE_DIR="strategy_versions/by_hash"
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
 COMMENT_WATCHER_INTERVAL=10
 COMMENT_WORKER_HEALTH_TTL=30
 COMMENT_PLAYER_HEARTBEAT_FILE="tmp/.comment_queue/player.heartbeat"
 COMMENT_WATCHER_HEARTBEAT_FILE="tmp/.comment_queue/watcher.heartbeat"
-mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "tmp/.twitch_chat" tmp
+mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "tmp/.twitch_chat" tmp
 
 #=== コアヘルパー ===
 
@@ -2410,10 +2412,96 @@ recover_strategy_backup() {
 
 #=== ローリングスコア & リグレッション検知 ===
 
+_archive_strategy_snapshot_by_hash() {
+	local source_file="$1" hash_value="$2"
+	[ -f "$source_file" ] || return 0
+	if [ -z "$hash_value" ] || [ "$hash_value" = "unknown" ]; then
+		hash_value=$(python3 extract_decide_hash.py "$source_file" 2>/dev/null || echo "")
+	fi
+	[ -z "$hash_value" ] && return 0
+	mkdir -p "$STRATEGY_HASH_ARCHIVE_DIR"
+	local dst="$STRATEGY_HASH_ARCHIVE_DIR/${hash_value}.py"
+	if [ ! -f "$dst" ]; then
+		cp "$source_file" "$dst" 2>/dev/null || true
+	fi
+}
+
+_find_strategy_file_by_hash() {
+	local target_hash="$1"
+	[ -z "$target_hash" ] && return 1
+	if [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${target_hash}.py" ]; then
+		echo "$STRATEGY_HASH_ARCHIVE_DIR/${target_hash}.py"
+		return 0
+	fi
+
+	local candidates=()
+	[ -f "$STRATEGY_FILE" ] && candidates+=("$STRATEGY_FILE")
+	[ -f "tmp/revert_strategy.py" ] && candidates+=("tmp/revert_strategy.py")
+	while IFS= read -r vf; do
+		[ -n "$vf" ] && candidates+=("$vf")
+	done < <(ls -1t "$STRATEGY_VERSIONS_DIR"/*.py 2>/dev/null || true)
+
+	local f h
+	for f in "${candidates[@]}"; do
+		[ -f "$f" ] || continue
+		h=$(python3 extract_decide_hash.py "$f" 2>/dev/null || echo "")
+		if [ "$h" = "$target_hash" ]; then
+			echo "$f"
+			return 0
+		fi
+	done
+	return 1
+}
+
+_pick_best_rollback_candidate() {
+	local current_hash="$1"
+	[ -f "$ROLLING_SCORES_FILE" ] || return 1
+
+	local ranked
+	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" <<'PY'
+import json
+import sys
+
+rs_file, current_hash, min_games = sys.argv[1], sys.argv[2], int(sys.argv[3])
+rs = json.load(open(rs_file))
+
+rows = []
+for h, data in rs.items():
+    if h == current_hash:
+        continue
+    scores = data.get("scores", [])
+    if len(scores) < min_games:
+        continue
+    avg = sum(scores) / len(scores)
+    rows.append((avg, len(scores), h))
+
+rows.sort(key=lambda x: (x[0], x[1]), reverse=True)
+for avg, n, h in rows:
+    print(f"{h}|{avg:.1f}|{n}")
+PY
+)
+	[ -z "$ranked" ] && return 1
+
+	local line h avg n candidate_file
+	while IFS= read -r line; do
+		[ -z "$line" ] && continue
+		IFS='|' read -r h avg n <<<"$line"
+		candidate_file=$(_find_strategy_file_by_hash "$h")
+		if [ -n "$candidate_file" ]; then
+			echo "${h}|${avg}|${n}|${candidate_file}"
+			return 0
+		fi
+	done <<EOF
+$ranked
+EOF
+	return 1
+}
+
 update_rolling_scores() {
 	local score="$1"
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
+	_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$strategy_hash"
 
 	python3 -c "
 import json, os
@@ -2513,25 +2601,50 @@ else:
 		fi
 		IMPROVE_PID=0
 		_write_improve_state "idle" "0" ""
-		log "[REGRESSION] tmp/revert_strategy.py に自動リバート"
+			log "[REGRESSION] 自動ロールバック開始"
 
-		# リジェクトハッシュに記録
-		echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
-		# 最新20件のみ保持
-		if [ -f "$REJECTED_HASHES_FILE" ]; then
-			tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
-			mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
+			# リジェクトハッシュに記録
+			echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
+			# 最新20件のみ保持
+			if [ -f "$REJECTED_HASHES_FILE" ]; then
+				tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
+				mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
+			fi
+
+			# リバート先選定:
+			# 1) ローリング平均で最良(十分試行数)かつ実ファイルが見つかる戦略
+			# 2) 見つからなければ従来どおり直前戦略(tmp/revert_strategy.py)
+			local rollback_file="" rollback_note="" rollback_hash=""
+			local best_candidate
+			best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
+			if [ -n "$best_candidate" ]; then
+				local best_avg best_n
+				IFS='|' read -r rollback_hash best_avg best_n rollback_file <<<"$best_candidate"
+				rollback_note="best_avg hash=${rollback_hash} avg=${best_avg} n=${best_n}"
+			elif [ -f "tmp/revert_strategy.py" ]; then
+				rollback_file="tmp/revert_strategy.py"
+				rollback_note="previous_strategy"
+			fi
+
+			if [ -z "$rollback_file" ]; then
+				log "[REGRESSION] ロールバック候補なし → 現在戦略を維持"
+				return 0
+			fi
+
+			# リバート実行
+			cp "$rollback_file" "$STRATEGY_FILE"
+			# 次回比較の基準も現戦略に合わせる（再帰的な誤判定防止）
+			cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
+			local rolled_hash
+			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+			log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
+
+			git add -A
+			git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null || true
+
+			return 0  # リグレッション検知
 		fi
-
-		# リバート実行
-		cp "tmp/revert_strategy.py" "$STRATEGY_FILE"
-		log "[REGRESSION] リバート完了"
-
-		git add -A
-		git commit -m "eloop Auto-revert: regression detected ($result)" 2>/dev/null || true
-
-		return 0  # リグレッション検知
-	fi
 
 	return 1  # 問題なし
 }
