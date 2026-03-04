@@ -7,18 +7,18 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (5 evaluation axes):
+Decision Logic (6 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
   2. Height penalty - Penalty for high landing position (varies by phase)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. NO_MERGE penalty - Penalty for positions with no merge opportunity (v84/v126: -150, v158: -200)
+  6. Chain merge bonus - Evaluate possibility of further merges after merge (v153: CHAIN_MERGE超強化版)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management strengthened (height_mult=2.4, v126/v42)
-  HIGH     (1.8 <= max_y < 3.0) : Late game. Height management relaxed (height_mult=1.8, v84/v155)
+  HIGH     (1.8 <= max_y < 3.0) : Late game. Height management relaxed (height_mult=1.8, v84/v156)
   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
@@ -30,20 +30,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# [BEST:3689] v126: v42-based HIGH phase merge enhancement
-# v151-v155: CHAIN_MERGE強化版（係数200.0→300.0→400.0、chain_distance 3.0→3.5→4.0→4.5→5.0）
-# [BEST:4026] v155: chain_distance 4.5→5.0、chain_bonus 400.0→450.0に強化したが、CHAIN_MERGE選択率は依然として低い
-# v156: v42/v126成功構造復帰・CHAIN_MERGE削除版 - v153-v155のCHAIN_MERGE過剰強化の振り子パターンを解消。
-# batch_summaryなしでも履歴分析でMEDIUM height_mult=1.8（v151緩和）がHEIGHT_CONTROL過多の原因と推定。
-# v42/v126のMEDIUM height_mult=2.4に復帰し、HEIGHT_CONTROLを削減してスコア安定性を向上。
-# CHAIN_MERGEロジックを完全削除（v153-v155の密度評価版、chain_distance=5.0、係数450.0等）し、v84のNO_MERGEペナルティ-150を導入。
-# v84のHIGHフェーズheight_mult=1.8を維持し、v42/v126のMEDIUM height_mult=2.4と統合。
-# これにより振り子パターンを解消し、MEDIUMフェーズでの高度管理を強化しつつHIGHフェーズの併合機会を確保。
-# コード量削減（約180行→約110行）で頑健性を確保。
-# v158: NO_MERGEペナルティ強化版 - v156のスコア4026は高いが、CHAIN_MERGE選択率7.3%の問題は解消されていない。
-# v157の動的パラメータ調整は複雑すぎて効果が薄い（スコア範囲553〜3583）。
-# v158の成功パターンを採用し、NO_MERGEペナルティを-150から-200に強化して、HEIGHT_CONTROL選択率（28.9%、avg_score_delta=2.4）を削減。
-# v42/v126の成功構造を維持し、併合を強制的に促すことでスコア安定性を向上。
+# v159: CHAIN_MERGE再導入版 - v158のNO_MERGEペナルティ-200強化は失敗（CHAIN_MERGE選択率改善なし）。
+# v153のCHAIN_MERGEロジックを再導入し、v84/v156の成功要素を組み合わせる。
+# （1）chain_distance=4.0、chain_bonus係数=300.0（v153設定）でCHAIN_MERGE選択率16.4%を再現。
+# （2）NO_MERGEペナルティを-150に戻す（v84/v156設定）。
+# （3）v84/v156のHIGH_TOWERペナルティ1.3倍を維持。
+# （4）v42/v126のheight_mult設定（MEDIUM=2.4、HIGH=1.8）を維持。
+# v156のスコア4026の成功構造をベースに、v153のCHAIN_MERGEを追加することで振子パターンを回避し、CHAIN_MERGE選択率向上でスコア安定性を改善。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -51,13 +44,14 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v158: NO_MERGEペナルティ強化版
+    """v159: CHAIN_MERGE再導入版
 
-    v156のスコア4026は高いが、CHAIN_MERGE選択率7.3%の問題は解消されていない。
-    v157の動的パラメータ調整は複雑すぎて効果が薄い（スコア範囲553〜3583）。
-    v158の成功パターンを採用し、NO_MERGEペナルティを-150から-200に強化して、
-    HEIGHT_CONTROL選択率（28.9%、avg_score_delta=2.4）を削減。
-    v42/v126の成功構造を維持し、併合を強制的に促すことでスコア安定性を向上。
+    v158のNO_MERGEペナルティ-200強化は失敗（CHAIN_MERGE選択率改善なし）。
+    v153のCHAIN_MERGEロジックを再導入し、v84/v156の成功要素を組み合わせる。
+    （1）chain_distance=4.0、chain_bonus係数=300.0（v153設定）でCHAIN_MERGE選択率16.4%を再現。
+    （2）NO_MERGEペナルティを-150に戻す（v84/v156設定）。
+    （3）v84/v156のHIGH_TOWERペナルティ1.3倍を維持。
+    （4）v42/v126のheight_mult設定（MEDIUM=2.4、HIGH=1.8）を維持。
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -94,11 +88,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v156: v42/v126の2.4に復帰、HEIGHT_CONTROLを削減
+        height_mult = 2.4  # v159: v42/v126の2.4を維持
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v156: v84/v155の1.8を維持、併合機会確保
+        height_mult = 1.8  # v159: v84/v156の1.8を維持
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -111,8 +105,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
+    # --- v149: merged_type calculation for chain merge detection ---
+    merged_type = min(next_type + 1, 16)
+
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 5 evaluation axes
+    #  score each drop candidate (x coordinate) with 6 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -145,7 +142,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v84: HIGH_TOWERペナルティ緩和
+            height_penalty *= 1.3  # v84/v156: HIGH_TOWERペナルティ緩和
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5
@@ -185,11 +182,39 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: NO_MERGE penalty (v84/v126/v158) -----
+        # ----- evaluation axis 6: chain merge bonus (v153: CHAIN_MERGE超強化版) -----
+        # if merge succeeds, evaluate possibility of further chain merge
+        # get best merge target from result["merges"]
+        # check if there are pieces of merged_type around the merged target
+        # v153: chain_merge_bonus coefficient 300.0, chain_distance 4.0
+        if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
+            merges = result["merges"]
+            if merges:
+                # get best merge target (closest distance)
+                best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
+                target_x = best_merge.get("x", 0)
+                target_y = best_merge.get("y", 0)
+
+                # check if there are pieces of merged_type on the board
+                # chain detection distance: type radius + piece radius (0.5~2.0)
+                chain_distance = 4.0  # v159: v153の4.0を維持
+
+                for p in pieces:
+                    if p.get("type") == merged_type:
+                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                        if dist < chain_distance:
+                            # chain possibility: closer distance gives larger bonus
+                            # v159: v153の係数300.0を維持
+                            chain_bonus = (chain_distance - dist) * 300.0
+                            score += chain_bonus
+                            reasons.append("CHAIN_MERGE")
+                            break  # one is enough
+
+        # ----- evaluation axis 7: NO_MERGE penalty (v84/v126/v156) -----
         # penalty for positions with no merge opportunity to force merge
-        # v158: strengthen from -150 to -200 to reduce HEIGHT_CONTROL selection
+        # v159: v84/v156の-150に戻す（v158の-200は過剰）
         if merge_grade == "NO":
-            score -= 200.0  # v158: -150から-200に強化
+            score -= 150.0
             reasons.append("NO_MERGE")
 
         # ----- update best candidate -----
