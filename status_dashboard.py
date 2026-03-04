@@ -246,10 +246,52 @@ def get_rejected_count():
         return 0
 
 
+def load_improve_state():
+    p = Path("tmp/improve_state.json")
+    base = {
+        "status": "idle",
+        "pid": 0,
+        "phase": "",
+        "progress": 0,
+        "alive": False,
+    }
+    if not p.exists():
+        return base
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        return base
+
+    base["status"] = d.get("status", "idle")
+    try:
+        base["pid"] = int(d.get("pid", 0) or 0)
+    except Exception:
+        base["pid"] = 0
+    base["phase"] = str(d.get("phase", "") or "")
+    try:
+        base["progress"] = int(float(d.get("progress", 0) or 0))
+    except Exception:
+        base["progress"] = 0
+    base["progress"] = max(0, min(100, base["progress"]))
+
+    if base["status"] == "running" and base["pid"] > 0:
+        try:
+            os.kill(base["pid"], 0)
+            cmd = subprocess.run(
+                ["ps", "-p", str(base["pid"]), "-o", "command="],
+                capture_output=True, text=True, timeout=2
+            ).stdout.strip()
+            base["alive"] = "eloop_improve" in cmd
+        except Exception:
+            base["alive"] = False
+
+    return base
+
+
 # ── Panel renderers ───────────────────────────────────────────
 
 def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
-                  rejected, accumulated):
+                  rejected, accumulated, improve):
     game_count = len(scores)
     best = max(scores) if scores else 0
     avg_all = int(sum(scores) / len(scores)) if scores else 0
@@ -307,8 +349,22 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
     ver_num = ""
     if strat_ver and strat_ver != "?":
         ver_num = strat_ver.split("_")[0]  # e.g. "v775"
-    r3 = f" Strategy: {hash_short}  {ver_num}  {strat_lines}L"
-    lines.append(f"{C_CYAN}│{RST}{DIM}{r3:<{inner}}{RST} {C_CYAN}│{RST}")
+    r3_raw = f" Strategy: {hash_short}  {ver_num}  {strat_lines}L"
+    r3_display = f"{DIM}{r3_raw}{RST}"
+    if improve.get("status") == "running":
+        phase = (improve.get("phase") or "running").replace("_", "-")
+        if len(phase) > 10:
+            phase = phase[:10]
+        if improve.get("alive"):
+            imp_raw = f"  Imp:{improve.get('progress', 0):>3}% {phase}"
+            imp_disp = f"  {C_YELLOW}Imp:{improve.get('progress', 0):>3}% {phase}{RST}"
+        else:
+            imp_raw = f"  Imp:stale {phase}"
+            imp_disp = f"  {C_RED}Imp:stale {phase}{RST}"
+        r3_raw += imp_raw
+        r3_display += imp_disp
+    pad3 = inner - len(r3_raw)
+    lines.append(f"{C_CYAN}│{RST}{r3_display}{' ' * max(pad3, 0)} {C_CYAN}│{RST}")
 
     # Row 4: live game state
     r4_raw = f" Live: {state}  score={gscore}  pieces={gpieces}"
@@ -532,12 +588,13 @@ def main():
     strat_lines = get_strategy_lines()
     rejected = get_rejected_count()
     accumulated = get_accumulated_count()
+    improve = load_improve_state()
     reasons = load_decision_reasons(50)
 
     output = []
 
     output += render_header(scores, game_state, strat_hash, strat_ver,
-                            strat_lines, rejected, accumulated)
+                            strat_lines, rejected, accumulated, improve)
     output.append("")
     output += render_score_timeline(scores)
     output.append("")
