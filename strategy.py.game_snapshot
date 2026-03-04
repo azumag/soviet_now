@@ -17,7 +17,7 @@ Decision Logic (6 evaluation axes):
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=2.2)
+  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8)
   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
@@ -32,12 +32,8 @@ Phases (determined by board max Y):
 # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # v151-v155: CHAIN_MERGE強化版（係数200.0→300.0→400.0、chain_distance 3.0→3.5→4.0→4.5→5.0）
-# v156: HEIGHT_CONTROL抑制・CHAIN_MERGE促進版 - batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
-# NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=40~52.8と高価値だが選択率が低いことを確認。
-# v155でchain_distance=5.0、chain_bonus=450.0に強化したが、HEIGHT_CONTROL選択率は依然として高い。
-# HEIGHT_CONTROL選択率を下げてCHAIN_MERGE選択を促進するために、height_multiplierを50.0→40.0に削減。
-# v155のchain_distance=5.0、chain_bonus=450.0は維持しつつ、高度ペナルティを約20%削減することで、
-# 高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を高めスコア向上を目指す。
+# v157: 復帰・v153成功設定採用版 - v156のheight_multiplier削減（50.0→40.0）が失敗したため、v153の成功設定に復帰。
+# height_multiplierを40.0→50.0に戻すシンプルな変更。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -45,14 +41,10 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v156: HEIGHT_CONTROL抑制・CHAIN_MERGE促進版
+    """v157: 復帰・v153成功設定採用版
 
-    batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
-    NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=40~52.8と高価値だが選択率が低いことを確認。
-    v155でchain_distance=5.0、chain_bonus=450.0に強化したが、HEIGHT_CONTROL選択率は依然として高い。
-    HEIGHT_CONTROL選択率を下げてCHAIN_MERGE選択を促進するために、height_multiplierを50.0→40.0に削減。
-    v155のchain_distance=5.0、chain_bonus=450.0は維持しつつ、高度ペナルティを約20%削減することで、
-    高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を高めスコア向上を目指す。
+    v156のheight_multiplier削減（50.0→40.0）が失敗したため、v153の成功設定に復帰。
+    height_multiplierを40.0→50.0に戻すシンプルな変更。
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -145,9 +137,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v156: height_multiplier reduced 50.0→40.0 to lower HEIGHT_CONTROL selection rate and encourage CHAIN_MERGE
+        # v157: height_multiplier restored to 50.0 (v153 success value)
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
-        height_penalty = landing_y * 40.0 * height_mult
+        height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -191,10 +183,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v156: HEIGHT_CONTROL抑制・CHAIN_MERGE促進版) -----
-        # v156: batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
-        # NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=40~52.8と高価値だが選択率が低いことを確認。
-        # height_multiplierを50.0→40.0に削減してHEIGHT_CONTROL選択率を下げ、chain_distance=5.0、chain_bonus=450.0を維持してCHAIN_MERGE選択を促進。
+        # ----- evaluation axis 6: chain merge bonus (v155: chain_distance微調整・ボーナス係数強化版) -----
+        # v157: height_multiplierを40.0→50.0に戻すのみ。chain_distance=5.0、chain_bonus=450.0はv155設定を維持。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -203,7 +193,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v155: chain_distance 4.5→5.0に微調整、評価範囲をさらに広げる（v156で維持）
+                # v155: chain_distance 4.5→5.0に微調整、評価範囲をさらに広げる（v157で維持）
                 chain_distance = 5.0
 
                 # collect all merged_type pieces within chain_distance of merge target
@@ -218,12 +208,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 nearby_pieces.sort(key=lambda x: x[0])
 
                 # bonus calculation from closest 3 pieces
-                # 1st: (chain_distance - dist) * 450.0 (v155で400.0→450.0、v156で維持)
+                # 1st: (chain_distance - dist) * 450.0 (v155で400.0→450.0、v157で維持)
                 # 2nd: (chain_distance - dist) * 225.0
                 # 3rd: (chain_distance - dist) * 112.5
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
-                    chain_bonus = (chain_distance - dist) * 450.0  # v155で強化、v156で維持
+                    chain_bonus = (chain_distance - dist) * 450.0
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 2:
