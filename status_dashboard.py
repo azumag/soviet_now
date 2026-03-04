@@ -439,7 +439,10 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
             f"q{int(current_entry['p25']):>4} l{int(current_entry['lcb']):>4} "
             f"n{current_entry['n_roll']:>2}/{current_entry['n_total']:<3}{RST}"
         )
-    lines.append(f" {DIM}hash      n/t   │{'bar':<{bar_w}} comp  p50  p25{RST}")
+    # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
+    # p50 label is intentionally shifted 1 column left for visual column match.
+    metric_header = "comp p50  p25"
+    lines.append(f" {DIM}hash      n/t   │{'bar':<{bar_w}} {metric_header}{RST}")
 
     for e in entries:
         is_current = current_hash and e["hash"] == current_hash
