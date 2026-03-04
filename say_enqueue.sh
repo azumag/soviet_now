@@ -161,10 +161,9 @@ if _is_preempted; then
 fi
 
 # --- ロック内: 既存sayプロセス終了待ち（PIDファイル漏れ対策） ---
-# --no-preempt の場合: 最大30秒待ち、それを超えたら現在のsay終了を待って即再生
-# （ラジオが連続すると永遠にブロックされる問題の対策）
+# --no-preempt は「絶対に重ねない」ことを優先し、全sayが終わるまで待機を継続する。
+# （過去の30秒タイムアウト切替は、コメントとラジオの同時再生を引き起こすことがあるため廃止）
 _say_pgrep_wait=0
-_say_pgrep_max=30
 while pgrep -x say >/dev/null 2>&1; do
     _touch_lock_heartbeat
     if _is_preempted; then
@@ -174,18 +173,6 @@ while pgrep -x say >/dev/null 2>&1; do
     [ "${_say_wait_logged:-0}" -eq 0 ] && _log "既存sayプロセス検出 → 終了待ち" && _say_wait_logged=1
     sleep 1
     _say_pgrep_wait=$((_say_pgrep_wait + 1))
-    if [ "$NO_PREEMPT" = true ] && [ "$_say_pgrep_wait" -ge "$_say_pgrep_max" ]; then
-        _log "既存say ${_say_pgrep_wait}秒超過 → 現在のsay終了待ちに切り替え"
-        # 現在再生中のsay PIDを取得し、そのプロセスだけ待つ
-        _current_say_pid=$(pgrep -x say | head -1)
-        if [ -n "$_current_say_pid" ]; then
-            while kill -0 "$_current_say_pid" 2>/dev/null; do
-                sleep 1
-            done
-        fi
-        _log "現在のsay終了 → コメント再生へ"
-        break
-    fi
 done
 
 # --- ロック内: トーク開始前の間（ロック外でやると他がすり抜けるのでロック内で） ---
