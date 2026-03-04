@@ -35,7 +35,7 @@ IMPROVE_PID=0
 # 配信演出の頻度 (必要ならここだけ調整)
 NEWS_INTERVAL=3
 NEWS_PHASE=1
-RADIO_INTERVAL=6
+RADIO_INTERVAL=5
 RADIO_PHASE=0
 
 # --- 初期化 ---
@@ -104,7 +104,7 @@ while true; do
 		fetch_and_play_news "$SCHEDULE_GAME_NUM" "$SCHEDULE_SCORE" &
 	fi
 
-	# ラジオトーク (6ゲームに1回、バックグラウンド)
+	# ラジオトーク (5ゲームに1回、バックグラウンド)
 	if (( SCHEDULE_GAME_NUM % RADIO_INTERVAL == RADIO_PHASE )); then
 		start_random_radio_corner "$SCHEDULE_GAME_NUM" "$SCHEDULE_SCORE" &
 	fi

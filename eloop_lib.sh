@@ -1785,8 +1785,11 @@ start_radio_corner_news() {
 	local unread_news_headlines=""
 	unread_news_headlines=$(printf '%s\n' "$news_headlines" | _filter_unread_news_blocks)
 	if [ -z "$unread_news_headlines" ]; then
-		log "[NEWS] 全ニュースが既読 → スキップ"
-		return 1
+		log "[NEWS] 全ニュースが既読 → 既読履歴をリセットして再読モードに切替"
+		: > "$PAST_NEWS_READ"
+		: > "$PAST_NEWS_READ_KEYS"
+		past_news_read=""
+		unread_news_headlines="$news_headlines"
 	fi
 
 	local prompt_file

@@ -9,18 +9,24 @@ mkdir -p tmp
 OUTFILE="tmp/news.txt"
 PAST_NEWS="tmp/.past_news_titles.txt"
 PAST_NEWS_LINKS="tmp/.past_news_links.txt"
+LAST_NEWS_CACHE="tmp/.news_last_success.txt"
 
 # 複数カテゴリの RSS を使い候補を増やす
 RSS_URLS=(
     "https://news.yahoo.co.jp/rss/topics/top-picks.xml"
     "https://news.yahoo.co.jp/rss/topics/domestic.xml"
     "https://news.yahoo.co.jp/rss/topics/world.xml"
+    "https://news.yahoo.co.jp/rss/topics/politics.xml"
+    "https://news.yahoo.co.jp/rss/topics/economy.xml"
     "https://news.yahoo.co.jp/rss/topics/business.xml"
     "https://news.yahoo.co.jp/rss/topics/it.xml"
     "https://news.yahoo.co.jp/rss/topics/science.xml"
+    "https://news.yahoo.co.jp/rss/topics/local.xml"
+    "https://news.yahoo.co.jp/rss/topics/life.xml"
 )
+RSS_PICK_COUNT=5
 
-# ランダムに3カテゴリ選ぶ（毎回違うジャンルから取得）
+# ランダムに複数カテゴリ選ぶ（毎回違うジャンルから取得）
 selected_urls=()
 indices=()
 for i in "${!RSS_URLS[@]}"; do indices+=("$i"); done
@@ -33,8 +39,13 @@ for ((i=${#indices[@]}-1; i>0; i--)); do
     indices[$j]=$tmp
 done
 
-# 先頭3つ選択
-for k in 0 1 2; do
+# 先頭 N 件を選択
+pick_count="$RSS_PICK_COUNT"
+total_count="${#indices[@]}"
+if [ "$pick_count" -gt "$total_count" ]; then
+    pick_count="$total_count"
+fi
+for ((k=0; k<pick_count; k++)); do
     selected_urls+=("${RSS_URLS[${indices[$k]}]}")
 done
 
@@ -54,7 +65,15 @@ for url in "${selected_urls[@]}"; do
 done
 
 if [ -z "$all_items" ]; then
-    rm -f "$OUTFILE"
+    # RSS取得失敗時は直近成功キャッシュを再利用
+    if [ -s "$LAST_NEWS_CACHE" ]; then
+        cp "$LAST_NEWS_CACHE" "$OUTFILE"
+    elif [ -s "$PAST_NEWS" ]; then
+        # キャッシュもない場合は過去見出しを再掲して無音を避ける
+        tail -3 "$PAST_NEWS" | awk 'NF {print "■ " $0 "\n"}' > "$OUTFILE"
+    else
+        rm -f "$OUTFILE"
+    fi
     exit 0
 fi
 
@@ -90,7 +109,37 @@ done <<< "$all_items"
 
 # 新規候補がない場合は履歴を維持したままスキップ
 if [ ! -s "$available_file" ]; then
-    rm -f "$available_file" "$OUTFILE"
+    # 全件既読で枯渇した場合は履歴をリセットして再抽出
+    : > "$PAST_NEWS"
+    : > "$PAST_NEWS_LINKS"
+
+    seen_titles=""
+    seen_links=""
+    while IFS=$'\t' read -r title link; do
+        [ -z "$title" ] && continue
+        [ -z "$link" ] && continue
+        if printf '%s\n' "$seen_titles" | grep -qxF "$title"; then
+            continue
+        fi
+        if printf '%s\n' "$seen_links" | grep -qxF "$link"; then
+            continue
+        fi
+        printf '%s\t%s\n' "$title" "$link" >>"$available_file"
+        seen_titles="${seen_titles}${title}"$'\n'
+        seen_links="${seen_links}${link}"$'\n'
+    done <<< "$all_items"
+fi
+
+if [ ! -s "$available_file" ]; then
+    # それでも候補ゼロならキャッシュを利用
+    rm -f "$available_file"
+    if [ -s "$LAST_NEWS_CACHE" ]; then
+        cp "$LAST_NEWS_CACHE" "$OUTFILE"
+    elif [ -s "$PAST_NEWS" ]; then
+        tail -3 "$PAST_NEWS" | awk 'NF {print "■ " $0 "\n"}' > "$OUTFILE"
+    else
+        rm -f "$OUTFILE"
+    fi
     exit 0
 fi
 
@@ -133,6 +182,13 @@ tail -200 "$PAST_NEWS_LINKS" > "${PAST_NEWS_LINKS}.tmp" && mv "${PAST_NEWS_LINKS
 
 if [ -n "$result" ]; then
     echo "$result" > "$OUTFILE"
+    cp "$OUTFILE" "$LAST_NEWS_CACHE"
 else
-    rm -f "$OUTFILE"
+    if [ -s "$LAST_NEWS_CACHE" ]; then
+        cp "$LAST_NEWS_CACHE" "$OUTFILE"
+    elif [ -s "$PAST_NEWS" ]; then
+        tail -3 "$PAST_NEWS" | awk 'NF {print "■ " $0 "\n"}' > "$OUTFILE"
+    else
+        rm -f "$OUTFILE"
+    fi
 fi
