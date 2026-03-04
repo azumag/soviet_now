@@ -6,6 +6,7 @@ Strategy Comparison, Decision Patterns.
 """
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -14,6 +15,10 @@ from glob import glob
 from pathlib import Path
 
 W = 57
+RANK_LCB_Z = 1.28
+RANK_WEIGHT_P50 = 0.55
+RANK_WEIGHT_P25 = 0.30
+RANK_WEIGHT_LCB = 0.15
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -129,6 +134,45 @@ def load_rolling():
         return json.loads(p.read_text())
     except Exception:
         return {}
+
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+
+def calc_strategy_metrics(scores):
+    xs = [int(v) for v in scores]
+    if not xs:
+        return None
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in xs) / n
+        std = math.sqrt(var)
+    else:
+        std = 0.0
+    lcb = mean - RANK_LCB_Z * (std / math.sqrt(n))
+    comp = (RANK_WEIGHT_P50 * p50) + (RANK_WEIGHT_P25 * p25) + (RANK_WEIGHT_LCB * lcb)
+    return {
+        "n": n,
+        "mean": mean,
+        "std": std,
+        "p25": p25,
+        "p50": p50,
+        "lcb": lcb,
+        "comp": comp,
+    }
 
 
 def load_game_state():
@@ -354,37 +398,59 @@ def render_score_distribution(scores, bar_w=40):
 
 
 def render_strategy_comparison(rolling, current_hash, max_rows=7):
-    bar_w = 36
-    # marker1 + hash8 + space + n4 + sep + bar36 + space + avg5 = 57
+    bar_w = 22
+    # marker1 + hash8 + space + n/t6 + sep1 + bar22 + space + comp4 + p504 + p254 = 51
 
-    entries = []
+    all_entries = []
     for h, data in rolling.items():
         sc = data.get("scores", [])
-        if not sc:
+        metrics = calc_strategy_metrics(sc)
+        if not metrics:
             continue
-        avg = sum(sc) / len(sc)
         games_total = data.get("games_total", len(sc))
         try:
             games_total = int(games_total)
         except Exception:
             games_total = len(sc)
-        entries.append((h[:8], games_total, avg))
+        all_entries.append({
+            "hash": h,
+            "h8": h[:8],
+            "n_roll": metrics["n"],
+            "n_total": games_total,
+            "comp": metrics["comp"],
+            "p50": metrics["p50"],
+            "p25": metrics["p25"],
+            "lcb": metrics["lcb"],
+        })
 
-    entries.sort(key=lambda x: -x[2])
-    entries = entries[:max_rows]
-
-    if not entries:
+    if not all_entries:
         return [f"  {BOLD}Strategy Comparison{RST}", f"  {DIM}(no data){RST}"]
 
-    max_avg = max(e[2] for e in entries) if entries else 1
+    all_entries.sort(key=lambda e: (e["comp"], e["p50"], e["p25"], e["n_roll"]), reverse=True)
+    current_entry = next((e for e in all_entries if current_hash and e["hash"] == current_hash), None)
+    entries = all_entries[:max_rows]
+    max_comp = max(e["comp"] for e in entries) if entries else 1
 
-    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(avg:rolling20 / n:total){RST}"]
-    for h8, n, avg in entries:
-        is_current = current_hash.startswith(h8) if current_hash else False
+    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(comp=0.55p50+0.30p25+0.15lcb){RST}"]
+    if current_entry:
+        lines.append(
+            f"  {DIM}cur {current_entry['h8']} "
+            f"c{int(current_entry['comp']):>4} m{int(current_entry['p50']):>4} "
+            f"q{int(current_entry['p25']):>4} l{int(current_entry['lcb']):>4} "
+            f"n{current_entry['n_roll']:>2}/{current_entry['n_total']:<3}{RST}"
+        )
+    lines.append(f"  {DIM}hash      n/t   │{'bar':<{bar_w}} comp  p50  p25{RST}")
+
+    for e in entries:
+        is_current = current_hash and e["hash"] == current_hash
         color = C_GREEN if is_current else C_BLUE
         marker = "►" if is_current else " "
-        bar = block_bar(avg, max_avg, bar_w, color)
-        lines.append(f"{marker}{color}{h8}{RST} {DIM}{n:>4}{RST}│{bar} {int(avg):>5}")
+        bar = block_bar(e["comp"], max_comp, bar_w, color)
+        n_field = f"{e['n_roll']:>2}/{e['n_total']:<3}"
+        lines.append(
+            f"{marker}{color}{e['h8']}{RST} {DIM}{n_field:>6}{RST}│"
+            f"{bar} {int(e['comp']):>4} {int(e['p50']):>4} {int(e['p25']):>4}"
+        )
     return lines
 
 
