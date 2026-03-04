@@ -835,7 +835,7 @@ print(result, end='')
 }
 
 _sanitize_onair_text() {
-	python3 -c "
+	python3 -c "$(cat <<'PY'
 import re
 import sys
 
@@ -853,8 +853,9 @@ patterns = [
 out = text
 for pat, repl in patterns:
     out = re.sub(pat, repl, out, flags=re.IGNORECASE)
-	sys.stdout.write(out)
-		"
+sys.stdout.write(out)
+PY
+)"
 }
 
 _normalize_radio_tone() {
@@ -1062,7 +1063,7 @@ _radio_clear_state() {
 _radio_generate_and_play() {
 	local prompt_file="$1" game_num="$2" score="$3" corner_name="$4"
 	shift 4
-	local no_preempt=false
+	local no_preempt=true
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--no-preempt) no_preempt=true ;;
@@ -2069,6 +2070,11 @@ _recover_orphan_comment_playing_files() {
 }
 
 _play_comment_queue() {
+	# debug.log ローテーション (500行超→200行に切り詰め)
+	local dbg="tmp/.say_queue/debug.log"
+	if [ -f "$dbg" ] && [ "$(wc -l < "$dbg")" -gt 500 ]; then
+		tail -200 "$dbg" > "${dbg}.tmp" && mv "${dbg}.tmp" "$dbg"
+	fi
 	_recover_orphan_comment_playing_files
 	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
 		if [ -f "$qf" ]; then
@@ -2562,6 +2568,8 @@ cleanup_all() {
 	stop_comment_player
 	# Twitchチャット停止
 	./twitch_chat.sh stop 2>/dev/null
+	# /tmp/eloop_* 一時ファイル一括削除
+	rm -f /tmp/eloop_prompt.* /tmp/eloop_runner.* /tmp/eloop_radio_* /tmp/eloop_comment_* /tmp/eloop_fix_* /tmp/eloop_celebration_* /tmp/eloop_news_*
 	# ロックファイル削除
 	rm -f tmp/soren_loop.lock
 	log "クリーンアップ完了"

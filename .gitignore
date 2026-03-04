@@ -6,3 +6,6 @@ tmp/
 sorengame/
 .claude/
 .cocoindex_code/
+__pycache__/
+.ruff_cache/
+*.pyc
