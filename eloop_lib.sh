@@ -41,6 +41,9 @@ MIN_GAMES_BEFORE_IMPROVE=10
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
 COMMENT_WATCHER_INTERVAL=10
+COMMENT_WORKER_HEALTH_TTL=30
+COMMENT_PLAYER_HEARTBEAT_FILE="tmp/.comment_queue/player.heartbeat"
+COMMENT_WATCHER_HEARTBEAT_FILE="tmp/.comment_queue/watcher.heartbeat"
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "tmp/.twitch_chat" tmp
 
 #=== コアヘルパー ===
@@ -1939,16 +1942,41 @@ _play_comment_queue() {
 
 COMMENT_PLAYER_PID_FILE="tmp/.comment_queue/player.pid"
 
+_is_comment_worker_healthy() {
+	local pid_file="$1" heartbeat_file="$2" ttl="${3:-30}"
+	[ -f "$pid_file" ] || return 1
+
+	local pid
+	pid=$(cat "$pid_file" 2>/dev/null)
+	[ -n "$pid" ] || return 1
+	kill -0 "$pid" 2>/dev/null || return 1
+
+	[ -f "$heartbeat_file" ] || return 1
+	local hb now age
+	hb=$(cat "$heartbeat_file" 2>/dev/null)
+	case "$hb" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	now=$(date +%s)
+	age=$((now - hb))
+	[ "$age" -le "$ttl" ] || return 1
+	return 0
+}
+
 start_comment_player() {
-	# 既存プレイヤーが生存中なら重複起動しない（PIDファイルベースで判定）
-	if [ -f "$COMMENT_PLAYER_PID_FILE" ]; then
-		local existing_pid
-		existing_pid=$(cat "$COMMENT_PLAYER_PID_FILE" 2>/dev/null)
-		if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
-			return
-		fi
-		# PIDファイルはあるがプロセスは死んでいる → 古いPIDをkillしようとして残った孤児も掃除
+	# 既存プレイヤーが生存中なら重複起動しない（PID + heartbeat で判定）
+	if _is_comment_worker_healthy "$COMMENT_PLAYER_PID_FILE" "$COMMENT_PLAYER_HEARTBEAT_FILE" "$COMMENT_WORKER_HEALTH_TTL"; then
+		return
 	fi
+	if [ -f "$COMMENT_PLAYER_PID_FILE" ]; then
+		local stale_pid
+		stale_pid=$(cat "$COMMENT_PLAYER_PID_FILE" 2>/dev/null)
+		if [ -n "$stale_pid" ]; then
+			log "[COMMENT] 再生プロセスPIDが不整合/停止を検出 → 再起動 (PID=$stale_pid)"
+		fi
+		rm -f "$COMMENT_PLAYER_PID_FILE"
+	fi
+	rm -f "$COMMENT_PLAYER_HEARTBEAT_FILE"
 	mkdir -p "$(dirname "$COMMENT_PLAYER_PID_FILE")"
 
 	(
@@ -1962,6 +1990,7 @@ start_comment_player() {
 			if [ "$_cp_file_pid" != "$_cp_my_pid" ]; then
 				exit 0
 			fi
+			date +%s >"$COMMENT_PLAYER_HEARTBEAT_FILE" 2>/dev/null || true
 			_play_comment_queue
 			sleep 5
 		done
@@ -1975,12 +2004,13 @@ stop_comment_player() {
 	if [ -f "$COMMENT_PLAYER_PID_FILE" ]; then
 		local cpid
 		cpid=$(cat "$COMMENT_PLAYER_PID_FILE" 2>/dev/null)
-		if [ -n "$cpid" ] && kill -0 "$cpid" 2>/dev/null; then
+		if [ -n "$cpid" ] && [ "$cpid" != "$$" ] && kill -0 "$cpid" 2>/dev/null; then
 			kill "$cpid" 2>/dev/null
 			wait "$cpid" 2>/dev/null
 		fi
 		rm -f "$COMMENT_PLAYER_PID_FILE"
 	fi
+	rm -f "$COMMENT_PLAYER_HEARTBEAT_FILE"
 }
 
 _format_comment_batch_context() {
@@ -2261,14 +2291,19 @@ COMMENTPROMPT
 # 10秒ごとにTwitchコメントをポーリングし、新コメントがあれば即座に生成→キュー追加
 
 start_comment_watcher() {
-	# 既存ウォッチャーが生存中なら重複起動しない
-	if [ -f "$COMMENT_WATCHER_PID_FILE" ]; then
-		local existing_pid
-		existing_pid=$(cat "$COMMENT_WATCHER_PID_FILE" 2>/dev/null)
-		if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
-			return
-		fi
+	# 既存ウォッチャーが生存中なら重複起動しない（PID + heartbeat で判定）
+	if _is_comment_worker_healthy "$COMMENT_WATCHER_PID_FILE" "$COMMENT_WATCHER_HEARTBEAT_FILE" "$COMMENT_WORKER_HEALTH_TTL"; then
+		return
 	fi
+	if [ -f "$COMMENT_WATCHER_PID_FILE" ]; then
+		local stale_pid
+		stale_pid=$(cat "$COMMENT_WATCHER_PID_FILE" 2>/dev/null)
+		if [ -n "$stale_pid" ]; then
+			log "[COMMENT] ウォッチャーPIDが不整合/停止を検出 → 再起動 (PID=$stale_pid)"
+		fi
+		rm -f "$COMMENT_WATCHER_PID_FILE"
+	fi
+	rm -f "$COMMENT_WATCHER_HEARTBEAT_FILE"
 	mkdir -p "$(dirname "$COMMENT_WATCHER_PID_FILE")"
 
 	(
@@ -2280,6 +2315,7 @@ start_comment_watcher() {
 			if [ "$_cw_file_pid" != "$_cw_my_pid" ]; then
 				exit 0
 			fi
+			date +%s >"$COMMENT_WATCHER_HEARTBEAT_FILE" 2>/dev/null || true
 
 			# コメント生成が進行中なら今回はスキップ
 			local gen_pidfile="tmp/.twitch_chat/comment_gen.pid"
@@ -2316,13 +2352,14 @@ stop_comment_watcher() {
 	if [ -f "$COMMENT_WATCHER_PID_FILE" ]; then
 		local wpid
 		wpid=$(cat "$COMMENT_WATCHER_PID_FILE" 2>/dev/null)
-		if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
+		if [ -n "$wpid" ] && [ "$wpid" != "$$" ] && kill -0 "$wpid" 2>/dev/null; then
 			kill "$wpid" 2>/dev/null
 			wait "$wpid" 2>/dev/null
 			log "[COMMENT] ウォッチャー停止 (PID=$wpid)"
 		fi
 		rm -f "$COMMENT_WATCHER_PID_FILE"
 	fi
+	rm -f "$COMMENT_WATCHER_HEARTBEAT_FILE"
 }
 
 #=== プロセス管理 ===

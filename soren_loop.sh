@@ -91,6 +91,9 @@ while true; do
 
 	# 前回の改善が完了したか確認
 	check_and_harvest_improvement
+	# コメント系ワーカーは壊れたPIDファイルからも自己回復させる
+	start_comment_player
+	start_comment_watcher
 
 	# 非同期ジョブに渡すため、試合開始時点の値を固定
 	SCHEDULE_GAME_NUM="$GAME_NUM"
