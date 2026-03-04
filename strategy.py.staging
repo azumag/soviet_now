@@ -1,79 +1,83 @@
 #!/usr/bin/env python3
-"""strategy.py - ソ連パズルゲームの AI ドロップ位置決定スクリプト
+"""strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-ゲーム概要:
-  - ピースをドロップし、同type同士が接触すると併合 (N+N → N+1)
-  - スコアテーブル: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
-  - ボード: x ∈ [-3.0, +3.0], 床 y=-4.48, デッドライン y=3.32
-  - プレイヤーが制御できるのはドロップX座標のみ
+Game Overview:
+  - Drop pieces, merge same type pieces (N+N -> N+1)
+  - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
+  - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
+  - Player controls only drop X coordinate
 
-決定ロジック (6つの評価軸):
-  1. 併合ボーナス        — 即座に併合できる位置に高得点 (DIRECT > NEAR > FAR)
-  2. 高度ペナルティ      — 着地位置が高いほど減点 (フェーズで重み変動)
-  3. ドリフトペナルティ    — ポリゴン形状による着地後のズレを減点
-  4. 左右バランス補正    — ピース数の偏りを是正する方向にボーナス
-  5. nextNext中央寄せ    — 次の次と同typeなら中央に寄せて併合準備
-  6. 連鎖併合ボーナス    — 併合後にさらに連鎖できる可能性を評価 (v149: 新規追加)
+Decision Logic (6 evaluation axes):
+  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+  2. Height penalty - Penalty for high landing position (varies by phase)
+  3. Drift penalty - Penalty for post-landing drift due to polygon shape
+  4. Left-right balance correction - Bonus for correcting piece count bias
+  5. nextNext centering - Center for next merge opportunity if nextNext same type
+  6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition)
 
-フェーズ (盤面の最高Y座標で判定):
-  LOW      (max_y < 0.8) : 序盤。併合優先 (merge_mult=1.2)
-  MEDIUM   (0.8 ≤ max_y < 1.8) : 中盤。高度管理を強化 (height_mult=2.2)
-  HIGH     (1.8 ≤ max_y < 3.0) : 終盤。併合機会確保 (height_mult=1.8)
-  CRITICAL (3.0 ≤ max_y) : 危険。DIRECT併合最優先で盤面圧縮 (NEAR は慎重に)
+Phases (determined by board max Y):
+  LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=2.2)
+  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+  CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
-# 固定インターフェース:
+# Fixed interface:
 # decide(game_state: dict, analysis: dict) -> dict
-#    戻り値: {"x": float, "reason": str}
+#    Returns: {"x": float, "reason": str}
 #
-# AI改変可能: decide() 内部,ヘルパー関数,定数,import
-# AI改変禁止: decide() シグネチャ,if __name__ == "__main__" ブロック
+# AI modifiable: decide() body, helper functions, constants, imports
+# AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- 変更履歴 ---
-# [BEST:3689] v126: v42ベース・HIGHフェーズ併合強化版
-# v151: MEDIUMフェーズ高度管理緩和・chain_merge_bonus強化版 - batch_summary分析でHEIGHT_CONTROLのavg_score_delta=1.9と非常に低いこと、
-# NEAR_MERGE関連（特にCHAIN_MERGE付き）がavg_score_delta=34.6〜52.1と高価値であることを確認。
-# HEIGHT_CONTROLが頻繁に選択されるが価値が低い問題を解決するため、MEDIUMフェーズheight_multを2.2→1.8に緩和して併合機会を増加。
-# 同時にchain_merge_bonusの係数を150.0→200.0に強化し、連鎖併合の可能性をより重視する。
-# これによりHEIGHT_CONTROLの選択率を減らし、高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を増やすことでスコア向上を目指す。
-# v152: CHAIN_MERGE大幅強化版 - batch_summary分析でNEAR_MERGE_HIGH_LAYER_CHAIN_MERGEのavg_score_delta=56.0と非常に高いことを確認。
-# v151でchain_merge_bonusを200.0に強化したが、CHAIN_MERGEの選択率はまだ低い（5.8%）。CHAIN_MERGEをさらに強化し、HEIGHT_CONTROLの選択率を減らすことでスコア向上を目指す。
-# chain_merge_bonusの係数を200.0→300.0に大幅強化し、chain_distanceを3.0→3.5に緩和して、より広範囲の連鎖可能性を評価する。
-# v153: CHAIN_MERGE超強化版 - batch_summary分析でNEAR_MERGE_HIGH_LAYER_CHAIN_MERGEのavg_score_delta=44.7、
-# NEAR_MERGE_CHAIN_MERGEのavg_score_delta=58.7と非常に高いことを確認。
-# v152でchain_merge_bonusを300.0に強化したが、CHAIN_MERGEの選択率はまだ低い（16.4%）。
-# CHAIN_MERGEをさらに強化し、HEIGHT_CONTROL（選択率27.4%、avg_score_delta=2.0）の選択率を減らすことでスコア向上を目指す。
-# chain_merge_bonusの係数を300.0→400.0に超強化し、chain_distanceを3.5→4.0にさらに緩和して、
-# より広範囲の連鎖可能性を評価し、CHAIN_MERGE選択率を15%以上に引き上げる。
+# --- Change History ---
+# [BEST:3689] v126: v42-based HIGH phase merge enhancement
+# v151: MEDIUM phase height management relaxation + chain_merge_bonus enhancement - batch_summary analysis shows HEIGHT_CONTROL avg_score_delta=1.9 very low,
+# NEAR_MERGE related (especially CHAIN_MERGE) avg_score_delta=34.6-52.1 high value.
+# HEIGHT_CONTROL frequently selected but low value problem solved by relaxing MEDIUM phase height_mult 2.2->1.8 to increase merge opportunities.
+# Simultaneously strengthen chain_merge_bonus coefficient 150.0->200.0 to emphasize chain merge possibility.
+# This reduces HEIGHT_CONTROL selection rate and increases high-value NEAR_MERGE (especially CHAIN_MERGE) selection rate for score improvement.
+# v152: CHAIN_MERGE large enhancement - batch_summary analysis shows NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE avg_score_delta=56.0 very high.
+# v151 strengthened chain_merge_bonus to 200.0 but CHAIN_MERGE selection rate still low (5.8%). Further strengthen CHAIN_MERGE and reduce HEIGHT_CONTROL selection rate for score improvement.
+# chain_merge_bonus coefficient 200.0->300.0 large enhancement, chain_distance 3.0->3.5 relaxation to evaluate wider chain possibility.
+# v153: CHAIN_MERGE ultra enhancement - batch_summary analysis shows NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE avg_score_delta=44.7,
+# NEAR_MERGE_CHAIN_MERGE avg_score_delta=58.7 very high.
+# v152 strengthened chain_merge_bonus to 300.0 but CHAIN_MERGE selection rate still low (16.4%).
+# Further strengthen CHAIN_MERGE and reduce HEIGHT_CONTROL (selection rate 27.4%, avg_score_delta=2.0) selection rate for score improvement.
+# chain_merge_bonus coefficient 300.0->400.0 ultra enhancement, chain_distance 3.5->4.0 further relaxation,
+# evaluate wider chain possibility and raise CHAIN_MERGE selection rate to 15% or more.
+# v154: merge target周围density evaluation版 - fix existing CHAIN_MERGE logic problem.
+# Change from logic evaluating only "closest merged_type piece to merge target" to logic evaluating "density of merged_type pieces around merge target".
+# batch_summary shows CHAIN_MERGE related avg_score_delta=40~52.8 high but selection rate low problem solved.
 
-# 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
-# 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
+# Merge result score: type N merge gives N*(N+1)/2 points
+# Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v153: CHAIN_MERGE超強化版
+    """v154: merge target周围density evaluation版
 
-    batch_summary分析でNEAR_MERGE_HIGH_LAYER_CHAIN_MERGEのavg_score_delta=44.7、
-    NEAR_MERGE_CHAIN_MERGEのavg_score_delta=58.7と非常に高いことを確認。
-    v152でchain_merge_bonusを300.0に強化したが、CHAIN_MERGEの選択率はまだ低い（16.4%）。
-    CHAIN_MERGEをさらに強化し、HEIGHT_CONTROL（選択率27.4%、avg_score_delta=2.0）の選択率を減らすことでスコア向上を目指す。
-    chain_merge_bonusの係数を300.0→400.0に超強化し、chain_distanceを3.5→4.0にさらに緩和して、
-    より広範囲の連鎖可能性を評価し、CHAIN_MERGE選択率を15%以上に引き上げる。
+    Existing logic evaluated only "closest merged_type piece to merge target", but this is insufficient.
+    batch_summary shows CHAIN_MERGE related avg_score_delta=40~52.8 high but selection rate low problem solved.
+    New evaluation method: evaluate "density of merged_type pieces around merge target".
+    - collect all merged_type pieces within chain_distance of merge target
+    - bonus calculation from closest 3 pieces: 1st=(chain_distance-dist)*400.0, 2nd=(chain_distance-dist)*200.0, 3rd=(chain_distance-dist)*100.0
+    - expand chain_distance 4.0->4.5 to widen evaluation range
+    Effect: accurately evaluate configuration where same type concentrates around merge target = high chain probability, improve CHAIN_MERGE selection rate.
 
     Args:
-        game_state: ゲーム状態 (pieces, next, nextNext, score 等)
-        analysis: analyze_board.py の解析結果
-            - results: 各ドロップX候補ごとの着地情報
-                - x: ドロップX座標
-                - landing_y: 推定着地Y座標 (高い=危険)
-                - drift_x/drift_unc: ポリゴン形状による着地後ドリフト
-                - merge_grade: 最良併合判定 (DIRECT/NEAR/FAR/NO)
-                - merges: 各同typeピースへの個別距離・併合判定
-            - reactor: 反応器状態 (reactive_pairs, near_pairs 等)
+        game_state: game state (pieces, next, nextNext, score, etc.)
+        analysis: analyze_board.py analysis results
+            - results: landing information for each drop X candidate
+                - x: drop X coordinate
+                - landing_y: estimated landing Y coordinate (high=dangerous)
+                - drift_x/drift_unc: post-landing drift due to polygon shape
+                - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                - merges: individual distance/merge judgment for each same-type piece
+            - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
-        {"x": ドロップX座標, "reason": 選択理由}
+        {"x": drop X coordinate, "reason": selection reason}
     """
 
     results = analysis.get("results", [])
@@ -85,45 +89,45 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_score = -float("inf")
     best_reason = ""
 
-    # --- 盤面情報の収集 ---
+    # --- board information collection ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # --- フェーズ判定 (v42の閾値) ---
+    # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 1.0  # 低い盤面では高度ペナルティ弱め
-        merge_mult = 1.2  # 併合ボーナス20%増で積極的に狙う
+        height_mult = 1.0  # low board weak height penalty
+        merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.8  # v151: height_multを2.2→1.8に緩和、併合機会確保
+        height_mult = 1.8  # v151: height_mult 2.2->1.8 relaxation, ensure merge opportunity
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # HIGHでは少し緩和して併合機会を確保
+        height_mult = 1.8  # HIGH relaxation to ensure merge opportunity
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult = 1.0  # CRITICALでは高度ペナルティ基本値のみ
-        merge_mult = 0.6  # v42: CRITICALフェーズ併合抑制
+        height_mult = 1.0  # CRITICAL height penalty basic value only
+        merge_mult = 0.6  # v42: CRITICAL phase merge suppression
 
-    # --- 次のピース情報 ---
+    # --- next piece information ---
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # --- Type別併合ボーナス計算 ---
-    # 併合結果のtype (next_type+1) が高いほどスコア価値が高い
-    # 例: type1併合 → bonus=330, type5併合 → bonus=510, type14併合 → bonus=1660
+    # --- Type-specific merge bonus calculation ---
+    # merge result type (next_type+1) higher means higher score value
+    # example: type1 merge -> bonus=330, type5 merge -> bonus=510, type14 merge -> bonus=1660
     merge_result_type = min(next_type + 1, 16)
     type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
-    # --- v149: 併合後のtypeを事前計算（連鎖判定用） ---
+    # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  各ドロップ候補 (x座標) を6つの評価軸でスコアリング
+    #  score each drop candidate (x coordinate) with 6 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -135,11 +139,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # ----- 評価軸 1: 併合ボーナス -----
-        # analyze_board が判定した merge_grade に応じてボーナス
-        # DIRECT: ターゲットに直撃 (成功率95.7%)
-        # NEAR:   着地後に接触圏内 (成功率68.5%)
-        # FAR:    ドリフトで接触する可能性あり (低確率)
+        # ----- evaluation axis 1: merge bonus -----
+        # analyze_board judged merge_grade gives bonus
+        # DIRECT: direct hit target (success rate 95.7%)
+        # NEAR:   contact zone after landing (success rate 68.5%)
+        # FAR:    contact possibility by drift (low probability)
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -150,9 +154,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- 評価軸 2: 高度ペナルティ -----
-        # 着地Y座標が高いほど大きなペナルティ。フェーズのheight_multで重み調整。
-        # さらにHIGH/MEDIUMで着地が高い(>0.5)場合は追加倍率
+        # ----- evaluation axis 2: height penalty -----
+        # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
+        # additional multiplier if HIGH/MEDIUM landing high (>0.5)
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
@@ -166,21 +170,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- 評価軸 3: ドリフトペナルティ -----
-        # ポリゴン形状のピースは着地後に転がる。ドリフト量と不確実性が大きいほど
-        # 狙った位置からズレるリスクが高い
+        # ----- evaluation axis 3: drift penalty -----
+        # polygon shape pieces roll after landing. larger drift amount and uncertainty means
+        # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # ----- 評価軸 4: 左右バランス補正 (v148: 強化版) -----
-        # 左右のピース数の偏りを是正する方向にボーナス。
-        # balance_bias > 0 なら右が多い → 左(x<0)に置くとペナルティ減
-        # v148: 盤面が高いほどbalance_strengthを大きくし、バランス制御を厳しく
+        # ----- evaluation axis 4: left-right balance correction (v148: enhanced) -----
+        # bonus for correcting left-right piece count bias.
+        # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
+        # v148: higher board increases balance_strength, strictens balance control
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 50.0  # v148: HIGHではバランス制御をさらに厳しく（40.0→50.0）
+            balance_strength = 50.0  # v148: HIGH balance control even stricter (40.0->50.0)
         elif phase == "MEDIUM":
-            balance_strength = 35.0  # v148: MEDIUMでもバランス制御を強化（30.0→35.0）
+            balance_strength = 35.0  # v148: MEDIUM also strengthen balance control (30.0->35.0)
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -189,62 +193,85 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # ----- 評価軸 5: nextNext中央寄せ -----
-        # nextNextが今のnextと同typeなら、次も併合チャンスがある。
-        # 中央付近に置いておけば次ターンでどちらの方向にも併合しやすい
+        # ----- evaluation axis 5: nextNext centering -----
+        # if nextNext same type as current next, next also has merge opportunity.
+        # place near center to allow merge in either direction next turn
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- 評価軸 6: 連鎖併合ボーナス (v149: 新規追加, v151/v152/v153: 強化) -----
-        # 併合が成功した場合、連鎖してさらに併合できるか評価
-        # result["merges"]から最良の併合ターゲットを取得
-        # 併合後のtype (merged_type) の周囲に同じtypeのピースがないか確認
-        # v153: chain_merge_bonusの係数を300.0→400.0に超強化
-        # v153: chain_distanceを3.5→4.0にさらに緩和
+        # ----- evaluation axis 6: chain merge bonus (v154: density evaluation版) -----
+        # v154: merge target周围density evaluation版 - fix problem with existing CHAIN_MERGE logic evaluating only "closest merged_type piece to merge target".
+        # configuration with same type concentrating around merge target = high chain probability.
+        # batch_summary shows CHAIN_MERGE related avg_score_delta=40~52.8 high but selection rate low problem solved.
+        # 
+        # evaluation method:
+        # - collect all merged_type pieces within chain_distance of merge target
+        # - bonus calculation from closest 3 pieces (chain_distance - dist) * 400.0
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
-                # 最良の併合ターゲット（距離が最も近い）を取得
+                # get best merge target (closest distance)
                 best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # 併合後のtype (merged_type) のピースが盤面上にあるか確認
-                # 連鎖判定距離: typeの半径 + ピースの半径 (0.5〜2.0程度)
-                chain_distance = 4.0  # v153: 3.5→4.0にさらに緩和、より広範囲の連鎖可能性を評価
+                # expand chain_distance to 4.5 to widen evaluation range
+                chain_distance = 4.5  # v154: 4.0->4.5 expand to widen evaluation range
 
+                # collect all merged_type pieces within chain_distance of merge target
+                nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
                         if dist < chain_distance:
-                            # 連鎖可能性がある: 距離が近いほど大きなボーナス
-                            # v153: 係数を300.0→400.0に超強化し、連鎖併合をさらに重視
-                            chain_bonus = (chain_distance - dist) * 400.0
-                            score += chain_bonus
-                            reasons.append("CHAIN_MERGE")
-                            break  # 1つ見つかれば十分
+                            nearby_pieces.append((dist, p))
 
-        # ----- 最良候補の更新 -----
+                # sort by distance
+                nearby_pieces.sort(key=lambda x: x[0])
+
+                # bonus calculation from closest 3 pieces
+                # 1st: (chain_distance - dist) * 400.0
+                # 2nd: (chain_distance - dist) * 200.0
+                # 3rd: (chain_distance - dist) * 100.0
+                if len(nearby_pieces) >= 1:
+                    dist, _ = nearby_pieces[0]
+                    chain_bonus = (chain_distance - dist) * 400.0
+                    score += chain_bonus
+
+                if len(nearby_pieces) >= 2:
+                    dist, _ = nearby_pieces[1]
+                    chain_bonus = (chain_distance - dist) * 200.0
+                    score += chain_bonus
+
+                if len(nearby_pieces) >= 3:
+                    dist, _ = nearby_pieces[2]
+                    chain_bonus = (chain_distance - dist) * 100.0
+                    score += chain_bonus
+
+                if nearby_pieces:
+                    reasons.append("CHAIN_MERGE")
+
+        # ----- update best candidate -----
         if score > best_score:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
-    # ドロップ範囲 [-3.0, +3.0] にクリップ
+    # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
 
     return {"x": best_x, "reason": best_reason}
 
 
-# --- AI改変禁止ゾーン ---
+# --- AI modification prohibited zone ---
 if __name__ == "__main__":
     import json
     import sys
 
-    # スタンドアロンテスト用
+    # standalone test
     gs_path = sys.argv[1] if len(sys.argv) > 1 else "game_state.json"
 
     try:
@@ -253,7 +280,7 @@ if __name__ == "__main__":
         print(json.dumps({"error": str(e)}))
         sys.exit(1)
 
-    # analyze_board から解析データ取得
+    # get analysis data from analyze_board
     try:
         from analyze_board import analyze_drops, calc_reactor_state
 
