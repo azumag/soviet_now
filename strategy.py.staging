@@ -17,7 +17,7 @@
 
 フェーズ (盤面の最高Y座標で判定):
   LOW      (max_y < 0.8) : 序盤。併合優先 (merge_mult=1.2)
-  MEDIUM   (0.8 ≤ max_y < 1.8) : 中盤。高度管理を強化 (height_mult=2.2)
+  MEDIUM   (0.8 ≤ max_y < 1.8) : 中盤。高度管理を強化 (height_mult=1.8)
   HIGH     (1.8 ≤ max_y < 3.0) : 終盤。併合機会確保 (height_mult=1.8)
   CRITICAL (3.0 ≤ max_y) : 危険。DIRECT併合最優先で盤面圧縮 (NEAR は慎重に)
 """
