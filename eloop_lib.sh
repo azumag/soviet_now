@@ -1919,16 +1919,18 @@ _kill_comment_gen() {
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
 _recover_orphan_comment_playing_files() {
-	# say が実行中なら .playing は現役の可能性が高いので触らない
-	if [ -f "tmp/.say_queue/pid" ]; then
-		local spid
-		spid=$(cat "tmp/.say_queue/pid" 2>/dev/null)
-		if [ -n "$spid" ] && kill -0 "$spid" 2>/dev/null; then
-			return
-		fi
+	# コメント用 say_enqueue が動作中なら .playing は現役の可能性が高いので触らない
+	if pgrep -f "say_enqueue.sh --no-preempt .*comment_.*\\.playing" >/dev/null 2>&1; then
+		return
 	fi
 	for orphan in "$COMMENT_QUEUE_DIR"/comment_*.playing; do
 		[ -f "$orphan" ] || continue
+		local now mtime age
+		now=$(date +%s)
+		mtime=$(stat -f %m "$orphan" 2>/dev/null || echo "$now")
+		age=$((now - mtime))
+		# 直近で生成された .playing はリネーム直後の可能性があるためスキップ
+		[ "$age" -lt 30 ] && continue
 		local recovered="${orphan%.playing}.txt"
 		mv "$orphan" "$recovered" 2>/dev/null
 		echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] リカバリ: $orphan → $recovered" >> tmp/.say_queue/debug.log
@@ -1936,6 +1938,7 @@ _recover_orphan_comment_playing_files() {
 }
 
 _play_comment_queue() {
+	_recover_orphan_comment_playing_files
 	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
 		if [ -f "$qf" ]; then
 			# 重複チェック: 同じ内容を再度再生しない
