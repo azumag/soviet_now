@@ -52,6 +52,12 @@ Phases (determined by board max Y):
 # 構造的改善としてv154の密度評価版を再導入し、最も近い3つの連鎖ピースを考慮した評価に戻す。
 # 同時にheight_multiplierを30.0→35.0に微増し、連鎖評価の信頼性を確保。
 # これによりCHAIN_MERGE選択率を15%以上に引き上げ、HEIGHT_CONTROL選択率を削減してスコア安定性を向上させる。
+# v159: 着地高動的拡大版 - v158の密度評価版（chain_distance=4.5固定）をベースに、
+# 着地高に応じてchain_distanceを動的に拡大（chain_distance = 4.5 + landing_y * 0.4）することで、
+# HIGH_LAYER/MEDIUM_TOWER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROLの選択率を減らしてスコア安定性を向上させる。
+# v157の動的調整はchain_distance_maxとchain_bonus_multiplierの双方を強化しすぎて失敗したが、
+# v159はchain_distanceの動的拡大のみを行い、chain_bonus_multiplierは400.0固定にすることで、
+# より安定したCHAIN_MERGE選択率向上を目指す。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -59,30 +65,29 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v158: 密度評価版再導入・HEIGHT_CONTROL抑制版
-    
-    batch_summary分析でHEIGHT_CONTROLが26.0%選択されながらavg_score_delta=2.9と低いこと、
-    NEAR_MERGE_HIGH_LAYER_CHAIN_MERGEがavg_score_delta=67.9と高価値だが選択率は10.2%と低いことを確認。
-    v157の動的調整ロジックは導入したが、CHAIN_MERGE選択率は依然として低い（約20%）。
-    v155で密度評価版（3つの連鎖ピース評価）が簡素化版（最も近い1つのみ）に変更されたことが原因を特定。
-    構造的改善としてv154の密度評価版を再導入し、最も近い3つの連鎖ピースを考慮した評価に戻す。
-    同時にheight_multiplierを30.0→35.0に微増し、連鎖評価の信頼性を確保。
-    これによりCHAIN_MERGE選択率を15%以上に引き上げ、HEIGHT_CONTROL選択率を削減してスコア安定性を向上させる。
+    """v159: 着地高動的拡大版
+
+    v158の密度評価版（chain_distance=4.5固定）をベースに、
+    着地高に応じてchain_distanceを動的に拡大（chain_distance = 4.5 + landing_y * 0.4）することで、
+    HIGH_LAYER/MEDIUM_TOWER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROLの選択率を減らしてスコア安定性を向上させる。
+    v157の動的調整はchain_distance_maxとchain_bonus_multiplierの双方を強化しすぎて失敗したが、
+    v159はchain_distanceの動的拡大のみを行い、chain_bonus_multiplierは400.0固定にすることで、
+    より安定したCHAIN_MERGE選択率向上を目指す。
 
     Args:
-        game_state: game state (pieces, next, nextNext, score, etc.)
-        analysis: analyze_board.py analysis results
-            - results: landing information for each drop X candidate
-                - x: drop X coordinate
-                - landing_y: estimated landing Y coordinate (high=dangerous)
-                - drift_x/drift_unc: post-landing drift due to polygon shape
-                - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                - merges: individual distance/merge judgment for each same-type piece
-            - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+         game_state: game state (pieces, next, nextNext, score, etc.)
+         analysis: analyze_board.py analysis results
+             - results: landing information for each drop X candidate
+                 - x: drop X coordinate
+                 - landing_y: estimated landing Y coordinate (high=dangerous)
+                 - drift_x/drift_unc: post-landing drift due to polygon shape
+                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                 - merges: individual distance/merge judgment for each same-type piece
+             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
-    Returns:
-        {"x": drop X coordinate, "reason": selection reason}
-    """
+     Returns:
+         {"x": drop X coordinate, "reason": selection reason}
+     """
 
     results = analysis.get("results", [])
 
@@ -206,16 +211,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v158: 密度評価版再導入・HEIGHT_CONTROL抑制版) -----
-        # v158: v157の動的調整ではCHAIN_MERGE選択率が依然として低い問題を解決。
-        # v155で密度評価版（3つの連鎖ピース評価）が簡素化版（最も近い1つのみ）に変更されたことが原因を特定。
-        # 構造的改善としてv154の密度評価版を再導入し、最も近い3つの連鎖ピースを考慮した評価に戻す。
-        # 併合ターゲット周辺に同じtypeが集積している配置 = 連鎖確率が高い、を正確に評価し、CHAIN_MERGE選択率を向上。
+        # ----- evaluation axis 6: chain merge bonus (v159: 着地高動的拡大版) -----
+        # v159: v158の密度評価版（chain_distance=4.5固定）をベースに、
+        # 着地高に応じてchain_distanceを動的に拡大（chain_distance = 4.5 + landing_y * 0.4）することで、
+        # HIGH_LAYER/MEDIUM_TOWER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROLの選択率を減らす。
+        # v157の動的調整はchain_distance_maxとchain_bonus_multiplierの双方を強化しすぎて失敗したが、
+        # v159はchain_distanceの動的拡大のみを行い、chain_bonus_multiplierは400.0固定にすることで、
+        # より安定したCHAIN_MERGE選択率向上を目指す。
         # 評価方法：
+        # - chain_distanceを着地高に応じて動的に拡大 (4.5 + landing_y * 0.4)
         # - 併合ターゲットからchain_distance以内のmerged_typeピースを全て収集
         # - 最も近い3つのピースからボーナス計算 (chain_distance - dist) * chain_bonus_multiplier
-        # - chain_distanceを4.5、chain_bonus_multiplierを400.0に設定
-        # 効果：併合ターゲット周辺に同じtypeが集中している配置を正確に評価し、CHAIN_MERGE選択率を15%以上に引き上げる。
+        # - chain_bonus_multiplierは400.0固定（v157失敗の教訓）
+        # 効果：着地高が高いほど遠くの連鎖も評価し、CHAIN_MERGE選択率を向上してHEIGHT_CONTROL選択率を減らす。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -224,10 +232,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v158: v154の密度評価版を再導入
-                # 併合ターゲット周辺のmerged_typeピースの「密度」を評価
-                chain_distance = 4.5  # v154: 4.0→4.5に拡大して評価範囲を広げる
-                chain_bonus_multiplier = 400.0  # v154: 係数を400.0に設定
+                # v159: 着地高に応じてchain_distanceを動的に拡大
+                # 着地高が高いほど遠くの連鎖も評価し、CHAIN_MERGE選択率を向上
+                chain_distance = 4.5 + landing_y * 0.4
+
+                # chain_bonus_multiplierは400.0固定（v157失敗の教訓）
+                chain_bonus_multiplier = 400.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
