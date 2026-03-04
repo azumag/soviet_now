@@ -8,7 +8,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 ## アーキテクチャ
 
 ```
-soviet_local.mjs          ← ゲーム実行環境 (HTTP server + Playwright + Unity WebGL)
+soviet_local.mjs          ← ゲーム実行環境 (HTTP server + Playwright + Unity WebGL, stateのみ更新)
     ↕ commands.txt / game_state.json
 AI ループ (3種類から選択)
     ├── eloop.sh           ← 自己改善ループ (推奨)
@@ -88,7 +88,7 @@ bash jloop.sh
 画像認識ベース。`OBSERVE → DECIDE → EXECUTE` の3段構成。スクリーンショットから盤面を読み取る。
 
 ```bash
-node soviet_local.mjs &
+node soviet_game.mjs &
 bash sloop.sh
 ```
 

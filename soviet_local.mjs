@@ -2,7 +2,6 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
-import sharp from 'sharp';
 
 const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
@@ -108,21 +107,6 @@ function clearCommands() {
   try { fs.writeFileSync(COMMAND_FILE, ''); } catch (e) {}
 }
 
-// Take screenshots from the page (same output files as soviet_game.mjs)
-async function takeScreenshots(page) {
-  try {
-    const buf = await page.screenshot();
-    await Promise.all([
-      fs.promises.writeFile('soviet_now.png', buf),
-      sharp(buf).extract({ left: 300, top: 0, width: 650, height: 720 }).toFile('board.png'),
-      sharp(buf).extract({ left: 980, top: 60, width: 180, height: 300 }).toFile('next_block.png'),
-    ]);
-    console.log('Screenshots updated');
-  } catch (e) {
-    console.error('Screenshot error:', e.message);
-  }
-}
-
 // Get game state from JS Bridge
 async function getGameState(page) {
   try {
@@ -173,10 +157,9 @@ async function executeCommand(page, command) {
     await page.waitForTimeout(500);
   }
 
-  // Update state + screenshots after command
+  // Update state after command
   const state = await getGameState(page);
   writeGameState(state);
-  await takeScreenshots(page);
   return state;
 }
 
@@ -290,7 +273,6 @@ async function runLocalController() {
   // Initial state
   const initialState = await getGameState(page);
   writeGameState(initialState);
-  await takeScreenshots(page);
   console.log('Initial game state saved');
   console.log(`Watching for commands in: ${COMMAND_FILE}`);
 
@@ -352,7 +334,6 @@ async function runLocalController() {
                   await page.waitForTimeout(2000);
                   lastState = s;
                   writeGameState(s);
-                  await takeScreenshots(page);
                   break;
                 }
                 await page.waitForTimeout(1000);
@@ -370,7 +351,6 @@ async function runLocalController() {
 
           if (stateChanged(lastState, state)) {
             writeGameState(state);
-            await takeScreenshots(page);
             console.log(`State: ${state.state}, score=${state.score}, pieces=${state.pieces?.length || 0}`);
           }
           lastState = state;
