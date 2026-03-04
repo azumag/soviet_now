@@ -29,15 +29,15 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
-# [BEST:3689] v126: v42-based HIGH phase merge enhancement
-# v151-v155: CHAIN_MERGE強化版（係数200.0→300.0→400.0、chain_distance 3.0→3.5→4.0→4.5→5.0）
-# v156: HEIGHT_CONTROL抑制・CHAIN_MERGE促進版 - batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
-# NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=40~52.8と高価値だが選択率が低いことを確認。
-# v155でchain_distance=5.0、chain_bonus=450.0に強化したが、HEIGHT_CONTROL選択率は依然として高い。
-# HEIGHT_CONTROL選択率を下げてCHAIN_MERGE選択を促進するために、height_multiplierを50.0→40.0に削減。
-# v155のchain_distance=5.0、chain_bonus=450.0は維持しつつ、高度ペナルティを約20%削減することで、
-# 高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を高めスコア向上を目指す。
+ # --- Change History ---
+ # [BEST:3689] v126: v42-based HIGH phase merge enhancement
+ # v151-v155: CHAIN_MERGE強化版（係数200.0→300.0→400.0、chain_distance 3.0→3.5→4.0→4.5→5.0）
+ # v157: 動的パラメータ調整版 - batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
+ # NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=40~52.8と高価値だが選択率が低いことを確認。
+ # v155でchain_distance=5.0、chain_bonus=450.0に強化したが、HEIGHT_CONTROL選択率は依然として高い。
+ # v154の動的パラメータ調整ロジックを採用し、調整係数を強化してCHAIN_MERGEの選択率を高めることで、HEIGHT_CONTROLを減らす。
+ # chain_distance_max=5.0+landing_y*0.8、chain_bonus_multiplier=500.0+landing_y*200.0に強化することで、
+ # HIGH_LAYER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROLの選択率を減らしてスコア安定性を向上させる構造的改善。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
