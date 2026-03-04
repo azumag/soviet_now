@@ -92,14 +92,18 @@ while true; do
 	# 前回の改善が完了したか確認
 	check_and_harvest_improvement
 
+	# 非同期ジョブに渡すため、試合開始時点の値を固定
+	SCHEDULE_GAME_NUM="$GAME_NUM"
+	SCHEDULE_SCORE=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+
 	# ニュース取得 & ニュースコーナー (3ゲームに1回、バックグラウンド)
-	if (( GAME_NUM % NEWS_INTERVAL == NEWS_PHASE )); then
-		fetch_and_play_news &
+	if (( SCHEDULE_GAME_NUM % NEWS_INTERVAL == NEWS_PHASE )); then
+		fetch_and_play_news "$SCHEDULE_GAME_NUM" "$SCHEDULE_SCORE" &
 	fi
 
 	# ラジオトーク (6ゲームに1回、バックグラウンド)
-	if (( GAME_NUM % RADIO_INTERVAL == RADIO_PHASE )); then
-		start_random_radio_corner &
+	if (( SCHEDULE_GAME_NUM % RADIO_INTERVAL == RADIO_PHASE )); then
+		start_random_radio_corner "$SCHEDULE_GAME_NUM" "$SCHEDULE_SCORE" &
 	fi
 
 	# 1試合プレイ

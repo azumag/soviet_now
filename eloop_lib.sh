@@ -992,6 +992,18 @@ _radio_generate_and_play() {
 		shift
 	done
 
+	# 同一 game_num + corner の二重生成/二重再生を防止
+	local done_marker="tmp/.radio_done_${game_num}_${corner_name}"
+	if [ -f "$done_marker" ]; then
+		log "[RADIO:${corner_name}] duplicate skip: already done for game=${game_num}"
+		return 0
+	fi
+	local inflight_dir="tmp/.radio_inflight_${game_num}_${corner_name}"
+	if ! mkdir "$inflight_dir" 2>/dev/null; then
+		log "[RADIO:${corner_name}] duplicate skip: in-flight for game=${game_num}"
+		return 0
+	fi
+
 	echo "generating:${corner_name}:$(date +%s)" > tmp/.radio_state
 	log "[RADIO:${corner_name}] トーク生成中..."
 	local talk
@@ -1007,6 +1019,7 @@ _radio_generate_and_play() {
 	if [ -z "$talk" ]; then
 		log "[RADIO:${corner_name}] トーク生成失敗"
 		_radio_clear_state "$corner_name"
+		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
 	fi
 
@@ -1030,6 +1043,7 @@ _radio_generate_and_play() {
 			elif grep -qxF "$selected_news" "$PAST_NEWS_READ" 2>/dev/null || grep -qxF "$selected_key" "$PAST_NEWS_READ_KEYS" 2>/dev/null; then
 				log "[RADIO:news] 重複ニュース検出 → スキップ: ${selected_news}"
 				_radio_clear_state "$corner_name"
+				rmdir "$inflight_dir" 2>/dev/null || true
 				return 1
 			else
 				echo "$selected_news" >>"$PAST_NEWS_READ"
@@ -1088,6 +1102,7 @@ _radio_generate_and_play() {
 		} >"$debug_dump"
 		log "[RADIO:${corner_name}] WARNING: 本文が短すぎる(${#talk_body}字) → スキップ (dump: $debug_dump)"
 		_radio_clear_state "$corner_name"
+		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
 	fi
 
@@ -1104,7 +1119,15 @@ _radio_generate_and_play() {
 		./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
 	fi
 	rm -f "$talk_file"
+	touch "$done_marker"
+	# 古い重複防止マーカーを掃除（最新200件だけ保持）
+	local old_markers
+	old_markers=$(ls -1t tmp/.radio_done_* 2>/dev/null | tail -n +201 || true)
+	if [ -n "$old_markers" ]; then
+		echo "$old_markers" | xargs rm -f 2>/dev/null || true
+	fi
 	_radio_clear_state "$corner_name"
+	rmdir "$inflight_dir" 2>/dev/null || true
 	log "[RADIO:${corner_name}] トーク終了"
 }
 
@@ -1771,14 +1794,13 @@ PROMPT
 #=== ニュース: 毎ゲーム取得 & 再生 ===
 
 fetch_and_play_news() {
+	local game_num="$1" score="$2"
 	log "[NEWS] ニュース取得..."
 	./fetch_news.sh 2>/dev/null
 
 	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
-		local game_num
-		game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-		local score
-		score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+		[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+		[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
 		start_radio_corner_news "$game_num" "$score"
 	else
 		log "[NEWS] ニュースなし、スキップ"
@@ -1788,10 +1810,9 @@ fetch_and_play_news() {
 #=== ラジオトーク: ディスパッチャー ===
 
 start_random_radio_corner() {
-	local game_num
-	game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-	local score
-	score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	local game_num="$1" score="$2"
+	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
 
 	# ニュースは毎ゲーム別途実行するので、ここでは除外
 	local candidates=("theme" "soviet" "recap")
