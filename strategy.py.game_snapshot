@@ -32,7 +32,7 @@ Phases (determined by board max Y):
 # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # v151-v155: CHAIN_MERGE強化版（係数200.0→300.0→400.0、chain_distance 3.0→3.5→4.0→4.5→5.0）
-# v155: chain_distance 4.5→5.0、chain_bonus 400.0→450.0に強化したが、CHAIN_MERGE選択率は依然として低い
+# [BEST:4026] v155: chain_distance 4.5→5.0、chain_bonus 400.0→450.0に強化したが、CHAIN_MERGE選択率は依然として低い
 # v156: v42/v126成功構造復帰・CHAIN_MERGE削除版 - v153-v155のCHAIN_MERGE過剰強化の振り子パターンを解消。
 # batch_summaryなしでも履歴分析でMEDIUM height_mult=1.8（v151緩和）がHEIGHT_CONTROL過多の原因と推定。
 # v42/v126のMEDIUM height_mult=2.4に復帰し、HEIGHT_CONTROLを削減してスコア安定性を向上。
