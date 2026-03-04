@@ -498,7 +498,14 @@ _run_opencode_radio() {
 		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$RADIO_OPENCODE_PERMISSION' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then
-		log "[RADIO] opencode timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)"
+		# command substitution に混ざらないよう stderr に出す
+		log "[RADIO] opencode timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
+		rm -f "$raw_file"
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		# 非タイムアウト失敗も本文扱いせず fallback へ渡す
+		log "[RADIO] opencode failed (rc=$rc, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
@@ -522,7 +529,8 @@ _run_claude_radio() {
 	if [ -z "$prompt" ]; then
 		return 1
 	fi
-	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL)"
+	# command substitution に混ざらないよう stderr に出す
+	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL)" >&2
 	claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>/dev/null
 }
 
