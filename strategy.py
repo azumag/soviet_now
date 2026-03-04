@@ -38,20 +38,29 @@
 # chain_distanceをv150の3.0に戻して連鎖判定を厳密化し、より近距離の連鎖のみを高く評価することで、
 # CHAIN_MERGEの選択率を高め、HEIGHT_CONTROLの選択を減らしてスコア安定性を向上させる。
 
+# v155: CHAIN_MERGE選択率向上・CRITICALフェーズ併合強化版 - v154のCHAIN_MERGE選択率が依然として7.3%と低い問題を解決。
+# batch_summary分析でNEAR_MERGE関連（特にCHAIN_MERGE付き）がavg_score_delta=23.1〜48.7と高価値であることを確認。
+# v154でchain_distanceを3.0に戻して厳密化したが、CHAIN_MERGE選択率が低いままである。
+# chain_merge_bonusの係数を400.0→500.0に強化し、同時にCRITICALフェーズでの高度ペナルティを緩和
+# (height_penalty * 0.7)することで、危険な状況でも併合機会を確保。
+# さらに左右バランス補正を強化（HIGH/MEDIUMフェーズのbalance_strengthを増加）し、早期の盤面偏りを是正。
+# これによりCHAIN_MERGE選択率を高め、HEIGHT_CONTROL（選択率27.4%、avg_score_delta=2.0）を減らしスコア向上を目指す。
+
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v154: 連鎖判定厳密化版
+    """v155: CHAIN_MERGE選択率向上・CRITICALフェーズ併合強化版
 
-    batch_summary分析でHEIGHT_CONTROLが27.4%選択されながらavg_score_delta=0.6と非常に低いこと、
-    NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE等のavg_score_delta=27.3〜41.4と高価値だが選択率は7.3%と低いことを確認。
-    v153でchain_distanceを3.5→4.0に緩和したが、これによりchain_merge判定が緩くなりすぎて、
-    本当に価値のある近距離の連鎖とそうでない遠距離の区別がつかなくなっている可能性を特定。
-    chain_distanceをv150の3.0に戻して連鎖判定を厳密化し、より近距離の連鎖のみを高く評価することで、
-    CHAIN_MERGEの選択率を高め、HEIGHT_CONTROLの選択を減らしてスコア安定性を向上させる。
+    batch_summary分析でCHAIN_MERGE選択率が依然として7.3%と低い問題を解決。
+    NEAR_MERGE関連（特にCHAIN_MERGE付き）がavg_score_delta=23.1〜48.7と高価値であることを確認。
+    v154でchain_distanceを3.0に戻して厳密化したが、CHAIN_MERGE選択率が低いままである。
+    chain_merge_bonusの係数を400.0→500.0に強化し、同時にCRITICALフェーズでの高度ペナルティを緩和
+    (height_penalty * 0.7)することで、危険な状況でも併合機会を確保。
+    さらに左右バランス補正を強化（HIGH/MEDIUMフェーズのbalance_strengthを増加）し、早期の盤面偏りを是正。
+    これによりCHAIN_MERGE選択率を高め、HEIGHT_CONTROL（選択率27.4%、avg_score_delta=2.0）を減らしスコア向上を目指す。
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -147,7 +156,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # さらにHIGH/MEDIUMで着地が高い(>0.5)場合は追加倍率
         height_penalty = landing_y * 50.0 * height_mult
 
-        if phase == "HIGH" and landing_y > 0.5:
+        # v155: CRITICALフェーズでは高度ペナルティを0.7倍に緩和し、併合機会を確保
+        if phase == "CRITICAL":
+            height_penalty *= 0.7
+            if landing_y > 0.0:
+                reasons.append("CRITICAL_HEIGHT")
+        elif phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
@@ -164,15 +178,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # ----- 評価軸 4: 左右バランス補正 (v148: 強化版) -----
+        # ----- 評価軸 4: 左右バランス補正 (v148: 強化版, v155: CRITICALフェーズ強化) -----
         # 左右のピース数の偏りを是正する方向にボーナス。
         # balance_bias > 0 なら右が多い → 左(x<0)に置くとペナルティ減
-        # v148: 盤面が高いほどbalance_strengthを大きくし、バランス制御を厳しく
+        # v155: 盤面が高いほどbalance_strengthを大きくし、バランス制御を厳しく
+        # v155: CRITICALフェーズでもバランス制御を強化（早期の盤面偏り対策）
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 50.0  # v148: HIGHではバランス制御をさらに厳しく（40.0→50.0）
+            balance_strength = 60.0  # v155: HIGHではバランス制御をさらに厳しく（50.0→60.0）
         elif phase == "MEDIUM":
-            balance_strength = 35.0  # v148: MEDIUMでもバランス制御を強化（30.0→35.0）
+            balance_strength = 40.0  # v155: MEDIUMでもバランス制御を強化（35.0→40.0）
+        elif phase == "CRITICAL":
+            balance_strength = 30.0  # v155: CRITICALでもバランス制御を導入
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -189,11 +206,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- 評価軸 6: 連鎖併合ボーナス (v149: 新規追加, v154: 厳密化) -----
+        # ----- 評価軸 6: 連鎖併合ボーナス (v149: 新規追加, v151/v152/v153: 強化, v155: CHAIN_MERGE選択率向上版) -----
         # 併合が成功した場合、連鎖してさらに併合できるか評価
         # result["merges"]から最良の併合ターゲットを取得
         # 併合後のtype (merged_type) の周囲に同じtypeのピースがないか確認
-        # v154: chain_distanceをv150の3.0に戻し厳密化
+        # v155: chain_merge_bonusの係数を400.0→500.0に強化し、CHAIN_MERGE選択率を向上
+        # v155: chain_distanceはv150の3.0を維持し、厳密な連鎖判定を継続
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -204,15 +222,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 # 併合後のtype (merged_type) のピースが盤面上にあるか確認
                 # 連鎖判定距離: typeの半径 + ピースの半径 (0.5〜2.0程度)
-                chain_distance = 3.0  # v154: v153の4.0→3.0に戻し、厳密な連鎖判定に
+                chain_distance = 3.0  # v155: v150の3.0を維持し、厳密な連鎖判定
 
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
                         if dist < chain_distance:
                             # 連鎖可能性がある: 距離が近いほど大きなボーナス
-                            # v154: v153の係数400.0を維持し、厳密な距離判定と組み合わせて高価値な連鎖のみ評価
-                            chain_bonus = (chain_distance - dist) * 400.0
+                            # v155: 係数を400.0→500.0に強化し、CHAIN_MERGE選択率を向上
+                            chain_bonus = (chain_distance - dist) * 500.0
                             score += chain_bonus
                             reasons.append("CHAIN_MERGE")
                             break  # 1つ見つかれば十分
