@@ -38,6 +38,10 @@
 # （2）MEDIUMフェーズheight_multを1.8→2.4に復帰：v126の成功値を採用し、v153の緩和（height_mult=1.8）を修正。
 # v126のシンプルで頑健な構造を維持しつつ、v153で追加された複雑な連鎖併合ボーナスを削除することで、
 # スコア分散を減らし下振れを抑制し、安定性を向上させる。コード量削減（約280行→約120行）。
+# v161: CRITICALフェーズ高度管理強化版 - v160の失敗（直近10試合スコア分散低い）を受けて、
+# CRITICALフェーズでHIGH_TOWERペナルティを適用し、高度管理を強化。
+# v126/v86の成功構造を維持しつつ、CRITICALフェーズでの高度管理を改善することで、
+# スコアの下振れを抑制し、安定性を向上させる。
 
 # 併合結果のスコア: type N の併合で N*(N+1)/2 点獲得
 # 例: type1+1→2 で +3点, type8+8→9 で +45点, type14+14→15 で +120点
@@ -45,12 +49,10 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v160: 連鎖併合ボーナス削除・v126成功構造復帰版
+    """v161: CRITICALフェーズ高度管理強化版
 
-    v153の失敗（直近10試合スコア分散553〜3583）を受けて、
-    v151-v153で追加・強化した連鎖併合ボーナス（CHAIN_MERGE）を完全削除。
-    change_log分析でCHAIN_MERGE選択率が約7-16%と低いままであり、v126/v86などの成功バージョン（殿堂入り3689点/2346点）は
-    連鎖併合ボーナスを持っていないことから、連鎖併合ボーナスはスコア向上に寄与していないと判断。
+    v160の失敗（直近10試合スコア分散低い）を受けて、CRITICALフェーズでHIGH_TOWERペナルティを適用し、
+    高度管理を強化。
 
     Args:
         game_state: ゲーム状態 (pieces, next, nextNext, score 等)
@@ -80,18 +82,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # --- フェーズ判定 (v160: v126の成功構造を採用) ---
+    # --- フェーズ判定 (v161: v126の成功構造を採用) ---
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0  # 低い盤面では高度ペナルティ弱め
         merge_mult = 1.2  # 併合ボーナス20%増で積極的に狙う
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v160: v126の成功値2.4に復帰（v153の1.8を修正）
+        height_mult = 2.4  # v161: v126の成功値2.4を維持
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v160: v126の成功値1.8を維持
+        height_mult = 1.8  # v161: v126の成功値1.8を維持
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -151,6 +153,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
+
+        # v161: CRITICALフェーズでHIGH_TOWERペナルティを適用
+        if phase == "CRITICAL" and landing_y > 0.5:
+            height_penalty *= 2.0
+            reasons.append("CRITICAL_TOWER")
 
         score -= height_penalty
 
