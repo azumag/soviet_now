@@ -40,6 +40,7 @@ REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
 MIN_GAMES_BEFORE_IMPROVE=10
 MIN_GAMES_FOR_BEST_ROLLBACK=10
 STRATEGY_HASH_ARCHIVE_DIR="strategy_versions/by_hash"
+HASH_ARCHIVE_KEEP_TOP=10
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
 COMMENT_WATCHER_INTERVAL=10
@@ -2497,6 +2498,57 @@ EOF
 	return 1
 }
 
+_prune_hash_archive_by_ranking() {
+	[ -d "$STRATEGY_HASH_ARCHIVE_DIR" ] || return 0
+	[ -f "$ROLLING_SCORES_FILE" ] || return 0
+
+	local ranked_hashes
+	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
+import json
+import sys
+
+rs_file, min_games, keep_top = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+rs = json.load(open(rs_file))
+rows = []
+for h, data in rs.items():
+    scores = data.get("scores", [])
+    if len(scores) < min_games:
+        continue
+    avg = sum(scores) / len(scores)
+    rows.append((avg, len(scores), h))
+rows.sort(key=lambda x: (x[0], x[1]), reverse=True)
+for _, _, h in rows[:keep_top]:
+    print(h)
+PY
+)
+
+	local current_hash=""
+	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	local revert_hash=""
+	if [ -f "tmp/revert_strategy.py" ]; then
+		revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
+	fi
+
+	local keep_hashes
+	keep_hashes=$(printf '%s\n%s\n%s\n' "$ranked_hashes" "$current_hash" "$revert_hash" | sed '/^$/d' | sort -u)
+
+	local removed=0
+	local f base h
+	while IFS= read -r f; do
+		[ -f "$f" ] || continue
+		base=$(basename "$f")
+		h="${base%.py}"
+		if ! printf '%s\n' "$keep_hashes" | grep -qxF "$h"; then
+			rm -f "$f"
+			removed=$((removed + 1))
+		fi
+	done < <(ls -1 "$STRATEGY_HASH_ARCHIVE_DIR"/*.py 2>/dev/null || true)
+
+	if [ "$removed" -gt 0 ]; then
+		log "[HASH-ARCHIVE] pruned ${removed} file(s): keep top ${HASH_ARCHIVE_KEEP_TOP} (+current/revert)"
+	fi
+}
+
 update_rolling_scores() {
 	local score="$1"
 	local strategy_hash
@@ -2522,6 +2574,7 @@ rs[h]['scores'] = rs[h]['scores'][-20:]
 with open(rs_file, 'w') as f:
     json.dump(rs, f)
 " 2>/dev/null
+	_prune_hash_archive_by_ranking
 }
 
 check_regression() {
