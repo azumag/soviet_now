@@ -33,10 +33,14 @@ source ./eloop_lib.sh
 GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 IMPROVE_PID=0
 # 配信演出の頻度 (必要ならここだけ調整)
-NEWS_INTERVAL=3
+NEWS_INTERVAL_DAY=3
+NEWS_INTERVAL_NIGHT=6
+NEWS_NIGHT_START_HOUR=2
+NEWS_NIGHT_END_HOUR=5
 NEWS_PHASE=1
 RADIO_INTERVAL=5
 RADIO_PHASE=0
+LAST_NEWS_MODE=""
 
 # --- 初期化 ---
 log "=== Soren Evolution Loop ==="
@@ -99,8 +103,20 @@ while true; do
 	SCHEDULE_GAME_NUM="$GAME_NUM"
 	SCHEDULE_SCORE=$(tail -1 score_history.txt 2>/dev/null || echo 0)
 
-	# ニュース取得 & ニュースコーナー (3ゲームに1回、バックグラウンド)
-	if (( SCHEDULE_GAME_NUM % NEWS_INTERVAL == NEWS_PHASE )); then
+	# ニュース取得 & ニュースコーナー（深夜帯は頻度を下げる）
+	CURRENT_HOUR=$(date +%H)
+	if (( 10#$CURRENT_HOUR >= NEWS_NIGHT_START_HOUR && 10#$CURRENT_HOUR < NEWS_NIGHT_END_HOUR )); then
+		CURRENT_NEWS_INTERVAL="$NEWS_INTERVAL_NIGHT"
+		CURRENT_NEWS_MODE="night"
+	else
+		CURRENT_NEWS_INTERVAL="$NEWS_INTERVAL_DAY"
+		CURRENT_NEWS_MODE="day"
+	fi
+	if [ "$CURRENT_NEWS_MODE" != "$LAST_NEWS_MODE" ]; then
+		log "[NEWS] schedule mode=${CURRENT_NEWS_MODE} interval=${CURRENT_NEWS_INTERVAL} (night: ${NEWS_NIGHT_START_HOUR}:00-${NEWS_NIGHT_END_HOUR}:00)"
+		LAST_NEWS_MODE="$CURRENT_NEWS_MODE"
+	fi
+	if (( SCHEDULE_GAME_NUM % CURRENT_NEWS_INTERVAL == NEWS_PHASE )); then
 		fetch_and_play_news "$SCHEDULE_GAME_NUM" "$SCHEDULE_SCORE" &
 	fi
 
