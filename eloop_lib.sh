@@ -597,12 +597,12 @@ _radio_persona_block() {
 話し言葉で、感情豊かに。
 
 【最重要ルール: ですます調の徹底】
-全ての文を「〜です」「〜ます」「〜ですね」「〜ですよ」「〜ました」「〜でしょうね」で終えること。
+全ての文を「〜です」「〜ます」「〜ですね」「〜ました」「〜でしょうね」「〜ますよね」で終えること。
 「〜だ」「〜である」「〜だった」「〜なのだ」「〜だろう」「〜ではないか」は全て禁止。
 「〜しまして」「〜でして」「〜でしてね」など不自然に硬い言い回しは使わない。
-× 「これは面白い話だ」 → ○ 「これは面白い話なんですよ」
+× 「これは面白い話だ」 → ○ 「これは面白い話なんですね」
 × 「驚くべき事実である」 → ○ 「驚くべき事実なんですけどね」
-× 「彼は天才だった」 → ○ 「彼は天才だったんですよ」
+× 「彼は天才だった」 → ○ 「彼は天才だったんですけどね」
 × 「間違いないだろう」 → ○ 「間違いないと思いますよ」
 × 「それが現実なのだ」 → ○ 「それが現実なんですよね」
 1文でも「だ・である」調が混じったら失格。全文チェックすること。
@@ -626,7 +626,7 @@ _radio_output_rules() {
 - ピースは必ず国名で呼ぶ
 - 【最重要】全ての文末を「です・ます」調にすること。「だ・である」調は1文たりとも許可しない
   × 「〜だ」「〜である」「〜だった」「〜なのだ」「〜だろう」 → 全て禁止
-  ○ 「〜です」「〜ますね」「〜でしょうね」「〜なんですよ」
+  ○ 「〜です」「〜ますね」「〜でしょうね」「〜ですけどね」
 - 「〜しまして」「〜でして」「〜でしてね」など耳障りな硬い口調は使わない
 - 体言止め禁止。文は必ず述語で終わらせる。「圧倒的な存在感。」のような名詞で終わる文は絶対に書かない
 - 陳腐な煽り表現は禁止。「いちばんおそろしい」「もはや怖い」「驚くべきことに」「衝撃の」「恐ろしいほどの」「想像を絶する」など、安っぽい誇張表現は使わない。
@@ -1946,7 +1946,7 @@ generate_soviet_celebration() {
 - 大げさな宣言調も交えて
 - 話し言葉で、感情豊かに
 - 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
-- 【最重要】全ての文末を「です・ます」調にすること。「〜だ」「〜である」「〜だった」「〜なのだ」は1文も許可しない。「〜です」「〜ますね」「〜でしょう」「〜なんですよ」で統一
+- 【最重要】全ての文末を「です・ます」調にすること。「〜だ」「〜である」「〜だった」「〜なのだ」は1文も許可しない。「〜です」「〜ますね」「〜でしょう」「〜ですけどね」で統一
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 出力はトーク本文のみ。前置きや補足説明は不要
 CELEBPROMPT
@@ -2216,8 +2216,8 @@ generate_comment_response() {
 	_kill_comment_gen
 	mkdir -p "tmp/.twitch_chat"
 
-	./twitch_chat.sh fetch
-	./twitch_chat.sh ack
+	# fetch+ack を原子的に実行して、同一コメントの二重取り込みを防ぐ
+	./twitch_chat.sh claim
 
 	local twitch_comments=""
 	if [ -f "tmp/twitch_comments.txt" ] && [ -s "tmp/twitch_comments.txt" ]; then
@@ -2433,15 +2433,12 @@ start_comment_watcher() {
 				fi
 			fi
 
-			# 生成中でもfetchしてpending.logに蓄積（raw.logの肥大化防止 + 即応答準備）
-			./twitch_chat.sh fetch 2>/dev/null
-
-			if [ "$gen_running" = "false" ]; then
-				if [ -f "tmp/twitch_comments.txt" ] && [ -s "tmp/twitch_comments.txt" ]; then
-					log "[COMMENT-WATCHER] 新コメント検出 → 生成開始"
-					# generate_comment_response はfetch済みファイルを使い、ack→生成→キュー追加
-					generate_comment_response
-				fi
+			if [ "$gen_running" = "true" ]; then
+				# 生成中は未読を溜めるだけにして、取りこぼしを防ぐ
+				./twitch_chat.sh fetch 2>/dev/null
+			else
+				# idle時は claim で原子的に取得して生成
+				generate_comment_response
 			fi
 
 			sleep "$COMMENT_WATCHER_INTERVAL"
@@ -2955,10 +2952,7 @@ _start_improvement_job() {
 		log "[IMPROVE] ${acc_count}試合分のデータで改善開始"
 	fi
 
-	# Twitchコメント・ニュース取得
-	log "[TWITCH] コメントfetch..."
-	./twitch_chat.sh fetch
-	./twitch_chat.sh ack
+	# Twitchコメント処理は comment watcher 側に一本化
 	log "[NEWS] ニュース取得..."
 	./fetch_news.sh
 
