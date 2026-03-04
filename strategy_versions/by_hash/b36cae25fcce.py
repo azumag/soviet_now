@@ -40,14 +40,10 @@ Phases (determined by board max Y):
 # v84のHIGHフェーズheight_mult=1.8を維持し、v42/v126のMEDIUM height_mult=2.4と統合。
 # これにより振り子パターンを解消し、MEDIUMフェーズでの高度管理を強化しつつHIGHフェーズの併合機会を確保。
 # コード量削減（約180行→約110行）で頑健性を確保。
-# v157: 動的パラメータ調整版 - v156のCHAIN_MERGE選択率7.3%とHEIGHT_CONTROL選択率28.9%という問題を解決。
-# v154の動的パラメータ調整ロジックを採用し、調整係数を強化してCHAIN_MERGEの選択率を高めることで、HEIGHT_CONTROLを減らす。
-# chain_distance_max=5.0+landing_y*0.8、chain_bonus_multiplier=500.0+landing_y*200.0に強化することで、
-# HIGH_LAYER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROLの選択率を減らしてスコア安定性を向上させる構造的改善。
-# v158: NO_MERGEペナルティ強化版 - v157の動的調整ロジックはbatch_summaryなしではリスクが高いため、v156の成功構造を維持しつつ
-# NO_MERGEペナルティを-150から-200に強化して、より強制的に併合を促すシンプルなアプローチを採用。
-# v156のheight_mult設定（MEDIUM=2.4/HIGH=1.8）を維持し、CHAIN_MERGEロジック削除も維持。
-# NO_MERGEペナルティ強化でHEIGHT_CONTROL選択率を減らし、併合機会を確保することでスコア安定性を向上。
+# v158: NO_MERGEペナルティ強化版 - v156のスコア4026は高いが、CHAIN_MERGE選択率7.3%の問題は解消されていない。
+# v157の動的パラメータ調整は複雑すぎて効果が薄い（スコア範囲553〜3583）。
+# v158の成功パターンを採用し、NO_MERGEペナルティを-150から-200に強化して、HEIGHT_CONTROL選択率（28.9%、avg_score_delta=2.4）を削減。
+# v42/v126の成功構造を維持し、併合を強制的に促すことでスコア安定性を向上。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -57,10 +53,11 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 def decide(game_state: dict, analysis: dict) -> dict:
     """v158: NO_MERGEペナルティ強化版
 
-    v157の動的調整ロジックはbatch_summaryなしではリスクが高いため、v156の成功構造を維持しつつ
-    NO_MERGEペナルティを-150から-200に強化して、より強制的に併合を促すシンプルなアプローチを採用。
-    v156のheight_mult設定（MEDIUM=2.4/HIGH=1.8）を維持し、CHAIN_MERGEロジック削除も維持。
-    NO_MERGEペナルティ強化でHEIGHT_CONTROL選択率を減らし、併合機会を確保することでスコア安定性を向上。
+    v156のスコア4026は高いが、CHAIN_MERGE選択率7.3%の問題は解消されていない。
+    v157の動的パラメータ調整は複雑すぎて効果が薄い（スコア範囲553〜3583）。
+    v158の成功パターンを採用し、NO_MERGEペナルティを-150から-200に強化して、
+    HEIGHT_CONTROL選択率（28.9%、avg_score_delta=2.4）を削減。
+    v42/v126の成功構造を維持し、併合を強制的に促すことでスコア安定性を向上。
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -97,11 +94,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4  # v158: v156のv42/v126の2.4を維持
+        height_mult = 2.4  # v156: v42/v126の2.4に復帰、HEIGHT_CONTROLを削減
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # v158: v156のv84/v155の1.8を維持
+        height_mult = 1.8  # v156: v84/v155の1.8を維持、併合機会確保
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -113,12 +110,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
-
-    # --- Type-specific merge bonus calculation ---
-    # merge result type (next_type+1) higher means higher score value
-    # example: type1 merge -> bonus=330, type5 merge -> bonus=510, type14 merge -> bonus=1660
-    merge_result_type = min(next_type + 1, 16)
-    type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
     # =======================================================================
     #  score each drop candidate (x coordinate) with 5 evaluation axes
@@ -194,9 +185,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: NO_MERGE penalty (v158: -200強化) -----
-        # v158: NO_MERGEペナルティを-150から-200に強化して、より強制的に併合を促す
-        # v156の成功構造を維持しつつ、HEIGHT_CONTROL選択率を減らすシンプルなアプローチ
+        # ----- evaluation axis 6: NO_MERGE penalty (v84/v126/v158) -----
+        # penalty for positions with no merge opportunity to force merge
+        # v158: strengthen from -150 to -200 to reduce HEIGHT_CONTROL selection
         if merge_grade == "NO":
             score -= 200.0  # v158: -150から-200に強化
             reasons.append("NO_MERGE")
