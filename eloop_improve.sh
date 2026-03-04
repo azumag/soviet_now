@@ -19,6 +19,18 @@ SOVIET="$3"
 GAME_NUM_SNAPSHOT="$4"
 TURNS_SNAPSHOT="$5"
 
+# 進捗モニタリング用メタ情報
+IMPROVE_SELF_PID="${BASHPID:-$$}"
+IMPROVE_STATE_JSON=$(_read_improve_state)
+IMPROVE_BASE_HASH=$(echo "$IMPROVE_STATE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null || echo "")
+[ -z "$IMPROVE_BASE_HASH" ] && IMPROVE_BASE_HASH=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+IMPROVE_STARTED_AT=$(echo "$IMPROVE_STATE_JSON" | python3 -c "import json,sys,time; print(int(json.load(sys.stdin).get('started_at', int(time.time()))))" 2>/dev/null || date +%s)
+
+_improve_progress() {
+	local phase="$1" progress="$2" detail="$3"
+	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT"
+}
+
 # ゲーム範囲を算出
 GAME_NUMS_LIST=()
 for hf in $HISTORY_FILES; do
@@ -28,6 +40,7 @@ NUM_GAMES=${#GAME_NUMS_LIST[@]}
 [ "$NUM_GAMES" -lt 1 ] && NUM_GAMES=1
 
 # --- Phase C: 分析 & 戦略改善 ---
+_improve_progress "summary" "5" "building_batch_summary"
 
 # バッチサマリー生成
 batch_summary_file="tmp/batch_summary.txt"
@@ -44,12 +57,14 @@ else
 	best_game_path=""
 	worst_game_path=""
 fi
+_improve_progress "summary_done" "15" "batch_summary_ready"
 
 # AI で strategy.py 改善
 # ゲーム実行中にstrategy.pyが壊れないよう、一時ファイルで作業し、
 # バリデーション成功後にのみアトミックに差し替える
 strategy_diff=""
 log "[IMPROVE] AI改善 (${NUM_GAMES}試合分)..."
+_improve_progress "ai_prepare" "20" "prepare_staging"
 
 STAGING_FILE="${STRATEGY_FILE}.staging"
 cp "$STRATEGY_FILE" "$STAGING_FILE"
@@ -83,6 +98,7 @@ improve_ref_files="$STAGING_FILE $batch_summary_file"
 improve_ref_files="$improve_ref_files $GAME_STATE $past_strategy_files $hall_of_fame_files"
 
 for retry in $(seq 1 3); do
+	_improve_progress "ai_retry${retry}" "$((25 + (retry - 1) * 15))" "ai_edit_and_validate"
 	if [ "$retry" -eq 1 ]; then
 		run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
 			prompts/improve_strategy.md "$STAGING_FILE" \
@@ -116,6 +132,7 @@ FIXEOF
 	fi
 
 	# 差分チェック
+	_improve_progress "validate_retry${retry}" "$((30 + (retry - 1) * 15))" "diff_and_validation_checks"
 	if diff -q "$STRATEGY_FILE" "$STAGING_FILE" >/dev/null 2>&1; then
 		log "[IMPROVE] 差分なし (retry $retry/3)"
 		VALIDATE_ERROR="AIが strategy.py.staging を変更しなかった。必ず strategy.py.staging を編集して改善すること。"
@@ -149,8 +166,8 @@ FIXEOF
 		real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
 		[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
 		# 変更履歴ログに記録 (振り子パターン防止)
-		if [ -n "$strategy_diff" ]; then
-			{
+			if [ -n "$strategy_diff" ]; then
+				{
 				echo "=== $(date '+%Y-%m-%d %H:%M') Game#${GAME_NUM_SNAPSHOT} scores=${SCORES} ==="
 				echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | head -20
 				echo ""
@@ -160,22 +177,25 @@ FIXEOF
 				tail -500 "$CHANGE_LOG_FILE" > "$CHANGE_LOG_FILE.tmp"
 				mv "$CHANGE_LOG_FILE.tmp" "$CHANGE_LOG_FILE"
 			fi
+			fi
+			# バリデーション成功 → アトミックに差し替え
+			_improve_progress "apply" "80" "apply_validated_strategy"
+			mv "$STAGING_FILE" "$STRATEGY_FILE"
+			python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
+			improve_ok=true
+			break
 		fi
-		# バリデーション成功 → アトミックに差し替え
-		mv "$STAGING_FILE" "$STRATEGY_FILE"
-		python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
-		improve_ok=true
-		break
-	fi
 done
 
 # 失敗してもstrategy.pyは一切触っていないので復元不要
+_improve_progress "post_validate" "85" "finalizing"
 rm -f "$STAGING_FILE"
 
 # git commit
 # ゲーム範囲を算出してコミットメッセージに含める
 first_score=$(echo "$SCORES" | awk '{print $1}')
 last_score=$(echo "$SCORES" | awk '{print $NF}')
+_improve_progress "git_commit" "90" "commit_changes"
 if [ "$NUM_GAMES" -eq 1 ]; then
 	git add -A
 	git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
@@ -186,6 +206,9 @@ fi
 
 # --- Phase D: 戦略解説コーナー (変更があった場合のみ) ---
 if [ -n "$strategy_diff" ]; then
+	_improve_progress "radio" "95" "strategy_commentary"
 	best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
 	start_radio_corner_strategy "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now"
 fi
+
+_improve_progress "done" "100" "awaiting_harvest"

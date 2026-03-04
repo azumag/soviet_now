@@ -81,7 +81,7 @@ _bar_meter() {
 #=== メイン表示 ===
 show_status() {
 	# --- 改善プロセス状態 ---
-	local imp_status="idle" imp_pid=0 imp_hash=""
+	local imp_status="idle" imp_pid=0 imp_hash="" imp_phase="" imp_progress=0
 	if [[ -f tmp/improve_state.json ]]; then
 		eval $(python3 -c "
 import json
@@ -89,6 +89,8 @@ d=json.load(open('tmp/improve_state.json'))
 print(f'imp_status={d.get(\"status\",\"idle\")}')
 print(f'imp_pid={d.get(\"pid\",0)}')
 print(f'imp_hash={d.get(\"strategy_hash_before\",\"\")}')
+print(f'imp_phase={d.get(\"phase\",\"\")}')
+print(f'imp_progress={int(d.get(\"progress\",0) or 0)}')
 " 2>/dev/null)
 	fi
 
@@ -289,12 +291,18 @@ if h and h in rs:
 	printf "    ${C_WHITE}▸${C_RESET} Workers     ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/5 online${C_RESET}\n" "$workers_bar" "$workers_online"
 
 	# 改善プロセス
+	local imp_phase_label="${imp_phase:-running}"
+	imp_phase_label=${imp_phase_label//_/ }
 	if [[ "$imp_status" == "running" ]] && $imp_alive; then
 		printf "    ${C_YELLOW}⟳${C_RESET} Improve     ${C_YELLOW}RUNNING${C_RESET}  ${C_DIM}PID=${imp_pid}${C_RESET}"
 		[[ -n "$imp_elapsed" ]] && printf "  ${C_DIM}${imp_elapsed}${C_RESET}"
+		printf "  ${C_DIM}[%d%% %s]${C_RESET}" "${imp_progress:-0}" "${imp_phase_label}"
 		echo ""
+		local imp_bar
+		imp_bar=$(_bar_meter "${imp_progress:-0}" 100 12)
+		printf "    ${C_WHITE}▸${C_RESET} ImproveProg ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d%%${C_RESET}\n" "$imp_bar" "${imp_progress:-0}"
 	elif [[ "$imp_status" == "running" ]] && ! $imp_alive; then
-		printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead)${C_RESET}\n"
+		printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead, %d%% %s)${C_RESET}\n" "${imp_progress:-0}" "${imp_phase_label}"
 	else
 		printf "    ${C_DIM}○${C_RESET} Improve     ${C_DIM}IDLE${C_RESET}\n"
 	fi

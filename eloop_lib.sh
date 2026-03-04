@@ -2972,15 +2972,56 @@ _read_improve_state() {
 	if [ -f "$IMPROVE_STATE_FILE" ]; then
 		cat "$IMPROVE_STATE_FILE"
 	else
-		echo '{"status":"idle","pid":0,"strategy_hash_before":""}'
+		echo '{"status":"idle","pid":0,"strategy_hash_before":"","phase":"","progress":0,"detail":"","started_at":0,"updated_at":0}'
 	fi
 }
 
 _write_improve_state() {
 	local status="$1" pid="$2" hash="$3"
-	cat >"$IMPROVE_STATE_FILE" <<EOF
-{"status":"${status}","pid":${pid:-0},"strategy_hash_before":"${hash:-}"}
-EOF
+	local phase="${4:-}" progress="${5:-0}" detail="${6:-}" started_at="${7:-0}"
+	local now
+	now=$(date +%s)
+	python3 - "$IMPROVE_STATE_FILE" "$status" "${pid:-0}" "${hash:-}" "$phase" "$progress" "$detail" "$started_at" "$now" <<'PY'
+import json
+import sys
+
+out_file, status, pid_raw, hash_before, phase, progress_raw, detail, started_raw, now_raw = sys.argv[1:10]
+
+try:
+    pid = int(pid_raw)
+except Exception:
+    pid = 0
+try:
+    progress = int(float(progress_raw))
+except Exception:
+    progress = 0
+progress = max(0, min(100, progress))
+try:
+    started_at = int(started_raw)
+except Exception:
+    started_at = 0
+try:
+    now = int(now_raw)
+except Exception:
+    now = 0
+
+if started_at <= 0 and status == "running":
+    started_at = now
+
+data = {
+    "status": status,
+    "pid": pid,
+    "strategy_hash_before": hash_before,
+    "phase": phase,
+    "progress": progress,
+    "detail": detail,
+    "started_at": started_at,
+    "updated_at": now,
+}
+
+with open(out_file, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False)
+PY
 }
 
 check_and_harvest_improvement() {
@@ -3062,7 +3103,7 @@ with open(rs_file, 'w') as f:
 				# 戦略が変わっていない → 蓄積データはそのまま有効
 			fi
 
-			_write_improve_state "idle" "0" ""
+			_write_improve_state "idle" "0" "" "" "0" ""
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
 		fi
@@ -3137,7 +3178,7 @@ _start_improvement_job() {
 
 	# 起動成功を確認してから状態更新
 	if kill -0 "$IMPROVE_PID" 2>/dev/null; then
-		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash"
+		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)"
 		if [ "$reason" = "post_regression" ]; then
 			log "[IMPROVE] 回帰ロールバック後の改善開始 (PID=$IMPROVE_PID, base=${REGRESSION_ROLLBACK_HASH:-unknown})"
 		else
