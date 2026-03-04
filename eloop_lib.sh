@@ -2601,49 +2601,49 @@ else:
 		fi
 		IMPROVE_PID=0
 		_write_improve_state "idle" "0" ""
-			log "[REGRESSION] 自動ロールバック開始"
+		log "[REGRESSION] 自動ロールバック開始"
 
-			# リジェクトハッシュに記録
-			echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
-			# 最新20件のみ保持
-			if [ -f "$REJECTED_HASHES_FILE" ]; then
-				tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
-				mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
-			fi
+		# リジェクトハッシュに記録
+		echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
+		# 最新20件のみ保持
+		if [ -f "$REJECTED_HASHES_FILE" ]; then
+			tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
+			mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
+		fi
 
-			# リバート先選定:
-			# 1) ローリング平均で最良(十分試行数)かつ実ファイルが見つかる戦略
-			# 2) 見つからなければ従来どおり直前戦略(tmp/revert_strategy.py)
-			local rollback_file="" rollback_note="" rollback_hash=""
-			local best_candidate
-			best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
-			if [ -n "$best_candidate" ]; then
-				local best_avg best_n
-				IFS='|' read -r rollback_hash best_avg best_n rollback_file <<<"$best_candidate"
-				rollback_note="best_avg hash=${rollback_hash} avg=${best_avg} n=${best_n}"
-			elif [ -f "tmp/revert_strategy.py" ]; then
-				rollback_file="tmp/revert_strategy.py"
-				rollback_note="previous_strategy"
-			fi
+		# リバート先選定:
+		# 1) ローリング平均で最良(十分試行数)かつ実ファイルが見つかる戦略
+		# 2) 見つからなければ従来どおり直前戦略(tmp/revert_strategy.py)
+		local rollback_file="" rollback_note="" rollback_hash=""
+		local best_candidate
+		best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
+		if [ -n "$best_candidate" ]; then
+			local best_avg best_n
+			IFS='|' read -r rollback_hash best_avg best_n rollback_file <<<"$best_candidate"
+			rollback_note="best_avg hash=${rollback_hash} avg=${best_avg} n=${best_n}"
+		elif [ -f "tmp/revert_strategy.py" ]; then
+			rollback_file="tmp/revert_strategy.py"
+			rollback_note="previous_strategy"
+		fi
 
-			if [ -z "$rollback_file" ]; then
-				log "[REGRESSION] ロールバック候補なし → 現在戦略を維持"
-				return 0
-			fi
+		if [ -z "$rollback_file" ]; then
+			log "[REGRESSION] ロールバック候補なし → 現在戦略を維持"
+			return 0
+		fi
 
-			# リバート実行
-			cp "$rollback_file" "$STRATEGY_FILE"
-			# 次回比較の基準も現戦略に合わせる（再帰的な誤判定防止）
-			cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
-			local rolled_hash
-			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
-			log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
+		# リバート実行
+		cp "$rollback_file" "$STRATEGY_FILE"
+		# 次回比較の基準も現戦略に合わせる（再帰的な誤判定防止）
+		cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
+		local rolled_hash
+		rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 
-			git add -A
-			git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null || true
+		git add -A
+		git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null || true
 
-			return 0  # リグレッション検知
+		return 0  # リグレッション検知
 		fi
 
 	return 1  # 問題なし
