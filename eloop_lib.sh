@@ -1046,10 +1046,47 @@ _radio_generate_and_play() {
 		echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
 	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
-	talk_body=$(echo "$talk_body" | _radio_dedup_text)
-	talk_body=$(printf '%s' "$talk_body" | _sanitize_onair_text)
+	local talk_body_parsed talk_body_sanitized talk_body_dedup
+	talk_body_parsed="$talk_body"
+	talk_body_sanitized=$(printf '%s' "$talk_body_parsed" | _sanitize_onair_text)
+	talk_body_dedup=$(printf '%s' "$talk_body_sanitized" | _radio_dedup_text)
+
+	# dedup が過剰に効いて短文化した場合は、まず非dedup本文に戻す
+	if [ ${#talk_body_dedup} -lt 100 ] && [ ${#talk_body_sanitized} -ge 100 ]; then
+		log "[RADIO:${corner_name}] dedup短縮が過剰 (${#talk_body_sanitized} -> ${#talk_body_dedup}字) → 非dedup本文を採用"
+		talk_body="$talk_body_sanitized"
+	else
+		talk_body="$talk_body_dedup"
+	fi
+
+	# パーサ結果が短い場合は、生の出力から本文を再抽出して救済
 	if [ ${#talk_body} -lt 100 ]; then
-		log "[RADIO:${corner_name}] WARNING: 繰り返し除去後が短すぎる(${#talk_body}字)、スキップ"
+		local fallback_body
+		fallback_body=$(printf '%s\n' "$talk" | sed '/^===SUMMARY===/,$d' | sed '/^===SELECTED_NEWS===/,$d')
+		fallback_body=$(printf '%s' "$fallback_body" | _sanitize_onair_text)
+		if [ ${#fallback_body} -ge 100 ]; then
+			log "[RADIO:${corner_name}] 本文再抽出フォールバック採用 (${#fallback_body}字)"
+			talk_body="$fallback_body"
+		fi
+	fi
+
+	if [ ${#talk_body} -lt 100 ]; then
+		local debug_dump
+		debug_dump="tmp/radio_short_${corner_name}_$(date +%s).txt"
+		{
+			echo "===RAW==="
+			printf '%s\n' "$talk"
+			echo
+			echo "===PARSED==="
+			printf '%s\n' "$talk_body_parsed"
+			echo
+			echo "===SANITIZED==="
+			printf '%s\n' "$talk_body_sanitized"
+			echo
+			echo "===DEDUP==="
+			printf '%s\n' "$talk_body_dedup"
+		} >"$debug_dump"
+		log "[RADIO:${corner_name}] WARNING: 本文が短すぎる(${#talk_body}字) → スキップ (dump: $debug_dump)"
 		_radio_clear_state "$corner_name"
 		return 1
 	fi
