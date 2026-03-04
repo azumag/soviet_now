@@ -24,8 +24,40 @@ CHANNEL="${2:-azumagbanjo}"
 
 _log() { echo "[twitch_chat $(date '+%H:%M:%S')] $*" >&2; }
 
+# 同一チャンネルの daemon PID を列挙
+_daemon_pids() {
+    ps -Ao pid=,command= 2>/dev/null | awk -v ch="$CHANNEL" '
+        $0 ~ /[b]ash[[:space:]]+\.\/twitch_chat_daemon\.sh/ && $0 ~ ("[[:space:]]" ch "([[:space:]]|$)") {print $1}
+    '
+}
+
 #--- start ---
 _start() {
+    local running_pids
+    running_pids=$(_daemon_pids)
+    if [ -n "$running_pids" ]; then
+        local pid_count
+        pid_count=$(printf '%s\n' "$running_pids" | sed '/^$/d' | wc -l | tr -d ' ')
+        if [ "$pid_count" -gt 1 ]; then
+            _log "daemon多重起動を検出 (${pid_count}件) → 既存を停止して再起動"
+            local pid
+            for pid in $running_pids; do
+                pkill -P "$pid" 2>/dev/null
+                kill "$pid" 2>/dev/null
+                wait "$pid" 2>/dev/null
+            done
+            running_pids=""
+        fi
+    fi
+
+    if [ -n "$running_pids" ]; then
+        local keep_pid
+        keep_pid=$(printf '%s\n' "$running_pids" | head -n1)
+        echo "$keep_pid" > "$PID_FILE"
+        _log "既存daemonを継続利用 (PID=$keep_pid)"
+        return 0
+    fi
+
     # 既に動いていたら何もしない
     if [ -f "$PID_FILE" ]; then
         local old_pid
@@ -121,6 +153,8 @@ _ack() {
 
 #--- stop ---
 _stop() {
+    local stopped=false
+
     if [ -f "$PID_FILE" ]; then
         local dpid
         dpid=$(cat "$PID_FILE")
@@ -130,8 +164,23 @@ _stop() {
             kill "$dpid" 2>/dev/null
             wait "$dpid" 2>/dev/null
             _log "daemon停止 (PID=$dpid)"
+            stopped=true
         fi
         rm -f "$PID_FILE"
+    fi
+
+    # PIDファイル管理外の孤児daemonも掃除
+    local pid
+    for pid in $(_daemon_pids); do
+        pkill -P "$pid" 2>/dev/null
+        kill "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+        _log "daemon孤児を停止 (PID=$pid)"
+        stopped=true
+    done
+
+    if [ "$stopped" = false ]; then
+        _log "stop: 対象daemonなし"
     fi
 }
 
