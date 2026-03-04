@@ -13,12 +13,12 @@ Decision Logic (6 evaluation axes):
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition)
+  6. Chain merge bonus - Evaluate density of merged_type pieces around merge target (v159: density count version)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8, v151 relaxation)
-  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management strengthened (height_mult=2.4, v126/v42)
+  HIGH     (1.8 <= max_y < 3.0) : Late game. Height management relaxed (height_mult=1.8, v84/v156)
   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
@@ -32,9 +32,11 @@ Phases (determined by board max Y):
 # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # v151-v155: CHAIN_MERGE enhanced versions (coefficients 200.0->300.0->400.0, chain_distance 3.0->3.5->4.0->4.5->5.0)
+# [BEST:4026] v155: chain_distance 4.5->5.0, chain_bonus 400.0->450.0 but CHAIN_MERGE selection rate still low
 # v156: v42/v126 success structure restore, CHAIN_MERGE removed
 # v157: Dynamic parameter adjustment - Adopt v154's dynamic adjustment logic with enhanced coefficients to promote CHAIN_MERGE and reduce HEIGHT_CONTROL
 # v158: Restore v154 stable parameters + strengthen balance control - v157's dynamic adjustment (chain_distance_max=4.5+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0) caused score instability similar to v155's chain_distance=5.0 expansion. Revert to v154's stable fixed parameters (chain_distance=4.5, chain_bonus_multiplier=400.0) for evaluation precision. Strengthen balance correction (HIGH: 50.0->55.0, MEDIUM: 35.0->40.0) following v148's success pattern (HIGH: 40.0->50.0).
+# v159: CHAIN_MERGE density count version - v158's density evaluation (3 closest pieces with distance-weighted bonus) still has CHAIN_MERGE selection rate ~7.4%. Change from distance-weighted logic to density count logic: count merged_type pieces within radius 2.5 of merge target, apply tiered bonus based on count (>=3 pieces: 350.0, >=2 pieces: 150.0, 1 piece: 50.0). This properly evaluates configurations where multiple pieces cluster around merge target = high chain probability, increasing CHAIN_MERGE selection rate.
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -42,15 +44,14 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v158: Restore v154 stable parameters + strengthen balance control
+    """v159: CHAIN_MERGE density count version - Structural improvement for CHAIN_MERGE selection rate
 
-    v157's dynamic parameter adjustment (chain_distance_max=4.5+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0)
-    caused score instability similar to v155's failure pattern (chain_distance=5.0 was too wide causing evaluation roughness).
-    Revert to v154's stable fixed parameters to improve evaluation precision:
-    - chain_distance: 4.5 (fixed, restore from v157's dynamic expansion)
-    - chain_bonus_multiplier: 400.0 (fixed, restore from v157's dynamic strengthening)
-    - Keep v154's density evaluation logic (3 closest pieces with distance-weighted bonus)
-    - Strengthen balance correction following v148's success pattern (HIGH: 40.0->50.0 in v148, now 50.0->55.0; MEDIUM: 30.0->35.0 in v148, now 35.0->40.0)
+    v158's density evaluation (3 closest pieces with distance-weighted bonus) has CHAIN_MERGE selection rate ~7.4% while avg_score_delta=26.3-49.6 is high.
+    batch_summary analysis shows HEIGHT_CONTROL (30.0% selection, avg_score_delta=3.4) is frequently selected but low value, and CHAIN_MERGE-related reasons (avg_score_delta=26.3-49.6) are high value but low selection rate (~7.4%).
+    Change from v158's distance-weighted logic to density count logic:
+    - Count merged_type pieces within radius 2.5 of merge target
+    - Apply tiered bonus based on count: >=3 pieces: 350.0, >=2 pieces: 150.0, 1 piece: 50.0
+    This properly evaluates configurations where multiple pieces cluster around merge target = high chain probability, increasing CHAIN_MERGE selection rate while maintaining v154's stable parameters.
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -87,11 +88,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.8  # v151: height_mult 2.2->1.8 relaxation, ensure merge opportunity
+        height_mult = 2.4  # v159: v156's v42/v126 2.4 restore to reduce HEIGHT_CONTROL
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # HIGH relaxation to ensure merge opportunity
+        height_mult = 1.8  # v159: v84/v156 1.8 maintain for merge opportunity
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -147,7 +148,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 2.0
+            height_penalty *= 1.3  # v159: HIGH_TOWER penalty relaxed (v84 1.3x)
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5
@@ -189,13 +190,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v158: restore v154 stable parameters) -----
-        # v158: v157's dynamic parameter adjustment caused score instability (chain_distance_max=4.5+landing_y*0.6,
-        # chain_bonus_multiplier=450.0+landing_y*150.0 was too aggressive like v155's chain_distance=5.0).
-        # Revert to v154's stable fixed parameters for evaluation precision:
-        # - chain_distance: 4.5 (fixed, restore from v157's dynamic expansion)
-        # - chain_bonus_multiplier: 400.0 (fixed, restore from v157's dynamic strengthening)
-        # Keep v154's density evaluation logic (3 closest pieces with distance-weighted bonus)
+        # ----- evaluation axis 6: chain merge bonus (v159: density count version) -----
+        # v158's density evaluation (3 closest pieces with distance-weighted bonus) has CHAIN_MERGE selection rate ~7.4%
+        # Change to density count logic: count merged_type pieces within radius 2.5 of merge target, apply tiered bonus
+        # This properly evaluates configurations where multiple pieces cluster around merge target = high chain probability
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -204,45 +202,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v158: restore v154's stable chain_distance (4.5 fixed)
-                # v157's dynamic expansion (4.5 + landing_y * 0.6) caused score instability
-                chain_distance = 4.5
-
-                # v158: restore v154's stable chain_bonus_multiplier (400.0 fixed)
-                # v157's dynamic strengthening (450.0 + landing_y * 150.0) was too aggressive
-                chain_bonus_multiplier = 400.0
-
-                # collect all merged_type pieces within chain_distance of merge target
-                nearby_pieces = []
+                # v159: density count logic (changed from distance-weighted to count-based)
+                # count merged_type pieces within radius 2.5 of merge target
+                chain_distance = 2.5
+                nearby_count = 0
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
                         if dist < chain_distance:
-                            nearby_pieces.append((dist, p))
+                            nearby_count += 1
 
-                # sort by distance
-                nearby_pieces.sort(key=lambda x: x[0])
-
-                # bonus calculation from closest 3 pieces
-                # 1st: (chain_distance - dist) * chain_bonus_multiplier
-                # 2nd: (chain_distance - dist) * chain_bonus_multiplier / 2.0
-                # 3rd: (chain_distance - dist) * chain_bonus_multiplier / 4.0
-                if len(nearby_pieces) >= 1:
-                    dist, _ = nearby_pieces[0]
-                    chain_bonus = (chain_distance - dist) * chain_bonus_multiplier
+                # v159: tiered bonus based on density count (structural improvement)
+                # >=3 pieces: 350.0 (clustered), >=2 pieces: 150.0 (somewhat clustered), 1 piece: 50.0 (dispersed)
+                if nearby_count >= 1:
+                    if nearby_count >= 3:
+                        chain_bonus = 350.0
+                    elif nearby_count >= 2:
+                        chain_bonus = 150.0
+                    else:
+                        chain_bonus = 50.0
                     score += chain_bonus
-
-                if len(nearby_pieces) >= 2:
-                    dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance - dist) * chain_bonus_multiplier / 2.0
-                    score += chain_bonus
-
-                if len(nearby_pieces) >= 3:
-                    dist, _ = nearby_pieces[2]
-                    chain_bonus = (chain_distance - dist) * chain_bonus_multiplier / 4.0
-                    score += chain_bonus
-
-                if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
         # ----- update best candidate -----
