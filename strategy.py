@@ -29,15 +29,15 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
-# [BEST:3689] v126: v42-based HIGH phase merge enhancement
-# v151-v155: CHAIN_MERGE強化版（係数200.0→300.0→400.0、chain_distance 3.0→3.5→4.0→4.5→5.0）
-# v156: HEIGHT_CONTROL抑制・CHAIN_MERGE促進版 - batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
-# NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=40~52.8と高価値だが選択率が低いことを確認。
-# v155でchain_distance=5.0、chain_bonus=450.0に強化したが、HEIGHT_CONTROL選択率は依然として高い。
-# HEIGHT_CONTROL選択率を下げてCHAIN_MERGE選択を促進するために、height_multiplierを50.0→40.0に削減。
-# v155のchain_distance=5.0、chain_bonus=450.0は維持しつつ、高度ペナルティを約20%削減することで、
-# 高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を高めスコア向上を目指す。
+ # --- Change History ---
+ # [BEST:3689] v126: v42-based HIGH phase merge enhancement
+ # v151-v155: CHAIN_MERGE強化版（係数200.0→300.0→400.0、chain_distance 3.0→3.5→4.0→4.5→5.0）
+ # v157: 動的パラメータ調整版 - batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
+ # NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=40~52.8と高価値だが選択率が低いことを確認。
+ # v155でchain_distance=5.0、chain_bonus=450.0に強化したが、HEIGHT_CONTROL選択率は依然として高い。
+ # v154の動的パラメータ調整ロジックを採用し、調整係数を強化してCHAIN_MERGEの選択率を高めることで、HEIGHT_CONTROLを減らす。
+ # chain_distance_max=5.0+landing_y*0.8、chain_bonus_multiplier=500.0+landing_y*200.0に強化することで、
+ # HIGH_LAYER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROLの選択率を減らしてスコア安定性を向上させる構造的改善。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -45,14 +45,12 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v156: HEIGHT_CONTROL抑制・CHAIN_MERGE促進版
-
-    batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
+    """v157: 動的パラメータ調整版 - batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
     NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=40~52.8と高価値だが選択率が低いことを確認。
     v155でchain_distance=5.0、chain_bonus=450.0に強化したが、HEIGHT_CONTROL選択率は依然として高い。
-    HEIGHT_CONTROL選択率を下げてCHAIN_MERGE選択を促進するために、height_multiplierを50.0→40.0に削減。
-    v155のchain_distance=5.0、chain_bonus=450.0は維持しつつ、高度ペナルティを約20%削減することで、
-    高価値なNEAR_MERGE（特にCHAIN_MERGE付き）の選択率を高めスコア向上を目指す。
+    v154の動的パラメータ調整ロジックを採用し、調整係数を強化してCHAIN_MERGEの選択率を高めることで、HEIGHT_CONTROLを減らす。
+    chain_distance_max=5.0+landing_y*0.8、chain_bonus_multiplier=500.0+landing_y*200.0に強化することで、
+    HIGH_LAYER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROLの選択率を減らしてスコア安定性を向上させる構造的改善。
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -191,10 +189,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v156: HEIGHT_CONTROL抑制・CHAIN_MERGE促進版) -----
-        # v156: batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
+        # ----- evaluation axis 6: chain merge bonus (v157: 動的パラメータ調整版) -----
+        # v157: batch_summary分析でHEIGHT_CONTROLが約28%選択されながらavg_score_delta=2.0と低いこと、
         # NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=40~52.8と高価値だが選択率が低いことを確認。
-        # height_multiplierを50.0→40.0に削減してHEIGHT_CONTROL選択率を下げ、chain_distance=5.0、chain_bonus=450.0を維持してCHAIN_MERGE選択を促進。
+        # v154の動的パラメータ調整ロジックを採用し、調整係数を強化してCHAIN_MERGEの選択率を高めることで、HEIGHT_CONTROLを減らす。
+        # chain_distance_max=5.0+landing_y*0.8、chain_bonus_multiplier=500.0+landing_y*200.0に強化することで、
+        # HIGH_LAYER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROLの選択率を減らしてスコア安定性を向上させる構造的改善。
+        # v155のdensity評価ロジックを採用：chain_distance内の全てのmerged_typeピースを収集し、最も近い3つからボーナス計算。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -203,37 +204,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v155: chain_distance 4.5→5.0に微調整、評価範囲をさらに広げる（v156で維持）
-                chain_distance = 5.0
+                # v157: 動的パラメータ調整ロジック（v154の係数を強化）
+                # chain_distance_max = 5.0 + landing_y*0.8 (v154: 3.5 + landing_y*0.5)
+                # chain_bonus_multiplier = 500.0 + landing_y*200.0 (v154: 400.0 + landing_y*100.0)
+                # 例: landing_y=0.0 → distance_max=5.0, multiplier=500.0
+                # 例: landing_y=1.0 → distance_max=5.8, multiplier=700.0
+                # 例: landing_y=2.0 → distance_max=6.6, multiplier=900.0
+                # 例: landing_y=3.0 → distance_max=7.4, multiplier=1100.0
+                chain_distance_max = 5.0 + landing_y * 0.8
+                chain_bonus_multiplier = 500.0 + landing_y * 200.0
 
                 # collect all merged_type pieces within chain_distance of merge target
                 nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
-                        if dist < chain_distance:
+                        if dist < chain_distance_max:
                             nearby_pieces.append((dist, p))
 
                 # sort by distance
                 nearby_pieces.sort(key=lambda x: x[0])
 
                 # bonus calculation from closest 3 pieces
-                # 1st: (chain_distance - dist) * 450.0 (v155で400.0→450.0、v156で維持)
-                # 2nd: (chain_distance - dist) * 225.0
-                # 3rd: (chain_distance - dist) * 112.5
+                # 1st: (chain_distance - dist) * multiplier * 0.9
+                # 2nd: (chain_distance - dist) * multiplier * 0.45
+                # 3rd: (chain_distance - dist) * multiplier * 0.225
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
-                    chain_bonus = (chain_distance - dist) * 450.0  # v155で強化、v156で維持
+                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.9
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 2:
                     dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance - dist) * 225.0
+                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.45
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 3:
                     dist, _ = nearby_pieces[2]
-                    chain_bonus = (chain_distance - dist) * 112.5
+                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.225
                     score += chain_bonus
 
                 if nearby_pieces:
