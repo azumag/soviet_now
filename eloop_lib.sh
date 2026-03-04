@@ -49,6 +49,8 @@ COMMENT_WATCHER_INTERVAL=10
 COMMENT_WORKER_HEALTH_TTL=30
 COMMENT_PLAYER_HEARTBEAT_FILE="tmp/.comment_queue/player.heartbeat"
 COMMENT_WATCHER_HEARTBEAT_FILE="tmp/.comment_queue/watcher.heartbeat"
+COMMENT_BATCH_HISTORY_FILE="tmp/.comment_queue/processed_batch_hashes.log"
+COMMENT_BATCH_DEDUP_TTL=180
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "tmp/.twitch_chat" tmp
 
 #=== コアヘルパー ===
@@ -1991,6 +1993,35 @@ _kill_comment_gen() {
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
+_is_recent_comment_batch_processed() {
+	local batch_hash="$1"
+	[ -n "$batch_hash" ] || return 1
+	[ -f "$COMMENT_BATCH_HISTORY_FILE" ] || return 1
+	local now
+	now=$(date +%s)
+	awk -F'|' -v h="$batch_hash" -v now="$now" -v ttl="$COMMENT_BATCH_DEDUP_TTL" '
+		$2 == h && (now - $1) <= ttl { found=1 }
+		END { exit(found ? 0 : 1) }
+	' "$COMMENT_BATCH_HISTORY_FILE" 2>/dev/null
+}
+
+_mark_comment_batch_processed() {
+	local batch_hash="$1"
+	[ -n "$batch_hash" ] || return 0
+	local now tmpf
+	now=$(date +%s)
+	tmpf=$(mktemp /tmp/eloop_comment_batch_history_XXXXXXXX)
+	{
+		if [ -f "$COMMENT_BATCH_HISTORY_FILE" ]; then
+			awk -F'|' -v now="$now" -v ttl="$COMMENT_BATCH_DEDUP_TTL" '
+				NF >= 2 && $1 ~ /^[0-9]+$/ && (now - $1) <= (ttl * 3) { print }
+			' "$COMMENT_BATCH_HISTORY_FILE" 2>/dev/null
+		fi
+		echo "${now}|${batch_hash}"
+	} >"$tmpf"
+	mv "$tmpf" "$COMMENT_BATCH_HISTORY_FILE"
+}
+
 _recover_orphan_comment_playing_files() {
 	# コメント用 say_enqueue が動作中なら .playing は現役の可能性が高いので触らない
 	if pgrep -f "say_enqueue.sh --no-preempt .*comment_.*\\.playing" >/dev/null 2>&1; then
@@ -2227,6 +2258,13 @@ generate_comment_response() {
 	fi
 	[ -z "$twitch_comments" ] && return
 
+	local comment_batch_hash=""
+	comment_batch_hash=$(printf '%s' "$twitch_comments" | md5 -q 2>/dev/null || echo "")
+	if _is_recent_comment_batch_processed "$comment_batch_hash"; then
+		log "[COMMENT] 同一コメントバッチを直近で処理済みのためスキップ (batch=$comment_batch_hash)"
+		return
+	fi
+
 	local past_topics=""
 	[ -f "$PAST_RADIO_TOPICS" ] && past_topics=$(cat "$PAST_RADIO_TOPICS")
 	local game_board_context=""
@@ -2293,9 +2331,10 @@ generate_comment_response() {
 - 言い訳をしない。スコアが低い、負けた、ミスした等の指摘には素直に認めて受け入れる。「でも」「ただ」「仕方ない」等で取り繕わない
 - 【最重要】全ての文末を「です・ます」調にすること。「〜だ」「〜である」「〜だった」「〜なのだ」は1文も許可しない
 - 各コメントへの返事は最低2-3文。もっと長くなっても構わない。短すぎる一言返しはNG
-	- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
-	- 「それな」「それって」「さっきの」「草」など文脈依存コメントは、コメント前後文脈と直前履歴を使って対象を推定してから返事すること
-	- 文脈が曖昧な場合は、断定せずに「この話のことですよね？」のように確認を挟んで返すこと
+- 同一コメントの読み上げ・返信を1回の出力内で繰り返さないこと。各コメントへの返事は必ず1回だけにする
+		- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
+		- 「それな」「それって」「さっきの」「草」など文脈依存コメントは、コメント前後文脈と直前履歴を使って対象を推定してから返事すること
+		- 文脈が曖昧な場合は、断定せずに「この話のことですよね？」のように確認を挟んで返すこと
 	- コメントの内容をまず読み上げ、そのあとに自分の感想・意見・連想を返す
 - コメントから話を膨らませる：関連する自分のエピソード、ツッコミ、豆知識、冗談などを足す
 - リスナーの気持ちに寄り添いつつ、独自の視点や感情を込める
@@ -2315,35 +2354,42 @@ generate_comment_response() {
 - 戦略アドバイスがなければ ===ADVICE=== は出力しない
 COMMENTPROMPT
 
-		echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
-		log "[COMMENT] コメント返し生成中..."
-		local comments_talk
-		comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
-		comments_talk=$(_clean_comment_talk "$comments_talk")
-		comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
-		if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
-			log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → fallback"
-			comments_talk=""
-		fi
-		if [ -z "$comments_talk" ]; then
-			comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
+			echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
+			log "[COMMENT] コメント返し生成中..."
+			local comments_talk comment_model_used
+			comment_model_used=""
+			comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
+			comment_model_used="$RADIO_AGENT"
 			comments_talk=$(_clean_comment_talk "$comments_talk")
 			comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
 			if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
-				log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback"
+				log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → fallback"
 				comments_talk=""
+				comment_model_used=""
 			fi
-		fi
-		if [ -z "$comments_talk" ]; then
-			comments_talk=$(_run_claude_radio "$comment_prompt_file")
-			comments_talk=$(_clean_comment_talk "$comments_talk")
-			comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
-			if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
-				log "[COMMENT] claude 出力が不正/短文のため破棄"
-				comments_talk=""
+			if [ -z "$comments_talk" ]; then
+				comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
+				comment_model_used="$RADIO_FALLBACK"
+				comments_talk=$(_clean_comment_talk "$comments_talk")
+				comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
+				if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
+					log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback"
+					comments_talk=""
+					comment_model_used=""
+				fi
 			fi
-		fi
-		rm -f "$comment_prompt_file"
+			if [ -z "$comments_talk" ]; then
+				comments_talk=$(_run_claude_radio "$comment_prompt_file")
+				comment_model_used="claude:${RADIO_CLAUDE_MODEL}"
+				comments_talk=$(_clean_comment_talk "$comments_talk")
+				comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
+				if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
+					log "[COMMENT] claude 出力が不正/短文のため破棄"
+					comments_talk=""
+					comment_model_used=""
+				fi
+			fi
+			rm -f "$comment_prompt_file"
 
 		if [ -n "$comments_talk" ]; then
 			# 戦略アドバイスを抽出して tmp/advice.md に追記
@@ -2373,16 +2419,18 @@ COMMENTPROMPT
 				local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
 				echo "$comments_talk" >"$queue_file"
 				# 生成直後に重複チェック（同じ内容のキューファイルがないか）
-				local new_hash
-				new_hash=$(md5 -q "$queue_file" 2>/dev/null)
-				if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
-					log "[COMMENT] 重複コメント返し検出 → 破棄 (hash=$new_hash)"
-					rm -f "$queue_file"
-				else
-					log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file"
+					local new_hash
+					new_hash=$(md5 -q "$queue_file" 2>/dev/null)
+					if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
+						log "[COMMENT] 重複コメント返し検出 → 破棄 (hash=$new_hash)"
+						_mark_comment_batch_processed "$comment_batch_hash"
+						rm -f "$queue_file"
+					else
+						_mark_comment_batch_processed "$comment_batch_hash"
+						log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file (model=${comment_model_used:-unknown}, batch=${comment_batch_hash:-none})"
+					fi
 				fi
-			fi
-		else
+			else
 			log "[COMMENT] コメント返し生成失敗（次回再取得）"
 		fi
 		rm -f tmp/.comment_gen_state
