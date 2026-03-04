@@ -18,11 +18,62 @@ PID_FILE="$CHAT_DIR/daemon.pid"
 OFFSET_FILE="$CHAT_DIR/last_offset" # 前回fetchした行数
 PENDING_LOG="$CHAT_DIR/pending.log"  # 未読み上げキュー
 OUTFILE="tmp/twitch_comments.txt"
+LOCK_DIR="$CHAT_DIR/.op_lock"
+LOCK_TIMEOUT_SEC=8
+LOCK_STALE_SEC=120
 
 CMD="${1:-fetch}"
 CHANNEL="${2:-azumagbanjo}"
 
 _log() { echo "[twitch_chat $(date '+%H:%M:%S')] $*" >&2; }
+
+_release_lock() {
+    [ -d "$LOCK_DIR" ] || return 0
+    local lock_pid
+    lock_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
+    if [ -z "$lock_pid" ] || [ "$lock_pid" = "$$" ]; then
+        rm -rf "$LOCK_DIR" 2>/dev/null || true
+    fi
+}
+
+_acquire_lock() {
+    local op_name="${1:-op}"
+    local start_ts now_ts lock_age lock_pid
+    start_ts=$(date +%s)
+    while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+        # 孤立ロック回収: PID死亡 or ロックが古すぎる
+        if [ -f "$LOCK_DIR/pid" ]; then
+            lock_pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")
+            if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+                rm -rf "$LOCK_DIR" 2>/dev/null || true
+                continue
+            fi
+        fi
+        now_ts=$(date +%s)
+        lock_age=$((now_ts - $(stat -f %m "$LOCK_DIR" 2>/dev/null || echo "$now_ts")))
+        if [ "$lock_age" -ge "$LOCK_STALE_SEC" ]; then
+            rm -rf "$LOCK_DIR" 2>/dev/null || true
+            continue
+        fi
+        if [ $((now_ts - start_ts)) -ge "$LOCK_TIMEOUT_SEC" ]; then
+            _log "${op_name}: lock timeout"
+            return 1
+        fi
+        sleep 0.1
+    done
+    echo "$$" > "$LOCK_DIR/pid" 2>/dev/null || true
+    return 0
+}
+
+_with_chat_lock() {
+    local op_name="$1"
+    shift
+    _acquire_lock "$op_name" || return 1
+    "$@"
+    local rc=$?
+    _release_lock
+    return $rc
+}
 
 # 同一チャンネルの daemon PID を列挙
 _daemon_pids() {
@@ -81,7 +132,7 @@ _start() {
 }
 
 #--- fetch: 前回からの差分を取得してサニタイズ → pending.logに蓄積 ---
-_fetch() {
+_fetch_nolock() {
     local new_sanitized=""
 
     # raw.logから新規コメントを取得
@@ -139,8 +190,12 @@ _fetch() {
     fi
 }
 
+_fetch() {
+    _with_chat_lock "fetch" _fetch_nolock
+}
+
 #--- ack: 読み上げ完了後にpending.logをクリア ---
-_ack() {
+_ack_nolock() {
     if [ -f "$PENDING_LOG" ] && [ -s "$PENDING_LOG" ]; then
         local count
         count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
@@ -149,6 +204,20 @@ _ack() {
     else
         _log "ack: pending.logは空"
     fi
+}
+
+_ack() {
+    _with_chat_lock "ack" _ack_nolock
+}
+
+#--- claim: fetch + pending snapshot + ack をロック下で一括処理 ---
+_claim_nolock() {
+    _fetch_nolock
+    _ack_nolock
+}
+
+_claim() {
+    _with_chat_lock "claim" _claim_nolock
 }
 
 #--- stop ---
@@ -201,7 +270,8 @@ case "$CMD" in
     start)  _start ;;
     fetch)  _fetch ;;
     ack)    _ack ;;
+    claim)  _claim ;;
     stop)   _stop ;;
     status) _status ;;
-    *)      echo "Usage: $0 {start|fetch|ack|stop|status} [channel]" >&2; exit 1 ;;
+    *)      echo "Usage: $0 {start|fetch|ack|claim|stop|status} [channel]" >&2; exit 1 ;;
 esac
