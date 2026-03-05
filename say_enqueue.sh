@@ -91,7 +91,7 @@ _acquire_lock() {
             esac
             now=$(date +%s)
             lock_age=$((now - lock_hb))
-            if [ "$owner_alive" = false ] && [ "$lock_age" -gt 120 ]; then
+            if [ "$owner_alive" = false ] && [ "$lock_age" -gt 30 ]; then
                 _log "stale lock検出 (owner=${lock_owner:-?}, ${lock_age}秒) → 強制解除"
                 rm -f "$LOCK_OWNER_FILE" "$LOCK_HEARTBEAT_FILE" 2>/dev/null
                 rmdir "$LOCK_DIR" 2>/dev/null
@@ -195,14 +195,15 @@ nohup say -r "$RATE" -f "$MY_CONTENT" > /dev/null 2>&1 &
 SAY_PID=$!
 echo "$SAY_PID" > "$PID_FILE"
 
-# ロック解放（say起動+PID記録が完了したので安全）
-_release_lock
-
-# sayの完了をポーリングで待つ
-# このスクリプトが殺されてもsayはnohupで生き残る
+# sayの完了をロック内で待つ（他プロセスのsay起動を確実にブロック）
+# ロックを保持し続けることで、二重再生を構造的に防止する
 while kill -0 "$SAY_PID" 2>/dev/null; do
+    _touch_lock_heartbeat
     sleep 2
 done
+
+# ロック解放（say完了後）
+_release_lock
 
 _log "say終了"
 # 自分のPIDの場合のみ削除（他プロセスが上書きした場合は残す）
