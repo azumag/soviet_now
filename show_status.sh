@@ -249,7 +249,7 @@ if h and h in rs:
 	[[ -f score_history.txt ]] && last_scores=$(tail -5 score_history.txt 2>/dev/null | tr '\n' ' ')
 
 	# --- 戦略情報 ---
-	local strategy_ver=$(ls -1t strategy_versions/v[0-9]*_strategy.py 2>/dev/null | head -1 | xargs basename 2>/dev/null)
+	local strategy_ver=$(ls -1t strategy_versions/v[0-9]*_score[0-9]*_strategy.py 2>/dev/null | head -1 | xargs basename 2>/dev/null)
 	local strategy_lines=$(wc -l < strategy.py 2>/dev/null | tr -d ' ')
 	local strategy_decide_hash="?"
 	strategy_decide_hash=$(python3 extract_decide_hash.py strategy.py 2>/dev/null || echo "?")
