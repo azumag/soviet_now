@@ -13,7 +13,7 @@ Decision Logic (6 evaluation axes):
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition, v158: stable parameters)
+  6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition, v160: v154 stable distance + enhanced bonus)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -37,6 +37,7 @@ Phases (determined by board max Y):
 # v157: Dynamic parameter adjustment - Adopt v154's dynamic adjustment logic with enhanced coefficients to promote CHAIN_MERGE and reduce HEIGHT_CONTROL
 # v158: Restore v154 stable parameters - v157's dynamic adjustment (chain_distance_max=4.5+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0) caused score instability similar to v155's failure pattern (chain_distance=5.0 was too wide causing evaluation roughness). Revert to v154's stable fixed parameters (chain_distance=4.5, chain_bonus_multiplier=400.0) for evaluation precision. Keep v154's density evaluation logic (3 closest pieces with distance-weighted bonus).
 # v159: Restore v155 parameters - v158's rollback to v154 (chain_distance=4.5, chain_bonus=400.0) was a mistake. Restore v155's successful parameters (chain_distance=5.0, chain_bonus=450.0) to increase CHAIN_MERGE selection rate.
+# v160: HEIGHT_CONTROL reduction + CHAIN_MERGE promotion - v158's v154 rollback (chain_distance=4.5, chain_bonus=400.0) reduced CHAIN_MERGE selection rate too much. v160 combines v154's stable chain_distance=4.5 for evaluation precision with enhanced chain_bonus=500.0 (stronger than v155) to promote CHAIN_MERGE selection. Reduce height_multiplier from 50.0 to 40.0 to decrease HEIGHT_CONTROL selection rate (currently 27.1% with low avg_score_delta=2.0). This balances evaluation precision (v154) with strong CHAIN_MERGE promotion (v155+) while reducing HEIGHT_CONTROL overuse.
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -44,22 +45,24 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v159: Restore v155 parameters
+    """v160: HEIGHT_CONTROL reduction + CHAIN_MERGE promotion
 
-    v158's rollback to v154 (chain_distance=4.5, chain_bonus_multiplier=400.0) was a mistake.
-    v155's parameters achieved the best score (4026) with:
-    - chain_distance: 5.0 (fixed, evaluate wider merge opportunities)
-    - chain_bonus_multiplier: 450.0 (fixed, stronger chain merge bonus)
-    - density evaluation logic (3 closest pieces with distance-weighted bonus)
-    
-    Reverting to v155's successful parameters to increase CHAIN_MERGE selection rate.
+    batch_summary analysis shows:
+    - HEIGHT_CONTROL selected 27.1% with avg_score_delta=2.0 (low value, overused)
+    - CHAIN_MERGE-related reasons have high avg_score_delta (28.2-61.6) but only 18.6% selection rate
+    - v155 achieved best score 4026 with chain_distance=5.0, chain_bonus=450.0
+    - v158 correctly identified that chain_distance=5.0 is too wide (evaluation roughness)
+    - v158's rollback to v154 (chain_distance=4.5, chain_bonus=400.0) reduced CHAIN_MERGE selection too much
 
-    v157's dynamic parameter adjustment (chain_distance_max=4.5+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0)
-    caused score instability similar to v155's failure pattern (chain_distance=5.0 was too wide causing evaluation roughness).
-    Revert to v154's stable fixed parameters to improve evaluation precision:
-    - chain_distance: 4.5 (fixed, restore from v157's dynamic expansion)
-    - chain_bonus_multiplier: 400.0 (fixed, restore from v157's dynamic strengthening)
-    - Keep v154's density evaluation logic (3 closest pieces with distance-weighted bonus)
+    v160 combines the best of v154/v155:
+    - chain_distance=4.5 (v154 stable value for evaluation precision)
+    - chain_bonus_multiplier=500.0 (enhanced from v155's 450.0 to promote CHAIN_MERGE)
+    - height_multiplier: 50.0->40.0 (reduce HEIGHT_CONTROL selection rate)
+
+    This balances:
+    1. Evaluation precision (v154's stable chain_distance=4.5)
+    2. Strong CHAIN_MERGE promotion (chain_bonus=500.0 > v155's 450.0)
+    3. HEIGHT_CONTROL reduction (height_multiplier 50.0->40.0)
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -153,7 +156,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
-        height_penalty = landing_y * 50.0 * height_mult
+        height_penalty = landing_y * 40.0 * height_mult  # v160: 50.0->40.0 reduce HEIGHT_CONTROL
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -197,11 +200,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-         # ----- evaluation axis 6: chain merge bonus (v159: v155 parameters) -----
-         # v159: Restore v155's successful parameters (chain_distance=5.0, chain_bonus_multiplier=450.0).
-         # v155 achieved best score 4026 with these parameters.
-         # v158's rollback to v154 (4.5/400.0) was a mistake.
-         # Revert to v155's parameters to increase CHAIN_MERGE selection rate.
+         # ----- evaluation axis 6: chain merge bonus (v160: v154 stable distance + enhanced bonus) -----
+         # v160: Combine v154's stable chain_distance=4.5 for evaluation precision
+         # with enhanced chain_bonus=500.0 (stronger than v155's 450.0) to promote CHAIN_MERGE selection.
+         # Reduce height_multiplier from 50.0 to 40.0 to decrease HEIGHT_CONTROL selection rate.
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -210,10 +212,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                 # v159: restore v155's successful parameters (chain_distance=5.0, chain_bonus=450.0)
-                 # v155 achieved best score 4026 with these parameters
-                chain_distance = 5.0
-                chain_bonus_multiplier = 450.0
+                # v160: v154's stable chain_distance=4.5 for evaluation precision
+                # v155's chain_distance=5.0 was too wide causing evaluation roughness.
+                # v158 correctly reverted to v154's 4.5.
+                chain_distance = 4.5
+
+                # v160: Enhanced chain_bonus to 500.0 (stronger than v155's 450.0) to promote CHAIN_MERGE
+                chain_bonus_multiplier = 500.0
 
                 # collect all merged_type pieces within chain_distance of merge target
                 nearby_pieces = []
