@@ -32,8 +32,10 @@ Phases (determined by board max Y):
 # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # v151-v155: CHAIN_MERGE enhanced versions (coefficients 200.0->300.0->400.0, chain_distance 3.0->3.5->4.0->4.5->5.0)
-# v156: v42/v126 success structure restore, CHAIN_MERGE removed
-# v157: Dynamic parameter adjustment - Adopt v154's dynamic adjustment logic with enhanced coefficients to promote CHAIN_MERGE and reduce HEIGHT_CONTROL
+# [BEST:4026] v155: chain_distance 4.5->5.0, chain_bonus 400.0->450.0 achieved best score 4026
+# v156: v42/v126成功構造復帰・CHAIN_MERGE削除版 - v153-v155のCHAIN_MERGE過剰強化の振り子パターンを解消
+# v162: MEDIUMフェーズバランス補正強化版 - v155の成功パラメータ（chain_distance=5.0、chain_bonus=450.0）を維持しつつ、MEDIUMフェーズでのバランス補正を強化（balance_strength 35.0→40.0）
+# v164: v155成功パラメータ復帰・バランス補正強化版 - v162の密度カウント版からv154/v155の密度評価ロジック（3つの最も近いピース評価）に戻す。v155の成功パラメータ（chain_distance=5.0、chain_bonus_multiplier=450.0）を維持し、v162のバランス補正強化（MEDIUM: 40.0）を組み合わせる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -41,13 +43,11 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v157: Dynamic parameter adjustment version
+    """v164: v155成功パラメータ復帰・バランス補正強化版
 
-    Adopt v154's dynamic adjustment logic (chain_distance_max=5.0+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0)
-    with enhanced coefficients (chain_distance_max=4.5+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0) to:
-    1. Reduce chain_distance from v155's 5.0 to 4.5 (fixed) to improve evaluation precision while maintaining broader range than v153's 4.0
-    2. Strengthen chain_bonus multiplier adjustment coefficient from v154's 100.0 to 150.0 to enhance CHAIN_MERGE promotion in HIGH_LAYER
-    3. Force CHAIN_MERGE selection in HIGH_LAYER situations and reduce HEIGHT_CONTROL selection
+    v163の密度カウント版（v154の密度評価ロジックから変更）を破棄し、v154/v155の密度評価ロジック（3つの最も近いピースを距離重みで評価）に戻す。
+    v155の成功パラメータ（chain_distance=5.0、chain_bonus_multiplier=450.0）で達成した4026点の成功構造を復帰。
+    動的パラメータ調整を削除し評価精度向上。同時にv162のバランス補正強化（MEDIUM: 40.0）を維持し、盤面の左右バランスを改善。
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -160,15 +160,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # ----- evaluation axis 4: left-right balance correction (v148: enhanced) -----
+        # ----- evaluation axis 4: left-right balance correction (v162: enhanced) -----
         # bonus for correcting left-right piece count bias.
         # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
-        # v148: higher board increases balance_strength, strictens balance control
+        # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 50.0  # v148: HIGH balance control even stricter (40.0->50.0)
         elif phase == "MEDIUM":
-            balance_strength = 35.0  # v148: MEDIUM also strengthen balance control (30.0->35.0)
+            balance_strength = 40.0  # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -185,12 +185,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v157: dynamic parameter adjustment) -----
-        # v157: Dynamic parameter adjustment - reduce chain_distance from v155's 5.0 to 4.5 for precision,
-        # strengthen chain_bonus multiplier adjustment coefficient from v154's 100.0 to 150.0.
-        # chain_distance_max = 4.5 + landing_y * 0.6 (dynamic expansion)
-        # chain_bonus_multiplier = 450.0 + landing_y * 150.0 (dynamic bonus)
-        # This forces CHAIN_MERGE selection in HIGH_LAYER and reduces HEIGHT_CONTROL.
+        # ----- evaluation axis 6: chain merge bonus (v164: v155 stable parameters + v162 balance enhancement) -----
+        # v164: Revert to v154/v155 density evaluation logic (3 closest pieces with distance-weighted bonus).
+        # v163's density count version (v162's change from v154) is discarded.
+        # v155's successful parameters (chain_distance=5.0, chain_bonus_multiplier=450.0) are maintained.
+        # This combines v155's successful parameters with v162's balance correction enhancement.
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -199,15 +198,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v157: dynamic chain_distance - reduce from v155's 5.0 fixed to 4.5 + landing_y * 0.6
-                # v155's 5.0 was too wide causing evaluation roughness, reduce to improve precision
-                # but keep dynamic expansion for HIGH_LAYER situations
-                chain_distance_max = 4.5 + landing_y * 0.6
-
-                # v157: dynamic chain_bonus_multiplier - strengthen from v154's 100.0 to 150.0
-                # v154's coefficient 100.0 was insufficient to promote CHAIN_MERGE in HIGH_LAYER
-                # enhance to force CHAIN_MERGE selection and reduce HEIGHT_CONTROL
-                chain_bonus_multiplier = 450.0 + landing_y * 150.0
+                # v164: v155's stable parameters (chain_distance=5.0 fixed, chain_bonus_multiplier=450.0 fixed)
+                # v155 achieved best score 4026 with these parameters.
+                chain_distance_max = 5.0
+                chain_bonus_multiplier = 450.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
@@ -220,7 +214,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # sort by distance
                 nearby_pieces.sort(key=lambda x: x[0])
 
-                # bonus calculation from closest 3 pieces
+                # bonus calculation from closest 3 pieces (v154/v155 density evaluation logic)
                 # 1st: (chain_distance_max - dist) * chain_bonus_multiplier
                 # 2nd: (chain_distance_max - dist) * chain_bonus_multiplier / 2.0
                 # 3rd: (chain_distance_max - dist) * chain_bonus_multiplier / 4.0
