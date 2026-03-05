@@ -37,7 +37,6 @@ Phases (determined by board max Y):
 # v162: MEDIUMフェーズバランス補正強化版 - v155の成功パラメータ（chain_distance=5.0、chain_bonus=450.0）を維持しつつ、MEDIUMフェーズでのバランス補正を強化（balance_strength 35.0→40.0）
 # v164: v155成功パラメータ復帰・バランス補正強化版 - v162の密度カウント版からv154/v155の密度評価ロジック（3つの最も近いピース評価）に戻す。v155の成功パラメータ（chain_distance=5.0、chain_bonus_multiplier=450.0）を維持し、v162のバランス補正強化（MEDIUM: 40.0）を組み合わせる。
 # v165: Chain merge density evaluation - Fix CHAIN_MERGE logic to evaluate merged_type piece density instead of just closest distance. This improves chain merge opportunity evaluation accuracy. Based on batch_summary showing HEIGHT_CONTROL has very low avg_score_delta=0.5 (26.2% selection rate) while CHAIN_MERGE-related reasons have high avg_score_delta=26.0-44.8 but low selection rate. Density evaluation better captures configurations where multiple merged_type pieces cluster around merge target, indicating high chain probability.
-# v166: Balanced chain merge evaluation - v155's chain_distance=5.0 is too wide causing evaluation roughness (per v164 analysis). Combine v154's precise chain_distance=4.5 with enhanced chain_bonus=500.0 to balance evaluation precision and CHAIN_MERGE selection rate. This addresses batch_summary showing CHAIN_MERGE avg_score_delta=26.0-44.8 with only ~18% selection rate, while HEIGHT_CONTROL has 26.2% selection rate with avg_score_delta=0.5.
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -45,19 +44,10 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v166: Balanced chain merge evaluation
+    """v165: Chain merge density evaluation
 
-    Combine v154's precise chain_distance=4.5 with enhanced chain_bonus=500.0 to balance
-    evaluation precision and CHAIN_MERGE selection rate.
-
-    v155's chain_distance=5.0 is too wide causing evaluation roughness (per v164 analysis).
-    v164's chain_distance=4.5 provides better precision but reduces selection rate.
-    v166 compensates by strengthening chain_bonus to maintain CHAIN_MERGE selection rate
-    while improving evaluation precision.
-
-    This addresses batch_summary showing:
-    - CHAIN_MERGE avg_score_delta=26.0-44.8 with only ~18% selection rate (should increase)
-    - HEIGHT_CONTROL has 26.2% selection rate with avg_score_delta=0.5 (too high, should decrease)
+    Fix CHAIN_MERGE logic to evaluate merged_type piece density instead of just closest distance.
+    This improves chain merge opportunity evaluation accuracy.
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -195,12 +185,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v166: balanced evaluation) -----
-        # v166: Combine v154's precise chain_distance=4.5 with enhanced chain_bonus=500.0
-        # v155's chain_distance=5.0 is too wide causing evaluation roughness (per v164 analysis)
-        # v154's chain_distance=4.5 provides better precision but reduces selection rate
-        # v166 compensates by strengthening chain_bonus from 450.0 to 500.0 to maintain
-        # CHAIN_MERGE selection rate while improving evaluation precision
+        # ----- evaluation axis 6: chain merge bonus (v165: density evaluation) -----
+        # v165: Changed from closest distance evaluation to density evaluation.
+        # Evaluate how many merged_type pieces are within chain_distance of merge target.
+        # This better captures configurations where multiple pieces cluster around merge target = high chain probability.
+        # v155's successful parameters: chain_distance=5.0, chain_bonus_multiplier=450.0
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -209,9 +198,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v166: Use v154's precise chain_distance=4.5 instead of v155's wide 5.0
-                # This improves evaluation precision by reducing false-positive chain evaluations
-                chain_distance = 4.5
+                # v165: Evaluate density of merged_type pieces within chain_distance
+                # Count pieces within distance, not just closest one
+                chain_distance = 5.0
                 nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
@@ -223,25 +212,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 nearby_pieces.sort(key=lambda x: x[0])
 
                 # Bonus calculation based on piece density (count, not just closest distance)
-                # v166: Enhanced chain_bonus from 450.0 to 500.0 to compensate for
-                # chain_distance reduction and maintain CHAIN_MERGE selection rate
-                # This balances evaluation precision (narrower distance) with selection promotion (stronger bonus)
+                # v165: Use count-based tiered bonus
                 # 1st piece: (chain_distance - dist) * chain_bonus_multiplier
                 # 2nd piece: (chain_distance - dist) * chain_bonus_multiplier * 0.5
                 # 3rd piece: (chain_distance - dist) * chain_bonus_multiplier * 0.25
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
-                    chain_bonus = (chain_distance - dist) * 500.0
+                    chain_bonus = (chain_distance - dist) * 450.0
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 2:
                     dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance - dist) * 500.0 * 0.5
+                    chain_bonus = (chain_distance - dist) * 450.0 * 0.5
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 3:
                     dist, _ = nearby_pieces[2]
-                    chain_bonus = (chain_distance - dist) * 500.0 * 0.25
+                    chain_bonus = (chain_distance - dist) * 450.0 * 0.25
                     score += chain_bonus
 
                 if nearby_pieces:
