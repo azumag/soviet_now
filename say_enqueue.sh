@@ -1,14 +1,14 @@
 #!/bin/bash
-# say_enqueue.sh - mkdirロックベースのsayキュー（最新が勝つ・プリエンプション付き）
+# say_enqueue.sh - mkdirロックベースのsayキュー（FIFO順次再生）
 #
 # 使い方: ./say_enqueue.sh [--no-preempt] <content_file> [rate] [pre_delay_sec]
 #
-# --no-preempt: プリエンプションチェックをスキップ（コメント読み上げ等、途中で切られたくない場合）
+# --no-preempt: 後方互換のため受け付ける（現在は常に順次再生）
 #
 # 動作:
-#   1. コンテンツコピー + トークン登録
-#   2. mkdirロック取得（待機 + プリエンプション確認）
-#   3. ロック内: 前のsay PID待ち + プリエンプション確認
+#   1. コンテンツコピー
+#   2. mkdirロック取得（取得できるまで待機）
+#   3. ロック内: 前のsay PID待ち
 #   4. ロック内: nohup say起動 + PID記録
 #   5. ロック解放
 #   6. say完了待ち + クリーンアップ
@@ -30,7 +30,6 @@ CONTENT_FILE="${1:?Usage: say_enqueue.sh [--no-preempt] <content_file> [rate]}"
 RATE="${2:-120}"
 
 PID_FILE="$QUEUE_DIR/pid"
-TOKEN_FILE="$QUEUE_DIR/token"
 LOCK_DIR="$QUEUE_DIR/.lock"
 LOCK_OWNER_FILE="$LOCK_DIR/owner_pid"
 LOCK_HEARTBEAT_FILE="$LOCK_DIR/heartbeat"
@@ -50,19 +49,7 @@ cp "$CONTENT_FILE" "$MY_CONTENT"
 # 読み上げ修正: "AI" → "エーアイ"
 sed -i '' 's/AI/エーアイ/g' "$MY_CONTENT"
 
-# トークン登録（通常リクエストのみ）
-# --no-preempt は「途中で切られない」用途なので、
-# 他の通常リクエストをプリエンプトしないようトークンを更新しない。
-if [ "$NO_PREEMPT" = false ]; then
-    echo "$MY_TOKEN" > "$TOKEN_FILE"
-fi
-
 _log() { echo "[say_enqueue $(date '+%H:%M:%S')] $*" >&2; echo "[say_enqueue $(date '+%H:%M:%S') PID=$$/${BASHPID:-?}] $* | file=$CONTENT_FILE token=$MY_TOKEN" >> tmp/.say_queue/debug.log; }
-
-_is_preempted() {
-    [ "$NO_PREEMPT" = true ] && return 1
-    [ "$(cat "$TOKEN_FILE" 2>/dev/null)" != "$MY_TOKEN" ]
-}
 
 _touch_lock_heartbeat() {
     [ -d "$LOCK_DIR" ] || return 0
@@ -72,9 +59,6 @@ _touch_lock_heartbeat() {
 
 # mkdirロック: アトミックな排他制御（macOS互換）
 _acquire_lock() {
-    # --no-preempt: 必ず再生したいのでタイムアウトなし
-    # 通常: 30秒でタイムアウト
-    local max_wait=60 waited=0
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
         # stale lock検出: 所有PIDが死んでおり、heartbeatも古い場合のみ強制解除
         if [ -d "$LOCK_DIR" ]; then
@@ -98,14 +82,7 @@ _acquire_lock() {
                 continue
             fi
         fi
-        if [ "$NO_PREEMPT" = false ] && [ "$waited" -ge "$max_wait" ]; then
-            return 1
-        fi
-        if _is_preempted; then
-            return 2
-        fi
         sleep 0.5
-        waited=$((waited + 1))
     done
     _touch_lock_heartbeat
     return 0
@@ -129,11 +106,7 @@ _log "queued (token=${MY_TOKEN})"
 _acquire_lock
 lock_ret=$?
 if [ "$lock_ret" -ne 0 ]; then
-    if [ "$lock_ret" -eq 2 ]; then
-        _log "ロック待ち中にプリエンプト → 諦め"
-    else
-        _log "ロック取得タイムアウト → 諦め"
-    fi
+    _log "ロック取得失敗 → 諦め"
     exit 0
 fi
 
@@ -144,35 +117,18 @@ if [ -f "$PID_FILE" ]; then
         _log "前のsay (PID=$PREV_PID) がまだ再生中 → 終了待ち"
         while kill -0 "$PREV_PID" 2>/dev/null; do
             _touch_lock_heartbeat
-            if _is_preempted; then
-                _log "say待ち中にプリエンプト → 諦め"
-                exit 0
-            fi
             sleep 1
         done
     fi
     rm -f "$PID_FILE"
 fi
 
-# --- ロック内: 最終プリエンプションチェック ---
-if _is_preempted; then
-    _log "最終チェックでプリエンプト → 諦め"
-    exit 0
-fi
-
 # --- ロック内: 既存sayプロセス終了待ち（PIDファイル漏れ対策） ---
-# --no-preempt は「絶対に重ねない」ことを優先し、全sayが終わるまで待機を継続する。
-# （過去の30秒タイムアウト切替は、コメントとラジオの同時再生を引き起こすことがあるため廃止）
-_say_pgrep_wait=0
+# 絶対に重ねないことを優先し、全sayが終わるまで待機する
 while pgrep -x say >/dev/null 2>&1; do
     _touch_lock_heartbeat
-    if _is_preempted; then
-        _log "say待機中にプリエンプト → 諦め"
-        exit 0
-    fi
     [ "${_say_wait_logged:-0}" -eq 0 ] && _log "既存sayプロセス検出 → 終了待ち" && _say_wait_logged=1
     sleep 1
-    _say_pgrep_wait=$((_say_pgrep_wait + 1))
 done
 
 # --- ロック内: トーク開始前の間（ロック外でやると他がすり抜けるのでロック内で） ---
@@ -181,10 +137,6 @@ _log "トーク開始まで ${PRE_DELAY}秒 待機..."
 waited_pre=0
 while [ "$waited_pre" -lt "$PRE_DELAY" ]; do
     _touch_lock_heartbeat
-    if _is_preempted; then
-        _log "待機中にプリエンプト → 諦め"
-        exit 0
-    fi
     sleep 1
     waited_pre=$((waited_pre + 1))
 done

@@ -300,14 +300,11 @@ def run_game():
                 if gs.get("makeSorenCount", 0) > 0:
                     soviet_created = True
                     log(f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} makeSorenCount={gs.get('makeSorenCount', 0)}")
-                    # say即停止（ゲーム音声を聞かせるため）
-                    import subprocess
-                    subprocess.run(["pkill", "-x", "say"], capture_output=True)
                     # フラグファイル作成（eloop.shが参照）
                     os.makedirs("tmp", exist_ok=True)
                     with open("tmp/.soviet_created", "w") as flag_f:
                         flag_f.write(f"{turn}\n")
-                    log("say停止完了 → ゲーム音声再生中")
+                    log("ソ連建国フラグ記録完了（読み上げはキュー順で継続）")
 
             # 盤面解析
             analysis = build_analysis(gs)
