@@ -47,6 +47,9 @@ Phases (determined by board max Y):
 # ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
 # v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
 # これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
+# v174: 序盤CHAIN_MERGE促進版 - ワーストゲーム(score0614)で序盤（初期5ターン）にDEFAULT_PLACEMENT/BOARD_DENSITYが選択され、
+# 併合機会を逃している失敗パターンを特定。初期5ターンのheight_multiplierを0.05に強化し、BOARD_DENSITYのdensity_bonus閾値を10.0→15.0に引き上げ、
+# 序盤での無意味な配置を抑制してCHAIN_MERGE選択率を向上させる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -54,18 +57,21 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v173: 序盤HEIGHT_CONTROL抑制超強化版
+    """v174: 序盤CHAIN_MERGE促進版
     
-    batch_summaryでDEFAULT_PLACEMENTが20.7%選択(avg_score_delta=2.2)と依然として高いことを確認。
-    ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
+    ワーストゲーム(score0614)で序盤（初期5ターン）にDEFAULT_PLACEMENT/BOARD_DENSITYが選択され、
+    併合機会を逃している失敗パターンを特定。初期5ターンのheight_multiplierを0.05に強化し、
+    BOARD_DENSITYのdensity_bonus閾値を10.0→15.0に引き上げ、序盤での無意味な配置を抑制してCHAIN_MERGE選択率を向上させる。
     
-    v173の改善点:
-    1. early game判定をmax_y < -2.0 → max_y < -3.0に拡大
-       - ワーストゲーム序盤(max_y=-5.0～-2.02)でのDEFAULT_PLACEMENT選択を超強力に抑制
-       - 盤面がまだ低い段階（max_y < -3.0）ではHEIGHT_CONTROLを超強力に抑制し、併合機会を最優先
-    2. height_multiplierを0.2→0.1に削減
-       - v172の0.2でもDEFAULT_PLACEMENTが高い（20.7%）ため、さらに超強力に抑制
-    3. v172のボード密度評価軸とv170の序盤HEIGHT_CONTROL抑制を維持
+    v174の改善点:
+    1. 初期5ターン（piece_count <= 5）でのHEIGHT_CONTROL抑制を超強化
+       - height_multiplierを0.05に設定し、初期数ターンでの併合機会を最優先
+       - 高スコア群と低スコア群のmax_y推移差（初期差0.39 vs 終盤差1.64）から、
+         序盤の高さ稼ぎ能力がスコア差の主要原因であることを確認
+    2. BOARD_DENSITYのdensity_bonus閾値を10.0→15.0に引き上げ
+       - 序盤では密度差がほとんどなく、微小な密度差でのボーナス適用を抑制
+       - 中盤以降では密度差が大きくなり、有効に機能することを期待
+    3. v173のearly_game判定(max_y < -3.0)とv171のBOARD_DENSITY評価軸を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -94,6 +100,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
+    piece_count = len(pieces)
+    
+    # --- v174: 初期5ターン判定を追加 ---
+    # ワーストゲーム(score0614)で初期5ターンにDEFAULT_PLACEMENT/BOARD_DENSITYが選択され、
+    # 併合機会を逃している失敗パターンを特定。初期5ターンではHEIGHT_CONTROLを超強力に抑制。
+    very_early_game = piece_count <= 5
     
     # --- v173: 序盤判定をmax_y < -3.0に拡大 ---
     early_game = max_y < -3.0
@@ -175,10 +187,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("FAR_MERGE")
 
         # ----- evaluation axis 2: height penalty -----
+        # v174: 初期5ターンではheight_multiplierを0.05に超強化し、併合機会を最優先
         # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
         # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
         height_multiplier = 30.0
-        if early_game:
+        if very_early_game:
+            height_multiplier = 0.05  # v174: 初期5ターンはHEIGHT_CONTROLを最強力に抑制し、併合機会を最優先
+        elif early_game:
             height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
 
         height_penalty = landing_y * height_multiplier * height_mult
@@ -261,10 +276,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 7: board density bonus (v171: NEW) -----
+        # ----- evaluation axis 7: board density bonus (v171: NEW, v174: threshold adjusted) -----
         # Prefer placement on less-dense side of board to improve height gain capability
-        # This addresses the problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
+        # This addresses problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
         # Low-score games often place pieces in center early, which reduces height gain capability in mid/late game
+        # v174: density_bonus閾値を10.0→15.0に引き上げ、序盤での無意味な配置を抑制
         if not reasons or merge_grade == "NO":
             # Only apply when no strong merge reason exists (avoid overriding merge opportunities)
             if x < 0:
@@ -275,7 +291,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 density_bonus = (left_density - right_density) * 50.0
 
             # Apply bonus (positive means placing on less-dense side)
-            if density_bonus > 10.0:  # Only add reason if density difference is significant
+            # v174: 閾値を10.0→15.0に引き上げ、序盤での微小な密度差でのボーナス適用を抑制
+            # 中盤以降では密度差が大きくなり、有効に機能することを期待
+            if density_bonus > 15.0:  # Only add reason if density difference is significant
                 score += density_bonus
                 reasons.append("BOARD_DENSITY")
 

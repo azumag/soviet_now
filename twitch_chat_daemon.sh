@@ -2,7 +2,7 @@
 # twitch_chat_daemon.sh - Twitch IRC 常駐プロセス（twitch_chat.sh から起動される）
 # 4分ごとに再接続し、PRIVMSGをraw.logに追記する
 
-CHAT_DIR="tmp/.twitch_chat"
+CHAT_DIR="${TWITCH_CHAT_DIR:-tmp/.twitch_chat}"
 RAW_LOG="$CHAT_DIR/raw.log"
 CHANNEL="${1:-azumagbanjo}"
 
@@ -30,8 +30,10 @@ while true; do
         if [[ "$payload" == *"PRIVMSG"* ]]; then
             login_user=$(echo "$payload" | sed -n 's/^:\([^!]*\)!.*/\1/p')
             display_name=""
+            msg_id=""
             if [ -n "$tags" ]; then
                 display_name=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^display-name=//p' | head -n1)
+                msg_id=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^id=//p' | head -n1)
                 # IRCv3の最低限デコード（\s=space, \:=;, \\=\）
                 display_name=$(printf '%s' "$display_name" | sed -e 's/\\s/ /g' -e 's/\\:/;/g' -e 's/\\\\/\\/g')
             fi
@@ -42,7 +44,12 @@ while true; do
             # サニタイズ: 制御文字 + シェルメタ文字除去
             msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
             user=$(echo "$user" | tr -d '`$\\{}|;<>&')
-            echo "${user}: ${msg}" >> "$RAW_LOG"
+            # msg-id を先頭に保持しておくと、再接続時の同一コメント重複を抑止しやすい
+            if [ -n "$msg_id" ]; then
+                echo "id=${msg_id}"$'\t'"${user}: ${msg}" >> "$RAW_LOG"
+            else
+                echo "${user}: ${msg}" >> "$RAW_LOG"
+            fi
         fi
     done
     sleep 5

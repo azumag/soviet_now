@@ -10,14 +10,16 @@
 
 cd "$(dirname "$0")"
 
-CHAT_DIR="tmp/.twitch_chat"
+CHAT_DIR="${TWITCH_CHAT_DIR:-tmp/.twitch_chat}"
 mkdir -p "$CHAT_DIR"
 
 RAW_LOG="$CHAT_DIR/raw.log"        # デーモンが追記するログ
 PID_FILE="$CHAT_DIR/daemon.pid"
 OFFSET_FILE="$CHAT_DIR/last_offset" # 前回fetchした行数
 PENDING_LOG="$CHAT_DIR/pending.log"  # 未読み上げキュー
-OUTFILE="tmp/twitch_comments.txt"
+OUTFILE="${TWITCH_CHAT_OUTFILE:-tmp/twitch_comments.txt}"
+SEEN_ID_FILE="$CHAT_DIR/seen_msg_ids.log" # 直近に処理済みのTwitch msg-id
+SEEN_ID_MAX=4000
 LOCK_DIR="$CHAT_DIR/.op_lock"
 LOCK_TIMEOUT_SEC=8
 LOCK_STALE_SEC=120
@@ -73,6 +75,35 @@ _with_chat_lock() {
     local rc=$?
     _release_lock
     return $rc
+}
+
+_sanitize_comment_line() {
+    local line="$1"
+    [ -n "$line" ] || return 1
+    # シェルメタ文字の除去（デーモン側で漏れた場合の保険）
+    line=$(printf '%s' "$line" | tr -d '`$\\{}|;<>&')
+    line=$(printf '%s' "$line" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+    [ -n "$line" ] || return 1
+
+    # 危険パターンを除去: プロンプトインジェクション対策
+    if printf '%s\n' "$line" | grep -Eiq 'ignore.*instruction|forget.*instruction|override.*prompt|pretend.*you|act as ai|無視.*指示|指示.*無視|命令.*無視|忘れ.*指示|ふりをし|なりきり|プロンプトインジェクション'; then
+        return 1
+    fi
+    # AI操作系の危険パターンを除去
+    if printf '%s\n' "$line" | grep -Eiq 'sudo|chmod|rm -rf|eval\(|exec\(|ファイル.*削除|コマンド.*実行|スクリプト.*実行|上書き.*ファイル'; then
+        return 1
+    fi
+
+    printf '%s' "$line"
+    return 0
+}
+
+_compact_seen_ids() {
+    [ -f "$SEEN_ID_FILE" ] || return 0
+    local tmpf
+    tmpf=$(mktemp /tmp/twitch_seen_ids_XXXXXXXX)
+    awk 'NF && !seen[$0]++' "$SEEN_ID_FILE" | tail -n "$SEEN_ID_MAX" > "$tmpf"
+    mv "$tmpf" "$SEEN_ID_FILE"
 }
 
 # 同一チャンネルの daemon PID を列挙
@@ -158,26 +189,74 @@ _fetch_nolock() {
                 echo "0" > "$OFFSET_FILE"
             fi
 
-            # サニタイズ
-            new_sanitized=$(echo "$new_comments" | \
-                # シェルメタ文字の二重除去（デーモン側で漏れた場合の保険）
-                tr -d '`$\\{}|;<>&' | \
-                # 危険パターンを除去: プロンプトインジェクション対策
-                grep -iv 'ignore.*instruction\|forget.*instruction\|override.*prompt\|pretend.*you\|act as ai\|無視.*指示\|指示.*無視\|命令.*無視\|忘れ.*指示\|ふりをし\|なりきり\|プロンプトインジェクション' | \
-                # AI操作系の危険パターンを除去
-                grep -iv 'sudo\|chmod\|rm -rf\|eval(\|exec(\|ファイル.*削除\|コマンド.*実行\|スクリプト.*実行\|上書き.*ファイル' | \
-                # 最新10件に制限
-                tail -10)
+            # 最新10件に制限したうえで、msg-id重複と危険入力を除外
+            local scan_tmp seen_batch_tmp dedup_tmp
+            local skipped_by_id=0 skipped_by_sanitize=0 skipped_by_line=0 added_count=0
+            scan_tmp=$(mktemp /tmp/twitch_new_scan_XXXXXXXX)
+            seen_batch_tmp=$(mktemp /tmp/twitch_seen_batch_XXXXXXXX)
+            dedup_tmp=$(mktemp /tmp/twitch_new_dedup_XXXXXXXX)
+            : > "$scan_tmp"
+            : > "$seen_batch_tmp"
+            [ -f "$SEEN_ID_FILE" ] || : > "$SEEN_ID_FILE"
+
+            while IFS= read -r raw_line; do
+                [ -n "$raw_line" ] || continue
+
+                local msg_id="" comment_line="$raw_line"
+                # 新形式: id=<twitch-msg-id>\t<display>: <message>
+                if [[ "$raw_line" == id=*"$'\t'"* ]]; then
+                    msg_id="${raw_line%%$'\t'*}"
+                    msg_id="${msg_id#id=}"
+                    comment_line="${raw_line#*$'\t'}"
+                    case "$msg_id" in
+                    ''|*[!0-9A-Za-z-]*)
+                        msg_id=""
+                        ;;
+                    esac
+                fi
+
+                local clean_line=""
+                clean_line=$(_sanitize_comment_line "$comment_line")
+                if [ -z "$clean_line" ]; then
+                    skipped_by_sanitize=$((skipped_by_sanitize + 1))
+                    continue
+                fi
+
+                if [ -n "$msg_id" ]; then
+                    if grep -qxF "$msg_id" "$seen_batch_tmp" 2>/dev/null || \
+                        grep -qxF "$msg_id" "$SEEN_ID_FILE" 2>/dev/null; then
+                        skipped_by_id=$((skipped_by_id + 1))
+                        continue
+                    fi
+                    echo "$msg_id" >> "$seen_batch_tmp"
+                fi
+
+                echo "$clean_line" >> "$scan_tmp"
+            done <<<"$(printf '%s\n' "$new_comments" | tail -10)"
 
             # 同一行の重複を除去（多重接続/再送対策）
-            if [ -n "$new_sanitized" ]; then
-                new_sanitized=$(printf '%s\n' "$new_sanitized" | awk 'NF && !seen[$0]++')
+            if [ -s "$scan_tmp" ]; then
+                local before_count after_count
+                before_count=$(wc -l < "$scan_tmp" | tr -d ' ')
+                awk 'NF && !seen[$0]++' "$scan_tmp" > "$dedup_tmp"
+                after_count=$(wc -l < "$dedup_tmp" | tr -d ' ')
+                skipped_by_line=$((before_count - after_count))
+                if [ "$after_count" -gt 0 ]; then
+                    cat "$dedup_tmp" >> "$PENDING_LOG"
+                    added_count="$after_count"
+                fi
             fi
 
-            # 新規サニタイズ済みコメントをpending.logに追記
-            if [ -n "$new_sanitized" ]; then
-                echo "$new_sanitized" >> "$PENDING_LOG"
-                _log "fetch: $((current_lines - last_offset))件中 $(echo "$new_sanitized" | wc -l | tr -d ' ')件を新規追加"
+            # 直近に処理したmsg-idを永続化（再接続再送対策）
+            if [ -s "$seen_batch_tmp" ]; then
+                cat "$seen_batch_tmp" >> "$SEEN_ID_FILE"
+                _compact_seen_ids
+            fi
+
+            rm -f "$scan_tmp" "$seen_batch_tmp" "$dedup_tmp"
+
+            if [ "${added_count:-0}" -gt 0 ] || [ "$skipped_by_id" -gt 0 ]; then
+                _log "fetch: $((current_lines - last_offset))件中 ${added_count}件追加 (id重複:${skipped_by_id}, 内容重複:${skipped_by_line}, sanitize除外:${skipped_by_sanitize})"
             fi
         fi
     fi
