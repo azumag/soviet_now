@@ -35,13 +35,12 @@ Phases (determined by board max Y):
 # v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 # v157: 着地高動的調整・CHAIN_MERGE促進版
 # v159: 序盤HEIGHT_CONTROL抑制強化版
+# v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
 # v165: CHAIN_MERGE密度カウント版 - 密度評価（半径2.5内のピース数）に変更したが、CHAIN_MERGE評価精度が低下。
 # v166: v155距離加重評価復帰版 - batch_summaryでHEIGHT_CONTROLが30%選択されavg_score_delta=2.5と低いこと、
-# NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=26.6-46.0と高価値だが選択率が低いことを確認。
 # v165の密度カウント版（radius=2.5, tiered bonus）はpiece距離を考慮せず、CHAIN_MERGE評価精度が不足。
-# v155の成功パラメータ（chain_distance=5.0, chain_bonus_multiplier=450.0）と距離加重評価ロジックを復帰し、
-# 3つの最も近いmerged_typeピースを距離重み付きで評価する。これによりCHAIN_MERGE評価精度を向上させ、
-# HEIGHT_CONTROL選択率を抑制してスコア安定性を向上させる。v159の序盤HEIGHT_CONTROL抑制は維持。
+# v167: 評価精度最適化版 - v166の距離加重評価を維持しつつ、v162のバランス補正強化（MEDIUM: 40.0）を適用し、
+# chain_distanceを5.0→4.5に縮小してCHAIN_MERGE評価精度を向上させる。v159の序盤HEIGHT_CONTROL抑制は維持。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -49,21 +48,19 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v166: v155距離加重評価復帰版
-
+    """v167: 評価精度最適化版
+    
     batch_summary分析でHEIGHT_CONTROLが30%選択されavg_score_delta=2.5と低いこと、
     NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=26.6-46.0と高価値だが選択率が低いことを確認。
-    v165の密度カウント版（radius=2.5, tiered bonus）はpiece距離を考慮せず、CHAIN_MERGE評価精度が不足。
-
-    v155の成功パラメータ（chain_distance=5.0, chain_bonus_multiplier=450.0）と距離加重評価ロジックを復帰：
-    - 併合ターゲット周辺（半径5.0）のmerged_typeピースを収集
-    - 距離が最も近い3つのピースに対し、距離に応じて段階的に減衰するボーナスを適用
-    - 1st: (5.0 - dist) * 450.0
-    - 2nd: (5.0 - dist) * 450.0 * 0.5
-    - 3rd: (5.0 - dist) * 450.0 * 0.25
-    これにより、併合ターゲットに近いピースを重視し、CHAIN_MERGE評価精度を向上させる。
+    
+    v167の改善点:
+    1. v162のバランス補正強化を適用（MEDIUM: balance_strength 35.0→40.0）
+       - 盤面の左右バランスを改善し、HEIGHT_CONTROLの選択率を削減
+    2. chain_distanceを5.0→4.5に縮小しCHAIN_MERGE評価精度を向上
+       - v155の5.0は広すぎて評価が粗く、CHAIN_MERGE選択率が低い（8-10%）
+       - 4.5に縮小することで、より高確率な連鎖機会を評価し選択率を15%以上に引き上げ
     v159の序盤HEIGHT_CONTROL抑制（height_multiplier=0.2 for max_y < -1.0）は維持。
-
+    
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
         analysis: analyze_board.py analysis results
@@ -74,7 +71,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
                 - merges: individual distance/merge judgment for each same-type piece
             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
-
+    
     Returns:
         {"x": drop X coordinate, "reason": selection reason}
     """
@@ -183,15 +180,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # ----- evaluation axis 4: left-right balance correction (v148: enhanced) -----
+        # ----- evaluation axis 4: left-right balance correction (v167: v162 enhanced) -----
         # bonus for correcting left-right piece count bias.
         # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
-        # v148: higher board increases balance_strength, strictens balance control
+        # v167: v162のバランス補正強化を適用（MEDIUM: 35.0→40.0）
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 50.0  # v148: HIGH balance control even stricter (40.0->50.0)
         elif phase == "MEDIUM":
-            balance_strength = 35.0  # v148: MEDIUM also strengthen balance control (30.0->35.0)
+            balance_strength = 40.0  # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -208,11 +205,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v166: v155 distance-weighted restored) -----
-        # v166: v155の成功した距離加重評価ロジックを復帰
-        # v165の密度カウント版（radius=2.5, tiered bonus）はpiece距離を考慮せず、CHAIN_MERGE評価精度が不足
-        # v155はchain_distance=5.0, chain_bonus_multiplier=450.0で4026点を達成
-        # 距離加重評価により、併合ターゲットに近いmerged_typeピースを重視し、CHAIN_MERGE評価精度を向上させる
+        # ----- evaluation axis 6: chain merge bonus (v167: chain_distance reduced to 4.5) -----
+        # v167: v155のchain_distance=5.0は広すぎて評価が粗く、CHAIN_MERGE選択率が低い（8-10%）
+        # chain_distanceを4.5に縮小し、より高確率な連鎖機会を評価
+        # v162のバランス補正強化（MEDIUM: 40.0）と組み合わせ、CHAIN_MERGE選択率を15%以上に引き上げ
+        # v159の序盤HEIGHT_CONTROL抑制（height_multiplier=0.2）は維持
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -221,8 +218,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v166: v155パラメータ復帰 - chain_distance=5.0, chain_bonus_multiplier=450.0
-                chain_distance = 5.0
+                # v167: chain_distanceを5.0→4.5に縮小してCHAIN_MERGE評価精度を向上
+                chain_distance = 4.5
                 chain_bonus_multiplier = 450.0
 
                 # collect all merged_type pieces within chain_distance of merge target
@@ -236,11 +233,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # sort by distance (closest first)
                 nearby_pieces.sort(key=lambda x: x[0])
 
-                # v166: 距離加重ボーナス - 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
-                # 1st: (chain_distance - dist) * chain_bonus_multiplier
-                # 2nd: (chain_distance - dist) * chain_bonus_multiplier * 0.5
-                # 3rd: (chain_distance - dist) * chain_bonus_multiplier * 0.25
-                # これにより、併合ターゲットに近いピースを重視し、CHAIN_MERGE評価精度を向上させる
+                # v167: 距離加重ボーナス - 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
+                # chain_distanceを4.5に縮小することで、より高確率な連鎖機会を評価
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
                     chain_bonus = (chain_distance - dist) * chain_bonus_multiplier
