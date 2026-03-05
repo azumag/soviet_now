@@ -3325,10 +3325,6 @@ trigger_adaptive_improvement() {
 	if check_regression; then
 		# リグレッション検知 → リバート済み、蓄積データクリア
 		_clear_accumulated_data
-		# ロールバック成功時は、ロールバック戦略をベースに即時改善を走らせる
-		if [ "${REGRESSION_ROLLBACK_DONE:-0}" -eq 1 ]; then
-			_start_improvement_job "" "" "false" "0" "post_regression" || true
-		fi
 		return
 	fi
 

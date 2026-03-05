@@ -249,9 +249,121 @@ if h and h in rs:
 	[[ -f score_history.txt ]] && last_scores=$(tail -5 score_history.txt 2>/dev/null | tr '\n' ' ')
 
 	# --- 戦略情報 ---
-	local strategy_hash=$(md5 -q strategy.py 2>/dev/null | cut -c1-8)
 	local strategy_ver=$(ls -1t strategy_versions/v[0-9]*_strategy.py 2>/dev/null | head -1 | xargs basename 2>/dev/null)
 	local strategy_lines=$(wc -l < strategy.py 2>/dev/null | tr -d ' ')
+	local strategy_decide_hash="?"
+	strategy_decide_hash=$(python3 extract_decide_hash.py strategy.py 2>/dev/null || echo "?")
+
+	# --- ロールバック履歴 ---
+	local rollback_total=0 rollback_last_at="" rollback_last_age=""
+	local -a rollback_events
+	while IFS='|' read -r rec_type rec_a rec_b rec_c rec_d; do
+		case "$rec_type" in
+			COUNT) rollback_total=${rec_a:-0} ;;
+			LAST_AT) rollback_last_at="$rec_a" ;;
+			LAST_AGE) rollback_last_age="$rec_a" ;;
+			EVENT) rollback_events+=("${rec_a}|${rec_b}|${rec_c}|${rec_d}") ;;
+		esac
+	done < <(python3 - <<'PY'
+import ast
+import datetime as dt
+import hashlib
+import re
+import subprocess
+
+
+def run(cmd):
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def decide_hash(source):
+    if not source:
+        return ""
+    try:
+        tree = ast.parse(source)
+    except Exception:
+        return ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "decide":
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                body = body[1:]
+            normalized = ast.dump(ast.Module(body=body, type_ignores=[]))
+            return hashlib.md5(normalized.encode("utf-8")).hexdigest()[:12]
+    return ""
+
+
+def age_text(seconds):
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s ago"
+    if seconds < 3600:
+        return f"{seconds // 60}m ago"
+    if seconds < 86400:
+        return f"{seconds // 3600}h ago"
+    return f"{seconds // 86400}d ago"
+
+
+log_text = run(
+    [
+        "git",
+        "log",
+        "--date=iso-strict",
+        "--pretty=format:%H|%ad|%s",
+        "--grep=^eloop Auto-revert: regression detected",
+        "-n",
+        "200",
+    ]
+)
+if not log_text:
+    print("COUNT|0")
+    raise SystemExit(0)
+
+rows = []
+for line in log_text.splitlines():
+    parts = line.split("|", 2)
+    if len(parts) == 3:
+        rows.append(parts)
+
+print(f"COUNT|{len(rows)}")
+now = dt.datetime.now().astimezone()
+try:
+    last_dt = dt.datetime.fromisoformat(rows[0][1])
+    print(f"LAST_AT|{last_dt.strftime('%Y-%m-%d %H:%M')}")
+    print(f"LAST_AGE|{age_text((now - last_dt).total_seconds())}")
+except Exception:
+    pass
+
+for commit, ad, subj in rows[:4]:
+    when_disp = ad
+    try:
+        when_disp = dt.datetime.fromisoformat(ad).strftime("%m-%d %H:%M")
+    except Exception:
+        pass
+
+    parent = run(["git", "rev-parse", f"{commit}^"])
+    src_before = run(["git", "show", f"{parent}:strategy.py"]) if parent else ""
+    src_after = run(["git", "show", f"{commit}:strategy.py"])
+
+    from_hash = decide_hash(src_before) or "?"
+    to_hash = decide_hash(src_after) or "?"
+
+    target_hash = ""
+    m = re.search(r"target=best_comp hash=([0-9a-fA-F]{8,12})", subj)
+    if m:
+        target_hash = m.group(1).lower()
+    if to_hash == "?" and target_hash:
+        to_hash = target_hash
+
+    print(f"EVENT|{when_disp}|{from_hash[:12]}|{to_hash[:12]}|{target_hash[:12]}")
+PY
+)
 
 	# --- say (TTS) 状態 ---
 	local say_running=false say_pid=""
@@ -309,6 +421,7 @@ if h and h in rs:
 	local comment_gen_running=false comment_gen_pid=""
 	if [[ -f tmp/.twitch_chat/comment_gen.pid ]]; then
 		comment_gen_pid=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null)
+		comment_gen_pid=${comment_gen_pid%%|*}
 		if [[ -n "$comment_gen_pid" ]] && kill -0 "$comment_gen_pid" 2>/dev/null; then
 			comment_gen_running=true
 		fi
@@ -508,28 +621,34 @@ if h and h in rs:
 
 	# === セクション: Strategy & Scores ===
 	printf "  ${C_BOLD}STRATEGY / SAFETY${C_RESET}\n"
-	printf "    ${C_DIM}Version=現行strategy / Rollback=回帰時の自動差し戻し状態${C_RESET}\n"
+	printf "    ${C_DIM}Version=現行戦略 / Rollback=自動差し戻し履歴${C_RESET}\n"
 	# "    ▸ Version     " = 18, "  XXXL" = 6 → version name max = W-24
 	local ver_display="${strategy_ver:-strategy.py}"
 	local max_ver=$(( W - 24 ))
 	(( ${#ver_display} > max_ver )) && ver_display="${ver_display[1,$((max_ver-2))]}.."
 	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}%s${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}\n" "${ver_display}"
+	printf "    ${C_WHITE}▸${C_RESET} DecideHash  ${C_DIM}%s${C_RESET}\n" "${strategy_decide_hash}"
 
-	local reject_bar
-	reject_bar=$(_bar_meter "$rejected_count" 20 12)
-	local revert_label="none"
-	$revert_available && revert_label="ready"
-	printf "    ${C_WHITE}▸${C_RESET} Rollback    ${C_DIM}[%s]${C_RESET}  ${C_DIM}rej=%d revert=%s${C_RESET}\n" \
-		"$reject_bar" "$rejected_count" "$revert_label"
+	local rollback_head="total=${rollback_total}  rejected=${rejected_count}"
+	if [[ -n "$rollback_last_age" ]]; then
+		rollback_head="${rollback_head}  last=${rollback_last_age}"
+	fi
+	printf "    ${C_WHITE}▸${C_RESET} Rollbacks   ${C_DIM}%s${C_RESET}\n" "$rollback_head"
 
-	# バッチサマリ
-	if [[ -f tmp/batch_summary.txt ]] && [[ -s tmp/batch_summary.txt ]]; then
-		local summary_age=$(_file_age tmp/batch_summary.txt)
-		local summary_line=$(grep -v '^$' tmp/batch_summary.txt | grep -v '^===' | head -1)
-		# "    ▸ Summary     " = 18, "  (XXX)" ~= 9 → text max = W-27
-		local max_summ=$(( W - 27 ))
-		(( ${#summary_line} > max_summ )) && summary_line="${summary_line[1,$((max_summ-2))]}.."
-		printf "    ${C_WHITE}▸${C_RESET} Summary     ${C_DIM}%s  (%s)${C_RESET}\n" "${summary_line}" "${summary_age}"
+	if (( rollback_total > 0 )) && (( ${#rollback_events[@]} > 0 )); then
+		local rb_idx=1
+		local rb_when="" rb_from="" rb_to="" rb_target=""
+		for rb_event in "${rollback_events[@]}"; do
+			IFS='|' read -r rb_when rb_from rb_to rb_target <<<"$rb_event"
+			local rb_when_compact="${rb_when//-//}"
+			local rb_line="${rb_when_compact} ${rb_from}->${rb_to}"
+			local max_rb=$(( W - 18 ))
+			(( ${#rb_line} > max_rb )) && rb_line="${rb_line[1,$((max_rb-2))]}.."
+			printf "    ${C_WHITE}▸${C_RESET} RB%-2d       ${C_DIM}%s${C_RESET}\n" "$rb_idx" "$rb_line"
+			rb_idx=$((rb_idx + 1))
+		done
+	else
+		printf "    ${C_WHITE}▸${C_RESET} RB History   ${C_DIM}(none)${C_RESET}\n"
 	fi
 
 	echo ""
