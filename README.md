@@ -388,24 +388,24 @@ soren_loop の AI 改善フローでは、AI がホストのファイルを直�
 ```mermaid
 flowchart TD
     subgraph HOST["ホスト (プロジェクトルート)"]
-        H_FILES["strategy.py\nstrategy_helpers/\nprompts/\ngame_history/"]
+        H_FILES["strategy.py<br/>strategy_helpers/<br/>prompts/<br/>game_history/"]
     end
 
-    HOST -->|"(1) create_sandbox\n必要ファイルをコピー"| SANDBOX
+    HOST -->|"(1) create_sandbox<br/>必要ファイルをコピー"| SANDBOX
 
     subgraph SANDBOX["/tmp/soren_sandbox_XXXXXX"]
         direction TB
-        S_EDIT["strategy.py.staging (AI編集対象)\nstrategy.py (参照用)"]
+        S_EDIT["strategy.py.staging (AI編集対象)<br/>strategy.py (参照用)"]
         S_HELPERS["strategy_helpers/"]
-        S_TEST["analyze_board.py (テスト実行用)\nextract_decide_hash.py (ハッシュ計算)"]
+        S_TEST["analyze_board.py (テスト実行用)<br/>extract_decide_hash.py (ハッシュ計算)"]
         S_PROMPT["prompts/improve_strategy.md"]
-        S_REF["参照データ一式\n(batch_summary, game_state,\npast versions, worst game等)"]
-        S_NOTE["※ LLM プロンプトにインライン展開されるのは\nimprove_ref_files のみ\n(analyze_board.py 等は含まない)"]
+        S_REF["参照データ一式<br/>(batch_summary, game_state,<br/>past versions, worst game等)"]
+        S_NOTE["※ LLM プロンプトにインライン展開されるのは<br/>improve_ref_files のみ<br/>(analyze_board.py 等は含まない)"]
     end
 
-    SANDBOX -->|"(2) AI 編集\npushd → LLM が staging を改善\n最大3回リトライ"| VALIDATE
+    SANDBOX -->|"(2) AI 編集<br/>pushd → LLM が staging を改善<br/>最大3回リトライ"| VALIDATE
 
-    VALIDATE{"(3) validate\ndecide() 存在・シグネチャ\nテスト実行"} -->|成功| HARVEST
+    VALIDATE{"(3) validate<br/>decide() 存在・シグネチャ<br/>テスト実行"} -->|成功| HARVEST
     VALIDATE -->|"失敗 (3回まで)"| SANDBOX
 
     subgraph HARVEST_DIR["harvest dir (tmp/.sandbox_harvest_XXXXXX)"]
@@ -413,16 +413,16 @@ flowchart TD
         H_HELPERS2["strategy_helpers/"]
     end
 
-    SANDBOX -->|"(4) harvest_sandbox\n許可ファイルのみ抽出\nsymlink/hard link 検査"| HARVEST_DIR
+    SANDBOX -->|"(4) harvest_sandbox<br/>許可ファイルのみ抽出<br/>symlink/hard link 検査"| HARVEST_DIR
 
     HARVEST_DIR --> INTEGRITY
-    INTEGRITY["(5) check_host_integrity\n改善中のホスト変化を検出"] --> DESTROY
-    DESTROY["(6) destroy_sandbox\n/tmp 上のサンドボックスを削除"] --> APPLY
+    INTEGRITY["(5) check_host_integrity<br/>改善中のホスト変化を検出"] --> DESTROY
+    DESTROY["(6) destroy_sandbox<br/>/tmp 上のサンドボックスを削除"] --> APPLY
 
     subgraph APPLY_PHASE["ホストへ適用"]
-        APPLY["(7) apply\nharvest → strategy.py\nharvest → strategy_helpers/"]
+        APPLY["(7) apply<br/>harvest → strategy.py<br/>harvest → strategy_helpers/"]
         CLEANUP["(8) cleanup harvest dir"]
-        COMMIT["(9) git commit\n明示的ファイル指定\n(strategy.py, strategy_helpers/,\ntmp/change_log.txt)"]
+        COMMIT["(9) git commit<br/>明示的ファイル指定<br/>(strategy.py, strategy_helpers/,<br/>tmp/change_log.txt)"]
         APPLY --> CLEANUP --> COMMIT
     end
 ```
