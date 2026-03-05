@@ -20,6 +20,9 @@ play_one_game() {
 		return 0
 	fi
 
+	# 前試合のダッシュボードを非表示
+	./generate_dashboard.sh MOVE || true
+
 	local game_num_display=$((GAME_NUM + 1))
 	log ""
 	log "── Game #${game_num_display} ──"
@@ -150,10 +153,6 @@ prepare_next_game() {
 
 	# 試合時スナップショットのクリーンアップ
 	rm -f "${STRATEGY_FILE}.game_snapshot"
-
-	# ダッシュボード非表示（次のゲーム開始前）
-	log "[DASHBOARD] Hiding dashboard..."
-	./generate_dashboard.sh MOVE || true
 
 	if is_game_over; then
 		send_retry
