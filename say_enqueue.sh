@@ -33,6 +33,7 @@ PID_FILE="$QUEUE_DIR/pid"
 LOCK_DIR="$QUEUE_DIR/.lock"
 LOCK_OWNER_FILE="$LOCK_DIR/owner_pid"
 LOCK_HEARTBEAT_FILE="$LOCK_DIR/heartbeat"
+LOCK_STALE_SEC=180
 
 if [ ! -s "$CONTENT_FILE" ]; then
     echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
@@ -41,7 +42,9 @@ fi
 
 # ユニークトークン（PID + ランダム + 秒 で衝突回避）
 MY_TOKEN="${BASHPID:-$$}_${RANDOM}_$(date +%s)"
+MY_OWNER="${BASHPID:-$$}:${MY_TOKEN}"
 MY_CONTENT="$QUEUE_DIR/content_${MY_TOKEN}.txt"
+LOCK_HELD=0
 
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
@@ -51,9 +54,14 @@ sed -i '' 's/AI/エーアイ/g' "$MY_CONTENT"
 
 _log() { echo "[say_enqueue $(date '+%H:%M:%S')] $*" >&2; echo "[say_enqueue $(date '+%H:%M:%S') PID=$$/${BASHPID:-?}] $* | file=$CONTENT_FILE token=$MY_TOKEN" >> tmp/.say_queue/debug.log; }
 
+_is_lock_owner() {
+    [ -d "$LOCK_DIR" ] || return 1
+    [ "$(cat "$LOCK_OWNER_FILE" 2>/dev/null || true)" = "$MY_OWNER" ]
+}
+
 _touch_lock_heartbeat() {
-    [ -d "$LOCK_DIR" ] || return 0
-    echo "${BASHPID:-$$}" > "$LOCK_OWNER_FILE" 2>/dev/null || true
+    _is_lock_owner || return 0
+    echo "$MY_OWNER" > "$LOCK_OWNER_FILE" 2>/dev/null || true
     date +%s > "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true
 }
 
@@ -62,9 +70,13 @@ _acquire_lock() {
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
         # stale lock検出: 所有PIDが死んでおり、heartbeatも古い場合のみ強制解除
         if [ -d "$LOCK_DIR" ]; then
-            local lock_owner lock_hb now lock_age owner_alive=false
-            lock_owner=$(cat "$LOCK_OWNER_FILE" 2>/dev/null || true)
-            if [ -n "$lock_owner" ] && kill -0 "$lock_owner" 2>/dev/null; then
+            local lock_owner_raw lock_owner_pid lock_hb now lock_age owner_alive=false
+            lock_owner_raw=$(cat "$LOCK_OWNER_FILE" 2>/dev/null || true)
+            lock_owner_pid="${lock_owner_raw%%:*}"
+            case "$lock_owner_pid" in
+            ''|*[!0-9]*) lock_owner_pid="" ;;
+            esac
+            if [ -n "$lock_owner_pid" ] && kill -0 "$lock_owner_pid" 2>/dev/null; then
                 owner_alive=true
             fi
             lock_hb=$(cat "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true)
@@ -75,8 +87,8 @@ _acquire_lock() {
             esac
             now=$(date +%s)
             lock_age=$((now - lock_hb))
-            if [ "$owner_alive" = false ] && [ "$lock_age" -gt 30 ]; then
-                _log "stale lock検出 (owner=${lock_owner:-?}, ${lock_age}秒) → 強制解除"
+            if [ "$owner_alive" = false ] && [ "$lock_age" -gt "$LOCK_STALE_SEC" ]; then
+                _log "stale lock検出 (owner=${lock_owner_pid:-?}, ${lock_age}秒) → 強制解除"
                 rm -f "$LOCK_OWNER_FILE" "$LOCK_HEARTBEAT_FILE" 2>/dev/null
                 rmdir "$LOCK_DIR" 2>/dev/null
                 continue
@@ -84,13 +96,25 @@ _acquire_lock() {
         fi
         sleep 0.5
     done
-    _touch_lock_heartbeat
+    echo "$MY_OWNER" > "$LOCK_OWNER_FILE" 2>/dev/null || {
+        rmdir "$LOCK_DIR" 2>/dev/null
+        return 1
+    }
+    date +%s > "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true
+    LOCK_HELD=1
     return 0
 }
 
 _release_lock() {
+    [ "$LOCK_HELD" -eq 1 ] || return 0
+    if ! _is_lock_owner; then
+        _log "ロック解放スキップ: 所有者不一致"
+        LOCK_HELD=0
+        return 0
+    fi
     rm -f "$LOCK_OWNER_FILE" "$LOCK_HEARTBEAT_FILE" 2>/dev/null
     rmdir "$LOCK_DIR" 2>/dev/null
+    LOCK_HELD=0
 }
 
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除

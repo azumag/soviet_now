@@ -2070,16 +2070,35 @@ CELEBPROMPT
 
 _kill_comment_gen() {
 	local pidfile="tmp/.twitch_chat/comment_gen.pid"
+	local statefile="tmp/.comment_gen_state"
 	if [ -f "$pidfile" ]; then
-		local old_pid
-		old_pid=$(cat "$pidfile")
+		local raw old_pid old_ppid live_ppid
+		raw=$(cat "$pidfile" 2>/dev/null || true)
+		old_pid="${raw%%|*}"
+		case "$old_pid" in
+		''|*[!0-9]*) old_pid="" ;;
+		esac
+		if [ "$raw" != "$old_pid" ]; then
+			old_ppid=$(printf '%s' "$raw" | awk -F'|' '{print $2}')
+			case "$old_ppid" in
+			''|*[!0-9]*) old_ppid="" ;;
+			esac
+		else
+			old_ppid=""
+		fi
 		if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-			pkill -P "$old_pid" 2>/dev/null
-			kill "$old_pid" 2>/dev/null
-			log "[COMMENT] 前回のコメント生成プロセス停止 (PID=$old_pid)"
+			live_ppid=$(ps -o ppid= -p "$old_pid" 2>/dev/null | tr -d ' ')
+			if [ -f "$statefile" ] && { [ -z "$old_ppid" ] || [ "$old_ppid" = "$live_ppid" ]; }; then
+				pkill -P "$old_pid" 2>/dev/null
+				kill "$old_pid" 2>/dev/null
+				log "[COMMENT] 前回のコメント生成プロセス停止 (PID=$old_pid)"
+			else
+				log "[COMMENT] stale comment_gen pid検出 → killスキップ (PID=$old_pid, ppid_file=${old_ppid:-?}, ppid_live=${live_ppid:-?})"
+			fi
 		fi
 		rm -f "$pidfile"
 	fi
+	rm -f "$statefile"
 }
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
@@ -2367,7 +2386,23 @@ generate_comment_response() {
 		time_period="未明"
 	fi
 
+	local comment_parent_pid comment_started_at
+	comment_parent_pid="${BASHPID:-$$}"
+	comment_started_at=$(date +%s)
+	echo "generating:comment:${comment_started_at}" > tmp/.comment_gen_state
+
 	(
+		_cleanup_comment_gen_worker() {
+			local raw file_pid
+			raw=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null || true)
+			file_pid="${raw%%|*}"
+			if [ "$file_pid" = "${BASHPID:-$$}" ]; then
+				rm -f tmp/.twitch_chat/comment_gen.pid
+			fi
+			rm -f tmp/.comment_gen_state
+		}
+		trap '_cleanup_comment_gen_worker' EXIT
+
 		local comment_prompt_file
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
 		cat >"$comment_prompt_file" <<COMMENTPROMPT
@@ -2510,10 +2545,9 @@ COMMENTPROMPT
 			else
 			log "[COMMENT] コメント返し生成失敗（次回再取得）"
 		fi
-		rm -f tmp/.comment_gen_state
 	) &
 	local comment_pid=$!
-	echo "$comment_pid" >tmp/.twitch_chat/comment_gen.pid
+	echo "${comment_pid}|${comment_parent_pid}|${comment_started_at}" >tmp/.twitch_chat/comment_gen.pid
 	disown "$comment_pid"
 }
 
@@ -2553,6 +2587,10 @@ start_comment_watcher() {
 			if [ -f "$gen_pidfile" ]; then
 				local gen_pid
 				gen_pid=$(cat "$gen_pidfile" 2>/dev/null)
+				gen_pid="${gen_pid%%|*}"
+				case "$gen_pid" in
+				''|*[!0-9]*) gen_pid="" ;;
+				esac
 				if [ -n "$gen_pid" ] && kill -0 "$gen_pid" 2>/dev/null; then
 					gen_running=true
 				fi
