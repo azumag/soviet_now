@@ -130,54 +130,11 @@ _radio_dedup_text() {
 }
 
 _sanitize_onair_text() {
-	python3 -c "$(cat <<'PY'
-import re
-import sys
-
-text = sys.stdin.read()
-patterns = [
-    (r'誰も(聞いて|見て)い(?:ない|ません)', 'みなさんに届くように'),
-    (r'聞き手(?:が|は)?い(?:ない|ません)', '聞き手に届くように'),
-    (r'リスナー(?:が|は)?い(?:ない|ません)', 'リスナーに届くように'),
-    (r'視聴者(?:が|は)?い(?:ない|ません)', '視聴者に届くように'),
-    (r'誰に向けてやってるのか', 'みなさんに向けて'),
-    (r'過疎(?:配信|放送)?', 'この配信'),
-    (r'無人(?:配信|放送)', '配信'),
-    (r'誰もいない', 'みなさんがいる'),
-]
-out = text
-for pat, repl in patterns:
-    out = re.sub(pat, repl, out, flags=re.IGNORECASE)
-sys.stdout.write(out)
-PY
-)"
+	python3 "$ELOOP_LIB_DIR/lib/radio_text_utils.py" sanitize
 }
 
 _normalize_radio_tone() {
-	python3 -c "
-import re
-import sys
-
-text = sys.stdin.read()
-out = text
-
-rules = [
-    (r'なんですよね(?=\\s|$|[。！？、])', 'なんです'),
-    (r'なんですよ(?=\\s|$|[。！？、])', 'なんです'),
-    (r'ですよね(?=\\s|$|[。！？、])', 'です'),
-    (r'ですよ(?=\\s|$|[。！？、])', 'です'),
-    (r'ますよね(?=\\s|$|[。！？、])', 'ます'),
-    (r'ますね(?=\\s|$|[。！？、])', 'ます'),
-    (r'ですね(?=\\s|$|[。！？、])', 'です'),
-    (r'ですけどね(?=\\s|$|[。！？、])', 'ですけど'),
-    (r'ますけどね(?=\\s|$|[。！？、])', 'ますけど'),
-    (r'なんですけどね(?=\\s|$|[。！？、])', 'なんですけど'),
-    (r'でしょうね(?=\\s|$|[。！？、])', 'でしょう'),
-]
-for pat, repl in rules:
-    out = re.sub(pat, repl, out)
-sys.stdout.write(out)
-		"
+	python3 "$ELOOP_LIB_DIR/lib/radio_text_utils.py" normalize_tone
 }
 
 _ensure_radio_intro() {
@@ -217,140 +174,20 @@ _ensure_radio_intro() {
 
 _news_title_key() {
 	local title="$1"
-	python3 - "$title" <<'PY'
-import re
-import sys
-import unicodedata
-
-s = sys.argv[1] if len(sys.argv) > 1 else ""
-s = unicodedata.normalize("NFKC", s).strip().lower()
-s = re.sub(r'[\s\u3000]+', '', s)
-s = ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('P', 'S'))
-s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
-print(s[:240])
-PY
+	python3 "$ELOOP_LIB_DIR/lib/news_filter.py" title_key "$title"
 }
 
 _filter_unread_news_blocks() {
 	local news_tmp
 	news_tmp=$(mktemp /tmp/eloop_news_blocks_XXXXXXXX)
 	cat >"$news_tmp"
-	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$news_tmp" <<'PY'
-import os
-import re
-import sys
-import unicodedata
-
-past_title_file = sys.argv[1]
-past_key_file = sys.argv[2]
-news_file = sys.argv[3]
-news_text = ""
-if os.path.exists(news_file):
-    with open(news_file, encoding="utf-8", errors="ignore") as f:
-        news_text = f.read()
-
-def key(s: str) -> str:
-    s = unicodedata.normalize("NFKC", s).strip().lower()
-    s = re.sub(r'[\s\u3000]+', '', s)
-    s = ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('P', 'S'))
-    s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
-    return s[:240]
-
-past_keys = set()
-if os.path.exists(past_title_file):
-    for ln in open(past_title_file, encoding="utf-8", errors="ignore"):
-        t = ln.strip()
-        if not t:
-            continue
-        k = key(t)
-        if k:
-            past_keys.add(k)
-if os.path.exists(past_key_file):
-    for ln in open(past_key_file, encoding="utf-8", errors="ignore"):
-        k = ln.strip()
-        if k:
-            past_keys.add(k)
-
-blocks = []
-current = []
-for line in news_text.splitlines():
-    if line.startswith("■ "):
-        if current:
-            blocks.append(current)
-        current = [line]
-    elif current:
-        current.append(line)
-if current:
-    blocks.append(current)
-
-seen = set()
-out = []
-for b in blocks:
-    title = b[0][2:].strip()
-    k = key(title)
-    if not k:
-        continue
-    if k in seen:
-        continue
-    if k in past_keys:
-        continue
-    seen.add(k)
-    out.append("\n".join(b).rstrip())
-
-print("\n\n".join(out))
-PY
+	python3 "$ELOOP_LIB_DIR/lib/news_filter.py" filter_unread "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$news_tmp"
 	rm -f "$news_tmp"
 }
 
 _resolve_selected_news_title() {
 	local selected_title="$1" news_file="$2"
-	python3 - "$selected_title" "$news_file" <<'PY'
-import os
-import re
-import sys
-import unicodedata
-
-selected = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
-news_file = sys.argv[2] if len(sys.argv) > 2 else ""
-
-def key(s: str) -> str:
-    s = unicodedata.normalize("NFKC", s).strip().lower()
-    s = re.sub(r'[\s\u3000]+', '', s)
-    s = ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('P', 'S'))
-    s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
-    return s[:240]
-
-titles = []
-if os.path.exists(news_file):
-    with open(news_file, encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            if line.startswith("■ "):
-                titles.append(line[2:].strip())
-
-if not selected:
-    print("")
-    raise SystemExit(0)
-if not titles:
-    print(selected)
-    raise SystemExit(0)
-
-sel_key = key(selected)
-for t in titles:
-    if t.strip() == selected:
-        print(t)
-        raise SystemExit(0)
-for t in titles:
-    if key(t) == sel_key and sel_key:
-        print(t)
-        raise SystemExit(0)
-for t in titles:
-    tk = key(t)
-    if sel_key and (sel_key in tk or tk in sel_key):
-        print(t)
-        raise SystemExit(0)
-
-print(selected)
-PY
+	python3 "$ELOOP_LIB_DIR/lib/news_filter.py" resolve_title "$selected_title" "$news_file"
 }
 
 # 自分のコーナーの状態ファイルだけ安全に削除 (並列実行の競合防止)
