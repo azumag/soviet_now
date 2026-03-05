@@ -32,6 +32,7 @@ source ./eloop_lib.sh
 # --- グローバル状態 ---
 GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 IMPROVE_PID=0
+HALT_STRATEGY_AFTER_SOVIET=0
 
 # --- 初期化 ---
 log "=== Soren Evolution Loop ==="
@@ -90,6 +91,13 @@ while true; do
 	start_comment_player
 	start_comment_watcher
 
+	# ソ連建国後は strategy 実行を止め、コメント系のみ維持する
+	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
+		log "[HALT] strategy停止中: コメント返し/読み上げのみ継続"
+		sleep 5
+		continue
+	fi
+
 	# 非同期ジョブに渡すため、試合開始時点の値を固定
 	SCHEDULE_GAME_NUM="$GAME_NUM"
 	SCHEDULE_SCORE=$(tail -1 score_history.txt 2>/dev/null || echo 0)
@@ -100,6 +108,13 @@ while true; do
 
 	# 後処理 (スコア記録, バージョン保存, git commit 等)
 	post_game_bookkeeping
+
+	# ソ連建国達成後は retry を含む次ゲーム操作を行わない
+	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
+		log "[HALT] retry・次ゲーム操作を停止"
+		sleep 5
+		continue
+	fi
 
 	# アダプティブ改善トリガー
 	trigger_adaptive_improvement

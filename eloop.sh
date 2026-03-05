@@ -79,6 +79,8 @@ post_game_bookkeeping() {
 	# ソ連建国チェック
 	if [ "$LAST_SOVIET" = "true" ]; then
 		handle_soviet_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
+		HALT_STRATEGY_AFTER_SOVIET=1
+		log "[HALT] ソ連建国達成: strategy実行を停止し、retry/次ゲーム操作を無効化"
 	fi
 
 	# スコア履歴

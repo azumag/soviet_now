@@ -305,6 +305,33 @@ def run_game():
                     with open("tmp/.soviet_created", "w") as flag_f:
                         flag_f.write(f"{turn}\n")
                     log("ソ連建国フラグ記録完了（読み上げはキュー順で継続）")
+                    # 建国後は戦略実行を停止し、これ以上コマンド送信しない
+                    try:
+                        with open(COMMANDS, "w") as f:
+                            f.write("")
+                    except Exception:
+                        pass
+                    decision = {"x": 0.0, "reason": "soviet created -> strategy halted"}
+                    analysis = {"results": [], "same_type": [], "reactor": {}}
+                    delta = score - prev_score
+                    record_turn(
+                        history_f,
+                        turn,
+                        gs,
+                        decision,
+                        analysis,
+                        soviet_created=True,
+                        strategy_hash=strategy_hash,
+                        score_delta=delta,
+                    )
+                    log("HALT: 建国達成により strategy_runner を停止（操作なし）")
+                    return {
+                        "score": score,
+                        "turns": turn,
+                        "state": get_state_field(gs),
+                        "pieces": len(pieces),
+                        "soviet_created": True,
+                    }
 
             # 盤面解析
             analysis = build_analysis(gs)
