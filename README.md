@@ -375,6 +375,141 @@ next が type N の場合、盤面に type N-1 のペアがあればいずれ併
 | パイプライン健全性 | `calc_reactor_state()` の `pipeline` | 断絶検知→修復優先 |
 | 空間的濃度 | `reactive_pairs`, `near_pairs` | 即時反応可能ペアへの触媒投入判断 |
 
+## サンドボックス改善機構
+
+eloop の AI 改善フローでは、AI がホストのファイルを直接編集するリスクを排除するため、**サンドボックス隔離**を導入している。
+
+### フロー概要
+
+```
+                          ホスト (プロジェクトルート)
+                          ┌──────────────────────────┐
+                          │ strategy.py              │
+                          │ strategy_helpers/         │
+                          │ prompts/                  │
+                          │ game_history/             │
+                          └──────┬───────────────────┘
+                                 │ (1) create_sandbox
+                                 │     必要ファイルをコピー
+                                 v
+                    サンドボックス (/tmp/soren_sandbox_XXXXXX)
+                    ┌──────────────────────────────────┐
+                    │ strategy.py          (参照用)     │
+                    │ strategy.py.staging  (AI編集対象) │
+                    │ strategy_helpers/                 │
+                    │ prompts/improve_strategy.md       │
+                    │ (参照データ一式)                   │
+                    └──────┬───────────────────────────┘
+                           │ (2) AI 編集
+                           │     pushd → LLM が staging を改善
+                           │     最大3回リトライ
+                           │ (3) validate
+                           │     decide() 存在・シグネチャ・テスト実行
+                           v
+                    ┌──────────────────────────────────┐
+                    │ (4) harvest_sandbox               │
+                    │     strategy.py.staging のみ取得   │
+                    │     + strategy_helpers/            │
+                    │     → harvest dir (tmp/.sandbox_harvest_XXXXXX)
+                    └──────┬───────────────────────────┘
+                           │ (5) check_host_integrity
+                           │     改善中のホスト変化を検出
+                           │ (6) destroy_sandbox
+                           │     /tmp 上のサンドボックスを削除
+                           v
+                          ホスト
+                          ┌──────────────────────────┐
+                          │ (7) apply                 │
+                          │     harvest → strategy.py │
+                          │     harvest → strategy_helpers/
+                          │ (8) cleanup harvest dir   │
+                          │ (9) git commit            │
+                          │     明示的ファイル指定     │
+                          └──────────────────────────┘
+```
+
+### 各フェーズの詳細
+
+#### (1) create_sandbox — 隔離環境の構築
+
+`eloop_lib.sh` の `create_sandbox()` が `/tmp/soren_sandbox_XXXXXX` にファイルをコピーする。
+
+- **許可リスト方式**: 呼び出し側が渡したファイルのみコピー
+- **symlink 除外**: シンボリックリンクはスキップ (`[ -L "$src" ] && continue`)
+- **パストラバーサル防御**: `../` を含むパスは拒否
+- **fallback**: `rsync -a --no-links` 優先、失敗時は `cp -RL`（symlink 展開コピー）
+- `strategy.py` を `strategy.py.staging` として複製し、AI はこの staging ファイルのみ編集する
+
+#### (2) AI 編集 — sandbox 内で LLM を実行
+
+`eloop_improve.sh` が `pushd "$SANDBOX_DIR"` でサンドボックスに移動してから `run_ai` を呼び出す。AI のカレントディレクトリは `/tmp` 配下なので、ホストのファイルに直接アクセスできない。
+
+- 最大3回リトライ（バリデーション失敗時は staging をリセットして再試行）
+- リトライ時には前回のエラーメッセージをプロンプトに含めて修正を促す
+
+#### (3) validate — staging ファイルの検証
+
+`validate_strategy_with_helpers()` がサンドボックス内で検証:
+
+- `decide(game_state, analysis)` 関数の存在とシグネチャ
+- Python テスト実行（インポートエラー・実行時エラー検出）
+- `strategy_helpers/` 内の symlink 検査
+- `__init__.py` の存在確認
+- ハッシュベースの反復防止（過去にリジェクトされた戦略と同一なら拒否）
+
+#### (4) harvest_sandbox — 許可ファイルのみ抽出
+
+`harvest_sandbox()` がサンドボックスから**決められたファイルのみ**を別ディレクトリに取り出す。
+
+- **取得対象**: `strategy.py.staging` と `strategy_helpers/` のみ（AI が他のファイルを生成しても無視される）
+- **harvest 先**: `tmp/.sandbox_harvest_XXXXXX`（ホスト側の tmp/）
+- **symlink 検査**: `find -type l` で混入を検出 → 発見時は harvest 全体を破棄
+- **hard link 検査**: `find -type f -links +1` で検出 → 発見時は harvest 全体を破棄
+- **パス検証**: harvest ディレクトリがプロジェクト内 `tmp/` 配下であることを確認
+
+#### (5) check_host_integrity — ホスト変化の検出
+
+改善前後の `git status --porcelain` を比較し、AI 改善中にホスト側で予期しない変更がないか検出する。
+
+- 変化検出時は警告ログを出力（commit は続行）
+- 並行実行中の `strategy_runner.py` による `game_state.json` 等の変更は正常動作なので、ブロックはしない
+
+#### (6) destroy_sandbox — サンドボックスの破棄
+
+- パス検証: `/tmp/soren_sandbox_*` パターンに一致する場合のみ `rm -rf`
+- harvest ディレクトリは別パスなので影響を受けない
+
+#### (7-9) apply, cleanup, git commit
+
+- harvest から `strategy.py` と `strategy_helpers/` をホストにコピー
+- harvest ディレクトリを削除
+- `git add` は **明示的ファイル指定** (`strategy.py strategy_helpers/ tmp/change_log.txt`) — `git add -A` による無関係ファイルの巻き込みを防止
+
+### 防御層の一覧
+
+| 防御層 | 場所 | 防ぐもの |
+|--------|------|----------|
+| sandbox 隔離 | create_sandbox | AI がホストファイルを直接変更 |
+| symlink 除外 (入力) | create_sandbox | sandbox に symlink が混入 |
+| `../` パス拒否 | create_sandbox | パストラバーサルで sandbox 外を参照 |
+| `cp -RL` fallback | create/harvest | rsync 失敗時にも symlink を展開 |
+| staging ファイル方式 | sandbox 内 | AI が strategy.py 本体を変更 |
+| バリデーション | validate_strategy_with_helpers | 構文エラー・シグネチャ不正 |
+| ハッシュ反復防止 | eloop_improve.sh | 同じ失敗戦略の繰り返し適用 |
+| 許可リスト harvest | harvest_sandbox | AI が作成した予期しないファイルの混入 |
+| symlink 検査 (出力) | harvest_sandbox | harvest に symlink が混入 |
+| hard link 検査 | harvest_sandbox | harvest に hard link が混入 |
+| パス検証 | harvest/destroy | 不正なパスへの操作 |
+| ホスト整合性チェック | check_host_integrity | 改善中のホスト変化 |
+| 明示的 git add | eloop_improve.sh | 無関係ファイルの commit 混入 |
+
+### 実装ファイル
+
+| ファイル | サンドボックス関連の関数 |
+|---------|------------------------|
+| `eloop_lib.sh` | `create_sandbox()`, `harvest_sandbox()`, `destroy_sandbox()`, `check_host_integrity()`, `validate_strategy_with_helpers()` |
+| `eloop_improve.sh` | サンドボックスフローの呼び出し元（create → AI 編集 → validate → harvest → apply → destroy） |
+
 ### 関連文献
 
 - `strategy_versions/best_score*_strategy.py` — ハイスコア時の戦略 (殿堂入り)
