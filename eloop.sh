@@ -145,13 +145,6 @@ prepare_next_game() {
 	# 試合時スナップショットのクリーンアップ
 	rm -f "${STRATEGY_FILE}.game_snapshot"
 
-	# ダッシュボード表示の猶予（OBSで見せる時間）
-	sleep 10
-
-	# ダッシュボード非表示（次のゲーム開始前）
-	log "[DASHBOARD] Generating MOVE dashboard (hiding)..."
-	./generate_dashboard.sh MOVE || log "[DASHBOARD] ERROR: generate_dashboard.sh MOVE failed"
-
 	if is_game_over; then
 		send_retry
 	else

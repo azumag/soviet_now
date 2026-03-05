@@ -1,29 +1,7 @@
 #!/bin/bash
 # score_history.txt を読み込んで score_dashboard.html を生成する
-# GAMEOVER/STOP 時のみダッシュボード表示、それ以外は透明な空ページ
+# 常にフルダッシュボードを生成（OBS表示用に次のGAMEOVERまで保持）
 cd "$(dirname "$0")"
-
-# ゲーム状態を取得（引数があればそれを使用、なければ game_state.json から）
-if [ -n "$1" ]; then
-	GAME_STATE="$1"
-else
-	GAME_STATE=$(python3 -c "import json; print(json.load(open('game_state.json')).get('state',''))" 2>/dev/null || echo "")
-fi
-
-# MOVE等（非GAMEOVER）なら空HTMLを書いて終了
-if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ]; then
-	cat > score_dashboard.html <<'EMPTYEOF'
-<!DOCTYPE html><html><head><meta charset="UTF-8">
-<meta http-equiv="refresh" content="2">
-</head>
-<body style="background:transparent">
-</body></html>
-EMPTYEOF
-	echo "Generated score_dashboard.html (state=${GAME_STATE}, hidden)"
-	exit 0
-fi
-
-# --- GAMEOVER/STOP: フルダッシュボード生成 ---
 
 # スコアデータをJSON配列に変換 (1行1スコア形式)
 SCORES_JSON=$(awk 'NF && /^[0-9]+$/ { n++; print "{\"game\":" n ",\"score\":" $1 "}" }' score_history.txt | paste -sd, -)
@@ -254,4 +232,4 @@ window.addEventListener('resize', () => drawChart(SCORES));
 </html>
 HTMLEOF
 
-echo "Generated score_dashboard.html (state=${GAME_STATE}, $(echo "[${SCORES_JSON}]" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') games)"
+echo "Generated score_dashboard.html ($(echo "[${SCORES_JSON}]" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))') games)"
