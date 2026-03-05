@@ -20,6 +20,7 @@ PENDING_LOG="$CHAT_DIR/pending.log"  # 未読み上げキュー
 OUTFILE="${TWITCH_CHAT_OUTFILE:-tmp/twitch_comments.txt}"
 SEEN_ID_FILE="$CHAT_DIR/seen_msg_ids.log" # 直近に処理済みのTwitch msg-id
 SEEN_ID_MAX=4000
+TAB=$'\t'
 LOCK_DIR="$CHAT_DIR/.op_lock"
 LOCK_TIMEOUT_SEC=8
 LOCK_STALE_SEC=120
@@ -204,10 +205,10 @@ _fetch_nolock() {
 
                 local msg_id="" comment_line="$raw_line"
                 # 新形式: id=<twitch-msg-id>\t<display>: <message>
-                if [[ "$raw_line" == id=*"$'\t'"* ]]; then
-                    msg_id="${raw_line%%$'\t'*}"
+                if [[ "$raw_line" == id=*"$TAB"* ]]; then
+                    msg_id="${raw_line%%"$TAB"*}"
                     msg_id="${msg_id#id=}"
-                    comment_line="${raw_line#*$'\t'}"
+                    comment_line="${raw_line#*"$TAB"}"
                     case "$msg_id" in
                     ''|*[!0-9A-Za-z-]*)
                         msg_id=""
