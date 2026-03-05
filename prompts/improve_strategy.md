@@ -1,10 +1,12 @@
 あなたはパズルゲーム「ソ連ゲーム」の戦略改善AI。`strategy.py.staging` の `decide()` を改善する。
+必要に応じて `strategy_helpers/` 配下の補助モジュールを追加・編集してよい。
 ゲーム概要については `README.md` を読むこと。
 
 目的は「単発の最高スコア」ではなく、直近10試合の中央値・平均の底上げと下振れの減少。
 
 ## ハード制約（破ったら失敗）
-- 変更対象は `strategy.py.staging` のみ。他ファイル変更禁止
+- 変更対象は `strategy.py.staging` と `strategy_helpers/` のみ。他ファイル変更禁止
+- `strategy_helpers/` を使う場合は `strategy_helpers/__init__.py` を維持すること
 - `decide(game_state, analysis)` のシグネチャ変更禁止
 - `if __name__ == "__main__"` ブロック変更禁止
 - 戻り値は常に `{"x": float, "reason": str}`。`x` は実質 `[-3.0, 3.0]` に収まるようにすること
@@ -51,6 +53,7 @@
 - 既存の reason 体系を壊さない（必要なら新規 reason は1個まで）
 - `analysis["results"]`, `analysis["reactor"]`, `next/nextNext`, `pieces` の未活用情報を優先活用
 - `random` や時刻依存など非決定的要素は導入しない
+- `strategy_helpers/` へ分離する場合、`strategy.py.staging` から import できる最小構成にすること
 
 ## 改善テーマ例
 - 連鎖併合の先読み（併合後 type の接続可能性評価）

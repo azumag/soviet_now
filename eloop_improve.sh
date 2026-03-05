@@ -9,6 +9,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+HOST_ROOT="$SCRIPT_DIR"
 
 source ./eloop_lib.sh
 
@@ -65,30 +66,36 @@ fi
 _improve_progress "summary_done" "15" "batch_summary_ready"
 
 # AI で strategy.py 改善
-# ゲーム実行中にstrategy.pyが壊れないよう、一時ファイルで作業し、
-# バリデーション成功後にのみアトミックに差し替える
+# サンドボックス内でのみ AI 編集を許可し、harvest 後にホストへ適用する
 strategy_diff=""
 log "[IMPROVE] AI改善 (${NUM_GAMES}試合分)..."
-_improve_progress "ai_prepare" "20" "prepare_staging"
-
-STAGING_FILE="${STRATEGY_FILE}.staging"
-cp "$STRATEGY_FILE" "$STAGING_FILE"
+_improve_progress "ai_prepare" "20" "prepare_sandbox"
 
 # リバート用に改善前のstrategy.pyを保存
 cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
 
 # 改善前のdecide()ハッシュを記録
 HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+HOST_REJECTED_HASHES_FILE="$HOST_ROOT/tmp/rejected_hashes.txt"
+CHANGE_LOG_FILE="tmp/change_log.txt"
+CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 
 improve_ok=false
+sandbox_ready=false
+in_sandbox=false
+SANDBOX_DIR=""
+HARVEST_DIR=""
+HOST_STATUS_SNAPSHOT=""
+STAGING_FILE="strategy.py.staging"
 
 # 直近3バージョン
-past_strategy_files=""
-for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3); do
-	past_strategy_files="$past_strategy_files $vf"
-done
+past_strategy_files=()
+while IFS= read -r vf; do
+	[ -n "$vf" ] && past_strategy_files+=("$vf")
+done < <(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3)
+
 # ランキング上位2戦略 (rolling_scores の composite スコア順)
-hall_of_fame_files=""
+hall_of_fame_files=()
 if [ -f "$ROLLING_SCORES_FILE" ]; then
 	top_hashes=$(python3 -c "
 import json, sys
@@ -111,34 +118,60 @@ for _, h in ranked[:2]:
 " 2>/dev/null)
 	for th in $top_hashes; do
 		hf="$STRATEGY_HASH_ARCHIVE_DIR/${th}.py"
-		[ -f "$hf" ] && hall_of_fame_files="$hall_of_fame_files $hf"
+		[ -f "$hf" ] && hall_of_fame_files+=("$hf")
 	done
 fi
 
-# 変更履歴ファイル (振り子パターン防止)
-CHANGE_LOG_FILE="tmp/change_log.txt"
+# 参照データ（sandbox相対パス）
+improve_ref_files=("$batch_summary_file" "$GAME_STATE")
+[ -f "$CHANGE_LOG_FILE" ] && improve_ref_files+=("$CHANGE_LOG_FILE")
+[ -f "tmp/advice.md" ] && [ -s "tmp/advice.md" ] && improve_ref_files+=("tmp/advice.md")
+[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && improve_ref_files+=("$worst_game_path")
+for vf in "${past_strategy_files[@]}"; do
+	improve_ref_files+=("$vf")
+done
+for hf in "${hall_of_fame_files[@]}"; do
+	improve_ref_files+=("$hf")
+done
 
-# 参照データ (AIにはstagingファイルを編集させる)
-improve_ref_files="$STAGING_FILE $batch_summary_file"
-[ -f "$CHANGE_LOG_FILE" ] && improve_ref_files="$improve_ref_files $CHANGE_LOG_FILE"
-[ -f "tmp/advice.md" ] && [ -s "tmp/advice.md" ] && improve_ref_files="$improve_ref_files tmp/advice.md"
-[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && improve_ref_files="$improve_ref_files $worst_game_path"
-improve_ref_files="$improve_ref_files $GAME_STATE $past_strategy_files $hall_of_fame_files"
+sandbox_ref_files=("prompts/improve_strategy.md" "$STRATEGY_FILE" "${improve_ref_files[@]}")
+[ -d "strategy_helpers" ] && sandbox_ref_files+=("strategy_helpers")
 
-for retry in $(seq 1 3); do
-	_improve_progress "ai_retry${retry}" "$((25 + (retry - 1) * 15))" "ai_edit_and_validate"
-	if [ "$retry" -eq 1 ]; then
-		run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
-			prompts/improve_strategy.md "$STAGING_FILE" \
-			$improve_ref_files
+HOST_STATUS_SNAPSHOT=$(mktemp /tmp/eloop_host_status_before.XXXXXX 2>/dev/null || echo "")
+[ -n "$HOST_STATUS_SNAPSHOT" ] && git status --porcelain >"$HOST_STATUS_SNAPSHOT" 2>/dev/null || true
+
+SANDBOX_DIR=$(create_sandbox "${sandbox_ref_files[@]}")
+if [ -z "$SANDBOX_DIR" ] || [ ! -d "$SANDBOX_DIR" ]; then
+	VALIDATE_ERROR="sandbox作成失敗"
+	log "[IMPROVE] $VALIDATE_ERROR"
+else
+	sandbox_ready=true
+fi
+
+if [ "$sandbox_ready" = true ]; then
+	if pushd "$SANDBOX_DIR" >/dev/null; then
+		in_sandbox=true
 	else
-		log "[IMPROVE] リトライ $retry/3 (前回エラー: ${VALIDATE_ERROR:0:80})"
+		VALIDATE_ERROR="sandboxへの移動失敗: $SANDBOX_DIR"
+		log "[IMPROVE] $VALIDATE_ERROR"
+	fi
+fi
 
-		# stagingをオリジナルに戻してからリトライ
-		cp "$STRATEGY_FILE" "$STAGING_FILE"
+if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
+	for retry in $(seq 1 3); do
+		_improve_progress "ai_retry${retry}" "$((25 + (retry - 1) * 15))" "ai_edit_and_validate"
+		if [ "$retry" -eq 1 ]; then
+			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
+				"prompts/improve_strategy.md" "$STAGING_FILE" \
+				"${improve_ref_files[@]}"
+		else
+			log "[IMPROVE] リトライ $retry/3 (前回エラー: ${VALIDATE_ERROR:0:80})"
 
-		fix_prompt_file=$(mktemp /tmp/eloop_fix_prompt.XXXXXX)
-		cat > "$fix_prompt_file" <<FIXEOF
+			# stagingをオリジナルに戻してからリトライ
+			cp "strategy.py" "$STAGING_FILE"
+
+			fix_prompt_file=$(mktemp /tmp/eloop_fix_prompt.XXXXXX)
+			cat > "$fix_prompt_file" <<FIXEOF
 前回の strategy.py.staging 改善でバリデーションが失敗した。strategy.py.staging はオリジナルに戻してある。
 以下のエラーを踏まえて、改めて改善せよ。
 
@@ -153,71 +186,111 @@ $VALIDATE_ERROR
 - decide() は必ず {"x": float, "reason": str} を返すこと
 - Write ツールで strategy.py.staging に書き込むこと
 FIXEOF
-		run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
-			"$fix_prompt_file" "$STAGING_FILE" \
-			$improve_ref_files
-		rm -f "$fix_prompt_file"
-	fi
-
-	# 差分チェック
-	_improve_progress "validate_retry${retry}" "$((30 + (retry - 1) * 15))" "diff_and_validation_checks"
-	if diff -q "$STRATEGY_FILE" "$STAGING_FILE" >/dev/null 2>&1; then
-		log "[IMPROVE] 差分なし (retry $retry/3)"
-		VALIDATE_ERROR="AIが strategy.py.staging を変更しなかった。必ず strategy.py.staging を編集して改善すること。"
-		continue
-	fi
-
-	# stagingファイルを直接バリデーション (strategy.pyには触らない)
-	if validate_strategy "$STAGING_FILE"; then
-		log "[IMPROVE] バリデーション成功"
-
-		# ハッシュベース反復防止: 最近リジェクトされたハッシュと同一なら拒否
-		HASH_STAGING=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
-		REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
-
-		if [ -n "$HASH_STAGING" ] && [ -f "$REJECTED_HASHES_FILE" ]; then
-			if grep -qF "$HASH_STAGING" "$REJECTED_HASHES_FILE"; then
-				log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み)"
-				VALIDATE_ERROR="この変更は過去にリジェクトされた戦略と同一 (hash=$HASH_STAGING)。別のアプローチを試せ。"
-				continue
-			fi
+			run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
+				"$fix_prompt_file" "$STAGING_FILE" \
+				"${improve_ref_files[@]}"
+			rm -f "$fix_prompt_file"
 		fi
 
-		# 改善前と同一ハッシュなら差分なしとして扱う
-		if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ]; then
-			log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
-			VALIDATE_ERROR="decide()関数の本体に実質的な変更がない (コメントのみの変更)。ロジックを変更せよ。"
+		# 差分チェック
+		_improve_progress "validate_retry${retry}" "$((30 + (retry - 1) * 15))" "diff_and_validation_checks"
+		if diff -q "strategy.py" "$STAGING_FILE" >/dev/null 2>&1; then
+			log "[IMPROVE] 差分なし (retry $retry/3)"
+			VALIDATE_ERROR="AIが strategy.py.staging を変更しなかった。必ず strategy.py.staging を編集して改善すること。"
 			continue
 		fi
 
-		strategy_diff=$(diff -u "$STRATEGY_FILE" "$STAGING_FILE" 2>/dev/null || true)
-		real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
-		[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
-		# 変更履歴ログに記録 (振り子パターン防止)
+		# stagingファイルを直接バリデーション (strategy.py本体は不変)
+		if validate_strategy_with_helpers "$STAGING_FILE" "strategy_helpers"; then
+			log "[IMPROVE] バリデーション成功"
+
+			# ハッシュベース反復防止: 最近リジェクトされたハッシュと同一なら拒否
+			HASH_STAGING=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
+			if [ -n "$HASH_STAGING" ] && [ -f "$HOST_REJECTED_HASHES_FILE" ]; then
+				if grep -qF "$HASH_STAGING" "$HOST_REJECTED_HASHES_FILE"; then
+					log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み)"
+					VALIDATE_ERROR="この変更は過去にリジェクトされた戦略と同一 (hash=$HASH_STAGING)。別のアプローチを試せ。"
+					continue
+				fi
+			fi
+
+			# 改善前と同一ハッシュなら差分なしとして扱う
+			if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ]; then
+				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
+				VALIDATE_ERROR="decide()関数の本体に実質的な変更がない (コメントのみの変更)。ロジックを変更せよ。"
+				continue
+			fi
+
+			strategy_diff=$(diff -u "strategy.py" "$STAGING_FILE" 2>/dev/null || true)
+			real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
+			[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
+
+			# 変更履歴ログに記録 (振り子パターン防止)
 			if [ -n "$strategy_diff" ]; then
 				{
-				echo "=== $(date '+%Y-%m-%d %H:%M') Game#${GAME_NUM_SNAPSHOT} scores=${SCORES} ==="
-				echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | head -20
-				echo ""
-			} >> "$CHANGE_LOG_FILE"
-			# 最新50エントリのみ保持
-			if [ -f "$CHANGE_LOG_FILE" ] && [ "$(wc -l < "$CHANGE_LOG_FILE")" -gt 200 ]; then
-				tail -200 "$CHANGE_LOG_FILE" > "$CHANGE_LOG_FILE.tmp"
-				mv "$CHANGE_LOG_FILE.tmp" "$CHANGE_LOG_FILE"
+					echo "=== $(date '+%Y-%m-%d %H:%M') Game#${GAME_NUM_SNAPSHOT} scores=${SCORES} ==="
+					echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | head -20
+					echo ""
+				} >> "$CHANGE_LOG_FILE_HOST"
+				if [ -f "$CHANGE_LOG_FILE_HOST" ] && [ "$(wc -l < "$CHANGE_LOG_FILE_HOST")" -gt 200 ]; then
+					tail -200 "$CHANGE_LOG_FILE_HOST" > "$CHANGE_LOG_FILE_HOST.tmp"
+					mv "$CHANGE_LOG_FILE_HOST.tmp" "$CHANGE_LOG_FILE_HOST"
+				fi
 			fi
-			fi
-			# バリデーション成功 → アトミックに差し替え
-			_improve_progress "apply" "80" "apply_validated_strategy"
-			mv "$STAGING_FILE" "$STRATEGY_FILE"
-			python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
+
 			improve_ok=true
 			break
 		fi
-done
+	done
 
-# 失敗してもstrategy.pyは一切触っていないので復元不要
+	if $improve_ok; then
+		HARVEST_DIR=$(harvest_sandbox "$SANDBOX_DIR")
+		if [ -z "$HARVEST_DIR" ] || [ ! -d "$HARVEST_DIR" ]; then
+			VALIDATE_ERROR="sandbox harvest失敗"
+			log "[IMPROVE] $VALIDATE_ERROR"
+			improve_ok=false
+		fi
+	fi
+fi
+
+if [ "$in_sandbox" = true ]; then
+	popd >/dev/null || true
+fi
+
+if [ -n "$HOST_STATUS_SNAPSHOT" ] && [ -f "$HOST_STATUS_SNAPSHOT" ]; then
+	check_host_integrity "$HOST_STATUS_SNAPSHOT"
+	rm -f "$HOST_STATUS_SNAPSHOT"
+fi
+
+[ -n "$SANDBOX_DIR" ] && destroy_sandbox "$SANDBOX_DIR" || true
+
+if $improve_ok; then
+	_improve_progress "apply" "80" "apply_validated_strategy"
+	if [ -f "$HARVEST_DIR/strategy.py.staging" ]; then
+		cp "$HARVEST_DIR/strategy.py.staging" "$STRATEGY_FILE"
+	else
+		VALIDATE_ERROR="harvestに strategy.py.staging がない"
+		log "[IMPROVE] $VALIDATE_ERROR"
+		improve_ok=false
+	fi
+
+	if $improve_ok; then
+		mkdir -p "strategy_helpers"
+		if [ -d "$HARVEST_DIR/strategy_helpers" ]; then
+			rsync -a --delete --no-links "$HARVEST_DIR/strategy_helpers"/ "strategy_helpers"/ 2>/dev/null || {
+				rm -rf "strategy_helpers"
+				mkdir -p "strategy_helpers"
+				cp -R "$HARVEST_DIR/strategy_helpers"/. "strategy_helpers"/ 2>/dev/null || true
+			}
+		fi
+		[ -f "strategy_helpers/__init__.py" ] || : > "strategy_helpers/__init__.py"
+		python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
+	fi
+fi
+
+# 失敗してもstrategy.pyはsandbox外で触っていないので復元不要
 _improve_progress "post_validate" "85" "finalizing"
-rm -f "$STAGING_FILE"
+[ -n "$HARVEST_DIR" ] && rm -rf "$HARVEST_DIR" 2>/dev/null || true
 
 # git commit
 # ゲーム範囲を算出してコミットメッセージに含める
