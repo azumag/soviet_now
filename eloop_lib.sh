@@ -3274,6 +3274,11 @@ _start_improvement_job() {
 }
 
 trigger_adaptive_improvement() {
+	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
+		log "[HALT] trigger_adaptive_improvementをスキップ（建国後停止中）"
+		return
+	fi
+
 	# Step 1: 常にデータを蓄積 & ローリングスコア更新
 	accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
 	update_rolling_scores "$LAST_SCORE"

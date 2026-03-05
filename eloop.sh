@@ -14,6 +14,12 @@
 
 #=== 1試合プレイ ===
 play_one_game() {
+	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
+		log "[HALT] play_one_gameをスキップ（strategy停止中）"
+		LAST_SOVIET="false"
+		return 0
+	fi
+
 	local game_num_display=$((GAME_NUM + 1))
 	log ""
 	log "── Game #${game_num_display} ──"
@@ -74,12 +80,18 @@ handle_soviet_celebration() {
 
 #=== 試合後の後処理 ===
 post_game_bookkeeping() {
+	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ] && [ "${LAST_SOVIET:-false}" != "true" ]; then
+		log "[HALT] post_game_bookkeepingをスキップ（建国後停止中）"
+		return 0
+	fi
+
 	local game_num_display=$((GAME_NUM + 1))
 
 	# ソ連建国チェック
 	if [ "$LAST_SOVIET" = "true" ]; then
 		handle_soviet_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
 		HALT_STRATEGY_AFTER_SOVIET=1
+		LAST_SOVIET="false"
 		log "[HALT] ソ連建国達成: strategy実行を停止し、retry/次ゲーム操作を無効化"
 	fi
 
@@ -110,6 +122,11 @@ post_game_bookkeeping() {
 
 #=== 次の試合準備 ===
 prepare_next_game() {
+	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
+		log "[HALT] prepare_next_gameをスキップ（retryなし）"
+		return 0
+	fi
+
 	# 試合時スナップショットのクリーンアップ
 	rm -f "${STRATEGY_FILE}.game_snapshot"
 
