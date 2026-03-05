@@ -252,6 +252,18 @@ bash sloop.sh      # 画像認識版 (レガシー)
 node soviet_game.mjs &
 ```
 
+### 4. ステータス表示
+
+AI ループの稼働状況は以下で監視できる。
+
+```bash
+./show-status 3      # 軽量ステータス表示 (3秒更新)
+./show-status-g 5    # グラフ付きダッシュボード (5秒更新)
+```
+
+- `Ctrl+C` で終了
+- 互換コマンドとして `./show_status.sh` / `./show_status_g.sh` も引き続き利用可能
+
 ## コマンドインターフェース
 
 `commands.txt` に書き込むとゲーム操作が実行される。
