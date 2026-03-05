@@ -13,7 +13,7 @@ Decision Logic (6 evaluation axes):
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition)
+  6. Chain merge bonus - Evaluate density of same-type pieces around merge target (v163: density count version)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -36,6 +36,8 @@ Phases (determined by board max Y):
 # v162: MEDIUMフェーズバランス補正強化版 - v155の成功パラメータ（chain_distance=5.0、chain_bonus=450.0）を維持しつつ、
 # MEDIUMフェーズでのバランス補正を強化（balance_strength 35.0→40.0）することで、盤面の左右バランスを改善し、
 # HEIGHT_CONTROLの選択率を削減してスコア安定性を向上させる。v155のchain_distance=5.0、chain_bonus=450.0は維持。
+# v163: CHAIN_MERGE密度カウント版 - v162の密度評価版（3つの最も近いピース評価）から密度カウント版に変更。
+# 連鎖機会の評価をより明確にし、選択率向上を目指す。半径2.5内の同typeピースの数をカウントし、Tieredボーナスを適用。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -43,12 +45,11 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v162: MEDIUMフェーズバランス補正強化版
+    """v163: CHAIN_MERGE密度カウント版
 
-    v155の成功パラメータ（chain_distance=5.0、chain_bonus=450.0）を維持しつつ、
-    MEDIUMフェーズでのバランス補正を強化（balance_strength 35.0→40.0）することで、盤面の左右バランスを改善し、
-    HEIGHT_CONTROLの選択率を削減してスコア安定性を向上させる。
-    v155のchain_distance=5.0、chain_bonus=450.0は維持。
+    v162の密度評価版（3つの最も近いピース評価）から密度カウント版に変更。
+    連鎖機会の評価をより明確にし、選択率向上を目指す。
+    半径2.5内の同typeピースの数をカウントし、Tieredボーナスを適用。
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -186,8 +187,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v162: v155 stable parameters) -----
-        # v162: maintain v155's successful parameters (chain_distance=5.0, chain_bonus=450.0)
+        # ----- evaluation axis 6: chain merge bonus (v163: density count version) -----
+        # v163: density count version - count merged_type pieces within radius 2.5 of merge target
+        # apply tiered bonus based on count: >=3 pieces = 350.0, >=2 pieces = 150.0, 1 piece = 50.0
+        # this properly evaluates configurations where multiple pieces cluster around merge target = high chain probability
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -196,40 +199,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v162: maintain v155's chain_distance=5.0
-                chain_distance = 5.0
+                # v163: density count radius
+                chain_radius = 2.5
 
-                # collect all merged_type pieces within chain_distance of merge target
-                nearby_pieces = []
+                # count merged_type pieces within radius
+                nearby_count = 0
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
-                        if dist < chain_distance:
-                            nearby_pieces.append((dist, p))
+                        if dist < chain_radius:
+                            nearby_count += 1
 
-                # sort by distance
-                nearby_pieces.sort(key=lambda x: x[0])
-
-                # bonus calculation from closest 3 pieces
-                # 1st: (chain_distance - dist) * 450.0 (v155 value, v162 maintained)
-                # 2nd: (chain_distance - dist) * 225.0
-                # 3rd: (chain_distance - dist) * 112.5
-                if len(nearby_pieces) >= 1:
-                    dist, _ = nearby_pieces[0]
-                    chain_bonus = (chain_distance - dist) * 450.0  # v155 value, v162 maintained
+                # apply tiered bonus based on count
+                if nearby_count >= 3:
+                    chain_bonus = 350.0
+                    score += chain_bonus
+                elif nearby_count >= 2:
+                    chain_bonus = 150.0
+                    score += chain_bonus
+                elif nearby_count >= 1:
+                    chain_bonus = 50.0
                     score += chain_bonus
 
-                if len(nearby_pieces) >= 2:
-                    dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance - dist) * 225.0
-                    score += chain_bonus
-
-                if len(nearby_pieces) >= 3:
-                    dist, _ = nearby_pieces[2]
-                    chain_bonus = (chain_distance - dist) * 112.5
-                    score += chain_bonus
-
-                if nearby_pieces:
+                if nearby_count > 0:
                     reasons.append("CHAIN_MERGE")
 
         # ----- update best candidate -----

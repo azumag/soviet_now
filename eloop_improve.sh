@@ -82,9 +82,9 @@ HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || ech
 
 improve_ok=false
 
-# 直近10バージョン + 殿堂入り戦略
+# 直近3バージョン + 殿堂入り戦略
 past_strategy_files=""
-for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -10); do
+for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3); do
 	past_strategy_files="$past_strategy_files $vf"
 done
 hall_of_fame_files=""
