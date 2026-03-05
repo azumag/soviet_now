@@ -46,7 +46,8 @@ cd "$SCRIPT_DIR"
 
 # 端末起動時は Ctrl-C キー定義を標準化し、届かない状況を明示する
 if [ -t 0 ]; then
-	stty intr '^C' 2>/dev/null || true
+	# screen/tmux配下などで ^C が文字入力扱いになるケースを防ぐ
+	stty intr '^C' isig 2>/dev/null || true
 	_self_pgid=$(ps -p $$ -o pgid= 2>/dev/null | tr -d ' ')
 	_tty_pgid=$(ps -p $$ -o tpgid= 2>/dev/null | tr -d ' ')
 	if [ -n "$_self_pgid" ] && [ -n "$_tty_pgid" ] && [ "$_self_pgid" != "$_tty_pgid" ]; then
