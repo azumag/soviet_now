@@ -653,7 +653,7 @@ save_strategy_version() {
 	GAME_NUM=$((GAME_NUM + 1))
 	echo "$GAME_NUM" >"$GAME_COUNT_FILE"
 	local version_file
-	version_file=$(printf "%s/v%03d_score%04d_strategy.py" "$STRATEGY_VERSIONS_DIR" "$GAME_NUM" "$score")
+	version_file=$(printf "%s/v%04d_score%04d_strategy.py" "$STRATEGY_VERSIONS_DIR" "$GAME_NUM" "$score")
 	# スナップショットがあれば試合時の戦略を保存 (裏の改善で書き換わっていても正確)
 	local src="${STRATEGY_FILE}.game_snapshot"
 	[ ! -f "$src" ] && src="$STRATEGY_FILE"
@@ -664,7 +664,7 @@ save_strategy_version() {
 	total=$(ls -1 "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | wc -l | tr -d ' ')
 	local delete_count=$((total - 10))
 	if [ "$delete_count" -gt 0 ]; then
-		ls -1 "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py | sort | head -n "$delete_count" | while read -r f; do
+		ls -1 "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py | sort -V | head -n "$delete_count" | while read -r f; do
 			rm -f "$f"
 			log "[VERSION] pruned: $(basename "$f")"
 		done
