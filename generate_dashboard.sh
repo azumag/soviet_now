@@ -1,7 +1,26 @@
 #!/bin/bash
 # score_history.txt を読み込んで score_dashboard.html を生成する
-# 常にフルダッシュボードを生成（OBS表示用に次のGAMEOVERまで保持）
+# GAMEOVER/STOP → フルダッシュボード、それ以外 → 空HTML（OBS非表示）
 cd "$(dirname "$0")"
+
+# 引数でゲーム状態を受け取る
+if [ -n "$1" ]; then
+    GAME_STATE="$1"
+else
+    GAME_STATE="MOVE"
+fi
+
+# MOVE等（非GAMEOVER）なら空HTMLを書いて終了
+if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ]; then
+    cat > score_dashboard.html <<'EMPTYEOF'
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+</head>
+<body style="background:transparent">
+<script>setInterval(function(){location.reload();},3000);</script>
+</body></html>
+EMPTYEOF
+    exit 0
+fi
 
 # スコアデータをJSON配列に変換 (1行1スコア形式)
 SCORES_JSON=$(awk 'NF && /^[0-9]+$/ { n++; print "{\"game\":" n ",\"score\":" $1 "}" }' score_history.txt | paste -sd, -)
@@ -11,7 +30,6 @@ cat > score_dashboard.html <<HTMLEOF
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="refresh" content="2">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -226,7 +244,8 @@ function drawChart(scores) {
 drawChart(SCORES);
 window.addEventListener('resize', () => drawChart(SCORES));
 
-// meta http-equiv="refresh" handles auto-reload
+// Auto-reload every 3 seconds (OBS CEF doesn't support meta refresh on file://)
+setInterval(function(){location.reload();},3000);
 </script>
 </body>
 </html>

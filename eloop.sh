@@ -151,6 +151,10 @@ prepare_next_game() {
 	# 試合時スナップショットのクリーンアップ
 	rm -f "${STRATEGY_FILE}.game_snapshot"
 
+	# ダッシュボード非表示（次のゲーム開始前）
+	log "[DASHBOARD] Hiding dashboard..."
+	./generate_dashboard.sh MOVE || true
+
 	if is_game_over; then
 		send_retry
 	else
