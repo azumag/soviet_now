@@ -32,9 +32,11 @@ Phases (determined by board max Y):
 # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # v151-v155: CHAIN_MERGE enhanced versions (coefficients 200.0->300.0->400.0, chain_distance 3.0->3.5->4.0->4.5->5.0)
+# [BEST:4026] v155: chain_distance 4.5->5.0, chain_bonus 400.0->450.0 with enhanced coefficients to promote CHAIN_MERGE and reduce HEIGHT_CONTROL
 # v156: v42/v126 success structure restore, CHAIN_MERGE removed
 # v157: Dynamic parameter adjustment - Adopt v154's dynamic adjustment logic with enhanced coefficients to promote CHAIN_MERGE and reduce HEIGHT_CONTROL
 # v158: Restore v154 stable parameters - v157's dynamic adjustment (chain_distance_max=4.5+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0) caused score instability similar to v155's failure pattern (chain_distance=5.0 was too wide causing evaluation roughness). Revert to v154's stable fixed parameters (chain_distance=4.5, chain_bonus_multiplier=400.0) for evaluation precision. Keep v154's density evaluation logic (3 closest pieces with distance-weighted bonus).
+# v159: Restore v155 parameters - v158's rollback to v154 (chain_distance=4.5, chain_bonus=400.0) was a mistake. Restore v155's successful parameters (chain_distance=5.0, chain_bonus=450.0) to increase CHAIN_MERGE selection rate.
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -42,7 +44,15 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v158: Restore v154 stable parameters
+    """v159: Restore v155 parameters
+
+    v158's rollback to v154 (chain_distance=4.5, chain_bonus_multiplier=400.0) was a mistake.
+    v155's parameters achieved the best score (4026) with:
+    - chain_distance: 5.0 (fixed, evaluate wider merge opportunities)
+    - chain_bonus_multiplier: 450.0 (fixed, stronger chain merge bonus)
+    - density evaluation logic (3 closest pieces with distance-weighted bonus)
+    
+    Reverting to v155's successful parameters to increase CHAIN_MERGE selection rate.
 
     v157's dynamic parameter adjustment (chain_distance_max=4.5+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0)
     caused score instability similar to v155's failure pattern (chain_distance=5.0 was too wide causing evaluation roughness).
@@ -187,11 +197,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v158: v154 stable parameters) -----
-        # v158: Restore v154's stable fixed parameters to avoid v155's failure pattern.
-        # v155's chain_distance=5.0 was too wide causing evaluation roughness and score instability.
-        # v158: Use fixed chain_distance=4.5 and chain_bonus_multiplier=400.0 for precision.
-        # Keep v154's density evaluation logic (3 closest pieces with distance-weighted bonus).
+         # ----- evaluation axis 6: chain merge bonus (v159: v155 parameters) -----
+         # v159: Restore v155's successful parameters (chain_distance=5.0, chain_bonus_multiplier=450.0).
+         # v155 achieved best score 4026 with these parameters.
+         # v158's rollback to v154 (4.5/400.0) was a mistake.
+         # Revert to v155's parameters to increase CHAIN_MERGE selection rate.
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -200,15 +210,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v158: fixed chain_distance=4.5 (restore from v157's dynamic expansion)
-                # v155's 5.0 fixed value was too wide, v157's dynamic expansion (4.5+landing_y*0.6) repeats this mistake
-                # v154's fixed 4.5 provides stable evaluation precision
-                chain_distance = 4.5
-
-                # v158: fixed chain_bonus_multiplier=400.0 (restore from v157's dynamic strengthening)
-                # v157's dynamic (450.0+landing_y*150.0) caused instability in HIGH_LAYER situations
-                # v154's fixed 400.0 provides stable bonus calculation
-                chain_bonus_multiplier = 400.0
+                 # v159: restore v155's successful parameters (chain_distance=5.0, chain_bonus=450.0)
+                 # v155 achieved best score 4026 with these parameters
+                chain_distance = 5.0
+                chain_bonus_multiplier = 450.0
 
                 # collect all merged_type pieces within chain_distance of merge target
                 nearby_pieces = []
