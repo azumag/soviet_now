@@ -340,7 +340,7 @@ try:
 except Exception:
     pass
 
-for commit, ad, subj in rows[:4]:
+for commit, ad, subj in rows[:2]:
     when_disp = ad
     try:
         when_disp = dt.datetime.fromisoformat(ad).strftime("%m-%d %H:%M")
