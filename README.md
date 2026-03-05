@@ -385,51 +385,46 @@ soren_loop の AI 改善フローでは、AI がホストのファイルを直�
 
 ### フロー概要
 
-```
-                          ホスト (プロジェクトルート)
-                          ┌──────────────────────────┐
-                          │ strategy.py              │
-                          │ strategy_helpers/         │
-                          │ prompts/                  │
-                          │ game_history/             │
-                          └──────┬───────────────────┘
-                                 │ (1) create_sandbox
-                                 │     必要ファイルをコピー
-                                 v
-                    サンドボックス (/tmp/soren_sandbox_XXXXXX)
-                    ┌──────────────────────────────────┐
-                    │ strategy.py          (参照用)     │
-                    │ strategy.py.staging  (AI編集対象) │
-                    │ strategy_helpers/                 │
-                    │ prompts/improve_strategy.md       │
-                    │ (参照データ一式)                   │
-                    └──────┬───────────────────────────┘
-                           │ (2) AI 編集
-                           │     pushd → LLM が staging を改善
-                           │     最大3回リトライ
-                           │ (3) validate
-                           │     decide() 存在・シグネチャ・テスト実行
-                           v
-                    ┌──────────────────────────────────┐
-                    │ (4) harvest_sandbox               │
-                    │     strategy.py.staging のみ取得   │
-                    │     + strategy_helpers/            │
-                    │     → harvest dir (tmp/.sandbox_harvest_XXXXXX)
-                    └──────┬───────────────────────────┘
-                           │ (5) check_host_integrity
-                           │     改善中のホスト変化を検出
-                           │ (6) destroy_sandbox
-                           │     /tmp 上のサンドボックスを削除
-                           v
-                          ホスト
-                          ┌──────────────────────────┐
-                          │ (7) apply                 │
-                          │     harvest → strategy.py │
-                          │     harvest → strategy_helpers/
-                          │ (8) cleanup harvest dir   │
-                          │ (9) git commit            │
-                          │     明示的ファイル指定     │
-                          └──────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph HOST["ホスト (プロジェクトルート)"]
+        H_FILES["strategy.py\nstrategy_helpers/\nprompts/\ngame_history/"]
+    end
+
+    HOST -->|"(1) create_sandbox\n必要ファイルをコピー"| SANDBOX
+
+    subgraph SANDBOX["/tmp/soren_sandbox_XXXXXX"]
+        direction TB
+        S_EDIT["strategy.py.staging (AI編集対象)\nstrategy.py (参照用)"]
+        S_HELPERS["strategy_helpers/"]
+        S_TEST["analyze_board.py (テスト実行用)\nextract_decide_hash.py (ハッシュ計算)"]
+        S_PROMPT["prompts/improve_strategy.md"]
+        S_REF["参照データ一式\n(batch_summary, game_state,\npast versions, worst game等)"]
+        S_NOTE["※ LLM プロンプトにインライン展開されるのは\nimprove_ref_files のみ\n(analyze_board.py 等は含まない)"]
+    end
+
+    SANDBOX -->|"(2) AI 編集\npushd → LLM が staging を改善\n最大3回リトライ"| VALIDATE
+
+    VALIDATE{"(3) validate\ndecide() 存在・シグネチャ\nテスト実行"} -->|成功| HARVEST
+    VALIDATE -->|"失敗 (3回まで)"| SANDBOX
+
+    subgraph HARVEST_DIR["harvest dir (tmp/.sandbox_harvest_XXXXXX)"]
+        H_STAGING["strategy.py.staging"]
+        H_HELPERS2["strategy_helpers/"]
+    end
+
+    SANDBOX -->|"(4) harvest_sandbox\n許可ファイルのみ抽出\nsymlink/hard link 検査"| HARVEST_DIR
+
+    HARVEST_DIR --> INTEGRITY
+    INTEGRITY["(5) check_host_integrity\n改善中のホスト変化を検出"] --> DESTROY
+    DESTROY["(6) destroy_sandbox\n/tmp 上のサンドボックスを削除"] --> APPLY
+
+    subgraph APPLY_PHASE["ホストへ適用"]
+        APPLY["(7) apply\nharvest → strategy.py\nharvest → strategy_helpers/"]
+        CLEANUP["(8) cleanup harvest dir"]
+        COMMIT["(9) git commit\n明示的ファイル指定\n(strategy.py, strategy_helpers/,\ntmp/change_log.txt)"]
+        APPLY --> CLEANUP --> COMMIT
+    end
 ```
 
 ### 各フェーズの詳細
@@ -443,6 +438,7 @@ soren_loop の AI 改善フローでは、AI がホストのファイルを直�
 - **パストラバーサル防御**: `../` を含むパスは拒否
 - **fallback**: `rsync -a --no-links` 優先、失敗時は `cp -RL`（symlink 展開コピー）
 - `strategy.py` を `strategy.py.staging` として複製し、AI はこの staging ファイルのみ編集する
+- `analyze_board.py` と `extract_decide_hash.py` もコピー（バリデーション・ハッシュ計算用。LLM プロンプトにはインライン展開されない）
 
 #### (2) AI 編集 — sandbox 内で LLM を実行
 
@@ -456,10 +452,10 @@ soren_loop の AI 改善フローでは、AI がホストのファイルを直�
 `validate_strategy_with_helpers()` がサンドボックス内で検証:
 
 - `decide(game_state, analysis)` 関数の存在とシグネチャ
-- Python テスト実行（インポートエラー・実行時エラー検出）
+- Python テスト実行 — `strategy.py.staging` を `game_state.json` + `analyze_board.py` で実行し、実データでの動作を確認
 - `strategy_helpers/` 内の symlink 検査
 - `__init__.py` の存在確認
-- ハッシュベースの反復防止（過去にリジェクトされた戦略と同一なら拒否）
+- `extract_decide_hash.py` によるハッシュベースの反復防止（過去にリジェクトされた戦略と同一なら拒否）
 
 #### (4) harvest_sandbox — 許可ファイルのみ抽出
 
@@ -506,6 +502,16 @@ soren_loop の AI 改善フローでは、AI がホストのファイルを直�
 | パス検証 | harvest/destroy | 不正なパスへの操作 |
 | ホスト整合性チェック | check_host_integrity | 改善中のホスト変化 |
 | 明示的 git add | eloop_improve.sh | 無関係ファイルの commit 混入 |
+| コンテキスト分離 | sandbox_ref_files / improve_ref_files | テスト用ファイル (analyze_board.py 等) が LLM プロンプトに混入してトークンを浪費 |
+
+### 設計ノート: sandbox_ref_files と improve_ref_files の分離
+
+sandbox にコピーするファイルリスト (`sandbox_ref_files`) と LLM プロンプトにインライン展開するファイルリスト (`improve_ref_files`) は意図的に分離されている。
+
+- **`sandbox_ref_files`** → `create_sandbox()` でファイルシステムにコピー。`analyze_board.py` (26KB) や `extract_decide_hash.py` など、バリデーション・ハッシュ計算に必要だが LLM に読ませる必要がないファイルを含む
+- **`improve_ref_files`** → `build_prompt()` でプロンプトにインライン展開。batch_summary、game_state、過去バージョン等、LLM が改善判断に必要なデータのみ
+
+これにより LLM のコンテキストウィンドウを節約しつつ、sandbox 内のテスト実行環境を完備する。
 
 ### 実装ファイル
 
