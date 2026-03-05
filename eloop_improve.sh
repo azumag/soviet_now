@@ -134,7 +134,7 @@ for hf in "${hall_of_fame_files[@]}"; do
 	improve_ref_files+=("$hf")
 done
 
-sandbox_ref_files=("prompts/improve_strategy.md" "$STRATEGY_FILE" "${improve_ref_files[@]}")
+sandbox_ref_files=("prompts/improve_strategy.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}")
 [ -d "strategy_helpers" ] && sandbox_ref_files+=("strategy_helpers")
 
 HOST_STATUS_SNAPSHOT=$(mktemp /tmp/eloop_host_status_before.XXXXXX 2>/dev/null || echo "")

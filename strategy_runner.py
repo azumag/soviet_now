@@ -18,6 +18,7 @@ import importlib.util
 import json
 import math
 import os
+import signal
 import sys
 import time
 
@@ -39,6 +40,15 @@ SETTLE_REQUIRED = 1       # 静止確認回数
 COMMAND_TIMEOUT = 20      # commands.txt 消化待ちタイムアウト(秒)
 MOVE_TIMEOUT = 120        # MOVE状態待ちタイムアウト(秒)
 DROP_WAIT = 0.3           # ドロップ後の待ち時間(秒)
+
+
+def _handle_stop_signal(signum, _frame):
+    """SIGINT/SIGTERMをKeyboardInterruptとして扱い、終了コード130へ寄せる。"""
+    raise KeyboardInterrupt(f"signal {signum}")
+
+
+signal.signal(signal.SIGINT, _handle_stop_signal)
+signal.signal(signal.SIGTERM, _handle_stop_signal)
 
 
 def log(msg):
@@ -380,7 +390,16 @@ def run_game():
 
 
 def main():
-    result = run_game()
+    try:
+        result = run_game()
+    except KeyboardInterrupt:
+        log("Interrupted: strategy_runnerを終了します")
+        try:
+            with open(COMMANDS, "w") as f:
+                f.write("")
+        except Exception:
+            pass
+        raise SystemExit(130)
     # 最終結果を JSON で stdout に出力
     print("---RESULT---")
     print(json.dumps(result, ensure_ascii=False))

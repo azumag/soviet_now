@@ -32,14 +32,20 @@ play_one_game() {
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
 	python3 -u strategy_runner.py 2>&1 | tee "$runner_tmpfile"
-	local runner_rc="${PIPESTATUS[0]:-1}"
-	if [ "$runner_rc" -eq 130 ] || [ "$runner_rc" -eq 143 ]; then
-		log "[SIGNAL] strategy_runner が割り込み終了 (rc=$runner_rc)"
+	local py_rc="${PIPESTATUS[0]:-1}"
+	local tee_rc="${PIPESTATUS[1]:-0}"
+	if [ "$py_rc" -eq 130 ] || [ "$py_rc" -eq 143 ] || [ "$tee_rc" -eq 130 ] || [ "$tee_rc" -eq 143 ]; then
+		log "[SIGNAL] strategy_runner/tee が割り込み終了 (py_rc=$py_rc tee_rc=$tee_rc)"
 		rm -f "$runner_tmpfile"
 		return 130
 	fi
-	if [ "$runner_rc" -ne 0 ]; then
-		log "[RUNNER] WARNING: strategy_runner が異常終了 (rc=$runner_rc)"
+	if [ "$py_rc" -eq 1 ] && grep -q "KeyboardInterrupt" "$runner_tmpfile" 2>/dev/null; then
+		log "[SIGNAL] strategy_runner KeyboardInterrupt を検出 (py_rc=$py_rc tee_rc=$tee_rc)"
+		rm -f "$runner_tmpfile"
+		return 130
+	fi
+	if [ "$py_rc" -ne 0 ] || [ "$tee_rc" -ne 0 ]; then
+		log "[RUNNER] WARNING: strategy_runner が異常終了 (py_rc=$py_rc tee_rc=$tee_rc)"
 	fi
 
 	# 結果抽出

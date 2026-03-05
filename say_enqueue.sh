@@ -167,7 +167,8 @@ done
 
 # --- ロック内: say開始 + PID記録（アトミック） ---
 _log "say開始 (rate=${RATE})"
-nohup say -r "$RATE" -f "$MY_CONTENT" > /dev/null 2>&1 &
+# Ctrl-Cでloopを止めても再生中のsayは止めない（INT/TERMを無視して実行）
+nohup env SAY_RATE="$RATE" SAY_CONTENT="$MY_CONTENT" bash -c 'trap "" INT TERM; exec say -r "$SAY_RATE" -f "$SAY_CONTENT"' > /dev/null 2>&1 &
 SAY_PID=$!
 echo "$SAY_PID" > "$PID_FILE"
 

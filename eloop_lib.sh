@@ -2917,6 +2917,20 @@ _collect_descendant_pids() {
 	printf '%s\n' "${descendants[@]}"
 }
 
+_is_audio_playback_process() {
+	local pid="$1"
+	case "$pid" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	local cmd
+	cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+	# Ctrl-C停止時でも再生中読み上げは途切れさせない
+	if echo "$cmd" | grep -Eq '(^|[[:space:]])say([[:space:]]|$)|say_enqueue\.sh'; then
+		return 0
+	fi
+	return 1
+}
+
 _stop_loop_descendants() {
 	local root_pid="$1"
 	case "$root_pid" in
@@ -2937,6 +2951,10 @@ _stop_loop_descendants() {
 	for ((idx=${#descendants[@]} - 1; idx>=0; idx--)); do
 		pid="${descendants[$idx]}"
 		[ "$pid" = "$$" ] && continue
+		if _is_audio_playback_process "$pid"; then
+			log "[CLEANUP] 再生プロセスは維持 (PID=$pid)"
+			continue
+		fi
 		_stop_pid_with_fallback "$pid" "child"
 	done
 }
