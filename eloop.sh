@@ -32,6 +32,15 @@ play_one_game() {
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
 	python3 -u strategy_runner.py 2>&1 | tee "$runner_tmpfile"
+	local runner_rc="${PIPESTATUS[0]:-1}"
+	if [ "$runner_rc" -eq 130 ] || [ "$runner_rc" -eq 143 ]; then
+		log "[SIGNAL] strategy_runner が割り込み終了 (rc=$runner_rc)"
+		rm -f "$runner_tmpfile"
+		return 130
+	fi
+	if [ "$runner_rc" -ne 0 ]; then
+		log "[RUNNER] WARNING: strategy_runner が異常終了 (rc=$runner_rc)"
+	fi
 
 	# 結果抽出
 	RESULT_JSON=$(sed -n '/^---RESULT---$/,$ p' "$runner_tmpfile" | tail -n 1)

@@ -33,6 +33,45 @@ source ./eloop_lib.sh
 GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 IMPROVE_PID=0
 HALT_STRATEGY_AFTER_SOVIET=0
+STOP_REQUESTED=0
+_SOREN_CLEANED_UP=0
+
+_cleanup_once() {
+	local reason="${1:-unknown}"
+	if [ "${_SOREN_CLEANED_UP:-0}" -eq 1 ]; then
+		return 0
+	fi
+	_SOREN_CLEANED_UP=1
+	cleanup_all "$reason"
+}
+
+_handle_stop_signal() {
+	local sig="${1:-INT}"
+	STOP_REQUESTED=1
+	log "[SIGNAL] ${sig} を受信: 停止処理に入ります"
+	trap - INT TERM
+	_cleanup_once "signal:${sig}"
+	trap - EXIT
+	exit 130
+}
+
+_handle_exit() {
+	local rc=$?
+	if [ "${STOP_REQUESTED:-0}" -eq 1 ]; then
+		return 0
+	fi
+	_cleanup_once "exit:${rc}"
+}
+
+_abort_if_interrupted() {
+	local rc="${1:-0}"
+	local stage="${2:-unknown}"
+	if [ "${STOP_REQUESTED:-0}" -eq 1 ] || [ "$rc" -eq 130 ] || [ "$rc" -eq 143 ]; then
+		log "[SIGNAL] ${stage} で割り込みを検出 (rc=${rc})"
+		exit 130
+	fi
+	return 0
+}
 
 # --- 初期化 ---
 log "=== Soren Evolution Loop ==="
@@ -42,7 +81,9 @@ log "strategy.py → 1game → adaptive improve → repeat"
 ./twitch_chat.sh start azumagbanjo
 
 # クリーンアップ trap
-trap 'cleanup_all; exit' EXIT INT TERM
+trap '_handle_exit' EXIT
+trap '_handle_stop_signal INT' INT
+trap '_handle_stop_signal TERM' TERM
 
 # 前回の孤児コメントプレイヤー/ウォッチャーを掃除してから起動
 stop_comment_player
@@ -67,10 +108,13 @@ fi
 check_and_harvest_improvement
 
 # MOVE状態待ち
-wait_for_move || {
+wait_for_move
+wait_rc=$?
+_abort_if_interrupted "$wait_rc" "wait_for_move(initial)"
+if [ "$wait_rc" -ne 0 ]; then
 	log "ゲームが起動していません"
 	exit 1
-}
+fi
 
 # --- メインループ: 1試合ずつ ---
 while true; do
@@ -105,9 +149,13 @@ while true; do
 
 	# 1試合プレイ
 	play_one_game
+	play_rc=$?
+	_abort_if_interrupted "$play_rc" "play_one_game"
 
 	# 後処理 (スコア記録, バージョン保存, git commit 等)
 	post_game_bookkeeping
+	post_rc=$?
+	_abort_if_interrupted "$post_rc" "post_game_bookkeeping"
 
 	# ソ連建国達成後は retry を含む次ゲーム操作を行わない
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
@@ -118,9 +166,13 @@ while true; do
 
 	# アダプティブ改善トリガー
 	trigger_adaptive_improvement
+	improve_rc=$?
+	_abort_if_interrupted "$improve_rc" "trigger_adaptive_improvement"
 
 	# 次の試合準備
 	prepare_next_game
+	next_rc=$?
+	_abort_if_interrupted "$next_rc" "prepare_next_game"
 
 	sleep 2
 done
