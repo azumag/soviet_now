@@ -114,185 +114,19 @@ _radio_output_rules() {
 
 _radio_parse_output_to_files() {
 	local body_file="$1" summary_file="$2" selected_news_file="$3"
-	local parser_file
-	parser_file=$(mktemp /tmp/eloop_radio_parser_XXXXXXXX)
-	cat >"$parser_file" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-body_path, summary_path, selected_path = sys.argv[1:4]
-raw = sys.stdin.read().replace("\r", "")
-
-raw = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", raw)
-raw = re.sub(
-    r"</?(?:arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>",
-    "",
-    raw,
-    flags=re.IGNORECASE,
-)
-
-lines = [line.strip() for line in raw.splitlines()]
-clean_lines = []
-for line in lines:
-    if not line:
-        continue
-    if line.startswith("```"):
-        continue
-    if line == "^D":
-        continue
-    if re.fullmatch(r"/[^ ]*", line):
-        continue
-    if line.startswith("/Users/"):
-        continue
-    if re.fullmatch(r"</?[^>]+>", line):
-        continue
-    clean_lines.append(line)
-
-def marker_positions(marker):
-    return [idx for idx, line in enumerate(clean_lines) if line == marker]
-
-summary_pos = marker_positions("===SUMMARY===")
-selected_pos = marker_positions("===SELECTED_NEWS===")
-main_lines = clean_lines[: selected_pos[0]] if selected_pos else clean_lines
-
-selected_news = ""
-if selected_pos:
-    for line in clean_lines[selected_pos[0] + 1 :]:
-        if not line or line.startswith("==="):
-            continue
-        selected_news = line
-        break
-selected_news = re.sub(r"</?[A-Za-z_][^>]*>", "", selected_news).strip()
-selected_news = re.sub(r"\s+", " ", selected_news)[:240]
-
-summary = ""
-if summary_pos:
-    summary_lines = []
-    for line in main_lines[summary_pos[0] + 1 :]:
-        if line.startswith("==="):
-            break
-        if not line:
-            continue
-        summary_lines.append(line)
-        if len(summary_lines) >= 2:
-            break
-    if summary_lines:
-        summary = " / ".join(summary_lines)
-summary = re.sub(r"</?[A-Za-z_][^>]*>", "", summary).strip()
-summary = re.sub(r"\s+", " ", summary)[:220]
-
-segments = []
-start = 0
-for idx, line in enumerate(main_lines):
-    if line == "===SUMMARY===":
-        segments.append(main_lines[start:idx])
-        start = idx + 1
-segments.append(main_lines[start:])
-
-def score_segment(seg):
-    txt = " ".join(seg).strip()
-    if not txt:
-        return -1
-    punct = len(re.findall(r"[。.!?！？]", txt))
-    return len(txt) + punct * 80
-
-body_lines = []
-if segments:
-    best = max(segments, key=score_segment)
-    body_lines = [line for line in best if line and not line.startswith("===")]
-
-if body_lines:
-    head = body_lines[0]
-    if ("," in head or "、" in head) and not re.search(r"[。.!?！？]", head):
-        body_lines = body_lines[1:]
-    elif head.count(",") + head.count("、") >= 4 and len(head) <= 180 and len(body_lines) >= 2:
-        body_lines = body_lines[1:]
-
-body = "\n".join(body_lines).strip()
-body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
-
-if len(body) < 100:
-    used_before_summary = False
-    if summary_pos and summary_pos[0] < len(main_lines):
-        before_summary = [line for line in main_lines[: summary_pos[0]] if not line.startswith("===")]
-        if before_summary:
-            body = "\n".join(before_summary).strip()
-            used_before_summary = True
-    if len(body) < 100 and not used_before_summary:
-        fallback_lines = [line for line in main_lines if not line.startswith("===")]
-        body = "\n".join(fallback_lines).strip()
-    body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
-
-clean_body_lines = [line.strip() for line in body.splitlines() if line.strip()]
-if clean_body_lines:
-    head = clean_body_lines[0]
-    if ("," in head or "、" in head) and not re.search(r"[。.!?！？]", head):
-        clean_body_lines = clean_body_lines[1:]
-    elif head.count(",") + head.count("、") >= 4 and len(head) <= 180 and len(clean_body_lines) >= 2:
-        clean_body_lines = clean_body_lines[1:]
-body = "\n".join(clean_body_lines).strip()
-
-body = re.sub(r"\n{3,}", "\n\n", body)
-if len(body) > 12000:
-    body = body[:12000]
-
-Path(body_path).write_text(body, encoding="utf-8")
-Path(summary_path).write_text(summary, encoding="utf-8")
-Path(selected_path).write_text(selected_news, encoding="utf-8")
-PY
-	python3 "$parser_file" "$body_file" "$summary_file" "$selected_news_file"
-	local rc=$?
-	rm -f "$parser_file"
-	return $rc
+	python3 "$ELOOP_LIB_DIR/lib/radio_parser.py" "$body_file" "$summary_file" "$selected_news_file"
 }
 
 _radio_past_topics_block() {
 	local past_topics=""
 	if [ -f "$PAST_RADIO_TOPICS" ]; then
-		past_topics=$(grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null | tail -80)
+		past_topics=$(grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null | tail -"${PAST_RADIO_TOPICS_KEEP:-100}")
 	fi
 	echo "${past_topics:-まだ過去のトークはありません。自由に話してください。}"
 }
 
 _radio_dedup_text() {
-	python3 -c "
-import sys
-text = sys.stdin.read()
-lines = text.split('\n')
-seen_repeat = 0
-cut_at = len(lines)
-for i in range(1, len(lines)):
-    if lines[i].strip() and lines[i] == lines[i-1]:
-        seen_repeat += 1
-        if seen_repeat >= 3:
-            cut_at = i - 2
-            break
-    else:
-        seen_repeat = 0
-from collections import Counter
-chunk_size = 20
-chunks = [text[i:i+chunk_size] for i in range(0, len(text)-chunk_size)]
-freq = Counter(chunks)
-repeat_phrase = None
-for phrase, count in freq.most_common(1):
-    if count >= 5 and len(phrase.strip()) > 5:
-        repeat_phrase = phrase
-        break
-result = '\n'.join(lines[:cut_at])
-if repeat_phrase:
-    idx = 0
-    for _ in range(3):
-        idx = result.find(repeat_phrase, idx)
-        if idx == -1:
-            break
-        idx += len(repeat_phrase)
-    if idx > 0:
-        result = result[:idx]
-if len(result) > 10000:
-    result = result[:10000]
-print(result, end='')
-	"
+	python3 "$ELOOP_LIB_DIR/lib/radio_text_utils.py" dedup
 }
 
 _sanitize_onair_text() {
@@ -594,8 +428,8 @@ _radio_generate_and_play() {
 			else
 				echo "$selected_news" >>"$PAST_NEWS_READ"
 				echo "$selected_key" >>"$PAST_NEWS_READ_KEYS"
-				tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
-				tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
+				tail -"${PAST_NEWS_READ_KEEP:-60}" "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
+				tail -"${PAST_NEWS_READ_KEYS_KEEP:-120}" "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
 				log "[RADIO:news] 既読記録: ${selected_news}"
 			fi
 		fi
@@ -604,7 +438,7 @@ _radio_generate_and_play() {
 	{
 		[ -f "$PAST_RADIO_TOPICS" ] && grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null || true
 		echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
-	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
+	} | tail -"${PAST_RADIO_TOPICS_KEEP:-100}" >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
 	# ニュースは選択タイトルを必ず先頭で読み上げる
 	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
@@ -622,7 +456,7 @@ ${talk_body}"
 	talk_body_dedup=$(printf '%s' "$talk_body_sanitized" | _radio_dedup_text)
 
 	# dedup が過剰に効いて短文化した場合は、まず非dedup本文に戻す
-	if [ ${#talk_body_dedup} -lt 100 ] && [ ${#talk_body_sanitized} -ge 100 ]; then
+	if [ ${#talk_body_dedup} -lt "${RADIO_MIN_TALK_LENGTH:-100}" ] && [ ${#talk_body_sanitized} -ge "${RADIO_MIN_TALK_LENGTH:-100}" ]; then
 		log "[RADIO:${corner_name}] dedup短縮が過剰 (${#talk_body_sanitized} -> ${#talk_body_dedup}字) → 非dedup本文を採用"
 		talk_body="$talk_body_sanitized"
 	else
@@ -630,11 +464,11 @@ ${talk_body}"
 	fi
 
 	# パーサ結果が短い場合は、生の出力から本文を再抽出して救済
-	if [ ${#talk_body} -lt 100 ]; then
+	if [ ${#talk_body} -lt "${RADIO_MIN_TALK_LENGTH:-100}" ]; then
 		local fallback_body
 		fallback_body=$(printf '%s\n' "$talk" | sed '/^===SUMMARY===/,$d' | sed '/^===SELECTED_NEWS===/,$d')
 		fallback_body=$(printf '%s' "$fallback_body" | _sanitize_onair_text)
-		if [ ${#fallback_body} -ge 100 ]; then
+		if [ ${#fallback_body} -ge "${RADIO_MIN_TALK_LENGTH:-100}" ]; then
 			log "[RADIO:${corner_name}] 本文再抽出フォールバック採用 (${#fallback_body}字)"
 			talk_body="$fallback_body"
 		fi
@@ -646,7 +480,7 @@ ${talk_body}"
 	[ -n "$talk_with_intro" ] && talk_body="$talk_with_intro"
 	talk_body=$(printf '%s' "$talk_body" | _normalize_radio_tone)
 
-	if [ ${#talk_body} -lt 100 ]; then
+	if [ ${#talk_body} -lt "${RADIO_MIN_TALK_LENGTH:-100}" ]; then
 		local debug_dump
 		debug_dump="tmp/radio_short_${corner_name}_$(date +%s).txt"
 		{
@@ -714,7 +548,7 @@ _pick_radio_theme() {
 	fi
 	local theme="${available_themes[$((RANDOM % ${#available_themes[@]}))]}"
 	echo "${theme%%。*}" >>"$past_themes_file"
-	tail -100 "$past_themes_file" >"${past_themes_file}.tmp" && mv "${past_themes_file}.tmp" "$past_themes_file"
+	tail -"${PAST_RADIO_TOPICS_KEEP:-100}" "$past_themes_file" >"${past_themes_file}.tmp" && mv "${past_themes_file}.tmp" "$past_themes_file"
 	echo "$theme"
 }
 
@@ -740,7 +574,7 @@ _pick_soviet_theme() {
 	local soviet_key="${soviet_theme%%。*}"
 	[ "$soviet_key" = "$soviet_theme" ] && soviet_key="${soviet_theme%%を深掘り*}"
 	echo "$soviet_key" >>"$past_soviet_file"
-	tail -60 "$past_soviet_file" >"${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
+	tail -"${PAST_NEWS_READ_KEEP:-60}" "$past_soviet_file" >"${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
 	echo "$soviet_theme"
 }
 

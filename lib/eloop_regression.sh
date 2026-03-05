@@ -49,61 +49,7 @@ _pick_best_rollback_candidate() {
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
 
 	local ranked
-	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
-import json
-import sys
-import math
-
-rs_file = sys.argv[1]
-current_hash = sys.argv[2]
-min_games = int(sys.argv[3])
-lcb_z = float(sys.argv[4])
-w_p50 = float(sys.argv[5])
-w_p25 = float(sys.argv[6])
-w_lcb = float(sys.argv[7])
-rs = json.load(open(rs_file))
-
-def quantile(vals, p):
-    xs = sorted(vals)
-    if not xs:
-        return 0.0
-    if len(xs) == 1:
-        return float(xs[0])
-    pos = (len(xs) - 1) * p
-    lo = int(pos)
-    hi = min(lo + 1, len(xs) - 1)
-    frac = pos - lo
-    return xs[lo] * (1.0 - frac) + xs[hi] * frac
-
-def metrics(scores):
-    n = len(scores)
-    mean = sum(scores) / n
-    p25 = quantile(scores, 0.25)
-    p50 = quantile(scores, 0.50)
-    if n > 1:
-        var = sum((x - mean) ** 2 for x in scores) / n
-        std = math.sqrt(var)
-    else:
-        std = 0.0
-    lcb = mean - lcb_z * (std / math.sqrt(n))
-    composite = w_p50 * p50 + w_p25 * p25 + w_lcb * lcb
-    return composite, p50, p25, lcb, n
-
-rows = []
-for h, data in rs.items():
-    if h == current_hash:
-        continue
-    scores = [int(x) for x in data.get("scores", [])]
-    if len(scores) < min_games:
-        continue
-    comp, p50, p25, lcb, n = metrics(scores)
-    rows.append((comp, p50, p25, lcb, n, h))
-
-rows.sort(key=lambda x: (x[0], x[1], x[2], x[4]), reverse=True)
-for comp, p50, p25, lcb, n, h in rows:
-    print(f"{h}|{comp:.2f}|{p50:.1f}|{p25:.1f}|{lcb:.1f}|{n}")
-PY
-)
+	ranked=$(python3 "$ELOOP_LIB_DIR/lib/regression_calc.py" rank "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB")
 	[ -z "$ranked" ] && return 1
 
 	local line h comp p50 p25 lcb n candidate_file
@@ -126,57 +72,7 @@ _prune_hash_archive_by_ranking() {
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
 
 	local ranked_hashes
-	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
-import json
-import sys
-import math
-
-rs_file = sys.argv[1]
-min_games = int(sys.argv[2])
-keep_top = int(sys.argv[3])
-lcb_z = float(sys.argv[4])
-w_p50 = float(sys.argv[5])
-w_p25 = float(sys.argv[6])
-w_lcb = float(sys.argv[7])
-rs = json.load(open(rs_file))
-
-def quantile(vals, p):
-    xs = sorted(vals)
-    if not xs:
-        return 0.0
-    if len(xs) == 1:
-        return float(xs[0])
-    pos = (len(xs) - 1) * p
-    lo = int(pos)
-    hi = min(lo + 1, len(xs) - 1)
-    frac = pos - lo
-    return xs[lo] * (1.0 - frac) + xs[hi] * frac
-
-def composite_score(scores):
-    n = len(scores)
-    mean = sum(scores) / n
-    p25 = quantile(scores, 0.25)
-    p50 = quantile(scores, 0.50)
-    if n > 1:
-        var = sum((x - mean) ** 2 for x in scores) / n
-        std = math.sqrt(var)
-    else:
-        std = 0.0
-    lcb = mean - lcb_z * (std / math.sqrt(n))
-    return w_p50 * p50 + w_p25 * p25 + w_lcb * lcb, p50, p25, n
-
-rows = []
-for h, data in rs.items():
-    scores = [int(x) for x in data.get("scores", [])]
-    if len(scores) < min_games:
-        continue
-    comp, p50, p25, n = composite_score(scores)
-    rows.append((comp, p50, p25, n, h))
-rows.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
-for _, _, _, _, h in rows[:keep_top]:
-    print(h)
-PY
-)
+	ranked_hashes=$(python3 "$ELOOP_LIB_DIR/lib/regression_calc.py" prune "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB")
 
 	local current_hash=""
 	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
@@ -211,28 +107,7 @@ update_rolling_scores() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 	_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$strategy_hash"
 
-	python3 -c "
-import json, os
-rs_file = '$ROLLING_SCORES_FILE'
-if os.path.exists(rs_file):
-    with open(rs_file) as f:
-        rs = json.load(f)
-else:
-    rs = {}
-
-h = '$strategy_hash'
-if h not in rs:
-    rs[h] = {'scores': [], 'prev_hash': '', 'games_total': 0}
-if 'games_total' not in rs[h]:
-    rs[h]['games_total'] = len(rs[h].get('scores', []))
-rs[h]['scores'].append(int('$score'))
-rs[h]['games_total'] += 1
-# 最大20試合分を保持
-rs[h]['scores'] = rs[h]['scores'][-20:]
-
-with open(rs_file, 'w') as f:
-    json.dump(rs, f)
-" 2>/dev/null
+	python3 "$ELOOP_LIB_DIR/lib/regression_calc.py" update_scores "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" 20 2>/dev/null
 	_prune_hash_archive_by_ranking
 }
 
@@ -245,105 +120,7 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P25_RATIO" <<'PY'
-import json
-import math
-import os
-import sys
-
-rs_file = sys.argv[1]
-current_hash = sys.argv[2]
-min_games_current = int(sys.argv[3])
-min_games_candidates = int(sys.argv[4])
-lcb_z = float(sys.argv[5])
-w_p50 = float(sys.argv[6])
-w_p25 = float(sys.argv[7])
-w_lcb = float(sys.argv[8])
-composite_ratio = float(sys.argv[9])
-p25_ratio = float(sys.argv[10])
-
-if not os.path.exists(rs_file):
-    print("OK")
-    raise SystemExit
-
-with open(rs_file) as f:
-    rs = json.load(f)
-
-if current_hash not in rs:
-    print("OK")
-    raise SystemExit
-
-def quantile(vals, p):
-    xs = sorted(vals)
-    if not xs:
-        return 0.0
-    if len(xs) == 1:
-        return float(xs[0])
-    pos = (len(xs) - 1) * p
-    lo = int(pos)
-    hi = min(lo + 1, len(xs) - 1)
-    frac = pos - lo
-    return xs[lo] * (1.0 - frac) + xs[hi] * frac
-
-def metrics(scores):
-    n = len(scores)
-    mean = sum(scores) / n
-    p25 = quantile(scores, 0.25)
-    p50 = quantile(scores, 0.50)
-    if n > 1:
-        var = sum((x - mean) ** 2 for x in scores) / n
-        std = math.sqrt(var)
-    else:
-        std = 0.0
-    lcb = mean - lcb_z * (std / math.sqrt(n))
-    composite = w_p50 * p50 + w_p25 * p25 + w_lcb * lcb
-    return {
-        "composite": composite,
-        "p50": p50,
-        "p25": p25,
-        "lcb": lcb,
-        "n": n,
-    }
-
-current_scores = [int(x) for x in rs[current_hash].get("scores", [])]
-if len(current_scores) < min_games_current:
-    print("OK")
-    raise SystemExit
-
-current = metrics(current_scores)
-
-candidates = []
-for h, data in rs.items():
-    if h == current_hash:
-        continue
-    scores = [int(x) for x in data.get("scores", [])]
-    if len(scores) < min_games_candidates:
-        continue
-    m = metrics(scores)
-    candidates.append((m["composite"], m["p50"], m["p25"], m["n"], h, m))
-
-if not candidates:
-    print("OK")
-    raise SystemExit
-
-candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
-best_comp, _, _, best_n, best_hash, best = candidates[0]
-curr_comp = current["composite"]
-
-is_comp_regression = best_comp > 0 and curr_comp < best_comp * composite_ratio
-is_p25_regression = best["p25"] > 0 and current["p25"] < best["p25"] * p25_ratio
-
-if is_comp_regression and is_p25_regression:
-    print(
-        "REGRESSION:"
-        f"best_hash={best_hash},best_comp={best_comp:.1f},curr_comp={curr_comp:.1f},"
-        f"best_p25={best['p25']:.1f},curr_p25={current['p25']:.1f},"
-        f"best_n={best_n},curr_n={current['n']}"
-    )
-else:
-    print("OK")
-PY
-	2>/dev/null)
+	result=$(python3 "$ELOOP_LIB_DIR/lib/regression_calc.py" check "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P25_RATIO" 2>/dev/null)
 
 	if echo "$result" | grep -q '^REGRESSION:'; then
 		log "[REGRESSION] リグレッション検知: $result"
@@ -372,9 +149,9 @@ PY
 
 		# リジェクトハッシュに記録
 		echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
-		# 最新20件のみ保持
+		# 最新N件のみ保持
 		if [ -f "$REJECTED_HASHES_FILE" ]; then
-			tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
+			tail -"${REJECTED_HASHES_KEEP:-20}" "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
 			mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
 		fi
 

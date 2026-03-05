@@ -29,7 +29,7 @@ is_move_state() {
 }
 
 wait_commands_done() {
-	for _ in $(seq 1 20); do
+	for _ in $(seq 1 "$WAIT_COMMANDS_TIMEOUT"); do
 		commands_empty && return 0
 		sleep 1
 	done
@@ -40,7 +40,7 @@ wait_commands_done() {
 wait_for_move() {
 	log "MOVE状態を待機中..."
 	local waited=0
-	while [ $waited -lt 60 ]; do
+	while [ $waited -lt "$WAIT_MOVE_TIMEOUT" ]; do
 		[ -f tmp/stop ] && return 130
 		if [ -f "$GAME_STATE" ] && is_move_state; then
 			log "MOVE状態検出"
@@ -60,7 +60,7 @@ send_retry() {
 	sleep 3
 
 	local waited=0
-	while [ $waited -lt 60 ]; do
+	while [ $waited -lt "$SEND_RETRY_TIMEOUT" ]; do
 		local rs
 		rs=$(python3 -c "
 import json

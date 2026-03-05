@@ -15,7 +15,7 @@ _stop_pid_with_fallback() {
 	fi
 	kill "$pid" 2>/dev/null || true
 	local i
-	for i in $(seq 1 20); do
+	for i in $(seq 1 "$STOP_PID_WAIT_TICKS"); do
 		if ! kill -0 "$pid" 2>/dev/null; then
 			return 0
 		fi

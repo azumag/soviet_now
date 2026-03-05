@@ -53,4 +53,23 @@ COMMENT_PLAYER_HEARTBEAT_FILE="tmp/.comment_queue/player.heartbeat"
 COMMENT_WATCHER_HEARTBEAT_FILE="tmp/.comment_queue/watcher.heartbeat"
 COMMENT_BATCH_HISTORY_FILE="tmp/.comment_queue/processed_batch_hashes.log"
 COMMENT_BATCH_DEDUP_TTL=180
+
+# --- タイムアウト・リトライ ---
+WAIT_COMMANDS_TIMEOUT=20         # commands.txt 消化待ち(秒)
+WAIT_MOVE_TIMEOUT=60             # MOVE状態待ち(秒)
+SEND_RETRY_TIMEOUT=60            # retry後の新ゲーム検知待ち(秒)
+STOP_PID_WAIT_TICKS=20           # プロセス停止の最大ポーリング回数
+
+# --- ローリングスコア ---
+ROLLING_SCORES_WINDOW=20         # ハッシュあたりの保持スコア数
+REJECTED_HASHES_KEEP=20          # リジェクトハッシュ保持数
+VERSION_KEEP=10                  # strategy_versions/ の保持数
+HALL_OF_FAME_KEEP=10             # hall_of_fame 保持数
+
+# --- ラジオ ---
+RADIO_MIN_TALK_LENGTH=100        # トーク最小文字数
+PAST_RADIO_TOPICS_KEEP=100       # 過去トピック保持数
+PAST_NEWS_READ_KEEP=60           # 既読ニュース保持数
+PAST_NEWS_READ_KEYS_KEEP=120     # 既読キー保持数
+
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "tmp/.twitch_chat" tmp

@@ -17,7 +17,7 @@ save_strategy_version() {
 
 	local total
 	total=$(ls -1 "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | wc -l | tr -d ' ')
-	local delete_count=$((total - 10))
+	local delete_count=$((total - VERSION_KEEP))
 	if [ "$delete_count" -gt 0 ]; then
 		ls -1 "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py | sort | head -n "$delete_count" | while read -r f; do
 			rm -f "$f"
@@ -48,7 +48,7 @@ update_best() {
 
 		local best_total
 		best_total=$(ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py 2>/dev/null | wc -l | tr -d ' ')
-		local best_delete=$((best_total - 10))
+		local best_delete=$((best_total - HALL_OF_FAME_KEEP))
 		if [ "$best_delete" -gt 0 ]; then
 			ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py | sort | head -n "$best_delete" | while read -r f; do
 				rm -f "$f"
