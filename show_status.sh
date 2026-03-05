@@ -9,8 +9,8 @@ cd "$SCRIPT_DIR"
 
 WATCH_INTERVAL=${1:-10}
 FULLSCREEN_ENABLED=${FULLSCREEN_ENABLED:-1}
-FULLSCREEN_RARE_N=${FULLSCREEN_RARE_N:-90}
-FULLSCREEN_MIN_GAP_SEC=${FULLSCREEN_MIN_GAP_SEC:-600}
+FULLSCREEN_RARE_N=${FULLSCREEN_RARE_N:-30}
+FULLSCREEN_MIN_GAP_SEC=${FULLSCREEN_MIN_GAP_SEC:-180}
 FULLSCREEN_LAST_FILE="tmp/.status_fullscreen_last"
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
@@ -148,6 +148,7 @@ _maybe_run_fullscreen_random() {
 	local pick="${cmds[$((RANDOM % ${#cmds} + 1))]}"
 	printf '\033[2J\033[H'
 	_run_fullscreen_command "$pick"
+	sleep 2
 	echo "$now" >"$FULLSCREEN_LAST_FILE"
 	return 0
 }
