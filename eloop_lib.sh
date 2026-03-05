@@ -442,11 +442,15 @@ create_sandbox() {
 		[ -n "$src" ] || continue
 		[ -e "$src" ] || continue
 		[ -L "$src" ] && continue
+		# ../を含むパスはsandbox外参照の危険があるため拒否
+		case "$src" in
+		../*|*/../*|*/..) log "[SANDBOX] パス拒否 (..含む): $src"; continue ;;
+		esac
 		dst="$sandbox_dir/$src"
 		mkdir -p "$(dirname "$dst")"
 		if [ -d "$src" ]; then
 			mkdir -p "$dst"
-			rsync -a --no-links "$src"/ "$dst"/ 2>/dev/null || cp -R "$src"/. "$dst"/ 2>/dev/null || true
+			rsync -a --no-links "$src"/ "$dst"/ 2>/dev/null || cp -RL "$src"/. "$dst"/ 2>/dev/null || true
 		else
 			cp "$src" "$dst" 2>/dev/null || true
 		fi
@@ -462,7 +466,7 @@ create_sandbox() {
 
 	mkdir -p "$sandbox_dir/strategy_helpers"
 	if [ -d "strategy_helpers" ]; then
-		rsync -a --no-links "strategy_helpers"/ "$sandbox_dir/strategy_helpers"/ 2>/dev/null || cp -R "strategy_helpers"/. "$sandbox_dir/strategy_helpers"/ 2>/dev/null || true
+		rsync -a --no-links "strategy_helpers"/ "$sandbox_dir/strategy_helpers"/ 2>/dev/null || cp -RL "strategy_helpers"/. "$sandbox_dir/strategy_helpers"/ 2>/dev/null || true
 	fi
 	[ -f "$sandbox_dir/strategy_helpers/__init__.py" ] || : > "$sandbox_dir/strategy_helpers/__init__.py"
 
@@ -497,11 +501,17 @@ harvest_sandbox() {
 	if [ -d "$sandbox_dir/strategy_helpers" ]; then
 		mkdir -p "$harvest_dir/strategy_helpers"
 		rsync -a --no-links "$sandbox_dir/strategy_helpers"/ "$harvest_dir/strategy_helpers"/ 2>/dev/null || \
-			cp -R "$sandbox_dir/strategy_helpers"/. "$harvest_dir/strategy_helpers"/ 2>/dev/null || true
+			cp -RL "$sandbox_dir/strategy_helpers"/. "$harvest_dir/strategy_helpers"/ 2>/dev/null || true
 	fi
 
 	if find "$harvest_dir" -type l 2>/dev/null | grep -q .; then
 		log "[SANDBOX] harvest拒否: symlink混入を検出"
+		rm -rf "$harvest_dir" 2>/dev/null
+		return 1
+	fi
+
+	if find "$harvest_dir" -type f -links +1 2>/dev/null | grep -q .; then
+		log "[SANDBOX] harvest拒否: hard link検出"
 		rm -rf "$harvest_dir" 2>/dev/null
 		return 1
 	fi
@@ -555,16 +565,18 @@ check_host_integrity() {
 	sort "$before_file" >"$before_sorted" 2>/dev/null || true
 	sort "$after_file" >"$after_sorted" 2>/dev/null || true
 
-	local added_lines
+	local added_lines host_changed=false
 	added_lines=$(comm -13 "$before_sorted" "$after_sorted" 2>/dev/null || true)
 	if [ -n "$added_lines" ]; then
 		log "[SANDBOX] WARNING: AI改善中にホスト作業ツリー変化を検出（自動revertなし）"
 		printf '%s\n' "$added_lines" | head -20 | while read -r line; do
 			[ -n "$line" ] && log "[SANDBOX] host_change: $line"
 		done
+		host_changed=true
 	fi
 
 	rm -f "$after_file" "$before_sorted" "$after_sorted"
+	$host_changed && return 1 || return 0
 }
 
 validate_strategy_with_helpers() {

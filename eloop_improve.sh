@@ -258,10 +258,14 @@ if [ "$in_sandbox" = true ]; then
 fi
 
 if [ -n "$HOST_STATUS_SNAPSHOT" ] && [ -f "$HOST_STATUS_SNAPSHOT" ]; then
-	check_host_integrity "$HOST_STATUS_SNAPSHOT"
+	if ! check_host_integrity "$HOST_STATUS_SNAPSHOT"; then
+		log "[IMPROVE] WARNING: ホスト変化検出、commit は実行するが確認推奨"
+	fi
 	rm -f "$HOST_STATUS_SNAPSHOT"
 fi
 
+# NOTE: HARVEST_DIR は sandbox とは別の mktemp ディレクトリ (tmp/.sandbox_harvest_XXXXXX)
+# destroy_sandbox は /tmp/soren_sandbox_* のみ削除するため、HARVEST_DIR は destroy 後もアクセス可能
 [ -n "$SANDBOX_DIR" ] && destroy_sandbox "$SANDBOX_DIR" || true
 
 if $improve_ok; then
@@ -280,7 +284,7 @@ if $improve_ok; then
 			rsync -a --delete --no-links "$HARVEST_DIR/strategy_helpers"/ "strategy_helpers"/ 2>/dev/null || {
 				rm -rf "strategy_helpers"
 				mkdir -p "strategy_helpers"
-				cp -R "$HARVEST_DIR/strategy_helpers"/. "strategy_helpers"/ 2>/dev/null || true
+				cp -RL "$HARVEST_DIR/strategy_helpers"/. "strategy_helpers"/ 2>/dev/null || true
 			}
 		fi
 		[ -f "strategy_helpers/__init__.py" ] || : > "strategy_helpers/__init__.py"
@@ -297,11 +301,10 @@ _improve_progress "post_validate" "85" "finalizing"
 first_score=$(echo "$SCORES" | awk '{print $1}')
 last_score=$(echo "$SCORES" | awk '{print $NF}')
 _improve_progress "git_commit" "90" "commit_changes"
+git add strategy.py strategy_helpers/ tmp/change_log.txt 2>/dev/null || true
 if [ "$NUM_GAMES" -eq 1 ]; then
-	git add -A
 	git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
 else
-	git add -A
 	git commit -m "eloop Improve after ${NUM_GAMES} games (scores: ${SCORES})" 2>/dev/null || true
 fi
 
