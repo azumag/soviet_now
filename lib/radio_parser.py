@@ -126,6 +126,10 @@ body = re.sub(r"\n{3,}", "\n\n", body)
 if len(body) > 12000:
     body = body[:12000]
 
-Path(body_path).write_text(body, encoding="utf-8")
-Path(summary_path).write_text(summary, encoding="utf-8")
-Path(selected_path).write_text(selected_news, encoding="utf-8")
+try:
+    Path(body_path).write_text(body, encoding="utf-8")
+    Path(summary_path).write_text(summary, encoding="utf-8")
+    Path(selected_path).write_text(selected_news, encoding="utf-8")
+except OSError as e:
+    print(f"Error writing output files: {e}", file=sys.stderr)
+    sys.exit(1)

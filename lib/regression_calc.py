@@ -51,7 +51,12 @@ def cmd_rank(args):
     w_p50 = float(args[4])
     w_p25 = float(args[5])
     w_lcb = float(args[6])
-    rs = json.load(open(rs_file))
+    try:
+        with open(rs_file) as f:
+            rs = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Error reading {rs_file}: {e}", file=sys.stderr)
+        return
 
     rows = []
     for h, data in rs.items():
@@ -77,7 +82,12 @@ def cmd_prune(args):
     w_p50 = float(args[4])
     w_p25 = float(args[5])
     w_lcb = float(args[6])
-    rs = json.load(open(rs_file))
+    try:
+        with open(rs_file) as f:
+            rs = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Error reading {rs_file}: {e}", file=sys.stderr)
+        return
 
     rows = []
     for h, data in rs.items():

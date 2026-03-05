@@ -20,6 +20,13 @@
 ELOOP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ELOOP_LIB_DIR"
 
+# --- 依存チェック ---
+if ! command -v envsubst &>/dev/null; then
+	echo "[WARN] envsubst が見つかりません。gettext をインストールしてください (brew install gettext)" >&2
+	# envsubst のフォールバック: 変数展開なしで cat として動作
+	envsubst() { cat; }
+fi
+
 source "$ELOOP_LIB_DIR/lib/eloop_config.sh"
 source "$ELOOP_LIB_DIR/lib/eloop_core.sh"
 source "$ELOOP_LIB_DIR/lib/eloop_ai.sh"

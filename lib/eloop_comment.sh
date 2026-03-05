@@ -346,6 +346,7 @@ generate_comment_response() {
 		export past_topics
 		export game_state_context="${game_state_context:-（取得失敗）}"
 		envsubst < "$ELOOP_LIB_DIR/prompts/comment_response.md" >"$comment_prompt_file"
+		unset current_time time_period twitch_comments comment_batch_context previous_comments_context past_topics game_state_context
 
 			echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
 			log "[COMMENT] コメント返し生成中..."

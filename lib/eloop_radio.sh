@@ -110,6 +110,7 @@ _radio_output_rules() {
 	local min_chars="$1" max_chars="$2"
 	export min_chars max_chars
 	envsubst '${min_chars} ${max_chars}' < "$ELOOP_LIB_DIR/prompts/radio_rules.md"
+	unset min_chars max_chars
 }
 
 _radio_parse_output_to_files() {
@@ -367,7 +368,10 @@ ${talk_body}"
 #=== ラジオトーク: テーマ選択 ===
 
 _pick_radio_theme() {
-	mapfile -t themes < "$ELOOP_LIB_DIR/data/radio_themes.txt"
+	local themes=()
+	while IFS= read -r _line; do
+		[ -n "$_line" ] && themes+=("$_line")
+	done < "$ELOOP_LIB_DIR/data/radio_themes.txt"
 	local past_themes_file="tmp/.past_radio_themes.txt"
 	local available_themes=()
 	local past_theme_list=""
@@ -390,7 +394,10 @@ _pick_radio_theme() {
 }
 
 _pick_soviet_theme() {
-	mapfile -t soviet_themes < "$ELOOP_LIB_DIR/data/radio_soviet_themes.txt"
+	local soviet_themes=()
+	while IFS= read -r _line; do
+		[ -n "$_line" ] && soviet_themes+=("$_line")
+	done < "$ELOOP_LIB_DIR/data/radio_soviet_themes.txt"
 	local past_soviet_file="tmp/.past_soviet_themes.txt"
 	local available_soviet=()
 	local past_soviet_list=""
@@ -411,7 +418,7 @@ _pick_soviet_theme() {
 	local soviet_key="${soviet_theme%%。*}"
 	[ "$soviet_key" = "$soviet_theme" ] && soviet_key="${soviet_theme%%を深掘り*}"
 	echo "$soviet_key" >>"$past_soviet_file"
-	tail -"${PAST_NEWS_READ_KEEP:-60}" "$past_soviet_file" >"${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
+	tail -"${PAST_SOVIET_TOPICS_KEEP:-100}" "$past_soviet_file" >"${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
 	echo "$soviet_theme"
 }
 
@@ -434,6 +441,7 @@ start_radio_corner_theme() {
 	output_rules=$(_radio_output_rules 1000 2000)
 	export _rc_time _rc_period _rc_mood theme past_topics game_num score
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_theme.md" > "$prompt_file"
+	unset persona_block output_rules _rc_time _rc_period _rc_mood theme past_topics
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "theme"
 }
@@ -455,6 +463,7 @@ start_radio_corner_soviet() {
 	output_rules=$(_radio_output_rules 1000 2000)
 	export _rc_time _rc_period _rc_mood soviet_theme past_topics game_num score
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_soviet.md" > "$prompt_file"
+	unset persona_block output_rules _rc_time _rc_period _rc_mood soviet_theme past_topics
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "soviet"
 }
@@ -497,6 +506,7 @@ start_radio_corner_news() {
 	# Default for empty past_news_read
 	[ -z "$past_news_read" ] && export past_news_read="（なし）"
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_news.md" > "$prompt_file"
+	unset persona_block output_rules _rc_time _rc_period _rc_mood unread_news_headlines past_news_read past_topics
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news"
 }
@@ -522,6 +532,7 @@ start_radio_corner_recap() {
 	export _rc_time _rc_period _rc_mood past_topics game_num score best_score
 	export recent_scores="${recent_scores:-まだ履歴がありません}"
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_recap.md" > "$prompt_file"
+	unset persona_block output_rules _rc_time _rc_period _rc_mood past_topics recent_scores
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "recap"
 }
@@ -541,6 +552,7 @@ start_radio_corner_strategy() {
 	output_rules=$(_radio_output_rules 1000 2000)
 	export _rc_time _rc_period _rc_mood past_topics game_num scores best_score strategy_diff
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_strategy.md" > "$prompt_file"
+	unset persona_block output_rules _rc_time _rc_period _rc_mood past_topics scores strategy_diff
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "${best_score}" "strategy"
 }
@@ -652,7 +664,6 @@ generate_soviet_celebration() {
 
 	export score turns game_num current_time
 	envsubst < "$ELOOP_LIB_DIR/prompts/celebration.md" > "$celebration_prompt_file"
-
 	echo "generating:celebration:$(date +%s)" > tmp/.radio_state
 	log "[CELEBRATION] 生成中..."
 	local celebration_talk

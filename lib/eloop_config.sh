@@ -69,6 +69,7 @@ HALL_OF_FAME_KEEP=10             # hall_of_fame 保持数
 # --- ラジオ ---
 RADIO_MIN_TALK_LENGTH=100        # トーク最小文字数
 PAST_RADIO_TOPICS_KEEP=100       # 過去トピック保持数
+PAST_SOVIET_TOPICS_KEEP=100      # 過去ソ連テーマ保持数
 PAST_NEWS_READ_KEEP=60           # 既読ニュース保持数
 PAST_NEWS_READ_KEYS_KEEP=120     # 既読キー保持数
 
