@@ -58,7 +58,7 @@ cat > score_dashboard.html <<HTMLEOF
   }
   .stat {
     text-align: center;
-    background: rgba(17,17,39,0.9);
+    background: rgba(17,17,39,0.95);
     padding: 10px 24px;
     border-radius: 10px;
     border: 1px solid #333;
@@ -84,7 +84,7 @@ cat > score_dashboard.html <<HTMLEOF
     width: 100%;
     max-width: 1400px;
     margin: 0 auto;
-    background: rgba(17,17,39,0.9);
+    background: rgba(17,17,39,0.95);
     border-radius: 12px;
     padding: 20px 20px 10px 20px;
     border: 1px solid #333;
