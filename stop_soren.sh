@@ -22,7 +22,7 @@ if [ -f "$LOCKFILE" ]; then
 		# PID がシェルスクリプトであることを確認
 		cmd=$(ps -p "$pid" -o comm= 2>/dev/null)
 		case "$cmd" in
-		bash|zsh|sh|*soren*)
+		*bash*|*zsh*|*sh|*python*|*soren*)
 			echo "Sending SIGINT to soren_loop (PID=$pid)"
 			kill -INT "$pid" 2>/dev/null
 			;;
