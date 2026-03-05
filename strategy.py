@@ -36,6 +36,9 @@ Phases (determined by board max Y):
 # 単純なパラメータ調整ではなく、構造的改善として着地高に応じた動的調整を導入。
 # landing_yが高いほどchain_distance_maxを拡大（5.0 + landing_y*0.6）し、chain_bonus_multiplierも強化（450.0 + landing_y*150.0）することで、
 # HIGH_LAYER状況でのCHAIN_MERGE選択を強制的に誘導し、HEIGHT_CONTROLの選択を減らしてスコア安定性を向上させる。
+# v158: HEIGHT_CONTROL抑制精度化版 - batch_summary分析でHEIGHT_CONTROLが29.1%選択されavg_score_delta=0.8と効果がないこと、
+# 低スコア群がHEIGHT_CONTROLを31.5%選択していること、序盤（max_y < -2.0）で盤面が高さを稼げない失敗パターンを確認。
+# v157の動的調整を維持しつつ、(1) chain_distance_maxのベース値を5.0→4.0に縮小して評価精度を向上し、(2) 序盤（max_y < -2.0）のheight_multiplierを0.3に削減してHEIGHT_CONTROL過剰選択を抑制。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -43,12 +46,16 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v157: 着地高動的調整・CHAIN_MERGE促進版
-    
-    v156のheight_multiplier抑制（40.0）でもHEIGHT_CONTROL選択率が高い問題を解決。
-    単純なパラメータ調整ではなく、構造的改善として着地高に応じた動的調整を導入。
-    landing_yが高いほどchain_distance_maxを拡大（5.0 + landing_y*0.6）し、chain_bonus_multiplierも強化（450.0 + landing_y*150.0）することで、
-    HIGH_LAYER状況でのCHAIN_MERGE選択を強制的に誘導し、HEIGHT_CONTROLの選択を減らしてスコア安定性を向上させる。
+    """v158: HEIGHT_CONTROL抑制精度化版
+
+    batch_summary分析でHEIGHT_CONTROLが29.1%選択されavg_score_delta=0.8と効果がないこと、
+    低スコア群がHEIGHT_CONTROLを31.5%選択していること、序盤（max_y < -2.0）で盤面が高さを稼げない失敗パターンを確認。
+
+    v157の動的調整を維持しつつ、以下の2点を改善：
+    1. chain_distance_maxのベース値を5.0→4.0に縮小（v153の評価精度を取り入れる）
+       - v155の5.0は広すぎて評価が粗くなっている可能性
+    2. 序盤（max_y < -2.0）のheight_multiplierを0.3に削減
+       - 序盤のHEIGHT_CONTROL過剰選択を抑制し、併合機会を優先
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -77,6 +84,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
+
+    # --- v158: 序盤判定（max_y < -2.0） ---
+    # ワーストゲーム分析で、序盤にHEIGHT_CONTROLを過剰に選択し盤面が高さを稼げない失敗パターンを確認
+    early_game = max_y < -2.0
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -141,10 +152,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v157: height_multiplier reduced 40.0→30.0 for additional HEIGHT_CONTROL suppression
+        # v158: early_game（max_y < -2.0）の場合、height_multiplierを0.3に削減してHEIGHT_CONTROL過剰選択を抑制
         # combined with dynamic chain merge adjustment (evaluation axis 6) for structural improvement
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
-        height_penalty = landing_y * 30.0 * height_mult
+        height_multiplier = 30.0
+        if early_game:
+            height_multiplier = 0.3  # v158: 序盤はHEIGHT_CONTROLを強く抑制し、併合機会を優先
+
+        height_penalty = landing_y * height_multiplier * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -188,11 +203,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v157: 着地高動的調整・CHAIN_MERGE促進版) -----
-        # v157: 単純なパラメータ調整ではなく、着地高に応じた動的調整を導入。
-        # HIGH_LAYER状況でのCHAIN_MERGE選択を強制的に誘導し、HEIGHT_CONTROLの選択を減らす構造的改善。
-        # chain_distanceとchain_bonus_multiplierは着地高に応じて動的に調整され、
-        # 高度が高いほど評価範囲を拡大し、より強力なボーナスを与える。
+        # ----- evaluation axis 6: chain merge bonus (v158: 基礎距離縮小版) -----
+        # v158: v157の着地高動的調整を維持しつつ、chain_distance_maxのベース値を5.0→4.0に縮小。
+        # v153（chain_distance=4.0）の評価精度を取り入れ、v155の5.0は広すぎて評価が粗くなっている問題を解決。
+        # HIGH_LAYER状況でのCHAIN_MERGE選択を誘導し、HEIGHT_CONTROLの選択を減らしてスコア安定性を向上させる。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -201,13 +215,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v157: 着地高に応じてchain_distanceとchain_bonus_multiplierを動的に調整
+                # v158: 着地高に応じてchain_distanceとchain_bonus_multiplierを動的に調整
+                # ベース値を4.0に縮小（v153の評価精度を取り入れる）
                 # HIGH_LAYER状況（landing_y>0.5）ではchain_distanceを拡大し、chain_bonus_multiplierを強化
-                # 例: landing_y=0.0 → distance_max=5.0, multiplier=450.0
-                # 例: landing_y=1.0 → distance_max=5.6, multiplier=600.0
-                # 例: landing_y=2.0 → distance_max=6.2, multiplier=750.0
-                # 例: landing_y=3.0 → distance_max=6.8, multiplier=900.0
-                chain_distance_max = 5.0 + landing_y * 0.6
+                # 例: landing_y=0.0 → distance_max=4.0, multiplier=450.0
+                # 例: landing_y=1.0 → distance_max=4.6, multiplier=600.0
+                # 例: landing_y=2.0 → distance_max=5.2, multiplier=750.0
+                # 例: landing_y=3.0 → distance_max=5.8, multiplier=900.0
+                chain_distance_max = 4.0 + landing_y * 0.6  # v158: 5.0→4.0に縮小
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
