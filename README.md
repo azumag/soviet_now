@@ -11,47 +11,51 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 soviet_local.mjs          ← ゲーム実行環境 (HTTP server + Playwright + Unity WebGL, stateのみ更新)
     ↕ commands.txt / game_state.json
 AI ループ (3種類から選択)
-    ├── eloop.sh           ← 自己改善ループ (推奨)
+    ├── soren_loop.sh      ← 自己改善ループ (推奨、eloop.sh/eloop_lib.sh/eloop_improve.sh を統括)
     ├── jloop.sh           ← JSON構造データ版ループ
     └── sloop.sh           ← 画像認識版ループ (レガシー)
 ```
 
 ## AI ループ
 
-### eloop.sh — Self-Improving Strategy Loop (推奨)
+### soren_loop.sh — Self-Improving Strategy Loop (推奨)
 
 Python スクリプト (`strategy.py`) が1試合を自律プレイし、試合終了後に AI がスクリプトを改善する「メタ学習ループ」。
 
 ```bash
 node soviet_local.mjs &    # ゲーム起動
-bash eloop.sh              # AI ループ開始
+./soren_loop.sh            # AI ループ開始
 ```
 
-**フロー:**
+**アーキテクチャ:**
 ```
-eloop.sh (外側ループ)
-  ├── strategy_runner.py    → 1試合を自律プレイ
-  │     ├── game_state.json を読む
-  │     ├── analyze_board.py で盤面解析
-  │     ├── strategy.py の decide() でドロップX決定
-  │     ├── commands.txt に書き込み
-  │     └── game_history/latest.jsonl にターンログ記録
-  ├── GAMEOVER 検知 → スコア取得
-  ├── バージョン保存 (strategy_versions/vNNN_scoreXXX_strategy.py)
-  ├── AI 呼び出し (prompts/improve_strategy.md)
-  │     → strategy.py を解析・改善・上書き
-  ├── バリデーション (decide() 存在・シグネチャ・テスト実行)
-  │     → 失敗時は前バージョンに自動復元
-  └── retry → 次の試合へ
+soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え対象外)
+  └── 毎試合 source で eloop.sh を読み込み
+        ├── strategy_runner.py  → 1試合を自律プレイ
+        │     ├── game_state.json を読む
+        │     ├── analyze_board.py で盤面解析
+        │     ├── strategy.py の decide() でドロップX決定
+        │     ├── commands.txt に書き込み
+        │     └── game_history/latest.jsonl にターンログ記録
+        ├── GAMEOVER 検知 → スコア取得
+        ├── バージョン保存 (strategy_versions/vNNN_scoreXXX_strategy.py)
+        ├── eloop_improve.sh (バックグラウンド)
+        │     ├── サンドボックス内で AI が strategy.py を改善
+        │     ├── バリデーション → 失敗時は自動復元
+        │     └── git commit
+        └── 次の試合へ
 ```
 
 **主要ファイル:**
 
 | ファイル | 役割 |
 |---------|------|
+| `soren_loop.sh` | 親スクリプト（エントリーポイント）。メインループ・初期化。AI書き換え対象外 |
+| `eloop.sh` | 1試合のゲームプレイ関数。毎試合 source で読み込み、AI書き換え可 |
+| `eloop_lib.sh` | 共通ライブラリ（ヘルパー・ラジオ・AI実行・バリデーション・サンドボックス） |
+| `eloop_improve.sh` | バックグラウンド改善サブプロセス |
 | `strategy.py` | AI が改善する決定関数。`decide(game_state, analysis) -> {x, reason}` |
 | `strategy_runner.py` | 内側ループ。strategy.py で1試合プレイ + JSONL履歴記録 |
-| `eloop.sh` | 外側ループ。試合実行→AI改善→バリデーション→リトライ |
 | `analyze_board.py` | 盤面解析。併合判定・着地予測・期待値計算 |
 | `prompts/improve_strategy.md` | AI改善用プロンプト |
 | `strategy_versions/` | strategy.py のバージョン履歴 |
@@ -61,7 +65,7 @@ eloop.sh (外側ループ)
 
 **ラジオDJ機能:**
 
-eloop にはソ連風ラジオDJ機能が組み込まれている。試合終了後に AI がトークを生成し、macOS `say` で読み上げる。
+soren_loop にはソ連風ラジオDJ機能が組み込まれている。試合終了後に AI がトークを生成し、macOS `say` で読み上げる。
 
 - **トーク本文**: 試合結果・雑談・ソ連ネタを生成 → `say_enqueue.sh` で再生
 - **コメント返し**: Twitchチャットのコメントに対する返事を生成 → `say_enqueue.sh --no-preempt` で再生（途中で切られない）
@@ -108,11 +112,11 @@ bash sloop.sh
 
 ### LLM モデル設定
 
-AI ループ (`eloop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツールを統一的に呼び分ける `run_cmd()` 関数を持つ。
+AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツールを統一的に呼び分ける `run_cmd()` 関数を持つ。
 
 #### モデル変数
 
-`eloop.sh` / `jloop.sh` の冒頭で使用モデルを設定:
+`eloop_lib.sh` / `jloop.sh` の冒頭で使用モデルを設定:
 
 ```bash
 MODEL_PRIMARY="glm"              # 主要モデル
@@ -238,7 +242,7 @@ npx playwright install chromium
 node soviet_local.mjs &
 
 # AI ループ開始 (いずれか選択)
-bash eloop.sh      # 自己改善ループ (推奨)
+./soren_loop.sh    # 自己改善ループ (推奨)
 bash jloop.sh      # JSON構造データ版
 bash sloop.sh      # 画像認識版 (レガシー)
 ```
@@ -377,7 +381,7 @@ next が type N の場合、盤面に type N-1 のペアがあればいずれ併
 
 ## サンドボックス改善機構
 
-eloop の AI 改善フローでは、AI がホストのファイルを直接編集するリスクを排除するため、**サンドボックス隔離**を導入している。
+soren_loop の AI 改善フローでは、AI がホストのファイルを直接編集するリスクを排除するため、**サンドボックス隔離**を導入している。
 
 ### フロー概要
 
