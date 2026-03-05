@@ -214,6 +214,7 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 
 	# --- ローリングスコア & リグレッション ---
 	local rolling_hash="" rolling_count=0 rolling_avg="" rolling_prev_avg=""
+	local rolling_comp="" rolling_p50="" rolling_p25="" rolling_total=""
 	local rejected_count=0
 	if [[ -f tmp/rolling_scores.json ]] && [[ -f strategy.py ]]; then
 		eval $(python3 -c "
@@ -232,6 +233,19 @@ if h and h in rs:
         prev_scores = rs[prev_h]['scores']
         prev_avg = sum(prev_scores)/len(prev_scores)
         print(f'rolling_prev_avg={prev_avg:.0f}')
+    # additional metrics: comp, p50, p25, total
+    n = len(scores)
+    print(f'rolling_total={n}')
+    if n > 0:
+        ss = sorted(scores)
+        p50 = ss[n//2] if n % 2 == 1 else (ss[n//2-1]+ss[n//2])/2
+        p25_idx = max(0, n//4 - (1 if n%4==0 else 0))
+        p25 = ss[p25_idx] if n >= 2 else ss[0]
+        lcb = avg - 1.96*(sum((s-avg)**2 for s in scores)/n)**0.5/(n**0.5) if n > 1 else avg
+        comp = 0.55*p50 + 0.30*p25 + 0.15*max(lcb,0)
+        print(f'rolling_comp={comp:.0f}')
+        print(f'rolling_p50={p50:.0f}')
+        print(f'rolling_p25={p25:.0f}')
 " 2>/dev/null)
 	fi
 	[[ -f tmp/rejected_hashes.txt ]] && rejected_count=$(wc -l < tmp/rejected_hashes.txt | tr -d ' ')
@@ -629,6 +643,28 @@ PY
 	(( ${#ver_display} > max_ver )) && ver_display="${ver_display[1,$((max_ver-2))]}.."
 	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}%s${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}\n" "${ver_display}"
 	printf "    ${C_WHITE}▸${C_RESET} DecideHash  ${C_DIM}%s${C_RESET}\n" "${strategy_decide_hash}"
+
+	# Score metrics + trend bar for current strategy
+	if [[ -n "$rolling_comp" ]]; then
+		printf "    ${C_WHITE}▸${C_RESET} Score       ${C_DIM}comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
+			"$rolling_comp" "$rolling_p50" "$rolling_p25" "${rolling_total:-0}"
+		# Trend mini-bar: comp normalized to max 2000, width 20
+		local bar_max=2000 bar_width=20
+		local bar_filled=$(( rolling_comp * bar_width / bar_max ))
+		(( bar_filled > bar_width )) && bar_filled=$bar_width
+		(( bar_filled < 0 )) && bar_filled=0
+		local bar_empty=$(( bar_width - bar_filled ))
+		local trend_suffix="avg ${rolling_avg:-?}"
+		if [[ -n "$rolling_prev_avg" ]] && (( rolling_prev_avg > 0 )); then
+			local diff_pct=$(( (rolling_avg - rolling_prev_avg) * 100 / rolling_prev_avg ))
+			local sign=""; (( diff_pct >= 0 )) && sign="+"
+			trend_suffix="${trend_suffix} vs prev ${rolling_prev_avg} ${sign}${diff_pct}%"
+		fi
+		printf "    ${C_WHITE}▸${C_RESET} Trend       ${C_GREEN}%s${C_DIM}%s${C_RESET} ${C_DIM}(%s)${C_RESET}\n" \
+			"$(printf '%0.s█' $(seq 1 $((bar_filled > 0 ? bar_filled : 1))))" \
+			"$(printf '%0.s░' $(seq 1 $((bar_empty > 0 ? bar_empty : 1))))" \
+			"$trend_suffix"
+	fi
 
 	local rollback_head="total=${rollback_total}  rejected=${rejected_count}"
 	if [[ -n "$rollback_last_age" ]]; then
