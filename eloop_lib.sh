@@ -2019,6 +2019,63 @@ start_random_radio_corner() {
 	esac
 }
 
+schedule_nonessential_audio_jobs() {
+	local game_num="$1" score="$2"
+	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+
+	# 配信演出の頻度 (変更しても毎ループ source で即反映)
+	local news_interval_day=4
+	local news_interval_night=8
+	local news_night_start_hour=2
+	local news_night_end_hour=5
+	local news_phase=1
+	local radio_interval=5
+	local radio_phase=0
+	local comment_backlog_skip_threshold=4
+
+	local comment_queued=0 comment_playing=0 comment_total=0
+	local skip_nonessential_radio=false
+	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
+	comment_queued=${comment_queued:-0}
+	comment_playing=${comment_playing:-0}
+	comment_total=$((comment_queued + comment_playing))
+	if is_comment_backlog_high "$comment_backlog_skip_threshold"; then
+		skip_nonessential_radio=true
+	fi
+
+	local current_hour current_news_interval current_news_mode
+	current_hour=$(date +%H)
+	if (( 10#$current_hour >= news_night_start_hour && 10#$current_hour < news_night_end_hour )); then
+		current_news_interval="$news_interval_night"
+		current_news_mode="night"
+	else
+		current_news_interval="$news_interval_day"
+		current_news_mode="day"
+	fi
+
+	if [ "$current_news_mode" != "${LAST_NEWS_MODE:-}" ]; then
+		log "[NEWS] schedule mode=${current_news_mode} interval=${current_news_interval} (night: ${news_night_start_hour}:00-${news_night_end_hour}:00)"
+		LAST_NEWS_MODE="$current_news_mode"
+	fi
+
+	if (( game_num % current_news_interval == news_phase )); then
+		if [ "$skip_nonessential_radio" = true ]; then
+			log "[NEWS] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
+		else
+			fetch_and_play_news "$game_num" "$score" &
+		fi
+	fi
+
+	if (( game_num % radio_interval == radio_phase )); then
+		if [ "$skip_nonessential_radio" = true ]; then
+			log "[RADIO] skip random corner: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
+		else
+			start_random_radio_corner "$game_num" "$score" &
+		fi
+	fi
+}
+
 #=== ソ連祝賀トーク ===
 
 generate_soviet_celebration() {
@@ -2090,6 +2147,25 @@ _kill_comment_gen() {
 }
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
+
+get_comment_backlog_counts() {
+	local queued playing
+	queued=$(ls -1 "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | wc -l | tr -d ' ')
+	playing=$(ls -1 "$COMMENT_QUEUE_DIR"/comment_*.playing 2>/dev/null | wc -l | tr -d ' ')
+	queued=${queued:-0}
+	playing=${playing:-0}
+	echo "${queued} ${playing}"
+}
+
+is_comment_backlog_high() {
+	local threshold="${1:-4}"
+	local queued playing total
+	read -r queued playing <<<"$(get_comment_backlog_counts)"
+	queued=${queued:-0}
+	playing=${playing:-0}
+	total=$((queued + playing))
+	[ "$total" -ge "$threshold" ]
+}
 
 _is_recent_comment_batch_processed() {
 	local batch_hash="$1"
