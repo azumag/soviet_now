@@ -11,6 +11,36 @@
 #   eloop.sh      — 1試合のゲームプレイ関数 (毎試合 source で最新版を読み込み)
 #   eloop_improve.sh — バックグラウンド改善サブプロセス
 
+# 親プロセスから SIGINT/SIGTERM 無視状態を継承していると Ctrl-C が効かない。
+# その場合でも確実に停止できるよう、起動直後にシグナル既定動作へ戻して再execする。
+if [ -z "${SOREN_SIGRESET_DONE:-}" ]; then
+	export SOREN_SIGRESET_DONE=1
+	exec python3 - "$0" "$@" <<'PY'
+import os
+import signal
+import sys
+
+targets = {signal.SIGINT, signal.SIGTERM}
+if hasattr(signal, "SIGQUIT"):
+    targets.add(signal.SIGQUIT)
+
+# 1) 無視ハンドラ継承を解除
+for sig in targets:
+    try:
+        signal.signal(sig, signal.SIG_DFL)
+    except Exception:
+        pass
+
+# 2) ブロックされたシグナルマスクも解除（Ctrl-Cが届かないケース対策）
+try:
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, targets)
+except Exception:
+    pass
+
+os.execv("/bin/bash", ["/bin/bash", sys.argv[1], *sys.argv[2:]])
+PY
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
