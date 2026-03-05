@@ -255,7 +255,7 @@ if h and h in rs:
 	[[ -f tmp/revert_strategy.py ]] && revert_available=true
 
 	# --- 最低試合ゲート ---
-	local min_games=10
+	local min_games=12
 
 	# --- スコア情報 ---
 	local best_score=$(cat best_score.txt 2>/dev/null || echo "?")
