@@ -82,15 +82,38 @@ HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || ech
 
 improve_ok=false
 
-# 直近3バージョン + 殿堂入り戦略
+# 直近3バージョン
 past_strategy_files=""
 for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -3); do
 	past_strategy_files="$past_strategy_files $vf"
 done
+# ランキング上位2戦略 (rolling_scores の composite スコア順)
 hall_of_fame_files=""
-for hf in $(ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py 2>/dev/null | sort -t'e' -k3 -rn | head -2); do
-	[ -f "$hf" ] && hall_of_fame_files="$hall_of_fame_files $hf"
-done
+if [ -f "$ROLLING_SCORES_FILE" ]; then
+	top_hashes=$(python3 -c "
+import json, sys
+with open('$ROLLING_SCORES_FILE') as f:
+    rs = json.load(f)
+ranked = []
+for h, d in rs.items():
+    scores = d.get('scores', [])
+    n = len(scores)
+    if n < $MIN_GAMES_FOR_BEST_ROLLBACK:
+        continue
+    ss = sorted(scores)
+    p50 = ss[n//2]
+    p25 = ss[n//4]
+    avg = sum(scores)/n
+    ranked.append((avg, h))
+ranked.sort(reverse=True)
+for _, h in ranked[:2]:
+    print(h)
+" 2>/dev/null)
+	for th in $top_hashes; do
+		hf="$STRATEGY_HASH_ARCHIVE_DIR/${th}.py"
+		[ -f "$hf" ] && hall_of_fame_files="$hall_of_fame_files $hf"
+	done
+fi
 
 # 変更履歴ファイル (振り子パターン防止)
 CHANGE_LOG_FILE="tmp/change_log.txt"
