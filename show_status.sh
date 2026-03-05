@@ -507,19 +507,13 @@ if h and h in rs:
 	echo ""
 
 	# === セクション: Strategy & Scores ===
-	printf "  ${C_BOLD}STRATEGY${C_RESET}\n"
+	printf "  ${C_BOLD}STRATEGY / SAFETY${C_RESET}\n"
+	printf "    ${C_DIM}Version=現行strategy / Rollback=回帰時の自動差し戻し状態${C_RESET}\n"
 	# "    ▸ Version     " = 18, "  XXXL" = 6 → version name max = W-24
 	local ver_display="${strategy_ver:-strategy.py}"
 	local max_ver=$(( W - 24 ))
 	(( ${#ver_display} > max_ver )) && ver_display="${ver_display[1,$((max_ver-2))]}.."
 	printf "    ${C_WHITE}▸${C_RESET} Version     ${C_DIM}%s${C_RESET}  ${C_DIM}${strategy_lines}L${C_RESET}\n" "${ver_display}"
-	# show_status_g と重複しない運用グラフ
-	local ops_health=$(( workers_online * 20 ))
-	(( ops_health < 0 )) && ops_health=0
-	(( ops_health > 100 )) && ops_health=100
-	local ops_bar
-	ops_bar=$(_bar_meter "$ops_health" 100 12)
-	printf "    ${C_WHITE}▸${C_RESET} OpsHealth   ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/100${C_RESET}\n" "$ops_bar" "$ops_health"
 
 	local reject_bar
 	reject_bar=$(_bar_meter "$rejected_count" 20 12)
@@ -537,14 +531,6 @@ if h and h in rs:
 		(( ${#summary_line} > max_summ )) && summary_line="${summary_line[1,$((max_summ-2))]}.."
 		printf "    ${C_WHITE}▸${C_RESET} Summary     ${C_DIM}%s  (%s)${C_RESET}\n" "${summary_line}" "${summary_age}"
 	fi
-
-	echo ""
-	printf "  ${C_BOLD}RANDOM${C_RESET}\n"
-	local random_line
-	random_line=$(_read_cached_random_line)
-	local max_random=$(( W - 18 ))
-	(( ${#random_line} > max_random )) && random_line="${random_line[1,$((max_random-2))]}.."
-	printf "    ${C_BLUE}▸${C_RESET} Pick        ${C_DIM}%s${C_RESET}\n" "$random_line"
 
 	echo ""
 	printf "${C_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
@@ -568,5 +554,8 @@ trap 'printf "\033[?25h\033[0m"; exit' EXIT INT TERM
 printf '\033[2J'            # 初回だけ画面クリア
 while true; do
 	show_status | render
+	if _maybe_run_fullscreen_random; then
+		continue
+	fi
 	sleep "$WATCH_INTERVAL"
 done

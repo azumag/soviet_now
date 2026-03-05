@@ -88,7 +88,7 @@ for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | he
 	past_strategy_files="$past_strategy_files $vf"
 done
 hall_of_fame_files=""
-for hf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
+for hf in $(ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py 2>/dev/null | sort -t'e' -k3 -rn | head -2); do
 	[ -f "$hf" ] && hall_of_fame_files="$hall_of_fame_files $hf"
 done
 
@@ -178,8 +178,8 @@ FIXEOF
 				echo ""
 			} >> "$CHANGE_LOG_FILE"
 			# 最新50エントリのみ保持
-			if [ -f "$CHANGE_LOG_FILE" ] && [ "$(wc -l < "$CHANGE_LOG_FILE")" -gt 500 ]; then
-				tail -500 "$CHANGE_LOG_FILE" > "$CHANGE_LOG_FILE.tmp"
+			if [ -f "$CHANGE_LOG_FILE" ] && [ "$(wc -l < "$CHANGE_LOG_FILE")" -gt 200 ]; then
+				tail -200 "$CHANGE_LOG_FILE" > "$CHANGE_LOG_FILE.tmp"
 				mv "$CHANGE_LOG_FILE.tmp" "$CHANGE_LOG_FILE"
 			fi
 			fi
