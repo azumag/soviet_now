@@ -8,6 +8,8 @@ SCRIPT_DIR="${0:a:h}"
 cd "$SCRIPT_DIR"
 
 WATCH_INTERVAL=${1:-10}
+RANDOM_REFRESH_SEC=${RANDOM_REFRESH_SEC:-30}
+RANDOM_CACHE_FILE="tmp/.status_random_cache"
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
 W=57
@@ -76,6 +78,213 @@ _bar_meter() {
 	local empty=$(( width - filled ))
 	printf "%${filled}s" "" | tr ' ' '█'
 	printf "%${empty}s" "" | tr ' ' '·'
+}
+
+_sanitize_line() {
+	local line="$1"
+	line=$(printf '%s' "$line" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g')
+	line=$(printf '%s' "$line" | tr '\r\n' '  ' | tr -d '\000-\010\013\014\016-\037')
+	line=$(printf '%s' "$line" | sed -E 's/[[:space:]]+/ /g; s/^ +//; s/ +$//')
+	printf '%s' "$line"
+}
+
+_collect_random_snippets() {
+	local -a snippets
+	snippets=()
+
+	[[ -f best_score.txt ]] && snippets+=("BEST SCORE: $(cat best_score.txt) pts")
+	if [[ -f score_history.txt ]] && [[ -s score_history.txt ]]; then
+		local total avg last
+		total=$(wc -l < score_history.txt | tr -d ' ')
+		avg=$(awk '{s+=$1}END{if(NR>0) printf "%.0f", s/NR; else print 0}' score_history.txt)
+		last=$(tail -1 score_history.txt 2>/dev/null)
+		snippets+=("${total} games played / avg ${avg} pts")
+		[[ -n "$last" ]] && snippets+=("Last score: ${last} pts")
+	fi
+	[[ -f game_count.txt ]] && snippets+=("Game #$(cat game_count.txt) and counting...")
+
+	if [[ -f game_state.json ]]; then
+		local info
+		info=$(python3 -c "import json; d=json.load(open('game_state.json')); print(f\"{len(d.get('pieces',[]))} pieces / {d.get('score',0)} pts / {d.get('state','?')}\")" 2>/dev/null)
+		[[ -n "$info" ]] && snippets+=("Board: $info")
+	fi
+
+	if [[ -f tmp/past_radio_topics.txt ]] && [[ -s tmp/past_radio_topics.txt ]]; then
+		local -a lines
+		lines=("${(@f)$(cat tmp/past_radio_topics.txt)}")
+		(( ${#lines} > 0 )) && snippets+=("${lines[$((RANDOM % ${#lines} + 1))]}")
+	fi
+
+	local latest_ver
+	latest_ver=$(ls -1t strategy_versions/v[0-9]*_strategy.py 2>/dev/null | head -1)
+	[[ -n "$latest_ver" ]] && snippets+=("Strategy: $(basename "$latest_ver")")
+
+	if [[ -f tmp/improve_state.json ]]; then
+		local imp
+		imp=$(python3 -c "import json; print(json.load(open('tmp/improve_state.json')).get('status','?'))" 2>/dev/null)
+		[[ -n "$imp" ]] && snippets+=("Improve: ${imp}")
+	fi
+
+	if [[ -f tmp/twitch_comments.txt ]] && [[ -s tmp/twitch_comments.txt ]]; then
+		local -a clines
+		clines=("${(@f)$(cat tmp/twitch_comments.txt)}")
+		(( ${#clines} > 0 )) && snippets+=("Chat: ${clines[$((RANDOM % ${#clines} + 1))]}")
+	fi
+
+	if [[ -f tmp/news.txt ]] && [[ -s tmp/news.txt ]]; then
+		local -a nlines
+		nlines=("${(@f)$(grep -v '^$' tmp/news.txt)}")
+		(( ${#nlines} > 0 )) && snippets+=("${nlines[$((RANDOM % ${#nlines} + 1))]}")
+	fi
+
+	(( ${#snippets} == 0 )) && return 1
+	printf '%s\n' "${snippets[@]}"
+}
+
+_random_from_data() {
+	local -a snippets selected used
+	snippets=("${(@f)$(_collect_random_snippets 2>/dev/null)}")
+	(( ${#snippets} == 0 )) && return 1
+	local pick_count=$(( RANDOM % 2 + 1 ))
+	(( pick_count > ${#snippets} )) && pick_count=${#snippets}
+	selected=()
+	used=()
+	local _p=0
+	while (( _p < pick_count )); do
+		local idx=$(( RANDOM % ${#snippets} + 1 ))
+		if (( ! ${used[(Ie)$idx]} )); then
+			used+=($idx)
+			selected+=("${snippets[$idx]}")
+			(( _p++ ))
+		fi
+	done
+	printf '%s' "${(pj: / :)selected}"
+}
+
+_random_from_fortune() {
+	(( $+commands[fortune] )) || return 1
+	local f
+	f=$(fortune -s 2>/dev/null | head -n 1)
+	f=$(_sanitize_line "$f")
+	[[ -n "$f" ]] || return 1
+	printf '%s' "$f"
+}
+
+_random_from_joke_loop() {
+	local -a jokes words
+	jokes=()
+	(( $+commands[fortune] && $+commands[cowsay] )) && jokes+=("fortune | cowsay")
+	(( $+commands[fortune] && $+commands[lolcat] )) && jokes+=("fortune | lolcat")
+	(( $+commands[fortune] && $+commands[boxes] )) && jokes+=("fortune | boxes")
+	(( $+commands[fortune] )) && jokes+=("fortune")
+	(( $+commands[figlet] )) && jokes+=("figlet")
+	(( $+commands[toilet] )) && jokes+=("toilet")
+	(( $+commands[genact] )) && jokes+=("genact")
+	(( ${#jokes} == 0 )) && return 1
+
+	words=("HELLO" "LOL" "WOW" "NICE" "SOREN" "BOOM" "YAY" "COOL" "YEAH")
+	local pick="${jokes[$((RANDOM % ${#jokes} + 1))]}"
+	local word="${words[$((RANDOM % ${#words} + 1))]}"
+	local out=""
+	case "$pick" in
+	figlet)
+		out=$(echo "$word" | timeout 2 figlet 2>/dev/null | head -n 1)
+		;;
+	toilet)
+		out=$(echo "$word" | timeout 2 toilet --gay 2>/dev/null | head -n 1)
+		;;
+	genact)
+		out="joke_loop: genact"
+		;;
+	*)
+		out=$(timeout 2 bash -c "$pick" 2>/dev/null | head -n 1)
+		;;
+	esac
+	out=$(_sanitize_line "$out")
+	[[ -z "$out" ]] && out="joke_loop: ${pick} ${word}"
+	printf '%s' "$out"
+}
+
+_has_joke_loop_actions() {
+	(( $+commands[fortune] && $+commands[cowsay] )) && return 0
+	(( $+commands[fortune] && $+commands[lolcat] )) && return 0
+	(( $+commands[fortune] && $+commands[boxes] )) && return 0
+	(( $+commands[fortune] )) && return 0
+	(( $+commands[figlet] )) && return 0
+	(( $+commands[toilet] )) && return 0
+	(( $+commands[genact] )) && return 0
+	return 1
+}
+
+_random_from_fullscreen() {
+	local -a cmds
+	cmds=()
+	(( $+commands[nyancat] )) && cmds+=("nyancat")
+	(( $+commands[cmatrix] )) && cmds+=("cmatrix")
+	(( $+commands[tty-clock] )) && cmds+=("tty-clock")
+	(( $+commands[genact] )) && cmds+=("genact")
+	(( ${#cmds} == 0 )) && return 1
+	printf 'fullscreen: %s' "${cmds[$((RANDOM % ${#cmds} + 1))]}"
+}
+
+_has_fullscreen_actions() {
+	(( $+commands[nyancat] )) && return 0
+	(( $+commands[cmatrix] )) && return 0
+	(( $+commands[tty-clock] )) && return 0
+	(( $+commands[genact] )) && return 0
+	return 1
+}
+
+_generate_random_status_line() {
+	local -a actions
+	actions=("data")
+	(( $+commands[fortune] )) && actions+=("fortune")
+	_has_joke_loop_actions && actions+=("joke")
+	_has_fullscreen_actions && actions+=("fullscreen")
+
+	local action="${actions[$((RANDOM % ${#actions} + 1))]}"
+	local line=""
+	case "$action" in
+	data)
+		line=$(_random_from_data 2>/dev/null)
+		;;
+	fortune)
+		line=$(_random_from_fortune 2>/dev/null)
+		;;
+	joke)
+		line=$(_random_from_joke_loop 2>/dev/null)
+		;;
+	fullscreen)
+		line=$(_random_from_fullscreen 2>/dev/null)
+		;;
+	esac
+	line=$(_sanitize_line "$line")
+	[[ -z "$line" ]] && line="status stable / random panel idle"
+	printf '%s' "$line"
+}
+
+_read_cached_random_line() {
+	local now ts line
+	now=$(date +%s)
+	if [[ -f "$RANDOM_CACHE_FILE" ]]; then
+		ts=$(head -n 1 "$RANDOM_CACHE_FILE" 2>/dev/null)
+		line=$(tail -n +2 "$RANDOM_CACHE_FILE" 2>/dev/null | head -n 1)
+		case "$ts" in
+		''|*[!0-9]*) ;;
+		*)
+			if (( now - ts < RANDOM_REFRESH_SEC )) && [[ -n "$line" ]]; then
+				printf '%s' "$line"
+				return 0
+			fi
+			;;
+		esac
+	fi
+	line=$(_generate_random_status_line)
+	{
+		echo "$now"
+		echo "$line"
+	} >"$RANDOM_CACHE_FILE"
+	printf '%s' "$line"
 }
 
 #=== メイン表示 ===
@@ -463,6 +672,14 @@ if h and h in rs:
 		(( ${#summary_line} > max_summ )) && summary_line="${summary_line[1,$((max_summ-2))]}.."
 		printf "    ${C_WHITE}▸${C_RESET} Summary     ${C_DIM}%s  (%s)${C_RESET}\n" "${summary_line}" "${summary_age}"
 	fi
+
+	echo ""
+	printf "  ${C_BOLD}RANDOM${C_RESET}\n"
+	local random_line
+	random_line=$(_read_cached_random_line)
+	local max_random=$(( W - 18 ))
+	(( ${#random_line} > max_random )) && random_line="${random_line[1,$((max_random-2))]}.."
+	printf "    ${C_BLUE}▸${C_RESET} Pick        ${C_DIM}%s${C_RESET}\n" "$random_line"
 
 	echo ""
 	printf "${C_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
