@@ -13,7 +13,7 @@ Decision Logic (6 evaluation axes):
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v165: density evaluation)
+  6. Chain merge bonus - Evaluate possibility of further merges after merge (v166: v155 distance-weighted restored)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -35,9 +35,13 @@ Phases (determined by board max Y):
 # v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 # v157: 着地高動的調整・CHAIN_MERGE促進版
 # v159: 序盤HEIGHT_CONTROL抑制強化版
-# v165: CHAIN_MERGE密度評価版 - v159の動的パラメータ調整を維持しつつ、CHAIN_MERGE評価を「最も近い1つのピース」から「周囲のピース密度」に変更。
-# 半径2.5内の同typeピース数をカウントし、ティアードボーナスを適用（>=3ピース: 350.0, >=2ピース: 150.0, 1ピース: 50.0）。
-# これによりCHAIN_MERGE選択率を向上させ、HEIGHT_CONTROL（選択率28.2%、avg_score_delta=1.3）を抑制してスコア安定性を向上。
+# v165: CHAIN_MERGE密度カウント版 - 密度評価（半径2.5内のピース数）に変更したが、CHAIN_MERGE評価精度が低下。
+# v166: v155距離加重評価復帰版 - batch_summaryでHEIGHT_CONTROLが30%選択されavg_score_delta=2.5と低いこと、
+# NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=26.6-46.0と高価値だが選択率が低いことを確認。
+# v165の密度カウント版（radius=2.5, tiered bonus）はpiece距離を考慮せず、CHAIN_MERGE評価精度が不足。
+# v155の成功パラメータ（chain_distance=5.0, chain_bonus_multiplier=450.0）と距離加重評価ロジックを復帰し、
+# 3つの最も近いmerged_typeピースを距離重み付きで評価する。これによりCHAIN_MERGE評価精度を向上させ、
+# HEIGHT_CONTROL選択率を抑制してスコア安定性を向上させる。v159の序盤HEIGHT_CONTROL抑制は維持。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -45,11 +49,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v165: CHAIN_MERGE密度評価版
+    """v166: v155距離加重評価復帰版
 
-    v159の動的パラメータ調整を維持しつつ、CHAIN_MERGE評価を「最も近い1つのピース」から「周囲のピース密度」に変更。
-    半径2.5内の同typeピース数をカウントし、ティアードボーナスを適用（>=3ピース: 350.0, >=2ピース: 150.0, 1ピース: 50.0）。
-    これによりCHAIN_MERGE選択率を向上させ、HEIGHT_CONTROL（選択率28.2%、avg_score_delta=1.3）を抑制してスコア安定性を向上。
+    batch_summary分析でHEIGHT_CONTROLが30%選択されavg_score_delta=2.5と低いこと、
+    NEAR_MERGE（特にCHAIN_MERGE付き）がavg_score_delta=26.6-46.0と高価値だが選択率が低いことを確認。
+    v165の密度カウント版（radius=2.5, tiered bonus）はpiece距離を考慮せず、CHAIN_MERGE評価精度が不足。
+
+    v155の成功パラメータ（chain_distance=5.0, chain_bonus_multiplier=450.0）と距離加重評価ロジックを復帰：
+    - 併合ターゲット周辺（半径5.0）のmerged_typeピースを収集
+    - 距離が最も近い3つのピースに対し、距離に応じて段階的に減衰するボーナスを適用
+    - 1st: (5.0 - dist) * 450.0
+    - 2nd: (5.0 - dist) * 450.0 * 0.5
+    - 3rd: (5.0 - dist) * 450.0 * 0.25
+    これにより、併合ターゲットに近いピースを重視し、CHAIN_MERGE評価精度を向上させる。
+    v159の序盤HEIGHT_CONTROL抑制（height_multiplier=0.2 for max_y < -1.0）は維持。
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -80,6 +93,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
     # --- v159: 序盤判定（max_y < -1.0） ---
+    # v159のHEIGHT_CONTROL抑制を維持し、序盤でHEIGHT_CONTROL過剰選択を抑制
     early_game = max_y < -1.0
 
     # --- phase judgment (v42 thresholds) ---
@@ -194,10 +208,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v165: density evaluation) -----
-        # v165: CHAIN_MERGE密度評価版 - v159の動的パラメータ調整を維持しつつ、密度評価を導入。
-        # 併合ターゲット周辺の同typeピース密度をカウントし、ティアードボーナスを適用。
-        # これにより、複数のピースがクラスタしている状況（高連鎖確率）をより正確に評価し、CHAIN_MERGE選択率を向上。
+        # ----- evaluation axis 6: chain merge bonus (v166: v155 distance-weighted restored) -----
+        # v166: v155の成功した距離加重評価ロジックを復帰
+        # v165の密度カウント版（radius=2.5, tiered bonus）はpiece距離を考慮せず、CHAIN_MERGE評価精度が不足
+        # v155はchain_distance=5.0, chain_bonus_multiplier=450.0で4026点を達成
+        # 距離加重評価により、併合ターゲットに近いmerged_typeピースを重視し、CHAIN_MERGE評価精度を向上させる
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -206,27 +221,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v165: 密度評価 - 併合ターゲット周辺（半径2.5）の同typeピース数をカウント
-                chain_distance = 2.5
-                nearby_count = 0
+                # v166: v155パラメータ復帰 - chain_distance=5.0, chain_bonus_multiplier=450.0
+                chain_distance = 5.0
+                chain_bonus_multiplier = 450.0
+
+                # collect all merged_type pieces within chain_distance of merge target
+                nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
                         if dist < chain_distance:
-                            nearby_count += 1
+                            nearby_pieces.append((dist, p))
 
-                # v165: ティアードボーナス - ピース数に応じて段階的にボーナスを適用
-                # >=3ピース: 350.0（高密度、高連鎖確率）
-                # >=2ピース: 150.0（中密度、中連鎖確率）
-                # 1ピース: 50.0（低密度、低連鎖確率）
-                if nearby_count >= 3:
-                    score += 350.0
-                elif nearby_count >= 2:
-                    score += 150.0
-                elif nearby_count >= 1:
-                    score += 50.0
+                # sort by distance (closest first)
+                nearby_pieces.sort(key=lambda x: x[0])
 
-                if nearby_count >= 1:
+                # v166: 距離加重ボーナス - 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
+                # 1st: (chain_distance - dist) * chain_bonus_multiplier
+                # 2nd: (chain_distance - dist) * chain_bonus_multiplier * 0.5
+                # 3rd: (chain_distance - dist) * chain_bonus_multiplier * 0.25
+                # これにより、併合ターゲットに近いピースを重視し、CHAIN_MERGE評価精度を向上させる
+                if len(nearby_pieces) >= 1:
+                    dist, _ = nearby_pieces[0]
+                    chain_bonus = (chain_distance - dist) * chain_bonus_multiplier
+                    score += chain_bonus
+
+                if len(nearby_pieces) >= 2:
+                    dist, _ = nearby_pieces[1]
+                    chain_bonus = (chain_distance - dist) * chain_bonus_multiplier * 0.5
+                    score += chain_bonus
+
+                if len(nearby_pieces) >= 3:
+                    dist, _ = nearby_pieces[2]
+                    chain_bonus = (chain_distance - dist) * chain_bonus_multiplier * 0.25
+                    score += chain_bonus
+
+                if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
         # ----- update best candidate -----
