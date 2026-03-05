@@ -55,10 +55,13 @@ handle_soviet_celebration() {
 	stop_comment_watcher
 	_kill_comment_gen
 
-	# 既存の読み上げを全停止
+	# 既存の読み上げを全停止（ロックも含めてクリーンに）
 	stop_comment_player
 	pkill -x say 2>/dev/null || true
 	pkill -f say_enqueue 2>/dev/null || true
+	# stale lock 防止: say_enqueue を殺した後、ロックディレクトリも確実に除去
+	rm -f tmp/.say_queue/.lock/owner_pid tmp/.say_queue/.lock/heartbeat 2>/dev/null
+	rmdir tmp/.say_queue/.lock 2>/dev/null || true
 	rm -f tmp/.say_queue/content_*.txt tmp/.say_queue/pid tmp/.say_queue/token
 	rm -f "$COMMENT_QUEUE_DIR"/comment_*.txt
 	log "[CELEBRATION] 既存読み上げを全停止"
