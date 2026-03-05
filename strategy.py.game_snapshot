@@ -36,8 +36,10 @@ Phases (determined by board max Y):
 # v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
 # v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
 # v167: 評価精度最適化版 - chain_distance 5.0→4.5縮小
-# v168: v155成功パラメータ復帰・動的調整復帰版
-# v169: HEIGHT_CONTROLフォールバック削除 - batch_summaryでHEIGHT_CONTROLが23.9%選択(avg_score_delta=2.5)と低価値を確認。フォールバックをDEFAULT_PLACEMENTに変更し、他の評価軸(特にCHAIN_MERGE)の影響力を強めることでスコア安定性向上。
+# v168: v155成功パラメータ復帰・動的調整復帰版 - batch_summaryでHEIGHT_CONTROLが28.1%選択(avg_score_delta=2.8)と高価値でないこと、
+# v167のchain_distance=4.5縮小がCHAIN_MERGE選択率低下の原因を確認。v155の成功パラメータ(chain_distance=5.0, chain_bonus=450.0)を完全復帰し、
+# v157/v159の着地高動的調整（chain_distance_max=5.0+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0）を復帰。
+# v159の序盤HEIGHT_CONTROL抑制（max_y < -1.0, height_multiplier=0.2）とv162のバランス補正強化（MEDIUM: 40.0）を維持。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -266,9 +268,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if score > best_score:
             best_score = score
             best_x = x
-            # v169: HEIGHT_CONTROLフォールバック削除 - batch_summaryでHEIGHT_CONTROLが23.9%選択(avg_score_delta=2.5)と低価値を確認。
-            # フォールバックをDEFAULT_PLACEMENTに変更し、他の評価軸(特にCHAIN_MERGE)の影響力を強めることでスコア安定性向上。
-            best_reason = "_".join(reasons) if reasons else "DEFAULT_PLACEMENT"
+            best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
