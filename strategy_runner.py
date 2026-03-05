@@ -42,8 +42,14 @@ MOVE_TIMEOUT = 120        # MOVE状態待ちタイムアウト(秒)
 DROP_WAIT = 0.3           # ドロップ後の待ち時間(秒)
 
 
+_received_signal = None
+
+STOP_FILE = "tmp/stop"
+
 def _handle_stop_signal(signum, _frame):
-    """SIGINT/SIGTERMをKeyboardInterruptとして扱い、終了コード130へ寄せる。"""
+    """SIGINT/SIGTERMをKeyboardInterruptとして扱い、シグナル再送出で確実にbashに伝搬。"""
+    global _received_signal
+    _received_signal = signum
     raise KeyboardInterrupt(f"signal {signum}")
 
 
@@ -221,6 +227,9 @@ def wait_for_move_state():
     start = time.time()
 
     while time.time() - start < MOVE_TIMEOUT:
+        if os.path.exists(STOP_FILE):
+            raise KeyboardInterrupt("stop file")
+
         gs = load_game_state()
         if gs is None:
             time.sleep(POLL_INTERVAL)
@@ -282,6 +291,10 @@ def run_game():
 
     with open(HISTORY_FILE, "w") as history_f:
         while True:
+            # stop-file チェック
+            if os.path.exists(STOP_FILE):
+                raise KeyboardInterrupt("stop file")
+
             # MOVE状態待ち
             gs, is_move = wait_for_move_state()
 
@@ -399,7 +412,10 @@ def main():
                 f.write("")
         except Exception:
             pass
-        raise SystemExit(130)
+        # シグナル再送出: bash WCE が「シグナル死」と認識し trap を発火する
+        sig = _received_signal or signal.SIGINT
+        signal.signal(sig, signal.SIG_DFL)
+        os.kill(os.getpid(), sig)
     # 最終結果を JSON で stdout に出力
     print("---RESULT---")
     print(json.dumps(result, ensure_ascii=False))

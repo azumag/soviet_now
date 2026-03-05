@@ -102,6 +102,7 @@ wait_for_move() {
 	log "MOVE状態を待機中..."
 	local waited=0
 	while [ $waited -lt 60 ]; do
+		[ -f tmp/stop ] && return 130
 		if [ -f "$GAME_STATE" ] && is_move_state; then
 			log "MOVE状態検出"
 			return 0
@@ -151,6 +152,7 @@ except:
 			fi
 			;;
 		esac
+		[ -f tmp/stop ] && return 130
 		sleep 2
 		waited=$((waited + 2))
 	done

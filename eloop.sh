@@ -29,23 +29,29 @@ play_one_game() {
 	cp "$STRATEGY_FILE" "${STRATEGY_FILE}.game_snapshot"
 
 	# strategy_runner.py で1試合プレイ
+	# パイプラインを使わない: bash はパイプライン中 INT trap を遅延するため Ctrl-C が効かない。
+	# 代わりに python3 をバックグラウンド実行 + tail -f でリアルタイム表示。
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
-	python3 -u strategy_runner.py 2>&1 | tee "$runner_tmpfile"
-	local py_rc="${PIPESTATUS[0]:-1}"
-	local tee_rc="${PIPESTATUS[1]:-0}"
-	if [ "$py_rc" -eq 130 ] || [ "$py_rc" -eq 143 ] || [ "$tee_rc" -eq 130 ] || [ "$tee_rc" -eq 143 ]; then
-		log "[SIGNAL] strategy_runner/tee が割り込み終了 (py_rc=$py_rc tee_rc=$tee_rc)"
+	python3 -u strategy_runner.py > "$runner_tmpfile" 2>&1 &
+	local py_pid=$!
+	tail -n +1 -f "$runner_tmpfile" &
+	local tail_pid=$!
+	wait "$py_pid"
+	local py_rc=$?
+	kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null || true
+	if [ "$py_rc" -eq 130 ] || [ "$py_rc" -eq 143 ]; then
+		log "[SIGNAL] strategy_runner が割り込み終了 (py_rc=$py_rc)"
 		rm -f "$runner_tmpfile"
 		return 130
 	fi
-	if [ "$py_rc" -eq 1 ] && grep -q "KeyboardInterrupt" "$runner_tmpfile" 2>/dev/null; then
-		log "[SIGNAL] strategy_runner KeyboardInterrupt を検出 (py_rc=$py_rc tee_rc=$tee_rc)"
+	if [ "$py_rc" -ne 0 ] && grep -q "KeyboardInterrupt" "$runner_tmpfile" 2>/dev/null; then
+		log "[SIGNAL] strategy_runner KeyboardInterrupt を検出 (py_rc=$py_rc)"
 		rm -f "$runner_tmpfile"
 		return 130
 	fi
-	if [ "$py_rc" -ne 0 ] || [ "$tee_rc" -ne 0 ]; then
-		log "[RUNNER] WARNING: strategy_runner が異常終了 (py_rc=$py_rc tee_rc=$tee_rc)"
+	if [ "$py_rc" -ne 0 ]; then
+		log "[RUNNER] WARNING: strategy_runner が異常終了 (py_rc=$py_rc)"
 	fi
 
 	# 結果抽出
