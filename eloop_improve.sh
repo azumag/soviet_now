@@ -171,21 +171,8 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			cp "strategy.py" "$STAGING_FILE"
 
 			fix_prompt_file=$(mktemp /tmp/eloop_fix_prompt.XXXXXX)
-			cat > "$fix_prompt_file" <<FIXEOF
-前回の strategy.py.staging 改善でバリデーションが失敗した。strategy.py.staging はオリジナルに戻してある。
-以下のエラーを踏まえて、改めて改善せよ。
-
-## 前回のエラー
-$VALIDATE_ERROR
-
-## 修正ルール
-- strategy.py.staging を改善して上記エラーを回避せよ
-- 1回の改善で1つの変更のみ。シンプルに保て
-- decide(game_state, analysis) のシグネチャは変更禁止
-- if __name__ == "__main__" ブロックは変更禁止
-- decide() は必ず {"x": float, "reason": str} を返すこと
-- Write ツールで strategy.py.staging に書き込むこと
-FIXEOF
+			export VALIDATE_ERROR
+			envsubst '${VALIDATE_ERROR}' < "$ELOOP_LIB_DIR/prompts/fix_validation.md" > "$fix_prompt_file"
 			run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
 				"$fix_prompt_file" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"

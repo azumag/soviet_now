@@ -87,7 +87,30 @@ print(f\"{len(d.get('pieces',[]))} pieces / {d.get('score',0)} pts / {d.get('sta
 	if [[ -f tmp/news.txt ]] && [[ -s tmp/news.txt ]]; then
 		local nlines=("${(@f)$(grep -v '^$' tmp/news.txt)}")
 		if (( ${#nlines} > 0 )); then
-			local nline="${nlines[$((RANDOM % ${#nlines} + 1))]}"
+			# 既読管理: news.txt が更新されたらリセット
+			local news_mtime=$(stat -f %m tmp/news.txt 2>/dev/null)
+			local shown_file="tmp/.news_shown_lines.txt"
+			local shown_mtime_file="tmp/.news_shown_mtime.txt"
+			local last_mtime=$(cat "$shown_mtime_file" 2>/dev/null)
+			if [[ "$news_mtime" != "$last_mtime" ]]; then
+				: > "$shown_file"
+				echo "$news_mtime" > "$shown_mtime_file"
+			fi
+			local shown=$(cat "$shown_file" 2>/dev/null)
+			# 未表示の行を探す
+			local -a unseen=()
+			for nline in "${nlines[@]}"; do
+				if ! printf '%s\n' "$shown" | grep -qxF "$nline"; then
+					unseen+=("$nline")
+				fi
+			done
+			# 全部表示済みならリセット
+			if (( ${#unseen} == 0 )); then
+				: > "$shown_file"
+				unseen=("${nlines[@]}")
+			fi
+			local nline="${unseen[$((RANDOM % ${#unseen} + 1))]}"
+			echo "$nline" >> "$shown_file"
 			(( ${#nline} > 80 )) && nline="${nline[1,77]}..."
 			snippets+=("$nline")
 		fi
