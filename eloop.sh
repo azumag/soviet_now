@@ -104,8 +104,6 @@ post_game_bookkeeping() {
 	git add -A
 	git commit -m "eloop Game #${game_num_display}: score=${LAST_SCORE}" 2>/dev/null && \
 		git push 2>/dev/null || true
-
-	_maybe_show_joke
 }
 
 #=== 次の試合準備 ===

@@ -107,6 +107,5 @@ while true; do
 	# 次の試合準備
 	prepare_next_game
 
-	_maybe_show_joke
 	sleep 2
 done
