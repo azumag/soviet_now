@@ -44,6 +44,17 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# 端末起動時は Ctrl-C キー定義を標準化し、届かない状況を明示する
+if [ -t 0 ]; then
+	stty intr '^C' 2>/dev/null || true
+	_self_pgid=$(ps -p $$ -o pgid= 2>/dev/null | tr -d ' ')
+	_tty_pgid=$(ps -p $$ -o tpgid= 2>/dev/null | tr -d ' ')
+	if [ -n "$_self_pgid" ] && [ -n "$_tty_pgid" ] && [ "$_self_pgid" != "$_tty_pgid" ]; then
+		echo "[WARN] この端末では soren_loop が前面PGではないため Ctrl-C は届きません。" >&2
+		echo "[WARN] soren_loop を実行した端末に戻るか、fg で前面に戻して停止してください。" >&2
+	fi
+fi
+
 # --- 多重起動防止 ---
 LOCKFILE="tmp/soren_loop.lock"
 mkdir -p tmp
