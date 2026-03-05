@@ -77,6 +77,34 @@ IMPROVE_PID=0
 HALT_STRATEGY_AFTER_SOVIET=0
 STOP_REQUESTED=0
 _SOREN_CLEANED_UP=0
+TTY_ETX_WATCHER_PID=0
+
+_start_tty_etx_watcher() {
+	[ -t 0 ] || return 0
+	(
+		while true; do
+			local _ch=""
+			IFS= read -r -n 1 _ch < /dev/tty || exit 0
+			# ^C がシグナル化されず文字として来た場合の保険
+			if [ "$_ch" = $'\003' ]; then
+				kill -INT "$$" 2>/dev/null || true
+			fi
+		done
+	) &
+	TTY_ETX_WATCHER_PID=$!
+}
+
+_stop_tty_etx_watcher() {
+	local wp="${TTY_ETX_WATCHER_PID:-0}"
+	case "$wp" in
+	''|*[!0-9]*) wp=0 ;;
+	esac
+	if [ "$wp" -ne 0 ] && [ "$wp" != "$$" ] && kill -0 "$wp" 2>/dev/null; then
+		kill "$wp" 2>/dev/null || true
+		wait "$wp" 2>/dev/null || true
+	fi
+	TTY_ETX_WATCHER_PID=0
+}
 
 _cleanup_once() {
 	local reason="${1:-unknown}"
@@ -84,6 +112,7 @@ _cleanup_once() {
 		return 0
 	fi
 	_SOREN_CLEANED_UP=1
+	_stop_tty_etx_watcher
 	cleanup_all "$reason"
 }
 
@@ -126,6 +155,7 @@ log "strategy.py → 1game → adaptive improve → repeat"
 trap '_handle_exit' EXIT
 trap '_handle_stop_signal INT' INT
 trap '_handle_stop_signal TERM' TERM
+_start_tty_etx_watcher
 
 # 前回の孤児コメントプレイヤー/ウォッチャーを掃除してから起動
 stop_comment_player
