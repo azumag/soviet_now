@@ -139,11 +139,41 @@ _sleep_with_heartbeat() {
     done
 }
 
+_resolve_audio_device_index() {
+    local name="$1"
+    # 数値ならそのまま返す
+    case "$name" in
+    *[!0-9]*) ;;  # 非数値→名前解決へ
+    '') return 1 ;;
+    *) echo "$name"; return 0 ;;
+    esac
+    # 名前からインデックスを解決 (grep -F で固定文字列マッチ)
+    local line idx
+    line=$(ffmpeg -y -f lavfi -i sine=frequency=1:duration=0.001 -f audiotoolbox -list_devices true "" 2>&1 \
+        | grep -F "$name" | head -1)
+    if [ -n "$line" ]; then
+        idx=$(echo "$line" | sed -n 's/.*\[\([0-9][0-9]*\)\].*/\1/p')
+        if [ -n "$idx" ]; then
+            echo "$idx"
+            return 0
+        fi
+    fi
+    echo "[say_enqueue] audio device not found: $name" >&2
+    return 1
+}
+
 _launch_say() {
     if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
+        local device_index
+        device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
+            _log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
+            nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
+            LAUNCHED_SAY_PID="$!"
+            return
+        }
         local aiff_file="${MY_CONTENT%.txt}.aiff"
         nohup bash -c 'trap "" INT TERM; say -r "$1" -o "$2" -f "$3" && ffmpeg -y -loglevel error -i "$2" -f audiotoolbox -audio_device_index "$4" "" && rm -f "$2"' \
-            _ "$RATE" "$aiff_file" "$MY_CONTENT" "$SAY_AUDIO_DEVICE" >/dev/null 2>&1 &
+            _ "$RATE" "$aiff_file" "$MY_CONTENT" "$device_index" >/dev/null 2>&1 &
     else
         nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
     fi
