@@ -147,6 +147,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score = 0.0
         reasons = []
+        nearby_pieces = []
 
         # ----- evaluation axis 1: merge bonus -----
         if merge_grade == "DIRECT":
@@ -217,7 +218,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
-                nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
