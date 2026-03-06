@@ -200,9 +200,11 @@ build_prompt() {
 	for f in "$@"; do
 		[ -f "$f" ] && c+=$'\n--- '"$f"$' ---\n'"$(cat "$f")"$'\n---\n'
 	done
-	[ -n "$c" ] && p="参照データ:${c}
-${p}"
-	echo "$p"
+	if [ -n "$c" ]; then
+		echo "${p}"$'\n\n'"参照データ:${c}"
+	else
+		echo "$p"
+	fi
 }
 
 #=== コマンド実行 ===
