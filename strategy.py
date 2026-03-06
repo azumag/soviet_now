@@ -43,37 +43,10 @@ Phases (determined by board max Y):
 # v169: early_game判定超拡大・CHAIN_MERGE評価範囲拡大版 - batch_summaryでHEIGHT_CONTROLが25.2%選択(avg_score_delta=1.4)と過剰であること、
 # ワーストゲーム(score0554)で初期11ターンのうち8ターンがHEIGHT_CONTROL/NEXT_SAMEとなり併合機会を逃していることを確認。
 # early_game判定をmax_y < -1.0→-3.0に超拡大し、chain_distance_maxを5.0→5.2に拡大して、CHAIN_MERGE選択率を10-15%に引き上げる。
-# v170: MEDIUM phase height penalty relaxation版 - batch_summaryでMEDIUM_TOWERがavg_score_delta=3.4（正の値）だが選択率が10.8%（低スコア群）と低いことを確認。
-#   # 高スコア群と低スコア群の比較でMEDIUM_TOWER選択率に13.6% vs 10.8%の差があることを特定。
-#   # MEDIUM phase height_multを1.8→1.4に削減してMEDIUM_TOWER選択を促進し、HEIGHT_CONTROL選択を削減することでスコア安定性を向上させる。
-# v179: MEDIUM phase height_multを1.4→1.2にさらに削減してMEDIUM_TOWER選択をより促進し、HEIGHT_CONTROL選択を削減してスコア安定性を向上させる。
-# v171: CHAIN_MERGE基本ボーナス強化版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=26.9-43.2（高価値）だが選択率は3.8-9.2%と低いことを確認。
-# ワーストゲーム(score0633)で初期5ターンが全てHEIGHT_CONTROLとなり、CHAIN_MERGE選択が0回であることを特定。
-# chain_distance_max基本値を5.2→5.0に戻し（v155成功値）、chain_bonus_multiplier初期値を450.0→480.0に強化して初期段階でのCHAIN_MERGE選択を促進。
-# 着地高による動的調整（landing_y*150.0）は維持し、初期段階と中盤以降の両方でCHAIN_MERGE選択を向上させる。
-# v172: 序盤マージ優先評価軸追加版 - batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=1.6)と過剰であり、低スコア群で30.3%選択されていることを確認。
-# ワーストゲーム(score0545)で初期5ターンが全てHEIGHT_CONTROLとなり併合機会を逃している失敗モードを特定。
-# early_game条件下でmerge_gradeがNEARの場合、追加ボーナス800.0を付与する評価軸を追加し、初期段階でのマージ機会を最優先してHEIGHT_CONTROL選択を超強力に抑制する。
-# v173: early_game判定緩和・初期10ターンマージ重視版 - batch_summaryでHEIGHT_CONTROLが26.7%選択(avg_score_delta=1.3)と依然として過剰であることを確認。
-# ワーストゲーム(score0678)で初期10ターンのmax_y推移(-5.0→-2.4)を分析し、v172のearly_game判定(max_y < -3.0)が過度に厳しく
-# 初期10ターンの大部分で判定されていないことを特定。
-# early_game判定をmax_y < -3.0→-2.5に緩和し、EARLY_MERGE_PRIORITYの適用範囲をearly_gameからpiece_count <= 10に拡大して
-# 初期10ターン全体でマージ機会を最優先する。
-# また、初期段階(piece_count <= 6)で併合機会がない場合のHEIGHT_CONTROL抑制を強化し、初期配置での消極的戦略を回避する。
-# v174: early_game判定さらに緩和・初期12ターンマージ重視版 - batch_summaryでHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
-# ワーストゲーム(score0765)で初期7ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗パターンを特定。
-# early_game判定をmax_y < -2.5→-2.0にさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大して初期12ターン全体でマージ機会を最優先する。
-# また、MEDIUM_TOWER選択を促進するための追加評価軸を追加し、高スコア群と低スコア群のMEDIUM_TOWER選択率差（13.6% vs 10.8%）を解消する。
-# v175: early_game判定をpiece_countベースに変更 - batch_summaryの序盤avg max_y(-2.5〜-2.72)がmax_y判定で十分にカバーできないことを確認。
-# ワーストゲーム(score0738)で初期12ターンのmax_y推移(-5.0→-2.74)を分析し、max_y < -2.0でもTurn 12でearly_game判定が外れ、HEIGHT_CONTROLが選択される失敗パターンを特定。
-# early_game判定をmax_y < -2.0からpiece_count <= 12に変更し、初期12ターン全体でheight_multiplier低減とEARLY_MERGE_PRIORITYを確実に適用する。
-# v177: 初期段階CHAIN_MERGE探索範囲拡大版 - batch_summaryでHEIGHT_CONTROLが29.4%選択(avg_score_delta=2.4)と依然として過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
-# 初期段階(landing_y=-3.0)でchain_distance_max=2.7と探索範囲が狭すぎ、merged_typeピースを見逃す問題を特定。v155成功例(chain_distance=5.0)と比較すると初期段階の探索範囲が半減している。
-# chain_distance_max基本値を4.5→5.0に拡大し、初期段階の探索範囲を11%広げてCHAIN_MERGE選択率を3.8-9.2%から10-15%に引き上げる。これによりHEIGHT_CONTROL選択率を削減しスコア安定性を改善する。
-# v180: reactor state-aware chain merge bonus版 - analysis["reactor"]でreactive_pairs（接触距離<=1.2*半径和）とnear_pairs（接触距離1.2~2.0*半径和）を活用。
-# 盤面で既に併合準備ができている箇所を特定し、CHAIN_MERGE選択を促進してHEIGHT_CONTROL過剰選択（28.8%）を削減。
-# batch_summaryでCHAIN_MERGE関連がavg_score_delta=26.9-43.2（高価値）だが選択率は3.8-9.2%と低いことを確認。
-# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260306_230002_score2673.jsonl, analyze_board.py
+  # v170: MEDIUM phase height penalty relaxation版 - batch_summaryでMEDIUM_TOWERがavg_score_delta=3.4（正の値）だが選択率が10.8%（低スコア群）と低いことを確認。
+  # 高スコア群と低スコア群の比較でMEDIUM_TOWER選択率に13.6% vs 10.8%の差があることを特定。
+  # MEDIUM phase height_multを1.8→1.4に削減してMEDIUM_TOWER選択を促進し、HEIGHT_CONTROL選択を削減することでスコア安定性を向上させる。
+  # v179: MEDIUM phase height_multを1.4→1.2にさらに削減してMEDIUM_TOWER選択をより促進し、HEIGHT_CONTROL選択を削減してスコア安定性を向上させる。
 # v171: CHAIN_MERGE基本ボーナス強化版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=26.9-43.2（高価値）だが選択率は3.8-9.2%と低いことを確認。
 # ワーストゲーム(score0633)で初期5ターンが全てHEIGHT_CONTROLとなり、CHAIN_MERGE選択が0回であることを特定。
 # chain_distance_max基本値を5.2→5.0に戻し（v155成功値）、chain_bonus_multiplier初期値を450.0→480.0に強化して初期段階でのCHAIN_MERGE選択を促進。
@@ -289,17 +262,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v180: reactor state-aware版) -----
-        # batch_summaryでHEIGHT_CONTROLが28.8%選択(avg_score_delta=2.6)と過剰、CHAIN_MERGE関連が3.8-9.2%選択(avg_score_delta=26.9-43.2)と低いことを確認。
-        # analysis["reactor"] にはreactive_pairs（接触距離 <=1.2*半径和）とnear_pairs（接触距離 1.2~2.0*半径和）が含まれ、
-        # 盤面上で既に併合準備ができている箇所を特定できる。これを活用してCHAIN_MERGE選択を促進する。
-        # v177: chain_distance_max基本値を5.0（v155成功値）に復帰、初期段階の探索範囲確保
-        # v179: chain_bonus_multiplier基本定数450.0（v176の基本定数強化）を維持
-        
-        # reactor state analysis: identify merge-ready positions
-        reactive_pairs = reactor.get("reactive_pairs", [])
-        near_pairs = reactor.get("near_pairs", [])
-        
+        # ----- evaluation axis 6: chain merge bonus (v177: 初期段階CHAIN_MERGE探索範囲拡大) -----
+        # v177: batch_summaryでHEIGHT_CONTROLが29.4%選択(avg_score_delta=2.4)と依然として過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
+        # 初期段階(landing_y=-3.0)でchain_distance_max=2.7と探索範囲が狭すぎ、merged_typeピースを見逃す問題を特定。
+        # v155成功例(chain_distance=5.0)と比較すると初期段階の探索範囲が半減しており、CHAIN_MERGE機能が実質的に無効化されている。
+        # chain_distance_max基本値を4.5→5.0に拡大し、初期段階の探索範囲を11%広げてCHAIN_MERGE選択率を3.8-9.2%から10-15%に引き上げる。
+        # v177: CHAIN_MERGE探索範囲拡大版
+        # chain_distance_max = 5.0 + landing_y * 0.6（基本値v155成功値に復帰、初期段階の探索範囲11%拡大）
+        # chain_bonus_multiplier = 450.0 + landing_y * 50.0（v176の基本定数強化を維持）
+        # 例: landing_y=-3.0 → distance_max=3.2（v176の2.7から19%改善、v155成功例との整合性確保）
+        # 例: landing_y=-2.0 → distance_max=3.8（v176の3.3から15%改善）
+        # 例: landing_y=0.0 → distance_max=5.0（v155成功値と完全一致）
+        # 例: landing_y=1.0 → distance_max=5.6
+        # 例: landing_y=2.0 → distance_max=6.2
+        # 例: landing_y=3.0 → distance_max=6.8
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -307,14 +283,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
-                
-                # Reactor-aware base bonus: prioritize positions that enable cascading merges
-                # If there are already pieces ready to merge, bonus is applied
-                reactor_bonus = 0.0
-                if reactive_pairs:
-                    # Bonus for positions that facilitate cascading
-                    reactor_bonus = 300.0
-                
+
+                # v177: CHAIN_MERGE探索範囲拡大版
+                # chain_distance_max = 5.0 + landing_y * 0.6（基本値v155成功値に復帰、初期段階の探索範囲11%拡大）
+                # chain_bonus_multiplier = 450.0 + landing_y * 50.0（v176の基本定数強化を維持）
+                # 例: landing_y=-3.0 → distance_max=3.2（v176の2.7から19%改善、v155成功例との整合性確保）
+                # 例: landing_y=-2.0 → distance_max=3.8（v176の3.3から15%改善）
+                # 例: landing_y=0.0 → distance_max=5.0（v155成功値と完全一致）
+                # 例: landing_y=1.0 → distance_max=5.6
+                # 例: landing_y=2.0 → distance_max=6.2
+                # 例: landing_y=3.0 → distance_max=6.8
                 chain_distance_max = 5.0 + landing_y * 0.6
                 chain_bonus_multiplier = 450.0 + landing_y * 50.0
 
@@ -329,12 +307,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # sort by distance (closest first)
                 nearby_pieces.sort(key=lambda x: x[0])
 
-                # Reactor-aware bonus adjustment: more bonus when board has merge-ready pieces
-                chain_bonus_multiplier += reactor_bonus / 450.0  # +300.0 base bonus if reactive_pairs exist
-
                 # v177: CHAIN_MERGE探索範囲拡大版 - 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
-                # chain_distance_max=5.0（v155成功値に復帰）で初期段階の探索範囲11%拡大し、
-                # 初期12ターンのCHAIN_MERGE選択率を3.8-9.2%から10-15%に引き上げてHEIGHT_CONTROL選択率（28.8%）を削減
+                # chain_distance_max=5.0（v155成功値に復帰）で初期段階の探索範囲を11%拡大し、
+                # 初期12ターンのCHAIN_MERGE選択率を3.8-9.2%から10-15%に引き上げてHEIGHT_CONTROL選択率（29.4%）を削減
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
                     chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
