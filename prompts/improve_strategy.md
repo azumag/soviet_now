@@ -20,21 +20,24 @@
 - 自信が低い場合は「新規機能追加」より「効果が薄い既存ロジック1つの削除/置換」を優先
 - 複数案で迷う場合は、`batch_summary` で根拠がより明確な案だけを採用
 
-## 参照データ（このプロンプトに埋め込まれている）
-1. `strategy.py.staging`（現在コード）
-2. `tmp/batch_summary.txt`（reason分布、avg_score_delta、高低比較）
-3. ワーストゲーム JSONL（ある場合）
-4. `game_state.json`
-5. 直近バージョン群（`strategy_versions/v*_strategy.py`）
-6. 殿堂入り戦略（`strategy_versions/best_score*_strategy.py`）
-7. `tmp/change_log.txt`（ある場合）
-8. `tmp/advice.md`（ある場合）
+## 参照データ（このプロンプトに埋め込み済み）
+1. `tmp/batch_summary.txt` — reason分布、avg_score_delta、高低比較
+2. `tmp/advice.md` — アドバイス（ある場合）
+3. `tmp/sandbox_files.md` — サンドボックス内の利用可能ファイル一覧
 
-## サンドボックス内の参照ファイル（必要に応じて読むこと）
+## サンドボックス内の参照ファイル（自分で読むこと）
+大きなファイルはプロンプトに埋め込まれていない。必要に応じて自分で読むこと。
+`tmp/sandbox_files.md` に利用可能ファイルの一覧がある。特に重要なもの:
+
+- **`tmp/change_log.txt`** — 過去の改善変更差分。**同じ方針の焼き直し防止のため必ず確認**
+- **ワーストゲーム JSONL** — 失敗モード分析に必須（パスは `tmp/sandbox_files.md` 参照）
+- **殿堂入り戦略** — 高スコア戦略との比較に有用（パスは `tmp/sandbox_files.md` 参照）
+- `strategy_versions/v*_strategy.py` — 直近の戦略バージョン
 - `prompts/game_theory.md` — ゲームの理論的背景（人工化学フレームワーク、6つの戦略原則）
-- `game_history/*.jsonl` — 全試合のターンログ。`batch_summary` にファイル名とスコアが一覧されている。ベスト/ワースト試合を比較して成功/失敗パターンを分析できる
-- `sorengame/.../Script/*.cs` — ゲーム本体のソースコード。`MainManager.cs`（併合・スコア・物理）、`RepublicController.cs`（ピース挙動）が特に重要
-- `analyze_board.py` — 盤面解析の実装（analysis dict の構造を確認したい場合）
+- `game_history/*.jsonl` — 全試合のターンログ（batch_summary にファイル名一覧あり）
+- `sorengame/.../Script/*.cs` — ゲーム本体のソースコード（`MainManager.cs`, `RepublicController.cs` が重要）
+- `analyze_board.py` — 盤面解析の実装（analysis dict の構造確認用）
+- `game_state.json` — 現在の盤面状態
 
 ## 改善の優先順位
 1. 構造変更（新しい評価軸・新しい選択ロジック）
@@ -49,10 +52,11 @@
 - 同一方向の変更を `change_log` で確認できるのに再実施すること
 
 ## 実行手順（必ずこの順）
-1. `batch_summary` から「頻度が高いのに効いていない reason」と「頻度は低いが効いている reason」を特定
-2. ワーストゲームから失敗モードを特定し、ベストゲーム（`game_history/` から読める）と比較して差異を分析
-3. `change_log` と過去バージョンを確認し、同じ方針の焼き直しを除外
-4. 1つの仮説を決定し、1つの変更として実装
+1. **`tmp/change_log.txt` を読んで**過去の変更履歴を把握し、同じ方針の焼き直しを除外
+2. `batch_summary` から「頻度が高いのに効いていない reason」と「頻度は低いが効いている reason」を特定
+3. ワーストゲーム JSONL を読んで失敗モードを特定し、ベストゲーム（`game_history/` から読める）と比較して差異を分析
+4. 殿堂入り戦略を読んで、高スコア戦略との構造的差異を分析
+5. 1つの仮説を決定し、1つの変更として実装
 
 ## 変更設計ルール
 - 変更規模は「1つの機能追加」または「1つの機能置換」に限定
@@ -73,7 +77,7 @@
 - `decide` の戻り値契約を全分岐で満たすか
 - `__main__` を壊していないか
 - 既存の有効ロジックを誤って消していないか
-- 例外時にも `{\"x\": float, \"reason\": str}` を返せるか
+- 例外時にも `{"x": float, "reason": str}` を返せるか
 
 ## 出力指示（必須）
 - 改善後の完全なコードを `strategy.py.staging` に書き込むこと
