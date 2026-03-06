@@ -43,9 +43,10 @@ Phases (determined by board max Y):
 # v169: early_game判定超拡大・CHAIN_MERGE評価範囲拡大版 - batch_summaryでHEIGHT_CONTROLが25.2%選択(avg_score_delta=1.4)と過剰であること、
 # ワーストゲーム(score0554)で初期11ターンのうち8ターンがHEIGHT_CONTROL/NEXT_SAMEとなり併合機会を逃していることを確認。
 # early_game判定をmax_y < -1.0→-3.0に超拡大し、chain_distance_maxを5.0→5.2に拡大して、CHAIN_MERGE選択率を10-15%に引き上げる。
-# v170: MEDIUM phase height penalty relaxation版 - batch_summaryでMEDIUM_TOWERがavg_score_delta=3.4（正の値）だが選択率が10.8%（低スコア群）と低いことを確認。
-# 高スコア群と低スコア群の比較でMEDIUM_TOWER選択率に13.6% vs 10.8%の差があることを特定。
-# MEDIUM phase height_multを1.8→1.4に削減してMEDIUM_TOWER選択を促進し、HEIGHT_CONTROL選択を削減することでスコア安定性を向上させる。
+  # v170: MEDIUM phase height penalty relaxation版 - batch_summaryでMEDIUM_TOWERがavg_score_delta=3.4（正の値）だが選択率が10.8%（低スコア群）と低いことを確認。
+  # 高スコア群と低スコア群の比較でMEDIUM_TOWER選択率に13.6% vs 10.8%の差があることを特定。
+  # MEDIUM phase height_multを1.8→1.4に削減してMEDIUM_TOWER選択を促進し、HEIGHT_CONTROL選択を削減することでスコア安定性を向上させる。
+  # v179: MEDIUM phase height_multを1.4→1.2にさらに削減してMEDIUM_TOWER選択をより促進し、HEIGHT_CONTROL選択を削減してスコア安定性を向上させる。
 # v171: CHAIN_MERGE基本ボーナス強化版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=26.9-43.2（高価値）だが選択率は3.8-9.2%と低いことを確認。
 # ワーストゲーム(score0633)で初期5ターンが全てHEIGHT_CONTROLとなり、CHAIN_MERGE選択が0回であることを特定。
 # chain_distance_max基本値を5.2→5.0に戻し（v155成功値）、chain_bonus_multiplier初期値を450.0→480.0に強化して初期段階でのCHAIN_MERGE選択を促進。
@@ -69,6 +70,7 @@ Phases (determined by board max Y):
  # v177: 初期段階CHAIN_MERGE探索範囲拡大版 - batch_summaryでHEIGHT_CONTROLが29.4%選択(avg_score_delta=2.4)と依然として過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
  # 初期段階(landing_y=-3.0)でchain_distance_max=2.7と探索範囲が狭すぎ、merged_typeピースを見逃す問題を特定。v155成功例(chain_distance=5.0)と比較すると初期段階の探索範囲が半減している。
  # chain_distance_max基本値を4.5→5.0に拡大し、初期段階の探索範囲を11%広げてCHAIN_MERGE選択率を3.8-9.2%から10-15%に引き上げる。これによりHEIGHT_CONTROL選択率を削減しスコア安定性を改善する。
+ # v179: MEDIUM phase height_multを1.4→1.2にさらに削減してMEDIUM_TOWER選択をより促進し、HEIGHT_CONTROL選択を削減してスコア安定性を向上させる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -76,29 +78,32 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v178: NEXT_SAME中央配置ボーナス強化版
+    """v179: MEDIUM phase height_mult削減版
 
-    advice.mdで「次の次の駒を考慮した配置戦略へ改善」という指摘を受けて実施。
-    batch_summaryで高スコア群と低スコア群の比較分析を行い、HEIGHT_CONTROLの選択率に差があることを確認（高スコア群26.1% vs 低スコア群31.5%）。
-    NEXT_SAME評価軸の中央配置ボーナスを強化してnextNext考慮を重視し、盤面の整理と次のマージ機会の確保を促進する。
+    advice.mdで「着地予測や盤面のバランスを重視した評価に調整する」という指摘を受けて実施。
+    batch_summaryで高スコア群と低スコア群の比較分析を行い、HEIGHT_CONTROLの選択率に差があることを確認（高スコア群23.2% vs 低スコア群34.4%）。
+    MEDIUM phaseのheight_multを1.4→1.2に削減してMEDIUM_TOWER選択をより促進し、HEIGHT_CONTROL選択を削減してスコア安定性を向上させる。
 
-    v178の改善点:
+    v179の改善点:
+    1. MEDIUM phase height_mult削減
+       - height_mult: 1.4 → 1.2（14%削減）
+       - MEDIUM_TOWER選択をより促進し、HEIGHT_CONTROL選択を削減
+       - 盤面のバランスを重視した評価に調整
+
+    v178から継承:
     1. NEXT_SAME中央配置ボーナス強化
-       - 中央配置ボーナス: 50.0 → 80.0（60%強化）
+       - 中央配置ボーナス: 80.0（v178で強化済み）
        - nextNextがnextと同じタイプの場合、中央寄せ配置をより優先
        - 盤面の整理と次のマージ機会の確保を促進
-
-    v177から継承:
-    1. 初期段階CHAIN_MERGE探索範囲拡大
+    2. v177の初期段階CHAIN_MERGE探索範囲拡大を維持
        - chain_distance_max基本値: 5.0（初期段階の探索範囲確保）
        - v155成功例(chain_distance=5.0)との整合性を確保
-    2. v175のearly_game判定(piece_count <= 12)を維持
+    3. v175のearly_game判定(piece_count <= 12)を維持
        - 初期12ターン全体を一つのフェーズとして扱い、height_multiplier低減とEARLY_MERGE_PRIORITYを確実に適用
-    3. v174のEARLY_MERGE_PRIORITY適用範囲を維持
+    4. v174のEARLY_MERGE_PRIORITY適用範囲を維持
        - piece_count <= 12でNEAR_MERGE機会がある場合、800.0ボーナスを適用
-    4. v174のMEDIUM_TOWER選択促進評価軸を維持
+    5. v174のMEDIUM_TOWER選択促進評価軸を維持
        - MEDIUM phaseでlanding_y > 0.5の場合、MEDIUM_TOWERボーナスを追加して選択を促進
-    5. v170のMEDIUM phase height_mult=1.4を維持
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -143,7 +148,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.4  # v170: MEDIUM phase height penalty relaxation (1.8->1.4) to increase MEDIUM_TOWER selections
+        height_mult = 1.2  # v179: MEDIUM phase height penalty relaxation (1.4->1.2) to further increase MEDIUM_TOWER selections
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
@@ -200,7 +205,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # v169: early_gameの場合、height_multiplierを0.2に削減してHEIGHT_CONTROL過剰選択を抑制
-        # v170: MEDIUM phase height_multを1.8→1.4に削減してMEDIUM_TOWER選択を促進
+        # v179: MEDIUM phase height_multを1.4→1.2にさらに削減してMEDIUM_TOWER選択をより促進
         # v173: 初期段階(piece_count <= 6)で併合機会がない場合、HEIGHT_CONTROL抑制を強化
         # v175: early_game判定をpiece_count <= 12に変更し、初期12ターン全体でHEIGHT_CONTROLを抑制
         height_multiplier = 30.0
@@ -334,9 +339,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 800.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8: MEDIUM_TOWER selection promotion (v174/v176) -----
+        # ----- evaluation axis 8: MEDIUM_TOWER selection promotion (v174/v176/v179) -----
         # v174: MEDIUM_TOWER選択を促進するための追加評価軸を追加し、高スコア群と低スコア群のMEDIUM_TOWER選択率差（13.6% vs 10.8%）を解消する。
         # v175/v176: early_game判定をpiece_count <= 12に変更することで、初期12ターンではMEDIUM phase判定が入らないため、この評価軸は中盤以降で有効。
+        # v179: MEDIUM phase height_multを1.4→1.2にさらに削減してMEDIUM_TOWER選択をより促進。
         # MEDIUM phaseでlanding_y > 0.5の場合、MEDIUM_TOWERボーナスを追加して選択を促進。
         if phase == "MEDIUM" and landing_y > 0.5:
             # MEDIUM_TOWER選択を促進するための追加ボーナス
