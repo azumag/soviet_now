@@ -162,7 +162,7 @@ _launch_say() {
     [ -n "$SAY_AUDIO_DEVICE" ] && cmd+=(-a "$SAY_AUDIO_DEVICE")
     cmd+=(-f "$chunk_file")
     nohup bash -c 'trap "" INT TERM; "$@"' _ "${cmd[@]}" >/dev/null 2>&1 &
-    echo "$!"
+    LAUNCHED_SAY_PID="$!"
 }
 
 _play_chunk_with_retry() {
@@ -172,7 +172,8 @@ _play_chunk_with_retry() {
         local attempt=$((retry + 1))
         _log "say開始 (chunk=${chunk_idx}/${chunk_total}, attempt=${attempt}, rate=${RATE})"
         local say_pid
-        say_pid=$(_launch_say "$chunk_file")
+        _launch_say "$chunk_file"
+        say_pid="$LAUNCHED_SAY_PID"
         if [ -z "$say_pid" ]; then
             _log "say起動失敗 (chunk=${chunk_idx}/${chunk_total})"
             return 1
@@ -252,7 +253,7 @@ if [ ! -s "$MY_CHUNK_LIST" ]; then
     exit 1
 fi
 
-CHUNK_TOTAL=$(wc -l < "$MY_CHUNK_LIST" | tr -d '[:space:]')
+CHUNK_TOTAL=$(awk 'END { print NR + 0 }' "$MY_CHUNK_LIST")
 CHUNK_IDX=0
 PLAYBACK_FAILED=0
 LAST_SAY_PID=""
