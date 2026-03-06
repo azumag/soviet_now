@@ -31,6 +31,9 @@ RATE="${2:-120}"
 SAY_RETRY_MAX="${SAY_RETRY_MAX:-6}"
 SAY_RETRY_SLEEP_SEC="${SAY_RETRY_SLEEP_SEC:-2}"
 SAY_RETRY_MAX_SLEEP_SEC="${SAY_RETRY_MAX_SLEEP_SEC:-20}"
+SAY_TRUNCATE_RATIO="${SAY_TRUNCATE_RATIO:-0.8}"
+SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
+SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 
 PID_FILE="$QUEUE_DIR/pid"
 LOCK_DIR="$QUEUE_DIR/.lock"
@@ -49,6 +52,7 @@ MY_OWNER="${BASHPID:-$$}:${MY_TOKEN}"
 MY_CONTENT="$QUEUE_DIR/content_${MY_TOKEN}.txt"
 LOCK_HELD=0
 LAUNCHED_SAY_PID=""
+LAUNCHED_EXPECTED_SEC=0
 
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
@@ -162,7 +166,34 @@ _resolve_audio_device_index() {
     return 1
 }
 
+_estimate_audio_duration_sec() {
+    local file="$1" d
+    command -v ffprobe >/dev/null 2>&1 || {
+        echo 0
+        return 0
+    }
+    d=$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 "$file" 2>/dev/null | head -1)
+    case "$d" in
+    ''|*[!0-9.]*)
+        echo 0
+        return 0
+        ;;
+    esac
+    awk -v v="$d" 'BEGIN { if (v < 0) v = 0; printf "%d\n", (v + 0.5) }'
+}
+
+_is_truncated_playback() {
+    local elapsed="${1:-0}" expected="${2:-0}"
+    awk -v e="$elapsed" -v x="$expected" -v min="$SAY_TRUNCATE_MIN_EXPECTED_SEC" -v ratio="$SAY_TRUNCATE_RATIO" -v grace="$SAY_TRUNCATE_GRACE_SEC" '
+BEGIN {
+    if (x < min) exit 1
+    if ((e + grace) < (x * ratio)) exit 0
+    exit 1
+}'
+}
+
 _launch_say() {
+    LAUNCHED_EXPECTED_SEC=0
     if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
         local device_index
         device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
@@ -172,8 +203,15 @@ _launch_say() {
             return
         }
         local aiff_file="${MY_CONTENT%.txt}.aiff"
-        nohup bash -c 'trap "" INT TERM; say -r "$1" -o "$2" -f "$3" && ffmpeg -y -loglevel error -i "$2" -f audiotoolbox -audio_device_index "$4" "" && rm -f "$2"' \
-            _ "$RATE" "$aiff_file" "$MY_CONTENT" "$device_index" >/dev/null 2>&1 &
+        if ! say -r "$RATE" -o "$aiff_file" -f "$MY_CONTENT" >/dev/null 2>&1; then
+            _log "say音声生成失敗 → デフォルト出力にフォールバック"
+            nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
+            LAUNCHED_SAY_PID="$!"
+            return
+        fi
+        LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$aiff_file")
+        nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; [ "$rc" -eq 0 ] && rm -f "$1"; exit "$rc"' \
+            _ "$aiff_file" "$device_index" >/dev/null 2>&1 &
     else
         nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
     fi
@@ -196,8 +234,9 @@ _play_with_retry() {
         fi
         LAST_SAY_PID="$say_pid"
         echo "$say_pid" > "$PID_FILE"
-        local start_ts now_ts elapsed say_rc
+        local start_ts now_ts elapsed say_rc expected_sec
         start_ts=$(date +%s)
+        expected_sec="${LAUNCHED_EXPECTED_SEC:-0}"
         while kill -0 "$say_pid" 2>/dev/null; do
             _touch_lock_heartbeat
             sleep 1
@@ -206,15 +245,19 @@ _play_with_retry() {
         say_rc=$?
         now_ts=$(date +%s)
         elapsed=$((now_ts - start_ts))
+        if [ "$say_rc" -eq 0 ] && _is_truncated_playback "$elapsed" "$expected_sec"; then
+            say_rc=98
+            _log "say途中切断の疑い (elapsed=${elapsed}s, expected=${expected_sec}s)"
+        fi
         if [ "$say_rc" -eq 0 ]; then
             return 0
         fi
         if [ "$retry" -ge "$SAY_RETRY_MAX" ]; then
-            _log "say異常終了 (rc=$say_rc, elapsed=${elapsed}s) → 再試行上限"
+            _log "say異常終了 (rc=$say_rc, elapsed=${elapsed}s, expected=${expected_sec}s) → 再試行上限"
             return "$say_rc"
         fi
         retry=$((retry + 1))
-        _log "say異常終了 (rc=$say_rc, elapsed=${elapsed}s) → ${backoff}s後に再試行 ${retry}/${SAY_RETRY_MAX}"
+        _log "say異常終了 (rc=$say_rc, elapsed=${elapsed}s, expected=${expected_sec}s) → ${backoff}s後に再試行 ${retry}/${SAY_RETRY_MAX}"
         _sleep_with_heartbeat "$backoff"
         if [ "$backoff" -lt "$SAY_RETRY_MAX_SLEEP_SEC" ]; then
             backoff=$((backoff * 2))
