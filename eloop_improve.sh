@@ -99,6 +99,11 @@ sandbox_ref_files+=("$GAME_STATE")
 [ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && sandbox_ref_files+=("$worst_game_path")
 [ -n "$best_game_path" ] && [ -f "$best_game_path" ] && sandbox_ref_files+=("$best_game_path")
 [ -d "strategy_helpers" ] && sandbox_ref_files+=("strategy_helpers")
+
+recent_strategy_files=()
+hall_of_fame_files=()
+all_history_files=()
+unity_source_files=()
 # 直近バージョン全て（ハッシュ重複除外）
 _past_seen_hashes=""
 for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -20); do
@@ -106,10 +111,14 @@ for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | he
 	case "$_past_seen_hashes" in *"$_h"*) continue ;; esac
 	_past_seen_hashes="${_past_seen_hashes}${_h}:"
 	sandbox_ref_files+=("$vf")
+	recent_strategy_files+=("$vf")
 done
 # 殿堂入り戦略（best_score ファイル全て）
 for bf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
-	[ -f "$bf" ] && sandbox_ref_files+=("$bf")
+	if [ -f "$bf" ]; then
+		sandbox_ref_files+=("$bf")
+		hall_of_fame_files+=("$bf")
+	fi
 done
 # ハッシュアーカイブ全て
 for hf in "$STRATEGY_HASH_ARCHIVE_DIR"/*.py; do
@@ -117,37 +126,63 @@ for hf in "$STRATEGY_HASH_ARCHIVE_DIR"/*.py; do
 done
 # 全試合のJSONL
 for hf in $HISTORY_FILES; do
-	[ -f "$hf" ] && sandbox_ref_files+=("$hf")
+	if [ -f "$hf" ]; then
+		sandbox_ref_files+=("$hf")
+		all_history_files+=("$hf")
+	fi
 done
 # ゲームソースコード
 for cs in sorengame/_extracted/soren-game-fixed/Assets/SORENGAMEFIXED/Script/*.cs; do
-	[ -f "$cs" ] && sandbox_ref_files+=("$cs")
+	if [ -f "$cs" ]; then
+		sandbox_ref_files+=("$cs")
+		unity_source_files+=("$cs")
+	fi
 done
 
 # サンドボックスファイル一覧マニフェスト生成（AIへのロードマップ）
 manifest_file="tmp/sandbox_files.md"
 {
 	echo "## サンドボックス内の利用可能ファイル"
-	echo "以下のファイルは全て読み取り可能。分析に必要なものを自分で読むこと。"
+	echo "以下のファイルは全て読み取り可能。改善前に必ず目録として確認すること。"
 	echo ""
-	echo "### 必ず確認（スキップ禁止）"
+	echo "### 必須参照ファイル（固定）"
+	echo '- `strategy.py.staging` — 変更対象の現行戦略（必ず最初に読む）'
+	echo '- `tmp/batch_summary.txt` — reason分布/高低比較（必ず読む）'
+	[ -f "tmp/advice.md" ] && echo '- `tmp/advice.md` — 補助アドバイス（存在する場合は読む）'
 	[ -f "$CHANGE_LOG_FILE" ] && printf -- '- \`%s\` — 過去の改善変更差分。**同じ方針の焼き直し防止のため最初に読め**\n' "$CHANGE_LOG_FILE"
+	echo '- `tmp/sandbox_files.md` — この目録そのもの（必ず読む）'
 	echo ""
-	echo "### 盤面データ"
+	echo "### 盤面・ゲームログ（必須）"
 	printf -- '- \`%s\` — 現在の盤面状態\n' "$GAME_STATE"
-	[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && printf -- '- \`%s\` — ワーストゲーム全ターンログ（失敗モード分析用）\n' "$worst_game_path"
-	[ -n "$best_game_path" ] && [ -f "$best_game_path" ] && printf -- '- \`%s\` — ベストゲーム全ターンログ（成功パターン分析用）\n' "$best_game_path"
-	echo '- `game_history/*.jsonl` — 全試合ターンログ（batch_summary にファイル名一覧あり）'
+	if [ -n "$worst_game_path" ] && [ -f "$worst_game_path" ]; then
+		printf -- '- \`%s\` — ワーストゲーム全ターンログ（**必須: 失敗モード分析**）\n' "$worst_game_path"
+	fi
+	if [ -n "$best_game_path" ] && [ -f "$best_game_path" ]; then
+		printf -- '- \`%s\` — ベストゲーム全ターンログ（**必須: 成功パターン分析**）\n' "$best_game_path"
+	fi
+	echo "- 直近履歴（今回の改善対象に投入済み）:"
+	for hf in "${all_history_files[@]}"; do
+		printf -- '  - \`%s\`\n' "$hf"
+	done
 	echo ""
-	echo "### 戦略バージョン"
-	echo '- `strategy_versions/v*_strategy.py` — 直近バージョン群（時系列順、重複除外済み）'
-	echo '- `strategy_versions/best_score*_strategy.py` — 殿堂入り戦略（歴代ハイスコア）'
+	echo "### 戦略バージョン（必須）"
+	echo "- 直近バージョン（最低3件は必ず読む）:"
+	for vf in "${recent_strategy_files[@]}"; do
+		printf -- '  - \`%s\`\n' "$vf"
+	done
+	echo "- 殿堂入り戦略（最低2件は必ず読む）:"
+	for bf in "${hall_of_fame_files[@]}"; do
+		printf -- '  - \`%s\`\n' "$bf"
+	done
 	echo '- `strategy_versions/by_hash/*.py` — ハッシュ別アーカイブ（全戦略）'
 	echo ""
-	echo "### ゲーム実装・理論"
+	echo "### ゲーム実装・理論（条件付きで必須）"
 	echo '- `prompts/game_theory.md` — ゲーム理論的背景'
 	echo '- `analyze_board.py` — 盤面解析実装（analysis dict の構造確認用）'
-	echo '- `sorengame/_extracted/soren-game-fixed/Assets/SORENGAMEFIXED/Script/*.cs` — Unity ソースコード'
+	echo "- Unity実装（merge/score/物理/着地挙動を変更する場合は必読）:"
+	for cs in "${unity_source_files[@]}"; do
+		printf -- '  - \`%s\`\n' "$cs"
+	done
 } > "$manifest_file"
 improve_ref_files+=("$manifest_file")
 
