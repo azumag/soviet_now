@@ -69,10 +69,9 @@ soren_loop にはソ連風ラジオDJ機能が組み込まれている。試合�
 
 - **トーク本文**: 試合結果・雑談・ソ連ネタを生成 → `say_enqueue.sh` で再生
 - **コメント返し**: Twitchチャットのコメントに対する返事を生成 → `say_enqueue.sh --no-preempt` で再生（途中で切られない）
-- **say_enqueue.sh**: mkdirロックベースの排他FIFOキュー。文単位で順次再生し、`say` 異常終了時は自動リトライ
+- **say_enqueue.sh**: mkdirロックベースの排他FIFOキュー。従来どおり順次再生しつつ、`say` 異常終了時は自動リトライ
 - コメント返しプロセスは `disown` で親プロセスから独立しており、次のゲーム開始時にトーク生成が kill されても再生が中断されない
 - `RADIO_SAY_RATE=180` で読み上げ速度を制御（macOS `say -r` に渡される）
-- USB再接続で `say` が落ちる場合は `SAY_AUDIO_DEVICE` で出力先を固定可能（例: `SAY_AUDIO_DEVICE="MacBook Proのスピーカー"`、一覧は `say -a '?'`）
 - リトライ挙動は `SAY_RETRY_MAX` / `SAY_RETRY_SLEEP_SEC` / `SAY_RETRY_MAX_SLEEP_SEC` で調整可能
 
 ### jloop.sh — JSON-based State Loop
