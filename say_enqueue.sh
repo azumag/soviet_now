@@ -28,6 +28,11 @@ mkdir -p "$QUEUE_DIR"
 
 CONTENT_FILE="${1:?Usage: say_enqueue.sh [--no-preempt] <content_file> [rate]}"
 RATE="${2:-120}"
+SAY_AUDIO_DEVICE="${SAY_AUDIO_DEVICE:-}"
+SAY_VOICE="${SAY_VOICE:-}"
+SAY_RETRY_MAX="${SAY_RETRY_MAX:-6}"
+SAY_RETRY_SLEEP_SEC="${SAY_RETRY_SLEEP_SEC:-2}"
+SAY_RETRY_MAX_SLEEP_SEC="${SAY_RETRY_MAX_SLEEP_SEC:-20}"
 
 PID_FILE="$QUEUE_DIR/pid"
 LOCK_DIR="$QUEUE_DIR/.lock"
@@ -44,10 +49,13 @@ fi
 MY_TOKEN="${BASHPID:-$$}_${RANDOM}_$(date +%s)"
 MY_OWNER="${BASHPID:-$$}:${MY_TOKEN}"
 MY_CONTENT="$QUEUE_DIR/content_${MY_TOKEN}.txt"
+MY_CHUNK_DIR="$QUEUE_DIR/chunks_${MY_TOKEN}"
+MY_CHUNK_LIST="$MY_CHUNK_DIR/chunks.txt"
 LOCK_HELD=0
 
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
+mkdir -p "$MY_CHUNK_DIR"
 
 # 読み上げ修正: "AI" → "エーアイ"
 sed -i '' 's/AI/エーアイ/g' "$MY_CONTENT"
@@ -121,10 +129,81 @@ _release_lock() {
 _cleanup() {
     _release_lock
     rm -f "$MY_CONTENT"
+    rm -rf "$MY_CHUNK_DIR"
 }
 trap '_cleanup' EXIT
 
 _log "queued (token=${MY_TOKEN})"
+
+_sleep_with_heartbeat() {
+    local sec="${1:-1}" waited=0
+    while [ "$waited" -lt "$sec" ]; do
+        _touch_lock_heartbeat
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
+_prepare_chunks() {
+    # 文末記号でざっくり分割し、落ちた際の再開単位を小さくする
+    perl -CSDA -pe 's/\r//g; s/\n/ /g; s/\s+/ /g; s/([。！？.!?])\s*/$1\n/g' "$MY_CONTENT" |
+        sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' |
+        sed '/^[[:space:]]*$/d' >"$MY_CHUNK_LIST"
+    if [ ! -s "$MY_CHUNK_LIST" ]; then
+        sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' "$MY_CONTENT" |
+            sed '/^[[:space:]]*$/d' >"$MY_CHUNK_LIST"
+    fi
+}
+
+_launch_say() {
+    local chunk_file="$1"
+    local -a cmd=(say -r "$RATE")
+    [ -n "$SAY_VOICE" ] && cmd+=(-v "$SAY_VOICE")
+    [ -n "$SAY_AUDIO_DEVICE" ] && cmd+=(-a "$SAY_AUDIO_DEVICE")
+    cmd+=(-f "$chunk_file")
+    nohup bash -c 'trap "" INT TERM; "$@"' _ "${cmd[@]}" >/dev/null 2>&1 &
+    echo "$!"
+}
+
+_play_chunk_with_retry() {
+    local chunk_file="$1" chunk_idx="$2" chunk_total="$3"
+    local retry=0 backoff="$SAY_RETRY_SLEEP_SEC"
+    while true; do
+        local attempt=$((retry + 1))
+        _log "say開始 (chunk=${chunk_idx}/${chunk_total}, attempt=${attempt}, rate=${RATE})"
+        local say_pid
+        say_pid=$(_launch_say "$chunk_file")
+        if [ -z "$say_pid" ]; then
+            _log "say起動失敗 (chunk=${chunk_idx}/${chunk_total})"
+            return 1
+        fi
+        echo "$say_pid" > "$PID_FILE"
+        local start_ts now_ts elapsed say_rc
+        start_ts=$(date +%s)
+        while kill -0 "$say_pid" 2>/dev/null; do
+            _touch_lock_heartbeat
+            sleep 1
+        done
+        wait "$say_pid"
+        say_rc=$?
+        now_ts=$(date +%s)
+        elapsed=$((now_ts - start_ts))
+        if [ "$say_rc" -eq 0 ]; then
+            return 0
+        fi
+        if [ "$retry" -ge "$SAY_RETRY_MAX" ]; then
+            _log "say異常終了 (chunk=${chunk_idx}/${chunk_total}, rc=$say_rc, elapsed=${elapsed}s) → 再試行上限"
+            return "$say_rc"
+        fi
+        retry=$((retry + 1))
+        _log "say異常終了 (chunk=${chunk_idx}/${chunk_total}, rc=$say_rc, elapsed=${elapsed}s) → ${backoff}s後に再試行 ${retry}/${SAY_RETRY_MAX}"
+        _sleep_with_heartbeat "$backoff"
+        if [ "$backoff" -lt "$SAY_RETRY_MAX_SLEEP_SEC" ]; then
+            backoff=$((backoff * 2))
+            [ "$backoff" -gt "$SAY_RETRY_MAX_SLEEP_SEC" ] && backoff="$SAY_RETRY_MAX_SLEEP_SEC"
+        fi
+    done
+}
 
 # --- mkdirロックで排他制御 ---
 _acquire_lock
@@ -165,23 +244,38 @@ while [ "$waited_pre" -lt "$PRE_DELAY" ]; do
     waited_pre=$((waited_pre + 1))
 done
 
-# --- ロック内: say開始 + PID記録（アトミック） ---
-_log "say開始 (rate=${RATE})"
-# Ctrl-Cでloopを止めても再生中のsayは止めない（INT/TERMを無視して実行）
-nohup env SAY_RATE="$RATE" SAY_CONTENT="$MY_CONTENT" bash -c 'trap "" INT TERM; exec say -r "$SAY_RATE" -f "$SAY_CONTENT"' > /dev/null 2>&1 &
-SAY_PID=$!
-echo "$SAY_PID" > "$PID_FILE"
+# --- ロック内: say再生（文単位 + 自動リトライ） ---
+_prepare_chunks
+if [ ! -s "$MY_CHUNK_LIST" ]; then
+    _log "再生スキップ: チャンク生成結果が空"
+    _release_lock
+    exit 1
+fi
 
-# sayの完了をロック内で待つ（他プロセスのsay起動を確実にブロック）
-# ロックを保持し続けることで、二重再生を構造的に防止する
-while kill -0 "$SAY_PID" 2>/dev/null; do
-    _touch_lock_heartbeat
-    sleep 2
-done
+CHUNK_TOTAL=$(wc -l < "$MY_CHUNK_LIST" | tr -d '[:space:]')
+CHUNK_IDX=0
+PLAYBACK_FAILED=0
+LAST_SAY_PID=""
+while IFS= read -r chunk_line || [ -n "$chunk_line" ]; do
+    [ -n "${chunk_line//[[:space:]]/}" ] || continue
+    CHUNK_IDX=$((CHUNK_IDX + 1))
+    CHUNK_FILE="$MY_CHUNK_DIR/chunk_${CHUNK_IDX}.txt"
+    printf '%s\n' "$chunk_line" > "$CHUNK_FILE"
+    if ! _play_chunk_with_retry "$CHUNK_FILE" "$CHUNK_IDX" "$CHUNK_TOTAL"; then
+        PLAYBACK_FAILED=1
+        break
+    fi
+    LAST_SAY_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+done < "$MY_CHUNK_LIST"
 
 # ロック解放（say完了後）
 _release_lock
 
-_log "say終了"
+if [ "$PLAYBACK_FAILED" -eq 1 ]; then
+    _log "say終了 (一部失敗あり)"
+else
+    _log "say終了"
+fi
 # 自分のPIDの場合のみ削除（他プロセスが上書きした場合は残す）
-[ "$(cat "$PID_FILE" 2>/dev/null)" = "$SAY_PID" ] && rm -f "$PID_FILE"
+[ -n "$LAST_SAY_PID" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$LAST_SAY_PID" ] && rm -f "$PID_FILE"
+exit "$PLAYBACK_FAILED"
