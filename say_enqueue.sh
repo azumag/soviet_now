@@ -9,9 +9,9 @@
 #   1. コンテンツコピー
 #   2. mkdirロック取得（取得できるまで待機）
 #   3. ロック内: 前のsay PID待ち
-#   4. ロック内: nohup say起動 + PID記録
+#   4. ロック内: 文単位で say 再生（異常終了時はリトライ）
 #   5. ロック解放
-#   6. say完了待ち + クリーンアップ
+#   6. クリーンアップ
 
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -52,6 +52,7 @@ MY_CONTENT="$QUEUE_DIR/content_${MY_TOKEN}.txt"
 MY_CHUNK_DIR="$QUEUE_DIR/chunks_${MY_TOKEN}"
 MY_CHUNK_LIST="$MY_CHUNK_DIR/chunks.txt"
 LOCK_HELD=0
+LAUNCHED_SAY_PID=""
 
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
@@ -172,8 +173,9 @@ _play_chunk_with_retry() {
         local attempt=$((retry + 1))
         _log "say開始 (chunk=${chunk_idx}/${chunk_total}, attempt=${attempt}, rate=${RATE})"
         local say_pid
+        LAUNCHED_SAY_PID=""
         _launch_say "$chunk_file"
-        say_pid="$LAUNCHED_SAY_PID"
+        say_pid="${LAUNCHED_SAY_PID:-}"
         if [ -z "$say_pid" ]; then
             _log "say起動失敗 (chunk=${chunk_idx}/${chunk_total})"
             return 1
