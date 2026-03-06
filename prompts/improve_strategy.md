@@ -24,7 +24,20 @@
 - **このプロンプトに埋め込み済み**: `tmp/batch_summary.txt`, `tmp/advice.md`
 - **サンドボックス内**: それ以外の全ファイル。`tmp/sandbox_files.md` に一覧がある
 
-サンドボックス内のファイルは自分で読み取り可能。大きなデータ（ゲームログ、過去バージョン、殿堂入り戦略、ソースコード等）は全てサンドボックスにある。必要なものを自分で読むこと。
+サンドボックス内のファイルは自分で読み取り可能。大きなデータ（ゲームログ、過去バージョン、殿堂入り戦略、ソースコード等）は全てサンドボックスにある。
+**`tmp/sandbox_files.md` を目録として使い、必須項目を順番に読むこと。**
+
+## 読み込み最低要件（未達は失敗）
+- `tmp/sandbox_files.md`（目録）
+- `strategy.py.staging`（現行コード）
+- `tmp/change_log.txt`（存在する場合）
+- `tmp/batch_summary.txt` と `tmp/advice.md`（存在する場合）
+- ワーストゲーム JSONL 1件 + ベストゲーム JSONL 1件（`sandbox_files.md` 記載）
+- 追加で `game_history/*.jsonl` から 2件以上（合計4件以上の試合ログを読む）
+- `strategy_versions/v*_strategy.py` から 3件以上（直近）
+- `strategy_versions/best_score*_strategy.py` から 2件以上（殿堂入り）
+- `analyze_board.py`（`analysis` の未活用情報を使う場合は必須）
+- `MainManager.cs` / `RepublicController.cs`（merge/score/物理/着地挙動に関わる仮説を使う場合は必須）
 
 ## 改善の優先順位
 1. 構造変更（新しい評価軸・新しい選択ロジック）
@@ -39,12 +52,13 @@
 - 同一方向の変更を `change_log` で確認できるのに再実施すること
 
 ## 実行手順（必ずこの順）
-1. **`tmp/sandbox_files.md` を読んで**利用可能ファイル一覧を把握
-2. **`tmp/change_log.txt` を読んで**過去の変更履歴を把握し、同じ方針の焼き直しを除外
-3. `batch_summary`（埋め込み済み）から「頻度が高いのに効いていない reason」と「頻度は低いが効いている reason」を特定
-4. ワーストゲーム JSONL を読んで失敗モードを特定し、ベストゲーム JSONL と比較して差異を分析
-5. 殿堂入り戦略（`strategy_versions/best_score*_strategy.py`）を読んで、高スコア戦略との構造的差異を分析
-6. 1つの仮説を決定し、1つの変更として実装
+1. `tmp/sandbox_files.md` を読み、必須参照ファイルの実ファイル名を特定する
+2. `tmp/change_log.txt` を読んで、過去と同じ方針の焼き直し候補を除外する
+3. `batch_summary` / `advice` から「頻度が高いのに効いていない reason」と「頻度は低いが効いている reason」を抽出する
+4. ワースト/ベスト + 追加2件以上のゲームログを読み、失敗モードと成功モードの差分を整理する
+5. 直近バージョン3件以上 + 殿堂入り2件以上を読み、構造差分を比較する
+6. 仮説がゲーム実装依存なら Unity ソース（`MainManager.cs` / `RepublicController.cs`）で事実確認する
+7. 仮説を1つに絞り、1つの変更として実装する
 
 ## 変更設計ルール
 - 変更規模は「1つの機能追加」または「1つの機能置換」に限定
@@ -70,4 +84,5 @@
 ## 出力指示（必須）
 - 改善後の完全なコードを `strategy.py.staging` に書き込むこと
 - 冒頭の変更履歴は簡潔に追記（2〜4行以内）
+- 変更履歴内に `refs:` 行を1行入れ、参照した主要ファイル名を列挙する（最低5ファイル）
 - コードにはなぜそうするに至ったかコメントを記載する
