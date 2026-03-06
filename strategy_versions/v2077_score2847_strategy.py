@@ -9,12 +9,12 @@ Game Overview:
 
 Decision Logic (7 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -3.0)
+  2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.5)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
   6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
-  7. Early game merge priority - Strong bonus for merge opportunities in early game (v172)
+  7. Early game merge priority - Strong bonus for merge opportunities in early game (v173)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -51,6 +51,14 @@ Phases (determined by board max Y):
 # v172: 序盤マージ優先評価軸追加版 - batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=1.6)と過剰であり、低スコア群で30.3%選択されていることを確認。
 # ワーストゲーム(score0545)で初期5ターンが全てHEIGHT_CONTROLとなり併合機会を逃している失敗モードを特定。
 # early_game条件下でmerge_gradeがNEARの場合、追加ボーナス800.0を付与する評価軸を追加し、初期段階でのマージ機会を最優先してHEIGHT_CONTROL選択を超強力に抑制する。
+# v173: early_game判定緩和・初期10ターンマージ重視版 - batch_summaryでHEIGHT_CONTROLが26.7%選択(avg_score_delta=1.3)と依然として過剰であることを確認。
+# ワーストゲーム(score0678)で初期10ターンのmax_y推移(-5.0→-2.4)を分析し、v172のearly_game判定(max_y < -3.0)が過度に厳しく初期10ターンの大部分で判定されていないことを特定。
+# early_game判定をmax_y < -3.0→-2.5に緩和し、EARLY_MERGE_PRIORITYの適用範囲をearly_gameからpiece_count <= 10に拡大して初期10ターン全体でマージ機会を最優先する。
+# また、初期段階(piece_count <= 6)で併合機会がない場合のHEIGHT_CONTROL抑制を強化し、初期配置での消極的戦略を回避する。
+# v173: early_game判定緩和・初期10ターンマージ重視版 - batch_summaryでHEIGHT_CONTROLが26.7%選択(avg_score_delta=1.3)と依然として過剰であることを確認。
+# ワーストゲーム(score0678)で初期10ターンのmax_y推移(-5.0→-2.4)を分析し、v172のearly_game判定(max_y < -3.0)が過度に厳しく初期10ターンの大部分で判定されていないことを特定。
+# early_game判定をmax_y < -3.0→-2.5に緩和し、EARLY_MERGE_PRIORITYの適用範囲をearly_gameからpiece_count <= 10に拡大して初期10ターン全体でマージ機会を最優先する。
+# また、初期段階(piece_count <= 6)で併合機会がない場合のHEIGHT_CONTROL抑制を強化し、初期配置での消極的戦略を回避する。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -58,21 +66,28 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v172: 序盤マージ優先評価軸追加版
+    """v173: early_game判定緩和・初期10ターンマージ重視版
 
-    batch_summary分析でHEIGHT_CONTROLが25.9%選択(avg_score_delta=1.6)と過剰であること、
-    低スコア群で30.3%選択されていることを確認（高スコア群22.5%より7.8ポイント高い）。
-    ワーストゲーム(score0545)で初期5ターンが全てHEIGHT_CONTROLとなり併合機会を逃している失敗モードを特定。
-    early_game条件下でmerge_gradeがNEARの場合、追加ボーナス800.0を付与する評価軸を追加し、
-    初期段階でのマージ機会を最優先してHEIGHT_CONTROL選択を超強力に抑制する。
+    batch_summary分析でHEIGHT_CONTROLが26.7%選択(avg_score_delta=1.3)と依然として過剰であることを確認。
+    ワーストゲーム(score0678)で初期10ターンのmax_y推移(-5.0→-2.4)を分析し、v172のearly_game判定(max_y < -3.0)が過度に厳しく
+    初期10ターンの大部分で判定されていないことを特定。
+    early_game判定をmax_y < -3.0→-2.5に緩和し、EARLY_MERGE_PRIORITYの適用範囲をearly_gameからpiece_count <= 10に拡大して
+    初期10ターン全体でマージ機会を最優先する。
+    また、初期段階(piece_count <= 6)で併合機会がない場合のHEIGHT_CONTROL抑制を強化し、初期配置での消極的戦略を回避する。
 
-    v172の改善点:
-    1. 新規評価軸「Early game merge priority」を追加
-       - early_game（max_y < -3.0）かつmerge_gradeがNEARの場合、追加ボーナス800.0を付与
-       - これにより初期段階でのマージ機会を最優先し、HEIGHT_CONTROL選択を超強力に抑制
-    2. v171のCHAIN_MERGE基本ボーナス強化を維持
+    v173の改善点:
+    1. early_game判定の緩和
+       - max_y < -3.0 → max_y < -2.5
+       - batch_summaryの序盤avg max_y(-2.5〜-2.72)に基づき、初期10ターンの大部分で判定されるように調整
+    2. EARLY_MERGE_PRIORITY適用範囲の拡大
+       - early_game条件からpiece_count <= 10へ変更
+       - 初期10ターンを一つのフェーズとして扱い、この期間中はマージ機会を最優先
+    3. 初期段階でのHEIGHT_CONTROL抑制の強化
+       - piece_count <= 6 かつ merge_grade == "NO" の場合、height_multiplierを0.2→0.1に削減
+       - 初期配置での消極的戦略を回避し、より積極的なマージ探索を促進
+    4. v171のCHAIN_MERGE基本ボーナス強化を維持
        - chain_distance_max=5.0とchain_bonus_multiplier初期値480.0でCHAIN_MERGE選択を促進
-    3. v170のearly_game判定（max_y < -3.0）とMEDIUM phase height_mult=1.4を維持
+    5. v170のMEDIUM phase height_mult=1.4を維持
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -101,12 +116,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
+    piece_count = len(pieces)
 
-    # --- v169: early_game判定超拡大（max_y < -3.0） ---
-    # batch_summaryでHEIGHT_CONTROLが25.2%選択(avg_score_delta=1.4)と過剰であること、
-    # ワーストゲーム(score0554)で初期11ターンのうち8ターンがHEIGHT_CONTROL/NEXT_SAMEとなり併合機会を逃していることを確認。
-    # early_game判定をmax_y < -1.0→-3.0に超拡大し、初期盤面でのHEIGHT_CONTROL選択を強力に抑制
-    early_game = max_y < -3.0
+    # --- v173: early_game判定緩和（max_y < -2.5） ---
+    # batch_summaryでHEIGHT_CONTROLが26.7%選択(avg_score_delta=1.3)と依然として過剰であることを確認。
+    # ワーストゲーム(score0678)で初期10ターンのmax_y推移(-5.0→-2.4)を分析し、v172のearly_game判定(max_y < -3.0)が過度に厳しく
+    # 初期10ターンの大部分で判定されていないことを特定。
+    # early_game判定をmax_y < -3.0→-2.5に緩和し、初期10ターンの大部分で判定されるように調整。
+    early_game = max_y < -2.5
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -171,11 +188,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v169: early_game（max_y < -3.0）の場合、height_multiplierを0.2に削減してHEIGHT_CONTROL過剰選択を超強力に抑制
+        # v169: early_game（max_y < -2.5）の場合、height_multiplierを0.2に削減してHEIGHT_CONTROL過剰選択を抑制
         # v170: MEDIUM phase height_multを1.8→1.4に削減してMEDIUM_TOWER選択を促進
+        # v173: 初期段階(piece_count <= 6)で併合機会がない場合、HEIGHT_CONTROL抑制を強化
         height_multiplier = 30.0
         if early_game:
-            height_multiplier = 0.2  # v169: 序盤はHEIGHT_CONTROLを超強力に抑制し、併合機会を最優先
+            height_multiplier = 0.2  # v169: 序盤はHEIGHT_CONTROLを抑制し、併合機会を最優先
+
+        # v173: 初期段階で併合機会がない場合、HEIGHT_CONTROL抑制をさらに強化
+        if piece_count <= 6 and merge_grade == "NO":
+            height_multiplier = 0.1  # 初期6ピースでマージ機会がない場合、消極的配置を回避
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -276,15 +298,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 7: early game merge priority (v172: 新規追加) -----
-        # v172: batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=1.6)と過剰であること、
-        # 低スコア群で30.3%選択されていることを確認（高スコア群22.5%より7.8ポイント高い）。
-        # ワーストゲーム(score0545)で初期5ターンが全てHEIGHT_CONTROLとなり併合機会を逃している失敗モードを特定。
-        # early_game条件下でmerge_gradeがNEARの場合、追加ボーナス800.0を付与し、初期段階でのマージ機会を最優先する。
-        # これによりHEIGHT_CONTROL選択を超強力に抑制し、スコア安定性を向上させる。
-        if early_game and merge_grade == "NEAR":
+        # ----- evaluation axis 7: early game merge priority (v173: 初期10ターンマージ重視) -----
+        # v173: early_game判定(max_y < -3.0→-2.5)を緩和し、EARLY_MERGE_PRIORITYの適用範囲をearly_gameからpiece_count <= 10に拡大。
+        # 初期10ターンを一つのフェーズとして扱い、この期間中はマージ機会を最優先してHEIGHT_CONTROL選択を抑制する。
+        # v172の初期条件(early_game && merge_grade == "NEAR")を維持し、piece_count <= 10でも適用することで初期10ターン全体でマージを重視。
+        if (early_game or piece_count <= 10) and merge_grade == "NEAR":
             # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
-            # これにより初期段階でのマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
+            # これにより初期10ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 800.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
