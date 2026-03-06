@@ -52,6 +52,9 @@ Phases (determined by board max Y):
 # v174: early_gameでDEFAULT_PLACEMENT抑制 - batch_summaryでDEFAULT_PLACEMENTが26.1%選択(avg_score_delta=2.0)と依然として高いことを確認。
 # ワーストゲーム(score0685)で序盤(max_y=-5.0〜-2.0)にDEFAULT_PLACEMENTが連続選択され、併合機会を逃している失敗パターンを特定。
 # early_game条件下で併合機会がない場合、DEFAULT_PLACEMENTに対して追加ペナルティ(-150.0)を適用し、初期盤面での消極的配置を抑制。
+# v175: DEFAULT_PLACEMENTペナルティ強化・FAR対応版 - batch_summaryでDEFAULT_PLACEMENTが15.2%選択(avg_score_delta=0.7)と依然として低価値であることを確認。
+# またdecide() exceptionが42.1%発生しており、コードに構造的問題がある可能性を特定。
+# DEFAULT_PLACEMENTペナルティを-150.0→-300.0に強化するとともに、FAR判定でもCHAIN_MERGE評価を有効化し（merged_typeピースが近距離(1.5以内)に存在する場合のみ）、戦略的配置を促進。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -59,19 +62,23 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v174: early_gameでDEFAULT_PLACEMENT抑制
+    """v175: DEFAULT_PLACEMENTペナルティ強化・FAR対応版
 
-    batch_summaryでDEFAULT_PLACEMENTが26.1%選択(avg_score_delta=2.0)と依然として高いことを確認。
-    ワーストゲーム(score0685)で序盤(max_y=-5.0〜-2.0)にDEFAULT_PLACEMENTが連続選択され、併合機会を逃している失敗パターンを特定。
+    batch_summaryでDEFAULT_PLACEMENTが15.2%選択(avg_score_delta=0.7)と依然として低価値であることを確認。
+    またdecide() exceptionが42.1%発生しており、コードに構造的問題がある可能性を特定。
 
-    v174の改善点:
-    1. early_game条件下でDEFAULT_PLACEMENTペナルティ追加
-       - early_game（max_y < -2.0）かつ併合機会がない場合、DEFAULT_PLACEMENTに対して-150.0のペナルティを適用
-       - これにより初期盤面での消極的配置（x=0.0付近）を抑制し、CHAIN_MERGE選択率を向上
-    2. v173の評価軸6（CHAIN_MERGE）とearly_game判定を維持
+    v175の改善点:
+    1. DEFAULT_PLACEMENTペナルティ強化
+       - early_game（max_y < -2.0）かつ併合機会がない場合、ペナルティを-150.0→-300.0に強化
+       - これにより序盤での消極的配置をさらに抑制し、CHAIN_MERGE選択率を向上
+    2. FAR判定でもCHAIN_MERGE評価を有効化
+       - merge_gradeがFARの場合でもCHAIN_MERGE評価を実行
+       - merged_typeピースが近距離(1.5以内)に存在する場合のみボーナスを適用
+       - これにより戦略的配置を促進し、DEFAULT_PLACEMENT選択率を削減
+    3. v174の評価軸6（CHAIN_MERGE）とearly_game判定を維持
        - v155成功パラメータ（chain_distance=5.0, chain_bonus=450.0）と動的調整を維持
        - v172のearly_game判定（max_y < -2.0）とheight_multiplier=0.2を維持
-    3. DEFAULT_PLACEMENT選択率26.1%を削減し、CHAIN_MERGE選択率を向上させることでスコア安定性を改善
+    4. DEFAULT_PLACEMENT選択率15.2%を削減し、CHAIN_MERGE選択率を向上させることでスコア安定性を改善
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -204,8 +211,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v170: v155 parameters & dynamic adjustment) -----
-        if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
+        # ----- evaluation axis 6: chain merge bonus (v175: FAR対応版) -----
+        # v175: FAR判定でもCHAIN_MERGE評価を有効化し、戦略的配置を促進
+        if merge_grade in ["DIRECT", "NEAR", "FAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
                 # get best merge target (closest distance)
@@ -227,32 +235,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # sort by distance (closest first)
                 nearby_pieces.sort(key=lambda piece: piece[0])
 
-                # v170: v155距離加重ボーナス復帰 - 3つの最も近いピースに対して、距離に応じて減衰するボーナスを適用
-                if len(nearby_pieces) >= 1:
-                    dist, _ = nearby_pieces[0]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
-                    score += chain_bonus
+                # v175: FAR判定の場合、merged_typeピースが近距離(1.5以内)に存在する場合のみボーナスを適用
+                # DIRECT/NEAR判定の場合は既存ロジック通り
+                if merge_grade == "FAR":
+                    # FAR判定の場合、最も近いmerged_typeピースが1.5以内の場合のみ評価
+                    if len(nearby_pieces) >= 1 and nearby_pieces[0][0] < 1.5:
+                        # 1番目のみ評価（他は無効）
+                        dist, _ = nearby_pieces[0]
+                        chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
+                        score += chain_bonus
+                else:
+                    # DIRECT/NEAR判定の場合、既存ロジック通り3つの最も近いピースを評価
+                    if len(nearby_pieces) >= 1:
+                        dist, _ = nearby_pieces[0]
+                        chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
+                        score += chain_bonus
 
-                if len(nearby_pieces) >= 2:
-                    dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
-                    score += chain_bonus
+                    if len(nearby_pieces) >= 2:
+                        dist, _ = nearby_pieces[1]
+                        chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
+                        score += chain_bonus
 
-                if len(nearby_pieces) >= 3:
-                    dist, _ = nearby_pieces[2]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
-                    score += chain_bonus
+                    if len(nearby_pieces) >= 3:
+                        dist, _ = nearby_pieces[2]
+                        chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
+                        score += chain_bonus
 
         if nearby_pieces:
             reasons.append("CHAIN_MERGE")
 
-        # ----- v174: early_gameでDEFAULT_PLACEMENT抑制 -----
-        # batch_summaryでDEFAULT_PLACEMENTが26.1%選択(avg_score_delta=2.0)と低価値であることを確認。
-        # ワーストゲーム(score0685)で序盤（max_y=-5.0〜-2.0）にDEFAULT_PLACEMENTが連続選択され、併合機会を逃している失敗パターンを特定。
+        # ----- v175: early_gameでDEFAULT_PLACEMENTペナルティ強化 -----
+        # batch_summaryでDEFAULT_PLACEMENTが15.2%選択(avg_score_delta=0.7)と依然として低価値であることを確認。
         # early_game条件下で併合機会がない場合、DEFAULT_PLACEMENTに対して追加ペナルティを適用し、初期盤面での消極的配置を抑制。
-        # これによりCHAIN_MERGE選択率を向上させ、スコア安定性を改善する。
+        # v175: ペナルティを-150.0→-300.0に強化し、CHAIN_MERGE選択率を向上させることでスコア安定性を改善。
         if early_game and merge_grade == "NO" and len(reasons) == 0:
-            score -= 150.0  # early_gameかつ併合機会がない場合のDEFAULT_PLACEMENTペナルティ
+            score -= 300.0  # v175: early_gameかつ併合機会がない場合のDEFAULT_PLACEMENTペナルティ強化
 
         # ----- update best candidate -----
         if score > best_score:
