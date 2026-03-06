@@ -61,7 +61,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `strategy_versions/` | strategy.py のバージョン履歴 |
 | `game_history/` | 試合ごとのターンログ (JSONL) |
 | `best_score.txt` | ハイスコア記録 |
-| `say_enqueue.sh` | macOS `say` のFIFOキュー管理（排他制御・異常終了リトライ付き） |
+| `say_enqueue.sh` | macOS `say` のFIFOキュー管理（排他制御・異常終了/途中切断リトライ付き） |
 
 **ラジオDJ機能:**
 
@@ -69,10 +69,13 @@ soren_loop にはソ連風ラジオDJ機能が組み込まれている。試合�
 
 - **トーク本文**: 試合結果・雑談・ソ連ネタを生成 → `say_enqueue.sh` で再生
 - **コメント返し**: Twitchチャットのコメントに対する返事を生成 → `say_enqueue.sh --no-preempt` で再生（途中で切られない）
-- **say_enqueue.sh**: mkdirロックベースの排他FIFOキュー。従来どおり順次再生しつつ、`say` 異常終了時は自動リトライ
+- **say_enqueue.sh**: mkdirロックベースの排他FIFOキュー。従来どおり順次再生しつつ、`say` / `ffmpeg` 異常終了時は自動リトライ
 - コメント返しプロセスは `disown` で親プロセスから独立しており、次のゲーム開始時にトーク生成が kill されても再生が中断されない
 - `RADIO_SAY_RATE=180` で読み上げ速度を制御（macOS `say -r` に渡される）
+- `SAY_AUDIO_DEVICE` を設定すると `say` で生成したAIFFを `ffmpeg -f audiotoolbox` で指定デバイス（例: `BlackHole 2ch`）へ出力
+- USB機器（例: GoPro）の抜き差しでCoreAudio再列挙が起きた際の途中切断に備え、再生実時間が想定尺より短すぎる場合は失敗扱いで自動リトライ
 - リトライ挙動は `SAY_RETRY_MAX` / `SAY_RETRY_SLEEP_SEC` / `SAY_RETRY_MAX_SLEEP_SEC` で調整可能
+- 途中切断判定は `SAY_TRUNCATE_RATIO` / `SAY_TRUNCATE_GRACE_SEC` / `SAY_TRUNCATE_MIN_EXPECTED_SEC` で調整可能
 
 ### jloop.sh — JSON-based State Loop
 

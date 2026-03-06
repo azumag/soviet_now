@@ -88,99 +88,68 @@ HARVEST_DIR=""
 HOST_STATUS_SNAPSHOT=""
 STAGING_FILE="strategy.py.staging"
 
-# 直近3バージョン（ハッシュ重複を除外して最大3つ）
-past_strategy_files=()
-_past_seen_hashes=""
-while IFS= read -r vf; do
-	[ -n "$vf" ] || continue
-	[ ${#past_strategy_files[@]} -ge 3 ] && break
-	_h=$(md5 -q "$vf" 2>/dev/null || echo "$RANDOM")
-	case "$_past_seen_hashes" in *"$_h"*) continue ;; esac
-	_past_seen_hashes="${_past_seen_hashes}${_h}:"
-	past_strategy_files+=("$vf")
-done < <(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -20)
-
-# ランキング上位2戦略 (rolling_scores の composite スコア順)
-hall_of_fame_files=()
-if [ -f "$ROLLING_SCORES_FILE" ]; then
-	top_hashes=$(python3 -c "
-import json, sys
-with open('$ROLLING_SCORES_FILE') as f:
-    rs = json.load(f)
-ranked = []
-for h, d in rs.items():
-    scores = d.get('scores', [])
-    n = len(scores)
-    if n < $MIN_GAMES_FOR_BEST_ROLLBACK:
-        continue
-    ss = sorted(scores)
-    p50 = ss[n//2]
-    p25 = ss[n//4]
-    avg = sum(scores)/n
-    ranked.append((avg, h))
-ranked.sort(reverse=True)
-for _, h in ranked[:2]:
-    print(h)
-" 2>/dev/null)
-	for th in $top_hashes; do
-		hf="$STRATEGY_HASH_ARCHIVE_DIR/${th}.py"
-		[ -f "$hf" ] && hall_of_fame_files+=("$hf")
-	done
-fi
-
 # --- プロンプトに埋め込む参照データ（小さくて重要なもの） ---
 improve_ref_files=("$batch_summary_file")
 [ -f "tmp/advice.md" ] && [ -s "tmp/advice.md" ] && improve_ref_files+=("tmp/advice.md")
 
-# --- サンドボックス内で読み取り可能な大きいファイル（パスだけ案内） ---
-sandbox_only_files=("$GAME_STATE")
-[ -f "$CHANGE_LOG_FILE" ] && sandbox_only_files+=("$CHANGE_LOG_FILE")
-[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && sandbox_only_files+=("$worst_game_path")
-for vf in "${past_strategy_files[@]}"; do
-	sandbox_only_files+=("$vf")
+# --- サンドボックスにコピーする全ファイル ---
+sandbox_ref_files=("prompts/improve_strategy.md" "prompts/game_theory.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}")
+sandbox_ref_files+=("$GAME_STATE")
+[ -f "$CHANGE_LOG_FILE" ] && sandbox_ref_files+=("$CHANGE_LOG_FILE")
+[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && sandbox_ref_files+=("$worst_game_path")
+[ -n "$best_game_path" ] && [ -f "$best_game_path" ] && sandbox_ref_files+=("$best_game_path")
+[ -d "strategy_helpers" ] && sandbox_ref_files+=("strategy_helpers")
+# 直近バージョン全て（ハッシュ重複除外）
+_past_seen_hashes=""
+for vf in $(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null | head -20); do
+	_h=$(md5 -q "$vf" 2>/dev/null || echo "$RANDOM")
+	case "$_past_seen_hashes" in *"$_h"*) continue ;; esac
+	_past_seen_hashes="${_past_seen_hashes}${_h}:"
+	sandbox_ref_files+=("$vf")
 done
-for hf in "${hall_of_fame_files[@]}"; do
-	sandbox_only_files+=("$hf")
+# 殿堂入り戦略（best_score ファイル全て）
+for bf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
+	[ -f "$bf" ] && sandbox_ref_files+=("$bf")
+done
+# ハッシュアーカイブ全て
+for hf in "$STRATEGY_HASH_ARCHIVE_DIR"/*.py; do
+	[ -f "$hf" ] && sandbox_ref_files+=("$hf")
+done
+# 全試合のJSONL
+for hf in $HISTORY_FILES; do
+	[ -f "$hf" ] && sandbox_ref_files+=("$hf")
+done
+# ゲームソースコード
+for cs in sorengame/_extracted/soren-game-fixed/Assets/SORENGAMEFIXED/Script/*.cs; do
+	[ -f "$cs" ] && sandbox_ref_files+=("$cs")
 done
 
 # サンドボックスファイル一覧マニフェスト生成（AIへのロードマップ）
 manifest_file="tmp/sandbox_files.md"
 {
 	echo "## サンドボックス内の利用可能ファイル"
-	echo "以下のファイルは読み取り可能。必要に応じて参照すること。"
+	echo "以下のファイルは全て読み取り可能。分析に必要なものを自分で読むこと。"
 	echo ""
-	echo "### 重要（必ず確認）"
-	[ -f "$CHANGE_LOG_FILE" ] && printf -- '- \`%s\` (%sKB) — 過去の改善変更差分。同じ方針の焼き直し防止に必須\n' "$CHANGE_LOG_FILE" "$(($(wc -c < "$CHANGE_LOG_FILE") / 1024))"
-	[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && printf -- '- \`%s\` (%sKB) — ワーストゲーム全ターンログ\n' "$worst_game_path" "$(($(wc -c < "$worst_game_path") / 1024))"
-	printf -- '- \`%s\` (%sKB) — 現在の盤面状態\n' "$GAME_STATE" "$(($(wc -c < "$GAME_STATE") / 1024))"
+	echo "### 必ず確認（スキップ禁止）"
+	[ -f "$CHANGE_LOG_FILE" ] && printf -- '- \`%s\` — 過去の改善変更差分。**同じ方針の焼き直し防止のため最初に読め**\n' "$CHANGE_LOG_FILE"
+	echo ""
+	echo "### 盤面データ"
+	printf -- '- \`%s\` — 現在の盤面状態\n' "$GAME_STATE"
+	[ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && printf -- '- \`%s\` — ワーストゲーム全ターンログ（失敗モード分析用）\n' "$worst_game_path"
+	[ -n "$best_game_path" ] && [ -f "$best_game_path" ] && printf -- '- \`%s\` — ベストゲーム全ターンログ（成功パターン分析用）\n' "$best_game_path"
+	echo '- `game_history/*.jsonl` — 全試合ターンログ（batch_summary にファイル名一覧あり）'
 	echo ""
 	echo "### 戦略バージョン"
-	for vf in "${past_strategy_files[@]}"; do
-		[ -f "$vf" ] && printf -- '- \`%s\` (%sKB) — 直近バージョン\n' "$vf" "$(($(wc -c < "$vf") / 1024))"
-	done
-	for hf in "${hall_of_fame_files[@]}"; do
-		[ -f "$hf" ] && printf -- '- \`%s\` (%sKB) — 殿堂入り戦略\n' "$hf" "$(($(wc -c < "$hf") / 1024))"
-	done
+	echo '- `strategy_versions/v*_strategy.py` — 直近バージョン群（時系列順、重複除外済み）'
+	echo '- `strategy_versions/best_score*_strategy.py` — 殿堂入り戦略（歴代ハイスコア）'
+	echo '- `strategy_versions/by_hash/*.py` — ハッシュ別アーカイブ（全戦略）'
 	echo ""
 	echo "### ゲーム実装・理論"
 	echo '- `prompts/game_theory.md` — ゲーム理論的背景'
 	echo '- `analyze_board.py` — 盤面解析実装（analysis dict の構造確認用）'
 	echo '- `sorengame/_extracted/soren-game-fixed/Assets/SORENGAMEFIXED/Script/*.cs` — Unity ソースコード'
-	echo '- `game_history/*.jsonl` — 全試合ターンログ（batch_summary にファイル名一覧あり）'
 } > "$manifest_file"
 improve_ref_files+=("$manifest_file")
-
-# --- サンドボックスにコピーするファイル一覧 ---
-sandbox_ref_files=("prompts/improve_strategy.md" "prompts/game_theory.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}" "${sandbox_only_files[@]}")
-[ -d "strategy_helpers" ] && sandbox_ref_files+=("strategy_helpers")
-# 全試合のJSONLをサンドボックスにコピー（AIが選択的に参照可能）
-for hf in $HISTORY_FILES; do
-	[ -f "$hf" ] && sandbox_ref_files+=("$hf")
-done
-# ゲームソースコード（物理・スコアリング・併合ロジック参照用）
-for cs in sorengame/_extracted/soren-game-fixed/Assets/SORENGAMEFIXED/Script/*.cs; do
-	[ -f "$cs" ] && sandbox_ref_files+=("$cs")
-done
 
 HOST_STATUS_SNAPSHOT=$(mktemp /tmp/eloop_host_status_before.XXXXXX 2>/dev/null || echo "")
 [ -n "$HOST_STATUS_SNAPSHOT" ] && git status --porcelain >"$HOST_STATUS_SNAPSHOT" 2>/dev/null || true
