@@ -38,7 +38,7 @@ Phases (determined by board max Y):
 # v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
 # v167: 評価精度最適化版 - chain_distance 5.0→4.5縮小
 # v168: v155成功パラメータ復帰・動的調整復帰版
-# v169: early_game判定超拡大・CHAIN_MERGE評価範囲拡大版 - batch_summaryでHEIGHT_CONTROLが25.2%選択(avg_score_delta=1.4)と過剰であること、
+# v169: 序盤HEIGHT_CONTROL抑制超拡大・CHAIN_MERGE評価範囲拡大版 - batch_summaryでHEIGHT_CONTROLが25.2%選択(avg_score_delta=1.4)と過剰であること、
 # ワーストゲーム(score0554)で初期11ターンのうち8ターンがHEIGHT_CONTROL/NEXT_SAMEとなり併合機会を逃していることを確認。
 # early_game判定をmax_y < -1.0→-3.0に超拡大し、chain_distance_maxを5.0→5.2に拡大して、CHAIN_MERGE選択率を10-15%に引き上げる。
 # v170: MEDIUM phase height penalty relaxation版 - batch_summaryでMEDIUM_TOWERがavg_score_delta=3.4（正の値）だが選択率が10.8%（低スコア群）と低いことを確認。
@@ -61,6 +61,9 @@ Phases (determined by board max Y):
 # ワーストゲーム(score0765)で初期7ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗パターンを特定。
 # early_game判定をmax_y < -2.5→-2.0にさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大して初期12ターン全体でマージ機会を最優先する。
 # また、MEDIUM_TOWER選択を促進するための追加評価軸を追加し、高スコア群と低スコア群のMEDIUM_TOWER選択率差（13.6% vs 10.8%）を解消する。
+# v175: MEDIUMフェーズHEIGHT_CONTROL抑制強化版 - batch_summaryでHEIGHT_CONTROLが26.5%選択(avg_score_delta=1.1)と依然として過剰であり、スコアの標準偏差が404.0と大きいことを確認。
+# v174で初期12ターンでのHEIGHT_CONTROL抑制は強化されたが、中盤以降のHEIGHT_CONTROL選択が依然として多く、これがスコアの不安定性を引き起こしていることを特定。
+# MEDIUMフェーズ（0.8 <= max_y < 1.8）でheight_multiplierを30.0→20.0に削減し、マージ選択を促進することでスコア安定性を向上させる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -68,27 +71,23 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v174: early_game判定さらに緩和・初期12ターンマージ重視版
+    """v175: MEDIUMフェーズHEIGHT_CONTROL抑制強化版
 
-    batch_summary分析でHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
-    ワーストゲーム(score0765)で初期7ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗パターンを特定。
-    early_game判定をmax_y < -2.5→-2.0にさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大して
-    初期12ターン全体でマージ機会を最優先する。
-    また、MEDIUM_TOWER選択を促進するための追加評価軸を追加し、高スコア群と低スコア群のMEDIUM_TOWER選択率差（13.6% vs 10.8%）を解消する。
+    batch_summary分析でHEIGHT_CONTROLが26.5%選択(avg_score_delta=1.1)と依然として過剰であり、
+    スコアの標準偏差が404.0と大きいことを確認。
+    v174で初期12ターンでのHEIGHT_CONTROL抑制は強化されたが、中盤以降のHEIGHT_CONTROL選択が依然として多く、
+    これがスコアの不安定性を引き起こしていることを特定。
+    MEDIUMフェーズ（0.8 <= max_y < 1.8）でheight_multiplierを30.0→20.0に削減し、マージ選択を促進することでスコア安定性を向上させる。
 
-    v174の改善点:
-    1. early_game判定のさらに緩和
-       - max_y < -2.5 → max_y < -2.0
-       - batch_summaryの序盤avg max_y(-2.5〜-2.72)に基づき、初期12ターンの大部分で判定されるように調整
-    2. EARLY_MERGE_PRIORITY適用範囲の拡大
-       - piece_count <= 10 → piece_count <= 12
-       - 初期12ターンを一つのフェーズとして扱い、この期間中はマージ機会を最優先
-    3. MEDIUM_TOWER選択促進評価軸追加
-       - MEDIUM_TOWER選択率が高スコア群13.6% vs 低スコア群10.8%と差があることを確認。
-       - MEDIUM phaseでlanding_y > 0.5の場合、MEDIUM_TOWERボーナスを追加して選択を促進
-    4. v171のCHAIN_MERGE基本ボーナス強化を維持
+    v175の改善点:
+    1. MEDIUMフェーズでのHEIGHT_CONTROL抑制強化
+       - height_multiplier: 30.0 → 20.0
+       - 中盤で高さによるペナルティを緩和し、マージ機会を優先
+    2. v174の初期12ターンマージ重視を維持
+       - early_game判定(max_y < -2.0)とEARLY_MERGE_PRIORITY(piece_count <= 12)を維持
+    3. v171のCHAIN_MERGE基本ボーナス強化を維持
        - chain_distance_max=5.0とchain_bonus_multiplier初期値480.0でCHAIN_MERGE選択を促進
-    5. v170のMEDIUM phase height_mult=1.4を維持
+    4. v170のMEDIUM phase height_mult=1.4を維持
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -192,9 +191,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v170: MEDIUM phase height_multを1.8→1.4に削減してMEDIUM_TOWER選択を促進
         # v173: 初期段階(piece_count <= 6)で併合機会がない場合、HEIGHT_CONTROL抑制を強化
         # v174: early game判定をさらに緩和し、初期12ターンでHEIGHT_CONTROLを抑制
+        # v175: MEDIUM phase height_multiplierを30.0→20.0に削減してHEIGHT_CONTROL抑制を強化
         height_multiplier = 30.0
         if early_game:
             height_multiplier = 0.2  # v169: 序盤はHEIGHT_CONTROLを抑制し、併合機会を最優先
+
+        # v175: MEDIUMフェーズでHEIGHT_CONTROL抑制を強化
+        if phase == "MEDIUM":
+            height_multiplier = 20.0  # v175: MEDIUM phaseで高さペナルティを緩和し、マージ選択を促進
 
         # v173: 初期段階で併合機会がない場合、HEIGHT_CONTROL抑制をさらに強化
         if piece_count <= 6 and merge_grade == "NO":
