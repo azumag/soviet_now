@@ -257,10 +257,51 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # ----- evaluation axis 5: nextNext centering -----
+        # ----- evaluation axis 5: nextNext centering (modified to discourage center placement without chain potential) -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
-        if next_next_type == next_type:
+        # Modified: Analyze if current merge can lead to nextNext merge after current merge (2-lookahead)
+        if next_next_type == next_type and merge_grade in ["DIRECT", "NEAR"]:
+            # Check if merging current piece enables nextNext merge (2-lookahead)
+            merged_type = min(next_type + 1, 16)
+            next_next_merged_type = min(next_next_type + 1, 16)
+            
+            # Calculate if any merged_type pieces are within chain_distance_max of merged target
+            chain_distance_max = 5.0 + landing_y * 0.6
+            chain_bonus_multiplier = 480.0 + landing_y * 150.0
+            
+            if result.get("merges"):
+                merges = result["merges"]
+                if merges:
+                    best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
+                    target_x = best_merge.get("x", 0)
+                    target_y = best_merge.get("y", 0)
+                    
+                    # Check if any merged_type pieces can merge with nextNext (nextNext -> nextNext_next)
+                    nearby_for_next = []
+                    for p in pieces:
+                        if p.get("type") == next_next_merged_type:
+                            dist_to_target = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                            if dist_to_target < chain_distance_max:
+                                nearby_for_next.append((dist_to_target, p))
+                    
+                    # If we have at least 2 chain opportunities (current merge + nextNext merge), discourage center placement
+                    if len(nearby_for_next) >= 2:
+                        # If center placement is chosen, reduce the bonus to 0
+                        center_bonus = max(0, 1.0 - abs(x) / 2.0) * 0.0
+                    else:
+                        # No 2-lookahead opportunity, normal center bonus
+                        center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+                    
+                    score += center_bonus
+                    reasons.append("NEXT_SAME_CHAIN")
+            else:
+                # No current merge, normal center bonus
+                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+                score += center_bonus
+                reasons.append("NEXT_SAME")
+        else:
+            # Different types, normal center bonus
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
