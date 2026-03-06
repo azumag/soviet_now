@@ -366,8 +366,19 @@ def run_game():
                     log(f"WARNING: decide() returned invalid: {decision}")
                     decision = {"x": 0.0, "reason": "invalid decide() return → center fallback"}
             except Exception as e:
-                log(f"ERROR: strategy.decide() failed: {e}")
-                decision = {"x": 0.0, "reason": f"decide() exception: {e}"}
+                err = str(e)
+                log(f"ERROR: strategy.decide() failed: {err}")
+                # decide例外は戦略破損の可能性が高いため即時終了して外側でロールバックさせる
+                return {
+                    "error": "decide_exception",
+                    "error_message": err,
+                    "score": score,
+                    "turns": turn,
+                    "state": get_state_field(gs),
+                    "pieces": len(pieces),
+                    "soviet_created": soviet_created,
+                    "strategy_hash": strategy_hash,
+                }
 
             # ドロップX をクランプ
             drop_x = max(GAME_X_MIN, min(GAME_X_MAX, decision["x"]))
