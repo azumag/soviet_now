@@ -76,6 +76,7 @@ _handle_decide_exception_recovery() {
 	local err_msg="$1"
 	local err_turn="${2:-0}"
 	local err_score="${3:-0}"
+	local rollback_applied=false
 	log "[RECOVERY] decide例外を検出: ${err_msg} (turn=${err_turn}, score=${err_score})"
 
 	_stop_improvement_for_runtime_recovery
@@ -91,6 +92,7 @@ _handle_decide_exception_recovery() {
 			local rolled_hash
 			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+			rollback_applied=true
 			log "[RECOVERY] ロールバック完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 			git add "$STRATEGY_FILE" tmp/revert_strategy.py 2>/dev/null || true
 			git commit -m "eloop Auto-revert: decide runtime exception (turn=${err_turn}, score=${err_score}, target=${rollback_note})" 2>/dev/null || true
@@ -108,16 +110,12 @@ _handle_decide_exception_recovery() {
 	# 進行中ゲームは捨てて、即リトライ
 	send_retry
 
-	# 即時に改善ジョブを再起動（理由: runtime exception）
-	local recent_files recent_scores recent_count
-	recent_files=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -3 | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')
-	recent_scores=$(tail -3 score_history.txt 2>/dev/null | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
-	recent_count=$(printf '%s' "$recent_scores" | awk '{print NF}')
-	[ "${recent_count:-0}" -lt 1 ] && recent_count=1
-	if _start_improvement_job "$recent_files" "$recent_scores" "false" "$recent_count" "post_regression"; then
-		log "[RECOVERY] 改善ジョブを再起動しました"
+	# ロールバック直後は即改善せず、ロールバック戦略の実績を一定数ためてから改善する
+	if [ "$rollback_applied" = true ]; then
+		echo "${MIN_GAMES_BEFORE_IMPROVE:-12}" > "$RUNTIME_RECOVERY_GATE_FILE"
+		log "[RECOVERY] 改善ゲート設定: ロールバック戦略で ${MIN_GAMES_BEFORE_IMPROVE:-12} 試合蓄積後に改善開始"
 	else
-		log "[RECOVERY] 改善ジョブ再起動に失敗（次サイクルで再試行）"
+		rm -f "$RUNTIME_RECOVERY_GATE_FILE" 2>/dev/null || true
 	fi
 }
 

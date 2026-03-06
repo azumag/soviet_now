@@ -276,14 +276,31 @@ trigger_adaptive_improvement() {
 		fi
 	fi
 
-	# Step 4: 最低10試合ゲート
+	# Step 4: 最低試合数ゲート（通常/復旧後ゲート）
 	local acc_data
 	acc_data=$(_read_accumulated_data)
 	local acc_count
 	acc_count=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null)
+	local required_games gate_value
+	required_games="${MIN_GAMES_BEFORE_IMPROVE:-12}"
+	if [ -f "$RUNTIME_RECOVERY_GATE_FILE" ]; then
+		gate_value=$(tr -d '[:space:]' <"$RUNTIME_RECOVERY_GATE_FILE" 2>/dev/null || echo "")
+		case "$gate_value" in
+		''|*[!0-9]*) ;;
+		*)
+			if [ "$gate_value" -gt 0 ]; then
+				required_games="$gate_value"
+			fi
+			;;
+		esac
+	fi
 
-	if [ "${acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then
-		log "[IMPROVE] 蓄積 ${acc_count:-0}/${MIN_GAMES_BEFORE_IMPROVE} 試合 → 待機"
+	if [ "${acc_count:-0}" -lt "$required_games" ]; then
+		if [ "$required_games" -ne "${MIN_GAMES_BEFORE_IMPROVE:-12}" ]; then
+			log "[IMPROVE] 回復後ゲート: 蓄積 ${acc_count:-0}/${required_games} 試合 → 待機"
+		else
+			log "[IMPROVE] 蓄積 ${acc_count:-0}/${required_games} 試合 → 待機"
+		fi
 		return
 	fi
 
@@ -294,6 +311,7 @@ trigger_adaptive_improvement() {
 	all_scores=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('scores',''))" 2>/dev/null)
 	any_soviet=$(echo "$acc_data" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet',False) else 'false')" 2>/dev/null)
 	if _start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "normal"; then
+		rm -f "$RUNTIME_RECOVERY_GATE_FILE" 2>/dev/null || true
 		# 通常改善のみ、起動成功後に蓄積をクリア (即死時は保持)
 		_clear_accumulated_data
 	fi
