@@ -7,15 +7,15 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
-  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase, early_game: piece_count <= 12)
-  3. Drift penalty - Penalty for post-landing drift due to polygon shape
-  4. Left-right balance correction - Bonus for correcting piece count bias
-  5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v176: 初期段階CHAIN_MERGEボーナス確保)
-  7. Early game merge priority - Strong bonus for merge opportunities in early game (v175)
-  8. Medium tower promotion - Bonus for MEDIUM_TOWER selections in MEDIUM phase (v174)
+ Decision Logic (8 evaluation axes):
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase, early_game: piece_count <= 12)
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Left-right balance correction - Bonus for correcting piece count bias
+   5. nextNext centering - Center for next merge opportunity if nextNext same type
+   6. Chain merge bonus - Evaluate possibility of further merges after merge (v177: 初期段階CHAIN_MERGE探索範囲拡大)
+   7. Early game merge priority - Strong bonus for merge opportunities in early game (v175)
+   8. Medium tower promotion - Bonus for MEDIUM_TOWER selections in MEDIUM phase (v174)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -65,9 +65,9 @@ Phases (determined by board max Y):
  # v175: early_game判定をpiece_countベースに変更 - batch_summaryの序盤avg max_y(-2.5〜-2.72)がmax_y判定で十分にカバーできないことを確認。
  # ワーストゲーム(score0738)で初期12ターンのmax_y推移(-5.0→-2.74)を分析し、max_y < -2.0でもTurn 12でearly_game判定が外れ、HEIGHT_CONTROLが選択される失敗パターンを特定。
  # early_game判定をmax_y < -2.0からpiece_count <= 12に変更し、初期12ターン全体でheight_multiplier低減とEARLY_MERGE_PRIORITYを確実に適用する。
- # v176: 初期段階CHAIN_MERGEボーナス確保版 - batch_summaryでHEIGHT_CONTROLが30.2%選択(avg_score_delta=1.3)と過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
- # 初期段階(landing_y=-3.0~-1.0)でchain_bonus_multiplier=480.0+landing_y*150.0の動的調整により初期ボーナスが30.0〜330.0と低くなり、CHAIN_MERGE機能が無効化されている問題を特定。
- # chain_distance_max基本値を3.0→4.5、chain_bonus_multiplier基本定数を300.0→450.0、動的調整係数を150.0→50.0に変更し、初期12ターンの初期ボーナスを450.0に固定してCHAIN_MERGE選択を促進する。
+ # v177: 初期段階CHAIN_MERGE探索範囲拡大版 - batch_summaryでHEIGHT_CONTROLが29.4%選択(avg_score_delta=2.4)と依然として過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
+ # 初期段階(landing_y=-3.0)でchain_distance_max=2.7と探索範囲が狭すぎ、merged_typeピースを見逃す問題を特定。v155成功例(chain_distance=5.0)と比較すると初期段階の探索範囲が半減している。
+ # chain_distance_max基本値を4.5→5.0に拡大し、初期段階の探索範囲を11%広げてCHAIN_MERGE選択率を3.8-9.2%から10-15%に引き上げる。これによりHEIGHT_CONTROL選択率を削減しスコア安定性を改善する。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -75,20 +75,17 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v176: 初期段階CHAIN_MERGEボーナス確保版
+    """v177: 初期段階CHAIN_MERGE探索範囲拡大版
 
-    batch_summary分析でHEIGHT_CONTROLが30.2%選択(avg_score_delta=1.3)と過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
-    初期段階(landing_y=-3.0~-1.0)でchain_bonus_multiplier=480.0+landing_y*150.0の動的調整により初期ボーナスが30.0〜330.0と低くなり、
-    CHAIN_MERGE機能が実質的に無効化されている問題を特定。
-    chain_distance_max基本値を3.0→4.5、chain_bonus_multiplier基本定数を300.0→450.0、動的調整係数を150.0→50.0に変更し、
-    初期12ターンの初期ボーナスを450.0に固定してCHAIN_MERGE選択を促進する。
+    batch_summary分析でHEIGHT_CONTROLが29.4%選択(avg_score_delta=2.4)と依然として過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
+    初期段階(landing_y=-3.0)でchain_distance_max=2.7と探索範囲が狭すぎ、merged_typeピースを見逃す問題を特定。
+    v155成功例(chain_distance=5.0)と比較すると初期段階の探索範囲が半減しており、CHAIN_MERGE機能が実質的に無効化されている。
 
-    v176の改善点:
-    1. 初期段階CHAIN_MERGEボーナス確保
-       - chain_distance_max基本値: 3.0 → 4.5（初期段階の探索範囲拡大）
-       - chain_bonus_multiplier基本定数: 300.0 → 450.0（初期ボーナス大幅強化）
-       - 動的調整係数: 150.0 → 50.0（初期ボーナスが打ち消される問題を解消）
-       - 初期12ターン(landing_y=-3.0)でのchain_bonus_multiplier: 30.0 → 450.0（大幅改善）
+    v177の改善点:
+    1. 初期段階CHAIN_MERGE探索範囲拡大
+       - chain_distance_max基本値: 4.5 → 5.0（初期段階の探索範囲11%拡大）
+       - landing_y=-3.0時: chain_distance_max = 3.2（v176の2.7から19%改善）
+       - v155成功例(chain_distance=5.0)との整合性を確保
     2. v175のearly_game判定(piece_count <= 12)を維持
        - 初期12ターン全体を一つのフェーズとして扱い、height_multiplier低減とEARLY_MERGE_PRIORITYを確実に適用
     3. v174のEARLY_MERGE_PRIORITY適用範囲を維持
@@ -252,20 +249,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v176: 初期段階CHAIN_MERGEボーナス確保) -----
-        # v176: batch_summaryでHEIGHT_CONTROLが30.2%選択(avg_score_delta=1.3)と過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
-        # 初期段階(landing_y=-3.0~-1.0)でchain_bonus_multiplier=480.0+landing_y*150.0の動的調整により初期ボーナスが30.0〜330.0と低くなり、
-        # CHAIN_MERGE機能が実質的に無効化されている問題を特定。
-        # chain_distance_max基本値を3.0→4.5、chain_bonus_multiplier基本定数を300.0→450.0、動的調整係数を150.0→50.0に変更し、
-        # 初期12ターンの初期ボーナスを450.0に固定してCHAIN_MERGE選択を促進する。
-        # v176: CHAIN_MERGEボーナス確保版
-        # chain_distance_max = 4.5 + landing_y * 0.6（基本値拡大、初期段階の探索範囲向上）
-        # chain_bonus_multiplier = 450.0 + landing_y * 50.0（基本定数強化、動的係数縮小で初期ボーナス確保）
-        # 例: landing_y=-3.0 → distance_max=2.7, multiplier=300.0（初期ボーナス確保）
-        # 例: landing_y=0.0 → distance_max=4.5, multiplier=450.0（初期ボーナス）
-        # 例: landing_y=1.0 → distance_max=5.1, multiplier=500.0
-        # 例: landing_y=2.0 → distance_max=5.7, multiplier=550.0
-        # 例: landing_y=3.0 → distance_max=6.3, multiplier=600.0
+        # ----- evaluation axis 6: chain merge bonus (v177: 初期段階CHAIN_MERGE探索範囲拡大) -----
+        # v177: batch_summaryでHEIGHT_CONTROLが29.4%選択(avg_score_delta=2.4)と依然として過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
+        # 初期段階(landing_y=-3.0)でchain_distance_max=2.7と探索範囲が狭すぎ、merged_typeピースを見逃す問題を特定。
+        # v155成功例(chain_distance=5.0)と比較すると初期段階の探索範囲が半減しており、CHAIN_MERGE機能が実質的に無効化されている。
+        # chain_distance_max基本値を4.5→5.0に拡大し、初期段階の探索範囲を11%広げてCHAIN_MERGE選択率を3.8-9.2%から10-15%に引き上げる。
+        # v177: CHAIN_MERGE探索範囲拡大版
+        # chain_distance_max = 5.0 + landing_y * 0.6（基本値v155成功値に復帰、初期段階の探索範囲11%拡大）
+        # chain_bonus_multiplier = 450.0 + landing_y * 50.0（v176の基本定数強化を維持）
+        # 例: landing_y=-3.0 → distance_max=3.2（v176の2.7から19%改善、v155成功例との整合性確保）
+        # 例: landing_y=-2.0 → distance_max=3.8（v176の3.3から15%改善）
+        # 例: landing_y=0.0 → distance_max=5.0（v155成功値と完全一致）
+        # 例: landing_y=1.0 → distance_max=5.6
+        # 例: landing_y=2.0 → distance_max=6.2
+        # 例: landing_y=3.0 → distance_max=6.8
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -274,15 +271,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v176: CHAIN_MERGEボーナス確保版
-                # chain_distance_max = 4.5 + landing_y * 0.6（基本値拡大、初期段階の探索範囲向上）
-                # chain_bonus_multiplier = 450.0 + landing_y * 50.0（基本定数強化、動的係数縮小で初期ボーナス確保）
-                # 例: landing_y=-3.0 → distance_max=2.7, multiplier=300.0（初期ボーナス確保）
-                # 例: landing_y=0.0 → distance_max=4.5, multiplier=450.0（初期ボーナス）
-                # 例: landing_y=1.0 → distance_max=5.1, multiplier=500.0
-                # 例: landing_y=2.0 → distance_max=5.7, multiplier=550.0
-                # 例: landing_y=3.0 → distance_max=6.3, multiplier=600.0
-                chain_distance_max = 4.5 + landing_y * 0.6
+                # v177: CHAIN_MERGE探索範囲拡大版
+                # chain_distance_max = 5.0 + landing_y * 0.6（基本値v155成功値に復帰、初期段階の探索範囲11%拡大）
+                # chain_bonus_multiplier = 450.0 + landing_y * 50.0（v176の基本定数強化を維持）
+                # 例: landing_y=-3.0 → distance_max=3.2（v176の2.7から19%改善、v155成功例との整合性確保）
+                # 例: landing_y=-2.0 → distance_max=3.8（v176の3.3から15%改善）
+                # 例: landing_y=0.0 → distance_max=5.0（v155成功値と完全一致）
+                # 例: landing_y=1.0 → distance_max=5.6
+                # 例: landing_y=2.0 → distance_max=6.2
+                # 例: landing_y=3.0 → distance_max=6.8
+                chain_distance_max = 5.0 + landing_y * 0.6
                 chain_bonus_multiplier = 450.0 + landing_y * 50.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
@@ -296,9 +294,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # sort by distance (closest first)
                 nearby_pieces.sort(key=lambda x: x[0])
 
-                # v176: CHAIN_MERGEボーナス確保版 - 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
-                # chain_distance_max=4.5（基本値強化）とchain_bonus_multiplier初期ボーナス450.0（基本定数強化）で
-                # 初期12ターンのCHAIN_MERGE選択を促進し、HEIGHT_CONTROL選択率（30.2%）を削減
+                # v177: CHAIN_MERGE探索範囲拡大版 - 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
+                # chain_distance_max=5.0（v155成功値に復帰）で初期段階の探索範囲を11%拡大し、
+                # 初期12ターンのCHAIN_MERGE選択率を3.8-9.2%から10-15%に引き上げてHEIGHT_CONTROL選択率（29.4%）を削減
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
                     chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
