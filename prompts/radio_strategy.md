@@ -3,9 +3,6 @@ ${persona_block}
 【現在時刻】${_rc_time} ${_rc_period}
 【時間帯の雰囲気】${_rc_mood}
 
-【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
-${past_topics}
-
 【状況】ゲーム${game_num}回目付近。スコア履歴: ${scores}。最高スコア: ${best_score}点。
 
 【作戦変更の差分】
