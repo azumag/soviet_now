@@ -50,6 +50,10 @@ Phases (determined by board max Y):
 # v174: 序盤CHAIN_MERGE促進版 - ワーストゲーム(score0614)で序盤（初期5ターン）にDEFAULT_PLACEMENT/BOARD_DENSITYが選択され、
 # 併合機会を逃している失敗パターンを特定。初期5ターンのheight_multiplierを0.05に強化し、BOARD_DENSITYのdensity_bonus閾値を10.0→15.0に引き上げ、
 # 序盤での無意味な配置を抑制してCHAIN_MERGE選択率を向上させる。
+# v175: CHAIN_MERGE評価範囲拡大・FAR対応版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=32.5-42.1と高価値だが選択率が3.9-8.8%と低いことを確認。
+# ワーストゲーム(score0723)で初期6ターンが全てDEFAULT_PLACEMENT/BOARD_DENSITYとなり、併合機会を逃している失敗パターンを特定。
+# merge_grade="FAR"の場合でもCHAIN_MERGE評価を有効化し、merged_typeピースが近距離(1.5以内)に存在する場合のみボーナスを適用することで、
+# 戦略的配置を促進しDEFAULT_PLACEMENT選択率を削減することでスコア安定性を向上させる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -57,21 +61,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v174: 序盤CHAIN_MERGE促進版
+    """v175: CHAIN_MERGE評価範囲拡大・FAR対応版
     
-    ワーストゲーム(score0614)で序盤（初期5ターン）にDEFAULT_PLACEMENT/BOARD_DENSITYが選択され、
-    併合機会を逃している失敗パターンを特定。初期5ターンのheight_multiplierを0.05に強化し、
-    BOARD_DENSITYのdensity_bonus閾値を10.0→15.0に引き上げ、序盤での無意味な配置を抑制してCHAIN_MERGE選択率を向上させる。
+    batch_summaryでCHAIN_MERGE関連がavg_score_delta=32.5-42.1と高価値だが選択率が3.9-8.8%と低いことを確認。
+    ワーストゲーム(score0723)で初期6ターンが全てDEFAULT_PLACEMENT/BOARD_DENSITYとなり、併合機会を逃している失敗パターンを特定。
     
-    v174の改善点:
-    1. 初期5ターン（piece_count <= 5）でのHEIGHT_CONTROL抑制を超強化
-       - height_multiplierを0.05に設定し、初期数ターンでの併合機会を最優先
-       - 高スコア群と低スコア群のmax_y推移差（初期差0.39 vs 終盤差1.64）から、
-         序盤の高さ稼ぎ能力がスコア差の主要原因であることを確認
-    2. BOARD_DENSITYのdensity_bonus閾値を10.0→15.0に引き上げ
-       - 序盤では密度差がほとんどなく、微小な密度差でのボーナス適用を抑制
-       - 中盤以降では密度差が大きくなり、有効に機能することを期待
-    3. v173のearly_game判定(max_y < -3.0)とv171のBOARD_DENSITY評価軸を維持
+    v175の改善点:
+    1. CHAIN_MERGE評価をmerge_grade="FAR"にも拡大
+       - merge_grade="FAR"の場合でもCHAIN_MERGE評価を有効化し、戦略的配置を促進
+       - merged_typeピースが近距離(1.5以内)に存在する場合のみボーナスを適用
+       - これにより併合機会がない場合でも、未来の併合に備えた配置が可能に
+    2. CHAIN_MERGEボーナス条件の厳格化
+       - 最も近いmerged_typeピースとの距離が1.5以内の場合のみ適用
+       - 距離条件を満たさない場合はCHAIN_MERGE評価を行わず、DEFAULT_PLACEMENT/BOARD_DENSITY選択を回避
+    3. v174の初期5ターン判定とBOARD_DENSITY閾値調整を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -233,8 +236,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v170: v155 parameters & dynamic adjustment) -----
-        if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
+        # ----- evaluation axis 6: chain merge bonus (v175: FAR対応版) -----
+        # v175: merge_grade="FAR"でもCHAIN_MERGE評価を有効化し、戦略的配置を促進
+        if merge_grade in ["DIRECT", "NEAR", "FAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
                 # get best merge target (closest distance)
@@ -257,24 +261,39 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # sort by distance (closest first)
                 nearby_pieces.sort(key=lambda piece: piece[0])
 
-                # v170: v155距離加重ボーナス復帰 - 3つの最も近いピースに対して、距離に応じて減衰するボーナスを適用
-                if len(nearby_pieces) >= 1:
-                    dist, _ = nearby_pieces[0]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
-                    score += chain_bonus
+                # v175: 厳格化されたCHAIN_MERGE条件
+                # DIRECT/NEAR: 従来通り距離加重ボーナスを適用
+                # FAR: 最も近いmerged_typeピースが1.5以内の場合のみ適用（戦略的配置を促進）
+                if merge_grade in ["DIRECT", "NEAR"]:
+                    # DIRECT/NEAR: 従来通りの評価
+                    if len(nearby_pieces) >= 1:
+                        dist, _ = nearby_pieces[0]
+                        chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
+                        score += chain_bonus
 
-                if len(nearby_pieces) >= 2:
-                    dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
-                    score += chain_bonus
+                    if len(nearby_pieces) >= 2:
+                        dist, _ = nearby_pieces[1]
+                        chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
+                        score += chain_bonus
 
-                if len(nearby_pieces) >= 3:
-                    dist, _ = nearby_pieces[2]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
-                    score += chain_bonus
+                    if len(nearby_pieces) >= 3:
+                        dist, _ = nearby_pieces[2]
+                        chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
+                        score += chain_bonus
 
-                if nearby_pieces:
-                    reasons.append("CHAIN_MERGE")
+                    if nearby_pieces:
+                        reasons.append("CHAIN_MERGE")
+
+                elif merge_grade == "FAR":
+                    # FAR: 最も近いmerged_typeピースが1.5以内の場合のみボーナス適用
+                    # これにより戦略的配置（未来の併合に備えた配置）を促進
+                    if len(nearby_pieces) >= 1:
+                        dist, _ = nearby_pieces[0]
+                        if dist < 1.5:  # 厳格な距離条件
+                            # ボーナスはDIRECT/NEARの50%に制限（FARは近距離ではないため）
+                            chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
+                            score += chain_bonus
+                            reasons.append("CHAIN_MERGE")
 
         # ----- evaluation axis 7: board density bonus (v171: NEW, v174: threshold adjusted) -----
         # Prefer placement on less-dense side of board to improve height gain capability
