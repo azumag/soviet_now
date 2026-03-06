@@ -185,6 +185,7 @@ manifest_file="tmp/sandbox_files.md"
 	done
 } > "$manifest_file"
 improve_ref_files+=("$manifest_file")
+[ -f "$manifest_file" ] && sandbox_ref_files+=("$manifest_file")
 
 HOST_STATUS_SNAPSHOT=$(mktemp /tmp/eloop_host_status_before.XXXXXX 2>/dev/null || echo "")
 [ -n "$HOST_STATUS_SNAPSHOT" ] && git status --porcelain >"$HOST_STATUS_SNAPSHOT" 2>/dev/null || true
