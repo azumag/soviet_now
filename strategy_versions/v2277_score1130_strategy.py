@@ -68,9 +68,9 @@ Phases (determined by board max Y):
   # v176: reactor情報活用によるマージ優先評価軸追加版 - batch_summaryでHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
   # reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を追加。
   # これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
-  # v177: MEDIUMフェーズHEIGHT_CONTROL抑制強化版 - batch_summaryでHEIGHT_CONTROLが27.5%選択(avg_score_delta=0.9)と過剰であることを確認。
-  # 高スコア群(23.9%)と低スコア群(32.5%)の比較で、低スコア群が8.6%も多くHEIGHT_CONTROLを選択していることを特定。
-  # MEDIUMフェーズのheight_multiplierを20.0→15.0に削減し、マージ選択を促進することでHEIGHT_CONTROL選択を23.9%程度まで抑制しスコア向上を目指す。
+  # v178: CRITICALフェーズ危険高さ抑制版 - batch_summaryで高スコア群が終盤avg=1.77、低スコア群が終盤avg=1.93であることを確認。
+  # アドバイスより「ゲームオーバー付近で併合判断が適切に行われていない」問題に対処。
+  # CRITICALフェーズ(max_y >= 3.0)でlanding_y > 2.0の場合、追加ペナルティ500.0を付与し、危険な高さ配置を強力に抑制する。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -78,20 +78,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v177: MEDIUMフェーズHEIGHT_CONTROL抑制強化版
+    """v178: CRITICALフェーズ危険高さ抑制版
 
-    batch_summary分析でHEIGHT_CONTROLが27.5%選択(avg_score_delta=0.9)と過剰であることを確認。
-    高スコア群(23.9%)と低スコア群(32.5%)の比較で、低スコア群が8.6%も多くHEIGHT_CONTROLを選択していることを特定。
-    MEDIUMフェーズのheight_multiplierを20.0→15.0に削減し、マージ選択を促進することでHEIGHT_CONTROL選択を抑制しスコア向上を目指す。
+    batch_summaryで高スコア群が終盤avg=1.77、低スコア群が終盤avg=1.93であることを確認。
+    アドバイスより「ゲームオーバー付近で併合判断が適切に行われていない」問題に対処。
+    CRITICALフェーズ(max_y >= 3.0)でlanding_y > 2.0の場合、追加ペナルティ500.0を付与し、危険な高さ配置を強力に抑制する。
 
-    v177の改善点:
-    1. MEDIUMフェーズHEIGHT_CONTROL抑制強化
-       - height_multiplier: 20.0→15.0に削減
-       - 高スコア群のHEIGHT_CONTROL選択率(23.9%)を目標に抑制
-    2. v176のreactor情報活用によるマージ優先評価軸を維持
-       - reactive_pair_count >= 2の場合、DIRECT/NEARマージに+500.0ボーナス
-    3. v175のMEDIUMフェーズHEIGHT_CONTROL抑制を強化
+    v178の改善点:
+    1. CRITICALフェーズ危険高さ抑制
+       - landing_y > 2.0の場合、追加ペナルティ500.0を付与
+       - ゲームオーバー直前の危険な配置を回避し、盤面を下げる選択を促進
+    2. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持
        - height_multiplier: 15.0（MEDIUMフェーズ）
+    3. v176のreactor情報活用によるマージ優先評価軸を維持
+       - reactive_pair_count >= 2の場合、DIRECT/NEARマージに+500.0ボーナス
     4. v174の初期12ターンマージ重視を維持
        - early_game判定(max_y < -2.0)とEARLY_MERGE_PRIORITY(piece_count <= 12)を維持
     5. v171のCHAIN_MERGE基本ボーナス強化を維持
@@ -220,7 +220,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         height_penalty = landing_y * height_multiplier * height_mult
 
-        if phase == "HIGH" and landing_y > 0.5:
+        if phase == "CRITICAL" and landing_y > 2.0:
+            height_penalty += 500.0
+            reasons.append("DANGER_HIGH_PLACEMENT")
+        elif phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
