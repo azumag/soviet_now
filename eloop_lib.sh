@@ -327,25 +327,43 @@ run_ai() {
 		expect_mtime_before=$(stat -f '%m' "$expect" 2>/dev/null)
 	fi
 
-	log "[$label] primary=$primary"
+	local primary_attempts="${RUN_AI_PRIMARY_RETRIES:-1}"
+	case "$primary_attempts" in
+	''|*[!0-9]*) primary_attempts=1 ;;
+	esac
+	[ "$primary_attempts" -lt 1 ] && primary_attempts=1
+
+	log "[$label] primary=$primary (attempts=$primary_attempts)"
 	local prev_cmd_log_tag="${RUN_CMD_LOG_TAG:-}"
-	RUN_CMD_LOG_TAG="${label}:primary"
-	run_cmd "$primary" "$prompt"
-	local primary_ret=$?
-	if [ -n "$expect" ]; then
-		local expect_mtime_after=""
-		[ -f "$expect" ] && expect_mtime_after=$(stat -f '%m' "$expect" 2>/dev/null)
-		if [ -s "$expect" ] && [ "$expect_mtime_after" != "$expect_mtime_before" ]; then
-			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
-			log "[$label] primary OK ($expect written)"
-			return 0
+	local primary_ret=1
+	local attempt=1
+	while [ "$attempt" -le "$primary_attempts" ]; do
+		if [ "$primary_attempts" -gt 1 ]; then
+			RUN_CMD_LOG_TAG="${label}:primary#${attempt}"
+		else
+			RUN_CMD_LOG_TAG="${label}:primary"
 		fi
-	else
-		[ "$primary_ret" -eq 0 ] && {
-			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
-			return 0
-		}
-	fi
+		run_cmd "$primary" "$prompt"
+		primary_ret=$?
+		if [ -n "$expect" ]; then
+			local expect_mtime_after=""
+			[ -f "$expect" ] && expect_mtime_after=$(stat -f '%m' "$expect" 2>/dev/null)
+			if [ -s "$expect" ] && [ "$expect_mtime_after" != "$expect_mtime_before" ]; then
+				if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+				log "[$label] primary OK ($expect written, attempt ${attempt}/${primary_attempts})"
+				return 0
+			fi
+		else
+			[ "$primary_ret" -eq 0 ] && {
+				if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+				return 0
+			}
+		fi
+		if [ "$attempt" -lt "$primary_attempts" ]; then
+			log "[$label] primary attempt ${attempt}/${primary_attempts} failed"
+		fi
+		attempt=$((attempt + 1))
+	done
 
 	log "[$label] primary failed → fallback=$fallback"
 	RUN_CMD_LOG_TAG="${label}:fallback"
