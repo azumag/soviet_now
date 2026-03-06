@@ -34,7 +34,7 @@ Phases (determined by board max Y):
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
-# v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+# [BEST:4999] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
 # v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
 # v167: 評価精度最適化版 - chain_distance 5.0→4.5縮小
 # v168: v155成功パラメータ復帰・動的調整復帰版
