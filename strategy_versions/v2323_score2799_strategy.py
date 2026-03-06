@@ -213,7 +213,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v170: v155 parameters & dynamic adjustment) -----
+        # ----- evaluation axis 6: lowest y placement (NEW: v171) -----
+        # prioritize placement near board's lowest y position to encourage vertical stacking
+        # and fill board valleys efficiently. helps reduce max_y while creating merge opportunities.
+        if pieces:
+            min_y = min(p["y"] for p in pieces)
+            # find x positions of pieces at min_y level (within tolerance)
+            min_y_positions = [p["x"] for p in pieces if p["y"] < min_y + 0.3]
+            if min_y_positions:
+                # bonus inversely proportional to distance to nearest lowest y position
+                dist_to_lowest = min(abs(x - low_x) for low_x in min_y_positions)
+                lowest_y_bonus = max(0, (1.5 - dist_to_lowest) * 80.0)
+                score += lowest_y_bonus
+                if lowest_y_bonus > 10.0:
+                    reasons.append("LOWEST_Y")
+
+        # ----- evaluation axis 7: chain merge bonus (v170: v155 parameters & dynamic adjustment) -----
         # v170: v167のchain_distance=4.5縮小がCHAIN_MERGE選択率低下（7-10%）の原因を確認。
         # v155の成功パラメータ(chain_distance=5.0, chain_bonus=450.0)を完全復帰し、
         # v157/v159の着地高動的調整を復帰することで、CHAIN_MERGE選択率を15%以上に引き上げる。
