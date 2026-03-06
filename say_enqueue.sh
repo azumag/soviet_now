@@ -168,17 +168,23 @@ _resolve_audio_device_index() {
 
 _estimate_audio_duration_sec() {
     local file="$1" d
-    command -v ffprobe >/dev/null 2>&1 || {
+    d=""
+    if command -v ffprobe >/dev/null 2>&1; then
+        d=$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 "$file" 2>/dev/null | head -1)
+        case "$d" in
+        ''|N/A|*[!0-9.]*) d="" ;;
+        esac
+    fi
+    if [ -z "$d" ] && command -v afinfo >/dev/null 2>&1; then
+        d=$(afinfo "$file" 2>/dev/null | sed -n 's/.*estimated duration: \([0-9.][0-9.]*\) sec.*/\1/p' | head -1)
+        case "$d" in
+        ''|*[!0-9.]*) d="" ;;
+        esac
+    fi
+    if [ -z "$d" ]; then
         echo 0
         return 0
-    }
-    d=$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 "$file" 2>/dev/null | head -1)
-    case "$d" in
-    ''|*[!0-9.]*)
-        echo 0
-        return 0
-        ;;
-    esac
+    fi
     awk -v v="$d" 'BEGIN { if (v < 0) v = 0; printf "%d\n", (v + 0.5) }'
 }
 
@@ -204,12 +210,17 @@ _launch_say() {
         }
         local aiff_file="${MY_CONTENT%.txt}.aiff"
         if ! say -r "$RATE" -o "$aiff_file" -f "$MY_CONTENT" >/dev/null 2>&1; then
-            _log "say音声生成失敗 → デフォルト出力にフォールバック"
-            nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
-            LAUNCHED_SAY_PID="$!"
+            _log "say音声生成失敗 (rc!=0)"
+            LAUNCHED_SAY_PID=""
             return
         fi
         LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$aiff_file")
+        if [ "${LAUNCHED_EXPECTED_SEC:-0}" -le 0 ]; then
+            _log "say音声生成失敗 (duration=${LAUNCHED_EXPECTED_SEC:-0}s)"
+            rm -f "$aiff_file" 2>/dev/null || true
+            LAUNCHED_SAY_PID=""
+            return
+        fi
         nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; [ "$rc" -eq 0 ] && rm -f "$1"; exit "$rc"' \
             _ "$aiff_file" "$device_index" >/dev/null 2>&1 &
     else
@@ -237,14 +248,20 @@ _play_with_retry() {
         local start_ts now_ts elapsed say_rc expected_sec
         start_ts=$(date +%s)
         expected_sec="${LAUNCHED_EXPECTED_SEC:-0}"
-        while kill -0 "$say_pid" 2>/dev/null; do
-            _touch_lock_heartbeat
-            sleep 1
-        done
-        wait "$say_pid"
-        say_rc=$?
-        now_ts=$(date +%s)
-        elapsed=$((now_ts - start_ts))
+        if [ -z "$say_pid" ]; then
+            say_rc=97
+            now_ts=$(date +%s)
+            elapsed=$((now_ts - start_ts))
+        else
+            while kill -0 "$say_pid" 2>/dev/null; do
+                _touch_lock_heartbeat
+                sleep 1
+            done
+            wait "$say_pid"
+            say_rc=$?
+            now_ts=$(date +%s)
+            elapsed=$((now_ts - start_ts))
+        fi
         if [ "$say_rc" -eq 0 ] && _is_truncated_playback "$elapsed" "$expected_sec"; then
             say_rc=98
             _log "say途中切断の疑い (elapsed=${elapsed}s, expected=${expected_sec}s)"
