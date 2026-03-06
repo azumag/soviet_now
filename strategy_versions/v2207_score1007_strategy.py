@@ -7,20 +7,21 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
-    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-    2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -3.0)
-    3. Drift penalty - Penalty for post-landing drift due to polygon shape
-    4. Left-right balance correction - Bonus for correcting piece count bias
-    5. nextNext centering - Center for next merge opportunity if nextNext same type (v178: 強化)
-    6. Chain merge bonus - Evaluate possibility of further merges after merge (v177: 初期段階CHAIN_MERGE探索範囲拡大)
-    7. Early game merge priority - Strong bonus for merge opportunities in early game (v175)
-    8. Board density bonus - Prefer placement on less-dense side of board (v4324/v4999 success pattern)
+Decision Logic (9 evaluation axes):
+  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+  2. Height penalty - Penalty for high landing position (varies by phase)
+  3. Drift penalty - Penalty for post-landing drift due to polygon shape
+  4. Left-right balance correction - Bonus for correcting piece count bias
+  5. nextNext centering - Center for next merge opportunity if nextNext same type (v178)
+  6. Chain merge bonus - Evaluate possibility of further merges after merge (v177)
+  7. Board density bonus - Prefer placement on less-dense side of board (v171)
+  8. Early game merge priority - Strong bonus for merge opportunities in early game (v175)
+  9. nextNext chain bonus - Evaluate possibility of nextNext merges after current merge (v181)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.2)
-  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.4)
   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
@@ -32,21 +33,27 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# refs: strategy.py.staging (v179), strategy_versions/best_score4324_strategy.py, strategy_versions/best_score4999_strategy.py
-# refs: tmp/batch_summary.txt, tmp/change_log.txt, game_history/*.jsonl
-# [BEST:3689] v126: v42-based HIGH phase merge enhancement
-# [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
-# [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
-# [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
-# [BEST:4999] v171: ボード密度評価軸追加 - BOARD_DENSITY評価軸を導入し、DEFAULT_PLACEMENT過剰選択を抑制
-# v178: NEXT_SAME中央配置ボーナス強化版 - 中央配置ボーナス50.0→80.0に強化してnextNext考慮を重視
-# v179: MEDIUM phase height_multを1.4→1.2にさらに削減してMEDIUM_TOWER選択をより促進
-# v180: BOARD_DENSITY評価軸再導入版 - v4324/v4999成功パターン復帰
-#   batch_summary分析でHEIGHT_CONTROLが26.9%選択(avg_score_delta=2.8)と依然として過剰であることを確認。
-#   低スコア群でHEIGHT_CONTROL選択率が34.4%と高スコア群（23.2%）より高いことを特定。
-#   v4324/v4999で成功したBOARD_DENSITY評価軸を再導入し、DEFAULT_PLACEMENT(x=0.0)の過剰選択を抑制。
-#   early_game判定をpiece_count <= 12からmax_y < -3.0に変更し、height_multiplierを0.2→0.1に削減して序盤のHEIGHT_CONTROL抑制を強化。
-#   ボード密度を計算し、密度が低い側への配置を優先することで盤面の高さ稼ぎ能力を向上させスコア安定性を改善。
+# refs: strategy.py.staging (v181), strategy_versions/best_score4999_strategy.py, strategy_versions/best_score4324_strategy.py
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/*.jsonl
+# [BEST:2663] v181: nextNext連鎖評価軸追加
+# v181の改善点:
+# 1. 新規評価軸「nextNext連鎖ボーナス」を追加
+#    - nextNextとnextが同じタイプの場合、nextNextも併合のチャンスがある
+#    - nextNext連鎖ボーナスを追加し、nextNextの併合機会を優先する判断を強化
+#    - これにより、nextNextの併合を逃す問題を解消（advice.mdより）
+# 2. MEDIUMフェーズheight_multを1.2→1.0に削減
+#    - 終盤に近づくほど併合を優先する
+# 3. HIGHフェーズheight_multを1.8→1.4に削減
+#    - 終盤でのHEIGHT_CONTROL選択を削減し、併合機会を確保
+# 4. CRITICALフェーズmerge_multを0.6→0.8に増加
+#    - CRITICALフェーズでの併合優先を強化
+#
+# v180から継承:
+# 1. BOARD_DENSITY評価軸再導入
+# 2. early_game判定をmax_y < -3.0に変更
+# 3. height_multiplierを0.1に削減
+# 4. CHAIN_MERGE探索範囲拡大
+# 5. EARLY_MERGE_PRIORITY評価軸
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -54,27 +61,22 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v180: BOARD_DENSITY評価軸再導入版
+    """v181: nextNext連鎖評価軸追加版
 
-    batch_summary分析でHEIGHT_CONTROLが26.9%選択(avg_score_delta=2.8)と依然として過剰であることを確認。
-    低スコア群でHEIGHT_CONTROL選択率が34.4%と高スコア群（23.2%）より高いことを特定。
+    batch_summary分析で終盤でのHEIGHT_CONTROL選択が多発し、併合機会を逃している問題を特定。
+    advice.mdで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」と指摘。
 
-    v180の改善点:
-    1. BOARD_DENSITY評価軸再導入 (v4324/v4999成功パターン復帰)
-       - ボード左右の密度を計算（ピース数および高さを考慮）
-       - 密度が低い側への配置を優先（DEFAULT_PLACEMENT過剰選択を抑制）
-       - 低スコア群と高スコア群のmax_y推移差から、序盤の中心放置が中盤以降の高さ稼ぎに失敗しているパターンを解消
-    2. early_game判定をpiece_count <= 12からmax_y < -3.0に変更
-       - v4324/v4999成功判定基準を採用し、盤面がまだ低い段階でHEIGHT_CONTROLを抑制
-    3. height_multiplierを0.2→0.1に削減
-       - v4324/v4999成功パラメータを採用し、序盤のHEIGHT_CONTROL抑制を強力化
-
-    v179から継承:
-    1. MEDIUM phase height_mult削減 (1.4→1.2)
-       - MEDIUM_TOWER選択を促進し、HEIGHT_CONTROL選択を削減
-    2. NEXT_SAME中央配置ボーナス強化 (80.0)
-    3. 初期段階CHAIN_MERGE探索範囲拡大 (chain_distance_max=5.0)
-    4. EARLY_MERGE_PRIORITY評価軸 (初期12ターンでマージ最優先)
+    v181の改善点:
+    1. 新規評価軸「nextNext連鎖ボーナス」を追加
+       - nextNextとnextが同じタイプの場合、nextNextも併合のチャンスがある
+       - nextNext連鎖ボーナスを追加し、nextNextの併合機会を優先する判断を強化
+       - これにより、nextNextの併合を逃す問題を解消
+    2. MEDIUMフェーズheight_multを1.2→1.0に削減
+       - 終盤に近づくほど併合を優先する
+    3. HIGHフェーズheight_multを1.8→1.4に削減
+       - 終盤でのHEIGHT_CONTROL選択を削減し、併合機会を確保
+    4. CRITICALフェーズmerge_multを0.6→0.8に増加
+       - CRITICALフェーズでの併合優先を強化
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -105,15 +107,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
 
-    # --- v180: early_game判定をmax_y < -3.0に変更 (v4324/v4999成功パターン復帰) ---
-    # batch_summaryでHEIGHT_CONTROLが26.9%選択(avg_score_delta=2.8)と依然として過剰であることを確認。
-    # v4324/v4999成功判定基準(max_y < -3.0)を採用し、盤面がまだ低い段階でHEIGHT_CONTROLを抑制
+    # --- v180: early_game判定をmax_y < -3.0に変更 ---
     early_game = max_y < -3.0
 
-    # --- v180: Calculate board density (for evaluation axis 8) ---
+    # --- phase judgment (v42 thresholds) ---
+    if max_y < 0.8:
+        phase = "LOW"
+        height_mult = 1.0  # low board weak height penalty
+        merge_mult = 1.2  # 20% merge bonus increase, actively target
+    elif max_y < 1.8:
+        phase = "MEDIUM"
+        height_mult = 1.0  # v181: MEDIUMフェーズheight_multを1.2→1.0に削減
+        merge_mult = 1.0
+    elif max_y < 3.0:
+        phase = "HIGH"
+        height_mult = 1.4  # v181: HIGHフェーズheight_multを1.8→1.4に削減
+        merge_mult = 1.0
+    else:
+        phase = "CRITICAL"
+        height_mult = 1.0  # CRITICAL height penalty basic value only
+        merge_mult = 0.8  # v181: CRITICALフェーズmerge_multを0.6→0.8に増加
+
+    # --- next piece information ---
+    next_piece = game_state.get("next", {})
+    next_next_piece = game_state.get("nextNext", {})
+    next_type = next_piece.get("type", 0)
+    next_next_type = next_next_piece.get("type", 0)
+
+    # --- Type-specific merge bonus calculation ---
+    merge_result_type = min(next_type + 1, 16)
+    type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
+
+    # --- v149: pre-calculate merged type (for chain judgment) ---
+    merged_type = min(next_type + 1, 16)
+
+    # --- v180: Calculate board density (for evaluation axis 7) ---
     # Count pieces and calculate weighted height on each side
     # Density is weighted by piece height to avoid stacking on already-high side
-    # This addresses the problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
     left_density = 0.0
     right_density = 0.0
     for p in pieces:
@@ -132,41 +162,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         left_density /= total_density
         right_density /= total_density
 
-    # --- phase judgment (v42 thresholds) ---
-    if max_y < 0.8:
-        phase = "LOW"
-        height_mult = 1.0  # low board weak height penalty
-        merge_mult = 1.2  # 20% merge bonus increase, actively target
-    elif max_y < 1.8:
-        phase = "MEDIUM"
-        height_mult = 1.2  # v179: MEDIUM phase height penalty relaxation (1.4->1.2)
-        merge_mult = 1.0
-    elif max_y < 3.0:
-        phase = "HIGH"
-        height_mult = 1.8  # HIGH relaxation to ensure merge opportunity
-        merge_mult = 1.0
-    else:
-        phase = "CRITICAL"
-        height_mult = 1.0  # CRITICAL height penalty basic value only
-        merge_mult = 0.6  # v42: CRITICAL phase merge suppression
-
-    # --- next piece information ---
-    next_piece = game_state.get("next", {})
-    next_next_piece = game_state.get("nextNext", {})
-    next_type = next_piece.get("type", 0)
-    next_next_type = next_next_piece.get("type", 0)
-
-    # --- Type-specific merge bonus calculation ---
-    # merge result type (next_type+1) higher means higher score value
-    # example: type1 merge -> bonus=330, type5 merge -> bonus=510, type14 merge -> bonus=1660
-    merge_result_type = min(next_type + 1, 16)
-    type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
-
-    # --- v149: pre-calculate merged type (for chain judgment) ---
-    merged_type = min(next_type + 1, 16)
-
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 8 evaluation axes
+    #  score each drop candidate (x coordinate) with 9 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -195,11 +192,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v180: early_game判定(max_y < -3.0)の場合、height_multiplierを0.1に削減(v4324/v4999成功パターン)
-        # v179: MEDIUM phase height_multを1.4→1.2にさらに削減してMEDIUM_TOWER選択をより促進
+        # v180: early_game判定(max_y < -3.0)の場合、height_multiplierを0.1に削減
+        # v181: MEDIUMフェーズheight_multを1.0に削減、HIGHフェーズheight_multを1.4に削減
         height_multiplier = 30.0
         if early_game:
-            height_multiplier = 0.1  # v180: 序盤はHEIGHT_CONTROLを超強力に抑制(v4324/v4999成功パラメータ)
+            height_multiplier = 0.1  # v180: 序盤はHEIGHT_CONTROLを超強力に抑制
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -223,12 +220,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 4: left-right balance correction (v162: enhanced) -----
         # bonus for correcting left-right piece count bias.
         # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
-        # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 50.0  # v148: HIGH balance control even stricter (40.0->50.0)
+            balance_strength = 50.0  # v148: HIGH balance control even stricter
         elif phase == "MEDIUM":
-            balance_strength = 40.0  # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
+            balance_strength = 40.0  # v162: MEDIUM phase balance correction enhanced
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -237,15 +233,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # ----- evaluation axis 5: nextNext centering (v178: 強化) -----
+        # ----- evaluation axis 5: nextNext centering (v178: enhanced) -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
         # v178: 中央配置ボーナスを強化してnextNext考慮を重視（50.0→80.0）
-        # 中央配置は盤面の整理と次のマージ機会の確保を促進する戦略的配置
+        # v181: nextNext連鎖ボーナスを追加してnextNextの併合機会を優先
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 80.0
             score += center_bonus
             reasons.append("NEXT_SAME")
+
+            # ----- evaluation axis 9: nextNext chain bonus (v181: NEW) -----
+            # if nextNext same type as current next, nextNext also has merge opportunity
+            # after current merge. Place to maximize nextNext merge opportunity
+            # This addresses the problem where nextNext merge is missed (advice.mdより)
+            if merge_grade in ["DIRECT", "NEAR"]:
+                # Calculate merged type for nextNext
+                next_next_merged_type = min(next_next_type + 1, 16)
+                
+                # Collect same type pieces as next_next_merged_type
+                nearby_next_next_pieces = []
+                for p in pieces:
+                    if p.get("type") == next_next_merged_type:
+                        dist = ((p["x"] - x) ** 2 + (p["y"] - landing_y) ** 2) ** 0.5
+                        nearby_next_next_pieces.append((dist, p))
+
+                # Sort by distance (closest first)
+                nearby_next_next_pieces.sort(key=lambda piece: piece[0])
+
+                # Apply bonus for closest next_next merged_type piece
+                if nearby_next_next_pieces:
+                    dist, _ = nearby_next_next_pieces[0]
+                    # Chain bonus based on distance to next_next merged_type piece
+                    # Stronger bonus when closer to next_next merged_type piece
+                    next_next_chain_bonus = (3.0 - min(dist, 3.0)) * 100.0
+                    score += next_next_chain_bonus
+                    reasons.append("NEXT_NEXT_CHAIN")
 
         # ----- evaluation axis 6: chain merge bonus (v177: 初期段階CHAIN_MERGE探索範囲拡大) -----
         # v177: batch_summaryでHEIGHT_CONTROLが29.4%選択(avg_score_delta=2.4)と依然として過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
