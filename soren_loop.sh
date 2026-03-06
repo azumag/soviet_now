@@ -202,6 +202,11 @@ while true; do
 	play_one_game
 	play_rc=$?
 	_abort_if_interrupted "$play_rc" "play_one_game"
+	if [ "$play_rc" -eq "${PLAY_RECOVERED_RETRY_RC:-75}" ]; then
+		log "[RECOVERY] decide例外リカバリ済み: この試合の後処理をスキップして次へ"
+		sleep 2
+		continue
+	fi
 
 	# 後処理 (スコア記録, バージョン保存, git commit 等)
 	post_game_bookkeeping

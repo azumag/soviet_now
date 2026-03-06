@@ -9,8 +9,117 @@
 #   post_game_bookkeeping()  — スコア記録、バージョン保存、git commit 等
 #   handle_soviet_celebration() — ソ連建国祝賀
 #   prepare_next_game()      — retry送信 or MOVE待ち
+#   _handle_decide_exception_recovery() — decide例外時のロールバック/再試行
 #
 # 前提: eloop_lib.sh が source 済みであること
+
+PLAY_RECOVERED_RETRY_RC=75
+
+_stop_improvement_for_runtime_recovery() {
+	local running_pid=0
+	if [ -f "$IMPROVE_STATE_FILE" ]; then
+		running_pid=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('pid',0))" 2>/dev/null || echo 0)
+	fi
+	if [ "${running_pid:-0}" -eq 0 ] && [ "${IMPROVE_PID:-0}" -ne 0 ]; then
+		running_pid="$IMPROVE_PID"
+	fi
+	if [ "${running_pid:-0}" -ne 0 ] && kill -0 "$running_pid" 2>/dev/null; then
+		local pid_cmd
+		pid_cmd=$(ps -p "$running_pid" -o command= 2>/dev/null || echo "")
+		if echo "$pid_cmd" | grep -q "eloop_improve"; then
+			log "[RECOVERY] 改善プロセス停止 (PID=$running_pid)"
+			pkill -P "$running_pid" 2>/dev/null || true
+			kill "$running_pid" 2>/dev/null || true
+			wait "$running_pid" 2>/dev/null || true
+		fi
+	fi
+	IMPROVE_PID=0
+	_write_improve_state "idle" "0" "" "runtime_recovery" "0" "decide_exception"
+}
+
+_pick_runtime_rollback_candidate() {
+	local current_hash="$1"
+
+	if [ -f "tmp/revert_strategy.py" ]; then
+		local revert_hash
+		revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
+		if [ -n "$revert_hash" ] && [ "$revert_hash" != "$current_hash" ]; then
+			echo "tmp/revert_strategy.py|previous_strategy|$revert_hash"
+			return 0
+		fi
+	fi
+
+	local best_candidate
+	best_candidate=$(_pick_best_rollback_candidate "$current_hash")
+	if [ -n "$best_candidate" ]; then
+		local h comp p50 p25 lcb n file
+		IFS='|' read -r h comp p50 p25 lcb n file <<<"$best_candidate"
+		echo "${file}|best_comp hash=${h} comp=${comp} p50=${p50} p25=${p25} lcb=${lcb} n=${n}|${h}"
+		return 0
+	fi
+
+	local vf vh
+	while IFS= read -r vf; do
+		[ -f "$vf" ] || continue
+		vh=$(python3 extract_decide_hash.py "$vf" 2>/dev/null || echo "")
+		[ -z "$vh" ] && continue
+		if [ "$vh" != "$current_hash" ]; then
+			echo "${vf}|latest_version|${vh}"
+			return 0
+		fi
+	done < <(ls -1t "$STRATEGY_VERSIONS_DIR"/v[0-9]*_strategy.py 2>/dev/null || true)
+
+	return 1
+}
+
+_handle_decide_exception_recovery() {
+	local err_msg="$1"
+	local err_turn="${2:-0}"
+	local err_score="${3:-0}"
+	log "[RECOVERY] decide例外を検出: ${err_msg} (turn=${err_turn}, score=${err_score})"
+
+	_stop_improvement_for_runtime_recovery
+
+	local current_hash rollback_line rollback_file rollback_note rollback_hash
+	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
+	rollback_line=$(_pick_runtime_rollback_candidate "$current_hash" || true)
+	if [ -n "$rollback_line" ]; then
+		IFS='|' read -r rollback_file rollback_note rollback_hash <<<"$rollback_line"
+		if [ -f "$rollback_file" ]; then
+			cp "$rollback_file" "$STRATEGY_FILE"
+			cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
+			local rolled_hash
+			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+			log "[RECOVERY] ロールバック完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
+			git add "$STRATEGY_FILE" tmp/revert_strategy.py 2>/dev/null || true
+			git commit -m "eloop Auto-revert: decide runtime exception (turn=${err_turn}, score=${err_score}, target=${rollback_note})" 2>/dev/null || true
+			git push 2>/dev/null || true
+		else
+			log "[RECOVERY] ロールバック候補ファイルなし: ${rollback_file}"
+		fi
+	else
+		log "[RECOVERY] ロールバック候補なし（現戦略のまま再試行）"
+	fi
+
+	# 戦略が切り替わる可能性が高いため蓄積データは破棄
+	_clear_accumulated_data
+
+	# 進行中ゲームは捨てて、即リトライ
+	send_retry
+
+	# 即時に改善ジョブを再起動（理由: runtime exception）
+	local recent_files recent_scores recent_count
+	recent_files=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -3 | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')
+	recent_scores=$(tail -3 score_history.txt 2>/dev/null | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+	recent_count=$(printf '%s' "$recent_scores" | awk '{print NF}')
+	[ "${recent_count:-0}" -lt 1 ] && recent_count=1
+	if _start_improvement_job "$recent_files" "$recent_scores" "false" "$recent_count" "post_regression"; then
+		log "[RECOVERY] 改善ジョブを再起動しました"
+	else
+		log "[RECOVERY] 改善ジョブ再起動に失敗（次サイクルで再試行）"
+	fi
+}
 
 #=== 1試合プレイ ===
 play_one_game() {
@@ -68,6 +177,17 @@ play_one_game() {
 	LAST_SCORE=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('score',0))" 2>/dev/null || echo 0)
 	LAST_TURNS=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turns',0))" 2>/dev/null || echo 0)
 	LAST_SOVIET=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet_created',False) else 'false')" 2>/dev/null || echo "false")
+	local runner_error runner_error_msg
+	runner_error=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || echo "")
+	runner_error_msg=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error_message',''))" 2>/dev/null || echo "")
+
+	if [ "$runner_error" = "decide_exception" ]; then
+		_handle_decide_exception_recovery "$runner_error_msg" "$LAST_TURNS" "$LAST_SCORE"
+		LAST_SCORE=0
+		LAST_TURNS=0
+		LAST_SOVIET="false"
+		return "$PLAY_RECOVERED_RETRY_RC"
+	fi
 
 	log "[RESULT] score=$LAST_SCORE turns=$LAST_TURNS"
 }
