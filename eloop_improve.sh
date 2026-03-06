@@ -134,8 +134,16 @@ for hf in "${hall_of_fame_files[@]}"; do
 	improve_ref_files+=("$hf")
 done
 
-sandbox_ref_files=("prompts/improve_strategy.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}")
+sandbox_ref_files=("prompts/improve_strategy.md" "prompts/game_theory.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}")
 [ -d "strategy_helpers" ] && sandbox_ref_files+=("strategy_helpers")
+# 全試合のJSONLをサンドボックスにコピー（AIが選択的に参照可能）
+for hf in $HISTORY_FILES; do
+	[ -f "$hf" ] && sandbox_ref_files+=("$hf")
+done
+# ゲームソースコード（物理・スコアリング・併合ロジック参照用）
+for cs in sorengame/_extracted/soren-game-fixed/Assets/SORENGAMEFIXED/Script/*.cs; do
+	[ -f "$cs" ] && sandbox_ref_files+=("$cs")
+done
 
 HOST_STATUS_SNAPSHOT=$(mktemp /tmp/eloop_host_status_before.XXXXXX 2>/dev/null || echo "")
 [ -n "$HOST_STATUS_SNAPSHOT" ] && git status --porcelain >"$HOST_STATUS_SNAPSHOT" 2>/dev/null || true
