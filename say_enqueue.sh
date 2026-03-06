@@ -140,9 +140,13 @@ _sleep_with_heartbeat() {
 }
 
 _launch_say() {
-    local -a cmd=(say -r "$RATE")
-    cmd+=(-f "$MY_CONTENT")
-    nohup bash -c 'trap "" INT TERM; "$@"' _ "${cmd[@]}" >/dev/null 2>&1 &
+    if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
+        local aiff_file="${MY_CONTENT%.txt}.aiff"
+        nohup bash -c 'trap "" INT TERM; say -r "$1" -o "$2" -f "$3" && ffmpeg -y -loglevel error -i "$2" -f audiotoolbox -audio_device_index "$4" "" && rm -f "$2"' \
+            _ "$RATE" "$aiff_file" "$MY_CONTENT" "$SAY_AUDIO_DEVICE" >/dev/null 2>&1 &
+    else
+        nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
+    fi
     LAUNCHED_SAY_PID="$!"
 }
 
@@ -212,7 +216,7 @@ fi
 
 # --- ロック内: 既存sayプロセス終了待ち（PIDファイル漏れ対策） ---
 # 絶対に重ねないことを優先し、全sayが終わるまで待機する
-while pgrep -x say >/dev/null 2>&1; do
+while pgrep -x say >/dev/null 2>&1 || { [ -n "${SAY_AUDIO_DEVICE:-}" ] && pgrep -xf "ffmpeg.*audiotoolbox" >/dev/null 2>&1; }; do
     _touch_lock_heartbeat
     [ "${_say_wait_logged:-0}" -eq 0 ] && _log "既存sayプロセス検出 → 終了待ち" && _say_wait_logged=1
     sleep 1
