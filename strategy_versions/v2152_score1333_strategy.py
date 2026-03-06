@@ -7,15 +7,15 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
- Decision Logic (8 evaluation axes):
-   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-   2. Height penalty - Penalty for high landing position (varies by phase, early_game: piece_count <= 12)
-   3. Drift penalty - Penalty for post-landing drift due to polygon shape
-   4. Left-right balance correction - Bonus for correcting piece count bias
-   5. nextNext centering - Center for next merge opportunity if nextNext same type
-   6. Chain merge bonus - Evaluate possibility of further merges after merge (v177: 初期段階CHAIN_MERGE探索範囲拡大)
-   7. Early game merge priority - Strong bonus for merge opportunities in early game (v175)
-   8. Medium tower promotion - Bonus for MEDIUM_TOWER selections in MEDIUM phase (v174)
+Decision Logic (8 evaluation axes):
+    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+    2. Height penalty - Penalty for high landing position (varies by phase, early_game: piece_count <= 12)
+    3. Drift penalty - Penalty for post-landing drift due to polygon shape
+    4. Left-right balance correction - Bonus for correcting piece count bias
+    5. nextNext centering - Center for next merge opportunity if nextNext same type (v178: 強化)
+    6. Chain merge bonus - Evaluate possibility of further merges after merge (v177: 初期段階CHAIN_MERGE探索範囲拡大)
+    7. Early game merge priority - Strong bonus for merge opportunities in early game (v175)
+    8. Medium tower promotion - Bonus for MEDIUM_TOWER selections in MEDIUM phase (v174)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -34,6 +34,7 @@ Phases (determined by board max Y):
 # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
+# v178: NEXT_SAME中央配置ボーナス強化版 - 中央配置ボーナス50.0→80.0に強化してnextNext考慮を重視
 # v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 # v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
 # v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
@@ -75,16 +76,21 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v177: 初期段階CHAIN_MERGE探索範囲拡大版
+    """v178: NEXT_SAME中央配置ボーナス強化版
 
-    batch_summary分析でHEIGHT_CONTROLが29.4%選択(avg_score_delta=2.4)と依然として過剰であること、CHAIN_MERGE選択率が3.8-9.2%と低いことを確認。
-    初期段階(landing_y=-3.0)でchain_distance_max=2.7と探索範囲が狭すぎ、merged_typeピースを見逃す問題を特定。
-    v155成功例(chain_distance=5.0)と比較すると初期段階の探索範囲が半減しており、CHAIN_MERGE機能が実質的に無効化されている。
+    advice.mdで「次の次の駒を考慮した配置戦略へ改善」という指摘を受けて実施。
+    batch_summaryで高スコア群と低スコア群の比較分析を行い、HEIGHT_CONTROLの選択率に差があることを確認（高スコア群26.1% vs 低スコア群31.5%）。
+    NEXT_SAME評価軸の中央配置ボーナスを強化してnextNext考慮を重視し、盤面の整理と次のマージ機会の確保を促進する。
 
-    v177の改善点:
+    v178の改善点:
+    1. NEXT_SAME中央配置ボーナス強化
+       - 中央配置ボーナス: 50.0 → 80.0（60%強化）
+       - nextNextがnextと同じタイプの場合、中央寄せ配置をより優先
+       - 盤面の整理と次のマージ機会の確保を促進
+
+    v177から継承:
     1. 初期段階CHAIN_MERGE探索範囲拡大
-       - chain_distance_max基本値: 4.5 → 5.0（初期段階の探索範囲11%拡大）
-       - landing_y=-3.0時: chain_distance_max = 3.2（v176の2.7から19%改善）
+       - chain_distance_max基本値: 5.0（初期段階の探索範囲確保）
        - v155成功例(chain_distance=5.0)との整合性を確保
     2. v175のearly_game判定(piece_count <= 12)を維持
        - 初期12ターン全体を一つのフェーズとして扱い、height_multiplier低減とEARLY_MERGE_PRIORITYを確実に適用
@@ -241,11 +247,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # ----- evaluation axis 5: nextNext centering -----
+        # ----- evaluation axis 5: nextNext centering (v178: 強化) -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
+        # v178: 中央配置ボーナスを強化してnextNext考慮を重視（50.0→80.0）
+        # 中央配置は盤面の整理と次のマージ機会の確保を促進する戦略的配置
         if next_next_type == next_type:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 80.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
