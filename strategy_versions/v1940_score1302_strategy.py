@@ -7,14 +7,13 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (7 evaluation axes):
+Decision Logic (6 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
   2. Height penalty - Penalty for high landing position (varies by phase)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
   6. Chain merge bonus - Evaluate possibility of further merges after merge
-  7. Board density bonus - Prefer placement on less-dense side of board
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -47,6 +46,9 @@ Phases (determined by board max Y):
 # ワーストゲーム(score0971)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
 # v171のearly_game判定(max_y < 0.0)をmax_y < -2.0に拡大し、height_multiplierを0.3→0.2に削減して、序盤のHEIGHT_CONTROL選択を強力に抑制。
 # これによりDEFAULT_PLACEMENTの選択率を減らし、併合機会を優先することでスコア安定性を向上させる。
+# v173: ボード密度評価軸削除版 - batch_summaryでBOARD_DENSITYが13.5%選択(avg_score_delta=1.0)と高頻度だが低価値であることを確認。
+# DEFAULT_PLACEMENTとBOARD_DENSITYが合計29.3%選択されているがavg_score_deltaが0.2/1.0と非常に低く、CHAIN_MERGE選択を妨げている。
+# v171で追加したボード密度評価軸を削除し、CHAIN_MERGE選択率を3.9-7.6%→10-15%に引き上げることでスコア安定性を改善。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -54,18 +56,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v172: 序盤HEIGHT_CONTROL抑制拡大・early_game判定調整版
+    """v173: ボード密度評価軸削除版
 
-    batch_summaryでDEFAULT_PLACEMENTが20.7%選択(avg_score_delta=2.2)と依然として高いことを確認。
-    ワーストゲーム(score0971)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
+    batch_summaryでBOARD_DENSITYが13.5%選択(avg_score_delta=1.0)と高頻度だが低価値であることを確認。
+    DEFAULT_PLACEMENTとBOARD_DENSITYが合計29.3%選択されているがavg_score_deltaが0.2/1.0と非常に低く、CHAIN_MERGE選択を妨げている。
+    ワーストゲーム(score0683)で序盤5ターン中3回DEFAULT_PLACEMENT/2回BOARD_DENSITYが選択され、併合機会を逃している。
 
-    v172の改善点:
-    1. early game判定をmax_y < 0.0 → max_y < -2.0に拡大
-       - ワーストゲーム序盤(max_y=-5.0～-3.07)でのDEFAULT_PLACEMENT選択を抑制
-       - 盤面がまだ低い段階（max_y < -2.0）ではHEIGHT_CONTROLを強力に抑制し、併合機会を優先
-    2. height_multiplierを0.3→0.2に削減
-       - v171の0.3でもDEFAULT_PLACEMENTが高い（20.7%）ため、さらに強力に抑制
-    3. v171のボード密度評価軸とv170の序盤HEIGHT_CONTROL抑制（max_y < 0.0, height_multiplier=0.1）を維持
+    v173の改善点:
+    1. v171で追加したボード密度評価軸（評価軸7）を削除
+       - BOARD_DENSITYが高頻度（13.5%）だが低価値（avg_score_delta=1.0）であることを確認
+       - DEFAULT_PLACEMENTとBOARD_DENSITYの合計選択率29.3%を削減し、CHAIN_MERGE選択率を向上
+    2. v172のearly_game判定（max_y < -2.0）とheight_multiplier=0.2を維持
+       - 序盤のHEIGHT_CONTROL抑制を維持し、併合機会を最優先
+    3. v170のv155成功パラメータ（chain_distance=5.0, chain_bonus=450.0）と動的調整を維持
+       - ボード密度評価軸削除によりCHAIN_MERGE選択率を3.9-7.6%→10-15%に引き上げることを期待
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -129,29 +133,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
 
-    # --- v171: Calculate board density (for new evaluation axis 7) ---
-    # Count pieces and calculate weighted height on each side
-    # Density is weighted by piece height to avoid stacking on already-high side
-    left_density = 0.0
-    right_density = 0.0
-    for p in pieces:
-        x = p["x"]
-        y = p["y"]
-        # Weight density by height (higher pieces contribute more to density)
-        weight = max(0, y + 4.0)  # y=-4.48 at bottom, so shift to positive
-        if x < 0:
-            left_density += weight
-        else:
-            right_density += weight
-
-    # Normalize densities
-    total_density = left_density + right_density
-    if total_density > 0:
-        left_density /= total_density
-        right_density /= total_density
-
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 7 evaluation axes
+    #  score each drop candidate (x coordinate) with 6 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -260,24 +243,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
-
-        # ----- evaluation axis 7: board density bonus (v171: NEW) -----
-        # Prefer placement on less-dense side of board to improve height gain capability
-        # This addresses the problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
-        # Low-score games often place pieces in center early, which reduces height gain capability in mid/late game
-        if not reasons or merge_grade == "NO":
-            # Only apply when no strong merge reason exists (avoid overriding merge opportunities)
-            if x < 0:
-                # Placing on left side: bonus if right side is more dense
-                density_bonus = (right_density - left_density) * 50.0
-            else:
-                # Placing on right side: bonus if left side is more dense
-                density_bonus = (left_density - right_density) * 50.0
-
-            # Apply bonus (positive means placing on less-dense side)
-            if density_bonus > 10.0:  # Only add reason if density difference is significant
-                score += density_bonus
-                reasons.append("BOARD_DENSITY")
 
         # ----- update best candidate -----
         if score > best_score:
