@@ -241,10 +241,10 @@ _play_with_retry() {
         say_pid="${LAUNCHED_SAY_PID:-}"
         if [ -z "$say_pid" ]; then
             _log "say起動失敗"
-            return 1
+        else
+            LAST_SAY_PID="$say_pid"
+            echo "$say_pid" > "$PID_FILE"
         fi
-        LAST_SAY_PID="$say_pid"
-        echo "$say_pid" > "$PID_FILE"
         local start_ts now_ts elapsed say_rc expected_sec
         start_ts=$(date +%s)
         expected_sec="${LAUNCHED_EXPECTED_SEC:-0}"
