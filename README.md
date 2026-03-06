@@ -128,6 +128,12 @@ MODEL_FALLBACK="opencode:glmflash"  # フォールバック
 ```
 
 `run_ai()` は PRIMARY でまず実行し、期待出力が得られなければ FALLBACK に切り替える。
+`eloop_improve.sh` では `RUN_AI_PRIMARY_RETRIES=3` がデフォルトで設定されており、改善フェーズでは PRIMARY を最大3回試行してから FALLBACK に切り替える。
+
+```bash
+# 例: PRIMARYの試行回数を上書き
+RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
+```
 
 #### モデルスペックと CLI マッピング
 
@@ -267,6 +273,10 @@ AI ループの稼働状況は以下で監視できる。
 
 - `Ctrl+C` で終了
 - 互換コマンドとして `./show_status.sh` / `./show_status_g.sh` も引き続き利用可能
+- `show-status` は改善中の `tmp/improve_ai.log` から **最新AI実行の出力を複数行**表示する（`AIOutput`）
+- 表示調整:
+  - `SHOW_STATUS_AI_OUTPUT_LINES` (既定: `6`) — 表示する `AIOutput` 行数
+  - `SHOW_STATUS_AI_TAIL_LINES` (既定: `400`) — ログ解析時に末尾から読む行数
 
 ## コマンドインターフェース
 
