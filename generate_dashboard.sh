@@ -74,6 +74,10 @@ cat > score_dashboard.html <<HTMLEOF
   .stat-value.avg { color: #4ecdc4; }
   .stat-value.games { color: #a78bfa; }
   .stat-value.recent { color: #f97316; }
+  .stat-value.trend { font-size: 1.15em; }
+  .stat-value.trend-up { color: #86efac; }
+  .stat-value.trend-flat { color: #94a3b8; }
+  .stat-value.trend-down { color: #fb923c; }
   .rank-label { font-size: 0.6em; vertical-align: super; margin-right: 2px; }
   .chart-container {
     position: relative;
@@ -115,6 +119,7 @@ cat > score_dashboard.html <<HTMLEOF
   <div class="stat"><div class="stat-label">Average</div><div class="stat-value avg" id="avg">-</div></div>
   <div class="stat"><div class="stat-label">Games</div><div class="stat-value games" id="games">-</div></div>
   <div class="stat"><div class="stat-label">Recent 10 Avg</div><div class="stat-value recent" id="recent">-</div></div>
+  <div class="stat"><div class="stat-label">Trend</div><div class="stat-value trend" id="trend">-</div></div>
 </div>
 <div class="chart-container">
   <canvas id="chart"></canvas>
@@ -122,6 +127,7 @@ cat > score_dashboard.html <<HTMLEOF
     <div class="legend-item"><span class="legend-dot" style="background:#4ecdc4"></span> Score</div>
     <div class="legend-item"><span class="legend-dot" style="background:#ffd700"></span> Best</div>
     <div class="legend-item"><span class="legend-dot" style="background:rgba(255,107,107,0.8)"></span> 10-game Moving Avg</div>
+    <div class="legend-item"><span class="legend-dot" style="background:rgba(148,163,184,0.9)"></span> Overall Trend (Up/Flat/Down)</div>
     <div class="legend-item"><span class="legend-dot" style="background:rgba(78,205,196,0.15)"></span> Overall Avg</div>
   </div>
 </div>
@@ -139,6 +145,43 @@ function movingAvg(scores, w) {
     const sl = scores.slice(Math.max(0, i - w + 1), i + 1);
     return sl.reduce((s, d) => s + d.score, 0) / sl.length;
   });
+}
+
+function linearTrend(scores) {
+  const n = scores.length;
+  if (!n) return { slope: 0, intercept: 0, r2: 0, y0: 0, yN: 0, dir: 'flat' };
+  if (n === 1) {
+    const y = scores[0].score;
+    return { slope: 0, intercept: y, r2: 1, y0: y, yN: y, dir: 'flat' };
+  }
+
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, sumYY = 0;
+  scores.forEach((d, i) => {
+    const x = i;
+    const y = d.score;
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+    sumYY += y * y;
+  });
+
+  const den = n * sumXX - sumX * sumX;
+  const slope = den === 0 ? 0 : (n * sumXY - sumX * sumY) / den;
+  const intercept = (sumY - slope * sumX) / n;
+
+  const corrDen = Math.sqrt(
+    Math.max(0, (n * sumXX - sumX * sumX) * (n * sumYY - sumY * sumY))
+  );
+  const corrNum = n * sumXY - sumX * sumY;
+  const r = corrDen === 0 ? 0 : corrNum / corrDen;
+  const r2 = Math.max(0, Math.min(1, r * r));
+
+  const y0 = intercept;
+  const yN = intercept + slope * (n - 1);
+  const absSlope = Math.abs(slope);
+  const dir = absSlope < 1.5 ? 'flat' : (slope > 0 ? 'up' : 'down');
+  return { slope, intercept, r2, y0, yN, dir };
 }
 
 function drawChart(scores) {
@@ -160,6 +203,7 @@ function drawChart(scores) {
   const recent10 = scores.slice(-10);
   const recent10Avg = recent10.reduce((s, d) => s + d.score, 0) / recent10.length;
   const ma = movingAvg(scores, 10);
+  const trend = linearTrend(scores);
 
   document.getElementById('best').textContent = maxScore;
   document.getElementById('second').textContent = secondScore;
@@ -167,6 +211,21 @@ function drawChart(scores) {
   document.getElementById('avg').textContent = Math.round(avgScore);
   document.getElementById('games').textContent = scores.length;
   document.getElementById('recent').textContent = Math.round(recent10Avg);
+  const trendEl = document.getElementById('trend');
+  const slopeRounded = (Math.round(trend.slope * 10) / 10).toFixed(1);
+  const fitPct = Math.round(trend.r2 * 100);
+  if (trend.dir === 'up') {
+    trendEl.textContent = 'UP ' + '+' + slopeRounded + '/g';
+  } else if (trend.dir === 'down') {
+    trendEl.textContent = 'DOWN ' + slopeRounded + '/g';
+  } else {
+    trendEl.textContent = 'STABLE ' + slopeRounded + '/g';
+  }
+  trendEl.title = 'line fit=' + fitPct + '%';
+  trendEl.classList.remove('trend-up', 'trend-flat', 'trend-down');
+  trendEl.classList.add(
+    trend.dir === 'up' ? 'trend-up' : (trend.dir === 'down' ? 'trend-down' : 'trend-flat')
+  );
 
   const padL = 55, padR = 20, padT = 20, padB = 40;
   const cW = W - padL - padR, cH = H - padT - padB;
@@ -222,6 +281,25 @@ function drawChart(scores) {
   ctx.beginPath();
   ma.forEach((v, i) => { const x = xScale(i), y = yScale(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
   ctx.stroke();
+
+  const trendColor = trend.dir === 'up'
+    ? 'rgba(134,239,172,0.9)'
+    : (trend.dir === 'down' ? 'rgba(251,146,60,0.9)' : 'rgba(148,163,184,0.9)');
+  ctx.strokeStyle = trendColor;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([10, 6]);
+  ctx.beginPath();
+  ctx.moveTo(xScale(0), yScale(trend.y0));
+  ctx.lineTo(xScale(scores.length - 1), yScale(trend.yN));
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = trendColor;
+  ctx.font = '10px monospace';
+  const trendLabel = 'trend ' + trend.dir + ' ' +
+    (trend.slope >= 0 ? '+' : '') + slopeRounded + '/game fit=' + fitPct + '%';
+  const trendMidY = yScale((trend.y0 + trend.yN) / 2);
+  const trendLabelY = Math.max(padT + 12, Math.min(H - padB - 8, trendMidY - 8));
+  ctx.fillText(trendLabel, padL + 4, trendLabelY);
 
   // Highlight top 3 scores on chart
   const rankMarkers = [
