@@ -115,14 +115,12 @@ Phases (determined by board max Y):
 # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_004349_score0336.jsonl, game_history/20260308_004123_score1909.jsonl,
 # strategy_versions/best_score5310_strategy.py, strategy_versions/best_score4999_strategy.py, analyze_board.py
 #
-# v185: 初期12ターンマージ優先強化版 - batch_summaryでHEIGHT_CONTROLが27.0%選択(avg_score_delta=1.6)と依然として過剰であることを確認。
-# 高スコア群(22.1%)と低スコア群(32.7%)の比較で、低スコア群が10.6%も多くHEIGHT_CONTROLを選択していることを特定。
-# ワーストゲーム(score0386)で初期12ターンのうちEARLY_MERGE_PRIORITYが3回のみであるのに対し、
-# ベストゲーム(score2365)では初期12ターンでEARLY_MERGE_PRIORITYが6回であることを確認。
-# 初期12ターンでのマージ優先を強化するため、EARLY_MERGE_PRIORITYボーナスを800.0→1000.0に強化し、
-# 初期段階でのHEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_012647_score0386.jsonl, game_history/20260308_011823_score2365.jsonl,
-# strategy_versions/best_score2346_strategy.py, analyze_board.py
+ # v186: reactive_pairs >= 2時のマージ優先ボーナス強化版 - batch_summaryでHEIGHT_CONTROLが26.0%選択(avg_score_delta=3.4)と依然として過剰であることを確認。
+ # 高スコア群(23.1%)と低スコア群(29.6%)の比較で、低スコア群が6.5%も多くHEIGHT_CONTROLを選択していることを特定。
+ # ワーストゲーム(score0724)のturn 12でreactive_pairs=3にも関わらずHEIGHT_CONTROLを選択し、併合機会を逃している失敗パターンを特定。
+ # reactive_pairs >= 2時のREACTIVE_MERGE_PRIORITYボーナスを500.0→700.0に強化し、盤面に多数の併合機会がある状況でマージ選択を優先させる。
+ # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_020939_score0724.jsonl, game_history/20260308_021732_score2655.jsonl,
+ # strategy_versions/best_score2346_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -130,21 +128,21 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v185: 初期12ターンマージ優先強化版
+    """v186: reactive_pairs >= 2時のマージ優先ボーナス強化版
 
-    batch_summaryでHEIGHT_CONTROLが27.0%選択(avg_score_delta=1.6)と依然として過剰であることを確認。
-    高スコア群(22.1%)と低スコア群(32.7%)の比較で、低スコア群が10.6%も多くHEIGHT_CONTROLを選択していることを特定。
-    ワーストゲーム(score0386)で初期12ターンのうちEARLY_MERGE_PRIORITYが3回のみであるのに対し、
-    ベストゲーム(score2365)では初期12ターンでEARLY_MERGE_PRIORITYが6回であることを確認。
+    batch_summaryでHEIGHT_CONTROLが26.0%選択(avg_score_delta=3.4)と依然として過剰であることを確認。
+    高スコア群(23.1%)と低スコア群(29.6%)の比較で、低スコア群が6.5%も多くHEIGHT_CONTROLを選択していることを特定。
+    ワーストゲーム(score0724)のturn 12でreactive_pairs=3にも関わらずHEIGHT_CONTROLを選択し、併合機会を逃している失敗パターンを特定。
 
-    v185の改善点:
-     1. EARLY_MERGE_PRIORITYボーナス強化（800.0→1000.0）
-        - 初期12ターンでのNEAR_MERGE機会の評価を高め、HEIGHT_CONTROL選択を抑制
-     2. v184の併合機会がある時のHEIGHT_CONTROL条件付抑制を維持
+    v186の改善点:
+     1. REACTIVE_MERGE_PRIORITYボーナス強化（500.0→700.0）
+        - reactive_pairs >= 2の時、盤面に多数の併合機会がある状況でマージ選択を優先
+        - HEIGHT_CONTROL選択を抑制し、スコア安定性を向上
+     2. v185の初期12ターンマージ優先を維持（EARLY_MERGE_PRIORITY=1000.0）
+     3. v184の併合機会がある時のHEIGHT_CONTROL条件付抑制を維持
         - reactive_pairs >= 1 or nextNext == next_type の場合、height_multiplier=5.0
-     3. v180のnextNext 2手先評価統合を維持
-     4. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持（height_multiplier: 15.0）
-     5. v176のreactor情報活用によるマージ優先評価軸を維持（reactive_pair_count >= 2で+500.0）
+     4. v180のnextNext 2手先評価統合を維持
+     5. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持（height_multiplier: 15.0）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -354,7 +352,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactor情報のreactive_pairs（反応性のあるペア）が2つ以上ある場合、盤面に多数の併合機会があることを示唆。
         # この状況でマージを優先することでHEIGHT_CONTROL選択を抑制しスコア安定性を向上させる。
         if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
-            score += 500.0
+            score += 700.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8: MEDIUM_TOWER selection promotion (v174) -----
