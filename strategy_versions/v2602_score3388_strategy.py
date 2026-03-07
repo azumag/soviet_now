@@ -7,14 +7,15 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (7 evaluation axes):
+Decision Logic (8 evaluation axes):
    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-   2. Height penalty - Penalty for high landing position (varies by phase)
+   2. Height penalty - Penalty for high landing position (varies by phase and landing height)
    3. Drift penalty - Penalty for post-landing drift due to polygon shape
    4. Left-right balance correction - Bonus for correcting piece count bias
    5. nextNext centering - Center for next merge opportunity if nextNext same type
    6. Chain merge bonus - Evaluate possibility of further merges after merge (v158: dynamic adjustment with reduced height penalty)
-   7. NextNext chain bonus - Evaluate possibility of nextNext merges after current merge (NEW)
+   7. Reactive merge priority - Bonus for merge when reactive_pairs >= 2 (v161: reactor-aware)
+   8. NextNext chain bonus - Evaluate possibility of nextNext merges after current merge (v159: NEW)
 
 Phases (determined by board max Y):
    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -42,7 +43,12 @@ Phases (determined by board max Y):
 # これにより、盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処し、CHAIN_MERGE選択を促進する。
 # v160: MEDIUMフェーズHEIGHT_CONTROL抑制版 - batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）。
 # MEDIUMフェーズでheight_multiplierを45.0→30.0に削減し、HEIGHT_CONTROL過剰選択を抑制して併合選択を促進することでスコア安定性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260307_194847_score0553.jsonl, game_history/20260307_202436_score3912.jsonl, strategy_versions/best_score4999_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
+# v161: reactor情報活用併用版 - batch_summaryで低スコア群がHEIGHT_CONTROLを37.1%選択していることを確認（高スコア群は22.2%）。
+# reactor情報のreactive_pairsを活用し、2つ以上ある場合にマージを優先する評価軸を追加。
+# v162: CRITICALフェーズ着地高抑制版 - batch_summaryで低スコア群がHEIGHT_CONTROLを32.4%選択していることを確認（高スコア群は23.4%）。
+# CRITICALフェーズで着地高が非常に高い場合（landing_y>2.5）、height_multiplierを45.0→15.0に大幅に削減し、
+# 危険な状況でのHEIGHT_CONTROL選択を抑制してマージを促進することで、スコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260307_214739_score0806.jsonl, game_history/20260307_212230_score4022.jsonl, strategy_versions/best_score4999_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -50,18 +56,17 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v161: reactor情報活用併用版
+    """v162: CRITICALフェーズ着地高抑制版
 
-    batch_summaryで低スコア群がHEIGHT_CONTROLを37.1%選択していることを確認（高スコア群は22.2%）。
-    reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を追加。
-    これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を構造的に抑制しスコア安定性を向上させる。
-    MEDIUMフェーズのheight_multiplierを30.0→20.0に削減し、マージ選択を促進。
+    batch_summaryで低スコア群がHEIGHT_CONTROLを32.4%選択していることを確認（高スコア群は23.4%）。
+    低スコア群が9.0%も多くHEIGHT_CONTROLを選択していることを特定。
+    CRITICALフェーズで着地高が非常に高い場合（landing_y>2.5）、height_multiplierを45.0→15.0に大幅に削減し、
+    危険な状況でのHEIGHT_CONTROL選択を抑制してマージを促進することで、スコア安定性を向上させる。
 
-    v159から継承:
-    - nextNext 2手先評価軸（盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に対処）
-
-    v160から継承:
-    - MEDIUMフェーズheight_multiplier削減（30.0→20.0）
+    v161から継承:
+    - reactor情報活用による併合優先評価軸（reactive_pairs>=2でマージ優先）
+    - MEDIUMフェーズheight_multiplier削減（20.0）
+    - nextNext 2手先評価軸
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -133,7 +138,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 7 evaluation axes
+    #  score each drop candidate (x coordinate) with 8 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -168,6 +173,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_multiplier = 45.0
         if phase == "MEDIUM":
             height_multiplier = 20.0  # v161: MEDIUMフェーズheight_multiplier削減（30.0→20.0）
+        elif phase == "CRITICAL" and landing_y > 2.5:
+            height_multiplier = 15.0  # v162: CRITICALフェーズで着地高が非常に高い場合、height_multiplierを抑制しマージを促進
         # v161: reactor_pairs >= 2の場合、height_multiplierをさらに抑制しマージ選択を促進
         if has_many_merge_opps:
             height_multiplier = height_multiplier * 0.7  # 30%削減（MEDIUM: 14.0, HIGH: 12.6, LOW/CRITICAL: 基本値）
@@ -277,7 +284,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 7: reactive merge priority (v161: NEW) -----
+        # ----- evaluation axis 7: reactive merge priority (v161: reactor-aware) -----
         # v161: reactor情報活用による併合優先評価軸追加版
         # batch_summaryでHEIGHT_CONTROLが27.5%選択(avg_score_delta=2.4)と依然として過剰であることを確認
         # 高スコア群(22.2%)と低スコア群(37.1%)の比較で、低スコア群が14.9%も多くHEIGHT_CONTROLを選択していることを特定
@@ -289,7 +296,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += reactive_merge_bonus
             reasons.append("REACTIVE_MERGE")
 
-        # ----- evaluation axis 8: nextNext chain bonus (v159: v161: 軴用) -----
+        # ----- evaluation axis 9: nextNext chain bonus (v159: NEW) -----
         # v159: nextNextが現在nextと同じtypeの場合、2連鎖評価を追加し「現在併合→nextNext併合」を促進。
         # 盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処。
         if next_next_type == next_type and merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
