@@ -1405,6 +1405,18 @@ _radio_generate_and_play() {
 		shift
 	done
 
+	# コメントキューが残っている間は新規トーク生成を止める（コメント消化を優先）
+	local comment_queued=0 comment_playing=0 comment_total=0
+	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
+	comment_queued=${comment_queued:-0}
+	comment_playing=${comment_playing:-0}
+	comment_total=$((comment_queued + comment_playing))
+	if [ "$comment_total" -gt 0 ]; then
+		log "[RADIO:${corner_name}] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing})"
+		rm -f "$prompt_file" 2>/dev/null || true
+		return 0
+	fi
+
 	# 同一 game_num + corner の二重生成/二重再生を防止
 	local done_marker="tmp/.radio_done_${game_num}_${corner_name}"
 	if [ -f "$done_marker" ]; then
@@ -2301,7 +2313,8 @@ schedule_nonessential_audio_jobs() {
 	local news_phase=1
 	local radio_interval=5
 	local radio_phase=0
-	local comment_backlog_skip_threshold=4
+	# キューが1件でもあれば新規トーク生成を止める
+	local comment_backlog_skip_threshold=1
 
 	local comment_queued=0 comment_playing=0 comment_total=0
 	local skip_nonessential_radio=false
