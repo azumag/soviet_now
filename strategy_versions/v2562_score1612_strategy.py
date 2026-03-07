@@ -8,19 +8,19 @@ Game Overview:
   - Player controls only drop X coordinate
 
 Decision Logic (7 evaluation axes):
-  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase)
-  3. Drift penalty - Penalty for post-landing drift due to polygon shape
-  4. Left-right balance correction - Bonus for correcting piece count bias
-  5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v158: dynamic adjustment with reduced height penalty)
-  7. NextNext chain bonus - Evaluate possibility of nextNext merges after current merge (NEW)
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase)
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Left-right balance correction - Bonus for correcting piece count bias
+   5. nextNext centering - Center for next merge opportunity if nextNext same type
+   6. Chain merge bonus - Evaluate possibility of further merges after merge (v158: dynamic adjustment with reduced height penalty)
+   7. NextNext chain bonus - Evaluate possibility of nextNext merges after current merge (NEW)
 
 Phases (determined by board max Y):
-  LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8)
-  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-  CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8)
+   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
 # Fixed interface:
@@ -40,6 +40,8 @@ Phases (determined by board max Y):
 # v159: nextNext 2手先評価軸追加版 - batch_summary/adviceで「A上にBを置くとnextNextの併合を逃す」問題に対処。
 # nextNextが現在nextと同じtypeの場合、「現在併合→nextNextで更に併合」の2連鎖を評価する評価軸を追加。
 # これにより、盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処し、CHAIN_MERGE選択を促進する。
+# v160: MEDIUMフェーズHEIGHT_CONTROL抑制版 - batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）。
+# MEDIUMフェーズでheight_multiplierを45.0→30.0に削減し、HEIGHT_CONTROL過剰選択を抑制して併合選択を促進することでスコア安定性を向上させる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -47,10 +49,13 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v159: nextNext 2手先評価軸追加版
+    """v160: MEDIUMフェーズHEIGHT_CONTROL抑制版
 
-    batch_summary/adviceで「A上にBを置くとnextNextの併合を逃す」問題に対処。
-    nextNextが現在nextと同じtypeの場合、「現在併合→nextNextで更に併合」の2連鎖を評価する評価軸を追加。
+    batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）。
+    MEDIUMフェーズでheight_multiplierを45.0→30.0に削減し、HEIGHT_CONTROL過剰選択を抑制して併合選択を促進する。
+
+    v159から継承:
+    - nextNext 2手先評価軸（盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に対処）
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -143,9 +148,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v158: height_multiplier reduced from 50.0 to 45.0 to promote merge opportunities
+        # v160: MEDIUMフェーズでheight_multiplierを45.0→30.0に削減しHEIGHT_CONTROL過剰選択を抑制
+        # batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
-        height_penalty = landing_y * 45.0 * height_mult
+        height_multiplier = 45.0
+        if phase == "MEDIUM":
+            height_multiplier = 30.0  # v160: MEDIUMフェーズで併合選択を促進
+        height_penalty = landing_y * height_multiplier * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
