@@ -48,13 +48,13 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v179: reactor情報活用による併合優先評価軸追加版
+    """v180: nextNext 2手先評価統合版
     
-    batch_summaryでHEIGHT_CONTROLが26.3%選択(avg_score_delta=1.6)と過剰であることを確認。
-    v175-v178のパラメータ調整では改善できず、構造的変更としてreactor情報のreactive_pairs（反応性のあるペア）を活用。
-    reactive_pairs >= 2の場合、盤面に複数の併合機会があるためheight_multiplierを0.5に抑制し、
-    併合ボーナスを1.5倍に強化してマージを優先する評価軸を追加。
-    これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を構造的に抑制しスコア安定性を向上させる。
+    batch_summaryでHEIGHT_CONTROLが22.6%選択(avg_score_delta=0.2)と過剰であることを確認。
+    CHAIN_MERGE関連が3-7%選択率しかないが、avg_score_delta=20-75と非常に高いスコア寄与がある。
+    v179のreactive_pairs活用は方向性は合っているが、CHAIN_MERGE自体の選択を促進できていない。
+    nextNextが現在nextと同じtypeの場合、「現在併合 → nextNextで更に併合」の2連鎖を評価するロジックをCHAIN_MERGEに統合。
+    これにより、盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処。
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -215,9 +215,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v157: 着地高動的調整・CHAIN_MERGE促進版) -----
+        # ----- evaluation axis 6: chain merge bonus (v180: nextNext 2手先評価統合版) -----
         # v157: 単純なパラメータ調整ではなく、着地高に応じた動的調整を導入。
         # HIGH_LAYER状況でのCHAIN_MERGE選択を強制的に誘導し、HEIGHT_CONTROLの選択を減らす構造的改善。
+        # v180: nextNextが現在nextと同じtypeの場合、2連鎖評価を追加し「現在併合→nextNext併合」を促進。
         # chain_distanceとchain_bonus_multiplierは着地高に応じて動的に調整され、
         # 高度が高いほど評価範囲を拡大し、より強力なボーナスを与える。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
@@ -251,8 +252,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 # bonus calculation from closest 3 pieces using dynamic multiplier
                 # 1st: (chain_distance_max - dist) * chain_bonus_multiplier
-                # 2nd: (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
-                # 3rd: (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
+                #2nd: (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
+                #3rd: (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
                     chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
@@ -270,6 +271,47 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
+
+                # ----- v180: nextNext 2手先評価（盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題への対処） -----
+                # nextNextが現在nextと同じtypeの場合、「現在併合 → nextNextで更に併合」の2連鎖を評価
+                if next_next_type == next_type:
+                    # 併合後type+1ピースとnextNext(type)の併合可能性を評価
+                    # 着地予測は簡略化し、併合ターゲットと同じ座標を使用（着地予測の複雑さを回避）
+                    next_next_merged_type = min(next_next_type + 1, 16)
+                    
+                    # nextNext併合用の距離とボーナスマルチプライヤ
+                    next_next_chain_distance_max = 5.0 + landing_y * 0.6
+                    next_next_chain_bonus_multiplier = 450.0 + landing_y * 150.0
+                    
+                    # nextNext併合ターゲットを探索
+                    next_next_nearby_pieces = []
+                    for p in pieces:
+                        if p.get("type") == next_next_type:
+                            dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                            if dist < next_next_chain_distance_max:
+                                next_next_nearby_pieces.append((dist, p))
+                    
+                    # 距離ソート
+                    next_next_nearby_pieces.sort(key=lambda x: x[0])
+                    
+                    # nextNext連鎖ボーナス計算（最も近い3ピースに対して）
+                    if len(next_next_nearby_pieces) >= 1:
+                        dist, _ = next_next_nearby_pieces[0]
+                        next_next_chain_bonus = (next_next_chain_distance_max - dist) * next_next_chain_bonus_multiplier
+                        score += next_next_chain_bonus
+                    
+                    if len(next_next_nearby_pieces) >= 2:
+                        dist, _ = next_next_nearby_pieces[1]
+                        next_next_chain_bonus = (next_next_chain_distance_max - dist) * next_next_chain_bonus_multiplier * 0.5
+                        score += next_next_chain_bonus
+                    
+                    if len(next_next_nearby_pieces) >= 3:
+                        dist, _ = next_next_nearby_pieces[2]
+                        next_next_chain_bonus = (next_next_chain_distance_max - dist) * next_next_chain_bonus_multiplier * 0.25
+                        score += next_next_chain_bonus
+                    
+                    if next_next_nearby_pieces:
+                        reasons.append("NEXT_NEXT_CHAIN")
 
         # ----- update best candidate -----
         if score > best_score:
