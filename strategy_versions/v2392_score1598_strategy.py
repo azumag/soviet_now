@@ -7,14 +7,15 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (7 evaluation axes):
-  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -3.0)
-  3. Drift penalty - Penalty for post-landing drift due to polygon shape
-  4. Left-right balance correction - Bonus for correcting piece count bias
-  5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
-  7. Early game merge priority - Strong bonus for merge opportunities in early game (v172)
+Decision Logic (8 evaluation axes):
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -3.0)
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Left-right balance correction - Bonus for correcting piece count bias
+   5. nextNext centering - Center for next merge opportunity if nextNext same type
+   6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
+   7. Early game merge priority - Strong bonus for merge opportunities in early game (v172)
+   8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (v176)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -287,6 +288,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # これにより初期段階でのマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 800.0
             reasons.append("EARLY_MERGE_PRIORITY")
+
+        # ----- evaluation axis 8: reactive merge priority (v176: 新規追加) -----
+        # reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する。
+        # 盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
+        reactor = analysis.get("reactor", {})
+        reactive_pairs = reactor.get("reactive_pairs", [])
+        reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
+        if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            # 盤面に2つ以上の反応性ペアがある場合、マージを優先
+            score += 500.0
+            reasons.append("REACTIVE_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:
