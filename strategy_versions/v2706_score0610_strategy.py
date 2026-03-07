@@ -115,12 +115,13 @@ Phases (determined by board max Y):
 # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_004349_score0336.jsonl, game_history/20260308_004123_score1909.jsonl,
 # strategy_versions/best_score5310_strategy.py, strategy_versions/best_score4999_strategy.py, analyze_board.py
 #
- # v186: reactive_pairs >= 2時のマージ優先ボーナス強化版 - batch_summaryでHEIGHT_CONTROLが26.0%選択(avg_score_delta=3.4)と依然として過剰であることを確認。
- # 高スコア群(23.1%)と低スコア群(29.6%)の比較で、低スコア群が6.5%も多くHEIGHT_CONTROLを選択していることを特定。
- # ワーストゲーム(score0724)のturn 12でreactive_pairs=3にも関わらずHEIGHT_CONTROLを選択し、併合機会を逃している失敗パターンを特定。
- # reactive_pairs >= 2時のREACTIVE_MERGE_PRIORITYボーナスを500.0→700.0に強化し、盤面に多数の併合機会がある状況でマージ選択を優先させる。
- # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_020939_score0724.jsonl, game_history/20260308_021732_score2655.jsonl,
- # strategy_versions/best_score2346_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
+  # v187: 近接マージ機会によるHEIGHT_CONTROL抑制版 - batch_summaryでHEIGHT_CONTROLが28.1%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
+  # 高スコア群と低スコア群の比較で、低スコア群が4.4%も多くHEIGHT_CONTROLを選択していることを特定。
+  # ワーストゲーム(score0572)で初期4ターン全てHEIGHT_CONTROLを選択し、併合機会を逃している失敗パターンを特定。
+  # 即時マージがない場合でも、配置により次回マージ可能な駒が隣接する場合、height_multiplierを0.2に低減しHEIGHT_CONTROL選択を抑制する。
+  # これにより、近接マージ機会がある配置を優先し、スコア安定性を向上させる。
+  # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_025727_score0572.jsonl, game_history/20260308_030131_score1578.jsonl,
+  # strategy_versions/best_score5310_strategy.py, strategy_versions/best_score4999_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -128,21 +129,22 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v186: reactive_pairs >= 2時のマージ優先ボーナス強化版
+    """v187: 近接マージ機会によるHEIGHT_CONTROL抑制版
 
-    batch_summaryでHEIGHT_CONTROLが26.0%選択(avg_score_delta=3.4)と依然として過剰であることを確認。
-    高スコア群(23.1%)と低スコア群(29.6%)の比較で、低スコア群が6.5%も多くHEIGHT_CONTROLを選択していることを特定。
-    ワーストゲーム(score0724)のturn 12でreactive_pairs=3にも関わらずHEIGHT_CONTROLを選択し、併合機会を逃している失敗パターンを特定。
+    batch_summaryでHEIGHT_CONTROLが28.1%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
+    高スコア群と低スコア群の比較で、低スコア群が4.4%も多くHEIGHT_CONTROLを選択していることを特定。
+    ワーストゲーム(score0572)で初期4ターン全てHEIGHT_CONTROLを選択し、併合機会を逃している失敗パターンを特定。
 
-    v186の改善点:
-     1. REACTIVE_MERGE_PRIORITYボーナス強化（500.0→700.0）
-        - reactive_pairs >= 2の時、盤面に多数の併合機会がある状況でマージ選択を優先
-        - HEIGHT_CONTROL選択を抑制し、スコア安定性を向上
-     2. v185の初期12ターンマージ優先を維持（EARLY_MERGE_PRIORITY=1000.0）
-     3. v184の併合機会がある時のHEIGHT_CONTROL条件付抑制を維持
+    v187の改善点:
+     1. 近接マージ機会によるHEIGHT_CONTROL抑制
+        - 即時マージがない場合でも、配置により次回マージ可能な駒が隣接する場合、height_multiplierを0.2に低減
+        - 近接マージ機会がある配置を優先し、スコア安定性を向上
+     2. v186のREACTIVE_MERGE_PRIORITYボーナス強化を維持（700.0）
+     3. v185の初期12ターンマージ優先を維持（EARLY_MERGE_PRIORITY=1000.0）
+     4. v184の併合機会がある時のHEIGHT_CONTROL条件付抑制を維持
         - reactive_pairs >= 1 or nextNext == next_type の場合、height_multiplier=5.0
-     4. v180のnextNext 2手先評価統合を維持
-     5. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持（height_multiplier: 15.0）
+     5. v180のnextNext 2手先評価統合を維持
+     6. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持（height_multiplier: 15.0）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -257,6 +259,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #   - reactive_pairs >= 1（盤面に即時マージ可能ペアがある）
         #   - nextNext == next_type（次回マージ可能な駒が来る）
         #   - いずれか満たす場合、height_multiplierを抑制
+        # v187: 近接マージ機会によるHEIGHT_CONTROL抑制
+        #   - 即時マージがない場合でも、配置により次回マージ可能な駒が隣接する場合、height_penaltyを抑制
+
+        # v187: 近接マージ機会判定
+        # 次回マージ可能な駒（next_typeと同じtypeの駒）が配置後に隣接するか判定
+        creates_adjacent_merge = False
+        if merge_grade == "NO":
+            # 即時マージがない場合のみ判定
+            for piece in pieces:
+                if piece["type"] == next_type:
+                    # 配置位置(x, landing_y)と盤面の駒の距離を計算
+                    # x方向距離 < 1.5 (隣接判定) かつ y方向距離 < 2.0 (近接判定)
+                    if abs(x - piece["x"]) < 1.5 and abs(landing_y - piece["y"]) < 2.0:
+                        creates_adjacent_merge = True
+                        break
 
         # 基本値設定
         height_multiplier = 30.0
@@ -267,7 +284,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reactive_pair_count >= 1 or
             (next_next_type == next_type)
         )
-        
+
         if (early_game or piece_count <= 12) and has_merge_opportunity:
             # 併合機会がある状況では、height_multiplierを抑制してマージ選択を優先
             height_multiplier = 5.0  # v184: 併合機会がある場合はHEIGHT_CONTROL抑制を強化
@@ -279,6 +296,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v177: MEDIUMフェーズでHEIGHT_CONTROL抑制を強化
         if phase == "MEDIUM":
             height_multiplier = 15.0  # v177: v175からさらに緩和しマージ選択を促進
+
+        # v187: 近接マージ機会がある場合、height_penaltyを抑制
+        # 即時マージがないが、次回マージ可能な駒が隣接する場合、height_multiplierを0.2に低減
+        if creates_adjacent_merge:
+            height_multiplier = 0.2
 
         # 高さペナルティの計算
         height_penalty = landing_y * height_multiplier * height_mult
