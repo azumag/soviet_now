@@ -39,6 +39,7 @@ PID_FILE="$QUEUE_DIR/pid"
 LOCK_DIR="$QUEUE_DIR/.lock"
 LOCK_OWNER_FILE="$LOCK_DIR/owner_pid"
 LOCK_HEARTBEAT_FILE="$LOCK_DIR/heartbeat"
+CURRENT_SOURCE_FILE="$QUEUE_DIR/current_source"
 LOCK_STALE_SEC=180
 
 if [ ! -s "$CONTENT_FILE" ]; then
@@ -71,6 +72,20 @@ _touch_lock_heartbeat() {
     _is_lock_owner || return 0
     echo "$MY_OWNER" > "$LOCK_OWNER_FILE" 2>/dev/null || true
     date +%s > "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true
+}
+
+_set_current_source() {
+    local phase="${1:-waiting}"
+    _is_lock_owner || return 0
+    printf '%s|%s|%s|%s\n' "$MY_OWNER" "$phase" "$CONTENT_FILE" "$(date +%s)" > "$CURRENT_SOURCE_FILE" 2>/dev/null || true
+}
+
+_clear_current_source_if_owner() {
+    local owner
+    owner=$(awk -F'|' 'NR==1{print $1}' "$CURRENT_SOURCE_FILE" 2>/dev/null || true)
+    [ -n "$owner" ] || return 0
+    [ "$owner" = "$MY_OWNER" ] || return 0
+    rm -f "$CURRENT_SOURCE_FILE" 2>/dev/null || true
 }
 
 # mkdirロック: アトミックな排他制御（macOS互換）
@@ -120,6 +135,7 @@ _release_lock() {
         LOCK_HELD=0
         return 0
     fi
+    _clear_current_source_if_owner
     rm -f "$LOCK_OWNER_FILE" "$LOCK_HEARTBEAT_FILE" 2>/dev/null
     rmdir "$LOCK_DIR" 2>/dev/null
     LOCK_HELD=0
@@ -127,6 +143,7 @@ _release_lock() {
 
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
 _cleanup() {
+    _clear_current_source_if_owner
     _release_lock
     rm -f "$MY_CONTENT"
 }
@@ -234,6 +251,7 @@ _play_with_retry() {
     LAST_SAY_PID=""
     while true; do
         local attempt=$((retry + 1))
+        _set_current_source "playing"
         _log "say開始 (attempt=${attempt}, rate=${RATE})"
         local say_pid
         LAUNCHED_SAY_PID=""
@@ -274,6 +292,7 @@ _play_with_retry() {
             return "$say_rc"
         fi
         retry=$((retry + 1))
+        _set_current_source "retry_wait"
         _log "say異常終了 (rc=$say_rc, elapsed=${elapsed}s, expected=${expected_sec}s) → ${backoff}s後に再試行 ${retry}/${SAY_RETRY_MAX}"
         _sleep_with_heartbeat "$backoff"
         if [ "$backoff" -lt "$SAY_RETRY_MAX_SLEEP_SEC" ]; then
@@ -290,6 +309,7 @@ if [ "$lock_ret" -ne 0 ]; then
     _log "ロック取得失敗 → 諦め"
     exit 0
 fi
+_set_current_source "waiting"
 
 # --- ロック内: 前のsayが残っていたら待つ ---
 if [ -f "$PID_FILE" ]; then
@@ -314,6 +334,7 @@ done
 
 # --- ロック内: トーク開始前の間（ロック外でやると他がすり抜けるのでロック内で） ---
 PRE_DELAY="${3:-60}"
+_set_current_source "waiting"
 _log "トーク開始まで ${PRE_DELAY}秒 待機..."
 waited_pre=0
 while [ "$waited_pre" -lt "$PRE_DELAY" ]; do

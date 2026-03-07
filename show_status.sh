@@ -436,6 +436,32 @@ PY
 	local say_locked=false
 	[[ -d tmp/.say_queue/.lock ]] && say_locked=true
 
+	# say_queue の現在ソース (owner|phase|source|ts)
+	local say_phase="" say_source="" say_source_age=""
+	local say_source_is_radio=false say_source_is_comment=false
+	if [[ -f tmp/.say_queue/current_source ]]; then
+		local cs_line="" cs_owner="" cs_ts=""
+		cs_line=$(cat tmp/.say_queue/current_source 2>/dev/null || true)
+		IFS='|' read -r cs_owner say_phase say_source cs_ts <<<"$cs_line"
+		case "$cs_ts" in
+		''|*[!0-9]*) ;;
+		*)
+			local cs_age=$(( $(date +%s) - cs_ts ))
+			if (( cs_age < 60 )); then say_source_age="${cs_age}s"
+			else say_source_age="$(( cs_age / 60 ))m$(( cs_age % 60 ))s"
+			fi
+			;;
+		esac
+		case "$say_source" in
+		*"/tmp/eloop_radio_talk_"*|*"tmp/.radio_deferred_queue/radio_"*|*"tmp/radio_celebration.txt"*)
+			say_source_is_radio=true
+			;;
+		*"tmp/.comment_queue/comment_"*)
+			say_source_is_comment=true
+			;;
+		esac
+	fi
+
 	# --- ラジオコーナー状態 (状態ファイルベース) ---
 	local radio_status="idle" radio_corner="" radio_elapsed=""
 	if [[ -f tmp/.radio_state ]]; then
@@ -462,6 +488,18 @@ PY
 	if [[ -z "$radio_corner" ]] && [[ -f tmp/past_radio_topics.txt ]] && [[ -s tmp/past_radio_topics.txt ]]; then
 		local last_radio_line=$(tail -1 tmp/past_radio_topics.txt)
 		radio_corner=$(echo "$last_radio_line" | grep -oE '\[[a-z_]+\]' | tail -1 | tr -d '[]')
+	fi
+
+	# radio_state の "playing" は予約済み/待機中も含むため、実再生状況で補正
+	local radio_effective_status="$radio_status"
+	if [[ "$radio_effective_status" == "playing" ]]; then
+		if ! $say_running; then
+			radio_effective_status="queued"
+		elif [[ -n "$say_phase" ]] && [[ "$say_phase" != "playing" ]]; then
+			radio_effective_status="queued"
+		elif [[ -n "$say_source" ]] && ! $say_source_is_radio; then
+			radio_effective_status="queued"
+		fi
 	fi
 
 	# --- コメントキュー状態 ---
@@ -606,10 +644,19 @@ PY
 	if $say_running; then
 		printf "    ${C_GREEN}♪${C_RESET} Say         ${C_GREEN}PLAYING${C_RESET}  ${C_DIM}PID=${say_pid}${C_RESET}"
 		$say_locked && printf "  ${C_DIM}[locked]${C_RESET}"
+		if [[ -n "$say_source" ]]; then
+			local say_kind="other"
+			$say_source_is_radio && say_kind="radio"
+			$say_source_is_comment && say_kind="comment"
+			printf "  ${C_DIM}[%s:%s]${C_RESET}" "$say_kind" "${say_phase:-playing}"
+		fi
 		echo ""
 	else
 		printf "    ${C_DIM}♪${C_RESET} Say         ${C_DIM}SILENT${C_RESET}"
 		$say_locked && printf "  ${C_YELLOW}[locked]${C_RESET}"
+		if [[ -n "$say_source" ]]; then
+			printf "  ${C_YELLOW}[last:%s:%s]${C_RESET}" "${say_phase:-?}" "${say_source_age:-?}"
+		fi
 		echo ""
 	fi
 
@@ -617,9 +664,12 @@ PY
 	local corner_label="${radio_corner:-?}"
 	local elapsed_label=""
 	[[ -n "$radio_elapsed" ]] && elapsed_label=" ${radio_elapsed}"
-	case "$radio_status" in
+	case "$radio_effective_status" in
 		playing)
 			printf "    ${C_GREEN}📻${C_RESET} Radio       ${C_GREEN}PLAYING${C_RESET}  ${C_DIM}[${corner_label}]${elapsed_label}${C_RESET}\n"
+			;;
+		queued)
+			printf "    ${C_YELLOW}📻${C_RESET} Radio       ${C_YELLOW}QUEUED${C_RESET}  ${C_DIM}[${corner_label}]${elapsed_label}${C_RESET}\n"
 			;;
 		generating)
 			printf "    ${C_CYAN}📻${C_RESET} Radio       ${C_CYAN}GENERATING${C_RESET}  ${C_DIM}[${corner_label}]${elapsed_label}${C_RESET}\n"
