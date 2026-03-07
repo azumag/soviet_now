@@ -2681,14 +2681,13 @@ generate_comment_response() {
 	_kill_comment_gen
 	mkdir -p "tmp/.twitch_chat"
 
-	# fetch+ack を原子的に実行して、同一コメントの二重取り込みを防ぐ
-	./twitch_chat.sh claim
+	# 先に未読を取得。ack はキュー投入成功時のみ実行する。
+	# 生成失敗時にコメントを失わないようにする。
+	./twitch_chat.sh fetch
 
 	local twitch_comments=""
 	if [ -f "tmp/twitch_comments.txt" ] && [ -s "tmp/twitch_comments.txt" ]; then
 		twitch_comments=$(cat "tmp/twitch_comments.txt")
-		# コメント返し担当が取得したので、ラジオトークと重複しないようクリア
-		rm -f "tmp/twitch_comments.txt"
 	fi
 	[ -z "$twitch_comments" ] && return
 
@@ -2696,6 +2695,7 @@ generate_comment_response() {
 	comment_batch_hash=$(printf '%s' "$twitch_comments" | md5 -q 2>/dev/null || echo "")
 	if _is_recent_comment_batch_processed "$comment_batch_hash"; then
 		log "[COMMENT] 同一コメントバッチを直近で処理済みのためスキップ (batch=$comment_batch_hash)"
+		./twitch_chat.sh ack
 		return
 	fi
 
@@ -2813,84 +2813,123 @@ generate_comment_response() {
 - 戦略アドバイスがなければ ===ADVICE=== は出力しない
 COMMENTPROMPT
 
-			echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
-			log "[COMMENT] コメント返し生成中..."
-			local comments_talk comment_model_used
-			comment_model_used=""
-			comments_talk=$(_run_opencode_radio "$RADIO_AGENT" "$comment_prompt_file")
-			comment_model_used="$RADIO_AGENT"
-			comments_talk=$(_clean_comment_talk "$comments_talk")
-			comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
-			if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
-				log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → fallback"
-				comments_talk=""
-				comment_model_used=""
-			fi
-			if [ -z "$comments_talk" ]; then
-				comments_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$comment_prompt_file")
-				comment_model_used="$RADIO_FALLBACK"
-				comments_talk=$(_clean_comment_talk "$comments_talk")
-				comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
-				if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
-					log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback"
-					comments_talk=""
-					comment_model_used=""
-				fi
-			fi
-			if [ -z "$comments_talk" ]; then
-				comments_talk=$(_run_claude_radio "$comment_prompt_file")
-				comment_model_used="claude:${RADIO_CLAUDE_MODEL}"
-				comments_talk=$(_clean_comment_talk "$comments_talk")
-				comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
-				if [ -n "$comments_talk" ] && ! _is_valid_comment_talk "$comments_talk"; then
-					log "[COMMENT] claude 出力が不正/短文のため破棄"
-					comments_talk=""
-					comment_model_used=""
-				fi
-			fi
-			rm -f "$comment_prompt_file"
+		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
+		case "$comment_retry_max" in
+		''|*[!0-9]*) comment_retry_max=3 ;;
+		esac
+		[ "$comment_retry_max" -lt 1 ] && comment_retry_max=1
 
-		if [ -n "$comments_talk" ]; then
-			# 戦略アドバイスを抽出して tmp/advice.md に追記
-			local advice_part
-			advice_part=$(echo "$comments_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
-			if [ -n "$advice_part" ]; then
-				local advice_item
-				advice_item=$(printf '%s' "$advice_part" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
-				if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
-					echo "- $advice_item" >> tmp/advice.md
+		local attempt=1 generation_ok=false
+		local comments_talk="" comment_model_used=""
+		echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
+		log "[COMMENT] コメント返し生成中... (max_retry=${comment_retry_max})"
+
+		while [ "$attempt" -le "$comment_retry_max" ]; do
+			echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
+			local prompt_for_attempt="$comment_prompt_file"
+			if [ "$attempt" -gt 1 ]; then
+				prompt_for_attempt=$(mktemp /tmp/eloop_comment_prompt_retry_XXXXXXXX)
+				cat "$comment_prompt_file" > "$prompt_for_attempt"
+				cat >>"$prompt_for_attempt" <<'RETRYCOMMENT'
+
+【再生成指示】
+- 前回の出力は無効でした。今回は必ず文量を増やし、各コメントへ2-3文以上で返してください。
+- 返答漏れ・短文・定型文の繰り返しを禁止します。前回と異なる言い回しで書き直してください。
+RETRYCOMMENT
+			fi
+
+			local attempt_talk="" attempt_model=""
+			attempt_talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_for_attempt")
+			attempt_model="$RADIO_AGENT"
+			attempt_talk=$(_clean_comment_talk "$attempt_talk")
+			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+			if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+				log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → fallback (attempt ${attempt}/${comment_retry_max})"
+				attempt_talk=""
+				attempt_model=""
+			fi
+			if [ -z "$attempt_talk" ]; then
+				attempt_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$prompt_for_attempt")
+				attempt_model="$RADIO_FALLBACK"
+				attempt_talk=$(_clean_comment_talk "$attempt_talk")
+				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+				if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+					log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
+					attempt_talk=""
+					attempt_model=""
 				fi
-				# 最新エントリ程度に制限
+			fi
+			if [ -z "$attempt_talk" ]; then
+				attempt_talk=$(_run_claude_radio "$prompt_for_attempt")
+				attempt_model="claude:${RADIO_CLAUDE_MODEL}"
+				attempt_talk=$(_clean_comment_talk "$attempt_talk")
+				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+				if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+					log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
+					attempt_talk=""
+					attempt_model=""
+				fi
+			fi
+			if [ "$prompt_for_attempt" != "$comment_prompt_file" ]; then
+				rm -f "$prompt_for_attempt"
+			fi
+
+			if [ -z "$attempt_talk" ]; then
+				attempt=$((attempt + 1))
+				continue
+			fi
+
+			# 戦略アドバイスを抽出（本文確定後に追記する）
+			local advice_part advice_item
+			advice_part=$(echo "$attempt_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
+			advice_item=""
+			if [ -n "$advice_part" ]; then
+				advice_item=$(printf '%s' "$advice_part" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+				attempt_talk=$(echo "$attempt_talk" | sed '/^===ADVICE===/,$ d')
+			fi
+
+			attempt_talk=$(_clean_comment_talk "$attempt_talk")
+			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+			if ! _is_valid_comment_talk "$attempt_talk"; then
+				log "[COMMENT] 最終本文が不正/短文のため再生成 (attempt ${attempt}/${comment_retry_max})"
+				attempt=$((attempt + 1))
+				continue
+			fi
+
+			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
+			echo "$attempt_talk" >"$queue_file"
+			local new_hash
+			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
+			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
+				log "[COMMENT] 重複コメント返し検出 → 再生成 (hash=$new_hash, attempt ${attempt}/${comment_retry_max})"
+				rm -f "$queue_file"
+				attempt=$((attempt + 1))
+				continue
+			fi
+
+			# 本文が有効なときだけアドバイスを追記
+			if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
+				echo "- $advice_item" >> tmp/advice.md
 				if [ -f tmp/advice.md ] && [ "$(wc -l < tmp/advice.md)" -gt 150 ]; then
 					tail -150 tmp/advice.md > tmp/advice.md.tmp
 					mv tmp/advice.md.tmp tmp/advice.md
 				fi
 				log "[COMMENT] 戦略アドバイス検出 → tmp/advice.md に追記"
-				# トーク本文からアドバイス部分を除去
-				comments_talk=$(echo "$comments_talk" | sed '/^===ADVICE===/,$ d')
 			fi
 
-			comments_talk=$(_clean_comment_talk "$comments_talk")
-			comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
-			if ! _is_valid_comment_talk "$comments_talk"; then
-				log "[COMMENT] 最終本文が不正/短文のため破棄"
-			else
-				local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
-				echo "$comments_talk" >"$queue_file"
-				# 生成直後に重複チェック（同じ内容のキューファイルがないか）
-					local new_hash
-					new_hash=$(md5 -q "$queue_file" 2>/dev/null)
-					if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
-						log "[COMMENT] 重複コメント返し検出 → 破棄 (hash=$new_hash)"
-						_mark_comment_batch_processed "$comment_batch_hash"
-						rm -f "$queue_file"
-					else
-						_mark_comment_batch_processed "$comment_batch_hash"
-						log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file (model=${comment_model_used:-unknown}, batch=${comment_batch_hash:-none})"
-					fi
-				fi
-			else
-			log "[COMMENT] コメント返し生成失敗（次回再取得）"
+			comments_talk="$attempt_talk"
+			comment_model_used="$attempt_model"
+			_mark_comment_batch_processed "$comment_batch_hash"
+			./twitch_chat.sh ack
+			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file (model=${comment_model_used:-unknown}, batch=${comment_batch_hash:-none}, attempt=${attempt}/${comment_retry_max})"
+			generation_ok=true
+			break
+		done
+
+		rm -f "$comment_prompt_file"
+
+		if [ "$generation_ok" != "true" ]; then
+			log "[COMMENT] コメント返し生成失敗（pending維持・次回再試行）"
 		fi
 	) &
 	local comment_pid=$!
