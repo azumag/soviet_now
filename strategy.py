@@ -129,22 +129,24 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v187: 近接マージ機会によるHEIGHT_CONTROL抑制版
+    """v188: early_game判定緩和による初期段階HEIGHT_CONTROL抑制版
 
-    batch_summaryでHEIGHT_CONTROLが28.1%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
-    高スコア群と低スコア群の比較で、低スコア群が4.4%も多くHEIGHT_CONTROLを選択していることを特定。
-    ワーストゲーム(score0572)で初期4ターン全てHEIGHT_CONTROLを選択し、併合機会を逃している失敗パターンを特定。
+    batch_summaryでHEIGHT_CONTROLが23.3%選択(avg_score_delta=0.6)と依然として過剰であることを確認。
+    ワーストゲーム(score0610)で初期12ターンのうち8ターンがHEIGHT_CONTROLを選択し、併合機会を逃している失敗パターンを特定。
+    ベストゲーム(score2025)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア2025を出していることを確認。
 
-    v187の改善点:
-     1. 近接マージ機会によるHEIGHT_CONTROL抑制
+    v188の改善点:
+     1. early_game判定の緩和による初期段階HEIGHT_CONTROL抑制
+        - early_game判定をmax_y < -2.0→-1.8に緩和し、初期12ターンのほとんどで適用
+        - 初期段階でのHEIGHT_CONTROL選択を抑制し、マージ機会を最優先してスコア安定性を向上
+     2. v187の近接マージ機会によるHEIGHT_CONTROL抑制を維持
         - 即時マージがない場合でも、配置により次回マージ可能な駒が隣接する場合、height_multiplierを0.2に低減
-        - 近接マージ機会がある配置を優先し、スコア安定性を向上
-     2. v186のREACTIVE_MERGE_PRIORITYボーナス強化を維持（700.0）
-     3. v185の初期12ターンマージ優先を維持（EARLY_MERGE_PRIORITY=1000.0）
-     4. v184の併合機会がある時のHEIGHT_CONTROL条件付抑制を維持
+     3. v186のREACTIVE_MERGE_PRIORITYボーナス強化を維持（700.0）
+     4. v185の初期12ターンマージ優先を維持（EARLY_MERGE_PRIORITY=1000.0）
+     5. v184の併合機会がある時のHEIGHT_CONTROL条件付抑制を維持
         - reactive_pairs >= 1 or nextNext == next_type の場合、height_multiplier=5.0
-     5. v180のnextNext 2手先評価統合を維持
-     6. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持（height_multiplier: 15.0）
+     6. v180のnextNext 2手先評価統合を維持
+     7. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持（height_multiplier: 15.0）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -175,11 +177,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
 
-    # --- v174: early_game判定さらに緩和（max_y < -2.0） ---
-    # batch_summaryでHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
-    # ワーストゲーム(score0765)で初期7ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗パターンを特定。
-    # early_game判定をmax_y < -2.5→-2.0にさらに緩和し、初期12ターンの大部分で判定されるように調整。
-    early_game = max_y < -2.0
+    # --- v188: early_game判定緩和（max_y < -1.8） ---
+    # batch_summaryでHEIGHT_CONTROLが23.3%選択(avg_score_delta=0.6)と依然として過剰であることを確認。
+    # ワーストゲーム(score0610)で初期12ターンのうち8ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗パターンを特定。
+    # early_game判定をmax_y < -2.0→-1.8に緩和し、初期12ターンのほとんどで適用されるように調整。
+    early_game = max_y < -1.8
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
