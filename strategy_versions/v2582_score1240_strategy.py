@@ -36,12 +36,13 @@ Phases (determined by board max Y):
 # v154: Merge target density evaluation - Fixed issue with existing CHAIN_MERGE logic
 # v155: Dynamic parameter adjustment version - chain_distance=5.0, chain_bonus=450.0 fixed, but uses dynamic adjustment logic
 # v157: Revert to v153 settings - height_multiplier 40.0->50.0, lost v155's dynamic adjustment
-# v158: Restore v155 dynamic adjustment + reduce height penalty - Reintroduce v155's dynamic adjustment logic (chain_distance_max=5.0+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0), and reduce height_multiplier from 50.0 to 45.0 to promote merge opportunities. This balances HEIGHT_CONTROL (selected 27.3% with low avg_score_delta=1.6) and CHAIN_MERGE (selected 8.2% with high avg_score_delta=29.7) by lowering height penalty while keeping dynamic chain merge bonuses.
+# v158: Restore v155 dynamic adjustment + reduce height penalty - Reintroduce v155's dynamic adjustment logic (chain_distance_max=5.0+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0), and reduce height_multiplier from 50.0 to 45.0 to promote merge opportunities. This balances HEIGHT_CONTROL (27.3% selection rate with low avg_score_delta=1.6) and CHAIN_MERGE (8.2% selection rate with high avg_score_delta=29.7) by lowering height penalty while keeping dynamic chain merge bonuses.
 # v159: nextNext 2手先評価軸追加版 - batch_summary/adviceで「A上にBを置くとnextNextの併合を逃す」問題に対処。
 # nextNextが現在nextと同じtypeの場合、「現在併合→nextNextで更に併合」の2連鎖を評価する評価軸を追加。
 # これにより、盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処し、CHAIN_MERGE選択を促進する。
 # v160: MEDIUMフェーズHEIGHT_CONTROL抑制版 - batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）。
 # MEDIUMフェーズでheight_multiplierを45.0→30.0に削減し、HEIGHT_CONTROL過剰選択を抑制して併合選択を促進することでスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260307_194847_score0553.jsonl, game_history/20260307_202436_score3912.jsonl, strategy_versions/best_score4999_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -49,13 +50,18 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v160: MEDIUMフェーズHEIGHT_CONTROL抑制版
+    """v161: reactor情報活用併用版
 
-    batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）。
-    MEDIUMフェーズでheight_multiplierを45.0→30.0に削減し、HEIGHT_CONTROL過剰選択を抑制して併合選択を促進する。
+    batch_summaryで低スコア群がHEIGHT_CONTROLを37.1%選択していることを確認（高スコア群は22.2%）。
+    reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を追加。
+    これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を構造的に抑制しスコア安定性を向上させる。
+    MEDIUMフェーズのheight_multiplierを30.0→20.0に削減し、マージ選択を促進。
 
     v159から継承:
     - nextNext 2手先評価軸（盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に対処）
+
+    v160から継承:
+    - MEDIUMフェーズheight_multiplier削減（30.0→20.0）
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -94,6 +100,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "MEDIUM"
         height_mult = 1.8  # v155: height_mult relaxation for merge opportunities
         merge_mult = 1.0
+        # v161: MEDIUMフェーズheight_multiplier削減版 - batch_summaryで低スコア群がHEIGHT_CONTROLを37.1%選択していることを確認
+        # height_multiplierを30.0→20.0に削減し、reactive_pairs活用と合わせてHEIGHT_CONTROL選択を抑制し、CHAIN_MERGE選択を促進
+        # これにより、高スコア群のHEIGHT_CONTROL選択率(22.2%)に近づけ、スコア安定性を向上させる
     elif max_y < 3.0:
         phase = "HIGH"
         height_mult = 1.8  # v155: HIGH relaxation to ensure merge opportunity
@@ -108,6 +117,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
+
+    # --- reactor information (v176/v177: reactive_pairs-based merge priority) ---
+    reactor = analysis.get("reactor", {})
+    reactive_pair_count = len(reactor.get("reactive_pairs", []))
+    has_many_merge_opps = reactive_pair_count >= 2
 
     # --- Type-specific merge bonus calculation ---
     # merge result type (next_type+1) higher means higher score value
@@ -148,12 +162,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v160: MEDIUMフェーズでheight_multiplierを45.0→30.0に削減しHEIGHT_CONTROL過剰選択を抑制
-        # batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）
+        # v161: reactor情報活用併用版 - reactive_pairs >= 2の場合、マージを優先しheight_multiplierを抑制
+        # batch_summaryで低スコア群がHEIGHT_CONTROLを37.1%選択していることを確認（高スコア群は22.2%）
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
         height_multiplier = 45.0
         if phase == "MEDIUM":
-            height_multiplier = 30.0  # v160: MEDIUMフェーズで併合選択を促進
+            height_multiplier = 20.0  # v161: MEDIUMフェーズheight_multiplier削減（30.0→20.0）
+        # v161: reactor_pairs >= 2の場合、height_multiplierをさらに抑制しマージ選択を促進
+        if has_many_merge_opps:
+            height_multiplier = height_multiplier * 0.7  # 30%削減（MEDIUM: 14.0, HIGH: 12.6, LOW/CRITICAL: 基本値）
         height_penalty = landing_y * height_multiplier * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
@@ -211,12 +228,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v158: Dynamic adjustment - chain_distance_max and chain_bonus_multiplier expand as landing_y increases
-                # Example: landing_y=0.0 -> distance_max=5.0, multiplier=450.0
-                # Example: landing_y=1.0 -> distance_max=5.6, multiplier=600.0
-                # Example: landing_y=2.0 -> distance_max=6.2, multiplier=750.0
-                # Example: landing_y=3.0 -> distance_max=6.8, multiplier=900.0
-                chain_distance_max = 5.0 + landing_y * 0.6
+                # v161+: reactor-aware dynamic adjustment - v158's parameters with reactive_pairs suppression
+                # When many merge opportunities exist (reactive_pairs>=2), suppress chain_distance_max expansion to avoid over-aggressive CHAIN_MERGE
+                # Example (reactive_pairs<2): landing_y=0.0 -> distance_max=5.0, multiplier=450.0
+                # Example (reactive_pairs>=2): landing_y=0.0 -> distance_max=5.0, multiplier=450.0 (suppressed)
+                # Example (reactive_pairs<2): landing_y=1.0 -> distance_max=5.6, multiplier=600.0
+                # Example (reactive_pairs>=2): landing_y=1.0 -> distance_max=5.3, multiplier=600.0
+                # Example (reactive_pairs<2): landing_y=2.0 -> distance_max=6.2, multiplier=750.0
+                # Example (reactive_pairs>=2): landing_y=2.0 -> distance_max=5.6, multiplier=750.0
+                # Example (reactive_pairs<2): landing_y=3.0 -> distance_max=6.8, multiplier=900.0
+                # Example (reactive_pairs>=2): landing_y=3.0 -> distance_max=5.9, multiplier=900.0
+                if has_many_merge_opps:
+                    chain_distance_max = 5.0 + landing_y * 0.3  # suppress expansion (0.6 -> 0.3)
+                else:
+                    chain_distance_max = 5.0 + landing_y * 0.6  # v158: original expansion
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
@@ -252,7 +277,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 7: nextNext chain bonus (v159: NEW) -----
+        # ----- evaluation axis 7: reactive merge priority (v161: NEW) -----
+        # v161: reactor情報活用による併合優先評価軸追加版
+        # batch_summaryでHEIGHT_CONTROLが27.5%選択(avg_score_delta=2.4)と依然として過剰であることを確認
+        # 高スコア群(22.2%)と低スコア群(37.1%)の比較で、低スコア群が14.9%も多くHEIGHT_CONTROLを選択していることを特定
+        # reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を追加
+        # これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を構造的に抑制しスコア安定性を向上させる
+        if has_many_merge_opps and merge_grade in ["DIRECT", "NEAR"]:
+            # reactive_pairs >= 2の場合、マージを強力に優先するボーナス
+            reactive_merge_bonus = 500.0
+            score += reactive_merge_bonus
+            reasons.append("REACTIVE_MERGE")
+
+        # ----- evaluation axis 8: nextNext chain bonus (v159: v161: 軴用) -----
         # v159: nextNextが現在nextと同じtypeの場合、2連鎖評価を追加し「現在併合→nextNext併合」を促進。
         # 盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処。
         if next_next_type == next_type and merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
