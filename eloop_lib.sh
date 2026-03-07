@@ -1405,14 +1405,14 @@ _radio_generate_and_play() {
 		shift
 	done
 
-	# コメントキューが残っている間は新規トーク生成を止める（コメント消化を優先）
-	local comment_queued=0 comment_playing=0 comment_total=0
+	# コメント待ちキュー(.txt)が残っている間は新規トーク生成を止める（コメント消化を優先）
+	# 再生中(.playing)のみの場合は生成を許可し、通常ラジオの飢餓を避ける
+	local comment_queued=0 comment_playing=0
 	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
 	comment_queued=${comment_queued:-0}
 	comment_playing=${comment_playing:-0}
-	comment_total=$((comment_queued + comment_playing))
-	if [ "$comment_total" -gt 0 ]; then
-		log "[RADIO:${corner_name}] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing})"
+	if [ "$comment_queued" -gt 0 ]; then
+		log "[RADIO:${corner_name}] skip: queued comments=${comment_queued} (playing=${comment_playing})"
 		rm -f "$prompt_file" 2>/dev/null || true
 		return 0
 	fi
@@ -2028,7 +2028,8 @@ schedule_nonessential_audio_jobs() {
 	local news_phase=1
 	local radio_interval=5
 	local radio_phase=0
-	# キューが1件でもあれば新規トーク生成を止める
+	# コメント待ち(.txt)が1件でもあれば新規トーク生成を止める
+	# 再生中(.playing)のみのときは止めない
 	local comment_backlog_skip_threshold=1
 
 	local comment_queued=0 comment_playing=0 comment_total=0
@@ -2037,7 +2038,7 @@ schedule_nonessential_audio_jobs() {
 	comment_queued=${comment_queued:-0}
 	comment_playing=${comment_playing:-0}
 	comment_total=$((comment_queued + comment_playing))
-	if is_comment_backlog_high "$comment_backlog_skip_threshold"; then
+	if is_comment_backlog_high "$comment_backlog_skip_threshold" "queued"; then
 		skip_nonessential_radio=true
 	fi
 
@@ -2161,12 +2162,18 @@ get_comment_backlog_counts() {
 
 is_comment_backlog_high() {
 	local threshold="${1:-4}"
+	local basis="${2:-total}" # total | queued
 	local queued playing total
+	local value
 	read -r queued playing <<<"$(get_comment_backlog_counts)"
 	queued=${queued:-0}
 	playing=${playing:-0}
 	total=$((queued + playing))
-	[ "$total" -ge "$threshold" ]
+	case "$basis" in
+	queued) value="$queued" ;;
+	*)      value="$total" ;;
+	esac
+	[ "$value" -ge "$threshold" ]
 }
 
 _is_recent_comment_batch_processed() {

@@ -77,7 +77,7 @@ soren_loop にはソ連風ラジオDJ機能が組み込まれている。試合�
 - リトライ挙動は `SAY_RETRY_MAX` / `SAY_RETRY_SLEEP_SEC` / `SAY_RETRY_MAX_SLEEP_SEC` で調整可能
 - 途中切断判定は `SAY_TRUNCATE_RATIO` / `SAY_TRUNCATE_GRACE_SEC` / `SAY_TRUNCATE_MIN_EXPECTED_SEC` で調整可能
 - ニュースコーナーは既読タイトルに加えて話題キー（例: カイロス、iPS など）も保持し、同一トピックの連投を抑制する。未読がない場合やRSS取得失敗時は再読せずスキップする（再読を許可したい場合のみ `NEWS_ALLOW_STALE_CACHE=1`）
-- コメントキュー（`tmp/.comment_queue`）に未消化が1件でもある間は、新規ラジオトーク（news/theme/soviet/recap/strategy）生成をスキップしてコメント消化を優先する
+- コメントキュー（`tmp/.comment_queue`）に未再生の待ち行列（`comment_*.txt`）が1件でもある間は、新規ラジオトーク（news/theme/soviet/recap/strategy）生成をスキップしてコメント消化を優先する（再生中 `comment_*.playing` のみの場合は通常ラジオ生成を許可）
 - コメント返しは `twitch_chat.sh fetch` で未読を取得し、生成が成功したときだけ `ack-batch` で処理済み行のみを pending から削除する。生成失敗やサニタイズ失敗時は pending を維持し、同一バッチで再生成をリトライする
 
 ### jloop.sh — JSON-based State Loop
