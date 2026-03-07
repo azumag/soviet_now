@@ -169,12 +169,34 @@ _resolve_audio_device_index() {
     '') return 1 ;;
     *) echo "$name"; return 0 ;;
     esac
-    # 名前からインデックスを解決 (grep -F で固定文字列マッチ)
-    local line idx
-    line=$(ffmpeg -y -f lavfi -i sine=frequency=1:duration=0.001 -f audiotoolbox -list_devices true "" 2>&1 \
-        | grep -F "$name" | head -1)
+    local devices line idx alt_name
+    devices=$(ffmpeg -y -f lavfi -i sine=frequency=1:duration=0.001 -f audiotoolbox -list_devices true "" 2>&1)
+
+    # まずは完全一致
+    line=$(printf '%s\n' "$devices" | grep -F "$name" | head -1)
+    if [ -z "$line" ]; then
+        # CoreAudio 側で表記揺れした場合に備えて緩めに解決
+        alt_name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+        line=$(printf '%s\n' "$devices" | awk -v needle="$alt_name" '
+            BEGIN { IGNORECASE = 1 }
+            {
+                hay = tolower($0)
+                if (index(hay, needle) > 0) {
+                    print
+                    exit
+                }
+            }')
+    fi
+    if [ -z "$line" ] && printf '%s' "$name" | grep -qi 'blackhole'; then
+        line=$(printf '%s\n' "$devices" | awk '
+            BEGIN { IGNORECASE = 1 }
+            /blackhole/ {
+                print
+                exit
+            }')
+    fi
     if [ -n "$line" ]; then
-        idx=$(echo "$line" | sed -n 's/.*\[\([0-9][0-9]*\)\].*/\1/p')
+        idx=$(printf '%s\n' "$line" | sed -n 's/.*\[\([0-9][0-9]*\)\].*/\1/p')
         if [ -n "$idx" ]; then
             echo "$idx"
             return 0
@@ -218,11 +240,13 @@ BEGIN {
 
 _launch_say() {
     LAUNCHED_EXPECTED_SEC=0
-    if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
+    LAUNCH_MODE="say"
+    if [ -n "${SAY_AUDIO_DEVICE:-}" ] && [ "${SAY_FORCE_DIRECT:-0}" != "1" ]; then
         local device_index
         device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
             _log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
             nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
+            LAUNCH_MODE="say"
             LAUNCHED_SAY_PID="$!"
             return
         }
@@ -241,8 +265,10 @@ _launch_say() {
         fi
         nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; [ "$rc" -eq 0 ] && rm -f "$1"; exit "$rc"' \
             _ "$aiff_file" "$device_index" >/dev/null 2>&1 &
+        LAUNCH_MODE="ffmpeg"
     else
         nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
+        LAUNCH_MODE="say"
     fi
     LAUNCHED_SAY_PID="$!"
 }
@@ -250,6 +276,7 @@ _launch_say() {
 _play_with_retry() {
     local retry=0 backoff="$SAY_RETRY_SLEEP_SEC"
     LAST_SAY_PID=""
+    SAY_FORCE_DIRECT=0
     while true; do
         local attempt=$((retry + 1))
         _set_current_source "playing"
@@ -308,6 +335,10 @@ _play_with_retry() {
         fi
         if [ "$say_rc" -eq 0 ]; then
             return 0
+        fi
+        if [ "${LAUNCH_MODE:-say}" = "ffmpeg" ] && [ "$SAY_FORCE_DIRECT" -eq 0 ]; then
+            SAY_FORCE_DIRECT=1
+            _log "ffmpeg再生失敗 (rc=$say_rc) → 次回は say 直再生へフォールバック"
         fi
         if [ "$retry" -ge "$SAY_RETRY_MAX" ]; then
             _log "say異常終了 (rc=$say_rc, elapsed=${elapsed}s, expected=${expected_sec}s) → 再試行上限"

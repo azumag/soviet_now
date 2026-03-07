@@ -2374,6 +2374,9 @@ start_comment_player() {
 			if [ "$_cp_file_pid" != "$_cp_my_pid" ]; then
 				exit 0
 			fi
+			if ! source ./eloop_lib.sh 2>/dev/null; then
+				echo "[COMMENT] WARNING: eloop_lib.sh の再読込に失敗 (前回定義で継続)" >> tmp/.say_queue/debug.log
+			fi
 			date +%s >"$COMMENT_PLAYER_HEARTBEAT_FILE" 2>/dev/null || true
 			_play_comment_queue
 			sleep 5
@@ -2737,6 +2740,7 @@ start_comment_watcher() {
 			if [ "$_cw_file_pid" != "$_cw_my_pid" ]; then
 				exit 0
 			fi
+			source ./eloop_lib.sh 2>/dev/null || true
 			date +%s >"$COMMENT_WATCHER_HEARTBEAT_FILE" 2>/dev/null || true
 
 			# コメント生成が進行中なら今回はスキップ
