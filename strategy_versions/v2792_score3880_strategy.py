@@ -178,6 +178,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
+        # ----- reactive pair count calculation -----
+        # Count how many merge opportunities exist on the board (DIRECT or NEAR)
+        reactive_pair_count = 0
+        for r in results:
+            if r.get("merge_grade") in ["DIRECT", "NEAR"]:
+                reactive_pair_count += 1
+
+        # If many merge opportunities exist, bonus for merge-focused placement
+        if reactive_pair_count >= 2:
+            score += reactive_pair_count * 100.0
+            reasons.append("REACTIVE_MERGE")
+
         # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
