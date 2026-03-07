@@ -2024,10 +2024,7 @@ schedule_nonessential_audio_jobs() {
 	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
 
 	# 配信演出の頻度 (変更しても毎ループ source で即反映)
-	local news_interval_day=4
-	local news_interval_night=8
-	local news_night_start_hour=2
-	local news_night_end_hour=5
+	local news_interval=4
 	local news_phase=1
 	local radio_interval=5
 	local radio_phase=0
@@ -2044,22 +2041,7 @@ schedule_nonessential_audio_jobs() {
 		skip_nonessential_radio=true
 	fi
 
-	local current_hour current_news_interval current_news_mode
-	current_hour=$(date +%H)
-	if (( 10#$current_hour >= news_night_start_hour && 10#$current_hour < news_night_end_hour )); then
-		current_news_interval="$news_interval_night"
-		current_news_mode="night"
-	else
-		current_news_interval="$news_interval_day"
-		current_news_mode="day"
-	fi
-
-	if [ "$current_news_mode" != "${LAST_NEWS_MODE:-}" ]; then
-		log "[NEWS] schedule mode=${current_news_mode} interval=${current_news_interval} (night: ${news_night_start_hour}:00-${news_night_end_hour}:00)"
-		LAST_NEWS_MODE="$current_news_mode"
-	fi
-
-	if (( game_num % current_news_interval == news_phase )); then
+	if (( game_num % news_interval == news_phase )); then
 		if [ "$skip_nonessential_radio" = true ]; then
 			log "[NEWS] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
 		else
