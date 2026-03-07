@@ -1,8 +1,7 @@
 #!/bin/bash
 # score_history.txt を読み込んで score_dashboard.html を生成する
-# 既定では常時フルダッシュボードを生成する。
-# 旧挙動（GAMEOVER/STOP 以外は空HTML）に戻したい場合は
-# DASHBOARD_SHOW_WHILE_PLAYING=0 を指定する。
+# 既定では GAMEOVER/STOP のみフルダッシュボードを生成する。
+# MOVE中も表示したい場合は DASHBOARD_SHOW_WHILE_PLAYING=1 を指定する。
 cd "$(dirname "$0")"
 
 # 引数でゲーム状態を受け取る
@@ -12,10 +11,10 @@ else
     GAME_STATE="MOVE"
 fi
 
-DASHBOARD_SHOW_WHILE_PLAYING="${DASHBOARD_SHOW_WHILE_PLAYING:-1}"
+DASHBOARD_SHOW_WHILE_PLAYING="${DASHBOARD_SHOW_WHILE_PLAYING:-0}"
 
-# 旧互換: 非GAMEOVER時は空HTML（OBSで非表示にしたい場合）
-if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ] && [ "$DASHBOARD_SHOW_WHILE_PLAYING" != "1" ]; then
+# 非GAMEOVER時は空HTML（OBSで非表示）
+if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ] && [ "$DASHBOARD_SHOW_WHILE_PLAYING" = "0" ]; then
     cat > score_dashboard.html <<'EMPTYEOF'
 <!DOCTYPE html><html><head><meta charset="UTF-8">
 </head>
