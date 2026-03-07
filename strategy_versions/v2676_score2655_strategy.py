@@ -114,6 +114,15 @@ Phases (determined by board max Y):
 # 初期段階で併合機会がある場合（reactive_pairs>=1 or nextNextマッチ）、HEIGHT_CONTROL選択を条件付で抑制するロジックに置換え。
 # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_004349_score0336.jsonl, game_history/20260308_004123_score1909.jsonl,
 # strategy_versions/best_score5310_strategy.py, strategy_versions/best_score4999_strategy.py, analyze_board.py
+#
+# v185: 初期12ターンマージ優先強化版 - batch_summaryでHEIGHT_CONTROLが27.0%選択(avg_score_delta=1.6)と依然として過剰であることを確認。
+# 高スコア群(22.1%)と低スコア群(32.7%)の比較で、低スコア群が10.6%も多くHEIGHT_CONTROLを選択していることを特定。
+# ワーストゲーム(score0386)で初期12ターンのうちEARLY_MERGE_PRIORITYが3回のみであるのに対し、
+# ベストゲーム(score2365)では初期12ターンでEARLY_MERGE_PRIORITYが6回であることを確認。
+# 初期12ターンでのマージ優先を強化するため、EARLY_MERGE_PRIORITYボーナスを800.0→1000.0に強化し、
+# 初期段階でのHEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_012647_score0386.jsonl, game_history/20260308_011823_score2365.jsonl,
+# strategy_versions/best_score2346_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -121,31 +130,21 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v184: 併合機会ある時のHEIGHT_CONTROL条件付抑制版
+    """v185: 初期12ターンマージ優先強化版
 
-    batch_summaryでINITIAL_HEIGHT_CONTROL_SUPPRESSIONが15.8%選択(avg_score_delta=0.4)と低価値であることを確認。
-    v183の初期段階での無条件HEIGHT_CONTROL選択抑制ロジック（height_multiplier=0.05+score+=500.0）は、マージ機会がない状況で低価値配置を促進する問題があった。
-    併合機会がある状況でHEIGHT_CONTROLを選択している失敗モードに対処理。
+    batch_summaryでHEIGHT_CONTROLが27.0%選択(avg_score_delta=1.6)と依然として過剰であることを確認。
+    高スコア群(22.1%)と低スコア群(32.7%)の比較で、低スコア群が10.6%も多くHEIGHT_CONTROLを選択していることを特定。
+    ワーストゲーム(score0386)で初期12ターンのうちEARLY_MERGE_PRIORITYが3回のみであるのに対し、
+    ベストゲーム(score2365)では初期12ターンでEARLY_MERGE_PRIORITYが6回であることを確認。
 
-    v184の改善点:
-     1. v183の初期段階HEIGHT_CONTROL抑制ロジックを削除
-        - height_multiplier=0.05, score+=500.0の無条件抑制を削除
-     2. 併合機会がある状況でのHEIGHT_CONTROL条件付抑制を追加
-        - reactive_pairs >= 1（盤面に即時マージ可能ペアがある場合）
-        - nextNext == next_type（次回マージ可能な駒が来る場合）
-        - これらがいずれか満たす場合、height_multiplierを抑制してマージ選択を優先
+    v185の改善点:
+     1. EARLY_MERGE_PRIORITYボーナス強化（800.0→1000.0）
+        - 初期12ターンでのNEAR_MERGE機会の評価を高め、HEIGHT_CONTROL選択を抑制
+     2. v184の併合機会がある時のHEIGHT_CONTROL条件付抑制を維持
+        - reactive_pairs >= 1 or nextNext == next_type の場合、height_multiplier=5.0
      3. v180のnextNext 2手先評価統合を維持
-        - nextNextが現在nextと同じtypeの場合、「現在併合 → nextNext併合」の2連鎖を評価
-     4. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持
-        - height_multiplier: 15.0（MEDIUMフェーズ）
-     5. v176のreactor情報活用によるマージ優先評価軸を維持
-        - reactive_pair_count >= 2の場合、DIRECT/NEARマージに+500.0ボーナス
-     6. v174の初期12ターンマージ重視を維持
-        - early_game判定(max_y < -2.0)とEARLY_MERGE_PRIORITY(piece_count <= 12)を維持
-     7. v171のCHAIN_MERGE基本ボーナス強化を維持
-        - chain_distance_max=5.0（動的拡大含む）
-        - chain_bonus_multiplier初期値480.0（v155ベース+10%強化）
-        - 着地高による動的拡大（landing_y*150.0）は維持
+     4. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持（height_multiplier: 15.0）
+     5. v176のreactor情報活用によるマージ優先評価軸を維持（reactive_pair_count >= 2で+500.0）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -346,8 +345,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v172の初期条件(early_game && merge_grade == "NEAR")を維持し、piece_count <= 12でも適用することで初期12ターン全体でマージを重視。
         if (early_game or piece_count <= 12) and merge_grade == "NEAR":
             # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
-            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
-            score += 800.0
+            # v185: ボーナス強化(800.0→1000.0)で初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
+            score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
         # ----- v176: reactive_pairs-based merge priority -----
