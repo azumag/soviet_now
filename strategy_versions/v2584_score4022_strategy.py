@@ -228,12 +228,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v158: Dynamic adjustment - chain_distance_max and chain_bonus_multiplier expand as landing_y increases
-                # Example: landing_y=0.0 -> distance_max=5.0, multiplier=450.0
-                # Example: landing_y=1.0 -> distance_max=5.6, multiplier=600.0
-                # Example: landing_y=2.0 -> distance_max=6.2, multiplier=750.0
-                # Example: landing_y=3.0 -> distance_max=6.8, multiplier=900.0
-                chain_distance_max = 5.0 + landing_y * 0.6
+                # v161+: reactor-aware dynamic adjustment - v158's parameters with reactive_pairs suppression
+                # When many merge opportunities exist (reactive_pairs>=2), suppress chain_distance_max expansion to avoid over-aggressive CHAIN_MERGE
+                # Example (reactive_pairs<2): landing_y=0.0 -> distance_max=5.0, multiplier=450.0
+                # Example (reactive_pairs>=2): landing_y=0.0 -> distance_max=5.0, multiplier=450.0 (suppressed)
+                # Example (reactive_pairs<2): landing_y=1.0 -> distance_max=5.6, multiplier=600.0
+                # Example (reactive_pairs>=2): landing_y=1.0 -> distance_max=5.3, multiplier=600.0
+                # Example (reactive_pairs<2): landing_y=2.0 -> distance_max=6.2, multiplier=750.0
+                # Example (reactive_pairs>=2): landing_y=2.0 -> distance_max=5.6, multiplier=750.0
+                # Example (reactive_pairs<2): landing_y=3.0 -> distance_max=6.8, multiplier=900.0
+                # Example (reactive_pairs>=2): landing_y=3.0 -> distance_max=5.9, multiplier=900.0
+                if has_many_merge_opps:
+                    chain_distance_max = 5.0 + landing_y * 0.3  # suppress expansion (0.6 -> 0.3)
+                else:
+                    chain_distance_max = 5.0 + landing_y * 0.6  # v158: original expansion
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
