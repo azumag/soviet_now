@@ -203,11 +203,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 # v157: 着地高に応じてchain_distanceとchain_bonus_multiplierを動的に調整
                 # HIGH_LAYER状況（landing_y>0.5）ではchain_distanceを拡大し、chain_bonus_multiplierを強化
-                # 例: landing_y=0.0 → distance_max=5.0, multiplier=450.0
-                # 例: landing_y=1.0 → distance_max=5.6, multiplier=600.0
-                # 例: landing_y=2.0 → distance_max=6.2, multiplier=750.0
-                # 例: landing_y=3.0 → distance_max=6.8, multiplier=900.0
-                chain_distance_max = 5.0 + landing_y * 0.6
+                # v158: MEDIUMフェーズでのCHAIN_MERGE評価範囲を拡大（中盤での縦積み連鎖促進）
+                # 例: landing_y=0.0 → distance_max=5.5, multiplier=450.0
+                # 例: landing_y=1.0 → distance_max=6.1, multiplier=600.0
+                # 例: landing_y=2.0 → distance_max=6.7, multiplier=750.0
+                # 例: landing_y=3.0 → distance_max=7.3, multiplier=900.0
+                chain_distance_max = 5.5 + landing_y * 0.6
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
