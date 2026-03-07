@@ -34,6 +34,7 @@ SAY_RETRY_MAX_SLEEP_SEC="${SAY_RETRY_MAX_SLEEP_SEC:-20}"
 SAY_TRUNCATE_RATIO="${SAY_TRUNCATE_RATIO:-0.8}"
 SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
 SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
+SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 
 PID_FILE="$QUEUE_DIR/pid"
 LOCK_DIR="$QUEUE_DIR/.lock"
@@ -263,9 +264,15 @@ _play_with_retry() {
             LAST_SAY_PID="$say_pid"
             echo "$say_pid" > "$PID_FILE"
         fi
-        local start_ts now_ts elapsed say_rc expected_sec
+        local start_ts now_ts elapsed say_rc expected_sec max_wait_sec timed_out
         start_ts=$(date +%s)
         expected_sec="${LAUNCHED_EXPECTED_SEC:-0}"
+        max_wait_sec=0
+        timed_out=0
+        # 期待尺が取れる経路（SAY_AUDIO_DEVICE経由）では、ハング監視を有効化
+        if [ "${expected_sec:-0}" -gt 0 ]; then
+            max_wait_sec=$((expected_sec + SAY_TRUNCATE_GRACE_SEC + SAY_HANG_EXTRA_SEC))
+        fi
         if [ -z "$say_pid" ]; then
             say_rc=97
             now_ts=$(date +%s)
@@ -274,9 +281,24 @@ _play_with_retry() {
             while kill -0 "$say_pid" 2>/dev/null; do
                 _touch_lock_heartbeat
                 sleep 1
+                if [ "$max_wait_sec" -gt 0 ]; then
+                    now_ts=$(date +%s)
+                    elapsed=$((now_ts - start_ts))
+                    if [ "$elapsed" -gt "$max_wait_sec" ]; then
+                        timed_out=1
+                        _log "say再生ハング疑い (elapsed=${elapsed}s, expected=${expected_sec}s, max=${max_wait_sec}s) → 強制終了して再試行"
+                        kill "$say_pid" 2>/dev/null || true
+                        sleep 1
+                        kill -9 "$say_pid" 2>/dev/null || true
+                        break
+                    fi
+                fi
             done
-            wait "$say_pid"
+            wait "$say_pid" 2>/dev/null
             say_rc=$?
+            if [ "$timed_out" -eq 1 ]; then
+                say_rc=99
+            fi
             now_ts=$(date +%s)
             elapsed=$((now_ts - start_ts))
         fi
