@@ -1,6 +1,8 @@
 #!/bin/bash
 # score_history.txt を読み込んで score_dashboard.html を生成する
-# GAMEOVER/STOP → フルダッシュボード、それ以外 → 空HTML（OBS非表示）
+# 既定では常時フルダッシュボードを生成する。
+# 旧挙動（GAMEOVER/STOP 以外は空HTML）に戻したい場合は
+# DASHBOARD_SHOW_WHILE_PLAYING=0 を指定する。
 cd "$(dirname "$0")"
 
 # 引数でゲーム状態を受け取る
@@ -10,8 +12,10 @@ else
     GAME_STATE="MOVE"
 fi
 
-# MOVE等（非GAMEOVER）なら空HTMLを書いて終了
-if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ]; then
+DASHBOARD_SHOW_WHILE_PLAYING="${DASHBOARD_SHOW_WHILE_PLAYING:-1}"
+
+# 旧互換: 非GAMEOVER時は空HTML（OBSで非表示にしたい場合）
+if [ "$GAME_STATE" != "GAMEOVER" ] && [ "$GAME_STATE" != "STOP" ] && [ "$DASHBOARD_SHOW_WHILE_PLAYING" != "1" ]; then
     cat > score_dashboard.html <<'EMPTYEOF'
 <!DOCTYPE html><html><head><meta charset="UTF-8">
 </head>
@@ -127,7 +131,7 @@ cat > score_dashboard.html <<HTMLEOF
     <div class="legend-item"><span class="legend-dot" style="background:#4ecdc4"></span> Score</div>
     <div class="legend-item"><span class="legend-dot" style="background:#ffd700"></span> Best</div>
     <div class="legend-item"><span class="legend-dot" style="background:rgba(255,107,107,0.8)"></span> 10-game Moving Avg</div>
-    <div class="legend-item"><span class="legend-dot" style="background:rgba(148,163,184,0.9)"></span> Overall Trend (Up/Flat/Down)</div>
+    <div class="legend-item"><span class="legend-dot" style="background:#f8fafc;border:2px solid #111827"></span> Overall Trend (green=up / white=stable / red=down)</div>
     <div class="legend-item"><span class="legend-dot" style="background:rgba(78,205,196,0.15)"></span> Overall Avg</div>
   </div>
 </div>
@@ -283,11 +287,18 @@ function drawChart(scores) {
   ctx.stroke();
 
   const trendColor = trend.dir === 'up'
-    ? 'rgba(134,239,172,0.9)'
-    : (trend.dir === 'down' ? 'rgba(251,146,60,0.9)' : 'rgba(148,163,184,0.9)');
+    ? '#00ff85'
+    : (trend.dir === 'down' ? '#ff4d4f' : '#f8fafc');
+  const trendDash = trend.dir === 'flat' ? [4, 7] : [14, 8];
+  ctx.setLineDash(trendDash);
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(xScale(0), yScale(trend.y0));
+  ctx.lineTo(xScale(scores.length - 1), yScale(trend.yN));
+  ctx.stroke();
   ctx.strokeStyle = trendColor;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([10, 6]);
+  ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.moveTo(xScale(0), yScale(trend.y0));
   ctx.lineTo(xScale(scores.length - 1), yScale(trend.yN));
@@ -299,7 +310,16 @@ function drawChart(scores) {
     (trend.slope >= 0 ? '+' : '') + slopeRounded + '/game fit=' + fitPct + '%';
   const trendMidY = yScale((trend.y0 + trend.yN) / 2);
   const trendLabelY = Math.max(padT + 12, Math.min(H - padB - 8, trendMidY - 8));
-  ctx.fillText(trendLabel, padL + 4, trendLabelY);
+  const trendLabelX = padL + 4;
+  const trendLabelW = ctx.measureText(trendLabel).width + 8;
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(trendLabelX - 4, trendLabelY - 9, trendLabelW, 14);
+  ctx.fillStyle = trendColor;
+  ctx.fillText(trendLabel, trendLabelX, trendLabelY);
+  const trendStartX = xScale(0), trendStartY = yScale(trend.y0);
+  const trendEndX = xScale(scores.length - 1), trendEndY = yScale(trend.yN);
+  ctx.beginPath(); ctx.arc(trendStartX, trendStartY, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(trendEndX, trendEndY, 3, 0, Math.PI * 2); ctx.fill();
 
   // Highlight top 3 scores on chart
   const rankMarkers = [

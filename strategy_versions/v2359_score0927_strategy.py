@@ -126,9 +126,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
     # --- Type-specific merge bonus calculation ---
     # merge result type (next_type+1) higher means higher score value
-    # example: type1 merge -> bonus=330, type5 merge -> bonus=510, type14 merge -> bonus=1660
+    # Note: type_merge_bonus calculation removed as it was not used in the evaluation
     merge_result_type = min(next_type + 1, 16)
-    type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
