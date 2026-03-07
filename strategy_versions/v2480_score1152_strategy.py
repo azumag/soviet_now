@@ -5,16 +5,17 @@ Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
   - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
-  - Player controls only drop X coordinate
+ - Player controls only drop X coordinate
 
-Decision Logic (7 evaluation axes):
+Decision Logic (8 evaluation axes):
    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
    2. Height penalty - Penalty for high landing position (varies by phase and reactive_pairs)
    3. Drift penalty - Penalty for post-landing drift due to polygon shape
    4. Left-right balance correction - Bonus for correcting piece count bias
    5. nextNext centering - Center for next merge opportunity if nextNext same type
-   6. Chain merge bonus - Evaluate possibility of further merges after merge (v180: nextNext 2-lookahead NEW)
-   7. Reactive merge priority (v179: retained) - Bonus for merge when reactive_pairs >= 2
+   6. Chain merge bonus - Evaluate possibility of further merges after merge (dynamic by landing height)
+   7. Reactive merge priority - Bonus for merge when reactive_pairs >= 2
+   8. v181: HEIGHT_CONTROL suppression for reactive_pairs >= 2 - NEW
 
 Phases (determined by board max Y):
    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -47,6 +48,10 @@ Phases (determined by board max Y):
 # 現在のCHAIN_MERGEは「併合後type+1ピースへの連鎖」のみを評価していたが、nextNextが現在nextと同じtypeの場合、
 # 「現在併合 → nextNextで更に併合」の2連鎖を評価するロジックを追加。
 # これにより、盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処。
+# v181: reactor_pairs >= 2時のHEIGHT_CONTROL抑制強化版 - batch_summaryでHEIGHT_CONTROLが29.3%選択(avg_score_delta=2.1)と依然として過剰であることを確認。
+# 高スコア群(27.4%)と低スコア群(31.8%)の比較で、低スコア群が4.4%も多くHEIGHT_CONTROLを選択していることを特定。
+# reactor_pairs >= 2の時、着地高が高い場合、HEIGHT_CONTROLの根本的な抑制を行う評価軸を追加し、
+# 盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を構造的に抑制しスコア安定性を向上させる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -54,17 +59,12 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v180: nextNext 2手先評価統合版
+    """v181: reactor_pairs >= 2時のHEIGHT_CONTROL抑制強化版
     
-    batch_summaryでCHAIN_MERGE(avg_delta=30-50)が高スコアへの効果的reasonであることを確認しつつ、現行v179のCHAIN_MERGE選択率は依然として低い（3-4%）。
-    v179のreactive_pairs活用は方向性は合っているが、CHAIN_MERGE自体の選択を促進できていない。
-    
-    batch_summary/adviceで「A上にBを置くとnextNextの併合を逃す」問題に対処。
-    構造的改善として、nextNextを考慮した2手先評価を既存CHAIN_MERGEロジックに統合。
-    
-    現在のCHAIN_MERGEは「併合後type+1ピースへの連鎖」のみを評価していたが、nextNextが現在nextと同じtypeの場合、
-    「現在併合 → nextNextで更に併合」の2連鎖を評価するロジックを追加。
-    これにより、盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処。
+    batch_summaryでHEIGHT_CONTROLが29.3%選択(avg_score_delta=2.1)と依然として過剰であることを確認。
+    高スコア群(27.4%)と低スコア群(31.8%)の比較で、低スコア群が4.4%も多くHEIGHT_CONTROLを選択していることを特定。
+    reactor_pairs >= 2の時、着地高が高い場合、HEIGHT_CONTROLの根本的な抑制を行う評価軸を追加し、
+    盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を構造的に抑制しスコア安定性を向上させる。
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -123,17 +123,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # --- Type-specific merge bonus calculation ---
-    # merge result type (next_type+1) higher means higher score value
-    # example: type1 merge -> bonus=330, type5 merge -> bonus=510, type14 merge -> bonus=1660
-    merge_result_type = min(next_type + 1, 16)
-    type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
-
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 7 evaluation axes
+    #  score each drop candidate (x coordinate) with 8 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -204,7 +198,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score -= drift_penalty
 
         # ----- evaluation axis 4: left-right balance correction (v148: enhanced) -----
-        # bonus for correcting left-right piece count bias.
+        # bonus for correcting piece count bias.
         # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
         # v148: higher board increases balance_strength, strictens balance control
         balance_strength = 20.0
@@ -229,7 +223,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("NEXT_SAME")
 
         # ----- evaluation axis 6: chain merge bonus (v180: nextNext 2手先評価統合版) -----
-        # v180: 単純なパラメータ調整ではなく、構造的改善としてnextNextを考慮した2手先評価を導入。
+        # v157: 単純なパラメータ調整ではなく、構造的改善として着地高に応じた動的調整を導入。
         # batch_summaryでCHAIN_MERGE(avg_delta=30-50)が高スコアへの効果的reasonであることを確認しつつ、
         # v179のCHAIN_MERGE選択率は依然として低い（3-4%）。
         # 「A上にBを置くとnextNextの併合を逃す」問題に対処。
@@ -326,6 +320,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         nextnext_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.15
                         score += nextnext_bonus
                         reasons.append("NEXTNEXT_CHAIN")
+
+        # ----- evaluation axis 7: reactive merge priority (v179: retained) -----
+        if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            score += 500.0
+            reasons.append("REACTIVE_MERGE")
+
+        # ----- evaluation axis 8: v181: HEIGHT_CONTROL suppression for reactive_pairs >= 2 (NEW) -----
+        # batch_summaryでHEIGHT_CONTROLが29.3%選択(avg_score_delta=2.1)と過剰であることを確認。
+        # reactor_pairs >= 2の時、着地高が高い場合、HEIGHT_CONTROLの根本的な抑制を行う。
+        # reactive_pair_count >= 2の盤面では併合機会が多数あるため、高さ管理よりも併合を優先すべき。
+        if reactive_pair_count >= 2:
+            if landing_y > 0.5:
+                # 高さ>0.5の時は危険なのでHEIGHT_CONTROLを明示的に抑制
+                suppression_penalty = 800.0  # HEIGHT_CONTROLを回避する強いペナルティ
+                score -= suppression_penalty
+                if reasons and reasons[-1] != "HEIGHT_CONTROL":
+                    reasons.append("REACTIVE_MERGE_REJECT_HIGH")
+            elif landing_y > 0.2:
+                # 高さ>0.2の時もHEIGHT_CONTROLを抑制
+                suppression_penalty = 300.0
+                score -= suppression_penalty
+                if reasons and reasons[-1] != "HEIGHT_CONTROL":
+                    reasons.append("REACTIVE_MERGE_REJECT_MID")
 
         # ----- update best candidate -----
         if score > best_score:
