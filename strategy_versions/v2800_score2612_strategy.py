@@ -35,7 +35,11 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 #
-# v191: 初期マージ強化・DIRECT拡張版
+# v192: LOWフェーズHEIGHT_CONTROL抑制版 - batch_summaryでHIGH_LAYERが高スコア群で23.3%（低スコア群11.4%）、
+# HEIGHT_CONTROLが低スコア群で32.4%（高スコア群19.2%）と選択率に有意差を確認。
+# 高スコア群は初期から高めに配置（序盤avg=-2.08）、低スコア群は初期から低く抑えすぎ（序盤avg=-2.79）していることを特定。
+# LOWフェーズのheight_multを1.0→0.6に減少し、初期段階でのHEIGHT_CONTROL選択を抑制しHIGH_LAYER選択を促進。
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_075131_score0761.jsonl, game_history/20260308_081750_score3880.jsonl
 # batch_summaryでHEIGHT_CONTROLが30.3%選択(avg_score_delta=1.5)と過剰であることを確認。
 # 高スコア群(27.2%)と低スコア群(35.1%)の比較で、低スコア群が7.9%も多くHEIGHT_CONTROLを選択していることを特定。
 # v190の複雑なロジック（reactive_pairs活用、side_reactive_mergeなど）を削除し、シンプルな構造へ復帰。
@@ -61,23 +65,22 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v191: 初期マージ強化・DIRECT拡張版
+    """v192: LOWフェーズHEIGHT_CONTROL抑制版
 
-    batch_summaryでHEIGHT_CONTROLが30.3%選択(avg_score_delta=1.5)と過剰であることを確認。
-    高スコア群(27.2%)と低スコア群(35.1%)の比較で、低スコア群が7.9%も多くHEIGHT_CONTROLを選択していることを特定。
-    v190の複雑なロジック（reactive_pairs活用、side_reactive_mergeなど）を削除し、シンプルな構造へ復帰。
-    初期12ターンでマージ機会をより積極的に狙うため、EARLY_MERGE_PRIORITYの適用条件を拡張。
+    batch_summaryでHIGH_LAYERが高スコア群で23.3%（低スコア群11.4%）、HEIGHT_CONTROLが低スコア群で32.4%（高スコア群19.2%）と選択率に有意差を確認。
+    高スコア群は初期から高めに配置（序盤avg=-2.08）、低スコア群は初期から低く抑えすぎ（序盤avg=-2.79）していることを特定。
+    LOWフェーズのheight_multを1.0→0.6に減少し、初期段階でのHEIGHT_CONTROL選択を抑制しHIGH_LAYER選択を促進。
 
-    v191の改善点:
-     1. v189のシンプル構造へ復帰
-        - reactive_pairs活用、side_reactive_mergeなど複雑なロジックを削除
-        - 5つの評価軸（merge bonus, height penalty, drift penalty, balance correction, nextNext centering）
-     2. 初期マージ強化・DIRECT拡張
-        - EARLY_MERGE_PRIORITY: piece_count <= 12 && merge_grade in ["NEAR", "DIRECT"] に拡張
-        - 初期12ターンでDIRECTマージもある場合も最優先
-     3. v177の殿堂入り戦略の成功パラメータを採用
-        - MEDIUMフェーズheight_mult=1.4
-     4. v180のnextNext 2手先評価を維持
+    v192の改善点:
+     1. LOWフェーズheight_mult減少
+        - height_mult: 1.0→0.6 に減少
+        - 初期段階でのHEIGHT_CONTROL選択を抑制
+        - HIGH_LAYER選択を促進し、高スコア群の「初期から積極的に高層配置」する戦略に近づける
+     2. v191の改善点を維持
+        - v189のシンプル構造
+        - 初期マージ強化・DIRECT拡張
+        - v177の殿堂入り戦略の成功パラメータ
+        - v180のnextNext 2手先評価
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -110,7 +113,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 1.0  # low board weak height penalty
+        height_mult = 0.6  # v192: LOW phase height penalty reduction (1.0→0.6) to promote HIGH_LAYER placement
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
