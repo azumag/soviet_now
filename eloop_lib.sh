@@ -62,7 +62,8 @@ COMMENT_PLAYER_HEARTBEAT_FILE="tmp/.comment_queue/player.heartbeat"
 COMMENT_WATCHER_HEARTBEAT_FILE="tmp/.comment_queue/watcher.heartbeat"
 COMMENT_BATCH_HISTORY_FILE="tmp/.comment_queue/processed_batch_hashes.log"
 COMMENT_BATCH_DEDUP_TTL=180
-mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "tmp/.twitch_chat" tmp
+RADIO_DEFERRED_QUEUE_DIR="tmp/.radio_deferred_queue"
+mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "$RADIO_DEFERRED_QUEUE_DIR" "tmp/.twitch_chat" tmp
 
 #=== コアヘルパー ===
 
@@ -1394,6 +1395,56 @@ _radio_clear_state() {
 	case "$current" in *":${my_corner}:"*) rm -f tmp/.radio_state ;; esac
 }
 
+_radio_mark_done() {
+	local done_marker="$1"
+	[ -n "$done_marker" ] || return 0
+	touch "$done_marker"
+	# 古い重複防止マーカーを掃除（最新200件だけ保持）
+	local old_markers
+	old_markers=$(ls -1t tmp/.radio_done_* 2>/dev/null | tail -n +201 || true)
+	if [ -n "$old_markers" ]; then
+		echo "$old_markers" | xargs rm -f 2>/dev/null || true
+	fi
+}
+
+_enqueue_deferred_radio_talk() {
+	local talk_file="$1" game_num="$2" corner_name="$3"
+	[ -s "$talk_file" ] || return 1
+	mkdir -p "$RADIO_DEFERRED_QUEUE_DIR" 2>/dev/null || true
+	local deferred_file
+	deferred_file="$RADIO_DEFERRED_QUEUE_DIR/radio_$(date +%s)_${game_num}_${corner_name}_${RANDOM}.txt"
+	cp "$talk_file" "$deferred_file" 2>/dev/null || return 1
+	echo "$deferred_file"
+}
+
+_play_deferred_radio_queue_once() {
+	# コメント未消化がある間は deferred ラジオを再生しない
+	local comment_queued=0 comment_playing=0 comment_total=0
+	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
+	comment_queued=${comment_queued:-0}
+	comment_playing=${comment_playing:-0}
+	comment_total=$((comment_queued + comment_playing))
+	[ "$comment_total" -gt 0 ] && return 0
+
+	local qf
+	qf=$(ls -1 "$RADIO_DEFERRED_QUEUE_DIR"/radio_*.txt 2>/dev/null | sort | head -n 1)
+	[ -n "$qf" ] || return 0
+	[ -f "$qf" ] || return 0
+
+	local playing_file="${qf%.txt}.playing"
+	if mv "$qf" "$playing_file" 2>/dev/null; then
+		log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
+		if ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+			rm -f "$playing_file"
+			log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
+		else
+			local retry_file="${playing_file%.playing}.txt"
+			mv "$playing_file" "$retry_file" 2>/dev/null || true
+			log "[RADIO:deferred] 再生失敗 → キューへ戻す: $(basename "$retry_file")"
+		fi
+	fi
+}
+
 _radio_generate_and_play() {
 	local prompt_file="$1" game_num="$2" score="$3" corner_name="$4"
 	shift 4
@@ -1404,18 +1455,6 @@ _radio_generate_and_play() {
 		esac
 		shift
 	done
-
-	# コメント待ちキュー(.txt)が残っている間は新規トーク生成を止める（コメント消化を優先）
-	# 再生中(.playing)のみの場合は生成を許可し、通常ラジオの飢餓を避ける
-	local comment_queued=0 comment_playing=0
-	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
-	comment_queued=${comment_queued:-0}
-	comment_playing=${comment_playing:-0}
-	if [ "$comment_queued" -gt 0 ]; then
-		log "[RADIO:${corner_name}] skip: queued comments=${comment_queued} (playing=${comment_playing})"
-		rm -f "$prompt_file" 2>/dev/null || true
-		return 0
-	fi
 
 	# 同一 game_num + corner の二重生成/二重再生を防止
 	local done_marker="tmp/.radio_done_${game_num}_${corner_name}"
@@ -1555,26 +1594,46 @@ ${talk_body}"
 	# say待ちは say_enqueue.sh 内で行われるため、ここでは不要
 
 	local talk_file
+	local comment_queued=0 comment_playing=0 comment_total=0
+	local deferred_file=""
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 	echo "$talk_body" >"$talk_file"
-	echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
 	log "[RADIO:${corner_name}] ${#talk_body}字"
-	if [ "$no_preempt" = true ]; then
-		./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
+
+	# コメント未消化がある間は再生を deferred キューへ積み、生成は止めない
+	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
+	comment_queued=${comment_queued:-0}
+	comment_playing=${comment_playing:-0}
+	comment_total=$((comment_queued + comment_playing))
+	if [ "$comment_total" -gt 0 ]; then
+		deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "$corner_name" || true)
+		if [ -n "$deferred_file" ]; then
+			echo "queued:${corner_name}:$(date +%s)" > tmp/.radio_state
+			log "[RADIO:${corner_name}] deferred: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}) -> $(basename "$deferred_file")"
+		else
+			log "[RADIO:${corner_name}] deferred enqueue失敗 (comment backlog=${comment_total})"
+			_radio_clear_state "$corner_name"
+			rm -f "$talk_file" 2>/dev/null || true
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
 	else
-		./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
+		echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
+		if [ "$no_preempt" = true ]; then
+			./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
+		else
+			./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
+		fi
 	fi
 	rm -f "$talk_file"
-	touch "$done_marker"
-	# 古い重複防止マーカーを掃除（最新200件だけ保持）
-	local old_markers
-	old_markers=$(ls -1t tmp/.radio_done_* 2>/dev/null | tail -n +201 || true)
-	if [ -n "$old_markers" ]; then
-		echo "$old_markers" | xargs rm -f 2>/dev/null || true
-	fi
+	_radio_mark_done "$done_marker"
 	_radio_clear_state "$corner_name"
 	rmdir "$inflight_dir" 2>/dev/null || true
-	log "[RADIO:${corner_name}] トーク終了"
+	if [ -n "$deferred_file" ]; then
+		log "[RADIO:${corner_name}] トーク終了 (再生待ちキュー)"
+	else
+		log "[RADIO:${corner_name}] トーク終了"
+	fi
 }
 
 #=== ラジオトーク: テーマ選択 ===
@@ -2028,34 +2087,32 @@ schedule_nonessential_audio_jobs() {
 	local news_phase=1
 	local radio_interval=5
 	local radio_phase=0
-	# コメント待ち(.txt)が1件でもあれば新規トーク生成を止める
-	# 再生中(.playing)のみのときは止めない
+	# コメント優先の判定は維持しつつ、生成は止めない。
+	# 再生段で deferred キューへ回して、コメント消化後に再生する。
 	local comment_backlog_skip_threshold=1
 
 	local comment_queued=0 comment_playing=0 comment_total=0
-	local skip_nonessential_radio=false
+	local comment_backlog_high=false
 	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
 	comment_queued=${comment_queued:-0}
 	comment_playing=${comment_playing:-0}
 	comment_total=$((comment_queued + comment_playing))
 	if is_comment_backlog_high "$comment_backlog_skip_threshold" "queued"; then
-		skip_nonessential_radio=true
+		comment_backlog_high=true
 	fi
 
 	if (( game_num % news_interval == news_phase )); then
-		if [ "$skip_nonessential_radio" = true ]; then
-			log "[NEWS] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
-		else
-			fetch_and_play_news "$game_num" "$score" &
+		if [ "$comment_backlog_high" = true ]; then
+			log "[NEWS] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
 		fi
+		fetch_and_play_news "$game_num" "$score" &
 	fi
 
 	if (( game_num % radio_interval == radio_phase )); then
-		if [ "$skip_nonessential_radio" = true ]; then
-			log "[RADIO] skip random corner: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
-		else
-			start_random_radio_corner "$game_num" "$score" &
+		if [ "$comment_backlog_high" = true ]; then
+			log "[RADIO] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
 		fi
+		start_random_radio_corner "$game_num" "$score" &
 	fi
 }
 
@@ -2257,6 +2314,9 @@ _play_comment_queue() {
 			fi
 		fi
 	done
+
+	# コメントが空のタイミングで deferred ラジオを1本だけ流す
+	_play_deferred_radio_queue_once
 }
 
 COMMENT_PLAYER_PID_FILE="tmp/.comment_queue/player.pid"
