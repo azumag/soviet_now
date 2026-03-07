@@ -369,9 +369,32 @@ ${talk_body}"
 
 _pick_radio_theme() {
 	local themes=()
-	while IFS= read -r _line; do
-		[ -n "$_line" ] && themes+=("$_line")
-	done < "$ELOOP_LIB_DIR/data/radio_themes.txt"
+	local theme_keys=()
+	if [ -f "$ELOOP_LIB_DIR/data/radio_themes.txt" ]; then
+		while IFS= read -r _line || [ -n "$_line" ]; do
+			[ -n "$_line" ] || continue
+			case "$_line" in
+			\#*) continue ;;
+			esac
+			local t_key="${_line%%。*}"
+			[ "$t_key" = "$_line" ] && t_key="${_line%%を深掘り*}"
+			[ -n "$t_key" ] || t_key="$_line"
+			local seen=false existing_key
+			for existing_key in "${theme_keys[@]}"; do
+				if [ "$existing_key" = "$t_key" ]; then
+					seen=true
+					break
+				fi
+			done
+			if [ "$seen" = false ]; then
+				themes+=("$_line")
+				theme_keys+=("$t_key")
+			fi
+		done < "$ELOOP_LIB_DIR/data/radio_themes.txt"
+	fi
+	if [ ${#themes[@]} -eq 0 ]; then
+		themes=("世界の料理と文化の話。各国の食卓と暮らしの違いを深掘りして")
+	fi
 	local past_themes_file="tmp/.past_radio_themes.txt"
 	local available_themes=()
 	local past_theme_list=""
@@ -379,6 +402,7 @@ _pick_radio_theme() {
 	for t in "${themes[@]}"; do
 		[ -z "$t" ] && continue
 		local t_key="${t%%。*}"
+		[ "$t_key" = "$t" ] && t_key="${t%%を深掘り*}"
 		if ! echo "$past_theme_list" | grep -qF "$t_key"; then
 			available_themes+=("$t")
 		fi
@@ -388,7 +412,9 @@ _pick_radio_theme() {
 		>"$past_themes_file"
 	fi
 	local theme="${available_themes[$((RANDOM % ${#available_themes[@]}))]}"
-	echo "${theme%%。*}" >>"$past_themes_file"
+	local theme_key="${theme%%。*}"
+	[ "$theme_key" = "$theme" ] && theme_key="${theme%%を深掘り*}"
+	echo "$theme_key" >>"$past_themes_file"
 	tail -"${PAST_RADIO_TOPICS_KEEP:-100}" "$past_themes_file" >"${past_themes_file}.tmp" && mv "${past_themes_file}.tmp" "$past_themes_file"
 	echo "$theme"
 }
