@@ -2681,8 +2681,7 @@ generate_comment_response() {
 	_kill_comment_gen
 	mkdir -p "tmp/.twitch_chat"
 
-	# 先に未読を取得。ack はキュー投入成功時のみ実行する。
-	# 生成失敗時にコメントを失わないようにする。
+	# 先に未読を取得。生成失敗時はpendingを維持し、成功時のみ処理済み行を削除する。
 	./twitch_chat.sh fetch
 
 	local twitch_comments=""
@@ -2690,12 +2689,17 @@ generate_comment_response() {
 		twitch_comments=$(cat "tmp/twitch_comments.txt")
 	fi
 	[ -z "$twitch_comments" ] && return
+	local comment_batch_file=""
+	comment_batch_file=$(mktemp /tmp/eloop_comment_batch_XXXXXXXX 2>/dev/null || true)
+	[ -z "$comment_batch_file" ] && comment_batch_file="tmp/.twitch_chat/comment_batch_$(date +%s)_${RANDOM}.txt"
+	printf '%s\n' "$twitch_comments" > "$comment_batch_file"
 
 	local comment_batch_hash=""
 	comment_batch_hash=$(printf '%s' "$twitch_comments" | md5 -q 2>/dev/null || echo "")
 	if _is_recent_comment_batch_processed "$comment_batch_hash"; then
 		log "[COMMENT] 同一コメントバッチを直近で処理済みのためスキップ (batch=$comment_batch_hash)"
-		./twitch_chat.sh ack
+		./twitch_chat.sh ack-batch "$comment_batch_file"
+		rm -f "$comment_batch_file"
 		return
 	fi
 
@@ -2747,6 +2751,7 @@ generate_comment_response() {
 				rm -f tmp/.twitch_chat/comment_gen.pid
 			fi
 			rm -f tmp/.comment_gen_state
+			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
 
@@ -2920,7 +2925,7 @@ RETRYCOMMENT
 			comments_talk="$attempt_talk"
 			comment_model_used="$attempt_model"
 			_mark_comment_batch_processed "$comment_batch_hash"
-			./twitch_chat.sh ack
+			./twitch_chat.sh ack-batch "$comment_batch_file"
 			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file (model=${comment_model_used:-unknown}, batch=${comment_batch_hash:-none}, attempt=${attempt}/${comment_retry_max})"
 			generation_ok=true
 			break
@@ -2986,7 +2991,7 @@ start_comment_watcher() {
 				# 生成中は未読を溜めるだけにして、取りこぼしを防ぐ
 				./twitch_chat.sh fetch 2>/dev/null
 			else
-				# idle時は claim で原子的に取得して生成
+				# idle時は pending から生成（成功時に処理済み行のみ削除）
 				generate_comment_response
 			fi
 

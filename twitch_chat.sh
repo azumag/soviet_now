@@ -5,6 +5,7 @@
 #   ./twitch_chat.sh start [channel]   - バックグラウンドでIRC常駐開始
 #   ./twitch_chat.sh fetch             - 前回fetch以降の新コメントを取得 → tmp/twitch_comments.txt
 #   ./twitch_chat.sh ack               - 読み上げ完了後に呼ぶ。pending.logをクリア
+#   ./twitch_chat.sh ack-batch <file>  - 処理済みコメント行のみ pending.log から削除
 #   ./twitch_chat.sh stop              - デーモン停止
 #   ./twitch_chat.sh status            - 動作状況表示
 
@@ -306,6 +307,42 @@ _ack() {
     _with_chat_lock "ack" _ack_nolock
 }
 
+#--- ack-batch: 指定ファイルの行だけpending.logから削除 ---
+_ack_batch_nolock() {
+    local batch_file="$1"
+    if [ -z "$batch_file" ] || [ ! -f "$batch_file" ]; then
+        _log "ack_batch: batch fileが見つかりません"
+        return 0
+    fi
+    if [ ! -f "$PENDING_LOG" ] || [ ! -s "$PENDING_LOG" ]; then
+        _log "ack_batch: pending.logは空"
+        return 0
+    fi
+
+    local batch_tmp out_tmp before_count after_count removed_count
+    batch_tmp=$(mktemp /tmp/twitch_ack_batch_XXXXXXXX)
+    out_tmp=$(mktemp /tmp/twitch_ack_out_XXXXXXXX)
+    awk 'NF && !seen[$0]++' "$batch_file" > "$batch_tmp"
+    if [ ! -s "$batch_tmp" ]; then
+        rm -f "$batch_tmp" "$out_tmp"
+        _log "ack_batch: 対象行なし"
+        return 0
+    fi
+
+    before_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
+    grep -vxF -f "$batch_tmp" "$PENDING_LOG" > "$out_tmp" || true
+    mv "$out_tmp" "$PENDING_LOG"
+    after_count=$(wc -l < "$PENDING_LOG" | tr -d ' ')
+    removed_count=$((before_count - after_count))
+    _log "ack_batch: ${removed_count}件をpendingから削除"
+    rm -f "$batch_tmp"
+}
+
+_ack_batch() {
+    local batch_file="$1"
+    _with_chat_lock "ack_batch" _ack_batch_nolock "$batch_file"
+}
+
 #--- claim: fetch + pending snapshot + ack をロック下で一括処理 ---
 _claim_nolock() {
     _fetch_nolock
@@ -366,8 +403,9 @@ case "$CMD" in
     start)  _start ;;
     fetch)  _fetch ;;
     ack)    _ack ;;
+    ack-batch) _ack_batch "$2" ;;
     claim)  _claim ;;
     stop)   _stop ;;
     status) _status ;;
-    *)      echo "Usage: $0 {start|fetch|ack|claim|stop|status} [channel]" >&2; exit 1 ;;
+    *)      echo "Usage: $0 {start|fetch|ack|ack-batch|claim|stop|status} [channel|batch_file]" >&2; exit 1 ;;
 esac
