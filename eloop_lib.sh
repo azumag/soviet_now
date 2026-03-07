@@ -2051,11 +2051,8 @@ start_radio_corner_news() {
 	local unread_news_headlines=""
 	unread_news_headlines=$(printf '%s\n' "$news_headlines" | _filter_unread_news_blocks)
 	if [ -z "$unread_news_headlines" ]; then
-		log "[NEWS] 全ニュースが既読 → 既読履歴をリセットして再読モードに切替"
-		: > "$PAST_NEWS_READ"
-		: > "$PAST_NEWS_READ_KEYS"
-		past_news_read=""
-		unread_news_headlines="$news_headlines"
+		log "[NEWS] 全ニュースが既読または新規なし → 今回はスキップ"
+		return 1
 	fi
 
 	local prompt_file
@@ -2188,7 +2185,9 @@ fetch_and_play_news() {
 	./fetch_news.sh 2>/dev/null
 
 	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
-		start_radio_corner_news "$game_num" "$score"
+		if ! start_radio_corner_news "$game_num" "$score"; then
+			log "[NEWS] 読み上げ対象の未読ニュースなし、スキップ"
+		fi
 	else
 		log "[NEWS] ニュースなし、スキップ"
 	fi

@@ -10,6 +10,7 @@ OUTFILE="tmp/news.txt"
 PAST_NEWS="tmp/.past_news_titles.txt"
 PAST_NEWS_LINKS="tmp/.past_news_links.txt"
 LAST_NEWS_CACHE="tmp/.news_last_success.txt"
+NEWS_ALLOW_STALE_CACHE="${NEWS_ALLOW_STALE_CACHE:-0}"
 
 # 複数カテゴリの RSS を使い候補を増やす
 RSS_URLS=(
@@ -65,12 +66,9 @@ for url in "${selected_urls[@]}"; do
 done
 
 if [ -z "$all_items" ]; then
-    # RSS取得失敗時は直近成功キャッシュを再利用
-    if [ -s "$LAST_NEWS_CACHE" ]; then
+    # RSS取得失敗時の古いニュース再読を避ける（必要なら明示的に再利用を許可）
+    if [ "$NEWS_ALLOW_STALE_CACHE" = "1" ] && [ -s "$LAST_NEWS_CACHE" ]; then
         cp "$LAST_NEWS_CACHE" "$OUTFILE"
-    elif [ -s "$PAST_NEWS" ]; then
-        # キャッシュもない場合は過去見出しを再掲して無音を避ける
-        tail -3 "$PAST_NEWS" | awk 'NF {print "■ " $0 "\n"}' > "$OUTFILE"
     else
         rm -f "$OUTFILE"
     fi
@@ -107,36 +105,19 @@ while IFS=$'\t' read -r title link; do
     seen_links="${seen_links}${link}"$'\n'
 done <<< "$all_items"
 
-# 新規候補がない場合は履歴を維持したままスキップ
+# 新規候補がない場合は再読せずスキップ
 if [ ! -s "$available_file" ]; then
-    # 全件既読で枯渇した場合は履歴をリセットして再抽出
-    : > "$PAST_NEWS"
-    : > "$PAST_NEWS_LINKS"
-
-    seen_titles=""
-    seen_links=""
-    while IFS=$'\t' read -r title link; do
-        [ -z "$title" ] && continue
-        [ -z "$link" ] && continue
-        if printf '%s\n' "$seen_titles" | grep -qxF "$title"; then
-            continue
-        fi
-        if printf '%s\n' "$seen_links" | grep -qxF "$link"; then
-            continue
-        fi
-        printf '%s\t%s\n' "$title" "$link" >>"$available_file"
-        seen_titles="${seen_titles}${title}"$'\n'
-        seen_links="${seen_links}${link}"$'\n'
-    done <<< "$all_items"
+    # 直近ニュースの再読を避けるため、今回の出力は空にする
+    rm -f "$available_file"
+    rm -f "$OUTFILE"
+    exit 0
 fi
 
 if [ ! -s "$available_file" ]; then
-    # それでも候補ゼロならキャッシュを利用
+    # それでも候補ゼロなら再読を避ける（明示許可時のみキャッシュ利用）
     rm -f "$available_file"
-    if [ -s "$LAST_NEWS_CACHE" ]; then
+    if [ "$NEWS_ALLOW_STALE_CACHE" = "1" ] && [ -s "$LAST_NEWS_CACHE" ]; then
         cp "$LAST_NEWS_CACHE" "$OUTFILE"
-    elif [ -s "$PAST_NEWS" ]; then
-        tail -3 "$PAST_NEWS" | awk 'NF {print "■ " $0 "\n"}' > "$OUTFILE"
     else
         rm -f "$OUTFILE"
     fi
@@ -184,10 +165,8 @@ if [ -n "$result" ]; then
     echo "$result" > "$OUTFILE"
     cp "$OUTFILE" "$LAST_NEWS_CACHE"
 else
-    if [ -s "$LAST_NEWS_CACHE" ]; then
+    if [ "$NEWS_ALLOW_STALE_CACHE" = "1" ] && [ -s "$LAST_NEWS_CACHE" ]; then
         cp "$LAST_NEWS_CACHE" "$OUTFILE"
-    elif [ -s "$PAST_NEWS" ]; then
-        tail -3 "$PAST_NEWS" | awk 'NF {print "■ " $0 "\n"}' > "$OUTFILE"
     else
         rm -f "$OUTFILE"
     fi
