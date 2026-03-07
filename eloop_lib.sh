@@ -29,7 +29,7 @@ RADIO_OPENCODE_TIMEOUT=180
 RADIO_CLAUDE_MODEL="sonnet"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 RADIO_SAY_RATE=150
-export SAY_AUDIO_DEVICE="${SAY_AUDIO_DEVICE:-}"
+unset SAY_AUDIO_DEVICE
 PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
 PAST_NEWS_READ="tmp/.past_news_read.txt"
 PAST_NEWS_READ_KEYS="tmp/.past_news_read_keys.txt"
