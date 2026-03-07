@@ -113,17 +113,6 @@ if [ ! -s "$available_file" ]; then
     exit 0
 fi
 
-if [ ! -s "$available_file" ]; then
-    # それでも候補ゼロなら再読を避ける（明示許可時のみキャッシュ利用）
-    rm -f "$available_file"
-    if [ "$NEWS_ALLOW_STALE_CACHE" = "1" ] && [ -s "$LAST_NEWS_CACHE" ]; then
-        cp "$LAST_NEWS_CACHE" "$OUTFILE"
-    else
-        rm -f "$OUTFILE"
-    fi
-    exit 0
-fi
-
 # シャッフルして3件選ぶ（保険としてタイトル重複を再除外）
 selected=$(sort -R "$available_file" | awk -F '\t' '!seen[$1]++' | head -3)
 rm -f "$available_file"

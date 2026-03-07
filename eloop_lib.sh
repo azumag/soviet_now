@@ -33,6 +33,7 @@ export SAY_AUDIO_DEVICE="${SAY_AUDIO_DEVICE:-BlackHole 2ch}"
 PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
 PAST_NEWS_READ="tmp/.past_news_read.txt"
 PAST_NEWS_READ_KEYS="tmp/.past_news_read_keys.txt"
+PAST_NEWS_TOPIC_KEYS="tmp/.past_news_topic_keys.txt"
 
 IMPROVE_STATE_FILE="tmp/improve_state.json"
 IMPROVE_AI_LOG_FILE="tmp/improve_ai.log"
@@ -1194,11 +1195,45 @@ print(s[:240])
 PY
 }
 
+_news_topic_key() {
+	local title="$1"
+	python3 - "$title" <<'PY'
+import re
+import sys
+import unicodedata
+
+title = sys.argv[1] if len(sys.argv) > 1 else ""
+s = unicodedata.normalize("NFKC", title).strip().lower()
+s = re.sub(r'【[^】]*】', ' ', s)
+s = re.sub(r'\[[^\]]*\]', ' ', s)
+parts = [p for p in re.split(r'[\s\u3000・／/|｜:：,，、。!！?？]+', s) if p]
+head = parts[0] if parts else s
+head = re.sub(r'^(速報|続報|解説|独自|動画|写真|社説|論説)', '', head)
+head = re.sub(r'[0-9０-９]+', '', head)
+
+mk = re.match(r'([ァ-ヶー]{3,})', head)
+if mk:
+    print(mk.group(1)[:32])
+    raise SystemExit(0)
+
+ma = re.match(r'([a-z]{3,})', head)
+if ma:
+    print(ma.group(1)[:32])
+    raise SystemExit(0)
+
+norm = unicodedata.normalize("NFKC", head)
+norm = re.sub(r'[\s\u3000]+', '', norm)
+norm = ''.join(ch for ch in norm if unicodedata.category(ch)[0] not in ('P', 'S'))
+norm = norm.replace("yahooニュース", "").replace("yahoo!ニュース", "")
+print(norm[:8])
+PY
+}
+
 _filter_unread_news_blocks() {
 	local news_tmp
 	news_tmp=$(mktemp /tmp/eloop_news_blocks_XXXXXXXX)
 	cat >"$news_tmp"
-	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$news_tmp" <<'PY'
+	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" "$news_tmp" <<'PY'
 import os
 import re
 import sys
@@ -1206,7 +1241,8 @@ import unicodedata
 
 past_title_file = sys.argv[1]
 past_key_file = sys.argv[2]
-news_file = sys.argv[3]
+past_topic_key_file = sys.argv[3]
+news_file = sys.argv[4]
 news_text = ""
 if os.path.exists(news_file):
     with open(news_file, encoding="utf-8", errors="ignore") as f:
@@ -1218,6 +1254,25 @@ def key(s: str) -> str:
     s = ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('P', 'S'))
     s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
     return s[:240]
+
+def topic_key(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s).strip().lower()
+    s = re.sub(r'【[^】]*】', ' ', s)
+    s = re.sub(r'\[[^\]]*\]', ' ', s)
+    parts = [p for p in re.split(r'[\s\u3000・／/|｜:：,，、。!！?？]+', s) if p]
+    head = parts[0] if parts else s
+    head = re.sub(r'^(速報|続報|解説|独自|動画|写真|社説|論説)', '', head)
+    head = re.sub(r'[0-9０-９]+', '', head)
+
+    m = re.match(r'([ァ-ヶー]{3,})', head)
+    if m:
+        return m.group(1)[:32]
+    m = re.match(r'([a-z]{3,})', head)
+    if m:
+        return m.group(1)[:32]
+
+    k = key(head)
+    return k[:8]
 
 past_keys = set()
 if os.path.exists(past_title_file):
@@ -1234,6 +1289,13 @@ if os.path.exists(past_key_file):
         if k:
             past_keys.add(k)
 
+past_topic_keys = set()
+if os.path.exists(past_topic_key_file):
+    for ln in open(past_topic_key_file, encoding="utf-8", errors="ignore"):
+        k = ln.strip()
+        if k:
+            past_topic_keys.add(k)
+
 blocks = []
 current = []
 for line in news_text.splitlines():
@@ -1247,17 +1309,25 @@ if current:
     blocks.append(current)
 
 seen = set()
+seen_topics = set()
 out = []
 for b in blocks:
     title = b[0][2:].strip()
     k = key(title)
+    tk = topic_key(title)
     if not k:
         continue
     if k in seen:
         continue
+    if tk and tk in seen_topics:
+        continue
     if k in past_keys:
         continue
+    if tk and tk in past_topic_keys:
+        continue
     seen.add(k)
+    if tk:
+        seen_topics.add(tk)
     out.append("\n".join(b).rstrip())
 
 print("\n\n".join(out))
@@ -1378,12 +1448,15 @@ _radio_generate_and_play() {
 	# ニュースコーナーの場合、選んだニュースを既読リストに記録
 	if [ "$corner_name" = "news" ]; then
 		if [ -n "$selected_news" ]; then
-			local selected_key
+			local selected_key selected_topic_key
 			selected_news=$(_resolve_selected_news_title "$selected_news" "tmp/news.txt")
 			selected_key=$(_news_title_key "$selected_news")
+			selected_topic_key=$(_news_topic_key "$selected_news")
 			if [ -z "$selected_key" ]; then
 				log "[RADIO:news] 既読記録スキップ: タイトル解決失敗"
-			elif grep -qxF "$selected_news" "$PAST_NEWS_READ" 2>/dev/null || grep -qxF "$selected_key" "$PAST_NEWS_READ_KEYS" 2>/dev/null; then
+			elif grep -qxF "$selected_news" "$PAST_NEWS_READ" 2>/dev/null || \
+				grep -qxF "$selected_key" "$PAST_NEWS_READ_KEYS" 2>/dev/null || \
+				{ [ -n "$selected_topic_key" ] && grep -qxF "$selected_topic_key" "$PAST_NEWS_TOPIC_KEYS" 2>/dev/null; }; then
 				log "[RADIO:news] 重複ニュース検出 → スキップ: ${selected_news}"
 				_radio_clear_state "$corner_name"
 				rmdir "$inflight_dir" 2>/dev/null || true
@@ -1391,8 +1464,10 @@ _radio_generate_and_play() {
 			else
 				echo "$selected_news" >>"$PAST_NEWS_READ"
 				echo "$selected_key" >>"$PAST_NEWS_READ_KEYS"
+				[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
 				tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
 				tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
+				tail -120 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
 				log "[RADIO:news] 既読記録: ${selected_news}"
 			fi
 		fi
