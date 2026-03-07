@@ -7,19 +7,20 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (6 evaluation axes):
-  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase)
-  3. Drift penalty - Penalty for post-landing drift due to polygon shape
-  4. Left-right balance correction - Bonus for correcting piece count bias
-  5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v158: dynamic adjustment with reduced height penalty)
+Decision Logic (7 evaluation axes):
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase)
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Left-right balance correction - Bonus for correcting piece count bias
+   5. nextNext centering - Center for next merge opportunity if nextNext same type
+   6. Chain merge bonus - Evaluate possibility of further merges after merge (v158: dynamic adjustment with reduced height penalty)
+   7. NextNext chain bonus - Evaluate possibility of nextNext merges after current merge (NEW)
 
 Phases (determined by board max Y):
-  LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8)
-  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-  CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8)
+   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
 # Fixed interface:
@@ -36,6 +37,11 @@ Phases (determined by board max Y):
 # v155: Dynamic parameter adjustment version - chain_distance=5.0, chain_bonus=450.0 fixed, but uses dynamic adjustment logic
 # v157: Revert to v153 settings - height_multiplier 40.0->50.0, lost v155's dynamic adjustment
 # v158: Restore v155 dynamic adjustment + reduce height penalty - Reintroduce v155's dynamic adjustment logic (chain_distance_max=5.0+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0), and reduce height_multiplier from 50.0 to 45.0 to promote merge opportunities. This balances HEIGHT_CONTROL (selected 27.3% with low avg_score_delta=1.6) and CHAIN_MERGE (selected 8.2% with high avg_score_delta=29.7) by lowering height penalty while keeping dynamic chain merge bonuses.
+# v159: nextNext 2手先評価軸追加版 - batch_summary/adviceで「A上にBを置くとnextNextの併合を逃す」問題に対処。
+# nextNextが現在nextと同じtypeの場合、「現在併合→nextNextで更に併合」の2連鎖を評価する評価軸を追加。
+# これにより、盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処し、CHAIN_MERGE選択を促進する。
+# v160: MEDIUMフェーズHEIGHT_CONTROL抑制版 - batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）。
+# MEDIUMフェーズでheight_multiplierを45.0→30.0に削減し、HEIGHT_CONTROL過剰選択を抑制して併合選択を促進することでスコア安定性を向上させる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -43,16 +49,13 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v158: Restore v155 dynamic adjustment + reduce height penalty
+    """v160: MEDIUMフェーズHEIGHT_CONTROL抑制版
 
-    v157 lost v155's dynamic adjustment advantage and only changed height_multiplier.
-    Reintroduce v155's successful dynamic adjustment logic while slightly reducing height penalty:
-    - chain_distance = 5.0 + landing_y * 0.6 (dynamic expansion)
-    - chain_bonus_multiplier = 450.0 + landing_y * 150.0 (dynamic bonus)
-    - height_multiplier: 50.0 -> 45.0 (reduced to promote merge opportunities)
-    - MEDIUM height_mult: 1.8 (v155 value)
-    - HIGH height_mult: 1.8 (v155 value)
-    This balances HEIGHT_CONTROL (27.3% selection rate with low avg_score_delta=1.6) and CHAIN_MERGE (8.2% selection rate with high avg_score_delta=29.7).
+    batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）。
+    MEDIUMフェーズでheight_multiplierを45.0→30.0に削減し、HEIGHT_CONTROL過剰選択を抑制して併合選択を促進する。
+
+    v159から継承:
+    - nextNext 2手先評価軸（盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に対処）
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -116,7 +119,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 6 evaluation axes
+    #  score each drop candidate (x coordinate) with 7 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -145,9 +148,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v158: height_multiplier reduced from 50.0 to 45.0 to promote merge opportunities
+        # v160: MEDIUMフェーズでheight_multiplierを45.0→30.0に削減しHEIGHT_CONTROL過剰選択を抑制
+        # batch_summaryで低スコア群がHEIGHT_CONTROLを34.3%選択していることを確認（高スコア群は24.3%）
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
-        height_penalty = landing_y * 45.0 * height_mult
+        height_multiplier = 45.0
+        if phase == "MEDIUM":
+            height_multiplier = 30.0  # v160: MEDIUMフェーズで併合選択を促進
+        height_penalty = landing_y * height_multiplier * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -244,6 +251,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
+
+        # ----- evaluation axis 7: nextNext chain bonus (v159: NEW) -----
+        # v159: nextNextが現在nextと同じtypeの場合、2連鎖評価を追加し「現在併合→nextNext併合」を促進。
+        # 盤面A・nextB・nextNextAの状況でA上にBを置くとnextNextの併合を逃す問題に構造的に対処。
+        if next_next_type == next_type and merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
+            merges = result["merges"]
+            if merges:
+                # get best merge target (closest distance)
+                best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
+                target_x = best_merge.get("x", 0)
+                target_y = best_merge.get("y", 0)
+
+                # type after merge (merged_type + 1) will be merged with nextNext
+                # nextNext will try to merge with pieces of type (merged_type + 1)
+                next_next_merge_type = min(merged_type + 1, 16)
+
+                # collect all next_next_merge_type pieces near the merge target
+                # use a moderate search distance for 2-step chain evaluation
+                next_next_chain_distance = 4.0
+                next_next_nearby_pieces = []
+                for p in pieces:
+                    if p.get("type") == next_next_merge_type:
+                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                        if dist < next_next_chain_distance:
+                            next_next_nearby_pieces.append((dist, p))
+
+                # sort by distance
+                next_next_nearby_pieces.sort(key=lambda x: x[0])
+
+                # bonus for 2-step chain merge - if nextNext can merge after current merge
+                # give bonus to promote current merge placement that enables nextNext merge
+                if len(next_next_nearby_pieces) >= 1:
+                    dist, _ = next_next_nearby_pieces[0]
+                    # bonus based on distance - closer nextNext merge target = higher bonus
+                    next_next_bonus = (next_next_chain_distance - dist) * 400.0
+                    score += next_next_bonus
+                    reasons.append("NEXTNEXT_CHAIN")
 
         # ----- update best candidate -----
         if score > best_score:
