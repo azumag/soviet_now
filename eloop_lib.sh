@@ -63,7 +63,9 @@ COMMENT_WATCHER_HEARTBEAT_FILE="tmp/.comment_queue/watcher.heartbeat"
 COMMENT_BATCH_HISTORY_FILE="tmp/.comment_queue/processed_batch_hashes.log"
 COMMENT_BATCH_DEDUP_TTL=180
 RADIO_DEFERRED_QUEUE_DIR="tmp/.radio_deferred_queue"
-mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "$RADIO_DEFERRED_QUEUE_DIR" "tmp/.twitch_chat" tmp
+MANUAL_AUDIO_TRIGGER_DIR="tmp/.manual_audio_triggers"
+MANUAL_AUDIO_TRIGGER_MAX_PER_TICK=3
+mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "$RADIO_DEFERRED_QUEUE_DIR" "$MANUAL_AUDIO_TRIGGER_DIR" "tmp/.twitch_chat" tmp
 
 #=== コアヘルパー ===
 
@@ -2057,6 +2059,102 @@ fetch_and_play_news() {
 	fi
 }
 
+_build_manual_strategy_diff() {
+	local latest_commit prev_commit diff_text real_changes
+	latest_commit=$(git log --format=%H -n 1 -- "$STRATEGY_FILE" 2>/dev/null | head -n 1)
+	prev_commit=$(git log --format=%H -n 2 -- "$STRATEGY_FILE" 2>/dev/null | tail -n 1)
+
+	if [ -n "$latest_commit" ] && [ -n "$prev_commit" ]; then
+		diff_text=$(git diff --unified=1 "$prev_commit" "$latest_commit" -- "$STRATEGY_FILE" 2>/dev/null || true)
+		real_changes=$(printf '%s\n' "$diff_text" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | head -n 60 || true)
+		if [ -n "$real_changes" ]; then
+			printf '%s\n' "$diff_text" | sed -n '1,220p'
+			return 0
+		fi
+	fi
+
+	if [ -n "$latest_commit" ]; then
+		git show --stat --oneline "$latest_commit" -- "$STRATEGY_FILE" 2>/dev/null || true
+	fi
+}
+
+_dispatch_manual_audio_trigger() {
+	local cmd_file="$1" game_num="$2" score="$3"
+	[ -f "$cmd_file" ] || return 1
+
+	local cmd_line cmd_name recent_scores best_score strategy_diff
+	cmd_line=$(sed 's/#.*$//' "$cmd_file" 2>/dev/null | sed '/^[[:space:]]*$/d' | head -n 1 | tr '[:upper:]' '[:lower:]')
+	cmd_name=$(printf '%s' "$cmd_line" | awk '{print $1}')
+
+	[ -n "$cmd_name" ] || {
+		log "[MANUAL] 空の音声トリガーを破棄: $(basename "$cmd_file")"
+		return 1
+	}
+
+	case "$cmd_name" in
+	news)
+		log "[MANUAL] news トリガー受付: $(basename "$cmd_file")"
+		fetch_and_play_news "$game_num" "$score" &
+		;;
+	soviet)
+		log "[MANUAL] soviet トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_soviet "$game_num" "$score" &
+		;;
+	strategy)
+		log "[MANUAL] strategy トリガー受付: $(basename "$cmd_file")"
+		recent_scores=$(tail -12 score_history.txt 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+		[ -z "$recent_scores" ] && recent_scores="${score:-0}"
+		best_score=$(cat best_score.txt 2>/dev/null || echo 0)
+		strategy_diff=$(_build_manual_strategy_diff)
+		if [ -z "$strategy_diff" ]; then
+			strategy_diff="直近の strategy.py 差分は取得できなかった。直近スコア推移と最新改善の狙いを中心に解説すること。"
+		fi
+		start_radio_corner_strategy "$strategy_diff" "$recent_scores" "$game_num" "$best_score" &
+		;;
+	theme)
+		log "[MANUAL] theme トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_theme "$game_num" "$score" &
+		;;
+	recap)
+		log "[MANUAL] recap トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_recap "$game_num" "$score" &
+		;;
+	*)
+		log "[MANUAL] 未知の音声トリガーを破棄: $(basename "$cmd_file") cmd=${cmd_name}"
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+process_external_audio_triggers() {
+	local game_num="$1" score="$2"
+	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	mkdir -p "$MANUAL_AUDIO_TRIGGER_DIR" 2>/dev/null || true
+
+	local max_per_tick="${MANUAL_AUDIO_TRIGGER_MAX_PER_TICK:-3}"
+	case "$max_per_tick" in
+	''|*[!0-9]*) max_per_tick=3 ;;
+	esac
+	[ "$max_per_tick" -lt 1 ] && max_per_tick=1
+
+	local qf processing count=0
+	for qf in $(ls -1 "$MANUAL_AUDIO_TRIGGER_DIR"/*.cmd 2>/dev/null | sort | head -n "$max_per_tick"); do
+		[ -f "$qf" ] || continue
+		processing="${qf%.cmd}.processing"
+		if ! mv "$qf" "$processing" 2>/dev/null; then
+			continue
+		fi
+		_dispatch_manual_audio_trigger "$processing" "$game_num" "$score" || true
+		rm -f "$processing" 2>/dev/null || true
+		count=$((count + 1))
+	done
+
+	[ "$count" -gt 0 ] && log "[MANUAL] 音声トリガー処理数: ${count}"
+}
+
 #=== ラジオトーク: ディスパッチャー ===
 
 start_random_radio_corner() {
@@ -2316,6 +2414,7 @@ _play_comment_queue() {
 	done
 
 	# コメントが空のタイミングで deferred ラジオを1本だけ流す
+	process_external_audio_triggers
 	_play_deferred_radio_queue_once
 }
 

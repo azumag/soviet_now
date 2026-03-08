@@ -185,6 +185,7 @@ while true; do
 	# コメント系ワーカーは壊れたPIDファイルからも自己回復させる
 	start_comment_player
 	start_comment_watcher
+	process_external_audio_triggers "$GAME_NUM" "$(tail -1 score_history.txt 2>/dev/null || echo 0)"
 
 	# ソ連建国後は strategy 実行を止め、コメント系のみ維持する
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then

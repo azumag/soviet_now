@@ -79,6 +79,8 @@ soren_loop にはソ連風ラジオDJ機能が組み込まれている。試合�
 - ニュースコーナーは既読タイトルに加えて話題キー（例: カイロス、iPS など）も保持し、同一トピックの連投を抑制する。未読がない場合やRSS取得失敗時は再読せずスキップする（再読を許可したい場合のみ `NEWS_ALLOW_STALE_CACHE=1`）
 - コメントキュー（`tmp/.comment_queue`）が混雑している間もラジオ生成は継続し、再生のみ `tmp/.radio_deferred_queue` に退避してコメント再生の後ろに並べる（コメント消化後に順次再生）
 - コメント返しは `twitch_chat.sh fetch` で未読を取得し、生成が成功したときだけ `ack-batch` で処理済み行のみを pending から削除する。生成失敗やサニタイズ失敗時は pending を維持し、同一バッチで再生成をリトライする
+- `tmp/.manual_audio_triggers/*.cmd` に `news` / `soviet` / `strategy` / `theme` / `recap` のコマンドファイルを置くと、常駐ループが数秒以内に拾って手動起動する
+- 便利スクリプト [`enqueue_audio_trigger.sh`](/Users/azumag/work/sandbox/soren/enqueue_audio_trigger.sh) で `./enqueue_audio_trigger.sh news` のようにキュー投入できる
 
 ### jloop.sh — JSON-based State Loop
 

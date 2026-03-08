@@ -519,6 +519,10 @@ PY
 	if [[ -d tmp/.comment_queue ]]; then
 		comment_queue_count=$(find tmp/.comment_queue -name 'comment_*.txt' 2>/dev/null | wc -l | tr -d ' ')
 	fi
+	local manual_audio_trigger_count=0
+	if [[ -d tmp/.manual_audio_triggers ]]; then
+		manual_audio_trigger_count=$(find tmp/.manual_audio_triggers -name '*.cmd' 2>/dev/null | wc -l | tr -d ' ')
+	fi
 
 	# コメント生成プロセス (PIDファイル + 状態ファイル)
 	local comment_gen_running=false comment_gen_pid=""
@@ -700,6 +704,9 @@ PY
 		printf "    ${C_MAGENTA}💬${C_RESET} CommentQ    ${C_MAGENTA}${comment_queue_count} pending${C_RESET}\n"
 	else
 		printf "    ${C_DIM}💬${C_RESET} CommentQ    ${C_DIM}empty${C_RESET}\n"
+	fi
+	if (( manual_audio_trigger_count > 0 )); then
+		printf "    ${C_CYAN}⌘${C_RESET} TriggerQ    ${C_CYAN}${manual_audio_trigger_count} pending${C_RESET}\n"
 	fi
 
 	# コメント生成
