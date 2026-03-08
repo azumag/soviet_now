@@ -37,8 +37,8 @@ PAST_NEWS_TOPIC_KEYS="tmp/.past_news_topic_keys.txt"
 
 IMPROVE_STATE_FILE="tmp/improve_state.json"
 IMPROVE_AI_LOG_FILE="tmp/improve_ai.log"
-IMPROVE_AI_LOG_KEEP_LINES=2000
-IMPROVE_AI_LOG_TRIM_LINES=4000
+IMPROVE_AI_LOG_KEEP_LINES=4000
+IMPROVE_AI_LOG_TRIM_LINES=8000
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
 ROLLING_SCORES_FILE="tmp/rolling_scores.json"
 REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
