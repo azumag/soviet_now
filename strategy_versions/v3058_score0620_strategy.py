@@ -21,9 +21,9 @@ Decision Logic (8 evaluation axes):
 
 Phases (determined by board max Y):
    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
-   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+    MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
+    HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+    CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
 # Merge result score: type N merge gives N*(N+1)/2 points
@@ -289,40 +289,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 500.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 10: Anti-passive start bonus (NEW) -----
+        # ----- evaluation axis 10: Anti-passive start bonus (v201: revised) -----
         # batch_summary shows HEIGHT_CONTROL selected 29.5% (low-score group) vs 24.6% (high-score group).
-        # Worst games (score 809, 873) show 6 of first 8 turns selecting HEIGHT_CONTROL, missing chain merge opportunities.
-        # Best games actively select CHAIN_MERGE from early turns.
-        # Root cause: Low-score games play too passively in early game, placing pieces too low (avg max_y=-2.99) creating flat boards that stifle reactive_pairs.
-        # High-score games place pieces slightly higher (avg max_y=-2.75), creating density and reactive_pairs.
-        # v198 improvements (EARLY_CHAIN_MERGE, REACTIVE_MERGE_PRIORITY, EARLY_MERGE_PRIORITY) were insufficient to address passive start.
-        # This axis penalizes passive flat placement and encourages edge stacking for height/density.
+        # Worst game (score0438) shows excessive EDGE_STACKING in early turns, creating boards that are too high (max_y=-3.7~-3.4).
+        # Best game (score3386) places pieces slightly lower (max_y=-3.74~-3.69) and actively selects EARLY_MERGE_PRIORITY.
+        # v199 had a bug: it used predicted_max_y which didn't account for actual landing_y from analysis.
+        # v201 fix: Use actual max_y (current board height) and landing_y from analysis to make accurate decisions.
+        # 
+        # Strategy:
+        # - If board is too high (max_y < -3.0) and no merge exists (merge_grade == "NO"):
+        #   - Penalize center placement (abs(x) < 0.5) to avoid stacking more pieces in the middle
+        #   - Bonus edge placement (abs(x) > 1.0) to distribute pieces toward edges and lower the board
+        # - This prevents excessive height in early game while maintaining density for reactive_pairs.
 
-        if merge_grade == "NO" and piece_count <= 8:
-            # Only apply in early game (piece_count <= 8) when no merge exists
+        if merge_grade == "NO" and piece_count <= 8 and max_y < -3.0:
+            # Early game with board too high: penalize center, reward edges
 
-            # Get max_y estimate for all candidates (assuming candidate x placement)
-            # We want to avoid flat boards (max_y < -3.5) which kill reactive_pairs.
-            # High-density placement (edges) creates better long-term prospects.
-
-            # Predictive max_y calculation:
-            # Height of this piece + average height of existing pieces (excluding this piece)
-            current_piece_y = -4.0  # approximate floor drop height
-            avg_other_y = (
-                sum([p["y"] for p in pieces if p["id"] != 0]) / len(pieces)
-                if pieces
-                else -3.8
-            )
-            predicted_max_y = current_piece_y + avg_other_y
-
-            # 1. Anti-flat center penalty: Penalize x=0.0 if it results in a flat board (max_y < -3.5)
-            # We want to build height, not flatness
-            if predicted_max_y < -3.5 and abs(x) < 0.5:
-                score -= 150.0  # Penalize center placement in low/flat game
-                reasons.append("ANTI_FLAT_CENTER")
-            # 2. Edge stacking bonus: Reward edge placement (x > 1.5 or x < -1.5) to build height
+            # 1. Penalize center placement when board is too high
+            if abs(x) < 0.5:
+                score -= 150.0  # Penalize center placement (board already too high)
+                reasons.append("ANTI_HIGH_CENTER")
+            # 2. Bonus edge placement to distribute pieces and lower the board
             elif abs(x) > 1.0:
-                score += 250.0  # Reward edge stacking (builds reactive pairs) - v200: increased from 100.0
+                score += 250.0  # Reward edge stacking (distribute pieces to lower board)
                 reasons.append("EDGE_STACKING")
 
         # ----- update best candidate -----
