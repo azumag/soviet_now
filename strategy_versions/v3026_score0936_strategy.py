@@ -280,16 +280,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("EARLY_CHAIN_MERGE")
 
         # ----- evaluation axis 8: early game merge priority -----
-        # 初期12ターンでマージ機会がある場合、強力なボーナスを付与
+        # 初期8ターンでマージ機会がある場合、強力なボーナスを付与
         # batch_summaryでHEIGHT_CONTROLが28.7%選択(avg_score_delta=1.8)と過剰であり、
         # ワーストゲーム(score0826)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している。
         # ベストゲーム(score2330)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア2330を出している。
         # v194のearly_game判定(max_y < -2.5)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
         # マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
         # 初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
-        if piece_count <= 12 and merge_grade == "NEAR":
+        if piece_count <= 8 and merge_grade == "NEAR":
             # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
-            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
+            # これにより初期8ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
