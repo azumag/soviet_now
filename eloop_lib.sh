@@ -1029,7 +1029,7 @@ _radio_fetch_web_grounding() {
 	query=$(_radio_extract_grounding_query "$corner_name" "$prompt_context" "$selected_news")
 	[ -n "$query" ] || return 0
 
-	log "[RADIO:${corner_name}] web grounding取得中... query=${query}"
+	log "[RADIO:${corner_name}] web grounding取得中... query=${query}" >&2
 	grounding=$(python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
 		--corner "$corner_name" \
 		--query "$query" \
@@ -1037,7 +1037,7 @@ _radio_fetch_web_grounding() {
 		--max-sources "${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}" \
 		--cache-dir "$RADIO_WEB_GROUNDING_CACHE_DIR" 2>/dev/null || true)
 	if [ -n "$grounding" ]; then
-		log "[RADIO:${corner_name}] web grounding取得成功"
+		log "[RADIO:${corner_name}] web grounding取得成功" >&2
 	fi
 	printf '%s' "$grounding"
 }
@@ -1103,7 +1103,7 @@ PROMPT
 	local model
 	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_FALLBACK:-}"; do
 		[ -n "$model" ] || continue
-		log "[RADIO:${corner_name}] fact-check中... (${model})"
+		log "[RADIO:${corner_name}] fact-check中... (${model})" >&2
 		raw_output=$(_run_opencode_radio "$model" "$prompt_file")
 		safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
 		issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
@@ -1111,9 +1111,9 @@ PROMPT
 		if _is_valid_radio_talk "$safe_script"; then
 			issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
 			if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
-				log "[RADIO:${corner_name}] fact-check通過 (${model}): ${issue_preview}"
+				log "[RADIO:${corner_name}] fact-check通過 (${model}): ${issue_preview}" >&2
 			else
-				log "[RADIO:${corner_name}] fact-check通過 (${model})"
+				log "[RADIO:${corner_name}] fact-check通過 (${model})" >&2
 			fi
 			rm -rf "$factcheck_dir"
 			printf '%s' "$safe_script"
@@ -1121,7 +1121,7 @@ PROMPT
 		fi
 	done
 
-	log "[RADIO:${corner_name}] fact-check fallback -> claude (${RADIO_FACT_CHECK_CLAUDE_MODEL})"
+	log "[RADIO:${corner_name}] fact-check fallback -> claude (${RADIO_FACT_CHECK_CLAUDE_MODEL})" >&2
 	raw_output=$(_run_claude_radio_with_model "$prompt_file" "$RADIO_FACT_CHECK_CLAUDE_MODEL")
 	safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
 	issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
@@ -1129,9 +1129,9 @@ PROMPT
 	if _is_valid_radio_talk "$safe_script"; then
 		issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
 		if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
-			log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}): ${issue_preview}"
+			log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}): ${issue_preview}" >&2
 		else
-			log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL})"
+			log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL})" >&2
 		fi
 		rm -rf "$factcheck_dir"
 		printf '%s' "$safe_script"
@@ -1147,12 +1147,12 @@ PROMPT
 		printf '%s\n' "$raw_output"
 	} >"$debug_dump"
 	if _is_valid_radio_talk "$last_candidate"; then
-		log "[RADIO:${corner_name}] fact-check不調だが抽出本文を採用 (dump: $debug_dump)"
+		log "[RADIO:${corner_name}] fact-check不調だが抽出本文を採用 (dump: $debug_dump)" >&2
 		rm -rf "$factcheck_dir"
 		printf '%s' "$last_candidate"
 		return 0
 	fi
-	log "[RADIO:${corner_name}] fact-check失敗 -> 元原稿で続行 (dump: $debug_dump)"
+	log "[RADIO:${corner_name}] fact-check失敗 -> 元原稿で続行 (dump: $debug_dump)" >&2
 	rm -rf "$factcheck_dir"
 	printf '%s' "$talk_body"
 	return 0
