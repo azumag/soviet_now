@@ -5,9 +5,9 @@ Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
 - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
-  - Player controls only drop X coordinate
+- Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
+Decision Logic (9 evaluation axes):
     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
     2. Height penalty - Penalty for high landing position (varies by phase)
     3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -17,12 +17,11 @@ Decision Logic (8 evaluation axes):
     7. Early stage CHAIN_MERGE bonus - Bonus for early game chain merges when landing_y < -1.0 (v198 maintained)
     8. Reactive pairs bonus - Bonus for multiple merge opportunities (v177: reactor info utilization)
     9. Early game merge priority - Strong bonus for merge opportunities in early game
-    10. Anti-passive start bonus (v199: NEW) - Suppresses HEIGHT_CONTROL in first 8 turns when no merge is available
 
 Phases (determined by board max Y):
    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
     MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
-    HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
     CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
@@ -32,25 +31,22 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v199: Early game Anti-passive start
+    """v202: 2-turn lookahead added - Addresses issue: placing next on A misses nextNext merge when nextNext is also A
 
-    batch_summary shows HEIGHT_CONTROL selected 29.5% (low-score group) vs 24.6% (high-score group).
-    Worst games (score 809, 873) show 6 of first 8 turns selecting HEIGHT_CONTROL, missing chain merge opportunities.
-    Best games actively select CHAIN_MERGE from early turns.
+    batch_summary shows CHAIN_MERGE reasons have high value (avg_score_delta=42.6-47.1) but low selection rates (5.8%).
+    Worst games show early game selecting HEIGHT_CONTROL excessively, missing chain merge opportunities.
+    Best games actively select CHAIN_MERGE from early turns, achieving higher median scores.
 
-    Root cause: Low-score games play too passively in early game, placing pieces too low (avg max_y=-2.99) creating flat boards that stifle reactive_pairs.
-    High-score games place pieces slightly higher (avg max_y=-2.75) creating density and reactive_pairs.
+    Root cause: Low-score games play too passively in early game, placing pieces too low, creating flat boards.
+    High-score games place pieces slightly higher, creating density and reactive_pairs.
 
-    v199 improvements:
-     1. New Evaluation Axis 10: Anti-passive start bonus (NEW).
-        - If merge_grade == "NO" and piece_count <= 8:
-          - Penalize DEFAULT_PLACEMENT (x=0.0) if it creates a flat board (max_y < -3.5).
-          - Bonus EDGE_STACKING (x=1.5 or -1.5) to encourage building height for future reactive_pairs.
-     2. Maintain v198 successful mechanisms (EARLY_CHAIN_MERGE, REACTIVE_MERGE_PRIORITY, EARLY_MERGE_PRIORITY).
-     3. Height penalty tuning:
-        - Allow slightly higher placement in early game (avoid excessive flatness).
+    v202 improvements:
+     1. New Evaluation Axis 6: 2-turn lookahead bonus.
+        - If next type merges and nextNext is same type, prioritize merge to enable chain merge in next turn.
+        - This addresses the core issue: nextNext merge opportunities being missed.
+     2. Remove ineffective anti-passive start bonus (v199) that incentivized EDGE_STACKING (avg_score_delta=0.0).
 
-    Args:
+     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
          analysis: analyze_board.py analysis results
              - results: landing information for each drop X candidate
@@ -61,8 +57,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  - merges: individual distance/merge judgment for each same-type piece
              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
-    Returns:
-         {"x": drop X coordinate, "reason": selection reason}
+     Returns:
+          {"x": drop X coordinate, "reason": selection reason}
     """
 
     results = analysis.get("results", [])
@@ -79,7 +75,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
 
-    # --- reactor information (for reactive merge priority) ---
+    # --- reactor information (for merge priority) ---
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
     # reactive_pairs is a list, count pairs for evaluation
@@ -109,11 +105,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # --- pre-calculate merged type (for chain judgment) ---
+    # --- pre-calculate merged types (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
+    next_merged_type = min(next_next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 6 evaluation axes (NEW: +1 axis for anti-passive start)
+    #  score each drop candidate (x coordinate) with 9 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -289,36 +286,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 500.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 10: Anti-passive start bonus (v201: revised) -----
-        # batch_summary shows HEIGHT_CONTROL selected 29.5% (low-score group) vs 24.6% (high-score group).
-        # Worst game (score0438) shows excessive EDGE_STACKING in early turns, creating boards that are too high (max_y=-3.7~-3.4).
-        # Best game (score3386) places pieces slightly lower (max_y=-3.74~-3.69) and actively selects EARLY_MERGE_PRIORITY.
-        # v199 had a bug: it used predicted_max_y which didn't account for actual landing_y from analysis.
-        # v201 fix: Use actual max_y (current board height) and landing_y from analysis to make accurate decisions.
-        # 
-        # Strategy:
-        # - If board is too high (max_y < -3.0) and no merge exists (merge_grade == "NO"):
-        #   - Penalize center placement (abs(x) < 0.5) to avoid stacking more pieces in the middle
-        #   - Bonus edge placement (abs(x) > 1.0) to distribute pieces toward edges and lower the board
-        # - This prevents excessive height in early game while maintaining density for reactive_pairs.
+        # ----- evaluation axis 10: 2-turn lookahead bonus (NEW) -----
+        # If next type merges and nextNext is same type, prioritize merge to enable chain merge in next turn.
+        # Addresses the core issue: nextNext merge opportunities being missed.
+        # Batch analysis shows CHAIN_MERGE reasons have high value (avg_score_delta=42.6-47.1) but low selection rates (5.8%).
+        if (next_next_type == merged_type and merge_grade in ["DIRECT", "NEAR"]):
+            # If current next merges with same type and nextNext can also merge, prioritize current merge to enable chain
+            # This addresses the scenario: placing next on piece A misses nextNext merge when nextNext is also A
+            score += 400.0
+            reasons.append("TWO_TURN_CHAIN")
 
-        if merge_grade == "NO" and piece_count <= 8 and max_y < -3.0:
-            # Early game with board too high: penalize center, reward edges
-
-            # 1. Penalize center placement when board is too high
-            if abs(x) < 0.5:
-                score -= 150.0  # Penalize center placement (board already too high)
-                reasons.append("ANTI_HIGH_CENTER")
-            # 2. Bonus edge placement to distribute pieces and lower the board
-            elif abs(x) > 1.0:
-                score += 250.0  # Reward edge stacking (distribute pieces to lower board)
-                reasons.append("EDGE_STACKING")
-
-        # ----- update best candidate -----
-        if score > best_score:
-            best_score = score
-            best_x = x
-            best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+    # ----- update best candidate -----
+    if score > best_score:
+        best_score = score
+        best_x = x
+        best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
