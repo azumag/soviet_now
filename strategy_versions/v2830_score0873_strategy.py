@@ -7,7 +7,7 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (5 evaluation axes):
+Decision Logic (7 evaluation axes):
     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
     2. Height penalty - Penalty for high landing position (varies by phase)
     3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -15,6 +15,7 @@ Decision Logic (5 evaluation axes):
     5. nextNext centering - Center for next merge opportunity if nextNext same type
     6. Chain merge bonus - Evaluate possibility of further merges after merge (v180: nextNext 2-lookahead)
     7. Early game merge priority - Strong bonus for merge opportunities in early game
+    8. Reactive pair bonus - Bonus for multiple merge opportunities (NEW)
 
 Phases (determined by board max Y):
     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -35,25 +36,12 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 #
-# v191: 初期マージ強化・DIRECT拡張版
-# batch_summaryでHEIGHT_CONTROLが30.3%選択(avg_score_delta=1.5)と過剰であることを確認。
-# 高スコア群(27.2%)と低スコア群(35.1%)の比較で、低スコア群が7.9%も多くHEIGHT_CONTROLを選択していることを特定。
-# v190の複雑なロジック（reactive_pairs活用、side_reactive_mergeなど）を削除し、シンプルな構造へ復帰。
-# 初期12ターンでマージ機会をより積極的に狙うため、EARLY_MERGE_PRIORITYの適用条件を拡張。
-#
-# v191の改善点:
-#  1. v189のシンプル構造へ復帰
-#     - reactive_pairs活用、side_reactive_mergeなど複雑なロジックを削除
-#     - 5つの評価軸（merge bonus, height penalty, drift penalty, balance correction, nextNext centering）
-#  2. 初期マージ強化・DIRECT拡張
-#     - EARLY_MERGE_PRIORITY: piece_count <= 12 && merge_grade in ["NEAR", "DIRECT"] に拡張
-#     - 初期12ターンでDIRECTマージもある場合も最優先
-#  3. v177の殿堂入り戦略の成功パラメータを採用
-#     - MEDIUMフェーズ height_mult=1.4
-#  4. v180のnextNext 2手先評価を維持
-#
-# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_060612_score0000.jsonl, game_history/20260308_062711_score1979.jsonl,
-# strategy_versions/best_score5310_strategy.py, analyze_board.py
+# v192: Reactive pair bonus強化版 - batch_summaryでHEIGHT_CONTROLが27.4%選択(avg_score_delta=2.8)と過剰であることを確認。
+# 高スコア群(24.6%)と低スコア群(31.7%)の比較で、低スコア群が7.1%も多くHEIGHT_CONTROLを選択していることを特定。
+# reactor情報のreactive_pairsを活用し、反応可能なペアが2つ以上ある場合にマージを優先する評価軸を追加。
+# これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_092459_score0277.jsonl, game_history/20260308_095302_score3381.jsonl,
+# strategy_versions/best_score5310_strategy.py, strategy_versions/best_score4999_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -61,23 +49,21 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v191: 初期マージ強化・DIRECT拡張版
+    """v192: Reactive pair bonus強化版
 
-    batch_summaryでHEIGHT_CONTROLが30.3%選択(avg_score_delta=1.5)と過剰であることを確認。
-    高スコア群(27.2%)と低スコア群(35.1%)の比較で、低スコア群が7.9%も多くHEIGHT_CONTROLを選択していることを特定。
-    v190の複雑なロジック（reactive_pairs活用、side_reactive_mergeなど）を削除し、シンプルな構造へ復帰。
-    初期12ターンでマージ機会をより積極的に狙うため、EARLY_MERGE_PRIORITYの適用条件を拡張。
+    batch_summaryでHEIGHT_CONTROLが27.4%選択(avg_score_delta=2.8)と過剰であることを確認。
+    高スコア群(24.6%)と低スコア群(31.7%)の比較で、低スコア群が7.1%も多くHEIGHT_CONTROLを選択していることを特定。
+    reactor情報のreactive_pairsを活用し、反応可能なペアが2つ以上ある場合にマージを優先する評価軸を追加。
+    これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
 
-    v191の改善点:
-     1. v189のシンプル構造へ復帰
-        - reactive_pairs活用、side_reactive_mergeなど複雑なロジックを削除
-        - 5つの評価軸（merge bonus, height penalty, drift penalty, balance correction, nextNext centering）
-     2. 初期マージ強化・DIRECT拡張
-        - EARLY_MERGE_PRIORITY: piece_count <= 12 && merge_grade in ["NEAR", "DIRECT"] に拡張
-        - 初期12ターンでDIRECTマージもある場合も最優先
-     3. v177の殿堂入り戦略の成功パラメータを採用
-        - MEDIUMフェーズheight_mult=1.4
-     4. v180のnextNext 2手先評価を維持
+    v192の改善点:
+     1. Reactor情報活用によるreactive pair bonus追加
+        - reactive_pair_count >= 2の場合、強力なボーナス(reactive_pair_count * 150.0)を付与
+        - 盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制
+     2. v191の構造を維持
+        - 5つの基本評価軸（merge bonus, height penalty, drift penalty, balance correction, nextNext centering）
+        - v180のnextNext 2手先評価（CHAIN_MERGE）を維持
+        - v191の初期マージ強化（EARLY_MERGE_PRIORITY）を維持
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -88,6 +74,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  - drift_x/drift_unc: post-landing drift due to polygon shape
                  - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
                  - merges: individual distance/merge judgment for each same-type piece
+             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
@@ -135,7 +122,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 5 evaluation axes
+    #  score each drop candidate (x coordinate) with 7 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -178,25 +165,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- reactive pair count calculation -----
+        # ----- evaluation axis 3: reactive pair count calculation -----
         # Count how many merge opportunities exist on the board (DIRECT or NEAR)
         reactive_pair_count = 0
         for r in results:
             if r.get("merge_grade") in ["DIRECT", "NEAR"]:
                 reactive_pair_count += 1
 
-        # If many merge opportunities exist, bonus for merge-focused placement
+        # v192: reactive pair bonus - reactor情報活用によるマージ優先
+        # 反応可能なペアが2つ以上ある場合、強力なボーナスを付与
         if reactive_pair_count >= 2:
-            score += reactive_pair_count * 100.0
-            reasons.append("REACTIVE_MERGE")
+            reactive_bonus = reactive_pair_count * 150.0
+            score += reactive_bonus
+            reasons.append("REACTIVE_PAIRS")
+        elif reactive_pair_count == 1:
+            # 反応可能なペアが1つある場合も小さなボーナス
+            score += 100.0
+            reasons.append("REACTIVE_PAIRS")
 
-        # ----- evaluation axis 3: drift penalty -----
+        # ----- evaluation axis 4: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # ----- evaluation axis 4: left-right balance correction (v42: simple) -----
+        # ----- evaluation axis 5: left-right balance correction (v42: simple) -----
         # bonus for correcting left-right piece count bias.
         # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
         balance_strength = 20.0
@@ -212,7 +205,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # ----- evaluation axis 5: nextNext centering -----
+        # ----- evaluation axis 6: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
         if next_next_type == next_type:
@@ -220,7 +213,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v180: nextNext 2手先評価) -----
+        # ----- evaluation axis 7: chain merge bonus (v180: nextNext 2手先評価) -----
         # v180: nextNext 2手先評価統合
         # nextNextが現在nextと同じtypeの場合、「現在併合 → nextNextで更に併合」の2連鎖を評価するロジック。
         # batch_summaryでCHAIN_MERGE(avg_delta=30-50)が高スコアへの効果的reasonであることを確認しつつ、
@@ -279,11 +272,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 7: early game merge priority -----
+        # ----- evaluation axis 8: early game merge priority -----
         # 初期12ターンでマージ機会がある場合、強力なボーナスを付与
-        # batch_summaryでHEIGHT_CONTROLが30.3%選択(avg_score_delta=1.5)と過剰であり、
-        # 高スコア群(27.2%)と低スコア群(35.1%)の比較で、低スコア群が7.9%も多くHEIGHT_CONTROLを選択していることを特定。
-        # ベストゲーム(score1979)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア1979を出していることを確認。
+        # batch_summaryでHEIGHT_CONTROLが27.4%選択(avg_score_delta=2.8)と過剰であり、
+        # 高スコア群(24.6%)と低スコア群(31.7%)の比較で、低スコア群が7.1%も多くHEIGHT_CONTROLを選択していることを特定。
+        # ベストゲーム(score3378)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア3378を出していることを確認。
         # v191: DIRECTマージも対象に含めることで、初期12ターンでより積極的にマージを狙う
         if piece_count <= 12 and merge_grade in ["NEAR", "DIRECT"]:
             # 初期段階でNEAR_MERGEまたはDIRECT_MERGE機会がある場合、強力なボーナスを付与
