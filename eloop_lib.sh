@@ -1179,6 +1179,14 @@ PROMPT
 _radio_time_context() {
 	_rc_hour=$(date '+%H')
 	_rc_time=$(date '+%H:%M')
+	local _rc_hour_num _rc_min_num
+	_rc_hour_num=$((10#$(date '+%H')))
+	_rc_min_num=$((10#$(date '+%M')))
+	if [ "$_rc_min_num" -eq 0 ]; then
+		_rc_time_spoken="${_rc_hour_num}時"
+	else
+		_rc_time_spoken="${_rc_hour_num}時${_rc_min_num}分"
+	fi
 	if [ "$_rc_hour" -ge 5 ] && [ "$_rc_hour" -lt 9 ]; then
 		_rc_period="早朝"
 		_rc_mood="早朝放送。静かな時間帯に合わせて、寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
@@ -1204,6 +1212,72 @@ _radio_time_context() {
 		_rc_period="未明"
 		_rc_mood="未明の放送。哲学的に"
 	fi
+}
+
+_refresh_radio_intro_for_playback_file() {
+	local target_file="$1" corner_name="${2:-}"
+	[ -f "$target_file" ] || return 0
+
+	_radio_time_context
+	local greet
+	if [ "$_rc_hour" -ge 5 ] && [ "$_rc_hour" -lt 11 ]; then
+		greet="おはようございます"
+	elif [ "$_rc_hour" -ge 17 ] || [ "$_rc_hour" -lt 2 ]; then
+		greet="こんばんは"
+	else
+		greet="こんにちは"
+	fi
+
+	python3 - "$target_file" "$corner_name" "$greet" "$_rc_period" "$_rc_time_spoken" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+corner = sys.argv[2]
+greet = sys.argv[3]
+period = sys.argv[4]
+time_text = sys.argv[5]
+
+try:
+    text = path.read_text(encoding="utf-8")
+except Exception:
+    raise SystemExit(0)
+
+lines = text.splitlines()
+if not lines:
+    raise SystemExit(0)
+
+intro = f"{greet}、{period}の放送です。現在時刻は{time_text}です。"
+intro_like = re.compile(
+    r"(現在時刻|[0-2]?\d[:時][0-5]\d(?:分)?|おはよう|こんにちは|こんばんは|早朝|午前|昼|午後|夕方|夕暮れ|夜|深夜|未明)"
+)
+
+changed = False
+for idx in (0, 1, 2):
+    if idx >= len(lines):
+        continue
+    line = lines[idx].strip()
+    if not line:
+        continue
+    if corner == "news" and idx == 0 and "今回取り上げるニュースタイトルは" in line:
+        continue
+    if intro_like.search(line):
+        lines[idx] = intro
+        changed = True
+        break
+
+if not changed:
+    insert_at = 0
+    if corner == "news" and lines and "今回取り上げるニュースタイトルは" in lines[0]:
+        insert_at = 1
+    lines.insert(insert_at, intro)
+
+updated = "\n".join(lines)
+if text.endswith("\n"):
+    updated += "\n"
+path.write_text(updated, encoding="utf-8")
+PY
 }
 
 _radio_persona_block() {
@@ -1558,7 +1632,7 @@ _ensure_radio_intro() {
 	fi
 
 	local intro_line
-	intro_line="${greet}、${_rc_period}の放送です。現在時刻は${_rc_time}です。"
+	intro_line="${greet}、${_rc_period}の放送です。現在時刻は${_rc_time_spoken}です。"
 
 	# ニュースはタイトル行を先頭に維持し、その直後に挨拶を補完
 	if [ "$corner_name" = "news" ] && printf '%s\n' "$text" | head -n 1 | grep -Fq '今回取り上げるニュースタイトルは'; then
@@ -1824,6 +1898,9 @@ _play_deferred_radio_queue_once() {
 
 	local playing_file="${qf%.txt}.playing"
 	if mv "$qf" "$playing_file" 2>/dev/null; then
+		local deferred_corner=""
+		deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/' )
+		_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 		log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
 		if ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
 			rm -f "$playing_file"
@@ -2027,6 +2104,7 @@ ${talk_body}"
 		fi
 	else
 		echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
+		_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
 		if [ "$no_preempt" = true ]; then
 			./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
 		else
@@ -2241,7 +2319,7 @@ start_radio_corner_theme() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time} ${_rc_period}
+【現在時刻】${_rc_time_spoken} ${_rc_period}
 【時間帯の雰囲気】${_rc_mood}
 
 【今回の脱線テーマ指定】
@@ -2279,7 +2357,7 @@ start_radio_corner_soviet() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time} ${_rc_period}
+【現在時刻】${_rc_time_spoken} ${_rc_period}
 【時間帯の雰囲気】${_rc_mood}
 
 【今回のソ連ネタ指定】
@@ -2332,7 +2410,7 @@ start_radio_corner_news() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time} ${_rc_period}
+【現在時刻】${_rc_time_spoken} ${_rc_period}
 【時間帯の雰囲気】${_rc_mood}
 
 【最新ニュース - 実際の本日のニュース】
@@ -2384,7 +2462,7 @@ start_radio_corner_recap() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time} ${_rc_period}
+【現在時刻】${_rc_time_spoken} ${_rc_period}
 【時間帯の雰囲気】${_rc_mood}
 
 【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
@@ -2421,7 +2499,7 @@ start_radio_corner_strategy() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time} ${_rc_period}
+【現在時刻】${_rc_time_spoken} ${_rc_period}
 【時間帯の雰囲気】${_rc_mood}
 
 【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
