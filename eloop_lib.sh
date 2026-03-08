@@ -32,6 +32,10 @@ RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-glmflash}"
 RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-zai}"
 RADIO_FACT_CHECK_CLAUDE_MODEL="${RADIO_FACT_CHECK_CLAUDE_MODEL:-$RADIO_CLAUDE_MODEL}"
 RADIO_FACT_CHECK_MIN_CHARS=100
+RADIO_WEB_GROUNDING_ENABLED="${RADIO_WEB_GROUNDING_ENABLED:-1}"
+RADIO_WEB_GROUNDING_TTL_SEC="${RADIO_WEB_GROUNDING_TTL_SEC:-21600}"
+RADIO_WEB_GROUNDING_MAX_SOURCES="${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}"
+RADIO_WEB_GROUNDING_CACHE_DIR="tmp/.radio_grounding_cache"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 RADIO_SAY_RATE=150
 unset SAY_AUDIO_DEVICE
@@ -70,7 +74,7 @@ COMMENT_BATCH_DEDUP_TTL=180
 RADIO_DEFERRED_QUEUE_DIR="tmp/.radio_deferred_queue"
 MANUAL_AUDIO_TRIGGER_DIR="tmp/.manual_audio_triggers"
 MANUAL_AUDIO_TRIGGER_MAX_PER_TICK=3
-mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "$RADIO_DEFERRED_QUEUE_DIR" "$MANUAL_AUDIO_TRIGGER_DIR" "tmp/.twitch_chat" tmp
+mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "$RADIO_DEFERRED_QUEUE_DIR" "$MANUAL_AUDIO_TRIGGER_DIR" "$RADIO_WEB_GROUNDING_CACHE_DIR" "tmp/.twitch_chat" tmp
 
 #=== コアヘルパー ===
 
@@ -854,6 +858,57 @@ _radio_extract_fact_check_issues() {
 	'
 }
 
+_radio_extract_prompt_section_value() {
+	local header="$1" prompt_context="$2"
+	printf '%s\n' "$prompt_context" | awk -v header="$header" '
+	BEGIN { capture = 0 }
+	$0 == header { capture = 1; next }
+	capture {
+		if ($0 ~ /^【/ ) exit
+		if ($0 ~ /^[[:space:]]*$/) next
+		print
+		exit
+	}
+	'
+}
+
+_radio_extract_grounding_query() {
+	local corner_name="$1" prompt_context="$2" selected_news="${3:-}" query=""
+	case "$corner_name" in
+	news)
+		query="$selected_news"
+		;;
+	theme)
+		query=$(_radio_extract_prompt_section_value "【今回の脱線テーマ指定】" "$prompt_context")
+		;;
+	soviet)
+		query=$(_radio_extract_prompt_section_value "【今回のソ連ネタ指定】" "$prompt_context")
+		;;
+	esac
+	printf '%s' "$query" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//'
+}
+
+_radio_fetch_web_grounding() {
+	local corner_name="$1" prompt_context="$2" selected_news="${3:-}"
+	[ "${RADIO_WEB_GROUNDING_ENABLED:-1}" = "1" ] || return 0
+
+	local query grounding
+	query=$(_radio_extract_grounding_query "$corner_name" "$prompt_context" "$selected_news")
+	[ -n "$query" ] || return 0
+
+	log "[RADIO:${corner_name}] web grounding取得中... query=${query}"
+	grounding=$(python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
+		--corner "$corner_name" \
+		--query "$query" \
+		--ttl-sec "${RADIO_WEB_GROUNDING_TTL_SEC:-21600}" \
+		--max-sources "${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}" \
+		--cache-dir "$RADIO_WEB_GROUNDING_CACHE_DIR" 2>/dev/null || true)
+	if [ -n "$grounding" ]; then
+		log "[RADIO:${corner_name}] web grounding取得成功"
+	fi
+	printf '%s' "$grounding"
+}
+
 _radio_fact_check_body() {
 	local corner_name="$1" prompt_context="$2" talk_body="$3" selected_news="${4:-}"
 	if [ "${RADIO_FACT_CHECK_ENABLED:-1}" = "0" ]; then
@@ -861,6 +916,9 @@ _radio_fact_check_body() {
 		return 0
 	fi
 	[ -n "$talk_body" ] || return 1
+
+	local web_grounding=""
+	web_grounding=$(_radio_fetch_web_grounding "$corner_name" "$prompt_context" "$selected_news")
 
 	local prompt_context_trimmed="$prompt_context"
 	if [ ${#prompt_context_trimmed} -gt 24000 ]; then
@@ -881,6 +939,7 @@ _radio_fact_check_body() {
 - 自信が低い細部は「と言われます」「とされます」「記録があります」「知られています」などの保守的な表現へ言い換える
 - news / strategy / recap では、材料にない断定を禁止
 - theme / soviet / celebration でも、確信のない歴史細部は一般論へ落とす
+- Web検索で集めた資料がある場合は、それを最優先で使う
 - 元の語り口、流れ、長さはなるべく維持する
 - 読み上げ用プレーンテキストのみを返す
 - マークダウン、見出し、箇条書き、補足解説は禁止
@@ -891,6 +950,9 @@ ${corner_name}
 
 【材料】
 ${prompt_context_trimmed}
+
+【Web検索で集めた資料】
+${web_grounding:-（外部資料なし。材料の範囲だけで保守的に直すこと）}
 
 【補足】
 ${selected_news:+ニュース選択見出し: ${selected_news}}
