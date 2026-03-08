@@ -7,7 +7,7 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (9 evaluation axes):
+Decision Logic (10 evaluation axes):
    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
    2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
    3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -17,6 +17,7 @@ Decision Logic (9 evaluation axes):
    7. Early game merge priority - Strong bonus for merge opportunities in early game (v174)
    8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (v176)
    9. Anti-passive placement - Penalty for passive center placement in early game with no merge (v179: NEW)
+  10. Proactive near merge - Actively search for merge opportunities when none available (v180: NEW)
 
 Phases (determined by board max Y):
    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -83,6 +84,14 @@ Phases (determined by board max Y):
 # refs: tmp/batch_summary.txt, game_history/20260308_232055_score0554.jsonl, game_history/20260308_234507_score3373.jsonl,
 # game_history/20260308_231600_score0566.jsonl, game_history/20260308_231327_score2019.jsonl,
 # strategy_versions/v3089_score1523_strategy.py, strategy_versions/best_score5310_strategy.py
+# v180: 積極的NEAR_MERGE探索評価軸追加版 - batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=2.1)と過剰であり、NEAR_MERGEが3.8-9.2%選択(avg_score_delta=28-57)と選択不足であることを確認。
+# ワーストゲーム(score0600)で初期5-10ターンが全てHEIGHT_CONTROLとなり、マージ機会を逃している失敗パターンを特定。
+# ベストゲーム(score3063)ではターン3から早めにNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしていることを確認。
+# 直接マージがない場合、積極的にNEAR_MERGEを作成する評価軸を追加。merge_grade=="NO"かつ(early_gameまたはpiece_count <= 15)の場合、
+# next_typeと同じタイプのピースを距離3.0以内で探索し、距離に応じたボーナス（最大400.0）を付与。
+# これにより、消極的なHEIGHT_CONTROL配置から積極的なマージ機会作成へシフトし、スコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, game_history/20260309_001359_score3063.jsonl, game_history/20260309_002610_score0600.jsonl,
+# game_history/20260309_002336_score0752.jsonl, strategy_versions/best_score5310_strategy.py, change_log.txt
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -90,26 +99,24 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v179: 初期段階マージなし時の消極的配置抑制版
+    """v181: 2手先評価ローカル関数追加版
 
-    batch_summaryでHEIGHT_CONTROLが26.6%選択(avg_score_delta=0.9)と依然として過剰であることを確認。
-    ワーストゲーム(score0554)で初期5ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
-    ベストゲーム(score3373)ではターン3から早めにNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしていることを確認。
+    batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=2.1)と過剰であり、CHAIN_MERGE関連がavg_score_delta=28-57と高価値だが選択率は3.3-4.7%と低いことを確認。
+    ワーストゲーム(score0600)で初期5-10ターンが全てHEIGHT_CONTROLとなり、マージ機会を逃している失敗パターンを特定。
+    ベストゲーム(score3063)ではターン3から早めにNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしていることを確認。
+    高スコア群ではNEAR_MERGE_HIGH_LAYER_CHAIN_MERGEが4.7%選択されているが、低スコア群では選択されていない。
 
-    v179の改善点:
-    1. 初期段階マージなし時の消極的配置抑制
-       - early_gameかつmerge_grade=="NO"の場合、中央付近(|x| < 1.0)への配置にペナルティ-300.0を付与
-       - 初期段階でマージ機会がない場合、消極的な中央配置を回避してマージ可能な位置を探させる
-    2. v178のCRITICALフェーズ危険高さ抑制を維持
-       - landing_y > 2.0の場合、追加ペナルティ500.0を付与
-    3. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持
-       - height_multiplier: 15.0（MEDIUMフェーズ）
-    4. v176のreactor情報活用によるマージ優先評価軸を維持
-       - reactive_pair_count >= 2の場合、DIRECT/NEARマージに+500.0ボーナス
-    5. v174の初期12ターンマージ重視を維持
-       - early_game判定(max_y < -2.0)とEARLY_MERGE_PRIORITY(piece_count <= 12)を維持
-    6. v171のCHAIN_MERGE基本ボーナス強化を維持
-       - chain_distance_max=5.0とchain_bonus_multiplier初期値480.0でCHAIN_MERGE選択を促進
+    v181の改善点:
+    1. 2手先評価ローカル関数追加（nextNextのマージ可能性評価）
+       - DIRECT/NEARマージ時に、マージ先の近くにmerged_typeと同じタイプのピースがあるかを判定
+       - ある場合は、距離に応じたボーナス（最大350.0）を付与し、連鎖マージを選択
+    2. v180の積極的NEAR_MERGE探索評価軸を維持
+    3. v179の初期段階マージなし時の消極的配置抑制を維持
+    4. v178のCRITICALフェーズ危険高さ抑制を維持
+    5. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持
+    6. v176のreactor情報活用によるマージ優先評価軸を維持
+    7. v174の初期12ターンマージ重視を維持
+    8. v171のCHAIN_MERGE基本ボーナス強化を維持
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -125,6 +132,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
     Returns:
         {"x": drop X coordinate, "reason": selection reason}
     """
+
+    # ----- ローカル関数: 2手先評価（nextNextのマージ可能性） -----
+    def check_nextnext_merge(pieces, target_x, target_y, merged_type, max_distance=2.5):
+        """マージ先の近くにmerged_typeと同じタイプのピースがあるかを判定する
+
+        Args:
+            pieces: 盤面のピースリスト
+            target_x: マージ先のX座標
+            target_y: マージ先のY座標
+            merged_type: マージ後のタイプ
+            max_distance: 距離の閾値（デフォルト2.5）
+
+        Returns:
+            (found, dist): 見つかった場合は(True, 最小距離)、見つからない場合は(False, float('inf'))
+        """
+        min_dist = float('inf')
+        for p in pieces:
+            if p.get("type") == merged_type:
+                dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                if dist < min_dist:
+                    min_dist = dist
+        return (min_dist < max_distance, min_dist)
 
     results = analysis.get("results", [])
 
@@ -186,7 +215,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 9 evaluation axes
+    #  score each drop candidate (x coordinate) with 10 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -222,7 +251,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v175: MEDIUM phase height_multiplierを30.0→20.0に削減してHEIGHT_CONTROL抑制を強化
         height_multiplier = 30.0
         if early_game:
-            height_multiplier = 0.2  # v169: 序盤はHEIGHT_CONTROLを抑制し、併合機会を最優先
+            height_multiplier = (
+                0.2  # v169: 序盤はHEIGHT_CONTROLを抑制し、併合機会を最優先
+            )
 
         # v177: MEDIUMフェーズでHEIGHT_CONTROL抑制を強化
         if phase == "MEDIUM":
@@ -230,7 +261,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # v173: 初期段階で併合機会がない場合、HEIGHT_CONTROL抑制をさらに強化
         if piece_count <= 6 and merge_grade == "NO":
-            height_multiplier = 0.1  # 初期6ピースでマージ機会がない場合、消極的配置を回避
+            height_multiplier = (
+                0.1  # 初期6ピースでマージ機会がない場合、消極的配置を回避
+            )
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -260,9 +293,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 50.0  # v148: HIGH balance control even stricter (40.0->50.0)
+            balance_strength = (
+                50.0  # v148: HIGH balance control even stricter (40.0->50.0)
+            )
         elif phase == "MEDIUM":
-            balance_strength = 40.0  # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
+            balance_strength = (
+                40.0  # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
+            )
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -282,14 +319,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 6: chain merge bonus (v171: CHAIN_MERGE基本ボーナス強化) -----
         # v171: CHAIN_MERGE関連がavg_score_delta=26.9-43.2（高価値）だが選択率は3.8-9.2%と低いことを確認。
         # ワーストゲーム(score0633)で初期5ターンが全てHEIGHT_CONTROLとなり、CHAIN_MERGE選択が0回であることを特定。
-# v171: CHAIN_MERGE基本ボーナス強化
-# chain_distance_max = 5.0 + landing_y * 0.6 (v155成功値に戻す、着地高に応じて拡大)
-# chain_bonus_multiplier = 480.0 + landing_y * 150.0 (初期値を450.0→480.0に強化、着地高に応じて増強)
-# 例: landing_y=-3.0 → distance_max=3.2, multiplier=30.0（初期段階）
-# 例: landing_y=0.0 → distance_max=5.0, multiplier=480.0（初期値強化）
-# 例: landing_y=1.0 → distance_max=5.6, multiplier=630.0
-# 例: landing_y=2.0 → distance_max=6.2, multiplier=780.0
-# 例: landing_y=3.0 → distance_max=6.8, multiplier=930.0
+        # v171: CHAIN_MERGE基本ボーナス強化
+        # chain_distance_max = 5.0 + landing_y * 0.6 (v155成功値に戻す、着地高に応じて拡大)
+        # chain_bonus_multiplier = 480.0 + landing_y * 150.0 (初期値を450.0→480.0に強化、着地高に応じて増強)
+        # 例: landing_y=-3.0 → distance_max=3.2, multiplier=30.0（初期段階）
+        # 例: landing_y=0.0 → distance_max=5.0, multiplier=480.0（初期値強化）
+        # 例: landing_y=1.0 → distance_max=5.6, multiplier=630.0
+        # 例: landing_y=2.0 → distance_max=6.2, multiplier=780.0
+        # 例: landing_y=3.0 → distance_max=6.8, multiplier=930.0
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -313,7 +350,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
-                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                        dist = (
+                            (p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2
+                        ) ** 0.5
                         if dist < chain_distance_max:
                             nearby_pieces.append((dist, p))
 
@@ -329,16 +368,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if len(nearby_pieces) >= 2:
                     dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
+                    chain_bonus = (
+                        (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
+                    )
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 3:
                     dist, _ = nearby_pieces[2]
-                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
+                    chain_bonus = (
+                        (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
+                    )
                     score += chain_bonus
 
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
+
+        # ----- v181: 2手先評価（nextNextのマージ可能性） -----
+        # batch_summaryでCHAIN_MERGE関連がavg_score_delta=28-57と高価値だが選択率は3.3-4.7%と低いことを確認。
+        # 高スコア群ではNEAR_MERGE_HIGH_LAYER_CHAIN_MERGEが4.7%選択されているが、低スコア群では選択されていない。
+        # DIRECT/NEARマージ時に、マージ先の近くにmerged_typeと同じタイプのピースがあるかを判定。
+        # ある場合は、距離に応じたボーナス（最大350.0）を付与し、連鎖マージを選択することで初期段階での連鎖選択を促進する。
+        if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
+            merges = result["merges"]
+            if merges:
+                best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
+                target_x = best_merge.get("x", 0)
+                target_y = best_merge.get("y", 0)
+
+                # マージ先の近くにmerged_typeと同じタイプのピースがあるかを判定
+                found_nextnext, dist = check_nextnext_merge(pieces, target_x, target_y, merged_type, max_distance=2.5)
+
+                if found_nextnext:
+                    # 距離に応じたボーナス：距離0.0で350.0、距離2.5で0.0（線形減衰）
+                    nextnext_bonus = max(0, (2.5 - dist) / 2.5 * 350.0)
+                    score += nextnext_bonus
+                    reasons.append("NEXTEXT_MERGE")
 
         # ----- evaluation axis 7: early game merge priority (v174: 初期12ターンマージ重視) -----
         # v174: early_game判定(max_y < -2.0)をさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大。
@@ -381,6 +445,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if abs(x) < 1.0:
                 score -= 300.0
                 reasons.append("ANTI_PASSIVE_CENTER")
+
+        # ----- evaluation axis 10: proactive near merge (v180: NEW) -----
+        # v180: 直接マージがない場合、積極的にNEAR_MERGEを作成する評価軸を追加
+        # batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=2.1)と過剰であり、NEAR_MERGEが3.8-9.2%選択(avg_score_delta=28-57)と選択不足であることを確認。
+        # ワーストゲーム(score0600)で初期5-10ターンが全てHEIGHT_CONTROLとなり、マージ機会を逃している失敗パターンを特定。
+        # ベストゲーム(score3063)ではターン3から早めにNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしている。
+        # merge_grade=="NO"かつ(early_gameまたはpiece_count <= 15)の場合、next_typeと同じタイプのピースを距離3.0以内で探索
+        # 距離に応じたボーナス（最大400.0）を付与し、消極的なHEIGHT_CONTROL配置から積極的なマージ機会作成へシフト
+        if merge_grade == "NO" and (early_game or piece_count <= 15):
+            # next_typeと同じタイプのピースを探索
+            search_distance_max = 3.0
+            found_pieces = []
+
+            for p in pieces:
+                if p.get("type") == next_type:
+                    # 着地位置(x, landing_y)と同じタイプのピースの距離を計算
+                    dist = ((p["x"] - x) ** 2 + (p["y"] - landing_y) ** 2) ** 0.5
+                    if dist < search_distance_max:
+                        found_pieces.append((dist, p))
+
+            if found_pieces:
+                # 最も近いピースを使用してボーナスを計算（距離が近いほどボーナスが高い）
+                found_pieces.sort(key=lambda x: x[0])
+                closest_dist, _ = found_pieces[0]
+
+                # 距離に応じたボーナス：距離0.0で400.0、距離3.0で0.0（線形減衰）
+                proactive_bonus = max(
+                    0,
+                    (search_distance_max - closest_dist) / search_distance_max * 400.0,
+                )
+                score += proactive_bonus
+                reasons.append("PROACTIVE_NEAR_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:
