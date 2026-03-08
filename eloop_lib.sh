@@ -838,6 +838,9 @@ _is_valid_radio_talk() {
 	if printf '%s' "$talk" | grep -Eq '===SAFE_SCRIPT===|===ISSUES===|===SUMMARY==='; then
 		return 1
 	fi
+	if printf '%s' "$talk" | grep -Eq '放送前のファクトチェック担当|安全化した最終原稿|削った・弱めた点|【最優先ルール】|【材料】|【元原稿】|【出力形式】'; then
+		return 1
+	fi
 	return 0
 }
 
@@ -883,7 +886,10 @@ _radio_cleanup_fact_checked_text() {
 		}
 		if (mode == "plain") print
 	}
-	' | sed '/^[[:space:]]*$/N;/^\n$/D'
+	' |
+		sed '/^[[:space:]]*$/N;/^\n$/D' |
+		grep -Ev '^(あなたは放送前のファクトチェック担当です。|与えられた「元原稿」を、与えられた「材料」から支持できる範囲にだけ言い換えてください。|目的は「誤情報を減らすこと」であり、「面白く盛ること」ではありません。|【最優先ルール】|【コーナー】|【材料】|【Web検索で集めた資料】|【補足】|【元原稿】|【出力形式】|ここに安全化した最終原稿だけを書く|削った・弱めた点を短く列挙。なければ「なし」)$' |
+		grep -Ev '^- '
 }
 
 _radio_extract_prompt_section_value() {
@@ -898,6 +904,105 @@ _radio_extract_prompt_section_value() {
 		exit
 	}
 	'
+}
+
+_radio_extract_prompt_section_block() {
+	local header="$1" prompt_context="$2"
+	printf '%s\n' "$prompt_context" | awk -v header="$header" '
+	BEGIN { capture = 0 }
+	$0 == header { capture = 1; next }
+	capture {
+		if ($0 ~ /^【/ ) exit
+		print
+	}
+	'
+}
+
+_radio_compact_fact_check_context() {
+	local corner_name="$1" prompt_context="$2"
+	local current_time mood situation block title_line compact
+	current_time=$(_radio_extract_prompt_section_value "【現在時刻】" "$prompt_context")
+	mood=$(_radio_extract_prompt_section_value "【時間帯の雰囲気】" "$prompt_context")
+	situation=$(_radio_extract_prompt_section_block "【状況】" "$prompt_context")
+
+	case "$corner_name" in
+	news)
+		block=$(_radio_extract_prompt_section_block "【最新ニュース - 実際の本日のニュース】" "$prompt_context")
+		compact=$(cat <<EOF
+【現在時刻】
+${current_time}
+【時間帯の雰囲気】
+${mood}
+【状況】
+${situation}
+【最新ニュース】
+${block}
+EOF
+)
+		;;
+	theme)
+		block=$(_radio_extract_prompt_section_block "【今回の脱線テーマ指定】" "$prompt_context")
+		compact=$(cat <<EOF
+【現在時刻】
+${current_time}
+【時間帯の雰囲気】
+${mood}
+【状況】
+${situation}
+【今回の脱線テーマ指定】
+${block}
+EOF
+)
+		;;
+	soviet)
+		block=$(_radio_extract_prompt_section_block "【今回のソ連ネタ指定】" "$prompt_context")
+		compact=$(cat <<EOF
+【現在時刻】
+${current_time}
+【時間帯の雰囲気】
+${mood}
+【状況】
+${situation}
+【今回のソ連ネタ指定】
+${block}
+EOF
+)
+		;;
+	strategy)
+		block=$(_radio_extract_prompt_section_block "【作戦変更の差分】" "$prompt_context")
+		compact=$(cat <<EOF
+【現在時刻】
+${current_time}
+【時間帯の雰囲気】
+${mood}
+【状況】
+${situation}
+【作戦変更の差分】
+${block}
+EOF
+)
+		;;
+	recap)
+		compact=$(cat <<EOF
+【現在時刻】
+${current_time}
+【時間帯の雰囲気】
+${mood}
+【状況】
+${situation}
+EOF
+)
+		;;
+	*)
+		compact="$prompt_context"
+		;;
+	esac
+
+	if [ ${#compact} -gt 12000 ]; then
+		printf '%s' "$compact" | tail -c 12000
+	else
+		printf '%s' "$compact"
+	fi
 }
 
 _radio_extract_grounding_query() {
@@ -945,12 +1050,11 @@ _radio_fact_check_body() {
 	fi
 	[ -n "$talk_body" ] || return 1
 
-	local web_grounding=""
+	local web_grounding="" prompt_context_trimmed
 	web_grounding=$(_radio_fetch_web_grounding "$corner_name" "$prompt_context" "$selected_news")
-
-	local prompt_context_trimmed="$prompt_context"
-	if [ ${#prompt_context_trimmed} -gt 24000 ]; then
-		prompt_context_trimmed=$(printf '%s' "$prompt_context_trimmed" | tail -c 24000)
+	prompt_context_trimmed=$(_radio_compact_fact_check_context "$corner_name" "$prompt_context")
+	if [ ${#prompt_context_trimmed} -gt 16000 ]; then
+		prompt_context_trimmed=$(printf '%s' "$prompt_context_trimmed" | tail -c 16000)
 	fi
 
 	local factcheck_dir prompt_file raw_output safe_script issues issue_preview debug_dump last_candidate
