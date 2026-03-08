@@ -9,13 +9,13 @@ Game Overview:
 
 Decision Logic (12 evaluation axes):
    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-    2. Height penalty - Penalty for high landing position (varies by phase, early_game: piece_count <= 10)
+   2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
    3. Drift penalty - Penalty for post-landing drift due to polygon shape
    4. Left-right balance correction - Bonus for correcting piece count bias
    5. nextNext centering - Center for next merge opportunity if nextNext same type
    6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
    7. Early game merge priority - Strong bonus for merge opportunities in early game (v174)
-   8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (v176, v186: ENHANCED)
+   8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (v176)
    9. Anti-passive placement - Penalty for passive center placement in early game with no merge (v179: NEW)
   10. Proactive near merge - Actively search for merge opportunities when none available (v180: NEW)
   11. Two-turn lookahead with accurate post-merge position estimation (v181: NEW)
@@ -143,44 +143,6 @@ Phases (determined by board max Y):
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260309_050348_score0511.jsonl, game_history/20260309_043751_score2545.jsonl,
 # game_history/20260309_043047_score0625.jsonl, game_history/20260309_044202_score2066.jsonl,
 # strategy_versions/v3184_score0511_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
-# v184: piece_count-based early game enhancement版 - batch_summaryでHEIGHT_CONTROLが17.4%選択(avg_score_delta=0.8)と過剰であることを確認。
-# 高スコア群は初期から高めに配置（序盤avg=-2.36）し、低スコア群は初期から低すぎ（序盤avg=-2.87）していることを特定。
-# NEAR_MERGE_EARLY_MERGE_PRIORITYがavg_score_delta=27.5（高価値）だが選択率は4.6%（低選択率）であることを確認。
-# REACTIVE_MERGE_PRIORITYがavg_score_delta=60.3-66.2（高価値）だが選択率は2.5-3.6%（極端に低い選択率）であることを確認。
-# v183の改善点に加え、以下の変更を実装：
-# 1. EARLY_MERGE_PRIORITYボーナスを800.0→1000.0に強化し、piece_count <= 12の範囲で初期段階でのマージ選択を超強力に促進
-# 2. REACTIVE_MERGE_PRIORITYボーナスを500.0→1500.0に強化し、反応性ペアがある状況でのマージ優先を超強力に強化
-# 3. piece_count <= 8の場合、HEIGHT_CONTROL抑制を0.1→0.05にさらに削減し、初期段階での盤面密度向上を超強化
-# 4. v183の初期5ピースでの盤面分散評価軸を維持
-# 5. v182の初期段階でのchain_distance_max動的縮小を維持
-# 6. v182のchain_bonus_multiplier初期値の強化を維持
-# 7. v181の2手先評価ローカル関数を維持
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260309_053331_score0912.jsonl, game_history/20260309_054759_score3139.jsonl,
-# strategy_versions/v3198_score1596_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
-# v186: REACTIVE_MERGE_PRIORITY超強化・初期段階HEIGHT_CONTROL抑制調整版 - 4つの最近のゲーム履歴と3つの戦略バージョンの分析に基づき、以下の変更を実装：
-# 1. REACTIVE_MERGE_PRIORITYボーナスを1500.0→2000.0に超強化
-#    - batch_summaryでREACTIVE_MERGE_PRIORITYがavg_score_delta=60.3-66.2（高価値）だが選択率は2.5-3.6%（極端に低い選択率）であることを確認
-#    - reactive_pairs >= 2の状況でマージを超強力に優先することでHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる
-# 2. 初期段階HEIGHT_CONTROL抑制の調整：height_multiplierを0.05→0.01にさらに削減
-#    - v184でHEIGHT_CONTROLが17.4%選択され、低スコア群では過剰に選択されていることを確認
-#    - 初期段階での消極的配置をさらに抑制し、マージ機会の創出を強化する
-# 3. early_game判定をmax_y < -2.0→-2.5に再調整
-#    - v184のmax_y < -2.0は過度に緩和されており、初期段階でのマージ優先効果が減弱していることを確認
-#    - max_y < -2.5に調整して初期段階でのマージ優先を適切に機能させる
-# 4. v184の他の改善点を維持
-#    - EARLY_MERGE_PRIORITYボーナス1000.0
-#    - 初期5ピースでの盤面分散評価軸
-#    - v182のchain_distance_max動的縮小とchain_bonus_multiplier強化
-#    - v181の2手先評価ローカル関数
-# refs: tmp/batch_summary.txt, game_history/20260309_062643_score1359.jsonl, strategy_versions/best_score5310_strategy.py,
-# strategy_versions/v3214_score0865_strategy.py, analyze_board.py
-# v187: early_game判定をピース数ベースに変更版 - batch_summaryでHEIGHT_CONTROLが21.1%選択(avg_score_delta=2.8)と過剰であることを確認。
-# ワーストゲーム(score0598)で初期10ターン中HEIGHT_CONTROLが7回選択され、max_y=-2.53になるまでマージ機会を逃している失敗パターンを特定。
-# ベストゲーム(score3184)では初期段階からマージを優先し、序盤avg=-2.36で安定したスコアを達成している。
-# v186のmax_y < -2.5という高さベースの判定では、初期段階でのマージ優先が機能しない。
-# early_game判定をpiece_count <= 10に変更し、初期段階でのマージ優先を確実に機能させることでHEIGHT_CONTROL選択を抑制しスコア安定性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260309_063252_score0598.jsonl,
-# game_history/20260309_061708_score3184.jsonl, strategy_versions/v3214_score0865_strategy.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -188,16 +150,22 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v187: early_game判定をピース数ベースに変更版
+    """v183: 初期段階での盤面分散向上評価軸追加版
 
-    batch_summaryでHEIGHT_CONTROLが21.1%選択(avg_score_delta=2.8)と過剰であることを確認。
-    ワーストゲーム(score0598)で初期10ターン中HEIGHT_CONTROLが7回選択され、max_y=-2.53になるまでマージ機会を逃している失敗パターンを特定。
-    ベストゲーム(score3184)では初期段階からマージを優先し、序盤avg=-2.36で安定したスコアを達成している。
-    v186のmax_y < -2.5という高さベースの判定では、初期段階でのマージ優先が機能しない。
-    early_game判定をpiece_count <= 10に変更し、初期段階でのマージ優先を確実に機能させることでHEIGHT_CONTROL選択を抑制しスコア安定性を向上させる。
+    batch_summaryでHEIGHT_CONTROLが24.7%選択(avg_score_delta=1.2)と過剰であり、低スコア群では29.5%選択されていることを確認。
+    高スコア群は初期から高めに配置（序盤avg=-2.36）し、低スコア群は初期から低すぎ（序盤avg=-2.87）していることを特定。
+    高スコア(score2066) vs 低スコア(score0625)の初期段階比較で、高スコアは初期5ピースの左右分散が大きく、初期8ターンで2回マージを実行しているのに対し、
+    低スコアは初期8ターンで1回しかマージできていないことを特定。
 
-    v186からの変更点:
-    - early_game判定をmax_y < -2.5→piece_count <= 10に変更し、初期段階でのマージ優先を確実に機能させる
+    v182の改善点に加え、以下の変更を実装：
+    1. 初期5ピースかつマージ機会がない場合、盤面の左右分散を最大化する評価軸を追加
+       - 最も左と右のピースの位置を計算し、現在の左右範囲外の位置にボーナスを付与
+       - 範囲外への距離に応じたボーナス：距離3.0で50.0、距離5.0以上で150.0（最大）
+       - これにより、初期段階での盤面分散を促進し、マージ機会を増加させる
+    2. v182の初期段階でのchain_distance_max動的縮小を維持
+    3. v182のchain_bonus_multiplier初期値の強化を維持
+    4. v182の初期5ピースでのHEIGHT_CONTROL抑制を維持
+    5. v181の2手先評価ローカル関数を維持
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -228,7 +196,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         Returns:
             (found, dist): 見つかった場合は(True, 最小距離)、見つからない場合は(False, float('inf'))
         """
-        min_dist = float("inf")
+        min_dist = float('inf')
         for p in pieces:
             if p.get("type") == merged_type:
                 dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
@@ -250,13 +218,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
 
-    # --- v187: early_game判定をピース数ベースに変更 ---
-    # batch_summaryでHEIGHT_CONTROLが21.1%選択(avg_score_delta=2.8)と過剰であることを確認。
-    # ワーストゲーム(score0598)で初期10ターン中HEIGHT_CONTROLが7回選択され、max_y=-2.53になるまでマージ機会を逃している失敗パターンを特定。
-    # ベストゲーム(score3184)では初期段階からマージを優先し、序盤avg=-2.36で安定したスコアを達成している。
-    # v186のmax_y < -2.5という高さベースの判定では、初期段階でのマージ優先が機能しない。
-    # early_game判定をpiece_count <= 10に変更し、初期段階でのマージ優先を確実に機能させることでHEIGHT_CONTROL選択を抑制しスコア安定性を向上させる。
-    early_game = piece_count <= 10
+    # --- v174: early_game判定さらに緩和（max_y < -2.0） ---
+    # batch_summaryでHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
+    # ワーストゲーム(score0765)で初期7ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗パターンを特定。
+    # early_game判定をmax_y < -2.5→-2.0にさらに緩和し、初期12ターンの大部分で判定されるように調整。
+    early_game = max_y < -2.0
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -349,16 +315,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             )
 
         # v182: 初期5ピースでのHEIGHT_CONTROL抑制をさらに強化
-        # ワーストゲーム(score0779)で初期5ターンが全てHEIGHT_CONTROLとなり、max_y=-3.7(低すぎ)であることを確認。
+        # ワーストゲーム(score0779)で初期5ターン全てHEIGHT_CONTROLとなり、max_y=-3.7(低すぎ)であることを確認。
         # 初期5ピース(piece_count <= 5)の場合、height_multiplierを0.1にさらに削減し、盤面密度を上げる。
         if piece_count <= 5:
             height_multiplier = 0.1
-
-        # v186: piece_count <= 8の場合、HEIGHT_CONTROL抑制を0.05→0.01にさらに削減
-        # v184でHEIGHT_CONTROLが17.4%選択され、低スコア群では過剰に選択されていることを確認。
-        # 初期段階での消極的配置をさらに抑制し、マージ機会の創出を強化する。
-        if piece_count <= 8:
-            height_multiplier = 0.01
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -488,7 +448,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # sort by distance (closest first)
                 nearby_pieces.sort(key=lambda x: x[0])
 
-                # v182: CHAIN_MERGE基本ボーナス強化 - 3つの最も近いピースに対して、距離に応じて減衰するボーナスを適用
+                # v182: CHAIN_MERGE基本ボーナス強化 - 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
                 # chain_distance_max初期値4.0（初期段階縮小）とchain_bonus_multiplier初期値530.0（強化）で初期段階でのCHAIN_MERGE選択を促進
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
@@ -525,9 +485,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_y = best_merge.get("y", 0)
 
                 # マージ先の近くにmerged_typeと同じタイプのピースがあるかを判定
-                found_nextnext, dist = check_nextnext_merge(
-                    pieces, target_x, target_y, merged_type, max_distance=2.5
-                )
+                found_nextnext, dist = check_nextnext_merge(pieces, target_x, target_y, merged_type, max_distance=2.5)
 
                 if found_nextnext:
                     # 距離に応じたボーナス：距離0.0で350.0、距離2.5で0.0（線形減衰）
@@ -535,30 +493,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += nextnext_bonus
                     reasons.append("NEXTEXT_MERGE")
 
-        # ----- v184: evaluation axis 7: early game merge priority (enhanced) -----
-        # v184: EARLY_MERGE_PRIORITYボーナスを800.0→1000.0に強化し、piece_count <= 12の範囲で初期段階でのマージ選択を超強力に促進
-        # batch_summaryでNEAR_MERGE_EARLY_MERGE_PRIORITYがavg_score_delta=27.5（高価値）だが選択率は4.6%（低選択率）であることを確認。
-        # ワーストゲーム(score0912)で初期8ターンが全てHEIGHT_CONTROLまたはEARLY_SPRIGHTとなり、マージ機会を逃している失敗パターンを特定。
-        # ベストゲーム(score3139)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしていることを確認。
-        # piece_count <= 12の範囲でEARLY_MERGE_PRIORITYボーナスを1000.0に強化し、初期段階でのマージ機会を超強力に優先することで、HEIGHT_CONTROL過剰選択を超強力に抑制する。
-        if piece_count <= 12 and merge_grade == "NEAR":
-            # 初期段階でNEAR_MERGE機会がある場合、超強力なボーナスを付与
-            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を超強力に抑制
-            score += 1000.0
+        # ----- evaluation axis 7: early game merge priority (v174: 初期12ターンマージ重視) -----
+        # v174: early_game判定(max_y < -2.0)をさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大。
+        # 初期12ターンを一つのフェーズとして扱い、この期間中はマージ機会を最優先してHEIGHT_CONTROL選択を抑制する。
+        # v172の初期条件(early_game && merge_grade == "NEAR")を維持し、piece_count <= 12でも適用することで初期12ターン全体でマージを重視。
+        if (early_game or piece_count <= 12) and merge_grade == "NEAR":
+            # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
+            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
+            score += 800.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- v186: evaluation axis 8: reactive_pairs-based merge priority (super enhanced) -----
-        # v186: REACTIVE_MERGE_PRIORITYボーナスを1500.0→2000.0に超強化し、反応性ペアがある状況でのマージ優先を超強力に強化
-        # batch_summaryでREACTIVE_MERGE_PRIORITY関連がavg_score_delta=60.3-66.2（高価値）だが選択率は2.5-3.6%（極端に低い選択率）であることを確認。
+        # ----- v176: reactive_pairs-based merge priority -----
+        # batch_summary分析でHEIGHT_CONTROLが26.5%選択(avg_score_delta=1.1)と過剰であることを確認。
         # reactor情報のreactive_pairs（反応性のあるペア）が2つ以上ある場合、盤面に多数の併合機会があることを示唆。
-        # この状況でマージを超強力に優先することでHEIGHT_CONTROL選択を超強力に抑制し、スコア安定性を向上させる。
+        # この状況でマージを優先することでHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
         if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
-            # 反応性ペアがある状況でマージを超強力に優先
-            # ボーナスを1500.0→2000.0に強化し、CHAIN_MERGEを促進
-            score += 2000.0
+            score += 500.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 9: MEDIUM_TOWER selection promotion (v174) -----
+        # ----- evaluation axis 8: MEDIUM_TOWER selection promotion (v174) -----
         # v174: MEDIUM_TOWER選択を促進するための追加評価軸を追加し、高スコア群と低スコア群のMEDIUM_TOWER選択率差（13.6% vs 10.8%）を解消する。
         # MEDIUM phaseでlanding_y > 0.5の場合、MEDIUM_TOWERボーナスを追加して選択を促進。
         if phase == "MEDIUM" and landing_y > 0.5:
@@ -568,7 +521,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0
             reasons.append("MEDIUM_TOWER_PROMOTION")
 
-        # ----- evaluation axis 10: anti-passive placement (v179: NEW) -----
+        # ----- evaluation axis 9: anti-passive placement (v179: NEW) -----
         # v179: 初期段階でマージ機会がない場合、消極的な中央配置を抑制
         # batch_summaryでHEIGHT_CONTROLが26.6%選択(avg_score_delta=0.9)と依然として過剰であることを確認。
         # ワーストゲーム(score0554)で初期5ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
@@ -582,9 +535,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 300.0
                 reasons.append("ANTI_PASSIVE_CENTER")
 
-        # ----- evaluation axis 11: proactive near merge (v180: NEW) -----
+        # ----- evaluation axis 10: proactive near merge (v180: NEW) -----
         # v180: 直接マージがない場合、積極的にNEAR_MERGEを作成する評価軸を追加
-        # batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=2.1)と過剛であり、NEAR_MERGEが3.8-9.2%選択(avg_score_delta=28-57)と選択不足であることを確認。
+        # batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=2.1)と過剰であり、NEAR_MERGEが3.8-9.2%選択(avg_score_delta=28-57)と選択不足であることを確認。
         # ワーストゲーム(score0600)で初期5-10ターンが全てHEIGHT_CONTROLとなり、マージ機会を逃している失敗パターンを特定。
         # ベストゲーム(score3063)ではターン3から早めにNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしていることを確認。
         # 直接マージがない場合、積極的にNEAR_MERGEを作成する評価軸を追加。merge_grade=="NO"かつ(early_gameまたはpiece_count <= 15)の場合、
