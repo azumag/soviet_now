@@ -45,15 +45,15 @@ Phases (determined by board max Y):
 # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_050953_score0826.jsonl, game_history/20260308_050518_score2330.jsonl,
 # strategy_versions/best_score2335_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
 #
-# v199: Early game HEIGHT_CONTROL suppression for low-score games
-# batch_summary shows HEIGHT_CONTROL selected 26.7% in low-score games vs 24.6% in high-score games.
-# Worst games (score809, 873) show 6 of first 8 turns selecting HEIGHT_CONTROL, missing chain merge opportunities.
-# Best games actively select CHAIN_MERGE from early turns, achieving higher median scores.
-# v198's EARLY_CHAIN_MERGE bonus helps but insufficient when no merges exist in very early game (piece_count <= 5).
-# Add piece_count-based HEIGHT_CONTROL suppression when no merges available in early game to prevent overly low placement.
-# This encourages board building for future chain merges and reduces HEIGHT_CONTROL over-selection that causes low scores.
-# refs: tmp/batch_summary.txt, game_history/20260308_191425_score0809.jsonl, game_history/20260308_185404_score0873.jsonl,
-# strategy_versions/best_score5310_strategy.py, strategy_versions/v2335_strategy.py, analyze_board.py
+# v198: Early game CHAIN_MERGE bonus - strengthen initial chain merge opportunities
+# batch_summary shows CHAIN_MERGE reasons have high value (avg_score_delta=29-61) but low selection rates (3.6-4.6%).
+# Worst game (score0738) shows 7 of first 8 turns selecting HEIGHT_CONTROL, missing early merge opportunities.
+# Best game (score2620) actively selects NEAR_MERGE_EARLY_MERGE_PRIORITY from early turns.
+# v197's LOW phase height_mult reduction (0.8→0.6) helps but insufficient to boost CHAIN_MERGE selection.
+# Add early stage CHAIN_MERGE bonus when landing_y < -1.0 to encourage early chain merges and suppress HEIGHT_CONTROL.
+# This addresses the root cause: early game CHAIN_MERGE selection is insufficient despite high value.
+# refs: tmp/batch_summary.txt, game_history/20260308_180936_score0738.jsonl, game_history/20260308_183900_score2620.jsonl,
+# game_history/20260308_181341_score1818.jsonl, game_history/20260308_182803_score2440.jsonl, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -301,21 +301,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 2つ以上の反応可能ペアがある場合、マージ優先ボーナス
             score += 500.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
-
-        # ----- early game HEIGHT_CONTROL suppression (low-score games prevention) -----
-        # batch_summary shows low-score games select HEIGHT_CONTROL 26.7% in early turns
-        # Worst games (score809, 873) show 6 of first 8 turns selecting HEIGHT_CONTROL
-        # When no merge opportunities exist in very early game (piece_count <= 5), HEIGHT_CONTROL
-        # selection leads to overly low placement that prevents future chain merges
-        # Suppress HEIGHT_CONTROL preference when no merges are available to encourage board building
-        if piece_count <= 5 and not merge_available and phase != "CRITICAL":
-            # Penalize HEIGHT_CONTROL by reducing score to encourage merge-seeking behavior
-            if landing_y < -2.5:
-                # Very early: strongly discourage HEIGHT_CONTROL to allow board building for merges
-                score -= 200.0
-            else:
-                # Early-mid: moderately discourage HEIGHT_CONTROL
-                score -= 100.0
 
         # ----- update best candidate -----
         if score > best_score:
