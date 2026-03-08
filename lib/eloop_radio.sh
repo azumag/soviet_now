@@ -138,6 +138,29 @@ _normalize_radio_tone() {
 	python3 "$ELOOP_LIB_DIR/lib/radio_text_utils.py" normalize_tone
 }
 
+_ensure_corner_announce() {
+	local text="$1" corner_name="$2"
+	local announce=""
+	case "$corner_name" in
+		soviet)   announce="ソ連共産主義ネタコーナーです。" ;;
+		news)     announce="本日のニュースです。" ;;
+		theme)    announce="" ;;
+		recap)    announce="" ;;
+		strategy) announce="" ;;
+	esac
+	[ -z "$announce" ] && { printf '%s' "$text"; return 0; }
+	# 既に含まれていたら二重挿入しない
+	if printf '%s\n' "$text" | head -n 5 | grep -qF "$announce"; then
+		printf '%s' "$text"
+		return 0
+	fi
+	# 挨拶行（1行目）の後に挿入
+	local first_line rest
+	first_line=$(printf '%s\n' "$text" | head -n 1)
+	rest=$(printf '%s\n' "$text" | tail -n +2)
+	printf '%s\n%s\n%s' "$first_line" "$announce" "$rest"
+}
+
 _ensure_radio_intro() {
 	local text="$1" corner_name="${2:-}"
 	[ -z "$text" ] && return 1
@@ -316,6 +339,7 @@ ${talk_body}"
 	local talk_with_intro
 	talk_with_intro=$(_ensure_radio_intro "$talk_body" "$corner_name")
 	[ -n "$talk_with_intro" ] && talk_body="$talk_with_intro"
+	talk_body=$(_ensure_corner_announce "$talk_body" "$corner_name")
 	talk_body=$(printf '%s' "$talk_body" | _normalize_radio_tone)
 
 	if [ ${#talk_body} -lt "${RADIO_MIN_TALK_LENGTH:-100}" ]; then
