@@ -52,6 +52,14 @@ Phases (determined by board max Y):
 # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_135748_score0553.jsonl, game_history/20260308_140225_score2268.jsonl,
 # game_history/20260308_134233_score0600.jsonl, game_history/20260308_135212_score1947.jsonl,
 # strategy_versions/best_score5310_strategy.py, analyze_board.py
+# v194: 初期段階CHAIN_MERGE強化版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.8-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
+# 初期段階でHEIGHT_CONTROLを過剰選択しマージ機会を逃している失敗モードを解決。
+# v171成功パラメータ（chain_bonus_multiplier=480.0 + landing_y * 150.0動的調整）を採用し、初期段階でのCHAIN_MERGE評価を強化。
+# これにより初期段階での連鎖選択を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_150108_score0789.jsonl, game_history/20260308_145243_score2428.jsonl,
+# game_history/20260308_143010_score2214.jsonl, game_history/20260308_145828_score0858.jsonl,
+# strategy_versions/v2920_score1194_strategy.py, strategy_versions/best_score5310_strategy.py,
+# strategy_versions/best_score4999_strategy.py, strategy_versions/best_score4319_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -215,23 +223,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v155成功パラメータ: chain_distance_max=5.0, chain_bonus_multiplier初期値450.0
-                # 着地高による動的調整: landing_y*0.6で距離、landing_y*150.0でボーナスを調整
-                # 例: landing_y=-3.0 → distance_max=3.2, multiplier=495.0（初期段階、最小ボーナス保障）
-                # 例: landing_y=0.0 → distance_max=5.0, multiplier=495.0（基本値）
-                # 例: landing_y=1.0 → distance_max=5.6, multiplier=645.0
-                # 例: landing_y=2.0 → distance_max=6.2, multiplier=795.0
-                # v193: 初期段階でのCHAIN_MERGE無効化問題に対応。初期段階（landing_y < -1.0）でも
-                # chain_bonus_multiplierを495.0（基本値）に設定し、CHAIN_MERGE評価を有効化。
-                # これにより初期段階でのマージ連鎖選択を促進し、HEIGHT_CONTROL選択を抑制する。
+                 # v171成功パラメータ: chain_distance_max=5.0, chain_bonus_multiplier初期値480.0
+                # 動地高による動的調整: landing_y*0.6で距離、landing_y*150.0でボーナスを調整
+                # 例: landing_y=-3.0 → distance_max=3.2, multiplier=480.0（初期段階、初期値）
+                # 例: landing_y=0.0 → distance_max=5.0, multiplier=480.0（基本値）
+                # 例: landing_y=1.0 → distance_max=5.6, multiplier=630.0
+                # 例: landing_y=2.0 → distance_max=6.2, multiplier=780.0
+                # v194: 初期段階CHAIN_MERGE強化版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.8-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
+                # 初期段階でHEIGHT_CONTROLを過剰選択しマージ機会を逃している失敗モードを解決。
+                # v171成功パラメータ（chain_bonus_multiplier=480.0 + landing_y * 150.0）を採用し、初期段階でのCHAIN_MERGE評価を強化。
+                # 初期段階でもchain_bonus_multiplierをv171初期値480.0を適用し、選択率向上とHEIGHT_CONTROL抑制を目指す。
                 if landing_y < -1.0:
-                    # 初期段階: 最小ボーナス保障495.0を適用し、CHAIN_MERGE評価を有効化
+                    # 初期段階: v171初期値480.0を適用し、初期段階での連鎖選択を促進
                     chain_distance_max = 5.0 + landing_y * 0.6
-                    chain_bonus_multiplier = 495.0
+                    chain_bonus_multiplier = 480.0
                 else:
-                    # 中盤以降: 着地高に応じて動的調整
+                    # 中盤以降: 動地高に応じて動的調整（v171成功パラメータ）
                     chain_distance_max = 5.0 + landing_y * 0.6
-                    chain_bonus_multiplier = 495.0 + landing_y * 150.0
+                    chain_bonus_multiplier = 480.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
