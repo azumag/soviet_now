@@ -219,6 +219,18 @@ END { printf "%s", block }
 		imp_ai_source=$(printf '%s' "$imp_ai_source" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x1f]//g')
 		imp_ai_output_block=$(printf '%s' "$imp_ai_output_block" | perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/[\x00-\x08\x0B-\x1F\x7F]//g')
 		imp_ai_output_block=$(printf '%s\n' "$imp_ai_output_block" | sed '/^[[:space:]]*$/d' | tail -n "$ai_max_lines")
+		if [[ -z "$imp_ai_output_block" ]]; then
+			# START/END が取れない場合でも、直近の改善ログを最低限見せる
+			imp_ai_output_block=$(tail -n "$ai_tail_lines" "$improve_ai_log" 2>/dev/null \
+				| perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/\r//g; s/[\x00-\x08\x0B-\x1F\x7F]//g' \
+				| grep -v '^\s*$' \
+				| grep -v '\[IMPROVE\] job start' \
+				| grep -v '\[IMPROVE\] attached pid=' \
+				| tail -n "$ai_max_lines")
+			if [[ -z "$imp_ai_source" ]] && [[ -n "$imp_ai_output_block" ]]; then
+				imp_ai_source="fallback:recent improve log"
+			fi
+		fi
 		imp_ai_age=$(_file_age "$improve_ai_log")
 	fi
 
