@@ -7,15 +7,16 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
+Decision Logic (9 evaluation axes):
     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
     2. Height penalty - Penalty for high landing position (varies by phase)
-    3. Drift penalty - Penalty for post-landing drift due to polygon shape
-    4. Left-right balance correction - Bonus for correcting piece count bias
-    5. nextNext centering - Center for next merge opportunity if nextNext same type
-    6. Chain merge bonus - Evaluate possibility of further merges after merge (v180: nextNext 2-lookahead)
-    7. Early game merge priority - Strong bonus for merge opportunities in early game
-    8. Reactive pair bonus - Bonus for multiple merge opportunities (NEW)
+    3. Reactive pair bonus - Bonus for multiple merge opportunities
+    4. Drift penalty - Penalty for post-landing drift due to polygon shape
+    5. Left-right balance correction - Bonus for correcting piece count bias
+    6. nextNext centering - Center for next merge opportunity if nextNext same type
+    7. nextNext protection bonus - Position for nextNext merge opportunity if nextNext==merged_type (v195: NEW)
+    8. Chain merge bonus - Evaluate possibility of further merges after merge
+    9. Early game merge priority - Strong bonus for merge opportunities in early game
 
 Phases (determined by board max Y):
     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -36,13 +37,11 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 #
-# v194: 漸層的早期マージ優先戦略 - batch_summaryでHEIGHT_CONTROLが20.2%(低スコア群)と8.8%(高スコア群)の選択率差を確認。
-# 低スコア群は初期から低すぎ(max_y avg=-2.89 vs 高スコア群-2.11)し、HEIGHT_CONTROLに過剰に従い併合機会を逃している失敗モードを特定。
-# v193のearly_game判定(max_y < -2.0)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
-# マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
-# 初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
-# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_111105_score0420.jsonl, game_history/20260308_110326_score2850.jsonl,
-# strategy_versions/v2849_score1147_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
+# v195: nextNext 2手先評価導入版 - batch_summaryでNEAR_MERGE_*_CHAIN_MERGEが3-5%選択(avg_score_delta=33-77)と高効率だが選択率が低いことを確認。
+# advice.mdの「nextNextを考慮して配置を決める戦略へ改善」と「盤面A・nextB・nextNextAの状況でnextNextの併合を逃す問題」に対処理。
+# nextNextとnextが同じタイプで、かつ、あるX位置に現在のnextを落とすことでnextNextが併合しやすい位置を確保できる場合、
+# その配置にボーナスを付与する新しい評価軸を追加。2手先の盤面評価機能を導入。
+# refs: tmp/batch_summary.txt, tmp/advice.md, strategy_versions/v2862_score2020_strategy.py, strategy_versions/best_score5310_strategy.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -50,28 +49,25 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v194: 漸層的早期マージ優先戦略
+    """v195: nextNext 2手先評価導入版
 
-    batch_summaryでHEIGHT_CONTROLが20.2%(低スコア群)と8.8%(高スコア群)の選択率差を確認。
-    低スコア群は初期から低すぎ(max_y avg=-2.89 vs 高スコア群-2.11)し、HEIGHT_CONTROLに過剰に従い併合機会を逃している失敗モードを特定。
-    v193のearly_game判定(max_y < -2.0)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
-    マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
-    初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
+    batch_summaryでNEAR_MERGE_*_CHAIN_MERGEが3-5%選択(avg_score_delta=33-77)と高効率だが選択率が低いことを確認。
+    advice.mdの「nextNextを考慮して配置を決める戦略へ改善」と「盤面A・nextB・nextNextAの状況でnextNextの併合を逃す問題」に対処理。
+    nextNextとmerged_typeが同じタイプで、かつ、あるX位置に現在のnextを落とすことでnextNextが併合しやすい位置を確保できる場合、
+    その配置にボーナスを付与する新しい評価軸を追加。2手先の盤面評価機能を導入。
 
-    v194の改善点:
-     1. 漸層的早期マージ優先戦略の導入
-        - early_game判定をmax_y < -2.5に緩和（v193: -2.0から拡大）
-        - マージ機会がある場合、HEIGHT_CONTROL抑制を強化（height_multiplier=0.1）
-        - マージ機会がない場合でも消極的な配置を回避（height_multiplier=0.5）
-     2. 初期段階マージ機会の優先度強化
-        - 初期8ターンまでEARLY_MERGE_PRIORITY条件を緩和（piece_count <= 8）
-        - 全体的にマージ機会を優先する戦略へ転換
-     3. LOWフェーズHEIGHT_CONTROL抑制の維持
-        - LOW phase height_mult=0.8（v193から継持）
-        - 高スコア群のHEIGHT_CONTROL選択率8.8%を目標に抑制
-     4. v177の殿堂入り戦略の成功パラメータを維持
-        - type_merge_bonus, chain_bonus_multiplier初期値480.0
-        - MEDIUMフェーズ height_mult=1.4（殿堂入り戦略）
+    v195の改善点:
+     1. nextNext protection bonus評価軸の追加（評価軸7）
+         - nextNextとmerged_typeが同じタイプの場合、併合後のmerged_typeピースに近い配置にボーナス
+         - これにより、nextNextが併合しやすい位置を選択するようになる
+         - ボーナスは最も近いmerged_typeピースへの距離に基づいて計算（maxボーナス600.0）
+     2. v194の漸層的早期マージ優先戦略を維持
+         - early_game判定をmax_y < -2.5に緩和
+         - マージ機会がある場合、HEIGHT_CONTROL抑制を強化（height_multiplier=0.1）
+         - 初期8ターンまでEARLY_MERGE_PRIORITY条件を緩和（piece_count <= 8）
+     3. v177の殿堂入り戦略の成功パラメータを維持
+         - type_merge_bonus, chain_bonus_multiplier初期値480.0
+         - MEDIUMフェーズ height_mult=1.4（殿堂入り戦略）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -248,7 +244,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 7: chain merge bonus (v177: type_merge_bonus強化版) -----
+        # ----- evaluation axis 7: nextNext protection bonus (NEW) -----
+        # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題に対処理。
+        # 具体的には、「併合後にtype merged_typeのピースが着地することを想定し、
+        # 最も近いmerged_typeピースへの距離が小さいほどボーナスが高い。
+        # これにより、nextNextが併合しやすい位置を選択するようになる。
+        if next_next_type == merged_type:
+            # 併合後にtype merged_typeのピースがどこに着地するか予測
+            # ターゲットを落とした直後のmerged_typeピースの着地Yを簡易的に予測
+            # 情密にはanalyze_boardのestimate_explosion_displacementを使うべきだが、簡易的に
+            # 併合後のピースは現在のnextより上に着地すると仮定
+            # merged_typeピースの中で、最もYが大きいものを見つけ、そこに近い場所へのボーナスを計算
+            merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
+            if merged_type_pieces:
+                # merged_typeピースの中で最も上にあるピースのY座標を取得
+                max_piece = max(merged_type_pieces, key=lambda p: p.get("y", -5.0))
+                target_y = max_piece["y"]
+                target_x = max_piece["x"]
+                
+                # すべてのmerged_typeピースに対する距離を計算し、最も近いものを探索
+                min_dist = float("inf")
+                for p in merged_type_pieces:
+                    if p["id"] != result.get("hit_id"):  # 併合対象のピースは除外
+                        dist = ((p["x"] - x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                        if dist < min_dist:
+                            min_dist = dist
+                
+                # 最も近いmerged_typeピースへの距離がさいほど（4.0未満）、ボーナスを大きく付与
+                # これにより、nextNextが併合後のmerged_typeのピースに近い位置を選ぶようになる
+                if min_dist < 4.0:
+                    next_protection_bonus = (4.0 - min_dist) * 150.0
+                    if next_protection_bonus > 0:
+                        score += next_protection_bonus
+                        reasons.append("NEXTNXT_PROTECTION")
+
+        # ----- evaluation axis 8: chain merge bonus (v177: type_merge_bonus強化版) -----
         # v177: type_merge_bonusを含めたCHAIN_MERGE評価軸
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
