@@ -3,17 +3,17 @@
 
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
-- Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
-- Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
+  - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
+ - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
 Decision Logic (8 evaluation axes):
     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-    2. Height penalty - Penalty for high landing position (varies by phase)
+    2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
     3. Drift penalty - Penalty for post-landing drift due to polygon shape
     4. Left-right balance correction - Bonus for correcting piece count bias
     5. nextNext centering - Center for next merge opportunity if nextNext same type
-    6. Chain merge bonus - Evaluate possibility of further merges after merge (v193: 初期段階有効化版)
+    6. Chain merge bonus - Evaluate possibility of further merges after merge (v194: 初期段階CHAIN_MERGE強化版)
     7. Early game merge priority - Strong bonus for merge opportunities in early game
     8. Reactive pair bonus - Bonus for multiple merge opportunities (NEW)
 
@@ -48,18 +48,26 @@ Phases (determined by board max Y):
 # v193: 初期段階CHAIN_MERGE有効化版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.6%以下と低いことを確認。
 # ワーストゲーム(score0553)で初期段階でHEIGHT_CONTROLを過剰選択しマージ機会を逃している失敗モードを特定。
 # 初期段階（landing_y < -1.0）でもchain_bonus_multiplierを495.0（基本値）に設定し、CHAIN_MERGE評価を有効化。
-# これにより初期段階での連鎖選択を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
+# これにより初期段階での連鎖択を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
 # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_135748_score0553.jsonl, game_history/20260308_140225_score2268.jsonl,
 # game_history/20260308_134233_score0600.jsonl, game_history/20260308_135212_score1947.jsonl,
 # strategy_versions/best_score5310_strategy.py, analyze_board.py
 # v194: 初期段階CHAIN_MERGE強化版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.8-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
 # 初期段階でHEIGHT_CONTROLを過剰選択しマージ機会を逃している失敗モードを解決。
 # v171成功パラメータ（chain_bonus_multiplier=480.0 + landing_y * 150.0動的調整）を採用し、初期段階でのCHAIN_MERGE評価を強化。
-# これにより初期段階での連鎖選択を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
+# これにより初期段階での連鎖択を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
 # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_150108_score0789.jsonl, game_history/20260308_145243_score2428.jsonl,
 # game_history/20260308_143010_score2214.jsonl, game_history/20260308_145828_score0858.jsonl,
 # strategy_versions/v2920_score1194_strategy.py, strategy_versions/best_score5310_strategy.py,
 # strategy_versions/best_score4999_strategy.py, strategy_versions/best_score4319_strategy.py, analyze_board.py
+# v195: 反応性マージ優先統合版 - batch_summaryでHEIGHT_CONTROLが24.8%選択(avg_score_delta=1.7)と過剰であることを確認。
+# CHAIN_MERGE関連がavg_score_delta=42.6-47.1（高価値）だが選択率は5.8%以下と低いことを確認。
+# 高スコア群では初期から高めに配置（序盤avg=-2.35）し、低スコア群は初期から低すぎ（序盤avg=-2.94）していることを特定。
+# v177のreactive_pairs活用（reactive_pair_count >= 2で500.0ボーナス）とv194のCHAIN_MERGE強化を統合し、初期段階でのマージ選択を最優先する。
+# LOWフェーズheight_multを0.8に削減し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
+# これにより、下振れ耐性を向上させスコア安定性を改善する。
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_153655_score0785.jsonl, game_history/20260308_155659_score3277.jsonl,
+# strategy_versions/best_score5310_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -67,12 +75,14 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v193: 初期段階CHAIN_MERGE有効化版
+    """v195: 反応性マージ優先統合版
 
-    batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.6%以下と低いことを確認。
-    ワーストゲーム(score0553)で初期段階でHEIGHT_CONTROLを過剰選択しマージ機会を逃している失敗モードを特定。
-    初期段階（landing_y < -1.0）でもchain_bonus_multiplierを495.0（基本値）に設定し、CHAIN_MERGE評価を有効化。
-    これにより初期段階での連鎖選択を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
+    batch_summaryでHEIGHT_CONTROLが24.8%選択(avg_score_delta=1.7)と過剰であることを確認。
+    CHAIN_MERGE関連がavg_score_delta=42.6-47.1（高価値）だが選択率は5.8%以下と低いことを確認。
+    高スコア群では初期から高めに配置（序盤avg=-2.35）し、低スコア群は初期から低すぎ（序盤avg=-2.94）していることを特定。
+    v177のreactive_pairs活用（reactive_pair_count >= 2で500.0ボーナス）とv194のCHAIN_MERGE強化を統合し、初期段階でのマージ選択を最優先する。
+    LOWフェーズheight_multを0.8に削減し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
+    これにより、下振れ耐性を向上させスコア安定性を改善する。
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -106,11 +116,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 1.0  # low board weak height penalty
+        height_mult = 0.8  # v195: 削減して初期HEIGHT_CONTROL選択を抑制
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.4  # v177: MEDIUM phase height_mult from v42 (2.4→1.4)
+        height_mult = 1.0  # v195: v177からheight_mult=1.0を採用しマージ優先
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
@@ -166,7 +176,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v42: シンプルな高さペナルティ計算
+        # v195: height_multはphaseごと設定。LOWフェーズ=0.8、MEDIUMフェーズ=1.0
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
@@ -210,11 +220,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v193: 初期段階有効化版) -----
-        # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.6%以下と低いことを確認。
-        # ワーストゲーム(score0553)で初期段階でHEIGHT_CONTROLを過剰選択しマージ機会を逃している失敗モードを特定。
-        # 初期段階（landing_y < -1.0）でもchain_bonus_multiplierを495.0（基本値）に設定し、CHAIN_MERGE評価を有効化。
-        # これにより初期段階での連鎖選択を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
+        # ----- evaluation axis 6: chain merge bonus (v194: 初期段階CHAIN_MERGE強化版) -----
+        # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.8-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
+        # 初期段階でHEIGHT_CONTROLを過剰選択しマージ機会を逃している失敗モードを解決。
+        # v171成功パラメータ（chain_bonus_multiplier=480.0 + landing_y * 150.0）を採用し、初期段階でのCHAIN_MERGE評価を強化。
+        # 初期段階でもchain_bonus_multiplierをv171初期値480.0を適用し、選択率向上とHEIGHT_CONTROL抑制を目指す。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -229,12 +239,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 例: landing_y=0.0 → distance_max=5.0, multiplier=480.0（基本値）
                 # 例: landing_y=1.0 → distance_max=5.6, multiplier=630.0
                 # 例: landing_y=2.0 → distance_max=6.2, multiplier=780.0
-                # v194: 初期段階CHAIN_MERGE強化版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.8-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
+                # v195: 初期段階CHAIN_MERGE強化版 - batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.8-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
                 # 初期段階でHEIGHT_CONTROLを過剰選択しマージ機会を逃している失敗モードを解決。
-                # v171成功パラメータ（chain_bonus_multiplier=480.0 + landing_y * 150.0）を採用し、初期段階でのCHAIN_MERGE評価を強化。
+                # v171成功パラメータ（chain_bonus_multiplier=480.0 + landing_y * 150.0動的調整）を採用し、初期段階でのCHAIN_MERGE評価を強化。
                 # 初期段階でもchain_bonus_multiplierをv171初期値480.0を適用し、選択率向上とHEIGHT_CONTROL抑制を目指す。
                 if landing_y < -1.0:
-                    # 初期段階: v171初期値480.0を適用し、初期段階での連鎖選択を促進
+                    # 初期段階: v171初期値480.0を適用し、初期段階での連鎖択を促進
                     chain_distance_max = 5.0 + landing_y * 0.6
                     chain_bonus_multiplier = 480.0
                 else:
@@ -280,7 +290,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 7: early game merge priority -----
         # 初期12ターンでマージ機会がある場合、強力なボーナスを付与
-        # batch_summaryでHEIGHT_CONTROLが28.3%選択(avg_score_delta=1.4)と過剰であり、
+        # batch_summaryでHEIGHT_CONTROLが24.8%選択(avg_score_delta=1.4)と過剰であり、
         # 高スコア群(27.2%)と低スコア群(29.5%)の比較で、低スコア群が2.3%も多くHEIGHT_CONTROLを選択していることを特定。
         # ベストゲーム(score2067)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア2067を出していることを確認。
         # v191: DIRECTマージも対象に含めることで、初期12ターンでより積極的にマージを狙う
@@ -289,9 +299,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8: reactive pair bonus (v192: NEW) -----
+        # ----- evaluation axis 8: reactive pair bonus (v195: NEW) -----
         # reactor情報のreactive_pairsを活用したマージ優先評価軸
-        # batch_summaryでHEIGHT_CONTROLが28.3%選択(avg_score_delta=1.4)と過剰であることを確認。
+        # batch_summaryでHEIGHT_CONTROLが24.8%選択(avg_score_delta=1.7)と過剰であることを確認。
         # reactor.reactive_pairsは盤面上の反応可能なペア（DIRECTまたはNEARマージ可能なペア）のリスト
         # reactive_pair_count >= 2の場合、盤面に多数の併合機会があることを示唆。
         # この状況でマージを優先することでHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
