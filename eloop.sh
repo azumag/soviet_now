@@ -210,6 +210,7 @@ handle_soviet_celebration() {
 
 	# 祝賀トーク再生
 	if [ -f "tmp/radio_celebration.txt" ] && [ -s "tmp/radio_celebration.txt" ]; then
+		_refresh_radio_intro_for_playback_file "tmp/radio_celebration.txt" "celebration"
 		./say_enqueue.sh --no-preempt tmp/radio_celebration.txt "$RADIO_SAY_RATE" 0
 	fi
 	_radio_clear_state "celebration"
