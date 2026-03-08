@@ -846,6 +846,8 @@ _radio_extract_fact_check_script() {
 	BEGIN { capture = 0 }
 	/^===SAFE_SCRIPT===$/ { capture = 1; next }
 	/^===ISSUES===$/ { capture = 0; exit }
+	/^===SUMMARY===$/ { capture = 0; exit }
+	/^===SELECTED_NEWS===$/ { capture = 0; exit }
 	capture { print }
 	'
 }
@@ -856,6 +858,32 @@ _radio_extract_fact_check_issues() {
 	/^===ISSUES===$/ { capture = 1; next }
 	capture { print }
 	'
+}
+
+_radio_cleanup_fact_checked_text() {
+	awk '
+	BEGIN {
+		mode = "plain"
+		saw_safe = 0
+	}
+	/^===SAFE_SCRIPT===$/ {
+		mode = "safe"
+		saw_safe = 1
+		next
+	}
+	/^===ISSUES===$/ || /^===SUMMARY===$/ || /^===SELECTED_NEWS===$/ {
+		if (saw_safe) exit
+		mode = "stop"
+		next
+	}
+	{
+		if (saw_safe) {
+			if (mode == "safe") print
+			next
+		}
+		if (mode == "plain") print
+	}
+	' | sed '/^[[:space:]]*$/N;/^\n$/D'
 }
 
 _radio_extract_prompt_section_value() {
@@ -925,7 +953,7 @@ _radio_fact_check_body() {
 		prompt_context_trimmed=$(printf '%s' "$prompt_context_trimmed" | tail -c 24000)
 	fi
 
-	local factcheck_dir prompt_file raw_output safe_script issues issue_preview debug_dump
+	local factcheck_dir prompt_file raw_output safe_script issues issue_preview debug_dump last_candidate
 	factcheck_dir=$(mktemp -d /tmp/eloop_radio_factcheck_XXXXXXXX) || return 1
 	prompt_file="$factcheck_dir/prompt.txt"
 	cat >"$prompt_file" <<PROMPT
@@ -973,8 +1001,9 @@ PROMPT
 		[ -n "$model" ] || continue
 		log "[RADIO:${corner_name}] fact-check中... (${model})"
 		raw_output=$(_run_opencode_radio "$model" "$prompt_file")
-		safe_script=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_script | _sanitize_onair_text | _normalize_radio_tone)
+		safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
 		issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
+		last_candidate="$safe_script"
 		if _is_valid_radio_talk "$safe_script"; then
 			issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
 			if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
@@ -990,8 +1019,9 @@ PROMPT
 
 	log "[RADIO:${corner_name}] fact-check fallback -> claude (${RADIO_FACT_CHECK_CLAUDE_MODEL})"
 	raw_output=$(_run_claude_radio_with_model "$prompt_file" "$RADIO_FACT_CHECK_CLAUDE_MODEL")
-	safe_script=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_script | _sanitize_onair_text | _normalize_radio_tone)
+	safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
 	issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
+	last_candidate="$safe_script"
 	if _is_valid_radio_talk "$safe_script"; then
 		issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
 		if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
@@ -1012,9 +1042,16 @@ PROMPT
 		echo "===RAW_CHECK_OUTPUT==="
 		printf '%s\n' "$raw_output"
 	} >"$debug_dump"
-	log "[RADIO:${corner_name}] fact-check失敗 -> 読み上げ中止 (dump: $debug_dump)"
+	if _is_valid_radio_talk "$last_candidate"; then
+		log "[RADIO:${corner_name}] fact-check不調だが抽出本文を採用 (dump: $debug_dump)"
+		rm -rf "$factcheck_dir"
+		printf '%s' "$last_candidate"
+		return 0
+	fi
+	log "[RADIO:${corner_name}] fact-check失敗 -> 元原稿で続行 (dump: $debug_dump)"
 	rm -rf "$factcheck_dir"
-	return 1
+	printf '%s' "$talk_body"
+	return 0
 }
 
 #=== ラジオトーク: 共通ヘルパー ===
@@ -1730,14 +1767,9 @@ _radio_generate_and_play() {
 		fi
 	fi
 
-	{
-		[ -f "$PAST_RADIO_TOPICS" ] && grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null || true
-		echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
-	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
-
-	# ニュースは選択タイトルを必ず先頭で読み上げる
-	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
-		local title_line
+		# ニュースは選択タイトルを必ず先頭で読み上げる
+		if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+			local title_line
 		title_line="今回取り上げるニュースタイトルは「${selected_news}」です。"
 		if ! printf '%s\n' "$talk_body" | head -n 2 | grep -Fq "$selected_news"; then
 			talk_body="${title_line}
@@ -1821,6 +1853,10 @@ ${talk_body}"
 	local deferred_file=""
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 	echo "$talk_body" >"$talk_file"
+	{
+		[ -f "$PAST_RADIO_TOPICS" ] && grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null || true
+		echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
+	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 	log "[RADIO:${corner_name}] ${#talk_body}字"
 
 	# コメント未消化がある間は再生を deferred キューへ積み、生成は止めない

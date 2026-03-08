@@ -80,6 +80,7 @@ soren_loop にはソ連風ラジオDJ機能が組み込まれている。試合�
 - コメントキュー（`tmp/.comment_queue`）が混雑している間もラジオ生成は継続し、再生のみ `tmp/.radio_deferred_queue` に退避してコメント再生の後ろに並べる（コメント消化後に順次再生）
 - コメント返しは `twitch_chat.sh fetch` で未読を取得し、生成が成功したときだけ `ack-batch` で処理済み行のみを pending から削除する。生成失敗やサニタイズ失敗時は pending を維持し、同一バッチで再生成をリトライする
 - ラジオ原稿は生成後に別AIでファクトチェック兼リライトを行い、検証に失敗した原稿は `say` しない。必要なら `RADIO_FACT_CHECK_ENABLED=0` で無効化できる
+- ファクトチェック出力の書式が崩れても、本文抽出をやり直して極力再生する。最終的に検証出力が使えない場合でも、無音スキップせず元原稿で続行する
 - `theme` / `soviet` / `news` はファクトチェック前に Web 由来の資料も取得して検証AIへ渡す。既定では `fetch_radio_grounding.py` が Wikipedia と Google News RSS を引く
 - 検証モデルは `RADIO_FACT_CHECK_AGENT` / `RADIO_FACT_CHECK_FALLBACK` / `RADIO_FACT_CHECK_CLAUDE_MODEL` で調整できる
 - Web資料取得は `RADIO_WEB_GROUNDING_ENABLED=0` で無効化できる。キャッシュや量は `RADIO_WEB_GROUNDING_TTL_SEC` / `RADIO_WEB_GROUNDING_MAX_SOURCES` で調整できる
