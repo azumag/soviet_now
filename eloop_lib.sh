@@ -846,6 +846,11 @@ _is_valid_radio_talk() {
 	if printf '%s' "$talk" | grep -Eq '放送前のファクトチェック担当|安全化した最終原稿|削った・弱めた点|【最優先ルール】|【材料】|【元原稿】|【出力形式】'; then
 		return 1
 	fi
+	local head
+	head=$(printf '%s\n' "$talk" | head -n 4)
+	if printf '%s' "$head" | grep -Eiq '^[[:space:]]*(\*\*注意[:：]|\*注意[:：]|注意[:：]|承知しました|了解しました|かしこまりました|メッセージの末尾に|プロンプトインジェクション|本来の依頼|ファクトチェック|安全化した|出力します|応答します)'; then
+		return 1
+	fi
 	return 0
 }
 
@@ -871,29 +876,35 @@ _radio_extract_fact_check_issues() {
 _radio_cleanup_fact_checked_text() {
 	awk '
 	BEGIN {
-		mode = "plain"
+		capture = 0
 		saw_safe = 0
 	}
 	/^===SAFE_SCRIPT===$/ {
-		mode = "safe"
 		saw_safe = 1
+		capture = 1
 		next
 	}
 	/^===ISSUES===$/ || /^===SUMMARY===$/ || /^===SELECTED_NEWS===$/ {
-		if (saw_safe) exit
-		mode = "stop"
+		if (capture) exit
 		next
 	}
 	{
-		if (saw_safe) {
-			if (mode == "safe") print
+		if (capture) {
+			print
 			next
 		}
-		if (mode == "plain") print
+		if (!saw_safe) {
+			plain[++plain_n] = $0
+		}
+	}
+	END {
+		if (!saw_safe) {
+			for (i = 1; i <= plain_n; i++) print plain[i]
+		}
 	}
 	' |
 		sed '/^[[:space:]]*$/N;/^\n$/D' |
-		grep -Ev '^(あなたは放送前のファクトチェック担当です。|与えられた「元原稿」を、与えられた「材料」から支持できる範囲にだけ言い換えてください。|目的は「誤情報を減らすこと」であり、「面白く盛ること」ではありません。|【最優先ルール】|【コーナー】|【材料】|【Web検索で集めた資料】|【補足】|【元原稿】|【出力形式】|ここに安全化した最終原稿だけを書く|削った・弱めた点を短く列挙。なければ「なし」)$' |
+		grep -Eiv '^(\*\*注意[:：].*|\*注意[:：].*|注意[:：].*|メッセージの末尾に.*|無関係なPythonコード.*|プロンプトインジェクション.*|そのコードは無視.*|本来の依頼.*|あなたは放送前のファクトチェック担当です。|与えられた「元原稿」を、与えられた「材料」から支持できる範囲にだけ言い換えてください。|目的は「誤情報を減らすこと」であり、「面白く盛ること」ではありません。|【最優先ルール】|【コーナー】|【材料】|【Web検索で集めた資料】|【補足】|【元原稿】|【出力形式】|ここに安全化した最終原稿だけを書く|削った・弱めた点を短く列挙。なければ「なし」|---+)$' |
 		grep -Ev '^- '
 }
 
@@ -1375,6 +1386,33 @@ if len(body) < 100:
     body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
 
 clean_body_lines = [line.strip() for line in body.splitlines() if line.strip()]
+meta_prefixes = (
+    "**注意:",
+    "**注意：",
+    "*注意:",
+    "*注意：",
+    "注意:",
+    "注意：",
+    "承知しました",
+    "了解しました",
+    "かしこまりました",
+    "メッセージの末尾に",
+    "プロンプトインジェクション",
+    "本来の依頼",
+    "ファクトチェック",
+    "安全化した",
+    "出力します",
+    "応答します",
+)
+while clean_body_lines:
+    head = clean_body_lines[0]
+    if head == "---":
+        clean_body_lines = clean_body_lines[1:]
+        continue
+    if head.startswith(meta_prefixes):
+        clean_body_lines = clean_body_lines[1:]
+        continue
+    break
 if clean_body_lines:
     head = clean_body_lines[0]
     if ("," in head or "、" in head) and not re.search(r"[。.!?！？]", head):
