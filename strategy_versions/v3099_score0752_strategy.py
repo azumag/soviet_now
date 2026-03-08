@@ -7,7 +7,7 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
+Decision Logic (9 evaluation axes):
    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
    2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
    3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -16,12 +16,13 @@ Decision Logic (8 evaluation axes):
    6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
    7. Early game merge priority - Strong bonus for merge opportunities in early game (v174)
    8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (v176)
+   9. Anti-passive placement - Penalty for passive center placement in early game with no merge (v179: NEW)
 
 Phases (determined by board max Y):
-  LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
-  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-  CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
+   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
 # Fixed interface:
@@ -62,15 +63,26 @@ Phases (determined by board max Y):
 # ワーストゲーム(score0765)で初期7ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗パターンを特定。
 # early_game判定をmax_y < -2.5→-2.0にさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大して初期12ターン全体でマージ機会を最優先する。
 # また、MEDIUM_TOWER選択を促進するための追加評価軸を追加し、高スコア群と低スコア群のMEDIUM_TOWER選択率差（13.6% vs 10.8%）を解消する。
-  # v175: MEDIUMフェーズHEIGHT_CONTROL抑制強化版 - batch_summaryでHEIGHT_CONTROLが26.5%選択(avg_score_delta=1.1)と依然として過剰であり、スコアの標準偏差が404.0と大きいことを確認。
-  # v174で初期12ターンでのHEIGHT_CONTROL抑制は強化されたが、中盤以降のHEIGHT_CONTROL選択が依然として多く、これがスコアの不安定性を引き起こしていることを特定。
-  # MEDIUMフェーズ（0.8 <= max_y < 1.8）でheight_multiplierを30.0→20.0に削減し、マージ選択を促進することでスコア安定性を向上させる。
-  # v176: reactor情報活用によるマージ優先評価軸追加版 - batch_summaryでHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
-  # reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を追加。
-  # これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
-  # v178: CRITICALフェーズ危険高さ抑制版 - batch_summaryで高スコア群が終盤avg=1.77、低スコア群が終盤avg=1.93であることを確認。
-  # アドバイスより「ゲームオーバー付近で併合判断が適切に行われていない」問題に対処。
-  # CRITICALフェーズ(max_y >= 3.0)でlanding_y > 2.0の場合、追加ペナルティ500.0を付与し、危険な高さ配置を強力に抑制する。
+# v175: MEDIUMフェーズHEIGHT_CONTROL抑制強化版 - batch_summaryでHEIGHT_CONTROLが26.5%選択(avg_score_delta=1.1)と依然として過剰であり、スコアの標準偏差が404.0と大きいことを確認。
+# v174で初期12ターンでのHEIGHT_CONTROL抑制は強化されたが、中盤以降のHEIGHT_CONTROL選択が依然として多く、これがスコアの不安定性を引き起こしていることを特定。
+# MEDIUMフェーズ（0.8 <= max_y < 1.8）でheight_multiplierを30.0→20.0に削減し、マージ選択を促進することでスコア安定性を向上させる。
+# v176: reactor情報活用によるマージ優先評価軸追加版 - batch_summaryでHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
+# reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を追加。
+# これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
+# v177: MEDIUMフェーズHEIGHT_CONTROL抑制強化版 - batch_summaryでHEIGHT_CONTROLが27.5%選択(avg_score_delta=0.9)と過剰であることを確認。
+# 高スコア群(23.9%)と低スコア群(32.5%)の比較で、低スコア群が8.6%も多くHEIGHT_CONTROLを選択していることを特定。
+# MEDIUMフェーズのheight_multiplierを20.0→15.0に削減し、マージ選択を促進することでHEIGHT_CONTROL選択を23.9%程度まで抑制しスコア向上を目指す。
+# v178: CRITICALフェーズ危険高さ抑制版 - batch_summaryで高スコア群が終盤avg=1.77、低スコア群が終盤avg=1.93であることを確認。
+# アドバイスより「ゲームオーバー付近で併合判断が適切に行われていない」問題に対処。
+# CRITICALフェーズ(max_y >= 3.0)でlanding_y > 2.0の場合、追加ペナルティ500.0を付与し、危険な高さ配置を強力に抑制する。
+# v179: 初期段階マージなし時の消極的配置抑制版 - batch_summaryでHEIGHT_CONTROLが26.6%選択(avg_score_delta=0.9)と依然として過剰であることを確認。
+# ワーストゲーム(score0554)で初期5ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
+# ベストゲーム(score3373)ではターン3から早めにNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしていることを確認。
+# early_gameかつmerge_grade=="NO"の場合、中央付近(|x| < 1.0)への配置にペナルティ-300.0を付与する評価軸を追加。
+# 初期段階でマージ機会がない場合、消極的な中央配置を回避してマージ可能な位置を探させることで、HEIGHT_CONTROL過剰選択を抑制しスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, game_history/20260308_232055_score0554.jsonl, game_history/20260308_234507_score3373.jsonl,
+# game_history/20260308_231600_score0566.jsonl, game_history/20260308_231327_score2019.jsonl,
+# strategy_versions/v3089_score1523_strategy.py, strategy_versions/best_score5310_strategy.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -78,23 +90,25 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v178: CRITICALフェーズ危険高さ抑制版
+    """v179: 初期段階マージなし時の消極的配置抑制版
 
-    batch_summaryで高スコア群が終盤avg=1.77、低スコア群が終盤avg=1.93であることを確認。
-    アドバイスより「ゲームオーバー付近で併合判断が適切に行われていない」問題に対処。
-    CRITICALフェーズ(max_y >= 3.0)でlanding_y > 2.0の場合、追加ペナルティ500.0を付与し、危険な高さ配置を強力に抑制する。
+    batch_summaryでHEIGHT_CONTROLが26.6%選択(avg_score_delta=0.9)と依然として過剰であることを確認。
+    ワーストゲーム(score0554)で初期5ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
+    ベストゲーム(score3373)ではターン3から早めにNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしていることを確認。
 
-    v178の改善点:
-    1. CRITICALフェーズ危険高さ抑制
+    v179の改善点:
+    1. 初期段階マージなし時の消極的配置抑制
+       - early_gameかつmerge_grade=="NO"の場合、中央付近(|x| < 1.0)への配置にペナルティ-300.0を付与
+       - 初期段階でマージ機会がない場合、消極的な中央配置を回避してマージ可能な位置を探させる
+    2. v178のCRITICALフェーズ危険高さ抑制を維持
        - landing_y > 2.0の場合、追加ペナルティ500.0を付与
-       - ゲームオーバー直前の危険な配置を回避し、盤面を下げる選択を促進
-    2. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持
+    3. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持
        - height_multiplier: 15.0（MEDIUMフェーズ）
-    3. v176のreactor情報活用によるマージ優先評価軸を維持
+    4. v176のreactor情報活用によるマージ優先評価軸を維持
        - reactive_pair_count >= 2の場合、DIRECT/NEARマージに+500.0ボーナス
-    4. v174の初期12ターンマージ重視を維持
+    5. v174の初期12ターンマージ重視を維持
        - early_game判定(max_y < -2.0)とEARLY_MERGE_PRIORITY(piece_count <= 12)を維持
-    5. v171のCHAIN_MERGE基本ボーナス強化を維持
+    6. v171のCHAIN_MERGE基本ボーナス強化を維持
        - chain_distance_max=5.0とchain_bonus_multiplier初期値480.0でCHAIN_MERGE選択を促進
 
     Args:
@@ -172,7 +186,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 7 evaluation axes
+    #  score each drop candidate (x coordinate) with 9 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -210,7 +224,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if early_game:
             height_multiplier = 0.2  # v169: 序盤はHEIGHT_CONTROLを抑制し、併合機会を最優先
 
-        # v175: MEDIUMフェーズでHEIGHT_CONTROL抑制を強化
+        # v177: MEDIUMフェーズでHEIGHT_CONTROL抑制を強化
         if phase == "MEDIUM":
             height_multiplier = 15.0  # v177: v175からさらに緩和しマージ選択を促進
 
@@ -353,6 +367,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # MEDIUM_TOWER選択を促進することで、スコア安定性を向上させる
             score += 200.0
             reasons.append("MEDIUM_TOWER_PROMOTION")
+
+        # ----- evaluation axis 9: anti-passive placement (v179: NEW) -----
+        # v179: 初期段階でマージ機会がない場合、消極的な中央配置を抑制
+        # batch_summaryでHEIGHT_CONTROLが26.6%選択(avg_score_delta=0.9)と依然として過剰であることを確認。
+        # ワーストゲーム(score0554)で初期5ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
+        # ベストゲーム(score3373)ではターン3から早めにNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしている。
+        # early_gameかつmerge_grade=="NO"の場合、中央付近(|x| < 1.0)への配置にペナルティ-300.0を付与。
+        # これにより初期段階でマージ機会がない場合、消極的な中央配置を回避してマージ可能な位置を探させ、HEIGHT_CONTROL過剰選択を抑制する。
+        if early_game and merge_grade == "NO":
+            # 中央付近(|x| < 1.0)への配置にペナルティ
+            # 初期段階でマージ機会がない場合、端に配置してマージ可能な位置を探させる
+            if abs(x) < 1.0:
+                score -= 300.0
+                reasons.append("ANTI_PASSIVE_CENTER")
 
         # ----- update best candidate -----
         if score > best_score:
