@@ -7,7 +7,7 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (7 evaluation axes):
+Decision Logic (8 evaluation axes):
     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
     2. Height penalty - Penalty for high landing position (varies by phase)
     3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -36,12 +36,13 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 #
-# v193: Reactor情報活用・初期マージ強化版 - v192の全候補ループ計算を廃止し、reactor.reactive_pairsを直接活用。
-# 効率性と正確性を向上させるため、初期段階でのHEIGHT_CONTROL選択をさらに抑制する。
-# reactor.reactive_pairsを活用したREACTIVE_PAIRS評価軸を追加・強化。
-# LOWフェーズheight_multを1.0→0.8に削減し、HEIGHT_CONTROL選択を抑制。
-# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_101239_score2190.jsonl, game_history/20260308_092459_score0779.jsonl,
-# strategy_versions/best_score5310_strategy.py, analyze_board.py
+# v194: 漸層的早期マージ優先戦略 - batch_summaryでHEIGHT_CONTROLが20.2%(低スコア群)と8.8%(高スコア群)の選択率差を確認。
+# 低スコア群は初期から低すぎ(max_y avg=-2.89 vs 高スコア群-2.11)し、HEIGHT_CONTROLに過剰に従い併合機会を逃している失敗モードを特定。
+# v193のearly_game判定(max_y < -2.0)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
+# マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
+# 初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_111105_score0420.jsonl, game_history/20260308_110326_score2850.jsonl,
+# strategy_versions/v2849_score1147_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -49,21 +50,28 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v193: Reactor情報活用・初期マージ強化版
+    """v194: 漸層的早期マージ優先戦略
 
-    v192の全候補ループ計算を廃止し、reactor.reactive_pairsを直接活用。
-    効率性と正確性を向上させるため、初期段階でのHEIGHT_CONTROL選択をさらに抑制する。
-    reactor.reactive_pairsを活用したREACTIVE_PAIRS評価軸を追加・強化。
+    batch_summaryでHEIGHT_CONTROLが20.2%(低スコア群)と8.8%(高スコア群)の選択率差を確認。
+    低スコア群は初期から低すぎ(max_y avg=-2.89 vs 高スコア群-2.11)し、HEIGHT_CONTROLに過剰に従い併合機会を逃している失敗モードを特定。
+    v193のearly_game判定(max_y < -2.0)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
+    マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
+    初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
 
-    v193の改善点:
-     1. Reactor情報直接活用による効率化
-        - v192: 全候補resultsループ計算 → v193: reactor.reactive_pairs直接参照
-        - reactive_pair_count >= 2の場合、強力なボーナス(reactive_pair_count * 150.0)を付与
-        - reactive_pair_count == 1の場合も小さなボーナス(100.0)を付与
-     2. 初期段階HEIGHT_CONTROL抑制強化
-        - LOWフェーズheight_multを1.0→0.8に削減
-        - 高スコア群のHEIGHT_CONTROL選択率を低減させ、マージ機会を増加
-     3. v177の殿堂入り戦略の成功パラメータ（type_merge_bonus, chain_bonus_multiplier初期値480.0）を維持
+    v194の改善点:
+     1. 漸層的早期マージ優先戦略の導入
+        - early_game判定をmax_y < -2.5に緩和（v193: -2.0から拡大）
+        - マージ機会がある場合、HEIGHT_CONTROL抑制を強化（height_multiplier=0.1）
+        - マージ機会がない場合でも消極的な配置を回避（height_multiplier=0.5）
+     2. 初期段階マージ機会の優先度強化
+        - 初期8ターンまでEARLY_MERGE_PRIORITY条件を緩和（piece_count <= 8）
+        - 全体的にマージ機会を優先する戦略へ転換
+     3. LOWフェーズHEIGHT_CONTROL抑制の維持
+        - LOW phase height_mult=0.8（v193から継持）
+        - 高スコア群のHEIGHT_CONTROL選択率8.8%を目標に抑制
+     4. v177の殿堂入り戦略の成功パラメータを維持
+        - type_merge_bonus, chain_bonus_multiplier初期値480.0
+        - MEDIUMフェーズ height_mult=1.4（殿堂入り戦略）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -100,9 +108,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pairs = reactor.get("reactive_pairs", [])
     reactive_pair_count = len(reactive_pairs)
 
-    # --- v193: early_game判定（v177から継承） ---
-    # 初期段階でHEIGHT_CONTROL選択を抑制するため、max_y < -2.0をearly_gameと判定
-    early_game = max_y < -2.0
+    # --- v194: early_game判定緩和（v193: -2.0 → v194: -2.5） ---
+    # v193ではmax_y < -2.0と厳しすぎ、gapのある間のマージ機会を見逃している
+    # 初期段階でのHEIGHT_CONTROL選択抑制を維持しつつ、マージ機会を優先する緩和を行う
+    early_game = max_y < -2.5
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -167,13 +176,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v193: LOW phase height_mult=0.8 (HEIGHT_CONTROL抑制強化)
-        # v177: early_game条件で初期段階のHEIGHT_CONTROL抑制を強化
+        # v194: LOW phase height_mult=0.8 (HEIGHT_CONTROL抑制強化)
+        # v194: early_game条件下での漸層的マージ優先戦略（v193の緩和版）
         height_multiplier = 50.0  # v177: 基本値30.0→50.0に変更
 
-        if early_game and merge_grade == "NO":
-            # v193: 初期マージ機会がない場合、HEIGHT_CONTROL抑制を強化
-            height_multiplier = 0.1  # v177: 消極的配置を回避
+        # v194: 漸層的早期マージ優先戦略
+        # マージ機会がある場合、HEIGHT_CONTROL抑制を強化（height_multiplier=0.1）
+        # マージ機会がない場合でも消極的配置を回避（height_multiplier=0.5）
+        if early_game:
+            if merge_grade in ["NEAR", "DIRECT"]:
+                # マージ機会がある場合、HEIGHT_CONTROL抑制を強化
+                height_multiplier = 0.1  # マージ優先戦略：消極的配置を回避
+            else:
+                # マージ機会がない場合も、v193の0.1では低すぎ、0.5に調整
+                # 完全に消極的配置を回避し、中程度の高さを許容
+                height_multiplier = 0.5
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -290,15 +307,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 8: early game merge priority (v191+v177統合) -----
-        # v191: DIRECTマージも対象に含めることで、初期12ターンでより積極的にマージを狙う
+        # ----- evaluation axis 8: early game merge priority (v194: 漸層的早期マージ優先戦略) -----
+        # v194: 初期8ターンまでEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換
         # v177: type_merge_bonus基本値を基本ボーナスとして適用
         # v177: chain_bonus_multiplier初期値480.0
         # v193: LOW phase height_mult=0.8 (HEIGHT_CONTROL抑制強化)
 
-        if piece_count <= 12 and merge_grade in ["NEAR", "DIRECT"]:
-            # 初期段階でNEAR_MERGEまたはDIRECT_MERGE機会がある場合、強力なボーナスを付与
-            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
+        # v194: 漸層的早期マージ優先戦略
+        # 初期8ターンまでEARLY_MERGE_PRIORITY条件を緩和（piece_count <= 8）
+        # 全体的にマージ機会を優先する戦略へ転換
+        if piece_count <= 8 and merge_grade in ["NEAR", "DIRECT"]:
+            # 初期8ターンでNEAR_MERGEまたはDIRECT_MERGE機会がある場合、強力なボーナスを付与
+            # これにより初期段階全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
