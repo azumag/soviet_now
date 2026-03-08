@@ -89,9 +89,125 @@ SANDBOX_DIR=""
 HARVEST_DIR=""
 HOST_STATUS_SNAPSHOT=""
 STAGING_FILE="strategy.py.staging"
+IMPROVE_BRIEF_FILE="tmp/improve_brief.md"
 
 # --- プロンプトに埋め込む参照データ（小さくて重要なもの） ---
-improve_ref_files=("$batch_summary_file")
+python3 - "$IMPROVE_BRIEF_FILE" "$batch_summary_file" "tmp/advice.md" "$CHANGE_LOG_FILE_HOST" "$SCORES" "$NUM_GAMES" "$best_game_path" "$worst_game_path" <<'PY'
+import os
+import re
+import statistics
+import sys
+
+out_file, batch_file, advice_file, change_log_file, scores_raw, num_games_raw, best_path, worst_path = sys.argv[1:9]
+
+def read_text(path: str) -> str:
+    if path and os.path.exists(path):
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    return ""
+
+def basename(path: str) -> str:
+    return os.path.basename(path) if path else ""
+
+scores = []
+for tok in scores_raw.split():
+    try:
+        scores.append(int(tok))
+    except Exception:
+        pass
+
+batch = read_text(batch_file)
+advice = read_text(advice_file)
+change_log = read_text(change_log_file)
+
+top_reasons = re.findall(r"^\s{2}([A-Z0-9_]+): .*avg_score_delta=([0-9.\-]+)", batch, re.M)
+high_low = re.search(r"高スコア群の reason 上位5:\n((?:\s+.+\n){1,8})\s+低スコア群の reason 上位5:\n((?:\s+.+\n){1,8})", batch)
+height_line = re.search(r"高スコア群: 序盤avg=([\-0-9.]+), 終盤avg=([\-0-9.]+).*\n\s+低スコア群: 序盤avg=([\-0-9.]+), 終盤avg=([\-0-9.]+)", batch)
+
+change_lines = []
+for line in change_log.splitlines():
+    s = line.strip()
+    if not s:
+        continue
+    if s.startswith("==="):
+        change_lines.append(s)
+    elif s.startswith("+#") or s.startswith("-#"):
+        change_lines.append(s[2:].strip())
+    if len(change_lines) >= 10:
+        break
+
+advice_lines = []
+for line in advice.splitlines():
+    s = line.strip()
+    if not s or s in {"- 特になし"}:
+        continue
+    if s.startswith("- "):
+        advice_lines.append(s[2:])
+    else:
+        advice_lines.append(s)
+    if len(advice_lines) >= 8:
+        break
+
+summary_lines = []
+summary_lines.append("# Improve Brief")
+summary_lines.append("")
+summary_lines.append("## Goal")
+summary_lines.append("今回の改善では、単発最高点よりも直近12試合の中央値・下振れ耐性を優先する。")
+if scores:
+    summary_lines.append(
+        f"- scores: {' '.join(map(str, scores))}"
+    )
+    summary_lines.append(
+        f"- min={min(scores)} median={statistics.median(scores):.1f} avg={statistics.mean(scores):.1f} max={max(scores)} n={len(scores)}"
+    )
+summary_lines.append(f"- best_game={basename(best_path)} worst_game={basename(worst_path)} batch_games={num_games_raw}")
+summary_lines.append("")
+summary_lines.append("## Batch Summary Highlights")
+for reason, delta in top_reasons[:6]:
+    summary_lines.append(f"- reason {reason}: avg_score_delta={delta}")
+if high_low:
+    summary_lines.append("- high score reasons:")
+    for line in high_low.group(1).splitlines():
+        s = line.strip()
+        if s:
+            summary_lines.append(f"  {s}")
+    summary_lines.append("- low score reasons:")
+    for line in high_low.group(2).splitlines():
+        s = line.strip()
+        if s:
+            summary_lines.append(f"  {s}")
+if height_line:
+    summary_lines.append(
+        f"- height trend: high-score early={height_line.group(1)} late={height_line.group(2)} / low-score early={height_line.group(3)} late={height_line.group(4)}"
+    )
+summary_lines.append("")
+summary_lines.append("## Recent Change Log Signals")
+if change_lines:
+    for line in change_lines:
+        summary_lines.append(f"- {line}")
+else:
+    summary_lines.append("- change_log unavailable")
+summary_lines.append("")
+summary_lines.append("## Advice Snapshot")
+if advice_lines:
+    for line in advice_lines:
+        summary_lines.append(f"- {line}")
+else:
+    summary_lines.append("- advice unavailable")
+summary_lines.append("")
+summary_lines.append("## Reading Order")
+summary_lines.append("1. improve_brief.md")
+summary_lines.append("2. sandbox_files.md")
+summary_lines.append("3. batch_summary.txt")
+summary_lines.append("4. change_log.txt")
+summary_lines.append("5. best/worst game logs")
+summary_lines.append("6. recent strategy versions and hall-of-fame strategies")
+
+with open(out_file, "w", encoding="utf-8") as f:
+    f.write("\n".join(summary_lines) + "\n")
+PY
+
+improve_ref_files=("$batch_summary_file" "$IMPROVE_BRIEF_FILE")
 [ -f "tmp/advice.md" ] && [ -s "tmp/advice.md" ] && improve_ref_files+=("tmp/advice.md")
 
 # --- サンドボックスにコピーする全ファイル ---
@@ -148,6 +264,7 @@ manifest_file="tmp/sandbox_files.md"
 	echo "以下のファイルは全て読み取り可能。改善前に必ず目録として確認すること。"
 	echo ""
 	echo "### 必須参照ファイル（固定）"
+	echo '- `tmp/improve_brief.md` — 今回の改善で最初に読む圧縮サマリ（最重要）'
 	echo '- `strategy.py.staging` — 変更対象の現行戦略（必ず最初に読む）'
 	echo '- `tmp/batch_summary.txt` — reason分布/高低比較（必ず読む）'
 	[ -f "tmp/advice.md" ] && echo '- `tmp/advice.md` — 補助アドバイス（存在する場合は読む）'
