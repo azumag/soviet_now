@@ -687,6 +687,9 @@ PY
 		queued)
 			printf "    ${C_YELLOW}📻${C_RESET} Radio       ${C_YELLOW}QUEUED${C_RESET}  ${C_DIM}[${corner_label}]${elapsed_label}${C_RESET}\n"
 			;;
+		verifying)
+			printf "    ${C_MAGENTA}📻${C_RESET} Radio       ${C_MAGENTA}VERIFYING${C_RESET}  ${C_DIM}[${corner_label}]${elapsed_label}${C_RESET}\n"
+			;;
 		generating)
 			printf "    ${C_CYAN}📻${C_RESET} Radio       ${C_CYAN}GENERATING${C_RESET}  ${C_DIM}[${corner_label}]${elapsed_label}${C_RESET}\n"
 			;;

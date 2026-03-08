@@ -27,6 +27,11 @@ RADIO_AGENT="zai"
 RADIO_FALLBACK="glmflash"
 RADIO_OPENCODE_TIMEOUT=180
 RADIO_CLAUDE_MODEL="sonnet"
+RADIO_FACT_CHECK_ENABLED="${RADIO_FACT_CHECK_ENABLED:-1}"
+RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-glmflash}"
+RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-zai}"
+RADIO_FACT_CHECK_CLAUDE_MODEL="${RADIO_FACT_CHECK_CLAUDE_MODEL:-$RADIO_CLAUDE_MODEL}"
+RADIO_FACT_CHECK_MIN_CHARS=100
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 RADIO_SAY_RATE=150
 unset SAY_AUDIO_DEVICE
@@ -785,16 +790,21 @@ _run_opencode_radio() {
 	rm -f "$raw_file"
 }
 
-_run_claude_radio() {
+_run_claude_radio_with_model() {
 	local prompt_file="$1"
+	local model="${2:-$RADIO_CLAUDE_MODEL}"
 	local prompt
 	prompt=$(cat "$prompt_file" 2>/dev/null)
 	if [ -z "$prompt" ]; then
 		return 1
 	fi
 	# command substitution に混ざらないよう stderr に出す
-	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL)" >&2
-	claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>/dev/null
+	log "[RADIO] claude call (model=$model)" >&2
+	claude -p "$prompt" --model "$model" 2>/dev/null
+}
+
+_run_claude_radio() {
+	_run_claude_radio_with_model "$1" "$RADIO_CLAUDE_MODEL"
 }
 
 _clean_comment_talk() {
@@ -812,6 +822,137 @@ _is_valid_comment_talk() {
 	[ ${#compact} -ge 24 ] || return 1
 	printf '%s' "$talk" | grep -Eq '[。！？]' || return 1
 	return 0
+}
+
+_is_valid_radio_talk() {
+	local talk="$1"
+	local compact min_chars
+	min_chars="${RADIO_FACT_CHECK_MIN_CHARS:-100}"
+	compact=$(printf '%s' "$talk" | tr -d '[:space:]')
+	[ ${#compact} -ge "$min_chars" ] || return 1
+	printf '%s' "$talk" | grep -Eq '[。！？]' || return 1
+	if printf '%s' "$talk" | grep -Eq '===SAFE_SCRIPT===|===ISSUES===|===SUMMARY==='; then
+		return 1
+	fi
+	return 0
+}
+
+_radio_extract_fact_check_script() {
+	awk '
+	BEGIN { capture = 0 }
+	/^===SAFE_SCRIPT===$/ { capture = 1; next }
+	/^===ISSUES===$/ { capture = 0; exit }
+	capture { print }
+	'
+}
+
+_radio_extract_fact_check_issues() {
+	awk '
+	BEGIN { capture = 0 }
+	/^===ISSUES===$/ { capture = 1; next }
+	capture { print }
+	'
+}
+
+_radio_fact_check_body() {
+	local corner_name="$1" prompt_context="$2" talk_body="$3" selected_news="${4:-}"
+	if [ "${RADIO_FACT_CHECK_ENABLED:-1}" = "0" ]; then
+		printf '%s' "$talk_body"
+		return 0
+	fi
+	[ -n "$talk_body" ] || return 1
+
+	local prompt_context_trimmed="$prompt_context"
+	if [ ${#prompt_context_trimmed} -gt 24000 ]; then
+		prompt_context_trimmed=$(printf '%s' "$prompt_context_trimmed" | tail -c 24000)
+	fi
+
+	local factcheck_dir prompt_file raw_output safe_script issues issue_preview debug_dump
+	factcheck_dir=$(mktemp -d /tmp/eloop_radio_factcheck_XXXXXXXX) || return 1
+	prompt_file="$factcheck_dir/prompt.txt"
+	cat >"$prompt_file" <<PROMPT
+あなたは放送前のファクトチェック担当です。
+与えられた「元原稿」を、与えられた「材料」から支持できる範囲にだけ言い換えてください。
+目的は「誤情報を減らすこと」であり、「面白く盛ること」ではありません。
+
+【最優先ルール】
+- 材料にない新事実を絶対に足さない
+- 固有名詞、年号、人数、数値、因果関係、逸話、引用は、材料で支えられないなら削るか弱める
+- 自信が低い細部は「と言われます」「とされます」「記録があります」「知られています」などの保守的な表現へ言い換える
+- news / strategy / recap では、材料にない断定を禁止
+- theme / soviet / celebration でも、確信のない歴史細部は一般論へ落とす
+- 元の語り口、流れ、長さはなるべく維持する
+- 読み上げ用プレーンテキストのみを返す
+- マークダウン、見出し、箇条書き、補足解説は禁止
+- 出力形式を厳守すること
+
+【コーナー】
+${corner_name}
+
+【材料】
+${prompt_context_trimmed}
+
+【補足】
+${selected_news:+ニュース選択見出し: ${selected_news}}
+
+【元原稿】
+${talk_body}
+
+【出力形式】
+===SAFE_SCRIPT===
+ここに安全化した最終原稿だけを書く
+
+===ISSUES===
+削った・弱めた点を短く列挙。なければ「なし」
+PROMPT
+
+	local model
+	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_FALLBACK:-}"; do
+		[ -n "$model" ] || continue
+		log "[RADIO:${corner_name}] fact-check中... (${model})"
+		raw_output=$(_run_opencode_radio "$model" "$prompt_file")
+		safe_script=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_script | _sanitize_onair_text | _normalize_radio_tone)
+		issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
+		if _is_valid_radio_talk "$safe_script"; then
+			issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
+			if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
+				log "[RADIO:${corner_name}] fact-check通過 (${model}): ${issue_preview}"
+			else
+				log "[RADIO:${corner_name}] fact-check通過 (${model})"
+			fi
+			rm -rf "$factcheck_dir"
+			printf '%s' "$safe_script"
+			return 0
+		fi
+	done
+
+	log "[RADIO:${corner_name}] fact-check fallback -> claude (${RADIO_FACT_CHECK_CLAUDE_MODEL})"
+	raw_output=$(_run_claude_radio_with_model "$prompt_file" "$RADIO_FACT_CHECK_CLAUDE_MODEL")
+	safe_script=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_script | _sanitize_onair_text | _normalize_radio_tone)
+	issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
+	if _is_valid_radio_talk "$safe_script"; then
+		issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
+		if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
+			log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}): ${issue_preview}"
+		else
+			log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL})"
+		fi
+		rm -rf "$factcheck_dir"
+		printf '%s' "$safe_script"
+		return 0
+	fi
+
+	debug_dump="tmp/radio_factcheck_failed_${corner_name}_$(date +%s).txt"
+	{
+		echo "===ORIGINAL==="
+		printf '%s\n' "$talk_body"
+		echo
+		echo "===RAW_CHECK_OUTPUT==="
+		printf '%s\n' "$raw_output"
+	} >"$debug_dump"
+	log "[RADIO:${corner_name}] fact-check失敗 -> 読み上げ中止 (dump: $debug_dump)"
+	rm -rf "$factcheck_dir"
+	return 1
 }
 
 #=== ラジオトーク: 共通ヘルパー ===
@@ -1472,7 +1613,8 @@ _radio_generate_and_play() {
 
 	echo "generating:${corner_name}:$(date +%s)" > tmp/.radio_state
 	log "[RADIO:${corner_name}] トーク生成中..."
-	local talk
+	local talk prompt_snapshot
+	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
 	if [ -z "$talk" ]; then
 		talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$prompt_file")
@@ -1591,6 +1733,23 @@ ${talk_body}"
 		_radio_clear_state "$corner_name"
 		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
+	fi
+
+	if [ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ]; then
+		local fact_checked_body
+		echo "verifying:${corner_name}:$(date +%s)" > tmp/.radio_state
+		fact_checked_body=$(_radio_fact_check_body "$corner_name" "$prompt_snapshot" "$talk_body" "$selected_news") || {
+			_radio_clear_state "$corner_name"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		}
+		talk_body="$fact_checked_body"
+		if ! _is_valid_radio_talk "$talk_body"; then
+			log "[RADIO:${corner_name}] fact-check後の本文が不正/短文 -> 読み上げ中止"
+			_radio_clear_state "$corner_name"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
 	fi
 
 	# say待ちは say_enqueue.sh 内で行われるため、ここでは不要
@@ -2249,7 +2408,8 @@ CELEBPROMPT
 
 	echo "generating:celebration:$(date +%s)" > tmp/.radio_state
 	log "[CELEBRATION] 生成中..."
-	local celebration_talk
+	local celebration_talk celebration_prompt_snapshot
+	celebration_prompt_snapshot=$(cat "$celebration_prompt_file" 2>/dev/null)
 	celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
 	if [ -z "$celebration_talk" ]; then
 		celebration_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$celebration_prompt_file")
@@ -2260,6 +2420,20 @@ CELEBPROMPT
 	rm -f "$celebration_prompt_file"
 
 	if [ -n "$celebration_talk" ]; then
+		celebration_talk=$(printf '%s' "$celebration_talk" | _sanitize_onair_text | _normalize_radio_tone)
+		if [ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ]; then
+			echo "verifying:celebration:$(date +%s)" > tmp/.radio_state
+			celebration_talk=$(_radio_fact_check_body "celebration" "$celebration_prompt_snapshot" "$celebration_talk") || {
+				_radio_clear_state "celebration"
+				log "[CELEBRATION] fact-check失敗"
+				return 1
+			}
+		fi
+		if ! _is_valid_radio_talk "$celebration_talk"; then
+			_radio_clear_state "celebration"
+			log "[CELEBRATION] fact-check後の本文が不正/短文"
+			return 1
+		fi
 		echo "$celebration_talk" >tmp/radio_celebration.txt
 		echo "playing:celebration:$(date +%s)" > tmp/.radio_state
 		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
