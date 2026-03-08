@@ -2789,7 +2789,9 @@ _play_comment_queue() {
 				# ハッシュファイルを最新50件に制限
 				tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
 					mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
-				./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0
+				if ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+					_remember_spoken_comment "$playing_file"
+				fi
 				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
 				rm -f "$playing_file"
 			fi
@@ -2907,6 +2909,104 @@ for i, (user, msg, raw) in enumerate(items, start=1):
 '
 }
 
+_remember_spoken_comment() {
+	local spoken_file="$1"
+	[ -s "$spoken_file" ] || return 0
+	mkdir -p "$COMMENT_SPOKEN_HISTORY_DIR" 2>/dev/null || true
+	local history_file prune_from old_files
+	history_file="$COMMENT_SPOKEN_HISTORY_DIR/$(date '+%Y%m%d_%H%M%S')_${RANDOM}.txt"
+	cp "$spoken_file" "$history_file" 2>/dev/null || return 0
+	prune_from=$((COMMENT_SPOKEN_HISTORY_MAX_FILES + 1))
+	old_files=$(ls -1t "$COMMENT_SPOKEN_HISTORY_DIR"/*.txt 2>/dev/null | tail -n +"$prune_from" || true)
+	if [ -n "$old_files" ]; then
+		printf '%s\n' "$old_files" | xargs rm -f 2>/dev/null || true
+	fi
+}
+
+_current_playing_comment_file() {
+	[ -f "tmp/.say_queue/current_source" ] || return 1
+	local cs_line phase src_file
+	cs_line=$(cat "tmp/.say_queue/current_source" 2>/dev/null || true)
+	phase=$(printf '%s' "$cs_line" | awk -F'|' 'NR==1{print $2}')
+	src_file=$(printf '%s' "$cs_line" | awk -F'|' 'NR==1{print $3}')
+	[ "$phase" = "playing" ] || return 1
+	case "$src_file" in
+	*comment_*.playing|*comment_*.txt)
+		[ -f "$src_file" ] || return 1
+		printf '%s' "$src_file"
+		return 0
+		;;
+	esac
+	return 1
+}
+
+_build_recent_spoken_comment_context() {
+	local current_file=""
+	current_file=$(_current_playing_comment_file || true)
+	python3 - "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$COMMENT_SPOKEN_PROMPT_MAX_CHARS" "$COMMENT_SPOKEN_ITEM_MAX_CHARS" "$current_file" <<'PY'
+import glob
+import os
+import re
+import sys
+import time
+
+history_dir = sys.argv[1]
+history_limit = max(0, int(sys.argv[2]))
+total_limit = max(200, int(sys.argv[3]))
+item_limit = max(80, int(sys.argv[4]))
+current_file = sys.argv[5] if len(sys.argv) > 5 else ""
+
+
+def collapse(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def excerpt(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            text = collapse(f.read())
+    except Exception:
+        return ""
+    if len(text) > item_limit:
+        text = text[:item_limit].rstrip() + "..."
+    return text
+
+
+entries = []
+seen = set()
+if current_file and os.path.isfile(current_file):
+    entries.append(("再生中", os.path.getmtime(current_file), current_file))
+    seen.add(os.path.realpath(current_file))
+
+history_files = sorted(glob.glob(os.path.join(history_dir, "*.txt")))
+if history_limit > 0:
+    history_files = history_files[-history_limit:]
+for path in reversed(history_files):
+    real_path = os.path.realpath(path)
+    if real_path in seen:
+        continue
+    entries.append(("", os.path.getmtime(path), path))
+
+lines = []
+used = 0
+for tag, ts, path in entries:
+    text = excerpt(path)
+    if not text:
+        continue
+    stamp = time.strftime("%H:%M", time.localtime(ts))
+    line = f"[{tag} {stamp}] {text}" if tag else f"[{stamp}] {text}"
+    if used and used + len(line) + 1 > total_limit:
+        break
+    if not used and len(line) > total_limit:
+        keep = max(40, total_limit - 16)
+        line = line[:keep].rstrip() + "..."
+    lines.append(line)
+    used += len(line) + 1
+
+print("\n".join(lines) if lines else "（なし）")
+PY
+}
+
 _build_comment_game_context() {
 	local gs_file="${1:-$GAME_STATE}"
 	python3 - "$gs_file" <<'PY'
@@ -2956,7 +3056,7 @@ generate_comment_response() {
 	fi
 
 	local past_topics=""
-	[ -f "$PAST_RADIO_TOPICS" ] && past_topics=$(cat "$PAST_RADIO_TOPICS")
+	past_topics=$(_radio_past_topics_block)
 	local game_state_context=""
 	game_state_context=$(_build_comment_game_context "$GAME_STATE")
 
@@ -2971,6 +3071,8 @@ generate_comment_response() {
 
 	local comment_batch_context=""
 	comment_batch_context=$(printf '%s\n' "$twitch_comments" | _format_comment_batch_context)
+	local recent_spoken_comment_context=""
+	recent_spoken_comment_context=$(_build_recent_spoken_comment_context)
 
 	local current_time current_hour time_period
 	current_time=$(date '+%H:%M')
@@ -3022,6 +3124,9 @@ generate_comment_response() {
 	【直前コメント履歴（前回まで）】
 	${previous_comments_context:-（なし）}
 
+	【最近自分が実際に読み上げたコメント返し（抜粋）】
+	${recent_spoken_comment_context:-（なし）}
+
 	【前回のトーク内容（文脈参照用）】
 	${past_topics}
 
@@ -3048,6 +3153,8 @@ generate_comment_response() {
 - 各コメントへの返事は最低2-3文。もっと長くなっても構わない。短すぎる一言返しはNG
 - 同一コメントの読み上げ・返信を1回の出力内で繰り返さないこと。各コメントへの返事は必ず1回だけにする
 		- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
+		- 「さっきの返事」「今の話」「その件」など、自分が直前に読み上げたコメント返しへの反応は、「最近自分が実際に読み上げたコメント返し」を優先して参照すること
+		- ニュースやラジオ本編への反応は、「前回のトーク内容（文脈参照用）」を参照すること
 		- 「それな」「それって」「さっきの」「草」など文脈依存コメントは、コメント前後文脈と直前履歴を使って対象を推定してから返事すること
 		- 文脈が曖昧な場合は、断定せずに「この話のことでしょうか？」のように確認を挟んで返すこと
 	- コメントの内容をまず読み上げ、そのあとに自分の感想・意見・連想を返す
