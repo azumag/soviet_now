@@ -186,11 +186,6 @@ def calc_regression_status(rolling, current_hash):
     current = calc_strategy_metrics(rolling[current_hash].get("scores", []))
     if not current:
         return None
-    if current["n"] < MIN_GAMES_BEFORE_IMPROVE:
-        return {
-            "state": "pending",
-            "text": f"RegCheck pending {current['n']}/{MIN_GAMES_BEFORE_IMPROVE} games",
-        }
 
     ranked = []
     for h, data in rolling.items():
@@ -202,8 +197,8 @@ def calc_regression_status(rolling, current_hash):
         ranked.append((metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics))
     if not ranked:
         return {
-            "state": "na",
-            "text": "RegCheck n/a no best ref",
+            "state": "safe",
+            "text": "RegPreview NO no best ref",
         }
 
     ranked.sort(reverse=True)
@@ -219,11 +214,11 @@ def calc_regression_status(rolling, current_hash):
             reasons.append("q25")
         return {
             "state": "trigger",
-            "text": f"RegCheck YES {'+'.join(reasons)} vs {best_hash[:8]}",
+            "text": f"RegPreview YES {'+'.join(reasons)} vs {best_hash[:8]} n={current['n']}",
         }
     return {
         "state": "safe",
-        "text": f"RegCheck NO vs {best_hash[:8]}",
+        "text": f"RegPreview NO vs {best_hash[:8]} n={current['n']}",
     }
 
 
@@ -448,19 +443,25 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
             curr_tag = "Curr*" if current_metrics["n"] < 12 else "Curr"
             curr_raw = (
                 f" {curr_tag} c{int(current_metrics['comp'])} m{int(current_metrics['p50'])} "
-                f"q{int(current_metrics['p25'])} n{int(current_metrics['n'])}   Best {best_short} "
-                f"c{int(best_metrics['comp'])} m{int(best_metrics['p50'])} "
-                f"q{int(best_metrics['p25'])} n{int(best_metrics['n'])}"
+                f"q{int(current_metrics['p25'])} n{int(current_metrics['n'])}"
             )
             curr_disp = (
                 f" {C_YELLOW}{curr_tag}{RST} c{int(current_metrics['comp'])} "
                 f"m{int(current_metrics['p50'])} q{int(current_metrics['p25'])} "
-                f"n{int(current_metrics['n'])}   {C_GREEN}Best{RST} {best_short} "
-                f"c{int(best_metrics['comp'])} m{int(best_metrics['p50'])} "
-                f"q{int(best_metrics['p25'])} n{int(best_metrics['n'])}"
+                f"n{int(current_metrics['n'])}"
             )
             pad5 = inner - len(curr_raw)
             lines.append(f"{C_CYAN}│{RST}{curr_disp}{' ' * max(pad5, 0)} {C_CYAN}│{RST}")
+            best_raw = (
+                f" Best  {best_short} c{int(best_metrics['comp'])} "
+                f"m{int(best_metrics['p50'])} q{int(best_metrics['p25'])} n{int(best_metrics['n'])}"
+            )
+            best_disp = (
+                f" {C_GREEN}Best{RST}  {best_short} c{int(best_metrics['comp'])} "
+                f"m{int(best_metrics['p50'])} q{int(best_metrics['p25'])} n{int(best_metrics['n'])}"
+            )
+            pad6 = inner - len(best_raw)
+            lines.append(f"{C_CYAN}│{RST}{best_disp}{' ' * max(pad6, 0)} {C_CYAN}│{RST}")
     elif current_metrics:
         curr_tag = "Curr*" if current_metrics["n"] < 12 else "Curr"
         curr_raw = (
@@ -482,12 +483,10 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
             reg_color = C_RED
         elif reg["state"] == "safe":
             reg_color = C_GREEN
-        elif reg["state"] == "pending":
-            reg_color = C_YELLOW
         reg_raw = f" {reg['text']}"
         reg_disp = f" {reg_color}{reg['text']}{RST}"
-        pad6 = inner - len(reg["text"]) - 1
-        lines.append(f"{C_CYAN}│{RST}{reg_disp}{' ' * max(pad6, 0)} {C_CYAN}│{RST}")
+        pad7 = inner - len(reg["text"]) - 1
+        lines.append(f"{C_CYAN}│{RST}{reg_disp}{' ' * max(pad7, 0)} {C_CYAN}│{RST}")
 
     lines.append(f"{C_CYAN}└{'─' * (W - 2)}┘{RST}")
     return lines

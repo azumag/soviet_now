@@ -360,7 +360,7 @@ if h and h in rs:
         print(f'best_p50={bp50:.0f}')
         print(f'best_p25={bp25:.0f}')
         print(f'best_total={bn}')
-        if m and n >= min_games_current:
+        if m:
             trigger_comp = comp < bc * composite_ratio
             trigger_p50 = p50 < bp50 * p50_ratio
             trigger_p25 = p25 < bp25 * p25_ratio
@@ -370,28 +370,19 @@ if h and h in rs:
                     reasons.append('p50')
                 if trigger_p25:
                     reasons.append('q25')
-                detail = 'YES ' + '+'.join(reasons) + ' vs ' + bh[:8]
+                detail = 'YES ' + '+'.join(reasons) + ' vs ' + bh[:8] + f' n={n}'
                 print('regression_state=trigger')
                 print('regression_detail=' + shlex.quote(detail))
             else:
-                detail = 'NO vs ' + bh[:8]
+                detail = 'NO vs ' + bh[:8] + f' n={n}'
                 print('regression_state=safe')
                 print('regression_detail=' + shlex.quote(detail))
-        elif m:
-            detail = f'PENDING {n}/{min_games_current} games'
-            print('regression_state=pending')
-            print('regression_detail=' + shlex.quote(detail))
         else:
             print('regression_state=na')
             print('regression_detail=' + shlex.quote('N/A'))
     elif m:
-        if n < min_games_current:
-            detail = f'PENDING {n}/{min_games_current} games'
-            print('regression_state=pending')
-            print('regression_detail=' + shlex.quote(detail))
-        else:
-            print('regression_state=na')
-            print('regression_detail=' + shlex.quote('N/A no best ref'))
+        print('regression_state=safe')
+        print('regression_detail=' + shlex.quote('NO no best ref'))
 PY
 		)"
 	fi
@@ -858,7 +849,6 @@ PY
 				case "$regression_state" in
 					trigger) reg_color="$C_RED" ;;
 					safe) reg_color="$C_GREEN" ;;
-					pending) reg_color="$C_YELLOW" ;;
 				esac
 				printf "    ${C_WHITE}▸${C_RESET} Regression  ${reg_color}%s${C_RESET}\n" "${regression_detail:-N/A}"
 			fi
