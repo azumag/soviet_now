@@ -274,16 +274,24 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 	local regression_state="" regression_detail=""
 	local rejected_count=0
 	if [[ -f tmp/rolling_scores.json ]] && [[ -f strategy.py ]]; then
-		eval $(python3 -c "
-	import json, math, os, shlex, subprocess
-	rs = json.load(open('tmp/rolling_scores.json'))
-	h = subprocess.run(['python3', 'extract_decide_hash.py', 'strategy.py'],
-	    capture_output=True, text=True).stdout.strip()
-	min_games_current = int(${MIN_GAMES_BEFORE_IMPROVE})
-	min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
-	composite_ratio = float(${REGRESSION_COMPOSITE_RATIO})
-	p50_ratio = float(${REGRESSION_P50_RATIO})
-	p25_ratio = float(${REGRESSION_P25_RATIO})
+		eval "$(
+			python3 - <<PY 2>/dev/null
+import json
+import math
+import shlex
+import subprocess
+
+rs = json.load(open('tmp/rolling_scores.json'))
+h = subprocess.run(
+    ['python3', 'extract_decide_hash.py', 'strategy.py'],
+    capture_output=True,
+    text=True,
+).stdout.strip()
+min_games_current = int(${MIN_GAMES_BEFORE_IMPROVE})
+min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
+composite_ratio = float(${REGRESSION_COMPOSITE_RATIO})
+p50_ratio = float(${REGRESSION_P50_RATIO})
+p25_ratio = float(${REGRESSION_P25_RATIO})
 
 def quantile(xs, q):
     ys = sorted(float(v) for v in xs)
@@ -326,9 +334,8 @@ if h and h in rs:
     print(f'rolling_avg={avg:.0f}')
     if prev_h and prev_h in rs and rs[prev_h]['scores']:
         prev_scores = rs[prev_h]['scores']
-        prev_avg = sum(prev_scores)/len(prev_scores)
+        prev_avg = sum(prev_scores) / len(prev_scores)
         print(f'rolling_prev_avg={prev_avg:.0f}')
-    # additional metrics: comp, p50, p25, total
     print(f'rolling_total={len(scores)}')
     if m:
         _, comp, p50, p25, n = m
@@ -341,7 +348,7 @@ if h and h in rs:
         m2 = metrics(sc)
         if not m2:
             continue
-        aa, ccomp, pp50, pp25, nn = m2
+        _, ccomp, pp50, pp25, nn = m2
         if nn < min_games_candidates:
             continue
         ranked.append((ccomp, pp50, pp25, nn, hh))
@@ -385,7 +392,8 @@ if h and h in rs:
         else:
             print('regression_state=na')
             print('regression_detail=' + shlex.quote('N/A no best ref'))
-	" 2>/dev/null)
+PY
+		)"
 	fi
 	[[ -f tmp/rejected_hashes.txt ]] && rejected_count=$(wc -l < tmp/rejected_hashes.txt | tr -d ' ')
 
