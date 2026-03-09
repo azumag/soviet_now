@@ -6,19 +6,18 @@ Game Overview:
   - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
-
-Decision Logic (10 evaluation axes):
-   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-   2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
-   3. Drift penalty - Penalty for post-landing drift due to polygon shape
-   4. Left-right balance correction - Bonus for correcting piece count bias
-   5. nextNext centering - Center for next merge opportunity if nextNext same type
-   6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
-   7. Early game merge priority - Strong bonus for merge opportunities in early game (v174)
-   8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (v176)
-   9. Anti-passive placement - Penalty for passive center placement in early game with no merge (v179: NEW)
-   10. Proactive near merge - Actively search for merge opportunities when none available (v180: NEW)
-   11. Two-turn lookahead with accurate post-merge position estimation (v182: NEW)
+# Decision Logic (11 evaluation axes):
+#    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+#    2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
+#    3. Drift penalty - Penalty for post-landing drift due to polygon shape
+#    4. Left-right balance correction - Bonus for correcting piece count bias
+#    5. nextNext centering - Center for next merge opportunity if nextNext same type
+#    6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
+#    7. Early game merge priority - Strong bonus for merge opportunities in early game (v183: EARLY_MERGE_PRIORITYボーナス強化)
+#    8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (v176)
+#    9. Anti-passive placement - Penalty for passive center placement in early game with no merge (v179)
+#    10. PROACTIVE_NEAR_MERGE removed - Low value (avg_score_delta=2.0), decision simplification (v183)
+#    11. Two-turn lookahead with accurate post-merge position estimation (v182)
 
 Phases (determined by board max Y):
    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -86,15 +85,23 @@ Phases (determined by board max Y):
 # game_history/20260308_231600_score0566.jsonl, game_history/20260308_231327_score2019.jsonl,
 # strategy_versions/v3089_score1523_strategy.py, strategy_versions/best_score5310_strategy.py
 # v182: マージ後の盤面位置推定による2手先評価精度強化版 - batch_summaryでNEAR_MERGE_EARLY_MERGE_PRIORITYがavg_score_delta=20.8（高価値）
-# だが選択率は4.8%（低選択率）であることを確認。ハイスコアゲーム（score3378/2686）は初期段階で連続してマージを実行し、スコアを伸ばしている。
+# だが選択率は4.8%（低選択率）であることを確認。ハイスコアゲーム（score3378/2686）は初期段階で連続してマージを実行し、スコアを伸ばしていることを確認。
 # ワーストゲーム（score0576/0939）はマージ実行後すぐにHEIGHT_CONTROLに戻り、マージ機会を逃している失敗モードを特定。
-# v181のcheck_nextnext_merge関数では、マージ先の位置（target_x, target_y）をそのまま使用していたが、
-# マージ後のmerged_typeピースはマージ先の周辺で最も高い位置に着地する特性を活用し、正確な2手先評価を行う。
+# v181の2手先評価を強化し、マージ後のmerged_typeピースの位置を正確に推定する。
 # マージ先のX座標周辺で最も高いピースのY座標をマージ後の着地位置として推定し、nextNextのマージ可能性を正確に評価する。
 # これにより、初期段階での連鎖マージ選択を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
 # refs: tmp/batch_summary.txt, game_history/20260309_014739_score0576.jsonl, game_history/20260309_020225_score3378.jsonl,
 # game_history/20260309_015012_score0939.jsonl, game_history/20260309_014538_score2686.jsonl,
 # strategy_versions/v3129_score3378_strategy.py, tmp/advice.md
+# v183: PROACTIVE_NEAR_MERGE削除・EARLY_MERGE_PRIORITY強化版 - batch_summaryでHEIGHT_CONTROLが25.0%選択(avg_score_delta=1.5)と過剰であり、
+# NEAR_MERGE_EARLY_MERGE_PRIORITYがavg_score_delta=24.2（高価値）だが選択率は4.8%（低選択率）であることを確認。
+# PROACTIVE_NEAR_MERGEはavg_score_delta=2.0（非常に低価値）であり、削除することで意思決定を簡素化する。
+# ハイスコアゲーム（score3359/1845）は初期段階でEARLY_MERGE_PRIORITYを選択し、スコアを伸ばしていることを確認。
+# ワーストゲーム（score0150/0839）はHEIGHT_CONTROLが過剰に選択され、マージ機会を逃している失敗モードを特定。
+# PROACTIVE_NEAR_MERGEを削除し、EARLY_MERGE_PRIORITYボーナスを1000.0→1200.0に強化することで初期12ターンでのマージ選択を超強力に促進。
+# これによりHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260309_082114_score0150.jsonl, game_history/20260309_084233_score3359.jsonl,
+# game_history/20260309_085809_score1845.jsonl, strategy_versions/v3258_score1845_strategy.py, strategy_versions/v182_strategy.py, tmp/change_log.txt
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -102,25 +109,32 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v182: マージ後の盤面位置推定による2手先評価精度強化版
+    """v183: PROACTIVE_NEAR_MERGE削除・EARLY_MERGE_PRIORITY強化版
 
-    batch_summaryでNEAR_MERGE_EARLY_MERGE_PRIORITYがavg_score_delta=20.8（高価値）
-    だが選択率は4.8%（低選択率）であることを確認。ハイスコアゲーム（score3378/2686）は初期段階で連続してマージを実行し、スコアを伸ばしている。
-    ワーストゲーム（score0576/0939）はマージ実行後すぐにHEIGHT_CONTROLに戻り、マージ機会を逃している失敗モードを特定。
-    PROACTIVE_NEAR_MERGEはavg_score_delta=8.9（良好）、選択率5.9%（低選択率）。
+    batch_summaryでHEIGHT_CONTROLが25.0%選択(avg_score_delta=1.5)と過剰であり、
+    NEAR_MERGE_EARLY_MERGE_PRIORITYがavg_score_delta=24.2（高価値）だが選択率は4.8%（低選択率）であることを確認。
+    PROACTIVE_NEAR_MERGEはavg_score_delta=2.0（非常に低価値）であり、ワーストゲームでも選択されているが効果が薄いことを確認。
+    ハイスコアゲーム（score3359/1845）は初期段階でEARLY_MERGE_PRIORITYを選択し、スコアを伸ばしている。
+    ワーストゲーム（score0150/0839）はHEIGHT_CONTROLが過剰に選択され、マージ機会を逃している失敗モードを特定。
 
-    v182の改善点:
-    1. マージ後の盤面位置推定による2手先評価精度強化
+    v183の改善点:
+    1. PROACTIVE_NEAR_MERGEの削除
+       - v180で追加されたPROACTIVE_NEAR_MERGEはavg_score_delta=2.0と非常に低価値であることを確認
+       - 削除することで意思決定を簡素化し、EARLY_MERGE_PRIORITY選択を促進
+       - 高スコア群と低スコア群の両方で選択率が低く、効果が薄いことを確認
+    2. EARLY_MERGE_PRIORITYボーナスの強化
+       - ボーナスを1000.0→1200.0に強化し、初期12ターンでのマージ選択を超強力に促進
+       - これによりHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる
+    3. v182のマージ後の盤面位置推定による2手先評価精度強化を維持
        - v181のcheck_nextnext_merge関数を強化し、マージ後のmerged_typeピースの位置を正確に推定
        - マージ先のX座標周辺で最も高いピースのY座標をマージ後の着地位置として推定
        - この推定位置を使用してnextNextのマージ可能性を正確に評価し、連鎖マージ選択を促進
-    2. v180の積極的NEAR_MERGE探索評価軸を維持
-    3. v179の初期段階マージなし時の消極的配置抑制を維持
-    4. v178のCRITICALフェーズ危険高さ抑制を維持
-    5. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持
-    6. v176のreactor情報活用によるマージ優先評価軸を維持
-    7. v174の初期12ターンマージ重視を維持
-    8. v171のCHAIN_MERGE基本ボーナス強化を維持
+    4. v179の初期段階マージなし時の消極的配置抑制を維持
+    5. v178のCRITICALフェーズ危険高さ抑制を維持
+    6. v177のMEDIUMフェーズHEIGHT_CONTROL抑制を維持
+    7. v176のreactor情報活用によるマージ優先評価軸を維持
+    8. v174の初期12ターンマージ重視を維持
+    9. v171のCHAIN_MERGE基本ボーナス強化を維持
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -141,11 +155,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
     def check_nextnext_merge(pieces, target_x, target_y, merged_type, max_distance=2.5):
         """マージ後のmerged_typeピースの位置を推定し、nextNextのマージ可能性を判定する
 
-        batch_summary分析により、NEAR_MERGE_EARLY_MERGE_PRIORITYがavg_score_delta=20.8（高価値）
+        batch_summary分析により、NEAR_MERGE_EARLY_MERGE_PRIORITYがavg_score_delta=24.2（高価値）
         だが選択率は4.8%（低選択率）であり、改善の余地があることを確認。
         ハイスコアゲームは初期段階で連続してマージを実行し、スコアを伸ばしている。
         マージ後のmerged_typeピースはマージ先の周辺で最も高い位置に着地する特性を活用し、
         正確な2手先評価を行うことで、初期段階での連鎖マージ選択を促進する。
+
+        v183の改善点により、PROACTIVE_NEAR_MERGEを削除し、EARLY_MERGE_PRIORITYボーナスを強化（1000.0→1200.0）。
+        これにより、意思決定を簡素化し、初期段階でのマージ選択を超強力に促進する。
 
         Args:
             pieces: 盤面のピースリスト
@@ -432,14 +449,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += nextnext_bonus
                     reasons.append("NEXTEXT_MERGE")
 
-        # ----- evaluation axis 7: early game merge priority (v174: 初期12ターンマージ重視) -----
-        # v174: early_game判定(max_y < -2.0)をさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大。
+        # ----- evaluation axis 7: early game merge priority (v183: 初期12ターンマージ重視強化版) -----
+        # batch_summaryでHEIGHT_CONTROLが25.0%選択(avg_score_delta=1.5)と過剰であり、NEAR_MERGE_EARLY_MERGE_PRIORITYがavg_score_delta=24.2（高価値）
+        # だが選択率は4.8%（低選択率）であることを確認。
+        # PROACTIVE_NEAR_MERGEはavg_score_delta=2.0（非常に低価値）であり、削除することで意思決定を簡素化する。
+        # ベストゲーム(score3359/1845)は初期段階でEARLY_MERGE_PRIORITYを選択し、スコアを伸ばしている。
+        # v174のearly_game判定(max_y < -2.0)を維持し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 12に維持。
         # 初期12ターンを一つのフェーズとして扱い、この期間中はマージ機会を最優先してHEIGHT_CONTROL選択を抑制する。
-        # v172の初期条件(early_game && merge_grade == "NEAR")を維持し、piece_count <= 12でも適用することで初期12ターン全体でマージを重視。
+        # ボーナスを1000.0→1200.0に強化し、初期段階でのマージ選択を超強力に促進することでHEIGHT_CONTROL選択を抑制しスコア安定性を向上させる。
+        # refs: tmp/batch_summary.txt, game_history/20260309_082114_score0150.jsonl, game_history/20260309_084233_score3359.jsonl,
+        # game_history/20260309_085809_score1845.jsonl, strategy_versions/v3258_score1845_strategy.py, strategy_versions/v182_strategy.py
         if (early_game or piece_count <= 12) and merge_grade == "NEAR":
-            # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
+            # 初期段階でNEAR_MERGE機会がある場合、超強力なボーナスを付与
             # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
-            score += 800.0
+            score += 1200.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
         # ----- v176: reactive_pairs-based merge priority -----
@@ -474,37 +497,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 300.0
                 reasons.append("ANTI_PASSIVE_CENTER")
 
-        # ----- evaluation axis 10: proactive near merge (v180: NEW) -----
-        # v180: 直接マージがない場合、積極的にNEAR_MERGEを作成する評価軸を追加
-        # batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=2.1)と過剰であり、NEAR_MERGEが3.8-9.2%選択(avg_score_delta=28-57)と選択不足であることを確認。
-        # ワーストゲーム(score0600)で初期5-10ターンが全てHEIGHT_CONTROLとなり、マージ機会を逃している失敗パターンを特定。
-        # ベストゲーム(score3063)ではターン3から早めにNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコアを伸ばしている。
-        # merge_grade=="NO"かつ(early_gameまたはpiece_count <= 15)の場合、next_typeと同じタイプのピースを距離3.0以内で探索
-        # 距離に応じたボーナス（最大400.0）を付与し、消極的なHEIGHT_CONTROL配置から積極的なマージ機会作成へシフト
-        if merge_grade == "NO" and (early_game or piece_count <= 15):
-            # next_typeと同じタイプのピースを探索
-            search_distance_max = 3.0
-            found_pieces = []
-
-            for p in pieces:
-                if p.get("type") == next_type:
-                    # 着地位置(x, landing_y)と同じタイプのピースの距離を計算
-                    dist = ((p["x"] - x) ** 2 + (p["y"] - landing_y) ** 2) ** 0.5
-                    if dist < search_distance_max:
-                        found_pieces.append((dist, p))
-
-            if found_pieces:
-                # 最も近いピースを使用してボーナスを計算（距離が近いほどボーナスが高い）
-                found_pieces.sort(key=lambda x: x[0])
-                closest_dist, _ = found_pieces[0]
-
-                # 距離に応じたボーナス：距離0.0で400.0、距離3.0で0.0（線形減衰）
-                proactive_bonus = max(
-                    0,
-                    (search_distance_max - closest_dist) / search_distance_max * 400.0,
-                )
-                score += proactive_bonus
-                reasons.append("PROACTIVE_NEAR_MERGE")
+        # ----- evaluation axis 10: proactive near merge (REMOVED in v183) -----
+        # v180で追加されたPROACTIVE_NEAR_MERGEはavg_score_delta=2.0（非常に低価値）であり、削除することで意思決定を簡素化。
+        # batch_summaryで高スコア群と低スコア群の両方で選択率が低く（高スコア:4.4%、低スコア:6.6%）、効果が薄いことを確認。
+        # PROACTIVE_NEAR_MERGEの削除により、EARLY_MERGE_PRIORITY選択を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
+        # refs: tmp/batch_summary.txt, tmp/change_log.txt, game_history/20260309_082114_score0150.jsonl,
+        # game_history/20260309_082735_score0839.jsonl, strategy_versions/v180_strategy.py
 
         # ----- update best candidate -----
         if score > best_score:
