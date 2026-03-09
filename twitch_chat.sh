@@ -21,6 +21,9 @@ PENDING_LOG="$CHAT_DIR/pending.log"  # 未読み上げキュー
 OUTFILE="${TWITCH_CHAT_OUTFILE:-tmp/twitch_comments.txt}"
 SEEN_ID_FILE="$CHAT_DIR/seen_msg_ids.log" # 直近に処理済みのTwitch msg-id
 SEEN_ID_MAX=4000
+SEEN_LINE_HASH_FILE="$CHAT_DIR/seen_line_hashes.log" # 直近に処理済みのコメント行ハッシュ
+SEEN_LINE_MAX=4000
+SEEN_LINE_TTL_SEC=1800
 TAB=$'\t'
 LOCK_DIR="$CHAT_DIR/.op_lock"
 LOCK_TIMEOUT_SEC=8
@@ -108,6 +111,29 @@ _compact_seen_ids() {
     mv "$tmpf" "$SEEN_ID_FILE"
 }
 
+_compact_seen_line_hashes() {
+    [ -f "$SEEN_LINE_HASH_FILE" ] || return 0
+    local tmpf now_ts
+    now_ts=$(date +%s)
+    tmpf=$(mktemp /tmp/twitch_seen_lines_XXXXXXXX)
+    awk -F'|' -v now_ts="$now_ts" -v ttl="$SEEN_LINE_TTL_SEC" '
+        NF >= 2 && $1 ~ /^[0-9]+$/ && (now_ts - $1) <= ttl && !seen[$2]++ { print $1 "|" $2 }
+    ' "$SEEN_LINE_HASH_FILE" | tail -n "$SEEN_LINE_MAX" > "$tmpf"
+    mv "$tmpf" "$SEEN_LINE_HASH_FILE"
+}
+
+_line_hash_recently_seen() {
+    local line_hash="$1"
+    [ -n "$line_hash" ] || return 1
+    [ -f "$SEEN_LINE_HASH_FILE" ] || return 1
+    local now_ts
+    now_ts=$(date +%s)
+    awk -F'|' -v target="$line_hash" -v now_ts="$now_ts" -v ttl="$SEEN_LINE_TTL_SEC" '
+        $2 == target && $1 ~ /^[0-9]+$/ && (now_ts - $1) <= ttl { found = 1; exit }
+        END { exit(found ? 0 : 1) }
+    ' "$SEEN_LINE_HASH_FILE"
+}
+
 # 同一チャンネルの daemon PID を列挙
 _daemon_pids() {
     ps -Ao pid=,command= 2>/dev/null | awk -v ch="$CHANNEL" '
@@ -192,14 +218,18 @@ _fetch_nolock() {
             fi
 
             # 最新10件に制限したうえで、msg-id重複と危険入力を除外
-            local scan_tmp seen_batch_tmp dedup_tmp
-            local skipped_by_id=0 skipped_by_sanitize=0 skipped_by_line=0 added_count=0
+            local scan_tmp seen_batch_tmp seen_line_batch_tmp dedup_tmp
+            local skipped_by_id=0 skipped_by_sanitize=0 skipped_by_line=0 skipped_by_recent_line=0 added_count=0
             scan_tmp=$(mktemp /tmp/twitch_new_scan_XXXXXXXX)
             seen_batch_tmp=$(mktemp /tmp/twitch_seen_batch_XXXXXXXX)
+            seen_line_batch_tmp=$(mktemp /tmp/twitch_seen_line_batch_XXXXXXXX)
             dedup_tmp=$(mktemp /tmp/twitch_new_dedup_XXXXXXXX)
             : > "$scan_tmp"
             : > "$seen_batch_tmp"
+            : > "$seen_line_batch_tmp"
             [ -f "$SEEN_ID_FILE" ] || : > "$SEEN_ID_FILE"
+            [ -f "$SEEN_LINE_HASH_FILE" ] || : > "$SEEN_LINE_HASH_FILE"
+            _compact_seen_line_hashes
 
             while IFS= read -r raw_line; do
                 [ -n "$raw_line" ] || continue
@@ -233,6 +263,16 @@ _fetch_nolock() {
                     echo "$msg_id" >> "$seen_batch_tmp"
                 fi
 
+                local line_hash=""
+                line_hash=$(printf '%s' "$clean_line" | md5 -q 2>/dev/null || printf '%s' "$clean_line" | md5sum | awk '{print $1}')
+                if [ -n "$line_hash" ]; then
+                    if grep -qxF "$line_hash" "$seen_line_batch_tmp" 2>/dev/null || _line_hash_recently_seen "$line_hash"; then
+                        skipped_by_recent_line=$((skipped_by_recent_line + 1))
+                        continue
+                    fi
+                    echo "$line_hash" >> "$seen_line_batch_tmp"
+                fi
+
                 echo "$clean_line" >> "$scan_tmp"
             done <<<"$(printf '%s\n' "$new_comments" | tail -10)"
 
@@ -254,11 +294,20 @@ _fetch_nolock() {
                 cat "$seen_batch_tmp" >> "$SEEN_ID_FILE"
                 _compact_seen_ids
             fi
+            if [ -s "$seen_line_batch_tmp" ]; then
+                local seen_line_ts
+                seen_line_ts=$(date +%s)
+                while IFS= read -r line_hash; do
+                    [ -n "$line_hash" ] || continue
+                    printf '%s|%s\n' "$seen_line_ts" "$line_hash" >> "$SEEN_LINE_HASH_FILE"
+                done < "$seen_line_batch_tmp"
+                _compact_seen_line_hashes
+            fi
 
-            rm -f "$scan_tmp" "$seen_batch_tmp" "$dedup_tmp"
+            rm -f "$scan_tmp" "$seen_batch_tmp" "$seen_line_batch_tmp" "$dedup_tmp"
 
-            if [ "${added_count:-0}" -gt 0 ] || [ "$skipped_by_id" -gt 0 ]; then
-                _log "fetch: $((current_lines - last_offset))件中 ${added_count}件追加 (id重複:${skipped_by_id}, 内容重複:${skipped_by_line}, sanitize除外:${skipped_by_sanitize})"
+            if [ "${added_count:-0}" -gt 0 ] || [ "$skipped_by_id" -gt 0 ] || [ "$skipped_by_recent_line" -gt 0 ]; then
+                _log "fetch: $((current_lines - last_offset))件中 ${added_count}件追加 (id重複:${skipped_by_id}, 内容重複:${skipped_by_line}, 履歴重複:${skipped_by_recent_line}, sanitize除外:${skipped_by_sanitize})"
             fi
         fi
     fi
