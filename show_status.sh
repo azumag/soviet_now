@@ -269,14 +269,47 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 	local rejected_count=0
 	if [[ -f tmp/rolling_scores.json ]] && [[ -f strategy.py ]]; then
 		eval $(python3 -c "
-import json, os, subprocess
+import json, math, os, subprocess
 rs = json.load(open('tmp/rolling_scores.json'))
 h = subprocess.run(['python3', 'extract_decide_hash.py', 'strategy.py'],
     capture_output=True, text=True).stdout.strip()
+
+def quantile(xs, q):
+    ys = sorted(float(v) for v in xs)
+    n = len(ys)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return ys[0]
+    pos = (n - 1) * q
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return ys[lo]
+    frac = pos - lo
+    return ys[lo] * (1.0 - frac) + ys[hi] * frac
+
+def metrics(scores):
+    n = len(scores)
+    if n <= 0:
+        return None
+    avg = sum(scores) / n
+    p50 = quantile(scores, 0.50)
+    p25 = quantile(scores, 0.25)
+    if n > 1:
+        var = sum((s - avg) ** 2 for s in scores) / n
+        std = math.sqrt(max(var, 0.0))
+    else:
+        std = 0.0
+    lcb = avg - 1.28 * (std / math.sqrt(n))
+    comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    return avg, comp, p50, p25, n
+
 if h and h in rs:
     scores = rs[h]['scores']
     prev_h = rs[h].get('prev_hash', '')
-    avg = sum(scores)/len(scores) if scores else 0
+    m = metrics(scores)
+    avg = m[0] if m else 0
     print(f'rolling_hash={h[:8]}')
     print(f'rolling_count={len(scores)}')
     print(f'rolling_avg={avg:.0f}')
@@ -285,31 +318,21 @@ if h and h in rs:
         prev_avg = sum(prev_scores)/len(prev_scores)
         print(f'rolling_prev_avg={prev_avg:.0f}')
     # additional metrics: comp, p50, p25, total
-    n = len(scores)
-    print(f'rolling_total={n}')
-    if n > 0:
-        ss = sorted(scores)
-        p50 = ss[n//2] if n % 2 == 1 else (ss[n//2-1]+ss[n//2])/2
-        p25_idx = max(0, n//4 - (1 if n%4==0 else 0))
-        p25 = ss[p25_idx] if n >= 2 else ss[0]
-        lcb = avg - 1.96*(sum((s-avg)**2 for s in scores)/n)**0.5/(n**0.5) if n > 1 else avg
-        comp = 0.55*p50 + 0.30*p25 + 0.15*max(lcb,0)
+    print(f'rolling_total={len(scores)}')
+    if m:
+        _, comp, p50, p25, n = m
         print(f'rolling_comp={comp:.0f}')
         print(f'rolling_p50={p50:.0f}')
         print(f'rolling_p25={p25:.0f}')
     ranked = []
     for hh, data in rs.items():
         sc = data.get('scores', [])
-        nn = len(sc)
+        m2 = metrics(sc)
+        if not m2:
+            continue
+        aa, ccomp, pp50, pp25, nn = m2
         if nn < 12:
             continue
-        aa = sum(sc)/nn if sc else 0
-        ssc = sorted(sc)
-        pp50 = ssc[nn//2] if nn % 2 == 1 else (ssc[nn//2-1]+ssc[nn//2])/2
-        pp25_idx = max(0, nn//4 - (1 if nn%4==0 else 0))
-        pp25 = ssc[pp25_idx] if nn >= 2 else ssc[0]
-        llcb = aa - 1.96*(sum((s-aa)**2 for s in sc)/nn)**0.5/(nn**0.5) if nn > 1 else aa
-        ccomp = 0.55*pp50 + 0.30*pp25 + 0.15*max(llcb,0)
         ranked.append((ccomp, pp50, pp25, nn, hh))
     if ranked:
         ranked.sort(reverse=True)
