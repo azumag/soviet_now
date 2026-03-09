@@ -882,7 +882,7 @@ _run_claude_comment_with_model() {
 	}
 	output=$(
 		cd "$sandbox_dir" &&
-			timeout "$timeout_sec" claude -p "$(cat 'tmp/comment_prompt.txt')" --model "$model" 2>/dev/null
+			timeout "$timeout_sec" claude -p "$(cat 'tmp/comment_prompt.txt')" --model "$model" --tools "Read,Glob,Grep,LS" --permission-mode dontAsk --strict-mcp-config 2>/dev/null
 	)
 	local rc=$?
 	destroy_sandbox "$sandbox_dir"
