@@ -59,7 +59,8 @@ RANK_LCB_Z=1.28
 RANK_WEIGHT_P50=0.55
 RANK_WEIGHT_P25=0.30
 RANK_WEIGHT_LCB=0.15
-REGRESSION_COMPOSITE_RATIO=0.82
+REGRESSION_COMPOSITE_RATIO=0.88
+REGRESSION_P50_RATIO=0.85
 REGRESSION_P25_RATIO=0.80
 STRATEGY_HASH_ARCHIVE_DIR="strategy_versions/by_hash"
 HASH_ARCHIVE_KEEP_TOP=10
@@ -3901,6 +3902,7 @@ with open(rs_file, 'w') as f:
 
 check_regression() {
 	# 新戦略が十分試行数で、LCB+中央値+分位点ベースの比較で劣化していればリグレッション
+	# 判定は composite の悪化に加えて、典型性能(p50)または下振れ耐性(p25)の悪化を要求する。
 	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
 	REGRESSION_ROLLBACK_DONE=0
 	REGRESSION_ROLLBACK_HASH=""
@@ -3908,7 +3910,7 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P25_RATIO" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" <<'PY'
 import json
 import math
 import os
@@ -3923,7 +3925,8 @@ w_p50 = float(sys.argv[6])
 w_p25 = float(sys.argv[7])
 w_lcb = float(sys.argv[8])
 composite_ratio = float(sys.argv[9])
-p25_ratio = float(sys.argv[10])
+p50_ratio = float(sys.argv[10])
+p25_ratio = float(sys.argv[11])
 
 if not os.path.exists(rs_file):
     print("OK")
@@ -3994,12 +3997,14 @@ best_comp, _, _, best_n, best_hash, best = candidates[0]
 curr_comp = current["composite"]
 
 is_comp_regression = best_comp > 0 and curr_comp < best_comp * composite_ratio
+is_p50_regression = best["p50"] > 0 and current["p50"] < best["p50"] * p50_ratio
 is_p25_regression = best["p25"] > 0 and current["p25"] < best["p25"] * p25_ratio
 
-if is_comp_regression and is_p25_regression:
+if is_comp_regression and (is_p50_regression or is_p25_regression):
     print(
         "REGRESSION:"
         f"best_hash={best_hash},best_comp={best_comp:.1f},curr_comp={curr_comp:.1f},"
+        f"best_p50={best['p50']:.1f},curr_p50={current['p50']:.1f},"
         f"best_p25={best['p25']:.1f},curr_p25={current['p25']:.1f},"
         f"best_n={best_n},curr_n={current['n']}"
     )
