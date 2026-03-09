@@ -2100,7 +2100,7 @@ _play_priority_audio_file() {
 	_interrupt_current_audio_playback "priority:${corner_name}"
 	echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
 	_refresh_radio_intro_for_playback_file "$audio_file" "$corner_name"
-	./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
+	SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
 }
 
 _cancel_russia_celebration_worker() {
@@ -2157,12 +2157,12 @@ _play_deferred_radio_queue_once() {
 	local playing_file="${qf%.txt}.playing"
 	if mv "$qf" "$playing_file" 2>/dev/null; then
 		local deferred_corner=""
-		deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/' )
-		_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
-		log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
-		if ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
-			rm -f "$playing_file"
-			log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
+			deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/' )
+			_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
+			log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
+			if SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+				rm -f "$playing_file"
+				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else
 			local retry_file="${playing_file%.playing}.txt"
 			mv "$playing_file" "$retry_file" 2>/dev/null || true
@@ -2360,15 +2360,15 @@ ${talk_body}"
 			rmdir "$inflight_dir" 2>/dev/null || true
 			return 1
 		fi
-	else
-		echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
-		_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
-		if [ "$no_preempt" = true ]; then
-			./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
 		else
-			./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
+			echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
+			_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
+			if [ "$no_preempt" = true ]; then
+				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
+			else
+				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
+			fi
 		fi
-	fi
 	rm -f "$talk_file"
 	_radio_mark_done "$done_marker"
 	_radio_clear_state "$corner_name"
@@ -3229,9 +3229,9 @@ _play_comment_queue() {
 				# ハッシュファイルを最新50件に制限
 				tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
 					mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
-				if ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
-					_remember_spoken_comment "$playing_file"
-				fi
+					if SAY_CONTEXT_LABEL="comment" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+						_remember_spoken_comment "$playing_file"
+					fi
 				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
 				rm -f "$playing_file"
 			fi

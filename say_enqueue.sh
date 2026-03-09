@@ -41,6 +41,8 @@ LOCK_DIR="$QUEUE_DIR/.lock"
 LOCK_OWNER_FILE="$LOCK_DIR/owner_pid"
 LOCK_HEARTBEAT_FILE="$LOCK_DIR/heartbeat"
 CURRENT_SOURCE_FILE="$QUEUE_DIR/current_source"
+PLAYED_LOG_FILE="$QUEUE_DIR/played.log"
+LAST_RADIO_PLAYED_FILE="tmp/radio_talk_played"
 LOCK_STALE_SEC=180
 
 if [ ! -s "$CONTENT_FILE" ]; then
@@ -62,7 +64,60 @@ cp "$CONTENT_FILE" "$MY_CONTENT"
 # 読み上げ修正: "AI" → "エーアイ"
 sed -i '' 's/AI/エーアイ/g' "$MY_CONTENT"
 
-_log() { echo "[say_enqueue $(date '+%H:%M:%S')] $*" >&2; echo "[say_enqueue $(date '+%H:%M:%S') PID=$$/${BASHPID:-?}] $* | file=$CONTENT_FILE token=$MY_TOKEN" >> tmp/.say_queue/debug.log; }
+_infer_source_label() {
+    local path="$1" base corner
+    base=$(basename "$path")
+    case "$path" in
+    *"tmp/.comment_queue/comment_"*.playing|*"tmp/.comment_queue/comment_"*.txt)
+        echo "comment"
+        return 0
+        ;;
+    *"tmp/.radio_deferred_queue/radio_"*.playing|*"tmp/.radio_deferred_queue/radio_"*.txt)
+        corner=$(printf '%s' "$base" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/')
+        [ -n "$corner" ] && [ "$corner" != "$base" ] && {
+            echo "radio:${corner}"
+            return 0
+        }
+        ;;
+    *"/tmp/eloop_radio_talk_"*)
+        echo "radio"
+        return 0
+        ;;
+    *"tmp/radio_celebration.txt")
+        echo "radio:celebration"
+        return 0
+        ;;
+    *"tmp/radio_russia_celebration.txt")
+        echo "radio:russia"
+        return 0
+        ;;
+    esac
+    return 1
+}
+
+SOURCE_LABEL="${SAY_CONTEXT_LABEL:-}"
+if [ -z "$SOURCE_LABEL" ]; then
+    SOURCE_LABEL=$(_infer_source_label "$CONTENT_FILE" 2>/dev/null || true)
+fi
+
+_log() { echo "[say_enqueue $(date '+%H:%M:%S')] $*" >&2; echo "[say_enqueue $(date '+%H:%M:%S') PID=$$/${BASHPID:-?}] $* | file=$CONTENT_FILE token=$MY_TOKEN label=${SOURCE_LABEL:-unknown}" >> tmp/.say_queue/debug.log; }
+
+_append_played_log() {
+    local status="$1" now_h now_ts
+    now_h=$(date '+%H:%M:%S')
+    now_ts=$(date +%s)
+    printf '[%s] %s [%s] %s\n' "$now_h" "$status" "${SOURCE_LABEL:-unknown}" "$CONTENT_FILE" >> "$PLAYED_LOG_FILE"
+    if [ -f "$PLAYED_LOG_FILE" ] && [ "$(wc -l < "$PLAYED_LOG_FILE")" -gt 500 ]; then
+        tail -200 "$PLAYED_LOG_FILE" > "${PLAYED_LOG_FILE}.tmp" && mv "${PLAYED_LOG_FILE}.tmp" "$PLAYED_LOG_FILE"
+    fi
+    case "${SOURCE_LABEL:-}" in
+    radio:*)
+        if [ "$status" = "played" ]; then
+            printf '%s|%s|%s\n' "$now_ts" "${SOURCE_LABEL#radio:}" "$CONTENT_FILE" > "$LAST_RADIO_PLAYED_FILE"
+        fi
+        ;;
+    esac
+}
 
 _is_lock_owner() {
     [ -d "$LOCK_DIR" ] || return 1
@@ -78,7 +133,7 @@ _touch_lock_heartbeat() {
 _set_current_source() {
     local phase="${1:-waiting}"
     _is_lock_owner || return 0
-    printf '%s|%s|%s|%s\n' "$MY_OWNER" "$phase" "$CONTENT_FILE" "$(date +%s)" > "$CURRENT_SOURCE_FILE" 2>/dev/null || true
+    printf '%s|%s|%s|%s|%s\n' "$MY_OWNER" "$phase" "$CONTENT_FILE" "$(date +%s)" "${SOURCE_LABEL:-}" > "$CURRENT_SOURCE_FILE" 2>/dev/null || true
 }
 
 _clear_current_source_if_owner() {
@@ -408,8 +463,10 @@ _release_lock
 
 if [ "$PLAYBACK_FAILED" -eq 1 ]; then
     _log "say終了 (一部失敗あり)"
+    _append_played_log "failed"
 else
     _log "say終了"
+    _append_played_log "played"
 fi
 # 自分のPIDの場合のみ削除（他プロセスが上書きした場合は残す）
 [ -n "$LAST_SAY_PID" ] && [ "$(cat "$PID_FILE" 2>/dev/null)" = "$LAST_SAY_PID" ] && rm -f "$PID_FILE"
