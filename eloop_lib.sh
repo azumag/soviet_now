@@ -356,9 +356,15 @@ run_ai() {
 		return 1
 	fi
 
-	local expect_mtime_before=""
+	local expect_snapshot=""
 	if [ -n "$expect" ] && [ -f "$expect" ]; then
-		expect_mtime_before=$(stat -f '%m' "$expect" 2>/dev/null)
+		expect_snapshot=$(mktemp /tmp/eloop_expect_before.XXXXXX 2>/dev/null || echo "")
+		if [ -n "$expect_snapshot" ]; then
+			cp "$expect" "$expect_snapshot" 2>/dev/null || {
+				rm -f "$expect_snapshot" 2>/dev/null || true
+				expect_snapshot=""
+			}
+		fi
 	fi
 
 	local primary_attempts="${RUN_AI_PRIMARY_RETRIES:-1}"
@@ -380,15 +386,25 @@ run_ai() {
 		run_cmd "$primary" "$prompt"
 		primary_ret=$?
 		if [ -n "$expect" ]; then
-			local expect_mtime_after=""
-			[ -f "$expect" ] && expect_mtime_after=$(stat -f '%m' "$expect" 2>/dev/null)
-			if [ -s "$expect" ] && [ "$expect_mtime_after" != "$expect_mtime_before" ]; then
+			local expect_written=false
+			if [ -s "$expect" ]; then
+				if [ -n "$expect_snapshot" ] && [ -f "$expect_snapshot" ]; then
+					if ! cmp -s "$expect_snapshot" "$expect" 2>/dev/null; then
+						expect_written=true
+					fi
+				else
+					expect_written=true
+				fi
+			fi
+			if [ "$expect_written" = true ]; then
+				rm -f "$expect_snapshot" 2>/dev/null || true
 				if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 				log "[$label] primary OK ($expect written, attempt ${attempt}/${primary_attempts})"
 				return 0
 			fi
 		else
 			[ "$primary_ret" -eq 0 ] && {
+				rm -f "$expect_snapshot" 2>/dev/null || true
 				if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 				return 0
 			}
@@ -403,14 +419,24 @@ run_ai() {
 	RUN_CMD_LOG_TAG="${label}:fallback"
 	run_cmd "$fallback" "$prompt"
 	if [ -n "$expect" ]; then
-		local expect_mtime_fb=""
-		[ -f "$expect" ] && expect_mtime_fb=$(stat -f '%m' "$expect" 2>/dev/null)
-		if [ ! -s "$expect" ] || [ "$expect_mtime_fb" = "$expect_mtime_before" ]; then
+		local expect_written_fb=false
+		if [ -s "$expect" ]; then
+			if [ -n "$expect_snapshot" ] && [ -f "$expect_snapshot" ]; then
+				if ! cmp -s "$expect_snapshot" "$expect" 2>/dev/null; then
+					expect_written_fb=true
+				fi
+			else
+				expect_written_fb=true
+			fi
+		fi
+		if [ "$expect_written_fb" != true ]; then
+			rm -f "$expect_snapshot" 2>/dev/null || true
 			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 			log "[$label] fallback also failed ($expect not written)"
 			return 1
 		fi
 	fi
+	rm -f "$expect_snapshot" 2>/dev/null || true
 	if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 }
 

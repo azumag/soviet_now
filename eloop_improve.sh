@@ -85,6 +85,7 @@ CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 improve_ok=false
 sandbox_ready=false
 in_sandbox=false
+host_integrity_ok=true
 SANDBOX_DIR=""
 HARVEST_DIR=""
 HOST_STATUS_SNAPSHOT=""
@@ -545,7 +546,10 @@ fi
 
 if [ -n "$HOST_STATUS_SNAPSHOT" ] && [ -f "$HOST_STATUS_SNAPSHOT" ]; then
 	if ! check_host_integrity "$HOST_STATUS_SNAPSHOT"; then
-		log "[IMPROVE] WARNING: ホスト変化検出、commit は実行するが確認推奨"
+		host_integrity_ok=false
+		improve_ok=false
+		VALIDATE_ERROR="AI改善中にホスト作業ツリー変化を検出"
+		log "[IMPROVE] ABORT: $VALIDATE_ERROR"
 	fi
 	rm -f "$HOST_STATUS_SNAPSHOT"
 fi
@@ -582,25 +586,34 @@ fi
 _improve_progress "post_validate" "85" "finalizing"
 [ -n "$HARVEST_DIR" ] && rm -rf "$HARVEST_DIR" 2>/dev/null || true
 
-# git commit
-# ゲーム範囲を算出してコミットメッセージに含める
-first_score=$(echo "$SCORES" | awk '{print $1}')
-last_score=$(echo "$SCORES" | awk '{print $NF}')
-_improve_progress "git_commit" "90" "commit_changes"
-git add strategy.py strategy_helpers/ tmp/change_log.txt 2>/dev/null || true
-if [ "$NUM_GAMES" -eq 1 ]; then
-	git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
-else
-	git commit -m "eloop Improve after ${NUM_GAMES} games (scores: ${SCORES})" 2>/dev/null || true
-fi
+if $improve_ok; then
+	# git commit
+	# ゲーム範囲を算出してコミットメッセージに含める
+	first_score=$(echo "$SCORES" | awk '{print $1}')
+	last_score=$(echo "$SCORES" | awk '{print $NF}')
+	_improve_progress "git_commit" "90" "commit_changes"
+	git add strategy.py strategy_helpers/ tmp/change_log.txt 2>/dev/null || true
+	if [ "$NUM_GAMES" -eq 1 ]; then
+		git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
+	else
+		git commit -m "eloop Improve after ${NUM_GAMES} games (scores: ${SCORES})" 2>/dev/null || true
+	fi
 
-# --- Phase D: 戦略解説コーナー (変更があった場合のみ) ---
-# 改善ジョブ自体は先に完了扱いにし、ラジオは非同期で流す。
-if [ -n "$strategy_diff" ]; then
-	_improve_progress "radio" "95" "strategy_commentary"
-	best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
-	_improve_progress "done" "100" "awaiting_harvest"
-	start_radio_corner_strategy "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now" &
+	# --- Phase D: 戦略解説コーナー (変更があった場合のみ) ---
+	# 改善ジョブ自体は先に完了扱いにし、ラジオは非同期で流す。
+	if [ -n "$strategy_diff" ]; then
+		_improve_progress "radio" "95" "strategy_commentary"
+		best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
+		_improve_progress "done" "100" "awaiting_harvest"
+		start_radio_corner_strategy "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now" &
+	else
+		_improve_progress "done" "100" "awaiting_harvest"
+	fi
 else
-	_improve_progress "done" "100" "awaiting_harvest"
+	if [ "$host_integrity_ok" != true ]; then
+		log "[IMPROVE] ホスト変化検出のため apply/commit/radio を中止"
+	else
+		log "[IMPROVE] 改善失敗のため commit/radio をスキップ"
+	fi
+	_improve_progress "done" "100" "failed_no_apply"
 fi
