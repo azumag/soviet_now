@@ -19,6 +19,11 @@ RANK_LCB_Z = 1.28
 RANK_WEIGHT_P50 = 0.55
 RANK_WEIGHT_P25 = 0.30
 RANK_WEIGHT_LCB = 0.15
+MIN_GAMES_BEFORE_IMPROVE = 12
+MIN_GAMES_FOR_BEST_ROLLBACK = 12
+REGRESSION_COMPOSITE_RATIO = 0.88
+REGRESSION_P50_RATIO = 0.85
+REGRESSION_P25_RATIO = 0.80
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -172,6 +177,53 @@ def calc_strategy_metrics(scores):
         "p50": p50,
         "lcb": lcb,
         "comp": comp,
+    }
+
+
+def calc_regression_status(rolling, current_hash):
+    if not current_hash or current_hash not in rolling:
+        return None
+    current = calc_strategy_metrics(rolling[current_hash].get("scores", []))
+    if not current:
+        return None
+    if current["n"] < MIN_GAMES_BEFORE_IMPROVE:
+        return {
+            "state": "pending",
+            "text": f"RegCheck pending {current['n']}/{MIN_GAMES_BEFORE_IMPROVE} games",
+        }
+
+    ranked = []
+    for h, data in rolling.items():
+        if h == current_hash:
+            continue
+        metrics = calc_strategy_metrics(data.get("scores", []))
+        if not metrics or metrics["n"] < MIN_GAMES_FOR_BEST_ROLLBACK:
+            continue
+        ranked.append((metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics))
+    if not ranked:
+        return {
+            "state": "na",
+            "text": "RegCheck n/a no best ref",
+        }
+
+    ranked.sort(reverse=True)
+    _, _, _, _, best_hash, best = ranked[0]
+    trigger_comp = current["comp"] < best["comp"] * REGRESSION_COMPOSITE_RATIO
+    trigger_p50 = current["p50"] < best["p50"] * REGRESSION_P50_RATIO
+    trigger_p25 = current["p25"] < best["p25"] * REGRESSION_P25_RATIO
+    if trigger_comp and (trigger_p50 or trigger_p25):
+        reasons = ["comp"]
+        if trigger_p50:
+            reasons.append("p50")
+        if trigger_p25:
+            reasons.append("q25")
+        return {
+            "state": "trigger",
+            "text": f"RegCheck YES {'+'.join(reasons)} vs {best_hash[:8]}",
+        }
+    return {
+        "state": "safe",
+        "text": f"RegCheck NO vs {best_hash[:8]}",
     }
 
 
@@ -422,6 +474,20 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
         )
         pad5 = inner - len(curr_raw)
         lines.append(f"{C_CYAN}│{RST}{curr_disp}{' ' * max(pad5, 0)} {C_CYAN}│{RST}")
+
+    reg = calc_regression_status(rolling, strat_hash)
+    if reg:
+        reg_color = DIM
+        if reg["state"] == "trigger":
+            reg_color = C_RED
+        elif reg["state"] == "safe":
+            reg_color = C_GREEN
+        elif reg["state"] == "pending":
+            reg_color = C_YELLOW
+        reg_raw = f" {reg['text']}"
+        reg_disp = f" {reg_color}{reg['text']}{RST}"
+        pad6 = inner - len(reg["text"]) - 1
+        lines.append(f"{C_CYAN}│{RST}{reg_disp}{' ' * max(pad6, 0)} {C_CYAN}│{RST}")
 
     lines.append(f"{C_CYAN}└{'─' * (W - 2)}┘{RST}")
     return lines

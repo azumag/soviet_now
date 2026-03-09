@@ -12,6 +12,11 @@ FULLSCREEN_ENABLED=${FULLSCREEN_ENABLED:-1}
 FULLSCREEN_RARE_N=${FULLSCREEN_RARE_N:-30}
 FULLSCREEN_MIN_GAP_SEC=${FULLSCREEN_MIN_GAP_SEC:-180}
 FULLSCREEN_LAST_FILE="tmp/.status_fullscreen_last"
+MIN_GAMES_BEFORE_IMPROVE=${MIN_GAMES_BEFORE_IMPROVE:-12}
+MIN_GAMES_FOR_BEST_ROLLBACK=${MIN_GAMES_FOR_BEST_ROLLBACK:-12}
+REGRESSION_COMPOSITE_RATIO=${REGRESSION_COMPOSITE_RATIO:-0.88}
+REGRESSION_P50_RATIO=${REGRESSION_P50_RATIO:-0.85}
+REGRESSION_P25_RATIO=${REGRESSION_P25_RATIO:-0.80}
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
 W=57
@@ -266,13 +271,19 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 	local rolling_hash="" rolling_count=0 rolling_avg="" rolling_prev_avg=""
 	local rolling_comp="" rolling_p50="" rolling_p25="" rolling_total=""
 	local best_hash_short="" best_comp="" best_p50="" best_p25="" best_total=""
+	local regression_state="" regression_detail=""
 	local rejected_count=0
 	if [[ -f tmp/rolling_scores.json ]] && [[ -f strategy.py ]]; then
 		eval $(python3 -c "
-import json, math, os, subprocess
-rs = json.load(open('tmp/rolling_scores.json'))
-h = subprocess.run(['python3', 'extract_decide_hash.py', 'strategy.py'],
-    capture_output=True, text=True).stdout.strip()
+	import json, math, os, shlex, subprocess
+	rs = json.load(open('tmp/rolling_scores.json'))
+	h = subprocess.run(['python3', 'extract_decide_hash.py', 'strategy.py'],
+	    capture_output=True, text=True).stdout.strip()
+	min_games_current = int(${MIN_GAMES_BEFORE_IMPROVE})
+	min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
+	composite_ratio = float(${REGRESSION_COMPOSITE_RATIO})
+	p50_ratio = float(${REGRESSION_P50_RATIO})
+	p25_ratio = float(${REGRESSION_P25_RATIO})
 
 def quantile(xs, q):
     ys = sorted(float(v) for v in xs)
@@ -331,7 +342,7 @@ if h and h in rs:
         if not m2:
             continue
         aa, ccomp, pp50, pp25, nn = m2
-        if nn < 12:
+        if nn < min_games_candidates:
             continue
         ranked.append((ccomp, pp50, pp25, nn, hh))
     if ranked:
@@ -342,7 +353,39 @@ if h and h in rs:
         print(f'best_p50={bp50:.0f}')
         print(f'best_p25={bp25:.0f}')
         print(f'best_total={bn}')
-" 2>/dev/null)
+        if m and n >= min_games_current:
+            trigger_comp = comp < bc * composite_ratio
+            trigger_p50 = p50 < bp50 * p50_ratio
+            trigger_p25 = p25 < bp25 * p25_ratio
+            if trigger_comp and (trigger_p50 or trigger_p25):
+                reasons = ['comp']
+                if trigger_p50:
+                    reasons.append('p50')
+                if trigger_p25:
+                    reasons.append('q25')
+                detail = 'YES ' + '+'.join(reasons) + ' vs ' + bh[:8]
+                print('regression_state=trigger')
+                print('regression_detail=' + shlex.quote(detail))
+            else:
+                detail = 'NO vs ' + bh[:8]
+                print('regression_state=safe')
+                print('regression_detail=' + shlex.quote(detail))
+        elif m:
+            detail = f'PENDING {n}/{min_games_current} games'
+            print('regression_state=pending')
+            print('regression_detail=' + shlex.quote(detail))
+        else:
+            print('regression_state=na')
+            print('regression_detail=' + shlex.quote('N/A'))
+    elif m:
+        if n < min_games_current:
+            detail = f'PENDING {n}/{min_games_current} games'
+            print('regression_state=pending')
+            print('regression_detail=' + shlex.quote(detail))
+        else:
+            print('regression_state=na')
+            print('regression_detail=' + shlex.quote('N/A no best ref'))
+	" 2>/dev/null)
 	fi
 	[[ -f tmp/rejected_hashes.txt ]] && rejected_count=$(wc -l < tmp/rejected_hashes.txt | tr -d ' ')
 
@@ -795,15 +838,24 @@ PY
 	printf "    ${C_WHITE}▸${C_RESET} DecideHash  ${C_DIM}%s${C_RESET}\n" "${strategy_decide_hash}"
 
 	# Score metrics + trend bar for current strategy
-	if [[ -n "$rolling_comp" ]]; then
-		printf "    ${C_WHITE}▸${C_RESET} Score       ${C_DIM}comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
-			"$rolling_comp" "$rolling_p50" "$rolling_p25" "${rolling_total:-0}"
-		if [[ -n "$best_comp" ]]; then
-			printf "    ${C_WHITE}▸${C_RESET} BestRef     ${C_DIM}%s  comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
-				"${best_hash_short:-?}" "$best_comp" "$best_p50" "$best_p25" "${best_total:-0}"
-		fi
-		# Trend mini-bar: comp normalized to max 2000, width 20
-		local bar_max=2000 bar_width=20
+		if [[ -n "$rolling_comp" ]]; then
+			printf "    ${C_WHITE}▸${C_RESET} Score       ${C_DIM}comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
+				"$rolling_comp" "$rolling_p50" "$rolling_p25" "${rolling_total:-0}"
+			if [[ -n "$best_comp" ]]; then
+				printf "    ${C_WHITE}▸${C_RESET} BestRef     ${C_DIM}%s  comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
+					"${best_hash_short:-?}" "$best_comp" "$best_p50" "$best_p25" "${best_total:-0}"
+			fi
+			if [[ -n "$regression_state" ]]; then
+				local reg_color="$C_DIM"
+				case "$regression_state" in
+					trigger) reg_color="$C_RED" ;;
+					safe) reg_color="$C_GREEN" ;;
+					pending) reg_color="$C_YELLOW" ;;
+				esac
+				printf "    ${C_WHITE}▸${C_RESET} Regression  ${reg_color}%s${C_RESET}\n" "${regression_detail:-N/A}"
+			fi
+			# Trend mini-bar: comp normalized to max 2000, width 20
+			local bar_max=2000 bar_width=20
 		local bar_filled=$(( rolling_comp * bar_width / bar_max ))
 		(( bar_filled > bar_width )) && bar_filled=$bar_width
 		(( bar_filled < 0 )) && bar_filled=0
