@@ -27,6 +27,89 @@ fi
 
 # スコアデータをJSON配列に変換 (1行1スコア形式)
 SCORES_JSON=$(awk 'NF && /^[0-9]+$/ { n++; print "{\"game\":" n ",\"score\":" $1 "}" }' score_history.txt | paste -sd, -)
+STRATEGY_METRICS_JSON=$(python3 <<'PY'
+import json
+import math
+import subprocess
+from pathlib import Path
+
+RANK_LCB_Z = 1.28
+RANK_WEIGHT_P50 = 0.55
+RANK_WEIGHT_P25 = 0.30
+RANK_WEIGHT_LCB = 0.15
+
+def quantile(xs, q):
+    if not xs:
+        return 0.0
+    ys = sorted(float(x) for x in xs)
+    n = len(ys)
+    if n == 1:
+        return ys[0]
+    pos = (n - 1) * q
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return ys[lo]
+    frac = pos - lo
+    return ys[lo] * (1.0 - frac) + ys[hi] * frac
+
+def calc_metrics(scores):
+    if not scores:
+        return None
+    xs = [float(x) for x in scores]
+    n = len(xs)
+    mean = sum(xs) / n
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in xs) / (n - 1)
+        sd = math.sqrt(max(var, 0.0))
+    else:
+        sd = 0.0
+    lcb = mean - RANK_LCB_Z * (sd / math.sqrt(n) if n > 0 else 0.0)
+    p50 = quantile(xs, 0.50)
+    p25 = quantile(xs, 0.25)
+    comp = (RANK_WEIGHT_P50 * p50) + (RANK_WEIGHT_P25 * p25) + (RANK_WEIGHT_LCB * max(lcb, 0.0))
+    return {
+        "comp": comp,
+        "p50": p50,
+        "p25": p25,
+        "n": n,
+    }
+
+out = {"current": None, "best": None}
+rolling_path = Path("tmp/rolling_scores.json")
+if rolling_path.exists():
+    try:
+        rolling = json.load(rolling_path.open())
+    except Exception:
+        rolling = {}
+    current_hash = ""
+    try:
+        current_hash = subprocess.run(
+            ["python3", "extract_decide_hash.py", "strategy.py"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+    except Exception:
+        current_hash = ""
+    if current_hash and current_hash in rolling:
+        current_metrics = calc_metrics(rolling[current_hash].get("scores", []))
+        if current_metrics:
+            out["current"] = {"hash": current_hash, **current_metrics}
+    ranked = []
+    for h, data in rolling.items():
+        metrics = calc_metrics(data.get("scores", []))
+        if not metrics or metrics["n"] < 12:
+            continue
+        ranked.append((metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics))
+    if ranked:
+        ranked.sort(reverse=True)
+        _, _, _, _, best_hash, best_metrics = ranked[0]
+        out["best"] = {"hash": best_hash, **best_metrics}
+
+print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
+PY
+)
 
 cat > score_dashboard.html <<HTMLEOF
 <!DOCTYPE html>
@@ -110,6 +193,47 @@ cat > score_dashboard.html <<HTMLEOF
   }
   .legend-item { display: flex; align-items: center; gap: 6px; }
   .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .strategy-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(280px, 1fr));
+    gap: 16px;
+    max-width: 1400px;
+    margin: 0 auto 16px auto;
+  }
+  .strategy-card {
+    background: rgba(17,17,39,0.95);
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 14px 18px;
+  }
+  .strategy-label {
+    font-size: 0.74em;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .strategy-value {
+    font-size: 1.05em;
+    line-height: 1.45;
+    color: #e5e7eb;
+  }
+  .strategy-value.current strong { color: #facc15; }
+  .strategy-value.best strong { color: #86efac; }
+  .strategy-note {
+    color: #94a3b8;
+    font-size: 0.85em;
+  }
+  .strategy-provisional {
+    color: #f59e0b;
+    font-size: 0.85em;
+    margin-left: 8px;
+  }
+  @media (max-width: 900px) {
+    .strategy-strip {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
 </head>
 <body>
@@ -123,6 +247,16 @@ cat > score_dashboard.html <<HTMLEOF
   <div class="stat"><div class="stat-label">Games</div><div class="stat-value games" id="games">-</div></div>
   <div class="stat"><div class="stat-label">Recent 10 Avg</div><div class="stat-value recent" id="recent">-</div></div>
   <div class="stat"><div class="stat-label">Trend</div><div class="stat-value trend" id="trend">-</div></div>
+</div>
+<div class="strategy-strip">
+  <div class="strategy-card">
+    <div class="strategy-label">Current Strategy</div>
+    <div class="strategy-value current" id="strategyCurrent">-</div>
+  </div>
+  <div class="strategy-card">
+    <div class="strategy-label">Best Reference</div>
+    <div class="strategy-value best" id="strategyBest">-</div>
+  </div>
 </div>
 <div class="chart-container">
   <canvas id="chart"></canvas>
@@ -139,6 +273,7 @@ cat > score_dashboard.html <<HTMLEOF
 <div class="refresh-indicator" id="refreshInfo">Generated: $(date '+%H:%M:%S')</div>
 <script>
 const SCORES = [${SCORES_JSON}];
+const STRATEGY_METRICS = ${STRATEGY_METRICS_JSON};
 
 const canvas = document.getElementById('chart');
 const ctx = canvas.getContext('2d');
@@ -185,6 +320,30 @@ function linearTrend(scores) {
   const absSlope = Math.abs(slope);
   const dir = absSlope < 1.5 ? 'flat' : (slope > 0 ? 'up' : 'down');
   return { slope, intercept, r2, y0, yN, dir };
+}
+
+function formatStrategyMetrics(entry, kind) {
+  if (!entry) {
+    return '<span class="strategy-note">unavailable</span>';
+  }
+  const shortHash = (entry.hash || '?').slice(0, 8);
+  const provisional = kind === 'current' && entry.n < 12
+    ? '<span class="strategy-provisional">provisional</span>'
+    : '';
+  return (
+    '<strong>' + shortHash + '</strong>' + provisional + '<br>' +
+    'comp=' + Math.round(entry.comp) +
+    '  p50=' + Math.round(entry.p50) +
+    '  q25=' + Math.round(entry.p25) +
+    '  n=' + entry.n
+  );
+}
+
+function renderStrategyMetrics() {
+  document.getElementById('strategyCurrent').innerHTML =
+    formatStrategyMetrics(STRATEGY_METRICS.current, 'current');
+  document.getElementById('strategyBest').innerHTML =
+    formatStrategyMetrics(STRATEGY_METRICS.best, 'best');
 }
 
 function drawChart(scores) {
@@ -338,6 +497,7 @@ function drawChart(scores) {
   });
 }
 
+renderStrategyMetrics();
 drawChart(SCORES);
 window.addEventListener('resize', () => drawChart(SCORES));
 

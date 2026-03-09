@@ -380,29 +380,48 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
     current_metrics = None
     for h, data in rolling.items():
         metrics = calc_strategy_metrics(data.get("scores", []))
-        if not metrics or metrics["n"] < 12:
+        if not metrics:
+            continue
+        if strat_hash and h == strat_hash:
+            current_metrics = metrics
+        if metrics["n"] < 12:
             continue
         row = (metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics)
         ranked.append(row)
-        if strat_hash and h == strat_hash:
-            current_metrics = metrics
     if ranked:
         ranked.sort(reverse=True)
         _, _, _, _, best_hash, best_metrics = ranked[0]
         if current_metrics:
             best_short = best_hash[:8]
+            curr_tag = "Curr*" if current_metrics["n"] < 12 else "Curr"
             curr_raw = (
-                f" Curr c{int(current_metrics['comp'])} m{int(current_metrics['p50'])} "
-                f"q{int(current_metrics['p25'])}   Best {best_short} "
-                f"c{int(best_metrics['comp'])} m{int(best_metrics['p50'])} q{int(best_metrics['p25'])}"
+                f" {curr_tag} c{int(current_metrics['comp'])} m{int(current_metrics['p50'])} "
+                f"q{int(current_metrics['p25'])} n{int(current_metrics['n'])}   Best {best_short} "
+                f"c{int(best_metrics['comp'])} m{int(best_metrics['p50'])} "
+                f"q{int(best_metrics['p25'])} n{int(best_metrics['n'])}"
             )
             curr_disp = (
-                f" {C_YELLOW}Curr{RST} c{int(current_metrics['comp'])} m{int(current_metrics['p50'])} "
-                f"q{int(current_metrics['p25'])}   {C_GREEN}Best{RST} {best_short} "
-                f"c{int(best_metrics['comp'])} m{int(best_metrics['p50'])} q{int(best_metrics['p25'])}"
+                f" {C_YELLOW}{curr_tag}{RST} c{int(current_metrics['comp'])} "
+                f"m{int(current_metrics['p50'])} q{int(current_metrics['p25'])} "
+                f"n{int(current_metrics['n'])}   {C_GREEN}Best{RST} {best_short} "
+                f"c{int(best_metrics['comp'])} m{int(best_metrics['p50'])} "
+                f"q{int(best_metrics['p25'])} n{int(best_metrics['n'])}"
             )
             pad5 = inner - len(curr_raw)
             lines.append(f"{C_CYAN}│{RST}{curr_disp}{' ' * max(pad5, 0)} {C_CYAN}│{RST}")
+    elif current_metrics:
+        curr_tag = "Curr*" if current_metrics["n"] < 12 else "Curr"
+        curr_raw = (
+            f" {curr_tag} c{int(current_metrics['comp'])} m{int(current_metrics['p50'])} "
+            f"q{int(current_metrics['p25'])} n{int(current_metrics['n'])}"
+        )
+        curr_disp = (
+            f" {C_YELLOW}{curr_tag}{RST} c{int(current_metrics['comp'])} "
+            f"m{int(current_metrics['p50'])} q{int(current_metrics['p25'])} "
+            f"n{int(current_metrics['n'])}"
+        )
+        pad5 = inner - len(curr_raw)
+        lines.append(f"{C_CYAN}│{RST}{curr_disp}{' ' * max(pad5, 0)} {C_CYAN}│{RST}")
 
     lines.append(f"{C_CYAN}└{'─' * (W - 2)}┘{RST}")
     return lines
