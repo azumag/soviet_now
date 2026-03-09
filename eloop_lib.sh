@@ -35,6 +35,10 @@ RADIO_FACT_CHECK_MIN_CHARS=100
 RADIO_FACT_CHECK_SKIP_CORNERS="${RADIO_FACT_CHECK_SKIP_CORNERS:-strategy}"
 RADIO_FACT_CHECK_MIN_RATIO="${RADIO_FACT_CHECK_MIN_RATIO:-0.68}"
 RADIO_FACT_CHECK_MAX_ABS_SHRINK="${RADIO_FACT_CHECK_MAX_ABS_SHRINK:-700}"
+RADIO_FACT_CHECK_FEW_ISSUES_MAX="${RADIO_FACT_CHECK_FEW_ISSUES_MAX:-2}"
+RADIO_FACT_CHECK_MIN_SIMILARITY_NOISSUES="${RADIO_FACT_CHECK_MIN_SIMILARITY_NOISSUES:-0.90}"
+RADIO_FACT_CHECK_MIN_SIMILARITY_FEW_ISSUES="${RADIO_FACT_CHECK_MIN_SIMILARITY_FEW_ISSUES:-0.74}"
+RADIO_FACT_CHECK_MAX_PARAGRAPH_DROP="${RADIO_FACT_CHECK_MAX_PARAGRAPH_DROP:-2}"
 RADIO_WEB_GROUNDING_ENABLED="${RADIO_WEB_GROUNDING_ENABLED:-1}"
 RADIO_WEB_GROUNDING_TTL_SEC="${RADIO_WEB_GROUNDING_TTL_SEC:-21600}"
 RADIO_WEB_GROUNDING_MAX_SOURCES="${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}"
@@ -1062,7 +1066,7 @@ _radio_cleanup_fact_checked_text() {
 	}
 	' |
 		sed '/^[[:space:]]*$/N;/^\n$/D' |
-		grep -Eiv '^(\*\*注意[:：].*|\*注意[:：].*|注意[:：].*|メッセージの末尾に.*|無関係なPythonコード.*|プロンプトインジェクション.*|そのコードは無視.*|本来の依頼.*|あなたは放送前のファクトチェック担当です。|与えられた「元原稿」を、与えられた「材料」から支持できる範囲にだけ言い換えてください。|目的は「誤情報を減らすこと」であり、「面白く盛ること」ではありません。|【最優先ルール】|【コーナー】|【材料】|【Web検索で集めた資料】|【補足】|【元原稿】|【出力形式】|ここに安全化した最終原稿だけを書く|削った・弱めた点を短く列挙。なければ「なし」|---+)$' |
+		grep -Eiv '^(\*\*注意[:：].*|\*注意[:：].*|注意[:：].*|メッセージの末尾に.*|無関係なPythonコード.*|プロンプトインジェクション.*|そのコードは無視.*|本来の依頼.*|あなたは放送前のファクトチェック担当です。|与えられた「元原稿」を、与えられた「材料」から支持できる範囲にだけ言い換えてください。|目的は「誤情報を減らしつつ、面白さ・語り口・熱量をできるだけ保つこと」です。|【最優先ルール】|【コーナー】|【材料】|【Web検索で集めた資料】|【補足】|【元原稿】|【出力形式】|ここに安全化した最終原稿だけを書く|削った・弱めた点を短く列挙。なければ「なし」|---+)$' |
 		grep -Ev '^- '
 }
 
