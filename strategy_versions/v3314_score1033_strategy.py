@@ -60,15 +60,15 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v197: LOW phase height penalty reduction for early game chain opportunities
+    """v198: LOW phase height penalty further reduction for proactive merge opportunities
 
-    batch_summary shows HEIGHT_CONTROL is over-selected in low-score games (27.5% vs 24.6% in high-score games).
-    Low-score games place pieces too low early (avg -2.73 vs -2.35), missing chain merge opportunities.
-    HEIGHT_CONTROL has very low value (avg_score_delta=0.9) but is selected 25.8% overall.
-    The LOW phase height penalty (height_mult=0.8) is discouraging necessary early-game board building.
-    Reduce LOW phase height_mult from 0.8 to 0.6 (25% reduction) to allow slightly higher early placement,
-    enabling chain merge opportunities while reducing HEIGHT_CONTROL over-selection.
-    This addresses the root cause: low-score games playing too conservatively early.
+    batch_summary shows HEIGHT_CONTROL is over-selected (23.8%, avg_score_delta=1.2) while NEAR_MERGE has low selection (3.8-9.2%) but high value (avg_score_delta=28-57).
+    Worst game (score802) shows initial 4 turns all HEIGHT_CONTROL, missing merge opportunities.
+    Best game (score3241) shows proactive NEAR_MERGE from early turns.
+    The LOW phase height penalty (height_mult=0.6) is still too restrictive for early-game merge opportunity creation.
+    Reduce LOW phase height_mult from 0.6 to 0.4 (33% reduction) to allow more flexible early placement,
+    enabling proactive merge opportunity creation while reducing HEIGHT_CONTROL over-selection.
+    This addresses the root cause: early-game passive HEIGHT_CONTROL selection instead of proactive merge building.
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -108,7 +108,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 0.6  # v197: LOW phase height_mult reduced (0.8→0.6) to enable early chain opportunities
+        height_mult = 0.4  # v198: LOW phase height_mult further reduced (0.6→0.4) to enable proactive merge opportunities
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
