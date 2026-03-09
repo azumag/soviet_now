@@ -174,6 +174,7 @@ play_one_game() {
 
 	LAST_SCORE=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('score',0))" 2>/dev/null || echo 0)
 	LAST_TURNS=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turns',0))" 2>/dev/null || echo 0)
+	LAST_RUSSIA=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('russia_created',False) else 'false')" 2>/dev/null || echo "false")
 	LAST_SOVIET=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet_created',False) else 'false')" 2>/dev/null || echo "false")
 	local runner_error runner_error_msg
 	runner_error=$(echo "$RESULT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || echo "")
@@ -183,11 +184,27 @@ play_one_game() {
 		_handle_decide_exception_recovery "$runner_error_msg" "$LAST_TURNS" "$LAST_SCORE"
 		LAST_SCORE=0
 		LAST_TURNS=0
+		LAST_RUSSIA="false"
 		LAST_SOVIET="false"
 		return "$PLAY_RECOVERED_RETRY_RC"
 	fi
 
 	log "[RESULT] score=$LAST_SCORE turns=$LAST_TURNS"
+}
+
+#=== ロシア建国祝賀 ===
+handle_russia_celebration() {
+	local score="$1" turns="$2" game_num="$3"
+
+	log "!!! RUSSIA CREATED !!!"
+
+	generate_russia_celebration "$score" "$turns" "$game_num"
+	if [ -f "tmp/radio_russia_celebration.txt" ] && [ -s "tmp/radio_russia_celebration.txt" ]; then
+		_refresh_radio_intro_for_playback_file "tmp/radio_russia_celebration.txt" "russia_celebration"
+		./say_enqueue.sh --no-preempt tmp/radio_russia_celebration.txt "$RADIO_SAY_RATE" 0
+	fi
+	_radio_clear_state "russia_celebration"
+	rm -f tmp/.russia_created
 }
 
 #=== ソ連建国祝賀 ===
@@ -234,8 +251,12 @@ post_game_bookkeeping() {
 	if [ "$LAST_SOVIET" = "true" ]; then
 		handle_soviet_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
 		HALT_STRATEGY_AFTER_SOVIET=1
+		LAST_RUSSIA="false"
 		LAST_SOVIET="false"
 		log "[HALT] ソ連建国達成: strategy実行を停止し、retry/次ゲーム操作を無効化"
+	elif [ "$LAST_RUSSIA" = "true" ]; then
+		handle_russia_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
+		LAST_RUSSIA="false"
 	fi
 
 	# スコア履歴

@@ -172,7 +172,7 @@ def build_analysis(game_state):
         return {"results": [], "same_type": [], "reactor": {}, "error": str(e)}
 
 
-def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=False, strategy_hash=None, score_delta=0):
+def record_turn(history_f, turn, game_state, decision, analysis, russia_created=False, soviet_created=False, strategy_hash=None, score_delta=0):
     """1ターン分の履歴をJSONLに記録"""
     pieces = game_state.get("pieces", [])
     score = game_state.get("score", 0)
@@ -214,6 +214,8 @@ def record_turn(history_f, turn, game_state, decision, analysis, soviet_created=
         "state_snapshot": {"pieces": piece_snapshot},
     }
 
+    if russia_created:
+        record["russia_created"] = True
     if soviet_created:
         record["soviet_created"] = True
 
@@ -281,9 +283,14 @@ def run_game():
 
     turn = 0
     prev_score = 0
+    russia_created = False
     soviet_created = False
 
-    # 前回のソ連フラグをクリア（ゲーム開始時に毎回リセット）
+    # 前回の建国フラグをクリア（ゲーム開始時に毎回リセット）
+    try:
+        os.remove("tmp/.russia_created")
+    except FileNotFoundError:
+        pass
     try:
         os.remove("tmp/.soviet_created")
     except FileNotFoundError:
@@ -308,6 +315,7 @@ def run_game():
                     "turns": turn,
                     "state": final_state,
                     "pieces": len(gs.get("pieces", [])) if gs else 0,
+                    "russia_created": russia_created,
                     "soviet_created": soviet_created,
                 }
 
@@ -316,6 +324,16 @@ def run_game():
             pieces = gs.get("pieces", [])
             max_y = max((p["y"] for p in pieces), default=-5.0)
             log(f"T{turn} s={score} p={len(pieces)} y={max_y:.1f}")
+
+            # ロシア建国検知（リアルタイム・1試合1回限り）
+            # type 15 = ロシア
+            if not russia_created and any(p.get("type", 0) == 15 for p in pieces):
+                russia_created = True
+                log(f"!!! RUSSIA CREATED !!! ロシア建国達成！ score={score}")
+                os.makedirs("tmp", exist_ok=True)
+                with open("tmp/.russia_created", "w") as flag_f:
+                    flag_f.write(f"{turn}|{score}\n")
+                log("ロシア建国フラグ記録完了")
 
             # ソ連建国検知（リアルタイム・1試合1回限り）
             # type 15 = ロシア、type 16 = ソ連。makeSorenCount はロシア同士併合(→ソ連生成)時にインクリメントされる
@@ -343,6 +361,7 @@ def run_game():
                         gs,
                         decision,
                         analysis,
+                        russia_created=russia_created,
                         soviet_created=True,
                         strategy_hash=strategy_hash,
                         score_delta=delta,
@@ -353,6 +372,7 @@ def run_game():
                         "turns": turn,
                         "state": get_state_field(gs),
                         "pieces": len(pieces),
+                        "russia_created": russia_created,
                         "soviet_created": True,
                     }
 
@@ -376,6 +396,7 @@ def run_game():
                     "turns": turn,
                     "state": get_state_field(gs),
                     "pieces": len(pieces),
+                    "russia_created": russia_created,
                     "soviet_created": soviet_created,
                     "strategy_hash": strategy_hash,
                 }
@@ -393,7 +414,17 @@ def run_game():
             delta = score - prev_score
 
             # 履歴記録
-            record_turn(history_f, turn, gs, decision, analysis, soviet_created=soviet_created, strategy_hash=strategy_hash, score_delta=delta)
+            record_turn(
+                history_f,
+                turn,
+                gs,
+                decision,
+                analysis,
+                russia_created=russia_created,
+                soviet_created=soviet_created,
+                strategy_hash=strategy_hash,
+                score_delta=delta,
+            )
 
             if delta > 0:
                 print(f"  +{delta} → {score}", flush=True)
