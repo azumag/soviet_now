@@ -237,14 +237,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v159: 着地高に応じてchain_distanceとchain_bonus_multiplierを動的に調整
-                # v155の成功パラメータ（chain_distance_max=5.0）を復帰し、CHAIN_MERGE選択率を向上させる
-                # HIGH_LAYER状況（landing_y>0.5）ではchain_distanceを拡大し、chain_bonus_multiplierを強化
-                # 例: landing_y=0.0 → distance_max=5.0, multiplier=450.0 (v155ベース)
-                # 例: landing_y=1.0 → distance_max=5.6, multiplier=600.0
-                # 例: landing_y=2.0 → distance_max=6.2, multiplier=750.0
-                # 例: landing_y=3.0 → distance_max=6.8, multiplier=900.0
-                chain_distance_max = 5.0 + landing_y * 0.6  # v159: v158の4.0→5.0に戻す（v155成功パラメータ復帰）
+                # v160: 初期段階でのCHAIN_MERGE選択強化版
+                # batch_summaryでHEIGHT_CONTROLが21.6%選択(avg_score_delta=1.1)と過剰であること、
+                # CHAIN_MERGE関連がavg_score_delta=31.4-41.4と高価値だが選択率は2.4-2.7%と極端に低いことを確認。
+                # worstゲームで初期6ターンが全てHEIGHT_CONTROLとなり、マージ機会を逃している失敗パターンを特定。
+                # early_game（max_y < -1.0）の場合、chain_distance_maxを7.0に拡大し初期段階でのCHAIN_MERGE選択を強化。
+                # 例: early_game=true → distance_max=7.0（初期段階での広範囲CHAIN_MERGE探索）
+                # 例: early_game=false, landing_y=0.0 → distance_max=5.0, multiplier=450.0
+                # 例: early_game=false, landing_y=1.0 → distance_max=5.6, multiplier=600.0
+                # 例: early_game=false, landing_y=2.0 → distance_max=6.2, multiplier=750.0
+                # 例: early_game=false, landing_y=3.0 → distance_max=6.8, multiplier=900.0
+                chain_distance_max = 7.0 if early_game else (5.0 + landing_y * 0.6)
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
