@@ -4254,7 +4254,7 @@ _find_strategy_file_by_hash() {
 _refresh_best_strategy_anchor() {
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
 	local current_hash="${1:-}"
-	python3 - "$ROLLING_SCORES_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" <<'PY'
+	python3 - "$ROLLING_SCORES_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" "$STRATEGY_HASH_ARCHIVE_DIR" "$REJECTED_HASHES_FILE" <<'PY'
 import json
 import math
 import os
@@ -4268,11 +4268,21 @@ w_p50 = float(sys.argv[5])
 w_p25 = float(sys.argv[6])
 w_lcb = float(sys.argv[7])
 current_hash = sys.argv[8] if len(sys.argv) > 8 else ""
+archive_dir = sys.argv[9] if len(sys.argv) > 9 else ""
+rejected_file = sys.argv[10] if len(sys.argv) > 10 else ""
 
 try:
     rs = json.load(open(rs_file))
 except Exception:
     raise SystemExit(0)
+
+rejected = set()
+if rejected_file and os.path.exists(rejected_file):
+    try:
+        with open(rejected_file, encoding="utf-8", errors="ignore") as f:
+            rejected = {line.strip() for line in f if line.strip()}
+    except Exception:
+        rejected = set()
 
 def quantile(vals, p):
     xs = sorted(vals)
@@ -4313,6 +4323,10 @@ best = None
 for h, data in rs.items():
     if current_hash and h == current_hash:
         continue
+    if h in rejected:
+        continue
+    if archive_dir and not os.path.exists(os.path.join(archive_dir, f"{h}.py")):
+        continue
     m = metrics(data.get("scores", []))
     if not m:
         continue
@@ -4344,9 +4358,16 @@ else:
         existing.get("hash", ""),
     )
     best_key = (best_metrics["comp"], best_metrics["p50"], best_metrics["p25"], best_metrics["n"], best_hash)
-    if current_hash and existing.get("hash") == current_hash:
+    existing_hash = existing.get("hash", "")
+    existing_has_file = bool(existing_hash) and bool(archive_dir) and os.path.exists(os.path.join(archive_dir, f"{existing_hash}.py"))
+    existing_rejected = bool(existing_hash) and existing_hash in rejected
+    if current_hash and existing_hash == current_hash:
         replace = True
-    elif existing.get("hash") == best_hash:
+    elif not existing_has_file:
+        replace = True
+    elif existing_rejected:
+        replace = True
+    elif existing_hash == best_hash:
         replace = True
     elif best_key > existing_key:
         replace = True
@@ -4485,6 +4506,32 @@ PY
 	done <<EOF
 $ranked
 EOF
+	return 1
+}
+
+_pick_hall_of_fame_rollback_candidate() {
+	local current_hash="$1"
+	local rejected_file="$REJECTED_HASHES_FILE"
+	local line f score_num h
+	while IFS='|' read -r score_num f; do
+		[ -f "$f" ] || continue
+		h=$(python3 extract_decide_hash.py "$f" 2>/dev/null || echo "")
+		[ -n "$h" ] || continue
+		[ "$h" = "$current_hash" ] && continue
+		if [ -f "$rejected_file" ] && grep -qF "$h" "$rejected_file" 2>/dev/null; then
+			log "[REGRESSION] hall-of-fame候補スキップ: $h は recent rejected" >&2
+			continue
+		fi
+		echo "${h}|hof|${score_num}|0|0|0|$f"
+		return 0
+	done < <(
+		for f in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
+			[ -f "$f" ] || continue
+			line=$(basename "$f" | sed -En 's/^best_score([0-9]+)_strategy\.py$/\1/p')
+			[ -n "$line" ] || continue
+			printf '%s|%s\n' "$line" "$f"
+		done | sort -t'|' -k1,1nr
+	)
 	return 1
 }
 
@@ -4860,10 +4907,19 @@ PY
 					rollback_note="previous_strategy"
 				fi
 			fi
+			if [ -z "$rollback_file" ]; then
+				local hof_candidate=""
+				hof_candidate=$(_pick_hall_of_fame_rollback_candidate "$strategy_hash")
+				if [ -n "$hof_candidate" ]; then
+					local hof_tag hof_score
+					IFS='|' read -r rollback_hash hof_tag hof_score _ _ _ rollback_file <<<"$hof_candidate"
+					rollback_note="hall_of_fame score=${hof_score}"
+				fi
+			fi
 
-		if [ -z "$rollback_file" ]; then
-			log "[REGRESSION] ロールバック候補なし → 現在戦略を維持"
-			return 0
+			if [ -z "$rollback_file" ]; then
+				log "[REGRESSION] ロールバック候補なし → 現在戦略を維持"
+				return 0
 		fi
 
 		# リバート実行
