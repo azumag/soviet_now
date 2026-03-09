@@ -18,7 +18,7 @@ Decision Logic (6 evaluation axes):
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8)
-  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=2.2)
   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
@@ -111,7 +111,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # HIGH relaxation to ensure merge opportunity
+        height_mult = 2.2  # HIGH height penalty strengthened to prioritize merge opportunities
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
