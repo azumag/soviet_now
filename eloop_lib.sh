@@ -38,6 +38,7 @@ RADIO_WEB_GROUNDING_MAX_SOURCES="${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}"
 RADIO_WEB_GROUNDING_CACHE_DIR="tmp/.radio_grounding_cache"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$RADIO_OPENCODE_PERMISSION}"
+COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
 RADIO_SAY_RATE=150
 unset SAY_AUDIO_DEVICE
 PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
@@ -854,6 +855,50 @@ _run_opencode_comment() {
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
 		sed '/^[[:space:]]*$/d'
 	rm -f "$raw_file"
+}
+
+_run_claude_comment_with_model() {
+	local prompt_file="$1"
+	local model="${2:-$RADIO_CLAUDE_MODEL}"
+	local sandbox_dir sandbox_prompt output timeout_sec
+	timeout_sec="${COMMENT_CLAUDE_TIMEOUT:-180}"
+	sandbox_dir=$(create_sandbox \
+		"README.md" \
+		"strategy.py" \
+		"prompts/comment_response.md" \
+		"show_status.sh" \
+		"show_status_g.sh" \
+		"status_dashboard.py")
+	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
+		log "[COMMENT] sandbox作成失敗 -> direct claude" >&2
+		_run_claude_radio_with_model "$prompt_file" "$model"
+		return
+	fi
+	sandbox_prompt="$sandbox_dir/tmp/comment_prompt.txt"
+	mkdir -p "$(dirname "$sandbox_prompt")"
+	cp "$prompt_file" "$sandbox_prompt" 2>/dev/null || {
+		destroy_sandbox "$sandbox_dir"
+		return 1
+	}
+	output=$(
+		cd "$sandbox_dir" &&
+			timeout "$timeout_sec" claude -p "$(cat 'tmp/comment_prompt.txt')" --model "$model" 2>/dev/null
+	)
+	local rc=$?
+	destroy_sandbox "$sandbox_dir"
+	if [ $rc -eq 124 ]; then
+		log "[COMMENT] claude timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[COMMENT] claude failed (rc=$rc, model=$model)" >&2
+		return 1
+	fi
+	printf '%s' "$output"
+}
+
+_run_claude_comment() {
+	_run_claude_comment_with_model "$1" "$RADIO_CLAUDE_MODEL"
 }
 
 _run_claude_radio_with_model() {
@@ -3442,12 +3487,12 @@ RETRYCOMMENT
 					attempt_talk=""
 					attempt_model=""
 				fi
-			fi
-			if [ -z "$attempt_talk" ]; then
-				attempt_talk=$(_run_claude_radio "$prompt_for_attempt")
-				attempt_model="claude:${RADIO_CLAUDE_MODEL}"
-				attempt_talk=$(_clean_comment_talk "$attempt_talk")
-				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+				fi
+				if [ -z "$attempt_talk" ]; then
+					attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
+					attempt_model="claude:${RADIO_CLAUDE_MODEL}"
+					attempt_talk=$(_clean_comment_talk "$attempt_talk")
+					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 				if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
 					log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
 					attempt_talk=""
