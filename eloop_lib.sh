@@ -4371,6 +4371,14 @@ PY
 _pick_best_rollback_candidate() {
 	local current_hash="$1"
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
+	local rejected_file="$REJECTED_HASHES_FILE"
+
+	_is_recently_rejected_for_rollback() {
+		local h="$1"
+		[ -n "$h" ] || return 1
+		[ -f "$rejected_file" ] || return 1
+		grep -qF "$h" "$rejected_file" 2>/dev/null
+	}
 
 	local anchor_hash="" anchor_comp="" anchor_p50="" anchor_p25="" anchor_lcb="" anchor_n="" anchor_file=""
 	if [ -f "$BEST_STRATEGY_ANCHOR_FILE" ]; then
@@ -4389,10 +4397,14 @@ for key in ("hash", "comp", "p50", "p25", "lcb", "n"):
     val = data.get(key, "")
     print(f"anchor_{key}=" + shlex.quote(str(val)))
 PY
-		)"
+			)"
 	fi
 	if [ -n "$anchor_hash" ] && [ "$anchor_hash" != "$current_hash" ]; then
-		anchor_file=$(_find_strategy_file_by_hash "$anchor_hash")
+		if _is_recently_rejected_for_rollback "$anchor_hash"; then
+			log "[REGRESSION] rollback候補スキップ: anchor $anchor_hash は recent rejected" >&2
+		else
+			anchor_file=$(_find_strategy_file_by_hash "$anchor_hash")
+		fi
 		if [ -n "$anchor_file" ]; then
 			echo "${anchor_hash}|${anchor_comp}|${anchor_p50}|${anchor_p25}|${anchor_lcb}|${anchor_n}|${anchor_file}"
 			return 0
@@ -4461,6 +4473,10 @@ PY
 	while IFS= read -r line; do
 		[ -z "$line" ] && continue
 		IFS='|' read -r h comp p50 p25 lcb n <<<"$line"
+		if _is_recently_rejected_for_rollback "$h"; then
+			log "[REGRESSION] rollback候補スキップ: $h は recent rejected" >&2
+			continue
+		fi
 		candidate_file=$(_find_strategy_file_by_hash "$h")
 		if [ -n "$candidate_file" ]; then
 			echo "${h}|${comp}|${p50}|${p25}|${lcb}|${n}|${candidate_file}"
@@ -4826,17 +4842,24 @@ PY
 		# リバート先選定:
 		# 1) LCB+中央値+分位点の合成スコアで最良(十分試行数)かつ実ファイルが見つかる戦略
 		# 2) 見つからなければ従来どおり直前戦略(tmp/revert_strategy.py)
-		local rollback_file="" rollback_note="" rollback_hash=""
-		local best_candidate
-		best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
-		if [ -n "$best_candidate" ]; then
-			local best_comp best_p50 best_p25 best_lcb best_n
-			IFS='|' read -r rollback_hash best_comp best_p50 best_p25 best_lcb best_n rollback_file <<<"$best_candidate"
-			rollback_note="best_comp hash=${rollback_hash} comp=${best_comp} p50=${best_p50} p25=${best_p25} lcb=${best_lcb} n=${best_n}"
-		elif [ -f "tmp/revert_strategy.py" ]; then
-			rollback_file="tmp/revert_strategy.py"
-			rollback_note="previous_strategy"
-		fi
+			local rollback_file="" rollback_note="" rollback_hash=""
+			local best_candidate
+			best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
+			if [ -n "$best_candidate" ]; then
+				local best_comp best_p50 best_p25 best_lcb best_n
+				IFS='|' read -r rollback_hash best_comp best_p50 best_p25 best_lcb best_n rollback_file <<<"$best_candidate"
+				rollback_note="best_comp hash=${rollback_hash} comp=${best_comp} p50=${best_p50} p25=${best_p25} lcb=${best_lcb} n=${best_n}"
+			elif [ -f "tmp/revert_strategy.py" ]; then
+				local revert_hash=""
+				revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
+				if [ -n "$revert_hash" ] && [ -f "$REJECTED_HASHES_FILE" ] && grep -qF "$revert_hash" "$REJECTED_HASHES_FILE" 2>/dev/null; then
+					log "[REGRESSION] previous_strategy を rollback候補から除外: $revert_hash は recent rejected"
+				else
+					rollback_file="tmp/revert_strategy.py"
+					rollback_hash="$revert_hash"
+					rollback_note="previous_strategy"
+				fi
+			fi
 
 		if [ -z "$rollback_file" ]; then
 			log "[REGRESSION] ロールバック候補なし → 現在戦略を維持"
