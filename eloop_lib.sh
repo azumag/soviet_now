@@ -4585,8 +4585,8 @@ rs[h]['games_total'] += 1
 # 最大20試合分を保持
 rs[h]['scores'] = rs[h]['scores'][-20:]
 
-	with open(rs_file, 'w') as f:
-	    json.dump(rs, f)
+with open(rs_file, 'w') as f:
+    json.dump(rs, f)
 	" 2>/dev/null
 		local anchor_updated=""
 		anchor_updated=$(_refresh_best_strategy_anchor "$strategy_hash" 2>/dev/null || true)
