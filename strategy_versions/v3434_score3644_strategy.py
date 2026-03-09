@@ -92,11 +92,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # --- reactor state (v160: reactive_pairs for endgame merge judgment) ---
-    reactor = analysis.get("reactor", {})
-    reactive_pairs = reactor.get("reactive_pairs", [])
-    reactive_pair_count = len(reactive_pairs)
-
     # --- v159: 序盤判定（max_y < -1.0） ---
     # v158のmax_y < -2.0でのHEIGHT_CONTROL抑制が不十分。より広範囲（max_y < -1.0）で抑制し、height_multiplierを0.2に削減。
     # これによりHEIGHT_CONTROL選択率を25%未満に抑制し、併合機会を優先。
@@ -162,14 +157,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
-
-        # ----- v160: endgame reactive merge bonus -----
-        # 終盤（max_y >= 2.0）で reactive_pairs が多い場合、
-        # DIRECT/NEAR マージを優先し、盤面の整理と回復を図る
-        if max_y >= 2.0 and reactive_pair_count >= 2:
-            if merge_grade in ["DIRECT", "NEAR"]:
-                score += 200.0  # 終盤で併合機会を優先
-                reasons.append("REACTIVE_MERGE")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
