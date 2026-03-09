@@ -3464,6 +3464,102 @@ print(f"state={state}, record={record}")
 PY
 }
 
+_extract_strategy_advice_from_comments() {
+	local batch_file="$1"
+	[ -f "$batch_file" ] || return 0
+	python3 - "$batch_file" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+
+try:
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = [line.strip() for line in f if line.strip()]
+except Exception:
+    raise SystemExit(0)
+
+game_terms = (
+    "戦略", "改善", "盤面", "併合", "連鎖", "next", "nextnext", "next-next",
+    "type", "高さ", "左", "右", "上に", "下に", "置く", "置き", "積む",
+    "積み", "デッドライン", "ゲームオーバー", "merge", "sandwich", "サンドイッチ"
+)
+directive_terms = (
+    "して", "しろ", "すべき", "したほうがいい", "した方がいい", "やめて",
+    "避けて", "見るべき", "見て", "考えて", "計算できる", "意識して",
+    "優先", "禁止", "改善して", "直して"
+)
+noise_terms = (
+    "レイド", "nightbot", "カード", "獲得しました", "ニュース", "ラジオ",
+    "show-status", "show_status", "dashboard", "blackhole", "ffmpeg"
+)
+
+def collapse(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+def parse_line(line: str):
+    m = re.match(r"([^:]{1,40}):\s*(.+)$", line)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return "", line
+
+def looks_like_strategy_advice(text: str) -> bool:
+    raw = collapse(text)
+    if len(raw) < 6:
+        return False
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1].strip()
+    norm = raw.lower().replace(" ", "")
+    has_game = any(term in norm for term in game_terms) or bool(re.search(r"type\s*[a-z0-9]+", raw, re.I))
+    has_directive = any(term in raw for term in directive_terms)
+    noisy = any(term.lower() in norm for term in noise_terms)
+    if has_game and has_directive:
+        return True
+    if "改善" in raw and has_game:
+        return True
+    if raw.startswith("[") and raw.endswith("]") and has_game:
+        return True
+    if noisy and not has_game:
+        return False
+    return False
+
+seen = set()
+for line in lines:
+    user, text = parse_line(line)
+    body = collapse(text)
+    if body.startswith("[") and body.endswith("]"):
+        body = body[1:-1].strip()
+    if not looks_like_strategy_advice(body):
+        continue
+    item = f"{user}: {body}" if user else body
+    if len(item) > 220:
+        item = item[:217].rstrip() + "..."
+    if item in seen:
+        continue
+    seen.add(item)
+    print(item)
+PY
+}
+
+_append_strategy_advice_item() {
+	local advice_item="$1"
+	advice_item=$(printf '%s' "$advice_item" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+	[ -n "$advice_item" ] || return 0
+	mkdir -p tmp 2>/dev/null || true
+	local advice_file="tmp/advice.md"
+	local advice_line="- $advice_item"
+	[ -f "$advice_file" ] || : >"$advice_file"
+	if grep -qxF -- "$advice_line" "$advice_file" 2>/dev/null; then
+		return 0
+	fi
+	printf '%s\n' "$advice_line" >>"$advice_file"
+	if [ -f "$advice_file" ] && [ "$(wc -l < "$advice_file")" -gt 150 ]; then
+		tail -150 "$advice_file" >"${advice_file}.tmp"
+		mv "${advice_file}.tmp" "$advice_file"
+	fi
+	log "[COMMENT] 戦略アドバイス追記 → tmp/advice.md"
+}
+
 generate_comment_response() {
 	_kill_comment_gen
 	mkdir -p "tmp/.twitch_chat"
@@ -3508,6 +3604,8 @@ generate_comment_response() {
 	comment_batch_context=$(printf '%s\n' "$twitch_comments" | _format_comment_batch_context)
 	local recent_spoken_comment_context=""
 	recent_spoken_comment_context=$(_build_recent_spoken_comment_context)
+	local strategy_advice_candidates=""
+	strategy_advice_candidates=$(_extract_strategy_advice_from_comments "$comment_batch_file")
 
 	local current_time current_hour time_period
 	current_time=$(date '+%H:%M')
@@ -3553,11 +3651,15 @@ generate_comment_response() {
 	【返信対象コメント（今回）】
 	${twitch_comments}
 
-	【コメント前後文脈（今回のコメント群）】
-	${comment_batch_context:-（なし）}
+		【コメント前後文脈（今回のコメント群）】
+		${comment_batch_context:-（なし）}
 
-	【直前コメント履歴（前回まで）】
-	${previous_comments_context:-（なし）}
+		【機械抽出した戦略アドバイス候補】
+		${strategy_advice_candidates:-（なし）}
+		※ ここに候補がある場合は、そのコメントを見落とさず返答し、戦略助言なら必ず ===ADVICE=== にも反映すること
+
+		【直前コメント履歴（前回まで）】
+		${previous_comments_context:-（なし）}
 
 	【最近自分が実際に読み上げたコメント返し（抜粋）】
 	${recent_spoken_comment_context:-（なし）}
@@ -3723,12 +3825,13 @@ RETRYCOMMENT
 
 			# 本文が有効なときだけアドバイスを追記
 			if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
-				echo "- $advice_item" >> tmp/advice.md
-				if [ -f tmp/advice.md ] && [ "$(wc -l < tmp/advice.md)" -gt 150 ]; then
-					tail -150 tmp/advice.md > tmp/advice.md.tmp
-					mv tmp/advice.md.tmp tmp/advice.md
-				fi
-				log "[COMMENT] 戦略アドバイス検出 → tmp/advice.md に追記"
+				_append_strategy_advice_item "$advice_item"
+			fi
+			if [ -n "$strategy_advice_candidates" ]; then
+				while IFS= read -r advice_line; do
+					[ -n "$advice_line" ] || continue
+					_append_strategy_advice_item "$advice_line"
+				done <<<"$strategy_advice_candidates"
 			fi
 
 			comments_talk="$attempt_talk"
