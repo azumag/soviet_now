@@ -4145,7 +4145,8 @@ _find_strategy_file_by_hash() {
 
 _refresh_best_strategy_anchor() {
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
-	python3 - "$ROLLING_SCORES_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
+	local current_hash="${1:-}"
+	python3 - "$ROLLING_SCORES_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" <<'PY'
 import json
 import math
 import os
@@ -4158,6 +4159,7 @@ lcb_z = float(sys.argv[4])
 w_p50 = float(sys.argv[5])
 w_p25 = float(sys.argv[6])
 w_lcb = float(sys.argv[7])
+current_hash = sys.argv[8] if len(sys.argv) > 8 else ""
 
 try:
     rs = json.load(open(rs_file))
@@ -4201,6 +4203,8 @@ def metrics(scores):
 
 best = None
 for h, data in rs.items():
+    if current_hash and h == current_hash:
+        continue
     m = metrics(data.get("scores", []))
     if not m:
         continue
@@ -4232,7 +4236,9 @@ else:
         existing.get("hash", ""),
     )
     best_key = (best_metrics["comp"], best_metrics["p50"], best_metrics["p25"], best_metrics["n"], best_hash)
-    if existing.get("hash") == best_hash:
+    if current_hash and existing.get("hash") == current_hash:
+        replace = True
+    elif existing.get("hash") == best_hash:
         replace = True
     elif best_key > existing_key:
         replace = True
@@ -4475,7 +4481,7 @@ rs[h]['scores'] = rs[h]['scores'][-20:]
 	    json.dump(rs, f)
 	" 2>/dev/null
 		local anchor_updated=""
-		anchor_updated=$(_refresh_best_strategy_anchor 2>/dev/null || true)
+		anchor_updated=$(_refresh_best_strategy_anchor "$strategy_hash" 2>/dev/null || true)
 		if [ -n "$anchor_updated" ]; then
 			log "[REGRESSION] best anchor更新: ${anchor_updated}"
 		fi
