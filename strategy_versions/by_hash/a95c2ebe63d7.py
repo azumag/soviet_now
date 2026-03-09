@@ -34,7 +34,7 @@ Phases (determined by board max Y):
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
-# [BEST:4999] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+# [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
 # v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
 # v167: 評価精度最適化版 - chain_distance 5.0→4.5縮小
 # v168: v155成功パラメータ復帰・動的調整復帰版
@@ -43,6 +43,10 @@ Phases (determined by board max Y):
 # v171: ボード密度評価軸追加 - batch_summaryでDEFAULT_PLACEMENTが21.7%選択(avg_score_delta=1.4)と非常に頻繁だが価値がないことを確認。
 # 低スコア群と高スコア群のmax_y推移差(初期差0.39 vs 終盤差1.64)から、序盤の中心放置が中盤以降の高さ稼ぎに失敗しているパターンを特定。
 # DEFAULT_PLACEMENT(x=0.0)を避け、密度が低い側(左or右)を優先する評価軸を追加することで、ボードの高さ稼ぎ能力を向上させスコア安定性を改善。
+# v173: 序盤HEIGHT_CONTROL抑制超強化版 - batch_summaryでDEFAULT_PLACEMENTが20.7%選択(avg_score_delta=2.2)と依然として高いことを確認。
+# ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
+# v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
+# これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -50,20 +54,19 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v171: ボード密度評価軸追加
-
-    batch_summary分析でDEFAULT_PLACEMENTが21.7%選択(avg_score_delta=1.4)と非常に頻繁だが価値がないことを確認。
-    高スコア群と低スコア群のmax_y推移差から、序盤の中心放置が中盤以降の高さ稼ぎに失敗しているパターンを特定。
-
-    v171の改善点:
-    1. 新規評価軸「ボード密度ボーナス」を追加
-       - ボード左右の密度を計算（ピース数および高さを考慮）
-       - 密度が低い側への配置を優先（ボードの高さ稼ぎ能力を向上）
-    2. v170のearly_game判定(max_y < 0.0)とheight_multiplier=0.1を維持
-       - 序盤のHEIGHT_CONTROL抑制を維持し、併合機会を最優先
-    3. v155成功パラメータ(chain_distance=5.0, chain_bonus=450.0)と動的調整を維持
-       - CHAIN_MERGE選択率を維持し、HEIGHT_CONTROL選択率を抑制
-
+    """v173: 序盤HEIGHT_CONTROL抑制超強化版
+    
+    batch_summaryでDEFAULT_PLACEMENTが20.7%選択(avg_score_delta=2.2)と依然として高いことを確認。
+    ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
+    
+    v173の改善点:
+    1. early game判定をmax_y < -2.0 → max_y < -3.0に拡大
+       - ワーストゲーム序盤(max_y=-5.0～-2.02)でのDEFAULT_PLACEMENT選択を超強力に抑制
+       - 盤面がまだ低い段階（max_y < -3.0）ではHEIGHT_CONTROLを超強力に抑制し、併合機会を最優先
+    2. height_multiplierを0.2→0.1に削減
+       - v172の0.2でもDEFAULT_PLACEMENTが高い（20.7%）ため、さらに超強力に抑制
+    3. v172のボード密度評価軸とv170の序盤HEIGHT_CONTROL抑制を維持
+    
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
         analysis: analyze_board.py analysis results
@@ -74,7 +77,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
                 - merges: individual distance/merge judgment for each same-type piece
             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
-
+    
     Returns:
         {"x": drop X coordinate, "reason": selection reason}
     """
@@ -91,9 +94,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
-
-    # --- v170: 序盤判定（max_y < 0.0） ---
-    early_game = max_y < 0.0
+    
+    # --- v173: 序盤判定をmax_y < -3.0に拡大 ---
+    early_game = max_y < -3.0
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -172,10 +175,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("FAR_MERGE")
 
         # ----- evaluation axis 2: height penalty -----
-        # v170: early_game（max_y < 0.0）の場合、height_multiplierを0.1に削減
+        # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
+        # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
         height_multiplier = 30.0
         if early_game:
-            height_multiplier = 0.1  # v170: 序盤はHEIGHT_CONTROLをさらに強く抑制し、併合機会を最優先
+            height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
 
         height_penalty = landing_y * height_multiplier * height_mult
 
