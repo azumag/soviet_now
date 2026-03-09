@@ -1240,12 +1240,71 @@ _radio_fact_check_length_ok() {
 	orig_len=$(printf '%s' "$original" | _radio_compact_text_len)
 	checked_len=$(printf '%s' "$checked" | _radio_compact_text_len)
 	awk -v o="${orig_len:-0}" -v c="${checked_len:-0}" -v ratio="${RADIO_FACT_CHECK_MIN_RATIO:-0.68}" -v max_shrink="${RADIO_FACT_CHECK_MAX_ABS_SHRINK:-700}" '
-BEGIN {
-    if (o < 400) exit 0
-    if (c >= o * ratio) exit 0
-    if ((o - c) <= max_shrink) exit 0
-    exit 1
-}'
+	BEGIN {
+	    if (o < 400) exit 0
+	    if (c >= o * ratio) exit 0
+	    if ((o - c) <= max_shrink) exit 0
+	    exit 1
+	}'
+}
+
+_radio_fact_check_style_reason() {
+	local original="$1" checked="$2" issues="$3"
+	printf '%s\0%s\0%s' "$original" "$checked" "$issues" | \
+		python3 -c '
+import difflib
+import re
+import sys
+
+few_issues_max = int(float(sys.argv[1]))
+min_similarity_noissues = float(sys.argv[2])
+min_similarity_few = float(sys.argv[3])
+max_paragraph_drop = int(float(sys.argv[4]))
+
+parts = sys.stdin.buffer.read().split(b"\0", 2)
+while len(parts) < 3:
+    parts.append(b"")
+original = parts[0].decode("utf-8", "ignore")
+checked = parts[1].decode("utf-8", "ignore")
+issues = parts[2].decode("utf-8", "ignore")
+
+def norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+def paras(text: str):
+    return [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+issue_lines = []
+for raw in issues.splitlines():
+    line = raw.strip()
+    if not line or line == "なし":
+        continue
+    if re.fullmatch(r"-+", line):
+        continue
+    issue_lines.append(line)
+
+ratio = difflib.SequenceMatcher(None, norm(original), norm(checked)).ratio()
+orig_paras = paras(original)
+checked_paras = paras(checked)
+
+if not issue_lines and ratio < min_similarity_noissues:
+    print(f"rewrite_too_large_noissues ratio={ratio:.2f}")
+    raise SystemExit(0)
+
+if len(issue_lines) <= few_issues_max and ratio < min_similarity_few:
+    print(f"rewrite_too_large_few_issues ratio={ratio:.2f} issues={len(issue_lines)}")
+    raise SystemExit(0)
+
+if len(orig_paras) >= 4 and len(checked_paras) < max(1, len(orig_paras) - max_paragraph_drop):
+    print(f"paragraph_drop {len(orig_paras)}->{len(checked_paras)}")
+    raise SystemExit(0)
+
+print("")
+' \
+			"${RADIO_FACT_CHECK_FEW_ISSUES_MAX:-2}" \
+			"${RADIO_FACT_CHECK_MIN_SIMILARITY_NOISSUES:-0.90}" \
+			"${RADIO_FACT_CHECK_MIN_SIMILARITY_FEW_ISSUES:-0.74}" \
+			"${RADIO_FACT_CHECK_MAX_PARAGRAPH_DROP:-2}"
 }
 
 _radio_fact_check_body() {
@@ -1263,14 +1322,14 @@ _radio_fact_check_body() {
 		prompt_context_trimmed=$(printf '%s' "$prompt_context_trimmed" | tail -c 16000)
 	fi
 
-	local factcheck_dir prompt_file raw_output safe_script issues issue_preview debug_dump last_candidate
+	local factcheck_dir prompt_file raw_output safe_script issues issue_preview debug_dump last_candidate style_reason
 	last_candidate=""
 	factcheck_dir=$(mktemp -d /tmp/eloop_radio_factcheck_XXXXXXXX) || return 1
 	prompt_file="$factcheck_dir/prompt.txt"
 	cat >"$prompt_file" <<PROMPT
 あなたは放送前のファクトチェック担当です。
 与えられた「元原稿」を、与えられた「材料」から支持できる範囲にだけ言い換えてください。
-目的は「誤情報を減らすこと」であり、「面白く盛ること」ではありません。
+目的は「誤情報を減らしつつ、面白さ・語り口・熱量をできるだけ保つこと」です。
 
 【最優先ルール】
 - 材料にない新事実を絶対に足さない
@@ -1279,7 +1338,10 @@ _radio_fact_check_body() {
 - news / strategy / recap では、材料にない断定を禁止
 - theme / soviet / celebration でも、確信のない歴史細部は一般論へ落とす
 - Web検索で集めた資料がある場合は、それを最優先で使う
+- 必要な箇所以外は極力書き換えないこと。問題がない文はそのまま残すこと
 - 元の語り口、流れ、長さはなるべく維持する
+- ジョーク、比喩、ツッコミ、感想、余韻、勢い、情景描写は、そこ自体が事実主張でない限り残すこと
+- 事務的・教科書的・無味乾燥な文章に平板化しないこと
 - unsupported な固有名詞や数字が多い段落でも、段落ごと消さずに一般化して言い換えること
 - 特に news / theme / soviet は、元原稿の7割未満まで短くしないこと。削る代わりに一般表現へ置き換えること
 - 読み上げ用プレーンテキストのみを返す
@@ -1322,6 +1384,12 @@ PROMPT
 				log "[RADIO:${corner_name}] fact-check短文化しすぎ (${model}) -> 次候補へ" >&2
 				continue
 			fi
+			style_reason=$(_radio_fact_check_style_reason "$talk_body" "$safe_script" "$issues")
+			if [ -n "$style_reason" ]; then
+				last_candidate=""
+				log "[RADIO:${corner_name}] fact-check平板化しすぎ (${model}) -> 次候補へ (${style_reason})" >&2
+				continue
+			fi
 			last_candidate="$safe_script"
 			issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
 			if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
@@ -1344,16 +1412,22 @@ PROMPT
 			last_candidate=""
 			log "[RADIO:${corner_name}] fact-check短文化しすぎ (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}) -> 元原稿へ" >&2
 		else
-			last_candidate="$safe_script"
-			issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
-			if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
-				log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}): ${issue_preview}" >&2
+			style_reason=$(_radio_fact_check_style_reason "$talk_body" "$safe_script" "$issues")
+			if [ -n "$style_reason" ]; then
+				last_candidate=""
+				log "[RADIO:${corner_name}] fact-check平板化しすぎ (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}) -> 元原稿へ (${style_reason})" >&2
 			else
-				log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL})" >&2
+				last_candidate="$safe_script"
+				issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
+				if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
+					log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}): ${issue_preview}" >&2
+				else
+					log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL})" >&2
+				fi
+				rm -rf "$factcheck_dir"
+				printf '%s' "$safe_script"
+				return 0
 			fi
-			rm -rf "$factcheck_dir"
-			printf '%s' "$safe_script"
-			return 0
 		fi
 	fi
 
