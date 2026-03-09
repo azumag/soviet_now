@@ -53,8 +53,8 @@ PAST_NEWS_READ="tmp/.past_news_read.txt"
 PAST_NEWS_READ_KEYS="tmp/.past_news_read_keys.txt"
 PAST_NEWS_TOPIC_KEYS="tmp/.past_news_topic_keys.txt"
 
-IMPROVE_STATE_FILE="tmp/improve_state.json"
-IMPROVE_AI_LOG_FILE="tmp/improve_ai.log"
+IMPROVE_STATE_FILE="$ELOOP_LIB_DIR/tmp/improve_state.json"
+IMPROVE_AI_LOG_FILE="$ELOOP_LIB_DIR/tmp/improve_ai.log"
 IMPROVE_AI_LOG_KEEP_LINES=4000
 IMPROVE_AI_LOG_TRIM_LINES=8000
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
