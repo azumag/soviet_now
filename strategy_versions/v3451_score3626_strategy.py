@@ -7,13 +7,14 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (6 evaluation axes):
+Decision Logic (7 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
   2. Height penalty - Penalty for high landing position (varies by phase)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition)
+  6. Chain merge bonus - Evaluate possibility of further merges after merge (v160: early_game enhancement)
+  7. Board dispersion bonus - Maximize left-right spread in early game with no merge (v3439: NEW)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -44,6 +45,12 @@ Phases (determined by board max Y):
 # v158のchain_distance_max=4.0がv155の成功パラメータ（5.0）より狭く、CHAIN_MERGE選択率が低下（7.6-9.6%）。
 # (1) 序盤判定をmax_y < -2.0 → max_y < -1.0に拡大しheight_multiplierを0.3→0.2に削減してHEIGHT_CONTROL選択を25%未満に抑制。
 # (2) chain_distance_maxのベース値を4.0→5.0に戻し（v155成功パラメータ復帰）、CHAIN_MERGE選択率を15%以上に向上。
+# v3439: 初期段階での盤面分散評価軸追加版 - batch_summaryでHEIGHT_CONTROLが低スコア群で32.0%選択されavg_score_delta=3.0と効果が低いこと、
+# 高スコア群は初期から高めに配置（序盤avg=-2.2）し、低スコア群は初期から低すぎ（序盤avg=-2.78）していることを確認。
+# 初期5ピースかつマージ機会がない場合、盤面の左右分散を最大化する評価軸を追加。
+# 最も左と右のピースの位置を計算し、現在の左右範囲外の位置にボーナスを付与。
+# 範囲外への距離に応じたボーナス：距離3.0で50.0、距離5.0以上で150.0（最大）。
+# これにより、初期段階での盤面分散を促進し、マージ機会を増加させる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -51,18 +58,19 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v159: 序盤HEIGHT_CONTROL抑制強化版
+    """v3439: 初期段階での盤面分散評価軸追加版
 
-    batch_summary分析でHEIGHT_CONTROLが30.5%選択されavg_score_delta=1.8と効果が低いこと、
-    低スコア群がHEIGHT_CONTROLを31.5%選択していること、序盤で盤面が高さを稼げない失敗パターンを確認。
-    v158のHEIGHT_CONTROL抑制（height_multiplier=0.3）が不十分でHEIGHT_CONTROL選択率が依然として高い（30.5%）。
-    v158のchain_distance_max=4.0がv155の成功パラメータ（5.0）より狭く、CHAIN_MERGE選択率が低下（7.6-9.6%）。
+    batch_summaryでHEIGHT_CONTROLが低スコア群で32.0%選択されavg_score_delta=3.0と効果が低いこと、
+    高スコア群は初期から高めに配置（序盤avg=-2.2）し、低スコア群は初期から低すぎ（序盤avg=-2.78）していることを確認。
+    v159のHEIGHT_CONTROL抑制（height_multiplier=0.2）が不十分で、初期段階での盤面分散が不足している。
 
-    v157の動的調整を維持しつつ、以下の2点を改善：
-    1. 序盤判定をmax_y < -2.0 → max_y < -1.0に拡大しheight_multiplierを0.3→0.2に削減
-       - HEIGHT_CONTROL選択率を25%未満に抑制し、併合機会を優先
-    2. chain_distance_maxのベース値を4.0→5.0に戻す（v155成功パラメータ復帰）
-       - CHAIN_MERGE選択率を15%以上に向上させ、スコア安定性を向上
+    v159の改善点に加え、以下の変更を実装：
+    1. 初期5ピースかつマージ機会がない場合、盤面の左右分散を最大化する評価軸を追加
+       - 最も左と右のピースの位置を計算し、現在の左右範囲外の位置にボーナスを付与
+       - 範囲外への距離に応じたボーナス：距離3.0で50.0、距離5.0以上で150.0（最大）
+       - これにより、初期段階での盤面分散を促進し、マージ機会を増加させる
+    2. v159のearly_game判定（max_y < -1.0）とheight_multiplier=0.2を維持
+    3. v159のchain_distance_max=5.0とchain_bonus_multiplier動的調整を維持
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -91,6 +99,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
+    piece_count = len(pieces)
+
+    # --- v3439: 初期5ピースかつマージ機会がない場合の盤面分散ボーナス計算準備 ---
+    # 初期段階（5ピース以下）でマージ機会がない場合、盤面の左右分散を最大化する
+    early_game_no_merge = piece_count <= 5
+    if pieces:
+        min_x = min(p["x"] for p in pieces)
+        max_x = max(p["x"] for p in pieces)
+    else:
+        min_x = max_x = 0.0
 
     # --- v159: 序盤判定（max_y < -1.0） ---
     # v158のmax_y < -2.0でのHEIGHT_CONTROL抑制が不十分。より広範囲（max_y < -1.0）で抑制し、height_multiplierを0.2に削減。
@@ -131,7 +149,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 6 evaluation axes
+    #  score each drop candidate (x coordinate) with 7 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -212,10 +230,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v159: v155成功パラメータ復帰版) -----
-        # v159: v158のchain_distance_max=4.0がv155の成功パラメータ（5.0）より狭く、CHAIN_MERGE選択率が低下。
-        # v155がchain_distance_max=5.0, chain_bonus_multiplier=450.0で達成した4026点を再現するため、ベース値を5.0に戻す。
-        # v157の着地高動的調整を維持しつつ、HIGH_LAYER状況でのCHAIN_MERGE選択を誘導し、HEIGHT_CONTROLの選択を減らしてスコア安定性を向上させる。
+        # ----- evaluation axis 6: chain merge bonus (v160: early_game enhancement版) -----
+        # v160: 初期段階でのCHAIN_MERGE選択強化版
+        # batch_summaryでHEIGHT_CONTROLが21.6%選択(avg_score_delta=1.1)と過剰であること、
+        # CHAIN_MERGE関連がavg_score_delta=31.4-41.4と高価値だが選択率は2.4-2.7%と極端に低いことを確認。
+        # worstゲームで初期6ターンが全てHEIGHT_CONTROLとなり、マージ機会を逃している失敗パターンを特定。
+        # early_game（max_y < -1.0）の場合、chain_distance_maxを7.0に拡大し初期段階でのCHAIN_MERGE選択を強化。
+        # 例: early_game=true → distance_max=7.0（初期段階での広範囲CHAIN_MERGE探索）
+        # 例: early_game=false, landing_y=0.0 → distance_max=5.0, multiplier=450.0
+        # 例: early_game=false, landing_y=1.0 → distance_max=5.6, multiplier=600.0
+        # 例: early_game=false, landing_y=2.0 → distance_max=6.2, multiplier=750.0
+        # 例: early_game=false, landing_y=3.0 → distance_max=6.8, multiplier=900.0
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -224,14 +249,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v159: 着地高に応じてchain_distanceとchain_bonus_multiplierを動的に調整
+                # v160: 着地高に応じてchain_distanceとchain_bonus_multiplierを動的に調整
                 # v155の成功パラメータ（chain_distance_max=5.0）を復帰し、CHAIN_MERGE選択率を向上させる
                 # HIGH_LAYER状況（landing_y>0.5）ではchain_distanceを拡大し、chain_bonus_multiplierを強化
-                # 例: landing_y=0.0 → distance_max=5.0, multiplier=450.0 (v155ベース)
-                # 例: landing_y=1.0 → distance_max=5.6, multiplier=600.0
-                # 例: landing_y=2.0 → distance_max=6.2, multiplier=750.0
-                # 例: landing_y=3.0 → distance_max=6.8, multiplier=900.0
-                chain_distance_max = 5.0 + landing_y * 0.6  # v159: v158の4.0→5.0に戻す（v155成功パラメータ復帰）
+                chain_distance_max = 7.0 if early_game else (5.0 + landing_y * 0.6)
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
@@ -266,6 +287,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
+
+        # ----- evaluation axis 7: board dispersion bonus (v3439: NEW) -----
+        # v3439: 初期5ピースかつマージ機会がない場合、盤面の左右分散を最大化する
+        # batch_summaryで高スコア群は初期から高めに配置（序盤avg=-2.2）し、低スコア群は初期から低すぎ（序盤avg=-2.78）していることを確認。
+        # 初期段階で盤面を左右に広げることで、マージ機会を創出し、HEIGHT_CONTROL過剰選択を抑制する。
+        if early_game_no_merge and merge_grade == "NO":
+            # 左端と右端のピース位置を計算
+            if x < min_x:
+                # 現在の左端より左側に配置
+                dist_outside = min_x - x
+                # 距離3.0で50.0、距離5.0以上で150.0（最大）
+                dispersion_bonus = min(150.0, max(0.0, (dist_outside - 3.0) * 50.0 + 50.0))
+                score += dispersion_bonus
+                reasons.append("BOARD_DISPERSION")
+            elif x > max_x:
+                # 現在の右端より右側に配置
+                dist_outside = x - max_x
+                # 距離3.0で50.0、距離5.0以上で150.0（最大）
+                dispersion_bonus = min(150.0, max(0.0, (dist_outside - 3.0) * 50.0 + 50.0))
+                score += dispersion_bonus
+                reasons.append("BOARD_DISPERSION")
 
         # ----- update best candidate -----
         if score > best_score:
