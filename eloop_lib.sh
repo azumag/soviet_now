@@ -33,6 +33,8 @@ RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-zai}"
 RADIO_FACT_CHECK_CLAUDE_MODEL="${RADIO_FACT_CHECK_CLAUDE_MODEL:-$RADIO_CLAUDE_MODEL}"
 RADIO_FACT_CHECK_MIN_CHARS=100
 RADIO_FACT_CHECK_SKIP_CORNERS="${RADIO_FACT_CHECK_SKIP_CORNERS:-strategy}"
+RADIO_FACT_CHECK_MIN_RATIO="${RADIO_FACT_CHECK_MIN_RATIO:-0.68}"
+RADIO_FACT_CHECK_MAX_ABS_SHRINK="${RADIO_FACT_CHECK_MAX_ABS_SHRINK:-700}"
 RADIO_WEB_GROUNDING_ENABLED="${RADIO_WEB_GROUNDING_ENABLED:-1}"
 RADIO_WEB_GROUNDING_TTL_SEC="${RADIO_WEB_GROUNDING_TTL_SEC:-21600}"
 RADIO_WEB_GROUNDING_MAX_SOURCES="${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}"
@@ -1215,6 +1217,24 @@ _radio_should_fact_check() {
 	return 0
 }
 
+_radio_compact_text_len() {
+	python3 -c 'import re,sys; print(len(re.sub(r"\s+", "", sys.stdin.read())))'
+}
+
+_radio_fact_check_length_ok() {
+	local original="$1" checked="$2"
+	local orig_len checked_len
+	orig_len=$(printf '%s' "$original" | _radio_compact_text_len)
+	checked_len=$(printf '%s' "$checked" | _radio_compact_text_len)
+	awk -v o="${orig_len:-0}" -v c="${checked_len:-0}" -v ratio="${RADIO_FACT_CHECK_MIN_RATIO:-0.68}" -v max_shrink="${RADIO_FACT_CHECK_MAX_ABS_SHRINK:-700}" '
+BEGIN {
+    if (o < 400) exit 0
+    if (c >= o * ratio) exit 0
+    if ((o - c) <= max_shrink) exit 0
+    exit 1
+}'
+}
+
 _radio_fact_check_body() {
 	local corner_name="$1" prompt_context="$2" talk_body="$3" selected_news="${4:-}"
 	if ! _radio_should_fact_check "$corner_name"; then
@@ -1231,6 +1251,7 @@ _radio_fact_check_body() {
 	fi
 
 	local factcheck_dir prompt_file raw_output safe_script issues issue_preview debug_dump last_candidate
+	last_candidate=""
 	factcheck_dir=$(mktemp -d /tmp/eloop_radio_factcheck_XXXXXXXX) || return 1
 	prompt_file="$factcheck_dir/prompt.txt"
 	cat >"$prompt_file" <<PROMPT
@@ -1246,6 +1267,8 @@ _radio_fact_check_body() {
 - theme / soviet / celebration でも、確信のない歴史細部は一般論へ落とす
 - Web検索で集めた資料がある場合は、それを最優先で使う
 - 元の語り口、流れ、長さはなるべく維持する
+- unsupported な固有名詞や数字が多い段落でも、段落ごと消さずに一般化して言い換えること
+- 特に news / theme / soviet は、元原稿の7割未満まで短くしないこと。削る代わりに一般表現へ置き換えること
 - 読み上げ用プレーンテキストのみを返す
 - マークダウン、見出し、箇条書き、補足解説は禁止
 - 出力形式を厳守すること
@@ -1280,8 +1303,13 @@ PROMPT
 		raw_output=$(_run_opencode_radio "$model" "$prompt_file")
 		safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
 		issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
-		last_candidate="$safe_script"
 		if _is_valid_radio_talk "$safe_script"; then
+			if ! _radio_fact_check_length_ok "$talk_body" "$safe_script"; then
+				last_candidate=""
+				log "[RADIO:${corner_name}] fact-check短文化しすぎ (${model}) -> 次候補へ" >&2
+				continue
+			fi
+			last_candidate="$safe_script"
 			issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
 			if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
 				log "[RADIO:${corner_name}] fact-check通過 (${model}): ${issue_preview}" >&2
@@ -1298,17 +1326,22 @@ PROMPT
 	raw_output=$(_run_claude_radio_with_model "$prompt_file" "$RADIO_FACT_CHECK_CLAUDE_MODEL")
 	safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
 	issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
-	last_candidate="$safe_script"
 	if _is_valid_radio_talk "$safe_script"; then
-		issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
-		if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
-			log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}): ${issue_preview}" >&2
+		if ! _radio_fact_check_length_ok "$talk_body" "$safe_script"; then
+			last_candidate=""
+			log "[RADIO:${corner_name}] fact-check短文化しすぎ (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}) -> 元原稿へ" >&2
 		else
-			log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL})" >&2
+			last_candidate="$safe_script"
+			issue_preview=$(printf '%s\n' "$issues" | sed '/^[[:space:]]*$/d' | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')
+			if [ -n "$issue_preview" ] && [ "$issue_preview" != "なし" ]; then
+				log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL}): ${issue_preview}" >&2
+			else
+				log "[RADIO:${corner_name}] fact-check通過 (claude:${RADIO_FACT_CHECK_CLAUDE_MODEL})" >&2
+			fi
+			rm -rf "$factcheck_dir"
+			printf '%s' "$safe_script"
+			return 0
 		fi
-		rm -rf "$factcheck_dir"
-		printf '%s' "$safe_script"
-		return 0
 	fi
 
 	debug_dump="tmp/radio_factcheck_failed_${corner_name}_$(date +%s).txt"
