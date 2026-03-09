@@ -19,6 +19,7 @@ import json
 import math
 import os
 import signal
+import subprocess
 import sys
 import time
 
@@ -27,6 +28,7 @@ GAME_STATE = "game_state.json"
 COMMANDS = "commands.txt"
 HISTORY_DIR = "game_history"
 HISTORY_FILE = os.path.join(HISTORY_DIR, "latest.jsonl")
+RUSSIA_WORKER_PID_FILE = "tmp/.russia_celebration_worker.pid"
 
 # 座標変換
 GAME_X_MIN = -3.0
@@ -143,6 +145,34 @@ def get_strategy_hash():
     """strategy.py のMD5ハッシュ（先頭8文字）を返す"""
     with open("strategy.py", "rb") as f:
         return hashlib.md5(f.read()).hexdigest()[:8]
+
+
+def trigger_russia_celebration_now(score, turn):
+    """ロシア建国祝賀を即時に別プロセスで発火する。"""
+    try:
+        with open("game_count.txt") as f:
+            game_num = int((f.read() or "0").strip() or "0") + 1
+    except Exception:
+        game_num = 0
+
+    cmd = (
+        "cd . && "
+        f"mkdir -p tmp && echo $$ > {RUSSIA_WORKER_PID_FILE} && "
+        f"trap 'rm -f {RUSSIA_WORKER_PID_FILE}' EXIT && "
+        "source ./eloop_lib.sh && source ./eloop.sh && "
+        f"handle_russia_celebration '{score}' '{turn}' '{game_num}'"
+    )
+    try:
+        subprocess.Popen(
+            ["/bin/bash", "-lc", cmd],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except Exception as e:
+        log(f"WARNING: failed to trigger russia celebration: {e}")
+        return False
 
 
 def build_analysis(game_state):
@@ -284,6 +314,7 @@ def run_game():
     turn = 0
     prev_score = 0
     russia_created = False
+    russia_announced = False
     soviet_created = False
 
     # 前回の建国フラグをクリア（ゲーム開始時に毎回リセット）
@@ -316,6 +347,7 @@ def run_game():
                     "state": final_state,
                     "pieces": len(gs.get("pieces", [])) if gs else 0,
                     "russia_created": russia_created,
+                    "russia_announced": russia_announced,
                     "soviet_created": soviet_created,
                 }
 
@@ -334,6 +366,7 @@ def run_game():
                 with open("tmp/.russia_created", "w") as flag_f:
                     flag_f.write(f"{turn}|{score}\n")
                 log("ロシア建国フラグ記録完了")
+                russia_announced = trigger_russia_celebration_now(score, turn)
 
             # ソ連建国検知（リアルタイム・1試合1回限り）
             # type 15 = ロシア、type 16 = ソ連。makeSorenCount はロシア同士併合(→ソ連生成)時にインクリメントされる
@@ -373,6 +406,7 @@ def run_game():
                         "state": get_state_field(gs),
                         "pieces": len(pieces),
                         "russia_created": russia_created,
+                        "russia_announced": russia_announced,
                         "soviet_created": True,
                     }
 
@@ -397,6 +431,7 @@ def run_game():
                     "state": get_state_field(gs),
                     "pieces": len(pieces),
                     "russia_created": russia_created,
+                    "russia_announced": russia_announced,
                     "soviet_created": soviet_created,
                     "strategy_hash": strategy_hash,
                 }

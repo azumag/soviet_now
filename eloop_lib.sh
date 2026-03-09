@@ -72,6 +72,7 @@ COMMENT_SPOKEN_HISTORY_MAX_FILES="${COMMENT_SPOKEN_HISTORY_MAX_FILES:-16}"
 COMMENT_SPOKEN_PROMPT_ITEMS="${COMMENT_SPOKEN_PROMPT_ITEMS:-10}"
 COMMENT_SPOKEN_PROMPT_MAX_CHARS="${COMMENT_SPOKEN_PROMPT_MAX_CHARS:-5000}"
 COMMENT_SPOKEN_ITEM_MAX_CHARS="${COMMENT_SPOKEN_ITEM_MAX_CHARS:-700}"
+RUSSIA_CELEBRATION_WORKER_PID_FILE="tmp/.russia_celebration_worker.pid"
 COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
 COMMENT_WATCHER_INTERVAL=10
 COMMENT_WORKER_HEALTH_TTL=30
@@ -2004,6 +2005,64 @@ _radio_clear_state() {
 	local current
 	current=$(cat tmp/.radio_state 2>/dev/null) || return 0
 	case "$current" in *":${my_corner}:"*) rm -f tmp/.radio_state ;; esac
+}
+
+_interrupt_current_audio_playback() {
+	local reason="${1:-priority_audio}"
+	local cs_line owner owner_pid say_pid
+	cs_line=$(cat "tmp/.say_queue/current_source" 2>/dev/null || true)
+	owner=$(printf '%s' "$cs_line" | awk -F'|' 'NR==1{print $1}')
+	owner_pid="${owner%%:*}"
+	say_pid=$(cat "tmp/.say_queue/pid" 2>/dev/null || true)
+
+	case "$say_pid" in
+	''|*[!0-9]*) say_pid="" ;;
+	esac
+	case "$owner_pid" in
+	''|*[!0-9]*) owner_pid="" ;;
+	esac
+
+	if [ -n "$say_pid" ] && kill -0 "$say_pid" 2>/dev/null; then
+		log "[AUDIO] child停止: pid=${say_pid} reason=${reason}"
+		kill -9 "$say_pid" 2>/dev/null || true
+	fi
+	if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
+		log "[AUDIO] enqueue停止: pid=${owner_pid} reason=${reason}"
+		kill "$owner_pid" 2>/dev/null || true
+		sleep 1
+		kill -9 "$owner_pid" 2>/dev/null || true
+	fi
+
+	local waited=0
+	while [ -d "tmp/.say_queue/.lock" ] && [ "$waited" -lt 30 ]; do
+		sleep 0.2
+		waited=$((waited + 1))
+	done
+	rm -f "tmp/.say_queue/pid" 2>/dev/null || true
+}
+
+_play_priority_audio_file() {
+	local audio_file="$1" corner_name="$2"
+	[ -s "$audio_file" ] || return 1
+	_interrupt_current_audio_playback "priority:${corner_name}"
+	echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
+	_refresh_radio_intro_for_playback_file "$audio_file" "$corner_name"
+	./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
+}
+
+_cancel_russia_celebration_worker() {
+	local worker_pid=""
+	worker_pid=$(cat "$RUSSIA_CELEBRATION_WORKER_PID_FILE" 2>/dev/null || true)
+	case "$worker_pid" in
+	''|*[!0-9]*) worker_pid="" ;;
+	esac
+	if [ -n "$worker_pid" ] && kill -0 "$worker_pid" 2>/dev/null; then
+		log "[RUSSIA] worker停止: pid=${worker_pid}"
+		kill "$worker_pid" 2>/dev/null || true
+		sleep 1
+		kill -9 "$worker_pid" 2>/dev/null || true
+	fi
+	rm -f "$RUSSIA_CELEBRATION_WORKER_PID_FILE" "tmp/radio_russia_celebration.txt" 2>/dev/null || true
 }
 
 _radio_mark_done() {
