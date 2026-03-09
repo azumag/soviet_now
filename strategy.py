@@ -3,26 +3,24 @@
 
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
-- Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
-- Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
-- Player controls only drop X coordinate
+  - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
+  - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
+  - Player controls only drop X coordinate
 
-Decision Logic (9 evaluation axes):
-   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-   2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
-   3. Drift penalty - Penalty for post-landing drift due to polygon shape
-   4. Left-right balance correction - Bonus for correcting piece count bias
-   5. nextNext centering - Center for next merge opportunity if nextNext same type
-   6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
-   7. Early game merge priority - Strong bonus for merge opportunities in early game (v174)
-   8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (NEW)
-   9. Board dispersion bonus - Maximize left-right spread in early game with no merge (v179: NEW)
+Decision Logic (7 evaluation axes):
+  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+  2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
+  3. Drift penalty - Penalty for post-landing drift due to polygon shape
+  4. Left-right balance correction - Bonus for correcting piece count bias
+  5. nextNext centering - Center for next merge opportunity if nextNext same type
+  6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
+  7. Early game merge priority - Strong bonus for merge opportunities in early game (v174)
 
 Phases (determined by board max Y):
-   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4 -> 1.0)
-   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+  LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
+  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+  CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
 # Fixed interface:
@@ -35,7 +33,7 @@ Phases (determined by board max Y):
 # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
-# [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
+# v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 # v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
 # v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
 # v167: 評価精度最適化版 - chain_distance 5.0→4.5縮小
@@ -63,44 +61,34 @@ Phases (determined by board max Y):
 # ワーストゲーム(score0765)で初期7ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗パターンを特定。
 # early_game判定をmax_y < -2.5→-2.0にさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大して初期12ターン全体でマージ機会を最優先する。
 # また、MEDIUM_TOWER選択を促進するための追加評価軸を追加し、高スコア群と低スコア群のMEDIUM_TOWER選択率差（13.6% vs 10.8%）を解消する。
-# v175: MEDIUMフェーズHEIGHT_CONTROL抑制強化版 - batch_summaryでHEIGHT_CONTROLが26.5%選択(avg_score_delta=1.1)と依然として過剰であり、スコアの標準偏差が404.0と大きいことを確認。
-# v174で初期12ターンでのHEIGHT_CONTROL抑制は強化されたが、中盤以降のHEIGHT_CONTROL選択が依然として多く、これがスコアの不安定性を引き起こしていることを特定。
-# MEDIUMフェーズ（0.8 <= max_y < 1.8）でheight_multiplierを30.0→20.0に削減し、マージ選択を促進することでスコア安定性を向上させる。
-# v176: reactor情報活用によるマージ優先評価軸追加版 - batch_summaryでHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
-# reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を追加。
-# これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
-# v177: MEDIUMフェーズHEIGHT_CONTROL抑制強化版 - batch_summaryでHEIGHT_CONTROLが27.5%選択(avg_score_delta=0.9)と過剰であることを確認。
-# 高スコア群(23.9%)と低スコア群(32.5%)の比較で、低スコア群が8.6%も多くHEIGHT_CONTROLを選択していることを特定。
-# MEDIUMフェーズのheight_multiplierを20.0→15.0に削減し、マージ選択を促進することでHEIGHT_CONTROL選択を23.9%程度まで抑制しスコア向上を目指す。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
-# Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->+15 gives +120 points
+# Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
+
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v179: reactor情報活用によるマージ優先評価軸追加版
+    """v174: early_game判定さらに緩和・初期12ターンマージ重視版
 
-    batch_summaryでHEIGHT_CONTROLが27.5%選択(avg_score_delta=0.9)と過剰であることを確認。
-    高スコア群(23.9%)と低スコア群(32.5%)の比較で、低スコア群が8.6%も多くHEIGHT_CONTROLを選択していることを特定。
-    MEDIUMフェーズのheight_multiplierを20.0→15.0に削減し、マージ選択を促進することでHEIGHT_CONTROL選択を抑制しスコア向上を目指す。
+    batch_summary分析でHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
+    ワーストゲーム(score0765)で初期7ターン全てHEIGHT_CONTROLを選択し、マージ機会を逃している失敗パターンを特定。
+    early_game判定をmax_y < -2.5→-2.0にさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大して
+    初期12ターン全体でマージ機会を最優先する。
+    また、MEDIUM_TOWER選択を促進するための追加評価軸を追加し、高スコア群と低スコア群のMEDIUM_TOWER選択率差（13.6% vs 10.8%）を解消する。
 
-    v179の改善点:
-    1. MEDIUMフェーズHEIGHT_CONTROL抑制強化
-        - height_multiplier: 20.0→15.0に削減
-        - 高スコア群のHEIGHT_CONTROL選択率(23.9%)を目標に抑制
-    2. v176のreactor情報活用によるマージ優先評価軸を維持
-        - reactive_pair_count >= 2の場合、DIRECT/NEARマージに+500.0ボーナス
-    3. v175のMEDIUMフェーズHEIGHT_CONTROL抑制を強化
-        - height_multiplier: 15.0（MEDIUMフェーズ）
-    4. v174の初期12ターンマージ重視を維持
-        - early_game判定(max_y < -2.0)とEARLY_MERGE_PRIORITY(piece_count <= 12)を維持
-    5. v171のCHAIN_MERGE基本ボーナス強化を維持
-        - chain_distance_max=5.0とchain_bonus_multiplier初期値480.0でCHAIN_MERGE選択を促進
-    6. v174のMEDIUM_TOWER選択促進評価軸を維持
-        - MEDIUM phaseでlanding_y > 0.5の場合、MEDIUM_TOWERボーナスを追加して選択を促進
-    7. 初期段階での盤面分散評価軸を追加 (NEW)
-        - piece_count <= 5かつmerge_grade == "NO"の場合、盤面の左右分散を最大化するボーナスを追加
-        - 現在の左右範囲外への配置にボーナスを付与し、消極的なHEIGHT_CONTROLを抑制
+    v174の改善点:
+    1. early_game判定のさらに緩和
+       - max_y < -2.5 → max_y < -2.0
+       - batch_summaryの序盤avg max_y(-2.5〜-2.72)に基づき、初期12ターンの大部分で判定されるように調整
+    2. EARLY_MERGE_PRIORITY適用範囲の拡大
+       - piece_count <= 10 → piece_count <= 12
+       - 初期12ターンを一つのフェーズとして扱い、この期間中はマージ機会を最優先
+    3. MEDIUM_TOWER選択促進評価軸追加
+       - MEDIUM_TOWER選択率が高スコア群13.6% vs 低スコア群10.8%と差があることを確認。
+       - MEDIUM phaseでlanding_y > 0.5の場合、MEDIUM_TOWERボーナスを追加して選択を促進
+    4. v171のCHAIN_MERGE基本ボーナス強化を維持
+       - chain_distance_max=5.0とchain_bonus_multiplier初期値480.0でCHAIN_MERGE選択を促進
+    5. v170のMEDIUM phase height_mult=1.4を維持
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -144,8 +132,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        # v177: MEDIUM phase height multiplier adjustment (reactive merge priority)
-        height_mult = 1.4  # v170: MEDIUM phase height_mult reduced (0.8→0.6) to enable early chain opportunities
+        height_mult = 1.4  # v170: MEDIUM phase height penalty relaxation (1.8->1.4) to increase MEDIUM_TOWER selections
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
@@ -155,12 +142,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL height penalty basic value only
         merge_mult = 0.6  # v42: CRITICAL phase merge suppression
-
-    # --- reactor information (for merge opportunity evaluation) ---
-    reactor = analysis.get("reactor", {})
-    reactive_pairs = reactor.get("reactive_pairs", [])
-    # reactive_pairs is a list, count pairs for evaluation
-    reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
 
     # --- next piece information ---
     next_piece = game_state.get("next", {})
@@ -178,7 +159,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 9 evaluation axes
+    #  score each drop candidate (x coordinate) with 7 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -207,17 +188,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v174: early_game（max_y < -2.0）の場合、height_multiplierを0.2に削減してHEIGHT_CONTROL過剰選択を抑制
-        # v177: MEDIUM phase height multiplier: 15.0 (from 20.0) - reactive merge priority
-        # v173: 初期段階(piece_count <= 6)で併合機会がない場合、HEIGHT_CONTROL抑制をさらに強化
+        # v169: early_game（max_y < -2.0）の場合、height_multiplierを0.2に削減してHEIGHT_CONTROL過剰選択を抑制
+        # v170: MEDIUM phase height_multを1.8→1.4に削減してMEDIUM_TOWER選択を促進
+        # v173: 初期段階(piece_count <= 6)で併合機会がない場合、HEIGHT_CONTROL抑制を強化
         # v174: early game判定をさらに緩和し、初期12ターンでHEIGHT_CONTROLを抑制
         height_multiplier = 30.0
         if early_game:
             height_multiplier = 0.2  # v169: 序盤はHEIGHT_CONTROLを抑制し、併合機会を最優先
-
-        # v177: MEDIUMフェーズでHEIGHT_CONTROL抑制強化
-        if phase == "MEDIUM":
-            height_multiplier = 15.0 # v177: v175からさらに緩和しマージ選択を促進
 
         # v173: 初期段階で併合機会がない場合、HEIGHT_CONTROL抑制をさらに強化
         if piece_count <= 6 and merge_grade == "NO":
@@ -245,7 +222,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 4: left-right balance correction (v162: enhanced) -----
         # bonus for correcting left-right piece count bias.
         # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
-        # v177: MEDIUM phase balance control adjustment (v162: 35.0->40.0 -> 50.0) - reactive priorityの影響でMEDIUMでもbalance_strengthを40.0に維持
+        # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 50.0  # v148: HIGH balance control even stricter (40.0->50.0)
@@ -267,17 +244,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v171: CHAIN_MERGE基本ボーナス強化版 ---
+        # ----- evaluation axis 6: chain merge bonus (v171: CHAIN_MERGE基本ボーナス強化) -----
         # v171: CHAIN_MERGE関連がavg_score_delta=26.9-43.2（高価値）だが選択率は3.8-9.2%と低いことを確認。
         # ワーストゲーム(score0633)で初期5ターンが全てHEIGHT_CONTROLとなり、CHAIN_MERGE選択が0回であることを特定。
-        # v171: CHAIN_MERGE基本ボーナス強化
-        # chain_distance_max = 5.0 + landing_y * 0.6 (v155成功値に戻す、着地高に応じて拡大)
-        # chain_bonus_multiplier = 480.0 + landing_y * 150.0 (初期値を450.0→480.0に強化、着地高に応じて増強）
-        # 例: landing_y=-3.0 → distance_max=3.2, multiplier=30.0（初期段階）
-        # 例: landing_y=0.0 → distance_max=5.0, multiplier=480.0（初期値強化）
-        # 例: landing_y=1.0 → distance_max=5.6, multiplier=630.0
-        # 例: landing_y=2.0 → distance_max=6.2, multiplier=780.0
-        # 例: landing_y=3.0 → distance_max=6.8, multiplier=930.0
+# v171: CHAIN_MERGE基本ボーナス強化
+# chain_distance_max = 5.0 + landing_y * 0.6 (v155成功値に戻す、着地高に応じて拡大)
+# chain_bonus_multiplier = 480.0 + landing_y * 150.0 (初期値を450.0→480.0に強化、着地高に応じて増強)
+# 例: landing_y=-3.0 → distance_max=3.2, multiplier=30.0（初期段階）
+# 例: landing_y=0.0 → distance_max=5.0, multiplier=480.0（初期値強化）
+# 例: landing_y=1.0 → distance_max=5.6, multiplier=630.0
+# 例: landing_y=2.0 → distance_max=6.2, multiplier=780.0
+# 例: landing_y=3.0 → distance_max=6.8, multiplier=930.0
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -294,6 +271,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 例: landing_y=1.0 → distance_max=5.6, multiplier=630.0
                 # 例: landing_y=2.0 → distance_max=6.2, multiplier=780.0
                 # 例: landing_y=3.0 → distance_max=6.8, multiplier=930.0
+                chain_distance_max = 5.0 + landing_y * 0.6
+                chain_bonus_multiplier = 480.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
@@ -336,13 +315,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 800.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- v176: reactive merge priority (reactor活用によるマージ優先） -----
-        # batch_summary分析でHEIGHT_CONTROLが26.2%選択(avg_score_delta=1.7)と依然として過剰であることを確認。
-        # reactor情報のreactive_pairs（反応性のあるペア）が2つ以上ある場合、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
-        if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
-            score += 500.0
-            reasons.append("REACTIVE_MERGE_PRIORITY")
-
         # ----- evaluation axis 8: MEDIUM_TOWER selection promotion (v174) -----
         # v174: MEDIUM_TOWER選択を促進するための追加評価軸を追加し、高スコア群と低スコア群のMEDIUM_TOWER選択率差（13.6% vs 10.8%）を解消する。
         # MEDIUM phaseでlanding_y > 0.5の場合、MEDIUM_TOWERボーナスを追加して選択を促進。
@@ -352,30 +324,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # MEDIUM_TOWER選択を促進することで、スコア安定性を向上させる
             score += 200.0
             reasons.append("MEDIUM_TOWER_PROMOTION")
-
-        # ----- evaluation axis 9: board dispersion bonus (v179: NEW) -----
-        # 初期段階でマージ機会がない場合、盤面の左右分散を最大化する評価軸を追加
-        # batch_summaryでHEIGHT_CONTROLが低スコア群で32.0%選択されavg_score_delta=3.0と効果が低いこと、
-        # 高スコア群は初期から高めに配置（序盤avg=-2.2）し、低スコア群は初期から低すぎ（序盤avg=-2.78）していることを確認。
-        # piece_count <= 5かつmerge_grade == "NO"の場合、盤面の左右分散を最大化するボーナスを追加
-        if piece_count <= 5 and merge_grade == "NO":
-            # 現在の左右範囲を計算
-            if pieces:
-                min_x = min(p["x"] for p in pieces)
-                max_x = max(p["x"] for p in pieces)
-                # 範囲外への距離を計算
-                if x < min_x:
-                    distance = min_x - x
-                elif x > max_x:
-                    distance = x - max_x
-                else:
-                    distance = 0.0
-
-                # 距離に応じたボーナス：距離3.0で50.0、距離5.0以上で150.0（最大）
-                dispersion_bonus = min(max((distance - 1.0) * 50.0, 0.0), 150.0)
-                score += dispersion_bonus
-                if dispersion_bonus > 0:
-                    reasons.append("BOARD_DISPERSION")
 
         # ----- update best candidate -----
         if score > best_score:
