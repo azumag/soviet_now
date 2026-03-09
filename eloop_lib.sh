@@ -817,6 +817,8 @@ _run_opencode_comment() {
 		"prompts/comment_response.md" \
 		"$COMMENT_SPOKEN_HISTORY_DIR" \
 		"$PAST_RADIO_TOPICS" \
+		"score_history.txt" \
+		"tmp/rolling_scores.json" \
 		"show_status.sh" \
 		"show_status_g.sh" \
 		"status_dashboard.py")
@@ -874,6 +876,8 @@ _run_claude_comment_with_model() {
 		"prompts/comment_response.md" \
 		"$COMMENT_SPOKEN_HISTORY_DIR" \
 		"$PAST_RADIO_TOPICS" \
+		"score_history.txt" \
+		"tmp/rolling_scores.json" \
 		"show_status.sh" \
 		"show_status_g.sh" \
 		"status_dashboard.py")
@@ -3561,10 +3565,12 @@ generate_comment_response() {
 	【前回のトーク内容（文脈参照用）】
 	${past_topics}
 
-	【追加参照可能ファイル（必要時のみ）】
-	- tmp/.comment_queue/spoken_history/*.txt: 最近実際に読み上げたコメント返し全文
-	- tmp/past_radio_topics.txt: 過去のニュース・ラジオ題名の履歴
-	※ まず上の埋め込み済み抜粋を優先し、文脈が足りない場合だけ読むこと
+		【追加参照可能ファイル（必要時のみ）】
+		- tmp/.comment_queue/spoken_history/*.txt: 最近実際に読み上げたコメント返し全文
+		- tmp/past_radio_topics.txt: 過去のニュース・ラジオ題名の履歴
+		- score_history.txt: 直近から過去までのスコア履歴
+		- tmp/rolling_scores.json: 戦略ハッシュごとの rolling 指標
+		※ まず上の埋め込み済み抜粋を優先し、文脈が足りない場合だけ読むこと
 
 	【現在のゲーム状態メモ（game_state.json）】
 	${game_state_context:-（取得失敗）}
@@ -3593,7 +3599,7 @@ generate_comment_response() {
 		- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
 		- 「さっきの返事」「今の話」「その件」など、自分が直前に読み上げたコメント返しへの反応は、「最近自分が実際に読み上げたコメント返し」を優先して参照すること
 		- ニュースやラジオ本編への反応は、「前回のトーク内容（文脈参照用）」を参照すること
-		- それでも文脈が足りなければ、sandbox 内の tmp/.comment_queue/spoken_history/*.txt と tmp/past_radio_topics.txt を追加で読んでよい
+			- それでも文脈が足りなければ、sandbox 内の tmp/.comment_queue/spoken_history/*.txt、tmp/past_radio_topics.txt、score_history.txt、tmp/rolling_scores.json を追加で読んでよい
 		- 「それな」「それって」「さっきの」「草」など文脈依存コメントは、コメント前後文脈と直前履歴を使って対象を推定してから返事すること
 		- 文脈が曖昧な場合は、断定せずに「この話のことでしょうか？」のように確認を挟んで返すこと
 		- コメントの要点には短く触れてよいが、そのまま長く復唱しない。「〜というコメントですね」の機械的な前置きは禁止
