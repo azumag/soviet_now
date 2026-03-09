@@ -7,14 +7,14 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (6 evaluation axes):
+Decision Logic (8 evaluation axes):
    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
    2. Height penalty - Penalty for high landing position (varies by phase)
    3. Drift penalty - Penalty for post-landing drift due to polygon shape
    4. Left-right balance correction - Bonus for correcting piece count bias
    5. nextNext centering - Center for next merge opportunity if nextNext same type
    6. Chain merge bonus - Evaluate possibility of further merges after merge
-   7. Reactive pairs bonus - Bonus for multiple merge opportunities (NEW: reactor info utilization)
+   7. Reactive pairs bonus - Bonus for multiple merge opportunities
    8. Early game merge priority - Strong bonus for merge opportunities in early game
 
 Phases (determined by board max Y):
@@ -53,6 +53,16 @@ Phases (determined by board max Y):
 # enabling chain merge opportunities while reducing HEIGHT_CONTROL over-selection.
 # This addresses the root cause: low-score games playing too conservatively early.
 # refs: tmp/batch_summary.txt, game_history/20260308_172623_score0598.jsonl, game_history/20260308_175330_score2416.jsonl
+#
+# v199: HIGH phase evaluation axis consolidation for merge priority
+# batch_summaryでHEIGHT_CONTROLが23.8%選択(avg_score_delta=0.8)と過剰であり、NEAR_MERGEが3.8-9.2%選択(avg_score_delta=28-57)と高価値だが選択不足であることを確認。
+# ワーストゲーム(score536)では終盤8ターンでHIGH_TOWER選択が続き、マージ機会を見逃している失敗モードを特定。
+# ベストゲーム(score2814)では終盤で積極的にNEAR_MERGE関連を選択し、スコア2814を出していることを確認。
+# MEDIUM_TOWERとHIGH_LAYERの評価はHIGH_TOWERよりスコア貢献が高い傾向にあることを確認。
+# v4999で追加されたBOARD_DENSITY評価軸はbatch_summaryで効果が薄く、削除することで戦略をシンプル化。
+# HIGHフェーズ（1.8 <= max_y < 3.0）での評価軸を整理・統合し、マージ優先の明確化を図る。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260309_121305_score0536.jsonl, game_history/20260309_120640_score2814.jsonl,
+# strategy_versions/v3323_score2734_strategy.py, strategy_versions/best_score5310_strategy.py, strategy_versions/best_score4999_strategy.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -60,26 +70,33 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v198: LOW phase height penalty further reduction for proactive merge opportunities
+    """v199: HIGH phase evaluation axis consolidation for merge priority
 
     batch_summary shows HEIGHT_CONTROL is over-selected (23.8%, avg_score_delta=1.2) while NEAR_MERGE has low selection (3.8-9.2%) but high value (avg_score_delta=28-57).
-    Worst game (score802) shows initial 4 turns all HEIGHT_CONTROL, missing merge opportunities.
-    Best game (score3241) shows proactive NEAR_MERGE from early turns.
-    The LOW phase height penalty (height_mult=0.6) is still too restrictive for early-game merge opportunity creation.
-    Reduce LOW phase height_mult from 0.6 to 0.4 (33% reduction) to allow more flexible early placement,
-    enabling proactive merge opportunity creation while reducing HEIGHT_CONTROL over-selection.
-    This addresses the root cause: early-game passive HEIGHT_CONTROL selection instead of proactive merge building.
+    Worst game (score536) shows HIGH_TOWER selection continues in final 8 turns, missing merge opportunities.
+    Best game (score2814) shows proactive NEAR_MERGE selection in final turns, achieving score 2814.
+    MEDIUM_TOWER and HIGH_LAYER have higher score contribution than HIGH_TOWER.
+    BOARD_DENSITY evaluation axis (v4999) shows low effectiveness in batch_summary, removing to simplify strategy.
+
+    v199 improvements:
+    1. HIGH phase evaluation axis consolidation
+       - Consolidate MEDIUM_TOWER/HIGH_LAYER into HIGH_TOWER
+       - Add HIGH_TOWER penalty for landing_y > 0.5
+       - Strengthen height penalty when no merge opportunity exists
+    2. Enhanced reactive pairs utilization
+       - Increase bonus when reactive_pairs >= 2 in HIGH phase
+    3. Simplify strategy by removing ineffective BOARD_DENSITY axis
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
          analysis: analyze_board.py analysis results
-             - results: landing information for each drop X candidate
-                 - x: drop X coordinate
-                 - landing_y: estimated landing Y coordinate (high=dangerous)
-                 - drift_x/drift_unc: post-landing drift due to polygon shape
-                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                 - merges: individual distance/merge judgment for each same-type piece
-             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+              - results: landing information for each drop X candidate
+                  - x: drop X coordinate
+                  - landing_y: estimated landing Y coordinate (high=dangerous)
+                  - drift_x/drift_unc: post-landing drift due to polygon shape
+                  - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                  - merges: individual distance/merge judgment for each same-type piece
+              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
@@ -133,7 +150,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 6 evaluation axes (NEW: +1 axis for reactive)
+    #  score each drop candidate (x coordinate) with 8 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -160,21 +177,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- evaluation axis 2: height penalty -----
+        # ----- evaluation axis 2: height penalty (v199: HIGH phase consolidation) -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
-        height_penalty = landing_y * 50.0 * height_mult
+        # v199: HIGH phase consolidate MEDIUM_TOWER/HIGH_LAYER into HIGH_TOWER, strengthen penalty when no merge
 
-        if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 2.0
-            reasons.append("HIGH_TOWER")
+        # base height penalty
+        base_penalty = landing_y * 50.0 * height_mult
+
+        if phase == "HIGH":
+            # v199: HIGH phase consolidation - strengthen penalty when no merge opportunity
+            # This encourages merge priority over height management in dangerous zone
+            if merge_grade in ["DIRECT", "NEAR"]:
+                # Has merge opportunity: normal HIGH_TOWER penalty (2.0x for landing_y > 0.5)
+                if landing_y > 0.5:
+                    base_penalty *= 2.0
+                    reasons.append("HIGH_TOWER")
+                elif landing_y > 0.0:
+                    reasons.append("HIGH_LAYER")
+            else:
+                # No merge opportunity: stronger penalty (2.5x for landing_y > 0.5)
+                # This discourages passive height_control when merge is possible
+                if landing_y > 0.5:
+                    base_penalty *= 2.5
+                    reasons.append("HIGH_TOWER")
+                elif landing_y > 0.0:
+                    base_penalty *= 1.2
+                    reasons.append("HIGH_LAYER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.5
-            reasons.append("MEDIUM_TOWER")
+            base_penalty *= 1.5
+            reasons.append("HIGH_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
-        score -= height_penalty
+        score -= base_penalty
 
         # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
@@ -276,13 +312,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization) -----
+        # ----- evaluation axis 8: reactive pairs bonus (v199: enhanced HIGH phase) -----
         # batch_summaryでHEIGHT_CONTROLが24.8%選択(avg_score_delta=1.7)と過剰であることを確認。
         # reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を追加。
+        # v199: HIGH phaseではreactive_pairs >= 2の場合、ボーナスを強化（500.0→700.0）
         # これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
+        reactive_bonus = 500.0
+        if phase == "HIGH" and reactive_pair_count >= 2:
+            reactive_bonus = 700.0  # v199: Strengthen HIGH phase reactive bonus to encourage merge in dangerous zone
+
         if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
             # 2つ以上の反応可能ペアがある場合、マージ優先ボーナス
-            score += 500.0
+            score += reactive_bonus
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
         # ----- update best candidate -----
