@@ -270,28 +270,34 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 	# --- ローリングスコア & リグレッション ---
 	local rolling_hash="" rolling_count=0 rolling_avg="" rolling_prev_avg=""
 	local rolling_comp="" rolling_p50="" rolling_p25="" rolling_total=""
-	local best_hash_short="" best_comp="" best_p50="" best_p25="" best_total=""
+	local best_hash_short="" best_comp="" best_p50="" best_p25="" best_total="" best_source_short=""
 	local regression_state="" regression_detail=""
 	local rejected_count=0
 	if [[ -f tmp/rolling_scores.json ]] && [[ -f strategy.py ]]; then
 		eval "$(
 			python3 - <<PY 2>/dev/null
-import json
-import math
-import shlex
-import subprocess
+	import json
+	import math
+	import shlex
+	import subprocess
 
-rs = json.load(open('tmp/rolling_scores.json'))
-h = subprocess.run(
-    ['python3', 'extract_decide_hash.py', 'strategy.py'],
+	rs = json.load(open('tmp/rolling_scores.json'))
+	h = subprocess.run(
+	    ['python3', 'extract_decide_hash.py', 'strategy.py'],
     capture_output=True,
     text=True,
 ).stdout.strip()
 min_games_current = int(${MIN_GAMES_BEFORE_IMPROVE})
-min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
-composite_ratio = float(${REGRESSION_COMPOSITE_RATIO})
-p50_ratio = float(${REGRESSION_P50_RATIO})
-p25_ratio = float(${REGRESSION_P25_RATIO})
+	min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
+	composite_ratio = float(${REGRESSION_COMPOSITE_RATIO})
+	p50_ratio = float(${REGRESSION_P50_RATIO})
+	p25_ratio = float(${REGRESSION_P25_RATIO})
+	trend_short_window = int(${REGRESSION_TREND_SHORT_WINDOW})
+	trend_long_window = int(${REGRESSION_TREND_LONG_WINDOW})
+	trend_short_ratio = float(${REGRESSION_TREND_SHORT_RATIO})
+	trend_long_ratio = float(${REGRESSION_TREND_LONG_RATIO})
+	anchor_file = 'tmp/best_strategy_anchor.json'
+	score_history_file = 'score_history.txt'
 
 def quantile(xs, q):
     ys = sorted(float(v) for v in xs)
@@ -342,50 +348,101 @@ if h and h in rs:
         print(f'rolling_comp={comp:.0f}')
         print(f'rolling_p50={p50:.0f}')
         print(f'rolling_p25={p25:.0f}')
-    ranked = []
-    for hh, data in rs.items():
-        sc = data.get('scores', [])
-        m2 = metrics(sc)
-        if not m2:
-            continue
-        _, ccomp, pp50, pp25, nn = m2
-        if nn < min_games_candidates:
-            continue
-        ranked.append((ccomp, pp50, pp25, nn, hh))
-    if ranked:
-        ranked.sort(reverse=True)
-        bc, bp50, bp25, bn, bh = ranked[0]
-        print(f'best_hash_short={bh[:8]}')
-        print(f'best_comp={bc:.0f}')
-        print(f'best_p50={bp50:.0f}')
-        print(f'best_p25={bp25:.0f}')
-        print(f'best_total={bn}')
-        if m:
-            trigger_comp = comp < bc * composite_ratio
-            trigger_p50 = p50 < bp50 * p50_ratio
-            trigger_p25 = p25 < bp25 * p25_ratio
-            if trigger_comp and (trigger_p50 or trigger_p25):
-                reasons = ['comp']
-                if trigger_p50:
-                    reasons.append('p50')
-                if trigger_p25:
-                    reasons.append('q25')
-                detail = 'YES ' + '+'.join(reasons) + ' vs ' + bh[:8] + f' n={n}'
-                print('regression_state=trigger')
-                print('regression_detail=' + shlex.quote(detail))
-            else:
-                detail = 'NO vs ' + bh[:8] + f' n={n}'
-                print('regression_state=safe')
-                print('regression_detail=' + shlex.quote(detail))
-        else:
-            print('regression_state=na')
-            print('regression_detail=' + shlex.quote('N/A'))
-    elif m:
-        print('regression_state=safe')
-        print('regression_detail=' + shlex.quote('NO no best ref'))
-PY
-		)"
-	fi
+	    ranked = []
+	    for hh, data in rs.items():
+	        sc = data.get('scores', [])
+	        m2 = metrics(sc)
+	        if not m2:
+	            continue
+	        _, ccomp, pp50, pp25, nn = m2
+	        if nn < min_games_candidates:
+	            continue
+	        ranked.append((ccomp, pp50, pp25, nn, hh))
+	    ranked_best = None
+	    if ranked:
+	        ranked.sort(reverse=True)
+	        bc, bp50, bp25, bn, bh = ranked[0]
+	        ranked_best = (bc, bp50, bp25, bn, bh)
+	    anchor_best = None
+	    try:
+	        anchor = json.load(open(anchor_file))
+	    except Exception:
+	        anchor = None
+	    if anchor:
+	        ah = str(anchor.get('hash', ''))
+	        an = int(anchor.get('n', 0) or 0)
+	        if ah and ah != h and an >= min_games_candidates:
+	            anchor_best = (
+	                float(anchor.get('comp', 0.0)),
+	                float(anchor.get('p50', 0.0)),
+	                float(anchor.get('p25', 0.0)),
+	                an,
+	                ah,
+	            )
+	    best = ranked_best
+	    best_source = 'rolling'
+	    if anchor_best and (best is None or anchor_best[:4] > best[:4]):
+	        best = anchor_best
+	        best_source = 'anchor'
+	    if best:
+	        bc, bp50, bp25, bn, bh = best
+	        print(f'best_hash_short={bh[:8]}')
+	        print(f'best_comp={bc:.0f}')
+	        print(f'best_p50={bp50:.0f}')
+	        print(f'best_p25={bp25:.0f}')
+	        print(f'best_total={bn}')
+	        print('best_source_short=' + shlex.quote(best_source))
+	        if m:
+	            trigger_comp = comp < bc * composite_ratio
+	            trigger_p50 = p50 < bp50 * p50_ratio
+	            trigger_p25 = p25 < bp25 * p25_ratio
+	            trend50 = False
+	            trend100 = False
+	            try:
+	                all_scores = [int(line.strip()) for line in open(score_history_file) if line.strip()]
+	            except Exception:
+	                all_scores = []
+	            if len(all_scores) >= trend_short_window * 2:
+	                recent = all_scores[-trend_short_window:]
+	                prev = all_scores[-trend_short_window * 2:-trend_short_window]
+	                prev_avg = sum(prev) / len(prev)
+	                recent_avg = sum(recent) / len(recent)
+	                trend50 = prev_avg > 0 and recent_avg < prev_avg * trend_short_ratio
+	            if len(all_scores) >= trend_long_window * 2:
+	                recent = all_scores[-trend_long_window:]
+	                prev = all_scores[-trend_long_window * 2:-trend_long_window]
+	                prev_avg = sum(prev) / len(prev)
+	                recent_avg = sum(recent) / len(recent)
+	                trend100 = prev_avg > 0 and recent_avg < prev_avg * trend_long_ratio
+	            trigger = (trigger_comp and (trigger_p50 or trigger_p25)) or (trend50 and trend100 and bh != h)
+	            reasons = []
+	            if trigger_comp:
+	                reasons.append('comp')
+	            if trigger_p50:
+	                reasons.append('p50')
+	            if trigger_p25:
+	                reasons.append('q25')
+	            if trend50:
+	                reasons.append('trend50')
+	            if trend100:
+	                reasons.append('trend100')
+	            if trigger:
+	                detail = 'YES ' + '+'.join(reasons) + ' vs ' + bh[:8] + f'({best_source}) n={n}'
+	                print('regression_state=trigger')
+	                print('regression_detail=' + shlex.quote(detail))
+	            else:
+	                detail = 'NO vs ' + bh[:8] + f'({best_source}) n={n}'
+	                print('regression_state=safe')
+	                print('regression_detail=' + shlex.quote(detail))
+	        else:
+	            print('regression_state=na')
+	            print('regression_detail=' + shlex.quote('N/A'))
+	    elif m:
+	        print('regression_state=safe')
+	        print('regression_detail=' + shlex.quote('NO no best ref'))
+	PY
+			)"
+		fi
 	[[ -f tmp/rejected_hashes.txt ]] && rejected_count=$(wc -l < tmp/rejected_hashes.txt | tr -d ' ')
 
 	# --- リバートバックアップ ---
@@ -841,8 +898,8 @@ PY
 			printf "    ${C_WHITE}▸${C_RESET} Score       ${C_DIM}comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
 				"$rolling_comp" "$rolling_p50" "$rolling_p25" "${rolling_total:-0}"
 			if [[ -n "$best_comp" ]]; then
-				printf "    ${C_WHITE}▸${C_RESET} BestRef     ${C_DIM}%s  comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
-					"${best_hash_short:-?}" "$best_comp" "$best_p50" "$best_p25" "${best_total:-0}"
+				printf "    ${C_WHITE}▸${C_RESET} BestRef     ${C_DIM}%s(%s)  comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
+					"${best_hash_short:-?}" "${best_source_short:-rolling}" "$best_comp" "$best_p50" "$best_p25" "${best_total:-0}"
 			fi
 			if [[ -n "$regression_state" ]]; then
 				local reg_color="$C_DIM"

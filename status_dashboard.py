@@ -24,6 +24,11 @@ MIN_GAMES_FOR_BEST_ROLLBACK = 12
 REGRESSION_COMPOSITE_RATIO = 0.88
 REGRESSION_P50_RATIO = 0.85
 REGRESSION_P25_RATIO = 0.80
+REGRESSION_TREND_SHORT_WINDOW = 50
+REGRESSION_TREND_LONG_WINDOW = 100
+REGRESSION_TREND_SHORT_RATIO = 0.94
+REGRESSION_TREND_LONG_RATIO = 0.95
+BEST_STRATEGY_ANCHOR_FILE = "tmp/best_strategy_anchor.json"
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -141,6 +146,16 @@ def load_rolling():
         return {}
 
 
+def load_best_anchor():
+    p = Path(BEST_STRATEGY_ANCHOR_FILE)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
+
+
 def quantile(vals, p):
     xs = sorted(vals)
     if not xs:
@@ -180,13 +195,7 @@ def calc_strategy_metrics(scores):
     }
 
 
-def calc_regression_status(rolling, current_hash):
-    if not current_hash or current_hash not in rolling:
-        return None
-    current = calc_strategy_metrics(rolling[current_hash].get("scores", []))
-    if not current:
-        return None
-
+def pick_best_reference(rolling, current_hash, anchor=None):
     ranked = []
     for h, data in rolling.items():
         if h == current_hash:
@@ -194,31 +203,95 @@ def calc_regression_status(rolling, current_hash):
         metrics = calc_strategy_metrics(data.get("scores", []))
         if not metrics or metrics["n"] < MIN_GAMES_FOR_BEST_ROLLBACK:
             continue
-        ranked.append((metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics))
-    if not ranked:
+        ranked.append((metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics, "rolling"))
+
+    best = None
+    if ranked:
+        ranked.sort(reverse=True)
+        best = ranked[0]
+
+    if anchor:
+        anchor_hash = str(anchor.get("hash", ""))
+        anchor_n = int(anchor.get("n", 0) or 0)
+        if anchor_hash and anchor_hash != current_hash and anchor_n >= MIN_GAMES_FOR_BEST_ROLLBACK:
+            anchor_metrics = {
+                "comp": float(anchor.get("comp", 0.0)),
+                "p50": float(anchor.get("p50", 0.0)),
+                "p25": float(anchor.get("p25", 0.0)),
+                "lcb": float(anchor.get("lcb", 0.0)),
+                "n": anchor_n,
+            }
+            anchor_row = (
+                anchor_metrics["comp"],
+                anchor_metrics["p50"],
+                anchor_metrics["p25"],
+                anchor_metrics["n"],
+                anchor_hash,
+                anchor_metrics,
+                "anchor",
+            )
+            if best is None or anchor_row[:4] > best[:4]:
+                best = anchor_row
+    return best
+
+
+def calc_trend_flags(scores):
+    trend50 = False
+    trend100 = False
+    if len(scores) >= REGRESSION_TREND_SHORT_WINDOW * 2:
+        recent = scores[-REGRESSION_TREND_SHORT_WINDOW:]
+        prev = scores[-REGRESSION_TREND_SHORT_WINDOW * 2:-REGRESSION_TREND_SHORT_WINDOW]
+        prev_avg = sum(prev) / len(prev)
+        recent_avg = sum(recent) / len(recent)
+        trend50 = prev_avg > 0 and recent_avg < prev_avg * REGRESSION_TREND_SHORT_RATIO
+    if len(scores) >= REGRESSION_TREND_LONG_WINDOW * 2:
+        recent = scores[-REGRESSION_TREND_LONG_WINDOW:]
+        prev = scores[-REGRESSION_TREND_LONG_WINDOW * 2:-REGRESSION_TREND_LONG_WINDOW]
+        prev_avg = sum(prev) / len(prev)
+        recent_avg = sum(recent) / len(recent)
+        trend100 = prev_avg > 0 and recent_avg < prev_avg * REGRESSION_TREND_LONG_RATIO
+    return trend50, trend100
+
+
+def calc_regression_status(rolling, current_hash, scores, anchor=None):
+    if not current_hash or current_hash not in rolling:
+        return None
+    current = calc_strategy_metrics(rolling[current_hash].get("scores", []))
+    if not current:
+        return None
+
+    best = pick_best_reference(rolling, current_hash, anchor=anchor)
+    if not best:
         return {
             "state": "safe",
             "text": "RegPreview NO no best ref",
         }
 
-    ranked.sort(reverse=True)
-    _, _, _, _, best_hash, best = ranked[0]
-    trigger_comp = current["comp"] < best["comp"] * REGRESSION_COMPOSITE_RATIO
-    trigger_p50 = current["p50"] < best["p50"] * REGRESSION_P50_RATIO
-    trigger_p25 = current["p25"] < best["p25"] * REGRESSION_P25_RATIO
-    if trigger_comp and (trigger_p50 or trigger_p25):
-        reasons = ["comp"]
+    _, _, _, _, best_hash, best_metrics, best_source = best
+    trigger_comp = current["comp"] < best_metrics["comp"] * REGRESSION_COMPOSITE_RATIO
+    trigger_p50 = current["p50"] < best_metrics["p50"] * REGRESSION_P50_RATIO
+    trigger_p25 = current["p25"] < best_metrics["p25"] * REGRESSION_P25_RATIO
+    trend50, trend100 = calc_trend_flags(scores)
+    trigger = (trigger_comp and (trigger_p50 or trigger_p25)) or (trend50 and trend100 and best_hash != current_hash)
+    if trigger:
+        reasons = []
+        if trigger_comp:
+            reasons.append("comp")
         if trigger_p50:
             reasons.append("p50")
         if trigger_p25:
             reasons.append("q25")
+        if trend50:
+            reasons.append("trend50")
+        if trend100:
+            reasons.append("trend100")
         return {
             "state": "trigger",
-            "text": f"RegPreview YES {'+'.join(reasons)} vs {best_hash[:8]} n={current['n']}",
+            "text": f"RegPreview YES {'+'.join(reasons)} vs {best_hash[:8]}({best_source}) n={current['n']}",
         }
     return {
         "state": "safe",
-        "text": f"RegPreview NO vs {best_hash[:8]} n={current['n']}",
+        "text": f"RegPreview NO vs {best_hash[:8]}({best_source}) n={current['n']}",
     }
 
 
@@ -423,6 +496,7 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
     pad4 = inner - len(r4_raw_nocolor)
     lines.append(f"{C_CYAN}│{RST}{r4_display}{' ' * max(pad4, 0)} {C_CYAN}│{RST}")
 
+    anchor = load_best_anchor()
     ranked = []
     current_metrics = None
     for h, data in rolling.items():
@@ -435,9 +509,9 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
             continue
         row = (metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics)
         ranked.append(row)
-    if ranked:
-        ranked.sort(reverse=True)
-        _, _, _, _, best_hash, best_metrics = ranked[0]
+    best_ref = pick_best_reference(rolling, strat_hash, anchor=anchor)
+    if best_ref:
+        _, _, _, _, best_hash, best_metrics, best_source = best_ref
         if current_metrics:
             best_short = best_hash[:8]
             curr_tag = "Curr*" if current_metrics["n"] < 12 else "Curr"
@@ -453,11 +527,11 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
             pad5 = inner - len(curr_raw)
             lines.append(f"{C_CYAN}│{RST}{curr_disp}{' ' * max(pad5, 0)} {C_CYAN}│{RST}")
             best_raw = (
-                f" Best  {best_short} c{int(best_metrics['comp'])} "
+                f" Best  {best_short}/{best_source[:1]} c{int(best_metrics['comp'])} "
                 f"m{int(best_metrics['p50'])} q{int(best_metrics['p25'])} n{int(best_metrics['n'])}"
             )
             best_disp = (
-                f" {C_GREEN}Best{RST}  {best_short} c{int(best_metrics['comp'])} "
+                f" {C_GREEN}Best{RST}  {best_short}/{best_source[:1]} c{int(best_metrics['comp'])} "
                 f"m{int(best_metrics['p50'])} q{int(best_metrics['p25'])} n{int(best_metrics['n'])}"
             )
             pad6 = inner - len(best_raw)
@@ -476,7 +550,7 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
         pad5 = inner - len(curr_raw)
         lines.append(f"{C_CYAN}│{RST}{curr_disp}{' ' * max(pad5, 0)} {C_CYAN}│{RST}")
 
-    reg = calc_regression_status(rolling, strat_hash)
+    reg = calc_regression_status(rolling, strat_hash, scores, anchor=anchor)
     if reg:
         reg_color = DIM
         if reg["state"] == "trigger":
