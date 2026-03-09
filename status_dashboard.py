@@ -291,7 +291,7 @@ def load_improve_state():
 # ── Panel renderers ───────────────────────────────────────────
 
 def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
-                  rejected, accumulated, improve):
+                  rejected, accumulated, improve, rolling):
     game_count = len(scores)
     best = max(scores) if scores else 0
     avg_all = int(sum(scores) / len(scores)) if scores else 0
@@ -375,6 +375,34 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
     r4_display = f" Live: {state_color}{state}{RST}  score={gscore}  pieces={gpieces}{live_extra}"
     pad4 = inner - len(r4_raw_nocolor)
     lines.append(f"{C_CYAN}│{RST}{r4_display}{' ' * max(pad4, 0)} {C_CYAN}│{RST}")
+
+    ranked = []
+    current_metrics = None
+    for h, data in rolling.items():
+        metrics = calc_strategy_metrics(data.get("scores", []))
+        if not metrics or metrics["n"] < 12:
+            continue
+        row = (metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics)
+        ranked.append(row)
+        if strat_hash and h == strat_hash:
+            current_metrics = metrics
+    if ranked:
+        ranked.sort(reverse=True)
+        _, _, _, _, best_hash, best_metrics = ranked[0]
+        if current_metrics:
+            best_short = best_hash[:8]
+            curr_raw = (
+                f" Curr c{int(current_metrics['comp'])} m{int(current_metrics['p50'])} "
+                f"q{int(current_metrics['p25'])}   Best {best_short} "
+                f"c{int(best_metrics['comp'])} m{int(best_metrics['p50'])} q{int(best_metrics['p25'])}"
+            )
+            curr_disp = (
+                f" {C_YELLOW}Curr{RST} c{int(current_metrics['comp'])} m{int(current_metrics['p50'])} "
+                f"q{int(current_metrics['p25'])}   {C_GREEN}Best{RST} {best_short} "
+                f"c{int(best_metrics['comp'])} m{int(best_metrics['p50'])} q{int(best_metrics['p25'])}"
+            )
+            pad5 = inner - len(curr_raw)
+            lines.append(f"{C_CYAN}│{RST}{curr_disp}{' ' * max(pad5, 0)} {C_CYAN}│{RST}")
 
     lines.append(f"{C_CYAN}└{'─' * (W - 2)}┘{RST}")
     return lines
@@ -594,7 +622,7 @@ def main():
     output = []
 
     output += render_header(scores, game_state, strat_hash, strat_ver,
-                            strat_lines, rejected, accumulated, improve)
+                            strat_lines, rejected, accumulated, improve, rolling)
     output.append("")
     output += render_score_timeline(scores)
     output.append("")

@@ -265,6 +265,7 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 	# --- ローリングスコア & リグレッション ---
 	local rolling_hash="" rolling_count=0 rolling_avg="" rolling_prev_avg=""
 	local rolling_comp="" rolling_p50="" rolling_p25="" rolling_total=""
+	local best_hash_short="" best_comp="" best_p50="" best_p25="" best_total=""
 	local rejected_count=0
 	if [[ -f tmp/rolling_scores.json ]] && [[ -f strategy.py ]]; then
 		eval $(python3 -c "
@@ -296,6 +297,28 @@ if h and h in rs:
         print(f'rolling_comp={comp:.0f}')
         print(f'rolling_p50={p50:.0f}')
         print(f'rolling_p25={p25:.0f}')
+    ranked = []
+    for hh, data in rs.items():
+        sc = data.get('scores', [])
+        nn = len(sc)
+        if nn < 12:
+            continue
+        aa = sum(sc)/nn if sc else 0
+        ssc = sorted(sc)
+        pp50 = ssc[nn//2] if nn % 2 == 1 else (ssc[nn//2-1]+ssc[nn//2])/2
+        pp25_idx = max(0, nn//4 - (1 if nn%4==0 else 0))
+        pp25 = ssc[pp25_idx] if nn >= 2 else ssc[0]
+        llcb = aa - 1.96*(sum((s-aa)**2 for s in sc)/nn)**0.5/(nn**0.5) if nn > 1 else aa
+        ccomp = 0.55*pp50 + 0.30*pp25 + 0.15*max(llcb,0)
+        ranked.append((ccomp, pp50, pp25, nn, hh))
+    if ranked:
+        ranked.sort(reverse=True)
+        bc, bp50, bp25, bn, bh = ranked[0]
+        print(f'best_hash_short={bh[:8]}')
+        print(f'best_comp={bc:.0f}')
+        print(f'best_p50={bp50:.0f}')
+        print(f'best_p25={bp25:.0f}')
+        print(f'best_total={bn}')
 " 2>/dev/null)
 	fi
 	[[ -f tmp/rejected_hashes.txt ]] && rejected_count=$(wc -l < tmp/rejected_hashes.txt | tr -d ' ')
@@ -752,6 +775,10 @@ PY
 	if [[ -n "$rolling_comp" ]]; then
 		printf "    ${C_WHITE}▸${C_RESET} Score       ${C_DIM}comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
 			"$rolling_comp" "$rolling_p50" "$rolling_p25" "${rolling_total:-0}"
+		if [[ -n "$best_comp" ]]; then
+			printf "    ${C_WHITE}▸${C_RESET} BestRef     ${C_DIM}%s  comp=%s p50=%s q25=%s  n=%s${C_RESET}\n" \
+				"${best_hash_short:-?}" "$best_comp" "$best_p50" "$best_p25" "${best_total:-0}"
+		fi
 		# Trend mini-bar: comp normalized to max 2000, width 20
 		local bar_max=2000 bar_width=20
 		local bar_filled=$(( rolling_comp * bar_width / bar_max ))
