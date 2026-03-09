@@ -32,6 +32,7 @@ RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-glmflash}"
 RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-zai}"
 RADIO_FACT_CHECK_CLAUDE_MODEL="${RADIO_FACT_CHECK_CLAUDE_MODEL:-$RADIO_CLAUDE_MODEL}"
 RADIO_FACT_CHECK_MIN_CHARS=100
+RADIO_FACT_CHECK_SKIP_CORNERS="${RADIO_FACT_CHECK_SKIP_CORNERS:-strategy}"
 RADIO_WEB_GROUNDING_ENABLED="${RADIO_WEB_GROUNDING_ENABLED:-1}"
 RADIO_WEB_GROUNDING_TTL_SEC="${RADIO_WEB_GROUNDING_TTL_SEC:-21600}"
 RADIO_WEB_GROUNDING_MAX_SOURCES="${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}"
@@ -1204,9 +1205,19 @@ _radio_fetch_web_grounding() {
 	printf '%s' "$grounding"
 }
 
+_radio_should_fact_check() {
+	local corner_name="$1"
+	[ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ] || return 1
+	local skip_list=" ${RADIO_FACT_CHECK_SKIP_CORNERS:-} "
+	case "$skip_list" in
+	*" ${corner_name} "*) return 1 ;;
+	esac
+	return 0
+}
+
 _radio_fact_check_body() {
 	local corner_name="$1" prompt_context="$2" talk_body="$3" selected_news="${4:-}"
-	if [ "${RADIO_FACT_CHECK_ENABLED:-1}" = "0" ]; then
+	if ! _radio_should_fact_check "$corner_name"; then
 		printf '%s' "$talk_body"
 		return 0
 	fi
@@ -2260,7 +2271,7 @@ ${talk_body}"
 		return 1
 	fi
 
-	if [ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ]; then
+	if _radio_should_fact_check "$corner_name"; then
 		local fact_checked_body
 		echo "verifying:${corner_name}:$(date +%s)" > tmp/.radio_state
 		fact_checked_body=$(_radio_fact_check_body "$corner_name" "$prompt_snapshot" "$talk_body" "$selected_news") || {
