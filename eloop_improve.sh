@@ -92,13 +92,15 @@ STAGING_FILE="strategy.py.staging"
 IMPROVE_BRIEF_FILE="tmp/improve_brief.md"
 
 # --- プロンプトに埋め込む参照データ（小さくて重要なもの） ---
-python3 - "$IMPROVE_BRIEF_FILE" "$batch_summary_file" "tmp/advice.md" "$CHANGE_LOG_FILE_HOST" "$SCORES" "$NUM_GAMES" "$best_game_path" "$worst_game_path" <<'PY'
+python3 - "$IMPROVE_BRIEF_FILE" "$batch_summary_file" "tmp/advice.md" "$CHANGE_LOG_FILE_HOST" "$SCORES" "$NUM_GAMES" "$best_game_path" "$worst_game_path" "$HISTORY_FILES" <<'PY'
+import collections
+import json
 import os
 import re
 import statistics
 import sys
 
-out_file, batch_file, advice_file, change_log_file, scores_raw, num_games_raw, best_path, worst_path = sys.argv[1:9]
+out_file, batch_file, advice_file, change_log_file, scores_raw, num_games_raw, best_path, worst_path, history_files_raw = sys.argv[1:10]
 
 def read_text(path: str) -> str:
     if path and os.path.exists(path):
@@ -108,6 +110,83 @@ def read_text(path: str) -> str:
 
 def basename(path: str) -> str:
     return os.path.basename(path) if path else ""
+
+def read_jsonl(path: str):
+    rows = []
+    if not path or not os.path.exists(path):
+        return rows
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        for raw in f:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rows.append(json.loads(raw))
+            except Exception:
+                continue
+    return rows
+
+def deadline_window(rows):
+    if not rows:
+        return []
+    danger = []
+    for row in rows:
+        try:
+            max_y = float(row.get("max_y", -999))
+        except Exception:
+            max_y = -999
+        if max_y >= 2.0:
+            danger.append(row)
+    if danger:
+        return danger[-8:]
+    return rows[-8:]
+
+def summarize_deadline(path: str):
+    rows = read_jsonl(path)
+    if not rows:
+        return None
+    focus = deadline_window(rows)
+    if not focus:
+        return None
+    reasons = collections.Counter()
+    reactive = []
+    max_ys = []
+    score_gain = 0
+    merge_hits = 0
+    for row in focus:
+        reason = str(row.get("decision_reason", "") or "").strip()
+        if reason:
+            reasons[reason] += 1
+        try:
+            reactive.append(int(row.get("reactor_reactive_pairs", 0) or 0))
+        except Exception:
+            pass
+        try:
+            max_ys.append(float(row.get("max_y", 0) or 0))
+        except Exception:
+            pass
+        try:
+            score_gain += int(row.get("score_delta", 0) or 0)
+        except Exception:
+            pass
+        if row.get("merge_available"):
+            merge_hits += 1
+    top_reasons = ", ".join(f"{name}x{count}" for name, count in reasons.most_common(3)) or "n/a"
+    start_turn = focus[0].get("turn", "?")
+    end_turn = focus[-1].get("turn", "?")
+    final_score = rows[-1].get("score", "?")
+    last_max_y = max_ys[-1] if max_ys else 0.0
+    avg_reactive = statistics.mean(reactive) if reactive else 0.0
+    return {
+        "file": basename(path),
+        "final_score": final_score,
+        "turn_span": f"{start_turn}-{end_turn}",
+        "reason_top": top_reasons,
+        "merge_hits": merge_hits,
+        "score_gain": score_gain,
+        "last_max_y": last_max_y,
+        "avg_reactive": avg_reactive,
+    }
 
 scores = []
 for tok in scores_raw.split():
@@ -119,6 +198,7 @@ for tok in scores_raw.split():
 batch = read_text(batch_file)
 advice = read_text(advice_file)
 change_log = read_text(change_log_file)
+history_paths = [p for p in history_files_raw.split() if p]
 
 top_reasons = re.findall(r"^\s{2}([A-Z0-9_]+): .*avg_score_delta=([0-9.\-]+)", batch, re.M)
 high_low = re.search(r"高スコア群の reason 上位5:\n((?:\s+.+\n){1,8})\s+低スコア群の reason 上位5:\n((?:\s+.+\n){1,8})", batch)
@@ -148,11 +228,37 @@ for line in advice.splitlines():
     if len(advice_lines) >= 8:
         break
 
+history_summaries = []
+for path in history_paths:
+    info = summarize_deadline(path)
+    if not info:
+        continue
+    try:
+        score_key = int(info["final_score"])
+    except Exception:
+        score_key = -1
+    history_summaries.append((score_key, path, info))
+history_summaries.sort(key=lambda item: item[0])
+
+extra_deadline_infos = []
+seen_paths = {best_path, worst_path}
+for _, path, info in history_summaries[:2]:
+    if path in seen_paths:
+        continue
+    extra_deadline_infos.append(("low", info))
+    seen_paths.add(path)
+for _, path, info in reversed(history_summaries[-2:]):
+    if path in seen_paths:
+        continue
+    extra_deadline_infos.append(("high", info))
+    seen_paths.add(path)
+
 summary_lines = []
 summary_lines.append("# Improve Brief")
 summary_lines.append("")
 summary_lines.append("## Goal")
 summary_lines.append("今回の改善では、単発最高点よりも直近12試合の中央値・下振れ耐性を優先する。")
+summary_lines.append("特にゲームオーバー直前の立て直しと、dead line 付近での延命ではなく回復につながる判断を重視する。")
 if scores:
     summary_lines.append(
         f"- scores: {' '.join(map(str, scores))}"
@@ -181,6 +287,25 @@ if height_line:
         f"- height trend: high-score early={height_line.group(1)} late={height_line.group(2)} / low-score early={height_line.group(3)} late={height_line.group(4)}"
     )
 summary_lines.append("")
+summary_lines.append("## Deadline Focus")
+summary_lines.append("- 終盤8ターンと `max_y>=2.0` を高危険域として優先的に見る。")
+for label, path in (("worst", worst_path), ("best", best_path)):
+    info = summarize_deadline(path)
+    if not info:
+        continue
+    summary_lines.append(
+        f"- {label}: {info['file']} turns={info['turn_span']} final={info['final_score']} "
+        f"last_max_y={info['last_max_y']:.2f} merge_hits={info['merge_hits']} "
+        f"score_gain={info['score_gain']} reactive_avg={info['avg_reactive']:.1f} reasons={info['reason_top']}"
+    )
+for bucket, info in extra_deadline_infos:
+    summary_lines.append(
+        f"- extra_{bucket}: {info['file']} turns={info['turn_span']} final={info['final_score']} "
+        f"last_max_y={info['last_max_y']:.2f} merge_hits={info['merge_hits']} "
+        f"score_gain={info['score_gain']} reactive_avg={info['avg_reactive']:.1f} reasons={info['reason_top']}"
+    )
+summary_lines.append("- 観点: HIGH_TOWER/HIGH_LAYER に入ってから回復できるか、merge_available を逃していないか、reactive_pairs 増加が得点に変わっているか。")
+summary_lines.append("")
 summary_lines.append("## Recent Change Log Signals")
 if change_lines:
     for line in change_lines:
@@ -202,7 +327,7 @@ summary_lines.append("1. improve_brief.md")
 summary_lines.append("2. sandbox_files.md")
 summary_lines.append("3. batch_summary.txt")
 summary_lines.append("4. change_log.txt")
-summary_lines.append("5. best/worst game logs")
+summary_lines.append("5. best/worst game logs (especially final 8 turns and max_y>=2.0)")
 summary_lines.append("6. recent strategy versions and hall-of-fame strategies")
 
 with open(out_file, "w", encoding="utf-8") as f:
@@ -266,7 +391,7 @@ manifest_file="tmp/sandbox_files.md"
 	echo "以下のファイルは全て読み取り可能。改善前に必ず目録として確認すること。"
 	echo ""
 	echo "### 必須参照ファイル（固定）"
-	echo '- `tmp/improve_brief.md` — 今回の改善で最初に読む圧縮サマリ（最重要）'
+	echo '- `tmp/improve_brief.md` — 今回の改善で最初に読む圧縮サマリ（最重要、終盤8ターンと max_y>=2.0 の要約付き）'
 	echo '- `strategy.py.staging` — 変更対象の現行戦略（必ず最初に読む）'
 	echo '- `tmp/batch_summary.txt` — reason分布/高低比較（必ず読む）'
 	[ -f "tmp/advice.md" ] && echo '- `tmp/advice.md` — 補助アドバイス（存在する場合は読む）'
@@ -274,12 +399,13 @@ manifest_file="tmp/sandbox_files.md"
 	echo '- `tmp/sandbox_files.md` — この目録そのもの（必ず読む）'
 	echo ""
 	echo "### 盤面・ゲームログ（必須）"
+	echo '- 各ゲームログで、終盤8ターンと `max_y>=2.0` の高危険域を必ず確認すること'
 	printf -- '- \`%s\` — 現在の盤面状態\n' "$GAME_STATE"
 	if [ -n "$worst_game_path" ] && [ -f "$worst_game_path" ]; then
-		printf -- '- \`%s\` — ワーストゲーム全ターンログ（**必須: 失敗モード分析**）\n' "$worst_game_path"
+		printf -- '- \`%s\` — ワーストゲーム全ターンログ（**必須: 失敗モード分析。特に終盤8ターン**）\n' "$worst_game_path"
 	fi
 	if [ -n "$best_game_path" ] && [ -f "$best_game_path" ]; then
-		printf -- '- \`%s\` — ベストゲーム全ターンログ（**必須: 成功パターン分析**）\n' "$best_game_path"
+		printf -- '- \`%s\` — ベストゲーム全ターンログ（**必須: 成功パターン分析。特に終盤8ターン**）\n' "$best_game_path"
 	fi
 	echo "- 直近履歴（今回の改善対象に投入済み）:"
 	for hf in "${all_history_files[@]}"; do

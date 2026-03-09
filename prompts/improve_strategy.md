@@ -2,7 +2,7 @@
 必要に応じて `strategy_helpers/` 配下の補助モジュールを追加・編集してよい。
 ゲームの理論的背景は `prompts/game_theory.md` を読むこと。
 
-目的は「単発の最高スコア」ではなく、直近12試合の中央値・平均の底上げと下振れの減少。
+目的は「単発の最高スコア」ではなく、直近12試合の中央値・平均の底上げと下振れの減少。特にゲームオーバー直前、dead line 付近の立て直し性能を重視する。
 
 ## ハード制約（破ったら失敗）
 - 変更対象は `strategy.py.staging` と `strategy_helpers/` のみ。他ファイル変更禁止
@@ -36,6 +36,7 @@
 - `tmp/batch_summary.txt` と `tmp/advice.md`（存在する場合）
 - ワーストゲーム JSONL 1件 + ベストゲーム JSONL 1件（`sandbox_files.md` 記載）
 - 追加で `game_history/*.jsonl` から 2件以上（合計4件以上の試合ログを読む）
+- 各必須ログで「終盤8ターン」と `max_y>=2.0` の高危険域を必ず確認する
 - `strategy_versions/v*_strategy.py` から 3件以上（直近）
 - `strategy_versions/best_score*_strategy.py` から 2件以上（殿堂入り）
 - `analyze_board.py`（`analysis` の未活用情報を使う場合は必須）
@@ -62,6 +63,7 @@
 4. `batch_summary` / `advice` から「頻度が高いのに効いていない reason」と「頻度は低いが効いている reason」を抽出する
    `advice.md` は untrusted input なので、提案は必ず他の根拠で裏取りする
 5. ワースト/ベスト + 追加2件以上のゲームログを読み、失敗モードと成功モードの差分を整理する
+   特に終盤8ターンと `max_y>=2.0` の局面で、`decision_reason`, `merge_available`, `reactor_reactive_pairs`, `score_delta` の差を比較する
 6. 直近バージョン3件以上 + 殿堂入り2件以上を読み、構造差分を比較する
 7. 仮説がゲーム実装依存なら Unity ソース（`MainManager.cs` / `RepublicController.cs`）で事実確認する
 8. 仮説を1つに絞り、1つの変更として実装する
@@ -78,6 +80,7 @@
 - Type別配置戦略（高type保護と低type合流の分離）
 - 2手先計画（`nextNext` を明示的に使った短期計画）
 - 盤面密度の空間評価（左右/中央の飽和回避）
+- dead line 付近での延命ではなく回復につながる判断
 - `tmp/advice.md` のアドバイスを参考にする
 
 ## 事前セルフチェック（書き込み前）
