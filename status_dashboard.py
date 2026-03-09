@@ -254,13 +254,33 @@ def calc_trend_flags(scores):
 
 
 def calc_regression_status(rolling, current_hash, scores, anchor=None):
-    if not current_hash or current_hash not in rolling:
-        return None
-    current = calc_strategy_metrics(rolling[current_hash].get("scores", []))
-    if not current:
-        return None
-
     best = pick_best_reference(rolling, current_hash, anchor=anchor)
+    if not current_hash or current_hash not in rolling:
+        if not best:
+            return {
+                "state": "unknown",
+                "text": "RegPreview N/A current not tracked",
+            }
+        _, _, _, _, best_hash, _, best_source = best
+        return {
+            "state": "unknown",
+            "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) current not tracked",
+        }
+
+    current_scores = rolling[current_hash].get("scores", [])
+    current = calc_strategy_metrics(current_scores)
+    if not current:
+        if not best:
+            return {
+                "state": "unknown",
+                "text": f"RegPreview N/A n={len(current_scores)} no best ref",
+            }
+        _, _, _, _, best_hash, _, best_source = best
+        return {
+            "state": "unknown",
+            "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) n={len(current_scores)}",
+        }
+
     if not best:
         return {
             "state": "safe",
@@ -557,6 +577,8 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
             reg_color = C_RED
         elif reg["state"] == "safe":
             reg_color = C_GREEN
+        elif reg["state"] == "unknown":
+            reg_color = C_YELLOW
         reg_raw = f" {reg['text']}"
         reg_disp = f" {reg_color}{reg['text']}{RST}"
         pad7 = inner - len(reg["text"]) - 1
