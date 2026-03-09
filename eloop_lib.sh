@@ -56,6 +56,7 @@ IMPROVE_AI_LOG_TRIM_LINES=8000
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
 ROLLING_SCORES_FILE="tmp/rolling_scores.json"
 REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
+BEST_STRATEGY_ANCHOR_FILE="tmp/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
 MIN_GAMES_BEFORE_IMPROVE=12
@@ -67,6 +68,10 @@ RANK_WEIGHT_LCB=0.15
 REGRESSION_COMPOSITE_RATIO=0.88
 REGRESSION_P50_RATIO=0.85
 REGRESSION_P25_RATIO=0.80
+REGRESSION_TREND_SHORT_WINDOW=50
+REGRESSION_TREND_LONG_WINDOW=100
+REGRESSION_TREND_SHORT_RATIO=0.94
+REGRESSION_TREND_LONG_RATIO=0.95
 STRATEGY_HASH_ARCHIVE_DIR="strategy_versions/by_hash"
 HASH_ARCHIVE_KEEP_TOP=10
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
@@ -4138,9 +4143,147 @@ _find_strategy_file_by_hash() {
 	return 1
 }
 
+_refresh_best_strategy_anchor() {
+	[ -f "$ROLLING_SCORES_FILE" ] || return 0
+	python3 - "$ROLLING_SCORES_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
+import json
+import math
+import os
+import sys
+from pathlib import Path
+
+rs_file, anchor_file = sys.argv[1], sys.argv[2]
+min_games = int(sys.argv[3])
+lcb_z = float(sys.argv[4])
+w_p50 = float(sys.argv[5])
+w_p25 = float(sys.argv[6])
+w_lcb = float(sys.argv[7])
+
+try:
+    rs = json.load(open(rs_file))
+except Exception:
+    raise SystemExit(0)
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def metrics(scores):
+    xs = [int(v) for v in scores]
+    if len(xs) < min_games:
+        return None
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in xs) / n
+        std = math.sqrt(var)
+    else:
+        std = 0.0
+    lcb = mean - lcb_z * (std / math.sqrt(n))
+    comp = (w_p50 * p50) + (w_p25 * p25) + (w_lcb * lcb)
+    return {
+        "comp": comp,
+        "p50": p50,
+        "p25": p25,
+        "lcb": lcb,
+        "n": n,
+    }
+
+best = None
+for h, data in rs.items():
+    m = metrics(data.get("scores", []))
+    if not m:
+        continue
+    row = (m["comp"], m["p50"], m["p25"], m["n"], h, m)
+    if best is None or row > best:
+        best = row
+
+if best is None:
+    raise SystemExit(0)
+
+_, _, _, _, best_hash, best_metrics = best
+existing = {}
+anchor_path = Path(anchor_file)
+if anchor_path.exists():
+    try:
+        existing = json.loads(anchor_path.read_text())
+    except Exception:
+        existing = {}
+
+replace = False
+if not existing:
+    replace = True
+else:
+    existing_key = (
+        float(existing.get("comp", 0.0)),
+        float(existing.get("p50", 0.0)),
+        float(existing.get("p25", 0.0)),
+        int(existing.get("n", 0)),
+        existing.get("hash", ""),
+    )
+    best_key = (best_metrics["comp"], best_metrics["p50"], best_metrics["p25"], best_metrics["n"], best_hash)
+    if existing.get("hash") == best_hash:
+        replace = True
+    elif best_key > existing_key:
+        replace = True
+
+if not replace:
+    raise SystemExit(0)
+
+payload = {
+    "hash": best_hash,
+    "comp": round(best_metrics["comp"], 4),
+    "p50": round(best_metrics["p50"], 4),
+    "p25": round(best_metrics["p25"], 4),
+    "lcb": round(best_metrics["lcb"], 4),
+    "n": int(best_metrics["n"]),
+    "updated_at": int(__import__("time").time()),
+}
+anchor_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+print(best_hash)
+PY
+}
+
 _pick_best_rollback_candidate() {
 	local current_hash="$1"
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
+
+	local anchor_hash="" anchor_comp="" anchor_p50="" anchor_p25="" anchor_lcb="" anchor_n="" anchor_file=""
+	if [ -f "$BEST_STRATEGY_ANCHOR_FILE" ]; then
+		eval "$(
+			python3 - "$BEST_STRATEGY_ANCHOR_FILE" <<'PY' 2>/dev/null
+import json
+import shlex
+import sys
+
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+
+for key in ("hash", "comp", "p50", "p25", "lcb", "n"):
+    val = data.get(key, "")
+    print(f"anchor_{key}=" + shlex.quote(str(val)))
+PY
+		)"
+	fi
+	if [ -n "$anchor_hash" ] && [ "$anchor_hash" != "$current_hash" ]; then
+		anchor_file=$(_find_strategy_file_by_hash "$anchor_hash")
+		if [ -n "$anchor_file" ]; then
+			echo "${anchor_hash}|${anchor_comp}|${anchor_p50}|${anchor_p25}|${anchor_lcb}|${anchor_n}|${anchor_file}"
+			return 0
+		fi
+	fi
 
 	local ranked
 	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
@@ -4278,9 +4421,13 @@ PY
 	if [ -f "tmp/revert_strategy.py" ]; then
 		revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
 	fi
+	local anchor_hash=""
+	if [ -f "$BEST_STRATEGY_ANCHOR_FILE" ]; then
+		anchor_hash=$(python3 -c "import json; import sys; print(json.load(open('$BEST_STRATEGY_ANCHOR_FILE')).get('hash',''))" 2>/dev/null || echo "")
+	fi
 
 	local keep_hashes
-	keep_hashes=$(printf '%s\n%s\n%s\n' "$ranked_hashes" "$current_hash" "$revert_hash" | sed '/^$/d' | sort -u)
+	keep_hashes=$(printf '%s\n%s\n%s\n%s\n' "$ranked_hashes" "$current_hash" "$revert_hash" "$anchor_hash" | sed '/^$/d' | sort -u)
 
 	local removed=0
 	local f base h
@@ -4324,10 +4471,15 @@ rs[h]['games_total'] += 1
 # 最大20試合分を保持
 rs[h]['scores'] = rs[h]['scores'][-20:]
 
-with open(rs_file, 'w') as f:
-    json.dump(rs, f)
-" 2>/dev/null
-	_prune_hash_archive_by_ranking
+	with open(rs_file, 'w') as f:
+	    json.dump(rs, f)
+	" 2>/dev/null
+		local anchor_updated=""
+		anchor_updated=$(_refresh_best_strategy_anchor 2>/dev/null || true)
+		if [ -n "$anchor_updated" ]; then
+			log "[REGRESSION] best anchor更新: ${anchor_updated}"
+		fi
+		_prune_hash_archive_by_ranking
 }
 
 check_regression() {
@@ -4340,7 +4492,7 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$BEST_STRATEGY_ANCHOR_FILE" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" <<'PY'
 import json
 import math
 import os
@@ -4357,6 +4509,12 @@ w_lcb = float(sys.argv[8])
 composite_ratio = float(sys.argv[9])
 p50_ratio = float(sys.argv[10])
 p25_ratio = float(sys.argv[11])
+anchor_file = sys.argv[12]
+score_history_file = sys.argv[13]
+trend_short_window = int(sys.argv[14])
+trend_long_window = int(sys.argv[15])
+trend_short_ratio = float(sys.argv[16])
+trend_long_ratio = float(sys.argv[17])
 
 if not os.path.exists(rs_file):
     print("OK")
@@ -4419,24 +4577,99 @@ for h, data in rs.items():
     candidates.append((m["composite"], m["p50"], m["p25"], m["n"], h, m))
 
 if not candidates:
+    ranked_best = None
+else:
+    candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
+    ranked_best = candidates[0]
+
+anchor_best = None
+if os.path.exists(anchor_file):
+    try:
+        anchor = json.load(open(anchor_file))
+    except Exception:
+        anchor = None
+    if anchor:
+        anchor_hash = str(anchor.get("hash", ""))
+        anchor_n = int(anchor.get("n", 0))
+        if anchor_hash and anchor_hash != current_hash and anchor_n >= min_games_candidates:
+            anchor_best = (
+                float(anchor.get("comp", 0.0)),
+                float(anchor.get("p50", 0.0)),
+                float(anchor.get("p25", 0.0)),
+                anchor_n,
+                anchor_hash,
+                {
+                    "composite": float(anchor.get("comp", 0.0)),
+                    "p50": float(anchor.get("p50", 0.0)),
+                    "p25": float(anchor.get("p25", 0.0)),
+                    "lcb": float(anchor.get("lcb", 0.0)),
+                    "n": anchor_n,
+                },
+            )
+
+best_ref = ranked_best
+best_source = "rolling"
+if anchor_best and (best_ref is None or anchor_best[:4] > best_ref[:4]):
+    best_ref = anchor_best
+    best_source = "anchor"
+
+if best_ref is None:
     print("OK")
     raise SystemExit
 
-candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
-best_comp, _, _, best_n, best_hash, best = candidates[0]
+best_comp, _, _, best_n, best_hash, best = best_ref
 curr_comp = current["composite"]
 
 is_comp_regression = best_comp > 0 and curr_comp < best_comp * composite_ratio
 is_p50_regression = best["p50"] > 0 and current["p50"] < best["p50"] * p50_ratio
 is_p25_regression = best["p25"] > 0 and current["p25"] < best["p25"] * p25_ratio
+base_regression = is_comp_regression and (is_p50_regression or is_p25_regression)
 
-if is_comp_regression and (is_p50_regression or is_p25_regression):
+trend50 = False
+trend100 = False
+trend50_recent = trend50_prev = None
+trend100_recent = trend100_prev = None
+if os.path.exists(score_history_file):
+    try:
+        all_scores = [int(line.strip()) for line in open(score_history_file) if line.strip()]
+    except Exception:
+        all_scores = []
+    if len(all_scores) >= trend_short_window * 2:
+        recent = all_scores[-trend_short_window:]
+        prev = all_scores[-trend_short_window * 2:-trend_short_window]
+        trend50_recent = sum(recent) / len(recent)
+        trend50_prev = sum(prev) / len(prev)
+        if trend50_prev > 0 and trend50_recent < trend50_prev * trend_short_ratio:
+            trend50 = True
+    if len(all_scores) >= trend_long_window * 2:
+        recent = all_scores[-trend_long_window:]
+        prev = all_scores[-trend_long_window * 2:-trend_long_window]
+        trend100_recent = sum(recent) / len(recent)
+        trend100_prev = sum(prev) / len(prev)
+        if trend100_prev > 0 and trend100_recent < trend100_prev * trend_long_ratio:
+            trend100 = True
+
+trend_regression = (best_hash != current_hash) and trend50 and trend100
+
+if base_regression or trend_regression:
+    reason_parts = []
+    if is_comp_regression:
+        reason_parts.append("comp")
+    if is_p50_regression:
+        reason_parts.append("p50")
+    if is_p25_regression:
+        reason_parts.append("p25")
+    if trend50:
+        reason_parts.append("trend50")
+    if trend100:
+        reason_parts.append("trend100")
     print(
         "REGRESSION:"
-        f"best_hash={best_hash},best_comp={best_comp:.1f},curr_comp={curr_comp:.1f},"
+        f"best_hash={best_hash},best_source={best_source},best_comp={best_comp:.1f},curr_comp={curr_comp:.1f},"
         f"best_p50={best['p50']:.1f},curr_p50={current['p50']:.1f},"
         f"best_p25={best['p25']:.1f},curr_p25={current['p25']:.1f},"
-        f"best_n={best_n},curr_n={current['n']}"
+        f"best_n={best_n},curr_n={current['n']},"
+        f"reasons={'+'.join(reason_parts)}"
     )
 else:
     print("OK")
