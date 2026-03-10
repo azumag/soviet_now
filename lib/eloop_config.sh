@@ -22,21 +22,28 @@ RADIO_OPENCODE_TIMEOUT=180
 RADIO_CLAUDE_MODEL="sonnet"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 RADIO_SAY_RATE=150
-PAST_RADIO_TOPICS="tmp/past_radio_topics.txt"
-PAST_NEWS_READ="tmp/.past_news_read.txt"
-PAST_NEWS_READ_KEYS="tmp/.past_news_read_keys.txt"
 
-IMPROVE_STATE_FILE="tmp/improve_state.json"
-IMPROVE_AI_LOG_FILE="tmp/improve_ai.log"
+TMP_STATE_DIR="tmp/state"
+TMP_MARKERS_DIR="tmp/markers"
+TMP_HISTORY_DIR="tmp/history"
+TMP_DEBUG_DIR="tmp/debug"
+TMP_CACHE_DIR="tmp/cache"
+
+PAST_RADIO_TOPICS="$TMP_HISTORY_DIR/past_radio_topics.txt"
+PAST_NEWS_READ="$TMP_HISTORY_DIR/past_news_read.txt"
+PAST_NEWS_READ_KEYS="$TMP_HISTORY_DIR/past_news_read_keys.txt"
+
+IMPROVE_STATE_FILE="$TMP_STATE_DIR/improve_state.json"
+IMPROVE_AI_LOG_FILE="$TMP_DEBUG_DIR/improve_ai.log"
 IMPROVE_AI_LOG_KEEP_LINES=2000
 IMPROVE_AI_LOG_TRIM_LINES=4000
-ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
-ROLLING_SCORES_FILE="tmp/rolling_scores.json"
-REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
+ACCUMULATED_GAMES_FILE="$TMP_STATE_DIR/accumulated_games.json"
+ROLLING_SCORES_FILE="$TMP_STATE_DIR/rolling_scores.json"
+REJECTED_HASHES_FILE="$TMP_HISTORY_DIR/rejected_hashes.txt"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
 MIN_GAMES_BEFORE_IMPROVE=12
-RUNTIME_RECOVERY_GATE_FILE="tmp/.runtime_recovery_min_games"
+RUNTIME_RECOVERY_GATE_FILE="$TMP_STATE_DIR/.runtime_recovery_min_games"
 MIN_GAMES_FOR_BEST_ROLLBACK=12
 RANK_LCB_Z=1.28
 RANK_WEIGHT_P50=0.55
@@ -74,4 +81,6 @@ PAST_SOVIET_TOPICS_KEEP=100      # 過去ソ連テーマ保持数
 PAST_NEWS_READ_KEEP=60           # 既読ニュース保持数
 PAST_NEWS_READ_KEYS_KEEP=120     # 既読キー保持数
 
-mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "tmp/.twitch_chat" tmp
+mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" \
+	"$TMP_STATE_DIR" "$TMP_MARKERS_DIR" "$TMP_HISTORY_DIR" "$TMP_DEBUG_DIR" "$TMP_CACHE_DIR" \
+	"$COMMENT_QUEUE_DIR" "tmp/.twitch_chat"

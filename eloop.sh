@@ -202,13 +202,13 @@ handle_russia_celebration() {
 	log "!!! RUSSIA CREATED !!!"
 
 	generate_russia_celebration "$score" "$turns" "$game_num"
-	if [ -f "tmp/radio_russia_celebration.txt" ] && [ -s "tmp/radio_russia_celebration.txt" ]; then
-		_refresh_radio_intro_for_playback_file "tmp/radio_russia_celebration.txt" "russia_celebration"
-		./say_enqueue.sh --no-preempt tmp/radio_russia_celebration.txt "$RADIO_SAY_RATE" 0
+	if [ -f "$TMP_DEBUG_DIR/radio_russia_celebration.txt" ] && [ -s "$TMP_DEBUG_DIR/radio_russia_celebration.txt" ]; then
+		_refresh_radio_intro_for_playback_file "$TMP_DEBUG_DIR/radio_russia_celebration.txt" "russia_celebration"
+		./say_enqueue.sh --no-preempt "$TMP_DEBUG_DIR/radio_russia_celebration.txt" "$RADIO_SAY_RATE" 0
 	fi
 	_radio_clear_state "russia_celebration"
 	rm -f "$RUSSIA_CELEBRATION_WORKER_PID_FILE"
-	rm -f tmp/.russia_created
+	rm -f "$TMP_MARKERS_DIR/.russia_created"
 }
 
 #=== ソ連建国祝賀 ===
@@ -237,7 +237,7 @@ handle_soviet_celebration() {
 		_play_priority_audio_file "tmp/radio_celebration.txt" "celebration"
 	fi
 	_radio_clear_state "celebration"
-	rm -f tmp/.soviet_created
+	rm -f "$TMP_MARKERS_DIR/.soviet_created"
 
 	# コメントプレイヤー・ウォッチャー再開
 	start_comment_player

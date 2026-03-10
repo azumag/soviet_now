@@ -28,9 +28,9 @@ REGRESSION_TREND_SHORT_WINDOW = 50
 REGRESSION_TREND_LONG_WINDOW = 100
 REGRESSION_TREND_SHORT_RATIO = 0.94
 REGRESSION_TREND_LONG_RATIO = 0.95
-BEST_STRATEGY_ANCHOR_FILE = "tmp/best_strategy_anchor.json"
-REJECTED_HASHES_FILE = "tmp/rejected_hashes.txt"
-REJECTED_HASH_META_FILE = "tmp/rejected_hash_metrics.json"
+BEST_STRATEGY_ANCHOR_FILE = "tmp/state/best_strategy_anchor.json"
+REJECTED_HASHES_FILE = "tmp/history/rejected_hashes.txt"
+REJECTED_HASH_META_FILE = "tmp/state/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_MIN_NEW_GAMES = 8
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
@@ -142,7 +142,7 @@ def load_scores():
 
 
 def load_rolling():
-    p = Path("tmp/rolling_scores.json")
+    p = Path("tmp/state/rolling_scores.json")
     if not p.exists():
         return {}
     try:
@@ -480,7 +480,7 @@ def get_strategy_lines():
 
 
 def get_accumulated_count():
-    p = Path("tmp/accumulated_games.json")
+    p = Path("tmp/state/accumulated_games.json")
     if not p.exists():
         return 0
     try:
@@ -490,7 +490,7 @@ def get_accumulated_count():
 
 
 def get_rejected_count():
-    p = Path("tmp/rejected_hashes.txt")
+    p = Path("tmp/history/rejected_hashes.txt")
     if not p.exists():
         return 0
     try:
@@ -500,7 +500,7 @@ def get_rejected_count():
 
 
 def load_improve_state():
-    p = Path("tmp/improve_state.json")
+    p = Path("tmp/state/improve_state.json")
     base = {
         "status": "idle",
         "pid": 0,

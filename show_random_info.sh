@@ -48,8 +48,8 @@ print(f\"{len(d.get('pieces',[]))} pieces / {d.get('score',0)} pts / {d.get('sta
 		[[ -n "$info" ]] && snippets+=("Board: $info")
 	fi
 
-	if [[ -f tmp/past_radio_topics.txt ]] && [[ -s tmp/past_radio_topics.txt ]]; then
-		local lines=("${(@f)$(cat tmp/past_radio_topics.txt)}")
+	if [[ -f "$TMP_HISTORY_DIR/past_radio_topics.txt" ]] && [[ -s "$TMP_HISTORY_DIR/past_radio_topics.txt" ]]; then
+		local lines=("${(@f)$(cat "$TMP_HISTORY_DIR/past_radio_topics.txt")}")
 		(( ${#lines} > 0 )) && snippets+=("${lines[$((RANDOM % ${#lines} + 1))]}")
 	fi
 
@@ -71,13 +71,13 @@ print(f\"{len(d.get('pieces',[]))} pieces / {d.get('score',0)} pts / {d.get('sta
 	local archives=$(ls -1 game_history/[0-9]*_score*.jsonl 2>/dev/null | wc -l | tr -d ' ')
 	(( archives > 0 )) && snippets+=("${archives} game logs archived")
 
-	if [[ -f tmp/improve_state.json ]]; then
-		local imp=$(python3 -c "import json; print(json.load(open('tmp/improve_state.json')).get('status','?'))" 2>/dev/null)
+	if [[ -f "$TMP_STATE_DIR/improve_state.json" ]]; then
+		local imp=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/improve_state.json')).get('status','?'))" 2>/dev/null)
 		snippets+=("Improve: ${imp}")
 	fi
 
-	if [[ -f tmp/accumulated_games.json ]]; then
-		local acc=$(python3 -c "import json; print(json.load(open('tmp/accumulated_games.json')).get('count',0))" 2>/dev/null)
+	if [[ -f "$TMP_STATE_DIR/accumulated_games.json" ]]; then
+		local acc=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/accumulated_games.json')).get('count',0))" 2>/dev/null)
 		(( acc > 0 )) && snippets+=("${acc} games queued for improvement")
 	fi
 
@@ -94,8 +94,8 @@ print(f\"{len(d.get('pieces',[]))} pieces / {d.get('score',0)} pts / {d.get('sta
 		if (( ${#nlines} > 0 )); then
 			# 既読管理: news.txt が更新されたらリセット
 			local news_mtime=$(stat -f %m tmp/news.txt 2>/dev/null)
-			local shown_file="tmp/.news_shown_lines.txt"
-			local shown_mtime_file="tmp/.news_shown_mtime.txt"
+			local shown_file="$TMP_STATE_DIR/.news_shown_lines.txt"
+			local shown_mtime_file="$TMP_STATE_DIR/.news_shown_mtime.txt"
 			local last_mtime=$(cat "$shown_mtime_file" 2>/dev/null)
 			if [[ "$news_mtime" != "$last_mtime" ]]; then
 				: > "$shown_file"

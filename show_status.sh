@@ -241,7 +241,7 @@ print(f'imp_progress={int(d.get(\"progress\",0) or 0)}')
 		imp_alive=true
 		imp_elapsed=$(_pid_elapsed "$imp_pid")
 	fi
-	local improve_ai_log="tmp/improve_ai.log"
+	local improve_ai_log="$TMP_DEBUG_DIR/improve_ai.log"
 	local imp_ai_source="" imp_ai_output_block="" imp_ai_age=""
 	if [[ -f "$improve_ai_log" ]] && [[ -s "$improve_ai_log" ]]; then
 		local ai_tail_lines="${SHOW_STATUS_AI_TAIL_LINES:-400}"
@@ -303,9 +303,9 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 
 	# --- 蓄積ゲーム ---
 	local acc_count=0 acc_scores=""
-	if [[ -f tmp/accumulated_games.json ]]; then
-		acc_count=$(python3 -c "import json; print(json.load(open('tmp/accumulated_games.json')).get('count',0))" 2>/dev/null)
-		acc_scores=$(python3 -c "import json; print(json.load(open('tmp/accumulated_games.json')).get('scores',''))" 2>/dev/null)
+	if [[ -f $TMP_STATE_DIR/accumulated_games.json ]]; then
+		acc_count=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/accumulated_games.json')).get('count',0))" 2>/dev/null)
+		acc_scores=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/accumulated_games.json')).get('scores',''))" 2>/dev/null)
 	fi
 
 	# --- ローリングスコア & リグレッション ---
@@ -314,7 +314,7 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 	local best_hash_short="" best_comp="" best_p50="" best_p25="" best_total="" best_source_short=""
 	local regression_state="" regression_detail=""
 		local rejected_count=0
-		if [[ -f tmp/rolling_scores.json ]] && [[ -f strategy.py ]]; then
+		if [[ -f $TMP_STATE_DIR/rolling_scores.json ]] && [[ -f strategy.py ]]; then
 			eval "$(
 				python3 - <<PY 2>/dev/null
 import json
@@ -322,7 +322,7 @@ import math
 import shlex
 import subprocess
 
-rs = json.load(open("tmp/rolling_scores.json"))
+rs = json.load(open("$TMP_STATE_DIR/rolling_scores.json"))
 h = subprocess.run(
     ["python3", "extract_decide_hash.py", "strategy.py"],
     capture_output=True,
@@ -336,7 +336,7 @@ trend_short_window = int(${REGRESSION_TREND_SHORT_WINDOW})
 trend_long_window = int(${REGRESSION_TREND_LONG_WINDOW})
 trend_short_ratio = float(${REGRESSION_TREND_SHORT_RATIO})
 trend_long_ratio = float(${REGRESSION_TREND_LONG_RATIO})
-anchor_file = "tmp/best_strategy_anchor.json"
+anchor_file = "$TMP_STATE_DIR/best_strategy_anchor.json"
 score_history_file = "score_history.txt"
 
 def quantile(xs, q):
@@ -489,7 +489,7 @@ if h and h in rs:
 PY
 			)"
 		fi
-	[[ -f tmp/rejected_hashes.txt ]] && rejected_count=$(wc -l < tmp/rejected_hashes.txt | tr -d ' ')
+	[[ -f $TMP_HISTORY_DIR/rejected_hashes.txt ]] && rejected_count=$(wc -l < $TMP_HISTORY_DIR/rejected_hashes.txt | tr -d ' ')
 
 	# --- リバートバックアップ ---
 	local revert_available=false
@@ -675,8 +675,8 @@ PY
 
 	# --- ラジオコーナー状態 (状態ファイルベース) ---
 	local radio_status="idle" radio_corner="" radio_elapsed=""
-	if [[ -f tmp/.radio_state ]]; then
-		local radio_line=$(cat tmp/.radio_state 2>/dev/null)
+	if [[ -f $TMP_STATE_DIR/.radio_state ]]; then
+		local radio_line=$(cat $TMP_STATE_DIR/.radio_state 2>/dev/null)
 		local radio_mode=${radio_line%%:*}
 		local rest=${radio_line#*:}
 		radio_corner=${rest%%:*}
@@ -699,8 +699,8 @@ PY
 	fi
 	# 注: sayフォールバックは廃止 (コメント再生との区別不可のため状態ファイルのみで判定)
 	# コーナー名が取れなかった場合、過去トピックスから取得
-		if [[ -z "$radio_corner" ]] && [[ -f tmp/past_radio_topics.txt ]] && [[ -s tmp/past_radio_topics.txt ]]; then
-			local last_radio_line=$(tail -1 tmp/past_radio_topics.txt)
+		if [[ -z "$radio_corner" ]] && [[ -f $TMP_HISTORY_DIR/past_radio_topics.txt ]] && [[ -s $TMP_HISTORY_DIR/past_radio_topics.txt ]]; then
+			local last_radio_line=$(tail -1 $TMP_HISTORY_DIR/past_radio_topics.txt)
 			radio_corner=$(echo "$last_radio_line" | grep -oE '\[[a-z_]+\]' | tail -1 | tr -d '[]')
 		fi
 
@@ -735,8 +735,8 @@ PY
 			comment_gen_running=true
 		fi
 	fi
-	if ! $comment_gen_running && [[ -f tmp/.comment_gen_state ]]; then
-		local cg_line=$(cat tmp/.comment_gen_state 2>/dev/null)
+	if ! $comment_gen_running && [[ -f $TMP_STATE_DIR/.comment_gen_state ]]; then
+		local cg_line=$(cat $TMP_STATE_DIR/.comment_gen_state 2>/dev/null)
 		local cg_ts=${cg_line##*:}
 		if [[ -n "$cg_ts" ]] && (( $(date +%s) - cg_ts < 300 )); then
 			comment_gen_running=true

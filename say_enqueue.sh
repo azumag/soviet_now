@@ -42,7 +42,7 @@ LOCK_OWNER_FILE="$LOCK_DIR/owner_pid"
 LOCK_HEARTBEAT_FILE="$LOCK_DIR/heartbeat"
 CURRENT_SOURCE_FILE="$QUEUE_DIR/current_source"
 PLAYED_LOG_FILE="$QUEUE_DIR/played.log"
-LAST_RADIO_PLAYED_FILE="tmp/radio_talk_played"
+LAST_RADIO_PLAYED_FILE="tmp/state/radio_talk_played"
 LOCK_STALE_SEC=180
 
 if [ ! -s "$CONTENT_FILE" ]; then
@@ -87,7 +87,7 @@ _infer_source_label() {
         echo "radio:celebration"
         return 0
         ;;
-    *"tmp/radio_russia_celebration.txt")
+    *"radio_russia_celebration.txt")
         echo "radio:russia"
         return 0
         ;;

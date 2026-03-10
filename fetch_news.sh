@@ -4,12 +4,15 @@
 # 過去に使った見出しは除外して同じニュースを繰り返さない
 
 cd "$(dirname "$0")"
-mkdir -p tmp
+
+TMP_HISTORY_DIR="tmp/history"
+TMP_STATE_DIR="tmp/state"
+mkdir -p tmp "$TMP_HISTORY_DIR" "$TMP_STATE_DIR"
 
 OUTFILE="tmp/news.txt"
-PAST_NEWS="tmp/.past_news_titles.txt"
-PAST_NEWS_LINKS="tmp/.past_news_links.txt"
-LAST_NEWS_CACHE="tmp/.news_last_success.txt"
+PAST_NEWS="$TMP_HISTORY_DIR/.past_news_titles.txt"
+PAST_NEWS_LINKS="$TMP_HISTORY_DIR/.past_news_links.txt"
+LAST_NEWS_CACHE="$TMP_STATE_DIR/.news_last_success.txt"
 NEWS_ALLOW_STALE_CACHE="${NEWS_ALLOW_STALE_CACHE:-0}"
 
 # 複数カテゴリの RSS を使い候補を増やす

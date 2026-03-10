@@ -28,7 +28,7 @@ GAME_STATE = "game_state.json"
 COMMANDS = "commands.txt"
 HISTORY_DIR = "game_history"
 HISTORY_FILE = os.path.join(HISTORY_DIR, "latest.jsonl")
-RUSSIA_WORKER_PID_FILE = "tmp/.russia_celebration_worker.pid"
+RUSSIA_WORKER_PID_FILE = "tmp/state/.russia_celebration_worker.pid"
 
 # 座標変換
 GAME_X_MIN = -3.0
@@ -319,11 +319,11 @@ def run_game():
 
     # 前回の建国フラグをクリア（ゲーム開始時に毎回リセット）
     try:
-        os.remove("tmp/.russia_created")
+        os.remove("tmp/markers/.russia_created")
     except FileNotFoundError:
         pass
     try:
-        os.remove("tmp/.soviet_created")
+        os.remove("tmp/markers/.soviet_created")
     except FileNotFoundError:
         pass
 
@@ -362,8 +362,8 @@ def run_game():
             if not russia_created and any(p.get("type", 0) == 15 for p in pieces):
                 russia_created = True
                 log(f"!!! RUSSIA CREATED !!! ロシア建国達成！ score={score}")
-                os.makedirs("tmp", exist_ok=True)
-                with open("tmp/.russia_created", "w") as flag_f:
+                os.makedirs("tmp/markers", exist_ok=True)
+                with open("tmp/markers/.russia_created", "w") as flag_f:
                     flag_f.write(f"{turn}|{score}\n")
                 log("ロシア建国フラグ記録完了")
                 russia_announced = trigger_russia_celebration_now(score, turn)
@@ -375,8 +375,8 @@ def run_game():
                     soviet_created = True
                     log(f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} makeSorenCount={gs.get('makeSorenCount', 0)}")
                     # フラグファイル作成（eloop.shが参照）
-                    os.makedirs("tmp", exist_ok=True)
-                    with open("tmp/.soviet_created", "w") as flag_f:
+                    os.makedirs("tmp/markers", exist_ok=True)
+                    with open("tmp/markers/.soviet_created", "w") as flag_f:
                         flag_f.write(f"{turn}\n")
                     log("ソ連建国フラグ記録完了（読み上げはキュー順で継続）")
                     # 建国後は戦略実行を停止し、これ以上コマンド送信しない

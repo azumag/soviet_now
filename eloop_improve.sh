@@ -160,7 +160,7 @@ cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
 
 # 改善前のdecide()ハッシュを記録
 HASH_BEFORE=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-HOST_REJECTED_HASHES_FILE="$HOST_ROOT/tmp/rejected_hashes.txt"
+HOST_REJECTED_HASHES_FILE="$HOST_ROOT/$REJECTED_HASHES_FILE"
 CHANGE_LOG_FILE="tmp/change_log.txt"
 CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 
@@ -541,7 +541,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	if [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ]; then
 		find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort > "$SANDBOX_TOPLEVEL_PY_BASELINE"
 	fi
-	RUN_CMD_SESSION_DIR="$PWD/tmp/.improve_retry_sessions"
+	RUN_CMD_SESSION_DIR="$PWD/$TMP_STATE_DIR/.improve_retry_sessions"
 	RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
 	export RUN_CMD_SESSION_DIR
 	export RUN_CMD_OPENCODE_PERMISSION

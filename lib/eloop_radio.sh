@@ -223,8 +223,8 @@ _resolve_selected_news_title() {
 _radio_clear_state() {
 	local my_corner="$1"
 	local current
-	current=$(cat tmp/.radio_state 2>/dev/null) || return 0
-	case "$current" in *":${my_corner}:"*) rm -f tmp/.radio_state ;; esac
+	current=$(cat $RADIO_STATE_FILE 2>/dev/null) || return 0
+	case "$current" in *":${my_corner}:"*) rm -f $RADIO_STATE_FILE ;; esac
 }
 
 _radio_generate_and_play() {
@@ -239,18 +239,18 @@ _radio_generate_and_play() {
 	done
 
 	# 同一 game_num + corner の二重生成/二重再生を防止
-	local done_marker="tmp/.radio_done_${game_num}_${corner_name}"
+	local done_marker="$TMP_MARKERS_DIR/.radio_done_${game_num}_${corner_name}"
 	if [ -f "$done_marker" ]; then
 		log "[RADIO:${corner_name}] duplicate skip: already done for game=${game_num}"
 		return 0
 	fi
-	local inflight_dir="tmp/.radio_inflight_${game_num}_${corner_name}"
+	local inflight_dir="$TMP_MARKERS_DIR/.radio_inflight_${game_num}_${corner_name}"
 	if ! mkdir "$inflight_dir" 2>/dev/null; then
 		log "[RADIO:${corner_name}] duplicate skip: in-flight for game=${game_num}"
 		return 0
 	fi
 
-	echo "generating:${corner_name}:$(date +%s)" > tmp/.radio_state
+	echo "generating:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 	log "[RADIO:${corner_name}] トーク生成中..."
 	local talk
 	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
@@ -349,7 +349,7 @@ ${talk_body}"
 
 	if [ ${#talk_body} -lt "${RADIO_MIN_TALK_LENGTH:-100}" ]; then
 		local debug_dump
-		debug_dump="tmp/radio_short_${corner_name}_$(date +%s).txt"
+		debug_dump="$TMP_DEBUG_DIR/radio_short_${corner_name}_$(date +%s).txt"
 		{
 			echo "===RAW==="
 			printf '%s\n' "$talk"
@@ -374,7 +374,7 @@ ${talk_body}"
 	local talk_file
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 	echo "$talk_body" >"$talk_file"
-	echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
+	echo "playing:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 	log "[RADIO:${corner_name}] ${#talk_body}字"
 	if [ "$no_preempt" = true ]; then
 		./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
@@ -385,7 +385,7 @@ ${talk_body}"
 	touch "$done_marker"
 	# 古い重複防止マーカーを掃除（最新200件だけ保持）
 	local old_markers
-	old_markers=$(ls -1t tmp/.radio_done_* 2>/dev/null | tail -n +201 || true)
+	old_markers=$(ls -1t $TMP_MARKERS_DIR/.radio_done_* 2>/dev/null | tail -n +201 || true)
 	if [ -n "$old_markers" ]; then
 		echo "$old_markers" | xargs rm -f 2>/dev/null || true
 	fi
@@ -424,7 +424,7 @@ _pick_radio_theme() {
 	if [ ${#themes[@]} -eq 0 ]; then
 		themes=("世界の料理と文化の話。各国の食卓と暮らしの違いを深掘りして")
 	fi
-	local past_themes_file="tmp/.past_radio_themes.txt"
+	local past_themes_file="$PAST_RADIO_TOPICS"
 	local available_themes=()
 	local past_theme_list=""
 	[ -f "$past_themes_file" ] && past_theme_list=$(cat "$past_themes_file")
@@ -453,7 +453,7 @@ _pick_soviet_theme() {
 	while IFS= read -r _line; do
 		[ -n "$_line" ] && soviet_themes+=("$_line")
 	done < "$ELOOP_LIB_DIR/data/radio_soviet_themes.txt"
-	local past_soviet_file="tmp/.past_soviet_themes.txt"
+	local past_soviet_file="$TMP_HISTORY_DIR/.past_soviet_themes.txt"
 	local available_soviet=()
 	local past_soviet_list=""
 	[ -f "$past_soviet_file" ] && past_soviet_list=$(cat "$past_soviet_file")
@@ -719,7 +719,7 @@ generate_soviet_celebration() {
 
 	export score turns game_num current_time
 	envsubst < "$ELOOP_LIB_DIR/prompts/celebration.md" > "$celebration_prompt_file"
-	echo "generating:celebration:$(date +%s)" > tmp/.radio_state
+	echo "generating:celebration:$(date +%s)" > $RADIO_STATE_FILE
 	log "[CELEBRATION] 生成中..."
 	local celebration_talk
 	celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
@@ -733,7 +733,7 @@ generate_soviet_celebration() {
 
 	if [ -n "$celebration_talk" ]; then
 		echo "$celebration_talk" >tmp/radio_celebration.txt
-		echo "playing:celebration:$(date +%s)" > tmp/.radio_state
+		echo "playing:celebration:$(date +%s)" > $RADIO_STATE_FILE
 		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
 		_radio_clear_state "celebration"
