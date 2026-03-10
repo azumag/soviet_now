@@ -392,6 +392,7 @@ manifest_file="tmp/sandbox_files.md"
 {
 	echo "## サンドボックス内の利用可能ファイル"
 	echo "以下のファイルは全て読み取り可能。改善前に必ず目録として確認すること。"
+	echo "この目録は全件読破のためではなく、最短で必要ファイルへ到達するための索引として使うこと。"
 	echo ""
 	echo "### 必須参照ファイル（固定）"
 	echo '- `tmp/improve_brief.md` — 今回の改善で最初に読む圧縮サマリ（最重要、終盤8ターンと max_y>=2.0 の要約付き）'
@@ -416,11 +417,11 @@ manifest_file="tmp/sandbox_files.md"
 	done
 	echo ""
 	echo "### 戦略バージョン（必須）"
-	echo "- 直近バージョン（最低3件は必ず読む）:"
+	echo "- 直近バージョン（最低2件。存在数が少なければ available 分だけ読む）:"
 	for vf in "${recent_strategy_files[@]}"; do
 		printf -- '  - \`%s\`\n' "$vf"
 	done
-	echo "- 殿堂入り戦略（最低2件は必ず読む）:"
+	echo "- 殿堂入り戦略（最低1件は必ず読む）:"
 	for bf in "${hall_of_fame_files[@]}"; do
 		printf -- '  - \`%s\`\n' "$bf"
 	done
@@ -429,6 +430,7 @@ manifest_file="tmp/sandbox_files.md"
 	echo "### ゲーム実装・理論（条件付きで必須）"
 	echo '- `prompts/game_theory.md` — ゲーム理論的背景'
 	echo '- `analyze_board.py` — 盤面解析実装（analysis dict の構造確認用）'
+	echo '- ここまでで仮説が立ったら追加読みに進まず実装すること'
 	echo "- Unity実装（merge/score/物理/着地挙動を変更する場合は必読）:"
 	for cs in "${unity_source_files[@]}"; do
 		printf -- '  - \`%s\`\n' "$cs"
