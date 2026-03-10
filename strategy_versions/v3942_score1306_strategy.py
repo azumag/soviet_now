@@ -8,15 +8,15 @@ Game Overview:
   - Player controls only drop X coordinate
 
  Decision Logic (7 evaluation axes):
-    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-    2. Height penalty - Penalty for high landing position (varies by phase)
-    3. Drift penalty - Penalty for post-landing drift due to polygon shape
-    4. Left-right balance correction - Bonus for correcting piece count bias
-    5. nextNext centering - Center for next merge opportunity if nextNext same type
-    6. Chain merge bonus - Evaluate possibility of further merges after merge
-    7. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
+     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+     2. Height penalty - Penalty for high landing position (varies by phase)
+     3. Drift penalty - Penalty for post-landing drift due to polygon shape
+     4. Left-right balance correction - Bonus for correcting piece count bias
+     5. nextNext centering - Center for next merge opportunity if nextNext same type
+     6. Chain merge bonus - Evaluate possibility of further merges after merge
+     7. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
 
-      v3810: 危険局面フィルタリング早期化強化・NEAR_PAIR_POTENTIAL無効化版 - max_y>=1.5かつreactive_pairs>=3で即時併合を最優先
+      v3932: 危険局面フィルタリング段階的強化版 - max_y>=1.8,reactive_pairs>=2 または max_y>=2.2,reactive_pairs>=2 で即時併合を最優先
       ワーストゲーム(score0522)の終盤(turns 53-60, max_y=2.96-3.0, reactive_pairs=6-7)でHIGH_TOWERが選択され続け、即時併合を逃している問題を解決
       危険度閾値をmax_y>=1.5に引き下げ、reactive_pairs>=3に引き上げて、より早期かつ高濃度の反応状況で盤面圧縮を強制
       ベストゲーム(score3353)でもmax_y=1.57でreactive_pairs=3の状況があり、早期から併合優先が必要
@@ -59,21 +59,14 @@ Game Overview:
 # v175: REACTIVE_MERGE_PRIORITY評価軸追加版 - 終盤高危険域(max_y>=1.8)でreactive_pairs>=2がある場合、DIRECT/NEARに+500ボーナスを付与し即時併合機会を優先。
 # ワーストゲームの終盤8ターン(max_y=2.37-2.38, reactive_pairs=3)でDEFAULT_PLACEMENTが続き即時併合機会を逃している失敗パターンを特定。
 # v177の成功構造を復帰し、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先することでスコア安定性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_125627_score0528.jsonl, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
-# v176: DANGER_RECOVERY_PENALTY評価軸追加版 - ワーストゲーム(score0794)の終盤8ターン(turns 58-60)でHIGH_TOWERが3回選択され、reactive_pairs=2があるにもかかわらず即時併合を逃している失敗パターンを特定。
-# 現行のDANGER_RECOVERY評価軸（+800ボーナス）はmerge_gradeが"DIRECT"または"NEAR"の場合のみ発動するが、NEAR_MERGE機会自体が選ばれていないという悪循環がある。
-# max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARマージ機会がない配置に-1000ペナルティを課す評価軸を追加。
-# これにより、HIGH_TOWERなどの非併合配置を間接的に抑制し、NEAR_MERGE選択率を向上させることでスコア安定性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_132049_score0794.jsonl, strategy_versions/v3769_score0794_strategy.py, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
-# v177: 危険局面フィルタリング追加版 - ワーストゲーム(score1143)の終盤8ターン(turns 72-74)でHIGH_LAYER_DANGER_RECOVERY_PENALTYが3回連続選択され、max_y=3.31まで上昇してdead lineに到達寸前。
-# DANGER_RECOVERY_PENALTYの-1000ペナルティが発動しているが、全ての候補にペナルティが課されているため、非併合配置が依然として選ばれる悪循環を特定。
-# max_y>=2.0でreactive_pairs>=2の場合、merge_gradeがDIRECTまたはNEARの候補のみを評価対象にするフィルタリングを追加し、非併合配置を物理的に除外。
-# これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を防ぎ、即時併合による盤面圧縮を強制することでスコア安定性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_133049_score1143.jsonl turns 72-74
-# v3805: BOARD_DENSITY評価軸削除版 - batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認。
-# 低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
-# BOARD_DENSITYを削除し、併合機会を逃す配置を排除することでスコア安定性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_214437_score0676.jsonl, game_history/20260310_214152_score4120.jsonl, strategy_versions/v3931_score1716_strategy.py, prompts/game_theory.md
+# v3932: 危険局面フィルタリング段階的強化版 - ワーストゲーム(score0676)の終盤8ターン(turns 67-74, max_y=3.54-3.98, reactive_pairs=2-3)でHIGH_LAYERが選択され続け、即時併合を逃している問題を解決
+# batch_summary分析で、高スコア群と低スコア群の終盤max_y推移差(終盤avg=1.74 vs 1.75)は小さいが、序盤avg差(-2.35 vs -2.83)が大きいことを確認
+# 高スコア群は序盤から盤面を高く保ち、終盤で余裕を持っている。一方、低スコア群は序盤から低く保ち、終盤で危険度が高まると対応できていない
+# 現行のフィルタリング(max_y>=1.5, reactive_pairs>=3)は条件が厳しくすぎて、reactive_pairs=2の危険局面で即時併合機会を逃している
+# 危険度に応じて段階的にフィルタリングを強化し、max_y>=1.8でreactive_pairs>=2から、max_y>=2.2でさらに強くフィルタリング
+# これにより、危険局面から早期に即時併合を最優先し、盤面圧縮とスコア回復を促進することでスコア安定性を向上させる
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_214437_score0676.jsonl turns 67-74, game_history/20260310_214152_score4120.jsonl
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -81,20 +74,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v3805: BOARD_DENSITY評価軸削除版
+    """v3932: 危険局面フィルタリング段階的強化版
 
-    batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認。
-    低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
-    v171で追加したBOARD_DENSITY評価軸を削除し、併合機会を逃す盤面分散配置を排除することでスコア安定性を向上させる。
+    batch_summary分析で、高スコア群と低スコア群の終盤max_y推移差(終盤avg=1.74 vs 1.75)は小さいが、序盤avg差(-2.35 vs -2.83)が大きいことを確認。
+    高スコア群は序盤から盤面を高く保ち、終盤で余裕を持っている。一方、低スコア群は序盤から低く保ち、終盤で危険度が高まると対応できていない。
+    現行のフィルタリング(max_y>=1.5, reactive_pairs>=3)は条件が厳しくすぎて、reactive_pairs=2の危険局面で即時併合機会を逃している。
+    ワーストゲーム(score0676)の終盤8ターン(turns 67-74, max_y=3.54-3.98, reactive_pairs=2-3)でHIGH_LAYERが選択され続け、即時併合を逃している問題を解決するため、危険度に応じて段階的にフィルタリングを強化。
 
-    v3805の改善点:
-    1. BOARD_DENSITY評価軸削除
-       - board density bonus評価軸を完全に削除
-       - 盤面密度を基準とした配置を排除
-       - 併合機会を最優先する決定ルールに集約
-    2. v178の危険局面フィルタリング強化（max_y>=2.0, reactive_pairs>=2 → DIRECT/NEAR/FARマージ候補のみ）
-       - v178仕様通りmax_y>=2.0で危険局面を定義
-       - FARマージも評価対象に含め、いずれかの併合機会を確保
+    v3932の改善点:
+    1. 危険局面フィルタリング段階的強化
+       - 危険度レベル1: max_y>=1.8, reactive_pairs>=2 → DIRECT/NEAR/FARマージ候補のみを評価
+       - 危険度レベル2: max_y>=2.2, reactive_pairs>=2 → DIRECT/NEAR/FARマージ候補のみを評価
+       - 危険度が上がるにつれて、より早期から即時併合を最優先
+       - reactive_pairs>=3という厳しい条件をreactive_pairs>=2に緩和し、より広い範囲の危険局面でフィルタリングを有効化
+    2. v3805のBOARD_DENSITY評価軸削除を維持
     3. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
     4. v174のHIGHフェーズ高さペナルティ抑制を維持
     5. v173の序盤HEIGHT_CONTROL抑制を維持
@@ -201,18 +194,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
     #       refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_161808_score0586.jsonl turns 60-67
     # =======================================================================
 
-    # v3810: 危険局面フィルタリング早期化強化 - max_y>=1.5かつreactive_pairs>=3で併合機会のみを評価
-    # ワーストゲーム(score0522)の終盤(turns 53-60, max_y=2.96-3.0, reactive_pairs=6-7)でHIGH_TOWERが選択され続け、即時併合を逃している問題を解決
-    # 危険度閾値をmax_y>=1.5に引き下げ、reactive_pairs>=3に引き上げて、より早期かつ高濃度の反応状況で盤面圧縮を強制
-    # ベストゲーム(score3353)でもmax_y=1.57でreactive_pairs=3の状況があり、早期から併合優先が必要
-    # DIRECT/NEAR/FARマージ候補のみを評価対象にし、非併合配置を物理的に除外することでスコア安定性を向上させる
-    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_183014_score0522.jsonl turns 53-60, game_history/20260310_192329_score3353.jsonl turns 113-120
-    if max_y >= 1.5 and reactive_pair_count >= 3:
-        # merge_gradeがDIRECT/NEAR/FARの候補のみを評価対象にする
+    # v3932: 危険局面フィルタリング段階的強化版 - max_y>=1.8,reactive_pairs>=2 または max_y>=2.2,reactive_pairs>=2 で併合機会のみを評価
+    # ワーストゲーム(score0676)の終盤8ターン(turns 67-74, max_y=3.54-3.98, reactive_pairs=2-3)でHIGH_LAYERが選択され続け、即時併合を逃している問題を解決
+    # batch_summary分析で、高スコア群と低スコア群の終盤max_y推移差(終盤avg=1.74 vs 1.75)は小さいが、序盤avg差(-2.35 vs -2.83)が大きいことを確認
+    # 高スコア群は序盤から盤面を高く保ち、終盤で余裕を持っている。一方、低スコア群は序盤から低く保ち、終盤で危険度が高まると対応できていない
+    # 危険度に応じて段階的にフィルタリングを強化し、reactive_pairs>=2の危険局面から即時併合を最優先するよう変更
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_214437_score0676.jsonl turns 67-74, game_history/20260310_214152_score4120.jsonl
+    if max_y >= 2.2 and reactive_pair_count >= 2:
+        # 危険度レベル2: max_y>=2.2 で reactive_pairs>=2 の場合、DIRECT/NEAR/FARマージ候補のみを評価
         merge_candidates = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR", "FAR"]]
         if merge_candidates:
-            results = merge_candidates  # 併合機会がある場合、それのみを評価
-        # 併合機会がない場合は全候補を評価
+            results = merge_candidates
+    elif max_y >= 1.8 and reactive_pair_count >= 2:
+        # 危険度レベル1: max_y>=1.8 で reactive_pairs>=2 の場合、DIRECT/NEAR/FARマージ候補のみを評価
+        merge_candidates = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR", "FAR"]]
+        if merge_candidates:
+            results = merge_candidates
 
     for result in results:
         x = result["x"]

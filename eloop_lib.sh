@@ -104,7 +104,8 @@ COMMENT_WORKER_HEALTH_TTL=30
 COMMENT_PLAYER_HEARTBEAT_FILE="tmp/.comment_queue/player.heartbeat"
 COMMENT_WATCHER_HEARTBEAT_FILE="tmp/.comment_queue/watcher.heartbeat"
 COMMENT_BATCH_HISTORY_FILE="tmp/.comment_queue/processed_batch_hashes.log"
-COMMENT_BATCH_DEDUP_TTL=180
+COMMENT_BATCH_INFLIGHT_FILE="tmp/.comment_queue/inflight_batch.log"
+COMMENT_BATCH_DEDUP_TTL=900
 RADIO_DEFERRED_QUEUE_DIR="tmp/.radio_deferred_queue"
 MANUAL_AUDIO_TRIGGER_DIR="tmp/.manual_audio_triggers"
 MANUAL_AUDIO_TRIGGER_MAX_PER_TICK=3
@@ -3706,6 +3707,7 @@ _kill_comment_gen() {
 		rm -f "$pidfile"
 	fi
 	rm -f "$statefile"
+	rm -f "$COMMENT_BATCH_INFLIGHT_FILE"
 }
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
@@ -3747,6 +3749,52 @@ _is_recent_comment_batch_processed() {
 	' "$COMMENT_BATCH_HISTORY_FILE" 2>/dev/null
 }
 
+_is_comment_batch_inflight() {
+	local batch_hash="$1"
+	[ -n "$batch_hash" ] || return 1
+	[ -f "$COMMENT_BATCH_INFLIGHT_FILE" ] || return 1
+	local now ts hash pid
+	now=$(date +%s)
+	IFS='|' read -r ts hash pid <"$COMMENT_BATCH_INFLIGHT_FILE" 2>/dev/null || return 1
+	case "$ts" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$hash" = "$batch_hash" ] || return 1
+	if [ $((now - ts)) -gt "$COMMENT_BATCH_DEDUP_TTL" ]; then
+		rm -f "$COMMENT_BATCH_INFLIGHT_FILE" 2>/dev/null || true
+		return 1
+	fi
+	case "$pid" in
+	''|*[!0-9]*) return 0 ;;
+	esac
+	if kill -0 "$pid" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$COMMENT_BATCH_INFLIGHT_FILE" 2>/dev/null || true
+	return 1
+}
+
+_mark_comment_batch_inflight() {
+	local batch_hash="$1" pid="${2:-}"
+	[ -n "$batch_hash" ] || return 0
+	printf '%s|%s|%s\n' "$(date +%s)" "$batch_hash" "$pid" >"$COMMENT_BATCH_INFLIGHT_FILE"
+}
+
+_clear_comment_batch_inflight() {
+	local batch_hash="${1:-}"
+	[ -f "$COMMENT_BATCH_INFLIGHT_FILE" ] || return 0
+	if [ -z "$batch_hash" ]; then
+		rm -f "$COMMENT_BATCH_INFLIGHT_FILE" 2>/dev/null || true
+		return 0
+	fi
+	local ts hash pid
+	IFS='|' read -r ts hash pid <"$COMMENT_BATCH_INFLIGHT_FILE" 2>/dev/null || {
+		rm -f "$COMMENT_BATCH_INFLIGHT_FILE" 2>/dev/null || true
+		return 0
+	}
+	[ "$hash" = "$batch_hash" ] && rm -f "$COMMENT_BATCH_INFLIGHT_FILE" 2>/dev/null || true
+}
+
 _mark_comment_batch_processed() {
 	local batch_hash="$1"
 	[ -n "$batch_hash" ] || return 0
@@ -3755,8 +3803,8 @@ _mark_comment_batch_processed() {
 	tmpf=$(mktemp /tmp/eloop_comment_batch_history_XXXXXXXX)
 	{
 		if [ -f "$COMMENT_BATCH_HISTORY_FILE" ]; then
-			awk -F'|' -v now="$now" -v ttl="$COMMENT_BATCH_DEDUP_TTL" '
-				NF >= 2 && $1 ~ /^[0-9]+$/ && (now - $1) <= (ttl * 3) { print }
+			awk -F'|' -v now="$now" -v ttl="$COMMENT_BATCH_DEDUP_TTL" -v h="$batch_hash" '
+				NF >= 2 && $1 ~ /^[0-9]+$/ && (now - $1) <= (ttl * 3) && $2 != h { print }
 			' "$COMMENT_BATCH_HISTORY_FILE" 2>/dev/null
 		fi
 		echo "${now}|${batch_hash}"
@@ -4171,6 +4219,11 @@ generate_comment_response() {
 		rm -f "$comment_batch_file"
 		return
 	fi
+	if _is_comment_batch_inflight "$comment_batch_hash"; then
+		log "[COMMENT] 同一コメントバッチを生成中のためスキップ (batch=$comment_batch_hash)"
+		rm -f "$comment_batch_file"
+		return
+	fi
 
 	local past_topics=""
 	past_topics=$(_radio_past_topics_block)
@@ -4214,6 +4267,7 @@ generate_comment_response() {
 	comment_parent_pid="${BASHPID:-$$}"
 	comment_started_at=$(date +%s)
 	echo "generating:comment:${comment_started_at}" > $COMMENT_GEN_STATE_FILE
+	_mark_comment_batch_inflight "$comment_batch_hash"
 
 	(
 		_cleanup_comment_gen_worker() {
@@ -4224,6 +4278,7 @@ generate_comment_response() {
 				rm -f tmp/.twitch_chat/comment_gen.pid
 			fi
 			rm -f $COMMENT_GEN_STATE_FILE
+			_clear_comment_batch_inflight "$comment_batch_hash"
 			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
@@ -4446,6 +4501,7 @@ RETRYCOMMENT
 		fi
 	) &
 	local comment_pid=$!
+	_mark_comment_batch_inflight "$comment_batch_hash" "$comment_pid"
 	echo "${comment_pid}|${comment_parent_pid}|${comment_started_at}" >tmp/.twitch_chat/comment_gen.pid
 	disown "$comment_pid"
 }
