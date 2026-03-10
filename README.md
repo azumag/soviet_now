@@ -294,16 +294,17 @@ node soviet_game.mjs &
 
 ```bash
 TWITCH_BOT_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWITCH_BOT_NICK=DOUSHI_AI
 TWITCH_CHANNEL=azumagbanjo
 ```
+
+投稿者名はトークン取得時にログインしたTwitchアカウント名になる（`NICK` 設定は不要）。
 
 `soren_loop.sh` 起動時に `.env` が自動で読み込まれる。
 
 #### 動作確認
 
 ```bash
-source .env && export TWITCH_BOT_TOKEN TWITCH_BOT_NICK TWITCH_CHANNEL
+source .env && export TWITCH_BOT_TOKEN TWITCH_CHANNEL
 ./twitch_chat.sh send "テスト投稿"
 ```
 
