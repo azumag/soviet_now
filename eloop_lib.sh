@@ -673,7 +673,7 @@ check_host_integrity() {
 		return 0
 	}
 
-	git status --porcelain >"$after_file" 2>/dev/null || {
+	git status --porcelain -- "$STRATEGY_FILE" strategy_helpers tmp/change_log.txt >"$after_file" 2>/dev/null || {
 		rm -f "$after_file" "$before_sorted" "$after_sorted"
 		return 0
 	}
@@ -683,7 +683,7 @@ check_host_integrity() {
 	local added_lines host_changed=false
 	added_lines=$(comm -13 "$before_sorted" "$after_sorted" 2>/dev/null || true)
 	if [ -n "$added_lines" ]; then
-		log "[SANDBOX] WARNING: AI改善中にホスト作業ツリー変化を検出（自動revertなし）"
+		log "[SANDBOX] WARNING: AI改善中にapply対象ファイルのホスト変化を検出"
 		printf '%s\n' "$added_lines" | head -20 | while read -r line; do
 			[ -n "$line" ] && log "[SANDBOX] host_change: $line"
 		done

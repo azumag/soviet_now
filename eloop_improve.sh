@@ -440,7 +440,7 @@ improve_ref_files+=("$manifest_file")
 [ -f "$manifest_file" ] && sandbox_ref_files+=("$manifest_file")
 
 HOST_STATUS_SNAPSHOT=$(mktemp /tmp/eloop_host_status_before.XXXXXX 2>/dev/null || echo "")
-[ -n "$HOST_STATUS_SNAPSHOT" ] && git status --porcelain >"$HOST_STATUS_SNAPSHOT" 2>/dev/null || true
+[ -n "$HOST_STATUS_SNAPSHOT" ] && git status --porcelain -- "$STRATEGY_FILE" strategy_helpers tmp/change_log.txt >"$HOST_STATUS_SNAPSHOT" 2>/dev/null || true
 
 SANDBOX_DIR=$(create_sandbox "${sandbox_ref_files[@]}")
 if [ -z "$SANDBOX_DIR" ] || [ ! -d "$SANDBOX_DIR" ]; then
