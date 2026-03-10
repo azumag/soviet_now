@@ -282,12 +282,16 @@ def collect_rollback_candidate_hashes(rolling, current_hash):
     rejected_hashes = load_rejected_hashes()
     rejected_meta = load_rejected_hash_meta()
     restorable_hashes = load_restorable_hashes()
+    current_metrics = calc_strategy_metrics(rolling.get(current_hash, {}).get("scores", [])) if current_hash else None
+    current_comp = current_metrics["comp"] if current_metrics else None
     candidates = set()
     for hash_, data in rolling.items():
         if not hash_ or hash_ == current_hash:
             continue
         metrics = calc_strategy_metrics(data.get("scores", []))
         if not metrics or metrics["n"] < MIN_GAMES_FOR_BEST_ROLLBACK:
+            continue
+        if current_comp is not None and metrics["comp"] <= current_comp:
             continue
         if hash_ not in restorable_hashes:
             continue

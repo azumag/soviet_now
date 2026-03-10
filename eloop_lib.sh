@@ -4644,9 +4644,58 @@ PY
 	return 0
 }
 
+_get_rolling_metrics_for_hash() {
+	local target_hash="$1"
+	[ -n "$target_hash" ] || return 1
+	[ -f "$ROLLING_SCORES_FILE" ] || return 1
+	python3 - "$ROLLING_SCORES_FILE" "$target_hash" <<'PY' 2>/dev/null
+import json
+import math
+import os
+import sys
+
+rolling_file, target_hash = sys.argv[1], sys.argv[2]
+if not os.path.exists(rolling_file):
+    raise SystemExit(1)
+try:
+    rolling = json.load(open(rolling_file))
+except Exception:
+    raise SystemExit(1)
+if target_hash not in rolling:
+    raise SystemExit(1)
+scores = [int(x) for x in rolling[target_hash].get("scores", [])]
+if not scores:
+    raise SystemExit(1)
+xs = sorted(scores)
+n = len(xs)
+mean = sum(xs) / n
+if n == 1:
+    p25 = p50 = float(xs[0])
+    std = 0.0
+else:
+    def q(p):
+        pos = (n - 1) * p
+        lo = int(pos)
+        hi = min(lo + 1, n - 1)
+        frac = pos - lo
+        return xs[lo] * (1.0 - frac) + xs[hi] * frac
+    p25 = q(0.25)
+    p50 = q(0.50)
+    var = sum((x - mean) ** 2 for x in xs) / n
+    std = math.sqrt(var)
+lcb = mean - 1.28 * (std / math.sqrt(n))
+comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+games_total = int(rolling[target_hash].get("games_total", n) or n)
+print(f"{comp:.2f}|{p50:.1f}|{p25:.1f}|{lcb:.1f}|{n}|{games_total}")
+PY
+}
+
 _pick_best_rollback_candidate() {
 	local current_hash="$1"
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
+	local current_metrics current_comp
+	current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
+	current_comp="${current_metrics%%|*}"
 
 	local anchor_hash="" anchor_comp="" anchor_p50="" anchor_p25="" anchor_lcb="" anchor_n="" anchor_file=""
 	if [ -f "$BEST_STRATEGY_ANCHOR_FILE" ]; then
@@ -4670,6 +4719,8 @@ PY
 	if [ -n "$anchor_hash" ] && [ "$anchor_hash" != "$current_hash" ]; then
 		if _is_recently_rejected_for_rollback "$anchor_hash"; then
 			log "[REGRESSION] rollback候補スキップ: anchor $anchor_hash は recent rejected" >&2
+		elif [ -n "$current_comp" ] && ! awk "BEGIN{exit !($anchor_comp > $current_comp)}"; then
+			log "[REGRESSION] rollback候補スキップ: anchor $anchor_hash は current(comp=$current_comp) 以下" >&2
 		else
 			anchor_file=$(_find_strategy_file_by_hash "$anchor_hash")
 		fi
@@ -4741,6 +4792,9 @@ PY
 	while IFS= read -r line; do
 		[ -z "$line" ] && continue
 		IFS='|' read -r h comp p50 p25 lcb n <<<"$line"
+		if [ -n "$current_comp" ] && ! awk "BEGIN{exit !($comp > $current_comp)}"; then
+			continue
+		fi
 		if _is_recently_rejected_for_rollback "$h"; then
 			log "[REGRESSION] rollback候補スキップ: $h は recent rejected" >&2
 			continue
@@ -4758,12 +4812,21 @@ EOF
 
 _pick_hall_of_fame_rollback_candidate() {
 	local current_hash="$1"
+	local current_metrics current_comp candidate_metrics candidate_comp
+	current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
+	current_comp="${current_metrics%%|*}"
 	local line f score_num h
 	while IFS='|' read -r score_num f; do
 		[ -f "$f" ] || continue
 		h=$(python3 extract_decide_hash.py "$f" 2>/dev/null || echo "")
 		[ -n "$h" ] || continue
 		[ "$h" = "$current_hash" ] && continue
+		candidate_metrics=$(_get_rolling_metrics_for_hash "$h" 2>/dev/null || true)
+		candidate_comp="${candidate_metrics%%|*}"
+		[ -n "$candidate_comp" ] || continue
+		if [ -n "$current_comp" ] && ! awk "BEGIN{exit !($candidate_comp > $current_comp)}"; then
+			continue
+		fi
 		if _is_recently_rejected_for_rollback "$h"; then
 			log "[REGRESSION] hall-of-fame候補スキップ: $h は recent rejected" >&2
 			continue
@@ -5116,13 +5179,23 @@ PY
 				rollback_note="best_comp hash=${rollback_hash} comp=${best_comp} p50=${best_p50} p25=${best_p25} lcb=${best_lcb} n=${best_n}"
 			elif [ -f "tmp/revert_strategy.py" ]; then
 				local revert_hash=""
+				local revert_metrics="" revert_comp=""
 				revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
 				if [ -n "$revert_hash" ] && _is_recently_rejected_for_rollback "$revert_hash"; then
 					log "[REGRESSION] previous_strategy を rollback候補から除外: $revert_hash は recent rejected"
 				else
-					rollback_file="tmp/revert_strategy.py"
-					rollback_hash="$revert_hash"
-					rollback_note="previous_strategy"
+					revert_metrics=$(_get_rolling_metrics_for_hash "$revert_hash" 2>/dev/null || true)
+					revert_comp="${revert_metrics%%|*}"
+					local current_metrics="" current_comp=""
+					current_metrics=$(_get_rolling_metrics_for_hash "$strategy_hash" 2>/dev/null || true)
+					current_comp="${current_metrics%%|*}"
+					if [ -z "$revert_comp" ] || { [ -n "$current_comp" ] && ! awk "BEGIN{exit !($revert_comp > $current_comp)}"; }; then
+						log "[REGRESSION] previous_strategy を rollback候補から除外: current(comp=${current_comp:-?}) 以下または未知"
+					else
+						rollback_file="tmp/revert_strategy.py"
+						rollback_hash="$revert_hash"
+						rollback_note="previous_strategy"
+					fi
 				fi
 			fi
 			if [ -z "$rollback_file" ]; then

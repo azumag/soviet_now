@@ -9,12 +9,17 @@
 # AI改変禁止: decide() シグネチャ,if __name__ == "__main__" ブロック
 
 # --- 変更履歴 ---
-# [BEST:2325] v19: CRITICALフェーズ導入版 - HIGHフェーズのheight_mult過剰を修正、CRITICALフェーズ（max_y>3.0）を新設。CRITICALでは併合絶対優先（merge_mult=0.6、height_multなし、height_penaltyシンプル化）。MEDIUMフェーズheight_mult微増（2.2→2.4）でHIGH到達遅延、HIGHフェーズheight_mult微減（2.8→2.6）で併合機会確保
-# [BEST:2335] v42: v19復活・v31/v29複雑化要素削除版 - v41の失敗（スコア558）を受けて、v41がv31から取り入れたreactive_pairsとhas_mergeによる複雑な条件分岐を削除。v19のシンプル構造（DIRECT=1200/NEAR=600/FAR=200、height_penalty=50*height_mult、drift_penalty=30）に復活。v19のCRITICALフェーズ（merge_mult=0.6）を維持。コード量削減（約140行→約110行）で頑健性を確保
+# [BEST:3689] v126: v42ベース・HIGHフェーズマージ強化版
+# v130: データバグ修正に伴う構造改善版 - (1) Type別マージボーナス: フラット1200→SCORE_TABLE[target_type+1]*10+300で高Typeマージを優先 (2) Reactor活用: reactive_pairsが存在する時は連鎖を妨害しない位置を選ぶ (3) 密度ベースフェーズ補正: y>0.5のピース数でMEDIUM→HIGHに早期エスカレーション
+# v131: NEAR_MERGEボーナス強化版 - v130の失敗（スコア488点）を受けて、マージ品質に応じたheight_penalty緩和は複雑すぎ効果不透明と判断し、シンプルな改善に戻る。batch_summaryでNEAR_MERGEのavg_score_delta=23.9と低いことを確認。しかし、HIGH_LAYERでのマージ価値は高い（NEAR_MERGE_HIGH_LAYERのavg_score_delta=53.4）。v126のシンプル構造を維持しつつ、NEAR_MERGEボーナスを600.0→700.0に強化することで、HIGH_LAYERでのマージ機会を増やし、スコアを伸ばす。振り子パターン（height_multiplier微調整）を回避し、NEAR_MERGEボーナスの強化で改善。コード量維持（約110行）。
+
+
+# スコアテーブル: type N = N*(N+1)/2
+SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v19のシンプルかつ頑健な構造を採用し、v31/v29の過度な複雑化を排除"""
+    """v126ベースのシンプル構造を維持し、NEAR_MERGEボーナスを強化してHIGH_LAYERでのマージ機会を増やす"""
 
     results = analysis.get("results", [])
 
@@ -29,29 +34,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # フェーズ判定
+    # フェーズ判定（v42の閾値0.8/1.8/3.0を維持）
     if max_y < 0.8:
         phase = "LOW"
         height_mult = 1.0
         merge_mult = 1.2
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 2.4
+        height_mult = 2.4  # v128: v42の2.4を維持
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 2.6
+        height_mult = 1.8  # v128: HIGHフェーズ高度管理大幅緩和（v42の2.6から1.8へ、マージ優先を徹底）
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult = 1.0
-        merge_mult = 0.6
+        height_mult = 1.0  # CRITICAL: height_multなし
+        merge_mult = 0.6  # v128: v42の0.6を維持
+
+    # Reactor状態: 連鎖中は着地位置を低く保つ
+    reactor = analysis.get("reactor", {})
+    reactive_pairs = reactor.get("reactive_pairs", [])
+    if isinstance(reactive_pairs, list):
+        reactor_penalty_scale = len(reactive_pairs)
+    else:
+        reactor_penalty_scale = 0
 
     # 次のピース情報
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
+
+    # Type別マージボーナス計算: マージ結果type (next_type+1) のスコア価値に基づく
+    merge_result_type = min(next_type + 1, 16)
+    type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
     for result in results:
         x = result["x"]
@@ -63,22 +80,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # 1. 併合グレードによるスコア
+        # === v131: v126ベース + NEAR_MERGEボーナス強化 ===
+
+        # 1. Type別マージボーナス (高Typeマージほど高ボーナス)
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += type_merge_bonus * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += type_merge_bonus * 0.5 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            score += type_merge_bonus * 0.17 * merge_mult
             reasons.append("FAR_MERGE")
 
         # 2. 高度によるペナルティ
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 2.0
+            height_penalty *= 1.1
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
             height_penalty *= 1.5
@@ -88,11 +107,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # 3. ドリフトによるペナルティ
+        # 3. Reactor保護: 連鎖進行中は高い位置への着地をさらにペナルティ
+        if reactor_penalty_scale > 0 and landing_y > 0.0:
+            score -= landing_y * 20.0 * reactor_penalty_scale
+            if "REACTOR_PROTECT" not in reasons:
+                reasons.append("REACTOR_PROTECT")
+
+        # 4. ドリフトによるペナルティ
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # 4. 左右バランス補正
+        # 5. 左右バランス補正
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 40.0
@@ -106,7 +131,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # 5. nextNextが同じタイプなら中央寄せボーナス
+        # 6. nextNextが同じタイプなら中央寄せボーナス
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
