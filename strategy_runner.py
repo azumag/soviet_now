@@ -29,6 +29,7 @@ COMMANDS = "commands.txt"
 HISTORY_DIR = "game_history"
 HISTORY_FILE = os.path.join(HISTORY_DIR, "latest.jsonl")
 RUSSIA_WORKER_PID_FILE = "tmp/state/.russia_celebration_worker.pid"
+RUSSIA_CELEBRATION_ENABLED = os.environ.get("RUSSIA_CELEBRATION_ENABLED", "0") != "0"
 
 # 座標変換
 GAME_X_MIN = -3.0
@@ -149,6 +150,8 @@ def get_strategy_hash():
 
 def trigger_russia_celebration_now(score, turn):
     """ロシア建国祝賀を即時に別プロセスで発火する。"""
+    if not RUSSIA_CELEBRATION_ENABLED:
+        return False
     try:
         with open("game_count.txt") as f:
             game_num = int((f.read() or "0").strip() or "0") + 1

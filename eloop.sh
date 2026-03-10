@@ -199,6 +199,13 @@ play_one_game() {
 handle_russia_celebration() {
 	local score="$1" turns="$2" game_num="$3"
 
+	if [ "${RUSSIA_CELEBRATION_ENABLED:-0}" = "0" ]; then
+		log "[RUSSIA] 祝賀読み上げは無効化中"
+		rm -f "$RUSSIA_CELEBRATION_WORKER_PID_FILE"
+		rm -f "$TMP_MARKERS_DIR/.russia_created"
+		return 0
+	fi
+
 	log "!!! RUSSIA CREATED !!!"
 
 	generate_russia_celebration "$score" "$turns" "$game_num"
