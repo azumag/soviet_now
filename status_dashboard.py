@@ -29,6 +29,10 @@ REGRESSION_TREND_LONG_WINDOW = 100
 REGRESSION_TREND_SHORT_RATIO = 0.94
 REGRESSION_TREND_LONG_RATIO = 0.95
 BEST_STRATEGY_ANCHOR_FILE = "tmp/best_strategy_anchor.json"
+REJECTED_HASHES_FILE = "tmp/rejected_hashes.txt"
+REJECTED_HASH_META_FILE = "tmp/rejected_hash_metrics.json"
+REJECTED_REEVALUATE_MIN_NEW_GAMES = 8
+STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -156,6 +160,27 @@ def load_best_anchor():
         return None
 
 
+def load_rejected_hashes():
+    p = Path(REJECTED_HASHES_FILE)
+    if not p.exists():
+        return set()
+    try:
+        return {line.strip() for line in p.read_text().splitlines() if line.strip()}
+    except Exception:
+        return set()
+
+
+def load_rejected_hash_meta():
+    p = Path(REJECTED_HASH_META_FILE)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def quantile(vals, p):
     xs = sorted(vals)
     if not xs:
@@ -193,6 +218,44 @@ def calc_strategy_metrics(scores):
         "lcb": lcb,
         "comp": comp,
     }
+
+
+def is_recently_rejected_for_rollback(hash_, rolling, rejected_hashes, rejected_meta):
+    if not hash_ or hash_ not in rejected_hashes:
+        return False
+    if hash_ not in rejected_meta:
+        return False
+    data = rolling.get(hash_)
+    if not isinstance(data, dict):
+        return True
+    metrics = calc_strategy_metrics(data.get("scores", []))
+    if not metrics:
+        return True
+    rejected = rejected_meta.get(hash_, {})
+    rejected_comp = float(rejected.get("comp", 0.0) or 0.0)
+    rejected_total = int(rejected.get("games_total", 0) or 0)
+    current_total = int(data.get("games_total", len(data.get("scores", []))) or len(data.get("scores", [])))
+    if current_total >= rejected_total + REJECTED_REEVALUATE_MIN_NEW_GAMES and metrics["comp"] > rejected_comp:
+        return False
+    return True
+
+
+def collect_rollback_candidate_hashes(rolling, current_hash):
+    rejected_hashes = load_rejected_hashes()
+    rejected_meta = load_rejected_hash_meta()
+    candidates = set()
+    for hash_, data in rolling.items():
+        if not hash_ or hash_ == current_hash:
+            continue
+        metrics = calc_strategy_metrics(data.get("scores", []))
+        if not metrics or metrics["n"] < MIN_GAMES_FOR_BEST_ROLLBACK:
+            continue
+        if not Path(STRATEGY_HASH_ARCHIVE_DIR, f"{hash_}.py").exists():
+            continue
+        if is_recently_rejected_for_rollback(hash_, rolling, rejected_hashes, rejected_meta):
+            continue
+        candidates.add(hash_)
+    return candidates
 
 
 def pick_best_reference(rolling, current_hash, anchor=None):
@@ -671,6 +734,7 @@ def render_score_distribution(scores, bar_w=40):
 def render_strategy_comparison(rolling, current_hash, max_rows=7):
     bar_w = 22
     # marker1 + rank3 + space + hash8 + space + n/t6 + sep1 + bar22 + metrics
+    rollback_candidates = collect_rollback_candidate_hashes(rolling, current_hash)
 
     all_entries = []
     for h, data in rolling.items():
@@ -704,7 +768,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     entries = all_entries[:max_rows]
     max_comp = max(e["comp"] for e in entries) if entries else 1
 
-    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(comp=0.55p50+0.30p25+0.15lcb){RST}"]
+    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(comp=0.55p50+0.30p25+0.15lcb, rollback=yellow){RST}"]
     if current_entry:
         lines.append(
             f"  {DIM}cur #{current_entry['rank']:>2} {current_entry['h8']} "
@@ -718,7 +782,8 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     lines.append(f"{DIM} rk hash      n/t  │{'bar':<{bar_w}} {metric_header}{RST}")
 
     def render_entry(e, is_current=False):
-        color = C_GREEN if is_current else C_BLUE
+        is_rollback = e["hash"] in rollback_candidates
+        color = C_GREEN if is_current else (C_YELLOW if is_rollback else C_BLUE)
         marker = "►" if is_current else " "
         bar = block_bar(e["comp"], max_comp, bar_w, color)
         n_field = f"{e['n_roll']:>2}/{e['n_total']:<3}"
