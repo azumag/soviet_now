@@ -29,6 +29,8 @@ TMP_HISTORY_DIR="tmp/history"
 TMP_DEBUG_DIR="tmp/debug"
 TMP_CACHE_DIR="tmp/cache"
 
+RADIO_STATE_FILE="$TMP_STATE_DIR/.radio_state"
+COMMENT_GEN_STATE_FILE="$TMP_STATE_DIR/.comment_gen_state"
 PAST_RADIO_TOPICS="$TMP_HISTORY_DIR/past_radio_topics.txt"
 PAST_NEWS_READ="$TMP_HISTORY_DIR/past_news_read.txt"
 PAST_NEWS_READ_KEYS="$TMP_HISTORY_DIR/past_news_read_keys.txt"

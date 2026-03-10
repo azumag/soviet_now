@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 
-ROLLING_SCORES_FILE = Path("tmp/rolling_scores.json")
+ROLLING_SCORES_FILE = Path("tmp/state/rolling_scores.json")
 BY_HASH_DIR = Path("strategy_versions/by_hash")
 MIN_GAMES = 12
 LBC_Z = 1.28

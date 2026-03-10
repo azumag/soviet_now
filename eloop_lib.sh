@@ -117,12 +117,16 @@ if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
 	# state files
 	for f in improve_state.json accumulated_games.json rolling_scores.json \
 		rejected_hash_metrics.json best_strategy_anchor.json .russia_celebration_worker.pid \
-		.radio_state .comment_gen_state; do
+		.radio_state .comment_gen_state radio_talk_played .news_last_success.txt \
+		.status_fullscreen_last .news_shown_lines.txt .news_shown_mtime.txt; do
 		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_STATE_DIR/$f" 2>/dev/null
 	done
 	# markers
 	for f in tmp/.radio_done_* tmp/.radio_inflight_* tmp/.timed_corner_done_* tmp/.timed_corner_inflight_*; do
 		[ -e "$f" ] && mv "$f" "$TMP_MARKERS_DIR/" 2>/dev/null
+	done
+	for f in .russia_created .soviet_created; do
+		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_MARKERS_DIR/$f" 2>/dev/null
 	done
 	# history
 	for f in .past_radio_themes.txt past_radio_topics.txt past_news_read.txt \
@@ -4142,7 +4146,7 @@ generate_comment_response() {
 		- tmp/.comment_queue/spoken_history/*.txt: 最近実際に読み上げたコメント返し全文
 		- ${PAST_RADIO_TOPICS}: 過去のニュース・ラジオ題名の履歴
 		- score_history.txt: 直近から過去までのスコア履歴
-		- tmp/rolling_scores.json: 戦略ハッシュごとの rolling 指標
+		- ${ROLLING_SCORES_FILE}: 戦略ハッシュごとの rolling 指標
 		※ まず上の埋め込み済み抜粋を優先し、文脈が足りない場合だけ読むこと
 
 	【現在のゲーム状態メモ（game_state.json）】

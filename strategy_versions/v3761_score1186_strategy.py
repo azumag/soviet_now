@@ -47,6 +47,9 @@ Phases (determined by board max Y):
 # ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
 # v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
 # これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
+# v174: HIGHフェーズ高さペナルティ抑制版 - batch_summaryでNEAR_MERGE(avg_score_delta=22.6)が高価値だが選択率6.5%と低いことを確認。
+# HIGHフェーズでheight_mult=1.8が高すぎてNEAR_MERGE機会を潰している問題に対し、height_multを1.8→1.0に抑制し併合機会を優先。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, strategy_versions/best_score2046_strategy.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -54,18 +57,17 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v173: 序盤HEIGHT_CONTROL抑制超強化版
+    """v174: HIGHフェーズ高さペナルティ抑制版
     
-    batch_summaryでDEFAULT_PLACEMENTが20.7%選択(avg_score_delta=2.2)と依然として高いことを確認。
-    ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
+    batch_summaryでNEAR_MERGE(avg_score_delta=22.6)が高価値だが選択率6.5%と低いことを確認。
+    HIGHフェーズでheight_mult=1.8が高すぎてNEAR_MERGE機会を潰している問題に対し、height_multを1.8→1.0に抑制。
     
-    v173の改善点:
-    1. early game判定をmax_y < -2.0 → max_y < -3.0に拡大
-       - ワーストゲーム序盤(max_y=-5.0～-2.02)でのDEFAULT_PLACEMENT選択を超強力に抑制
-       - 盤面がまだ低い段階（max_y < -3.0）ではHEIGHT_CONTROLを超強力に抑制し、併合機会を最優先
-    2. height_multiplierを0.2→0.1に削減
-       - v172の0.2でもDEFAULT_PLACEMENTが高い（20.7%）ため、さらに超強力に抑制
-    3. v172のボード密度評価軸とv170の序盤HEIGHT_CONTROL抑制を維持
+    v174の改善点:
+    1. HIGHフェーズでheight_multを1.8→1.0に抑制
+       - batch_summaryでNEAR_MERGE(avg_score_delta=22.6)が高価値だが選択率6.5%と低い
+       - HIGHフェーズでheight_mult=1.8が高すぎてNEAR_MERGE機会を潰している問題を解決
+    2. v173の序盤HEIGHT_CONTROL抑制を維持
+    3. v172のボード密度評価軸を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -109,7 +111,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # HIGH relaxation to ensure merge opportunity
+        height_mult = 1.0  # v174: batch_summary分析に基づきHIGHフェーズの高さペナルティ抑制(1.8→1.0)しNEAR_MERGE機会を優先
         merge_mult = 1.0
     else:
         phase = "CRITICAL"

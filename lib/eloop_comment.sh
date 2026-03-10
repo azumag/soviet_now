@@ -5,7 +5,7 @@
 
 _kill_comment_gen() {
 	local pidfile="tmp/.twitch_chat/comment_gen.pid"
-	local statefile="tmp/.comment_gen_state"
+	local statefile="$COMMENT_GEN_STATE_FILE"
 	if [ -f "$pidfile" ]; then
 		local raw old_pid old_ppid live_ppid
 		raw=$(cat "$pidfile" 2>/dev/null || true)
@@ -324,7 +324,7 @@ generate_comment_response() {
 	local comment_parent_pid comment_started_at
 	comment_parent_pid="${BASHPID:-$$}"
 	comment_started_at=$(date +%s)
-	echo "generating:comment:${comment_started_at}" > tmp/.comment_gen_state
+	echo "generating:comment:${comment_started_at}" > $COMMENT_GEN_STATE_FILE
 
 	(
 		_cleanup_comment_gen_worker() {
@@ -334,7 +334,7 @@ generate_comment_response() {
 			if [ "$file_pid" = "${BASHPID:-$$}" ]; then
 				rm -f tmp/.twitch_chat/comment_gen.pid
 			fi
-			rm -f tmp/.comment_gen_state
+			rm -f $COMMENT_GEN_STATE_FILE
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
 
@@ -348,7 +348,7 @@ generate_comment_response() {
 		envsubst < "$ELOOP_LIB_DIR/prompts/comment_response.md" >"$comment_prompt_file"
 		unset current_time time_period twitch_comments comment_batch_context previous_comments_context past_topics game_state_context
 
-			echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
+			echo "generating:comment:$(date +%s)" > $COMMENT_GEN_STATE_FILE
 			log "[COMMENT] コメント返し生成中..."
 			local comments_talk comment_model_used
 			comment_model_used=""
