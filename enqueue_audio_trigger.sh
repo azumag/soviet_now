@@ -5,9 +5,9 @@ cd "$(dirname "$0")"
 
 cmd="${1:-}"
 case "$cmd" in
-news|soviet|strategy|theme|recap) ;;
+news|soviet|strategy|theme|weather|fortune|market|dinner|deals|survival) ;;
 *)
-	echo "Usage: $0 {news|soviet|strategy|theme|recap}" >&2
+	echo "Usage: $0 {news|soviet|strategy|theme|weather|fortune|market|dinner|deals|survival}" >&2
 	exit 1
 	;;
 esac

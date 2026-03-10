@@ -1936,6 +1936,33 @@ sys.stdout.write(out)
 		"
 }
 
+_ensure_corner_announce() {
+	local text="$1" corner_name="$2"
+	local announce=""
+	case "$corner_name" in
+		soviet)   announce="ソ連共産主義ネタコーナーです。" ;;
+		news)     announce="本日のニュースです。" ;;
+		weather)  announce="ソ連天気予報コーナーです。" ;;
+		fortune)  announce="今日のソ連占いコーナーです。" ;;
+		market)   announce="本日の株価・経済動向コーナーです。" ;;
+		dinner)   announce="今日の夕飯の献立を考えようコーナーです。" ;;
+		deals)    announce="お得情報コーナーです。" ;;
+		survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
+		*)        announce="" ;;
+	esac
+	[ -z "$announce" ] && { printf '%s' "$text"; return 0; }
+	# 既に含まれていたら二重挿入しない
+	if printf '%s\n' "$text" | head -n 5 | grep -qF "$announce"; then
+		printf '%s' "$text"
+		return 0
+	fi
+	# 挨拶行（1行目）の後に挿入
+	local first_line rest
+	first_line=$(printf '%s\n' "$text" | head -n 1)
+	rest=$(printf '%s\n' "$text" | tail -n +2)
+	printf '%s\n%s\n%s' "$first_line" "$announce" "$rest"
+}
+
 _ensure_radio_intro() {
 	local text="$1" corner_name="${2:-}"
 	[ -z "$text" ] && return 1
@@ -2456,6 +2483,9 @@ ${talk_body}"
 		fi
 	fi
 
+	# コーナーアナウンス差し込み（fact-check後に強制挿入）
+	talk_body=$(_ensure_corner_announce "$talk_body" "$corner_name")
+
 	# say待ちは say_enqueue.sh 内で行われるため、ここでは不要
 
 	local talk_file
@@ -2509,6 +2539,7 @@ ${talk_body}"
 #=== ラジオトーク: テーマ選択 ===
 
 _pick_radio_theme() {
+	local filter_category="${1:-}"
 	local theme_file="$ELOOP_LIB_DIR/data/radio_themes.txt"
 	local themes=()
 	local theme_keys=()
@@ -2518,9 +2549,18 @@ _pick_radio_theme() {
 			case "$_line" in
 			\#*) continue ;;
 			esac
-			local t_key="${_line%%。*}"
-			[ "$t_key" = "$_line" ] && t_key="${_line%%を深掘り*}"
-			[ -n "$t_key" ] || t_key="$_line"
+			# カテゴリフィルタリング
+			local line_category="" line_body="$_line"
+			if [[ "$_line" == \[soviet\]\ * ]]; then
+				line_category="soviet"
+				line_body="${_line#\[soviet\] }"
+			fi
+			if [ -n "$filter_category" ] && [ "$line_category" != "$filter_category" ]; then
+				continue
+			fi
+			local t_key="${line_body%%。*}"
+			[ "$t_key" = "$line_body" ] && t_key="${line_body%%を深掘り*}"
+			[ -n "$t_key" ] || t_key="$line_body"
 			local seen=false existing_key
 			for existing_key in "${theme_keys[@]}"; do
 				if [ "$existing_key" = "$t_key" ]; then
@@ -2543,8 +2583,10 @@ _pick_radio_theme() {
 	local past_theme_list=""
 	[ -f "$past_themes_file" ] && past_theme_list=$(cat "$past_themes_file")
 	for t in "${themes[@]}"; do
-		local t_key="${t%%。*}"
-		[ "$t_key" = "$t" ] && t_key="${t%%を深掘り*}"
+		local t_body="$t"
+		[[ "$t" == \[soviet\]\ * ]] && t_body="${t#\[soviet\] }"
+		local t_key="${t_body%%。*}"
+		[ "$t_key" = "$t_body" ] && t_key="${t_body%%を深掘り*}"
 		if ! echo "$past_theme_list" | grep -qF "$t_key"; then
 			available_themes+=("$t")
 		fi
@@ -2554,138 +2596,22 @@ _pick_radio_theme() {
 		>"$past_themes_file"
 	fi
 	local theme="${available_themes[$((RANDOM % ${#available_themes[@]}))]}"
-	local theme_key="${theme%%。*}"
-	[ "$theme_key" = "$theme" ] && theme_key="${theme%%を深掘り*}"
+	local theme_body="$theme"
+	local theme_cat=""
+	if [[ "$theme" == \[soviet\]\ * ]]; then
+		theme_cat="soviet"
+		theme_body="${theme#\[soviet\] }"
+	fi
+	local theme_key="${theme_body%%。*}"
+	[ "$theme_key" = "$theme_body" ] && theme_key="${theme_body%%を深掘り*}"
 	echo "$theme_key" >>"$past_themes_file"
 	tail -100 "$past_themes_file" >"${past_themes_file}.tmp" && mv "${past_themes_file}.tmp" "$past_themes_file"
-	echo "$theme"
-}
-
-_pick_soviet_theme() {
-	local soviet_themes=(
-		"ソ連ジョーク（アネクドート）の背景と意味を深掘りして"
-		"ソ連の宇宙開発の話。ガガーリン、ライカ犬、ヴォストーク、宇宙競争を深掘りして"
-		"ソ連の秘密都市・閉鎖都市の暮らしを深掘りして"
-		"プロパガンダポスターのデザインとメッセージを深掘りして"
-		"ソ連の食文化の話。配給制、食堂ストリーチヌイ、ソ連料理を深掘りして"
-		"レーニンの逸話の話。レーニン廟、各地のレーニン像を深掘りして"
-		"ソ連映画・アニメの話。エイゼンシュテイン、タルコフスキー、チェブラーシカを深掘りして"
-		"ソ連の音楽と検閲の話。ショスタコーヴィチ、ヴィソツキー、骨のレコードを深掘りして"
-		"KGBと諜報の話。有名なスパイ事件を深掘りして"
-		"ソ連崩壊の瞬間の話。1991年8月クーデター、国旗が降ろされた夜を深掘りして"
-		"ソ連の科学者と発明の話。テルミン、テトリス、スプートニク、パヴロフの犬を深掘りして"
-		"シベリア鉄道9000kmの旅を深掘りして"
-		"ソ連建築の話。スターリン様式、フルシチョフカ団地、モスクワ地下鉄を深掘りして"
-		"ソ連の検閲と地下出版（サミズダート）の話。禁書をタイプライターで写して秘密裏に回した文化、ソルジェニーツィンを深掘りして"
-		"チェルノブイリの話。リクビダートル、プリピャチ廃墟を深掘りして"
-		"ソ連の日常生活の話。コムナルカ、ダーチャ、行列文化、闇市場を深掘りして"
-		"ピオネール、コムソモール、数学オリンピックを深掘りして"
-		"鉄のカーテンと亡命ドラマを深掘りして"
-		"ソ連の女性の話。テレシコワ、女性狙撃手リュドミラを深掘りして"
-		"ソ連と日本の関係の話。シベリア抑留、北方領土、ゾルゲ事件を深掘りして"
-		"赤の広場とクレムリンの歴史的事件を深掘りして"
-		"五カ年計画の実態の話。ノルマ、スタハノフ運動を深掘りして"
-		"ソ連SF文学の話。ストルガツキー兄弟を深掘りして"
-		"グラグ収容所文学の話。ソルジェニーツィン、シャラモフを深掘りして"
-		"ソ連チェス文化の話。カスパロフvsカルポフ、フィッシャーvsスパスキーを深掘りして"
-		"ウォッカの歴史の話。ゴルバチョフの禁酒令、サモゴンを深掘りして"
-		"宇宙ステーションの話。サリュート、ミールを深掘りして"
-		"マルクスの生涯の話。エンゲルスとの友情を深掘りして"
-		"共産党宣言が書かれた1848年の革命の嵐を深掘りして"
-		"資本論と大英博物館の話。剰余価値の概念を深掘りして"
-		"ロシア革命の話。二月革命と十月革命、オーロラ号を深掘りして"
-		"トロツキーの波乱の生涯を深掘りして"
-		"毛沢東と中国共産主義の話。長征、大躍進、文化大革命を深掘りして"
-		"キューバ革命の話。カストロとゲバラを深掘りして"
-		"チェ・ゲバラのアイコン化を深掘りして"
-		"パリ・コミューンの話。世界初の労働者政権を深掘りして"
-		"インターナショナル（歌）の歴史を深掘りして"
-		"共産主義と芸術の話。社会主義リアリズム、構成主義を深掘りして"
-		"赤い旗の歴史と鎌と槌のデザインを深掘りして"
-		"共産主義とフェミニズムの話。コロンタイ、国際女性デーを深掘りして"
-		"ユーゴスラビアの自主管理社会主義を深掘りして"
-		"プラハの春（1968年）を深掘りして"
-		"ベルリンの壁を深掘りして"
-		"ポル・ポトとクメール・ルージュを深掘りして"
-		"北朝鮮の主体思想を深掘りして"
-		"ホー・チ・ミンの生涯を深掘りして"
-		"共産主義と宗教の話。「宗教はアヘン」の真意を深掘りして"
-		"ユートピア思想の話。トマス・モア、フーリエを深掘りして"
-		"冷戦のプロパガンダ合戦を深掘りして"
-		"メーデーの起源と労働運動を深掘りして"
-		"赤狩りとマッカーシズムを深掘りして"
-		"東ドイツの日常の話。シュタージ、トラバント、オスタルギーを深掘りして"
-		"サミズダート（地下出版）文化を深掘りして"
-		"ビロード革命の話。ハヴェルの非暴力革命を深掘りして"
-		"ワレサとポーランド連帯を深掘りして"
-		"共産主義の記念碑と銅像の運命を深掘りして"
-		"テルミンの話。発明者レフ・テルミン、世界初の電子楽器、CIAの盗聴器ザ・シング、波乱の生涯を深掘りして"
-		# --- ソ連追加パックA ---
-		"戦時共産主義の話。余剰穀物徴発、配給制、内戦期の国家統制を深掘りして"
-		"ネップの話。市場の部分解禁、レーニンの現実主義、短い繁栄と終焉を深掘りして"
-		"コミンテルンの話。世界革命輸出の構想、各国共産党との緊張、解散までを深掘りして"
-		"コメコンの話。社会主義圏の経済分業、計画貿易、硬直化の実態を深掘りして"
-		"ワルシャワ条約機構の話。NATOへの対抗、統合作戦の実態、崩壊までを深掘りして"
-		"ソ連憲法の話。1936年憲法の理想文言、権利と現実のギャップを深掘りして"
-		"計画経済の価格形成の話。ゴスプラン、供給不足、見えないコストを深掘りして"
-		"ノーメンクラトゥーラの話。党幹部人事名簿、特権階層の形成、統治メカニズムを深掘りして"
-		"住宅割当制度の話。待機リスト、団地文化、私生活への国家介入を深掘りして"
-		"フルシチョフ秘密報告の話。スターリン批判の衝撃、党内動揺、東欧への波及を深掘りして"
-		"新経済政策後の集団化の話。クラーク問題、抵抗と飢饉、農業の再編を深掘りして"
-		"ソ連の標準化の話。GOST規格、工業品質、日用品の均質化を深掘りして"
-		"スタハノフ運動の社会心理の話。英雄労働者の演出、ノルマ圧力、現場の実態を深掘りして"
-		"ソ連の児童雑誌の話。ムルジルカ、教育宣伝、子ども向け文化政策を深掘りして"
-		"ソ連サーカスの話。国策芸能としての体操と演出、国際巡業、人気の理由を深掘りして"
-		"ソ連バレエ外交の話。ボリショイ劇場、芸術と国家威信、亡命騒動を深掘りして"
-		"ソ連スポーツ科学の話。国家主導トレーニング、五輪戦略、記録至上主義を深掘りして"
-		"スパルタキアーダの話。労働者スポーツ祭典、五輪への対抗、政治的意図を深掘りして"
-		"ソ連の自動車事情の話。ラーダ、モスクヴィッチ、待ち行列と整備文化を深掘りして"
-		"ソ連家電の話。修理前提設計、部品不足、長寿命と不便の両面を深掘りして"
-		"ソ連の電話事情の話。回線不足、共同電話、盗聴不安と日常会話を深掘りして"
-		"マグニトゴルスクの話。計画都市建設、重工業の象徴、労働動員の現実を深掘りして"
-		"バイカル・アムール鉄道の話。国家プロジェクト、青年動員、採算性論争を深掘りして"
-		"ノヴォシビルスク学術都市の話。アカデムゴロドク、科学者共同体、自由と統制を深掘りして"
-		"ソ連の数学教育の話。専門学校体系、問題集文化、強さの秘密を深掘りして"
-		"サハロフの話。水爆開発者から反体制知識人へ、ノーベル平和賞までを深掘りして"
-		"ソ連の半導体開発の話。西側との差、コピー戦略、冷戦技術競争を深掘りして"
-		"ミグ設計局の話。戦闘機開発、設計局競争、国家委託の仕組みを深掘りして"
-		"ツポレフ設計局の話。長距離爆撃機と旅客機、技術継承、政治との関係を深掘りして"
-		"ベレンコ中尉亡命事件の話。MiG-25の機密流出、日本着陸、冷戦インパクトを深掘りして"
-		"アフガニスタン侵攻の話。介入の論理、泥沼化、帰還兵問題を深掘りして"
-		"ヘルシンキ宣言と人権運動の話。デタントの副作用、監視社会での抵抗を深掘りして"
-		"ソ連と国連外交の話。安保理戦略、拒否権運用、第三世界外交を深掘りして"
-		"ゴルバチョフ改革の話。ペレストロイカとグラスノスチ、制度疲労への処方箋を深掘りして"
-		"バルト三国独立運動の話。歌う革命、人間の鎖、連邦崩壊への連鎖を深掘りして"
-		"八月クーデター失敗の話。保守派の焦り、エリツィン台頭、最後の三日間を深掘りして"
-		"ルーブル圏の崩壊の話。通貨と主権、インフレ、移行期ショックを深掘りして"
-		"ソ連パスポート制度の話。国内移動制限、登録制度、都市への流入管理を深掘りして"
-		"ソ連の食糧輸入の話。穀物調達、為替問題、計画経済の限界を深掘りして"
-		"冷戦期の将棋とチェス交流の話。知的競技外交、日ソ文化交流の意外な接点を深掘りして"
-		"ソ連ポスター印刷工房の話。版画技法、色彩設計、大衆動員のビジュアルを深掘りして"
-		"モスクワ五輪ボイコットの話。政治とスポーツ、参加国分断、記憶の温度差を深掘りして"
-		"ソ連崩壊後の記憶政治の話。ノスタルジー、再評価、世代間ギャップを深掘りして"
-		)
-	local past_soviet_file="tmp/.past_soviet_themes.txt"
-	local available_soviet=()
-	local past_soviet_list=""
-	[ -f "$past_soviet_file" ] && past_soviet_list=$(cat "$past_soviet_file")
-	for st in "${soviet_themes[@]}"; do
-		local st_key="${st%%。*}"
-		[ "$st_key" = "$st" ] && st_key="${st%%を深掘り*}"
-		if ! echo "$past_soviet_list" | grep -qF "$st_key"; then
-			available_soviet+=("$st")
-		fi
-	done
-	if [ ${#available_soviet[@]} -eq 0 ]; then
-		available_soviet=("${soviet_themes[@]}")
-		>"$past_soviet_file"
+	# カテゴリ付きの場合はタブ区切りで返す: [soviet]\tテーマ本文
+	if [ -n "$theme_cat" ]; then
+		printf '[%s]\t%s\n' "$theme_cat" "$theme_body"
+	else
+		echo "$theme_body"
 	fi
-	local soviet_theme="${available_soviet[$((RANDOM % ${#available_soviet[@]}))]}"
-	local soviet_key="${soviet_theme%%。*}"
-	[ "$soviet_key" = "$soviet_theme" ] && soviet_key="${soviet_theme%%を深掘り*}"
-	echo "$soviet_key" >>"$past_soviet_file"
-	tail -60 "$past_soviet_file" >"${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
-	echo "$soviet_theme"
 }
 
 #=== ラジオトーク: コーナー ===
@@ -2843,6 +2769,218 @@ ${strategy_diff}
 $(_radio_output_rules 1000 2000)
 PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "${best_score}" "strategy"
+}
+
+#=== 時間帯コーナー ===
+
+start_radio_corner_weather() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	# wttr.in から天気情報を取得
+	local weather_data=""
+	weather_data=$(curl -sf "wttr.in/Tokyo?format=%C+%t+%h+%w&lang=ja" 2>/dev/null || echo "")
+	local weather_detail=""
+	weather_detail=$(curl -sf "wttr.in/Tokyo?lang=ja&format=3" 2>/dev/null || echo "")
+	[ -z "$weather_data" ] && weather_data="天気情報を取得できませんでした。一般的な季節の天気の話をしてください。"
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【今日の天気データ（実測）】
+${weather_data}
+${weather_detail}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. ソ連天気予報コーナー
+   - 上記の実際の天気データをもとに、ソ連風に天気を解説する
+   - 「同志諸君」「労働者の皆さん」などソ連っぽい呼びかけ
+   - 天気に絡めたソ連的なアドバイスやエピソード
+   - 実際の気温・天気は正確に伝える
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "weather"
+}
+
+start_radio_corner_fortune() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. 今日のソ連占いコーナー
+   - ラッキーアイテム: ソ連っぽいもの（例: 五カ年計画の書類、赤い星のバッジ、ウォッカのグラスなど）
+   - ラッキーワード: ソ連・共産主義的な言葉
+   - 今日の運勢をソ連っぽく語る
+   - 真面目にやるほど面白い。占いの体裁はちゃんと守る
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "fortune"
+}
+
+start_radio_corner_market() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. 株価・経済動向コーナー
+   - 最近の経済トピックや市場の動向について語る
+   - 円安・円高、日経平均、米国市場など一般的な経済話題
+   - ソ連的な視点（計画経済と市場経済の対比など）を混ぜると面白い
+   - 具体的な銘柄推奨は避ける。一般的な経済教養として語る
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "market"
+}
+
+start_radio_corner_dinner() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. 夕飯の献立を考えようコーナー
+   - 今日の夕飯を一緒に考える
+   - 季節感のある料理を提案
+   - 簡単に作れるレシピのポイントも軽く
+   - ソ連料理やロシア料理を混ぜてもOK
+   - リスナーに語りかけるように
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "dinner"
+}
+
+start_radio_corner_deals() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. お得情報コーナー
+   - 節約術、お得な生活の知恵、コスパの良い買い物のコツ
+   - 食費・光熱費・通信費など身近な節約ネタ
+   - ソ連的な「足りない中でやりくりする知恵」の視点も
+   - 具体的で実用的なアドバイス
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "deals"
+}
+
+start_radio_corner_survival() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. 明日を生き延びるサバイバル知識コーナー
+   - 災害対策、応急処置、野外生存術など実用的な知識
+   - 毎回テーマを変える（火起こし、浄水、ロープワーク、方角の見方、食料確保など）
+   - 知っているだけで命を救える系の知識
+   - ソ連的なサバイバル精神（シベリアの知恵など）も混ぜる
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "survival"
 }
 
 #=== ニュース: 毎ゲーム取得 & 再生 ===

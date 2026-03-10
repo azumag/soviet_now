@@ -33,6 +33,7 @@ REJECTED_HASHES_FILE = "tmp/rejected_hashes.txt"
 REJECTED_HASH_META_FILE = "tmp/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_MIN_NEW_GAMES = 8
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
+STRATEGY_VERSIONS_DIR = "strategy_versions"
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -181,6 +182,43 @@ def load_rejected_hash_meta():
         return {}
 
 
+def compute_decide_hash(path):
+    try:
+        r = subprocess.run(
+            ["python3", "extract_decide_hash.py", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        h = r.stdout.strip()
+        return h if r.returncode == 0 and h else ""
+    except Exception:
+        return ""
+
+
+def load_restorable_hashes():
+    restorable = set()
+
+    by_hash_dir = Path(STRATEGY_HASH_ARCHIVE_DIR)
+    if by_hash_dir.exists():
+        for f in by_hash_dir.glob("*.py"):
+            restorable.add(f.stem)
+
+    candidate_files = []
+    for p in (Path("tmp/revert_strategy.py"), Path("strategy.py")):
+        if p.exists():
+            candidate_files.append(p)
+    versions_dir = Path(STRATEGY_VERSIONS_DIR)
+    if versions_dir.exists():
+        candidate_files.extend(sorted(versions_dir.glob("best_score*_strategy.py")))
+
+    for f in candidate_files:
+        h = compute_decide_hash(f)
+        if h:
+            restorable.add(h)
+    return restorable
+
+
 def quantile(vals, p):
     xs = sorted(vals)
     if not xs:
@@ -243,6 +281,7 @@ def is_recently_rejected_for_rollback(hash_, rolling, rejected_hashes, rejected_
 def collect_rollback_candidate_hashes(rolling, current_hash):
     rejected_hashes = load_rejected_hashes()
     rejected_meta = load_rejected_hash_meta()
+    restorable_hashes = load_restorable_hashes()
     candidates = set()
     for hash_, data in rolling.items():
         if not hash_ or hash_ == current_hash:
@@ -250,7 +289,7 @@ def collect_rollback_candidate_hashes(rolling, current_hash):
         metrics = calc_strategy_metrics(data.get("scores", []))
         if not metrics or metrics["n"] < MIN_GAMES_FOR_BEST_ROLLBACK:
             continue
-        if not Path(STRATEGY_HASH_ARCHIVE_DIR, f"{hash_}.py").exists():
+        if hash_ not in restorable_hashes:
             continue
         if is_recently_rejected_for_rollback(hash_, rolling, rejected_hashes, rejected_meta):
             continue
@@ -767,6 +806,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     current_entry = next((e for e in all_entries if current_hash and e["hash"] == current_hash), None)
     entries = all_entries[:max_rows]
     max_comp = max(e["comp"] for e in entries) if entries else 1
+    rollback_entry = next((e for e in all_entries if e["hash"] in rollback_candidates), None)
 
     lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(comp=0.55p50+0.30p25+0.15lcb, rollback=yellow){RST}"]
     if current_entry:
@@ -795,8 +835,12 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     for e in entries:
         is_current = current_hash and e["hash"] == current_hash
         lines.append(render_entry(e, is_current=bool(is_current)))
-    if current_entry and current_entry not in entries:
+    if rollback_entry and rollback_entry not in entries and rollback_entry is not current_entry:
         lines.append(f"{DIM} .. {'':8} {'':>6}│{'':<{bar_w}} {RST}")
+        lines.append(render_entry(rollback_entry, is_current=False))
+    if current_entry and current_entry not in entries:
+        if not rollback_entry or rollback_entry is current_entry:
+            lines.append(f"{DIM} .. {'':8} {'':>6}│{'':<{bar_w}} {RST}")
         lines.append(render_entry(current_entry, is_current=True))
     return lines
 
