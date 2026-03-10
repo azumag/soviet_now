@@ -40,12 +40,6 @@ SOURCES = [
         "license": None,
     },
     {
-        "url": "https://prtimes.jp/index.rdf",
-        "key": "prtimes",
-        "name": "PRTIMES",
-        "license": None,
-    },
-    {
         "url": "https://ja.wikinews.org/w/index.php?title=特別:新しいページ&feed=rss",
         "key": "wikinews",
         "name": "ウィキニュース",
