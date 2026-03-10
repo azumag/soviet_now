@@ -173,10 +173,15 @@ _improve_progress "ai_prepare" "20" "prepare_sandbox"
 # primary(glm) を最大3回まで試し、失敗時のみ fallback(glmflash) へ
 RUN_AI_PRIMARY_RETRIES="${RUN_AI_PRIMARY_RETRIES:-3}"
 IMPROVE_MAX_RETRIES="${IMPROVE_MAX_RETRIES:-3}"
+IMPROVE_CONTINUE_MAX="${IMPROVE_CONTINUE_MAX:-6}"
 case "$IMPROVE_MAX_RETRIES" in
 ''|*[!0-9]*) IMPROVE_MAX_RETRIES=3 ;;
 esac
 [ "$IMPROVE_MAX_RETRIES" -lt 1 ] && IMPROVE_MAX_RETRIES=1
+case "$IMPROVE_CONTINUE_MAX" in
+''|*[!0-9]*) IMPROVE_CONTINUE_MAX=6 ;;
+esac
+[ "$IMPROVE_CONTINUE_MAX" -lt 1 ] && IMPROVE_CONTINUE_MAX=1
 
 # リバート用に改善前のstrategy.pyを保存
 cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
@@ -583,39 +588,40 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	export RUN_CMD_OPENCODE_PERMISSION
 	mkdir -p "$RUN_CMD_SESSION_DIR" 2>/dev/null || true
 	mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
-	for retry in $(seq 1 "$IMPROVE_MAX_RETRIES"); do
+	fresh_retry=1
+	continue_retry=0
+	while [ "$fresh_retry" -le "$IMPROVE_MAX_RETRIES" ]; do
 		ai_progress=""
 		validate_progress=""
 		if [ "$IMPROVE_MAX_RETRIES" -le 1 ]; then
 			ai_progress=25
 			validate_progress=30
 		else
-			ai_progress=$((25 + (retry - 1) * 40 / (IMPROVE_MAX_RETRIES - 1)))
-			validate_progress=$((30 + (retry - 1) * 40 / (IMPROVE_MAX_RETRIES - 1)))
+			ai_progress=$((25 + (fresh_retry - 1) * 40 / (IMPROVE_MAX_RETRIES - 1)))
+			validate_progress=$((30 + (fresh_retry - 1) * 40 / (IMPROVE_MAX_RETRIES - 1)))
 		fi
-		_improve_progress "ai_retry${retry}" "$ai_progress" "ai_edit_and_validate"
-		if [ "$retry" -eq 1 ]; then
+
+		if [ "$continue_retry" -eq 0 ]; then
+			_improve_progress "ai_retry${fresh_retry}" "$ai_progress" "ai_edit_and_validate"
+			if [ "$fresh_retry" -eq 1 ]; then
+				_improve_note "fresh improve ${fresh_retry}/${IMPROVE_MAX_RETRIES}: start new analysis session"
+			else
+				log "[IMPROVE] 新規改善リトライ $fresh_retry/${IMPROVE_MAX_RETRIES} (前回エラー: ${VALIDATE_ERROR:0:80})"
+				_improve_note "fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}: restart from clean sandbox state; previous error: ${VALIDATE_ERROR:0:160}"
+				_improve_clear_retry_sessions
+			fi
+			_improve_reset_sandbox_targets
 			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
 				"prompts/improve_strategy.md" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
 		else
-			log "[IMPROVE] リトライ $retry/${IMPROVE_MAX_RETRIES} (前回エラー: ${VALIDATE_ERROR:0:80})"
-			_improve_note "retry ${retry}/${IMPROVE_MAX_RETRIES}: continue prior opencode session when available; fix only: ${VALIDATE_ERROR:0:160}"
-
-			# stagingをオリジナルに戻してからリトライ
-			cp "strategy.py" "$STAGING_FILE"
-			rm -rf "strategy_helpers" 2>/dev/null || true
-			mkdir -p "strategy_helpers" 2>/dev/null || true
-			if [ -d "$SANDBOX_HELPERS_BASELINE_DIR" ]; then
-				rsync -a --delete --no-links "$SANDBOX_HELPERS_BASELINE_DIR"/ "strategy_helpers"/ 2>/dev/null || \
-					cp -RL "$SANDBOX_HELPERS_BASELINE_DIR"/. "strategy_helpers"/ 2>/dev/null || true
-			fi
-			[ -f "strategy_helpers/__init__.py" ] || : > "strategy_helpers/__init__.py"
-
+			_improve_progress "fix_retry${fresh_retry}_${continue_retry}" "$validate_progress" "continue_same_session_fix"
+			log "[IMPROVE] 継続修正 ${continue_retry}/${IMPROVE_CONTINUE_MAX} (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, 前回エラー: ${VALIDATE_ERROR:0:80})"
+			_improve_note "continue fix ${continue_retry}/${IMPROVE_CONTINUE_MAX} on same session for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; preserve current staging/helpers; fix only: ${VALIDATE_ERROR:0:160}"
 			fix_prompt_file=$(mktemp "$PWD/$TMP_STATE_DIR/eloop_fix_prompt.XXXXXX")
 			export VALIDATE_ERROR
 			envsubst '${VALIDATE_ERROR}' < "$ELOOP_LIB_DIR/prompts/fix_validation.md" > "$fix_prompt_file"
-			run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
+			run_ai "FIX(${fresh_retry}.${continue_retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
 				"$fix_prompt_file" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
 			rm -f "$fix_prompt_file"
@@ -626,16 +632,23 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			unexpected_py=$(comm -13 "$SANDBOX_TOPLEVEL_PY_BASELINE" <(find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort) 2>/dev/null | sed '/^strategy\.py\.staging$/d' || true)
 			if [ -n "$unexpected_py" ]; then
 				VALIDATE_ERROR="許可されていない新規トップレベルPythonファイルを作成: $(printf '%s' "$unexpected_py" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')"
-				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
+				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
 				while IFS= read -r extra_py; do
 					[ -n "$extra_py" ] && rm -f -- "$extra_py" 2>/dev/null || true
 				done <<<"$unexpected_py"
+				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+					continue_retry=$((continue_retry + 1))
+					continue
+				fi
+				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
 				continue
 			fi
 		fi
 
 		# 差分チェック
-		_improve_progress "validate_retry${retry}" "$validate_progress" "diff_and_validation_checks"
+		_improve_progress "validate_retry${fresh_retry}" "$validate_progress" "diff_and_validation_checks"
 		staging_changed=false
 		helper_changed=false
 		helpers_diff=""
@@ -646,9 +659,16 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			helper_changed=true
 		fi
 		if [ "$staging_changed" != true ] && [ "$helper_changed" != true ]; then
-			log "[IMPROVE] 差分なし (retry $retry/${IMPROVE_MAX_RETRIES})"
+			log "[IMPROVE] 差分なし (fresh $fresh_retry/${IMPROVE_MAX_RETRIES}, continue $continue_retry/${IMPROVE_CONTINUE_MAX})"
 			VALIDATE_ERROR="AIが strategy.py.staging / strategy_helpers を変更しなかった。必ず strategy.py.staging または helper を改善すること。"
-			_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
+			_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+			if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+				continue_retry=$((continue_retry + 1))
+				continue
+			fi
+			_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+			fresh_retry=$((fresh_retry + 1))
+			continue_retry=0
 			continue
 		fi
 
@@ -662,7 +682,14 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				if grep -qF "$HASH_STAGING" "$HOST_REJECTED_HASHES_FILE"; then
 					log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み)"
 					VALIDATE_ERROR="この変更は過去にリジェクトされた戦略と同一 (hash=$HASH_STAGING)。別のアプローチを試せ。"
-					_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
+					_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+					if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+						continue_retry=$((continue_retry + 1))
+						continue
+					fi
+					_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+					fresh_retry=$((fresh_retry + 1))
+					continue_retry=0
 					continue
 				fi
 			fi
@@ -671,19 +698,40 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ] && [ "$helper_changed" != true ]; then
 				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
 				VALIDATE_ERROR="decide()関数の本体に実質的な変更がない (コメントのみの変更)。ロジックを変更せよ。"
-				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
+				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+					continue_retry=$((continue_retry + 1))
+					continue
+				fi
+				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
 				continue
 			fi
 
 			if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_numeric_only "strategy.py" "$STAGING_FILE"; then
 				VALIDATE_ERROR="数値・文字列の微調整だけの変更は不可。構造変更、ロジック削除/置換、未活用情報の活用を含む変更にせよ。"
-				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
+				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+					continue_retry=$((continue_retry + 1))
+					continue
+				fi
+				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
 				continue
 			fi
 
 			if [ "$staging_changed" = true ] && _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
 				VALIDATE_ERROR="終盤判定を turns>=N の固定ターン数で追加してはいけない。max_y, merge_available, reactor など局面条件で表現せよ。"
-				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
+				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+					continue_retry=$((continue_retry + 1))
+					continue
+				fi
+				_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+				fresh_retry=$((fresh_retry + 1))
+				continue_retry=0
 				continue
 			fi
 
@@ -722,7 +770,15 @@ ${helpers_diff}"
 			improve_ok=true
 			break
 		else
-			_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR:-unknown validation error}"
+			_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR:-unknown validation error}"
+			if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+				continue_retry=$((continue_retry + 1))
+				continue
+			fi
+			_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"
+			fresh_retry=$((fresh_retry + 1))
+			continue_retry=0
+			continue
 		fi
 	done
 
