@@ -508,6 +508,27 @@ run_cmd() {
 
 #=== AIステップ ===
 
+_build_no_edit_retry_prompt() {
+	local original_prompt="$1" expect="$2" attempt="$3" primary_attempts="$4" resume_session="$5"
+	local short_followup
+	short_followup=$(cat <<EOF
+前回の応答は \`$expect\` を実際には変更していないため失敗扱いです。
+同じタスクを続けて、今回は必ず実ファイル編集まで完了してください。
+- いま必要なのは説明ではなく \`$expect\` の実編集
+- 再分析・要約・長文説明は禁止
+- 必要なら \`$expect\` を1回だけ Read し、その直後に Edit
+- 新規トップレベル .py を作らない
+- 終了前に、\`$expect\` に差分が入った状態にすること
+- これは no-edit 後の再試行 ${attempt}/${primary_attempts}
+EOF
+)
+	if [ -n "$resume_session" ]; then
+		printf '%s\n' "$short_followup"
+	else
+		printf '%s\n\n%s\n' "$original_prompt" "$short_followup"
+	fi
+}
+
 run_ai() {
 	local label="$1" primary="$2" fallback="$3" pf="$4" expect="$5"
 	shift 5
@@ -571,16 +592,9 @@ run_ai() {
 				return 0
 			fi
 			if [ "$attempt" -lt "$primary_attempts" ]; then
-				attempt_prompt=$(cat <<EOF
-同じセッションを継続して、未完了の編集だけを続けてください。
-まだ \`$expect\` が実際には編集されていません。
-- 再分析や長い説明は不要
-- 必要なら現在の \`$expect\` を1回だけ Read
-- その後すぐ \`$expect\` を Edit
-- 新規トップレベル .py を作らない
-- 修正結果は「説明」ではなく、実ファイル編集で示すこと
-EOF
-)
+				local retry_resume_session=""
+				retry_resume_session=$(_run_cmd_load_resume_session "$primary" 2>/dev/null || true)
+				attempt_prompt=$(_build_no_edit_retry_prompt "$prompt" "$expect" "$attempt" "$primary_attempts" "$retry_resume_session")
 			fi
 		else
 			[ "$primary_ret" -eq 0 ] && {
