@@ -101,6 +101,19 @@ mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$
 
 commands_empty() { [ -z "$(tr -d '[:space:]' <"$COMMANDS" 2>/dev/null)" ]; }
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
+clear_commands_file() { : >"$COMMANDS"; }
+_clear_stale_commands_if_any() {
+	local reason="${1:-unknown}"
+	[ -f "$COMMANDS" ] || return 0
+	local cmd_preview
+	cmd_preview=$(tr '\n' ' ' <"$COMMANDS" 2>/dev/null | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+	[ -n "$cmd_preview" ] || return 0
+	if [ "${#cmd_preview}" -gt 120 ]; then
+		cmd_preview="${cmd_preview:0:117}..."
+	fi
+	log "[COMMANDS] stale commandsをクリア (${reason}): ${cmd_preview}"
+	clear_commands_file
+}
 _trim_log_file() {
 	local f="$1" keep="${2:-2000}" trim="${3:-4000}"
 	[ -n "$f" ] || return 0
@@ -151,9 +164,10 @@ wait_for_move() {
 
 send_retry() {
 	log "retry送信..."
+	_clear_stale_commands_if_any "before retry"
 	echo "retry" >"$COMMANDS"
 	wait_commands_done
-	sleep 3
+	sleep 1
 
 	local waited=0
 	while [ $waited -lt 60 ]; do
@@ -163,30 +177,36 @@ import json
 try:
     d = json.load(open('$GAME_STATE'))
     s = d.get('state','')
+    score = d.get('score', 0)
     n = len(d.get('pieces',[]))
-    if s == 'MOVE' and n <= 2:
-        print('ready')
+    if s == 'MOVE' and ((score <= 0 and n <= 4) or n <= 2):
+        print(f'ready|{s}|{score}|{n}')
     elif s == 'GAMEOVER' or s == 'STOP':
-        print('still_over')
+        print(f'still_over|{s}|{score}|{n}')
     else:
-        print('waiting')
+        print(f'waiting|{s}|{score}|{n}')
 except:
-    print('waiting')
+    print('waiting|?|?|?')
 " 2>/dev/null)
 
+		local rs_kind rs_state rs_score rs_pieces
+		IFS='|' read -r rs_kind rs_state rs_score rs_pieces <<<"$rs"
 		case "$rs" in
-		ready)
-			log "新ゲーム検出"
+		ready*)
+			log "新ゲーム検出 (${waited}s, state=${rs_state:-?}, score=${rs_score:-?}, pieces=${rs_pieces:-?})"
 			return 0
 			;;
-		still_over)
+		still_over*)
 			if [ $((waited % 20)) -eq 0 ] && [ $waited -gt 0 ]; then
-				log "まだGAMEOVER → retry再送"
+				log "まだGAMEOVER/STOP (${waited}s, state=${rs_state:-?}, score=${rs_score:-?}, pieces=${rs_pieces:-?}) → retry再送"
 				echo "retry" >"$COMMANDS"
 				wait_commands_done
 			fi
 			;;
 		esac
+		if [ $((waited % 10)) -eq 0 ] && [ "$waited" -gt 0 ] && [ "${rs_kind:-waiting}" = "waiting" ]; then
+			log "retry待機中 ${waited}s (state=${rs_state:-?}, score=${rs_score:-?}, pieces=${rs_pieces:-?})"
+		fi
 		[ -f tmp/stop ] && return 130
 		sleep 2
 		waited=$((waited + 2))

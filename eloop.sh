@@ -133,6 +133,7 @@ play_one_game() {
 	local game_num_display=$((GAME_NUM + 1))
 	log ""
 	log "── Game #${game_num_display} ──"
+	_clear_stale_commands_if_any "before play_one_game"
 
 	# 試合開始時の strategy.py をスナップショット保存
 	# (裏で改善が strategy.py を書き換えても、この試合で使った戦略を正確に保存できる)
