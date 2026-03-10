@@ -418,7 +418,7 @@ _send() {
     local channel token nick tmp_irc rc
     channel="${TWITCH_CHANNEL:-azumagbanjo}"
     token="${TWITCH_BOT_TOKEN:-}"
-    nick="${TWITCH_BOT_NICK:-sorenbot}"
+    nick="${TWITCH_BOT_NICK:-${TWITCH_BOT_LOGIN:-azumagdev}}"
     channel="${channel#\#}"
     nick=$(printf '%s' "$nick" | tr '\r\n' ' ' | tr -d '\000')
     if [ -z "$token" ]; then
@@ -429,6 +429,24 @@ _send() {
     token="${token#oauth:}"
     msg=$(printf '%s' "$msg" | tr '\r\n' ' ' | tr -d '\000')
     [ -n "$msg" ] || return 1
+    msg=$(python3 - <<'PY' "$msg"
+import sys
+msg = sys.argv[1]
+limit = 430
+data = msg.encode("utf-8")
+if len(data) <= limit:
+    print(msg, end="")
+    raise SystemExit
+trim = data[:limit - 3]
+while True:
+    try:
+        out = trim.decode("utf-8")
+        break
+    except UnicodeDecodeError:
+        trim = trim[:-1]
+print(out.rstrip() + "...", end="")
+PY
+)
 
     tmp_irc=$(mktemp /tmp/twitch_send_XXXXXXXX)
     {
@@ -447,6 +465,8 @@ _send() {
         if [ -s "$tmp_irc" ]; then
             head -5 "$tmp_irc" >&2
         fi
+        rm -f "$tmp_irc"
+        return 1
     fi
     rm -f "$tmp_irc"
     return 0

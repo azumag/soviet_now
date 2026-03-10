@@ -2481,9 +2481,13 @@ if url:
 parts.append(f"({license_name})")
 print(" | ".join(parts))
 PY
-)
+	)
 	[ -n "$cc_text" ] || return 0
-	./twitch_chat.sh send "$cc_text" 2>/dev/null || true
+	(
+		if ! ./twitch_chat.sh send "$cc_text" >/dev/null 2>&1; then
+			log "[RADIO:news] CC表記投稿失敗: ${title:0:80}"
+		fi
+	) &
 }
 
 # 自分のコーナーの状態ファイルだけ安全に削除 (並列実行の競合防止)

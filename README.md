@@ -294,10 +294,11 @@ node soviet_game.mjs &
 
 ```bash
 TWITCH_BOT_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWITCH_BOT_NICK=azumagdev
 TWITCH_CHANNEL=azumagbanjo
 ```
 
-投稿者名はトークン取得時にログインしたTwitchアカウント名になる（`NICK` 設定は不要）。
+`TWITCH_BOT_NICK` は、トークンを取得したTwitchアカウント名に合わせること。未設定時は `azumagdev` を既定値として使う。
 
 `soren_loop.sh` 起動時に `.env` が自動で読み込まれる。
 
