@@ -138,7 +138,7 @@ MODEL_FALLBACK="opencode:glmflash"  # フォールバック
 ```
 
 `run_ai()` は PRIMARY でまず実行し、期待出力が得られなければ FALLBACK に切り替える。
-`eloop_improve.sh` では `RUN_AI_PRIMARY_RETRIES=3` がデフォルトで設定されており、改善フェーズでは PRIMARY を最大3回試行してから FALLBACK に切り替える。
+`eloop_improve.sh` では `RUN_AI_PRIMARY_RETRIES=10` がデフォルトで設定されており、改善フェーズでは PRIMARY を最大10回試行してから FALLBACK に切り替える。
 
 ```bash
 # 例: PRIMARYの試行回数を上書き

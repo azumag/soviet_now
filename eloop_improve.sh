@@ -170,8 +170,8 @@ _improve_progress "summary_done" "15" "batch_summary_ready"
 strategy_diff=""
 log "[IMPROVE] AI改善 (${NUM_GAMES}試合分)..."
 _improve_progress "ai_prepare" "20" "prepare_sandbox"
-# primary(glm) を最大3回まで試し、失敗時のみ fallback(glmflash) へ
-RUN_AI_PRIMARY_RETRIES="${RUN_AI_PRIMARY_RETRIES:-3}"
+# primary(glm) を最大10回まで試し、失敗時のみ fallback(glmflash) へ
+RUN_AI_PRIMARY_RETRIES="${RUN_AI_PRIMARY_RETRIES:-10}"
 IMPROVE_MAX_RETRIES="${IMPROVE_MAX_RETRIES:-3}"
 IMPROVE_CONTINUE_MAX="${IMPROVE_CONTINUE_MAX:-6}"
 case "$IMPROVE_MAX_RETRIES" in
