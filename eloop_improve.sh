@@ -37,6 +37,11 @@ _improve_progress() {
 	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT"
 }
 
+_improve_note() {
+	local msg="$*"
+	printf '[%s] [IMPROVE] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
+}
+
 # ゲーム範囲を算出
 GAME_NUMS_LIST=()
 for hf in $HISTORY_FILES; do
@@ -455,6 +460,10 @@ if [ "$sandbox_ready" = true ]; then
 fi
 
 if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
+	SANDBOX_TOPLEVEL_PY_BASELINE=$(mktemp /tmp/eloop_sandbox_py.XXXXXX 2>/dev/null || echo "")
+	if [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ]; then
+		find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort > "$SANDBOX_TOPLEVEL_PY_BASELINE"
+	fi
 	for retry in $(seq 1 3); do
 		_improve_progress "ai_retry${retry}" "$((25 + (retry - 1) * 15))" "ai_edit_and_validate"
 		if [ "$retry" -eq 1 ]; then
@@ -476,11 +485,25 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			rm -f "$fix_prompt_file"
 		fi
 
+		if [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ] && [ -f "$SANDBOX_TOPLEVEL_PY_BASELINE" ]; then
+			local unexpected_py=""
+			unexpected_py=$(comm -13 "$SANDBOX_TOPLEVEL_PY_BASELINE" <(find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort) 2>/dev/null | sed '/^strategy\.py\.staging$/d' || true)
+			if [ -n "$unexpected_py" ]; then
+				VALIDATE_ERROR="許可されていない新規トップレベルPythonファイルを作成: $(printf '%s' "$unexpected_py" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')"
+				_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR}"
+				while IFS= read -r extra_py; do
+					[ -n "$extra_py" ] && rm -f -- "$extra_py" 2>/dev/null || true
+				done <<<"$unexpected_py"
+				continue
+			fi
+		fi
+
 		# 差分チェック
 		_improve_progress "validate_retry${retry}" "$((30 + (retry - 1) * 15))" "diff_and_validation_checks"
 		if diff -q "strategy.py" "$STAGING_FILE" >/dev/null 2>&1; then
 			log "[IMPROVE] 差分なし (retry $retry/3)"
 			VALIDATE_ERROR="AIが strategy.py.staging を変更しなかった。必ず strategy.py.staging を編集して改善すること。"
+			_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR}"
 			continue
 		fi
 
@@ -494,6 +517,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				if grep -qF "$HASH_STAGING" "$HOST_REJECTED_HASHES_FILE"; then
 					log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み)"
 					VALIDATE_ERROR="この変更は過去にリジェクトされた戦略と同一 (hash=$HASH_STAGING)。別のアプローチを試せ。"
+					_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR}"
 					continue
 				fi
 			fi
@@ -502,6 +526,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ]; then
 				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
 				VALIDATE_ERROR="decide()関数の本体に実質的な変更がない (コメントのみの変更)。ロジックを変更せよ。"
+				_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR}"
 				continue
 			fi
 
@@ -524,6 +549,8 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 
 			improve_ok=true
 			break
+		else
+			_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR:-unknown validation error}"
 		fi
 	done
 
@@ -540,6 +567,7 @@ fi
 if [ "$in_sandbox" = true ]; then
 	popd >/dev/null || true
 fi
+[ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ] && rm -f "$SANDBOX_TOPLEVEL_PY_BASELINE" 2>/dev/null || true
 
 # NOTE: HARVEST_DIR は sandbox とは別の mktemp ディレクトリ (tmp/.sandbox_harvest_XXXXXX)
 # destroy_sandbox は /tmp/soren_sandbox_* のみ削除するため、HARVEST_DIR は destroy 後もアクセス可能
@@ -598,5 +626,6 @@ if $improve_ok; then
 	fi
 else
 	log "[IMPROVE] 改善失敗のため commit/radio をスキップ"
+	_improve_note "failed_no_apply: ${VALIDATE_ERROR:-unknown}"
 	_improve_progress "done" "100" "failed_no_apply"
 fi

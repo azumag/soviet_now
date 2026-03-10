@@ -914,7 +914,6 @@ PY
 
 	# === セクション: Strategy & Scores ===
 	printf "  ${C_BOLD}STRATEGY / SAFETY${C_RESET}\n"
-	printf "    ${C_DIM}Version=現行戦略 / Rollback=自動差し戻し履歴${C_RESET}\n"
 	# "    ▸ Version     " = 18, "  XXXL" = 6 → version name max = W-24
 	local ver_display="${strategy_ver:-strategy.py}"
 	local max_ver=$(( W - 24 ))

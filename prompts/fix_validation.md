@@ -10,4 +10,5 @@ ${VALIDATE_ERROR}
 - decide(game_state, analysis) のシグネチャは変更禁止
 - if __name__ == "__main__" ブロックは変更禁止
 - decide() は必ず {"x": float, "reason": str} を返すこと
-- Write ツールで strategy.py.staging に書き込むこと
+- `strategy.py.staging` を直接 `Edit` して修正すること
+- `strategy.py.staging` 以外のトップレベル `.py` は新規作成しないこと

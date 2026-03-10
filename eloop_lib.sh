@@ -5409,6 +5409,10 @@ check_and_harvest_improvement() {
 			# プロセス完了 or stale → harvest
 			local hash_before
 			hash_before=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null)
+			local prev_phase prev_detail prev_progress
+			prev_phase=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',''))" 2>/dev/null)
+			prev_detail=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('detail',''))" 2>/dev/null)
+			prev_progress=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('progress',0) or 0))" 2>/dev/null)
 			local hash_now
 			hash_now=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
 
@@ -5452,11 +5456,15 @@ with open(rs_file, 'w') as f:
 					log "[IMPROVE] 蓄積${acc_count_discarded}試合を破棄 (旧戦略のデータ)"
 				fi
 			else
-				log "[IMPROVE] 戦略変更なし (改善失敗 or 差分なし)"
+				log "[IMPROVE] failed_no_apply: 戦略変更なし (phase=${prev_phase:-?}, progress=${prev_progress:-0}, detail=${prev_detail:-})"
 				# 戦略が変わっていない → 蓄積データはそのまま有効
 			fi
 
-			_write_improve_state "idle" "0" "" "" "0" ""
+			if [ "$hash_before" != "$hash_now" ]; then
+				_write_improve_state "idle" "0" "" "" "0" ""
+			else
+				_write_improve_state "idle" "0" "" "failed_no_apply" "100" "${prev_detail:-process_exited_without_apply}"
+			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
 		fi
