@@ -670,7 +670,7 @@ def render_score_distribution(scores, bar_w=40):
 
 def render_strategy_comparison(rolling, current_hash, max_rows=7):
     bar_w = 22
-    # marker1 + hash8 + space + n/t6 + sep1 + bar22 + space + comp4 + p504 + p254 = 51
+    # marker1 + rank3 + space + hash8 + space + n/t6 + sep1 + bar22 + metrics
 
     all_entries = []
     for h, data in rolling.items():
@@ -698,6 +698,8 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
         return [f"  {BOLD}Strategy Comparison{RST}", f"  {DIM}(no data){RST}"]
 
     all_entries.sort(key=lambda e: (e["comp"], e["p50"], e["p25"], e["n_roll"]), reverse=True)
+    for idx, e in enumerate(all_entries, start=1):
+        e["rank"] = idx
     current_entry = next((e for e in all_entries if current_hash and e["hash"] == current_hash), None)
     entries = all_entries[:max_rows]
     max_comp = max(e["comp"] for e in entries) if entries else 1
@@ -705,7 +707,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(comp=0.55p50+0.30p25+0.15lcb){RST}"]
     if current_entry:
         lines.append(
-            f"  {DIM}cur {current_entry['h8']} "
+            f"  {DIM}cur #{current_entry['rank']:>2} {current_entry['h8']} "
             f"c{int(current_entry['comp']):>4} m{int(current_entry['p50']):>4} "
             f"q{int(current_entry['p25']):>4} l{int(current_entry['lcb']):>4} "
             f"n{current_entry['n_roll']:>2}/{current_entry['n_total']:<3}{RST}"
@@ -713,18 +715,24 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
     metric_header = "comp p50  p25"
-    lines.append(f"{DIM} hash      n/t  │{'bar':<{bar_w}} {metric_header}{RST}")
+    lines.append(f"{DIM} rk hash      n/t  │{'bar':<{bar_w}} {metric_header}{RST}")
 
-    for e in entries:
-        is_current = current_hash and e["hash"] == current_hash
+    def render_entry(e, is_current=False):
         color = C_GREEN if is_current else C_BLUE
         marker = "►" if is_current else " "
         bar = block_bar(e["comp"], max_comp, bar_w, color)
         n_field = f"{e['n_roll']:>2}/{e['n_total']:<3}"
-        lines.append(
-            f"{marker}{color}{e['h8']}{RST} {DIM}{n_field:>6}{RST}│"
+        return (
+            f"{marker}{e['rank']:>2} {color}{e['h8']}{RST} {DIM}{n_field:>6}{RST}│"
             f"{bar} {int(e['comp']):>4} {int(e['p50']):>4} {int(e['p25']):>4}"
         )
+
+    for e in entries:
+        is_current = current_hash and e["hash"] == current_hash
+        lines.append(render_entry(e, is_current=bool(is_current)))
+    if current_entry and current_entry not in entries:
+        lines.append(f"{DIM} .. {'':8} {'':>6}│{'':<{bar_w}} {RST}")
+        lines.append(render_entry(current_entry, is_current=True))
     return lines
 
 
