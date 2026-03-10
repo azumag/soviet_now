@@ -100,6 +100,11 @@ _sanitize_comment_line() {
         return 1
     fi
 
+    # 開発用アカウントからのコメントは読み上げ対象外
+    if printf '%s\n' "$line" | grep -Eiq '^azumagdev:[[:space:]]'; then
+        return 1
+    fi
+
     printf '%s' "$line"
     return 0
 }

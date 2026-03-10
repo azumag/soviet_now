@@ -75,6 +75,11 @@ while true; do
             user="$display_name"
             [ -z "$user" ] && user="$login_user"
 
+            # 開発用アカウントは読み上げ対象から除外
+            if [ "$login_user" = "azumagdev" ] || [ "$user" = "azumagdev" ]; then
+                continue
+            fi
+
             msg=$(echo "$payload" | sed 's/^.*PRIVMSG [^ ]* ://')
             # サニタイズ: 制御文字 + シェルメタ文字除去
             msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
