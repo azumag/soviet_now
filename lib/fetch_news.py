@@ -49,7 +49,7 @@ SOURCES = [
         "url": "https://ja.wikinews.org/w/index.php?title=特別:新しいページ&feed=rss",
         "key": "wikinews",
         "name": "ウィキニュース",
-        "license": "CC BY 2.5",
+        "license": "CC BY 4.0",
     },
     {
         "url": "https://jp.globalvoices.org/feed/",
@@ -246,7 +246,7 @@ def strip_wikitext(text: str) -> str:
     return trim_summary(text)
 
 
-def clean_item(source: dict, item: ET.Element) -> dict | None:
+def clean_item(source: dict, item: ET.Element, og_fetch_budget: int = 2) -> dict | None:
     title = strip_tags(child_text(item, "title"))
     url = extract_link(item)
     if not title or not url:
@@ -256,10 +256,12 @@ def clean_item(source: dict, item: ET.Element) -> dict | None:
     if not raw_description:
         raw_description = child_text(item, "encoded")
 
+    used_og_fetch = False
     if source["key"] == "kantei":
         summary = trim_summary(strip_tags(raw_description))
-        if not summary:
+        if not summary and og_fetch_budget > 0:
             summary = trim_summary(fetch_meta_description(url))
+            used_og_fetch = True
     elif source["key"] == "wikinews":
         summary = strip_wikitext(raw_description)
     else:
@@ -275,6 +277,7 @@ def clean_item(source: dict, item: ET.Element) -> dict | None:
         "author": author,
         "license": source["license"],
         "source_key": source["key"],
+        "_used_og_fetch": used_og_fetch,
     }
 
 
@@ -291,9 +294,13 @@ def fetch_source_items(source: dict) -> list[dict]:
         return []
 
     items = []
+    og_fetch_budget = 2  # limit og:description fetches to avoid stalling
     for item in iter_items(root):
-        cleaned = clean_item(source, item)
+        cleaned = clean_item(source, item, og_fetch_budget)
         if cleaned:
+            if cleaned.get("_used_og_fetch"):
+                og_fetch_budget -= 1
+            cleaned.pop("_used_og_fetch", None)
             items.append(cleaned)
     return items
 
