@@ -53,6 +53,7 @@ RADIO_WEB_GROUNDING_CACHE_DIR="$TMP_CACHE_DIR/radio_grounding"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$RADIO_OPENCODE_PERMISSION}"
 COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
+IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow","external_directory":"allow"}'
 RADIO_SAY_RATE=150
 unset SAY_AUDIO_DEVICE
 PAST_RADIO_TOPICS="$TMP_HISTORY_DIR/past_radio_topics.txt"
@@ -93,7 +94,7 @@ COMMENT_SPOKEN_HISTORY_MAX_FILES="${COMMENT_SPOKEN_HISTORY_MAX_FILES:-16}"
 COMMENT_SPOKEN_PROMPT_ITEMS="${COMMENT_SPOKEN_PROMPT_ITEMS:-10}"
 COMMENT_SPOKEN_PROMPT_MAX_CHARS="${COMMENT_SPOKEN_PROMPT_MAX_CHARS:-5000}"
 COMMENT_SPOKEN_ITEM_MAX_CHARS="${COMMENT_SPOKEN_ITEM_MAX_CHARS:-700}"
-RUSSIA_CELEBRATION_WORKER_PID_FILE="tmp/.russia_celebration_worker.pid"
+RUSSIA_CELEBRATION_WORKER_PID_FILE="$TMP_STATE_DIR/.russia_celebration_worker.pid"
 COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
 COMMENT_WATCHER_INTERVAL=10
 COMMENT_WORKER_HEALTH_TTL=30
@@ -104,7 +105,10 @@ COMMENT_BATCH_DEDUP_TTL=180
 RADIO_DEFERRED_QUEUE_DIR="tmp/.radio_deferred_queue"
 MANUAL_AUDIO_TRIGGER_DIR="tmp/.manual_audio_triggers"
 MANUAL_AUDIO_TRIGGER_MAX_PER_TICK=3
-mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" "$COMMENT_QUEUE_DIR" "$COMMENT_SPOKEN_HISTORY_DIR" "$RADIO_DEFERRED_QUEUE_DIR" "$MANUAL_AUDIO_TRIGGER_DIR" "$RADIO_WEB_GROUNDING_CACHE_DIR" "tmp/.twitch_chat" tmp
+mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" \
+	"$TMP_STATE_DIR" "$TMP_MARKERS_DIR" "$TMP_HISTORY_DIR" "$TMP_DEBUG_DIR" "$TMP_CACHE_DIR" \
+	"$COMMENT_QUEUE_DIR" "$COMMENT_SPOKEN_HISTORY_DIR" "$RADIO_DEFERRED_QUEUE_DIR" \
+	"$MANUAL_AUDIO_TRIGGER_DIR" "$RADIO_WEB_GROUNDING_CACHE_DIR" "tmp/.twitch_chat"
 
 #=== コアヘルパー ===
 
@@ -364,9 +368,17 @@ run_cmd() {
 		glm_args=(run "$prompt_body" --agent="zai")
 		[ -n "$resume_session" ] && glm_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
-			opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
+			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
+				OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
+			else
+				opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
+			fi
 		else
-			opencode "${glm_args[@]}" &
+			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
+				OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${glm_args[@]}" &
+			else
+				opencode "${glm_args[@]}" &
+			fi
 		fi
 		;;
 	gemini)
@@ -409,9 +421,17 @@ run_cmd() {
 		opencode_args=(run "$prompt_body" --agent="${agent:-glmflash}")
 		[ -n "$resume_session" ] && opencode_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
-			opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
+				OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+			else
+				opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+			fi
 		else
-			opencode "${opencode_args[@]}" &
+			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
+				OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${opencode_args[@]}" &
+			else
+				opencode "${opencode_args[@]}" &
+			fi
 		fi
 		;;
 	esac
@@ -482,13 +502,14 @@ run_ai() {
 	local prev_cmd_log_tag="${RUN_CMD_LOG_TAG:-}"
 	local primary_ret=1
 	local attempt=1
+	local attempt_prompt="$prompt"
 	while [ "$attempt" -le "$primary_attempts" ]; do
 		if [ "$primary_attempts" -gt 1 ]; then
 			RUN_CMD_LOG_TAG="${label}:primary#${attempt}"
 		else
 			RUN_CMD_LOG_TAG="${label}:primary"
 		fi
-		run_cmd "$primary" "$prompt"
+		run_cmd "$primary" "$attempt_prompt"
 		primary_ret=$?
 		if [ -n "$expect" ]; then
 			local expect_written=false
@@ -506,6 +527,18 @@ run_ai() {
 				if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 				log "[$label] primary OK ($expect written, attempt ${attempt}/${primary_attempts})"
 				return 0
+			fi
+			if [ "$attempt" -lt "$primary_attempts" ]; then
+				attempt_prompt=$(cat <<EOF
+同じセッションを継続して、未完了の編集だけを続けてください。
+まだ \`$expect\` が実際には編集されていません。
+- 再分析や長い説明は不要
+- 必要なら現在の \`$expect\` を1回だけ Read
+- その後すぐ \`$expect\` を Edit
+- 新規トップレベル .py を作らない
+- 修正結果は「説明」ではなく、実ファイル編集で示すこと
+EOF
+)
 			fi
 		else
 			[ "$primary_ret" -eq 0 ] && {

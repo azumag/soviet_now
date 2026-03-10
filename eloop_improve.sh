@@ -42,6 +42,78 @@ _improve_note() {
 	printf '[%s] [IMPROVE] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
 }
 
+_strategy_change_is_numeric_only() {
+	local before_file="$1" after_file="$2"
+	python3 - "$before_file" "$after_file" <<'PY' 2>/dev/null
+import ast
+import sys
+
+before_path, after_path = sys.argv[1], sys.argv[2]
+
+def load_tree(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        return ast.parse(f.read(), path)
+
+class Normalize(ast.NodeTransformer):
+    def visit_Constant(self, node):
+        if isinstance(node.value, (int, float, complex)):
+            return ast.copy_location(ast.Constant(value=0), node)
+        if isinstance(node.value, str):
+            return ast.copy_location(ast.Constant(value=""), node)
+        return node
+
+    def visit_JoinedStr(self, node):
+        return ast.copy_location(ast.Constant(value=""), node)
+
+before_tree = Normalize().visit(load_tree(before_path))
+after_tree = Normalize().visit(load_tree(after_path))
+ast.fix_missing_locations(before_tree)
+ast.fix_missing_locations(after_tree)
+same = ast.dump(before_tree, include_attributes=False) == ast.dump(after_tree, include_attributes=False)
+raise SystemExit(0 if same else 1)
+PY
+}
+
+_strategy_change_introduces_fixed_turn_gate() {
+	local before_file="$1" after_file="$2"
+	python3 - "$before_file" "$after_file" <<'PY' 2>/dev/null
+import ast
+import sys
+
+before_path, after_path = sys.argv[1], sys.argv[2]
+
+def load_tree(path: str):
+    with open(path, "r", encoding="utf-8") as f:
+        return ast.parse(f.read(), path)
+
+def collect_turn_gate_nodes(tree):
+    found = set()
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Compare(self, node):
+            has_turns = False
+            nodes = [node.left, *node.comparators]
+            for item in nodes:
+                if isinstance(item, ast.Name) and item.id == "turns":
+                    has_turns = True
+                elif isinstance(item, ast.Call) and isinstance(item.func, ast.Attribute):
+                    if item.func.attr == "get" and item.args:
+                        arg0 = item.args[0]
+                        if isinstance(arg0, ast.Constant) and arg0.value == "turns":
+                            has_turns = True
+            if has_turns:
+                found.add(ast.dump(node, include_attributes=False))
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    return found
+
+before_nodes = collect_turn_gate_nodes(load_tree(before_path))
+after_nodes = collect_turn_gate_nodes(load_tree(after_path))
+raise SystemExit(0 if (after_nodes - before_nodes) else 1)
+PY
+}
+
 # ゲーム範囲を算出
 GAME_NUMS_LIST=()
 for hf in $HISTORY_FILES; do
@@ -470,7 +542,9 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 		find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort > "$SANDBOX_TOPLEVEL_PY_BASELINE"
 	fi
 	RUN_CMD_SESSION_DIR="$PWD/tmp/.improve_retry_sessions"
+	RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
 	export RUN_CMD_SESSION_DIR
+	export RUN_CMD_OPENCODE_PERMISSION
 	mkdir -p "$RUN_CMD_SESSION_DIR" 2>/dev/null || true
 	for retry in $(seq 1 "$IMPROVE_MAX_RETRIES"); do
 		ai_progress=""
@@ -504,7 +578,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 		fi
 
 		if [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ] && [ -f "$SANDBOX_TOPLEVEL_PY_BASELINE" ]; then
-			local unexpected_py=""
+			unexpected_py=""
 			unexpected_py=$(comm -13 "$SANDBOX_TOPLEVEL_PY_BASELINE" <(find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort) 2>/dev/null | sed '/^strategy\.py\.staging$/d' || true)
 			if [ -n "$unexpected_py" ]; then
 				VALIDATE_ERROR="許可されていない新規トップレベルPythonファイルを作成: $(printf '%s' "$unexpected_py" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')"
@@ -548,6 +622,18 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				continue
 			fi
 
+			if _strategy_change_is_numeric_only "strategy.py" "$STAGING_FILE"; then
+				VALIDATE_ERROR="数値・文字列の微調整だけの変更は不可。構造変更、ロジック削除/置換、未活用情報の活用を含む変更にせよ。"
+				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
+				continue
+			fi
+
+			if _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
+				VALIDATE_ERROR="終盤判定を turns>=N の固定ターン数で追加してはいけない。max_y, merge_available, reactor など局面条件で表現せよ。"
+				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
+				continue
+			fi
+
 			strategy_diff=$(diff -u "strategy.py" "$STAGING_FILE" 2>/dev/null || true)
 			real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
 			[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
@@ -582,6 +668,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	fi
 fi
 unset RUN_CMD_SESSION_DIR
+unset RUN_CMD_OPENCODE_PERMISSION
 
 if [ "$in_sandbox" = true ]; then
 	popd >/dev/null || true
