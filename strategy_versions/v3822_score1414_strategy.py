@@ -7,17 +7,18 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
+ Decision Logic (7 evaluation axes):
     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
     2. Height penalty - Penalty for high landing position (varies by phase)
     3. Drift penalty - Penalty for post-landing drift due to polygon shape
     4. Left-right balance correction - Bonus for correcting piece count bias
     5. nextNext centering - Center for next merge opportunity if nextNext same type
     6. Chain merge bonus - Evaluate possibility of further merges after merge
-    7. Board density bonus - Prefer placement on less-dense side of board
-    8. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
-    
-    v178: 危険局面フィルタリング強化版 - max_y>=2.0でreactive_pairs>=2の場合、DIRECT/NEARマージ候補のみを評価対象にし、DANGER_RECOVERY_PENALTY評価軸を削除
+    7. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
+
+    v3805: BOARD_DENSITY評価軸削除版 - batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認
+    低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群より高いことを特定
+    BOARD_DENSITYを削除し、併合機会を逃す配置を排除することでスコア安定性を向上させる
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -67,6 +68,10 @@ Phases (determined by board max Y):
 # max_y>=2.0でreactive_pairs>=2の場合、merge_gradeがDIRECTまたはNEARの候補のみを評価対象にするフィルタリングを追加し、非併合配置を物理的に除外。
 # これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を防ぎ、即時併合による盤面圧縮を強制することでスコア安定性を向上させる。
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_133049_score1143.jsonl turns 72-74
+# v3805: BOARD_DENSITY評価軸削除版 - batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認。
+# 低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
+# BOARD_DENSITYを削除し、併合機会を逃す配置を排除することでスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -74,23 +79,21 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v177: 危険局面フィルタリング追加版
-    
-    ワーストゲーム(score1143)の終盤8ターン(turns 72-74)でHIGH_LAYER_DANGER_RECOVERY_PENALTYが3回連続選択され、max_y=3.31まで上昇してdead lineに到達寸前。
-    DANGER_RECOVERY_PENALTYの-1000ペナルティが発動しているが、全ての候補にペナルティが課されているため、非併合配置が依然として選ばれる悪循環を特定。
-    max_y>=2.0でreactive_pairs>=2の場合、merge_gradeがDIRECTまたはNEARの候補のみを評価対象にするフィルタリングを追加し、非併合配置を物理的に除外。
-    これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を防ぎ、即時併合による盤面圧縮を強制することでスコア安定性を向上させる。
-    
-    v177の改善点:
-    1. 危険局面フィルタリング追加
-       - max_y>=2.0でreactive_pairs>=2の場合、DIRECT/NEARマージ候補のみを評価対象にする
-       - 非併合配置（HIGH_TOWER/HIGH_LAYER/DEFAULT_PLACEMENT）を物理的に除外
-       - 即時併合による盤面圧縮を強制し、dead line到達を回避
-    2. v176のDANGER_RECOVERY_PENALTY評価軸を維持（フィルタリング後の併合機会がない場合のペナルティ）
+    """v3805: BOARD_DENSITY評価軸削除版
+
+    batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認。
+    低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
+    v171で追加したBOARD_DENSITY評価軸を削除し、併合機会を逃す盤面分散配置を排除することでスコア安定性を向上させる。
+
+    v3805の改善点:
+    1. BOARD_DENSITY評価軸削除
+       - board density bonus評価軸を完全に削除
+       - 盤面密度を基準とした配置を排除
+       - 併合機会を最優先する決定ルールに集約
+    2. v177の危険局面フィルタリング構造を維持（max_y>=2.0, reactive_pairs>=2 → DIRECT/NEARマージ候補のみ）
     3. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
     4. v174のHIGHフェーズ高さペナルティ抑制を維持
     5. v173の序盤HEIGHT_CONTROL抑制を維持
-    6. v172のボード密度評価軸を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -182,15 +185,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         right_density /= total_density
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 9 evaluation axes
-    #  v177: 危険局面フィルタリング追加 - max_y>=2.0でreactive_pairs>=2の場合、
+    #  score each drop candidate (x coordinate) with 8 evaluation axes
+    #  v3805: 危険局面フィルタリング発動閾値引下版 - max_y>=1.8でreactive_pairs>=2の場合、
     #       merge_gradeがDIRECTまたはNEARの候補のみを評価対象にし、非併合配置を除外する
     #       これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を物理的に防ぎ、即時併合による盤面圧縮を強制
     #       refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_133049_score1143.jsonl turns 72-74
     # =======================================================================
-    
-    # v177: 危険局面フィルタリング - 併合機会がある場合、非併合配置を候補から除外
-    if max_y >= 2.0 and reactive_pair_count >= 2:
+
+    # v3805: 危険局面フィルタリング - 併合機会がある場合、非併合配置を候補から除外
+    # 危険度閾値引下: max_y>=2.0 -> 1.8, 危険局面をより早く定義して盤面圧縮を早める
+    if max_y >= 1.8 and reactive_pair_count >= 2:
         # merge_gradeがDIRECTまたはNEARの候補のみを評価対象にする
         merge_candidates = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR"]]
         if merge_candidates:
@@ -305,23 +309,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 7: board density bonus (v171: NEW) -----
-        # Prefer placement on less-dense side of board to improve height gain capability
-        # This addresses the problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
-        # Low-score games often place pieces in center early, which reduces height gain capability in mid/late game
-        if not reasons or merge_grade == "NO":
-            # Only apply when no strong merge reason exists (avoid overriding merge opportunities)
-            if x < 0:
-                # Placing on left side: bonus if right side is more dense
-                density_bonus = (right_density - left_density) * 50.0
-            else:
-                # Placing on right side: bonus if left side is more dense
-                density_bonus = (left_density - right_density) * 50.0
-
-            # Apply bonus (positive means placing on less-dense side)
-            if density_bonus > 10.0:  # Only add reason if density difference is significant
-                score += density_bonus
-                reasons.append("BOARD_DENSITY")
+        # v3805: BOARD_DENSITY evaluation axis removed - batch_summary analysis showed BOARD_DENSITY has 10.7% frequency but avg_score_delta=0.3 (low value)
+        # Low-score games have higher DEFAULT_PLACEMENT (17.1%) and BOARD_DENSITY (12.8%) selection rates compared to high-score games
+        # Removing BOARD_DENSITY prevents non-merge placements that were prioritizing board density over immediate merge opportunities
+        # This structural change removes an evaluation axis, allowing merge-focused decisions to dominate
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md
 
          # ----- evaluation axis 8: REACTIVE_MERGE_PRIORITY (v175: NEW) -----
         # reactor情報のreactive_pairsを活用し、反応濃度の高い状況での即時反応を優先
