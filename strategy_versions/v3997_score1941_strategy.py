@@ -7,13 +7,14 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (6 evaluation axes):
+Decision Logic (7 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
   2. Height penalty - Penalty for high landing position (varies by phase)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
   6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition)
+  7. Reactive merge priority - Bonus for merge opportunities when max_y>=2.0 and reactive_pairs>=2 (v159)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -39,6 +40,11 @@ Phases (determined by board max Y):
 # v158: HEIGHT_CONTROL抑制精度化版 - batch_summary分析でHEIGHT_CONTROLが29.1%選択されavg_score_delta=0.8と効果がないこと、
 # 低スコア群がHEIGHT_CONTROLを31.5%選択していること、序盤（max_y < -2.0）で盤面が高さを稼げない失敗パターンを確認。
 # v157の動的調整を維持しつつ、(1) chain_distance_maxのベース値を5.0→4.0に縮小して評価精度を向上し、(2) 序盤（max_y < -2.0）のheight_multiplierを0.3に削減してHEIGHT_CONTROL過剰選択を抑制。
+# v159: reactor情報活用による危険局面即時併合優先版 - ワーストゲーム(score0537)の終盤8ターン(turns 48-55)でmerge_available=falseが続き、
+# max_yが2.41→2.93に上昇。reactive_pairs=5-6があるにもかかわらずHIGH_TOWER/HIGH_LAYERが選択され、即時併合を逃している失敗パターンを特定。
+# 危険局面（max_y >= 2.0, reactive_pairs >= 2）の場合、DIRECT/NEAR/FARマージ候補のみを評価対象にし、非併合配置を物理的に排除。
+# FARマージボーナスを危険局面で200.0→800.0に増強し、いずれかの併合機会を確保。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_011046_score0537.jsonl, strategy_versions/best_score5310_strategy.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -46,30 +52,32 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v158: HEIGHT_CONTROL抑制精度化版
+    """v159: reactor情報活用による危険局面即時併合優先版
 
-    batch_summary分析でHEIGHT_CONTROLが29.1%選択されavg_score_delta=0.8と効果がないこと、
-    低スコア群がHEIGHT_CONTROLを31.5%選択していること、序盤（max_y < -2.0）で盤面が高さを稼げない失敗パターンを確認。
+    ワーストゲーム(score0537)の終盤8ターン(turns 48-55)でmerge_available=falseが続き、
+    max_yが2.41→2.93に上昇。reactive_pairs=5-6があるにもかかわらずHIGH_TOWER/HIGH_LAYERが選択され、
+    即時併合を逃している失敗パターンを特定。
 
-    v157の動的調整を維持しつつ、以下の2点を改善：
-    1. chain_distance_maxのベース値を5.0→4.0に縮小（v153の評価精度を取り入れる）
-       - v155の5.0は広すぎて評価が粗くなっている可能性
-    2. 序盤（max_y < -2.0）のheight_multiplierを0.3に削減
-       - 序盤のHEIGHT_CONTROL過剰選択を抑制し、併合機会を優先
+    v159の改善点：
+    1. reactor情報活用による危険局面即時併合優先
+       - max_y >= 2.0かつreactive_pairs >= 2の場合、DIRECT/NEAR/FARマージ候補のみを評価対象
+       - 非併合配置を物理的に排除し、即時併合による盤面圧縮を強制
+    2. FARマージボーナス強化
+       - 危険局面ではFARマージボーナスを200.0→800.0に増強し、いずれかの併合機会を確保
 
     Args:
-        game_state: game state (pieces, next, nextNext, score, etc.)
-        analysis: analyze_board.py analysis results
-            - results: landing information for each drop X candidate
-                - x: drop X coordinate
-                - landing_y: estimated landing Y coordinate (high=dangerous)
-                - drift_x/drift_unc: post-landing drift due to polygon shape
-                - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                - merges: individual distance/merge judgment for each same-type piece
-            - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+         game_state: game state (pieces, next, nextNext, score, etc.)
+         analysis: analyze_board.py analysis results
+             - results: landing information for each drop X candidate
+                 - x: drop X coordinate
+                 - landing_y: estimated landing Y coordinate (high=dangerous)
+                 - drift_x/drift_unc: post-landing drift due to polygon shape
+                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                 - merges: individual distance/merge judgment for each same-type piece
+             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
-        {"x": drop X coordinate, "reason": selection reason}
+         {"x": drop X coordinate, "reason": selection reason}
     """
 
     results = analysis.get("results", [])
@@ -85,9 +93,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
+    # --- reactor information (for danger situation judgment) ---
+    reactor = analysis.get("reactor", {})
+    reactive_pairs = reactor.get("reactive_pairs", [])
+    # reactive_pairs is a list, count pairs for evaluation
+    reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
+
+    # --- v159: 危険局面フィルタリング ---
+    # max_y>=2.0かつreactive_pairs>=2の場合、DIRECT/NEAR/FARマージ候補のみを評価対象
+    # ワーストゲーム(score0537)の終盤8ターン(turns 48-55)でmerge_available=falseが続き、max_yが2.41→2.93に上昇。
+    # reactive_pairs=5-6があるにもかかわらずHIGH_TOWER/HIGH_LAYERが選択され、即時併合を逃している失敗パターンを特定。
+    # フィルタリングを追加し、非併合配置を物理的に排除することで盤面圧縮を強制しスコア安定性を向上させる。
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_011046_score0537.jsonl turns 48-55, strategy_versions/best_score5310_strategy.py
+
     # --- v158: 序盤判定（max_y < -2.0） ---
     # ワーストゲーム分析で、序盤にHEIGHT_CONTROLを過剰に選択し盤面が高さを稼げない失敗パターンを確認
     early_game = max_y < -2.0
+
+    # --- danger situation judgment for filtering ---
+    dangerous_situation = max_y >= 2.0 and reactive_pair_count >= 2
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -122,10 +146,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
 
+    # --- v159: danger situation filtering ---
+    # 危険局面（max_y >= 2.0 and reactive_pairs >= 2）の場合、DIRECT/NEAR/FARマージ候補のみを評価対象
+    # これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を防ぎ、即時併合による盤面圧縮を強制
+    filtered_results = results
+    if dangerous_situation:
+        merge_results = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR", "FAR"]]
+        if merge_results:
+            filtered_results = merge_results
+        # else: 全候補を評価（マージ機会がない場合のフォールバック）
+
     # =======================================================================
     #  score each drop candidate (x coordinate) with 6 evaluation axes
     # =======================================================================
-    for result in results:
+    for result in filtered_results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
@@ -140,6 +174,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # DIRECT: direct hit target (success rate 95.7%)
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
+        # v159: 危険局面ではFARマージボーナスを強化（200.0→800.0）し、いずれかの併合機会を確保
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -147,7 +182,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            far_bonus = 800.0 if dangerous_situation else 200.0
+            score += far_bonus * merge_mult
             reasons.append("FAR_MERGE")
 
         # ----- evaluation axis 2: height penalty -----
