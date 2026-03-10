@@ -7,7 +7,7 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
+Decision Logic (9 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
   2. Height penalty - Penalty for high landing position (varies by phase)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -16,6 +16,7 @@ Decision Logic (8 evaluation axes):
   6. Chain merge bonus - Evaluate possibility of further merges after merge
   7. Board density bonus - Prefer placement on less-dense side of board
   8. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
+  9. DANGER_RECOVERY_PENALTY - Penalty for non-merge placements when max_y>=2.0 and reactive_pairs>=2 (v176)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -55,6 +56,11 @@ Phases (determined by board max Y):
 # ワーストゲームの終盤8ターン(max_y=2.37-2.38, reactive_pairs=3)でDEFAULT_PLACEMENTが続き即時併合機会を逃している失敗パターンを特定。
 # v177の成功構造を復帰し、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先することでスコア安定性を向上させる。
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_125627_score0528.jsonl, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
+# v176: DANGER_RECOVERY_PENALTY評価軸追加版 - ワーストゲーム(score0794)の終盤8ターン(turns 58-60)でHIGH_TOWERが3回選択され、reactive_pairs=2があるにもかかわらず即時併合を逃している失敗パターンを特定。
+# 現行のDANGER_RECOVERY評価軸（+800ボーナス）はmerge_gradeが"DIRECT"または"NEAR"の場合のみ発動するが、NEAR_MERGE機会自体が選ばれていないという悪循環がある。
+# max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARマージ機会がない配置に-1000ペナルティを課す評価軸を追加。
+# これにより、HIGH_TOWERなどの非併合配置を間接的に抑制し、NEAR_MERGE選択率を向上させることでスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_132049_score0794.jsonl, strategy_versions/v3769_score0794_strategy.py, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -62,20 +68,23 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v175: REACTIVE_MERGE_PRIORITY評価軸追加版
+    """v176: DANGER_RECOVERY_PENALTY評価軸追加版
     
-    終盤高危険域(max_y>=1.8)でreactive_pairs>=2がある場合、DIRECT/NEARに+500ボーナスを付与し即時併合機会を優先。
-    ワーストゲームの終盤8ターン(max_y=2.37-2.38, reactive_pairs=3)でDEFAULT_PLACEMENTが続き即時併合機会を逃している失敗パターンを特定。
-    v177の成功構造を復帰し、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先することでスコア安定性を向上させる。
+    ワーストゲーム(score0794)の終盤8ターン(turns 58-60)でHIGH_TOWERが3回選択され、reactive_pairs=2があるにもかかわらず即時併合を逃している失敗パターンを特定。
+    max_yが2.19→2.45に上昇し、dead line(3.32)に近づいている状況で、HIGH_TOWER選択が続きゲームオーバーに至っている。
+    現行のDANGER_RECOVERY評価軸（+800ボーナス）はmerge_gradeが"DIRECT"または"NEAR"の場合のみ発動するが、NEAR_MERGE機会自体が選ばれていないという悪循環がある。
+    max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARマージ機会がない配置に-1000ペナルティを課す評価軸を追加。
+    これにより、HIGH_TOWERなどの非併合配置を間接的に抑制し、NEAR_MERGE選択率を向上させることでスコア安定性を向上させる。
     
-    v175の改善点:
-    1. REACTIVE_MERGE_PRIORITY評価軸の追加
-       - reactor情報のreactive_pairs（反応性のあるペア）を活用
-       - 終盤高危険域(max_y>=1.8)でreactive_pairs>=2の場合、DIRECT/NEARに+500ボーナス
-       - 反応濃度の高い状況での即時反応を優先し、DEFAULT_PLACEMENT選択を抑制
-    2. v174のHIGHフェーズ高さペナルティ抑制を維持
-    3. v173の序盤HEIGHT_CONTROL抑制を維持
-    4. v172のボード密度評価軸を維持
+    v176の改善点:
+    1. DANGER_RECOVERY_PENALTY評価軸の追加
+       - max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARマージ機会がない配置に-1000ペナルティ
+       - 非併合配置（HIGH_TOWER等）を間接的に抑制し、NEAR_MERGE選択率を向上させることでスコア安定性を改善
+       - batch_summaryでNEAR_MERGE(avg_score_delta=42.3)が高価値だが選択率4.8%と低いことに対応
+    2. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
+    3. v174のHIGHフェーズ高さペナルティ抑制を維持
+    4. v173の序盤HEIGHT_CONTROL抑制を維持
+    5. v172のボード密度評価軸を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -305,15 +314,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 500.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 9: DANGER_RECOVERY (v176: NEW) -----
-        # max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARに+800ボーナスを付与し即時併合を最優先
-        # ワーストゲーム(score0778)の終盤8ターン(turns 57-64)でHIGH_TOWERが6回選択され、reactive_pairs=3があるにもかかわらず即時併合を逃している失敗パターンを特定。
-        # max_yが1.93→2.89に上昇し、dead lineに近づいている状況で、REACTIVE_MERGE_PRIORITY(+500)では不十分でHIGH_TOWER選択を抑制できていない。
-        # max_y>=2.0の危険局面では、即時併合による盤面圧縮とスコア回復を最優先するため、REACTIVE_MERGE_PRIORITYより強力なボーナスを付与する評価軸を追加。
-        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_130739_score0778.jsonl, strategy_versions/v3764_score0778_strategy.py, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
-        if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
-            score += 800.0
-            reasons.append("DANGER_RECOVERY")
+        # ----- evaluation axis 9: DANGER_RECOVERY_PENALTY (v176: NEW) -----
+        # max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARマージ機会がない配置に-1000ペナルティを課す
+        # ワーストゲーム(score0794)の終盤8ターン(turns 58-60)でHIGH_TOWERが3回選択され、reactive_pairs=2があるにもかかわらず即時併合を逃している失敗パターンを特定。
+        # max_yが2.19→2.45に上昇し、dead line(3.32)に近づいている状況で、HIGH_TOWER選択が続きゲームオーバーに至っている。
+        # 現行のDANGER_RECOVERY評価軸（+800ボーナス）はmerge_gradeが"DIRECT"または"NEAR"の場合のみ発動するが、NEAR_MERGE機会自体が選ばれていないという悪循環がある。
+        # max_y>=2.0の危険局面では、即時併合による盤面圧縮とスコア回復を最優先するため、DIRECT/NEARマージ機会がない配置に強力なペナルティを課す。
+        # これにより、HIGH_TOWERなどの非併合配置を間接的に抑制し、NEAR_MERGE選択率を向上させることでスコア安定性を向上させる。
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_132049_score0794.jsonl, strategy_versions/v3769_score0794_strategy.py, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
+        if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade not in ["DIRECT", "NEAR"]:
+            score -= 1000.0
+            reasons.append("DANGER_RECOVERY_PENALTY")
 
         # ----- update best candidate -----
         if score > best_score:
