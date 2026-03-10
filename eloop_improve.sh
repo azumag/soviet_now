@@ -120,6 +120,23 @@ _helpers_tree_changed() {
 	[ $? -eq 1 ]
 }
 
+_improve_reset_sandbox_targets() {
+	cp "strategy.py" "$STAGING_FILE"
+	rm -rf "strategy_helpers" 2>/dev/null || true
+	mkdir -p "strategy_helpers" 2>/dev/null || true
+	if [ -d "$SANDBOX_HELPERS_BASELINE_DIR" ]; then
+		rsync -a --delete --no-links "$SANDBOX_HELPERS_BASELINE_DIR"/ "strategy_helpers"/ 2>/dev/null || \
+			cp -RL "$SANDBOX_HELPERS_BASELINE_DIR"/. "strategy_helpers"/ 2>/dev/null || true
+	fi
+	[ -f "strategy_helpers/__init__.py" ] || : > "strategy_helpers/__init__.py"
+}
+
+_improve_clear_retry_sessions() {
+	[ -n "${RUN_CMD_SESSION_DIR:-}" ] || return 0
+	[ -d "$RUN_CMD_SESSION_DIR" ] || return 0
+	rm -f "$RUN_CMD_SESSION_DIR"/*.session 2>/dev/null || true
+}
+
 # ゲーム範囲を算出
 GAME_NUMS_LIST=()
 for hf in $HISTORY_FILES; do
