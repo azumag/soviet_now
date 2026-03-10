@@ -295,7 +295,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += density_bonus
                 reasons.append("BOARD_DENSITY")
 
-        # ----- evaluation axis 8: REACTIVE_MERGE_PRIORITY (v175: NEW) -----
+         # ----- evaluation axis 8: REACTIVE_MERGE_PRIORITY (v175: NEW) -----
         # reactor情報のreactive_pairsを活用し、反応濃度の高い状況での即時反応を優先
         # 終盤高危険域(max_y>=1.8)でreactive_pairs>=2がある場合、DIRECT/NEARに+500ボーナス
         # これにより、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先
@@ -304,6 +304,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if max_y >= 1.8 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
             score += 500.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
+
+        # ----- evaluation axis 9: DANGER_RECOVERY (v176: NEW) -----
+        # max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARに+800ボーナスを付与し即時併合を最優先
+        # ワーストゲーム(score0778)の終盤8ターン(turns 57-64)でHIGH_TOWERが6回選択され、reactive_pairs=3があるにもかかわらず即時併合を逃している失敗パターンを特定。
+        # max_yが1.93→2.89に上昇し、dead lineに近づいている状況で、REACTIVE_MERGE_PRIORITY(+500)では不十分でHIGH_TOWER選択を抑制できていない。
+        # max_y>=2.0の危険局面では、即時併合による盤面圧縮とスコア回復を最優先するため、REACTIVE_MERGE_PRIORITYより強力なボーナスを付与する評価軸を追加。
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_130739_score0778.jsonl, strategy_versions/v3764_score0778_strategy.py, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
+        if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            score += 800.0
+            reasons.append("DANGER_RECOVERY")
 
         # ----- update best candidate -----
         if score > best_score:
