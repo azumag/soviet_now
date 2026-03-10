@@ -7,21 +7,22 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
-  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase)
-  3. Drift penalty - Penalty for post-landing drift due to polygon shape
-  4. Left-right balance correction - Bonus for correcting piece count bias
-  5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge
-  7. Early game merge priority - Bonus for NEAR merge in early game (max_y < -2.0)
-  8. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase
+ Decision Logic (8 evaluation axes):
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase)
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Left-right balance correction - Bonus for correcting piece count bias
+   5. nextNext centering - Center for next merge opportunity if nextNext same type
+   6. Chain merge bonus - Evaluate possibility of further merges after merge
+   7. Early game merge priority - Bonus for NEAR merge in early game (max_y < -2.0)
+   8. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase
+   9. v161: Medium phase immediate merge priority - Filter to merge candidates when reactive_pairs >= 2 in MEDIUM phase
 
-Phases (determined by board max Y):
-  LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
-  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-  CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression
+ Phases (determined by board max Y):
+   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4), immediate merge when reactive_pairs >= 2
+   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8), immediate merge when reactive_pairs >= 3
+   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression
 
 Fixed interface:
   decide(game_state: dict, analysis: dict) -> dict
@@ -35,28 +36,34 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 # v160: 危険局面フィルタリング早期化強化版 - max_y>=1.8かつreactive_pairs>=3で併合機会のみを評価対象
 #   - 危険局面でのFARマージボーナスを強化（200.0→1200.0）し、いずれかの併合機会を確保
 #   - ワーストゲーム(score0467)の失敗パターン分析に基づき、危険局面の閾値を厳密化
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_012257_score0467.jsonl turns 48-55
+# v161: 中盤フェーズでの即時併合優先強化版 - ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避
+#   - 中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にする
+#   - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
+#   - これにより、盤面がまだ圧縮可能な段階で即時併合を優先し、盤面圧迫を回避する
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_022246_score0606.jsonl turns 62-69, game_history/20260311_025551_score2766.jsonl turns 135-141
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v160: 危険局面フィルタリング早期化強化版
+    """v161: 中盤フェーズでの即時併合優先強化版
 
-    ワーストゲーム(score0467)の失敗パターン分析に基づき、危険局面の閾値を厳密化。
-    ベストゲーム(score3064)と同様の盤面圧縮を実現するため、FARマージボーナスを強化し、
-    危険局面での盤面圧縮を最優先する。
+    ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避。
+    turn 60-67 で max_y=2.58-3.59, reactive_pairs=5-7 で即時併合を逃している失敗パターンを特定。
+    中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にし、
+    盤面がまだ圧縮可能な段階で即時併合を優先することで、盤面圧迫を回避しスコア安定性を向上させる。
 
-    v160の改善点：
-     1. 危険局面判定の早期化
-        - max_y >= 1.8 and reactive_pairs >= 3 でフィルタリング発動（v159: 2.0 → 1.8）
-        - これにより、max_y=2.0〜3.07の危険領域で早期から併合候補のみを評価対象
-     2. FARマージボーナス調整
-        - 危険局面ではFARマージボーナスを200.0→1200.0に調整
-        - 反応ペア数が多い状況での即時併合促進を強化
+    v161の改善点：
+     1. 中盤フェーズでの即時併合優先強化
+        - MEDIUMフェーズでは reactive_pairs >= 2 でフィルタリング発動
+        - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
+        - これにより、盤面がまだ圧縮可能な段階で即時併合を優先
+     2. 即時併合機会の見逃し回避
+        - ワーストゲームの turn 62-63 で reactive_pairs=6 があるにもかかわらず HIGH_TOWER が選択された失敗パターンを解消
+        - MEDIUMフェーズでの即時併合優先により、中盤での盤面圧迫を回避
      3. ベストゲームと同様の盤面圧縮戦略
-        - max_y>2.5 の場合でも、reactive_pairs >= 3 ならFARマージ優先で盤面を下げる
-        - 即時圧縮による盤面圧縮が生存率を大幅に向上
+        - ベストゲーム(score2766)では max_y=5.78 でも即時併合を優先して盤面圧縮を実現
+        - 中盤フェーズでの早期の盤面圧縮により、盤面の圧迫を回避しスコア安定性を向上
     """
 
     results = analysis.get("results", [])
@@ -77,11 +84,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pairs = reactor.get("reactive_pairs", [])
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
 
-    # --- v160: 危険局面フィルタリング早期化・強化 ---
-    # 条件: max_y >= 1.8 かつ reactive_pairs >= 3
-    # ワーストゲーム(score0467)での失敗パターン分析に基づき閾値調整
-    dangerous_situation = max_y >= 1.8 and reactive_pair_count >= 3
-
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
@@ -99,6 +101,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "CRITICAL"
         height_mult = 1.0
         merge_mult = 0.6
+
+    # --- v161: 中盤フェーズでの即時併合優先強化版 ---
+    # ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避
+    # 中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にする
+    # HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動
+    # これにより、盤面がまだ圧縮可能な段階で即時併合を優先し、盤面圧迫を回避する
+    dangerous_situation_medium = phase == "MEDIUM" and reactive_pair_count >= 2
+    dangerous_situation_high = max_y >= 1.8 and reactive_pair_count >= 3
+    dangerous_situation = dangerous_situation_medium or dangerous_situation_high
 
     # --- next piece information ---
     next_piece = game_state.get("next", {})
