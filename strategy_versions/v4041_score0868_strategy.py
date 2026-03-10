@@ -40,30 +40,37 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - 中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にする
 #   - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
 #   - これにより、盤面がまだ圧縮可能な段階で即時併合を優先し、盤面圧迫を回避する
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_022246_score0606.jsonl turns 62-69, game_history/20260311_025551_score2766.jsonl turns 135-141
+# v162: 危険局面での盤面圧縮最優先化版 - ワーストゲーム(score0681, score0780)の終盤失敗パターン分析に基づき、max_y >= 2.0 の危険局面での盤面圧縮を最優先
+#   - max_y >= 2.0 の全ての局面で height_multiplier=0.0 に設定し、height_penalty を無効化
+#   - 即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される
+#   - 併合候補がない場合も、盤面圧縮を優先して height_penalty によるペナルティを回避
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_032720_score0681.jsonl turns 52-59, game_history/20260311_031742_score0780.jsonl turns 59-65, tmp/advice.md
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v161: 中盤フェーズでの即時併合優先強化版
+    """v162: 危険局面での盤面圧縮最優先化版
 
-    ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避。
-    turn 60-67 で max_y=2.58-3.59, reactive_pairs=5-7 で即時併合を逃している失敗パターンを特定。
-    中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にし、
-    盤面がまだ圧縮可能な段階で即時併合を優先することで、盤面圧迫を回避しスコア安定性を向上させる。
+    ワーストゲーム(score0681, score0780)の終盤失敗パターン分析に基づき、max_y >= 2.0 の危険局面での盤面圧縮を最優先。
+    turn 52-59 で max_y=2.3-3.11, reactive_pairs=4 があるにもかかわらず HIGH_TOWER/HIGH_LAYER が選択され続け、
+    盤面圧迫が進んでゲームオーバーになる失敗パターンを特定。
+    max_y >= 2.0 の全ての局面で height_multiplier=0.0 に設定し、height_penalty を無効化することで、
+    即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される。
+    併合候補がない場合も、盤面圧縮を優先して height_penalty によるペナルティを回避し、スコア安定性を向上させる。
 
-    v161の改善点：
-     1. 中盤フェーズでの即時併合優先強化
-        - MEDIUMフェーズでは reactive_pairs >= 2 でフィルタリング発動
-        - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
-        - これにより、盤面がまだ圧縮可能な段階で即時併合を優先
-     2. 即時併合機会の見逃し回避
-        - ワーストゲームの turn 62-63 で reactive_pairs=6 があるにもかかわらず HIGH_TOWER が選択された失敗パターンを解消
-        - MEDIUMフェーズでの即時併合優先により、中盤での盤面圧迫を回避
-     3. ベストゲームと同様の盤面圧縮戦略
-        - ベストゲーム(score2766)では max_y=5.78 でも即時併合を優先して盤面圧縮を実現
-        - 中盤フェーズでの早期の盤面圧縮により、盤面の圧迫を回避しスコア安定性を向上
+    v162の改善点：
+     1. 危険局面でのheight_multiplier無効化
+        - max_y >= 2.0 の全ての局面で height_multiplier=0.0 に設定
+        - 即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される
+        - 併合候補がない場合も、盤面圧縮を優先して height_penalty によるペナルティを回避
+     2. ワーストゲームの失敗パターン解消
+        - ワーストゲーム(score0681)の turn 52-59 で reactive_pairs=4 があるにもかかわらず
+          HIGH_TOWER/HIGH_LAYER が選択された失敗パターンを解消
+        - max_y >= 2.0 で height_penalty を無効化することで、即時併合を優先
+     3. ベストゲームの成功パターン適用
+        - ベストゲーム(score2463)では max_y >= 2.0 でも NEAR_MERGE を選んで即時併合し盤面圧縮
+        - max_y >= 2.0 で盤面圧縮を最優先することで、盤面圧迫を回避しスコア安定性を向上
     """
 
     results = analysis.get("results", [])
@@ -102,11 +109,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_mult = 1.0
         merge_mult = 0.6
 
-    # --- v161: 中盤フェーズでの即時併合優先強化版 ---
-    # ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避
-    # 中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にする
-    # HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動
-    # これにより、盤面がまだ圧縮可能な段階で即時併合を優先し、盤面圧迫を回避する
+    # --- v162: 危険局面でのheight_multiplier上書き ---
+    # max_y >= 2.0 の全ての局面で height_multiplier=0.0 に設定し、height_penalty を無効化
+    # 即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される
+    # 併合候補がない場合も、盤面圧縮を優先して height_penalty によるペナルティを回避
+    if max_y >= 2.0:
+        height_mult = 0.0
+
+    # --- v162: 危険局面での盤面圧縮最優先化版 ---
+    # ワーストゲーム(score0681, score0780)の終盤失敗パターン分析に基づき、max_y >= 2.0 の危険局面での盤面圧縮を最優先
+    # max_y >= 2.0 の全ての局面で height_multiplier=0.0 に設定し、height_penalty を無効化
+    # これにより、即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される
+    # 併合候補がない場合も、盤面圧縮を優先して height_penalty によるペナルティを回避
+    # フィルタリング条件: MEDIUMフェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2
+    # HIGHフェーズ(max_y >= 1.8)では reactive_pairs >= 3
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_032720_score0681.jsonl turns 52-59
+    #       game_history/20260311_031742_score0780.jsonl turns 59-65
     dangerous_situation_medium = phase == "MEDIUM" and reactive_pair_count >= 2
     dangerous_situation_high = max_y >= 1.8 and reactive_pair_count >= 3
     dangerous_situation = dangerous_situation_medium or dangerous_situation_high
