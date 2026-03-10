@@ -272,7 +272,49 @@ bash sloop.sh      # 画像認識版 (レガシー)
 node soviet_game.mjs &
 ```
 
-### 4. ステータス表示
+### 4. Twitch Bot 設定（CC表記チャット投稿用）
+
+ニュースコーナーでCCライセンス対象ソース（ウィキニュース、Global Voices）を読み上げた際、CC表記をTwitchチャットに自動投稿する。設定しなくても動作に影響はない（投稿がスキップされるだけ）。
+
+#### トークン取得手順
+
+1. https://dev.twitch.tv/console にログインし「アプリケーションを登録」
+   - 名前: 任意（例: `soren-cc-bot`）
+   - OAuth リダイレクト URL: `http://localhost`
+   - カテゴリ: Chat Bot
+2. 登録後、アプリの「Client ID」を控える
+3. ブラウザで以下のURLを開く（`CLIENT_ID` を置換）:
+   ```
+   https://id.twitch.tv/oauth2/authorize?response_type=token&client_id=CLIENT_ID&redirect_uri=http://localhost&scope=chat:edit+chat:read
+   ```
+4. 「Authorize」をクリック
+5. リダイレクト先のアドレスバーから `access_token=` の値をコピー
+
+#### `.env` に設定
+
+```bash
+TWITCH_BOT_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWITCH_BOT_NICK=DOUSHI_AI
+TWITCH_CHANNEL=azumagbanjo
+```
+
+`soren_loop.sh` 起動時に `.env` が自動で読み込まれる。
+
+#### 動作確認
+
+```bash
+source .env && export TWITCH_BOT_TOKEN TWITCH_BOT_NICK TWITCH_CHANNEL
+./twitch_chat.sh send "テスト投稿"
+```
+
+#### CC表記の投稿形式
+
+CCライセンス対象ソースの場合のみ投稿される:
+```
+記事タイトル | by 著者名 | Global Voices | https://... | (CC BY 3.0)
+```
+
+### 5. ステータス表示
 
 AI ループの稼働状況は以下で監視できる。
 

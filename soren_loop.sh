@@ -69,6 +69,9 @@ fi
 echo $$ > "$LOCKFILE"
 rm -f tmp/stop
 
+# --- 環境変数読み込み ---
+[ -f .env ] && set -a && . ./.env && set +a
+
 # --- 共通ライブラリ読み込み ---
 source ./eloop_lib.sh
 
