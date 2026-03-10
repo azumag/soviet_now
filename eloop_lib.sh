@@ -5641,6 +5641,36 @@ check_and_harvest_improvement() {
 			fi
 		fi
 
+		local watchdog_sec="${IMPROVE_STALE_WATCHDOG_SEC:-1200}"
+		case "$watchdog_sec" in
+		''|*[!0-9]*) watchdog_sec=1200 ;;
+		esac
+		if [ "$pid_alive" = true ] && [ "${watchdog_sec:-0}" -gt 0 ]; then
+			local updated_at updated_age now_epoch log_age log_mtime prev_phase prev_detail
+			updated_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('updated_at',0) or 0))" 2>/dev/null || echo 0)
+			prev_phase=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',''))" 2>/dev/null)
+			prev_detail=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('detail',''))" 2>/dev/null)
+			now_epoch=$(date +%s)
+			updated_age=$(( now_epoch - ${updated_at:-0} ))
+			log_age=$updated_age
+			if [ -f "$IMPROVE_AI_LOG_FILE" ]; then
+				log_mtime=$(stat -f '%m' "$IMPROVE_AI_LOG_FILE" 2>/dev/null || echo 0)
+				if [ "${log_mtime:-0}" -gt 0 ]; then
+					log_age=$(( now_epoch - log_mtime ))
+				fi
+			fi
+			if [ "$updated_age" -ge "$watchdog_sec" ] && [ "$log_age" -ge "$watchdog_sec" ]; then
+				log "[IMPROVE] watchdog発火: ${updated_age}s 状態更新なし / ${log_age}s ログ更新なし → 停止 (PID=$pid, phase=${prev_phase:-?}, detail=${prev_detail:-})"
+				_stop_loop_descendants "$pid"
+				_stop_pid_with_fallback "$pid" "improve_watchdog"
+				if kill -0 "$pid" 2>/dev/null; then
+					log "[IMPROVE] watchdog停止失敗: PID=$pid がまだ生存"
+				else
+					pid_alive=false
+				fi
+			fi
+		fi
+
 		if [ "$pid_alive" = false ]; then
 			# プロセス完了 or stale → harvest
 			local hash_before
