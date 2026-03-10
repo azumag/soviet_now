@@ -2446,17 +2446,18 @@ if source:
 PY
 }
 
-_post_cc_attribution_to_chat() {
+_build_cc_attribution_text() {
 	local title="$1"
-	[ -f "tmp/news_meta.json" ] || return 0
-	local cc_text
-	cc_text=$(python3 - "$title" <<'PY'
+	local meta_path="${2:-tmp/news_meta.json}"
+	[ -f "$meta_path" ] || return 0
+	python3 - "$title" "$meta_path" <<'PY'
 import json
 import sys
 
 title = sys.argv[1] if len(sys.argv) > 1 else ""
+meta_path = sys.argv[2] if len(sys.argv) > 2 else "tmp/news_meta.json"
 try:
-    with open("tmp/news_meta.json", encoding="utf-8") as f:
+    with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
 except Exception:
     raise SystemExit(0)
@@ -2482,13 +2483,25 @@ if url:
 parts.append(f"({license_name})")
 print(" | ".join(parts))
 PY
-	)
+}
+
+_post_cc_text_to_chat() {
+	local cc_text="$1"
 	[ -n "$cc_text" ] || return 0
 	(
 		if ! ./twitch_chat.sh send "$cc_text" >/dev/null 2>&1; then
-			log "[RADIO:news] CC表記投稿失敗: ${title:0:80}"
+			log "[RADIO:news] CC表記投稿失敗: ${cc_text:0:80}"
 		fi
 	) &
+}
+
+_post_cc_attribution_to_chat() {
+	local title="$1"
+	local meta_path="${2:-tmp/news_meta.json}"
+	local cc_text
+	cc_text=$(_build_cc_attribution_text "$title" "$meta_path")
+	[ -n "$cc_text" ] || return 0
+	_post_cc_text_to_chat "$cc_text"
 }
 
 # 自分のコーナーの状態ファイルだけ安全に削除 (並列実行の競合防止)
@@ -2599,7 +2612,12 @@ _play_deferred_radio_queue_once() {
 			deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/' )
 			# CC表記をTwitchチャットに投稿（deferred再生開始タイミング）
 			local news_title_file="${playing_file%.playing}.news_title"
-			if [ "$deferred_corner" = "news" ] && [ -f "$news_title_file" ]; then
+			local news_cc_file="${playing_file%.playing}.cc_text"
+			if [ "$deferred_corner" = "news" ] && [ -f "$news_cc_file" ]; then
+				local deferred_cc_text
+				deferred_cc_text=$(cat "$news_cc_file" 2>/dev/null)
+				[ -n "$deferred_cc_text" ] && _post_cc_text_to_chat "$deferred_cc_text" &
+			elif [ "$deferred_corner" = "news" ] && [ -f "$news_title_file" ]; then
 				local deferred_news_title
 				deferred_news_title=$(cat "$news_title_file" 2>/dev/null)
 				[ -n "$deferred_news_title" ] && _post_cc_attribution_to_chat "$deferred_news_title" &
@@ -2607,7 +2625,7 @@ _play_deferred_radio_queue_once() {
 			_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 			log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
 			if SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
-				rm -f "$playing_file" "${playing_file%.playing}.news_title"
+				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text"
 				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else
 			local retry_file="${playing_file%.playing}.txt"
@@ -2811,6 +2829,9 @@ ${talk_body}"
 		# deferred再生時のCC投稿用にニュースタイトルを保存
 		if [ -n "$deferred_file" ] && [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
 			echo "$selected_news" > "${deferred_file%.txt}.news_title"
+			local deferred_cc_text=""
+			deferred_cc_text=$(_build_cc_attribution_text "$selected_news")
+			[ -n "$deferred_cc_text" ] && printf '%s' "$deferred_cc_text" > "${deferred_file%.txt}.cc_text"
 		fi
 		if [ -n "$deferred_file" ]; then
 			echo "queued:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
@@ -2826,7 +2847,9 @@ ${talk_body}"
 			echo "playing:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 			# CC表記をTwitchチャットに投稿（再生開始タイミング）
 			if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
-				_post_cc_attribution_to_chat "$selected_news" &
+				local immediate_cc_text=""
+				immediate_cc_text=$(_build_cc_attribution_text "$selected_news")
+				[ -n "$immediate_cc_text" ] && _post_cc_text_to_chat "$immediate_cc_text" &
 			fi
 			_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
 			if [ "$no_preempt" = true ]; then
