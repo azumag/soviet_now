@@ -60,6 +60,8 @@ IMPROVE_AI_LOG_TRIM_LINES=8000
 ACCUMULATED_GAMES_FILE="tmp/accumulated_games.json"
 ROLLING_SCORES_FILE="tmp/rolling_scores.json"
 REJECTED_HASHES_FILE="tmp/rejected_hashes.txt"
+REJECTED_HASH_META_FILE="tmp/rejected_hash_metrics.json"
+REJECTED_REEVALUATE_MIN_NEW_GAMES="${REJECTED_REEVALUATE_MIN_NEW_GAMES:-8}"
 BEST_STRATEGY_ANCHOR_FILE="tmp/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
@@ -4412,14 +4414,6 @@ PY
 _pick_best_rollback_candidate() {
 	local current_hash="$1"
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
-	local rejected_file="$REJECTED_HASHES_FILE"
-
-	_is_recently_rejected_for_rollback() {
-		local h="$1"
-		[ -n "$h" ] || return 1
-		[ -f "$rejected_file" ] || return 1
-		grep -qF "$h" "$rejected_file" 2>/dev/null
-	}
 
 	local anchor_hash="" anchor_comp="" anchor_p50="" anchor_p25="" anchor_lcb="" anchor_n="" anchor_file=""
 	if [ -f "$BEST_STRATEGY_ANCHOR_FILE" ]; then
@@ -4532,13 +4526,63 @@ EOF
 _pick_hall_of_fame_rollback_candidate() {
 	local current_hash="$1"
 	local rejected_file="$REJECTED_HASHES_FILE"
+	local rejected_meta_file="$REJECTED_HASH_META_FILE"
+	_is_recently_rejected_for_hof() {
+		local h="$1"
+		[ -n "$h" ] || return 1
+		[ -f "$rejected_file" ] || return 1
+		grep -qF "$h" "$rejected_file" 2>/dev/null || return 1
+		python3 - "$ROLLING_SCORES_FILE" "$rejected_meta_file" "$h" "$REJECTED_REEVALUATE_MIN_NEW_GAMES" <<'PY' 2>/dev/null
+import json, math, os, sys
+rolling_file, meta_file, target_hash, min_new_games = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+if not (os.path.exists(rolling_file) and os.path.exists(meta_file)):
+    raise SystemExit(1)
+try:
+    rolling = json.load(open(rolling_file))
+    meta = json.load(open(meta_file))
+except Exception:
+    raise SystemExit(1)
+if target_hash not in rolling or target_hash not in meta:
+    raise SystemExit(1)
+scores = [int(x) for x in rolling[target_hash].get("scores", [])]
+if not scores:
+    raise SystemExit(1)
+rej = meta.get(target_hash, {})
+rej_comp = float(rej.get("comp", 0.0) or 0.0)
+rej_total = int(rej.get("games_total", 0) or 0)
+cur_total = int(rolling[target_hash].get("games_total", len(scores)) or len(scores))
+if cur_total < rej_total + min_new_games:
+    raise SystemExit(1)
+xs = sorted(scores)
+n = len(xs)
+mean = sum(xs) / n
+if n == 1:
+    p25 = p50 = float(xs[0])
+    std = 0.0
+else:
+    def q(p):
+        pos = (n - 1) * p
+        lo = int(pos)
+        hi = min(lo + 1, n - 1)
+        frac = pos - lo
+        return xs[lo] * (1.0 - frac) + xs[hi] * frac
+    p25 = q(0.25)
+    p50 = q(0.50)
+    var = sum((x - mean) ** 2 for x in xs) / n
+    std = math.sqrt(var)
+lcb = mean - 1.28 * (std / math.sqrt(n))
+cur_comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+raise SystemExit(1 if cur_comp > rej_comp else 0)
+PY
+		return $?
+	}
 	local line f score_num h
 	while IFS='|' read -r score_num f; do
 		[ -f "$f" ] || continue
 		h=$(python3 extract_decide_hash.py "$f" 2>/dev/null || echo "")
 		[ -n "$h" ] || continue
 		[ "$h" = "$current_hash" ] && continue
-		if [ -f "$rejected_file" ] && grep -qF "$h" "$rejected_file" 2>/dev/null; then
+		if _is_recently_rejected_for_hof "$h"; then
 			log "[REGRESSION] hall-of-fame候補スキップ: $h は recent rejected" >&2
 			continue
 		fi
@@ -4903,15 +4947,65 @@ PY
 		_write_improve_state "idle" "0" ""
 		log "[REGRESSION] 自動ロールバック開始"
 
-		# リジェクトハッシュに記録
-		echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
-		# 最新20件のみ保持
-		if [ -f "$REJECTED_HASHES_FILE" ]; then
-			tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
-			mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
-		fi
+			# リジェクトハッシュに記録
+			echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
+			# 最新20件のみ保持
+			if [ -f "$REJECTED_HASHES_FILE" ]; then
+				tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
+				mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
+			fi
+			python3 - "$ROLLING_SCORES_FILE" "$REJECTED_HASH_META_FILE" "$strategy_hash" <<'PY' 2>/dev/null
+import json
+import math
+import os
+import sys
 
-		# リバート先選定:
+rolling_file, meta_file, target_hash = sys.argv[1], sys.argv[2], sys.argv[3]
+if not os.path.exists(rolling_file):
+    raise SystemExit(0)
+try:
+    rolling = json.load(open(rolling_file))
+except Exception:
+    raise SystemExit(0)
+if target_hash not in rolling:
+    raise SystemExit(0)
+scores = [int(x) for x in rolling[target_hash].get("scores", [])]
+if not scores:
+    raise SystemExit(0)
+xs = sorted(scores)
+n = len(xs)
+mean = sum(xs) / n
+if n == 1:
+    p25 = p50 = float(xs[0])
+    std = 0.0
+else:
+    def q(p):
+        pos = (n - 1) * p
+        lo = int(pos)
+        hi = min(lo + 1, n - 1)
+        frac = pos - lo
+        return xs[lo] * (1.0 - frac) + xs[hi] * frac
+    p25 = q(0.25)
+    p50 = q(0.50)
+    var = sum((x - mean) ** 2 for x in xs) / n
+    std = math.sqrt(var)
+lcb = mean - 1.28 * (std / math.sqrt(n))
+comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+try:
+    meta = json.load(open(meta_file))
+except Exception:
+    meta = {}
+meta[target_hash] = {
+    "comp": round(comp, 4),
+    "games_total": int(rolling[target_hash].get("games_total", n) or n),
+    "n": n,
+    "updated_at": int(__import__("time").time()),
+}
+with open(meta_file, "w") as f:
+    json.dump(meta, f)
+PY
+
+			# リバート先選定:
 		# 1) LCB+中央値+分位点の合成スコアで最良(十分試行数)かつ実ファイルが見つかる戦略
 		# 2) 見つからなければ従来どおり直前戦略(tmp/revert_strategy.py)
 			local rollback_file="" rollback_note="" rollback_hash=""
