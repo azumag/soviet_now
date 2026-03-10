@@ -2558,10 +2558,17 @@ _play_deferred_radio_queue_once() {
 	if mv "$qf" "$playing_file" 2>/dev/null; then
 		local deferred_corner=""
 			deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/' )
+			# CC表記をTwitchチャットに投稿（deferred再生開始タイミング）
+			local news_title_file="${playing_file%.playing}.news_title"
+			if [ "$deferred_corner" = "news" ] && [ -f "$news_title_file" ]; then
+				local deferred_news_title
+				deferred_news_title=$(cat "$news_title_file" 2>/dev/null)
+				[ -n "$deferred_news_title" ] && _post_cc_attribution_to_chat "$deferred_news_title" &
+			fi
 			_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 			log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
 			if SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
-				rm -f "$playing_file"
+				rm -f "$playing_file" "${playing_file%.playing}.news_title"
 				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else
 			local retry_file="${playing_file%.playing}.txt"
@@ -2649,10 +2656,6 @@ _radio_generate_and_play() {
 				log "[RADIO:news] 既読記録: ${selected_news}"
 			fi
 		fi
-	fi
-
-	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
-		_post_cc_attribution_to_chat "$selected_news" &
 	fi
 
 	# ニュースは選択タイトルを必ず先頭で読み上げる
@@ -2766,6 +2769,10 @@ ${talk_body}"
 	comment_total=$((comment_queued + comment_playing))
 	if [ "$comment_total" -gt 0 ]; then
 		deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "$corner_name" || true)
+		# deferred再生時のCC投稿用にニュースタイトルを保存
+		if [ -n "$deferred_file" ] && [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+			echo "$selected_news" > "${deferred_file%.txt}.news_title"
+		fi
 		if [ -n "$deferred_file" ]; then
 			echo "queued:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 			log "[RADIO:${corner_name}] deferred: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}) -> $(basename "$deferred_file")"
@@ -2778,6 +2785,10 @@ ${talk_body}"
 		fi
 		else
 			echo "playing:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
+			# CC表記をTwitchチャットに投稿（再生開始タイミング）
+			if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+				_post_cc_attribution_to_chat "$selected_news" &
+			fi
 			_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
 			if [ "$no_preempt" = true ]; then
 				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
