@@ -1222,6 +1222,9 @@ _is_valid_comment_talk() {
 	if printf '%s' "$talk" | grep -Eiq 'tool_call|tool_result|assistant_response|^analysis$|^final$|^assistant$|^provider[[:space:]]*[:=]|^model[[:space:]]*[:=]|^agent[[:space:]]*[:=]'; then
 		return 1
 	fi
+	if printf '%s' "$talk" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticate|api error[: ]|request_id|invalid error token|invalid token|unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission'; then
+		return 1
+	fi
 	return 0
 }
 
@@ -1236,6 +1239,9 @@ _is_valid_radio_talk() {
 		return 1
 	fi
 	if printf '%s' "$talk" | grep -Eq '放送前のファクトチェック担当|安全化した最終原稿|削った・弱めた点|【最優先ルール】|【材料】|【元原稿】|【出力形式】'; then
+		return 1
+	fi
+	if printf '%s' "$talk" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticate|api error[: ]|request_id|invalid error token|invalid token|unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission'; then
 		return 1
 	fi
 	if printf '%s' "$talk" | grep -Eq 'といわれます|と言われます|といわれています|と言われています|とされています|とされます|とされていました|とみられます|とみられています|と考えられます|と考えられています'; then
@@ -2074,6 +2080,24 @@ import re
 import sys
 
 text = sys.stdin.read()
+drop_line_patterns = [
+    r'failed to authenticate',
+    r'api error[: ]',
+    r'authentication_error',
+    r'invalid bearer token',
+    r'request_id',
+    r'\binvalid error token\b',
+    r'\binvalid token\b',
+    r'\bunexpected token\b',
+    r'\bsyntaxerror\b',
+    r'\breferenceerror\b',
+    r'\btypeerror\b',
+    r'could not find oldstring',
+    r'no changes to apply',
+    r'the user rejected permission',
+    r'permission to use this specific tool call',
+    r'^\s*\{.*\"type\"\s*:\s*\"error\".*\}\s*$',
+]
 patterns = [
     (r'誰も(聞いて|見て)い(?:ない|ません)', 'みなさんに届くように'),
     (r'聞き手(?:が|は)?い(?:ない|ません)', '聞き手に届くように'),
@@ -2086,9 +2110,18 @@ patterns = [
     (r'マージ', '併合'),
     (r'合体', '併合'),
 ]
-out = text
+filtered_lines = []
+for raw_line in text.splitlines():
+    line = raw_line.strip()
+    if line:
+        low = line.lower()
+        if any(re.search(pat, low, flags=re.IGNORECASE) for pat in drop_line_patterns):
+            continue
+    filtered_lines.append(raw_line)
+out = "\n".join(filtered_lines)
 for pat, repl in patterns:
     out = re.sub(pat, repl, out, flags=re.IGNORECASE)
+out = re.sub(r'\n{3,}', '\n\n', out).strip()
 sys.stdout.write(out)
 PY
 )"
@@ -2133,6 +2166,7 @@ _ensure_corner_announce() {
 		dinner)   announce="今日の夕飯の献立を考えようコーナーです。" ;;
 		deals)    announce="お得情報コーナーです。" ;;
 		survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
+		rakugo) announce="深夜の落語紹介コーナーです。" ;;
 		*)        announce="" ;;
 	esac
 	[ -z "$announce" ] && { printf '%s' "$text"; return 0; }
@@ -3254,6 +3288,45 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "survival"
 }
 
+start_radio_corner_rakugo() {
+    local game_num="$1" score="$2"
+    _radio_time_context
+    local past_topics
+    past_topics=$(_radio_past_topics_block)
+
+    local prompt_file
+    prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+    cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】深夜の落語紹介コーナー
+1. 深夜の静かな雰囲気に合わせたオープニング（2-3文）
+   - 「こんな深夜に聞いてくださっている同志に、日本の伝統話芸を一席」のような導入
+2. 古典落語の演目を1つ選んで紹介
+   - 演目名（例: 時そば、芝浜、死神、寿限無、饅頭怖い、目黒のさんま、等）
+   - あらすじを簡潔に紹介（ネタバレOK、むしろオチまで語る）
+   - その演目の面白さ・見どころを解説
+   - 有名な演じ手がいれば触れる（例: 古今亭志ん朝、立川談志、桂枝雀 等）
+   - ソ連的な視点からのツッコミや感想を1つ入れる
+3. 軽いクロージング（1-2文）
+   - 深夜のリスナーへの一言
+
+※ 毎回異なる演目を選ぶこと。過去トークの演目名は絶対に繰り返さない。
+※ 落語の雰囲気を活かし、語り口調も少し噺家風にしてよい（ただしですます調は維持）。
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+    _radio_generate_and_play "$prompt_file" "$game_num" "$score" "rakugo"
+}
+
 #=== ニュース: 毎ゲーム取得 & 再生 ===
 
 fetch_and_play_news() {
@@ -3353,6 +3426,10 @@ _dispatch_manual_audio_trigger() {
 	survival)
 		log "[MANUAL] survival トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_survival "$game_num" "$score" &
+		;;
+	rakugo)
+		log "[MANUAL] rakugo トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_rakugo "$game_num" "$score" &
 		;;
 	*)
 		log "[MANUAL] 未知の音声トリガーを破棄: $(basename "$cmd_file") cmd=${cmd_name}"
@@ -3486,6 +3563,10 @@ schedule_nonessential_audio_jobs() {
 	if _try_timed_corner "survival" 22 0; then
 		timed_corner_fired=true
 		_run_timed_corner "survival" start_radio_corner_survival "$game_num" "$score" &
+	fi
+	if _try_timed_corner "rakugo" 1 0; then
+		timed_corner_fired=true
+		_run_timed_corner "rakugo" start_radio_corner_rakugo "$game_num" "$score" &
 	fi
 
 	# 時間帯コーナー発火時はランダムラジオをスキップ (重複防止)
