@@ -2688,15 +2688,32 @@ _pick_soviet_theme() {
 	echo "$soviet_theme"
 }
 
-#=== ラジオトーク: 5つのコーナー ===
+#=== ラジオトーク: コーナー ===
 
 start_radio_corner_theme() {
-	local game_num="$1" score="$2"
+	local game_num="$1" score="$2" filter_category="${3:-}"
 	_radio_time_context
-	local theme
-	theme=$(_pick_radio_theme)
+
+	local raw_theme category="" theme corner_name="theme"
+	raw_theme=$(_pick_radio_theme "$filter_category")
+	if [[ "$raw_theme" == \[soviet\]$'\t'* ]]; then
+		category="soviet"
+		theme="${raw_theme#*$'\t'}"
+		corner_name="soviet"
+	else
+		category=""
+		theme="$raw_theme"
+	fi
+
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
+
+	local soviet_extra=""
+	if [ "$category" = "soviet" ]; then
+		soviet_extra="
+   - 共産主義っぽい言い回しを自然に使う
+   - 理想と現実のギャップにはきっちり突っ込む"
+	fi
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
@@ -2720,49 +2737,12 @@ ${past_topics}
    - 具体的なトピックを「ひとつだけ」選ぶ
    - 歴史的背景、具体的なエピソードや逸話、自分なりの感想・驚き・比較、関連する小ネタや派生話
    - 重要: あれもこれもと話題を並べない。1つのトピックで聞き手が「詳しくなった」と感じるくらい深く
-   - 偉人や歴史上の人物にも容赦なくツッコむ。ただし敬意はある
+   - 偉人や歴史上の人物にも容赦なくツッコむ。ただし敬意はある${soviet_extra}
 3. 軽いクロージング（1-2文）
 
 $(_radio_output_rules 1000 2000)
 PROMPT
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "theme"
-}
-
-start_radio_corner_soviet() {
-	local game_num="$1" score="$2"
-	_radio_time_context
-	local soviet_theme
-	soviet_theme=$(_pick_soviet_theme)
-	local past_topics
-	past_topics=$(_radio_past_topics_block)
-
-	local prompt_file
-	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
-	cat >"$prompt_file" <<PROMPT
-$(_radio_persona_block)
-
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
-
-【今回のソ連ネタ指定】
-${soviet_theme}
-
-【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
-${past_topics}
-
-【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
-
-【トーク構成】
-1. 時間帯に合わせた軽いオープニング（2-3文）
-2. ソ連共産主義ネタコーナー
-   - 指定トピックを表面的に紹介するのではなく、背景・経緯・逸話まで掘り下げること
-   - 共産主義っぽい言い回しを自然に使う
-   - 理想と現実のギャップにはきっちり突っ込む
-3. 軽いクロージング（1-2文）
-
-$(_radio_output_rules 1000 2000)
-PROMPT
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "soviet"
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "$corner_name"
 }
 
 start_radio_corner_news() {
@@ -2828,48 +2808,6 @@ $(_radio_output_rules 1000 2000)
 （選んだニュースの見出し1行）
 PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news"
-}
-
-start_radio_corner_recap() {
-	local game_num="$1" score="$2"
-	_radio_time_context
-	local past_topics
-	past_topics=$(_radio_past_topics_block)
-
-	local best_score
-	best_score=$(cat best_score.txt 2>/dev/null || echo 0)
-	local recent_scores=""
-	[ -f "score_history.txt" ] && recent_scores=$(tail -10 score_history.txt 2>/dev/null)
-
-	local prompt_file
-	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
-	cat >"$prompt_file" <<PROMPT
-$(_radio_persona_block)
-
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
-
-【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
-${past_topics}
-
-【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
-最高スコア: ${best_score}点。
-直近スコア履歴:
-${recent_scores:-まだ履歴がありません}
-
-【トーク構成】
-1. 時間帯に合わせた軽いオープニング（2-3文）
-2. 直近の試合振り返り
-   - 直近スコアの推移を簡潔に振り返る
-   - 戦略がうまく機能していたかどうかだけ触れる。
-   - 最高スコア${best_score}点との比較
-   - 調子の波、伸び悩み、ブレイクスルーなど全体の傾向を語る
-   - 数字を淡々と並べるだけではなく、自分なりの分析や感想を
-3. 軽いクロージング（1-2文）
-
-$(_radio_output_rules 1000 2000)
-PROMPT
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "recap"
 }
 
 start_radio_corner_strategy() {
@@ -2965,8 +2903,8 @@ _dispatch_manual_audio_trigger() {
 		fetch_and_play_news "$game_num" "$score" &
 		;;
 	soviet)
-		log "[MANUAL] soviet トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_soviet "$game_num" "$score" &
+		log "[MANUAL] soviet トリガー受付 (sovietカテゴリtheme): $(basename "$cmd_file")"
+		start_radio_corner_theme "$game_num" "$score" "soviet" &
 		;;
 	strategy)
 		log "[MANUAL] strategy トリガー受付: $(basename "$cmd_file")"
@@ -2983,9 +2921,29 @@ _dispatch_manual_audio_trigger() {
 		log "[MANUAL] theme トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_theme "$game_num" "$score" &
 		;;
-	recap)
-		log "[MANUAL] recap トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_recap "$game_num" "$score" &
+	weather)
+		log "[MANUAL] weather トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_weather "$game_num" "$score" &
+		;;
+	fortune)
+		log "[MANUAL] fortune トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_fortune "$game_num" "$score" &
+		;;
+	market)
+		log "[MANUAL] market トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_market "$game_num" "$score" &
+		;;
+	dinner)
+		log "[MANUAL] dinner トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_dinner "$game_num" "$score" &
+		;;
+	deals)
+		log "[MANUAL] deals トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_deals "$game_num" "$score" &
+		;;
+	survival)
+		log "[MANUAL] survival トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_survival "$game_num" "$score" &
 		;;
 	*)
 		log "[MANUAL] 未知の音声トリガーを破棄: $(basename "$cmd_file") cmd=${cmd_name}"
@@ -3030,17 +2988,8 @@ start_random_radio_corner() {
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
 
-	# ニュースは毎ゲーム別途実行するので、ここでは除外
-	local candidates=("theme" "soviet" "recap")
-
-	local pick="${candidates[$((RANDOM % ${#candidates[@]}))]}"
-	log "[RADIO] コーナー選択: ${pick}"
-
-	case "$pick" in
-	theme)   start_radio_corner_theme "$game_num" "$score" ;;
-	soviet)  start_radio_corner_soviet "$game_num" "$score" ;;
-	recap)   start_radio_corner_recap "$game_num" "$score" ;;
-	esac
+	log "[RADIO] コーナー選択: theme"
+	start_radio_corner_theme "$game_num" "$score"
 }
 
 schedule_nonessential_audio_jobs() {
@@ -3074,7 +3023,64 @@ schedule_nonessential_audio_jobs() {
 		fetch_and_play_news "$game_num" "$score" &
 	fi
 
-	if (( game_num % radio_interval == radio_phase )); then
+	# --- 時間帯コーナー (1日1回、±15分ウィンドウ) ---
+	local current_hour current_min today timed_corner_fired=false
+	current_hour=$(date +%H)
+	current_min=$(date +%M)
+	today=$(date +%Y%m%d)
+
+	_try_timed_corner() {
+		local name="$1" target_hh="$2" target_mm="$3"
+		local marker="tmp/.timed_corner_done_${today}_${name}"
+		local inflight="tmp/.timed_corner_inflight_${name}"
+		[ -f "$marker" ] && return 1
+		[ -f "$inflight" ] && return 1
+		local target=$((target_hh * 60 + target_mm))
+		local now=$((10#$current_hour * 60 + 10#$current_min))
+		local diff=$((now - target))
+		[ "$diff" -lt 0 ] && diff=$((-diff))
+		[ "$diff" -le 15 ] || return 1
+		touch "$inflight"
+		return 0
+	}
+
+	# 成功マーカーを作成するラッパー (バックグラウンドジョブ内で使用)
+	_run_timed_corner() {
+		local name="$1" func="$2"
+		shift 2
+		if "$func" "$@"; then
+			touch "tmp/.timed_corner_done_${today}_${name}"
+		fi
+		rm -f "tmp/.timed_corner_inflight_${name}"
+	}
+
+	if _try_timed_corner "weather" 8 0; then
+		timed_corner_fired=true
+		_run_timed_corner "weather" start_radio_corner_weather "$game_num" "$score" &
+	fi
+	if _try_timed_corner "fortune" 12 0; then
+		timed_corner_fired=true
+		_run_timed_corner "fortune" start_radio_corner_fortune "$game_num" "$score" &
+	fi
+	if _try_timed_corner "market" 15 30; then
+		timed_corner_fired=true
+		_run_timed_corner "market" start_radio_corner_market "$game_num" "$score" &
+	fi
+	if _try_timed_corner "dinner" 17 0; then
+		timed_corner_fired=true
+		_run_timed_corner "dinner" start_radio_corner_dinner "$game_num" "$score" &
+	fi
+	if _try_timed_corner "deals" 21 0; then
+		timed_corner_fired=true
+		_run_timed_corner "deals" start_radio_corner_deals "$game_num" "$score" &
+	fi
+	if _try_timed_corner "survival" 22 0; then
+		timed_corner_fired=true
+		_run_timed_corner "survival" start_radio_corner_survival "$game_num" "$score" &
+	fi
+
+	# 時間帯コーナー発火時はランダムラジオをスキップ (重複防止)
+	if [ "$timed_corner_fired" = false ] && (( game_num % radio_interval == radio_phase )); then
 		if [ "$comment_backlog_high" = true ]; then
 			log "[RADIO] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
 		fi
