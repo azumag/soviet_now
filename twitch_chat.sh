@@ -6,6 +6,7 @@
 #   ./twitch_chat.sh fetch             - 前回fetch以降の新コメントを取得 → tmp/twitch_comments.txt
 #   ./twitch_chat.sh ack               - 読み上げ完了後に呼ぶ。pending.logをクリア
 #   ./twitch_chat.sh ack-batch <file>  - 処理済みコメント行のみ pending.log から削除
+#   ./twitch_chat.sh send <message>    - 認証済みIRC接続で単発チャット投稿
 #   ./twitch_chat.sh stop              - デーモン停止
 #   ./twitch_chat.sh status            - 動作状況表示
 
@@ -402,6 +403,48 @@ _claim() {
     _with_chat_lock "claim" _claim_nolock
 }
 
+_send() {
+    local msg="$1"
+    [ -n "$msg" ] || {
+        echo "Usage: $0 send <message>" >&2
+        return 1
+    }
+
+    local channel token nick tmp_irc rc
+    channel="${TWITCH_CHANNEL:-azumagbanjo}"
+    token="${TWITCH_BOT_TOKEN:-}"
+    nick="${TWITCH_BOT_NICK:-sorenbot}"
+    if [ -z "$token" ]; then
+        echo "TWITCH_BOT_TOKEN not set" >&2
+        return 1
+    fi
+
+    token="${token#oauth:}"
+    msg=$(printf '%s' "$msg" | tr '\r\n' ' ' | tr -d '\000')
+    [ -n "$msg" ] || return 1
+
+    tmp_irc=$(mktemp /tmp/twitch_send_XXXXXXXX)
+    {
+        printf 'PASS oauth:%s\r\n' "$token"
+        printf 'NICK %s\r\n' "$nick"
+        printf 'JOIN #%s\r\n' "$channel"
+        sleep 1.5
+        printf 'PRIVMSG #%s :%s\r\n' "$channel" "$msg"
+        sleep 0.5
+        printf 'QUIT\r\n'
+    } | nc -w 5 irc.chat.twitch.tv 6667 >"$tmp_irc" 2>&1
+    rc=$?
+
+    if [ "$rc" -ne 0 ] || grep -Eiq "Login authentication failed|NOTICE.*Error" "$tmp_irc" 2>/dev/null; then
+        echo "WARNING: Twitch send may have failed (rc=$rc)" >&2
+        if [ -s "$tmp_irc" ]; then
+            head -5 "$tmp_irc" >&2
+        fi
+    fi
+    rm -f "$tmp_irc"
+    return 0
+}
+
 #--- stop ---
 _stop() {
     local stopped=false
@@ -454,7 +497,8 @@ case "$CMD" in
     ack)    _ack ;;
     ack-batch) _ack_batch "$2" ;;
     claim)  _claim ;;
+    send)   _send "$2" ;;
     stop)   _stop ;;
     status) _status ;;
-    *)      echo "Usage: $0 {start|fetch|ack|ack-batch|claim|stop|status} [channel|batch_file]" >&2; exit 1 ;;
+    *)      echo "Usage: $0 {start|fetch|ack|ack-batch|claim|send|stop|status} [channel|batch_file|message]" >&2; exit 1 ;;
 esac

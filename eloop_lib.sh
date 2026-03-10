@@ -2389,6 +2389,68 @@ print(selected)
 PY
 }
 
+_extract_news_source_name() {
+	local title="$1"
+	[ -f "tmp/news_meta.json" ] || return 0
+	python3 - "$title" <<'PY'
+import json
+import sys
+
+title = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    with open("tmp/news_meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+item = meta.get(title, {})
+source = item.get("source", "")
+if source:
+    print(source)
+PY
+}
+
+_post_cc_attribution_to_chat() {
+	local title="$1"
+	[ -f "tmp/news_meta.json" ] || return 0
+	local cc_text
+	cc_text=$(python3 - "$title" <<'PY'
+import json
+import sys
+
+title = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    with open("tmp/news_meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+item = meta.get(title)
+if not item:
+    raise SystemExit(0)
+
+license_name = item.get("license")
+if not license_name:
+    raise SystemExit(0)
+
+parts = [title]
+author = (item.get("author") or "").strip()
+if author:
+    parts.append("by " + author)
+source = (item.get("source") or "").strip()
+if source:
+    parts.append(source)
+url = (item.get("url") or "").strip()
+if url:
+    parts.append(url)
+parts.append(f"({license_name})")
+print(" | ".join(parts))
+PY
+)
+	[ -n "$cc_text" ] || return 0
+	./twitch_chat.sh send "$cc_text" 2>/dev/null || true
+}
+
 # 自分のコーナーの状態ファイルだけ安全に削除 (並列実行の競合防止)
 _radio_clear_state() {
 	local my_corner="$1"
@@ -2588,6 +2650,10 @@ _radio_generate_and_play() {
 		fi
 	fi
 
+	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+		_post_cc_attribution_to_chat "$selected_news" &
+	fi
+
 		# ニュースは選択タイトルを必ず先頭で読み上げる
 		if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
 			local title_line
@@ -2595,6 +2661,15 @@ _radio_generate_and_play() {
 		if ! printf '%s\n' "$talk_body" | head -n 2 | grep -Fq "$selected_news"; then
 			talk_body="${title_line}
 ${talk_body}"
+		fi
+	fi
+
+	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+		local news_source attribution
+		news_source=$(_extract_news_source_name "$selected_news")
+		if [ -n "$news_source" ]; then
+			attribution="出典は${news_source}です。"
+			talk_body=$(printf '%s\n' "$talk_body" | awk -v attribution="$attribution" 'NR==1 { print; print attribution; next } { print }')
 		fi
 	fi
 

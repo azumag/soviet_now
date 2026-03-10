@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+"""Fetch news from public RSS sources and emit backward-compatible output."""
+
+from __future__ import annotations
+
+import html
+import json
+import os
+import random
+import re
+import shutil
+import unicodedata
+import urllib.request
+import xml.etree.ElementTree as ET
+
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+TMP_DIR = os.path.join(ROOT_DIR, "tmp")
+TMP_HISTORY_DIR = os.path.join(TMP_DIR, "history")
+TMP_STATE_DIR = os.path.join(TMP_DIR, "state")
+
+OUTFILE = os.path.join(TMP_DIR, "news.txt")
+META_OUTFILE = os.path.join(TMP_DIR, "news_meta.json")
+PAST_NEWS = os.path.join(TMP_HISTORY_DIR, ".past_news_titles.txt")
+PAST_NEWS_LINKS = os.path.join(TMP_HISTORY_DIR, ".past_news_links.txt")
+LAST_NEWS_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success.txt")
+LAST_NEWS_META_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success_meta.json")
+NEWS_ALLOW_STALE_CACHE = os.environ.get("NEWS_ALLOW_STALE_CACHE", "0")
+
+OUTPUT_COUNT = 3
+SUMMARY_LIMIT = 200
+REQUEST_TIMEOUT = 8.0
+USER_AGENT = "soren-news-fetcher/1.0"
+
+SOURCES = [
+    {
+        "url": "https://www.kantei.go.jp/index-jnews.rdf",
+        "key": "kantei",
+        "name": "首相官邸",
+        "license": None,
+    },
+    {
+        "url": "https://prtimes.jp/index.rdf",
+        "key": "prtimes",
+        "name": "PRTIMES",
+        "license": None,
+    },
+    {
+        "url": "https://ja.wikinews.org/w/index.php?title=特別:新しいページ&feed=rss",
+        "key": "wikinews",
+        "name": "ウィキニュース",
+        "license": "CC BY 2.5",
+    },
+    {
+        "url": "https://jp.globalvoices.org/feed/",
+        "key": "globalvoices",
+        "name": "Global Voices",
+        "license": "CC BY 3.0",
+    },
+]
+
+
+def ensure_dirs() -> None:
+    os.makedirs(TMP_DIR, exist_ok=True)
+    os.makedirs(TMP_HISTORY_DIR, exist_ok=True)
+    os.makedirs(TMP_STATE_DIR, exist_ok=True)
+
+
+def http_get(url: str, timeout: float = REQUEST_TIMEOUT) -> str:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="ignore")
+
+
+def collapse_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def strip_tags(text: str) -> str:
+    text = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", text or "", flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(text)
+    return collapse_ws(text)
+
+
+def trim_summary(text: str, limit: int = SUMMARY_LIMIT) -> str:
+    text = collapse_ws(text)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def title_key(title: str) -> str:
+    s = unicodedata.normalize("NFKC", title or "").strip().lower()
+    s = re.sub(r"[\s\u3000]+", "", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch)[0] not in ("P", "S"))
+    s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
+    return s[:240]
+
+
+def safe_unlink(path: str) -> None:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def copy_if_exists(src: str, dst: str) -> bool:
+    if not os.path.exists(src):
+        return False
+    shutil.copyfile(src, dst)
+    return True
+
+
+def write_text(path: str, text: str) -> None:
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp_path, path)
+
+
+def write_json(path: str, data) -> None:
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp_path, path)
+
+
+def load_lines(path: str) -> list[str]:
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return [line.rstrip("\n") for line in f if line.strip()]
+    except OSError:
+        return []
+
+
+def append_and_trim(path: str, values: list[str], max_lines: int) -> None:
+    lines = load_lines(path)
+    lines.extend(v for v in values if v)
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+    if lines:
+        write_text(path, "\n".join(lines) + "\n")
+    else:
+        safe_unlink(path)
+
+
+def restore_stale_cache() -> bool:
+    if NEWS_ALLOW_STALE_CACHE != "1":
+        return False
+    if not copy_if_exists(LAST_NEWS_CACHE, OUTFILE):
+        return False
+    if not copy_if_exists(LAST_NEWS_META_CACHE, META_OUTFILE):
+        safe_unlink(META_OUTFILE)
+    return True
+
+
+def clear_outputs() -> None:
+    safe_unlink(OUTFILE)
+    safe_unlink(META_OUTFILE)
+
+
+def localname(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1]
+    return tag
+
+
+def child_text(item: ET.Element, *names: str) -> str:
+    wanted = set(names)
+    for child in list(item):
+        if localname(child.tag) in wanted:
+            return collapse_ws("".join(child.itertext()))
+    return ""
+
+
+def child_attr(item: ET.Element, attr_name: str) -> str:
+    for key, value in item.attrib.items():
+        if localname(key) == attr_name:
+            return collapse_ws(value)
+    return ""
+
+
+def extract_link(item: ET.Element) -> str:
+    for child in list(item):
+        if localname(child.tag) != "link":
+            continue
+        text = collapse_ws("".join(child.itertext()))
+        if text:
+            return text
+        for key, value in child.attrib.items():
+            if localname(key) in {"resource", "href"}:
+                return collapse_ws(value)
+    return child_attr(item, "about")
+
+
+def iter_items(root: ET.Element):
+    for elem in root.iter():
+        if localname(elem.tag) == "item":
+            yield elem
+
+
+def extract_meta_content(html_text: str, *targets: str) -> str:
+    targets_lc = {t.lower() for t in targets}
+    for match in re.finditer(r"<meta\b[^>]*>", html_text, re.I):
+        tag = match.group(0)
+        prop = ""
+        content = ""
+        for attr, _, value in re.findall(r'([a-zA-Z:_-]+)\s*=\s*([\'"])(.*?)\2', tag, re.S):
+            attr_lc = attr.lower()
+            if attr_lc in {"property", "name"}:
+                prop = value.lower()
+            elif attr_lc == "content":
+                content = value
+        if prop in targets_lc and content:
+            return collapse_ws(html.unescape(content))
+    return ""
+
+
+def fetch_meta_description(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        html_text = http_get(url)
+    except Exception:
+        return ""
+    return extract_meta_content(html_text, "og:description", "description")
+
+
+def strip_wikitext(text: str) -> str:
+    text = html.unescape(text or "")
+    text = re.sub(r"<ref\b[^>]*>.*?</ref>", " ", text, flags=re.I | re.S)
+    text = re.sub(r"<br\s*/?>", " ", text, flags=re.I)
+    text = re.sub(r"\[(https?://[^\s\]]+)\s+([^\]]+)\]", r"\2", text)
+    for _ in range(4):
+        new_text = re.sub(r"\{\{[^{}]*\}\}", " ", text)
+        if new_text == text:
+            break
+        text = new_text
+    text = re.sub(r"\[\[([^|\]]*\|)?([^\]]+)\]\]", r"\2", text)
+    text = re.sub(r"''+", "", text)
+    text = strip_tags(text)
+    return trim_summary(text)
+
+
+def clean_item(source: dict, item: ET.Element) -> dict | None:
+    title = strip_tags(child_text(item, "title"))
+    url = extract_link(item)
+    if not title or not url:
+        return None
+
+    raw_description = child_text(item, "description")
+    if not raw_description:
+        raw_description = child_text(item, "encoded")
+
+    if source["key"] == "kantei":
+        summary = trim_summary(strip_tags(raw_description))
+        if not summary:
+            summary = trim_summary(fetch_meta_description(url))
+    elif source["key"] == "wikinews":
+        summary = strip_wikitext(raw_description)
+    else:
+        summary = trim_summary(strip_tags(raw_description))
+
+    author = strip_tags(child_text(item, "creator", "author"))
+
+    return {
+        "title": title,
+        "url": url,
+        "summary": summary,
+        "source": source["name"],
+        "author": author,
+        "license": source["license"],
+        "source_key": source["key"],
+    }
+
+
+def fetch_source_items(source: dict) -> list[dict]:
+    try:
+        raw = http_get(source["url"])
+    except Exception:
+        return []
+    if not raw.strip():
+        return []
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return []
+
+    items = []
+    for item in iter_items(root):
+        cleaned = clean_item(source, item)
+        if cleaned:
+            items.append(cleaned)
+    return items
+
+
+def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    past_title_keys = {title_key(title) for title in load_lines(PAST_NEWS)}
+    past_links = set(load_lines(PAST_NEWS_LINKS))
+    seen_title_keys: set[str] = set()
+    seen_links: set[str] = set()
+    filtered: dict[str, list[dict]] = {}
+
+    for source in SOURCES:
+        key = source["key"]
+        source_items = []
+        for item in all_source_items.get(key, []):
+            item_title_key = title_key(item["title"])
+            item_link = item["url"]
+            if not item_title_key or not item_link:
+                continue
+            if item_title_key in past_title_keys or item_link in past_links:
+                continue
+            if item_title_key in seen_title_keys or item_link in seen_links:
+                continue
+            seen_title_keys.add(item_title_key)
+            seen_links.add(item_link)
+            source_items.append(item)
+        if source_items:
+            filtered[key] = source_items
+    return filtered
+
+
+def pick_articles(candidates: dict[str, list[dict]]) -> list[dict]:
+    source_order = [source["key"] for source in SOURCES if candidates.get(source["key"])]
+    random.shuffle(source_order)
+
+    selected = []
+    offsets = {key: 0 for key in source_order}
+
+    for key in source_order:
+        items = candidates.get(key, [])
+        if not items:
+            continue
+        selected.append(items[0])
+        offsets[key] = 1
+        if len(selected) >= OUTPUT_COUNT:
+            return selected
+
+    while len(selected) < OUTPUT_COUNT:
+        progressed = False
+        for key in source_order:
+            index = offsets.get(key, 0)
+            items = candidates.get(key, [])
+            if index >= len(items):
+                continue
+            selected.append(items[index])
+            offsets[key] = index + 1
+            progressed = True
+            if len(selected) >= OUTPUT_COUNT:
+                break
+        if not progressed:
+            break
+
+    return selected
+
+
+def render_news(selected: list[dict]) -> str:
+    blocks = []
+    for item in selected:
+        block = [f"■ {item['title']}"]
+        if item["summary"]:
+            block.append(item["summary"])
+        blocks.append("\n".join(block))
+    if not blocks:
+        return ""
+    return "\n\n".join(blocks) + "\n"
+
+
+def render_meta(selected: list[dict]) -> dict[str, dict]:
+    meta = {}
+    for item in selected:
+        meta[item["title"]] = {
+            "source": item["source"],
+            "author": item["author"],
+            "url": item["url"],
+            "license": item["license"],
+        }
+    return meta
+
+
+def main() -> int:
+    ensure_dirs()
+
+    all_source_items = {source["key"]: fetch_source_items(source) for source in SOURCES}
+    fetched_any = any(all_source_items.values())
+
+    if not fetched_any:
+        if not restore_stale_cache():
+            clear_outputs()
+        return 0
+
+    candidates = dedupe_candidates(all_source_items)
+    selected = pick_articles(candidates)
+    if not selected:
+        clear_outputs()
+        return 0
+
+    news_text = render_news(selected)
+    meta = render_meta(selected)
+
+    if not news_text:
+        clear_outputs()
+        return 0
+
+    write_text(OUTFILE, news_text)
+    write_json(META_OUTFILE, meta)
+    write_text(LAST_NEWS_CACHE, news_text)
+    write_json(LAST_NEWS_META_CACHE, meta)
+
+    append_and_trim(PAST_NEWS, [item["title"] for item in selected], 100)
+    append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 200)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
