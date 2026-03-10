@@ -7,6 +7,11 @@
 SCRIPT_DIR="${0:a:h}"
 cd "$SCRIPT_DIR"
 
+# tmp/ subdirectory paths (mirroring eloop_lib.sh structure)
+TMP_STATE_DIR="tmp/state"
+TMP_HISTORY_DIR="tmp/history"
+TMP_DEBUG_DIR="tmp/debug"
+
 LOOP_MODE=false
 LOOP_INTERVAL=5
 

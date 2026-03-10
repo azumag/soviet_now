@@ -7,13 +7,14 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (6 evaluation axes):
+Decision Logic (7 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
   2. Height penalty - Penalty for high landing position (varies by phase)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition, v158: stable parameters)
+  6. Chain merge bonus - Evaluate possibility of further merges after merge
+  7. Board density bonus - Prefer placement on less-dense side of board
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -31,10 +32,24 @@ Phases (determined by board max Y):
 
 # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
-# v151-v155: CHAIN_MERGE enhanced versions (coefficients 200.0->300.0->400.0, chain_distance 3.0->3.5->4.0->4.5->5.0)
-# v156: v42/v126 success structure restore, CHAIN_MERGE removed
-# v157: Dynamic parameter adjustment - Adopt v154's dynamic adjustment logic with enhanced coefficients to promote CHAIN_MERGE and reduce HEIGHT_CONTROL
-# v158: Restore v154 stable parameters - v157's dynamic adjustment (chain_distance_max=4.5+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0) caused score instability similar to v155's failure pattern (chain_distance=5.0 was too wide causing evaluation roughness). Revert to v154's stable fixed parameters (chain_distance=4.5, chain_bonus_multiplier=400.0) for evaluation precision. Keep v154's density evaluation logic (3 closest pieces with distance-weighted bonus).
+# [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
+# [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
+# [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+# v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
+# v167: 評価精度最適化版 - chain_distance 5.0→4.5縮小
+# v168: v155成功パラメータ復帰・動的調整復帰版
+# v169: HEIGHT_CONTROLフォールバック削除 - batch_summaryでHEIGHT_CONTROLが23.9%選択(avg_score_delta=2.5)と低価値を確認
+# v170: 序盤HEIGHT_CONTROL抑制拡大版 - max_y < 0.0, height_multiplier=0.1
+# v171: ボード密度評価軸追加 - batch_summaryでDEFAULT_PLACEMENTが21.7%選択(avg_score_delta=1.4)と非常に頻繁だが価値がないことを確認。
+# 低スコア群と高スコア群のmax_y推移差(初期差0.39 vs 終盤差1.64)から、序盤の中心放置が中盤以降の高さ稼ぎに失敗しているパターンを特定。
+# DEFAULT_PLACEMENT(x=0.0)を避け、密度が低い側(左or右)を優先する評価軸を追加することで、ボードの高さ稼ぎ能力を向上させスコア安定性を改善。
+# v173: 序盤HEIGHT_CONTROL抑制超強化版 - batch_summaryでDEFAULT_PLACEMENTが20.7%選択(avg_score_delta=2.2)と依然として高いことを確認。
+# ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
+# v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
+# これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
+# v174: HIGHフェーズ高さペナルティ抑制版 - batch_summaryでNEAR_MERGE(avg_score_delta=22.6)が高価値だが選択率6.5%と低いことを確認。
+# HIGHフェーズでheight_mult=1.8が高すぎてNEAR_MERGE機会を潰している問題に対し、height_multを1.8→1.0に抑制し併合機会を優先。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, strategy_versions/best_score2046_strategy.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -42,15 +57,18 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v158: Restore v154 stable parameters
-
-    v157's dynamic parameter adjustment (chain_distance_max=4.5+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0)
-    caused score instability similar to v155's failure pattern (chain_distance=5.0 was too wide causing evaluation roughness).
-    Revert to v154's stable fixed parameters to improve evaluation precision:
-    - chain_distance: 4.5 (fixed, restore from v157's dynamic expansion)
-    - chain_bonus_multiplier: 400.0 (fixed, restore from v157's dynamic strengthening)
-    - Keep v154's density evaluation logic (3 closest pieces with distance-weighted bonus)
-
+    """v174: HIGHフェーズ高さペナルティ抑制版
+    
+    batch_summaryでNEAR_MERGE(avg_score_delta=22.6)が高価値だが選択率6.5%と低いことを確認。
+    HIGHフェーズでheight_mult=1.8が高すぎてNEAR_MERGE機会を潰している問題に対し、height_multを1.8→1.0に抑制。
+    
+    v174の改善点:
+    1. HIGHフェーズでheight_multを1.8→1.0に抑制
+       - batch_summaryでNEAR_MERGE(avg_score_delta=22.6)が高価値だが選択率6.5%と低い
+       - HIGHフェーズでheight_mult=1.8が高すぎてNEAR_MERGE機会を潰している問題を解決
+    2. v173の序盤HEIGHT_CONTROL抑制を維持
+    3. v172のボード密度評価軸を維持
+    
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
         analysis: analyze_board.py analysis results
@@ -61,7 +79,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
                 - merges: individual distance/merge judgment for each same-type piece
             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
-
+    
     Returns:
         {"x": drop X coordinate, "reason": selection reason}
     """
@@ -78,6 +96,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
+    
+    # --- v173: 序盤判定をmax_y < -3.0に拡大 ---
+    early_game = max_y < -3.0
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -90,7 +111,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # HIGH relaxation to ensure merge opportunity
+        height_mult = 1.0  # v174: batch_summary分析に基づきHIGHフェーズの高さペナルティ抑制(1.8→1.0)しNEAR_MERGE機会を優先
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -104,16 +125,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_type = next_next_piece.get("type", 0)
 
     # --- Type-specific merge bonus calculation ---
-    # merge result type (next_type+1) higher means higher score value
-    # example: type1 merge -> bonus=330, type5 merge -> bonus=510, type14 merge -> bonus=1660
     merge_result_type = min(next_type + 1, 16)
     type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
 
+    # --- v171: Calculate board density (for new evaluation axis 7) ---
+    # Count pieces and calculate weighted height on each side
+    # Density is weighted by piece height to avoid stacking on already-high side
+    left_density = 0.0
+    right_density = 0.0
+    for p in pieces:
+        x = p["x"]
+        y = p["y"]
+        # Weight density by height (higher pieces contribute more to density)
+        weight = max(0, y + 4.0)  # y=-4.48 at bottom, so shift to positive
+        if x < 0:
+            left_density += weight
+        else:
+            right_density += weight
+
+    # Normalize densities
+    total_density = left_density + right_density
+    if total_density > 0:
+        left_density /= total_density
+        right_density /= total_density
+
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 6 evaluation axes
+    #  score each drop candidate (x coordinate) with 7 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -126,10 +166,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         reasons = []
 
         # ----- evaluation axis 1: merge bonus -----
-        # analyze_board judged merge_grade gives bonus
-        # DIRECT: direct hit target (success rate 95.7%)
-        # NEAR:   contact zone after landing (success rate 68.5%)
-        # FAR:    contact possibility by drift (low probability)
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
@@ -141,9 +177,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("FAR_MERGE")
 
         # ----- evaluation axis 2: height penalty -----
-        # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # additional multiplier if HIGH/MEDIUM landing high (>0.5)
-        height_penalty = landing_y * 50.0 * height_mult
+        # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
+        # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
+        height_multiplier = 30.0
+        if early_game:
+            height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
+
+        height_penalty = landing_y * height_multiplier * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -157,20 +197,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score -= height_penalty
 
         # ----- evaluation axis 3: drift penalty -----
-        # polygon shape pieces roll after landing. larger drift amount and uncertainty means
-        # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # ----- evaluation axis 4: left-right balance correction (v148: enhanced) -----
-        # bonus for correcting left-right piece count bias.
-        # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
-        # v148: higher board increases balance_strength, strictens balance control
+        # ----- evaluation axis 4: left-right balance correction (v162: enhanced) -----
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 50.0  # v148: HIGH balance control even stricter (40.0->50.0)
+            balance_strength = 50.0  # v148: HIGH balance control even stricter
         elif phase == "MEDIUM":
-            balance_strength = 35.0  # v148: MEDIUM also strengthen balance control (30.0->35.0)
+            balance_strength = 40.0  # v162: MEDIUM phase balance correction enhanced
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -180,18 +215,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score -= abs(balance_penalty)
 
         # ----- evaluation axis 5: nextNext centering -----
-        # if nextNext same type as current next, next also has merge opportunity.
-        # place near center to allow merge in either direction next turn
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v158: v154 stable parameters) -----
-        # v158: Restore v154's stable fixed parameters to avoid v155's failure pattern.
-        # v155's chain_distance=5.0 was too wide causing evaluation roughness and score instability.
-        # v158: Use fixed chain_distance=4.5 and chain_bonus_multiplier=400.0 for precision.
-        # Keep v154's density evaluation logic (3 closest pieces with distance-weighted bonus).
+        # ----- evaluation axis 6: chain merge bonus (v170: v155 parameters & dynamic adjustment) -----
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -200,54 +229,64 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v158: fixed chain_distance=4.5 (restore from v157's dynamic expansion)
-                # v155's 5.0 fixed value was too wide, v157's dynamic expansion (4.5+landing_y*0.6) repeats this mistake
-                # v154's fixed 4.5 provides stable evaluation precision
-                chain_distance = 4.5
+                # v170: v155成功パラメータ復帰 & v157/v159動的調整復帰
+                chain_distance_max = 5.0 + landing_y * 0.6
+                chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
-                # v158: fixed chain_bonus_multiplier=400.0 (restore from v157's dynamic strengthening)
-                # v157's dynamic (450.0+landing_y*150.0) caused instability in HIGH_LAYER situations
-                # v154's fixed 400.0 provides stable bonus calculation
-                chain_bonus_multiplier = 400.0
-
-                # collect all merged_type pieces within chain_distance of merge target
+                # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
-                        if dist < chain_distance:
+                        if dist < chain_distance_max:
                             nearby_pieces.append((dist, p))
 
-                # sort by distance
-                nearby_pieces.sort(key=lambda x: x[0])
+                # sort by distance (closest first)
+                nearby_pieces.sort(key=lambda piece: piece[0])
 
-                # bonus calculation from closest 3 pieces
-                # 1st: (chain_distance - dist) * chain_bonus_multiplier
-                # 2nd: (chain_distance - dist) * chain_bonus_multiplier / 2.0
-                # 3rd: (chain_distance - dist) * chain_bonus_multiplier / 4.0
+                # v170: v155距離加重ボーナス復帰 - 3つの最も近いピースに対して、距離に応じて減衰するボーナスを適用
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
-                    chain_bonus = (chain_distance - dist) * chain_bonus_multiplier
+                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 2:
                     dist, _ = nearby_pieces[1]
-                    chain_bonus = (chain_distance - dist) * chain_bonus_multiplier / 2.0
+                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.5
                     score += chain_bonus
 
                 if len(nearby_pieces) >= 3:
                     dist, _ = nearby_pieces[2]
-                    chain_bonus = (chain_distance - dist) * chain_bonus_multiplier / 4.0
+                    chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier * 0.25
                     score += chain_bonus
 
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
+        # ----- evaluation axis 7: board density bonus (v171: NEW) -----
+        # Prefer placement on less-dense side of board to improve height gain capability
+        # This addresses the problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
+        # Low-score games often place pieces in center early, which reduces height gain capability in mid/late game
+        if not reasons or merge_grade == "NO":
+            # Only apply when no strong merge reason exists (avoid overriding merge opportunities)
+            if x < 0:
+                # Placing on left side: bonus if right side is more dense
+                density_bonus = (right_density - left_density) * 50.0
+            else:
+                # Placing on right side: bonus if left side is more dense
+                density_bonus = (left_density - right_density) * 50.0
+
+            # Apply bonus (positive means placing on less-dense side)
+            if density_bonus > 10.0:  # Only add reason if density difference is significant
+                score += density_bonus
+                reasons.append("BOARD_DENSITY")
+
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
             best_x = x
-            best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+            # v169: HEIGHT_CONTROLフォールバック削除を維持
+            best_reason = "_".join(reasons) if reasons else "DEFAULT_PLACEMENT"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))

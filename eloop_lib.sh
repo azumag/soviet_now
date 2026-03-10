@@ -50,6 +50,8 @@ TMP_DEBUG_DIR="tmp/debug"
 TMP_CACHE_DIR="tmp/cache"
 
 RADIO_WEB_GROUNDING_CACHE_DIR="$TMP_CACHE_DIR/radio_grounding"
+RADIO_STATE_FILE="$TMP_STATE_DIR/.radio_state"
+COMMENT_GEN_STATE_FILE="$TMP_STATE_DIR/.comment_gen_state"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$RADIO_OPENCODE_PERMISSION}"
 COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
@@ -109,6 +111,32 @@ mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" \
 	"$TMP_STATE_DIR" "$TMP_MARKERS_DIR" "$TMP_HISTORY_DIR" "$TMP_DEBUG_DIR" "$TMP_CACHE_DIR" \
 	"$COMMENT_QUEUE_DIR" "$COMMENT_SPOKEN_HISTORY_DIR" "$RADIO_DEFERRED_QUEUE_DIR" \
 	"$MANUAL_AUDIO_TRIGGER_DIR" "$RADIO_WEB_GROUNDING_CACHE_DIR" "tmp/.twitch_chat"
+
+# --- tmp/ レイアウト移行 (旧パス → 新サブディレクトリ) ---
+if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
+	# state files
+	for f in improve_state.json accumulated_games.json rolling_scores.json \
+		rejected_hash_metrics.json best_strategy_anchor.json .russia_celebration_worker.pid \
+		.radio_state .comment_gen_state; do
+		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_STATE_DIR/$f" 2>/dev/null
+	done
+	# markers
+	for f in tmp/.radio_done_* tmp/.radio_inflight_* tmp/.timed_corner_done_* tmp/.timed_corner_inflight_*; do
+		[ -e "$f" ] && mv "$f" "$TMP_MARKERS_DIR/" 2>/dev/null
+	done
+	# history
+	for f in .past_radio_themes.txt past_radio_topics.txt past_news_read.txt \
+		past_news_read_keys.txt past_news_topic_keys.txt rejected_hashes.txt \
+		.past_news_titles.txt .past_news_links.txt; do
+		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_HISTORY_DIR/$f" 2>/dev/null
+	done
+	# debug
+	for f in tmp/radio_short_*.txt tmp/radio_factcheck_failed_*.txt tmp/radio_russia_celebration.txt; do
+		[ -e "$f" ] && mv "$f" "$TMP_DEBUG_DIR/" 2>/dev/null
+	done
+	[ -f "tmp/improve_ai.log" ] && mv "tmp/improve_ai.log" "$TMP_DEBUG_DIR/improve_ai.log" 2>/dev/null
+	touch "$TMP_STATE_DIR/.migrated"
+fi
 
 #=== コアヘルパー ===
 
@@ -991,7 +1019,7 @@ _run_opencode_comment() {
 		"$COMMENT_SPOKEN_HISTORY_DIR" \
 		"$PAST_RADIO_TOPICS" \
 		"score_history.txt" \
-		"tmp/rolling_scores.json" \
+		"$ROLLING_SCORES_FILE" \
 		"show_status.sh" \
 		"show_status_g.sh" \
 		"status_dashboard.py")
@@ -1050,7 +1078,7 @@ _run_claude_comment_with_model() {
 		"$COMMENT_SPOKEN_HISTORY_DIR" \
 		"$PAST_RADIO_TOPICS" \
 		"score_history.txt" \
-		"tmp/rolling_scores.json" \
+		"$ROLLING_SCORES_FILE" \
 		"show_status.sh" \
 		"show_status_g.sh" \
 		"status_dashboard.py")
@@ -1595,7 +1623,7 @@ PROMPT
 		fi
 	fi
 
-	debug_dump="tmp/radio_factcheck_failed_${corner_name}_$(date +%s).txt"
+	debug_dump="$TMP_DEBUG_DIR/radio_factcheck_failed_${corner_name}_$(date +%s).txt"
 	{
 		echo "===ORIGINAL==="
 		printf '%s\n' "$talk_body"
@@ -2325,8 +2353,8 @@ PY
 _radio_clear_state() {
 	local my_corner="$1"
 	local current
-	current=$(cat tmp/.radio_state 2>/dev/null) || return 0
-	case "$current" in *":${my_corner}:"*) rm -f tmp/.radio_state ;; esac
+	current=$(cat $RADIO_STATE_FILE 2>/dev/null) || return 0
+	case "$current" in *":${my_corner}:"*) rm -f $RADIO_STATE_FILE ;; esac
 }
 
 _interrupt_current_audio_playback() {
@@ -2367,7 +2395,7 @@ _play_priority_audio_file() {
 	local audio_file="$1" corner_name="$2"
 	[ -s "$audio_file" ] || return 1
 	_interrupt_current_audio_playback "priority:${corner_name}"
-	echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
+	echo "playing:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 	_refresh_radio_intro_for_playback_file "$audio_file" "$corner_name"
 	SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
 }
@@ -2384,7 +2412,7 @@ _cancel_russia_celebration_worker() {
 		sleep 1
 		kill -9 "$worker_pid" 2>/dev/null || true
 	fi
-	rm -f "$RUSSIA_CELEBRATION_WORKER_PID_FILE" "tmp/radio_russia_celebration.txt" 2>/dev/null || true
+	rm -f "$RUSSIA_CELEBRATION_WORKER_PID_FILE" "$TMP_DEBUG_DIR/radio_russia_celebration.txt" 2>/dev/null || true
 }
 
 _radio_mark_done() {
@@ -2393,7 +2421,7 @@ _radio_mark_done() {
 	touch "$done_marker"
 	# 古い重複防止マーカーを掃除（最新200件だけ保持）
 	local old_markers
-	old_markers=$(ls -1t tmp/.radio_done_* 2>/dev/null | tail -n +201 || true)
+	old_markers=$(ls -1t $TMP_MARKERS_DIR/.radio_done_* 2>/dev/null | tail -n +201 || true)
 	if [ -n "$old_markers" ]; then
 		echo "$old_markers" | xargs rm -f 2>/dev/null || true
 	fi
@@ -2452,18 +2480,18 @@ _radio_generate_and_play() {
 	done
 
 	# 同一 game_num + corner の二重生成/二重再生を防止
-	local done_marker="tmp/.radio_done_${game_num}_${corner_name}"
+	local done_marker="$TMP_MARKERS_DIR/.radio_done_${game_num}_${corner_name}"
 	if [ -f "$done_marker" ]; then
 		log "[RADIO:${corner_name}] duplicate skip: already done for game=${game_num}"
 		return 0
 	fi
-	local inflight_dir="tmp/.radio_inflight_${game_num}_${corner_name}"
+	local inflight_dir="$TMP_MARKERS_DIR/.radio_inflight_${game_num}_${corner_name}"
 	if ! mkdir "$inflight_dir" 2>/dev/null; then
 		log "[RADIO:${corner_name}] duplicate skip: in-flight for game=${game_num}"
 		return 0
 	fi
 
-	echo "generating:${corner_name}:$(date +%s)" > tmp/.radio_state
+	echo "generating:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 	log "[RADIO:${corner_name}] トーク生成中..."
 	local talk prompt_snapshot
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
@@ -2562,7 +2590,7 @@ ${talk_body}"
 
 	if [ ${#talk_body} -lt 100 ]; then
 		local debug_dump
-		debug_dump="tmp/radio_short_${corner_name}_$(date +%s).txt"
+		debug_dump="$TMP_DEBUG_DIR/radio_short_${corner_name}_$(date +%s).txt"
 		{
 			echo "===RAW==="
 			printf '%s\n' "$talk"
@@ -2584,7 +2612,7 @@ ${talk_body}"
 
 	if _radio_should_fact_check "$corner_name"; then
 		local fact_checked_body
-		echo "verifying:${corner_name}:$(date +%s)" > tmp/.radio_state
+		echo "verifying:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 		fact_checked_body=$(_radio_fact_check_body "$corner_name" "$prompt_snapshot" "$talk_body" "$selected_news") || {
 			_radio_clear_state "$corner_name"
 			rmdir "$inflight_dir" 2>/dev/null || true
@@ -2623,7 +2651,7 @@ ${talk_body}"
 	if [ "$comment_total" -gt 0 ]; then
 		deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "$corner_name" || true)
 		if [ -n "$deferred_file" ]; then
-			echo "queued:${corner_name}:$(date +%s)" > tmp/.radio_state
+			echo "queued:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 			log "[RADIO:${corner_name}] deferred: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}) -> $(basename "$deferred_file")"
 		else
 			log "[RADIO:${corner_name}] deferred enqueue失敗 (comment backlog=${comment_total})"
@@ -2633,7 +2661,7 @@ ${talk_body}"
 			return 1
 		fi
 		else
-			echo "playing:${corner_name}:$(date +%s)" > tmp/.radio_state
+			echo "playing:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 			_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
 			if [ "$no_preempt" = true ]; then
 				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
@@ -2694,7 +2722,7 @@ _pick_radio_theme() {
 		themes=("世界の料理と文化の話。各国の食卓と暮らしの違いを深掘りして")
 	fi
 
-	local past_themes_file="tmp/.past_radio_themes.txt"
+	local past_themes_file="$PAST_RADIO_TOPICS"
 	local available_themes=()
 	local past_theme_list=""
 	[ -f "$past_themes_file" ] && past_theme_list=$(cat "$past_themes_file")
@@ -3285,8 +3313,8 @@ schedule_nonessential_audio_jobs() {
 
 	_try_timed_corner() {
 		local name="$1" target_hh="$2" target_mm="$3"
-		local marker="tmp/.timed_corner_done_${today}_${name}"
-		local inflight="tmp/.timed_corner_inflight_${name}"
+		local marker="$TMP_MARKERS_DIR/.timed_corner_done_${today}_${name}"
+		local inflight="$TMP_MARKERS_DIR/.timed_corner_inflight_${name}"
 		[ -f "$marker" ] && return 1
 		[ -f "$inflight" ] && return 1
 		local target=$((target_hh * 60 + target_mm))
@@ -3303,9 +3331,9 @@ schedule_nonessential_audio_jobs() {
 		local name="$1" func="$2"
 		shift 2
 		if "$func" "$@"; then
-			touch "tmp/.timed_corner_done_${today}_${name}"
+			touch "$TMP_MARKERS_DIR/.timed_corner_done_${today}_${name}"
 		fi
-		rm -f "tmp/.timed_corner_inflight_${name}"
+		rm -f "$TMP_MARKERS_DIR/.timed_corner_inflight_${name}"
 	}
 
 	if _try_timed_corner "weather" 8 0; then
@@ -3351,20 +3379,20 @@ cleanup_tmp_files() {
 
 	# .radio_done_* : 最新200個を残して削除
 	local radio_done_count
-	radio_done_count=$(ls -1 tmp/.radio_done_* 2>/dev/null | wc -l)
+	radio_done_count=$(ls -1 $TMP_MARKERS_DIR/.radio_done_* 2>/dev/null | wc -l)
 	if [ "$radio_done_count" -gt 200 ]; then
-		ls -1t tmp/.radio_done_* 2>/dev/null | tail -n +201 | xargs rm -f 2>/dev/null
+		ls -1t $TMP_MARKERS_DIR/.radio_done_* 2>/dev/null | tail -n +201 | xargs rm -f 2>/dev/null
 		cleaned=$((cleaned + radio_done_count - 200))
 	fi
 
 	# .timed_corner_done_* : 7日より古いものを削除
-	find tmp -maxdepth 1 -name '.timed_corner_done_*' -mtime +7 -delete 2>/dev/null
+	find "$TMP_MARKERS_DIR" -maxdepth 1 -name '.timed_corner_done_*' -mtime +7 -delete 2>/dev/null
 	# .radio_inflight_* : 1時間以上古い孤児ディレクトリを削除
-	find tmp -maxdepth 1 -name '.radio_inflight_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
+	find "$TMP_MARKERS_DIR" -maxdepth 1 -name '.radio_inflight_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
 
 	# --- デバッグダンプ: 1日以上古いものを削除 ---
-	find tmp -maxdepth 1 -name 'radio_short_*.txt' -mtime +1 -delete 2>/dev/null
-	find tmp -maxdepth 1 -name 'radio_factcheck_failed_*.txt' -mtime +1 -delete 2>/dev/null
+	find "$TMP_DEBUG_DIR" -maxdepth 1 -name 'radio_short_*.txt' -mtime +1 -delete 2>/dev/null
+	find "$TMP_DEBUG_DIR" -maxdepth 1 -name 'radio_factcheck_failed_*.txt' -mtime +1 -delete 2>/dev/null
 
 	# --- サンドボックス孤児: 1時間以上古いものを削除 ---
 	find tmp -maxdepth 1 -name '.sandbox_harvest_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
@@ -3372,7 +3400,7 @@ cleanup_tmp_files() {
 	# --- 履歴ファイル: キャップ適用 ---
 	# .past_news_titles.txt / .past_news_links.txt にもキャップ適用
 	local hist_file
-	for hist_file in tmp/.past_news_titles.txt tmp/.past_news_links.txt; do
+	for hist_file in $TMP_HISTORY_DIR/.past_news_titles.txt $TMP_HISTORY_DIR/.past_news_links.txt; do
 		if [ -f "$hist_file" ]; then
 			local lc
 			lc=$(wc -l < "$hist_file" | tr -d ' ')
@@ -3425,7 +3453,7 @@ generate_russia_celebration() {
 - 出力はトーク本文のみ。前置きや補足説明は不要
 CELEBPROMPT
 
-	echo "generating:russia_celebration:$(date +%s)" > tmp/.radio_state
+	echo "generating:russia_celebration:$(date +%s)" > $RADIO_STATE_FILE
 	log "[RUSSIA] 生成中..."
 	local celebration_talk celebration_prompt_snapshot
 	celebration_prompt_snapshot=$(cat "$celebration_prompt_file" 2>/dev/null)
@@ -3441,7 +3469,7 @@ CELEBPROMPT
 	if [ -n "$celebration_talk" ]; then
 		celebration_talk=$(printf '%s' "$celebration_talk" | _sanitize_onair_text | _normalize_radio_tone)
 		if [ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ]; then
-			echo "verifying:russia_celebration:$(date +%s)" > tmp/.radio_state
+			echo "verifying:russia_celebration:$(date +%s)" > $RADIO_STATE_FILE
 			celebration_talk=$(_radio_fact_check_body "celebration" "$celebration_prompt_snapshot" "$celebration_talk") || {
 				_radio_clear_state "russia_celebration"
 				log "[RUSSIA] fact-check失敗"
@@ -3453,8 +3481,8 @@ CELEBPROMPT
 			log "[RUSSIA] fact-check後の本文が不正/短文"
 			return 1
 		fi
-		echo "$celebration_talk" >tmp/radio_russia_celebration.txt
-		echo "playing:russia_celebration:$(date +%s)" > tmp/.radio_state
+		echo "$celebration_talk" >$TMP_DEBUG_DIR/radio_russia_celebration.txt
+		echo "playing:russia_celebration:$(date +%s)" > $RADIO_STATE_FILE
 		log "[RUSSIA] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
 		_radio_clear_state "russia_celebration"
@@ -3493,7 +3521,7 @@ generate_soviet_celebration() {
 - 出力はトーク本文のみ。前置きや補足説明は不要
 CELEBPROMPT
 
-	echo "generating:celebration:$(date +%s)" > tmp/.radio_state
+	echo "generating:celebration:$(date +%s)" > $RADIO_STATE_FILE
 	log "[CELEBRATION] 生成中..."
 	local celebration_talk celebration_prompt_snapshot
 	celebration_prompt_snapshot=$(cat "$celebration_prompt_file" 2>/dev/null)
@@ -3509,7 +3537,7 @@ CELEBPROMPT
 	if [ -n "$celebration_talk" ]; then
 		celebration_talk=$(printf '%s' "$celebration_talk" | _sanitize_onair_text | _normalize_radio_tone)
 		if [ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ]; then
-			echo "verifying:celebration:$(date +%s)" > tmp/.radio_state
+			echo "verifying:celebration:$(date +%s)" > $RADIO_STATE_FILE
 			celebration_talk=$(_radio_fact_check_body "celebration" "$celebration_prompt_snapshot" "$celebration_talk") || {
 				_radio_clear_state "celebration"
 				log "[CELEBRATION] fact-check失敗"
@@ -3522,7 +3550,7 @@ CELEBPROMPT
 			return 1
 		fi
 		echo "$celebration_talk" >tmp/radio_celebration.txt
-		echo "playing:celebration:$(date +%s)" > tmp/.radio_state
+		echo "playing:celebration:$(date +%s)" > $RADIO_STATE_FILE
 		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
 		_radio_clear_state "celebration"
@@ -3534,7 +3562,7 @@ CELEBPROMPT
 
 _kill_comment_gen() {
 	local pidfile="tmp/.twitch_chat/comment_gen.pid"
-	local statefile="tmp/.comment_gen_state"
+	local statefile="$COMMENT_GEN_STATE_FILE"
 	if [ -f "$pidfile" ]; then
 		local raw old_pid old_ppid live_ppid
 		raw=$(cat "$pidfile" 2>/dev/null || true)
@@ -4070,7 +4098,7 @@ generate_comment_response() {
 	local comment_parent_pid comment_started_at
 	comment_parent_pid="${BASHPID:-$$}"
 	comment_started_at=$(date +%s)
-	echo "generating:comment:${comment_started_at}" > tmp/.comment_gen_state
+	echo "generating:comment:${comment_started_at}" > $COMMENT_GEN_STATE_FILE
 
 	(
 		_cleanup_comment_gen_worker() {
@@ -4080,7 +4108,7 @@ generate_comment_response() {
 			if [ "$file_pid" = "${BASHPID:-$$}" ]; then
 				rm -f tmp/.twitch_chat/comment_gen.pid
 			fi
-			rm -f tmp/.comment_gen_state
+			rm -f $COMMENT_GEN_STATE_FILE
 			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
@@ -4112,7 +4140,7 @@ generate_comment_response() {
 
 		【追加参照可能ファイル（必要時のみ）】
 		- tmp/.comment_queue/spoken_history/*.txt: 最近実際に読み上げたコメント返し全文
-		- tmp/past_radio_topics.txt: 過去のニュース・ラジオ題名の履歴
+		- ${PAST_RADIO_TOPICS}: 過去のニュース・ラジオ題名の履歴
 		- score_history.txt: 直近から過去までのスコア履歴
 		- tmp/rolling_scores.json: 戦略ハッシュごとの rolling 指標
 		※ まず上の埋め込み済み抜粋を優先し、文脈が足りない場合だけ読むこと
@@ -4144,7 +4172,7 @@ generate_comment_response() {
 		- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
 		- 「さっきの返事」「今の話」「その件」など、自分が直前に読み上げたコメント返しへの反応は、「最近自分が実際に読み上げたコメント返し」を優先して参照すること
 		- ニュースやラジオ本編への反応は、「前回のトーク内容（文脈参照用）」を参照すること
-			- それでも文脈が足りなければ、sandbox 内の tmp/.comment_queue/spoken_history/*.txt、tmp/past_radio_topics.txt、score_history.txt、tmp/rolling_scores.json を追加で読んでよい
+			- それでも文脈が足りなければ、sandbox 内の tmp/.comment_queue/spoken_history/*.txt、${PAST_RADIO_TOPICS}、score_history.txt、${ROLLING_SCORES_FILE} を追加で読んでよい
 			- 「それな」「それって」「さっきの」「草」など文脈依存コメントは、コメント前後文脈と直前履歴を使って対象を推定してから返事すること
 			- 文脈が曖昧な場合は、断定せずに「この話のことでしょうか？」のように確認を挟んで返すこと
 			- コメントの要点には短く触れてよいが、そのまま長く復唱しない。「〜というコメントですね」の機械的な前置きは禁止
@@ -4183,11 +4211,11 @@ COMMENTPROMPT
 
 		local attempt=1 generation_ok=false
 		local comments_talk="" comment_model_used=""
-		echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
+		echo "generating:comment:$(date +%s)" > $COMMENT_GEN_STATE_FILE
 		log "[COMMENT] コメント返し生成中... (max_retry=${comment_retry_max})"
 
 		while [ "$attempt" -le "$comment_retry_max" ]; do
-			echo "generating:comment:$(date +%s)" > tmp/.comment_gen_state
+			echo "generating:comment:$(date +%s)" > $COMMENT_GEN_STATE_FILE
 			local prompt_for_attempt="$comment_prompt_file"
 			if [ "$attempt" -gt 1 ]; then
 				prompt_for_attempt=$(mktemp /tmp/eloop_comment_prompt_retry_XXXXXXXX)

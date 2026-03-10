@@ -11,7 +11,11 @@ WATCH_INTERVAL=${1:-10}
 FULLSCREEN_ENABLED=${FULLSCREEN_ENABLED:-1}
 FULLSCREEN_RARE_N=${FULLSCREEN_RARE_N:-30}
 FULLSCREEN_MIN_GAP_SEC=${FULLSCREEN_MIN_GAP_SEC:-180}
-FULLSCREEN_LAST_FILE="tmp/.status_fullscreen_last"
+TMP_STATE_DIR="tmp/state"
+TMP_MARKERS_DIR="tmp/markers"
+TMP_HISTORY_DIR="tmp/history"
+TMP_DEBUG_DIR="tmp/debug"
+FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
 MIN_GAMES_BEFORE_IMPROVE=${MIN_GAMES_BEFORE_IMPROVE:-1}
 MIN_GAMES_FOR_BEST_ROLLBACK=${MIN_GAMES_FOR_BEST_ROLLBACK:-12}
 REGRESSION_COMPOSITE_RATIO=${REGRESSION_COMPOSITE_RATIO:-0.88}
@@ -220,10 +224,10 @@ _maybe_run_fullscreen_random() {
 show_status() {
 	# --- 改善プロセス状態 ---
 	local imp_status="idle" imp_pid=0 imp_hash="" imp_phase="" imp_progress=0
-	if [[ -f tmp/improve_state.json ]]; then
+	if [[ -f "$TMP_STATE_DIR/improve_state.json" ]]; then
 		eval $(python3 -c "
 import json
-d=json.load(open('tmp/improve_state.json'))
+d=json.load(open('$TMP_STATE_DIR/improve_state.json'))
 print(f'imp_status={d.get(\"status\",\"idle\")}')
 print(f'imp_pid={d.get(\"pid\",0)}')
 print(f'imp_hash={d.get(\"strategy_hash_before\",\"\")}')

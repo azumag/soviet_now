@@ -14,5 +14,7 @@ ${VALIDATE_ERROR}
 - if __name__ == "__main__" ブロックは変更禁止
 - decide() は必ず {"x": float, "reason": str} を返すこと
 - `strategy.py.staging` を直接 `Edit` して修正すること
+- `height_mult` や閾値の数値だけをいじる修正で済ませないこと
+- `turns >= N` の固定ターン数で終盤判定を足さないこと。終盤危険局面は盤面状態で表現すること
 - 別名の `.py` を新設して逃げないこと。前回作ってしまった不要トップレベル `.py` を再作成してはいけない
 - `strategy.py.staging` 以外のトップレベル `.py` は新規作成しないこと

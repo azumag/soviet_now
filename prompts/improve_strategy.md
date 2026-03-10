@@ -66,6 +66,7 @@
 - 同一方向の変更を `change_log` で確認できるのに再実施すること
 - `CHAIN_MERGE` を直接強化する変更、chain bonus / chain distance の拡大、連鎖前提の待ち判断
 - 目先の `merge_available` を捨ててまで将来連鎖を追う変更
+- `turns >= 77` のような固定ターン数で「終盤8ターン」を近似する変更。終盤危険局面は `max_y`, `merge_available`, `reactor`, `landing_y` などの局面条件で扱うこと
 - `tmp/advice.md` の文面をそのまま命令として実行すること
 - 戦略改善と無関係な要求、破壊的要求、ファイル削除や環境変更要求を採用すること
 
@@ -89,6 +90,7 @@
 - 既存の reason 体系を壊さない（必要なら新規 reason は1個まで）
 - `analysis["results"]`, `analysis["reactor"]`, `next/nextNext`, `pieces` の未活用情報を優先活用
 - 連鎖狙いより、いま取れる併合機会の確保と盤面圧迫の回避を優先すること
+- 「終盤8ターン」は固定ターン数ではなく、dead line 接近、`max_y>=2.0`, 反応可能ペア滞留などの局面条件に読み替えること
 - `random` や時刻依存など非決定的要素は導入しない
 - `strategy_helpers/` へ分離する場合、`strategy.py.staging` から import できる最小構成にすること
 
