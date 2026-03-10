@@ -517,6 +517,8 @@ _build_no_edit_retry_prompt() {
 - いま必要なのは説明ではなく \`$expect\` の実編集
 - 再分析・要約・長文説明は禁止
 - 必要なら \`$expect\` を1回だけ Read し、その直後に Edit
+- patch の根拠は必ず現在の \`$expect\` に合わせること。別ファイルや古い読み取り結果を oldString 根拠にしない
+- \`Edit\` が2回連続で失敗したら、\`$expect\` の該当箇所だけを狭く再読込して、より小さい patch に分割して再実行する
 - 新規トップレベル .py を作らない
 - 終了前に、\`$expect\` に差分が入った状態にすること
 - これは no-edit 後の再試行 ${attempt}/${primary_attempts}
