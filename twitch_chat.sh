@@ -414,6 +414,8 @@ _send() {
     channel="${TWITCH_CHANNEL:-azumagbanjo}"
     token="${TWITCH_BOT_TOKEN:-}"
     nick="${TWITCH_BOT_NICK:-sorenbot}"
+    channel="${channel#\#}"
+    nick=$(printf '%s' "$nick" | tr '\r\n' ' ' | tr -d '\000')
     if [ -z "$token" ]; then
         echo "TWITCH_BOT_TOKEN not set" >&2
         return 1

@@ -340,18 +340,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # DANGER_RECOVERY_PENALTY評価軸はv177のフィルタリングだけで十分のため削除（v178）
 
-        # ----- evaluation axis 9: NEAR_PAIR_POTENTIAL (v3806→v3810: 危険局面無効化) -----
-        # near_pairs（触媒誘導可能な近接ペア）を活用し、シェイクや押し込みの効果を最大化する配置を優先
-        # HIGHフェーズ以降でnear_pairs>=3がある場合、着地位置が低い候補にボーナスを付与
-        # v3810: 危険局面（max_y >= 2.0）ではNEAR_PAIR_POTENTIALボーナスを無効化
-        # ワーストゲーム(score0522)の終盤(turns 53-60, max_y=2.96-3.0)でHIGH_TOWERが選択され続けた問題は、
+        # ----- evaluation axis 9: NEAR_PAIR_POTENTIAL削除版 -----
+        # NEAR_PAIR_POTENTIAL評価軸を完全に削除
+        # batch_summary分析でNEAR_PAIR_POTENTIALが即時併合機会を逃す原因になっていることを特定
+        # ワーストゲーム(score0522)の終盤(turns 53-60, max_y=2.96-3.0)でHIGH_TOWERが選択され続け、
         # NEAR_PAIR_POTENTIALが潜在併合機会を優先しすぎて、即時のDIRECT/NEARマージを見逃したことに起因
-        # 危険局面ではnear_pairsよりも、即時のDIRECT/NEARマージ機会を最優先するためボーナスを無効化
+        # v3810の危険局面フィルタリング（max_y >= 1.5, reactive_pairs >= 3）で即時併合を強制するため、
+        # NEAR_PAIR_POTENTIALのような潜在併合機会優先の評価軸は不要
+        # 削除することで、即時併合による盤面圧縮を徹底しスコア安定性を向上させる
         # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_183014_score0522.jsonl turns 53-60
-        if phase in ["HIGH", "CRITICAL"] and near_pair_count >= 3 and max_y < 2.0:
-            potential_bonus = landing_y * -50.0  # 着地位置が低いほど大きなボーナス（危険局面では無効）
-            score += potential_bonus
-            reasons.append("NEAR_PAIR_POTENTIAL")
 
         # ----- update best candidate -----
         if score > best_score:

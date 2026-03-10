@@ -5,15 +5,50 @@
 CHAT_DIR="${TWITCH_CHAT_DIR:-tmp/.twitch_chat}"
 RAW_LOG="$CHAT_DIR/raw.log"
 CHANNEL="${1:-azumagbanjo}"
+RECENT_MSG_IDS_FILE="$CHAT_DIR/recent_msg_ids.log"
+RECENT_LINE_HASHES_FILE="$CHAT_DIR/recent_line_hashes.log"
+RECENT_DEDUP_TTL_SEC="${TWITCH_RECENT_DEDUP_TTL_SEC:-900}"
+RECENT_DEDUP_MAX="${TWITCH_RECENT_DEDUP_MAX:-4000}"
 
 cd "$(dirname "$0")"
 mkdir -p "$CHAT_DIR"
+
+_compact_recent_file() {
+    local src="$1" ttl="${2:-$RECENT_DEDUP_TTL_SEC}" max_keep="${3:-$RECENT_DEDUP_MAX}"
+    [ -f "$src" ] || return 0
+    local tmpf now_ts
+    now_ts=$(date +%s)
+    tmpf=$(mktemp /tmp/twitch_daemon_recent_XXXXXXXX 2>/dev/null) || return 0
+    awk -F'|' -v now_ts="$now_ts" -v ttl="$ttl" '
+        NF >= 2 && $1 ~ /^[0-9]+$/ && (now_ts - $1) <= ttl && !seen[$2]++ { print $1 "|" $2 }
+    ' "$src" | tail -n "$max_keep" > "$tmpf"
+    mv "$tmpf" "$src"
+}
+
+_recent_key_seen() {
+    local src="$1" key="$2" ttl="${3:-$RECENT_DEDUP_TTL_SEC}"
+    [ -n "$key" ] || return 1
+    [ -f "$src" ] || return 1
+    local now_ts
+    now_ts=$(date +%s)
+    awk -F'|' -v target="$key" -v now_ts="$now_ts" -v ttl="$ttl" '
+        $2 == target && $1 ~ /^[0-9]+$/ && (now_ts - $1) <= ttl { found = 1; exit }
+        END { exit(found ? 0 : 1) }
+    ' "$src"
+}
+
+_mark_recent_key() {
+    local src="$1" key="$2"
+    [ -n "$key" ] || return 0
+    mkdir -p "$CHAT_DIR" 2>/dev/null || true
+    printf '%s|%s\n' "$(date +%s)" "$key" >> "$src"
+}
 
 while true; do
     nick="justinfan$((RANDOM % 90000 + 10000))"
     {
         # display-name などのメタ情報タグを受け取る
-        echo "CAP REQ :twitch.tv/tags"
+        echo "CAP REQ :twitch.tv/tags twitch.tv/commands"
         echo "NICK $nick"
         echo "JOIN #${CHANNEL}"
         sleep 240
@@ -44,11 +79,29 @@ while true; do
             # サニタイズ: 制御文字 + シェルメタ文字除去
             msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
             user=$(echo "$user" | tr -d '`$\\{}|;<>&')
+            clean_line="${user}: ${msg}"
+
+            _compact_recent_file "$RECENT_MSG_IDS_FILE"
+            _compact_recent_file "$RECENT_LINE_HASHES_FILE"
+
+            if [ -n "$msg_id" ] && _recent_key_seen "$RECENT_MSG_IDS_FILE" "$msg_id"; then
+                continue
+            fi
+
+            line_hash=$(printf '%s' "$clean_line" | md5 -q 2>/dev/null || printf '%s' "$clean_line" | md5sum | awk '{print $1}')
+            if [ -n "$line_hash" ] && _recent_key_seen "$RECENT_LINE_HASHES_FILE" "$line_hash"; then
+                continue
+            fi
+
             # msg-id を先頭に保持しておくと、再接続時の同一コメント重複を抑止しやすい
             if [ -n "$msg_id" ]; then
-                echo "id=${msg_id}"$'\t'"${user}: ${msg}" >> "$RAW_LOG"
+                echo "id=${msg_id}"$'\t'"${clean_line}" >> "$RAW_LOG"
+                _mark_recent_key "$RECENT_MSG_IDS_FILE" "$msg_id"
             else
-                echo "${user}: ${msg}" >> "$RAW_LOG"
+                echo "${clean_line}" >> "$RAW_LOG"
+            fi
+            if [ -n "$line_hash" ]; then
+                _mark_recent_key "$RECENT_LINE_HASHES_FILE" "$line_hash"
             fi
         fi
     done
