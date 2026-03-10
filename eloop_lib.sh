@@ -79,7 +79,7 @@ REGRESSION_TREND_LONG_WINDOW=100
 REGRESSION_TREND_SHORT_RATIO=0.94
 REGRESSION_TREND_LONG_RATIO=0.95
 STRATEGY_HASH_ARCHIVE_DIR="strategy_versions/by_hash"
-HASH_ARCHIVE_KEEP_TOP=10
+HASH_ARCHIVE_KEEP_TOP="${HASH_ARCHIVE_KEEP_TOP:-10}"
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 COMMENT_SPOKEN_HISTORY_DIR="tmp/.comment_queue/spoken_history"
 COMMENT_SPOKEN_HISTORY_MAX_FILES="${COMMENT_SPOKEN_HISTORY_MAX_FILES:-16}"
@@ -4845,7 +4845,93 @@ _pick_hall_of_fame_rollback_candidate() {
 }
 
 _prune_hash_archive_by_ranking() {
-	return 0
+	[ -d "$STRATEGY_HASH_ARCHIVE_DIR" ] || return 0
+	[ -f "$ROLLING_SCORES_FILE" ] || return 0
+
+	_backfill_hash_archive_from_known_versions
+
+	local ranked_hashes
+	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
+import json
+import sys
+import math
+
+rs_file = sys.argv[1]
+min_games = int(sys.argv[2])
+keep_top = int(sys.argv[3])
+lcb_z = float(sys.argv[4])
+w_p50 = float(sys.argv[5])
+w_p25 = float(sys.argv[6])
+w_lcb = float(sys.argv[7])
+rs = json.load(open(rs_file))
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def composite_score(scores):
+    n = len(scores)
+    mean = sum(scores) / n
+    p25 = quantile(scores, 0.25)
+    p50 = quantile(scores, 0.50)
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in scores) / n
+        std = math.sqrt(var)
+    else:
+        std = 0.0
+    lcb = mean - lcb_z * (std / math.sqrt(n))
+    return w_p50 * p50 + w_p25 * p25 + w_lcb * lcb, p50, p25, n
+
+rows = []
+for h, data in rs.items():
+    scores = [int(x) for x in data.get("scores", [])]
+    if len(scores) < min_games:
+        continue
+    comp, p50, p25, n = composite_score(scores)
+    rows.append((comp, p50, p25, n, h))
+rows.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
+for _, _, _, _, h in rows[:keep_top]:
+    print(h)
+PY
+)
+
+	local current_hash=""
+	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	local revert_hash=""
+	if [ -f "tmp/revert_strategy.py" ]; then
+		revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
+	fi
+	local anchor_hash=""
+	if [ -f "$BEST_STRATEGY_ANCHOR_FILE" ]; then
+		anchor_hash=$(python3 -c "import json; print(json.load(open('$BEST_STRATEGY_ANCHOR_FILE')).get('hash',''))" 2>/dev/null || echo "")
+	fi
+
+	local keep_hashes
+	keep_hashes=$(printf '%s\n%s\n%s\n%s\n' "$ranked_hashes" "$current_hash" "$revert_hash" "$anchor_hash" | sed '/^$/d' | sort -u)
+
+	local removed=0
+	local f base h
+	while IFS= read -r f; do
+		[ -f "$f" ] || continue
+		base=$(basename "$f")
+		h="${base%.py}"
+		if ! printf '%s\n' "$keep_hashes" | grep -qxF "$h"; then
+			rm -f "$f"
+			removed=$((removed + 1))
+		fi
+	done < <(ls -1 "$STRATEGY_HASH_ARCHIVE_DIR"/*.py 2>/dev/null || true)
+
+	if [ "$removed" -gt 0 ]; then
+		log "[HASH-ARCHIVE] pruned ${removed} file(s): keep top ${HASH_ARCHIVE_KEEP_TOP} (+current/revert/anchor)"
+	fi
 }
 
 update_rolling_scores() {
