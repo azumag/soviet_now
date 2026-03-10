@@ -265,6 +265,64 @@ build_prompt() {
 
 #=== コマンド実行 ===
 
+_opencode_latest_session_id_for_dir() {
+	local target_dir="$1"
+	local opencode_db="${OPENCODE_SESSION_DB:-$HOME/.local/share/opencode/opencode.db}"
+	[ -n "$target_dir" ] || return 1
+	[ -f "$opencode_db" ] || return 1
+	python3 - "$opencode_db" "$target_dir" <<'PY' 2>/dev/null
+import os
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+target_dir = os.path.realpath(sys.argv[2])
+
+try:
+    conn = sqlite3.connect(db_path)
+    cur = conn.execute(
+        "SELECT id FROM session WHERE directory = ? ORDER BY time_updated DESC LIMIT 1",
+        (target_dir,),
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        print(row[0])
+except Exception:
+    pass
+PY
+}
+
+_run_cmd_session_meta_file() {
+	local session_dir="$1" spec="$2"
+	[ -n "$session_dir" ] || return 1
+	[ -n "$spec" ] || return 1
+	local key
+	key=$(printf '%s' "$spec" | tr -cs 'A-Za-z0-9._-' '_')
+	printf '%s/%s.session\n' "$session_dir" "$key"
+}
+
+_run_cmd_load_resume_session() {
+	local spec="$1"
+	local session_dir="${RUN_CMD_SESSION_DIR:-}"
+	[ -n "$session_dir" ] || return 1
+	local meta_file
+	meta_file=$(_run_cmd_session_meta_file "$session_dir" "$spec") || return 1
+	[ -f "$meta_file" ] || return 1
+	sed -n '1p' "$meta_file" 2>/dev/null | tr -d '[:space:]'
+}
+
+_run_cmd_store_resume_session() {
+	local spec="$1" workdir="${2:-$PWD}"
+	local session_dir="${RUN_CMD_SESSION_DIR:-}"
+	[ -n "$session_dir" ] || return 0
+	mkdir -p "$session_dir" 2>/dev/null || return 0
+	local session_id meta_file
+	session_id=$(_opencode_latest_session_id_for_dir "$workdir")
+	[ -n "$session_id" ] || return 0
+	meta_file=$(_run_cmd_session_meta_file "$session_dir" "$spec") || return 0
+	printf '%s\n' "$session_id" >"$meta_file" 2>/dev/null || true
+}
+
 run_cmd() {
 	local spec="$1" prompt="$2"
 	local type="${spec%%:*}" agent="${spec#*:}"
@@ -273,6 +331,11 @@ run_cmd() {
 	[ -n "$agent" ] && target="${type}:${agent}"
 	local cmd_log_file="${RUN_CMD_LOG_FILE:-}"
 	local cmd_log_tag="${RUN_CMD_LOG_TAG:-$type}"
+	local prompt_body="$prompt"
+	local resume_session=""
+	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+		resume_session=$(_run_cmd_load_resume_session "$spec" 2>/dev/null || true)
+	fi
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_prompt.XXXXXX)
@@ -281,57 +344,67 @@ run_cmd() {
 	if [ -n "$cmd_log_file" ]; then
 		mkdir -p "$(dirname "$cmd_log_file")" 2>/dev/null || true
 		_trim_log_file "$cmd_log_file" "$IMPROVE_AI_LOG_KEEP_LINES" "$IMPROVE_AI_LOG_TRIM_LINES"
-		printf '[%s] [AI:%s] START spec=%s target=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" >>"$cmd_log_file" 2>/dev/null || true
+		if [ -n "$resume_session" ]; then
+			printf '[%s] [AI:%s] START spec=%s target=%s continue_session=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" "$resume_session" >>"$cmd_log_file" 2>/dev/null || true
+		else
+			printf '[%s] [AI:%s] START spec=%s target=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" >>"$cmd_log_file" 2>/dev/null || true
+		fi
 	fi
 
 	case "$type" in
 	glm)
+		local -a glm_args
+		glm_args=(run "$prompt_body" --agent="zai")
+		[ -n "$resume_session" ] && glm_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
-			opencode run "$(cat "$prompt_file")" --agent="zai" >>"$cmd_log_file" 2>&1 &
+			opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
 		else
-			opencode run "$(cat "$prompt_file")" --agent="zai" &
+			opencode "${glm_args[@]}" &
 		fi
 		;;
 	gemini)
 		if [ -n "$cmd_log_file" ]; then
-			gemini -p "$(cat "$prompt_file")" -y -s >>"$cmd_log_file" 2>&1 &
+			gemini -p "$prompt_body" -y -s >>"$cmd_log_file" 2>&1 &
 		else
-			gemini -p "$(cat "$prompt_file")" -y -s &
+			gemini -p "$prompt_body" -y -s &
 		fi
 		;;
 	gemini-flash)
 		if [ -n "$cmd_log_file" ]; then
-			gemini -p "$(cat "$prompt_file")" -y -s --model=gemini-2.5-flash >>"$cmd_log_file" 2>&1 &
+			gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash >>"$cmd_log_file" 2>&1 &
 		else
-			gemini -p "$(cat "$prompt_file")" -y -s --model=gemini-2.5-flash &
+			gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash &
 		fi
 		;;
 	sonnet)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			claude -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits &
+			claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
 		fi
 		;;
 	opus)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			claude -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits &
+			claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
 		fi
 		;;
 	claude)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			claude -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits &
+			claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
 		fi
 		;;
 	opencode)
+		local -a opencode_args
+		opencode_args=(run "$prompt_body" --agent="${agent:-glmflash}")
+		[ -n "$resume_session" ] && opencode_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
-			opencode run "$(cat "$prompt_file")" --agent="${agent:-glmflash}" >>"$cmd_log_file" 2>&1 &
+			opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
 		else
-			opencode run "$(cat "$prompt_file")" --agent="${agent:-glmflash}" &
+			opencode "${opencode_args[@]}" &
 		fi
 		;;
 	esac
@@ -348,6 +421,9 @@ run_cmd() {
 	local ret=$?
 	if [ "$interrupted" -eq 1 ]; then
 		ret=130
+	fi
+	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+		_run_cmd_store_resume_session "$spec" "$PWD"
 	fi
 	if [ -n "$cmd_log_file" ]; then
 		printf '[%s] [AI:%s] END rc=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$ret" >>"$cmd_log_file" 2>/dev/null || true

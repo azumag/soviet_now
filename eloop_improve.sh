@@ -464,6 +464,9 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	if [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ]; then
 		find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort > "$SANDBOX_TOPLEVEL_PY_BASELINE"
 	fi
+	RUN_CMD_SESSION_DIR="$PWD/tmp/.improve_retry_sessions"
+	export RUN_CMD_SESSION_DIR
+	mkdir -p "$RUN_CMD_SESSION_DIR" 2>/dev/null || true
 	for retry in $(seq 1 3); do
 		_improve_progress "ai_retry${retry}" "$((25 + (retry - 1) * 15))" "ai_edit_and_validate"
 		if [ "$retry" -eq 1 ]; then
@@ -472,6 +475,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				"${improve_ref_files[@]}"
 		else
 			log "[IMPROVE] リトライ $retry/3 (前回エラー: ${VALIDATE_ERROR:0:80})"
+			_improve_note "retry ${retry}/3: continue prior opencode session when available; fix only: ${VALIDATE_ERROR:0:160}"
 
 			# stagingをオリジナルに戻してからリトライ
 			cp "strategy.py" "$STAGING_FILE"
@@ -563,6 +567,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 		fi
 	fi
 fi
+unset RUN_CMD_SESSION_DIR
 
 if [ "$in_sandbox" = true ]; then
 	popd >/dev/null || true
