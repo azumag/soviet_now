@@ -268,6 +268,7 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
         }
 
     current_scores = rolling[current_hash].get("scores", [])
+    current_prev_hash = str(rolling[current_hash].get("prev_hash", "") or "")
     current = calc_strategy_metrics(current_scores)
     if not current:
         if not best:
@@ -278,7 +279,13 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
         _, _, _, _, best_hash, _, best_source = best
         return {
             "state": "unknown",
-            "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) n={len(current_scores)}",
+                "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) n={len(current_scores)}",
+            }
+
+    if not current_prev_hash:
+        return {
+            "state": "safe",
+            "text": f"RegPreview NO baseline(no prev_hash) n={current['n']}",
         }
 
     if not best:

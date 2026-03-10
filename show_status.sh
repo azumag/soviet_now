@@ -404,6 +404,11 @@ if h and h in rs:
         print(f"rolling_comp={comp:.0f}")
         print(f"rolling_p50={p50:.0f}")
         print(f"rolling_p25={p25:.0f}")
+        if not prev_h:
+            detail = f"NO baseline(no prev_hash) n={int(n)}"
+            print("regression_state=safe")
+            print("regression_detail=" + shlex.quote(detail))
+            raise SystemExit
         best = pick_best_reference()
         if best:
             bc, bp50, bp25, bn, bh, _, best_source = best

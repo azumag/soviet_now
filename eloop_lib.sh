@@ -4761,6 +4761,11 @@ if len(current_scores) < min_games_current:
     print("OK")
     raise SystemExit
 
+current_prev_hash = str(rs[current_hash].get("prev_hash", "") or "")
+if not current_prev_hash:
+    print("OK")
+    raise SystemExit
+
 current = metrics(current_scores)
 
 candidates = []
