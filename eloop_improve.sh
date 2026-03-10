@@ -77,6 +77,11 @@ log "[IMPROVE] AI改善 (${NUM_GAMES}試合分)..."
 _improve_progress "ai_prepare" "20" "prepare_sandbox"
 # primary(glm) を最大3回まで試し、失敗時のみ fallback(glmflash) へ
 RUN_AI_PRIMARY_RETRIES="${RUN_AI_PRIMARY_RETRIES:-3}"
+IMPROVE_MAX_RETRIES="${IMPROVE_MAX_RETRIES:-5}"
+case "$IMPROVE_MAX_RETRIES" in
+''|*[!0-9]*) IMPROVE_MAX_RETRIES=5 ;;
+esac
+[ "$IMPROVE_MAX_RETRIES" -lt 1 ] && IMPROVE_MAX_RETRIES=1
 
 # リバート用に改善前のstrategy.pyを保存
 cp "$STRATEGY_FILE" "tmp/revert_strategy.py"
@@ -467,15 +472,24 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	RUN_CMD_SESSION_DIR="$PWD/tmp/.improve_retry_sessions"
 	export RUN_CMD_SESSION_DIR
 	mkdir -p "$RUN_CMD_SESSION_DIR" 2>/dev/null || true
-	for retry in $(seq 1 3); do
-		_improve_progress "ai_retry${retry}" "$((25 + (retry - 1) * 15))" "ai_edit_and_validate"
+	for retry in $(seq 1 "$IMPROVE_MAX_RETRIES"); do
+		ai_progress=""
+		validate_progress=""
+		if [ "$IMPROVE_MAX_RETRIES" -le 1 ]; then
+			ai_progress=25
+			validate_progress=30
+		else
+			ai_progress=$((25 + (retry - 1) * 40 / (IMPROVE_MAX_RETRIES - 1)))
+			validate_progress=$((30 + (retry - 1) * 40 / (IMPROVE_MAX_RETRIES - 1)))
+		fi
+		_improve_progress "ai_retry${retry}" "$ai_progress" "ai_edit_and_validate"
 		if [ "$retry" -eq 1 ]; then
 			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
 				"prompts/improve_strategy.md" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
 		else
-			log "[IMPROVE] リトライ $retry/3 (前回エラー: ${VALIDATE_ERROR:0:80})"
-			_improve_note "retry ${retry}/3: continue prior opencode session when available; fix only: ${VALIDATE_ERROR:0:160}"
+			log "[IMPROVE] リトライ $retry/${IMPROVE_MAX_RETRIES} (前回エラー: ${VALIDATE_ERROR:0:80})"
+			_improve_note "retry ${retry}/${IMPROVE_MAX_RETRIES}: continue prior opencode session when available; fix only: ${VALIDATE_ERROR:0:160}"
 
 			# stagingをオリジナルに戻してからリトライ
 			cp "strategy.py" "$STAGING_FILE"
@@ -494,7 +508,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			unexpected_py=$(comm -13 "$SANDBOX_TOPLEVEL_PY_BASELINE" <(find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort) 2>/dev/null | sed '/^strategy\.py\.staging$/d' || true)
 			if [ -n "$unexpected_py" ]; then
 				VALIDATE_ERROR="許可されていない新規トップレベルPythonファイルを作成: $(printf '%s' "$unexpected_py" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]*$//')"
-				_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR}"
+				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
 				while IFS= read -r extra_py; do
 					[ -n "$extra_py" ] && rm -f -- "$extra_py" 2>/dev/null || true
 				done <<<"$unexpected_py"
@@ -503,11 +517,11 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 		fi
 
 		# 差分チェック
-		_improve_progress "validate_retry${retry}" "$((30 + (retry - 1) * 15))" "diff_and_validation_checks"
+		_improve_progress "validate_retry${retry}" "$validate_progress" "diff_and_validation_checks"
 		if diff -q "strategy.py" "$STAGING_FILE" >/dev/null 2>&1; then
-			log "[IMPROVE] 差分なし (retry $retry/3)"
+			log "[IMPROVE] 差分なし (retry $retry/${IMPROVE_MAX_RETRIES})"
 			VALIDATE_ERROR="AIが strategy.py.staging を変更しなかった。必ず strategy.py.staging を編集して改善すること。"
-			_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR}"
+			_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
 			continue
 		fi
 
@@ -521,7 +535,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				if grep -qF "$HASH_STAGING" "$HOST_REJECTED_HASHES_FILE"; then
 					log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み)"
 					VALIDATE_ERROR="この変更は過去にリジェクトされた戦略と同一 (hash=$HASH_STAGING)。別のアプローチを試せ。"
-					_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR}"
+					_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
 					continue
 				fi
 			fi
@@ -530,7 +544,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ]; then
 				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
 				VALIDATE_ERROR="decide()関数の本体に実質的な変更がない (コメントのみの変更)。ロジックを変更せよ。"
-				_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR}"
+				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
 				continue
 			fi
 
@@ -554,7 +568,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			improve_ok=true
 			break
 		else
-			_improve_note "validation failed (retry ${retry}/3): ${VALIDATE_ERROR:-unknown validation error}"
+			_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR:-unknown validation error}"
 		fi
 	done
 
