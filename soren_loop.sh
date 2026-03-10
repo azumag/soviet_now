@@ -214,6 +214,11 @@ while true; do
 	post_rc=$?
 	_abort_if_interrupted "$post_rc" "post_game_bookkeeping"
 
+	# 定期 tmp/ クリーンアップ (50ゲームごと)
+	if (( GAME_NUM % 50 == 0 )); then
+		cleanup_tmp_files
+	fi
+
 	# ソ連建国達成後は retry を含む次ゲーム操作を行わない
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
 		log "[HALT] retry・次ゲーム操作を停止"

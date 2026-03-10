@@ -3302,6 +3302,58 @@ schedule_nonessential_audio_jobs() {
 	fi
 }
 
+#=== tmp/ クリーンアップ ===
+
+cleanup_tmp_files() {
+	local cleaned=0
+
+	# --- マーカーファイル: 古いものを削除 ---
+
+	# .radio_done_* : 最新200個を残して削除
+	local radio_done_count
+	radio_done_count=$(ls -1 tmp/.radio_done_* 2>/dev/null | wc -l)
+	if [ "$radio_done_count" -gt 200 ]; then
+		ls -1t tmp/.radio_done_* 2>/dev/null | tail -n +201 | xargs rm -f 2>/dev/null
+		cleaned=$((cleaned + radio_done_count - 200))
+	fi
+
+	# .timed_corner_done_* : 7日より古いものを削除
+	find tmp -maxdepth 1 -name '.timed_corner_done_*' -mtime +7 -delete 2>/dev/null
+	# .radio_inflight_* : 1時間以上古い孤児ディレクトリを削除
+	find tmp -maxdepth 1 -name '.radio_inflight_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
+
+	# --- デバッグダンプ: 1日以上古いものを削除 ---
+	find tmp -maxdepth 1 -name 'radio_short_*.txt' -mtime +1 -delete 2>/dev/null
+	find tmp -maxdepth 1 -name 'radio_factcheck_failed_*.txt' -mtime +1 -delete 2>/dev/null
+
+	# --- サンドボックス孤児: 1時間以上古いものを削除 ---
+	find tmp -maxdepth 1 -name '.sandbox_harvest_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
+
+	# --- 履歴ファイル: キャップ適用 ---
+	# .past_news_titles.txt / .past_news_links.txt にもキャップ適用
+	local hist_file
+	for hist_file in tmp/.past_news_titles.txt tmp/.past_news_links.txt; do
+		if [ -f "$hist_file" ]; then
+			local lc
+			lc=$(wc -l < "$hist_file" | tr -d ' ')
+			if [ "${lc:-0}" -gt 300 ]; then
+				tail -200 "$hist_file" > "${hist_file}.tmp" && mv "${hist_file}.tmp" "$hist_file"
+			fi
+		fi
+	done
+
+	# --- レガシー/テスト用ファイル削除 ---
+	rm -f tmp/test_*.txt tmp/v158_*.txt tmp/v159_*.txt tmp/monitor_v159.sh 2>/dev/null
+	rm -f tmp/batch_test.sh tmp/accumulated_games.test.json 2>/dev/null
+
+	# --- 古い .past_soviet_themes.txt を統合済みなので削除可 ---
+	# (テーマが radio_themes.txt に移動済み。ただし _pick_radio_theme の重複防止用は残す)
+
+	if [ "$cleaned" -gt 0 ]; then
+		log "[CLEANUP] tmp/ クリーンアップ完了: ${cleaned}ファイル削除"
+	fi
+}
+
 #=== ソ連祝賀トーク ===
 
 generate_russia_celebration() {
