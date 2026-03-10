@@ -63,6 +63,7 @@ PAST_RADIO_TOPICS="$TMP_HISTORY_DIR/past_radio_topics.txt"
 PAST_NEWS_READ="$TMP_HISTORY_DIR/past_news_read.txt"
 PAST_NEWS_READ_KEYS="$TMP_HISTORY_DIR/past_news_read_keys.txt"
 PAST_NEWS_TOPIC_KEYS="$TMP_HISTORY_DIR/past_news_topic_keys.txt"
+PAST_NEWS_READ_SOURCES="$TMP_HISTORY_DIR/past_news_read_sources.txt"
 
 IMPROVE_STATE_FILE="$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_state.json"
 IMPROVE_AI_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/improve_ai.log"
@@ -133,7 +134,7 @@ if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
 	done
 	# history
 	for f in .past_radio_themes.txt past_radio_topics.txt past_news_read.txt \
-		past_news_read_keys.txt past_news_topic_keys.txt rejected_hashes.txt \
+		past_news_read_keys.txt past_news_topic_keys.txt past_news_read_sources.txt rejected_hashes.txt \
 		.past_news_titles.txt .past_news_links.txt; do
 		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_HISTORY_DIR/$f" 2>/dev/null
 	done
@@ -2425,6 +2426,163 @@ print(selected)
 PY
 }
 
+_news_source_name_for_title() {
+	local title="$1"
+	[ -f "tmp/news_meta.json" ] || return 0
+	python3 - "$title" <<'PY'
+import json
+import sys
+
+title = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    with open("tmp/news_meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+item = meta.get(title, {})
+source = (item.get("source") or "").strip()
+if source:
+    print(source)
+PY
+}
+
+_news_source_key_from_name() {
+	local name="$1"
+	case "$name" in
+		"ウィキニュース"|wikinews|Wikinews) echo "wikinews" ;;
+		"首相官邸"|kantei|Kantei) echo "kantei" ;;
+		"Global Voices"|globalvoices|GlobalVoices) echo "globalvoices" ;;
+		*) echo "" ;;
+	esac
+}
+
+_append_news_read_source() {
+	local source_key="$1"
+	[ -n "$source_key" ] || return 0
+	echo "$source_key" >>"$PAST_NEWS_READ_SOURCES"
+	tail -120 "$PAST_NEWS_READ_SOURCES" >"${PAST_NEWS_READ_SOURCES}.tmp" && mv "${PAST_NEWS_READ_SOURCES}.tmp" "$PAST_NEWS_READ_SOURCES"
+}
+
+_prepare_news_prompt_blocks() {
+	local blocks_text="$1"
+	python3 - "$PAST_NEWS_READ_SOURCES" <<'PY'
+import json
+import os
+import sys
+from collections import Counter
+
+source_hist_path = sys.argv[1]
+raw = sys.stdin.read()
+
+try:
+    with open("tmp/news_meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    meta = {}
+
+pref_order = {"wikinews": 0, "kantei": 1, "globalvoices": 2}
+name_to_key = {"ウィキニュース": "wikinews", "首相官邸": "kantei", "Global Voices": "globalvoices"}
+display = {"wikinews": "ウィキニュース", "kantei": "首相官邸", "globalvoices": "Global Voices"}
+
+hist = []
+if os.path.exists(source_hist_path):
+    with open(source_hist_path, encoding="utf-8", errors="ignore") as f:
+        hist = [ln.strip() for ln in f if ln.strip()]
+recent = hist[-12:]
+counts = Counter(recent)
+
+blocks = []
+current = []
+for line in raw.splitlines():
+    if line.startswith("■ "):
+        if current:
+            blocks.append(current)
+        current = [line.rstrip()]
+    elif current:
+        current.append(line.rstrip())
+if current:
+    blocks.append(current)
+
+def block_title(block):
+    return block[0][2:].strip() if block and block[0].startswith("■ ") else ""
+
+def block_source_name(block):
+    title = block_title(block)
+    item = meta.get(title, {})
+    return (item.get("source") or "").strip()
+
+def block_source_key(block):
+    return name_to_key.get(block_source_name(block), "")
+
+def block_priority(block):
+    key = block_source_key(block)
+    return (counts.get(key, 0), pref_order.get(key, 99), block_title(block))
+
+blocks.sort(key=block_priority)
+
+out_blocks = []
+for block in blocks:
+    title = block_title(block)
+    source_name = block_source_name(block)
+    if source_name:
+        out_blocks.append("\n".join([block[0], f"出典: {source_name}", *block[1:]]).rstrip())
+    else:
+        out_blocks.append("\n".join(block).rstrip())
+
+print("\n\n".join(out_blocks))
+PY
+<<<"$blocks_text"
+}
+
+_news_source_balance_hint() {
+	local blocks_text="$1"
+	python3 - "$PAST_NEWS_READ_SOURCES" <<'PY'
+import json
+import os
+import sys
+from collections import Counter
+
+source_hist_path = sys.argv[1]
+raw = sys.stdin.read()
+
+try:
+    with open("tmp/news_meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    meta = {}
+
+name_to_key = {"ウィキニュース": "wikinews", "首相官邸": "kantei", "Global Voices": "globalvoices"}
+label = {"wikinews": "ウィキニュース", "kantei": "首相官邸", "globalvoices": "Global Voices"}
+
+hist = []
+if os.path.exists(source_hist_path):
+    with open(source_hist_path, encoding="utf-8", errors="ignore") as f:
+        hist = [ln.strip() for ln in f if ln.strip()]
+recent = hist[-12:]
+counts = Counter(recent)
+
+seen = []
+for line in raw.splitlines():
+    if not line.startswith("■ "):
+        continue
+    title = line[2:].strip()
+    source_name = (meta.get(title, {}) or {}).get("source", "").strip()
+    key = name_to_key.get(source_name, "")
+    if key and key not in seen:
+        seen.append(key)
+
+if not seen:
+    raise SystemExit(0)
+
+parts = [f"{label.get(k, k)}:{counts.get(k, 0)}" for k in seen]
+under = sorted(seen, key=lambda k: (counts.get(k, 0), {"wikinews": 0, "kantei": 1, "globalvoices": 2}.get(k, 99)))
+prefer = label.get(under[0], under[0])
+print(f"直近12回のニュース出典件数: {', '.join(parts)}。内容が同程度なら最近少ない出典を優先。特に今回は {prefer} をやや優先。")
+PY
+<<<"$blocks_text"
+}
+
 _extract_news_source_name() {
 	local title="$1"
 	[ -f "tmp/news_meta.json" ] || return 0
@@ -2690,10 +2848,12 @@ _radio_generate_and_play() {
 	# ニュースコーナーの場合、選んだニュースを既読リストに記録
 	if [ "$corner_name" = "news" ]; then
 		if [ -n "$selected_news" ]; then
-			local selected_key selected_topic_key
+			local selected_key selected_topic_key selected_source_name selected_source_key
 			selected_news=$(_resolve_selected_news_title "$selected_news" "tmp/news.txt")
 			selected_key=$(_news_title_key "$selected_news")
 			selected_topic_key=$(_news_topic_key "$selected_news")
+			selected_source_name=$(_news_source_name_for_title "$selected_news")
+			selected_source_key=$(_news_source_key_from_name "$selected_source_name")
 			if [ -z "$selected_key" ]; then
 				log "[RADIO:news] 既読記録スキップ: タイトル解決失敗"
 			elif grep -qxF "$selected_news" "$PAST_NEWS_READ" 2>/dev/null || \
@@ -2707,6 +2867,7 @@ _radio_generate_and_play() {
 				echo "$selected_news" >>"$PAST_NEWS_READ"
 				echo "$selected_key" >>"$PAST_NEWS_READ_KEYS"
 				[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
+				_append_news_read_source "$selected_source_key"
 				tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
 				tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
 				tail -120 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
@@ -3027,6 +3188,9 @@ start_radio_corner_news() {
 		log "[NEWS] 全ニュースが既読または新規なし → 今回はスキップ"
 		return 1
 	fi
+	unread_news_headlines=$(_prepare_news_prompt_blocks "$unread_news_headlines")
+	local news_source_balance_hint=""
+	news_source_balance_hint=$(_news_source_balance_hint "$unread_news_headlines")
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
@@ -3042,6 +3206,9 @@ $(_radio_persona_block)
 ${unread_news_headlines}
 ---
 
+【出典バランス】
+${news_source_balance_hint:-内容が同程度なら、最近少ない出典をやや優先して選ぶこと。}
+
 【既に読んだニュース - 絶対に選ばないこと】
 ${past_news_read:-（なし）}
 
@@ -3054,6 +3221,7 @@ ${past_topics}
 1. 時間帯に合わせた軽いオープニング（2-3文）
 2. ニュースコーナー
    - 「既に読んだニュース」に含まれない記事から1つ選ぶこと
+   - 内容が同程度なら、最近少ない出典のニュースを優先すること
    - ニュース本文に入る前に、選んだニュースタイトルを1文で必ず読み上げること
    - ニュースから1つ選んで、本文の内容を踏まえて1000字程度で深く語る
    - 単なる冷笑やツッコミで終わらせず、「なぜこうなったのか」「この先どうなるのか」「歴史的に見るとどういう位置づけか」など自分なりの洞察や意見を述べる
