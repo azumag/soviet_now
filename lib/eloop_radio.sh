@@ -144,8 +144,13 @@ _ensure_corner_announce() {
 	case "$corner_name" in
 		soviet)   announce="ソ連共産主義ネタコーナーです。" ;;
 		news)     announce="本日のニュースです。" ;;
+		weather)  announce="ソ連天気予報コーナーです。" ;;
+		fortune)  announce="今日のソ連占いコーナーです。" ;;
+		market)   announce="本日の株価・経済動向コーナーです。" ;;
+		dinner)   announce="今日の夕飯の献立を考えようコーナーです。" ;;
+		deals)    announce="お得情報コーナーです。" ;;
+		survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
 		theme)    announce="" ;;
-		recap)    announce="" ;;
 		strategy) announce="" ;;
 	esac
 	[ -z "$announce" ] && { printf '%s' "$text"; return 0; }

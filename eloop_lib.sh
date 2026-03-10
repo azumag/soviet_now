@@ -1181,7 +1181,7 @@ EOF
 )
 		;;
 	soviet)
-		block=$(_radio_extract_prompt_section_block "【今回のソ連ネタ指定】" "$prompt_context")
+		block=$(_radio_extract_prompt_section_block "【今回の脱線テーマ指定】" "$prompt_context")
 		compact=$(cat <<EOF
 【現在時刻】
 ${current_time}
@@ -1189,8 +1189,19 @@ ${current_time}
 ${mood}
 【状況】
 ${situation}
-【今回のソ連ネタ指定】
+【今回の脱線テーマ指定】
 ${block}
+EOF
+)
+		;;
+	weather|fortune|market|dinner|deals|survival)
+		compact=$(cat <<EOF
+【現在時刻】
+${current_time}
+【時間帯の雰囲気】
+${mood}
+【状況】
+${situation}
 EOF
 )
 		;;
@@ -1205,17 +1216,6 @@ ${mood}
 ${situation}
 【作戦変更の差分】
 ${block}
-EOF
-)
-		;;
-	recap)
-		compact=$(cat <<EOF
-【現在時刻】
-${current_time}
-【時間帯の雰囲気】
-${mood}
-【状況】
-${situation}
 EOF
 )
 		;;
@@ -1241,7 +1241,7 @@ _radio_extract_grounding_query() {
 		query=$(_radio_extract_prompt_section_value "【今回の脱線テーマ指定】" "$prompt_context")
 		;;
 	soviet)
-		query=$(_radio_extract_prompt_section_value "【今回のソ連ネタ指定】" "$prompt_context")
+		query=$(_radio_extract_prompt_section_value "【今回の脱線テーマ指定】" "$prompt_context")
 		;;
 	esac
 	printf '%s' "$query" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//'
@@ -1383,7 +1383,7 @@ _radio_fact_check_body() {
 - 材料にない新事実を絶対に足さない
 - 固有名詞、年号、人数、数値、因果関係、逸話、引用は、材料で支えられないなら削るか弱める
 - 自信が低い細部は、「と言われます」「とされています」「とみられます」などの無責任な逃げ表現へ言い換えず、その細部ごと削るか、確認できる範囲の事実だけに言い換える
-- news / strategy / recap では、材料にない断定を禁止
+- news / strategy / weather / market では、材料にない断定を禁止
 - theme / soviet / celebration でも、確信のない歴史細部は一般論へ落とす
 - Web検索で集めた資料がある場合は、それを最優先で使う
 - 必要な箇所以外は極力書き換えないこと。問題がない文はそのまま残すこと
@@ -4390,6 +4390,17 @@ _archive_strategy_snapshot_by_hash() {
 	fi
 }
 
+_backfill_hash_archive_from_known_versions() {
+	mkdir -p "$STRATEGY_HASH_ARCHIVE_DIR"
+	local f
+	[ -f "$STRATEGY_FILE" ] && _archive_strategy_snapshot_by_hash "$STRATEGY_FILE"
+	[ -f "tmp/revert_strategy.py" ] && _archive_strategy_snapshot_by_hash "tmp/revert_strategy.py"
+	for f in "$STRATEGY_VERSIONS_DIR"/v*_strategy.py "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
+		[ -f "$f" ] || continue
+		_archive_strategy_snapshot_by_hash "$f"
+	done
+}
+
 _find_strategy_file_by_hash() {
 	local target_hash="$1"
 	[ -z "$target_hash" ] && return 1
@@ -4771,91 +4782,7 @@ _pick_hall_of_fame_rollback_candidate() {
 }
 
 _prune_hash_archive_by_ranking() {
-	[ -d "$STRATEGY_HASH_ARCHIVE_DIR" ] || return 0
-	[ -f "$ROLLING_SCORES_FILE" ] || return 0
-
-	local ranked_hashes
-	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
-import json
-import sys
-import math
-
-rs_file = sys.argv[1]
-min_games = int(sys.argv[2])
-keep_top = int(sys.argv[3])
-lcb_z = float(sys.argv[4])
-w_p50 = float(sys.argv[5])
-w_p25 = float(sys.argv[6])
-w_lcb = float(sys.argv[7])
-rs = json.load(open(rs_file))
-
-def quantile(vals, p):
-    xs = sorted(vals)
-    if not xs:
-        return 0.0
-    if len(xs) == 1:
-        return float(xs[0])
-    pos = (len(xs) - 1) * p
-    lo = int(pos)
-    hi = min(lo + 1, len(xs) - 1)
-    frac = pos - lo
-    return xs[lo] * (1.0 - frac) + xs[hi] * frac
-
-def composite_score(scores):
-    n = len(scores)
-    mean = sum(scores) / n
-    p25 = quantile(scores, 0.25)
-    p50 = quantile(scores, 0.50)
-    if n > 1:
-        var = sum((x - mean) ** 2 for x in scores) / n
-        std = math.sqrt(var)
-    else:
-        std = 0.0
-    lcb = mean - lcb_z * (std / math.sqrt(n))
-    return w_p50 * p50 + w_p25 * p25 + w_lcb * lcb, p50, p25, n
-
-rows = []
-for h, data in rs.items():
-    scores = [int(x) for x in data.get("scores", [])]
-    if len(scores) < min_games:
-        continue
-    comp, p50, p25, n = composite_score(scores)
-    rows.append((comp, p50, p25, n, h))
-rows.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
-for _, _, _, _, h in rows[:keep_top]:
-    print(h)
-PY
-)
-
-	local current_hash=""
-	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-	local revert_hash=""
-	if [ -f "tmp/revert_strategy.py" ]; then
-		revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
-	fi
-	local anchor_hash=""
-	if [ -f "$BEST_STRATEGY_ANCHOR_FILE" ]; then
-		anchor_hash=$(python3 -c "import json; import sys; print(json.load(open('$BEST_STRATEGY_ANCHOR_FILE')).get('hash',''))" 2>/dev/null || echo "")
-	fi
-
-	local keep_hashes
-	keep_hashes=$(printf '%s\n%s\n%s\n%s\n' "$ranked_hashes" "$current_hash" "$revert_hash" "$anchor_hash" | sed '/^$/d' | sort -u)
-
-	local removed=0
-	local f base h
-	while IFS= read -r f; do
-		[ -f "$f" ] || continue
-		base=$(basename "$f")
-		h="${base%.py}"
-		if ! printf '%s\n' "$keep_hashes" | grep -qxF "$h"; then
-			rm -f "$f"
-			removed=$((removed + 1))
-		fi
-	done < <(ls -1 "$STRATEGY_HASH_ARCHIVE_DIR"/*.py 2>/dev/null || true)
-
-	if [ "$removed" -gt 0 ]; then
-		log "[HASH-ARCHIVE] pruned ${removed} file(s): keep top ${HASH_ARCHIVE_KEEP_TOP} (+current/revert)"
-	fi
+	return 0
 }
 
 update_rolling_scores() {
@@ -4863,6 +4790,7 @@ update_rolling_scores() {
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 	_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$strategy_hash"
+	_backfill_hash_archive_from_known_versions
 
 	python3 -c "
 import json, os
