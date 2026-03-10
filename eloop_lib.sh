@@ -55,7 +55,7 @@ COMMENT_GEN_STATE_FILE="$TMP_STATE_DIR/.comment_gen_state"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$RADIO_OPENCODE_PERMISSION}"
 COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
-IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow","external_directory":"allow"}'
+IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow"}'
 RADIO_SAY_RATE=150
 unset SAY_AUDIO_DEVICE
 PAST_RADIO_TOPICS="$TMP_HISTORY_DIR/past_radio_topics.txt"
@@ -75,7 +75,7 @@ REJECTED_REEVALUATE_MIN_NEW_GAMES="${REJECTED_REEVALUATE_MIN_NEW_GAMES:-8}"
 BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
-MIN_GAMES_BEFORE_IMPROVE=1
+MIN_GAMES_BEFORE_IMPROVE=12
 MIN_GAMES_FOR_BEST_ROLLBACK=12
 RANK_LCB_Z=1.28
 RANK_WEIGHT_P50=0.55
@@ -381,7 +381,12 @@ run_cmd() {
 	fi
 
 	local prompt_file
-	prompt_file=$(mktemp /tmp/eloop_prompt.XXXXXX)
+	if [ -n "${RUN_CMD_TMP_DIR:-}" ]; then
+		mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
+		prompt_file=$(mktemp "$RUN_CMD_TMP_DIR/eloop_prompt.XXXXXX" 2>/dev/null)
+	else
+		prompt_file=$(mktemp /tmp/eloop_prompt.XXXXXX)
+	fi
 	printf '%s' "$prompt" >"$prompt_file"
 	log "[CMD] $(wc -c <"$prompt_file" | tr -d ' ')B → $type"
 	if [ -n "$cmd_log_file" ]; then
@@ -515,7 +520,12 @@ run_ai() {
 
 	local expect_snapshot=""
 	if [ -n "$expect" ] && [ -f "$expect" ]; then
-		expect_snapshot=$(mktemp /tmp/eloop_expect_before.XXXXXX 2>/dev/null || echo "")
+		if [ -n "${RUN_CMD_TMP_DIR:-}" ]; then
+			mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
+			expect_snapshot=$(mktemp "$RUN_CMD_TMP_DIR/eloop_expect_before.XXXXXX" 2>/dev/null || echo "")
+		else
+			expect_snapshot=$(mktemp /tmp/eloop_expect_before.XXXXXX 2>/dev/null || echo "")
+		fi
 		if [ -n "$expect_snapshot" ]; then
 			cp "$expect" "$expect_snapshot" 2>/dev/null || {
 				rm -f "$expect_snapshot" 2>/dev/null || true
@@ -695,7 +705,8 @@ _path_is_under_dir() {
 
 create_sandbox() {
 	local sandbox_dir
-	sandbox_dir=$(mktemp -d /tmp/soren_sandbox_XXXXXX 2>/dev/null) || {
+	mkdir -p "$ELOOP_LIB_DIR/tmp" 2>/dev/null || true
+	sandbox_dir=$(mktemp -d "$ELOOP_LIB_DIR/tmp/.soren_sandbox_XXXXXX" 2>/dev/null) || {
 		log "[SANDBOX] 作成失敗"
 		return 1
 	}
@@ -743,12 +754,16 @@ harvest_sandbox() {
 
 	local sandbox_real
 	sandbox_real=$(_realpath_safe "$sandbox_dir" 2>/dev/null) || return 1
-	case "$sandbox_real" in
-	/private/tmp/soren_sandbox_*|/tmp/soren_sandbox_*) ;;
-	*)
+	if ! _path_is_under_dir "$sandbox_real" "$ELOOP_LIB_DIR/tmp"; then
 		log "[SANDBOX] harvest拒否: 不正なsandboxパス $sandbox_real"
 		return 1
-		;;
+	fi
+	case "$(basename "$sandbox_real")" in
+		.soren_sandbox_*) ;;
+		*)
+			log "[SANDBOX] harvest拒否: sandbox名が不正 $sandbox_real"
+			return 1
+			;;
 	esac
 
 	local harvest_dir
@@ -795,14 +810,18 @@ destroy_sandbox() {
 
 	local sandbox_real
 	sandbox_real=$(_realpath_safe "$sandbox_dir" 2>/dev/null) || return 1
-	case "$sandbox_real" in
-	/private/tmp/soren_sandbox_*|/tmp/soren_sandbox_*)
-		rm -rf "$sandbox_real" 2>/dev/null || return 1
-		;;
-	*)
+	if ! _path_is_under_dir "$sandbox_real" "$ELOOP_LIB_DIR/tmp"; then
 		log "[SANDBOX] destroy拒否: 不正なsandboxパス $sandbox_real"
 		return 1
-		;;
+	fi
+	case "$(basename "$sandbox_real")" in
+		.soren_sandbox_*)
+			rm -rf "$sandbox_real" 2>/dev/null || return 1
+			;;
+		*)
+			log "[SANDBOX] destroy拒否: sandbox名が不正 $sandbox_real"
+			return 1
+			;;
 	esac
 }
 

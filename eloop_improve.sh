@@ -114,6 +114,12 @@ raise SystemExit(0 if (after_nodes - before_nodes) else 1)
 PY
 }
 
+_helpers_tree_changed() {
+	local before_dir="$1" after_dir="$2"
+	diff -qr "$before_dir" "$after_dir" >/dev/null 2>&1
+	[ $? -eq 1 ]
+}
+
 # ゲーム範囲を算出
 GAME_NUMS_LIST=()
 for hf in $HISTORY_FILES; do
@@ -149,9 +155,9 @@ log "[IMPROVE] AI改善 (${NUM_GAMES}試合分)..."
 _improve_progress "ai_prepare" "20" "prepare_sandbox"
 # primary(glm) を最大3回まで試し、失敗時のみ fallback(glmflash) へ
 RUN_AI_PRIMARY_RETRIES="${RUN_AI_PRIMARY_RETRIES:-3}"
-IMPROVE_MAX_RETRIES="${IMPROVE_MAX_RETRIES:-5}"
+IMPROVE_MAX_RETRIES="${IMPROVE_MAX_RETRIES:-3}"
 case "$IMPROVE_MAX_RETRIES" in
-''|*[!0-9]*) IMPROVE_MAX_RETRIES=5 ;;
+''|*[!0-9]*) IMPROVE_MAX_RETRIES=3 ;;
 esac
 [ "$IMPROVE_MAX_RETRIES" -lt 1 ] && IMPROVE_MAX_RETRIES=1
 
@@ -171,6 +177,8 @@ SANDBOX_DIR=""
 HARVEST_DIR=""
 STAGING_FILE="strategy.py.staging"
 IMPROVE_BRIEF_FILE="tmp/improve_brief.md"
+SANDBOX_TOPLEVEL_PY_BASELINE=""
+SANDBOX_HELPERS_BASELINE_DIR=""
 
 # --- プロンプトに埋め込む参照データ（小さくて重要なもの） ---
 python3 - "$IMPROVE_BRIEF_FILE" "$batch_summary_file" "tmp/advice.md" "$CHANGE_LOG_FILE_HOST" "$SCORES" "$NUM_GAMES" "$best_game_path" "$worst_game_path" "$HISTORY_FILES" <<'PY'
@@ -537,15 +545,27 @@ if [ "$sandbox_ready" = true ]; then
 fi
 
 if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
-	SANDBOX_TOPLEVEL_PY_BASELINE=$(mktemp /tmp/eloop_sandbox_py.XXXXXX 2>/dev/null || echo "")
+	mkdir -p "$PWD/$TMP_STATE_DIR" 2>/dev/null || true
+	SANDBOX_TOPLEVEL_PY_BASELINE=$(mktemp "$PWD/$TMP_STATE_DIR/eloop_sandbox_py.XXXXXX" 2>/dev/null || echo "")
 	if [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ]; then
 		find . -maxdepth 1 -type f -name '*.py' | sed 's#^\./##' | sort > "$SANDBOX_TOPLEVEL_PY_BASELINE"
 	fi
+	SANDBOX_HELPERS_BASELINE_DIR="$PWD/$TMP_STATE_DIR/.baseline_strategy_helpers"
+	rm -rf "$SANDBOX_HELPERS_BASELINE_DIR" 2>/dev/null || true
+	mkdir -p "$SANDBOX_HELPERS_BASELINE_DIR" 2>/dev/null || true
+	if [ -d "strategy_helpers" ]; then
+		rsync -a --delete --no-links "strategy_helpers"/ "$SANDBOX_HELPERS_BASELINE_DIR"/ 2>/dev/null || \
+			cp -RL "strategy_helpers"/. "$SANDBOX_HELPERS_BASELINE_DIR"/ 2>/dev/null || true
+	fi
+	[ -f "$SANDBOX_HELPERS_BASELINE_DIR/__init__.py" ] || : > "$SANDBOX_HELPERS_BASELINE_DIR/__init__.py"
 	RUN_CMD_SESSION_DIR="$PWD/$TMP_STATE_DIR/.improve_retry_sessions"
+	RUN_CMD_TMP_DIR="$PWD/$TMP_STATE_DIR/.run_cmd_tmp"
 	RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
 	export RUN_CMD_SESSION_DIR
+	export RUN_CMD_TMP_DIR
 	export RUN_CMD_OPENCODE_PERMISSION
 	mkdir -p "$RUN_CMD_SESSION_DIR" 2>/dev/null || true
+	mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
 	for retry in $(seq 1 "$IMPROVE_MAX_RETRIES"); do
 		ai_progress=""
 		validate_progress=""
@@ -567,8 +587,15 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 
 			# stagingをオリジナルに戻してからリトライ
 			cp "strategy.py" "$STAGING_FILE"
+			rm -rf "strategy_helpers" 2>/dev/null || true
+			mkdir -p "strategy_helpers" 2>/dev/null || true
+			if [ -d "$SANDBOX_HELPERS_BASELINE_DIR" ]; then
+				rsync -a --delete --no-links "$SANDBOX_HELPERS_BASELINE_DIR"/ "strategy_helpers"/ 2>/dev/null || \
+					cp -RL "$SANDBOX_HELPERS_BASELINE_DIR"/. "strategy_helpers"/ 2>/dev/null || true
+			fi
+			[ -f "strategy_helpers/__init__.py" ] || : > "strategy_helpers/__init__.py"
 
-			fix_prompt_file=$(mktemp /tmp/eloop_fix_prompt.XXXXXX)
+			fix_prompt_file=$(mktemp "$PWD/$TMP_STATE_DIR/eloop_fix_prompt.XXXXXX")
 			export VALIDATE_ERROR
 			envsubst '${VALIDATE_ERROR}' < "$ELOOP_LIB_DIR/prompts/fix_validation.md" > "$fix_prompt_file"
 			run_ai "FIX(${retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
@@ -592,9 +619,18 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 
 		# 差分チェック
 		_improve_progress "validate_retry${retry}" "$validate_progress" "diff_and_validation_checks"
-		if diff -q "strategy.py" "$STAGING_FILE" >/dev/null 2>&1; then
+		staging_changed=false
+		helper_changed=false
+		helpers_diff=""
+		if ! diff -q "strategy.py" "$STAGING_FILE" >/dev/null 2>&1; then
+			staging_changed=true
+		fi
+		if [ -n "$SANDBOX_HELPERS_BASELINE_DIR" ] && [ -d "$SANDBOX_HELPERS_BASELINE_DIR" ] && _helpers_tree_changed "$SANDBOX_HELPERS_BASELINE_DIR" "strategy_helpers"; then
+			helper_changed=true
+		fi
+		if [ "$staging_changed" != true ] && [ "$helper_changed" != true ]; then
 			log "[IMPROVE] 差分なし (retry $retry/${IMPROVE_MAX_RETRIES})"
-			VALIDATE_ERROR="AIが strategy.py.staging を変更しなかった。必ず strategy.py.staging を編集して改善すること。"
+			VALIDATE_ERROR="AIが strategy.py.staging / strategy_helpers を変更しなかった。必ず strategy.py.staging または helper を改善すること。"
 			_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
 			continue
 		fi
@@ -615,26 +651,41 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			fi
 
 			# 改善前と同一ハッシュなら差分なしとして扱う
-			if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ]; then
+			if [ -n "$HASH_STAGING" ] && [ "$HASH_STAGING" = "$HASH_BEFORE" ] && [ "$helper_changed" != true ]; then
 				log "[IMPROVE] decide()本体に実質的変更なし (hash=$HASH_STAGING)"
 				VALIDATE_ERROR="decide()関数の本体に実質的な変更がない (コメントのみの変更)。ロジックを変更せよ。"
 				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
 				continue
 			fi
 
-			if _strategy_change_is_numeric_only "strategy.py" "$STAGING_FILE"; then
+			if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_numeric_only "strategy.py" "$STAGING_FILE"; then
 				VALIDATE_ERROR="数値・文字列の微調整だけの変更は不可。構造変更、ロジック削除/置換、未活用情報の活用を含む変更にせよ。"
 				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
 				continue
 			fi
 
-			if _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
+			if [ "$staging_changed" = true ] && _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
 				VALIDATE_ERROR="終盤判定を turns>=N の固定ターン数で追加してはいけない。max_y, merge_available, reactor など局面条件で表現せよ。"
 				_improve_note "validation failed (retry ${retry}/${IMPROVE_MAX_RETRIES}): ${VALIDATE_ERROR}"
 				continue
 			fi
 
-			strategy_diff=$(diff -u "strategy.py" "$STAGING_FILE" 2>/dev/null || true)
+			strategy_diff=""
+			if [ "$staging_changed" = true ]; then
+				strategy_diff=$(diff -u "strategy.py" "$STAGING_FILE" 2>/dev/null || true)
+			fi
+			if [ "$helper_changed" = true ]; then
+				helpers_diff=$(diff -ruN "$SANDBOX_HELPERS_BASELINE_DIR" "strategy_helpers" 2>/dev/null || true)
+				if [ -n "$helpers_diff" ]; then
+					if [ -n "$strategy_diff" ]; then
+						strategy_diff="${strategy_diff}
+
+${helpers_diff}"
+					else
+						strategy_diff="$helpers_diff"
+					fi
+				fi
+			fi
 			real_changes=$(echo "$strategy_diff" | grep '^[+-]' | grep -v '^[+-][+-][+-]' | grep -v '^[+-][[:space:]]*$' | wc -l | tr -d ' ')
 			[ "${real_changes:-0}" -lt 2 ] && strategy_diff=""
 
@@ -668,15 +719,17 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	fi
 fi
 unset RUN_CMD_SESSION_DIR
+unset RUN_CMD_TMP_DIR
 unset RUN_CMD_OPENCODE_PERMISSION
 
 if [ "$in_sandbox" = true ]; then
 	popd >/dev/null || true
 fi
 [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ] && rm -f "$SANDBOX_TOPLEVEL_PY_BASELINE" 2>/dev/null || true
+[ -n "$SANDBOX_HELPERS_BASELINE_DIR" ] && rm -rf "$SANDBOX_HELPERS_BASELINE_DIR" 2>/dev/null || true
 
 # NOTE: HARVEST_DIR は sandbox とは別の mktemp ディレクトリ (tmp/.sandbox_harvest_XXXXXX)
-# destroy_sandbox は /tmp/soren_sandbox_* のみ削除するため、HARVEST_DIR は destroy 後もアクセス可能
+# destroy_sandbox は tmp/.soren_sandbox_* のみ削除するため、HARVEST_DIR は destroy 後もアクセス可能
 [ -n "$SANDBOX_DIR" ] && destroy_sandbox "$SANDBOX_DIR" || true
 
 if $improve_ok; then
