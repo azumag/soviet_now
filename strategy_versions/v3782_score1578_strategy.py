@@ -8,15 +8,17 @@ Game Overview:
   - Player controls only drop X coordinate
 
 Decision Logic (9 evaluation axes):
-  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase)
-  3. Drift penalty - Penalty for post-landing drift due to polygon shape
-  4. Left-right balance correction - Bonus for correcting piece count bias
-  5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge
-  7. Board density bonus - Prefer placement on less-dense side of board
-  8. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
-  9. DANGER_RECOVERY_PENALTY - Penalty for non-merge placements when max_y>=2.0 and reactive_pairs>=2 (v176)
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase)
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Left-right balance correction - Bonus for correcting piece count bias
+   5. nextNext centering - Center for next merge opportunity if nextNext same type
+   6. Chain merge bonus - Evaluate possibility of further merges after merge
+   7. Board density bonus - Prefer placement on less-dense side of board
+   8. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
+   9. DANGER_RECOVERY_PENALTY - Penalty for non-merge placements when max_y>=2.0 and reactive_pairs>=2 (v176)
+   
+   v177: 危険局面フィルタリング - max_y>=2.0でreactive_pairs>=2の場合、DIRECT/NEARマージ候補のみを評価対象にし、非併合配置を物理的に除外
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -61,6 +63,11 @@ Phases (determined by board max Y):
 # max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARマージ機会がない配置に-1000ペナルティを課す評価軸を追加。
 # これにより、HIGH_TOWERなどの非併合配置を間接的に抑制し、NEAR_MERGE選択率を向上させることでスコア安定性を向上させる。
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_132049_score0794.jsonl, strategy_versions/v3769_score0794_strategy.py, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
+# v177: 危険局面フィルタリング追加版 - ワーストゲーム(score1143)の終盤8ターン(turns 72-74)でHIGH_LAYER_DANGER_RECOVERY_PENALTYが3回連続選択され、max_y=3.31まで上昇してdead lineに到達寸前。
+# DANGER_RECOVERY_PENALTYの-1000ペナルティが発動しているが、全ての候補にペナルティが課されているため、非併合配置が依然として選ばれる悪循環を特定。
+# max_y>=2.0でreactive_pairs>=2の場合、merge_gradeがDIRECTまたはNEARの候補のみを評価対象にするフィルタリングを追加し、非併合配置を物理的に除外。
+# これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を防ぎ、即時併合による盤面圧縮を強制することでスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_133049_score1143.jsonl turns 72-74
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -68,23 +75,23 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v176: DANGER_RECOVERY_PENALTY評価軸追加版
+    """v177: 危険局面フィルタリング追加版
     
-    ワーストゲーム(score0794)の終盤8ターン(turns 58-60)でHIGH_TOWERが3回選択され、reactive_pairs=2があるにもかかわらず即時併合を逃している失敗パターンを特定。
-    max_yが2.19→2.45に上昇し、dead line(3.32)に近づいている状況で、HIGH_TOWER選択が続きゲームオーバーに至っている。
-    現行のDANGER_RECOVERY評価軸（+800ボーナス）はmerge_gradeが"DIRECT"または"NEAR"の場合のみ発動するが、NEAR_MERGE機会自体が選ばれていないという悪循環がある。
-    max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARマージ機会がない配置に-1000ペナルティを課す評価軸を追加。
-    これにより、HIGH_TOWERなどの非併合配置を間接的に抑制し、NEAR_MERGE選択率を向上させることでスコア安定性を向上させる。
+    ワーストゲーム(score1143)の終盤8ターン(turns 72-74)でHIGH_LAYER_DANGER_RECOVERY_PENALTYが3回連続選択され、max_y=3.31まで上昇してdead lineに到達寸前。
+    DANGER_RECOVERY_PENALTYの-1000ペナルティが発動しているが、全ての候補にペナルティが課されているため、非併合配置が依然として選ばれる悪循環を特定。
+    max_y>=2.0でreactive_pairs>=2の場合、merge_gradeがDIRECTまたはNEARの候補のみを評価対象にするフィルタリングを追加し、非併合配置を物理的に除外。
+    これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を防ぎ、即時併合による盤面圧縮を強制することでスコア安定性を向上させる。
     
-    v176の改善点:
-    1. DANGER_RECOVERY_PENALTY評価軸の追加
-       - max_y>=2.0の危険局面でreactive_pairs>=2がある場合、DIRECT/NEARマージ機会がない配置に-1000ペナルティ
-       - 非併合配置（HIGH_TOWER等）を間接的に抑制し、NEAR_MERGE選択率を向上させることでスコア安定性を改善
-       - batch_summaryでNEAR_MERGE(avg_score_delta=42.3)が高価値だが選択率4.8%と低いことに対応
-    2. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
-    3. v174のHIGHフェーズ高さペナルティ抑制を維持
-    4. v173の序盤HEIGHT_CONTROL抑制を維持
-    5. v172のボード密度評価軸を維持
+    v177の改善点:
+    1. 危険局面フィルタリング追加
+       - max_y>=2.0でreactive_pairs>=2の場合、DIRECT/NEARマージ候補のみを評価対象にする
+       - 非併合配置（HIGH_TOWER/HIGH_LAYER/DEFAULT_PLACEMENT）を物理的に除外
+       - 即時併合による盤面圧縮を強制し、dead line到達を回避
+    2. v176のDANGER_RECOVERY_PENALTY評価軸を維持（フィルタリング後の併合機会がない場合のペナルティ）
+    3. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
+    4. v174のHIGHフェーズ高さペナルティ抑制を維持
+    5. v173の序盤HEIGHT_CONTROL抑制を維持
+    6. v172のボード密度評価軸を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -176,8 +183,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         right_density /= total_density
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 8 evaluation axes
+    #  score each drop candidate (x coordinate) with 9 evaluation axes
+    #  v177: 危険局面フィルタリング追加 - max_y>=2.0でreactive_pairs>=2の場合、
+    #       merge_gradeがDIRECTまたはNEARの候補のみを評価対象にし、非併合配置を除外する
+    #       これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を物理的に防ぎ、即時併合による盤面圧縮を強制
+    #       refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_133049_score1143.jsonl turns 72-74
     # =======================================================================
+    
+    # v177: 危険局面フィルタリング - 併合機会がある場合、非併合配置を候補から除外
+    if max_y >= 2.0 and reactive_pair_count >= 2:
+        # merge_gradeがDIRECTまたはNEARの候補のみを評価対象にする
+        merge_candidates = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR"]]
+        if merge_candidates:
+            results = merge_candidates  # 併合機会がある場合、それのみを評価
+        # 併合機会がない場合は全候補を評価（DANGER_RECOVERY_PENALTYでペナルティ課す）
+    
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
