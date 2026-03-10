@@ -7,7 +7,7 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (7 evaluation axes):
+Decision Logic (8 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
   2. Height penalty - Penalty for high landing position (varies by phase)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -15,6 +15,7 @@ Decision Logic (7 evaluation axes):
   5. nextNext centering - Center for next merge opportunity if nextNext same type
   6. Chain merge bonus - Evaluate possibility of further merges after merge
   7. Board density bonus - Prefer placement on less-dense side of board
+  8. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -35,6 +36,7 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+# [BEST:5310] v177: reactor情報活用によるマージ優先評価軸追加版 - reactive_pairs>=2でDIRECT/NEARに+500ボーナス
 # v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
 # v167: 評価精度最適化版 - chain_distance 5.0→4.5縮小
 # v168: v155成功パラメータ復帰・動的調整復帰版
@@ -47,6 +49,12 @@ Phases (determined by board max Y):
 # ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
 # v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
 # これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
+# v174: HIGHフェーズ高さペナルティ抑制版 - batch_summaryでNEAR_MERGE(avg_score_delta=22.6)が高価値だが選択率6.5%と低いことを確認。
+# HIGHフェーズでheight_mult=1.8が高すぎてNEAR_MERGE機会を潰している問題に対し、height_multを1.8→1.0に抑制し併合機会を優先。
+# v175: REACTIVE_MERGE_PRIORITY評価軸追加版 - 終盤高危険域(max_y>=1.8)でreactive_pairs>=2がある場合、DIRECT/NEARに+500ボーナスを付与し即時併合機会を優先。
+# ワーストゲームの終盤8ターン(max_y=2.37-2.38, reactive_pairs=3)でDEFAULT_PLACEMENTが続き即時併合機会を逃している失敗パターンを特定。
+# v177の成功構造を復帰し、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先することでスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_125627_score0528.jsonl, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -54,18 +62,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v173: 序盤HEIGHT_CONTROL抑制超強化版
+    """v175: REACTIVE_MERGE_PRIORITY評価軸追加版
     
-    batch_summaryでDEFAULT_PLACEMENTが20.7%選択(avg_score_delta=2.2)と依然として高いことを確認。
-    ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
+    終盤高危険域(max_y>=1.8)でreactive_pairs>=2がある場合、DIRECT/NEARに+500ボーナスを付与し即時併合機会を優先。
+    ワーストゲームの終盤8ターン(max_y=2.37-2.38, reactive_pairs=3)でDEFAULT_PLACEMENTが続き即時併合機会を逃している失敗パターンを特定。
+    v177の成功構造を復帰し、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先することでスコア安定性を向上させる。
     
-    v173の改善点:
-    1. early game判定をmax_y < -2.0 → max_y < -3.0に拡大
-       - ワーストゲーム序盤(max_y=-5.0～-2.02)でのDEFAULT_PLACEMENT選択を超強力に抑制
-       - 盤面がまだ低い段階（max_y < -3.0）ではHEIGHT_CONTROLを超強力に抑制し、併合機会を最優先
-    2. height_multiplierを0.2→0.1に削減
-       - v172の0.2でもDEFAULT_PLACEMENTが高い（20.7%）ため、さらに超強力に抑制
-    3. v172のボード密度評価軸とv170の序盤HEIGHT_CONTROL抑制を維持
+    v175の改善点:
+    1. REACTIVE_MERGE_PRIORITY評価軸の追加
+       - reactor情報のreactive_pairs（反応性のあるペア）を活用
+       - 終盤高危険域(max_y>=1.8)でreactive_pairs>=2の場合、DIRECT/NEARに+500ボーナス
+       - 反応濃度の高い状況での即時反応を優先し、DEFAULT_PLACEMENT選択を抑制
+    2. v174のHIGHフェーズ高さペナルティ抑制を維持
+    3. v173の序盤HEIGHT_CONTROL抑制を維持
+    4. v172のボード密度評価軸を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -98,6 +108,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- v173: 序盤判定をmax_y < -3.0に拡大 ---
     early_game = max_y < -3.0
 
+    # --- v175: reactor情報の取得（REACTIVE_MERGE_PRIORITY評価軸用） ---
+    reactor = analysis.get("reactor", {})
+    reactive_pairs = reactor.get("reactive_pairs", [])
+    # reactive_pairs is a list, count pairs for evaluation
+    reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
+
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
@@ -109,7 +125,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.8  # HIGH relaxation to ensure merge opportunity
+        height_mult = 1.0  # v174: batch_summary分析に基づきHIGHフェーズの高さペナルティ抑制(1.8→1.0)しNEAR_MERGE機会を優先
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
@@ -151,7 +167,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         right_density /= total_density
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 7 evaluation axes
+    #  score each drop candidate (x coordinate) with 8 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -278,6 +294,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if density_bonus > 10.0:  # Only add reason if density difference is significant
                 score += density_bonus
                 reasons.append("BOARD_DENSITY")
+
+        # ----- evaluation axis 8: REACTIVE_MERGE_PRIORITY (v175: NEW) -----
+        # reactor情報のreactive_pairsを活用し、反応濃度の高い状況での即時反応を優先
+        # 終盤高危険域(max_y>=1.8)でreactive_pairs>=2がある場合、DIRECT/NEARに+500ボーナス
+        # これにより、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先
+        # 理論的背景: game_theory.md - 反応効率は反応物の濃度に比例する（reactive_pairsは接触圏内の同typeペア数）
+        # refs: game_history/20260310_125627_score0528.jsonl turn 64-66 (max_y=2.37-2.38, reactive_pairs=3でDEFAULT_PLACEMENTが続き即時併合機会を逃している)
+        if max_y >= 1.8 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            score += 500.0
+            reasons.append("REACTIVE_MERGE_PRIORITY")
 
         # ----- update best candidate -----
         if score > best_score:
