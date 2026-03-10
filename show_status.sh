@@ -87,6 +87,43 @@ _bar_meter() {
 	printf "%${empty}s" "" | tr ' ' '·'
 }
 
+_truncate_display_width() {
+	local text="$1" max_width="$2"
+	python3 - "$text" "$max_width" <<'PY' 2>/dev/null
+import sys
+import unicodedata
+
+text = sys.argv[1]
+max_width = int(sys.argv[2])
+
+def ch_width(ch):
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("F", "W", "A") else 1
+
+width = 0
+for ch in text:
+    width += ch_width(ch)
+
+if width <= max_width:
+    print(text)
+    raise SystemExit(0)
+
+ellipsis = ".."
+ellipsis_w = 2
+limit = max(0, max_width - ellipsis_w)
+out = []
+cur = 0
+for ch in text:
+    w = ch_width(ch)
+    if cur + w > limit:
+        break
+    out.append(ch)
+    cur += w
+print("".join(out) + ellipsis)
+PY
+}
+
 _print_ai_output_lines() {
 	local ai_block="$1" ai_age="$2"
 	[[ -n "$ai_block" ]] || return
@@ -96,7 +133,7 @@ _print_ai_output_lines() {
 	local ai_line=""
 	while IFS= read -r ai_line; do
 		[[ -n "${ai_line//[[:space:]]/}" ]] || continue
-		(( ${#ai_line} > max_ai )) && ai_line="${ai_line[1,$((max_ai-2))]}.."
+		ai_line=$(_truncate_display_width "$ai_line" "$max_ai")
 		if $first_line; then
 			printf "    ${C_WHITE}▸${C_RESET} AIOutput    ${C_DIM}%s${C_RESET}" "$ai_line"
 			[[ -n "$ai_age" ]] && printf "  ${C_DIM}(%s)${C_RESET}" "$ai_age"
@@ -954,20 +991,20 @@ PY
 				local imp_bar
 				imp_bar=$(_bar_meter "${imp_progress:-0}" 100 12)
 				printf "    ${C_WHITE}▸${C_RESET} ImproveProg ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d%%${C_RESET}\n" "$imp_bar" "${imp_progress:-0}"
-				if [[ -n "$imp_ai_source" ]]; then
-					local src_display="$imp_ai_source"
-					local max_src=$(( W - 20 ))
-					(( ${#src_display} > max_src )) && src_display="${src_display[1,$((max_src-2))]}.."
-					printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
-				fi
-			elif [[ "$imp_status" == "running" ]] && ! $imp_alive; then
-				printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead, %d%% %s)${C_RESET}\n" "${imp_progress:-0}" "${imp_phase_label}"
-				if [[ -n "$imp_ai_source" ]]; then
-					local src_display="$imp_ai_source"
-					local max_src=$(( W - 20 ))
-					(( ${#src_display} > max_src )) && src_display="${src_display[1,$((max_src-2))]}.."
-					printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
-				fi
+			if [[ -n "$imp_ai_source" ]]; then
+				local src_display="$imp_ai_source"
+				local max_src=$(( W - 20 ))
+				src_display=$(_truncate_display_width "$src_display" "$max_src")
+				printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
+			fi
+		elif [[ "$imp_status" == "running" ]] && ! $imp_alive; then
+			printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead, %d%% %s)${C_RESET}\n" "${imp_progress:-0}" "${imp_phase_label}"
+			if [[ -n "$imp_ai_source" ]]; then
+				local src_display="$imp_ai_source"
+				local max_src=$(( W - 20 ))
+				src_display=$(_truncate_display_width "$src_display" "$max_src")
+				printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
+			fi
 			fi
 			if [[ -n "$imp_ai_output_block" ]]; then
 				_print_ai_output_lines "$imp_ai_output_block" "$imp_ai_age"

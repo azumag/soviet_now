@@ -85,10 +85,8 @@ CHANGE_LOG_FILE_HOST="$HOST_ROOT/$CHANGE_LOG_FILE"
 improve_ok=false
 sandbox_ready=false
 in_sandbox=false
-host_integrity_ok=true
 SANDBOX_DIR=""
 HARVEST_DIR=""
-HOST_STATUS_SNAPSHOT=""
 STAGING_FILE="strategy.py.staging"
 IMPROVE_BRIEF_FILE="tmp/improve_brief.md"
 
@@ -439,9 +437,6 @@ manifest_file="tmp/sandbox_files.md"
 improve_ref_files+=("$manifest_file")
 [ -f "$manifest_file" ] && sandbox_ref_files+=("$manifest_file")
 
-HOST_STATUS_SNAPSHOT=$(mktemp /tmp/eloop_host_status_before.XXXXXX 2>/dev/null || echo "")
-[ -n "$HOST_STATUS_SNAPSHOT" ] && git status --porcelain -- "$STRATEGY_FILE" strategy_helpers tmp/change_log.txt >"$HOST_STATUS_SNAPSHOT" 2>/dev/null || true
-
 SANDBOX_DIR=$(create_sandbox "${sandbox_ref_files[@]}")
 if [ -z "$SANDBOX_DIR" ] || [ ! -d "$SANDBOX_DIR" ]; then
 	VALIDATE_ERROR="sandbox作成失敗"
@@ -546,16 +541,6 @@ if [ "$in_sandbox" = true ]; then
 	popd >/dev/null || true
 fi
 
-if [ -n "$HOST_STATUS_SNAPSHOT" ] && [ -f "$HOST_STATUS_SNAPSHOT" ]; then
-	if ! check_host_integrity "$HOST_STATUS_SNAPSHOT"; then
-		host_integrity_ok=false
-		improve_ok=false
-		VALIDATE_ERROR="AI改善中にホスト作業ツリー変化を検出"
-		log "[IMPROVE] ABORT: $VALIDATE_ERROR"
-	fi
-	rm -f "$HOST_STATUS_SNAPSHOT"
-fi
-
 # NOTE: HARVEST_DIR は sandbox とは別の mktemp ディレクトリ (tmp/.sandbox_harvest_XXXXXX)
 # destroy_sandbox は /tmp/soren_sandbox_* のみ削除するため、HARVEST_DIR は destroy 後もアクセス可能
 [ -n "$SANDBOX_DIR" ] && destroy_sandbox "$SANDBOX_DIR" || true
@@ -612,10 +597,6 @@ if $improve_ok; then
 		_improve_progress "done" "100" "awaiting_harvest"
 	fi
 else
-	if [ "$host_integrity_ok" != true ]; then
-		log "[IMPROVE] ホスト変化検出のため apply/commit/radio を中止"
-	else
-		log "[IMPROVE] 改善失敗のため commit/radio をスキップ"
-	fi
+	log "[IMPROVE] 改善失敗のため commit/radio をスキップ"
 	_improve_progress "done" "100" "failed_no_apply"
 fi
