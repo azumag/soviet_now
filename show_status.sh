@@ -754,40 +754,9 @@ PY
 	workers_bar=$(_bar_meter "$workers_online" 5 12)
 	printf "    ${C_WHITE}▸${C_RESET} Workers     ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/5 online${C_RESET}\n" "$workers_bar" "$workers_online"
 
-	# 改善プロセス
-	local imp_phase_label="${imp_phase:-running}"
-	imp_phase_label=${imp_phase_label//_/ }
-	if [[ "$imp_status" == "running" ]] && $imp_alive; then
-		printf "    ${C_YELLOW}⟳${C_RESET} Improve     ${C_YELLOW}RUNNING${C_RESET}  ${C_DIM}PID=${imp_pid}${C_RESET}"
-		[[ -n "$imp_elapsed" ]] && printf "  ${C_DIM}${imp_elapsed}${C_RESET}"
-		printf "  ${C_DIM}[%d%% %s]${C_RESET}" "${imp_progress:-0}" "${imp_phase_label}"
-		echo ""
-		local imp_bar
-		imp_bar=$(_bar_meter "${imp_progress:-0}" 100 12)
-		printf "    ${C_WHITE}▸${C_RESET} ImproveProg ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d%%${C_RESET}\n" "$imp_bar" "${imp_progress:-0}"
-		if [[ -n "$imp_ai_source" ]]; then
-			local src_display="$imp_ai_source"
-			local max_src=$(( W - 20 ))
-			(( ${#src_display} > max_src )) && src_display="${src_display[1,$((max_src-2))]}.."
-			printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
-		fi
-		_print_ai_output_lines "$imp_ai_output_block" "$imp_ai_age"
-	elif [[ "$imp_status" == "running" ]] && ! $imp_alive; then
-		printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead, %d%% %s)${C_RESET}\n" "${imp_progress:-0}" "${imp_phase_label}"
-		if [[ -n "$imp_ai_source" ]]; then
-			local src_display="$imp_ai_source"
-			local max_src=$(( W - 20 ))
-			(( ${#src_display} > max_src )) && src_display="${src_display[1,$((max_src-2))]}.."
-			printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
-		fi
-		_print_ai_output_lines "$imp_ai_output_block" "$imp_ai_age"
-	else
-		printf "    ${C_DIM}○${C_RESET} Improve     ${C_DIM}IDLE${C_RESET}\n"
-	fi
-
-	# 蓄積ゲーム (最低試合ゲート付き)
-	if (( acc_count > 0 )); then
-		local gate_color="$C_MAGENTA"
+		# 蓄積ゲーム (最低試合ゲート付き)
+		if (( acc_count > 0 )); then
+			local gate_color="$C_MAGENTA"
 		(( acc_count >= min_games )) && gate_color="$C_GREEN"
 		local count_label="${acc_count}/${min_games} games"
 		local max_scores=$(( W - 22 - ${#count_label} ))
@@ -968,12 +937,45 @@ PY
 			printf "    ${C_WHITE}▸${C_RESET} RB%-2d       ${C_DIM}%s${C_RESET}\n" "$rb_idx" "$rb_line"
 			rb_idx=$((rb_idx + 1))
 		done
-	else
-		printf "    ${C_WHITE}▸${C_RESET} RB History   ${C_DIM}(none)${C_RESET}\n"
-	fi
+		else
+			printf "    ${C_WHITE}▸${C_RESET} RB History   ${C_DIM}(none)${C_RESET}\n"
+		fi
 
-	echo ""
-	printf "${C_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
+		echo ""
+		printf "  ${C_BOLD}AI IMPROVE${C_RESET}\n"
+		local imp_phase_label="${imp_phase:-running}"
+		imp_phase_label=${imp_phase_label//_/ }
+		if [[ "$imp_status" == "running" ]] && $imp_alive; then
+			printf "    ${C_YELLOW}⟳${C_RESET} Improve     ${C_YELLOW}RUNNING${C_RESET}  ${C_DIM}PID=${imp_pid}${C_RESET}"
+			[[ -n "$imp_elapsed" ]] && printf "  ${C_DIM}${imp_elapsed}${C_RESET}"
+			printf "  ${C_DIM}[%d%% %s]${C_RESET}" "${imp_progress:-0}" "${imp_phase_label}"
+			echo ""
+			local imp_bar
+			imp_bar=$(_bar_meter "${imp_progress:-0}" 100 12)
+			printf "    ${C_WHITE}▸${C_RESET} ImproveProg ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d%%${C_RESET}\n" "$imp_bar" "${imp_progress:-0}"
+			if [[ -n "$imp_ai_source" ]]; then
+				local src_display="$imp_ai_source"
+				local max_src=$(( W - 20 ))
+				(( ${#src_display} > max_src )) && src_display="${src_display[1,$((max_src-2))]}.."
+				printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
+			fi
+		elif [[ "$imp_status" == "running" ]] && ! $imp_alive; then
+			printf "    ${C_RED}✗${C_RESET} Improve     ${C_RED}STALE${C_RESET}  ${C_DIM}(PID=${imp_pid} dead, %d%% %s)${C_RESET}\n" "${imp_progress:-0}" "${imp_phase_label}"
+			if [[ -n "$imp_ai_source" ]]; then
+				local src_display="$imp_ai_source"
+				local max_src=$(( W - 20 ))
+				(( ${#src_display} > max_src )) && src_display="${src_display[1,$((max_src-2))]}.."
+				printf "    ${C_WHITE}▸${C_RESET} AIEngine    ${C_DIM}%s${C_RESET}\n" "$src_display"
+			fi
+		else
+			printf "    ${C_DIM}○${C_RESET} Improve     ${C_DIM}IDLE${C_RESET}\n"
+		fi
+		if [[ -n "$imp_ai_output_block" ]]; then
+			_print_ai_output_lines "$imp_ai_output_block" "$imp_ai_age"
+		fi
+
+		echo ""
+		printf "${C_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
 	echo ""
 }
 
