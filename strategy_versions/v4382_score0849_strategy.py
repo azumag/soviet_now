@@ -201,6 +201,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
+        # ----- evaluation axis 5.5: sandwich situation avoidance -----
+        # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合機会を逃す
+        # next_type と next_next_type が異なる場合、盤面上の next_type 駒の上に配置して即時併合を優先
+        # 特に危険局面（dangerous_situation）では即時併合を優先し、nextNext の併合機会を逃さない
+        if not dangerous_situation and next_type != 0 and next_next_type != 0 and next_type != next_next_type:
+            # 盤面上に next_type の駒があるかチェック
+            has_next_type_on_board = any(p.get("type") == next_type for p in pieces)
+            if has_next_type_on_board and merge_grade in ["DIRECT", "NEAR"]:
+                # 即時併合候補なら、nextNext の併合機会を守るためにボーナスを与える
+                score += 300.0
+                reasons.append("SANDWICH_AVOID")
+
         # ----- evaluation axis 6: chain merge bonus (v159: 基礎距離4.0版） -----
         # ワーストゲームではmax_y>2.5の盤面でもchain_mergeが有効だった可能性がある
         # そのため、着地低でchain_mage_bonusが高い配置を評価する
