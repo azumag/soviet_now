@@ -2923,16 +2923,6 @@ _radio_generate_and_play() {
 	rm -rf "$parse_dir"
 	[ -z "$talk_summary" ] && talk_summary="(要約なし)"
 
-	# ニュースは選択タイトルを必ず先頭で読み上げる
-	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
-		local title_line
-		title_line="今回取り上げるニュースタイトルは「${selected_news}」です。"
-		if ! printf '%s\n' "$talk_body" | head -n 2 | grep -Fq "$selected_news"; then
-			talk_body="${title_line}
-${talk_body}"
-		fi
-	fi
-
 	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
 		local news_source attribution
 		news_source=$(_extract_news_source_name "$selected_news")
