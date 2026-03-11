@@ -10,6 +10,7 @@ import random
 import re
 import shutil
 import unicodedata
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -61,6 +62,7 @@ def ensure_dirs() -> None:
 
 
 def http_get(url: str, timeout: float = REQUEST_TIMEOUT) -> str:
+    url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=-._~%")
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", errors="ignore")
@@ -413,8 +415,8 @@ def main() -> int:
     write_text(LAST_NEWS_CACHE, news_text)
     write_json(LAST_NEWS_META_CACHE, meta)
 
-    append_and_trim(PAST_NEWS, [item["title"] for item in selected], 100)
-    append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 200)
+    append_and_trim(PAST_NEWS, [item["title"] for item in selected], 30)
+    append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 60)
     return 0
 
 
