@@ -2451,6 +2451,10 @@ _news_source_key_from_name() {
 	local name="$1"
 	case "$name" in
 		"ウィキニュース"|wikinews|Wikinews) echo "wikinews" ;;
+		"Wikinews(EN)"|wikinews_en) echo "wikinews" ;;
+		"Wikinews(FR)"|wikinews_fr) echo "wikinews" ;;
+		"Wikinews(RU)"|wikinews_ru) echo "wikinews" ;;
+		"Wikinews(DE)"|wikinews_de) echo "wikinews" ;;
 		"首相官邸"|kantei|Kantei) echo "kantei" ;;
 		"Global Voices"|globalvoices|GlobalVoices) echo "globalvoices" ;;
 		*) echo "" ;;
@@ -2482,8 +2486,14 @@ except Exception:
     meta = {}
 
 pref_order = {"wikinews": 0, "kantei": 1, "globalvoices": 2}
-name_to_key = {"ウィキニュース": "wikinews", "首相官邸": "kantei", "Global Voices": "globalvoices"}
+name_to_key = {
+    "ウィキニュース": "wikinews", "Wikinews(EN)": "wikinews",
+    "Wikinews(FR)": "wikinews", "Wikinews(RU)": "wikinews",
+    "Wikinews(DE)": "wikinews",
+    "首相官邸": "kantei", "Global Voices": "globalvoices",
+}
 display = {"wikinews": "ウィキニュース", "kantei": "首相官邸", "globalvoices": "Global Voices"}
+lang_labels = {"ja": "", "en": " [英語]", "fr": " [フランス語]", "ru": " [ロシア語]", "de": " [ドイツ語]"}
 
 hist = []
 if os.path.exists(source_hist_path):
@@ -2525,8 +2535,11 @@ out_blocks = []
 for block in blocks:
     title = block_title(block)
     source_name = block_source_name(block)
+    item_meta = meta.get(title, {})
+    lang = item_meta.get("lang", "ja")
+    lang_tag = lang_labels.get(lang, f" [{lang}]") if lang != "ja" else ""
     if source_name:
-        out_blocks.append("\n".join([block[0], f"出典: {source_name}", *block[1:]]).rstrip())
+        out_blocks.append("\n".join([block[0], f"出典: {source_name}{lang_tag}", *block[1:]]).rstrip())
     else:
         out_blocks.append("\n".join(block).rstrip())
 
@@ -2551,7 +2564,12 @@ try:
 except Exception:
     meta = {}
 
-name_to_key = {"ウィキニュース": "wikinews", "首相官邸": "kantei", "Global Voices": "globalvoices"}
+name_to_key = {
+    "ウィキニュース": "wikinews", "Wikinews(EN)": "wikinews",
+    "Wikinews(FR)": "wikinews", "Wikinews(RU)": "wikinews",
+    "Wikinews(DE)": "wikinews",
+    "首相官邸": "kantei", "Global Voices": "globalvoices",
+}
 label = {"wikinews": "ウィキニュース", "kantei": "首相官邸", "globalvoices": "Global Voices"}
 
 hist = []
@@ -3199,7 +3217,8 @@ $(_radio_persona_block)
 【時間帯の雰囲気】${_rc_mood}
 
 【最新ニュース - 実際の本日のニュース】
-以下は本日の実際のニュースです。「既に読んだニュース」以外から1つ選んで、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
+以下は本日の実際のニュースです。日本語以外の言語のニュースも含まれています。「既に読んだニュース」以外から1つ選んで、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
+外国語のニュースを選んだ場合は、内容を日本語に翻訳した上で語ること。読み上げは必ず日本語で行うこと。
 ---
 ${unread_news_headlines}
 ---

@@ -39,20 +39,56 @@ SOURCES = [
         "key": "kantei",
         "name": "首相官邸",
         "license": None,
+        "lang": "ja",
     },
     {
         "url": "https://ja.wikinews.org/w/index.php?title=特別:新しいページ&feed=rss",
         "key": "wikinews",
         "name": "ウィキニュース",
         "license": "CC BY 4.0",
+        "lang": "ja",
+    },
+    {
+        "url": "https://en.wikinews.org/w/index.php?title=Special:NewPages&feed=rss",
+        "key": "wikinews_en",
+        "name": "Wikinews(EN)",
+        "license": "CC BY 4.0",
+        "lang": "en",
+    },
+    {
+        "url": "https://fr.wikinews.org/w/index.php?title=Spécial:Nouvelles_pages&feed=rss",
+        "key": "wikinews_fr",
+        "name": "Wikinews(FR)",
+        "license": "CC BY 4.0",
+        "lang": "fr",
+    },
+    {
+        "url": "https://ru.wikinews.org/w/index.php?title=Служебная:Новые_страницы&feed=rss",
+        "key": "wikinews_ru",
+        "name": "Wikinews(RU)",
+        "license": "CC BY 4.0",
+        "lang": "ru",
+    },
+    {
+        "url": "https://de.wikinews.org/w/index.php?title=Spezial:Neue_Seiten&feed=rss",
+        "key": "wikinews_de",
+        "name": "Wikinews(DE)",
+        "license": "CC BY 4.0",
+        "lang": "de",
     },
     {
         "url": "https://jp.globalvoices.org/feed/",
         "key": "globalvoices",
         "name": "Global Voices",
         "license": "CC BY 3.0",
+        "lang": "ja",
     },
 ]
+
+
+def source_family(key: str) -> str:
+    """Group wikinews variants together for balanced selection."""
+    return "wikinews" if key.startswith("wikinews") else key
 
 
 def ensure_dirs() -> None:
@@ -258,7 +294,7 @@ def clean_item(source: dict, item: ET.Element, og_fetch_budget: int = 2) -> dict
         if not summary and og_fetch_budget > 0:
             summary = trim_summary(fetch_meta_description(url))
             used_og_fetch = True
-    elif source["key"] == "wikinews":
+    elif source["key"].startswith("wikinews"):
         summary = strip_wikitext(raw_description)
     else:
         summary = trim_summary(strip_tags(raw_description))
@@ -272,6 +308,7 @@ def clean_item(source: dict, item: ET.Element, og_fetch_budget: int = 2) -> dict
         "source": source["name"],
         "author": author,
         "license": source["license"],
+        "lang": source.get("lang", "ja"),
         "source_key": source["key"],
         "_used_og_fetch": used_og_fetch,
     }
@@ -334,16 +371,23 @@ def pick_articles(candidates: dict[str, list[dict]]) -> list[dict]:
 
     selected = []
     offsets = {key: 0 for key in source_order}
+    family_used: dict[str, int] = {}
 
+    # First pass: pick at most 1 from each family for diversity
     for key in source_order:
+        fam = source_family(key)
+        if family_used.get(fam, 0) >= 1:
+            continue
         items = candidates.get(key, [])
         if not items:
             continue
         selected.append(items[0])
         offsets[key] = 1
+        family_used[fam] = family_used.get(fam, 0) + 1
         if len(selected) >= OUTPUT_COUNT:
             return selected
 
+    # Second pass: fill remaining from any source
     while len(selected) < OUTPUT_COUNT:
         progressed = False
         for key in source_order:
@@ -382,6 +426,7 @@ def render_meta(selected: list[dict]) -> dict[str, dict]:
             "author": item["author"],
             "url": item["url"],
             "license": item["license"],
+            "lang": item.get("lang", "ja"),
         }
     return meta
 
