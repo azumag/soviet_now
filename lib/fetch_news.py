@@ -139,12 +139,72 @@ SOURCES = [
         "license": "CC BY 3.0",
         "lang": "ja",
     },
+    {
+        "url": "https://globalvoices.org/feed/",
+        "key": "globalvoices_en",
+        "name": "Global Voices(EN)",
+        "license": "CC BY 3.0",
+        "lang": "en",
+    },
+    {
+        "url": "https://fr.globalvoices.org/feed/",
+        "key": "globalvoices_fr",
+        "name": "Global Voices(FR)",
+        "license": "CC BY 3.0",
+        "lang": "fr",
+    },
+    {
+        "url": "https://ru.globalvoices.org/feed/",
+        "key": "globalvoices_ru",
+        "name": "Global Voices(RU)",
+        "license": "CC BY 3.0",
+        "lang": "ru",
+    },
+    {
+        "url": "https://es.globalvoices.org/feed/",
+        "key": "globalvoices_es",
+        "name": "Global Voices(ES)",
+        "license": "CC BY 3.0",
+        "lang": "es",
+    },
+    {
+        "url": "https://ar.globalvoices.org/feed/",
+        "key": "globalvoices_ar",
+        "name": "Global Voices(AR)",
+        "license": "CC BY 3.0",
+        "lang": "ar",
+    },
+    {
+        "url": "https://de.globalvoices.org/feed/",
+        "key": "globalvoices_de",
+        "name": "Global Voices(DE)",
+        "license": "CC BY 3.0",
+        "lang": "de",
+    },
+    {
+        "url": "https://pt.globalvoices.org/feed/",
+        "key": "globalvoices_pt",
+        "name": "Global Voices(PT)",
+        "license": "CC BY 3.0",
+        "lang": "pt",
+    },
+    {
+        "url": "https://zhs.globalvoices.org/feed/",
+        "key": "globalvoices_zh",
+        "name": "Global Voices(ZH)",
+        "license": "CC BY 3.0",
+        "lang": "zh",
+    },
 ]
 
 
 def source_family(key: str) -> str:
-    """Group wikinews variants together for balanced selection."""
-    return "wikinews" if key.startswith("wikinews") else key
+    """Group wikinews/globalvoices variants together for balanced selection."""
+    if key.startswith("wikinews"):
+        return "wikinews"
+    if key.startswith("globalvoices"):
+        return "globalvoices"
+    return key
 
 
 def ensure_dirs() -> None:
