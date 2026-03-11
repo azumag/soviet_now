@@ -773,6 +773,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     rollback_candidates = collect_rollback_candidate_hashes(rolling, current_hash)
 
     all_entries = []
+    provisional_entries = []
     for h, data in rolling.items():
         sc = data.get("scores", [])
         metrics = calc_strategy_metrics(sc)
@@ -783,7 +784,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
             games_total = int(games_total)
         except Exception:
             games_total = len(sc)
-        all_entries.append({
+        entry = {
             "hash": h,
             "h8": h[:8],
             "n_roll": metrics["n"],
@@ -792,26 +793,51 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
             "p50": metrics["p50"],
             "p25": metrics["p25"],
             "lcb": metrics["lcb"],
-        })
+        }
+        if metrics["n"] < MIN_GAMES_FOR_BEST_ROLLBACK:
+            provisional_entries.append(entry)
+            continue
+        all_entries.append(entry)
+
+    current_entry = next((e for e in all_entries if current_hash and e["hash"] == current_hash), None)
+    provisional_current = None
+    if not current_entry and current_hash:
+        provisional_current = next((e for e in provisional_entries if e["hash"] == current_hash), None)
 
     if not all_entries:
-        return [f"  {BOLD}Strategy Comparison{RST}", f"  {DIM}(no data){RST}"]
+        lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature strategies only: n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
+        if provisional_current:
+            lines.append(
+                f"  {DIM}cur provisional {provisional_current['h8']} "
+                f"c{int(provisional_current['comp'])} m{int(provisional_current['p50'])} "
+                f"q{int(provisional_current['p25'])} l{int(provisional_current['lcb'])} "
+                f"n{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}{RST}"
+            )
+        else:
+            lines.append(f"  {DIM}(no mature data){RST}")
+        return lines
 
     all_entries.sort(key=lambda e: (e["comp"], e["p50"], e["p25"], e["n_roll"]), reverse=True)
     for idx, e in enumerate(all_entries, start=1):
         e["rank"] = idx
-    current_entry = next((e for e in all_entries if current_hash and e["hash"] == current_hash), None)
     entries = all_entries[:max_rows]
     max_comp = max(e["comp"] for e in entries) if entries else 1
     rollback_entry = next((e for e in all_entries if e["hash"] in rollback_candidates), None)
 
-    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(comp=0.55p50+0.30p25+0.15lcb, rollback=yellow){RST}"]
+    lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(comp=0.55p50+0.30p25+0.15lcb, mature only n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=yellow){RST}"]
     if current_entry:
         lines.append(
             f"  {DIM}cur #{current_entry['rank']:>2} {current_entry['h8']} "
             f"c{int(current_entry['comp']):>4} m{int(current_entry['p50']):>4} "
             f"q{int(current_entry['p25']):>4} l{int(current_entry['lcb']):>4} "
             f"n{current_entry['n_roll']:>2}/{current_entry['n_total']:<3}{RST}"
+        )
+    elif provisional_current:
+        lines.append(
+            f"  {DIM}cur provisional {provisional_current['h8']} "
+            f"c{int(provisional_current['comp']):>4} m{int(provisional_current['p50']):>4} "
+            f"q{int(provisional_current['p25']):>4} l{int(provisional_current['lcb']):>4} "
+            f"n{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}{RST}"
         )
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
