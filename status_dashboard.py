@@ -32,6 +32,7 @@ BEST_STRATEGY_ANCHOR_FILE = "tmp/state/best_strategy_anchor.json"
 REJECTED_HASHES_FILE = "tmp/history/rejected_hashes.txt"
 REJECTED_HASH_META_FILE = "tmp/state/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_TTL_SEC = 21600
+LAST_ROLLBACK_PAIR_FILE = "tmp/state/last_rollback_pair.json"
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
 
@@ -182,6 +183,17 @@ def load_rejected_hash_meta():
         return {}
 
 
+def load_last_rollback_pair():
+    p = Path(LAST_ROLLBACK_PAIR_FILE)
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text())
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
 def compute_decide_hash(path):
     try:
         r = subprocess.run(
@@ -258,22 +270,17 @@ def calc_strategy_metrics(scores):
     }
 
 
-def is_recently_rejected_for_rollback(hash_, rolling, rejected_hashes, rejected_meta):
-    if not hash_ or hash_ not in rejected_hashes:
+def is_blocked_reverse_rollback_pair(current_hash, candidate_hash, last_pair):
+    if not current_hash or not candidate_hash or not isinstance(last_pair, dict):
         return False
-    if hash_ not in rejected_meta:
-        return False
-    rejected = rejected_meta.get(hash_, {})
-    rejected_at = int(rejected.get("updated_at", 0) or 0)
-    if rejected_at <= 0:
-        return False
-    age = int(__import__("time").time()) - rejected_at
-    return age < REJECTED_REEVALUATE_TTL_SEC
+    return (
+        str(last_pair.get("to_hash", "") or "") == current_hash
+        and str(last_pair.get("from_hash", "") or "") == candidate_hash
+    )
 
 
 def collect_rollback_candidate_hashes(rolling, current_hash):
-    rejected_hashes = load_rejected_hashes()
-    rejected_meta = load_rejected_hash_meta()
+    last_pair = load_last_rollback_pair()
     restorable_hashes = load_restorable_hashes()
     current_metrics = calc_strategy_metrics(rolling.get(current_hash, {}).get("scores", [])) if current_hash else None
     current_comp = current_metrics["comp"] if current_metrics else None
@@ -288,7 +295,7 @@ def collect_rollback_candidate_hashes(rolling, current_hash):
             continue
         if hash_ not in restorable_hashes:
             continue
-        if is_recently_rejected_for_rollback(hash_, rolling, rejected_hashes, rejected_meta):
+        if is_blocked_reverse_rollback_pair(current_hash, hash_, last_pair):
             continue
         candidates.add(hash_)
     return candidates

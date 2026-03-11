@@ -75,6 +75,7 @@ ROLLING_SCORES_FILE="$TMP_STATE_DIR/rolling_scores.json"
 REJECTED_HASHES_FILE="$TMP_HISTORY_DIR/rejected_hashes.txt"
 REJECTED_HASH_META_FILE="$TMP_STATE_DIR/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_TTL_SEC="${REJECTED_REEVALUATE_TTL_SEC:-21600}"
+LAST_ROLLBACK_PAIR_FILE="$TMP_STATE_DIR/last_rollback_pair.json"
 BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
@@ -120,7 +121,7 @@ mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" \
 if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
 	# state files
 	for f in improve_state.json accumulated_games.json rolling_scores.json \
-		rejected_hash_metrics.json best_strategy_anchor.json .russia_celebration_worker.pid \
+		rejected_hash_metrics.json best_strategy_anchor.json last_rollback_pair.json .russia_celebration_worker.pid \
 		.radio_state .comment_gen_state radio_talk_played .news_last_success.txt \
 		.status_fullscreen_last .news_shown_lines.txt .news_shown_mtime.txt; do
 		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_STATE_DIR/$f" 2>/dev/null
@@ -5290,6 +5291,30 @@ PY
 	return 0
 }
 
+_is_blocked_reverse_rollback_pair() {
+	local current_hash="$1"
+	local candidate_hash="$2"
+	[ -n "$current_hash" ] || return 1
+	[ -n "$candidate_hash" ] || return 1
+	[ -f "$LAST_ROLLBACK_PAIR_FILE" ] || return 1
+	python3 - "$LAST_ROLLBACK_PAIR_FILE" "$current_hash" "$candidate_hash" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+pair_file, current_hash, candidate_hash = sys.argv[1:4]
+try:
+    data = json.load(open(pair_file))
+except Exception:
+    raise SystemExit(1)
+
+from_hash = str(data.get("from_hash", "") or "")
+to_hash = str(data.get("to_hash", "") or "")
+if to_hash == current_hash and from_hash == candidate_hash:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 _get_rolling_metrics_for_hash() {
 	local target_hash="$1"
 	[ -n "$target_hash" ] || return 1
@@ -5362,12 +5387,12 @@ for key in ("hash", "comp", "p50", "p25", "lcb", "n"):
 PY
 			)"
 	fi
-	if [ -n "$anchor_hash" ] && [ "$anchor_hash" != "$current_hash" ]; then
-		if _is_recently_rejected_for_rollback "$anchor_hash"; then
-			log "[REGRESSION] rollback候補スキップ: anchor $anchor_hash は recent rejected" >&2
-		elif [ -n "$current_comp" ] && ! awk "BEGIN{exit !($anchor_comp > $current_comp)}"; then
-			log "[REGRESSION] rollback候補スキップ: anchor $anchor_hash は current(comp=$current_comp) 以下" >&2
-		else
+		if [ -n "$anchor_hash" ] && [ "$anchor_hash" != "$current_hash" ]; then
+			if _is_blocked_reverse_rollback_pair "$current_hash" "$anchor_hash"; then
+				log "[REGRESSION] rollback候補スキップ: anchor $anchor_hash は直前rollbackの逆向き" >&2
+			elif [ -n "$current_comp" ] && ! awk "BEGIN{exit !($anchor_comp > $current_comp)}"; then
+				log "[REGRESSION] rollback候補スキップ: anchor $anchor_hash は current(comp=$current_comp) 以下" >&2
+			else
 			anchor_file=$(_find_strategy_file_by_hash "$anchor_hash")
 		fi
 		if [ -n "$anchor_file" ]; then
@@ -5441,10 +5466,10 @@ PY
 		if [ -n "$current_comp" ] && ! awk "BEGIN{exit !($comp > $current_comp)}"; then
 			continue
 		fi
-		if _is_recently_rejected_for_rollback "$h"; then
-			log "[REGRESSION] rollback候補スキップ: $h は recent rejected" >&2
-			continue
-		fi
+			if _is_blocked_reverse_rollback_pair "$current_hash" "$h"; then
+				log "[REGRESSION] rollback候補スキップ: $h は直前rollbackの逆向き" >&2
+				continue
+			fi
 		candidate_file=$(_find_strategy_file_by_hash "$h")
 		if [ -n "$candidate_file" ]; then
 			echo "${h}|${comp}|${p50}|${p25}|${lcb}|${n}|${candidate_file}"
@@ -5473,10 +5498,10 @@ _pick_hall_of_fame_rollback_candidate() {
 		if [ -n "$current_comp" ] && ! awk "BEGIN{exit !($candidate_comp > $current_comp)}"; then
 			continue
 		fi
-		if _is_recently_rejected_for_rollback "$h"; then
-			log "[REGRESSION] hall-of-fame候補スキップ: $h は recent rejected" >&2
-			continue
-		fi
+			if _is_blocked_reverse_rollback_pair "$current_hash" "$h"; then
+				log "[REGRESSION] hall-of-fame候補スキップ: $h は直前rollbackの逆向き" >&2
+				continue
+			fi
 		echo "${h}|hof|${score_num}|0|0|0|$f"
 		return 0
 	done < <(
@@ -5908,8 +5933,8 @@ PY
 				local revert_hash=""
 				local revert_metrics="" revert_comp=""
 				revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
-				if [ -n "$revert_hash" ] && _is_recently_rejected_for_rollback "$revert_hash"; then
-					log "[REGRESSION] previous_strategy を rollback候補から除外: $revert_hash は recent rejected"
+				if [ -n "$revert_hash" ] && _is_blocked_reverse_rollback_pair "$strategy_hash" "$revert_hash"; then
+					log "[REGRESSION] previous_strategy を rollback候補から除外: $revert_hash は直前rollbackの逆向き"
 				else
 					revert_metrics=$(_get_rolling_metrics_for_hash "$revert_hash" 2>/dev/null || true)
 					revert_comp="${revert_metrics%%|*}"
@@ -5941,13 +5966,28 @@ PY
 		fi
 
 		# リバート実行
-		cp "$rollback_file" "$STRATEGY_FILE"
-		# 次回比較の基準も現戦略に合わせる（再帰的な誤判定防止）
-		cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
-		local rolled_hash
-		rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
-		REGRESSION_ROLLBACK_DONE=1
+			cp "$rollback_file" "$STRATEGY_FILE"
+			# 次回比較の基準も現戦略に合わせる（再帰的な誤判定防止）
+			cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
+			local rolled_hash
+			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+			python3 - "$LAST_ROLLBACK_PAIR_FILE" "$strategy_hash" "$rolled_hash" "$rollback_note" <<'PY' 2>/dev/null
+import json
+import sys
+import time
+
+out_file, from_hash, to_hash, note = sys.argv[1:5]
+payload = {
+    "from_hash": from_hash,
+    "to_hash": to_hash,
+    "note": note,
+    "updated_at": int(time.time()),
+}
+with open(out_file, "w") as f:
+    json.dump(payload, f)
+PY
+			REGRESSION_ROLLBACK_DONE=1
 		REGRESSION_ROLLBACK_HASH="$rolled_hash"
 		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 
