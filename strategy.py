@@ -342,75 +342,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-    # v3805: BOARD_DENSITY evaluation axis removed - batch_summary analysis showed BOARD_DENSITY has 10.7% frequency but avg_score_delta=0.3 (low value)
+        # v3805: BOARD_DENSITY evaluation axis removed - batch_summary analysis showed BOARD_DENSITY has 10.7% frequency but avg_score_delta=0.3 (low value)
         # Low-score games have higher DEFAULT_PLACEMENT (17.1%) and BOARD_DENSITY (12.8%) selection rates compared to high-score games
         # Removing BOARD_DENSITY prevents non-merge placements that were prioritizing board density over immediate merge opportunities
-        # This structural change removes an evaluation system axis, allowing merge-focused decisions to dominate
+        # This structural change removes an evaluation axis, allowing merge-focused decisions to dominate
         # refs: tmp/batch_summary.txt, tmp/improve_brief.md
 
-    # ----- evaluation axis 8: REACTIVE_MERGE_PRIORITY (v175: NEW) -----
+         # ----- evaluation axis 8: REACTIVE_MERGE_PRIORITY (v175: NEW) -----
         # reactor情報のreactive_pairsを活用し、反応濃度の高い状況での即時反応を優先
         # 終盤高危険域(max_y>=1.8)でreactive_pairs>=2がある場合、DIRECT/NEARに+500ボーナス
         # これにより、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先
-        # 理論的背景: game_theory.md - 反応効率は反応物の濃度に比例する（reactive_pairsは接触圏内の同タイプペア数）
+        # 理論的背景: game_theory.md - 反応効率は反応物の濃度に比例する（reactive_pairsは接触圏内の同typeペア数）
         # refs: game_history/20260310_125627_score0528.jsonl turn 64-66 (max_y=2.37-2.38, reactive_pairs=3でDEFAULT_PLACEMENTが続き即時併合機会を逃している)
         if max_y >= 1.8 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
             score += 500.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
         # DANGER_RECOVERY_PENALTY評価軸はv177のフィルタリングだけで十分のため削除（v178）
-        
-        # ----- evaluation axis 8.5: NEXT_SAME_TYPE_PLACEMENT (NEW) -----
-        # nextNextがnextと同じタイプで来る場合、盤面上の同タイプの最上位（max_yが高い位置、または最も近い同タイプ）に配置する
-        # これによりnextNextの併合機会を確実に確保し、将来のスコアアップを図る
-        if next_type == next_next_type:
-            # 盤面上の同タイプの最上位（max_yが高いピース）または最も近い同タイプ（マンハッタン距離最小）に配置する候補を検出
-            same_type_pieces = [p for p in pieces if p.get("type") == next_type]
-            if same_type_pieces:
-                # 最も高いピース（max_yが高い = 併合後に次の併合チャンスを見越えやすい）
-                highest_piece = max(same_type_pieces, key=lambda p: p.get("y", 0))
-                
-                # 最も近い同タイプ（マンハッタン距離最小）
-                if len(same_type_pieces) >= 1:
-                    target_piece = min(same_type_pieces, key=lambda p: ((highest_piece["x"] - p["x"])**2 + (highest_piece["y"] - p["y"])**2)**0.5)
-                else:
-                    target_piece = highest_piece
-                
-                # target_pieceが見つかった場合、その近く配置候補にボーナスを付与
-                if target_piece:
-                    target_x = target_piece["x"]
-                    for result in results:
-                        # target_x +/- 1.0 以内の候補（接触圏内）
-                        if abs(result["x"] - target_x) < 1.0:
-                            # nextNext併合機会を逃さないため、着地位置が低いほどボーナスを高くする
-                            # 着位置が高いほど、次のピースで着地した後の併合機会が見越えやすい
-                            # target_yに近い位置ほど、併合後にさらにchain mergeしやすい
-                            target_y_diff = target_y - result.get("landing_y", 0)
-                            next_next_bonus = max(0, target_y_diff * 20.0)
-                            if next_next_bonus > 0:
-                                score += next_next_bonus
-                                reasons.append("NEXT_SAME_TYPE_PLACEMENT")
-
-        # ----- evaluation axis 2: height penalty -----
-        # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
-        # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
-        # v4120: 危険局面での即時併合優先化 - max_y>=2.0 かつ reactive_pair_count>=4 の場合、height_multiplierを0.0に設定
-        # ワーストゲーム(score0873, score1005)の終盤8ターンで max_y>=2.0, reactive_pairs>=4 にもかかわらず
-        # HIGH_TOWER/HIGH_LAYERが選択され、即時併合機会を逃している失敗パターンを特定
-        # 危険度の非常に高い局面（max_y>=2.0, reactive_pairs>=4）で height_multiplier=0.0に設定し、
-        # height_penalty を無効化することで、即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される
-        height_multiplier = 30.0
-        if early_game:
-            height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
-        elif max_y >= 1.5 and reactive_pair_count >= 3:
-            height_multiplier = 0.0  # v4130: 危険局面（max_y >= 1.5）で即時併合を最優先
-        elif max_y >= 2.0 and reactive_pair_count >= 4:
-            height_multiplier = 0.0  # 超危険局面（max_y >= 2.0）で即時併合を最優先
-        elif max_y >= 2.5:
-            height_multiplier = 0.0  # 最危険局面では盤面圧縮を最優先
-        else:
-            height_multiplier = 30.0
-        
 
         # ----- evaluation axis 9: NEAR_PAIR_POTENTIAL削除版 -----
         # NEAR_PAIR_POTENTIAL評価軸を完全に削除
