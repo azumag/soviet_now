@@ -7,22 +7,18 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-  Decision Logic (6 evaluation axes):
-     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-     2. Height penalty - Penalty for high landing position (varies by phase)
-     3. Drift penalty - Penalty for post-landing drift due to polygon shape
-     4. Left-right balance correction - Bonus for correcting piece count bias
-     5. nextNext centering - Center for next merge opportunity if nextNext same type
-     6. Chain merge bonus - Evaluate possibility of further merges after merge
-     6. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
+ Decision Logic (7 evaluation axes):
+    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+    2. Height penalty - Penalty for high landing position (varies by phase)
+    3. Drift penalty - Penalty for post-landing drift due to polygon shape
+    4. Left-right balance correction - Bonus for correcting piece count bias
+    5. nextNext centering - Center for next merge opportunity if nextNext same type
+    6. Chain merge bonus - Evaluate possibility of further merges after merge
+    7. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
 
-      v3807: NEAR_PAIR_POTENTIAL評価軸削除版 - batch_summary分析でHIGH_TOWER_NEAR_PAIR_POTENTIALがavg_score_delta=0.0と無価値を確認。
-      ワーストゲーム(score0848)の終盤でHIGH_TOWER_NEAR_PAIR_POTENTIALが6回選択され、即時併合機会を逃している失敗パターンを特定。
-      near_pairs>=3で着地位置が低い候補にボーナスを付与する評価軸を削除し、併合機会を最優先する決定ルールに集約。
-
-      v3805: BOARD_DENSITY評価軸削除版 - batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認
-      低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
-      BOARD_DENSITYを削除し、併合機会を逃す配置を排除することでスコア安定性を向上させる。
+     v3805: BOARD_DENSITY評価軸削除版 - batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認
+     低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
+     BOARD_DENSITYを削除し、併合機会を逃す配置を排除することでスコア安定性を向上させる。
 
      v178: 危険局面フィルタリング強化 - max_y>=2.0でreactive_pairs>=2の場合、FARマージも評価対象に含め、DANGER_RECOVERY_PENALTY強化
      ワーストゲームの終盤8ターンでreactive_pairs=5あるにもかかわらずHIGH_TOWER選択が続き、即時併合機会を逃している失敗パターンを特定。
@@ -75,19 +71,11 @@ Game Overview:
 # DANGER_RECOVERY_PENALTYの-1000ペナルティが発動しているが、全ての候補にペナルティが課されているため、非併合配置が依然として選ばれる悪循環を特定。
 # max_y>=2.0でreactive_pairs>=2の場合、merge_gradeがDIRECTまたはNEARの候補のみを評価対象にするフィルタリングを追加し、非併合配置を物理的に除外。
 # これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を防ぎ、即時併合による盤面圧縮を強制することでスコア安定性を向上させる。
- # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_133049_score1143.jsonl turns 72-74
- # v3806: 危険局面フィルタリング閾値引下 - max_y>=1.8でreactive_pairs>=2の場合、併合機会のみを評価
- # ワーストゲーム(score0586)の終盤(max_y=2.92, reactive_avg=5.2)でHIGH_TOWERが選択され続けている問題を解決
- # 危険度閾値をHIGHフェーズ境界(max_y>=1.8)に引き下げ、より早く危険局面を検知して盤面圧縮を強制
- # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_161808_score0586.jsonl turns 60-67
- # v3805: BOARD_DENSITY評価軸削除版 - batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認。
- # 低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
- # BOARD_DENSITYを削除し、併合機会を逃す配置を排除することでスコア安定性を向上させる。
- # refs: tmp/batch_summary.txt, tmp/improve_brief.md
- # v3807: NEAR_PAIR_POTENTIAL評価軸削除版 - batch_summary分析でHIGH_TOWER_NEAR_PAIR_POTENTIALがavg_score_delta=0.0と無価値を確認。
- # ワーストゲーム(score0848)の終盤でHIGH_TOWER_NEAR_PAIR_POTENTIALが6回選択され、即時併合機会を逃している失敗パターンを特定。
- # near_pairs>=3で着地位置が低い候補にボーナスを付与する評価軸を削除し、併合機会を最優先する決定ルールに集約。
- # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_170011_score0848.jsonl turns 45-62
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_133049_score1143.jsonl turns 72-74
+# v3805: BOARD_DENSITY評価軸削除版 - batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認。
+# 低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
+# BOARD_DENSITYを削除し、併合機会を逃す配置を排除することでスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -95,22 +83,23 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v3807: NEAR_PAIR_POTENTIAL評価軸削除版
+    """v3805: BOARD_DENSITY評価軸削除版
 
-    batch_summary分析でHIGH_TOWER_NEAR_PAIR_POTENTIALがavg_score_delta=0.0と無価値を確認。
-    ワーストゲーム(score0848)の終盤でHIGH_TOWER_NEAR_PAIR_POTENTIALが6回選択され、即時併合機会を逃している失敗パターンを特定。
-    v3806で追加したNEAR_PAIR_POTENTIAL評価軸を削除し、併合機会を逃す配置を排除することでスコア安定性を向上させる。
+    batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認。
+    低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
+    v171で追加したBOARD_DENSITY評価軸を削除し、併合機会を逃す盤面分散配置を排除することでスコア安定性を向上させる。
 
-    v3807の改善点:
-     1. NEAR_PAIR_POTENTIAL評価軸削除
-        - near_pairs>=3で着地位置が低い候補にボーナスを付与する評価軸を完全に削除
-        - near_pairsを活用する配置を排除
-        - 併合機会を最優先する決定ルールに集約
-     2. v3805のBOARD_DENSITY評価軸削除を維持
-     3. v3806の危険局面フィルタリング閾値引下（max_y>=1.8）を維持
-     4. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
-     5. v174のHIGHフェーズ高さペナルティ抑制を維持
-     6. v173の序盤HEIGHT_CONTROL抑制を維持
+    v3805の改善点:
+    1. BOARD_DENSITY評価軸削除
+       - board density bonus評価軸を完全に削除
+       - 盤面密度を基準とした配置を排除
+       - 併合機会を最優先する決定ルールに集約
+    2. v178の危険局面フィルタリング強化（max_y>=2.0, reactive_pairs>=2 → DIRECT/NEAR/FARマージ候補のみ）
+       - v178仕様通りmax_y>=2.0で危険局面を定義
+       - FARマージも評価対象に含め、いずれかの併合機会を確保
+    3. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
+    4. v174のHIGHフェーズ高さペナルティ抑制を維持
+    5. v173の序盤HEIGHT_CONTROL抑制を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -171,12 +160,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL height penalty basic value only
         merge_mult = 0.6  # v42: CRITICAL phase merge suppression
-    
-    # v4308: 危険局面での即時併合強化 - max_y>=1.5でreactive_pairs>=3の場合、height_multiplierを0.0に設定し即時併合を支配的にする
-    # ワーストゲーム(score0688)の終盤8ターンでreactive_pairs=4-5あるにもかかわらずHIGH_LAYER/HIGH_TOWERが選択され続け、即時併合機会を逃している失敗パターンを特定。
-    # advice.mdより「高さによる危険回避の重要性は低い、併合優先を重視すべき」が支持されている。
-    # thresholdをmax_y>=1.8→1.5に引き下げ、reactive_pairs>=3という少し厳しい条件で適用し、過剰な抑制を回避しつつ確実に即時併合を優先。
-    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_172910_score0688.jsonl turns 68-75, advice.md
 
     # --- next piece information ---
     next_piece = game_state.get("next", {})
@@ -213,10 +196,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         right_density /= total_density
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 6 evaluation axes
-    #  v3807: NEAR_PAIR_POTENTIAL評価軸削除 - near_pairs>=3で着地位置が低い候補にボーナスを付与する評価軸を削除
-    #       これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を防ぎ、即時併合による盤面圧縮を強制
-    #       refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_170011_score0848.jsonl turns 45-62
+    #  score each drop candidate (x coordinate) with 8 evaluation axes
+    #  v3805: 危険局面フィルタリング強化 - max_y>=2.0でreactive_pairs>=2の場合、
+    #       merge_gradeがDIRECT/NEAR/FARの候補のみを評価対象にし、非併合配置を除外する
+    #       これにより、HIGH_TOWER/HIGH_LAYERなどの延命配置を物理的に防ぎ、即時併合による盤面圧縮を強制
+    #       refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_161808_score0586.jsonl turns 60-67
     # =======================================================================
 
     # v3806: 危険局面フィルタリング閾値引下 - max_y>=1.8でreactive_pairs>=2の場合、併合機会のみを評価
@@ -253,15 +237,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("FAR_MERGE")
 
         # ----- evaluation axis 2: height penalty -----
-        # v4308: 危険局面での即時併合強化 - max_y>=1.5でreactive_pairs>=3の場合、height_multiplierを0.0に設定
-        # advice.mdより「高さによる危険回避の重要性は低い、併合優先を重視すべき」が支持されている。
-        # ワーストゲーム(score0688)の終盤8ターンでreactive_pairs=4-5あるにもかかわらずHIGH_LAYER/HIGH_TOWERが選択され続け、即時併合機会を逃している失敗パターンを特定。
-        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_172910_score0688.jsonl turns 68-75, advice.md
+        # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
+        # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
         height_multiplier = 30.0
         if early_game:
             height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
-        elif max_y >= 1.5 and reactive_pair_count >= 3:
-            height_multiplier = 0.0  # v4308: 危険局面で高さペナルティ無効化、即時併合を支配的に優先
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -361,10 +341,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # DANGER_RECOVERY_PENALTY評価軸はv177のフィルタリングだけで十分のため削除（v178）
 
-        # v3807: NEAR_PAIR_POTENTIAL評価軸削除版 - batch_summary分析でHIGH_TOWER_NEAR_PAIR_POTENTIALがavg_score_delta=0.0と無価値を確認。
-        # ワーストゲーム(score0848)の終盤でHIGH_TOWER_NEAR_PAIR_POTENTIALが6回選択され、即時併合機会を逃している失敗パターンを特定。
-        # near_pairs>=3で着地位置が低い候補にボーナスを付与する評価軸を削除し、併合機会を最優先する決定ルールに集約。
-        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_170011_score0848.jsonl turns 45-62
+        # ----- evaluation axis 9: NEAR_PAIR_POTENTIAL (v3806: NEW) -----
+        # near_pairs（触媒誘導可能な近接ペア）を活用し、シェイクや押し込みの効果を最大化する配置を優先
+        # HIGHフェーズ以降でnear_pairs>=3がある場合、着地位置が低い候補にボーナスを付与
+        # 理論的背景: 物理的なシェイク・押し込みは下から上へ伝播しやすいため、低い位置からの干渉がより効果的
+        # これにより、潜在併合機会（near_pairs）を即時反応可能状態（reactive_pairs）に変換する確率を向上
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md
+        if phase in ["HIGH", "CRITICAL"] and near_pair_count >= 3:
+            potential_bonus = landing_y * -50.0  # 着地位置が低いほど大きなボーナス
+            score += potential_bonus
+            reasons.append("NEAR_PAIR_POTENTIAL")
 
         # ----- update best candidate -----
         if score > best_score:
