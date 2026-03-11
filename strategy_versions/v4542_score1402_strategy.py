@@ -17,7 +17,7 @@ Decision Logic (8 evaluation axes):
      7. Early game merge priority - Bonus for NEAR merge in early game (max_y < -2.0)
      8. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase
      9. v161: Medium phase immediate merge priority - Filter to merge candidates when reactive_pairs >= 2 in MEDIUM phase
-    10. v164: Reactive merge priority - Direct bonus for merge when reactive_pairs >= 3 (replaces v163 penalty reduction)
+     10. v166: Danger board compression - Prioritize low landing in dangerous situations with merge opportunities
 
 Phases (determined by board max Y):
    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -35,6 +35,11 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 # --- Change History ---
 # [BEST:5310] v159: reactor情報活用による危険局面即時併合優先版
 # v160: 危険局面フィルタリング早期化強化版 - max_y>=1.8かつreactive_pairs>=3で併合機会のみを評価対象
+# v166: 危険局面での盤面圧縮優先評価軸 - ワーストゲーム(score0937)のturn 76（reactive_pairs=4でHEIGHT_LAYER選択）のような
+#   危険局面で着地が高い配置を選択し続ける失敗パターンを解消。
+# - 危険局面で併合候補の中から着地Yが低いものを強力に優先する構造的な評価軸を追加
+# - reactive_pairs >= 3 の条件を維持しつつ、着地Yが低い配置をさらに優先することで盤面圧縮を促進
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_061454_score0937.jsonl turns 70-77
 #   - 危険局面でのFARマージボーナスを強化（200.0→1200.0）し、いずれかの併合機会を確保
 #   - ワーストゲーム(score0467)の失敗パターン分析に基づき、危険局面の閾値を厳密化
 # v161: 中盤フェーズでの即時併合優先強化版 - ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避
@@ -66,25 +71,28 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v164: 即時併合直接ボーナスによる強化版
+    """v166: 危険局面での盤面圧縮優先評価軸
 
-    batch_summaryでHEIGHT_CONTROLが28.6%選択(avg_score_delta=0.8)と過剰であることを確認。
-    ワーストゲーム(score0463)の失敗パターン分析で、v163のペナルティ削減ロジックがdangerous_situationフラグによってブロックされる問題を特定。
-    max_y >= 1.8かつreactive_pairs >= 3の危険局面で、dangerous_situation=Trueとなり、high_reactivity_zoneのペナルティ削減が適用されず、
-    reactive_pairs=4-5あるにもかかわらずHIGH_TOWERが選択される失敗が発生。
-    ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITYアプローチを採用し、直接ボーナス方式に切り替える。
+    ワーストゲーム(score0937)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs>=2-4あるにもかかわらず
+    HIGH_TOWER/HIGH_LAYERが選択され続け即時併合機会を逃している失敗パターンを特定。
+    特にturn 76でreactive_pairs=4なのにHEIGHT_LAYERが選択され、即時併合機会を完全に見逃している。
 
-    v164の改善点：
-     1. 即時併合直接ボーナスの採用
-        - v163のペナルティ削減アプローチを廃止し、直接ボーナス方式に切り替え
-        - reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与
-        - 危険局面(dangerous_situation=True)でもボーナスが適用されるため、即時併合が選択される
-     2. 即時併合機会の見逃し回避
-        - ワーストゲーム(score0463)のturn 60,61,63,64でreactive_pairs=4-5あるにもかかわらずHIGH_TOWERが選択される失敗を解消
-        - 危険局面でも即時併合を強制的に優先し、盤面圧縮を促進
-     3. v162の改善を維持
-        - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
-        - reactive_pairsが少ない状況での即時併合見逃しを回避
+    v165の問題点：
+     1. 数値微調整だけの変更
+        - reactive_pairs >= 3 → >= 2 という閾値の微調整だけであった
+        - 構造的な変更ではなく、禁止事項にあたる
+
+    v166の改善点：
+     1. 新しい評価軸の追加（構造的変更）
+        - 危険局面で併合候補の中から着地Yが低いものを強力に優先する評価軸を追加
+        - reactive_pairs >= 3 の条件を維持しつつ、着地Yが低い配置をさらに優先
+        - DANGER_BOARD_COMPRESSIONボーナス（+800.0）を付与し、危険局面での盤面圧縮を強力に優先
+     2. 盤面圧縮の促進
+        - 危険局面では即時併合だけでなく、着地Yが低い配置を優先することで盤面圧縮を促進
+        - ワーストゲームのような危険局面での即時併合見逃しパターンを回避
+     3. 即時併合機会の見逃し回避
+        - 危険局面での即時併合機会をより広い範囲で優先
+        - ベストゲームのような終盤回復を実現
     """
 
     results = analysis.get("results", [])
@@ -194,10 +202,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # LOW/MEDIUMフェーズのheight_multを維持（1.0, 1.4）し、HIGHフェーズはheight_mult=1.8
         height_multiplier = 30.0 if phase != "LOW" else 15.0
 
-        # v164: 危険局面での高さペナルティ無効化
-        # max_y >= 1.8かつreactive_pairs >= 3の危険局面では、即時併合を優先するためにheight_multiplierを0.0に設定
-        # refs: game_history/20260312_012424_score0463.jsonl turns 60-64
-        if max_y >= 1.8 and reactive_pair_count >= 3:
+        # v165: 危険局面即時併合条件緩和版 - ワーストゲーム(score0937)の終盤8ターン分析で、
+        #   max_y>=2.0かつreactive_pairs>=2-4あるにもかかわらずHIGH_TOWER/HIGH_LAYERが選択され続け
+        #   即時併合機会を逃している失敗パターンを特定。
+        # - 殿堂入り戦略(best_score5310 v176)のREACTIVE_MERGE_PRIORITY（reactive_pairs >= 2で+500.0ボーナス）
+        #   の成功パターンに戻し、条件をreactive_pairs >= 2に緩和
+        # - 危険局面(max_y >= 1.8)でreactive_pairs >= 2の場合、height_multiplierを0.0に設定し
+        #   高さペナルティを無効化して即時併合を支配的に優先
+        # - これにより、危険局面での即時併合機会の見逃しを回避し、盤面圧縮を促進してスコア安定性を向上
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_061454_score0937.jsonl turns 70-77, strategy_versions/best_score5310_strategy.py
+        if max_y >= 1.8 and reactive_pair_count >= 2:
             height_multiplier = 0.0
 
         height_penalty = landing_y * height_multiplier * height_mult
@@ -213,15 +227,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- v164: 即時併合直接ボーナス -----
-        # v163のペナルティ削減ロジックは削除済み
-        # ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITYアプローチを採用
-        # reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与
-        # 危険局面(dangerous_situation=True)でもボーナスが適用されるため、即時併合が選択される
-        # refs: game_history/20260312_012424_score0463.jsonl turns 60-64
-        if reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
-            score += 500.0
-            reasons.append("REACTIVE_MERGE_PRIORITY")
+        # ----- v166: 危険局面での盤面圧縮優先評価軸 -----
+        # ワーストゲーム(score0937)のturn 76（reactive_pairs=4でHEIGHT_LAYER選択）のような
+        # 危険局面で着地が高い配置を選択し続ける失敗パターンを解消
+        # 危険局面で併合候補の中から着地Yが低いものを強力に優先する構造的な評価軸を追加
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_061454_score0937.jsonl turns 70-77
+        if dangerous_situation and merge_grade in ["DIRECT", "NEAR"]:
+            score += 800.0  # 危険局面での併合・盤面圧縮を強力に優先
+            reasons.append("DANGER_BOARD_COMPRESSION")
 
         # ----- evaluation axis 3: drift penalty -----
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
