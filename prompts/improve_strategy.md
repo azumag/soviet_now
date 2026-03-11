@@ -94,7 +94,8 @@
 ## 変更設計ルール
 - 変更規模は「1つの機能追加」または「1つの機能置換」に限定
 - 既存の reason 体系を壊さない（必要なら新規 reason は1個まで）
-- `analysis["results"]`, `analysis["reactor"]`, `next/nextNext`, `pieces` の未活用情報を優先活用
+- `analysis["results"]`, `analysis["reactor"]`, `analysis["deadline"]`, `next/nextNext`, `pieces` の未活用情報を優先活用
+- 特に `deadline_y`, `top_edge_y`, `deadline_margin`, `danger_piece_count`, `min_redline_time`, `crosses_deadline`, `danger_merge_available`, `danger_direct_merge_available` を読むこと
 - 連鎖狙いより、いま取れる併合機会の確保と盤面圧迫の回避を優先すること
 - 「終盤8ターン」は固定ターン数ではなく、dead line 接近、`max_y>=2.0`, 反応可能ペア滞留などの局面条件に読み替えること
 - `random` や時刻依存など非決定的要素は導入しない

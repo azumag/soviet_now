@@ -191,6 +191,15 @@ def build_analysis(game_state):
 
         results, same_type = analyze_drops(pieces, nt, nr, shapes)
         reactor = calc_reactor_state(pieces)
+        deadline = {
+            "deadline_y": reactor.get("deadline_y", 0.0),
+            "top_center_y": reactor.get("top_center_y", -5.0),
+            "top_edge_y": reactor.get("top_edge_y", -5.0),
+            "deadline_margin": reactor.get("deadline_margin", 0.0),
+            "deadline_crossed": reactor.get("deadline_crossed", False),
+            "danger_piece_count": reactor.get("danger_piece_count", 0),
+            "min_redline_time": reactor.get("min_redline_time", 0.0),
+        }
 
         return {
             "results": results,
@@ -199,6 +208,7 @@ def build_analysis(game_state):
                 for p in same_type
             ],
             "reactor": reactor,
+            "deadline": deadline,
         }
     except Exception as e:
         log(f"WARNING: analyze_board failed: {e}")
@@ -210,9 +220,11 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
     pieces = game_state.get("pieces", [])
     score = game_state.get("score", 0)
     max_y = max((p["y"] for p in pieces), default=-5.0)
+    top_edge_y = max((p["y"] + p.get("r", 0.0) for p in pieces), default=-5.0)
     nxt = game_state.get("next", {})
 
     results = analysis.get("results", [])
+    deadline = analysis.get("deadline", {})
 
     # chosen_x に最も近い result を参照（results[0]は最左端なので不正確）
     chosen_x = decision.get("x", 0.0)
@@ -224,6 +236,8 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
 
     reactor = analysis.get("reactor", {})
     reactive_pairs = len(reactor.get("reactive_pairs", []))
+    danger_piece_count = int(deadline.get("danger_piece_count", 0) or 0)
+    min_redline_time = float(deadline.get("min_redline_time", 0.0) or 0.0)
 
     # ピースのスナップショット（軽量化: 位置とtypeのみ）
     piece_snapshot = [
@@ -237,12 +251,21 @@ def record_turn(history_f, turn, game_state, decision, analysis, russia_created=
         "score_delta": score_delta,
         "piece_count": len(pieces),
         "max_y": round(max_y, 2),
+        "top_edge_y": round(top_edge_y, 2),
+        "deadline_y": round(float(deadline.get("deadline_y", 0.0) or 0.0), 2),
+        "deadline_margin": round(float(deadline.get("deadline_margin", 0.0) or 0.0), 2),
+        "deadline_crossed": bool(deadline.get("deadline_crossed", False)),
+        "danger_piece_count": danger_piece_count,
+        "min_redline_time": round(min_redline_time, 2),
         "next_type": nxt.get("type", 0),
         "decision_x": round(decision.get("x", 0), 3),
         "decision_reason": decision.get("reason", ""),
         "merge_available": has_merge,
         "best_merge_grade": best_grade,
         "reactor_reactive_pairs": reactive_pairs,
+        "decision_crosses_deadline": bool(chosen_result.get("crosses_deadline", False)) if chosen_result else False,
+        "danger_merge_available": bool(chosen_result.get("danger_merge_available", False)) if chosen_result else False,
+        "danger_direct_merge_available": bool(chosen_result.get("danger_direct_merge_available", False)) if chosen_result else False,
         "strategy_hash": strategy_hash,
         "state_snapshot": {"pieces": piece_snapshot},
     }

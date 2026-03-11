@@ -214,6 +214,18 @@ def calc_reactor_state(pieces):
         bucket = left_types if p["x"] < 0 else right_types
         bucket[p["type"]] = bucket.get(p["type"], 0) + 1
 
+    top_center_y = max((p["y"] for p in pieces), default=FLOOR_Y)
+    top_edge_y = max((p["y"] + p["r"] for p in pieces), default=FLOOR_Y)
+    danger_pieces = [
+        p for p in pieces
+        if float(p.get("redLineTime", 0) or 0) > 0 or (p["y"] + p["r"]) >= DEADLINE_Y
+    ]
+    positive_redline = [
+        float(p.get("redLineTime", 0) or 0)
+        for p in pieces
+        if float(p.get("redLineTime", 0) or 0) > 0
+    ]
+
     return {
         "type_count": type_count,
         "reactive_pairs": reactive_pairs,
@@ -221,6 +233,13 @@ def calc_reactor_state(pieces):
         "pipeline": pipeline,
         "left_types": left_types,
         "right_types": right_types,
+        "deadline_y": DEADLINE_Y,
+        "top_center_y": round(top_center_y, 3),
+        "top_edge_y": round(top_edge_y, 3),
+        "deadline_margin": round(DEADLINE_Y - top_edge_y, 3),
+        "deadline_crossed": top_edge_y >= DEADLINE_Y,
+        "danger_piece_count": len(danger_pieces),
+        "min_redline_time": round(min(positive_redline), 3) if positive_redline else 0.0,
     }
 
 
@@ -338,12 +357,21 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
 
             merges.append({
                 "id": t["id"],
+                "x": t["x"],
+                "y": t["y"],
+                "r": t["r"],
                 "tx": t["x"],
                 "ty": t["y"],
                 "tr": t["r"],
                 "dist": round(dist, 3),
                 "contact_r": round(contact_r, 3),
                 "grade": grade,
+                "target_top_y": round(t["y"] + t["r"], 3),
+                "target_crosses_deadline": (t["y"] + t["r"]) >= DEADLINE_Y,
+                "target_redline_time": round(float(t.get("redLineTime", 0) or 0), 3),
+                "target_is_danger": (
+                    float(t.get("redLineTime", 0) or 0) > 0 or (t["y"] + t["r"]) >= DEADLINE_Y
+                ),
             })
 
         best_grade = "NO"
@@ -359,15 +387,36 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
                     best_merge_dist = m["dist"]
 
         has_merge = best_grade in ("DIRECT", "NEAR")
+        top_after_drop = ly + next_r
+        danger_direct_merge_available = any(
+            m["grade"] == "DIRECT" and (
+                float(next((p.get("redLineTime", 0) for p in same_type if p["id"] == m["id"]), 0) or 0) > 0
+                or float(next((p["y"] + p["r"] for p in same_type if p["id"] == m["id"]), FLOOR_Y)) >= DEADLINE_Y
+            )
+            for m in merges
+        )
+        danger_merge_available = any(
+            m["grade"] in ("DIRECT", "NEAR") and (
+                float(next((p.get("redLineTime", 0) for p in same_type if p["id"] == m["id"]), 0) or 0) > 0
+                or float(next((p["y"] + p["r"] for p in same_type if p["id"] == m["id"]), FLOOR_Y)) >= DEADLINE_Y
+            )
+            for m in merges
+        )
 
         results.append({
             "x": round(x, 2),
             "landing_y": round(ly, 3),
+            "top_y_after_drop": round(top_after_drop, 3),
+            "deadline_y": DEADLINE_Y,
+            "deadline_margin": round(DEADLINE_Y - top_after_drop, 3),
+            "crosses_deadline": top_after_drop >= DEADLINE_Y,
             "drift_x": drift_x,
             "drift_unc": drift_unc,
             "merges": merges,
             "has_merge": has_merge,
             "merge_grade": best_grade,
+            "danger_merge_available": danger_merge_available,
+            "danger_direct_merge_available": danger_direct_merge_available,
         })
 
     return results, same_type
