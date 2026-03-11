@@ -46,36 +46,30 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先
 #   - 即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260311_224024_score0328.jsonl, game_history/20260311_222520_score0849.jsonl
-# v163: 危険局面即時併合優先版 - ワースト/extra_lowゲームの終盤分析で、max_y>=2.0かつreactive_pairs>=2あるにもかかわらずHIGH_TOWERが選択され即時併合を逃している失敗パターンを特定
-#   - max_y>=2.0かつreactive_pairs>=2の局面でheight_multiplierを0.0に設定し、高さペナルティを無効化して即時併合を支配的に優先
-#   - ベストゲームではmax_y>=2.0、reactive_pairs>=2で即時併合が積極的に選択され、盤面圧縮によりスコア回復を実現
-#   - extra_lowではreactive_pairs=4~5あるのにHIGH_TOWERが続き、即時併合機会を逃してゲームオーバー
-#   - high_multiplierの動的調整により、危険局面で盤面を下げる即時併合を強力に優先し、延命ではなく回復につながる判断を強化
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_230949_score0799.jsonl turns 42-50, game_history/20260311_231553_score0834.jsonl turns 65-71, game_history/20260311_232001_score2325.jsonl turns 106-113, game_history/20260311_230444_score1735.jsonl turns 85-92
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v163: 危険局面即時併合優先版
+    """v162: 中盤低反応器活性化によるSANDWICH_AVOID強化版
 
-    ワースト/extra_lowゲームの終盤分析で、max_y>=2.0かつreactive_pairs>=2あるにもかかわらず
-    HIGH_TOWERが選択され即時併合を逃している失敗パターンを特定。
-    max_y>=2.0かつreactive_pairs>=2の局面でheight_multiplierを0.0に設定し、
-    高さペナルティを無効化して即時併合を支配的に優先する。
+    batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認。
+    ワーストゲーム(score0328, score0849)の失敗パターン分析に基づき、中盤フェーズでreactive_pairsが少ない場合、
+    即時併合を逃してHEIGHT_CONTROLを選択すると早期ゲームオーバーになる問題を解消。
+    中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先し、
+    即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
 
-    v163の改善点：
-     1. 危険局面での即時併合優先（max_y>=2.0, reactive_pairs>=2）
-        - height_multiplierを0.0に設定し、高さペナルティを完全無効化
-        - 即時併合候補(DIRECT/NEAR/FAR)がある場合、高さに関係なく即時併合を最優先
-        - 盤面圧迫回避ではなく、即時併合による盤面圧縮で延命ではなく回復を目指す
+    v162の改善点：
+     1. 中盤低反応器活性化によるSANDWICH_AVOID強化
+        - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
+        - 危険局面ではないが、盤面圧迫を回避するために即時併合を優先
+        - reactive_pairs <= 1 は盤面がまだ疎で、即時併合による盤面圧縮が効果的である状況
      2. 即時併合機会の見逃し回避
-        - extra_low(score0834)でreactive_pairs=4~5あるのにHIGH_TOWERが続き即時併合を逃している
-        - ワーストゲーム(score0799)でreactive_pairs=1~2でHIGH_TOWERが選択され早期ゲームオーバー
-        - ベストゲーム(score2325)ではmax_y>=2.0, reactive_pairs>=2で即時併合が積極的に選択され盤面回復
-     3. 盤面圧縮による回復戦略
-        - 延命（高さ管理）ではなく回復（即時併合で盤面を下げる）を優先
-        - reactive_pairs>=2は盤面に反応可能なペアが十分にあり、即時併合で盤面を圧縮できる状況
+        - 低スコア群でHEIGHT_CONTROL選択が高く、中盤での即時併合見逃しが早期ゲームオーバーの一因
+        - 即時併合候補がある場合、300〜400ボーナスで優先的に評価する
+     3. ベストゲームと同様の盤面圧縮戦略
+        - ベストゲーム(score3003)では中盤から即時併合を優先して盤面圧縮を実現
+        - 中盤フェーズでの早期の盤面圧縮により、盤面の圧迫を回避しスコア安定性を向上
     """
 
     results = analysis.get("results", [])
@@ -174,13 +168,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 盤面圧縮優先戦略
         # max_yが高い盤面では、併合候補の中でも着地Yが低いものを優先する傾向がある
         # LOW/MEDIUMフェーズのheight_multを維持（1.0, 1.4）し、HIGHフェーズはheight_mult=1.8
-        # v163: 危険局面での即時併合優先 - max_y>=2.0かつreactive_pairs>=2でheight_multiplierを0.0に設定
-        # ワーストゲームの終盤分析でreactive_pairs>=2あるにもかかわらずHIGH_TOWERが選択され即時併合を逃している失敗パターンを特定
-        # max_y>=2.0でreactive_pairs>=2の場合、height_multiplierを0.0にして即時併合を支配的に優先
-        if max_y >= 2.0 and reactive_pair_count >= 2:
-            height_multiplier = 0.0  # v163: 危険局面で高さペナルティ無効化、即時併合を支配的に優先
-        else:
-            height_multiplier = 30.0 if phase != "LOW" else 15.0
+        height_multiplier = 30.0 if phase != "LOW" else 15.0
 
         height_penalty = landing_y * height_multiplier * height_mult
 
