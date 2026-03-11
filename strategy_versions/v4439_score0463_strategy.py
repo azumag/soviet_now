@@ -8,15 +8,16 @@ Game Overview:
   - Player controls only drop X coordinate
 
  Decision Logic (8 evaluation axes):
-   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-   2. Height penalty - Penalty for high landing position (varies by phase)
-   3. Drift penalty - Penalty for post-landing drift due to polygon shape
-   4. Left-right balance correction - Bonus for correcting piece count bias
-   5. nextNext centering - Center for next merge opportunity if nextNext same type
-   6. Chain merge bonus - Evaluate possibility of further merges after merge
-   7. Early game merge priority - Bonus for NEAR merge in early game (max_y < -2.0)
-   8. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase
-   9. v161: Medium phase immediate merge priority - Filter to merge candidates when reactive_pairs >= 2 in MEDIUM phase
+    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+    2. Height penalty - Penalty for high landing position (varies by phase, v163: reduced when reactive_pairs >= 3)
+    3. Drift penalty - Penalty for post-landing drift due to polygon shape
+    4. Left-right balance correction - Bonus for correcting piece count bias
+    5. nextNext centering - Center for next merge opportunity if nextNext same type
+    6. Chain merge bonus - Evaluate possibility of further merges after merge
+    7. Early game merge priority - Bonus for NEAR merge in early game (max_y < -2.0)
+    8. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase
+    9. v161: Medium phase immediate merge priority - Filter to merge candidates when reactive_pairs >= 2 in MEDIUM phase
+   10. v163: High reactivity height penalty reduction - Reduce height penalty when reactive_pairs >= 3 to prioritize immediate merge
 
  Phases (determined by board max Y):
    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -46,30 +47,39 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先
 #   - 即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260311_224024_score0328.jsonl, game_history/20260311_222520_score0849.jsonl
+# v163: 高反応器ペナ削減による即時併合強化版 - ワーストゲーム(score0594, score0645)の終盤8ターン分析で、reactive_pairs=3-7あるにもかかわらずHIGH_TOWERが選択され続け即時併合を逃している失敗パターンを特定
+#   - 危険局面ではないがreactive_pairsが高い状況で、height_penaltyが強すぎて併合機会を優先できない問題を解消
+#   - max_y >= 1.0かつreactive_pairs >= 3の場合、height_multiplierを動的に削減して即時併合を優先
+#   - height_multiplier = max(base_value * (1.0 - (reactive_pair_count - 2) * 0.15), min_value)
+#   - MEDIUMフェーズ: base=15.0, min=5.0 (削減率最大67%)
+#   - HIGHフェーズ: base=30.0, min=10.0 (削減率最大67%)
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_004246_score0594.jsonl turns 58-65, game_history/20260312_002337_score0645.jsonl turns 58-65
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v162: 中盤低反応器活性化によるSANDWICH_AVOID強化版
+    """v163: 高反応器ペナ削減による即時併合強化版
 
-    batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認。
-    ワーストゲーム(score0328, score0849)の失敗パターン分析に基づき、中盤フェーズでreactive_pairsが少ない場合、
-    即時併合を逃してHEIGHT_CONTROLを選択すると早期ゲームオーバーになる問題を解消。
-    中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先し、
-    即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
+    batch_summaryでHEIGHT_CONTROLが28.6%選択(avg_score_delta=0.8)と過剰であることを確認。
+    ワーストゲーム(score0594, score0645)の終盤8ターン分析で、reactive_pairs=3-7あるにもかかわらずHIGH_TOWERが選択され続け
+    即時併合を逃している失敗パターンを特定。
+    危険局面ではないがreactive_pairsが高い状況(max_y >= 1.0, reactive_pairs >= 3)で、
+    height_penaltyが強すぎて併合機会を優先できない問題を解消。
 
-    v162の改善点：
-     1. 中盤低反応器活性化によるSANDWICH_AVOID強化
-        - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
-        - 危険局面ではないが、盤面圧迫を回避するために即時併合を優先
-        - reactive_pairs <= 1 は盤面がまだ疎で、即時併合による盤面圧縮が効果的である状況
+    v163の改善点：
+     1. 高反応器ペナ削減による即時併合強化
+        - max_y >= 1.0かつreactive_pairs >= 3の場合、height_multiplierを動的に削減して即時併合を優先
+        - MEDIUMフェーズ: base=15.0, min=5.0（削減率最大67%）
+        - HIGHフェーズ: base=30.0, min=10.0（削減率最大67%）
+        - 危険局面ではないがreactive_pairsが高い状況での即時併合を強化
      2. 即時併合機会の見逃し回避
-        - 低スコア群でHEIGHT_CONTROL選択が高く、中盤での即時併合見逃しが早期ゲームオーバーの一因
-        - 即時併合候補がある場合、300〜400ボーナスで優先的に評価する
-     3. ベストゲームと同様の盤面圧縮戦略
-        - ベストゲーム(score3003)では中盤から即時併合を優先して盤面圧縮を実現
-        - 中盤フェーズでの早期の盤面圧縮により、盤面の圧迫を回避しスコア安定性を向上
+        - ワーストゲーム(score0594)のturn 61-63でreactive_pairs=7あるにもかかわらずHIGH_TOWERが選択される失敗を解消
+        - ワーストゲーム(score0645)のturn 59,61,63でreactive_pairs=3-4あるにもかかわらずHIGH_TOWERが選択される失敗を解消
+        - reactive_pairs=3-7の状況でheight_multiplierを12.75-10.5または5.25-25.5に削減し、即時併合を優先
+     3. v162の改善を維持
+        - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
+        - reactive_pairsが少ない状況での即時併合見逃しを回避
     """
 
     results = analysis.get("results", [])
@@ -107,6 +117,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "CRITICAL"
         height_mult = 1.0
         merge_mult = 0.6
+
+    # --- v163: 高反応器ペナ削減による即時併合強化 ---
+    # ワーストゲーム(score0594, score0645)の終盤8ターン分析で、reactive_pairs=3-7あるにもかかわらず
+    # HIGH_TOWERが選択され続け即時併合を逃している失敗パターンを特定。
+    # 危険局面ではないがreactive_pairsが高い状況で、height_penaltyが強すぎて併合機会を優先できない問題を解消。
+    # max_y >= 1.0かつreactive_pairs >= 3の場合、height_multiplierを動的に削減して即時併合を優先。
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_004246_score0594.jsonl, game_history/20260312_002337_score0645.jsonl
+    high_reactivity_zone = max_y >= 1.0 and reactive_pair_count >= 3
 
     # --- v161: 中盤フェーズでの即時併合優先強化版 ---
     # ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避
@@ -169,6 +187,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # max_yが高い盤面では、併合候補の中でも着地Yが低いものを優先する傾向がある
         # LOW/MEDIUMフェーズのheight_multを維持（1.0, 1.4）し、HIGHフェーズはheight_mult=1.8
         height_multiplier = 30.0 if phase != "LOW" else 15.0
+
+        # v163: 高反応器ペナ削減 - reactive_pairsが多い場合、height_multiplierを削減して即時併合を優先
+        # ワーストゲームでreactive_pairs=3-7あるにもかかわらずHIGH_TOWERが選択される失敗パターンを解消
+        # refs: game_history/20260312_004246_score0594.jsonl turns 61-63, game_history/20260312_002337_score0645.jsonl turns 59,61,63
+        if high_reactivity_zone and not dangerous_situation:
+            if phase == "MEDIUM":
+                # MEDIUMフェーズ: base=15.0, reactive_pairs=3で12.75, reactive_pairs=7で5.25
+                # 最小値5.0まで削減（削減率最大67%）
+                base_multiplier = 15.0
+                min_multiplier = 5.0
+                reduction = (reactive_pair_count - 2) * 0.15  # 3→0.15, 4→0.30, 5→0.45, 6→0.60, 7→0.75
+                height_multiplier = max(base_multiplier * (1.0 - reduction), min_multiplier)
+            elif phase == "HIGH":
+                # HIGHフェーズ: base=30.0, reactive_pairs=3で25.5, reactive_pairs=7で10.5
+                # 最小値10.0まで削減（削減率最大67%）
+                base_multiplier = 30.0
+                min_multiplier = 10.0
+                reduction = (reactive_pair_count - 2) * 0.15  # 3→0.15, 4→0.30, 5→0.45, 6→0.60, 7→0.75
+                height_multiplier = max(base_multiplier * (1.0 - reduction), min_multiplier)
 
         height_penalty = landing_y * height_multiplier * height_mult
 
