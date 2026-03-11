@@ -4686,7 +4686,7 @@ generate_comment_response() {
 		local comment_prompt_file
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
 		cat >"$comment_prompt_file" <<COMMENTPROMPT
-あなたはソ連風ラジオDJ。リスナーのTwitchコメントに返事してください。
+あなたはソ連のラジオDJ。リスナーのTwitchコメントに返事してください。
 	時刻: ${current_time} / ${time_period}
 
 	【返信対象コメント（今回）】
