@@ -32,59 +32,65 @@ Fixed interface:
 AI modifiable: decide() body, helper functions, constants, imports
 AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
-# [BEST:5310] v159: reactor情報活用による危険局面即時併合優先版
-# v160: 危険局面フィルタリング早期化強化版 - max_y>=1.8かつreactive_pairs>=3で併合機会のみを評価対象
-#   - 危険局面でのFARマージボーナスを強化（200.0→1200.0）し、いずれかの併合機会を確保
-#   - ワーストゲーム(score0467)の失敗パターン分析に基づき、危険局面の閾値を厳密化
-# v161: 中盤フェーズでの即時併合優先強化版 - ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避
-#   - 中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にする
-#   - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
-#   - これにより、盤面がまだ圧縮可能な段階で即時併合を優先し、盤面圧迫を回避する
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_022246_score0606.jsonl turns 62-69, game_history/20260311_025551_score2766.jsonl turns 135-141
-# v162: 中盤低反応器活性化によるSANDWICH_AVOID強化版 - batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認
-#   - ワーストゲーム(score0328, score0849)の終盤分析で、中盤フェーズでreactive_pairsが少ない場合、HEIGHT_CONTROLが選択され早期ゲームオーバーとなる失敗パターンを特定
-#   - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先
-#   - 即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260311_224024_score0328.jsonl, game_history/20260311_222520_score0849.jsonl
-# v163: 高反応器ペナ削減による即時併合強化版 - ワーストゲーム(score0594, score0645)の終盤8ターン分析で、reactive_pairs=3-7あるにもかかわらずHIGH_TOWERが選択され続け即時併合を逃している失敗パターンを特定
-#   - 危険局面ではないがreactive_pairsが高い状況で、height_penaltyが強すぎて併合機会を優先できない問題を解消
-#   - max_y >= 1.0かつreactive_pairs >= 3の場合、height_multiplierを動的に削減して即時併合を優先
-#   - height_multiplier = max(base_value * (1.0 - (reactive_pair_count - 2) * 0.15), min_value)
-#   - MEDIUMフェーズ: base=15.0, min=5.0 (削減率最大67%)
-#   - HIGHフェーズ: base=30.0, min=10.0 (削減率最大67%)
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_004246_score0594.jsonl turns 58-65, game_history/20260312_002337_score0645.jsonl turns 58-65
-# v164: 即時併合直接ボーナスによる強化版 - ワーストゲーム(score0463)の失敗パターン分析で、v163のペナルティ削減ロジックがdangerous_situationフラグによってブロックされる問題を特定
-#   - v163のhigh_reactivity_zone条件は、dangerous_situationがTrueの場合に適用されず、即時併合が抑制される
-#   - ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITY（reactive_pairs >= 2で+500.0ボーナス）を採用し、ペナルティ削減アプローチを置換
-#   - reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与し、即時併合を強制的に優先
-#   - これにより、危険局面でも即時併合が選択され、HIGH_TOWER選択を抑制してスコア安定性を向上させる
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_012424_score0463.jsonl turns 60-64
-"""
+ # --- Change History ---
+ # [BEST:5310] v159: reactor情報活用による危険局面即時併合優先版
+ # v160: 危険局面フィルタリング早期化強化版 - max_y>=1.8かつreactive_pairs>=3で併合機会のみを評価対象
+ #   - 危険局面でのFARマージボーナスを強化（200.0→1200.0）し、いずれかの併合機会を確保
+ #   - ワーストゲーム(score0467)の失敗パターン分析に基づき、危険局面の閾値を厳密化
+ # v161: 中盤フェーズでの即時併合優先強化版 - ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避
+ #   - 中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にする
+ #   - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
+ #   - これにより、盤面がまだ圧縮可能な段階で即時併合を優先し、盤面圧迫を回避する
+ # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_022246_score0606.jsonl turns 62-69, game_history/20260311_025551_score2766.jsonl turns 135-141
+ # v162: 中盤低反応器活性化によるSANDWICH_AVOID強化版 - batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認
+ #   - ワーストゲーム(score0328, score0849)の終盤分析で、中盤フェーズでreactive_pairsが少ない場合、HEIGHT_CONTROLが選択され早期ゲームオーバーとなる失敗パターンを特定
+ #   - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先
+ #   - 即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる
+ # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260311_224024_score0328.jsonl, game_history/20260311_222520_score0849.jsonl
+ # v163: 高反応器ペナ削減による即時併合強化版 - ワーストゲーム(score0594, score0645)の終盤8ターン分析で、reactive_pairs=3-7あるにもかかわらずHIGH_TOWERが選択され続け即時併合を逃している失敗パターンを特定
+ #   - 危険局面ではないがreactive_pairsが高い状況で、height_penaltyが強すぎて併合機会を優先できない問題を解消
+ #   - max_y >= 1.0かつreactive_pairs >= 3の場合、height_multiplierを動的に削減して即時併合を優先
+ #   - height_multiplier = max(base_value * (1.0 - (reactive_pair_count - 2) * 0.15), min_value)
+ #   - MEDIUMフェーズ: base=15.0, min=5.0 (削減率最大67%)
+ #   - HIGHフェーズ: base=30.0, min=10.0 (削減率最大67%)
+ # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_004246_score0594.jsonl turns 58-65, game_history/20260312_002337_score0645.jsonl turns 58-65
+ # v164: 即時併合直接ボーナスによる強化版 - ワーストゲーム(score0463)の失敗パターン分析で、v163のペナルティ削減ロジックがdangerous_situationフラグによってブロックされる問題を特定
+ #   - v163のhigh_reactivity_zone条件は、dangerous_situationがTrueの場合に適用されず、即時併合が抑制される
+ #   - ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITY（reactive_pairs >= 2で+500.0ボーナス）を採用し、ペナルティ削減アプローチを置換
+ #   - reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与し、即時併合を強制的に優先
+ #   - これにより、危険局面でも即時併合が選択され、HIGH_TOWER選択を抑制してスコア安定性を向上させる
+ # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_012424_score0463.jsonl turns 60-64
+ # v165: 危険局面即時併合強化版（閾値緩和） - batch_summaryでHEIGHT_CONTROLが28.2%選択(avg_score_delta=2.1)と過剰であることを確認
+ #   - ワーストゲーム(score0636)の終盤8ターン(turns 58-64)で、reactive_pairs=2の状況が5ターン続いているにもかかわらずHIGH_TOWERが選択される失敗パターンを特定
+ #   - ベストゲーム(score2561)ではreactive_pairs=2-4の状況で即時併合が選択され、盤面圧縮による回復を実現
+ #   - v164のreactive_pairs >= 3閾値を>=2に緩和し、危険局面での即時併合をより強力に優先する
+ #   - ベスト戦略(best_score5310)のv176と同様に、reactive_pairs >= 2で即時併合を優先する構造を採用
+ # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260312_021950_score0636.jsonl turns 58-64,
+ #       game_history/20260312_022713_score2561.jsonl, strategy_versions/best_score5310_strategy.py
+ """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v164: 即時併合直接ボーナスによる強化版
+    """v165: 危険局面判定の統一
 
-    batch_summaryでHEIGHT_CONTROLが28.6%選択(avg_score_delta=0.8)と過剰であることを確認。
-    ワーストゲーム(score0463)の失敗パターン分析で、v163のペナルティ削減ロジックがdangerous_situationフラグによってブロックされる問題を特定。
-    max_y >= 1.8かつreactive_pairs >= 3の危険局面で、dangerous_situation=Trueとなり、high_reactivity_zoneのペナルティ削減が適用されず、
-    reactive_pairs=4-5あるにもかかわらずHIGH_TOWERが選択される失敗が発生。
-    ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITYアプローチを採用し、直接ボーナス方式に切り替える。
+    batch_summaryでHEIGHT_CONTROLが28.2%選択(avg_score_delta=2.1)と過剰であることを確認。
+    ワーストゲーム(score0636)の終盤8ターン(turns 58-64)で、reactive_pairs=2の状況が5ターン続いているにもかかわらずHIGH_TOWERが選択される失敗パターンを特定。
+    危険局面の判定条件（dangerous_situation）が REACTIVE_MERGE_PRIORITY ボーナス（reactive_pairs >= 2）と不整合している問題を解消。
+    dangerous_situationの判定条件を REACTIVE_MERGE_PRIORITY と統一し、危険局面のフィルタリングと即時併合ボーナスの適用条件を整合させることで、判断の一貫性を確保。
 
-    v164の改善点：
-     1. 即時併合直接ボーナスの採用
-        - v163のペナルティ削減アプローチを廃止し、直接ボーナス方式に切り替え
-        - reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与
-        - 危険局面(dangerous_situation=True)でもボーナスが適用されるため、即時併合が選択される
+    v165の改善点：
+     1. 危険局面判定の統一
+        - MEDIUMフェーズ: phase == "MEDIUM" and reactive_pair_count >= 2
+        - HIGH/CRITICALフェーズ: max_y >= 1.8 and reactive_pair_count >= 2
+        - v164の危険局面判定（HIGHフェーズで reactive_pairs >= 3）を廃止し、統一条件を採用
      2. 即時併合機会の見逃し回避
-        - ワーストゲーム(score0463)のturn 60,61,63,64でreactive_pairs=4-5あるにもかかわらずHIGH_TOWERが選択される失敗を解消
-        - 危険局面でも即時併合を強制的に優先し、盤面圧縮を促進
-     3. v162の改善を維持
-        - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
-        - reactive_pairsが少ない状況での即時併合見逃しを回避
+        - ワーストゲーム(score0636)のturns 58-64でreactive_pairs=2あるにもかかわらずHIGH_TOWERが選択される失敗を解消
+        - 危険局面での即時併合ボーナス適用とフィルタリング条件が統合されたことで、危険局面での判断が一貫する
+     3. v164の改善を維持
+        - 即時併合直接ボーナス（reactive_pairs >= 2で+500.0）は維持
+        - 危険局面でもボーナスが適用される仕組みを維持
     """
 
     results = analysis.get("results", [])
@@ -123,20 +129,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_mult = 1.0
         merge_mult = 0.6
 
-    # --- v164: 即時併合直接ボーナスによる強化版 ---
-    # v163のペナルティ削減ロジック(high_reactivity_zone)は削除済み
-    # ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITYアプローチを採用し、直接ボーナス方式に切り替えた
-    # reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与
-    # 危険局面でもボーナスが適用されるため、即時併合が選択される
-    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_012424_score0463.jsonl turns 60-64
+    # --- v165: 危険局面即時併合強化版（閾値緩和） ---
+    # v164のreactive_pairs >= 3から>=2に緩和し、危険局面での即時併合をより強力に優先
+    # ワーストゲーム(score0636)の終盤8ターンでreactive_pairs=2の状況が5ターン続いているにもかかわらずHIGH_TOWERが選択される失敗パターンを解消
+    # ベスト戦略(best_score5310)のv176と同様にreactive_pairs >= 2で即時併合を優先
+    # 危険局面(dangerous_situation=True)でもボーナスが適用されるため、即時併合が選択される
+ # v165: 危険局面判定の統一 - dangerous_situationの判定条件をREACTIVE_MERGE_PRIORITYボーナスと統一
+ #   - MEDIUMフェーズ: phase == "MEDIUM" and reactive_pair_count >= 2
+ #   - HIGH/CRITICALフェーズ: max_y >= 1.8 and reactive_pair_count >= 2
+ #   - これにより、危険局面のフィルタリングと即時併合ボーナスの適用条件が整合し、判断の一貫性を確保
+ # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_021950_score0636.jsonl turns 58-64
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260312_021950_score0636.jsonl turns 58-64,
+#       game_history/20260312_022713_score2561.jsonl, strategy_versions/best_score5310_strategy.py
 
-    # --- v161: 中盤フェーズでの即時併合優先強化版 ---
-    # ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避
-    # 中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にする
-    # HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動
-    # これにより、盤面がまだ圧縮可能な段階で即時併合を優先し、盤面圧迫を回避する
+    # --- v165: 危険局面判定の統一 ---
+    # 危険局面の判定条件を REACTIVE_MERGE_PRIORITY ボーナスと統一するため、閾値を reactive_pairs >= 2 に統一
+    # MEDIUMフェーズ(0.8 <= max_y < 1.8): reactive_pairs >= 2
+    # HIGHフェーズ(max_y >= 1.8): reactive_pairs >= 2
+    # これにより、危険局面のフィルタリングと即時併合ボーナスの適用条件が整合し、判断の一貫性を確保
     dangerous_situation_medium = phase == "MEDIUM" and reactive_pair_count >= 2
-    dangerous_situation_high = max_y >= 1.8 and reactive_pair_count >= 3
+    dangerous_situation_high = max_y >= 1.8 and reactive_pair_count >= 2
     dangerous_situation = dangerous_situation_medium or dangerous_situation_high
 
     # --- next piece information ---
@@ -194,10 +206,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # LOW/MEDIUMフェーズのheight_multを維持（1.0, 1.4）し、HIGHフェーズはheight_mult=1.8
         height_multiplier = 30.0 if phase != "LOW" else 15.0
 
-        # v164: 危険局面での高さペナルティ無効化
-        # max_y >= 1.8かつreactive_pairs >= 3の危険局面では、即時併合を優先するためにheight_multiplierを0.0に設定
-        # refs: game_history/20260312_012424_score0463.jsonl turns 60-64
-        if max_y >= 1.8 and reactive_pair_count >= 3:
+        # v165: 危険局面判定の統一 - dangerous_situationの判定条件をREACTIVE_MERGE_PRIORITYボーナスと統一
+        # MEDIUMフェーズ: reactive_pairs >= 2, HIGH/CRITICALフェーズ: max_y >= 1.8 and reactive_pairs >= 2
+        # 危険局面で高さペナルティ無効化し、即時併合を優先
+        # refs: game_history/20260312_021950_score0636.jsonl turns 58-64
+        if dangerous_situation:
             height_multiplier = 0.0
 
         height_penalty = landing_y * height_multiplier * height_mult
@@ -213,13 +226,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- v164: 即時併合直接ボーナス -----
-        # v163のペナルティ削減ロジックは削除済み
-        # ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITYアプローチを採用
-        # reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与
+        # ----- v165: 即時併合直接ボーナス（危険局面判定統一版） -----
+        # v164の即時併合直接ボーナスを維持しつつ、危険局面判定を統一
+        # REACTIVE_MERGE_PRIORITY（reactive_pairs >= 2）とdangerous_situation（reactive_pairs >= 2）を統一
         # 危険局面(dangerous_situation=True)でもボーナスが適用されるため、即時併合が選択される
-        # refs: game_history/20260312_012424_score0463.jsonl turns 60-64
-        if reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_021950_score0636.jsonl turns 58-64,
+        #       game_history/20260312_022713_score2561.jsonl, strategy_versions/best_score5310_strategy.py
+        if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
             score += 500.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
