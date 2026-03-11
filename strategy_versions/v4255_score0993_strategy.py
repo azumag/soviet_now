@@ -49,7 +49,7 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
  #   merge_available=falseが続き、HIGH_TOWER/HIGH_LAYERが選択される失敗パターンを特定。
  #   v177(best_score5310)のreactive_pairs-based merge priorityを導入し、max_y >= 2.0 かつ reactive_pairs >= 2 の危険局面で
  #   即時併合候補(DIRECT/NEAR)に+1000.0ボーナスを与え、非併合配置に-2000.0ペナルティを課すことで即時併合を強力に優先。
- # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260311_141001_score0696.jsonl turns 58-65,
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260311_141001_score0696.jsonl turns 58-65,
  #       game_history/20260311_143033_score2348.jsonl, strategy_versions/best_score5310_strategy.py
  """
 
