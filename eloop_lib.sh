@@ -2549,6 +2549,67 @@ print("\n\n".join(out_blocks))
 PY
 }
 
+_random_pick_news_block() {
+	local blocks_text="$1"
+	python3 - "$PAST_NEWS_READ_SOURCES" "$blocks_text" <<'PY'
+import os
+import random
+import sys
+from collections import Counter
+
+source_hist_path = sys.argv[1]
+raw = sys.argv[2] if len(sys.argv) > 2 else ""
+
+try:
+    import json
+    with open("tmp/news_meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    meta = {}
+
+def _name_to_key(name):
+    if name == "ウィキニュース" or name.startswith("Wikinews"):
+        return "wikinews"
+    return {"首相官邸": "kantei", "Global Voices": "globalvoices"}.get(name, "")
+
+# Parse blocks
+blocks = []
+current = []
+for line in raw.splitlines():
+    if line.startswith("■ "):
+        if current:
+            blocks.append(current)
+        current = [line.rstrip()]
+    elif current:
+        current.append(line.rstrip())
+if current:
+    blocks.append(current)
+
+if not blocks:
+    sys.exit(0)
+
+# Weight by inverse source frequency (prefer underrepresented sources)
+hist = []
+if os.path.exists(source_hist_path):
+    with open(source_hist_path, encoding="utf-8", errors="ignore") as f:
+        hist = [ln.strip() for ln in f if ln.strip()]
+recent = hist[-12:]
+counts = Counter(recent)
+
+weights = []
+for block in blocks:
+    title = block[0][2:].strip() if block[0].startswith("■ ") else ""
+    item = meta.get(title, {})
+    source_name = (item.get("source") or "").strip()
+    source_key = _name_to_key(source_name)
+    freq = counts.get(source_key, 0) if source_key else 0
+    weights.append(1.0 / (1 + freq))
+
+chosen = random.choices(blocks, weights=weights, k=1)[0]
+print("\n".join(chosen))
+PY
+}
+
 _news_source_balance_hint() {
 	local blocks_text="$1"
 	python3 - "$PAST_NEWS_READ_SOURCES" "$blocks_text" <<'PY'
@@ -2813,9 +2874,11 @@ _radio_generate_and_play() {
 	local prompt_file="$1" game_num="$2" score="$3" corner_name="$4"
 	shift 4
 	local no_preempt=true
+	local selected_news=""
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--no-preempt) no_preempt=true ;;
+		--selected-news) shift; selected_news="$1" ;;
 		esac
 		shift
 	done
@@ -2852,45 +2915,13 @@ _radio_generate_and_play() {
 		return 1
 	fi
 
-	local talk_body talk_summary selected_news parse_dir
+	local talk_body talk_summary parse_dir
 	parse_dir=$(mktemp -d /tmp/eloop_radio_parse_XXXXXXXX)
 	printf '%s' "$talk" | _radio_parse_output_to_files "$parse_dir/body.txt" "$parse_dir/summary.txt" "$parse_dir/selected_news.txt"
 	talk_body=$(cat "$parse_dir/body.txt" 2>/dev/null)
 	talk_summary=$(cat "$parse_dir/summary.txt" 2>/dev/null)
-	selected_news=$(cat "$parse_dir/selected_news.txt" 2>/dev/null)
 	rm -rf "$parse_dir"
 	[ -z "$talk_summary" ] && talk_summary="(要約なし)"
-
-	# ニュースコーナーの場合、選んだニュースを既読リストに記録
-	if [ "$corner_name" = "news" ]; then
-		if [ -n "$selected_news" ]; then
-			local selected_key selected_topic_key selected_source_name selected_source_key
-			selected_news=$(_resolve_selected_news_title "$selected_news" "tmp/news.txt")
-			selected_key=$(_news_title_key "$selected_news")
-			selected_topic_key=$(_news_topic_key "$selected_news")
-			selected_source_name=$(_news_source_name_for_title "$selected_news")
-			selected_source_key=$(_news_source_key_from_name "$selected_source_name")
-			if [ -z "$selected_key" ]; then
-				log "[RADIO:news] 既読記録スキップ: タイトル解決失敗"
-			elif grep -qxF "$selected_news" "$PAST_NEWS_READ" 2>/dev/null || \
-				grep -qxF "$selected_key" "$PAST_NEWS_READ_KEYS" 2>/dev/null || \
-				{ [ -n "$selected_topic_key" ] && grep -qxF "$selected_topic_key" "$PAST_NEWS_TOPIC_KEYS" 2>/dev/null; }; then
-				log "[RADIO:news] 重複ニュース検出 → スキップ: ${selected_news}"
-				_radio_clear_state "$corner_name"
-				rmdir "$inflight_dir" 2>/dev/null || true
-				return 1
-			else
-				echo "$selected_news" >>"$PAST_NEWS_READ"
-				echo "$selected_key" >>"$PAST_NEWS_READ_KEYS"
-				[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
-				_append_news_read_source "$selected_source_key"
-				tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
-				tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
-				tail -120 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
-				log "[RADIO:news] 既読記録: ${selected_news}"
-			fi
-		fi
-	fi
 
 	# ニュースは選択タイトルを必ず先頭で読み上げる
 	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
