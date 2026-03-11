@@ -771,6 +771,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     bar_w = 22
     # marker1 + rank3 + space + hash8 + space + n/t6 + sep1 + bar22 + metrics
     rollback_candidates = collect_rollback_candidate_hashes(rolling, current_hash)
+    sort_key = lambda e: (e["comp"], e["p50"], e["p25"], e["n_roll"])
 
     all_entries = []
     provisional_entries = []
@@ -804,23 +805,43 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     if not current_entry and current_hash:
         provisional_current = next((e for e in provisional_entries if e["hash"] == current_hash), None)
 
+    combined_entries = sorted(all_entries + provisional_entries, key=sort_key, reverse=True)
+    for idx, e in enumerate(combined_entries, start=1):
+        e["overall_rank"] = idx
+
     if not all_entries:
         lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature strategies only: n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
         if provisional_current:
+            metric_header = "comp p50  p25"
+            provisional_current["rank"] = provisional_current.get("overall_rank", 0)
+            lines.append(f"{DIM} rk hash      n/t  │{'bar':<{bar_w}} {metric_header}{RST}")
+            max_comp = max(provisional_current["comp"], 1)
+            n_field = f"{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}"
+            bar = block_bar(provisional_current["comp"], max_comp, bar_w, C_GREEN)
             lines.append(
-                f"  {C_GREEN}Current* provisional {provisional_current['h8']}{RST} "
-                f"c{int(provisional_current['comp'])} m{int(provisional_current['p50'])} "
-                f"q{int(provisional_current['p25'])} l{int(provisional_current['lcb'])} "
-                f"n{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}"
+                f"►{provisional_current['rank']:>2} {C_GREEN}{provisional_current['h8']}{RST} {DIM}{n_field:>6}{RST}│"
+                f"{bar} {int(provisional_current['comp']):>4} {int(provisional_current['p50']):>4} {int(provisional_current['p25']):>4}"
             )
         else:
             lines.append(f"  {DIM}(no mature data){RST}")
         return lines
 
-    all_entries.sort(key=lambda e: (e["comp"], e["p50"], e["p25"], e["n_roll"]), reverse=True)
+    all_entries.sort(key=sort_key, reverse=True)
     for idx, e in enumerate(all_entries, start=1):
         e["rank"] = idx
-    entries = all_entries[:max_rows]
+
+    show_provisional_inline = bool(
+        provisional_current and provisional_current.get("overall_rank", max_rows + 1) <= max_rows
+    )
+    if show_provisional_inline:
+        entries = sorted(all_entries + [provisional_current], key=sort_key, reverse=True)[:max_rows]
+        for idx, e in enumerate(entries, start=1):
+            e["display_rank"] = idx
+    else:
+        entries = all_entries[:max_rows]
+        for idx, e in enumerate(entries, start=1):
+            e["display_rank"] = idx
+
     max_comp = max(e["comp"] for e in entries) if entries else 1
     rollback_entry = next((e for e in all_entries if e["hash"] in rollback_candidates), None)
 
@@ -832,26 +853,20 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
             f"q{int(current_entry['p25']):>4} l{int(current_entry['lcb']):>4} "
             f"n{current_entry['n_roll']:>2}/{current_entry['n_total']:<3}"
         )
-    elif provisional_current:
-        lines.append(
-            f"  {C_GREEN}Current* provisional {provisional_current['h8']}{RST} "
-            f"c{int(provisional_current['comp']):>4} m{int(provisional_current['p50']):>4} "
-            f"q{int(provisional_current['p25']):>4} l{int(provisional_current['lcb']):>4} "
-            f"n{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}"
-        )
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
     metric_header = "comp p50  p25"
     lines.append(f"{DIM} rk hash      n/t  │{'bar':<{bar_w}} {metric_header}{RST}")
 
-    def render_entry(e, is_current=False):
+    def render_entry(e, is_current=False, rank_override=None):
         is_rollback = e["hash"] in rollback_candidates
         color = C_GREEN if is_current else (C_YELLOW if is_rollback else C_BLUE)
         marker = "►" if is_current else " "
         bar = block_bar(e["comp"], max_comp, bar_w, color)
         n_field = f"{e['n_roll']:>2}/{e['n_total']:<3}"
+        rank_value = e.get("display_rank", e.get("rank", 0)) if rank_override is None else rank_override
         return (
-            f"{marker}{e['rank']:>2} {color}{e['h8']}{RST} {DIM}{n_field:>6}{RST}│"
+            f"{marker}{rank_value:>2} {color}{e['h8']}{RST} {DIM}{n_field:>6}{RST}│"
             f"{bar} {int(e['comp']):>4} {int(e['p50']):>4} {int(e['p25']):>4}"
         )
 
@@ -865,6 +880,15 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
         if not rollback_entry or rollback_entry is current_entry:
             lines.append(f"{DIM} .. {'':8} {'':>6}│{'':<{bar_w}} {RST}")
         lines.append(render_entry(current_entry, is_current=True))
+    elif provisional_current and not show_provisional_inline:
+        lines.append(f"{DIM} .. {'':8} {'':>6}│{'':<{bar_w}} {RST}")
+        lines.append(
+            render_entry(
+                provisional_current,
+                is_current=True,
+                rank_override=provisional_current.get("overall_rank", 0),
+            )
+        )
     return lines
 
 
