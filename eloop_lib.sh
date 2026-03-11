@@ -3193,10 +3193,6 @@ start_radio_corner_news() {
 	fi
 	[ -z "$news_headlines" ] && return 1
 
-	# 過去に読んだニュース見出しリスト
-	local past_news_read=""
-	[ -f "$PAST_NEWS_READ" ] && past_news_read=$(cat "$PAST_NEWS_READ")
-
 	# 正規化キーで未読のみ抽出（表記揺れを吸収）
 	local unread_news_headlines=""
 	unread_news_headlines=$(printf '%s\n' "$news_headlines" | _filter_unread_news_blocks)
@@ -3205,8 +3201,33 @@ start_radio_corner_news() {
 		return 1
 	fi
 	unread_news_headlines=$(_prepare_news_prompt_blocks "$unread_news_headlines")
-	local news_source_balance_hint=""
-	news_source_balance_hint=$(_news_source_balance_hint "$unread_news_headlines")
+
+	# スクリプト側でランダムに1本選定
+	local selected_news selected_block
+	selected_block=$(_random_pick_news_block "$unread_news_headlines")
+	if [ -z "$selected_block" ]; then
+		log "[NEWS] ニュースブロック選定失敗 → スキップ"
+		return 1
+	fi
+	selected_news=$(printf '%s\n' "$selected_block" | head -n 1 | sed 's/^■ //')
+	log "[NEWS] スクリプト選定: ${selected_news}"
+
+	# 選定直後に既読記録（AI生成を待たずに確定）
+	local selected_key selected_topic_key selected_source_name selected_source_key
+	selected_key=$(_news_title_key "$selected_news")
+	selected_topic_key=$(_news_topic_key "$selected_news")
+	selected_source_name=$(_news_source_name_for_title "$selected_news")
+	selected_source_key=$(_news_source_key_from_name "$selected_source_name")
+	if [ -n "$selected_key" ]; then
+		echo "$selected_news" >>"$PAST_NEWS_READ"
+		echo "$selected_key" >>"$PAST_NEWS_READ_KEYS"
+		[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
+		_append_news_read_source "$selected_source_key"
+		tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
+		tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
+		tail -120 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
+		log "[NEWS] 既読記録: ${selected_news}"
+	fi
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
@@ -3216,18 +3237,12 @@ $(_radio_persona_block)
 【現在時刻】${_rc_time_spoken} ${_rc_period}
 【時間帯の雰囲気】${_rc_mood}
 
-【最新ニュース - 実際の本日のニュース】
-以下は本日の実際のニュースです。日本語以外の言語のニュースも含まれています。「既に読んだニュース」以外から1つ選んで、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
-外国語のニュースを選んだ場合は、内容を日本語に翻訳した上で語ること。読み上げは必ず日本語で行うこと。
+【本日のニュース】
+以下のニュースについて、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
+外国語のニュースの場合は、内容を日本語に翻訳した上で語ること。読み上げは必ず日本語で行うこと。
 ---
-${unread_news_headlines}
+${selected_block}
 ---
-
-【出典バランス】
-${news_source_balance_hint:-内容が同程度なら、最近少ない出典をやや優先して選ぶこと。}
-
-【既に読んだニュース - 絶対に選ばないこと】
-${past_news_read:-（なし）}
 
 【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
 ${past_topics}
@@ -3237,21 +3252,15 @@ ${past_topics}
 【トーク構成】
 1. 時間帯に合わせた軽いオープニング（2-3文）
 2. ニュースコーナー
-   - 「既に読んだニュース」に含まれない記事から1つ選ぶこと
-   - 内容が同程度なら、最近少ない出典のニュースを優先すること
-   - ニュース本文に入る前に、選んだニュースタイトルを1文で必ず読み上げること
-   - ニュースから1つ選んで、本文の内容を踏まえて1000字程度で深く語る
+   - ニュース本文に入る前に、ニュースタイトルを1文で必ず読み上げること
+   - 本文の内容を踏まえて1000字程度で深く語る
    - 単なる冷笑やツッコミで終わらせず、「なぜこうなったのか」「この先どうなるのか」「歴史的に見るとどういう位置づけか」など自分なりの洞察や意見を述べる
    - 斜に構えつつも知性を感じさせる分析を
 3. 軽いクロージング（1-2文）
 
 $(_radio_output_rules 1000 2000)
-
-最後に以下の形式で選んだニュースの見出しを出力すること:
-===SELECTED_NEWS===
-（選んだニュースの見出し1行）
 PROMPT
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news"
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news" --selected-news "$selected_news"
 }
 
 start_radio_corner_strategy() {
