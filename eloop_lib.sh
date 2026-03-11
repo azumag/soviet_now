@@ -64,6 +64,7 @@ PAST_NEWS_READ="$TMP_HISTORY_DIR/past_news_read.txt"
 PAST_NEWS_READ_KEYS="$TMP_HISTORY_DIR/past_news_read_keys.txt"
 PAST_NEWS_TOPIC_KEYS="$TMP_HISTORY_DIR/past_news_topic_keys.txt"
 PAST_NEWS_READ_SOURCES="$TMP_HISTORY_DIR/past_news_read_sources.txt"
+STRATEGY_ADVICE_FILE="advice.md"
 
 IMPROVE_STATE_FILE="$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_state.json"
 IMPROVE_AI_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/improve_ai.log"
@@ -116,6 +117,10 @@ mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" \
 	"$TMP_STATE_DIR" "$TMP_MARKERS_DIR" "$TMP_HISTORY_DIR" "$TMP_DEBUG_DIR" "$TMP_CACHE_DIR" \
 	"$COMMENT_QUEUE_DIR" "$COMMENT_SPOKEN_HISTORY_DIR" "$RADIO_DEFERRED_QUEUE_DIR" \
 	"$MANUAL_AUDIO_TRIGGER_DIR" "$RADIO_WEB_GROUNDING_CACHE_DIR" "tmp/.twitch_chat"
+
+if [ -f "tmp/advice.md" ] && [ ! -f "$STRATEGY_ADVICE_FILE" ]; then
+	mv "tmp/advice.md" "$STRATEGY_ADVICE_FILE" 2>/dev/null || cp "tmp/advice.md" "$STRATEGY_ADVICE_FILE" 2>/dev/null || true
+fi
 
 # --- tmp/ レイアウト移行 (旧パス → 新サブディレクトリ) ---
 if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
@@ -4515,7 +4520,7 @@ _append_strategy_advice_item() {
 	advice_item=$(printf '%s' "$advice_item" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
 	[ -n "$advice_item" ] || return 0
 	mkdir -p tmp 2>/dev/null || true
-	local advice_file="tmp/advice.md"
+	local advice_file="$STRATEGY_ADVICE_FILE"
 	local advice_line="- $advice_item"
 	[ -f "$advice_file" ] || : >"$advice_file"
 	if grep -qxF -- "$advice_line" "$advice_file" 2>/dev/null; then
@@ -4526,7 +4531,7 @@ _append_strategy_advice_item() {
 		tail -150 "$advice_file" >"${advice_file}.tmp"
 		mv "${advice_file}.tmp" "$advice_file"
 	fi
-	log "[COMMENT] 戦略アドバイス追記 → tmp/advice.md"
+	log "[COMMENT] 戦略アドバイス追記 → $STRATEGY_ADVICE_FILE"
 }
 
 generate_comment_response() {

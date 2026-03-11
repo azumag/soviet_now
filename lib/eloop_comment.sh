@@ -385,25 +385,25 @@ generate_comment_response() {
 			fi
 			rm -f "$comment_prompt_file"
 
-		if [ -n "$comments_talk" ]; then
-			# 戦略アドバイスを抽出して tmp/advice.md に追記
-			local advice_part
-			advice_part=$(echo "$comments_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
-			if [ -n "$advice_part" ]; then
-				local advice_item
-				advice_item=$(printf '%s' "$advice_part" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
-				if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
-					echo "- $advice_item" >> tmp/advice.md
+			if [ -n "$comments_talk" ]; then
+				# 戦略アドバイスを抽出して advice.md に追記
+				local advice_part
+				advice_part=$(echo "$comments_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
+				if [ -n "$advice_part" ]; then
+					local advice_item
+					advice_item=$(printf '%s' "$advice_part" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+					if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
+						echo "- $advice_item" >> advice.md
+					fi
+					# 最新エントリ程度に制限
+					if [ -f advice.md ] && [ "$(wc -l < advice.md)" -gt 150 ]; then
+						tail -150 advice.md > advice.md.tmp
+						mv advice.md.tmp advice.md
+					fi
+					log "[COMMENT] 戦略アドバイス検出 → advice.md に追記"
+					# トーク本文からアドバイス部分を除去
+					comments_talk=$(echo "$comments_talk" | sed '/^===ADVICE===/,$ d')
 				fi
-				# 最新エントリ程度に制限
-				if [ -f tmp/advice.md ] && [ "$(wc -l < tmp/advice.md)" -gt 150 ]; then
-					tail -150 tmp/advice.md > tmp/advice.md.tmp
-					mv tmp/advice.md.tmp tmp/advice.md
-				fi
-				log "[COMMENT] 戦略アドバイス検出 → tmp/advice.md に追記"
-				# トーク本文からアドバイス部分を除去
-				comments_talk=$(echo "$comments_talk" | sed '/^===ADVICE===/,$ d')
-			fi
 
 			comments_talk=$(_clean_comment_talk "$comments_talk")
 			comments_talk=$(printf '%s' "$comments_talk" | _sanitize_onair_text)
