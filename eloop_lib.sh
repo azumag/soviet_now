@@ -3409,6 +3409,16 @@ start_radio_corner_market() {
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
 
+	# Fetch latest exchange rates
+	./fetch_market.sh 2>/dev/null
+	local market_data="" market_instruction=""
+	if [[ -f tmp/market.txt ]] && [[ -s tmp/market.txt ]]; then
+		market_data=$(cat tmp/market.txt)
+		market_instruction="以下の実データを踏まえて語れ。データにない数値を捏造するな。"
+	else
+		market_instruction="為替データは取得できなかった。一般的な経済教養として語れ。"
+	fi
+
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
 	cat >"$prompt_file" <<PROMPT
@@ -3421,6 +3431,10 @@ $(_radio_persona_block)
 ${past_topics}
 
 【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【最新マーケットデータ】
+${market_data}
+${market_instruction}
 
 【トーク構成】
 1. 時間帯に合わせた軽いオープニング（2-3文）
