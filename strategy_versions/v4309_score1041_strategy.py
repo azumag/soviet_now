@@ -171,6 +171,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL height penalty basic value only
         merge_mult = 0.6  # v42: CRITICAL phase merge suppression
+    
+    # v4308: 危険局面での即時併合強化 - max_y>=1.5でreactive_pairs>=3の場合、height_multiplierを0.0に設定し即時併合を支配的にする
+    # ワーストゲーム(score0688)の終盤8ターンでreactive_pairs=4-5あるにもかかわらずHIGH_LAYER/HIGH_TOWERが選択され続け、即時併合機会を逃している失敗パターンを特定。
+    # advice.mdより「高さによる危険回避の重要性は低い、併合優先を重視すべき」が支持されている。
+    # thresholdをmax_y>=1.8→1.5に引き下げ、reactive_pairs>=3という少し厳しい条件で適用し、過剰な抑制を回避しつつ確実に即時併合を優先。
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_172910_score0688.jsonl turns 68-75, advice.md
 
     # --- next piece information ---
     next_piece = game_state.get("next", {})
@@ -247,11 +253,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("FAR_MERGE")
 
         # ----- evaluation axis 2: height penalty -----
-        # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
-        # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
+        # v4308: 危険局面での即時併合強化 - max_y>=1.5でreactive_pairs>=3の場合、height_multiplierを0.0に設定
+        # advice.mdより「高さによる危険回避の重要性は低い、併合優先を重視すべき」が支持されている。
+        # ワーストゲーム(score0688)の終盤8ターンでreactive_pairs=4-5あるにもかかわらずHIGH_LAYER/HIGH_TOWERが選択され続け、即時併合機会を逃している失敗パターンを特定。
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_172910_score0688.jsonl turns 68-75, advice.md
         height_multiplier = 30.0
         if early_game:
             height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
+        elif max_y >= 1.5 and reactive_pair_count >= 3:
+            height_multiplier = 0.0  # v4308: 危険局面で高さペナルティ無効化、即時併合を支配的に優先
 
         height_penalty = landing_y * height_multiplier * height_mult
 
