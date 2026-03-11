@@ -2466,14 +2466,14 @@ _append_news_read_source() {
 
 _prepare_news_prompt_blocks() {
 	local blocks_text="$1"
-	python3 - "$PAST_NEWS_READ_SOURCES" <<'PY'
+	python3 - "$PAST_NEWS_READ_SOURCES" "$blocks_text" <<'PY'
 import json
 import os
 import sys
 from collections import Counter
 
 source_hist_path = sys.argv[1]
-raw = sys.stdin.read()
+raw = sys.argv[2] if len(sys.argv) > 2 else ""
 
 try:
     with open("tmp/news_meta.json", encoding="utf-8") as f:
@@ -2532,19 +2532,18 @@ for block in blocks:
 
 print("\n\n".join(out_blocks))
 PY
-<<<"$blocks_text"
 }
 
 _news_source_balance_hint() {
 	local blocks_text="$1"
-	python3 - "$PAST_NEWS_READ_SOURCES" <<'PY'
+	python3 - "$PAST_NEWS_READ_SOURCES" "$blocks_text" <<'PY'
 import json
 import os
 import sys
 from collections import Counter
 
 source_hist_path = sys.argv[1]
-raw = sys.stdin.read()
+raw = sys.argv[2] if len(sys.argv) > 2 else ""
 
 try:
     with open("tmp/news_meta.json", encoding="utf-8") as f:
@@ -2580,7 +2579,6 @@ under = sorted(seen, key=lambda k: (counts.get(k, 0), {"wikinews": 0, "kantei": 
 prefer = label.get(under[0], under[0])
 print(f"直近12回のニュース出典件数: {', '.join(parts)}。内容が同程度なら最近少ない出典を優先。特に今回は {prefer} をやや優先。")
 PY
-<<<"$blocks_text"
 }
 
 _extract_news_source_name() {
