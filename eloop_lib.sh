@@ -74,7 +74,7 @@ ACCUMULATED_GAMES_FILE="$TMP_STATE_DIR/accumulated_games.json"
 ROLLING_SCORES_FILE="$TMP_STATE_DIR/rolling_scores.json"
 REJECTED_HASHES_FILE="$TMP_HISTORY_DIR/rejected_hashes.txt"
 REJECTED_HASH_META_FILE="$TMP_STATE_DIR/rejected_hash_metrics.json"
-REJECTED_REEVALUATE_MIN_NEW_GAMES="${REJECTED_REEVALUATE_MIN_NEW_GAMES:-8}"
+REJECTED_REEVALUATE_TTL_SEC="${REJECTED_REEVALUATE_TTL_SEC:-21600}"
 BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
@@ -5234,69 +5234,38 @@ _is_recently_rejected_for_rollback() {
 		return 1
 	fi
 	local recovered=""
-	recovered=$(python3 - "$ROLLING_SCORES_FILE" "$REJECTED_HASH_META_FILE" "$h" "$REJECTED_REEVALUATE_MIN_NEW_GAMES" <<'PY' 2>/dev/null
+	recovered=$(python3 - "$REJECTED_HASH_META_FILE" "$h" "$REJECTED_REEVALUATE_TTL_SEC" <<'PY' 2>/dev/null
 import json
-import math
 import os
 import sys
+import time
 
-rolling_file, meta_file, target_hash, min_new_games = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-if not (os.path.exists(rolling_file) and os.path.exists(meta_file)):
+meta_file, target_hash, ttl_sec = sys.argv[1], sys.argv[2], int(sys.argv[3])
+if not os.path.exists(meta_file):
     raise SystemExit(0)
 
 try:
-    rolling = json.load(open(rolling_file))
     meta = json.load(open(meta_file))
 except Exception:
     raise SystemExit(0)
 
 if target_hash not in meta:
-    print("legacy")
-    raise SystemExit(0)
-
-if target_hash not in rolling:
-    raise SystemExit(0)
-
-scores = [int(x) for x in rolling[target_hash].get("scores", [])]
-if not scores:
+    print("expired|legacy|0")
     raise SystemExit(0)
 
 rej = meta.get(target_hash, {})
-rej_comp = float(rej.get("comp", 0.0) or 0.0)
-rej_total = int(rej.get("games_total", 0) or 0)
-cur_total = int(rolling[target_hash].get("games_total", len(scores)) or len(scores))
-if cur_total < rej_total + min_new_games:
+rejected_at = int(rej.get("updated_at", 0) or 0)
+if rejected_at <= 0:
     raise SystemExit(0)
 
-xs = sorted(scores)
-n = len(xs)
-mean = sum(xs) / n
-if n == 1:
-    p25 = p50 = float(xs[0])
-    std = 0.0
-else:
-    def q(p):
-        pos = (n - 1) * p
-        lo = int(pos)
-        hi = min(lo + 1, n - 1)
-        frac = pos - lo
-        return xs[lo] * (1.0 - frac) + xs[hi] * frac
-    p25 = q(0.25)
-    p50 = q(0.50)
-    var = sum((x - mean) ** 2 for x in xs) / n
-    std = math.sqrt(var)
-lcb = mean - 1.28 * (std / math.sqrt(n))
-cur_comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
-if cur_comp > rej_comp:
-    print(f"recovered|{cur_total}|{rej_total}|{cur_comp:.2f}|{rej_comp:.2f}")
+age = int(time.time()) - rejected_at
+if age >= ttl_sec:
+    print(f"expired|{age}|{ttl_sec}")
 PY
 )
 	case "$recovered" in
-	recovered*)
-		log "[REGRESSION] rollback候補を再許可: $h (${recovered#recovered|})" >&2
-		return 1
-		;;
-	legacy*)
+	expired*)
+		log "[REGRESSION] rollback候補を再許可: $h (${recovered#expired|})" >&2
 		return 1
 		;;
 	esac

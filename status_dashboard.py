@@ -31,7 +31,7 @@ REGRESSION_TREND_LONG_RATIO = 0.95
 BEST_STRATEGY_ANCHOR_FILE = "tmp/state/best_strategy_anchor.json"
 REJECTED_HASHES_FILE = "tmp/history/rejected_hashes.txt"
 REJECTED_HASH_META_FILE = "tmp/state/rejected_hash_metrics.json"
-REJECTED_REEVALUATE_MIN_NEW_GAMES = 8
+REJECTED_REEVALUATE_TTL_SEC = 21600
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
 
@@ -263,19 +263,12 @@ def is_recently_rejected_for_rollback(hash_, rolling, rejected_hashes, rejected_
         return False
     if hash_ not in rejected_meta:
         return False
-    data = rolling.get(hash_)
-    if not isinstance(data, dict):
-        return True
-    metrics = calc_strategy_metrics(data.get("scores", []))
-    if not metrics:
-        return True
     rejected = rejected_meta.get(hash_, {})
-    rejected_comp = float(rejected.get("comp", 0.0) or 0.0)
-    rejected_total = int(rejected.get("games_total", 0) or 0)
-    current_total = int(data.get("games_total", len(data.get("scores", []))) or len(data.get("scores", [])))
-    if current_total >= rejected_total + REJECTED_REEVALUATE_MIN_NEW_GAMES and metrics["comp"] > rejected_comp:
+    rejected_at = int(rejected.get("updated_at", 0) or 0)
+    if rejected_at <= 0:
         return False
-    return True
+    age = int(__import__("time").time()) - rejected_at
+    return age < REJECTED_REEVALUATE_TTL_SEC
 
 
 def collect_rollback_candidate_hashes(rolling, current_hash):
