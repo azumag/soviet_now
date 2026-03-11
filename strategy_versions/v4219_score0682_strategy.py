@@ -38,14 +38,13 @@ Phases (determined by board max Y):
 # [BEST:4999] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
 # [BEST:4319] v177: reactor情報活用・初期マージ強化版 - reactor.reactive_pairs活用によりマージ優先評価を強化
 #
-# v193: 危険局面即時併合強化版
-# batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認。
-# 高スコア群(26.3%)と低スコア群(33.7%)の比較で、低スコア群が7.4%多くHEIGHT_CONTROLを選択していることを特定。
-# ワーストゲーム(score0767)の終盤8ターン(turns 70-78)でmax_y=2.63-2.81, reactive_pairs=2にもかかわらずHIGH_TOWERが選択され続け、即時併合を逃している失敗パターンを特定。
-# max_y>=2.0かつreactive_pairs>=2の危険局面で、即時併合候補（DIRECT/NEAR/FAR）がある場合、非併合配置に-1000ペナルティを課す評価軸8.5を追加。
-# reactive pair bonusボーナスを危険局面で4倍に増強（200.0*4.0=800.0）し、即時併合を強力に優先。
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260311_122144_score0767.jsonl, game_history/20260311_115642_score2258.jsonl,
-# game_history/20260311_120331_score1916.jsonl, analyze_board.py, strategy_versions/best_score5310_strategy.py
+# v192: Reactive pair bonus強化版
+# batch_summaryでHEIGHT_CONTROLが28.3%選択(avg_score_delta=1.4)と過剰であることを確認。
+# 高スコア群(27.2%)と低スコア群(29.5%)の比較で、低スコア群が2.3%多くHEIGHT_CONTROLを選択していることを特定。
+# reactor情報のreactive_pairsを活用し、反応可能なペアが2つ以上ある場合にマージを優先する評価軸を追加。
+# これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_132943_score0711.jsonl, game_history/20260308_130616_score2067.jsonl,
+# strategy_versions/best_score5310_strategy.py, strategy_versions/best_score4999_strategy.py, analyze_board.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -53,13 +52,12 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v193: 危険局面即時併合強化版
+    """v192: Reactive pair bonus強化版
 
-    batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認。
-    高スコア群(26.3%)と低スコア群(33.7%)の比較で、低スコア群が7.4%多くHEIGHT_CONTROLを選択していることを特定。
-    ワーストゲーム(score0767)の終盤8ターン(turns 70-78)でmax_y=2.63-2.81, reactive_pairs=2にもかかわらずHIGH_TOWERが選択され続け、即時併合を逃している失敗パターンを特定。
-    max_y>=2.0かつreactive_pairs>=2の危険局面で、即時併合候補（DIRECT/NEAR/FAR）がある場合、非併合配置に-1000ペナルティを課す評価軸8.5を追加。
-    reactive pair bonusボーナスを危険局面で4倍に増強（200.0*4.0=800.0）し、即時併合を強力に優先。
+    batch_summaryでHEIGHT_CONTROLが28.3%選択(avg_score_delta=1.4)と過剰であることを確認。
+    高スコア群(27.2%)と低スコア群(29.5%)の比較で、低スコア群が2.3%多くHEIGHT_CONTROLを選択していることを特定。
+    reactor情報のreactive_pairsを活用し、反応可能なペアが2つ以上ある場合にマージを優先する評価軸を追加。
+    これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -267,34 +265,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8: reactive pair bonus (v193: 危険局面強化版) -----
+        # ----- evaluation axis 8: reactive pair bonus (v192: NEW) -----
         # reactor情報のreactive_pairsを活用したマージ優先評価軸
-        # batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認。
-        # 高スコア群(26.3%)と低スコア群(33.7%)の比較で、低スコア群が7.4%多くHEIGHT_CONTROLを選択していることを特定。
+        # batch_summaryでHEIGHT_CONTROLが28.3%選択(avg_score_delta=1.4)と過剰であることを確認。
         # reactor.reactive_pairsは盤面上の反応可能なペア（DIRECTまたはNEARマージ可能なペア）のリスト
         # reactive_pair_count >= 2の場合、盤面に多数の併合機会があることを示唆。
         # この状況でマージを優先することでHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
-        # v192: reactor情報活用によるマージ優先評価軸の成功実績を踏襲
-        # v193: 危険局面（max_y >= 2.0, reactive_pairs >= 2）でのマージ優先強化
-        # ワーストゲーム(score0767)の終盤8ターン(turns 70-78)でmax_y=2.63-2.81, reactive_pairs=2にもかかわらずHIGH_TOWERが選択され続け、即時併合を逃している失敗パターンを特定。
-        # 危険局面でのreactive_pairボーナスを200.0→800.0に増強し、即時併合を強力に優先する。
+        # v177: reactor情報活用によるマージ優先評価軸の成功実績を踏襲
         if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
             # 盤面に2つ以上の反応可能なペアがある場合、マージを強力に優先
-            # v193: 危険局面ではボーナスを4倍に増強し、即時併合を強力に優先
-            bonus_multiplier = 4.0 if max_y >= 2.0 else 1.0
-            score += reactive_pair_count * 200.0 * bonus_multiplier
+            # reactive_pair_countが多いほど、より大きなボーナスを付与
+            score += reactive_pair_count * 200.0
             reasons.append("REACTIVE_MERGE")
-
-        # ----- evaluation axis 8.5: 危険局面即時併合強制 (v193: NEW) -----
-        # max_y >= 2.0かつreactive_pairs >= 2の危険局面で、即時併合候補（DIRECT/NEAR/FARマージ）がない配置に-1000ペナルティを課す。
-        # これにより、危険局面では即時併合候補以外を物理的に除外し、盤面圧縮を強制する。
-        # batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認。
-        # ワーストゲーム(score0767)の終盤8ターンでmax_y>=2.0かつreactive_pairs>=2にもかかわらずHIGH_TOWERが選択され続け、max_y=2.81まで上昇してゲームオーバーになる失敗パターンを特定。
-        # max_y>=2.0で即時併合候補がある場合、非併合配置を物理的に除外することで盤面圧縮を強制。
-        if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade == "NO":
-            # 危険局面で併合機会があるのに高さ優先を選択した場合、厳しいペナルティ
-            score -= 1000.0
-            reasons.append("DANGER_NO_MERGE_PENALTY")
 
         # ----- update best candidate -----
         if score > best_score:
