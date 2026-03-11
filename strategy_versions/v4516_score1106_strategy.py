@@ -7,26 +7,27 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
- Decision Logic (8 evaluation axes):
-   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-   2. Height penalty - Penalty for high landing position (varies by phase)
-   3. Drift penalty - Penalty for post-landing drift due to polygon shape
-   4. Left-right balance correction - Bonus for correcting piece count bias
-   5. nextNext centering - Center for next merge opportunity if nextNext same type
-   6. Chain merge bonus - Evaluate possibility of further merges after merge
-   7. Early game merge priority - Bonus for NEAR merge in early game (max_y < -2.0)
-   8. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase
-   9. v161: Medium phase immediate merge priority - Filter to merge candidates when reactive_pairs >= 2 in MEDIUM phase
+Decision Logic (8 evaluation axes):
+     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+     2. Height penalty - Penalty for high landing position (varies by phase)
+     3. Drift penalty - Penalty for post-landing drift due to polygon shape
+     4. Left-right balance correction - Bonus for correcting piece count bias
+     5. nextNext centering - Center for next merge opportunity if nextNext same type
+     6. Chain merge bonus - Evaluate possibility of further merges after merge
+     7. Early game merge priority - Bonus for NEAR merge in early game (max_y < -2.0)
+     8. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase
+     9. v161: Medium phase immediate merge priority - Filter to merge candidates when reactive_pairs >= 2 in MEDIUM phase
+    10. v164: Reactive merge priority - Direct bonus for merge when reactive_pairs >= 3 (replaces v163 penalty reduction)
 
- Phases (determined by board max Y):
+Phases (determined by board max Y):
    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
    MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4), immediate merge when reactive_pairs >= 2
    HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8), immediate merge when reactive_pairs >= 3
    CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression
 
 Fixed interface:
-  decide(game_state: dict, analysis: dict) -> dict
-     Returns: {"x": float, "reason": str}
+   decide(game_state: dict, analysis: dict) -> dict
+      Returns: {"x": float, "reason": str}
 
 AI modifiable: decide() body, helper functions, constants, imports
 AI prohibited: decide() signature, if __name__ == "__main__" block
@@ -41,29 +42,49 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
 #   - これにより、盤面がまだ圧縮可能な段階で即時併合を優先し、盤面圧迫を回避する
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_022246_score0606.jsonl turns 62-69, game_history/20260311_025551_score2766.jsonl turns 135-141
+# v162: 中盤低反応器活性化によるSANDWICH_AVOID強化版 - batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認
+#   - ワーストゲーム(score0328, score0849)の終盤分析で、中盤フェーズでreactive_pairsが少ない場合、HEIGHT_CONTROLが選択され早期ゲームオーバーとなる失敗パターンを特定
+#   - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先
+#   - 即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260311_224024_score0328.jsonl, game_history/20260311_222520_score0849.jsonl
+# v163: 高反応器ペナ削減による即時併合強化版 - ワーストゲーム(score0594, score0645)の終盤8ターン分析で、reactive_pairs=3-7あるにもかかわらずHIGH_TOWERが選択され続け即時併合を逃している失敗パターンを特定
+#   - 危険局面ではないがreactive_pairsが高い状況で、height_penaltyが強すぎて併合機会を優先できない問題を解消
+#   - max_y >= 1.0かつreactive_pairs >= 3の場合、height_multiplierを動的に削減して即時併合を優先
+#   - height_multiplier = max(base_value * (1.0 - (reactive_pair_count - 2) * 0.15), min_value)
+#   - MEDIUMフェーズ: base=15.0, min=5.0 (削減率最大67%)
+#   - HIGHフェーズ: base=30.0, min=10.0 (削減率最大67%)
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_004246_score0594.jsonl turns 58-65, game_history/20260312_002337_score0645.jsonl turns 58-65
+# v164: 即時併合直接ボーナスによる強化版 - ワーストゲーム(score0463)の失敗パターン分析で、v163のペナルティ削減ロジックがdangerous_situationフラグによってブロックされる問題を特定
+#   - v163のhigh_reactivity_zone条件は、dangerous_situationがTrueの場合に適用されず、即時併合が抑制される
+#   - ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITY（reactive_pairs >= 2で+500.0ボーナス）を採用し、ペナルティ削減アプローチを置換
+#   - reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与し、即時併合を強制的に優先
+#   - これにより、危険局面でも即時併合が選択され、HIGH_TOWER選択を抑制してスコア安定性を向上させる
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_012424_score0463.jsonl turns 60-64
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
+
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v161: 中盤フェーズでの即時併合優先強化版
+    """v164: 即時併合直接ボーナスによる強化版
 
-    ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避。
-    turn 60-67 で max_y=2.58-3.59, reactive_pairs=5-7 で即時併合を逃している失敗パターンを特定。
-    中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にし、
-    盤面がまだ圧縮可能な段階で即時併合を優先することで、盤面圧迫を回避しスコア安定性を向上させる。
+    batch_summaryでHEIGHT_CONTROLが28.6%選択(avg_score_delta=0.8)と過剰であることを確認。
+    ワーストゲーム(score0463)の失敗パターン分析で、v163のペナルティ削減ロジックがdangerous_situationフラグによってブロックされる問題を特定。
+    max_y >= 1.8かつreactive_pairs >= 3の危険局面で、dangerous_situation=Trueとなり、high_reactivity_zoneのペナルティ削減が適用されず、
+    reactive_pairs=4-5あるにもかかわらずHIGH_TOWERが選択される失敗が発生。
+    ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITYアプローチを採用し、直接ボーナス方式に切り替える。
 
-    v161の改善点：
-     1. 中盤フェーズでの即時併合優先強化
-        - MEDIUMフェーズでは reactive_pairs >= 2 でフィルタリング発動
-        - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
-        - これにより、盤面がまだ圧縮可能な段階で即時併合を優先
+    v164の改善点：
+     1. 即時併合直接ボーナスの採用
+        - v163のペナルティ削減アプローチを廃止し、直接ボーナス方式に切り替え
+        - reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与
+        - 危険局面(dangerous_situation=True)でもボーナスが適用されるため、即時併合が選択される
      2. 即時併合機会の見逃し回避
-        - ワーストゲームの turn 62-63 で reactive_pairs=6 があるにもかかわらず HIGH_TOWER が選択された失敗パターンを解消
-        - MEDIUMフェーズでの即時併合優先により、中盤での盤面圧迫を回避
-     3. ベストゲームと同様の盤面圧縮戦略
-        - ベストゲーム(score2766)では max_y=5.78 でも即時併合を優先して盤面圧縮を実現
-        - 中盤フェーズでの早期の盤面圧縮により、盤面の圧迫を回避しスコア安定性を向上
+        - ワーストゲーム(score0463)のturn 60,61,63,64でreactive_pairs=4-5あるにもかかわらずHIGH_TOWERが選択される失敗を解消
+        - 危険局面でも即時併合を強制的に優先し、盤面圧縮を促進
+     3. v162の改善を維持
+        - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
+        - reactive_pairsが少ない状況での即時併合見逃しを回避
     """
 
     results = analysis.get("results", [])
@@ -102,6 +123,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_mult = 1.0
         merge_mult = 0.6
 
+    # --- v164: 即時併合直接ボーナスによる強化版 ---
+    # v163のペナルティ削減ロジック(high_reactivity_zone)は削除済み
+    # ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITYアプローチを採用し、直接ボーナス方式に切り替えた
+    # reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与
+    # 危険局面でもボーナスが適用されるため、即時併合が選択される
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_012424_score0463.jsonl turns 60-64
+
     # --- v161: 中盤フェーズでの即時併合優先強化版 ---
     # ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避
     # 中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にする
@@ -121,7 +149,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     #  v160: 危険局面での候補フィルタリング
     # =======================================================================
     if dangerous_situation:
-        merge_results = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR", "FAR"]]
+        merge_results = [
+            r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR", "FAR"]
+        ]
         if merge_results:
             filtered_results = merge_results
         else:
@@ -164,6 +194,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # LOW/MEDIUMフェーズのheight_multを維持（1.0, 1.4）し、HIGHフェーズはheight_mult=1.8
         height_multiplier = 30.0 if phase != "LOW" else 15.0
 
+        # v164: 危険局面での高さペナルティ無効化
+        # max_y >= 1.8かつreactive_pairs >= 3の危険局面では、即時併合を優先するためにheight_multiplierを0.0に設定
+        # refs: game_history/20260312_012424_score0463.jsonl turns 60-64
+        if max_y >= 1.8 and reactive_pair_count >= 3:
+            height_multiplier = 0.0
+
         height_penalty = landing_y * height_multiplier * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
@@ -176,6 +212,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
+
+        # ----- v164: 即時併合直接ボーナス -----
+        # v163のペナルティ削減ロジックは削除済み
+        # ベスト戦略(best_score5310)のREACTIVE_MERGE_PRIORITYアプローチを採用
+        # reactive_pairs >= 3の場合、DIRECT/NEARマージに+500.0ボーナスを付与
+        # 危険局面(dangerous_situation=True)でもボーナスが適用されるため、即時併合が選択される
+        # refs: game_history/20260312_012424_score0463.jsonl turns 60-64
+        if reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
+            score += 500.0
+            reasons.append("REACTIVE_MERGE_PRIORITY")
 
         # ----- evaluation axis 3: drift penalty -----
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
@@ -201,6 +247,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
+        # ----- evaluation axis 5.5: sandwich situation avoidance (v162: 中盤低反応器活性化版) -----
+        # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合機会を逃す
+        # ワーストゲーム(score0328, score0849)の失敗パターン分析に基づき、中盤フェーズでreactive_pairsが少ない場合、
+        # 即時併合を逃してHEIGHT_CONTROLを選択すると早期ゲームオーバーになる問題を解消。
+        #
+        # v162の改善点：
+        # 1. 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
+        #    - 危険局面ではないが、盤面圧迫を回避するために即時併合を優先
+        #    - reactive_pairs <= 1 は盤面がまだ疎で、即時併合による盤面圧縮が効果的である状況
+        # 2. 即時併合機会の見逃し回避
+        #    - batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認
+        #    - 低スコア群でHEIGHT_CONTROL選択が高く、中盤での即時併合見逃しが早期ゲームオーバーの一因
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_224024_score0328.jsonl, game_history/20260311_222520_score0849.jsonl
+        medium_phase_low_reactivity = phase == "MEDIUM" and reactive_pair_count <= 1
+        if (
+            (not dangerous_situation or medium_phase_low_reactivity)
+            and next_type != 0
+            and next_next_type != 0
+            and next_type != next_next_type
+        ):
+            # 盤面上に next_type の駒があるかチェック
+            has_next_type_on_board = any(p.get("type") == next_type for p in pieces)
+            if has_next_type_on_board and merge_grade in ["DIRECT", "NEAR"]:
+                # 即時併合候補なら、nextNext の併合機会を守るためにボーナスを与える
+                # 中盤低反応器活性化の場合、ボーナスを強化して即時併合をより強力に優先
+                bonus_amount = 400.0 if medium_phase_low_reactivity else 300.0
+                score += bonus_amount
+                reasons.append("SANDWICH_AVOID")
+
         # ----- evaluation axis 6: chain merge bonus (v159: 基礎距離4.0版） -----
         # ワーストゲームではmax_y>2.5の盤面でもchain_mergeが有効だった可能性がある
         # そのため、着地低でchain_mage_bonusが高い配置を評価する
@@ -220,7 +295,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == next_type:
-                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                        dist = (
+                            (p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2
+                        ) ** 0.5
                         if dist < chain_distance_max:
                             nearby_pieces.append((dist, p))
 
