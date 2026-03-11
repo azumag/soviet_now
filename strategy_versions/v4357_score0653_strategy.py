@@ -3,11 +3,11 @@
 
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
-- Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
-- Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
-- Player controls only drop X coordinate
+  - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
+  - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
+  - Player controls only drop X coordinate
 
-Decision Logic (7 evaluation axes):
+ Decision Logic (7 evaluation axes):
     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
     2. Height penalty - Penalty for high landing position (varies by phase)
     3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -26,9 +26,9 @@ Decision Logic (7 evaluation axes):
 
      Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8)
-   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+  MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8)
+  HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+  CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
 # Fixed interface:
@@ -59,7 +59,7 @@ Decision Logic (7 evaluation axes):
 # v174: HIGHフェーズ高さペナルティ抑制版 - batch_summaryでNEAR_MERGE(avg_score_delta=22.6)が高価値だが選択率6.5%と低いことを確認。
 # HIGHフェーズでheight_mult=1.8が高すぎてNEAR_MERGE機会を潰している問題に対し、height_multを1.8→1.0に抑制し併合機会を優先。
 # v175: REACTIVE_MERGE_PRIORITY評価軸追加版 - 終盤高危険域(max_y>=1.8)でreactive_pairs>=2がある場合、DIRECT/NEARに+500ボーナスを付与し即時併合機会を優先。
-# ワーストゲームの終盤8ターン(max_y=2.37-2.38, reactive_pairs=3でDEFAULT_PLACEMENTが続き即時併合機会を逃している失敗パターンを特定。
+# ワーストゲームの終盤8ターン(max_y=2.37-2.38, reactive_pairs=3)でDEFAULT_PLACEMENTが続き即時併合機会を逃している失敗パターンを特定。
 # v177の成功構造を復帰し、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先することでスコア安定性を向上させる。
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_125627_score0528.jsonl, strategy_versions/best_score5310_strategy.py, prompts/game_theory.md
 # v176: DANGER_RECOVERY_PENALTY評価軸追加版 - ワーストゲーム(score0794)の終盤8ターン(turns 58-60)でHIGH_TOWERが3回選択され、reactive_pairs=2があるにもかかわらず即時併合を逃している失敗パターンを特定。
@@ -81,6 +81,7 @@ Decision Logic (7 evaluation axes):
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
+
 def decide(game_state: dict, analysis: dict) -> dict:
     """v3805: BOARD_DENSITY評価軸削除版
 
@@ -89,17 +90,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
     v171で追加したBOARD_DENSITY評価軸を削除し、併合機会を逃す盤面分散配置を排除することでスコア安定性を向上させる。
 
     v3805の改善点:
-     1. BOARD_DENSITY評価軸削除
-        - board density bonus評価軸を完全に削除
-        - 盤面密度を基準とした配置を排除
-        - 併合機会を最優先する決定ルールに集約
-     2. v178の危険局面フィルタリング強化（max_y>=2.0, reactive_pairs>=2 → DIRECT/NEAR/FARマージ候補のみ）
-        - v178仕様通りmax_y>=2.0で危険局面を定義
-        - FARマージも評価対象に含め、いずれかの併合機会を確保
-     3. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
-     4. v174のHIGHフェーズ高さペナルティ抑制を維持
-     5. v173の序盤HEIGHT_CONTROL抑制を維持
-
+    1. BOARD_DENSITY評価軸削除
+       - board density bonus評価軸を完全に削除
+       - 盤面密度を基準とした配置を排除
+       - 併合機会を最優先する決定ルールに集約
+    2. v178の危険局面フィルタリング強化（max_y>=2.0, reactive_pairs>=2 → DIRECT/NEAR/FARマージ候補のみ）
+       - v178仕様通りmax_y>=2.0で危険局面を定義
+       - FARマージも評価対象に含め、いずれかの併合機会を確保
+    3. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
+    4. v174のHIGHフェーズ高さペナルティ抑制を維持
+    5. v173の序盤HEIGHT_CONTROL抑制を維持
+    
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
         analysis: analyze_board.py analysis results
@@ -110,7 +111,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
                 - merges: individual distance/merge judgment for each same-type piece
             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
-
+    
     Returns:
         {"x": drop X coordinate, "reason": selection reason}
     """
@@ -127,7 +128,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
-
+    
     # --- v173: 序盤判定をmax_y < -3.0に拡大 ---
     early_game = max_y < -3.0
 
@@ -145,20 +146,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 1.0
-        merge_mult = 1.2
+        height_mult = 1.0  # low board weak height penalty
+        merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
-        height_mult = 1.8
+        height_mult = 1.8  # v151: height_mult 2.2->1.8 relaxation, ensure merge opportunity
         merge_mult = 1.0
     elif max_y < 3.0:
         phase = "HIGH"
-        height_mult = 1.0
+        height_mult = 1.0  # v174: batch_summary分析に基づきHIGHフェーズの高さペナルティ抑制(1.8→1.0)しNEAR_MERGE機会を優先
         merge_mult = 1.0
     else:
         phase = "CRITICAL"
-        height_mult = 1.0
-        merge_mult = 0.6
+        height_mult = 1.0  # CRITICAL height penalty basic value only
+        merge_mult = 0.6  # v42: CRITICAL phase merge suppression
 
     # --- next piece information ---
     next_piece = game_state.get("next", {})
@@ -173,6 +174,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
 
+    # --- v171: Calculate board density (for new evaluation axis 7) ---
+    # Count pieces and calculate weighted height on each side
+    # Density is weighted by piece height to avoid stacking on already-high side
+    left_density = 0.0
+    right_density = 0.0
+    for p in pieces:
+        x = p["x"]
+        y = p["y"]
+        # Weight density by height (higher pieces contribute more to density)
+        weight = max(0, y + 4.0)  # y=-4.48 at bottom, so shift to positive
+        if x < 0:
+            left_density += weight
+        else:
+            right_density += weight
+
+    # Normalize densities
+    total_density = left_density + right_density
+    if total_density > 0:
+        left_density /= total_density
+        right_density /= total_density
+
     # =======================================================================
     #  score each drop candidate (x coordinate) with 8 evaluation axes
     #  v3805: 危険局面フィルタリング強化 - max_y>=2.0でreactive_pairs>=2の場合、
@@ -184,11 +206,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # v3806: 危険局面フィルタリング閾値引下 - max_y>=1.8でreactive_pairs>=2の場合、併合機会のみを評価
     # ワーストゲーム(score0586)の終盤(max_y=2.92, reactive_avg=5.2)でHIGH_TOWERが選択され続けている問題を解決
     # 危険度閾値をHIGHフェーズ境界(max_y>=1.8)に引き下げ、より早く危険局面を検知して盤面圧縮を強制
-    # DIRECT/NEAR/FARマージ候補のみを評価対象にし、非併合配置を物理的に除外することでスコア安定性を向上させる。
+    # DIRECT/NEAR/FARマージ候補のみを評価対象にし、非併合配置を物理的に除外することでスコア安定性を向上させる
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260310_161808_score0586.jsonl turns 60-67
     if max_y >= 1.8 and reactive_pair_count >= 2:
+        # merge_gradeがDIRECT/NEAR/FARの候補のみを評価対象にする
         merge_candidates = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR", "FAR"]]
         if merge_candidates:
-            results = merge_candidates
+            results = merge_candidates  # 併合機会がある場合、それのみを評価
         # 併合機会がない場合は全候補を評価
 
     for result in results:
@@ -217,7 +241,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
         height_multiplier = 30.0
         if early_game:
-            height_multiplier = 0.1
+            height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -239,11 +263,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 4: left-right balance correction (v162: enhanced) -----
         balance_strength = 20.0
         if phase == "HIGH":
-            balance_strength = 50.0
+            balance_strength = 50.0  # v148: HIGH balance control even stricter
         elif phase == "MEDIUM":
-            balance_strength = 40.0
-        else:
-            balance_strength = 20.0
+            balance_strength = 40.0  # v162: MEDIUM phase balance correction enhanced
 
         left_count = sum(1 for p in pieces if p["x"] < 0)
         right_count = len(pieces) - left_count
@@ -262,13 +284,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
+                # get best merge target (closest distance)
                 best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
+                # v170: v155成功パラメータ復帰 & v157/v159動的調整復帰
                 chain_distance_max = 5.0 + landing_y * 0.6
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
+                # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
@@ -276,8 +301,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if dist < chain_distance_max:
                             nearby_pieces.append((dist, p))
 
+                # sort by distance (closest first)
                 nearby_pieces.sort(key=lambda piece: piece[0])
 
+                # v170: v155距離加重ボーナス復帰 - 3つの最も近いピースに対して、距離に応じて減衰するボーナスを適用
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
                     chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
@@ -296,7 +323,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 8: REACTIVE_MERGE_PRIORITY (v175: NEW) -----
+        # v3805: BOARD_DENSITY evaluation axis removed - batch_summary analysis showed BOARD_DENSITY has 10.7% frequency but avg_score_delta=0.3 (low value)
+        # Low-score games have higher DEFAULT_PLACEMENT (17.1%) and BOARD_DENSITY (12.8%) selection rates compared to high-score games
+        # Removing BOARD_DENSITY prevents non-merge placements that were prioritizing board density over immediate merge opportunities
+        # This structural change removes an evaluation axis, allowing merge-focused decisions to dominate
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md
+
+         # ----- evaluation axis 8: REACTIVE_MERGE_PRIORITY (v175: NEW) -----
         # reactor情報のreactive_pairsを活用し、反応濃度の高い状況での即時反応を優先
         # 終盤高危険域(max_y>=1.8)でreactive_pairs>=2がある場合、DIRECT/NEARに+500ボーナス
         # これにより、反応器（reactor）情報を活用して反応濃度の高い状況での即時反応を優先
@@ -313,6 +346,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # HIGHフェーズ以降でnear_pairs>=3がある場合、着地位置が低い候補にボーナスを付与
         # 理論的背景: 物理的なシェイク・押し込みは下から上へ伝播しやすいため、低い位置からの干渉がより効果的
         # これにより、潜在併合機会（near_pairs）を即時反応可能状態（reactive_pairs）に変換する確率を向上
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md
         if phase in ["HIGH", "CRITICAL"] and near_pair_count >= 3:
             potential_bonus = landing_y * -50.0  # 着地位置が低いほど大きなボーナス
             score += potential_bonus
