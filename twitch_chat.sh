@@ -280,7 +280,7 @@ _fetch_nolock() {
                 fi
 
                 echo "$clean_line" >> "$scan_tmp"
-            done <<<"$(printf '%s\n' "$new_comments" | tail -10)"
+            done <<<"$(printf '%s\n' "$new_comments")"
 
             # 同一行の重複を除去（多重接続/再送対策）
             if [ -s "$scan_tmp" ]; then
@@ -331,8 +331,8 @@ _fetch_nolock() {
             _log "fetch: pending重複を$((before_count - after_count))件除去"
         fi
 
-        # pending.logも最新10件に制限
-        tail -10 "$PENDING_LOG" > "$OUTFILE"
+        # pending は FIFO で先頭から処理する
+        head -10 "$PENDING_LOG" > "$OUTFILE"
         local pending_count
         pending_count=$(wc -l < "$OUTFILE" | tr -d ' ')
         _log "fetch: pending ${pending_count}件を出力"
