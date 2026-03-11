@@ -2643,7 +2643,7 @@ license_name = item.get("license")
 if not license_name:
     raise SystemExit(0)
 
-parts = [title]
+parts = ["[NEWS] " + title]
 author = (item.get("author") or "").strip()
 if author:
     parts.append("by " + author)

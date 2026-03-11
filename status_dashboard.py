@@ -801,10 +801,10 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
         lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature strategies only: n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
         if provisional_current:
             lines.append(
-                f"  {DIM}cur provisional {provisional_current['h8']} "
+                f"  {C_GREEN}Current* provisional {provisional_current['h8']}{RST} "
                 f"c{int(provisional_current['comp'])} m{int(provisional_current['p50'])} "
                 f"q{int(provisional_current['p25'])} l{int(provisional_current['lcb'])} "
-                f"n{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}{RST}"
+                f"n{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}"
             )
         else:
             lines.append(f"  {DIM}(no mature data){RST}")
@@ -820,17 +820,17 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(comp=0.55p50+0.30p25+0.15lcb, mature only n>={MIN_GAMES_FOR_BEST_ROLLBACK}, rollback=yellow){RST}"]
     if current_entry:
         lines.append(
-            f"  {DIM}cur #{current_entry['rank']:>2} {current_entry['h8']} "
+            f"  {C_GREEN}Current #{current_entry['rank']:>2} {current_entry['h8']}{RST} "
             f"c{int(current_entry['comp']):>4} m{int(current_entry['p50']):>4} "
             f"q{int(current_entry['p25']):>4} l{int(current_entry['lcb']):>4} "
-            f"n{current_entry['n_roll']:>2}/{current_entry['n_total']:<3}{RST}"
+            f"n{current_entry['n_roll']:>2}/{current_entry['n_total']:<3}"
         )
     elif provisional_current:
         lines.append(
-            f"  {DIM}cur provisional {provisional_current['h8']} "
+            f"  {C_GREEN}Current* provisional {provisional_current['h8']}{RST} "
             f"c{int(provisional_current['comp']):>4} m{int(provisional_current['p50']):>4} "
             f"q{int(provisional_current['p25']):>4} l{int(provisional_current['lcb']):>4} "
-            f"n{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}{RST}"
+            f"n{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}"
         )
     # Align with numeric columns rendered as: " {comp:>4} {p50:>4} {p25:>4}"
     # p50 label is intentionally shifted 1 column left for visual column match.
