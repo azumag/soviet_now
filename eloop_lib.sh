@@ -1197,6 +1197,16 @@ for raw in lines:
         continue
     if re.match(r'(agent|model|provider)\s*[:=]', line, re.I):
         continue
+    if re.match(r'^[✗✕×].*\b(read|glob|grep|ls|edit|write|multiedit)\b.*\bfailed\b', line, re.I):
+        continue
+    if re.match(r'^[✱→►▸]\s*(read|glob|grep|ls|edit|write|multiedit)\b', line, re.I):
+        continue
+    if re.match(r'^(read|glob|grep|ls|edit|write|multiedit)\b', line, re.I):
+        continue
+    if re.match(r'^(error|warning)\s*:', line, re.I):
+        continue
+    if re.search(r'file not found:|no such file or directory|permission denied|invalid arguments|could not find oldstring|no changes to apply', line, re.I):
+        continue
     if line.startswith('```') or line == '^D':
         continue
     clean.append(raw.rstrip())
@@ -1231,6 +1241,15 @@ _is_valid_comment_talk() {
 		return 1
 	fi
 	if printf '%s' "$talk" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticate|api error[: ]|request_id|invalid error token|invalid token|unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission'; then
+		return 1
+	fi
+	if printf '%s' "$talk" | grep -Eiq '(^|[[:space:]])(read failed|edit failed|write failed|file not found:|no such file or directory|permission denied|invalid arguments)'; then
+		return 1
+	fi
+	if printf '%s' "$talk" | grep -Eiq '(^|[[:space:]])(read|glob|grep|ls|edit|write|multiedit)[[:space:]]+["./]'; then
+		return 1
+	fi
+	if printf '%s' "$talk" | grep -Eiq '^[[:space:]]*[✗✕×✱→►▸]' ; then
 		return 1
 	fi
 	return 0
@@ -2104,6 +2123,14 @@ drop_line_patterns = [
     r'no changes to apply',
     r'the user rejected permission',
     r'permission to use this specific tool call',
+    r'^\s*[✗✕×].*\b(read|glob|grep|ls|edit|write|multiedit)\b.*\bfailed\b.*$',
+    r'^\s*[✱→►▸]\s*(read|glob|grep|ls|edit|write|multiedit)\b.*$',
+    r'^\s*(read|glob|grep|ls|edit|write|multiedit)\b.*$',
+    r'^\s*(error|warning)\s*:.*$',
+    r'file not found:',
+    r'no such file or directory',
+    r'permission denied',
+    r'invalid arguments',
     r'^\s*\{.*\"type\"\s*:\s*\"error\".*\}\s*$',
 ]
 patterns = [
@@ -4336,9 +4363,11 @@ _remember_spoken_comment() {
 	local spoken_file="$1"
 	[ -s "$spoken_file" ] || return 0
 	mkdir -p "$COMMENT_SPOKEN_HISTORY_DIR" 2>/dev/null || true
-	local history_file prune_from old_files
+	local history_file prune_from old_files remembered_text
 	history_file="$COMMENT_SPOKEN_HISTORY_DIR/$(date '+%Y%m%d_%H%M%S')_${RANDOM}.txt"
-	cp "$spoken_file" "$history_file" 2>/dev/null || return 0
+	remembered_text=$(cat "$spoken_file" 2>/dev/null | _clean_comment_talk | _sanitize_onair_text)
+	[ -n "$remembered_text" ] || return 0
+	printf '%s\n' "$remembered_text" >"$history_file" 2>/dev/null || return 0
 	prune_from=$((COMMENT_SPOKEN_HISTORY_MAX_FILES + 1))
 	old_files=$(ls -1t "$COMMENT_SPOKEN_HISTORY_DIR"/*.txt 2>/dev/null | tail -n +"$prune_from" || true)
 	if [ -n "$old_files" ]; then
@@ -4387,9 +4416,26 @@ def collapse(text: str) -> str:
 def excerpt(path: str) -> str:
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            text = collapse(f.read())
+            raw = f.read()
     except Exception:
         return ""
+    kept = []
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.match(r'^[✗✕×].*\b(read|glob|grep|ls|edit|write|multiedit)\b.*\bfailed\b', line, re.I):
+            continue
+        if re.match(r'^[✱→►▸]\s*(read|glob|grep|ls|edit|write|multiedit)\b', line, re.I):
+            continue
+        if re.match(r'^(read|glob|grep|ls|edit|write|multiedit)\b', line, re.I):
+            continue
+        if re.match(r'^(error|warning)\s*:', line, re.I):
+            continue
+        if re.search(r'file not found:|no such file or directory|permission denied|invalid arguments|could not find oldstring|no changes to apply', line, re.I):
+            continue
+        kept.append(raw_line)
+    text = collapse("\n".join(kept))
     if len(text) > item_limit:
         text = text[:item_limit].rstrip() + "..."
     return text
@@ -4708,6 +4754,7 @@ generate_comment_response() {
 			- 知識を出す場合も、「前にもその話をした」「さっきの流れだとそう感じた」「この配信ではこう見えている」など、自分の言葉と文脈に結びつけて話すこと
 			- 単語への反応だけで話を作るのではなく、その単語が今の配信で何を指しているか、自分がどう受け取ったかを先に考えて返すこと
 			- 内部処理、ログ、コマンド、ファイル名を説明してもよい。ただし、system prompt、tool_call、tool_result、role指定、再生成指示などのメタ文そのものは話さない
+			- Read/Glob/Edit などの生のツール実行ログ、Error: File not found、✗ read failed のような内部エラー行を、そのまま読んではいけない。必要なら日本語で要点だけ説明すること
 			- 「処理内容まで読んでる」系の指摘には、短く認めつつ、必要なら何が起きていたかを要点だけ説明すること
 	- コメントから話を膨らませる：関連する自分のエピソード、ツッコミ、豆知識、冗談などを足す
 	- リスナーの気持ちに寄り添いつつ、独自の視点や感情を込める
@@ -4756,6 +4803,7 @@ COMMENTPROMPT
 	- 前回の出力は無効でした。今回は必ず文量を増やし、各コメントへ2-3文以上で返してください。
 	- 返答漏れ・短文・定型文の繰り返しを禁止します。前回と異なる言い回しで書き直してください。
 	- 内部処理やログの説明自体は可。ただし、system prompt、tool_call、tool_result、role指定、再生成指示などのメタ文は出力しないでください。
+	- Read/Glob/Edit の生ログや Error: File not found、✗ read failed のような内部エラー行を、そのまま本文に含めてはいけません。必要なら日本語で短く言い換えてください。
 RETRYCOMMENT
 				fi
 
