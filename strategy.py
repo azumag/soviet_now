@@ -7,20 +7,14 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-  Decision Logic (7 evaluation axes):
-     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-     2. Height penalty - Penalty for high landing position (varies by phase)
-     3. Drift penalty - Penalty for post-landing drift due to polygon shape
-     4. Left-right balance correction - Bonus for correcting piece count bias
-     5. nextNext centering - Center for next merge opportunity if nextNext same type
-     6. Chain merge bonus - Evaluate possibility of further merges after merge
-     7. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
-     
-     v4120: 危険局面での即時併合優先化 - max_y>=2.0 かつ reactive_pairs>=4 の場合、height_multiplierを0.0に設定
-     ワーストゲーム(score0873, score1005)の終盤8ターンで max_y>=2.0, reactive_pairs>=4 にもかかわらず
-     HIGH_TOWER/HIGH_LAYER が選択され、即時併合機会を逃している失敗パターンを特定
-     危険度の非常に高い局面（max_y>=2.0, reactive_pairs>=4）で height_multiplier=0.0 に設定し、
-     height_penalty を無効化することで、即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される
+ Decision Logic (7 evaluation axes):
+    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+    2. Height penalty - Penalty for high landing position (varies by phase)
+    3. Drift penalty - Penalty for post-landing drift due to polygon shape
+    4. Left-right balance correction - Bonus for correcting piece count bias
+    5. nextNext centering - Center for next merge opportunity if nextNext same type
+    6. Chain merge bonus - Evaluate possibility of further merges after merge
+    7. Reactive merge priority - Bonus for merge opportunities in HIGH phase when reactive_pairs >= 2 (v175)
 
       v3810: 危険局面フィルタリング早期化強化・NEAR_PAIR_POTENTIAL無効化版 - max_y>=1.5かつreactive_pairs>=3で即時併合を最優先
       ワーストゲーム(score0522)の終盤(turns 53-60, max_y=2.96-3.0, reactive_pairs=6-7)でHIGH_TOWERが選択され続け、即時併合を逃している問題を解決
@@ -80,12 +74,6 @@ Game Overview:
 # 低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
 # BOARD_DENSITYを削除し、併合機会を逃す配置を排除することでスコア安定性を向上させる。
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md
-# v4120: 危険局面での即時併合優先化 - max_y>=2.0 かつ reactive_pair_count>=4 の場合、height_multiplierを0.0に設定
-# ワーストゲーム(score0873, score1005)の終盤8ターンで max_y>=2.0, reactive_pairs>=4 にもかかわらず
-# HIGH_TOWER/HIGH_LAYER が選択され、即時併合機会を逃している失敗パターンを特定
-# 危険度の非常に高い局面（max_y>=2.0, reactive_pairs>=4）で height_multiplier=0.0 に設定し、
-# height_penalty を無効化することで、即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_081245_score0873.jsonl turns 69-76, game_history/20260311_075124_score1005.jsonl turns 72-79, tmp/advice.md
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -93,23 +81,23 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v4120: 危険局面での即時併合優先化版
+    """v3805: BOARD_DENSITY評価軸削除版
 
-    ワーストゲーム(score0873, score1005)の終盤8ターンで max_y>=2.0, reactive_pairs>=4 にもかかわらず
-    HIGH_TOWER/HIGH_LAYER が選択され、即時併合機会を逃している失敗パターンを特定。
-    危険度の非常に高い局面（max_y>=2.0, reactive_pairs>=4）で height_multiplier=0.0 に設定し、
-    height_penalty を無効化することで、即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される。
+    batch_summary分析でBOARD_DENSITYが10.7%選択(avg_score_delta=0.3)と低価値を確認。
+    低スコア群のDEFAULT_PLACEMENT(17.1%)とBOARD_DENSITY(12.8%)選択率が高スコア群(DEFAULT_PLACEMENT 13.7%, BOARD_DENSITY 9.0%)より高いことを特定。
+    v171で追加したBOARD_DENSITY評価軸を削除し、併合機会を逃す盤面分散配置を排除することでスコア安定性を向上させる。
 
-    v4120の改善点:
-     1. 危険局面での即時併合優先化
-        - max_y>=2.0 かつ reactive_pair_count>=4 の場合、height_multiplierを0.0に設定
-        - height_penalty を無効化し、即時併合機会がある場合は mergeボーナスが支配的になる
-        - HIGH_TOWER/HIGH_LAYER などの延命配置を抑制し、即時併合による盤面圧縮を強制
-     2. v3805のBOARD_DENSITY評価軸削除を維持
-     3. v3810の危険局面フィルタリング早期化強化を維持
-     4. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
-     5. v174のHIGHフェーズ高さペナルティ抑制を維持
-     6. v173の序盤HEIGHT_CONTROL抑制を維持
+    v3805の改善点:
+    1. BOARD_DENSITY評価軸削除
+       - board density bonus評価軸を完全に削除
+       - 盤面密度を基準とした配置を排除
+       - 併合機会を最優先する決定ルールに集約
+    2. v178の危険局面フィルタリング強化（max_y>=2.0, reactive_pairs>=2 → DIRECT/NEAR/FARマージ候補のみ）
+       - v178仕様通りmax_y>=2.0で危険局面を定義
+       - FARマージも評価対象に含め、いずれかの併合機会を確保
+    3. v175のREACTIVE_MERGE_PRIORITY評価軸を維持
+    4. v174のHIGHフェーズ高さペナルティ抑制を維持
+    5. v173の序盤HEIGHT_CONTROL抑制を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -250,17 +238,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 2: height penalty -----
         # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
         # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
-        # v4120: 危険局面での即時併合優先化 - max_y>=2.0 かつ reactive_pair_count>=4 の場合、height_multiplierを0.0に設定
-        # ワーストゲーム(score0873, score1005)の終盤8ターンで max_y>=2.0, reactive_pairs>=4 にもかかわらず
-        # HIGH_TOWER/HIGH_LAYER が選択され、即時併合機会を逃している失敗パターンを特定
-# 危険度の非常に高い局面（max_y>=2.0, reactive_pairs>=4）で height_multiplier=0.0 に設定し、
-# height_penalty を無効化することで、即時併合機会がある場合は mergeボーナスが支配的になり即時併合が最優先される
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_081245_score0873.jsonl turns 69-76, game_history/20260311_075124_score1005.jsonl turns 72-79, tmp/advice.md
         height_multiplier = 30.0
         if early_game:
             height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
-        elif max_y >= 2.0 and reactive_pair_count >= 4:
-            height_multiplier = 0.0  # v4120: 危険局面で即時併合を最優先
 
         height_penalty = landing_y * height_multiplier * height_mult
 
