@@ -29,8 +29,7 @@ LAST_NEWS_META_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success_meta.json
 NEWS_ALLOW_STALE_CACHE = os.environ.get("NEWS_ALLOW_STALE_CACHE", "0")
 
 OUTPUT_COUNT = 3
-SUMMARY_LIMIT = 200
-WIKINEWS_SUMMARY_LIMIT = 4000
+SUMMARY_LIMIT = 4000
 REQUEST_TIMEOUT = 8.0
 USER_AGENT = "soren-news-fetcher/1.0"
 
@@ -332,7 +331,7 @@ def strip_wikitext(text: str) -> str:
     text = re.sub(r"\[\[([^|\]]*\|)?([^\]]+)\]\]", r"\2", text)
     text = re.sub(r"''+", "", text)
     text = strip_tags(text)
-    return trim_summary(text, limit=WIKINEWS_SUMMARY_LIMIT)
+    return trim_summary(text)
 
 
 def clean_item(source: dict, item: ET.Element, og_fetch_budget: int = 2) -> dict | None:
