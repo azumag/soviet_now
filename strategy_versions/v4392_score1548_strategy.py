@@ -41,28 +41,34 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
 #   - これにより、盤面がまだ圧縮可能な段階で即時併合を優先し、盤面圧迫を回避する
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_022246_score0606.jsonl turns 62-69, game_history/20260311_025551_score2766.jsonl turns 135-141
+# v162: 中盤低反応器活性化によるSANDWICH_AVOID強化版 - batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認
+#   - ワーストゲーム(score0328, score0849)の終盤分析で、中盤フェーズでreactive_pairsが少ない場合、HEIGHT_CONTROLが選択され早期ゲームオーバーとなる失敗パターンを特定
+#   - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先
+#   - 即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260311_224024_score0328.jsonl, game_history/20260311_222520_score0849.jsonl
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v161: 中盤フェーズでの即時併合優先強化版
+    """v162: 中盤低反応器活性化によるSANDWICH_AVOID強化版
 
-    ワーストゲーム(score0606)の失敗パターン分析に基づき、中盤フェーズでの即時併合機会の見逃しを回避。
-    turn 60-67 で max_y=2.58-3.59, reactive_pairs=5-7 で即時併合を逃している失敗パターンを特定。
-    中盤フェーズ(0.8 <= max_y < 1.8)では reactive_pairs >= 2 の段階で併合候補のみを評価対象にし、
-    盤面がまだ圧縮可能な段階で即時併合を優先することで、盤面圧迫を回避しスコア安定性を向上させる。
+    batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認。
+    ワーストゲーム(score0328, score0849)の失敗パターン分析に基づき、中盤フェーズでreactive_pairsが少ない場合、
+    即時併合を逃してHEIGHT_CONTROLを選択すると早期ゲームオーバーになる問題を解消。
+    中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先し、
+    即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる。
 
-    v161の改善点：
-     1. 中盤フェーズでの即時併合優先強化
-        - MEDIUMフェーズでは reactive_pairs >= 2 でフィルタリング発動
-        - HIGH/CRITICALフェーズでは reactive_pairs >= 3 でフィルタリング発動（v160の条件を維持）
-        - これにより、盤面がまだ圧縮可能な段階で即時併合を優先
+    v162の改善点：
+     1. 中盤低反応器活性化によるSANDWICH_AVOID強化
+        - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
+        - 危険局面ではないが、盤面圧迫を回避するために即時併合を優先
+        - reactive_pairs <= 1 は盤面がまだ疎で、即時併合による盤面圧縮が効果的である状況
      2. 即時併合機会の見逃し回避
-        - ワーストゲームの turn 62-63 で reactive_pairs=6 があるにもかかわらず HIGH_TOWER が選択された失敗パターンを解消
-        - MEDIUMフェーズでの即時併合優先により、中盤での盤面圧迫を回避
+        - 低スコア群でHEIGHT_CONTROL選択が高く、中盤での即時併合見逃しが早期ゲームオーバーの一因
+        - 即時併合候補がある場合、300〜400ボーナスで優先的に評価する
      3. ベストゲームと同様の盤面圧縮戦略
-        - ベストゲーム(score2766)では max_y=5.78 でも即時併合を優先して盤面圧縮を実現
+        - ベストゲーム(score3003)では中盤から即時併合を優先して盤面圧縮を実現
         - 中盤フェーズでの早期の盤面圧縮により、盤面の圧迫を回避しスコア安定性を向上
     """
 
@@ -201,16 +207,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 5.5: sandwich situation avoidance -----
+        # ----- evaluation axis 5.5: sandwich situation avoidance (v162: 中盤低反応器活性化版) -----
         # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合機会を逃す
-        # next_type と next_next_type が異なる場合、盤面上の next_type 駒の上に配置して即時併合を優先
-        # 特に危険局面（dangerous_situation）では即時併合を優先し、nextNext の併合機会を逃さない
-        if not dangerous_situation and next_type != 0 and next_next_type != 0 and next_type != next_next_type:
+        # ワーストゲーム(score0328, score0849)の失敗パターン分析に基づき、中盤フェーズでreactive_pairsが少ない場合、
+        # 即時併合を逃してHEIGHT_CONTROLを選択すると早期ゲームオーバーになる問題を解消。
+        # 
+        # v162の改善点：
+        # 1. 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
+        #    - 危険局面ではないが、盤面圧迫を回避するために即時併合を優先
+        #    - reactive_pairs <= 1 は盤面がまだ疎で、即時併合による盤面圧縮が効果的である状況
+        # 2. 即時併合機会の見逃し回避
+        #    - batch_summaryでHEIGHT_CONTROLが29.7%選択(avg_score_delta=2.2)と過剰であることを確認
+        #    - 低スコア群でHEIGHT_CONTROL選択が高く、中盤での即時併合見逃しが早期ゲームオーバーの一因
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_224024_score0328.jsonl, game_history/20260311_222520_score0849.jsonl
+        medium_phase_low_reactivity = (phase == "MEDIUM" and reactive_pair_count <= 1)
+        if (not dangerous_situation or medium_phase_low_reactivity) and next_type != 0 and next_next_type != 0 and next_type != next_next_type:
             # 盤面上に next_type の駒があるかチェック
             has_next_type_on_board = any(p.get("type") == next_type for p in pieces)
             if has_next_type_on_board and merge_grade in ["DIRECT", "NEAR"]:
                 # 即時併合候補なら、nextNext の併合機会を守るためにボーナスを与える
-                score += 300.0
+                # 中盤低反応器活性化の場合、ボーナスを強化して即時併合をより強力に優先
+                bonus_amount = 400.0 if medium_phase_low_reactivity else 300.0
+                score += bonus_amount
                 reasons.append("SANDWICH_AVOID")
 
         # ----- evaluation axis 6: chain merge bonus (v159: 基礎距離4.0版） -----
