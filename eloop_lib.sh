@@ -2451,10 +2451,8 @@ _news_source_key_from_name() {
 	local name="$1"
 	case "$name" in
 		"ウィキニュース"|wikinews|Wikinews) echo "wikinews" ;;
-		"Wikinews(EN)"|wikinews_en) echo "wikinews" ;;
-		"Wikinews(FR)"|wikinews_fr) echo "wikinews" ;;
-		"Wikinews(RU)"|wikinews_ru) echo "wikinews" ;;
-		"Wikinews(DE)"|wikinews_de) echo "wikinews" ;;
+		Wikinews\(*) echo "wikinews" ;;
+		wikinews_*) echo "wikinews" ;;
 		"首相官邸"|kantei|Kantei) echo "kantei" ;;
 		"Global Voices"|globalvoices|GlobalVoices) echo "globalvoices" ;;
 		*) echo "" ;;
@@ -2486,14 +2484,17 @@ except Exception:
     meta = {}
 
 pref_order = {"wikinews": 0, "kantei": 1, "globalvoices": 2}
-name_to_key = {
-    "ウィキニュース": "wikinews", "Wikinews(EN)": "wikinews",
-    "Wikinews(FR)": "wikinews", "Wikinews(RU)": "wikinews",
-    "Wikinews(DE)": "wikinews",
-    "首相官邸": "kantei", "Global Voices": "globalvoices",
-}
+def _name_to_key(name):
+    if name == "ウィキニュース" or name.startswith("Wikinews"):
+        return "wikinews"
+    return {"首相官邸": "kantei", "Global Voices": "globalvoices"}.get(name, "")
 display = {"wikinews": "ウィキニュース", "kantei": "首相官邸", "globalvoices": "Global Voices"}
-lang_labels = {"ja": "", "en": " [英語]", "fr": " [フランス語]", "ru": " [ロシア語]", "de": " [ドイツ語]"}
+lang_labels = {
+    "ja": "", "en": " [英語]", "fr": " [フランス語]", "ru": " [ロシア語]",
+    "de": " [ドイツ語]", "ar": " [アラビア語]", "cs": " [チェコ語]",
+    "eo": " [エスペラント]", "fi": " [フィンランド語]", "he": " [ヘブライ語]",
+    "pl": " [ポーランド語]", "uk": " [ウクライナ語]", "zh": " [中国語]",
+}
 
 hist = []
 if os.path.exists(source_hist_path):
@@ -2523,7 +2524,7 @@ def block_source_name(block):
     return (item.get("source") or "").strip()
 
 def block_source_key(block):
-    return name_to_key.get(block_source_name(block), "")
+    return _name_to_key(block_source_name(block))
 
 def block_priority(block):
     key = block_source_key(block)
@@ -2564,12 +2565,10 @@ try:
 except Exception:
     meta = {}
 
-name_to_key = {
-    "ウィキニュース": "wikinews", "Wikinews(EN)": "wikinews",
-    "Wikinews(FR)": "wikinews", "Wikinews(RU)": "wikinews",
-    "Wikinews(DE)": "wikinews",
-    "首相官邸": "kantei", "Global Voices": "globalvoices",
-}
+def _name_to_key(name):
+    if name == "ウィキニュース" or name.startswith("Wikinews"):
+        return "wikinews"
+    return {"首相官邸": "kantei", "Global Voices": "globalvoices"}.get(name, "")
 label = {"wikinews": "ウィキニュース", "kantei": "首相官邸", "globalvoices": "Global Voices"}
 
 hist = []
@@ -2585,7 +2584,7 @@ for line in raw.splitlines():
         continue
     title = line[2:].strip()
     source_name = (meta.get(title, {}) or {}).get("source", "").strip()
-    key = name_to_key.get(source_name, "")
+    key = _name_to_key(source_name)
     if key and key not in seen:
         seen.append(key)
 
