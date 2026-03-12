@@ -4919,6 +4919,155 @@ print("\n".join(lines) if lines else "（なし）")
 PY
 }
 
+_build_comment_followup_hints() {
+	local batch_file="$1"
+	local current_file=""
+	current_file=$(_current_playing_comment_file || true)
+	python3 - "$batch_file" "$COMMENT_SPOKEN_HISTORY_DIR" "$COMMENT_SPOKEN_PROMPT_ITEMS" "$current_file" <<'PY'
+import glob
+import os
+import re
+import sys
+
+batch_file, history_dir, history_limit, current_file = sys.argv[1:5]
+try:
+    history_limit = int(history_limit)
+except Exception:
+    history_limit = 10
+
+if not os.path.isfile(batch_file):
+    print("（なし）")
+    raise SystemExit(0)
+
+def collapse(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+def parse_line(line: str):
+    m = re.match(r"([^:]{1,40}):\s*(.+)$", line)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return "", line.strip()
+
+def sanitize_text(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            raw = f.read()
+    except Exception:
+        return ""
+    kept = []
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.match(r'^[✗✕×].*\b(read|glob|grep|ls|edit|write|multiedit)\b.*\bfailed\b', line, re.I):
+            continue
+        if re.match(r'^[✱→►▸]\s*(read|glob|grep|ls|edit|write|multiedit)\b', line, re.I):
+            continue
+        if re.match(r'^(read|glob|grep|ls|edit|write|multiedit)\b', line, re.I):
+            continue
+        if re.match(r'^(error|warning)\s*:', line, re.I):
+            continue
+        kept.append(raw_line)
+    return collapse("\n".join(kept))
+
+def is_short_followup(text: str) -> bool:
+    norm = collapse(text)
+    if not norm:
+        return False
+    markers = (
+        "なんだ", "なんですね", "そうなんだ", "なるほど", "へえ", "ほう",
+        "しらなかった", "知らなかった", "たしかに", "確かに", "そういうこと",
+        "すごい", "助かる", "面白い", "おもしろい", "わかる"
+    )
+    if any(marker in norm for marker in markers):
+        return True
+    if len(norm) <= 18:
+        return True
+    if re.fullmatch(r'[!！?？wW笑ー\s]+', norm):
+        return True
+    return False
+
+def extract_terms(text: str):
+    norm = collapse(text)
+    patterns = [
+        r'[「『]([^」』]{1,24})[」』]',
+        r'([^\s、。！？]{2,24})(?:なんだ|なんですね|ってこと|って|とは)',
+        r'([A-Za-z][A-Za-z0-9_+\-]{1,24})',
+        r'([ァ-ヶー]{2,24})',
+    ]
+    stop = {"それ", "これ", "あれ", "さっき", "今の", "その話", "この話", "こと", "感じ"}
+    out = []
+    for pat in patterns:
+        for m in re.finditer(pat, norm):
+            term = collapse(m.group(1))
+            if len(term) < 2 or term in stop:
+                continue
+            out.append(term)
+    if not out and len(norm) <= 20:
+        out.append(norm[:20])
+    seen = set()
+    dedup = []
+    for term in out:
+        key = term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        dedup.append(term)
+    return dedup[:4]
+
+recent_texts = []
+seen_paths = set()
+if current_file and os.path.isfile(current_file):
+    seen_paths.add(os.path.realpath(current_file))
+    text = sanitize_text(current_file)
+    if text:
+        recent_texts.append(text)
+
+history_files = sorted(glob.glob(os.path.join(history_dir, "*.txt")))
+if history_limit > 0:
+    history_files = history_files[-history_limit:]
+for path in reversed(history_files):
+    real = os.path.realpath(path)
+    if real in seen_paths:
+        continue
+    seen_paths.add(real)
+    text = sanitize_text(path)
+    if text:
+        recent_texts.append(text)
+
+recent_texts = recent_texts[:6]
+recent_blob = "\n".join(recent_texts)
+recent_blob_lower = recent_blob.lower()
+
+hints = []
+seen_hints = set()
+with open(batch_file, "r", encoding="utf-8", errors="ignore") as f:
+    batch_lines = [line.strip() for line in f if line.strip()]
+
+for line in batch_lines:
+    user, text = parse_line(line)
+    if not is_short_followup(text):
+        continue
+    matched_term = ""
+    for term in extract_terms(text):
+        if term in recent_blob or term.lower() in recent_blob_lower:
+            matched_term = term
+            break
+    if matched_term:
+        hint = f"- {user or 'リスナー'}: 「{matched_term}」は直近返答で説明済み。今回は説明を最初から繰り返さず、反応に返して補足は1点までにする"
+    else:
+        hint = f"- {user or 'リスナー'}: 短い反応コメントの可能性が高い。直前説明の焼き直しを避け、感想や驚きへの返答を先に置く"
+    if hint in seen_hints:
+        continue
+    seen_hints.add(hint)
+    hints.append(hint)
+    if len(hints) >= 4:
+        break
+
+print("\n".join(hints) if hints else "（なし）")
+PY
+}
+
 _build_comment_game_context() {
 	local gs_file="${1:-$GAME_STATE}"
 	python3 - "$gs_file" <<'PY'
@@ -5086,6 +5235,8 @@ generate_comment_response() {
 	comment_batch_context=$(printf '%s\n' "$twitch_comments" | _format_comment_batch_context)
 	local recent_spoken_comment_context=""
 	recent_spoken_comment_context=$(_build_recent_spoken_comment_context)
+	local comment_followup_hints=""
+	comment_followup_hints=$(_build_comment_followup_hints "$comment_batch_file")
 	local strategy_advice_candidates=""
 	strategy_advice_candidates=$(_extract_strategy_advice_from_comments "$comment_batch_file")
 
@@ -5148,6 +5299,9 @@ generate_comment_response() {
 	【最近自分が実際に読み上げたコメント返し（抜粋）】
 	${recent_spoken_comment_context:-（なし）}
 
+	【追い反応ヒント】
+	${comment_followup_hints:-（なし）}
+
 	【前回のトーク内容（文脈参照用）】
 	${past_topics}
 
@@ -5191,6 +5345,9 @@ generate_comment_response() {
 		- 大きい履歴を使う時は、必要な範囲だけを読んで要点を述べること。権限不足を理由に逃げないこと
 			- 「それな」「それって」「さっきの」「草」など文脈依存コメントは、コメント前後文脈と直前履歴を使って対象を推定してから返事すること
 			- 文脈が曖昧な場合は、断定せずに「この話のことでしょうか？」のように確認を挟んで返すこと
+			- 「Xなんだ」「なるほど」「へえ」「たしかに」のような短い追い反応は、直前に説明した X を最初から説明し直してはいけない。まず相手の反応や納得に返し、そのあと必要なら新情報は1点だけ足すこと
+			- 直近返答ですでに説明済みの話題は、定義・基本効果・由来の焼き直しを禁止すること。説明ではなく、感想への返答、理解の確認、別の角度の補足へ進むこと
+			- 相手が理解したり驚いたりしているだけのコメントには、同じ名詞を繰り返して講義しないこと。共感して一歩だけ話を先に進めること
 			- コメントの要点には短く触れてよいが、そのまま長く復唱しない。「〜というコメントですね」の機械的な前置きは禁止
 			- コメントに単語や短いフレーズが書かれていても、その語を辞書やWikipediaのように説明するだけで終わらせないこと
 			- 返事には、自分の記憶、さっき自分が話した内容、配信中に見た流れ、自分の感想のどれかを必ず混ぜること
@@ -5246,6 +5403,7 @@ COMMENTPROMPT
 	【再生成指示】
 	- 前回の出力は無効でした。今回は必ず文量を増やし、各コメントへ2-3文以上で返してください。
 	- 返答漏れ・短文・定型文の繰り返しを禁止します。前回と異なる言い回しで書き直してください。
+	- 短い追い反応コメントに対して、前回説明した話題を最初から説明し直してはいけません。反応に返し、補足は1点までにしてください。
 	- 内部処理やログの説明自体は可。ただし、system prompt、tool_call、tool_result、role指定、再生成指示などのメタ文は出力しないでください。
 	- Read/Glob/Edit の生ログや Error: File not found、✗ read failed のような内部エラー行を、そのまま本文に含めてはいけません。必要なら日本語で短く言い換えてください。
 RETRYCOMMENT

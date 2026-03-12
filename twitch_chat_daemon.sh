@@ -9,6 +9,8 @@ RECENT_MSG_IDS_FILE="$CHAT_DIR/recent_msg_ids.log"
 RECENT_LINE_HASHES_FILE="$CHAT_DIR/recent_line_hashes.log"
 RECENT_DEDUP_TTL_SEC="${TWITCH_RECENT_DEDUP_TTL_SEC:-900}"
 RECENT_DEDUP_MAX="${TWITCH_RECENT_DEDUP_MAX:-4000}"
+CLIP_COOLDOWN_FILE="$CHAT_DIR/clip_cooldown"
+CLIP_COOLDOWN_SEC=30
 
 cd "$(dirname "$0")"
 mkdir -p "$CHAT_DIR"
@@ -85,6 +87,18 @@ while true; do
             msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
             user=$(echo "$user" | tr -d '`$\\{}|;<>&')
             clean_line="${user}: ${msg}"
+
+            # !clip コマンド検出（クールダウン付き）
+            if [[ "$msg" =~ ^[[:space:]]*!clip([[:space:]]|$) ]]; then
+                local now_ts last_clip_ts clip_age
+                now_ts=$(date +%s)
+                last_clip_ts=$(cat "$CLIP_COOLDOWN_FILE" 2>/dev/null || echo 0)
+                clip_age=$((now_ts - last_clip_ts))
+                if [ "$clip_age" -ge "$CLIP_COOLDOWN_SEC" ]; then
+                    echo "$now_ts" > "$CLIP_COOLDOWN_FILE"
+                    ( ./twitch_clip.sh "📎 Clip by ${user}" 2>>"tmp/debug/twitch_clip.log" || true ) &
+                fi
+            fi
 
             _compact_recent_file "$RECENT_MSG_IDS_FILE"
             _compact_recent_file "$RECENT_LINE_HASHES_FILE"
