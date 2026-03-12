@@ -1100,7 +1100,8 @@ _run_opencode_comment() {
 		"$ROLLING_SCORES_FILE" \
 		"show_status.sh" \
 		"show_status_g.sh" \
-		"status_dashboard.py")
+		"status_dashboard.py" \
+		"tmp/.comment_queue/comment_screenshot.png")
 	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
 		log "[COMMENT] sandbox作成失敗 -> direct opencode" >&2
 		rm -f "$raw_file"
@@ -1159,7 +1160,8 @@ _run_claude_comment_with_model() {
 		"$ROLLING_SCORES_FILE" \
 		"show_status.sh" \
 		"show_status_g.sh" \
-		"status_dashboard.py")
+		"status_dashboard.py" \
+		"tmp/.comment_queue/comment_screenshot.png")
 	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
 		log "[COMMENT] sandbox作成失敗 -> direct claude" >&2
 		_run_claude_radio_with_model "$prompt_file" "$model"
@@ -5449,6 +5451,14 @@ generate_comment_response() {
 		twitch_comments=$(cat "tmp/twitch_comments.txt")
 	fi
 	[ -z "$twitch_comments" ] && return
+
+	# コメント処理時点のTwitch配信画面を保存
+	local comment_screenshot="tmp/.comment_queue/comment_screenshot.png"
+	if [ -f "tmp/twitch_stream.png" ]; then
+		cp -f "tmp/twitch_stream.png" "$comment_screenshot" 2>/dev/null || true
+		log "[COMMENT] 配信スクリーンショット保存: $comment_screenshot"
+	fi
+
 	local comment_batch_file=""
 	comment_batch_file=$(mktemp /tmp/eloop_comment_batch_XXXXXXXX 2>/dev/null || true)
 	[ -z "$comment_batch_file" ] && comment_batch_file="tmp/.twitch_chat/comment_batch_$(date +%s)_${RANDOM}.txt"
@@ -5556,6 +5566,13 @@ generate_comment_response() {
 	【前回のトーク内容（文脈参照用）】
 	${past_topics}
 
+	【Twitch配信画面スクリーンショット】
+	tmp/.comment_queue/comment_screenshot.png をReadツールで読んでください。
+	コメント受信時のTwitch配信画面です。ゲーム盤面だけでなく、カメラ映像（猫が映っていることもある）、
+	OBSオーバーレイ、配信全体の雰囲気が確認できます。
+	コメントへの返事に、画面に見えているものを自然に織り込んでください。
+	※ スクリーンショットは数秒〜数十秒のラグがあります。
+
 		【追加参照可能ファイル（必要時のみ）】
 		- tmp/.comment_queue/spoken_history/*.txt: 最近実際に読み上げたコメント返し全文
 		- ${PAST_RADIO_TOPICS}: 過去のニュース・ラジオ題名の履歴
@@ -5621,7 +5638,7 @@ generate_comment_response() {
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 前置きや補足説明は不要。コメント返し本文のみ出力
 		- コメントの中にゲーム戦略へのアドバイスが含まれていた場合、言い訳せず真摯に受け止め、「次の戦略改善に取り入れます」と具体的に説明すること
-		- 盤面への言及（例: 右が高い、左が詰まってる、次の駒が弱い等）は、厳密検証せず「今のことですか」と受け止めて返すこと
+		- 盤面への言及（例: 右が高い、左が詰まってる、次の駒が弱い等）は、配信画面スクリーンショットを確認して、実際に見える状況を踏まえて返すこと
 		- 盤面の位置・駒タイプ・配置を断定しないこと。断定が必要な聞かれ方でも「配信の流れ上そう見えます」など柔らかく返すこと
 		- ハイスコアを聞かれた時だけ、上の game_state メモ（record）を使って答えること
 		- 現在スコアを聞かれた時は、生成時からラグがあるので今は断定しないと説明すること
@@ -5981,6 +5998,9 @@ cleanup_all() {
 	stop_comment_watcher
 	_kill_comment_gen
 	stop_comment_player
+
+	# Twitch配信スクリーンショット停止
+	stop_twitch_screen
 
 	# Twitchチャット停止
 	./twitch_chat.sh stop 2>/dev/null || true
@@ -7409,5 +7429,44 @@ trigger_adaptive_improvement() {
 	if _start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "normal"; then
 		# 通常改善のみ、起動成功後に蓄積をクリア (即死時は保持)
 		_clear_accumulated_data
+	fi
+}
+
+#=== Twitch配信スクリーンショットデーモン ===
+
+start_twitch_screen() {
+	local pid_file="tmp/.twitch_screen.pid"
+	if [ -f "$pid_file" ]; then
+		local old_pid
+		old_pid=$(cat "$pid_file" 2>/dev/null)
+		if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+			log "[TWITCH_SCREEN] 既に起動中 (PID=$old_pid)"
+			return 0
+		fi
+		rm -f "$pid_file"
+	fi
+	if ! command -v node >/dev/null 2>&1; then
+		log "[TWITCH_SCREEN] node が見つかりません"
+		return 1
+	fi
+	if [ ! -f "twitch_screen.mjs" ]; then
+		log "[TWITCH_SCREEN] twitch_screen.mjs が見つかりません"
+		return 1
+	fi
+	node twitch_screen.mjs &
+	disown 2>/dev/null || true
+	log "[TWITCH_SCREEN] デーモン起動"
+}
+
+stop_twitch_screen() {
+	local pid_file="tmp/.twitch_screen.pid"
+	if [ -f "$pid_file" ]; then
+		local pid
+		pid=$(cat "$pid_file" 2>/dev/null)
+		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+			kill "$pid" 2>/dev/null || true
+			log "[TWITCH_SCREEN] デーモン停止 (PID=$pid)"
+		fi
+		rm -f "$pid_file"
 	fi
 }
