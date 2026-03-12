@@ -130,6 +130,43 @@ print("".join(out) + ellipsis)
 PY
 }
 
+_truncate_display_width_keep_tail() {
+	local text="$1" max_width="$2"
+	python3 - "$text" "$max_width" <<'PY' 2>/dev/null
+import sys
+import unicodedata
+
+text = sys.argv[1]
+max_width = int(sys.argv[2])
+
+def ch_width(ch):
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in ("F", "W", "A") else 1
+
+width = 0
+for ch in text:
+    width += ch_width(ch)
+
+if width <= max_width:
+    print(text)
+    raise SystemExit(0)
+
+ellipsis = ".."
+ellipsis_w = 2
+limit = max(0, max_width - ellipsis_w)
+out = []
+cur = 0
+for ch in reversed(text):
+    w = ch_width(ch)
+    if cur + w > limit:
+        break
+    out.append(ch)
+    cur += w
+print(ellipsis + "".join(reversed(out)))
+PY
+}
+
 _print_ai_output_lines() {
 	local ai_block="$1" ai_age="$2"
 	[[ -n "$ai_block" ]] || return
@@ -799,7 +836,7 @@ PY
 		local count_label="${acc_count}/${min_games} games"
 		local max_scores=$(( W - 22 - ${#count_label} ))
 		local scores_display="${acc_scores}"
-		(( ${#scores_display} > max_scores )) && scores_display="${scores_display[1,$((max_scores-2))]}.."
+		scores_display=$(_truncate_display_width_keep_tail "$scores_display" "$max_scores")
 		printf "    ${gate_color}◆${C_RESET} Queued      ${gate_color}%s${C_RESET}  ${C_DIM}[%s]${C_RESET}\n" "${count_label}" "${scores_display}"
 	fi
 
