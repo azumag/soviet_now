@@ -276,7 +276,6 @@ post_game_bookkeeping() {
 
 	# スコア履歴
 	echo "$LAST_SCORE" >> score_history.txt
-	update_rolling_scores "$LAST_SCORE"
 
 	# ダッシュボード更新（GAMEOVER状態で生成→表示される）
 	log "[DASHBOARD] Generating GAMEOVER dashboard..."
@@ -289,6 +288,9 @@ post_game_bookkeeping() {
 
 	# アーカイブファイル名を記録
 	LAST_ARCHIVE_FILE=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -1)
+
+	# 改善用の rolling/queued 記録はここで一度だけ行う
+	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
 
 	# コメントプレイヤー・ウォッチャーが死んでいたら再起動
 	start_comment_player

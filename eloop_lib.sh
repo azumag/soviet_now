@@ -6638,6 +6638,29 @@ _clear_accumulated_data() {
 	rm -f "$ACCUMULATED_GAMES_FILE"
 }
 
+record_completed_game_for_adaptive_improvement() {
+	local archive_file="$1" score="$2" soviet="$3"
+	local played_hash="" current_hash=""
+	if [ -f "${STRATEGY_FILE}.game_snapshot" ]; then
+		played_hash=$(python3 extract_decide_hash.py "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || echo "")
+	fi
+	if [ -z "$played_hash" ] && [ -f "$STRATEGY_FILE" ]; then
+		played_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	fi
+	if [ -f "$STRATEGY_FILE" ]; then
+		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	fi
+
+	update_rolling_scores "$score"
+
+	if [ -n "$played_hash" ] && [ -n "$current_hash" ] && [ "$played_hash" != "$current_hash" ]; then
+		log "[IMPROVE] current戦略と異なる試合を検出: played=${played_hash:0:8} current=${current_hash:0:8} → queuedをリセットしてこの試合は蓄積しない"
+		_clear_accumulated_data
+	else
+		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash"
+	fi
+}
+
 _start_improvement_job() {
 	local all_history_files="$1" all_scores="$2" any_soviet="$3" acc_count="$4" reason="$5"
 
@@ -6695,25 +6718,10 @@ trigger_adaptive_improvement() {
 		return
 	fi
 
-	local played_hash="" current_hash=""
-	if [ -f "${STRATEGY_FILE}.game_snapshot" ]; then
-		played_hash=$(python3 extract_decide_hash.py "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || echo "")
-	fi
-	if [ -z "$played_hash" ] && [ -f "$STRATEGY_FILE" ]; then
-		played_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-	fi
+	local current_hash=""
 	if [ -f "$STRATEGY_FILE" ]; then
 		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	fi
-
-	# Step 1: 常にローリング更新。改善キュー蓄積は current と一致する試合だけ。
-	if [ -n "$played_hash" ] && [ -n "$current_hash" ] && [ "$played_hash" != "$current_hash" ]; then
-		log "[IMPROVE] current戦略と異なる試合を検出: played=${played_hash:0:8} current=${current_hash:0:8} → queuedをリセットしてこの試合は蓄積しない"
-		_clear_accumulated_data
-	else
-		accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET" "$played_hash"
-	fi
-	update_rolling_scores "$LAST_SCORE"
 
 	# Step 2: リグレッション検知 (新戦略が旧戦略の85%未満なら自動リバート)
 	if check_regression; then
