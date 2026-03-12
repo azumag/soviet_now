@@ -35,6 +35,7 @@ REJECTED_REEVALUATE_TTL_SEC = 21600
 LAST_ROLLBACK_PAIR_FILE = "tmp/state/last_rollback_pair.json"
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
+HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "50"))
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
@@ -215,19 +216,6 @@ def load_restorable_hashes():
     if by_hash_dir.exists():
         for f in by_hash_dir.glob("*.py"):
             restorable.add(f.stem)
-
-    candidate_files = []
-    for p in (Path("tmp/revert_strategy.py"), Path("strategy.py")):
-        if p.exists():
-            candidate_files.append(p)
-    versions_dir = Path(STRATEGY_VERSIONS_DIR)
-    if versions_dir.exists():
-        candidate_files.extend(sorted(versions_dir.glob("best_score*_strategy.py")))
-
-    for f in candidate_files:
-        h = compute_decide_hash(f)
-        if h:
-            restorable.add(h)
     return restorable
 
 
@@ -279,21 +267,48 @@ def is_blocked_reverse_rollback_pair(current_hash, candidate_hash, last_pair):
     )
 
 
-def collect_rollback_candidate_hashes(rolling, current_hash):
-    last_pair = load_last_rollback_pair()
-    restorable_hashes = load_restorable_hashes()
-    current_metrics = calc_strategy_metrics(rolling.get(current_hash, {}).get("scores", [])) if current_hash else None
-    current_comp = current_metrics["comp"] if current_metrics else None
-    candidates = set()
+def ranked_mature_entries(rolling, current_hash="", top=None, require_restorable=True):
+    restorable_hashes = load_restorable_hashes() if require_restorable else None
+    entries = []
     for hash_, data in rolling.items():
         if not hash_ or hash_ == current_hash:
             continue
         metrics = calc_strategy_metrics(data.get("scores", []))
         if not metrics or metrics["n"] < MIN_GAMES_FOR_BEST_ROLLBACK:
             continue
-        if current_comp is not None and metrics["comp"] <= current_comp:
+        if require_restorable and hash_ not in restorable_hashes:
             continue
-        if hash_ not in restorable_hashes:
+        games_total = data.get("games_total", len(data.get("scores", [])))
+        try:
+            games_total = int(games_total)
+        except Exception:
+            games_total = len(data.get("scores", []))
+        entries.append(
+            {
+                "hash": hash_,
+                "h8": hash_[:8],
+                "n_roll": metrics["n"],
+                "n_total": games_total,
+                "comp": metrics["comp"],
+                "p50": metrics["p50"],
+                "p25": metrics["p25"],
+                "lcb": metrics["lcb"],
+            }
+        )
+    entries.sort(key=lambda e: (e["comp"], e["p50"], e["p25"], e["n_roll"]), reverse=True)
+    if top is not None:
+        entries = entries[:top]
+    return entries
+
+
+def collect_rollback_candidate_hashes(rolling, current_hash):
+    last_pair = load_last_rollback_pair()
+    current_metrics = calc_strategy_metrics(rolling.get(current_hash, {}).get("scores", [])) if current_hash else None
+    current_comp = current_metrics["comp"] if current_metrics else None
+    candidates = set()
+    for entry in ranked_mature_entries(rolling, current_hash, top=HASH_ARCHIVE_KEEP_TOP, require_restorable=True):
+        hash_ = entry["hash"]
+        if current_comp is not None and entry["comp"] <= current_comp:
             continue
         if is_blocked_reverse_rollback_pair(current_hash, hash_, last_pair):
             continue
@@ -302,43 +317,18 @@ def collect_rollback_candidate_hashes(rolling, current_hash):
 
 
 def pick_best_reference(rolling, current_hash, anchor=None):
-    ranked = []
-    for h, data in rolling.items():
-        if h == current_hash:
-            continue
-        metrics = calc_strategy_metrics(data.get("scores", []))
-        if not metrics or metrics["n"] < MIN_GAMES_FOR_BEST_ROLLBACK:
-            continue
-        ranked.append((metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics, "rolling"))
-
-    best = None
-    if ranked:
-        ranked.sort(reverse=True)
-        best = ranked[0]
-
-    if anchor:
-        anchor_hash = str(anchor.get("hash", ""))
-        anchor_n = int(anchor.get("n", 0) or 0)
-        if anchor_hash and anchor_hash != current_hash and anchor_n >= MIN_GAMES_FOR_BEST_ROLLBACK:
-            anchor_metrics = {
-                "comp": float(anchor.get("comp", 0.0)),
-                "p50": float(anchor.get("p50", 0.0)),
-                "p25": float(anchor.get("p25", 0.0)),
-                "lcb": float(anchor.get("lcb", 0.0)),
-                "n": anchor_n,
-            }
-            anchor_row = (
-                anchor_metrics["comp"],
-                anchor_metrics["p50"],
-                anchor_metrics["p25"],
-                anchor_metrics["n"],
-                anchor_hash,
-                anchor_metrics,
-                "anchor",
-            )
-            if best is None or anchor_row[:4] > best[:4]:
-                best = anchor_row
-    return best
+    ranked = ranked_mature_entries(rolling, current_hash, top=HASH_ARCHIVE_KEEP_TOP, require_restorable=True)
+    if not ranked:
+        return None
+    best = ranked[0]
+    best_metrics = {
+        "comp": best["comp"],
+        "p50": best["p50"],
+        "p25": best["p25"],
+        "lcb": best["lcb"],
+        "n": best["n_roll"],
+    }
+    return (best["comp"], best["p50"], best["p25"], best["n_roll"], best["hash"], best_metrics, "ranking")
 
 
 def calc_trend_flags(scores):
@@ -773,39 +763,39 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     rollback_candidates = collect_rollback_candidate_hashes(rolling, current_hash)
     sort_key = lambda e: (e["comp"], e["p50"], e["p25"], e["n_roll"])
 
-    all_entries = []
-    provisional_entries = []
-    for h, data in rolling.items():
-        sc = data.get("scores", [])
-        metrics = calc_strategy_metrics(sc)
-        if not metrics:
-            continue
-        games_total = data.get("games_total", len(sc))
-        try:
-            games_total = int(games_total)
-        except Exception:
-            games_total = len(sc)
-        entry = {
-            "hash": h,
-            "h8": h[:8],
-            "n_roll": metrics["n"],
-            "n_total": games_total,
-            "comp": metrics["comp"],
-            "p50": metrics["p50"],
-            "p25": metrics["p25"],
-            "lcb": metrics["lcb"],
-        }
-        if metrics["n"] < MIN_GAMES_FOR_BEST_ROLLBACK:
-            provisional_entries.append(entry)
-            continue
-        all_entries.append(entry)
-
-    current_entry = next((e for e in all_entries if current_hash and e["hash"] == current_hash), None)
+    all_entries = ranked_mature_entries(rolling, current_hash, top=HASH_ARCHIVE_KEEP_TOP, require_restorable=True)
+    current_entry = None
     provisional_current = None
-    if not current_entry and current_hash:
-        provisional_current = next((e for e in provisional_entries if e["hash"] == current_hash), None)
+    if current_hash and current_hash in rolling:
+        current_scores = rolling[current_hash].get("scores", [])
+        current_metrics = calc_strategy_metrics(current_scores)
+        if current_metrics:
+            games_total = rolling[current_hash].get("games_total", len(current_scores))
+            try:
+                games_total = int(games_total)
+            except Exception:
+                games_total = len(current_scores)
+            current_like = {
+                "hash": current_hash,
+                "h8": current_hash[:8],
+                "n_roll": current_metrics["n"],
+                "n_total": games_total,
+                "comp": current_metrics["comp"],
+                "p50": current_metrics["p50"],
+                "p25": current_metrics["p25"],
+                "lcb": current_metrics["lcb"],
+            }
+            if current_metrics["n"] >= MIN_GAMES_FOR_BEST_ROLLBACK:
+                current_entry = current_like
+            else:
+                provisional_current = current_like
 
-    combined_entries = sorted(all_entries + provisional_entries, key=sort_key, reverse=True)
+    combined_entries = list(all_entries)
+    if current_entry:
+        combined_entries.append(current_entry)
+    elif provisional_current:
+        combined_entries.append(provisional_current)
+    combined_entries.sort(key=sort_key, reverse=True)
     for idx, e in enumerate(combined_entries, start=1):
         e["overall_rank"] = idx
 
@@ -826,14 +816,20 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
             lines.append(f"  {DIM}(no mature data){RST}")
         return lines
 
-    all_entries.sort(key=sort_key, reverse=True)
     for idx, e in enumerate(all_entries, start=1):
         e["rank"] = idx
 
     show_provisional_inline = bool(
         provisional_current and provisional_current.get("overall_rank", max_rows + 1) <= max_rows
     )
-    if show_provisional_inline:
+    show_current_inline = bool(
+        current_entry and current_entry.get("overall_rank", max_rows + 1) <= max_rows
+    )
+    if show_current_inline:
+        entries = sorted(all_entries + [current_entry], key=sort_key, reverse=True)[:max_rows]
+        for idx, e in enumerate(entries, start=1):
+            e["display_rank"] = idx
+    elif show_provisional_inline:
         entries = sorted(all_entries + [provisional_current], key=sort_key, reverse=True)[:max_rows]
         for idx, e in enumerate(entries, start=1):
             e["display_rank"] = idx
@@ -869,7 +865,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     if rollback_entry and rollback_entry not in entries and rollback_entry is not current_entry:
         lines.append(f"{DIM} .. {'':8} {'':>6}│{'':<{bar_w}} {RST}")
         lines.append(render_entry(rollback_entry, is_current=False))
-    if current_entry and current_entry not in entries:
+    if current_entry and not show_current_inline and current_entry not in entries:
         if not rollback_entry or rollback_entry is current_entry:
             lines.append(f"{DIM} .. {'':8} {'':>6}│{'':<{bar_w}} {RST}")
         lines.append(render_entry(current_entry, is_current=True))
