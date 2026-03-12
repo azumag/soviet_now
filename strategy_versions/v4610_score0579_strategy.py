@@ -7,15 +7,16 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
+Decision Logic (9 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase)
+  2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge
-  7. Early game merge priority - Bonus for NEAR merge in early game (max_y < -2.0)
-  8. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase
+  6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
+  7. Early game merge priority - Strong bonus for merge opportunities in early game (v174: piece_count <= 12)
+  8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (v176)
+  9. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase (v174)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -36,27 +37,32 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - 危険局面でのFARマージボーナスを強化（200.0→1200.0）し、いずれかの併合機会を確保
 #   - ワーストゲーム(score0467)の失敗パターン分析に基づき、危険局面の閾値を厳密化
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_012257_score0467.jsonl turns 48-55
+# v177: MEDIUMフェーズHEIGHT_CONTROL抑制強化版 - batch_summaryでHEIGHT_CONTROLが27.5%選択(avg_score_delta=0.9)と過剰であることを確認
+#   - 高スコア群(23.9%)と低スコア群(32.5%)の比較で、低スコア群が8.6%も多くHEIGHT_CONTROLを選択していることを特定
+#   - MEDIUMフェーズのheight_multiplierを15.0に削減し、マージ選択を促進することでHEIGHT_CONTROL選択を抑制しスコア向上を目指す
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, strategy_versions/best_score5310_strategy.py, tmp/change_log.txt
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v160: 危険局面フィルタリング早期化強化版
+    """v177: MEDIUMフェーズHEIGHT_CONTROL抑制強化版
 
-    ワーストゲーム(score0467)の失敗パターン分析に基づき、危険局面の閾値を厳密化。
-    ベストゲーム(score3064)と同様の盤面圧縮を実現するため、FARマージボーナスを強化し、
-    危険局面での盤面圧縮を最優先する。
+    batch_summary分析でHEIGHT_CONTROLが27.5%選択(avg_score_delta=0.9)と過剰であることを確認。
+    高スコア群(23.9%)と低スコア群(32.5%)の比較で、低スコア群が8.6%も多くHEIGHT_CONTROLを選択していることを特定。
+    MEDIUMフェーズのheight_multiplierを15.0に削減し、マージ選択を促進することでHEIGHT_CONTROL選択を抑制しスコア向上を目指す。
 
-    v160の改善点：
-     1. 危険局面判定の早期化
-        - max_y >= 1.8 and reactive_pairs >= 3 でフィルタリング発動（v159: 2.0 → 1.8）
-        - これにより、max_y=2.0〜3.07の危険領域で早期から併合候補のみを評価対象
-     2. FARマージボーナス調整
-        - 危険局面ではFARマージボーナスを200.0→1200.0に調整
-        - 反応ペア数が多い状況での即時併合促進を強化
-     3. ベストゲームと同様の盤面圧縮戦略
-        - max_y>2.5 の場合でも、reactive_pairs >= 3 ならFARマージ優先で盤面を下げる
-        - 即時圧縮による盤面圧縮が生存率を大幅に向上
+    v177の改善点：
+     1. MEDIUMフェーズHEIGHT_CONTROL抑制強化
+        - height_multiplier: 30.0→15.0に削減（v175/v177）
+        - 高スコア群のHEIGHT_CONTROL選択率(23.9%)を目標に抑制
+     2. v176のreactor情報活用によるマージ優先評価軸を維持
+        - reactive_pair_count >= 2の場合、DIRECT/NEARマージに+500.0ボーナス
+        - v167のreactive_pairsによる盤面圧縮調整も適用
+     3. v174の初期12ターンマージ重視を維持
+        - early_game判定(max_y < -2.0)とEARLY_MERGE_PRIORITY(piece_count <= 12)を維持
+     4. v171のCHAIN_MERGE基本ボーナス強化を維持
+        - chain_distance_max=5.0とchain_bonus_multiplier初期値480.0でCHAIN_MERGE選択を促進
     """
 
     results = analysis.get("results", [])
@@ -71,6 +77,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
+    piece_count = len(pieces)
+
+    # --- v174: early_game判定（max_y < -2.0） ---
+    early_game = max_y < -2.0
 
     # --- reactor information ---
     reactor = analysis.get("reactor", {})
@@ -148,10 +158,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("FAR_MERGE")
 
         # ----- evaluation axis 2: height penalty -----
-        # 盤面圧縮優先戦略
-        # max_yが高い盤面では、併合候補の中でも着地Yが低いものを優先する傾向がある
-        # LOW/MEDIUMフェーズのheight_multを維持（1.0, 1.4）し、HIGHフェーズはheight_mult=1.8
-        height_multiplier = 30.0 if phase != "LOW" else 15.0
+        # v174/v177: 盤面圧縮優先戦略・HEIGHT_CONTROL抑制
+        # early_game: height_multiplierを0.2に削減してHEIGHT_CONTROL過剰選択を抑制
+        # v175/v177: MEDIUMフェーズでheight_multiplierを15.0に削減してマージ選択を促進
+        # v173: 初期段階で併合機会がない場合、HEIGHT_CONTROL抑制を強化
+        # v167: reactive_pairsに応じて盤面圧縮の強度を動的に調整
+        height_multiplier = 30.0
+        if early_game:
+            height_multiplier = 0.2  # early_gameではHEIGHT_CONTROLを抑制
+
+        # v175/v177: MEDIUMフェーズでHEIGHT_CONTROL抑制を強化
+        if phase == "MEDIUM":
+            height_multiplier = 15.0  # v177: マージ選択を促進
+
+        # v173: 初期段階で併合機会がない場合、HEIGHT_CONTROL抑制をさらに強化
+        if piece_count <= 6 and merge_grade == "NO":
+            height_multiplier = 0.1
+
+        # v167: reactive_pairsによる盤面圧縮調整
+        if phase in ["MEDIUM", "HIGH"] and reactive_pair_count >= 2:
+            reactive_compression_factor = max(0.3, 1.0 - (reactive_pair_count - 2) * 0.15)
+            height_multiplier *= reactive_compression_factor
+        elif max_y >= 2.0 and reactive_pair_count >= 2:
+            height_multiplier *= 0.5
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -190,10 +219,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v159: 基礎距離4.0版） -----
-        # ワーストゲームではmax_y>2.5の盤面でもchain_mergeが有効だった可能性がある
-        # そのため、着地低でchain_mage_bonusが高い配置を評価する
-        # ワーストゲームでの盤面圧縮戦略（盤面を下げる）と整合させるため、v159のパラメータを維持
+        # ----- evaluation axis 6: chain merge bonus (v171: CHAIN_MERGE基本ボーナス強化） -----
+        # v171: CHAIN_MERGE基本ボーナス強化
+        # chain_distance_max = 5.0 + landing_y * 0.6 (v155成功値に戻す、着地高に応じて拡大)
+        # chain_bonus_multiplier = 480.0 + landing_y * 150.0 (初期値を450.0→480.0に強化、着地高に応じて増強)
 
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
@@ -202,9 +231,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v159: 着地高に応じた動的調整
-                chain_distance_max = 4.0 + landing_y * 0.6
-                chain_bonus_multiplier = 450.0 + landing_y * 150.0
+                # v171: CHAIN_MERGE基本ボーナス強化
+                chain_distance_max = 5.0 + landing_y * 0.6
+                chain_bonus_multiplier = 480.0 + landing_y * 150.0
 
                 nearby_pieces = []
                 for p in pieces:
@@ -242,18 +271,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 7: early game merge priority (NEW) -----
-        # 危険局面（max_y >= 1.8, reactive_pairs >= 3）は、盤面圧縮が最優先
-        # 早期マージで盤面を下げることは、後の盤面圧縮を容易にする
-        # max_y < -2.0 かつ piece_count <= 15 の場合、EARLY_MERGE_PRIORITYを適用
-        early_game = max_y < -2.0
-        piece_count_threshold = 15
-
-        if early_game and merge_grade == "NEAR":
-            score += 500.0  # 危険局面での強力な早期マージ優先
+        # ----- evaluation axis 7: early game merge priority (v174: 初期12ターンマージ重視) -----
+        # v174: early_game判定(max_y < -2.0)をさらに緩和し、EARLY_MERGE_PRIORITYの適用範囲をpiece_count <= 10→12に拡大。
+        # 初期12ターンを一つのフェーズとして扱い、この期間中はマージ機会を最優先してHEIGHT_CONTROL選択を抑制する。
+        if (early_game or piece_count <= 12) and merge_grade == "NEAR":
+            score += 800.0  # 初期段階での強力なマージ優先
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8: MEDIUM_TOWER selection promotion (v174 from v3805) -----
+        # ----- v176: reactive_pairs-based merge priority -----
+        # batch_summary分析でHEIGHT_CONTROLが26.5%選択(avg_score_delta=1.1)と過剰であることを確認。
+        # reactor情報のreactive_pairs（反応性のあるペア）が2つ以上ある場合、盤面に多数の併合機会があることを示唆。
+        # この状況でマージを優先することでHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
+        if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            score += 500.0
+            reasons.append("REACTIVE_MERGE_PRIORITY")
+
+        # ----- evaluation axis 8: MEDIUM_TOWER selection promotion (v174) -----
         # ベストゲーム(score3064)の戦略から採用
         # HIGHフェーズのheight_multiplier=1.8に対して、MEDIUMフェーズでは1.4と差をつけることで、
         # 着地が高い場合でも、マージ候補の中からMEDIUM_TOWERを選んで盤面を下げる
