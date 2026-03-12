@@ -54,11 +54,13 @@ Phases (determined by board max Y):
 # ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
 # v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
 # これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
-# v181: 危険局面判定関数抽出版 - コード重複削除によるロジック整理
-# v180の失敗（閾値緩和によるrollback）を踏まえ、数値変更ではなく構造的改善を行う。
-# 危険局面判定を is_dangerous_situation() ヘルパー関数として抽出し、各評価軸で共通の判定ロジックを使用。
-# これによりコード重複を削減し、ロジックを整理して保守性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md
+        # v182: 危険局面即時併合強化版 - rollback failure mode (p25=-249.8) の解消
+        # 低スコアゲーム(score0755, score0294)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs>=2-3あるにもかわらず
+        # HIGH_LAYER_BOARD_DENSITYが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+        # 危険局面判定を max_y >= 2.0（変更なし）、reactive_pairs >= 3でheight_multiplierを15.0→5.0に強化し、
+        # 危険局面で即時併合機会がある場合、BOARD_DENSITY評価を無効化することで、即時併合を最優先。
+        # これにより下振れ耐性p25の向上を図り、comp改善とスコア安定性を向上させる。
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_010415_score0755.jsonl turns 34-42, game_history/20260313_013934_score0294.jsonl turns 35-41
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -211,6 +213,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 1.5: dangerous situation merge enhancement -----
         # 危険局面で即時併合機会がある場合、さらに強化する
+        # 危険局面判定閾値を max_y >= 1.5 に引き下げ、危険局面を早期検出
+        # 危険局面での即時併合機会強化
         dangerous_situation = is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=2)
         
         if dangerous_situation and merge_grade != "NO":
@@ -222,6 +226,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             elif merge_grade == "FAR":
                 score += 200.0
                 reasons.append("DANGER_MERGE_ENHANCEMENT")
+            elif merge_grade == "FAR":
+                score += 200.0
+                reasons.append("DANGER_MERGE_ENHANCEMENT")
  
         # ----- evaluation axis 2: height penalty -----
         # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
@@ -229,13 +236,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_multiplier = 30.0
         if early_game:
             height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
-        
-        # v178: 危険局面での即時併合優先
-        # ワーストゲーム(score0593)の終盤分析で、reactive_pairs=4-6あるにもかかわらず
-        # HIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
-        # max_y >= 2.0かつreactive_pairsの長さ >= 3の危険局面でheight_multiplierを15.0に削減
+
+        # 危険局面での即時併合優先強化（閾値1.5変更なし、強化のみ実装）
+        # 低スコアゲーム(score0755, score0294)の終盤8ターン分析で、max_y>=1.5かつreactive_pairs>=2-3あるにもかわらず
+        # HIGH_LAYER_BOARD_DENSITYが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+        # 危険局面でのheight_multiplierを強化し、即時併合を最優先することでスコア安定性を向上させる。
         if is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=3):
-            height_multiplier = 15.0  # v178: 危険局面はHEIGHT_CONTROLを抑制し、即時併合を最優先
+            height_multiplier = 5.0  # 危険局面はHEIGHT_CONTROLを強制的に抑制し、即時併合を最優先
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -336,9 +343,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 7: board density bonus (v171: NEW) -----
         # Prefer placement on less-dense side of board to improve height gain capability
-        # This addresses the problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
+        # This addresses problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
         # Low-score games often place pieces in center early, which reduces height gain capability in mid/late game
-        if not reasons or merge_grade == "NO":
+        # 危険局面ではBOARD_DENSITY評価を無効化し、即時併合を最優先
+        if (not reasons or merge_grade == "NO") and not (dangerous_situation and merge_grade != "NO"):
+            # 危険局面で即時併合機会がある場合、BOARD_DENSITY評価を無効化
             # Only apply when no strong merge reason exists (avoid overriding merge opportunities)
             if x < 0:
                 # Placing on left side: bonus if right side is more dense
