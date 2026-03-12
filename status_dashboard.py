@@ -20,8 +20,9 @@ RANK_WEIGHT_P50 = 0.55
 RANK_WEIGHT_P25 = 0.30
 RANK_WEIGHT_LCB = 0.15
 MIN_GAMES_BEFORE_IMPROVE = 12
-MIN_GAMES_BEFORE_REGRESSION = int(os.getenv("MIN_GAMES_BEFORE_REGRESSION", "20"))
+MIN_GAMES_BEFORE_REGRESSION = int(os.getenv("MIN_GAMES_BEFORE_REGRESSION", "12"))
 MIN_GAMES_FOR_BEST_ROLLBACK = 12
+REGRESSION_MAX_RANK = int(os.getenv("REGRESSION_MAX_RANK", "20"))
 REGRESSION_COMPOSITE_RATIO = 0.88
 REGRESSION_P50_RATIO = 0.85
 REGRESSION_P25_RATIO = 0.80
@@ -476,58 +477,42 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
     if not best:
         return {
             "state": "safe",
-            "text": "RegPreview NO no best ref",
+            "text": "RegPreview NO no mature ranking",
         }
 
     _, _, _, _, best_hash, best_metrics, best_source = best
     if current["n"] < MIN_GAMES_BEFORE_REGRESSION:
         return {
             "state": "safe",
-            "text": f"RegPreview WAIT vs {best_hash[:8]}({best_source}) n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}",
+            "text": f"RegPreview WAIT rank=?/{REGRESSION_MAX_RANK} cutoff={best_hash[:8]} n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}",
         }
-    comp_gap = best_metrics["comp"] - current["comp"]
-    p50_gap = best_metrics["p50"] - current["p50"]
-    p25_gap = best_metrics["p25"] - current["p25"]
-    trigger_comp = (
-        current["comp"] < best_metrics["comp"] * REGRESSION_COMPOSITE_RATIO
-        and comp_gap >= REGRESSION_MIN_COMP_GAP
+
+    ranked = ranked_mature_entries(rolling, current_hash, top=None, require_restorable=True)
+    ranked.append(
+        {
+            "hash": current_hash,
+            "h8": current_hash[:8],
+            "comp": current["comp"],
+            "p50": current["p50"],
+            "p25": current["p25"],
+            "lcb": current_entry["lcb"],
+            "n_roll": current["n"],
+            "n_total": current_entry["n_total"],
+        }
     )
-    trigger_p50 = (
-        current["p50"] < best_metrics["p50"] * REGRESSION_P50_RATIO
-        and p50_gap >= REGRESSION_MIN_P50_GAP
-    )
-    trigger_p25 = (
-        current["p25"] < best_metrics["p25"] * REGRESSION_P25_RATIO
-        and p25_gap >= REGRESSION_MIN_P25_GAP
-    )
-    trend50, trend100 = calc_trend_flags(scores)
-    fresh_games_since_rollback = count_fresh_games_since_last_rollback(current_hash)
-    if (
-        fresh_games_since_rollback is not None
-        and fresh_games_since_rollback < REGRESSION_TREND_SHORT_WINDOW
-    ):
-        trend50 = False
-        trend100 = False
-    trigger = (trigger_comp and (trigger_p50 or trigger_p25)) or (trend50 and trend100 and best_hash != current_hash)
-    if trigger:
-        reasons = []
-        if trigger_comp:
-            reasons.append("comp")
-        if trigger_p50:
-            reasons.append("p50")
-        if trigger_p25:
-            reasons.append("q25")
-        if trend50:
-            reasons.append("trend50")
-        if trend100:
-            reasons.append("trend100")
+    ranked.sort(key=lambda e: (e["comp"], e["p50"], e["p25"], e["n_roll"]), reverse=True)
+    current_rank = next((idx for idx, entry in enumerate(ranked, start=1) if entry["hash"] == current_hash), None)
+    cutoff = ranked[min(REGRESSION_MAX_RANK, len(ranked)) - 1]
+    cutoff_hash = cutoff["hash"][:8]
+
+    if current_rank is not None and len(ranked) > REGRESSION_MAX_RANK and current_rank > REGRESSION_MAX_RANK:
         return {
             "state": "trigger",
-            "text": f"RegPreview YES {'+'.join(reasons)} vs {best_hash[:8]}({best_source}) n={current['n']}",
+            "text": f"RegPreview YES rank={current_rank}/{REGRESSION_MAX_RANK} cutoff={cutoff_hash} n={current['n']}",
         }
     return {
         "state": "safe",
-        "text": f"RegPreview NO vs {best_hash[:8]}({best_source}) n={current['n']}",
+        "text": f"RegPreview NO rank={current_rank or '?'}/{REGRESSION_MAX_RANK} cutoff={cutoff_hash} n={current['n']}",
     }
 
 

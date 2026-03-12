@@ -18,8 +18,9 @@ TMP_DEBUG_DIR="tmp/debug"
 CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
 FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
 MIN_GAMES_BEFORE_IMPROVE=${MIN_GAMES_BEFORE_IMPROVE:-12}
-MIN_GAMES_BEFORE_REGRESSION=${MIN_GAMES_BEFORE_REGRESSION:-20}
+MIN_GAMES_BEFORE_REGRESSION=${MIN_GAMES_BEFORE_REGRESSION:-12}
 MIN_GAMES_FOR_BEST_ROLLBACK=${MIN_GAMES_FOR_BEST_ROLLBACK:-12}
+REGRESSION_MAX_RANK=${REGRESSION_MAX_RANK:-20}
 REGRESSION_COMPOSITE_RATIO=${REGRESSION_COMPOSITE_RATIO:-0.88}
 REGRESSION_P50_RATIO=${REGRESSION_P50_RATIO:-0.85}
 REGRESSION_P25_RATIO=${REGRESSION_P25_RATIO:-0.80}
@@ -380,17 +381,8 @@ try:
 except Exception:
     current_run = {}
 min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
-composite_ratio = float(${REGRESSION_COMPOSITE_RATIO})
-p50_ratio = float(${REGRESSION_P50_RATIO})
-p25_ratio = float(${REGRESSION_P25_RATIO})
 min_games_current = int(${MIN_GAMES_BEFORE_REGRESSION})
-min_comp_gap = float(${REGRESSION_MIN_COMP_GAP})
-min_p50_gap = float(${REGRESSION_MIN_P50_GAP})
-min_p25_gap = float(${REGRESSION_MIN_P25_GAP})
-trend_short_window = int(${REGRESSION_TREND_SHORT_WINDOW})
-trend_long_window = int(${REGRESSION_TREND_LONG_WINDOW})
-trend_short_ratio = float(${REGRESSION_TREND_SHORT_RATIO})
-trend_long_ratio = float(${REGRESSION_TREND_LONG_RATIO})
+max_rank = int(${REGRESSION_MAX_RANK})
 archive_dir = "strategy_versions/by_hash"
 keep_top = int(${HASH_ARCHIVE_KEEP_TOP:-50})
 score_history_file = "score_history.txt"
@@ -427,7 +419,7 @@ def metrics(scores):
     comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
     return {"avg": avg, "comp": comp, "p50": p50, "p25": p25, "n": n}
 
-def pick_best_reference():
+def mature_rank_rows(current_metrics):
     ranked = []
     for hh, data in rs.items():
         if hh == h:
@@ -438,31 +430,10 @@ def pick_best_reference():
         if archive_dir and not os.path.exists(os.path.join(archive_dir, f"{hh}.py")):
             continue
         ranked.append((m2["comp"], m2["p50"], m2["p25"], m2["n"], hh, m2, "ranking"))
-    if ranked:
-        ranked.sort(reverse=True)
-        return ranked[:keep_top][0]
-    return None
-
-def trend_flags():
-    try:
-        all_scores = [int(line.strip().split('\t')[-1]) for line in open(score_history_file) if line.strip()]
-    except Exception:
-        all_scores = []
-    trend50 = False
-    trend100 = False
-    if len(all_scores) >= trend_short_window * 2:
-        recent = all_scores[-trend_short_window:]
-        prev = all_scores[-trend_short_window * 2:-trend_short_window]
-        prev_avg = sum(prev) / len(prev)
-        recent_avg = sum(recent) / len(recent)
-        trend50 = prev_avg > 0 and recent_avg < prev_avg * trend_short_ratio
-    if len(all_scores) >= trend_long_window * 2:
-        recent = all_scores[-trend_long_window:]
-        prev = all_scores[-trend_long_window * 2:-trend_long_window]
-        prev_avg = sum(prev) / len(prev)
-        recent_avg = sum(recent) / len(recent)
-        trend100 = prev_avg > 0 and recent_avg < prev_avg * trend_long_ratio
-    return trend50, trend100
+    if current_metrics:
+        ranked.append((current_metrics["comp"], current_metrics["p50"], current_metrics["p25"], current_metrics["n"], h, current_metrics, "current"))
+    ranked.sort(reverse=True)
+    return ranked
 
 if h:
     current_data = {"hash": h, "scores": [], "games_total": 0}
@@ -492,50 +463,37 @@ if h:
         print(f"rolling_comp={comp:.0f}")
         print(f"rolling_p50={p50:.0f}")
         print(f"rolling_p25={p25:.0f}")
-        best = pick_best_reference()
-        if best:
-            bc, bp50, bp25, bn, bh, _, best_source = best
-            print(f"best_hash_short={bh[:8]}")
-            print(f"best_comp={bc:.0f}")
-            print(f"best_p50={bp50:.0f}")
-            print(f"best_p25={bp25:.0f}")
-            print(f"best_total={bn}")
-            print("best_source_short=" + shlex.quote(best_source))
+        ranked = mature_rank_rows({"comp": comp, "p50": p50, "p25": p25, "n": n})
+        if ranked:
+            cutoff = ranked[min(max_rank, len(ranked)) - 1]
+            cc, cp50, cp25, cn, ch, _, csource = cutoff
+            print(f"best_hash_short={ch[:8]}")
+            print(f"best_comp={cc:.0f}")
+            print(f"best_p50={cp50:.0f}")
+            print(f"best_p25={cp25:.0f}")
+            print(f"best_total={cn}")
+            print("best_source_short=" + shlex.quote("rank_cutoff"))
             if int(n) < min_games_current:
-                detail = "WAIT vs " + bh[:8] + f"({best_source}) n={int(n)}/{min_games_current}"
+                detail = "WAIT rank=?/" + str(max_rank) + f" cutoff={ch[:8]} n={int(n)}/{min_games_current}"
                 print("regression_state=grace")
                 print("regression_detail=" + shlex.quote(detail))
                 raise SystemExit
-            comp_gap = bc - comp
-            p50_gap = bp50 - p50
-            p25_gap = bp25 - p25
-            trigger_comp = comp < bc * composite_ratio and comp_gap >= min_comp_gap
-            trigger_p50 = p50 < bp50 * p50_ratio and p50_gap >= min_p50_gap
-            trigger_p25 = p25 < bp25 * p25_ratio and p25_gap >= min_p25_gap
-            trend50, trend100 = trend_flags()
-            trigger = (trigger_comp and (trigger_p50 or trigger_p25)) or (trend50 and trend100 and bh != h)
-            reasons = []
-            if trigger_comp:
-                reasons.append("comp")
-            if trigger_p50:
-                reasons.append("p50")
-            if trigger_p25:
-                reasons.append("q25")
-            if trend50:
-                reasons.append("trend50")
-            if trend100:
-                reasons.append("trend100")
-            if trigger:
-                detail = "YES " + "+".join(reasons) + " vs " + bh[:8] + f"({best_source}) n={int(n)}"
-                print("regression_state=trigger")
+            current_rank = None
+            for idx, row in enumerate(ranked, start=1):
+                if row[4] == h:
+                    current_rank = idx
+                    break
+            if current_rank is None or len(ranked) <= max_rank or current_rank <= max_rank:
+                detail = "NO rank=" + str(current_rank or "?") + f"/{max_rank} cutoff={ch[:8]} n={int(n)}"
+                print("regression_state=safe")
                 print("regression_detail=" + shlex.quote(detail))
             else:
-                detail = "NO vs " + bh[:8] + f"({best_source}) n={int(n)}"
-                print("regression_state=safe")
+                detail = "YES rank=" + str(current_rank) + f"/{max_rank} cutoff={ch[:8]} n={int(n)}"
+                print("regression_state=trigger")
                 print("regression_detail=" + shlex.quote(detail))
         else:
             print("regression_state=safe")
-            print("regression_detail=" + shlex.quote("NO no best ref"))
+            print("regression_detail=" + shlex.quote("NO no mature ranking"))
 PY
 			)"
 		fi

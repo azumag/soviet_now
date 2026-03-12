@@ -88,8 +88,9 @@ BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
 MIN_GAMES_BEFORE_IMPROVE=12
-MIN_GAMES_BEFORE_REGRESSION="${MIN_GAMES_BEFORE_REGRESSION:-20}"
+MIN_GAMES_BEFORE_REGRESSION="${MIN_GAMES_BEFORE_REGRESSION:-12}"
 MIN_GAMES_FOR_BEST_ROLLBACK=12
+REGRESSION_MAX_RANK="${REGRESSION_MAX_RANK:-20}"
 RANK_LCB_Z=1.28
 RANK_WEIGHT_P50=0.55
 RANK_WEIGHT_P25=0.30
@@ -3606,7 +3607,10 @@ def explain_reasons(reason_text):
         "trend100": "直近100試合平均がその前100試合平均より落ちていた。",
     }
     for reason in reasons:
-        lines.append(mapping.get(reason, f"{reason} が悪化要因だった。"))
+        if reason.startswith("rank") and reason[4:].isdigit():
+            lines.append(f"成熟ランキングで上位{reason[4:]}位圏外に落ちた。")
+        else:
+            lines.append(mapping.get(reason, f"{reason} が悪化要因だった。"))
     return lines or ["詳細理由を特定できなかった。"]
 
 try:
@@ -3666,10 +3670,17 @@ if rollback_metrics:
         f"p25={fmt_num(rollback_metrics['p25'])} mean={fmt_num(rollback_metrics['mean'])} n={rollback_metrics['n']}"
     )
 if reg:
+    ref_hash = reg.get("cutoff_hash", reg.get("best_hash", "n/a"))
+    ref_comp = reg.get("cutoff_comp", reg.get("best_comp", "n/a"))
+    ref_p50 = reg.get("cutoff_p50", reg.get("best_p50", "n/a"))
+    ref_p25 = reg.get("cutoff_p25", reg.get("best_p25", "n/a"))
+    ref_n = reg.get("cutoff_n", reg.get("best_n", "n/a"))
     lines.append(
-        f"- compared_best_ref: hash={reg.get('best_hash', 'n/a')} comp={reg.get('best_comp', 'n/a')} "
-        f"p50={reg.get('best_p50', 'n/a')} p25={reg.get('best_p25', 'n/a')} n={reg.get('best_n', 'n/a')}"
+        f"- compared_rank_ref: hash={ref_hash} comp={ref_comp} "
+        f"p50={ref_p50} p25={ref_p25} n={ref_n}"
     )
+    if reg.get("current_rank") and reg.get("max_rank"):
+        lines.append(f"- current_rank: {reg.get('current_rank')} / {reg.get('max_rank')}")
 lines.append("")
 lines.append("## Defeat Delta")
 if current_metrics and rollback_metrics:
@@ -3703,6 +3714,8 @@ lines.append("")
 lines.append("## Next Improve Focus")
 focus = []
 reasons = set((reg.get("reasons") or "").split("+"))
+if any(r.startswith("rank") for r in reasons):
+    focus.append("- まず cutoff rank の戦略と current の差分を見て、順位を落とした主要因を特定すること。")
 if "p25" in reasons:
     focus.append("- 下振れゲームで何を取りこぼしたかを優先分析すること。低スコア回の終盤8ターンと deadline 接近局面を読み直す。")
 if "p50" in reasons:
@@ -7101,9 +7114,8 @@ PY
 }
 
 check_regression() {
-	# 新戦略が十分試行数に達した後、LCB+中央値+分位点ベースの比較で明確に劣化していればリグレッション
-	# 判定は composite の悪化に加えて、典型性能(p50)または下振れ耐性(p25)の悪化を要求し、
-	# 比率だけでなく絶対差分も満たしたときだけロールバックする。
+	# 新戦略が十分試行数に達した後、成熟ランキングで上位圏から外れていればリグレッション
+	# 判定対象は current strategy を含む成熟ランキングで、上位 REGRESSION_MAX_RANK 位までは維持する。
 	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
 	REGRESSION_ROLLBACK_DONE=0
 	REGRESSION_ROLLBACK_HASH=""
@@ -7111,7 +7123,7 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$STRATEGY_HASH_ARCHIVE_DIR" "$LAST_ROLLBACK_PAIR_FILE" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$REGRESSION_MAX_RANK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$STRATEGY_HASH_ARCHIVE_DIR" <<'PY'
 import json
 import math
 import os
@@ -7122,24 +7134,12 @@ current_run_file = sys.argv[2]
 current_hash = sys.argv[3]
 min_games_current = int(sys.argv[4])
 min_games_candidates = int(sys.argv[5])
-lcb_z = float(sys.argv[6])
-w_p50 = float(sys.argv[7])
-w_p25 = float(sys.argv[8])
-w_lcb = float(sys.argv[9])
-composite_ratio = float(sys.argv[10])
-p50_ratio = float(sys.argv[11])
-p25_ratio = float(sys.argv[12])
-min_comp_gap = float(sys.argv[13])
-min_p50_gap = float(sys.argv[14])
-min_p25_gap = float(sys.argv[15])
-archive_dir = sys.argv[16]
-last_rollback_pair_file = sys.argv[17]
-score_history_file = sys.argv[18]
-trend_short_window = int(sys.argv[19])
-trend_long_window = int(sys.argv[20])
-trend_short_ratio = float(sys.argv[21])
-trend_long_ratio = float(sys.argv[22])
-keep_top = int(sys.argv[23])
+max_rank = int(sys.argv[6])
+lcb_z = float(sys.argv[7])
+w_p50 = float(sys.argv[8])
+w_p25 = float(sys.argv[9])
+w_lcb = float(sys.argv[10])
+archive_dir = sys.argv[11]
 
 if not os.path.exists(rs_file):
     print("OK")
@@ -7200,7 +7200,7 @@ if len(current_scores) < min_games_current:
 
 current = metrics(current_scores)
 
-candidates = []
+rows = [(current["composite"], current["p50"], current["p25"], current["n"], current_hash, current)]
 for h, data in rs.items():
     if h == current_hash:
         continue
@@ -7210,116 +7210,35 @@ for h, data in rs.items():
     if archive_dir and not os.path.exists(os.path.join(archive_dir, f"{h}.py")):
         continue
     m = metrics(scores)
-    candidates.append((m["composite"], m["p50"], m["p25"], m["n"], h, m))
+    rows.append((m["composite"], m["p50"], m["p25"], m["n"], h, m))
 
-if not candidates:
-    ranked_best = None
-else:
-    candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
-    ranked_best = candidates[:keep_top][0] if candidates[:keep_top] else None
-
-best_ref = ranked_best
-best_source = "ranking"
-
-if best_ref is None:
+if len(rows) <= max_rank:
     print("OK")
     raise SystemExit
 
-best_comp, _, _, best_n, best_hash, best = best_ref
-curr_comp = current["composite"]
-comp_gap = best_comp - curr_comp
-p50_gap = best["p50"] - current["p50"]
-p25_gap = best["p25"] - current["p25"]
+rows.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
+current_rank = None
+for idx, row in enumerate(rows, start=1):
+    if row[4] == current_hash:
+        current_rank = idx
+        break
 
-is_comp_regression = (
-    best_comp > 0
-    and curr_comp < best_comp * composite_ratio
-    and comp_gap >= min_comp_gap
-)
-is_p50_regression = (
-    best["p50"] > 0
-    and current["p50"] < best["p50"] * p50_ratio
-    and p50_gap >= min_p50_gap
-)
-is_p25_regression = (
-    best["p25"] > 0
-    and current["p25"] < best["p25"] * p25_ratio
-    and p25_gap >= min_p25_gap
-)
-base_regression = is_comp_regression and (is_p50_regression or is_p25_regression)
-
-trend50 = False
-trend100 = False
-trend50_recent = trend50_prev = None
-trend100_recent = trend100_prev = None
-fresh_games_since_rollback = None
-if os.path.exists(last_rollback_pair_file) and str(current_run.get("hash", "") or "") == current_hash:
-    try:
-        last_pair = json.load(open(last_rollback_pair_file))
-    except Exception:
-        last_pair = {}
-    if str(last_pair.get("to_hash", "") or "") == current_hash:
-        rollback_ts = int(last_pair.get("updated_at", 0) or 0)
-        if rollback_ts > 0:
-            fresh_games_since_rollback = 0
-            for archive in current_run.get("_recent_archives", []) or []:
-                if not isinstance(archive, str) or not archive.startswith("game_history/"):
-                    continue
-                if not os.path.exists(archive):
-                    continue
-                try:
-                    if int(os.path.getmtime(archive)) >= rollback_ts:
-                        fresh_games_since_rollback += 1
-                except Exception:
-                    continue
-if os.path.exists(score_history_file):
-    try:
-        all_scores = [int(line.strip().split('\t')[-1]) for line in open(score_history_file) if line.strip()]
-    except Exception:
-        all_scores = []
-    if len(all_scores) >= trend_short_window * 2:
-        recent = all_scores[-trend_short_window:]
-        prev = all_scores[-trend_short_window * 2:-trend_short_window]
-        trend50_recent = sum(recent) / len(recent)
-        trend50_prev = sum(prev) / len(prev)
-        if trend50_prev > 0 and trend50_recent < trend50_prev * trend_short_ratio:
-            trend50 = True
-    if len(all_scores) >= trend_long_window * 2:
-        recent = all_scores[-trend_long_window:]
-        prev = all_scores[-trend_long_window * 2:-trend_long_window]
-        trend100_recent = sum(recent) / len(recent)
-        trend100_prev = sum(prev) / len(prev)
-        if trend100_prev > 0 and trend100_recent < trend100_prev * trend_long_ratio:
-            trend100 = True
-
-if fresh_games_since_rollback is not None and fresh_games_since_rollback < trend_short_window:
-    trend50 = False
-    trend100 = False
-
-trend_regression = (best_hash != current_hash) and trend50 and trend100
-
-if base_regression or trend_regression:
-    reason_parts = []
-    if is_comp_regression:
-        reason_parts.append("comp")
-    if is_p50_regression:
-        reason_parts.append("p50")
-    if is_p25_regression:
-        reason_parts.append("p25")
-    if trend50:
-        reason_parts.append("trend50")
-    if trend100:
-        reason_parts.append("trend100")
-    print(
-        "REGRESSION:"
-        f"best_hash={best_hash},best_source={best_source},best_comp={best_comp:.1f},curr_comp={curr_comp:.1f},"
-        f"best_p50={best['p50']:.1f},curr_p50={current['p50']:.1f},"
-        f"best_p25={best['p25']:.1f},curr_p25={current['p25']:.1f},"
-        f"best_n={best_n},curr_n={current['n']},"
-        f"reasons={'+'.join(reason_parts)}"
-    )
-else:
+if current_rank is None or current_rank <= max_rank:
     print("OK")
+    raise SystemExit
+
+cutoff_comp, cutoff_p50, cutoff_p25, cutoff_n, cutoff_hash, cutoff = rows[max_rank - 1]
+print(
+    "REGRESSION:"
+    f"current_rank={current_rank},max_rank={max_rank},ranked_total={len(rows)},"
+    f"cutoff_hash={cutoff_hash},cutoff_comp={cutoff_comp:.1f},curr_comp={current['composite']:.1f},"
+    f"cutoff_p50={cutoff['p50']:.1f},curr_p50={current['p50']:.1f},"
+    f"cutoff_p25={cutoff['p25']:.1f},curr_p25={current['p25']:.1f},"
+    f"cutoff_n={cutoff_n},curr_n={current['n']},"
+    f"best_hash={cutoff_hash},best_source=rank_cutoff,best_comp={cutoff_comp:.1f},"
+    f"best_p50={cutoff['p50']:.1f},best_p25={cutoff['p25']:.1f},best_n={cutoff_n},"
+    f"reasons=rank{max_rank}"
+)
 PY
 	2>/dev/null)
 
