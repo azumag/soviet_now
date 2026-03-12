@@ -1019,7 +1019,7 @@ update_best() {
 # 同一ゲームで複数イベント発火時は最初の1回のみ
 _TWITCH_CLIP_GAME=""
 _create_twitch_clip() {
-	local event_msg="$1" game_id="${2:-}"
+	local event_msg="$1" game_id="${2:-}" delay="${3:-0}"
 	[ "${TWITCH_CLIP_ENABLED:-0}" = "1" ] || return 0
 	[ -n "${TWITCH_CLIENT_ID:-}" ] && [ -n "${TWITCH_BROADCASTER_ID:-}" ] || return 0
 	# 同一ゲーム内デデュプ（建国+ハイスコア同時発生時に2本作らない）
@@ -1028,7 +1028,7 @@ _create_twitch_clip() {
 		return 0
 	fi
 	[ -n "$game_id" ] && _TWITCH_CLIP_GAME="$game_id"
-	( ./twitch_clip.sh "$event_msg" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true ) &
+	( [ "$delay" -gt 0 ] 2>/dev/null && sleep "$delay"; ./twitch_clip.sh "$event_msg" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true ) &
 }
 
 archive_history() {

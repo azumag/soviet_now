@@ -226,7 +226,7 @@ handle_soviet_celebration() {
 	local score="$1" turns="$2" game_num="$3"
 
 	log "!!! SOVIET CREATED !!!"
-	_create_twitch_clip "☭ ソ連建国! score=${score} (Game #${game_num})" "$game_num"
+	_create_twitch_clip "☭ ソ連建国! score=${score} (Game #${game_num})" "$game_num" 10
 
 	# ロシア祝賀が走っていたら中止してソ連祝賀を優先
 	_cancel_russia_celebration_worker
