@@ -50,6 +50,7 @@ TMP_MARKERS_DIR="tmp/markers"
 TMP_HISTORY_DIR="tmp/history"
 TMP_DEBUG_DIR="tmp/debug"
 TMP_CACHE_DIR="tmp/cache"
+CC_POST_LOG_FILE="$TMP_DEBUG_DIR/cc_post.log"
 
 RADIO_WEB_GROUNDING_CACHE_DIR="$TMP_CACHE_DIR/radio_grounding"
 RADIO_STATE_FILE="$TMP_STATE_DIR/.radio_state"
@@ -2791,12 +2792,31 @@ print(" | ".join(parts))
 PY
 }
 
+_append_cc_post_log() {
+	local status="$1" detail="$2" cc_text="$3"
+	mkdir -p "$(dirname "$CC_POST_LOG_FILE")" 2>/dev/null || true
+	{
+		printf '[%s] %s' "$(date '+%Y-%m-%d %H:%M:%S')" "$status"
+		[ -n "$detail" ] && printf ' %s' "$detail"
+		printf ' | %s\n' "$cc_text"
+	} >>"$CC_POST_LOG_FILE" 2>/dev/null || true
+	if [ -f "$CC_POST_LOG_FILE" ] && [ "$(wc -l < "$CC_POST_LOG_FILE")" -gt 200 ]; then
+		tail -200 "$CC_POST_LOG_FILE" >"${CC_POST_LOG_FILE}.tmp" && mv "${CC_POST_LOG_FILE}.tmp" "$CC_POST_LOG_FILE"
+	fi
+}
+
 _post_cc_text_to_chat() {
 	local cc_text="$1"
 	[ -n "$cc_text" ] || return 0
 	(
-		if ! ./twitch_chat.sh send "$cc_text" >/dev/null 2>&1; then
+		local send_output rc
+		send_output=$(./twitch_chat.sh send "$cc_text" 2>&1)
+		rc=$?
+		if [ "$rc" -ne 0 ]; then
 			log "[RADIO:news] CC表記投稿失敗: ${cc_text:0:80}"
+			_append_cc_post_log "FAIL" "rc=$rc output=$(printf '%s' "$send_output" | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g')" "$cc_text"
+		else
+			_append_cc_post_log "OK" "" "$cc_text"
 		fi
 	) &
 }

@@ -233,9 +233,11 @@ _radio_generate_and_play() {
 	local prompt_file="$1" game_num="$2" score="$3" corner_name="$4"
 	shift 4
 	local no_preempt=true
+	local selected_news=""
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--no-preempt) no_preempt=true ;;
+		--selected-news) shift; selected_news="$1" ;;
 		esac
 		shift
 	done
@@ -271,14 +273,20 @@ _radio_generate_and_play() {
 		return 1
 	fi
 
-	local talk_body talk_summary selected_news parse_dir
+	local talk_body talk_summary parsed_selected_news parse_dir
 	parse_dir=$(mktemp -d /tmp/eloop_radio_parse_XXXXXXXX)
 	printf '%s' "$talk" | _radio_parse_output_to_files "$parse_dir/body.txt" "$parse_dir/summary.txt" "$parse_dir/selected_news.txt"
 	talk_body=$(cat "$parse_dir/body.txt" 2>/dev/null)
 	talk_summary=$(cat "$parse_dir/summary.txt" 2>/dev/null)
-	selected_news=$(cat "$parse_dir/selected_news.txt" 2>/dev/null)
+	parsed_selected_news=$(cat "$parse_dir/selected_news.txt" 2>/dev/null)
 	rm -rf "$parse_dir"
 	[ -z "$talk_summary" ] && talk_summary="(要約なし)"
+
+	if [ -z "$selected_news" ]; then
+		selected_news="$parsed_selected_news"
+	elif [ -z "$parsed_selected_news" ] && [ "$corner_name" = "news" ]; then
+		log "[RADIO:news] SELECTED_NEWS抽出失敗 -> スケジュール済みタイトルを採用: ${selected_news}"
+	fi
 
 	# ニュースコーナーの場合、選んだニュースを既読リストに記録
 	if [ "$corner_name" = "news" ]; then
@@ -385,7 +393,11 @@ ${talk_body}"
 		fi
 		if [ -n "$news_cc_text" ] && declare -F _post_cc_text_to_chat >/dev/null 2>&1; then
 			_post_cc_text_to_chat "$news_cc_text"
+		elif declare -F _append_cc_post_log >/dev/null 2>&1; then
+			_append_cc_post_log "SKIP" "no_cc_text title=${selected_news}" "[NEWS] ${selected_news}"
 		fi
+	elif [ "$corner_name" = "news" ] && declare -F _append_cc_post_log >/dev/null 2>&1; then
+		_append_cc_post_log "SKIP" "no_selected_news" "[NEWS] (selected_news unavailable)"
 	fi
 	if [ "$no_preempt" = true ]; then
 		./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
