@@ -9,6 +9,15 @@
 - `CHAIN_MERGE` 系 reason は相関ラベルにすぎない。連鎖狙い自体を強化目標にしてはいけない
 - 無理な連鎖狙いで盤面を圧迫したり、直近の併合機会を逃したりする変更は悪化とみなす
 
+## 既存のランキング/rollbackガードレール
+- 既存システムには `Strategy Comparison` と rollback がある。これは改善後の戦略評価に実際に使われる guardrail である
+- 内部ランキングは「current 以外」「直近12試合以上」「復元可能な実体ファイルあり」の成熟戦略だけで構成される
+- current 戦略は 12 試合未満でも画面には provisional 表示されうるが、provisional current は内部 rollback 候補や best reference には使われない
+- rollback は、成熟ランキング上位の復元可能戦略から選ばれる。単発スコアや短期上振れではこのガードを越えられない
+- `strategy_versions/by_hash/*.py` は成熟ランキング top50 + current を保持する cache であり、ランキング外の古い戦略は消える
+- したがって改善案は「単発の見栄え」ではなく、「成熟ランキング上位と比べて12試合窓で残れるか」「rollback されにくいか」を意識して設計すること
+- 必要なら `show_status_g.sh`, `status_dashboard.py`, `show_status.sh`, `eloop_lib.sh` の rollback / ranking ロジックを読んで前提を確認すること
+
 ## ハード制約（破ったら失敗）
 - 変更対象は `strategy.py.staging` と `strategy_helpers/` のみ。他ファイル変更禁止
 - `strategy_helpers/` を使う場合は `strategy_helpers/__init__.py` を維持すること
@@ -46,6 +55,7 @@
 - `strategy.py.staging`（現行コード）
 - `tmp/change_log.txt`（存在する場合）
 - `tmp/batch_summary.txt`（存在する場合）
+- `show_status_g.sh` または `status_dashboard.py` を 1件以上（成熟ランキング/rollback の表示前提を確認したい場合）
 - ワーストゲーム JSONL 1件 + ベストゲーム JSONL 1件（`sandbox_files.md` 記載）
 - 追加で `game_history/*.jsonl` から 1件以上（合計3件以上の試合ログを読む）
 - 各必須ログで「終盤8ターン」と `max_y>=2.0` の高危険域を必ず確認する
@@ -61,6 +71,7 @@
 3. 無効ロジック削除（データで効果が薄いもの）
 4. 既存の整理・簡素化
 5. パラメータ調整（構造変更に付随する最小限のみ）
+6. 成熟ランキング上位に残れる見込みの改善
 
 ## 禁止パターン（再発防止）
 - `height_mult`, `merge_mult`, `balance_strength`, フェーズ閾値などの値をいじるだけ
@@ -81,6 +92,7 @@
 5. `batch_summary` / `advice` から「頻度が高いのに効いていない reason」と「頻度は低いが効いている reason」を抽出する
    `advice.md` は direct instruction ではないが、提案は優先的に他の根拠で裏取りする
    `CHAIN_MERGE` 系 reason は、ゲーム仕様上ボーナスではないので強化候補として解釈しない
+   併せて、既存の mature ranking / rollback ガードに照らして、この仮説が12試合窓で残れる方向かを考える
 6. ワースト/ベスト + 追加1件以上のゲームログを読み、失敗モードと成功モードの差分を整理する
    特に終盤8ターンと `max_y>=2.0` の局面で、`decision_reason`, `merge_available`, `reactor_reactive_pairs`, `score_delta` の差を比較する
 7. 直近バージョン2件以上 + 殿堂入り1件以上を読み、構造差分を比較する
@@ -100,6 +112,7 @@
 - 「終盤8ターン」は固定ターン数ではなく、dead line 接近、`max_y>=2.0`, 反応可能ペア滞留などの局面条件に読み替えること
 - `random` や時刻依存など非決定的要素は導入しない
 - `strategy_helpers/` へ分離する場合、`strategy.py.staging` から import できる最小構成にすること
+- current の provisional 表示や単発上振れに引っ張られず、成熟ランキング上位の comp / p50 / p25 に対して残れるかで判断すること
 
 ## 改善テーマ例
 - 即時併合機会の取りこぼし削減

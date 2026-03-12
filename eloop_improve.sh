@@ -203,7 +203,7 @@ SANDBOX_TOPLEVEL_PY_BASELINE=""
 SANDBOX_HELPERS_BASELINE_DIR=""
 
 # --- プロンプトに埋め込む参照データ（小さくて重要なもの） ---
-python3 - "$IMPROVE_BRIEF_FILE" "$batch_summary_file" "$STRATEGY_ADVICE_FILE" "$CHANGE_LOG_FILE_HOST" "$SCORES" "$NUM_GAMES" "$best_game_path" "$worst_game_path" "$HISTORY_FILES" <<'PY'
+python3 - "$IMPROVE_BRIEF_FILE" "$batch_summary_file" "$STRATEGY_ADVICE_FILE" "$CHANGE_LOG_FILE_HOST" "$SCORES" "$NUM_GAMES" "$best_game_path" "$worst_game_path" "$HISTORY_FILES" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
 import collections
 import json
 import os
@@ -211,7 +211,12 @@ import re
 import statistics
 import sys
 
-out_file, batch_file, advice_file, change_log_file, scores_raw, num_games_raw, best_path, worst_path, history_files_raw = sys.argv[1:10]
+out_file, batch_file, advice_file, change_log_file, scores_raw, num_games_raw, best_path, worst_path, history_files_raw, keep_top_raw = sys.argv[1:11]
+
+try:
+    keep_top = int(keep_top_raw)
+except Exception:
+    keep_top = 50
 
 def read_text(path: str) -> str:
     if path and os.path.exists(path):
@@ -391,6 +396,13 @@ if advice_lines:
 else:
     summary_lines.append("- advice unavailable")
 summary_lines.append("")
+summary_lines.append("## Existing Ranking And Rollback Guardrail")
+summary_lines.append("- Strategy Comparison は mature only。current 以外で n>=12 の戦略だけが内部ランキング対象。")
+summary_lines.append(f"- mature ranking cache: strategy_versions/by_hash top{keep_top} + current を保持。ランキング外の古い戦略は消える。")
+summary_lines.append("- current は n<12 でも provisional 表示されうるが、provisional current は内部 rollback / best reference には使われない。")
+summary_lines.append("- rollback は成熟ランキング上位の復元可能戦略から選ばれる。単発の最高点や短期上振れでは guardrail を越えられない。")
+summary_lines.append("- 改善案は、単発の見栄えではなく、12試合窓で mature ranking 上位に残れるかを基準に設計する。")
+summary_lines.append("")
 summary_lines.append("## Batch Summary Highlights")
 for reason, delta in top_reasons[:6]:
     summary_lines.append(f"- reason {reason}: avg_score_delta={delta}")
@@ -517,6 +529,7 @@ manifest_file="tmp/sandbox_files.md"
 	echo '- `tmp/batch_summary.txt` — reason分布/高低比較（必ず読む）'
 	[ -f "$CHANGE_LOG_FILE" ] && printf -- '- \`%s\` — 過去の改善変更差分。**同じ方針の焼き直し防止のため最初に読め**\n' "$CHANGE_LOG_FILE"
 	echo '- `tmp/sandbox_files.md` — この目録そのもの（必ず読む）'
+	echo '- `show_status_g.sh` / `status_dashboard.py` / `show_status.sh` / `eloop_lib.sh` — Strategy Comparison と rollback の guardrail を知りたい時に見る'
 	echo ""
 	echo "### 盤面・ゲームログ（必須）"
 	echo '- 各ゲームログで、終盤8ターンと `max_y>=2.0` の高危険域を必ず確認すること'

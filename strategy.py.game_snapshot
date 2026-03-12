@@ -8,14 +8,14 @@ Game Overview:
   - Player controls only drop X coordinate
 
  Decision Logic (8 evaluation axes):
-    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-    2. Height penalty - Penalty for high landing position (varies by phase)
-    2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
-    3. Drift penalty - Penalty for post-landing drift due to polygon shape
-    4. Left-right balance correction - Bonus for correcting piece count bias
-    5. nextNext centering - Center for next merge opportunity (v179: extended to consider nextNext placement)
-    6. Chain merge bonus - Evaluate possibility of further merges after merge
-    7. Board density bonus - Prefer placement on less-dense side of board
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase)
+   2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Left-right balance correction - Bonus for correcting piece count bias
+   5. nextNext centering - Center for next merge opportunity if nextNext same type
+   6. Chain merge bonus - Evaluate possibility of further merges after merge
+   7. Board density bonus - Prefer placement on less-dense side of board
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -52,14 +52,10 @@ v178 additional logic:
 # ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
 # v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
 # これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
- # v178: 危険局面即時併合優先強化版 - batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
- # ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
- # max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減し、即時併合を強制的に優先することで、併合機会を活かしスコア安定性を向上させる。
- # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260312_135916_score0593.jsonl turns 36-42, game_history/20260312_141222_score2015.jsonl turns 83-85
- # v179: nextNext考慮による次ターン併合機会確保版 - advice.mdの「次の次の駒（next-next piece）を考慮して配置を決める戦略」を反映。
- # nextNextと同じタイプのピースが盤面にある場合、次のターンでnextピースを落としてその近くでマージできる位置を優先する配置評価を追加。
- # 次のターンの併合機会を考慮し、併合機会の取りこぼしを削減することでスコア安定性を向上させる。
- # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md
+# v178: 危険局面即時併合優先強化版 - batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
+# ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+# max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減し、即時併合を強制的に優先することで、併合機会を活かしスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260312_135916_score0593.jsonl turns 36-42, game_history/20260312_141222_score2015.jsonl turns 83-85
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -67,22 +63,21 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v179: nextNext考慮による次ターン併合機会確保版
-
-    advice.mdの「次の次の駒（next-next piece）を考慮して配置を決める戦略」を反映。
-    nextNextと同じタイプのピースが盤面にある場合、次のターンでnextピースを落として
-    その近くでマージできる位置を優先する配置評価を追加。
-
-    v179の改善点:
-    1. nextNextを考慮した配置評価の追加
-       - nextNextとnextが同じタイプの場合は従来通り中心を優先
-       - nextNextとnextが異なるタイプの場合、nextNextと同じタイプのピースの平均位置を計算
-       - 次のターンでnextピースを落としてマージできる位置に近い候補を優先（最大100.0ボーナス）
-       - 次のターンの併合機会を考慮し、併合機会の取りこぼしを削減
-    2. v178の危険局面即時併合優先を維持
+    """v178: 危険局面即時併合優先強化版
+    
+    batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
+    ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+    
+    v178の改善点:
+    1. 危険局面での即時併合優先
        - max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減
-       - v173の序盤HEIGHT_CONTROL抑制超強化（max_y < -3.0, height_multiplier=0.1）を維持
-
+       - reactor情報のreactive_pairsを活用し、危険局面で即時併合を強制的に優先
+       - ワーストゲームの失敗パターン（reactive_pairs=4-6あるのに即時併合を逃す）を解消
+    2. v173の序盤HEIGHT_CONTROL抑制超強化を維持
+       - early_game判定(max_y < -3.0)とheight_multiplier=0.1を維持
+       - 序盤のDEFAULT_PLACEMENT選択を抑制し、併合機会を最優先
+    3. v173のボード密度評価軸とv172の序盤HEIGHT_CONTROL抑制を維持
+    
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
         analysis: analyze_board.py analysis results
@@ -93,7 +88,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
                 - merges: individual distance/merge judgment for each same-type piece
             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
-
+    
     Returns:
         {"x": drop X coordinate, "reason": selection reason}
     """
@@ -260,32 +255,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score -= abs(balance_penalty)
 
         # ----- evaluation axis 5: nextNext centering -----
-        # v179: 次の次のピースを考慮した配置評価を拡張
-        # advice.mdの「次の次の駒（next-next piece）を考慮して配置を決める戦略」を反映
-        # nextNextと同じタイプのピースが盤面にある場合、次のターンでnextピースを落として
-        # その近くでマージできるような位置を優先する
-        if next_next_type > 0:
-            if next_next_type == next_type:
-                # 既存ロジック: nextNextがnextと同じタイプの場合は中心を優先
-                center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
-                score += center_bonus
-                reasons.append("NEXT_SAME")
-            else:
-                # 次のターンの併合機会を考慮: nextNextと同じタイプのピースの平均位置を計算
-                next_next_pieces = [p for p in pieces if p.get("type") == next_next_type]
-                if next_next_pieces:
-                    # nextNextピースの中心位置を計算
-                    avg_x = sum(p["x"] for p in next_next_pieces) / len(next_next_pieces)
-                    avg_y = sum(p["y"] for p in next_next_pieces) / len(next_next_pieces)
-                    
-                    # 次のターンでnextピースを落としてマージできる位置に近い候補を優先
-                    # 着地位置とnextNextピースの中心位置の距離を計算
-                    dist_to_next_next = ((x - avg_x) ** 2 + (landing_y - avg_y) ** 2) ** 0.5
-                    
-                    # 距離が近いほどボーナス（最大100.0）
-                    proximity_bonus = max(0, (3.0 - dist_to_next_next) / 3.0) * 100.0
-                    score += proximity_bonus
-                    reasons.append("NEXTNEXT_MERGE")
+        if next_next_type == next_type:
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            score += center_bonus
+            reasons.append("NEXT_SAME")
 
         # ----- evaluation axis 6: chain merge bonus (v170: v155 parameters & dynamic adjustment) -----
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
