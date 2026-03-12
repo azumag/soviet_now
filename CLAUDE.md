@@ -53,7 +53,29 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `eloop_lib.sh` | 共通ライブラリ (ヘルパー/ラジオ/AI実行/バリデーション) |
 | `eloop_improve.sh` | バックグラウンド改善サブプロセス |
 | `analyze_board.py` | 盤面解析 (併合判定・着地予測・反応器状態) |
+| `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿 |
+| `twitch_chat.sh` | Twitch IRC チャットデーモン管理 (start/fetch/send等) |
+| `twitch_chat_daemon.sh` | IRC常駐プロセス (`!clip` コマンド対応) |
 | ~~`STRATEGY.md`~~ | 廃止（jloop用、git履歴に残存） |
+
+## Twitch クリップ自動作成
+
+ハイスコア・ロシア建国・ソ連建国時に自動でTwitchクリップを作成し、URLをチャットに投稿する。
+チャットで `!clip` と打つと視聴者もクリップ作成可能（30秒クールダウン付き）。
+
+**現在デフォルト無効**。有効化するには `.env` に以下を追加:
+
+```bash
+TWITCH_CLIP_ENABLED=1
+TWITCH_CLIENT_ID=<Developer ConsoleのClient ID>
+TWITCH_BROADCASTER_ID=<Helix /users APIで取得>
+```
+
+- OAuthトークン (`TWITCH_BOT_TOKEN`) に `clips:edit` スコープが必要
+- ハイスコア・建国クリップ: `.env` 変更後、次のゲームから自動反映
+- `!clip` コマンド: デーモン再起動が必要 (`./twitch_chat.sh stop && ./twitch_chat.sh start`)
+- 同一ゲーム内で複数イベント発火時はデデュプ（最初の1クリップのみ）
+- 配信オフライン時やAPI失敗時はサイレントにスキップ
 
 
 # 実装計画立案時のルール
