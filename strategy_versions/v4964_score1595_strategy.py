@@ -63,11 +63,14 @@ Phases (determined by board max Y):
    # 即時併合候補がない場合、盤面整理（BOARD_DENSITY）を優先して盤面圧迫を回避。
    # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_033353_score0565.jsonl turns 48-55, advice.md
-   # v186: 危険局面盤面圧縮強化版 - ワーストゲーム(score0345)の終盤8ターン分析で、max_y>=2.26かつreactive_pairs=6-7あるにもかかわらず
-   # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITYが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
-   # 危険局面で即時併合候補がない場合、BOARD_DENSITY評価を無効化し、near_pairsボーナスを優先することで、盤面圧縮を促進。
-   # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
-   # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_043859_score0345.jsonl turns 54-61, advice.md
+    # v187: 危険局面near_pairsボーナス超強化版 - rollback failure mode (p25=-249.8) の解消
+    # ワーストゲーム(score0672)の終盤8ターン分析で、max_y=2.03-3.11かつreactive_pairs=6-7あるにもかかわらず
+    # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+    # v186のnear_pairsボーナスが不十分で、危険局面での即時併合機会の取りこぼしが継続していたため、near_pairsボーナスを大幅に強化。
+    # near_pairs_count >= 3: 800.0→1200.0、>= 2: 400.0→800.0、>= 1: 200.0（新規追加）に強化し、危険局面での盤面圧縮を促進。
+    # 併せて、危険局面でlanding_y > 0.0の場合、height_penaltyの倍率を3倍→4倍に強化してHIGH_TOWER選択をさらに抑制。
+    # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_045854_score0672.jsonl turns 53-60
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -288,11 +291,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         height_penalty = landing_y * height_multiplier * height_mult
 
-        # v185: 危険局面でのHIGH_TOWER評価を3倍に強化して盤面整理優先を強力に抑制
-        # 危険局面でlanding_y > 0.0の場合、height_penaltyを3倍にしてHIGH_TOWER選択を抑制
-        # v186: 共通変数 dangerous_situation を使用
+        # v187: 危険局面でのHIGH_TOWER評価を4倍に強化して盤面整理優先をさらに抑制
+        # ワーストゲーム(score0672)の終盤8ターン分析で、危険局面でHIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITYが
+        # 6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+        # 危険局面でlanding_y > 0.0の場合、height_penaltyを4倍にしてHIGH_TOWER選択をさらに抑制し、即時併合を最優先。
+        # v187: 共通変数 dangerous_situation を使用
         if dangerous_situation and landing_y > 0.0:
-            height_penalty *= 3.0
+            height_penalty *= 4.0
             reasons.append("HIGH_TOWER")
         elif phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -318,12 +323,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 2.5: near_pairs bonus in dangerous situations -----
         # 危険局面で即時併合がない場合、near_pairsを活用する配置を優先
         # v185: 危険局面判定緩和（min_reactive_pairs=1）に合わせてnear_pairsボーナス条件を更新
-        # dangerous_situationかつ merge_grade == "NO" の場合、near_pairsが多い配置を優先
-        # v186: 共通変数 dangerous_situation を使用
-        # 危険局面で即時併合がない場合、near_pairsを活用する配置を優先
-        # ワーストゲーム(score0345)の終盤8ターン分析で、max_y>=2.26かつreactive_pairs=6-7あるにもかかわらず
-        # 即時併合機会を完全に逃している失敗パターンを特定。
-        # 危険局面で即時併合がない場合、near_pairsを活用して盤面圧縮を促進することで、即時併合機会の取りこぼしを削減。
+        # v187: 危険局面near_pairsボーナスを大幅に強化して盤面圧縮を促進
+        # ワーストゲーム(score0672)の終盤8ターン分析で、max_y=2.03-3.11かつreactive_pairs=6-7あるにもかかわらず
+        # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+        # v186のnear_pairsボーナスが不十分で、危険局面での即時併合機会の取りこぼしが継続していたため、near_pairsボーナスを大幅に強化。
+        # near_pairs_count >= 3: 800.0→1200.0、>= 2: 400.0→800.0、>= 1: 200.0（新規追加）に強化し、危険局面での盤面圧縮を促進。
+        # v187: 共通変数 dangerous_situation を使用
         if dangerous_situation and merge_grade == "NO":
             near_pairs = reactor.get("near_pairs", [])
             if isinstance(near_pairs, list):
@@ -331,10 +336,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # near_pairsが多いほど将来のreactive_pairsへの昇格可能性が高い
                 # reactive_pairsがある状況で、near_pairsを増やすことでさらに盤面圧縮を促進
                 if near_pairs_count >= 3:
-                    score += 800.0  # near_pairs活用ボーナス
+                    score += 1200.0  # v187: near_pairs活用ボーナスを強化（800.0→1200.0）
                     reasons.append("NEAR_PAIRS_OPPORTUNITY")
                 elif near_pairs_count >= 2:
-                    score += 400.0
+                    score += 800.0  # v187: near_pairs活用ボーナスを強化（400.0→800.0）
+                    reasons.append("NEAR_PAIRS_OPPORTUNITY")
+                elif near_pairs_count >= 1:
+                    score += 400.0  # v187: near_pairs活用ボーナスを新規追加（near_pairs >= 1でもボーナス）
                     reasons.append("NEAR_PAIRS_OPPORTUNITY")
 
         # ----- evaluation axis 3: drift penalty -----
