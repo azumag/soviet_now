@@ -6066,7 +6066,7 @@ PY
 }
 
 update_rolling_scores() {
-	local score="$1"
+	local score="$1" archive_file="${2:-}"
 	local strategy_source="${STRATEGY_FILE}.game_snapshot"
 	[ ! -f "$strategy_source" ] && strategy_source="$STRATEGY_FILE"
 	local strategy_hash
@@ -6074,12 +6074,12 @@ update_rolling_scores() {
 	_archive_strategy_snapshot_by_hash "$strategy_source" "$strategy_hash"
 	_backfill_hash_archive_from_known_versions
 	local rolling_result=""
-	rolling_result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" <<'PY' 2>/dev/null
+	rolling_result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" "$archive_file" <<'PY' 2>/dev/null
 import json
 import os
 import sys
 
-rs_file, h, score = sys.argv[1], sys.argv[2], int(sys.argv[3])
+rs_file, h, score, archive_file = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
 if os.path.exists(rs_file):
     with open(rs_file) as f:
         rs = json.load(f)
@@ -6090,21 +6090,36 @@ if h not in rs:
     rs[h] = {"scores": [], "prev_hash": "", "games_total": 0}
 if "games_total" not in rs[h]:
     rs[h]["games_total"] = len(rs[h].get("scores", []))
+recent_archives = rs[h].get("_recent_archives", [])
+if not isinstance(recent_archives, list):
+    recent_archives = []
+
+if archive_file and archive_file in recent_archives:
+    print(f"{h}|{len(rs[h]['scores'])}|{rs[h]['games_total']}|dedup")
+    raise SystemExit
 
 rs[h]["scores"].append(score)
 rs[h]["games_total"] += 1
 rs[h]["scores"] = rs[h]["scores"][-20:]
+if archive_file:
+    recent_archives.append(archive_file)
+    recent_archives = recent_archives[-25:]
+rs[h]["_recent_archives"] = recent_archives
 
 with open(rs_file, "w") as f:
     json.dump(rs, f)
 
-print(f"{h}|{len(rs[h]['scores'])}|{rs[h]['games_total']}")
+print(f"{h}|{len(rs[h]['scores'])}|{rs[h]['games_total']}|updated")
 PY
 )
 	if [ -n "$rolling_result" ]; then
-		local rolling_n="" rolling_total=""
-		IFS='|' read -r strategy_hash rolling_n rolling_total <<<"$rolling_result"
-		log "[ROLLING] updated: hash=${strategy_hash} n=${rolling_n} total=${rolling_total} score=${score}"
+		local rolling_n="" rolling_total="" rolling_status=""
+		IFS='|' read -r strategy_hash rolling_n rolling_total rolling_status <<<"$rolling_result"
+		if [ "$rolling_status" = "dedup" ]; then
+			log "[ROLLING] duplicate skip: hash=${strategy_hash} n=${rolling_n} total=${rolling_total} score=${score} file=${archive_file}"
+		else
+			log "[ROLLING] updated: hash=${strategy_hash} n=${rolling_n} total=${rolling_total} score=${score} file=${archive_file}"
+		fi
 	else
 		log "[ROLLING] update failed: hash=${strategy_hash} score=${score}"
 	fi
@@ -6651,7 +6666,7 @@ record_completed_game_for_adaptive_improvement() {
 		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	fi
 
-	update_rolling_scores "$score"
+	update_rolling_scores "$score" "$archive_file"
 
 	if [ -n "$played_hash" ] && [ -n "$current_hash" ] && [ "$played_hash" != "$current_hash" ]; then
 		log "[IMPROVE] current戦略と異なる試合を検出: played=${played_hash:0:8} current=${current_hash:0:8} → queuedをリセットしてこの試合は蓄積しない"
