@@ -626,6 +626,38 @@ _filter_unread_opinion_blocks() {
 	rm -f "$opinion_tmp"
 }
 
+_run_opencode_opinion_research() {
+	local agent="$1" prompt_file="$2"
+	local raw_file permission
+	raw_file=$(mktemp /tmp/eloop_opinion_research_raw_XXXXXXXX)
+	# bash許可でAIにWeb検索させる
+	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow"}'
+	timeout "${RADIO_OPENCODE_TIMEOUT}" \
+		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$permission' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
+	local rc=$?
+	if [ $rc -eq 124 ]; then
+		log "[OPINION] opencode research timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
+		rm -f "$raw_file"
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[OPINION] opencode research failed (rc=$rc, agent=$agent)" >&2
+		rm -f "$raw_file"
+		return 1
+	fi
+	cat "$raw_file" |
+		_strip_ansi |
+		grep -v '^>' |
+		grep -v '^\^D' |
+		grep -v '^Script started on ' |
+		grep -v '^Script done on ' |
+		grep -v '^/[^ ]*$' |
+		grep -v '^[[:space:]]*/Users/' |
+		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
+		sed '/^[[:space:]]*$/d'
+	rm -f "$raw_file"
+}
+
 start_radio_corner_opinion() {
 	local game_num="$1" score="$2"
 	_radio_time_context
@@ -651,11 +683,29 @@ start_radio_corner_opinion() {
 	# 先頭の見出しを選択（■ プレフィックスを除去）
 	headline=$(printf '%s\n' "$unread_headlines" | head -1 | sed 's/^■ //')
 
-	# 3. 選んだ見出しで検索（grounding）
-	local grounding_context=""
-	grounding_context=$(python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
-		--corner opinion --query "$headline" --max-sources 3 2>/dev/null || true)
+	# 3. AIにWeb検索で調査させる（bash許可）
+	log "[OPINION] AI調査中: $headline"
+	local research_prompt_file grounding_context=""
+	research_prompt_file=$(mktemp /tmp/eloop_opinion_research_prompt_XXXXXXXX)
+	export headline
+	envsubst < "$ELOOP_LIB_DIR/prompts/radio_opinion_research.md" > "$research_prompt_file"
+	unset headline
+
+	grounding_context=$(_run_opencode_opinion_research "$RADIO_AGENT" "$research_prompt_file")
+	if [ -z "$grounding_context" ]; then
+		log "[OPINION] AI調査失敗、fallbackエージェントで再試行..."
+		grounding_context=$(_run_opencode_opinion_research "$RADIO_FALLBACK" "$research_prompt_file")
+	fi
+	rm -f "$research_prompt_file"
+
+	# AI調査失敗時はプログラム的検索にフォールバック
+	if [ -z "$grounding_context" ]; then
+		log "[OPINION] AI調査失敗、fetch_radio_grounding.py にフォールバック"
+		grounding_context=$(python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
+			--corner opinion --query "$headline" --max-sources 3 2>/dev/null || true)
+	fi
 	[ -z "$grounding_context" ] && grounding_context="（検索結果なし）"
+	log "[OPINION] 調査完了 (${#grounding_context}字)"
 
 	# 4. 既読記録（選択時点で記録）
 	local headline_key
