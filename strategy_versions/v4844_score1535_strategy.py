@@ -52,11 +52,10 @@ v178 additional logic:
 # ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
 # v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
 # これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
-# v179: 危険局面near_pairs漸進的ボーナス強化版 - ワーストゲーム(score0756, score0934)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs>=2-8あるにもかかわらず
-# HIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが連続で選択され、即時併合機会を逃している失敗パターンを特定。
-# reactive_pairsが豊富にある状況でnear_pairsを増やす配置を優先することで、reactive_pairsの昇格可能性を高め盤面圧縮を促進。
-# near_pairs閾値を2に引き下げ、漸進的ボーナス(600.0ベース+各300.0追加)を導入し、near_pairs蓄積を強化してスコア安定性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260312_222222_score0756.jsonl turns 67-74, game_history/20260312_215919_score0934.jsonl turns 64-66
+# v178: 危険局面即時併合優先強化版 - batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
+# ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+# max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減し、即時併合を強制的に優先することで、併合機会を活かしスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260312_135916_score0593.jsonl turns 36-42, game_history/20260312_141222_score2015.jsonl turns 83-85
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -64,23 +63,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v179: 危険局面near_pairs漸進的ボーナス強化版 - rollback failure mode (reactive_pairsあってもnear_pairs不足で盤面圧縮失敗) の解消
-
-    ワーストゲーム(score0756)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs>=5-8あるにもかかわらず
-    HIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが4ターン連続で選択され、reactive_pairsの活用機会を完全に逃している失敗パターンを特定。
-    rollback分析の「低スコア回の終盤8ターンとdeadline接近局面」の改善要件を満たすため、
-    reactive_pairsが豊富にある危険局面でnear_pairsを漸進的に蓄積する配置を優先する。
-
-    v179の改善点:
-    1. 危険局面near_pairs漸進的ボーナス強化
-       - near_pairs閾値を2に引き下げ（3→2）
-       - 漸進的ボーナス導入（600.0ベース+各300.0追加）
-       - reactive_pairs>=3かつnear_pairs>=2で600.0、near_pairs>=3で900.0、near_pairs>=4で1200.0
-       - これによりreactive_pairsの昇格可能性を高め、盤面圧縮を促進してスコア安定性を向上
-    2. v178の危険局面即時併合優先を維持
+    """v178: 危険局面即時併合優先強化版
+    
+    batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
+    ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+    
+    v178の改善点:
+    1. 危険局面での即時併合優先
        - max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減
-    3. v173の序盤HEIGHT_CONTROL抑制超強化を維持
+       - reactor情報のreactive_pairsを活用し、危険局面で即時併合を強制的に優先
+       - ワーストゲームの失敗パターン（reactive_pairs=4-6あるのに即時併合を逃す）を解消
+    2. v173の序盤HEIGHT_CONTROL抑制超強化を維持
        - early_game判定(max_y < -3.0)とheight_multiplier=0.1を維持
+       - 序盤のDEFAULT_PLACEMENT選択を抑制し、併合機会を最優先
+    3. v173のボード密度評価軸とv172の序盤HEIGHT_CONTROL抑制を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -222,26 +218,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score -= height_penalty
 
         # ----- evaluation axis 2.5: near_pairs bonus in dangerous situations -----
-        # 危険局面で即時併合がない場合、near_pairsを漸進的に蓄積する配置を優先
-        # ワーストゲーム(score0756, score0934)の終盤分析で、max_y>=2.0かつreactive_pairs>=2-8あるにもかかわらず
-        # HIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが連続で選択され、reactive_pairsの活用機会を完全に逃している失敗パターンを特定
-        # reactive_pairsが豊富にある状況でnear_pairsを増やす配置を優先し、reactive_pairsの昇格可能性を高める
+        # 危険局面で即時併合がない場合、near_pairsを活用する配置を優先
+        # ワーストゲーム(score0574, score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4-6あるにもかかわらず
+        # HIGH_TOWER/HIGH_LAYERが選択され続け即時併合機会を逃している失敗パターンを特定
+        # dangerous_situation かつ merge_grade == "NO" の場合、near_pairs が多い配置を優先
         dangerous_situation = max_y >= 2.0 and isinstance(reactive_pairs, list) and len(reactive_pairs) >= 3
         if dangerous_situation and merge_grade == "NO":
             near_pairs = reactor.get("near_pairs", [])
             if isinstance(near_pairs, list):
                 near_pairs_count = len(near_pairs)
-                # near_pairs漸進的ボーナス: reactive_pairsが3以上ある状況でnear_pairsを蓄積することを強化
-                # near_pairsが多いほど将来のreactive_pairsへの昇格可能性が高く、即時併合機会を確保できる
-                if near_pairs_count >= 4:
-                    score += 600.0 + (near_pairs_count - 2) * 300.0  # 1200.0以上
-                    reasons.append("NEAR_PAIRS_BUILDUP")
-                elif near_pairs_count >= 3:
-                    score += 900.0  # 600.0 + 300.0
-                    reasons.append("NEAR_PAIRS_BUILDUP")
+                # near_pairsが多いほど将来のreactive_pairsへの昇格可能性が高い
+                # reactive_pairsが3以上ある状況で、near_pairsを増やすことでさらに盤面圧縮を促進
+                if near_pairs_count >= 3:
+                    score += 800.0  # near_pairs活用ボーナス
+                    reasons.append("NEAR_PAIRS_OPPORTUNITY")
                 elif near_pairs_count >= 2:
-                    score += 600.0  # 閾値を2に引き下げて適用範囲を拡大
-                    reasons.append("NEAR_PAIRS_BUILDUP")
+                    score += 400.0
+                    reasons.append("NEAR_PAIRS_OPPORTUNITY")
 
         # ----- evaluation axis 3: drift penalty -----
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
