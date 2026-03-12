@@ -18,10 +18,14 @@ TMP_DEBUG_DIR="tmp/debug"
 CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
 FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
 MIN_GAMES_BEFORE_IMPROVE=${MIN_GAMES_BEFORE_IMPROVE:-12}
+MIN_GAMES_BEFORE_REGRESSION=${MIN_GAMES_BEFORE_REGRESSION:-20}
 MIN_GAMES_FOR_BEST_ROLLBACK=${MIN_GAMES_FOR_BEST_ROLLBACK:-12}
 REGRESSION_COMPOSITE_RATIO=${REGRESSION_COMPOSITE_RATIO:-0.88}
 REGRESSION_P50_RATIO=${REGRESSION_P50_RATIO:-0.85}
 REGRESSION_P25_RATIO=${REGRESSION_P25_RATIO:-0.80}
+REGRESSION_MIN_COMP_GAP=${REGRESSION_MIN_COMP_GAP:-120}
+REGRESSION_MIN_P50_GAP=${REGRESSION_MIN_P50_GAP:-100}
+REGRESSION_MIN_P25_GAP=${REGRESSION_MIN_P25_GAP:-180}
 RADIO_STATE_STALE_SEC=${RADIO_STATE_STALE_SEC:-600}
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
@@ -379,6 +383,10 @@ min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
 composite_ratio = float(${REGRESSION_COMPOSITE_RATIO})
 p50_ratio = float(${REGRESSION_P50_RATIO})
 p25_ratio = float(${REGRESSION_P25_RATIO})
+min_games_current = int(${MIN_GAMES_BEFORE_REGRESSION})
+min_comp_gap = float(${REGRESSION_MIN_COMP_GAP})
+min_p50_gap = float(${REGRESSION_MIN_P50_GAP})
+min_p25_gap = float(${REGRESSION_MIN_P25_GAP})
 trend_short_window = int(${REGRESSION_TREND_SHORT_WINDOW})
 trend_long_window = int(${REGRESSION_TREND_LONG_WINDOW})
 trend_short_ratio = float(${REGRESSION_TREND_SHORT_RATIO})
@@ -493,9 +501,17 @@ if h:
             print(f"best_p25={bp25:.0f}")
             print(f"best_total={bn}")
             print("best_source_short=" + shlex.quote(best_source))
-            trigger_comp = comp < bc * composite_ratio
-            trigger_p50 = p50 < bp50 * p50_ratio
-            trigger_p25 = p25 < bp25 * p25_ratio
+            if int(n) < min_games_current:
+                detail = "WAIT vs " + bh[:8] + f"({best_source}) n={int(n)}/{min_games_current}"
+                print("regression_state=grace")
+                print("regression_detail=" + shlex.quote(detail))
+                raise SystemExit
+            comp_gap = bc - comp
+            p50_gap = bp50 - p50
+            p25_gap = bp25 - p25
+            trigger_comp = comp < bc * composite_ratio and comp_gap >= min_comp_gap
+            trigger_p50 = p50 < bp50 * p50_ratio and p50_gap >= min_p50_gap
+            trigger_p25 = p25 < bp25 * p25_ratio and p25_gap >= min_p25_gap
             trend50, trend100 = trend_flags()
             trigger = (trigger_comp and (trigger_p50 or trigger_p25)) or (trend50 and trend100 and bh != h)
             reasons = []

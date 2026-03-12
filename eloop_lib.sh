@@ -88,6 +88,7 @@ BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
 MIN_GAMES_BEFORE_IMPROVE=12
+MIN_GAMES_BEFORE_REGRESSION="${MIN_GAMES_BEFORE_REGRESSION:-20}"
 MIN_GAMES_FOR_BEST_ROLLBACK=12
 RANK_LCB_Z=1.28
 RANK_WEIGHT_P50=0.55
@@ -96,6 +97,9 @@ RANK_WEIGHT_LCB=0.15
 REGRESSION_COMPOSITE_RATIO=0.88
 REGRESSION_P50_RATIO=0.85
 REGRESSION_P25_RATIO=0.80
+REGRESSION_MIN_COMP_GAP="${REGRESSION_MIN_COMP_GAP:-120}"
+REGRESSION_MIN_P50_GAP="${REGRESSION_MIN_P50_GAP:-100}"
+REGRESSION_MIN_P25_GAP="${REGRESSION_MIN_P25_GAP:-180}"
 REGRESSION_TREND_SHORT_WINDOW=50
 REGRESSION_TREND_LONG_WINDOW=100
 REGRESSION_TREND_SHORT_RATIO=0.94
@@ -7097,8 +7101,9 @@ PY
 }
 
 check_regression() {
-	# 新戦略が十分試行数で、LCB+中央値+分位点ベースの比較で劣化していればリグレッション
-	# 判定は composite の悪化に加えて、典型性能(p50)または下振れ耐性(p25)の悪化を要求する。
+	# 新戦略が十分試行数に達した後、LCB+中央値+分位点ベースの比較で明確に劣化していればリグレッション
+	# 判定は composite の悪化に加えて、典型性能(p50)または下振れ耐性(p25)の悪化を要求し、
+	# 比率だけでなく絶対差分も満たしたときだけロールバックする。
 	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
 	REGRESSION_ROLLBACK_DONE=0
 	REGRESSION_ROLLBACK_HASH=""
@@ -7106,7 +7111,7 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$STRATEGY_HASH_ARCHIVE_DIR" "$LAST_ROLLBACK_PAIR_FILE" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$STRATEGY_HASH_ARCHIVE_DIR" "$LAST_ROLLBACK_PAIR_FILE" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
 import json
 import math
 import os
@@ -7124,14 +7129,17 @@ w_lcb = float(sys.argv[9])
 composite_ratio = float(sys.argv[10])
 p50_ratio = float(sys.argv[11])
 p25_ratio = float(sys.argv[12])
-archive_dir = sys.argv[13]
-last_rollback_pair_file = sys.argv[14]
-score_history_file = sys.argv[15]
-trend_short_window = int(sys.argv[16])
-trend_long_window = int(sys.argv[17])
-trend_short_ratio = float(sys.argv[18])
-trend_long_ratio = float(sys.argv[19])
-keep_top = int(sys.argv[20])
+min_comp_gap = float(sys.argv[13])
+min_p50_gap = float(sys.argv[14])
+min_p25_gap = float(sys.argv[15])
+archive_dir = sys.argv[16]
+last_rollback_pair_file = sys.argv[17]
+score_history_file = sys.argv[18]
+trend_short_window = int(sys.argv[19])
+trend_long_window = int(sys.argv[20])
+trend_short_ratio = float(sys.argv[21])
+trend_long_ratio = float(sys.argv[22])
+keep_top = int(sys.argv[23])
 
 if not os.path.exists(rs_file):
     print("OK")
@@ -7219,10 +7227,25 @@ if best_ref is None:
 
 best_comp, _, _, best_n, best_hash, best = best_ref
 curr_comp = current["composite"]
+comp_gap = best_comp - curr_comp
+p50_gap = best["p50"] - current["p50"]
+p25_gap = best["p25"] - current["p25"]
 
-is_comp_regression = best_comp > 0 and curr_comp < best_comp * composite_ratio
-is_p50_regression = best["p50"] > 0 and current["p50"] < best["p50"] * p50_ratio
-is_p25_regression = best["p25"] > 0 and current["p25"] < best["p25"] * p25_ratio
+is_comp_regression = (
+    best_comp > 0
+    and curr_comp < best_comp * composite_ratio
+    and comp_gap >= min_comp_gap
+)
+is_p50_regression = (
+    best["p50"] > 0
+    and current["p50"] < best["p50"] * p50_ratio
+    and p50_gap >= min_p50_gap
+)
+is_p25_regression = (
+    best["p25"] > 0
+    and current["p25"] < best["p25"] * p25_ratio
+    and p25_gap >= min_p25_gap
+)
 base_regression = is_comp_regression and (is_p50_regression or is_p25_regression)
 
 trend50 = False

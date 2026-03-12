@@ -20,10 +20,14 @@ RANK_WEIGHT_P50 = 0.55
 RANK_WEIGHT_P25 = 0.30
 RANK_WEIGHT_LCB = 0.15
 MIN_GAMES_BEFORE_IMPROVE = 12
+MIN_GAMES_BEFORE_REGRESSION = int(os.getenv("MIN_GAMES_BEFORE_REGRESSION", "20"))
 MIN_GAMES_FOR_BEST_ROLLBACK = 12
 REGRESSION_COMPOSITE_RATIO = 0.88
 REGRESSION_P50_RATIO = 0.85
 REGRESSION_P25_RATIO = 0.80
+REGRESSION_MIN_COMP_GAP = float(os.getenv("REGRESSION_MIN_COMP_GAP", "120"))
+REGRESSION_MIN_P50_GAP = float(os.getenv("REGRESSION_MIN_P50_GAP", "100"))
+REGRESSION_MIN_P25_GAP = float(os.getenv("REGRESSION_MIN_P25_GAP", "180"))
 REGRESSION_TREND_SHORT_WINDOW = 50
 REGRESSION_TREND_LONG_WINDOW = 100
 REGRESSION_TREND_SHORT_RATIO = 0.94
@@ -476,9 +480,26 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
         }
 
     _, _, _, _, best_hash, best_metrics, best_source = best
-    trigger_comp = current["comp"] < best_metrics["comp"] * REGRESSION_COMPOSITE_RATIO
-    trigger_p50 = current["p50"] < best_metrics["p50"] * REGRESSION_P50_RATIO
-    trigger_p25 = current["p25"] < best_metrics["p25"] * REGRESSION_P25_RATIO
+    if current["n"] < MIN_GAMES_BEFORE_REGRESSION:
+        return {
+            "state": "safe",
+            "text": f"RegPreview WAIT vs {best_hash[:8]}({best_source}) n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}",
+        }
+    comp_gap = best_metrics["comp"] - current["comp"]
+    p50_gap = best_metrics["p50"] - current["p50"]
+    p25_gap = best_metrics["p25"] - current["p25"]
+    trigger_comp = (
+        current["comp"] < best_metrics["comp"] * REGRESSION_COMPOSITE_RATIO
+        and comp_gap >= REGRESSION_MIN_COMP_GAP
+    )
+    trigger_p50 = (
+        current["p50"] < best_metrics["p50"] * REGRESSION_P50_RATIO
+        and p50_gap >= REGRESSION_MIN_P50_GAP
+    )
+    trigger_p25 = (
+        current["p25"] < best_metrics["p25"] * REGRESSION_P25_RATIO
+        and p25_gap >= REGRESSION_MIN_P25_GAP
+    )
     trend50, trend100 = calc_trend_flags(scores)
     fresh_games_since_rollback = count_fresh_games_since_last_rollback(current_hash)
     if (
