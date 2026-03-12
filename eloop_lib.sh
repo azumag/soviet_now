@@ -5656,29 +5656,41 @@ update_rolling_scores() {
 	strategy_hash=$(python3 extract_decide_hash.py "$strategy_source" 2>/dev/null || echo "unknown")
 	_archive_strategy_snapshot_by_hash "$strategy_source" "$strategy_hash"
 	_backfill_hash_archive_from_known_versions
+	local rolling_result=""
+	rolling_result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$score" <<'PY' 2>/dev/null
+import json
+import os
+import sys
 
-	python3 -c "
-import json, os
-rs_file = '$ROLLING_SCORES_FILE'
+rs_file, h, score = sys.argv[1], sys.argv[2], int(sys.argv[3])
 if os.path.exists(rs_file):
     with open(rs_file) as f:
         rs = json.load(f)
 else:
     rs = {}
 
-h = '$strategy_hash'
 if h not in rs:
-    rs[h] = {'scores': [], 'prev_hash': '', 'games_total': 0}
-if 'games_total' not in rs[h]:
-    rs[h]['games_total'] = len(rs[h].get('scores', []))
-rs[h]['scores'].append(int('$score'))
-rs[h]['games_total'] += 1
-# 最大20試合分を保持
-rs[h]['scores'] = rs[h]['scores'][-20:]
+    rs[h] = {"scores": [], "prev_hash": "", "games_total": 0}
+if "games_total" not in rs[h]:
+    rs[h]["games_total"] = len(rs[h].get("scores", []))
 
-	with open(rs_file, 'w') as f:
-	    json.dump(rs, f)
-	" 2>/dev/null
+rs[h]["scores"].append(score)
+rs[h]["games_total"] += 1
+rs[h]["scores"] = rs[h]["scores"][-20:]
+
+with open(rs_file, "w") as f:
+    json.dump(rs, f)
+
+print(f"{h}|{len(rs[h]['scores'])}|{rs[h]['games_total']}")
+PY
+)
+	if [ -n "$rolling_result" ]; then
+		local rolling_n="" rolling_total=""
+		IFS='|' read -r strategy_hash rolling_n rolling_total <<<"$rolling_result"
+		log "[ROLLING] updated: hash=${strategy_hash} n=${rolling_n} total=${rolling_total} score=${score}"
+	else
+		log "[ROLLING] update failed: hash=${strategy_hash} score=${score}"
+	fi
 	_prune_hash_archive_by_ranking
 }
 
