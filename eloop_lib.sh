@@ -1845,18 +1845,13 @@ for idx in (0, 1, 2):
     line = lines[idx].strip()
     if not line:
         continue
-    if corner == "news" and idx == 0 and "今回取り上げるニュースタイトルは" in line:
-        continue
     if intro_like.search(line):
         lines[idx] = intro
         changed = True
         break
 
 if not changed:
-    insert_at = 0
-    if corner == "news" and lines and "今回取り上げるニュースタイトルは" in lines[0]:
-        insert_at = 1
-    lines.insert(insert_at, intro)
+    lines.insert(0, intro)
 
 updated = "\n".join(lines)
 if text.endswith("\n"):
@@ -2278,15 +2273,7 @@ _ensure_radio_intro() {
 	local intro_line
 	intro_line="${greet}、${_rc_period}の放送です。現在時刻は${_rc_time_spoken}です。"
 
-	# ニュースはタイトル行を先頭に維持し、その直後に挨拶を補完
-	if [ "$corner_name" = "news" ] && printf '%s\n' "$text" | head -n 1 | grep -Fq '今回取り上げるニュースタイトルは'; then
-		local first_line rest
-		first_line=$(printf '%s\n' "$text" | head -n 1)
-		rest=$(printf '%s\n' "$text" | tail -n +2)
-		printf '%s\n%s\n%s' "$first_line" "$intro_line" "$rest"
-	else
-		printf '%s\n%s' "$intro_line" "$text"
-	fi
+	printf '%s\n%s' "$intro_line" "$text"
 }
 
 _news_title_key() {
@@ -3469,7 +3456,7 @@ $(_radio_persona_block)
 
 【本日のニュース】
 以下のニュースについて、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
-外国語のニュースの場合は、内容を日本語に翻訳した上で語ること。読み上げは必ず日本語で行うこと。
+外国語のニュースの場合は、内容を日本語に翻訳した上で語ること。タイトルも意味が伝わる自然な日本語に訳して扱うこと。原題をそのまま読み上げないこと。読み上げは必ず日本語で行うこと。
 ---
 ${selected_block}
 ---
@@ -3482,7 +3469,8 @@ ${past_topics}
 【トーク構成】
 1. 時間帯に合わせた軽いオープニング（2-3文）
 2. ニュースコーナー
-   - ニュース本文に入る前に、ニュースタイトルを1文で必ず読み上げること
+   - ニュース本文に入る前に、ニュースタイトルを日本語で1文だけ読み上げること
+   - 外国語タイトルは、原題の音読ではなく意味が伝わる自然な日本語タイトルに訳してから読むこと
    - 本文の内容を踏まえて1000字程度で深く語る
    - 単なる冷笑やツッコミで終わらせず、「なぜこうなったのか」「この先どうなるのか」「歴史的に見るとどういう位置づけか」など自分なりの洞察や意見を述べる
    - 斜に構えつつも知性を感じさせる分析を

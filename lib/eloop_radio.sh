@@ -192,15 +192,7 @@ _ensure_radio_intro() {
 	local intro_line
 	intro_line="${greet}、${_rc_period}の放送です。現在時刻は${_rc_time}です。"
 
-	# ニュースはタイトル行を先頭に維持し、その直後に挨拶を補完
-	if [ "$corner_name" = "news" ] && printf '%s\n' "$text" | head -n 1 | grep -Fq '今回取り上げるニュースタイトルは'; then
-		local first_line rest
-		first_line=$(printf '%s\n' "$text" | head -n 1)
-		rest=$(printf '%s\n' "$text" | tail -n +2)
-		printf '%s\n%s\n%s' "$first_line" "$intro_line" "$rest"
-	else
-		printf '%s\n%s' "$intro_line" "$text"
-	fi
+	printf '%s\n%s' "$intro_line" "$text"
 }
 
 _news_title_key() {
@@ -316,16 +308,6 @@ _radio_generate_and_play() {
 		echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
 	} | tail -"${PAST_RADIO_TOPICS_KEEP:-100}" >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 
-	# ニュースは選択タイトルを必ず先頭で読み上げる
-	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
-		local title_line
-		title_line="今回取り上げるニュースタイトルは「${selected_news}」です。"
-		if ! printf '%s\n' "$talk_body" | head -n 2 | grep -Fq "$selected_news"; then
-			talk_body="${title_line}
-${talk_body}"
-		fi
-	fi
-
 	local talk_body_parsed talk_body_sanitized talk_body_dedup
 	talk_body_parsed="$talk_body"
 	talk_body_sanitized=$(printf '%s' "$talk_body_parsed" | _sanitize_onair_text)
@@ -350,7 +332,7 @@ ${talk_body}"
 		fi
 	fi
 
-	# 挨拶・時刻言及が抜けた出力を補完（ニュースはタイトル行を先頭維持）
+	# 挨拶・時刻言及が抜けた出力を補完
 	local talk_with_intro
 	talk_with_intro=$(_ensure_radio_intro "$talk_body" "$corner_name")
 	[ -n "$talk_with_intro" ] && talk_body="$talk_with_intro"
@@ -558,10 +540,6 @@ start_radio_corner_news() {
 	fi
 	[ -z "$news_headlines" ] && return 1
 
-	# 過去に読んだニュース見出しリスト
-	local past_news_read=""
-	[ -f "$PAST_NEWS_READ" ] && past_news_read=$(cat "$PAST_NEWS_READ")
-
 	# 正規化キーで未読のみ抽出（表記揺れを吸収）
 	local unread_news_headlines=""
 	unread_news_headlines=$(printf '%s\n' "$news_headlines" | _filter_unread_news_blocks)
@@ -569,24 +547,72 @@ start_radio_corner_news() {
 		log "[NEWS] 全ニュースが既読 → 既読履歴をリセットして再読モードに切替"
 		: > "$PAST_NEWS_READ"
 		: > "$PAST_NEWS_READ_KEYS"
-		past_news_read=""
+		: > "$PAST_NEWS_TOPIC_KEYS"
+		: > "$PAST_NEWS_READ_SOURCES"
 		unread_news_headlines="$news_headlines"
+	fi
+
+	unread_news_headlines=$(_prepare_news_prompt_blocks "$unread_news_headlines")
+
+	local selected_news selected_block
+	selected_block=$(_random_pick_news_block "$unread_news_headlines")
+	if [ -z "$selected_block" ]; then
+		log "[NEWS] ニュースブロック選定失敗 → スキップ"
+		return 1
+	fi
+	selected_news=$(printf '%s\n' "$selected_block" | head -n 1 | sed 's/^■ //')
+	log "[NEWS] スクリプト選定: ${selected_news}"
+
+	local selected_key selected_topic_key selected_source_name selected_source_key
+	selected_key=$(_news_title_key "$selected_news")
+	selected_topic_key=$(_news_topic_key "$selected_news")
+	selected_source_name=$(_news_source_name_for_title "$selected_news")
+	selected_source_key=$(_news_source_key_from_name "$selected_source_name")
+	if [ -n "$selected_key" ]; then
+		echo "$selected_news" >>"$PAST_NEWS_READ"
+		echo "$selected_key" >>"$PAST_NEWS_READ_KEYS"
+		[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
+		_append_news_read_source "$selected_source_key"
+		tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
+		tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
+		tail -40 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
+		log "[NEWS] 既読記録: ${selected_news}"
 	fi
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
 
-	export persona_block
-	persona_block=$(_radio_persona_block)
-	export output_rules
-	output_rules=$(_radio_output_rules 1000 2000)
-	export _rc_time _rc_period _rc_mood unread_news_headlines past_news_read past_topics game_num score
-	# Default for empty past_news_read
-	[ -z "$past_news_read" ] && export past_news_read="（なし）"
-	envsubst < "$ELOOP_LIB_DIR/prompts/radio_news.md" > "$prompt_file"
-	unset persona_block output_rules _rc_time _rc_period _rc_mood unread_news_headlines past_news_read past_topics
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
 
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news"
+【本日のニュース】
+以下のニュースについて、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
+外国語のニュースの場合は、内容を日本語に翻訳した上で語ること。タイトルも意味が伝わる自然な日本語に訳して扱うこと。原題をそのまま読み上げないこと。読み上げは必ず日本語で行うこと。
+---
+${selected_block}
+---
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. ニュースコーナー
+   - ニュース本文に入る前に、ニュースタイトルを日本語で1文だけ読み上げること
+   - 外国語タイトルは、原題の音読ではなく意味が伝わる自然な日本語タイトルに訳してから読むこと
+   - 本文の内容を踏まえて1000字程度で深く語る
+   - 単なる冷笑やツッコミで終わらせず、「なぜこうなったのか」「この先どうなるのか」「歴史的に見るとどういう位置づけか」など自分なりの洞察や意見を述べる
+   - 斜に構えつつも知性を感じさせる分析を
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news" --selected-news "$selected_news"
 }
 
 start_radio_corner_recap() {
