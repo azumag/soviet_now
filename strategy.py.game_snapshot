@@ -7,14 +7,15 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (7 evaluation axes):
-  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase)
-  3. Drift penalty - Penalty for post-landing drift due to polygon shape
-  4. Left-right balance correction - Bonus for correcting piece count bias
-  5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge
-  7. Board density bonus - Prefer placement on less-dense side of board
+ Decision Logic (8 evaluation axes):
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase)
+   2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Left-right balance correction - Bonus for correcting piece count bias
+   5. nextNext centering - Center for next merge opportunity if nextNext same type
+   6. Chain merge bonus - Evaluate possibility of further merges after merge
+   7. Board density bonus - Prefer placement on less-dense side of board
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -215,6 +216,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
+
+        # ----- evaluation axis 2.5: near_pairs bonus in dangerous situations -----
+        # 危険局面で即時併合がない場合、near_pairsを活用する配置を優先
+        # ワーストゲーム(score0574, score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4-6あるにもかかわらず
+        # HIGH_TOWER/HIGH_LAYERが選択され続け即時併合機会を逃している失敗パターンを特定
+        # dangerous_situation かつ merge_grade == "NO" の場合、near_pairs が多い配置を優先
+        dangerous_situation = max_y >= 2.0 and isinstance(reactive_pairs, list) and len(reactive_pairs) >= 3
+        if dangerous_situation and merge_grade == "NO":
+            near_pairs = reactor.get("near_pairs", [])
+            if isinstance(near_pairs, list):
+                near_pairs_count = len(near_pairs)
+                # near_pairsが多いほど将来のreactive_pairsへの昇格可能性が高い
+                # reactive_pairsが3以上ある状況で、near_pairsを増やすことでさらに盤面圧縮を促進
+                if near_pairs_count >= 3:
+                    score += 800.0  # near_pairs活用ボーナス
+                    reasons.append("NEAR_PAIRS_OPPORTUNITY")
+                elif near_pairs_count >= 2:
+                    score += 400.0
+                    reasons.append("NEAR_PAIRS_OPPORTUNITY")
 
         # ----- evaluation axis 3: drift penalty -----
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
