@@ -7,16 +7,17 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-  Decision Logic (9 evaluation axes):
-   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-   1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
-   2. Height penalty - Penalty for high landing position (varies by phase)
-   2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
-   3. Drift penalty - Penalty for post-landing drift due to polygon shape
-   4. Left-right balance correction - Bonus for correcting piece count bias
-   5. nextNext centering - Center for next merge opportunity if nextNext same type
-   6. Chain merge bonus - Evaluate possibility of further merges after merge
-   7. Board density bonus - Prefer placement on less-dense side of board
+   Decision Logic (10 evaluation axes):
+    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+    1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
+    1.6. Dangerous situation nextNext enhancement - Bonus when nextNext matches merged type in dangerous situations
+    2. Height penalty - Penalty for high landing position (varies by phase)
+    2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
+    3. Drift penalty - Penalty for post-landing drift due to polygon shape
+    4. Left-right balance correction - Bonus for correcting piece count bias
+    5. nextNext centering - Center for next merge opportunity if nextNext same type
+    6. Chain merge bonus - Evaluate possibility of further merges after merge
+    7. Board density bonus - Prefer placement on less-dense side of board
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -79,6 +80,13 @@ Phases (determined by board max Y):
     # 即時併合候補がある場合は、near_pairsボーナス（900.0/600.0/300.0）を適用し、即時併合と盤面圧縮の両立を図る。
     # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
     # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_054618_score0973.jsonl turns 66-73, game_history/20260313_054034_score1960.jsonl turns 88-95, strategy.py.staging, advice.md
+    # v189: 危険局面nextNext活用強化版 - rollback failure mode (p25=-249.8) の解消
+    # ワーストゲーム(score0647)の終盤8ターン分析で、reactive_pairs=2-4あるにもかかわらず、MEDIUM_TOWER/HIGH_TOWERが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+    # advice.mdの「次の次の駒（next-next piece）を考慮して配置を決める戦略へ改善」に基づき、危険局面で即時併合候補がある場合、nextNextがマージ後のタイプと一致する配置にボーナスを追加。
+    # 将来の併合機会を確保し、下振れ耐性（p25）を向上させることで、成熟ランキングに残れる再現性を重視。
+    # 即時併合候補でnextNextがmerged_typeと一致する場合、+300.0ボーナスを追加することで、即時併合を取りつつ将来の併合機会を確保。
+    # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_061954_score0647.jsonl turns 49-56, game_history/20260313_064959_score2292.jsonl turns 114-121, strategy.py.staging
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -279,6 +287,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             elif merge_grade == "FAR":
                 score += 200.0
                 reasons.append("DANGER_MERGE_ENHANCEMENT")
+        
+        # ----- evaluation axis 1.6: dangerous situation nextNext enhancement -----
+        # 危険局面で即時併合候補がある場合、nextNextがマージ後のタイプ（next_type + 1）と一致するならボーナス
+        # 将来の併合機会を確保し、下振れ耐性（p25）を向上させる
+        # refs: advice.md, tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_061954_score0647.jsonl turns 49-56, game_history/20260313_064959_score2292.jsonl turns 114-121
+        
+        if dangerous_situation and merge_grade != "NO":
+            merged_type = min(next_type + 1, 16)  # マージ後のタイプ
+            if next_next_type == merged_type:
+                score += 300.0
+                reasons.append("DANGER_NEXT_SAME_MERGE")
  
         # ----- evaluation axis 2: height penalty -----
         # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
