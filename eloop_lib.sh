@@ -80,7 +80,6 @@ REJECTED_HASH_META_FILE="$TMP_STATE_DIR/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_TTL_SEC="${REJECTED_REEVALUATE_TTL_SEC:-21600}"
 LAST_ROLLBACK_PAIR_FILE="$TMP_STATE_DIR/last_rollback_pair.json"
 ROLLBACK_ANALYSIS_FILE="$TMP_STATE_DIR/last_rollback_analysis.md"
-ROLLBACK_TIMED_CORNER_SUPPRESS_SEC="${ROLLBACK_TIMED_CORNER_SUPPRESS_SEC:-1800}"
 BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
@@ -2889,27 +2888,6 @@ _play_priority_audio_file() {
 	SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
 }
 
-_recent_rollback_within() {
-	local window_sec="${1:-$ROLLBACK_TIMED_CORNER_SUPPRESS_SEC}"
-	[ -f "$LAST_ROLLBACK_PAIR_FILE" ] || return 1
-	python3 - "$LAST_ROLLBACK_PAIR_FILE" "$window_sec" <<'PY' >/dev/null 2>&1
-import json
-import sys
-import time
-
-path, window = sys.argv[1], int(sys.argv[2])
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    updated = int(data.get("updated_at") or 0)
-except Exception:
-    raise SystemExit(1)
-if updated and (time.time() - updated) <= window:
-    raise SystemExit(0)
-raise SystemExit(1)
-PY
-}
-
 _cancel_russia_celebration_worker() {
 	local worker_pid=""
 	worker_pid=$(cat "$RUSSIA_CELEBRATION_WORKER_PID_FILE" 2>/dev/null || true)
@@ -4671,12 +4649,8 @@ schedule_nonessential_audio_jobs() {
 		_run_timed_corner "dinner" start_radio_corner_dinner "$game_num" "$score" &
 	fi
 	if _try_timed_corner "redefine" 17 30; then
-		if _recent_rollback_within "$ROLLBACK_TIMED_CORNER_SUPPRESS_SEC"; then
-			log "[RADIO:redefine] skip: recent rollback"
-		else
-			timed_corner_fired=true
-			_run_timed_corner "redefine" start_radio_corner_redefine "$game_num" "$score" &
-		fi
+		timed_corner_fired=true
+		_run_timed_corner "redefine" start_radio_corner_redefine "$game_num" "$score" &
 	fi
 	if _try_timed_corner "fictionary" 18 0; then
 		timed_corner_fired=true
@@ -7574,4 +7548,3 @@ trigger_adaptive_improvement() {
 		_clear_accumulated_data
 	fi
 }
-
