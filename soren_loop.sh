@@ -127,9 +127,6 @@ log "strategy.py → 1game → adaptive improve → repeat"
 # Twitchチャットデーモン起動
 ./twitch_chat.sh start azumagbanjo
 
-# Twitch配信スクリーンショットデーモン起動
-start_twitch_screen
-
 # クリーンアップ trap
 trap '_handle_exit' EXIT
 trap '_handle_stop_signal INT' INT

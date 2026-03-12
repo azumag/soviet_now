@@ -1103,7 +1103,7 @@ _run_opencode_comment() {
 		"show_status.sh" \
 		"show_status_g.sh" \
 		"status_dashboard.py" \
-		"tmp/.comment_queue/comment_screenshot.png")
+		"tmp/.comment_queue/comment_screenshot.jpg")
 	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
 		log "[COMMENT] sandbox作成失敗 -> direct opencode" >&2
 		rm -f "$raw_file"
@@ -1163,7 +1163,7 @@ _run_claude_comment_with_model() {
 		"show_status.sh" \
 		"show_status_g.sh" \
 		"status_dashboard.py" \
-		"tmp/.comment_queue/comment_screenshot.png")
+		"tmp/.comment_queue/comment_screenshot.jpg")
 	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
 		log "[COMMENT] sandbox作成失敗 -> direct claude" >&2
 		_run_claude_radio_with_model "$prompt_file" "$model"
@@ -5597,11 +5597,12 @@ generate_comment_response() {
 	fi
 	[ -z "$twitch_comments" ] && return
 
-	# コメント処理時点のTwitch配信画面を保存
-	local comment_screenshot="tmp/.comment_queue/comment_screenshot.png"
-	if [ -f "tmp/twitch_stream.png" ]; then
-		cp -f "tmp/twitch_stream.png" "$comment_screenshot" 2>/dev/null || true
-		log "[COMMENT] 配信スクリーンショット保存: $comment_screenshot"
+	# コメント処理時点のTwitch配信サムネイルを取得
+	local comment_screenshot="tmp/.comment_queue/comment_screenshot.jpg"
+	if curl -sf -o "$comment_screenshot" -m 5 "https://static-cdn.jtvnw.net/previews-ttv/live_user_azumagbanjo-1280x720.jpg" 2>/dev/null; then
+		log "[COMMENT] 配信サムネイル取得: $comment_screenshot"
+	else
+		rm -f "$comment_screenshot"
 	fi
 
 	local comment_batch_file=""
@@ -5712,11 +5713,11 @@ generate_comment_response() {
 	${past_topics}
 
 	【Twitch配信画面スクリーンショット】
-	tmp/.comment_queue/comment_screenshot.png をReadツールで読んでください。
-	コメント受信時のTwitch配信画面です。ゲーム盤面だけでなく、カメラ映像（猫が映っていることもある）、
+	tmp/.comment_queue/comment_screenshot.jpg をReadツールで読んでください。
+	コメント受信時のTwitch配信サムネイルです。ゲーム盤面だけでなく、カメラ映像（猫が映っていることもある）、
 	OBSオーバーレイ、配信全体の雰囲気が確認できます。
 	コメントへの返事に、画面に見えているものを自然に織り込んでください。
-	※ スクリーンショットは数秒〜数十秒のラグがあります。
+	※ ファイルが存在しない場合は配信オフラインの可能性があります。
 
 		【追加参照可能ファイル（必要時のみ）】
 		- tmp/.comment_queue/spoken_history/*.txt: 最近実際に読み上げたコメント返し全文
@@ -6143,9 +6144,6 @@ cleanup_all() {
 	stop_comment_watcher
 	_kill_comment_gen
 	stop_comment_player
-
-	# Twitch配信スクリーンショット停止
-	stop_twitch_screen
 
 	# Twitchチャット停止
 	./twitch_chat.sh stop 2>/dev/null || true
@@ -7577,41 +7575,3 @@ trigger_adaptive_improvement() {
 	fi
 }
 
-#=== Twitch配信スクリーンショットデーモン ===
-
-start_twitch_screen() {
-	local pid_file="tmp/.twitch_screen.pid"
-	if [ -f "$pid_file" ]; then
-		local old_pid
-		old_pid=$(cat "$pid_file" 2>/dev/null)
-		if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-			log "[TWITCH_SCREEN] 既に起動中 (PID=$old_pid)"
-			return 0
-		fi
-		rm -f "$pid_file"
-	fi
-	if ! command -v node >/dev/null 2>&1; then
-		log "[TWITCH_SCREEN] node が見つかりません"
-		return 1
-	fi
-	if [ ! -f "twitch_screen.mjs" ]; then
-		log "[TWITCH_SCREEN] twitch_screen.mjs が見つかりません"
-		return 1
-	fi
-	node twitch_screen.mjs &
-	disown 2>/dev/null || true
-	log "[TWITCH_SCREEN] デーモン起動"
-}
-
-stop_twitch_screen() {
-	local pid_file="tmp/.twitch_screen.pid"
-	if [ -f "$pid_file" ]; then
-		local pid
-		pid=$(cat "$pid_file" 2>/dev/null)
-		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-			kill "$pid" 2>/dev/null || true
-			log "[TWITCH_SCREEN] デーモン停止 (PID=$pid)"
-		fi
-		rm -f "$pid_file"
-	fi
-}
