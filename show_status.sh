@@ -393,7 +393,7 @@ def pick_best_reference():
 
 def trend_flags():
     try:
-        all_scores = [int(line.strip()) for line in open(score_history_file) if line.strip()]
+        all_scores = [int(line.strip().split('\t')[-1]) for line in open(score_history_file) if line.strip()]
     except Exception:
         all_scores = []
     trend50 = False
@@ -489,7 +489,7 @@ PY
 	local best_score=$(cat best_score.txt 2>/dev/null || echo "?")
 	local game_count=$(cat game_count.txt 2>/dev/null || echo "?")
 	local last_scores=""
-	[[ -f score_history.txt ]] && last_scores=$(tail -5 score_history.txt 2>/dev/null | tr '\n' ' ')
+	[[ -f score_history.txt ]] && last_scores=$(tail -5 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' | tr '\n' ' ')
 
 	# --- 戦略情報 ---
 	local strategy_ver=$(ls -1t strategy_versions/v[0-9]*_score[0-9]*_strategy.py 2>/dev/null | head -1 | xargs basename 2>/dev/null)

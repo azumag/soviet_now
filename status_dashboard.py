@@ -140,7 +140,7 @@ def load_scores():
     p = Path("score_history.txt")
     if not p.exists():
         return []
-    return [int(l.strip()) for l in p.read_text().splitlines() if l.strip().isdigit()]
+    return [int(l.strip().split('\t')[-1]) for l in p.read_text().splitlines() if l.strip().split('\t')[-1].isdigit()]
 
 
 def load_rolling():

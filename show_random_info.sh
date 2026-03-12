@@ -32,10 +32,10 @@ collect_snippets() {
 
 	if [[ -f score_history.txt ]] && [[ -s score_history.txt ]]; then
 		local total=$(wc -l < score_history.txt | tr -d ' ')
-		local avg=$(awk '{s+=$1}END{printf "%.0f", s/NR}' score_history.txt)
+		local avg=$(awk -F'\t' '{s+=$NF}END{printf "%.0f", s/NR}' score_history.txt)
 		snippets+=("${total} games played / avg ${avg} pts")
-		snippets+=("Last score: $(tail -1 score_history.txt) pts")
-		snippets+=("Range: $(sort -n score_history.txt | head -1) .. $(sort -n score_history.txt | tail -1)")
+		snippets+=("Last score: $(tail -1 score_history.txt | awk -F'\t' '{print $NF}') pts")
+		snippets+=("Range: $(awk -F'\t' '{print $NF}' score_history.txt | sort -n | head -1) .. $(awk -F'\t' '{print $NF}' score_history.txt | sort -n | tail -1)")
 	fi
 
 	[[ -f game_count.txt ]] && snippets+=("Game #$(cat game_count.txt) and counting...")
@@ -133,7 +133,7 @@ print(f\"{len(d.get('pieces',[]))} pieces / {d.get('score',0)} pts / {d.get('sta
 	if [[ -f score_history.txt ]] && (( $(wc -l < score_history.txt | tr -d ' ') >= 5 )); then
 		local graph=$(tail -10 score_history.txt | python3 -c "
 import sys
-scores = [int(l.strip()) for l in sys.stdin if l.strip().isdigit()]
+scores = [int(l.strip().split('\t')[-1]) for l in sys.stdin if l.strip().split('\t')[-1].isdigit()]
 if scores:
     lo, hi = min(scores), max(scores)
     bars = '▁▂▃▄▅▆▇█'

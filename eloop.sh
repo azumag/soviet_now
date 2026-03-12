@@ -275,7 +275,7 @@ post_game_bookkeeping() {
 	fi
 
 	# スコア履歴
-	echo "$LAST_SCORE" >> score_history.txt
+	printf '%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z' | sed 's/\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/')" "$LAST_SCORE" >> score_history.txt
 
 	# ダッシュボード更新（GAMEOVER状態で生成→表示される）
 	log "[DASHBOARD] Generating GAMEOVER dashboard..."

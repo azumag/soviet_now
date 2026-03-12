@@ -154,6 +154,17 @@ fi
 
 #=== コアヘルパー ===
 
+# score_history.txt からスコアのみ抽出（新旧両形式対応）
+_last_score() {
+	local line
+	line=$(tail -1 score_history.txt 2>/dev/null) || { echo 0; return; }
+	printf '%s\n' "${line##*	}"
+}
+_recent_scores() {
+	local n="${1:-10}"
+	tail -"$n" score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}'
+}
+
 commands_empty() { [ -z "$(tr -d '[:space:]' <"$COMMANDS" 2>/dev/null)" ]; }
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 clear_commands_file() { : >"$COMMANDS"; }
@@ -3999,7 +4010,7 @@ fetch_and_play_news() {
 	local game_num="$1" score="$2"
 	# 旧呼び出し（引数なし）でも、起動時点の値を固定して後段に渡す
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(_last_score)
 
 	log "[NEWS] ニュース取得..."
 	./fetch_news.sh 2>/dev/null
@@ -4056,7 +4067,7 @@ _dispatch_manual_audio_trigger() {
 		;;
 	strategy)
 		log "[MANUAL] strategy トリガー受付: $(basename "$cmd_file")"
-		recent_scores=$(tail -12 score_history.txt 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+		recent_scores=$(_recent_scores 12 | tr '\n' ' ' | sed 's/ $//')
 		[ -z "$recent_scores" ] && recent_scores="${score:-0}"
 		best_score=$(cat best_score.txt 2>/dev/null || echo 0)
 		strategy_diff=$(_build_manual_strategy_diff)
@@ -4109,7 +4120,7 @@ _dispatch_manual_audio_trigger() {
 process_external_audio_triggers() {
 	local game_num="$1" score="$2"
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(_last_score)
 	mkdir -p "$MANUAL_AUDIO_TRIGGER_DIR" 2>/dev/null || true
 
 	local max_per_tick="${MANUAL_AUDIO_TRIGGER_MAX_PER_TICK:-3}"
@@ -4138,7 +4149,7 @@ process_external_audio_triggers() {
 start_random_radio_corner() {
 	local game_num="$1" score="$2"
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(_last_score)
 
 	log "[RADIO] コーナー選択: theme"
 	start_radio_corner_theme "$game_num" "$score"
@@ -4147,7 +4158,7 @@ start_random_radio_corner() {
 schedule_nonessential_audio_jobs() {
 	local game_num="$1" score="$2"
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(_last_score)
 
 	# 配信演出の頻度 (変更しても毎ループ source で即反映)
 	local news_interval=4
@@ -6250,7 +6261,7 @@ trend50_recent = trend50_prev = None
 trend100_recent = trend100_prev = None
 if os.path.exists(score_history_file):
     try:
-        all_scores = [int(line.strip()) for line in open(score_history_file) if line.strip()]
+        all_scores = [int(line.strip().split('\t')[-1]) for line in open(score_history_file) if line.strip()]
     except Exception:
         all_scores = []
     if len(all_scores) >= trend_short_window * 2:

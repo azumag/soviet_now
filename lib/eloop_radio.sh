@@ -575,7 +575,7 @@ start_radio_corner_recap() {
 	local best_score
 	best_score=$(cat best_score.txt 2>/dev/null || echo 0)
 	local recent_scores=""
-	[ -f "score_history.txt" ] && recent_scores=$(tail -10 score_history.txt 2>/dev/null)
+	[ -f "score_history.txt" ] && recent_scores=$(tail -10 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}')
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)

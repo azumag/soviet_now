@@ -188,7 +188,7 @@ while true; do
 	# コメント系ワーカーは壊れたPIDファイルからも自己回復させる
 	start_comment_player
 	start_comment_watcher
-	process_external_audio_triggers "$GAME_NUM" "$(tail -1 score_history.txt 2>/dev/null || echo 0)"
+	process_external_audio_triggers "$GAME_NUM" "$(_last_score)"
 
 	# ソ連建国後は strategy 実行を止め、コメント系のみ維持する
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
@@ -199,7 +199,7 @@ while true; do
 
 	# 非同期ジョブに渡すため、試合開始時点の値を固定
 	SCHEDULE_GAME_NUM="$GAME_NUM"
-	SCHEDULE_SCORE=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	SCHEDULE_SCORE=$(_last_score)
 	schedule_nonessential_audio_jobs "$SCHEDULE_GAME_NUM" "$SCHEDULE_SCORE"
 
 	# 1試合プレイ
