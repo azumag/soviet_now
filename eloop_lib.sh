@@ -7075,7 +7075,12 @@ PY
 
 		rollback_analysis_summary=$(_write_rollback_analysis_file "$strategy_hash" "$rolled_hash" "$result" "$rollback_note" "$rollback_game_num" 2>/dev/null || true)
 		if [ -n "$rolled_hash" ]; then
-			_reset_current_strategy_run "$rolled_hash"
+			if _seed_current_strategy_run_from_rolling "$rolled_hash"; then
+				log "[CURRENT-RUN] rollback seed from rolling: hash=${rolled_hash}"
+			else
+				_reset_current_strategy_run "$rolled_hash"
+				log "[CURRENT-RUN] rollback seed missing -> reset: hash=${rolled_hash}"
+			fi
 		fi
 		if [ -n "$rollback_analysis_summary" ]; then
 			{
@@ -7338,6 +7343,45 @@ payload = {
     "scores": [],
     "games_total": 0,
     "_recent_archives": [],
+}
+with open(out_file, "w") as f:
+    json.dump(payload, f)
+PY
+}
+
+_seed_current_strategy_run_from_rolling() {
+	local strategy_hash="$1"
+	[ -n "$strategy_hash" ] || return 1
+	[ -f "$ROLLING_SCORES_FILE" ] || return 1
+	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" <<'PY' >/dev/null 2>&1
+import json
+import os
+import sys
+
+rolling_file, out_file, strategy_hash = sys.argv[1], sys.argv[2], sys.argv[3]
+if not os.path.exists(rolling_file):
+    raise SystemExit(1)
+try:
+    rolling = json.load(open(rolling_file))
+except Exception:
+    raise SystemExit(1)
+entry = rolling.get(strategy_hash)
+if not isinstance(entry, dict):
+    raise SystemExit(1)
+scores = []
+for x in entry.get("scores", []) or []:
+    try:
+        scores.append(int(x))
+    except Exception:
+        pass
+recent_archives = entry.get("_recent_archives", []) or []
+if not isinstance(recent_archives, list):
+    recent_archives = []
+payload = {
+    "hash": strategy_hash,
+    "scores": scores[-20:],
+    "games_total": int(entry.get("games_total", len(scores)) or len(scores)),
+    "_recent_archives": recent_archives[-50:],
 }
 with open(out_file, "w") as f:
     json.dump(payload, f)
