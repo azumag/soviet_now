@@ -139,13 +139,6 @@ def collect_sources(corner: str, query: str, max_sources: int):
         seen_urls.add(url)
         sources.append(src)
 
-    if corner == "news":
-        try:
-            for src in google_news_search(query, max_sources):
-                add_source(src)
-        except Exception:
-            pass
-
     wiki_limit = max_sources if not sources else max(1, max_sources - len(sources))
     for lang in ("ja", "en"):
         if len(sources) >= max_sources:

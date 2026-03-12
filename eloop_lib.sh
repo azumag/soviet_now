@@ -2230,7 +2230,7 @@ _ensure_corner_announce() {
 		dinner)   announce="今日の夕飯の献立を考えようコーナーです。" ;;
 		deals)    announce="お得情報コーナーです。" ;;
 		survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
-		opinion)  announce="時事意見コーナーです。" ;;
+		jiji)     announce="時事ニュースコーナーです。" ;;
 		rollback) announce="粛清ラジオです。" ;;
 		rakugo) announce="深夜の落語創作コーナーです。" ;;
 		*)        announce="" ;;
@@ -4826,6 +4826,10 @@ _dispatch_manual_audio_trigger() {
 	rakugo)
 		log "[MANUAL] rakugo トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_rakugo "$game_num" "$score" &
+		;;
+	jiji)
+		log "[MANUAL] jiji トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_jiji "$game_num" "$score" &
 		;;
 	*)
 		log "[MANUAL] 未知の音声トリガーを破棄: $(basename "$cmd_file") cmd=${cmd_name}"

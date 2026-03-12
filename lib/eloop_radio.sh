@@ -150,7 +150,7 @@ _ensure_corner_announce() {
 		dinner)   announce="今日の夕飯の献立を考えようコーナーです。" ;;
 		deals)    announce="お得情報コーナーです。" ;;
 		survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
-		opinion)  announce="時事意見コーナーです。" ;;
+		jiji)     announce="時事ニュースコーナーです。" ;;
 		rollback) announce="粛清ラジオです。" ;;
 		theme)    announce="" ;;
 		strategy) announce="" ;;
@@ -614,35 +614,35 @@ start_radio_corner_strategy() {
 	_radio_generate_and_play "$prompt_file" "$game_num" "${best_score}" "strategy"
 }
 
-#=== 時事意見コーナー ===
+#=== 時事ニュースコーナー (jiji) ===
 
-_filter_unread_opinion_blocks() {
-	local opinion_tmp
-	opinion_tmp=$(mktemp /tmp/eloop_opinion_blocks_XXXXXXXX)
-	cat >"$opinion_tmp"
+_filter_unread_jiji_blocks() {
+	local jiji_tmp
+	jiji_tmp=$(mktemp /tmp/eloop_jiji_blocks_XXXXXXXX)
+	cat >"$jiji_tmp"
 	python3 "$ELOOP_LIB_DIR/lib/news_filter.py" filter_unread \
-		"$TMP_HISTORY_DIR/.past_opinion_titles.txt" \
-		"$TMP_HISTORY_DIR/.past_opinion_keys.txt" \
-		"$opinion_tmp"
-	rm -f "$opinion_tmp"
+		"$TMP_HISTORY_DIR/.past_jiji_titles.txt" \
+		"$TMP_HISTORY_DIR/.past_jiji_keys.txt" \
+		"$jiji_tmp"
+	rm -f "$jiji_tmp"
 }
 
-_run_opencode_opinion_research() {
+_run_opencode_jiji_research() {
 	local agent="$1" prompt_file="$2"
 	local raw_file permission
-	raw_file=$(mktemp /tmp/eloop_opinion_research_raw_XXXXXXXX)
+	raw_file=$(mktemp /tmp/eloop_jiji_research_raw_XXXXXXXX)
 	# bash許可でAIにWeb検索させる
 	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow"}'
 	timeout "${RADIO_OPENCODE_TIMEOUT}" \
 		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$permission' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
 	local rc=$?
 	if [ $rc -eq 124 ]; then
-		log "[OPINION] opencode research timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
+		log "[JIJI] opencode research timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
-		log "[OPINION] opencode research failed (rc=$rc, agent=$agent)" >&2
+		log "[JIJI] opencode research failed (rc=$rc, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
@@ -659,65 +659,72 @@ _run_opencode_opinion_research() {
 	rm -f "$raw_file"
 }
 
-start_radio_corner_opinion() {
+start_radio_corner_jiji() {
 	local game_num="$1" score="$2"
 	_radio_time_context
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
 
+	# Migrate old dedup files (one-time)
+	if [ -f "$TMP_HISTORY_DIR/.past_opinion_titles.txt" ] && [ ! -f "$TMP_HISTORY_DIR/.past_jiji_titles.txt" ]; then
+		cp "$TMP_HISTORY_DIR/.past_opinion_titles.txt" "$TMP_HISTORY_DIR/.past_jiji_titles.txt"
+		cp "$TMP_HISTORY_DIR/.past_opinion_keys.txt" "$TMP_HISTORY_DIR/.past_jiji_keys.txt" 2>/dev/null || true
+		log "[JIJI] migrated .past_opinion_*.txt -> .past_jiji_*.txt"
+	fi
+
 	# 1. Google News トップ見出し取得
-	log "[OPINION] Google News 見出し取得..."
+	log "[JIJI] Google News 見出し取得..."
 	python3 "$ELOOP_LIB_DIR/lib/fetch_google_headlines.py" 2>/dev/null
 	if [ ! -f "tmp/google_headlines.txt" ] || [ ! -s "tmp/google_headlines.txt" ]; then
-		log "[OPINION] 見出し取得失敗、スキップ"
+		log "[JIJI] 見出し取得失敗、スキップ"
 		return 1
 	fi
 
 	# 2. 未読の見出しから1件選択
 	local headlines unread_headlines headline
 	headlines=$(cat "tmp/google_headlines.txt")
-	unread_headlines=$(printf '%s\n' "$headlines" | _filter_unread_opinion_blocks)
+	unread_headlines=$(printf '%s\n' "$headlines" | _filter_unread_jiji_blocks)
 	if [ -z "$unread_headlines" ]; then
-		log "[OPINION] 未読見出しなし、スキップ"
+		log "[JIJI] 未読見出しなし、スキップ"
 		return 1
 	fi
 	# 先頭の見出しを選択（■ プレフィックスを除去）
 	headline=$(printf '%s\n' "$unread_headlines" | head -1 | sed 's/^■ //')
 
 	# 3. AIにWeb検索で調査させる（bash許可）
-	log "[OPINION] AI調査中: $headline"
+	log "[JIJI] AI調査中: $headline"
 	local research_prompt_file grounding_context=""
-	research_prompt_file=$(mktemp /tmp/eloop_opinion_research_prompt_XXXXXXXX)
+	research_prompt_file=$(mktemp /tmp/eloop_jiji_research_prompt_XXXXXXXX)
 	export headline
-	envsubst < "$ELOOP_LIB_DIR/prompts/radio_opinion_research.md" > "$research_prompt_file"
+	envsubst < "$ELOOP_LIB_DIR/prompts/radio_jiji_research.md" > "$research_prompt_file"
 	unset headline
 
-	grounding_context=$(_run_opencode_opinion_research "$RADIO_AGENT" "$research_prompt_file")
+	grounding_context=$(_run_opencode_jiji_research "$RADIO_AGENT" "$research_prompt_file")
 	if [ -z "$grounding_context" ]; then
-		log "[OPINION] AI調査失敗、fallbackエージェントで再試行..."
-		grounding_context=$(_run_opencode_opinion_research "$RADIO_FALLBACK" "$research_prompt_file")
+		log "[JIJI] AI調査失敗、fallbackエージェントで再試行..."
+		grounding_context=$(_run_opencode_jiji_research "$RADIO_FALLBACK" "$research_prompt_file")
 	fi
 	rm -f "$research_prompt_file"
 
 	# AI調査失敗時はプログラム的検索にフォールバック
 	if [ -z "$grounding_context" ]; then
-		log "[OPINION] AI調査失敗、fetch_radio_grounding.py にフォールバック"
+		log "[JIJI] AI調査失敗、fetch_radio_grounding.py にフォールバック"
 		grounding_context=$(python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
-			--corner opinion --query "$headline" --max-sources 3 2>/dev/null || true)
+			--corner jiji --query "$headline" --max-sources 3 2>/dev/null || true)
 	fi
 	[ -z "$grounding_context" ] && grounding_context="（検索結果なし）"
-	log "[OPINION] 調査完了 (${#grounding_context}字)"
+	log "[JIJI] 調査完了 (${#grounding_context}字)"
 
 	# 4. 既読記録（選択時点で記録）
 	local headline_key
 	headline_key=$(_news_title_key "$headline")
 	if [ -n "$headline_key" ]; then
-		echo "$headline" >>"$TMP_HISTORY_DIR/.past_opinion_titles.txt"
-		echo "$headline_key" >>"$TMP_HISTORY_DIR/.past_opinion_keys.txt"
-		tail -60 "$TMP_HISTORY_DIR/.past_opinion_titles.txt" >"$TMP_HISTORY_DIR/.past_opinion_titles.txt.tmp" \
-			&& mv "$TMP_HISTORY_DIR/.past_opinion_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_opinion_titles.txt"
-		tail -120 "$TMP_HISTORY_DIR/.past_opinion_keys.txt" >"$TMP_HISTORY_DIR/.past_opinion_keys.txt.tmp" \
-			&& mv "$TMP_HISTORY_DIR/.past_opinion_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_opinion_keys.txt"
+		echo "$headline" >>"$TMP_HISTORY_DIR/.past_jiji_titles.txt"
+		echo "$headline_key" >>"$TMP_HISTORY_DIR/.past_jiji_keys.txt"
+		tail -60 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" \
+			&& mv "$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_titles.txt"
+		tail -120 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" \
+			&& mv "$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_keys.txt"
 	fi
 
 	# 5. プロンプト生成 → AI生成 → 再生
@@ -728,10 +735,10 @@ start_radio_corner_opinion() {
 	export output_rules
 	output_rules=$(_radio_output_rules 1000 2000)
 	export _rc_time _rc_period _rc_mood past_topics game_num score headline grounding_context
-	envsubst < "$ELOOP_LIB_DIR/prompts/radio_opinion.md" > "$prompt_file"
+	envsubst < "$ELOOP_LIB_DIR/prompts/radio_jiji.md" > "$prompt_file"
 	unset persona_block output_rules _rc_time _rc_period _rc_mood past_topics headline grounding_context
 
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "opinion"
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji"
 }
 
 #=== ニュース: 毎ゲーム取得 & 再生 ===
@@ -828,19 +835,19 @@ schedule_nonessential_audio_jobs() {
 		fi
 	fi
 
-	# 時事意見コーナー（1時間に1回）
-	local opinion_interval_sec=3600
-	local opinion_last_file="$TMP_STATE_DIR/.opinion_last_run"
-	local opinion_last_ts now_ts opinion_elapsed
+	# 時事ニュースコーナー（2時間に1回）
+	local jiji_interval_sec=7200
+	local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
+	local jiji_last_ts now_ts jiji_elapsed
 	now_ts=$(date +%s)
-	opinion_last_ts=$(cat "$opinion_last_file" 2>/dev/null || echo 0)
-	opinion_elapsed=$((now_ts - opinion_last_ts))
-	if [ "$opinion_elapsed" -ge "$opinion_interval_sec" ]; then
+	jiji_last_ts=$(cat "$jiji_last_file" 2>/dev/null || echo 0)
+	jiji_elapsed=$((now_ts - jiji_last_ts))
+	if [ "$jiji_elapsed" -ge "$jiji_interval_sec" ]; then
 		if [ "$skip_nonessential_radio" = true ]; then
-			log "[OPINION] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
+			log "[JIJI] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
 		else
-			echo "$now_ts" > "$opinion_last_file"
-			start_radio_corner_opinion "$game_num" "$score" &
+			echo "$now_ts" > "$jiji_last_file"
+			start_radio_corner_jiji "$game_num" "$score" &
 		fi
 	fi
 }

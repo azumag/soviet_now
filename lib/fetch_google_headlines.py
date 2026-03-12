@@ -18,8 +18,8 @@ import xml.etree.ElementTree as ET
 
 RSS_URL = "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
 OUTPUT_FILE = "tmp/google_headlines.txt"
-PAST_TITLES_FILE = "tmp/history/.past_opinion_titles.txt"
-PAST_KEYS_FILE = "tmp/history/.past_opinion_keys.txt"
+PAST_TITLES_FILE = "tmp/history/.past_jiji_titles.txt"
+PAST_KEYS_FILE = "tmp/history/.past_jiji_keys.txt"
 USER_AGENT = "soren-radio-grounding/1.0"
 MAX_HEADLINES = 8
 
