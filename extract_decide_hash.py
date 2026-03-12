@@ -10,6 +10,29 @@ import hashlib
 import sys
 
 
+def stable_ast_dump(node):
+    """Return a cross-Python-version-stable AST dump.
+
+    Python 3.9 and 3.14 differ in how `ast.dump()` renders empty fields such as
+    `keywords=[]` or `orelse=[]`. The runtime and dashboard both key strategy
+    history off this hash, so the dump must not depend on the interpreter
+    version.
+    """
+    if isinstance(node, ast.AST):
+        fields = []
+        for field in getattr(node, "_fields", ()):
+            value = getattr(node, field)
+            if value == [] or value is None:
+                continue
+            fields.append(f"{field}={stable_ast_dump(value)}")
+        if fields:
+            return f"{node.__class__.__name__}({', '.join(fields)})"
+        return f"{node.__class__.__name__}()"
+    if isinstance(node, list):
+        return "[" + ", ".join(stable_ast_dump(item) for item in node) + "]"
+    return repr(node)
+
+
 def extract_decide_body(filepath):
     """decide()関数のAST本体を抽出し、コメント・docstring除去した正規化コードを返す"""
     with open(filepath, "r", encoding="utf-8") as f:
@@ -30,7 +53,7 @@ def extract_decide_body(filepath):
                 body = body[1:]
 
             # ASTをダンプして正規化（コメントは含まれない）
-            normalized = ast.dump(ast.Module(body=body, type_ignores=[]))
+            normalized = stable_ast_dump(ast.Module(body=body, type_ignores=[]))
             return normalized
 
     return ""

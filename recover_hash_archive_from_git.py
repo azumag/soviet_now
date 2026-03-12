@@ -54,6 +54,21 @@ def calc_comp(scores: list[int]) -> float:
 
 
 def extract_decide_hash_from_source(source: str) -> str:
+    def stable_ast_dump(node):
+        if isinstance(node, ast.AST):
+            fields = []
+            for field in getattr(node, "_fields", ()):
+                value = getattr(node, field)
+                if value == [] or value is None:
+                    continue
+                fields.append(f"{field}={stable_ast_dump(value)}")
+            if fields:
+                return f"{node.__class__.__name__}({', '.join(fields)})"
+            return f"{node.__class__.__name__}()"
+        if isinstance(node, list):
+            return "[" + ", ".join(stable_ast_dump(item) for item in node) + "]"
+        return repr(node)
+
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "decide":
@@ -65,7 +80,7 @@ def extract_decide_hash_from_source(source: str) -> str:
                 and isinstance(body[0].value.value, str)
             ):
                 body = body[1:]
-            normalized = ast.dump(ast.Module(body=body, type_ignores=[]))
+            normalized = stable_ast_dump(ast.Module(body=body, type_ignores=[]))
             import hashlib
 
             return hashlib.md5(normalized.encode("utf-8")).hexdigest()[:12]
