@@ -5184,23 +5184,6 @@ _find_strategy_file_by_hash() {
 		echo "$STRATEGY_HASH_ARCHIVE_DIR/${target_hash}.py"
 		return 0
 	fi
-
-	local candidates=()
-	[ -f "$STRATEGY_FILE" ] && candidates+=("$STRATEGY_FILE")
-	[ -f "tmp/revert_strategy.py" ] && candidates+=("tmp/revert_strategy.py")
-	while IFS= read -r vf; do
-		[ -n "$vf" ] && candidates+=("$vf")
-	done < <(ls -1t "$STRATEGY_VERSIONS_DIR"/*.py 2>/dev/null || true)
-
-	local f h
-	for f in "${candidates[@]}"; do
-		[ -f "$f" ] || continue
-		h=$(python3 extract_decide_hash.py "$f" 2>/dev/null || echo "")
-		if [ "$h" = "$target_hash" ]; then
-			echo "$f"
-			return 0
-		fi
-	done
 	return 1
 }
 
@@ -5466,41 +5449,8 @@ _pick_best_rollback_candidate() {
 	current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
 	current_comp="${current_metrics%%|*}"
 
-	local anchor_hash="" anchor_comp="" anchor_p50="" anchor_p25="" anchor_lcb="" anchor_n="" anchor_file=""
-	if [ -f "$BEST_STRATEGY_ANCHOR_FILE" ]; then
-		eval "$(
-			python3 - "$BEST_STRATEGY_ANCHOR_FILE" <<'PY' 2>/dev/null
-import json
-import shlex
-import sys
-
-try:
-    data = json.load(open(sys.argv[1]))
-except Exception:
-    raise SystemExit(0)
-
-for key in ("hash", "comp", "p50", "p25", "lcb", "n"):
-    val = data.get(key, "")
-    print(f"anchor_{key}=" + shlex.quote(str(val)))
-PY
-			)"
-	fi
-		if [ -n "$anchor_hash" ] && [ "$anchor_hash" != "$current_hash" ]; then
-			if _is_blocked_reverse_rollback_pair "$current_hash" "$anchor_hash"; then
-				log "[REGRESSION] rollback候補スキップ: anchor $anchor_hash は直前rollbackの逆向き" >&2
-			elif [ -n "$current_comp" ] && ! awk "BEGIN{exit !($anchor_comp > $current_comp)}"; then
-				log "[REGRESSION] rollback候補スキップ: anchor $anchor_hash は current(comp=$current_comp) 以下" >&2
-			else
-			anchor_file=$(_find_strategy_file_by_hash "$anchor_hash")
-		fi
-		if [ -n "$anchor_file" ]; then
-			echo "${anchor_hash}|${anchor_comp}|${anchor_p50}|${anchor_p25}|${anchor_lcb}|${anchor_n}|${anchor_file}"
-			return 0
-		fi
-	fi
-
 	local ranked
-	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
+	ranked=$(python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
 import json
 import sys
 import math
@@ -5508,10 +5458,11 @@ import math
 rs_file = sys.argv[1]
 current_hash = sys.argv[2]
 min_games = int(sys.argv[3])
-lcb_z = float(sys.argv[4])
-w_p50 = float(sys.argv[5])
-w_p25 = float(sys.argv[6])
-w_lcb = float(sys.argv[7])
+keep_top = int(sys.argv[4])
+lcb_z = float(sys.argv[5])
+w_p50 = float(sys.argv[6])
+w_p25 = float(sys.argv[7])
+w_lcb = float(sys.argv[8])
 rs = json.load(open(rs_file))
 
 def quantile(vals, p):
@@ -5551,7 +5502,7 @@ for h, data in rs.items():
     rows.append((comp, p50, p25, lcb, n, h))
 
 rows.sort(key=lambda x: (x[0], x[1], x[2], x[4]), reverse=True)
-for comp, p50, p25, lcb, n, h in rows:
+for comp, p50, p25, lcb, n, h in rows[:keep_top]:
     print(f"{h}|{comp:.2f}|{p50:.1f}|{p25:.1f}|{lcb:.1f}|{n}")
 PY
 )
@@ -5564,11 +5515,12 @@ PY
 		if [ -n "$current_comp" ] && ! awk "BEGIN{exit !($comp > $current_comp)}"; then
 			continue
 		fi
-			if _is_blocked_reverse_rollback_pair "$current_hash" "$h"; then
-				log "[REGRESSION] rollback候補スキップ: $h は直前rollbackの逆向き" >&2
-				continue
-			fi
-		candidate_file=$(_find_strategy_file_by_hash "$h")
+		if _is_blocked_reverse_rollback_pair "$current_hash" "$h"; then
+			log "[REGRESSION] rollback候補スキップ: $h は直前rollbackの逆向き" >&2
+			continue
+		fi
+		candidate_file="$STRATEGY_HASH_ARCHIVE_DIR/${h}.py"
+		[ -f "$candidate_file" ] || continue
 		if [ -n "$candidate_file" ]; then
 			echo "${h}|${comp}|${p50}|${p25}|${lcb}|${n}|${candidate_file}"
 			return 0
@@ -5620,7 +5572,9 @@ _prune_hash_archive_by_ranking() {
 	_backfill_hash_archive_from_known_versions
 
 	local ranked_hashes
-	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" <<'PY'
+	local current_hash=""
+	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" <<'PY'
 import json
 import sys
 import math
@@ -5632,6 +5586,7 @@ lcb_z = float(sys.argv[4])
 w_p50 = float(sys.argv[5])
 w_p25 = float(sys.argv[6])
 w_lcb = float(sys.argv[7])
+current_hash = sys.argv[8]
 rs = json.load(open(rs_file))
 
 def quantile(vals, p):
@@ -5661,6 +5616,8 @@ def composite_score(scores):
 
 rows = []
 for h, data in rs.items():
+    if h == current_hash:
+        continue
     scores = [int(x) for x in data.get("scores", [])]
     if len(scores) < min_games:
         continue
@@ -5671,20 +5628,8 @@ for _, _, _, _, h in rows[:keep_top]:
     print(h)
 PY
 )
-
-	local current_hash=""
-	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-	local revert_hash=""
-	if [ -f "tmp/revert_strategy.py" ]; then
-		revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
-	fi
-	local anchor_hash=""
-	if [ -f "$BEST_STRATEGY_ANCHOR_FILE" ]; then
-		anchor_hash=$(python3 -c "import json; print(json.load(open('$BEST_STRATEGY_ANCHOR_FILE')).get('hash',''))" 2>/dev/null || echo "")
-	fi
-
 	local keep_hashes
-	keep_hashes=$(printf '%s\n%s\n%s\n%s\n' "$ranked_hashes" "$current_hash" "$revert_hash" "$anchor_hash" | sed '/^$/d' | sort -u)
+	keep_hashes=$(printf '%s\n%s\n' "$ranked_hashes" "$current_hash" | sed '/^$/d' | sort -u)
 
 	local removed=0
 	local f base h
@@ -5699,7 +5644,7 @@ PY
 	done < <(ls -1 "$STRATEGY_HASH_ARCHIVE_DIR"/*.py 2>/dev/null || true)
 
 	if [ "$removed" -gt 0 ]; then
-		log "[HASH-ARCHIVE] pruned ${removed} file(s): keep top ${HASH_ARCHIVE_KEEP_TOP} (+current/revert/anchor)"
+		log "[HASH-ARCHIVE] pruned ${removed} file(s): keep top ${HASH_ARCHIVE_KEEP_TOP} mature (+current)"
 	fi
 }
 
@@ -5729,15 +5674,10 @@ rs[h]['games_total'] += 1
 # 最大20試合分を保持
 rs[h]['scores'] = rs[h]['scores'][-20:]
 
-with open(rs_file, 'w') as f:
-    json.dump(rs, f)
+	with open(rs_file, 'w') as f:
+	    json.dump(rs, f)
 	" 2>/dev/null
-		local anchor_updated=""
-		anchor_updated=$(_refresh_best_strategy_anchor "$strategy_hash" 2>/dev/null || true)
-		if [ -n "$anchor_updated" ]; then
-			log "[REGRESSION] best anchor更新: ${anchor_updated}"
-		fi
-		_prune_hash_archive_by_ranking
+	_prune_hash_archive_by_ranking
 }
 
 check_regression() {
@@ -5750,7 +5690,7 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$BEST_STRATEGY_ANCHOR_FILE" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$STRATEGY_HASH_ARCHIVE_DIR" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
 import json
 import math
 import os
@@ -5767,12 +5707,13 @@ w_lcb = float(sys.argv[8])
 composite_ratio = float(sys.argv[9])
 p50_ratio = float(sys.argv[10])
 p25_ratio = float(sys.argv[11])
-anchor_file = sys.argv[12]
+archive_dir = sys.argv[12]
 score_history_file = sys.argv[13]
 trend_short_window = int(sys.argv[14])
 trend_long_window = int(sys.argv[15])
 trend_short_ratio = float(sys.argv[16])
 trend_long_ratio = float(sys.argv[17])
+keep_top = int(sys.argv[18])
 
 if not os.path.exists(rs_file):
     print("OK")
@@ -5831,6 +5772,8 @@ for h, data in rs.items():
     scores = [int(x) for x in data.get("scores", [])]
     if len(scores) < min_games_candidates:
         continue
+    if archive_dir and not os.path.exists(os.path.join(archive_dir, f"{h}.py")):
+        continue
     m = metrics(scores)
     candidates.append((m["composite"], m["p50"], m["p25"], m["n"], h, m))
 
@@ -5838,38 +5781,10 @@ if not candidates:
     ranked_best = None
 else:
     candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
-    ranked_best = candidates[0]
-
-anchor_best = None
-if os.path.exists(anchor_file):
-    try:
-        anchor = json.load(open(anchor_file))
-    except Exception:
-        anchor = None
-    if anchor:
-        anchor_hash = str(anchor.get("hash", ""))
-        anchor_n = int(anchor.get("n", 0))
-        if anchor_hash and anchor_hash != current_hash and anchor_n >= min_games_candidates:
-            anchor_best = (
-                float(anchor.get("comp", 0.0)),
-                float(anchor.get("p50", 0.0)),
-                float(anchor.get("p25", 0.0)),
-                anchor_n,
-                anchor_hash,
-                {
-                    "composite": float(anchor.get("comp", 0.0)),
-                    "p50": float(anchor.get("p50", 0.0)),
-                    "p25": float(anchor.get("p25", 0.0)),
-                    "lcb": float(anchor.get("lcb", 0.0)),
-                    "n": anchor_n,
-                },
-            )
+    ranked_best = candidates[:keep_top][0] if candidates[:keep_top] else None
 
 best_ref = ranked_best
-best_source = "rolling"
-if anchor_best and (best_ref is None or anchor_best[:4] > best_ref[:4]):
-    best_ref = anchor_best
-    best_source = "anchor"
+best_source = "ranking"
 
 if best_ref is None:
     print("OK")
@@ -6018,8 +5933,7 @@ with open(meta_file, "w") as f:
 PY
 
 			# リバート先選定:
-		# 1) LCB+中央値+分位点の合成スコアで最良(十分試行数)かつ実ファイルが見つかる戦略
-		# 2) 見つからなければ従来どおり直前戦略(tmp/revert_strategy.py)
+		# 成熟ランキング(topN)の先頭から、current より強く実体ファイルがある戦略を選ぶ。
 			local rollback_file="" rollback_note="" rollback_hash=""
 			local best_candidate
 			best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
@@ -6027,35 +5941,6 @@ PY
 				local best_comp best_p50 best_p25 best_lcb best_n
 				IFS='|' read -r rollback_hash best_comp best_p50 best_p25 best_lcb best_n rollback_file <<<"$best_candidate"
 				rollback_note="best_comp hash=${rollback_hash} comp=${best_comp} p50=${best_p50} p25=${best_p25} lcb=${best_lcb} n=${best_n}"
-			elif [ -f "tmp/revert_strategy.py" ]; then
-				local revert_hash=""
-				local revert_metrics="" revert_comp=""
-				revert_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
-				if [ -n "$revert_hash" ] && _is_blocked_reverse_rollback_pair "$strategy_hash" "$revert_hash"; then
-					log "[REGRESSION] previous_strategy を rollback候補から除外: $revert_hash は直前rollbackの逆向き"
-				else
-					revert_metrics=$(_get_rolling_metrics_for_hash "$revert_hash" 2>/dev/null || true)
-					revert_comp="${revert_metrics%%|*}"
-					local current_metrics="" current_comp=""
-					current_metrics=$(_get_rolling_metrics_for_hash "$strategy_hash" 2>/dev/null || true)
-					current_comp="${current_metrics%%|*}"
-					if [ -z "$revert_comp" ] || { [ -n "$current_comp" ] && ! awk "BEGIN{exit !($revert_comp > $current_comp)}"; }; then
-						log "[REGRESSION] previous_strategy を rollback候補から除外: current(comp=${current_comp:-?}) 以下または未知"
-					else
-						rollback_file="tmp/revert_strategy.py"
-						rollback_hash="$revert_hash"
-						rollback_note="previous_strategy"
-					fi
-				fi
-			fi
-			if [ -z "$rollback_file" ]; then
-				local hof_candidate=""
-				hof_candidate=$(_pick_hall_of_fame_rollback_candidate "$strategy_hash")
-				if [ -n "$hof_candidate" ]; then
-					local hof_tag hof_score
-					IFS='|' read -r rollback_hash hof_tag hof_score _ _ _ rollback_file <<<"$hof_candidate"
-					rollback_note="hall_of_fame score=${hof_score}"
-				fi
 			fi
 
 			if [ -z "$rollback_file" ]; then

@@ -319,6 +319,7 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 				python3 - <<PY 2>/dev/null
 import json
 import math
+import os
 import shlex
 import subprocess
 
@@ -336,7 +337,8 @@ trend_short_window = int(${REGRESSION_TREND_SHORT_WINDOW})
 trend_long_window = int(${REGRESSION_TREND_LONG_WINDOW})
 trend_short_ratio = float(${REGRESSION_TREND_SHORT_RATIO})
 trend_long_ratio = float(${REGRESSION_TREND_LONG_RATIO})
-anchor_file = "$TMP_STATE_DIR/best_strategy_anchor.json"
+archive_dir = "strategy_versions/by_hash"
+keep_top = int(${HASH_ARCHIVE_KEEP_TOP:-50})
 score_history_file = "score_history.txt"
 
 def quantile(xs, q):
@@ -379,29 +381,13 @@ def pick_best_reference():
         m2 = metrics(data.get("scores", []))
         if not m2 or m2["n"] < min_games_candidates:
             continue
-        ranked.append((m2["comp"], m2["p50"], m2["p25"], m2["n"], hh, m2, "rolling"))
-    best = None
+        if archive_dir and not os.path.exists(os.path.join(archive_dir, f"{hh}.py")):
+            continue
+        ranked.append((m2["comp"], m2["p50"], m2["p25"], m2["n"], hh, m2, "ranking"))
     if ranked:
         ranked.sort(reverse=True)
-        best = ranked[0]
-    try:
-        anchor = json.load(open(anchor_file))
-    except Exception:
-        anchor = None
-    if anchor:
-        ah = str(anchor.get("hash", ""))
-        an = int(anchor.get("n", 0) or 0)
-        if ah and ah != h and an >= min_games_candidates:
-            am = {
-                "comp": float(anchor.get("comp", 0.0)),
-                "p50": float(anchor.get("p50", 0.0)),
-                "p25": float(anchor.get("p25", 0.0)),
-                "n": an,
-            }
-            anchor_row = (am["comp"], am["p50"], am["p25"], am["n"], ah, am, "anchor")
-            if best is None or anchor_row[:4] > best[:4]:
-                best = anchor_row
-    return best
+        return ranked[:keep_top][0]
+    return None
 
 def trend_flags():
     try:

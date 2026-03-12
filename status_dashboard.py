@@ -801,16 +801,17 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
 
     if not all_entries:
         lines = [f"  {BOLD}Strategy Comparison{RST} {DIM}(mature strategies only: n>={MIN_GAMES_FOR_BEST_ROLLBACK}){RST}"]
-        if provisional_current:
+        if current_entry or provisional_current:
             metric_header = "comp p50  p25"
-            provisional_current["rank"] = provisional_current.get("overall_rank", 0)
+            lone_current = current_entry or provisional_current
+            lone_current["rank"] = lone_current.get("overall_rank", 0)
             lines.append(f"{DIM} rk hash      n/t  │{'bar':<{bar_w}} {metric_header}{RST}")
-            max_comp = max(provisional_current["comp"], 1)
-            n_field = f"{provisional_current['n_roll']:>2}/{provisional_current['n_total']:<3}"
-            bar = block_bar(provisional_current["comp"], max_comp, bar_w, C_GREEN)
+            max_comp = max(lone_current["comp"], 1)
+            n_field = f"{lone_current['n_roll']:>2}/{lone_current['n_total']:<3}"
+            bar = block_bar(lone_current["comp"], max_comp, bar_w, C_GREEN)
             lines.append(
-                f"►{provisional_current['rank']:>2} {C_GREEN}{provisional_current['h8']}{RST} {DIM}{n_field:>6}{RST}│"
-                f"{bar} {int(provisional_current['comp']):>4} {int(provisional_current['p50']):>4} {int(provisional_current['p25']):>4}"
+                f"►{lone_current['rank']:>2} {C_GREEN}{lone_current['h8']}{RST} {DIM}{n_field:>6}{RST}│"
+                f"{bar} {int(lone_current['comp']):>4} {int(lone_current['p50']):>4} {int(lone_current['p25']):>4}"
             )
         else:
             lines.append(f"  {DIM}(no mature data){RST}")
@@ -853,7 +854,7 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
         marker = "►" if is_current else " "
         bar = block_bar(e["comp"], max_comp, bar_w, color)
         n_field = f"{e['n_roll']:>2}/{e['n_total']:<3}"
-        rank_value = e.get("display_rank", e.get("rank", 0)) if rank_override is None else rank_override
+        rank_value = e.get("display_rank", e.get("rank", e.get("overall_rank", 0))) if rank_override is None else rank_override
         return (
             f"{marker}{rank_value:>2} {color}{e['h8']}{RST} {DIM}{n_field:>6}{RST}│"
             f"{bar} {int(e['comp']):>4} {int(e['p50']):>4} {int(e['p25']):>4}"
