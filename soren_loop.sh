@@ -176,6 +176,9 @@ while true; do
 	if ! source ./eloop_lib.sh 2>/dev/null; then
 		log "WARNING: eloop_lib.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
+	if ! source ./lib/eloop_radio.sh 2>/dev/null; then
+		log "WARNING: lib/eloop_radio.sh の読み込みに失敗 (eloop_lib.sh 内の定義で続行)"
+	fi
 	if ! source ./eloop.sh 2>/dev/null; then
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
