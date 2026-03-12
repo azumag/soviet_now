@@ -16,7 +16,7 @@ Decision Logic (9 evaluation axes):
   6. Chain merge bonus - Evaluate possibility of further merges after merge (v171: CHAIN_MERGE基本ボーナス強化)
   7. Early game merge priority - Strong bonus for merge opportunities in early game (v174: piece_count <= 12)
   8. Reactive merge priority - Bonus for merge opportunities when reactive_pairs >= 2 (v176)
-  9. MEDIUM_TOWER promotion removed (v179) - No longer bonus for high landing in MEDIUM phase
+  9. MEDIUM_TOWER promotion - Bonus for merge candidates at higher landing in MEDIUM phase (v174)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -48,30 +48,27 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - 危険局面でlanding_y>0.5の場合にheight_penaltyを3倍にしてHIGH_TOWERを強力に抑制
 #   - REACTIVE_MERGE_PRIORITYボーナスを500.0→800.0に増強してマージ選択を強制
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_103346_score0579.jsonl, game_history/20260312_110534_score0697.jsonl
-# v179: MEDIUMフェーズ高位置着地ボーナス削除版 - batch_summaryでMEDIUM_TOWER_MEDIUM_TOWER_PROMOTIONのavg_score_delta=1.0と低いことを確認
-#   - MEDIUMフェーズでlanding_y>0.5の場合に+200.0ボーナスを付与するv174の変更が、盤面を不必要に高くしていることを特定
-#   - 高スコア群(11.2%)より低スコア群(8.4%)の方が選択率が低いにも関わらず、このボーナスはパフォーマンス向上に寄与していない
-#   - MEDIUMフェーズのheight_multiplier=15.0により、マージ選択を自然に優先させるため、高位置着地ボーナスを削除してHEIGHT_CONTROLを抑制
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, strategy_versions/best_score5694_strategy.py
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v179: MEDIUMフェーズ高位置着地ボーナス削除版
+    """v178: 危険局面盤面圧縮強化版
 
-    batch_summaryでMEDIUM_TOWER_MEDIUM_TOWER_PROMOTIONのavg_score_delta=1.0と低く、
-    MEDIUMフェーズでlanding_y>0.5の場合に+200.0ボーナスを付与するv174の変更が、
-    盤面を不必要に高くしていることを特定。
-    高スコア群(11.2%)より低スコア群(8.4%)の方が選択率が低いにも関わらず、
-    このボーナスはパフォーマンス向上に寄与していないため削除。
-    MEDIUMフェーズのheight_multiplier=15.0により、マージ選択を自然に優先させる。
+    ワーストゲーム(score0579, score0697)の終盤分析で、max_y>=2.0かつreactive_pairs>=2-8あるにもかかわらず
+    HIGH_TOWERが選択され続け即時併合機会を逃している失敗パターンを特定。
+    危険局面での盤面圧縮を最優先し、reactive_pairsを活用したマージ選択を強制することでスコア向上を目指す。
 
-    v179の改善点：
-     1. MEDIUMフェーズ高位置着地ボーナス削除
-        - landing_y > 0.5の場合の+200.0ボーナスを削除
-        - MEDIUMフェーズで盤面を不必要に高くする配置を抑制
-     2. v174/v177/v178の初期12ターンマージ重視・MEDIUMフェーズHEIGHT_CONTROL抑制・危険局面盤面圧縮を維持
+    v178の改善点：
+     1. 危険局面判定閾値引き下げ
+        - dangerous_situation: reactive_pairs >= 3 → >= 2（早期対応）
+     2. 危険局面でのheight_multiplier削減
+        - height_multiplierを15.0に設定してreactive_pairs優先を強化
+     3. 危険局面でのHIGH_TOWER強力抑制
+        - landing_y > 0.5の場合にheight_penaltyを3倍にして、reactive_pairsを活用する配置を優先
+     4. REACTIVE_MERGE_PRIORITYボーナス増強
+        - reactive_pair_count >= 2でDIRECT/NEARマージに+800.0ボーナス（500.0→800.0）
+     5. v174/v177の初期12ターンマージ重視・MEDIUMフェーズHEIGHT_CONTROL抑制を維持
     """
 
     results = analysis.get("results", [])
@@ -303,11 +300,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8: MEDIUM_TOWER promotion removed (v179) -----
-        # batch_summaryでMEDIUM_TOWER_MEDIUM_TOWER_PROMOTIONのavg_score_delta=1.0と低く
-        # 高スコア群(11.2%)より低スコア群(8.4%)の方が選択率が低いにも関わらず
-        # MEDIUMフェーズで着地が高い配置を促進するボーナスは盤面を不必要に高くするため削除
-        # MEDIUMフェーズでのheight_multiplier=15.0により、マージ選択を自然に優先させる
+        # ----- evaluation axis 8: MEDIUM_TOWER selection promotion (v174) -----
+        # ベストゲーム(score3064)の戦略から採用
+        # HIGHフェーズのheight_multiplier=1.8に対して、MEDIUMフェーズでは1.4と差をつけることで、
+        # 着地が高い場合でも、マージ候補の中からMEDIUM_TOWERを選んで盤面を下げる
+        if phase == "MEDIUM" and landing_y > 0.5:
+            score += 200.0  # ベストゲームでの成功パラメータ
+            reasons.append("MEDIUM_TOWER_PROMOTION")
+        elif phase == "HIGH" and landing_y > 0.5:
+            # HIGHフェーズでのMEDIUM_TOWERは高すぎるため、適用なし
+            # そのままHIGH_TOWERとして評価（height_penalty *= 2.0）
+            pass
 
         # ----- update best candidate -----
         if score > best_score:
