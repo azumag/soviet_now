@@ -199,6 +199,9 @@ play_one_game() {
 handle_russia_celebration() {
 	local score="$1" turns="$2" game_num="$3"
 
+	# クリップは祝賀有効/無効に関係なく作成
+	_create_twitch_clip "🇷🇺 ロシア建国! score=${score} (Game #${game_num})" "$game_num"
+
 	if [ "${RUSSIA_CELEBRATION_ENABLED:-0}" = "0" ]; then
 		log "[RUSSIA] 祝賀読み上げは無効化中"
 		rm -f "$RUSSIA_CELEBRATION_WORKER_PID_FILE"
@@ -223,6 +226,7 @@ handle_soviet_celebration() {
 	local score="$1" turns="$2" game_num="$3"
 
 	log "!!! SOVIET CREATED !!!"
+	_create_twitch_clip "☭ ソ連建国! score=${score} (Game #${game_num})" "$game_num"
 
 	# ロシア祝賀が走っていたら中止してソ連祝賀を優先
 	_cancel_russia_celebration_worker
@@ -259,6 +263,13 @@ post_game_bookkeeping() {
 	fi
 
 	local game_num_display=$((GAME_NUM + 1))
+
+	# ハイスコア判定を先行実行（クリップは早いほど良い）
+	local _best_for_clip
+	_best_for_clip=$(cat best_score.txt 2>/dev/null || echo 0)
+	if [ "${LAST_SCORE:-0}" -gt "${_best_for_clip:-0}" ]; then
+		_create_twitch_clip "🏆 NEW HIGH SCORE: ${LAST_SCORE}! (Game #${game_num_display})" "$game_num_display"
+	fi
 
 	# ソ連建国チェック
 	if [ "$LAST_SOVIET" = "true" ]; then

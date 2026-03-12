@@ -1015,6 +1015,21 @@ update_best() {
 	fi
 }
 
+# Twitch クリップ作成（バックグラウンド・ノンブロッキング）
+# 同一ゲームで複数イベント発火時は最初の1回のみ
+_TWITCH_CLIP_GAME=""
+_create_twitch_clip() {
+	local event_msg="$1" game_id="${2:-}"
+	[ -n "${TWITCH_CLIENT_ID:-}" ] && [ -n "${TWITCH_BROADCASTER_ID:-}" ] || return 0
+	# 同一ゲーム内デデュプ（建国+ハイスコア同時発生時に2本作らない）
+	if [ -n "$game_id" ] && [ "$game_id" = "$_TWITCH_CLIP_GAME" ]; then
+		log "[CLIP] skip: already clipped for game $game_id"
+		return 0
+	fi
+	[ -n "$game_id" ] && _TWITCH_CLIP_GAME="$game_id"
+	( ./twitch_clip.sh "$event_msg" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true ) &
+}
+
 archive_history() {
 	local score="$1"
 	local ts
