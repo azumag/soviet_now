@@ -26,7 +26,11 @@ EMPTYEOF
 fi
 
 # スコアデータをJSON配列に変換 (1行1スコア形式)
-SCORES_JSON=$(awk 'NF && /^[0-9]+$/ { n++; print "{\"game\":" n ",\"score\":" $1 "}" }' score_history.txt | paste -sd, -)
+SCORES_JSON=$(awk -F'\t' 'NF {
+  n++
+  if ($2 != "") { print "{\"ts\":\"" $1 "\",\"game\":" n ",\"score\":" $2 "}" }
+  else if ($1 ~ /^[0-9]+$/) { print "{\"ts\":null,\"game\":" n ",\"score\":" $1 "}" }
+}' score_history.txt | paste -sd, -)
 
 cat > score_dashboard.html <<HTMLEOF
 <!DOCTYPE html>
@@ -232,7 +236,10 @@ function drawChart(scores) {
   const padL = 55, padR = 20, padT = 20, padB = 40;
   const cW = W - padL - padR, cH = H - padT - padB;
   const yMax = Math.ceil(maxScore / 500) * 500 + 200;
-  const xScale = i => padL + (i / (scores.length - 1 || 1)) * cW;
+  const tTimes = scores.map((d,i) => d.ts ? new Date(d.ts).getTime() : i);
+  const tMin = tTimes[0], tMax = tTimes[tTimes.length-1];
+  const tRange = tMax - tMin || 1;
+  const xScale = i => padL + ((tTimes[i] - tMin) / tRange) * cW;
   const yScale = v => padT + cH - (v / yMax) * cH;
 
   ctx.clearRect(0, 0, W, H);
@@ -247,8 +254,16 @@ function drawChart(scores) {
 
   const xi = Math.max(1, Math.ceil(scores.length / 15));
   ctx.fillStyle = '#555';
-  for (let i = 0; i < scores.length; i += xi)
-    ctx.fillText(scores[i].game, xScale(i) - 6, H - 8);
+  const spanMs = tMax - tMin;
+  const dateFmt = spanMs > 7*86400000
+    ? d => (d.getMonth()+1)+'/'+d.getDate()
+    : spanMs > 86400000
+      ? d => (d.getMonth()+1)+'/'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')
+      : d => String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  for (let i = 0; i < scores.length; i += xi) {
+    const label = scores[i].ts ? dateFmt(new Date(scores[i].ts)) : String(scores[i].game);
+    ctx.fillText(label, xScale(i) - 16, H - 8);
+  }
 
   ctx.fillStyle = 'rgba(78,205,196,0.08)';
   ctx.fillRect(padL, yScale(avgScore) - 1, cW, 2);

@@ -618,7 +618,7 @@ fetch_and_play_news() {
 	local game_num="$1" score="$2"
 	# 旧呼び出し（引数なし）でも、起動時点の値を固定して後段に渡す
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' || echo 0)
 
 	log "[NEWS] ニュース取得..."
 	./fetch_news.sh 2>/dev/null
@@ -635,7 +635,7 @@ fetch_and_play_news() {
 start_random_radio_corner() {
 	local game_num="$1" score="$2"
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' || echo 0)
 
 	# ニュースは毎ゲーム別途実行するので、ここでは除外
 	local candidates=("theme" "soviet" "recap")
@@ -653,7 +653,7 @@ start_random_radio_corner() {
 schedule_nonessential_audio_jobs() {
 	local game_num="$1" score="$2"
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
-	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null || echo 0)
+	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' || echo 0)
 
 	# 配信演出の頻度 (変更しても毎ループ source で即反映)
 	local news_interval_day=4
