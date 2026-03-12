@@ -304,8 +304,10 @@ print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 	# --- 蓄積ゲーム ---
 	local acc_count=0 acc_scores=""
 	if [[ -f $TMP_STATE_DIR/accumulated_games.json ]]; then
-		acc_count=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/accumulated_games.json')).get('count',0))" 2>/dev/null)
-		acc_scores=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/accumulated_games.json')).get('scores',''))" 2>/dev/null)
+		local current_hash_for_acc=""
+		current_hash_for_acc=$(python3 extract_decide_hash.py strategy.py 2>/dev/null || echo "")
+		acc_count=$(python3 -c "import json; d=json.load(open('$TMP_STATE_DIR/accumulated_games.json')); h=d.get('hash',''); print(d.get('count',0) if (h and h == '$current_hash_for_acc') else 0)" 2>/dev/null)
+		acc_scores=$(python3 -c "import json; d=json.load(open('$TMP_STATE_DIR/accumulated_games.json')); h=d.get('hash',''); print(d.get('scores','') if (h and h == '$current_hash_for_acc') else '')" 2>/dev/null)
 	fi
 
 	# --- ローリングスコア & リグレッション ---

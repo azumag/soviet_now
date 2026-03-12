@@ -6597,7 +6597,7 @@ with open(rs_file, 'w') as f:
 }
 
 accumulate_game_data() {
-	local archive_file="$1" score="$2" soviet="$3"
+	local archive_file="$1" score="$2" soviet="$3" strategy_hash="$4"
 
 	python3 -c "
 import json, os
@@ -6606,7 +6606,13 @@ if os.path.exists(acc_file):
     with open(acc_file) as f:
         acc = json.load(f)
 else:
-    acc = {'files': [], 'scores': '', 'soviet': False, 'count': 0}
+    acc = {'files': [], 'scores': '', 'soviet': False, 'count': 0, 'hash': ''}
+
+curr_hash = '$strategy_hash'
+if acc.get('hash') and curr_hash and acc.get('hash') != curr_hash:
+    acc = {'files': [], 'scores': '', 'soviet': False, 'count': 0, 'hash': curr_hash}
+elif curr_hash:
+    acc['hash'] = curr_hash
 
 acc['files'].append('$archive_file')
 acc['scores'] = (acc['scores'] + ' $score').strip()
@@ -6624,7 +6630,7 @@ _read_accumulated_data() {
 	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		cat "$ACCUMULATED_GAMES_FILE"
 	else
-		echo '{"files":[],"scores":"","soviet":false,"count":0}'
+		echo '{"files":[],"scores":"","soviet":false,"count":0,"hash":""}'
 	fi
 }
 
@@ -6689,8 +6695,24 @@ trigger_adaptive_improvement() {
 		return
 	fi
 
-	# Step 1: 常にデータを蓄積 & ローリングスコア更新
-	accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
+	local played_hash="" current_hash=""
+	if [ -f "${STRATEGY_FILE}.game_snapshot" ]; then
+		played_hash=$(python3 extract_decide_hash.py "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || echo "")
+	fi
+	if [ -z "$played_hash" ] && [ -f "$STRATEGY_FILE" ]; then
+		played_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	fi
+	if [ -f "$STRATEGY_FILE" ]; then
+		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	fi
+
+	# Step 1: 常にローリング更新。改善キュー蓄積は current と一致する試合だけ。
+	if [ -n "$played_hash" ] && [ -n "$current_hash" ] && [ "$played_hash" != "$current_hash" ]; then
+		log "[IMPROVE] current戦略と異なる試合を検出: played=${played_hash:0:8} current=${current_hash:0:8} → queuedをリセットしてこの試合は蓄積しない"
+		_clear_accumulated_data
+	else
+		accumulate_game_data "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET" "$played_hash"
+	fi
 	update_rolling_scores "$LAST_SCORE"
 
 	# Step 2: リグレッション検知 (新戦略が旧戦略の85%未満なら自動リバート)
@@ -6730,7 +6752,24 @@ trigger_adaptive_improvement() {
 	# Step 4: 最低10試合ゲート
 	local acc_data
 	acc_data=$(_read_accumulated_data)
+	local acc_hash
+	acc_hash=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hash',''))" 2>/dev/null)
 	local acc_count
+	acc_count=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null)
+	if [ "${acc_count:-0}" -gt 0 ] && [ -n "$current_hash" ] && [ -z "$acc_hash" ]; then
+		log "[IMPROVE] 旧形式queuedデータを検出（hashなし）→ 破棄"
+		_clear_accumulated_data
+		acc_data=$(_read_accumulated_data)
+		acc_hash=""
+		acc_count=0
+	fi
+	if [ -n "$acc_hash" ] && [ -n "$current_hash" ] && [ "$acc_hash" != "$current_hash" ]; then
+		log "[IMPROVE] queuedデータの戦略が現行と不一致: queued=${acc_hash:0:8} current=${current_hash:0:8} → 破棄"
+		_clear_accumulated_data
+		acc_data=$(_read_accumulated_data)
+		acc_hash=""
+		acc_count=0
+	fi
 	acc_count=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null)
 
 	if [ "${acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then

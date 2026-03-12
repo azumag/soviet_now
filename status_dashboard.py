@@ -462,12 +462,16 @@ def get_strategy_lines():
         return 0
 
 
-def get_accumulated_count():
+def get_accumulated_count(current_hash=""):
     p = Path("tmp/state/accumulated_games.json")
     if not p.exists():
         return 0
     try:
-        return json.loads(p.read_text()).get("count", 0)
+        data = json.loads(p.read_text())
+        acc_hash = data.get("hash", "")
+        if current_hash and (not acc_hash or acc_hash != current_hash):
+            return 0
+        return data.get("count", 0)
     except Exception:
         return 0
 
@@ -967,7 +971,7 @@ def main():
     strat_ver = get_strategy_version()
     strat_lines = get_strategy_lines()
     rejected = get_rejected_count()
-    accumulated = get_accumulated_count()
+    accumulated = get_accumulated_count(strat_hash)
     improve = load_improve_state()
     reasons = load_decision_reasons(50)
 
