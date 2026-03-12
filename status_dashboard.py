@@ -766,15 +766,15 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     all_entries = ranked_mature_entries(rolling, current_hash, top=HASH_ARCHIVE_KEEP_TOP, require_restorable=True)
     current_entry = None
     provisional_current = None
-    if current_hash and current_hash in rolling:
-        current_scores = rolling[current_hash].get("scores", [])
+    if current_hash:
+        current_scores = rolling.get(current_hash, {}).get("scores", [])
         current_metrics = calc_strategy_metrics(current_scores)
+        games_total = rolling.get(current_hash, {}).get("games_total", len(current_scores))
+        try:
+            games_total = int(games_total)
+        except Exception:
+            games_total = len(current_scores)
         if current_metrics:
-            games_total = rolling[current_hash].get("games_total", len(current_scores))
-            try:
-                games_total = int(games_total)
-            except Exception:
-                games_total = len(current_scores)
             current_like = {
                 "hash": current_hash,
                 "h8": current_hash[:8],
@@ -789,6 +789,17 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
                 current_entry = current_like
             else:
                 provisional_current = current_like
+        else:
+            provisional_current = {
+                "hash": current_hash,
+                "h8": current_hash[:8],
+                "n_roll": 0,
+                "n_total": games_total,
+                "comp": 0.0,
+                "p50": 0.0,
+                "p25": 0.0,
+                "lcb": 0.0,
+            }
 
     combined_entries = list(all_entries)
     if current_entry:

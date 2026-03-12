@@ -276,6 +276,7 @@ post_game_bookkeeping() {
 
 	# スコア履歴
 	echo "$LAST_SCORE" >> score_history.txt
+	update_rolling_scores "$LAST_SCORE"
 
 	# ダッシュボード更新（GAMEOVER状態で生成→表示される）
 	log "[DASHBOARD] Generating GAMEOVER dashboard..."

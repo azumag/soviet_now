@@ -5650,9 +5650,11 @@ PY
 
 update_rolling_scores() {
 	local score="$1"
+	local strategy_source="${STRATEGY_FILE}.game_snapshot"
+	[ ! -f "$strategy_source" ] && strategy_source="$STRATEGY_FILE"
 	local strategy_hash
-	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
-	_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$strategy_hash"
+	strategy_hash=$(python3 extract_decide_hash.py "$strategy_source" 2>/dev/null || echo "unknown")
+	_archive_strategy_snapshot_by_hash "$strategy_source" "$strategy_hash"
 	_backfill_hash_archive_from_known_versions
 
 	python3 -c "
