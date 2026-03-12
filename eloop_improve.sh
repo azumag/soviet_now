@@ -200,6 +200,7 @@ HARVEST_DIR=""
 STAGING_FILE="strategy.py.staging"
 IMPROVE_BRIEF_FILE="tmp/improve_brief.md"
 ROLLBACK_ANALYSIS_FILE="tmp/state/last_rollback_analysis.md"
+ROLLBACK_POSTMORTEM_FILE="tmp/state/last_rollback_postmortem.md"
 SANDBOX_TOPLEVEL_PY_BASELINE=""
 SANDBOX_HELPERS_BASELINE_DIR=""
 
@@ -331,6 +332,7 @@ batch = read_text(batch_file)
 advice = read_text(advice_file)
 change_log = read_text(change_log_file)
 rollback_analysis = read_text("tmp/state/last_rollback_analysis.md")
+rollback_postmortem = read_text("tmp/state/last_rollback_postmortem.md")
 history_paths = [p for p in history_files_raw.split() if p]
 
 top_reasons = re.findall(r"^\s{2}([A-Z0-9_]+): .*avg_score_delta=([0-9.\-]+)", batch, re.M)
@@ -449,6 +451,34 @@ if rollback_analysis.strip():
 else:
     summary_lines.append("- rollback analysis unavailable")
 summary_lines.append("")
+summary_lines.append("## Last Rollback AI Postmortem")
+if rollback_postmortem.strip():
+    rollback_postmortem_sections = [
+        ("Verdict", extract_markdown_section(rollback_postmortem, "## Verdict"), 4),
+        ("Failure Modes", extract_markdown_section(rollback_postmortem, "## Failure Modes"), 6),
+        ("Contrast With Rollback Target", extract_markdown_section(rollback_postmortem, "## Contrast With Rollback Target"), 5),
+        ("Constraints For Next Improve", extract_markdown_section(rollback_postmortem, "## Constraints For Next Improve"), 6),
+    ]
+    postmortem_added = False
+    for label, section_lines, limit in rollback_postmortem_sections:
+        if not section_lines:
+            continue
+        summary_lines.append(f"- {label}:")
+        postmortem_added = True
+        section_added = 0
+        for line in section_lines:
+            s = line[2:].strip() if line.startswith("- ") else line.strip()
+            if not s:
+                continue
+            summary_lines.append(f"  - {s}")
+            section_added += 1
+            if section_added >= limit:
+                break
+    if not postmortem_added:
+        summary_lines.append("- rollback AI postmortem present but no structured sections found")
+else:
+    summary_lines.append("- rollback AI postmortem unavailable")
+summary_lines.append("")
 summary_lines.append("## Batch Summary Highlights")
 for reason, delta in top_reasons[:6]:
     summary_lines.append(f"- reason {reason}: avg_score_delta={delta}")
@@ -502,11 +532,12 @@ summary_lines.append("## Reading Order")
 summary_lines.append("1. improve_brief.md")
 summary_lines.append("2. advice.md")
 summary_lines.append("3. sandbox_files.md")
-summary_lines.append("4. last_rollback_analysis.md if present")
-summary_lines.append("5. change_log.txt")
-summary_lines.append("6. batch_summary.txt")
-summary_lines.append("7. best/worst game logs (especially final 8 turns and max_y>=2.0)")
-summary_lines.append("8. recent strategy versions and hall-of-fame strategies")
+summary_lines.append("4. last_rollback_postmortem.md if present")
+summary_lines.append("5. last_rollback_analysis.md if present")
+summary_lines.append("6. change_log.txt")
+summary_lines.append("7. batch_summary.txt")
+summary_lines.append("8. best/worst game logs (especially final 8 turns and max_y>=2.0)")
+summary_lines.append("9. recent strategy versions and hall-of-fame strategies")
 
 with open(out_file, "w", encoding="utf-8") as f:
     f.write("\n".join(summary_lines) + "\n")
@@ -514,6 +545,7 @@ PY
 
 improve_ref_files=("$batch_summary_file" "$IMPROVE_BRIEF_FILE")
 [ -f "$STRATEGY_ADVICE_FILE" ] && [ -s "$STRATEGY_ADVICE_FILE" ] && improve_ref_files+=("$STRATEGY_ADVICE_FILE")
+[ -f "$ROLLBACK_POSTMORTEM_FILE" ] && [ -s "$ROLLBACK_POSTMORTEM_FILE" ] && improve_ref_files+=("$ROLLBACK_POSTMORTEM_FILE")
 [ -f "$ROLLBACK_ANALYSIS_FILE" ] && [ -s "$ROLLBACK_ANALYSIS_FILE" ] && improve_ref_files+=("$ROLLBACK_ANALYSIS_FILE")
 
 # --- サンドボックスにコピーする全ファイル ---
@@ -573,6 +605,7 @@ manifest_file="tmp/sandbox_files.md"
 	echo "### 必須参照ファイル（固定）"
 	echo '- `tmp/improve_brief.md` — 今回の改善で最初に読む圧縮サマリ（最重要、終盤8ターンと max_y>=2.0 の要約付き）'
 		[ -f "$STRATEGY_ADVICE_FILE" ] && printf -- '- `%s` — 視聴者由来の優先改善仮説。存在する場合は improve_brief の次に読む\n' "$STRATEGY_ADVICE_FILE"
+	[ -f "$ROLLBACK_POSTMORTEM_FILE" ] && printf -- '- `%s` — 直近rollbackのAIポストモーテム。存在する場合は rollback_analysis より先に読む\n' "$ROLLBACK_POSTMORTEM_FILE"
 	[ -f "$ROLLBACK_ANALYSIS_FILE" ] && printf -- '- `%s` — 直近rollbackの原因分析。存在する場合は change_log の前に読む\n' "$ROLLBACK_ANALYSIS_FILE"
 	echo '- `strategy.py.staging` — 変更対象の現行戦略（必ず最初に読む）'
 	echo '- `tmp/batch_summary.txt` — reason分布/高低比較（必ず読む）'

@@ -80,6 +80,10 @@ REJECTED_HASH_META_FILE="$TMP_STATE_DIR/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_TTL_SEC="${REJECTED_REEVALUATE_TTL_SEC:-21600}"
 LAST_ROLLBACK_PAIR_FILE="$TMP_STATE_DIR/last_rollback_pair.json"
 ROLLBACK_ANALYSIS_FILE="$TMP_STATE_DIR/last_rollback_analysis.md"
+ROLLBACK_POSTMORTEM_FILE="$TMP_STATE_DIR/last_rollback_postmortem.md"
+ROLLBACK_POSTMORTEM_CONTEXT_FILE="$TMP_STATE_DIR/last_rollback_postmortem_context.md"
+ROLLBACK_POSTMORTEM_PID_FILE="$TMP_STATE_DIR/rollback_postmortem.pid"
+ROLLBACK_POSTMORTEM_AI_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/rollback_postmortem_ai.log"
 BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
@@ -3726,6 +3730,255 @@ print("\n".join(summary))
 PY
 }
 
+_write_rollback_postmortem_context_file() {
+	local current_hash="$1" rollback_hash="$2" game_num="$3" rollback_note="${4:-}"
+	python3 - "$ROLLING_SCORES_FILE" "$STRATEGY_HASH_ARCHIVE_DIR" "$current_hash" "$rollback_hash" "$game_num" "$rollback_note" "$ROLLBACK_POSTMORTEM_CONTEXT_FILE" <<'PY'
+import json
+import os
+import re
+import sys
+import time
+
+rolling_file, archive_dir, current_hash, rollback_hash, game_num, rollback_note, out_file = sys.argv[1:8]
+
+def load_json(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        return json.load(open(path))
+    except Exception:
+        return {}
+
+def unique_existing(paths):
+    out = []
+    seen = set()
+    for raw in paths or []:
+        if not isinstance(raw, str):
+            continue
+        path = raw.strip()
+        if not path or path in seen or not os.path.exists(path):
+            continue
+        seen.add(path)
+        out.append(path)
+    return out
+
+def score_from_path(path):
+    m = re.search(r"_score([0-9]+)\.jsonl$", os.path.basename(path))
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+def focus_bad_logs(paths):
+    ranked = []
+    for idx, path in enumerate(paths):
+        score = score_from_path(path)
+        ranked.append((score if score is not None else 10**9, idx, path))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return [path for _, _, path in ranked[:4]] or paths[-4:]
+
+def focus_target_logs(paths):
+    return paths[-4:]
+
+rolling = load_json(rolling_file)
+current_data = rolling.get(current_hash, {}) if current_hash else {}
+rollback_data = rolling.get(rollback_hash, {}) if rollback_hash else {}
+
+bad_recent = unique_existing((current_data.get("_recent_archives") or [])[-8:])
+target_recent = unique_existing((rollback_data.get("_recent_archives") or [])[-8:])
+bad_focus = focus_bad_logs(bad_recent)
+target_focus = focus_target_logs(target_recent)
+
+bad_strategy_file = os.path.join(archive_dir, f"{current_hash}.py") if current_hash else ""
+target_strategy_file = os.path.join(archive_dir, f"{rollback_hash}.py") if rollback_hash else ""
+if bad_strategy_file and not os.path.exists(bad_strategy_file):
+    bad_strategy_file = ""
+if target_strategy_file and not os.path.exists(target_strategy_file):
+    target_strategy_file = ""
+
+lines = []
+lines.append("# Rollback Postmortem Context")
+lines.append("")
+lines.append(f"- generated_at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+if game_num:
+    lines.append(f"- game: {game_num}")
+lines.append(f"- bad_strategy_hash: {current_hash or 'n/a'}")
+lines.append(f"- rollback_target_hash: {rollback_hash or 'n/a'}")
+if rollback_note:
+    lines.append(f"- rollback_target_note: {rollback_note}")
+lines.append(f"- bad_strategy_file: {bad_strategy_file or 'n/a'}")
+lines.append(f"- rollback_target_file: {target_strategy_file or 'n/a'}")
+lines.append("")
+lines.append("## Read Order")
+lines.append("- まず tmp/state/last_rollback_analysis.md を読む。")
+lines.append("- 次に bad strategy source と rollback target source を読む。")
+lines.append("- その後 bad logs を最低2件、rollback target logs を最低2件読む。")
+lines.append("- 各ログでは終盤8ターン、max_y>=2.0、merge_available、decision_reason を優先確認する。")
+lines.append("")
+lines.append("## Bad Strategy Logs")
+for path in bad_focus:
+    score = score_from_path(path)
+    score_disp = "?" if score is None else str(score)
+    lines.append(f"- {path} score={score_disp}")
+if not bad_focus:
+    lines.append("- n/a")
+lines.append("")
+lines.append("## Rollback Target Logs")
+for path in target_focus:
+    score = score_from_path(path)
+    score_disp = "?" if score is None else str(score)
+    lines.append(f"- {path} score={score_disp}")
+if not target_focus:
+    lines.append("- n/a")
+lines.append("")
+lines.append("## Notes")
+lines.append("- bad logs は recent の中でも低スコア寄りを優先抽出している。")
+lines.append("- target logs は rollback 先の直近挙動を見るため時系列の新しいものを優先している。")
+lines.append("")
+
+os.makedirs(os.path.dirname(out_file), exist_ok=True)
+with open(out_file, "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+
+ordered = []
+seen = set()
+for path in [bad_strategy_file, target_strategy_file, *bad_focus, *target_focus]:
+    if not path or path in seen or not os.path.exists(path):
+        continue
+    seen.add(path)
+    ordered.append(path)
+for path in ordered:
+    print(path)
+PY
+}
+
+_generate_rollback_postmortem_with_ai() {
+	local current_hash="$1" rollback_hash="$2" game_num="$3" rollback_note="${4:-}"
+	[ -f "$ROLLBACK_ANALYSIS_FILE" ] || return 1
+
+	mkdir -p "$TMP_STATE_DIR" "$TMP_DEBUG_DIR" 2>/dev/null || true
+	local -a extra_files sandbox_ref_files
+	local path
+	while IFS= read -r path; do
+		[ -n "$path" ] && extra_files+=("$path")
+	done < <(_write_rollback_postmortem_context_file "$current_hash" "$rollback_hash" "$game_num" "$rollback_note" 2>/dev/null || true)
+
+	sandbox_ref_files=(
+		"prompts/rollback_postmortem.md"
+		"$ROLLBACK_ANALYSIS_FILE"
+		"$ROLLBACK_POSTMORTEM_CONTEXT_FILE"
+		"$ROLLING_SCORES_FILE"
+		"score_history.txt"
+		"analyze_board.py"
+	)
+	local f
+	for f in "${extra_files[@]}"; do
+		[ -f "$f" ] && sandbox_ref_files+=("$f")
+	done
+
+	local sandbox_dir=""
+	sandbox_dir=$(create_sandbox "${sandbox_ref_files[@]}")
+	[ -n "$sandbox_dir" ] && [ -d "$sandbox_dir" ] || return 1
+
+	local rc=1
+	if pushd "$sandbox_dir" >/dev/null; then
+		mkdir -p "$PWD/$TMP_STATE_DIR" "$PWD/$TMP_DEBUG_DIR" 2>/dev/null || true
+
+		local prev_log="${RUN_CMD_LOG_FILE-}"
+		local prev_session_dir="${RUN_CMD_SESSION_DIR-}"
+		local prev_tmp_dir="${RUN_CMD_TMP_DIR-}"
+		local prev_permission="${RUN_CMD_OPENCODE_PERMISSION-}"
+		local prev_retries="${RUN_AI_PRIMARY_RETRIES-}"
+
+		RUN_CMD_LOG_FILE="$ROLLBACK_POSTMORTEM_AI_LOG_FILE"
+		RUN_CMD_SESSION_DIR="$PWD/$TMP_STATE_DIR/.rollback_postmortem_sessions"
+		RUN_CMD_TMP_DIR="$PWD/$TMP_STATE_DIR/.run_cmd_tmp"
+		RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
+		RUN_AI_PRIMARY_RETRIES="${ROLLBACK_POSTMORTEM_PRIMARY_RETRIES:-3}"
+		export RUN_CMD_LOG_FILE RUN_CMD_SESSION_DIR RUN_CMD_TMP_DIR RUN_CMD_OPENCODE_PERMISSION RUN_AI_PRIMARY_RETRIES
+		mkdir -p "$RUN_CMD_SESSION_DIR" "$RUN_CMD_TMP_DIR" 2>/dev/null || true
+
+		run_ai "ROLLBACK-POSTMORTEM" "$MODEL_PRIMARY" "$MODEL_FALLBACK" \
+			"prompts/rollback_postmortem.md" "$ROLLBACK_POSTMORTEM_FILE" \
+			"$ROLLBACK_ANALYSIS_FILE" "$ROLLBACK_POSTMORTEM_CONTEXT_FILE"
+		rc=$?
+		if [ "$rc" -eq 0 ] && [ -s "$ROLLBACK_POSTMORTEM_FILE" ]; then
+			mkdir -p "$(dirname "$ELOOP_LIB_DIR/$ROLLBACK_POSTMORTEM_FILE")" 2>/dev/null || true
+			cp "$ROLLBACK_POSTMORTEM_FILE" "$ELOOP_LIB_DIR/$ROLLBACK_POSTMORTEM_FILE" 2>/dev/null || rc=1
+		fi
+
+		if [ -n "$prev_log" ]; then
+			RUN_CMD_LOG_FILE="$prev_log"
+			export RUN_CMD_LOG_FILE
+		else
+			unset RUN_CMD_LOG_FILE
+		fi
+		if [ -n "$prev_session_dir" ]; then
+			RUN_CMD_SESSION_DIR="$prev_session_dir"
+			export RUN_CMD_SESSION_DIR
+		else
+			unset RUN_CMD_SESSION_DIR
+		fi
+		if [ -n "$prev_tmp_dir" ]; then
+			RUN_CMD_TMP_DIR="$prev_tmp_dir"
+			export RUN_CMD_TMP_DIR
+		else
+			unset RUN_CMD_TMP_DIR
+		fi
+		if [ -n "$prev_permission" ]; then
+			RUN_CMD_OPENCODE_PERMISSION="$prev_permission"
+			export RUN_CMD_OPENCODE_PERMISSION
+		else
+			unset RUN_CMD_OPENCODE_PERMISSION
+		fi
+		if [ -n "$prev_retries" ]; then
+			RUN_AI_PRIMARY_RETRIES="$prev_retries"
+			export RUN_AI_PRIMARY_RETRIES
+		else
+			unset RUN_AI_PRIMARY_RETRIES
+		fi
+
+		popd >/dev/null || true
+	fi
+
+	destroy_sandbox "$sandbox_dir"
+	return "$rc"
+}
+
+start_rollback_postmortem_worker() {
+	local current_hash="$1" rollback_hash="$2" game_num="$3" rollback_note="${4:-}"
+	[ -f "$ROLLBACK_ANALYSIS_FILE" ] || return 0
+
+	local running_pid=""
+	if [ -f "$ROLLBACK_POSTMORTEM_PID_FILE" ]; then
+		running_pid=$(cat "$ROLLBACK_POSTMORTEM_PID_FILE" 2>/dev/null || echo "")
+		case "$running_pid" in
+		''|*[!0-9]*) running_pid="" ;;
+		esac
+	fi
+	if [ -n "$running_pid" ] && kill -0 "$running_pid" 2>/dev/null; then
+		log "[ROLLBACK-POSTMORTEM] 既存 worker 停止 (PID=$running_pid)"
+		pkill -P "$running_pid" 2>/dev/null || true
+		_stop_pid_with_fallback "$running_pid" "rollback_postmortem"
+		wait "$running_pid" 2>/dev/null || true
+	fi
+
+	rm -f "$ROLLBACK_POSTMORTEM_PID_FILE" "$ROLLBACK_POSTMORTEM_FILE"
+	(
+		local worker_pid="${BASHPID:-$$}"
+		printf '%s\n' "$worker_pid" >"$ROLLBACK_POSTMORTEM_PID_FILE"
+		trap 'rm -f "$ROLLBACK_POSTMORTEM_PID_FILE"' EXIT
+		log "[ROLLBACK-POSTMORTEM] start: game=${game_num:-?} from=${current_hash:0:8} to=${rollback_hash:0:8}"
+		if _generate_rollback_postmortem_with_ai "$current_hash" "$rollback_hash" "$game_num" "$rollback_note"; then
+			log "[ROLLBACK-POSTMORTEM] written: $ROLLBACK_POSTMORTEM_FILE"
+		else
+			log "[ROLLBACK-POSTMORTEM] failed -> fallback to rule-based rollback analysis only"
+		fi
+	) &
+}
+
 start_radio_corner_rollback() {
 	local analysis_file="$1" game_num="$2" from_hash="$3" to_hash="$4"
 	[ -f "$analysis_file" ] || return 1
@@ -6156,6 +6409,20 @@ cleanup_all() {
 	fi
 	_write_improve_state "idle" "0" ""
 
+	local rollback_postmortem_pid=0
+	if [ -f "$ROLLBACK_POSTMORTEM_PID_FILE" ]; then
+		rollback_postmortem_pid=$(cat "$ROLLBACK_POSTMORTEM_PID_FILE" 2>/dev/null || echo 0)
+		case "$rollback_postmortem_pid" in
+		''|*[!0-9]*) rollback_postmortem_pid=0 ;;
+		esac
+	fi
+	if [ "${rollback_postmortem_pid:-0}" -ne 0 ] && kill -0 "$rollback_postmortem_pid" 2>/dev/null; then
+		pkill -P "$rollback_postmortem_pid" 2>/dev/null || true
+		_stop_pid_with_fallback "$rollback_postmortem_pid" "rollback_postmortem"
+		wait "$rollback_postmortem_pid" 2>/dev/null || true
+	fi
+	rm -f "$ROLLBACK_POSTMORTEM_PID_FILE"
+
 	# コメント関連停止
 	stop_comment_watcher
 	_kill_comment_gen
@@ -7140,6 +7407,7 @@ PY
 				mv "tmp/change_log.txt.tmp" "tmp/change_log.txt"
 			fi
 		fi
+		start_rollback_postmortem_worker "$strategy_hash" "$rolled_hash" "$rollback_game_num" "$rollback_note"
 
 		git add -A
 		git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null || true

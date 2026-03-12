@@ -24,6 +24,7 @@
 - `decide(game_state, analysis)` のシグネチャ変更禁止
 - `if __name__ == "__main__"` ブロック変更禁止
 - 戻り値は常に `{"x": float, "reason": str}`。`x` は実質 `[-3.0, 3.0]` に収まるようにすること
+- `tmp/state/last_rollback_postmortem.md` がある場合、そこで特定された Failure Modes と Constraints For Next Improve に逆行する変更は禁止
 - `tmp/state/last_rollback_analysis.md` がある場合、そこに書かれた敗因と `Next Improve Focus` に逆行する変更は禁止
 - 数値の微調整だけの変更は禁止
 - `strategy.py.staging` は既存ファイルとしてその場で編集すること。新規 `Write` / 全面再生成より、既存コードへの `Edit` を優先すること
@@ -42,6 +43,7 @@
 
 ## 参照データ
 - **このプロンプトに埋め込み済み**: `tmp/improve_brief.md`, `tmp/batch_summary.txt`, `advice.md`
+- **サンドボックス内で優先参照**: `tmp/state/last_rollback_postmortem.md`（存在する場合）
 - **サンドボックス内で優先参照**: `tmp/state/last_rollback_analysis.md`（存在する場合）
 - **サンドボックス内**: それ以外の全ファイル。`tmp/sandbox_files.md` に一覧がある
 
@@ -56,6 +58,7 @@
 - `tmp/sandbox_files.md`（目録）
 - `strategy.py.staging`（現行コード）
 - `tmp/change_log.txt`（存在する場合）
+- `tmp/state/last_rollback_postmortem.md`（存在する場合。直近rollbackのAI敗因分析）
 - `tmp/state/last_rollback_analysis.md`（存在する場合。直近rollbackの原因分析）
 - `tmp/batch_summary.txt`（存在する場合）
 - `show_status_g.sh` または `status_dashboard.py` を 1件以上（成熟ランキング/rollback の表示前提を確認したい場合）
@@ -92,6 +95,7 @@
 2. `advice.md` を読み、改善仮説の第一候補を2つ以内に絞る（存在する場合）
 3. `tmp/sandbox_files.md` を読み、必須参照ファイルの実ファイル名を特定する
 4. `tmp/change_log.txt` を読んで、過去と同じ方針の焼き直し候補を除外する
+4.4. `tmp/state/last_rollback_postmortem.md` がある場合は必ず読み、Failure Modes と Constraints For Next Improve を今回の hard constraint に反映する
 4.5. `tmp/state/last_rollback_analysis.md` がある場合は必ず読み、rollback に至った失敗パターンを今回の禁止事項・優先観点へ反映する
 4.6. rollback 分析の `Why Rollback Triggered` と `Next Improve Focus` を hard constraint として扱い、今回の変更がどの敗因を潰すのか明確にしてから実装する
 5. `batch_summary` / `advice` から「頻度が高いのに効いていない reason」と「頻度は低いが効いている reason」を抽出する
