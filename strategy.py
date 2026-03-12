@@ -21,6 +21,10 @@ Phases (determined by board max Y):
   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.8)
   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+
+v178 additional logic:
+  - Dangerous situation detection (max_y >= 2.0 and reactive_pairs >= 3)
+  - In dangerous situations, reduce height_multiplier to 15.0 to prioritize immediate merge
 """
 
 # Fixed interface:
@@ -47,6 +51,10 @@ Phases (determined by board max Y):
 # ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
 # v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
 # これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
+# v178: 危険局面即時併合優先強化版 - batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
+# ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+# max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減し、即時併合を強制的に優先することで、併合機会を活かしスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260312_135916_score0593.jsonl turns 36-42, game_history/20260312_141222_score2015.jsonl turns 83-85
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -54,18 +62,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v173: 序盤HEIGHT_CONTROL抑制超強化版
+    """v178: 危険局面即時併合優先強化版
     
-    batch_summaryでDEFAULT_PLACEMENTが20.7%選択(avg_score_delta=2.2)と依然として高いことを確認。
-    ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
+    batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
+    ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
     
-    v173の改善点:
-    1. early game判定をmax_y < -2.0 → max_y < -3.0に拡大
-       - ワーストゲーム序盤(max_y=-5.0～-2.02)でのDEFAULT_PLACEMENT選択を超強力に抑制
-       - 盤面がまだ低い段階（max_y < -3.0）ではHEIGHT_CONTROLを超強力に抑制し、併合機会を最優先
-    2. height_multiplierを0.2→0.1に削減
-       - v172の0.2でもDEFAULT_PLACEMENTが高い（20.7%）ため、さらに超強力に抑制
-    3. v172のボード密度評価軸とv170の序盤HEIGHT_CONTROL抑制を維持
+    v178の改善点:
+    1. 危険局面での即時併合優先
+       - max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減
+       - reactor情報のreactive_pairsを活用し、危険局面で即時併合を強制的に優先
+       - ワーストゲームの失敗パターン（reactive_pairs=4-6あるのに即時併合を逃す）を解消
+    2. v173の序盤HEIGHT_CONTROL抑制超強化を維持
+       - early_game判定(max_y < -3.0)とheight_multiplier=0.1を維持
+       - 序盤のDEFAULT_PLACEMENT選択を抑制し、併合機会を最優先
+    3. v173のボード密度評価軸とv172の序盤HEIGHT_CONTROL抑制を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -177,9 +187,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 2: height penalty -----
         # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
         # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
+        # v178: 危険局面即時併合優先強化 - max_y >= 2.0かつreactive_pairs >= 3の場合、
+        #        height_multiplierを15.0に削減し、即時併合を強制的に優先
         height_multiplier = 30.0
         if early_game:
             height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
+        
+        # v178: 危険局面での即時併合優先
+        # reactor情報のreactive_pairsを活用し、危険局面で即時併合を優先する
+        # ワーストゲーム(score0593)の終盤分析で、reactive_pairs=4-6あるにもかかわらず
+        # HIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定
+        # max_y >= 2.0かつreactive_pairsの長さ >= 3の危険局面でheight_multiplierを15.0に削減
+        reactor = analysis.get("reactor", {})
+        reactive_pairs = reactor.get("reactive_pairs", [])
+        if max_y >= 2.0 and isinstance(reactive_pairs, list) and len(reactive_pairs) >= 3:
+            height_multiplier = 15.0  # v178: 危険局面はHEIGHT_CONTROLを抑制し、即時併合を最優先
 
         height_penalty = landing_y * height_multiplier * height_mult
 
