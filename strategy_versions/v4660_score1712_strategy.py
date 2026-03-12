@@ -7,9 +7,10 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (9 evaluation axes):
+Decision Logic (10 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
   2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -2.0)
+  2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable (v179)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
@@ -33,7 +34,7 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
 # [BEST:5310] v159: reactor情報活用による危険局面即時併合優先版
-# v160: 危険局面フィルタリング早期化強化版 - max_y>=1.8かつreactive_pairs>=3で併合機会のみを評価対象
+# [BEST:5694] v160: 危険局面フィルタリング早期化強化版 - max_y>=1.8かつreactive_pairs>=3で併合機会のみを評価対象
 #   - 危険局面でのFARマージボーナスを強化（200.0→1200.0）し、いずれかの併合機会を確保
 #   - ワーストゲーム(score0467)の失敗パターン分析に基づき、危険局面の閾値を厳密化
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_012257_score0467.jsonl turns 48-55
@@ -41,28 +42,41 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - 高スコア群(23.9%)と低スコア群(32.5%)の比較で、低スコア群が8.6%も多くHEIGHT_CONTROLを選択していることを特定
 #   - MEDIUMフェーズのheight_multiplierを15.0に削減し、マージ選択を促進することでHEIGHT_CONTROL選択を抑制しスコア向上を目指す
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, strategy_versions/best_score5310_strategy.py, tmp/change_log.txt
+# v178: 危険局面盤面圧縮強化版 - ワーストゲーム(score0579, score0697)の終盤分析で、max_y>=2.0かつreactive_pairs>=2-8あるにもかかわらず
+#   HIGH_TOWERが選択され続け即時併合機会を逃している失敗パターンを特定。
+#   - 危険局面判定閾値をreactive_pairs>=2に引き下げて早期対応
+#   - 危険局面でheight_multiplierを15.0に削減し、reactive_pairsによる盤面圧縮を優先
+#   - 危険局面でlanding_y>0.5の場合にheight_penaltyを3倍にしてHIGH_TOWERを強力に抑制
+#   - REACTIVE_MERGE_PRIORITYボーナスを500.0→800.0に増強してマージ選択を強制
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_103346_score0579.jsonl, game_history/20260312_110534_score0697.jsonl
+# v179: 危険局面near_pairs活用による将来併合機会確保版 - ワーストゲーム(score0618)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=3-4あるにもかかわらず
+#   HIGH_TOWERが選択され続け即時併合機会を逃している失敗パターンを特定。
+#   - dangerous_situation かつ merge_available=false の場合、near_pairs を活用する配置を優先する新しい評価軸を追加
+#   - near_pairs が多いほど将来の reactive_pairs への昇格可能性が高く、即時併合機会を確保できる
+#   - near_pairs ペナルティではなく near_pairs ボーナスとして実装し、near_pairs>=3 で NEAR_PAIRS_OPPORTUNITY reason を追加
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260312_115117_score0618.jsonl, game_history/20260312_112603_score5694.jsonl, analyze_board.py
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v177: MEDIUMフェーズHEIGHT_CONTROL抑制強化版
+    """v179: 危険局面near_pairs活用による将来併合機会確保版
 
-    batch_summary分析でHEIGHT_CONTROLが27.5%選択(avg_score_delta=0.9)と過剰であることを確認。
-    高スコア群(23.9%)と低スコア群(32.5%)の比較で、低スコア群が8.6%も多くHEIGHT_CONTROLを選択していることを特定。
-    MEDIUMフェーズのheight_multiplierを15.0に削減し、マージ選択を促進することでHEIGHT_CONTROL選択を抑制しスコア向上を目指す。
+    ワーストゲーム(score0618)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=3-4あるにもかかわらず
+    HIGH_TOWERが選択され続け即時併合機会を逃している失敗パターンを特定。
+    危険局面で即時併合がない場合、着地が低い配置を優先するのではなく、near_pairs を活用する配置を優先することで、
+    将来の併合機会を確保しつつ盤面圧縮を促進しスコア向上を目指す。
 
-    v177の改善点：
-     1. MEDIUMフェーズHEIGHT_CONTROL抑制強化
-        - height_multiplier: 30.0→15.0に削減（v175/v177）
-        - 高スコア群のHEIGHT_CONTROL選択率(23.9%)を目標に抑制
-     2. v176のreactor情報活用によるマージ優先評価軸を維持
-        - reactive_pair_count >= 2の場合、DIRECT/NEARマージに+500.0ボーナス
-        - v167のreactive_pairsによる盤面圧縮調整も適用
-     3. v174の初期12ターンマージ重視を維持
-        - early_game判定(max_y < -2.0)とEARLY_MERGE_PRIORITY(piece_count <= 12)を維持
-     4. v171のCHAIN_MERGE基本ボーナス強化を維持
-        - chain_distance_max=5.0とchain_bonus_multiplier初期値480.0でCHAIN_MERGE選択を促進
+    v179の改善点：
+     1. 危険局面near_pairs活用評価軸の追加
+        - dangerous_situation かつ merge_available=false の場合、near_pairs を活用する配置を優先
+        - near_pairs が多いほど将来の reactive_pairs への昇格可能性が高く、即時併合機会を確保できる
+        - near_pairs ボーナスとして実装し、near_pairs >= 3 で NEAR_PAIRS_OPPORTUNITY reason を追加
+     2. v178の危険局面即時併合優先戦略を維持
+        - dangerous_situation: reactive_pairs >= 2
+        - 危険局面でのheight_multiplier削減（15.0）
+        - 危険局面でのHIGH_TOWER強力抑制（landing_y > 0.5 で height_penalty *= 3.0）
+        - REACTIVE_MERGE_PRIORITYボーナス（+800.0）
     """
 
     results = analysis.get("results", [])
@@ -86,11 +100,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
+    near_pairs = reactor.get("near_pairs", [])
+    near_pair_count = len(near_pairs) if isinstance(near_pairs, list) else 0
 
-    # --- v160: 危険局面フィルタリング早期化・強化 ---
-    # 条件: max_y >= 1.8 かつ reactive_pairs >= 3
-    # ワーストゲーム(score0467)での失敗パターン分析に基づき閾値調整
-    dangerous_situation = max_y >= 1.8 and reactive_pair_count >= 3
+    # --- v178: 危険局面フィルタリング早期化・強化 ---
+    # 条件: max_y >= 1.8 かつ reactive_pairs >= 2（v178: >=3から>=2に引き下げ）
+    # ワーストゲーム(score0579, score0697)での失敗パターン分析に基づき閾値調整
+    dangerous_situation = max_y >= 1.8 and reactive_pair_count >= 2
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -175,6 +191,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if piece_count <= 6 and merge_grade == "NO":
             height_multiplier = 0.1
 
+        # v178: 危険局面での盤面圧縮強化（height_multiplierを15.0に削減）
+        if dangerous_situation:
+            height_multiplier = 15.0
+
         # v167: reactive_pairsによる盤面圧縮調整
         if phase in ["MEDIUM", "HIGH"] and reactive_pair_count >= 2:
             reactive_compression_factor = max(0.3, 1.0 - (reactive_pair_count - 2) * 0.15)
@@ -193,7 +213,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
 
+        # v178: 危険局面での着地高すぎに対する強力なペナルティ
+        if dangerous_situation and landing_y > 0.5:
+            height_penalty *= 3.0
+
         score -= height_penalty
+
+        # ----- evaluation axis 2.5: near_pairs bonus for dangerous situations -----
+        # v179: 危険局面で即時併合がない場合、near_pairs を活用する配置を優先
+        # ワーストゲーム(score0618)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=3-4あるにもかかわらず
+        # HIGH_TOWERが選択され続け即時併合機会を逃している失敗パターンを特定
+        # dangerous_situation かつ merge_available=false の場合、near_pairs が多い配置を優先
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260312_115117_score0618.jsonl turns 56-63
+        if dangerous_situation and merge_grade == "NO" and reactive_pair_count >= 2:
+            # near_pairs が多いほどボーナス（将来の併合機会を確保）
+            near_pairs_bonus = near_pair_count * 150.0
+            score += near_pairs_bonus
+            if near_pair_count >= 3:
+                reasons.append("NEAR_PAIRS_OPPORTUNITY")
 
         # ----- evaluation axis 3: drift penalty -----
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
@@ -278,12 +315,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 800.0  # 初期段階での強力なマージ優先
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- v176: reactive_pairs-based merge priority -----
-        # batch_summary分析でHEIGHT_CONTROLが26.5%選択(avg_score_delta=1.1)と過剰であることを確認。
+        # ----- v178: reactive_pairs-based merge priority -----
+        # v178: batch_summary分析でHEIGHT_CONTROLが27.5%選択と過剰であることを確認。
         # reactor情報のreactive_pairs（反応性のあるペア）が2つ以上ある場合、盤面に多数の併合機会があることを示唆。
-        # この状況でマージを優先することでHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
+        # v178: ボーナスを800.0に増強し、危険局面でのマージ選択を強制することでHEIGHT_CONTROL選択を抑制しスコア安定性を向上させる。
         if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
-            score += 500.0
+            score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8: MEDIUM_TOWER selection promotion (v174) -----
