@@ -1020,6 +1020,7 @@ update_best() {
 _TWITCH_CLIP_GAME=""
 _create_twitch_clip() {
 	local event_msg="$1" game_id="${2:-}"
+	[ "${TWITCH_CLIP_ENABLED:-0}" = "1" ] || return 0
 	[ -n "${TWITCH_CLIENT_ID:-}" ] && [ -n "${TWITCH_BROADCASTER_ID:-}" ] || return 0
 	# 同一ゲーム内デデュプ（建国+ハイスコア同時発生時に2本作らない）
 	if [ -n "$game_id" ] && [ "$game_id" = "$_TWITCH_CLIP_GAME" ]; then

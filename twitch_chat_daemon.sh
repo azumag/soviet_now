@@ -88,8 +88,8 @@ while true; do
             user=$(echo "$user" | tr -d '`$\\{}|;<>&')
             clean_line="${user}: ${msg}"
 
-            # !clip コマンド検出（クールダウン付き）
-            if [[ "$msg" =~ ^[[:space:]]*!clip([[:space:]]|$) ]]; then
+            # !clip コマンド検出（クールダウン付き、TWITCH_CLIP_ENABLED=1 で有効）
+            if [ "${TWITCH_CLIP_ENABLED:-0}" = "1" ] && [[ "$msg" =~ ^[[:space:]]*!clip([[:space:]]|$) ]]; then
                 local now_ts last_clip_ts clip_age
                 now_ts=$(date +%s)
                 last_clip_ts=$(cat "$CLIP_COOLDOWN_FILE" 2>/dev/null || echo 0)
