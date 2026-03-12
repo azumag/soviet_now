@@ -22,6 +22,7 @@ MIN_GAMES_FOR_BEST_ROLLBACK=${MIN_GAMES_FOR_BEST_ROLLBACK:-12}
 REGRESSION_COMPOSITE_RATIO=${REGRESSION_COMPOSITE_RATIO:-0.88}
 REGRESSION_P50_RATIO=${REGRESSION_P50_RATIO:-0.85}
 REGRESSION_P25_RATIO=${REGRESSION_P25_RATIO:-0.80}
+RADIO_STATE_STALE_SEC=${RADIO_STATE_STALE_SEC:-600}
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
 W=57
@@ -672,16 +673,16 @@ PY
 	# --- ラジオコーナー状態 (状態ファイルベース) ---
 	local radio_status="idle" radio_corner="" radio_elapsed=""
 	if [[ -f $TMP_STATE_DIR/.radio_state ]]; then
-		local radio_line=$(cat $TMP_STATE_DIR/.radio_state 2>/dev/null)
-		local radio_mode=${radio_line%%:*}
-		local rest=${radio_line#*:}
-		radio_corner=${rest%%:*}
-		local radio_ts=${rest##*:}
+		local radio_line radio_mode radio_ts radio_owner_pid
+		radio_line=$(cat $TMP_STATE_DIR/.radio_state 2>/dev/null)
+		IFS=':' read -r radio_mode radio_corner radio_ts radio_owner_pid _ <<<"$radio_line"
 		if [[ -n "$radio_ts" ]]; then
 			local age=$(( $(date +%s) - radio_ts ))
-			if (( age > 600 )); then
-				# 10分以上前 → stale
+			if (( age > RADIO_STATE_STALE_SEC )); then
+				# stale は表示上は無視
 				radio_status="idle"
+				radio_elapsed=""
+				radio_corner=""
 			else
 				radio_status="$radio_mode"
 				if (( age < 60 )); then radio_elapsed="${age}s"

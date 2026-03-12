@@ -43,6 +43,7 @@ RADIO_FACT_CHECK_MAX_PARAGRAPH_DROP="${RADIO_FACT_CHECK_MAX_PARAGRAPH_DROP:-2}"
 RADIO_WEB_GROUNDING_ENABLED="${RADIO_WEB_GROUNDING_ENABLED:-1}"
 RADIO_WEB_GROUNDING_TTL_SEC="${RADIO_WEB_GROUNDING_TTL_SEC:-21600}"
 RADIO_WEB_GROUNDING_MAX_SOURCES="${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}"
+RADIO_STATE_STALE_SEC="${RADIO_STATE_STALE_SEC:-600}"
 # --- tmp/ サブディレクトリ ---
 TMP_STATE_DIR="tmp/state"
 TMP_MARKERS_DIR="tmp/markers"
@@ -2802,12 +2803,46 @@ _post_cc_attribution_to_chat() {
 	_post_cc_text_to_chat "$cc_text"
 }
 
+_radio_gc_stale_state() {
+	local current mode corner ts owner_pid now age
+	current=$(cat "$RADIO_STATE_FILE" 2>/dev/null) || return 0
+	IFS=':' read -r mode corner ts owner_pid _ <<<"$current"
+	case "$ts" in
+	''|*[!0-9]*) return 0 ;;
+	esac
+	now=$(date +%s)
+	age=$((now - ts))
+	[ "$age" -le "$RADIO_STATE_STALE_SEC" ] && return 0
+	case "$owner_pid" in
+	''|*[!0-9]*) owner_pid="" ;;
+	esac
+	if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$RADIO_STATE_FILE"
+	log "[RADIO:${corner:-unknown}] stale state clear: mode=${mode:-unknown} age=${age}s"
+}
+
+_radio_set_state() {
+	local mode="$1" corner="$2"
+	[ -n "$mode" ] || return 1
+	[ -n "$corner" ] || return 1
+	_radio_gc_stale_state
+	printf '%s:%s:%s:%s\n' "$mode" "$corner" "$(date +%s)" "$$" >"$RADIO_STATE_FILE"
+}
+
 # 自分のコーナーの状態ファイルだけ安全に削除 (並列実行の競合防止)
 _radio_clear_state() {
-	local my_corner="$1"
+	local my_corner="$1" reason="${2:-}"
 	local current
-	current=$(cat $RADIO_STATE_FILE 2>/dev/null) || return 0
-	case "$current" in *":${my_corner}:"*) rm -f $RADIO_STATE_FILE ;; esac
+	_radio_gc_stale_state
+	current=$(cat "$RADIO_STATE_FILE" 2>/dev/null) || return 0
+	case "$current" in
+	*":${my_corner}:"*)
+		rm -f "$RADIO_STATE_FILE"
+		[ -n "$reason" ] && log "[RADIO:${my_corner}] state clear: ${reason}"
+		;;
+	esac
 }
 
 _interrupt_current_audio_playback() {
@@ -2848,7 +2883,7 @@ _play_priority_audio_file() {
 	local audio_file="$1" corner_name="$2"
 	[ -s "$audio_file" ] || return 1
 	_interrupt_current_audio_playback "priority:${corner_name}"
-	echo "playing:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
+	_radio_set_state "playing" "$corner_name"
 	_refresh_radio_intro_for_playback_file "$audio_file" "$corner_name"
 	SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
 }
@@ -2898,6 +2933,26 @@ _play_deferred_radio_queue_once() {
 	comment_playing=${comment_playing:-0}
 	comment_total=$((comment_queued + comment_playing))
 	[ "$comment_total" -gt 0 ] && return 0
+
+	local stale_playing=""
+	for stale_playing in "$RADIO_DEFERRED_QUEUE_DIR"/radio_*.playing; do
+		[ -f "$stale_playing" ] || continue
+		local stale_mtime="" stale_age=0 retry_file=""
+		stale_mtime=$(stat -f '%m' "$stale_playing" 2>/dev/null || true)
+		case "$stale_mtime" in
+		''|*[!0-9]*) continue ;;
+		esac
+		stale_age=$(( $(date +%s) - stale_mtime ))
+		[ "$stale_age" -le "$RADIO_STATE_STALE_SEC" ] && continue
+		retry_file="${stale_playing%.playing}.txt"
+		if [ -f "$retry_file" ]; then
+			rm -f "$stale_playing"
+			log "[RADIO:deferred] stale playing削除: $(basename "$stale_playing") age=${stale_age}s"
+		else
+			mv "$stale_playing" "$retry_file" 2>/dev/null || true
+			log "[RADIO:deferred] stale playing復帰: $(basename "$retry_file") age=${stale_age}s"
+		fi
+	done
 
 	local qf
 	qf=$(ls -1 "$RADIO_DEFERRED_QUEUE_DIR"/radio_*.txt 2>/dev/null | sort | head -n 1)
@@ -2958,9 +3013,9 @@ _radio_generate_and_play() {
 		return 0
 	fi
 
-	echo "generating:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
+	_radio_set_state "generating" "$corner_name"
 	log "[RADIO:${corner_name}] トーク生成中..."
-	local talk prompt_snapshot
+	local talk prompt_snapshot debug_dump=""
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
 	if [ -z "$talk" ]; then
@@ -2972,8 +3027,19 @@ _radio_generate_and_play() {
 	rm -f "$prompt_file"
 
 	if [ -z "$talk" ]; then
-		log "[RADIO:${corner_name}] トーク生成失敗"
-		_radio_clear_state "$corner_name"
+		debug_dump="$TMP_DEBUG_DIR/radio_failed_${corner_name}_$(date +%s).txt"
+		{
+			echo "reason=generation_empty"
+			echo "corner=${corner_name}"
+			echo "game=${game_num}"
+			echo "score=${score}"
+			echo "selected_news=${selected_news}"
+			echo
+			echo "===PROMPT==="
+			printf '%s\n' "$prompt_snapshot"
+		} >"$debug_dump"
+		log "[RADIO:${corner_name}] トーク生成失敗: empty output (dump: $debug_dump)"
+		_radio_clear_state "$corner_name" "generation_failed"
 		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
 	fi
@@ -3026,9 +3092,18 @@ _radio_generate_and_play() {
 	talk_body=$(printf '%s' "$talk_body" | _normalize_radio_tone)
 
 	if [ ${#talk_body} -lt 100 ]; then
-		local debug_dump
 		debug_dump="$TMP_DEBUG_DIR/radio_short_${corner_name}_$(date +%s).txt"
 		{
+			echo "reason=body_too_short"
+			echo "corner=${corner_name}"
+			echo "game=${game_num}"
+			echo "score=${score}"
+			echo "raw_chars=${#talk}"
+			echo "parsed_chars=${#talk_body_parsed}"
+			echo "sanitized_chars=${#talk_body_sanitized}"
+			echo "dedup_chars=${#talk_body_dedup}"
+			echo "final_chars=${#talk_body}"
+			echo
 			echo "===RAW==="
 			printf '%s\n' "$talk"
 			echo
@@ -3041,24 +3116,50 @@ _radio_generate_and_play() {
 			echo "===DEDUP==="
 			printf '%s\n' "$talk_body_dedup"
 		} >"$debug_dump"
-		log "[RADIO:${corner_name}] WARNING: 本文が短すぎる(${#talk_body}字) → スキップ (dump: $debug_dump)"
-		_radio_clear_state "$corner_name"
+		log "[RADIO:${corner_name}] WARNING: 本文が短すぎる raw=${#talk} parsed=${#talk_body_parsed} sanitized=${#talk_body_sanitized} dedup=${#talk_body_dedup} final=${#talk_body} -> skip (dump: $debug_dump)"
+		_radio_clear_state "$corner_name" "body_too_short"
 		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
 	fi
 
 	if _radio_should_fact_check "$corner_name"; then
 		local fact_checked_body
-		echo "verifying:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
+		_radio_set_state "verifying" "$corner_name"
 		fact_checked_body=$(_radio_fact_check_body "$corner_name" "$prompt_snapshot" "$talk_body" "$selected_news") || {
-			_radio_clear_state "$corner_name"
+			debug_dump="$TMP_DEBUG_DIR/radio_factcheck_input_${corner_name}_$(date +%s).txt"
+			{
+				echo "reason=fact_check_failed"
+				echo "corner=${corner_name}"
+				echo "game=${game_num}"
+				echo "score=${score}"
+				echo "selected_news=${selected_news}"
+				echo "body_chars=${#talk_body}"
+				echo
+				echo "===PROMPT==="
+				printf '%s\n' "$prompt_snapshot"
+				echo
+				echo "===BODY==="
+				printf '%s\n' "$talk_body"
+			} >"$debug_dump"
+			log "[RADIO:${corner_name}] fact-check失敗 (dump: $debug_dump)"
+			_radio_clear_state "$corner_name" "fact_check_failed"
 			rmdir "$inflight_dir" 2>/dev/null || true
 			return 1
 		}
 		talk_body="$fact_checked_body"
 		if ! _is_valid_radio_talk "$talk_body"; then
-			log "[RADIO:${corner_name}] fact-check後の本文が不正/短文 -> 読み上げ中止"
-			_radio_clear_state "$corner_name"
+			debug_dump="$TMP_DEBUG_DIR/radio_factcheck_invalid_${corner_name}_$(date +%s).txt"
+			{
+				echo "reason=fact_checked_body_invalid"
+				echo "corner=${corner_name}"
+				echo "game=${game_num}"
+				echo "score=${score}"
+				echo "body_chars=${#talk_body}"
+				echo
+				printf '%s\n' "$talk_body"
+			} >"$debug_dump"
+			log "[RADIO:${corner_name}] fact-check後の本文が不正/短文 -> 中止 (dump: $debug_dump)"
+			_radio_clear_state "$corner_name" "fact_checked_body_invalid"
 			rmdir "$inflight_dir" 2>/dev/null || true
 			return 1
 		fi
@@ -3072,6 +3173,7 @@ _radio_generate_and_play() {
 	local talk_file
 	local comment_queued=0 comment_playing=0 comment_total=0
 	local deferred_file=""
+	local play_rc=0
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 	echo "$talk_body" >"$talk_file"
 	{
@@ -3095,17 +3197,17 @@ _radio_generate_and_play() {
 			[ -n "$deferred_cc_text" ] && printf '%s' "$deferred_cc_text" > "${deferred_file%.txt}.cc_text"
 		fi
 		if [ -n "$deferred_file" ]; then
-			echo "queued:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
+			_radio_set_state "queued" "$corner_name"
 			log "[RADIO:${corner_name}] deferred: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}) -> $(basename "$deferred_file")"
 		else
 			log "[RADIO:${corner_name}] deferred enqueue失敗 (comment backlog=${comment_total})"
-			_radio_clear_state "$corner_name"
+			_radio_clear_state "$corner_name" "deferred_enqueue_failed"
 			rm -f "$talk_file" 2>/dev/null || true
 			rmdir "$inflight_dir" 2>/dev/null || true
 			return 1
 		fi
 		else
-			echo "playing:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
+			_radio_set_state "playing" "$corner_name"
 			# CC表記をTwitchチャットに投稿（再生開始タイミング）
 			if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
 				local immediate_cc_text=""
@@ -3114,14 +3216,31 @@ _radio_generate_and_play() {
 			fi
 			_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
 			if [ "$no_preempt" = true ]; then
-				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
+				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
 			else
-				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
+				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
+			fi
+			if [ "$play_rc" -ne 0 ]; then
+				debug_dump="$TMP_DEBUG_DIR/radio_play_failed_${corner_name}_$(date +%s).txt"
+				{
+					echo "reason=play_failed"
+					echo "corner=${corner_name}"
+					echo "game=${game_num}"
+					echo "score=${score}"
+					echo "play_rc=${play_rc}"
+					echo
+					printf '%s\n' "$talk_body"
+				} >"$debug_dump"
+				log "[RADIO:${corner_name}] 再生失敗 rc=${play_rc} (dump: $debug_dump)"
+				rm -f "$talk_file"
+				_radio_clear_state "$corner_name" "play_failed"
+				rmdir "$inflight_dir" 2>/dev/null || true
+				return 1
 			fi
 		fi
 	rm -f "$talk_file"
 	_radio_mark_done "$done_marker"
-	_radio_clear_state "$corner_name"
+	_radio_clear_state "$corner_name" "completed"
 	rmdir "$inflight_dir" 2>/dev/null || true
 	if [ -n "$deferred_file" ]; then
 		log "[RADIO:${corner_name}] トーク終了 (再生待ちキュー)"
@@ -4646,7 +4765,7 @@ generate_russia_celebration() {
 - 出力はトーク本文のみ。前置きや補足説明は不要
 CELEBPROMPT
 
-	echo "generating:russia_celebration:$(date +%s)" > $RADIO_STATE_FILE
+	_radio_set_state "generating" "russia_celebration"
 	log "[RUSSIA] 生成中..."
 	local celebration_talk celebration_prompt_snapshot
 	celebration_prompt_snapshot=$(cat "$celebration_prompt_file" 2>/dev/null)
@@ -4662,23 +4781,23 @@ CELEBPROMPT
 	if [ -n "$celebration_talk" ]; then
 		celebration_talk=$(printf '%s' "$celebration_talk" | _sanitize_onair_text | _normalize_radio_tone)
 		if [ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ]; then
-			echo "verifying:russia_celebration:$(date +%s)" > $RADIO_STATE_FILE
+			_radio_set_state "verifying" "russia_celebration"
 			celebration_talk=$(_radio_fact_check_body "celebration" "$celebration_prompt_snapshot" "$celebration_talk") || {
-				_radio_clear_state "russia_celebration"
+				_radio_clear_state "russia_celebration" "fact_check_failed"
 				log "[RUSSIA] fact-check失敗"
 				return 1
 			}
 		fi
 		if ! _is_valid_radio_talk "$celebration_talk"; then
-			_radio_clear_state "russia_celebration"
+			_radio_clear_state "russia_celebration" "invalid_after_fact_check"
 			log "[RUSSIA] fact-check後の本文が不正/短文"
 			return 1
 		fi
 		echo "$celebration_talk" >$TMP_DEBUG_DIR/radio_russia_celebration.txt
-		echo "playing:russia_celebration:$(date +%s)" > $RADIO_STATE_FILE
+		_radio_set_state "playing" "russia_celebration"
 		log "[RUSSIA] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
-		_radio_clear_state "russia_celebration"
+		_radio_clear_state "russia_celebration" "generation_failed"
 		log "[RUSSIA] 祝賀トーク生成失敗"
 	fi
 }
@@ -4714,7 +4833,7 @@ generate_soviet_celebration() {
 - 出力はトーク本文のみ。前置きや補足説明は不要
 CELEBPROMPT
 
-	echo "generating:celebration:$(date +%s)" > $RADIO_STATE_FILE
+	_radio_set_state "generating" "celebration"
 	log "[CELEBRATION] 生成中..."
 	local celebration_talk celebration_prompt_snapshot
 	celebration_prompt_snapshot=$(cat "$celebration_prompt_file" 2>/dev/null)
@@ -4730,23 +4849,23 @@ CELEBPROMPT
 	if [ -n "$celebration_talk" ]; then
 		celebration_talk=$(printf '%s' "$celebration_talk" | _sanitize_onair_text | _normalize_radio_tone)
 		if [ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ]; then
-			echo "verifying:celebration:$(date +%s)" > $RADIO_STATE_FILE
+			_radio_set_state "verifying" "celebration"
 			celebration_talk=$(_radio_fact_check_body "celebration" "$celebration_prompt_snapshot" "$celebration_talk") || {
-				_radio_clear_state "celebration"
+				_radio_clear_state "celebration" "fact_check_failed"
 				log "[CELEBRATION] fact-check失敗"
 				return 1
 			}
 		fi
 		if ! _is_valid_radio_talk "$celebration_talk"; then
-			_radio_clear_state "celebration"
+			_radio_clear_state "celebration" "invalid_after_fact_check"
 			log "[CELEBRATION] fact-check後の本文が不正/短文"
 			return 1
 		fi
 		echo "$celebration_talk" >tmp/radio_celebration.txt
-		echo "playing:celebration:$(date +%s)" > $RADIO_STATE_FILE
+		_radio_set_state "playing" "celebration"
 		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
-		_radio_clear_state "celebration"
+		_radio_clear_state "celebration" "generation_failed"
 		log "[CELEBRATION] 祝賀トーク生成失敗"
 	fi
 }
