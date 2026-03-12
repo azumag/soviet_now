@@ -378,6 +378,15 @@ ${talk_body}"
 	echo "$talk_body" >"$talk_file"
 	echo "playing:${corner_name}:$(date +%s)" > $RADIO_STATE_FILE
 	log "[RADIO:${corner_name}] ${#talk_body}字"
+	if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+		local news_cc_text=""
+		if declare -F _build_cc_attribution_text >/dev/null 2>&1; then
+			news_cc_text=$(_build_cc_attribution_text "$selected_news")
+		fi
+		if [ -n "$news_cc_text" ] && declare -F _post_cc_text_to_chat >/dev/null 2>&1; then
+			_post_cc_text_to_chat "$news_cc_text"
+		fi
+	fi
 	if [ "$no_preempt" = true ]; then
 		./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
 	else
