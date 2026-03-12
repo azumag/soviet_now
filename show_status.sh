@@ -413,15 +413,20 @@ def trend_flags():
 if h and h in rs:
     scores = rs[h]["scores"]
     m = metrics(scores)
+    games_total = rs[h].get("games_total", len(scores))
+    try:
+        games_total = int(games_total)
+    except Exception:
+        games_total = len(scores)
     avg = m["avg"] if m else 0
     print(f"rolling_hash={h[:8]}")
-    print(f"rolling_count={len(scores)}")
+    print(f"rolling_count={games_total}")
     print(f"rolling_avg={avg:.0f}")
     if prev_h and prev_h in rs and rs[prev_h]["scores"]:
         prev_scores = rs[prev_h]["scores"]
         prev_avg = sum(prev_scores) / len(prev_scores)
         print(f"rolling_prev_avg={prev_avg:.0f}")
-    print(f"rolling_total={len(scores)}")
+    print(f"rolling_total={games_total}")
     if m:
         comp = m["comp"]
         p50 = m["p50"]
