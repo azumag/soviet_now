@@ -795,7 +795,7 @@ start_radio_corner_jiji() {
 
 #=== ニュース: 毎ゲーム取得 & 再生 ===
 
-fetch_and_play_news() {
+_legacy_fetch_and_play_news() {
 	local game_num="$1" score="$2"
 	# 旧呼び出し（引数なし）でも、起動時点の値を固定して後段に渡す
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
@@ -813,7 +813,7 @@ fetch_and_play_news() {
 
 #=== ラジオトーク: ディスパッチャー ===
 
-start_random_radio_corner() {
+_legacy_start_random_radio_corner() {
 	local game_num="$1" score="$2"
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' || echo 0)
@@ -831,7 +831,7 @@ start_random_radio_corner() {
 	esac
 }
 
-schedule_nonessential_audio_jobs() {
+_legacy_schedule_nonessential_audio_jobs() {
 	local game_num="$1" score="$2"
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' || echo 0)
