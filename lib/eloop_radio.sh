@@ -226,10 +226,11 @@ _radio_generate_and_play() {
 	shift 4
 	local no_preempt=true
 	local selected_news=""
+	local selected_news_preselected=false
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--no-preempt) no_preempt=true ;;
-		--selected-news) shift; selected_news="$1" ;;
+		--selected-news) shift; selected_news="$1"; selected_news_preselected=true ;;
 		esac
 		shift
 	done
@@ -285,6 +286,9 @@ _radio_generate_and_play() {
 		if [ -n "$selected_news" ]; then
 			local selected_key
 			selected_news=$(_resolve_selected_news_title "$selected_news" "tmp/news.txt")
+			if [ "$selected_news_preselected" = true ]; then
+				log "[RADIO:news] スケジュール済みニュースを再生: ${selected_news}"
+			elif [ -n "$selected_news" ]; then
 			selected_key=$(_news_title_key "$selected_news")
 			if [ -z "$selected_key" ]; then
 				log "[RADIO:news] 既読記録スキップ: タイトル解決失敗"
@@ -299,6 +303,7 @@ _radio_generate_and_play() {
 				tail -"${PAST_NEWS_READ_KEEP:-60}" "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
 				tail -"${PAST_NEWS_READ_KEYS_KEEP:-120}" "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
 				log "[RADIO:news] 既読記録: ${selected_news}"
+			fi
 			fi
 		fi
 	fi
