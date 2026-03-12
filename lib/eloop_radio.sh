@@ -150,6 +150,7 @@ _ensure_corner_announce() {
 		dinner)   announce="今日の夕飯の献立を考えようコーナーです。" ;;
 		deals)    announce="お得情報コーナーです。" ;;
 		survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
+		opinion)  announce="時事意見コーナーです。" ;;
 		theme)    announce="" ;;
 		strategy) announce="" ;;
 	esac
@@ -612,6 +613,76 @@ start_radio_corner_strategy() {
 	_radio_generate_and_play "$prompt_file" "$game_num" "${best_score}" "strategy"
 }
 
+#=== 時事意見コーナー ===
+
+_filter_unread_opinion_blocks() {
+	local opinion_tmp
+	opinion_tmp=$(mktemp /tmp/eloop_opinion_blocks_XXXXXXXX)
+	cat >"$opinion_tmp"
+	python3 "$ELOOP_LIB_DIR/lib/news_filter.py" filter_unread \
+		"$TMP_HISTORY_DIR/.past_opinion_titles.txt" \
+		"$TMP_HISTORY_DIR/.past_opinion_keys.txt" \
+		"$opinion_tmp"
+	rm -f "$opinion_tmp"
+}
+
+start_radio_corner_opinion() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	# 1. Google News トップ見出し取得
+	log "[OPINION] Google News 見出し取得..."
+	python3 "$ELOOP_LIB_DIR/lib/fetch_google_headlines.py" 2>/dev/null
+	if [ ! -f "tmp/google_headlines.txt" ] || [ ! -s "tmp/google_headlines.txt" ]; then
+		log "[OPINION] 見出し取得失敗、スキップ"
+		return 1
+	fi
+
+	# 2. 未読の見出しから1件選択
+	local headlines unread_headlines headline
+	headlines=$(cat "tmp/google_headlines.txt")
+	unread_headlines=$(printf '%s\n' "$headlines" | _filter_unread_opinion_blocks)
+	if [ -z "$unread_headlines" ]; then
+		log "[OPINION] 未読見出しなし、スキップ"
+		return 1
+	fi
+	# 先頭の見出しを選択（■ プレフィックスを除去）
+	headline=$(printf '%s\n' "$unread_headlines" | head -1 | sed 's/^■ //')
+
+	# 3. 選んだ見出しで検索（grounding）
+	local grounding_context=""
+	grounding_context=$(python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
+		--corner opinion --query "$headline" --max-sources 3 2>/dev/null || true)
+	[ -z "$grounding_context" ] && grounding_context="（検索結果なし）"
+
+	# 4. 既読記録（選択時点で記録）
+	local headline_key
+	headline_key=$(_news_title_key "$headline")
+	if [ -n "$headline_key" ]; then
+		echo "$headline" >>"$TMP_HISTORY_DIR/.past_opinion_titles.txt"
+		echo "$headline_key" >>"$TMP_HISTORY_DIR/.past_opinion_keys.txt"
+		tail -60 "$TMP_HISTORY_DIR/.past_opinion_titles.txt" >"$TMP_HISTORY_DIR/.past_opinion_titles.txt.tmp" \
+			&& mv "$TMP_HISTORY_DIR/.past_opinion_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_opinion_titles.txt"
+		tail -120 "$TMP_HISTORY_DIR/.past_opinion_keys.txt" >"$TMP_HISTORY_DIR/.past_opinion_keys.txt.tmp" \
+			&& mv "$TMP_HISTORY_DIR/.past_opinion_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_opinion_keys.txt"
+	fi
+
+	# 5. プロンプト生成 → AI生成 → 再生
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	export persona_block
+	persona_block=$(_radio_persona_block)
+	export output_rules
+	output_rules=$(_radio_output_rules 1000 2000)
+	export _rc_time _rc_period _rc_mood past_topics game_num score headline grounding_context
+	envsubst < "$ELOOP_LIB_DIR/prompts/radio_opinion.md" > "$prompt_file"
+	unset persona_block output_rules _rc_time _rc_period _rc_mood past_topics headline grounding_context
+
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "opinion"
+}
+
 #=== ニュース: 毎ゲーム取得 & 再生 ===
 
 fetch_and_play_news() {
@@ -703,6 +774,22 @@ schedule_nonessential_audio_jobs() {
 			log "[RADIO] skip random corner: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
 		else
 			start_random_radio_corner "$game_num" "$score" &
+		fi
+	fi
+
+	# 時事意見コーナー（1時間に1回）
+	local opinion_interval_sec=3600
+	local opinion_last_file="$TMP_STATE_DIR/.opinion_last_run"
+	local opinion_last_ts now_ts opinion_elapsed
+	now_ts=$(date +%s)
+	opinion_last_ts=$(cat "$opinion_last_file" 2>/dev/null || echo 0)
+	opinion_elapsed=$((now_ts - opinion_last_ts))
+	if [ "$opinion_elapsed" -ge "$opinion_interval_sec" ]; then
+		if [ "$skip_nonessential_radio" = true ]; then
+			log "[OPINION] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
+		else
+			echo "$now_ts" > "$opinion_last_file"
+			start_radio_corner_opinion "$game_num" "$score" &
 		fi
 	fi
 }
