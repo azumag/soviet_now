@@ -6681,7 +6681,7 @@ def metrics(scores):
         "n": n,
     }
 
-current_scores = [int(x) for x in rs[current_hash].get("scores", [])]
+current_scores = []
 current_run = {}
 if os.path.exists(current_run_file):
     try:
@@ -6689,9 +6689,7 @@ if os.path.exists(current_run_file):
     except Exception:
         current_run = {}
 if str(current_run.get("hash", "") or "") == current_hash:
-    run_scores = [int(x) for x in current_run.get("scores", [])]
-    if run_scores:
-        current_scores = run_scores
+    current_scores = [int(x) for x in current_run.get("scores", [])]
 
 if len(current_scores) < min_games_current:
     print("OK")
@@ -6892,6 +6890,9 @@ PY
 			local rolled_hash
 			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+			if [ -n "$rolled_hash" ]; then
+				_reset_current_strategy_run "$rolled_hash"
+			fi
 			python3 - "$LAST_ROLLBACK_PAIR_FILE" "$strategy_hash" "$rolled_hash" "$rollback_note" <<'PY' 2>/dev/null
 import json
 import sys
@@ -7089,6 +7090,9 @@ elif 'games_total' not in rs[h]:
 with open(rs_file, 'w') as f:
     json.dump(rs, f)
 " 2>/dev/null
+				fi
+				if [ -n "$new_decide_hash" ]; then
+					_reset_current_strategy_run "$new_decide_hash"
 				fi
 
 				# 戦略が変わった → 蓄積データは旧戦略のものなので破棄

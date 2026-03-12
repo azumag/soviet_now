@@ -33,6 +33,7 @@ REJECTED_HASHES_FILE = "tmp/history/rejected_hashes.txt"
 REJECTED_HASH_META_FILE = "tmp/state/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_TTL_SEC = 21600
 LAST_ROLLBACK_PAIR_FILE = "tmp/state/last_rollback_pair.json"
+CURRENT_STRATEGY_RUN_FILE = "tmp/state/current_strategy_run.json"
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
 HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "50"))
@@ -301,10 +302,60 @@ def ranked_mature_entries(rolling, current_hash="", top=None, require_restorable
     return entries
 
 
+def get_current_strategy_run_entry(current_hash):
+    if not current_hash:
+        return None
+    p = Path(CURRENT_STRATEGY_RUN_FILE)
+    if not p.exists():
+        data = {}
+    try:
+        data = json.loads(p.read_text()) if p.exists() else data
+    except Exception:
+        data = {}
+    if str(data.get("hash", "") or "") != current_hash:
+        data = {
+            "hash": current_hash,
+            "scores": [],
+            "games_total": 0,
+        }
+    scores = data.get("scores", [])
+    metrics = calc_strategy_metrics(scores)
+    games_total = data.get("games_total", len(scores))
+    try:
+        games_total = int(games_total)
+    except Exception:
+        games_total = len(scores)
+    if metrics:
+        return {
+            "hash": current_hash,
+            "h8": current_hash[:8],
+            "n_roll": metrics["n"],
+            "n_total": games_total,
+            "comp": metrics["comp"],
+            "p50": metrics["p50"],
+            "p25": metrics["p25"],
+            "lcb": metrics["lcb"],
+        }
+    return {
+        "hash": current_hash,
+        "h8": current_hash[:8],
+        "n_roll": 0,
+        "n_total": games_total,
+        "comp": 0.0,
+        "p50": 0.0,
+        "p25": 0.0,
+        "lcb": 0.0,
+    }
+
+
 def collect_rollback_candidate_hashes(rolling, current_hash):
     last_pair = load_last_rollback_pair()
-    current_metrics = calc_strategy_metrics(rolling.get(current_hash, {}).get("scores", [])) if current_hash else None
-    current_comp = current_metrics["comp"] if current_metrics else None
+    current_entry = get_current_strategy_run_entry(current_hash)
+    if current_entry:
+        current_comp = current_entry["comp"]
+    else:
+        current_metrics = calc_strategy_metrics(rolling.get(current_hash, {}).get("scores", [])) if current_hash else None
+        current_comp = current_metrics["comp"] if current_metrics else None
     candidates = set()
     for entry in ranked_mature_entries(rolling, current_hash, top=HASH_ARCHIVE_KEEP_TOP, require_restorable=True):
         hash_ = entry["hash"]
@@ -351,7 +402,8 @@ def calc_trend_flags(scores):
 
 def calc_regression_status(rolling, current_hash, scores, anchor=None):
     best = pick_best_reference(rolling, current_hash, anchor=anchor)
-    if not current_hash or current_hash not in rolling:
+    current_entry = get_current_strategy_run_entry(current_hash)
+    if not current_hash or not current_entry:
         if not best:
             return {
                 "state": "unknown",
@@ -362,20 +414,23 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
             "state": "unknown",
             "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) current not tracked",
         }
-
-    current_scores = rolling[current_hash].get("scores", [])
-    current = calc_strategy_metrics(current_scores)
-    if not current:
+    if current_entry["n_roll"] < MIN_GAMES_BEFORE_IMPROVE:
         if not best:
             return {
                 "state": "unknown",
-                "text": f"RegPreview N/A n={len(current_scores)} no best ref",
+                "text": f"RegPreview N/A n={current_entry['n_roll']} no best ref",
             }
         _, _, _, _, best_hash, _, best_source = best
         return {
             "state": "unknown",
-                "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) n={len(current_scores)}",
-            }
+            "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) n={current_entry['n_roll']}",
+        }
+    current = {
+        "comp": current_entry["comp"],
+        "p50": current_entry["p50"],
+        "p25": current_entry["p25"],
+        "n": current_entry["n_roll"],
+    }
 
     if not best:
         return {
@@ -623,12 +678,18 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
         metrics = calc_strategy_metrics(data.get("scores", []))
         if not metrics:
             continue
-        if strat_hash and h == strat_hash:
-            current_metrics = metrics
         if metrics["n"] < 12:
             continue
         row = (metrics["comp"], metrics["p50"], metrics["p25"], metrics["n"], h, metrics)
         ranked.append(row)
+    current_entry = get_current_strategy_run_entry(strat_hash)
+    if current_entry and current_entry["n_roll"] > 0:
+        current_metrics = {
+            "n": current_entry["n_roll"],
+            "comp": current_entry["comp"],
+            "p50": current_entry["p50"],
+            "p25": current_entry["p25"],
+        }
     best_ref = pick_best_reference(rolling, strat_hash, anchor=anchor)
     if best_ref:
         _, _, _, _, best_hash, best_metrics, best_source = best_ref
@@ -771,39 +832,12 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     current_entry = None
     provisional_current = None
     if current_hash:
-        current_scores = rolling.get(current_hash, {}).get("scores", [])
-        current_metrics = calc_strategy_metrics(current_scores)
-        games_total = rolling.get(current_hash, {}).get("games_total", len(current_scores))
-        try:
-            games_total = int(games_total)
-        except Exception:
-            games_total = len(current_scores)
-        if current_metrics:
-            current_like = {
-                "hash": current_hash,
-                "h8": current_hash[:8],
-                "n_roll": current_metrics["n"],
-                "n_total": games_total,
-                "comp": current_metrics["comp"],
-                "p50": current_metrics["p50"],
-                "p25": current_metrics["p25"],
-                "lcb": current_metrics["lcb"],
-            }
-            if current_metrics["n"] >= MIN_GAMES_FOR_BEST_ROLLBACK:
+        current_like = get_current_strategy_run_entry(current_hash)
+        if current_like:
+            if current_like["n_roll"] >= MIN_GAMES_FOR_BEST_ROLLBACK:
                 current_entry = current_like
             else:
                 provisional_current = current_like
-        else:
-            provisional_current = {
-                "hash": current_hash,
-                "h8": current_hash[:8],
-                "n_roll": 0,
-                "n_total": games_total,
-                "comp": 0.0,
-                "p50": 0.0,
-                "p25": 0.0,
-                "lcb": 0.0,
-            }
 
     combined_entries = list(all_entries)
     if current_entry:

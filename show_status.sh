@@ -15,6 +15,7 @@ TMP_STATE_DIR="tmp/state"
 TMP_MARKERS_DIR="tmp/markers"
 TMP_HISTORY_DIR="tmp/history"
 TMP_DEBUG_DIR="tmp/debug"
+CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
 FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
 MIN_GAMES_BEFORE_IMPROVE=${MIN_GAMES_BEFORE_IMPROVE:-12}
 MIN_GAMES_FOR_BEST_ROLLBACK=${MIN_GAMES_FOR_BEST_ROLLBACK:-12}
@@ -331,6 +332,11 @@ h = subprocess.run(
     capture_output=True,
     text=True,
 ).stdout.strip()
+current_run = {}
+try:
+    current_run = json.load(open("$CURRENT_STRATEGY_RUN_FILE"))
+except Exception:
+    current_run = {}
 min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
 composite_ratio = float(${REGRESSION_COMPOSITE_RATIO})
 p50_ratio = float(${REGRESSION_P50_RATIO})
@@ -412,10 +418,13 @@ def trend_flags():
         trend100 = prev_avg > 0 and recent_avg < prev_avg * trend_long_ratio
     return trend50, trend100
 
-if h and h in rs:
-    scores = rs[h]["scores"]
+if h:
+    current_data = {"hash": h, "scores": [], "games_total": 0}
+    if str(current_run.get("hash", "") or "") == h:
+        current_data = current_run
+    scores = current_data.get("scores", [])
     m = metrics(scores)
-    games_total = rs[h].get("games_total", len(scores))
+    games_total = current_data.get("games_total", len(scores))
     try:
         games_total = int(games_total)
     except Exception:
