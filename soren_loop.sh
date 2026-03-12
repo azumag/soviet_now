@@ -172,12 +172,13 @@ while true; do
 		exit 130
 	fi
 
-	# eloop_lib.sh / eloop.sh を毎回 source (書き換え時に反映)
-	if ! source ./eloop_lib.sh 2>/dev/null; then
-		log "WARNING: eloop_lib.sh の読み込みに失敗 (前回の定義で続行)"
-	fi
+	# lib/eloop_radio.sh を先に読み込み、その後 eloop_lib.sh で最新の共通実装を上書きする。
+	# これにより lib 側ヘルパーは利用しつつ、旧スケジューラが最新実装を潰さないようにする。
 	if ! source ./lib/eloop_radio.sh 2>/dev/null; then
 		log "WARNING: lib/eloop_radio.sh の読み込みに失敗 (eloop_lib.sh 内の定義で続行)"
+	fi
+	if ! source ./eloop_lib.sh 2>/dev/null; then
+		log "WARNING: eloop_lib.sh の読み込みに失敗 (前回の定義で継続)"
 	fi
 	if ! source ./eloop.sh 2>/dev/null; then
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
