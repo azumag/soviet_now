@@ -7837,7 +7837,7 @@ trigger_adaptive_improvement() {
 		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	fi
 
-	# Step 2: リグレッション検知 (新戦略が旧戦略の85%未満なら自動リバート)
+	# Step 2: リグレッション検知 (成熟ランキングで上位 REGRESSION_MAX_RANK 位圏外なら自動リバート)
 	if check_regression; then
 		# リグレッション検知 → リバート済み、蓄積データクリア
 		_clear_accumulated_data
