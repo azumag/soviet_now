@@ -63,14 +63,22 @@ Phases (determined by board max Y):
    # 即時併合候補がない場合、盤面整理（BOARD_DENSITY）を優先して盤面圧迫を回避。
    # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_033353_score0565.jsonl turns 48-55, advice.md
-    # v187: 危険局面near_pairsボーナス超強化版 - rollback failure mode (p25=-249.8) の解消
-    # ワーストゲーム(score0672)の終盤8ターン分析で、max_y=2.03-3.11かつreactive_pairs=6-7あるにもかかわらず
-    # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
-    # v186のnear_pairsボーナスが不十分で、危険局面での即時併合機会の取りこぼしが継続していたため、near_pairsボーナスを大幅に強化。
-    # near_pairs_count >= 3: 800.0→1200.0、>= 2: 400.0→800.0、>= 1: 200.0（新規追加）に強化し、危険局面での盤面圧縮を促進。
-    # 併せて、危険局面でlanding_y > 0.0の場合、height_penaltyの倍率を3倍→4倍に強化してHIGH_TOWER選択をさらに抑制。
+   # v187: 危険局面near_pairsボーナス超強化版 - rollback failure mode (p25=-249.8) の解消
+   # ワーストゲーム(score0672)の終盤8ターン分析で、max_y=2.03-3.11かつreactive_pairs=6-7あるにもかわらず
+   # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+   # v186のnear_pairsボーナスが不十分で、危険局面での即時併合機会の取りこぼしが継続していたため、near_pairsボーナスを大幅に強化。
+   # near_pairs_count >= 3: 800.0→1200.0、>= 2: 400.0→800.0、>= 1: 200.0（新規追加）に強化し、危険局面での盤面圧縮を促進。
+   # 併せて、危険局面でlanding_y > 0.0の場合、height_penaltyの倍率を3倍→4倍に強化してHIGH_TOWER選択をさらに抑制。
+   # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
+   # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_045854_score0672.jsonl turns 53-60
+    # v188: 危険局面即時併合候補near_pairs活用版 - rollback failure mode (p25=-249.8) の解消
+    # ワーストゲーム(score0973)の終盤8ターン分析で、max_y>=2.58かつreactive_pairs=6-7あるにもかわらず
+    # 即時併合候補にnear_pairsボーナスが適用されず、near_pairsを増やす配置が評価されず、将来の即時併合機会の可能性が最大化されていない失敗パターンを特定。
+    # 危険局面で即時併合候補がある場合もnear_pairsボーナスを適用し、near_pairsを増やす配置を優先評価することで、盤面圧縮を促進し、将来の即時併合機会を最大化。
+    # 即時併合候補がない場合は、v187のnear_pairsボーナス（1200.0/800.0/400.0）を維持。
+    # 即時併合候補がある場合は、near_pairsボーナス（900.0/600.0/300.0）を適用し、即時併合と盤面圧縮の両立を図る。
     # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
-    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_045854_score0672.jsonl turns 53-60
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_054618_score0973.jsonl turns 66-73, game_history/20260313_054034_score1960.jsonl turns 88-95, strategy.py.staging, advice.md
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -321,29 +329,51 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("DANGER_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 2.5: near_pairs bonus in dangerous situations -----
-        # 危険局面で即時併合がない場合、near_pairsを活用する配置を優先
+        # 危険局面でnear_pairsを活用する配置を優先（即時併合候補がある場合も適用）
         # v185: 危険局面判定緩和（min_reactive_pairs=1）に合わせてnear_pairsボーナス条件を更新
         # v187: 危険局面near_pairsボーナスを大幅に強化して盤面圧縮を促進
-        # ワーストゲーム(score0672)の終盤8ターン分析で、max_y=2.03-3.11かつreactive_pairs=6-7あるにもかかわらず
+        # ワーストゲーム(score0672)の終盤8ターン分析で、max_y=2.03-3.11かつreactive_pairs=6-7あるにもかわらず
         # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
         # v186のnear_pairsボーナスが不十分で、危険局面での即時併合機会の取りこぼしが継続していたため、near_pairsボーナスを大幅に強化。
         # near_pairs_count >= 3: 800.0→1200.0、>= 2: 400.0→800.0、>= 1: 200.0（新規追加）に強化し、危険局面での盤面圧縮を促進。
+        # v188: rollback failure mode (p25=-249.8) の解消 - 危険局面で即時併合候補がある場合もnear_pairsボーナスを適用
+        # ワーストゲーム(score0973)の終盤8ターン分析で、max_y>=2.58かつreactive_pairs=6-7あるにもかわらず
+        # 即時併合候補にnear_pairsボーナスが適用されず、near_pairsを増やす配置が評価されず、将来の即時併合機会の可能性が最大化されていない失敗パターンを特定。
+        # 危険局面で即時併合候補がある場合もnear_pairsボーナスを適用し、near_pairsを増やす配置を優先評価することで、盤面圧縮を促進し、将来の即時併合機会を最大化。
+        # 即時併合候補がない場合は、v187のnear_pairsボーナス（1200.0/800.0/400.0）を維持。
+        # 即時併合候補がある場合は、near_pairsボーナス（900.0/600.0/300.0）を適用し、即時併合と盤面圧縮の両立を図る。
         # v187: 共通変数 dangerous_situation を使用
-        if dangerous_situation and merge_grade == "NO":
+        if dangerous_situation:
             near_pairs = reactor.get("near_pairs", [])
             if isinstance(near_pairs, list):
                 near_pairs_count = len(near_pairs)
                 # near_pairsが多いほど将来のreactive_pairsへの昇格可能性が高い
                 # reactive_pairsがある状況で、near_pairsを増やすことでさらに盤面圧縮を促進
-                if near_pairs_count >= 3:
-                    score += 1200.0  # v187: near_pairs活用ボーナスを強化（800.0→1200.0）
-                    reasons.append("NEAR_PAIRS_OPPORTUNITY")
-                elif near_pairs_count >= 2:
-                    score += 800.0  # v187: near_pairs活用ボーナスを強化（400.0→800.0）
-                    reasons.append("NEAR_PAIRS_OPPORTUNITY")
-                elif near_pairs_count >= 1:
-                    score += 400.0  # v187: near_pairs活用ボーナスを新規追加（near_pairs >= 1でもボーナス）
-                    reasons.append("NEAR_PAIRS_OPPORTUNITY")
+                
+                # 危険局面では即時併合候補がある場合もnear_pairsボーナスを適用
+                if merge_grade == "NO":
+                    # 即時併合がない場合：v187の強化ボーナスを維持
+                    if near_pairs_count >= 3:
+                        score += 1200.0  # v187: near_pairs活用ボーナスを強化（800.0→1200.0）
+                        reasons.append("NEAR_PAIRS_OPPORTUNITY")
+                    elif near_pairs_count >= 2:
+                        score += 800.0  # v187: near_pairs活用ボーナスを強化（400.0→800.0）
+                        reasons.append("NEAR_PAIRS_OPPORTUNITY")
+                    elif near_pairs_count >= 1:
+                        score += 400.0  # v187: near_pairs活用ボーナスを新規追加（near_pairs >= 1でもボーナス）
+                        reasons.append("NEAR_PAIRS_OPPORTUNITY")
+                else:
+                    # 即時併合がある場合：near_pairsを増やす配置を優先（v188: 新規追加）
+                    # 即時併合を取りつつ、将来の即時併合機会を最大化する配置を評価
+                    if near_pairs_count >= 3:
+                        score += 900.0  # v188: 即時併合候補でもnear_pairs活用ボーナスを適用
+                        reasons.append("NEAR_PAIRS_OPPORTUNITY")
+                    elif near_pairs_count >= 2:
+                        score += 600.0  # v188: 即時併合候補でもnear_pairs活用ボーナスを適用
+                        reasons.append("NEAR_PAIRS_OPPORTUNITY")
+                    elif near_pairs_count >= 1:
+                        score += 300.0  # v188: 即時併合候補でもnear_pairs活用ボーナスを適用
+                        reasons.append("NEAR_PAIRS_OPPORTUNITY")
 
         # ----- evaluation axis 3: drift penalty -----
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
