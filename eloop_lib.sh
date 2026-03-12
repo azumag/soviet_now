@@ -77,6 +77,7 @@ REJECTED_HASHES_FILE="$TMP_HISTORY_DIR/rejected_hashes.txt"
 REJECTED_HASH_META_FILE="$TMP_STATE_DIR/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_TTL_SEC="${REJECTED_REEVALUATE_TTL_SEC:-21600}"
 LAST_ROLLBACK_PAIR_FILE="$TMP_STATE_DIR/last_rollback_pair.json"
+ROLLBACK_ANALYSIS_FILE="$TMP_STATE_DIR/last_rollback_analysis.md"
 BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
@@ -3378,6 +3379,247 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "${best_score}" "strategy"
 }
 
+_write_rollback_analysis_file() {
+	local current_hash="$1" rollback_hash="$2" regression_result="$3" rollback_note="$4" game_num="${5:-}"
+	python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$rollback_hash" "$regression_result" "$rollback_note" "$ROLLBACK_ANALYSIS_FILE" "score_history.txt" "$game_num" <<'PY'
+import json
+import math
+import os
+import re
+import statistics
+import sys
+import time
+
+rolling_file, current_hash, rollback_hash, regression_result, rollback_note, out_file, score_history_file, game_num = sys.argv[1:9]
+
+def parse_regression(text: str):
+    text = (text or "").strip()
+    if text.startswith("REGRESSION:"):
+        text = text[len("REGRESSION:"):]
+    out = {}
+    for part in text.split(","):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+def to_scores(data):
+    try:
+        return [int(x) for x in (data or {}).get("scores", [])]
+    except Exception:
+        return []
+
+def fmt_num(value, digits=1):
+    try:
+        return f"{float(value):.{digits}f}"
+    except Exception:
+        return "n/a"
+
+def quantile(vals, p):
+    xs = sorted(vals)
+    if not xs:
+        return 0.0
+    if len(xs) == 1:
+        return float(xs[0])
+    pos = (len(xs) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+def metrics(scores):
+    if not scores:
+        return None
+    xs = [int(x) for x in scores]
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in xs) / n
+        std = math.sqrt(var)
+    else:
+        std = 0.0
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    return {"comp": comp, "p50": p50, "p25": p25, "lcb": lcb, "mean": mean, "n": n}
+
+def recent_archives(data):
+    arcs = (data or {}).get("_recent_archives", []) or []
+    return [os.path.basename(str(x)) for x in arcs[-5:]]
+
+def read_score_history(path):
+    vals = []
+    if not os.path.exists(path):
+        return vals
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    vals.append(int(raw.split("\t")[-1]))
+                except Exception:
+                    continue
+    except Exception:
+        return []
+    return vals
+
+def explain_reasons(reason_text):
+    reasons = [r for r in (reason_text or "").split("+") if r]
+    lines = []
+    mapping = {
+        "comp": "総合指標 comp が成熟ランキング上位より弱かった。",
+        "p50": "中央値寄りの典型性能 p50 が不足していた。",
+        "p25": "下振れ耐性 p25 が不足していた。",
+        "trend50": "直近50試合平均がその前50試合平均より落ちていた。",
+        "trend100": "直近100試合平均がその前100試合平均より落ちていた。",
+    }
+    for reason in reasons:
+        lines.append(mapping.get(reason, f"{reason} が悪化要因だった。"))
+    return lines or ["詳細理由を特定できなかった。"]
+
+try:
+    rolling = json.load(open(rolling_file))
+except Exception:
+    rolling = {}
+
+current_data = rolling.get(current_hash, {})
+rollback_data = rolling.get(rollback_hash, {})
+current_scores = to_scores(current_data)
+rollback_scores = to_scores(rollback_data)
+current_metrics = metrics(current_scores)
+rollback_metrics = metrics(rollback_scores)
+reg = parse_regression(regression_result)
+history_scores = read_score_history(score_history_file)
+
+trend_lines = []
+if len(history_scores) >= 100:
+    recent50 = statistics.mean(history_scores[-50:])
+    prev50 = statistics.mean(history_scores[-100:-50])
+    trend_lines.append(f"- recent50={recent50:.1f} prev50={prev50:.1f}")
+if len(history_scores) >= 200:
+    recent100 = statistics.mean(history_scores[-100:])
+    prev100 = statistics.mean(history_scores[-200:-100])
+    trend_lines.append(f"- recent100={recent100:.1f} prev100={prev100:.1f}")
+
+lines = []
+lines.append("# Rollback Analysis")
+lines.append("")
+lines.append(f"- recorded_at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+if game_num:
+    lines.append(f"- game: {game_num}")
+lines.append(f"- reverted_from: {current_hash}")
+lines.append(f"- reverted_to: {rollback_hash}")
+if rollback_note:
+    lines.append(f"- target_note: {rollback_note}")
+lines.append(f"- trigger: {(reg.get('reasons') or 'unknown')}")
+lines.append("")
+lines.append("## Why Rollback Triggered")
+for line in explain_reasons(reg.get("reasons", "")):
+    lines.append(f"- {line}")
+if current_metrics:
+    lines.append(
+        f"- current: comp={fmt_num(current_metrics['comp'])} p50={fmt_num(current_metrics['p50'])} "
+        f"p25={fmt_num(current_metrics['p25'])} mean={fmt_num(current_metrics['mean'])} n={current_metrics['n']}"
+    )
+if rollback_metrics:
+    lines.append(
+        f"- rollback_target: comp={fmt_num(rollback_metrics['comp'])} p50={fmt_num(rollback_metrics['p50'])} "
+        f"p25={fmt_num(rollback_metrics['p25'])} mean={fmt_num(rollback_metrics['mean'])} n={rollback_metrics['n']}"
+    )
+if reg:
+    lines.append(
+        f"- compared_best_ref: hash={reg.get('best_hash', 'n/a')} comp={reg.get('best_comp', 'n/a')} "
+        f"p50={reg.get('best_p50', 'n/a')} p25={reg.get('best_p25', 'n/a')} n={reg.get('best_n', 'n/a')}"
+    )
+lines.append("")
+lines.append("## Score Pattern")
+if current_scores:
+    lines.append(f"- bad_strategy_recent_scores: {' '.join(map(str, current_scores[-12:]))}")
+    lines.append(f"- bad_strategy_recent_files: {', '.join(recent_archives(current_data)) or 'n/a'}")
+if rollback_scores:
+    lines.append(f"- rollback_target_recent_scores: {' '.join(map(str, rollback_scores[-12:]))}")
+    lines.append(f"- rollback_target_recent_files: {', '.join(recent_archives(rollback_data)) or 'n/a'}")
+if trend_lines:
+    lines.extend(trend_lines)
+lines.append("")
+lines.append("## Next Improve Focus")
+focus = []
+reasons = set((reg.get("reasons") or "").split("+"))
+if "p25" in reasons:
+    focus.append("- 下振れゲームで何を取りこぼしたかを優先分析すること。低スコア回の終盤8ターンと deadline 接近局面を読み直す。")
+if "p50" in reasons:
+    focus.append("- 典型性能が弱いので、普段の試合で頻出する選択 reason と score_delta のズレを見直すこと。")
+if "comp" in reasons:
+    focus.append("- comp 悪化なので、単発上振れより mature ranking に残れる再現性を重視すること。")
+if "trend50" in reasons or "trend100" in reasons:
+    focus.append("- 長期下降トレンドが出ているので、直近だけの上振れを追わず、過去の強戦略との差分を比較すること。")
+if not focus:
+    focus.append("- rollback の直前12試合と rollback 先の直近12試合を比較して、再発理由を特定すること。")
+lines.extend(focus)
+lines.append("")
+
+os.makedirs(os.path.dirname(out_file), exist_ok=True)
+with open(out_file, "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+
+summary = []
+summary.append(f"- rollback from {current_hash} to {rollback_hash} at game {game_num or '?'}")
+summary.append(f"- reasons: {reg.get('reasons', 'unknown')}")
+if current_metrics and rollback_metrics:
+    summary.append(
+        f"- current comp/p50/p25={current_metrics['comp']:.1f}/{current_metrics['p50']:.1f}/{current_metrics['p25']:.1f} "
+        f"vs target {rollback_metrics['comp']:.1f}/{rollback_metrics['p50']:.1f}/{rollback_metrics['p25']:.1f}"
+    )
+if current_scores:
+    summary.append(f"- bad recent scores: {' '.join(map(str, current_scores[-8:]))}")
+print("\n".join(summary))
+PY
+}
+
+start_radio_corner_rollback() {
+	local analysis_file="$1" game_num="$2" from_hash="$3" to_hash="$4"
+	[ -f "$analysis_file" ] || return 1
+	_radio_time_context
+	local past_topics analysis_text
+	past_topics=$(_radio_past_topics_block)
+	analysis_text=$(cat "$analysis_file" 2>/dev/null)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目付近で戦略 rollback が発生。戻した hash は ${from_hash} から ${to_hash}。
+
+【rollback分析メモ】
+${analysis_text}
+
+【トーク構成】
+1. rollback が起きた事実を短く伝える
+2. なぜ rollback が起きたかを、comp / p50 / p25 / 直近スコアの観点でわかりやすく整理する
+3. 次の改善で何を直すべきかを1-3点だけ具体的に話す
+4. 軽い締め
+
+【ルール】
+- 単なる謝罪だけで終わらず、失敗の知見として整理すること
+- 数値は分析メモにあるものだけを使うこと
+- 前向きすぎるごまかしは禁止。どこが弱かったかを具体的に言うこと
+
+$(_radio_output_rules 900 1600)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "0" "rollback"
+}
+
 #=== 時間帯コーナー ===
 
 start_radio_corner_weather() {
@@ -5362,11 +5604,11 @@ generate_comment_response() {
 - 褒めるときも大げさに持ち上げすぎないこと。煽りに聞こえる過剰賛美は禁止。「天才」「神」「最強」「完璧」などの大仰な持ち上げは、コメント側がそう言っている場合を除いて多用しない
 - 話し言葉で、カジュアルなトーン
 - 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
-- azumagbanjo からのコメントで、AがBを獲得しました、というものは、放送のカードガチャの引き換えの結果である。あずまぐが獲得したのではない。獲得したのはAさん。コメント中の枚数表現は「その人が累積で持っている枚数」であり、今回手に入れた枚数とは限らない。獲得したカードの特徴や性能を踏まえて、カードの名前や内容について面白く解説すること。カードゲーム上のカードの効果については具体的な効果を決めつけて説明してよいが、ふざけすぎず、まず1文は真面目に「どういう効き方をするカードか」「何が強みか」を説明し、その後に軽いボケや妙な副作用を1つだけ足すこと。全部を悪ふざけで埋めないこと。
-- カード説明は、真面目さ7割、遊び3割くらいの配分にすること。先に用途や相性を自然に説明し、そのあと少しだけ笑える一言を足す形を基本にすること。
+- azumagbanjo からのコメントで、AがBを獲得しました、というものは、放送のカードガチャの引き換えの結果である。あずまぐが獲得したのではない。獲得したのはAさん。コメント中の枚数表現は「その人が累積で持っている枚数」であり、今回手に入れた枚数とは限らない。獲得したカードの特徴や性能を踏まえて、カードの名前や内容について真面目に解説すること。カードゲーム上のカードの効果については具体的な効果を決めつけて説明してよいが、まず「どういう効き方をするカードか」「何が強みか」「どんな場面で使うか」を丁寧に説明すること。ボケや冗談は最後に軽く一言だけ。全部を悪ふざけで埋めないこと。
+- カード説明は、真面目な解説8割、遊び2割の配分にすること。カード名から連想される実際の用途・戦術・相性を具体的に説明し、最後に架空の副作用やデメリットをでっち上げて笑いを取る一言を足すこと
 - カード効果の説明は、直近で自分が同じカードや似たカードについて話した内容を見て、同じ言い回しや同じ切り口を繰り返さないこと。必要なら tmp/.comment_queue/spoken_history/*.txt を見て、直近説明済みの観点を避けること
-- 同じカード効果をまた説明する場合は、毎回まったく違う方向にふざけること。たとえば、今回は謎の副作用、次はカードが勝手に喋り出す設定、次はソ連的運用法、次は使うと友達をなくす理由、というように毎回違うボケの切り口にすること
-- カード効果の説明で、前回と同じ定型句や同じオチをそのまま使わないこと。真面目な解説より、聞いた人が「なんだそれ」とツッコみたくなるような説明を優先すること
+- 同じカード効果をまた説明する場合は、毎回少し切り口を変えること。たとえば、今回は即効性、次は継戦能力、次はコンボ、次は弱点や対策、次はその人の持ち札との相性、というように観点をずらすこと
+- カード効果の説明で、前回と同じ定型句や同じオチをそのまま使わないこと。効果自体は同じでも、別の戦闘場面や盤面イメージに置き換えて話すこと
 - レイドはTwitchの機能。nightbot による、レイド通知があったばあい、その紹介された人からレイドがきたということです。そのIDさんに、最初にレイドへの感謝を伝え、可能ならIDさんに「どんな配信でしたか？」と問いかけるか、nightbotの紹介から、どんなゲーム/配信をしていたか推測して感想を述べ、IDさんのチャンネルの紹介をする。最後にこのチャンネル紹介として、普段はRTAやおでかけ配信、カジュアルゲーム、など幅広く配信しており、たまに猫も登場すること、配信主は別作業をしていたり不在なことが多いこと、今回は「中華AIを用いて国家併合戦略を改善しながらソ連ゲームをプレイし、ソ連建国を目指す」配信であることを説明する
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 前置きや補足説明は不要。コメント返し本文のみ出力
@@ -6579,6 +6821,9 @@ PY
 				return 0
 		fi
 
+			local rollback_game_num rollback_analysis_summary
+			rollback_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+
 		# リバート実行
 			cp "$rollback_file" "$STRATEGY_FILE"
 			# 次回比較の基準も現戦略に合わせる（再帰的な誤判定防止）
@@ -6605,8 +6850,22 @@ PY
 		REGRESSION_ROLLBACK_HASH="$rolled_hash"
 		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 
+		rollback_analysis_summary=$(_write_rollback_analysis_file "$strategy_hash" "$rolled_hash" "$result" "$rollback_note" "$rollback_game_num" 2>/dev/null || true)
+		if [ -n "$rollback_analysis_summary" ]; then
+			{
+				echo "=== $(date '+%Y-%m-%d %H:%M') ROLLBACK Game#${rollback_game_num} ${strategy_hash} -> ${rolled_hash} ==="
+				printf '%s\n' "$rollback_analysis_summary"
+				echo ""
+			} >> "tmp/change_log.txt"
+			if [ -f "tmp/change_log.txt" ] && [ "$(wc -l < "tmp/change_log.txt")" -gt 200 ]; then
+				tail -200 "tmp/change_log.txt" > "tmp/change_log.txt.tmp"
+				mv "tmp/change_log.txt.tmp" "tmp/change_log.txt"
+			fi
+		fi
+
 		git add -A
 		git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null || true
+		[ -f "$ROLLBACK_ANALYSIS_FILE" ] && start_radio_corner_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash" &
 
 		return 0  # リグレッション検知
 		fi

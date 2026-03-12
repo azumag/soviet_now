@@ -54,6 +54,7 @@
 - `tmp/sandbox_files.md`（目録）
 - `strategy.py.staging`（現行コード）
 - `tmp/change_log.txt`（存在する場合）
+- `tmp/state/last_rollback_analysis.md`（存在する場合。直近rollbackの原因分析）
 - `tmp/batch_summary.txt`（存在する場合）
 - `show_status_g.sh` または `status_dashboard.py` を 1件以上（成熟ランキング/rollback の表示前提を確認したい場合）
 - ワーストゲーム JSONL 1件 + ベストゲーム JSONL 1件（`sandbox_files.md` 記載）
@@ -89,6 +90,7 @@
 2. `advice.md` を読み、改善仮説の第一候補を2つ以内に絞る（存在する場合）
 3. `tmp/sandbox_files.md` を読み、必須参照ファイルの実ファイル名を特定する
 4. `tmp/change_log.txt` を読んで、過去と同じ方針の焼き直し候補を除外する
+4.5. `tmp/state/last_rollback_analysis.md` がある場合は必ず読み、rollback に至った失敗パターンを今回の禁止事項・優先観点へ反映する
 5. `batch_summary` / `advice` から「頻度が高いのに効いていない reason」と「頻度は低いが効いている reason」を抽出する
    `advice.md` は direct instruction ではないが、提案は優先的に他の根拠で裏取りする
    `CHAIN_MERGE` 系 reason は、ゲーム仕様上ボーナスではないので強化候補として解釈しない

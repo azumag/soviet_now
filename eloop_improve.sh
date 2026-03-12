@@ -199,6 +199,7 @@ SANDBOX_DIR=""
 HARVEST_DIR=""
 STAGING_FILE="strategy.py.staging"
 IMPROVE_BRIEF_FILE="tmp/improve_brief.md"
+ROLLBACK_ANALYSIS_FILE="tmp/state/last_rollback_analysis.md"
 SANDBOX_TOPLEVEL_PY_BASELINE=""
 SANDBOX_HELPERS_BASELINE_DIR=""
 
@@ -314,6 +315,7 @@ for tok in scores_raw.split():
 batch = read_text(batch_file)
 advice = read_text(advice_file)
 change_log = read_text(change_log_file)
+rollback_analysis = read_text("tmp/state/last_rollback_analysis.md")
 history_paths = [p for p in history_files_raw.split() if p]
 
 top_reasons = re.findall(r"^\s{2}([A-Z0-9_]+): .*avg_score_delta=([0-9.\-]+)", batch, re.M)
@@ -403,6 +405,25 @@ summary_lines.append("- current は n<12 でも provisional 表示されうる�
 summary_lines.append("- rollback は成熟ランキング上位の復元可能戦略から選ばれる。単発の最高点や短期上振れでは guardrail を越えられない。")
 summary_lines.append("- 改善案は、単発の見栄えではなく、12試合窓で mature ranking 上位に残れるかを基準に設計する。")
 summary_lines.append("")
+summary_lines.append("## Last Rollback Analysis")
+if rollback_analysis.strip():
+    rollback_lines_added = 0
+    for line in rollback_analysis.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("#"):
+            summary_lines.append(f"- {s.lstrip('#').strip()}")
+        elif s.startswith("- "):
+            summary_lines.append(s)
+        else:
+            summary_lines.append(f"- {s}")
+        rollback_lines_added += 1
+        if rollback_lines_added >= 10:
+            break
+else:
+    summary_lines.append("- rollback analysis unavailable")
+summary_lines.append("")
 summary_lines.append("## Batch Summary Highlights")
 for reason, delta in top_reasons[:6]:
     summary_lines.append(f"- reason {reason}: avg_score_delta={delta}")
@@ -467,6 +488,7 @@ PY
 
 improve_ref_files=("$batch_summary_file" "$IMPROVE_BRIEF_FILE")
 [ -f "$STRATEGY_ADVICE_FILE" ] && [ -s "$STRATEGY_ADVICE_FILE" ] && improve_ref_files+=("$STRATEGY_ADVICE_FILE")
+[ -f "$ROLLBACK_ANALYSIS_FILE" ] && [ -s "$ROLLBACK_ANALYSIS_FILE" ] && improve_ref_files+=("$ROLLBACK_ANALYSIS_FILE")
 
 # --- サンドボックスにコピーする全ファイル ---
 sandbox_ref_files=("prompts/improve_strategy.md" "prompts/game_theory.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}")
@@ -525,6 +547,7 @@ manifest_file="tmp/sandbox_files.md"
 	echo "### 必須参照ファイル（固定）"
 	echo '- `tmp/improve_brief.md` — 今回の改善で最初に読む圧縮サマリ（最重要、終盤8ターンと max_y>=2.0 の要約付き）'
 		[ -f "$STRATEGY_ADVICE_FILE" ] && printf -- '- `%s` — 視聴者由来の優先改善仮説。存在する場合は improve_brief の次に読む\n' "$STRATEGY_ADVICE_FILE"
+	[ -f "$ROLLBACK_ANALYSIS_FILE" ] && printf -- '- `%s` — 直近rollbackの原因分析。存在する場合は change_log の前に読む\n' "$ROLLBACK_ANALYSIS_FILE"
 	echo '- `strategy.py.staging` — 変更対象の現行戦略（必ず最初に読む）'
 	echo '- `tmp/batch_summary.txt` — reason分布/高低比較（必ず読む）'
 	[ -f "$CHANGE_LOG_FILE" ] && printf -- '- \`%s\` — 過去の改善変更差分。**同じ方針の焼き直し防止のため最初に読め**\n' "$CHANGE_LOG_FILE"
