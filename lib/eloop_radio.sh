@@ -151,6 +151,7 @@ _ensure_corner_announce() {
 		deals)    announce="お得情報コーナーです。" ;;
 		survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
 		opinion)  announce="時事意見コーナーです。" ;;
+		rollback) announce="粛清ラジオです。" ;;
 		theme)    announce="" ;;
 		strategy) announce="" ;;
 	esac

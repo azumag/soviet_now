@@ -2226,6 +2226,8 @@ _ensure_corner_announce() {
 		dinner)   announce="今日の夕飯の献立を考えようコーナーです。" ;;
 		deals)    announce="お得情報コーナーです。" ;;
 		survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
+		opinion)  announce="時事意見コーナーです。" ;;
+		rollback) announce="粛清ラジオです。" ;;
 		rakugo) announce="深夜の落語創作コーナーです。" ;;
 		*)        announce="" ;;
 	esac
@@ -3661,6 +3663,25 @@ if reg:
         f"p50={reg.get('best_p50', 'n/a')} p25={reg.get('best_p25', 'n/a')} n={reg.get('best_n', 'n/a')}"
     )
 lines.append("")
+lines.append("## Defeat Delta")
+if current_metrics and rollback_metrics:
+    lines.append(
+        f"- metric_gap_vs_target: comp={fmt_num(current_metrics['comp'] - rollback_metrics['comp'])} "
+        f"p50={fmt_num(current_metrics['p50'] - rollback_metrics['p50'])} "
+        f"p25={fmt_num(current_metrics['p25'] - rollback_metrics['p25'])} "
+        f"mean={fmt_num(current_metrics['mean'] - rollback_metrics['mean'])}"
+    )
+if current_scores and rollback_scores:
+    current_recent = current_scores[-12:]
+    rollback_recent = rollback_scores[-12:]
+    lines.append(
+        f"- recent12_avg: bad={fmt_num(statistics.mean(current_recent))} "
+        f"target={fmt_num(statistics.mean(rollback_recent))}"
+    )
+    lines.append(
+        f"- recent12_floor: bad={min(current_recent)} target={min(rollback_recent)}"
+    )
+lines.append("")
 lines.append("## Score Pattern")
 if current_scores:
     lines.append(f"- bad_strategy_recent_scores: {' '.join(map(str, current_scores[-12:]))}")
@@ -3720,25 +3741,33 @@ $(_radio_persona_block)
 
 【現在時刻】${_rc_time_spoken} ${_rc_period}
 【時間帯の雰囲気】${_rc_mood}
+【コーナー名】粛清ラジオ
 
 【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
 ${past_topics}
 
-【状況】ゲーム${game_num}回目付近で戦略 rollback が発生。戻した hash は ${from_hash} から ${to_hash}。
+【状況】ゲーム${game_num}回目付近で戦略の粛清が発生。
+低スコアだった戦略 ${from_hash} は粛清され、以前の成績が良かった戦略 ${to_hash} にすげ替えられた。
 
 【rollback分析メモ】
 ${analysis_text}
 
 【トーク構成】
-1. rollback が起きた事実を短く伝える
-2. なぜ rollback が起きたかを、comp / p50 / p25 / 直近スコアの観点でわかりやすく整理する
+1. 冒頭で「粛清ラジオ」と言い、${from_hash} が低スコアで粛清され ${to_hash} にすげ替えられた事実を短く伝える
+2. 敗因分析を語る
+   - current と rollback_target の comp / p50 / p25 / Defeat Delta / recent12 を比較する
+   - 典型性能の弱さなのか、下振れ耐性の欠如なのか、直近の崩れなのかを切り分ける
 3. 次の改善で何を直すべきかを1-3点だけ具体的に話す
-4. 軽い締め
+   - 低スコア回の終盤8ターン、deadline 接近、merge 取りこぼしなど、分析メモに沿って述べる
+4. 成績の良い旧戦略へ戻した意味を一言で締める
 
 【ルール】
+- 「rollback された」より「低スコアだったので粛清された」「成績の良い旧戦略にすげ替えられた」という表現を優先すること
 - 単なる謝罪だけで終わらず、失敗の知見として整理すること
+- 敗因を運や雰囲気で流さず、分析メモにある current と rollback_target の差で説明すること
 - 数値は分析メモにあるものだけを使うこと
 - 前向きすぎるごまかしは禁止。どこが弱かったかを具体的に言うこと
+- 次の戦略改善プロセスに渡せる、再発防止の観点を必ず残すこと
 
 $(_radio_output_rules 900 1600)
 PROMPT

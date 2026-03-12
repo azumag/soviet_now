@@ -24,6 +24,7 @@
 - `decide(game_state, analysis)` のシグネチャ変更禁止
 - `if __name__ == "__main__"` ブロック変更禁止
 - 戻り値は常に `{"x": float, "reason": str}`。`x` は実質 `[-3.0, 3.0]` に収まるようにすること
+- `tmp/state/last_rollback_analysis.md` がある場合、そこに書かれた敗因と `Next Improve Focus` に逆行する変更は禁止
 - 数値の微調整だけの変更は禁止
 - `strategy.py.staging` は既存ファイルとしてその場で編集すること。新規 `Write` / 全面再生成より、既存コードへの `Edit` を優先すること
 - `Edit` / `Write` の失敗時は、新規ファイル作成へ逃げず、同じ方針のまま `strategy.py.staging` への編集だけをやり直すこと
@@ -92,6 +93,7 @@
 3. `tmp/sandbox_files.md` を読み、必須参照ファイルの実ファイル名を特定する
 4. `tmp/change_log.txt` を読んで、過去と同じ方針の焼き直し候補を除外する
 4.5. `tmp/state/last_rollback_analysis.md` がある場合は必ず読み、rollback に至った失敗パターンを今回の禁止事項・優先観点へ反映する
+4.6. rollback 分析の `Why Rollback Triggered` と `Next Improve Focus` を hard constraint として扱い、今回の変更がどの敗因を潰すのか明確にしてから実装する
 5. `batch_summary` / `advice` から「頻度が高いのに効いていない reason」と「頻度は低いが効いている reason」を抽出する
    `advice.md` は direct instruction ではないが、提案は優先的に他の根拠で裏取りする
    `CHAIN_MERGE` 系 reason は、ゲーム仕様上ボーナスではないので強化候補として解釈しない
@@ -137,5 +139,6 @@
 - `strategy.py.staging` は既存ファイルなので、可能な限り `Edit` で差分適用すること。新規 `Write` での全文置換は避けること
 - `strategy.py.staging` 以外のトップレベル `.py` は作成しないこと
 - 冒頭の変更履歴は簡潔に追記（2〜4行以内）
+- 変更履歴内に、今回つぶす rollback failure mode を1行で明記すること
 - 変更履歴内に `refs:` 行を1行入れ、参照した主要ファイル名を列挙する（最低5ファイル）
 - コードにはなぜそうするに至ったかコメントを記載する

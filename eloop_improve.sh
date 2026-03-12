@@ -305,6 +305,21 @@ def summarize_deadline(path: str):
         "avg_reactive": avg_reactive,
     }
 
+def extract_markdown_section(text: str, heading: str):
+    lines = []
+    in_section = False
+    for raw in (text or "").splitlines():
+        s = raw.rstrip()
+        if s.startswith("## "):
+            if in_section:
+                break
+            if s.strip() == heading:
+                in_section = True
+            continue
+        if in_section and s.strip():
+            lines.append(s.strip())
+    return lines
+
 scores = []
 for tok in scores_raw.split():
     try:
@@ -407,20 +422,30 @@ summary_lines.append("- 改善案は、単発の見栄えではなく、12試合
 summary_lines.append("")
 summary_lines.append("## Last Rollback Analysis")
 if rollback_analysis.strip():
-    rollback_lines_added = 0
-    for line in rollback_analysis.splitlines():
-        s = line.strip()
-        if not s:
+    summary_lines.append("- rollback analysis は再発防止の hard constraint。ここにある敗因を今回の変更で潰すこと。")
+    rollback_sections = [
+        ("Why Rollback Triggered", extract_markdown_section(rollback_analysis, "## Why Rollback Triggered"), 6),
+        ("Defeat Delta", extract_markdown_section(rollback_analysis, "## Defeat Delta"), 4),
+        ("Score Pattern", extract_markdown_section(rollback_analysis, "## Score Pattern"), 4),
+        ("Next Improve Focus", extract_markdown_section(rollback_analysis, "## Next Improve Focus"), 4),
+    ]
+    rollback_added = False
+    for label, section_lines, limit in rollback_sections:
+        if not section_lines:
             continue
-        if s.startswith("#"):
-            summary_lines.append(f"- {s.lstrip('#').strip()}")
-        elif s.startswith("- "):
-            summary_lines.append(s)
-        else:
-            summary_lines.append(f"- {s}")
-        rollback_lines_added += 1
-        if rollback_lines_added >= 10:
-            break
+        summary_lines.append(f"- {label}:")
+        rollback_added = True
+        section_added = 0
+        for line in section_lines:
+            s = line[2:].strip() if line.startswith("- ") else line.strip()
+            if not s:
+                continue
+            summary_lines.append(f"  - {s}")
+            section_added += 1
+            if section_added >= limit:
+                break
+    if not rollback_added:
+        summary_lines.append("- rollback analysis present but no structured sections found")
 else:
     summary_lines.append("- rollback analysis unavailable")
 summary_lines.append("")
