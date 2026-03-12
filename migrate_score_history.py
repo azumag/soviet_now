@@ -35,22 +35,29 @@ def get_git_game_entries():
         if "score=" not in subject:
             continue
         try:
-            score = int(subject.split("score=")[1].split()[0])
+            score_str = subject.split("score=")[1].split()[0].rstrip(",")
+            score = int(score_str)
         except (ValueError, IndexError):
             continue
         entries.append((timestamp, score))
     return entries
 
 
-def load_scores():
-    """score_history.txt から現在のスコアリストを読み込み"""
-    lines = SCORE_FILE.read_text().splitlines()
-    scores = []
-    for line in lines:
+def load_lines():
+    """score_history.txt の全行を (timestamp_or_none, score) で返す"""
+    raw_lines = SCORE_FILE.read_text().splitlines()
+    entries = []
+    for line in raw_lines:
         stripped = line.strip()
-        if stripped:
-            scores.append(int(stripped))
-    return scores
+        if not stripped:
+            continue
+        parts = stripped.split('\t')
+        if len(parts) >= 2:
+            # Already new format: "TIMESTAMP\tSCORE"
+            entries.append((parts[0], int(parts[-1])))
+        else:
+            entries.append((None, int(parts[0])))
+    return entries
 
 
 def main():
@@ -60,26 +67,34 @@ def main():
         print("ERROR: score_history.txt not found")
         sys.exit(1)
 
-    current_scores = load_scores()
+    current_entries = load_lines()
     git_entries = get_git_game_entries()
 
-    print(f"score_history.txt: {len(current_scores)} scores")
-    print(f"git log entries:   {len(git_entries)} entries")
+    # Count lines that still need migration (no timestamp)
+    needs_migration = [(i, s) for i, (ts, s) in enumerate(current_entries) if ts is None]
+    already_migrated = [(i, ts, s) for i, (ts, s) in enumerate(current_entries) if ts is not None]
 
-    if len(git_entries) != len(current_scores):
-        print(f"WARNING: count mismatch ({len(git_entries)} git vs {len(current_scores)} file)")
-        # Try to match from the beginning
-        if len(git_entries) < len(current_scores):
-            print("git entries are fewer than scores - will leave extra scores without timestamp")
-        else:
-            print("ERROR: git entries are more than scores - cannot reconcile")
-            sys.exit(1)
+    print(f"score_history.txt: {len(current_entries)} entries")
+    print(f"  already migrated: {len(already_migrated)}")
+    print(f"  needs migration:  {len(needs_migration)}")
+    print(f"git log entries:    {len(git_entries)} entries")
 
-    # Verify scores match where we have git entries
+    if not needs_migration:
+        print("All entries already have timestamps. Nothing to do.")
+        return
+
+    # Match git entries to file entries by score sequence
+    # The file's score sequence should match the git log's score sequence
+    current_scores = [s for _, s in current_entries]
+    git_scores = [s for _, s in git_entries]
+
+    # Verify the git scores match the file scores
     mismatches = []
-    for i, (ts, git_score) in enumerate(git_entries):
-        if i < len(current_scores) and git_score != current_scores[i]:
-            mismatches.append((i + 1, current_scores[i], git_score))
+    for i in range(min(len(git_entries), len(current_entries))):
+        git_score = git_scores[i]
+        file_score = current_scores[i]
+        if git_score != file_score:
+            mismatches.append((i + 1, file_score, git_score))
 
     if mismatches:
         print(f"ERROR: {len(mismatches)} score mismatches found:")
@@ -89,16 +104,19 @@ def main():
             print(f"  ... and {len(mismatches) - 10} more")
         sys.exit(1)
 
-    print("Score verification: OK (all scores match)")
+    print("Score verification: OK (all matched scores are consistent)")
 
     # Build new content
     new_lines = []
-    for i, score in enumerate(current_scores):
-        if i < len(git_entries):
+    for i, (existing_ts, score) in enumerate(current_entries):
+        if existing_ts is not None:
+            # Already has timestamp
+            new_lines.append(f"{existing_ts}\t{score}")
+        elif i < len(git_entries):
             ts, _ = git_entries[i]
             new_lines.append(f"{ts}\t{score}")
         else:
-            # No timestamp available for extra scores
+            # No timestamp available
             new_lines.append(str(score))
 
     new_content = "\n".join(new_lines) + "\n"
