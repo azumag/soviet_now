@@ -3382,7 +3382,7 @@ PROMPT
 
 _write_rollback_analysis_file() {
 	local current_hash="$1" rollback_hash="$2" regression_result="$3" rollback_note="$4" game_num="${5:-}"
-	python3 - "$ROLLING_SCORES_FILE" "$current_hash" "$rollback_hash" "$regression_result" "$rollback_note" "$ROLLBACK_ANALYSIS_FILE" "score_history.txt" "$game_num" <<'PY'
+	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$current_hash" "$rollback_hash" "$regression_result" "$rollback_note" "$ROLLBACK_ANALYSIS_FILE" "score_history.txt" "$game_num" <<'PY'
 import json
 import math
 import os
@@ -3391,7 +3391,7 @@ import statistics
 import sys
 import time
 
-rolling_file, current_hash, rollback_hash, regression_result, rollback_note, out_file, score_history_file, game_num = sys.argv[1:9]
+rolling_file, current_run_file, current_hash, rollback_hash, regression_result, rollback_note, out_file, score_history_file, game_num = sys.argv[1:10]
 
 def parse_regression(text: str):
     text = (text or "").strip()
@@ -3490,6 +3490,13 @@ except Exception:
 current_data = rolling.get(current_hash, {})
 rollback_data = rolling.get(rollback_hash, {})
 current_scores = to_scores(current_data)
+if os.path.exists(current_run_file):
+    try:
+        current_run = json.load(open(current_run_file))
+    except Exception:
+        current_run = {}
+    if str(current_run.get("hash", "") or "") == current_hash:
+        current_scores = to_scores(current_run)
 rollback_scores = to_scores(rollback_data)
 current_metrics = metrics(current_scores)
 rollback_metrics = metrics(rollback_scores)
@@ -6890,9 +6897,6 @@ PY
 			local rolled_hash
 			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
-			if [ -n "$rolled_hash" ]; then
-				_reset_current_strategy_run "$rolled_hash"
-			fi
 			python3 - "$LAST_ROLLBACK_PAIR_FILE" "$strategy_hash" "$rolled_hash" "$rollback_note" <<'PY' 2>/dev/null
 import json
 import sys
@@ -6913,6 +6917,9 @@ PY
 		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 
 		rollback_analysis_summary=$(_write_rollback_analysis_file "$strategy_hash" "$rolled_hash" "$result" "$rollback_note" "$rollback_game_num" 2>/dev/null || true)
+		if [ -n "$rolled_hash" ]; then
+			_reset_current_strategy_run "$rolled_hash"
+		fi
 		if [ -n "$rollback_analysis_summary" ]; then
 			{
 				echo "=== $(date '+%Y-%m-%d %H:%M') ROLLBACK Game#${rollback_game_num} ${strategy_hash} -> ${rolled_hash} ==="
