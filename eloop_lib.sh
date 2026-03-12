@@ -3616,6 +3616,383 @@ PROMPT
     _radio_generate_and_play "$prompt_file" "$game_num" "$score" "rakugo"
 }
 
+start_radio_corner_breakfast() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】世界の朝食コーナー
+1. 朝の挨拶と軽いオープニング（2-3文）
+2. 世界の朝食紹介
+   - 毎回一つの国・地域の朝食に焦点を当てて紹介する
+   - その朝食の定番メニュー、材料、作り方のポイント
+   - その国の食文化的背景や歴史（なぜその朝食が定着したか）
+   - 日本の朝食との比較や、日本で再現するならどうするか
+   - ソ連圏の朝食（ブリヌイ、カーシャ、シルニキ等）も候補に含む
+   - リスナーが「明日の朝、試してみようかな」と思えるような語り口で
+3. 軽いクロージング（1-2文）
+
+※ 毎回必ず異なる国・地域を取り上げること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "breakfast"
+}
+
+start_radio_corner_lunch() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】世界の昼食コーナー
+1. お昼の挨拶と軽いオープニング（2-3文）
+2. 世界の昼食紹介
+   - 毎回一つの国・地域の昼食に焦点を当てて紹介する
+   - その国の典型的なランチメニュー、食べ方、昼食の文化
+   - 昼食にまつわるエピソードや習慣（シエスタ文化、弁当文化など）
+   - ソ連の食堂（スタローバヤ）の昼食なども候補に
+   - リスナーの昼食時間を彩るような語り口で
+3. 軽いクロージング（1-2文）
+
+※ 毎回必ず異なる国・地域を取り上げること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "lunch"
+}
+
+start_radio_corner_devil_dict() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】悪魔の辞典コーナー
+1. 軽いオープニング（2-3文）
+   - 「さて、今日も一つ、言葉の真実をお届けしましょう」のような導入
+2. 悪魔の辞典
+   - アンブローズ・ビアス『悪魔の辞典』の精神を受け継ぐコーナー
+   - 毎回一つの言葉を取り上げる（日常語、社会用語、流行語など何でもよい）
+   - その言葉を、恐ろしく捻くれた・皮肉な・シニカルな視点で再定義する
+   - 定義は短くキレのある一文、その後に補足的な解説やエピソードを添える
+   - ソ連的なブラックユーモアや官僚主義への風刺も混ぜると良い
+   - 最後にもう1-2語、ミニ定義を添えてもよい
+3. 軽いクロージング（1-2文）
+
+※ 毎回異なる言葉を取り上げること。辛辣だが品のある皮肉を心がける。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "devil_dict"
+}
+
+start_radio_corner_soviet_quiz() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】ソ連クイズコーナー
+1. 軽いオープニング（2-3文）
+   - 「同志諸君、今日もソビエト連邦の知識を試す時間がやってまいりました」のような導入
+2. ソ連クイズ
+   - ソ連に関するトリビアクイズを1問出題する
+   - 出題 → 少し間を置く語り → 正解発表 → 詳しい解説 の流れ
+   - 題材: ソ連の歴史、文化、科学技術、宇宙開発、日常生活、食文化、スポーツ、音楽、映画など幅広く
+   - 3択または4択形式で、選択肢も面白い内容にする
+   - 解説は「へぇ〜」と思える豆知識を含む
+   - リスナーに語りかけるように（「さあ、お考えください」「正解は...」）
+3. 軽いクロージング（1-2文）
+
+※ 毎回異なるテーマ・問題にすること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "soviet_quiz"
+}
+
+start_radio_corner_parallel_news() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】パラレルワールド・ニュース
+1. 軽いオープニング（2-3文）
+   - 「パラレルワールドからニュースをお届けします」のような導入
+2. 架空のニュース番組
+   - 「もしもあの時、歴史が違っていたら？」という仮定に基づく架空のニュースを報道する
+   - 例:「もし江戸幕府が続いていたら」「もしソ連が崩壊しなかったら」「もしインターネットが発明されなかったら」
+   - ニュースキャスター風の語り口で、真面目に架空のニュースを伝える
+   - 政治、経済、文化、スポーツなど複数のニュース項目を盛り込む
+   - その仮定世界ならではのディテール（架空の地名、制度、流行語など）を入れる
+   - 最後に天気予報やスポーツ結果なども架空で添えると面白い
+3. 軽いクロージング（1-2文）
+
+※ 毎回異なる歴史的分岐点を取り上げること。
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "parallel_news"
+}
+
+start_radio_corner_bluegrass() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】ブルーグラス音楽紹介コーナー
+1. 軽いオープニング（2-3文）
+   - 「さて、今日もアパラチアの風をお届けしましょう」のような導入
+2. ブルーグラス音楽紹介
+   - ブルーグラス音楽のアーティスト、楽曲、歴史、楽器について紹介・解説する
+   - ビル・モンロー、フラット&スクラッグス、アリソン・クラウスなどのレジェンドから現代のアーティストまで
+   - バンジョー、マンドリン、フィドル、ドブロなど楽器の話も
+   - ブルーグラスの成り立ち（アイルランド/スコットランド移民の音楽→アパラチア→ブルーグラス）
+   - ソ連の民族音楽との意外な共通点や対比を語ると面白い
+   - おすすめの1曲を紹介して、その聴きどころを解説する
+3. 軽いクロージング（1-2文）
+
+※ 毎回異なるアーティスト・楽曲・テーマを取り上げること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "bluegrass"
+}
+
+start_radio_corner_redefine() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】概念の再定義コーナー
+1. 軽いオープニング（2-3文）
+   - 「今日も一つ、当たり前を疑う時間がやってまいりました」のような導入
+2. 概念の再定義
+   - 「愛とは何か？」のような大きな問いではなく、「醤油とは何か？」「階段とは何か？」「靴下とは何か？」のような当たり前すぎるものを題材にする
+   - その概念をゼロから考え直す: 本質は何か、なぜそう呼ばれているのか、本当にその名前でいいのか
+   - 哲学的に、科学的に、文化的に、あるいは詩的に再検討する
+   - 最終的に、全く別の呼び名を考案して提案する（理由付きで）
+   - ソ連的な「計画経済的命名」の視点を混ぜてもよい
+   - 真面目にやっているようで、どこかズレている面白さを出す
+3. 軽いクロージング（1-2文）
+
+※ 毎回異なる概念を取り上げること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "redefine"
+}
+
+start_radio_corner_fictionary() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】架空の辞書・編纂室コーナー
+1. 軽いオープニング（2-3文）
+   - 「本日も架空辞書編纂室からお届けします」のような導入
+2. 架空の辞書
+   - 世の中にまだ名前がついていない感情や現象に、勝手に名前をつけていく
+   - 3〜5個の新語を創作する
+   - 例:
+     - 「美容院の鏡に映った自分の顔に絶望する瞬間」＝「ミラ・ショック」
+     - 「エレベーターで知らない人と二人きりになった時の気まずさ」＝「箱中緊張」
+   - 各新語について: 語源（もっともらしい造語理由）、用例（日常の使用例）、類義語なども添える
+   - 日本語、外来語風、ロシア語風など命名スタイルを混ぜる
+   - ソ連の官僚的な命名センスを活かした新語も入れると面白い
+3. 軽いクロージング（1-2文）
+
+※ 毎回異なる新語を創作すること。既出の新語は絶対に繰り返さない。
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "fictionary"
+}
+
+start_radio_corner_world_dinner() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】世界の夕食コーナー
+1. 夕方の挨拶と軽いオープニング（2-3文）
+2. 世界の夕食紹介
+   - 毎回一つの国・地域の夕食に焦点を当てて紹介する
+   - その国の典型的なディナーメニュー、食卓の風景、夕食の文化
+   - 家族の団らん、夕食の時間帯（国によって大きく異なる）
+   - ソ連時代の家庭の夕食（ボルシチ、ペリメニ、オリヴィエサラダ等）も候補に
+   - リスナーの夕食の参考になるような語り口で
+3. 軽いクロージング（1-2文）
+
+※ 毎回必ず異なる国・地域を取り上げること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "world_dinner"
+}
+
+start_radio_corner_night_snack() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】世界の夜食コーナー
+1. 夜の挨拶と軽いオープニング（2-3文）
+   - 「こんな時間にお腹が空いてきた同志に、背中を押す情報をお届けします」のような導入
+2. 世界の夜食紹介
+   - 毎回一つの国・地域・文化圏の夜食に焦点を当てて紹介する
+   - 夜に食べる罪深い一品、屋台文化、夜市の定番メニュー
+   - その国の夜食事情（夜食文化が発達している国、深夜食堂的な存在）
+   - 台湾の夜市、韓国のチキン、メキシコのタコス、トルコのケバブなど
+   - ソ連の夜食文化（深夜のキッチンでの密かな一品）も候補に
+   - 「今夜、食べてしまおうか...」とリスナーを誘惑するような語り口で
+3. 軽いクロージング（1-2文）
+
+※ 毎回必ず異なる国・地域を取り上げること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "night_snack"
+}
+
 #=== ニュース: 毎ゲーム取得 & 再生 ===
 
 fetch_and_play_news() {
@@ -3829,33 +4206,73 @@ schedule_nonessential_audio_jobs() {
 		rm -f "$TMP_MARKERS_DIR/.timed_corner_inflight_${name}"
 	}
 
+	if _try_timed_corner "rakugo" 1 0; then
+		timed_corner_fired=true
+		_run_timed_corner "rakugo" start_radio_corner_rakugo "$game_num" "$score" &
+	fi
+	if _try_timed_corner "breakfast" 7 0; then
+		timed_corner_fired=true
+		_run_timed_corner "breakfast" start_radio_corner_breakfast "$game_num" "$score" &
+	fi
 	if _try_timed_corner "weather" 8 0; then
 		timed_corner_fired=true
 		_run_timed_corner "weather" start_radio_corner_weather "$game_num" "$score" &
+	fi
+	if _try_timed_corner "lunch" 11 30; then
+		timed_corner_fired=true
+		_run_timed_corner "lunch" start_radio_corner_lunch "$game_num" "$score" &
 	fi
 	if _try_timed_corner "fortune" 12 0; then
 		timed_corner_fired=true
 		_run_timed_corner "fortune" start_radio_corner_fortune "$game_num" "$score" &
 	fi
+	if _try_timed_corner "devil_dict" 13 0; then
+		timed_corner_fired=true
+		_run_timed_corner "devil_dict" start_radio_corner_devil_dict "$game_num" "$score" &
+	fi
+	if _try_timed_corner "soviet_quiz" 14 0; then
+		timed_corner_fired=true
+		_run_timed_corner "soviet_quiz" start_radio_corner_soviet_quiz "$game_num" "$score" &
+	fi
+	if _try_timed_corner "parallel_news" 15 0; then
+		timed_corner_fired=true
+		_run_timed_corner "parallel_news" start_radio_corner_parallel_news "$game_num" "$score" &
+	fi
 	if _try_timed_corner "market" 15 30; then
 		timed_corner_fired=true
 		_run_timed_corner "market" start_radio_corner_market "$game_num" "$score" &
+	fi
+	if _try_timed_corner "bluegrass" 16 0; then
+		timed_corner_fired=true
+		_run_timed_corner "bluegrass" start_radio_corner_bluegrass "$game_num" "$score" &
 	fi
 	if _try_timed_corner "dinner" 17 0; then
 		timed_corner_fired=true
 		_run_timed_corner "dinner" start_radio_corner_dinner "$game_num" "$score" &
 	fi
+	if _try_timed_corner "redefine" 17 30; then
+		timed_corner_fired=true
+		_run_timed_corner "redefine" start_radio_corner_redefine "$game_num" "$score" &
+	fi
+	if _try_timed_corner "fictionary" 18 0; then
+		timed_corner_fired=true
+		_run_timed_corner "fictionary" start_radio_corner_fictionary "$game_num" "$score" &
+	fi
+	if _try_timed_corner "world_dinner" 19 0; then
+		timed_corner_fired=true
+		_run_timed_corner "world_dinner" start_radio_corner_world_dinner "$game_num" "$score" &
+	fi
 	if _try_timed_corner "deals" 21 0; then
 		timed_corner_fired=true
 		_run_timed_corner "deals" start_radio_corner_deals "$game_num" "$score" &
 	fi
+	if _try_timed_corner "night_snack" 21 30; then
+		timed_corner_fired=true
+		_run_timed_corner "night_snack" start_radio_corner_night_snack "$game_num" "$score" &
+	fi
 	if _try_timed_corner "survival" 22 0; then
 		timed_corner_fired=true
 		_run_timed_corner "survival" start_radio_corner_survival "$game_num" "$score" &
-	fi
-	if _try_timed_corner "rakugo" 1 0; then
-		timed_corner_fired=true
-		_run_timed_corner "rakugo" start_radio_corner_rakugo "$game_num" "$score" &
 	fi
 
 	# 時間帯コーナー発火時はランダムラジオをスキップ (重複防止)
