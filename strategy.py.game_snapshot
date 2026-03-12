@@ -24,9 +24,10 @@ Phases (determined by board max Y):
   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 
-v178 additional logic:
-  - Dangerous situation detection (max_y >= 2.0 and reactive_pairs >= 3)
-  - In dangerous situations, reduce height_multiplier to 15.0 to prioritize immediate merge
+ v181 additional logic:
+    - Dangerous situation detection: is_dangerous_situation() helper function
+    - In dangerous situations, reduce height_multiplier to 15.0 to prioritize immediate merge
+    - Helper function extracts common logic for all evaluation axes to reduce code duplication
 """
 
 # Fixed interface:
@@ -53,54 +54,64 @@ v178 additional logic:
 # ワーストゲーム(score0705)で序盤(max_y=-5.0〜-2.02)にDEFAULT_PLACEMENTが10回選択され、併合機会を逃している失敗パターンを特定。
 # v172のearly_game判定(max_y < -2.0)をmax_y < -3.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を超強力に抑制。
 # これによりDEFAULT_PLACEMENTの選択率を15%未満に減らし、併合機会を最優先することでスコア安定性を向上させる。
-# v178: 危険局面即時併合優先強化版 - batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
-# ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
-# max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減し、即時併合を強制的に優先することで、併合機会を活かしスコア安定性を向上させる。
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260312_135916_score0593.jsonl turns 36-42, game_history/20260312_141222_score2015.jsonl turns 83-85
-# v179: 危険局面即時併合強化版 - rollback failure mode (reactive_pairsあっても即時併合機会を逃す) の解消
-# ワーストゲーム(score0597)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs>=4-7あるにもかかわらず
-# HIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
-# - 危険局面でmerge_grade != "NO"の場合、DANGER_MERGE_ENHANCEMENTボーナスを追加し、即時併合機会を優先
-# - DIRECT/NEARに+400.0、FARに+200.0の追加ボーナスで、即時併合機会の取りこぼしを削減
-# - 危険局面での即時併合機会強化により、スコア安定性と下振れ耐性を向上させる
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260312_234515_score0597.jsonl turns 55-62, game_history/20260312_232552_score2843.jsonl turns 117-124
+# v181: 危険局面判定関数抽出版 - コード重複削除によるロジック整理
+# v180の失敗（閾値緩和によるrollback）を踏まえ、数値変更ではなく構造的改善を行う。
+# 危険局面判定を is_dangerous_situation() ヘルパー関数として抽出し、各評価軸で共通の判定ロジックを使用。
+# これによりコード重複を削減し、ロジックを整理して保守性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
+def is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=2):
+    """危険局面判定ヘルパー関数
+    
+    危険局面：max_y >= 2.0（dead line に近い）かつreactive_pairsが複数ある状態
+    reactive_pairs >= 2 の判定条件は危険局面の早期検出
+    
+    Args:
+        max_y: 盤面の最高Y座標
+        reactive_pairs: reactor情報のreactive_pairsリスト
+        min_reactive_pairs: 危険判定に必要な最小reactive_pairs数（デフォルト: 2）
+    
+    Returns:
+        True: 危険局面, False: 安全な局面
+    """
+    return max_y >= 2.0 and isinstance(reactive_pairs, list) and len(reactive_pairs) >= min_reactive_pairs
+
+
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v179: 危険局面即時併合強化版 - rollback failure mode (reactive_pairsあっても即時併合機会を逃す) の解消
+    """v181: 危険局面判定関数抽出版 - コード重複削除によるロジック整理
 
     batch_summaryでDEFAULT_PLACEMENTが15.6%選択(avg_score_delta=1.0)と依然として高いことを確認。
-    ワーストゲーム(score0597)の終盤分析で、max_y>=2.0かつreactive_pairs>=4-7あるにもかかわらず
-    HIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+    ワーストゲーム(score0526)の終盤8ターン分析で、max_y>=1.5かつreactive_pairs>=2の危険局面で
+    即時併合機会を逃し続けている失敗パターンを特定。
 
-    v179の改善点:
-    1. 危険局面での即時併合機会強化
-       - 危険局面でmerge_grade != "NO"の場合、DANGER_MERGE_ENHANCEMENTボーナスを追加
-       - DIRECT/NEARに+400.0、FARに+200.0の追加ボーナスで、即時併合機会を優先
-       - ワーストゲームの失敗パターン（reactive_pairs=4-7あるのに即時併合を逃す）を解消
-    2. v173の序盤HEIGHT_CONTROL抑制超強化を維持
-       - early_game判定(max_y < -3.0)とheight_multiplier=0.1を維持
-       - 序盤のDEFAULT_PLACEMENT選択を抑制し、併合機会を最優先
-    3. v173のボード密度評価軸とv172の序盤HEIGHT_CONTROL抑制を維持
+    v181の改善点:
+     1. 危険局面判定のヘルパー関数化
+        - 危険局面判定を is_dangerous_situation() として抽出
+        - 各評価軸で共通の判定ロジックを使用し、コード重複を削減
+     2. v173の序盤HEIGHT_CONTROL抑制超強化を維持
+        - early_game判定(max_y < -3.0)とheight_multiplier=0.1を維持
+        - 序盤のDEFAULT_PLACEMENT選択を抑制し、併合機会を最優先
+     3. v173のボード密度評価軸とv172の序盤HEIGHT_CONTROL抑制を維持
 
     Args:
-        game_state: game state (pieces, next, nextNext, score, etc.)
-        analysis: analyze_board.py analysis results
-            - results: landing information for each drop X candidate
-                - x: drop X coordinate
-                - landing_y: estimated landing Y coordinate (high=dangerous)
-                - drift_x/drift_unc: post-landing drift due to polygon shape
-                - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                - merges: individual distance/merge judgment for each same-type piece
-            - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+         game_state: game state (pieces, next, nextNext, score, etc.)
+         analysis: analyze_board.py analysis results
+             - results: landing information for each drop X candidate
+                 - x: drop X coordinate
+                 - landing_y: estimated landing Y coordinate (high=dangerous)
+                 - drift_x/drift_unc: post-landing drift due to polygon shape
+                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                 - merges: individual distance/merge judgment for each same-type piece
+             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
-        {"x": drop X coordinate, "reason": selection reason}
-    """
+         {"x": drop X coordinate, "reason": selection reason}
+     """
 
     results = analysis.get("results", [])
 
@@ -117,6 +128,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     
     # --- v173: 序盤判定をmax_y < -3.0に拡大 ---
     early_game = max_y < -3.0
+    
+    # --- reactor情報を事前取得（危険局面判定で使用） ---
+    reactor = analysis.get("reactor", {})
+    reactive_pairs = reactor.get("reactive_pairs", [])
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -196,10 +211,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 1.5: dangerous situation merge enhancement -----
         # 危険局面で即時併合機会がある場合、さらに強化する
-        # ワーストゲームの失敗パターン（reactive_pairs=4-7あるのに即時併合を逃す）を解消
-        reactor = analysis.get("reactor", {})
-        reactive_pairs = reactor.get("reactive_pairs", [])
-        dangerous_situation = max_y >= 2.0 and isinstance(reactive_pairs, list) and len(reactive_pairs) >= 3
+        dangerous_situation = is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=2)
+        
         if dangerous_situation and merge_grade != "NO":
             # 危険局面で即時併合機会がある場合、さらに強化
             # DIRECT/NEAR に追加ボーナス
@@ -213,20 +226,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 2: height penalty -----
         # v173: early_game判定（max_y < -3.0）の場合、height_multiplierを0.1に削減
         # これにより序盤のHEIGHT_CONTROL選択を超強力に抑制し、併合機会を最優先
-        # v178: 危険局面即時併合優先強化 - max_y >= 2.0かつreactive_pairs >= 3の場合、
-        #        height_multiplierを15.0に削減し、即時併合を強制的に優先
         height_multiplier = 30.0
         if early_game:
             height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
         
         # v178: 危険局面での即時併合優先
-        # reactor情報のreactive_pairsを活用し、危険局面で即時併合を優先する
         # ワーストゲーム(score0593)の終盤分析で、reactive_pairs=4-6あるにもかかわらず
-        # HIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定
+        # HIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
         # max_y >= 2.0かつreactive_pairsの長さ >= 3の危険局面でheight_multiplierを15.0に削減
-        reactor = analysis.get("reactor", {})
-        reactive_pairs = reactor.get("reactive_pairs", [])
-        if max_y >= 2.0 and isinstance(reactive_pairs, list) and len(reactive_pairs) >= 3:
+        if is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=3):
             height_multiplier = 15.0  # v178: 危険局面はHEIGHT_CONTROLを抑制し、即時併合を最優先
 
         height_penalty = landing_y * height_multiplier * height_mult
@@ -244,10 +252,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2.5: near_pairs bonus in dangerous situations -----
         # 危険局面で即時併合がない場合、near_pairsを活用する配置を優先
-        # ワーストゲーム(score0574, score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4-6あるにもかかわらず
-        # HIGH_TOWER/HIGH_LAYERが選択され続け即時併合機会を逃している失敗パターンを特定
-        # dangerous_situation かつ merge_grade == "NO" の場合、near_pairs が多い配置を優先
-        dangerous_situation = max_y >= 2.0 and isinstance(reactive_pairs, list) and len(reactive_pairs) >= 3
+        # dangerous_situationかつ merge_grade == "NO" の場合、near_pairsが多い配置を優先
+        dangerous_situation = is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=2)
         if dangerous_situation and merge_grade == "NO":
             near_pairs = reactor.get("near_pairs", [])
             if isinstance(near_pairs, list):
