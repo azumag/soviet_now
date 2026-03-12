@@ -576,8 +576,8 @@ def main() -> int:
     write_text(LAST_NEWS_CACHE, news_text)
     write_json(LAST_NEWS_META_CACHE, meta)
 
-    append_and_trim(PAST_NEWS, [item["title"] for item in selected], 30)
-    append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 60)
+    append_and_trim(PAST_NEWS, [item["title"] for item in selected], 120)
+    append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 200)
     return 0
 
 

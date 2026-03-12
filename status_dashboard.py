@@ -414,16 +414,16 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
             "state": "unknown",
             "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) current not tracked",
         }
-    if current_entry["n_roll"] < MIN_GAMES_BEFORE_IMPROVE:
+    if current_entry["n_roll"] <= 0:
         if not best:
             return {
                 "state": "unknown",
-                "text": f"RegPreview N/A n={current_entry['n_roll']} no best ref",
+                "text": "RegPreview N/A n=0 no best ref",
             }
         _, _, _, _, best_hash, _, best_source = best
         return {
             "state": "unknown",
-            "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) n={current_entry['n_roll']}",
+            "text": f"RegPreview N/A vs {best_hash[:8]}({best_source}) n=0",
         }
     current = {
         "comp": current_entry["comp"],

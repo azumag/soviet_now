@@ -2368,6 +2368,7 @@ def topic_key(s: str) -> str:
     head = parts[0] if parts else s
     head = re.sub(r'^(速報|続報|解説|独自|動画|写真|社説|論説)', '', head)
     head = re.sub(r'[0-9０-９]+', '', head)
+    head = re.sub(r'^(高市総理は|岸田総理は|石破総理は|首相は|大統領は|президент)', '', head)
 
     m = re.match(r'([ァ-ヶー]{3,})', head)
     if m:
@@ -2377,7 +2378,9 @@ def topic_key(s: str) -> str:
         return m.group(1)[:32]
 
     k = key(head)
-    return k[:8]
+    if len(k) < 6:
+        return ''
+    return k[:16]
 
 past_keys = set()
 if os.path.exists(past_title_file):
@@ -3428,7 +3431,7 @@ start_radio_corner_news() {
 		_append_news_read_source "$selected_source_key"
 		tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
 		tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
-		tail -120 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
+		tail -40 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
 		log "[NEWS] 既読記録: ${selected_news}"
 	fi
 
