@@ -76,8 +76,8 @@ _radio_time_context() {
 	_rc_hour=$(date '+%H')
 	_rc_time=$(date '+%H:%M')
 	if [ "$_rc_hour" -ge 5 ] && [ "$_rc_hour" -lt 9 ]; then
-		_rc_period="早朝"
-		_rc_mood="早朝放送。静かな時間帯に合わせて、寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
+		_rc_period="朝"
+		_rc_mood="朝放送。静かな時間帯に合わせて、寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
 	elif [ "$_rc_hour" -ge 9 ] && [ "$_rc_hour" -lt 12 ]; then
 		_rc_period="午前"
 		_rc_mood="午前中の放送。人工知能はいつでも全力"

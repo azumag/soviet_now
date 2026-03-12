@@ -1773,8 +1773,8 @@ _radio_time_context() {
 		_rc_time_spoken="${_rc_hour_num}時${_rc_min_num}分"
 	fi
 	if [ "$_rc_hour" -ge 5 ] && [ "$_rc_hour" -lt 9 ]; then
-		_rc_period="早朝"
-		_rc_mood="早朝放送。静かな時間帯に合わせて、寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
+		_rc_period="朝"
+		_rc_mood="朝放送。静かな時間帯に合わせて、寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
 	elif [ "$_rc_hour" -ge 9 ] && [ "$_rc_hour" -lt 12 ]; then
 		_rc_period="午前"
 		_rc_mood="午前中の放送。人工知能はいつでも全力"
@@ -1835,7 +1835,7 @@ if not lines:
 
 intro = f"{greet}、{period}の放送です。現在時刻は{time_text}です。"
 intro_like = re.compile(
-    r"(現在時刻|[0-2]?\d[:時][0-5]\d(?:分)?|おはよう|こんにちは|こんばんは|早朝|午前|昼|午後|夕方|夕暮れ|夜|深夜|未明)"
+    r"(現在時刻|[0-2]?\d[:時][0-5]\d(?:分)?|おはよう|こんにちは|こんばんは|朝|午前|昼|午後|夕方|夕暮れ|夜|深夜|未明)"
 )
 
 changed = False
@@ -5986,7 +5986,7 @@ generate_comment_response() {
 	current_time=$(date '+%H:%M')
 	current_hour=$(date '+%H')
 	if [ "$current_hour" -ge 5 ] && [ "$current_hour" -lt 9 ]; then
-		time_period="早朝"
+		time_period="朝"
 	elif [ "$current_hour" -ge 9 ] && [ "$current_hour" -lt 12 ]; then
 		time_period="午前"
 	elif [ "$current_hour" -ge 12 ] && [ "$current_hour" -lt 17 ]; then

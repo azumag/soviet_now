@@ -308,7 +308,7 @@ generate_comment_response() {
 	current_time=$(date '+%H:%M')
 	current_hour=$(date '+%H')
 	if [ "$current_hour" -ge 5 ] && [ "$current_hour" -lt 9 ]; then
-		time_period="早朝"
+		time_period="朝"
 	elif [ "$current_hour" -ge 9 ] && [ "$current_hour" -lt 12 ]; then
 		time_period="午前"
 	elif [ "$current_hour" -ge 12 ] && [ "$current_hour" -lt 17 ]; then
