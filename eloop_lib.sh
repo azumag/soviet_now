@@ -6769,7 +6769,7 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$STRATEGY_HASH_ARCHIVE_DIR" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$STRATEGY_HASH_ARCHIVE_DIR" "$LAST_ROLLBACK_PAIR_FILE" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
 import json
 import math
 import os
@@ -6788,12 +6788,13 @@ composite_ratio = float(sys.argv[10])
 p50_ratio = float(sys.argv[11])
 p25_ratio = float(sys.argv[12])
 archive_dir = sys.argv[13]
-score_history_file = sys.argv[14]
-trend_short_window = int(sys.argv[15])
-trend_long_window = int(sys.argv[16])
-trend_short_ratio = float(sys.argv[17])
-trend_long_ratio = float(sys.argv[18])
-keep_top = int(sys.argv[19])
+last_rollback_pair_file = sys.argv[14]
+score_history_file = sys.argv[15]
+trend_short_window = int(sys.argv[16])
+trend_long_window = int(sys.argv[17])
+trend_short_ratio = float(sys.argv[18])
+trend_long_ratio = float(sys.argv[19])
+keep_top = int(sys.argv[20])
 
 if not os.path.exists(rs_file):
     print("OK")
@@ -6891,6 +6892,26 @@ trend50 = False
 trend100 = False
 trend50_recent = trend50_prev = None
 trend100_recent = trend100_prev = None
+fresh_games_since_rollback = None
+if os.path.exists(last_rollback_pair_file) and str(current_run.get("hash", "") or "") == current_hash:
+    try:
+        last_pair = json.load(open(last_rollback_pair_file))
+    except Exception:
+        last_pair = {}
+    if str(last_pair.get("to_hash", "") or "") == current_hash:
+        rollback_ts = int(last_pair.get("updated_at", 0) or 0)
+        if rollback_ts > 0:
+            fresh_games_since_rollback = 0
+            for archive in current_run.get("_recent_archives", []) or []:
+                if not isinstance(archive, str) or not archive.startswith("game_history/"):
+                    continue
+                if not os.path.exists(archive):
+                    continue
+                try:
+                    if int(os.path.getmtime(archive)) >= rollback_ts:
+                        fresh_games_since_rollback += 1
+                except Exception:
+                    continue
 if os.path.exists(score_history_file):
     try:
         all_scores = [int(line.strip().split('\t')[-1]) for line in open(score_history_file) if line.strip()]
@@ -6910,6 +6931,10 @@ if os.path.exists(score_history_file):
         trend100_prev = sum(prev) / len(prev)
         if trend100_prev > 0 and trend100_recent < trend100_prev * trend_long_ratio:
             trend100 = True
+
+if fresh_games_since_rollback is not None and fresh_games_since_rollback < trend_short_window:
+    trend50 = False
+    trend100 = False
 
 trend_regression = (best_hash != current_hash) and trend50 and trend100
 

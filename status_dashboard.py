@@ -196,6 +196,43 @@ def load_last_rollback_pair():
         return None
 
 
+def count_fresh_games_since_last_rollback(current_hash):
+    if not current_hash:
+        return None
+    last_pair = load_last_rollback_pair()
+    if not isinstance(last_pair, dict):
+        return None
+    if str(last_pair.get("to_hash", "") or "") != current_hash:
+        return None
+    rollback_ts = int(last_pair.get("updated_at", 0) or 0)
+    if rollback_ts <= 0:
+        return None
+
+    p = Path(CURRENT_STRATEGY_RUN_FILE)
+    if not p.exists():
+        return None
+    try:
+        run = json.loads(p.read_text())
+    except Exception:
+        return None
+    if str(run.get("hash", "") or "") != current_hash:
+        return None
+
+    fresh = 0
+    for archive in run.get("_recent_archives", []) or []:
+        if not isinstance(archive, str) or not archive.startswith("game_history/"):
+            continue
+        archive_path = Path(archive)
+        if not archive_path.exists():
+            continue
+        try:
+            if int(archive_path.stat().st_mtime) >= rollback_ts:
+                fresh += 1
+        except Exception:
+            continue
+    return fresh
+
+
 def compute_decide_hash(path):
     try:
         r = subprocess.run(
@@ -443,6 +480,13 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
     trigger_p50 = current["p50"] < best_metrics["p50"] * REGRESSION_P50_RATIO
     trigger_p25 = current["p25"] < best_metrics["p25"] * REGRESSION_P25_RATIO
     trend50, trend100 = calc_trend_flags(scores)
+    fresh_games_since_rollback = count_fresh_games_since_last_rollback(current_hash)
+    if (
+        fresh_games_since_rollback is not None
+        and fresh_games_since_rollback < REGRESSION_TREND_SHORT_WINDOW
+    ):
+        trend50 = False
+        trend100 = False
     trigger = (trigger_comp and (trigger_p50 or trigger_p25)) or (trend50 and trend100 and best_hash != current_hash)
     if trigger:
         reasons = []
