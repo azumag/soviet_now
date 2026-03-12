@@ -73,6 +73,7 @@ IMPROVE_AI_LOG_TRIM_LINES=8000
 IMPROVE_STALE_WATCHDOG_SEC="${IMPROVE_STALE_WATCHDOG_SEC:-1200}"
 ACCUMULATED_GAMES_FILE="$TMP_STATE_DIR/accumulated_games.json"
 ROLLING_SCORES_FILE="$TMP_STATE_DIR/rolling_scores.json"
+CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
 REJECTED_HASHES_FILE="$TMP_HISTORY_DIR/rejected_hashes.txt"
 REJECTED_HASH_META_FILE="$TMP_STATE_DIR/rejected_hash_metrics.json"
 REJECTED_REEVALUATE_TTL_SEC="${REJECTED_REEVALUATE_TTL_SEC:-21600}"
@@ -6286,11 +6287,58 @@ print(f"{comp:.2f}|{p50:.1f}|{p25:.1f}|{lcb:.1f}|{n}|{games_total}")
 PY
 }
 
+_get_current_strategy_run_metrics() {
+	local target_hash="$1"
+	[ -n "$target_hash" ] || return 1
+	[ -f "$CURRENT_STRATEGY_RUN_FILE" ] || return 1
+	python3 - "$CURRENT_STRATEGY_RUN_FILE" "$target_hash" <<'PY' 2>/dev/null
+import json
+import math
+import os
+import sys
+
+run_file, target_hash = sys.argv[1], sys.argv[2]
+if not os.path.exists(run_file):
+    raise SystemExit(1)
+try:
+    run = json.load(open(run_file))
+except Exception:
+    raise SystemExit(1)
+if str(run.get("hash", "") or "") != target_hash:
+    raise SystemExit(1)
+scores = [int(x) for x in run.get("scores", [])]
+if not scores:
+    raise SystemExit(1)
+xs = sorted(scores)
+n = len(xs)
+mean = sum(xs) / n
+if n == 1:
+    p25 = p50 = float(xs[0])
+    std = 0.0
+else:
+    def q(p):
+        pos = (n - 1) * p
+        lo = int(pos)
+        hi = min(lo + 1, n - 1)
+        frac = pos - lo
+        return xs[lo] * (1.0 - frac) + xs[hi] * frac
+    p25 = q(0.25)
+    p50 = q(0.50)
+    var = sum((x - mean) ** 2 for x in xs) / n
+    std = math.sqrt(var)
+lcb = mean - 1.28 * (std / math.sqrt(n))
+comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+games_total = int(run.get("games_total", n) or n)
+print(f"{comp:.2f}|{p50:.1f}|{p25:.1f}|{lcb:.1f}|{n}|{games_total}")
+PY
+}
+
 _pick_best_rollback_candidate() {
 	local current_hash="$1"
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
 	local current_metrics current_comp
-	current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
+	current_metrics=$(_get_current_strategy_run_metrics "$current_hash" 2>/dev/null || true)
+	[ -z "$current_metrics" ] && current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
 	current_comp="${current_metrics%%|*}"
 
 	local ranked
@@ -6378,7 +6426,8 @@ EOF
 _pick_hall_of_fame_rollback_candidate() {
 	local current_hash="$1"
 	local current_metrics current_comp candidate_metrics candidate_comp
-	current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
+	current_metrics=$(_get_current_strategy_run_metrics "$current_hash" 2>/dev/null || true)
+	[ -z "$current_metrics" ] && current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
 	current_comp="${current_metrics%%|*}"
 	local line f score_num h
 	while IFS='|' read -r score_num f; do
@@ -6563,30 +6612,31 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$STRATEGY_HASH_ARCHIVE_DIR" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_IMPROVE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$REGRESSION_COMPOSITE_RATIO" "$REGRESSION_P50_RATIO" "$REGRESSION_P25_RATIO" "$STRATEGY_HASH_ARCHIVE_DIR" "score_history.txt" "$REGRESSION_TREND_SHORT_WINDOW" "$REGRESSION_TREND_LONG_WINDOW" "$REGRESSION_TREND_SHORT_RATIO" "$REGRESSION_TREND_LONG_RATIO" "$HASH_ARCHIVE_KEEP_TOP" <<'PY'
 import json
 import math
 import os
 import sys
 
 rs_file = sys.argv[1]
-current_hash = sys.argv[2]
-min_games_current = int(sys.argv[3])
-min_games_candidates = int(sys.argv[4])
-lcb_z = float(sys.argv[5])
-w_p50 = float(sys.argv[6])
-w_p25 = float(sys.argv[7])
-w_lcb = float(sys.argv[8])
-composite_ratio = float(sys.argv[9])
-p50_ratio = float(sys.argv[10])
-p25_ratio = float(sys.argv[11])
-archive_dir = sys.argv[12]
-score_history_file = sys.argv[13]
-trend_short_window = int(sys.argv[14])
-trend_long_window = int(sys.argv[15])
-trend_short_ratio = float(sys.argv[16])
-trend_long_ratio = float(sys.argv[17])
-keep_top = int(sys.argv[18])
+current_run_file = sys.argv[2]
+current_hash = sys.argv[3]
+min_games_current = int(sys.argv[4])
+min_games_candidates = int(sys.argv[5])
+lcb_z = float(sys.argv[6])
+w_p50 = float(sys.argv[7])
+w_p25 = float(sys.argv[8])
+w_lcb = float(sys.argv[9])
+composite_ratio = float(sys.argv[10])
+p50_ratio = float(sys.argv[11])
+p25_ratio = float(sys.argv[12])
+archive_dir = sys.argv[13]
+score_history_file = sys.argv[14]
+trend_short_window = int(sys.argv[15])
+trend_long_window = int(sys.argv[16])
+trend_short_ratio = float(sys.argv[17])
+trend_long_ratio = float(sys.argv[18])
+keep_top = int(sys.argv[19])
 
 if not os.path.exists(rs_file):
     print("OK")
@@ -6632,6 +6682,17 @@ def metrics(scores):
     }
 
 current_scores = [int(x) for x in rs[current_hash].get("scores", [])]
+current_run = {}
+if os.path.exists(current_run_file):
+    try:
+        current_run = json.load(open(current_run_file))
+    except Exception:
+        current_run = {}
+if str(current_run.get("hash", "") or "") == current_hash:
+    run_scores = [int(x) for x in current_run.get("scores", [])]
+    if run_scores:
+        current_scores = run_scores
+
 if len(current_scores) < min_games_current:
     print("OK")
     raise SystemExit
@@ -7097,6 +7158,86 @@ _clear_accumulated_data() {
 	rm -f "$ACCUMULATED_GAMES_FILE"
 }
 
+_reset_current_strategy_run() {
+	local strategy_hash="$1"
+	python3 - "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+out_file, strategy_hash = sys.argv[1], sys.argv[2]
+payload = {
+    "hash": strategy_hash,
+    "scores": [],
+    "games_total": 0,
+    "_recent_archives": [],
+}
+with open(out_file, "w") as f:
+    json.dump(payload, f)
+PY
+}
+
+_update_current_strategy_run() {
+	local strategy_hash="$1" score="$2" archive_file="${3:-}"
+	[ -n "$strategy_hash" ] || return 1
+	local run_result=""
+	run_result=$(python3 - "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$score" "$archive_file" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+
+run_file, strategy_hash, score, archive_file = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+if os.path.exists(run_file):
+    try:
+        run = json.load(open(run_file))
+    except Exception:
+        run = {}
+else:
+    run = {}
+
+if run.get("hash") != strategy_hash:
+    run = {
+        "hash": strategy_hash,
+        "scores": [],
+        "games_total": 0,
+        "_recent_archives": [],
+    }
+
+recent_archives = run.get("_recent_archives", [])
+if not isinstance(recent_archives, list):
+    recent_archives = []
+
+if archive_file and archive_file in recent_archives:
+    print(f"{strategy_hash}|{len(run.get('scores', []))}|{int(run.get('games_total', 0) or 0)}|dedup")
+    raise SystemExit
+
+scores = [int(x) for x in run.get("scores", [])]
+scores.append(score)
+run["scores"] = scores[-20:]
+run["games_total"] = int(run.get("games_total", 0) or 0) + 1
+if archive_file:
+    recent_archives.append(archive_file)
+    recent_archives = recent_archives[-50:]
+run["_recent_archives"] = recent_archives
+
+with open(run_file, "w") as f:
+    json.dump(run, f)
+
+print(f"{strategy_hash}|{len(run['scores'])}|{run['games_total']}|updated")
+PY
+)
+	if [ -n "$run_result" ]; then
+		local run_n="" run_total="" run_status=""
+		IFS='|' read -r strategy_hash run_n run_total run_status <<<"$run_result"
+		if [ "$run_status" = "dedup" ]; then
+			log "[CURRENT-RUN] duplicate skip: hash=${strategy_hash} n=${run_n} total=${run_total} score=${score} file=${archive_file}"
+		else
+			log "[CURRENT-RUN] updated: hash=${strategy_hash} n=${run_n} total=${run_total} score=${score} file=${archive_file}"
+		fi
+	else
+		log "[CURRENT-RUN] update failed: hash=${strategy_hash} score=${score}"
+	fi
+}
+
 record_completed_game_for_adaptive_improvement() {
 	local archive_file="$1" score="$2" soviet="$3"
 	local played_hash="" current_hash=""
@@ -7115,7 +7256,11 @@ record_completed_game_for_adaptive_improvement() {
 	if [ -n "$played_hash" ] && [ -n "$current_hash" ] && [ "$played_hash" != "$current_hash" ]; then
 		log "[IMPROVE] current戦略と異なる試合を検出: played=${played_hash:0:8} current=${current_hash:0:8} → queuedをリセットしてこの試合は蓄積しない"
 		_clear_accumulated_data
+		_reset_current_strategy_run "$current_hash"
 	else
+		if [ -n "$current_hash" ]; then
+			_update_current_strategy_run "$current_hash" "$score" "$archive_file"
+		fi
 		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash"
 	fi
 }
