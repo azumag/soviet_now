@@ -55,12 +55,7 @@ v178 additional logic:
 # v178: 危険局面即時併合優先強化版 - batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
 # ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
 # max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減し、即時併合を強制的に優先することで、併合機会を活かしスコア安定性を向上させる。
-# v179: 危険局面near_pairs活用強化版 - ワーストゲーム(score0846)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-7あるにもかかわらず
-#   HIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが選択され続け、即時併合機会を完全に逃している失敗パターンを特定。
-#   - 危険局面（max_y >= 2.0かつreactive_pairs >= 3）でmerge_grade == "NO"の場合、BOARD_DENSITY評価を無効化
-#   - near_pairsボーナスを強化（800.0→1000.0, 400.0→500.0）し、閾値を引き下げ（near_pairs>=2で適用）
-#   - これにより危険局面では盤面整理よりもnear_pairs活用を優先し、即時併合機会の取りこぼしを削減
-# refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260312_201459_score0846.jsonl turns 60-67, game_history/20260312_200009_score2172.jsonl turns 105-112
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260312_135916_score0593.jsonl turns 36-42, game_history/20260312_141222_score2015.jsonl turns 83-85
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -68,23 +63,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v179: 危険局面near_pairs活用強化版
+    """v178: 危険局面即時併合優先強化版
     
-    ワーストゲーム(score0846)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-7あるにもかかわらず
-    HIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが選択され続け、即時併合機会を完全に逃している失敗パターンを特定。
-    batch_summaryでBOARD_DENSITYが11.8%選択(avg_score_delta=1.1)と低価値であることを確認。
+    batch_summaryでDEFAULT_PLACEMENTが19.5%選択(avg_score_delta=1.8)と依然として高いことを確認。
+    ワーストゲーム(score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらずHIGH_LAYER_BOARD_DENSITYが6ターン連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
     
-    v179の改善点:
-    1. 危険局面でのBOARD_DENSITY無効化
-       - 危険局面（max_y >= 2.0かつreactive_pairs >= 3）でmerge_grade == "NO"の場合、BOARD_DENSITY評価を無効化
-       - 盤面整理よりもnear_pairs活用を優先し、即時併合機会の取りこぼしを削減
-    2. near_pairsボーナス強化
-       - near_pairsボーナスを強化（800.0→1000.0, 400.0→500.0）
-       - 閾値を引き下げ（near_pairs>=2で適用）
-    3. v173の序盤HEIGHT_CONTROL抑制超強化を維持
-       - early_game判定(max_y < -3.0)とheight_multiplier=0.1を維持
-    4. v178の危険局面即時併合優先を維持
+    v178の改善点:
+    1. 危険局面での即時併合優先
        - max_y >= 2.0かつreactive_pairs >= 3の危険局面でheight_multiplierを15.0に削減
+       - reactor情報のreactive_pairsを活用し、危険局面で即時併合を強制的に優先
+       - ワーストゲームの失敗パターン（reactive_pairs=4-6あるのに即時併合を逃す）を解消
+    2. v173の序盤HEIGHT_CONTROL抑制超強化を維持
+       - early_game判定(max_y < -3.0)とheight_multiplier=0.1を維持
+       - 序盤のDEFAULT_PLACEMENT選択を抑制し、併合機会を最優先
+    3. v173のボード密度評価軸とv172の序盤HEIGHT_CONTROL抑制を維持
     
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -225,11 +217,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- evaluation axis 2.5: near_pairs bonus in dangerous situations (v179: 強化) -----
+        # ----- evaluation axis 2.5: near_pairs bonus in dangerous situations -----
         # 危険局面で即時併合がない場合、near_pairsを活用する配置を優先
-        # ワーストゲーム(score0574, score0593, score0846)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs>=4-7あるにもかかわらず
+        # ワーストゲーム(score0574, score0593)の終盤分析で、max_y>=2.0かつreactive_pairs>=4-6あるにもかかわらず
         # HIGH_TOWER/HIGH_LAYERが選択され続け即時併合機会を逃している失敗パターンを特定
-        # v179: near_pairsボーナスを強化し、閾値を引き下げて即時併合機会の取りこぼしを削減
         # dangerous_situation かつ merge_grade == "NO" の場合、near_pairs が多い配置を優先
         dangerous_situation = max_y >= 2.0 and isinstance(reactive_pairs, list) and len(reactive_pairs) >= 3
         if dangerous_situation and merge_grade == "NO":
@@ -238,12 +229,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 near_pairs_count = len(near_pairs)
                 # near_pairsが多いほど将来のreactive_pairsへの昇格可能性が高い
                 # reactive_pairsが3以上ある状況で、near_pairsを増やすことでさらに盤面圧縮を促進
-                # v179: ボーナス強化と閾値引き下げ（near_pairs>=2でボーナス適用）
                 if near_pairs_count >= 3:
-                    score += 1000.0  # v179: 800.0→1000.0に強化
-                    reasons.append("NEAR_PAIRS_OPPORTUNITY")
-                elif near_pairs_count >= 2:
-                    score += 500.0  # v179: 400.0→500.0に強化
+                    score += 800.0  # near_pairs活用ボーナス
                     reasons.append("NEAR_PAIRS_OPPORTUNITY")
                 elif near_pairs_count >= 2:
                     score += 400.0
@@ -316,19 +303,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 7: board density bonus (v171: NEW, v179: 危険局面で無効化) -----
+        # ----- evaluation axis 7: board density bonus (v171: NEW) -----
         # Prefer placement on less-dense side of board to improve height gain capability
-        # This addresses by problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
+        # This addresses the problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
         # Low-score games often place pieces in center early, which reduces height gain capability in mid/late game
-        # v179: 危険局面（max_y >= 2.0かつreactive_pairs >= 3）で即時併合がない場合、BOARD_DENSITY評価を無効化
-        # ワーストゲーム(score0846)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-7あるにもかかわらず
-        # HIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが選択され続け、即時併合機会を完全に逃している失敗パターンを特定
-        # 危険局面では盤面整理よりもnear_pairs活用を優先することで、即時併合機会の取りこぼしを削減
-        apply_density_bonus = True
-        if dangerous_situation and merge_grade == "NO":
-            apply_density_bonus = False  # 危険局面ではBOARD_DENSITYを無効化
-        
-        if apply_density_bonus and (not reasons or merge_grade == "NO"):
+        if not reasons or merge_grade == "NO":
             # Only apply when no strong merge reason exists (avoid overriding merge opportunities)
             if x < 0:
                 # Placing on left side: bonus if right side is more dense
