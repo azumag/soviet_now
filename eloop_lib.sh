@@ -3732,14 +3732,15 @@ PY
 
 _write_rollback_postmortem_context_file() {
 	local current_hash="$1" rollback_hash="$2" game_num="$3" rollback_note="${4:-}"
-	python3 - "$ROLLING_SCORES_FILE" "$STRATEGY_HASH_ARCHIVE_DIR" "$current_hash" "$rollback_hash" "$game_num" "$rollback_note" "$ROLLBACK_POSTMORTEM_CONTEXT_FILE" <<'PY'
+	python3 - "$ROLLING_SCORES_FILE" "$STRATEGY_HASH_ARCHIVE_DIR" "$STRATEGY_VERSIONS_DIR" "$STRATEGY_FILE" "tmp/revert_strategy.py" "extract_decide_hash.py" "$current_hash" "$rollback_hash" "$game_num" "$rollback_note" "$ROLLBACK_POSTMORTEM_CONTEXT_FILE" <<'PY'
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 
-rolling_file, archive_dir, current_hash, rollback_hash, game_num, rollback_note, out_file = sys.argv[1:8]
+rolling_file, archive_dir, versions_dir, strategy_file, revert_file, hash_script, current_hash, rollback_hash, game_num, rollback_note, out_file = sys.argv[1:12]
 
 def load_json(path):
     if not os.path.exists(path):
@@ -3782,6 +3783,46 @@ def focus_bad_logs(paths):
 def focus_target_logs(paths):
     return paths[-4:]
 
+def decide_hash(path):
+    if not path or not os.path.exists(path):
+        return ""
+    try:
+        result = subprocess.run(
+            ["python3", hash_script, path],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return ""
+    out = result.stdout.strip()
+    return out if result.returncode == 0 and out else ""
+
+def find_strategy_file(target_hash):
+    if not target_hash:
+        return ""
+    by_hash = os.path.join(archive_dir, f"{target_hash}.py")
+    if os.path.exists(by_hash):
+        return by_hash
+
+    candidates = []
+    for path in (strategy_file, revert_file):
+        if path and os.path.exists(path):
+            candidates.append(path)
+    if os.path.isdir(versions_dir):
+        for name in sorted(os.listdir(versions_dir), reverse=True):
+            if name.endswith(".py"):
+                candidates.append(os.path.join(versions_dir, name))
+
+    seen = set()
+    for path in candidates:
+        if path in seen or not os.path.exists(path):
+            continue
+        seen.add(path)
+        if decide_hash(path) == target_hash:
+            return path
+    return ""
+
 rolling = load_json(rolling_file)
 current_data = rolling.get(current_hash, {}) if current_hash else {}
 rollback_data = rolling.get(rollback_hash, {}) if rollback_hash else {}
@@ -3791,12 +3832,8 @@ target_recent = unique_existing((rollback_data.get("_recent_archives") or [])[-8
 bad_focus = focus_bad_logs(bad_recent)
 target_focus = focus_target_logs(target_recent)
 
-bad_strategy_file = os.path.join(archive_dir, f"{current_hash}.py") if current_hash else ""
-target_strategy_file = os.path.join(archive_dir, f"{rollback_hash}.py") if rollback_hash else ""
-if bad_strategy_file and not os.path.exists(bad_strategy_file):
-    bad_strategy_file = ""
-if target_strategy_file and not os.path.exists(target_strategy_file):
-    target_strategy_file = ""
+bad_strategy_file = find_strategy_file(current_hash)
+target_strategy_file = find_strategy_file(rollback_hash)
 
 lines = []
 lines.append("# Rollback Postmortem Context")
