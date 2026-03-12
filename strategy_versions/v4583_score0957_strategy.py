@@ -48,7 +48,7 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化して即時併合を優先
 #   - 即時併合による盤面圧縮を促進し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260311_224024_score0328.jsonl, game_history/20260311_222520_score0849.jsonl
-# v163: 高反応器ペナ削減による即時併合強化版 - ワーストゲーム(score0594, score0645)の終盤8ターン分析で、reactive_pairs=3-7あるにもかかわらずHIGH_TOWERが選択され続け即時併合を逃している失敗パターンを特定
+# v163: 高反応器ペナル削減による即時併合強化版 - ワーストゲーム(score0594, score0645)の終盤8ターン分析で、reactive_pairs=3-7あるにもかかわらずHIGH_TOWERが選択され続け即時併合を逃している失敗パターンを特定
 #   - 危険局面ではないがreactive_pairsが高い状況で、height_penaltyが強すぎて併合機会を優先できない問題を解消
 #   - max_y >= 1.0かつreactive_pairs >= 3の場合、height_multiplierを動的に削減して即時併合を優先
 #   - height_multiplier = max(base_value * (1.0 - (reactive_pair_count - 2) * 0.15), min_value)
@@ -72,33 +72,41 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 #   - danger_piece_countが多いほど、盤面圧縮をより優先
 #   - 未活用情報(deadline関連)を活用することで、危険局面での盤面圧縮戦略を強化し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260312_073925_score0472.jsonl, game_history/20260312_074619_score1782.jsonl, tmp/change_log.txt
+# v167: 危険局面reactive_pairs活用による盤面圧縮調整版 - batch_summaryでHEIGHT_CONTROLが28.8%選択(avg_score_delta=0.9)と過剰であることを確認
+#   - ワーストゲーム(score0624)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-6あるにもかかわらずmerge_available=falseの状況で
+#     HIGH_TOWER/HIGH_LAYERが選択され続け、即時併合機会を逃している失敗パターンを特定
+#   - reactive_pairsが多い状況では、盤面の高さを下げるだけでなくreactive_pairsを活かす配置を優先する必要がある
+#   - reactive_pair_countに応じて盤面圧縮の強度を動的に調整し、reactive_pairsを活用する配置を優先する
+#   - reactive_compression_factor = max(0.3, 1.0 - (reactive_pair_count - 2) * 0.15) により、reactive_pairsが多いほど盤面圧縮を弱めてreactive_pairs活用を優先
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260312_084756_score0624.jsonl, game_history/20260312_084231_score2819.jsonl, game_history/20260312_082803_score0640.jsonl, tmp/change_log.txt
 """
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v166: 危険局面deadline情報活用による盤面圧縮評価軸追加
+    """v167: 危険局面reactive_pairs活用による盤面圧縮調整版
 
-    batch_summaryでHEIGHT_CONTROLが28.5%選択(avg_score_delta=0.9)と過剰であることを確認。
-    ワーストゲーム(score0472)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-5あるにもかかわらず
-    HIGH_TOWER/HIGH_LAYERが選択され続け即時併合機会を逃している失敗パターンを特定。
-    ベスト戦略(best_score5310)の閾値に合わせて、危険局面での即時併合優先閾値を引き下げるとともに、
-    deadline関連の未活用情報を活用した盤面圧縮評価軸を追加。
+    batch_summaryでHEIGHT_CONTROLが28.8%選択(avg_score_delta=0.9)と過剰であることを確認。
+    ワーストゲーム(score0624)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-6あるにもかかわらず
+    merge_available=falseの状況でHIGH_TOWER/HIGH_LAYERが選択され続け、即時併合機会を逃している失敗パターンを特定。
+    reactive_pairsが多い状況では、盤面の高さを下げるだけでなくreactive_pairsを活かす配置を優先する必要がある。
+    reactive_pair_countに応じて盤面圧縮の強度を動的に調整し、reactive_pairsを活用する配置を優先する。
 
-    v166の改善点：
-     1. 危険局面deadline情報活用による盤面圧縮評価軸追加
-        - 危険局面(max_y >= 2.0)で即時併合機会がない場合、deadline_marginとdanger_piece_countを活用
-        - deadline_marginが小さい（deadlineに近い）ほど、着地Yが低い配置をより優先
-        - danger_piece_countが多いほど、盤面圧縮をより優先
-        - 未活用情報(deadline関連)を活用することで、危険局面での盤面圧縮戦略を強化
-     2. 即時併合機会の見逃し回避
-        - ワーストゲーム(score0472)のturn 56-63でreactive_pairs=4-5あるにもかかわらずHIGH_TOWER/HIGH_LAYERが選択される失敗を解消
-        - 即時併合がない場合でも、deadlineに近い状況では着地Yが低い配置を優先し、盤面圧縮を促進
-     3. v162/v164/v165の改善を維持
-        - ベスト戦略(best_score5310)の閾値に合わせて、危険局面での即時併合優先閾値を引き下げ
-        - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
-        - reactive_pairsが少ない状況での即時併合見逃しを回避
+    v167の改善点：
+      1. 危険局面reactive_pairs活用による盤面圧縮調整
+         - 危険局面(max_y >= 2.0)でmerge_available=falseの場合、reactive_pair_countに応じて盤面圧縮の強度を動的に調整
+         - reactive_compression_factor = max(0.3, 1.0 - (reactive_pair_count - 2) * 0.15) により、reactive_pairsが多いほど盤面圧縮を弱めてreactive_pairs活用を優先
+         - reactive_pairs=3で70%、reactive_pairs=4で55%、reactive_pairs=5で40%、reactive_pairs=6で25%の盤面圧縮強度に調整
+         - reactive_pairsが少ない状況では盤面圧縮を優先し、reactive_pairsが多い状況ではreactive_pairs活用を優先
+      2. 即時併合機会の見逃し回避
+         - ワーストゲーム(score0624)のturn 59-65でreactive_pairs=4-6あるにもかかわらずHIGH_TOWER/HIGH_LAYERが選択される失敗を解消
+         - reactive_pairsが多い状況では、盤面の高さを下げるだけでなくreactive_pairsを活かす配置を優先し、即時併合機会を確保
+      3. v162/v164/v165/v166の改善を維持
+         - ベスト戦略(best_score5310)の閾値に合わせて、危険局面での即時併合優先閾値を引き下げ
+         - 中盤フェーズ(0.8 <= max_y < 1.8)でreactive_pairs <= 1の場合、SANDWICH_AVOIDを有効化
+         - reactive_pairsが少ない状況での即時併合見逃しを回避
+         - 危険局面deadline情報活用による盤面圧縮評価軸を維持しつつ、reactive_pairs活用による調整を追加
     """
 
     results = analysis.get("results", [])
@@ -119,14 +127,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pairs = reactor.get("reactive_pairs", [])
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
 
-    # --- v166: 危険局面deadline情報活用による盤面圧縮評価軸追加 ---
-    # batch_summaryでHEIGHT_CONTROLが28.5%選択(avg_score_delta=0.9)と過剰であることを確認
-    # ワーストゲーム(score0472)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-5あるにもかかわらずHIGH_TOWER/HIGH_LAYERが選択され続け即時併合機会を逃している失敗パターンを特定
-    # 危険局面(max_y >= 2.0)で即時併合機会がない場合、deadline_marginとdanger_piece_countを活用して盤面圧縮を促進する新しい評価軸を追加
-    # deadline_marginが小さい（deadlineに近い）ほど、着地Yが低い配置をより優先
-    # danger_piece_countが多いほど、盤面圧縮をより優先
-    # 未活用情報(deadline関連)を活用することで、危険局面での盤面圧縮戦略を強化し、HEIGHT_CONTROL選択を抑制してスコア安定性を向上させる
-    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260312_073925_score0472.jsonl, game_history/20260312_074619_score1782.jsonl, tmp/change_log.txt
+    # --- v167: 危険局面reactive_pairs活用による盤面圧縮調整版 ---
+    # batch_summaryでHEIGHT_CONTROLが28.8%選択(avg_score_delta=0.9)と過剰であることを確認
+    # ワーストゲーム(score0624)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-6あるにもかかわらず
+    # merge_available=falseの状況でHIGH_TOWER/HIGH_LAYERが選択され続け、即時併合機会を逃している失敗パターンを特定
+    # reactive_pairsが多い状況では、盤面の高さを下げるだけでなくreactive_pairsを活かす配置を優先する必要がある
+    # reactive_pair_countに応じて盤面圧縮の強度を動的に調整し、reactive_pairsを活用する配置を優先する
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260312_084756_score0624.jsonl, game_history/20260312_084231_score2819.jsonl, game_history/20260312_082803_score0640.jsonl, tmp/change_log.txt
     deadline = analysis.get("deadline", {})
     deadline_margin = deadline.get("deadline_margin", 0.0)
     danger_piece_count = deadline.get("danger_piece_count", 0)
@@ -388,24 +395,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # そのままHIGH_TOWERとして評価（height_penalty *= 2.0）
             pass
 
-        # ----- v166: 危険局面deadline情報活用による盤面圧縮評価軸 -----
-        # batch_summaryでHEIGHT_CONTROLが28.5%選択(avg_score_delta=0.9)と過剰であることを確認
-        # 危険局面(max_y >= 2.0)で即時併合機会がない場合、deadline_marginとdanger_piece_countを活用して盤面圧縮を促進する新しい評価軸を追加
-        # deadline_marginが小さい（deadlineに近い）ほど、着地Yが低い配置をより優先
-        # danger_piece_countが多いほど、盤面圧縮をより優先
-        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260312_073925_score0472.jsonl, game_history/20260312_074619_score1782.jsonl, tmp/change_log.txt
+        # ----- v167: 危険局面reactive_pairs活用による盤面圧縮調整版 -----
+        # batch_summaryでHEIGHT_CONTROLが28.8%選択(avg_score_delta=0.9)と過剰であることを確認
+        # ワーストゲーム(score0624)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-6あるにもかかわらず
+        # merge_available=falseの状況でHIGH_TOWER/HIGH_LAYERが選択され続け、即時併合機会を逃している失敗パターンを特定
+        # reactive_pairsが多い状況では、盤面の高さを下げるだけでなくreactive_pairsを活かす配置を優先する必要がある
+        # reactive_pair_countに応じて盤面圧縮の強度を動的に調整し、reactive_pairsを活用する配置を優先する
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/advice.md, game_history/20260312_084756_score0624.jsonl, game_history/20260312_084231_score2819.jsonl, tmp/change_log.txt
         if max_y >= 2.0 and merge_grade == "NO":
-            # deadline_marginが小さい（deadlineに近い）ほど、着地Yが低い配置を優先
+            # reactive_pairsが多いほど、盤面圧縮の優先度を下げてreactive_pairsを活かす配置を優先
+            # reactive_pairsは将来の併合機会であり、これを活かすことで盤面圧縮を促進できる
+            # reactive_pair_count >= 3 の場合、盤面圧縮ボーナスを削減してreactive_pairs活用を優先
+            reactive_compression_factor = max(0.3, 1.0 - (reactive_pair_count - 2) * 0.15)
+            
             if deadline_margin < 0.0:
                 # deadline_marginが負の値（deadlineを超えている）場合、絶対値が大きいほどより危険
-                # 着地Yが低い配置に強力なボーナスを付与
-                danger_compression_bonus = (-deadline_margin) * 100.0 + danger_piece_count * 50.0
+                # 着地Yが低い配置にボーナスを付与（reactive_compression_factorで調整）
+                danger_compression_bonus = ((-deadline_margin) * 100.0 + danger_piece_count * 50.0) * reactive_compression_factor
                 score -= landing_y * danger_compression_bonus * 0.5
                 reasons.append("DANGER_COMPRESSION")
             else:
                 # deadline_marginが正の値（deadlineを超えていない）場合でも、着地Yが低い配置を優先
-                # danger_piece_countが多いほど、盤面圧縮をより優先
-                danger_compression_bonus = danger_piece_count * 30.0
+                # danger_piece_countが多いほど、盤面圧縮をより優先（reactive_compression_factorで調整）
+                danger_compression_bonus = danger_piece_count * 30.0 * reactive_compression_factor
                 score -= landing_y * danger_compression_bonus * 0.3
                 reasons.append("DANGER_COMPRESSION")
 
