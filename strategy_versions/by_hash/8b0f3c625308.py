@@ -61,6 +61,14 @@ Phases (determined by board max Y):
         # 危険局面で即時併合機会がある場合、BOARD_DENSITY評価を無効化することで、即時併合を最優先。
         # これにより下振れ耐性p25の向上を図り、comp改善とスコア安定性を向上させる。
         # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_010415_score0755.jsonl turns 34-42, game_history/20260313_013934_score0294.jsonl turns 35-41
+        # v183: 危険局面即時併合機会取りこぼし削減版 - ワーストゲーム(score0537, score0555)の終盤8ターン分析で、
+        # max_y>=2.0かつreactive_pairs>=2-8あるにもかわらずHIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが連続で選択され、
+        # 即時併合機会を完全に逃している失敗パターンを特定。rollback failure mode (p25=-249.8) の解消。
+        # 1. 危険局面でDIRECT/NEARマージボーナスを+400.0→+600.0に強化し、即時併合を最優先
+        # 2. 危険局面（max_y >= 2.0）でnear_pairsボーナスを削除し、即時併合を最優先
+        # 3. 危険局面でmerge_grade=="NO"の場合、ペナルティ-1000.0を追加し、即時併合を強制
+        # これにより危険局面での即時併合機会の取りこぼしを削減し、comp改善とスコア安定性を向上させる。
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, game_history/20260313_021652_score0537.jsonl turns 51-58, game_history/20260313_020454_score0555.jsonl turns 45-54
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -213,18 +221,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 1.5: dangerous situation merge enhancement -----
         # 危険局面で即時併合機会がある場合、さらに強化する
-        # 危険局面判定閾値を max_y >= 1.5 に引き下げ、危険局面を早期検出
+        # 危険局面判定閾値を max_y >= 2.0 に変更し、reactive_pairs >= 2 で早期検出
         # 危険局面での即時併合機会強化
         dangerous_situation = is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=2)
         
         if dangerous_situation and merge_grade != "NO":
             # 危険局面で即時併合機会がある場合、さらに強化
-            # DIRECT/NEAR に追加ボーナス
+            # DIRECT/NEAR に追加ボーナス（v4902: +400.0 -> +600.0に強化）
             if merge_grade in ["DIRECT", "NEAR"]:
-                score += 400.0
-                reasons.append("DANGER_MERGE_ENHANCEMENT")
-            elif merge_grade == "FAR":
-                score += 200.0
+                score += 600.0
                 reasons.append("DANGER_MERGE_ENHANCEMENT")
             elif merge_grade == "FAR":
                 score += 200.0
@@ -237,11 +242,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if early_game:
             height_multiplier = 0.1  # v173: 序盤はHEIGHT_CONTROLを超強力に抑制
 
-        # 危険局面での即時併合優先強化（閾値1.5変更なし、強化のみ実装）
-        # 低スコアゲーム(score0755, score0294)の終盤8ターン分析で、max_y>=1.5かつreactive_pairs>=2-3あるにもかわらず
-        # HIGH_LAYER_BOARD_DENSITYが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+        # 危険局面での即時併合優先強化（閾値2.0、reactive_pairs>=2）
+        # ワーストゲーム(score0537, score0555)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs>=2-8あるにもかわらず
+        # HIGH_TOWER_NEAR_PAIRS_OPPORTUNITYが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
         # 危険局面でのheight_multiplierを強化し、即時併合を最優先することでスコア安定性を向上させる。
-        if is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=3):
+        if is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=2):
             height_multiplier = 5.0  # 危険局面はHEIGHT_CONTROLを強制的に抑制し、即時併合を最優先
 
         height_penalty = landing_y * height_multiplier * height_mult
@@ -257,11 +262,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
+        # 危険局面でmerge_grade=="NO"の場合、ペナルティを追加し、即時併合を優先
+        # ワーストゲーム(score0537, score0555)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs>=2-8あるにもかわらず
+        # merge_grade=="NO"の候補が選択され、即時併合機会を完全に逃している失敗パターンを特定。
+        # 危険局面でmerge_grade=="NO"の場合、ペナルティを追加し、即時併合を最優先することで、スコア安定性を向上させる。
+        if is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=2) and merge_grade == "NO":
+            score -= 1000.0  # 危険局面で即時併合がない場合、ペナルティを追加
+            reasons.append("DANGER_NO_MERGE_PENALTY")
+
         # ----- evaluation axis 2.5: near_pairs bonus in dangerous situations -----
         # 危険局面で即時併合がない場合、near_pairsを活用する配置を優先
+        # ただし、危険局面（max_y >= 2.0かつreactive_pairs >= 2）では、near_pairsボーナスを削除し、即時併合を最優先
         # dangerous_situationかつ merge_grade == "NO" の場合、near_pairsが多い配置を優先
         dangerous_situation = is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=2)
-        if dangerous_situation and merge_grade == "NO":
+        # 危険局面（max_y >= 2.0）では、near_pairsボーナスを削除し、即時併合を最優先
+        # ワーストゲーム(score0537)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs>=4あるにもかかわらず
+        # HIGH_LAYER_NEAR_PAIRS_OPPORTUNITYが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+        # 危険局面ではnear_pairsボーナスを削除し、即時併合を最優先することで、スコア安定性を向上させる。
+        if dangerous_situation and max_y < 2.0 and merge_grade == "NO":
             near_pairs = reactor.get("near_pairs", [])
             if isinstance(near_pairs, list):
                 near_pairs_count = len(near_pairs)
