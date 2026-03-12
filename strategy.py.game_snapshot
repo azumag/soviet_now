@@ -33,7 +33,7 @@ AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
 # [BEST:5310] v159: reactor情報活用による危険局面即時併合優先版
-# v160: 危険局面フィルタリング早期化強化版 - max_y>=1.8かつreactive_pairs>=3で併合機会のみを評価対象
+# [BEST:5694] v160: 危険局面フィルタリング早期化強化版 - max_y>=1.8かつreactive_pairs>=3で併合機会のみを評価対象
 #   - 危険局面でのFARマージボーナスを強化（200.0→1200.0）し、いずれかの併合機会を確保
 #   - ワーストゲーム(score0467)の失敗パターン分析に基づき、危険局面の閾値を厳密化
 # refs: tmp/batch_summary.txt, tmp/improve_brief.md, game_history/20260311_012257_score0467.jsonl turns 48-55
