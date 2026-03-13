@@ -67,6 +67,9 @@ IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"a
 RADIO_SAY_RATE=150
 unset SAY_AUDIO_DEVICE
 PAST_RADIO_TOPICS="$TMP_HISTORY_DIR/past_radio_topics.txt"
+PAST_RADIO_THEME_KEYS="$TMP_HISTORY_DIR/.past_radio_themes.txt"
+PAST_RADIO_THEME_BODIES="$TMP_HISTORY_DIR/past_radio_theme_bodies.txt"
+PAST_RADIO_THEME_HISTORY_KEEP="${PAST_RADIO_THEME_HISTORY_KEEP:-160}"
 PAST_NEWS_READ="$TMP_HISTORY_DIR/past_news_read.txt"
 PAST_NEWS_READ_KEYS="$TMP_HISTORY_DIR/past_news_read_keys.txt"
 PAST_NEWS_TOPIC_KEYS="$TMP_HISTORY_DIR/past_news_topic_keys.txt"
@@ -170,7 +173,7 @@ if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
 	done
 	# history
 	for f in .past_radio_themes.txt past_radio_topics.txt past_news_read.txt \
-		past_news_read_keys.txt past_news_topic_keys.txt past_news_read_sources.txt rejected_hashes.txt \
+		past_radio_theme_bodies.txt past_news_read_keys.txt past_news_topic_keys.txt past_news_read_sources.txt rejected_hashes.txt \
 		.past_news_titles.txt .past_news_links.txt; do
 		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_HISTORY_DIR/$f" 2>/dev/null
 	done
@@ -3552,6 +3555,114 @@ _radio_generate_and_play() {
 
 #=== ラジオトーク: テーマ選択 ===
 
+_radio_theme_key_from_body() {
+	local theme_body="$1"
+	python3 - "$theme_body" <<'PY'
+import re
+import sys
+
+text = sys.argv[1] if len(sys.argv) > 1 else ""
+text = re.sub(r'^\[soviet\]\s*', '', text)
+text = text.replace('\u3000', ' ')
+text = re.sub(r'を深掘りして|を深掘り|深掘りして|深掘り', ' ', text)
+text = re.sub(r'の話(?:。)?', ' ', text)
+text = re.sub(r'[()（）「」『』【】［］\[\]!?！？:：]', ' ', text)
+text = re.sub(r'[、,／/・;；]', ' ', text)
+text = re.sub(r'\s+', ' ', text).strip().lower()
+print(text)
+PY
+}
+
+_radio_theme_recent_match_mode() {
+	local theme_body="$1"
+	local history_bodies_file="${2:-$PAST_RADIO_THEME_BODIES}"
+	local history_keys_file="${3:-$PAST_RADIO_THEME_KEYS}"
+	python3 - "$theme_body" "$history_bodies_file" "$history_keys_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+candidate = sys.argv[1] if len(sys.argv) > 1 else ""
+history_bodies_path = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+history_keys_path = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+
+def normalize(text: str) -> str:
+    text = re.sub(r'^\[soviet\]\s*', '', text or '')
+    text = text.replace('\u3000', ' ')
+    text = re.sub(r'を深掘りして|を深掘り|深掘りして|深掘り', ' ', text)
+    text = re.sub(r'の話(?:。)?', ' ', text)
+    text = re.sub(r'[()（）「」『』【】［］\[\]!?！？:：]', ' ', text)
+    text = re.sub(r'[、,／/・;；]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip().lower()
+    return text
+
+def read_tail(path, limit: int) -> list[str]:
+    if not path or not path.exists():
+        return []
+    try:
+        lines = [ln.strip() for ln in path.read_text(encoding='utf-8', errors='ignore').splitlines() if ln.strip()]
+    except OSError:
+        return []
+    return lines[-limit:]
+
+def keywords(text: str) -> set[str]:
+    stop = {
+        'ソ連', 'ロシア', '日本', '世界', '歴史', '文化', '政治', '経済', '思想', '哲学',
+        '社会', '事件', '人物', '制度', '理論', '技術', '国家', '革命', '問題', 'テーマ',
+        '放送', '深掘り', '構造', '背景', '比較', '現実', '真実', '心理', '起源', '実態',
+    }
+    norm = normalize(text)
+    out = []
+    for chunk in re.split(r'\s+', norm):
+        if not chunk:
+            continue
+        for part in re.split(r'(?:の|と|や|を|に|で|へ|から|まで|について|による|によると)', chunk):
+            part = part.strip()
+            if len(part) < 3 or part in stop:
+                continue
+            out.append(part)
+    seen = []
+    for part in out:
+        if part not in seen:
+            seen.append(part)
+    return set(seen)
+
+cand_key = normalize(candidate)
+if not cand_key:
+    raise SystemExit(0)
+
+history_keys = {normalize(line) for line in read_tail(history_keys_path, 200)}
+if cand_key in history_keys:
+    print('exact')
+    raise SystemExit(0)
+
+cand_keywords = keywords(candidate)
+for past in reversed(read_tail(history_bodies_path, 80)):
+    past_key = normalize(past)
+    if not past_key:
+        continue
+    if cand_key == past_key:
+        print('exact')
+        raise SystemExit(0)
+    shared = cand_keywords & keywords(past)
+    if any(len(token) >= 5 for token in shared) or len(shared) >= 2:
+        print('overlap:' + ','.join(sorted(shared, key=lambda s: (-len(s), s))[:3]))
+        raise SystemExit(0)
+PY
+}
+
+_radio_mark_theme_used() {
+	local theme_body="$1"
+	local past_keys_file="${PAST_RADIO_THEME_KEYS:-$TMP_HISTORY_DIR/.past_radio_themes.txt}"
+	local past_bodies_file="${PAST_RADIO_THEME_BODIES:-$TMP_HISTORY_DIR/past_radio_theme_bodies.txt}"
+	local theme_key=""
+	theme_key=$(_radio_theme_key_from_body "$theme_body")
+	[ -n "$theme_key" ] && echo "$theme_key" >>"$past_keys_file"
+	echo "$theme_body" >>"$past_bodies_file"
+	tail -"${PAST_RADIO_THEME_HISTORY_KEEP:-160}" "$past_keys_file" >"${past_keys_file}.tmp" && mv "${past_keys_file}.tmp" "$past_keys_file"
+	tail -"${PAST_RADIO_THEME_HISTORY_KEEP:-160}" "$past_bodies_file" >"${past_bodies_file}.tmp" && mv "${past_bodies_file}.tmp" "$past_bodies_file"
+}
+
 _pick_radio_theme() {
 	local filter_category="${1:-}"
 	local theme_file="$ELOOP_LIB_DIR/data/radio_themes.txt"
@@ -3572,8 +3683,8 @@ _pick_radio_theme() {
 			if [ -n "$filter_category" ] && [ "$line_category" != "$filter_category" ]; then
 				continue
 			fi
-			local t_key="${line_body%%。*}"
-			[ "$t_key" = "$line_body" ] && t_key="${line_body%%を深掘り*}"
+			local t_key
+			t_key=$(_radio_theme_key_from_body "$line_body")
 			[ -n "$t_key" ] || t_key="$line_body"
 			local seen=false existing_key
 			for existing_key in "${theme_keys[@]}"; do
@@ -3592,22 +3703,22 @@ _pick_radio_theme() {
 		themes=("世界の料理と文化の話。各国の食卓と暮らしの違いを深掘りして")
 	fi
 
-	local past_themes_file="$PAST_RADIO_TOPICS"
+	local past_themes_file="${PAST_RADIO_THEME_KEYS:-$TMP_HISTORY_DIR/.past_radio_themes.txt}"
+	local past_theme_bodies_file="${PAST_RADIO_THEME_BODIES:-$TMP_HISTORY_DIR/past_radio_theme_bodies.txt}"
 	local available_themes=()
-	local past_theme_list=""
-	[ -f "$past_themes_file" ] && past_theme_list=$(cat "$past_themes_file")
 	for t in "${themes[@]}"; do
 		local t_body="$t"
 		[[ "$t" == \[soviet\]\ * ]] && t_body="${t#\[soviet\] }"
-		local t_key="${t_body%%。*}"
-		[ "$t_key" = "$t_body" ] && t_key="${t_body%%を深掘り*}"
-		if ! echo "$past_theme_list" | grep -qF "$t_key"; then
+		local match_mode=""
+		match_mode=$(_radio_theme_recent_match_mode "$t_body" "$past_theme_bodies_file" "$past_themes_file")
+		if [ -z "$match_mode" ]; then
 			available_themes+=("$t")
 		fi
 	done
 	if [ ${#available_themes[@]} -eq 0 ]; then
 		available_themes=("${themes[@]}")
 		>"$past_themes_file"
+		>"$past_theme_bodies_file"
 	fi
 	local theme="${available_themes[$((RANDOM % ${#available_themes[@]}))]}"
 	local theme_body="$theme"
@@ -3616,10 +3727,7 @@ _pick_radio_theme() {
 		theme_cat="soviet"
 		theme_body="${theme#\[soviet\] }"
 	fi
-	local theme_key="${theme_body%%。*}"
-	[ "$theme_key" = "$theme_body" ] && theme_key="${theme_body%%を深掘り*}"
-	echo "$theme_key" >>"$past_themes_file"
-	tail -100 "$past_themes_file" >"${past_themes_file}.tmp" && mv "${past_themes_file}.tmp" "$past_themes_file"
+	_radio_mark_theme_used "$theme_body"
 	# カテゴリ付きの場合はタブ区切りで返す: [soviet]\tテーマ本文
 	if [ -n "$theme_cat" ]; then
 		printf '[%s]\t%s\n' "$theme_cat" "$theme_body"
