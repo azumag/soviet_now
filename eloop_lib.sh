@@ -63,6 +63,7 @@ LAST_PHYROGENETIC_CHAT_COMMIT_FILE="$TMP_STATE_DIR/last_phyrogenetic_chat_commit
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$RADIO_OPENCODE_PERMISSION}"
 COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
+COMMENT_FORCE_CLAUDE_WHEN_IMPROVING="${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}"
 IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow"}'
 RADIO_SAY_RATE=150
 unset SAY_AUDIO_DEVICE
@@ -5724,6 +5725,34 @@ is_comment_backlog_high() {
 	[ "$value" -ge "$threshold" ]
 }
 
+_comment_should_use_claude_only() {
+	[ "${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}" = "1" ] || return 1
+
+	local state status pid
+	state=$(_read_improve_state 2>/dev/null || true)
+	[ -n "$state" ] || return 1
+	read -r status pid <<<"$(printf '%s' "$state" | python3 -c '
+import json, sys
+try:
+    data = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    data = {}
+status = str(data.get("status", "") or "")
+pid = data.get("pid", 0)
+try:
+    pid = int(pid)
+except Exception:
+    pid = 0
+print(status, pid)
+' 2>/dev/null)"
+	[ "$status" = "running" ] || return 1
+	case "$pid" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$pid" -gt 0 ] || return 1
+	kill -0 "$pid" 2>/dev/null
+}
+
 _is_recent_comment_batch_processed() {
 	local batch_hash="$1"
 	[ -n "$batch_hash" ] || return 1
@@ -6567,7 +6596,12 @@ COMMENTPROMPT
 		[ "$comment_retry_max" -lt 1 ] && comment_retry_max=1
 
 		local attempt=1 generation_ok=false
+		local comment_claude_only=false
 		local comments_talk="" comment_model_used=""
+		if _comment_should_use_claude_only; then
+			comment_claude_only=true
+			log "[COMMENT] improve実行中のため claude専用モードで生成"
+		fi
 		echo "generating:comment:$(date +%s)" > $COMMENT_GEN_STATE_FILE
 		log "[COMMENT] コメント返し生成中... (max_retry=${comment_retry_max})"
 
@@ -6589,37 +6623,49 @@ RETRYCOMMENT
 				fi
 
 				local attempt_talk="" attempt_model=""
-				attempt_talk=$(_run_opencode_comment "$RADIO_AGENT" "$prompt_for_attempt")
-				attempt_model="$RADIO_AGENT"
-			attempt_talk=$(_clean_comment_talk "$attempt_talk")
-			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-			if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-				log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → fallback (attempt ${attempt}/${comment_retry_max})"
-				attempt_talk=""
-				attempt_model=""
-				fi
-				if [ -z "$attempt_talk" ]; then
-					attempt_talk=$(_run_opencode_comment "$RADIO_FALLBACK" "$prompt_for_attempt")
-					attempt_model="$RADIO_FALLBACK"
-				attempt_talk=$(_clean_comment_talk "$attempt_talk")
-				attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-				if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-					log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
-					attempt_talk=""
-					attempt_model=""
-				fi
-				fi
-				if [ -z "$attempt_talk" ]; then
+				if [ "$comment_claude_only" = "true" ]; then
 					attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
 					attempt_model="claude:${RADIO_CLAUDE_MODEL}"
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
 					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-				if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-					log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
-					attempt_talk=""
-					attempt_model=""
+					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+						log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
+						attempt_talk=""
+						attempt_model=""
+					fi
+				else
+					attempt_talk=$(_run_opencode_comment "$RADIO_AGENT" "$prompt_for_attempt")
+					attempt_model="$RADIO_AGENT"
+					attempt_talk=$(_clean_comment_talk "$attempt_talk")
+					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+						log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → fallback (attempt ${attempt}/${comment_retry_max})"
+						attempt_talk=""
+						attempt_model=""
+					fi
+					if [ -z "$attempt_talk" ]; then
+						attempt_talk=$(_run_opencode_comment "$RADIO_FALLBACK" "$prompt_for_attempt")
+						attempt_model="$RADIO_FALLBACK"
+						attempt_talk=$(_clean_comment_talk "$attempt_talk")
+						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+							log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
+							attempt_talk=""
+							attempt_model=""
+						fi
+					fi
+					if [ -z "$attempt_talk" ]; then
+						attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
+						attempt_model="claude:${RADIO_CLAUDE_MODEL}"
+						attempt_talk=$(_clean_comment_talk "$attempt_talk")
+						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+							log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
+							attempt_talk=""
+							attempt_model=""
+						fi
+					fi
 				fi
-			fi
 			if [ "$prompt_for_attempt" != "$comment_prompt_file" ]; then
 				rm -f "$prompt_for_attempt"
 			fi
