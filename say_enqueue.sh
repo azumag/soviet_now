@@ -149,6 +149,23 @@ _clear_current_source_if_owner() {
     rm -f "$CURRENT_SOURCE_FILE" 2>/dev/null || true
 }
 
+_radio_should_yield_to_comment() {
+    case "${SOURCE_LABEL:-}" in
+    radio|radio:*)
+        case "${SOURCE_LABEL:-}" in
+        radio:celebration|radio:russia)
+            return 1
+            ;;
+        esac
+        ;;
+    *)
+        return 1
+        ;;
+    esac
+
+    ls tmp/.comment_queue/comment_*.txt tmp/.comment_queue/comment_*.playing >/dev/null 2>&1
+}
+
 # mkdirロック: アトミックな排他制御（macOS互換）
 _acquire_lock() {
     while ! mkdir "$LOCK_DIR" 2>/dev/null; do
@@ -415,14 +432,29 @@ _play_with_retry() {
     done
 }
 
+_wait_for_turn() {
+    local yield_count=0
+    while true; do
+        _acquire_lock
+        lock_ret=$?
+        if [ "$lock_ret" -ne 0 ]; then
+            _log "ロック取得失敗 → 諦め"
+            exit 0
+        fi
+        _set_current_source "waiting"
+        if _radio_should_yield_to_comment; then
+            yield_count=$((yield_count + 1))
+            _log "comment backlog を優先するため radio が順番を譲る (${yield_count})"
+            _release_lock
+            sleep 1
+            continue
+        fi
+        break
+    done
+}
+
 # --- mkdirロックで排他制御 ---
-_acquire_lock
-lock_ret=$?
-if [ "$lock_ret" -ne 0 ]; then
-    _log "ロック取得失敗 → 諦め"
-    exit 0
-fi
-_set_current_source "waiting"
+_wait_for_turn
 
 # --- ロック内: 前のsayが残っていたら待つ ---
 if [ -f "$PID_FILE" ]; then
