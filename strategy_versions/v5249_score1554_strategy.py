@@ -7,13 +7,14 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (6 evaluation axes):
+Decision Logic (8 evaluation axes):
    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
    2. Height penalty - Penalty for high landing position (varies by phase)
    3. Drift penalty - Penalty for post-landing drift due to polygon shape
    4. Left-right balance correction - Bonus for correcting piece count bias
-   5. nextNext centering - Center for next merge opportunity if nextNext same type
-   6. Chain merge bonus - Evaluate possibility of further merges after merge
+    5. nextNext centering - Center for next merge opportunity if nextNext same type
+    5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches (NEW: nextNext utilization)
+    6. Chain merge bonus - Evaluate possibility of further merges after merge
    7. Reactive pairs bonus - Bonus for multiple merge opportunities (NEW: reactor info utilization)
    8. Early game merge priority - Strong bonus for merge opportunities in early game
 
@@ -34,7 +35,25 @@ Phases (determined by board max Y):
 # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
-# [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
+# [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
+#
+# v203: nextNextブロック回避評価軸追加 - 2手先併合機会最大化
+# advice.mdで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
+# batch_summaryでHEIGHT_CONTROLが25.7%選択(avg_score_delta=2.2)と過剰、NEAR_MERGE系が3.1-5.4%選択(avg_score_delta=28-57)と低価値かつ低選択率。
+# v201 rollback教訓: シンプルなマージ重視戦略を維持し、即時併合機会の取りこぼしを削減する構造的改善が必要。
+# 未活用情報のnextNextを活用し、nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置ではペナルティ(-400.0)を与える。
+# これにより「A上にBを置くとnextNextのAの併合機会を潰す」問題を回避し、2手先の併合可能性を最大化。
+# 構造的変更（新規評価軸axis 5.5追加）であり、数値微調整ではない。
+# refs: advice.md (Pitman_live, azumag), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
+#
+# v202: reactive pairsボーナス強化版 - 即時併合機会の取りこぼし削減
+# batch_summaryでNEAR_MERGE系reasonsがavg_score_delta=28-57（高価値）だが選択率が3.8-9.2%と低いことを確認。
+# ワーストゲーム終盤（score932）ではreactive_pairs=4.5あるにもかかわらず即時併合優先が弱く、HEIGHT_CONTROL選択で下振れ。
+# ベストゲーム（score3037）はreactive_pairsが少ないが即時併合機会を確実に捉えてスコア稼ぎ。
+# v201 rollback教訓: 危険的ピース排出・複雑な危険局面判定はp25悪化の原因。
+# シンプルなマージ重視戦略を維持しつつ、reactive_pairsが豊富な状況で即時併合を強力に優先。
+# reactive_pairs >= 2 でのボーナスを 500.0 → 800.0 に強化し、即時併合機会の取りこぼし削減で下振れ耐性向上。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_201117_score0932.jsonl turns 56-63, game_history/20260313_200849_score3037.jsonl turns 142-149
 #
 # v189: シンプル化・初期マージ重視版
 # batch_summaryでHEIGHT_CONTROLが28.7%選択(avg_score_delta=1.8)と依然として過剰であることを確認。
@@ -60,15 +79,13 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v198: LOW phase height penalty further reduction for proactive merge opportunities
+    """v203: nextNextブロック回避評価軸追加 - 2手先併合機会最大化
 
-    batch_summary shows HEIGHT_CONTROL is over-selected (23.8%, avg_score_delta=1.2) while NEAR_MERGE has low selection (3.8-9.2%) but high value (avg_score_delta=28-57).
-    Worst game (score802) shows initial 4 turns all HEIGHT_CONTROL, missing merge opportunities.
-    Best game (score3241) shows proactive NEAR_MERGE from early turns.
-    The LOW phase height penalty (height_mult=0.6) is still too restrictive for early-game merge opportunity creation.
-    Reduce LOW phase height_mult from 0.6 to 0.4 (33% reduction) to allow more flexible early placement,
-    enabling proactive merge opportunity creation while reducing HEIGHT_CONTROL over-selection.
-    This addresses the root cause: early-game passive HEIGHT_CONTROL selection instead of proactive merge building.
+    advice.mdで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
+    batch_summaryでHEIGHT_CONTROLが25.7%選択(avg_score_delta=2.2)と過剰、NEAR_MERGE系が3.1-5.4%選択(avg_score_delta=28-57)と低価値かつ低選択率。
+    v201 rollback教訓: シンプルなマージ重視戦略を維持し、即時併合機会の取りこぼしを削減する構造的改善が必要。
+    未活用情報のnextNextを活用し、nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置ではペナルティ(-400.0)を与える。
+    これにより「A上にBを置くとnextNextのAの併合機会を潰す」問題を回避し、2手先の併合可能性を最大化。
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -205,8 +222,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
-
-        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版) -----
+ 
+        # ----- evaluation axis 5.5: avoid blocking nextNext merge (NEW: nextNext info utilization) -----
+        # batch_summary/adviceで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
+        # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
+        # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
+        # refs: advice.md (Pitman_live, azumag), batch_summary.txt
+        for p in pieces:
+            if p.get("type") == next_next_type:
+                piece_y = p.get("y", -10)
+                landing_y = result.get("landing_y", 0)
+                if landing_y > piece_y:
+                    # 着地位置がnextNext typeのピースの上になる場合
+                    horiz_dist = abs(x - p["x"])
+                    if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
+                        score -= 400.0  # 未来の併合機会を潰すためのペナルティ
+                        reasons.append("AVOID_BLOCK_NEXTNEXT")
+                        break
+ 
+         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版) -----
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。
@@ -276,13 +310,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization) -----
-        # batch_summaryでHEIGHT_CONTROLが24.8%選択(avg_score_delta=1.7)と過剰であることを確認。
-        # reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を追加。
+        # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization, enhanced) -----
+        # batch_summaryでHEIGHT_CONTROLが23.8%選択(avg_score_delta=1.2)と過剰であることを確認。
+        # NEAR_MERGE系reasonsがavg_score_delta=28-57（高価値）だが選択率が3.8-9.2%と低いことを確認。
+        # ワーストゲーム終盤（score932）ではreactive_pairs=4.5あるにもかかわらず即時併合優先が弱く、HEIGHT_CONTROL選択で下振れ。
+        # ベストゲーム（score3037）はreactive_pairsが少ないが即時併合機会を確実に捉えてスコア稼ぎ。
+        # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルなマージ重視戦略を維持。
+        # reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を強化。
+        # reactive_pairsが豊富な状況で即時併合を強力に優先することで、即時併合機会の取りこぼし削減。
         # これにより、盤面に多数の併合機会がある状況でHEIGHT_CONTROL選択を抑制し、スコア安定性を向上させる。
         if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
-            # 2つ以上の反応可能ペアがある場合、マージ優先ボーナス
-            score += 500.0
+            # 2つ以上の反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
+            score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
         # ----- update best candidate -----
