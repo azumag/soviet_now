@@ -37,6 +37,8 @@ EDGE_PRIORITY = {
     "git": 30,
     "pending": 40,
 }
+OVERVIEW_NODE_LIMIT = 60
+DETAIL_CHUNK_NODE_LIMIT = 80
 
 
 def load_json(path: Path) -> dict:
@@ -353,9 +355,44 @@ def node_class(node: Node) -> str:
     return "plain"
 
 
+def render_mermaid_block(nodes: list[Node], edges: list[Edge]) -> list[str]:
+    lines: list[str] = []
+    lines.append("```mermaid")
+    lines.append("flowchart TD")
+    for node in nodes:
+        lines.append(f'    h_{node.hash_value}["{node_label(node)}"]')
+    lines.append("")
+    for edge in edges:
+        if edge.kind == "rollback":
+            lines.append(f"    h_{edge.src} -. rollback .-> h_{edge.dst}")
+        else:
+            lines.append(f"    h_{edge.src} -->|improve| h_{edge.dst}")
+    lines.append("")
+    lines.append("    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;")
+    lines.append("    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;")
+    lines.append("    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;")
+    lines.append("    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;")
+    lines.append("")
+    for node in nodes:
+        lines.append(f"    class h_{node.hash_value} {node_class(node)};")
+    lines.append("```")
+    return lines
+
+
+def chunk_nodes(ordered_nodes: list[Node], chunk_size: int) -> list[list[Node]]:
+    return [ordered_nodes[i : i + chunk_size] for i in range(0, len(ordered_nodes), chunk_size)]
+
+
+def edge_text(edge: Edge) -> str:
+    if edge.kind == "rollback":
+        return f"{edge.src} -.rollback.-> {edge.dst}"
+    return f"{edge.src} --improve--> {edge.dst}"
+
+
 def render_markdown(builder: GraphBuilder, current_hash: str, anchor_hash: str) -> str:
     ordered_nodes = sorted(builder.nodes.values(), key=lambda n: (n.first_order, n.hash_value))
     ordered_edges = sorted(builder.edges.values(), key=lambda e: (e.order, e.src, e.dst))
+    node_lookup = {node.hash_value: node for node in ordered_nodes}
     now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
     lines: list[str] = []
@@ -369,27 +406,48 @@ def render_markdown(builder: GraphBuilder, current_hash: str, anchor_hash: str) 
     lines.append("- Solid edge: mutation/improvement")
     lines.append("- Dashed edge: rollback")
     lines.append("- Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.")
+    lines.append("- GitHub Mermaid size limit is avoided by splitting the full history into multiple smaller diagrams.")
     lines.append("")
-    lines.append("```mermaid")
-    lines.append("flowchart TD")
+
+    overview_hashes = {node.hash_value for node in ordered_nodes[-OVERVIEW_NODE_LIMIT:]}
     for node in ordered_nodes:
-        lines.append(f'    h_{node.hash_value}["{node_label(node)}"]')
+        if node.tags:
+            overview_hashes.add(node.hash_value)
+    overview_nodes = [node_lookup[h] for h in overview_hashes if h in node_lookup]
+    overview_nodes.sort(key=lambda n: (n.first_order, n.hash_value))
+    overview_edges = [edge for edge in ordered_edges if edge.src in overview_hashes and edge.dst in overview_hashes]
+
+    lines.append("## Overview")
     lines.append("")
-    for edge in ordered_edges:
-        if edge.kind == "rollback":
-            lines.append(f"    h_{edge.src} -. rollback .-> h_{edge.dst}")
-        else:
-            lines.append(f"    h_{edge.src} -->|improve| h_{edge.dst}")
+    lines.append(f"- Contains tagged nodes and the latest `{min(OVERVIEW_NODE_LIMIT, len(ordered_nodes))}` nodes.")
+    lines.extend(render_mermaid_block(overview_nodes, overview_edges))
     lines.append("")
-    lines.append("    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;")
-    lines.append("    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;")
-    lines.append("    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;")
-    lines.append("    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;")
-    lines.append("")
-    for node in ordered_nodes:
-        lines.append(f"    class h_{node.hash_value} {node_class(node)};")
-    lines.append("```")
-    lines.append("")
+
+    chunks = chunk_nodes(ordered_nodes, DETAIL_CHUNK_NODE_LIMIT)
+    for index, chunk in enumerate(chunks, start=1):
+        chunk_hashes = {node.hash_value for node in chunk}
+        internal_edges = [edge for edge in ordered_edges if edge.src in chunk_hashes and edge.dst in chunk_hashes]
+        boundary_edges: list[str] = []
+        for edge in ordered_edges:
+            src_in = edge.src in chunk_hashes
+            dst_in = edge.dst in chunk_hashes
+            if src_in ^ dst_in:
+                boundary_edges.append(edge_text(edge))
+
+        lines.append(f"## Detail {index}/{len(chunks)}")
+        lines.append("")
+        lines.append(f"- Range: `{chunk[0].hash_value}` .. `{chunk[-1].hash_value}`")
+        lines.append(f"- Nodes in this diagram: `{len(chunk)}`")
+        lines.append(f"- Internal edges in this diagram: `{len(internal_edges)}`")
+        if boundary_edges:
+            for item in boundary_edges[:12]:
+                lines.append(f"- Cross-chunk link: `{item}`")
+            if len(boundary_edges) > 12:
+                lines.append(f"- Cross-chunk link: `... and {len(boundary_edges) - 12} more`")
+        lines.append("")
+        lines.extend(render_mermaid_block(chunk, internal_edges))
+        lines.append("")
+
     return "\n".join(lines)
 
 
