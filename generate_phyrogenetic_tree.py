@@ -276,9 +276,10 @@ def collect_graph(pending_edges: list[tuple[str, str, str]]) -> tuple[GraphBuild
         seen_hashes.add(hash_value)
         prev_hash = hash_value
 
-    current_hash = compute_hash_from_file(STRATEGY_FILE)
+    working_tree_hash = compute_hash_from_file(STRATEGY_FILE)
     current_run = load_json(CURRENT_STRATEGY_RUN_FILE)
     current_run_hash = str(current_run.get("hash", "") or "")
+    current_hash = working_tree_hash if pending_edges else (current_run_hash or working_tree_hash)
     if current_run_hash:
         node = builder.ensure_node(current_run_hash, source="state", order=3_000_000)
         scores = [int(x) for x in current_run.get("scores", []) if isinstance(x, int) or str(x).isdigit()]

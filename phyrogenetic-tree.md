@@ -1,8 +1,8 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-13 09:43:33 JST`
+- Updated: `2026-03-13 09:44:58 JST`
 - Nodes: `485`
-- Edges: `669`
+- Edges: `670`
 - Current: `51d6d7502cab`
 - Anchor: `633b07c78b7c`
 - Solid edge: mutation/improvement
@@ -492,10 +492,10 @@ flowchart TD
     h_3ef39a374acf["3ef39a374acf<br/>g=13 n=13<br/>comp=1080.0"]
     h_e2a889360de0["e2a889360de0<br/>g=26 n=20<br/>comp=1082.0"]
     h_6d9586d182e0["6d9586d182e0<br/>g=14 n=14<br/>comp=853.7"]
-    h_8c79ef457733["8c79ef457733<br/>g=13 n=13<br/>comp=1316.2"]
+    h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
+    h_51d6d7502cab["51d6d7502cab<br/>CURRENT<br/>g=0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_51d6d7502cab["51d6d7502cab<br/>CURRENT"]
 
     h_b0936e9e200b -->|improve| h_e4bc59608c67
     h_e4bc59608c67 -->|improve| h_2d1f9a38d00e
@@ -1163,6 +1163,7 @@ flowchart TD
     h_3ef39a374acf -->|improve| h_e2a889360de0
     h_e2a889360de0 -->|improve| h_6d9586d182e0
     h_6d9586d182e0 -->|improve| h_8c79ef457733
+    h_8c79ef457733 -->|improve| h_51d6d7502cab
     h_80cc6a42986e -->|improve| h_389b56537573
     h_389b56537573 -->|improve| h_3d3038a910f5
     h_1b7384c61008 -->|improve| h_a3aae72a4e37
@@ -1654,7 +1655,7 @@ flowchart TD
     class h_e2a889360de0 plain;
     class h_6d9586d182e0 plain;
     class h_8c79ef457733 plain;
+    class h_51d6d7502cab current;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_51d6d7502cab current;
 ```
