@@ -27,6 +27,7 @@ REGRESSION_P25_RATIO=${REGRESSION_P25_RATIO:-0.80}
 REGRESSION_MIN_COMP_GAP=${REGRESSION_MIN_COMP_GAP:-120}
 REGRESSION_MIN_P50_GAP=${REGRESSION_MIN_P50_GAP:-100}
 REGRESSION_MIN_P25_GAP=${REGRESSION_MIN_P25_GAP:-180}
+REGRESSION_MIN_BREACH_COUNT=${REGRESSION_MIN_BREACH_COUNT:-2}
 RADIO_STATE_STALE_SEC=${RADIO_STATE_STALE_SEC:-600}
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
@@ -383,6 +384,10 @@ except Exception:
 min_games_candidates = int(${MIN_GAMES_FOR_BEST_ROLLBACK})
 min_games_current = int(${MIN_GAMES_BEFORE_REGRESSION})
 max_rank = int(${REGRESSION_MAX_RANK})
+min_comp_gap = float(${REGRESSION_MIN_COMP_GAP})
+min_p50_gap = float(${REGRESSION_MIN_P50_GAP})
+min_p25_gap = float(${REGRESSION_MIN_P25_GAP})
+min_breach_count = int(${REGRESSION_MIN_BREACH_COUNT})
 archive_dir = "strategy_versions/by_hash"
 keep_top = int(${HASH_ARCHIVE_KEEP_TOP:-50})
 score_history_file = "score_history.txt"
@@ -488,8 +493,19 @@ if h:
                 print("regression_state=safe")
                 print("regression_detail=" + shlex.quote(detail))
             else:
-                detail = "YES rank=" + str(current_rank) + f"/{max_rank} cutoff={ch[:8]} n={int(n)}"
-                print("regression_state=trigger")
+                comp_gap = max(0.0, cc - comp)
+                p50_gap = max(0.0, cp50 - p50)
+                p25_gap = max(0.0, cp25 - p25)
+                breach_count = sum(
+                    [
+                        1 if comp_gap >= min_comp_gap else 0,
+                        1 if p50_gap >= min_p50_gap else 0,
+                        1 if p25_gap >= min_p25_gap else 0,
+                    ]
+                )
+                gap_text = f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))} br={breach_count}/{min_breach_count}"
+                detail = ("YES" if breach_count >= min_breach_count else "NO") + " rank=" + str(current_rank) + f"/{max_rank} cutoff={ch[:8]}{gap_text} n={int(n)}"
+                print("regression_state=" + ("trigger" if breach_count >= min_breach_count else "safe"))
                 print("regression_detail=" + shlex.quote(detail))
         else:
             print("regression_state=safe")

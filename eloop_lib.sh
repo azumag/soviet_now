@@ -107,6 +107,7 @@ REGRESSION_P25_RATIO=0.80
 REGRESSION_MIN_COMP_GAP="${REGRESSION_MIN_COMP_GAP:-120}"
 REGRESSION_MIN_P50_GAP="${REGRESSION_MIN_P50_GAP:-100}"
 REGRESSION_MIN_P25_GAP="${REGRESSION_MIN_P25_GAP:-180}"
+REGRESSION_MIN_BREACH_COUNT="${REGRESSION_MIN_BREACH_COUNT:-2}"
 REGRESSION_TREND_SHORT_WINDOW=50
 REGRESSION_TREND_LONG_WINDOW=100
 REGRESSION_TREND_SHORT_RATIO=0.94
@@ -3935,6 +3936,11 @@ if reg:
     )
     if reg.get("current_rank") and reg.get("max_rank"):
         lines.append(f"- current_rank: {reg.get('current_rank')} / {reg.get('max_rank')}")
+    if reg.get("comp_gap") or reg.get("p50_gap") or reg.get("p25_gap"):
+        lines.append(
+            f"- cutoff_gap: comp={reg.get('comp_gap', 'n/a')} p50={reg.get('p50_gap', 'n/a')} "
+            f"p25={reg.get('p25_gap', 'n/a')} breaches={reg.get('breach_count', 'n/a')}/{reg.get('min_breach_count', 'n/a')}"
+        )
 lines.append("")
 lines.append("## Defeat Delta")
 if current_metrics and rollback_metrics:
@@ -7385,7 +7391,8 @@ PY
 }
 
 check_regression() {
-	# 新戦略が十分試行数に達した後、成熟ランキングで上位圏から外れていればリグレッション
+	# 新戦略が十分試行数に達した後、成熟ランキングで上位圏から外れ、
+	# かつ rank cutoff から十分に乖離していればリグレッション。
 	# 判定対象は current strategy を含む成熟ランキングで、上位 REGRESSION_MAX_RANK 位までは維持する。
 	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
 	REGRESSION_ROLLBACK_DONE=0
@@ -7394,7 +7401,7 @@ check_regression() {
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$REGRESSION_MAX_RANK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$STRATEGY_HASH_ARCHIVE_DIR" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$REGRESSION_MAX_RANK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$STRATEGY_HASH_ARCHIVE_DIR" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$REGRESSION_MIN_BREACH_COUNT" <<'PY'
 import json
 import math
 import os
@@ -7411,6 +7418,10 @@ w_p50 = float(sys.argv[8])
 w_p25 = float(sys.argv[9])
 w_lcb = float(sys.argv[10])
 archive_dir = sys.argv[11]
+min_comp_gap = float(sys.argv[12])
+min_p50_gap = float(sys.argv[13])
+min_p25_gap = float(sys.argv[14])
+min_breach_count = int(sys.argv[15])
 
 if not os.path.exists(rs_file):
     print("OK")
@@ -7499,16 +7510,32 @@ if current_rank is None or current_rank <= max_rank:
     raise SystemExit
 
 cutoff_comp, cutoff_p50, cutoff_p25, cutoff_n, cutoff_hash, cutoff = rows[max_rank - 1]
+comp_gap = cutoff_comp - current["composite"]
+p50_gap = cutoff["p50"] - current["p50"]
+p25_gap = cutoff["p25"] - current["p25"]
+reasons = [f"rank{max_rank}"]
+if comp_gap >= min_comp_gap:
+    reasons.append("comp")
+if p50_gap >= min_p50_gap:
+    reasons.append("p50")
+if p25_gap >= min_p25_gap:
+    reasons.append("p25")
+breach_count = len(reasons) - 1
+if breach_count < min_breach_count:
+    print("OK")
+    raise SystemExit
 print(
     "REGRESSION:"
     f"current_rank={current_rank},max_rank={max_rank},ranked_total={len(rows)},"
     f"cutoff_hash={cutoff_hash},cutoff_comp={cutoff_comp:.1f},curr_comp={current['composite']:.1f},"
     f"cutoff_p50={cutoff['p50']:.1f},curr_p50={current['p50']:.1f},"
     f"cutoff_p25={cutoff['p25']:.1f},curr_p25={current['p25']:.1f},"
+    f"comp_gap={comp_gap:.1f},p50_gap={p50_gap:.1f},p25_gap={p25_gap:.1f},"
+    f"breach_count={breach_count},min_breach_count={min_breach_count},"
     f"cutoff_n={cutoff_n},curr_n={current['n']},"
     f"best_hash={cutoff_hash},best_source=rank_cutoff,best_comp={cutoff_comp:.1f},"
     f"best_p50={cutoff['p50']:.1f},best_p25={cutoff['p25']:.1f},best_n={cutoff_n},"
-    f"reasons=rank{max_rank}"
+    f"reasons={'+'.join(reasons)}"
 )
 PY
 	2>/dev/null)

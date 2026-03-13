@@ -29,6 +29,7 @@ REGRESSION_P25_RATIO = 0.80
 REGRESSION_MIN_COMP_GAP = float(os.getenv("REGRESSION_MIN_COMP_GAP", "120"))
 REGRESSION_MIN_P50_GAP = float(os.getenv("REGRESSION_MIN_P50_GAP", "100"))
 REGRESSION_MIN_P25_GAP = float(os.getenv("REGRESSION_MIN_P25_GAP", "180"))
+REGRESSION_MIN_BREACH_COUNT = int(os.getenv("REGRESSION_MIN_BREACH_COUNT", "2"))
 REGRESSION_TREND_SHORT_WINDOW = 50
 REGRESSION_TREND_LONG_WINDOW = 100
 REGRESSION_TREND_SHORT_RATIO = 0.94
@@ -506,9 +507,28 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
     cutoff_hash = cutoff["hash"][:8]
 
     if current_rank is not None and len(ranked) > REGRESSION_MAX_RANK and current_rank > REGRESSION_MAX_RANK:
+        comp_gap = max(0.0, cutoff["comp"] - current["comp"])
+        p50_gap = max(0.0, cutoff["p50"] - current["p50"])
+        p25_gap = max(0.0, cutoff["p25"] - current["p25"])
+        breach_count = sum(
+            [
+                1 if comp_gap >= REGRESSION_MIN_COMP_GAP else 0,
+                1 if p50_gap >= REGRESSION_MIN_P50_GAP else 0,
+                1 if p25_gap >= REGRESSION_MIN_P25_GAP else 0,
+            ]
+        )
+        gap_text = (
+            f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))}"
+            f" br={breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
+        )
+        if breach_count >= REGRESSION_MIN_BREACH_COUNT:
+            return {
+                "state": "trigger",
+                "text": f"RegPreview YES rank={current_rank}/{REGRESSION_MAX_RANK} cutoff={cutoff_hash}{gap_text} n={current['n']}",
+            }
         return {
-            "state": "trigger",
-            "text": f"RegPreview YES rank={current_rank}/{REGRESSION_MAX_RANK} cutoff={cutoff_hash} n={current['n']}",
+            "state": "safe",
+            "text": f"RegPreview NO rank={current_rank}/{REGRESSION_MAX_RANK} cutoff={cutoff_hash}{gap_text} n={current['n']}",
         }
     return {
         "state": "safe",
