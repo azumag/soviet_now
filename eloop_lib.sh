@@ -91,6 +91,7 @@ ROLLBACK_POSTMORTEM_CONTEXT_FILE="$TMP_STATE_DIR/last_rollback_postmortem_contex
 ROLLBACK_POSTMORTEM_PID_FILE="$TMP_STATE_DIR/rollback_postmortem.pid"
 ROLLBACK_POSTMORTEM_AI_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/rollback_postmortem_ai.log"
 BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
+ACTIVE_BRANCH_FILE="$TMP_STATE_DIR/active_branch.json"
 REGRESSION_ROLLBACK_DONE=0
 REGRESSION_ROLLBACK_HASH=""
 MIN_GAMES_BEFORE_IMPROVE=12
@@ -108,6 +109,13 @@ REGRESSION_MIN_COMP_GAP="${REGRESSION_MIN_COMP_GAP:-120}"
 REGRESSION_MIN_P50_GAP="${REGRESSION_MIN_P50_GAP:-100}"
 REGRESSION_MIN_P25_GAP="${REGRESSION_MIN_P25_GAP:-180}"
 REGRESSION_MIN_BREACH_COUNT="${REGRESSION_MIN_BREACH_COUNT:-2}"
+BRANCH_MAX_DEPTH="${BRANCH_MAX_DEPTH:-4}"
+BRANCH_MAX_GAMES="${BRANCH_MAX_GAMES:-48}"
+BRANCH_PATIENCE="${BRANCH_PATIENCE:-3}"
+BRANCH_HARD_COMP_GAP="${BRANCH_HARD_COMP_GAP:-220}"
+BRANCH_HARD_P50_GAP="${BRANCH_HARD_P50_GAP:-180}"
+BRANCH_HARD_P25_GAP="${BRANCH_HARD_P25_GAP:-260}"
+BRANCH_HARD_MIN_BREACH_COUNT="${BRANCH_HARD_MIN_BREACH_COUNT:-2}"
 REGRESSION_TREND_SHORT_WINDOW=50
 REGRESSION_TREND_LONG_WINDOW=100
 REGRESSION_TREND_SHORT_RATIO=0.94
@@ -148,7 +156,7 @@ fi
 if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
 	# state files
 	for f in improve_state.json accumulated_games.json rolling_scores.json \
-		rejected_hash_metrics.json best_strategy_anchor.json last_rollback_pair.json .russia_celebration_worker.pid \
+		rejected_hash_metrics.json best_strategy_anchor.json active_branch.json last_rollback_pair.json .russia_celebration_worker.pid \
 		.radio_state .comment_gen_state radio_talk_played .news_last_success.txt \
 		.status_fullscreen_last .news_shown_lines.txt .news_shown_mtime.txt; do
 		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_STATE_DIR/$f" 2>/dev/null
@@ -6980,6 +6988,219 @@ anchor_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8"
 PY
 }
 
+_has_active_branch() {
+	[ -f "$ACTIVE_BRANCH_FILE" ] || return 1
+	python3 - "$ACTIVE_BRANCH_FILE" <<'PY' >/dev/null 2>&1
+import json
+import os
+import sys
+
+path = sys.argv[1]
+if not os.path.exists(path):
+    raise SystemExit(1)
+try:
+    data = json.load(open(path))
+except Exception:
+    raise SystemExit(1)
+if str(data.get("head_hash", "") or ""):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+_clear_active_branch() {
+	rm -f "$ACTIVE_BRANCH_FILE" 2>/dev/null || true
+}
+
+_promote_current_strategy_to_anchor() {
+	local current_hash="$1"
+	[ -n "$current_hash" ] || return 1
+	local current_metrics=""
+	current_metrics=$(_get_current_strategy_run_metrics "$current_hash" 2>/dev/null || true)
+	[ -z "$current_metrics" ] && current_metrics=$(_get_rolling_metrics_for_hash "$current_hash" 2>/dev/null || true)
+	[ -n "$current_metrics" ] || return 1
+	python3 - "$BEST_STRATEGY_ANCHOR_FILE" "$current_hash" "$current_metrics" <<'PY' >/dev/null 2>&1
+import json
+import sys
+import time
+
+out_file, current_hash, metrics_line = sys.argv[1:4]
+parts = (metrics_line or "").split("|")
+if len(parts) < 5:
+    raise SystemExit(1)
+payload = {
+    "hash": current_hash,
+    "comp": round(float(parts[0]), 4),
+    "p50": round(float(parts[1]), 4),
+    "p25": round(float(parts[2]), 4),
+    "lcb": round(float(parts[3]), 4),
+    "n": int(float(parts[4])),
+    "updated_at": int(time.time()),
+}
+with open(out_file, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False)
+PY
+}
+
+_branch_transition_after_improve() {
+	local base_hash="$1" new_hash="$2"
+	[ -n "$new_hash" ] || return 1
+	_refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
+	python3 - "$ACTIVE_BRANCH_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$base_hash" "$new_hash" "$(date +%s)" <<'PY' 2>/dev/null
+import json
+import math
+import os
+import sys
+
+active_file, run_file, anchor_file, base_hash, new_hash, now_raw = sys.argv[1:7]
+now = int(now_raw)
+
+def load_json(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def metrics_from_run(path, target_hash):
+    run = load_json(path)
+    if str(run.get("hash", "") or "") != target_hash:
+        return None
+    scores = []
+    for x in run.get("scores", []) or []:
+        try:
+            scores.append(int(x))
+        except Exception:
+            pass
+    if not scores:
+        return None
+    xs = sorted(scores)
+    n = len(xs)
+    mean = sum(xs) / n
+    if n == 1:
+        p25 = p50 = float(xs[0])
+        std = 0.0
+    else:
+        def q(p):
+            pos = (n - 1) * p
+            lo = int(pos)
+            hi = min(lo + 1, n - 1)
+            frac = pos - lo
+            return xs[lo] * (1.0 - frac) + xs[hi] * frac
+        p25 = q(0.25)
+        p50 = q(0.50)
+        var = sum((x - mean) ** 2 for x in xs) / n
+        std = math.sqrt(var)
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
+    return {
+        "comp": round(comp, 4),
+        "p50": round(p50, 4),
+        "p25": round(p25, 4),
+        "lcb": round(lcb, 4),
+        "n": int(n),
+    }
+
+def key(metrics):
+    if not metrics:
+        return (-10**18, -10**18, -10**18, -10**18)
+    return (
+        float(metrics.get("comp", 0.0)),
+        float(metrics.get("p50", 0.0)),
+        float(metrics.get("p25", 0.0)),
+        int(metrics.get("n", 0)),
+    )
+
+active = load_json(active_file)
+anchor = load_json(anchor_file)
+base_metrics = metrics_from_run(run_file, base_hash) if base_hash else None
+
+anchor_hash = str(anchor.get("hash", "") or "")
+anchor_metrics = {
+    "comp": float(anchor.get("comp", 0.0) or 0.0),
+    "p50": float(anchor.get("p50", 0.0) or 0.0),
+    "p25": float(anchor.get("p25", 0.0) or 0.0),
+    "lcb": float(anchor.get("lcb", 0.0) or 0.0),
+    "n": int(anchor.get("n", 0) or 0),
+} if anchor_hash else {}
+if not anchor_hash and base_hash and base_metrics:
+    anchor_hash = base_hash
+    anchor_metrics = dict(base_metrics)
+
+if not anchor_hash:
+    raise SystemExit(1)
+
+existing_head = str(active.get("head_hash", "") or "")
+existing_anchor_hash = str(active.get("anchor_hash", "") or "")
+if existing_head and existing_head == base_hash and existing_anchor_hash:
+    best_hash = str(active.get("best_hash", "") or "")
+    best_metrics = active.get("best", {}) if isinstance(active.get("best"), dict) else {}
+    patience = int(active.get("patience", 0) or 0)
+    closed_games = int(active.get("closed_games", 0) or 0)
+    depth = int(active.get("depth", 0) or 0)
+    lineage = [str(x) for x in (active.get("lineage", []) or []) if str(x)]
+
+    if base_metrics:
+        closed_games += int(base_metrics.get("n", 0) or 0)
+        if key(base_metrics) > key(best_metrics):
+            best_hash = base_hash
+            best_metrics = dict(base_metrics)
+            patience = 0
+        else:
+            patience += 1
+    payload = {
+        "anchor_hash": existing_anchor_hash,
+        "anchor": active.get("anchor", anchor_metrics) if isinstance(active.get("anchor"), dict) else anchor_metrics,
+        "head_hash": new_hash,
+        "best_hash": best_hash,
+        "best": best_metrics,
+        "depth": depth + 1,
+        "closed_games": closed_games,
+        "patience": patience,
+        "lineage": (lineage + [new_hash])[-12:],
+        "started_at": int(active.get("started_at", now) or now),
+        "updated_at": now,
+    }
+    with open(active_file, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    print(
+        f"continue|anchor={existing_anchor_hash[:8]}|head={new_hash[:8]}|"
+        f"depth={payload['depth']}|closed={closed_games}|patience={patience}|best={(best_hash[:8] if best_hash else '-')}"
+    )
+    raise SystemExit(0)
+
+payload = {
+    "anchor_hash": anchor_hash,
+    "anchor": anchor_metrics,
+    "head_hash": new_hash,
+    "best_hash": "",
+    "best": {},
+    "depth": 1,
+    "closed_games": 0,
+    "patience": 0,
+    "lineage": [new_hash],
+    "started_at": now,
+    "updated_at": now,
+}
+if base_hash and base_hash != anchor_hash and base_metrics:
+    payload["best_hash"] = base_hash
+    payload["best"] = dict(base_metrics)
+    payload["closed_games"] = int(base_metrics.get("n", 0) or 0)
+    payload["depth"] = 2
+    payload["lineage"] = [base_hash, new_hash]
+
+with open(active_file, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False)
+print(
+    f"start|anchor={anchor_hash[:8]}|head={new_hash[:8]}|depth={payload['depth']}|"
+    f"closed={payload['closed_games']}|patience={payload['patience']}|best={(payload['best_hash'][:8] if payload['best_hash'] else '-')}"
+)
+PY
+}
+
 _is_recently_rejected_for_rollback() {
 	local h="$1"
 	[ -n "$h" ] || return 1
@@ -8105,6 +8326,10 @@ record_completed_game_for_adaptive_improvement() {
 			_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
 		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash"
+	fi
+
+	if ! _has_active_branch; then
+		_refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
 	fi
 }
 
