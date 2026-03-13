@@ -180,6 +180,32 @@ def trigger_russia_celebration_now(score, turn):
         return False
 
 
+def trigger_soviet_clip_now(score, turn):
+    """ソ連建国クリップを検知直後に別プロセスで発火する。"""
+    try:
+        with open("game_count.txt") as f:
+            game_num = int((f.read() or "0").strip() or "0") + 1
+    except Exception:
+        game_num = 0
+
+    cmd = (
+        "cd . && "
+        "source ./eloop_lib.sh && "
+        f"_create_twitch_clip '☭ ソ連建国! score={score} (Game #{game_num})' '{game_num}'"
+    )
+    try:
+        subprocess.Popen(
+            ["/bin/bash", "-lc", cmd],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except Exception as e:
+        log(f"WARNING: failed to trigger soviet clip: {e}")
+        return False
+
+
 def build_analysis(game_state):
     """analyze_board の関数を呼んで analysis dict を構築"""
     try:
@@ -402,6 +428,7 @@ def run_game():
                 if gs.get("makeSorenCount", 0) > 0:
                     soviet_created = True
                     log(f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} makeSorenCount={gs.get('makeSorenCount', 0)}")
+                    trigger_soviet_clip_now(score, turn)
                     # フラグファイル作成（eloop.shが参照）
                     os.makedirs("tmp/markers", exist_ok=True)
                     with open("tmp/markers/.soviet_created", "w") as flag_f:
