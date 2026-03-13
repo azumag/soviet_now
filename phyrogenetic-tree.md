@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-13 12:08:35 JST`
-- Nodes: `488`
-- Edges: `673`
-- Current: `f93db007ea2d`
+- Updated: `2026-03-13 12:53:25 JST`
+- Nodes: `489`
+- Edges: `674`
+- Current: `8cecce8bb7c6`
 - Anchor: `633b07c78b7c`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_633b07c78b7c["633b07c78b7c<br/>ANCHOR<br/>g=65 n=20<br/>comp=1004.1"]
-    h_b2850c039a20["b2850c039a20<br/>g=3 n=3<br/>comp=1474.9"]
     h_02de1e28ed25["02de1e28ed25<br/>g=19 n=19<br/>comp=1114.0"]
     h_083cba953593["083cba953593<br/>g=22 n=20<br/>comp=999.2"]
     h_ecd51266b7af["ecd51266b7af<br/>g=30 n=20<br/>comp=1186.5"]
@@ -72,12 +71,12 @@ flowchart TD
     h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
     h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=1045.9"]
     h_8783d96fea8f["8783d96fea8f<br/>g=14 n=14<br/>comp=1270.3"]
-    h_e4a3ff55afbf["e4a3ff55afbf<br/>g=19 n=19<br/>comp=884.2"]
+    h_e4a3ff55afbf["e4a3ff55afbf<br/>g=20 n=20<br/>comp=912.4"]
+    h_f93db007ea2d["f93db007ea2d<br/>g=14 n=14<br/>comp=1128.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_f93db007ea2d["f93db007ea2d<br/>CURRENT"]
+    h_8cecce8bb7c6["8cecce8bb7c6<br/>CURRENT"]
 
-    h_b2850c039a20 -->|improve| h_02de1e28ed25
     h_02de1e28ed25 -->|improve| h_083cba953593
     h_083cba953593 -->|improve| h_ecd51266b7af
     h_ecd51266b7af -->|improve| h_cf5abc62bca8
@@ -167,6 +166,7 @@ flowchart TD
     h_51d6d7502cab -->|improve| h_8783d96fea8f
     h_8783d96fea8f -->|improve| h_e4a3ff55afbf
     h_e4a3ff55afbf -->|improve| h_f93db007ea2d
+    h_f93db007ea2d -->|improve| h_8cecce8bb7c6
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -174,7 +174,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_633b07c78b7c anchor;
-    class h_b2850c039a20 plain;
     class h_02de1e28ed25 plain;
     class h_083cba953593 plain;
     class h_ecd51266b7af plain;
@@ -231,9 +230,10 @@ flowchart TD
     class h_51d6d7502cab plain;
     class h_8783d96fea8f plain;
     class h_e4a3ff55afbf plain;
+    class h_f93db007ea2d plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_f93db007ea2d current;
+    class h_8cecce8bb7c6 current;
 ```
 
 ## Detail 1/7
@@ -1931,9 +1931,9 @@ flowchart TD
 
 ## Detail 7/7
 
-- Range: `6d9586d182e0` .. `f93db007ea2d`
-- Nodes in this diagram: `8`
-- Internal edges in this diagram: `5`
+- Range: `6d9586d182e0` .. `8cecce8bb7c6`
+- Nodes in this diagram: `9`
+- Internal edges in this diagram: `6`
 - Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -1945,16 +1945,18 @@ flowchart TD
     h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
     h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=1045.9"]
     h_8783d96fea8f["8783d96fea8f<br/>g=14 n=14<br/>comp=1270.3"]
-    h_e4a3ff55afbf["e4a3ff55afbf<br/>g=19 n=19<br/>comp=884.2"]
+    h_e4a3ff55afbf["e4a3ff55afbf<br/>g=20 n=20<br/>comp=912.4"]
+    h_f93db007ea2d["f93db007ea2d<br/>g=14 n=14<br/>comp=1128.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_f93db007ea2d["f93db007ea2d<br/>CURRENT"]
+    h_8cecce8bb7c6["8cecce8bb7c6<br/>CURRENT"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
     h_51d6d7502cab -->|improve| h_8783d96fea8f
     h_8783d96fea8f -->|improve| h_e4a3ff55afbf
     h_e4a3ff55afbf -->|improve| h_f93db007ea2d
+    h_f93db007ea2d -->|improve| h_8cecce8bb7c6
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -1966,12 +1968,23 @@ flowchart TD
     class h_51d6d7502cab plain;
     class h_8783d96fea8f plain;
     class h_e4a3ff55afbf plain;
+    class h_f93db007ea2d plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_f93db007ea2d current;
+    class h_8cecce8bb7c6 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#5098 `f93db007 -> 8cecce8b`
+
+- scores: `898 1447 1325 1213 1705 1743 953 819 1078 1290 873 1517`
+- else:
+- 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題への対処
+- 併合候補がない場合、typeA上へのnextBの配置を回避し、nextNext(typeA)と同じ近くに置くことを優先
+- Check if we are blocking nextNext merge
+- Find all pieces on board with type == nextNext_type (A)
+- If current drop (type next) is dropped on top of type A, it blocks A from merging with nextNext A
 
 ### Improve Game#5078 `e4a3ff55 -> f93db007`
 
