@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """status_dashboard.py — CUI Graphical Statistics Dashboard for Soren AI
 
-Renders 6 panels: Header, Score Timeline (braille), Score Distribution,
-Strategy Comparison, Branch Rollback View, Decision Patterns.
+Renders 5 panels: Header, Score Timeline (braille), Score Distribution,
+Strategy Comparison, Branch Rollback View.
+Decision Patterns logic remains available but is hidden from the dashboard layout.
 """
 
 import json
@@ -1371,9 +1372,6 @@ def main():
     output.append("")
     output += render_branch_overview(rolling, strat_hash)
     output.append("")
-    output += render_decision_patterns(reasons)
-    output.append("")
-
     print("\n".join(output))
 
 
