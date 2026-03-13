@@ -1,6 +1,6 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-13 11:09:29 JST`
+- Updated: `2026-03-13 11:20:09 JST`
 - Nodes: `487`
 - Edges: `672`
 - Current: `e4a3ff55afbf`
@@ -72,10 +72,10 @@ flowchart TD
     h_6d9586d182e0["6d9586d182e0<br/>g=14 n=14<br/>comp=853.7"]
     h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
     h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=1045.9"]
-    h_8783d96fea8f["8783d96fea8f<br/>g=13 n=13<br/>comp=1248.2"]
+    h_8783d96fea8f["8783d96fea8f<br/>g=14 n=14<br/>comp=1270.3"]
+    h_e4a3ff55afbf["e4a3ff55afbf<br/>CURRENT<br/>g=3 n=3<br/>comp=787.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_e4a3ff55afbf["e4a3ff55afbf<br/>CURRENT"]
 
     h_901c41c4e1ed -->|improve| h_b2850c039a20
     h_b2850c039a20 -->|improve| h_02de1e28ed25
@@ -231,9 +231,9 @@ flowchart TD
     class h_8c79ef457733 plain;
     class h_51d6d7502cab plain;
     class h_8783d96fea8f plain;
+    class h_e4a3ff55afbf current;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_e4a3ff55afbf current;
 ```
 
 ## Detail 1/7
@@ -1931,7 +1931,7 @@ flowchart TD
 
 ## Detail 7/7
 
-- Range: `6d9586d182e0` .. `e4a3ff55afbf`
+- Range: `6d9586d182e0` .. `a3aae72a4e37`
 - Nodes in this diagram: `7`
 - Internal edges in this diagram: `4`
 - Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
@@ -1944,10 +1944,10 @@ flowchart TD
     h_6d9586d182e0["6d9586d182e0<br/>g=14 n=14<br/>comp=853.7"]
     h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
     h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=1045.9"]
-    h_8783d96fea8f["8783d96fea8f<br/>g=13 n=13<br/>comp=1248.2"]
+    h_8783d96fea8f["8783d96fea8f<br/>g=14 n=14<br/>comp=1270.3"]
+    h_e4a3ff55afbf["e4a3ff55afbf<br/>CURRENT<br/>g=3 n=3<br/>comp=787.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_e4a3ff55afbf["e4a3ff55afbf<br/>CURRENT"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
@@ -1963,7 +1963,11 @@ flowchart TD
     class h_8c79ef457733 plain;
     class h_51d6d7502cab plain;
     class h_8783d96fea8f plain;
+    class h_e4a3ff55afbf current;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_e4a3ff55afbf current;
 ```
+
+## Transition Notes
+
+- Structured improve/rollback notes will appear here after future transitions are recorded.
