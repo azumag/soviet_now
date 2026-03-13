@@ -7,29 +7,37 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-         Decision Logic (12 evaluation axes):
-          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-          1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
-          1.6. Dangerous situation nextNext enhancement - Bonus when nextNext matches merged type in dangerous situations
-          1.7. Deadline margin based merge priority - In dangerous situations, prioritize merge more aggressively when deadline_margin is small
-          2. Height penalty - Penalty for high landing position (varies by phase)
-          2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
-           2.6. Dangerous situation danger piece ejection (v197: CORRECTED) - In dangerous situations without immediate merge, eject danger pieces (above deadline) off board with REDUCED priority (avoids missing reactive_pairs merges)
-           2.7. nextNext future bonus - Bonus for positioning near nextNext type pieces when immediate merge unavailable
+          Decision Logic (13 evaluation axes):
+           1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+           1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
+           1.6. Dangerous situation nextNext enhancement - Bonus when nextNext matches merged type in dangerous situations
+           1.7. Deadline margin based merge priority - In dangerous situations, prioritize merge more aggressively when deadline_margin is small
+           2. Height penalty - Penalty for high landing position (varies by phase)
+           2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
+            2.6. Dangerous situation danger piece ejection (v197: CORRECTED) - In dangerous situations without immediate merge, eject danger pieces (above deadline) off board with REDUCED priority (avoids missing reactive_pairs merges)
+            2.7. nextNext future bonus - Bonus for positioning near nextNext type pieces when immediate merge unavailable
+            2.8. Reactive pair creation bonus (v198: NEW) - In dangerous situations without immediate merge, bonus for placements that increase reactive_pairs (bridging near_pairs to create reactive_pairs)
            3. Drift penalty - Penalty for post-landing drift due to polygon shape
            4. Left-right balance correction - Bonus for correcting piece count bias
            5. nextNext centering - Center for next merge opportunity if nextNext same type
            6. Chain merge bonus - Evaluate possibility of further merges after merge
            7. Board density bonus - Prefer placement on less-dense side of board
            8. Dangerous situation candidate filtering - In dangerous situations, evaluate only merge candidates if merge candidates >= 1, else evaluate all candidates with near_pairs bonus
-     v197 additional logic:
-          - Dangerous situation danger piece ejection (corrected): In dangerous situations without immediate merge, eject danger pieces with REDUCED priority
-          - v196の問題点を解消：reactive_pairsがある場合、排出ボーナスを大幅に減衰（80%減衰）して即時併合を優先
-          - 排出ボーナスを大幅に減衰（x=盤面端、deadline_margin合計~4000.0 -> ~800.0）し、DANGER_NO_MERGE_PENALTYを強化
-          - 危険的ピースが盤面端（abs(x) >= 2.0）に配置される場合、高さペナルティを50%削減して排出を優先するv196のロジックは維持
-          - 危険的ピースが存在する場合、deadline_margin条件を削除し、盤面端への排出を強制的に優先するv196のロジックは維持
-          - v196: 危険的ピースの排出で盤面圧迫を緩和し、将来の即時併合機会を確保。p25=-249.8の下振れ耐性不足を解消。
-          - v197: 危険局面reactive_pairs考慮版 - 排出ボーナス大幅減衰とペナルティ追加により、reactive_pairsを維持しつがら排出を回避を強制し、comp改善とスコア安定性を向上させる。
+      v198 additional logic:
+           - Reactive pair creation bonus (NEW): In dangerous situations without immediate merge, calculate reactive_pairs delta after drop
+           - Bonus for placements that increase reactive_pairs: +1→+800, +2→+1600, +3+→+2400
+           - "Planned economy" strategy: Convert near_pairs to reactive_pairs proactively for board compression
+           - v197の問題点を解消：reactive_pairsがある場合、HIGH_TOWERを選択し、reactive_pairsが浪費される失敗パターンを解消
+           - near_pairsをreactive_pairsに変換する配置を優先し、将来の即時併合機会を確保
+           - 危険局面で盤面圧縮を促進し、下振れ耐性（p25）を向上させる
+      v197 additional logic:
+           - Dangerous situation danger piece ejection (corrected): In dangerous situations without immediate merge, eject danger pieces with REDUCED priority
+           - v196の問題点を解消：reactive_pairsがある場合、排出ボーナスを大幅に減衰（80%減衰）して即時併合を優先
+           - 排出ボーナスを大幅に減衰（x=盤面端、deadline_margin合計~4000.0 -> ~800.0）し、DANGER_NO_MERGE_PENALTYを強化
+           - 危険的ピースが盤面端（abs(x) >= 2.0）に配置される場合、高さペナルティを50%削減して排出を優先するv196のロジックは維持
+           - 危険的ピースが存在する場合、deadline_margin条件を削除し、盤面端への排出を強制的に優先するv196のロジックは維持
+           - v196: 危険的ピースの排出で盤面圧迫を緩和し、将来の即時併合機会を確保。p25=-249.8の下振れ耐性不足を解消。
+           - v197: 危険局面reactive_pairs考慮版 - 排出ボーナス大幅減衰とペナルティ追加により、reactive_pairsを維持しつがら排出を回避を強制し、comp改善とスコア安定性を向上させる。
 
 
 Phases (determined by board max Y):
@@ -56,8 +64,24 @@ Phases (determined by board max Y):
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
- # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
-  # v196: 危険局面排出超強化版 - rollback failure mode (reactive_pairsあるのに即時併合を逃す) の解消
+  # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+    # v199: ドキュメント明確化版 - v198の"計画的経済"戦略をより明確に文書化
+    # v198: 計画的経済（Reactive Pair Creation）版 - reactive_pairs創出ボーナス追加
+    # v197の問題点を解消：reactive_pairsがある場合、HIGH_TOWERを選択し、reactive_pairsが浪費される失敗パターンを解消
+    # ワーストゲーム(score0646)の終盤8ターン分析で、max_y=2.57-3.41かつreactive_pairs=3-6あるにもかかわらず
+    # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_REACTIVE_PAIRS_WASTEDが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+    # v197のnear_pairsボーナスは、near_pairsの存在に基づいてボーナスを与えるが、reactive_pairsを増やす配置を優先するロジックが欠如していた。
+    # "計画的経済"（Planned Economy）戦略の実装：near_pairsをreactive_pairsに変換する配置を優先し、盤面圧縮を促進。
+    # ドロップ後のreactive_pairs変化量を計算するcalc_reactive_pairs_delta()ヘルパー関数を追加。
+    # 危険局面で即時併合がない場合、reactive_pairsの増加量に応じた段階的ボーナスを追加（+1で+800、+2で+1600、+3以上で+2400）。
+    # これにより、near_pairsをreactive_pairsに変換する配置を優先し、将来の即時併合機会を確保。
+    # 危険局面での盤面圧縮を促進し、下振れ耐性（p25）を向上させることで、成熟ランキングに残れる再現性を重視。
+    # v199の改善点：
+    # 1. ドキュメントの明確化：v198の"計画的経済"戦略の実装内容をより明確に記述
+    # 2. ヘルパー関数の文書化：calc_reactive_pairs_delta()の詳細な仕様と実装意図を明記
+    # 3. 評価軸2.8の明確化：reactive pair creation bonusの具体的な計算ロジックを補足
+    # refs: tmp/.prompt_history.md, tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_132257_score0646.jsonl turns 60-67, game_history/20260313_133259_score1842.jsonl turns 82-87, strategy_versions/best_score5694_strategy.py, strategy.py.staging
+   # v196: 危険局面排出超強化版 - rollback failure mode (reactive_pairsあるのに即時併合を逃す) の解消
   # ワーストゲーム(score0420)の終盤8ターン分析で、max_y>=2.48かつreactive_pairs=4-5あるにもかわらず
   # 危険的ピースが排出できず、盤面圧迫が進行し即時併合機会を完全に逃している失敗パターンを特定。
   # v195のejection_bonusが不十分で、危険的ピース排出が機能していなかった問題を解消。
@@ -168,48 +192,86 @@ def is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=1):
     )
 
 
-def decide(game_state: dict, analysis: dict) -> dict:
-    """v197: 危険局面reactive_pairs考慮版 - 排出ボーナス大幅減衰とペナルティ追加により、reactive_pairsを維持しつがら排出を回避するロジックを追加。
+def calc_reactive_pairs_delta(pieces, drop_x, drop_y, drop_type, drop_r):
+    """ドロップ後のreactive_pairs変化量を計算するヘルパー関数
 
-    batch_summaryでDEFAULT_PLACEMENTが18.0%選択(avg_score_delta=1.9)と依然として高いことを確認。
-    ワーストゲーム(score0586)の終盤8ターン分析で、max_y=3.36-3.79かつreactive_pairs=1あるにもかわらず
-    HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITY_DANGER_PIECE_EJECTIONが連続で選択され、危険的ピースが排出できず、盤面圧迫が進行し即時併合機会を完全に逃している失敗パターンを特定。
-    v196の排出ボーナスが不十分ではなく、危険的ピース排出が機能していなかった問題を解消。
-    危険的ピースが盤面端に配置される場合、高さペナルティを大幅に緩和し、排出を強制的に最優先。
-    
-    v197の改善点:
-      1. Dangerous situation danger piece ejection（補正評価軸）
-          - 危険局面で即時併合候補がない場合、危険的ピース（deadline_y以上のピース）を盤面外へ排出する配置を優先
-          - v196の問題点を解消：reactive_pairsがある場合、排出を優先することが即時併合機会を逃している
-          - 排出ボーナスを大幅に減衰（x=盤面端、deadline_margin合計~4000.0）し、reactive_pairs > 0 の場合はさらに80%減衰
-          - DANGER_NO_MERGE_PENALTYを強化しreactive_pairs浪費によるスコア低下をペナルティで厳しく罰する
-          - これにより危険局面での盤面圧迫を緩和し、将来の即時併合機会を確保。p25=-249.8の下振れ耐性不足を解消。
-      
-      2. v191の危険局面即時併合候補フィルタリングを維持
-          - 即時併合候補が1個以上ある場合、即時併合候補を評価対象に含め
-          - 即時併合候補がない場合、全候補を評価してreactive_pairsボーナスと危険的ピース排出を優先
-          - 危険局面でのBOARD_DENSITY評価を無効化し、危険的ピース排出ボーナスを優先して盤面圧迫を緩和。
-      
-      3. v185の危険局面即時併合優先強化を維持
-          - 危険局面判定（max_y >= 1.5、reactive_pairs >= 1）を維持
-          - 危険局面でHIGH_TOWER評価を4倍にして盤面整理優先をさらに抑制
+    与えられたドロップ位置にピースを配置した後のボード状態をシミュレートし、
+    reactive_pairsがどれだけ増減するかを計算する。
 
     Args:
-         game_state: game state (pieces, next, nextNext, score, etc.)
-         analysis: analyze_board.py analysis results
-              - results: landing information for each drop X candidate
-                  - x: drop X coordinate
-                  - landing_y: estimated landing Y coordinate (high=dangerous)
-                  - drift_x/drift_unc: post-landing drift due to polygon shape
-                  - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                  - merges: individual distance/merge judgment for each same-type piece
-              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
-              - deadline: deadline information (deadline_y, deadline_margin, danger_piece_count, etc.)
+        pieces: 現在のボード上のピースリスト
+        drop_x: ドロップするX座標
+        drop_y: ドロップするY座標
+        drop_type: ドロップするピースのタイプ
+        drop_r: ドロップするピースの半径
 
     Returns:
-          {"x": drop X coordinate, "reason": selection reason}
-          
-    refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_111711_score0586.jsonl turns 48-55, strategy.py.staging
+        reactive_pairsの変化量（正の値で増加、0で変化なし、負の値で減少）
+    """
+    # 現在のreactive_pairs数を計算（calc_reactor_stateを使用）
+    from analyze_board import calc_reactor_state
+    current_reactor = calc_reactor_state(pieces)
+    current_reactive_pairs = len(current_reactor.get("reactive_pairs", []))
+
+    # ドロップ後のピースリストをシミュレート
+    # 既存のピースをコピーして新しいピースを追加
+    new_pieces = pieces.copy()
+    new_pieces.append({
+        "id": -1,  # 一時的なID（既存ピースと重複しない）
+        "type": drop_type,
+        "x": drop_x,
+        "y": drop_y,
+        "r": drop_r
+    })
+
+    # ドロップ後のreactor状態を計算
+    future_reactor = calc_reactor_state(new_pieces)
+    future_reactive_pairs = len(future_reactor.get("reactive_pairs", []))
+
+    # reactive_pairsの変化量を返す
+    return future_reactive_pairs - current_reactive_pairs
+
+
+def decide(game_state: dict, analysis: dict) -> dict:
+    """v198: 計画的経済（Reactive Pair Creation）版 - reactive_pairs創出ボーナス追加により、near_pairsをreactive_pairsに変換する配置を優先。
+
+    ワーストゲーム(score0646)の終盤8ターン分析で、max_y=2.57-3.41かつreactive_pairs=3-6あるにもかかわらず
+    HIGH_TOWER_DANGER_NO_MERGE_PENALTY_REACTIVE_PAIRS_WASTEDが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+    v197のnear_pairsボーナスは、near_pairsの存在に基づいてボーナスを与えるが、reactive_pairsを増やす配置を優先するロジックが欠如していた。
+    "計画的経済"（Planned Economy）戦略の実装：near_pairsをreactive_pairsに変換する配置を優先し、盤面圧縮を促進。
+
+    v198の改善点:
+      1. Reactive pair creation bonus（新規評価軸 2.8）
+           - 危険局面で即時併合がない場合、reactive_pairsの変化量を計算
+           - ドロップ後にreactive_pairsが増加する配置にボーナスを与える
+           - reactive_pairsの増加量に応じた段階的ボーナス（+1で+800、+2で+1600、+3以上で+2400）
+           - calc_reactive_pairs_delta()ヘルパー関数で、ドロップ後のreactive_pairs変化量を正確に計算
+           - これにより、near_pairsをreactive_pairsに変換する配置を優先し、盤面圧縮を促進
+       
+      2. v197の危険局面reactive_pairs考慮版を維持
+           - 排出ボーナス大幅減衰とペナルティ追加により、reactive_pairsを維持しつがら排出を回避
+           - 即時併合候補フィルタリング、deadlineマージン活用、nextNext活用を維持
+       
+      3. best_score5694_strategy.py (v178) の成功パターンを継承
+           - reactive_pairsの維持・増加を優先し、盤面圧縮を促進
+           - 危険局面でもreactive_pairsを活用し、安定したスコア向上を実現
+
+    Args:
+          game_state: game state (pieces, next, nextNext, score, etc.)
+          analysis: analyze_board.py analysis results
+               - results: landing information for each drop X candidate
+                   - x: drop X coordinate
+                   - landing_y: estimated landing Y coordinate (high=dangerous)
+                   - drift_x/drift_unc: post-landing drift due to polygon shape
+                   - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                   - merges: individual distance/merge judgment for each same-type piece
+               - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+               - deadline: deadline information (deadline_y, deadline_margin, danger_piece_count, etc.)
+
+    Returns:
+           {"x": drop X coordinate, "reason": selection reason}
+
+    refs: tmp/.prompt_history.md, tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_132257_score0646.jsonl turns 60-67, game_history/20260313_133259_score1842.jsonl turns 82-87, strategy_versions/best_score5694_strategy.py, strategy.py.staging
     """
 
     results = analysis.get("results", [])
@@ -256,6 +318,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_piece = game_state.get("next", {})
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
+    next_r = next_piece.get("r", 0.5)  # v198: nextピースの半径（reactive_pairs計算用）
     next_next_type = next_next_piece.get("type", 0)
 
     # --- Type-specific merge bonus calculation ---
@@ -508,6 +571,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             300.0  # v188: 即時併合候補でもnear_pairs活用ボーナスを適用
                         )
                         reasons.append("NEAR_PAIRS_OPPORTUNITY")
+
+        # ----- evaluation axis 2.8: reactive pair creation bonus (NEW) -----
+        # 危険局面で即時併合がない場合、reactive_pairsを増やす配置を優先
+        # near_pairsをreactive_pairsに変換する「計画的経済」戦略の実装
+        # 危険的な盤面状況で、reactive_pairsは即時合併機会の「保険」である
+        # ドロップ後にreactive_pairsが増える配置を優先することで、将来の盤面圧縮を確保
+        #
+        # v197の失敗パターン（score0646.jsonl turns 60-67）：
+        # reactive_pairs=3あるにもかかわらず、HIGH_TOWERが選択され、reactive_pairsが浪費された
+        # 即時併合機会を逃し、盤面圧迫が進行した
+        #
+        # best_score5694_strategy.py (v178) の成功パターン：
+        # reactive_pairsの維持・増加を優先し、盤面圧縮を促進
+        # 危険局面でもreactive_pairsを活用し、安定したスコア向上を実現
+        #
+        # v198の改善点：
+        # 1. 危険局面かつ即時併合がない場合、reactive_pairsの変化量を計算
+        # 2. ドロップ後にreactive_pairsが増加する配置にボーナスを与える
+        # 3. reactive_pairsの増加量に応じた段階的ボーナス（+1で+800、+2で+1600、+3以上で+2400）
+        # 4. これにより、near_pairsをreactive_pairsに変換する配置を優先し、盤面圧縮を促進
+        #
+        # refs: tmp/.prompt_history.md, game_history/20260313_132257_score0646.jsonl, game_history/20260313_133259_score1842.jsonl, strategy_versions/best_score5694_strategy.py
+        if dangerous_situation and merge_grade == "NO":
+            # ドロップ後のreactive_pairs変化量を計算
+            reactive_pairs_delta = calc_reactive_pairs_delta(
+                pieces, x, landing_y, next_type, next_r
+            )
+
+            # reactive_pairsが増加する場合にボーナスを適用
+            if reactive_pairs_delta > 0:
+                # 増加量に応じた段階的ボーナス
+                if reactive_pairs_delta >= 3:
+                    bonus = 2400.0
+                elif reactive_pairs_delta >= 2:
+                    bonus = 1600.0
+                else:  # reactive_pairs_delta >= 1
+                    bonus = 800.0
+
+                score += bonus
+                reasons.append(f"REACTIVE_PAIR_CREATION_BONUS_{reactive_pairs_delta}")
 
         # ----- evaluation axis 2.6: dangerous situation danger piece ejection (v197: CORRECTED) -----
         # 危険局面で即時併合候補がない場合、危険的ピース（deadline_y以上のピース）を盤面外へ排出する配置を最優先
