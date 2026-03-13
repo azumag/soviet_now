@@ -30,6 +30,8 @@ HISTORY_DIR = "game_history"
 HISTORY_FILE = os.path.join(HISTORY_DIR, "latest.jsonl")
 RUSSIA_WORKER_PID_FILE = "tmp/state/.russia_celebration_worker.pid"
 RUSSIA_CELEBRATION_ENABLED = os.environ.get("RUSSIA_CELEBRATION_ENABLED", "0") != "0"
+RUSSIA_TYPE = 14
+SOVIET_TYPE = 15
 
 # 座標変換
 GAME_X_MIN = -3.0
@@ -146,6 +148,13 @@ def get_strategy_hash():
     """strategy.py のMD5ハッシュ（先頭8文字）を返す"""
     with open("strategy.py", "rb") as f:
         return hashlib.md5(f.read()).hexdigest()[:8]
+
+
+def count_piece_type(game_state, piece_type):
+    """盤面上の指定type個数を返す。"""
+    if game_state is None:
+        return 0
+    return sum(1 for p in game_state.get("pieces", []) if p.get("type", 0) == piece_type)
 
 
 def trigger_russia_celebration_now(score, turn):
@@ -370,6 +379,8 @@ def run_game():
     russia_created = False
     russia_announced = False
     soviet_created = False
+    prev_russia_count = 0
+    prev_soviet_count = 0
 
     # 前回の建国フラグをクリア（ゲーム開始時に毎回リセット）
     try:
@@ -409,13 +420,23 @@ def run_game():
             score = gs.get("score", 0)
             pieces = gs.get("pieces", [])
             max_y = max((p["y"] for p in pieces), default=-5.0)
+            current_russia_count = count_piece_type(gs, RUSSIA_TYPE)
+            current_soviet_count = count_piece_type(gs, SOVIET_TYPE)
             log(f"T{turn} s={score} p={len(pieces)} y={max_y:.1f}")
 
             # ロシア建国検知（リアルタイム・1試合1回限り）
-            # type 15 = ロシア
-            if not russia_created and any(p.get("type", 0) == 15 for p in pieces):
+            # ガイド準拠: type 14 = ロシア, type 15 = ソ連
+            # 盤面に「存在する」だけではなく、このターンでロシアが新規生成された時だけ発火する。
+            if (
+                not russia_created
+                and current_russia_count > prev_russia_count
+                and gs.get("makeSorenCount", 0) <= 0
+            ):
                 russia_created = True
-                log(f"!!! RUSSIA CREATED !!! ロシア建国達成！ score={score}")
+                log(
+                    f"!!! RUSSIA CREATED !!! ロシア建国達成！ score={score} "
+                    f"russia_count={prev_russia_count}->{current_russia_count}"
+                )
                 os.makedirs("tmp/markers", exist_ok=True)
                 with open("tmp/markers/.russia_created", "w") as flag_f:
                     flag_f.write(f"{turn}|{score}\n")
@@ -423,11 +444,15 @@ def run_game():
                 russia_announced = trigger_russia_celebration_now(score, turn)
 
             # ソ連建国検知（リアルタイム・1試合1回限り）
-            # type 15 = ロシア、type 16 = ソ連。makeSorenCount はロシア同士併合(→ソ連生成)時にインクリメントされる
+            # type 15 = ソ連。makeSorenCount はロシア同士併合(→ソ連生成)時にインクリメントされる。
             if not soviet_created:
-                if gs.get("makeSorenCount", 0) > 0:
+                if gs.get("makeSorenCount", 0) > 0 or current_soviet_count > prev_soviet_count:
                     soviet_created = True
-                    log(f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} makeSorenCount={gs.get('makeSorenCount', 0)}")
+                    log(
+                        f"!!! SOVIET UNION CREATED !!! ソ連建国達成！ score={score} "
+                        f"makeSorenCount={gs.get('makeSorenCount', 0)} "
+                        f"soviet_count={prev_soviet_count}->{current_soviet_count}"
+                    )
                     trigger_soviet_clip_now(score, turn)
                     # フラグファイル作成（eloop.shが参照）
                     os.makedirs("tmp/markers", exist_ok=True)
@@ -519,6 +544,8 @@ def run_game():
             if delta > 0:
                 print(f"  +{delta} → {score}", flush=True)
             prev_score = score
+            prev_russia_count = current_russia_count
+            prev_soviet_count = current_soviet_count
 
             # コマンド書き込み
             if not commands_empty():
