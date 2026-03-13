@@ -17,6 +17,7 @@ STRATEGY_FILE="strategy.py"
 STRATEGY_VERSIONS_DIR="strategy_versions"
 HISTORY_DIR="game_history"
 HISTORY_FILE="$HISTORY_DIR/latest.jsonl"
+PHYROGENETIC_TREE_FILE="phyrogenetic-tree.md"
 
 MODEL_PRIMARY="glm"
 MODEL_FALLBACK="opencode:glmflash"
@@ -202,6 +203,16 @@ _trim_log_file() {
 	[ "${n:-0}" -le "$trim" ] && return 0
 	local tmpf="${f}.tmp"
 	tail -n "$keep" "$f" >"$tmpf" 2>/dev/null && mv "$tmpf" "$f" 2>/dev/null || true
+}
+
+refresh_phyrogenetic_tree() {
+	local pending_args=("$@")
+	if python3 generate_phyrogenetic_tree.py --output "$PHYROGENETIC_TREE_FILE" "${pending_args[@]}"; then
+		log "[PHYLO] updated $PHYROGENETIC_TREE_FILE"
+		return 0
+	fi
+	log "[PHYLO] failed to update $PHYROGENETIC_TREE_FILE"
+	return 1
 }
 
 is_game_over() {
@@ -7400,8 +7411,11 @@ PY
 		fi
 		start_rollback_postmortem_worker "$strategy_hash" "$rolled_hash" "$rollback_game_num" "$rollback_note"
 
-		git add -A
-		git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null || true
+		refresh_phyrogenetic_tree --pending-edge rollback "$strategy_hash" "$rolled_hash" >/dev/null 2>&1 || true
+		git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" 2>/dev/null || true
+		if git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null; then
+			git push 2>/dev/null || true
+		fi
 		[ -f "$ROLLBACK_ANALYSIS_FILE" ] && start_radio_corner_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash" &
 
 		return 0  # リグレッション検知

@@ -939,12 +939,18 @@ if $improve_ok; then
 	# ゲーム範囲を算出してコミットメッセージに含める
 	first_score=$(echo "$SCORES" | awk '{print $1}')
 	last_score=$(echo "$SCORES" | awk '{print $NF}')
+	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	refresh_phyrogenetic_tree --pending-edge improve "$HASH_BEFORE" "$HASH_AFTER" >/dev/null 2>&1 || true
 	_improve_progress "git_commit" "90" "commit_changes"
-	git add strategy.py strategy_helpers/ tmp/change_log.txt 2>/dev/null || true
+	git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" 2>/dev/null || true
 	if [ "$NUM_GAMES" -eq 1 ]; then
-		git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null || true
+		if git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null; then
+			git push 2>/dev/null || true
+		fi
 	else
-		git commit -m "eloop Improve after ${NUM_GAMES} games (scores: ${SCORES})" 2>/dev/null || true
+		if git commit -m "eloop Improve after ${NUM_GAMES} games (scores: ${SCORES})" 2>/dev/null; then
+			git push 2>/dev/null || true
+		fi
 	fi
 
 	# --- Phase D: 戦略解説コーナー (変更があった場合のみ) ---
