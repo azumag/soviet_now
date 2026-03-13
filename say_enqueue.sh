@@ -65,6 +65,7 @@ cp "$CONTENT_FILE" "$MY_CONTENT"
 sed -i '' \
     -e 's/AI/エーアイ/g' \
     -e 's/静寂/せいじゃく/g' \
+    -e 's/地政学的/ちせいがくてき/g' \
     "$MY_CONTENT"
 
 _infer_source_label() {
