@@ -1077,7 +1077,7 @@ _strip_ansi() {
 
 _run_opencode_radio() {
 	local agent="$1" prompt_file="$2"
-	local raw_file
+	local raw_file cleaned
 	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
 	timeout "${RADIO_OPENCODE_TIMEOUT}" \
 		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$RADIO_OPENCODE_PERMISSION' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
@@ -1094,7 +1094,7 @@ _run_opencode_radio() {
 		rm -f "$raw_file"
 		return 1
 	fi
-	cat "$raw_file" |
+	cleaned=$(cat "$raw_file" |
 		_strip_ansi |
 		grep -v '^>' |
 		grep -v '^\^D' |
@@ -1103,8 +1103,13 @@ _run_opencode_radio() {
 		grep -v '^/[^ ]*$' |
 		grep -v '^[[:space:]]*/Users/' |
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
-		sed '/^[[:space:]]*$/d'
+		sed '/^[[:space:]]*$/d')
 	rm -f "$raw_file"
+	if printf '%s' "$cleaned" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticate|api error[: ]|request_id|invalid error token|invalid token'; then
+		log "[RADIO] opencode provider error treated as failure (agent=$agent)" >&2
+		return 1
+	fi
+	printf '%s' "$cleaned"
 }
 
 _run_opencode_comment() {
