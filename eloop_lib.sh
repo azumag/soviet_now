@@ -5280,6 +5280,21 @@ schedule_nonessential_audio_jobs() {
 		fi
 		start_random_radio_corner "$game_num" "$score" &
 	fi
+
+	# 時事ニュースコーナー（2時間に1回）
+	local jiji_interval_sec=7200
+	local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
+	local jiji_last_ts now_ts jiji_elapsed
+	now_ts=$(date +%s)
+	jiji_last_ts=$(cat "$jiji_last_file" 2>/dev/null || echo 0)
+	jiji_elapsed=$((now_ts - jiji_last_ts))
+	if [ "$jiji_elapsed" -ge "$jiji_interval_sec" ]; then
+		if [ "$comment_backlog_high" = true ]; then
+			log "[JIJI] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
+		fi
+		echo "$now_ts" >"$jiji_last_file"
+		start_radio_corner_jiji "$game_num" "$score" &
+	fi
 }
 
 #=== tmp/ クリーンアップ ===
