@@ -136,3 +136,5 @@
 - 危険局面で近くのピースを優先する戦術へ（戦略ハッシュ: almeonia_estonia_latvia_lithuania_georgia_azerbaijan_tajikistan_kirgizia_belarus_uzbekistan_turkmenistan_ukraine_kazakhstan_russia_soviet_board_height_immediate_merge_near_pairs_bonus_planned_economy_flexibility）
 - 日本の料理にソ連風アレンジを加えるという、異文化融合の発想は戦略的です。既存の要素に新しい要素を融合させて価値を高めるこの視点は、ゲーム盤面での駒の組み合わせや戦術にも応用できると考えられます。同志tonkararinさんの提案を取り入れて、より創造的な戦略を模索します。
 - 現状の伸び悩む戦略体制を破壊し、ソ連建国のために大胆な変化が必要。同志プリパラ煉獄丸からのアドバイス。
+- 失敗や終わりをネタにして新しい展開に活かす柔軟な発想（あずまぐ）
+- あずまぐ: @ひじきん が 【レジェンダリー】 GAME OVER を獲得しました【1枚目】 みんなの前で漏らしてしまえば、イメージ戦略というゲームは終わりを迎える。しかし、それをネタに、糧に、新くゲームを始めることはできる。一つの終わりは、一つの門出だ。Twitch パートナーになるために必要な条件の一つ。
