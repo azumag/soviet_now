@@ -168,7 +168,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 0.4  # v198: LOW phase height_mult further reduced (0.6→0.4) to enable proactive merge opportunities
+        height_mult = 1.0  # v177: LOW phase height_mult (best score 5310)
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
@@ -361,32 +361,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization, enhanced) -----
-        # batch_summaryでHEIGHT_CONTROLが23.8%選択(avg_score_delta=1.2)と過剰であることを確認。
-        # NEAR_MERGE系reasonsがavg_score_delta=28-57（高価値）だが選択率が3.8-9.2%と低いことを確認。
-        # ワーストゲーム終盤（score932）ではreactive_pairs=4.5あるにもかかわらず即時併合優先が弱く、HEIGHT_CONTROL選択で下振れ。
-        # ベストゲーム（score3037）はreactive_pairsが少ないが即時併合機会を確実に捉えてスコア稼ぎ。
-        # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルなマージ重視戦略を維持。
-        # reactor情報のreactive_pairs（反応性のあるペア）を活用し、即時併合を優先する評価軸を強化。
-        # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを+800.0から+1000.0に強化。
-        # v206: reactive_pairs>=3で即時併合なし（NO）の場合、盤面密度ボーナスを+300.0から+50.0に削減。
-        # これによりreactive_pairs>=3の場合、即時併合機会を優先するようになり、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
-        if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
-            # reactive_pairs==1の場合も即時併合を優先し、機会取りこぼし削減
-            score += 400.0
+        # ----- evaluation axis 8: reactive pairs bonus (SIMPLIFIED: exponential scaling) -----
+        # v177-style simple logic with exponential scaling for immediate merge priority
+        # reactive_pair_count >= 1 かつ merge_grade in ["DIRECT", "NEAR"] の場合、指数関数的にボーナスを与える
+        # reactive_pair_count=1: +400.0, reactive_pair_count=2: +800.0, reactive_pair_count>=3: +1200.0
+        # これにより、reactive_pairsが多い状況で即時併合を最優先し、HEIGHT_CONTROL過剰選択を抑制
+        if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
+            # 指数関数的ボーナス: base=400.0, reactive_pair_count=1→400, 2→800, 3+→1200
+            reactive_bonus = 400.0 * min(reactive_pair_count, 3)
+            score += reactive_bonus
             reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"]:
-            #2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
-            score += 800.0
-            reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
-            # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0）
-            # reactive_pairsが3以上ある場合、即時併合機会を最優先
-            score += 1000.0
-            reasons.append("REACTIVE_MERGE_PRIORITY")
-        # v209: reactive_pairs>=3で即時併合なしの場合のcompression_bonusロジックを削除
-        # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
-        # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
         # ----- evaluation axis 8.5: danger zone direct merge priority (NEW: reactive_pairs >=2 dangerous situation prioritization) -----
         # ワーストゲーム(score0927)終盤turns 56-62でreactive_pairs=7-8あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続いている失敗パターンを解消。

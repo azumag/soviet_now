@@ -149,21 +149,28 @@ _clear_current_source_if_owner() {
     rm -f "$CURRENT_SOURCE_FILE" 2>/dev/null || true
 }
 
+_has_pending_comment_queue() {
+    ls tmp/.comment_queue/comment_*.txt >/dev/null 2>&1
+}
+
 _radio_should_yield_to_comment() {
     case "${SOURCE_LABEL:-}" in
     radio|radio:*)
-        case "${SOURCE_LABEL:-}" in
-        radio:celebration|radio:russia)
-            return 1
-            ;;
-        esac
         ;;
     *)
         return 1
         ;;
     esac
 
-    ls tmp/.comment_queue/comment_*.txt tmp/.comment_queue/comment_*.playing >/dev/null 2>&1
+    _has_pending_comment_queue
+}
+
+_yield_turn_to_pending_comment() {
+    _is_lock_owner || return 1
+    _log "pending comment を優先するため ${SOURCE_LABEL:-unknown} が順番を譲る"
+    _release_lock
+    sleep 1
+    return 0
 }
 
 # mkdirロック: アトミックな排他制御（macOS互換）
@@ -479,40 +486,61 @@ _wait_for_turn() {
     done
 }
 
-# --- mkdirロックで排他制御 ---
-_wait_for_turn
+_prepare_playback_turn() {
+    local pre_delay="${1:-0}" waited_pre prev_pid=""
+    while true; do
+        _wait_for_turn
 
-# --- ロック内: 前のsayが残っていたら待つ ---
-if [ -f "$PID_FILE" ]; then
-    PREV_PID=$(cat "$PID_FILE" 2>/dev/null)
-    if [ -n "$PREV_PID" ] && kill -0 "$PREV_PID" 2>/dev/null; then
-        _log "前のsay (PID=$PREV_PID) がまだ再生中 → 終了待ち"
-        while kill -0 "$PREV_PID" 2>/dev/null; do
+        if [ -f "$PID_FILE" ]; then
+            prev_pid=$(cat "$PID_FILE" 2>/dev/null)
+            if [ -n "$prev_pid" ] && kill -0 "$prev_pid" 2>/dev/null; then
+                _log "前のsay (PID=$prev_pid) がまだ再生中 → 終了待ち"
+                while kill -0 "$prev_pid" 2>/dev/null; do
+                    if _radio_should_yield_to_comment; then
+                        _yield_turn_to_pending_comment
+                        continue 2
+                    fi
+                    _touch_lock_heartbeat
+                    sleep 1
+                done
+            fi
+            rm -f "$PID_FILE"
+        fi
+
+        while pgrep -x say >/dev/null 2>&1 || { [ -n "${SAY_AUDIO_DEVICE:-}" ] && pgrep -xf "ffmpeg.*audiotoolbox" >/dev/null 2>&1; }; do
+            if _radio_should_yield_to_comment; then
+                _yield_turn_to_pending_comment
+                continue 2
+            fi
             _touch_lock_heartbeat
+            [ "${_say_wait_logged:-0}" -eq 0 ] && _log "既存sayプロセス検出 → 終了待ち" && _say_wait_logged=1
             sleep 1
         done
-    fi
-    rm -f "$PID_FILE"
-fi
 
-# --- ロック内: 既存sayプロセス終了待ち（PIDファイル漏れ対策） ---
-# 絶対に重ねないことを優先し、全sayが終わるまで待機する
-while pgrep -x say >/dev/null 2>&1 || { [ -n "${SAY_AUDIO_DEVICE:-}" ] && pgrep -xf "ffmpeg.*audiotoolbox" >/dev/null 2>&1; }; do
-    _touch_lock_heartbeat
-    [ "${_say_wait_logged:-0}" -eq 0 ] && _log "既存sayプロセス検出 → 終了待ち" && _say_wait_logged=1
-    sleep 1
-done
+        _set_current_source "waiting"
+        _log "トーク開始まで ${pre_delay}秒 待機..."
+        waited_pre=0
+        while [ "$waited_pre" -lt "$pre_delay" ]; do
+            if _radio_should_yield_to_comment; then
+                _yield_turn_to_pending_comment
+                continue 2
+            fi
+            _touch_lock_heartbeat
+            sleep 1
+            waited_pre=$((waited_pre + 1))
+        done
 
-# --- ロック内: トーク開始前の間（ロック外でやると他がすり抜けるのでロック内で） ---
+        if _radio_should_yield_to_comment; then
+            _yield_turn_to_pending_comment
+            continue
+        fi
+        return 0
+    done
+}
+
+# --- mkdirロックで排他制御 ---
 PRE_DELAY="${3:-60}"
-_set_current_source "waiting"
-_log "トーク開始まで ${PRE_DELAY}秒 待機..."
-waited_pre=0
-while [ "$waited_pre" -lt "$PRE_DELAY" ]; do
-    _touch_lock_heartbeat
-    sleep 1
-    waited_pre=$((waited_pre + 1))
-done
+_prepare_playback_turn "$PRE_DELAY"
 
 # --- ロック内: say再生（単発 + 自動リトライ） ---
 PLAYBACK_FAILED=0
