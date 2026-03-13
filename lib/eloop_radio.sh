@@ -401,9 +401,9 @@ _radio_generate_and_play() {
 		_append_cc_post_log "SKIP" "no_selected_news" "[NEWS] (selected_news unavailable)"
 	fi
 	if [ "$no_preempt" = true ]; then
-		./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
+		SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0
 	else
-		./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
+		SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0
 	fi
 	rm -f "$talk_file"
 	touch "$done_marker"

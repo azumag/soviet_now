@@ -3169,6 +3169,26 @@ _enqueue_deferred_radio_talk() {
 	echo "$deferred_file"
 }
 
+_run_jiji_corner_guarded() {
+	local game_num="$1" score="$2"
+	local jiji_lock_dir="$TMP_STATE_DIR/.jiji_inflight"
+	local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
+
+	if ! mkdir "$jiji_lock_dir" 2>/dev/null; then
+		log "[JIJI] duplicate skip: already in-flight"
+		return 0
+	fi
+
+	if start_radio_corner_jiji "$game_num" "$score"; then
+		echo "$(date +%s)" >"$jiji_last_file"
+		log "[JIJI] completed: next interval starts now"
+	else
+		log "[JIJI] failed before playback/queue completion -> will retry next loop"
+	fi
+
+	rmdir "$jiji_lock_dir" 2>/dev/null || true
+}
+
 _play_deferred_radio_queue_once() {
 	# コメント未消化がある間は deferred ラジオを再生しない
 	local comment_queued=0 comment_playing=0 comment_total=0
@@ -5308,8 +5328,7 @@ schedule_nonessential_audio_jobs() {
 		if [ "$comment_backlog_high" = true ]; then
 			log "[JIJI] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
 		fi
-		echo "$now_ts" >"$jiji_last_file"
-		start_radio_corner_jiji "$game_num" "$score" &
+		_run_jiji_corner_guarded "$game_num" "$score" &
 	fi
 }
 
