@@ -3706,6 +3706,9 @@ _pick_radio_theme() {
 	local past_themes_file="${PAST_RADIO_THEME_KEYS:-$TMP_HISTORY_DIR/.past_radio_themes.txt}"
 	local past_theme_bodies_file="${PAST_RADIO_THEME_BODIES:-$TMP_HISTORY_DIR/past_radio_theme_bodies.txt}"
 	local available_themes=()
+	if [ ! -f "$past_theme_bodies_file" ] && [ -f "$past_themes_file" ]; then
+		cp "$past_themes_file" "$past_theme_bodies_file" 2>/dev/null || cat "$past_themes_file" >"$past_theme_bodies_file" 2>/dev/null || true
+	fi
 	for t in "${themes[@]}"; do
 		local t_body="$t"
 		[[ "$t" == \[soviet\]\ * ]] && t_body="${t#\[soviet\] }"
