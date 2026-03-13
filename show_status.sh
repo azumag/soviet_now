@@ -389,7 +389,7 @@ min_p50_gap = float(${REGRESSION_MIN_P50_GAP})
 min_p25_gap = float(${REGRESSION_MIN_P25_GAP})
 min_breach_count = int(${REGRESSION_MIN_BREACH_COUNT})
 archive_dir = "strategy_versions/by_hash"
-keep_top = int(${HASH_ARCHIVE_KEEP_TOP:-50})
+keep_top = int(${HASH_ARCHIVE_KEEP_TOP:-100})
 score_history_file = "score_history.txt"
 
 def quantile(xs, q):

@@ -42,7 +42,7 @@ LAST_ROLLBACK_PAIR_FILE = "tmp/state/last_rollback_pair.json"
 CURRENT_STRATEGY_RUN_FILE = "tmp/state/current_strategy_run.json"
 STRATEGY_HASH_ARCHIVE_DIR = "strategy_versions/by_hash"
 STRATEGY_VERSIONS_DIR = "strategy_versions"
-HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "50"))
+HASH_ARCHIVE_KEEP_TOP = int(os.getenv("HASH_ARCHIVE_KEEP_TOP", "100"))
 
 # ── ANSI helpers ──────────────────────────────────────────────
 
