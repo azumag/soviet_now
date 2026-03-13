@@ -498,20 +498,6 @@ def inspect_branch_state(rolling, current_hash, anchor=None):
             "verdict": "N/A",
             "text": "RegPreview N/A current not tracked",
         }
-    if current_entry["n_roll"] <= 0:
-        return {
-            "available": True,
-            "state": "unknown",
-            "verdict": "N/A",
-            "text": "RegPreview N/A n=0 no anchor",
-            "current_hash": current_hash,
-            "current": {
-                "comp": current_entry["comp"],
-                "p50": current_entry["p50"],
-                "p25": current_entry["p25"],
-                "n": current_entry["n_roll"],
-            },
-        }
     current = {
         "comp": current_entry["comp"],
         "p50": current_entry["p50"],
@@ -519,6 +505,47 @@ def inspect_branch_state(rolling, current_hash, anchor=None):
         "n": current_entry["n_roll"],
     }
     anchor_payload = anchor or load_best_anchor()
+    if current_entry["n_roll"] <= 0:
+        if anchor_payload and anchor_payload.get("hash"):
+            anchor_hash = str(anchor_payload.get("hash", "") or "")
+            anchor_metrics = {
+                "comp": float(anchor_payload.get("comp", 0.0) or 0.0),
+                "p50": float(anchor_payload.get("p50", 0.0) or 0.0),
+                "p25": float(anchor_payload.get("p25", 0.0) or 0.0),
+                "n": int(anchor_payload.get("n", 0) or 0),
+            }
+            return {
+                "available": True,
+                "state": "unknown",
+                "verdict": "WAIT",
+                "text": f"RegPreview WAIT anchor={anchor_hash[:8]} n=0/{MIN_GAMES_BEFORE_REGRESSION}",
+                "current_hash": current_hash,
+                "current": current,
+                "anchor_hash": anchor_hash,
+                "anchor": anchor_metrics,
+                "branch_active": False,
+                "active_branch": {},
+                "current_gap": {"comp": 0.0, "p50": 0.0, "p25": 0.0},
+                "current_breach_count": 0,
+                "hard_breach_count": 0,
+                "best_hash": "",
+                "best": None,
+                "best_gap": None,
+                "best_breach_count": 0,
+                "depth": 0,
+                "closed_games": 0,
+                "branch_games": 0,
+                "patience": 0,
+                "budget_hit": [],
+            }
+        return {
+            "available": True,
+            "state": "unknown",
+            "verdict": "N/A",
+            "text": "RegPreview N/A n=0 no anchor",
+            "current_hash": current_hash,
+            "current": current,
+        }
     if not anchor_payload or not anchor_payload.get("hash"):
         return {
             "available": True,
