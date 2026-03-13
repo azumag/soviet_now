@@ -7,23 +7,24 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-          Decision Logic (13 evaluation axes):
-           1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-           1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
-           1.6. Dangerous situation nextNext enhancement - Bonus when nextNext matches merged type in dangerous situations
-           1.7. Deadline margin based merge priority - In dangerous situations, prioritize merge more aggressively when deadline_margin is small
-           2. Height penalty - Penalty for high landing position (varies by phase)
-           2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
-            2.6. Dangerous situation danger piece ejection (v197: CORRECTED) - In dangerous situations without immediate merge, eject danger pieces (above deadline) off board with REDUCED priority (avoids missing reactive_pairs merges)
-            2.7. nextNext future bonus - Bonus for positioning near nextNext type pieces when immediate merge unavailable
-            2.8. Reactive pair creation bonus (v198: NEW) - In dangerous situations without immediate merge, bonus for placements that increase reactive_pairs (bridging near_pairs to create reactive_pairs)
-           3. Drift penalty - Penalty for post-landing drift due to polygon shape
-           4. Left-right balance correction - Bonus for correcting piece count bias
-           5. nextNext centering - Center for next merge opportunity if nextNext same type
-           6. Chain merge bonus - Evaluate possibility of further merges after merge
-           7. Board density bonus - Prefer placement on less-dense side of board
-           8. Dangerous situation candidate filtering - In dangerous situations, evaluate only merge candidates if merge candidates >= 1, else evaluate all candidates with near_pairs bonus
-      v198 additional logic:
+           Decision Logic (13 evaluation axes):
+            1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+            1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
+            1.6. Dangerous situation nextNext enhancement - Bonus when nextNext matches merged type in dangerous situations
+            1.7. Deadline margin based merge priority - In dangerous situations, prioritize merge more aggressively when deadline_margin is small
+            2. Height penalty - Penalty for high landing position (varies by phase)
+            2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
+             2.6. Dangerous situation danger piece ejection (v203: ENHANCED) - In dangerous situations without immediate merge, eject danger pieces (above deadline) off board with ENHANCED priority
+             2.7. nextNext future bonus - Bonus for positioning near nextNext type pieces when immediate merge unavailable
+             2.8. Reactive pair creation bonus (v198: REMOVED) - Reactive pair creation bonus removed in v201
+            3. Drift penalty - Penalty for post-landing drift due to polygon shape
+            4. Left-right balance correction - Bonus for correcting piece count bias
+            5. nextNext centering - Center for next merge opportunity if nextNext same type
+            6. Chain merge bonus - Evaluate possibility of further merges after merge
+            7. Board density bonus - Prefer placement on less-dense side of board
+            8. Dangerous situation candidate filtering - In dangerous situations, evaluate only merge candidates if merge candidates >= 1, else evaluate all candidates with near_pairs bonus
+       v203 additional logic:
+            - Danger piece ejection enhancement: danger_piece_count threshold 3→2, ejection bonus attenuation removed for no-immediate-merge situations
            - Reactive pair creation bonus (NEW): In dangerous situations without immediate merge, calculate reactive_pairs delta after drop
            - Bonus for placements that increase reactive_pairs: +1→+800, +2→+1600, +3+→+2400
            - "Planned economy" strategy: Convert near_pairs to reactive_pairs proactively for board compression
@@ -65,6 +66,12 @@ Phases (determined by board max Y):
   # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
   # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
     # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+  # v203: 排出ボーナス適用条件緩和と減衰解除版 - rollback failure mode (p25=-249.8) の解消
+  # ワーストゲーム(score0455)の終盤8ターン分析で、deadline_margin=-0.67~-1.09かつdanger_piece_count=1-7の危険な状態で
+  # HIGH_TOWERが選択され続け、危険的ピース排出が機能していない失敗パターンを特定。
+  # danger_piece_count閾値を3から2に緩和し、即時併合がない場合の排出ボーナス減衰を解除し、盤面圧縮を最優先。
+  # これにより危険局面での盤面圧迫を早めに緩和し、即時併合機会の確保と下振れ耐性の向上を図り、comp改善とスコア安定性を向上させる。
+  # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_174955_score0455.jsonl turns 54-61
   # v201: reactive_pairs creation bonusとnextNext future bonus削除版 - rollback failure mode (p25=-249.8) の解消
   # ワーストゲームの終盤8ターン分析で、reactive_pairs=3-6あるにもかかわらず即時併合機会を逃している失敗パターンを特定。
   # batch_summaryでreactive_pairs系reasonのavg_score_deltaが低い（+10.2、+42.6など）ことを確認。
@@ -190,6 +197,10 @@ def is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=1, deadline
     ワーストゲーム(score0499)の終盤8ターン分析で、max_y=2.25~3.05かつdeadline_margin=-0.9~-1.63の危険な状態で
     HIGH_TOWERが選択され続け、危険的ピース排出が機能していない失敗パターンを特定。
     deadline_margin < 0（deadline超過）かつdanger_piece_count >= 2の場合、危険局面と判定を強化。
+    v203: danger_piece_count閾値を3→2に緩和し、排出ボーナス適用範囲を拡大
+    ワーストゲーム(score0455)の終盤8ターン分析で、deadline_margin=-0.67~-1.09かつdanger_piece_count=1-7の危険な状態で
+    HIGH_TOWERが選択され続け、危険的ピース排出が機能していない失敗パターンを特定。
+    即時併合がない危険局面では盤面圧縮を最優先し、下振れ耐性（p25）を向上させることで、成熟ランキングに残れる再現性を重視。
 
     Args:
         max_y: 盤面の最高Y座標
@@ -207,13 +218,14 @@ def is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=1, deadline
         and len(reactive_pairs) >= min_reactive_pairs
     )
     
-    # v202: 排出ロジックの適用条件を厳格化 - 危険的ピースが3個以上の場合にのみ排出を優先
-    # ワーストゲーム(score0681)でreactive_pairs=4-6あるのに排出が機能せず即時併合を逃している失敗パターンを解消
-    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_171315_score0681.jsonl turns 66-73
+    # v203: 排出ロジックの適用条件緩和 - 危険的ピースが2個以上の場合に排出を優先
+    # ワーストゲーム(score0455)の終盤8ターン分析で、deadline_margin=-0.67~-1.09かつdanger_piece_count=1-7の危険な状態で
+    # HIGH_TOWERが選択され続け、危険的ピース排出が機能していない失敗パターンを解消
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_174955_score0455.jsonl turns 54-61
     deadline_danger = (
         deadline_margin is not None
         and deadline_margin < 0
-        and danger_piece_count >= 3
+        and danger_piece_count >= 2
         and max_y >= 1.0
     )
     
@@ -682,10 +694,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     else:
                         deadline_bonus = min(3500.0, abs(deadline_margin) * 2000.0)
                 
-                # v202: reactive_pairs > 0 の場合、排出ボーナスを緩和減衰（80%→50%）して、即時併合を優先
-                # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_171315_score0681.jsonl turns 66-73
-                if len(reactive_pairs) > 0:
-                    # reactive_pairsがあるのに排出した場合、大きく損をしたことを明確にするペナルティ
+                # v203: 即時併合がない危険局面では、排出ボーナスの減衰を解除して盤面圧縮を最優先
+                # 即時併合機会がない場合（merge_grade=="NO"）、reactive_pairsがあっても排出を優先し、盤面圧迫を緩和
+                # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_174955_score0455.jsonl turns 54-61
+                if len(reactive_pairs) > 0 and merge_grade != "NO":
+                    # 即時併合がある場合のみ、排出ボーナスを減衰して即時併合を優先
                     edge_bonus *= 0.5
                     deadline_bonus *= 0.5
                 
