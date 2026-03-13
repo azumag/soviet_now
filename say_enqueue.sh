@@ -61,8 +61,11 @@ LAUNCHED_EXPECTED_SEC=0
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
 
-# 読み上げ修正: "AI" → "エーアイ"
-sed -i '' 's/AI/エーアイ/g' "$MY_CONTENT"
+# 読み上げ修正: よくある誤読を事前に置換
+sed -i '' \
+    -e 's/AI/エーアイ/g' \
+    -e 's/静寂/せいじゃく/g' \
+    "$MY_CONTENT"
 
 _infer_source_label() {
     local path="$1" base corner

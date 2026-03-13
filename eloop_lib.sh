@@ -1486,6 +1486,9 @@ _is_valid_radio_talk() {
 	if _contains_provider_error_text "$talk" || printf '%s' "$talk" | grep -Eiq 'unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission'; then
 		return 1
 	fi
+	if printf '%s' "$talk" | grep -Eiq '現在.*(問題|不具合|障害).*(読み上げ|放送|案内).*(できません|できない)|現在.*(読み上げ|放送|案内).*(できません|できない)|検索(が|は)?できません|調査(が|は)?できません|情報(が|は)?取得できません|うまく読み上げできません|読み上げられません'; then
+		return 1
+	fi
 	if printf '%s' "$talk" | grep -Eq 'といわれます|と言われます|といわれています|と言われています|とされています|とされます|とされていました|とみられます|とみられています|と考えられます|と考えられています'; then
 		return 1
 	fi
@@ -2335,6 +2338,13 @@ drop_line_patterns = [
     r'permission denied',
     r'invalid arguments',
     r'^\s*\{.*\"type\"\s*:\s*\"error\".*\}\s*$',
+    r'現在.*(問題|不具合|障害).*(読み上げ|放送|案内).*(できません|できない)',
+    r'現在.*(読み上げ|放送|案内).*(できません|できない)',
+    r'検索(が|は)?できません',
+    r'調査(が|は)?できません',
+    r'情報(が|は)?取得できません',
+    r'うまく読み上げできません',
+    r'読み上げられません',
 ]
 patterns = [
     (r'誰も(聞いて|見て)い(?:ない|ません)', 'みなさんに届くように'),

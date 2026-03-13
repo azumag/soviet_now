@@ -51,6 +51,15 @@ def cmd_dedup():
 def cmd_sanitize():
     """Replace self-deprecating broadcast phrases with positive alternatives."""
     text = sys.stdin.read()
+    drop_line_patterns = [
+        r'現在.*(問題|不具合|障害).*(読み上げ|放送|案内).*(できません|できない)',
+        r'現在.*(読み上げ|放送|案内).*(できません|できない)',
+        r'検索(が|は)?できません',
+        r'調査(が|は)?できません',
+        r'情報(が|は)?取得できません',
+        r'うまく読み上げできません',
+        r'読み上げられません',
+    ]
     patterns = [
         (r'誰も(聞いて|見て)い(?:ない|ません)', 'みなさんに届くように'),
         (r'聞き手(?:が|は)?い(?:ない|ません)', '聞き手に届くように'),
@@ -61,7 +70,13 @@ def cmd_sanitize():
         (r'無人(?:配信|放送)', '配信'),
         (r'誰もいない', 'みなさんがいる'),
     ]
-    out = text
+    filtered_lines = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line and any(re.search(pat, line, flags=re.IGNORECASE) for pat in drop_line_patterns):
+            continue
+        filtered_lines.append(raw_line)
+    out = "\n".join(filtered_lines)
     for pat, repl in patterns:
         out = re.sub(pat, repl, out, flags=re.IGNORECASE)
     sys.stdout.write(out)
