@@ -7010,7 +7010,7 @@ payload = {
     "updated_at": int(__import__("time").time()),
 }
 anchor_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-	print(best_hash)
+print(best_hash)
 PY
 }
 
@@ -8079,6 +8079,7 @@ PY
 				log "[CURRENT-RUN] rollback seed missing -> reset: hash=${rolled_hash}"
 			fi
 		fi
+		_refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
 		if [ -n "$rollback_analysis_summary" ]; then
 			{
 				echo "=== $(date '+%Y-%m-%d %H:%M') ROLLBACK Game#${rollback_game_num} ${strategy_hash} -> ${rolled_hash} ==="
