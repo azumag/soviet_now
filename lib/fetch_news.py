@@ -32,7 +32,7 @@ SUMMARY_LIMIT = 4000
 REQUEST_TIMEOUT = 8.0
 USER_AGENT = "soren-news-fetcher/1.0"
 
-DISABLED_SOURCE_NAMES = {"首相官邸"}
+DISABLED_SOURCE_NAMES = {"首相官邸", "Kantei", "kantei"}
 
 SOURCES = [
     {
@@ -413,7 +413,7 @@ def strip_wikitext(text: str) -> str:
     return trim_summary(text)
 
 
-def clean_item(source: dict, item: ET.Element, og_fetch_budget: int = 2) -> dict | None:
+def clean_item(source: dict, item: ET.Element) -> dict | None:
     title = strip_tags(child_text(item, "title"))
     url = extract_link(item)
     if not title or not url:
@@ -423,7 +423,6 @@ def clean_item(source: dict, item: ET.Element, og_fetch_budget: int = 2) -> dict
     if not raw_description:
         raw_description = child_text(item, "encoded")
 
-    used_og_fetch = False
     if source["key"].startswith("wikinews"):
         summary = strip_wikitext(raw_description)
     else:
@@ -440,7 +439,6 @@ def clean_item(source: dict, item: ET.Element, og_fetch_budget: int = 2) -> dict
         "license": source["license"],
         "lang": source.get("lang", "ja"),
         "source_key": source["key"],
-        "_used_og_fetch": used_og_fetch,
     }
 
 
@@ -457,13 +455,9 @@ def fetch_source_items(source: dict) -> list[dict]:
         return []
 
     items = []
-    og_fetch_budget = 2  # limit og:description fetches to avoid stalling
     for item in iter_items(root):
-        cleaned = clean_item(source, item, og_fetch_budget)
+        cleaned = clean_item(source, item)
         if cleaned:
-            if cleaned.get("_used_og_fetch"):
-                og_fetch_budget -= 1
-            cleaned.pop("_used_og_fetch", None)
             items.append(cleaned)
     return items
 
