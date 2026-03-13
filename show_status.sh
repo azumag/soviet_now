@@ -478,16 +478,33 @@ if h:
             print(f"best_p25={cp25:.0f}")
             print(f"best_total={cn}")
             print("best_source_short=" + shlex.quote("rank_cutoff"))
-            if int(n) < min_games_current:
-                detail = "WAIT rank=?/" + str(max_rank) + f" cutoff={ch[:8]} n={int(n)}/{min_games_current}"
-                print("regression_state=grace")
-                print("regression_detail=" + shlex.quote(detail))
-                raise SystemExit
             current_rank = None
             for idx, row in enumerate(ranked, start=1):
                 if row[4] == h:
                     current_rank = idx
                     break
+            if int(n) < min_games_current:
+                if current_rank is not None and len(ranked) > max_rank and current_rank > max_rank:
+                    comp_gap = max(0.0, cc - comp)
+                    p50_gap = max(0.0, cp50 - p50)
+                    p25_gap = max(0.0, cp25 - p25)
+                    breach_count = sum(
+                        [
+                            1 if comp_gap >= min_comp_gap else 0,
+                            1 if p50_gap >= min_p50_gap else 0,
+                            1 if p25_gap >= min_p25_gap else 0,
+                        ]
+                    )
+                    gap_text = f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))} br={breach_count}/{min_breach_count}"
+                    if breach_count >= min_breach_count:
+                        detail = "WARN rank=" + str(current_rank) + f"/{max_rank} cutoff={ch[:8]}{gap_text} n={int(n)}/{min_games_current}"
+                        print("regression_state=warning")
+                        print("regression_detail=" + shlex.quote(detail))
+                        raise SystemExit
+                detail = "WAIT rank=" + str(current_rank or "?") + f"/{max_rank} cutoff={ch[:8]} n={int(n)}/{min_games_current}"
+                print("regression_state=grace")
+                print("regression_detail=" + shlex.quote(detail))
+                raise SystemExit
             if current_rank is None or len(ranked) <= max_rank or current_rank <= max_rank:
                 detail = "NO rank=" + str(current_rank or "?") + f"/{max_rank} cutoff={ch[:8]} n={int(n)}"
                 print("regression_state=safe")
@@ -975,6 +992,7 @@ PY
 				local reg_color="$C_DIM"
 				case "$regression_state" in
 					trigger) reg_color="$C_RED" ;;
+					warning) reg_color="$C_RED" ;;
 					safe) reg_color="$C_GREEN" ;;
 				esac
 				printf "    ${C_WHITE}▸${C_RESET} Regression  ${reg_color}%s${C_RESET}\n" "${regression_detail:-N/A}"

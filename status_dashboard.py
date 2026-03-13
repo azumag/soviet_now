@@ -482,12 +482,6 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
         }
 
     _, _, _, _, best_hash, best_metrics, best_source = best
-    if current["n"] < MIN_GAMES_BEFORE_REGRESSION:
-        return {
-            "state": "safe",
-            "text": f"RegPreview WAIT rank=?/{REGRESSION_MAX_RANK} cutoff={best_hash[:8]} n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}",
-        }
-
     ranked = ranked_mature_entries(rolling, current_hash, top=None, require_restorable=True)
     ranked.append(
         {
@@ -505,6 +499,34 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
     current_rank = next((idx for idx, entry in enumerate(ranked, start=1) if entry["hash"] == current_hash), None)
     cutoff = ranked[min(REGRESSION_MAX_RANK, len(ranked)) - 1]
     cutoff_hash = cutoff["hash"][:8]
+    if current["n"] < MIN_GAMES_BEFORE_REGRESSION:
+        if current_rank is not None and len(ranked) > REGRESSION_MAX_RANK and current_rank > REGRESSION_MAX_RANK:
+            comp_gap = max(0.0, cutoff["comp"] - current["comp"])
+            p50_gap = max(0.0, cutoff["p50"] - current["p50"])
+            p25_gap = max(0.0, cutoff["p25"] - current["p25"])
+            breach_count = sum(
+                [
+                    1 if comp_gap >= REGRESSION_MIN_COMP_GAP else 0,
+                    1 if p50_gap >= REGRESSION_MIN_P50_GAP else 0,
+                    1 if p25_gap >= REGRESSION_MIN_P25_GAP else 0,
+                ]
+            )
+            gap_text = (
+                f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))}"
+                f" br={breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
+            )
+            if breach_count >= REGRESSION_MIN_BREACH_COUNT:
+                return {
+                    "state": "warning",
+                    "text": (
+                        f"RegPreview WARN rank={current_rank}/{REGRESSION_MAX_RANK} "
+                        f"cutoff={cutoff_hash}{gap_text} n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}"
+                    ),
+                }
+        return {
+            "state": "safe",
+            "text": f"RegPreview WAIT rank={current_rank or '?'}/{REGRESSION_MAX_RANK} cutoff={cutoff_hash} n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}",
+        }
 
     if current_rank is not None and len(ranked) > REGRESSION_MAX_RANK and current_rank > REGRESSION_MAX_RANK:
         comp_gap = max(0.0, cutoff["comp"] - current["comp"])
@@ -805,6 +827,8 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
     if reg:
         reg_color = DIM
         if reg["state"] == "trigger":
+            reg_color = C_RED
+        elif reg["state"] == "warning":
             reg_color = C_RED
         elif reg["state"] == "safe":
             reg_color = C_GREEN
