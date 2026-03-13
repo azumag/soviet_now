@@ -8,6 +8,8 @@ cd "$(dirname "$0")"
 
 EVENT_MSG="${1:-}"
 _log() { echo "[twitch_clip $(date '+%H:%M:%S')] $*" >&2; }
+CLIP_POLL_MAX="${TWITCH_CLIP_POLL_MAX:-12}"
+CLIP_POLL_INTERVAL_SEC="${TWITCH_CLIP_POLL_INTERVAL_SEC:-3}"
 
 # --- 環境変数チェック ---
 TOKEN="${TWITCH_BOT_TOKEN:-}"
@@ -43,18 +45,20 @@ _log "clip created: id=$clip_id"
 
 # --- 完了ポーリング（最大15秒） ---
 clip_url=""
-for i in 1 2 3 4 5; do
-    sleep 3
+poll=1
+while [ "$poll" -le "$CLIP_POLL_MAX" ]; do
+    sleep "$CLIP_POLL_INTERVAL_SEC"
     clip_info=$(curl -sf \
         "https://api.twitch.tv/helix/clips?id=${clip_id}" \
         -H "Authorization: Bearer ${TOKEN}" \
         -H "Client-Id: ${CLIENT_ID}" 2>/dev/null)
     clip_url=$(printf '%s' "$clip_info" | _json_get "['data'][0]['url']")
     if [ -n "$clip_url" ]; then
-        _log "clip ready (poll=$i): $clip_url"
+        _log "clip ready (poll=$poll): $clip_url"
         break
     fi
-    _log "clip not ready yet (poll=$i/5)"
+    _log "clip not ready yet (poll=$poll/$CLIP_POLL_MAX)"
+    poll=$((poll + 1))
 done
 
 # Get Clips で確認できなかった場合は投稿しない（dead link防止）
