@@ -207,12 +207,13 @@ def is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=1, deadline
         and len(reactive_pairs) >= min_reactive_pairs
     )
     
-    # v200: deadline_margin活用による危険局面判定強化
-    # deadlineが超過しているかつ危険的ピースが2個以上ある場合、危険局面と判定
+    # v202: 排出ロジックの適用条件を厳格化 - 危険的ピースが3個以上の場合にのみ排出を優先
+    # ワーストゲーム(score0681)でreactive_pairs=4-6あるのに排出が機能せず即時併合を逃している失敗パターンを解消
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_171315_score0681.jsonl turns 66-73
     deadline_danger = (
         deadline_margin is not None
         and deadline_margin < 0
-        and danger_piece_count >= 2
+        and danger_piece_count >= 3
         and max_y >= 1.0
     )
     
@@ -681,11 +682,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     else:
                         deadline_bonus = min(3500.0, abs(deadline_margin) * 2000.0)
                 
-                # v197修正: reactive_pairs > 0 の場合、排出ボーナスを大幅に減衰（80%減衰）して、即時併合を優先
+                # v202: reactive_pairs > 0 の場合、排出ボーナスを緩和減衰（80%→50%）して、即時併合を優先
+                # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_171315_score0681.jsonl turns 66-73
                 if len(reactive_pairs) > 0:
                     # reactive_pairsがあるのに排出した場合、大きく損をしたことを明確にするペナルティ
-                    edge_bonus *= 0.2
-                    deadline_bonus *= 0.2
+                    edge_bonus *= 0.5
+                    deadline_bonus *= 0.5
                 
                 ejection_bonus = edge_bonus + deadline_bonus
                 if ejection_bonus > 0:
@@ -705,16 +707,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # v200: 危険的ピースが盤面中央（abs(x) < 2.0）に近い場合も、高さペナルティを25%（超過時15%）に削減して排出を優先
                     height_penalty *= height_penalty_reduction
 
-        # ----- evaluation axis 2.7: dangerous situation nextNext future bonus (v191: REMOVED v200) -----
-        # v200: 危険局面で即時併合候補がない場合、nextNextを活用した将来性評価を削除
-        # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題への対処（削除）
-        # nextNextタイプの近くにnextタイプのピースがある場合、将来の併合機会を最大化する配置を優先（削除）
-        # refs: advice.md, tmp/batch_summary.txt, tmp/improve_brief.md
-        # v200の改善点：
-        # 1. nextNext future bonusを削除 - batch_summaryでnextNext系reasonのavg_score_deltaが低い（+10.2など）ことを確認
-        # 2. 即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる
-        # 3. 複雑な将来計画ロジックを削除し、即時併合と盤面圧縮の両立を図るnear_pairsボーナス（v188）に集中
-        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, advice.md
+        # ----- evaluation axis 2.7: dangerous situation nextNext future bonus (v202: REVIVED) -----
+        # v200で削除されたが、v202で復活：危険局面でreactive_pairsが一定数以上ある場合、nextNextタイプの近くに配置して将来の併合機会を確保
+        # ワーストゲーム(score0681)でreactive_pairs=4-6あるのに即時併合機会を逃している失敗パターンを解消
+        # 危険局面でmerge_grade=="NO"かつreactive_pairs>=3の場合、nextNextタイプに近い配置を優先するボーナスを追加
+        # refs: advice.md, tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_171315_score0681.jsonl turns 66-73
+        # v202の改善点：
+        # 1. reactive_pairsが3個以上ある危険局面で即時併合がない場合、nextNextタイプに近い配置を優先するボーナスを追加
+        # 2. reactive_pairsを活用して盤面圧縮を促進し、将来の即時併合機会を確保することで、p25=-249.8の下振れ耐性不足を解消
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md
+        
+        if dangerous_situation and merge_grade == "NO" and len(reactive_pairs) >= 3:
+            # nextNextタイプに近い位置に配置するボーナス
+            # piecesの中からnextNextタイプのピースを探し、重心を計算
+            nextnext_pieces = [p for p in pieces if p.get("type") == next_next_type]
+            if nextnext_pieces:
+                # nextNextタイプのピースの重心を計算
+                avg_x = sum(p["x"] for p in nextnext_pieces) / len(nextnext_pieces)
+                avg_y = sum(p["y"] for p in nextnext_pieces) / len(nextnext_pieces)
+                
+                # 重心からの距離が近いほど大きなボーナス（最大600.0）
+                distance = ((x - avg_x) ** 2 + (landing_y - avg_y) ** 2) ** 0.5
+                nextnext_bonus = max(0, 600.0 - distance * 200.0)
+                
+                if nextnext_bonus > 0:
+                    score += nextnext_bonus
+                    reasons.append("DANGER_NEXTNEAR_FUTURE")
 
         # ----- evaluation axis 3: drift penalty -----
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
