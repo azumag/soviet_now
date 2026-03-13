@@ -2960,10 +2960,11 @@ _append_phyrogenetic_chat_post_log() {
 }
 
 _post_phyrogenetic_tree_link_to_chat() {
-	local event_type="$1" before_hash="$2" after_hash="$3"
+	local event_type="$1" before_hash="$2" after_hash="$3" commit_hash="${4:-}"
 	[ -n "$PHYROGENETIC_TREE_URL" ] || return 0
 	local head_commit last_commit action before_short after_short transition chat_text
-	head_commit=$(git rev-parse HEAD 2>/dev/null || true)
+	head_commit="$commit_hash"
+	[ -n "$head_commit" ] || head_commit=$(git rev-parse HEAD 2>/dev/null || true)
 	[ -n "$head_commit" ] || return 0
 	last_commit=$(cat "$LAST_PHYROGENETIC_CHAT_COMMIT_FILE" 2>/dev/null || true)
 	if [ -n "$last_commit" ] && [ "$last_commit" = "$head_commit" ]; then
@@ -2994,6 +2995,20 @@ _post_phyrogenetic_tree_link_to_chat() {
 			_append_phyrogenetic_chat_post_log "OK" "commit=${head_commit:0:8} event=$event_type" "$chat_text"
 		fi
 	) &
+}
+
+_post_pending_phyrogenetic_tree_link_to_chat_if_any() {
+	local latest_line latest_commit latest_subject event_type
+	latest_line=$(git log --format='%H|%s' --grep='^eloop Improve after' --grep='^eloop Auto-revert:' -n 1 2>/dev/null | head -n 1)
+	[ -n "$latest_line" ] || return 0
+	latest_commit="${latest_line%%|*}"
+	latest_subject="${latest_line#*|}"
+	[ -n "$latest_commit" ] || return 0
+	case "$latest_subject" in
+	eloop\ Improve\ after*) event_type="improve" ;;
+	*) event_type="rollback" ;;
+	esac
+	_post_phyrogenetic_tree_link_to_chat "$event_type" "" "" "$latest_commit"
 }
 
 _post_cc_text_to_chat() {
