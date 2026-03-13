@@ -9,6 +9,7 @@ Decision Patterns logic remains available but is hidden from the dashboard layou
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -148,6 +149,31 @@ def block_bar(value, max_val, width, color=""):
     if color:
         return color + bar + RST
     return bar
+
+
+def compact_regpreview_text(text, max_len):
+    compact = str(text or "")
+    replacements = [
+        ("RegPreview ", "Reg "),
+        ("anchor=", "a="),
+        ("best=", "b="),
+        ("gap=", "g="),
+        (" hard", " H"),
+        (" no anchor", " no-a"),
+        ("current not tracked", "not tracked"),
+    ]
+    for old, new in replacements:
+        compact = compact.replace(old, new)
+    compact = re.sub(r"\s+", " ", compact).strip()
+    if len(compact) <= max_len:
+        return compact
+    if max_len <= 3:
+        return compact[:max_len]
+    tail_len = min(12, max(6, max_len // 4))
+    head_len = max_len - tail_len - 3
+    if head_len < 1:
+        return compact[: max_len - 3] + "..."
+    return compact[:head_len] + "..." + compact[-tail_len:]
 
 
 # ── Data loading ──────────────────────────────────────────────
@@ -1021,9 +1047,10 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
             reg_color = C_GREEN
         elif reg["state"] == "unknown":
             reg_color = C_YELLOW
-        reg_raw = f" {reg['text']}"
-        reg_disp = f" {reg_color}{reg['text']}{RST}"
-        pad7 = inner - len(reg["text"]) - 1
+        reg_text = compact_regpreview_text(reg["text"], inner - 1)
+        reg_raw = f" {reg_text}"
+        reg_disp = f" {reg_color}{reg_text}{RST}"
+        pad7 = inner - len(reg_text) - 1
         lines.append(f"{C_CYAN}│{RST}{reg_disp}{' ' * max(pad7, 0)} {C_CYAN}│{RST}")
 
     lines.append(f"{C_CYAN}└{'─' * (W - 2)}┘{RST}")
