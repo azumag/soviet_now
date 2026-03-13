@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-13 20:39:00 JST`
-- Nodes: `496`
-- Edges: `682`
-- Current: `f2e07b06f8f1`
+- Updated: `2026-03-13 21:26:44 JST`
+- Nodes: `497`
+- Edges: `683`
+- Current: `b778f2a512ef`
 - Anchor: `9d6fe31baf81`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,8 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_9d6fe31baf81["9d6fe31baf81<br/>ANCHOR<br/>g=29 n=20<br/>comp=1343.0"]
-    h_2a1f6e9cb13f["2a1f6e9cb13f<br/>g=11 n=11<br/>comp=1075.7"]
+    h_9d6fe31baf81["9d6fe31baf81<br/>ANCHOR<br/>g=30 n=20<br/>comp=1338.5"]
     h_173e15416a89["173e15416a89<br/>g=17 n=17<br/>comp=1181.6"]
     h_64ab1a2a94a2["64ab1a2a94a2<br/>g=30 n=20<br/>comp=1252.9"]
     h_bc73e823fcfb["bc73e823fcfb<br/>g=39 n=20<br/>comp=1034.6"]
@@ -73,9 +72,10 @@ flowchart TD
     h_04234237c864["04234237c864<br/>g=17 n=17<br/>comp=965.8"]
     h_8c76e22ff7c8["8c76e22ff7c8<br/>g=15 n=15<br/>comp=1143.0"]
     h_cf42a97de4d5["cf42a97de4d5<br/>g=22 n=20<br/>comp=985.1"]
+    h_f2e07b06f8f1["f2e07b06f8f1<br/>g=13 n=13<br/>comp=1201.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_f2e07b06f8f1["f2e07b06f8f1<br/>CURRENT"]
+    h_b778f2a512ef["b778f2a512ef<br/>CURRENT"]
 
     h_173e15416a89 -->|improve| h_64ab1a2a94a2
     h_64ab1a2a94a2 -->|improve| h_bc73e823fcfb
@@ -139,6 +139,7 @@ flowchart TD
     h_8c76e22ff7c8 -->|improve| h_cf42a97de4d5
     h_cf42a97de4d5 -. rollback .-> h_9d6fe31baf81
     h_9d6fe31baf81 -->|improve| h_f2e07b06f8f1
+    h_f2e07b06f8f1 -->|improve| h_b778f2a512ef
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -146,7 +147,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_9d6fe31baf81 anchor;
-    class h_2a1f6e9cb13f plain;
     class h_173e15416a89 plain;
     class h_64ab1a2a94a2 plain;
     class h_bc73e823fcfb plain;
@@ -203,9 +203,10 @@ flowchart TD
     class h_04234237c864 plain;
     class h_8c76e22ff7c8 plain;
     class h_cf42a97de4d5 plain;
+    class h_f2e07b06f8f1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_f2e07b06f8f1 current;
+    class h_b778f2a512ef current;
 ```
 
 ## Detail 1/7
@@ -1659,7 +1660,7 @@ flowchart TD
     h_d7e505ff9490["d7e505ff9490<br/>g=11 n=11<br/>comp=1001.7"]
     h_74d2be53d875["74d2be53d875<br/>g=14 n=14<br/>comp=1035.4"]
     h_3bc61278c800["3bc61278c800<br/>g=12 n=12<br/>comp=888.3"]
-    h_9d6fe31baf81["9d6fe31baf81<br/>ANCHOR<br/>g=29 n=20<br/>comp=1343.0"]
+    h_9d6fe31baf81["9d6fe31baf81<br/>ANCHOR<br/>g=30 n=20<br/>comp=1338.5"]
     h_cffc0644c1fb["cffc0644c1fb<br/>g=11 n=11<br/>comp=1028.8"]
     h_af010e4e7088["af010e4e7088<br/>g=11 n=11<br/>comp=1089.0"]
     h_8dd849e1c259["8dd849e1c259<br/>g=27 n=20<br/>comp=1092.8"]
@@ -1903,15 +1904,15 @@ flowchart TD
 
 ## Detail 7/7
 
-- Range: `6d9586d182e0` .. `f2e07b06f8f1`
-- Nodes in this diagram: `16`
-- Internal edges in this diagram: `12`
+- Range: `6d9586d182e0` .. `b778f2a512ef`
+- Nodes in this diagram: `17`
+- Internal edges in this diagram: `13`
 - Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
 - Cross-chunk link: `cf42a97de4d5 -.rollback.-> 9d6fe31baf81`
+- Cross-chunk link: `9d6fe31baf81 --improve--> f2e07b06f8f1`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `9d6fe31baf81 --improve--> f2e07b06f8f1`
 
 ```mermaid
 flowchart TD
@@ -1928,9 +1929,10 @@ flowchart TD
     h_04234237c864["04234237c864<br/>g=17 n=17<br/>comp=965.8"]
     h_8c76e22ff7c8["8c76e22ff7c8<br/>g=15 n=15<br/>comp=1143.0"]
     h_cf42a97de4d5["cf42a97de4d5<br/>g=22 n=20<br/>comp=985.1"]
+    h_f2e07b06f8f1["f2e07b06f8f1<br/>g=13 n=13<br/>comp=1201.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_f2e07b06f8f1["f2e07b06f8f1<br/>CURRENT"]
+    h_b778f2a512ef["b778f2a512ef<br/>CURRENT"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
@@ -1944,6 +1946,7 @@ flowchart TD
     h_faae21cf61e0 -->|improve| h_04234237c864
     h_04234237c864 -->|improve| h_8c76e22ff7c8
     h_8c76e22ff7c8 -->|improve| h_cf42a97de4d5
+    h_f2e07b06f8f1 -->|improve| h_b778f2a512ef
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -1963,12 +1966,23 @@ flowchart TD
     class h_04234237c864 plain;
     class h_8c76e22ff7c8 plain;
     class h_cf42a97de4d5 plain;
+    class h_f2e07b06f8f1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_f2e07b06f8f1 current;
+    class h_b778f2a512ef current;
 ```
 
 ## Transition Notes
+
+### Improve Game#5258 `f2e07b06 -> b778f2a5`
+
+- scores: `1135 1121 1554 1979 1195 1235 1223 1180 2256 1340 1362 322`
+- v204: reactive_pairs==1 即時併合優先ボーナス追加 - 即時併合機会取りこぼし削減
+- batch_summaryでHEIGHT_CONTROLが26.5%選択(avg_score_delta=0.7)と過剰、NEAR_MERGE系が3.3-9.2%選択(avg_score_delta=28-57)と低選択率を確認。
+- ワーストゲーム(score0322, score1121)終盤でreactive_pairs=1-2あるにもかかわらずHIGH_TOWER/HIGH_LAYER選択で下振れ。
+- v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルなマージ重視戦略を維持。
+- reactive_pairs>=2での既存800.0ボーナスに加え、reactive_pairs==1でも即時併合時に400.0ボーナスを付与。
+- これによりreactive_pairs==1のケースでの即時併合機会取りこぼし削減し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
 
 ### Improve Game#5242 `9d6fe31b -> f2e07b06`
 
