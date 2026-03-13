@@ -7,6 +7,10 @@ _strip_ansi() {
 	perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x09\x0b-\x0d\x0e-\x1f]//g' | tr -d '\r'
 }
 
+_contains_provider_error_text() {
+	printf '%s' "$1" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticat(e|ed)|api error[: ]|request_id|invalid error token|invalid token'
+}
+
 #=== opencode run を疑似TTY付きで実行 ===
 
 _run_opencode_radio() {
@@ -39,7 +43,7 @@ _run_opencode_radio() {
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
 		sed '/^[[:space:]]*$/d')
 	rm -f "$raw_file"
-	if printf '%s' "$cleaned" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticate|api error[: ]|request_id|invalid error token|invalid token'; then
+	if _contains_provider_error_text "$cleaned"; then
 		log "[RADIO] opencode provider error treated as failure (agent=$agent)" >&2
 		return 1
 	fi
@@ -48,14 +52,19 @@ _run_opencode_radio() {
 
 _run_claude_radio() {
 	local prompt_file="$1"
-	local prompt
+	local prompt output
 	prompt=$(cat "$prompt_file" 2>/dev/null)
 	if [ -z "$prompt" ]; then
 		return 1
 	fi
 	# command substitution に混ざらないよう stderr に出す
 	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL)" >&2
-	claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>/dev/null
+	output=$(claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>/dev/null)
+	if _contains_provider_error_text "$output"; then
+		log "[RADIO] claude provider error treated as failure (model=$RADIO_CLAUDE_MODEL)" >&2
+		return 1
+	fi
+	printf '%s' "$output"
 }
 
 _clean_comment_talk() {
@@ -714,7 +723,7 @@ _run_opencode_jiji_research() {
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
 		sed '/^[[:space:]]*$/d')
 	rm -f "$raw_file"
-	if printf '%s' "$cleaned" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticate|api error[: ]|request_id|invalid error token|invalid token'; then
+	if _contains_provider_error_text "$cleaned"; then
 		log "[JIJI] opencode provider error treated as failure (agent=$agent)" >&2
 		return 1
 	fi

@@ -1199,6 +1199,10 @@ _strip_ansi() {
 	perl -pe 's/\e\[[0-9;]*[a-zA-Z]//g; s/[\x00-\x09\x0b-\x0d\x0e-\x1f]//g' | tr -d '\r'
 }
 
+_contains_provider_error_text() {
+	printf '%s' "$1" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticat(e|ed)|api error[: ]|request_id|invalid error token|invalid token'
+}
+
 #=== opencode run を疑似TTY付きで実行 ===
 
 _run_opencode_radio() {
@@ -1231,7 +1235,7 @@ _run_opencode_radio() {
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
 		sed '/^[[:space:]]*$/d')
 	rm -f "$raw_file"
-	if printf '%s' "$cleaned" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticate|api error[: ]|request_id|invalid error token|invalid token'; then
+	if _contains_provider_error_text "$cleaned"; then
 		log "[RADIO] opencode provider error treated as failure (agent=$agent)" >&2
 		return 1
 	fi
@@ -1350,14 +1354,19 @@ _run_claude_comment() {
 _run_claude_radio_with_model() {
 	local prompt_file="$1"
 	local model="${2:-$RADIO_CLAUDE_MODEL}"
-	local prompt
+	local prompt output
 	prompt=$(cat "$prompt_file" 2>/dev/null)
 	if [ -z "$prompt" ]; then
 		return 1
 	fi
 	# command substitution に混ざらないよう stderr に出す
 	log "[RADIO] claude call (model=$model)" >&2
-	claude -p "$prompt" --model "$model" 2>/dev/null
+	output=$(claude -p "$prompt" --model "$model" 2>/dev/null)
+	if _contains_provider_error_text "$output"; then
+		log "[RADIO] claude provider error treated as failure (model=$model)" >&2
+		return 1
+	fi
+	printf '%s' "$output"
 }
 
 _run_claude_radio() {
@@ -1424,7 +1433,7 @@ _is_valid_comment_talk() {
 	if printf '%s' "$talk" | grep -Eiq 'tool_call|tool_result|assistant_response|^analysis$|^final$|^assistant$|^provider[[:space:]]*[:=]|^model[[:space:]]*[:=]|^agent[[:space:]]*[:=]'; then
 		return 1
 	fi
-	if printf '%s' "$talk" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticate|api error[: ]|request_id|invalid error token|invalid token|unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission'; then
+	if _contains_provider_error_text "$talk" || printf '%s' "$talk" | grep -Eiq 'unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission'; then
 		return 1
 	fi
 	if printf '%s' "$talk" | grep -Eiq '(^|[[:space:]])(read failed|edit failed|write failed|file not found:|no such file or directory|permission denied|invalid arguments)'; then
@@ -1452,7 +1461,7 @@ _is_valid_radio_talk() {
 	if printf '%s' "$talk" | grep -Eq '放送前のファクトチェック担当|安全化した最終原稿|削った・弱めた点|【最優先ルール】|【材料】|【元原稿】|【出力形式】'; then
 		return 1
 	fi
-	if printf '%s' "$talk" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticate|api error[: ]|request_id|invalid error token|invalid token|unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission'; then
+	if _contains_provider_error_text "$talk" || printf '%s' "$talk" | grep -Eiq 'unexpected token|syntaxerror|referenceerror|typeerror|could not find oldstring|no changes to apply|rejected permission'; then
 		return 1
 	fi
 	if printf '%s' "$talk" | grep -Eq 'といわれます|と言われます|といわれています|と言われています|とされています|とされます|とされていました|とみられます|とみられています|と考えられます|と考えられています'; then
@@ -2280,7 +2289,7 @@ import sys
 
 text = sys.stdin.read()
 drop_line_patterns = [
-    r'failed to authenticate',
+    r'failed to authenticat(?:e|ed)',
     r'api error[: ]',
     r'authentication_error',
     r'invalid bearer token',
@@ -3219,6 +3228,26 @@ _radio_generate_and_play() {
 
 	local talk_body_parsed talk_body_sanitized talk_body_dedup
 	talk_body_parsed="$talk_body"
+	if _contains_provider_error_text "$talk" || _contains_provider_error_text "$talk_body_parsed"; then
+		debug_dump="$TMP_DEBUG_DIR/radio_failed_${corner_name}_$(date +%s).txt"
+		{
+			echo "reason=provider_error_text"
+			echo "corner=${corner_name}"
+			echo "game=${game_num}"
+			echo "score=${score}"
+			echo "selected_news=${selected_news}"
+			echo
+			echo "===RAW==="
+			printf '%s\n' "$talk"
+			echo
+			echo "===PARSED==="
+			printf '%s\n' "$talk_body_parsed"
+		} >"$debug_dump"
+		log "[RADIO:${corner_name}] provider error text detected in generated talk -> skip (dump: $debug_dump)"
+		_radio_clear_state "$corner_name" "generation_failed"
+		rmdir "$inflight_dir" 2>/dev/null || true
+		return 1
+	fi
 	talk_body_sanitized=$(printf '%s' "$talk_body_parsed" | _sanitize_onair_text)
 	talk_body_dedup=$(printf '%s' "$talk_body_sanitized" | _radio_dedup_text)
 
