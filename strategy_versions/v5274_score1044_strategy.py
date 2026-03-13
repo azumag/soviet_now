@@ -7,22 +7,23 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (8 evaluation axes):
+Decision Logic (9 evaluation axes):
    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
    2. Height penalty - Penalty for high landing position (varies by phase)
    3. Drift penalty - Penalty for post-landing drift due to polygon shape
    4. Left-right balance correction - Bonus for correcting piece count bias
     5. nextNext centering - Center for next merge opportunity if nextNext same type
-    5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches (NEW: nextNext utilization)
+    5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
     6. Chain merge bonus - Evaluate possibility of further merges after merge
-   7. Reactive pairs bonus - Bonus for multiple merge opportunities (NEW: reactor info utilization)
-   8. Early game merge priority - Strong bonus for merge opportunities in early game
+    7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization)
+    8. Early game merge priority - Strong bonus for merge opportunities in early game
+    8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (NEW: density enhancement)
 
 Phases (determined by board max Y):
-   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-   MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
-   HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-   CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+    MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
+    HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+    CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
 # Fixed interface:
@@ -36,6 +37,15 @@ Phases (determined by board max Y):
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
+#
+# v205: reactive_pairs>=3での盤面圧縮ボーナス追加 - 即時併合機会がない場合の盤面密度強化
+# ワーストゲーム(score0781)終盤でreactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択し盤面圧迫。
+# advice.md「盤面が詰まっても即時併合を狙うべきだ」とreactive_pairs活用で実現。即時併合を優先しつつ盤面密度を高める。
+# v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+# reactive_pairs>=3でmerge_grade=="NO"の場合、盤面密度を高める配置に+300.0ボーナスを与え盤面圧縮を促進。
+# これにより「併合機会があるのにHEIGHT_CONTROL」問題の派生パターン（即時併合なしで盤面圧迫）を解消しp25悪化を抑制。
+# 構造的変更（新規評価軸axis 8.5追加）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_220700_score0781.jsonl turns 66-73, advice.md
 #
 # v204: reactive_pairs==1 即時併合優先ボーナス追加 - 即時併合機会取りこぼし削減
 # batch_summaryでHEIGHT_CONTROLが26.5%選択(avg_score_delta=0.7)と過剰、NEAR_MERGE系が3.3-9.2%選択(avg_score_delta=28-57)と低選択率を確認。
@@ -88,13 +98,13 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v204: reactive_pairs==1 即時併合優先ボーナス追加 - 即時併合機会取りこぼし削減
+    """v205: reactive_pairs>=3での盤面圧縮ボーナス追加 - 即時併合機会がない場合の盤面密度強化
 
-    batch_summaryでHEIGHT_CONTROLが26.5%選択(avg_score_delta=0.7)と過剰、NEAR_MERGE系が3.3-9.2%選択(avg_score_delta=28-57)と低選択率を確認。
-    ワーストゲーム(score0322, score1121)終盤でreactive_pairs=1-2あるにもかかわらずHIGH_TOWER/HIGH_LAYER選択で下振れ。
-    v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルなマージ重視戦略を維持。
-    reactive_pairs>=2での既存800.0ボーナスに加え、reactive_pairs==1でも即時併合時に400.0ボーナスを付与。
-    これによりreactive_pairs==1のケースでの即時併合機会取りこぼし削減し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
+    ワーストゲーム(score0781)終盤でreactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択し盤面圧迫。
+    advice.md「盤面が詰まっても即時併合を狙うべきだ」とreactive_pairs活用で実現。即時併合を優先しつつ盤面密度を高める。
+    v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+    reactive_pairs>=3でmerge_grade=="NO"の場合、盤面密度を高める配置に+300.0ボーナスを与え盤面圧縮を促進。
+    これにより「併合機会があるのにHEIGHT_CONTROL」問題の派生パターン（即時併合なしで盤面圧迫）を解消しp25悪化を抑制。
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -336,6 +346,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 2つ以上の反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
             score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
+
+        # ----- evaluation axis 8.5: reactive pairs board compression (NEW: no merge density enhancement) -----
+        # ワーストゲーム(score0781)終盤でreactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択し盤面圧迫。
+        # advice.md「盤面が詰まっても即時併合を狙うべきだ」とは、即時併合を優先しつつ盤面密度を高めることを示唆。
+        # v201 rollback教訓: 複雑な危険局面判定は禁止。reactive_pairs活用のシンプルな改善を採用。
+        # reactive_pairs>=3で即時併合機会がない場合、盤面密度を高める配置（近い位置）に+300.0ボーナスを与え盤面圧縮を促進。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_220700_score0781.jsonl turns 66-73, advice.md
+        if reactive_pair_count >= 3 and merge_grade == "NO":
+            # reactive_pairsが3以上あるのに即時併合機会がない場合、盤面密度を高める配置を優先
+            # 近い位置（landing_yが低い）ほど盤面圧縮に寄与するため、landing_yに応じてボーナスを減衰させる
+            # landing_yが低い（盤面下）ほど盤面密度が高くなるため、より強いボーナスを与える
+            compression_bonus = 300.0 * max(0, 1.0 - (landing_y + 4.0) / 8.0)  # landing_y=-4.0で300.0, landing_y=4.0で0.0
+            score += compression_bonus
+            reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
         # ----- update best candidate -----
         if score > best_score:
