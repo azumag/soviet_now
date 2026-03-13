@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-13 11:03:44 JST`
-- Nodes: `486`
-- Edges: `671`
-- Current: `8783d96fea8f`
+- Updated: `2026-03-13 11:09:29 JST`
+- Nodes: `487`
+- Edges: `672`
+- Current: `e4a3ff55afbf`
 - Anchor: `633b07c78b7c`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_633b07c78b7c["633b07c78b7c<br/>ANCHOR<br/>g=65 n=20<br/>comp=1004.1"]
-    h_7963d7bcee94["7963d7bcee94<br/>g=5 n=5<br/>comp=809.5"]
     h_901c41c4e1ed["901c41c4e1ed<br/>g=3 n=3<br/>comp=1374.2"]
     h_b2850c039a20["b2850c039a20<br/>g=3 n=3<br/>comp=1474.9"]
     h_02de1e28ed25["02de1e28ed25<br/>g=19 n=19<br/>comp=1114.0"]
@@ -73,11 +72,11 @@ flowchart TD
     h_6d9586d182e0["6d9586d182e0<br/>g=14 n=14<br/>comp=853.7"]
     h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
     h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=1045.9"]
-    h_8783d96fea8f["8783d96fea8f<br/>CURRENT<br/>g=11 n=11<br/>comp=1296.5"]
+    h_8783d96fea8f["8783d96fea8f<br/>g=13 n=13<br/>comp=1248.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_e4a3ff55afbf["e4a3ff55afbf<br/>CURRENT"]
 
-    h_7963d7bcee94 -->|improve| h_901c41c4e1ed
     h_901c41c4e1ed -->|improve| h_b2850c039a20
     h_b2850c039a20 -->|improve| h_02de1e28ed25
     h_02de1e28ed25 -->|improve| h_083cba953593
@@ -167,6 +166,7 @@ flowchart TD
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
     h_51d6d7502cab -->|improve| h_8783d96fea8f
+    h_8783d96fea8f -->|improve| h_e4a3ff55afbf
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -174,7 +174,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_633b07c78b7c anchor;
-    class h_7963d7bcee94 plain;
     class h_901c41c4e1ed plain;
     class h_b2850c039a20 plain;
     class h_02de1e28ed25 plain;
@@ -231,9 +230,10 @@ flowchart TD
     class h_6d9586d182e0 plain;
     class h_8c79ef457733 plain;
     class h_51d6d7502cab plain;
-    class h_8783d96fea8f current;
+    class h_8783d96fea8f plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_e4a3ff55afbf current;
 ```
 
 ## Detail 1/7
@@ -1931,9 +1931,9 @@ flowchart TD
 
 ## Detail 7/7
 
-- Range: `6d9586d182e0` .. `a3aae72a4e37`
-- Nodes in this diagram: `6`
-- Internal edges in this diagram: `3`
+- Range: `6d9586d182e0` .. `e4a3ff55afbf`
+- Nodes in this diagram: `7`
+- Internal edges in this diagram: `4`
 - Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -1944,13 +1944,15 @@ flowchart TD
     h_6d9586d182e0["6d9586d182e0<br/>g=14 n=14<br/>comp=853.7"]
     h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
     h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=1045.9"]
-    h_8783d96fea8f["8783d96fea8f<br/>CURRENT<br/>g=11 n=11<br/>comp=1296.5"]
+    h_8783d96fea8f["8783d96fea8f<br/>g=13 n=13<br/>comp=1248.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_e4a3ff55afbf["e4a3ff55afbf<br/>CURRENT"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
     h_51d6d7502cab -->|improve| h_8783d96fea8f
+    h_8783d96fea8f -->|improve| h_e4a3ff55afbf
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -1960,7 +1962,8 @@ flowchart TD
     class h_6d9586d182e0 plain;
     class h_8c79ef457733 plain;
     class h_51d6d7502cab plain;
-    class h_8783d96fea8f current;
+    class h_8783d96fea8f plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_e4a3ff55afbf current;
 ```
