@@ -2696,7 +2696,6 @@ _news_source_key_from_name() {
 		"ウィキニュース"|wikinews|Wikinews) echo "wikinews" ;;
 		Wikinews\(*) echo "wikinews" ;;
 		wikinews_*) echo "wikinews" ;;
-		"首相官邸"|kantei|Kantei) echo "kantei" ;;
 		"Global Voices"|globalvoices|GlobalVoices) echo "globalvoices" ;;
 		*) echo "" ;;
 	esac
@@ -2726,12 +2725,12 @@ try:
 except Exception:
     meta = {}
 
-pref_order = {"wikinews": 0, "kantei": 1, "globalvoices": 2}
+pref_order = {"wikinews": 0, "globalvoices": 1}
 def _name_to_key(name):
     if name == "ウィキニュース" or name.startswith("Wikinews"):
         return "wikinews"
-    return {"首相官邸": "kantei", "Global Voices": "globalvoices"}.get(name, "")
-display = {"wikinews": "ウィキニュース", "kantei": "首相官邸", "globalvoices": "Global Voices"}
+    return {"Global Voices": "globalvoices"}.get(name, "")
+display = {"wikinews": "ウィキニュース", "globalvoices": "Global Voices"}
 lang_labels = {
     "ja": "", "en": " [英語]", "fr": " [フランス語]", "ru": " [ロシア語]",
     "de": " [ドイツ語]", "ar": " [アラビア語]", "cs": " [チェコ語]",
@@ -2812,7 +2811,7 @@ except Exception:
 def _name_to_key(name):
     if name == "ウィキニュース" or name.startswith("Wikinews"):
         return "wikinews"
-    return {"首相官邸": "kantei", "Global Voices": "globalvoices"}.get(name, "")
+    return {"Global Voices": "globalvoices"}.get(name, "")
 
 # Parse blocks
 blocks = []
@@ -2872,8 +2871,8 @@ except Exception:
 def _name_to_key(name):
     if name == "ウィキニュース" or name.startswith("Wikinews"):
         return "wikinews"
-    return {"首相官邸": "kantei", "Global Voices": "globalvoices"}.get(name, "")
-label = {"wikinews": "ウィキニュース", "kantei": "首相官邸", "globalvoices": "Global Voices"}
+    return {"Global Voices": "globalvoices"}.get(name, "")
+label = {"wikinews": "ウィキニュース", "globalvoices": "Global Voices"}
 
 hist = []
 if os.path.exists(source_hist_path):
@@ -2896,7 +2895,7 @@ if not seen:
     raise SystemExit(0)
 
 parts = [f"{label.get(k, k)}:{counts.get(k, 0)}" for k in seen]
-under = sorted(seen, key=lambda k: (counts.get(k, 0), {"wikinews": 0, "kantei": 1, "globalvoices": 2}.get(k, 99)))
+under = sorted(seen, key=lambda k: (counts.get(k, 0), {"wikinews": 0, "globalvoices": 1}.get(k, 99)))
 prefer = label.get(under[0], under[0])
 print(f"直近12回のニュース出典件数: {', '.join(parts)}。内容が同程度なら最近少ない出典を優先。特に今回は {prefer} をやや優先。")
 PY
@@ -3635,7 +3634,7 @@ start_radio_corner_theme() {
 	local game_num="$1" score="$2" filter_category="${3:-}"
 	_radio_time_context
 
-	local raw_theme category="" theme corner_name="theme"
+	local raw_theme category="" theme corner_name="theme" grounding_context="" category_guidance=""
 	raw_theme=$(_pick_radio_theme "$filter_category")
 	if [[ "$raw_theme" == \[soviet\]$'\t'* ]]; then
 		category="soviet"
@@ -3649,40 +3648,25 @@ start_radio_corner_theme() {
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
 
-	local soviet_extra=""
+	grounding_context=$(_radio_fetch_theme_grounding_context "$corner_name" "$theme")
+	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
+
 	if [ "$category" = "soviet" ]; then
-		soviet_extra="
+		category_guidance="
    - 共産主義っぽい言い回しを自然に使う
    - 理想と現実のギャップにはきっちり突っ込む"
 	fi
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
-	cat >"$prompt_file" <<PROMPT
-$(_radio_persona_block)
+	export persona_block
+	persona_block=$(_radio_persona_block)
+	export output_rules
+	output_rules=$(_radio_output_rules 1000 2000)
+	export _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics game_num score
+	envsubst < "$ELOOP_LIB_DIR/prompts/radio_theme.md" > "$prompt_file"
+	unset persona_block output_rules _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
-
-【今回の脱線テーマ指定】
-${theme}
-
-【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
-${past_topics}
-
-【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
-
-【トーク構成】
-1. 時間帯に合わせた軽いオープニング（2-3文）
-2. 雑談コーナー: 指定テーマを深掘り
-   - 具体的なトピックを「ひとつだけ」選ぶ
-   - 歴史的背景、具体的なエピソードや逸話、自分なりの感想・驚き・比較、関連する小ネタや派生話
-   - 重要: あれもこれもと話題を並べない。1つのトピックで聞き手が「詳しくなった」と感じるくらい深く
-   - 偉人や歴史上の人物にも容赦なくツッコむ。ただし敬意はある${soviet_extra}
-3. 軽いクロージング（1-2文）
-
-$(_radio_output_rules 1000 2000)
-PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "$corner_name"
 }
 

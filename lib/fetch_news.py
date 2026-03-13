@@ -8,7 +8,6 @@ import json
 import os
 import random
 import re
-import shutil
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -33,14 +32,9 @@ SUMMARY_LIMIT = 4000
 REQUEST_TIMEOUT = 8.0
 USER_AGENT = "soren-news-fetcher/1.0"
 
+DISABLED_SOURCE_NAMES = {"首相官邸"}
+
 SOURCES = [
-    {
-        "url": "https://www.kantei.go.jp/index-jnews.rdf",
-        "key": "kantei",
-        "name": "首相官邸",
-        "license": None,
-        "lang": "ja",
-    },
     {
         "url": "https://ja.wikinews.org/w/index.php?title=特別:新しいページ&feed=rss",
         "key": "wikinews",
@@ -253,13 +247,6 @@ def safe_unlink(path: str) -> None:
         pass
 
 
-def copy_if_exists(src: str, dst: str) -> bool:
-    if not os.path.exists(src):
-        return False
-    shutil.copyfile(src, dst)
-    return True
-
-
 def write_text(path: str, text: str) -> None:
     tmp_path = path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -296,13 +283,72 @@ def append_and_trim(path: str, values: list[str], max_lines: int) -> None:
         safe_unlink(path)
 
 
+def load_text(path: str) -> str:
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def load_json(path: str):
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def filter_disabled_cached_outputs(news_text: str, meta: dict) -> tuple[str, dict]:
+    filtered_meta = {
+        title: item
+        for title, item in meta.items()
+        if collapse_ws((item or {}).get("source", "")) not in DISABLED_SOURCE_NAMES
+    }
+    if len(filtered_meta) == len(meta):
+        return news_text, filtered_meta
+
+    blocks = []
+    current = []
+    for raw_line in news_text.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("■ "):
+            if current:
+                blocks.append(current)
+            current = [line]
+        elif current:
+            current.append(line)
+    if current:
+        blocks.append(current)
+
+    filtered_blocks = []
+    for block in blocks:
+        title = block[0][2:].strip() if block and block[0].startswith("■ ") else ""
+        if title in filtered_meta:
+            filtered_blocks.append("\n".join(block).rstrip())
+
+    filtered_text = "\n\n".join(filtered_blocks).strip()
+    if filtered_text:
+        filtered_text += "\n"
+    return filtered_text, filtered_meta
+
+
 def restore_stale_cache() -> bool:
     if NEWS_ALLOW_STALE_CACHE != "1":
         return False
-    if not copy_if_exists(LAST_NEWS_CACHE, OUTFILE):
+    news_text = load_text(LAST_NEWS_CACHE)
+    meta = load_json(LAST_NEWS_META_CACHE)
+    if not news_text or not isinstance(meta, dict):
         return False
-    if not copy_if_exists(LAST_NEWS_META_CACHE, META_OUTFILE):
-        safe_unlink(META_OUTFILE)
+    news_text, meta = filter_disabled_cached_outputs(news_text, meta)
+    if not news_text or not meta:
+        return False
+    write_text(OUTFILE, news_text)
+    write_json(META_OUTFILE, meta)
     return True
 
 
@@ -351,33 +397,6 @@ def iter_items(root: ET.Element):
             yield elem
 
 
-def extract_meta_content(html_text: str, *targets: str) -> str:
-    targets_lc = {t.lower() for t in targets}
-    for match in re.finditer(r"<meta\b[^>]*>", html_text, re.I):
-        tag = match.group(0)
-        prop = ""
-        content = ""
-        for attr, _, value in re.findall(r'([a-zA-Z:_-]+)\s*=\s*([\'"])(.*?)\2', tag, re.S):
-            attr_lc = attr.lower()
-            if attr_lc in {"property", "name"}:
-                prop = value.lower()
-            elif attr_lc == "content":
-                content = value
-        if prop in targets_lc and content:
-            return collapse_ws(html.unescape(content))
-    return ""
-
-
-def fetch_meta_description(url: str) -> str:
-    if not url:
-        return ""
-    try:
-        html_text = http_get(url)
-    except Exception:
-        return ""
-    return extract_meta_content(html_text, "og:description", "description")
-
-
 def strip_wikitext(text: str) -> str:
     text = html.unescape(text or "")
     text = re.sub(r"<ref\b[^>]*>.*?</ref>", " ", text, flags=re.I | re.S)
@@ -405,12 +424,7 @@ def clean_item(source: dict, item: ET.Element, og_fetch_budget: int = 2) -> dict
         raw_description = child_text(item, "encoded")
 
     used_og_fetch = False
-    if source["key"] == "kantei":
-        summary = trim_summary(strip_tags(raw_description))
-        if not summary and og_fetch_budget > 0:
-            summary = trim_summary(fetch_meta_description(url))
-            used_og_fetch = True
-    elif source["key"].startswith("wikinews"):
+    if source["key"].startswith("wikinews"):
         summary = strip_wikitext(raw_description)
     else:
         summary = trim_summary(strip_tags(raw_description))

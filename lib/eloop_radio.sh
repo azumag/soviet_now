@@ -420,6 +420,32 @@ _radio_generate_and_play() {
 
 #=== ラジオトーク: テーマ選択 ===
 
+_radio_fetch_theme_grounding_context() {
+	local corner_name="$1" theme="$2"
+	[ "${RADIO_WEB_GROUNDING_ENABLED:-1}" = "1" ] || return 0
+	[ -n "$theme" ] || return 0
+
+	local grounding_context="" prompt_seed=""
+	if typeset -f _radio_fetch_web_grounding >/dev/null 2>&1; then
+		prompt_seed=$(printf '【今回の脱線テーマ指定】\n%s\n' "$theme")
+		grounding_context=$(_radio_fetch_web_grounding "$corner_name" "$prompt_seed")
+	fi
+
+	if [ -z "$grounding_context" ]; then
+		grounding_context=$(python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
+			--corner "$corner_name" \
+			--query "$theme" \
+			--ttl-sec "${RADIO_WEB_GROUNDING_TTL_SEC:-21600}" \
+			--max-sources "${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}" \
+			--cache-dir "$RADIO_WEB_GROUNDING_CACHE_DIR" 2>/dev/null || true)
+		if [ -n "$grounding_context" ]; then
+			log "[RADIO:${corner_name}] theme grounding取得成功(fallback)" >&2
+		fi
+	fi
+
+	printf '%s' "$grounding_context"
+}
+
 _pick_radio_theme() {
 	local themes=()
 	local theme_keys=()
@@ -506,8 +532,10 @@ _pick_soviet_theme() {
 start_radio_corner_theme() {
 	local game_num="$1" score="$2"
 	_radio_time_context
-	local theme
+	local theme grounding_context category_guidance=""
 	theme=$(_pick_radio_theme)
+	grounding_context=$(_radio_fetch_theme_grounding_context "theme" "$theme")
+	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
 
@@ -518,9 +546,9 @@ start_radio_corner_theme() {
 	persona_block=$(_radio_persona_block)
 	export output_rules
 	output_rules=$(_radio_output_rules 1000 2000)
-	export _rc_time _rc_period _rc_mood theme past_topics game_num score
+	export _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics game_num score
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_theme.md" > "$prompt_file"
-	unset persona_block output_rules _rc_time _rc_period _rc_mood theme past_topics
+	unset persona_block output_rules _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "theme"
 }
