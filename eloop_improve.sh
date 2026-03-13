@@ -940,9 +940,15 @@ if $improve_ok; then
 	first_score=$(echo "$SCORES" | awk '{print $1}')
 	last_score=$(echo "$SCORES" | awk '{print $NF}')
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	local phylo_improve_summary=""
+	if [ -n "$strategy_diff" ]; then
+		phylo_improve_summary=$(printf '%s' "$strategy_diff" | _summarize_strategy_diff_for_phylo)
+	fi
+	append_phyrogenetic_event "improve" "$HASH_BEFORE" "$HASH_AFTER" "$GAME_NUM_SNAPSHOT" "$SCORES" \
+		"$phylo_improve_summary" ""
 	refresh_phyrogenetic_tree --pending-edge improve "$HASH_BEFORE" "$HASH_AFTER" >/dev/null 2>&1 || true
 	_improve_progress "git_commit" "90" "commit_changes"
-	git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" 2>/dev/null || true
+	git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" 2>/dev/null || true
 	if [ "$NUM_GAMES" -eq 1 ]; then
 		if git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null; then
 			git push 2>/dev/null || true

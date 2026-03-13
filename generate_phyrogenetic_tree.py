@@ -25,6 +25,7 @@ BEST_STRATEGY_ANCHOR_FILE = ROOT / "tmp/state/best_strategy_anchor.json"
 LAST_ROLLBACK_PAIR_FILE = ROOT / "tmp/state/last_rollback_pair.json"
 STRATEGY_FILE = ROOT / "strategy.py"
 STRATEGY_HASH_ARCHIVE_DIR = ROOT / "strategy_versions/by_hash"
+PHYROGENETIC_EVENTS_FILE = ROOT / "phyrogenetic-events.jsonl"
 
 RANK_LCB_Z = 1.28
 RANK_WEIGHT_P50 = 0.55
@@ -185,6 +186,19 @@ class Edge:
     source: str
     order: int
     note: str = ""
+
+
+@dataclass
+class TransitionEvent:
+    event_type: str
+    from_hash: str
+    to_hash: str
+    game_num: str = ""
+    scores: str = ""
+    summary_lines: list[str] = field(default_factory=list)
+    analysis_lines: list[str] = field(default_factory=list)
+    recorded_at: int = 0
+    source: str = "runtime"
 
 
 class GraphBuilder:
@@ -389,6 +403,76 @@ def edge_text(edge: Edge) -> str:
     return f"{edge.src} --improve--> {edge.dst}"
 
 
+def load_transition_events() -> list[TransitionEvent]:
+    events: list[TransitionEvent] = []
+    if not PHYROGENETIC_EVENTS_FILE.exists():
+        return events
+    for raw in PHYROGENETIC_EVENTS_FILE.read_text(encoding="utf-8", errors="ignore").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        event_type = str(payload.get("event_type", "") or "")
+        from_hash = str(payload.get("from_hash", "") or "")
+        to_hash = str(payload.get("to_hash", "") or "")
+        if event_type not in {"improve", "rollback"} or not from_hash or not to_hash:
+            continue
+        summary = payload.get("summary_lines", [])
+        analysis = payload.get("analysis_lines", [])
+        if not isinstance(summary, list):
+            summary = []
+        if not isinstance(analysis, list):
+            analysis = []
+        try:
+            recorded_at = int(payload.get("recorded_at", 0) or 0)
+        except Exception:
+            recorded_at = 0
+        events.append(
+            TransitionEvent(
+                event_type=event_type,
+                from_hash=from_hash,
+                to_hash=to_hash,
+                game_num=str(payload.get("game_num", "") or ""),
+                scores=str(payload.get("scores", "") or ""),
+                summary_lines=[str(x).strip() for x in summary if str(x).strip()][:8],
+                analysis_lines=[str(x).strip() for x in analysis if str(x).strip()][:10],
+                recorded_at=recorded_at,
+                source=str(payload.get("source", "runtime") or "runtime"),
+            )
+        )
+    events.sort(key=lambda e: (e.recorded_at, e.game_num, e.from_hash, e.to_hash))
+    return events
+
+
+def render_transition_notes(events: list[TransitionEvent]) -> list[str]:
+    lines: list[str] = []
+    lines.append("## Transition Notes")
+    lines.append("")
+    if not events:
+        lines.append("- Structured improve/rollback notes will appear here after future transitions are recorded.")
+        lines.append("")
+        return lines
+
+    for event in reversed(events):
+        label = "Rollback" if event.event_type == "rollback" else "Improve"
+        game_label = f" Game#{event.game_num}" if event.game_num else ""
+        lines.append(f"### {label}{game_label} `{event.from_hash[:8]} -> {event.to_hash[:8]}`")
+        lines.append("")
+        if event.scores:
+            lines.append(f"- scores: `{event.scores}`")
+        for item in event.summary_lines:
+            lines.append(f"- {item}")
+        for item in event.analysis_lines:
+            lines.append(f"- {item}")
+        lines.append("")
+    return lines
+
+
 def render_markdown(builder: GraphBuilder, current_hash: str, anchor_hash: str) -> str:
     ordered_nodes = sorted(builder.nodes.values(), key=lambda n: (n.first_order, n.hash_value))
     ordered_edges = sorted(builder.edges.values(), key=lambda e: (e.order, e.src, e.dst))
@@ -448,6 +532,7 @@ def render_markdown(builder: GraphBuilder, current_hash: str, anchor_hash: str) 
         lines.extend(render_mermaid_block(chunk, internal_edges))
         lines.append("")
 
+    lines.extend(render_transition_notes(load_transition_events()))
     return "\n".join(lines)
 
 

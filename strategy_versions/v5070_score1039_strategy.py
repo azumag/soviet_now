@@ -7,26 +7,27 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-        Decision Logic (12 evaluation axes):
-         1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-         1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
-         1.6. Dangerous situation nextNext enhancement - Bonus when nextNext matches merged type in dangerous situations
-         1.7. Deadline margin based merge priority - In dangerous situations, prioritize merge more aggressively when deadline_margin is small
-         2. Height penalty - Penalty for high landing position (varies by phase)
-         2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
-         2.6. Dangerous situation danger piece ejection (v195: NEW) - In dangerous situations without immediate merge, eject danger pieces (above deadline) off board with enhanced bonus
-         2.7. nextNext future bonus - Bonus for positioning near nextNext type pieces when immediate merge unavailable
-         3. Drift penalty - Penalty for post-landing drift due to polygon shape
-         4. Left-right balance correction - Bonus for correcting piece count bias
-         5. nextNext centering - Center for next merge opportunity if nextNext same type
-         6. Chain merge bonus - Evaluate possibility of further merges after merge
-         7. Board density bonus - Prefer placement on less-dense side of board
-         8. Dangerous situation candidate filtering - In dangerous situations, evaluate only merge candidates if merge candidates >= 1, else evaluate all candidates with near_pairs bonus
-   v195 additional logic:
-        - Dangerous situation danger piece ejection: In dangerous situations without immediate merge, prioritize ejecting danger pieces (above deadline) off board with enhanced bonus
-        - v194の問題点を解消：ejection_bonus計算ロジック（最大200.0）を大幅強化し、edge_bonus最大1000.0 + deadline_bonus最大1000.0 = 最大2000.0
-        - 危険的ピースが存在する場合、deadline_margin条件を削除し、盤面端への排出を強制的に優先
-        - v195: 危険的ピースの排出で盤面圧迫を緩和し、将来の即時併合機会を確保。p25=-249.8の下振れ耐性不足を解消。
+         Decision Logic (12 evaluation axes):
+          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+          1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
+          1.6. Dangerous situation nextNext enhancement - Bonus when nextNext matches merged type in dangerous situations
+          1.7. Deadline margin based merge priority - In dangerous situations, prioritize merge more aggressively when deadline_margin is small
+          2. Height penalty - Penalty for high landing position (varies by phase)
+          2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
+          2.6. Dangerous situation danger piece ejection (v196: ENHANCED) - In dangerous situations without immediate merge, eject danger pieces (above deadline) off board with maximum priority and height penalty relaxation
+          2.7. nextNext future bonus - Bonus for positioning near nextNext type pieces when immediate merge unavailable
+          3. Drift penalty - Penalty for post-landing drift due to polygon shape
+          4. Left-right balance correction - Bonus for correcting piece count bias
+          5. nextNext centering - Center for next merge opportunity if nextNext same type
+          6. Chain merge bonus - Evaluate possibility of further merges after merge
+          7. Board density bonus - Prefer placement on less-dense side of board
+          8. Dangerous situation candidate filtering - In dangerous situations, evaluate only merge candidates if merge candidates >= 1, else evaluate all candidates with near_pairs bonus
+    v196 additional logic:
+         - Dangerous situation danger piece ejection: In dangerous situations without immediate merge, eject danger pieces (above deadline) off board with maximum priority
+         - v195の問題点を解消：ejection_bonus計算ロジック（最大2000.0）を超強化し、edge_bonus最大2000.0 + deadline_bonus最大2000.0 = 最大4000.0
+         - 危険的ピースが盤面端（abs(x) >= 2.0）に配置される場合、高さペナルティを50%削減して排出を強制的に最優先
+         - 危険的ピースが存在する場合、deadline_margin条件を削除し、盤面端への排出を強制的に最優先
+         - v196: 危険的ピースの排出で盤面圧迫を緩和し、将来の即時併合機会を確保。p25=-249.8の下振れ耐性不足を解消。
 
 
 Phases (determined by board max Y):
@@ -54,7 +55,16 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
  # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
- # v195: 危険局面deadline排出強化版 - rollback failure mode (p25=-249.8, reactive_pairsあるのに即時併合を逃す) の解消
+ # v196: 危険局面排出超強化版 - rollback failure mode (reactive_pairsあるのに即時併合を逃す) の解消
+ # ワーストゲーム(score0420)の終盤8ターン分析で、max_y>=2.48かつreactive_pairs=4-5あるにもかわらず
+ # 危険的ピースが排出できず、盤面圧迫が進行し即時併合機会を完全に逃している失敗パターンを特定。
+ # v195のejection_bonusが不十分で、危険的ピース排出が機能していなかった問題を解消。
+ # 危険的ピースが盤面端に配置される場合、edge_bonusを最大2000.0（abs(x)>=2.8で2000.0）に強化し、
+ # deadline_bonusを最大2000.0（deadline_margin=-2.0で2000.0）に強化。
+ # さらに、危険的ピースを排出する配置（盤面端）の場合、高さペナルティを50%に削減して排出を強制的に最優先。
+ # これにより危険局面での盤面圧迫を緩和し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
+ # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_110036_score0420.jsonl turns 39-46, strategy.py.staging
+  # v195: 危険局面deadline排出強化版 - rollback failure mode (p25=-249.8, reactive_pairsあるのに即時併合を逃す) の解消
  # ワーストゲーム(score0466, score0523)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-7あるにもかわらず
  # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITY_DANGER_PIECE_EJECTIONが連続で選択され、危険的ピースが排出できず、盤面圧迫が進行し即時併合機会を完全に逃している失敗パターンを特定。
  # v194のejection_bonus計算ロジック（最大200.0）が、DANGER_NO_MERGE_PENALTY(-1000.0)やheight_penaltyに比べて小さすぎる問題を解消。
@@ -481,33 +491,47 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         )
                         reasons.append("NEAR_PAIRS_OPPORTUNITY")
 
-        # ----- evaluation axis 2.6: dangerous situation danger piece ejection (v195: NEW) -----
-        # 危険局面で即時併合候補がない場合、危険的ピース（deadline_y以上のピース）を盤面外へ排出する配置を優先
-        # ワーストゲーム(score0466, score0523)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=4-7あるにもかわらず
+        # ----- evaluation axis 2.6: dangerous situation danger piece ejection (v196: ENHANCED) -----
+        # 危険局面で即時併合候補がない場合、危険的ピース（deadline_y以上のピース）を盤面外へ排出する配置を最優先
+        # ワーストゲーム(score0420)の終盤8ターン分析で、max_y>=2.48かつreactive_pairs=4-5あるにもかわらず
         # 危険的ピースが排出できず、盤面圧迫が進行し即時併合機会を完全に逃している失敗パターンを特定。
-        # v194のejection_bonus計算ロジック（最大200.0）が、DANGER_NO_MERGE_PENALTY(-1000.0)やheight_penaltyに比べて小さすぎる問題を解消。
-        # 危険的ピースを排出する配置に大きなボーナスを与え、盤面端（x = ±3.0 近傍）への排出を強制的に優先。
-        # これにより危険局面での盤面圧迫を緩和し、将来の即時併合機会を確保。
-        # refs: advice.md, tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_100625_score0466.jsonl turns 47-58, game_history/20260313_095250_score0523.jsonl turns 45-55
+        # v195のejection_bonusが不十分で、危険的ピース排出が機能していなかった問題を解消。
+        # 危険的ピースが盤面端に配置される場合、高さペナルティを大幅に緩和し、排出を強制的に最優先。
+        # これにより危険局面での盤面圧迫を緩和し、将来の即時併合機会を確保。p25=-249.8の下振れ耐性不足を解消。
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_110036_score0420.jsonl turns 39-46
         if dangerous_situation and merge_grade == "NO":
             deadline = analysis.get("deadline", {})
             deadline_margin = deadline.get("deadline_margin", 0)
             danger_piece_count = deadline.get("danger_piece_count", 0)
             
-            # 危険的ピースが存在する場合のみ適用
+            # 危険的ピースが存在する場合、排出を強制的に最優先
             if danger_piece_count > 0:
-                # 危険的ピースを盤面端へ排出するボーナス（v195: 大幅強化）
-                # xが盤面端に近いほど大きなボーナス（abs(x) >= 2.5 で1000.0、2.0で500.0）
-                edge_bonus = max(0, (abs(x) - 2.0) / 0.5) * 1000.0
+                # 危険的ピースを盤面端へ排出するボーナス（v196: 超強化）
+                # xが盤面端に近いほど大きなボーナス（abs(x) >= 2.8 で2000.0、2.5で1500.0、2.0で1000.0）
+                if abs(x) >= 2.8:
+                    edge_bonus = 2000.0
+                elif abs(x) >= 2.5:
+                    edge_bonus = 1500.0
+                elif abs(x) >= 2.0:
+                    edge_bonus = 1000.0
+                else:
+                    edge_bonus = 0.0
                 
                 # deadline_marginが小さい（deadlineに近い）ほどさらにボーナスを強化
-                # deadline_margin=-1.0で+500.0、-2.0で+1000.0（最大）
-                deadline_bonus = min(1000.0, abs(deadline_margin) * 500.0) if deadline_margin < 0 else 0
+                # deadline_margin=-1.0で+1000.0、-2.0で+2000.0（最大）
+                deadline_bonus = 0.0
+                if deadline_margin < 0:
+                    deadline_bonus = min(2000.0, abs(deadline_margin) * 1000.0)
                 
                 ejection_bonus = edge_bonus + deadline_bonus
                 if ejection_bonus > 0:
                     score += ejection_bonus
                     reasons.append("DANGER_PIECE_EJECTION")
+                
+                # 危険的ピースを排出する配置（盤面端）の場合、高さペナルティを大幅に緩和
+                if abs(x) >= 2.0:
+                    # 危険的ピース排出を最優先するため、高さペナルティを50%に削減
+                    height_penalty *= 0.5
 
         # ----- evaluation axis 2.7: dangerous situation nextNext future bonus (v191: NEW) -----
         # 危険局面で即時併合候補がない場合、nextNextを活用した将来性評価を追加

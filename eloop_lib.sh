@@ -18,6 +18,7 @@ STRATEGY_VERSIONS_DIR="strategy_versions"
 HISTORY_DIR="game_history"
 HISTORY_FILE="$HISTORY_DIR/latest.jsonl"
 PHYROGENETIC_TREE_FILE="phyrogenetic-tree.md"
+PHYROGENETIC_EVENTS_FILE="phyrogenetic-events.jsonl"
 
 MODEL_PRIMARY="glm"
 MODEL_FALLBACK="opencode:glmflash"
@@ -213,6 +214,131 @@ refresh_phyrogenetic_tree() {
 	fi
 	log "[PHYLO] failed to update $PHYROGENETIC_TREE_FILE"
 	return 1
+}
+
+_summarize_strategy_diff_for_phylo() {
+	python3 -c "$(cat <<'PY'
+import re
+import sys
+
+diff_text = sys.stdin.read()
+added = []
+removed = []
+
+def normalize(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r'\s+', ' ', text)
+    return text[:180]
+
+for raw in diff_text.splitlines():
+    if raw.startswith(('+++', '---', '@@')):
+        continue
+    if not raw or raw[0] not in '+-':
+        continue
+    body = raw[1:].strip()
+    if not body:
+        continue
+    if body.startswith('#'):
+        body = re.sub(r'^#+\s*', '', body).strip()
+    if body.startswith(('refs:', '===', 'diff --git')):
+        continue
+    if raw[0] == '+':
+        added.append(normalize(body))
+    else:
+        removed.append(normalize(body))
+
+lines = []
+for item in added:
+    if item and item not in lines:
+        lines.append(item)
+    if len(lines) >= 6:
+        break
+
+if len(lines) < 4:
+    for item in removed:
+        note = f"removed: {item}"
+        if item and note not in lines:
+            lines.append(note)
+        if len(lines) >= 6:
+            break
+
+print("\n".join(lines[:6]), end="")
+PY
+)"
+}
+
+_extract_rollback_analysis_for_phylo() {
+	local analysis_file="${1:-$ROLLBACK_ANALYSIS_FILE}"
+	[ -f "$analysis_file" ] || return 0
+	python3 - "$analysis_file" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8", errors="ignore")
+
+sections = {
+    "## Why Rollback Triggered": 4,
+    "## Defeat Delta": 3,
+    "## Next Improve Focus": 3,
+}
+
+out = []
+for header, limit in sections.items():
+    part = text.split(header, 1)
+    if len(part) != 2:
+        continue
+    block = part[1].split("\n## ", 1)[0]
+    count = 0
+    for raw in block.splitlines():
+        line = raw.strip()
+        if not line.startswith("- "):
+            continue
+        out.append(line[2:].strip())
+        count += 1
+        if count >= limit:
+            break
+
+print("\n".join(out[:8]), end="")
+PY
+}
+
+append_phyrogenetic_event() {
+	local event_type="$1" from_hash="$2" to_hash="$3" game_num="$4" scores="$5" summary_text="$6" analysis_text="$7"
+	[ -n "$event_type" ] || return 0
+	[ -n "$from_hash" ] || return 0
+	[ -n "$to_hash" ] || return 0
+	PHYLO_EVENT_SUMMARY="$summary_text" \
+		PHYLO_EVENT_ANALYSIS="$analysis_text" \
+		python3 - "$PHYROGENETIC_EVENTS_FILE" "$event_type" "$from_hash" "$to_hash" "$game_num" "$scores" <<'PY'
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+event_file, event_type, from_hash, to_hash, game_num, scores = sys.argv[1:7]
+summary = [ln.strip() for ln in os.environ.get("PHYLO_EVENT_SUMMARY", "").splitlines() if ln.strip()]
+analysis = [ln.strip() for ln in os.environ.get("PHYLO_EVENT_ANALYSIS", "").splitlines() if ln.strip()]
+
+payload = {
+    "recorded_at": int(time.time()),
+    "event_type": event_type,
+    "from_hash": from_hash,
+    "to_hash": to_hash,
+    "game_num": str(game_num or ""),
+    "scores": str(scores or ""),
+    "summary_lines": summary[:8],
+    "analysis_lines": analysis[:10],
+    "source": "runtime",
+}
+
+path = Path(event_file)
+path.parent.mkdir(parents=True, exist_ok=True)
+with path.open("a", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False)
+    f.write("\n")
+PY
 }
 
 is_game_over() {
@@ -7416,8 +7542,12 @@ PY
 		fi
 		start_rollback_postmortem_worker "$strategy_hash" "$rolled_hash" "$rollback_game_num" "$rollback_note"
 
+		local rollback_event_analysis=""
+		rollback_event_analysis=$(_extract_rollback_analysis_for_phylo "$ROLLBACK_ANALYSIS_FILE")
+		append_phyrogenetic_event "rollback" "$strategy_hash" "$rolled_hash" "$rollback_game_num" "" \
+			"$rollback_analysis_summary" "$rollback_event_analysis"
 		refresh_phyrogenetic_tree --pending-edge rollback "$strategy_hash" "$rolled_hash" >/dev/null 2>&1 || true
-		git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" 2>/dev/null || true
+		git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" 2>/dev/null || true
 		if git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null; then
 			git push 2>/dev/null || true
 		fi
