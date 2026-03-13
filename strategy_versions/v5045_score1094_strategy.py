@@ -7,24 +7,25 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-      Decision Logic (11 evaluation axes):
-       1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-       1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
-       1.6. Dangerous situation nextNext enhancement - Bonus when nextNext matches merged type in dangerous situations
-       1.7. Deadline margin based merge priority - In dangerous situations, prioritize merge more aggressively when deadline_margin is small
-       2. Height penalty - Penalty for high landing position (varies by phase)
-       2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
-       3. Drift penalty - Penalty for post-landing drift due to polygon shape
-       4. Left-right balance correction - Bonus for correcting piece count bias
-       5. nextNext centering - Center for next merge opportunity if nextNext same type
-       6. Chain merge bonus - Evaluate possibility of further merges after merge
-       7. Board density bonus - Prefer placement on less-dense side of board
-       8. Dangerous situation candidate filtering - In dangerous situations, evaluate only merge candidates if merge candidates >= 1, else evaluate all candidates with near_pairs bonus
-  v193 additional logic:
-      - Deadline margin based merge priority: In dangerous situations, prioritize merge more aggressively when deadline_margin is small
-      - deadline_margin = deadline_y - top_edge_y. Small negative value means close to deadline (dangerous)
-      - v193: 危険局面でdeadline_marginが小さいほど即時併合を最優先
-      - v193: 未活用情報analysis["deadline"]["deadline_margin"]を活用
+       Decision Logic (12 evaluation axes):
+        1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+        1.5. Dangerous situation merge enhancement - Bonus for merge opportunities in dangerous situations
+        1.6. Dangerous situation nextNext enhancement - Bonus when nextNext matches merged type in dangerous situations
+        1.7. Deadline margin based merge priority - In dangerous situations, prioritize merge more aggressively when deadline_margin is small
+        2. Height penalty - Penalty for high landing position (varies by phase)
+        2.5. near_pairs bonus - Bonus for near_pairs in dangerous situations when immediate merge unavailable
+        2.6. Dangerous situation danger piece ejection (v194: NEW) - In dangerous situations without immediate merge, eject danger pieces (above deadline) off board
+        2.7. nextNext future bonus - Bonus for positioning near nextNext type pieces when immediate merge unavailable
+        3. Drift penalty - Penalty for post-landing drift due to polygon shape
+        4. Left-right balance correction - Bonus for correcting piece count bias
+        5. nextNext centering - Center for next merge opportunity if nextNext same type
+        6. Chain merge bonus - Evaluate possibility of further merges after merge
+        7. Board density bonus - Prefer placement on less-dense side of board
+        8. Dangerous situation candidate filtering - In dangerous situations, evaluate only merge candidates if merge candidates >= 1, else evaluate all candidates with near_pairs bonus
+   v194 additional logic:
+       - Dangerous situation danger piece ejection: In dangerous situations without immediate merge, prioritize ejecting danger pieces (above deadline) off board
+       - deadline_marginが小さい（deadlineに近い）ほど、危険的ピースを盤面端へ排出する配置を優先
+       - v194: 危険的ピースの排出で盤面圧迫を緩和し、将来の即時併合機会を確保
 
 
 Phases (determined by board max Y):
@@ -52,6 +53,13 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
 # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+# v194: 危険局面deadline排出優先版 - rollback failure mode (p25=-249.8, reactive_pairsあるのに即時併合を逃す) の解消
+# ワーストゲーム(score0615, score0827)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=3-7あるにもかわらず
+# HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITY_NEXTNEXT_FUTUREが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+# 危険局面で即時併合候補がない場合、near_pairsボーナスだけでは危険的ピースを排出できておらず、盤面整理が不十分。
+# deadline_marginが小さい（deadlineに近い）ほど、危険的ピース（deadline_y以上のピース）を盤面外へ排出する配置を優先する評価軸を追加。
+# これにより危険局面での盤面圧迫を緩和し、即時併合機会を取りこぼす頻度を削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
+# refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_092110_score0615.jsonl turns 55-62, game_history/20260313_093509_score0827.jsonl turns 55-62
 # v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
 # v167: 評価精度最適化版 - chain_distance 5.0→4.5縮小
 # v168: v155成功パラメータ復帰・動的調整復帰版
@@ -142,23 +150,23 @@ def is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=1):
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v193: 危険局面deadlineマージン活用即時併合優先版 - rollback failure mode (reactive_pairsあるのに即時併合を逃す) の解消
+    """v194: 危険局面deadline排出優先版 - rollback failure mode (reactive_pairsあるのに即時併合を逃す) の解消
 
     batch_summaryでDEFAULT_PLACEMENTが18.0%選択(avg_score_delta=1.9)と依然として高いことを確認。
-    ワーストゲーム(score0614)の終盤8ターン分析で、max_y=1.88-2.19かつreactive_pairs=3-4の危険局面で
+    ワーストゲーム(score0615, score0827)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=3-7あるにもかわらず
     HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITY_NEXTNEXT_FUTUREが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
 
-    v193の改善点:
-      1. Deadline margin based merge priority（新規評価軸）
-         - analysis["deadline"]["deadline_margin"]（deadline_y - top_edge_y）の未活用情報を活用
-         - 危険局面でdeadline_marginが小さい（deadlineに近い）ほど即時併合を最優先
-         - deadline_margin=-1.0で200.0、-2.0で400.0、-3.0で600.0、-4.0で800.0、-5.0で1000.0のボーナス
-      2. 危険局面判定の統一
-         - dangerous_situation変数をループの外で一度だけ計算
-         - 各評価軸で同じ値を使用することで、一貫性を確保
+    v194の改善点:
+      1. Dangerous situation danger piece ejection（新規評価軸）
+         - 危険局面で即時併合候補がない場合、危険的ピース（deadline_y以上のピース）を盤面外へ排出する配置を優先
+         - deadline_marginが小さい（deadlineに近い）ほど、危険的ピースを排出する配置を優先
+         - 盤面端（x = ±3.0 近傍）へ排出するボーナス（abs(x) >= 2.5 で最大）
+         - deadline_margin=-1.0で200.0、-2.0で400.0、-3.0で600.0、-4.0で800.0、-5.0で1000.0（最大）
+      2. v193のDeadline margin based merge priorityを維持
+         - 危険局面で即時併合候補がある場合、deadline_marginが小さいほど即時併合を最優先
       3. v191の危険局面即時併合候補フィルタリングを維持
          - 即時併合候補が1個以上ある場合、即時併合候補を評価対象に含め
-         - 即時併合候補がない場合、全候補を評価してnear_pairsボーナスを優先
+         - 即時併合候補がない場合、全候補を評価してnear_pairsボーナスと危険的ピース排出を優先
       4. v185の危険局面即時併合優先強化を維持
          - 危険局面判定（max_y >= 1.5、reactive_pairs >= 1）を維持
          - 危険局面でHIGH_TOWER評価を4倍にして盤面整理優先を強力に抑制
@@ -173,6 +181,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
                  - merges: individual distance/merge judgment for each same-type piece
              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+             - deadline: deadline information (deadline_y, deadline_margin, danger_piece_count, etc.)
 
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
@@ -258,27 +267,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
     # ----- v186: 危険局面判定（共通変数） -----
     # 危険局面判定を一度だけ計算し、各評価軸で同じ値を使用する
-    # v190: 危険局面即時併合優先強化版 - rollback failure mode (p25=-249.8) の解消
-    # ワーストゲーム(score0559)の終盤8ターン分析で、max_y=2.07-4.04かつreactive_pairs=5-6あるにもかかわらず
-    # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITYが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
+    # v194: 危険局面deadline排出優先版 - rollback failure mode (p25=-249.8) の解消
+    # ワーストゲーム(score0615, score0827)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=3-7あるにもかわらず
+    # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITY_NEXTNEXT_FUTUREが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
     # 即時併合候補がある場合、危険局面判定を強化し、盤面整理優先の判断を抑制することで、即時併合機会の取りこぼしを削減。
-    # 即時併合候補がない場合、near_pairsボーナスで盤面圧縮を促進し、将来の即時併合機会を確保。
+    # 即時併合候補がない場合、危険的ピースを排出する配置を優先し、盤面圧迫を緩和し、将来の即時併合機会を確保。
     # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
-    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_071114_score0559.jsonl turns 58-65, strategy.py.staging
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_092110_score0615.jsonl turns 55-62, game_history/20260313_093509_score0827.jsonl turns 55-62, strategy.py.staging
 
     dangerous_situation = is_dangerous_situation(
         max_y, reactive_pairs, min_reactive_pairs=1
     )
 
     # ----- v192: 危険局面即時併合候補強制優先版 - rollback failure mode (reactive_pairsあるのに即時併合を逃す) の解消 -----
-    # ワーストゲーム(score0614)の終盤8ターン分析で、max_y=1.88-2.19かつreactive_pairs=3-4あるにもかかわらず
+    # ワーストゲーム(score0615)の終盤8ターン分析で、max_y=1.88-2.19かつreactive_pairs=3-4あるにもかわらず
     # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_NEAR_PAIRS_OPPORTUNITY_NEXTNEXT_FUTUREが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
-    # v191の即時併合候補フィルタリングが、即時併合候補が2個未満の場合に全候補を評価し、height_multiplier=1.8の高さペナルティが効いてしまい、即時併合候補が優先されない問題を解消。
-    # 危険局面で即時併合候補が1個以上ある場合、即時併合候補を必ず評価対象に含め、height_multiplierを0.5に下げて即時併合を最優先。
-    # 危険局面で即時併合候補がない場合、全候補を評価してnear_pairsボーナスを優先し、盤面圧縮を促進。
-    # 危険局面でのBOARD_DENSITY評価を無効化し、near_pairsボーナスを優先して盤面圧縮を促進。
+    # v194の改善: 即時併合候補がない場合、危険的ピースを排出する配置を優先し、盤面圧迫を緩和。
+    # 危険局面で即時併合候補が1個以上ある場合、即時併合候補を必ず評価対象に含め、即時併合を最優先。
+    # 危険局面で即時併合候補がない場合、全候補を評価して危険的ピース排出ボーナスを優先し、盤面圧迫を緩和。
+    # 危険局面でのBOARD_DENSITY評価を無効化し、危険的ピース排出を優先して盤面圧迫を緩和。
     # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
-    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_082054_score0614.jsonl turns 62-69, strategy.py.staging
+    # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_092110_score0615.jsonl turns 55-62, game_history/20260313_093509_score0827.jsonl turns 55-62, strategy.py.staging
     if dangerous_situation:
         # 即時併合可能な候補があるかチェック
         merge_candidates = [r for r in results if r.get("merge_grade", "NO") != "NO"]
@@ -289,9 +298,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v192の改善: 即時併合候補を必ず評価対象に含め、height_multiplierを0.5に下げて即時併合を最優先
             results = merge_candidates
         else:
-            # 即時併合候補がない場合、全候補を評価してnear_pairsボーナスを優先し、盤面圧縮を促進
-            # v192: 危険局面でのBOARD_DENSITY評価を無効化し、near_pairsボーナスを優先して盤面圧縮を促進
-            # BOARD_DENSITY評価を有効化せず、near_pairsボーナスを優先することで、即時併合機会の取りこぼしを削減
+            # 即時併合候補がない場合、全候補を評価して危険的ピース排出ボーナスを優先し、盤面圧迫を緩和
+            # v194: 危険局面での危険的ピース排出ボーナスを優先し、盤面圧迫を緩和
+            # BOARD_DENSITY評価を有効化せず、危険的ピース排出ボーナスを優先することで、即時併合機会の取りこぼしを削減
             pass  # results = results（変更なし）
 
     for result in results:
@@ -468,7 +477,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         )
                         reasons.append("NEAR_PAIRS_OPPORTUNITY")
 
-        # ----- evaluation axis 2.6: dangerous situation nextNext future bonus (v191: NEW) -----
+        # ----- evaluation axis 2.6: dangerous situation danger piece ejection (v194: NEW) -----
+        # 危険局面で即時併合候補がない場合、危険的ピース（deadline_y以上のピース）を盤面外へ排出する配置を優先
+        # ワーストゲーム(score0615, score0827)の終盤8ターン分析で、max_y>=2.0かつreactive_pairs=3-7あるにもかわらず
+        # 危険的ピースが排出できず、盤面整理のみで即時併合機会を完全に逃している失敗パターンを特定。
+        # deadline_marginが小さい（deadlineに近い）ほど、危険的ピースを排出する配置を優先し、盤面圧迫を緩和
+        # 危険的ピースを盤面端（x = ±3.0 近傍）へ排出することで、将来の即時併合機会を確保
+        # refs: advice.md, tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, game_history/20260313_092110_score0615.jsonl turns 55-62, game_history/20260313_093509_score0827.jsonl turns 55-62
+        if dangerous_situation and merge_grade == "NO":
+            deadline = analysis.get("deadline", {})
+            deadline_margin = deadline.get("deadline_margin", 0)
+            danger_piece_count = deadline.get("danger_piece_count", 0)
+            
+            # 危険的ピースが存在する場合のみ適用
+            if danger_piece_count > 0 and deadline_margin < 0:
+                # 危険的ピースを盤面端へ排出するボーナス
+                # deadline_marginが小さい（deadlineに近い）ほどボーナスを強化
+                # deadline_margin=-1.0で200.0、-2.0で400.0、-3.0で600.0、-4.0で800.0、-5.0で1000.0（最大）
+                ejection_bonus_multiplier = min(1000.0, abs(deadline_margin) * 200.0)
+                
+                # 盤面端（x = ±3.0 近傍）へ排出するボーナス
+                # xが盤面端に近いほど大きなボーナス（abs(x) >= 2.5 で最大）
+                edge_bonus = max(0, (abs(x) - 2.0) / 1.0) * 200.0
+                
+                ejection_bonus = ejection_bonus_multiplier * (edge_bonus / 200.0)
+                if ejection_bonus > 0:
+                    score += ejection_bonus
+                    reasons.append("DANGER_PIECE_EJECTION")
+
+        # ----- evaluation axis 2.7: dangerous situation nextNext future bonus (v191: NEW) -----
         # 危険局面で即時併合候補がない場合、nextNextを活用した将来性評価を追加
         # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題への対処
         # nextNextタイプの近くにnextタイプのピースがある場合、将来の併合機会を最大化する配置を優先
@@ -565,9 +602,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Prefer placement on less-dense side of board to improve height gain capability
         # This addresses problem where DEFAULT_PLACEMENT (x=0.0) is too frequent but provides low value
         # Low-score games often place pieces in center early, which reduces height gain capability in mid/late game
-        # v186: 危険局面で即時併合候補がない場合、BOARD_DENSITY評価を無効化し、near_pairsボーナスを優先
-        # v190: 危険局面でのBOARD_DENSITY評価を無効化し、near_pairsボーナスを優先して盤面圧縮を促進
-        # 危険局面では盤面整理よりもnear_pairs活用を優先し、即時併合機会の取りこぼしを削減
+        # v194: 危険局面では危険的ピース排出を優先し、盤面圧迫を緩和
+        # 危険局面ではBOARD_DENSITY評価を無効化し、危険的ピース排出ボーナスを優先して盤面圧迫を緩和
         # 安全な局面のみでBOARD_DENSITY評価を適用
         if (not reasons or merge_grade == "NO") and not dangerous_situation:
             # 危険局面ではBOARD_DENSITY評価を無効化し、near_pairsボーナスを優先
