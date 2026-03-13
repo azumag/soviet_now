@@ -305,6 +305,31 @@ _estimate_audio_duration_sec() {
     awk -v v="$d" 'BEGIN { if (v < 0) v = 0; printf "%d\n", (v + 0.5) }'
 }
 
+_estimate_text_duration_sec() {
+    local file="$1" rate="${2:-150}" chars chars_per_sec
+    chars=$(wc -m < "$file" 2>/dev/null | tr -d '[:space:]')
+    case "$chars" in
+    ''|*[!0-9]*) chars=0 ;;
+    esac
+    if [ "$chars" -le 0 ]; then
+        echo 0
+        return 0
+    fi
+    chars_per_sec=$(awk -v r="$rate" '
+BEGIN {
+    cps = 5.0
+    if (r > 0) cps = cps * (r / 150.0)
+    if (cps < 2.5) cps = 2.5
+    printf "%.3f\n", cps
+}')
+    awk -v c="$chars" -v cps="$chars_per_sec" '
+BEGIN {
+    sec = int((c / cps) + 0.999)
+    if (sec < 8) sec = 8
+    print sec
+}'
+}
+
 _is_truncated_playback() {
     local elapsed="${1:-0}" expected="${2:-0}"
     awk -v e="$elapsed" -v x="$expected" -v min="$SAY_TRUNCATE_MIN_EXPECTED_SEC" -v ratio="$SAY_TRUNCATE_RATIO" -v grace="$SAY_TRUNCATE_GRACE_SEC" '
@@ -346,6 +371,7 @@ _launch_say() {
     else
         nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
         LAUNCH_MODE="say"
+        LAUNCHED_EXPECTED_SEC=$(_estimate_text_duration_sec "$MY_CONTENT" "$RATE")
     fi
     LAUNCHED_SAY_PID="$!"
 }
