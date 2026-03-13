@@ -3886,11 +3886,20 @@ def explain_reasons(reason_text):
     reasons = [r for r in (reason_text or "").split("+") if r]
     lines = []
     mapping = {
-        "comp": "総合指標 comp が成熟ランキング上位より弱かった。",
-        "p50": "中央値寄りの典型性能 p50 が不足していた。",
-        "p25": "下振れ耐性 p25 が不足していた。",
+        "comp": "総合指標 comp が anchor を下回っていた。",
+        "p50": "中央値寄りの典型性能 p50 が anchor を下回っていた。",
+        "p25": "下振れ耐性 p25 が anchor を下回っていた。",
         "trend50": "直近50試合平均がその前50試合平均より落ちていた。",
         "trend100": "直近100試合平均がその前100試合平均より落ちていた。",
+        "budget_exhausted": "探索 branch の予算を使い切っても anchor に届かなかった。",
+        "budget_reset": "探索予算は使い切ったが anchor との差が小さく、今回は粛清を見送った。",
+        "depth": "branch depth 上限に到達した。",
+        "games": "branch games 上限に到達した。",
+        "patience": "branch best が更新されない状態が続いた。",
+        "hard_fail": "anchor 比で明確な悪化が出て即時停止条件に触れた。",
+        "branch": "単一戦略ではなく branch 全体の失敗として判定した。",
+        "anchor_direct": "branch 状態なしで anchor 比の即時悪化として判定した。",
+        "anchor_promoted": "現戦略が anchor を上回ったため anchor を更新した。",
     }
     for reason in reasons:
         if reason.startswith("rank") and reason[4:].isdigit():
@@ -3956,21 +3965,34 @@ if rollback_metrics:
         f"p25={fmt_num(rollback_metrics['p25'])} mean={fmt_num(rollback_metrics['mean'])} n={rollback_metrics['n']}"
     )
 if reg:
-    ref_hash = reg.get("cutoff_hash", reg.get("best_hash", "n/a"))
-    ref_comp = reg.get("cutoff_comp", reg.get("best_comp", "n/a"))
-    ref_p50 = reg.get("cutoff_p50", reg.get("best_p50", "n/a"))
-    ref_p25 = reg.get("cutoff_p25", reg.get("best_p25", "n/a"))
-    ref_n = reg.get("cutoff_n", reg.get("best_n", "n/a"))
+    ref_hash = reg.get("anchor_hash", reg.get("cutoff_hash", reg.get("best_hash", "n/a")))
+    ref_comp = reg.get("anchor_comp", reg.get("cutoff_comp", reg.get("best_comp", "n/a")))
+    ref_p50 = reg.get("anchor_p50", reg.get("cutoff_p50", reg.get("best_p50", "n/a")))
+    ref_p25 = reg.get("anchor_p25", reg.get("cutoff_p25", reg.get("best_p25", "n/a")))
+    ref_n = reg.get("anchor_n", reg.get("cutoff_n", reg.get("best_n", "n/a")))
     lines.append(
-        f"- compared_rank_ref: hash={ref_hash} comp={ref_comp} "
+        f"- compared_anchor: hash={ref_hash} comp={ref_comp} "
         f"p50={ref_p50} p25={ref_p25} n={ref_n}"
     )
-    if reg.get("current_rank") and reg.get("max_rank"):
-        lines.append(f"- current_rank: {reg.get('current_rank')} / {reg.get('max_rank')}")
+    if reg.get("branch_depth") or reg.get("branch_games") or reg.get("branch_patience"):
+        lines.append(
+            f"- branch_budget: depth={reg.get('branch_depth', 'n/a')} "
+            f"games={reg.get('branch_games', 'n/a')} patience={reg.get('branch_patience', 'n/a')}"
+        )
     if reg.get("comp_gap") or reg.get("p50_gap") or reg.get("p25_gap"):
         lines.append(
-            f"- cutoff_gap: comp={reg.get('comp_gap', 'n/a')} p50={reg.get('p50_gap', 'n/a')} "
+            f"- current_gap_vs_anchor: comp={reg.get('comp_gap', 'n/a')} p50={reg.get('p50_gap', 'n/a')} "
             f"p25={reg.get('p25_gap', 'n/a')} breaches={reg.get('breach_count', 'n/a')}/{reg.get('min_breach_count', 'n/a')}"
+        )
+    if reg.get("best_hash"):
+        lines.append(
+            f"- branch_best: hash={reg.get('best_hash')} comp={reg.get('best_comp', 'n/a')} "
+            f"p50={reg.get('best_p50', 'n/a')} p25={reg.get('best_p25', 'n/a')} n={reg.get('best_n', 'n/a')}"
+        )
+        lines.append(
+            f"- branch_best_gap_vs_anchor: comp={reg.get('best_comp_gap', 'n/a')} "
+            f"p50={reg.get('best_p50_gap', 'n/a')} p25={reg.get('best_p25_gap', 'n/a')} "
+            f"breaches={reg.get('best_breach_count', 'n/a')}/{reg.get('min_breach_count', 'n/a')}"
         )
 lines.append("")
 lines.append("## Defeat Delta")
@@ -4013,6 +4035,10 @@ if "p50" in reasons:
     focus.append("- 典型性能が弱いので、普段の試合で頻出する選択 reason と score_delta のズレを見直すこと。")
 if "comp" in reasons:
     focus.append("- comp 悪化なので、単発上振れより mature ranking に残れる再現性を重視すること。")
+if "budget_exhausted" in reasons or "depth" in reasons or "games" in reasons or "patience" in reasons:
+    focus.append("- branch 全体として伸びが止まった理由を確認すること。各世代で何が改善され、どこで頭打ちになったかを整理する。")
+if "hard_fail" in reasons:
+    focus.append("- anchor 比で急激に悪化した局面を重点的に調べること。特に p25 を落とした試合群の共通条件を抽出する。")
 if "trend50" in reasons or "trend100" in reasons:
     focus.append("- 長期下降トレンドが出ているので、直近だけの上振れを追わず、過去の強戦略との差分を比較すること。")
 if not focus:
@@ -7634,48 +7660,45 @@ PY
 }
 
 check_regression() {
-	# 新戦略が十分試行数に達した後、成熟ランキングで上位圏から外れ、
-	# かつ rank cutoff から十分に乖離していればリグレッション。
-	# 判定対象は current strategy を含む成熟ランキングで、上位 REGRESSION_MAX_RANK 位までは維持する。
-	# 戻り値: 0=リグレッション検知(リバート実行済み), 1=問題なし
+	# top1 anchor を固定基準にして branch 単位で評価する。
+	# 単世代の揺らぎでは戻さず、branch の budget が尽きても anchor から明確に劣後する場合だけ rollback。
 	REGRESSION_ROLLBACK_DONE=0
 	REGRESSION_ROLLBACK_HASH=""
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
+	_refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
 
 	local result
-	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$REGRESSION_MAX_RANK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$STRATEGY_HASH_ARCHIVE_DIR" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$REGRESSION_MIN_BREACH_COUNT" <<'PY'
+	result=$(python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$ACTIVE_BRANCH_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$strategy_hash" "$MIN_GAMES_BEFORE_REGRESSION" "$STRATEGY_HASH_ARCHIVE_DIR" "$REGRESSION_MIN_COMP_GAP" "$REGRESSION_MIN_P50_GAP" "$REGRESSION_MIN_P25_GAP" "$REGRESSION_MIN_BREACH_COUNT" "$BRANCH_MAX_DEPTH" "$BRANCH_MAX_GAMES" "$BRANCH_PATIENCE" "$BRANCH_HARD_COMP_GAP" "$BRANCH_HARD_P50_GAP" "$BRANCH_HARD_P25_GAP" "$BRANCH_HARD_MIN_BREACH_COUNT" <<'PY'
 import json
 import math
 import os
 import sys
 
-rs_file = sys.argv[1]
-current_run_file = sys.argv[2]
-current_hash = sys.argv[3]
-min_games_current = int(sys.argv[4])
-min_games_candidates = int(sys.argv[5])
-max_rank = int(sys.argv[6])
-lcb_z = float(sys.argv[7])
-w_p50 = float(sys.argv[8])
-w_p25 = float(sys.argv[9])
-w_lcb = float(sys.argv[10])
-archive_dir = sys.argv[11]
-min_comp_gap = float(sys.argv[12])
-min_p50_gap = float(sys.argv[13])
-min_p25_gap = float(sys.argv[14])
-min_breach_count = int(sys.argv[15])
+rs_file, current_run_file, active_branch_file, anchor_file, current_hash = sys.argv[1:6]
+min_games_current = int(sys.argv[6])
+archive_dir = sys.argv[7]
+min_comp_gap = float(sys.argv[8])
+min_p50_gap = float(sys.argv[9])
+min_p25_gap = float(sys.argv[10])
+min_breach_count = int(sys.argv[11])
+branch_max_depth = int(sys.argv[12])
+branch_max_games = int(sys.argv[13])
+branch_patience = int(sys.argv[14])
+hard_comp_gap = float(sys.argv[15])
+hard_p50_gap = float(sys.argv[16])
+hard_p25_gap = float(sys.argv[17])
+hard_min_breach_count = int(sys.argv[18])
 
-if not os.path.exists(rs_file):
-    print("OK")
-    raise SystemExit
-
-with open(rs_file) as f:
-    rs = json.load(f)
-
-if current_hash not in rs:
-    print("OK")
-    raise SystemExit
+def load_json(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 def quantile(vals, p):
     xs = sorted(vals)
@@ -7690,102 +7713,231 @@ def quantile(vals, p):
     return xs[lo] * (1.0 - frac) + xs[hi] * frac
 
 def metrics(scores):
-    n = len(scores)
-    mean = sum(scores) / n
-    p25 = quantile(scores, 0.25)
-    p50 = quantile(scores, 0.50)
+    xs = [int(v) for v in scores]
+    if not xs:
+        return None
+    n = len(xs)
+    mean = sum(xs) / n
+    p25 = quantile(xs, 0.25)
+    p50 = quantile(xs, 0.50)
     if n > 1:
-        var = sum((x - mean) ** 2 for x in scores) / n
+        var = sum((x - mean) ** 2 for x in xs) / n
         std = math.sqrt(var)
     else:
         std = 0.0
-    lcb = mean - lcb_z * (std / math.sqrt(n))
-    composite = w_p50 * p50 + w_p25 * p25 + w_lcb * lcb
+    lcb = mean - 1.28 * (std / math.sqrt(n))
+    comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
     return {
-        "composite": composite,
+        "comp": comp,
         "p50": p50,
         "p25": p25,
         "lcb": lcb,
         "n": n,
     }
 
+def key(metrics_dict):
+    if not metrics_dict:
+        return (-10**18, -10**18, -10**18, -10**18)
+    return (
+        float(metrics_dict.get("comp", 0.0)),
+        float(metrics_dict.get("p50", 0.0)),
+        float(metrics_dict.get("p25", 0.0)),
+        int(metrics_dict.get("n", 0)),
+    )
+
+def gap(anchor_metrics, target_metrics):
+    return (
+        max(0.0, float(anchor_metrics.get("comp", 0.0)) - float(target_metrics.get("comp", 0.0))),
+        max(0.0, float(anchor_metrics.get("p50", 0.0)) - float(target_metrics.get("p50", 0.0))),
+        max(0.0, float(anchor_metrics.get("p25", 0.0)) - float(target_metrics.get("p25", 0.0))),
+    )
+
+def breach_count(comp_gap, p50_gap, p25_gap, comp_th, p50_th, p25_th):
+    return sum(
+        [
+            1 if comp_gap >= comp_th else 0,
+            1 if p50_gap >= p50_th else 0,
+            1 if p25_gap >= p25_th else 0,
+        ]
+    )
+
+rolling = load_json(rs_file)
+current_run = load_json(current_run_file)
 current_scores = []
-current_run = {}
-if os.path.exists(current_run_file):
-    try:
-        current_run = json.load(open(current_run_file))
-    except Exception:
-        current_run = {}
 if str(current_run.get("hash", "") or "") == current_hash:
-    current_scores = [int(x) for x in current_run.get("scores", [])]
-
-if len(current_scores) < min_games_current:
-    print("OK")
-    raise SystemExit
-
+    for x in current_run.get("scores", []) or []:
+        try:
+            current_scores.append(int(x))
+        except Exception:
+            pass
+if not current_scores:
+    entry = rolling.get(current_hash, {})
+    for x in entry.get("scores", []) or []:
+        try:
+            current_scores.append(int(x))
+        except Exception:
+            pass
 current = metrics(current_scores)
-
-rows = [(current["composite"], current["p50"], current["p25"], current["n"], current_hash, current)]
-for h, data in rs.items():
-    if h == current_hash:
-        continue
-    scores = [int(x) for x in data.get("scores", [])]
-    if len(scores) < min_games_candidates:
-        continue
-    if archive_dir and not os.path.exists(os.path.join(archive_dir, f"{h}.py")):
-        continue
-    m = metrics(scores)
-    rows.append((m["composite"], m["p50"], m["p25"], m["n"], h, m))
-
-if len(rows) <= max_rank:
+if not current:
     print("OK")
     raise SystemExit
 
-rows.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
-current_rank = None
-for idx, row in enumerate(rows, start=1):
-    if row[4] == current_hash:
-        current_rank = idx
-        break
+anchor_payload = load_json(anchor_file)
+anchor_hash = str(anchor_payload.get("hash", "") or "")
+if not anchor_hash:
+    print("OK")
+    raise SystemExit
+anchor = {
+    "comp": float(anchor_payload.get("comp", 0.0) or 0.0),
+    "p50": float(anchor_payload.get("p50", 0.0) or 0.0),
+    "p25": float(anchor_payload.get("p25", 0.0) or 0.0),
+    "lcb": float(anchor_payload.get("lcb", 0.0) or 0.0),
+    "n": int(anchor_payload.get("n", 0) or 0),
+}
 
-if current_rank is None or current_rank <= max_rank:
+active = load_json(active_branch_file)
+branch_active = str(active.get("head_hash", "") or "") == current_hash and str(active.get("anchor_hash", "") or "")
+if branch_active:
+    anchor_hash = str(active.get("anchor_hash", "") or anchor_hash)
+    anchor_blob = active.get("anchor", {}) if isinstance(active.get("anchor"), dict) else {}
+    anchor = {
+        "comp": float(anchor_blob.get("comp", anchor.get("comp", 0.0)) or 0.0),
+        "p50": float(anchor_blob.get("p50", anchor.get("p50", 0.0)) or 0.0),
+        "p25": float(anchor_blob.get("p25", anchor.get("p25", 0.0)) or 0.0),
+        "lcb": float(anchor_blob.get("lcb", anchor.get("lcb", 0.0)) or 0.0),
+        "n": int(anchor_blob.get("n", anchor.get("n", 0)) or 0),
+    }
+
+if current_hash == anchor_hash and not branch_active:
     print("OK")
     raise SystemExit
 
-cutoff_comp, cutoff_p50, cutoff_p25, cutoff_n, cutoff_hash, cutoff = rows[max_rank - 1]
-comp_gap = cutoff_comp - current["composite"]
-p50_gap = cutoff["p50"] - current["p50"]
-p25_gap = cutoff["p25"] - current["p25"]
-reasons = [f"rank{max_rank}"]
-if comp_gap >= min_comp_gap:
-    reasons.append("comp")
-if p50_gap >= min_p50_gap:
-    reasons.append("p50")
-if p25_gap >= min_p25_gap:
-    reasons.append("p25")
-breach_count = len(reasons) - 1
-if breach_count < min_breach_count:
+curr_comp_gap, curr_p50_gap, curr_p25_gap = gap(anchor, current)
+curr_breach = breach_count(curr_comp_gap, curr_p50_gap, curr_p25_gap, min_comp_gap, min_p50_gap, min_p25_gap)
+hard_breach = breach_count(curr_comp_gap, curr_p50_gap, curr_p25_gap, hard_comp_gap, hard_p50_gap, hard_p25_gap)
+
+if current["n"] >= min_games_current and current_hash != anchor_hash and key(current) > key(anchor):
+    print(
+        "PROMOTE:"
+        f"anchor_hash={anchor_hash},current_hash={current_hash},"
+        f"anchor_comp={anchor['comp']:.1f},curr_comp={current['comp']:.1f},"
+        f"anchor_p50={anchor['p50']:.1f},curr_p50={current['p50']:.1f},"
+        f"anchor_p25={anchor['p25']:.1f},curr_p25={current['p25']:.1f},"
+        f"anchor_n={anchor['n']},curr_n={current['n']},"
+        "reasons=anchor_promoted"
+    )
+    raise SystemExit
+
+if current["n"] < min_games_current:
     print("OK")
     raise SystemExit
-print(
-    "REGRESSION:"
-    f"current_rank={current_rank},max_rank={max_rank},ranked_total={len(rows)},"
-    f"cutoff_hash={cutoff_hash},cutoff_comp={cutoff_comp:.1f},curr_comp={current['composite']:.1f},"
-    f"cutoff_p50={cutoff['p50']:.1f},curr_p50={current['p50']:.1f},"
-    f"cutoff_p25={cutoff['p25']:.1f},curr_p25={current['p25']:.1f},"
-    f"comp_gap={comp_gap:.1f},p50_gap={p50_gap:.1f},p25_gap={p25_gap:.1f},"
-    f"breach_count={breach_count},min_breach_count={min_breach_count},"
-    f"cutoff_n={cutoff_n},curr_n={current['n']},"
-    f"best_hash={cutoff_hash},best_source=rank_cutoff,best_comp={cutoff_comp:.1f},"
-    f"best_p50={cutoff['p50']:.1f},best_p25={cutoff['p25']:.1f},best_n={cutoff_n},"
-    f"reasons={'+'.join(reasons)}"
-)
+
+if not branch_active:
+    if hard_breach >= hard_min_breach_count and current_hash != anchor_hash:
+        print(
+            "REGRESSION:"
+            f"mode=anchor_direct,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
+            f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
+            f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
+            f"comp_gap={curr_comp_gap:.1f},p50_gap={curr_p50_gap:.1f},p25_gap={curr_p25_gap:.1f},"
+            f"breach_count={curr_breach},min_breach_count={min_breach_count},"
+            "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
+            f"best_comp_gap={curr_comp_gap:.1f},best_p50_gap={curr_p50_gap:.1f},best_p25_gap={curr_p25_gap:.1f},best_breach_count={curr_breach},"
+            "branch_depth=0,branch_games=0,branch_patience=0,"
+            "reasons=hard_fail+anchor_direct"
+        )
+        raise SystemExit
+    print("OK")
+    raise SystemExit
+
+best_hash = str(active.get("best_hash", "") or "")
+best_blob = active.get("best", {}) if isinstance(active.get("best"), dict) else {}
+best_metrics = {
+    "comp": float(best_blob.get("comp", 0.0) or 0.0),
+    "p50": float(best_blob.get("p50", 0.0) or 0.0),
+    "p25": float(best_blob.get("p25", 0.0) or 0.0),
+    "lcb": float(best_blob.get("lcb", 0.0) or 0.0),
+    "n": int(best_blob.get("n", 0) or 0),
+} if best_hash else {}
+if key(current) > key(best_metrics):
+    best_hash = current_hash
+    best_metrics = dict(current)
+
+best_comp_gap, best_p50_gap, best_p25_gap = gap(anchor, best_metrics if best_metrics else current)
+best_breach = breach_count(best_comp_gap, best_p50_gap, best_p25_gap, min_comp_gap, min_p50_gap, min_p25_gap)
+depth = int(active.get("depth", 0) or 0)
+closed_games = int(active.get("closed_games", 0) or 0)
+patience = int(active.get("patience", 0) or 0)
+branch_games = closed_games + int(current.get("n", 0) or 0)
+budget_reasons = []
+if depth >= branch_max_depth:
+    budget_reasons.append("depth")
+if branch_games >= branch_max_games:
+    budget_reasons.append("games")
+if patience >= branch_patience:
+    budget_reasons.append("patience")
+
+if hard_breach >= hard_min_breach_count:
+    print(
+        "REGRESSION:"
+        f"mode=anchor_branch,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
+        f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
+        f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
+        f"comp_gap={curr_comp_gap:.1f},p50_gap={curr_p50_gap:.1f},p25_gap={curr_p25_gap:.1f},"
+        f"breach_count={curr_breach},min_breach_count={min_breach_count},"
+        f"best_hash={best_hash},best_comp={best_metrics.get('comp', 0.0):.1f},best_p50={best_metrics.get('p50', 0.0):.1f},best_p25={best_metrics.get('p25', 0.0):.1f},best_n={best_metrics.get('n', 0)},"
+        f"best_comp_gap={best_comp_gap:.1f},best_p50_gap={best_p50_gap:.1f},best_p25_gap={best_p25_gap:.1f},best_breach_count={best_breach},"
+        f"branch_depth={depth},branch_games={branch_games},branch_patience={patience},"
+        "reasons=hard_fail+branch"
+    )
+    raise SystemExit
+
+if budget_reasons:
+    if best_breach >= min_breach_count:
+        print(
+            "REGRESSION:"
+            f"mode=anchor_branch,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
+            f"anchor_comp={anchor['comp']:.1f},anchor_p50={anchor['p50']:.1f},anchor_p25={anchor['p25']:.1f},anchor_n={anchor['n']},"
+            f"curr_comp={current['comp']:.1f},curr_p50={current['p50']:.1f},curr_p25={current['p25']:.1f},curr_n={current['n']},"
+            f"comp_gap={curr_comp_gap:.1f},p50_gap={curr_p50_gap:.1f},p25_gap={curr_p25_gap:.1f},"
+            f"breach_count={curr_breach},min_breach_count={min_breach_count},"
+            f"best_hash={best_hash},best_comp={best_metrics.get('comp', 0.0):.1f},best_p50={best_metrics.get('p50', 0.0):.1f},best_p25={best_metrics.get('p25', 0.0):.1f},best_n={best_metrics.get('n', 0)},"
+            f"best_comp_gap={best_comp_gap:.1f},best_p50_gap={best_p50_gap:.1f},best_p25_gap={best_p25_gap:.1f},best_breach_count={best_breach},"
+            f"branch_depth={depth},branch_games={branch_games},branch_patience={patience},"
+            f"reasons=budget_exhausted+{'+'.join(budget_reasons)}"
+        )
+        raise SystemExit
+    print(
+        "RESET:"
+        f"anchor_hash={anchor_hash},current_hash={current_hash},"
+        f"best_hash={best_hash},best_comp={best_metrics.get('comp', 0.0):.1f},best_p50={best_metrics.get('p50', 0.0):.1f},best_p25={best_metrics.get('p25', 0.0):.1f},best_n={best_metrics.get('n', 0)},"
+        f"best_comp_gap={best_comp_gap:.1f},best_p50_gap={best_p50_gap:.1f},best_p25_gap={best_p25_gap:.1f},best_breach_count={best_breach},"
+        f"branch_depth={depth},branch_games={branch_games},branch_patience={patience},"
+        f"reasons=budget_reset+{'+'.join(budget_reasons)}"
+    )
+    raise SystemExit
+
+print("OK")
 PY
 	2>/dev/null)
 
+	if echo "$result" | grep -q '^PROMOTE:'; then
+		log "[BRANCH] anchor昇格: $result"
+		if _promote_current_strategy_to_anchor "$strategy_hash"; then
+			_clear_active_branch
+			log "[BRANCH] current strategy promoted to anchor: ${strategy_hash}"
+		fi
+		return 1
+	fi
+
+	if echo "$result" | grep -q '^RESET:'; then
+		log "[BRANCH] exploration budget reset: $result"
+		_clear_active_branch
+		return 1
+	fi
+
 	if echo "$result" | grep -q '^REGRESSION:'; then
 		log "[REGRESSION] リグレッション検知: $result"
-		# 進行中の改善プロセスがあれば停止して、リバート後の再上書きを防ぐ
 		local running_pid=0
 		if [ -f "$IMPROVE_STATE_FILE" ]; then
 			running_pid=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('pid',0))" 2>/dev/null || echo 0)
@@ -7808,14 +7960,12 @@ PY
 		_write_improve_state "idle" "0" ""
 		log "[REGRESSION] 自動ロールバック開始"
 
-			# リジェクトハッシュに記録
-			echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
-			# 最新20件のみ保持
-			if [ -f "$REJECTED_HASHES_FILE" ]; then
-				tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
-				mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
-			fi
-			python3 - "$ROLLING_SCORES_FILE" "$REJECTED_HASH_META_FILE" "$strategy_hash" <<'PY' 2>/dev/null
+		echo "$strategy_hash" >> "$REJECTED_HASHES_FILE"
+		if [ -f "$REJECTED_HASHES_FILE" ]; then
+			tail -20 "$REJECTED_HASHES_FILE" > "$REJECTED_HASHES_FILE.tmp"
+			mv "$REJECTED_HASHES_FILE.tmp" "$REJECTED_HASHES_FILE"
+		fi
+		python3 - "$ROLLING_SCORES_FILE" "$REJECTED_HASH_META_FILE" "$strategy_hash" <<'PY' 2>/dev/null
 import json
 import math
 import os
@@ -7866,33 +8016,41 @@ with open(meta_file, "w") as f:
     json.dump(meta, f)
 PY
 
-			# リバート先選定:
-		# 成熟ランキング(topN)の先頭から、current より強く実体ファイルがある戦略を選ぶ。
-			local rollback_file="" rollback_note="" rollback_hash=""
+		local rollback_file="" rollback_note="" rollback_hash=""
+		rollback_hash=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*rollback_hash=([^,]+).*/\1/p')
+		if [ -n "$rollback_hash" ] && [ -f "$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py" ]; then
+			local anchor_comp anchor_p50 anchor_p25 anchor_n
+			anchor_comp=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_comp=([^,]+).*/\1/p')
+			anchor_p50=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_p50=([^,]+).*/\1/p')
+			anchor_p25=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_p25=([^,]+).*/\1/p')
+			anchor_n=$(printf '%s' "$result" | sed -En 's/^REGRESSION:.*anchor_n=([^,]+).*/\1/p')
+			rollback_file="$STRATEGY_HASH_ARCHIVE_DIR/${rollback_hash}.py"
+			rollback_note="anchor_top1 hash=${rollback_hash} comp=${anchor_comp:-?} p50=${anchor_p50:-?} p25=${anchor_p25:-?} n=${anchor_n:-?}"
+		fi
+		if [ -z "$rollback_file" ]; then
 			local best_candidate
 			best_candidate=$(_pick_best_rollback_candidate "$strategy_hash")
 			if [ -n "$best_candidate" ]; then
 				local best_comp best_p50 best_p25 best_lcb best_n
 				IFS='|' read -r rollback_hash best_comp best_p50 best_p25 best_lcb best_n rollback_file <<<"$best_candidate"
-				rollback_note="best_comp hash=${rollback_hash} comp=${best_comp} p50=${best_p50} p25=${best_p25} lcb=${best_lcb} n=${best_n}"
+				rollback_note="fallback_best hash=${rollback_hash} comp=${best_comp} p50=${best_p50} p25=${best_p25} lcb=${best_lcb} n=${best_n}"
 			fi
-
-			if [ -z "$rollback_file" ]; then
-				log "[REGRESSION] ロールバック候補なし → 現在戦略を維持"
-				return 0
 		fi
 
-			local rollback_game_num rollback_analysis_summary
-			rollback_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+		if [ -z "$rollback_file" ]; then
+			log "[REGRESSION] ロールバック候補なし → 現在戦略を維持"
+			return 0
+		fi
 
-		# リバート実行
-			cp "$rollback_file" "$STRATEGY_FILE"
-			# 次回比較の基準も現戦略に合わせる（再帰的な誤判定防止）
-			cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
-			local rolled_hash
-			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
-			python3 - "$LAST_ROLLBACK_PAIR_FILE" "$strategy_hash" "$rolled_hash" "$rollback_note" <<'PY' 2>/dev/null
+		local rollback_game_num rollback_analysis_summary
+		rollback_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+
+		cp "$rollback_file" "$STRATEGY_FILE"
+		cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
+		local rolled_hash
+		rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
+		python3 - "$LAST_ROLLBACK_PAIR_FILE" "$strategy_hash" "$rolled_hash" "$rollback_note" <<'PY' 2>/dev/null
 import json
 import sys
 import time
@@ -7907,8 +8065,9 @@ payload = {
 with open(out_file, "w") as f:
     json.dump(payload, f)
 PY
-			REGRESSION_ROLLBACK_DONE=1
+		REGRESSION_ROLLBACK_DONE=1
 		REGRESSION_ROLLBACK_HASH="$rolled_hash"
+		_clear_active_branch
 		log "[REGRESSION] リバート完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 
 		rollback_analysis_summary=$(_write_rollback_analysis_file "$strategy_hash" "$rolled_hash" "$result" "$rollback_note" "$rollback_game_num" 2>/dev/null || true)
@@ -7949,11 +8108,10 @@ PY
 			_post_phyrogenetic_tree_link_to_chat "rollback" "$strategy_hash" "$rolled_hash"
 		fi
 		[ -f "$ROLLBACK_ANALYSIS_FILE" ] && start_radio_corner_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash" &
+		return 0
+	fi
 
-		return 0  # リグレッション検知
-		fi
-
-	return 1  # 問題なし
+	return 1
 }
 
 #=== 改善ステート管理 ===

@@ -113,6 +113,7 @@ _handle_decide_exception_recovery() {
 
 	# 戦略が切り替わる可能性が高いため蓄積データは破棄
 	_clear_accumulated_data
+	_clear_active_branch
 
 	# 進行中ゲームは捨てて、即リトライ
 	send_retry
