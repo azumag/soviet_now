@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-13 11:20:09 JST`
-- Nodes: `487`
-- Edges: `672`
-- Current: `e4a3ff55afbf`
+- Updated: `2026-03-13 12:08:35 JST`
+- Nodes: `488`
+- Edges: `673`
+- Current: `f93db007ea2d`
 - Anchor: `633b07c78b7c`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_633b07c78b7c["633b07c78b7c<br/>ANCHOR<br/>g=65 n=20<br/>comp=1004.1"]
-    h_901c41c4e1ed["901c41c4e1ed<br/>g=3 n=3<br/>comp=1374.2"]
     h_b2850c039a20["b2850c039a20<br/>g=3 n=3<br/>comp=1474.9"]
     h_02de1e28ed25["02de1e28ed25<br/>g=19 n=19<br/>comp=1114.0"]
     h_083cba953593["083cba953593<br/>g=22 n=20<br/>comp=999.2"]
@@ -73,11 +72,11 @@ flowchart TD
     h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
     h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=1045.9"]
     h_8783d96fea8f["8783d96fea8f<br/>g=14 n=14<br/>comp=1270.3"]
-    h_e4a3ff55afbf["e4a3ff55afbf<br/>CURRENT<br/>g=3 n=3<br/>comp=787.6"]
+    h_e4a3ff55afbf["e4a3ff55afbf<br/>g=19 n=19<br/>comp=884.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_f93db007ea2d["f93db007ea2d<br/>CURRENT"]
 
-    h_901c41c4e1ed -->|improve| h_b2850c039a20
     h_b2850c039a20 -->|improve| h_02de1e28ed25
     h_02de1e28ed25 -->|improve| h_083cba953593
     h_083cba953593 -->|improve| h_ecd51266b7af
@@ -167,6 +166,7 @@ flowchart TD
     h_8c79ef457733 -->|improve| h_51d6d7502cab
     h_51d6d7502cab -->|improve| h_8783d96fea8f
     h_8783d96fea8f -->|improve| h_e4a3ff55afbf
+    h_e4a3ff55afbf -->|improve| h_f93db007ea2d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -174,7 +174,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_633b07c78b7c anchor;
-    class h_901c41c4e1ed plain;
     class h_b2850c039a20 plain;
     class h_02de1e28ed25 plain;
     class h_083cba953593 plain;
@@ -231,9 +230,10 @@ flowchart TD
     class h_8c79ef457733 plain;
     class h_51d6d7502cab plain;
     class h_8783d96fea8f plain;
-    class h_e4a3ff55afbf current;
+    class h_e4a3ff55afbf plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_f93db007ea2d current;
 ```
 
 ## Detail 1/7
@@ -1931,9 +1931,9 @@ flowchart TD
 
 ## Detail 7/7
 
-- Range: `6d9586d182e0` .. `a3aae72a4e37`
-- Nodes in this diagram: `7`
-- Internal edges in this diagram: `4`
+- Range: `6d9586d182e0` .. `f93db007ea2d`
+- Nodes in this diagram: `8`
+- Internal edges in this diagram: `5`
 - Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -1945,14 +1945,16 @@ flowchart TD
     h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
     h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=1045.9"]
     h_8783d96fea8f["8783d96fea8f<br/>g=14 n=14<br/>comp=1270.3"]
-    h_e4a3ff55afbf["e4a3ff55afbf<br/>CURRENT<br/>g=3 n=3<br/>comp=787.6"]
+    h_e4a3ff55afbf["e4a3ff55afbf<br/>g=19 n=19<br/>comp=884.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_f93db007ea2d["f93db007ea2d<br/>CURRENT"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
     h_51d6d7502cab -->|improve| h_8783d96fea8f
     h_8783d96fea8f -->|improve| h_e4a3ff55afbf
+    h_e4a3ff55afbf -->|improve| h_f93db007ea2d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -1963,11 +1965,20 @@ flowchart TD
     class h_8c79ef457733 plain;
     class h_51d6d7502cab plain;
     class h_8783d96fea8f plain;
-    class h_e4a3ff55afbf current;
+    class h_e4a3ff55afbf plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_f93db007ea2d current;
 ```
 
 ## Transition Notes
 
-- Structured improve/rollback notes will appear here after future transitions are recorded.
+### Improve Game#5078 `e4a3ff55 -> f93db007`
+
+- scores: `916 854 586 1039 740 2711 2010 1661 667 1311 597 921`
+- 2.6. Dangerous situation danger piece ejection (v197: CORRECTED) - In dangerous situations without immediate merge, eject danger pieces (above deadline) off board with REDUCED prio
+- 2.7. nextNext future bonus - Bonus for positioning near nextNext type pieces when immediate merge unavailable
+- 3. Drift penalty - Penalty for post-landing drift due to polygon shape
+- 4. Left-right balance correction - Bonus for correcting piece count bias
+- 5. nextNext centering - Center for next merge opportunity if nextNext same type
+- 6. Chain merge bonus - Evaluate possibility of further merges after merge
