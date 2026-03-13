@@ -580,6 +580,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nextNext_bonus > 0:
                     score += nextNext_bonus
                     reasons.append("NEXTNEXT_FUTURE")
+                else:
+                    # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題への対処
+                    # 併合候補がない場合、typeA上へのnextBの配置を回避し、nextNext(typeA)と同じ近くに置くことを優先
+                    # Check if we are blocking nextNext merge
+                    # Find all pieces on board with type == nextNext_type (A)
+                    # If current drop (type next) is dropped on top of type A, it blocks A from merging with nextNext A
+                    target_pieces = [p for p in pieces if p.get("type") == next_next_type and p["x"] == x and p["y"] > landing_y]
+                    if target_pieces:
+                        # Penalty for blocking A with B
+                        score -= 500.0
+                        reasons.append("AVOID_BLOCKING_NEXT_MERGE")
 
         # ----- evaluation axis 3: drift penalty -----
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
