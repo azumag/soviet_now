@@ -16,6 +16,7 @@ TMP_MARKERS_DIR="tmp/markers"
 TMP_HISTORY_DIR="tmp/history"
 TMP_DEBUG_DIR="tmp/debug"
 CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
+ACTIVE_BRANCH_FILE="$TMP_STATE_DIR/active_branch.json"
 FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
 MIN_GAMES_BEFORE_IMPROVE=${MIN_GAMES_BEFORE_IMPROVE:-12}
 MIN_GAMES_BEFORE_REGRESSION=${MIN_GAMES_BEFORE_REGRESSION:-12}
@@ -28,6 +29,13 @@ REGRESSION_MIN_COMP_GAP=${REGRESSION_MIN_COMP_GAP:-120}
 REGRESSION_MIN_P50_GAP=${REGRESSION_MIN_P50_GAP:-100}
 REGRESSION_MIN_P25_GAP=${REGRESSION_MIN_P25_GAP:-180}
 REGRESSION_MIN_BREACH_COUNT=${REGRESSION_MIN_BREACH_COUNT:-2}
+BRANCH_MAX_DEPTH=${BRANCH_MAX_DEPTH:-4}
+BRANCH_MAX_GAMES=${BRANCH_MAX_GAMES:-48}
+BRANCH_PATIENCE=${BRANCH_PATIENCE:-3}
+BRANCH_HARD_COMP_GAP=${BRANCH_HARD_COMP_GAP:-220}
+BRANCH_HARD_P50_GAP=${BRANCH_HARD_P50_GAP:-180}
+BRANCH_HARD_P25_GAP=${BRANCH_HARD_P25_GAP:-260}
+BRANCH_HARD_MIN_BREACH_COUNT=${BRANCH_HARD_MIN_BREACH_COUNT:-2}
 RADIO_STATE_STALE_SEC=${RADIO_STATE_STALE_SEC:-600}
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
@@ -424,21 +432,15 @@ def metrics(scores):
     comp = 0.55 * p50 + 0.30 * p25 + 0.15 * lcb
     return {"avg": avg, "comp": comp, "p50": p50, "p25": p25, "n": n}
 
-def mature_rank_rows(current_metrics):
-    ranked = []
-    for hh, data in rs.items():
-        if hh == h:
-            continue
-        m2 = metrics(data.get("scores", []))
-        if not m2 or m2["n"] < min_games_candidates:
-            continue
-        if archive_dir and not os.path.exists(os.path.join(archive_dir, f"{hh}.py")):
-            continue
-        ranked.append((m2["comp"], m2["p50"], m2["p25"], m2["n"], hh, m2, "ranking"))
-    if current_metrics:
-        ranked.append((current_metrics["comp"], current_metrics["p50"], current_metrics["p25"], current_metrics["n"], h, current_metrics, "current"))
-    ranked.sort(reverse=True)
-    return ranked
+def load_json(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 if h:
     current_data = {"hash": h, "scores": [], "games_total": 0}
@@ -468,65 +470,131 @@ if h:
         print(f"rolling_comp={comp:.0f}")
         print(f"rolling_p50={p50:.0f}")
         print(f"rolling_p25={p25:.0f}")
-        ranked = mature_rank_rows({"comp": comp, "p50": p50, "p25": p25, "n": n})
-        if ranked:
-            cutoff = ranked[min(max_rank, len(ranked)) - 1]
-            cc, cp50, cp25, cn, ch, _, csource = cutoff
-            print(f"best_hash_short={ch[:8]}")
-            print(f"best_comp={cc:.0f}")
-            print(f"best_p50={cp50:.0f}")
-            print(f"best_p25={cp25:.0f}")
-            print(f"best_total={cn}")
-            print("best_source_short=" + shlex.quote("rank_cutoff"))
-            current_rank = None
-            for idx, row in enumerate(ranked, start=1):
-                if row[4] == h:
-                    current_rank = idx
-                    break
-            if int(n) < min_games_current:
-                if current_rank is not None and len(ranked) > max_rank and current_rank > max_rank:
-                    comp_gap = max(0.0, cc - comp)
-                    p50_gap = max(0.0, cp50 - p50)
-                    p25_gap = max(0.0, cp25 - p25)
-                    breach_count = sum(
-                        [
-                            1 if comp_gap >= min_comp_gap else 0,
-                            1 if p50_gap >= min_p50_gap else 0,
-                            1 if p25_gap >= min_p25_gap else 0,
-                        ]
-                    )
-                    gap_text = f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))} br={breach_count}/{min_breach_count}"
-                    if breach_count >= min_breach_count:
-                        detail = "WARN rank=" + str(current_rank) + f"/{max_rank} cutoff={ch[:8]}{gap_text} n={int(n)}/{min_games_current}"
-                        print("regression_state=warning")
-                        print("regression_detail=" + shlex.quote(detail))
-                        raise SystemExit
-                detail = "WAIT rank=" + str(current_rank or "?") + f"/{max_rank} cutoff={ch[:8]} n={int(n)}/{min_games_current}"
-                print("regression_state=grace")
-                print("regression_detail=" + shlex.quote(detail))
-                raise SystemExit
-            if current_rank is None or len(ranked) <= max_rank or current_rank <= max_rank:
-                detail = "NO rank=" + str(current_rank or "?") + f"/{max_rank} cutoff={ch[:8]} n={int(n)}"
+        anchor_payload = load_json("${TMP_STATE_DIR}/best_strategy_anchor.json")
+        active_branch = load_json("${ACTIVE_BRANCH_FILE}")
+        if anchor_payload and anchor_payload.get("hash"):
+            anchor_hash = str(anchor_payload.get("hash", "") or "")
+            anchor_comp = float(anchor_payload.get("comp", 0.0) or 0.0)
+            anchor_p50 = float(anchor_payload.get("p50", 0.0) or 0.0)
+            anchor_p25 = float(anchor_payload.get("p25", 0.0) or 0.0)
+            anchor_n = int(anchor_payload.get("n", 0) or 0)
+            branch_active = (
+                str(active_branch.get("head_hash", "") or "") == h
+                and str(active_branch.get("anchor_hash", "") or "")
+            )
+            if branch_active:
+                anchor_hash = str(active_branch.get("anchor_hash", "") or anchor_hash)
+                anchor_blob = active_branch.get("anchor", {}) if isinstance(active_branch.get("anchor"), dict) else {}
+                anchor_comp = float(anchor_blob.get("comp", anchor_comp) or 0.0)
+                anchor_p50 = float(anchor_blob.get("p50", anchor_p50) or 0.0)
+                anchor_p25 = float(anchor_blob.get("p25", anchor_p25) or 0.0)
+                anchor_n = int(anchor_blob.get("n", anchor_n) or 0)
+            print(f"best_hash_short={anchor_hash[:8]}")
+            print(f"best_comp={anchor_comp:.0f}")
+            print(f"best_p50={anchor_p50:.0f}")
+            print(f"best_p25={anchor_p25:.0f}")
+            print(f"best_total={anchor_n}")
+            print("best_source_short=" + shlex.quote("anchor"))
+
+            comp_gap = max(0.0, anchor_comp - comp)
+            p50_gap = max(0.0, anchor_p50 - p50)
+            p25_gap = max(0.0, anchor_p25 - p25)
+            breach_count = sum(
+                [
+                    1 if comp_gap >= min_comp_gap else 0,
+                    1 if p50_gap >= min_p50_gap else 0,
+                    1 if p25_gap >= min_p25_gap else 0,
+                ]
+            )
+            hard_breach_count = sum(
+                [
+                    1 if comp_gap >= float(${BRANCH_HARD_COMP_GAP}) else 0,
+                    1 if p50_gap >= float(${BRANCH_HARD_P50_GAP}) else 0,
+                    1 if p25_gap >= float(${BRANCH_HARD_P25_GAP}) else 0,
+                ]
+            )
+            gap_text = f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))} br={breach_count}/{min_breach_count}"
+
+            if h == anchor_hash and not branch_active:
                 print("regression_state=safe")
+                print("regression_detail=" + shlex.quote(f"NO anchor={anchor_hash[:8]} n={int(n)}"))
+            elif int(n) < min_games_current:
+                detail = f"WAIT anchor={anchor_hash[:8]} n={int(n)}/{min_games_current}"
+                state = "grace"
+                if breach_count >= min_breach_count:
+                    detail = f"WARN anchor={anchor_hash[:8]}{gap_text} n={int(n)}/{min_games_current}"
+                    state = "warning"
+                print("regression_state=" + state)
+                print("regression_detail=" + shlex.quote(detail))
+            elif (comp, p50, p25, n) > (anchor_comp, anchor_p50, anchor_p25, anchor_n):
+                print("regression_state=safe")
+                print("regression_detail=" + shlex.quote(f"PROMOTE anchor={anchor_hash[:8]} n={int(n)}"))
+            elif not branch_active:
+                detail = f"NO anchor={anchor_hash[:8]}{gap_text} n={int(n)}"
+                state = "safe"
+                if hard_breach_count >= int(${BRANCH_HARD_MIN_BREACH_COUNT}):
+                    detail = f"YES anchor={anchor_hash[:8]} hard{gap_text} n={int(n)}"
+                    state = "trigger"
+                print("regression_state=" + state)
                 print("regression_detail=" + shlex.quote(detail))
             else:
-                comp_gap = max(0.0, cc - comp)
-                p50_gap = max(0.0, cp50 - p50)
-                p25_gap = max(0.0, cp25 - p25)
-                breach_count = sum(
+                best_hash = str(active_branch.get("best_hash", "") or "")
+                best_blob = active_branch.get("best", {}) if isinstance(active_branch.get("best"), dict) else {}
+                if best_hash:
+                    best_comp = float(best_blob.get("comp", 0.0) or 0.0)
+                    best_p50 = float(best_blob.get("p50", 0.0) or 0.0)
+                    best_p25 = float(best_blob.get("p25", 0.0) or 0.0)
+                    best_n = int(best_blob.get("n", 0) or 0)
+                else:
+                    best_hash = h
+                    best_comp = comp
+                    best_p50 = p50
+                    best_p25 = p25
+                    best_n = int(n)
+                if (comp, p50, p25, n) > (best_comp, best_p50, best_p25, best_n):
+                    best_hash = h
+                    best_comp = comp
+                    best_p50 = p50
+                    best_p25 = p25
+                    best_n = int(n)
+                best_comp_gap = max(0.0, anchor_comp - best_comp)
+                best_p50_gap = max(0.0, anchor_p50 - best_p50)
+                best_p25_gap = max(0.0, anchor_p25 - best_p25)
+                best_breach_count = sum(
                     [
-                        1 if comp_gap >= min_comp_gap else 0,
-                        1 if p50_gap >= min_p50_gap else 0,
-                        1 if p25_gap >= min_p25_gap else 0,
+                        1 if best_comp_gap >= min_comp_gap else 0,
+                        1 if best_p50_gap >= min_p50_gap else 0,
+                        1 if best_p25_gap >= min_p25_gap else 0,
                     ]
                 )
-                gap_text = f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))} br={breach_count}/{min_breach_count}"
-                detail = ("YES" if breach_count >= min_breach_count else "NO") + " rank=" + str(current_rank) + f"/{max_rank} cutoff={ch[:8]}{gap_text} n={int(n)}"
-                print("regression_state=" + ("trigger" if breach_count >= min_breach_count else "safe"))
-                print("regression_detail=" + shlex.quote(detail))
+                depth = int(active_branch.get("depth", 0) or 0)
+                closed_games = int(active_branch.get("closed_games", 0) or 0)
+                patience = int(active_branch.get("patience", 0) or 0)
+                branch_games = closed_games + int(n)
+                budget_hit = []
+                if depth >= int(${BRANCH_MAX_DEPTH}):
+                    budget_hit.append("d")
+                if branch_games >= int(${BRANCH_MAX_GAMES}):
+                    budget_hit.append("g")
+                if patience >= int(${BRANCH_PATIENCE}):
+                    budget_hit.append("p")
+                budget_text = f" depth={depth}/{int(${BRANCH_MAX_DEPTH})} games={branch_games}/{int(${BRANCH_MAX_GAMES})} patience={patience}/{int(${BRANCH_PATIENCE})}"
+                if hard_breach_count >= int(${BRANCH_HARD_MIN_BREACH_COUNT}):
+                    print("regression_state=trigger")
+                    print("regression_detail=" + shlex.quote(f"YES anchor={anchor_hash[:8]} hard{gap_text}{budget_text} n={int(n)}"))
+                elif budget_hit and best_breach_count >= min_breach_count:
+                    best_gap_text = f" best={best_hash[:8]} bc{int(round(best_comp_gap))}/bm{int(round(best_p50_gap))}/bq{int(round(best_p25_gap))} bbr={best_breach_count}/{min_breach_count}"
+                    print("regression_state=trigger")
+                    print("regression_detail=" + shlex.quote(f"YES anchor={anchor_hash[:8]}{gap_text}{best_gap_text}{budget_text} n={int(n)}"))
+                elif budget_hit:
+                    print("regression_state=safe")
+                    print("regression_detail=" + shlex.quote(f"RESET anchor={anchor_hash[:8]} best={best_hash[:8]}{budget_text} n={int(n)}"))
+                else:
+                    print("regression_state=safe")
+                    print("regression_detail=" + shlex.quote(f"NO anchor={anchor_hash[:8]}{gap_text}{budget_text} n={int(n)}"))
         else:
             print("regression_state=safe")
-            print("regression_detail=" + shlex.quote("NO no mature ranking"))
+            print("regression_detail=" + shlex.quote("NO no anchor"))
 PY
 			)"
 		fi
