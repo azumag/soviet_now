@@ -515,6 +515,69 @@ def metric_breach_count(comp_gap, p50_gap, p25_gap, comp_th, p50_th, p25_th):
     )
 
 
+def strategy_metrics_for_hash(rolling, hash_, current_entry=None):
+    if not hash_:
+        return None
+    if current_entry and str(current_entry.get("hash", "") or "") == hash_:
+        return {
+            "comp": float(current_entry.get("comp", 0.0) or 0.0),
+            "p50": float(current_entry.get("p50", 0.0) or 0.0),
+            "p25": float(current_entry.get("p25", 0.0) or 0.0),
+            "lcb": float(current_entry.get("lcb", 0.0) or 0.0),
+            "n": int(current_entry.get("n_roll", 0) or 0),
+        }
+    metrics = calc_strategy_metrics((rolling.get(hash_, {}) or {}).get("scores", []) or [])
+    if not metrics:
+        return None
+    return {
+        "comp": float(metrics.get("comp", 0.0) or 0.0),
+        "p50": float(metrics.get("p50", 0.0) or 0.0),
+        "p25": float(metrics.get("p25", 0.0) or 0.0),
+        "lcb": float(metrics.get("lcb", 0.0) or 0.0),
+        "n": int(metrics.get("n", 0) or 0),
+    }
+
+
+def derive_branch_best(rolling, active_branch, current_hash, current_entry=None):
+    best_hash = str(active_branch.get("best_hash", "") or "")
+    best_blob = active_branch.get("best", {}) if isinstance(active_branch.get("best"), dict) else {}
+    best_metrics = None
+    if best_hash:
+        best_metrics = {
+            "comp": float(best_blob.get("comp", 0.0) or 0.0),
+            "p50": float(best_blob.get("p50", 0.0) or 0.0),
+            "p25": float(best_blob.get("p25", 0.0) or 0.0),
+            "lcb": float(best_blob.get("lcb", 0.0) or 0.0),
+            "n": int(best_blob.get("n", 0) or 0),
+        }
+        if best_metrics["n"] <= 0:
+            best_metrics = None
+
+    seen = set()
+    lineage = [str(x) for x in (active_branch.get("lineage", []) or []) if str(x)]
+    for cand_hash in lineage + ([current_hash] if current_hash else []):
+        if not cand_hash or cand_hash in seen:
+            continue
+        seen.add(cand_hash)
+        cand_metrics = strategy_metrics_for_hash(rolling, cand_hash, current_entry=current_entry)
+        if not cand_metrics:
+            continue
+        if best_metrics is None or metric_key(cand_metrics) > metric_key(best_metrics):
+            best_hash = cand_hash
+            best_metrics = cand_metrics
+
+    if best_metrics is None and current_entry:
+        best_hash = current_hash
+        best_metrics = {
+            "comp": float(current_entry.get("comp", 0.0) or 0.0),
+            "p50": float(current_entry.get("p50", 0.0) or 0.0),
+            "p25": float(current_entry.get("p25", 0.0) or 0.0),
+            "lcb": float(current_entry.get("lcb", 0.0) or 0.0),
+            "n": int(current_entry.get("n_roll", 0) or 0),
+        }
+    return best_hash, best_metrics
+
+
 def inspect_branch_state(rolling, current_hash, anchor=None):
     current_entry = get_current_strategy_run_entry(current_hash)
     if not current_hash or not current_entry:
@@ -642,6 +705,38 @@ def inspect_branch_state(rolling, current_hash, anchor=None):
         "text": "",
     }
 
+    if branch_active:
+        best_hash, best_metrics = derive_branch_best(rolling, active_branch, current_hash, current_entry=current_entry)
+        best_comp_gap, best_p50_gap, best_p25_gap = metric_gaps(anchor_metrics, best_metrics or current)
+        best_breach_count = metric_breach_count(
+            best_comp_gap, best_p50_gap, best_p25_gap,
+            REGRESSION_MIN_COMP_GAP, REGRESSION_MIN_P50_GAP, REGRESSION_MIN_P25_GAP,
+        )
+        depth = int(active_branch.get("depth", 0) or 0)
+        closed_games = int(active_branch.get("closed_games", 0) or 0)
+        patience = int(active_branch.get("patience", 0) or 0)
+        branch_games = closed_games + int(current["n"])
+        budget_hit = []
+        if depth >= BRANCH_MAX_DEPTH:
+            budget_hit.append("d")
+        if branch_games >= BRANCH_MAX_GAMES:
+            budget_hit.append("g")
+        if patience >= BRANCH_PATIENCE:
+            budget_hit.append("p")
+        info["best_hash"] = best_hash
+        info["best"] = best_metrics
+        info["best_gap"] = {
+            "comp": best_comp_gap,
+            "p50": best_p50_gap,
+            "p25": best_p25_gap,
+        }
+        info["best_breach_count"] = best_breach_count
+        info["depth"] = depth
+        info["closed_games"] = closed_games
+        info["branch_games"] = branch_games
+        info["patience"] = patience
+        info["budget_hit"] = budget_hit
+
     if current_hash == anchor_hash and not branch_active:
         info["text"] = f"RegPreview NO anchor={anchor_hash[:8]} n={current['n']}"
         return info
@@ -685,48 +780,19 @@ def inspect_branch_state(rolling, current_hash, anchor=None):
         )
         return info
 
-    best_hash = str(active_branch.get("best_hash", "") or "")
-    best_blob = active_branch.get("best", {}) if isinstance(active_branch.get("best"), dict) else {}
-    best_metrics = {
-        "comp": float(best_blob.get("comp", 0.0) or 0.0),
-        "p50": float(best_blob.get("p50", 0.0) or 0.0),
-        "p25": float(best_blob.get("p25", 0.0) or 0.0),
-        "n": int(best_blob.get("n", 0) or 0),
-    } if best_hash else None
-    if best_metrics is None or metric_key(current) > metric_key(best_metrics):
-        best_hash = current_hash
-        best_metrics = dict(current)
-
-    best_comp_gap, best_p50_gap, best_p25_gap = metric_gaps(anchor_metrics, best_metrics)
-    best_breach_count = metric_breach_count(
-        best_comp_gap, best_p50_gap, best_p25_gap,
-        REGRESSION_MIN_COMP_GAP, REGRESSION_MIN_P50_GAP, REGRESSION_MIN_P25_GAP,
-    )
-    depth = int(active_branch.get("depth", 0) or 0)
-    closed_games = int(active_branch.get("closed_games", 0) or 0)
-    patience = int(active_branch.get("patience", 0) or 0)
-    branch_games = closed_games + int(current["n"])
-    budget_hit = []
-    if depth >= BRANCH_MAX_DEPTH:
-        budget_hit.append("d")
-    if branch_games >= BRANCH_MAX_GAMES:
-        budget_hit.append("g")
-    if patience >= BRANCH_PATIENCE:
-        budget_hit.append("p")
+    best_hash = str(info.get("best_hash", "") or current_hash)
+    best_metrics = info.get("best") or dict(current)
+    best_gap = info.get("best_gap") or {"comp": 0.0, "p50": 0.0, "p25": 0.0}
+    best_comp_gap = float(best_gap.get("comp", 0.0) or 0.0)
+    best_p50_gap = float(best_gap.get("p50", 0.0) or 0.0)
+    best_p25_gap = float(best_gap.get("p25", 0.0) or 0.0)
+    best_breach_count = int(info.get("best_breach_count", 0) or 0)
+    depth = int(info.get("depth", 0) or 0)
+    closed_games = int(info.get("closed_games", 0) or 0)
+    patience = int(info.get("patience", 0) or 0)
+    branch_games = int(info.get("branch_games", int(current["n"])) or int(current["n"]))
+    budget_hit = list(info.get("budget_hit", []) or [])
     budget_text = f" depth={depth}/{BRANCH_MAX_DEPTH} games={branch_games}/{BRANCH_MAX_GAMES} patience={patience}/{BRANCH_PATIENCE}"
-    info["best_hash"] = best_hash
-    info["best"] = best_metrics
-    info["best_gap"] = {
-        "comp": best_comp_gap,
-        "p50": best_p50_gap,
-        "p25": best_p25_gap,
-    }
-    info["best_breach_count"] = best_breach_count
-    info["depth"] = depth
-    info["closed_games"] = closed_games
-    info["branch_games"] = branch_games
-    info["patience"] = patience
-    info["budget_hit"] = budget_hit
 
     if hard_breach_count >= BRANCH_HARD_MIN_BREACH_COUNT:
         info["state"] = "trigger"
@@ -1285,7 +1351,8 @@ def render_branch_overview(rolling, current_hash):
     best_hash_disp = best_hash if branch_active else "--"
     best_metrics_disp = best_metrics if branch_active else {"comp": 0, "n": 0}
 
-    anchor_box = node("Anchor top1", anchor_hash, anchor, C_GREEN)
+    anchor_label = "Branch anchor" if branch_active else "Anchor top1"
+    anchor_box = node(anchor_label, anchor_hash, anchor, C_GREEN)
     best_box = node(best_label, best_hash_disp, best_metrics_disp, C_BLUE if branch_active else C_GREY)
     current_box = node("Current head", current_hash, current, verdict_color)
 
