@@ -367,12 +367,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # reactive_pairsが3以上ある場合、即時併合機会を最優先
             score += 1000.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 3 and merge_grade == "NO":
-            # v206: reactive_pairs>=3で即時併合なし（NO）の場合、盤面密度ボーナスを削減（+50.0）
-            # 即時併合機会がない場合でも、盤面密度を高める配置を優先するが、ボーナスを大幅に削減して即時併合優先を維持
-            compression_bonus = 50.0 * max(0, 1.0 - (landing_y + 4.0) / 8.0)  # landing_y=-4.0で50.0, landing_y=4.0で0.0
-            score += compression_bonus
-            reasons.append("REACTIVE_PAIRS_COMPRESSION")
+        # v209: reactive_pairs>=3で即時併合なしの場合のcompression_bonusロジックを削除
+        # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
+        # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
