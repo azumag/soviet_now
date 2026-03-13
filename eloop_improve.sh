@@ -940,6 +940,7 @@ if $improve_ok; then
 	first_score=$(echo "$SCORES" | awk '{print $1}')
 	last_score=$(echo "$SCORES" | awk '{print $NF}')
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+	phylo_push_ok=false
 	local phylo_improve_summary=""
 	if [ -n "$strategy_diff" ]; then
 		phylo_improve_summary=$(printf '%s' "$strategy_diff" | _summarize_strategy_diff_for_phylo)
@@ -951,12 +952,19 @@ if $improve_ok; then
 	git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" 2>/dev/null || true
 	if [ "$NUM_GAMES" -eq 1 ]; then
 		if git commit -m "eloop Improve after game #${GAME_NUM_SNAPSHOT}" 2>/dev/null; then
-			git push 2>/dev/null || true
+			if git push 2>/dev/null; then
+				phylo_push_ok=true
+			fi
 		fi
 	else
 		if git commit -m "eloop Improve after ${NUM_GAMES} games (scores: ${SCORES})" 2>/dev/null; then
-			git push 2>/dev/null || true
+			if git push 2>/dev/null; then
+				phylo_push_ok=true
+			fi
 		fi
+	fi
+	if [ "$phylo_push_ok" = true ]; then
+		_post_phyrogenetic_tree_link_to_chat "improve" "$HASH_BEFORE" "$HASH_AFTER"
 	fi
 
 	# --- Phase D: 戦略解説コーナー (変更があった場合のみ) ---

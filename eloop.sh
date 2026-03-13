@@ -90,13 +90,20 @@ _handle_decide_exception_recovery() {
 			cp "$rollback_file" "$STRATEGY_FILE"
 			cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
 			local rolled_hash
+			local phylo_push_ok=false
 			rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 			_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"
 			rollback_applied=true
 			log "[RECOVERY] ロールバック完了: ${rollback_note} (file=${rollback_file}, hash=${rolled_hash:-unknown})"
 			git add "$STRATEGY_FILE" tmp/revert_strategy.py 2>/dev/null || true
-			git commit -m "eloop Auto-revert: decide runtime exception (turn=${err_turn}, score=${err_score}, target=${rollback_note})" 2>/dev/null || true
-			git push 2>/dev/null || true
+			if git commit -m "eloop Auto-revert: decide runtime exception (turn=${err_turn}, score=${err_score}, target=${rollback_note})" 2>/dev/null; then
+				if git push 2>/dev/null; then
+					phylo_push_ok=true
+				fi
+			fi
+			if [ "$phylo_push_ok" = true ]; then
+				_post_phyrogenetic_tree_link_to_chat "rollback" "$current_hash" "$rolled_hash"
+			fi
 		else
 			log "[RECOVERY] ロールバック候補ファイルなし: ${rollback_file}"
 		fi

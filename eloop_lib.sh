@@ -19,6 +19,7 @@ HISTORY_DIR="game_history"
 HISTORY_FILE="$HISTORY_DIR/latest.jsonl"
 PHYROGENETIC_TREE_FILE="phyrogenetic-tree.md"
 PHYROGENETIC_EVENTS_FILE="phyrogenetic-events.jsonl"
+PHYROGENETIC_TREE_URL="${PHYROGENETIC_TREE_URL:-https://github.com/azumag/soviet_now/blob/main/phyrogenetic-tree.md}"
 
 MODEL_PRIMARY="glm"
 MODEL_FALLBACK="opencode:glmflash"
@@ -53,10 +54,12 @@ TMP_HISTORY_DIR="tmp/history"
 TMP_DEBUG_DIR="tmp/debug"
 TMP_CACHE_DIR="tmp/cache"
 CC_POST_LOG_FILE="$TMP_DEBUG_DIR/cc_post.log"
+PHYROGENETIC_CHAT_POST_LOG_FILE="$TMP_DEBUG_DIR/phyrogenetic_chat_post.log"
 
 RADIO_WEB_GROUNDING_CACHE_DIR="$TMP_CACHE_DIR/radio_grounding"
 RADIO_STATE_FILE="$TMP_STATE_DIR/.radio_state"
 COMMENT_GEN_STATE_FILE="$TMP_STATE_DIR/.comment_gen_state"
+LAST_PHYROGENETIC_CHAT_COMMIT_FILE="$TMP_STATE_DIR/last_phyrogenetic_chat_commit.txt"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$RADIO_OPENCODE_PERMISSION}"
 COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
@@ -2941,6 +2944,56 @@ _append_cc_post_log() {
 	if [ -f "$CC_POST_LOG_FILE" ] && [ "$(wc -l < "$CC_POST_LOG_FILE")" -gt 200 ]; then
 		tail -200 "$CC_POST_LOG_FILE" >"${CC_POST_LOG_FILE}.tmp" && mv "${CC_POST_LOG_FILE}.tmp" "$CC_POST_LOG_FILE"
 	fi
+}
+
+_append_phyrogenetic_chat_post_log() {
+	local status="$1" detail="$2" chat_text="$3"
+	mkdir -p "$(dirname "$PHYROGENETIC_CHAT_POST_LOG_FILE")" 2>/dev/null || true
+	{
+		printf '[%s] %s' "$(date '+%Y-%m-%d %H:%M:%S')" "$status"
+		[ -n "$detail" ] && printf ' %s' "$detail"
+		printf ' | %s\n' "$chat_text"
+	} >>"$PHYROGENETIC_CHAT_POST_LOG_FILE" 2>/dev/null || true
+	if [ -f "$PHYROGENETIC_CHAT_POST_LOG_FILE" ] && [ "$(wc -l < "$PHYROGENETIC_CHAT_POST_LOG_FILE")" -gt 200 ]; then
+		tail -200 "$PHYROGENETIC_CHAT_POST_LOG_FILE" >"${PHYROGENETIC_CHAT_POST_LOG_FILE}.tmp" && mv "${PHYROGENETIC_CHAT_POST_LOG_FILE}.tmp" "$PHYROGENETIC_CHAT_POST_LOG_FILE"
+	fi
+}
+
+_post_phyrogenetic_tree_link_to_chat() {
+	local event_type="$1" before_hash="$2" after_hash="$3"
+	[ -n "$PHYROGENETIC_TREE_URL" ] || return 0
+	local head_commit last_commit action before_short after_short transition chat_text
+	head_commit=$(git rev-parse HEAD 2>/dev/null || true)
+	[ -n "$head_commit" ] || return 0
+	last_commit=$(cat "$LAST_PHYROGENETIC_CHAT_COMMIT_FILE" 2>/dev/null || true)
+	if [ -n "$last_commit" ] && [ "$last_commit" = "$head_commit" ]; then
+		return 0
+	fi
+	case "$event_type" in
+	improve) action="戦略更新" ;;
+	rollback) action="戦略ロールバック" ;;
+	*) action="戦略切り替え" ;;
+	esac
+	before_short="${before_hash:0:8}"
+	after_short="${after_hash:0:8}"
+	transition=""
+	if [ -n "$before_short" ] && [ -n "$after_short" ] && [ "$before_short" != "$after_short" ]; then
+		transition=" ${before_short}->${after_short}"
+	fi
+	chat_text="${action}${transition}。系統樹はこちら: ${PHYROGENETIC_TREE_URL}"
+	(
+		local send_output rc
+		send_output=$(./twitch_chat.sh send "$chat_text" 2>&1)
+		rc=$?
+		if [ "$rc" -ne 0 ]; then
+			log "[PHYLO] Twitch chat投稿失敗: ${chat_text:0:120}"
+			_append_phyrogenetic_chat_post_log "FAIL" "rc=$rc commit=${head_commit:0:8} event=$event_type output=$(printf '%s' "$send_output" | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g')" "$chat_text"
+		else
+			mkdir -p "$(dirname "$LAST_PHYROGENETIC_CHAT_COMMIT_FILE")" 2>/dev/null || true
+			printf '%s\n' "$head_commit" >"$LAST_PHYROGENETIC_CHAT_COMMIT_FILE"
+			_append_phyrogenetic_chat_post_log "OK" "commit=${head_commit:0:8} event=$event_type" "$chat_text"
+		fi
+	) &
 }
 
 _post_cc_text_to_chat() {
@@ -7577,8 +7630,14 @@ PY
 			"$rollback_analysis_summary" "$rollback_event_analysis"
 		refresh_phyrogenetic_tree --pending-edge rollback "$strategy_hash" "$rolled_hash" >/dev/null 2>&1 || true
 		git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" 2>/dev/null || true
+		local phylo_push_ok=false
 		if git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null; then
-			git push 2>/dev/null || true
+			if git push 2>/dev/null; then
+				phylo_push_ok=true
+			fi
+		fi
+		if [ "$phylo_push_ok" = true ]; then
+			_post_phyrogenetic_tree_link_to_chat "rollback" "$strategy_hash" "$rolled_hash"
 		fi
 		[ -f "$ROLLBACK_ANALYSIS_FILE" ] && start_radio_corner_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash" &
 
