@@ -149,9 +149,11 @@ def get_strategy_hash():
 
 
 def trigger_russia_celebration_now(score, turn):
-    """ロシア建国祝賀を即時に別プロセスで発火する。"""
-    if not RUSSIA_CELEBRATION_ENABLED:
-        return False
+    """ロシア建国時の即時処理を別プロセスで発火する。
+
+    handle_russia_celebration() 側で、祝賀読み上げの有無と関係なく
+    クリップ作成は先に実行する。ここでは worker 起動を常に試みる。
+    """
     try:
         with open("game_count.txt") as f:
             game_num = int((f.read() or "0").strip() or "0") + 1

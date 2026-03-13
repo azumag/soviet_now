@@ -60,12 +60,17 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
- # --- Change History ---
- # [BEST:3689] v126: v42-based HIGH phase merge enhancement
- # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
- # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
-   # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
- # v200: deadline_margin活用による危険局面判定強化版 - rollback failure mode (p25=-249.8) の解消
+  # --- Change History ---
+  # [BEST:3689] v126: v42-based HIGH phase merge enhancement
+  # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
+  # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
+    # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+  # v201: reactive_pairs creation bonusとnextNext future bonus削除版 - rollback failure mode (p25=-249.8) の解消
+  # ワーストゲームの終盤8ターン分析で、reactive_pairs=3-6あるにもかかわらず即時併合機会を逃している失敗パターンを特定。
+  # batch_summaryでreactive_pairs系reasonのavg_score_deltaが低い（+10.2、+42.6など）ことを確認。
+  # reactive_pairs creation bonusとnextNext future bonusを削除し、即時併合と盤面圧縮の両立を図るnear_pairsボーナス（v188）に集中することで、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
+  # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, advice.md
+  # v200: deadline_margin活用による危険局面判定強化版 - rollback failure mode (p25=-249.8) の解消
  # ワーストゲーム(score0499)の終盤8ターン分析で、max_y=2.25~3.05かつdeadline_margin=-0.9~-1.63の危険な状態で
  # HIGH_TOWERが選択され続け、危険的ピース排出が機能していない失敗パターンを特定。
  # deadline_marginが小さい（deadlineに近い）かつdanger_piece_count >= 2の場合、危険局面と判定を強化。
@@ -255,43 +260,47 @@ def calc_reactive_pairs_delta(pieces, drop_x, drop_y, drop_type, drop_r):
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v198: 計画的経済（Reactive Pair Creation）版 - reactive_pairs創出ボーナス追加により、near_pairsをreactive_pairsに変換する配置を優先。
+    """v201: reactive_pairs creation bonusとnextNext future bonus削除版 - 即時併合と盤面圧縮の両立を図る
 
-    ワーストゲーム(score0646)の終盤8ターン分析で、max_y=2.57-3.41かつreactive_pairs=3-6あるにもかかわらず
-    HIGH_TOWER_DANGER_NO_MERGE_PENALTY_REACTIVE_PAIRS_WASTEDが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
-    v197のnear_pairsボーナスは、near_pairsの存在に基づいてボーナスを与えるが、reactive_pairsを増やす配置を優先するロジックが欠如していた。
-    "計画的経済"（Planned Economy）戦略の実装：near_pairsをreactive_pairsに変換する配置を優先し、盤面圧縮を促進。
+    ワーストゲームの終盤8ターン分析で、reactive_pairs=3-6あるにもかかわらず即時併合機会を逃している失敗パターンを特定。
+    batch_summaryでreactive_pairs系reasonのavg_score_deltaが低い（+10.2、+42.6など）ことを確認。
+    reactive_pairs creation bonusとnextNext future bonusを削除し、即時併合と盤面圧縮の両立を図るnear_pairsボーナス（v188）に集中することで、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
 
-    v198の改善点:
-      1. Reactive pair creation bonus（新規評価軸 2.8）
-           - 危険局面で即時併合がない場合、reactive_pairsの変化量を計算
-           - ドロップ後にreactive_pairsが増加する配置にボーナスを与える
-           - reactive_pairsの増加量に応じた段階的ボーナス（+1で+800、+2で+1600、+3以上で+2400）
-           - calc_reactive_pairs_delta()ヘルパー関数で、ドロップ後のreactive_pairs変化量を正確に計算
-           - これにより、near_pairsをreactive_pairsに変換する配置を優先し、盤面圧縮を促進
-       
-      2. v197の危険局面reactive_pairs考慮版を維持
-           - 排出ボーナス大幅減衰とペナルティ追加により、reactive_pairsを維持しつがら排出を回避
-           - 即時併合候補フィルタリング、deadlineマージン活用、nextNext活用を維持
-       
-      3. best_score5694_strategy.py (v178) の成功パターンを継承
-           - reactive_pairsの維持・増加を優先し、盤面圧縮を促進
-           - 危険局面でもreactive_pairsを活用し、安定したスコア向上を実現
+    v201の改善点:
+      1. Reactive pair creation bonus削除
+            - ドロップ後にreactive_pairsが増加する配置にボーナスを与えるロジックを削除
+            - batch_summaryでreactive_pairsは相関ラベルに過ぎず、即時併合の機会を逃す失敗パターンを解消
+            - 複雑な将来計画ロジックを削除し、即時併合を最優先
+        
+      2. NextNext future bonus削除
+            - nextNextタイプの近くに配置する将来性評価を削除
+            - batch_summaryでnextNext系reasonのavg_score_deltaが低いことを確認
+            - 即時併合機会の取りこぼしを削減
+        
+      3. v200の危険局面判定強化を維持
+            - deadline_margin活用による危険局面判定強化
+            - 即時併合候補フィルタリング
+            - near_pairsボーナス強化（v188）
+            - DANGER_PIECE_EJECTION強化（v197）
+        
+      4. best_score5694_strategy.py (v178) の成功パターンを継承
+            - 即時併合と盤面圧縮の両立
+            - 危険局面での判断安定性
 
     Args:
           game_state: game state (pieces, next, nextNext, score, etc.)
           analysis: analyze_board.py analysis results
-               - results: landing information for each drop X candidate
-                   - x: drop X coordinate
-                   - landing_y: estimated landing Y coordinate (high=dangerous)
-                   - drift_x/drift_unc: post-landing drift due to polygon shape
-                   - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                   - merges: individual distance/merge judgment for each same-type piece
-               - reactor: reactor state (reactive_pairs, near_pairs, etc.)
-               - deadline: deadline information (deadline_y, deadline_margin, danger_piece_count, etc.)
+                - results: landing information for each drop X candidate
+                    - x: drop X coordinate
+                    - landing_y: estimated landing Y coordinate (high=dangerous)
+                    - drift_x/drift_unc: post-landing drift due to polygon shape
+                    - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                    - merges: individual distance/merge judgment for each same-type piece
+                - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+                - deadline: deadline information (deadline_y, deadline_margin, danger_piece_count, etc.)
 
     Returns:
-           {"x": drop X coordinate, "reason": selection reason}
+            {"x": drop X coordinate, "reason": selection reason}
 
     refs: tmp/.prompt_history.md, tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_132257_score0646.jsonl turns 60-67, game_history/20260313_133259_score1842.jsonl turns 82-87, strategy_versions/best_score5694_strategy.py, strategy.py.staging
     """
@@ -601,8 +610,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         )
                         reasons.append("NEAR_PAIRS_OPPORTUNITY")
 
-        # ----- evaluation axis 2.8: reactive pair creation bonus (v199: ENHANCED) -----
-        # 危険局面で即時併合と盤面圧縮の両立を図るため、reactive_pairsを増やす配置を優先
+        # ----- evaluation axis 2.8: reactive pair creation bonus (v199: REMOVED v200) -----
+        # v200: 危険局面即時併合と盤面圧縮の両立を図るため、reactive_pairsを増やす配置を優先
         # near_pairsをreactive_pairsに変換する「計画的経済」戦略の強化版
         # 危険的な盤面状況で、reactive_pairsは即時合併機会の「保険」である
         # ドロップ後にreactive_pairsが増える配置を優先することで、将来の盤面圧縮を確保
@@ -615,7 +624,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactive_pairsの維持・増加を優先し、盤面圧縮を促進
         # 危険局面でもreactive_pairsを活用し、安定したスコア向上を実現
         #
-        # v199の改善点：
+        # v199の改善点（削除）：
         # 1. 危険局面で即時併合がない場合、reactive_pairsの変化量を計算
         # 2. 危険局面で即時併合がある場合もreactive_pairsの変化量を計算（新規追加）
         # 3. ドロップ後にreactive_pairsが増加する配置にボーナスを与える
@@ -623,34 +632,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 5. 即時併合がない場合：v198のボーナスを維持（+1で+800、+2で+1600、+3以上で+2400）
         # 6. これにより、即時併合を取りつつ将来の盤面圧縮も考慮できる配置を優先し、下振れ耐性を向上
         #
-        # refs: tmp/.prompt_history.md, tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_142113_score0514.jsonl turns 59-66, game_history/20260313_141604_score2761.jsonl turns 114-121, strategy_versions/best_score5694_strategy.py
-        if dangerous_situation:
-            # ドロップ後のreactive_pairs変化量を計算
-            reactive_pairs_delta = calc_reactive_pairs_delta(
-                pieces, x, landing_y, next_type, next_r
-            )
-
-            # reactive_pairsが増加する場合にボーナスを適用
-            if reactive_pairs_delta > 0:
-                if merge_grade == "NO":
-                    # 即時併合がない場合：v198のボーナスを維持
-                    if reactive_pairs_delta >= 3:
-                        bonus = 2400.0
-                    elif reactive_pairs_delta >= 2:
-                        bonus = 1600.0
-                    else:  # reactive_pairs_delta >= 1
-                        bonus = 800.0
-                else:
-                    # 即時併合がある場合：70%に減衰して両立を図る
-                    if reactive_pairs_delta >= 3:
-                        bonus = 1680.0
-                    elif reactive_pairs_delta >= 2:
-                        bonus = 1120.0
-                    else:  # reactive_pairs_delta >= 1
-                        bonus = 560.0
-
-                score += bonus
-                reasons.append(f"REACTIVE_PAIR_CREATION_BONUS_{reactive_pairs_delta}")
+        # v200の改善点：
+        # 1. reactive_pairs creation bonusを削除 - batch_summaryでreactive_pairsは相関ラベルに過ぎず、即時併合の機会を逃す失敗パターンを解消
+        # 2. ワーストゲームの終盤8ターン分析で、reactive_pairs=3-6あるにもかかわらず即時併合機会を逃している失敗パターンを特定
+        # 3. reactive_pairs系reasonのavg_score_deltaが低い（+10.2、+42.6など）ことを確認
+        # 4. 即時併合と盤面圧縮の両立を図るnear_pairsボーナス（v188）に集中することで、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる
+        #
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, advice.md
 
         # ----- evaluation axis 2.6: dangerous situation danger piece ejection (v197: CORRECTED) -----
         # 危険局面で即時併合候補がない場合、危険的ピース（deadline_y以上のピース）を盤面外へ排出する配置を最優先
@@ -717,37 +705,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # v200: 危険的ピースが盤面中央（abs(x) < 2.0）に近い場合も、高さペナルティを25%（超過時15%）に削減して排出を優先
                     height_penalty *= height_penalty_reduction
 
-        # ----- evaluation axis 2.7: dangerous situation nextNext future bonus (v191: NEW) -----
-        # 危険局面で即時併合候補がない場合、nextNextを活用した将来性評価を追加
-        # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題への対処
-        # nextNextタイプの近くにnextタイプのピースがある場合、将来の併合機会を最大化する配置を優先
+        # ----- evaluation axis 2.7: dangerous situation nextNext future bonus (v191: REMOVED v200) -----
+        # v200: 危険局面で即時併合候補がない場合、nextNextを活用した将来性評価を削除
+        # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題への対処（削除）
+        # nextNextタイプの近くにnextタイプのピースがある場合、将来の併合機会を最大化する配置を優先（削除）
         # refs: advice.md, tmp/batch_summary.txt, tmp/improve_brief.md
-        if dangerous_situation and merge_grade == "NO" and next_next_type > 0:
-            # nextNextタイプと同じタイプのピースが盤面にあるかチェック
-            nextNext_pieces = [p for p in pieces if p.get("type") == next_next_type]
-            if nextNext_pieces:
-                # nextNextタイプのピースの重心を計算
-                avg_x = sum(p["x"] for p in nextNext_pieces) / len(nextNext_pieces)
-                avg_y = sum(p["y"] for p in nextNext_pieces) / len(nextNext_pieces)
-
-                # nextNextタイプの重心に近い配置を優先（将来の併合機会を最大化）
-                # v199: ボーナスを200.0→300.0に強化し、危険局面でのnextNext活用評価を強化
-                dist_to_future = ((x - avg_x) ** 2 + (landing_y - avg_y) ** 2) ** 0.5
-                nextNext_bonus = max(0, 5.0 - dist_to_future) * 300.0
-                if nextNext_bonus > 0:
-                    score += nextNext_bonus
-                    reasons.append("NEXTNEXT_FUTURE")
-                else:
-                    # 盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題への対処
-                    # 併合候補がない場合、typeA上へのnextBの配置を回避し、nextNext(typeA)と同じ近くに置くことを優先
-                    # Check if we are blocking nextNext merge
-                    # Find all pieces on board with type == nextNext_type (A)
-                    # If current drop (type next) is dropped on top of type A, it blocks A from merging with nextNext A
-                    target_pieces = [p for p in pieces if p.get("type") == next_next_type and p["x"] == x and p["y"] > landing_y]
-                    if target_pieces:
-                        # Penalty for blocking A with B
-                        score -= 500.0
-                        reasons.append("AVOID_BLOCKING_NEXT_MERGE")
+        # v200の改善点：
+        # 1. nextNext future bonusを削除 - batch_summaryでnextNext系reasonのavg_score_deltaが低い（+10.2など）ことを確認
+        # 2. 即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる
+        # 3. 複雑な将来計画ロジックを削除し、即時併合と盤面圧縮の両立を図るnear_pairsボーナス（v188）に集中
+        # refs: tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, advice.md
 
         # ----- evaluation axis 3: drift penalty -----
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
