@@ -65,22 +65,19 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
   # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
-    # v199: ドキュメント明確化版 - v198の"計画的経済"戦略をより明確に文書化
-    # v198: 計画的経済（Reactive Pair Creation）版 - reactive_pairs創出ボーナス追加
-    # v197の問題点を解消：reactive_pairsがある場合、HIGH_TOWERを選択し、reactive_pairsが浪費される失敗パターンを解消
-    # ワーストゲーム(score0646)の終盤8ターン分析で、max_y=2.57-3.41かつreactive_pairs=3-6あるにもかかわらず
-    # HIGH_TOWER_DANGER_NO_MERGE_PENALTY_REACTIVE_PAIRS_WASTEDが連続で選択され、即時併合機会を完全に逃している失敗パターンを特定。
-    # v197のnear_pairsボーナスは、near_pairsの存在に基づいてボーナスを与えるが、reactive_pairsを増やす配置を優先するロジックが欠如していた。
-    # "計画的経済"（Planned Economy）戦略の実装：near_pairsをreactive_pairsに変換する配置を優先し、盤面圧縮を促進。
-    # ドロップ後のreactive_pairs変化量を計算するcalc_reactive_pairs_delta()ヘルパー関数を追加。
-    # 危険局面で即時併合がない場合、reactive_pairsの増加量に応じた段階的ボーナスを追加（+1で+800、+2で+1600、+3以上で+2400）。
-    # これにより、near_pairsをreactive_pairsに変換する配置を優先し、将来の即時併合機会を確保。
-    # 危険局面での盤面圧縮を促進し、下振れ耐性（p25）を向上させることで、成熟ランキングに残れる再現性を重視。
+    # v199: Reactive pair creation bonus enhancement - 即時併合と盤面圧縮の両立
+    # 危険局面で即時併合がある場合にもreactive_pairs創出ボーナスを適用し、即時併合と盤面圧縮の両立を図る。
+    # ワーストゲーム(score0514)の終盤8ターン分析で、max_y=2.57-3.41かつreactive_pairs=3-6あるにもかかわらず
+    # 即時併合機会を逃している失敗パターンを特定。
+    # v198のreactive_pairs創出ボーナスは即時併合がない場合にのみ適用されていたが、即時併合がある場合にも適用することで、
+    # 即時併合を取りつつ将来の盤面圧縮も考慮できる配置を優先する。
+    # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
     # v199の改善点：
-    # 1. ドキュメントの明確化：v198の"計画的経済"戦略の実装内容をより明確に記述
-    # 2. ヘルパー関数の文書化：calc_reactive_pairs_delta()の詳細な仕様と実装意図を明記
-    # 3. 評価軸2.8の明確化：reactive pair creation bonusの具体的な計算ロジックを補足
-    # refs: tmp/.prompt_history.md, tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_132257_score0646.jsonl turns 60-67, game_history/20260313_133259_score1842.jsonl turns 82-87, strategy_versions/best_score5694_strategy.py, strategy.py.staging
+    # 1. 評価軸2.8の適用条件緩和：即時併合がない場合だけでなく、即時併合がある場合にもreactive_pairs創出ボーナスを適用
+    # 2. 即時併合がある場合のボーナス減衰：即時併合がある場合は70%に減衰して両立を図る
+    # 3. 評価軸2.7のボーナス強化：nextNext重心に近い配置のボーナスを200.0→300.0に強化
+    # 4. 危険局面での即時併合判断の改善：即時併合と盤面圧縮の両立を図ることで下振れ耐性を向上
+    # refs: tmp/.prompt_history.md, tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_142113_score0514.jsonl turns 59-66, game_history/20260313_141604_score2761.jsonl turns 114-121, strategy_versions/best_score5694_strategy.py, strategy.py.staging
    # v196: 危険局面排出超強化版 - rollback failure mode (reactive_pairsあるのに即時併合を逃す) の解消
   # ワーストゲーム(score0420)の終盤8ターン分析で、max_y>=2.48かつreactive_pairs=4-5あるにもかわらず
   # 危険的ピースが排出できず、盤面圧迫が進行し即時併合機会を完全に逃している失敗パターンを特定。
@@ -572,9 +569,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         )
                         reasons.append("NEAR_PAIRS_OPPORTUNITY")
 
-        # ----- evaluation axis 2.8: reactive pair creation bonus (NEW) -----
-        # 危険局面で即時併合がない場合、reactive_pairsを増やす配置を優先
-        # near_pairsをreactive_pairsに変換する「計画的経済」戦略の実装
+        # ----- evaluation axis 2.8: reactive pair creation bonus (v199: ENHANCED) -----
+        # 危険局面で即時併合と盤面圧縮の両立を図るため、reactive_pairsを増やす配置を優先
+        # near_pairsをreactive_pairsに変換する「計画的経済」戦略の強化版
         # 危険的な盤面状況で、reactive_pairsは即時合併機会の「保険」である
         # ドロップ後にreactive_pairsが増える配置を優先することで、将来の盤面圧縮を確保
         #
@@ -586,14 +583,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactive_pairsの維持・増加を優先し、盤面圧縮を促進
         # 危険局面でもreactive_pairsを活用し、安定したスコア向上を実現
         #
-        # v198の改善点：
-        # 1. 危険局面かつ即時併合がない場合、reactive_pairsの変化量を計算
-        # 2. ドロップ後にreactive_pairsが増加する配置にボーナスを与える
-        # 3. reactive_pairsの増加量に応じた段階的ボーナス（+1で+800、+2で+1600、+3以上で+2400）
-        # 4. これにより、near_pairsをreactive_pairsに変換する配置を優先し、盤面圧縮を促進
+        # v199の改善点：
+        # 1. 危険局面で即時併合がない場合、reactive_pairsの変化量を計算
+        # 2. 危険局面で即時併合がある場合もreactive_pairsの変化量を計算（新規追加）
+        # 3. ドロップ後にreactive_pairsが増加する配置にボーナスを与える
+        # 4. 即時併合がある場合：70%に減衰して両立を図る（+1で+560、+2で+1120、+3以上で+1680）
+        # 5. 即時併合がない場合：v198のボーナスを維持（+1で+800、+2で+1600、+3以上で+2400）
+        # 6. これにより、即時併合を取りつつ将来の盤面圧縮も考慮できる配置を優先し、下振れ耐性を向上
         #
-        # refs: tmp/.prompt_history.md, game_history/20260313_132257_score0646.jsonl, game_history/20260313_133259_score1842.jsonl, strategy_versions/best_score5694_strategy.py
-        if dangerous_situation and merge_grade == "NO":
+        # refs: tmp/.prompt_history.md, tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_142113_score0514.jsonl turns 59-66, game_history/20260313_141604_score2761.jsonl turns 114-121, strategy_versions/best_score5694_strategy.py
+        if dangerous_situation:
             # ドロップ後のreactive_pairs変化量を計算
             reactive_pairs_delta = calc_reactive_pairs_delta(
                 pieces, x, landing_y, next_type, next_r
@@ -601,13 +600,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
             # reactive_pairsが増加する場合にボーナスを適用
             if reactive_pairs_delta > 0:
-                # 増加量に応じた段階的ボーナス
-                if reactive_pairs_delta >= 3:
-                    bonus = 2400.0
-                elif reactive_pairs_delta >= 2:
-                    bonus = 1600.0
-                else:  # reactive_pairs_delta >= 1
-                    bonus = 800.0
+                if merge_grade == "NO":
+                    # 即時併合がない場合：v198のボーナスを維持
+                    if reactive_pairs_delta >= 3:
+                        bonus = 2400.0
+                    elif reactive_pairs_delta >= 2:
+                        bonus = 1600.0
+                    else:  # reactive_pairs_delta >= 1
+                        bonus = 800.0
+                else:
+                    # 即時併合がある場合：70%に減衰して両立を図る
+                    if reactive_pairs_delta >= 3:
+                        bonus = 1680.0
+                    elif reactive_pairs_delta >= 2:
+                        bonus = 1120.0
+                    else:  # reactive_pairs_delta >= 1
+                        bonus = 560.0
 
                 score += bonus
                 reasons.append(f"REACTIVE_PAIR_CREATION_BONUS_{reactive_pairs_delta}")
@@ -678,8 +686,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 avg_y = sum(p["y"] for p in nextNext_pieces) / len(nextNext_pieces)
 
                 # nextNextタイプの重心に近い配置を優先（将来の併合機会を最大化）
+                # v199: ボーナスを200.0→300.0に強化し、危険局面でのnextNext活用評価を強化
                 dist_to_future = ((x - avg_x) ** 2 + (landing_y - avg_y) ** 2) ** 0.5
-                nextNext_bonus = max(0, 5.0 - dist_to_future) * 200.0
+                nextNext_bonus = max(0, 5.0 - dist_to_future) * 300.0
                 if nextNext_bonus > 0:
                     score += nextNext_bonus
                     reasons.append("NEXTNEXT_FUTURE")
