@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """status_dashboard.py — CUI Graphical Statistics Dashboard for Soren AI
 
-Renders 5 panels: Header, Score Timeline (braille), Score Distribution,
-Strategy Comparison, Decision Patterns.
+Renders 6 panels: Header, Score Timeline (braille), Score Distribution,
+Strategy Comparison, Branch Rollback View, Decision Patterns.
 """
 
 import json
@@ -462,17 +462,54 @@ def calc_trend_flags(scores):
     return trend50, trend100
 
 
-def calc_regression_status(rolling, current_hash, scores, anchor=None):
+def metric_key(metrics):
+    return (
+        float(metrics.get("comp", 0.0)),
+        float(metrics.get("p50", 0.0)),
+        float(metrics.get("p25", 0.0)),
+        int(metrics.get("n", 0)),
+    )
+
+
+def metric_gaps(ref, target):
+    comp_gap = max(0.0, float(ref.get("comp", 0.0)) - float(target.get("comp", 0.0)))
+    p50_gap = max(0.0, float(ref.get("p50", 0.0)) - float(target.get("p50", 0.0)))
+    p25_gap = max(0.0, float(ref.get("p25", 0.0)) - float(target.get("p25", 0.0)))
+    return comp_gap, p50_gap, p25_gap
+
+
+def metric_breach_count(comp_gap, p50_gap, p25_gap, comp_th, p50_th, p25_th):
+    return sum(
+        [
+            1 if comp_gap >= comp_th else 0,
+            1 if p50_gap >= p50_th else 0,
+            1 if p25_gap >= p25_th else 0,
+        ]
+    )
+
+
+def inspect_branch_state(rolling, current_hash, anchor=None):
     current_entry = get_current_strategy_run_entry(current_hash)
     if not current_hash or not current_entry:
         return {
+            "available": False,
             "state": "unknown",
+            "verdict": "N/A",
             "text": "RegPreview N/A current not tracked",
         }
     if current_entry["n_roll"] <= 0:
         return {
+            "available": True,
             "state": "unknown",
+            "verdict": "N/A",
             "text": "RegPreview N/A n=0 no anchor",
+            "current_hash": current_hash,
+            "current": {
+                "comp": current_entry["comp"],
+                "p50": current_entry["p50"],
+                "p25": current_entry["p25"],
+                "n": current_entry["n_roll"],
+            },
         }
     current = {
         "comp": current_entry["comp"],
@@ -483,8 +520,12 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
     anchor_payload = anchor or load_best_anchor()
     if not anchor_payload or not anchor_payload.get("hash"):
         return {
+            "available": True,
             "state": "safe",
+            "verdict": "NO",
             "text": "RegPreview NO no anchor",
+            "current_hash": current_hash,
+            "current": current,
         }
 
     active_branch = load_active_branch() or {}
@@ -509,72 +550,86 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
             "p25": float(anchor_blob.get("p25", anchor_metrics["p25"]) or 0.0),
             "n": int(anchor_blob.get("n", anchor_metrics["n"]) or 0),
         }
-
-    def metric_key(m):
-        return (float(m["comp"]), float(m["p50"]), float(m["p25"]), int(m["n"]))
-
-    def gaps(ref, target):
-        comp_gap = max(0.0, ref["comp"] - target["comp"])
-        p50_gap = max(0.0, ref["p50"] - target["p50"])
-        p25_gap = max(0.0, ref["p25"] - target["p25"])
-        return comp_gap, p50_gap, p25_gap
-
-    def breaches(comp_gap, p50_gap, p25_gap, comp_th, p50_th, p25_th):
-        return sum(
-            [
-                1 if comp_gap >= comp_th else 0,
-                1 if p50_gap >= p50_th else 0,
-                1 if p25_gap >= p25_th else 0,
-            ]
-        )
-
-    comp_gap, p50_gap, p25_gap = gaps(anchor_metrics, current)
-    breach_count = breaches(
+    comp_gap, p50_gap, p25_gap = metric_gaps(anchor_metrics, current)
+    breach_count = metric_breach_count(
         comp_gap, p50_gap, p25_gap,
         REGRESSION_MIN_COMP_GAP, REGRESSION_MIN_P50_GAP, REGRESSION_MIN_P25_GAP,
     )
-    hard_breach_count = breaches(
+    hard_breach_count = metric_breach_count(
         comp_gap, p50_gap, p25_gap,
         BRANCH_HARD_COMP_GAP, BRANCH_HARD_P50_GAP, BRANCH_HARD_P25_GAP,
     )
-    gap_text = (
-        f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))}"
-        f" br={breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
-    )
+    info = {
+        "available": True,
+        "state": "safe",
+        "verdict": "NO",
+        "current_hash": current_hash,
+        "current": current,
+        "anchor_hash": anchor_hash,
+        "anchor": anchor_metrics,
+        "branch_active": bool(branch_active),
+        "active_branch": active_branch,
+        "current_gap": {
+            "comp": comp_gap,
+            "p50": p50_gap,
+            "p25": p25_gap,
+        },
+        "current_breach_count": breach_count,
+        "hard_breach_count": hard_breach_count,
+        "best_hash": "",
+        "best": None,
+        "best_gap": None,
+        "best_breach_count": 0,
+        "depth": 0,
+        "closed_games": 0,
+        "branch_games": int(current["n"]),
+        "patience": 0,
+        "budget_hit": [],
+        "text": "",
+    }
 
     if current_hash == anchor_hash and not branch_active:
-        return {
-            "state": "safe",
-            "text": f"RegPreview NO anchor={anchor_hash[:8]} n={current['n']}",
-        }
+        info["text"] = f"RegPreview NO anchor={anchor_hash[:8]} n={current['n']}"
+        return info
 
     if current["n"] < MIN_GAMES_BEFORE_REGRESSION:
         if breach_count >= REGRESSION_MIN_BREACH_COUNT:
-            return {
-                "state": "warning",
-                "text": f"RegPreview WARN anchor={anchor_hash[:8]}{gap_text} n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}",
-            }
-        return {
-            "state": "safe",
-            "text": f"RegPreview WAIT anchor={anchor_hash[:8]} n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}",
-        }
+            info["state"] = "warning"
+            info["verdict"] = "WARN"
+            info["text"] = (
+                f"RegPreview WARN anchor={anchor_hash[:8]}"
+                f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))}"
+                f" br={breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
+                f" n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}"
+            )
+            return info
+        info["verdict"] = "WAIT"
+        info["text"] = f"RegPreview WAIT anchor={anchor_hash[:8]} n={current['n']}/{MIN_GAMES_BEFORE_REGRESSION}"
+        return info
 
     if metric_key(current) > metric_key(anchor_metrics):
-        return {
-            "state": "safe",
-            "text": f"RegPreview PROMOTE anchor={anchor_hash[:8]} n={current['n']}",
-        }
+        info["verdict"] = "PROMOTE"
+        info["text"] = f"RegPreview PROMOTE anchor={anchor_hash[:8]} n={current['n']}"
+        return info
 
     if not branch_active:
         if hard_breach_count >= BRANCH_HARD_MIN_BREACH_COUNT:
-            return {
-                "state": "trigger",
-                "text": f"RegPreview YES anchor={anchor_hash[:8]} hard{gap_text} n={current['n']}",
-            }
-        return {
-            "state": "safe",
-            "text": f"RegPreview NO anchor={anchor_hash[:8]}{gap_text} n={current['n']}",
-        }
+            info["state"] = "trigger"
+            info["verdict"] = "YES"
+            info["text"] = (
+                f"RegPreview YES anchor={anchor_hash[:8]}"
+                f" hard gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))}"
+                f" br={breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
+                f" n={current['n']}"
+            )
+            return info
+        info["text"] = (
+            f"RegPreview NO anchor={anchor_hash[:8]}"
+            f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))}"
+            f" br={breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
+            f" n={current['n']}"
+        )
+        return info
 
     best_hash = str(active_branch.get("best_hash", "") or "")
     best_blob = active_branch.get("best", {}) if isinstance(active_branch.get("best"), dict) else {}
@@ -588,8 +643,8 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
         best_hash = current_hash
         best_metrics = dict(current)
 
-    best_comp_gap, best_p50_gap, best_p25_gap = gaps(anchor_metrics, best_metrics)
-    best_breach_count = breaches(
+    best_comp_gap, best_p50_gap, best_p25_gap = metric_gaps(anchor_metrics, best_metrics)
+    best_breach_count = metric_breach_count(
         best_comp_gap, best_p50_gap, best_p25_gap,
         REGRESSION_MIN_COMP_GAP, REGRESSION_MIN_P50_GAP, REGRESSION_MIN_P25_GAP,
     )
@@ -605,29 +660,60 @@ def calc_regression_status(rolling, current_hash, scores, anchor=None):
     if patience >= BRANCH_PATIENCE:
         budget_hit.append("p")
     budget_text = f" depth={depth}/{BRANCH_MAX_DEPTH} games={branch_games}/{BRANCH_MAX_GAMES} patience={patience}/{BRANCH_PATIENCE}"
+    info["best_hash"] = best_hash
+    info["best"] = best_metrics
+    info["best_gap"] = {
+        "comp": best_comp_gap,
+        "p50": best_p50_gap,
+        "p25": best_p25_gap,
+    }
+    info["best_breach_count"] = best_breach_count
+    info["depth"] = depth
+    info["closed_games"] = closed_games
+    info["branch_games"] = branch_games
+    info["patience"] = patience
+    info["budget_hit"] = budget_hit
 
     if hard_breach_count >= BRANCH_HARD_MIN_BREACH_COUNT:
-        return {
-            "state": "trigger",
-            "text": f"RegPreview YES anchor={anchor_hash[:8]} hard{gap_text}{budget_text} n={current['n']}",
-        }
+        info["state"] = "trigger"
+        info["verdict"] = "YES"
+        info["text"] = (
+            f"RegPreview YES anchor={anchor_hash[:8]}"
+            f" hard gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))}"
+            f" br={breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
+            f"{budget_text} n={current['n']}"
+        )
+        return info
     if budget_hit and best_breach_count >= REGRESSION_MIN_BREACH_COUNT:
-        best_gap_text = (
+        info["state"] = "trigger"
+        info["verdict"] = "YES"
+        info["text"] = (
+            f"RegPreview YES anchor={anchor_hash[:8]}"
+            f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))}"
+            f" br={breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
             f" best={best_hash[:8]} bc{int(round(best_comp_gap))}/bm{int(round(best_p50_gap))}/bq{int(round(best_p25_gap))}"
             f" bbr={best_breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
+            f"{budget_text} n={current['n']}"
         )
-        return {
-            "state": "trigger",
-            "text": f"RegPreview YES anchor={anchor_hash[:8]}{gap_text}{best_gap_text}{budget_text} n={current['n']}",
-        }
+        return info
     if budget_hit:
-        return {
-            "state": "safe",
-            "text": f"RegPreview RESET anchor={anchor_hash[:8]} best={best_hash[:8]}{budget_text} n={current['n']}",
-        }
+        info["verdict"] = "RESET"
+        info["text"] = f"RegPreview RESET anchor={anchor_hash[:8]} best={best_hash[:8]}{budget_text} n={current['n']}"
+        return info
+    info["text"] = (
+        f"RegPreview NO anchor={anchor_hash[:8]}"
+        f" gap=c{int(round(comp_gap))}/m{int(round(p50_gap))}/q{int(round(p25_gap))}"
+        f" br={breach_count}/{REGRESSION_MIN_BREACH_COUNT}"
+        f"{budget_text} n={current['n']}"
+    )
+    return info
+
+
+def calc_regression_status(rolling, current_hash, scores, anchor=None):
+    info = inspect_branch_state(rolling, current_hash, anchor=anchor)
     return {
-        "state": "safe",
-        "text": f"RegPreview NO anchor={anchor_hash[:8]}{gap_text}{budget_text} n={current['n']}",
+        "state": info.get("state", "unknown"),
+        "text": info.get("text", "RegPreview N/A"),
     }
 
 
@@ -1098,6 +1184,102 @@ def render_strategy_comparison(rolling, current_hash, max_rows=7):
     return lines
 
 
+def render_branch_overview(rolling, current_hash):
+    info = inspect_branch_state(rolling, current_hash)
+    lines = [f"  {BOLD}Branch Rollback View{RST} {DIM}(anchor / best / head){RST}"]
+    if not info.get("available"):
+        lines.append(f"  {DIM}(current strategy not tracked){RST}")
+        return lines
+
+    anchor = info.get("anchor") or {}
+    current = info.get("current") or {}
+    anchor_hash = str(info.get("anchor_hash", "") or "-")
+    current_hash = str(info.get("current_hash", "") or "-")
+    best_hash = str(info.get("best_hash", "") or current_hash)
+    best_metrics = info.get("best") or current
+    branch_active = bool(info.get("branch_active"))
+
+    verdict = str(info.get("verdict", "NO") or "NO")
+    state = str(info.get("state", "safe") or "safe")
+    verdict_color = C_GREEN
+    if state == "trigger":
+        verdict_color = C_RED
+    elif state == "warning":
+        verdict_color = C_RED
+    elif verdict in ("WAIT", "RESET"):
+        verdict_color = C_YELLOW
+    elif verdict == "PROMOTE":
+        verdict_color = C_GREEN
+    elif branch_active:
+        verdict_color = C_BLUE
+
+    def node(label, hash8, metrics, color):
+        width = 15
+        comp = int(round(float(metrics.get("comp", 0.0) or 0.0)))
+        n_val = int(metrics.get("n", 0) or 0)
+        rows = [
+            f"{color}┌{'─' * width}┐{RST}",
+            f"{color}│{label.center(width)}│{RST}",
+            f"{color}│{hash8[:8].center(width)}│{RST}",
+            f"{color}│{f'c{comp} n{n_val}'.center(width)}│{RST}",
+            f"{color}└{'─' * width}┘{RST}",
+        ]
+        return rows
+
+    best_label = "Branch best" if branch_active else "Branch idle"
+    best_hash_disp = best_hash if branch_active else "--"
+    best_metrics_disp = best_metrics if branch_active else {"comp": 0, "n": 0}
+
+    anchor_box = node("Anchor top1", anchor_hash, anchor, C_GREEN)
+    best_box = node(best_label, best_hash_disp, best_metrics_disp, C_BLUE if branch_active else C_GREY)
+    current_box = node("Current head", current_hash, current, verdict_color)
+
+    for idx in range(len(anchor_box)):
+        lines.append(f" {anchor_box[idx]} {best_box[idx]} {current_box[idx]}")
+
+    curr_gap = info.get("current_gap") or {"comp": 0.0, "p50": 0.0, "p25": 0.0}
+    gap_line = (
+        f"  A→H c{int(round(curr_gap['comp']))}/m{int(round(curr_gap['p50']))}/q{int(round(curr_gap['p25']))}"
+        f"  br {int(info.get('current_breach_count', 0))}/{REGRESSION_MIN_BREACH_COUNT}"
+    )
+    if branch_active:
+        best_gap = info.get("best_gap") or {"comp": 0.0, "p50": 0.0, "p25": 0.0}
+        gap_line += (
+            f"  A→B c{int(round(best_gap['comp']))}/m{int(round(best_gap['p50']))}/q{int(round(best_gap['p25']))}"
+        )
+    lines.append(gap_line)
+
+    depth = int(info.get("depth", 0) or 0)
+    branch_games = int(info.get("branch_games", int(current.get("n", 0) or 0)) or 0)
+    patience = int(info.get("patience", 0) or 0)
+    budget_line = (
+        f"  budget d{block_bar(depth, BRANCH_MAX_DEPTH, 4, C_YELLOW)} {depth}/{BRANCH_MAX_DEPTH}"
+        f"  g{block_bar(branch_games, BRANCH_MAX_GAMES, 4, C_YELLOW)} {branch_games}/{BRANCH_MAX_GAMES}"
+        f"  p{block_bar(patience, BRANCH_PATIENCE, 4, C_YELLOW)} {patience}/{BRANCH_PATIENCE}"
+    )
+    lines.append(budget_line)
+
+    lineage = []
+    active_branch = info.get("active_branch") or {}
+    if branch_active:
+        lineage = [str(x)[:8] for x in (active_branch.get("lineage", []) or []) if str(x)]
+    if lineage:
+        path = " -> ".join(lineage[-4:])
+        if len(path) > 50:
+            path = "..." + path[-47:]
+        lines.append(f"  path: {path}")
+    else:
+        lines.append(f"  path: {anchor_hash[:8]} -> {current_hash[:8]} {DIM}(no active branch){RST}")
+
+    verdict_text = f"  verdict: {verdict}"
+    if branch_active and info.get("budget_hit"):
+        verdict_text += f" / budget={'/'.join(info['budget_hit'])}"
+    elif not branch_active:
+        verdict_text += " / direct anchor watch"
+    lines.append(f"{verdict_color}{verdict_text}{RST}")
+    return lines
+
+
 # Rotating palette for dynamic color assignment
 _COLOR_PALETTE = [118, 37, 75, 196, 208, 220, 141, 222, 33, 170, 82, 214, 51, 183, 46]
 
@@ -1186,6 +1368,8 @@ def main():
     output += render_score_distribution(scores)
     output.append("")
     output += render_strategy_comparison(rolling, strat_hash)
+    output.append("")
+    output += render_branch_overview(rolling, strat_hash)
     output.append("")
     output += render_decision_patterns(reasons)
     output.append("")
