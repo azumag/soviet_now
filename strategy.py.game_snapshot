@@ -60,11 +60,19 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
-# [BEST:3689] v126: v42-based HIGH phase merge enhancement
-# [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
-# [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
-  # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+ # --- Change History ---
+ # [BEST:3689] v126: v42-based HIGH phase merge enhancement
+ # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
+ # [BEST:4319] v156: v42/v126成功構造復帰・CHAIN_MERGE削除版
+   # [BEST:4324] v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
+ # v200: deadline_margin活用による危険局面判定強化版 - rollback failure mode (p25=-249.8) の解消
+ # ワーストゲーム(score0499)の終盤8ターン分析で、max_y=2.25~3.05かつdeadline_margin=-0.9~-1.63の危険な状態で
+ # HIGH_TOWERが選択され続け、危険的ピース排出が機能していない失敗パターンを特定。
+ # deadline_marginが小さい（deadlineに近い）かつdanger_piece_count >= 2の場合、危険局面と判定を強化。
+ # 危険的ピース排出ボーナスを強化（deadline_margin=-0.5で+500、-1.0で+1500、-1.5で+2500、-2.0で+3500）。
+ # 高さペナルティ削減を強化（25%削減、deadline超過が大きい場合は15%削減）。
+ # これにより危険局面での危険的ピース排出を最優先し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
+ # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_152520_score0499.jsonl turns 57-64
     # v199: Reactive pair creation bonus enhancement - 即時併合と盤面圧縮の両立
     # 危険局面で即時併合がある場合にもreactive_pairs創出ボーナスを適用し、即時併合と盤面圧縮の両立を図る。
     # ワーストゲーム(score0514)の終盤8ターン分析で、max_y=2.57-3.41かつreactive_pairs=3-6あるにもかかわらず
@@ -166,27 +174,44 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
-def is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=1):
+def is_dangerous_situation(max_y, reactive_pairs, min_reactive_pairs=1, deadline_margin=None, danger_piece_count=0):
     """危険局面判定ヘルパー関数
 
     危険局面：max_y >= 1.5（dead line に近い）かつreactive_pairsがある状態
     v185: 閾値を緩和（max_y >= 2.0 → 1.5、reactive_pairs >= 2 → 1）して早期検出を強化
     ワーストゲーム(score0565)の終盤8ターン分析で、max_y>=1.97かつreactive_pairs=2-3あるにもかかわらず
     即時併合機会を完全に逃している失敗パターンを特定。危険局面判定を緩和して早期対応を強化。
+    v200: deadline_margin活用による危険局面判定強化 - rollback failure mode (p25=-249.8) の解消
+    ワーストゲーム(score0499)の終盤8ターン分析で、max_y=2.25~3.05かつdeadline_margin=-0.9~-1.63の危険な状態で
+    HIGH_TOWERが選択され続け、危険的ピース排出が機能していない失敗パターンを特定。
+    deadline_margin < 0（deadline超過）かつdanger_piece_count >= 2の場合、危険局面と判定を強化。
 
     Args:
         max_y: 盤面の最高Y座標
         reactive_pairs: reactor情報のreactive_pairsリスト
         min_reactive_pairs: 危険判定に必要な最小reactive_pairs数（デフォルト: 1）
+        deadline_margin: deadline_y - top_edge_y（負の値でdeadline超過を表現）
+        danger_piece_count: deadline_y以上の危険的ピース数
 
     Returns:
         True: 危険局面, False: 安全な局面
     """
-    return (
+    base_danger = (
         max_y >= 1.5
         and isinstance(reactive_pairs, list)
         and len(reactive_pairs) >= min_reactive_pairs
     )
+    
+    # v200: deadline_margin活用による危険局面判定強化
+    # deadlineが超過しているかつ危険的ピースが2個以上ある場合、危険局面と判定
+    deadline_danger = (
+        deadline_margin is not None
+        and deadline_margin < 0
+        and danger_piece_count >= 2
+        and max_y >= 1.0
+    )
+    
+    return base_danger or deadline_danger
 
 
 def calc_reactive_pairs_delta(pieces, drop_x, drop_y, drop_type, drop_r):
@@ -290,6 +315,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- reactor情報を事前取得（危険局面判定で使用） ---
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
+    
+    # --- v200: deadline情報を事前取得（危険局面判定で使用） ---
+    deadline = analysis.get("deadline", {})
+    deadline_margin = deadline.get("deadline_margin", 0)
+    danger_piece_count = deadline.get("danger_piece_count", 0)
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -361,8 +391,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # これにより危険局面での即時併合機会の取りこぼしを削減し、p25=-249.8の下振れ耐性不足を解消しcomp改善とスコア安定性を向上させる。
     # refs: tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260313_100625_score0466.jsonl turns 47-58, game_history/20260313_095250_score0523.jsonl turns 45-55, strategy.py.staging
 
+    # v200: deadline_margin活用による危険局面判定強化
     dangerous_situation = is_dangerous_situation(
-        max_y, reactive_pairs, min_reactive_pairs=1
+        max_y, reactive_pairs, min_reactive_pairs=1,
+        deadline_margin=deadline_margin, danger_piece_count=danger_piece_count
     )
 
     # ----- v192: 危険局面即時併合候補強制優先版 - rollback failure mode (reactive_pairsあるのに即時併合を逃す) の解消 -----
@@ -647,11 +679,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 else:
                     edge_bonus = 0.0
                 
-                # deadline_marginが小さい（deadlineに近い）ほどさらにボーナスを強化
-                # deadline_margin=-1.0で+1000.0、-2.0で+2000.0（最大）
+                # v200: deadline_marginが小さい（deadlineに近い）ほどさらにボーナスを強化
+                # ワーストゲーム(score0499)の終盤でdeadline_margin=-0.9~-1.63の状況で排出が機能していない問題に対処
+                # deadline_margin=-0.5で+500.0、-1.0で+1500.0、-1.5で+2500.0、-2.0で+3500.0（最大）
                 deadline_bonus = 0.0
                 if deadline_margin < 0:
-                    deadline_bonus = min(2000.0, abs(deadline_margin) * 1000.0)
+                    if deadline_margin >= -0.5:
+                        deadline_bonus = 500.0
+                    elif deadline_margin >= -1.0:
+                        deadline_bonus = 1500.0
+                    elif deadline_margin >= -1.5:
+                        deadline_bonus = 2500.0
+                    else:
+                        deadline_bonus = min(3500.0, abs(deadline_margin) * 2000.0)
                 
                 # v197修正: reactive_pairs > 0 の場合、排出ボーナスを大幅に減衰（80%減衰）して、即時併合を優先
                 if len(reactive_pairs) > 0:
@@ -663,14 +703,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if ejection_bonus > 0:
                     score += ejection_bonus
                     reasons.append("DANGER_PIECE_EJECTION")
+                    
+                # v200: 危険的ピースを排出する配置（盤面端）の場合、高さペナルティを大幅に緩和
+                # deadline_marginが小さい（deadlineに近い）ほど、高さペナルティをさらに削減して排出を最優先
+                height_penalty_reduction = 0.25  # 25%に削減
+                if deadline_margin < -1.0:
+                    height_penalty_reduction = 0.15  # deadline超過が大きい場合、15%にさらに削減
                 
-                # 危険的ピースを排出する配置（盤面端）の場合、高さペナルティを大幅に緩和
                 if abs(x) >= 2.0:
-                    # v197: 危険的ピース排出を最優先するため、高さペナルティを50%に削減（v196維持）
-                    height_penalty *= 0.5
+                    # v200: 危険的ピース排出を最優先するため、高さペナルティを25%（超過時15%）に削減
+                    height_penalty *= height_penalty_reduction
                 else:
-                    # v197: 危険的ピースが盤面中央（abs(x) < 2.0）に近い場合、高さペナルティを50%に削減して排出を優先
-                    height_penalty *= 0.5
+                    # v200: 危険的ピースが盤面中央（abs(x) < 2.0）に近い場合も、高さペナルティを25%（超過時15%）に削減して排出を優先
+                    height_penalty *= height_penalty_reduction
 
         # ----- evaluation axis 2.7: dangerous situation nextNext future bonus (v191: NEW) -----
         # 危険局面で即時併合候補がない場合、nextNextを活用した将来性評価を追加
