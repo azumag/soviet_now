@@ -8089,12 +8089,15 @@ check_and_harvest_improvement() {
 				# リバート用候補はeloop_improve.shが tmp/revert_strategy.py に保存済み
 				# ローリングスコアで新戦略のprev_hashを記録
 				local new_decide_hash
+				local prev_decide_hash=""
 				new_decide_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
+				if [ -f "tmp/revert_strategy.py" ]; then
+					prev_decide_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
+				fi
+				if [ -z "$prev_decide_hash" ] && [ -f "$CURRENT_STRATEGY_RUN_FILE" ]; then
+					prev_decide_hash=$(python3 -c "import json; print(json.load(open('$CURRENT_STRATEGY_RUN_FILE')).get('hash',''))" 2>/dev/null || echo "")
+				fi
 				if [ -n "$new_decide_hash" ] && [ -f "$ROLLING_SCORES_FILE" ]; then
-					local prev_decide_hash=""
-					if [ -f "tmp/revert_strategy.py" ]; then
-						prev_decide_hash=$(python3 extract_decide_hash.py "tmp/revert_strategy.py" 2>/dev/null || echo "")
-					fi
 					python3 -c "
 import json, os
 rs_file = '$ROLLING_SCORES_FILE'
@@ -8111,6 +8114,11 @@ elif 'games_total' not in rs[h]:
 with open(rs_file, 'w') as f:
     json.dump(rs, f)
 " 2>/dev/null
+				fi
+				if [ -n "$new_decide_hash" ]; then
+					local branch_transition=""
+					branch_transition=$(_branch_transition_after_improve "$prev_decide_hash" "$new_decide_hash" || true)
+					[ -n "$branch_transition" ] && log "[BRANCH] ${branch_transition}"
 				fi
 				if [ -n "$new_decide_hash" ]; then
 					_reset_current_strategy_run "$new_decide_hash"
