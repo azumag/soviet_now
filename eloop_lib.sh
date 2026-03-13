@@ -5163,7 +5163,7 @@ _dispatch_manual_audio_trigger() {
 		;;
 	jiji)
 		log "[MANUAL] jiji トリガー受付: $(basename "$cmd_file")"
-		start_radio_corner_jiji "$game_num" "$score" &
+		_run_jiji_corner_guarded "$game_num" "$score" &
 		;;
 	*)
 		log "[MANUAL] 未知の音声トリガーを破棄: $(basename "$cmd_file") cmd=${cmd_name}"

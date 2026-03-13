@@ -917,8 +917,7 @@ _legacy_schedule_nonessential_audio_jobs() {
 		if [ "$skip_nonessential_radio" = true ]; then
 			log "[JIJI] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
 		else
-			echo "$now_ts" > "$jiji_last_file"
-			start_radio_corner_jiji "$game_num" "$score" &
+			_run_jiji_corner_guarded "$game_num" "$score" &
 		fi
 	fi
 }
