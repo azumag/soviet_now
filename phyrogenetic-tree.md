@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-14 18:30:58 JST`
-- Nodes: `521`
-- Edges: `710`
-- Current: `8013dc80e4f3`
+- Updated: `2026-03-14 19:25:10 JST`
+- Nodes: `522`
+- Edges: `711`
+- Current: `d6fe29751fc9`
 - Anchor: `b6bfeb3b27ac`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_3c4475f0b59d["3c4475f0b59d<br/>g=17 n=17<br/>comp=1055.4"]
     h_900c44e033ca["900c44e033ca<br/>g=58 n=20<br/>comp=976.8"]
     h_26287fbc6945["26287fbc6945<br/>g=23 n=20<br/>comp=1132.2"]
     h_a6f551f457fc["a6f551f457fc<br/>g=13 n=13<br/>comp=1287.7"]
@@ -71,15 +70,13 @@ flowchart TD
     h_9ea35a35fc54["9ea35a35fc54<br/>g=12 n=12<br/>comp=1085.0"]
     h_340d4a08b62a["340d4a08b62a<br/>g=15 n=15<br/>comp=1265.8"]
     h_6fc76d37f76a["6fc76d37f76a<br/>g=13 n=13<br/>comp=1237.7"]
-    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>ANCHOR<br/>g=30 n=20<br/>comp=1100.9"]
+    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>ANCHOR<br/>g=31 n=20<br/>comp=1129.8"]
+    h_8013dc80e4f3["8013dc80e4f3<br/>g=15 n=15<br/>comp=1416.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_8013dc80e4f3["8013dc80e4f3<br/>CURRENT"]
+    h_d6fe29751fc9["d6fe29751fc9<br/>CURRENT"]
 
-    h_3c4475f0b59d -->|improve| h_900c44e033ca
     h_900c44e033ca -->|improve| h_26287fbc6945
-    h_26287fbc6945 -. rollback .-> h_3c4475f0b59d
-    h_3c4475f0b59d -. rollback .-> h_26287fbc6945
     h_a6f551f457fc -->|improve| h_8d2792a50aba
     h_8d2792a50aba -->|improve| h_4237be147960
     h_4237be147960 -. rollback .-> h_8d2792a50aba
@@ -142,13 +139,13 @@ flowchart TD
     h_b645f6da7910 -->|improve| h_b6bfeb3b27ac
     h_b6bfeb3b27ac -. rollback .-> h_b645f6da7910
     h_b6bfeb3b27ac -->|improve| h_8013dc80e4f3
+    h_8013dc80e4f3 -->|improve| h_d6fe29751fc9
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_3c4475f0b59d plain;
     class h_900c44e033ca plain;
     class h_26287fbc6945 plain;
     class h_a6f551f457fc plain;
@@ -205,9 +202,10 @@ flowchart TD
     class h_340d4a08b62a plain;
     class h_6fc76d37f76a plain;
     class h_b6bfeb3b27ac anchor;
+    class h_8013dc80e4f3 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_8013dc80e4f3 current;
+    class h_d6fe29751fc9 current;
 ```
 
 ## Detail 1/7
@@ -1905,9 +1903,9 @@ flowchart TD
 
 ## Detail 7/7
 
-- Range: `6d9586d182e0` .. `8013dc80e4f3`
-- Nodes in this diagram: `41`
-- Internal edges in this diagram: `40`
+- Range: `6d9586d182e0` .. `d6fe29751fc9`
+- Nodes in this diagram: `42`
+- Internal edges in this diagram: `41`
 - Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
 - Cross-chunk link: `cf42a97de4d5 -.rollback.-> 9d6fe31baf81`
 - Cross-chunk link: `9d6fe31baf81 --improve--> f2e07b06f8f1`
@@ -1954,10 +1952,11 @@ flowchart TD
     h_9ea35a35fc54["9ea35a35fc54<br/>g=12 n=12<br/>comp=1085.0"]
     h_340d4a08b62a["340d4a08b62a<br/>g=15 n=15<br/>comp=1265.8"]
     h_6fc76d37f76a["6fc76d37f76a<br/>g=13 n=13<br/>comp=1237.7"]
-    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>ANCHOR<br/>g=30 n=20<br/>comp=1100.9"]
+    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>ANCHOR<br/>g=31 n=20<br/>comp=1129.8"]
+    h_8013dc80e4f3["8013dc80e4f3<br/>g=15 n=15<br/>comp=1416.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_8013dc80e4f3["8013dc80e4f3<br/>CURRENT"]
+    h_d6fe29751fc9["d6fe29751fc9<br/>CURRENT"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
@@ -1999,6 +1998,7 @@ flowchart TD
     h_b645f6da7910 -->|improve| h_b6bfeb3b27ac
     h_b6bfeb3b27ac -. rollback .-> h_b645f6da7910
     h_b6bfeb3b27ac -->|improve| h_8013dc80e4f3
+    h_8013dc80e4f3 -->|improve| h_d6fe29751fc9
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2043,12 +2043,23 @@ flowchart TD
     class h_340d4a08b62a plain;
     class h_6fc76d37f76a plain;
     class h_b6bfeb3b27ac anchor;
+    class h_8013dc80e4f3 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_8013dc80e4f3 current;
+    class h_d6fe29751fc9 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#5649 `8013dc80 -> d6fe2975`
+
+- scores: `1608 2819 2534 1535 949 1178 1872 925 1665 1513 2792 1403`
+- """
+- Soren Game Strategy - AI decision-making for drop position.
+- This file contains the core AI logic for determining the best column to drop
+- the current piece in the Soviet puzzle game.
+- def find_best_drop_position(game_state, analysis):
+- Find the best column to drop the current piece based on game state and analysis.
 
 ### Improve Game#5633 `b6bfeb3b -> 8013dc80`
 
