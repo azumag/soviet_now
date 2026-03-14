@@ -63,7 +63,7 @@ LAST_PHYROGENETIC_CHAT_COMMIT_FILE="$TMP_STATE_DIR/last_phyrogenetic_chat_commit
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 COMMENT_OPENCODE_PERMISSION_DEFAULT='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow"}'
 COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$COMMENT_OPENCODE_PERMISSION_DEFAULT}"
-COMMENT_CLAUDE_TOOLS="${COMMENT_CLAUDE_TOOLS:-default}"
+COMMENT_CLAUDE_TOOLS="${COMMENT_CLAUDE_TOOLS:-default,WebSearch,WebFetch}"
 COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
 COMMENT_FORCE_CLAUDE_WHEN_IMPROVING="${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}"
 IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow"}'
@@ -6634,7 +6634,7 @@ generate_comment_response() {
 		- ゲームや盤面の説明は、相手が実際にゲーム内容、盤面、スコア、戦略、配信画面について聞いている時だけ行うこと
 		- 一般質問、雑談、知識質問、人物や作品の話では、最後にゲーム実況の話へ戻して締めないこと。必要な脱線は1点までにすること
 		- 配信外の事実確認が必要な質問では、必要に応じて Web検索を使ってよい。特に時事、人物の近況、作品や店やイベントの情報、一般知識の確認、株価・為替・金融データ、天気、スポーツの結果などでは積極的に活用すること
-		- 「データフィードがない」「株価情報にアクセスできない」「リアルタイムデータがない」「情報源がない」等の言い訳は禁止。Web検索で調べて、検索結果から分かる範囲で答えること
+		- 「データフィードがない」「株価情報にアクセスできない」「リアルタイムデータがない」「情報源がない」「検索機能がない」「検索ツールがない」「外部にアクセスできない」等の言い訳は禁止。Web検索ツール（WebSearch）があれば使って調べること。Web検索ツールが使えない場合でも、自分の学習知識の範囲で答えること。「できない」「ない」ではなく「最新情報ではないかもしれませんが」と前置きして知っている範囲で答えること
 		- Web検索を使う場合も必要最小限にとどめ、未確認の点は断定しないこと。検索したこと自体をわざわざ説明する必要はない
 		- グラフやステータス表示について質問されたら、必ず最初に「左は show_status_g.sh、右は show_status.sh」と明言してから説明すること
 	- 一つずつ返事する。「同志○○」と名前を呼んで反応
