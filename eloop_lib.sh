@@ -5966,6 +5966,9 @@ _is_comment_worker_healthy() {
 	local pid
 	pid=$(cat "$pid_file" 2>/dev/null)
 	[ -n "$pid" ] || return 1
+	case "$pid" in
+	''|*[!0-9]*|0) return 1 ;;
+	esac
 	kill -0 "$pid" 2>/dev/null || return 1
 	# ttl<=0 の場合は PID 生存のみでヘルシー判定
 	if [ "$ttl" -le 0 ]; then
