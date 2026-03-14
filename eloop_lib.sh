@@ -3264,7 +3264,9 @@ _play_deferred_radio_queue_once() {
 			fi
 			_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 			log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
-			if SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+			# deferred radio is executed by the comment player itself, so it must not
+			# yield to comments queued after this point or playback deadlocks.
+			if SAY_DISABLE_COMMENT_YIELD=1 SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
 				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text"
 				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else

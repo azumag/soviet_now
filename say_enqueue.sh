@@ -154,6 +154,15 @@ _has_pending_comment_queue() {
 }
 
 _radio_should_yield_to_comment() {
+    # deferred radio is launched from the comment player itself.
+    # If it keeps yielding to newly queued comments, the comment player blocks
+    # on this process and can never drain that backlog.
+    case "${SAY_DISABLE_COMMENT_YIELD:-0}" in
+    1|true|yes)
+        return 1
+        ;;
+    esac
+
     case "${SOURCE_LABEL:-}" in
     radio|radio:*)
         ;;
