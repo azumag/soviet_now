@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-14 17:44:26 JST`
+- Updated: `2026-03-14 17:47:02 JST`
 - Nodes: `520`
 - Edges: `709`
-- Current: `b645f6da7910`
+- Current: `b6bfeb3b27ac`
 - Anchor: `b6bfeb3b27ac`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -68,11 +68,11 @@ flowchart TD
     h_a3e1051a0c6d["a3e1051a0c6d<br/>g=13 n=13<br/>comp=1166.8"]
     h_e8fe85e17249["e8fe85e17249<br/>g=14 n=14<br/>comp=1218.1"]
     h_c32336e8228a["c32336e8228a<br/>g=16 n=16<br/>comp=1312.0"]
-    h_b645f6da7910["b645f6da7910<br/>CURRENT<br/>g=42 n=20<br/>comp=1275.2"]
+    h_b645f6da7910["b645f6da7910<br/>g=42 n=20<br/>comp=1275.2"]
     h_9ea35a35fc54["9ea35a35fc54<br/>g=12 n=12<br/>comp=1085.0"]
     h_340d4a08b62a["340d4a08b62a<br/>g=15 n=15<br/>comp=1265.8"]
     h_6fc76d37f76a["6fc76d37f76a<br/>g=13 n=13<br/>comp=1237.7"]
-    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>ANCHOR<br/>g=14 n=14<br/>comp=1578.4"]
+    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>CURRENT ANCHOR<br/>g=15 n=15<br/>comp=1548.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
 
@@ -139,8 +139,8 @@ flowchart TD
     h_b645f6da7910 -->|improve| h_340d4a08b62a
     h_340d4a08b62a -->|improve| h_6fc76d37f76a
     h_6fc76d37f76a -. rollback .-> h_b645f6da7910
-    h_b645f6da7910 -->|improve| h_b6bfeb3b27ac
-    h_b6bfeb3b27ac -->|improve| h_b645f6da7910
+    h_b6bfeb3b27ac -. rollback .-> h_b645f6da7910
+    h_b645f6da7910 -. rollback .-> h_b6bfeb3b27ac
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -200,11 +200,11 @@ flowchart TD
     class h_a3e1051a0c6d plain;
     class h_e8fe85e17249 plain;
     class h_c32336e8228a plain;
-    class h_b645f6da7910 current;
+    class h_b645f6da7910 plain;
     class h_9ea35a35fc54 plain;
     class h_340d4a08b62a plain;
     class h_6fc76d37f76a plain;
-    class h_b6bfeb3b27ac anchor;
+    class h_b6bfeb3b27ac current_anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
 ```
@@ -1949,11 +1949,11 @@ flowchart TD
     h_a3e1051a0c6d["a3e1051a0c6d<br/>g=13 n=13<br/>comp=1166.8"]
     h_e8fe85e17249["e8fe85e17249<br/>g=14 n=14<br/>comp=1218.1"]
     h_c32336e8228a["c32336e8228a<br/>g=16 n=16<br/>comp=1312.0"]
-    h_b645f6da7910["b645f6da7910<br/>CURRENT<br/>g=42 n=20<br/>comp=1275.2"]
+    h_b645f6da7910["b645f6da7910<br/>g=42 n=20<br/>comp=1275.2"]
     h_9ea35a35fc54["9ea35a35fc54<br/>g=12 n=12<br/>comp=1085.0"]
     h_340d4a08b62a["340d4a08b62a<br/>g=15 n=15<br/>comp=1265.8"]
     h_6fc76d37f76a["6fc76d37f76a<br/>g=13 n=13<br/>comp=1237.7"]
-    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>ANCHOR<br/>g=14 n=14<br/>comp=1578.4"]
+    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>CURRENT ANCHOR<br/>g=15 n=15<br/>comp=1548.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
 
@@ -1994,8 +1994,8 @@ flowchart TD
     h_b645f6da7910 -->|improve| h_340d4a08b62a
     h_340d4a08b62a -->|improve| h_6fc76d37f76a
     h_6fc76d37f76a -. rollback .-> h_b645f6da7910
-    h_b645f6da7910 -->|improve| h_b6bfeb3b27ac
-    h_b6bfeb3b27ac -->|improve| h_b645f6da7910
+    h_b6bfeb3b27ac -. rollback .-> h_b645f6da7910
+    h_b645f6da7910 -. rollback .-> h_b6bfeb3b27ac
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2035,16 +2035,26 @@ flowchart TD
     class h_a3e1051a0c6d plain;
     class h_e8fe85e17249 plain;
     class h_c32336e8228a plain;
-    class h_b645f6da7910 current;
+    class h_b645f6da7910 plain;
     class h_9ea35a35fc54 plain;
     class h_340d4a08b62a plain;
     class h_6fc76d37f76a plain;
-    class h_b6bfeb3b27ac anchor;
+    class h_b6bfeb3b27ac current_anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
 ```
 
 ## Transition Notes
+
+### Rollback Game#5621 `b645f6da -> b6bfeb3b`
+
+- - rollback from b645f6da7910 to b6bfeb3b27ac at game 5621
+- - reasons: hard_fail+anchor_direct
+- anchor 比で明確な悪化が出て即時停止条件に触れた。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- rollback_target: comp=1548.7 p50=1727.0 p25=1264.0 mean=1630.8 n=15
+- compared_anchor: hash=b6bfeb3b27ac comp=1548.7 p50=1727.0 p25=1264.0 n=15
+- anchor 比で急激に悪化した局面を重点的に調べること。特に p25 を落とした試合群の共通条件を抽出する。
 
 ### Improve Game#5618 `b6bfeb3b -> b645f6da`
 
