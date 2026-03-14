@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-14 11:07:32 JST`
-- Nodes: `515`
-- Edges: `701`
-- Current: `c32336e8228a`
+- Updated: `2026-03-14 12:05:51 JST`
+- Nodes: `516`
+- Edges: `702`
+- Current: `b645f6da7910`
 - Anchor: `aadc74dd62a7`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_cd9a3414b2ae["cd9a3414b2ae<br/>g=25 n=20<br/>comp=1064.2"]
     h_ec51087092d1["ec51087092d1<br/>g=11 n=11<br/>comp=1100.2"]
     h_e94cc9f2bcc6["e94cc9f2bcc6"]
     h_78db7a926515["78db7a926515<br/>g=11 n=11<br/>comp=779.8"]
@@ -71,12 +70,12 @@ flowchart TD
     h_f121c3a5c869["f121c3a5c869<br/>g=13 n=13<br/>comp=1080.2"]
     h_69fb91cb8907["69fb91cb8907<br/>g=13 n=13<br/>comp=1257.6"]
     h_a3e1051a0c6d["a3e1051a0c6d<br/>g=13 n=13<br/>comp=1166.8"]
-    h_e8fe85e17249["e8fe85e17249<br/>g=13 n=13<br/>comp=1176.2"]
+    h_e8fe85e17249["e8fe85e17249<br/>g=14 n=14<br/>comp=1218.1"]
+    h_c32336e8228a["c32336e8228a<br/>g=15 n=15<br/>comp=1261.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_c32336e8228a["c32336e8228a<br/>CURRENT"]
+    h_b645f6da7910["b645f6da7910<br/>CURRENT"]
 
-    h_cd9a3414b2ae -->|improve| h_ec51087092d1
     h_8479963ec45c -->|improve| h_924cfcf7e0d2
     h_3c4475f0b59d -->|improve| h_900c44e033ca
     h_900c44e033ca -->|improve| h_26287fbc6945
@@ -135,13 +134,13 @@ flowchart TD
     h_69fb91cb8907 -->|improve| h_a3e1051a0c6d
     h_a3e1051a0c6d -->|improve| h_e8fe85e17249
     h_e8fe85e17249 -->|improve| h_c32336e8228a
+    h_c32336e8228a -->|improve| h_b645f6da7910
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_cd9a3414b2ae plain;
     class h_ec51087092d1 plain;
     class h_e94cc9f2bcc6 plain;
     class h_78db7a926515 plain;
@@ -198,9 +197,10 @@ flowchart TD
     class h_69fb91cb8907 plain;
     class h_a3e1051a0c6d plain;
     class h_e8fe85e17249 plain;
+    class h_c32336e8228a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_c32336e8228a current;
+    class h_b645f6da7910 current;
 ```
 
 ## Detail 1/7
@@ -1898,9 +1898,9 @@ flowchart TD
 
 ## Detail 7/7
 
-- Range: `6d9586d182e0` .. `c32336e8228a`
-- Nodes in this diagram: `35`
-- Internal edges in this diagram: `31`
+- Range: `6d9586d182e0` .. `b645f6da7910`
+- Nodes in this diagram: `36`
+- Internal edges in this diagram: `32`
 - Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
 - Cross-chunk link: `cf42a97de4d5 -.rollback.-> 9d6fe31baf81`
 - Cross-chunk link: `9d6fe31baf81 --improve--> f2e07b06f8f1`
@@ -1941,10 +1941,11 @@ flowchart TD
     h_f121c3a5c869["f121c3a5c869<br/>g=13 n=13<br/>comp=1080.2"]
     h_69fb91cb8907["69fb91cb8907<br/>g=13 n=13<br/>comp=1257.6"]
     h_a3e1051a0c6d["a3e1051a0c6d<br/>g=13 n=13<br/>comp=1166.8"]
-    h_e8fe85e17249["e8fe85e17249<br/>g=13 n=13<br/>comp=1176.2"]
+    h_e8fe85e17249["e8fe85e17249<br/>g=14 n=14<br/>comp=1218.1"]
+    h_c32336e8228a["c32336e8228a<br/>g=15 n=15<br/>comp=1261.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_c32336e8228a["c32336e8228a<br/>CURRENT"]
+    h_b645f6da7910["b645f6da7910<br/>CURRENT"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
@@ -1977,6 +1978,7 @@ flowchart TD
     h_69fb91cb8907 -->|improve| h_a3e1051a0c6d
     h_a3e1051a0c6d -->|improve| h_e8fe85e17249
     h_e8fe85e17249 -->|improve| h_c32336e8228a
+    h_c32336e8228a -->|improve| h_b645f6da7910
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2015,12 +2017,23 @@ flowchart TD
     class h_69fb91cb8907 plain;
     class h_a3e1051a0c6d plain;
     class h_e8fe85e17249 plain;
+    class h_c32336e8228a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_c32336e8228a current;
+    class h_b645f6da7910 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#5519 `c32336e8 -> b645f6da`
+
+- scores: `990 1181 2904 2474 1146 2011 764 965 917 3695 776 2388`
+- Decision Logic (9 evaluation axes):
+- 1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+- 2. Height penalty - Penalty for high landing position (varies by phase)
+- 3. Drift penalty - Penalty for post-landing drift due to polygon shape
+- 4. Left-right balance correction - Bonus for correcting piece count bias
+- 5. nextNext centering - Center for next merge opportunity if nextNext same type
 
 ### Improve Game#5506 `e8fe85e1 -> c32336e8`
 
