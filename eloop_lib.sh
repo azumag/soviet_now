@@ -208,6 +208,8 @@ _recent_scores() {
 
 commands_empty() { [ -z "$(tr -d '[:space:]' <"$COMMANDS" 2>/dev/null)" ]; }
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
+# bash 3.2 (macOS /bin/bash) には BASHPID がないため、サブシェルPID取得のポータブル関数
+_my_pid() { sh -c 'echo $PPID'; }
 clear_commands_file() { : >"$COMMANDS"; }
 _clear_stale_commands_if_any() {
 	local reason="${1:-unknown}"
@@ -4453,7 +4455,8 @@ start_rollback_postmortem_worker() {
 
 	rm -f "$ROLLBACK_POSTMORTEM_PID_FILE" "$ROLLBACK_POSTMORTEM_FILE"
 	(
-		local worker_pid="${BASHPID:-$$}"
+		local worker_pid
+		worker_pid=$(_my_pid)
 		printf '%s\n' "$worker_pid" >"$ROLLBACK_POSTMORTEM_PID_FILE"
 		trap 'rm -f "$ROLLBACK_POSTMORTEM_PID_FILE"' EXIT
 		log "[ROLLBACK-POSTMORTEM] start: game=${game_num:-?} from=${current_hash:0:8} to=${rollback_hash:0:8}"
@@ -5909,7 +5912,7 @@ _recover_orphan_comment_playing_files() {
 		[ "$age" -lt 30 ] && continue
 		local recovered="${orphan%.playing}.txt"
 		mv "$orphan" "$recovered" 2>/dev/null
-		echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] リカバリ: $orphan → $recovered" >> tmp/.say_queue/debug.log
+		echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] リカバリ: $orphan → $recovered" >> tmp/.say_queue/debug.log
 	done
 }
 
@@ -5926,7 +5929,7 @@ _play_comment_queue() {
 			local file_hash
 			file_hash=$(md5 -q "$qf" 2>/dev/null)
 			if [ -n "$file_hash" ] && grep -qF "$file_hash" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null; then
-				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] 重複スキップ: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 重複スキップ: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
 				rm -f "$qf"
 				continue
 			fi
@@ -5934,7 +5937,7 @@ _play_comment_queue() {
 			# 再生前にリネームして他プレイヤーとの二重再生を防ぐ
 			local playing_file="${qf%.txt}.playing"
 			if mv "$qf" "$playing_file" 2>/dev/null; then
-				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] 再生開始: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生開始: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
 				# ハッシュを記録（再生開始前に記録して、kill時にも重複防止）
 				echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"
 				# ハッシュファイルを最新50件に制限
@@ -5943,7 +5946,7 @@ _play_comment_queue() {
 					if SAY_CONTEXT_LABEL="comment" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
 						_remember_spoken_comment "$playing_file"
 					fi
-				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=${BASHPID:-$$}] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
 				rm -f "$playing_file"
 			fi
 		fi
@@ -6000,7 +6003,7 @@ start_comment_player() {
 	(
 		# サブシェル内でPIDファイルを自分のPIDで上書き
 		# NOTE: local はサブシェル直下では使えない (関数内でのみ有効)
-		_cp_my_pid=${BASHPID:-$$}
+		_cp_my_pid=$(_my_pid)
 		echo "$_cp_my_pid" > "$COMMENT_PLAYER_PID_FILE" 2>/dev/null
 		_recover_orphan_comment_playing_files
 		while true; do
@@ -6540,17 +6543,18 @@ generate_comment_response() {
 	fi
 
 	local comment_parent_pid comment_started_at
-	comment_parent_pid="${BASHPID:-$$}"
+	comment_parent_pid=$(_my_pid)
 	comment_started_at=$(date +%s)
 	echo "generating:comment:${comment_started_at}" > $COMMENT_GEN_STATE_FILE
 	_mark_comment_batch_inflight "$comment_batch_hash"
 
 	(
+		_cg_my_pid=$(_my_pid)
 		_cleanup_comment_gen_worker() {
 			local raw file_pid
 			raw=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null || true)
 			file_pid="${raw%%|*}"
-			if [ "$file_pid" = "${BASHPID:-$$}" ]; then
+			if [ "$file_pid" = "$_cg_my_pid" ]; then
 				rm -f tmp/.twitch_chat/comment_gen.pid
 			fi
 			rm -f $COMMENT_GEN_STATE_FILE
@@ -6860,7 +6864,7 @@ start_comment_watcher() {
 	mkdir -p "$(dirname "$COMMENT_WATCHER_PID_FILE")"
 
 	(
-		_cw_my_pid=${BASHPID:-$$}
+		_cw_my_pid=$(_my_pid)
 		echo "$_cw_my_pid" > "$COMMENT_WATCHER_PID_FILE" 2>/dev/null
 		while true; do
 			# PIDファイルが自分でなくなったら終了
@@ -7022,7 +7026,8 @@ cleanup_all() {
 
 	log "クリーンアップ中... (reason=${reason})"
 
-	local loop_pid="${BASHPID:-$$}"
+	local loop_pid
+	loop_pid=$(_my_pid)
 	if [ -f "tmp/soren_loop.lock" ]; then
 		local lock_pid
 		local lock_cmd
