@@ -39,17 +39,16 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
   #
-  # v221: 全フェーズ即時併合優先版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
-  # ワーストゲーム(score0747)終盤turns 57-64でreactive_pairs=4-6あるにもかかわらずmerge_available=falseでHIGH_LAYER/HIGH_TOWER選択が続きゲームオーバー。
-  # ベストゲーム(score2672)終盤turns 113-120でもmax_y=2.38-3.32の危険域でmerge_hits=0、reactive_pairs=3-4あるにもかかわらずHIGH_TOWER/HIGH_LAYER選択が続き。
-  # v220の危険域reactive_pairs非併合時ペナルティ(max_y>=2.0)は危険域でのみ発動し、全フェーズでの即時併合優先が不足している。
-  # batch_summaryでHEIGHT_CONTROLが25.5%選択(avg_score_delta=1.3)と過剰、NEAR_MERGE系が高価値(avg_score_delta=16-52)だが選択率が低い。
-  # reactive_pairs>=1かつmerge_grade=="NO"の場合、段階的ペナルティを与え、即時併合機会がない選択を大幅抑制。
-  # reactive_pairs==1: -1000.0, reactive_pairs>=2: -1500.0 の段階的ペナルティにより、全フェーズで即時併合機会を最大化。
-  # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
-  # これにより全フェーズで即時併合機会を最大化し、v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
-  # 構造的変更（評価軸8.7新規追加・8.6全フェーズ拡張）であり、数値微調整ではない。
-  # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260314_094512_score0747.jsonl turns 57-64, game_history/20260314_101451_score2672.jsonl turns 113-120
+  # v222: 初期段階DIRECTマージ優先強化版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
+  # ワーストゲーム(score0591)終盤turns 48-55でreactive_pairs=0のまま進み、即時併合機会を取りこぼしてゲームオーバー。
+  # ベストゲーム(score3124)終盤turns 126-133でreactive_pairs=1-3あり、REACTIVE_NON_MERGE_PENALティが発動し即時併合優先。
+  # v221の評価軸7はpiece_count <= 12 && merge_grade == "NEAR"のみで、DIRECTマージは除外されていたため、初期段階での即時併合機会の最大化が不足していた。
+  # batch_summaryでHEIGHT_CONTROLが16.4%選択(avg_score_delta=0.1)と依然として過剰、NEAR_MERGE系が高価値(avg_score_delta=16-54)だが選択率が低い。
+  # 初期段階(max_y < 0.0かつpiece_count <= 12)でDIRECT/NEARマージがある場合、reactive_pairsがなくても強力なボーナス(+1000.0)を与え、HEIGHT_CONTROL選択を抑制。
+  # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルな初期段階即時併合優先改善を採用。
+  # これにより初期段階で即時併合機会を最大化し、reactive_pairs=0で進む失敗パターンを解消。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
+  # 構造的変更（評価軸7条件緩和）であり、数値微調整ではない。
+  # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260314_103132_score0591.jsonl turns 48-55, game_history/20260314_110429_score3124.jsonl turns 126-133, strategy_versions/best_score5310_strategy.py
   # ワーストゲーム(score0757)終盤turns 58-65でreactive_pairs=5-9あるにもかかわらずmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
   # ベストゲーム(score2104)終盤turns 94-101でもreactive_pairs=5-6あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
   # v219の危険域即時併合優先(max_y>=2.0, reactive_pairs>=1, merge_grade in [DIRECT, NEAR])はmerge_available=falseでは発動せず、非併合選択が継続する問題。
@@ -367,13 +366,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 7: early game merge priority -----
         # 初期12ターンでマージ機会がある場合、強力なボーナスを付与
         # batch_summaryでHEIGHT_CONTROLが28.7%選択(avg_score_delta=1.8)と過剰であり、
-        # ワーストゲーム(score0826)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している。
-        # ベストゲーム(score2330)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア2330を出している。
+        # ワーストゲーム(score0591)では初期段階からHEIGHT_CONTROL選択が続き、reactive_pairs=0のまま終盤まで進み即時併合機会を取りこぼしている。
+        # ベストゲーム(score3124)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア3124を出していることを確認。
         # v194のearly_game判定(max_y < -2.5)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
         # マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
         # 初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
-        if piece_count <= 12 and merge_grade == "NEAR":
-            # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
+        if piece_count <= 12 and merge_grade in ["DIRECT", "NEAR"]:
+            # 初期段階でDIRECT/NEARマージ機会がある場合、強力なボーナスを付与
             # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
