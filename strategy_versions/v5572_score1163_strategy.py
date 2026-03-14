@@ -40,6 +40,7 @@ Phases (determined by board max Y):
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
   #
    # v224: 評価軸8.6削除・危険域特別ペナルティ追加版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
+# v225: next same type merge priority全フェーズ拡張版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
    # ワーストゲーム(score0764)終盤turns 55-60でmax_y=2.02-2.11、reactive_pairs=7あるにもかかわらずmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
    # ワーストゲーム(score0776)終盤turns 60-67でmax_y=2.26-3.43、reactive_pairs=4-7あるにもかかわらずmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続きゲームオーバー。
    # ベストゲーム(score2904)終盤turns 120-127でもmax_y=1.45-3.03、reactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
@@ -369,19 +370,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
-        # ----- evaluation axis 7: early game merge priority -----
-        # 初期12ターンでマージ機会がある場合、強力なボーナスを付与
-        # batch_summaryでHEIGHT_CONTROLが28.7%選択(avg_score_delta=1.8)と過剰であり、
-        # ワーストゲーム(score0591)では初期段階からHEIGHT_CONTROL選択が続き、reactive_pairs=0のまま終盤まで進み即時併合機会を取りこぼしている。
-        # ベストゲーム(score3124)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア3124を出していることを確認。
-        # v194のearly_game判定(max_y < -2.5)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
-        # マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
-        # 初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
-        if piece_count <= 12 and merge_grade in ["DIRECT", "NEAR"]:
-            # 初期段階でDIRECT/NEARマージ機会がある場合、強力なボーナスを付与
-            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
-            score += 1000.0
-            reasons.append("EARLY_MERGE_PRIORITY")
+        # ----- evaluation axis 7: next same type merge priority (v225: 全フェーズ拡張版) -----
+        # batch_summaryでHEIGHT_CONTROLが16.4%選択(avg_score_delta=0.1)と過剰であり、
+        # ワーストゲーム(score0787)終盤turns 64-71でreactive_pairs=0のまま進み、HIGH_TOWER選択が続きゲームオーバー。
+        # ベストゲーム(score3057)終盤turns 147-154でreactive_pairs=4-6あり、即時併合機会を確実に捉えてスコア稼ぎ。
+        # advice.mdで「国typeAの上に来るtypeAを活用し、盤面圧迫を回避する」という提案がある。
+        # v224の初期段階即時併合優先(piece_count <= 12)は、reactive_pairsがない場合の即時併合機会の最大化が不足していた。
+        # 盤面上に next_type と同じタイプのピースがある場合、全フェーズで強力なボーナスを与え、HEIGHT_CONTROL選択を抑制。
+        # これにより reactive_pairs==0 の場合でも、即時併合機会を最大化し、v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
+        # 構造的変更（評価軸7条件拡張・全フェーズ適用）であり、数値微調整ではない。
+        has_same_type_on_board = any(p.get("type") == next_type for p in pieces)
+        if merge_grade in ["DIRECT", "NEAR"] and has_same_type_on_board:
+            # next と同じタイプが盤面上にある場合、全フェーズで即時併合を最優先
+            if piece_count <= 12:
+                # 初期段階でのボーナス強化（既存のEARLY_MERGE_PRIORITYロジック維持）
+                score += 1500.0
+                reasons.append("EARLY_MERGE_PRIORITY")
+            else:
+                # 中盤以降でも即時併合優先（新規追加）
+                score += 800.0
+                reasons.append("NEXT_SAME_MERGE_PRIORITY")
 
         # ----- evaluation axis 8: reactive pairs bonus (v217: EXPONENTIAL SCALING + REACTIVE_PAIRS_OPPORTUNITY追加) -----
         # v216: reactive_pairsあり時の非併合heightペナルティ強化版の追加改善として、reactive_pairsスコアリングを指数関数化し、即時併合機会を最大化。
