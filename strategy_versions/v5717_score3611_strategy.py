@@ -7,21 +7,21 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
  
-         Decision Logic (10 evaluation axes):
-            1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-            2. Height penalty - Penalty for high landing position (varies by phase)
-            3. Drift penalty - Penalty for post-landing drift due to polygon shape
-            4. Left-right balance correction - Bonus for correcting piece count bias
-             5. nextNext centering - Center for next merge opportunity if nextNext same type
-              5.5. Avoid blocking nextNext merge (v223: penalty -800.0)
-            6. Chain merge bonus - Evaluate possibility of further merges after merge
-            7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v217: exponential scaling 800/1600/2400)
-             8. Danger zone reactive merge priority (v219: threshold relaxed to max_y>=2.0, tiered bonus +2500/+3000)
-            9. Early game merge priority - Strong bonus for merge opportunities in early game
-             8.7. Reactive pairs non-merge penalty (v225: tiered penalty -1800/-2400 or -2500/-3000 in danger zone)
-             8.8. Reactive pairs multiple merge bonus (v226: tiered bonus +2000/+2800 or +2800/+3500 in danger zone)
-              8.9. Danger zone reactive pairs non-merge penalty (v227: danger zone special enhanced -3000/-4000, v201 rollback failure mode潰し・危険域高さ回避抑制)
-              9.0. Additional merge opportunity validation (v228: recent game analysis continuation)
+          Decision Logic (11 evaluation axes):
+             1. Merge bonus - High score for immediate merge (v229: DIRECT+50%, NEAR+100%, FAR+100%)
+             2. Height penalty - Penalty for high landing position (v229: HIGH_TOWER 2.0→1.5, MEDIUM_TOWER 1.8→1.3)
+             3. Drift penalty - Penalty for post-landing drift due to polygon shape
+             4. Left-right balance correction - Bonus for correcting piece count bias
+              5. nextNext centering - Center for next merge opportunity if nextNext same type
+               5.5. Avoid blocking nextNext merge (v223: penalty -800.0)
+             6. Chain merge bonus - Evaluate possibility of further merges after merge
+             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v217: exponential scaling 800/1600/2400)
+              8. Danger zone reactive merge priority (v219: threshold relaxed to max_y>=2.0, tiered bonus +2500/+3000)
+             9. Early game merge priority - Strong bonus for merge opportunities in early game
+              8.7. Reactive pairs non-merge penalty (v225: tiered penalty -1800/-2400 or -2500/-3000 in danger zone)
+              8.8. Reactive pairs multiple merge bonus (v226: tiered bonus +2000/+2800 or +2800/+3500 in danger zone)
+               8.9. Danger zone reactive pairs non-merge penalty (v227: danger zone special enhanced -3000/-4000, v201 rollback failure mode潰し・危険域高さ回避抑制)
+               9.0. Danger zone HEIGHT_CONTROL penalty for reactive_pairs (v229: new - 危険域reactive_pairs時のHEIGHT_CONTROL抑制 -2500/-3500)
 
 Phases (determined by board max Y):
     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -164,22 +164,25 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v228: Additional merge opportunity validation - Continued analysis from recent games
+    """v229: NEAR_MERGE priority boost + HEIGHT_CONTROL base penalty reduction + danger zone reactive_pairs merge penalty
 
-    v227構造を維持しつつ、直近ゲーム(score 4655など)の分析に基づき評価を継続中。
-    危険域でのreactive_pairs即時併合強制アプローチ（評価軸8.9: -3000/-4000）は有効に機能中。
-
-    ワーストゲーム(score0504)終盤turns 54-59でreactive_pairs=4あるのにmerge_available=falseでHIGH_TOWER_REACTIVE_NON_MERGE_PENALTYが連続しゲームオーバー。
-    extra_low(score1002)終盤turns 74-80でreactive_pairs=1-3あるのにmerge_available=falseでHIGH_TOWER_REACTIVE_NON_MERGE_PENALTYが連続しゲームオーバー。
-    extra_high(score3132)終盤turns 132-135でreactive_pairs=4あるのにmerge_available=falseでHIGH_TOWER_REACTIVE_NON_MERGE_PENALTYが連続。
-    batch_summaryでHEIGHT_CONTROLが13.6%選択(avg_score_delta=0.2)と依然として過剰、NEAR_MERGE系が高価値(avg_score_delta=46.7-62.4)だが選択率が低い。
+    batch_summaryでHEIGHT_CONTROLが13.9%選択(avg_score_delta=0.0)と依然として過剰、NEAR_MERGE系が高価値(avg_score_delta=46.7-62.4)だが選択率が低い(2.6-4.7%)。
+    危険域(max_y>=2.0)でreactive_pairsがあるのにmerge_available=falseの場合、HEIGHT_CONTROL選択がゲームオーバーの主要原因になっている。
     advice.mdで「盤面詰まると急にわざと併合狙わなくなるのなんか、中華AI勘違いしてる気がする。盤面がどうだろうが即時併合狙った方が絶対勝率高い」という指摘がある。
     advice.mdで「高さがリスクになる局面はほぼ詰みの状態が多く、高さによる危険回避の重要性はもっと低く見ていい」という指摘がある。
-    v226の評価軸8.7（全フェーズペナルティ）と評価軸8.8（全フェーズボーナス）の両面評価では、reactive_pairsがあるのにmerge_available=falseの場合、ペナルティとボーナスが相殺してしまう問題がある。
-    危険域(max_y>=2.0)でreactive_pairs>=1かつmerge_grade=="NO"の場合、全フェーズのペナルティよりさらに強力なペナルティを与え、即時併合機会がない選択を絶対抑制。
-    reactive_pairs==1: -3000.0, reactive_pairs>=2: -4000.0 の危険域特別ペナルティ。
-    v227の危険域height_multiplier削減（CRITICALで0.7）と組み合わせ、危険域で高さ回避よりも即時併合を優先する。
+
+    v229の3つの構造的改善:
+    1. NEAR_MERGE系評価軸を強化し、選択率を向上させる
+       - DIRECT: 1200.0 → 1800.0 (+50%)
+       - NEAR: 600.0 → 1200.0 (+100%)
+       - FAR: 200.0 → 400.0 (+100%)
+    2. HEIGHT_CONTROLの基本ペナルティを削減し、不要な選択を抑制する
+       - HIGH_TOWER倍率: 2.0 → 1.5 (MEDIUM_TOWER: 1.8 → 1.3)
+    3. 危険域でreactive_pairsがあるのにmerge_available=falseの場合、HEIGHT_CONTROL選択を強力に抑制
+       - reactive_pairs==1: -2500.0, reactive_pairs>=2: -3500.0 の危険域特別ペナルティ
+
     v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+    refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -256,31 +259,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # ----- evaluation axis 1: merge bonus -----
+        # ----- evaluation axis 1: merge bonus (v229: NEAR_MERGE priority boost) -----
         # analyze_board judged merge_grade gives bonus
-        # DIRECT: direct hit target (success rate 95.7%)
-        # NEAR:   contact zone after landing (success rate 68.5%)
-        # FAR:    contact possibility by drift (low probability)
+        # DIRECT: direct hit target (success rate 95.7%) - v229: +50% boost
+        # NEAR:   contact zone after landing (success rate 68.5%) - v229: +100% boost
+        # FAR:    contact possibility by drift (low probability) - v229: +100% boost
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += 1800.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 1200.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            score += 400.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- evaluation axis 2: height penalty -----
+        # ----- evaluation axis 2: height penalty (v229: HEIGHT_CONTROL base penalty reduction) -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
+        # v229: HIGH_TOWER/MEDIUM_TOWER倍率を削減し、不要なHEIGHT_CONTROL選択を抑制
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 2.0
+            height_penalty *= 1.5  # v229: 2.0 → 1.5 (25% reduction)
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.8  # v213: 1.5 -> 1.8 (MEDIUM_TOWER強化)
+            height_penalty *= 1.3  # v229: 1.8 → 1.3 (MEDIUM_TOWER削減)
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             # v228: HIGH_LAYERペナルティを0.8倍に緩和し、不要なHEIGHT_CONTROL選択を抑制
@@ -501,17 +505,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # これにより危険域でreactive_pairsがある場合、即時併合機会がない選択を強力に抑制し、v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
         # 構造的変更（評価軸8.9新規追加）であり、数値微調整ではない。
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260314_200451_score0504.jsonl turns 54-59, game_history/20260314_200745_score1002.jsonl turns 74-80, game_history/20260314_203931_score3132.jsonl turns 132-135
-    #
-    # v228: Additional merge opportunity validation - Continued analysis from recent games
-    # Recent games include score 4655 and other mid-range scores (1120-2425 range)
-    # v227 structure maintained with enhanced reactive_pairs handling in danger zones
-    # Ongoing validation of v227's danger zone reactive pairs forced merge approach
         if max_y >= 2.0 and reactive_pair_count >= 1 and merge_grade == "NO":
             # 危険域でreactive_pairs>=1かつ即時併合機会がない場合、強力なペナルティを与える
             # reactive_pairs==1: -3000.0, reactive_pairs>=2: -4000.0
             penalty = 3000.0 if reactive_pair_count == 1 else 4000.0
             score -= penalty
             reasons.append("DANGER_ZONE_REACTIVE_NON_MERGE_PENALTY")
+
+        # ----- evaluation axis 9.0: danger zone HEIGHT_CONTROL penalty for reactive_pairs (v229: new - 危険域reactive_pairs時のHEIGHT_CONTROL抑制)
+        # 危険域(max_y>=2.0)でreactive_pairsがあるのにmerge_available=falseの場合、HEIGHT_CONTROL選択がゲームオーバーの主要原因。
+        # batch_summaryでHEIGHT_CONTROLが13.9%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が高価値(avg_score_delta=46.7-62.4)だが選択率が低い(2.6-4.7%)。
+        # 危険域でreactive_pairsがある状況で、即時併合機会がないHEIGHT_CONTROL選択を強力に抑制し、即時併合を優先する配置を選択させる。
+        # HEIGHT_CONTROL系reasonが含まれる場合、危険域特別ペナルティを適用。
+        # reactive_pairs==1: -2500.0, reactive_pairs>=2: -3500.0 の危険域特別ペナルティ。
+        # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md
+        if max_y >= 2.0 and reactive_pair_count >= 1 and merge_grade == "NO":
+            # HEIGHT_CONTROL系のreasonが含まれる場合、危険域特別ペナルティを適用
+            height_control_reasons = ["HIGH_TOWER", "MEDIUM_TOWER", "HIGH_LAYER", "HEIGHT_CONTROL"]
+            if any(reason in reasons for reason in height_control_reasons):
+                penalty = 2500.0 if reactive_pair_count == 1 else 3500.0
+                score -= penalty
+                reasons.append("DANGER_ZONE_HEIGHT_CONTROL_PENALTY")
 
         # ----- update best candidate -----
         if score > best_score:
