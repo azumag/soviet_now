@@ -7133,20 +7133,38 @@ replace = False
 if not existing:
     replace = True
 else:
+    existing_hash = str(existing.get("hash", "") or "")
+    existing_live = None
+    if existing_hash:
+        existing_scores = []
+        try:
+            existing_scores = rs.get(existing_hash, {}).get("scores", []) or []
+        except Exception:
+            existing_scores = []
+        existing_live = metrics(existing_scores)
     existing_key = (
         float(existing.get("comp", 0.0)),
         float(existing.get("p50", 0.0)),
         float(existing.get("p25", 0.0)),
         int(existing.get("n", 0)),
-        existing.get("hash", ""),
+        existing_hash,
     )
+    if existing_live:
+        existing_key = (
+            existing_live["comp"],
+            existing_live["p50"],
+            existing_live["p25"],
+            existing_live["n"],
+            existing_hash,
+        )
     best_key = (best_metrics["comp"], best_metrics["p50"], best_metrics["p25"], best_metrics["n"], best_hash)
-    existing_hash = existing.get("hash", "")
     existing_has_file = bool(existing_hash) and bool(archive_dir) and os.path.exists(os.path.join(archive_dir, f"{existing_hash}.py"))
     existing_rejected = bool(existing_hash) and existing_hash in rejected
     if current_hash and existing_hash == current_hash:
         replace = True
     elif not existing_has_file:
+        replace = True
+    elif existing_live is None:
         replace = True
     elif existing_rejected:
         replace = True
