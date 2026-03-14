@@ -38,7 +38,15 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
-# v216: REACTIVE_PAIRS_COMPRESSION削除・危険域即時併合強化版 - v201 rollback failure mode潰し
+# v231: reactive_pairs>=5での非併合heightペナルティ軽減版 - 即時併合機会がない状況での盤面圧迫緩和・延命戦略優先（v201 rollback failure mode潰し）
+# ワーストゲーム(score0765)終盤turns 60-67でreactive_pairs=5-9あるのにmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
+# ベストゲーム(score3270)終盤turns 132-139ではreactive_pairs=2で、即時併合を選択したターンと非併合を選択したターンが分かれている。
+# reactive_pairsが非常に多い(>=5)場合、即時併合機会がない状況でも盤面圧迫が進行し、悪循環に陥る可能性がある。
+# reactive_pairs>=5かつmerge_grade=="NO"の場合、非併合heightペナルティを軽減し、盤面圧迫を緩和して延命戦略を優先。
+# 危険域(max_y>=2.5)でreactive_pairs>=5の場合、非併合heightペナルティを4.0倍から2.0倍に軽減。
+# 非危険域でreactive_pairs>=5の場合、非併合heightペナルティを2.0倍から1.0倍に軽減。
+# これによりreactive_pairsが非常に多い状況での盤面圧迫を緩和し、ゲームオーバー直前の立て直しを改善する。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260315_025603_score0765.jsonl turns 60-67, game_history/20260315_024037_score3270.jsonl turns 132-139
 # ワーストゲーム(score0874)終盤turns 64-71でmax_y=2.11-2.53、reactive_pairs=3あるにもかかわらずmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
 # extra_low(score0899)終盤turns 63-70でmax_y=2.0-3.55、reactive_pairs=2-5あるにもかかわらずmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
 # batch_summaryでREACTIVE_PAIRS_COMPRESSIONがavg_score_delta=2.8と低価値であり、低スコア群で14.8%選択されていることを確認。高スコア群では6.1%のみ。
@@ -240,17 +248,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # v216: reactive_pairsあり時の非併合heightペナルティ強化版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
         # ワーストゲーム(score0874)終盤turns 64-71でreactive_pairs=3あるのにmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
-        # extra_low(score0899)終盤turns 63-70でreactive_pairs=2-5あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
+        # extra_low(score0899)終盤turns 63-70でmax_y=2.0-3.55、reactive_pairs=2-5あるにもかかわらずmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
         # advice.md「盤面が詰まっても即時併合を狙うべきだ」を踏まえ、reactive_pairsがある状況で即時併合機会を優先。
         # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
-        # 危険域(max_y>=2.5)でreactive_pairs>=1かつmerge_grade=="NO"の場合、非併合heightペナルティを4倍に強化。
+        # 危険域(max_y>=2.5)でreactive_pairs>=1かつmerge_grade=="NO"の場合、非併合heightペナルティを強化。
+        # v231: reactive_pairs>=5での非併合heightペナルティ軽減版 - 即時併合機会がない状況での盤面圧迫緩和・延命戦略優先（v201 rollback failure mode潰し）
+        # ワーストゲーム(score0765)終盤turns 60-67でreactive_pairs=5-9あるのにmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
+        # reactive_pairsが非常に多い(>=5)場合、即時併合機会がない状況でも盤面圧迫が進行し、悪循環に陥る可能性がある。
+        # reactive_pairs>=5かつmerge_grade=="NO"の場合、非併合heightペナルティを軽減し、盤面圧迫を緩和して延命戦略を優先。
         if reactive_pair_count >= 1 and merge_grade == "NO":
-            if max_y >= 2.5:
-                # 危険域では非併合配置を強く抑制
-                height_penalty *= 4.0
+            if reactive_pair_count >= 5:
+                # reactive_pairsが非常に多い(>=5)場合、即時併合機会がない状況での盤面圧迫を緩和
+                if max_y >= 2.5:
+                    # 危険域では2倍に軽減（4.0倍 → 2.0倍）
+                    height_penalty *= 2.0
+                else:
+                    # 非危険域では1倍に軽減（2.0倍 → 1.0倍）
+                    height_penalty *= 1.0
             else:
-                # 非危険域では2倍
-                height_penalty *= 2.0  # reactive_pairsがある場合は、非併合配置を抑制
+                # reactive_pairsが少ない(1-4)場合は、従来通りペナルティ強化
+                if max_y >= 2.5:
+                    # 危険域では非併合配置を強く抑制
+                    height_penalty *= 4.0
+                else:
+                    # 非危険域では2倍
+                    height_penalty *= 2.0  # reactive_pairsがある場合は、非併合配置を抑制
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
