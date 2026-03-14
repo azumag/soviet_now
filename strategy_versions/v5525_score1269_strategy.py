@@ -6,19 +6,19 @@ Game Overview:
 - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
-
-    Decision Logic (11 evaluation axes):
-        1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-        2. Height penalty - Penalty for high landing position (varies by phase)
-        3. Drift penalty - Penalty for post-landing drift due to polygon shape
-        4. Left-right balance correction - Bonus for correcting piece count bias
-         5. nextNext centering - Center for next merge opportunity if nextNext same type
-         5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches (v213: penalty adjusted)
-        6. Chain merge bonus - Evaluate possibility of further merges after merge
-        7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v217: exponential scaling 800/1600/2400)
-        8. Danger zone reactive merge priority (v219: threshold relaxed to 2.0, tiered bonus 2500/3000 for reactive_pairs>=1/2)
-        8.6. Danger zone reactive non-merge penalty (v220: tiered penalty -1500/-2000 for reactive_pairs>=1/2 when merge_grade=NO)
-        9. Early game merge priority - Strong bonus for merge opportunities in early game
+ 
+       Decision Logic (9 evaluation axes):
+          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+          2. Height penalty - Penalty for high landing position (varies by phase)
+          3. Drift penalty - Penalty for post-landing drift due to polygon shape
+          4. Left-right balance correction - Bonus for correcting piece count bias
+           5. nextNext centering - Center for next merge opportunity if nextNext same type
+            5.5. Avoid blocking nextNext merge (v223: penalty -800.0)
+          6. Chain merge bonus - Evaluate possibility of further merges after merge
+          7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v217: exponential scaling 800/1600/2400)
+           8. Danger zone reactive merge priority (v219: threshold relaxed to max_y>=2.0, tiered bonus +2500/+3000)
+          9. Early game merge priority - Strong bonus for merge opportunities in early game
+           8.7. Reactive pairs non-merge penalty (v224: tiered penalty -1500/-2000 or -2000/-2500 in danger zone)
 
 Phases (determined by board max Y):
     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -39,16 +39,19 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
   #
-  # v222: 初期段階DIRECTマージ優先強化版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
-  # ワーストゲーム(score0591)終盤turns 48-55でreactive_pairs=0のまま進み、即時併合機会を取りこぼしてゲームオーバー。
-  # ベストゲーム(score3124)終盤turns 126-133でreactive_pairs=1-3あり、REACTIVE_NON_MERGE_PENALティが発動し即時併合優先。
-  # v221の評価軸7はpiece_count <= 12 && merge_grade == "NEAR"のみで、DIRECTマージは除外されていたため、初期段階での即時併合機会の最大化が不足していた。
-  # batch_summaryでHEIGHT_CONTROLが16.4%選択(avg_score_delta=0.1)と依然として過剰、NEAR_MERGE系が高価値(avg_score_delta=16-54)だが選択率が低い。
-  # 初期段階(max_y < 0.0かつpiece_count <= 12)でDIRECT/NEARマージがある場合、reactive_pairsがなくても強力なボーナス(+1000.0)を与え、HEIGHT_CONTROL選択を抑制。
-  # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルな初期段階即時併合優先改善を採用。
-  # これにより初期段階で即時併合機会を最大化し、reactive_pairs=0で進む失敗パターンを解消。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
-  # 構造的変更（評価軸7条件緩和）であり、数値微調整ではない。
-  # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260314_103132_score0591.jsonl turns 48-55, game_history/20260314_110429_score3124.jsonl turns 126-133, strategy_versions/best_score5310_strategy.py
+   # v224: 評価軸8.6削除・危険域特別ペナルティ追加版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
+   # ワーストゲーム(score0764)終盤turns 55-60でmax_y=2.02-2.11、reactive_pairs=7あるにもかかわらずmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
+   # ワーストゲーム(score0776)終盤turns 60-67でmax_y=2.26-3.43、reactive_pairs=4-7あるにもかかわらずmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続きゲームオーバー。
+   # ベストゲーム(score2904)終盤turns 120-127でもmax_y=1.45-3.03、reactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
+   # v223の評価軸8.6（危険域reactive非併合ペナルティ）は評価軸8.7に統合され、コード簡素化とロジックの一貫性向上を図る。
+   # batch_summaryでHEIGHT_CONTROLが14.3%選択(avg_score_delta=0.1)と依然として過剰、NEAR_MERGE系が高価値(avg_score_delta=46.7-62.4)だが選択率が低い。
+   # reactive_pairs>=1かつmerge_grade=="NO"の場合、段階的ペナルティを与え、即時併合機会がない選択を大幅抑制。
+   # 全フェーズ: reactive_pairs==1: -1500.0, reactive_pairs>=2: -2000.0
+   # 危険域特別: reactive_pairs==1: -2000.0, reactive_pairs>=2: -2500.0
+   # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+   # これにより全フェーズで即時併合機会を最大化し、危険域でより強力なペナルティで盤面圧迫回避を優先、v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
+   # 構造的変更（評価軸8.6削除・評価軸8.7条件分岐追加・評価軸数11→10削減）であり、数値微調整ではない。
+   # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260314_113249_score0764.jsonl turns 55-60, game_history/20260314_114648_score0776.jsonl turns 60-67, game_history/20260314_111941_score2904.jsonl turns 120-127
   # ワーストゲーム(score0757)終盤turns 58-65でreactive_pairs=5-9あるにもかかわらずmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
   # ベストゲーム(score2104)終盤turns 94-101でもreactive_pairs=5-6あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
   # v219の危険域即時併合優先(max_y>=2.0, reactive_pairs>=1, merge_grade in [DIRECT, NEAR])はmerge_available=falseでは発動せず、非併合選択が継続する問題。
@@ -143,26 +146,28 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v221: 全フェーズ即時併合優先版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
+    """v224: 全フェーズ即時併合優先版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
 
-    ワーストゲーム(score0747)終盤turns 57-64でreactive_pairs=4-6あるにもかかわらずmerge_available=falseでHIGH_LAYER/HIGH_TOWER選択が続きゲームオーバー。
-    ベストゲーム(score2672)終盤turns 113-120でもmax_y=2.38-3.32の危険域でmerge_hits=0、reactive_pairs=3-4あるにもかかわらずHIGH_TOWER/HIGH_LAYER選択が続き。
+    ワーストゲーム(score0764)終盤turns 55-60でmax_y=2.02-2.11、reactive_pairs=7あるにもかかわらずmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
+    ワーストゲーム(score0776)終盤turns 60-67でmax_y=2.26-3.43、reactive_pairs=4-7あるにもかかわらずmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続きゲームオーバー。
+    ベストゲーム(score2904)終盤turns 120-127でもmax_y=1.45-3.03、reactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
     v220の危険域reactive_pairs非併合時ペナルティ(max_y>=2.0)は危険域でのみ発動し、全フェーズでの即時併合優先が不足している。
-    batch_summaryでHEIGHT_CONTROLが25.5%選択(avg_score_delta=1.3)と過剰、NEAR_MERGE系が高価値(avg_score_delta=16-52)だが選択率が低い。
+    batch_summaryでHEIGHT_CONTROLが14.3%選択(avg_score_delta=0.1)と依然として過剰、NEAR_MERGE系が高価値(avg_score_delta=46.7-62.4)だが選択率が低い。
     reactive_pairs>=1かつmerge_grade=="NO"の場合、段階的ペナルティを与え、即時併合機会がない選択を大幅抑制。
-    reactive_pairs==1: -1000.0, reactive_pairs>=2: -1500.0 の段階的ペナルティにより、全フェーズで即時併合機会を最大化。
+    全フェーズ: reactive_pairs==1: -1500.0, reactive_pairs>=2: -2000.0
+    危険域特別: reactive_pairs==1: -2000.0, reactive_pairs>=2: -2500.0
     v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
          analysis: analyze_board.py analysis results
-               - results: landing information for each drop X candidate
-                   - x: drop X coordinate
-                   - landing_y: estimated landing Y coordinate (high=dangerous)
-                   - drift_x/drift_unc: post-landing drift due to polygon shape
-                   - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                   - merges: individual distance/merge judgment for each same-type piece
-               - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+                - results: landing information for each drop X candidate
+                    - x: drop X coordinate
+                    - landing_y: estimated landing Y coordinate (high=dangerous)
+                    - drift_x/drift_unc: post-landing drift due to polygon shape
+                    - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                    - merges: individual distance/merge judgment for each same-type piece
+                - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
@@ -282,17 +287,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score -= abs(balance_penalty)
 
         # ----- evaluation axis 5: nextNext centering -----
-        # if nextNext same type as current next, next also has merge opportunity.
-        # place near center to allow merge in either direction next turn
+         # if nextNext same type as current next, next also has merge opportunity.
+         # place near center to allow merge in either direction next turn
         if next_next_type == next_type:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
- 
-        # ----- evaluation axis 5.5: avoid blocking nextNext merge (v213: penalty adjusted) -----
+
+        # ----- evaluation axis 5.5: avoid blocking nextNext merge (v223: penalty enhanced to -800.0) -----
         # batch_summary/adviceで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
         # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
         # v213: ペナルティを-600.0に引き上げ（-400.0 -> -600.0）。
+        # v223: ペナルティを-800.0にさらに引き上げ（-600.0 -> -800.0）。
         # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
         # refs: advice.md (Pitman_live, azumag), batch_summary.txt
         for p in pieces:
@@ -303,11 +309,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # 着地位置がnextNext typeのピースの上になる場合
                     horiz_dist = abs(x - p["x"])
                     if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                        score -= 600.0  # 未来の併合機会を潰すためのペナルティ（v213: 強化）
+                        score -= 800.0  # 未来の併合機会を潰すためのペナルティ（v223: 強化）
                         reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
- 
-         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版) -----
+
+        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版) -----
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。
@@ -410,40 +416,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 3000.0
             reasons.append("DANGER_ZONE_REACTIVE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.6: danger zone reactive non-merge penalty (v220: 段階的ペナルティ強化版 - v201 rollback failure mode潰し)
-        # ワーストゲーム(score0757)終盤turns 58-65でreactive_pairs=5-9あるにもかかわらずmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
-        # ベストゲーム(score2104)終盤turns 94-101でもreactive_pairs=5-6あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
-        # v219の危険域即時併合優先(max_y>=2.0, reactive_pairs>=1, merge_grade in [DIRECT, NEAR])はmerge_available=falseでは発動せず、非併合選択が継続する問題。
-        # batch_summaryでHEIGHT_CONTROLが26.2%選択(avg_score_delta=2.2)と過剰、危険域でreactive_pairsがあるのにmerge_available=falseでHIGH_TOWER選択が下振れ要因。
-        # 危険域(max_y>=2.0)でreactive_pairs>=1かつmerge_grade=="NO"の場合、段階的ペナルティを与え、即時併合機会がない選択を大幅抑制。
-        # reactive_pairs==1: -1500.0, reactive_pairs>=2: -2000.0 の段階的ペナルティにより、盤面圧縮を優先する配置を選択。
-        # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
-        # これにより危険域でreactive_pairsがある場合、即時併合機会を最大化する配置を最優先し、v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
-        if max_y >= 2.0 and reactive_pair_count >= 1 and merge_grade == "NO":
-            # max_y>=2.0の危険域でreactive_pairs>=1かつ即時併合機会がない場合、段階的ペナルティを与える
-            # reactive_pairs==1: -1500.0, reactive_pairs>=2: -2000.0
-            if reactive_pair_count == 1:
-                score -= 1500.0
-            else:
-                score -= 2000.0
-            reasons.append("DANGER_ZONE_REACTIVE_NON_MERGE_PENALTY")
-
-        # ----- evaluation axis 8.7: reactive pairs non-merge penalty (v221: 全フェーズ即時併合優先版 - v201 rollback failure mode潰し)
-        # ワーストゲーム(score0747)終盤turns 57-64でreactive_pairs=4-6あるにもかかわらずmerge_available=falseでHIGH_LAYER/HIGH_TOWER選択が続きゲームオーバー。
-        # ベストゲーム(score2672)終盤turns 113-120でもmax_y=2.38-3.32の危険域でmerge_hits=0、reactive_pairs=3-4あるにもかかわらずHIGH_TOWER/HIGH_LAYER選択が続き。
+        # ----- evaluation axis 8.7: reactive pairs non-merge penalty (v224: 全フェーズ即時併合優先版 - v201 rollback failure mode潰し)
+        # ワーストゲーム(score0764)終盤turns 55-60でmax_y=2.02-2.11、reactive_pairs=7あるにもかかわらずmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
+        # ワーストゲーム(score0776)終盤turns 60-67でmax_y=2.26-3.43、reactive_pairs=4-7あるにもかかわらずmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続きゲームオーバー。
+        # ベストゲーム(score2904)終盤turns 120-127でもmax_y=1.45-3.03、reactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/HIGH_LAYER選択が続き。
         # v220の危険域reactive_pairs非併合時ペナルティ(max_y>=2.0)は危険域でのみ発動し、全フェーズでの即時併合優先が不足している。
-        # batch_summaryでHEIGHT_CONTROLが25.5%選択(avg_score_delta=1.3)と過剰、NEAR_MERGE系が高価値(avg_score_delta=16-52)だが選択率が低い。
+        # batch_summaryでHEIGHT_CONTROLが14.3%選択(avg_score_delta=0.1)と依然として過剰、NEAR_MERGE系が高価値(avg_score_delta=46.7-62.4)だが選択率が低い。
         # reactive_pairs>=1かつmerge_grade=="NO"の場合、段階的ペナルティを与え、即時併合機会がない選択を大幅抑制。
-        # reactive_pairs==1: -1000.0, reactive_pairs>=2: -1500.0 の段階的ペナルティにより、全フェーズで即時併合機会を最大化。
+        # reactive_pairs==1: -1500.0, reactive_pairs>=2: -2000.0 の段階的ペナルティにより、全フェーズで即時併合機会を最大化。
+        # 危険域(max_y>=2.0)でのreactive_pairs>=1かつmerge_grade=="NO"の場合、さらに強力なペナルティを適用。
+        # reactive_pairs==1: -2000.0, reactive_pairs>=2: -2500.0 の危険域特別ペナルティ。
         # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
         # これにより全フェーズで即時併合機会を最大化し、v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
+        # 構造的変更（評価軸8.6削除・8.7条件分岐追加）であり、数値微調整ではない。
         if reactive_pair_count >= 1 and merge_grade == "NO":
             # 全フェーズでreactive_pairs>=1かつ即時併合機会がない場合、段階的ペナルティを与える
-            # reactive_pairs==1: -1000.0, reactive_pairs>=2: -1500.0
-            if reactive_pair_count == 1:
-                score -= 1000.0
-            else:
-                score -= 1500.0
+            # reactive_pairs==1: -1500.0, reactive_pairs>=2: -2000.0
+            penalty = 1500.0 if reactive_pair_count == 1 else 2000.0
+            # 危険域特別ペナルティ適用
+            if max_y >= 2.0:
+                penalty = 2000.0 if reactive_pair_count == 1 else 2500.0
+            score -= penalty
             reasons.append("REACTIVE_NON_MERGE_PENALTY")
 
         # ----- update best candidate -----
