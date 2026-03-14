@@ -5837,6 +5837,63 @@ _mark_comment_batch_processed() {
 	mv "$tmpf" "$COMMENT_BATCH_HISTORY_FILE"
 }
 
+# 個別コメント行の重複フィルタ: 処理済み行ハッシュに存在する行を除外して返す
+_filter_already_processed_comment_lines() {
+	local comments="$1"
+	[ -n "$comments" ] || return 0
+	[ -f "$COMMENT_PROCESSED_LINES_FILE" ] || { printf '%s' "$comments"; return 0; }
+	local now filtered_count=0 total_count=0
+	now=$(date +%s)
+	local result=""
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		total_count=$((total_count + 1))
+		local line_hash
+		line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
+		[ -n "$line_hash" ] || { result="${result:+${result}
+}${line}"; filtered_count=$((filtered_count + 1)); continue; }
+		if awk -F'|' -v h="$line_hash" -v now="$now" -v ttl="$COMMENT_PROCESSED_LINES_TTL" \
+			'$2 == h && (now - $1) <= ttl { found=1 } END { exit(found ? 0 : 1) }' \
+			"$COMMENT_PROCESSED_LINES_FILE" 2>/dev/null; then
+			: # 処理済み → スキップ
+		else
+			result="${result:+${result}
+}${line}"
+			filtered_count=$((filtered_count + 1))
+		fi
+	done <<<"$comments"
+	if [ "$filtered_count" -lt "$total_count" ]; then
+		log "[COMMENT] 個別行フィルタ: ${total_count}行中 $((total_count - filtered_count))行を処理済みとして除外"
+	fi
+	[ -n "$result" ] && printf '%s' "$result"
+	return 0
+}
+
+# 処理成功後に個別コメント行のハッシュを記録する
+_record_processed_comment_lines() {
+	local comments="$1"
+	[ -n "$comments" ] || return 0
+	local now tmpf
+	now=$(date +%s)
+	tmpf=$(mktemp /tmp/eloop_comment_lines_XXXXXXXX)
+	{
+		# 既存エントリからTTL内のものを保持
+		if [ -f "$COMMENT_PROCESSED_LINES_FILE" ]; then
+			awk -F'|' -v now="$now" -v ttl="$COMMENT_PROCESSED_LINES_TTL" \
+				'NF >= 2 && $1 ~ /^[0-9]+$/ && (now - $1) <= ttl { print }' \
+				"$COMMENT_PROCESSED_LINES_FILE" 2>/dev/null
+		fi
+		# 新しい行ハッシュを追加
+		while IFS= read -r line; do
+			[ -n "$line" ] || continue
+			local line_hash
+			line_hash=$(printf '%s' "$line" | md5 -q 2>/dev/null || echo "")
+			[ -n "$line_hash" ] && echo "${now}|${line_hash}"
+		done <<<"$comments"
+	} | tail -n "$COMMENT_PROCESSED_LINES_MAX" >"$tmpf"
+	mv "$tmpf" "$COMMENT_PROCESSED_LINES_FILE"
+}
+
 _recover_orphan_comment_playing_files() {
 	# コメント用 say_enqueue が動作中なら .playing は現役の可能性が高いので触らない
 	if pgrep -f "say_enqueue.sh --no-preempt .*comment_.*\\.playing" >/dev/null 2>&1; then
@@ -6400,6 +6457,20 @@ generate_comment_response() {
 	fi
 	[ -z "$twitch_comments" ] && return
 
+	# 個別コメント行の重複フィルタ（ack-batch失敗で残留した行を除外）
+	local twitch_comments_original="$twitch_comments"
+	twitch_comments=$(_filter_already_processed_comment_lines "$twitch_comments")
+	if [ -z "$twitch_comments" ]; then
+		log "[COMMENT] 全コメント行が個別重複チェックにより処理済み → スキップ"
+		# pending.log から残留行を消化する
+		local ack_tmp
+		ack_tmp=$(mktemp /tmp/eloop_comment_ack_XXXXXXXX 2>/dev/null || echo "tmp/.twitch_chat/comment_ack_$(date +%s)_${RANDOM}.txt")
+		printf '%s\n' "$twitch_comments_original" > "$ack_tmp"
+		./twitch_chat.sh ack-batch "$ack_tmp"
+		rm -f "$ack_tmp"
+		return
+	fi
+
 	# コメント処理時点のTwitch配信サムネイルを取得
 	local comment_screenshot="tmp/.comment_queue/comment_screenshot.jpg"
 	if curl -sf -o "$comment_screenshot" -m 5 "https://static-cdn.jtvnw.net/previews-ttv/live_user_azumagbanjo-1280x720.jpg" 2>/dev/null; then
@@ -6411,7 +6482,8 @@ generate_comment_response() {
 	local comment_batch_file=""
 	comment_batch_file=$(mktemp /tmp/eloop_comment_batch_XXXXXXXX 2>/dev/null || true)
 	[ -z "$comment_batch_file" ] && comment_batch_file="tmp/.twitch_chat/comment_batch_$(date +%s)_${RANDOM}.txt"
-	printf '%s\n' "$twitch_comments" > "$comment_batch_file"
+	# ack-batch用にオリジナル全行を書き込む（フィルタ済み行も pending から確実に消化するため）
+	printf '%s\n' "$twitch_comments_original" > "$comment_batch_file"
 
 	local comment_batch_hash=""
 	comment_batch_hash=$(printf '%s' "$twitch_comments" | md5 -q 2>/dev/null || echo "")
@@ -6743,8 +6815,14 @@ RETRYCOMMENT
 
 			comments_talk="$attempt_talk"
 			comment_model_used="$attempt_model"
-			_mark_comment_batch_processed "$comment_batch_hash"
-			./twitch_chat.sh ack-batch "$comment_batch_file"
+			if ./twitch_chat.sh ack-batch "$comment_batch_file"; then
+				_mark_comment_batch_processed "$comment_batch_hash"
+				_record_processed_comment_lines "$twitch_comments"
+			else
+				log "[COMMENT] ack-batch 失敗 → 個別行ハッシュ記録で次回重複除外"
+				_record_processed_comment_lines "$twitch_comments"
+				_mark_comment_batch_processed "$comment_batch_hash"
+			fi
 			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file (model=${comment_model_used:-unknown}, batch=${comment_batch_hash:-none}, attempt=${attempt}/${comment_retry_max})"
 			generation_ok=true
 			break
