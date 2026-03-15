@@ -38,7 +38,13 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
-# v235: reactive_pairs少な時縦積み優先・盤面圧迫緩和版 - last_rollback_analysis failure mode潰し・縦方向積み上げ優先
+# v236: 危険域reactive_pairs>=3でのheightペナルティ軽減強化版 - 危険域延命戦略改善・last_rollback_analysis failure mode潰し
+# last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
+# ワーストゲーム(score0748)終盤turns 62-69: reactive_pairs=4-5、max_y=1.86→4.21、merge_available=falseでREACTIVE_PAIRS_HEIGHT_RELAXEDが続き危険域拡大。
+# ベストゲーム(score2414)終盤turns 112-119: max_y=2.15→3.18、reactive_pairs=2-3で即時併合または盤面圧縮選択を交互に行い延命成功。
+# v235のreactive_pairs>=1一律0.5倍軽減では、reactive_pairsが多い危険域(max_y>=2.0)で盤面圧迫緩和が不十分。
+# 危険域(max_y>=2.0)かつreactive_pairs>=3の場合、height_penaltyを0.25倍にさらに軽減し、盤面圧迫を大幅緩和して縦方向の積み上げ優先。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260315_161559_score0748.jsonl turns 62-69, game_history/20260315_162656_score2414.jsonl turns 112-119
 # last_rollback_analysis: anchor比でcomp=-308.7 p50=-456.5 p25=-124.0と明確に悪化。
 # ワーストゲーム(score0991)終盤turns 55-62でmax_y=0.86→2.87、reactive_pairs=4→3あるのにmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score2647)終盤turns 112-119でmax_y=2.15→3.18、即時併合を選択したターンと非併合を選択したターンが分かれている。
@@ -132,16 +138,15 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v235: reactive_pairs少な時縦積み優先・盤面圧迫緩和版 - last_rollback_analysis failure mode潰し・縦方向積み上げ優先
+    """v236: 危険域reactive_pairs>=3でのheightペナルティ軽減強化版 - 危険域延命戦略改善・last_rollback_analysis failure mode潰し
 
-    last_rollback_analysis: anchor比でcomp=-308.7 p50=-456.5 p25=-124.0と明確に悪化。
-    ワーストゲーム(score0991)終盤turns 55-62でmax_y=0.86→2.87、reactive_pairs=4→3あるのにmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
-    ベストゲーム(score2647)終盤turns 112-119でmax_y=2.15→3.18、即時併合を選択したターンと非併合を選択したターンが分かれている。
-    advice.mdで「高さがリスクになる局面はほぼ詰みの状態が多く、高さによる危険回避の重要性は低く見てよい」「盤面が詰まっても即時併合を狙うべきだ」というアドバイスがある。
-    v210のreactive_pairs>=1でheight_penaltyを2倍に強化するロジックは、reactive_pairsが少ない状況で盤面圧迫を進行させ、悪循環に陥る原因になっている。
-    reactive_pairs>=1かつmerge_grade=="NO"の場合、height_penaltyを0.5倍に軽減し、盤面圧迫を緩和して縦方向の積み上げを優先。
-    これによりreactive_pairsがある状況での盤面圧迫を緩和し、ゲームオーバー直前の立て直しを改善する。
-    refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260315_153201_score0991.jsonl turns 55-62, game_history/20260315_154958_score2647.jsonl turns 112-119
+    last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
+    ワーストゲーム(score0748)終盤turns 62-69: reactive_pairs=4-5、max_y=1.86→4.21、merge_available=falseでREACTIVE_PAIRS_HEIGHT_RELAXEDが続き危険域拡大。
+    ベストゲーム(score2414)終盤turns 112-119: max_y=2.15→3.18、reactive_pairs=2-3で即時併合または盤面圧縮選択を交互に行い延命成功。
+    advice.md「高さがリスクになる局面はほぼ詰みの状態が多く、高さによる危険回避の重要性は低く見てよい」「盤面が詰まっても即時併合を狙うべきだ」を踏まえ、reactive_pairsがある状況での盤面圧迫を緩和。
+    v235のreactive_pairs>=1一律0.5倍軽減では、reactive_pairsが多い危険域(max_y>=2.0)で盤面圧迫緩和が不十分。
+    危険域(max_y>=2.0)かつreactive_pairs>=3の場合、height_penaltyを0.25倍にさらに軽減し、盤面圧迫を大幅緩和して縦方向の積み上げ優先。
+    refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260315_161559_score0748.jsonl turns 62-69, game_history/20260315_162656_score2414.jsonl turns 112-119
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -238,15 +243,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
         height_penalty = landing_y * 50.0 * height_mult
 
-        # v235: reactive_pairsあり時縦積み優先・盤面圧迫緩和版 - last_rollback_analysis failure mode潰し
-        # last_rollback_analysis: anchor比でcomp=-308.7 p50=-456.5 p25=-124.0と明確に悪化。
-        # ワーストゲーム(score0991)終盤turns 55-62でmax_y=0.86→2.87、reactive_pairs=4→3あるのにmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
-        # v210のreactive_pairs>=1でheight_penaltyを2倍に強化するロジックは、reactive_pairsが少ない状況で盤面圧迫を進行させ、悪循環に陥る原因になっている。
-        # reactive_pairs>=1かつmerge_grade=="NO"の場合、height_penaltyを0.5倍に軽減し、盤面圧迫を緩和して縦方向の積み上げを優先。
-        # advice.md「高さがリスクになる局面はほぼ詰みの状態が多く、高さによる危険回避の重要性は低く見てよい」「盤面が詰まっても即時併合を狙うべきだ」を踏まえ、reactive_pairsがある状況での盤面圧迫を緩和。
-        # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
-        if reactive_pair_count >= 1 and merge_grade == "NO":
-            height_penalty *= 0.5  # reactive_pairsがある場合は、非併合配置のheightペナルティを軽減して盤面圧迫を緩和
+        # v236: 危険域reactive_pairs>=3でのheightペナルティ軽減強化版 - 危険域延命戦略改善
+        # last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
+        # ワーストゲーム(score0748)終盤turns 62-69: reactive_pairs=4-5、max_y=1.86→4.21、merge_available=falseでREACTIVE_PAIRS_HEIGHT_RELAXEDが続き危険域拡大。
+        # ベストゲーム(score2414)終盤turns 112-119: max_y=2.15→3.18、reactive_pairs=2-3で即時併合または盤面圧縮選択を交互に行い延命成功。
+        # v235のreactive_pairs>=1一律0.5倍軽減では、reactive_pairsが多い危険域(max_y>=2.0)で盤面圧迫緩和が不十分。
+        # 危険域(max_y>=2.0)かつreactive_pairs>=3の場合、height_penaltyを0.25倍にさらに軽減し、盤面圧迫を大幅緩和して縦方向の積み上げ優先。
+        # 危険域かつreactive_pairs>=2の場合、height_penaltyを0.5倍に軽減（v235維持）。
+        # これによりreactive_pairsが多い危険域での盤面圧迫を大幅緩和し、ゲームオーバー直前の立て直しを改善する。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260315_161559_score0748.jsonl turns 62-69, game_history/20260315_162656_score2414.jsonl turns 112-119
+        
+        # Apply height penalty relaxation based on reactive_pairs count and danger zone
+        if max_y >= 2.0:
+            # Danger zone: more aggressive relaxation with more reactive pairs
+            if reactive_pair_count >= 3 and merge_grade == "NO":
+                height_penalty *= 0.25  # Strong relief in danger zone with abundant reactive pairs
+                reasons.append("DANGER_ZONE_HEIGHT_RELAXED")
+            elif reactive_pair_count >= 2 and merge_grade == "NO":
+                height_penalty *= 0.5
+                reasons.append("REACTIVE_PAIRS_HEIGHT_RELAXED_DANGER")
+        elif reactive_pair_count >= 1 and merge_grade == "NO":
+            # Normal zone: standard relaxation
+            height_penalty *= 0.5
             reasons.append("REACTIVE_PAIRS_HEIGHT_RELAXED")
 
         if phase == "HIGH" and landing_y > 0.5:
