@@ -77,6 +77,10 @@ PAST_NEWS_READ="$TMP_HISTORY_DIR/past_news_read.txt"
 PAST_NEWS_READ_KEYS="$TMP_HISTORY_DIR/past_news_read_keys.txt"
 PAST_NEWS_TOPIC_KEYS="$TMP_HISTORY_DIR/past_news_topic_keys.txt"
 PAST_NEWS_READ_SOURCES="$TMP_HISTORY_DIR/past_news_read_sources.txt"
+RUSSIA_CREATION_HISTORY_FILE="$TMP_HISTORY_DIR/russia_creation_history.tsv"
+SOVIET_CREATION_HISTORY_FILE="$TMP_HISTORY_DIR/soviet_creation_history.tsv"
+CELEBRATION_HISTORY_KEEP_LINES="${CELEBRATION_HISTORY_KEEP_LINES:-200}"
+COMMENT_CELEBRATION_HISTORY_ITEMS="${COMMENT_CELEBRATION_HISTORY_ITEMS:-12}"
 STRATEGY_ADVICE_FILE="advice.md"
 
 IMPROVE_STATE_FILE="$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_state.json"
@@ -182,7 +186,7 @@ if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
 	# history
 	for f in .past_radio_themes.txt past_radio_topics.txt past_news_read.txt \
 		past_radio_theme_bodies.txt past_news_read_keys.txt past_news_topic_keys.txt past_news_read_sources.txt rejected_hashes.txt \
-		.past_news_titles.txt .past_news_links.txt; do
+		.past_news_titles.txt .past_news_links.txt russia_creation_history.tsv soviet_creation_history.tsv; do
 		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_HISTORY_DIR/$f" 2>/dev/null
 	done
 	# debug
@@ -204,6 +208,33 @@ _last_score() {
 _recent_scores() {
 	local n="${1:-10}"
 	tail -"$n" score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}'
+}
+
+_append_celebration_history() {
+	local kind="$1" score="${2:-0}" turns="${3:-0}" game_num="${4:-0}"
+	local history_file=""
+	case "$kind" in
+	russia) history_file="$RUSSIA_CREATION_HISTORY_FILE" ;;
+	soviet) history_file="$SOVIET_CREATION_HISTORY_FILE" ;;
+	*) return 1 ;;
+	esac
+	mkdir -p "$(dirname "$history_file")" 2>/dev/null || true
+	if [ -f "$history_file" ]; then
+		local last_line last_key
+		last_line=$(tail -1 "$history_file" 2>/dev/null || true)
+		last_key=$(printf '%s' "$last_line" | awk -F'\t' 'NR==1{print $3 "\t" $4 "\t" $5}')
+		if [ "$last_key" = "${game_num}\t${score}\t${turns}" ]; then
+			return 0
+		fi
+	fi
+	local iso_ts local_ts
+	iso_ts=$(date '+%Y-%m-%dT%H:%M:%S%z' | sed 's/\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/')
+	local_ts=$(date '+%Y-%m-%d %H:%M %Z')
+	printf '%s\t%s\t%s\t%s\t%s\n' "$iso_ts" "$local_ts" "$game_num" "$score" "$turns" >>"$history_file"
+	if [ -f "$history_file" ] && [ "$(wc -l < "$history_file")" -gt "$CELEBRATION_HISTORY_KEEP_LINES" ]; then
+		tail -"$CELEBRATION_HISTORY_KEEP_LINES" "$history_file" >"${history_file}.tmp" 2>/dev/null && \
+			mv "${history_file}.tmp" "$history_file" 2>/dev/null
+	fi
 }
 
 commands_empty() { [ -z "$(tr -d '[:space:]' <"$COMMANDS" 2>/dev/null)" ]; }
@@ -1289,6 +1320,8 @@ _run_opencode_comment() {
 		"$COMMENT_SPOKEN_HISTORY_DIR" \
 		"$PAST_RADIO_TOPICS" \
 		"score_history.txt" \
+		"$RUSSIA_CREATION_HISTORY_FILE" \
+		"$SOVIET_CREATION_HISTORY_FILE" \
 		"$ROLLING_SCORES_FILE" \
 		"show_status.sh" \
 		"show_status_g.sh" \
@@ -1349,6 +1382,8 @@ _run_claude_comment_with_model() {
 		"$COMMENT_SPOKEN_HISTORY_DIR" \
 		"$PAST_RADIO_TOPICS" \
 		"score_history.txt" \
+		"$RUSSIA_CREATION_HISTORY_FILE" \
+		"$SOVIET_CREATION_HISTORY_FILE" \
 		"$ROLLING_SCORES_FILE" \
 		"show_status.sh" \
 		"show_status_g.sh" \
@@ -6379,6 +6414,49 @@ print(f"state={state}, record={record}")
 PY
 }
 
+_build_comment_celebration_history_context() {
+	python3 - "$RUSSIA_CREATION_HISTORY_FILE" "$SOVIET_CREATION_HISTORY_FILE" "$COMMENT_CELEBRATION_HISTORY_ITEMS" <<'PY'
+import sys
+from pathlib import Path
+
+russia_file = Path(sys.argv[1])
+soviet_file = Path(sys.argv[2])
+limit = max(1, int(sys.argv[3]))
+
+
+def read_entries(path: Path):
+    items = []
+    if not path.exists():
+        return items
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return items
+    for raw in lines:
+        cols = raw.strip().split("\t")
+        if len(cols) < 5:
+            continue
+        _iso_ts, local_ts, game_num, score, turns = cols[:5]
+        items.append((local_ts.strip(), game_num.strip(), score.strip(), turns.strip()))
+    return items[-limit:]
+
+
+def render_block(label: str, path: Path):
+    rows = read_entries(path)
+    if not rows:
+        return f"{label}:\n- まだ履歴なし"
+    lines = [f"{label}:"]
+    for local_ts, game_num, score, turns in reversed(rows):
+        lines.append(f"- {local_ts} / Game#{game_num} / score={score} / turns={turns}")
+    return "\n".join(lines)
+
+
+print(render_block("ロシア建国", russia_file))
+print("")
+print(render_block("ソ連建国", soviet_file))
+PY
+}
+
 _extract_strategy_advice_from_comments() {
 	local batch_file="$1"
 	[ -f "$batch_file" ] || return 0
@@ -6534,6 +6612,8 @@ generate_comment_response() {
 	past_topics=$(_radio_past_topics_block)
 	local game_state_context=""
 	game_state_context=$(_build_comment_game_context "$GAME_STATE")
+	local celebration_history_context=""
+	celebration_history_context=$(_build_comment_celebration_history_context)
 
 	local comment_context_history_file="tmp/.twitch_chat/comment_context_history.log"
 	local previous_comments_context=""
@@ -6619,6 +6699,10 @@ generate_comment_response() {
 	【前回のトーク内容（文脈参照用）】
 	${past_topics}
 
+	【建国履歴メモ】
+	${celebration_history_context:-（なし）}
+	※ ロシア建国・ソ連建国の過去履歴です。いつ起きたか、何回あったか、直近がいつかを聞かれたらこの日時付き履歴を優先して使うこと
+
 	【Twitch配信サムネイル（必要時のみ）】
 	tmp/.comment_queue/comment_screenshot.jpg にTwitch配信サムネイルがあります。
 	コメントが配信画面の様子（猫、画面、盤面の見た目、配信の雰囲気など）に言及している場合のみ、
@@ -6630,6 +6714,8 @@ generate_comment_response() {
 		- tmp/.comment_queue/spoken_history/*.txt: 最近実際に読み上げたコメント返し全文
 		- ${PAST_RADIO_TOPICS}: 過去のニュース・ラジオ題名の履歴
 		- score_history.txt: 直近から過去までのスコア履歴
+		- ${RUSSIA_CREATION_HISTORY_FILE}: ロシア建国履歴（日付時刻, game, score, turns）
+		- ${SOVIET_CREATION_HISTORY_FILE}: ソ連建国履歴（日付時刻, game, score, turns）
 		- ${ROLLING_SCORES_FILE}: 戦略ハッシュごとの rolling 指標
 		- Web検索（web / WebSearch ツール）: あなたはWeb検索ツールを持っています。確実に動作します。配信外の固有名詞、時事、人物、作品、店、イベント、株価・為替・金融データ、天気、スポーツなど、手元ファイルだけでは弱い質問は必ず検索してから答えること。「検索できない」「インターネットにアクセスできない」は事実と異なります
 		※ まず上の埋め込み済み抜粋を優先し、文脈が足りない場合だけ読むこと
@@ -6662,6 +6748,7 @@ generate_comment_response() {
 		- あなたはWeb検索ツール（web / WebSearch）を持っています。株価、為替、天気、時事、人物などの外部情報が必要な質問では、必ず検索ツールを実行してから答えること
 		- 「データフィードがない」「株価情報にアクセスできない」「リアルタイムデータがない」「情報源がない」「検索機能がない」「検索ツールがない」「外部にアクセスできない」「インターネットに接続できない」等の発言は事実に反するため禁止。検索ツールは確実に動作する
 		- Web検索を使う場合も必要最小限にとどめ、未確認の点は断定しないこと。検索したこと自体をわざわざ説明する必要はない
+		- ロシア建国やソ連建国の履歴、回数、直近達成日時を聞かれた時は、上の建国履歴メモや履歴ファイルを使って答えること。可能なら日付と時刻を一緒に言うこと
 		- グラフやステータス表示について質問されたら、必ず最初に「左は show_status_g.sh、右は show_status.sh」と明言してから説明すること
 	- 一つずつ返事する。「同志○○」と名前を呼んで反応
 	- 偉そうにしないで、フレンドリーに返事すること
@@ -6673,7 +6760,7 @@ generate_comment_response() {
 		- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
 		- 「さっきの返事」「今の話」「その件」など、自分が直前に読み上げたコメント返しへの反応は、「最近自分が実際に読み上げたコメント返し」を優先して参照すること
 		- ニュースやラジオ本編への反応は、「前回のトーク内容（文脈参照用）」を参照すること
-		- それでも文脈が足りなければ、sandbox 内の tmp/.comment_queue/spoken_history/*.txt、${PAST_RADIO_TOPICS}、score_history.txt、${ROLLING_SCORES_FILE} を追加で読んでよい
+		- それでも文脈が足りなければ、sandbox 内の tmp/.comment_queue/spoken_history/*.txt、${PAST_RADIO_TOPICS}、score_history.txt、${RUSSIA_CREATION_HISTORY_FILE}、${SOVIET_CREATION_HISTORY_FILE}、${ROLLING_SCORES_FILE} を追加で読んでよい
 		- 上の追加参照可能ファイルは、sandbox 内で実際に読める前提で案内している。読めない、権限がない、見られない、という言い訳はしないこと
 		- ただし、score_history.txt のような大きい生データについて、手元で正確な集計を即断できない場合は、権限の問題とは言わず、「いまここで厳密集計はしていない」「見えている範囲でいうと」と言い換えること
 		- 大きい履歴を使う時は、必要な範囲だけを読んで要点を述べること。権限不足を理由に逃げないこと

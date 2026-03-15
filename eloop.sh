@@ -209,6 +209,7 @@ handle_russia_celebration() {
 
 	# クリップは祝賀有効/無効に関係なく作成
 	_create_twitch_clip "🇷🇺 ロシア建国! score=${score} (Game #${game_num})" "$game_num" "${RUSSIA_CELEBRATION_CLIP_DELAY_SEC:-5}"
+	_append_celebration_history "russia" "$score" "$turns" "$game_num"
 
 	if [ "${RUSSIA_CELEBRATION_ENABLED:-0}" = "0" ]; then
 		log "[RUSSIA] 祝賀読み上げは無効化中"
@@ -235,6 +236,7 @@ handle_soviet_celebration() {
 
 	log "!!! SOVIET CREATED !!!"
 	_create_twitch_clip "☭ ソ連建国! score=${score} (Game #${game_num})" "$game_num" "${SOVIET_CELEBRATION_CLIP_DELAY_SEC:-20}"
+	_append_celebration_history "soviet" "$score" "$turns" "$game_num"
 
 	# ロシア祝賀が走っていたら中止してソ連祝賀を優先
 	_cancel_russia_celebration_worker
