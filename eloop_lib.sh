@@ -220,10 +220,11 @@ _append_celebration_history() {
 	esac
 	mkdir -p "$(dirname "$history_file")" 2>/dev/null || true
 	if [ -f "$history_file" ]; then
-		local last_line last_key
+		local last_line last_key new_key
 		last_line=$(tail -1 "$history_file" 2>/dev/null || true)
 		last_key=$(printf '%s' "$last_line" | awk -F'\t' 'NR==1{print $3 "\t" $4 "\t" $5}')
-		if [ "$last_key" = "${game_num}\t${score}\t${turns}" ]; then
+		new_key=$(printf '%s\t%s\t%s' "$game_num" "$score" "$turns")
+		if [ "$last_key" = "$new_key" ]; then
 			return 0
 		fi
 	fi
