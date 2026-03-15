@@ -52,14 +52,20 @@ _run_opencode_radio() {
 
 _run_claude_radio() {
 	local prompt_file="$1"
-	local prompt output
+	local prompt output timeout_sec
+	timeout_sec="${RADIO_CLAUDE_TIMEOUT:-120}"
 	prompt=$(cat "$prompt_file" 2>/dev/null)
 	if [ -z "$prompt" ]; then
 		return 1
 	fi
 	# command substitution に混ざらないよう stderr に出す
 	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL)" >&2
-	output=$(claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>/dev/null)
+	output=$(timeout "$timeout_sec" claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>/dev/null)
+	local rc=$?
+	if [ $rc -eq 124 ]; then
+		log "[RADIO] claude fallback timeout (${timeout_sec}s, model=$RADIO_CLAUDE_MODEL)" >&2
+		return 1
+	fi
 	if _contains_provider_error_text "$output"; then
 		log "[RADIO] claude provider error treated as failure (model=$RADIO_CLAUDE_MODEL)" >&2
 		return 1

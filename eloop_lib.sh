@@ -1425,14 +1425,20 @@ _run_claude_comment() {
 _run_claude_radio_with_model() {
 	local prompt_file="$1"
 	local model="${2:-$RADIO_CLAUDE_MODEL}"
-	local prompt output
+	local prompt output timeout_sec
+	timeout_sec="${RADIO_CLAUDE_TIMEOUT:-120}"
 	prompt=$(cat "$prompt_file" 2>/dev/null)
 	if [ -z "$prompt" ]; then
 		return 1
 	fi
 	# command substitution に混ざらないよう stderr に出す
 	log "[RADIO] claude call (model=$model)" >&2
-	output=$(claude -p "$prompt" --model "$model" 2>/dev/null)
+	output=$(timeout "$timeout_sec" claude -p "$prompt" --model "$model" 2>/dev/null)
+	local rc=$?
+	if [ $rc -eq 124 ]; then
+		log "[RADIO] claude timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
 	if _contains_provider_error_text "$output"; then
 		log "[RADIO] claude provider error treated as failure (model=$model)" >&2
 		return 1
