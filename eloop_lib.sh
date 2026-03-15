@@ -2965,9 +2965,12 @@ if not license_name:
 
 parts = ["[NEWS] " + title]
 author = (item.get("author") or "").strip()
+source = (item.get("source") or "").strip()
+source_key = (item.get("source_key") or "").strip()
+if author == "トモモ" and (source_key.startswith("wikinews") or source == "ウィキニュース" or source.startswith("Wikinews")):
+    author = ""
 if author:
     parts.append("by " + author)
-source = (item.get("source") or "").strip()
 if source:
     parts.append(source)
 url = (item.get("url") or "").strip()

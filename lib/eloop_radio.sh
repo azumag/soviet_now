@@ -700,12 +700,16 @@ start_radio_corner_news() {
 	local unread_news_headlines=""
 	unread_news_headlines=$(printf '%s\n' "$news_headlines" | _filter_unread_news_blocks)
 	if [ -z "$unread_news_headlines" ]; then
-		log "[NEWS] 全ニュースが既読 → 既読履歴をリセットして再読モードに切替"
-		: > "$PAST_NEWS_READ"
-		: > "$PAST_NEWS_READ_KEYS"
-		: > "$PAST_NEWS_TOPIC_KEYS"
-		: > "$PAST_NEWS_READ_SOURCES"
-		unread_news_headlines="$news_headlines"
+		log "[NEWS] 全ニュースが既読 → 最古の既読記録を削除して再抽出"
+		# 各履歴ファイルの先頭行（最古）を削除
+		for f in "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" "$PAST_NEWS_READ_SOURCES"; do
+			[ -f "$f" ] && [ -s "$f" ] && sed -i '' '1d' "$f"
+		done
+		unread_news_headlines=$(printf '%s\n' "$news_headlines" | _filter_unread_news_blocks)
+		if [ -z "$unread_news_headlines" ]; then
+			log "[NEWS] 最古削除後も未読なし → スキップ"
+			return 1
+		fi
 	fi
 
 	unread_news_headlines=$(_prepare_news_prompt_blocks "$unread_news_headlines")

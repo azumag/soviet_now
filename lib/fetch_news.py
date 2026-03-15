@@ -429,6 +429,8 @@ def clean_item(source: dict, item: ET.Element) -> dict | None:
         summary = trim_summary(strip_tags(raw_description))
 
     author = strip_tags(child_text(item, "creator", "author"))
+    if source["key"].startswith("wikinews") and author == "トモモ":
+        author = ""
 
     return {
         "title": title,
@@ -551,6 +553,7 @@ def render_meta(selected: list[dict]) -> dict[str, dict]:
             "url": item["url"],
             "license": item["license"],
             "lang": item.get("lang", "ja"),
+            "source_key": item.get("source_key", ""),
         }
     return meta
 
