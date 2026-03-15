@@ -670,7 +670,7 @@ start_radio_corner_theme() {
 	export persona_block
 	persona_block=$(_radio_persona_block)
 	export output_rules
-	output_rules=$(_radio_output_rules 1000 2000)
+	output_rules=$(_radio_output_rules 1000 2400)
 	export _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics game_num score
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_theme.md" > "$prompt_file"
 	unset persona_block output_rules _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics
@@ -692,7 +692,7 @@ start_radio_corner_soviet() {
 	export persona_block
 	persona_block=$(_radio_persona_block)
 	export output_rules
-	output_rules=$(_radio_output_rules 1000 2000)
+	output_rules=$(_radio_output_rules 1000 2400)
 	export _rc_time _rc_period _rc_mood soviet_theme past_topics game_num score
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_soviet.md" > "$prompt_file"
 	unset persona_block output_rules _rc_time _rc_period _rc_mood soviet_theme past_topics

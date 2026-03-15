@@ -1401,11 +1401,17 @@ _run_claude_comment_with_model() {
 		destroy_sandbox "$sandbox_dir"
 		return 1
 	}
+	local stderr_file
+	stderr_file=$(mktemp /tmp/eloop_claude_comment_stderr_XXXXXXXX)
 	output=$(
 		cd "$sandbox_dir" &&
-			timeout "$timeout_sec" claude -p "$(cat 'tmp/comment_prompt.txt')" --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk --strict-mcp-config 2>/dev/null
+			timeout "$timeout_sec" claude -p "$(cat 'tmp/comment_prompt.txt')" --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk --strict-mcp-config 2>"$stderr_file"
 	)
 	local rc=$?
+	if [ -s "$stderr_file" ]; then
+		log "[COMMENT] claude stderr: $(head -c 500 "$stderr_file")" >&2
+	fi
+	rm -f "$stderr_file"
 	destroy_sandbox "$sandbox_dir"
 	if [ $rc -eq 124 ]; then
 		log "[COMMENT] claude timeout (${timeout_sec}s, model=$model)" >&2
@@ -3862,7 +3868,7 @@ start_radio_corner_theme() {
 	export persona_block
 	persona_block=$(_radio_persona_block)
 	export output_rules
-	output_rules=$(_radio_output_rules 1000 2000)
+	output_rules=$(_radio_output_rules 1000 2400)
 	export _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics game_num score
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_theme.md" > "$prompt_file"
 	unset persona_block output_rules _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics
