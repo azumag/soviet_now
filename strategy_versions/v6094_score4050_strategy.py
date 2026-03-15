@@ -38,13 +38,16 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
-# v236: 危険域reactive_pairs>=3でのheightペナルティ軽減強化版 - 危険域延命戦略改善・last_rollback_analysis failure mode潰し
-# last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
-# ワーストゲーム(score0748)終盤turns 62-69: reactive_pairs=4-5、max_y=1.86→4.21、merge_available=falseでREACTIVE_PAIRS_HEIGHT_RELAXEDが続き危険域拡大。
-# ベストゲーム(score2414)終盤turns 112-119: max_y=2.15→3.18、reactive_pairs=2-3で即時併合または盤面圧縮選択を交互に行い延命成功。
-# v235のreactive_pairs>=1一律0.5倍軽減では、reactive_pairsが多い危険域(max_y>=2.0)で盤面圧迫緩和が不十分。
-# 危険域(max_y>=2.0)かつreactive_pairs>=3の場合、height_penaltyを0.25倍にさらに軽減し、盤面圧迫を大幅緩和して縦方向の積み上げ優先。
-# refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260315_161559_score0748.jsonl turns 62-69, game_history/20260315_162656_score2414.jsonl turns 112-119
+ # v240: reactive_pairs段階的軽減版 - 危険域盤面圧迫緩和・last_rollback_postmortem failure mode潰し
+ # last_rollback_postmortem: v239のreactive_pairs非併合heightペナルティ漸増(1.5-2.5倍)は即時併合機会を取りこぼし悪化
+ # ワーストゲーム(score0606)終盤turns 53-60: reactive_pairs=2-4、merge_available=falseでREACTIVE_PAIRS_HEIGHT_RELAXED_DANGERが続きmax_y=2.42→2.94に悪化
+ # ワーストゲーム(score1063)終盤turns 62-72: reactive_pairs=3-6、merge_available=falseでDANGER_ZONE_HEIGHT_RELAXEDが続きmax_y=2.24→3.22に悪化
+ # ベストゲーム(score4793)終盤turns 194-201: reactive_pairs=0-1、max_y=2.88-2.97で安定。即時併合ありターンとないターンが分かれている
+ # ベストゲーム(score2978)終盤turns 121-128: reactive_pairs=1-2、max_y=2.38-3.38で即時併合を選択したターンでmax_y低下
+ # v236のreactive_pairs>=3一律0.25倍軽減では、reactive_pairsが少ない状況(1-2)で盤面圧迫緩和が不十分
+ # reactive_pairs数に応じて段階的にheight_penaltyを軽減: reactive_pairs==1: 0.8倍, >=2: 0.6倍, >=3: 0.5倍
+ # これによりreactive_pairsの数に応じた適切な盤面圧迫緩和を実現し、危険域でのmax_y悪化を抑制
+ # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260315_193628_score0606.jsonl turns 53-60, game_history/20260315_193001_score1063.jsonl turns 62-72, game_history/20260315_191631_score4793.jsonl turns 194-201, game_history/20260315_190207_score2978.jsonl turns 121-128
 # last_rollback_analysis: anchor比でcomp=-308.7 p50=-456.5 p25=-124.0と明確に悪化。
 # ワーストゲーム(score0991)終盤turns 55-62でmax_y=0.86→2.87、reactive_pairs=4→3あるのにmerge_available=falseでHIGH_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score2647)終盤turns 112-119でmax_y=2.15→3.18、即時併合を選択したターンと非併合を選択したターンが分かれている。
@@ -254,17 +257,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260315_161559_score0748.jsonl turns 62-69, game_history/20260315_162656_score2414.jsonl turns 112-119
         
         # Apply height penalty relaxation based on reactive_pairs count and danger zone
+        # v240: reactive_pairs段階的軽減版 - reactive_pairs数に応じて段階的にheight_penaltyを軽減
         if max_y >= 2.0:
             # Danger zone: more aggressive relaxation with more reactive pairs
             if reactive_pair_count >= 3 and merge_grade == "NO":
-                height_penalty *= 0.25  # Strong relief in danger zone with abundant reactive pairs
+                height_penalty *= 0.5  # reactive_pairs>=3: 0.5倍軽減（v236: 0.25倍から緩和）
                 reasons.append("DANGER_ZONE_HEIGHT_RELAXED")
             elif reactive_pair_count >= 2 and merge_grade == "NO":
-                height_penalty *= 0.5
+                height_penalty *= 0.6  # reactive_pairs>=2: 0.6倍軽減（v236: 0.5倍から緩和）
+                reasons.append("REACTIVE_PAIRS_HEIGHT_RELAXED_DANGER")
+            elif reactive_pair_count >= 1 and merge_grade == "NO":
+                height_penalty *= 0.8  # reactive_pairs==1: 0.8倍軽減（新規）
                 reasons.append("REACTIVE_PAIRS_HEIGHT_RELAXED_DANGER")
         elif reactive_pair_count >= 1 and merge_grade == "NO":
             # Normal zone: standard relaxation
-            height_penalty *= 0.5
+            if reactive_pair_count >= 3:
+                height_penalty *= 0.5  # reactive_pairs>=3: 0.5倍軽減
+            elif reactive_pair_count >= 2:
+                height_penalty *= 0.6  # reactive_pairs>=2: 0.6倍軽減
+            else:
+                height_penalty *= 0.8  # reactive_pairs==1: 0.8倍軽減
             reasons.append("REACTIVE_PAIRS_HEIGHT_RELAXED")
 
         if phase == "HIGH" and landing_y > 0.5:
