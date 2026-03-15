@@ -1374,10 +1374,6 @@ _run_opencode_comment() {
 _run_claude_comment_with_model() {
 	local prompt_file="$1"
 	local model="${2:-$RADIO_CLAUDE_MODEL}"
-	if _is_claude_busy; then
-		log "[COMMENT] claude skipped: improve process is running (model=$model)" >&2
-		return 1
-	fi
 	local sandbox_dir sandbox_prompt output timeout_sec
 	timeout_sec="${COMMENT_CLAUDE_TIMEOUT:-180}"
 	sandbox_dir=$(create_sandbox \
@@ -1426,18 +1422,6 @@ _run_claude_comment() {
 	_run_claude_comment_with_model "$1" "$RADIO_CLAUDE_MODEL"
 }
 
-_is_claude_busy() {
-	# improve が claude/sonnet/opus を使用中かチェック
-	if [ -f "$IMPROVE_STATE_FILE" ]; then
-		local status
-		status=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('status',''))" "$IMPROVE_STATE_FILE" 2>/dev/null || echo "")
-		if [ "$status" = "running" ]; then
-			return 0
-		fi
-	fi
-	return 1
-}
-
 _run_claude_radio_with_model() {
 	local prompt_file="$1"
 	local model="${2:-$RADIO_CLAUDE_MODEL}"
@@ -1447,16 +1431,22 @@ _run_claude_radio_with_model() {
 	if [ -z "$prompt" ]; then
 		return 1
 	fi
-	if _is_claude_busy; then
-		log "[RADIO] claude skipped: improve process is running (model=$model)" >&2
-		return 1
-	fi
 	# command substitution に混ざらないよう stderr に出す
-	log "[RADIO] claude call (model=$model)" >&2
-	output=$(timeout "$timeout_sec" claude -p "$prompt" --model "$model" 2>/dev/null)
+	log "[RADIO] claude call (model=$model, prompt=${#prompt}B)" >&2
+	local stderr_file
+	stderr_file=$(mktemp /tmp/eloop_claude_stderr_XXXXXXXX)
+	output=$(timeout "$timeout_sec" claude -p "$prompt" --model "$model" 2>"$stderr_file")
 	local rc=$?
+	if [ -s "$stderr_file" ]; then
+		log "[RADIO] claude stderr: $(head -c 500 "$stderr_file")" >&2
+	fi
+	rm -f "$stderr_file"
 	if [ $rc -eq 124 ]; then
 		log "[RADIO] claude timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[RADIO] claude failed (rc=$rc, model=$model)" >&2
 		return 1
 	fi
 	if _contains_provider_error_text "$output"; then

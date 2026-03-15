@@ -59,11 +59,21 @@ _run_claude_radio() {
 		return 1
 	fi
 	# command substitution に混ざらないよう stderr に出す
-	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL)" >&2
-	output=$(timeout "$timeout_sec" claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>/dev/null)
+	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL, prompt=${#prompt}B)" >&2
+	local stderr_file
+	stderr_file=$(mktemp /tmp/eloop_claude_stderr_XXXXXXXX)
+	output=$(timeout "$timeout_sec" claude -p "$prompt" --model "$RADIO_CLAUDE_MODEL" 2>"$stderr_file")
 	local rc=$?
+	if [ -s "$stderr_file" ]; then
+		log "[RADIO] claude stderr: $(head -c 500 "$stderr_file")" >&2
+	fi
+	rm -f "$stderr_file"
 	if [ $rc -eq 124 ]; then
 		log "[RADIO] claude fallback timeout (${timeout_sec}s, model=$RADIO_CLAUDE_MODEL)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[RADIO] claude fallback failed (rc=$rc, model=$RADIO_CLAUDE_MODEL)" >&2
 		return 1
 	fi
 	if _contains_provider_error_text "$output"; then
