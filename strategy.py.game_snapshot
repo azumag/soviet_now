@@ -33,20 +33,22 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-   # --- Change History ---
-   # [BEST:3689] v126: v42-based HIGH phase merge enhancement
-   # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
-   # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
-   #
-   # v238: 未活用情報near_pairs活用による即時併合強化版 - HEIGHT_CONTROL過剰選択解消・rollback failure mode潰し
-   #
-   # last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
-   # batch_summary: HEIGHT_CONTROLが15.7%選択(avg_score_delta=0.4)と過剰、REACTIVE_PAIRS_HEIGHT_RELAXED avg_score_delta=5.6 は高いが選択率が低い。
-   # advice.md「盤面が詰まっても即時併合を狙うべきだ」「高さがリスクになる局面はほぼ詰みの状態が多く、高さによる危険回避の重要性は低く見てよい」
-   # v237の危険域定義拡大(max_y>=1.8)とheight_penalty軽減(0.2倍)は数値微調整であり、構造的変更が不十分。
-   # 未活用情報のnear_pairs（反応器に近いペア）を活用した新しい評価軸(axis 8.2)を追加し、即時併合機会を強化。
-   # これによりHEIGHT_CONTROL過剰選択を構造的に解消し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
-   # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, analyze_board.py
+    # --- Change History ---
+    # [BEST:3689] v126: v42-based HIGH phase merge enhancement
+    # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
+    # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
+    #
+    # v239: reactive_pairs非併合ペナルティ漸増版 - rollback failure mode潰し・即時併合機会優先強化
+    # last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
+    # ワーストゲーム(score0935)終盤turns 57-70でreactive_pairs=3-4、merge_grade="NO"でDANGER_ZONE_HEIGHT_RELAXED_HIGH_TOWER/LAYERが続き、即時併合機会を見逃しゲームオーバー。
+    # ベストゲーム(score2969)終盤turns 100-127でreactive_pairs=1-3で、即時併合と非併合を選択し分け、即時併合を確実に捉えている。
+    # v238のheight_penalty軽減(0.2倍/0.5倍)はreactive_pairsがある場合に緩和しすぎており、非併合位置を頻繁に選択して即時併合機会を逃している問題を解消。
+    # reactive_pairs数に応じて非併合heightペナルティを漸増的に強化し、reactive_pairs>=2で非併合の場合はペナルティを1.5倍、>=3で2.0倍、>=5で2.5倍に。
+    # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, tmp/change_log.txt, game_history/20260315_173442_score0935.jsonl, game_history/20260315_180737_score2969.jsonl
+    # v238のheight_penalty軽減(0.2倍/0.5倍)はreactive_pairsがある場合に緩和しすぎており、非併合位置を頻繁に選択して即時併合機会を逃している問題を解消。
+    # reactive_pairs数に応じて非併合heightペナルティを漸増的に強化し、reactive_pairs>=2で非併合の場合はペナルティを1.5倍、>=3で2.0倍、>=5で2.5倍に。
+    # これによりreactive_pairsがある状況で即時併合機会をより積極的に探し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
+    # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260315_173442_score0935.jsonl turns 57-70, game_history/20260315_180737_score2969.jsonl turns 100-127
    #
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
@@ -132,15 +134,15 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v238: 未活用情報near_pairs活用による即時併合強化版 - HEIGHT_CONTROL過剰選択解消・rollback failure mode潰し
+    """v239: reactive_pairs非併合ペナルティ漸増版 - rollback failure mode潰し・即時併合機会優先強化
 
     last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
-    batch_summary: HEIGHT_CONTROLが15.7%選択(avg_score_delta=0.4)と過剰、REACTIVE_PAIRS_HEIGHT_RELAXED avg_score_delta=5.6 は高いが選択率が低い。
-    advice.md「盤面が詰まっても即時併合を狙うべきだ」「高さがリスクになる局面はほぼ詰みの状態が多く、高さによる危険回避の重要性は低く見てよい」
-    v237の危険域定義拡大(max_y>=1.8)とheight_penalty軽減(0.2倍)は数値微調整であり、構造的変更が不十分。
-    未活用情報のnear_pairs（反応器に近いペア）を活用した新しい評価軸(axis 8.2)を追加し、即時併合機会を強化。
-    これによりHEIGHT_CONTROL過剰選択を構造的に解消し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
-    refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, analyze_board.py
+    ワーストゲーム(score0935)終盤turns 57-70でreactive_pairs=3-4、merge_grade="NO"でDANGER_ZONE_HEIGHT_RELAXED_HIGH_TOWER/LAYERが続き、即時併合機会を見逃しゲームオーバー。
+    ベストゲーム(score2969)終盤turns 100-127でreactive_pairs=1-3で、即時併合と非併合を選択し分け、即時併合を確実に捉えている。
+    v238のheight_penalty軽減(0.2倍/0.5倍)はreactive_pairsがある場合に緩和しすぎており、非併合位置を頻繁に選択して即時併合機会を逃している問題を解消。
+    reactive_pairs数に応じて非併合heightペナルティを漸増的に強化し、reactive_pairs>=2で非併合の場合はペナルティを1.5倍、>=3で2.0倍、>=5で2.5倍に。
+    これによりreactive_pairsがある状況で即時併合機会をより積極的に探し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
+    refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260315_173442_score0935.jsonl turns 57-70, game_history/20260315_180737_score2969.jsonl turns 100-127
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -237,29 +239,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
         height_penalty = landing_y * 50.0 * height_mult
 
-        # v237: 危険域定義拡大とreactive_pairs活用強化版 - rollback failure mode潰し
+        # v239: reactive_pairs非併合ペナルティ漸増版 - rollback failure mode潰し・即時併合機会優先強化
         # last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
-        # ワーストゲーム(score1032)終盤turns 74-81: reactive_pairs=7-9、max_y=2.64→3.50でDANGER_ZONE_HEIGHT_RELAXED_HIGH_LAYER/TOWERが続き、即時併合機会を取りこぼしゲームオーバー。
-        # ベストゲーム(score2404)終盤turns 104-111: max_y=2.03→3.03でHIGH_TOWER判断が多いが、即時併合を確実に捉えている。
-        # advice.md「高さがリスクになる局面はほぼ詰みの状態が多く、高さによる危険回避の重要性は低く見てよい」「盤面が詰まっても即時併合を狙うべきだ」を踏まえ、危険域でのHIGH_LAYER/TOWER判断を抑制。
-        # v236の危険域定義(max_y>=2.0)では遅すぎ、HIGHフェーズ(height_mult=1.8)でHIGH_LAYER/TOWER判断が優先され、即時併合が抑制される問題を解消。
-        # 危険域定義をmax_y>=1.8から開始し、reactive_pairs>=2の場合、height_penaltyを0.2倍に大幅軽減して盤面圧縮を優先。
-        # これにより危険域でのHEIGHT_CONTROL選択を抑制し、reactive_pairs活用による即時併合機会を優先して、p25悪化の主要因である「即時併合機会があるのにHIGH_LAYER/TOWER」問題を解消。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260315_165657_score1032.jsonl turns 74-81, game_history/20260315_164722_score2404.jsonl turns 104-111
+        # ワーストゲーム(score0935)終盤turns 57-70でreactive_pairs=3-4、merge_grade="NO"でDANGER_ZONE_HEIGHT_RELAXED_HIGH_TOWER/LAYERが続き、即時併合機会を見逃しゲームオーバー。
+        # ベストゲーム(score2969)終盤turns 100-127でreactive_pairs=1-3で、即時併合と非併合を選択し分け、即時併合を確実に捉えている。
+        # v238のheight_penalty軽減(0.2倍/0.5倍)はreactive_pairsがある場合に緩和しすぎており、非併合位置を頻繁に選択して即時併合機会を逃している問題を解消。
+        # reactive_pairs数に応じて非併合heightペナルティを漸増的に強化し、reactive_pairs>=2で非併合の場合はペナルティを1.5倍、>=3で2.0倍、>=5で2.5倍に。
+        # これによりreactive_pairsがある状況で即時併合機会をより積極的に探し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260315_173442_score0935.jsonl turns 57-70, game_history/20260315_180737_score2969.jsonl turns 100-127
         
-        # Apply height penalty relaxation based on reactive_pairs count and danger zone
-        if max_y >= 1.8:
-            # Danger zone (expanded from max_y>=2.0 to max_y>=1.8): aggressive relaxation with reactive pairs
-            if reactive_pair_count >= 2 and merge_grade == "NO":
-                height_penalty *= 0.2  # Strong relief to suppress HIGH_LAYER/TOWER and prioritize immediate merge
-                reasons.append("DANGER_ZONE_HEIGHT_RELAXED")
-            elif reactive_pair_count >= 1 and merge_grade == "NO":
-                height_penalty *= 0.5
-                reasons.append("REACTIVE_PAIRS_HEIGHT_RELAXED")
+        # Apply height penalty modifier based on reactive_pairs count when no immediate merge available
+        # This makes the strategy more selective about choosing non-merge positions when reactive_pairs exist
+        if reactive_pair_count >= 5 and merge_grade == "NO":
+            # Abundant reactive pairs: apply stronger penalty to discourage non-merge
+            height_penalty *= 2.5
+            reasons.append("ABUNDANT_REACTIVE_PENALTY")
+        elif reactive_pair_count >= 3 and merge_grade == "NO":
+            # Multiple reactive pairs: moderate penalty increase
+            height_penalty *= 2.0
+            reasons.append("MULTIPLE_REACTIVE_PENALTY")
         elif reactive_pair_count >= 1 and merge_grade == "NO":
-            # Normal zone: standard relaxation
-            height_penalty *= 0.5
-            reasons.append("REACTIVE_PAIRS_HEIGHT_RELAXED")
+            # Some reactive pairs: slight penalty
+            height_penalty *= 1.5
+            reasons.append("REACTIVE_PENALTY")
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
