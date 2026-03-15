@@ -27,7 +27,7 @@ LAST_NEWS_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success.txt")
 LAST_NEWS_META_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success_meta.json")
 NEWS_ALLOW_STALE_CACHE = os.environ.get("NEWS_ALLOW_STALE_CACHE", "0")
 
-OUTPUT_COUNT = 3
+PER_SOURCE_LIMIT = 30
 SUMMARY_LIMIT = 4000
 REQUEST_TIMEOUT = 8.0
 USER_AGENT = "soren-news-fetcher/1.0"
@@ -492,40 +492,24 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> dict[str, list
 
 
 def pick_articles(candidates: dict[str, list[dict]]) -> list[dict]:
+    """Return all candidate articles, interleaved across sources for diversity."""
     source_order = [source["key"] for source in SOURCES if candidates.get(source["key"])]
     random.shuffle(source_order)
 
     selected = []
     offsets = {key: 0 for key in source_order}
-    family_used: dict[str, int] = {}
 
-    # First pass: pick at most 1 from each family for diversity
-    for key in source_order:
-        fam = source_family(key)
-        if family_used.get(fam, 0) >= 1:
-            continue
-        items = candidates.get(key, [])
-        if not items:
-            continue
-        selected.append(items[0])
-        offsets[key] = 1
-        family_used[fam] = family_used.get(fam, 0) + 1
-        if len(selected) >= OUTPUT_COUNT:
-            return selected
-
-    # Second pass: fill remaining from any source
-    while len(selected) < OUTPUT_COUNT:
+    # Round-robin across sources for diversity
+    while True:
         progressed = False
         for key in source_order:
             index = offsets.get(key, 0)
             items = candidates.get(key, [])
-            if index >= len(items):
+            if index >= len(items) or index >= PER_SOURCE_LIMIT:
                 continue
             selected.append(items[index])
             offsets[key] = index + 1
             progressed = True
-            if len(selected) >= OUTPUT_COUNT:
-                break
         if not progressed:
             break
 
