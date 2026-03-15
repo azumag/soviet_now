@@ -3011,6 +3011,7 @@ _post_phyrogenetic_tree_link_to_chat() {
 	local event_type="$1" before_hash="$2" after_hash="$3" commit_hash="${4:-}"
 	[ -n "$PHYROGENETIC_TREE_URL" ] || return 0
 	local head_commit last_commit action before_short after_short transition chat_text
+	local target_hash detail_info detail_label detail_anchor tree_url
 	head_commit="$commit_hash"
 	[ -n "$head_commit" ] || head_commit=$(git rev-parse HEAD 2>/dev/null || true)
 	[ -n "$head_commit" ] || return 0
@@ -3029,7 +3030,24 @@ _post_phyrogenetic_tree_link_to_chat() {
 	if [ -n "$before_short" ] && [ -n "$after_short" ] && [ "$before_short" != "$after_short" ]; then
 		transition=" ${before_short}->${after_short}"
 	fi
-	chat_text="${action}${transition}。系統樹はこちら: ${PHYROGENETIC_TREE_URL}"
+	target_hash="${after_hash:-$before_hash}"
+	tree_url="$PHYROGENETIC_TREE_URL"
+	if [ -n "$target_hash" ]; then
+		detail_info=$(python3 generate_phyrogenetic_tree.py --print-detail-anchor-for "$target_hash" 2>/dev/null || true)
+		if [ -n "$detail_info" ]; then
+			IFS=$'\t' read -r detail_label detail_anchor <<EOF
+$detail_info
+EOF
+			if [ -n "$detail_label" ] && [ -n "$detail_anchor" ]; then
+				tree_url="${PHYROGENETIC_TREE_URL}#${detail_anchor}"
+			fi
+		fi
+	fi
+	if [ -n "$detail_label" ]; then
+		chat_text="${action}${transition}。系統樹はこちら(${detail_label}): ${tree_url}"
+	else
+		chat_text="${action}${transition}。系統樹はこちら: ${tree_url}"
+	fi
 	(
 		local send_output rc
 		send_output=$(./twitch_chat.sh send "$chat_text" 2>&1)

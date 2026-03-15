@@ -12,6 +12,7 @@ import argparse
 import ast
 import json
 import math
+import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -397,6 +398,30 @@ def chunk_nodes(ordered_nodes: list[Node], chunk_size: int) -> list[list[Node]]:
     return [ordered_nodes[i : i + chunk_size] for i in range(0, len(ordered_nodes), chunk_size)]
 
 
+def detail_heading(index: int, total: int) -> str:
+    return f"Detail {index}/{total}"
+
+
+def github_anchor_slug(text: str) -> str:
+    slug = text.strip().lower()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"\s+", "-", slug)
+    return slug
+
+
+def find_detail_section_for_hash(builder: GraphBuilder, target_hash: str) -> tuple[str, str] | None:
+    if not target_hash:
+        return None
+    ordered_nodes = sorted(builder.nodes.values(), key=lambda n: (n.first_order, n.hash_value))
+    chunks = chunk_nodes(ordered_nodes, DETAIL_CHUNK_NODE_LIMIT)
+    total = len(chunks)
+    for index, chunk in enumerate(chunks, start=1):
+        if any(node.hash_value == target_hash for node in chunk):
+            heading = detail_heading(index, total)
+            return f"detail{index}/{total}", github_anchor_slug(heading)
+    return None
+
+
 def edge_text(edge: Edge) -> str:
     if edge.kind == "rollback":
         return f"{edge.src} -.rollback.-> {edge.dst}"
@@ -518,7 +543,7 @@ def render_markdown(builder: GraphBuilder, current_hash: str, anchor_hash: str) 
             if src_in ^ dst_in:
                 boundary_edges.append(edge_text(edge))
 
-        lines.append(f"## Detail {index}/{len(chunks)}")
+        lines.append(f"## {detail_heading(index, len(chunks))}")
         lines.append("")
         lines.append(f"- Range: `{chunk[0].hash_value}` .. `{chunk[-1].hash_value}`")
         lines.append(f"- Nodes in this diagram: `{len(chunk)}`")
@@ -539,6 +564,7 @@ def render_markdown(builder: GraphBuilder, current_hash: str, anchor_hash: str) 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="phyrogenetic-tree.md")
+    parser.add_argument("--print-detail-anchor-for", default="")
     parser.add_argument(
         "--pending-edge",
         nargs=3,
@@ -558,6 +584,12 @@ def main() -> int:
         pending_edges.append((kind, src, dst))
 
     builder, current_hash, anchor_hash = collect_graph(pending_edges)
+    if args.print_detail_anchor_for:
+        detail = find_detail_section_for_hash(builder, str(args.print_detail_anchor_for))
+        if not detail:
+            return 1
+        print(f"{detail[0]}\t{detail[1]}")
+        return 0
     output_path = (ROOT / args.output).resolve() if not Path(args.output).is_absolute() else Path(args.output)
     output_path.write_text(render_markdown(builder, current_hash, anchor_hash), encoding="utf-8")
     return 0
