@@ -37,6 +37,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v234: reactive_pairs>=5での非併合heightペナルティ軽減版 - 即時併合機会がない状況での盤面圧迫緩和・延命戦略優先（v229 rollback failure mode潰し）
+# last_rollback_postmortem: v229が非併合ペナルティを-3500/-4500に強化したため、reactive_pairsがあるのに即時併合機会がない局面でペナルティが暴走
+# ワーストゲーム(score0732)終盤turns 54-61でreactive_pairs=3-4あるのにmerge_available=falseでHIGH_TOWER選択が続き、max_y=0.52→2.73に上昇しゲームオーバー
+# ベストゲーム(score2266)終盤turns 108-118ではreactive_pairs=1-3で、即時併合を選択したターンと非併合を選択したターンが分かれている
+# reactive_pairsが非常に多い(>=5)場合、即時併合機会がない状況でも盤面圧迫が進行し、悪循環に陥る可能性がある。
+# reactive_pairs>=5かつmerge_grade=="NO"の場合、height_multiplierを0.5倍に軽減し、盤面圧迫を緩和して延命戦略を優先。
+# これによりreactive_pairsが非常に多い状況での盤面圧迫を緩和し、ゲームオーバー直前の立て直しを改善する。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260315_105506_score0732.jsonl turns 54-61, game_history/20260315_103307_score2266.jsonl turns 108-118, advice.md
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
@@ -271,6 +279,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
         height_penalty = landing_y * 50.0 * height_mult
+
+        # v234: reactive_pairs>=5での非併合heightペナルティ軽減版 - 即時併合機会がない状況での盤面圧迫緩和・延命戦略優先
+        # last_rollback_postmortem: v229が非併合ペナルティを-3500/-4500に強化したため、reactive_pairsがあるのに即時併合機会がない局面でペナルティが暴走
+        # reactive_pairsが非常に多い(>=5)場合、即時併合機会がない状況でも盤面圧迫が進行し、悪循環に陥る可能性がある。
+        # reactive_pairs>=5かつmerge_grade=="NO"の場合、height_multiplierを0.5倍に軽減し、盤面圧迫を緩和して延命戦略を優先。
+        # これによりreactive_pairsが非常に多い状況での盤面圧迫を緩和し、ゲームオーバー直前の立て直しを改善する。
+        if reactive_pair_count >= 5 and merge_grade == "NO":
+            height_penalty *= 0.5
+            reasons.append("ABUNDANT_PAIRS_HEIGHT_RELAXED")
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
