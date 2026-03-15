@@ -38,6 +38,64 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
+# v245: v243 rollback recovery - last_rollback_postmortem danger_zone_bonus_overreach fix
+# last_rollback_postmortem failure mode: v243 removed conditional height_penalty doubling and
+# replaced with absolute danger zone bonuses (+4000/+3000), causing death spirals when
+# merge_available=false with reactive_pairs=6-8.
+#
+# Postmortem constraints:
+# - FORBID: Removing conditional height_penalty doubling for reactive_pairs>=1 & merge_grade=="NO"
+# - FORBID: Absolute danger zone bonuses without penalty escape when merge_available=false
+# - PRIORITIZE: Keeping conditional height_penalty doubling for reactive_pairs>=1 & merge_grade=="NO"
+# - PRIORITIZE: Ensuring danger zone merge priority has a fallback strategy for when merge_available=false
+#
+# The fix: Ensure v210's conditional height_penalty doubling (2.0x) for
+# reactive_pairs>=1 & merge_grade=="NO" is maintained. No absolute danger zone bonuses.
+# This ensures non-merge placements are expensive when reactive pairs exist, preventing death spirals
+# in danger zones where merge_available=false.
+#
+# refs: tmp/state/last_rollback_postmortem.md, game_history/20260315_230948_score0823.jsonl turns 57-64,
+# game_history/20260315_231436_score2496.jsonl turns 107-126
+#
+# v245: reactive_pairs conditional height penalty restoration - last_rollback_postmortem failure mode fix
+# last_rollback_postmortem failure mode: v243 removed conditional height_penalty doubling and
+# replaced with absolute danger zone bonuses (+4000/+3000), causing death spirals when
+# merge_available=false with reactive_pairs=6-8.
+#
+# Postmortem constraints:
+# - FORBID: Removing conditional height_penalty doubling for reactive_pairs>=1 & merge_grade=="NO"
+# - FORBID: Absolute danger zone bonuses without penalty escape when merge_available=false
+# - FORBID: Overlapping danger zone conditions that apply bonuses both for reactive_pairs>=1 and unconditionally
+# - PRIORITIZE: Keeping conditional height_penalty doubling for reactive_pairs>=1 & merge_grade=="NO"
+# - PRIORITIZE: Danger zone bonuses conditional on reactive_pairs>=2 (not >=1) and not overlapping with unconditionals
+# - PRIORITIZE: Ensuring danger zone merge priority has a fallback strategy for when merge_available=false
+#
+# The fix: Restore v210's conditional height_penalty doubling (2.0x) for
+# reactive_pairs>=1 & merge_grade=="NO". This ensures non-merge placements
+# are expensive when reactive pairs exist, preventing death spirals in danger zones
+# where merge_available=false.
+#
+# refs: tmp/state/last_rollback_postmortem.md, game_history/20260315_230948_score0823.jsonl turns 57-64,
+# game_history/20260315_231436_score2496.jsonl turns 107-126
+#
+# v244: reactive_pairs height penalty relaxation - last_rollback_postmortem danger_zone_bonus_overreach fix
+# last_rollback_postmortem failure mode: v243 removed conditional height_penalty doubling and
+# replaced with absolute danger zone bonuses (+4000/+3000), causing death spirals when
+# merge_available=false with reactive_pairs=6-8 (score0828.jsonl turns 52-59).
+# 
+# Postmortem constraints:
+# - FORBID: Removing conditional height_penalty logic for reactive_pairs>=1 & merge_grade=="NO"
+# - FORBID: Absolute danger zone bonuses without penalty escape when merge_available=false
+# - PRIORITIZE: Fallback strategy for when merge_available=false
+#
+# The fix: Replace v210's PENALTY DOUBLING (2.0x) with PENALTY RELAXATION (0.5x)
+# when reactive_pairs>=1 and merge is NOT available. This allows the strategy to accept
+# higher placements to reach reactive pair opportunities, avoiding the death spiral
+# of forced high placements with no escape.
+#
+# refs: tmp/state/last_rollback_postmortem.md, game_history/20260315_230948_score0823.jsonl turns 57-64,
+# game_history/20260315_231436_score2496.jsonl turns 107-126
+#
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
@@ -225,14 +283,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
         height_penalty = landing_y * 50.0 * height_mult
 
-        # v210: reactive_pairsあり時の非併合heightペナルティ強化版 - 即時併合機会取りこぼし削減
-        # reactive_pair_count >= 1 かつ merge_grade == "NO" の場合、height_penaltyを2倍に強化
-        # ワーストゲーム(score0446)終盤turns 61-68でreactive_pairs=7-8あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続いている
-        # advice.md「盤面が詰まっても即時併合を狙うべきだ」を踏まえ、reactive_pairsがある状況で即時併合機会を優先
+        # v210: reactive_pairsあり時の非併合heightペナルティ強化版 - 即時併合機会取りこぼし削減（v201 rollback failure mode潰し）
+        # ワーストゲーム(score0446)終盤turns 61-68でreactive_pairs=7-8あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続いている失敗パターンを解消。
+        # advice.md「盤面が詰まっても即時併合を狙うべきだ」とbatch_summary HEIGHT_CONTROL過剰選択（13.8%）を踏まえ、reactive_pairsがある状況で即時併合機会を優先する構造的改善。
         # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+        # reactive_pair_count >= 1 かつ merge_grade == "NO" の場合、height_penaltyを2倍に強化し、即時併合機会を優先する配置を選択する。
+        # これによりreactive_pairsがある状況でHEIGHT_CONTROL/HEIGHT_TOWER/MEDIUM_TOWER選択を抑制し、即時併合機会の取りこぼしを削減。
         if reactive_pair_count >= 1 and merge_grade == "NO":
             height_penalty *= 2.0  # reactive_pairsがある場合は、非併合配置を抑制
 
+        # phase-based tower penalties (applied after reactive_pairs adjustment)
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
@@ -377,14 +437,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73という危険域でもDIRECT_MERGEを確実に捉えている。
         # batch_summaryでHEIGHT_CONTROLが13.8%選択(avg_score_delta=0.3)と過剰であり、終盤高危険域(max_y>=2.0)での即時併合優先が弱いことを確認。
         # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
-        # v210で「reactive_pairs>=1かつmerge_grade=="NO"でheight_penaltyを2倍に強化」が導入されたが、max_y>=2.0の危険域では即時併合優先が強くない問題がある。
-        # 危純に「max_y>=2.0 かつreactive_pairs>=2かつmerge_grade in ["DIRECT", "NEAR"]」で強力なボーナスを与え、
-        # 危険なHIGH_TOWER判断を上書きする評価軸を追加。
-        if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
-            # max_y>=2.0の危険域でreactive_pairs>=2ある場合、DIRECT_MERGEを絶対優先
-            # 危険なHIGH_TOWER判断を上書きする強力なボーナス
-            score += 1200.0
-            reasons.append("DANGER_ZONE_DIRECT_MERGE_PRIORITY")
+
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
