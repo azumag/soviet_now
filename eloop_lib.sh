@@ -6448,7 +6448,12 @@ def render_block(label: str, path: Path):
         return f"{label}:\n- まだ履歴なし"
     lines = [f"{label}:"]
     for local_ts, game_num, score, turns in reversed(rows):
-        lines.append(f"- {local_ts} / Game#{game_num} / score={score} / turns={turns}")
+        parts = [local_ts]
+        if game_num:
+            parts.append(f"Game#{game_num}")
+        parts.append(f"score={score}")
+        parts.append(f"turns={turns}")
+        lines.append("- " + " / ".join(parts))
     return "\n".join(lines)
 
 
