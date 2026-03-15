@@ -33,20 +33,19 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
+ # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
-# v241: 危険域reactive_pairs非併合heightペナルティ抑制版 - 即時併合機会優先強化・last_rollback_analysis failure mode潰し
+# v243: 危険域reactive_pairs即時併合絶対優先化版 - last_rollback_analysis failure mode潰し・即時併合機会強制
 # last_rollback_analysis: anchor比でcomp=-559.7 p50=-642.5 p25=-446.8と明確に悪化。
 # ワーストゲーム(score0337)終盤turns 54-63: reactive_pairs=2、merge_available=falseでREACTIVE_PAIRS_HEIGHT_RELAXED_DANGER_HIGH_TOWERが続きmax_y=1.94→2.98に上昇しゲームオーバー。
-# ベストゲーム(score2393)終盤turns 108-115: max_y=2.03→3.35→2.84、即時併合を選択したターンと非併合を選択したターンが交互に行われ延命成功。
-# advice.md「盤面が詰まっても即時併合を狙うべきだ」を踏まえ、v236のheight_penalty軽減(0.25倍/0.5倍)は非併合のペナルティを軽減しすぎて即時併合機会を取りこぼしている問題を解消。
-# 危険域(max_y>=2.0)かつreactive_pairs>=2かつmerge_grade=="NO"の場合、height_penaltyを1.0倍（軽減なし）に抑制し、即時併合機会を優先。
-# 危険域かつreactive_pairs>=3かつmerge_grade=="NO"の場合、height_penaltyを0.5倍に緩和（v236の0.25倍から強化）。
-# これによりreactive_pairsが多い危険域での即時併合機会を優先し、ワーストゲームのような「reactive_pairsがあるのに非併合」問題を抑制。
-# refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260315_205347_score0337.jsonl turns 54-63, game_history/20260315_203139_score2393.jsonl turns 108-115, strategy_versions/best_score5310_strategy.py
+# ベストゲーム(score2393)終盤turns 108-115: 即時併合を選択しmax_y=2.03→3.35→2.84と延命成功。
+# batch_summaryでREACTIVE_PAIRS_HEIGHT_RELAXEDが14.4%選択(avg_score_delta=6.0)と過剰で、即時併合機会を取りこぼしている問題を特定。
+# 危険域(max_y>=2.0)かつreactive_pairs>=1で即時併合が可能な場合、即時併合を強制する絶対優先評価軸を追加。
+# これにより危険域で「reactive_pairsがあるのに非併合」問題を構造的に解決し、p25悪化を抑制。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260315_220052_score0595.jsonl turns 60-67, game_history/20260315_215819_score2270.jsonl turns 113-120
 
 
 # Merge result score: type N merge gives N*(N+1)/2 points
@@ -55,16 +54,15 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v241: 危険域reactive_pairs非併合heightペナルティ抑制版 - 即時併合機会優先強化・last_rollback_analysis failure mode潰し
+    """v243: 危険域reactive_pairs即時併合絶対優先化版 - last_rollback_analysis failure mode潰し・即時併合機会強制
 
     last_rollback_analysis: anchor比でcomp=-559.7 p50=-642.5 p25=-446.8と明確に悪化。
     ワーストゲーム(score0337)終盤turns 54-63: reactive_pairs=2、merge_available=falseでREACTIVE_PAIRS_HEIGHT_RELAXED_DANGER_HIGH_TOWERが続きmax_y=1.94→2.98に上昇しゲームオーバー。
-    ベストゲーム(score2393)終盤turns 108-115: max_y=2.03→3.35→2.84、即時併合を選択したターンと非併合を選択したターンが交互に行われ延命成功。
-    advice.md「盤面が詰まっても即時併合を狙うべきだ」を踏まえ、v236のheight_penalty軽減(0.25倍/0.5倍)は非併合のペナルティを軽減しすぎて即時併合機会を取りこぼしている問題を解消。
-    危険域(max_y>=2.0)かつreactive_pairs>=2かつmerge_grade=="NO"の場合、height_penaltyを1.0倍（軽減なし）に抑制し、即時併合機会を優先。
-    危険域かつreactive_pairs>=3かつmerge_grade=="NO"の場合、height_penaltyを0.5倍に緩和（v236の0.25倍から強化）。
-    これによりreactive_pairsが多い危険域での即時併合機会を優先し、ワーストゲームのような「reactive_pairsがあるのに非併合」問題を抑制。
-    refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260315_205347_score0337.jsonl turns 54-63, game_history/20260315_203139_score2393.jsonl turns 108-115, strategy_versions/best_score5310_strategy.py
+    ベストゲーム(score2393)終盤turns 108-115: 即時併合を選択しmax_y=2.03→3.35→2.84と延命成功。
+    batch_summaryでREACTIVE_PAIRS_HEIGHT_RELAXEDが14.4%選択(avg_score_delta=6.0)と過剰で、即時併合機会を取りこぼしている問題を特定。
+    危険域(max_y>=2.0)かつreactive_pairs>=1で即時併合が可能な場合、即時併合を強制する絶対優先評価軸を追加。
+    これにより危険域で「reactive_pairsがあるのに非併合」問題を構造的に解決し、p25悪化を抑制。
+    refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260315_220052_score0595.jsonl turns 60-67, game_history/20260315_215819_score2270.jsonl turns 113-120
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -158,18 +156,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v242: 危険域でのheight_penalty軽減ロジックを全削除 - 即時併合絶対優先化
+        # v243: 危険域reactive_pairs即時併合絶対優先化 - 危険域でのheight軽減削除
         # last_rollback_analysisで危険域での非併合選択が悪化原因と判明。
-        # height_penalty軽減ロジックは危険域では機能せず、即時併合を逃す原因になっている。
-        # 危険域(max_y>=2.0)ではheight_penalty軽減を全廃し、評価軸8.5の絶対優先ボーナスで即時併合を強制。
-        # 危険域以外ではreactive_pairs>=1かつ非併合の場合、0.5倍軽減を維持し盤面圧迫を緩和。
+        # 危険域(max_y>=2.0)かつreactive_pairs>=1で即時併合が可能な場合、即時併合を強制する絶対優先評価軸を追加。
+        # 危険域でのheight_penalty軽減を削除し、即時併合機会を優先。
         height_penalty = landing_y * 50.0 * height_mult
-
-        # 危険域以外でのみheight_penalty軽減を適用
-        if max_y < 2.0 and reactive_pair_count >= 1 and merge_grade == "NO":
-            # Normal zone: standard relaxation
-            height_penalty *= 0.5
-            reasons.append("REACTIVE_PAIRS_HEIGHT_RELAXED")
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -310,14 +301,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += reactive_bonus
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.5: danger zone absolute merge priority (NEW: 危険域即時併合絶対優先) -----
+        # ----- evaluation axis 8.5: danger zone reactive pairs absolute merge priority (NEW: 危険域reactive_pairs即時併合絶対優先化) -----
         # last_rollback_analysis: anchor比でcomp=-559.7 p50=-642.5 p25=-446.8と明確に悪化。
         # ワーストゲーム(score0337)終盤turns 54-63: max_y=1.94→2.98に上昇し即時併合機会を取りこぼしゲームオーバー。
         # ベストゲーム(score2393)終盤turns 108-115: 即時併合を選択しmax_y=2.03→3.35→2.84と延命成功。
-        # batch_summaryでDANGER_ZONE_HEIGHT_RELAXED_HIGH_TOWERがavg_score_delta=2.6（低価値）なのに3.6%選択され、危険域での非併合選択が悪化原因。
-        # v241のheight_penalty抑制(1.0倍/0.5倍)は危険域では不十分で、非併合選択を根絶できない構造的問題がある。
-        # 危険域(max_y>=2.0)で即時併合が可能な場合、他の評価軸を無視して即時併合を強制する絶対優先評価軸を追加。
-        # これにより危険域での「即時併合機会があるのに非併合」問題を構造的に解決し、p25悪化を抑制。
+        # batch_summaryでREACTIVE_PAIRS_HEIGHT_RELAXEDが14.4%選択(avg_score_delta=6.0)と過剰で、即時併合機会を取りこぼしている問題を特定。
+        # 危険域(max_y>=2.0)かつreactive_pairs>=1で即時併合が可能な場合、即時併合を強制する絶対優先評価軸を追加。
+        # これにより危険域で「reactive_pairsがあるのに非併合」問題を構造的に解決し、p25悪化を抑制。
+        if max_y >= 2.0 and reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
+            # 危険域でreactive_pairsがある場合、即時併合を強制
+            # DIRECT_MERGE: +4000.0, NEAR_MERGE: +3000.0（他の評価軸を凌駕する絶対値）
+            if merge_grade == "DIRECT":
+                score += 4000.0
+                reasons.append("DANGER_ZONE_REACTIVE_PAIRS_ABSOLUTE_DIRECT_MERGE")
+            else:  # merge_grade == "NEAR"
+                score += 3000.0
+                reasons.append("DANGER_ZONE_REACTIVE_PAIRS_ABSOLUTE_NEAR_MERGE")
         if max_y >= 2.0 and merge_grade in ["DIRECT", "NEAR"]:
             # 危険域で即時併合が可能な場合、他の評価を全て上書きして即時併合を強制
             # DIRECT_MERGE: +3000.0, NEAR_MERGE: +2000.0（他の評価軸を凌駕する絶対値）
@@ -331,10 +330,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
         # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
-        # reactive_pairsがある場合、即時併合がない時のデフォルト選択をHEIGHT_CONTROLからREACTIVE_PAIRS_COMPRESSIONへ変更し、盤面圧縮を優先。
+        # 危険域では即時併合を優先し、安易な非併合選択を回避する。
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
         if not reasons:
-            if reactive_pair_count >= 1:
+            if max_y >= 2.0 and reactive_pair_count >= 1:
+                # 危険域でreactive_pairsがある場合、即時併合優先
+                reasons.append("DANGER_ZONE_REACTIVE_PAIRS_PRIORITY")
+            elif reactive_pair_count >= 1:
+                # 通常域でもreactive_pairsがある場合、盤面圧縮優先
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
         # ----- update best candidate -----

@@ -728,15 +728,12 @@ start_radio_corner_news() {
 	selected_topic_key=$(_news_topic_key "$selected_news")
 	selected_source_name=$(_news_source_name_for_title "$selected_news")
 	selected_source_key=$(_news_source_key_from_name "$selected_source_name")
+	# 既読記録は _radio_finish_common() 側で一元管理（二重記録防止）
 	if [ -n "$selected_key" ]; then
-		echo "$selected_news" >>"$PAST_NEWS_READ"
-		echo "$selected_key" >>"$PAST_NEWS_READ_KEYS"
 		[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
 		_append_news_read_source "$selected_source_key"
-		tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
-		tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
 		tail -40 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
-		log "[NEWS] 既読記録: ${selected_news}"
+		log "[NEWS] スクリプト選定完了: ${selected_news}"
 	fi
 
 	local prompt_file
