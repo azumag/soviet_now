@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-15 10:57:47 JST`
+- Updated: `2026-03-15 11:39:10 JST`
 - Nodes: `534`
-- Edges: `733`
-- Current: `25e0ff7f9225`
+- Edges: `734`
+- Current: `b3c32d709d62`
 - Anchor: `b3c32d709d62`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -61,20 +61,20 @@ flowchart TD
     h_b6bfeb3b27ac["b6bfeb3b27ac<br/>g=75 n=20<br/>comp=1202.8"]
     h_8013dc80e4f3["8013dc80e4f3<br/>g=16 n=16<br/>comp=1432.1"]
     h_d6fe29751fc9["d6fe29751fc9<br/>g=12 n=12<br/>comp=776.1"]
-    h_6e0f0a2c7486["6e0f0a2c7486<br/>g=40 n=20<br/>comp=1293.8"]
+    h_6e0f0a2c7486["6e0f0a2c7486<br/>g=41 n=20<br/>comp=1292.5"]
     h_857a8f93be44["857a8f93be44<br/>g=20 n=20<br/>comp=1237.8"]
     h_5e9735de41ac["5e9735de41ac<br/>g=13 n=13<br/>comp=1403.9"]
     h_9eb59f4bcdd8["9eb59f4bcdd8<br/>g=12 n=12<br/>comp=1100.3"]
     h_5559d0b91da6["5559d0b91da6<br/>g=12 n=12<br/>comp=1079.1"]
     h_cc74585d1fa6["cc74585d1fa6<br/>g=13 n=13<br/>comp=1261.5"]
-    h_b3c32d709d62["b3c32d709d62<br/>ANCHOR<br/>g=17 n=17<br/>comp=1437.3"]
+    h_b3c32d709d62["b3c32d709d62<br/>CURRENT ANCHOR<br/>g=17 n=17<br/>comp=1437.3"]
     h_eb2461c06609["eb2461c06609<br/>g=12 n=12<br/>comp=904.3"]
     h_870fabf058b5["870fabf058b5<br/>g=26 n=20<br/>comp=1147.8"]
     h_3835dc75df3f["3835dc75df3f<br/>g=12 n=12<br/>comp=1169.7"]
     h_55357f97ee00["55357f97ee00<br/>g=12 n=12<br/>comp=1050.2"]
+    h_25e0ff7f9225["25e0ff7f9225<br/>g=12 n=12<br/>comp=1128.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_25e0ff7f9225["25e0ff7f9225<br/>CURRENT"]
 
     h_4cfb010e2add -->|improve| h_e60ffd95cb26
     h_e60ffd95cb26 -->|improve| h_636722a45a6e
@@ -145,6 +145,7 @@ flowchart TD
     h_6e0f0a2c7486 -->|improve| h_55357f97ee00
     h_55357f97ee00 -. rollback .-> h_6e0f0a2c7486
     h_6e0f0a2c7486 -->|improve| h_25e0ff7f9225
+    h_25e0ff7f9225 -. rollback .-> h_b3c32d709d62
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -203,14 +204,14 @@ flowchart TD
     class h_9eb59f4bcdd8 plain;
     class h_5559d0b91da6 plain;
     class h_cc74585d1fa6 plain;
-    class h_b3c32d709d62 anchor;
+    class h_b3c32d709d62 current_anchor;
     class h_eb2461c06609 plain;
     class h_870fabf058b5 plain;
     class h_3835dc75df3f plain;
     class h_55357f97ee00 plain;
+    class h_25e0ff7f9225 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_25e0ff7f9225 current;
 ```
 
 ## Detail 1/7
@@ -1908,9 +1909,9 @@ flowchart TD
 
 ## Detail 7/7
 
-- Range: `6d9586d182e0` .. `25e0ff7f9225`
+- Range: `6d9586d182e0` .. `a3aae72a4e37`
 - Nodes in this diagram: `54`
-- Internal edges in this diagram: `63`
+- Internal edges in this diagram: `64`
 - Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
 - Cross-chunk link: `cf42a97de4d5 -.rollback.-> 9d6fe31baf81`
 - Cross-chunk link: `9d6fe31baf81 --improve--> f2e07b06f8f1`
@@ -1960,20 +1961,20 @@ flowchart TD
     h_b6bfeb3b27ac["b6bfeb3b27ac<br/>g=75 n=20<br/>comp=1202.8"]
     h_8013dc80e4f3["8013dc80e4f3<br/>g=16 n=16<br/>comp=1432.1"]
     h_d6fe29751fc9["d6fe29751fc9<br/>g=12 n=12<br/>comp=776.1"]
-    h_6e0f0a2c7486["6e0f0a2c7486<br/>g=40 n=20<br/>comp=1293.8"]
+    h_6e0f0a2c7486["6e0f0a2c7486<br/>g=41 n=20<br/>comp=1292.5"]
     h_857a8f93be44["857a8f93be44<br/>g=20 n=20<br/>comp=1237.8"]
     h_5e9735de41ac["5e9735de41ac<br/>g=13 n=13<br/>comp=1403.9"]
     h_9eb59f4bcdd8["9eb59f4bcdd8<br/>g=12 n=12<br/>comp=1100.3"]
     h_5559d0b91da6["5559d0b91da6<br/>g=12 n=12<br/>comp=1079.1"]
     h_cc74585d1fa6["cc74585d1fa6<br/>g=13 n=13<br/>comp=1261.5"]
-    h_b3c32d709d62["b3c32d709d62<br/>ANCHOR<br/>g=17 n=17<br/>comp=1437.3"]
+    h_b3c32d709d62["b3c32d709d62<br/>CURRENT ANCHOR<br/>g=17 n=17<br/>comp=1437.3"]
     h_eb2461c06609["eb2461c06609<br/>g=12 n=12<br/>comp=904.3"]
     h_870fabf058b5["870fabf058b5<br/>g=26 n=20<br/>comp=1147.8"]
     h_3835dc75df3f["3835dc75df3f<br/>g=12 n=12<br/>comp=1169.7"]
     h_55357f97ee00["55357f97ee00<br/>g=12 n=12<br/>comp=1050.2"]
+    h_25e0ff7f9225["25e0ff7f9225<br/>g=12 n=12<br/>comp=1128.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_25e0ff7f9225["25e0ff7f9225<br/>CURRENT"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
@@ -2038,6 +2039,7 @@ flowchart TD
     h_6e0f0a2c7486 -->|improve| h_55357f97ee00
     h_55357f97ee00 -. rollback .-> h_6e0f0a2c7486
     h_6e0f0a2c7486 -->|improve| h_25e0ff7f9225
+    h_25e0ff7f9225 -. rollback .-> h_b3c32d709d62
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2090,17 +2092,32 @@ flowchart TD
     class h_9eb59f4bcdd8 plain;
     class h_5559d0b91da6 plain;
     class h_cc74585d1fa6 plain;
-    class h_b3c32d709d62 anchor;
+    class h_b3c32d709d62 current_anchor;
     class h_eb2461c06609 plain;
     class h_870fabf058b5 plain;
     class h_3835dc75df3f plain;
     class h_55357f97ee00 plain;
+    class h_25e0ff7f9225 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_25e0ff7f9225 current;
 ```
 
 ## Transition Notes
+
+### Rollback Game#5945 `25e0ff7f -> b3c32d70`
+
+- - rollback from 25e0ff7f9225 to b3c32d709d62 at game 5945
+- - reasons: hard_fail+branch
+- - current comp/p50/p25=1128.6/1144.5/1064.0 vs target 1437.3/1601.0/1188.0
+- - bad recent scores: 1860 1286 1092 1129 1116 1160 935 3530
+- anchor 比で明確な悪化が出て即時停止条件に触れた。
+- 単一戦略ではなく branch 全体の失敗として判定した。
+- current: comp=1128.6 p50=1144.5 p25=1064.0 mean=1471.0 n=12
+- rollback_target: comp=1437.3 p50=1601.0 p25=1188.0 mean=1496.5 n=17
+- metric_gap_vs_target: comp=-308.7 p50=-456.5 p25=-124.0 mean=-25.5
+- recent12_avg: bad=1471.0 target=1293.6
+- recent12_floor: bad=700 target=546
+- anchor 比で急激に悪化した局面を重点的に調べること。特に p25 を落とした試合群の共通条件を抽出する。
 
 ### Improve Game#5932 `6e0f0a2c -> 25e0ff7f`
 
