@@ -21,7 +21,7 @@ OUTPUT_FILE = "tmp/google_headlines.txt"
 PAST_TITLES_FILE = "tmp/history/.past_jiji_titles.txt"
 PAST_KEYS_FILE = "tmp/history/.past_jiji_keys.txt"
 USER_AGENT = "soren-radio-grounding/1.0"
-MAX_HEADLINES = 8
+MAX_HEADLINES = 50
 
 
 def http_get(url: str, timeout: float = 10.0) -> str:
