@@ -1405,7 +1405,7 @@ _run_claude_comment_with_model() {
 	stderr_file=$(mktemp /tmp/eloop_claude_comment_stderr_XXXXXXXX)
 	output=$(
 		cd "$sandbox_dir" &&
-			timeout "$timeout_sec" claude -p "$(cat 'tmp/comment_prompt.txt')" --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk --strict-mcp-config 2>"$stderr_file"
+			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk --strict-mcp-config 2>"$stderr_file"
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
@@ -1433,15 +1433,14 @@ _run_claude_radio_with_model() {
 	local model="${2:-$RADIO_CLAUDE_MODEL}"
 	local prompt output timeout_sec
 	timeout_sec="${RADIO_CLAUDE_TIMEOUT:-120}"
-	prompt=$(cat "$prompt_file" 2>/dev/null)
-	if [ -z "$prompt" ]; then
+	if [ ! -s "$prompt_file" ]; then
 		return 1
 	fi
 	# command substitution に混ざらないよう stderr に出す
-	log "[RADIO] claude call (model=$model, prompt=${#prompt}B)" >&2
+	log "[RADIO] claude call (model=$model, prompt=$(wc -c < "$prompt_file" | tr -d ' ')B)" >&2
 	local stderr_file
 	stderr_file=$(mktemp /tmp/eloop_claude_stderr_XXXXXXXX)
-	output=$(timeout "$timeout_sec" claude -p "$prompt" --model "$model" 2>"$stderr_file")
+	output=$(cat "$prompt_file" | timeout "$timeout_sec" claude -p --model "$model" 2>"$stderr_file")
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
 		log "[RADIO] claude stderr: $(head -c 500 "$stderr_file")" >&2
