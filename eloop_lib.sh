@@ -1312,7 +1312,11 @@ _strip_ansi() {
 }
 
 _contains_provider_error_text() {
-	printf '%s' "$1" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticat(e|ed)|api error[: ]|request_id|invalid error token|invalid token'
+	printf '%s' "$1" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticat(e|ed)|api error[: ]|request_id|invalid error token|invalid token|not logged in|please run /login'
+}
+
+_contains_claude_login_error_text() {
+	printf '%s' "$1" | grep -Eiq 'not logged in|please run /login'
 }
 
 #=== opencode run を疑似TTY付きで実行 ===
@@ -1448,27 +1452,46 @@ _run_claude_comment_with_model() {
 	}
 	local stderr_file
 	stderr_file=$(mktemp /tmp/eloop_claude_comment_stderr_XXXXXXXX)
+	local stderr_preview="" provider_error=false login_error=false
 	output=$(
 		cd "$sandbox_dir" &&
 			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
+		stderr_preview=$(head -c 4000 "$stderr_file")
+	fi
+	if _contains_provider_error_text "$output" || { [ -n "$stderr_preview" ] && _contains_provider_error_text "$stderr_preview"; }; then
+		provider_error=true
+	fi
+	if _contains_claude_login_error_text "$output" || { [ -n "$stderr_preview" ] && _contains_claude_login_error_text "$stderr_preview"; }; then
+		login_error=true
+	fi
+	if [ -n "$stderr_preview" ] || [ "$provider_error" = "true" ]; then
 		mkdir -p "$(dirname "$COMMENT_CLAUDE_LOG_FILE")" 2>/dev/null || true
 		{
 			printf '[%s] rc=%s model=%s tools=%s\n' "$(date '+%F %T')" "$rc" "$model" "$COMMENT_CLAUDE_TOOLS"
-			head -c 4000 "$stderr_file"
+			if [ -n "$stderr_preview" ]; then
+				printf '[stderr]\n%s\n' "$stderr_preview"
+			fi
+			if [ "$provider_error" = "true" ]; then
+				printf '[stdout]\n'
+				printf '%s' "$output" | head -c 4000
+				printf '\n'
+			fi
 			printf '\n\n'
 		} >>"$COMMENT_CLAUDE_LOG_FILE" 2>/dev/null || true
-		if grep -qi 'Not logged in' "$stderr_file"; then
-			log "[COMMENT] claude unavailable: not logged in" >&2
-		fi
-		log "[COMMENT] claude stderr: $(head -c 500 "$stderr_file")" >&2
+		[ -n "$stderr_preview" ] && log "[COMMENT] claude stderr: $(printf '%s' "$stderr_preview" | head -c 500)" >&2
 	fi
+	[ "$login_error" = "true" ] && log "[COMMENT] claude unavailable: not logged in" >&2
 	rm -f "$stderr_file"
 	destroy_sandbox "$sandbox_dir"
 	if [ $rc -eq 124 ]; then
 		log "[COMMENT] claude timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ "$provider_error" = "true" ]; then
+		log "[COMMENT] claude provider/auth error treated as failure (model=$model)" >&2
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
@@ -1494,22 +1517,31 @@ _run_claude_radio_with_model() {
 	log "[RADIO] claude call (model=$model, prompt=$(wc -c < "$prompt_file" | tr -d ' ')B)" >&2
 	local stderr_file
 	stderr_file=$(mktemp /tmp/eloop_claude_stderr_XXXXXXXX)
+	local stderr_preview="" provider_error=false login_error=false
 	output=$(cat "$prompt_file" | timeout "$timeout_sec" claude -p --model "$model" 2>"$stderr_file")
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
-		log "[RADIO] claude stderr: $(head -c 500 "$stderr_file")" >&2
+		stderr_preview=$(head -c 500 "$stderr_file")
+		log "[RADIO] claude stderr: $stderr_preview" >&2
 	fi
+	if _contains_provider_error_text "$output" || { [ -n "$stderr_preview" ] && _contains_provider_error_text "$stderr_preview"; }; then
+		provider_error=true
+	fi
+	if _contains_claude_login_error_text "$output" || { [ -n "$stderr_preview" ] && _contains_claude_login_error_text "$stderr_preview"; }; then
+		login_error=true
+	fi
+	[ "$login_error" = "true" ] && log "[RADIO] claude unavailable: not logged in" >&2
 	rm -f "$stderr_file"
 	if [ $rc -eq 124 ]; then
 		log "[RADIO] claude timeout (${timeout_sec}s, model=$model)" >&2
 		return 1
 	fi
-	if [ $rc -ne 0 ]; then
-		log "[RADIO] claude failed (rc=$rc, model=$model)" >&2
+	if [ "$provider_error" = "true" ]; then
+		log "[RADIO] claude provider/auth error treated as failure (model=$model)" >&2
 		return 1
 	fi
-	if _contains_provider_error_text "$output"; then
-		log "[RADIO] claude provider error treated as failure (model=$model)" >&2
+	if [ $rc -ne 0 ]; then
+		log "[RADIO] claude failed (rc=$rc, model=$model)" >&2
 		return 1
 	fi
 	printf '%s' "$output"
