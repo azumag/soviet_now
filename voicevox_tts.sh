@@ -180,7 +180,17 @@ case "${1:-}" in
     -o)
         OUTPUT="$2"
         shift 2
-        TEXT="$*"
+        if [ "$1" = "-f" ]; then
+            TEXT=$(cat "$2")
+            shift 2
+        else
+            TEXT="$*"
+        fi
+        ;;
+    -f)
+        TEXT=$(cat "$2")
+        shift 2
+        OUTPUT="/tmp/voicevox_$$.wav"
         ;;
     ""|--help|-h)
         echo "Usage:"
@@ -188,6 +198,7 @@ case "${1:-}" in
         echo "  $0 --test               テスト音声生成+再生"
         echo "  $0 \"テキスト\"            音声合成+再生"
         echo "  $0 -o out.wav \"テキスト\"  ファイル出力"
+        echo "  $0 -o out.wav -f file    ファイルから読み込み"
         echo ""
         echo "Environment variables:"
         echo "  VOICEVOX_URL      (default: http://127.0.0.1:50021)"
