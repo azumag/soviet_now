@@ -103,6 +103,19 @@ while true; do
                 fi
             fi
 
+            # !test0 / !test1 COEIROINK TTS テスト
+            if [[ "$msg" =~ ^[[:space:]]*!(test[01])[[:space:]]+(.*) ]]; then
+                local test_cmd="${BASH_REMATCH[1]}"
+                local test_text="${BASH_REMATCH[2]}"
+                if [ "$test_cmd" = "test0" ]; then
+                    ( SPEAKER_UUID="d41bcbd9-f4a9-4e10-b000-7a431568dd01" STYLE_ID=100 \
+                      ./coeiroink_tts.sh "$test_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
+                elif [ "$test_cmd" = "test1" ]; then
+                    ( SPEAKER_UUID="fb1a910e-208f-11ee-8dde-0242ac1c000c" STYLE_ID=0 \
+                      ./coeiroink_tts.sh "$test_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
+                fi
+            fi
+
             _compact_recent_file "$RECENT_MSG_IDS_FILE" "$RECENT_MSG_ID_TTL_SEC"
             _compact_recent_file "$RECENT_LINE_HASHES_FILE" "$RECENT_LINE_HASH_TTL_SEC"
 
