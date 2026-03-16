@@ -104,8 +104,10 @@ while true; do
             fi
 
             # !wakana / !moko COEIROINK TTS
+            echo "[coe-debug $(date '+%H:%M:%S')] msg=[$msg]" >> tmp/debug/coeiroink_tts.log
             if [[ "$msg" =~ ^[[:space:]]*!(wakana|moko)[[:space:]]+(.*) ]]; then
                 local coe_cmd="${BASH_REMATCH[1]}" coe_text="${BASH_REMATCH[2]}"
+                echo "[coe-debug $(date '+%H:%M:%S')] MATCHED cmd=$coe_cmd text=$coe_text" >> tmp/debug/coeiroink_tts.log
                 if [ "$coe_cmd" = "wakana" ]; then
                     ( SPEAKER_UUID="8e99d620-87d3-11ed-870a-0242ac1c000c" STYLE_ID=905192261 \
                       ./coeiroink_tts.sh "$coe_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
