@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-16 22:33:47 JST`
-- Nodes: `560`
-- Edges: `779`
-- Current: `a9b396182ae6`
+- Updated: `2026-03-16 23:46:23 JST`
+- Nodes: `561`
+- Edges: `780`
+- Current: `7df607868da2`
 - Anchor: `7f3bfa93dbef`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_e8c175933cd7["e8c175933cd7<br/>g=14 n=14<br/>comp=1371.6"]
     h_fccc64cd2326["fccc64cd2326<br/>g=72 n=20<br/>comp=1347.0"]
     h_0c419a7e906c["0c419a7e906c<br/>g=15 n=15<br/>comp=1131.9"]
     h_a4ad3ca358d9["a4ad3ca358d9<br/>g=13 n=13<br/>comp=1188.2"]
@@ -71,12 +70,12 @@ flowchart TD
     h_67ca531a9e2c["67ca531a9e2c<br/>g=12 n=12<br/>comp=1050.4"]
     h_597dde8a9032["597dde8a9032<br/>g=12 n=12<br/>comp=1264.3"]
     h_1fab86e56ddc["1fab86e56ddc<br/>g=12 n=12<br/>comp=1402.1"]
-    h_7f3bfa93dbef["7f3bfa93dbef<br/>ANCHOR<br/>g=14 n=14<br/>comp=1572.4"]
+    h_7f3bfa93dbef["7f3bfa93dbef<br/>ANCHOR<br/>g=15 n=15<br/>comp=1552.1"]
+    h_a9b396182ae6["a9b396182ae6<br/>g=21 n=20<br/>comp=1362.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_a9b396182ae6["a9b396182ae6<br/>CURRENT"]
+    h_7df607868da2["7df607868da2<br/>CURRENT"]
 
-    h_e8c175933cd7 -->|improve| h_fccc64cd2326
     h_fccc64cd2326 -->|improve| h_0c419a7e906c
     h_0c419a7e906c -->|improve| h_a4ad3ca358d9
     h_a4ad3ca358d9 -->|improve| h_229f1b115fd9
@@ -164,13 +163,13 @@ flowchart TD
     h_1fab86e56ddc -. rollback .-> h_467e45d0adc3
     h_467e45d0adc3 -->|improve| h_7f3bfa93dbef
     h_7f3bfa93dbef -->|improve| h_a9b396182ae6
+    h_a9b396182ae6 -->|improve| h_7df607868da2
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_e8c175933cd7 plain;
     class h_fccc64cd2326 plain;
     class h_0c419a7e906c plain;
     class h_a4ad3ca358d9 plain;
@@ -227,12 +226,13 @@ flowchart TD
     class h_597dde8a9032 plain;
     class h_1fab86e56ddc plain;
     class h_7f3bfa93dbef anchor;
+    class h_a9b396182ae6 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_a9b396182ae6 current;
+    class h_7df607868da2 current;
 ```
 
-## Detail 1/7
+## Detail 1/8
 
 - Range: `b0936e9e200b` .. `d3f6c63419da`
 - Nodes in this diagram: `80`
@@ -505,7 +505,7 @@ flowchart TD
     class h_d3f6c63419da plain;
 ```
 
-## Detail 2/7
+## Detail 2/8
 
 - Range: `155d2f3c99f8` .. `b5cd8a7be86d`
 - Nodes in this diagram: `80`
@@ -778,7 +778,7 @@ flowchart TD
     class h_b5cd8a7be86d plain;
 ```
 
-## Detail 3/7
+## Detail 3/8
 
 - Range: `e3676607049d` .. `e24d1084d5ef`
 - Nodes in this diagram: `80`
@@ -1045,7 +1045,7 @@ flowchart TD
     class h_e24d1084d5ef plain;
 ```
 
-## Detail 4/7
+## Detail 4/8
 
 - Range: `7daa4348391b` .. `57de365479a0`
 - Nodes in this diagram: `80`
@@ -1349,7 +1349,7 @@ flowchart TD
     class h_57de365479a0 plain;
 ```
 
-## Detail 5/7
+## Detail 5/8
 
 - Range: `1fa254eca81f` .. `d062adad419a`
 - Nodes in this diagram: `80`
@@ -1645,7 +1645,7 @@ flowchart TD
     class h_d062adad419a plain;
 ```
 
-## Detail 6/7
+## Detail 6/8
 
 - Range: `82d52dfb6031` .. `e2a889360de0`
 - Nodes in this diagram: `80`
@@ -1925,9 +1925,9 @@ flowchart TD
     class h_e2a889360de0 plain;
 ```
 
-## Detail 7/7
+## Detail 7/8
 
-- Range: `6d9586d182e0` .. `a9b396182ae6`
+- Range: `6d9586d182e0` .. `a3aae72a4e37`
 - Nodes in this diagram: `80`
 - Internal edges in this diagram: `109`
 - Cross-chunk link: `e2a889360de0 --improve--> 6d9586d182e0`
@@ -1936,6 +1936,7 @@ flowchart TD
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
+- Cross-chunk link: `a9b396182ae6 --improve--> 7df607868da2`
 
 ```mermaid
 flowchart TD
@@ -2015,10 +2016,10 @@ flowchart TD
     h_67ca531a9e2c["67ca531a9e2c<br/>g=12 n=12<br/>comp=1050.4"]
     h_597dde8a9032["597dde8a9032<br/>g=12 n=12<br/>comp=1264.3"]
     h_1fab86e56ddc["1fab86e56ddc<br/>g=12 n=12<br/>comp=1402.1"]
-    h_7f3bfa93dbef["7f3bfa93dbef<br/>ANCHOR<br/>g=14 n=14<br/>comp=1572.4"]
+    h_7f3bfa93dbef["7f3bfa93dbef<br/>ANCHOR<br/>g=15 n=15<br/>comp=1552.1"]
+    h_a9b396182ae6["a9b396182ae6<br/>g=21 n=20<br/>comp=1362.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_a9b396182ae6["a9b396182ae6<br/>CURRENT"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
@@ -2212,12 +2213,42 @@ flowchart TD
     class h_597dde8a9032 plain;
     class h_1fab86e56ddc plain;
     class h_7f3bfa93dbef anchor;
+    class h_a9b396182ae6 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_a9b396182ae6 current;
+```
+
+## Detail 8/8
+
+- Range: `7df607868da2` .. `7df607868da2`
+- Nodes in this diagram: `1`
+- Internal edges in this diagram: `0`
+- Cross-chunk link: `a9b396182ae6 --improve--> 7df607868da2`
+
+```mermaid
+flowchart TD
+    h_7df607868da2["7df607868da2<br/>CURRENT"]
+
+
+    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
+    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
+    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
+    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
+
+    class h_7df607868da2 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#6574 `a9b39618 -> 7df60786`
+
+- scores: `1741 2248 2182 983 1984 1540 1082 327 1505 2483 1485 1289`
+- v178: axis 8.7 reactive_pairs>=2緩和・v253動的ペナルティ修正版 - axis 8.7発動頻度改善によるp25悪化潰し
+- last_rollback_postmortem: v253動的ペナルティ（-(2000.0 + reactive_pairs * 500.0)）がp25=-371.0の主因
+- failure_mode: axis 8.7発動頻度が低い（reactive_pairs>=3条件が厳しすぎる）ため、非併合が続きゲームオーバー
+- ワーストゲーム(score0327)終盤turns 44-51: reactive_pairs=7-8, merge_available=falseで非併合続きmax_y=3.07に悪化
+- axis 8.7閾値をreactive_pairs>=3から>=2に緩和し、中危険域（max_y>=1.8）での非併合をより早期に抑制
+- """v178: axis 8.7 reactive_pairs>=2緩和・v253動的ペナルティ修正版
 
 ### Improve Game#6559 `7f3bfa93 -> a9b39618`
 
