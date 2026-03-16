@@ -1262,14 +1262,16 @@ archive_history() {
 
 _history_gameover_asset_path() {
 	local history_file="$1" kind="$2"
+	local stem
 	[ -n "$history_file" ] || return 1
 	case "$history_file" in
 	*.jsonl) ;;
 	*) return 1 ;;
 	esac
+	stem=$(basename "${history_file%.jsonl}")
 	case "$kind" in
-	board) printf '%s.gameover_board.png\n' "${history_file%.jsonl}" ;;
-	next) printf '%s.gameover_next.png\n' "${history_file%.jsonl}" ;;
+	board) printf '%s/gameover_screens/%s.gameover_board.png\n' "$TMP_HISTORY_DIR" "$stem" ;;
+	next) printf '%s/gameover_screens/%s.gameover_next.png\n' "$TMP_HISTORY_DIR" "$stem" ;;
 	*) return 1 ;;
 	esac
 }
@@ -1288,6 +1290,7 @@ archive_gameover_screenshots() {
 		[ -s "$src" ] || continue
 		dst=$(_history_gameover_asset_path "$history_file" "$kind" 2>/dev/null || true)
 		[ -n "$dst" ] || continue
+		mkdir -p "$(dirname "$dst")" 2>/dev/null || true
 		if cp "$src" "$dst" 2>/dev/null; then
 			log "[ARCHIVE] $dst"
 			copied=$((copied + 1))

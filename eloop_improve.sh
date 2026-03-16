@@ -309,10 +309,10 @@ def summarize_deadline(path: str):
 def history_screenshot_paths(path: str):
     if not path:
         return []
-    base = path[:-6] if path.endswith(".jsonl") else path
+    stem = basename(path[:-6] if path.endswith(".jsonl") else path)
     candidates = [
-        ("board", f"{base}.gameover_board.png"),
-        ("next", f"{base}.gameover_next.png"),
+        ("board", os.path.join("tmp", "history", "gameover_screens", f"{stem}.gameover_board.png")),
+        ("next", os.path.join("tmp", "history", "gameover_screens", f"{stem}.gameover_next.png")),
     ]
     return [(label, image_path) for label, image_path in candidates if os.path.exists(image_path)]
 
