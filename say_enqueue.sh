@@ -50,6 +50,7 @@ _COE_VOICES=(
     "8e99d620-87d3-11ed-870a-0242ac1c000c|905192261"  # ワカナ normal
     "9bf2ab50-c756-11ec-9374-0242ac1c0002|1403759395" # ナースロボ 通常
     "6e0539ea-a6a7-11f0-8d2f-0242ac1c000c|172697038"  # AⅡowa β
+    "f0d1a286-64dd-11ee-babd-0242ac1c000c|1486940343" # 芽々子 のーまる
 )
 if [ -f "tmp/coeiroink_voice.txt" ]; then
     _coe_line=$(cat "tmp/coeiroink_voice.txt" 2>/dev/null)
