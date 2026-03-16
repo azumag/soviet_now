@@ -9,6 +9,7 @@
 VOICEVOX_URL="${VOICEVOX_URL:-http://127.0.0.1:50021}"
 VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-3}"  # デフォルト: ずんだもん ノーマル
 VOICEVOX_TIMEOUT="${VOICEVOX_TIMEOUT:-30}"
+VOICEVOX_MAX_CHARS="${VOICEVOX_MAX_CHARS:-500}"
 
 check_server() {
     if ! curl -s --max-time 2 "$VOICEVOX_URL/speakers" > /dev/null 2>&1; then
@@ -29,11 +30,10 @@ for s in speakers:
 "
 }
 
-synthesize() {
+# 単一チャンクを合成
+_synthesize_one() {
     local text="$1"
     local output="$2"
-
-    check_server || return 1
 
     # Step 1: audio_query
     local query_json http_code
@@ -61,6 +61,103 @@ synthesize() {
         rm -f "$output" 2>/dev/null
         return 1
     fi
+}
+
+# テキストを句点・改行で分割（Python に委譲）
+_split_text() {
+    local text="$1"
+    python3 -c "
+import sys
+text = sys.argv[1]
+max_len = int(sys.argv[2])
+chunks = []
+for line in text.split('\n'):
+    for sent in line.split('\u3002'):
+        sent = sent.strip()
+        if not sent:
+            continue
+        sent += '\u3002'
+        if chunks and len(chunks[-1]) + len(sent) <= max_len:
+            chunks[-1] += sent
+        else:
+            # 読点で再分割
+            if len(sent) > max_len:
+                parts = sent.split('\u3001')
+                buf = ''
+                for p in parts:
+                    candidate = buf + ('\u3001' if buf else '') + p
+                    if len(candidate) > max_len and buf:
+                        chunks.append(buf)
+                        buf = p
+                    else:
+                        buf = candidate
+                if buf:
+                    chunks.append(buf)
+            else:
+                chunks.append(sent)
+for c in chunks:
+    print(c)
+" "$text" "$VOICEVOX_MAX_CHARS"
+}
+
+# wav ファイルを Python wave モジュールで結合
+_concat_wavs() {
+    local output="$1"
+    shift
+    python3 -c "
+import wave, sys
+output = sys.argv[1]
+files = sys.argv[2:]
+with wave.open(output, 'wb') as out:
+    params_set = False
+    for f in files:
+        with wave.open(f, 'rb') as inp:
+            if not params_set:
+                out.setparams(inp.getparams())
+                params_set = True
+            out.writeframes(inp.readframes(inp.getnframes()))
+" "$output" "$@"
+}
+
+# チャンク一時ファイルを削除
+_cleanup_chunks() {
+    rm -f /tmp/voicevox_chunk_${$}_*.wav 2>/dev/null
+}
+
+synthesize() {
+    local text="$1"
+    local output="$2"
+
+    check_server || return 1
+
+    # テキストを分割
+    local chunks=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && chunks+=("$line")
+    done < <(_split_text "$text")
+
+    if [ ${#chunks[@]} -le 1 ]; then
+        # 短いテキスト: 従来どおり1回で合成
+        _synthesize_one "$text" "$output"
+        return $?
+    fi
+
+    echo "Splitting into ${#chunks[@]} chunks..." >&2
+
+    # チャンクごとに合成
+    local chunk_files=() i=0
+    for chunk in "${chunks[@]}"; do
+        local chunk_wav="/tmp/voicevox_chunk_${$}_${i}.wav"
+        _synthesize_one "$chunk" "$chunk_wav" || { _cleanup_chunks; return 1; }
+        chunk_files+=("$chunk_wav")
+        i=$((i + 1))
+    done
+
+    # Python wave モジュールで結合
+    _concat_wavs "$output" "${chunk_files[@]}"
+    local rc=$?
+    _cleanup_chunks
+    return $rc
 }
 
 # --- main ---
