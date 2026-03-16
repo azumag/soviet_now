@@ -35,7 +35,7 @@ USER_AGENT = "soren-news-fetcher/1.0"
 DISABLED_SOURCE_NAMES = {"首相官邸", "Kantei", "kantei"}
 
 
-def should_hide_wikinews_author(author: str, source_key: str) -> bool:
+def should_exclude_wikinews_author(author: str, source_key: str) -> bool:
     if not source_key.startswith("wikinews"):
         return False
     normalized = unicodedata.normalize("NFKC", author or "")
@@ -316,6 +316,10 @@ def filter_disabled_cached_outputs(news_text: str, meta: dict) -> tuple[str, dic
         title: item
         for title, item in meta.items()
         if collapse_ws((item or {}).get("source", "")) not in DISABLED_SOURCE_NAMES
+        and not should_exclude_wikinews_author(
+            (item or {}).get("author", ""),
+            (item or {}).get("source_key", ""),
+        )
     }
     if len(filtered_meta) == len(meta):
         return news_text, filtered_meta
@@ -437,8 +441,8 @@ def clean_item(source: dict, item: ET.Element) -> dict | None:
         summary = trim_summary(strip_tags(raw_description))
 
     author = strip_tags(child_text(item, "creator", "author"))
-    if should_hide_wikinews_author(author, source["key"]):
-        author = ""
+    if should_exclude_wikinews_author(author, source["key"]):
+        return None
 
     return {
         "title": title,
