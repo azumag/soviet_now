@@ -37,12 +37,28 @@ SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 
 # --- COEIROINK TTS切替 ---
-# tmp/coeiroink_voice.txt があれば COEIROINK を使用 (!wakana/!moko で生成、!say で削除)
-# 環境変数 USE_COEIROINK=1 でも強制有効化可能
+# tmp/coeiroink_voice.txt の内容で動作を決定:
+#   "random"        → 毎回ランダムに話者選択
+#   "uuid|styleId"  → 固定話者
+#   ファイルなし     → macOS say
+# !wakana/!moko で固定、!random でランダム、!say で無効化
+_COE_VOICES=(
+    "3c37646f-3881-5374-2a83-149267990abc|0"          # つくよみちゃん れいせい
+    "d41bcbd9-f4a9-4e10-b000-7a431568dd01|100"        # AI声優-金苗 のーまる
+    "fb1a910e-208f-11ee-8dde-0242ac1c000c|981131762"  # モコちゃん よろこび
+    "8e99d620-87d3-11ed-870a-0242ac1c000c|905192261"  # ワカナ normal
+    "9bf2ab50-c756-11ec-9374-0242ac1c0002|1403759395" # ナースロボ 通常
+)
 if [ -f "tmp/coeiroink_voice.txt" ]; then
     _coe_line=$(cat "tmp/coeiroink_voice.txt" 2>/dev/null)
-    COEIROINK_SPEAKER_UUID="${_coe_line%%|*}"
-    COEIROINK_STYLE_ID="${_coe_line##*|}"
+    if [ "$_coe_line" = "random" ]; then
+        _coe_pick="${_COE_VOICES[$((RANDOM % ${#_COE_VOICES[@]}))]}"
+        COEIROINK_SPEAKER_UUID="${_coe_pick%%|*}"
+        COEIROINK_STYLE_ID="${_coe_pick##*|}"
+    else
+        COEIROINK_SPEAKER_UUID="${_coe_line%%|*}"
+        COEIROINK_STYLE_ID="${_coe_line##*|}"
+    fi
     USE_COEIROINK="${USE_COEIROINK:-1}"
 else
     USE_COEIROINK="${USE_COEIROINK:-0}"
