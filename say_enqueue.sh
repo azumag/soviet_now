@@ -69,6 +69,17 @@ else
     COEIROINK_STYLE_ID="${COEIROINK_STYLE_ID:-905192261}"
 fi
 
+# --- VOICEVOX TTS切替 ---
+# tmp/voicevox_voice.txt があれば VOICEVOX を使用 (COEIROINK より優先)
+# ファイル内容: speaker ID (例: 109)
+USE_VOICEVOX=0
+VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-109}"
+if [ -f "tmp/voicevox_voice.txt" ]; then
+    VOICEVOX_SPEAKER=$(cat "tmp/voicevox_voice.txt" 2>/dev/null)
+    USE_VOICEVOX=1
+    USE_COEIROINK=0
+fi
+
 PID_FILE="$QUEUE_DIR/pid"
 LOCK_DIR="$QUEUE_DIR/.lock"
 LOCK_OWNER_FILE="$LOCK_DIR/owner_pid"
@@ -393,7 +404,24 @@ _launch_say() {
     LAUNCHED_EXPECTED_SEC=0
     LAUNCH_MODE="say"
 
-    # --- COEIROINK TTS (テスト用) ---
+    # --- VOICEVOX TTS ---
+    if [ "${USE_VOICEVOX:-0}" = "1" ]; then
+        local vo_text vo_wav
+        vo_text=$(cat "$MY_CONTENT" 2>/dev/null)
+        vo_wav="${MY_CONTENT%.txt}.wav"
+        if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
+           ./voicevox_tts.sh -o "$vo_wav" "$vo_text" >/dev/null 2>&1 && [ -s "$vo_wav" ]; then
+            LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$vo_wav")
+            nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
+            LAUNCH_MODE="voicevox"
+            LAUNCHED_SAY_PID="$!"
+            return
+        else
+            _log "VOICEVOX合成失敗 → macOS say にフォールバック"
+        fi
+    fi
+
+    # --- COEIROINK TTS ---
     if [ "${USE_COEIROINK:-0}" = "1" ]; then
         local coe_text coe_wav
         coe_text=$(cat "$MY_CONTENT" 2>/dev/null)
