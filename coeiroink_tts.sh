@@ -22,7 +22,14 @@ check_server() {
 
 show_speakers() {
     check_server || return 1
-    curl -s "$COEIROINK_URL/v1/speakers" | python3 -m json.tool
+    curl -s "$COEIROINK_URL/v1/speakers" | python3 -c "
+import json, sys
+speakers = json.load(sys.stdin)
+for s in speakers:
+    print(f\"{s['speakerName']}  uuid={s['speakerUuid']}\")
+    for st in s.get('styles', []):
+        print(f\"  [{st['styleId']}] {st['styleName']}\")
+"
 }
 
 synthesize() {
@@ -42,6 +49,8 @@ print(json.dumps({
     'volumeScale': 1.0,
     'pitchScale': 0.0,
     'intonationScale': 1.0,
+    'prePhonemeLength': 0.1,
+    'postPhonemeLength': 0.1,
     'outputSamplingRate': 48000
 }))
 " "$text")
