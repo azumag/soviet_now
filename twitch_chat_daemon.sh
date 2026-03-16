@@ -103,6 +103,17 @@ while true; do
                 fi
             fi
 
+            # !wakana / !moko COEIROINK TTS
+            if [[ "$msg" =~ ^[[:space:]]*!(wakana|moko)[[:space:]]+(.*) ]]; then
+                local coe_cmd="${BASH_REMATCH[1]}" coe_text="${BASH_REMATCH[2]}"
+                if [ "$coe_cmd" = "wakana" ]; then
+                    ( SPEAKER_UUID="8e99d620-87d3-11ed-870a-0242ac1c000c" STYLE_ID=905192261 \
+                      ./coeiroink_tts.sh "$coe_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
+                elif [ "$coe_cmd" = "moko" ]; then
+                    ( SPEAKER_UUID="fb1a910e-208f-11ee-8dde-0242ac1c000c" STYLE_ID=981131762 \
+                      ./coeiroink_tts.sh "$coe_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
+                fi
+            fi
 
             _compact_recent_file "$RECENT_MSG_IDS_FILE" "$RECENT_MSG_ID_TTL_SEC"
             _compact_recent_file "$RECENT_LINE_HASHES_FILE" "$RECENT_LINE_HASH_TTL_SEC"
