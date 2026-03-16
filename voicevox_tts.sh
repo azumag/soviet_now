@@ -9,7 +9,7 @@
 VOICEVOX_URL="${VOICEVOX_URL:-http://127.0.0.1:50021}"
 VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-3}"  # デフォルト: ずんだもん ノーマル
 VOICEVOX_TIMEOUT="${VOICEVOX_TIMEOUT:-30}"
-VOICEVOX_MAX_CHARS="${VOICEVOX_MAX_CHARS:-500}"
+VOICEVOX_MAX_CHARS="${VOICEVOX_MAX_CHARS:-200}"
 
 check_server() {
     if ! curl -s --max-time 2 "$VOICEVOX_URL/speakers" > /dev/null 2>&1; then

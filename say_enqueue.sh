@@ -409,8 +409,8 @@ _launch_say() {
         local vo_text vo_wav
         vo_text=$(cat "$MY_CONTENT" 2>/dev/null)
         vo_wav="${MY_CONTENT%.txt}.wav"
-        if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
-           ./voicevox_tts.sh -o "$vo_wav" "$vo_text" >/dev/null 2>&1 && [ -s "$vo_wav" ]; then
+        if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_TIMEOUT=60 \
+           ./voicevox_tts.sh -o "$vo_wav" "$vo_text" 2>/dev/null && [ -s "$vo_wav" ]; then
             LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$vo_wav")
             nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
             LAUNCH_MODE="voicevox"
