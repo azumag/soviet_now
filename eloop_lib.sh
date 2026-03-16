@@ -7205,13 +7205,6 @@ RETRYCOMMENT
 				done <<<"$strategy_advice_candidates"
 			fi
 
-			# Claude（メリケンAI）で生成した場合、冒頭に宣言を挿入
-			if [[ "$attempt_model" == claude:* ]]; then
-				attempt_talk="中華AIが忙しいのでメリケンAIが代わりに返答します。
-${attempt_talk}"
-				# キューファイルも更新
-				echo "$attempt_talk" >"$queue_file"
-			fi
 			comments_talk="$attempt_talk"
 			comment_model_used="$attempt_model"
 			if ./twitch_chat.sh ack-batch "$comment_batch_file"; then
@@ -8978,6 +8971,8 @@ with open(rs_file, 'w') as f:
 			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
+			# Twitch チャットに戦略改善終了を通知
+			./twitch_chat.sh send "戦略改善終了しました。中華AIはコメントに戻れます" 2>/dev/null &
 		fi
 	fi
 }
@@ -9217,6 +9212,8 @@ _start_improvement_job() {
 		else
 			log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count} 試合)"
 		fi
+		# Twitch チャットに戦略改善開始を通知
+		./twitch_chat.sh send "戦略改善中。中華AIが忙しくしている間、メリケンAIが同志として代わりに返答します" 2>/dev/null &
 		return 0
 	else
 		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死)"
