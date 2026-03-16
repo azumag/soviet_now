@@ -1451,6 +1451,9 @@ _run_claude_comment_with_model() {
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
+		if grep -qi 'Not logged in' "$stderr_file"; then
+			log "[COMMENT] claude unavailable: not logged in" >&2
+		fi
 		log "[COMMENT] claude stderr: $(head -c 500 "$stderr_file")" >&2
 	fi
 	rm -f "$stderr_file"
@@ -6889,6 +6892,7 @@ COMMENTPROMPT
 
 		local attempt=1 generation_ok=false
 		local comment_claude_only=false
+		local comment_skip_claude=false
 		local comments_talk="" comment_model_used=""
 		if _comment_should_use_claude_only; then
 			comment_claude_only=true
@@ -6928,7 +6932,13 @@ RETRYCOMMENT
 						attempt_talk=""
 						attempt_model=""
 					fi
-				else
+					if [ -z "$attempt_talk" ]; then
+						log "[COMMENT] claude専用モード失敗 -> opencode fallbackへ退避 (attempt ${attempt}/${comment_retry_max})"
+						comment_claude_only=false
+						comment_skip_claude=true
+					fi
+				fi
+				if [ -z "$attempt_talk" ]; then
 					attempt_talk=$(_run_opencode_comment "$RADIO_AGENT" "$prompt_for_attempt")
 					attempt_model="$RADIO_AGENT"
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
@@ -6949,7 +6959,7 @@ RETRYCOMMENT
 							attempt_model=""
 						fi
 					fi
-					if [ -z "$attempt_talk" ]; then
+					if [ -z "$attempt_talk" ] && [ "$comment_skip_claude" != "true" ]; then
 						attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
 						attempt_model="claude:${RADIO_CLAUDE_MODEL}"
 						attempt_talk=$(_clean_comment_talk "$attempt_talk")
