@@ -1447,7 +1447,7 @@ _run_claude_comment_with_model() {
 	stderr_file=$(mktemp /tmp/eloop_claude_comment_stderr_XXXXXXXX)
 	output=$(
 		cd "$sandbox_dir" &&
-			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk --strict-mcp-config 2>"$stderr_file"
+			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
@@ -3044,7 +3044,9 @@ _build_cc_attribution_text() {
 	[ -f "$meta_path" ] || return 0
 	python3 - "$title" "$meta_path" <<'PY'
 import json
+import re
 import sys
+import unicodedata
 
 title = sys.argv[1] if len(sys.argv) > 1 else ""
 meta_path = sys.argv[2] if len(sys.argv) > 2 else "tmp/news_meta.json"
