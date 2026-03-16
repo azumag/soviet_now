@@ -3066,7 +3066,11 @@ parts = ["[NEWS] " + title]
 author = (item.get("author") or "").strip()
 source = (item.get("source") or "").strip()
 source_key = (item.get("source_key") or "").strip()
-if author == "トモモ" and (source_key.startswith("wikinews") or source == "ウィキニュース" or source.startswith("Wikinews")):
+normalized_author = unicodedata.normalize("NFKC", author or "")
+normalized_author = re.sub(r"\s+", "", normalized_author)
+if normalized_author in {"トモモ", "背後のトモモ"} and (
+    source_key.startswith("wikinews") or source == "ウィキニュース" or source.startswith("Wikinews")
+):
     author = ""
 if author:
     parts.append("by " + author)

@@ -34,6 +34,14 @@ USER_AGENT = "soren-news-fetcher/1.0"
 
 DISABLED_SOURCE_NAMES = {"首相官邸", "Kantei", "kantei"}
 
+
+def should_hide_wikinews_author(author: str, source_key: str) -> bool:
+    if not source_key.startswith("wikinews"):
+        return False
+    normalized = unicodedata.normalize("NFKC", author or "")
+    normalized = re.sub(r"\s+", "", normalized)
+    return normalized in {"トモモ", "背後のトモモ"}
+
 SOURCES = [
     {
         "url": "https://ja.wikinews.org/w/index.php?title=特別:新しいページ&feed=rss",
@@ -429,7 +437,7 @@ def clean_item(source: dict, item: ET.Element) -> dict | None:
         summary = trim_summary(strip_tags(raw_description))
 
     author = strip_tags(child_text(item, "creator", "author"))
-    if source["key"].startswith("wikinews") and author == "トモモ":
+    if should_hide_wikinews_author(author, source["key"]):
         author = ""
 
     return {
