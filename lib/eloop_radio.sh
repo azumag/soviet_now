@@ -747,7 +747,7 @@ start_radio_corner_news() {
 	if [ -n "$selected_key" ]; then
 		[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
 		_append_news_read_source "$selected_source_key"
-		tail -40 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
+		tail -200 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
 		log "[NEWS] スクリプト選定完了: ${selected_news}"
 	fi
 

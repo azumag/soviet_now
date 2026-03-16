@@ -85,8 +85,8 @@ HALL_OF_FAME_KEEP=10             # hall_of_fame 保持数
 RADIO_MIN_TALK_LENGTH=100        # トーク最小文字数
 PAST_RADIO_TOPICS_KEEP=100       # 過去トピック保持数
 PAST_SOVIET_TOPICS_KEEP=100      # 過去ソ連テーマ保持数
-PAST_NEWS_READ_KEEP=60           # 既読ニュース保持数
-PAST_NEWS_READ_KEYS_KEEP=120     # 既読キー保持数
+PAST_NEWS_READ_KEEP=200          # 既読ニュース保持数
+PAST_NEWS_READ_KEYS_KEEP=400     # 既読キー保持数
 
 mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" \
 	"$TMP_STATE_DIR" "$TMP_MARKERS_DIR" "$TMP_HISTORY_DIR" "$TMP_DEBUG_DIR" "$TMP_CACHE_DIR" \
