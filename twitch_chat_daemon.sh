@@ -111,6 +111,7 @@ while true; do
                     moko)   echo "fb1a910e-208f-11ee-8dde-0242ac1c000c|981131762" > tmp/coeiroink_voice.txt ;;
                     say)    rm -f tmp/coeiroink_voice.txt ;;
                 esac
+                continue
             fi
 
             _compact_recent_file "$RECENT_MSG_IDS_FILE" "$RECENT_MSG_ID_TTL_SEC"
