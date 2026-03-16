@@ -63,8 +63,10 @@ LAST_PHYROGENETIC_CHAT_COMMIT_FILE="$TMP_STATE_DIR/last_phyrogenetic_chat_commit
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
 COMMENT_OPENCODE_PERMISSION_DEFAULT='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow"}'
 COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$COMMENT_OPENCODE_PERMISSION_DEFAULT}"
+COMMENT_OPENCODE_TIMEOUT="${COMMENT_OPENCODE_TIMEOUT:-75}"
 COMMENT_CLAUDE_TOOLS="${COMMENT_CLAUDE_TOOLS:-default,WebSearch,WebFetch}"
 COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
+COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
 COMMENT_FORCE_CLAUDE_WHEN_IMPROVING="${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}"
 IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow"}'
 RADIO_SAY_RATE=150
@@ -6900,6 +6902,7 @@ COMMENTPROMPT
 		local attempt=1 generation_ok=false
 		local comment_claude_only=false
 		local comment_skip_claude=false
+		local comment_try_claude_before_opencode_fallback="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
 		local comments_talk="" comment_model_used=""
 		if _comment_should_use_claude_only; then
 			comment_claude_only=true
@@ -6951,9 +6954,24 @@ RETRYCOMMENT
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
 					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → fallback (attempt ${attempt}/${comment_retry_max})"
+						if [ "$comment_try_claude_before_opencode_fallback" = "1" ] && [ "$comment_skip_claude" != "true" ]; then
+							log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
+						else
+							log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → ${RADIO_FALLBACK} fallback (attempt ${attempt}/${comment_retry_max})"
+						fi
 						attempt_talk=""
 						attempt_model=""
+					fi
+					if [ -z "$attempt_talk" ] && [ "$comment_skip_claude" != "true" ] && [ "$comment_try_claude_before_opencode_fallback" = "1" ]; then
+						attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
+						attempt_model="claude:${RADIO_CLAUDE_MODEL}"
+						attempt_talk=$(_clean_comment_talk "$attempt_talk")
+						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+							log "[COMMENT] claude 出力が不正/短文のため破棄 → ${RADIO_FALLBACK} fallback (attempt ${attempt}/${comment_retry_max})"
+							attempt_talk=""
+							attempt_model=""
+						fi
 					fi
 					if [ -z "$attempt_talk" ]; then
 						attempt_talk=$(_run_opencode_comment "$RADIO_FALLBACK" "$prompt_for_attempt")
@@ -6961,12 +6979,16 @@ RETRYCOMMENT
 						attempt_talk=$(_clean_comment_talk "$attempt_talk")
 						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-							log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
+							if [ "$comment_try_claude_before_opencode_fallback" = "1" ]; then
+								log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → retry (attempt ${attempt}/${comment_retry_max})"
+							else
+								log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
+							fi
 							attempt_talk=""
 							attempt_model=""
 						fi
 					fi
-					if [ -z "$attempt_talk" ] && [ "$comment_skip_claude" != "true" ]; then
+					if [ -z "$attempt_talk" ] && [ "$comment_skip_claude" != "true" ] && [ "$comment_try_claude_before_opencode_fallback" != "1" ]; then
 						attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
 						attempt_model="claude:${RADIO_CLAUDE_MODEL}"
 						attempt_talk=$(_clean_comment_talk "$attempt_talk")
