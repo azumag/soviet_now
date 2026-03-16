@@ -1,6 +1,8 @@
 #!/bin/bash
 # lib/eloop_ai.sh - AI実行・スピナー・プロンプト構築
 
+declare -p CLAUDE_CMD >/dev/null 2>&1 || CLAUDE_CMD=(env -u ANTHROPIC_AUTH_TOKEN claude)
+
 #=== スピナー ===
 
 _spinner_pid=0
@@ -90,23 +92,23 @@ run_cmd() {
 		;;
 	sonnet)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			"${CLAUDE_CMD[@]}" -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			claude -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits &
+			"${CLAUDE_CMD[@]}" -p "$(cat "$prompt_file")" --model=sonnet --permission-mode=acceptEdits &
 		fi
 		;;
 	opus)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			"${CLAUDE_CMD[@]}" -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			claude -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits &
+			"${CLAUDE_CMD[@]}" -p "$(cat "$prompt_file")" --model=opus --permission-mode=acceptEdits &
 		fi
 		;;
 	claude)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			"${CLAUDE_CMD[@]}" -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			claude -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits &
+			"${CLAUDE_CMD[@]}" -p "$(cat "$prompt_file")" --model=Haiku --permission-mode=acceptEdits &
 		fi
 		;;
 	opencode)

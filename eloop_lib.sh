@@ -68,6 +68,7 @@ COMMENT_CLAUDE_TOOLS="${COMMENT_CLAUDE_TOOLS:-default,WebSearch,WebFetch}"
 COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
 COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
 COMMENT_FORCE_CLAUDE_WHEN_IMPROVING="${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}"
+CLAUDE_CMD=(env -u ANTHROPIC_AUTH_TOKEN claude)
 IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow"}'
 RADIO_SAY_RATE=150
 unset SAY_AUDIO_DEVICE
@@ -668,23 +669,23 @@ run_cmd() {
 		;;
 	sonnet)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
+			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
 		fi
 		;;
 	opus)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
+			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
 		fi
 		;;
 	claude)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
+			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
 		fi
 		;;
 	opencode)
@@ -1455,7 +1456,7 @@ _run_claude_comment_with_model() {
 	local stderr_preview="" provider_error=false login_error=false
 	output=$(
 		cd "$sandbox_dir" &&
-			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
+			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" "${CLAUDE_CMD[@]}" -p --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
@@ -1518,7 +1519,7 @@ _run_claude_radio_with_model() {
 	local stderr_file
 	stderr_file=$(mktemp /tmp/eloop_claude_stderr_XXXXXXXX)
 	local stderr_preview="" provider_error=false login_error=false
-	output=$(cat "$prompt_file" | timeout "$timeout_sec" claude -p --model "$model" 2>"$stderr_file")
+	output=$(cat "$prompt_file" | timeout "$timeout_sec" "${CLAUDE_CMD[@]}" -p --model "$model" 2>"$stderr_file")
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
 		stderr_preview=$(head -c 500 "$stderr_file")
