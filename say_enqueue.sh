@@ -36,10 +36,19 @@ SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
 SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 
-# --- COEIROINK TTS切替フラグ (戻すには 1→0 にするだけ) ---
-USE_COEIROINK="${USE_COEIROINK:-0}"
-COEIROINK_SPEAKER_UUID="${COEIROINK_SPEAKER_UUID:-8e99d620-87d3-11ed-870a-0242ac1c000c}"
-COEIROINK_STYLE_ID="${COEIROINK_STYLE_ID:-905192261}"
+# --- COEIROINK TTS切替 ---
+# tmp/coeiroink_voice.txt があれば COEIROINK を使用 (!wakana/!moko で生成、!say で削除)
+# 環境変数 USE_COEIROINK=1 でも強制有効化可能
+if [ -f "tmp/coeiroink_voice.txt" ]; then
+    _coe_line=$(cat "tmp/coeiroink_voice.txt" 2>/dev/null)
+    COEIROINK_SPEAKER_UUID="${_coe_line%%|*}"
+    COEIROINK_STYLE_ID="${_coe_line##*|}"
+    USE_COEIROINK="${USE_COEIROINK:-1}"
+else
+    USE_COEIROINK="${USE_COEIROINK:-0}"
+    COEIROINK_SPEAKER_UUID="${COEIROINK_SPEAKER_UUID:-8e99d620-87d3-11ed-870a-0242ac1c000c}"
+    COEIROINK_STYLE_ID="${COEIROINK_STYLE_ID:-905192261}"
+fi
 
 PID_FILE="$QUEUE_DIR/pid"
 LOCK_DIR="$QUEUE_DIR/.lock"
