@@ -603,12 +603,11 @@ _prepare_playback_turn() {
             rm -f "$PID_FILE"
         fi
 
-        # 孤児sayプロセス検出: ロック取得済み＝前の所有者は死んでいるので、残留sayはkillして進む
+        # 孤児say/afplayプロセス検出: ロック取得済み＝前の所有者は死んでいるので、残留プロセスはkillして進む
         local _orphan_pids _orphan_wait=0
         while true; do
-            _orphan_pids=$(pgrep -x say 2>/dev/null || true)
+            _orphan_pids=$(pgrep -x 'say|afplay' 2>/dev/null || true)
             if [ -z "$_orphan_pids" ]; then
-                [ -z "${SAY_AUDIO_DEVICE:-}" ] && break
                 _orphan_pids=$(pgrep -xf "ffmpeg.*audiotoolbox" 2>/dev/null || true)
                 [ -z "$_orphan_pids" ] && break
             fi

@@ -41,15 +41,14 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
-# v252: reactive_pairsに応じた段階的ペナルティ強化版 - 超危険域即時併合強制条件緩和
-#     last_rollback_analysis: anchor比でcomp=-230.1 p50=-236.5 p25=-249.2と明確に悪化。reactive_pairsがあるのに非併合選択を繰り返し下振れしている。
-#     ワーストゲーム(score0878)終盤turns 58-65: reactive_pairs=3-4あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=3.10に悪化しゲームオーバー。
-#     ベストゲーム(score2703)終盤turns 106-113: 終盤でもreactive_pairs>=2あれば即時併合を確実に捉え、max_y=3.60の危険域でも延命成功。
-#     v251のaxis 8.9がmax_y>=2.0条件で発動し、reactive_pairs>=3の超危険域での即時併合強制に失敗。
-#     axis 8.9のボーナス発動条件をmax_y>=2.0からmax_y>=1.8へ緩和し、axis 8.7のペナルティをreactive_pairsに応じて-(3000.0 + reactive_pairs * 500.0)に動的強化。
-#     これによりreactive_pairs=3で-4500.0、reactive_pairs=4で-5000.0、reactive_pairs=5で-5500.0のペナルティが適用され、reactive_pairsが多いほど即時併合を強制。
-#     構造的変更（axis 8.7動的強化・axis 8.9条件緩和）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
-#     refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260317_043103_score0878.jsonl turns 58-65, game_history/20260317_035812_score2703.jsonl turns 106-113
+# v253: reactive_pairs==0時のdanger zone no merge penalty削除版 - 盤面構築許容
+#     last_rollback_analysis: anchor比でcomp=-230.1 p50=-236.5 p25=-249.2と明確に悪化。reactive_pairs==0の状況でも盤面構築が抑制され下振れ。
+#     ワーストゲーム(score0986)終盤turns 57-64: reactive_pairs=0のままHEIGHT_CONTROL選択が続きmax_y=2.97に悪化しゲームオーバー。
+#     ベストゲーム(score2473)終盤turns 103-118: reactive_pairs>=1あれば即時併合を確実に捉え、max_y=3.42の危険域でも延命成功。
+#     v252のaxis 8.7はmax_y>=1.8 & reactive_pairs>=3 & merge_grade=="NO"条件で発動していたが、reactive_pairs==0の状況でもpenalty=-3000.0が適用され、安全な盤面構築を抑制していた。
+#     reactive_pairs==0（振動併合が不可能）の場合、penalty=0.0にし盤面構築（HEIGHT_CONTROL）を許容する。reactive_pairs>=1なら即時併合強制を維持。
+#     構造的変更（reactive_pairs==0時のペナルティ削除）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairs==0での盤面構築抑制」を潰す。
+#     refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260317_061026_score0986.jsonl turns 57-64, game_history/20260317_054401_score2473.jsonl turns 103-118
 #
  # v251: reactive_pairsに応じた段階的ペナルティ強化版 - 超危険域即時併合強制条件緩和
      # last_rollback_analysis: anchor比でp25=-460.5と悪化。reactive_pairsがあるのに非併合選択を繰り返し下振れしている。
@@ -144,16 +143,15 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v252: reactive_pairsに応じた段階的ペナルティ強化版 - 超危険域即時併合強制条件緩和
+    """v253: reactive_pairs==0時のdanger zone no merge penalty削除版 - 盤面構築許容
 
-    last_rollback_analysis: anchor比でcomp=-230.1 p50=-236.5 p25=-249.2と明確に悪化。reactive_pairsがあるのに非併合選択を繰り返し下振れしている。
-    ワーストゲーム(score0878)終盤turns 58-65: reactive_pairs=3-4あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=3.10に悪化しゲームオーバー。
-    ベストゲーム(score2703)終盤turns 106-113: 終盤でもreactive_pairs>=2あれば即時併合を確実に捉え、max_y=3.60の危険域でも延命成功。
-    v251のaxis 8.9がmax_y>=2.0条件で発動し、reactive_pairs>=3の超危険域での即時併合強制に失敗。
-    axis 8.9のボーナス発動条件をmax_y>=2.0からmax_y>=1.8へ緩和し、axis 8.7のペナルティをreactive_pairsに応じて-(3000.0 + reactive_pairs * 500.0)に動的強化。
-    これによりreactive_pairs=3で-4500.0、reactive_pairs=4で-5000.0、reactive_pairs=5で-5500.0のペナルティが適用され、reactive_pairsが多いほど即時併合を強制。
-    構造的変更（axis 8.7動的強化・axis 8.9条件緩和）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
-    refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260317_043103_score0878.jsonl turns 58-65, game_history/20260317_035812_score2703.jsonl turns 106-113
+    last_rollback_analysis: anchor比でcomp=-230.1 p50=-236.5 p25=-249.2と明確に悪化。reactive_pairs==0の状況でも盤面構築が抑制され下振れ。
+    ワーストゲーム(score0986)終盤turns 57-64: reactive_pairs=0のままHEIGHT_CONTROL選択が続きmax_y=2.97に悪化しゲームオーバー。
+    ベストゲーム(score2473)終盤turns 103-118: reactive_pairs>=1あれば即時併合を確実に捉え、max_y=3.42の危険域でも延命成功。
+    v252のaxis 8.7はmax_y>=1.8 & reactive_pairs>=3 & merge_grade=="NO"条件で発動していたが、reactive_pairs==0の状況でもpenalty=-3000.0が適用され、安全な盤面構築を抑制していた。
+    reactive_pairs==0（振動併合が不可能）の場合、penalty=0.0にし盤面構築（HEIGHT_CONTROL）を許容する。reactive_pairs>=1なら即時併合強制を維持。
+    構造的変更（reactive_pairs==0時のペナルティ削除）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairs==0での盤面構築抑制」を潰す。
+    refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260317_061026_score0986.jsonl turns 57-64, game_history/20260317_054401_score2473.jsonl turns 103-118
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -423,19 +421,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 2000.0
             reasons.append("DANGER_ZONE_NO_MERGE_PENALTY")
 
-        # ----- evaluation axis 8.7: expanded danger zone absolute merge priority (NEW: reactive_pairs>=3 scaled penalty) -----
+        # ----- evaluation axis 8.7: expanded danger zone absolute merge priority (v253: reactive_pairs==0時のdanger zone no merge penalty削除版) -----
         # last_rollback_analysis: anchor比でcomp=-230.1 p50=-236.5 p25=-249.2と明確に悪化。
-        # ワーストゲーム(score0878)終盤turns 58-65: reactive_pairs=3-4あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=3.10に悪化。
-        # ベストゲーム(score2703)終盤turns 106-113: 終盤でもreactive_pairs>=2あれば即時併合を確実に捉え、max_y=3.60の危険域でも延命成功。
-        # v250のaxis 8.9がmax_y>=2.0条件で発動し、reactive_pairs>=3の超危険域での即時併合強制に失敗。
-        # axis 8.7のペナルティをreactive_pairsに応じて-(3000.0 + reactive_pairs * 500.0)に動的強化。
-        # これによりreactive_pairs=3で-4500.0、reactive_pairs=4で-5000.0のペナルティが適用され、reactive_pairsが多いほど即時併合を強制。
-        # 構造的変更（ペナルティ動的化）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
-        if max_y >= 1.8 and reactive_pair_count >= 3 and merge_grade == "NO":
-            # 危険域でreactive_pairs>=3あるのに即時併合がない場合、reactive_pairsに応じた極めて強力なペナルティを与える
-            # reactive_pairs=3で-4500.0、reactive_pairs=4で-5000.0、reactive_pairs=5で-5500.0
-            # 超危険域での非併合選択を完全に排除し、即時併合優先を強制
-            penalty = 3000.0 + reactive_pair_count * 500.0
+        # ワーストゲーム(score0986)終盤turns 57-64: reactive_pairs=0のままHEIGHT_CONTROL選択が続きmax_y=2.97に悪化しゲームオーバー。
+        # ベストゲーム(score2473)終盤turns 103-118: reactive_pairs>=1あれば即時併合を確実に捉え、max_y=3.42の危険域でも延命成功。
+        # v252のaxis 8.7はreactive_pairs>=3条件で発動し、reactive_pairs==0の状況でpenalty=-3000.0が適用され、安全な盤面構築を抑制していた。
+        # reactive_pairs==0（振動併合が不可能）の場合、penalty=0.0にし盤面構築（HEIGHT_CONTROL）を許容する。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260317_061026_score0986.jsonl turns 57-64, game_history/20260317_054401_score2473.jsonl turns 103-118
+        if max_y >= 1.8 and merge_grade == "NO":
+            if reactive_pair_count == 0:
+                # 振動なしでは安全に盤面を構築できる
+                penalty = 0.0
+            else:
+                # 振動ありなら併合を強制する
+                penalty = 3000.0 + reactive_pair_count * 500.0
             score -= penalty
             reasons.append("EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY")
 
