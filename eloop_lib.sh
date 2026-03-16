@@ -6902,6 +6902,11 @@ generate_comment_response() {
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
 
+		local sing_reference=""
+		if [ -f "$ELOOP_LIB_DIR/data/voicevox_sing_reference.md" ]; then
+			sing_reference=$(cat "$ELOOP_LIB_DIR/data/voicevox_sing_reference.md" 2>/dev/null)
+		fi
+
 		local comment_prompt_file
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
 		cat >"$comment_prompt_file" <<COMMENTPROMPT
@@ -7045,6 +7050,22 @@ generate_comment_response() {
   ===ADVICE===
   （アドバイス内容を1-3行で要約。コメント主の名前も記載）
 - 戦略アドバイスがなければ ===ADVICE=== は出力しない
+
+	【歌声合成機能】
+	「歌って」「〜歌って」「〜を歌ってください」などの歌唱リクエストがあった場合:
+	1. まずテキストで応答する（「歌ってみます」など短く）
+	2. その後に ===SING=== マーカーで楽譜JSONを出力する
+	3. 曲の指定がない場合や知らない曲の場合は、きらきら星など簡単な曲でよい
+	4. 楽譜生成が難しい場合は、テキスト応答のみでもOK（無理に ===SING=== を出力しなくてよい）
+	5. 歌唱リクエスト以外のコメントでは ===SING=== を出力しないこと
+
+	===SING=== の出力形式:
+	===SING===
+	{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},...,{"key":null,"frame_length":15,"lyric":""}]}
+	===SING===
+
+	楽譜JSON仕様:
+${sing_reference}
 COMMENTPROMPT
 
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
@@ -7166,6 +7187,13 @@ RETRYCOMMENT
 				continue
 			fi
 
+			# ===SING=== セクションを抽出（===ADVICE=== より先に処理）
+			local sing_score=""
+			if echo "$attempt_talk" | grep -q '^===SING==='; then
+				sing_score=$(echo "$attempt_talk" | sed -n '/^===SING===/,/^===SING===/ p' | sed '1d;$d')
+				attempt_talk=$(echo "$attempt_talk" | sed '/^===SING===/,/^===SING===/ d')
+			fi
+
 			# 戦略アドバイスを抽出（本文確定後に追記する）
 			local advice_part advice_item
 			advice_part=$(echo "$attempt_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
@@ -7181,6 +7209,28 @@ RETRYCOMMENT
 				log "[COMMENT] 最終本文が不正/短文のため再生成 (attempt ${attempt}/${comment_retry_max})"
 				attempt=$((attempt + 1))
 				continue
+			fi
+
+			# 歌声合成: 楽譜JSONが有効なら非同期で合成→キューに投入
+			if [ -n "$sing_score" ]; then
+				if echo "$sing_score" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'notes' in d" 2>/dev/null; then
+					local score_file="/tmp/sing_score_$(date +%s)_$$.json"
+					echo "$sing_score" > "$score_file"
+					(
+						local sing_wav="/tmp/sing_wav_$(date +%s)_$$.wav"
+						if "$ELOOP_LIB_DIR/voicevox_sing.sh" -o "$sing_wav" "$score_file" 2>/dev/null; then
+							SAY_CONTEXT_LABEL="comment:sing" "$ELOOP_LIB_DIR/say_enqueue.sh" --no-preempt --wav "$sing_wav" 150 0
+							rm -f "$sing_wav"
+						else
+							log "[COMMENT] 歌声合成失敗: $score_file"
+						fi
+						rm -f "$score_file"
+					) &
+					disown $!
+					log "[COMMENT] 歌声合成開始 (score=$score_file)"
+				else
+					log "[COMMENT] 楽譜JSONが不正のため歌声合成スキップ"
+				fi
 			fi
 
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"

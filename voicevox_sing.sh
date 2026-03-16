@@ -32,11 +32,11 @@ for s in singers:
         print(f\"  [{st['id']}] {st['name']} (type={t})\")
 "
     echo ""
-    echo "=== Speakers with frame_decode support (frame_synthesis 用) ==="
-    curl -s "$VOICEVOX_URL/speakers" | python3 -c "
+    echo "=== Singers with frame_decode support (frame_synthesis 用) ==="
+    curl -s "$VOICEVOX_URL/singers" | python3 -c "
 import json, sys
-speakers = json.load(sys.stdin)
-for s in speakers:
+singers = json.load(sys.stdin)
+for s in singers:
     fd_styles = [st for st in s.get('styles', []) if st.get('type') == 'frame_decode']
     if fd_styles:
         print(f\"{s['name']}\")
@@ -47,11 +47,11 @@ for s in speakers:
 
 # /singers から frame_decode 対応のスピーカーIDをランダム選択
 pick_synth_speaker() {
-    curl -s --max-time 5 "$VOICEVOX_URL/speakers" | python3 -c "
+    curl -s --max-time 5 "$VOICEVOX_URL/singers" | python3 -c "
 import json, sys, random
-speakers = json.load(sys.stdin)
+singers = json.load(sys.stdin)
 fd_ids = []
-for s in speakers:
+for s in singers:
     for st in s.get('styles', []):
         if st.get('type') == 'frame_decode':
             fd_ids.append(st['id'])
@@ -90,10 +90,12 @@ synthesize_song() {
         -H "Content-Type: application/json" \
         -d "$score_json")
 
-    if [ -z "$frame_query" ] || echo "$frame_query" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'f0' in d" 2>/dev/null; then
-        : # OK — f0 key exists means valid frame audio query
-    else
-        echo "ERROR: sing_frame_audio_query failed" >&2
+    if [ -z "$frame_query" ]; then
+        echo "ERROR: sing_frame_audio_query returned empty response" >&2
+        return 1
+    fi
+    if ! echo "$frame_query" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'f0' in d" 2>/dev/null; then
+        echo "ERROR: sing_frame_audio_query failed (no 'f0' in response)" >&2
         echo "$frame_query" | head -3 >&2
         return 1
     fi

@@ -386,6 +386,33 @@ generate_comment_response() {
 			rm -f "$comment_prompt_file"
 
 			if [ -n "$comments_talk" ]; then
+				# ===SING=== セクションを抽出（===ADVICE=== より先に処理）
+				local sing_score=""
+				if echo "$comments_talk" | grep -q '^===SING==='; then
+					sing_score=$(echo "$comments_talk" | sed -n '/^===SING===/,/^===SING===/ p' | sed '1d;$d')
+					comments_talk=$(echo "$comments_talk" | sed '/^===SING===/,/^===SING===/ d')
+				fi
+				if [ -n "$sing_score" ]; then
+					if echo "$sing_score" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'notes' in d" 2>/dev/null; then
+						local score_file="/tmp/sing_score_$(date +%s)_$$.json"
+						echo "$sing_score" > "$score_file"
+						(
+							local sing_wav="/tmp/sing_wav_$(date +%s)_$$.wav"
+							if ./voicevox_sing.sh -o "$sing_wav" "$score_file" 2>/dev/null; then
+								SAY_CONTEXT_LABEL="comment:sing" ./say_enqueue.sh --no-preempt --wav "$sing_wav" 150 0
+								rm -f "$sing_wav"
+							else
+								log "[COMMENT] 歌声合成失敗: $score_file"
+							fi
+							rm -f "$score_file"
+						) &
+						disown $!
+						log "[COMMENT] 歌声合成開始 (score=$score_file)"
+					else
+						log "[COMMENT] 楽譜JSONが不正のため歌声合成スキップ"
+					fi
+				fi
+
 				# 戦略アドバイスを抽出して advice.md に追記
 				local advice_part
 				advice_part=$(echo "$comments_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
