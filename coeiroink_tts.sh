@@ -56,7 +56,8 @@ print(json.dumps({
 " "$text")
 
     local http_code
-    http_code=$(curl -s -X POST "$COEIROINK_URL/v1/synthesis" \
+    http_code=$(curl -s --max-time "${COEIROINK_TIMEOUT:-30}" \
+        -X POST "$COEIROINK_URL/v1/synthesis" \
         -H "Content-Type: application/json" \
         -d "$payload" \
         --output "$output" \
