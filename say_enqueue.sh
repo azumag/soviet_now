@@ -408,8 +408,16 @@ _launch_say() {
     if [ "${USE_VOICEVOX:-0}" = "1" ]; then
         local vo_wav
         vo_wav="${MY_CONTENT%.txt}.wav"
+        # 合成中もheartbeatを更新（stale判定回避）
+        ( while true; do _touch_lock_heartbeat; sleep 2; done ) &
+        local _hb_pid=$!
+        local _vo_ok=0
         if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_TIMEOUT=60 \
            ./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
+            _vo_ok=1
+        fi
+        kill "$_hb_pid" 2>/dev/null; wait "$_hb_pid" 2>/dev/null
+        if [ "$_vo_ok" -eq 1 ]; then
             LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$vo_wav")
             nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
             LAUNCH_MODE="voicevox"
