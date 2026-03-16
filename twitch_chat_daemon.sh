@@ -7,7 +7,8 @@ RAW_LOG="$CHAT_DIR/raw.log"
 CHANNEL="${1:-azumagbanjo}"
 RECENT_MSG_IDS_FILE="$CHAT_DIR/recent_msg_ids.log"
 RECENT_LINE_HASHES_FILE="$CHAT_DIR/recent_line_hashes.log"
-RECENT_DEDUP_TTL_SEC="${TWITCH_RECENT_DEDUP_TTL_SEC:-900}"
+RECENT_MSG_ID_TTL_SEC="${TWITCH_RECENT_DEDUP_TTL_SEC:-900}"
+RECENT_LINE_HASH_TTL_SEC="${TWITCH_RECENT_LINE_HASH_TTL_SEC:-60}"
 RECENT_DEDUP_MAX="${TWITCH_RECENT_DEDUP_MAX:-4000}"
 CLIP_COOLDOWN_FILE="$CHAT_DIR/clip_cooldown"
 CLIP_COOLDOWN_SEC=30
@@ -16,7 +17,8 @@ cd "$(dirname "$0")"
 mkdir -p "$CHAT_DIR"
 
 _compact_recent_file() {
-    local src="$1" ttl="${2:-$RECENT_DEDUP_TTL_SEC}" max_keep="${3:-$RECENT_DEDUP_MAX}"
+    local src="$1" ttl="$2" max_keep="${3:-$RECENT_DEDUP_MAX}"
+    [ -n "$ttl" ] || ttl="$RECENT_MSG_ID_TTL_SEC"
     [ -f "$src" ] || return 0
     local tmpf now_ts
     now_ts=$(date +%s)
@@ -28,7 +30,8 @@ _compact_recent_file() {
 }
 
 _recent_key_seen() {
-    local src="$1" key="$2" ttl="${3:-$RECENT_DEDUP_TTL_SEC}"
+    local src="$1" key="$2" ttl="$3"
+    [ -n "$ttl" ] || ttl="$RECENT_MSG_ID_TTL_SEC"
     [ -n "$key" ] || return 1
     [ -f "$src" ] || return 1
     local now_ts
@@ -100,15 +103,15 @@ while true; do
                 fi
             fi
 
-            _compact_recent_file "$RECENT_MSG_IDS_FILE"
-            _compact_recent_file "$RECENT_LINE_HASHES_FILE"
+            _compact_recent_file "$RECENT_MSG_IDS_FILE" "$RECENT_MSG_ID_TTL_SEC"
+            _compact_recent_file "$RECENT_LINE_HASHES_FILE" "$RECENT_LINE_HASH_TTL_SEC"
 
-            if [ -n "$msg_id" ] && _recent_key_seen "$RECENT_MSG_IDS_FILE" "$msg_id"; then
+            if [ -n "$msg_id" ] && _recent_key_seen "$RECENT_MSG_IDS_FILE" "$msg_id" "$RECENT_MSG_ID_TTL_SEC"; then
                 continue
             fi
 
             line_hash=$(printf '%s' "$clean_line" | md5 -q 2>/dev/null || printf '%s' "$clean_line" | md5sum | awk '{print $1}')
-            if [ -n "$line_hash" ] && _recent_key_seen "$RECENT_LINE_HASHES_FILE" "$line_hash"; then
+            if [ -n "$line_hash" ] && _recent_key_seen "$RECENT_LINE_HASHES_FILE" "$line_hash" "$RECENT_LINE_HASH_TTL_SEC"; then
                 continue
             fi
 
