@@ -16,12 +16,16 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-# --no-preempt フラグ処理
+# フラグ処理
 NO_PREEMPT=false
-if [ "${1:-}" = "--no-preempt" ]; then
-    NO_PREEMPT=true
-    shift
-fi
+WAV_MODE=false
+while true; do
+    case "${1:-}" in
+        --no-preempt) NO_PREEMPT=true; shift ;;
+        --wav) WAV_MODE=true; shift ;;
+        *) break ;;
+    esac
+done
 
 QUEUE_DIR="tmp/.say_queue"
 mkdir -p "$QUEUE_DIR"
@@ -105,13 +109,15 @@ LAUNCHED_EXPECTED_SEC=0
 # コンテンツをキュー用にコピー（元ファイルが消されても安全）
 cp "$CONTENT_FILE" "$MY_CONTENT"
 
-# 読み上げ修正: よくある誤読を事前に置換
-sed -i '' \
-    -e 's/AI/エーアイ/g' \
-    -e 's/静寂/せいじゃく/g' \
-    -e 's/地政学的/ちせいがくてき/g' \
-    -e 's/地政学/ちせいがく/g' \
-    "$MY_CONTENT"
+# 読み上げ修正: よくある誤読を事前に置換（WAVモード時はスキップ）
+if [ "$WAV_MODE" = "false" ]; then
+    sed -i '' \
+        -e 's/AI/エーアイ/g' \
+        -e 's/静寂/せいじゃく/g' \
+        -e 's/地政学的/ちせいがくてき/g' \
+        -e 's/地政学/ちせいがく/g' \
+        "$MY_CONTENT"
+fi
 
 _infer_source_label() {
     local path="$1" base corner
@@ -403,6 +409,15 @@ BEGIN {
 _launch_say() {
     LAUNCHED_EXPECTED_SEC=0
     LAUNCH_MODE="say"
+
+    # --- Pre-synthesized WAV (--wav mode) ---
+    if [ "$WAV_MODE" = "true" ] && [ -s "$MY_CONTENT" ]; then
+        LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$MY_CONTENT")
+        nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$MY_CONTENT" >/dev/null 2>&1 &
+        LAUNCH_MODE="wav"
+        LAUNCHED_SAY_PID="$!"
+        return
+    fi
 
     # --- VOICEVOX TTS ---
     if [ "${USE_VOICEVOX:-0}" = "1" ]; then
