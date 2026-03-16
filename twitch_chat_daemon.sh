@@ -103,16 +103,29 @@ while true; do
                 fi
             fi
 
-            # !test0 / !test1 COEIROINK TTS テスト
-            if [[ "$msg" =~ ^[[:space:]]*!(test[01])[[:space:]]+(.*) ]]; then
-                local test_cmd="${BASH_REMATCH[1]}"
-                local test_text="${BASH_REMATCH[2]}"
-                if [ "$test_cmd" = "test0" ]; then
-                    ( SPEAKER_UUID="d41bcbd9-f4a9-4e10-b000-7a431568dd01" STYLE_ID=100 \
-                      ./coeiroink_tts.sh "$test_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
-                elif [ "$test_cmd" = "test1" ]; then
-                    ( SPEAKER_UUID="fb1a910e-208f-11ee-8dde-0242ac1c000c" STYLE_ID=981131759 \
-                      ./coeiroink_tts.sh "$test_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
+            # !coe-{voice} COEIROINK TTS (短縮名で話者指定)
+            # 例: !coe-moko こんにちは  /  !coe-kana テスト
+            if [[ "$msg" =~ ^[[:space:]]*!coe-([a-zA-Z0-9_-]+)[[:space:]]+(.*) ]]; then
+                local coe_voice="${BASH_REMATCH[1]}" coe_text="${BASH_REMATCH[2]}"
+                local coe_uuid="" coe_style=""
+                case "$coe_voice" in
+                    anji|angie)      coe_uuid="cc213e6d-d847-45b5-a1df-415744c890f2"; coe_style=120 ;;
+                    meme|memeko)     coe_uuid="f0d1a286-64dd-11ee-babd-0242ac1c000c"; coe_style=1486940343 ;;
+                    moko)            coe_uuid="fb1a910e-208f-11ee-8dde-0242ac1c000c"; coe_style=981131759 ;;
+                    moko-nare)       coe_uuid="fb1a910e-208f-11ee-8dde-0242ac1c000c"; coe_style=981131760 ;;
+                    moko-rou)        coe_uuid="fb1a910e-208f-11ee-8dde-0242ac1c000c"; coe_style=981131761 ;;
+                    moko-yoro)       coe_uuid="fb1a910e-208f-11ee-8dde-0242ac1c000c"; coe_style=981131762 ;;
+                    moko-naki)       coe_uuid="fb1a910e-208f-11ee-8dde-0242ac1c000c"; coe_style=981131763 ;;
+                    moko-hiso)       coe_uuid="fb1a910e-208f-11ee-8dde-0242ac1c000c"; coe_style=981131764 ;;
+                    moko-robo)       coe_uuid="fb1a910e-208f-11ee-8dde-0242ac1c000c"; coe_style=981131765 ;;
+                    moko-aimai)      coe_uuid="fb1a910e-208f-11ee-8dde-0242ac1c000c"; coe_style=981131766 ;;
+                    kana)            coe_uuid="297a5b91-f88a-6951-5841-f1e648b2e594"; coe_style=30 ;;
+                    kanae)           coe_uuid="d41bcbd9-f4a9-4e10-b000-7a431568dd01"; coe_style=100 ;;
+                    tsuku|tsukuyomi) coe_uuid="3c37646f-3881-5374-2a83-149267990abc"; coe_style=0 ;;
+                esac
+                if [ -n "$coe_uuid" ]; then
+                    ( SPEAKER_UUID="$coe_uuid" STYLE_ID="$coe_style" \
+                      ./coeiroink_tts.sh "$coe_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
                 fi
             fi
 
