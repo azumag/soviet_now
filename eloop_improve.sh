@@ -306,6 +306,16 @@ def summarize_deadline(path: str):
         "avg_reactive": avg_reactive,
     }
 
+def history_screenshot_paths(path: str):
+    if not path:
+        return []
+    base = path[:-6] if path.endswith(".jsonl") else path
+    candidates = [
+        ("board", f"{base}.gameover_board.png"),
+        ("next", f"{base}.gameover_next.png"),
+    ]
+    return [(label, image_path) for label, image_path in candidates if os.path.exists(image_path)]
+
 def extract_markdown_section(text: str, heading: str):
     lines = []
     in_section = False
@@ -517,6 +527,31 @@ for bucket, info in extra_deadline_infos:
     )
 summary_lines.append("- 観点: HIGH_TOWER/HIGH_LAYER に入ってから回復できるか、merge_available を逃していないか、reactive_pairs 増加が得点に変わっているか。")
 summary_lines.append("")
+summary_lines.append("## Supplemental Screenshots")
+summary_lines.append("- gameover時の補助画像。終盤ログを主、画像を補助として使うこと。画像だけで敗因を断定しない。")
+shot_added = False
+for label, path in (("worst", worst_path), ("best", best_path)):
+    assets = history_screenshot_paths(path)
+    if not assets:
+        continue
+    joined = ", ".join(f"{name}={basename(image_path)}" for name, image_path in assets)
+    summary_lines.append(f"- {label}: {joined}")
+    shot_added = True
+if not shot_added:
+    extra_shot_count = 0
+    for path in history_paths:
+        assets = history_screenshot_paths(path)
+        if not assets:
+            continue
+        joined = ", ".join(f"{name}={basename(image_path)}" for name, image_path in assets)
+        summary_lines.append(f"- recent: {basename(path)} {joined}")
+        shot_added = True
+        extra_shot_count += 1
+        if extra_shot_count >= 4:
+            break
+if not shot_added:
+    summary_lines.append("- none")
+summary_lines.append("")
 summary_lines.append("## Recent Change Log Signals")
 if change_lines:
     for line in change_lines:
@@ -537,7 +572,8 @@ summary_lines.append("5. last_rollback_analysis.md if present")
 summary_lines.append("6. change_log.txt")
 summary_lines.append("7. batch_summary.txt")
 summary_lines.append("8. best/worst game logs (especially final 8 turns and max_y>=2.0)")
-summary_lines.append("9. recent strategy versions and hall-of-fame strategies")
+summary_lines.append("9. optional gameover screenshots if present")
+summary_lines.append("10. recent strategy versions and hall-of-fame strategies")
 
 with open(out_file, "w", encoding="utf-8") as f:
     f.write("\n".join(summary_lines) + "\n")
@@ -559,6 +595,7 @@ sandbox_ref_files+=("$GAME_STATE")
 recent_strategy_files=()
 hall_of_fame_files=()
 all_history_files=()
+history_screenshot_files=()
 unity_source_files=()
 # 直近バージョン全て（ハッシュ重複除外）
 _past_seen_hashes=""
@@ -585,6 +622,13 @@ for hf in $HISTORY_FILES; do
 	if [ -f "$hf" ]; then
 		sandbox_ref_files+=("$hf")
 		all_history_files+=("$hf")
+		for kind in board next; do
+			history_shot=$(_history_gameover_asset_path "$hf" "$kind" 2>/dev/null || true)
+			if [ -n "$history_shot" ] && [ -f "$history_shot" ]; then
+				sandbox_ref_files+=("$history_shot")
+				history_screenshot_files+=("$history_shot")
+			fi
+		done
 	fi
 done
 # ゲームソースコード
@@ -626,6 +670,16 @@ manifest_file="tmp/sandbox_files.md"
 	for hf in "${all_history_files[@]}"; do
 		printf -- '  - \`%s\`\n' "$hf"
 	done
+	echo ""
+	echo "### 補助スクリーンショット（任意）"
+	echo "- gameover時の盤面補助画像。終盤ログを主、画像を補助として使うこと。画像だけで敗因を断定しないこと"
+	if [ "${#history_screenshot_files[@]}" -gt 0 ]; then
+		for sf in "${history_screenshot_files[@]}"; do
+			printf -- '  - \`%s\`\n' "$sf"
+		done
+	else
+		echo "- まだなし"
+	fi
 	echo ""
 	echo "### 戦略バージョン（必須）"
 	echo "- 直近バージョン（最低2件。存在数が少なければ available 分だけ読む）:"

@@ -1256,7 +1256,46 @@ archive_history() {
 		local archive
 		archive=$(printf "%s/%s_score%04d.jsonl" "$HISTORY_DIR" "$ts" "$score")
 		cp "$HISTORY_FILE" "$archive"
-		log "[ARCHIVE] $archive"
+			log "[ARCHIVE] $archive"
+	fi
+}
+
+_history_gameover_asset_path() {
+	local history_file="$1" kind="$2"
+	[ -n "$history_file" ] || return 1
+	case "$history_file" in
+	*.jsonl) ;;
+	*) return 1 ;;
+	esac
+	case "$kind" in
+	board) printf '%s.gameover_board.png\n' "${history_file%.jsonl}" ;;
+	next) printf '%s.gameover_next.png\n' "${history_file%.jsonl}" ;;
+	*) return 1 ;;
+	esac
+}
+
+archive_gameover_screenshots() {
+	local history_file="$1"
+	local copied=0 kind src dst
+	[ -n "$history_file" ] || return 0
+	[ -f "$history_file" ] || return 0
+
+	for kind in board next; do
+		case "$kind" in
+		board) src="board.png" ;;
+		next) src="next_block.png" ;;
+		esac
+		[ -s "$src" ] || continue
+		dst=$(_history_gameover_asset_path "$history_file" "$kind" 2>/dev/null || true)
+		[ -n "$dst" ] || continue
+		if cp "$src" "$dst" 2>/dev/null; then
+			log "[ARCHIVE] $dst"
+			copied=$((copied + 1))
+		fi
+	done
+
+	if [ "$copied" -eq 0 ]; then
+		log "[ARCHIVE] gameover screenshots unavailable for $(basename "$history_file")"
 	fi
 }
 

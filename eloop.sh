@@ -309,6 +309,7 @@ post_game_bookkeeping() {
 
 	# アーカイブファイル名を記録
 	LAST_ARCHIVE_FILE=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -1)
+	archive_gameover_screenshots "$LAST_ARCHIVE_FILE"
 
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
