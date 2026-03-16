@@ -5922,18 +5922,24 @@ import unicodedata
 
 raw_comments = sys.argv[1] if len(sys.argv) > 1 else ""
 
+OWNER_NAMES = {"azumagbanjo", "あずまぐ"}
+
 def normalize_author(text: str) -> str:
     text = unicodedata.normalize("NFKC", text or "").strip().lower()
     return re.sub(r"\s+", "", text)
+
+def is_owner(author_raw: str) -> bool:
+    normed = normalize_author(author_raw)
+    return normed in OWNER_NAMES
 
 
 for raw in raw_comments.splitlines():
     match = re.match(r'([^:]+):\s*(.*)$', raw)
     if not match:
         continue
-    author = normalize_author(match.group(1))
+    author = match.group(1).strip()
     body = match.group(2)
-    if author != "azumagbanjo":
+    if not is_owner(author):
         continue
     if re.match(r'^\s*!claude(?:\s+|$)', body, re.I):
         raise SystemExit(0)
@@ -5951,9 +5957,15 @@ import unicodedata
 
 raw_comments = sys.argv[1] if len(sys.argv) > 1 else ""
 
+OWNER_NAMES = {"azumagbanjo", "あずまぐ"}
+
 def normalize_author(text: str) -> str:
     text = unicodedata.normalize("NFKC", text or "").strip().lower()
     return re.sub(r"\s+", "", text)
+
+def is_owner(author_raw: str) -> bool:
+    normed = normalize_author(author_raw)
+    return normed in OWNER_NAMES
 
 
 out = []
@@ -5964,7 +5976,7 @@ for raw in raw_comments.splitlines():
         continue
     author = match.group(1).strip()
     body = match.group(2)
-    if normalize_author(author) == "azumagbanjo":
+    if is_owner(author):
         stripped = re.sub(r'^\s*!claude(?:\s+|$)', '', body, count=1, flags=re.I)
         if stripped != body:
             if stripped.strip():
