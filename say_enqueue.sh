@@ -373,7 +373,7 @@ _launch_say() {
         if SPEAKER_UUID="$COEIROINK_SPEAKER_UUID" STYLE_ID="$COEIROINK_STYLE_ID" \
            ./coeiroink_tts.sh -o "$coe_wav" "$coe_text" >/dev/null 2>&1 && [ -s "$coe_wav" ]; then
             LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$coe_wav")
-            nohup bash -c 'trap "" INT TERM; afplay "$1"; rm -f "$1"' _ "$coe_wav" >/dev/null 2>&1 &
+            nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$coe_wav" >/dev/null 2>&1 &
             LAUNCH_MODE="coeiroink"
             LAUNCHED_SAY_PID="$!"
             return

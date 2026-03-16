@@ -55,13 +55,16 @@ print(json.dumps({
 }))
 " "$text")
 
-    curl -s -X POST "$COEIROINK_URL/v1/synthesis" \
+    local http_code
+    http_code=$(curl -s -X POST "$COEIROINK_URL/v1/synthesis" \
         -H "Content-Type: application/json" \
         -d "$payload" \
-        --output "$output"
+        --output "$output" \
+        -w '%{http_code}')
 
-    if [ $? -ne 0 ] || [ ! -s "$output" ]; then
-        echo "ERROR: synthesis failed" >&2
+    if [ "$http_code" != "200" ] || [ ! -s "$output" ]; then
+        echo "ERROR: synthesis failed (HTTP $http_code)" >&2
+        rm -f "$output" 2>/dev/null
         return 1
     fi
 }
