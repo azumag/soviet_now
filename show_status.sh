@@ -759,8 +759,39 @@ PY
 	fi
 
 	# say_queue のロック状態
-	local say_locked=false
-	[[ -d tmp/.say_queue/.lock ]] && say_locked=true
+	local say_lock_present=false
+	local say_lock_stale=false
+	local say_lock_owner_alive=false
+	local say_lock_age="" say_lock_owner_pid=""
+	if [[ -d tmp/.say_queue/.lock ]]; then
+		say_lock_present=true
+		local say_lock_owner_raw="" say_lock_hb="" say_lock_age_sec=0
+		local say_lock_stale_sec=180
+		say_lock_owner_raw=$(cat tmp/.say_queue/.lock/owner_pid 2>/dev/null || true)
+		say_lock_owner_pid="${say_lock_owner_raw%%:*}"
+		case "$say_lock_owner_pid" in
+		''|*[!0-9]*) say_lock_owner_pid="" ;;
+		esac
+		if [[ -n "$say_lock_owner_pid" ]] && kill -0 "$say_lock_owner_pid" 2>/dev/null; then
+			say_lock_owner_alive=true
+		fi
+		say_lock_hb=$(cat tmp/.say_queue/.lock/heartbeat 2>/dev/null || true)
+		case "$say_lock_hb" in
+		''|*[!0-9]*) say_lock_hb=$(stat -f %m tmp/.say_queue/.lock 2>/dev/null || echo 0) ;;
+		esac
+		case "$say_lock_hb" in
+		''|*[!0-9]*) say_lock_hb=0 ;;
+		esac
+		if (( say_lock_hb > 0 )); then
+			say_lock_age_sec=$(( $(date +%s) - say_lock_hb ))
+			if (( say_lock_age_sec < 60 )); then say_lock_age="${say_lock_age_sec}s"
+			else say_lock_age="$(( say_lock_age_sec / 60 ))m$(( say_lock_age_sec % 60 ))s"
+			fi
+		fi
+		if ! $say_lock_owner_alive && (( say_lock_age_sec > say_lock_stale_sec )); then
+			say_lock_stale=true
+		fi
+	fi
 
 	# say_queue の現在ソース (owner|phase|source|ts|label)
 	local say_phase="" say_source="" say_source_age="" say_label=""
@@ -793,6 +824,17 @@ PY
 		comment*)
 			say_source_is_comment=true
 			;;
+		esac
+	fi
+	local say_effective_status="silent"
+	if $say_running; then
+		say_effective_status="playing"
+	elif $say_lock_present && $say_lock_owner_alive; then
+		case "${say_phase:-}" in
+		retry_wait) say_effective_status="retry" ;;
+		waiting) say_effective_status="waiting" ;;
+		playing) say_effective_status="preparing" ;;
+		*) say_effective_status="waiting" ;;
 		esac
 	fi
 
@@ -951,9 +993,8 @@ PY
 	printf "  ${C_BOLD}AUDIO${C_RESET}\n"
 
 	# TTS (say)
-		if $say_running; then
+		if [[ "$say_effective_status" == "playing" ]]; then
 			printf "    ${C_GREEN}♪${C_RESET} Say         ${C_GREEN}PLAYING${C_RESET}  ${C_DIM}PID=${say_pid}${C_RESET}"
-			$say_locked && printf "  ${C_DIM}[locked]${C_RESET}"
 			if [[ -n "$say_source" ]]; then
 				local say_kind="other"
 				local say_kind_label=""
@@ -967,9 +1008,30 @@ PY
 				printf "  ${C_DIM}[%s:%s]${C_RESET}" "$say_kind_label" "${say_phase:-playing}"
 			fi
 			echo ""
+		elif [[ "$say_effective_status" == "preparing" ]]; then
+			printf "    ${C_CYAN}♪${C_RESET} Say         ${C_CYAN}PREPARING${C_RESET}"
+			if [[ -n "$say_source" ]]; then
+				local prep_label="${say_label:-${say_phase:-?}}"
+				printf "  ${C_DIM}[%s:%s:%s]${C_RESET}" "$prep_label" "${say_phase:-?}" "${say_source_age:-?}"
+			fi
+			echo ""
+		elif [[ "$say_effective_status" == "waiting" ]]; then
+			printf "    ${C_BLUE}♪${C_RESET} Say         ${C_BLUE}WAITING${C_RESET}"
+			if [[ -n "$say_source" ]]; then
+				local wait_label="${say_label:-${say_phase:-?}}"
+				printf "  ${C_DIM}[%s:%s:%s]${C_RESET}" "$wait_label" "${say_phase:-?}" "${say_source_age:-?}"
+			fi
+			echo ""
+		elif [[ "$say_effective_status" == "retry" ]]; then
+			printf "    ${C_YELLOW}♪${C_RESET} Say         ${C_YELLOW}RETRY${C_RESET}"
+			if [[ -n "$say_source" ]]; then
+				local retry_label="${say_label:-${say_phase:-?}}"
+				printf "  ${C_DIM}[%s:%s:%s]${C_RESET}" "$retry_label" "${say_phase:-?}" "${say_source_age:-?}"
+			fi
+			echo ""
 		else
 			printf "    ${C_DIM}♪${C_RESET} Say         ${C_DIM}SILENT${C_RESET}"
-			$say_locked && printf "  ${C_YELLOW}[locked]${C_RESET}"
+			$say_lock_stale && printf "  ${C_YELLOW}[stale-lock:%s]${C_RESET}" "${say_lock_age:-?}"
 			if [[ -n "$say_source" ]]; then
 				local last_label="${say_label:-${say_phase:-?}}"
 				printf "  ${C_YELLOW}[last:%s:%s:%s]${C_RESET}" "$last_label" "${say_phase:-?}" "${say_source_age:-?}"
