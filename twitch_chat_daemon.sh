@@ -111,7 +111,7 @@ while true; do
                     ( SPEAKER_UUID="d41bcbd9-f4a9-4e10-b000-7a431568dd01" STYLE_ID=100 \
                       ./coeiroink_tts.sh "$test_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
                 elif [ "$test_cmd" = "test1" ]; then
-                    ( SPEAKER_UUID="fb1a910e-208f-11ee-8dde-0242ac1c000c" STYLE_ID=0 \
+                    ( SPEAKER_UUID="fb1a910e-208f-11ee-8dde-0242ac1c000c" STYLE_ID=981131759 \
                       ./coeiroink_tts.sh "$test_text" 2>>"tmp/debug/coeiroink_tts.log" || true ) &
                 fi
             fi
