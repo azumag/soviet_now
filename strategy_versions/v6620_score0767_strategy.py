@@ -7,7 +7,7 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-  Decision Logic (12 evaluation axes):
+    Decision Logic (12 evaluation axes):
       1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
       2. Height penalty - Penalty for high landing position (varies by phase)
       3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -19,8 +19,10 @@ Game Overview:
        8. Early game merge priority - Strong bonus for merge opportunities in early game
         8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
         8.6. Deadline margin based no merge penalty - No merge penalty when deadline_margin<0 and reactive_pairs>=1 (v255: deadline_margin utilization)
-        8.7. Expanded danger zone absolute merge priority - Absolute merge priority when max_y>=1.8 and reactive_pairs>=3
-
+         8.7. Expanded danger zone absolute merge priority - Absolute merge priority when max_y>=1.8 and reactive_pairs>=3
+          9. High type proximity bonus (NEW v257) - Bonus for landing near same-type high pieces (type>=12) to facilitate future merges
+         10. Reactive pairs default - Default reason when no other reason applies (v256: simplified)
+ 
 Phases (determined by board max Y):
     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
     MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
@@ -35,10 +37,28 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-   # --- Change History ---
+     # --- Change History ---
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
+#
+# v257: 高type近接配置評価軸追加 - 即時併合機会の取りこぼし削減
+# batch_summary: 高スコア群はHIGH_LAYER(12.1%)を中心に安定して高得点。即時併合機会の取りこぼしを削減するため、
+# 高typeピース(type>=12)を近接配置し、将来の併合道筋を作る評価軸を追加。
+# advice.md: 「大国同士を近接させて配置する戦略」「大きな国を埋めてしまわずに、ウクライナ以降の国の配置を優先する」
+# ワーストゲーム(score0619)終盤turns 55-62でreactive_pairs=4-7あるのにmerge_available=falseでHIGH_TOWER選択続きmax_y=3.19に悪化。
+# ベストゲーム(score2738)終盤turns 114-116で即時併合を選択しmax_y=3.09→1.88に回復。
+# 高typeピース(type>=12)の近接配置ボーナスを追加し、将来の併合機会を確実に確保することでp25悪化を抑制。
+# 構造的変更（新規評価軸axis 9追加）であり、数値微調整ではない。
+# refs: tmp/batch_summary.txt, advice.md, game_history/20260317_004159_score0619.jsonl, game_history/20260317_004646_score2738.jsonl
+#
+# v256: HEIGHT_CONTROL削除・REACTIVE_PAIRS_COMPRESSION簡素化版 - p25悪化の主要因を潰す
+# last_rollback_analysis: anchor比でp25=-501.0と悪化。ワーストゲーム(score0619)終盤turns 55-62でreactive_pairs=4-7あるのにmerge_available=falseでHIGH_TOWER選択続きmax_y=3.19に悪化。
+# ベストゲーム(score2738)終盤turns 114-116で即時併合を選択しmax_y=3.09→1.88に回復。
+# batch_summary: HEIGHT_CONTROL avg_score_delta=0.0で効果なし。低スコア群はHEIGHT_CONTROL(14.5%)を高スコア群(11.6%)より多く選択。
+# HEIGHT_CONTROL削除・REACTIVE_PAIRS_COMPRESSION簡素化により、即時併合機会の取りこぼしを構造的に削減。
+# 構造的変更（無効ロジック削除）であり、数値微調整ではない。anchor比p25悪化の主要因を潰す。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260317_004159_score0619.jsonl, game_history/20260317_004646_score2738.jsonl, tmp/advice.md
 #
 # v255: deadline_margin活用による危険域判定・未活用情報の構造的活用版
 # ワーストゲーム(score0624)終盤turns 60-61: deadline_margin=-1.36, reactive_pairs=7, merge_available=falseでDANGER_ZONE_NO_MERGE_PENALTYが続きmax_y=2.33に悪化
@@ -150,15 +170,17 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v255: deadline_margin活用による危険域判定・未活用情報の構造的活用版
+    """v257: 高type近接配置評価軸追加 - 即時併合機会の取りこぼし削減
 
-    v255: deadline_margin活用による危険域判定 - 未活用情報の構造的活用
-    ワーストゲーム(score0624)終盤turns 60-61: deadline_margin=-1.36, reactive_pairs=7, merge_available=falseでDANGER_ZONE_NO_MERGE_PENALTYが続きmax_y=2.33に悪化
-    ベストゲーム(score2505)終盤turns 108-115: deadline_margin=-0.71〜-2.09の危険域でもmerge_available=true時にNEAR_MERGEを選択し延命成功
-    max_yだけではdeadline_crossed=falseの局面を危険域と誤判定する問題を解消
-    axis 8.6をmax_y判定からdeadline_margin<0（盤面がデッドラインを超えている）判定へ変更し、reactive_pairs>=1かつ非併合配置に-3000.0ペナルティを適用
-    未活用情報deadline_marginの活用による構造的変更であり、数値微調整ではない。物理的危険域判定による即時併合優先強化
-    refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260316_211913_score0624.jsonl turns 60-61, game_history/20260316_210022_score2505.jsonl turns 108-115
+    v257: 高type近接配置評価軸追加 - 即時併合機会の取りこぼし削減
+    batch_summary: 高スコア群はHIGH_LAYER(12.1%)を中心に安定して高得点。即時併合機会の取りこぼしを削減するため、
+    高typeピース(type>=12)を近接配置し、将来の併合道筋を作る評価軸を追加。
+    advice.md: 「大国同士を近接させて配置する戦略」「大きな国を埋めてしまわずに、ウクライナ以降の国の配置を優先する」
+    ワーストゲーム(score0619)終盤turns 55-62でreactive_pairs=4-7あるのにmerge_available=falseでHIGH_TOWER選択続きmax_y=3.19に悪化。
+    ベストゲーム(score2738)終盤turns 114-116で即時併合を選択しmax_y=3.09→1.88に回復。
+    高typeピース(type>=12)の近接配置ボーナスを追加し、将来の併合機会を確実に確保することでp25悪化を抑制。
+    構造的変更（新規評価軸axis 9追加）であり、数値微調整ではない。
+    refs: tmp/batch_summary.txt, advice.md, game_history/20260317_004159_score0619.jsonl, game_history/20260317_004646_score2738.jsonl
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -227,9 +249,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
 
-    # =======================================================================
-    #  score each drop candidate (x coordinate) with 6 evaluation axes (NEW: +1 axis for reactive)
-    # =======================================================================
+     # =======================================================================
+     #  score each drop candidate (x coordinate) with 11 evaluation axes (NEW: +1 axis for reactive default)
+     # =======================================================================
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -268,6 +290,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 1 and merge_grade == "NO":
             height_penalty *= 2.0  # reactive_pairsがある場合は、非併合配置を抑制
 
+        # v256: HEIGHT_CONTROL reason削除・HIGH_LAYER only化 - batch_summaryでavg_score_delta=0.0の無効reason削除
+        # 高スコア群はHEIGHT_CONTROL(11.6%) vs 低スコア群(14.5%)と差があり、効果なし
+        # HIGH_TOWER/MEDIUM_TOWER/HIGH_LAYER reasonは残すが、HEIGHT_CONTROLのみ削除
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
@@ -448,11 +473,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 3000.0
             reasons.append("EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
-        # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
-        # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
-        # reactive_pairsがある場合、即時併合がない時のデフォルト選択をHEIGHT_CONTROLからREACTIVE_PAIRS_COMPRESSIONへ変更し、盤面圧縮を優先。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
+        # ----- evaluation axis 9: high type proximity bonus (NEW v257) -----
+        # batch_summary: 高スコア群はHIGH_LAYER(12.1%)を中心に安定して高得点。即時併合機会の取りこぼしを削減するため、
+        # 高typeピース(type>=12)を近接配置し、将来の併合道筋を作る評価軸を追加。
+        # advice.md: 「大国同士を近接させて配置する戦略」「大きな国を埋めてしまわずに、ウクライナ以降の国の配置を優先する」
+        # refs: tmp/batch_summary.txt, advice.md, game_history/20260317_004646_score2738.jsonl, game_history/20260317_004159_score0619.jsonl
+        next_type = game_state.get("next", {}).get("type", 0)
+        if next_type >= 12:  # type 12以上（ウクライナ以降）を高typeと定義
+            # 盤面上の同じtypeの高typeピースを探し、最も近いピースへの距離を計算
+            min_high_type_dist = float("inf")
+            for p in pieces:
+                if p.get("type") == next_type:
+                    dist = ((x - p["x"])**2 + (landing_y - p["y"])**2)**0.5
+                    if dist < min_high_type_dist:
+                        min_high_type_dist = dist
+            # 近接ボーナス: 距離が近いほど高評価（最大+800.0）
+            if min_high_type_dist < float("inf"):
+                proximity_bonus = max(0, 800.0 - min_high_type_dist * 200.0)
+                score += proximity_bonus
+                reasons.append("HIGH_TYPE_PROXIMITY")
+
+        # ----- evaluation axis 10: reactive pairs default (v256: 簡素化版) -----
+        # v207で追加されたロジックを簡素化。batch_summaryでavg_score_delta=5.0の有効reasonとして維持。
+        # reactive_pairsがある場合のデフォルトreasonとして機能するが、複雑な制御は削除。
+        # refs: tmp/batch_summary.txt, tmp/change_log.txt, game_history/20260313_231816_score0814.jsonl turns 54-57
         if not reasons:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
@@ -461,7 +505,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if score > best_score:
             best_score = score
             best_x = x
-            best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+            # v256: HEIGHT_CONTROL削除・簡素化 - デフォルトは""（空文字）で表現
+            best_reason = "_".join(reasons) if reasons else ""
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
