@@ -596,14 +596,26 @@ _prepare_playback_turn() {
             rm -f "$PID_FILE"
         fi
 
-        while pgrep -x say >/dev/null 2>&1 || { [ -n "${SAY_AUDIO_DEVICE:-}" ] && pgrep -xf "ffmpeg.*audiotoolbox" >/dev/null 2>&1; }; do
-            if _radio_should_yield_to_comment; then
-                _yield_turn_to_pending_comment
-                continue 2
+        # 孤児sayプロセス検出: ロック取得済み＝前の所有者は死んでいるので、残留sayはkillして進む
+        local _orphan_pids _orphan_wait=0
+        while true; do
+            _orphan_pids=$(pgrep -x say 2>/dev/null || true)
+            if [ -z "$_orphan_pids" ]; then
+                [ -z "${SAY_AUDIO_DEVICE:-}" ] && break
+                _orphan_pids=$(pgrep -xf "ffmpeg.*audiotoolbox" 2>/dev/null || true)
+                [ -z "$_orphan_pids" ] && break
             fi
+            if [ "$_orphan_wait" -ge 3 ]; then
+                _log "残留say/ffmpegプロセス検出 → kill: $_orphan_pids"
+                echo "$_orphan_pids" | xargs kill 2>/dev/null || true
+                sleep 1
+                echo "$_orphan_pids" | xargs kill -9 2>/dev/null || true
+                break
+            fi
+            [ "$_orphan_wait" -eq 0 ] && _log "既存sayプロセス検出 → 短時間待機後にkill"
             _touch_lock_heartbeat
-            [ "${_say_wait_logged:-0}" -eq 0 ] && _log "既存sayプロセス検出 → 終了待ち" && _say_wait_logged=1
             sleep 1
+            _orphan_wait=$((_orphan_wait + 1))
         done
 
         _set_current_source "waiting"
