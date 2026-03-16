@@ -36,6 +36,11 @@ SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
 SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 
+# --- COEIROINK TTS切替フラグ (戻すには 1→0 にするだけ) ---
+USE_COEIROINK="${USE_COEIROINK:-1}"
+COEIROINK_SPEAKER_UUID="${COEIROINK_SPEAKER_UUID:-d41bcbd9-f4a9-4e10-b000-7a431568dd01}"
+COEIROINK_STYLE_ID="${COEIROINK_STYLE_ID:-100}"
+
 PID_FILE="$QUEUE_DIR/pid"
 LOCK_DIR="$QUEUE_DIR/.lock"
 LOCK_OWNER_FILE="$LOCK_DIR/owner_pid"
@@ -359,6 +364,25 @@ BEGIN {
 _launch_say() {
     LAUNCHED_EXPECTED_SEC=0
     LAUNCH_MODE="say"
+
+    # --- COEIROINK TTS (テスト用) ---
+    if [ "${USE_COEIROINK:-0}" = "1" ]; then
+        local coe_text coe_wav
+        coe_text=$(cat "$MY_CONTENT" 2>/dev/null)
+        coe_wav="${MY_CONTENT%.txt}.wav"
+        if SPEAKER_UUID="$COEIROINK_SPEAKER_UUID" STYLE_ID="$COEIROINK_STYLE_ID" \
+           ./coeiroink_tts.sh -o "$coe_wav" "$coe_text" >/dev/null 2>&1 && [ -s "$coe_wav" ]; then
+            LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$coe_wav")
+            nohup bash -c 'trap "" INT TERM; afplay "$1"; rm -f "$1"' _ "$coe_wav" >/dev/null 2>&1 &
+            LAUNCH_MODE="coeiroink"
+            LAUNCHED_SAY_PID="$!"
+            return
+        else
+            _log "COEIROINK合成失敗 → macOS say にフォールバック"
+        fi
+    fi
+    # --- /COEIROINK ---
+
     if [ -n "${SAY_AUDIO_DEVICE:-}" ] && [ "${SAY_FORCE_DIRECT:-0}" != "1" ]; then
         local device_index
         device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
