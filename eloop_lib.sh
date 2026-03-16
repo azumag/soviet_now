@@ -5912,6 +5912,70 @@ is_comment_backlog_high() {
 	[ "$value" -ge "$threshold" ]
 }
 
+_comment_has_manual_claude_trigger() {
+	local comments="$1"
+	[ -n "$comments" ] || return 1
+	python3 - "$comments" <<'PY'
+import re
+import sys
+import unicodedata
+
+raw_comments = sys.argv[1] if len(sys.argv) > 1 else ""
+
+def normalize_author(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text or "").strip().lower()
+    return re.sub(r"\s+", "", text)
+
+
+for raw in raw_comments.splitlines():
+    match = re.match(r'([^:]+):\s*(.*)$', raw)
+    if not match:
+        continue
+    author = normalize_author(match.group(1))
+    body = match.group(2)
+    if author != "azumagbanjo":
+        continue
+    if re.match(r'^\s*!claude(?:\s+|$)', body, re.I):
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+_strip_comment_control_prefixes() {
+	local comments="$1"
+	python3 - "$comments" <<'PY'
+import re
+import sys
+import unicodedata
+
+raw_comments = sys.argv[1] if len(sys.argv) > 1 else ""
+
+def normalize_author(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text or "").strip().lower()
+    return re.sub(r"\s+", "", text)
+
+
+out = []
+for raw in raw_comments.splitlines():
+    match = re.match(r'([^:]+):\s*(.*)$', raw)
+    if not match:
+        out.append(raw)
+        continue
+    author = match.group(1).strip()
+    body = match.group(2)
+    if normalize_author(author) == "azumagbanjo":
+        stripped = re.sub(r'^\s*!claude(?:\s+|$)', '', body, count=1, flags=re.I)
+        if stripped != body:
+            if stripped.strip():
+                out.append(f"{author}: {stripped}")
+            continue
+    out.append(raw)
+
+print("\n".join(out), end="")
+PY
+}
+
 _comment_should_use_claude_only() {
 	[ "${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}" = "1" ] || return 1
 
@@ -6728,6 +6792,31 @@ generate_comment_response() {
 		return
 	fi
 
+	local comment_force_claude_manual=false
+	local twitch_comments_for_prompt="$twitch_comments"
+	if _comment_has_manual_claude_trigger "$twitch_comments"; then
+		comment_force_claude_manual=true
+		twitch_comments_for_prompt=$(_strip_comment_control_prefixes "$twitch_comments")
+		log "[COMMENT] azumagbanjo の !claude トリガを検出 → claude sonnet を優先"
+	fi
+	if [ -z "$twitch_comments_for_prompt" ]; then
+		log "[COMMENT] !claude 制御コメントのみのため返信生成をスキップ"
+		if ./twitch_chat.sh ack-batch "$comment_batch_file"; then
+			_record_processed_comment_lines "$twitch_comments"
+		else
+			log "[COMMENT] ack-batch 失敗 → 個別行ハッシュ記録で次回重複除外"
+			_record_processed_comment_lines "$twitch_comments"
+		fi
+		_mark_comment_batch_processed "$comment_batch_hash"
+		rm -f "$comment_batch_file"
+		return
+	fi
+
+	local comment_prompt_batch_file=""
+	comment_prompt_batch_file=$(mktemp /tmp/eloop_comment_prompt_batch_XXXXXXXX 2>/dev/null || true)
+	[ -z "$comment_prompt_batch_file" ] && comment_prompt_batch_file="tmp/.twitch_chat/comment_prompt_batch_$(date +%s)_${RANDOM}.txt"
+	printf '%s\n' "$twitch_comments_for_prompt" > "$comment_prompt_batch_file"
+
 	local past_topics=""
 	past_topics=$(_radio_past_topics_block)
 	local game_state_context=""
@@ -6742,11 +6831,11 @@ generate_comment_response() {
 	local _last_context_lines=""
 	if [ -f "$comment_context_history_file" ]; then
 		local _new_line_count
-		_new_line_count=$(printf '%s\n' "$twitch_comments" | wc -l)
+		_new_line_count=$(printf '%s\n' "$twitch_comments_for_prompt" | wc -l)
 		_last_context_lines=$(tail -"${_new_line_count}" "$comment_context_history_file" 2>/dev/null)
 	fi
-	if [ "$_last_context_lines" != "$twitch_comments" ]; then
-		printf '%s\n' "$twitch_comments" >> "$comment_context_history_file"
+	if [ "$_last_context_lines" != "$twitch_comments_for_prompt" ]; then
+		printf '%s\n' "$twitch_comments_for_prompt" >> "$comment_context_history_file"
 	fi
 	if [ -f "$comment_context_history_file" ] && [ "$(wc -l < "$comment_context_history_file")" -gt 300 ]; then
 		tail -300 "$comment_context_history_file" > "${comment_context_history_file}.tmp"
@@ -6754,13 +6843,13 @@ generate_comment_response() {
 	fi
 
 	local comment_batch_context=""
-	comment_batch_context=$(printf '%s\n' "$twitch_comments" | _format_comment_batch_context)
+	comment_batch_context=$(printf '%s\n' "$twitch_comments_for_prompt" | _format_comment_batch_context)
 	local recent_spoken_comment_context=""
 	recent_spoken_comment_context=$(_build_recent_spoken_comment_context)
 	local comment_followup_hints=""
-	comment_followup_hints=$(_build_comment_followup_hints "$comment_batch_file")
+	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file")
 	local strategy_advice_candidates=""
-	strategy_advice_candidates=$(_extract_strategy_advice_from_comments "$comment_batch_file")
+	strategy_advice_candidates=$(_extract_strategy_advice_from_comments "$comment_prompt_batch_file")
 
 	local current_time current_hour time_period
 	current_time=$(date '+%H:%M')
@@ -6797,6 +6886,7 @@ generate_comment_response() {
 			rm -f $COMMENT_GEN_STATE_FILE
 			_clear_comment_batch_inflight "$comment_batch_hash"
 			[ -n "$comment_batch_file" ] && rm -f "$comment_batch_file"
+			[ -n "$comment_prompt_batch_file" ] && rm -f "$comment_prompt_batch_file"
 		}
 		trap '_cleanup_comment_gen_worker' EXIT
 
@@ -6807,7 +6897,7 @@ generate_comment_response() {
 	時刻: ${current_time} / ${time_period}
 
 	【返信対象コメント（今回）】
-	${twitch_comments}
+	${twitch_comments_for_prompt}
 
 		【コメント前後文脈（今回のコメント群）】
 		${comment_batch_context:-（なし）}
@@ -6956,7 +7046,10 @@ COMMENTPROMPT
 		local comment_skip_claude=false
 		local comment_try_claude_before_opencode_fallback="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
 		local comments_talk="" comment_model_used=""
-		if _comment_should_use_claude_only; then
+		if [ "$comment_force_claude_manual" = "true" ]; then
+			comment_claude_only=true
+			log "[COMMENT] !claude 指定のため claude sonnet で生成"
+		elif _comment_should_use_claude_only; then
 			comment_claude_only=true
 			log "[COMMENT] improve実行中のため claude専用モードで生成"
 		fi
