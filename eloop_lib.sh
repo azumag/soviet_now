@@ -87,6 +87,7 @@ IMPROVE_STATE_FILE="$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_state.json"
 IMPROVE_AI_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/improve_ai.log"
 IMPROVE_AI_LOG_KEEP_LINES=4000
 IMPROVE_AI_LOG_TRIM_LINES=8000
+COMMENT_CLAUDE_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/comment_claude.log"
 IMPROVE_STALE_WATCHDOG_SEC="${IMPROVE_STALE_WATCHDOG_SEC:-1200}"
 ACCUMULATED_GAMES_FILE="$TMP_STATE_DIR/accumulated_games.json"
 ROLLING_SCORES_FILE="$TMP_STATE_DIR/rolling_scores.json"
@@ -1451,6 +1452,12 @@ _run_claude_comment_with_model() {
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
+		mkdir -p "$(dirname "$COMMENT_CLAUDE_LOG_FILE")" 2>/dev/null || true
+		{
+			printf '[%s] rc=%s model=%s tools=%s\n' "$(date '+%F %T')" "$rc" "$model" "$COMMENT_CLAUDE_TOOLS"
+			head -c 4000 "$stderr_file"
+			printf '\n\n'
+		} >>"$COMMENT_CLAUDE_LOG_FILE" 2>/dev/null || true
 		if grep -qi 'Not logged in' "$stderr_file"; then
 			log "[COMMENT] claude unavailable: not logged in" >&2
 		fi
