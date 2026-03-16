@@ -1,8 +1,6 @@
 #!/bin/bash
 # lib/eloop_radio.sh - ラジオトーク・オーディオ管理
 
-declare -p CLAUDE_CMD >/dev/null 2>&1 || CLAUDE_CMD=(env -u ANTHROPIC_AUTH_TOKEN claude)
-
 #=== ANSIエスケープ除去 ===
 
 _strip_ansi() {
@@ -63,7 +61,7 @@ _run_claude_radio() {
 	log "[RADIO] claude fallback (model=$RADIO_CLAUDE_MODEL, prompt=$(wc -c < "$prompt_file" | tr -d ' ')B)" >&2
 	local stderr_file
 	stderr_file=$(mktemp /tmp/eloop_claude_stderr_XXXXXXXX)
-	output=$(cat "$prompt_file" | timeout "$timeout_sec" "${CLAUDE_CMD[@]}" -p --model "$RADIO_CLAUDE_MODEL" 2>"$stderr_file")
+	output=$(cat "$prompt_file" | timeout "$timeout_sec" claude -p --model "$RADIO_CLAUDE_MODEL" 2>"$stderr_file")
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
 		log "[RADIO] claude stderr: $(head -c 500 "$stderr_file")" >&2

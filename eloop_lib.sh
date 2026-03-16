@@ -8,6 +8,7 @@
 # --- スクリプトディレクトリ ---
 ELOOP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ELOOP_LIB_DIR"
+unset ANTHROPIC_AUTH_TOKEN
 
 # --- 定数 ---
 COMMANDS="commands.txt"
@@ -68,7 +69,6 @@ COMMENT_CLAUDE_TOOLS="${COMMENT_CLAUDE_TOOLS:-default,WebSearch,WebFetch}"
 COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
 COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
 COMMENT_FORCE_CLAUDE_WHEN_IMPROVING="${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}"
-CLAUDE_CMD=(env -u ANTHROPIC_AUTH_TOKEN claude)
 IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow"}'
 RADIO_SAY_RATE=150
 unset SAY_AUDIO_DEVICE
@@ -142,8 +142,8 @@ esac
 COMMENT_QUEUE_DIR="tmp/.comment_queue"
 COMMENT_SPOKEN_HISTORY_DIR="tmp/.comment_queue/spoken_history"
 COMMENT_SPOKEN_HISTORY_MAX_FILES="${COMMENT_SPOKEN_HISTORY_MAX_FILES:-16}"
-COMMENT_SPOKEN_PROMPT_ITEMS="${COMMENT_SPOKEN_PROMPT_ITEMS:-10}"
-COMMENT_SPOKEN_PROMPT_MAX_CHARS="${COMMENT_SPOKEN_PROMPT_MAX_CHARS:-5000}"
+COMMENT_SPOKEN_PROMPT_ITEMS="${COMMENT_SPOKEN_PROMPT_ITEMS:-20}"
+COMMENT_SPOKEN_PROMPT_MAX_CHARS="${COMMENT_SPOKEN_PROMPT_MAX_CHARS:-8000}"
 COMMENT_SPOKEN_ITEM_MAX_CHARS="${COMMENT_SPOKEN_ITEM_MAX_CHARS:-700}"
 RUSSIA_CELEBRATION_WORKER_PID_FILE="$TMP_STATE_DIR/.russia_celebration_worker.pid"
 COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
@@ -669,23 +669,23 @@ run_cmd() {
 		;;
 	sonnet)
 		if [ -n "$cmd_log_file" ]; then
-			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
+			claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
 		fi
 		;;
 	opus)
 		if [ -n "$cmd_log_file" ]; then
-			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
+			claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
 		fi
 		;;
 	claude)
 		if [ -n "$cmd_log_file" ]; then
-			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 		else
-			"${CLAUDE_CMD[@]}" -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
+			claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
 		fi
 		;;
 	opencode)
@@ -1456,7 +1456,7 @@ _run_claude_comment_with_model() {
 	local stderr_preview="" provider_error=false login_error=false
 	output=$(
 		cd "$sandbox_dir" &&
-			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" "${CLAUDE_CMD[@]}" -p --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
+			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model "$model" --tools "$COMMENT_CLAUDE_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
@@ -1519,7 +1519,7 @@ _run_claude_radio_with_model() {
 	local stderr_file
 	stderr_file=$(mktemp /tmp/eloop_claude_stderr_XXXXXXXX)
 	local stderr_preview="" provider_error=false login_error=false
-	output=$(cat "$prompt_file" | timeout "$timeout_sec" "${CLAUDE_CMD[@]}" -p --model "$model" 2>"$stderr_file")
+	output=$(cat "$prompt_file" | timeout "$timeout_sec" claude -p --model "$model" 2>"$stderr_file")
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
 		stderr_preview=$(head -c 500 "$stderr_file")
@@ -6738,7 +6738,16 @@ generate_comment_response() {
 	local comment_context_history_file="tmp/.twitch_chat/comment_context_history.log"
 	local previous_comments_context=""
 	[ -f "$comment_context_history_file" ] && previous_comments_context=$(tail -30 "$comment_context_history_file" 2>/dev/null)
-	printf '%s\n' "$twitch_comments" >> "$comment_context_history_file"
+	# 重複追記防止: 直前の内容と同一でなければ追記
+	local _last_context_lines=""
+	if [ -f "$comment_context_history_file" ]; then
+		local _new_line_count
+		_new_line_count=$(printf '%s\n' "$twitch_comments" | wc -l)
+		_last_context_lines=$(tail -"${_new_line_count}" "$comment_context_history_file" 2>/dev/null)
+	fi
+	if [ "$_last_context_lines" != "$twitch_comments" ]; then
+		printf '%s\n' "$twitch_comments" >> "$comment_context_history_file"
+	fi
 	if [ -f "$comment_context_history_file" ] && [ "$(wc -l < "$comment_context_history_file")" -gt 300 ]; then
 		tail -300 "$comment_context_history_file" > "${comment_context_history_file}.tmp"
 		mv "${comment_context_history_file}.tmp" "$comment_context_history_file"
@@ -6812,6 +6821,9 @@ generate_comment_response() {
 
 	【最近自分が実際に読み上げたコメント返し（抜粋）】
 	${recent_spoken_comment_context:-（なし）}
+	※ 上の履歴と同じ表現・同じ構成・同じオチ・同じ比喩を今回の返答で使うことは禁止。
+	※ 同じ質問が再度来た場合は、前回と違う角度・違う例え・違う情報で返すこと。
+	※ 前回使ったフレーズや言い回しが分かる場合、それを避けて別の言葉を選ぶこと。
 
 	【追い反応ヒント】
 	${comment_followup_hints:-（なし）}
@@ -6877,6 +6889,7 @@ generate_comment_response() {
 - 「ね」で終わる文末は禁止。「〜ですね」「〜ますね」「〜ですけどね」「〜でしょうね」は使わない
 - 各コメントへの返事は最低2-3文。もっと長くなっても構わない。短すぎる一言返しはNG
 - 同一コメントの読み上げ・返信を1回の出力内で繰り返さないこと。各コメントへの返事は必ず1回だけにする
+- 【繰り返し防止・最重要】上の「最近自分が実際に読み上げたコメント返し」を必ず確認し、過去の返答と同じ内容・同じ言い回し・同じ構成・同じオチを避けること。似た質問が来ても、前回と異なる切り口（別の例え、別の事実、別の感想、別の質問返し）で応答すること。定型句の使い回しは禁止
 		- コメントが前回のトーク内容のどの話題に対する反応なのか推測して返事すること
 		- 「さっきの返事」「今の話」「その件」など、自分が直前に読み上げたコメント返しへの反応は、「最近自分が実際に読み上げたコメント返し」を優先して参照すること
 		- ニュースやラジオ本編への反応は、「前回のトーク内容（文脈参照用）」を参照すること
