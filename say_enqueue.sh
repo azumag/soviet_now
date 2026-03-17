@@ -40,6 +40,27 @@ SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
 SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 
+# --- VOICEVOX ASMR (ささやき系) 話者選択 ---
+# _pick_asmr_voicevox_speaker: ささやき系から "ID|名前/スタイル" を stdout に返す（粛清フィルタ適用）
+_pick_asmr_voicevox_speaker() {
+    local vo_url="${VOICEVOX_URL:-http://127.0.0.1:50021}"
+    curl -s --max-time 3 "$vo_url/speakers" 2>/dev/null | python3 -c "
+import json, sys, random
+try:
+    with open('tmp/voicevox_exclude_ids.txt') as f:
+        exclude_ids = {int(l.strip()) for l in f if l.strip().isdigit()}
+except FileNotFoundError:
+    exclude_ids = set()
+speakers = json.load(sys.stdin)
+pool = [(s['name'], st['id'], st['name']) for s in speakers for st in s.get('styles', []) if st.get('type', 'talk') == 'talk' and 'ささやき' in st['name'] and st['id'] not in exclude_ids]
+if pool:
+    name, sid, style = random.choice(pool)
+    print(f'{sid}|{name}/{style}', end='')
+else:
+    print('36|四国めたん/ささやき', end='')
+" 2>/dev/null
+}
+
 # --- VOICEVOX ランダム話者選択 ---
 # _pick_random_voicevox_speaker: "ID|名前/スタイル" を stdout に返す
 _pick_random_voicevox_speaker() {
@@ -449,6 +470,21 @@ _launch_say() {
         LAUNCH_MODE="wav"
         LAUNCHED_SAY_PID="$!"
         return
+    fi
+
+    # --- ASMR モード: コメント再生時にささやき系ボイスへ一時切替 ---
+    if [ "${USE_VOICEVOX:-0}" = "1" ] && [ -f "tmp/voicevox_asmr.txt" ]; then
+        case "${SOURCE_LABEL:-}" in
+        comment|comment:*)
+            local _asmr_result
+            _asmr_result=$(_pick_asmr_voicevox_speaker)
+            VOICEVOX_SPEAKER="${_asmr_result%%|*}"
+            VOICEVOX_RANDOM_VOICE_NAME="${_asmr_result#*|}"
+            VOICEVOX_RANDOM_MODE=1
+            rm -f "tmp/voicevox_asmr.txt"
+            _log "ASMR mode: speaker=$VOICEVOX_SPEAKER ($VOICEVOX_RANDOM_VOICE_NAME)"
+            ;;
+        esac
     fi
 
     # --- VOICEVOX TTS ---

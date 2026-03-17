@@ -103,6 +103,16 @@ while true; do
                 fi
             fi
 
+            # !ASMR — このコメントへの応答をささやき系ボイスで再生
+            if [[ "$msg" =~ ^[[:space:]]*![Aa][Ss][Mm][Rr]([[:space:]]|$) ]]; then
+                # !ASMR プレフィックスを除去してコメント本文を残す
+                msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Aa][Ss][Mm][Rr][[:space:]]*//')
+                clean_line="${user}: ${msg}"
+                # ASMRフラグを立てる（次のコメント再生で使用）
+                echo "$(date +%s)" > tmp/voicevox_asmr.txt
+                # continue しない — コメントとして通常処理を続行
+            fi
+
             # !syukusei / 粛清 [ID] — vo_random から特定スタイルIDを除外 + 再生中の読み上げをkill
             if [[ "$msg" == *粛清*[0-9]* ]] || [[ "$msg" == *syukusei*[0-9]* ]]; then
                 _syukusei_id=$(echo "$msg" | grep -oE '[0-9]+' | head -1)
