@@ -112,11 +112,11 @@ while true; do
                     if ! grep -qx "$_syukusei_id" "$_syukusei_file" 2>/dev/null; then
                         echo "$_syukusei_id" >> "$_syukusei_file"
                     fi
-                    # 再生中の読み上げをkill (afplay + 親のnohup bash)
+                    # 再生中の読み上げをkill (afplayを先にkill、親bashはtrap無視なのでSIGKILL)
                     pgrep -x 'afplay' 2>/dev/null | while read _pid; do
                         _ppid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')
-                        kill "$_pid" 2>/dev/null || true
-                        [ -n "$_ppid" ] && [ "$_ppid" != "1" ] && kill "$_ppid" 2>/dev/null || true
+                        kill -9 "$_pid" 2>/dev/null || true
+                        [ -n "$_ppid" ] && [ "$_ppid" != "1" ] && kill -9 "$_ppid" 2>/dev/null || true
                     done
                     # チャットに粛清通知
                     ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "粛清されました [${_syukusei_id}]" >/dev/null 2>&1 || true ) &

@@ -220,6 +220,13 @@ handle_russia_celebration() {
 
 	log "!!! RUSSIA CREATED !!!"
 
+	# 既存の読み上げを停止して祝賀を優先
+	pgrep -x 'afplay' 2>/dev/null | while read _pid; do
+		_ppid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')
+		kill -9 "$_pid" 2>/dev/null || true
+		[ -n "$_ppid" ] && [ "$_ppid" != "1" ] && kill -9 "$_ppid" 2>/dev/null || true
+	done
+
 	generate_russia_celebration "$score" "$turns" "$game_num"
 	if [ -f "$TMP_DEBUG_DIR/radio_russia_celebration.txt" ] && [ -s "$TMP_DEBUG_DIR/radio_russia_celebration.txt" ]; then
 		_refresh_radio_intro_for_playback_file "$TMP_DEBUG_DIR/radio_russia_celebration.txt" "russia_celebration"
@@ -248,8 +255,13 @@ handle_soviet_celebration() {
 	stop_comment_watcher
 	_kill_comment_gen
 
-	# 既存の読み上げは止めず、キュー順で順次再生する
-	log "[CELEBRATION] 既存読み上げを保持（強制停止なし・キュー順再生）"
+	# 既存の読み上げを停止して祝賀を優先
+	log "[CELEBRATION] 既存読み上げを停止"
+	pgrep -x 'afplay' 2>/dev/null | while read _pid; do
+		_ppid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')
+		kill -9 "$_pid" 2>/dev/null || true
+		[ -n "$_ppid" ] && [ "$_ppid" != "1" ] && kill -9 "$_ppid" 2>/dev/null || true
+	done
 
 	sleep 30
 
