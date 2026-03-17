@@ -453,14 +453,19 @@ _launch_say() {
     # --- VOICEVOX TTS ---
     if [ "${USE_VOICEVOX:-0}" = "1" ]; then
         local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
-        _log "VOICEVOX speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}"
+        # IDごとのピッチ設定をルックアップ
+        local vo_pitch=""
+        if [ -f "tmp/voicevox_pitch_map.txt" ]; then
+            vo_pitch=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_pitch_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
+        fi
+        _log "VOICEVOX speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}"
         local vo_wav
         vo_wav="${MY_CONTENT%.txt}.wav"
         # 合成中もheartbeatを更新（stale判定回避）
         ( while true; do _touch_lock_heartbeat; sleep 2; done ) &
         local _hb_pid=$!
         local _vo_ok=0
-        if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_TIMEOUT=60 \
+        if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TIMEOUT=60 \
            ./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
             _vo_ok=1
         fi

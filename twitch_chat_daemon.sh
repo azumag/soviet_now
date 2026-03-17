@@ -112,11 +112,29 @@ while true; do
                     if ! grep -qx "$_syukusei_id" "$_syukusei_file" 2>/dev/null; then
                         echo "$_syukusei_id" >> "$_syukusei_file"
                     fi
-                    # 再生中の読み上げをkill
-                    pgrep -x 'afplay' 2>/dev/null | xargs kill 2>/dev/null || true
+                    # 再生中の読み上げをkill (afplay + 親のnohup bash)
+                    pgrep -x 'afplay' 2>/dev/null | while read _pid; do
+                        _ppid=$(ps -o ppid= -p "$_pid" 2>/dev/null | tr -d ' ')
+                        kill "$_pid" 2>/dev/null || true
+                        [ -n "$_ppid" ] && [ "$_ppid" != "1" ] && kill "$_ppid" 2>/dev/null || true
+                    done
                     # チャットに粛清通知
                     ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "粛清されました [${_syukusei_id}]" >/dev/null 2>&1 || true ) &
                 fi
+                continue
+            fi
+
+            # !pitch ID VALUE — スピーカーIDごとにピッチ設定 (例: !pitch 86 0.1, !pitch 3 -0.05)
+            if [[ "$msg" =~ ^[[:space:]]*!pitch[[:space:]]+([0-9]+)[[:space:]]+([-]?[0-9]*\.?[0-9]+) ]]; then
+                _pitch_id="${BASH_REMATCH[1]}"
+                _pitch_val="${BASH_REMATCH[2]}"
+                _pitch_file="tmp/voicevox_pitch_map.txt"
+                # 既存エントリを除去して新しい値を追加
+                if [ -f "$_pitch_file" ]; then
+                    grep -v "^${_pitch_id}|" "$_pitch_file" > "${_pitch_file}.tmp" 2>/dev/null || true
+                    mv "${_pitch_file}.tmp" "$_pitch_file"
+                fi
+                echo "${_pitch_id}|${_pitch_val}" >> "$_pitch_file"
                 continue
             fi
 

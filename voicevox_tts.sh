@@ -48,6 +48,16 @@ _synthesize_one() {
         return 1
     fi
 
+    # ピッチ適用 (VOICEVOX_PITCH 環境変数)
+    if [ -n "${VOICEVOX_PITCH:-}" ]; then
+        query_json=$(echo "$query_json" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+d['pitchScale']=d.get('pitchScale',0)+float('${VOICEVOX_PITCH}')
+json.dump(d,sys.stdout)
+" 2>/dev/null) || true
+    fi
+
     # Step 2: synthesis
     http_code=$(curl -s --max-time "$VOICEVOX_TIMEOUT" \
         -X POST "$VOICEVOX_URL/synthesis?speaker=$VOICEVOX_SPEAKER" \
