@@ -1103,17 +1103,16 @@ _radio_generate_and_play() {
 		fi
 		else
 			_radio_set_state "playing" "$corner_name"
-			# CC表記をTwitchチャットに投稿（再生開始タイミング）
+			# CC表記は say_enqueue.sh の再生開始時に投稿（SAY_CC_TEXT 経由）
+			local immediate_cc_text=""
 			if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
-				local immediate_cc_text=""
 				immediate_cc_text=$(_build_cc_attribution_text "$selected_news")
-				[ -n "$immediate_cc_text" ] && _post_cc_text_to_chat "$immediate_cc_text" &
 			fi
 			_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
 			if [ "$no_preempt" = true ]; then
-				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
+				SAY_CC_TEXT="$immediate_cc_text" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
 			else
-				SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
+				SAY_CC_TEXT="$immediate_cc_text" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
 			fi
 			if [ "$play_rc" -ne 0 ]; then
 				debug_dump="$TMP_DEBUG_DIR/radio_play_failed_${corner_name}_$(date +%s).txt"

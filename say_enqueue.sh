@@ -512,6 +512,8 @@ _launch_say() {
         local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
         if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
             local _chat_msg="VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name"
+            [ -n "${PRE_SYNTH_PITCH:-}" ] && _chat_msg="$_chat_msg pitch=$PRE_SYNTH_PITCH"
+            [ -n "${PRE_SYNTH_TEMPO:-}" ] && _chat_msg="$_chat_msg tempo=$PRE_SYNTH_TEMPO"
             case "$vo_voice_name" in *もち子*) _chat_msg="$_chat_msg [(cv 明日葉よもぎ)]" ;; esac
             ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "$_chat_msg" >/dev/null 2>&1 || true ) &
         fi

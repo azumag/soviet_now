@@ -194,23 +194,22 @@ _play_deferred_radio_queue_once() {
 	if mv "$qf" "$playing_file" 2>/dev/null; then
 		local deferred_corner=""
 			deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/' )
-			# CC表記をTwitchチャットに投稿（deferred再生開始タイミング）
+			# CC表記は say_enqueue.sh の再生開始時に投稿（SAY_CC_TEXT 経由）
 			local news_title_file="${playing_file%.playing}.news_title"
 			local news_cc_file="${playing_file%.playing}.cc_text"
+			local deferred_cc_text=""
 			if [ "$deferred_corner" = "news" ] && [ -f "$news_cc_file" ]; then
-				local deferred_cc_text
 				deferred_cc_text=$(cat "$news_cc_file" 2>/dev/null)
-				[ -n "$deferred_cc_text" ] && _post_cc_text_to_chat "$deferred_cc_text" &
 			elif [ "$deferred_corner" = "news" ] && [ -f "$news_title_file" ]; then
 				local deferred_news_title
 				deferred_news_title=$(cat "$news_title_file" 2>/dev/null)
-				[ -n "$deferred_news_title" ] && _post_cc_attribution_to_chat "$deferred_news_title" &
+				[ -n "$deferred_news_title" ] && deferred_cc_text=$(_build_cc_attribution_text "$deferred_news_title")
 			fi
 			_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 			log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
 			# deferred radio is executed by the comment player itself, so it must not
 			# yield to comments queued after this point or playback deadlocks.
-			if SAY_DISABLE_COMMENT_YIELD=1 SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+			if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
 				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
 				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else
