@@ -33,7 +33,7 @@ cleanup_tmp_files() {
 	# --- 履歴ファイル: キャップ適用 ---
 	# .past_news_titles.txt / .past_news_links.txt にもキャップ適用
 	local hist_file
-	for hist_file in $TMP_HISTORY_DIR/.past_news_titles.txt $TMP_HISTORY_DIR/.past_news_links.txt $PAST_NEWS_URL_HASHES; do
+	for hist_file in $TMP_HISTORY_DIR/.past_news_titles.txt $TMP_HISTORY_DIR/.past_news_links.txt $PAST_NEWS_URL_HASHES $PAST_JIJI_URL_HASHES; do
 		if [ -f "$hist_file" ]; then
 			local lc
 			lc=$(wc -l < "$hist_file" | tr -d ' ')

@@ -1039,6 +1039,16 @@ start_radio_corner_jiji() {
 			&& mv "$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_titles.txt"
 		tail -120 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" \
 			&& mv "$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_keys.txt"
+		# URL hash で重複排除（同じ記事が別タイトルで出現するケースに対応）
+		local jiji_url_hash=""
+		if [ -f "tmp/google_headlines_meta.json" ]; then
+			jiji_url_hash=$(_news_url_hash_for_title_meta "$headline" "tmp/google_headlines_meta.json")
+		fi
+		if [ -n "$jiji_url_hash" ]; then
+			echo "$jiji_url_hash" >>"$PAST_JIJI_URL_HASHES"
+			tail -200 "$PAST_JIJI_URL_HASHES" >"${PAST_JIJI_URL_HASHES}.tmp" && \
+				mv "${PAST_JIJI_URL_HASHES}.tmp" "$PAST_JIJI_URL_HASHES"
+		fi
 	fi
 
 	# 5. プロンプト生成 → AI生成 → 再生

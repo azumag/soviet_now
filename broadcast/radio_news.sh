@@ -262,17 +262,18 @@ if source:
 PY
 }
 
-_news_url_hash_for_title() {
-	local title="$1"
-	[ -f "tmp/news_meta.json" ] || return 0
-	python3 - "$title" <<'PY'
+_news_url_hash_for_title_meta() {
+	local title="$1" meta_file="${2:-tmp/news_meta.json}"
+	[ -f "$meta_file" ] || return 0
+	python3 - "$title" "$meta_file" <<'PY'
 import hashlib
 import json
 import sys
 
 title = sys.argv[1] if len(sys.argv) > 1 else ""
+meta_file = sys.argv[2] if len(sys.argv) > 2 else "tmp/news_meta.json"
 try:
-    with open("tmp/news_meta.json", encoding="utf-8") as f:
+    with open(meta_file, encoding="utf-8") as f:
         meta = json.load(f)
 except Exception:
     raise SystemExit(0)
@@ -282,6 +283,10 @@ url = (item.get("url") or "").strip()
 if url:
     print(hashlib.sha1(url.encode("utf-8")).hexdigest())
 PY
+}
+
+_news_url_hash_for_title() {
+	_news_url_hash_for_title_meta "$1" "tmp/news_meta.json"
 }
 
 _news_source_key_from_name() {
