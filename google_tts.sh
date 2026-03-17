@@ -8,6 +8,7 @@
 
 PROJECT="gen-lang-client-0367522921"
 DEFAULT_VOICE="${GOOGLE_TTS_VOICE:-ja-JP-Standard-B}"
+GOOGLE_TTS_MAX_CHARS="${GOOGLE_TTS_MAX_CHARS:-500}"
 OUT="/tmp/tts.mp3"
 
 if [[ "$1" == "--demo" ]]; then
@@ -108,31 +109,118 @@ if [[ -z "$OUTPUT" ]]; then
   PLAY_AFTER=true
 fi
 
-# テキストのエスケープ（JSON用）
-ESCAPED_TEXT=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$TEXT")
+# gcloud トークン取得（全チャンクで共有）
+TOKEN=$(gcloud auth print-access-token) || { echo "Error: gcloud auth failed" >&2; exit 1; }
 
-curl -s -X POST \
-  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  -H "x-goog-user-project: $PROJECT" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"input\": {\"text\": $ESCAPED_TEXT},
-    \"voice\": {\"languageCode\": \"ja-JP\", \"name\": \"$VOICE\"},
-    \"audioConfig\": {
-      \"audioEncoding\": \"MP3\",
-      \"speakingRate\": $RATE,
-      \"pitch\": $PITCH,
-      \"volumeGainDb\": $VOLUME
-    }
-  }" \
-  "https://texttospeech.googleapis.com/v1/text:synthesize" \
-  | python3 -c "
+# --- テキスト分割（句点・改行で区切り、max_chars 以内にまとめる） ---
+_split_text() {
+  python3 -c "
+import sys
+text = sys.argv[1]
+max_len = int(sys.argv[2])
+chunks = []
+for line in text.split('\n'):
+    for sent in line.split('\u3002'):
+        sent = sent.strip()
+        if not sent:
+            continue
+        sent += '\u3002'
+        if chunks and len(chunks[-1]) + len(sent) <= max_len:
+            chunks[-1] += sent
+        else:
+            if len(sent) > max_len:
+                parts = sent.split('\u3001')
+                buf = ''
+                for p in parts:
+                    candidate = buf + ('\u3001' if buf else '') + p
+                    if len(candidate) > max_len and buf:
+                        chunks.append(buf)
+                        buf = p
+                    else:
+                        buf = candidate
+                if buf:
+                    chunks.append(buf)
+            else:
+                chunks.append(sent)
+for c in chunks:
+    print(c)
+" "$1" "$2"
+}
+
+# --- 1チャンク合成 ---
+_synthesize_one() {
+  local text="$1" output="$2"
+  local escaped
+  escaped=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$text")
+
+  curl -s -X POST \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "x-goog-user-project: $PROJECT" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"input\": {\"text\": $escaped},
+      \"voice\": {\"languageCode\": \"ja-JP\", \"name\": \"$VOICE\"},
+      \"audioConfig\": {
+        \"audioEncoding\": \"MP3\",
+        \"speakingRate\": $RATE,
+        \"pitch\": $PITCH,
+        \"volumeGainDb\": $VOLUME
+      }
+    }" \
+    "https://texttospeech.googleapis.com/v1/text:synthesize" \
+    | python3 -c "
 import sys, json, base64
 data = json.load(sys.stdin)
 if 'error' in data:
     print('Error:', data['error']['message'], file=sys.stderr); sys.exit(1)
 audio = base64.b64decode(data['audioContent'])
 open(sys.argv[1], 'wb').write(audio)
-" "$OUTPUT" || exit 1
+" "$output"
+}
+
+# --- MP3 結合 ---
+_concat_mp3s() {
+  local output="$1"; shift
+  if [[ $# -eq 1 ]]; then
+    mv "$1" "$output"
+    return
+  fi
+  # ffmpeg concat demuxer
+  local listfile="/tmp/gtts_concat_$$.txt"
+  for f in "$@"; do
+    echo "file '$f'"
+  done > "$listfile"
+  ffmpeg -y -loglevel error -f concat -safe 0 -i "$listfile" -c copy "$output" 2>/dev/null
+  local rc=$?
+  rm -f "$listfile"
+  return $rc
+}
+
+_cleanup_chunks() {
+  rm -f /tmp/gtts_chunk_${$}_*.mp3 2>/dev/null
+}
+
+# --- メイン合成処理 ---
+chunks=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && chunks+=("$line")
+done < <(_split_text "$TEXT" "$GOOGLE_TTS_MAX_CHARS")
+
+if [[ ${#chunks[@]} -le 1 ]]; then
+  _synthesize_one "$TEXT" "$OUTPUT" || exit 1
+else
+  echo "Splitting into ${#chunks[@]} chunks..." >&2
+  chunk_files=()
+  i=0
+  for chunk in "${chunks[@]}"; do
+    chunk_mp3="/tmp/gtts_chunk_${$}_${i}.mp3"
+    _synthesize_one "$chunk" "$chunk_mp3" || { _cleanup_chunks; exit 1; }
+    [[ -s "$chunk_mp3" ]] || { _cleanup_chunks; exit 1; }
+    chunk_files+=("$chunk_mp3")
+    i=$((i + 1))
+  done
+  _concat_mp3s "$OUTPUT" "${chunk_files[@]}" || { _cleanup_chunks; exit 1; }
+  _cleanup_chunks
+fi
 
 [[ "$PLAY_AFTER" = "true" ]] && afplay "$OUTPUT"
