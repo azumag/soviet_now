@@ -533,7 +533,10 @@ _launch_say() {
         if [ "$_vo_ok" -eq 1 ]; then
             # vo_random 時はチャットに話者名を投稿
             if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
-                ./twitch_chat.sh send "VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name" >/dev/null 2>&1 &
+                local _chat_msg="VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name"
+                [ -n "$vo_pitch" ] && _chat_msg="$_chat_msg pitch=$vo_pitch"
+                [ -n "$vo_tempo" ] && _chat_msg="$_chat_msg tempo=$vo_tempo"
+                ./twitch_chat.sh send "$_chat_msg" >/dev/null 2>&1 &
             fi
             LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$vo_wav")
             nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
