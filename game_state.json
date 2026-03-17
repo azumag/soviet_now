@@ -3,13 +3,13 @@
   "score": 0,
   "record": 5694,
   "next": {
-    "type": 2,
-    "r": 0.273,
-    "x": 2.927
+    "type": 7,
+    "r": 0.528,
+    "x": 2.673
   },
   "nextNext": {
-    "type": 8,
-    "r": 0.774
+    "type": 3,
+    "r": 0.367
   },
   "makeSorenCount": 0,
   "pieceCount": 0,
