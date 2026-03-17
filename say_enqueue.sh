@@ -327,11 +327,15 @@ _acquire_lock() {
             lock_hb=$(cat "$LOCK_HEARTBEAT_FILE" 2>/dev/null || true)
             case "$lock_hb" in
             ''|*[!0-9]*)
-                lock_hb=$(stat -f %m "$LOCK_DIR" 2>/dev/null || echo 0)
+                lock_hb=$(stat -f %m "$LOCK_DIR" 2>/dev/null || true)
                 ;;
             esac
             now=$(date +%s)
-            lock_age=$((now - lock_hb))
+            # heartbeat が読めない場合はstale判定しない（誤検出で重複再生を防ぐ）
+            case "$lock_hb" in
+            ''|*[!0-9]*|0) lock_age=0 ;;
+            *) lock_age=$((now - lock_hb)) ;;
+            esac
             if [ "$owner_alive" = false ] && [ "$lock_age" -gt "$LOCK_STALE_SEC" ]; then
                 _log "stale lock検出 (owner=${lock_owner_pid:-?}, ${lock_age}秒) → 強制解除"
                 rm -f "$LOCK_OWNER_FILE" "$LOCK_HEARTBEAT_FILE" 2>/dev/null

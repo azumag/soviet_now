@@ -3493,6 +3493,14 @@ _play_deferred_radio_queue_once() {
 	comment_total=$((comment_queued + comment_playing))
 	[ "$comment_total" -gt 0 ] && return 0
 
+	# say_enqueue プロセスが溜まりすぎている場合はスキップ（蓄積→重複再生を防止）
+	local _say_proc_count
+	_say_proc_count=$(pgrep -fc 'say_enqueue.sh' 2>/dev/null || echo 0)
+	if [ "${_say_proc_count:-0}" -gt 3 ]; then
+		log "[RADIO:deferred] say_enqueue プロセス過多 (${_say_proc_count}) → スキップ"
+		return 0
+	fi
+
 	local stale_playing=""
 	for stale_playing in "$RADIO_DEFERRED_QUEUE_DIR"/radio_*.playing; do
 		[ -f "$stale_playing" ] || continue
@@ -3503,6 +3511,11 @@ _play_deferred_radio_queue_once() {
 		esac
 		stale_age=$(( $(date +%s) - stale_mtime ))
 		[ "$stale_age" -le "$RADIO_STATE_STALE_SEC" ] && continue
+		# say_enqueue がまだ動いている場合は stale 復帰しない（重複再生の原因になる）
+		if pgrep -f "say_enqueue.sh.*$(basename "$stale_playing")" >/dev/null 2>&1; then
+			log "[RADIO:deferred] stale だが say_enqueue 実行中 → スキップ: $(basename "$stale_playing") age=${stale_age}s"
+			continue
+		fi
 		retry_file="${stale_playing%.playing}.txt"
 		if [ -f "$retry_file" ]; then
 			rm -f "$stale_playing"
