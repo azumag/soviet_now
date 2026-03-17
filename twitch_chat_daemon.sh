@@ -133,7 +133,7 @@ while true; do
                 _syukusei_file="tmp/voicevox_exclude_ids.txt"
                 echo "[syukusei $(date '+%H:%M:%S')] id=$_syukusei_id msg=[$msg]" >> tmp/debug/syukusei.log 2>&1
                 if [ -n "$_syukusei_id" ]; then
-                    if ! grep -qx "$_syukusei_id" "$_syukusei_file" 2>/dev/null; then
+                    if ! grep -q "^${_syukusei_id}\b" "$_syukusei_file" 2>/dev/null; then
                         echo "$_syukusei_id" >> "$_syukusei_file"
                     fi
                     # 再生中の読み上げをkill (afplayのみ、say_enqueueはkill_flagでリトライ抑止)

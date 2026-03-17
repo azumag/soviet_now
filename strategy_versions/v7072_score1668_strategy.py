@@ -36,6 +36,18 @@ Phases (determined by board max Y):
  # AI prohibited: decide() signature, if __name__ == "__main__" block
  
 # --- Change History ---
+# v262: axis 9将来の併合機会最大化への再設計 - reactive_pairs盤面圧縮からnextNext戦略配置へ
+# last_rollback_analysis: anchor比でcomp=-228.9 p50=-368.5 p25=-23.2と悪化。「reactive_pairsがあるのに非併合」が敗因。
+# ワーストゲーム(score0871)終盤turns 56-63: max_y=1.94-2.87, reactive_pairs=3-4あるのにmerge_available=falseで
+# HIGH_TOWER_DANGER_ZONE_NO_MERGE_PENALTY_EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY選択が続きmax_y悪化。
+# ベストゲーム(score4690)終盤turns 172-179: reactive_pairs=1-4だが、即時併合を確実に捉え、危険域(max_y>=2.19)でも延命成功。
+# batch_summaryでREACTIVE_PAIRS_COMPRESSIONはavg_score_delta=7.6と低価値だが低スコア群で14.9%使用。即時併合がない状況での盤面圧縮はスコアに寄与せず、下振れ要因。
+# axis 9を「max_y<1.8でreactive_pairs>=1ならREACTIVE_PAIRS_COMPRESSION」から「max_y<1.8でmerge_grade==NOかつnextNextタイプが盤面上ならnextNextタイプのピースに近い配置にボーナス」へ再設計。
+# 即時併合がない安全域で、将来の併合機会を最大化する戦略配置へ転換。nextNextタイプのピースに近い配置を選択し、2ターン先の併合可能性を高める。
+# advice.md「次の次の駒まで見越して配置を考慮する」「2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る戦略」を戦略的に実装。
+# 構造的変更（axis 9評価軸再設計）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
+# refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260318_020249_score0871.jsonl turns 56-63, game_history/20260318_020023_score4690.jsonl turns 172-179
+#
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
@@ -133,16 +145,18 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v251: reactive_pairsに応じた段階的ペナルティ強化版 - 超危険域即時併合強制条件緩和
+    """v262: axis 9将来の併合機会最大化への再設計 - reactive_pairs盤面圧縮からnextNext戦略配置へ
 
-    last_rollback_analysis: anchor比でcomp=-230.1 p50=-236.5 p25=-249.2と明確に悪化。
-    ワーストゲーム(score0878)終盤turns 58-65: reactive_pairs=3-4あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=3.10に悪化。
-    ベストゲーム(score2703)終盤turns 106-113: 終盤でもreactive_pairs>=2あれば即時併合を確実に捉え、max_y=3.60の危険域でも延命成功。
-    v250のaxis 8.9がmax_y>=2.0条件で発動し、reactive_pairs>=3の超危険域での即時併合強制に失敗。
-    axis 8.9のボーナス発動条件をmax_y>=2.0からmax_y>=1.8へ緩和し、axis 8.7のペナルティをreactive_pairsに応じて-(3000.0 + reactive_pairs * 500.0)に動的強化。
-    これによりreactive_pairs=3で-4500.0、reactive_pairs=4で-5000.0のペナルティが適用され、reactive_pairsが多いほど即時併合を強制。
-    構造的変更（axis 8.7動的強化・axis 8.9条件緩和）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
-    refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260317_043103_score0878.jsonl turns 58-65, game_history/20260317_035812_score2703.jsonl turns 106-113
+    last_rollback_analysis: anchor比でcomp=-228.9 p50=-368.5 p25=-23.2と悪化。「reactive_pairsがあるのに非併合」が敗因。
+    ワーストゲーム(score0871)終盤turns 56-63: max_y=1.94-2.87, reactive_pairs=3-4あるのにmerge_available=falseで
+    HIGH_TOWER_DANGER_ZONE_NO_MERGE_PENALTY_EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY選択が続きmax_y悪化。
+    ベストゲーム(score4690)終盤turns 172-179: reactive_pairs=1-4だが、即時併合を確実に捉え、危険域(max_y>=2.19)でも延命成功。
+    batch_summaryでREACTIVE_PAIRS_COMPRESSIONはavg_score_delta=7.6と低価値だが低スコア群で14.9%使用。即時併合がない状況での盤面圧縮はスコアに寄与せず、下振れ要因。
+    axis 9を「max_y<1.8でreactive_pairs>=1ならREACTIVE_PAIRS_COMPRESSION」から「max_y<1.8でmerge_grade==NOかつnextNextタイプが盤面上ならnextNextタイプのピースに近い配置にボーナス」へ再設計。
+    即時併合がない安全域で、将来の併合機会を最大化する戦略配置へ転換。nextNextタイプのピースに近い配置を選択し、2ターン先の併合可能性を高める。
+    advice.md「次の次の駒まで見越して配置を考慮する」「2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る戦略」を戦略的に実装。
+    構造的変更（axis 9評価軸再設計）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
+    refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260318_020249_score0871.jsonl turns 56-63, game_history/20260318_020023_score4690.jsonl turns 172-179
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -428,18 +442,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= penalty
             reasons.append("EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 9: safe zone reactive pairs priority (NEW: force board compression in safe zones) -----
-        # batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.1)と低価値であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
-        # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
-        # last_rollback_postmortemの教訓: deadline_margin>=0.5の安全域で盤面圧縮を行うことは成功パターン。max_y<1.8の安全域でreactive_pairs>=1がある場合、
-        # 盤面圧縮を優先し、HEIGHT_CONTROLやHIGH_TOWERなどの非圧縮選択を抑制する構造的変更。
-        # 危険域(max_y>=1.8)では既存のaxis 8.5/8.6/8.7が即時併合を強制するため、axis 9は安全域での盤面圧縮に専念。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
-        if max_y < 1.8 and reactive_pair_count >= 1:
-            # 安全域でreactive_pairsがある場合、盤面圧縮を強制的に優先
-            # axis 8.5/8.6/8.7が発動しない安全域でのみ、盤面圧縮を強制し下振れを抑制
-            # 既存のreasonsに関わらず、安全域での盤面圧縮を最優先
-            reasons.insert(0, "REACTIVE_PAIRS_COMPRESSION")
+        # ----- evaluation axis 9: future merge opportunity maximization (NEW: nextNext-based strategic placement) -----
+        # ワーストゲーム(score0871)終盤turns 56-63: max_y=1.94-2.87, reactive_pairs=3-4あるのにmerge_available=falseで
+        # HIGH_TOWER_DANGER_ZONE_NO_MERGE_PENALTY_EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY選択が続きmax_y悪化。
+        # ベストゲーム(score4690)終盤turns 172-179: reactive_pairs=1-4だが、即時併合を確実に捉え、危険域(max_y>=2.19)でも延命成功。
+        # batch_summaryでREACTIVE_PAIRS_COMPRESSIONはavg_score_delta=7.6と低価値だが低スコア群で14.9%使用。即時併合がない状況での盤面圧縮はスコアに寄与せず、下振れ要因。
+        # axis 5.5は「nextNext併合をブロックする配置にペナルティ」だが、逆に「nextNext併合を促進する配置にボーナス」を与える評価軸が必要。
+        # max_y<1.8の安全域で即時併合がない場合、nextNextタイプが盤面上にあるなら、そのタイプのピースに近い配置を選択し、将来の併合機会を最大化。
+        # 危険域(max_y>=1.8)では既存のaxis 8.5/8.6/8.7が即時併合を強制するため、axis 9は安全域での将来併合準備に専念。
+        # refs: tmp/batch_summary.txt, advice.md, game_history/20260318_020249_score0871.jsonl turns 56-63, game_history/20260318_020023_score4690.jsonl turns 172-179
+        if max_y < 1.8 and merge_grade == "NO" and next_next_type > 0:
+            # 安全域で即時併合がない場合、nextNextタイプのピースに近い配置を優先し、将来の併合機会を最大化
+            for p in pieces:
+                if p.get("type") == next_next_type:
+                    piece_x = p["x"]
+                    piece_y = p["y"]
+                    # 距離が近いほどボーナスを与え、将来の併合を促進
+                    dist = ((x - piece_x) ** 2 + (landing_y - piece_y) ** 2) ** 0.5
+                    # ボーナス: 距離が近いほど高い。距離1.0以内で+300.0、距離2.0で+100.0
+                    if dist < 2.0:
+                        future_merge_bonus = (2.0 - dist) * 150.0
+                        score += future_merge_bonus
+                        reasons.append("FUTURE_MERGE_OPPORTUNITY")
+                        break
 
         # ----- update best candidate -----
         if score > best_score:

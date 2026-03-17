@@ -48,7 +48,7 @@ _pick_asmr_voicevox_speaker() {
 import json, sys, random
 try:
     with open('tmp/voicevox_exclude_ids.txt') as f:
-        exclude_ids = {int(l.strip()) for l in f if l.strip().isdigit()}
+        import re; exclude_ids = {int(m.group()) for l in f for m in [re.match(r'\d+', l.strip())] if m}
 except FileNotFoundError:
     exclude_ids = set()
 speakers = json.load(sys.stdin)
@@ -70,7 +70,7 @@ import json, sys, random
 exclude = {'玄野武宏','白上虎太郎','後鬼','ちび式じい','†聖騎士 紅桜†','栗田まろん','Voidoll'}
 try:
     with open('tmp/voicevox_exclude_ids.txt') as f:
-        exclude_ids = {int(l.strip()) for l in f if l.strip().isdigit()}
+        import re; exclude_ids = {int(m.group()) for l in f for m in [re.match(r'\d+', l.strip())] if m}
 except FileNotFoundError:
     exclude_ids = set()
 speakers = json.load(sys.stdin)
@@ -548,7 +548,7 @@ _launch_say() {
     # --- VOICEVOX TTS ---
     if [ "${USE_VOICEVOX:-0}" = "1" ]; then
         # 合成直前に粛清リストを再チェック — 粛清済みなら別のスピーカーに差し替え
-        if [ -f "tmp/voicevox_exclude_ids.txt" ] && grep -qx "$VOICEVOX_SPEAKER" "tmp/voicevox_exclude_ids.txt" 2>/dev/null; then
+        if [ -f "tmp/voicevox_exclude_ids.txt" ] && grep -q "^${VOICEVOX_SPEAKER}\b" "tmp/voicevox_exclude_ids.txt" 2>/dev/null; then
             _log "speaker=$VOICEVOX_SPEAKER は粛清済み → 再選択"
             local _reroll
             _reroll=$(_pick_random_voicevox_speaker)
@@ -871,7 +871,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 
     if [ "${USE_VOICEVOX:-0}" = "1" ]; then
         # 粛清チェック
-        if [ -f "tmp/voicevox_exclude_ids.txt" ] && grep -qx "$VOICEVOX_SPEAKER" "tmp/voicevox_exclude_ids.txt" 2>/dev/null; then
+        if [ -f "tmp/voicevox_exclude_ids.txt" ] && grep -q "^${VOICEVOX_SPEAKER}\b" "tmp/voicevox_exclude_ids.txt" 2>/dev/null; then
             _log "speaker=$VOICEVOX_SPEAKER は粛清済み → 再選択"
             local _reroll
             _reroll=$(_pick_random_voicevox_speaker)
@@ -879,10 +879,12 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
             VOICEVOX_RANDOM_VOICE_NAME="${_reroll#*|}"
         fi
 
-        # ピッチ・テンポ
+        # ピッチ・テンポ（スクリプトレベル変数に保存 → _launch_say でチャット投稿に使用）
+        PRE_SYNTH_PITCH="" PRE_SYNTH_TEMPO=""
         local vo_pitch="" vo_tempo=""
         [ -f "tmp/voicevox_pitch_map.txt" ] && vo_pitch=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_pitch_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
         [ -f "tmp/voicevox_tempo_map.txt" ] && vo_tempo=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_tempo_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
+        PRE_SYNTH_PITCH="$vo_pitch" PRE_SYNTH_TEMPO="$vo_tempo"
         local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
         _log "VOICEVOX 事前合成 speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}"
 
