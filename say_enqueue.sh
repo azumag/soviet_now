@@ -41,17 +41,25 @@ SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 
 # --- VOICEVOX ランダム話者選択 ---
+VOICEVOX_CURRENT_VOICE_FILE="tmp/voicevox_current_voice.txt"
 _pick_random_voicevox_speaker() {
     local vo_url="${VOICEVOX_URL:-http://127.0.0.1:50021}"
-    local picked
-    picked=$(curl -s --max-time 3 "$vo_url/speakers" 2>/dev/null | python3 -c "
+    local result
+    result=$(curl -s --max-time 3 "$vo_url/speakers" 2>/dev/null | python3 -c "
 import json, sys, random
 exclude = {'玄野武宏','白上虎太郎','後鬼','ちび式じい','†聖騎士 紅桜†','栗田まろん','Voidoll'}
 speakers = json.load(sys.stdin)
-ids = [st['id'] for s in speakers if s['name'] not in exclude for st in s.get('styles', []) if st.get('type', 'talk') == 'talk']
-print(random.choice(ids) if ids else '3', end='')
+pool = [(s['name'], st['id'], st['name']) for s in speakers if s['name'] not in exclude for st in s.get('styles', []) if st.get('type', 'talk') == 'talk']
+if pool:
+    name, sid, style = random.choice(pool)
+    print(f'{sid}|{name}/{style}', end='')
+else:
+    print('3|ずんだもん/ノーマル', end='')
 " 2>/dev/null)
-    echo "${picked:-3}"
+    local picked_id="${result%%|*}"
+    local picked_name="${result#*|}"
+    echo "$picked_name" > "$VOICEVOX_CURRENT_VOICE_FILE" 2>/dev/null
+    echo "${picked_id:-3}"
 }
 
 # --- COEIROINK TTS切替 ---
@@ -440,6 +448,9 @@ _launch_say() {
 
     # --- VOICEVOX TTS ---
     if [ "${USE_VOICEVOX:-0}" = "1" ]; then
+        local vo_voice_name=""
+        [ -f "$VOICEVOX_CURRENT_VOICE_FILE" ] && vo_voice_name=$(cat "$VOICEVOX_CURRENT_VOICE_FILE" 2>/dev/null)
+        _log "VOICEVOX speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}"
         local vo_wav
         vo_wav="${MY_CONTENT%.txt}.wav"
         # 合成中もheartbeatを更新（stale判定回避）
