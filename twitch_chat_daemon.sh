@@ -135,6 +135,19 @@ while true; do
                 continue
             fi
 
+            # !tempo ID VALUE — スピーカーIDごとにテンポ設定 (例: !tempo 16 1.2, !tempo 3 0.9)
+            if [[ "$msg" =~ ^[[:space:]]*!tempo[[:space:]]+([0-9]+)[[:space:]]+([-]?[0-9]*\.?[0-9]+) ]]; then
+                _tempo_id="${BASH_REMATCH[1]}"
+                _tempo_val="${BASH_REMATCH[2]}"
+                _tempo_file="tmp/voicevox_tempo_map.txt"
+                if [ -f "$_tempo_file" ]; then
+                    grep -v "^${_tempo_id}|" "$_tempo_file" > "${_tempo_file}.tmp" 2>/dev/null || true
+                    mv "${_tempo_file}.tmp" "$_tempo_file"
+                fi
+                echo "${_tempo_id}|${_tempo_val}" >> "$_tempo_file"
+                continue
+            fi
+
             # !wakana / !moko / !random / !vo / !vo_random / !say — コメント読み上げの声切替
             if [[ "$msg" =~ ^[[:space:]]*!(wakana|moko|random|vo_random|vo|say)([[:space:]]|$) ]]; then
                 coe_cmd="${BASH_REMATCH[1]}"

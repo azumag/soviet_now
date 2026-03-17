@@ -48,12 +48,15 @@ _synthesize_one() {
         return 1
     fi
 
-    # ピッチ適用 (VOICEVOX_PITCH 環境変数)
-    if [ -n "${VOICEVOX_PITCH:-}" ]; then
+    # ピッチ・テンポ適用 (VOICEVOX_PITCH / VOICEVOX_TEMPO 環境変数)
+    if [ -n "${VOICEVOX_PITCH:-}" ] || [ -n "${VOICEVOX_TEMPO:-}" ]; then
         query_json=$(echo "$query_json" | python3 -c "
-import json,sys
+import json,sys,os
 d=json.load(sys.stdin)
-d['pitchScale']=d.get('pitchScale',0)+float('${VOICEVOX_PITCH}')
+p=os.environ.get('VOICEVOX_PITCH','')
+t=os.environ.get('VOICEVOX_TEMPO','')
+if p: d['pitchScale']=d.get('pitchScale',0)+float(p)
+if t: d['speedScale']=float(t)
 json.dump(d,sys.stdout)
 " 2>/dev/null) || true
     fi
