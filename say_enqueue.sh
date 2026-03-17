@@ -665,6 +665,10 @@ _play_with_retry() {
         else
             LAST_SAY_PID="$say_pid"
             echo "$say_pid" > "$PID_FILE"
+            # 初回再生開始時にCC表記をTwitchチャットに投稿
+            if [ "$attempt" -eq 1 ] && [ -n "${SAY_CC_TEXT:-}" ]; then
+                ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "$SAY_CC_TEXT" >/dev/null 2>&1 || true ) &
+            fi
         fi
         local start_ts now_ts elapsed say_rc expected_sec max_wait_sec timed_out
         start_ts=$(date +%s)
