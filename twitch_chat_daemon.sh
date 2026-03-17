@@ -139,6 +139,9 @@ while true; do
                     # 再生中の読み上げをkill (afplayのみ、say_enqueueはkill_flagでリトライ抑止)
                     echo "1" > tmp/.say_queue/kill_flag
                     pgrep -x 'afplay' 2>/dev/null | xargs kill -9 2>/dev/null || true
+                    # ロックをクリーンアップ（stale lock誤判定防止）
+                    rm -f tmp/.say_queue/.lock/owner_pid tmp/.say_queue/.lock/heartbeat 2>/dev/null
+                    rmdir tmp/.say_queue/.lock 2>/dev/null || true
                     # チャットに粛清通知
                     ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "粛清されました [${_syukusei_id}]" >/dev/null 2>&1 || true ) &
                 fi

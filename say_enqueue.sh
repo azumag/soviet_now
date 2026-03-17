@@ -783,7 +783,13 @@ _prepare_playback_turn() {
 
 # --- VOICEVOX 事前合成（ロック取得前＝前の再生中に並行合成） ---
 PRE_SYNTH_WAV=""
+PRE_SYNTH_LOCK="$QUEUE_DIR/.pre_synth_lock"
 if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
+    # 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
+    if ! mkdir "$PRE_SYNTH_LOCK" 2>/dev/null; then
+        _log "事前合成スキップ（別プロセスが合成中）"
+    else
+    trap 'rmdir "$PRE_SYNTH_LOCK" 2>/dev/null; _cleanup' EXIT
     _log "事前合成開始"
 
     # ワンショットスピーカー指定 (!NTROB等)
@@ -859,6 +865,9 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
             rm -f "$PRE_SYNTH_WAV" 2>/dev/null
             PRE_SYNTH_WAV=""
         fi
+    fi
+    rmdir "$PRE_SYNTH_LOCK" 2>/dev/null
+    trap '_cleanup' EXIT
     fi
 fi
 

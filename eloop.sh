@@ -223,6 +223,8 @@ handle_russia_celebration() {
 	# 既存の読み上げを停止して祝賀を優先 (afplayのみ、say_enqueueはkill_flagでリトライ抑止)
 	echo "1" > tmp/.say_queue/kill_flag
 	pgrep -x 'afplay' 2>/dev/null | xargs kill -9 2>/dev/null || true
+	rm -f tmp/.say_queue/.lock/owner_pid tmp/.say_queue/.lock/heartbeat 2>/dev/null
+	rmdir tmp/.say_queue/.lock 2>/dev/null || true
 
 	generate_russia_celebration "$score" "$turns" "$game_num"
 	if [ -f "$TMP_DEBUG_DIR/radio_russia_celebration.txt" ] && [ -s "$TMP_DEBUG_DIR/radio_russia_celebration.txt" ]; then
@@ -256,6 +258,8 @@ handle_soviet_celebration() {
 	log "[CELEBRATION] 既存読み上げを停止"
 	echo "1" > tmp/.say_queue/kill_flag
 	pgrep -x 'afplay' 2>/dev/null | xargs kill -9 2>/dev/null || true
+	rm -f tmp/.say_queue/.lock/owner_pid tmp/.say_queue/.lock/heartbeat 2>/dev/null
+	rmdir tmp/.say_queue/.lock 2>/dev/null || true
 
 	sleep 30
 
