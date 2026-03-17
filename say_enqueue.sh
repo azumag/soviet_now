@@ -786,6 +786,19 @@ PRE_SYNTH_WAV=""
 if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
     _log "事前合成開始"
 
+    # ワンショットスピーカー指定 (!NTROB等)
+    if [ -f "tmp/voicevox_oneshot_speaker.txt" ]; then
+        case "${SOURCE_LABEL:-}" in
+        comment|comment:*)
+            VOICEVOX_SPEAKER=$(cat "tmp/voicevox_oneshot_speaker.txt" 2>/dev/null)
+            VOICEVOX_RANDOM_VOICE_NAME=""
+            VOICEVOX_RANDOM_MODE=0
+            rm -f "tmp/voicevox_oneshot_speaker.txt"
+            _log "ワンショットスピーカー: $VOICEVOX_SPEAKER"
+            ;;
+        esac
+    fi
+
     # 同志モード: macOS say へ一時切替
     if [ -f "tmp/voicevox_dousi.txt" ]; then
         case "${SOURCE_LABEL:-}" in
