@@ -104,8 +104,10 @@ if [ -f "tmp/voicevox_voice.txt" ]; then
     _vo_line=$(cat "tmp/voicevox_voice.txt" 2>/dev/null)
     if [ "$_vo_line" = "random" ]; then
         VOICEVOX_SPEAKER=$(_pick_random_voicevox_speaker)
+        VOICEVOX_RANDOM_MODE=1
     else
         VOICEVOX_SPEAKER="$_vo_line"
+        VOICEVOX_RANDOM_MODE=0
     fi
     USE_VOICEVOX=1
     USE_COEIROINK=0
@@ -463,6 +465,10 @@ _launch_say() {
         fi
         kill "$_hb_pid" 2>/dev/null; wait "$_hb_pid" 2>/dev/null
         if [ "$_vo_ok" -eq 1 ]; then
+            # vo_random 時はチャットに話者名を投稿
+            if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
+                ./twitch_chat.sh send "VOICEVOX: $vo_voice_name" >/dev/null 2>&1 &
+            fi
             LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$vo_wav")
             nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
             LAUNCH_MODE="voicevox"
