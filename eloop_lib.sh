@@ -3542,9 +3542,14 @@ _play_deferred_radio_queue_once() {
 				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text"
 				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else
-			local retry_file="${playing_file%.playing}.txt"
-			mv "$playing_file" "$retry_file" 2>/dev/null || true
-			log "[RADIO:deferred] 再生失敗 → キューへ戻す: $(basename "$retry_file")"
+			if [ -f "tmp/.say_queue/kill_flag" ]; then
+				rm -f "tmp/.say_queue/kill_flag" "$playing_file"
+				log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
+			else
+				local retry_file="${playing_file%.playing}.txt"
+				mv "$playing_file" "$retry_file" 2>/dev/null || true
+				log "[RADIO:deferred] 再生失敗 → キューへ戻す: $(basename "$retry_file")"
+			fi
 		fi
 	fi
 }
