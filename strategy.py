@@ -372,6 +372,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         reasons.append("FUTURE_MERGE_OPPORTUNITY")
                         break
 
+        # ----- evaluation axis 8.8: deadline-based immediate merge priority (NEW: safety zone reactive_pairs non-merge suppression) -----
+        # v264: axis 8.8 deadline_margin-only detection failed. Reverted to v262 (max_y-based detection).
+        # v263: axis 8.5/8.6/8.7/8.9 are active for max_y >= 0.8 && reactive_pairs >= 1.
+        # v264's failure: max_y < 1.8 (safe zone) but deadline_margin critical (0.35 or -0.07) while reactive_pairs=4-6 available.
+        # New axis 8.8: Add deadline_margin-based detection to cover gap where max_y-based detection doesn't trigger.
+        # Condition: deadline_margin < 1.0 AND reactive_pairs >= 1 AND merge_grade in ["DIRECT", "NEAR"]
+        # Penalty: -3000.0 (similar to axes 8.6/8.7)
+        # This creates a penalty for non-merge placements when:
+        #   deadline is approaching (deadline_margin < 1.0)
+        #   reactive pairs are available (reactive_pairs >= 1)
+        #   no immediate merge is possible (merge_grade in ["DIRECT", "NEAR"])
+        #   refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260318_073909_score0669.jsonl turns 51-58, game_history/20260318_075734_score2687.jsonl turns 128-135
+        reactor_margin = reactor.get("deadline_margin", 0.0)
+        if reactor_margin < 1.0 and reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
+            # deadline is approaching (deadline_margin < 1.0) and reactive pairs are available
+            # non-merge placement in this situation is critical for safety
+            # immediate merge priority to avoid game over
+            score -= 3000.0
+            reasons.append("DEADLINE_MARGIN_IMMEDIATE_MERGE_PRIORITY")
+
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
