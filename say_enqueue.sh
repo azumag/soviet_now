@@ -127,9 +127,10 @@ fi
 USE_VOICEVOX=0
 VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-109}"
 # コンテンツファイルのサイドカー .voice ファイルをチェック（リトライ時の声の一貫性）
+# deferred ラジオファイルのみ対象（コメント等では不要なので作成しない）
 _content_file="${1:-}"
 _voice_sidecar=""
-if [ -n "$_content_file" ]; then
+if [ -n "$_content_file" ] && [[ "$_content_file" == */.radio_deferred_queue/* ]]; then
     _voice_base="${_content_file%.playing}"
     _voice_base="${_voice_base%.txt}"
     _voice_sidecar="${_voice_base}.voice"
