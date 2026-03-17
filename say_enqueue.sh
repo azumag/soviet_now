@@ -41,14 +41,13 @@ SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 
 # --- VOICEVOX ランダム話者選択 ---
-VOICEVOX_RANDOM_VOICE_NAME=""
+# _pick_random_voicevox_speaker: "ID|名前/スタイル" を stdout に返す
 _pick_random_voicevox_speaker() {
     local vo_url="${VOICEVOX_URL:-http://127.0.0.1:50021}"
-    local result
-    result=$(curl -s --max-time 3 "$vo_url/speakers" 2>/dev/null | python3 -c "
+    curl -s --max-time 3 "$vo_url/speakers" 2>/dev/null | python3 -c "
 import json, sys, random
 exclude = {'玄野武宏','白上虎太郎','後鬼','ちび式じい','†聖騎士 紅桜†','栗田まろん','Voidoll'}
-exclude_ids = {86}  # 青山龍星/囁き
+exclude_ids = set()
 speakers = json.load(sys.stdin)
 pool = [(s['name'], st['id'], st['name']) for s in speakers if s['name'] not in exclude for st in s.get('styles', []) if st.get('type', 'talk') == 'talk' and st['id'] not in exclude_ids]
 if pool:
@@ -56,10 +55,7 @@ if pool:
     print(f'{sid}|{name}/{style}', end='')
 else:
     print('3|ずんだもん/ノーマル', end='')
-" 2>/dev/null)
-    local picked_id="${result%%|*}"
-    VOICEVOX_RANDOM_VOICE_NAME="${result#*|}"
-    echo "${picked_id:-3}"
+" 2>/dev/null
 }
 
 # --- COEIROINK TTS切替 ---
@@ -103,7 +99,9 @@ VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-109}"
 if [ -f "tmp/voicevox_voice.txt" ]; then
     _vo_line=$(cat "tmp/voicevox_voice.txt" 2>/dev/null)
     if [ "$_vo_line" = "random" ]; then
-        VOICEVOX_SPEAKER=$(_pick_random_voicevox_speaker)
+        _vo_result=$(_pick_random_voicevox_speaker)
+        VOICEVOX_SPEAKER="${_vo_result%%|*}"
+        VOICEVOX_RANDOM_VOICE_NAME="${_vo_result#*|}"
         VOICEVOX_RANDOM_MODE=1
     else
         VOICEVOX_SPEAKER="$_vo_line"
@@ -466,7 +464,7 @@ _launch_say() {
         if [ "$_vo_ok" -eq 1 ]; then
             # vo_random 時はチャットに話者名を投稿
             if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
-                ./twitch_chat.sh send "VOICEVOX: $vo_voice_name" >/dev/null 2>&1 &
+                ./twitch_chat.sh send "VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name" >/dev/null 2>&1 &
             fi
             LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$vo_wav")
             nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &

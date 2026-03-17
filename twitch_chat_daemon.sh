@@ -103,6 +103,16 @@ while true; do
                 fi
             fi
 
+            # !syukusei [ID] — vo_random から特定スタイルIDを除外
+            if [[ "$msg" =~ ^[[:space:]]*!syukusei[[:space:]]+([0-9]+) ]]; then
+                local syukusei_id="${BASH_REMATCH[1]}"
+                local syukusei_file="tmp/voicevox_exclude_ids.txt"
+                if ! grep -qx "$syukusei_id" "$syukusei_file" 2>/dev/null; then
+                    echo "$syukusei_id" >> "$syukusei_file"
+                fi
+                continue
+            fi
+
             # !wakana / !moko / !random / !vo / !vo_random / !say — コメント読み上げの声切替
             if [[ "$msg" =~ ^[[:space:]]*!(wakana|moko|random|vo_random|vo|say)([[:space:]]|$) ]]; then
                 coe_cmd="${BASH_REMATCH[1]}"
