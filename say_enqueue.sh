@@ -47,7 +47,11 @@ _pick_random_voicevox_speaker() {
     curl -s --max-time 3 "$vo_url/speakers" 2>/dev/null | python3 -c "
 import json, sys, random
 exclude = {'玄野武宏','白上虎太郎','後鬼','ちび式じい','†聖騎士 紅桜†','栗田まろん','Voidoll'}
-exclude_ids = set()
+try:
+    with open('tmp/voicevox_exclude_ids.txt') as f:
+        exclude_ids = {int(l.strip()) for l in f if l.strip().isdigit()}
+except FileNotFoundError:
+    exclude_ids = set()
 speakers = json.load(sys.stdin)
 pool = [(s['name'], st['id'], st['name']) for s in speakers if s['name'] not in exclude for st in s.get('styles', []) if st.get('type', 'talk') == 'talk' and st['id'] not in exclude_ids]
 if pool:
