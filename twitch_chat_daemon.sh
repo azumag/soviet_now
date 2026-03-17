@@ -112,10 +112,9 @@ while true; do
                     if ! grep -qx "$_syukusei_id" "$_syukusei_file" 2>/dev/null; then
                         echo "$_syukusei_id" >> "$_syukusei_file"
                     fi
-                    # 再生中の読み上げをkill (say_enqueueごと停止)
+                    # 再生中の読み上げをkill (afplayのみ、say_enqueueはkill_flagでリトライ抑止)
                     echo "1" > tmp/.say_queue/kill_flag
                     pgrep -x 'afplay' 2>/dev/null | xargs kill -9 2>/dev/null || true
-                    pgrep -f 'say_enqueue\.sh' 2>/dev/null | xargs kill -9 2>/dev/null || true
                     # チャットに粛清通知
                     ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "粛清されました [${_syukusei_id}]" >/dev/null 2>&1 || true ) &
                 fi
