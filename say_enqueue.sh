@@ -723,7 +723,7 @@ _launch_say() {
             if [ "$_vo_synth_wait" -ge 60 ]; then break; fi  # 30s timeout
         done
         if [ "$_vo_synth_wait" -ge 60 ]; then
-            _log "VOICEVOX合成ロック取得タイムアウト → macOS say にフォールバック"
+            _log "VOICEVOX合成ロック取得タイムアウト → リトライへ"
         else
             _vo_synth_locked=1
         fi
@@ -754,7 +754,9 @@ _launch_say() {
             LAUNCHED_SAY_PID="$!"
             return
         else
-            _log "VOICEVOX合成失敗 → macOS say にフォールバック"
+            _log "VOICEVOX合成失敗 → リトライへ"
+            LAUNCHED_SAY_PID=""
+            return
         fi
     fi
 
@@ -771,10 +773,19 @@ _launch_say() {
             LAUNCHED_SAY_PID="$!"
             return
         else
-            _log "COEIROINK合成失敗 → macOS say にフォールバック"
+            _log "COEIROINK合成失敗 → リトライへ"
+            LAUNCHED_SAY_PID=""
+            return
         fi
     fi
     # --- /COEIROINK ---
+
+    # VOICEVOX/COEIROINK が有効な場合、macOS say へのフォールバックを行わずリトライ
+    if [ "${USE_VOICEVOX:-0}" = "1" ] || [ "${USE_COEIROINK:-0}" = "1" ]; then
+        _log "TTS合成失敗 → リトライへ（macOS sayフォールバック無効）"
+        LAUNCHED_SAY_PID=""
+        return
+    fi
 
     if [ -n "${SAY_AUDIO_DEVICE:-}" ] && [ "${SAY_FORCE_DIRECT:-0}" != "1" ]; then
         local device_index
