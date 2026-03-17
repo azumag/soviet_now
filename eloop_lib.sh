@@ -3539,11 +3539,11 @@ _play_deferred_radio_queue_once() {
 			# deferred radio is executed by the comment player itself, so it must not
 			# yield to comments queued after this point or playback deadlocks.
 			if SAY_DISABLE_COMMENT_YIELD=1 SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
-				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text"
+				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
 				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else
 			if [ -f "tmp/.say_queue/kill_flag" ]; then
-				rm -f "tmp/.say_queue/kill_flag" "$playing_file"
+				rm -f "tmp/.say_queue/kill_flag" "$playing_file" "${playing_file%.playing}.voice"
 				log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
 			else
 				local retry_file="${playing_file%.playing}.txt"

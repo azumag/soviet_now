@@ -120,15 +120,39 @@ fi
 # --- VOICEVOX TTS切替 ---
 # tmp/voicevox_voice.txt があれば VOICEVOX を使用 (COEIROINK より優先)
 # ファイル内容: speaker ID (例: 109) or "random"
+#
+# 声の永続化: リトライ時に同じ声を使うため、ランダム選択結果を
+# <content_file>.voice サイドカーファイルに保存する。
+# サイドカーが存在する場合はランダム選択をスキップ。
 USE_VOICEVOX=0
 VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-109}"
-if [ -f "tmp/voicevox_voice.txt" ]; then
+# コンテンツファイルのサイドカー .voice ファイルをチェック（リトライ時の声の一貫性）
+_content_file="${1:-}"
+_voice_sidecar=""
+if [ -n "$_content_file" ]; then
+    _voice_base="${_content_file%.playing}"
+    _voice_base="${_voice_base%.txt}"
+    _voice_sidecar="${_voice_base}.voice"
+fi
+if [ -n "$_voice_sidecar" ] && [ -f "$_voice_sidecar" ]; then
+    _saved_speaker=$(cat "$_voice_sidecar" 2>/dev/null)
+    if [ -n "$_saved_speaker" ]; then
+        VOICEVOX_SPEAKER="$_saved_speaker"
+        USE_VOICEVOX=1
+        USE_COEIROINK=0
+        VOICEVOX_RANDOM_MODE=0
+    fi
+elif [ -f "tmp/voicevox_voice.txt" ]; then
     _vo_line=$(cat "tmp/voicevox_voice.txt" 2>/dev/null)
     if [ "$_vo_line" = "random" ]; then
         _vo_result=$(_pick_random_voicevox_speaker)
         VOICEVOX_SPEAKER="${_vo_result%%|*}"
         VOICEVOX_RANDOM_VOICE_NAME="${_vo_result#*|}"
         VOICEVOX_RANDOM_MODE=1
+        # サイドカーに保存（リトライ時に同じ声を使う）
+        if [ -n "$_voice_sidecar" ]; then
+            echo "$VOICEVOX_SPEAKER" > "$_voice_sidecar" 2>/dev/null || true
+        fi
     else
         VOICEVOX_SPEAKER="$_vo_line"
         VOICEVOX_RANDOM_MODE=0
