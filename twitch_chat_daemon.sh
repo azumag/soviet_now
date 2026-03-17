@@ -103,13 +103,24 @@ while true; do
                 fi
             fi
 
-            # !syukusei / 粛清 [ID] — vo_random から特定スタイルIDを除外
+            # !syukusei / 粛清 [ID] — vo_random から特定スタイルIDを除外 + 再生中の読み上げをkill
+            if [[ "$msg" == *粛清* ]] || [[ "$msg" == *syukusei* ]]; then
+                echo "[syukusei-debug $(date '+%H:%M:%S')] raw msg=[$msg]" >> tmp/debug/syukusei.log
+            fi
             if [[ "$msg" =~ ^[[:space:]]*(!syukusei|粛清)[[:space:]]*([0-9]+) ]]; then
                 local syukusei_id="${BASH_REMATCH[2]}"
                 local syukusei_file="tmp/voicevox_exclude_ids.txt"
                 if ! grep -qx "$syukusei_id" "$syukusei_file" 2>/dev/null; then
                     echo "$syukusei_id" >> "$syukusei_file"
                 fi
+                # 再生中の読み上げをkill
+                local _say_pids
+                _say_pids=$(pgrep -x 'afplay' 2>/dev/null || true)
+                if [ -n "$_say_pids" ]; then
+                    echo "$_say_pids" | xargs kill 2>/dev/null || true
+                fi
+                # チャットに粛清通知
+                ( ./twitch_chat.sh send "粛清されました [${syukusei_id}]" >/dev/null 2>&1 || true ) &
                 continue
             fi
 
