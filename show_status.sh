@@ -838,6 +838,25 @@ PY
 		esac
 	fi
 
+	# --- VOICEVOX 合成ロック & ストリーミング状態 ---
+	local voicevox_synth_locked=false
+	[[ -d tmp/.say_queue/.voicevox_synth_lock ]] && voicevox_synth_locked=true
+
+	local stream_active=false stream_chunk_done=0 stream_chunk_total=0
+	local stream_dir=""
+	stream_dir=$(ls -d tmp/.say_queue/stream_* 2>/dev/null | head -1)
+	if [[ -n "$stream_dir" ]] && [[ -d "$stream_dir" ]]; then
+		stream_active=true
+		stream_chunk_done=$(ls "$stream_dir"/chunk_*.wav 2>/dev/null | wc -l | tr -d ' ')
+		# チャンク総数はチャンクファイル（_chunks.txt）から取得
+		local chunks_file=$(ls tmp/.say_queue/content_*_chunks.txt 2>/dev/null | head -1)
+		if [[ -n "$chunks_file" ]] && [[ -f "$chunks_file" ]]; then
+			stream_chunk_total=$(wc -l < "$chunks_file" | tr -d ' ')
+			# +1 for chunk 0 (pre-synthesized)
+			stream_chunk_total=$(( stream_chunk_total + 1 ))
+		fi
+	fi
+
 	# --- ラジオコーナー状態 (状態ファイルベース) ---
 	local radio_status="idle" radio_corner="" radio_elapsed=""
 	if [[ -f $TMP_STATE_DIR/.radio_state ]]; then
@@ -1007,6 +1026,9 @@ PY
 				fi
 				printf "  ${C_DIM}[%s:%s]${C_RESET}" "$say_kind_label" "${say_phase:-playing}"
 			fi
+			if $stream_active && (( stream_chunk_total > 0 )); then
+				printf "  ${C_CYAN}STREAM[%d/%d]${C_RESET}" "$stream_chunk_done" "$stream_chunk_total"
+			fi
 			echo ""
 		elif [[ "$say_effective_status" == "preparing" ]]; then
 			printf "    ${C_CYAN}♪${C_RESET} Say         ${C_CYAN}PREPARING${C_RESET}"
@@ -1037,6 +1059,19 @@ PY
 				printf "  ${C_YELLOW}[last:%s:%s:%s]${C_RESET}" "$last_label" "${say_phase:-?}" "${say_source_age:-?}"
 			fi
 			echo ""
+		fi
+
+	# VOICEVOX 合成状態
+		if $voicevox_synth_locked; then
+			if $stream_active; then
+				printf "    ${C_CYAN}🔊${C_RESET} VOICEVOX    ${C_CYAN}SYNTH${C_RESET}  ${C_DIM}streaming${C_RESET}"
+				if (( stream_chunk_total > 0 )); then
+					printf " ${C_DIM}chunk %d/%d${C_RESET}" "$((stream_chunk_done + 1))" "$stream_chunk_total"
+				fi
+				echo ""
+			else
+				printf "    ${C_CYAN}🔊${C_RESET} VOICEVOX    ${C_CYAN}SYNTH${C_RESET}  ${C_DIM}locked${C_RESET}\n"
+			fi
 		fi
 
 	# ラジオコーナー
