@@ -1201,6 +1201,11 @@ RETRYCOMMENT
 				sing_score=$(echo "$attempt_talk" | sed -n '/^===SING===/,/^===SING===/ p' | sed '1d;$d')
 				attempt_talk=$(echo "$attempt_talk" | sed '/^===SING===/,/^===SING===/ d')
 			fi
+			# 歌唱宣言ありだが ===SING=== なし → デフォルト楽譜（きらきら星）で補完
+			if [ -z "$sing_score" ] && echo "$attempt_talk" | grep -Eq '歌います|歌ってみます|歌いましょう|歌をお届け|歌声をお届け|をどうぞ。$|うたいます'; then
+				log "[COMMENT] 歌唱宣言あり but ===SING=== なし → デフォルト楽譜で補完"
+				sing_score='{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},{"key":67,"frame_length":45,"lyric":"き"},{"key":67,"frame_length":45,"lyric":"ら"},{"key":69,"frame_length":45,"lyric":"ひ"},{"key":69,"frame_length":45,"lyric":"か"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"お"},{"key":65,"frame_length":45,"lyric":"そ"},{"key":64,"frame_length":45,"lyric":"ら"},{"key":64,"frame_length":45,"lyric":"の"},{"key":62,"frame_length":45,"lyric":"ほ"},{"key":62,"frame_length":45,"lyric":"し"},{"key":60,"frame_length":90,"lyric":"よ"},{"key":null,"frame_length":15,"lyric":""}]}'
+			fi
 
 			# 戦略アドバイスを抽出（本文確定後に追記する）
 			local advice_part advice_item
