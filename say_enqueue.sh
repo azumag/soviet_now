@@ -372,6 +372,8 @@ _cleanup() {
     _clear_current_source_if_owner
     _release_lock
     rm -f "$MY_CONTENT"
+    rm -f "${MY_CONTENT%.txt}_chunks.txt" 2>/dev/null
+    rm -rf "$QUEUE_DIR/stream_${MY_TOKEN}" 2>/dev/null
 }
 trap '_cleanup' EXIT
 
@@ -486,6 +488,150 @@ BEGIN {
     if ((e + grace) < (x * ratio)) exit 0
     exit 1
 }'
+}
+
+# --- VOICEVOX ストリーミングTTS用ヘルパー ---
+
+# テキストを句点・読点で ~N文字チャンクに分割
+_split_tts_text() {
+    local text="$1" max_chars="${2:-100}"
+    python3 -c "
+import sys
+text = sys.argv[1]
+max_len = int(sys.argv[2])
+chunks = []
+for line in text.split('\n'):
+    for sent in line.split('\u3002'):
+        sent = sent.strip()
+        if not sent:
+            continue
+        sent += '\u3002'
+        if chunks and len(chunks[-1]) + len(sent) <= max_len:
+            chunks[-1] += sent
+        else:
+            if len(sent) > max_len:
+                parts = sent.split('\u3001')
+                buf = ''
+                for p in parts:
+                    candidate = buf + ('\u3001' if buf else '') + p
+                    if len(candidate) > max_len and buf:
+                        chunks.append(buf)
+                        buf = p
+                    else:
+                        buf = candidate
+                if buf:
+                    chunks.append(buf)
+            else:
+                chunks.append(sent)
+for c in chunks:
+    print(c)
+" "$text" "$max_chars"
+}
+
+# 単一チャンクをVOICEVOXで合成（voicevox_tts.shの再分割を抑止）
+_synthesize_chunk() {
+    local text="$1" output="$2"
+    VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
+    VOICEVOX_PITCH="${PRE_SYNTH_PITCH:-}" \
+    VOICEVOX_TEMPO="${PRE_SYNTH_TEMPO:-}" \
+    VOICEVOX_TIMEOUT=30 \
+    VOICEVOX_MAX_CHARS=99999 \
+    ./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
+}
+
+# ストリーミング再生: チャンク0再生中に次チャンクを合成→逐次再生
+# 呼び出し時点で再生ロック(LOCK_DIR)を保持済みであること
+_stream_voicevox_play() {
+    local chunks_file="$1"
+    local chunks=()
+    while IFS= read -r _sc_line; do
+        [ -n "$_sc_line" ] && chunks+=("$_sc_line")
+    done < "$chunks_file"
+
+    local total=${#chunks[@]}
+    local stream_dir="$QUEUE_DIR/stream_${MY_TOKEN}"
+    mkdir -p "$stream_dir"
+
+    _set_current_source "playing"
+    _log "ストリーミング再生開始 (1+${total}チャンク)"
+
+    # チャンク0（事前合成済み）を再生開始
+    local play_pid="" current_wav="$PRE_SYNTH_WAV"
+    nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$current_wav" >/dev/null 2>&1 &
+    play_pid=$!
+    echo "$play_pid" > "$PID_FILE"
+    LAST_SAY_PID="$play_pid"
+
+    # 再生開始タイミングでチャットに話者名を投稿
+    local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
+    if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
+        local _chat_msg="VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name"
+        [ -n "${PRE_SYNTH_PITCH:-}" ] && _chat_msg="$_chat_msg pitch=$PRE_SYNTH_PITCH"
+        [ -n "${PRE_SYNTH_TEMPO:-}" ] && _chat_msg="$_chat_msg tempo=$PRE_SYNTH_TEMPO"
+        case "$vo_voice_name" in *もち子*) _chat_msg="$_chat_msg [(cv 明日葉よもぎ)]" ;; esac
+        ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "$_chat_msg" >/dev/null 2>&1 || true ) &
+    fi
+
+    # SYNTH_LOCK をストリーミングセッション全体で保持
+    local _stream_locked=0 _slw=0
+    while ! mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; do
+        sleep 0.3; _slw=$((_slw + 1))
+        [ "$_slw" -ge 100 ] && break  # 30s timeout
+    done
+    [ "$_slw" -lt 100 ] && _stream_locked=1
+
+    # 残りチャンクを逐次合成→再生
+    local i=0
+    for (( i=0; i<total; i++ )); do
+        local next_wav="$stream_dir/chunk_${i}.wav"
+        local synth_ok=1
+
+        # 現チャンク再生中に次チャンクを合成（フォアグラウンド）
+        if [ "$_stream_locked" -eq 1 ]; then
+            if _synthesize_chunk "${chunks[$i]}" "$next_wav"; then
+                synth_ok=0
+            fi
+        fi
+
+        # 現チャンク再生完了を待機
+        while kill -0 "$play_pid" 2>/dev/null; do
+            _touch_lock_heartbeat
+            sleep 0.5
+        done
+        wait "$play_pid" 2>/dev/null
+        rm -f "$current_wav" 2>/dev/null
+
+        # 次チャンク再生（合成失敗なら中断）
+        if [ "$synth_ok" -eq 0 ] && [ -s "$next_wav" ]; then
+            nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$next_wav" >/dev/null 2>&1 &
+            play_pid=$!
+            echo "$play_pid" > "$PID_FILE"
+            LAST_SAY_PID="$play_pid"
+            current_wav="$next_wav"
+        else
+            _log "チャンク$((i+1))/${total} 合成失敗 → ストリーミング中断"
+            break
+        fi
+    done
+
+    # 最終チャンク再生完了を待機
+    if [ -n "$play_pid" ] && kill -0 "$play_pid" 2>/dev/null; then
+        while kill -0 "$play_pid" 2>/dev/null; do
+            _touch_lock_heartbeat
+            sleep 0.5
+        done
+        wait "$play_pid" 2>/dev/null
+    fi
+    rm -f "$current_wav" 2>/dev/null
+
+    # SYNTH_LOCK 解放
+    [ "$_stream_locked" -eq 1 ] && { rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; _stream_locked=0; }
+
+    # ストリーミング一時ファイル削除
+    rm -rf "$stream_dir" 2>/dev/null
+
+    _log "ストリーミング再生完了"
+    return 0
 }
 
 _launch_say() {
@@ -910,13 +1056,40 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
         _log "VOICEVOX 事前合成 speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}"
 
         PRE_SYNTH_WAV="${MY_CONTENT%.txt}_pre.wav"
-        if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_TIMEOUT=60 \
-           ./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
-            _log "事前合成完了: $PRE_SYNTH_WAV"
+        PRE_SYNTH_CHUNKS_FILE=""
+
+        # テキストを ~100文字チャンクに分割
+        _pre_text=$(cat "$MY_CONTENT" 2>/dev/null)
+        _pre_chunks=()
+        while IFS= read -r _pc_line; do
+            [ -n "$_pc_line" ] && _pre_chunks+=("$_pc_line")
+        done < <(_split_tts_text "$_pre_text" 100)
+
+        if [ ${#_pre_chunks[@]} -le 1 ]; then
+            # 短いテキスト: 従来通り全文を1回で合成
+            if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_TIMEOUT=60 \
+               ./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
+                _log "事前合成完了: $PRE_SYNTH_WAV"
+            else
+                _log "事前合成失敗 → 再生時にフォールバック"
+                rm -f "$PRE_SYNTH_WAV" 2>/dev/null
+                PRE_SYNTH_WAV=""
+            fi
         else
-            _log "事前合成失敗 → 再生時にフォールバック"
-            rm -f "$PRE_SYNTH_WAV" 2>/dev/null
-            PRE_SYNTH_WAV=""
+            # 複数チャンク: チャンク0のみ事前合成、残りはストリーミング再生用に保存
+            _log "テキスト分割: ${#_pre_chunks[@]}チャンク → ストリーミングモード"
+            if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_TIMEOUT=30 \
+               VOICEVOX_MAX_CHARS=99999 \
+               ./voicevox_tts.sh -o "$PRE_SYNTH_WAV" "${_pre_chunks[0]}" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
+                _log "事前合成完了 (チャンク1/${#_pre_chunks[@]}): $PRE_SYNTH_WAV"
+                # 残りチャンクをファイルに保存
+                PRE_SYNTH_CHUNKS_FILE="${MY_CONTENT%.txt}_chunks.txt"
+                printf '%s\n' "${_pre_chunks[@]:1}" > "$PRE_SYNTH_CHUNKS_FILE"
+            else
+                _log "事前合成失敗 → 再生時にフォールバック"
+                rm -f "$PRE_SYNTH_WAV" 2>/dev/null
+                PRE_SYNTH_WAV=""
+            fi
         fi
     fi
     rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
@@ -928,10 +1101,15 @@ fi
 PRE_DELAY="${3:-60}"
 _prepare_playback_turn "$PRE_DELAY"
 
-# --- ロック内: say再生（単発 + 自動リトライ） ---
+# --- ロック内: say再生（単発 + 自動リトライ / ストリーミング） ---
 PLAYBACK_FAILED=0
 LAST_SAY_PID=""
-if ! _play_with_retry; then
+if [ -n "${PRE_SYNTH_CHUNKS_FILE:-}" ] && [ -s "$PRE_SYNTH_CHUNKS_FILE" ] && [ -n "$PRE_SYNTH_WAV" ] && [ -s "$PRE_SYNTH_WAV" ]; then
+    # ストリーミングモード: チャンク逐次合成再生
+    if ! _stream_voicevox_play "$PRE_SYNTH_CHUNKS_FILE"; then
+        PLAYBACK_FAILED=1
+    fi
+elif ! _play_with_retry; then
     PLAYBACK_FAILED=1
 fi
 
