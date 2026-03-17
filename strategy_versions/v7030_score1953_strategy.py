@@ -428,14 +428,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= penalty
             reasons.append("EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
-        # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
+        # ----- evaluation axis 9: safe zone reactive pairs priority (NEW: force board compression in safe zones) -----
+        # batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.1)と低価値であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
         # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
-        # reactive_pairsがある場合、即時併合がない時のデフォルト選択をHEIGHT_CONTROLからREACTIVE_PAIRS_COMPRESSIONへ変更し、盤面圧縮を優先。
+        # last_rollback_postmortemの教訓: deadline_margin>=0.5の安全域で盤面圧縮を行うことは成功パターン。max_y<1.8の安全域でreactive_pairs>=1がある場合、
+        # 盤面圧縮を優先し、HEIGHT_CONTROLやHIGH_TOWERなどの非圧縮選択を抑制する構造的変更。
+        # 危険域(max_y>=1.8)では既存のaxis 8.5/8.6/8.7が即時併合を強制するため、axis 9は安全域での盤面圧縮に専念。
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
-        if not reasons:
-            if reactive_pair_count >= 1:
-                reasons.append("REACTIVE_PAIRS_COMPRESSION")
+        if max_y < 1.8 and reactive_pair_count >= 1:
+            # 安全域でreactive_pairsがある場合、盤面圧縮を強制的に優先
+            # axis 8.5/8.6/8.7が発動しない安全域でのみ、盤面圧縮を強制し下振れを抑制
+            # 既存のreasonsに関わらず、安全域での盤面圧縮を最優先
+            reasons.insert(0, "REACTIVE_PAIRS_COMPRESSION")
 
         # ----- update best candidate -----
         if score > best_score:
