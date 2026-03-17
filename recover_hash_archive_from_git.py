@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROLLING_SCORES_FILE = Path("tmp/state/rolling_scores.json")
 BY_HASH_DIR = Path("strategy_versions/by_hash")
+STRATEGY_VERSIONS_DIR = Path("strategy_versions")
 MIN_GAMES = 12
 LBC_Z = 1.28
 W_P50 = 0.55
@@ -103,6 +104,53 @@ def load_target_hashes(argv: list[str]) -> list[str]:
     return [hash_ for _, hash_ in rows]
 
 
+def iter_local_candidate_paths() -> list[Path]:
+    paths: list[Path] = []
+    for path in [Path("strategy.py"), Path("tmp/revert_strategy.py")]:
+        if path.exists():
+            paths.append(path)
+    if STRATEGY_VERSIONS_DIR.exists():
+        paths.extend(sorted(STRATEGY_VERSIONS_DIR.glob("*.py")))
+        by_hash_dir = STRATEGY_VERSIONS_DIR / "by_hash"
+        if by_hash_dir.exists():
+            paths.extend(sorted(by_hash_dir.glob("*.py")))
+    return paths
+
+
+def iter_git_candidate_objects() -> list[tuple[str, str]]:
+    out = run_git(
+        [
+            "log",
+            "--format=COMMIT:%H",
+            "--name-only",
+            "--diff-filter=AMR",
+            "--all",
+            "--",
+            "strategy.py",
+            "tmp/revert_strategy.py",
+            "strategy_versions",
+        ]
+    )
+    rows: list[tuple[str, str]] = []
+    current_commit = ""
+    seen: set[tuple[str, str]] = set()
+    for raw in out.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("COMMIT:"):
+            current_commit = line.split(":", 1)[1]
+            continue
+        if not current_commit or not line.endswith(".py"):
+            continue
+        item = (current_commit, line)
+        if item in seen:
+            continue
+        seen.add(item)
+        rows.append(item)
+    return rows
+
+
 def main() -> int:
     BY_HASH_DIR.mkdir(parents=True, exist_ok=True)
     targets = set(load_target_hashes(sys.argv[1:]))
@@ -111,13 +159,50 @@ def main() -> int:
         return 0
 
     recovered: dict[str, str] = {}
-    commits = [c for c in run_git(["log", "--format=%H", "--all", "--", "strategy.py"]).splitlines() if c]
-
-    for commit in commits:
+    for path in iter_local_candidate_paths():
         if not targets:
             break
         try:
-            source = run_git(["show", f"{commit}:strategy.py"])
+            source = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        path_hash = path.stem if path.parent == BY_HASH_DIR else ""
+        if path_hash and path_hash in targets:
+            out = BY_HASH_DIR / f"{path_hash}.py"
+            if not out.exists():
+                out.write_text(source, encoding="utf-8")
+            recovered[path_hash] = str(path)
+            targets.remove(path_hash)
+            continue
+        try:
+            hash_ = extract_decide_hash_from_source(source)
+        except Exception:
+            continue
+        if hash_ not in targets:
+            continue
+        out = BY_HASH_DIR / f"{hash_}.py"
+        if not out.exists():
+            out.write_text(source, encoding="utf-8")
+        recovered[hash_] = str(path)
+        targets.remove(hash_)
+
+    for commit, path in iter_git_candidate_objects():
+        if not targets:
+            break
+        basename_hash = Path(path).stem if path.startswith("strategy_versions/by_hash/") else ""
+        if basename_hash and basename_hash in targets:
+            try:
+                source = run_git(["show", f"{commit}:{path}"])
+            except subprocess.CalledProcessError:
+                continue
+            out = BY_HASH_DIR / f"{basename_hash}.py"
+            if not out.exists():
+                out.write_text(source, encoding="utf-8")
+            recovered[basename_hash] = f"{commit}:{path}"
+            targets.remove(basename_hash)
+            continue
+        try:
+            source = run_git(["show", f"{commit}:{path}"])
         except subprocess.CalledProcessError:
             continue
         try:
@@ -129,7 +214,7 @@ def main() -> int:
         out = BY_HASH_DIR / f"{hash_}.py"
         if not out.exists():
             out.write_text(source, encoding="utf-8")
-        recovered[hash_] = commit
+        recovered[hash_] = f"{commit}:{path}"
         targets.remove(hash_)
 
     for hash_, commit in sorted(recovered.items()):

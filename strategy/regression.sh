@@ -1258,10 +1258,13 @@ _prune_hash_archive_by_ranking() {
 
 	_backfill_hash_archive_from_known_versions
 
-	local ranked_hashes
+	local archive_count ranked_result ranked_hashes
+	local meta_line mature_count ranked_count keep_hash_count expected_keep_count
+	local min_keep_guard ratio_guard
+	archive_count=$(find "$STRATEGY_HASH_ARCHIVE_DIR" -maxdepth 1 -type f -name '*.py' 2>/dev/null | wc -l | tr -d ' ')
 	local current_hash=""
 	current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-	ranked_hashes=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" <<'PY'
+	ranked_result=$(python3 - "$ROLLING_SCORES_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$HASH_ARCHIVE_KEEP_TOP" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" <<'PY' 2>/dev/null || true
 import json
 import sys
 import math
@@ -1311,12 +1314,41 @@ for h, data in rs.items():
     comp, p50, p25, n = composite_score(scores)
     rows.append((comp, p50, p25, n, h))
 rows.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
+print(f"META|{len(rows)}|{min(len(rows), keep_top)}")
 for _, _, _, _, h in rows[:keep_top]:
     print(h)
 PY
 )
+	meta_line=$(printf '%s\n' "$ranked_result" | sed -n '1p')
+	ranked_hashes=$(printf '%s\n' "$ranked_result" | sed '1d')
+	mature_count=0
+	ranked_count=0
+	if printf '%s\n' "$meta_line" | grep -q '^META|'; then
+		IFS='|' read -r _ mature_count ranked_count <<<"$meta_line"
+	else
+		ranked_hashes="$ranked_result"
+	fi
 	local keep_hashes
 	keep_hashes=$(printf '%s\n%s\n' "$ranked_hashes" "$current_hash" | sed '/^$/d' | sort -u)
+	keep_hash_count=$(printf '%s\n' "$keep_hashes" | sed '/^$/d' | wc -l | tr -d ' ')
+	expected_keep_count=$ranked_count
+	if [ -n "$current_hash" ] && ! printf '%s\n' "$ranked_hashes" | grep -qxF "$current_hash"; then
+		expected_keep_count=$((expected_keep_count + 1))
+	fi
+	if [ "${archive_count:-0}" -gt 1 ] && [ "${mature_count:-0}" -gt 0 ] && [ "${expected_keep_count:-0}" -gt 0 ]; then
+		if [ "$expected_keep_count" -le "$HASH_ARCHIVE_PRUNE_SAFETY_MIN_KEEP" ]; then
+			min_keep_guard=$(( (expected_keep_count + 1) / 2 ))
+		else
+			ratio_guard=$(( (expected_keep_count * HASH_ARCHIVE_PRUNE_SAFETY_MIN_RATIO_PCT + 99) / 100 ))
+			min_keep_guard=$ratio_guard
+			[ "$min_keep_guard" -lt "$HASH_ARCHIVE_PRUNE_SAFETY_MIN_KEEP" ] && min_keep_guard=$HASH_ARCHIVE_PRUNE_SAFETY_MIN_KEEP
+		fi
+		[ "$min_keep_guard" -lt 1 ] && min_keep_guard=1
+		if [ "${keep_hash_count:-0}" -lt "$min_keep_guard" ]; then
+			log "[HASH-ARCHIVE] prune skipped: suspicious keep set (archive=${archive_count} mature=${mature_count} expected=${expected_keep_count} actual=${keep_hash_count} guard=${min_keep_guard})"
+			return 0
+		fi
+	fi
 
 	local removed=0
 	local f base h
