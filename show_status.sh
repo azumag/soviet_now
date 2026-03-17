@@ -937,10 +937,10 @@ PY
 		fi
 	fi
 
-	# --- say_queue 内の再生待ち項目を集計 (_chunks.txt は除外) ---
+	# --- say_queue 内の再生待ち項目を集計 (_chunks.txt 除外, 5分以内のみ) ---
 	local say_queue_waiting=0
 	if [[ -d tmp/.say_queue ]]; then
-		say_queue_waiting=$(find tmp/.say_queue -maxdepth 1 -name 'content_*.txt' ! -name '*_chunks.txt' 2>/dev/null | wc -l | tr -d ' ')
+		say_queue_waiting=$(find tmp/.say_queue -maxdepth 1 -name 'content_*.txt' ! -name '*_chunks.txt' -mmin -5 2>/dev/null | wc -l | tr -d ' ')
 	fi
 
 	# --- Twitch チャット状態 ---
