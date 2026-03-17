@@ -501,6 +501,14 @@ _launch_say() {
 
     # --- VOICEVOX TTS ---
     if [ "${USE_VOICEVOX:-0}" = "1" ]; then
+        # 合成直前に粛清リストを再チェック — 粛清済みなら別のスピーカーに差し替え
+        if [ -f "tmp/voicevox_exclude_ids.txt" ] && grep -qx "$VOICEVOX_SPEAKER" "tmp/voicevox_exclude_ids.txt" 2>/dev/null; then
+            _log "speaker=$VOICEVOX_SPEAKER は粛清済み → 再選択"
+            local _reroll
+            _reroll=$(_pick_random_voicevox_speaker)
+            VOICEVOX_SPEAKER="${_reroll%%|*}"
+            VOICEVOX_RANDOM_VOICE_NAME="${_reroll#*|}"
+        fi
         local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
         # IDごとのピッチ・テンポ設定をルックアップ
         local vo_pitch="" vo_tempo=""
