@@ -104,7 +104,7 @@ while true; do
             fi
 
             # !syukusei / 粛清 [ID] — vo_random から特定スタイルIDを除外
-            if [[ "$msg" =~ ^[[:space:]]*(!syukusei|粛清)[[:space:]]+([0-9]+) ]]; then
+            if [[ "$msg" =~ ^[[:space:]]*(!syukusei|粛清)[[:space:]]*([0-9]+) ]]; then
                 local syukusei_id="${BASH_REMATCH[2]}"
                 local syukusei_file="tmp/voicevox_exclude_ids.txt"
                 if ! grep -qx "$syukusei_id" "$syukusei_file" 2>/dev/null; then
