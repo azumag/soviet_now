@@ -844,12 +844,12 @@ PY
 
 	local stream_active=false stream_chunk_done=0 stream_chunk_total=0
 	local stream_dir=""
-	stream_dir=$(ls -d tmp/.say_queue/stream_* 2>/dev/null | head -1)
+	stream_dir=$(find tmp/.say_queue -maxdepth 1 -type d -name 'stream_*' 2>/dev/null | head -1)
 	if [[ -n "$stream_dir" ]] && [[ -d "$stream_dir" ]]; then
 		stream_active=true
-		stream_chunk_done=$(ls "$stream_dir"/chunk_*.wav 2>/dev/null | wc -l | tr -d ' ')
+		stream_chunk_done=$(find "$stream_dir" -name 'chunk_*.wav' 2>/dev/null | wc -l | tr -d ' ')
 		# チャンク総数はチャンクファイル（_chunks.txt）から取得
-		local chunks_file=$(ls tmp/.say_queue/content_*_chunks.txt 2>/dev/null | head -1)
+		local chunks_file=$(find tmp/.say_queue -maxdepth 1 -name 'content_*_chunks.txt' 2>/dev/null | head -1)
 		if [[ -n "$chunks_file" ]] && [[ -f "$chunks_file" ]]; then
 			stream_chunk_total=$(wc -l < "$chunks_file" | tr -d ' ')
 			# +1 for chunk 0 (pre-synthesized)
@@ -901,17 +901,26 @@ PY
 	fi
 
 	# --- コメントキュー状態 ---
-	local comment_queue_count=0
+	local comment_queue_pending=0 comment_queue_playing=0
 	if [[ -d tmp/.comment_queue ]]; then
-		comment_queue_count=$(find tmp/.comment_queue -name 'comment_*.txt' 2>/dev/null | wc -l | tr -d ' ')
+		comment_queue_pending=$(find tmp/.comment_queue -name 'comment_*.txt' 2>/dev/null | wc -l | tr -d ' ')
+		comment_queue_playing=$(find tmp/.comment_queue -name 'comment_*.playing' 2>/dev/null | wc -l | tr -d ' ')
 	fi
+	local comment_queue_count=$((comment_queue_pending + comment_queue_playing))
 	local manual_audio_trigger_count=0
 	if [[ -d tmp/.manual_audio_triggers ]]; then
 		manual_audio_trigger_count=$(find tmp/.manual_audio_triggers -name '*.cmd' 2>/dev/null | wc -l | tr -d ' ')
 	fi
 
+	# --- ラジオ deferred キュー状態 ---
+	local radio_deferred_pending=0 radio_deferred_playing=0
+	if [[ -d tmp/.radio_deferred_queue ]]; then
+		radio_deferred_pending=$(find tmp/.radio_deferred_queue -name 'radio_*.txt' 2>/dev/null | wc -l | tr -d ' ')
+		radio_deferred_playing=$(find tmp/.radio_deferred_queue -name 'radio_*.playing' 2>/dev/null | wc -l | tr -d ' ')
+	fi
+
 	# コメント生成プロセス (PIDファイル + 状態ファイル)
-	local comment_gen_running=false comment_gen_pid=""
+	local comment_gen_running=false comment_gen_pid="" comment_gen_phase=""
 	if [[ -f tmp/.twitch_chat/comment_gen.pid ]]; then
 		comment_gen_pid=$(cat tmp/.twitch_chat/comment_gen.pid 2>/dev/null)
 		comment_gen_pid=${comment_gen_pid%%|*}
@@ -919,12 +928,19 @@ PY
 			comment_gen_running=true
 		fi
 	fi
-	if ! $comment_gen_running && [[ -f $TMP_STATE_DIR/.comment_gen_state ]]; then
+	if [[ -f $TMP_STATE_DIR/.comment_gen_state ]]; then
 		local cg_line=$(cat $TMP_STATE_DIR/.comment_gen_state 2>/dev/null)
+		comment_gen_phase="${cg_line%%:*}"
 		local cg_ts=${cg_line##*:}
-		if [[ -n "$cg_ts" ]] && (( $(date +%s) - cg_ts < 300 )); then
+		if ! $comment_gen_running && [[ -n "$cg_ts" ]] && (( $(date +%s) - cg_ts < 300 )); then
 			comment_gen_running=true
 		fi
+	fi
+
+	# --- say_queue 内の再生待ち項目を集計 (_chunks.txt は除外) ---
+	local say_queue_waiting=0
+	if [[ -d tmp/.say_queue ]]; then
+		say_queue_waiting=$(find tmp/.say_queue -maxdepth 1 -name 'content_*.txt' ! -name '*_chunks.txt' 2>/dev/null | wc -l | tr -d ' ')
 	fi
 
 	# --- Twitch チャット状態 ---
@@ -1100,19 +1116,46 @@ PY
 			;;
 	esac
 
-	# コメント読み上げキュー
-	if (( comment_queue_count > 0 )); then
-		printf "    ${C_MAGENTA}💬${C_RESET} CommentQ    ${C_MAGENTA}${comment_queue_count} pending${C_RESET}\n"
+	# コメント パイプライン表示
+	# 生成 → キュー待ち → 再生中 の流れ
+	if $comment_gen_running; then
+		local gen_label="${comment_gen_phase:-generating}"
+		printf "    ${C_YELLOW}⟳${C_RESET} CommentGen  ${C_YELLOW}%s${C_RESET}" "${gen_label}"
+		[[ -n "$comment_gen_pid" ]] && printf "  ${C_DIM}PID=${comment_gen_pid}${C_RESET}"
+		echo ""
+	else
+		printf "    ${C_DIM}⟳${C_RESET} CommentGen  ${C_DIM}idle${C_RESET}\n"
+	fi
+	if (( comment_queue_pending > 0 || comment_queue_playing > 0 )); then
+		local cq_parts=""
+		(( comment_queue_playing > 0 )) && cq_parts="${C_GREEN}${comment_queue_playing} playing${C_RESET}"
+		if (( comment_queue_pending > 0 )); then
+			[[ -n "$cq_parts" ]] && cq_parts="${cq_parts} ${C_DIM}|${C_RESET} "
+			cq_parts="${cq_parts}${C_MAGENTA}${comment_queue_pending} queued${C_RESET}"
+		fi
+		printf "    ${C_MAGENTA}💬${C_RESET} CommentQ    ${cq_parts}\n"
 	else
 		printf "    ${C_DIM}💬${C_RESET} CommentQ    ${C_DIM}empty${C_RESET}\n"
 	fi
-	if (( manual_audio_trigger_count > 0 )); then
-		printf "    ${C_CYAN}⌘${C_RESET} TriggerQ    ${C_CYAN}${manual_audio_trigger_count} pending${C_RESET}\n"
+
+	# ラジオ deferred キュー
+	if (( radio_deferred_playing > 0 || radio_deferred_pending > 0 )); then
+		local rq_parts=""
+		(( radio_deferred_playing > 0 )) && rq_parts="${C_GREEN}${radio_deferred_playing} playing${C_RESET}"
+		if (( radio_deferred_pending > 0 )); then
+			[[ -n "$rq_parts" ]] && rq_parts="${rq_parts} ${C_DIM}|${C_RESET} "
+			rq_parts="${rq_parts}${C_CYAN}${radio_deferred_pending} queued${C_RESET}"
+		fi
+		printf "    ${C_CYAN}📻${C_RESET} RadioQ      ${rq_parts}\n"
 	fi
 
-	# コメント生成
-	if $comment_gen_running; then
-		printf "    ${C_YELLOW}⟳${C_RESET} CommentGen  ${C_YELLOW}RUNNING${C_RESET}  ${C_DIM}PID=${comment_gen_pid}${C_RESET}\n"
+	# say キュー（合成済み再生待ち）
+	if (( say_queue_waiting > 1 )); then
+		printf "    ${C_BLUE}▶${C_RESET} PlaybackQ   ${C_BLUE}$((say_queue_waiting - 1)) waiting${C_RESET}\n"
+	fi
+
+	if (( manual_audio_trigger_count > 0 )); then
+		printf "    ${C_CYAN}⌘${C_RESET} TriggerQ    ${C_CYAN}${manual_audio_trigger_count} pending${C_RESET}\n"
 	fi
 
 	echo ""
