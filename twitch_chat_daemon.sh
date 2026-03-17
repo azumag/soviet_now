@@ -113,6 +113,13 @@ while true; do
                 # continue しない — コメントとして通常処理を続行
             fi
 
+            # !NTROB — このコメントへの応答を波音リツ/クイーン(65)で再生
+            if [[ "$msg" =~ ^[[:space:]]*![Nn][Tt][Rr][Oo][Bb]([[:space:]]|$) ]]; then
+                msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Nn][Tt][Rr][Oo][Bb][[:space:]]*//')
+                clean_line="${user}: ${msg}"
+                echo "65" > tmp/voicevox_oneshot_speaker.txt
+            fi
+
             # !doushi — このコメントへの応答を macOS say で再生
             if [[ "$msg" =~ ^[[:space:]]*![Dd][Oo][Uu][Ss][Hh][Ii]([[:space:]]|$) ]]; then
                 msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Dd][Oo][Uu][Ss][Hh][Ii][[:space:]]*//')
