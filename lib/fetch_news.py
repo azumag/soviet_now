@@ -13,6 +13,8 @@ import unicodedata
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
@@ -412,6 +414,38 @@ def extract_link(item: ET.Element) -> str:
     return child_attr(item, "about")
 
 
+def extract_published_text(item: ET.Element) -> str:
+    return child_text(item, "pubDate", "published", "updated", "date")
+
+
+def parse_published(value: str) -> tuple[int, str]:
+    value = collapse_ws(value)
+    if not value:
+        return 0, ""
+
+    dt = None
+    try:
+        dt = parsedate_to_datetime(value)
+    except Exception:
+        dt = None
+
+    if dt is None:
+        iso_candidate = value.replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(iso_candidate)
+        except Exception:
+            dt = None
+
+    if dt is None:
+        return 0, value
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    ts = int(dt.timestamp())
+    normalized = dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return ts, normalized
+
+
 def iter_items(root: ET.Element):
     for elem in root.iter():
         if localname(elem.tag) == "item":
@@ -453,6 +487,8 @@ def clean_item(source: dict, item: ET.Element) -> dict | None:
     if should_exclude_wikinews_author(author, source["key"]):
         return None
 
+    published_ts, published_at = parse_published(extract_published_text(item))
+
     return {
         "title": title,
         "url": url,
@@ -462,6 +498,8 @@ def clean_item(source: dict, item: ET.Element) -> dict | None:
         "license": source["license"],
         "lang": source.get("lang", "ja"),
         "source_key": source["key"],
+        "published_ts": published_ts,
+        "published_at": published_at,
     }
 
 
@@ -482,6 +520,7 @@ def fetch_source_items(source: dict) -> list[dict]:
         cleaned = clean_item(source, item)
         if cleaned:
             items.append(cleaned)
+    items.sort(key=lambda item: (item.get("published_ts", 0), item.get("title", "")), reverse=True)
     return items
 
 
@@ -518,9 +557,12 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> dict[str, list
 
 
 def pick_articles(candidates: dict[str, list[dict]]) -> list[dict]:
-    """Return all candidate articles, interleaved across sources for diversity."""
+    """Return candidate articles, preferring fresher items while keeping source diversity."""
     source_order = [source["key"] for source in SOURCES if candidates.get(source["key"])]
-    random.shuffle(source_order)
+    source_order.sort(
+        key=lambda key: max((item.get("published_ts", 0) for item in candidates.get(key, [])), default=0),
+        reverse=True,
+    )
 
     selected = []
     offsets = {key: 0 for key in source_order}
@@ -564,6 +606,8 @@ def render_meta(selected: list[dict]) -> dict[str, dict]:
             "license": item["license"],
             "lang": item.get("lang", "ja"),
             "source_key": item.get("source_key", ""),
+            "published_ts": item.get("published_ts", 0),
+            "published_at": item.get("published_at", ""),
         }
     return meta
 

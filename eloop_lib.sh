@@ -2990,9 +2990,17 @@ def block_source_name(block):
 def block_source_key(block):
     return _name_to_key(block_source_name(block))
 
+def block_published_ts(block):
+    title = block_title(block)
+    item = meta.get(title, {})
+    try:
+        return int(item.get("published_ts", 0) or 0)
+    except Exception:
+        return 0
+
 def block_priority(block):
     key = block_source_key(block)
-    return (counts.get(key, 0), pref_order.get(key, 99), block_title(block))
+    return (-block_published_ts(block), counts.get(key, 0), pref_order.get(key, 99), block_title(block))
 
 blocks.sort(key=block_priority)
 
@@ -3058,6 +3066,15 @@ if os.path.exists(source_hist_path):
         hist = [ln.strip() for ln in f if ln.strip()]
 recent = hist[-12:]
 counts = Counter(recent)
+published_values = []
+for block in blocks:
+    title = block[0][2:].strip() if block[0].startswith("■ ") else ""
+    item = meta.get(title, {})
+    try:
+        published_values.append(int(item.get("published_ts", 0) or 0))
+    except Exception:
+        published_values.append(0)
+newest_ts = max(published_values) if published_values else 0
 
 weights = []
 for block in blocks:
@@ -3066,7 +3083,19 @@ for block in blocks:
     source_name = (item.get("source") or "").strip()
     source_key = _name_to_key(source_name)
     freq = counts.get(source_key, 0) if source_key else 0
-    weights.append(1.0 / (1 + freq))
+    try:
+        published_ts = int(item.get("published_ts", 0) or 0)
+    except Exception:
+        published_ts = 0
+    if newest_ts > 0 and published_ts > 0:
+        age_hours = max(0.0, (newest_ts - published_ts) / 3600.0)
+        recency_weight = 1.0 / (1.0 + age_hours / 12.0)
+    elif published_ts > 0:
+        recency_weight = 1.0
+    else:
+        recency_weight = 0.25
+    source_weight = 1.0 / (1 + freq)
+    weights.append((recency_weight * 6.0) + source_weight)
 
 chosen = random.choices(blocks, weights=weights, k=1)[0]
 print("\n".join(chosen))
