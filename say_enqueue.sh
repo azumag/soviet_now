@@ -1106,6 +1106,10 @@ PLAYBACK_FAILED=0
 LAST_SAY_PID=""
 if [ -n "${PRE_SYNTH_CHUNKS_FILE:-}" ] && [ -s "$PRE_SYNTH_CHUNKS_FILE" ] && [ -n "$PRE_SYNTH_WAV" ] && [ -s "$PRE_SYNTH_WAV" ]; then
     # ストリーミングモード: チャンク逐次合成再生
+    # CC表記をTwitchチャットに投稿
+    if [ -n "${SAY_CC_TEXT:-}" ]; then
+        ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "$SAY_CC_TEXT" >/dev/null 2>&1 || true ) &
+    fi
     if ! _stream_voicevox_play "$PRE_SYNTH_CHUNKS_FILE"; then
         PLAYBACK_FAILED=1
     fi
