@@ -63,6 +63,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `game_history/` | 試合ごとのターンログ (JSONL) |
 | `best_score.txt` | ハイスコア記録 |
 | `say_enqueue.sh` | macOS `say` のFIFOキュー管理（排他制御・異常終了/途中切断リトライ付き） |
+| `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用）。`./google_tts.sh "テキスト"`, `--list`, `--demo` |
 
 **ラジオDJ機能:**
 

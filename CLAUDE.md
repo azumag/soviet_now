@@ -66,6 +66,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿 |
 | `twitch_chat.sh` | Twitch IRC チャットデーモン管理 (start/fetch/send等) |
 | `twitch_chat_daemon.sh` | IRC常駐プロセス (`!clip` コマンド対応) |
+| `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用） |
 
 ## Twitch クリップ自動作成
 

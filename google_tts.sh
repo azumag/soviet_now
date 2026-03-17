@@ -1,13 +1,13 @@
 #!/bin/bash
 # Google Cloud TTS - 日本語音声合成
-# Usage: ./tts.sh "テキスト" [options]
-# Example: ./tts.sh "こんにちは"
-#          ./tts.sh "こんにちは" --voice ja-JP-Chirp3-HD-Kore
-#          ./tts.sh "こんにちは" --rate 1.5 --pitch 3
-#          ./tts.sh --list   # 声の一覧表示
+# Usage: ./google_tts.sh "テキスト" [options]
+# Example: ./google_tts.sh "こんにちは"
+#          ./google_tts.sh "こんにちは" --voice ja-JP-Chirp3-HD-Kore
+#          ./google_tts.sh "こんにちは" --rate 1.5 --pitch 3
+#          ./google_tts.sh --list   # 声の一覧表示
 
 PROJECT="gen-lang-client-0367522921"
-DEFAULT_VOICE="ja-JP-Neural2-B"
+DEFAULT_VOICE="${GOOGLE_TTS_VOICE:-ja-JP-Neural2-B}"
 OUT="/tmp/tts.mp3"
 
 if [[ "$1" == "--demo" ]]; then
@@ -65,14 +65,17 @@ for v in data['voices']:
 fi
 
 # Parse arguments
+OUTPUT=""
 TEXT=""
 VOICE="$DEFAULT_VOICE"
-RATE="1.0"
+RATE="${GOOGLE_TTS_RATE:-1.0}"
 PITCH="0"
 VOLUME="0"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -o)       OUTPUT="$2"; shift 2 ;;
+    -f)       TEXT=$(cat "$2"); shift 2 ;;
     --voice)  VOICE="$2"; shift 2 ;;
     --rate)   RATE="$2"; shift 2 ;;
     --pitch)  PITCH="$2"; shift 2 ;;
@@ -83,22 +86,37 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$TEXT" ]]; then
-  echo "Usage: ./tts.sh \"テキスト\" [options]"
+  echo "Usage: ./google_tts.sh \"テキスト\" [options]"
+  echo "       ./google_tts.sh -o out.mp3 \"テキスト\""
+  echo "       ./google_tts.sh -o out.mp3 -f content.txt"
   echo "Options:"
+  echo "  -o FILE        ファイル出力（再生なし）"
+  echo "  -f FILE        テキストをファイルから読み込み"
   echo "  --voice NAME   声の種類 (default: $DEFAULT_VOICE)"
   echo "  --rate  N      速さ 0.25-4.0 (default: 1.0)"
   echo "  --pitch N      高さ -20.0-20.0 (default: 0)"
   echo "  --volume N     音量 -96.0-16.0 dB (default: 0)"
   echo "  --list         声の一覧表示"
+  echo "Env: GOOGLE_TTS_VOICE, GOOGLE_TTS_RATE"
   exit 1
 fi
+
+# 出力先の決定
+PLAY_AFTER=false
+if [[ -z "$OUTPUT" ]]; then
+  OUTPUT="$OUT"
+  PLAY_AFTER=true
+fi
+
+# テキストのエスケープ（JSON用）
+ESCAPED_TEXT=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$TEXT")
 
 curl -s -X POST \
   -H "Authorization: Bearer $(gcloud auth print-access-token)" \
   -H "x-goog-user-project: $PROJECT" \
   -H "Content-Type: application/json" \
   -d "{
-    \"input\": {\"text\": \"$TEXT\"},
+    \"input\": {\"text\": $ESCAPED_TEXT},
     \"voice\": {\"languageCode\": \"ja-JP\", \"name\": \"$VOICE\"},
     \"audioConfig\": {
       \"audioEncoding\": \"MP3\",
@@ -112,7 +130,9 @@ curl -s -X POST \
 import sys, json, base64
 data = json.load(sys.stdin)
 if 'error' in data:
-    print('Error:', data['error']['message']); sys.exit(1)
+    print('Error:', data['error']['message'], file=sys.stderr); sys.exit(1)
 audio = base64.b64decode(data['audioContent'])
-open('$OUT', 'wb').write(audio)
-" && afplay "$OUT"
+open(sys.argv[1], 'wb').write(audio)
+" "$OUTPUT" || exit 1
+
+[[ "$PLAY_AFTER" = "true" ]] && afplay "$OUTPUT"
