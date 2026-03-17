@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import os
 import random
@@ -23,6 +24,7 @@ OUTFILE = os.path.join(TMP_DIR, "news.txt")
 META_OUTFILE = os.path.join(TMP_DIR, "news_meta.json")
 PAST_NEWS = os.path.join(TMP_HISTORY_DIR, ".past_news_titles.txt")
 PAST_NEWS_LINKS = os.path.join(TMP_HISTORY_DIR, ".past_news_links.txt")
+PAST_NEWS_LINK_HASHES = os.path.join(TMP_HISTORY_DIR, "past_news_url_hashes.txt")
 LAST_NEWS_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success.txt")
 LAST_NEWS_META_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success_meta.json")
 NEWS_ALLOW_STALE_CACHE = os.environ.get("NEWS_ALLOW_STALE_CACHE", "0")
@@ -246,6 +248,13 @@ def title_key(title: str) -> str:
     s = "".join(ch for ch in s if unicodedata.category(ch)[0] not in ("P", "S"))
     s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
     return s[:240]
+
+
+def link_hash(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    return hashlib.sha1(url.encode("utf-8")).hexdigest()
 
 
 def safe_unlink(path: str) -> None:
@@ -479,8 +488,10 @@ def fetch_source_items(source: dict) -> list[dict]:
 def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> dict[str, list[dict]]:
     past_title_keys = {title_key(title) for title in load_lines(PAST_NEWS)}
     past_links = set(load_lines(PAST_NEWS_LINKS))
+    past_link_hashes = set(load_lines(PAST_NEWS_LINK_HASHES))
     seen_title_keys: set[str] = set()
     seen_links: set[str] = set()
+    seen_link_hashes: set[str] = set()
     filtered: dict[str, list[dict]] = {}
 
     for source in SOURCES:
@@ -489,14 +500,17 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> dict[str, list
         for item in all_source_items.get(key, []):
             item_title_key = title_key(item["title"])
             item_link = item["url"]
+            item_link_hash = link_hash(item_link)
             if not item_title_key or not item_link:
                 continue
-            if item_title_key in past_title_keys or item_link in past_links:
+            if item_title_key in past_title_keys or item_link in past_links or (item_link_hash and item_link_hash in past_link_hashes):
                 continue
-            if item_title_key in seen_title_keys or item_link in seen_links:
+            if item_title_key in seen_title_keys or item_link in seen_links or (item_link_hash and item_link_hash in seen_link_hashes):
                 continue
             seen_title_keys.add(item_title_key)
             seen_links.add(item_link)
+            if item_link_hash:
+                seen_link_hashes.add(item_link_hash)
             source_items.append(item)
         if source_items:
             filtered[key] = source_items

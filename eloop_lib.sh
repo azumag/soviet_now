@@ -78,6 +78,7 @@ PAST_RADIO_THEME_BODIES="$TMP_HISTORY_DIR/past_radio_theme_bodies.txt"
 PAST_RADIO_THEME_HISTORY_KEEP="${PAST_RADIO_THEME_HISTORY_KEEP:-160}"
 PAST_NEWS_READ="$TMP_HISTORY_DIR/past_news_read.txt"
 PAST_NEWS_READ_KEYS="$TMP_HISTORY_DIR/past_news_read_keys.txt"
+PAST_NEWS_URL_HASHES="$TMP_HISTORY_DIR/past_news_url_hashes.txt"
 PAST_NEWS_TOPIC_KEYS="$TMP_HISTORY_DIR/past_news_topic_keys.txt"
 PAST_NEWS_READ_SOURCES="$TMP_HISTORY_DIR/past_news_read_sources.txt"
 RUSSIA_CREATION_HISTORY_FILE="$TMP_HISTORY_DIR/russia_creation_history.tsv"
@@ -2674,7 +2675,9 @@ _filter_unread_news_blocks() {
 	local news_tmp
 	news_tmp=$(mktemp /tmp/eloop_news_blocks_XXXXXXXX)
 	cat >"$news_tmp"
-	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" "$news_tmp" <<'PY'
+	python3 - "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$PAST_NEWS_TOPIC_KEYS" "$PAST_NEWS_URL_HASHES" "$news_tmp" <<'PY'
+import hashlib
+import json
 import os
 import re
 import sys
@@ -2683,11 +2686,17 @@ import unicodedata
 past_title_file = sys.argv[1]
 past_key_file = sys.argv[2]
 past_topic_key_file = sys.argv[3]
-news_file = sys.argv[4]
+past_url_hash_file = sys.argv[4]
+news_file = sys.argv[5]
 news_text = ""
 if os.path.exists(news_file):
     with open(news_file, encoding="utf-8", errors="ignore") as f:
         news_text = f.read()
+try:
+    with open("tmp/news_meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    meta = {}
 
 def key(s: str) -> str:
     s = unicodedata.normalize("NFKC", s).strip().lower()
@@ -2695,6 +2704,13 @@ def key(s: str) -> str:
     s = ''.join(ch for ch in s if unicodedata.category(ch)[0] not in ('P', 'S'))
     s = s.replace("yahooニュース", "").replace("yahoo!ニュース", "")
     return s[:240]
+
+def url_hash_for_title(title: str) -> str:
+    item = meta.get(title, {}) if isinstance(meta, dict) else {}
+    url = (item.get("url") or "").strip()
+    if not url:
+        return ""
+    return hashlib.sha1(url.encode("utf-8")).hexdigest()
 
 def topic_key(s: str) -> str:
     s = unicodedata.normalize("NFKC", s).strip().lower()
@@ -2740,6 +2756,13 @@ if os.path.exists(past_topic_key_file):
         if k:
             past_topic_keys.add(k)
 
+past_url_hashes = set()
+if os.path.exists(past_url_hash_file):
+    for ln in open(past_url_hash_file, encoding="utf-8", errors="ignore"):
+        k = ln.strip()
+        if k:
+            past_url_hashes.add(k)
+
 blocks = []
 current = []
 for line in news_text.splitlines():
@@ -2754,24 +2777,32 @@ if current:
 
 seen = set()
 seen_topics = set()
+seen_url_hashes = set()
 out = []
 for b in blocks:
     title = b[0][2:].strip()
     k = key(title)
     tk = topic_key(title)
+    uh = url_hash_for_title(title)
     if not k:
         continue
     if k in seen:
         continue
     if tk and tk in seen_topics:
         continue
+    if uh and uh in seen_url_hashes:
+        continue
     if k in past_keys:
         continue
     if tk and tk in past_topic_keys:
         continue
+    if uh and uh in past_url_hashes:
+        continue
     seen.add(k)
     if tk:
         seen_topics.add(tk)
+    if uh:
+        seen_url_hashes.add(uh)
     out.append("\n".join(b).rstrip())
 
 print("\n\n".join(out))
@@ -2851,6 +2882,28 @@ if source:
 PY
 }
 
+_news_url_hash_for_title() {
+	local title="$1"
+	[ -f "tmp/news_meta.json" ] || return 0
+	python3 - "$title" <<'PY'
+import hashlib
+import json
+import sys
+
+title = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    with open("tmp/news_meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+item = meta.get(title, {})
+url = (item.get("url") or "").strip()
+if url:
+    print(hashlib.sha1(url.encode("utf-8")).hexdigest())
+PY
+}
+
 _news_source_key_from_name() {
 	local name="$1"
 	case "$name" in
@@ -2867,6 +2920,14 @@ _append_news_read_source() {
 	[ -n "$source_key" ] || return 0
 	echo "$source_key" >>"$PAST_NEWS_READ_SOURCES"
 	tail -120 "$PAST_NEWS_READ_SOURCES" >"${PAST_NEWS_READ_SOURCES}.tmp" && mv "${PAST_NEWS_READ_SOURCES}.tmp" "$PAST_NEWS_READ_SOURCES"
+}
+
+_append_news_read_url_hash() {
+	local url_hash="$1"
+	[ -n "$url_hash" ] || return 0
+	echo "$url_hash" >>"$PAST_NEWS_URL_HASHES"
+	tail -"${PAST_NEWS_URL_HASHES_KEEP:-200}" "$PAST_NEWS_URL_HASHES" >"${PAST_NEWS_URL_HASHES}.tmp" && \
+		mv "${PAST_NEWS_URL_HASHES}.tmp" "$PAST_NEWS_URL_HASHES"
 }
 
 _prepare_news_prompt_blocks() {
@@ -4000,16 +4061,18 @@ start_radio_corner_news() {
 	log "[NEWS] スクリプト選定: ${selected_news}"
 
 	# 選定直後に既読記録（AI生成を待たずに確定）
-	local selected_key selected_topic_key selected_source_name selected_source_key
+	local selected_key selected_topic_key selected_source_name selected_source_key selected_url_hash
 	selected_key=$(_news_title_key "$selected_news")
 	selected_topic_key=$(_news_topic_key "$selected_news")
 	selected_source_name=$(_news_source_name_for_title "$selected_news")
 	selected_source_key=$(_news_source_key_from_name "$selected_source_name")
+	selected_url_hash=$(_news_url_hash_for_title "$selected_news")
 	if [ -n "$selected_key" ]; then
 		echo "$selected_news" >>"$PAST_NEWS_READ"
 		echo "$selected_key" >>"$PAST_NEWS_READ_KEYS"
 		[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
 		_append_news_read_source "$selected_source_key"
+		_append_news_read_url_hash "$selected_url_hash"
 		tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
 		tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
 		tail -40 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
@@ -5691,7 +5754,7 @@ cleanup_tmp_files() {
 	# --- 履歴ファイル: キャップ適用 ---
 	# .past_news_titles.txt / .past_news_links.txt にもキャップ適用
 	local hist_file
-	for hist_file in $TMP_HISTORY_DIR/.past_news_titles.txt $TMP_HISTORY_DIR/.past_news_links.txt; do
+	for hist_file in $TMP_HISTORY_DIR/.past_news_titles.txt $TMP_HISTORY_DIR/.past_news_links.txt $PAST_NEWS_URL_HASHES; do
 		if [ -f "$hist_file" ]; then
 			local lc
 			lc=$(wc -l < "$hist_file" | tr -d ' ')

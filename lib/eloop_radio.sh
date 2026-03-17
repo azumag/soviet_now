@@ -233,13 +233,44 @@ _filter_unread_news_blocks() {
 	local news_tmp
 	news_tmp=$(mktemp /tmp/eloop_news_blocks_XXXXXXXX)
 	cat >"$news_tmp"
-	python3 "$ELOOP_LIB_DIR/lib/news_filter.py" filter_unread "$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$news_tmp"
+	python3 "$ELOOP_LIB_DIR/lib/news_filter.py" filter_unread \
+		"$PAST_NEWS_READ" "$PAST_NEWS_READ_KEYS" "$news_tmp" "$PAST_NEWS_URL_HASHES" "tmp/news_meta.json"
 	rm -f "$news_tmp"
 }
 
 _resolve_selected_news_title() {
 	local selected_title="$1" news_file="$2"
 	python3 "$ELOOP_LIB_DIR/lib/news_filter.py" resolve_title "$selected_title" "$news_file"
+}
+
+_news_url_hash_for_title() {
+	local title="$1"
+	[ -f "tmp/news_meta.json" ] || return 0
+	python3 - "$title" <<'PY'
+import hashlib
+import json
+import sys
+
+title = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    with open("tmp/news_meta.json", encoding="utf-8") as f:
+        meta = json.load(f)
+except Exception:
+    raise SystemExit(0)
+
+item = meta.get(title, {})
+url = (item.get("url") or "").strip()
+if url:
+    print(hashlib.sha1(url.encode("utf-8")).hexdigest())
+PY
+}
+
+_append_news_read_url_hash() {
+	local url_hash="$1"
+	[ -n "$url_hash" ] || return 0
+	echo "$url_hash" >>"$PAST_NEWS_URL_HASHES"
+	tail -"${PAST_NEWS_URL_HASHES_KEEP:-200}" "$PAST_NEWS_URL_HASHES" >"${PAST_NEWS_URL_HASHES}.tmp" && \
+		mv "${PAST_NEWS_URL_HASHES}.tmp" "$PAST_NEWS_URL_HASHES"
 }
 
 # 自分のコーナーの状態ファイルだけ安全に削除 (並列実行の競合防止)
@@ -738,15 +769,17 @@ start_radio_corner_news() {
 	selected_news=$(printf '%s\n' "$selected_block" | head -n 1 | sed 's/^■ //')
 	log "[NEWS] スクリプト選定: ${selected_news}"
 
-	local selected_key selected_topic_key selected_source_name selected_source_key
+	local selected_key selected_topic_key selected_source_name selected_source_key selected_url_hash
 	selected_key=$(_news_title_key "$selected_news")
 	selected_topic_key=$(_news_topic_key "$selected_news")
 	selected_source_name=$(_news_source_name_for_title "$selected_news")
 	selected_source_key=$(_news_source_key_from_name "$selected_source_name")
+	selected_url_hash=$(_news_url_hash_for_title "$selected_news")
 	# 既読記録は _radio_finish_common() 側で一元管理（二重記録防止）
 	if [ -n "$selected_key" ]; then
 		[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
 		_append_news_read_source "$selected_source_key"
+		_append_news_read_url_hash "$selected_url_hash"
 		tail -200 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
 		log "[NEWS] スクリプト選定完了: ${selected_news}"
 	fi

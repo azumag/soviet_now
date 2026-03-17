@@ -3,9 +3,11 @@
 
 Usage:
     python3 news_filter.py title_key <title>
-    python3 news_filter.py filter_unread <past_read_file> <past_keys_file> <news_file>
+    python3 news_filter.py filter_unread <past_read_file> <past_keys_file> <news_file> [past_url_hash_file] [meta_file]
     python3 news_filter.py resolve_title <selected_title> <news_file>
 """
+import hashlib
+import json
 import os
 import re
 import sys
@@ -21,6 +23,13 @@ def key(s: str) -> str:
     return s[:240]
 
 
+def url_hash(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    return hashlib.sha1(url.encode("utf-8")).hexdigest()
+
+
 def cmd_title_key():
     title = sys.argv[2] if len(sys.argv) > 2 else ""
     print(key(title))
@@ -30,11 +39,20 @@ def cmd_filter_unread():
     past_title_file = sys.argv[2]
     past_key_file = sys.argv[3]
     news_file = sys.argv[4]
+    past_url_hash_file = sys.argv[5] if len(sys.argv) > 5 else ""
+    meta_file = sys.argv[6] if len(sys.argv) > 6 else ""
 
     news_text = ""
     if os.path.exists(news_file):
         with open(news_file, encoding="utf-8", errors="ignore") as f:
             news_text = f.read()
+    meta = {}
+    if meta_file and os.path.exists(meta_file):
+        try:
+            with open(meta_file, encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
 
     past_keys = set()
     if os.path.exists(past_title_file):
@@ -51,6 +69,13 @@ def cmd_filter_unread():
             if k:
                 past_keys.add(k)
 
+    past_url_hashes = set()
+    if past_url_hash_file and os.path.exists(past_url_hash_file):
+        for ln in open(past_url_hash_file, encoding="utf-8", errors="ignore"):
+            k = ln.strip()
+            if k:
+                past_url_hashes.add(k)
+
     blocks = []
     current = []
     for line in news_text.splitlines():
@@ -64,17 +89,26 @@ def cmd_filter_unread():
         blocks.append(current)
 
     seen = set()
+    seen_url_hashes = set()
     out = []
     for b in blocks:
         title = b[0][2:].strip()
         k = key(title)
+        item = meta.get(title, {}) if isinstance(meta, dict) else {}
+        uh = url_hash(item.get("url", ""))
         if not k:
             continue
         if k in seen:
             continue
+        if uh and uh in seen_url_hashes:
+            continue
         if k in past_keys:
             continue
+        if uh and uh in past_url_hashes:
+            continue
         seen.add(k)
+        if uh:
+            seen_url_hashes.add(uh)
         out.append("\n".join(b).rstrip())
 
     print("\n\n".join(out))
