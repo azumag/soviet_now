@@ -1,0 +1,204 @@
+#!/bin/bash
+# eloop_lib.sh - Soren Evolution Loop 共通ライブラリ
+#
+# soren_loop.sh から source される。AI による書き換え対象外の安定レイヤー。
+# ヘルパー関数、AI実行、バリデーション、バージョン管理、ラジオトーク、
+# コメント処理、改善ステート管理を提供する。
+
+# --- スクリプトディレクトリ ---
+ELOOP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ELOOP_LIB_DIR"
+unset ANTHROPIC_AUTH_TOKEN
+
+# --- 定数 ---
+COMMANDS="commands.txt"
+GAME_STATE="game_state.json"
+
+STRATEGY_FILE="strategy.py"
+STRATEGY_VERSIONS_DIR="strategy_versions"
+HISTORY_DIR="game_history"
+HISTORY_FILE="$HISTORY_DIR/latest.jsonl"
+PHYROGENETIC_TREE_FILE="phyrogenetic-tree.md"
+PHYROGENETIC_EVENTS_FILE="phyrogenetic-events.jsonl"
+PHYROGENETIC_TREE_URL="${PHYROGENETIC_TREE_URL:-https://github.com/azumag/soviet_now/blob/main/phyrogenetic-tree.md}"
+
+MODEL_PRIMARY="glm"
+MODEL_FALLBACK="opencode:glmflash"
+
+GAME_COUNT_FILE="game_count.txt"
+
+RADIO_AGENT="zai"
+RADIO_FALLBACK="glmflash"
+RADIO_OPENCODE_TIMEOUT=180
+RADIO_CLAUDE_MODEL="sonnet"
+RADIO_FACT_CHECK_ENABLED="${RADIO_FACT_CHECK_ENABLED:-1}"
+RUSSIA_CELEBRATION_ENABLED="${RUSSIA_CELEBRATION_ENABLED:-0}"
+RADIO_FACT_CHECK_AGENT="${RADIO_FACT_CHECK_AGENT:-glmflash}"
+RADIO_FACT_CHECK_FALLBACK="${RADIO_FACT_CHECK_FALLBACK:-zai}"
+RADIO_FACT_CHECK_CLAUDE_MODEL="${RADIO_FACT_CHECK_CLAUDE_MODEL:-$RADIO_CLAUDE_MODEL}"
+RADIO_FACT_CHECK_MIN_CHARS=100
+RADIO_FACT_CHECK_SKIP_CORNERS="${RADIO_FACT_CHECK_SKIP_CORNERS:-strategy}"
+RADIO_FACT_CHECK_MIN_RATIO="${RADIO_FACT_CHECK_MIN_RATIO:-0.68}"
+RADIO_FACT_CHECK_MAX_ABS_SHRINK="${RADIO_FACT_CHECK_MAX_ABS_SHRINK:-700}"
+RADIO_FACT_CHECK_FEW_ISSUES_MAX="${RADIO_FACT_CHECK_FEW_ISSUES_MAX:-2}"
+RADIO_FACT_CHECK_MIN_SIMILARITY_NOISSUES="${RADIO_FACT_CHECK_MIN_SIMILARITY_NOISSUES:-0.90}"
+RADIO_FACT_CHECK_MIN_SIMILARITY_FEW_ISSUES="${RADIO_FACT_CHECK_MIN_SIMILARITY_FEW_ISSUES:-0.74}"
+RADIO_FACT_CHECK_MAX_PARAGRAPH_DROP="${RADIO_FACT_CHECK_MAX_PARAGRAPH_DROP:-2}"
+RADIO_WEB_GROUNDING_ENABLED="${RADIO_WEB_GROUNDING_ENABLED:-1}"
+RADIO_WEB_GROUNDING_TTL_SEC="${RADIO_WEB_GROUNDING_TTL_SEC:-21600}"
+RADIO_WEB_GROUNDING_MAX_SOURCES="${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}"
+RADIO_STATE_STALE_SEC="${RADIO_STATE_STALE_SEC:-600}"
+# --- tmp/ サブディレクトリ ---
+TMP_STATE_DIR="tmp/state"
+TMP_MARKERS_DIR="tmp/markers"
+TMP_HISTORY_DIR="tmp/history"
+TMP_DEBUG_DIR="tmp/debug"
+TMP_CACHE_DIR="tmp/cache"
+CC_POST_LOG_FILE="$TMP_DEBUG_DIR/cc_post.log"
+PHYROGENETIC_CHAT_POST_LOG_FILE="$TMP_DEBUG_DIR/phyrogenetic_chat_post.log"
+
+RADIO_WEB_GROUNDING_CACHE_DIR="$TMP_CACHE_DIR/radio_grounding"
+RADIO_STATE_FILE="$TMP_STATE_DIR/.radio_state"
+COMMENT_GEN_STATE_FILE="$TMP_STATE_DIR/.comment_gen_state"
+LAST_PHYROGENETIC_CHAT_COMMIT_FILE="$TMP_STATE_DIR/last_phyrogenetic_chat_commit.txt"
+RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
+COMMENT_OPENCODE_PERMISSION_DEFAULT='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow"}'
+COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$COMMENT_OPENCODE_PERMISSION_DEFAULT}"
+COMMENT_OPENCODE_TIMEOUT="${COMMENT_OPENCODE_TIMEOUT:-75}"
+COMMENT_CLAUDE_TOOLS="${COMMENT_CLAUDE_TOOLS:-default,WebSearch,WebFetch}"
+COMMENT_CLAUDE_TIMEOUT="${COMMENT_CLAUDE_TIMEOUT:-180}"
+COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
+COMMENT_FORCE_CLAUDE_WHEN_IMPROVING="${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}"
+IMPROVE_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","edit":"allow","write":"allow"}'
+RADIO_SAY_RATE=150
+unset SAY_AUDIO_DEVICE
+PAST_RADIO_TOPICS="$TMP_HISTORY_DIR/past_radio_topics.txt"
+PAST_RADIO_THEME_KEYS="$TMP_HISTORY_DIR/.past_radio_themes.txt"
+PAST_RADIO_THEME_BODIES="$TMP_HISTORY_DIR/past_radio_theme_bodies.txt"
+PAST_RADIO_THEME_HISTORY_KEEP="${PAST_RADIO_THEME_HISTORY_KEEP:-160}"
+PAST_NEWS_READ="$TMP_HISTORY_DIR/past_news_read.txt"
+PAST_NEWS_READ_KEYS="$TMP_HISTORY_DIR/past_news_read_keys.txt"
+PAST_NEWS_URL_HASHES="$TMP_HISTORY_DIR/past_news_url_hashes.txt"
+PAST_NEWS_TOPIC_KEYS="$TMP_HISTORY_DIR/past_news_topic_keys.txt"
+PAST_NEWS_READ_SOURCES="$TMP_HISTORY_DIR/past_news_read_sources.txt"
+RUSSIA_CREATION_HISTORY_FILE="$TMP_HISTORY_DIR/russia_creation_history.tsv"
+SOVIET_CREATION_HISTORY_FILE="$TMP_HISTORY_DIR/soviet_creation_history.tsv"
+CELEBRATION_HISTORY_KEEP_LINES="${CELEBRATION_HISTORY_KEEP_LINES:-200}"
+COMMENT_CELEBRATION_HISTORY_ITEMS="${COMMENT_CELEBRATION_HISTORY_ITEMS:-12}"
+STRATEGY_ADVICE_FILE="advice.md"
+
+IMPROVE_STATE_FILE="$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_state.json"
+IMPROVE_AI_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/improve_ai.log"
+IMPROVE_AI_LOG_KEEP_LINES=4000
+IMPROVE_AI_LOG_TRIM_LINES=8000
+COMMENT_CLAUDE_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/comment_claude.log"
+IMPROVE_STALE_WATCHDOG_SEC="${IMPROVE_STALE_WATCHDOG_SEC:-1200}"
+ACCUMULATED_GAMES_FILE="$TMP_STATE_DIR/accumulated_games.json"
+ROLLING_SCORES_FILE="$TMP_STATE_DIR/rolling_scores.json"
+CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
+REJECTED_HASHES_FILE="$TMP_HISTORY_DIR/rejected_hashes.txt"
+REJECTED_HASH_META_FILE="$TMP_STATE_DIR/rejected_hash_metrics.json"
+REJECTED_REEVALUATE_TTL_SEC="${REJECTED_REEVALUATE_TTL_SEC:-21600}"
+LAST_ROLLBACK_PAIR_FILE="$TMP_STATE_DIR/last_rollback_pair.json"
+ROLLBACK_ANALYSIS_FILE="$TMP_STATE_DIR/last_rollback_analysis.md"
+ROLLBACK_POSTMORTEM_FILE="$TMP_STATE_DIR/last_rollback_postmortem.md"
+ROLLBACK_POSTMORTEM_CONTEXT_FILE="$TMP_STATE_DIR/last_rollback_postmortem_context.md"
+ROLLBACK_POSTMORTEM_PID_FILE="$TMP_STATE_DIR/rollback_postmortem.pid"
+ROLLBACK_POSTMORTEM_AI_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/rollback_postmortem_ai.log"
+BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
+ACTIVE_BRANCH_FILE="$TMP_STATE_DIR/active_branch.json"
+REGRESSION_ROLLBACK_DONE=0
+REGRESSION_ROLLBACK_HASH=""
+MIN_GAMES_BEFORE_IMPROVE=12
+MIN_GAMES_BEFORE_REGRESSION="${MIN_GAMES_BEFORE_REGRESSION:-12}"
+MIN_GAMES_FOR_BEST_ROLLBACK=12
+REGRESSION_MAX_RANK="${REGRESSION_MAX_RANK:-20}"
+RANK_LCB_Z=1.28
+RANK_WEIGHT_P50=0.55
+RANK_WEIGHT_P25=0.30
+RANK_WEIGHT_LCB=0.15
+REGRESSION_COMPOSITE_RATIO=0.88
+REGRESSION_P50_RATIO=0.85
+REGRESSION_P25_RATIO=0.80
+REGRESSION_MIN_COMP_GAP="${REGRESSION_MIN_COMP_GAP:-120}"
+REGRESSION_MIN_P50_GAP="${REGRESSION_MIN_P50_GAP:-100}"
+REGRESSION_MIN_P25_GAP="${REGRESSION_MIN_P25_GAP:-180}"
+REGRESSION_MIN_BREACH_COUNT="${REGRESSION_MIN_BREACH_COUNT:-2}"
+BRANCH_MAX_DEPTH="${BRANCH_MAX_DEPTH:-4}"
+BRANCH_MAX_GAMES="${BRANCH_MAX_GAMES:-48}"
+BRANCH_PATIENCE="${BRANCH_PATIENCE:-3}"
+BRANCH_HARD_COMP_GAP="${BRANCH_HARD_COMP_GAP:-220}"
+BRANCH_HARD_P50_GAP="${BRANCH_HARD_P50_GAP:-180}"
+BRANCH_HARD_P25_GAP="${BRANCH_HARD_P25_GAP:-260}"
+BRANCH_HARD_MIN_BREACH_COUNT="${BRANCH_HARD_MIN_BREACH_COUNT:-2}"
+REGRESSION_TREND_SHORT_WINDOW=50
+REGRESSION_TREND_LONG_WINDOW=100
+REGRESSION_TREND_SHORT_RATIO=0.94
+REGRESSION_TREND_LONG_RATIO=0.95
+STRATEGY_HASH_ARCHIVE_DIR="strategy_versions/by_hash"
+# 旧設定の keep_top=10 が親シェルに残っていても、既定値は 100 に引き上げる。
+case "${HASH_ARCHIVE_KEEP_TOP:-}" in
+""|10) HASH_ARCHIVE_KEEP_TOP=100 ;;
+esac
+COMMENT_QUEUE_DIR="tmp/.comment_queue"
+COMMENT_SPOKEN_HISTORY_DIR="tmp/.comment_queue/spoken_history"
+COMMENT_SPOKEN_HISTORY_MAX_FILES="${COMMENT_SPOKEN_HISTORY_MAX_FILES:-16}"
+COMMENT_SPOKEN_PROMPT_ITEMS="${COMMENT_SPOKEN_PROMPT_ITEMS:-20}"
+COMMENT_SPOKEN_PROMPT_MAX_CHARS="${COMMENT_SPOKEN_PROMPT_MAX_CHARS:-8000}"
+COMMENT_SPOKEN_ITEM_MAX_CHARS="${COMMENT_SPOKEN_ITEM_MAX_CHARS:-700}"
+RUSSIA_CELEBRATION_WORKER_PID_FILE="$TMP_STATE_DIR/.russia_celebration_worker.pid"
+COMMENT_WATCHER_PID_FILE="tmp/.comment_queue/watcher.pid"
+COMMENT_WATCHER_INTERVAL=10
+COMMENT_WORKER_HEALTH_TTL=30
+COMMENT_PLAYER_HEARTBEAT_FILE="tmp/.comment_queue/player.heartbeat"
+COMMENT_WATCHER_HEARTBEAT_FILE="tmp/.comment_queue/watcher.heartbeat"
+COMMENT_BATCH_HISTORY_FILE="tmp/.comment_queue/processed_batch_hashes.log"
+COMMENT_BATCH_INFLIGHT_FILE="tmp/.comment_queue/inflight_batch.log"
+COMMENT_BATCH_DEDUP_TTL=900
+COMMENT_PROCESSED_LINES_FILE="tmp/.comment_queue/processed_line_hashes.log"
+COMMENT_PROCESSED_LINES_TTL=1800
+COMMENT_PROCESSED_LINES_MAX=500
+RADIO_DEFERRED_QUEUE_DIR="tmp/.radio_deferred_queue"
+MANUAL_AUDIO_TRIGGER_DIR="tmp/.manual_audio_triggers"
+MANUAL_AUDIO_TRIGGER_MAX_PER_TICK=3
+RUSSIA_CELEBRATION_CLIP_DELAY_SEC="${RUSSIA_CELEBRATION_CLIP_DELAY_SEC:-5}"
+SOVIET_CELEBRATION_CLIP_DELAY_SEC="${SOVIET_CELEBRATION_CLIP_DELAY_SEC:-20}"
+mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" \
+	"$TMP_STATE_DIR" "$TMP_MARKERS_DIR" "$TMP_HISTORY_DIR" "$TMP_DEBUG_DIR" "$TMP_CACHE_DIR" \
+	"$COMMENT_QUEUE_DIR" "$COMMENT_SPOKEN_HISTORY_DIR" "$RADIO_DEFERRED_QUEUE_DIR" \
+	"$MANUAL_AUDIO_TRIGGER_DIR" "$RADIO_WEB_GROUNDING_CACHE_DIR" "tmp/.twitch_chat"
+
+if [ -f "tmp/advice.md" ] && [ ! -f "$STRATEGY_ADVICE_FILE" ]; then
+	mv "tmp/advice.md" "$STRATEGY_ADVICE_FILE" 2>/dev/null || cp "tmp/advice.md" "$STRATEGY_ADVICE_FILE" 2>/dev/null || true
+fi
+
+# --- tmp/ レイアウト移行 (旧パス → 新サブディレクトリ) ---
+if [ ! -f "$TMP_STATE_DIR/.migrated" ]; then
+	# state files
+	for f in improve_state.json accumulated_games.json rolling_scores.json \
+		rejected_hash_metrics.json best_strategy_anchor.json active_branch.json last_rollback_pair.json .russia_celebration_worker.pid \
+		.radio_state .comment_gen_state radio_talk_played .news_last_success.txt \
+		.status_fullscreen_last .news_shown_lines.txt .news_shown_mtime.txt; do
+		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_STATE_DIR/$f" 2>/dev/null
+	done
+	# markers
+	for f in tmp/.radio_done_* tmp/.radio_inflight_* tmp/.timed_corner_done_* tmp/.timed_corner_inflight_*; do
+		[ -e "$f" ] && mv "$f" "$TMP_MARKERS_DIR/" 2>/dev/null
+	done
+	for f in .russia_created .soviet_created; do
+		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_MARKERS_DIR/$f" 2>/dev/null
+	done
+	# history
+	for f in .past_radio_themes.txt past_radio_topics.txt past_news_read.txt \
+		past_radio_theme_bodies.txt past_news_read_keys.txt past_news_topic_keys.txt past_news_read_sources.txt rejected_hashes.txt \
+		.past_news_titles.txt .past_news_links.txt russia_creation_history.tsv soviet_creation_history.tsv; do
+		[ -f "tmp/$f" ] && mv "tmp/$f" "$TMP_HISTORY_DIR/$f" 2>/dev/null
+	done
+	# debug
+	for f in tmp/radio_short_*.txt tmp/radio_factcheck_failed_*.txt tmp/radio_russia_celebration.txt; do
+		[ -e "$f" ] && mv "$f" "$TMP_DEBUG_DIR/" 2>/dev/null
+	done
+	[ -f "tmp/improve_ai.log" ] && mv "tmp/improve_ai.log" "$TMP_DEBUG_DIR/improve_ai.log" 2>/dev/null
+	touch "$TMP_STATE_DIR/.migrated"
+fi
+
