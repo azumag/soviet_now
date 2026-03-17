@@ -115,7 +115,7 @@ while true; do
                     # 再生中の読み上げをkill
                     pgrep -x 'afplay' 2>/dev/null | xargs kill 2>/dev/null || true
                     # チャットに粛清通知
-                    ( ./twitch_chat.sh send "粛清されました [${_syukusei_id}]" >/dev/null 2>&1 || true ) &
+                    ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "粛清されました [${_syukusei_id}]" >/dev/null 2>&1 || true ) &
                 fi
                 continue
             fi
