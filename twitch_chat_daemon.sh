@@ -113,6 +113,13 @@ while true; do
                 # continue しない — コメントとして通常処理を続行
             fi
 
+            # !doushi — このコメントへの応答を macOS say で再生
+            if [[ "$msg" =~ ^[[:space:]]*![Dd][Oo][Uu][Ss][Hh][Ii]([[:space:]]|$) ]]; then
+                msg=$(echo "$msg" | sed -E 's/^[[:space:]]*![Dd][Oo][Uu][Ss][Hh][Ii][[:space:]]*//')
+                clean_line="${user}: ${msg}"
+                echo "$(date +%s)" > tmp/voicevox_dousi.txt
+            fi
+
             # !syukusei / 粛清 [ID] — vo_random から特定スタイルIDを除外 + 再生中の読み上げをkill
             if [[ "$msg" == *粛清*[0-9]* ]] || [[ "$msg" == *syukusei*[0-9]* ]]; then
                 _syukusei_id=$(echo "$msg" | grep -oE '[0-9]+' | head -1)

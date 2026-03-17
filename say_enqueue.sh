@@ -472,6 +472,18 @@ _launch_say() {
         return
     fi
 
+    # --- 同志モード: コメント再生時に macOS say へ一時切替 ---
+    if [ -f "tmp/voicevox_dousi.txt" ]; then
+        case "${SOURCE_LABEL:-}" in
+        comment|comment:*)
+            rm -f "tmp/voicevox_dousi.txt"
+            USE_VOICEVOX=0
+            USE_COEIROINK=0
+            _log "同志mode: macOS say"
+            ;;
+        esac
+    fi
+
     # --- ASMR モード: コメント再生時にささやき系ボイスへ一時切替 ---
     if [ "${USE_VOICEVOX:-0}" = "1" ] && [ -f "tmp/voicevox_asmr.txt" ]; then
         case "${SOURCE_LABEL:-}" in
