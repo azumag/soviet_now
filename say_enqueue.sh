@@ -472,6 +472,16 @@ _launch_say() {
         return
     fi
 
+    # --- 事前合成済みWAV ---
+    if [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
+        LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$PRE_SYNTH_WAV")
+        nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$PRE_SYNTH_WAV" >/dev/null 2>&1 &
+        LAUNCH_MODE="voicevox_pre"
+        LAUNCHED_SAY_PID="$!"
+        _log "事前合成WAV再生 ($PRE_SYNTH_WAV)"
+        return
+    fi
+
     # --- 同志モード: コメント再生時に macOS say へ一時切替 ---
     if [ -f "tmp/voicevox_dousi.txt" ]; then
         case "${SOURCE_LABEL:-}" in
@@ -770,6 +780,74 @@ _prepare_playback_turn() {
         return 0
     done
 }
+
+# --- VOICEVOX 事前合成（ロック取得前＝前の再生中に並行合成） ---
+PRE_SYNTH_WAV=""
+if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
+    _log "事前合成開始"
+
+    # 同志モード: macOS say へ一時切替
+    if [ -f "tmp/voicevox_dousi.txt" ]; then
+        case "${SOURCE_LABEL:-}" in
+        comment|comment:*)
+            rm -f "tmp/voicevox_dousi.txt"
+            USE_VOICEVOX=0
+            USE_COEIROINK=0
+            _log "同志mode: macOS say (事前合成スキップ)"
+            ;;
+        esac
+    fi
+
+    # ASMR モード
+    if [ "${USE_VOICEVOX:-0}" = "1" ] && [ -f "tmp/voicevox_asmr.txt" ]; then
+        case "${SOURCE_LABEL:-}" in
+        comment|comment:*)
+            local _asmr_result
+            _asmr_result=$(_pick_asmr_voicevox_speaker)
+            VOICEVOX_SPEAKER="${_asmr_result%%|*}"
+            VOICEVOX_RANDOM_VOICE_NAME="${_asmr_result#*|}"
+            VOICEVOX_RANDOM_MODE=1
+            rm -f "tmp/voicevox_asmr.txt"
+            _log "ASMR mode: speaker=$VOICEVOX_SPEAKER ($VOICEVOX_RANDOM_VOICE_NAME)"
+            ;;
+        esac
+    fi
+
+    if [ "${USE_VOICEVOX:-0}" = "1" ]; then
+        # 粛清チェック
+        if [ -f "tmp/voicevox_exclude_ids.txt" ] && grep -qx "$VOICEVOX_SPEAKER" "tmp/voicevox_exclude_ids.txt" 2>/dev/null; then
+            _log "speaker=$VOICEVOX_SPEAKER は粛清済み → 再選択"
+            local _reroll
+            _reroll=$(_pick_random_voicevox_speaker)
+            VOICEVOX_SPEAKER="${_reroll%%|*}"
+            VOICEVOX_RANDOM_VOICE_NAME="${_reroll#*|}"
+        fi
+
+        # ピッチ・テンポ
+        local vo_pitch="" vo_tempo=""
+        [ -f "tmp/voicevox_pitch_map.txt" ] && vo_pitch=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_pitch_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
+        [ -f "tmp/voicevox_tempo_map.txt" ] && vo_tempo=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_tempo_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
+        local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
+        _log "VOICEVOX 事前合成 speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}"
+
+        PRE_SYNTH_WAV="${MY_CONTENT%.txt}_pre.wav"
+        if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_TIMEOUT=60 \
+           ./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
+            _log "事前合成完了: $PRE_SYNTH_WAV"
+            # チャット投稿
+            if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
+                local _chat_msg="VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name"
+                [ -n "$vo_pitch" ] && _chat_msg="$_chat_msg pitch=$vo_pitch"
+                [ -n "$vo_tempo" ] && _chat_msg="$_chat_msg tempo=$vo_tempo"
+                ./twitch_chat.sh send "$_chat_msg" >/dev/null 2>&1 &
+            fi
+        else
+            _log "事前合成失敗 → 再生時にフォールバック"
+            rm -f "$PRE_SYNTH_WAV" 2>/dev/null
+            PRE_SYNTH_WAV=""
+        fi
+    fi
+fi
 
 # --- mkdirロックで排他制御 ---
 PRE_DELAY="${3:-60}"
