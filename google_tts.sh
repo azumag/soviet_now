@@ -10,6 +10,46 @@ PROJECT="gen-lang-client-0367522921"
 DEFAULT_VOICE="ja-JP-Neural2-B"
 OUT="/tmp/tts.mp3"
 
+if [[ "$1" == "--demo" ]]; then
+  TEXT="${2:-こんにちは、私の声を聞いてください}"
+  TOKEN=$(gcloud auth print-access-token)
+  VOICES=$(curl -s \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "x-goog-user-project: $PROJECT" \
+    "https://texttospeech.googleapis.com/v1/voices?languageCode=ja-JP" \
+    | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for v in data['voices']:
+    print(v['name'], v['ssmlGender'])
+")
+  TOTAL=$(echo "$VOICES" | wc -l | tr -d ' ')
+  I=0
+  echo "$VOICES" | while read NAME GENDER; do
+    I=$((I + 1))
+    echo "[$I/$TOTAL] $NAME ($GENDER)"
+    curl -s -X POST \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "x-goog-user-project: $PROJECT" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"input\": {\"text\": \"$TEXT\"},
+        \"voice\": {\"languageCode\": \"ja-JP\", \"name\": \"$NAME\"},
+        \"audioConfig\": {\"audioEncoding\": \"MP3\"}
+      }" \
+      "https://texttospeech.googleapis.com/v1/text:synthesize" \
+      | python3 -c "
+import sys, json, base64
+data = json.load(sys.stdin)
+if 'error' in data:
+    print('  Error:', data['error']['message']); sys.exit(1)
+audio = base64.b64decode(data['audioContent'])
+open('$OUT', 'wb').write(audio)
+" && afplay "$OUT"
+  done
+  exit 0
+fi
+
 if [[ "$1" == "--list" ]]; then
   curl -s \
     -H "Authorization: Bearer $(gcloud auth print-access-token)" \
