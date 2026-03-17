@@ -1335,6 +1335,10 @@ PY
 	if [ -n "$current_hash" ] && ! printf '%s\n' "$ranked_hashes" | grep -qxF "$current_hash"; then
 		expected_keep_count=$((expected_keep_count + 1))
 	fi
+	if [ "${archive_count:-0}" -gt 1 ] && [ "${expected_keep_count:-0}" -le 0 ]; then
+		log "[HASH-ARCHIVE] prune skipped: empty keep set (archive=${archive_count})"
+		return 0
+	fi
 	if [ "${archive_count:-0}" -gt 1 ] && [ "${mature_count:-0}" -gt 0 ] && [ "${expected_keep_count:-0}" -gt 0 ]; then
 		if [ "$expected_keep_count" -le "$HASH_ARCHIVE_PRUNE_SAFETY_MIN_KEEP" ]; then
 			min_keep_guard=$(( (expected_keep_count + 1) / 2 ))
