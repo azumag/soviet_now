@@ -40,44 +40,19 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
-# v256: 危険域即時併合強制・ダブルペナルティ解消版 - 即時併合取りこぼし削減・p25悪化抑制
-# last_rollback_analysis: anchor比でcomp=-343.9 p50=-420.5 p25=-235.8と明確に悪化。reactive_pairsがあるのに非併合選択を繰り返し下振れしている。
-# ワーストゲーム(score0949)終盤turns 62-66: reactive_pairs=4-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.02→2.66に悪化しゲームオーバー。
-# extra_low(score1089)終盤turns 65-69: reactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.01→2.98に悪化しゲームオーバー。
-# ベストゲーム(score2084)終盤turns 100-103: reactive_pairs=3-5あるが即時併合を確実に捉え、max_y=2.41→2.95で延命成功。
+# v257: 危険域全非併合一律ペナルティ化・HEIGHT_CONTROL抑制版 - 即時併合取りこぼし削減・p25悪化抑制
+# batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=2.9)と過剰であり、終盤高危険域での即時併合優先が弱い。
+# ワーストゲーム(score0574)終盤turns 55-62: reactive_pairs=8-9あるのにHEIGHT_CONTROL選択が続きmax_y=1.53→3.06に悪化しゲームオーバー。
+# extra_low(score0873)終盤turns 63-70: reactive_pairs=5あるのにHEIGHT_CONTROL選択が続きmax_y=2.12→3.84に悪化しゲームオーバー。
+# ベストゲーム(score2849)終盤turns 126-133: reactive_pairs=3-4あるが即時併合を確実に捉え、max_y=2.50→3.17で延命成功。
 # advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、即時併合を優先。
-# axis 8.6の発動条件をmax_y>=1.8 & reactive_pair_count>=1からmax_y>=1.8 & reactive_pair_count==0に厳格化し、axis 8.7とのダブルペナルティ問題を解消。
-# axis 8.7のペナルティをreactive_pairs=2で-7000.0、3で-9000.0、>=4で-11000.0に強化し、reactive_pairsが多いほど即時併合を強制。
-# reactive_pairs>=2かつmerge_grade=="NO"の場合、height_penaltyを2倍に強化し、危険域での盤面構築を抑制し即時併合を強制。
-# これによりreactive_pairsがある危険域での即時併合機会を確実に捉え、HEIGHT_CONTROL過剰選択を抑制しp25悪化を抑制。
-# 構造的変更（axis 8.6発動条件厳格化・axis 8.7ペナルティ強化・axis 2 height_penalty動的強化）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
-# refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260317_090558_score0949.jsonl turns 62-66, game_history/20260317_091850_score1089.jsonl turns 65-69, game_history/20260317_084856_score2084.jsonl turns 100-103
-#
-# v256: 危険域即時併合強制・ダブルペナルティ解消版 - 即時併合取りこぼし削減・p25悪化抑制
-# last_rollback_analysis: anchor比でcomp=-343.9 p50=-420.5 p25=-235.8と明確に悪化。reactive_pairsがあるのに非併合選択を繰り返し下振れしている。
-# ワーストゲーム(score0949)終盤turns 62-66: reactive_pairs=4-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.02→2.66に悪化しゲームオーバー。
-# extra_low(score1089)終盤turns 65-69: reactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.01→2.98に悪化しゲームオーバー。
-# ベストゲーム(score2084)終盤turns 100-103: reactive_pairs=3-5あるが即時併合を確実に捉え、max_y=2.41→2.95で延命成功。
-# advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、即時併合を優先。
-# axis 8.6の発動条件をmax_y>=1.8 & reactive_pair_count>=1からmax_y>=1.8 & reactive_pair_count==0に厳格化し、axis 8.7とのダブルペナルティ問題を解消。
-# axis 8.7のペナルティをreactive_pairs=2で-7000.0、3で-900.0、>=4で-11000.0に強化し、reactive_pairsが多いほど即時併合を強制。
-# reactive_pairs>=2かつmerge_grade=="NO"の場合、height_penaltyを2倍に強化し、危険域での盤面構築を抑制し即時併合を強制。
-# これによりreactive_pairsがある危険域での即時併合機会を確実に捉え、HEIGHT_CONTROL過剰選択を抑制しp25悪化を抑制。
-# 構造的変更（axis 8.6発動条件厳格化・axis 8.7ペナルティ強化・axis 2 height_penalty動的強化）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
-# refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260317_090558_score0949.jsonl turns 62-66, game_history/20260317_091850_score1089.jsonl turns 65-69, game_history/20260317_084856_score2084.jsonl turns 100-103
-#
-# batch_summaryでHEIGHT_CONTROLが13.5%選択(avg_score_delta=0.2)と過剰であり、終盤高危険域(max_y>=2.0)での即時併合優先が弱い。
-# ワーストゲーム(score0517)終盤turns 53-60: reactive_pairs=5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.76に悪化しゲームオーバー。
-# ベストゲーム(score2792)終盤turns 112-119: reactive_pairs=1でも即時併合を確実に捉え、max_y=3.35の危険域でも延命成功。
-# advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、即時併合を優先。
-# last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す構造的変更。
-# axis 8.5: 危険域条件をmax_y>=1.8 & reactive_pair_count>=1からmax_y>=1.8へ緩和し、reactive_pairsの有無に関わらず即時併合を強制。ボーナス6000.0→7000.0に強化。
-# axis 8.6: 危険域条件をmax_y>=1.8 & reactive_pair_count>=1からmax_y>=1.8 & reactive_pair_count>=0へ完全緩和し、危険域での非併合を強力に抑制。
-# axis 8.7: 危険域条件をmax_y>=1.8 & reactive_pair_count>=2からmax_y>=1.8 & reactive_pair_count>=1へ緩和し、reactive_pairs>=1あれば即時併合を強制。
-# これにより危険域での即時併合機会を確実に捉え、HEIGHT_CONTROL過剰選択を抑制しp25悪化を抑制。
-# 構造的変更（axis 8.5/8.6/8.7条件緩和・ボーナス強化）であり、数値微調整ではない。
-# refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260317_081741_score0517.jsonl turns 53-60, game_history/20260317_080816_score2792.jsonl turns 112-119
-#
+# axis 8.6の発動条件をmax_y>=1.8 & reactive_pair_count==0 & merge_grade=="NO"からmax_y>=1.8 & merge_grade=="NO"に緩和。
+# reactive_pairsの有無に関わらず危険域非併合一律にペナルティ(-5000.0)を適用し、HEIGHT_CONTROL過剰選択を抑制。
+# reactive_pairsがある非併合はaxis 8.7で追加ペナルティ、reactive_pairs==0の非併合もaxis 8.6で抑制。
+# これにより危険域でのHEIGHT_CONTROL過剰選択を抑制し、即時併合優先を強制。p25悪化の主要因である「reactive_pairsがあるのにHEIGHT_CONTROL」を潰す。
+# 構造的変更（axis 8.6発動条件緩和・ペナルティ強化）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
+# refs: tmp/batch_summary.txt, advice.md, game_history/20260317_100935_score0574.jsonl turns 55-62, game_history/20260317_093126_score2849.jsonl turns 126-133, game_history/20260317_095550_score0873.jsonl turns 63-70, game_history/20260317_094934_score2604.jsonl turns 99-107
+ #
  # v251: reactive_pairsに応じた段階的ペナルティ強化版 - 超危険域即時併合強制条件緩和
     # last_rollback_analysis: anchor比でcomp=-230.1 p50=-236.5 p25=-249.2と明確に悪化。reactive_pairsがあるのに非併合選択を繰り返し下振れしている。
     # ワーストゲーム(score0878)終盤turns 58-65: reactive_pairs=3-4あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=3.10に悪化しゲームオーバー。
@@ -171,19 +146,19 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v256: 危険域即時併合強制・ダブルペナルティ解消版 - 即時併合取りこぼし削減・p25悪化抑制
+    """v257: 危険域全非併合一律ペナルティ化・HEIGHT_CONTROL抑制版 - 即時併合取りこぼし削減・p25悪化抑制
 
-    last_rollback_analysis: anchor比でcomp=-343.9 p50=-420.5 p25=-235.8と明確に悪化。reactive_pairsがあるのに非併合選択を繰り返し下振れしている。
-    ワーストゲーム(score0949)終盤turns 62-66: reactive_pairs=4-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.02→2.66に悪化しゲームオーバー。
-    extra_low(score1089)終盤turns 65-69: reactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.01→2.98に悪化しゲームオーバー。
-    ベストゲーム(score2084)終盤turns 100-103: reactive_pairs=3-5あるが即時併合を確実に捉え、max_y=2.41→2.95で延命成功。
+    batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=2.9)と過剰であり、終盤高危険域での即時併合優先が弱い。
+    ワーストゲーム(score0574)終盤turns 55-62: reactive_pairs=8-9あるのにHEIGHT_CONTROL選択が続きmax_y=1.53→3.06に悪化しゲームオーバー。
+    extra_low(score0873)終盤turns 63-70: reactive_pairs=5あるのにHEIGHT_CONTROL選択が続きmax_y=2.12→3.84に悪化しゲームオーバー。
+    ベストゲーム(score2849)終盤turns 126-133: reactive_pairs=3-4あるが即時併合を確実に捉え、max_y=2.50→3.17で延命成功。
     advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、即時併合を優先。
-    axis 8.6の発動条件をmax_y>=1.8 & reactive_pair_count>=1からmax_y>=1.8 & reactive_pair_count==0に厳格化し、axis 8.7とのダブルペナルティ問題を解消。
-    axis 8.7のペナルティをreactive_pairs=2で-7000.0、3で-900.0、>=4で-11000.0に強化し、reactive_pairsが多いほど即時併合を強制。
-    reactive_pairs>=2かつmerge_grade=="NO"の場合、height_penaltyを2倍に強化し、危険域での盤面構築を抑制し即時併合を強制。
-    これによりreactive_pairsがある危険域での即時併合機会を確実に捉え、HEIGHT_CONTROL過剰選択を抑制しp25悪化を抑制。
-    構造的変更（axis 8.6発動条件厳格化・axis 8.7ペナルティ強化・axis 2 height_penalty動的強化）であり、数値微調整ではない。
-    refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260317_090558_score0949.jsonl turns 62-66, game_history/20260317_091850_score1089.jsonl turns 65-69, game_history/20260317_084856_score2084.jsonl turns 100-103
+    axis 8.6の発動条件をmax_y>=1.8 & reactive_pair_count==0 & merge_grade=="NO"からmax_y>=1.8 & merge_grade=="NO"に緩和。
+    reactive_pairsの有無に関わらず危険域非併合一律にペナルティ(-5000.0)を適用し、HEIGHT_CONTROL過剰選択を抑制。
+    reactive_pairsがある非併合はaxis 8.7で追加ペナルティ、reactive_pairs==0の非併合もaxis 8.6で抑制。
+    これにより危険域でのHEIGHT_CONTROL過剰選択を抑制し、即時併合優先を強制。p25悪化の主要因である「reactive_pairsがあるのにHEIGHT_CONTROL」を潰す。
+    構造的変更（axis 8.6発動条件緩和・ペナルティ強化）であり、数値微調整ではない。
+    refs: tmp/batch_summary.txt, advice.md, game_history/20260317_100935_score0574.jsonl turns 55-62, game_history/20260317_093126_score2849.jsonl turns 126-133, game_history/20260317_095550_score0873.jsonl turns 63-70, game_history/20260317_094934_score2604.jsonl turns 99-107
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -453,20 +428,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 7000.0
             reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_FORCE_PRIORITY")
 
-        # ----- evaluation axis 8.6: danger zone no merge penalty (v256: 発動条件厳格化・ダブルペナルティ解消版) -----
-        # last_rollback_analysis: anchor比でcomp=-343.9 p50=-420.5 p25=-235.8と明確に悪化。reactive_pairsがあるのに非併合選択を繰り返し下振れしている。
-        # ワーストゲーム(score0949)終盤turns 62-66: reactive_pairs=4-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.02→2.66に悪化しゲームオーバー。
-        # extra_low(score1089)終盤turns 65-69: reactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.01→2.98に悪化しゲームオーバー。
-        # ベストゲーム(score2084)終盤turns 100-103: reactive_pairs=3-5あるが即時併合を確実に捉え、max_y=2.41→2.95で延命成功。
+        # ----- evaluation axis 8.6: danger zone no merge penalty (v257: 危険域全非併合一律ペナルティ化・HEIGHT_CONTROL抑制版) -----
+        # batch_summaryでHEIGHT_CONTROLが25.9%選択(avg_score_delta=2.9)と過剰であり、終盤高危険域での即時併合優先が弱い。
+        # ワーストゲーム(score0574)終盤turns 55-62: reactive_pairs=8-9あるのにHEIGHT_CONTROL選択が続きmax_y=1.53→3.06に悪化しゲームオーバー。
+        # extra_low(score0873)終盤turns 63-70: reactive_pairs=5あるのにHEIGHT_CONTROL選択が続きmax_y=2.12→3.84に悪化しゲームオーバー。
+        # ベストゲーム(score2849)終盤turns 126-133: reactive_pairs=3-4あるが即時併合を確実に捉え、max_y=2.50→3.17で延命成功。
         # advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、即時併合を優先。
-        # axis 8.7とaxis 8.6のダブルペナルティ問題を解消するため、発動条件をreactive_pair_count==0に厳格化。
-        # reactive_pairsがある非併合状況はaxis 8.7で対処し、reactive_pairs==0（振動併合不可能）の危険域非併合のみ抑制。
-        # last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す構造的変更。
-        # refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md, game_history/20260317_090558_score0949.jsonl turns 62-66, game_history/20260317_091850_score1089.jsonl turns 65-69, game_history/20260317_084856_score2084.jsonl turns 100-103
-        if max_y >= 1.8 and reactive_pair_count == 0 and merge_grade == "NO":
-            # reactive_pairs==0（振動併合不可能）の危険域非併合に対してのみペナルティを適用
-            # reactive_pairsがある非併合状況はaxis 8.7で対処し、ダブルペナルティを解消
-            score -= 3000.0
+        # 危険域(max_y>=1.8)で非併合選択(merge_grade=="NO")をした場合、reactive_pairsの有無に関わらず一律に強力なペナルティを適用。
+        # reactive_pairsがある非併合はaxis 8.7で追加ペナルティ、reactive_pairs==0の非併合もaxis 8.6で抑制。
+        # これにより危険域でのHEIGHT_CONTROL過剰選択を抑制し、即時併合優先を強制。p25悪化の主要因である「reactive_pairsがあるのにHEIGHT_CONTROL」を潰す。
+        # 構造的変更（axis 8.6発動条件緩和・ペナルティ強化）であり、数値微調整ではない。
+        # refs: tmp/batch_summary.txt, advice.md, game_history/20260317_100935_score0574.jsonl turns 55-62, game_history/20260317_093126_score2849.jsonl turns 126-133, game_history/20260317_095550_score0873.jsonl turns 63-70, game_history/20260317_094934_score2604.jsonl turns 99-107
+        if max_y >= 1.8 and merge_grade == "NO":
+            # 危険域での非併合選択一律に強力なペナルティを適用し、HEIGHT_CONTROL過剰選択を抑制
+            score -= 5000.0
             reasons.append("DANGER_ZONE_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 8.7: expanded danger zone absolute merge priority (v256: reactive_pairs強化版・危険域非併合強制版) -----
