@@ -930,7 +930,9 @@ _filter_unread_jiji_blocks() {
 	python3 "$ELOOP_LIB_DIR/lib/news_filter.py" filter_unread \
 		"$TMP_HISTORY_DIR/.past_jiji_titles.txt" \
 		"$TMP_HISTORY_DIR/.past_jiji_keys.txt" \
-		"$jiji_tmp"
+		"$jiji_tmp" \
+		"$PAST_JIJI_URL_HASHES" \
+		"tmp/google_headlines_meta.json"
 	rm -f "$jiji_tmp"
 }
 

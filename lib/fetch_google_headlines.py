@@ -8,6 +8,7 @@ tmp/google_headlines.txt に ■ プレフィックス形式で出力する。
 Usage:
     python3 lib/fetch_google_headlines.py
 """
+import json
 import os
 import re
 import sys
@@ -18,6 +19,7 @@ import xml.etree.ElementTree as ET
 
 RSS_URL = "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
 OUTPUT_FILE = "tmp/google_headlines.txt"
+META_FILE = "tmp/google_headlines_meta.json"
 PAST_TITLES_FILE = "tmp/history/.past_jiji_titles.txt"
 PAST_KEYS_FILE = "tmp/history/.past_jiji_keys.txt"
 USER_AGENT = "soren-radio-grounding/1.0"
@@ -58,45 +60,54 @@ def load_past_keys() -> set:
     return keys
 
 
-def fetch_headlines() -> list[str]:
+def fetch_headlines() -> list[tuple[str, str]]:
+    """Return list of (title, url) from Google News RSS."""
     raw = http_get(RSS_URL)
     root = ET.fromstring(raw)
-    titles = []
+    items = []
     for item in root.findall("./channel/item"):
         t = strip_tags(item.findtext("title", default=""))
+        link = (item.findtext("link", default="") or "").strip()
         if t:
-            titles.append(t)
-        if len(titles) >= MAX_HEADLINES:
+            items.append((t, link))
+        if len(items) >= MAX_HEADLINES:
             break
-    return titles
+    return items
 
 
 def main():
     try:
-        titles = fetch_headlines()
+        items = fetch_headlines()
     except Exception as e:
         print(f"Error fetching Google News RSS: {e}", file=sys.stderr)
         return 1
 
-    if not titles:
+    if not items:
         print("No headlines found", file=sys.stderr)
         return 1
 
     past_keys = load_past_keys()
 
     lines = []
-    for t in titles:
+    meta = {}
+    for t, url in items:
+        if url:
+            meta[t] = {"url": url}
         k = title_key(t)
         if k and k not in past_keys:
             lines.append(f"\u25a0 {t}")
 
     # Even if all are read, output all titles (caller handles empty unread)
     if not lines:
-        lines = [f"\u25a0 {t}" for t in titles]
+        lines = [f"\u25a0 {t}" for t, _url in items]
 
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
+
+    # メタ情報 (URL等) をJSON出力 — jiji フィルタの URL hash 重複排除に使用
+    with open(META_FILE, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
 
     print(f"Wrote {len(lines)} headlines to {OUTPUT_FILE}", file=sys.stderr)
     return 0
