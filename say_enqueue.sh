@@ -53,7 +53,8 @@ try:
 except FileNotFoundError:
     exclude_ids = set()
 speakers = json.load(sys.stdin)
-pool = [(s['name'], st['id'], st['name']) for s in speakers if s['name'] not in exclude for st in s.get('styles', []) if st.get('type', 'talk') == 'talk' and st['id'] not in exclude_ids]
+exclude_styles = {'ささやき', 'セクシー'}
+pool = [(s['name'], st['id'], st['name']) for s in speakers if s['name'] not in exclude for st in s.get('styles', []) if st.get('type', 'talk') == 'talk' and st['id'] not in exclude_ids and not any(k in st['name'] for k in exclude_styles)]
 if pool:
     name, sid, style = random.choice(pool)
     print(f'{sid}|{name}/{style}', end='')
