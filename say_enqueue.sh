@@ -575,6 +575,7 @@ _launch_say() {
                 local _chat_msg="VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name"
                 [ -n "$vo_pitch" ] && _chat_msg="$_chat_msg pitch=$vo_pitch"
                 [ -n "$vo_tempo" ] && _chat_msg="$_chat_msg tempo=$vo_tempo"
+                case "$vo_voice_name" in *もちこ*) _chat_msg="$_chat_msg [(cv 明日葉よもぎ)]" ;; esac
                 ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "$_chat_msg" >/dev/null 2>&1 || true ) &
             fi
             LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$vo_wav")
@@ -887,6 +888,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
                 local _chat_msg="VOICEVOX: [$VOICEVOX_SPEAKER] $vo_voice_name"
                 [ -n "$vo_pitch" ] && _chat_msg="$_chat_msg pitch=$vo_pitch"
                 [ -n "$vo_tempo" ] && _chat_msg="$_chat_msg tempo=$vo_tempo"
+                case "$vo_voice_name" in *もちこ*) _chat_msg="$_chat_msg [(cv 明日葉よもぎ)]" ;; esac
                 ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "$_chat_msg" >/dev/null 2>&1 || true ) &
             fi
         else

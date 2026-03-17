@@ -13,9 +13,9 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 - 日本語ファイル名の展開は `ditto` を使うこと（`unzip` は文字化けする）
 - commit 前に `dot_clean ./` を実行して `._*` ファイルを除去
 
-## AI ループ (3種類)
+## AI ループ (eloop)
 
-### soren_loop.sh → eloop.sh — Self-Improving Strategy Loop (推奨)
+### soren_loop.sh → eloop.sh — Self-Improving Strategy Loop
 - `./soren_loop.sh` で起動（親スクリプト）
 - `strategy.py` が1試合を自律プレイ、試合後に AI が `strategy.py` をバックグラウンド改善するアダプティブループ
 - `soren_loop.sh`: 親スクリプト (メインループ、初期化、クリーンアップ)。安定層で AI 書き換え対象外
@@ -33,18 +33,9 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 - アダプティブ改善: 1試合ごとに改善開始、改善中なら履歴を蓄積、完了後に統合して次の改善へ
 - AI改善後にバリデーション (decide() 存在・シグネチャ・テスト実行)、失敗時は自動復元
 
-### jloop.sh — JSON-based State Loop
-- 毎ターン AI (LLM) を呼び出して盤面判断→ドロップ
-- `analyze_board.py` で盤面解析 → AI プロンプト → `tmp/plan.md` / `tmp/plan.json`
-- 思考ログ: `think.md`
-
-### sloop.sh — Simple State Loop (レガシー)
-- 画像認識ベースの OBSERVE → DECIDE → EXECUTE ループ
-
 ## ゲーム操作
 
 - `soviet_local.mjs` - ローカルビルドで AI プレイ（Playwright + JS Bridge）
-- `soviet_game.mjs` - unityroom.com オンライン版で AI プレイ
 - `commands.txt` に書き込んでドロップ指示、`game_state.json` から盤面読み取り
 
 ## 主要ファイル
@@ -75,7 +66,6 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿 |
 | `twitch_chat.sh` | Twitch IRC チャットデーモン管理 (start/fetch/send等) |
 | `twitch_chat_daemon.sh` | IRC常駐プロセス (`!clip` コマンド対応) |
-| ~~`STRATEGY.md`~~ | 廃止（jloop用、git履歴に残存） |
 
 ## Twitch クリップ自動作成
 
