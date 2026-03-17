@@ -9,11 +9,11 @@ Game Overview:
 
 Decision Logic (6 evaluation axes):
   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase)
+  2. Height penalty - Penalty for high landing position (varies by phase, early_game: max_y < -3.0)
   3. Drift penalty - Penalty for post-landing drift due to polygon shape
   4. Left-right balance correction - Bonus for correcting piece count bias
   5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v170: early game suppression)
+  6. Chain merge bonus - Evaluate possibility of further merges after merge (v169: CHAIN_MERGE評価範囲拡大)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -36,15 +36,10 @@ Phases (determined by board max Y):
 # v162: MEDIUMフェーズバランス補正強化版 - balance_strength 35.0→40.0
 # v159: 序盤HEIGHT_CONTROL抑制強化版 - max_y < -1.0, height_multiplier=0.2
 # v167: 評価精度最適化版 - chain_distance 5.0→4.5縮小
-# v168: v155成功パラメータ復帰・動的調整復帰版 - batch_summaryでHEIGHT_CONTROLが28.1%選択(avg_score_delta=2.8)と高価値でないこと、
-# v167のchain_distance=4.5縮小がCHAIN_MERGE選択率低下の原因を確認。v155の成功パラメータ(chain_distance=5.0, chain_bonus=450.0)を完全復帰し、
-# v157/v159の着地高動的調整（chain_distance_max=5.0+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0）を復帰。
-# v159の序盤HEIGHT_CONTROL抑制（max_y < -1.0, height_multiplier=0.2）とv162のバランス補正強化（MEDIUM: 40.0）を維持。
-# v169: HEIGHT_CONTROLフォールバック削除 - batch_summaryでHEIGHT_CONTROLが23.9%選択(avg_score_delta=2.5)と低価値を確認。フォールバックをDEFAULT_PLACEMENTに変更し、他の評価軸(特にCHAIN_MERGE)の影響力を強めることでスコア安定性向上。
-# v170: 序盤HEIGHT_CONTROL抑制拡大版 - batch_summaryでHEIGHT_CONTROLが依然として23.9%選択(avg_score_delta=2.5)と低価値であることを確認。
-# ワーストゲーム（score0971）で序盤にHEIGHT_CONTROLが多く選択され（序盤36%）、merge_available=trueでもHEIGHT_CONTROLを選んでいる失敗パターンを確認。
-# v159のearly_game判定をmax_y < -1.0 → max_y < 0.0に拡大し、height_multiplierを0.2→0.1に削減して、序盤のHEIGHT_CONTROL選択を強力に抑制。
-# v169のHEIGHT_CONTROLフォールバック削除（DEFAULT_PLACEMENT）を維持。
+# v168: v155成功パラメータ復帰・動的調整復帰版
+# v169: early_game判定超拡大・CHAIN_MERGE評価範囲拡大版 - batch_summaryでHEIGHT_CONTROLが25.2%選択(avg_score_delta=1.4)と過剰であること、
+# ワーストゲーム(score0554)で初期11ターンのうち8ターンがHEIGHT_CONTROL/NEXT_SAMEとなり併合機会を逃していることを確認。
+# early_game判定をmax_y < -1.0→-3.0に超拡大し、chain_distance_maxを5.0→5.2に拡大して、CHAIN_MERGE選択率を10-15%に引き上げる。
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -52,20 +47,22 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v170: 序盤HEIGHT_CONTROL抑制拡大版
+    """v169: early_game判定超拡大・CHAIN_MERGE評価範囲拡大版
 
-    batch_summaryでHEIGHT_CONTROLが依然として23.9%選択(avg_score_delta=2.5)と低価値であることを確認。
-    高スコア群と低スコア群のHEIGHT_CONTROL選択率はほぼ同じ（23.2% vs 25.1%）で、HEIGHT_CONTROLがスコアに寄与していない。
-    ワーストゲーム（score0971）で序盤にHEIGHT_CONTROLが多く選択され（序盤36%）、merge_available=trueでもHEIGHT_CONTROLを選んでいる失敗パターンを確認。
+    batch_summary分析でHEIGHT_CONTROLが25.2%選択されavg_score_delta=1.4と過剰であること、
+    CHAIN_MERGE関連がavg_score_delta=23.5-49.5（高価値）だが選択率は3.9-7.6%と低いことを確認。
+    ワーストゲーム(score0554)で初期11ターンのうち8ターンがHEIGHT_CONTROL/NEXT_SAMEとなり、
+    merge_available=trueでも併合機会を逃している失敗パターンを特定。
 
-    v170の改善点:
-    1. v159のearly_game判定をmax_y < -1.0 → max_y < 0.0に拡大
-       - ワーストゲーム序盤（max_y=-5.0～-3.07）でのHEIGHT_CONTROL選択を抑制
-       - 盤面がまだ低い段階（max_y < 0.0）ではHEIGHT_CONTROLを強力に抑制し、併合機会を優先
-    2. height_multiplierを0.2→0.1に削減
-       - v159の0.2でもHEIGHT_CONTROL選択率が高い（23.9%）ため、さらに強力に抑制
-    3. v169のHEIGHT_CONTROLフォールバック削除（DEFAULT_PLACEMENT）を維持
-       - merge_gradeがNOの場合のデフォルトreasonをHEIGHT_CONTROLからDEFAULT_PLACEMENTに変更
+    v169の改善点:
+    1. early_game判定を超拡大（max_y < -1.0 → max_y < -3.0）
+       - 初期盤面でのHEIGHT_CONTROL選択を強力に抑制し、併合機会を最優先
+       - ワーストゲームの初期HEIGHT_CONTROL連続選択（max_y=-5.0〜-3.7）を回避
+    2. CHAIN_MERGE評価範囲拡大（chain_distance_max=5.0 → 5.2）
+       - 戦略的配置の探索範囲を4%拡大し、CHAIN_MERGE選択率を10-15%に引き上げ
+       - HIGH_LAYER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROL選択を削減
+    3. v168の動的調整を維持（chain_distance_max=5.2+landing_y*0.6, chain_bonus_multiplier=450.0+landing_y*150.0）
+    4. v162のバランス補正強化（MEDIUM: 40.0）を維持
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -95,10 +92,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
-    # --- v170: 序盤判定（max_y < 0.0） ---
-    # v159のmax_y < -1.0でのHEIGHT_CONTROL抑制が不十分。ワーストゲーム序盤（max_y=-5.0～-3.07）でHEIGHT_CONTROLが多く選択されている。
-    # early_game判定をmax_y < 0.0に拡大し、height_multiplierを0.1に削減して、序盤のHEIGHT_CONTROL選択を強力に抑制。
-    early_game = max_y < 0.0
+    # --- v169: early_game判定超拡大（max_y < -3.0） ---
+    # batch_summaryでHEIGHT_CONTROLが25.2%選択(avg_score_delta=1.4)と過剰であること、
+    # ワーストゲーム(score0554)で初期11ターンのうち8ターンがHEIGHT_CONTROL/NEXT_SAMEとなり併合機会を逃していることを確認。
+    # early_game判定をmax_y < -1.0→-3.0に超拡大し、初期盤面でのHEIGHT_CONTROL選択を強力に抑制
+    early_game = max_y < -3.0
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -126,8 +124,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
     # --- Type-specific merge bonus calculation ---
     # merge result type (next_type+1) higher means higher score value
-    # Note: type_merge_bonus calculation removed as it was not used in the evaluation
+    # example: type1 merge -> bonus=330, type5 merge -> bonus=510, type14 merge -> bonus=1660
     merge_result_type = min(next_type + 1, 16)
+    type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
@@ -162,11 +161,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v170: early_game（max_y < 0.0）の場合、height_multiplierを0.1に削減してHEIGHT_CONTROL過剰選択を強力に抑制
-        # v159の0.2でもHEIGHT_CONTROL選択率が高い（23.9%）ため、さらに強力に抑制
+        # v169: early_game（max_y < -3.0）の場合、height_multiplierを0.2に削減してHEIGHT_CONTROL過剰選択を超強力に抑制
         height_multiplier = 30.0
         if early_game:
-            height_multiplier = 0.1  # v170: 序盤はHEIGHT_CONTROLをさらに強く抑制し、併合機会を最優先
+            height_multiplier = 0.2  # v169: 序盤はHEIGHT_CONTROLを超強力に抑制し、併合機会を最優先
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -212,26 +210,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: lowest y placement (NEW: v171) -----
-        # prioritize placement near board's lowest y position to encourage vertical stacking
-        # and fill board valleys efficiently. helps reduce max_y while creating merge opportunities.
-        if pieces:
-            min_y = min(p["y"] for p in pieces)
-            # find x positions of pieces at min_y level (within tolerance)
-            min_y_positions = [p["x"] for p in pieces if p["y"] < min_y + 0.3]
-            if min_y_positions:
-                # bonus inversely proportional to distance to nearest lowest y position
-                dist_to_lowest = min(abs(x - low_x) for low_x in min_y_positions)
-                lowest_y_bonus = max(0, (1.5 - dist_to_lowest) * 80.0)
-                score += lowest_y_bonus
-                if lowest_y_bonus > 10.0:
-                    reasons.append("LOWEST_Y")
-
-        # ----- evaluation axis 7: chain merge bonus (v170: v155 parameters & dynamic adjustment) -----
-        # v170: v167のchain_distance=4.5縮小がCHAIN_MERGE選択率低下（7-10%）の原因を確認。
-        # v155の成功パラメータ(chain_distance=5.0, chain_bonus=450.0)を完全復帰し、
-        # v157/v159の着地高動的調整を復帰することで、CHAIN_MERGE選択率を15%以上に引き上げる。
-        # この動的調整により、HIGH_LAYER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROL選択率を削減。
+        # ----- evaluation axis 6: chain merge bonus (v169: CHAIN_MERGE評価範囲拡大) -----
+        # v169: CHAIN_MERGE関連がavg_score_delta=23.5-49.5（高価値）だが選択率は3.9-7.6%と低いことを確認。
+        # early_game判定をmax_y < -3.0に超拡大し、chain_distance_maxを5.0→5.2に拡大して、CHAIN_MERGE選択率を10-15%に引き上げる。
+        # この戦略的配置の探索範囲拡大により、HIGH_LAYER状況でのCHAIN_MERGE選択を促進し、HEIGHT_CONTROL選択を削減。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
@@ -240,14 +222,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
-                # v170: v155成功パラメータ復帰 & v157/v159動的調整復帰
-                # chain_distance_max = 5.0 + landing_y * 0.6 (着地高に応じて拡大)
+                # v169: early_game判定超拡大 & CHAIN_MERGE評価範囲拡大
+                # chain_distance_max = 5.2 + landing_y * 0.6 (着地高に応じて拡大、基本値を4%拡大)
                 # chain_bonus_multiplier = 450.0 + landing_y * 150.0 (着地高に応じて強化)
-                # 例: landing_y=0.0 → distance_max=5.0, multiplier=450.0 (v155ベース)
-                # 例: landing_y=1.0 → distance_max=5.6, multiplier=600.0
-                # 例: landing_y=2.0 → distance_max=6.2, multiplier=750.0
-                # 例: landing_y=3.0 → distance_max=6.8, multiplier=900.0
-                chain_distance_max = 5.0 + landing_y * 0.6
+                # 例: landing_y=0.0 → distance_max=5.2, multiplier=450.0 (基本値拡大)
+                # 例: landing_y=1.0 → distance_max=5.8, multiplier=600.0
+                # 例: landing_y=2.0 → distance_max=6.4, multiplier=750.0
+                # 例: landing_y=3.0 → distance_max=7.0, multiplier=900.0
+                chain_distance_max = 5.2 + landing_y * 0.6
                 chain_bonus_multiplier = 450.0 + landing_y * 150.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
@@ -261,8 +243,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # sort by distance (closest first)
                 nearby_pieces.sort(key=lambda x: x[0])
 
-                # v170: v155距離加重ボーナス復帰 - 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
-                # chain_distance_maxとchain_bonus_multiplierは動的に調整
+                # v169: CHAIN_MERGE評価範囲拡大 - 3つの最も近いピースに対し、距離に応じて減衰するボーナスを適用
+                # chain_distance_max=5.2（基本値拡大）とchain_bonus_multiplierは動的に調整
                 if len(nearby_pieces) >= 1:
                     dist, _ = nearby_pieces[0]
                     chain_bonus = (chain_distance_max - dist) * chain_bonus_multiplier
@@ -282,12 +264,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     reasons.append("CHAIN_MERGE")
 
         # ----- update best candidate -----
-        # v169: HEIGHT_CONTROLフォールバック削除 - batch_summaryでHEIGHT_CONTROLが23.9%選択(avg_score_delta=2.5)と低価値を確認。
-        # フォールバックをDEFAULT_PLACEMENTに変更し、他の評価軸(特にCHAIN_MERGE)の影響力を強めることでスコア安定性向上。
         if score > best_score:
             best_score = score
             best_x = x
-            best_reason = "_".join(reasons) if reasons else "DEFAULT_PLACEMENT"
+            best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
