@@ -312,6 +312,9 @@ schedule_nonessential_audio_jobs() {
 
 #=== lib/eloop_radio.sh から移行した関数 ===
 
+
+#=== ニュース: 毎ゲーム取得 & 再生 ===
+
 _legacy_fetch_and_play_news() {
 	local game_num="$1" score="$2"
 	# 旧呼び出し（引数なし）でも、起動時点の値を固定して後段に渡す
@@ -327,6 +330,8 @@ _legacy_fetch_and_play_news() {
 		log "[NEWS] ニュースなし、スキップ"
 	fi
 }
+
+#=== ラジオトーク: ディスパッチャー ===
 
 _legacy_start_random_radio_corner() {
 	local game_num="$1" score="$2"
@@ -417,4 +422,3 @@ _legacy_schedule_nonessential_audio_jobs() {
 		fi
 	fi
 }
-

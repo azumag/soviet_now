@@ -1,5 +1,8 @@
 # broadcast/radio_persona.sh - ペルソナ, 時間帯, 出力ルール, 過去トピック
 
+
+#=== ラジオトーク: 共通ヘルパー ===
+
 _radio_time_context() {
 	_rc_hour=$(date '+%H')
 	_rc_time=$(date '+%H:%M')

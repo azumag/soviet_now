@@ -1,10 +1,6 @@
 # strategy/sandbox.sh - validate_strategy, create/harvest/destroy_sandbox
 
 
-#=== strategy.py バリデーション ===
-
-VALIDATE_ERROR=""
-
 validate_strategy() {
 	# 引数でファイルパスを指定可能 (デフォルト: strategy.py)
 	local target_file="${1:-strategy.py}"

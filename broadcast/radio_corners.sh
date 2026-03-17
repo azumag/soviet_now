@@ -1,5 +1,8 @@
 # broadcast/radio_corners.sh - 各コーナー関数 + ディスパッチャー
 
+
+#=== ラジオトーク: コーナー ===
+
 start_radio_corner_theme() {
 	local game_num="$1" score="$2" filter_category="${3:-}"
 	_radio_time_context
@@ -869,6 +872,7 @@ PROMPT
 
 #=== lib/eloop_radio.sh から移行した関数 ===
 
+
 start_radio_corner_soviet() {
 	local game_num="$1" score="$2"
 	_radio_time_context
@@ -916,6 +920,8 @@ start_radio_corner_recap() {
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "recap"
 }
+
+#=== 時事ニュースコーナー (jiji) ===
 
 _filter_unread_jiji_blocks() {
 	local jiji_tmp
@@ -1046,4 +1052,3 @@ start_radio_corner_jiji() {
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji"
 }
-

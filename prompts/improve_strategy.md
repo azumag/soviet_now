@@ -24,7 +24,7 @@
 - rollback は、成熟ランキング上位の復元可能戦略から選ばれる。単発スコアや短期上振れではこのガードを越えられない
 - `strategy_versions/by_hash/*.py` は成熟ランキング top50 + current を保持する cache であり、ランキング外の古い戦略は消える
 - したがって改善案は「単発の見栄え」ではなく、「成熟ランキング上位と比べて12試合窓で残れるか」「rollback されにくいか」を意識して設計すること
-- 必要なら `show_status_g.sh`, `status_dashboard.py`, `show_status.sh`, `eloop_lib.sh` の rollback / ranking ロジックを読んで前提を確認すること
+- 必要なら `show_status_g.sh`, `status_dashboard.py`, `show_status.sh`, `strategy/regression.sh` の rollback / ranking ロジックを読んで前提を確認すること
 
 ## ハード制約（破ったら失敗）
 - 変更対象は `strategy.py.staging` と `strategy_helpers/` のみ。他ファイル変更禁止

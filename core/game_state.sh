@@ -90,3 +90,7 @@ except:
 	log "WARNING: 新ゲーム検知タイムアウト"
 	return 1
 }
+
+#=== スピナー ===
+
+_spinner_pid=0

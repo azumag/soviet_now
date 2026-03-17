@@ -1,9 +1,5 @@
 # strategy/ai.sh - spinner, build_prompt, run_cmd, run_ai
 
-
-#=== スピナー ===
-
-_spinner_pid=0
 start_spinner() {
 	local label="$1"
 	(
@@ -376,3 +372,7 @@ run_ai() {
 	rm -f "$expect_snapshot" 2>/dev/null || true
 	if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 }
+
+#=== strategy.py バリデーション ===
+
+VALIDATE_ERROR=""

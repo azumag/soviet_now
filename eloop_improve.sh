@@ -655,7 +655,7 @@ manifest_file="tmp/sandbox_files.md"
 	echo '- `tmp/batch_summary.txt` — reason分布/高低比較（必ず読む）'
 	[ -f "$CHANGE_LOG_FILE" ] && printf -- '- \`%s\` — 過去の改善変更差分。**同じ方針の焼き直し防止のため最初に読め**\n' "$CHANGE_LOG_FILE"
 	echo '- `tmp/sandbox_files.md` — この目録そのもの（必ず読む）'
-	echo '- `show_status_g.sh` / `status_dashboard.py` / `show_status.sh` / `eloop_lib.sh` — Strategy Comparison と rollback の guardrail を知りたい時に見る'
+	echo '- `show_status_g.sh` / `status_dashboard.py` / `show_status.sh` / `strategy/regression.sh` — Strategy Comparison と rollback の guardrail を知りたい時に見る'
 	echo ""
 	echo "### 盤面・ゲームログ（必須）"
 	echo '- 各ゲームログで、終盤8ターンと `max_y>=2.0` の高危険域を必ず確認すること'

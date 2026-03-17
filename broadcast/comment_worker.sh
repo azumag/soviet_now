@@ -221,3 +221,7 @@ stop_comment_watcher() {
 	fi
 	rm -f "$COMMENT_WATCHER_HEARTBEAT_FILE"
 }
+
+#=== プロセス管理 ===
+
+_CLEANUP_ALL_RUNNING=0
