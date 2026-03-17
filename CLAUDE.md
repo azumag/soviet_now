@@ -20,8 +20,13 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 - `strategy.py` が1試合を自律プレイ、試合後に AI が `strategy.py` をバックグラウンド改善するアダプティブループ
 - `soren_loop.sh`: 親スクリプト (メインループ、初期化、クリーンアップ)。安定層で AI 書き換え対象外
 - `eloop.sh`: 1試合の関数群 (play_one_game, post_game_bookkeeping 等)。毎試合 source で読み込み、AI 書き換え可
-- `eloop_lib.sh`: 共通ライブラリ (ヘルパー/ラジオ/AI実行/バリデーション等)
+- `eloop_lib.sh`: 全モジュールをsourceするshim (~40行)
 - `eloop_improve.sh`: バックグラウンド改善サブプロセス (AI呼び出し/バリデーション/ラジオ生成)
+- モジュール構成:
+  - `core/`: config, helpers, game_state, version, phyrogenetic
+  - `strategy/`: ai, sandbox, regression, improve
+  - `broadcast/`: radio_engine/persona/themes/news/factcheck/corners/state/celebration, comment, comment_worker, scheduler
+  - `infra/`: cleanup
 - `strategy_runner.py`: 内側ループ (game_state.json → analyze_board.py → strategy.decide() → commands.txt)
 - `strategy_versions/` にバージョン履歴、`game_history/` にターンログ (JSONL)
 - `best_score.txt` でハイスコア管理
@@ -50,7 +55,21 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `strategy_runner.py` | eloop内側ループ: 1試合自律プレイ + JSONL履歴記録 |
 | `soren_loop.sh` | 親スクリプト: メインループ、初期化 (AI書き換え対象外) |
 | `eloop.sh` | 1試合の関数群 (毎試合source、AI書き換え可) |
-| `eloop_lib.sh` | 共通ライブラリ (ヘルパー/ラジオ/AI実行/バリデーション) |
+| `eloop_lib.sh` | 全モジュールsource shim (~40行) |
+| `core/config.sh` | 全定数・パス定義・mkdir初期化 |
+| `core/helpers.sh` | log, commands_empty, _trim_log_file 等 |
+| `core/game_state.sh` | is_game_over, wait_for_move, send_retry |
+| `core/version.sh` | save_strategy_version, update_best, archive_history |
+| `core/phyrogenetic.sh` | 進化系統樹の記録・投稿 |
+| `strategy/ai.sh` | spinner, build_prompt, run_cmd, run_ai |
+| `strategy/sandbox.sh` | validate_strategy, sandbox管理 |
+| `strategy/regression.sh` | rolling scores, check_regression, rollback, postmortem |
+| `strategy/improve.sh` | improve_state管理, trigger_adaptive_improvement |
+| `broadcast/radio_*.sh` | ラジオ放送系 (engine/persona/themes/news/factcheck/corners/state/celebration) |
+| `broadcast/comment.sh` | コメント応答生成 |
+| `broadcast/comment_worker.sh` | player/watcherデーモン管理 |
+| `broadcast/scheduler.sh` | 非同期ジョブスケジュール |
+| `infra/cleanup.sh` | PID停止, cleanup_all, cleanup_tmp |
 | `eloop_improve.sh` | バックグラウンド改善サブプロセス |
 | `analyze_board.py` | 盤面解析 (併合判定・着地予測・反応器状態) |
 | `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿 |

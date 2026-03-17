@@ -7,7 +7,7 @@
 #
 # アーキテクチャ:
 #   soren_loop.sh (このファイル) — メインループ、初期化、クリーンアップ
-#   eloop_lib.sh  — 共通ライブラリ (ヘルパー/ラジオ/コメント/AI/バリデーション)
+#   eloop_lib.sh  — 全モジュールsource shim (core/, strategy/, broadcast/, infra/)
 #   eloop.sh      — 1試合のゲームプレイ関数 (毎試合 source で最新版を読み込み)
 #   eloop_improve.sh — バックグラウンド改善サブプロセス
 

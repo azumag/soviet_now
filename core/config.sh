@@ -1,14 +1,7 @@
-#!/bin/bash
-# eloop_lib.sh - Soren Evolution Loop 共通ライブラリ
+# core/config.sh - 全定数・パス定義・mkdir初期化
 #
-# soren_loop.sh から source される。AI による書き換え対象外の安定レイヤー。
-# ヘルパー関数、AI実行、バリデーション、バージョン管理、ラジオトーク、
-# コメント処理、改善ステート管理を提供する。
-
-# --- スクリプトディレクトリ ---
-ELOOP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$ELOOP_LIB_DIR"
-unset ANTHROPIC_AUTH_TOKEN
+# ELOOP_LIB_DIR は eloop_lib.sh (shim) で設定済み。
+# このファイルでは再設定しない。
 
 # --- 定数 ---
 COMMANDS="commands.txt"
