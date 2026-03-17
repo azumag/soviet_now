@@ -7,7 +7,7 @@
 #          ./google_tts.sh --list   # 声の一覧表示
 
 PROJECT="gen-lang-client-0367522921"
-DEFAULT_VOICE="${GOOGLE_TTS_VOICE:-ja-JP-Neural2-B}"
+DEFAULT_VOICE="${GOOGLE_TTS_VOICE:-ja-JP-Standard-B}"
 OUT="/tmp/tts.mp3"
 
 if [[ "$1" == "--demo" ]]; then
@@ -68,8 +68,8 @@ fi
 OUTPUT=""
 TEXT=""
 VOICE="$DEFAULT_VOICE"
-RATE="${GOOGLE_TTS_RATE:-1.0}"
-PITCH="0"
+RATE="${GOOGLE_TTS_RATE:-0.7}"
+PITCH="${GOOGLE_TTS_PITCH:--2.5}"
 VOLUME="0"
 
 while [[ $# -gt 0 ]]; do

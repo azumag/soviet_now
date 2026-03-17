@@ -780,13 +780,46 @@ _launch_say() {
     fi
     # --- /COEIROINK ---
 
-    # VOICEVOX/COEIROINK が有効な場合、macOS say へのフォールバックを行わずリトライ
+    # VOICEVOX/COEIROINK が有効な場合、フォールバックを行わずリトライ
     if [ "${USE_VOICEVOX:-0}" = "1" ] || [ "${USE_COEIROINK:-0}" = "1" ]; then
-        _log "TTS合成失敗 → リトライへ（macOS sayフォールバック無効）"
+        _log "TTS合成失敗 → リトライへ（フォールバック無効）"
         LAUNCHED_SAY_PID=""
         return
     fi
 
+    # --- Google Cloud TTS (デフォルト音声合成) ---
+    if [ "${GOOGLE_TTS_FAILED:-0}" != "1" ]; then
+        local gtts_mp3="/tmp/google_tts_${$}_$(date +%s).mp3"
+        if ./google_tts.sh -o "$gtts_mp3" -f "$MY_CONTENT" 2>/dev/null && [ -s "$gtts_mp3" ]; then
+            LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$gtts_mp3")
+            if [ "${LAUNCHED_EXPECTED_SEC:-0}" -gt 0 ]; then
+                if [ -n "${SAY_AUDIO_DEVICE:-}" ] && [ "${SAY_FORCE_DIRECT:-0}" != "1" ]; then
+                    local device_index
+                    device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
+                        _log "audio device解決失敗 → afplayフォールバック"
+                        nohup bash -c 'trap "" INT TERM; afplay "$1"; rm -f "$1"' _ "$gtts_mp3" >/dev/null 2>&1 &
+                        LAUNCH_MODE="google_tts"
+                        LAUNCHED_SAY_PID="$!"
+                        return
+                    }
+                    nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; rm -f "$1"; exit "$rc"' \
+                        _ "$gtts_mp3" "$device_index" >/dev/null 2>&1 &
+                    LAUNCH_MODE="ffmpeg"
+                else
+                    nohup bash -c 'trap "" INT TERM; afplay "$1"; rm -f "$1"' _ "$gtts_mp3" >/dev/null 2>&1 &
+                    LAUNCH_MODE="google_tts"
+                fi
+                LAUNCHED_SAY_PID="$!"
+                return
+            fi
+            rm -f "$gtts_mp3" 2>/dev/null || true
+        else
+            rm -f "$gtts_mp3" 2>/dev/null || true
+        fi
+        _log "Google TTS失敗 → macOS sayフォールバック"
+    fi
+
+    # --- macOS say (最終フォールバック) ---
     if [ -n "${SAY_AUDIO_DEVICE:-}" ] && [ "${SAY_FORCE_DIRECT:-0}" != "1" ]; then
         local device_index
         device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
@@ -824,6 +857,7 @@ _play_with_retry() {
     local retry=0 backoff="$SAY_RETRY_SLEEP_SEC"
     LAST_SAY_PID=""
     SAY_FORCE_DIRECT=0
+    GOOGLE_TTS_FAILED=0
     while true; do
         local attempt=$((retry + 1))
         _set_current_source "playing"
@@ -893,7 +927,10 @@ _play_with_retry() {
             _log "外部killフラグ検出 → リトライ中止"
             return "$say_rc"
         fi
-        if [ "${LAUNCH_MODE:-say}" = "ffmpeg" ] && [ "$SAY_FORCE_DIRECT" -eq 0 ]; then
+        if [ "${LAUNCH_MODE:-say}" = "google_tts" ]; then
+            GOOGLE_TTS_FAILED=1
+            _log "Google TTS再生失敗 (rc=$say_rc) → 次回は macOS sayフォールバック"
+        elif [ "${LAUNCH_MODE:-say}" = "ffmpeg" ] && [ "$SAY_FORCE_DIRECT" -eq 0 ]; then
             SAY_FORCE_DIRECT=1
             _log "ffmpeg再生失敗 (rc=$say_rc) → 次回は say 直再生へフォールバック"
         fi
