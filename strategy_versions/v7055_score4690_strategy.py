@@ -41,22 +41,14 @@ Phases (determined by board max Y):
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
  # v251: reactive_pairsに応じた段階的ペナルティ強化版 - 超危険域即時併合強制条件緩和
-     # last_rollback_analysis: anchor比でcomp=-230.1 p50=-236.5 p25=-249.2と明確に悪化。
-     # ワーストゲーム(score0878)終盤turns 58-65: reactive_pairs=3-4あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=3.10に悪化しゲームオーバー。
-     # ベストゲーム(score2703)終盤turns 106-113: 終盤でもreactive_pairs>=2あれば即時併合を確実に捉え、max_y=3.60の危険域でも延命成功。
-     # v250のmax_y>=2.0 & reactive_pairs>=2条件では、reactive_pairs>=4の超危険域で即時併合機会を見逃している問題があった。
-     # axis 8.9のボーナス発動条件をmax_y>=2.0からmax_y>=1.8へ緩和し、axis 8.7のペナルティをreactive_pairsに応じて-(3000.0 + reactive_pairs * 500.0)に動的強化。
-     # これによりreactive_pairs=3で-4500.0、reactive_pairs=4で-5000.0のペナルティが適用され、reactive_pairsが多いほど即時併合を強制。
-     # 構造的変更（axis 8.7動的強化・axis 8.9条件緩和）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
-     # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260317_043103_score0878.jsonl turns 58-65, game_history/20260317_035812_score2703.jsonl turns 106-113
-#
- # v262: axis 9 盤面圧縮ボーナス追加版 - 安全域盤面圧縮のスコア的インセンティブ化
-# batch_summary: 低スコア群(17.1%) vs 高スコア群(7.8%) の REACTIVE_PAIRS_COMPRESSION 選択率差から、axis 9 の盤面圧縮がスコア的に評価されていないことが明らか。
-# last_rollback_postmortem: deadline_margin>=0.5 の安全域で reactive_pairs>=1 の非併合選択を禁止し、max_y>=1.8 の物理的危険域判定に統一する教訓�に基づき、安全域での盤面圧縮をスコア的にインセンティブ化。
-# axis 9 に盤面圧縮ボーナスを追加: reactive_pairs==1で+200.0、reactive_pairs==2で+400.0、reactive_pairs>=3で+600.0
-# これにより安全域での盤面圧縮がスコアに反映され、戦略的判断がより明確になる。
-# 構造的変更（axis 9 ボーナス付与）であり、数値微調整ではない。last_rollback_postmortem の「安全域での盤面圧縮」を潰す。
-# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md
+    # last_rollback_analysis: anchor比でp25=-460.5と悪化。reactive_pairsがあるのに非併合選択を繰り返し下振れしている。
+    # ワーストゲーム(score0878)終盤turns 58-65: reactive_pairs=3-4あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=3.10に悪化しゲームオーバー。
+    # ベストゲーム(score2703)終盤turns 106-113: 終盤でもreactive_pairs>=2あれば即時併合を確実に捉え、max_y=3.60の危険域でも延命成功。
+    # v250のmax_y>=2.0 & reactive_pairs>=2条件では、reactive_pairs>=4の超危険域で即時併合機会を見逃している問題があった。
+    # axis 8.9のボーナス発動条件をmax_y>=2.0からmax_y>=1.8へ緩和し、axis 8.7のペナルティをreactive_pairsに応じた-(3000.0 + reactive_pairs * 500.0)に動的強化。
+    # これによりreactive_pairs>=3の超危険域でより早期から即時併合を強制し、p25悪化の主要因である「reactive_pairs>=3の非併合」問題を構造的に潰す。
+    # 構造的変更（axis 8.7動的強化・axis 8.9条件緩和）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
+    # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260317_043103_score0878.jsonl turns 58-65, game_history/20260317_035812_score2703.jsonl turns 106-113
 #
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
@@ -436,7 +428,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= penalty
             reasons.append("EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 9: safe zone reactive pairs priority (force board compression with bonus) -----
+        # ----- evaluation axis 9: safe zone reactive pairs priority (NEW: force board compression in safe zones) -----
         # batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.1)と低価値であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
         # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
         # last_rollback_postmortemの教訓: deadline_margin>=0.5の安全域で盤面圧縮を行うことは成功パターン。max_y<1.8の安全域でreactive_pairs>=1がある場合、
@@ -444,14 +436,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 危険域(max_y>=1.8)では既存のaxis 8.5/8.6/8.7が即時併合を強制するため、axis 9は安全域での盤面圧縮に専念。
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
         if max_y < 1.8 and reactive_pair_count >= 1:
-            # 安全域でreactive_pairsがある場合、盤面圧縮を強制的に優先し、スコアボーナスを付与
-            # reactive_pairsが多いほど、盤面圧縮の価値が高まる（2手先の併合機会が増える）
-            if reactive_pair_count == 1:
-                score += 200.0
-            elif reactive_pair_count == 2:
-                score += 400.0
-            else:  # reactive_pair_count >= 3
-                score += 600.0
+            # 安全域でreactive_pairsがある場合、盤面圧縮を強制的に優先
+            # axis 8.5/8.6/8.7が発動しない安全域でのみ、盤面圧縮を強制し下振れを抑制
             # 既存のreasonsに関わらず、安全域での盤面圧縮を最優先
             reasons.insert(0, "REACTIVE_PAIRS_COMPRESSION")
 
