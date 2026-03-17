@@ -40,6 +40,19 @@ SAY_TRUNCATE_GRACE_SEC="${SAY_TRUNCATE_GRACE_SEC:-3}"
 SAY_TRUNCATE_MIN_EXPECTED_SEC="${SAY_TRUNCATE_MIN_EXPECTED_SEC:-15}"
 SAY_HANG_EXTRA_SEC="${SAY_HANG_EXTRA_SEC:-120}"
 
+# --- VOICEVOX ランダム話者選択 ---
+_pick_random_voicevox_speaker() {
+    local vo_url="${VOICEVOX_URL:-http://127.0.0.1:50021}"
+    local picked
+    picked=$(curl -s --max-time 3 "$vo_url/speakers" 2>/dev/null | python3 -c "
+import json, sys, random
+speakers = json.load(sys.stdin)
+ids = [st['id'] for s in speakers for st in s.get('styles', []) if st.get('type', 'talk') == 'talk']
+print(random.choice(ids) if ids else '3', end='')
+" 2>/dev/null)
+    echo "${picked:-3}"
+}
+
 # --- COEIROINK TTS切替 ---
 # tmp/coeiroink_voice.txt の内容で動作を決定:
 #   "random"        → 毎回ランダムに話者選択
@@ -75,11 +88,16 @@ fi
 
 # --- VOICEVOX TTS切替 ---
 # tmp/voicevox_voice.txt があれば VOICEVOX を使用 (COEIROINK より優先)
-# ファイル内容: speaker ID (例: 109)
+# ファイル内容: speaker ID (例: 109) or "random"
 USE_VOICEVOX=0
 VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-109}"
 if [ -f "tmp/voicevox_voice.txt" ]; then
-    VOICEVOX_SPEAKER=$(cat "tmp/voicevox_voice.txt" 2>/dev/null)
+    _vo_line=$(cat "tmp/voicevox_voice.txt" 2>/dev/null)
+    if [ "$_vo_line" = "random" ]; then
+        VOICEVOX_SPEAKER=$(_pick_random_voicevox_speaker)
+    else
+        VOICEVOX_SPEAKER="$_vo_line"
+    fi
     USE_VOICEVOX=1
     USE_COEIROINK=0
 fi

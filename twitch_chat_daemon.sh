@@ -103,15 +103,16 @@ while true; do
                 fi
             fi
 
-            # !wakana / !moko / !random / !vo / !say — コメント読み上げの声切替
-            if [[ "$msg" =~ ^[[:space:]]*!(wakana|moko|random|vo|say)([[:space:]]|$) ]]; then
+            # !wakana / !moko / !random / !vo / !vo_random / !say — コメント読み上げの声切替
+            if [[ "$msg" =~ ^[[:space:]]*!(wakana|moko|random|vo_random|vo|say)([[:space:]]|$) ]]; then
                 coe_cmd="${BASH_REMATCH[1]}"
                 case "$coe_cmd" in
-                    wakana) echo "8e99d620-87d3-11ed-870a-0242ac1c000c|905192261" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
-                    moko)   echo "fb1a910e-208f-11ee-8dde-0242ac1c000c|981131762" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
-                    random) echo "random" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
-                    vo)     echo "109" > tmp/voicevox_voice.txt; rm -f tmp/coeiroink_voice.txt ;;
-                    say)    rm -f tmp/coeiroink_voice.txt tmp/voicevox_voice.txt ;;
+                    wakana)    echo "8e99d620-87d3-11ed-870a-0242ac1c000c|905192261" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
+                    moko)      echo "fb1a910e-208f-11ee-8dde-0242ac1c000c|981131762" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
+                    random)    echo "random" > tmp/coeiroink_voice.txt; rm -f tmp/voicevox_voice.txt ;;
+                    vo)        echo "109" > tmp/voicevox_voice.txt; rm -f tmp/coeiroink_voice.txt ;;
+                    vo_random) echo "random" > tmp/voicevox_voice.txt; rm -f tmp/coeiroink_voice.txt ;;
+                    say)       rm -f tmp/coeiroink_voice.txt tmp/voicevox_voice.txt ;;
                 esac
                 continue
             fi
