@@ -599,6 +599,12 @@ _play_with_retry() {
         if [ "$say_rc" -eq 0 ]; then
             return 0
         fi
+        # 粛清等による外部killフラグがあればリトライしない
+        if [ -f "$QUEUE_DIR/kill_flag" ]; then
+            rm -f "$QUEUE_DIR/kill_flag"
+            _log "外部killフラグ検出 → リトライ中止"
+            return "$say_rc"
+        fi
         if [ "${LAUNCH_MODE:-say}" = "ffmpeg" ] && [ "$SAY_FORCE_DIRECT" -eq 0 ]; then
             SAY_FORCE_DIRECT=1
             _log "ffmpeg再生失敗 (rc=$say_rc) → 次回は say 直再生へフォールバック"
