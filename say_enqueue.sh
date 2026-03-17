@@ -46,8 +46,9 @@ _pick_random_voicevox_speaker() {
     local picked
     picked=$(curl -s --max-time 3 "$vo_url/speakers" 2>/dev/null | python3 -c "
 import json, sys, random
+exclude = {'玄野武宏','白上虎太郎','後鬼','ちび式じい','†聖騎士 紅桜†','栗田まろん','Voidoll'}
 speakers = json.load(sys.stdin)
-ids = [st['id'] for s in speakers for st in s.get('styles', []) if st.get('type', 'talk') == 'talk']
+ids = [st['id'] for s in speakers if s['name'] not in exclude for st in s.get('styles', []) if st.get('type', 'talk') == 'talk']
 print(random.choice(ids) if ids else '3', end='')
 " 2>/dev/null)
     echo "${picked:-3}"
