@@ -1226,12 +1226,27 @@ RETRYCOMMENT
 					echo "$sing_score" > "$score_file"
 					(
 						local sing_wav="/tmp/sing_wav_$(date +%s)_$$.wav"
-						if "$ELOOP_LIB_DIR/voicevox_sing.sh" -o "$sing_wav" "$score_file" 2>/dev/null; then
-							SAY_CONTEXT_LABEL="comment:sing" "$ELOOP_LIB_DIR/say_enqueue.sh" --no-preempt --wav "$sing_wav" 150 0
-							rm -f "$sing_wav"
+						local _sing_lock="tmp/.say_queue/.voicevox_synth_lock"
+						local _sing_lock_held=0 _sing_lock_wait=0
+						while ! mkdir "$_sing_lock" 2>/dev/null; do
+							sleep 0.5
+							_sing_lock_wait=$((_sing_lock_wait + 1))
+							if [ "$_sing_lock_wait" -ge 120 ]; then break; fi  # 60s timeout
+						done
+						[ "$_sing_lock_wait" -lt 120 ] && _sing_lock_held=1
+						if [ "$_sing_lock_held" -eq 1 ]; then
+							if "$ELOOP_LIB_DIR/voicevox_sing.sh" -o "$sing_wav" "$score_file" 2>/dev/null; then
+								rmdir "$_sing_lock" 2>/dev/null; _sing_lock_held=0
+								SAY_CONTEXT_LABEL="comment:sing" "$ELOOP_LIB_DIR/say_enqueue.sh" --no-preempt --wav "$sing_wav" 150 0
+								rm -f "$sing_wav"
+							else
+								rmdir "$_sing_lock" 2>/dev/null; _sing_lock_held=0
+								log "[COMMENT] 歌声合成失敗: $score_file"
+							fi
 						else
-							log "[COMMENT] 歌声合成失敗: $score_file"
+							log "[COMMENT] VOICEVOX合成ロック取得タイムアウト → 歌声合成スキップ: $score_file"
 						fi
+						[ "$_sing_lock_held" -eq 1 ] && rmdir "$_sing_lock" 2>/dev/null
 						rm -f "$score_file"
 					) &
 					disown $!

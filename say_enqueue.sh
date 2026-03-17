@@ -569,15 +569,30 @@ _launch_say() {
         _log "VOICEVOX speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}"
         local vo_wav
         vo_wav="${MY_CONTENT%.txt}.wav"
+        # フォールバック合成時もVOICEVOX合成ロックを取得（同時1リクエスト制限）
+        local _vo_synth_locked=0 _vo_synth_wait=0
+        while ! mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; do
+            sleep 0.5
+            _vo_synth_wait=$((_vo_synth_wait + 1))
+            if [ "$_vo_synth_wait" -ge 60 ]; then break; fi  # 30s timeout
+        done
+        if [ "$_vo_synth_wait" -ge 60 ]; then
+            _log "VOICEVOX合成ロック取得タイムアウト → macOS say にフォールバック"
+        else
+            _vo_synth_locked=1
+        fi
         # 合成中もheartbeatを更新（stale判定回避）
         ( while true; do _touch_lock_heartbeat; sleep 2; done ) &
         local _hb_pid=$!
         local _vo_ok=0
-        if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_TIMEOUT=60 \
-           ./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
-            _vo_ok=1
+        if [ "$_vo_synth_locked" -eq 1 ]; then
+            if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_TIMEOUT=60 \
+               ./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
+                _vo_ok=1
+            fi
         fi
         kill "$_hb_pid" 2>/dev/null; wait "$_hb_pid" 2>/dev/null
+        [ "$_vo_synth_locked" -eq 1 ] && { rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; _vo_synth_locked=0; }
         if [ "$_vo_ok" -eq 1 ]; then
             # vo_random 時はチャットに話者名を投稿
             if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
@@ -826,13 +841,13 @@ _prepare_playback_turn() {
 
 # --- VOICEVOX 事前合成（ロック取得前＝前の再生中に並行合成） ---
 PRE_SYNTH_WAV=""
-PRE_SYNTH_LOCK="$QUEUE_DIR/.pre_synth_lock"
+VOICEVOX_SYNTH_LOCK="$QUEUE_DIR/.voicevox_synth_lock"
 if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
     # 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
-    if ! mkdir "$PRE_SYNTH_LOCK" 2>/dev/null; then
+    if ! mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; then
         _log "事前合成スキップ（別プロセスが合成中）"
     else
-    trap 'rmdir "$PRE_SYNTH_LOCK" 2>/dev/null; _cleanup' EXIT
+    trap 'rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; _cleanup' EXIT
     _log "事前合成開始"
 
     # ワンショットスピーカー指定 (!NTROB等)
@@ -904,7 +919,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
             PRE_SYNTH_WAV=""
         fi
     fi
-    rmdir "$PRE_SYNTH_LOCK" 2>/dev/null
+    rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
     trap '_cleanup' EXIT
     fi
 fi
