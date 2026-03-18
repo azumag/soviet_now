@@ -414,6 +414,7 @@ def run_game():
                     "russia_created": russia_created,
                     "russia_announced": russia_announced,
                     "soviet_created": soviet_created,
+                    "final_types": [p.get("type", 0) for p in gs.get("pieces", [])] if gs else [],
                 }
 
             turn += 1
@@ -486,6 +487,7 @@ def run_game():
                         "russia_created": russia_created,
                         "russia_announced": russia_announced,
                         "soviet_created": True,
+                        "final_types": [p.get("type", 0) for p in pieces],
                     }
 
             # 盤面解析
@@ -512,6 +514,7 @@ def run_game():
                     "russia_announced": russia_announced,
                     "soviet_created": soviet_created,
                     "strategy_hash": strategy_hash,
+                    "final_types": [p.get("type", 0) for p in pieces],
                 }
 
             # ドロップX をクランプ

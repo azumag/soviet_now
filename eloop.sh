@@ -361,8 +361,27 @@ json.dump(d,open(f,'w'))
 	LAST_ARCHIVE_FILE=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -1)
 	archive_gameover_screenshots "$LAST_ARCHIVE_FILE"
 
+	# 建国ボーナス: 最終盤面のtype別ボーナスを加算した評価スコア
+	EVAL_SCORE=$(echo "$RESULT_JSON" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+types = d.get('final_types', [])
+soviet = d.get('soviet_created', False)
+TB = {1:1,2:2,3:3,4:5,5:8,6:13,7:20,8:30,9:50,10:80,11:130,12:200,13:350,14:600,15:1200}
+bonus = sum(TB.get(t, 0) for t in types)
+if soviet: bonus += 4000
+print(d.get('score', 0) + bonus)
+" 2>/dev/null || echo "$LAST_SCORE")
+
+	local _bonus=$(( EVAL_SCORE - LAST_SCORE ))
+	if [ "$_bonus" -gt 0 ]; then
+		local _top_types
+		_top_types=$(echo "$RESULT_JSON" | python3 -c "import json,sys;ts=json.load(sys.stdin).get('final_types',[]);print(sorted(ts,reverse=True)[:5])" 2>/dev/null || echo "[]")
+		log "[BONUS] types=${_top_types} bonus=+${_bonus} eval=${EVAL_SCORE} (raw=${LAST_SCORE})"
+	fi
+
 	# 改善用の rolling/queued 記録はここで一度だけ行う
-	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
+	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET"
 
 	# 予想サイクル進捗をチャットに投稿
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
