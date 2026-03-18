@@ -368,9 +368,9 @@ import json, sys
 d = json.load(sys.stdin)
 types = d.get('final_types', [])
 soviet = d.get('soviet_created', False)
-TB = {1:1,2:2,3:3,4:5,5:8,6:13,7:20,8:30,9:50,10:80,11:130,12:200,13:350,14:600,15:1200}
+TB = {1:0,2:0,3:1,4:1,5:2,6:3,7:4,8:6,9:10,10:16,11:26,12:40,13:70,14:120,15:240}
 bonus = sum(TB.get(t, 0) for t in types)
-if soviet: bonus += 4000
+if soviet: bonus += 800
 print(d.get('score', 0) + bonus)
 " 2>/dev/null || echo "$LAST_SCORE")
 
