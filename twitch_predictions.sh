@@ -67,7 +67,7 @@ print(json.dumps({
 PY
 )
 
-	response=$(curl -sf -X POST \
+	response=$(curl -sf --max-time 15 -X POST \
 		"https://api.twitch.tv/helix/predictions" \
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \
@@ -146,7 +146,7 @@ print(json.dumps({
 PY
 )
 
-	response=$(curl -sf -X PATCH \
+	response=$(curl -sf --max-time 15 -X PATCH \
 		"https://api.twitch.tv/helix/predictions" \
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \
@@ -191,7 +191,7 @@ print(json.dumps({
 PY
 )
 
-	curl -sf -X PATCH \
+	curl -sf --max-time 15 -X PATCH \
 		"https://api.twitch.tv/helix/predictions" \
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \

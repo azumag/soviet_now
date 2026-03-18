@@ -291,6 +291,17 @@ post_game_bookkeeping() {
 		_create_twitch_clip "🏆 NEW HIGH SCORE: ${LAST_SCORE}! (Game #${game_num_display})" "$game_num_display"
 	fi
 
+	# チャネルポイント予想: 新サイクル初戦なら賭けを作成（best_outcome 更新の前に作成）
+	if [ ! -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+		local acc_count_for_pred=0
+		if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+			acc_count_for_pred=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+		fi
+		if [ "${acc_count_for_pred:-0}" -eq 0 ]; then
+			./twitch_predictions.sh create "$game_num_display" 2>/dev/null
+		fi
+	fi
+
 	# チャネルポイント予想: 今回の結果を best_outcome に蓄積（リセット前に判定）
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 		local cur_outcome=0
