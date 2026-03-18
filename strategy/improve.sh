@@ -455,8 +455,21 @@ trigger_adaptive_improvement() {
 	# Step 2: リグレッション検知 (成熟ランキングで上位 REGRESSION_MAX_RANK 位圏外なら自動リバート)
 	if check_regression; then
 		# リグレッション検知 → リバート済み、蓄積データクリア
+		# チャネルポイント予想: 粛清として解決
+		if [ -f "$TMP_STATE_DIR/.prediction_outcome" ]; then
+			./twitch_predictions.sh resolve 3 2>/dev/null &
+			rm -f "$TMP_STATE_DIR/.prediction_outcome"
+		fi
 		_clear_accumulated_data
 		return
+	fi
+
+	# チャネルポイント予想: 粛清なし → 保存された結果で解決
+	if [ -f "$TMP_STATE_DIR/.prediction_outcome" ]; then
+		local pred_outcome
+		pred_outcome=$(cat "$TMP_STATE_DIR/.prediction_outcome" 2>/dev/null || echo 0)
+		./twitch_predictions.sh resolve "$pred_outcome" 2>/dev/null &
+		rm -f "$TMP_STATE_DIR/.prediction_outcome"
 	fi
 
 	# Step 3: 改善プロセス実行中?
@@ -510,10 +523,6 @@ trigger_adaptive_improvement() {
 	acc_count=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null)
 
 	if [ "${acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then
-		# 新サイクル最初のゲーム (count==0) → チャネルポイント予想を開始
-		if [ "${acc_count:-0}" -eq 0 ] && [ ! -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-			./twitch_predictions.sh create "${GAME_NUM:-0}" >/dev/null 2>&1 &
-		fi
 		log "[IMPROVE] 蓄積 ${acc_count:-0}/${MIN_GAMES_BEFORE_IMPROVE} 試合 → 待機"
 		return
 	fi

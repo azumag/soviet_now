@@ -321,8 +321,32 @@ post_game_bookkeeping() {
 	LAST_ARCHIVE_FILE=$(ls -1t "$HISTORY_DIR"/[0-9]*_score*.jsonl 2>/dev/null | head -1)
 	archive_gameover_screenshots "$LAST_ARCHIVE_FILE"
 
+	# チャネルポイント予想: 新サイクル最初のゲームなら賭けを開始
+	if [ ! -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+		local acc_count_for_pred=0
+		if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+			acc_count_for_pred=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+		fi
+		if [ "${acc_count_for_pred:-0}" -eq 0 ]; then
+			./twitch_predictions.sh create "$game_num_display" >/dev/null 2>&1 &
+		fi
+	fi
+
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
+
+	# チャネルポイント予想の解決（粛清以外: soviet/russia/none）
+	# 粛清判定は trigger_adaptive_improvement() 内の check_regression() 後に行う
+	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+		local pred_outcome=0
+		if [ "${LAST_SOVIET:-false}" = "true" ]; then
+			pred_outcome=2  # ソ連建国
+		elif [ "${LAST_RUSSIA:-false}" = "true" ]; then
+			pred_outcome=1  # ロシア建国
+		fi
+		# 結果を一時保存（粛清判定のため trigger_adaptive_improvement まで解決を遅延）
+		echo "$pred_outcome" > "$TMP_STATE_DIR/.prediction_outcome"
+	fi
 
 	# コメントプレイヤー・ウォッチャーが死んでいたら再起動
 	start_comment_player
