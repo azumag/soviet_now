@@ -7,7 +7,7 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (9 evaluation axes):
+Decision Logic (10 evaluation axes):
    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
    2. Height penalty - Penalty for high landing position (varies by phase)
    3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -17,7 +17,7 @@ Decision Logic (9 evaluation axes):
     6. Chain merge bonus - Evaluate possibility of further merges after merge
      7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
     8. Early game merge priority - Strong bonus for merge opportunities in early game
-     8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
+     8.5. Critical deadline immediate merge priority - Enhanced penalty for ultra-critical zone (v270)
 
 Phases (determined by board max Y):
     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -37,6 +37,14 @@ Phases (determined by board max Y):
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
+#
+# v270: deadline_margin< -0.5超危険領域即時併合強化 - v268失敗モード解消
+# ワーストゲーム(score0625)終盤turns 51-55でdeadline_margin=-0.99〜-2.69, reactive_pairs=2-3, merge_available=false続き→max_y=3.65でオーバー
+# ベストゲーム(score2477)終盤turns 124-127でdeadline_margin=-0.98〜-1.55, reactive_pairs=4, 即時併合3回成功→max_y=2.77で延命
+# v268の失敗モード（deadline_margin < 0.5 で -5000.0ペナルティによる強制配置）を回避しつつ、
+# deadline_margin < -0.5 の超危険領域で即時併合不可能な選択に対して、ペナルティを-1500.0から-3000.0へ強化。
+# これにより超危険領域での緊急性を確保しつつ、即時併合不可能な場合の強制配置失敗モードを回避。
+# refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md, game_history/20260318_224946_score0625.jsonl turns 51-55, game_history/20260318_230744_score2480.jsonl turns 124-127
 #
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
@@ -122,31 +130,31 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v269: Improved deadline handling with reactive merge availability check (v268 fix)
+    """v270: Enhanced deadline handling with ultra-critical zone penalty (v268 failure mode fix)
 
-    v268の失敗モード（deadline_margin < 0.5 で -5000.0 ペナルティによる強制配置）を修正。
-    deadline接近時（reactor_margin < 1.0）にreactive_pairsがある場合、即時併合が可能かどうかを確認し、
-    即時併合不可能（danger_direct_merge_available == false）の場合はペナルティを緩和して強制配置を回避。
-
-    ワーストゲーム(score0732)終盤turns 54-61でdeadline_marginが-0.67〜-0.51、reactive_pairs=2-3あるのに
-    merge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続き、max_yが2.5まで上昇しゲームオーバー。
-    これはdeadline_margin < 1.0 の -3000.0 ペナルティが強すぎて、即時併合できない場合でも高配置を強制したため。
-
+    v268の失敗モード（deadline_margin < 0.5 で -5000.0 ペナルティによる強制配置）を回避しつつ、
+    超危険領域（deadline_margin < -0.5）での即時併合不可能な選択に対してペナルティを強化（-1500.0 → -3000.0）。
+    
+    ワーストゲーム(score0625)終盤turns 51-55でdeadline_margin=-0.99〜-2.69, reactive_pairs=2-3, merge_available=false続き→max_y=3.65でオーバー。
+    ベストゲーム(score2477)終盤turns 124-127でdeadline_margin=-0.98〜-1.55, reactive_pairs=4, 即時併合3回成功→max_y=2.77で延命。
+    
     修正: deadline_margin < 1.0 && reactive_pair_count >= 1 の場合、
-    - danger_direct_merge_available == true（即時併合可能）: ペナルティなし（mergeロジックに任せる）
-    - danger_direct_merge_available == false（即時併合不可能）: 緩和したペナルティ（-1500.0）
-    これによりdeadline緊急性を尊重しつつ、即時併合が不可能な場合の強制配置失敗モードを回避。
+    - deadline_margin < -0.5（超危険領域）: 即時併合不可能な選択に-3000.0ペナルティ
+    - -0.5 <= deadline_margin < 1.0（危険領域）:
+      - danger_direct_merge_available == true（即時併合可能）: ペナルティなし（mergeロジックに任せる）
+      - danger_direct_merge_available == false（即時併合不可能）: 緩和したペナルティ（-1500.0）
+    これにより超危険領域での緊急性を確保しつつ、即時併合不可能な場合の強制配置失敗モードを回避。
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
          analysis: analyze_board.py analysis results
-             - results: landing information for each drop X candidate
-                 - x: drop X coordinate
-                 - landing_y: estimated landing Y coordinate (high=dangerous)
-                 - drift_x/drift_unc: post-landing drift due to polygon shape
-                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                 - danger_direct_merge_available: DIRECT merge available with danger piece
-             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+              - results: landing information for each drop X candidate
+                  - x: drop X coordinate
+                  - landing_y: estimated landing Y coordinate (high=dangerous)
+                  - drift_x/drift_unc: post-landing drift due to polygon shape
+                  - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                  - danger_direct_merge_available: DIRECT merge available with danger piece
+              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
@@ -395,23 +403,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
         # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
-        # ----- evaluation axis 8.5: danger zone immediate merge priority (v269: improved deadline handling with reactive merge availability check) -----
-        # v268の失敗モード修正: deadline_margin < 1.0 の -3000.0 ペナルティが強すぎて、即時併合できない場合でも高配置を強制。
-        # ワーストゲーム(score0732)終盤turns 54-61でdeadline_margin=-0.67〜-0.51, reactive_pairs=2-3, merge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
-        # v269修正: deadline_margin < 1.0 && reactive_pair_count >= 1 の場合、danger_direct_merge_availableで判断:
-        # - danger_direct_merge_available == true（即時併合可能）: ペナルティなし（mergeロジックに任せる）
-        # - danger_direct_merge_available == false（即時併合不可能）: 緩和したペナルティ（-1500.0）で強制配置を回避
-        # refs: tmp/state/last_rollback_postmortem.md, game_history/20260318_215042_score0732.jsonl turns 54-61
+        # ----- evaluation axis 8.5: critical deadline immediate merge priority (v270: enhanced penalty for ultra-critical zone) -----
+        # v268の失敗モード解消：deadline_margin < 0.5 で -5000.0ペナルティによる強制配置を回避しつつ、
+        # 超危険領域（deadline_margin < -0.5）での即時併合不可能な選択に対してペナルティを強化（-1500.0 → -3000.0）
+        # ワーストゲーム(score0625)終盤turns 51-55でdeadline_margin=-0.99〜-2.69, reactive_pairs=2-3, merge_available=false続き→max_y=3.65でオーバー
+        # ベストゲーム(score2477)終盤turns 124-127でdeadline_margin=-0.98〜-1.55, reactive_pairs=4, 即時併合3回成功→max_y=2.77で延命
+        # refs: tmp/state/last_rollback_postmortem.md, game_history/20260318_224946_score0625.jsonl turns 51-55, game_history/20260318_230744_score2480.jsonl turns 124-127
+        # ワーストゲーム(score0625)終盤turns 51-55でdeadline_margin=-0.99〜-2.69, reactive_pairs=2-3, merge_available=false続き→max_y=3.65でオーバー
+        # ベストゲーム(score2477)終盤turns 124-127でdeadline_margin=-0.98〜-1.55, reactive_pairs=4, 即時併合3回成功→max_y=2.77で延命
+        # refs: tmp/state/last_rollback_postmortem.md, game_history/20260318_224946_score0625.jsonl turns 51-55, game_history/20260318_230744_score2480.jsonl turns 124-127
 
         reactor_margin = reactor.get("deadline_margin", 0.0)
         danger_direct_merge_available = result.get("danger_direct_merge_available", False)
 
         if reactor_margin < 1.0 and reactive_pair_count >= 1 and merge_grade == "NO":
-            if danger_direct_merge_available:
-                # 即時併合可能な場合：ペナルティなし（mergeロジックに任せる）
+            if reactor_margin < -0.5:
+                # 超危険領域（deadline_margin < -0.5）：即時併合不可能な選択に対して-3000.0ペナルティ
+                # reactive_pairsがある状況で盤面を圧縮する選択を優先し、ゲームオーバー回避
+                score -= 3000.0
+                reasons.append("CRITICAL_DEADLINE_IMMEDIATE_MERGE_PRIORITY")
+            elif danger_direct_merge_available:
+                # 危険領域（-0.5 <= deadline_margin < 1.0）で即時併合可能な場合：ペナルティなし（mergeロジックに任せる）
                 pass
             else:
-                # 即時併合不可能な場合：緩和したペナルティでdeadline緊急性を示すが、強制配置は回避
+                # 危険領域で即時併合不可能な場合：緩和したペナルティで強制配置を回避（v268失敗モード回避）
                 score -= 1500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
