@@ -7,17 +7,17 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
- Decision Logic (9 evaluation axes):
-    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-    2. Height penalty - Penalty for high landing position (varies by phase)
-    3. Drift penalty - Penalty for post-landing drift due to polygon shape
-    4. Left-right balance correction - Bonus for correcting piece count bias
-     5. nextNext centering - Center for next merge opportunity if nextNext same type
-     5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-     6. Chain merge bonus - Evaluate possibility of further merges after merge
-      7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
-     8. Early game merge priority - Strong bonus for merge opportunities in early game
-      8.5. Danger zone reactive pairs merge priority - Bonus for immediate merge when reactive_pairs >= 1 in danger zone (v270)
+Decision Logic (9 evaluation axes):
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase)
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Left-right balance correction - Bonus for correcting piece count bias
+    5. nextNext centering - Center for next merge opportunity if nextNext same type
+    5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
+    6. Chain merge bonus - Evaluate possibility of further merges after merge
+     7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
+    8. Early game merge priority - Strong bonus for merge opportunities in early game
+     8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
 
 Phases (determined by board max Y):
     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -48,18 +48,6 @@ Phases (determined by board max Y):
 # これによりreactive_pairs>=2がある危険域での即時併合機会を優先し、ワーストゲームのような「reactive_pairsがあるのにHIGH_TOWER」判断を回避。
 # 構造的変更（新規評価軸axis 8.5追加）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
 # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260314_013946_score0927.jsonl turns 55-62, game_history/20260314_012722_score1933.jsonl turns 97-100
-#
-# v270: danger zone reactive pairs merge priority enhancement (v269 fix)
-# last_rollback_postmortemの教訓：deadline接近時（deadline_margin < 1.0）にreactive_pairsがあるが即時併合不可能（danger_direct_merge_available=false）の場合、
-# 非併合配置へのペナルティが強制配置を引き起こし、盤面崩壊→低スコアへ直結する失敗モード
-# v270修正：危険域（max_y >= 2.0）でreactive_pairsがある場合、即時併合を最優先:
-# - max_y >= 2.0 && reactive_pair_count >= 1 && merge_grade in ["DIRECT", "NEAR"]: +2000.0 ボーナス（即時併合強制）
-# - max_y >= 2.0 && reactive_pair_count >= 1 && merge_grade == "NO": ペナルティなし（axis 9でREACTIVE_PAIRS_COMPRESSIONを優先）
-# deadline_margin条件は削除し、max_yベースの危険域判定に切り替え
-# refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md
-# batch_summary分析：高スコア群はmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている
-# 低スコア群はmax_y>=2.0でreactive_pairsがあるのにHEIGHT_CONTROL選択で下振れ
-# advice.md「高い位置にあろうが低い位置にあろうが、併合優先しないと盤面圧縮できなくてすぐ死ぬ」
 #
 # v207: reactive_pairsあり時のデフォルト選択を戦略的思考へ変更 - HEIGHT_CONTROL過剰選択の解消
 # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では即時併合がないときの「何もしない」HEIGHT_CONTROLではなく、
@@ -134,24 +122,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v270: Danger zone reactive pairs merge priority enhancement (v269 fix)
+    """v269: Improved deadline handling with reactive merge availability check (v268 fix)
 
-    v269の失敗モード修正：deadline_margin < 1.0 の -3000.0 ペナルティが強すぎて、即時併合できない場合でも高配置を強制。
-    deadline接近時（deadline_margin < 1.0）にreactive_pairsがあるが即時併合不可能（danger_direct_merge_available=false）の場合、
-    非併合配置へのペナルティが強制配置を引き起こし、盤面崩壊→低スコアへ直結する失敗モード。
+    v268の失敗モード（deadline_margin < 0.5 で -5000.0 ペナルティによる強制配置）を修正。
+    deadline接近時（reactor_margin < 1.0）にreactive_pairsがある場合、即時併合が可能かどうかを確認し、
+    即時併合不可能（danger_direct_merge_available == false）の場合はペナルティを緩和して強制配置を回避。
 
-    v270修正：危険域（max_y >= 2.0）でreactive_pairsがある場合、即時併合を最優先:
-    - max_y >= 2.0 && reactive_pair_count >= 1 && merge_grade in ["DIRECT", "NEAR"]: +2000.0 ボーナス（即時併合強制）
-    - max_y >= 2.0 && reactive_pair_count >= 1 && merge_grade == "NO": ペナルティなし（axis 9でREACTIVE_PAIRS_COMPRESSIONを優先）
-    deadline_margin条件は削除し、max_yベースの危険域判定に切り替え
+    ワーストゲーム(score0732)終盤turns 54-61でdeadline_marginが-0.67〜-0.51、reactive_pairs=2-3あるのに
+    merge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続き、max_yが2.5まで上昇しゲームオーバー。
+    これはdeadline_margin < 1.0 の -3000.0 ペナルティが強すぎて、即時併合できない場合でも高配置を強制したため。
 
-    ワーストゲーム(score0732)終盤turns 54-61でdeadline_margin=-0.67〜-0.51, reactive_pairs=2-3, merge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
-    ベストゲーム(score2416)終盤turns 121-128でdeadline_margin=-0.57〜-2.78, reactive_pairs=2-3で即時併合を確実に捉えmax_y=3.6でも延命成功。
-
-    batch_summary分析：高スコア群はmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている
-    低スコア群はmax_y>=2.0でreactive_pairsがあるのにHEIGHT_CONTROL選択で下振れ
-
-    advice.md「高い位置にあろうが低い位置にあろうが、併合優先しないと盤面圧縮できなくてすぐ死ぬ」
+    修正: deadline_margin < 1.0 && reactive_pair_count >= 1 の場合、
+    - danger_direct_merge_available == true（即時併合可能）: ペナルティなし（mergeロジックに任せる）
+    - danger_direct_merge_available == false（即時併合不可能）: 緩和したペナルティ（-1500.0）
+    これによりdeadline緊急性を尊重しつつ、即時併合が不可能な場合の強制配置失敗モードを回避。
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -411,25 +395,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
         # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
-        # ----- evaluation axis 8.5: danger zone reactive pairs merge priority (v270: reactive pairs immediate merge enhancement) -----
-        # last_rollback_postmortemの教訓：deadline接近時（deadline_margin < 1.0）にreactive_pairsがあるが即時併合不可能（danger_direct_merge_available=false）の場合、
-        # 非併合配置へのペナルティが強制配置を引き起こし、盤面崩壊→低スコアへ直結する失敗モード
-        # v270修正：危険域（max_y >= 2.0）でreactive_pairsがある場合、即時併合を最優先:
-        # - max_y >= 2.0 && reactive_pair_count >= 1 && merge_grade in ["DIRECT", "NEAR"]: +2000.0 ボーナス（即時併合強制）
-        # - max_y >= 2.0 && reactive_pair_count >= 1 && merge_grade == "NO": ペナルティなし（axis 9でREACTIVE_PAIRS_COMPRESSIONを優先）
-        # deadline_margin条件は削除し、max_yベースの危険域判定に切り替え
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md
-        # batch_summary分析：高スコア群はmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている
-        # 低スコア群はmax_y>=2.0でreactive_pairsがあるのにHEIGHT_CONTROL選択で下振れ
-        # advice.md「高い位置にあろうが低い位置にあろうが、併合優先しないと盤面圧縮できなくてすぐ死ぬ」
+        # ----- evaluation axis 8.5: danger zone immediate merge priority (v269: improved deadline handling with reactive merge availability check) -----
+        # v268の失敗モード修正: deadline_margin < 1.0 の -3000.0 ペナルティが強すぎて、即時併合できない場合でも高配置を強制。
+        # ワーストゲーム(score0732)終盤turns 54-61でdeadline_margin=-0.67〜-0.51, reactive_pairs=2-3, merge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
+        # v269修正: deadline_margin < 1.0 && reactive_pair_count >= 1 の場合、danger_direct_merge_availableで判断:
+        # - danger_direct_merge_available == true（即時併合可能）: ペナルティなし（mergeロジックに任せる）
+        # - danger_direct_merge_available == false（即時併合不可能）: 緩和したペナルティ（-1500.0）で強制配置を回避
+        # refs: tmp/state/last_rollback_postmortem.md, game_history/20260318_215042_score0732.jsonl turns 54-61
 
-        if max_y >= 2.0 and reactive_pair_count >= 1:
-            if merge_grade in ["DIRECT", "NEAR"]:
-                # 危険域でreactive_pairsがある場合、即時併合を最優先
-                score += 2000.0
-                reasons.append("DANGER_ZONE_REACTIVE_PAIRS_IMMEDIATE_MERGE")
-            # merge_grade == "NO" の場合はペナルティなし
-            # axis 9のREACTIVE_PAIRS_COMPRESSIONがデフォルトとして機能し、盤面圧縮を優先
+        reactor_margin = reactor.get("deadline_margin", 0.0)
+        danger_direct_merge_available = result.get("danger_direct_merge_available", False)
+
+        if reactor_margin < 1.0 and reactive_pair_count >= 1 and merge_grade == "NO":
+            if danger_direct_merge_available:
+                # 即時併合可能な場合：ペナルティなし（mergeロジックに任せる）
+                pass
+            else:
+                # 即時併合不可能な場合：緩和したペナルティでdeadline緊急性を示すが、強制配置は回避
+                score -= 1500.0
+                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
