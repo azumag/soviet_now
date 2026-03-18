@@ -107,6 +107,7 @@ PY
 	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
 	echo "$result" > "$PREDICTION_STATE_FILE"
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
+	./twitch_chat.sh send "チャネルポイント予想スタート！「12ゲーム中に建国できる？」投票受付中（${PREDICTION_WINDOW_SEC}秒）" 2>/dev/null &
 	echo "$result"
 	;;
 
@@ -158,7 +159,9 @@ PY
 	fi
 
 	OUTCOME_LABELS=("建国なし" "ロシア建国" "ソ連建国" "粛清される")
-	_log "prediction resolved: ${OUTCOME_LABELS[$OUTCOME_INDEX]:-index=$OUTCOME_INDEX}"
+	OUTCOME_LABEL="${OUTCOME_LABELS[$OUTCOME_INDEX]:-index=$OUTCOME_INDEX}"
+	_log "prediction resolved: $OUTCOME_LABEL"
+	./twitch_chat.sh send "予想結果：「${OUTCOME_LABEL}」でした！" 2>/dev/null &
 	rm -f "$PREDICTION_STATE_FILE"
 	;;
 
