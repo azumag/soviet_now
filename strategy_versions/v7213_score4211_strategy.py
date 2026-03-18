@@ -20,12 +20,12 @@ Game Overview:
        8.5. Danger zone immediate merge force priority - Immediate merge force priority when max_y>=0.8 and reactive_pairs>=1 (v263: condition relaxed)
        8.6. Danger zone no merge penalty - No merge penalty when max_y>=0.8 and reactive_pairs>=1 (v264: condition relaxed from max_y>=1.8 && reactive_pairs>=2)
        8.7. Expanded danger zone absolute merge priority - Scaled penalty -(3000.0 + reactive_pairs * 500.0) when max_y>=1.8 and reactive_pairs>=3
- 
-Phases (determined by board max Y):
-    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-    MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
-    HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-    CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+  
+  Phases (determined by board max Y):
+     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+     MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
+     HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+     CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
  # --- Change History ---
 # v265: axis 8.8実装誤り修正 - deadline_margin接近時の非併合ペナルティ化
@@ -380,20 +380,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v263: axis 8.5/8.6/8.7/8.9 are active for max_y >= 0.8 && reactive_pairs >= 1.
         # v264の失敗: max_y < 1.8（安全域）だがdeadline_marginがcritical(0.35 or -0.07)でreactive_pairs=4-6ある状況が検出できなかった
         # v264の実装誤り: merge_grade in ["DIRECT", "NEAR"]でscore -= 3000.0となっていた（即時併合にペナルティを与える誤り）
-        # 修正: merge_grade == "NO"でscore -= 3000.0へ変更。deadline_margin < 1.0 && reactive_pairs >= 1の場合、
+        # 修正: merge_grade == "NO"でscore -= 3000.0へ変更。max_y < 0.8 && deadline_margin < 1.0 && reactive_pairs >= 2の場合、
         # 即時併合がない非併合選択に強力なペナルティを与え、deadline接近時の即時併合優先を強制。
-        # Condition: deadline_margin < 1.0 AND reactive_pairs >= 1 AND merge_grade == "NO"
+        # axis 8.6はmax_y >= 0.8 && reactive_pairs >= 1で発動するため、axis 8.8はmax_y < 0.8 && reactive_pairs >= 2で排他的に動作
+        # Condition: max_y < 0.8 AND deadline_margin < 1.0 AND reactive_pairs >= 2 AND merge_grade == "NO"
         # Penalty: -3000.0 (similar to axes 8.6/8.7)
         # This creates a penalty for non-merge placements when:
+        #   board is in safe zone (max_y < 0.8)
         #   deadline is approaching (deadline_margin < 1.0)
-        #   reactive pairs are available (reactive_pairs >= 1)
+        #   multiple reactive pairs are available (reactive_pairs >= 2)
         #   no immediate merge is possible (merge_grade == "NO")
         # refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260318_085051_score0883.jsonl turns 64-71, game_history/20260318_082956_score3464.jsonl turns 124-132
         reactor_margin = reactor.get("deadline_margin", 0.0)
-        if reactor_margin < 1.0 and reactive_pair_count >= 1 and merge_grade == "NO":
-            # deadline is approaching (deadline_margin < 1.0) and reactive pairs are available
-            # non-merge placement in this situation is critical for safety
-            # immediate merge priority to avoid game over
+        if max_y < 0.8 and reactor_margin < 1.0 and reactive_pair_count >= 2 and merge_grade == "NO":
+            # v265 fix: deadline approaching (margin < 1.0) with multiple reactive pairs available in safe zone
+            # Apply penalty to non-merge selections to force immediate merge priority
+            # Prevents missing merge opportunities in critical deadline situations
             score -= 3000.0
             reasons.append("DEADLINE_MARGIN_IMMEDIATE_MERGE_PRIORITY")
 
