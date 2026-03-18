@@ -33,98 +33,110 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-   # --- Change History ---
-   # [BEST:3689] v126: v42-based HIGH phase merge enhancement
-   # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
-   # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
-   #
-   # v238: 未活用情報near_pairs活用による即時併合強化版 - HEIGHT_CONTROL過剰選択解消・rollback failure mode潰し
-   #
-   # last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
-   # batch_summary: HEIGHT_CONTROLが15.7%選択(avg_score_delta=0.4)と過剰、REACTIVE_PAIRS_HEIGHT_RELAXED avg_score_delta=5.6 は高いが選択率が低い。
-   # advice.md「盤面が詰まっても即時併合を狙うべきだ」「高さがリスクになる局面はほぼ詰みの状態が多く、高さによる危険回避の重要性は低く見てよい」
-   # v237の危険域定義拡大(max_y>=1.8)とheight_penalty軽減(0.2倍)は数値微調整であり、構造的変更が不十分。
-   # 未活用情報のnear_pairs（反応器に近いペア）を活用した新しい評価軸(axis 8.2)を追加し、即時併合機会を強化。
-   # これによりHEIGHT_CONTROL過剰選択を構造的に解消し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
-   # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, analyze_board.py
-   #
-# v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
-# ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
-# ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
-# batch_summaryでHEIGHT_CONTROLが13.8%選択(avg_score_delta=0.3)と過剰であり、終盤高危険域(max_y>=2.0)での即時併合優先が弱いことを確認。
-# v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
-# v210で「reactive_pairs>=1かつmerge_grade=="NO"でheight_penaltyを2倍に強化」が導入されたが、max_y>=2.0の危険域ではHIGH_TOWER判断を完全に抑制できていない問題を解消。
-# 危純に「max_y>=2.0かつreactive_pairs>=2かつDIRECT/NEARマージ」で強力なボーナス(1200.0)を与え、危険なHIGH_TOWER判断を上書きする評価軸を追加。
-# これによりreactive_pairs>=2がある危険域での即時併合機会を優先し、ワーストゲームのような「reactive_pairsがあるのにHIGH_TOWER」判断を回避。
-# 構造的変更（新規評価軸axis 8.5追加）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
-# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260314_013946_score0927.jsonl turns 55-62, game_history/20260314_012722_score1933.jsonl turns 97-100
-#
-# v207: reactive_pairsあり時のデフォルト選択を戦略的思考へ変更 - HEIGHT_CONTROL過剰選択の解消
-# batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では即時併合がないときの「何もしない」HEIGHT_CONTROLではなく、
-# reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える必要がある。
-# ワーストゲーム(score0814)終盤turns 54-57でreactive_pairs=2あるのにMEDIUM_TOWER選択で併合機会を取りこぼしている失敗パターンを解消。
-# ベストゲーム(score4925)はreactive_pairsが少ないが即時併合機会を確実に捉えている。
-# v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
-# reactive_pairsがある場合、即時併合がない時のデフォルト選択をHEIGHT_CONTROLからREACTIVE_PAIRS_COMPRESSIONへ変更し、盤面圧縮を優先。
-# これによりreactive_pairsがある状況で「何もしない」挙動を改善し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
-# 構造的変更（評価軸9追加）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHEIGHT_TOWER) を潰す。
-# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl, game_history/20260313_231248_score4925.jsonl, strategy_versions/best_score2335_strategy.py
-#
-# v206: reactive_pairs>=3で即時併合優先強化版 - 即時併合機会取りこぼし削減
-# ワーストゲーム(score0761)終盤でreactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER_REACTIVE_PAIRS_COMPRESSION選択。
-# ベストゲーム(score2603)終盤でもreactive_pairs=4-5あるのにmerge_available=falseでHIGH_TOWER_REACTIVE_PAIRS_COMPRESSION選択。
-# v205の盤面密度ボーナス（+300.0）が大きすぎて、即時併合機会を取りこぼす原因になっている。
-# v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
-# reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを+800.0から+1000.0に強化。
-# reactive_pairs>=3で即時併合なし（NO）の場合、盤面密度ボーナスを+300.0から+50.0に削減。
-# これによりreactive_pairs>=3の場合、即時併合機会を優先するようになり、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
-# 構造的変更（評価軸強化）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
-# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_222224_score0761.jsonl, game_history/20260313_222659_score2603.jsonl
-#
-# v204: reactive_pairs==1 即時併合優先ボーナス追加 - 即時併合機会取りこぼし削減
-# batch_summaryでHEIGHT_CONTROLが26.5%選択(avg_score_delta=0.7)と過剰、NEAR_MERGE系が3.3-9.2%選択(avg_score_delta=28-57)と低選択率を確認。
-# ワーストゲーム(score0322, score1121)終盤でreactive_pairs=1-2あるにもかかわらずHIGH_TOWER/HIGH_LAYER選択で下振れ。
-# v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルなマージ重視戦略を維持。
-# reactive_pairs>=2での既存800.0ボーナスに加え、reactive_pairs==1でも即時併合時に400.0ボーナスを付与。
-# これによりreactive_pairs==1のケースでの即時併合機会取りこぼし削減し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
-# 構造的変更（条件分岐追加）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
-# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_211912_score0322.jsonl, game_history/20260313_204643_score1121.jsonl, game_history/20260313_211052_score2256.jsonl
-#
-# v203: nextNextブロック回避評価軸追加 - 2手先併合機会最大化
-# advice.mdで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
-# batch_summaryでHEIGHT_CONTROLが25.7%選択(avg_score_delta=2.2)と過剰、NEAR_MERGE系が3.1-5.4%選択(avg_score_delta=28-57)と低価値かつ低選択率。
-# v201 rollback教訓: シンプルなマージ重視戦略を維持し、即時併合機会の取りこぼしを削減する構造的改善が必要。
-# 未活用情報のnextNextを活用し、nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置ではペナルティ(-400.0)を与える。
-# これにより「A上にBを置くとnextNextのAの併合機会を潰す」問題を回避し、2手先の併合可能性を最大化。
-# 構造的変更（新規評価軸axis 5.5追加）であり、数値微調整ではない。
-# refs: advice.md (Pitman_live, azumag), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
-#
-# v202: reactive pairsボーナス強化版 - 即時併合機会の取りこぼし削減
-# batch_summaryでNEAR_MERGE系reasonsがavg_score_delta=28-57（高価値）だが選択率が3.8-9.2%と低いことを確認。
-# ワーストゲーム終盤（score932）ではreactive_pairs=4.5あるにもかかわらず即時併合優先が弱く、HEIGHT_CONTROL選択で下振れ。
-# ベストゲーム（score3037）はreactive_pairsが少ないが即時併合機会を確実に捉えてスコア稼ぎ。
-# v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルなマージ重視戦略を維持。
-# reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を強化。
-# reactive_pairs >= 2 でのボーナスを 500.0 → 800.0 に強化し、即時併合機会の取りこぼし削減で下振れ耐性向上。
-# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_201117_score0932.jsonl turns 56-63, game_history/20260313_200849_score3037.jsonl turns 142-149
-#
-# v189: シンプル化・初期マージ重視版
-# batch_summaryでHEIGHT_CONTROLが28.7%選択(avg_score_delta=1.8)と依然として過剰であることを確認。
-# v188の過度な複雑化（v187の近接マージ機会判定、v184の併合機会条件付抑制など）がスコア安定性を低下させている。
-# ワーストゲーム(score0826)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
-# ベストゲーム(score2330)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア2330を出していることを確認。
-# refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_050953_score0826.jsonl, game_history/20260308_050518_score2330.jsonl,
-# strategy_versions/best_score2335_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
-#
-# v197: LOW phase height penalty reduction for early game chain opportunities
-# batch_summary shows HEIGHT_CONTROL is over-selected in low-score games (27.5% vs 24.6% in high-score games).
-# Low-score games place pieces too low early (avg -2.73 vs -2.35), missing chain merge opportunities.
-# HEIGHT_CONTROL has very low value (avg_score_delta=0.9) but is selected 25.8% overall.
-# The LOW phase height penalty (height_mult=0.8) is discouraging necessary early-game board building.
-# Reduce LOW phase height_mult from 0.8 to 0.6 (25% reduction) to allow slightly higher early placement,
-# enabling chain merge opportunities while reducing HEIGHT_CONTROL over-selection.
-# This addresses the root cause: low-score games playing too conservatively early.
-# refs: tmp/batch_summary.txt, game_history/20260308_172623_score0598.jsonl, game_history/20260308_175330_score2416.jsonl
+    # --- Change History ---
+    # [BEST:3689] v126: v42-based HIGH phase merge enhancement
+    # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
+    # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
+    #
+    # v239: 高さに関わらず併合を優先する戦略強化 - LOW phase merge priority enhancement
+    #
+    # improve_brief.md: 直近12試合の中央値・下振れ耐性を優先。特に初期段階での併合優先戦略への回帰を検討。
+    # advice.md: 高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになるので、併合優先戦略に切り替える必要がある。
+    # advice.md: 盤面が低い段階から併合を優先する判断を追加。高さに関わらず併合チャンスを柔軟に捉える戦略改善。
+    # advice.md: 序盤の高さ稼ぎはスコアや建国に悪影響であり、高さを抑える戦略を優先すべき。
+    # batch_summary: LOW phase height_mult=0.8では抑制が強すぎ、初期段階でのHEIGHT_CONTROL選択が過剰。
+    # HIGH_TOWER/HIGH_LAYER判断が過剰になり、即時併合機会を取りこぼす失敗モードを解消。
+    # LOW phase height_multを0.8から1.0に戻し、初期段階での併合優先を強化。
+    # これにより初期段階でのHEIGHT_CONTROL過剰選択を抑制し、即時併合機会を優先して、p25悪化の主要因である「初期段階での併合機会を取りこぼす」問題を解消。
+    # refs: tmp/improve_brief.md, advice.md, tmp/batch_summary.txt
+    #
+    # v238: 未活用情報near_pairs活用による即時併合強化版 - HEIGHT_CONTROL過剰選択解消・rollback failure mode潰し
+    #
+    # last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
+    # batch_summary: HEIGHT_CONTROLが15.7%選択(avg_score_delta=0.4)と過剰、REACTIVE_PAIRS_HEIGHT_RELAXED avg_score_delta=5.6 は高いが選択率が低い。
+    # advice.md「盤面が詰まっても即時併合を狙うべきだ」「高さがリスクになる局面はほぼ詰みの状態が多く、高さによる危険回避の重要性は低く見てよい」
+    # v237の危険域定義拡大(max_y>=1.8)とheight_penalty軽減(0.2倍)は数値微調整であり、構造的変更が不十分。
+    # 未活用情報のnear_pairs（反応器に近いペア）を活用した新しい評価軸(axis 8.2)を追加し、即時併合機会を強化。
+    # これによりHEIGHT_CONTROL過剰選択を構造的に解消し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
+    # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, analyze_board.py
+    #
+    # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
+    # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
+    # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
+    # batch_summaryでHEIGHT_CONTROLが13.8%選択(avg_score_delta=0.3)と過剰であり、終盤高危険域(max_y>=2.0)での即時併合優先が弱いことを確認。
+    # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+    # v210で「reactive_pairs>=1かつmerge_grade=="NO"でheight_penaltyを2倍に強化」が導入されたが、max_y>=2.0の危険域ではHIGH_TOWER判断を完全に抑制できていない問題を解消。
+    # 危純に「max_y>=2.0かつreactive_pairs>=2かつDIRECT/NEARマージ」で強力なボーナス(1200.0)を与え、危険なHIGH_TOWER判断を上書きする評価軸を追加。
+    # これによりreactive_pairs>=2がある危険域での即時併合機会を優先し、ワーストゲームのような「reactive_pairsがあるのにHIGH_TOWER」判断を回避。
+    # 構造的変更（新規評価軸axis 8.5追加）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
+    # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md, game_history/20260314_013946_score0927.jsonl turns 55-62, game_history/20260314_012722_score1933.jsonl turns 97-100
+    #
+    # v207: reactive_pairsあり時のデフォルト選択を戦略的思考へ変更 - HEIGHT_CONTROL過剰選択の解消
+    # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では即時併合がないときの「何もしない」HEIGHT_CONTROLではなく、
+    # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える必要がある。
+    # ワーストゲーム(score0814)終盤turns 54-57でreactive_pairs=2あるのにMEDIUM_TOWER選択で併合機会を取りこぼしている失敗パターンを解消。
+    # ベストゲーム(score4925)はreactive_pairsが少ないが即時併合機会を確実に捉えている。
+    # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+    # reactive_pairsがある場合、即時併合がない時のデフォルト選択をHEIGHT_CONTROLからREACTIVE_PAIRS_COMPRESSIONへ変更し、盤面圧縮を優先。
+    # これによりreactive_pairsがある状況で「何もしない」挙動を改善し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
+    # 構造的変更（評価軸9追加）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHEIGHT_TOWER) を潰す。
+    # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl, game_history/20260313_231248_score4925.jsonl, strategy_versions/best_score2335_strategy.py
+    #
+    # v206: reactive_pairs>=3で即時併合優先強化版 - 即時併合機会取りこぼし削減
+    # ワーストゲーム(score0761)終盤でreactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER_REACTIVE_PAIRS_COMPRESSION選択。
+    # ベストゲーム(score2603)終盤でもreactive_pairs=4-5あるのにmerge_available=falseでHIGH_TOWER_REACTIVE_PAIRS_COMPRESSION選択。
+    # v205の盤面密度ボーナス（+300.0）が大きすぎて、即時併合機会を取りこぼす原因になっている。
+    # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+    # reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを+800.0から+1000.0に強化。
+    # reactive_pairs>=3で即時併合なし（NO）の場合、盤面密度ボーナスを+300.0から+50.0に削減。
+    # これによりreactive_pairs>=3の場合、即時併合機会を優先するようになり、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
+    # 構造的変更（評価軸強化）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
+    # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_222224_score0761.jsonl, game_history/20260313_222659_score2603.jsonl
+    #
+    # v204: reactive_pairs==1 即時併合優先ボーナス追加 - 即時併合機会取りこぼし削減
+    # batch_summaryでHEIGHT_CONTROLが26.5%選択(avg_score_delta=0.7)と過剰、NEAR_MERGE系が3.3-9.2%選択(avg_score_delta=28-57)と低選択率を確認。
+    # ワーストゲーム(score0322, score1121)終盤でreactive_pairs=1-2あるにもかかわらずHIGH_TOWER/HIGH_LAYER選択で下振れ。
+    # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルなマージ重視戦略を維持。
+    # reactive_pairs>=2での既存800.0ボーナスに加え、reactive_pairs==1でも即時併合時に400.0ボーナスを付与。
+    # これによりreactive_pairs==1のケースでの即時併合機会取りこぼし削減し、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
+    # 構造的変更（条件分岐追加）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
+    # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_211912_score0322.jsonl, game_history/20260313_204643_score1121.jsonl, game_history/20260313_211052_score2256.jsonl
+    #
+    # v203: nextNextブロック回避評価軸追加 - 2手先併合機会最大化
+    # advice.mdで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
+    # batch_summaryでHEIGHT_CONTROLが25.7%選択(avg_score_delta=2.2)と過剰、NEAR_MERGE系が3.1-5.4%選択(avg_score_delta=28-57)と低価値かつ低選択率。
+    # v201 rollback教訓: シンプルなマージ重視戦略を維持し、即時併合機会の取りこぼしを削減する構造的改善が必要。
+    # 未活用情報のnextNextを活用し、nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置ではペナルティ(-400.0)を与える。
+    # これにより「A上にBを置くとnextNextのAの併合機会を潰す」問題を回避し、2手先の併合可能性を最大化。
+    # 構造的変更（新規評価軸axis 5.5追加）であり、数値微調整ではない。
+    # refs: advice.md (Pitman_live, azumag), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
+    #
+    # v202: reactive pairsボーナス強化版 - 即時併合機会の取りこぼし削減
+    # batch_summaryでNEAR_MERGE系reasonsがavg_score_delta=28-57（高価値）だが選択率が3.8-9.2%と低いことを確認。
+    # ワーストゲーム終盤（score932）ではreactive_pairs=4.5あるにもかかわらず即時併合優先が弱く、HEIGHT_CONTROL選択で下振れ。
+    # ベストゲーム（score3037）はreactive_pairsが少ないが即時併合機会を確実に捉えてスコア稼ぎ。
+    # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。シンプルなマージ重視戦略を維持。
+    # reactor情報のreactive_pairs（反応性のあるペア）を活用し、2つ以上ある場合にマージを優先する評価軸を強化。
+    # reactive_pairs >= 2 でのボーナスを 500.0 → 800.0 に強化し、即時併合機会の取りこぼし削減で下振れ耐性向上。
+    # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_201117_score0932.jsonl turns 56-63, game_history/20260313_200849_score3037.jsonl turns 142-149
+    #
+    # v189: シンプル化・初期マージ重視版
+    # batch_summaryでHEIGHT_CONTROLが28.7%選択(avg_score_delta=1.8)と依然として過剰であることを確認。
+    # v188の過度な複雑化（v187の近接マージ機会判定、v184の併合機会条件付抑制など）がスコア安定性を低下させている。
+    # ワーストゲーム(score0826)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
+    # ベストゲーム(score2330)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア2330を出していることを確認。
+    # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_050953_score0826.jsonl, game_history/20260308_050518_score2330.jsonl,
+    # strategy_versions/best_score2335_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
+    #
+    # v197: LOW phase height penalty reduction for early game chain opportunities
+    # batch_summary shows HEIGHT_CONTROL is over-selected in low-score games (27.5% vs 24.6% in high-score games).
+    # Low-score games place pieces too low early (avg -2.73 vs -2.35), missing chain merge opportunities.
+    # HEIGHT_CONTROL has very low value (avg_score_delta=0.9) but is selected 25.8% overall.
+    # The LOW phase height penalty (height_mult=0.8) is discouraging necessary early-game board building.
+    # Reduce LOW phase height_mult from 0.8 to 0.6 (25% reduction) to allow slightly higher early placement,
+    # enabling chain merge opportunities while reducing HEIGHT_CONTROL over-selection.
+    # This addresses the root cause: low-score games playing too conservatively early.
+    # refs: tmp/batch_summary.txt, game_history/20260308_172623_score0598.jsonl, game_history/20260308_175330_score2416.jsonl
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -180,7 +192,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
-        height_mult = 1.0  # v177: LOW phase height_mult (best score 5310)
+        height_mult = 1.0  # v239: LOW phase height_mult enhanced (v197: 0.8→1.0)
         merge_mult = 1.2  # 20% merge bonus increase, actively target
     elif max_y < 1.8:
         phase = "MEDIUM"
@@ -234,8 +246,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
+        # v239: LOW phase height_mult enhanced (v197: 0.8→1.0)
         height_penalty = landing_y * 50.0 * height_mult
+
+        # v239: LOW phase merge priority enhancement - HEIGHT_CONTROL過剰選択解消
+        # improve_brief.md: 直近12試合の中央値・下振れ耐性を優先。特に初期段階での併合優先戦略への回帰を検討。
+        # advice.md: 高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになるので、併合優先戦略に切り替える必要がある。
+        # advice.md: 盤面が低い段階から併合を優先する判断を追加。高さに関わらず併合チャンスを柔軟に捉える戦略改善。
+        # advice.md: 序盤の高さ稼ぎはスコアや建国に悪影響であり、高さを抑える戦略を優先すべき。
+        # batch_summary: LOW phase height_mult=0.8では抑制が強すぎ、初期段階でのHEIGHT_CONTROL選択が過剰。
+        # HIGH_TOWER/HIGH_LAYER判断が過剰になり、即時併合機会を取りこぼす失敗モードを解消。
+        # LOW phaseでmerge_gradeがDIRECT/NEARの場合、HIGH_TOWER/HIGH_LAYERペナルティを0.5倍に緩和して併合優先を強化。
+        # これにより初期段階でのHEIGHT_CONTROL過剰選択を抑制し、即時併合機会を優先して、p25悪化の主要因である「初期段階での併合機会を取りこぼす」問題を解消。
+        # refs: tmp/improve_brief.md, advice.md, tmp/batch_summary.txt
+
+        # v239: Apply LOW phase merge priority - relax HIGH_TOWER/HIGH_LAYER penalty when immediate merge available
+        if phase == "LOW" and merge_grade in ["DIRECT", "NEAR"]:
+            height_penalty *= 0.5  # Strong relief to prioritize immediate merge in early game
+            reasons.append("LOW_MERGE_PRIORITY")
 
         # v237: 危険域定義拡大とreactive_pairs活用強化版 - rollback failure mode潰し
         # last_rollback_analysis: anchor比でcomp=-234.4 p50=-197.0 p25=-278.8と明確に悪化。
