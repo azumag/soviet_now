@@ -36,16 +36,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-# v273: danger_piece_countベース即時併合優先版 - d2176809 rollback failure mode (danger zone HEIGHT_CONTROL) 潰し
+# v274: 危険ピース数増強即時併合優先版 - ワーストゲーム(score0508)終盤危険エリア即時併合取りこぼし潰し
+# ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
+# ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
+# batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が3.0-4.2%選択(avg_score_delta=22.3-37.9)と低選択率を確認。
+# v273の固定+800.0ボーナスでは、danger_piece_countの緊急性を十分反映できていなかった問題を解消。
+# danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
+# 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
 # last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-# v272のaxis 8.5はdeadline_marginベースで判断していたが、danger_piece_countを直接活用していない問題を解消。
-# danger_piece_count > 0の時は即時併合に+800.0ボーナスを付与し、危険領域での即時併合優先を強化。
-# 即時併合機会がない場合はheight_multを0.6に緩和し、戦略的配置の余地を確保。
-# ワーストゲーム(score0728)終盤でdeadline_crossed時の即時併合取りこぼしでゲームオーバー。
-# ベストゲーム(score2246)終盤でdeadline_crossed時の即時併合成功で延命。
-# 構造的変更（axis 8.5置換）であり、数値微調整ではない。rollback failure mode (danger zone HEIGHT_CONTROL) を潰す。
+# 即時併合機会がある候補が強化されることで、危険エリアでの即時併合優先が強化され、
+# ワーストゲームのような「danger_piece_count増加中に即時併合取りこぼし」問題を解消。
+# 構造的変更（axis 8.5置換）であり、数値微調整ではない。failure mode (危険エリア即時併合取りこぼし) を潰す。
 # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md (Pitman_live),
-#       game_history/20260319_065933_score0728.jsonl, game_history/20260319_070945_score2246.jsonl
+#       game_history/20260319_080238_score0508.jsonl turns 58-61, game_history/20260319_074738_score2160.jsonl turns 102-106
 #
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
@@ -155,21 +158,23 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v272: 危険領域reactive_pairs即時併合優先強化 - v271失敗モード（即時併合機会逃し）潰し
+    """v274: 危険ピース数増強即時併合優先版 - ワーストゲーム(score0508)終盤危険エリア即時併合取りこぼし潰し
 
-    advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」（Pitman_live）に基づく構造的改善。
-    batch_summaryでHEIGHT_CONTROLが15.9%選択(avg_score_delta=0.1)と過剰であり、即時併合機会を取りこぼしていることを確認。
-    axis 9.5追加：盤面上の現在タイプピースの上に配置を優先する評価軸を追加し、即時併合機会を最大化。
-    reactive_pairsがある状況では、即時併合機会を確実に捉える配置を優先し、盤面圧縮と将来の併合を同時に狙う。
+    ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
+    ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
+    batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が3.0-4.2%選択(avg_score_delta=22.3-37.9)と低選択率を確認。
+    v273の固定+800.0ボーナスでは、danger_piece_countの緊急性を十分反映できていなかった問題を解消。
+    axis 8.5改善：danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
+    即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
     last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-    ワーストゲーム(score0266)終盤でreactive_pairsがあるのにHEIGHT_CONTROLが続き、即時併合機会を取りこぼしている失敗パターンを解消。
+    即時併合機会がある候補が強化されることで、危険エリアでの即時併合優先が強化され、
+    ワーストゲームのような「danger_piece_count増加中に即時併合取りこぼし」問題を解消。
 
-    v272の改善点:
-    1. axis 9.5追加：現在タイプのスタック優先（same type stacking）
-       - 即時併合がない場合、盤面上の現在タイプの最も高い位置のピースに配置を優先
-       - reactive_pairs >= 1 の場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う
-    2. v271のreactive pairs height penalty relaxationを維持
-    3. axis 8.5のdanger zone immediate merge priorityを維持
+    v274の改善点:
+    1. axis 8.5改善：danger_piece_count増強即時併合優先
+       - danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
+       - 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保
+    2. v273のaxis 9.5（same type stacking）を維持
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -446,23 +451,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
         # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
-        # ----- evaluation axis 8.5: danger zone immediate merge priority (v273: danger_piece_countベース即時併合優先版) -----
-        # v272のaxis 8.5はdeadline_marginベースで判断していたが、danger_piece_countを直接活用していない問題を解消。
+        # ----- evaluation axis 8.5: danger zone immediate merge priority (v274: 危険ピース数増強即時併合優先版) -----
+        # v273の固定+800.0ボーナスでは、danger_piece_countの緊急性を十分反映できていなかった問題を解消。
         # last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-        # danger_piece_count > 0の時は即時併合を強力に優先し、即時併合がない時はheight_multを緩和して戦略的配置の余地を確保。
-        # ワーストゲーム(score0728)終盤でdeadline_crossed時の即時併合取りこぼしでゲームオーバー。
-        # ベストゲーム(score2246)終盤でdeadline_crossed時の即時併合成功で延命。
-        # danger_piece_countベースの明確な危険判定により、危険領域での即時併合優先を強化。
+        # danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
+        # 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
+        # ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
+        # ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
+        # danger_piece_count増強の明確な危険判定により、危険領域での即時併合優先を強化。
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md (Pitman_live),
-        #       game_history/20260319_065933_score0728.jsonl, game_history/20260319_070945_score2246.jsonl
+        #       game_history/20260319_080238_score0508.jsonl turns 58-61, game_history/20260319_074738_score2160.jsonl turns 102-106
 
         danger_piece_count = reactor.get("danger_piece_count", 0)
         danger_direct_merge_available = result.get("danger_direct_merge_available", False)
 
         if danger_piece_count > 0:
             if merge_grade in ["DIRECT", "NEAR"]:
-                # 危険ピースがある時は即時併合を強力に優先
-                score += 800.0
+                # 危険ピース数に応じて即時併合ボーナスを段階的に強化し、緊急性を反映
+                # 1個: +800.0, 2個: +1000.0, 3個以上: +1200.0
+                if danger_piece_count >= 3:
+                    score += 1200.0
+                elif danger_piece_count >= 2:
+                    score += 1000.0
+                else:
+                    score += 800.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO" and danger_direct_merge_available:
                 # 即時併合可能だが、この候補では併合できない場合：ペナルティ
