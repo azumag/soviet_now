@@ -120,11 +120,10 @@ resolve)
 
 	state=$(cat "$PREDICTION_STATE_FILE")
 	PREDICTION_ID=$(echo "$state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prediction_id"])' 2>/dev/null)
-	WINNING_OUTCOME_ID=$(echo "$state" | python3 - "$OUTCOME_INDEX" <<'PY' 2>/dev/null
+	WINNING_OUTCOME_ID=$(python3 - "$state" "$OUTCOME_INDEX" <<'PY' 2>/dev/null
 import json, sys
-idx = int(sys.argv[1])
-data = json.load(sys.stdin)
-print(data["outcome_ids"][idx])
+data = json.loads(sys.argv[1])
+print(data["outcome_ids"][int(sys.argv[2])])
 PY
 )
 
