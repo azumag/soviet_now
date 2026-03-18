@@ -534,6 +534,7 @@ _synthesize_chunk() {
     VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" \
     VOICEVOX_PITCH="${PRE_SYNTH_PITCH:-}" \
     VOICEVOX_TEMPO="${PRE_SYNTH_TEMPO:-}" \
+    VOICEVOX_INTONATION="${PRE_SYNTH_INTONATION:-}" \
     VOICEVOX_TIMEOUT=30 \
     VOICEVOX_MAX_CHARS=99999 \
     ./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
@@ -705,14 +706,17 @@ _launch_say() {
         fi
         local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
         # IDごとのピッチ・テンポ設定をルックアップ
-        local vo_pitch="" vo_tempo=""
+        local vo_pitch="" vo_tempo="" vo_intonation=""
         if [ -f "tmp/voicevox_pitch_map.txt" ]; then
             vo_pitch=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_pitch_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
         fi
         if [ -f "tmp/voicevox_tempo_map.txt" ]; then
             vo_tempo=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_tempo_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
         fi
-        _log "VOICEVOX speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}"
+        if [ -f "tmp/voicevox_intonation_map.txt" ]; then
+            vo_intonation=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_intonation_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
+        fi
+        _log "VOICEVOX speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}${vo_intonation:+ intonation=$vo_intonation}"
         local vo_wav
         vo_wav="${MY_CONTENT%.txt}.wav"
         # フォールバック合成時もVOICEVOX合成ロックを取得（同時1リクエスト制限）
@@ -732,7 +736,7 @@ _launch_say() {
         local _hb_pid=$!
         local _vo_ok=0
         if [ "$_vo_synth_locked" -eq 1 ]; then
-            if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_TIMEOUT=60 \
+            if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
                ./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
                 _vo_ok=1
             fi
@@ -1095,13 +1099,14 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
         fi
 
         # ピッチ・テンポ（スクリプトレベル変数に保存 → _launch_say でチャット投稿に使用）
-        PRE_SYNTH_PITCH="" PRE_SYNTH_TEMPO=""
-        local vo_pitch="" vo_tempo=""
+        PRE_SYNTH_PITCH="" PRE_SYNTH_TEMPO="" PRE_SYNTH_INTONATION=""
+        local vo_pitch="" vo_tempo="" vo_intonation=""
         [ -f "tmp/voicevox_pitch_map.txt" ] && vo_pitch=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_pitch_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
         [ -f "tmp/voicevox_tempo_map.txt" ] && vo_tempo=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_tempo_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
-        PRE_SYNTH_PITCH="$vo_pitch" PRE_SYNTH_TEMPO="$vo_tempo"
+        [ -f "tmp/voicevox_intonation_map.txt" ] && vo_intonation=$(grep "^${VOICEVOX_SPEAKER}|" "tmp/voicevox_intonation_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
+        PRE_SYNTH_PITCH="$vo_pitch" PRE_SYNTH_TEMPO="$vo_tempo" PRE_SYNTH_INTONATION="$vo_intonation"
         local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
-        _log "VOICEVOX 事前合成 speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}"
+        _log "VOICEVOX 事前合成 speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}${vo_intonation:+ intonation=$vo_intonation}"
 
         PRE_SYNTH_WAV="${MY_CONTENT%.txt}_pre.wav"
         PRE_SYNTH_CHUNKS_FILE=""
@@ -1115,7 +1120,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 
         if [ ${#_pre_chunks[@]} -le 1 ]; then
             # 短いテキスト: 従来通り全文を1回で合成
-            if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_TIMEOUT=60 \
+            if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
                ./voicevox_tts.sh -o "$PRE_SYNTH_WAV" -f "$MY_CONTENT" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
                 _log "事前合成完了: $PRE_SYNTH_WAV"
             else
@@ -1126,7 +1131,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
         else
             # 複数チャンク: チャンク0のみ事前合成、残りはストリーミング再生用に保存
             _log "テキスト分割: ${#_pre_chunks[@]}チャンク → ストリーミングモード"
-            if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_TIMEOUT=30 \
+            if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=30 \
                VOICEVOX_MAX_CHARS=99999 \
                ./voicevox_tts.sh -o "$PRE_SYNTH_WAV" "${_pre_chunks[0]}" 2>/dev/null && [ -s "$PRE_SYNTH_WAV" ]; then
                 _log "事前合成完了 (チャンク1/${#_pre_chunks[@]}): $PRE_SYNTH_WAV"
