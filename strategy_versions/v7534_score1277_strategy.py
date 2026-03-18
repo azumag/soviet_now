@@ -388,7 +388,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("EARLY_MERGE_PRIORITY")
 
         # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization, enhanced) -----
-        # batch_summaryでHEIGHT_CONTROLが23.8%選択(avg_score_delta=1.2)と過剰であることを確認。
+        # batch_summaryでHEIGHT_CONTROLが23.8%選択(avg_score_delta=1.2)と過剛であることを確認。
         # NEAR_MERGE系reasonsがavg_score_delta=28-57（高価値）だが選択率が3.8-9.2%と低いことを確認。
         # ワーストゲーム終盤（score932）ではreactive_pairs=4.5あるにもかかわらず即時併合優先が弱く、HEIGHT_CONTROL選択で下振れ。
         # ベストゲーム（score3037）はreactive_pairsが少ないが即時併合機会を確実に捉えてスコア稼ぎ。
@@ -397,13 +397,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを+800.0から+1000.0に強化。
         # v206: reactive_pairs>=3で即時併合なし（NO）の場合、盤面密度ボーナスを+300.0から+50.0に削減。
         # これによりreactive_pairs>=3の場合、即時併合機会を最優先するようになり、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
-        if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
+        # 構造的変更（評価軸強化）であり、数値微調整ではない。v201 rollback failure mode (即時併合候補があるのにHIGH_TOWER) を潰す。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_201117_score0932.jsonl turns 56-63, game_history/20260313_200849_score3037.jsonl, strategy_versions/best_score2335_strategy.py
+        
+        # v272: reactive_pairs>=2でNEAR_MERGE優先化 - 即時併合機会取りこぼし削減
+        # last_rollback_postmortem: REACTIVE_PAIRS_COMPRESSIONを連続選択して即時併合機会を取りこぼす failure mode を潰す
+        # NEAR_MERGE系（avg_score_delta=40.4-40.6, 高価値）が選択率3.9-6.2%と低選択率
+        # REACTIVE_PAIRS_COMPRESSION（avg_score_delta=3.2）が8.4%選択と過剰選択
+        # reactive_pairs>=2の時、REACTIVE_PAIRS_COMPRESSIONを選ぶ前にNEAR_MERGE候補を優先
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
+        
+        if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            # reactive_pairs>=2で即時併合機会がある場合、優先的にNEAR_MERGEを選択
+            # 2つの反応可能ペアがある場合、強力なマージ優先ボーナス
+            if reactive_pair_count >= 3:
+                score += 1200.0
+            else:
+                score += 800.0
+            reasons.append("NEAR_MERGE_REACTIVE_MERGE_PRIORITY")
+        elif reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
             # reactive_pairs==1の場合も即時併合を優先し、機会取りこぼし削減
             score += 400.0
-            reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"]:
-            #2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
-            score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
         elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
             # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0）
@@ -434,14 +448,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 1500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
-        # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
-        # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
-        # reactive_pairsがある場合、即時併合がない時のデフォルト選択をHEIGHT_CONTROLからREACTIVE_PAIRS_COMPRESSIONへ変更し、盤面圧縮を優先。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
-        if not reasons:
-            if reactive_pair_count >= 1:
+        # ----- evaluation axis 9: reactive pairs default (NEW: reactive pairs prioritization with NEAR_MERGE) -----
+        # last_rollback_postmortemの「REACTIVE_PAIRS_COMPRESSIONを連続選択して即時併合機会を取りこぼす」failure mode を潰す。
+        # batch_summaryでNEAR_MERGE系reasonsがavg_score_delta=40.4-40.6（高価値）だが選択率が3.8-9.2%と低い。
+        # reactive_pairs>=2がある場合、NEAR_MERGE候補を優先して「即時併合機会を取りこぼす」。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
+        if reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            # reactive_pairs>=2でNEAR_MERGE候補がある場合、即時併合を優先
+            # 2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
+            if reactive_pair_count >= 3:
+                score += 1000.0
+            else:
+                score += 800.0
+            reasons.append("NEAR_MERGE_REACTIVE_MERGE_PRIORITY")
+        elif reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
+            # reactive_pairs==1の場合も即時併合を優先、機会取りこぼし削減（v202: 800→400）
+            score += 400.0
+            reasons.append("REACTIVE_MERGE_PRIORITY")
+        elif reactive_pair_count >= 2 and merge_grade == "NO":
+            # reactive_pairsがあるが即時併合がない場合、戦略的配置（REACTIVE_PAIRS_COMPRESSION）だが、
+            # height_multを0.8に緩和し、危険域でも無理な高配置を回避
+            # 既に他の評価軸でreasonが付いている場合は、そちらを優先
+            if not reasons:
+                height_mult *= 0.8
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
+        elif reactive_pair_count == 0:
+            # reactive_pairsがない場合はHEIGHT_CONTROLをデフォルト
+            # refs: tmp/batch_summary.txt
+            pass
+        else:
+            # reactive_pairsがない場合はHEIGHT_CONTROLをデフォルト
+            # refs: tmp/batch_summary.txt
+            pass
 
         # ----- update best candidate -----
         if score > best_score:
