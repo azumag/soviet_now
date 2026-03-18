@@ -197,7 +197,7 @@ with open(rs_file, 'w') as f:
 }
 
 accumulate_game_data() {
-	local archive_file="$1" score="$2" soviet="$3" strategy_hash="$4"
+	local archive_file="$1" score="$2" soviet="$3" strategy_hash="$4" russia="${5:-false}"
 
 	python3 -c "
 import json, os
@@ -206,11 +206,11 @@ if os.path.exists(acc_file):
     with open(acc_file) as f:
         acc = json.load(f)
 else:
-    acc = {'files': [], 'scores': '', 'soviet': False, 'count': 0, 'hash': ''}
+    acc = {'files': [], 'scores': '', 'soviet': False, 'count': 0, 'hash': '', 'russia_count': 0}
 
 curr_hash = '$strategy_hash'
 if acc.get('hash') and curr_hash and acc.get('hash') != curr_hash:
-    acc = {'files': [], 'scores': '', 'soviet': False, 'count': 0, 'hash': curr_hash}
+    acc = {'files': [], 'scores': '', 'soviet': False, 'count': 0, 'hash': curr_hash, 'russia_count': 0}
 elif curr_hash:
     acc['hash'] = curr_hash
 
@@ -218,6 +218,8 @@ acc['files'].append('$archive_file')
 acc['scores'] = (acc['scores'] + ' $score').strip()
 if '$soviet' == 'true':
     acc['soviet'] = True
+if '$russia' == 'true':
+    acc['russia_count'] = acc.get('russia_count', 0) + 1
 acc['count'] += 1
 
 with open(acc_file, 'w') as f:
@@ -358,7 +360,7 @@ PY
 }
 
 record_completed_game_for_adaptive_improvement() {
-	local archive_file="$1" score="$2" soviet="$3"
+	local archive_file="$1" score="$2" soviet="$3" russia="${4:-false}"
 	local played_hash="" current_hash=""
 	if [ -f "${STRATEGY_FILE}.game_snapshot" ]; then
 		played_hash=$(python3 extract_decide_hash.py "${STRATEGY_FILE}.game_snapshot" 2>/dev/null || echo "")
@@ -380,7 +382,7 @@ record_completed_game_for_adaptive_improvement() {
 		if [ -n "$current_hash" ]; then
 			_update_current_strategy_run "$current_hash" "$score" "$archive_file"
 		fi
-		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash"
+		accumulate_game_data "$archive_file" "$score" "$soviet" "$played_hash" "$russia"
 	fi
 
 	if ! _has_active_branch; then

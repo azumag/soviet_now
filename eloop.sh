@@ -382,7 +382,7 @@ print(d.get('score', 0) + bonus)
 	fi
 
 	# 改善用の rolling/queued 記録はここで一度だけ行う
-	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET"
+	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$LAST_RUSSIA"
 
 	# 予想サイクル進捗をチャットに投稿
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
@@ -394,7 +394,9 @@ count = acc.get("count", 0)
 scores = acc.get("scores", "").split()
 avg = sum(int(s) for s in scores) // len(scores) if scores else 0
 remain = 12 - count
-print(f"サイクル進捗 [{count}/12] score={sys.argv[2]} | avg={avg} (次の戦略改善まであと{remain}試合)")
+russia = acc.get("russia_count", 0)
+russia_str = f" 🇷🇺×{russia}" if russia > 0 else ""
+print(f"サイクル進捗 [{count}/12] score={sys.argv[2]} | avg={avg}{russia_str} (次の戦略改善まであと{remain}試合)")
 PY
 		)
 		./twitch_chat.sh send "${pred_progress}" 2>/dev/null &
