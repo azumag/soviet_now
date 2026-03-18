@@ -60,7 +60,7 @@ print(json.dumps({
         {"title": "建国なし"},
         {"title": "ロシア建国(ソ連不成立)"},
         {"title": "ソ連建国"},
-        {"title": "粛清される"}
+        {"title": "粛清"}
     ],
     "prediction_window": window
 }))
@@ -158,7 +158,7 @@ PY
 		exit 1
 	fi
 
-	OUTCOME_LABELS=("建国なし" "ロシア建国(ソ連不成立)" "ソ連建国" "粛清される")
+	OUTCOME_LABELS=("建国なし" "ロシア建国(ソ連不成立)" "ソ連建国" "粛清")
 	OUTCOME_LABEL="${OUTCOME_LABELS[$OUTCOME_INDEX]:-index=$OUTCOME_INDEX}"
 	_log "prediction resolved: $OUTCOME_LABEL"
 	./twitch_chat.sh send "予想結果：「${OUTCOME_LABEL}」でした！" 2>/dev/null &
@@ -204,7 +204,7 @@ PY
 
 *)
 	echo "Usage: $0 {create|resolve <outcome_index>|cancel}" >&2
-	echo "  outcome_index: 0=建国なし, 1=ロシア建国, 2=ソ連建国, 3=粛清される" >&2
+	echo "  outcome_index: 0=建国なし, 1=ロシア建国, 2=ソ連建国, 3=粛清" >&2
 	exit 1
 	;;
 esac
