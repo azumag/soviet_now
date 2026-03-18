@@ -55,7 +55,7 @@ import json, sys
 bid, window = sys.argv[1], int(sys.argv[2])
 print(json.dumps({
     "broadcaster_id": bid,
-    "title": "次のゲームで建国できる？",
+    "title": "12ゲーム中に建国できる？",
     "outcomes": [
         {"title": "建国なし"},
         {"title": "ロシア建国"},
