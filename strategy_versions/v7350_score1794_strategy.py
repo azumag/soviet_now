@@ -428,17 +428,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= penalty
             reasons.append("EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 9: safe zone reactive pairs priority (NEW: force board compression in safe zones) -----
-        # batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.1)と低価値であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
-        # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
-        # last_rollback_postmortemの教訓: deadline_margin>=0.5の安全域で盤面圧縮を行うことは成功パターン。max_y<1.8の安全域でreactive_pairs>=1がある場合、
-        # 盤面圧縮を優先し、HEIGHT_CONTROLやHIGH_TOWERなどの非圧縮選択を抑制する構造的変更。
-        # 危険域(max_y>=1.8)では既存のaxis 8.5/8.6/8.7が即時併合を強制するため、axis 9は安全域での盤面圧縮に専念。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
-        if max_y < 1.8 and reactive_pair_count >= 1:
+        # ----- evaluation axis 9: safe zone reactive pairs priority (NEW: expanded board compression for danger zone) -----
+        # last_rollback_analysis: anchor比でp25=-77.8と悪化。reactive_pairsがあるのに非併合で下振れしている。
+        # ワーストゲーム(score0694)終盤: reactive_pairs=6あるのにmerge_available=falseが続き、即時併合機会を取りこぼしている。
+        # ベストゲーム(score2813)終盤: 危険域でも即時併合を確実に捉え、max_y=3.28でも延命成功。
+        # batch_summary: REACTIVE_PAIRS_COMPRESSION系がavg_score_delta=48.4と高価値だが選択率が低い(8.1%)。
+        # advice.md: 高さに関係なく併合を優先する必要がある。
+        # 危険域(1.5 <= max_y < 1.8)でreactive_pairsがある場合も盤面圧縮を強制的に優先させる。
+        # 安全域(max_y < 1.5)での盤面圧縮はそのまま維持しつつつ、危険域への対応を強化。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md, game_history/20260318_181428_score0694.jsonl turns 62-69, game_history/20260318_182543_score2813.jsonl turns 129-136
+        if max_y < 1.5 and reactive_pair_count >= 1:
             # 安全域でreactive_pairsがある場合、盤面圧縮を強制的に優先
-            # axis 8.5/8.6/8.7が発動しない安全域でのみ、盤面圧縮を強制し下振れを抑制
             # 既存のreasonsに関わらず、安全域での盤面圧縮を最優先
+            reasons.insert(0, "REACTIVE_PAIRS_COMPRESSION")
+        elif max_y < 1.8 and reactive_pair_count >= 1:
+            # 危険域(1.5 <= max_y < 1.8)でreactive_pairsがある場合も盤面圧縮を強制的に優先
+            # 既存のaxis 8.5/8.6/8.7が発動しない中危険域での盤面圧縮を強化
+            reasons.insert(0, "REACTIVE_PAIRS_COMPRESSION")
+        elif max_y >= 1.8 and reactive_pair_count >= 2:
+            # 危険域(max_y >= 1.8)でreactive_pairs>=2ある場合も盤面圧縮を強制的に優先
+            # axis 8.5/8.6/8.7が即時併合を強制する危険域での盤面圧縮を補完
             reasons.insert(0, "REACTIVE_PAIRS_COMPRESSION")
 
         # ----- update best candidate -----

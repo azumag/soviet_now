@@ -35,7 +35,7 @@ fi
 TOKEN="${TOKEN#oauth:}"
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
-PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-180}"
+PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-300}"
 
 # --- サブコマンド ---
 case "${1:-}" in
@@ -58,7 +58,7 @@ print(json.dumps({
     "title": "12ゲーム中に建国できる？",
     "outcomes": [
         {"title": "建国なし"},
-        {"title": "ロシア建国"},
+        {"title": "ロシア建国(ソ連不成立)"},
         {"title": "ソ連建国"},
         {"title": "粛清される"}
     ],
@@ -107,7 +107,8 @@ PY
 	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
 	echo "$result" > "$PREDICTION_STATE_FILE"
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
-	./twitch_chat.sh send "チャネルポイント予想スタート！「12ゲーム中に建国できる？」投票受付中（${PREDICTION_WINDOW_SEC}秒）" 2>/dev/null &
+	local window_min=$((PREDICTION_WINDOW_SEC / 60))
+	./twitch_chat.sh send "チャネルポイント予想スタート！「12ゲーム中に建国できる？」投票受付中（${window_min}分） ※ソ連建国・粛清は即確定。ロシア建国は12ゲーム後にソ連不成立なら的中" 2>/dev/null &
 	echo "$result"
 	;;
 
@@ -158,7 +159,7 @@ PY
 		exit 1
 	fi
 
-	OUTCOME_LABELS=("建国なし" "ロシア建国" "ソ連建国" "粛清される")
+	OUTCOME_LABELS=("建国なし" "ロシア建国(ソ連不成立)" "ソ連建国" "粛清される")
 	OUTCOME_LABEL="${OUTCOME_LABELS[$OUTCOME_INDEX]:-index=$OUTCOME_INDEX}"
 	_log "prediction resolved: $OUTCOME_LABEL"
 	./twitch_chat.sh send "予想結果：「${OUTCOME_LABEL}」でした！" 2>/dev/null &
