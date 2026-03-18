@@ -1042,9 +1042,6 @@ PY
 				fi
 				printf "  ${C_DIM}[%s:%s]${C_RESET}" "$say_kind_label" "${say_phase:-playing}"
 			fi
-			if $stream_active && (( stream_chunk_total > 0 )); then
-				printf "  ${C_CYAN}STREAM[%d/%d]${C_RESET}" "$stream_chunk_done" "$stream_chunk_total"
-			fi
 			echo ""
 		elif [[ "$say_effective_status" == "preparing" ]]; then
 			printf "    ${C_CYAN}♪${C_RESET} Say         ${C_CYAN}PREPARING${C_RESET}"
