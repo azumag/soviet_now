@@ -246,10 +246,6 @@ schedule_nonessential_audio_jobs() {
 		timed_corner_fired=true
 		_run_timed_corner "soviet_quiz" start_radio_corner_soviet_quiz "$game_num" "$score" &
 	fi
-	if _try_timed_corner "parallel_news" 15 0; then
-		timed_corner_fired=true
-		_run_timed_corner "parallel_news" start_radio_corner_parallel_news "$game_num" "$score" &
-	fi
 	if _try_timed_corner "market" 15 30; then
 		timed_corner_fired=true
 		_run_timed_corner "market" start_radio_corner_market "$game_num" "$score" &

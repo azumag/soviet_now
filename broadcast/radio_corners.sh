@@ -625,43 +625,6 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "soviet_quiz"
 }
 
-start_radio_corner_parallel_news() {
-	local game_num="$1" score="$2"
-	_radio_time_context
-	local past_topics
-	past_topics=$(_radio_past_topics_block)
-
-	local prompt_file
-	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
-	cat >"$prompt_file" <<PROMPT
-$(_radio_persona_block)
-
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
-
-【絶対NG: 過去のトークで既に話した内容。以下に登場する人名・事件名・概念は一切言及禁止】
-${past_topics}
-
-【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
-
-【トーク構成】パラレルワールド・ニュース
-1. 軽いオープニング（2-3文）
-   - 「パラレルワールドからニュースをお届けします」のような導入
-2. 架空のニュース番組
-   - 「もしもあの時、歴史が違っていたら？」という仮定に基づく架空のニュースを報道する
-   - 例:「もし江戸幕府が続いていたら」「もしソ連が崩壊しなかったら」「もしインターネットが発明されなかったら」
-   - ニュースキャスター風の語り口で、真面目に架空のニュースを伝える
-   - 政治、経済、文化、スポーツなど複数のニュース項目を盛り込む
-   - その仮定世界ならではのディテール（架空の地名、制度、流行語など）を入れる
-   - 最後に天気予報やスポーツ結果なども架空で添えると面白い
-3. 軽いクロージング（1-2文）
-
-※ 毎回異なる歴史的分岐点を取り上げること。
-
-$(_radio_output_rules 1000 2000)
-PROMPT
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "parallel_news"
-}
 
 start_radio_corner_bluegrass() {
 	local game_num="$1" score="$2"
