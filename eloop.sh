@@ -362,6 +362,7 @@ json.dump(d,open(f,'w'))
 	archive_gameover_screenshots "$LAST_ARCHIVE_FILE"
 
 	# 建国ボーナス: 最終盤面のtype別ボーナスを加算した評価スコア
+	local EVAL_SCORE
 	EVAL_SCORE=$(echo "$RESULT_JSON" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
