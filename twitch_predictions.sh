@@ -107,8 +107,7 @@ PY
 	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
 	echo "$result" > "$PREDICTION_STATE_FILE"
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
-	local window_min=$((PREDICTION_WINDOW_SEC / 60))
-	./twitch_chat.sh send "チャネルポイント予想スタート！「12ゲーム中に建国できる？」投票受付中（${window_min}分） ※ソ連建国・粛清は即確定。ロシア建国は12ゲーム後にソ連不成立なら的中" 2>/dev/null &
+	./twitch_chat.sh send "チャネルポイント予想スタート！「12ゲーム中に建国できる？」投票受付中（$((PREDICTION_WINDOW_SEC / 60))分） ※ソ連建国・粛清は即確定。ロシア建国は12ゲーム後にソ連不成立なら的中" 2>/dev/null &
 	echo "$result"
 	;;
 
