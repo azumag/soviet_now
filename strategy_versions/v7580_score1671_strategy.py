@@ -36,6 +36,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
+# v273: danger_piece_countベース即時併合優先版 - d2176809 rollback failure mode (danger zone HEIGHT_CONTROL) 潰し
+# last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
+# v272のaxis 8.5はdeadline_marginベースで判断していたが、danger_piece_countを直接活用していない問題を解消。
+# danger_piece_count > 0の時は即時併合に+800.0ボーナスを付与し、危険領域での即時併合優先を強化。
+# 即時併合機会がない場合はheight_multを0.6に緩和し、戦略的配置の余地を確保。
+# ワーストゲーム(score0728)終盤でdeadline_crossed時の即時併合取りこぼしでゲームオーバー。
+# ベストゲーム(score2246)終盤でdeadline_crossed時の即時併合成功で延命。
+# 構造的変更（axis 8.5置換）であり、数値微調整ではない。rollback failure mode (danger zone HEIGHT_CONTROL) を潰す。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md (Pitman_live),
+#       game_history/20260319_065933_score0728.jsonl, game_history/20260319_070945_score2246.jsonl
+#
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
@@ -435,25 +446,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
         # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
-        # ----- evaluation axis 8.5: danger zone immediate merge priority (v269: improved deadline handling with reactive merge availability check) -----
-        # v268の失敗モード修正: deadline_margin < 1.0 の -3000.0 ペナルティが強すぎて、即時併合できない場合でも高配置を強制。
-        # ワーストゲーム(score0732)終盤turns 54-61でdeadline_margin=-0.67〜-0.51, reactive_pairs=2-3, merge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
-        # v269修正: deadline_margin < 1.0 && reactive_pair_count >= 1 の場合、danger_direct_merge_availableで判断:
-        # - danger_direct_merge_available == true（即時併合可能）: ペナルティなし（mergeロジックに任せる）
-        # - danger_direct_merge_available == false（即時併合不可能）: 緩和したペナルティ（-1500.0）で強制配置を回避
-        # refs: tmp/state/last_rollback_postmortem.md, game_history/20260318_215042_score0732.jsonl turns 54-61
+        # ----- evaluation axis 8.5: danger zone immediate merge priority (v273: danger_piece_countベース即時併合優先版) -----
+        # v272のaxis 8.5はdeadline_marginベースで判断していたが、danger_piece_countを直接活用していない問題を解消。
+        # last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
+        # danger_piece_count > 0の時は即時併合を強力に優先し、即時併合がない時はheight_multを緩和して戦略的配置の余地を確保。
+        # ワーストゲーム(score0728)終盤でdeadline_crossed時の即時併合取りこぼしでゲームオーバー。
+        # ベストゲーム(score2246)終盤でdeadline_crossed時の即時併合成功で延命。
+        # danger_piece_countベースの明確な危険判定により、危険領域での即時併合優先を強化。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md (Pitman_live),
+        #       game_history/20260319_065933_score0728.jsonl, game_history/20260319_070945_score2246.jsonl
 
-        reactor_margin = reactor.get("deadline_margin", 0.0)
+        danger_piece_count = reactor.get("danger_piece_count", 0)
         danger_direct_merge_available = result.get("danger_direct_merge_available", False)
 
-        if reactor_margin < 1.0 and reactive_pair_count >= 1 and merge_grade == "NO":
-            if danger_direct_merge_available:
-                # 即時併合可能な場合：ペナルティなし（mergeロジックに任せる）
-                pass
-            else:
-                # 即時併合不可能な場合：緩和したペナルティでdeadline緊急性を示すが、強制配置は回避
-                score -= 1500.0
+        if danger_piece_count > 0:
+            if merge_grade in ["DIRECT", "NEAR"]:
+                # 危険ピースがある時は即時併合を強力に優先
+                score += 800.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
+            elif merge_grade == "NO" and danger_direct_merge_available:
+                # 即時併合可能だが、この候補では併合できない場合：ペナルティ
+                score -= 500.0
+                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
+            elif merge_grade == "NO":
+                # 即時併合機会がない場合：戦略的配置の余地を確保するためheight_multを緩和
+                # この緩和はheight_penalty計算時に適用される
+                height_mult *= 0.6
+                reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
