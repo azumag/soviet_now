@@ -372,7 +372,7 @@ count = acc.get("count", 0)
 scores = acc.get("scores", "").split()
 avg = sum(int(s) for s in scores) // len(scores) if scores else 0
 remain = 12 - count
-print(f"📊 サイクル進捗 [{count}/12] score={sys.argv[2]} | avg={avg} (次の改善まであと{remain}試合)")
+print(f"サイクル進捗 [{count}/12] score={sys.argv[2]} | avg={avg} (次の戦略改善まであと{remain}試合)")
 PY
 		)
 		./twitch_chat.sh send "${pred_progress}" 2>/dev/null &
