@@ -327,6 +327,9 @@ json.dump(d,open(f,'w'))
 		fi
 	fi
 
+	# 蓄積用にロシア建国フラグを保存（後でリセットされるため）
+	local _russia_for_acc="$LAST_RUSSIA"
+
 	# ソ連建国チェック
 	if [ "$LAST_SOVIET" = "true" ]; then
 		handle_soviet_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
@@ -382,7 +385,7 @@ print(d.get('score', 0) + bonus)
 	fi
 
 	# 改善用の rolling/queued 記録はここで一度だけ行う
-	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$LAST_RUSSIA"
+	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
 
 	# 予想サイクル進捗をチャットに投稿
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
