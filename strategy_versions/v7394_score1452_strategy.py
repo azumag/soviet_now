@@ -38,13 +38,6 @@ Phases (determined by board max Y):
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
 #
-# v268: deadline_margin<0.5超危険域即時併合強化 - reactive_pairsある非併合選択を潰す
-# ワーストゲーム(score0943)終盤turns 76-83でdeadline_margin=-0.7~-1.53, reactive_pairs=5-7あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.76まで悪化。
-# ベストゲーム(score2414)終盤turns 121-128でdeadline_margin=-0.57~-2.78, reactive_pairs=2-3で即時併合を確実に捉えmax_y=3.6でも延命成功。
-# axis 8.5を強化：deadline_margin < 0.5 && reactive_pairs >= 1で-5000.0ペナルティ、deadline_margin < 1.0で-3000.0ペナルティを適用。
-# これにより危険域での非併合選択を完全に抑制し、last_rollback_postmortemの「超危険域での即時併合機会逃し」を潰す。
-# refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, game_history/20260318_200936_score0943.jsonl, game_history/20260318_202231_score2414.jsonl
-#
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
@@ -395,25 +388,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
         # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
-        # ----- evaluation axis 8.5: critical deadline reactive pairs priority (ENHANCED: reactive_pairs immediate merge enforcement) -----
-        # last_rollback_postmortemの「超危険域での即時併合機会逃し」failure modeを潰す。
-        # ワーストゲーム(score0943)終盤turns 76-83でdeadline_margin=-0.7~-1.53, reactive_pairs=5-7あるのにmerge_available=falseの選択が続きmax_y=2.76まで悪化。
-        # ベストゲーム(score2414)終盤turns 121-128でdeadline_margin=-0.57~-2.78, reactive_pairs=2-3で即時併合を確実に捉えmax_y=3.6でも延命成功。
-        # batch_summary: HEIGHT_CONTROLが13.1%選択(avg_score_delta=0.0)と過剰。危険域での即時併合優先が弱い。
-        # advice.md「高さに関係なく併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、deadline_margin接近時の即時併合を強制。
-        # reactive_pairs >= 1の危険域でdeadline_margin < 0.5の場合、非併合選択に-5000.0の超強力ペナルティを適用。
-        # deadline_margin < 1.0の場合、-3000.0の強力ペナルティを適用。これにより危険域でのHIGH_TOWER等の非併合選択を完全に抑制。
-        # refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, game_history/20260318_200936_score0943.jsonl turns 76-83, game_history/20260318_202231_score2414.jsonl turns 121-128
+        # ----- evaluation axis 8.5: danger zone immediate merge priority (NEW: deadline_margin reactive pairs priority) -----
+        # last_rollback_analysis: anchor比でp25=-77.8と悪化。
+        # ワーストゲーム(score0878)終盤turns 76-83でdeadline_margin=-1.48〜-0.85, reactive_pairs=1あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.42まで悪化。
+        # ベストゲーム(score2631)終盤turns 113-116でmax_y=3.84でもDIRECT_MERGEを優先し、危険域での延命に成功。
+        # batch_summary: NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE_REACTIVE_MERGE_PRIORITYが4.1%選択(avg_score_delta=57.4)と高価値だが選択率が低い。
+        # axis 8.5の実装誤りを修正：merge_grade in ["DIRECT", "NEAR"]でscore -= 3000.0となっていたのを、
+        # merge_grade == "NO"でscore -= 3000.0へ修正。deadline_margin < 1.0 && reactive_pairs >= 1の場合、
+        # 即時併合がない非併合選択に強力なペナルティを適用し、deadline接近時の即時併合優先を強制。
+        # refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, game_history/20260318_192848_score0878.jsonl turns 76-83, game_history/20260318_192139_score2631.jsonl turns 113-116
 
         reactor_margin = reactor.get("deadline_margin", 0.0)
-        if reactor_margin < 0.5 and reactive_pair_count >= 1 and merge_grade == "NO":
-            # deadlineが超接近（reactor_margin < 0.5）し、即時併合機会がある場合、非併合選択に超強力ペナルティを適用
-            # 危険なHIGH_TOWER判断を完全に上書き
-            score -= 5000.0
-            reasons.append("CRITICAL_DEADLINE_REACTIVE_PAIRS_IMMEDIATE_MERGE_PRIORITY")
-        elif reactor_margin < 1.0 and reactive_pair_count >= 1 and merge_grade == "NO":
-            # deadlineが接近（reactor_margin < 1.0）し、即時併合機会がある場合、非併合選択に強力ペナルティを適用
-            # 危険なHIGH_TOWER判断を上書き
+        if reactor_margin < 1.0 and reactive_pair_count >= 1 and merge_grade == "NO":
+            # deadlineが接近（reactor_margin < 1.0）し、即時併合機会がある場合、非併合選択に強力なペナルティを適用
+            # 危険なHIGH_TOWER判断を上書きする強力なボーナス
             score -= 3000.0
             reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 

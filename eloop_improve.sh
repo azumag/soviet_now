@@ -406,6 +406,7 @@ summary_lines.append("今回の改善では、単発最高点よりも直近12�
 summary_lines.append("特にゲームオーバー直前の立て直しと、dead line 付近での延命ではなく回復につながる判断を重視する。")
 summary_lines.append("- game rule: 連鎖ボーナスはない。CHAIN_MERGE 系 reason は相関ラベルであり、直接の強化対象ではない。")
 summary_lines.append("- avoid: 将来連鎖のために盤面を圧迫したり、直近の併合機会を見送る変更。")
+summary_lines.append("- eval scoring: 評価スコアにはゲーム終了時の盤面ピースtype別ボーナスが加算される（高typeほど高ボーナス、ソ連建国で+4000）。高typeを育てて盤面に残す戦略が評価上有利。")
 if scores:
     summary_lines.append(
         f"- scores: {' '.join(map(str, scores))}"
