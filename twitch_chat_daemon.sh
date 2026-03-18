@@ -130,7 +130,7 @@ while true; do
             # !syukusei / 粛清 [ID] — vo_random から特定スタイルIDを除外 + 再生中の読み上げをkill
             if [[ "$msg" == *粛清*[0-9]* ]] || [[ "$msg" == *syukusei*[0-9]* ]]; then
                 _syukusei_id=$(echo "$msg" | grep -oE '[0-9]+' | head -1)
-                _syukusei_file="tmp/voicevox_exclude_ids.txt"
+                _syukusei_file="config/voicevox_exclude_ids.txt"
                 echo "[syukusei $(date '+%H:%M:%S')] id=$_syukusei_id msg=[$msg]" >> tmp/debug/syukusei.log 2>&1
                 if [ -n "$_syukusei_id" ]; then
                     if ! grep -q "^${_syukusei_id}\b" "$_syukusei_file" 2>/dev/null; then
@@ -152,7 +152,7 @@ while true; do
             if [[ "$msg" =~ ^[[:space:]]*!pitch[[:space:]]+([0-9]+)[[:space:]]+([-]?[0-9]*\.?[0-9]+) ]]; then
                 _pitch_id="${BASH_REMATCH[1]}"
                 _pitch_val="${BASH_REMATCH[2]}"
-                _pitch_file="tmp/voicevox_pitch_map.txt"
+                _pitch_file="config/voicevox_pitch_map.txt"
                 # 既存エントリを除去して新しい値を追加
                 if [ -f "$_pitch_file" ]; then
                     grep -v "^${_pitch_id}|" "$_pitch_file" > "${_pitch_file}.tmp" 2>/dev/null || true
@@ -167,7 +167,7 @@ while true; do
             if [[ "$msg" =~ ^[[:space:]]*!tempo[[:space:]]+([0-9]+)[[:space:]]+([-]?[0-9]*\.?[0-9]+) ]]; then
                 _tempo_id="${BASH_REMATCH[1]}"
                 _tempo_val="${BASH_REMATCH[2]}"
-                _tempo_file="tmp/voicevox_tempo_map.txt"
+                _tempo_file="config/voicevox_tempo_map.txt"
                 if [ -f "$_tempo_file" ]; then
                     grep -v "^${_tempo_id}|" "$_tempo_file" > "${_tempo_file}.tmp" 2>/dev/null || true
                     mv "${_tempo_file}.tmp" "$_tempo_file"
