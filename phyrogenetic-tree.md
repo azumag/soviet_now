@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-18 11:59:29 JST`
+- Updated: `2026-03-18 12:41:21 JST`
 - Nodes: `591`
-- Edges: `824`
-- Current: `7cde6f5b4387`
+- Edges: `825`
+- Current: `922d37760c2b`
 - Anchor: `922d37760c2b`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -71,10 +71,10 @@ flowchart TD
     h_4d7f786718b8["4d7f786718b8<br/>g=14 n=14<br/>comp=1185.7"]
     h_2b031b4f385b["2b031b4f385b<br/>g=31 n=20<br/>comp=1346.7"]
     h_23858122e5c6["23858122e5c6"]
-    h_922d37760c2b["922d37760c2b<br/>ANCHOR<br/>g=15 n=15<br/>comp=1616.4"]
+    h_922d37760c2b["922d37760c2b<br/>CURRENT ANCHOR<br/>g=16 n=16<br/>comp=1732.3"]
+    h_7cde6f5b4387["7cde6f5b4387<br/>g=12 n=12<br/>comp=1290.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_7cde6f5b4387["7cde6f5b4387<br/>CURRENT"]
 
     h_a35784f5c9d6 -->|improve| h_a1c73824d54e
     h_a1c73824d54e -->|improve| h_923af923a304
@@ -156,6 +156,7 @@ flowchart TD
     h_23858122e5c6 -. rollback .-> h_2b031b4f385b
     h_2b031b4f385b -->|improve| h_922d37760c2b
     h_922d37760c2b -->|improve| h_7cde6f5b4387
+    h_7cde6f5b4387 -. rollback .-> h_922d37760c2b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -218,10 +219,10 @@ flowchart TD
     class h_4d7f786718b8 plain;
     class h_2b031b4f385b plain;
     class h_23858122e5c6 plain;
-    class h_922d37760c2b anchor;
+    class h_922d37760c2b current_anchor;
+    class h_7cde6f5b4387 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_7cde6f5b4387 current;
 ```
 
 ## Detail 1/8
@@ -2218,9 +2219,9 @@ flowchart TD
 
 ## Detail 8/8
 
-- Range: `4e4943f7f65c` .. `7cde6f5b4387`
+- Range: `4e4943f7f65c` .. `a3aae72a4e37`
 - Nodes in this diagram: `31`
-- Internal edges in this diagram: `35`
+- Internal edges in this diagram: `36`
 - Cross-chunk link: `467e45d0adc3 --improve--> 4e4943f7f65c`
 - Cross-chunk link: `4e4943f7f65c -.rollback.-> 4da6ecce5bb9`
 - Cross-chunk link: `467e45d0adc3 --improve--> ddd4637d2985`
@@ -2259,10 +2260,10 @@ flowchart TD
     h_4d7f786718b8["4d7f786718b8<br/>g=14 n=14<br/>comp=1185.7"]
     h_2b031b4f385b["2b031b4f385b<br/>g=31 n=20<br/>comp=1346.7"]
     h_23858122e5c6["23858122e5c6"]
-    h_922d37760c2b["922d37760c2b<br/>ANCHOR<br/>g=15 n=15<br/>comp=1616.4"]
+    h_922d37760c2b["922d37760c2b<br/>CURRENT ANCHOR<br/>g=16 n=16<br/>comp=1732.3"]
+    h_7cde6f5b4387["7cde6f5b4387<br/>g=12 n=12<br/>comp=1290.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_7cde6f5b4387["7cde6f5b4387<br/>CURRENT"]
 
     h_ddd4637d2985 -->|improve| h_1d954126e373
     h_1d954126e373 -->|improve| h_cdfe94687752
@@ -2299,6 +2300,7 @@ flowchart TD
     h_23858122e5c6 -. rollback .-> h_2b031b4f385b
     h_2b031b4f385b -->|improve| h_922d37760c2b
     h_922d37760c2b -->|improve| h_7cde6f5b4387
+    h_7cde6f5b4387 -. rollback .-> h_922d37760c2b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2332,13 +2334,28 @@ flowchart TD
     class h_4d7f786718b8 plain;
     class h_2b031b4f385b plain;
     class h_23858122e5c6 plain;
-    class h_922d37760c2b anchor;
+    class h_922d37760c2b current_anchor;
+    class h_7cde6f5b4387 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_7cde6f5b4387 current;
 ```
 
 ## Transition Notes
+
+### Rollback Game#7237 `7cde6f5b -> 922d3776`
+
+- - rollback from 7cde6f5b4387 to 922d37760c2b at game 7237
+- - reasons: hard_fail+branch
+- - current comp/p50/p25=1290.2/1378.5/1120.0 vs target 1732.3/2007.0/1215.2
+- - bad recent scores: 1316 1022 1834 1902 1130 749 1703 1441
+- anchor 比で明確な悪化が出て即時停止条件に触れた。
+- 単一戦略ではなく branch 全体の失敗として判定した。
+- current: comp=1290.2 p50=1378.5 p25=1120.0 mean=1478.5 n=12
+- rollback_target: comp=1732.3 p50=2007.0 p25=1215.2 mean=2073.0 n=16
+- metric_gap_vs_target: comp=-442.0 p50=-628.5 p25=-95.2 mean=-594.5
+- recent12_avg: bad=1478.5 target=2041.6
+- recent12_floor: bad=749 target=901
+- anchor 比で急激に悪化した局面を重点的に調べること。特に p25 を落とした試合群の共通条件を抽出する。
 
 ### Improve Game#7221 `922d3776 -> 7cde6f5b`
 
