@@ -191,6 +191,7 @@ cp "$CONTENT_FILE" "$MY_CONTENT"
 if [ "$WAV_MODE" = "false" ]; then
     sed -i '' \
         -e 's/AI/エーアイ/g' \
+        -e 's/zoumotu3/ザモートゥ/g' \
         -e 's/静寂/せいじゃく/g' \
         -e 's/地政学的/ちせいがくてき/g' \
         -e 's/地政学/ちせいがく/g' \
