@@ -514,10 +514,6 @@ trigger_adaptive_improvement() {
 	acc_count=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null)
 
 	if [ "${acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then
-		# 新サイクル最初のゲーム (count==1) → チャネルポイント予想を開始
-		if [ "${acc_count:-0}" -eq 1 ] && [ ! -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-			./twitch_predictions.sh create "${GAME_NUM:-0}" >/dev/null 2>&1 &
-		fi
 		log "[IMPROVE] 蓄積 ${acc_count:-0}/${MIN_GAMES_BEFORE_IMPROVE} 試合 → 待機"
 		return
 	fi

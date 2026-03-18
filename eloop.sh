@@ -317,6 +317,10 @@ json.dump(d,open(f,'w'))
 	# ソ連建国チェック
 	if [ "$LAST_SOVIET" = "true" ]; then
 		handle_soviet_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
+		# チャネルポイント予想: ソ連建国で即 resolve（HALT 後は trigger_adaptive_improvement が呼ばれないため）
+		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+			./twitch_predictions.sh resolve 2 2>/dev/null &
+		fi
 		HALT_STRATEGY_AFTER_SOVIET=1
 		LAST_RUSSIA="false"
 		LAST_RUSSIA_ANNOUNCED="false"
