@@ -31,11 +31,6 @@ TOKEN="${TOKEN#oauth:}"
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
 PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-180}"
 
-# --- JSON パーサー (jq 不要) ---
-_json_get() {
-	python3 -c "import json,sys; d=json.loads(sys.stdin.read()); print(d$1 if d$1 else '')" 2>/dev/null
-}
-
 # --- サブコマンド ---
 case "${1:-}" in
 create)
@@ -48,25 +43,30 @@ create)
 
 	GAME_NUM="${2:-0}"
 
+	# JSON ペイロード生成
+	payload=$(python3 - "$BROADCASTER_ID" "$PREDICTION_WINDOW_SEC" <<'PY'
+import json, sys
+bid, window = sys.argv[1], int(sys.argv[2])
+print(json.dumps({
+    "broadcaster_id": bid,
+    "title": "次のゲームで建国できる？",
+    "outcomes": [
+        {"title": "建国なし"},
+        {"title": "ロシア建国"},
+        {"title": "ソ連建国"},
+        {"title": "粛清される"}
+    ],
+    "prediction_window": window
+}))
+PY
+)
+
 	response=$(curl -sf -X POST \
 		"https://api.twitch.tv/helix/predictions" \
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \
 		-H "Content-Type: application/json" \
-		-d "$(python3 -c "
-import json
-print(json.dumps({
-    'broadcaster_id': '${BROADCASTER_ID}',
-    'title': '次のゲームで建国できる？',
-    'outcomes': [
-        {'title': '建国なし'},
-        {'title': 'ロシア建国'},
-        {'title': 'ソ連建国'},
-        {'title': '粛清される'}
-    ],
-    'prediction_window': ${PREDICTION_WINDOW_SEC}
-}))
-")" 2>/dev/null)
+		-d "$payload" 2>/dev/null)
 
 	if [ $? -ne 0 ] || [ -z "$response" ]; then
 		_log "WARN: prediction create failed"
@@ -74,24 +74,24 @@ print(json.dumps({
 	fi
 
 	# レスポンスから prediction_id と outcome_ids を抽出
-	result=$(python3 -c "
+	result=$(python3 - "$GAME_NUM" <<'PY' <<< "$response" 2>/dev/null
 import json, sys, time
 data = json.loads(sys.stdin.read())
-pred = data.get('data', [{}])[0]
-pred_id = pred.get('id', '')
-outcomes = pred.get('outcomes', [])
-outcome_ids = [o.get('id', '') for o in outcomes]
+pred = data.get("data", [{}])[0]
+pred_id = pred.get("id", "")
+outcomes = pred.get("outcomes", [])
+outcome_ids = [o.get("id", "") for o in outcomes]
 if not pred_id or len(outcome_ids) < 4:
-    print('ERROR', file=sys.stderr)
     sys.exit(1)
 state = {
-    'prediction_id': pred_id,
-    'outcome_ids': outcome_ids,
-    'game_num': ${GAME_NUM},
-    'created_at': int(time.time())
+    "prediction_id": pred_id,
+    "outcome_ids": outcome_ids,
+    "game_num": int(sys.argv[1]),
+    "created_at": int(time.time())
 }
 print(json.dumps(state))
-" <<< "$response" 2>/dev/null)
+PY
+)
 
 	if [ $? -ne 0 ] || [ -z "$result" ]; then
 		_log "WARN: failed to parse prediction response"
@@ -100,7 +100,7 @@ print(json.dumps(state))
 
 	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
 	echo "$result" > "$PREDICTION_STATE_FILE"
-	_log "prediction created: $(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(f'id={d[\"prediction_id\"]}')" 2>/dev/null)"
+	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
 	echo "$result"
 	;;
 
@@ -113,8 +113,14 @@ resolve)
 	fi
 
 	state=$(cat "$PREDICTION_STATE_FILE")
-	PREDICTION_ID=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin)['prediction_id'])" 2>/dev/null)
-	WINNING_OUTCOME_ID=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin)['outcome_ids'][${OUTCOME_INDEX}])" 2>/dev/null)
+	PREDICTION_ID=$(echo "$state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prediction_id"])' 2>/dev/null)
+	WINNING_OUTCOME_ID=$(echo "$state" | python3 - "$OUTCOME_INDEX" <<'PY' 2>/dev/null
+import json, sys
+idx = int(sys.argv[1])
+data = json.load(sys.stdin)
+print(data["outcome_ids"][idx])
+PY
+)
 
 	if [ -z "$PREDICTION_ID" ] || [ -z "$WINNING_OUTCOME_ID" ]; then
 		_log "WARN: invalid state file"
@@ -122,20 +128,24 @@ resolve)
 		exit 1
 	fi
 
+	payload=$(python3 - "$BROADCASTER_ID" "$PREDICTION_ID" "$WINNING_OUTCOME_ID" <<'PY'
+import json, sys
+bid, pid, wid = sys.argv[1], sys.argv[2], sys.argv[3]
+print(json.dumps({
+    "broadcaster_id": bid,
+    "id": pid,
+    "status": "RESOLVED",
+    "winning_outcome_id": wid
+}))
+PY
+)
+
 	response=$(curl -sf -X PATCH \
 		"https://api.twitch.tv/helix/predictions" \
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \
 		-H "Content-Type: application/json" \
-		-d "$(python3 -c "
-import json
-print(json.dumps({
-    'broadcaster_id': '${BROADCASTER_ID}',
-    'id': '${PREDICTION_ID}',
-    'status': 'RESOLVED',
-    'winning_outcome_id': '${WINNING_OUTCOME_ID}'
-}))
-")" 2>/dev/null)
+		-d "$payload" 2>/dev/null)
 
 	if [ $? -ne 0 ]; then
 		_log "WARN: prediction resolve failed"
@@ -154,7 +164,7 @@ cancel)
 	fi
 
 	state=$(cat "$PREDICTION_STATE_FILE")
-	PREDICTION_ID=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin)['prediction_id'])" 2>/dev/null)
+	PREDICTION_ID=$(echo "$state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prediction_id"])' 2>/dev/null)
 
 	if [ -z "$PREDICTION_ID" ]; then
 		_log "WARN: invalid state file"
@@ -162,19 +172,23 @@ cancel)
 		exit 1
 	fi
 
+	payload=$(python3 - "$BROADCASTER_ID" "$PREDICTION_ID" <<'PY'
+import json, sys
+bid, pid = sys.argv[1], sys.argv[2]
+print(json.dumps({
+    "broadcaster_id": bid,
+    "id": pid,
+    "status": "CANCELED"
+}))
+PY
+)
+
 	curl -sf -X PATCH \
 		"https://api.twitch.tv/helix/predictions" \
 		-H "Authorization: Bearer ${TOKEN}" \
 		-H "Client-Id: ${CLIENT_ID}" \
 		-H "Content-Type: application/json" \
-		-d "$(python3 -c "
-import json
-print(json.dumps({
-    'broadcaster_id': '${BROADCASTER_ID}',
-    'id': '${PREDICTION_ID}',
-    'status': 'CANCELED'
-}))
-")" >/dev/null 2>&1
+		-d "$payload" >/dev/null 2>&1
 
 	_log "prediction canceled"
 	rm -f "$PREDICTION_STATE_FILE"
