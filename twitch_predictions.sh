@@ -35,7 +35,7 @@ fi
 TOKEN="${TOKEN#oauth:}"
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
-PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-300}"
+PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-480}"
 
 # --- サブコマンド ---
 case "${1:-}" in
