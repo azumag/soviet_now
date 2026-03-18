@@ -106,6 +106,16 @@ Phases (determined by board max Y):
 # refs: tmp/batch_summary.txt, tmp/advice.md, game_history/20260308_050953_score0826.jsonl, game_history/20260308_050518_score2330.jsonl,
 # strategy_versions/best_score2335_strategy.py, strategy_versions/best_score5310_strategy.py, analyze_board.py
 #
+# v271: Reactive pairs non-merge height penalty relaxation - v270 failure mode fix
+# ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3, merge_available=falseが続き、
+# DANGER_ZONE_IMMEDIATE_MERGE_PRIORITYペナルティにより強制的に高配置となりmax_y=2.31でゲームオーバー。
+# v269/v270の-1500.0ペナルティは全候補一律に下げるため、「強制配置」問題が残っていた。
+# reactive_pair_count >= 1 && merge_grade == "NO" の場合、height_multを0.8に緩和し、
+# 戦略的配置の余地を確保しつつdeadline緊急性を維持。
+# ベストゲーム(score2945)終盤turns 127-133でも同様の状況だが、より多くのターンを耐えている。
+# v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133
+#
 # v197: LOW phase height penalty reduction for early game chain opportunities
 # batch_summary shows HEIGHT_CONTROL is over-selected in low-score games (27.5% vs 24.6% in high-score games).
 # Low-score games place pieces too low early (avg -2.73 vs -2.35), missing chain merge opportunities.
@@ -122,20 +132,24 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v269: Improved deadline handling with reactive merge availability check (v268 fix)
+    """v271: Reactive pairs non-merge height penalty relaxation (v270 failure mode fix)
 
-    v268の失敗モード（deadline_margin < 0.5 で -5000.0 ペナルティによる強制配置）を修正。
-    deadline接近時（reactor_margin < 1.0）にreactive_pairsがある場合、即時併合が可能かどうかを確認し、
-    即時併合不可能（danger_direct_merge_available == false）の場合はペナルティを緩和して強制配置を回避。
+    v270の失敗モード（max_y>=2.0で+2000.0ボーナスによる過剰な即時併合強制と不連続な挙動）を修正。
+    deadline接近時、reactive_pairsがあるがmerge_available=falseの場合、v269/v270の-1500.0ペナルティにより
+    全候補が一律に下げられ、「強制的に高配置」問題が残っていた。
 
-    ワーストゲーム(score0732)終盤turns 54-61でdeadline_marginが-0.67〜-0.51、reactive_pairs=2-3あるのに
-    merge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続き、max_yが2.5まで上昇しゲームオーバー。
-    これはdeadline_margin < 1.0 の -3000.0 ペナルティが強すぎて、即時併合できない場合でも高配置を強制したため。
+    ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3, merge_available=falseが続き、
+    DANGER_ZONE_IMMEDIATE_MERGE_PRIORITYペナルティにより強制的に高配置となりmax_y=2.31でゲームオーバー。
+    ベストゲーム(score2945)終盤turns 127-133でも同様の状況だが、より多くのターンを耐えている。
 
-    修正: deadline_margin < 1.0 && reactive_pair_count >= 1 の場合、
-    - danger_direct_merge_available == true（即時併合可能）: ペナルティなし（mergeロジックに任せる）
-    - danger_direct_merge_available == false（即時併合不可能）: 緩和したペナルティ（-1500.0）
-    これによりdeadline緊急性を尊重しつつ、即時併合が不可能な場合の強制配置失敗モードを回避。
+    修正: reactive_pair_count >= 1 かつ merge_grade == "NO" の場合、height_multを0.8に緩和。
+    これにより全候補一律のペナルティではなく、戦略的配置の余地を確保。
+    - 将来の併合を狙える配置
+    - reactive_pairsを活用した盤面圧縮
+    - 危険域でも無理な高配置を回避
+    v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
+
+    Args:
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -232,13 +246,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
         height_penalty = landing_y * 50.0 * height_mult
 
-        # v210: reactive_pairsあり時の非併合heightペナルティ強化版 - 即時併合機会取りこぼし削減
-        # reactive_pair_count >= 1 かつ merge_grade == "NO" の場合、height_penaltyを2倍に強化
-        # ワーストゲーム(score0446)終盤turns 61-68でreactive_pairs=7-8あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続いている
-        # advice.md「盤面が詰まっても即時併合を狙うべきだ」とbatch_summary HEIGHT_CONTROL過剰選択（13.8%）を踏まえ、reactive_pairsがある状況で即時併合機会を優先
-        # v201 rollback教訓: 複雑な危険局面判定ロジックは禁止。reactive_pairsを活用したシンプルな改善を採用。
+        # v270 fix: reactive_pairsあり時の非併合heightペナルティ緩和版 - 危険域での戦略的配置余地を確保
+        # ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3あるのにmerge_available=falseが続き、
+        # -1500.0ペナルティにより強制的に高配置となりゲームオーバー。
+        # ベストゲーム(score2945)終盤turns 127-133でも同様の状況だが、より多くのターンを耐えている。
+        # axis 8.5の-1500.0ペナルティは全候補を一律に下げるため、「強制配置」の問題が残る。
+        # reactive_pairs>=1かつmerge_grade=="NO"の場合、height_multを0.8に緩和し、
+        # 戦略的配置の余地を確保しつつdeadline緊急性を維持。reactive_pairsを活用して将来の併合を狙う戦略的思考へ切り替える。
+        # v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133
         if reactive_pair_count >= 1 and merge_grade == "NO":
-            height_penalty *= 2.0  # reactive_pairsがある場合は、非併合配置を抑制
+            # reactive_pairsがある場合は、将来の併合を狙える戦略的配置を可能にするためheight_multを緩和
+            height_mult *= 0.8
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
