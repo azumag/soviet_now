@@ -28,29 +28,33 @@ Game Overview:
      CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
  # --- Change History ---
-# v267: axis 9削除・axis 8.8 deadline_margin条件厳格化 - 即時併合優先構造変更
-# ワーストゲーム(score0901): deadline crossed(max_y=1.62-2.61, deadline_margin=-0.47〜-1.48)でreactive_pairs=1あるのにmerge_available=falseの選択が続き悪化
-# batch_summary: FUTURE_MERGE_OPPORTUNITYが3.0%選択(avg_score_delta=0.1)と低価値、即時併合の取りこぼしを削減する必要
-# axis 9を削除し、将来の併合機会評価を廃止。即時併合機会を最優先する構造変更。
-# axis 8.8のdeadline_margin条件を2.0から1.0へ厳格化し、deadline接近時の即時併合優先を強制。
-# Condition: max_y < 0.8 AND deadline_margin < 1.0 AND reactive_pairs >= 1 AND merge_grade == "NO"
-# これにより、deadline_margin < 1.0の危険域でreactive_pairs >= 1ある場合、即時併合がない非併合選択に強力なペナルティを適用。
-# axis 8.6はmax_y >= 0.8 && reactive_pairs >= 1で発動するため、axis 8.8はmax_y < 0.8 && reactive_pairs >= 1で排他的に動作。
-# advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、即時併合取りこぼしを潰す。
-# refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, game_history/20260318_113400_score0901.jsonl turns 64-71
+# v265: axis 8.8実装誤り修正 - deadline_margin接近時の非併合ペナルティ化
+# ワーストゲーム(score0883): 終盤turns 68-71でreactive_pairs=1-2あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.42まで悪化
+# extra_low(score0936): 終盤turns 70-74でreactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=3.34まで悪化
+# ベストゲーム(score3464): 危険域でreactive_pairsがある場合、即時併合を確実に捉え、max_y=3.84でも延命成功
+# batch_summary: NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE_REACTIVE_MERGE_PRIORITYが4.1%選択(avg_score_delta=57.1)と高価値だが選択率が低い
+# axis 8.8の実装誤りを修正：merge_grade in ["DIRECT", "NEAR"]でscore -= 3000.0となっていたのを、
+# merge_grade == "NO"でscore -= 3000.0へ修正。deadline_margin < 1.0 && reactive_pairs >= 1の場合、
+# 即時併合がない非併合選択に強力なペナルティを与え、deadline接近時の即時併合優先を強制。
+# last_rollback_postmortemの教訓: 既存の有効な危険域ロジックを「置き換え」ず「拡張」する。
+# axis 8.8は既存ロジック(axis 8.5/8.6/8.7)のギャップ(deadline_marginのみ検出される状況)を補完する追加ロジックとして機能。
+# last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰し、deadline_marginが1.0未満の危険域での即時併合取りこぼしを削減。
+# refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260318_085051_score0883.jsonl turns 64-71, game_history/20260318_082956_score3464.jsonl turns 124-132
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v267: axis 9削除・axis 8.8 deadline_margin条件厳格化 - 即時併合優先構造変更
+    """v265: axis 8.8実装誤り修正 - deadline_margin接近時の非併合ペナルティ化
 
-    ワーストゲーム(score0901): deadline crossed(max_y=1.62-2.61, deadline_margin=-0.47〜-1.48)でreactive_pairs=1あるのにmerge_available=falseの選択が続き悪化
-    batch_summary: FUTURE_MERGE_OPPORTUNITYが3.0%選択(avg_score_delta=0.1)と低価値。即時併合の取りこぼしを削減する必要。
-    axis 9を削除し、将来の併合機会評価を廃止。即時併合機会を最優先する構造変更。
-    axis 8.8のdeadline_margin条件を2.0から1.0へ厳格化し、deadline接近時の即時併合優先を強制。
-    Condition: max_y < 0.8 AND deadline_margin < 1.0 AND reactive_pairs >= 1 AND merge_grade == "NO"
-    これにより、deadline_margin < 1.0の危険域でreactive_pairs >= 1ある場合、即時併合がない非併合選択に強力なペナルティを適用。
-    axis 8.6はmax_y >= 0.8 && reactive_pairs >= 1で発動するため、axis 8.8はmax_y < 0.8 && reactive_pairs >= 1で排他的に動作。
-    advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、即時併合取りこぼしを潰す。
-    refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, game_history/20260318_113400_score0901.jsonl turns 64-71
+    ワーストゲーム(score0883): 終盤turns 68-71でreactive_pairs=1-2あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=2.42まで悪化
+    extra_low(score0936): 終盤turns 70-74でreactive_pairs=3-5あるのにmerge_available=falseでHIGH_TOWER選択が続きmax_y=3.34まで悪化
+    ベストゲーム(score3464): 危険域でreactive_pairsがある場合、即時併合を確実に捉え、max_y=3.84でも延命成功
+    batch_summary: NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE_REACTIVE_MERGE_PRIORITYが4.1%選択(avg_score_delta=57.1)と高価値だが選択率が低い
+    axis 8.8の実装誤りを修正：merge_grade in ["DIRECT", "NEAR"]でscore -= 3000.0となっていたのを、
+    merge_grade == "NO"でscore -= 3000.0へ修正。deadline_margin < 1.0 && reactive_pairs >= 1の場合、
+    即時併合がない非併合選択に強力なペナルティを与え、deadline接近時の即時併合優先を強制。
+    last_rollback_postmortemの教訓: 既存の有効な危険域ロジックを「置き換え」ず「拡張」する。
+    axis 8.8は既存ロジック(axis 8.5/8.6/8.7)のギャップ(deadline_marginのみ検出される状況)を補完する追加ロジックとして機能。
+    last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰し、deadline_marginが1.0未満の危険域での即時併合取りこぼしを削減。
+    refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260318_085051_score0883.jsonl turns 64-71, game_history/20260318_082956_score3464.jsonl turns 124-132
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -343,25 +347,53 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= penalty
             reasons.append("EXPANDED_DANGER_ZONE_ABSOLUTE_MERGE_PRIORITY")
 
+        # ----- evaluation axis 9: future merge opportunity maximization (NEW: nextNext-based strategic placement, strict condition) -----
+        # v263: axis 9発動条件厳格化 - reactive_pairs>=1での即時併合優先維持
+        # ワーストゲーム(score0958): 終盤8ターンで即時併合機会なし、FUTURE_MERGE_OPPORTUNITY選択で即時併合見逃し
+        # extra_low(score0969): 危険域でreactive_pairs=5-7あるが即時併合が見つからず、max_y=4.08まで悪化
+        # ベストゲーム(score2591): 危険域でreactive_pairsが少ないが、即時併合を確実に捉え、危険域でも延命成功
+        # batch_summary: NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE_REACTIVE_MERGE_PRIORITY avg_score_delta=53.4だが選択率4.7%と低い
+        # last_rollback_analysis: anchor比でcomp=-251.7 p50=-380.0 p25=-78.8と悪化。「reactive_pairsがあるのに非併合」が敗因
+        # axis 9の発動条件にreactive_pairs == 0を追加し、即時併合がある状況での将来の併合機会優先を抑制
+        # 安全域(max_y < 0.8)でreactive_pairs == 0 && merge_grade == "NO" && nextNextタイプがある場合のみ、将来の併合機会を評価
+        # advice.md「高さに関わらず併合を優先しないと盤面圧縮できずにゲームオーバーになる」を踏まえ、即時併合機会がある状況では将来の併合機会を優先しない
+        # 構造的変更（axis 9発動条件厳格化）であり、数値微調整ではない。last_rollback_analysisの「reactive_pairsがあるのに非併合」を潰す。
+        # refs: tmp/batch_summary.txt, advice.md, game_history/20260318_061630_score0958.jsonl turns 64-71, game_history/20260318_054824_score2591.jsonl turns 114-121
+        if max_y < 0.8 and reactive_pair_count == 0 and merge_grade == "NO" and next_next_type > 0:
+            # 安全域で即時併合機会がない場合、nextNextタイプのピースに近い配置を優先し、将来の併合機会を最大化
+            for p in pieces:
+                if p.get("type") == next_next_type:
+                    piece_x = p["x"]
+                    piece_y = p["y"]
+                    # 距離が近いほどボーナスを与え、将来の併合を促進
+                    dist = ((x - piece_x) ** 2 + (landing_y - piece_y) ** 2) ** 0.5
+                    # ボーナス: 距離が近いほど高い。距離1.0以内で+300.0、距離2.0で+100.0
+                    if dist < 2.0:
+                        future_merge_bonus = (2.0 - dist) * 150.0
+                        score += future_merge_bonus
+                        reasons.append("FUTURE_MERGE_OPPORTUNITY")
+                        break
 
-        # ----- evaluation axis 8.8: deadline-based immediate merge priority (v267: axis 9削除・deadline_margin条件厳格化) -----
-        # v267: axis 9削除・axis 8.8 deadline_margin条件厳格化 - 即時併合優先構造変更
-        # ワーストゲーム(score0901): deadline crossed(max_y=1.62-2.61, deadline_margin=-0.47〜-1.48)でreactive_pairs=1あるのにmerge_available=falseの選択が続き悪化
-        # batch_summary: FUTURE_MERGE_OPPORTUNITYが3.0%選択(avg_score_delta=0.1)と低価値。即時併合の取りこぼしを削減する必要
-        # axis 9を削除し、将来の併合機会評価を廃止。即時併合機会を最優先する構造変更。
-        # axis 8.8のdeadline_margin条件を2.0から1.0へ厳格化し、deadline接近時の即時併合優先を強制。
-        # axis 8.6はmax_y >= 0.8 && reactive_pairs >= 1で発動するため、axis 8.8はmax_y < 0.8 && reactive_pairs >= 1で排他的に動作
-        # Condition: max_y < 0.8 AND deadline_margin < 1.0 AND reactive_pairs >= 1 AND merge_grade == "NO"
+        # ----- evaluation axis 8.8: deadline-based immediate merge priority (NEW: deadline_margin approaching non-merge penalty) -----
+        # v265: axis 8.8実装誤り修正 - deadline_margin接近時の非併合ペナルティ化
+        # v264: axis 8.8 deadline_margin-only detection failed. Reverted to v262 (max_y-based detection).
+        # v263: axis 8.5/8.6/8.7/8.9 are active for max_y >= 0.8 && reactive_pairs >= 1.
+        # v264の失敗: max_y < 1.8（安全域）だがdeadline_marginがcritical(0.35 or -0.07)でreactive_pairs=4-6ある状況が検出できなかった
+        # v264の実装誤り: merge_grade in ["DIRECT", "NEAR"]でscore -= 3000.0となっていた（即時併合にペナルティを与える誤り）
+        # 修正: merge_grade == "NO"でscore -= 3000.0へ変更。max_y < 0.8 && deadline_margin < 1.0 && reactive_pairs >= 2の場合、
+        # 即時併合がない非併合選択に強力なペナルティを与え、deadline接近時の即時併合優先を強制。
+        # axis 8.6はmax_y >= 0.8 && reactive_pairs >= 1で発動するため、axis 8.8はmax_y < 0.8 && reactive_pairs >= 2で排他的に動作
+        # Condition: max_y < 0.8 AND deadline_margin < 1.0 AND reactive_pairs >= 2 AND merge_grade == "NO"
         # Penalty: -3000.0 (similar to axes 8.6/8.7)
         # This creates a penalty for non-merge placements when:
         #   board is in safe zone (max_y < 0.8)
         #   deadline is approaching (deadline_margin < 1.0)
-        #   reactive pairs are available (reactive_pairs >= 1)
+        #   multiple reactive pairs are available (reactive_pairs >= 2)
         #   no immediate merge is possible (merge_grade == "NO")
-        # refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, game_history/20260318_113400_score0901.jsonl turns 64-71
+        # refs: tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260318_085051_score0883.jsonl turns 64-71, game_history/20260318_082956_score3464.jsonl turns 124-132
         reactor_margin = reactor.get("deadline_margin", 0.0)
-        if max_y < 0.8 and reactor_margin < 1.0 and reactive_pair_count >= 1 and merge_grade == "NO":
-            # v267: deadline approaching (margin < 1.0) with reactive pairs available in safe zone
+        if max_y < 0.8 and reactor_margin < 1.0 and reactive_pair_count >= 2 and merge_grade == "NO":
+            # v265 fix: deadline approaching (margin < 1.0) with multiple reactive pairs available in safe zone
             # Apply penalty to non-merge selections to force immediate merge priority
             # Prevents missing merge opportunities in critical deadline situations
             score -= 3000.0
