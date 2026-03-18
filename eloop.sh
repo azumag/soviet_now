@@ -362,6 +362,23 @@ json.dump(d,open(f,'w'))
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$LAST_SCORE" "$LAST_SOVIET"
 
+	# 予想サイクル進捗をチャットに投稿
+	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+		local pred_progress
+		pred_progress=$(python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" <<'PY'
+import json, sys
+acc = json.load(open(sys.argv[1]))
+count = acc.get("count", 0)
+scores = acc.get("scores", "").split()
+avg = sum(int(s) for s in scores) // len(scores) if scores else 0
+print(f"[{count}/12] score={sys.argv[2]} | avg={avg}")
+PY
+		)
+		local best_score
+		best_score=$(cat best_score.txt 2>/dev/null || echo 0)
+		./twitch_chat.sh send "${pred_progress} | best=${best_score}" 2>/dev/null &
+	fi
+
 	# コメントプレイヤー・ウォッチャーが死んでいたら再起動
 	start_comment_player
 	start_comment_watcher
