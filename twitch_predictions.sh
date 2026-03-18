@@ -80,9 +80,9 @@ PY
 	fi
 
 	# レスポンスから prediction_id と outcome_ids を抽出
-	result=$(python3 - "$GAME_NUM" <<'PY' <<< "$response" 2>/dev/null
+	result=$(python3 - "$response" "$GAME_NUM" <<'PY' 2>/dev/null
 import json, sys, time
-data = json.loads(sys.stdin.read())
+data = json.loads(sys.argv[1])
 pred = data.get("data", [{}])[0]
 pred_id = pred.get("id", "")
 outcomes = pred.get("outcomes", [])
@@ -92,7 +92,7 @@ if not pred_id or len(outcome_ids) < 4:
 state = {
     "prediction_id": pred_id,
     "outcome_ids": outcome_ids,
-    "game_num": int(sys.argv[1]),
+    "game_num": int(sys.argv[2]),
     "created_at": int(time.time())
 }
 print(json.dumps(state))
