@@ -19,11 +19,17 @@ if [ "${TWITCH_PREDICTIONS_ENABLED:-0}" != "1" ]; then
 	exit 0
 fi
 
-TOKEN="${TWITCH_BOT_TOKEN:-}"
+# 予想はチャネルオーナーのトークンが必須 (TWITCH_PREDICTIONS_TOKEN)
+# チャット投稿用の TWITCH_BOT_TOKEN とは別
+TOKEN="${TWITCH_PREDICTIONS_TOKEN:-}"
+if [ -z "$TOKEN" ]; then
+	_log "SKIP: TWITCH_PREDICTIONS_TOKEN not set"
+	exit 0
+fi
 CLIENT_ID="${TWITCH_CLIENT_ID:-}"
 BROADCASTER_ID="${TWITCH_BROADCASTER_ID:-}"
-if [ -z "$TOKEN" ] || [ -z "$CLIENT_ID" ] || [ -z "$BROADCASTER_ID" ]; then
-	_log "SKIP: missing env vars (TWITCH_BOT_TOKEN, TWITCH_CLIENT_ID, TWITCH_BROADCASTER_ID)"
+if [ -z "$CLIENT_ID" ] || [ -z "$BROADCASTER_ID" ]; then
+	_log "SKIP: missing env vars (TWITCH_CLIENT_ID, TWITCH_BROADCASTER_ID)"
 	exit 0
 fi
 TOKEN="${TOKEN#oauth:}"
