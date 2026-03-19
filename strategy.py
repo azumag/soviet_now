@@ -7,19 +7,19 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-   Decision Logic (10 evaluation axes):
-      1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-     2. Height penalty - Penalty for high landing position (varies by phase)
-     3. Drift penalty - Penalty for post-landing drift due to polygon shape
-     4. Left-right balance correction - Bonus for correcting piece count bias
-      5. nextNext centering - Center for next merge opportunity if nextNext same type
-       5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-       6. Chain merge bonus - Evaluate possibility of further merges after merge
-        7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
-       8. Early game merge priority - Strong bonus for merge opportunities in early game
-        8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
-        9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
-         9.5. Current type stack merge priority - v287: Deadline-aware reactive pairs fallback + merged type adjacency (MERGE_ADVANCEMENT for >=2 merged_type pieces)
+  Decision Logic (10 evaluation axes):
+     1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+    2. Height penalty - Penalty for high landing position (varies by phase)
+    3. Drift penalty - Penalty for post-landing drift due to polygon shape
+    4. Left-right balance correction - Bonus for correcting piece count bias
+     5. nextNext centering - Center for next merge opportunity if nextNext same type
+      5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
+      6. Chain merge bonus - Evaluate possibility of further merges after merge
+       7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
+      8. Early game merge priority - Strong bonus for merge opportunities in early game
+       8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
+       9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
+       9.5. Current type stack merge priority - v277: Same type stacking enhanced (reactive>=1:+800.0, reactive==0:+300.0, deadline_crossed: always active)
 
 Phases (determined by board max Y):
     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -35,25 +35,7 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-   # --- Change History ---
-# v287: deadline-aware reactive pairs fallback in axis 9 - REACTIVE_PAIRS_COMPRESSION over-selection fix
-# dd33e5c3775b rollback failure mode (REACTIVE_PAIRS_COMPRESSION over-selection when reactive_pairs>=1 && merge_grade=="NO") の修正。
-# axis 9 のREACTIVE_PAIRS_COMPRESSIONデフォルトを deadline_margin<=2.6 の危険局面で抑制し、即時併合機会の探索を優先。
-# deadline_y(3.32) - max_y で deadline_margin を計算し、盤面の緊急性を評価する未活用情報を活用。
-# deadline_margin>2.6 の安全な局面では盤面圧縮を優先する既存挙動を維持。
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-#       game_history/20260320_002123_score0870.jsonl turns 23-30, game_history/20260320_003315_score0757.jsonl turns 56-67
-#
-# v286: merged_type adjacency evaluation in axis 9.5 - merge opportunity maximization
-# dd33e5c3775b rollback failure mode (REACTIVE_PAIRS_COMPRESSION over-selection when reactive_pairs>=1 && merge_grade=="NO") の修正。
-# axis 9.5 で盤面上に same type が複数ある場合、併合後のタイプ merged_type との隣接状況を評価する MERGE_ADVANCEMENT ロジックを追加。
-# 盤面上に merged_type ピースが >=2 個ある場合、最も近い merged_type ピースの近くに配置することで、次の併合を進化させやすくする。
-# deadline_margin<=2.6 の局面で merge_grade=="DIRECT" または "NEAR" の候補がある場合は、盤面圧縮より即時併合を優先する制約を遵守。
-# advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を強化し、2手先の併合可能性を最大化する戦略を採用。
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-#       game_history/20260320_002123_score0870.jsonl turns 23-30, game_history/20260320_003315_score0757.jsonl turns 56-67,
-#       game_history/20260320_004540_score2527.jsonl turns 111-118, advice.md (Pitman_live, プリパラ煉獄丸)
-#
+  # --- Change History ---
 # v277: deadline_crossed時もSAME_TYPE_STACK有効版 - v275 rollback failure mode (deadline_crossed時に戦略的配置ガイド喪失)潰し
 # v275の変更（deadline_crossed時のSAME_TYPE_STACK無効化）は戦略的配置ガイドを消失させたためロールバック。
 # advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を強化するため、axis 9.5を強化。
@@ -182,20 +164,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v287: deadline-aware reactive pairs fallback in axis 9 - REACTIVE_PAIRS_COMPRESSION over-selection fix
-
-    dd33e5c3775b rollback failure mode (REACTIVE_PAIRS_COMPRESSION over-selection when reactive_pairs>=1 && merge_grade=="NO") の修正。
-    axis 9 のREACTIVE_PAIRS_COMPRESSIONデフォルトを deadline_margin<=2.6 の危険局面で抑制し、即時併合機会の探索を優先。
-    deadline_y(3.32) - max_y で deadline_margin を計算し、盤面の緊急性を評価する未活用情報を活用。
-
-    v287の改善点:
-    1. deadline_margin計算の追加
-       - board information collectionでmax_yを計算後、deadline_y(3.32) - max_yでdeadline_marginを計算
-       - 未活用情報（deadline proximity）を活用し、盤面の緊急性を評価
-    2. axis 9の構造変更：deadline-aware reactive pairs fallback
-       - deadline_margin<=2.6の危険局面ではREACTIVE_PAIRS_COMPRESSIONを抑制
-       - 即時併合機会の探索を優先し、盤面圧縮による即時併合機会取りこぼしを回避
-       - deadline_margin>2.6の安全な局面では盤面圧縮を優先する既存挙動を維持
+    """v277: deadline_crossed時もSAME_TYPE_STACK有効版 - v275 rollback failure mode (deadline_crossed時に戦略的配置ガイド喪失)潰し
+    
+    v275の変更（deadline_crossed時のSAME_TYPE_STACK無効化）は戦略的配置ガイドを消失させたためロールバック。
+    advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を強化するため、axis 9.5を強化。
+    batch_summaryでNEAR_MERGE系が選択率5.0%と低いことを踏まえ、CHAIN_MERGEボーナスを強化して即時併合機会を確実に捉える。
+    
+    v277の改善点:
+    1. axis 9.5強化：deadline_crossed時もSAME_TYPE_STACK有効
+       - v275の無効化を修正し、deadline_crossed時も戦略的配置ガイドを維持
+       - reactive_pairs>=1の場合、SAME_TYPE_STACKボーナスを+600.0→+800.0に強化
+       - reactive_pairs==0の場合、SAME_TYPE_STACKボーナスを維持（+300.0）
+    2. landing_y > stack_top_y時のペナルティ軽減も強化
+       - reactive_pairs>=1の場合、+200.0（既存）
+       - reactive_pairs==0の場合、+100.0（既存）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -225,13 +207,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
-
-    # --- deadline proximity calculation (v287: for deadline-aware reactive pairs evaluation) -----
-    # dd33e5c3775b rollback failure mode fix: reactive_pairs>=1 && merge_grade=="NO"でREACTIVE_PAIRS_COMPRESSION過剰選択を回避
-    # deadline_marginはdeadline_y(3.32) - max_yで計算
-    # refs: tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
-    deadline_y = 3.32
-    deadline_margin = deadline_y - max_y
 
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
@@ -514,55 +489,40 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 height_mult *= 0.6
                 reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
 
-        # ----- evaluation axis 9: reactive pairs default (v287: deadline-aware reactive pairs fallback) -----
-        # dd33e5c3775b rollback failure mode fix: reactive_pairs>=1 && merge_grade=="NO"でREACTIVE_PAIRS_COMPRESSION過剰選択を回避
+        # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
         # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
         # reactive_pairsがある場合、即時併合がない時のデフォルト選択をHEIGHT_CONTROLからREACTIVE_PAIRS_COMPRESSIONへ変更し、盤面圧縮を優先。
-        # deadline_margin<=2.6（max_y>=0.72）の危険局面では、REACTIVE_PAIRS_COMPRESSIONを抑制し即時併合機会の探索を優先。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-        #       game_history/20260320_002123_score0870.jsonl turns 23-30, game_history/20260320_003315_score0757.jsonl turns 56-67
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
         if not reasons:
             if reactive_pair_count >= 1:
-                # deadline_margin<=2.6の危険局面ではREACTIVE_PAIRS_COMPRESSIONを抑制
-                # 即時併合候補の探索を優先し、盤面圧縮による即時併合機会取りこぼしを回避
-                if deadline_margin > 2.6:
-                    reasons.append("REACTIVE_PAIRS_COMPRESSION")
-                # deadline_margin<=2.6の場合は何も追加せず、既存の評価軸で判断させる
+                reasons.append("REACTIVE_PAIRS_COMPRESSION")
         
-        # ----- evaluation axis 9.5: current type stack merge priority (v286: merged type adjacency evaluation) -----
-        # advice.md「盤面にTypeNが二つ並んでいてnextもTypeNのとき、TypeN+1と隣接している方を優先してドロップする」という戦略を強化。
-        # 盤面上に same typeがある場合、併合後のタイプ merged_type を計算し、そのタイプの隣接状況を評価する。
-        # merged_type ピースが >=2 個ある場合、MERGE_ADVANCEMENT ボーナスで次の併合を進化させやすくする。
-        # refs: advice.md (Pitman_live, プリパラ煉獄丸), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
+        # ----- evaluation axis 9.5: current type stack merge priority (v277: deadline_crossed時も有効版) -----
+        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
+        # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
+        # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
+        # reactive_pairsがある場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替える。
+        # v277: deadline_crossed時も有効化し、v275の無効化を修正
+        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
             
-            # 盤面上に same typeが複数ある場合、より高価値な併合を目指す
-            merged_type = min(next_type + 1, 16)
-            merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
+            # v277: reactive_pairs強化版 - advice.md反映とdeadline_crossed時有効化
+            if reactive_pair_count >= 1:
+                score += 800.0
+                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
+            else:
+                score += 300.0
+                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             
-            # 盤面上に next併合(type N + 1)のピースが多数ある場合、その近くに配置するとスコアアップ
-            if len(merged_type_pieces) >= 2:
-                # 最も近いmerged_typeピースを見つける（ユークリッド距離）
-                best_neighbor = min(merged_type_pieces, key=lambda p: ((p["x"] - stack_top_x) ** 2 + (p["y"] - stack_top_y) ** 2) ** 0.5)
-                neighbor_x = best_neighbor.get("x", 0)
-                neighbor_y = best_neighbor.get("y", -10)
-                
-                # 盤面の余裕がある場合は、merged_typeの隣接に配置することを強化
-                if neighbor_y < stack_top_y + 2.0: # 水面の余裕がある場合（盤面圧縮と高さ管理のバランス）
-                    horiz_dist = abs(x - neighbor_x)
-                    if horiz_dist < 0.8: # 近くに配置すると次の併合が進化しやすくなる
-                        # 併合の将来性を高めるボーナス
-                        score += 150.0
-                        if "MERGE_ADVANCEMENT" not in "_".join(reasons):
-                            reasons.append("MERGE_ADVANCEMENT")
-                        else:
-                            reasons.append("SAME_TYPE_STACK")
-                else:
-                    # 単一のsame typeピースの場合（またはmerged_typeが少ない場合は既存ロジック）
-                    # reactive_pairsがある場合は、併合の将来性を高めるためにボーナスを強化
+            # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
+            landing_y = result.get("landing_y", 0)
+            if landing_y > stack_top_y:
+                horiz_dist = abs(x - stack_top_x)
+                if horiz_dist < 1.0:
+                    # reactive_pairsがある場合、ペナルティ軽減を強化
                     if reactive_pair_count >= 1:
                         score += 200.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
@@ -571,43 +531,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += 100.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
-            else:
-                # 単一のsame typeピースの場合（またはmerged_typeが少ない場合は既存ロジック）
-                # reactive_pairsがある場合は、併合の将来性を高めるためにボーナスを強化
-                if reactive_pair_count >= 1:
-                    score += 200.0
-                    if "SAME_TYPE_STACK" not in "_".join(reasons):
-                        reasons.append("SAME_TYPE_STACK")
-                else:
-                    score += 100.0
-                    if "SAME_TYPE_STACK" not in "_".join(reasons):
-                        reasons.append("SAME_TYPE_STACK")
-
-            # nextNext typeが盤面上にある場合、将来の併合を潰さない配置を回避
-            # 2手先の併合可能性を最大化するため、nextNext typeのピースの上に置くと、次の併合が進まらなくなるのを避ける
-            next_next_pieces = [p for p in pieces if p.get("type") == next_next_type]
-            if next_next_pieces:
-                # nextNext typeのピースの上に着地するかを判定
-                landing_y = result.get("landing_y", 0)
-                for next_next_piece in next_next_pieces:
-                    piece_y = next_next_piece.get("y", -10)
-                    piece_x = next_next_piece.get("x", 0)
-                    if landing_y > piece_y:
-                        horiz_dist = abs(x - piece_x)
-                        if horiz_dist < 1.0:  # nextNext typeのピースの上になる配置は将来の併合を潰すためペナルティ
-                            score -= 300.0  # 将来の併合を潰すペナルティ
-                            reasons.append("AVOID_BLOCK_NEXTNEXT")
-                            break
-            else:
-                # reactive_pairsがある場合は、併合の将来性を高めるためにボーナスを強化
-                if reactive_pair_count >= 1:
-                    score += 100.0
-                    if "SAME_TYPE_STACK" not in "_".join(reasons):
-                        reasons.append("SAME_TYPE_STACK")
-                else:
-                    score += 50.0
-                    if "SAME_TYPE_STACK" not in "_".join(reasons):
-                        reasons.append("SAME_TYPE_STACK")
 
         # ----- update best candidate -----
         if score > best_score:
