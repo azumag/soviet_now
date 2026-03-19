@@ -3,6 +3,40 @@
 
 #=== ラジオトーク: テーマ選択 ===
 
+_write_radio_theme_pick_status() {
+	local status="$1" filter_category="$2" source_count="$3" deduped_count="$4" available_count="$5" history_reset="$6" used_default_fallback="$7" selected_category="$8" selected_theme="$9"
+	python3 - "$RADIO_THEME_PICK_STATUS_FILE" "$status" "$filter_category" "$source_count" "$deduped_count" "$available_count" "$history_reset" "$used_default_fallback" "$selected_category" "$selected_theme" <<'PY' >/dev/null 2>&1
+import json
+import sys
+from datetime import datetime, timezone
+
+out_file, status, filter_category, source_count, deduped_count, available_count, history_reset, used_default_fallback, selected_category, selected_theme = sys.argv[1:11]
+
+def to_int(value: str) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return 0
+
+payload = {
+    "status": status,
+    "filter_category": filter_category,
+    "source_theme_count": to_int(source_count),
+    "deduped_theme_count": to_int(deduped_count),
+    "available_theme_count": to_int(available_count),
+    "history_reset": history_reset == "true",
+    "used_default_fallback": used_default_fallback == "true",
+    "selected_category": selected_category,
+    "selected_theme": selected_theme,
+    "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+}
+
+with open(out_file, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+}
+
 _radio_theme_key_from_body() {
 	local theme_body="$1"
 	python3 - "$theme_body" <<'PY'
@@ -116,6 +150,8 @@ _pick_radio_theme() {
 	local theme_file="$ELOOP_LIB_DIR/data/radio_themes.txt"
 	local themes=()
 	local theme_keys=()
+	local used_default_fallback=false
+	local history_reset=false
 	if [ -f "$theme_file" ]; then
 		while IFS= read -r _line || [ -n "$_line" ]; do
 			[ -n "$_line" ] || continue
@@ -145,9 +181,10 @@ _pick_radio_theme() {
 				themes+=("$_line")
 				theme_keys+=("$t_key")
 			fi
-		done < "$theme_file"
+	done < "$theme_file"
 	fi
 	if [ ${#themes[@]} -eq 0 ]; then
+		used_default_fallback=true
 		themes=("世界の料理と文化の話。各国の食卓と暮らしの違いを深掘りして")
 	fi
 
@@ -167,6 +204,7 @@ _pick_radio_theme() {
 		fi
 	done
 	if [ ${#available_themes[@]} -eq 0 ]; then
+		history_reset=true
 		available_themes=("${themes[@]}")
 		>"$past_themes_file"
 		>"$past_theme_bodies_file"
@@ -179,6 +217,16 @@ _pick_radio_theme() {
 		theme_body="${theme#\[soviet\] }"
 	fi
 	_radio_mark_theme_used "$theme_body"
+	_write_radio_theme_pick_status \
+		"ok" \
+		"$filter_category" \
+		"${#themes[@]}" \
+		"${#themes[@]}" \
+		"${#available_themes[@]}" \
+		"$history_reset" \
+		"$used_default_fallback" \
+		"$theme_cat" \
+		"$theme_body"
 	# カテゴリ付きの場合はタブ区切りで返す: [soviet]\tテーマ本文
 	if [ -n "$theme_cat" ]; then
 		printf '[%s]\t%s\n' "$theme_cat" "$theme_body"

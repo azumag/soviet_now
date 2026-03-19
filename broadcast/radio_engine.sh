@@ -233,6 +233,46 @@ _run_claude_radio() {
 	_run_claude_radio_with_model "$1" "$RADIO_CLAUDE_MODEL"
 }
 
+_write_radio_corner_status() {
+	local status="$1" corner_name="$2" game_num="$3" score="$4" topic="${5:-}" reason="${6:-}" selected_news="${7:-}" extra_json="${8:-}"
+	python3 - "$RADIO_CORNER_STATUS_FILE" "$status" "$corner_name" "$game_num" "$score" "$topic" "$reason" "$selected_news" "$extra_json" <<'PY' >/dev/null 2>&1
+import json
+import sys
+from datetime import datetime, timezone
+
+out_file, status, corner_name, game_num_raw, score_raw, topic, reason, selected_news, extra_json = sys.argv[1:9]
+
+def to_int(value: str) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return 0
+
+payload = {
+    "status": status,
+    "corner": corner_name,
+    "game_num": to_int(game_num_raw),
+    "score": to_int(score_raw),
+    "topic": topic,
+    "reason": reason,
+    "selected_news": selected_news,
+    "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+}
+
+if extra_json:
+    try:
+        extra = json.loads(extra_json)
+    except Exception:
+        extra = {"note": extra_json}
+    if isinstance(extra, dict):
+        payload.update(extra)
+
+with open(out_file, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+}
+
 _clean_comment_talk() {
 	printf '%s\n' "$1" | python3 -c "$(cat <<'PY'
 import re
@@ -868,10 +908,12 @@ _radio_generate_and_play() {
 	shift 4
 	local no_preempt=true
 	local selected_news=""
+	local topic=""
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--no-preempt) no_preempt=true ;;
 		--selected-news) shift; selected_news="$1" ;;
+		--topic) shift; topic="$1" ;;
 		esac
 		shift
 	done
@@ -880,15 +922,18 @@ _radio_generate_and_play() {
 	local done_marker="$TMP_MARKERS_DIR/.radio_done_${game_num}_${corner_name}"
 	if [ -f "$done_marker" ]; then
 		log "[RADIO:${corner_name}] duplicate skip: already done for game=${game_num}"
+		_write_radio_corner_status "duplicate_done" "$corner_name" "$game_num" "$score" "$topic" "already_done" "$selected_news"
 		return 0
 	fi
 	local inflight_dir="$TMP_MARKERS_DIR/.radio_inflight_${game_num}_${corner_name}"
 	if ! mkdir "$inflight_dir" 2>/dev/null; then
 		log "[RADIO:${corner_name}] duplicate skip: in-flight for game=${game_num}"
+		_write_radio_corner_status "duplicate_inflight" "$corner_name" "$game_num" "$score" "$topic" "already_inflight" "$selected_news"
 		return 0
 	fi
 
 	_radio_set_state "generating" "$corner_name"
+	_write_radio_corner_status "generating" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
 	log "[RADIO:${corner_name}] トーク生成中..."
 	local talk prompt_snapshot debug_dump=""
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
@@ -914,6 +959,7 @@ _radio_generate_and_play() {
 			printf '%s\n' "$prompt_snapshot"
 		} >"$debug_dump"
 		log "[RADIO:${corner_name}] トーク生成失敗: empty output (dump: $debug_dump)"
+		_write_radio_corner_status "generation_failed" "$corner_name" "$game_num" "$score" "$topic" "generation_empty" "$selected_news"
 		_radio_clear_state "$corner_name" "generation_failed"
 		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
@@ -954,6 +1000,7 @@ _radio_generate_and_play() {
 			printf '%s\n' "$talk_body_parsed"
 		} >"$debug_dump"
 		log "[RADIO:${corner_name}] provider error text detected in generated talk -> skip (dump: $debug_dump)"
+		_write_radio_corner_status "generation_failed" "$corner_name" "$game_num" "$score" "$topic" "provider_error_text" "$selected_news"
 		_radio_clear_state "$corner_name" "generation_failed"
 		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
@@ -1012,6 +1059,7 @@ _radio_generate_and_play() {
 			printf '%s\n' "$talk_body_dedup"
 		} >"$debug_dump"
 		log "[RADIO:${corner_name}] WARNING: 本文が短すぎる raw=${#talk} parsed=${#talk_body_parsed} sanitized=${#talk_body_sanitized} dedup=${#talk_body_dedup} final=${#talk_body} -> skip (dump: $debug_dump)"
+		_write_radio_corner_status "body_too_short" "$corner_name" "$game_num" "$score" "$topic" "body_too_short" "$selected_news"
 		_radio_clear_state "$corner_name" "body_too_short"
 		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
@@ -1020,6 +1068,7 @@ _radio_generate_and_play() {
 	if _radio_should_fact_check "$corner_name"; then
 		local fact_checked_body
 		_radio_set_state "verifying" "$corner_name"
+		_write_radio_corner_status "verifying" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
 		fact_checked_body=$(_radio_fact_check_body "$corner_name" "$prompt_snapshot" "$talk_body" "$selected_news") || {
 			debug_dump="$TMP_DEBUG_DIR/radio_factcheck_input_${corner_name}_$(date +%s).txt"
 			{
@@ -1037,6 +1086,7 @@ _radio_generate_and_play() {
 				printf '%s\n' "$talk_body"
 			} >"$debug_dump"
 			log "[RADIO:${corner_name}] fact-check失敗 (dump: $debug_dump)"
+			_write_radio_corner_status "fact_check_failed" "$corner_name" "$game_num" "$score" "$topic" "fact_check_failed" "$selected_news"
 			_radio_clear_state "$corner_name" "fact_check_failed"
 			rmdir "$inflight_dir" 2>/dev/null || true
 			return 1
@@ -1054,6 +1104,7 @@ _radio_generate_and_play() {
 				printf '%s\n' "$talk_body"
 			} >"$debug_dump"
 			log "[RADIO:${corner_name}] fact-check後の本文が不正/短文 -> 中止 (dump: $debug_dump)"
+			_write_radio_corner_status "fact_checked_body_invalid" "$corner_name" "$game_num" "$score" "$topic" "fact_checked_body_invalid" "$selected_news"
 			_radio_clear_state "$corner_name" "fact_checked_body_invalid"
 			rmdir "$inflight_dir" 2>/dev/null || true
 			return 1
@@ -1093,9 +1144,11 @@ _radio_generate_and_play() {
 		fi
 		if [ -n "$deferred_file" ]; then
 			_radio_set_state "queued" "$corner_name"
+			_write_radio_corner_status "queued" "$corner_name" "$game_num" "$score" "$topic" "comment_backlog" "$selected_news" "{\"comment_queued\": ${comment_queued:-0}, \"comment_playing\": ${comment_playing:-0}, \"deferred_file\": \"$(basename "$deferred_file")\"}"
 			log "[RADIO:${corner_name}] deferred: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}) -> $(basename "$deferred_file")"
 		else
 			log "[RADIO:${corner_name}] deferred enqueue失敗 (comment backlog=${comment_total})"
+			_write_radio_corner_status "deferred_enqueue_failed" "$corner_name" "$game_num" "$score" "$topic" "deferred_enqueue_failed" "$selected_news"
 			_radio_clear_state "$corner_name" "deferred_enqueue_failed"
 			rm -f "$talk_file" 2>/dev/null || true
 			rmdir "$inflight_dir" 2>/dev/null || true
@@ -1103,6 +1156,7 @@ _radio_generate_and_play() {
 		fi
 		else
 			_radio_set_state "playing" "$corner_name"
+			_write_radio_corner_status "playing" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
 			# CC表記は say_enqueue.sh の再生開始時に投稿（SAY_CC_TEXT 経由）
 			local immediate_cc_text=""
 			if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
@@ -1126,6 +1180,7 @@ _radio_generate_and_play() {
 					printf '%s\n' "$talk_body"
 				} >"$debug_dump"
 				log "[RADIO:${corner_name}] 再生失敗 rc=${play_rc} (dump: $debug_dump)"
+				_write_radio_corner_status "play_failed" "$corner_name" "$game_num" "$score" "$topic" "play_failed" "$selected_news" "{\"play_rc\": ${play_rc:-1}}"
 				rm -f "$talk_file"
 				_radio_clear_state "$corner_name" "play_failed"
 				rmdir "$inflight_dir" 2>/dev/null || true
@@ -1135,6 +1190,7 @@ _radio_generate_and_play() {
 	rm -f "$talk_file"
 	_radio_mark_done "$done_marker"
 	_radio_clear_state "$corner_name" "completed"
+	_write_radio_corner_status "completed" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
 	rmdir "$inflight_dir" 2>/dev/null || true
 	if [ -n "$deferred_file" ]; then
 		log "[RADIO:${corner_name}] トーク終了 (再生待ちキュー)"

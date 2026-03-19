@@ -278,6 +278,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let moveCount = 0;
   let roundEnded = false;
   let holdUsedThisTurn = false;
+  let lastKnownRank = null;
 
   console.log('[game] Game loop started');
 
@@ -296,11 +297,11 @@ async function gameLoop(page, calibration, gameNumber) {
       // 盤面解析
       const { analyzeScreenshot } = await loadModule('./screenshot_analyzer.mjs');
       const boardState = await analyzeScreenshot(screenshotPath, calibration);
-      console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, score=${boardState.score}, conf=${boardState.confidence.toFixed(2)}`);
+      console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank}, conf=${boardState.confidence.toFixed(2)}`);
 
       // ゲームオーバー処理
       if (boardState.state === 'GAMEOVER') {
-        console.log(`[game] GAMEOVER at turn ${turn}, score=${boardState.score}`);
+        console.log(`[game] GAMEOVER at turn ${turn}, rank=${boardState.rank}`);
         await handleGameOver(page, gameNumber, turn, boardState, historyFile);
         return;
       }
@@ -476,13 +477,13 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile) 
   const summary = {
     gameNumber,
     turns,
-    score: finalState.score,
+    rank: finalState.rank || null,
     piecesAtEnd: finalState.pieces.length,
     timestamp: new Date().toISOString(),
   };
   const summaryPath = join('tmp/summaries', `game_${String(gameNumber).padStart(4, '0')}.json`);
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
-  console.log(`[game] Summary: turns=${turns}, score=${finalState.score}`);
+  console.log(`[game] Summary: turns=${turns}, rank=${finalState.rank}`);
 
   const { interval: improvementIntervalGames, source: improvementIntervalSource } = loadImprovementSchedule();
   if (gameNumber % improvementIntervalGames !== 0) {

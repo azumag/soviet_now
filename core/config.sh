@@ -52,6 +52,8 @@ PHYROGENETIC_CHAT_POST_LOG_FILE="$TMP_DEBUG_DIR/phyrogenetic_chat_post.log"
 
 RADIO_WEB_GROUNDING_CACHE_DIR="$TMP_CACHE_DIR/radio_grounding"
 RADIO_STATE_FILE="$TMP_STATE_DIR/.radio_state"
+RADIO_THEME_PICK_STATUS_FILE="$TMP_STATE_DIR/.radio_theme_pick_status.json"
+RADIO_CORNER_STATUS_FILE="$TMP_STATE_DIR/.radio_corner_status.json"
 COMMENT_GEN_STATE_FILE="$TMP_STATE_DIR/.comment_gen_state"
 LAST_PHYROGENETIC_CHAT_COMMIT_FILE="$TMP_STATE_DIR/last_phyrogenetic_chat_commit.txt"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow"}'
