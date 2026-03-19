@@ -211,8 +211,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pairs = reactor.get("reactive_pairs", [])
     # reactive_pairs is a list, count pairs for evaluation
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
-    # deadline_crossed: danger zone status (for strict merge enforcement)
-    deadline_crossed = reactor.get("deadline_crossed", False)
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -294,11 +292,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactive_pairs>=1かつmerge_grade=="NO"の場合、height_multを0.8に緩和し、
         # 戦略的配置の余地を確保しつつdeadline緊急性を維持。reactive_pairsを活用して将来の併合を狙う戦略的思考へ切り替える。
         # v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
-        # v276 fix: deadline_crossed時はheight_multリラックスを禁止し、axis 8.5の-800.0ペナルティを厳格適用
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133
-        if not deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
+        if reactive_pair_count >= 1 and merge_grade == "NO":
             # reactive_pairsがある場合は、将来の併合を狙える戦略的配置を可能にするためheight_multを緩和
-            # deadline_crossed時は緩和禁止（axis 8.5の-800.0ペナルティで即時併合を強制）
             height_mult *= 0.8
 
         if phase == "HIGH" and landing_y > 0.5:
