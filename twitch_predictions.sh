@@ -36,6 +36,80 @@ TOKEN="${TOKEN#oauth:}"
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
 PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-480}"
+AUTO_VOTE_POINTS="${TWITCH_AUTO_VOTE_POINTS:-10}"
+
+# --- azumagdev 自動投票 (Twitch GQL API) ---
+_auto_vote_prediction() {
+	local state_json="$1"
+	local bot_token="${TWITCH_BOT_TOKEN:-}"
+	[ -n "$bot_token" ] || return 0
+	bot_token="${bot_token#oauth:}"
+
+	# 少し待ってから投票（予想が確実に受付中になるのを待つ）
+	sleep 5
+
+	# ランダムに1つの outcome を選ぶ
+	local event_id outcome_id
+	event_id=$(echo "$state_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prediction_id"])' 2>/dev/null)
+	outcome_id=$(echo "$state_json" | python3 -c '
+import json, sys, random
+d = json.load(sys.stdin)
+ids = d.get("outcome_ids", [])
+if ids:
+    print(random.choice(ids))
+' 2>/dev/null)
+
+	if [ -z "$event_id" ] || [ -z "$outcome_id" ]; then
+		_log "AUTO_VOTE: skip (missing ids)"
+		return 0
+	fi
+
+	# Twitch GQL API で投票
+	local gql_payload
+	gql_payload=$(python3 -c "
+import json
+print(json.dumps({
+    'operationName': 'MakePrediction',
+    'variables': {
+        'input': {
+            'eventID': '$event_id',
+            'outcomeID': '$outcome_id',
+            'points': $AUTO_VOTE_POINTS,
+            'transactionID': '$(python3 -c "import uuid; print(str(uuid.uuid4()))")'
+        }
+    },
+    'extensions': {
+        'persistedQuery': {
+            'version': 1,
+            'sha256Hash': 'b44682ecc88358817009f20571c0b1b81e1e3292a7157a9c9ee0b290e4c26c09'
+        }
+    }
+}))
+" 2>/dev/null)
+
+	local vote_resp
+	vote_resp=$(curl -sf --max-time 10 -X POST \
+		"https://gql.twitch.tv/gql" \
+		-H "Authorization: OAuth ${bot_token}" \
+		-H "Client-Id: kimne78kx3ncx6brgo4mv6wki5h1ko" \
+		-H "Content-Type: application/json" \
+		-d "$gql_payload" 2>/dev/null)
+
+	if [ $? -eq 0 ] && [ -n "$vote_resp" ]; then
+		local voted_label
+		voted_label=$(echo "$state_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+ids = d.get('outcome_ids', [])
+labels = ['建国なし', 'ロシア建国', 'ソ連建国', '粛清']
+idx = ids.index('$outcome_id') if '$outcome_id' in ids else -1
+print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
+" 2>/dev/null)
+		_log "AUTO_VOTE: azumagdev voted '${voted_label}' (${AUTO_VOTE_POINTS}pt)"
+	else
+		_log "AUTO_VOTE: failed (curl error or empty response)"
+	fi
+}
 
 # --- サブコマンド ---
 case "${1:-}" in
@@ -108,6 +182,10 @@ PY
 	echo "$result" > "$PREDICTION_STATE_FILE"
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
 	./twitch_chat.sh send "チャネルポイント予想スタート！「12ゲーム中に建国できる？」投票受付中（$((PREDICTION_WINDOW_SEC / 60))分） ※ソ連建国・粛清は即確定。ロシア建国は12ゲーム後にソ連不成立なら的中" 2>/dev/null &
+
+	# azumagdev ボットがランダムに1票入れる（GQL API）
+	_auto_vote_prediction "$result" &
+
 	echo "$result"
 	;;
 
