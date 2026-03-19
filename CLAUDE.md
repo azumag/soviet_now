@@ -90,7 +90,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `broadcast/radio_engine.sh` | ラジオ放送コア (コーナー実行、再生管理) |
 | `broadcast/radio_persona.sh` | ラジオDJペルソナ設定 |
 | `broadcast/radio_themes.sh` | 雑談テーマ選択・重複回避 |
-| `broadcast/radio_news.sh` | ニュース取得・フィルタ・再生 |
+| `broadcast/radio_news.sh` | ニュース取得・フィルタ・再生・AIスパム判定 |
 | `broadcast/radio_factcheck.sh` | 生成テキストのファクトチェック・修正 |
 | `broadcast/radio_corners.sh` | 各コーナー定義 (theme/news/soviet/strategy/recap/rules/jiji等) |
 | `broadcast/radio_state.sh` | ラジオ状態管理 |
@@ -119,7 +119,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿 |
 | `twitch_chat.sh` | Twitch IRC チャットデーモン管理 (start/fetch/send等) |
 | `twitch_chat_daemon.sh` | IRC常駐プロセス (`!clip` コマンド対応) |
-| `twitch_predictions.sh` | Twitch チャネルポイント予想 API wrapper (create/resolve/cancel, azumagdev自動投票) |
+| `twitch_predictions.sh` | Twitch チャネルポイント予想 API wrapper (create/resolve/cancel/autovote/cleanup, azumagdev自動投票) |
 
 ### ダッシュボード / ステータス
 
@@ -148,6 +148,13 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `fetch_radio_grounding.py` | ラジオWebグラウンディング情報取得 |
 | `generate_phyrogenetic_tree.py` | Mermaid形式の戦略系統樹生成 |
 | `extract_decide_hash.py` | decide()関数のAST抽出→MD5ハッシュ |
+| `analyze_patterns.py` | 振り子パターン検出・履歴データ分析 |
+| `batch_summary.py` | 複数ゲーム履歴JSONLからコンパクトサマリー生成 |
+| `tag_best_changelog.py` | strategy.py の最新バージョンに [BEST:スコア] タグ付与 |
+| `trim_changelog.py` | strategy.py の変更履歴を直近N個にトリミング |
+| `backfill_celebration_history.py` | 建国履歴の補完（バックフィル用） |
+| `migrate_score_history.py` | score_history.txt へのタイムスタンプ付与（git logから復元） |
+| `recover_hash_archive_from_git.py` | git履歴からstrategy_versions/by_hashエントリを復元 |
 | `strategy_helpers/` | 戦略ヘルパーモジュール (2turn_lookahead.py 等) |
 
 ### データ / プロンプト
@@ -173,6 +180,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 - ソ連テーマ: `data/radio_soviet_themes.txt`
 - ニュース読み上げ: 記事内容は素直に紹介するが、政治的に中立・多角的な意見を述べること（左右どちらにも偏らない）
 - 履歴保持: テーマ400件（PAST_RADIO_THEME_HISTORY_KEEP）、ニュースURL 500件、ソース 400件で重複を回避
+- ニュースAIスパムフィルタ: `_news_ai_spam_check` が `opencode run --agent=glm` でタイトル+本文冒頭を判定し、広告・PR記事を除外
 - Webグラウンディング: `RADIO_WEB_GROUNDING_ENABLED=1` でテーマ関連の補足情報をWeb検索で取得（TTL 6時間）
 - ファクトチェック: `RADIO_FACT_CHECK_ENABLED=1` で生成テキストのファクトチェック・修正を実施
 
@@ -187,7 +195,8 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 - 12ゲームサイクルの開始時に「建国できる？」予想を作成
 - 選択肢: 建国なし / ロシア建国(ソ連不成立) / ソ連建国 / 粛清
 - ソ連建国・粛清は即 resolve、ロシア建国は12ゲーム後に判定
-- azumagdev ボットが GQL API でランダムに1票自動投票（AUTO_VOTE_POINTS=10）
+- azumagdev ボットが GQL API でランダムに1票自動投票。`TWITCH_BOT_GQL_TOKEN` 設定時は残高の10%を賭ける。未設定時は固定 `TWITCH_AUTO_VOTE_POINTS`（デフォルト10pt）
+- `cleanup` サブコマンドで `PREDICTION_MAX_GAMES`（デフォルト12）超過等の古い予想状態を自動クリア
 - `TWITCH_PREDICTIONS_ENABLED=1` と `TWITCH_PREDICTIONS_TOKEN` が必要（チャネルオーナートークン）
 
 ## Twitch クリップ自動作成
