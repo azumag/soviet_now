@@ -40,13 +40,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
    # --- Change History ---
-# v278: deadline_crossed時reactive_pairsペナルティ緩和版 - v277 rollback failure mode潰し
-# last_rollback_postmortemの「deadline_crossed && reactive_pairs<=1で即時併合不可ペナルティでSAME_TYPE_STACK以外の候補が抑制される問題」を潰す。
-# deadline_crossed && merge_grade=="NO" で reactive_pairs==0 の場合はペナルティを削除し、戦略的配置を可能にする。
-# reactive_pairs==1 の場合はペナルティを -600.0 から -300.0 に半減し、戦略的配置の余地を拡大。
-# deadline_crossed && danger_piece_count==0 の場合は height_mult を 0.5 に緩和し、安全確保の余地を確保。
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
-#
 # v276: deadline_crossed時reactive_pairsベース即時併合不可ペナルティ段階化版 - 即時併合取りこぼし削減
 # ワーストゲーム(score0652)終盤turns 60-67でdeadline_crossed=true, reactive_pairs=2-3があるにもかかわらず即時併合不可が続きmax_y=3.5でオーバー。
 # ベストゲーム(score2808)終盤turns 114-121でdeadline_crossed時もreactive_pairs>=3で確実に即時併合を実行し延命。
@@ -491,26 +484,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
                 # deadline_crossed状態で即時併合機会がない場合：reactive_pairsに応じて段階的ペナルティを適用
-                # v278: reactive_pairs==0の場合はペナルティを削除し、戦略的配置を可能にする（Constraints For Next Improve対応）
-                # reactive_pairs==1の場合はペナルティを半減し、戦略的配置の余地を拡大
-                # reactive_pairs>=2の場合は強力なペナルティで即時併合逃しを回避
-                if reactive_pair_count == 0:
-                    # reactive_pairsがない場合は即時併合不可ペナルティを適用せず、戦略的配置を選択可能にする
-                    # REACTIVE_PAIRS_COMPRESSIONやHEIGHT_CONTROLなどの戦略的思考を許容
-                    pass
-                elif reactive_pair_count == 1:
-                    score -= 300.0  # v278: reactive_pairs==1の場合はペナルティを半減し戦略的配置の余地を拡大
+                # reactive_pairsが少ない場合は戦略的配置の余地を確保し、多い場合は強力なペナルティで即時併合逃しを回避
+                if reactive_pair_count <= 1:
+                    score -= 600.0  # reactive_pairs<=1の場合は緩和したペナルティで戦略的配置の余地を確保
                 elif reactive_pair_count == 2:
                     score -= 800.0  # reactive_pairs==2の場合は従来通りのペナルティを維持
                 else:
                     score -= 1000.0  # reactive_pairs>=3の場合は強力なペナルティで即時併合逃しを回避
                 reasons.append("DANGER_ZONE_MERGE_REQUIRED")
-        elif danger_piece_count == 0 and deadline_crossed:
-            # v278: deadline_crossed状態で危険ピースがない場合、安全確保のためheight_multを緩和
-            # 即時併合機会がない場合でも、戦略的配置の余地を確保
-            if merge_grade == "NO":
-                height_mult *= 0.5  # 高さペナルティを半減し、安全確保の余地を確保
-                reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
         elif danger_piece_count > 0:
             # deadline_crossedしていないが危険ピースがある場合：従来のボーナスとペナルティ
             if merge_grade in ["DIRECT", "NEAR"]:
