@@ -203,8 +203,11 @@ PY
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
 	./twitch_chat.sh send "チャネルポイント予想スタート！「12ゲーム中に建国できる？」投票受付中（$((PREDICTION_WINDOW_SEC / 60))分） ※ソ連建国・粛清は即確定。ロシア建国は12ゲーム後にソ連不成立なら的中" 2>/dev/null &
 
-	# azumagdev ボットがランダムに1票入れる（GQL API）
-	_auto_vote_prediction "$result" &
+	# azumagdev ボットがランダムに1票入れる（GQL API）— 独立プロセスで実行
+	(
+		_auto_vote_prediction "$result"
+	) </dev/null >>tmp/auto_vote.log 2>&1 &
+	disown
 
 	echo "$result"
 	;;
