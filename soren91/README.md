@@ -11,7 +11,7 @@
 cd soren91
 npm install          # 初回のみ
 npx playwright install chromium  # 初回のみ
-node main.mjs        # ゲーム起動 → 自動プレイ → ラウンド間にAI改善
+node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごとにAI改善
 ```
 
 ## アーキテクチャ
@@ -42,13 +42,13 @@ tmp/summaries/           # ラウンドサマリーJSON
 [ラウンドループ]
   Matching待ち → ゲームプレイ → ランキング
   → 履歴保存 (game_NNNN.jsonl)
-  → AI改善 (claude -p --model sonnet で strategy.mjs 更新)
+  → 12ゲームごとにAI改善 (claude -p --model sonnet で strategy.mjs 更新)
   → 次ラウンドへ (自動)
 ```
 
 ## AI自動改善
 
-ラウンド終了ごとに `claude -p --model sonnet` で戦略を改善する:
+12ゲームごとに `claude -p --model sonnet` で戦略を改善する:
 
 1. ゲーム履歴からテキストサマリー (ターン数、ドロップ分布、理由分布) を生成
 2. 現在の `strategy.mjs` + サマリーを Claude に送信
@@ -58,10 +58,10 @@ tmp/summaries/           # ラウンドサマリーJSON
 
 ## ホットリロード
 
-全モジュールが毎ターン/毎ラウンド動的importされるため、ファイル編集が即反映される (再起動不要):
+全モジュールが実行時に動的importされるため、ファイル編集が即反映される (再起動不要):
 
 - `strategy.mjs` / `screenshot_analyzer.mjs` / `calibration.mjs` -- 毎ターン
-- `improve.mjs` -- 毎ラウンド終了時
+- `improve.mjs` -- 12ゲームごと
 
 ## 盤面解析
 

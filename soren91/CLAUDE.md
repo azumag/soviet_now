@@ -12,7 +12,7 @@ https://unityroom.com/games/sorengame91
 ```bash
 cd soren91
 npm install          # 初回のみ
-node main.mjs        # ゲーム起動 → 自動プレイ → ラウンド間にAI改善
+node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごとにAI改善
 ```
 
 ## アーキテクチャ
@@ -41,12 +41,12 @@ tmp/summaries/           # ラウンドサマリーJSON
 [ラウンドループ]
   Matching待ち → ゲームプレイ → ランキング
   → 履歴保存 (game_NNNN.jsonl)
-  → AI改善 (claude -p --model sonnet でstrategy.mjs更新)
+  → 12ゲームごとにAI改善 (claude -p --model sonnet でstrategy.mjs更新)
   → 次ラウンドへ (自動)
 ```
 
 ## AI改善ループ
-- ラウンド終了時に `claude -p --model sonnet` を非同期呼び出し
+- 12ゲームごとに `claude -p --model sonnet` を非同期呼び出し
 - テキストサマリー (ターン数、ドロップ分布、理由分布) を送信
 - 返ってきた新strategy.mjsをバリデーション (構文 + スモークテスト)
 - パスしたら適用、旧版をstrategy_versions/にバックアップ
@@ -57,7 +57,7 @@ tmp/summaries/           # ラウンドサマリーJSON
 - strategy.mjs — 毎ターン
 - screenshot_analyzer.mjs — 毎ターン
 - calibration.mjs — 毎ターン
-- improve.mjs — 毎ラウンド終了時
+- improve.mjs — 12ゲームごと
 
 ## 盤面解析
 - **状態検出**: 中央列(35-65%)の暗さ比率でMOVE/WAITING判定。dark>10%ならMOVE

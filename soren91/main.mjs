@@ -29,6 +29,7 @@ const HISTORY_DIR = 'game_history';
 const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲーム側クールダウン≈1秒)
 const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
+const IMPROVEMENT_INTERVAL_GAMES = 12; // AI改善を走らせるゲーム間隔
 
 // ディレクトリ確保
 [SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions'].forEach(dir => {
@@ -443,6 +444,11 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile) 
   const summaryPath = join('tmp/summaries', `game_${String(gameNumber).padStart(4, '0')}.json`);
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
   console.log(`[game] Summary: turns=${turns}, score=${finalState.score}`);
+
+  if (gameNumber % IMPROVEMENT_INTERVAL_GAMES !== 0) {
+    console.log(`[game] Skipping improvement for game #${gameNumber} (runs every ${IMPROVEMENT_INTERVAL_GAMES} games)`);
+    return;
+  }
 
   // AI改善ループ起動
   try {
