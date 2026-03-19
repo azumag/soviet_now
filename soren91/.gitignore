@@ -3,4 +3,5 @@ tmp/
 game_history/
 strategy_versions/
 .env
+runtime_config.json
 *.log

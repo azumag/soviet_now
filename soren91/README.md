@@ -56,6 +56,20 @@ tmp/summaries/           # ラウンドサマリーJSON
 4. パスしたら適用、旧版を `strategy_versions/` にバックアップ
 5. 排他ロック: 前の改善中は次をスキップ
 
+改善間隔は実行中でも変更できる。優先順は `runtime_config.json` → `.env` → デフォルト値 `12`。
+
+`.env`:
+```env
+IMPROVEMENT_INTERVAL_GAMES=12
+```
+
+`runtime_config.json`:
+```json
+{
+  "improvementIntervalGames": 12
+}
+```
+
 ## ホットリロード
 
 全モジュールが実行時に動的importされるため、ファイル編集が即反映される (再起動不要):

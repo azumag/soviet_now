@@ -7,8 +7,9 @@
  */
 
 import 'dotenv/config';
+import { parse as parseDotenv } from 'dotenv';
 import { chromium } from 'playwright';
-import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync } from 'fs';
+import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 // calibration.mjs, screenshot_analyzer.mjs は動的ロード (ホットリロード対応)
 async function loadModule(name) {
@@ -29,7 +30,9 @@ const HISTORY_DIR = 'game_history';
 const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲーム側クールダウン≈1秒)
 const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
-const IMPROVEMENT_INTERVAL_GAMES = 12; // AI改善を走らせるゲーム間隔
+const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
+const ENV_PATH = '.env';
+const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 
 // ディレクトリ確保
 [SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions'].forEach(dir => {
@@ -43,6 +46,42 @@ function getNextGameNumber() {
     .filter(f => f.startsWith('game_') && f.endsWith('.jsonl'))
     .map(f => parseInt(f.match(/game_(\d+)/)?.[1] || '0', 10));
   return nums.length > 0 ? Math.max(...nums) + 1 : 1;
+}
+
+function parsePositiveInt(value) {
+  const num = Number.parseInt(String(value), 10);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+function loadImprovementSchedule() {
+  if (existsSync(RUNTIME_CONFIG_PATH)) {
+    try {
+      const config = JSON.parse(readFileSync(RUNTIME_CONFIG_PATH, 'utf-8'));
+      const interval = parsePositiveInt(config.improvementIntervalGames);
+      if (interval) return { interval, source: RUNTIME_CONFIG_PATH };
+      console.log(`[config] Ignoring invalid improvementIntervalGames in ${RUNTIME_CONFIG_PATH}`);
+    } catch (err) {
+      console.log(`[config] Failed to parse ${RUNTIME_CONFIG_PATH}: ${err.message}`);
+    }
+  }
+
+  if (existsSync(ENV_PATH)) {
+    try {
+      const env = parseDotenv(readFileSync(ENV_PATH, 'utf-8'));
+      const interval = parsePositiveInt(env.IMPROVEMENT_INTERVAL_GAMES);
+      if (interval) return { interval, source: ENV_PATH };
+      if (typeof env.IMPROVEMENT_INTERVAL_GAMES !== 'undefined') {
+        console.log(`[config] Ignoring invalid IMPROVEMENT_INTERVAL_GAMES in ${ENV_PATH}`);
+      }
+    } catch (err) {
+      console.log(`[config] Failed to parse ${ENV_PATH}: ${err.message}`);
+    }
+  }
+
+  const envInterval = parsePositiveInt(process.env.IMPROVEMENT_INTERVAL_GAMES);
+  if (envInterval) return { interval: envInterval, source: 'process.env' };
+
+  return { interval: DEFAULT_IMPROVEMENT_INTERVAL_GAMES, source: 'default' };
 }
 
 // --- メイン ---
@@ -445,8 +484,9 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile) 
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
   console.log(`[game] Summary: turns=${turns}, score=${finalState.score}`);
 
-  if (gameNumber % IMPROVEMENT_INTERVAL_GAMES !== 0) {
-    console.log(`[game] Skipping improvement for game #${gameNumber} (runs every ${IMPROVEMENT_INTERVAL_GAMES} games)`);
+  const { interval: improvementIntervalGames, source: improvementIntervalSource } = loadImprovementSchedule();
+  if (gameNumber % improvementIntervalGames !== 0) {
+    console.log(`[game] Skipping improvement for game #${gameNumber} (runs every ${improvementIntervalGames} games via ${improvementIntervalSource})`);
     return;
   }
 
