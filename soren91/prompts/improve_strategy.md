@@ -19,7 +19,8 @@ The largest achievable type is 15 (ソ連/Russia).
 export function decide(boardState) {
   // boardState: {
   //   pieces: [{type, x, y, r}],   // 検出されたピース (国ピースのみ、おじゃまは除外)
-  //   next: {type, r},              // 次にドロップするピース
+  //   next: {type, r},              // 次にドロップするピース (nextPieces[0] と同じ)
+  //   nextPieces: [{type, r}, ...], // 次の最大3ピース (1番目=next, 2番目, 3番目)
   //   hold: {type, r} | null,       // HOLD領域のピース (null=空)
   //   canHold: boolean,             // このターンでHOLD使用可能か
   //   score: number,
@@ -54,6 +55,7 @@ export function decide(boardState) {
 3. **Balance**: Distribute weight evenly left-right to prevent toppling
 4. **Chain Potential**: Position pieces so merges cascade (merged piece near same type)
 5. **Grouping**: Keep same-type pieces together for future merge opportunities
+6. **Look-ahead**: Use nextPieces[1] and nextPieces[2] to plan ahead (e.g., prepare merge targets for upcoming pieces)
 
 ## Important Constraints
 - Input comes from screenshot analysis (imperfect - pieces may be misclassified)

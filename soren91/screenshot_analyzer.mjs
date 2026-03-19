@@ -72,10 +72,11 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     ? detectPieces(data, width, height, calibration)
     : [];
 
-  // 3. 次のピース検出
-  const next = state === 'MOVE'
-    ? detectNextPiece(data, width, height, board)
-    : null;
+  // 3. 次のピース検出 (3つ)
+  const nextPieces = state === 'MOVE'
+    ? detectNextPieces(data, width, height, board)
+    : [];
+  const next = nextPieces.length > 0 ? nextPieces[0] : null;
 
   // 4. おじゃまブロック量を測定 (灰色領域の割合)
   const garbage = state === 'MOVE'
@@ -94,9 +95,10 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     state,
     score,
     pieces,
-    next,
-    hold, // { type, r } or null
-    garbage, // { ratio: 0-1, height: ゲーム座標でのおじゃまの高さ }
+    next,             // { type, r } — 1つ目 (後方互換)
+    nextPieces,       // [{ type, r }, ...] — 最大3つ
+    hold,             // { type, r } or null
+    garbage,          // { ratio: 0-1, height: ゲーム座標でのおじゃまの高さ }
     confidence: pieces.length > 0 ? 0.5 : 0.3,
   };
 }
@@ -321,18 +323,28 @@ function detectHoldPiece(data, width, height, board) {
 }
 
 /**
- * 次のピースを検出する
- * 画面上部のNEXT表示領域から次のピースのタイプを推定
+ * NEXT領域から最大3つのピースを検出する
+ * NEXT表示は縦に3つ並んでいる
  */
-function detectNextPiece(data, width, height, board) {
-  // NEXT領域: ボード上部右寄り (HOLD領域と被らないよう右側に限定)
-  const nextAreaTop = 0;
-  const nextAreaBottom = board.top + 30;
+function detectNextPieces(data, width, height, board) {
   const nextAreaLeft = board.left + Math.floor(board.width * 0.55);
   const nextAreaRight = board.right;
+  // NEXT領域は上部UIから盤面内に延びる (3ピース分の高さ)
+  const nextAreaTop = 0;
+  const nextAreaBottom = board.top + 90;
+  const slotHeight = Math.floor((nextAreaBottom - nextAreaTop) / 3);
 
-  return detectPieceInArea(data, width, height, nextAreaTop, nextAreaBottom, nextAreaLeft, nextAreaRight)
-    || { type: 1, r: TYPE_RADII[1] }; // デフォルト: 小さいピース
+  const results = [];
+  for (let i = 0; i < 3; i++) {
+    const slotTop = nextAreaTop + slotHeight * i;
+    const slotBottom = slotTop + slotHeight;
+    const piece = detectPieceInArea(data, width, height, slotTop, slotBottom, nextAreaLeft, nextAreaRight);
+    if (piece) results.push(piece);
+  }
+
+  // 最低1つは返す
+  if (results.length === 0) results.push({ type: 1, r: TYPE_RADII[1] });
+  return results;
 }
 
 /**

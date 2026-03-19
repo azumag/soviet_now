@@ -178,7 +178,7 @@ ${currentStrategy}
 ## Instructions
 Based on the game analysis and screenshots above, improve the strategy.mjs code.
 The function signature must remain: export function decide(boardState) -> { x: number, reason: string, hold?: boolean }
-where boardState has: { pieces: [{type, x, y, r}], next: {type, r}, hold: {type, r}|null, canHold: boolean, score: number, confidence: number, garbage: {ratio, height, pixelCount} }
+where boardState has: { pieces: [{type, x, y, r}], next: {type, r}, nextPieces: [{type, r}, ...] (up to 3), hold: {type, r}|null, canHold: boolean, score: number, confidence: number, garbage: {ratio, height, pixelCount} }
 
 HOLD mechanic: right-click saves current piece to HOLD slot, or swaps with held piece.
 - boardState.hold: currently held piece (null if empty)
@@ -296,6 +296,7 @@ async function validateStrategy(code) {
         { type: 2, x: 1, y: -4, r: 0.259 },
       ],
       next: { type: 1, r: 0.207 },
+      nextPieces: [{ type: 1, r: 0.207 }, { type: 3, r: 0.316 }, { type: 2, r: 0.259 }],
       hold: { type: 2, r: 0.259 },
       canHold: true,
       score: 100,
