@@ -48,28 +48,38 @@ _auto_vote_prediction() {
 	# 少し待ってから投票（予想が確実に受付中になるのを待つ）
 	sleep 5
 
-	# 所持ポイントを取得して10%を計算
+	# GQL APIにはファーストパーティトークンが必要
+	# TWITCH_BOT_GQL_TOKEN が設定されていれば残高の10%を賭ける
+	# 未設定ならフォールバックで AUTO_VOTE_POINTS を使う
+	local gql_token="${TWITCH_BOT_GQL_TOKEN:-}"
+	local vote_token="$bot_token"
+	local vote_points="$AUTO_VOTE_POINTS"
 	local channel_login="${TWITCH_CHANNEL_LOGIN:-azumagbanjo}"
-	local balance_resp vote_points
-	balance_resp=$(curl -sf --max-time 10 -X POST \
-		"https://gql.twitch.tv/gql" \
-		-H "Authorization: OAuth ${bot_token}" \
-		-H "Client-Id: kimne78kx3ncx6brgo4mv6wki5h1ko" \
-		-H "Content-Type: application/json" \
-		-d "{\"operationName\":\"ChannelPointsContext\",\"variables\":{\"channelLogin\":\"${channel_login}\"},\"extensions\":{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"1530a003a7d374b0380b79db0be0534f30ff46e61cffa2571ed5571571e39e7c\"}}}" 2>/dev/null)
 
-	vote_points=$(echo "$balance_resp" | python3 -c "
+	if [ -n "$gql_token" ]; then
+		gql_token="${gql_token#oauth:}"
+		vote_token="$gql_token"
+		local balance_resp
+		balance_resp=$(curl -sf --max-time 10 -X POST \
+			"https://gql.twitch.tv/gql" \
+			-H "Authorization: OAuth ${gql_token}" \
+			-H "Client-Id: kimne78kx3ncx6brgo4mv6wki5h1ko" \
+			-H "Content-Type: application/json" \
+			-d "{\"operationName\":\"ChannelPointsContext\",\"variables\":{\"channelLogin\":\"${channel_login}\"},\"extensions\":{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"1530a003a7d374b0380b79db0be0534f30ff46e61cffa2571ed5571571e39e7c\"}}}" 2>/dev/null)
+
+		vote_points=$(echo "$balance_resp" | python3 -c "
 import json, sys
 try:
     d = json.load(sys.stdin)
     balance = d['data']['community']['channel']['self']['communityPoints']['balance']
-    pts = max(10, int(balance * 0.10))
-    print(pts)
+    print(max(10, int(balance * 0.10)))
 except Exception:
-    print(10)
-" 2>/dev/null || echo "10")
-
-	_log "AUTO_VOTE: balance query → betting ${vote_points}pt (10% of balance)"
+    print($AUTO_VOTE_POINTS)
+" 2>/dev/null || echo "$AUTO_VOTE_POINTS")
+		_log "AUTO_VOTE: GQL balance → betting ${vote_points}pt (10%)"
+	else
+		_log "AUTO_VOTE: no GQL token, using fixed ${vote_points}pt"
+	fi
 
 	# ランダムに1つの outcome を選ぶ
 	local event_id outcome_id
@@ -113,7 +123,7 @@ print(json.dumps({
 	local vote_resp
 	vote_resp=$(curl -sf --max-time 10 -X POST \
 		"https://gql.twitch.tv/gql" \
-		-H "Authorization: OAuth ${bot_token}" \
+		-H "Authorization: OAuth ${vote_token}" \
 		-H "Client-Id: kimne78kx3ncx6brgo4mv6wki5h1ko" \
 		-H "Content-Type: application/json" \
 		-d "$gql_payload" 2>/dev/null)
