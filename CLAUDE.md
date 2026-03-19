@@ -41,9 +41,10 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 ### 粛清（regression rollback）基準
 - anchor戦略（過去の安定戦略）と現戦略の composite/p50/p25 を比較
-- Hard fail（即時粛清）: comp gap≥330, p50 gap≥270, p25 gap≥390 のうち2つ以上で発動
-- Soft fail（予算切れ時）: comp gap≥180, p50 gap≥150, p25 gap≥270 のうち2つ以上で発動
+- Hard fail（即時粛清 — branch depth/patience超過時）: comp gap≥330, p50 gap≥270, p25 gap≥390 のうち2つ以上で発動
+- Soft fail（通常の回帰検出）: comp gap≥180, p50 gap≥150, p25 gap≥270 のうち2つ以上で発動
 - composite = 0.55×p50 + 0.30×p25 + 0.15×lcb
+- Branch制御: max_depth=4, max_games=48, patience=3
 
 ## ゲーム操作
 
@@ -77,10 +78,17 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `core/phyrogenetic.sh` | 進化系統樹の記録・投稿 |
 | `strategy/ai.sh` | spinner, build_prompt, run_cmd, run_ai |
 | `strategy/sandbox.sh` | validate_strategy, sandbox管理 |
-| `strategy/regression.sh` | rolling scores, check_regression, rollback, postmortem |
+| `strategy/regression.sh` | rolling scores, check_regression, rollback候補選定, postmortem |
 | `strategy/improve.sh` | improve_state管理, trigger_adaptive_improvement |
-| `broadcast/radio_*.sh` | ラジオ放送系 (engine/persona/themes/news/factcheck/corners/state/celebration) |
-| `broadcast/comment.sh` | コメント応答生成 |
+| `broadcast/radio_engine.sh` | ラジオ放送コア (コーナー実行、再生管理) |
+| `broadcast/radio_persona.sh` | ラジオDJペルソナ設定 |
+| `broadcast/radio_themes.sh` | 雑談テーマ選択・重複回避 |
+| `broadcast/radio_news.sh` | ニュース取得・フィルタ・再生 |
+| `broadcast/radio_factcheck.sh` | 生成テキストのファクトチェック・修正 |
+| `broadcast/radio_corners.sh` | 各コーナー定義 (theme/news/soviet/strategy/recap/rules/jiji等) |
+| `broadcast/radio_state.sh` | ラジオ状態管理 |
+| `broadcast/radio_celebration.sh` | 建国祝賀トーク生成 |
+| `broadcast/comment.sh` | コメント応答生成・コンテキスト構築・advice抽出 |
 | `broadcast/comment_worker.sh` | player/watcherデーモン管理 |
 | `broadcast/scheduler.sh` | 非同期ジョブスケジュール |
 | `infra/cleanup.sh` | PID停止, cleanup_all, cleanup_tmp |
@@ -104,7 +112,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `twitch_clip.sh` | Twitchクリップ自動作成 + チャット投稿 |
 | `twitch_chat.sh` | Twitch IRC チャットデーモン管理 (start/fetch/send等) |
 | `twitch_chat_daemon.sh` | IRC常駐プロセス (`!clip` コマンド対応) |
-| `twitch_predictions.sh` | Twitch チャネルポイント予想 API wrapper (create/resolve/cancel) |
+| `twitch_predictions.sh` | Twitch チャネルポイント予想 API wrapper (create/resolve/cancel, azumagdev自動投票) |
 
 ### ダッシュボード / ステータス
 
@@ -140,11 +148,12 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | ファイル | 役割 |
 |---------|------|
 | `data/radio_themes.txt` | ラジオ雑談テーマリスト（685件。料理・文化・神社・日本神話・オカルト等） |
-| `data/radio_soviet_themes.txt` | ソ連関連テーマリスト |
+| `data/radio_soviet_themes.txt` | ソ連関連テーマリスト（209件） |
 | `data/songs/` | VOICEVOX歌声合成用の楽譜JSON |
+| `data/voicevox_sing_reference.md` | VOICEVOX歌声合成リファレンス |
 | `prompts/improve_strategy.md` | 戦略改善AIへのプロンプト（建国ボーナス指標の説明含む） |
 | `prompts/rollback_postmortem.md` | 粛清後の事後分析AIプロンプト |
-| `prompts/radio_*.md` | ラジオ各コーナー用プロンプト (persona/theme/news/soviet/strategy/recap/rules/jiji等) |
+| `prompts/radio_*.md` | ラジオ各コーナー用プロンプト (persona/theme/news/soviet/strategy/recap/rules/jiji/jiji_research等) |
 | `prompts/comment_response.md` | コメント応答生成プロンプト |
 | `prompts/celebration.md` | 建国お祝い生成プロンプト |
 | `prompts/game_theory.md` | ゲーム理論プロンプト |
@@ -156,9 +165,23 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 - 雑談テーマ: `data/radio_themes.txt`（685件。料理・文化・神社・日本神話・神道・オカルト等）
 - ソ連テーマ: `data/radio_soviet_themes.txt`
 - ニュース読み上げ: 記事内容は素直に紹介するが、政治的に中立・多角的な意見を述べること（左右どちらにも偏らない）
-- 履歴保持: テーマ400件、ニュース200-500件で重複を回避
+- 履歴保持: テーマ400件（PAST_RADIO_THEME_HISTORY_KEEP）、ニュースURL 500件、ソース 400件で重複を回避
 - Webグラウンディング: `RADIO_WEB_GROUNDING_ENABLED=1` でテーマ関連の補足情報をWeb検索で取得（TTL 6時間）
 - ファクトチェック: `RADIO_FACT_CHECK_ENABLED=1` で生成テキストのファクトチェック・修正を実施
+
+## 配信画面構成
+
+- 画面端の小窓: メリケンAI（アメリカ製AI）が「ソ連ゲーム91」（続編・対戦版）をプレイしている様子
+- こちらが「中華AI×ソ連ゲーム」、向こうは「メリケンAI×ソ連ゲーム91」
+- コメント応答でメリケンAIについて聞かれたら、ライバル意識を持ちつつも認め合う姿勢で答える
+
+## Twitch チャネルポイント予想
+
+- 12ゲームサイクルの開始時に「建国できる？」予想を作成
+- 選択肢: 建国なし / ロシア建国(ソ連不成立) / ソ連建国 / 粛清
+- ソ連建国・粛清は即 resolve、ロシア建国は12ゲーム後に判定
+- azumagdev ボットが GQL API でランダムに1票自動投票（AUTO_VOTE_POINTS=10）
+- `TWITCH_PREDICTIONS_ENABLED=1` と `TWITCH_PREDICTIONS_TOKEN` が必要（チャネルオーナートークン）
 
 ## Twitch クリップ自動作成
 

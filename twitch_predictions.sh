@@ -48,6 +48,29 @@ _auto_vote_prediction() {
 	# 少し待ってから投票（予想が確実に受付中になるのを待つ）
 	sleep 5
 
+	# 所持ポイントを取得して10%を計算
+	local channel_login="${TWITCH_CHANNEL_LOGIN:-azumag}"
+	local balance_resp vote_points
+	balance_resp=$(curl -sf --max-time 10 -X POST \
+		"https://gql.twitch.tv/gql" \
+		-H "Authorization: OAuth ${bot_token}" \
+		-H "Client-Id: kimne78kx3ncx6brgo4mv6wki5h1ko" \
+		-H "Content-Type: application/json" \
+		-d "{\"operationName\":\"ChannelPointsContext\",\"variables\":{\"channelLogin\":\"${channel_login}\"},\"extensions\":{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"1530a003a7d374b0380b79db0be0534f30ff46e61cffa2571ed5571571e39e7c\"}}}" 2>/dev/null)
+
+	vote_points=$(echo "$balance_resp" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    balance = d['data']['community']['channel']['self']['communityPoints']['balance']
+    pts = max(10, int(balance * 0.10))
+    print(pts)
+except Exception:
+    print(10)
+" 2>/dev/null || echo "10")
+
+	_log "AUTO_VOTE: balance query → betting ${vote_points}pt (10% of balance)"
+
 	# ランダムに1つの outcome を選ぶ
 	local event_id outcome_id
 	event_id=$(echo "$state_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prediction_id"])' 2>/dev/null)
@@ -74,7 +97,7 @@ print(json.dumps({
         'input': {
             'eventID': '$event_id',
             'outcomeID': '$outcome_id',
-            'points': $AUTO_VOTE_POINTS,
+            'points': $vote_points,
             'transactionID': '$(python3 -c "import uuid; print(str(uuid.uuid4()))")'
         }
     },
@@ -105,7 +128,7 @@ labels = ['建国なし', 'ロシア建国', 'ソ連建国', '粛清']
 idx = ids.index('$outcome_id') if '$outcome_id' in ids else -1
 print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
 " 2>/dev/null)
-		_log "AUTO_VOTE: azumagdev voted '${voted_label}' (${AUTO_VOTE_POINTS}pt)"
+		_log "AUTO_VOTE: azumagdev voted '${voted_label}' (${vote_points}pt)"
 	else
 		_log "AUTO_VOTE: failed (curl error or empty response)"
 	fi
