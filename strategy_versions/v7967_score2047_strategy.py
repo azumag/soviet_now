@@ -40,6 +40,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
     # --- Change History ---
+# v280: axis 9.5 に merged type adjacency 追加 - 即時併合機会がない場合の2手先併合可能性最大化
+# ワーストゲーム(score0818)終盤turns 75-82でdeadline_crossed=trueになった後、即時併合機会がなく
+# max_yが2.63→3.45へ上昇してゲームオーバー。deadline_crossedになる前にmax_yが上昇したことが主因。
+# ベストゲーム(score2589)終盤turns 130-137ではmax_y=1.47→1.87の緩やかな上昇でdeadline_crossedに至らず延命。
+# batch_summaryでHEIGHT_CONTROLが9.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が高価値だが低選択率を確認。
+# advice.md「次のピースを予測し、数ターン先の配置を計画的に判断する戦略への改善」を参考に、
+# axis 9.5にmerged_typeピース（next_type + 1）に近い配置を優先する評価を追加。
+# 即時併合機会がない場合、2手先の併合可能性を最大化する配置を優先することで、
+# max_yが上昇中の状況でより即時併合機会を最大化する配置を選択する。
+# reactive_pairsがある場合、この評価を強化する。
+# last_rollback_postmortemの制約を遵守：deadline_crossed && reactive_pairs>=1の場合は
+# SAME_TYPE_STACKボーナスを完全に抑制して即時併合を最優先。
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+#       game_history/20260320_062958_score0818.jsonl turns 75-82, game_history/20260320_063902_score2589.jsonl turns 130-137,
+#       game_history/20260320_061856_score2450.jsonl turns 98-105, advice.md
 # v277: deadline_crossed時SAME_TYPE_STACK抑制即時併合最優先版 - ワーストゲーム(score948)終盤即時併合取りこぼし潰し
 # ワーストゲーム(score948)終盤turns 60-73でdeadline_crossed=true, reactive_pairs=4があるにもかかわらず、
 # SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEを選択し、即時併合を取りこぼしてmax_y=3.39でオーバー。
@@ -161,34 +176,37 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v274: 危険ピース数増強即時併合優先版 - ワーストゲーム(score0508)終盤危険エリア即時併合取りこぼし潰し
+    """v280: axis 9.5 に merged type adjacency 追加 - 即時併合機会がない場合の2手先併合可能性最大化
 
-    ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
-    ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
-    batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が3.0-4.2%選択(avg_score_delta=22.3-37.9)と低選択率を確認。
-    v273の固定+800.0ボーナスでは、danger_piece_countの緊急性を十分反映できていなかった問題を解消。
-    axis 8.5改善：danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
-    即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
-    last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-    即時併合機会がある候補が強化されることで、危険エリアでの即時併合優先が強化され、
-    ワーストゲームのような「danger_piece_count増加中に即時併合取りこぼし」問題を解消。
+    ワーストゲーム(score0818)終盤turns 75-82でdeadline_crossed=trueになった後、即時併合機会がなく
+    max_yが2.63→3.45へ上昇してゲームオーバー。deadline_crossedになる前にmax_yが上昇したことが主因。
+    ベストゲーム(score2589)終盤turns 130-137ではmax_y=1.47→1.87の緩やかな上昇でdeadline_crossedに至らず延命。
+    batch_summaryでHEIGHT_CONTROLが9.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が高価値だが低選択率を確認。
+    advice.md「次のピースを予測し、数ターン先の配置を計画的に判断する戦略への改善」を参考に、
+    axis 9.5にmerged_typeピース（next_type + 1）に近い配置を優先する評価を追加。
+    即時併合機会がない場合、2手先の併合可能性を最大化する配置を優先することで、
+    max_yが上昇中の状況でより即時併合機会を最大化する配置を選択する。
+    reactive_pairsがある場合、この評価を強化する。
+    last_rollback_postmortemの制約を遵守：deadline_crossed && reactive_pairs>=1の場合は
+    SAME_TYPE_STACKボーナスを完全に抑制して即時併合を最優先。
 
-    v274の改善点:
-    1. axis 8.5改善：danger_piece_count増強即時併合優先
-       - danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
-       - 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保
-    2. v273のaxis 9.5（same type stacking）を維持
+    v280の改善点:
+    1. axis 9.5改善：merged type adjacency 追加
+       - 即時併合機会がない場合、merged_typeピース（next_type + 1）に近い配置を優先
+       - reactive_pairsがある場合、ボーナスを強化（+500.0 vs +250.0）
+    2. v274のaxis 9.5（same type stacking）を維持
+    3. deadline_crossed && reactive_pairs>=1の場合はSAME_TYPE_STACKボーナスを完全に抑制（制約遵守）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
          analysis: analyze_board.py analysis results
-             - results: landing information for each drop X candidate
-                 - x: drop X coordinate
-                 - landing_y: estimated landing Y coordinate (high=dangerous)
-                 - drift_x/drift_unc: post-landing drift due to polygon shape
-                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                 - danger_direct_merge_available: DIRECT merge available with danger piece
-             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+              - results: landing information for each drop X candidate
+                  - x: drop X coordinate
+                  - landing_y: estimated landing Y coordinate (high=dangerous)
+                  - drift_x/drift_unc: post-landing drift due to polygon shape
+                  - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                  - danger_direct_merge_available: DIRECT merge available with danger piece
+              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
@@ -252,6 +270,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     if same_type_pieces:
         # 盤面上の現在タイプの最も高い位置のピースを見つける
         same_type_stack_top = max(same_type_pieces, key=lambda p: p.get("y", -10))
+    
+    # merged_typeピースの取得（2手先の併合可能性を評価するため）
+    merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
+    merged_type_stack_top = None
+    if merged_type_pieces:
+        merged_type_stack_top = max(merged_type_pieces, key=lambda p: p.get("y", -10))
     
     # =======================================================================
     #  score each drop candidate (x coordinate) with 6 evaluation axes (NEW: +1 axis for reactive)
@@ -571,6 +595,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             score += 100.0
                             if "SAME_TYPE_STACK" not in "_".join(reasons):
                                 reasons.append("SAME_TYPE_STACK")
+                
+                # merged type adjacency: 2手先の併合（merged_type）ピースに近い配置を優先
+                # 即時併合機会がない場合、2手先の併合可能性を最大化する配置を優先することで、
+                # max_yが上昇中の状況でより即時併合機会を最大化する配置を選択する
+                if merged_type_stack_top:
+                    merged_stack_top_x = merged_type_stack_top.get("x", 0)
+                    horiz_dist_merged = abs(x - merged_stack_top_x)
+                    if horiz_dist_merged < 0.8:  # ピースの真上に近い配置
+                        # reactive_pairsがある場合、ボーナスを強化
+                        if reactive_pair_count >= 1:
+                            score += 500.0
+                            if "MERGED_TYPE_ADJACENCY_REACTIVE" not in "_".join(reasons):
+                                reasons.append("MERGED_TYPE_ADJACENCY_REACTIVE")
+                        else:
+                            score += 250.0
+                            if "MERGED_TYPE_ADJACENCY" not in "_".join(reasons):
+                                reasons.append("MERGED_TYPE_ADJACENCY")
 
         # ----- update best candidate -----
         if score > best_score:
