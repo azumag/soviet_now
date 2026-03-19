@@ -2,6 +2,13 @@
 
 Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロジェクト。
 
+## サブプロジェクト
+
+- `soren91/` — 91人対戦版 (unityroom) の自動プレイヤー。独自の CLAUDE.md を持つ。スクリーンショットベース・Node.js 実装。以下の親プロジェクト固有セクション（eloop, ラジオ, TTS, Twitch等）は soren91 には該当しない。
+
+---
+## 以下は親プロジェクト (ローカル版ソ連ゲーム) 固有の情報
+
 ## Unity WebGL ビルド
 
 **ビルドガイド**: `sorengame/BUILD_GUIDE.md` を参照。
