@@ -56,7 +56,7 @@ tmp/summaries/           # ラウンドサマリーJSON
 4. パスしたら適用、旧版を `strategy_versions/` にバックアップ
 5. 排他ロック: 前の改善中は次をスキップ
 
-改善間隔は実行中でも変更できる。優先順は `runtime_config.json` → `.env` → デフォルト値 `12`。
+改善間隔は実行中でも変更できる。優先順は `runtime_config.json` → `.env` → デフォルト値 `12`。`runtime_config.json` は通常の設定ファイルとして git 管理してよい。
 
 `.env`:
 ```env

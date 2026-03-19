@@ -52,6 +52,7 @@ tmp/summaries/           # ラウンドサマリーJSON
 - パスしたら適用、旧版をstrategy_versions/にバックアップ
 - 排他ロック: 前の改善中は次をスキップ
 - 改善間隔の優先順: `runtime_config.json` → `.env` (`IMPROVEMENT_INTERVAL_GAMES`) → デフォルト値 `12`
+- `runtime_config.json` は通常の設定ファイルとして git 管理してよい
 
 ## ホットリロード
 全モジュールが動的importされるため、ファイル編集が即反映される (再起動不要):
