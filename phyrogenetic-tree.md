@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-20 03:58:25 JST`
+- Updated: `2026-03-20 04:26:21 JST`
 - Nodes: `617`
-- Edges: `871`
-- Current: `d88a7d1bba56`
-- Anchor: `d88a7d1bba56`
+- Edges: `872`
+- Current: `c35afe41a4f4`
+- Anchor: `c35afe41a4f4`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -60,13 +60,13 @@ flowchart TD
     h_ed7175aba8a7["ed7175aba8a7<br/>g=14 n=14<br/>comp=1493.1"]
     h_28f565693d84["28f565693d84<br/>g=13 n=13<br/>comp=1606.7"]
     h_4eadb4f5eb3c["4eadb4f5eb3c<br/>g=13 n=13<br/>comp=1370.4"]
-    h_d88a7d1bba56["d88a7d1bba56<br/>CURRENT ANCHOR<br/>g=43 n=20<br/>comp=1761.7"]
+    h_d88a7d1bba56["d88a7d1bba56<br/>g=51 n=20<br/>comp=1565.7"]
     h_88e10e16f2c3["88e10e16f2c3<br/>g=43 n=20<br/>comp=1540.4"]
     h_63b6794f9167["63b6794f9167<br/>g=13 n=13<br/>comp=1612.4"]
     h_3b6ca2f80b46["3b6ca2f80b46<br/>g=12 n=12<br/>comp=1479.1"]
     h_c8d603f06e3d["c8d603f06e3d<br/>g=76 n=20<br/>comp=1516.5"]
     h_3b3c2479f429["3b3c2479f429<br/>g=12 n=12<br/>comp=1802.5"]
-    h_c35afe41a4f4["c35afe41a4f4<br/>g=12 n=12<br/>comp=1812.1"]
+    h_c35afe41a4f4["c35afe41a4f4<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=1812.1"]
     h_22fc9a6d3ec2["22fc9a6d3ec2<br/>g=12 n=12<br/>comp=1430.8"]
     h_b4533b8c7dc6["b4533b8c7dc6<br/>g=48 n=20<br/>comp=1697.2"]
     h_dd33e5c3775b["dd33e5c3775b<br/>g=30 n=20<br/>comp=1634.4"]
@@ -153,6 +153,7 @@ flowchart TD
     h_1497aa8c82aa -. rollback .-> h_b4533b8c7dc6
     h_b4533b8c7dc6 -->|improve| h_aa34486df2a1
     h_aa34486df2a1 -. rollback .-> h_d88a7d1bba56
+    h_d88a7d1bba56 -. rollback .-> h_c35afe41a4f4
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -204,13 +205,13 @@ flowchart TD
     class h_ed7175aba8a7 plain;
     class h_28f565693d84 plain;
     class h_4eadb4f5eb3c plain;
-    class h_d88a7d1bba56 current_anchor;
+    class h_d88a7d1bba56 plain;
     class h_88e10e16f2c3 plain;
     class h_63b6794f9167 plain;
     class h_3b6ca2f80b46 plain;
     class h_c8d603f06e3d plain;
     class h_3b3c2479f429 plain;
-    class h_c35afe41a4f4 plain;
+    class h_c35afe41a4f4 current_anchor;
     class h_22fc9a6d3ec2 plain;
     class h_b4533b8c7dc6 plain;
     class h_dd33e5c3775b plain;
@@ -2222,7 +2223,7 @@ flowchart TD
 
 - Range: `4e4943f7f65c` .. `a3aae72a4e37`
 - Nodes in this diagram: `57`
-- Internal edges in this diagram: `76`
+- Internal edges in this diagram: `77`
 - Cross-chunk link: `467e45d0adc3 --improve--> 4e4943f7f65c`
 - Cross-chunk link: `4e4943f7f65c -.rollback.-> 4da6ecce5bb9`
 - Cross-chunk link: `467e45d0adc3 --improve--> ddd4637d2985`
@@ -2281,13 +2282,13 @@ flowchart TD
     h_ed7175aba8a7["ed7175aba8a7<br/>g=14 n=14<br/>comp=1493.1"]
     h_28f565693d84["28f565693d84<br/>g=13 n=13<br/>comp=1606.7"]
     h_4eadb4f5eb3c["4eadb4f5eb3c<br/>g=13 n=13<br/>comp=1370.4"]
-    h_d88a7d1bba56["d88a7d1bba56<br/>CURRENT ANCHOR<br/>g=43 n=20<br/>comp=1761.7"]
+    h_d88a7d1bba56["d88a7d1bba56<br/>g=51 n=20<br/>comp=1565.7"]
     h_88e10e16f2c3["88e10e16f2c3<br/>g=43 n=20<br/>comp=1540.4"]
     h_63b6794f9167["63b6794f9167<br/>g=13 n=13<br/>comp=1612.4"]
     h_3b6ca2f80b46["3b6ca2f80b46<br/>g=12 n=12<br/>comp=1479.1"]
     h_c8d603f06e3d["c8d603f06e3d<br/>g=76 n=20<br/>comp=1516.5"]
     h_3b3c2479f429["3b3c2479f429<br/>g=12 n=12<br/>comp=1802.5"]
-    h_c35afe41a4f4["c35afe41a4f4<br/>g=12 n=12<br/>comp=1812.1"]
+    h_c35afe41a4f4["c35afe41a4f4<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=1812.1"]
     h_22fc9a6d3ec2["22fc9a6d3ec2<br/>g=12 n=12<br/>comp=1430.8"]
     h_b4533b8c7dc6["b4533b8c7dc6<br/>g=48 n=20<br/>comp=1697.2"]
     h_dd33e5c3775b["dd33e5c3775b<br/>g=30 n=20<br/>comp=1634.4"]
@@ -2373,6 +2374,7 @@ flowchart TD
     h_1497aa8c82aa -. rollback .-> h_b4533b8c7dc6
     h_b4533b8c7dc6 -->|improve| h_aa34486df2a1
     h_aa34486df2a1 -. rollback .-> h_d88a7d1bba56
+    h_d88a7d1bba56 -. rollback .-> h_c35afe41a4f4
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2421,13 +2423,13 @@ flowchart TD
     class h_ed7175aba8a7 plain;
     class h_28f565693d84 plain;
     class h_4eadb4f5eb3c plain;
-    class h_d88a7d1bba56 current_anchor;
+    class h_d88a7d1bba56 plain;
     class h_88e10e16f2c3 plain;
     class h_63b6794f9167 plain;
     class h_3b6ca2f80b46 plain;
     class h_c8d603f06e3d plain;
     class h_3b3c2479f429 plain;
-    class h_c35afe41a4f4 plain;
+    class h_c35afe41a4f4 current_anchor;
     class h_22fc9a6d3ec2 plain;
     class h_b4533b8c7dc6 plain;
     class h_dd33e5c3775b plain;
@@ -2439,6 +2441,21 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#7919 `d88a7d1b -> c35afe41`
+
+- - rollback from d88a7d1bba56 to c35afe41a4f4 at game 7919
+- - reasons: hard_fail+anchor_direct
+- - current comp/p50/p25=1565.7/1634.0/1421.2 vs target 1812.1/2081.0/1340.5
+- - bad recent scores: 2177 1253 1449 1831 1468 1547 1670 1269
+- anchor 比で明確な悪化が出て即時停止条件に触れた。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- current: comp=1565.7 p50=1634.0 p25=1421.2 mean=1756.5 n=20
+- rollback_target: comp=1812.1 p50=2081.0 p25=1340.5 mean=2000.9 n=12
+- metric_gap_vs_target: comp=-246.4 p50=-447.0 p25=80.8 mean=-244.5
+- recent12_avg: bad=1777.7 target=2000.9
+- recent12_floor: bad=1237 target=1072
+- anchor 比で急激に悪化した局面を重点的に調べること。特に p25 を落とした試合群の共通条件を抽出する。
 
 ### Rollback Game#7911 `aa34486d -> d88a7d1b`
 
