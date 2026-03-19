@@ -245,7 +245,10 @@ function callClaude(promptText) {
       encoding: 'utf-8',
       maxBuffer: 2 * 1024 * 1024,
     }, (err, stdout, stderr) => {
-      if (err) return reject(err);
+      if (err) {
+        if (stderr) console.error('[improve] claude stderr:', stderr.slice(0, 500));
+        return reject(err);
+      }
       const text = stdout.trim();
 
       // コードブロックを抽出
