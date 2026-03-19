@@ -20,15 +20,26 @@ export function decide(boardState) {
   // boardState: {
   //   pieces: [{type, x, y, r}],   // 検出されたピース (国ピースのみ、おじゃまは除外)
   //   next: {type, r},              // 次にドロップするピース
+  //   hold: {type, r} | null,       // HOLD領域のピース (null=空)
+  //   canHold: boolean,             // このターンでHOLD使用可能か
   //   score: number,
   //   confidence: number,
   //   garbage: { ratio, height, pixelCount }  // おじゃまブロック情報
   //     ratio: ボード内のおじゃまの割合 (0-1)
   //     height: おじゃまの最高到達Y座標 (ゲーム座標, 高い=危険)
   // }
-  // Returns: { x: number [-3.0, 3.0], reason: string }
+  // Returns: { x: number [-3.0, 3.0], reason: string, hold?: boolean }
 }
 ```
+
+## HOLD Mechanic
+- Right-click saves the current cursor piece to HOLD, or swaps with the held piece
+- `boardState.hold`: the currently held piece ({type, r}) or null if empty
+- `boardState.canHold`: true if hold is available (resets after each drop, false after holding)
+- Return `{ x: 0, reason: 'HOLD_...', hold: true }` to use HOLD (x is ignored)
+- After holding, the bot re-analyzes the board with the swapped piece before deciding
+- Use HOLD when: current piece has no merge targets but held piece does, or save current piece for later
+- **HOLD logic MUST be preserved in any strategy improvement**
 
 ## Garbage Blocks (おじゃまブロック)
 - Gray blocks sent by opponents
@@ -51,5 +62,6 @@ export function decide(boardState) {
 - Do NOT import external modules - pure logic only
 - You MUST only output strategy.mjs code. Do NOT modify any other files
 - The function signature `export function decide(boardState)` MUST be preserved
-- Return value MUST be `{ x: number, reason: string }` where x is in [-3.0, 3.0]
+- Return value MUST be `{ x: number, reason: string, hold?: boolean }` where x is in [-3.0, 3.0]
+- HOLD logic (checking boardState.hold and canHold) MUST be preserved
 - Do NOT use async/await, fetch, fs, or any side effects - pure computation only

@@ -64,6 +64,15 @@ tmp/summaries/           # ラウンドサマリーJSON
 - **壁検出**: 水平スキャンで明→暗遷移、暗領域150px以上でゲームボード壁と判定
 - **ピース検出**: gridStep=4のblob検出、背景(brightness<60)除外、低彩度(壁/灰色)除外
 - **おじゃま測定**: 灰色(brightness100-200, saturation<0.1)の割合と高さを`boardState.garbage`で提供
+- **HOLD検出**: 画面上部HOLD領域のピースを検出。`boardState.hold`で提供 ({type, r}|null)
+- **NEXT検出**: 画面上部NEXT領域のピースを検出。`boardState.next`で提供
+
+## HOLD機能
+- 右クリックで現在のカーソルピースをHOLD領域に保持
+- 既にHOLDがある場合は右クリックでHOLDとカーソルを入れ替え (1ターン1回)
+- `boardState.hold`: HOLD領域のピース ({type, r}|null)
+- `boardState.canHold`: このターンでHOLD使用可能か (ドロップ後にリセット)
+- `decide()` が `hold: true` を返すとドロップせず右クリック→再解析
 
 ## ゲーム座標系
 - Board X: [-3.5 wall, -3.0 drop min ... +3.0 drop max, +3.5 wall]

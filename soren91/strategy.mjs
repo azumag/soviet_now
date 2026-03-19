@@ -24,7 +24,7 @@ const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 70;
 
 export function decide(boardState) {
-  const { pieces, next, confidence, garbage } = boardState;
+  const { pieces, next, confidence, garbage, hold, canHold } = boardState;
   const nextType = next ? next.type : 1;
 
   if (!pieces || pieces.length === 0) {
@@ -41,6 +41,27 @@ export function decide(boardState) {
   if (unreliable) {
     const safeX = findLeastOccupiedX(activePieces);
     return { x: safeX, reason: `SPREAD_UNRELIABLE_X${safeX.toFixed(1)}` };
+  }
+
+  // --- HOLD判定 ---
+  if (canHold) {
+    const nextMergeTargets = activePieces.filter(p =>
+      p.type === nextType && p.y < DEADLINE_Y - 0.3
+    );
+    if (hold && hold.type) {
+      // HOLDにピースがある: holdの方がマージ先が多ければswap
+      const holdMergeTargets = activePieces.filter(p =>
+        p.type === hold.type && p.y < DEADLINE_Y - 0.3
+      );
+      if (holdMergeTargets.length >= 2 && nextMergeTargets.length === 0) {
+        return { x: 0, reason: `HOLD_SWAP_T${hold.type}`, hold: true };
+      }
+    } else {
+      // HOLDが空: 現ピースにマージ先がなく盤面が十分ならsave
+      if (nextMergeTargets.length === 0 && activePieces.length > 10) {
+        return { x: 0, reason: `HOLD_SAVE_T${nextType}`, hold: true };
+      }
+    }
   }
 
   // おじゃま状態

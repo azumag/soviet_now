@@ -177,8 +177,14 @@ ${currentStrategy}
 
 ## Instructions
 Based on the game analysis and screenshots above, improve the strategy.mjs code.
-The function signature must remain: export function decide(boardState) -> { x: number, reason: string }
-where boardState has: { pieces: [{type, x, y, r}], next: {type, r}, score: number, confidence: number }
+The function signature must remain: export function decide(boardState) -> { x: number, reason: string, hold?: boolean }
+where boardState has: { pieces: [{type, x, y, r}], next: {type, r}, hold: {type, r}|null, canHold: boolean, score: number, confidence: number, garbage: {ratio, height, pixelCount} }
+
+HOLD mechanic: right-click saves current piece to HOLD slot, or swaps with held piece.
+- boardState.hold: currently held piece (null if empty)
+- boardState.canHold: true if hold is available this turn (resets after each drop)
+- Return hold: true to use HOLD (x is ignored, bot will re-analyze after swap)
+- HOLD logic MUST be preserved in any improvement.
 
 Return ONLY the complete improved strategy.mjs code, enclosed in a single code block.
 Focus on practical improvements based on the observed game behavior.`;
@@ -290,8 +296,11 @@ async function validateStrategy(code) {
         { type: 2, x: 1, y: -4, r: 0.259 },
       ],
       next: { type: 1, r: 0.207 },
+      hold: { type: 2, r: 0.259 },
+      canHold: true,
       score: 100,
       confidence: 0.5,
+      garbage: { ratio: 0, height: -5, pixelCount: 0 },
     };
 
     const result = module.decide(dummyState);
