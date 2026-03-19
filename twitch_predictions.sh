@@ -8,8 +8,10 @@
 # 状態ファイル: tmp/state/current_prediction.json
 cd "$(dirname "$0")"
 
-# 単体実行時にも.envを読めるようにする
-[ -z "${TWITCH_CLIENT_ID:-}" ] && [ -f .env ] && set -a && . ./.env && set +a
+# 予想系は毎回の実行で最新の .env を読む。
+# 長寿命の親プロセスから古い exported env を引き継いでも、
+# 後から追加・更新した Twitch 関連トークンをここで反映させる。
+[ -f .env ] && set -a && . ./.env && set +a
 
 _log() { echo "[twitch_predictions $(date '+%H:%M:%S')] $*" >&2; }
 
