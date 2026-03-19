@@ -5,19 +5,21 @@
  * インターフェースは固定: decide(boardState) -> { x, reason }
  *
  * v7改善点:
- * - ピースノイズ対策: 密集デデュプ + 物理的不可能位置の除外
- * - 列高さ計算: 幅を0.5に拡大し取りこぼし防止
- * - 超緊急モード: pieces>90またはmaxHeight>2.0 で低列強制ドロップ
- * - HOLD: 大型ピース温存 + より積極的なswap
- * - 近接同タイプ密集ボーナス強化で将来チェーン準備
- * - avoidSide閾値を3差に緩和（過剰回避防止）
+ * - ピース数フィルタ: 70→50件 + X範囲制限 (他ボード混入対策)
+ * - avoidSide をハードブロック→スコアペナルティに変換 (マージ機会損失を防止)
+ * - チェーンスコア強化 (c1×6, c2×3, c3×1.5)
+ * - 近接同タイプボーナス強化 (nearSame×3)
+ * - 高さ管理: deadline近接列の緊急回避を先行チェック
+ * - HOLD: 大型ピース(type>=5)をスモールで無駄にしない判断追加
+ * - 中央寄りバイアス追加 (右寄り傾向の修正)
+ * - HEIGHT列高さ重みを強化 (×3.0)
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
 const DEADLINE_Y = 2.5;
-const WARN_Y = 1.2;
+const WARN_Y = 1.5;
 const WALL_MARGIN = 2.8;
-const MAX_ACTIVE_PIECES = 80;
+const MAX_ACTIVE_PIECES = 50;
 
 export function decide(boardState) {
   const { pieces, next, confidence, garbage, hold, canHold } = boardState;
@@ -27,18 +29,10 @@ export function decide(boardState) {
     return { x: 0.0, reason: 'NO_PIECES' };
   }
 
-  // 物理範囲外を先に除外
-  let inBound = pieces.filter(p =>
-    p.x >= -3.5 && p.x <= 3.5 && p.y >= -6.0 && p.y <= 3.5
-  );
-
-  // 密集デデュプ: 同タイプが0.3以内に複数ある場合はY高いもの1つだけ残す
-  inBound = deduplicatePieces(inBound);
-
-  // 上位80件にフィルタ
-  let activePieces = inBound;
-  if (inBound.length > MAX_ACTIVE_PIECES) {
-    activePieces = [...inBound].sort((a, b) => b.y - a.y).slice(0, MAX_ACTIVE_PIECES);
+  // X範囲でフィルタ後、Y座標上位50件に絞る (他ボードの混入対策)
+  let activePieces = pieces.filter(p => Math.abs(p.x) <= 3.2);
+  if (activePieces.length > MAX_ACTIVE_PIECES) {
+    activePieces = [...activePieces].sort((a, b) => b.y - a.y).slice(0, MAX_ACTIVE_PIECES);
   }
 
   const unreliable = confidence < 0.3;
@@ -47,167 +41,125 @@ export function decide(boardState) {
     return { x: safeX, reason: `SPREAD_UNRELIABLE_X${safeX.toFixed(1)}` };
   }
 
-  // 列高さ計算 (幅0.5で取りこぼし防止)
-  const colHeights = computeColHeights(activePieces);
-
-  const validH = colHeights.filter(h => h > -4.5);
-  const avgHeight = validH.length > 0
-    ? validH.reduce((a, b) => a + b, 0) / validH.length
-    : -3.0;
-  const maxHeight = validH.length > 0 ? Math.max(...validH) : -3.0;
-
-  // 危険側判定（閾値3差に緩和）
-  const dangerPieces = activePieces.filter(p => p.y > WARN_Y);
-  const leftDanger = dangerPieces.filter(p => p.x < 0).length;
-  const rightDanger = dangerPieces.filter(p => p.x >= 0).length;
-  let avoidSide = null;
-  if (leftDanger > rightDanger + 3) avoidSide = 'left';
-  else if (rightDanger > leftDanger + 3) avoidSide = 'right';
+  // --- HOLD判定 ---
+  if (canHold) {
+    const holdResult = evaluateHold(activePieces, nextType, hold);
+    if (holdResult) return holdResult;
+  }
 
   // おじゃま状態
   const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
   const garbageHeight = garbage ? (garbage.height || -5) : -5;
   const garbageUrgent = garbageRatio > 0.3 || garbageHeight > 0.5;
 
-  // 圧迫度
-  const boardPressure = activePieces.length > 55;
-  const boardCritical = activePieces.length > 90 || maxHeight > 2.0;
+  // ボード圧迫度
+  const boardPressure = activePieces.length > 50;
 
-  // --- HOLD判定 ---
-  if (canHold) {
-    const holdDecision = evaluateHold(activePieces, nextType, hold, avgHeight, boardCritical);
-    if (holdDecision) return holdDecision;
+  // 細粒度列高さ
+  const colHeights = computeColHeights(activePieces);
+
+  const validH = colHeights.filter(h => h > -4.5);
+  const avgHeight = validH.length > 0
+    ? validH.reduce((a, b) => a + b, 0) / validH.length
+    : -3.0;
+
+  // 危険側バイアス (ハードブロックではなくスコアペナルティ)
+  const dangerPieces = activePieces.filter(p => p.y > WARN_Y);
+  const leftDanger = dangerPieces.filter(p => p.x < 0).length;
+  const rightDanger = dangerPieces.filter(p => p.x >= 0).length;
+  // dangerBias: -1=右優先(左危険), 0=中立, 1=左優先(右危険)
+  let dangerBias = 0;
+  if (leftDanger > rightDanger + 2) dangerBias = -1;
+  else if (rightDanger > leftDanger + 2) dangerBias = 1;
+
+  // --- 緊急: deadline近接列があれば最低列へ即座に回避 ---
+  const criticalCount = colHeights.filter(h => h > DEADLINE_Y - 0.3).length;
+  if (criticalCount > 0) {
+    const lowestIdx = findLowestColIdx(colHeights);
+    return { x: clampX(FINE_COLS[lowestIdx]), reason: `CRITICAL_DEADLINE_COL${lowestIdx}` };
   }
 
-  // 超緊急: 最低列に大型マージを試み、無ければ強制低列ドロップ
-  if (boardCritical) {
-    if (nextType >= 4) {
-      const bigMerge = findBestMerge(activePieces, nextType, colHeights, null, avgHeight, garbageUrgent, 0);
-      if (bigMerge) return { ...bigMerge, reason: `CRITICAL_${bigMerge.reason}` };
-    }
-    const drop = findLowestDrop(colHeights, avoidSide);
-    return { ...drop, reason: `CRITICAL_${drop.reason}` };
-  }
-
-  // ボード圧迫時は高さ管理優先（大型はマージ優先）
+  // ボード圧迫時: 大型マージ → 高さ管理
   if (boardPressure) {
     if (nextType >= 5) {
-      const bigMerge = findBestMerge(activePieces, nextType, colHeights, avoidSide, avgHeight, garbageUrgent, 0);
-      if (bigMerge) return { ...bigMerge, reason: `PRESSURE_${bigMerge.reason}` };
+      const bigMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0);
+      if (bigMerge) return bigMerge;
     }
-    const heightDrop = findBestHeightDrop(activePieces, nextType, colHeights, avoidSide);
+    const heightDrop = findBestHeightDrop(activePieces, nextType, colHeights, dangerBias, avgHeight);
     if (heightDrop) return { ...heightDrop, reason: `PRESSURE_${heightDrop.reason}` };
   }
 
-  // 大型ピース(type>=6)優先マージ
+  // --- 1. 大型ピース(type>=6)の優先マージ ---
   if (nextType >= 6) {
-    const bigMerge = findBestMerge(activePieces, nextType, colHeights, avoidSide, avgHeight, garbageUrgent, 0);
+    const bigMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0);
     if (bigMerge) return bigMerge;
   }
 
-  // チェーン期待値の高いマージ
-  const chainMerge = findBestMerge(activePieces, nextType, colHeights, avoidSide, avgHeight, garbageUrgent, 4);
+  // --- 2. チェーン期待値の高いマージ ---
+  const chainMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 4);
   if (chainMerge) return chainMerge;
 
-  // 通常マージ
-  const normalMerge = findBestMerge(activePieces, nextType, colHeights, avoidSide, avgHeight, garbageUrgent, 0);
+  // --- 3. 通常マージ ---
+  const normalMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0);
   if (normalMerge) return normalMerge;
 
-  // 高さバランス
-  return findBestHeightDrop(activePieces, nextType, colHeights, avoidSide)
+  // --- 4. 高さバランス ---
+  return findBestHeightDrop(activePieces, nextType, colHeights, dangerBias, avgHeight)
     || { x: 0.0, reason: 'CENTER_FALLBACK' };
 }
 
-/** 密集デデュプ: 同タイプが0.3以内なら上位Y座標のもの1つに絞る */
-function deduplicatePieces(pieces) {
-  const kept = [];
-  const used = new Array(pieces.length).fill(false);
-  // Y降順で処理
-  const sorted = [...pieces].sort((a, b) => b.y - a.y);
-  for (let i = 0; i < sorted.length; i++) {
-    if (used[i]) continue;
-    kept.push(sorted[i]);
-    for (let j = i + 1; j < sorted.length; j++) {
-      if (used[j]) continue;
-      if (sorted[j].type === sorted[i].type &&
-          Math.hypot(sorted[j].x - sorted[i].x, sorted[j].y - sorted[i].y) < 0.3) {
-        used[j] = true;
-      }
-    }
-  }
-  return kept;
-}
-
-/** HOLD使用を評価 */
-function evaluateHold(pieces, nextType, hold, avgHeight, boardCritical) {
-  const nextMergeTargets = pieces.filter(p =>
-    p.type === nextType && p.y < DEADLINE_Y - 0.3
-  );
+/** HOLD判定: 現ピースとHOLDの有利な方を使う */
+function evaluateHold(pieces, nextType, hold) {
+  const safeY = DEADLINE_Y - 0.3;
+  const nextMergeCount = pieces.filter(p => p.type === nextType && p.y < safeY).length;
 
   if (hold && hold.type) {
-    const holdType = hold.type;
-    const holdMergeTargets = pieces.filter(p =>
-      p.type === holdType && p.y < DEADLINE_Y - 0.3
-    );
-
-    // HOLDの方がマージ機会が多い
-    if (holdMergeTargets.length >= 2 && nextMergeTargets.length === 0) {
-      return { x: 0, reason: `HOLD_SWAP_T${holdType}`, hold: true };
+    const holdMergeCount = pieces.filter(p => p.type === hold.type && p.y < safeY).length;
+    // HOLDの方が明らかにマージ有利で現ピースはマージ無し
+    if (holdMergeCount > nextMergeCount && nextMergeCount === 0) {
+      return { x: 0, reason: `HOLD_SWAP_T${hold.type}vs${nextType}`, hold: true };
     }
-    // 大型HOLDピースにマージ先があり現ピースが小型
-    if (holdType >= 6 && holdMergeTargets.length >= 1 && nextType <= 3) {
-      return { x: 0, reason: `HOLD_BIGSWAP_T${holdType}`, hold: true };
+    // HOLDが大型で現ピースが小型かつHOLDにマージ先あり
+    if (hold.type >= 5 && nextType <= 3 && holdMergeCount >= 1) {
+      return { x: 0, reason: `HOLD_SWAP_BIGTYPE_T${hold.type}`, hold: true };
     }
   } else {
-    // HOLDが空: 現ピースのマージ先がなく盤面が十分ならsave
-    if (nextMergeTargets.length === 0 && pieces.length > 8 && !boardCritical && nextType >= 3) {
+    // HOLDが空: マージ先なし + 盤面余裕あり → 保存
+    if (nextMergeCount === 0 && pieces.length > 15 && pieces.length < 50) {
       return { x: 0, reason: `HOLD_SAVE_T${nextType}`, hold: true };
     }
   }
   return null;
 }
 
-/** 列高さ計算 (幅±0.5で取りこぼし防止) */
+/** 列高さを計算 */
 function computeColHeights(pieces) {
   return FINE_COLS.map(cx => {
-    const col = pieces.filter(p => Math.abs(p.x - cx) < 0.5);
+    const col = pieces.filter(p => Math.abs(p.x - cx) < 0.4);
     if (col.length === 0) return -5.0;
     return Math.max(...col.map(p => p.y + (p.r || 0.3)));
   });
 }
 
-/** 緊急時: 最も低い列を返す */
-function findLowestDrop(colHeights, avoidSide) {
-  let bestIdx = -1;
-  let bestH = Infinity;
-
-  for (let i = 0; i < FINE_COLS.length; i++) {
-    const cx = FINE_COLS[i];
-    if (avoidSide === 'left' && cx < -0.5) continue;
-    if (avoidSide === 'right' && cx > 0.5) continue;
-    if (colHeights[i] >= DEADLINE_Y) continue;
-    if (colHeights[i] < bestH) {
-      bestH = colHeights[i];
-      bestIdx = i;
-    }
+/** 最も低い列のインデックス */
+function findLowestColIdx(colHeights) {
+  let minH = Infinity, minIdx = 5;
+  for (let i = 0; i < colHeights.length; i++) {
+    if (colHeights[i] < minH) { minH = colHeights[i]; minIdx = i; }
   }
-
-  if (bestIdx < 0) {
-    const minH = Math.min(...colHeights);
-    bestIdx = colHeights.indexOf(minH);
-  }
-
-  return { x: clampX(FINE_COLS[bestIdx]), reason: `LOWEST_COL${bestIdx}_Y${colHeights[bestIdx].toFixed(1)}` };
+  return minIdx;
 }
 
-/** 最良マージ位置を探す */
-function findBestMerge(pieces, nextType, colHeights, avoidSide, avgHeight, garbageUrgent, minChainScore) {
+/**
+ * 最良マージ位置を探す
+ * dangerBias: -1=右寄り優先(左ペナルティ), 0=中立, 1=左寄り優先(右ペナルティ)
+ * minChainScore: 0=全マージ, 4=チェーン期待が高いもののみ
+ */
+function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, minChainScore) {
   const candidates = pieces.filter(p =>
     p.type === nextType &&
     Math.abs(p.x) < WALL_MARGIN &&
-    p.y < DEADLINE_Y - 0.1 &&
-    !(avoidSide === 'left' && p.x < -0.5) &&
-    !(avoidSide === 'right' && p.x > 0.5)
+    p.y < DEADLINE_Y - 0.1
   );
   if (candidates.length === 0) return null;
 
@@ -229,7 +181,7 @@ function findBestMerge(pieces, nextType, colHeights, avoidSide, avgHeight, garba
     // 大型マージの価値
     s += nextType * 1.5;
 
-    // 3段チェーン評価
+    // 3段チェーン評価 (強化)
     const c1 = countNear(pieces, t.x, nextType + 1, 1.8);
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
@@ -237,15 +189,18 @@ function findBestMerge(pieces, nextType, colHeights, avoidSide, avgHeight, garba
     if (chainScore < minChainScore) continue;
     s += chainScore;
 
-    // マージ後のtype+1が近くにいれば追加ボーナス
-    const nextMergeReady = countNear(pieces, t.x, nextType + 1, 1.5);
-    s += nextMergeReady * 4;
-
-    // 近接同タイプ: 多重マージ期待
-    const nearSame = candidates.filter(p => p !== t && Math.abs(p.x - t.x) < 1.0).length;
+    // 近接同タイプ: 多重マージ期待 (強化)
+    const nearSame = candidates.filter(p => p !== t && Math.abs(p.x - t.x) < 1.2).length;
     s += nearSame * 3;
 
-    if (garbageUrgent) s += 12;
+    // 危険側スコアペナルティ (ハードブロックではない)
+    if (dangerBias < 0 && t.x < -0.5) s -= 5;
+    if (dangerBias > 0 && t.x > 0.5) s -= 5;
+
+    // 中央寄りボーナス (右寄り傾向の修正)
+    s -= Math.abs(t.x) * 0.5;
+
+    if (garbageUrgent) s += 15;
 
     if (s > bestScore) {
       bestScore = s;
@@ -258,17 +213,15 @@ function findBestMerge(pieces, nextType, colHeights, avoidSide, avgHeight, garba
 }
 
 /** 高さバランスを優先した着弾位置 */
-function findBestHeightDrop(pieces, nextType, colHeights, avoidSide) {
+function findBestHeightDrop(pieces, nextType, colHeights, dangerBias, avgHeight) {
   let bestIdx = -1;
   let bestScore = -Infinity;
 
   for (let i = 0; i < FINE_COLS.length; i++) {
     const cx = FINE_COLS[i];
-    if (avoidSide === 'left' && cx < -0.5) continue;
-    if (avoidSide === 'right' && cx > 0.5) continue;
     if (colHeights[i] > DEADLINE_Y) continue;
 
-    let s = -colHeights[i] * 2.5;
+    let s = -colHeights[i] * 3.0; // 低い列をより強く優先 (2.5→3.0)
 
     // 同タイプ近傍: 将来マージ準備
     const nearSame = pieces.filter(p =>
@@ -276,15 +229,18 @@ function findBestHeightDrop(pieces, nextType, colHeights, avoidSide) {
     ).length;
     s += nearSame * 2.5;
 
-    // 隣接列との高さ差ペナルティ
+    // 隣接列との高さ差ペナルティ (急な段差を避ける)
     const leftH = i > 0 ? colHeights[i - 1] : colHeights[i];
     const rightH = i < FINE_COLS.length - 1 ? colHeights[i + 1] : colHeights[i];
     const gap = Math.max(leftH, rightH) - colHeights[i];
-    if (gap > 1.5) s -= 2.0;
-    if (gap > 2.5) s -= 3.5;
+    if (gap > 1.0) s -= (gap - 1.0) * 2.0;
 
-    // 中央付近を若干好む
-    s -= Math.abs(cx) * 0.15;
+    // 中央寄りボーナス (右寄り傾向の修正)
+    s -= Math.abs(cx) * 0.4;
+
+    // 危険側スコアペナルティ
+    if (dangerBias < 0 && cx < -0.5) s -= 4;
+    if (dangerBias > 0 && cx > 0.5) s -= 4;
 
     if (s > bestScore) {
       bestScore = s;
@@ -293,9 +249,8 @@ function findBestHeightDrop(pieces, nextType, colHeights, avoidSide) {
   }
 
   if (bestIdx < 0) {
-    const minH = Math.min(...colHeights);
-    const minIdx = colHeights.indexOf(minH);
-    return { x: clampX(FINE_COLS[minIdx]), reason: `CRITICAL_COL${minIdx}` };
+    const lowestIdx = findLowestColIdx(colHeights);
+    return { x: clampX(FINE_COLS[lowestIdx]), reason: `CRITICAL_COL${lowestIdx}` };
   }
   return { x: clampX(FINE_COLS[bestIdx]), reason: `HEIGHT_COL${bestIdx}_Y${colHeights[bestIdx].toFixed(1)}` };
 }
@@ -322,7 +277,7 @@ function nearestColIdx(x) {
 function findLeastOccupiedX(pieces) {
   const counts = FINE_COLS.map(cx => ({
     x: cx,
-    n: pieces.filter(p => Math.abs(p.x - cx) < 0.5).length,
+    n: pieces.filter(p => Math.abs(p.x - cx) < 0.4).length,
   }));
   const minN = Math.min(...counts.map(c => c.n));
   return counts
