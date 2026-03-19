@@ -7,26 +7,26 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-  Decision Logic (10 evaluation axes):
-      1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-     2. Height penalty - Penalty for high landing position (varies by phase)
-     3. Drift penalty - Penalty for post-landing drift due to polygon shape
-     4. Left-right balance correction - Bonus for correcting piece count bias
-      5. nextNext centering - Center for next merge opportunity if nextNext same type
-       5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-       6. Chain merge bonus - Evaluate possibility of further merges after merge
-        7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
-       8. Early game merge priority - Strong bonus for merge opportunities in early game
-        8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
-        9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
-        9.5. Current type stack merge priority - v277: Same type stacking enhanced (reactive>=1:+800.0, reactive==0:+300.0, deadline_crossed: always active)
+ Decision Logic (10 evaluation axes):
+    1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+    2. Height penalty - Penalty for high landing position (varies by phase)
+    3. Drift penalty - Penalty for post-landing drift due to polygon shape
+    4. Left-right balance correction - Bonus for correcting piece count bias
+     5. nextNext centering - Center for next merge opportunity if nextNext same type
+     5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
+     6. Chain merge bonus - Evaluate possibility of further merges after merge
+      7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
+     8. Early game merge priority - Strong bonus for merge opportunities in early game
+      8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
+      9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
+      9.5. Current type stack merge priority - Bonus for stacking on same type pieces when no immediate merge (v272: same type stacking)
 
- Phases (determined by board max Y):
-     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-     MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
-     HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-     CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
- """
+Phases (determined by board max Y):
+    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+    MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
+    HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+    CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+"""
 
 # Fixed interface:
 # decide(game_state: dict, analysis: dict) -> dict
@@ -36,12 +36,6 @@ Game Overview:
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-# v279: deadline-aware即時併合優先構造導入版 - v287 failure mode fix
-# v287の「axis 9判定順序不正」「deadline_margin<=2.6でのREACTIVE_PAIRS_COMPRESSION一律抑制」を構造的に修正。
-# last_rollback_postmortem: reactive_pairs>=1 && merge_grade=="NO"の状況で一貫してREACTIVE_PAIRS_COMPRESSIONを選択する必要がある。
-# deadline_margin計算を追加し、危険局面で即時併合優先を強化する構造を導入。
-# refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md (Pitman_live), game_history/20260320_030014_score0314.jsonl, game_history/20260320_025046_score3050.jsonl
-#
 # v274: 危険ピース数増強即時併合優先版 - ワーストゲーム(score0508)終盤危険エリア即時併合取りこぼし潰し
 # ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
 # ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
@@ -164,22 +158,23 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v279: deadline-aware即時併合優先構造導入版 - v287 failure mode fix
+    """v274: 危険ピース数増強即時併合優先版 - ワーストゲーム(score0508)終盤危険エリア即時併合取りこぼし潰し
 
-    v287の「axis 9判定順序不正」「deadline_margin<=2.6でのREACTIVE_PAIRS_COMPRESSION一律抑制」を構造的に修正。
-    last_rollback_postmortem: reactive_pairs>=1 && merge_grade=="NO"の状況で一貫してREACTIVE_PAIRS_COMPRESSIONを選択する必要がある。
-    deadline_margin計算を追加し、危険局面で即時併合優先を強化する構造を導入。
+    ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
+    ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
+    batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が3.0-4.2%選択(avg_score_delta=22.3-37.9)と低選択率を確認。
+    v273の固定+800.0ボーナスでは、danger_piece_countの緊急性を十分反映できていなかった問題を解消。
+    axis 8.5改善：danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
+    即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
+    last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
+    即時併合機会がある候補が強化されることで、危険エリアでの即時併合優先が強化され、
+    ワーストゲームのような「danger_piece_count増加中に即時併合取りこぼし」問題を解消。
 
-    v279の改善点:
-    1. deadline_margin計算の追加（構造的変更）
-       - deadline_y=3.32, max_yからdeadline_marginを計算
-       - deadline_margin<=2.6の危険局面を検出
-    2. axis 9のREACTIVE_PAIRS_COMPRESSION判定順序修正（構造的変更）
-       - axis 9をheight_penalty計算後、height_mult緩和後に配置
-       - reactive_pairs>=1 && merge_grade=="NO"で一貫してREACTIVE_PAIRS_COMPRESSIONを選択
-    3. 危険局面での即時併合優先強化（構造的変更）
-       - deadline_margin<=2.6 && merge_grade=="DIRECT"/"NEAR"で強力なボーナス（+1200.0）
-       - reactive_pairs>=2の場合さらに+300.0を付与し、即時併合優先を強化
+    v274の改善点:
+    1. axis 8.5改善：danger_piece_count増強即時併合優先
+       - danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
+       - 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保
+    2. v273のaxis 9.5（same type stacking）を維持
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -233,12 +228,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL height penalty basic value only
         merge_mult = 0.6  # v42: CRITICAL phase merge suppression
-
-    # --- v279: deadline_margin計算（構造的変更） ---
-    # v287のfailure mode fix。deadline_margin<=2.6の危険局面を検出し、即時併合優先を強化
-    deadline_y = 3.32
-    deadline_margin = deadline_y - max_y
-    deadline_crossed = deadline_margin <= 2.6
 
     # --- next piece information ---
     next_piece = game_state.get("next", {})
@@ -497,67 +486,51 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 height_mult *= 0.6
                 reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
 
-        # ----- v279: deadline-aware即時併合優先（新規評価軸axis 8.75） -----
-        # v287のfailure mode fix。deadline_margin<=2.6の危険局面で即時併合を優先する構造を導入。
-        # 危険局面でmerge_grade=="DIRECT"/"NEAR"の場合、強力なボーナスを与えて即時併合を優先
-        # reactive_pairs>=2の場合、さらに+300.0を付与し、即時併合優先を強化
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, game_history/20260320_030014_score0314.jsonl, game_history/20260320_025046_score3050.jsonl
-        if deadline_crossed:
-            if merge_grade in ["DIRECT", "NEAR"]:
-                # 危険局面での即時併合優先
-                if merge_grade == "DIRECT":
-                    score += 1200.0
-                else:  # NEAR
-                    score += 800.0
-
-                if reactive_pair_count >= 2:
-                    # reactive_pairs>=2の場合、さらにボーナスを追加
-                    score += 300.0
-
-                reasons.append("DEADLINE_IMMEDIATE_MERGE_PRIORITY")
-            elif merge_grade == "NO":
-                # 危険局面で即時併合がない場合：戦略的配置の余地を確保するためheight_multを緩和
-                height_mult *= 0.7
-                if not reasons:
-                    reasons.append("DEADLINE_STRATEGIC_PLACEMENT")
-
-        # ----- evaluation axis 9: reactive pairs default (v279: シンプル化版) -----
-        # v287のfailure mode fix。axis 9の判定順序を修正し、deadline-aware即時併合優先を独立した評価軸として追加。
+        # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
+        # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
+        # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
         # reactive_pairsがある場合、即時併合がない時のデフォルト選択をHEIGHT_CONTROLからREACTIVE_PAIRS_COMPRESSIONへ変更し、盤面圧縮を優先。
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
         if not reasons:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
-
-        # ----- evaluation axis 9.5: current type stack merge priority (v279: axis 9優先版 - REACTIVE_PAIRS_COMPRESSION over-selection fix) -----
-        # axis 9の判定順序を修正し、axis 9.5はaxis 9の補完として機能するよう配置。
-        # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
-        # reactive_pairsがある場合、axis 9.5はaxis 9のREACTIVE_PAIRS_COMPRESSIONの補完として機能する。
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md (Pitman_live)
+        
+        # ----- evaluation axis 9.5: current type stack merge priority (NEW: same type stacking) -----
+        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」（Pitman_live）に基づく構造的改善。
+        # batch_summaryでHEIGHT_CONTROLが15.9%選択(avg_score_delta=0.1)と過剰であり、即時併合機会を取りこぼしていることを確認。
+        # 即時併合機会がない場合、盤面上の現在タイプの最も高い位置のピースに配置を優先し、将来の併合可能性を最大化。
+        # reactive_pairs >= 1 の場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う。
+        # last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
+        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
             
-            # v279: axis 9.5ボーナスはv277のまま（axis 9のREACTIVE_PAIRS_COMPRESSIONが優先的に機能する構造）
-            # axis 9のdeadline-aware即時併合優先構造により、axis 9.5はaxis 9の補完として機能
-            if reactive_pair_count >= 1:
-                score += 800.0  # v277: reactive>=1の場合
-                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
-            else:
-                score += 300.0  # v277: reactive==0の場合
-                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+            # 配置位置が最上位の同タイプピースに近い場合、ボーナスを付与
+            horiz_dist = abs(x - stack_top_x)
+            if horiz_dist < 0.8:  # ピースの真上に近い配置
+                # reactive_pairsがある場合、ボーナスを強化
+                if reactive_pair_count >= 1:
+                    score += 600.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
+                else:
+                    score += 300.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             
-            # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減
+            # 配置位置が盤面上の現在タイプのピースの上になる場合、移動ペナルティを軽減
             landing_y = result.get("landing_y", 0)
             if landing_y > stack_top_y:
                 horiz_dist = abs(x - stack_top_x)
-                if horiz_dist < 1.0:
+                if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
+                    # reactive_pairsがある場合、ペナルティ軽減を強化
                     if reactive_pair_count >= 1:
-                        score += 200.0  # v277: reactive>=1の場合
+                        # 移動ペナルティを40%軽減
+                        score += 200.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
                     else:
-                        score += 100.0  # v277: reactive==0の場合
+                        # 移動ペナルティを20%軽減
+                        score += 100.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
