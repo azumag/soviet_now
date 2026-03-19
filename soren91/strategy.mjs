@@ -1,13 +1,14 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v12)
+ * strategy.mjs - ドロップ位置決定戦略 (v13)
  *
- * v12改善点 (v11からの修正):
- * - garbageUrgent閾値緩和: 0.3→0.4 (GBGモード過剰発火を防止、v11は43/83ターンGBG)
- * - GBGモード: マージなし時は低列へドロップして高さ均し
- * - 大量ピースモード追加: activePieces>=60時にfindAnyMergeで生存優先
- * - 右バイアス修正: センター列へのペナルティを0.5→0.8に強化
- * - ピース選択改善: cap時にマージ候補を優先選択して解析精度向上
- * - HOLD改善: 大型ピース(type>=5)保存ロジック強化
+ * v13改善点 (v12からの修正):
+ * - 最重要バグ修正: garbageUrgentがisCriticalより先に発火していた問題を修正
+ *   → v12では isCritical=true時もgarbageUrgentが先に処理され、
+ *      高さ管理をスキップしてT1マージを連発 → score=0, 80/81ターンGBGの原因
+ * - 優先順位: massMode → isCritical → garbageUrgent の順に変更
+ * - CRITICAL内でGBGマージを低列限定で試行 (高さ管理しながらガベージ対処)
+ * - GBGモード: HOLDピースが高タイプでマージ可能なら先にスワップ
+ * - garbageHeight閾値: 0.8→1.2 (多人数対戦の常時ガベージ環境での過剰発火防止)
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -26,7 +27,7 @@ export function decide(boardState) {
 
   let activePieces = pieces.filter(p => Math.abs(p.x) <= 3.2);
 
-  // v12: マージ候補を優先保護してからcap
+  // マージ候補を優先保護してからcap
   if (activePieces.length > MAX_ACTIVE_PIECES) {
     const mergeCandidates = activePieces.filter(p => p.type === nextType);
     const highPieces = activePieces.filter(p => p.y > WARN_Y && p.type !== nextType);
@@ -47,11 +48,10 @@ export function decide(boardState) {
 
   const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
   const garbageHeight = garbage ? (garbage.height || -5) : -5;
-  // v12: 閾値を0.3→0.4に引き上げ
-  const garbageUrgent = garbageRatio > 0.4 || garbageHeight > 0.8;
+  // v13: height閾値を0.8→1.2に引き上げ（多人数戦での常時ガベージ過剰発火防止）
+  const garbageUrgent = garbageRatio > 0.4 || garbageHeight > 1.2;
   const garbageCritical = garbageRatio > 0.6 || garbageHeight > 2.0;
 
-  // v12: 大量ピースモード
   const massMode = activePieces.length >= MAX_ACTIVE_PIECES - 5;
   const boardPressure = activePieces.length > 55;
 
@@ -73,7 +73,7 @@ export function decide(boardState) {
   const isCritical = nearDeadlineCount >= 3 || overDeadlineCount >= 2;
   const isWarn = colHeights.some(h => h > WARN_Y + 0.5);
 
-  // --- 大量ピースモード: マージ優先で生存 ---
+  // --- 大量ピースモード: 非CRITICAL時のみ (マージ優先で生存) ---
   if (massMode && !isCritical) {
     const anyMergeX = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
     if (anyMergeX !== null) return { x: anyMergeX, reason: `MASS_MERGE_T${nextType}` };
@@ -81,30 +81,20 @@ export function decide(boardState) {
     return { x: lowestDrop.x, reason: `MASS_LOW_COL_Y${colHeights[lowestDrop.idx].toFixed(1)}` };
   }
 
-  // --- ガベージ緊急: CRITICAL前に最優先でマージ ---
-  if (garbageUrgent) {
-    const gbgMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, true, 0);
-    if (gbgMerge) return { ...gbgMerge, reason: `GBG_MERGE_T${nextType}` };
-    if (canHold && hold && hold.type) {
-      const holdMergeCount = activePieces.filter(p =>
-        p.type === hold.type && p.y < DEADLINE_Y - 0.1
-      ).length;
-      if (holdMergeCount > 0) {
-        return { x: 0, reason: `GBG_HOLD_SWAP_T${hold.type}`, hold: true };
-      }
-    }
-    // v12: マージ不可 + 非CRITICALなら低列へ均す
-    if (!isCritical) {
-      const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
-      return { x: lowestDrop.x, reason: `GBG_LOW_COL_Y${colHeights[lowestDrop.idx].toFixed(1)}` };
-    }
-  }
-
-  // --- CRITICAL: 最低列優先 + 低列限定マージ ---
+  // --- v13: CRITICAL を garbageUrgent より先に処理 (高さ管理最優先) ---
   if (isCritical) {
     if (overDeadlineCount >= FINE_COLS.length - 3) {
       const emergencyIdx = findLowestColIdx(colHeights);
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
+    }
+
+    // v13: CRITICAL中もGBGマージを低列限定で試行（高さ管理しながら）
+    if (garbageUrgent) {
+      const lowLimit = Math.min(avgHeight + 0.2, DEADLINE_Y - 0.4);
+      const critGbgMerge = findMergeInLowCol(activePieces, nextType, colHeights, lowLimit, dangerBias);
+      if (critGbgMerge) {
+        return { x: critGbgMerge.x, reason: `CRITICAL_GBG_T${nextType}` };
+      }
     }
 
     if (canHold && hold && hold.type) {
@@ -141,6 +131,37 @@ export function decide(boardState) {
     }
 
     return { x: lowestDrop.x, reason: `CRITICAL_DROP${lowestDrop.idx}_Y${lowestColH.toFixed(1)}` };
+  }
+
+  // --- ガベージ緊急 (非CRITICAL時のみ到達) ---
+  if (garbageUrgent) {
+    // v13: HOLDが高タイプかつマージ可能なら先にスワップ
+    if (canHold && hold && hold.type && hold.type > nextType) {
+      const holdMergeCount = activePieces.filter(p =>
+        p.type === hold.type && p.y < DEADLINE_Y - 0.1
+      ).length;
+      const nextMergeCount = activePieces.filter(p =>
+        p.type === nextType && p.y < DEADLINE_Y - 0.1
+      ).length;
+      if (holdMergeCount > 0 && holdMergeCount >= nextMergeCount) {
+        return { x: 0, reason: `GBG_HOLD_UPGRADE_T${hold.type}`, hold: true };
+      }
+    }
+
+    const gbgMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, true, 0);
+    if (gbgMerge) return { ...gbgMerge, reason: `GBG_MERGE_T${nextType}` };
+
+    if (canHold && hold && hold.type) {
+      const holdMergeCount = activePieces.filter(p =>
+        p.type === hold.type && p.y < DEADLINE_Y - 0.1
+      ).length;
+      if (holdMergeCount > 0) {
+        return { x: 0, reason: `GBG_HOLD_SWAP_T${hold.type}`, hold: true };
+      }
+    }
+    // マージ不可: 最低列へ均す
+    const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
+    return { x: lowestDrop.x, reason: `GBG_LOW_COL_Y${colHeights[lowestDrop.idx].toFixed(1)}` };
   }
 
   // --- HOLD判定 (非CRITICAL時) ---
@@ -182,7 +203,7 @@ export function decide(boardState) {
     || { x: 0.0, reason: 'CENTER_FALLBACK' };
 }
 
-/** v12: 大量ピースモード用 - 安全列のマージを探す */
+/** 大量ピースモード用 - 安全列のマージを探す */
 function findAnyMerge(pieces, nextType, colHeights, dangerBias) {
   const candidates = pieces.filter(p =>
     p.type === nextType && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y
@@ -265,7 +286,6 @@ function evaluateHold(pieces, nextType, hold, nextPieces, isWarn) {
     if (hold.type >= 5 && nextType <= 3 && holdMergeCount >= 1) {
       return { x: 0, reason: `HOLD_SWAP_BIGTYPE_T${hold.type}`, hold: true };
     }
-    // v12: 非常に大型のピースは積極的に使う
     if (hold.type >= 7 && nextType <= 4 && holdMergeCount >= 1) {
       return { x: 0, reason: `HOLD_SWAP_HUGE_T${hold.type}`, hold: true };
     }
@@ -281,7 +301,6 @@ function evaluateHold(pieces, nextType, hold, nextPieces, isWarn) {
           return { x: 0, reason: `HOLD_SAVE_T${nextType}_FOR_T${futureType}`, hold: true };
         }
       }
-      // v12: 大型ピースはHOLDに保存して後で活用
       if (nextType >= 5 && !isWarn) {
         return { x: 0, reason: `HOLD_SAVE_BIG_T${nextType}`, hold: true };
       }
@@ -390,7 +409,6 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
 
     if (dangerBias < 0 && t.x < -0.5) s -= 5;
     if (dangerBias > 0 && t.x > 0.5) s -= 5;
-    // v12: センターバイアス強化 (0.5→0.8)
     s -= Math.abs(t.x) * 0.8;
     if (Math.abs(t.x) > 2.2) s -= 3;
 
@@ -423,7 +441,6 @@ function findBestHeightDrop(pieces, nextType, colHeights, dangerBias, avgHeight)
     const gap = Math.max(leftH, rightH) - colHeights[i];
     if (gap > 1.0) s -= (gap - 1.0) * 2.0;
 
-    // v12: センターバイアス強化 (0.4→0.7)
     s -= Math.abs(cx) * 0.7;
     if (Math.abs(cx) > 2.2) s -= 2;
 
