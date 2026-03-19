@@ -4,26 +4,39 @@
 # --- AIスパム判定 (opencode glmflash) ---
 _news_ai_spam_check() {
 	local title="$1" block="$2"
+	local spam_timeout="${NEWS_SPAM_CHECK_TIMEOUT_SEC:-20}"
 	# タイトル+本文冒頭をAIに判定させる
 	local body_excerpt
 	body_excerpt=$(printf '%s' "$block" | head -n 5 | tail -n +2 | head -c 300)
 
-	local verdict
-	verdict=$(opencode run --agent=glm --format=json \
-		"以下の記事がニュースとして紹介する価値があるか判定してください。
+	local verdict rc
+	verdict=$(
+		set -o pipefail
+		timeout "${spam_timeout}s" opencode run --agent=glm --format=json \
+			"以下の記事がニュースとして紹介する価値があるか判定してください。
 宣伝、広告、アフィリエイト、プロモーションコード紹介、商品レビュー偽装、SEOスパム、企業PR記事であれば SPAM と答えてください。
 正当な報道・ニュース・時事であれば NEWS と答えてください。
 SPAM か NEWS の1単語だけ答えてください。
 
 タイトル: ${title}
 本文冒頭: ${body_excerpt}" 2>/dev/null \
-		| grep '"type":"text"' \
-		| python3 -c "import json,sys;[print(json.loads(l).get('part',{}).get('text','')) for l in sys.stdin]" 2>/dev/null \
-		| tr -d '[:space:]')
+			| grep '"type":"text"' \
+			| python3 -c "import json,sys;[print(json.loads(l).get('part',{}).get('text','')) for l in sys.stdin]" 2>/dev/null \
+			| tr -d '[:space:]'
+	)
+	rc=$?
 
 	if [ "$verdict" = "SPAM" ]; then
 		log "[NEWS:SPAM] AI判定: SPAM → ${title}"
 		return 0  # spam detected
+	fi
+	if [ "$rc" -eq 124 ]; then
+		log "[NEWS:SPAM] AI判定タイムアウト(${spam_timeout}s) → PASS: ${title}"
+		return 1
+	fi
+	if [ "$rc" -ne 0 ]; then
+		log "[NEWS:SPAM] AI判定失敗 rc=${rc} verdict=${verdict:-EMPTY} → PASS: ${title}"
+		return 1
 	fi
 	log "[NEWS:SPAM] AI判定: ${verdict:-UNKNOWN}(PASS) → ${title}"
 	return 1  # not spam
