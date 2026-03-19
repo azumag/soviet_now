@@ -452,35 +452,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
         # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
-        # ----- evaluation axis 8.5: danger zone immediate merge priority (v276: deadline_crossed時無条件即時併合最優先版) -----
-        # v275の危険ピース数増強ボーナスでは、deadline_crossed時の即時併合強化が不十分だった。
+        # ----- evaluation axis 8.5: danger zone immediate merge priority (v275: deadline_crossed強化即時併合優先版) -----
+        # v274のdanger_piece_count増強即時併合ボーナスでは、deadline_crossed状態での強制的なHEIGHT_CONTROL回避が不十分だった。
         # last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-        # ワーストゲーム(score1151)終盤turns 68-71でdeadline_crossed=true, merge_available=trueが連続し、
-        # SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE（高配置での同タイプ積み上げ）を優先して即時併合機会を取りこぼした。
-        # 即時併合機会を取りこぼさないため、deadline_crossed時の危険ピース数に関わらず、
-        # 即時併合（DIRECT/NEAR）を強制的に最優先し、高配置での同タイプ積み上げを抑制する。
-        # deadline_crossed時、即時併合がある場合は危険ピース数に関わらず+2000.0ボーナスを付与。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260319_094814_score1151.jsonl turns 68-71
+        # deadline_crossed時は、危険ピース数に関わらず即時併合を強制的に優先し、HEIGHT_CONTROLを完全に抑制。
+        # 危険ピース数に応じたボーナス強化と即時併合不可時の強力なペナルティを追加し、危険域での回復戦略を明確化。
+        # ワーストゲーム(score0735)終盤turns 63-71でdeadline_crossed=true,danger_piece_count=5-1の即時併合取りこぼしでmax_y=3.62オーバー。
+        # ベストゲーム(score5090)終盤turns 190-197でdeadline_crossed時も即時併合を確実に捕捉して延命。
+        # deadline_crossed状態の強制的な即時併合優先により、危険エリアでの回復戦略を強化。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md (Pitman_live),
+        #       game_history/20260319_084501_score0735.jsonl turns 63-71, game_history/20260319_082101_score5090.jsonl turns 190-197
 
         deadline_crossed = reactor.get("deadline_crossed", False)
         danger_piece_count = reactor.get("danger_piece_count", 0)
         danger_direct_merge_available = result.get("danger_direct_merge_available", False)
 
         if deadline_crossed:
-            # deadline_crossed状態：即時併合を強制的に最優先し、危険ピース数に関わらず即時併合を優先
+            # deadline_crossed状態：強制的に即時併合優先し、HEIGHT_CONTROLを完全に抑制
             if merge_grade in ["DIRECT", "NEAR"]:
-                # 危険ピース数に関わらず、即時併合に強力なボーナスを付与し、高配置での同タイプ積み上げを抑制
-                score += 2000.0
-                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_REQUIRED")
+                # 危険ピース数に応じて即時併合ボーナスを段階的に強化し、緊急性を反映
+                # 1個: +1200.0, 2個: +1500.0, 3個以上: +1800.0
+                if danger_piece_count >= 3:
+                    score += 1800.0
+                elif danger_piece_count >= 2:
+                    score += 1500.0
+                else:
+                    score += 1200.0
+                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif danger_direct_merge_available:
-                # 即時併合可能だが、この候補では併合できない場合：強力なペナルティ
-                score -= 2000.0
-                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_REQUIRED")
+                # deadline_crossed状態で即時併合可能だが、この候補では併合できない場合：強力なペナルティ
+                score -= 1000.0
+                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
-                # 即時併合機会がない場合：戦略的配置の余地を確保するためheight_multを緩和
-                # この緩和はheight_penalty計算時に適用される
-                height_mult *= 0.6
-                reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
+                # deadline_crossed状態で即時併合機会がない場合：強力なペナルティでHEIGHT_CONTROLを抑制
+                score -= 800.0
+                reasons.append("DANGER_ZONE_MERGE_REQUIRED")
         elif danger_piece_count > 0:
             # deadline_crossedしていないが危険ピースがある場合：従来のボーナスとペナルティ
             if merge_grade in ["DIRECT", "NEAR"]:
