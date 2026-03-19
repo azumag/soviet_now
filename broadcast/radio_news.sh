@@ -9,7 +9,7 @@ _news_ai_spam_check() {
 	body_excerpt=$(printf '%s' "$block" | head -n 5 | tail -n +2 | head -c 300)
 
 	local verdict
-	verdict=$(opencode run --agent=glmflash --format=json \
+	verdict=$(opencode run --agent=glm --format=json \
 		"以下の記事がニュースとして紹介する価値があるか判定してください。
 宣伝、広告、アフィリエイト、プロモーションコード紹介、商品レビュー偽装、SEOスパム、企業PR記事であれば SPAM と答えてください。
 正当な報道・ニュース・時事であれば NEWS と答えてください。
