@@ -11,7 +11,7 @@
 import 'dotenv/config';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import sharp from 'sharp';
 
 const STRATEGY_PATH = 'strategy.mjs';
@@ -54,7 +54,7 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
 
   let newStrategy;
   try {
-    newStrategy = callClaude(promptText);
+    newStrategy = await callClaude(promptText);
   } catch (err) {
     console.error('[improve] API call failed:', err.message);
     cleanupScreenshots();
@@ -228,34 +228,34 @@ async function selectScreenshots() {
 }
 
 /**
- * claude CLI を呼び出してテキスト応答を取得
+ * claude CLI を呼び出してテキスト応答を取得 (非同期)
  */
 function callClaude(promptText) {
-  // プロンプトをファイルに書き出し (CLIの引数長制限回避)
   const promptFile = 'tmp/improve_prompt.txt';
   writeFileSync(promptFile, promptText);
 
-  const result = execFileSync('claude', ['-p', '--model', 'sonnet', '--output-format', 'text'], {
-    encoding: 'utf-8',
-    timeout: 180000,  // 180秒でタイムアウト (CLIの応答生成に十分な時間を確保)
-    maxBuffer: 1024 * 1024,
-    input: promptText,
+  return new Promise((resolve, reject) => {
+    const child = execFile('claude', ['-p', '--model', 'sonnet', '--output-format', 'text'], {
+      encoding: 'utf-8',
+      maxBuffer: 2 * 1024 * 1024,
+    }, (err, stdout, stderr) => {
+      if (err) return reject(err);
+      const text = stdout.trim();
+
+      // コードブロックを抽出
+      const codeMatch = text.match(/```(?:javascript|js)?\n([\s\S]*?)```/);
+      if (codeMatch) return resolve(codeMatch[1].trim());
+
+      // コードブロックがない場合、全文をコードとして扱う
+      if (text.includes('export function decide')) return resolve(text.trim());
+
+      resolve(null);
+    });
+
+    // stdinでプロンプトを送信
+    child.stdin.write(promptText);
+    child.stdin.end();
   });
-
-  const text = result.trim();
-
-  // コードブロックを抽出
-  const codeMatch = text.match(/```(?:javascript|js)?\n([\s\S]*?)```/);
-  if (codeMatch) {
-    return codeMatch[1].trim();
-  }
-
-  // コードブロックがない場合、全文をコードとして扱う
-  if (text.includes('export function decide')) {
-    return text.trim();
-  }
-
-  return null;
 }
 
 /**
