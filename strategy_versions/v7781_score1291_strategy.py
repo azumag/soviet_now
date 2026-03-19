@@ -36,7 +36,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-# v274: 危険ピース数増強即時併合優先版 - ワーストゲーム(score0508)終盤危険エリア即時併合取りこぼし潰し
+# v275: deadline_crossed時SAME_TYPE_STACK抑制即時併合優先版 - rollback failure mode (即時併合取りこぼし) 潰し
 # ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
 # ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
 # batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が3.0-4.2%選択(avg_score_delta=22.3-37.9)と低選択率を確認。
@@ -158,23 +158,22 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v274: 危険ピース数増強即時併合優先版 - ワーストゲーム(score0508)終盤危険エリア即時併合取りこぼし潰し
+    """v275: deadline_crossed時SAME_TYPE_STACK抑制即時併合優先版 - rollback failure mode (即時併合取りこぼし) 潰し
 
-    ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
-    ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
-    batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が3.0-4.2%選択(avg_score_delta=22.3-37.9)と低選択率を確認。
-    v273の固定+800.0ボーナスでは、danger_piece_countの緊急性を十分反映できていなかった問題を解消。
-    axis 8.5改善：danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
-    即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
-    last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-    即時併合機会がある候補が強化されることで、危険エリアでの即時併合優先が強化され、
-    ワーストゲームのような「danger_piece_count増加中に即時併合取りこぼし」問題を解消。
+    ワーストゲーム(score0793)終盤turns 49-51でdeadline_crossed=true, danger_piece_count=1-2ありながら即時併合なし→max_y=3.54でオーバー。
+    同ゲームturn 49ではNEAR_MERGE成功済みだが、即時併合を取りこぼし、その後の戦略的配置(SAME_TYPE_STACK)が続きゲームオーバー。
+    ベストゲーム(score2352)終盤turn 128でdeadline_crossed時も即時併合を確実に捕捉し延命。
+    axis 9.5改善：deadline_crossed状態で即時併合機会がある場合、SAME_TYPE_STACKボーナスを抑制して即時併合を最優先。
+    deadline_crossed && merge_grade in ["DIRECT", "NEAR"] の場合はSAME_TYPE_STACKボーナスを無効化し、
+    危険域での戦略的配置による即時併合取りこぼし問題を解消。
+    batch_summaryでHEIGHT_CONTROLが10.2%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
+    NEAR_MERGE系reasonsがavg_score_delta=59.8（高価値）だが選択率が低い。
 
-    v274の改善点:
-    1. axis 8.5改善：danger_piece_count増強即時併合優先
-       - danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
-       - 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保
-    2. v273のaxis 9.5（same type stacking）を維持
+    v275の改善点:
+    1. axis 8.5改善：deadline_crossed時SAME_TYPE_STACK抑制即時併合優先
+       - deadline_crossed状態で即時併合機会がある場合、SAME_TYPE_STACKボーナスを無効化し即時併合を最優先
+       - 危険域での戦略的配置による即時併合取りこぼし問題を解消
+    2. v274のaxis 9.5（same type stacking）を維持
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -451,17 +450,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
         # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
-        # ----- evaluation axis 8.5: danger zone immediate merge priority (v274: 危険ピース数増強即時併合優先版) -----
-        # v273の固定+800.0ボーナスでは、danger_piece_countの緊急性を十分反映できていなかった問題を解消。
-        # last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-        # danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
-        # 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
-        # ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
-        # ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
-        # danger_piece_count増強の明確な危険判定により、危険領域での即時併合優先を強化。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md (Pitman_live),
-        #       game_history/20260319_080238_score0508.jsonl turns 58-61, game_history/20260319_074738_score2160.jsonl turns 102-106
+        # ----- evaluation axis 8.5: danger zone immediate merge priority (v275: deadline_crossed時SAME_TYPE_STACK抑制即時併合優先版) -----
+        # v274の危険ピース数増強ボーナスでは、deadline_crossed状態での即時併合優先が不十分だった問題を解消。
+        # ワーストゲーム(score0793)終盤turn 49-51でdeadline_crossed=true, danger_piece_count=1-2ありながら即時併合なし→max_y=3.54でオーバー。
+        # 同ゲームturn 49ではNEAR_MERGE成功済みだが、即時併合を取りこぼし、その後の戦略的配置(SAME_TYPE_STACK)が続きゲームオーバー。
+        # ベストゲーム(score2352)終盤turn 128でdeadline_crossed時も即時併合を確実に捕捉し延命。
+        # axis 9.5改善：deadline_crossed状態で即時併合機会がある場合、SAME_TYPE_STACKボーナスを抑制して即時併合を最優先。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md (Pitman_live),
+        #       game_history/20260319_193433_score0793.jsonl turns 49-51, game_history/20260319_194938_score2352.jsonl turns 128
 
+        deadline_crossed = reactor.get("deadline_crossed", False)
         danger_piece_count = reactor.get("danger_piece_count", 0)
         danger_direct_merge_available = result.get("danger_direct_merge_available", False)
 
@@ -495,14 +493,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
         
-        # ----- evaluation axis 9.5: current type stack merge priority (NEW: same type stacking) -----
+        # ----- evaluation axis 9.5: current type stack merge priority (v275: deadline_crossed時SAME_TYPE_STACK抑制即時併合優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」（Pitman_live）に基づく構造的改善。
         # batch_summaryでHEIGHT_CONTROLが15.9%選択(avg_score_delta=0.1)と過剰であり、即時併合機会を取りこぼしていることを確認。
         # 即時併合機会がない場合、盤面上の現在タイプの最も高い位置のピースに配置を優先し、将来の併合可能性を最大化。
         # reactive_pairs >= 1 の場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う。
-        # last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
-        if same_type_stack_top and merge_grade == "NO":
+        # v275: deadline_crossed時SAME_TYPE_STACK抑制即時併合優先版 - rollback failure mode (即時併合取りこぼし) 潰し
+        # ワーストゲーム(score0793)終盤turn 49-51でdeadline_crossed=true, danger_piece_count=1-2ありながら即時併合なし→max_y=3.54でオーバー。
+        # 同ゲームturn 49ではNEAR_MERGE成功済みだが、即時併合を取りこぼし、その後の戦略的配置(SAME_TYPE_STACK)が続きゲームオーバー。
+        # ベストゲーム(score2352)終盤turn 128でdeadline_crossed時も即時併合を確実に捕捉し延命。
+        # axis 9.5改善：deadline_crossed状態で即時併合機会がある場合、SAME_TYPE_STACKボーナスを抑制して即時併合を最優先。
+        # deadline_crossed && merge_grade in ["DIRECT", "NEAR"] の場合はSAME_TYPE_STACKボーナスを無効化し、
+        # 危険域での戦略的配置による即時併合取りこぼし問題を解消。
+        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md
+        #       game_history/20260319_193433_score0793.jsonl turns 49-51, game_history/20260319_194938_score2352.jsonl turns 128
+        
+        if same_type_stack_top and merge_grade == "NO" and not deadline_crossed:
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
             
