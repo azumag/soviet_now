@@ -3,21 +3,63 @@
 
 #=== ニュース: 毎ゲーム取得 & 再生 ===
 
+_news_fetch_status_snapshot() {
+	local status_file="tmp/state/.news_fetch_status.json"
+	[ -f "$status_file" ] || return 1
+	python3 - "$status_file" <<'PY' 2>/dev/null
+import json
+import sys
+
+path = sys.argv[1]
+data = json.load(open(path))
+status = str(data.get("status", "") or "")
+source_count = int(data.get("source_count", 0) or 0)
+fetched_sources = int(data.get("fetched_source_count", 0) or 0)
+fetched_items = int(data.get("fetched_item_count", 0) or 0)
+candidate_items = int(data.get("candidate_item_count", 0) or 0)
+selected_items = int(data.get("selected_item_count", 0) or 0)
+
+messages = {
+    "ok": f"取得成功: selected={selected_items}件 (sources={fetched_sources}/{source_count}, fetched={fetched_items}, candidates={candidate_items})",
+    "stale_cache_restored": f"取得失敗のため前回成功キャッシュを復元 (sources={fetched_sources}/{source_count})",
+    "fetch_failed": f"取得失敗: RSS取得成功 source=0/{source_count}",
+    "all_seen_or_filtered": f"取得成功だが未読候補なし (sources={fetched_sources}/{source_count}, fetched={fetched_items}, candidates={candidate_items})",
+    "render_empty": f"取得成功だが本文生成結果が空 (selected={selected_items})",
+    "running": "取得状態不明: fetch_news.py が途中終了した可能性",
+}
+
+message = messages.get(status, f"取得状態不明: status={status or 'unknown'}")
+print(f"{status}|{message}")
+PY
+}
+
 fetch_and_play_news() {
 	local game_num="$1" score="$2"
+	local news_fetch_status="" news_fetch_message="" news_status_line=""
 	# 旧呼び出し（引数なし）でも、起動時点の値を固定して後段に渡す
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(_last_score)
 
 	log "[NEWS] ニュース取得..."
 	./fetch_news.sh 2>/dev/null
+	news_status_line=$(_news_fetch_status_snapshot || true)
+	if [ -n "$news_status_line" ]; then
+		IFS='|' read -r news_fetch_status news_fetch_message <<<"$news_status_line"
+	fi
 
 	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
+		if [ "$news_fetch_status" = "stale_cache_restored" ] && [ -n "$news_fetch_message" ]; then
+			log "[NEWS] ${news_fetch_message}"
+		fi
 		if ! start_radio_corner_news "$game_num" "$score"; then
 			log "[NEWS] 読み上げ対象の未読ニュースなし、スキップ"
 		fi
 	else
-		log "[NEWS] ニュースなし、スキップ"
+		if [ -n "$news_fetch_message" ]; then
+			log "[NEWS] ${news_fetch_message}"
+		else
+			log "[NEWS] ニュースなし、スキップ"
+		fi
 	fi
 }
 
@@ -313,17 +355,29 @@ schedule_nonessential_audio_jobs() {
 
 _legacy_fetch_and_play_news() {
 	local game_num="$1" score="$2"
+	local news_fetch_status="" news_fetch_message="" news_status_line=""
 	# 旧呼び出し（引数なし）でも、起動時点の値を固定して後段に渡す
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' || echo 0)
 
 	log "[NEWS] ニュース取得..."
 	./fetch_news.sh 2>/dev/null
+	news_status_line=$(_news_fetch_status_snapshot || true)
+	if [ -n "$news_status_line" ]; then
+		IFS='|' read -r news_fetch_status news_fetch_message <<<"$news_status_line"
+	fi
 
 	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
+		if [ "$news_fetch_status" = "stale_cache_restored" ] && [ -n "$news_fetch_message" ]; then
+			log "[NEWS] ${news_fetch_message}"
+		fi
 		start_radio_corner_news "$game_num" "$score"
 	else
-		log "[NEWS] ニュースなし、スキップ"
+		if [ -n "$news_fetch_message" ]; then
+			log "[NEWS] ${news_fetch_message}"
+		else
+			log "[NEWS] ニュースなし、スキップ"
+		fi
 	fi
 }
 

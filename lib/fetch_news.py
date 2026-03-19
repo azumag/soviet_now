@@ -29,6 +29,7 @@ PAST_NEWS_LINKS = os.path.join(TMP_HISTORY_DIR, ".past_news_links.txt")
 PAST_NEWS_LINK_HASHES = os.path.join(TMP_HISTORY_DIR, "past_news_url_hashes.txt")
 LAST_NEWS_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success.txt")
 LAST_NEWS_META_CACHE = os.path.join(TMP_STATE_DIR, ".news_last_success_meta.json")
+FETCH_STATUS_FILE = os.path.join(TMP_STATE_DIR, ".news_fetch_status.json")
 NEWS_ALLOW_STALE_CACHE = os.environ.get("NEWS_ALLOW_STALE_CACHE", "0")
 
 PER_SOURCE_LIMIT = 30
@@ -279,6 +280,12 @@ def write_json(path: str, data) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")
     os.replace(tmp_path, path)
+
+
+def write_fetch_status(data: dict) -> None:
+    payload = dict(data)
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    write_json(FETCH_STATUS_FILE, payload)
 
 
 def load_lines(path: str) -> list[str]:
@@ -615,18 +622,55 @@ def render_meta(selected: list[dict]) -> dict[str, dict]:
 def main() -> int:
     ensure_dirs()
 
+    write_fetch_status(
+        {
+            "status": "running",
+            "source_count": len(SOURCES),
+            "allow_stale_cache": NEWS_ALLOW_STALE_CACHE == "1",
+        }
+    )
+
     all_source_items = {source["key"]: fetch_source_items(source) for source in SOURCES}
     fetched_any = any(all_source_items.values())
+    source_item_counts = {key: len(items) for key, items in all_source_items.items()}
+    fetched_source_count = sum(1 for items in all_source_items.values() if items)
+    fetched_item_count = sum(len(items) for items in all_source_items.values())
 
     if not fetched_any:
-        if not restore_stale_cache():
+        restored_stale_cache = restore_stale_cache()
+        if not restored_stale_cache:
             clear_outputs()
+        write_fetch_status(
+            {
+                "status": "stale_cache_restored" if restored_stale_cache else "fetch_failed",
+                "source_count": len(SOURCES),
+                "fetched_source_count": fetched_source_count,
+                "fetched_item_count": fetched_item_count,
+                "source_item_counts": source_item_counts,
+                "allow_stale_cache": NEWS_ALLOW_STALE_CACHE == "1",
+            }
+        )
         return 0
 
     candidates = dedupe_candidates(all_source_items)
+    candidate_source_count = sum(1 for items in candidates.values() if items)
+    candidate_item_count = sum(len(items) for items in candidates.values())
     selected = pick_articles(candidates)
     if not selected:
         clear_outputs()
+        write_fetch_status(
+            {
+                "status": "all_seen_or_filtered",
+                "source_count": len(SOURCES),
+                "fetched_source_count": fetched_source_count,
+                "fetched_item_count": fetched_item_count,
+                "candidate_source_count": candidate_source_count,
+                "candidate_item_count": candidate_item_count,
+                "selected_item_count": 0,
+                "source_item_counts": source_item_counts,
+                "allow_stale_cache": NEWS_ALLOW_STALE_CACHE == "1",
+            }
+        )
         return 0
 
     news_text = render_news(selected)
@@ -634,12 +678,38 @@ def main() -> int:
 
     if not news_text:
         clear_outputs()
+        write_fetch_status(
+            {
+                "status": "render_empty",
+                "source_count": len(SOURCES),
+                "fetched_source_count": fetched_source_count,
+                "fetched_item_count": fetched_item_count,
+                "candidate_source_count": candidate_source_count,
+                "candidate_item_count": candidate_item_count,
+                "selected_item_count": len(selected),
+                "source_item_counts": source_item_counts,
+                "allow_stale_cache": NEWS_ALLOW_STALE_CACHE == "1",
+            }
+        )
         return 0
 
     write_text(OUTFILE, news_text)
     write_json(META_OUTFILE, meta)
     write_text(LAST_NEWS_CACHE, news_text)
     write_json(LAST_NEWS_META_CACHE, meta)
+    write_fetch_status(
+        {
+            "status": "ok",
+            "source_count": len(SOURCES),
+            "fetched_source_count": fetched_source_count,
+            "fetched_item_count": fetched_item_count,
+            "candidate_source_count": candidate_source_count,
+            "candidate_item_count": candidate_item_count,
+            "selected_item_count": len(selected),
+            "source_item_counts": source_item_counts,
+            "allow_stale_cache": NEWS_ALLOW_STALE_CACHE == "1",
+        }
+    )
 
     append_and_trim(PAST_NEWS, [item["title"] for item in selected], 120)
     append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 200)
