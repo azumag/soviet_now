@@ -23,7 +23,7 @@ async function loadStrategy() {
 
 // --- 定数 ---
 const GAME_URL = 'https://unityroom.com/games/sorengame91';
-const PLAYER_NAME = 'DousiAI_US';
+const PLAYER_NAME = 'DoCiAI:US';
 const SCREENSHOT_DIR = 'tmp/screenshots';
 const HISTORY_DIR = 'game_history';
 const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲーム側クールダウン≈1秒)
