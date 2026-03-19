@@ -21,17 +21,28 @@ _radio_fetch_web_grounding() {
 	local corner_name="$1" prompt_context="$2" selected_news="${3:-}"
 	[ "${RADIO_WEB_GROUNDING_ENABLED:-1}" = "1" ] || return 0
 
-	local query grounding
+	local query grounding grounding_timeout rc
 	query=$(_radio_extract_grounding_query "$corner_name" "$prompt_context" "$selected_news")
 	[ -n "$query" ] || return 0
+	grounding_timeout="${RADIO_WEB_GROUNDING_TIMEOUT_SEC:-30}"
 
 	log "[RADIO:${corner_name}] web grounding取得中... query=${query}" >&2
-	grounding=$(python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
-		--corner "$corner_name" \
-		--query "$query" \
-		--ttl-sec "${RADIO_WEB_GROUNDING_TTL_SEC:-21600}" \
-		--max-sources "${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}" \
-		--cache-dir "$RADIO_WEB_GROUNDING_CACHE_DIR" 2>/dev/null || true)
+	grounding=$(timeout "${grounding_timeout}s" \
+		python3 "$ELOOP_LIB_DIR/fetch_radio_grounding.py" \
+			--corner "$corner_name" \
+			--query "$query" \
+			--ttl-sec "${RADIO_WEB_GROUNDING_TTL_SEC:-21600}" \
+			--max-sources "${RADIO_WEB_GROUNDING_MAX_SOURCES:-3}" \
+			--cache-dir "$RADIO_WEB_GROUNDING_CACHE_DIR" 2>/dev/null)
+	rc=$?
+	if [ "$rc" -eq 124 ]; then
+		log "[RADIO:${corner_name}] web grounding timeout (${grounding_timeout}s) -> continue without grounding" >&2
+		return 0
+	fi
+	if [ "$rc" -ne 0 ]; then
+		log "[RADIO:${corner_name}] web grounding failed rc=${rc} -> continue without grounding" >&2
+		return 0
+	fi
 	if [ -n "$grounding" ]; then
 		log "[RADIO:${corner_name}] web grounding取得成功" >&2
 	fi
@@ -134,6 +145,9 @@ _radio_fact_check_body() {
 	[ -n "$talk_body" ] || return 1
 
 	local web_grounding="" prompt_context_trimmed
+	local factcheck_timeout factcheck_claude_timeout
+	factcheck_timeout="${RADIO_FACT_CHECK_OPENCODE_TIMEOUT_SEC:-45}"
+	factcheck_claude_timeout="${RADIO_FACT_CHECK_CLAUDE_TIMEOUT_SEC:-60}"
 	web_grounding=$(_radio_fetch_web_grounding "$corner_name" "$prompt_context" "$selected_news")
 	prompt_context_trimmed=$(_radio_compact_fact_check_context "$corner_name" "$prompt_context")
 	if [ ${#prompt_context_trimmed} -gt 16000 ]; then
@@ -192,8 +206,8 @@ PROMPT
 	local model
 	for model in "${RADIO_FACT_CHECK_AGENT:-}" "${RADIO_FACT_CHECK_FALLBACK:-}"; do
 		[ -n "$model" ] || continue
-		log "[RADIO:${corner_name}] fact-check中... (${model})" >&2
-		raw_output=$(_run_opencode_radio "$model" "$prompt_file")
+		log "[RADIO:${corner_name}] fact-check中... (${model}, timeout=${factcheck_timeout}s)" >&2
+		raw_output=$(RADIO_OPENCODE_TIMEOUT="$factcheck_timeout" _run_opencode_radio "$model" "$prompt_file")
 		safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
 		issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
 		if _is_valid_radio_talk "$safe_script"; then
@@ -221,8 +235,8 @@ PROMPT
 		fi
 	done
 
-	log "[RADIO:${corner_name}] fact-check fallback -> claude (${RADIO_FACT_CHECK_CLAUDE_MODEL})" >&2
-	raw_output=$(_run_claude_radio_with_model "$prompt_file" "$RADIO_FACT_CHECK_CLAUDE_MODEL")
+	log "[RADIO:${corner_name}] fact-check fallback -> claude (${RADIO_FACT_CHECK_CLAUDE_MODEL}, timeout=${factcheck_claude_timeout}s)" >&2
+	raw_output=$(RADIO_CLAUDE_TIMEOUT="$factcheck_claude_timeout" _run_claude_radio_with_model "$prompt_file" "$RADIO_FACT_CHECK_CLAUDE_MODEL")
 	safe_script=$(printf '%s\n' "$raw_output" | _radio_cleanup_fact_checked_text | _sanitize_onair_text | _normalize_radio_tone)
 	issues=$(printf '%s\n' "$raw_output" | _radio_extract_fact_check_issues)
 	if _is_valid_radio_talk "$safe_script"; then
