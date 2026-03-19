@@ -33,6 +33,18 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 - アダプティブ改善: 1試合ごとに改善開始、改善中なら履歴を蓄積、完了後に統合して次の改善へ
 - AI改善後にバリデーション (decide() 存在・シグネチャ・テスト実行)、失敗時は自動復元
 
+### 建国ボーナス指標
+- 戦略評価（rolling_scores, regression, 改善AI向け蓄積）には「建国ボーナス込みスコア（EVAL_SCORE）」を使用
+- ゲームオーバー時の最終盤面のピースtype別ボーナスを加算: type 1-5: 0,0,1,1,2 / type 6-10: 3,4,6,10,16 / type 11-15: 26,40,70,120,240 / ソ連建国: +800
+- 表示用スコア（best_score.txt, commit, ダッシュボード）は raw スコアのまま
+- `strategy_runner.py` が `final_types` を出力 → `eloop.sh` の `post_game_bookkeeping()` でボーナス計算
+
+### 粛清（regression rollback）基準
+- anchor戦略（過去の安定戦略）と現戦略の composite/p50/p25 を比較
+- Hard fail（即時粛清）: comp gap≥330, p50 gap≥270, p25 gap≥390 のうち2つ以上で発動
+- Soft fail（予算切れ時）: comp gap≥180, p50 gap≥150, p25 gap≥270 のうち2つ以上で発動
+- composite = 0.55×p50 + 0.30×p25 + 0.15×lcb
+
 ## ゲーム操作
 
 - `soviet_local.mjs` - ローカルビルドで AI プレイ（Playwright + JS Bridge）
@@ -67,6 +79,16 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `twitch_chat.sh` | Twitch IRC チャットデーモン管理 (start/fetch/send等) |
 | `twitch_chat_daemon.sh` | IRC常駐プロセス (`!clip` コマンド対応) |
 | `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用） |
+| `data/radio_themes.txt` | ラジオ雑談テーマリスト（料理・文化・神社・日本神話・オカルト等） |
+| `data/radio_soviet_themes.txt` | ソ連関連テーマリスト |
+| `prompts/improve_strategy.md` | 戦略改善AIへのプロンプト（建国ボーナス指標の説明含む） |
+
+## ラジオ放送
+
+- 雑談テーマ: `data/radio_themes.txt`（685件。料理・文化・神社・日本神話・神道・オカルト等）
+- ソ連テーマ: `data/radio_soviet_themes.txt`
+- ニュース読み上げ: 記事内容は素直に紹介するが、政治的に中立・多角的な意見を述べること（左右どちらにも偏らない）
+- 履歴保持: テーマ400件、ニュース200-500件で重複を回避
 
 ## Twitch クリップ自動作成
 
