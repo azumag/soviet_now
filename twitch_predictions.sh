@@ -65,13 +65,13 @@ _auto_vote_prediction() {
 			-H "Authorization: OAuth ${gql_token}" \
 			-H "Client-Id: kimne78kx3ncx6brgo4mv6wki5h1ko" \
 			-H "Content-Type: application/json" \
-			-d "{\"operationName\":\"ChannelPointsContext\",\"variables\":{\"channelLogin\":\"${channel_login}\"},\"extensions\":{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"1530a003a7d374b0380b79db0be0534f30ff46e61cffa2571ed5571571e39e7c\"}}}" 2>/dev/null)
+			-d "{\"query\":\"query { channel(name: \\\"${channel_login}\\\") { self { communityPoints { balance } } } }\"}" 2>/dev/null)
 
 		vote_points=$(echo "$balance_resp" | python3 -c "
 import json, sys
 try:
     d = json.load(sys.stdin)
-    balance = d['data']['community']['channel']['self']['communityPoints']['balance']
+    balance = d['data']['channel']['self']['communityPoints']['balance']
     print(max(10, int(balance * 0.10)))
 except Exception:
     print($AUTO_VOTE_POINTS)
@@ -97,26 +97,13 @@ if ids:
 		return 0
 	fi
 
-	# Twitch GQL API で投票
-	local gql_payload
+	# Twitch GQL API で投票（直接ミューテーション）
+	local tx_id gql_payload
+	tx_id=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
 	gql_payload=$(python3 -c "
 import json
 print(json.dumps({
-    'operationName': 'MakePrediction',
-    'variables': {
-        'input': {
-            'eventID': '$event_id',
-            'outcomeID': '$outcome_id',
-            'points': $vote_points,
-            'transactionID': '$(python3 -c "import uuid; print(str(uuid.uuid4()))")'
-        }
-    },
-    'extensions': {
-        'persistedQuery': {
-            'version': 1,
-            'sha256Hash': 'b44682ecc88358817009f20571c0b1b81e1e3292a7157a9c9ee0b290e4c26c09'
-        }
-    }
+    'query': 'mutation { makePrediction(input: {eventID: \"$event_id\", outcomeID: \"$outcome_id\", points: $vote_points, transactionID: \"$tx_id\"}) { prediction { id } error { code } } }'
 }))
 " 2>/dev/null)
 

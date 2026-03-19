@@ -237,6 +237,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let calibrated = false;
   let moveCount = 0;
   let roundEnded = false;
+  let holdUsedThisTurn = false;
 
   console.log('[game] Game loop started');
 
@@ -321,13 +322,23 @@ async function gameLoop(page, calibration, gameNumber) {
         continue;
       }
 
-      // 戦略決定
+      // 戦略決定 (canHoldを付与)
+      boardState.canHold = !holdUsedThisTurn;
       const { decide } = await loadStrategy();
       const decision = decide(boardState);
-      console.log(`[game] Decision: x=${decision.x.toFixed(2)}, reason=${decision.reason}`);
+      console.log(`[game] Decision: x=${decision.x.toFixed(2)}, reason=${decision.reason}${decision.hold ? ' [HOLD]' : ''}`);
+
+      // HOLD操作: 右クリックでswap/save → ドロップせず再解析
+      if (decision.hold && !holdUsedThisTurn) {
+        await executeHold(page, calibration);
+        holdUsedThisTurn = true;
+        lastDropTime = Date.now();
+        continue; // ピースが変わるので再解析
+      }
 
       // マウスドロップ実行
       await executeDrop(page, decision.x, calibration);
+      holdUsedThisTurn = false; // ドロップ後にhold権をリセット
       lastDropTime = Date.now();
 
       // ターン記録
@@ -354,6 +365,22 @@ async function gameLoop(page, calibration, gameNumber) {
       await sleep(1000);
     }
   }
+}
+
+/**
+ * HOLD操作を実行 (右クリック)
+ * 現在のカーソルピースをHOLD領域に保持、既にHOLDがあれば入れ替え
+ */
+async function executeHold(page, calibration) {
+  const { board } = calibration;
+  const canvas = await page.$('canvas');
+  if (!canvas) throw new Error('Canvas not found');
+
+  // ボード中央で右クリック
+  const clickX = board.left + Math.floor(board.width / 2);
+  const clickY = board.top + Math.floor(board.height * 0.3);
+  await page.mouse.click(clickX, clickY, { button: 'right' });
+  await sleep(300);
 }
 
 /**

@@ -82,7 +82,12 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     ? measureGarbage(data, width, height, calibration)
     : { ratio: 0, height: 0 };
 
-  // 5. スコア検出 (簡易版 - 後でOCR/テンプレートマッチに改良)
+  // 5. HOLD ピース検出
+  const hold = state === 'MOVE'
+    ? detectHoldPiece(data, width, height, board)
+    : null;
+
+  // 6. スコア検出 (簡易版 - 後でOCR/テンプレートマッチに改良)
   const score = 0; // TODO: スコア検出実装
 
   return {
@@ -90,6 +95,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     score,
     pieces,
     next,
+    hold, // { type, r } or null
     garbage, // { ratio: 0-1, height: ゲーム座標でのおじゃまの高さ }
     confidence: pieces.length > 0 ? 0.5 : 0.3,
   };
@@ -301,26 +307,47 @@ function classifyBlob(blob, calibration) {
 }
 
 /**
+ * HOLD領域のピースを検出する
+ * 画面上部のHOLD表示領域(YOURとNEXTの間)からピースのタイプを推定
+ */
+function detectHoldPiece(data, width, height, board) {
+  // HOLD領域: ボード上部左寄り (YOURの右、NEXTの左)
+  const holdAreaTop = 0;
+  const holdAreaBottom = board.top + 30;
+  const holdAreaLeft = board.left + Math.floor(board.width * 0.15);
+  const holdAreaRight = board.left + Math.floor(board.width * 0.45);
+
+  return detectPieceInArea(data, width, height, holdAreaTop, holdAreaBottom, holdAreaLeft, holdAreaRight);
+}
+
+/**
  * 次のピースを検出する
  * 画面上部のNEXT表示領域から次のピースのタイプを推定
  */
 function detectNextPiece(data, width, height, board) {
-  // NEXT表示は通常、ゲームエリアの上部に表示される
-  // ボード上部の上方の領域をサンプリング
-  const nextAreaTop = Math.max(0, board.top - 80);
-  const nextAreaBottom = board.top;
-  const nextAreaLeft = board.left + Math.floor(board.width * 0.3);
-  const nextAreaRight = board.left + Math.floor(board.width * 0.7);
+  // NEXT領域: ボード上部右寄り (HOLD領域と被らないよう右側に限定)
+  const nextAreaTop = 0;
+  const nextAreaBottom = board.top + 30;
+  const nextAreaLeft = board.left + Math.floor(board.width * 0.55);
+  const nextAreaRight = board.right;
 
-  // この領域で最も大きい色つきブロブを探す
+  return detectPieceInArea(data, width, height, nextAreaTop, nextAreaBottom, nextAreaLeft, nextAreaRight)
+    || { type: 1, r: TYPE_RADII[1] }; // デフォルト: 小さいピース
+}
+
+/**
+ * 指定領域内の最大色ブロブからピースタイプを推定 (HOLD/NEXT共通)
+ * ピースが無い場合は null を返す
+ */
+function detectPieceInArea(data, width, height, areaTop, areaBottom, areaLeft, areaRight) {
   let maxBlobSize = 0;
   let bestColor = null;
 
   const gridStep = 4;
   const visited = new Set();
 
-  for (let y = nextAreaTop; y < nextAreaBottom; y += gridStep) {
-    for (let x = nextAreaLeft; x < nextAreaRight; x += gridStep) {
+  for (let y = areaTop; y < areaBottom; y += gridStep) {
+    for (let x = areaLeft; x < areaRight; x += gridStep) {
       const key = `${Math.floor(x / gridStep)}_${Math.floor(y / gridStep)}`;
       if (visited.has(key)) continue;
 
@@ -335,7 +362,7 @@ function detectNextPiece(data, width, height, board) {
       if (saturation < 0.15) continue;
 
       const blob = floodFillEstimate(data, width, height, x, y, r, g, b, gridStep, visited,
-        { left: nextAreaLeft, right: nextAreaRight, top: nextAreaTop, bottom: nextAreaBottom });
+        { left: areaLeft, right: areaRight, top: areaTop, bottom: areaBottom });
 
       if (blob && blob.pixelCount > maxBlobSize) {
         maxBlobSize = blob.pixelCount;
@@ -344,10 +371,7 @@ function detectNextPiece(data, width, height, board) {
     }
   }
 
-  if (!bestColor) {
-    // デフォルト: 小さいピース
-    return { type: 1, r: TYPE_RADII[1] };
-  }
+  if (!bestColor) return null;
 
   // 色から最も近いタイプを推定
   let bestType = 1;
@@ -360,7 +384,7 @@ function detectNextPiece(data, width, height, board) {
     }
   }
 
-  // ドロップ可能なピースはtype 1-5程度（小さいもの）
+  // ドロップ可能なピースはtype 1-5程度
   if (bestType > 5) bestType = Math.min(bestType, 5);
 
   return { type: bestType, r: TYPE_RADII[bestType] };
