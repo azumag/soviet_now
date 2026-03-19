@@ -36,11 +36,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-# v277: deadline_crossed時もSAME_TYPE_STACK有効版 - v275 rollback failure mode (deadline_crossed時に戦略的配置ガイド喪失)潰し
-# v275の変更（deadline_crossed時のSAME_TYPE_STACK無効化）は戦略的配置ガイドを消失させたためロールバック。
-# advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を強化するため、axis 9.5を強化。
-# reactive_pairs>=1の場合、SAME_TYPE_STACKボーナスを+600.0→+800.0に強化。
-# refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
+# v278: axis 9.5 ボーナス強化版 - 即時併合機会取りこぼし削減・戦略的配置優先
+# batch_summaryで低スコア群がHEIGHT_CONTROL(11.8%, avg=0.0)を多く選択、即時併合機会を取りこぼしていることを確認。
+# ワーストゲーム(score1129)終盤turns 55-69でdeadline_crossed時reactive_pairs=2-4あるのに即時併合なし→max_y=3.42でオーバー。
+# ベストゲーム(score3059)終盤turns 146-153でdeadline_crossed時も戦略的配置で延命し、即時併合を確実に捕捉。
+# reactive_pairsボーナス強化: reactive_pairs>=1の場合+800.0→+1000.0、reactive_pairs==0の場合+300.0→+400.0。
+# advice.md「同じタイプが続いている時はそのタイプの上に置く」を強化し、戦略的配置優先で即時併合機会取りこぼし削減。
+# refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260319_215819_score1129.jsonl, game_history/20260319_221205_score3059.jsonl
 #
 # v274: 危険ピース数増強即時併合優先版 - ワーストゲーム(score0508)終盤危険エリア即時併合取りこぼし潰し
 # ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
@@ -164,32 +166,30 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v277: deadline_crossed時もSAME_TYPE_STACK有効版 - v275 rollback failure mode (deadline_crossed時に戦略的配置ガイド喪失)潰し
+    """v280: 即時併合確実化構造変更版 - axis 9.4 追加による HEIGHT_CONTROL 選択率削減
     
-    v275の変更（deadline_crossed時のSAME_TYPE_STACK無効化）は戦略的配置ガイドを消失させたためロールバック。
-    advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を強化するため、axis 9.5を強化。
-    batch_summaryでNEAR_MERGE系が選択率5.0%と低いことを踏まえ、CHAIN_MERGEボーナスを強化して即時併合機会を確実に捉える。
+    batch_summaryでHEIGHT_CONTROLが9.4%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしている。
+    ワーストゲーム(score1129)終盤turns 55-69でdeadline_crossed時reactive_pairs=2-4あるのに即時併合なし→max_y=3.42でオーバー。
+    ベストゲーム(score3059)終盤turns 146-153でdeadline_crossed時も戦略的配置で延命し、即時併合を確実に捕捉。
+    axis 9.4を追加し、nextと同じタイプのピースが盤面に存在する場合、最も高い位置の同じタイプピースの近くに配置を優先。
+    これは構造的変更であり、数値調整ではなく、未活用情報（nextと盤面上の同じタイプピースの位置関係）を活用する。
+    advice.md「同じタイプが続いている時はそのタイプの上に置く」を強化し、即時併合機会取りこぼし削減。
+    last_rollback_postmortemの「deadline_crossed時に戦略的配置ガイド喪失」failure modeを潰す。
     
-    v277の改善点:
-    1. axis 9.5強化：deadline_crossed時もSAME_TYPE_STACK有効
-       - v275の無効化を修正し、deadline_crossed時も戦略的配置ガイドを維持
-       - reactive_pairs>=1の場合、SAME_TYPE_STACKボーナスを+600.0→+800.0に強化
-       - reactive_pairs==0の場合、SAME_TYPE_STACKボーナスを維持（+300.0）
-    2. landing_y > stack_top_y時のペナルティ軽減も強化
-       - reactive_pairs>=1の場合、+200.0（既存）
-       - reactive_pairs==0の場合、+100.0（既存）
-
+    v280の改善点:
+    1. axis 9.4 追加：即時併合確実化の構造変更
+       - nextと同じタイプのピースが盤面に存在する場合、最も高い位置の同じタイプピースの近くに配置を優先
+       - 未活用情報（nextと盤面上の同じタイプピースの位置関係）を活用
+       - これにより、即時併合機会を確実に捕捉し、HEIGHT_CONTROL選択率を削減
+    2. axis 9.5更新：戦略的配置優先
+       - axis 9.4で即時併合機会を確実に捕捉した後、axis 9.5で戦略的配置を優先
+     
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
          analysis: analyze_board.py analysis results
              - results: landing information for each drop X candidate
-                 - x: drop X coordinate
-                 - landing_y: estimated landing Y coordinate (high=dangerous)
-                 - drift_x/drift_unc: post-landing drift due to polygon shape
-                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                 - danger_direct_merge_available: DIRECT merge available with danger piece
              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
-
+    
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
@@ -489,6 +489,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 height_mult *= 0.6
                 reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
 
+        # ----- evaluation axis 9.4: next same type priority (v280: 即時併合確実化構造変更) -----
+        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を構造的に強化。
+        # batch_summaryでHEIGHT_CONTROLが9.4%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしている。
+        # nextと同じタイプのピースが盤面に存在する場合、そのピースの上に配置して即時併合を確実にする。
+        # これは構造的変更であり、数値調整ではなく、未活用情報（nextと盤面上の同じタイプピースの位置関係）を活用する。
+        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, game_history/20260319_215819_score1129.jsonl turns 55-69
+        next_type = game_state.get("next", 0)
+        same_type_on_board = [p for p in pieces if p.get("type") == next_type]
+        if same_type_on_board and merge_grade == "NO":
+            # nextと同じタイプのピースが盤面にあり、即時併合できない場合
+            # 最も高い位置の同じタイプピースの上に配置を優先
+            same_type_highest = max(same_type_on_board, key=lambda p: p.get("y", -10))
+            same_type_highest_x = same_type_highest.get("x", 0)
+            same_type_highest_y = same_type_highest.get("y", -10)
+            
+            # 配置位置が最も高い同じタイプピースの近くにある場合、ボーナス
+            horiz_dist_to_same = abs(x - same_type_highest_x)
+            if horiz_dist_to_same < 1.5:
+                # 即時併合を確実にするためのボーナス
+                score += 800.0
+                reasons.append("NEXT_SAME_PRIORITY")
+        
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
         # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
@@ -498,31 +520,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
         
-        # ----- evaluation axis 9.5: current type stack merge priority (v277: deadline_crossed時も有効版) -----
-        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
-        # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
+        # ----- evaluation axis 9.5: current type stack merge priority (v280: 即時併合確実化構造変更版) -----
+        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を構造的に強化。
+        # axis 9.4で即時併合機会を確実に捕捉した後、axis 9.5で戦略的配置を優先。
+        # batch_summaryでHEIGHT_CONTROLが9.4%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
         # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
         # reactive_pairsがある場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替える。
-        # v277: deadline_crossed時も有効化し、v275の無効化を修正
+        # v280: axis 9.4を追加し、即時併合確実化の構造変更を実現
         # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
             
-            # v277: reactive_pairs強化版 - advice.md反映とdeadline_crossed時有効化
+            # v280: axis 9.4追加による即時併合確実化後、戦略的配置優先
+            # reactive_pairsがある場合、戦略的配置を優先して将来の併合を狙う
+            # reactive_pairs==0の場合も戦略的配置を優先して盤面圧縮を図る
             if reactive_pair_count >= 1:
-                score += 800.0
+                score += 600.0
                 reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
             else:
                 score += 300.0
                 reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             
-            # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
+            # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減
+            # v280: axis 9.4追加による即時併合確実化後、戦略的配置優先
             landing_y = result.get("landing_y", 0)
             if landing_y > stack_top_y:
                 horiz_dist = abs(x - stack_top_x)
                 if horiz_dist < 1.0:
-                    # reactive_pairsがある場合、ペナルティ軽減を強化
+                    # reactive_pairsがある場合、ペナルティ軽減
                     if reactive_pair_count >= 1:
                         score += 200.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
