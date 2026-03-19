@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections import Counter
 from glob import glob
 from pathlib import Path
@@ -221,9 +222,23 @@ def load_rejected_hashes():
     if not p.exists():
         return set()
     try:
-        return {line.strip() for line in p.read_text().splitlines() if line.strip()}
+        hashes = {line.strip() for line in p.read_text().splitlines() if line.strip()}
     except Exception:
         return set()
+    meta = load_rejected_hash_meta()
+    now = int(time.time())
+    active = set()
+    for hash_ in hashes:
+        entry = meta.get(hash_)
+        if not isinstance(entry, dict):
+            continue
+        updated_at = int(entry.get("updated_at", 0) or 0)
+        if updated_at <= 0:
+            continue
+        if REJECTED_REEVALUATE_TTL_SEC > 0 and now - updated_at >= REJECTED_REEVALUATE_TTL_SEC:
+            continue
+        active.add(hash_)
+    return active
 
 
 def load_rejected_hash_meta():
@@ -903,13 +918,7 @@ def get_accumulated_count(current_hash=""):
 
 
 def get_rejected_count():
-    p = Path("tmp/history/rejected_hashes.txt")
-    if not p.exists():
-        return 0
-    try:
-        return sum(1 for l in p.read_text().splitlines() if l.strip())
-    except Exception:
-        return 0
+    return len(load_rejected_hashes())
 
 
 def load_improve_state():

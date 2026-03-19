@@ -832,15 +832,16 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 		if validate_strategy_with_helpers "$STAGING_FILE" "strategy_helpers"; then
 			log "[IMPROVE] バリデーション成功"
 
-			# ハッシュベース反復防止: 最近リジェクトされたハッシュと同一なら拒否
-			HASH_STAGING=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
-			if [ -n "$HASH_STAGING" ] && [ -f "$HOST_REJECTED_HASHES_FILE" ]; then
-				if grep -qF "$HASH_STAGING" "$HOST_REJECTED_HASHES_FILE"; then
-					log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み)"
-					VALIDATE_ERROR="この変更は過去にリジェクトされた戦略と同一 (hash=$HASH_STAGING)。別のアプローチを試せ。"
-					_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
-					if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
-						continue_retry=$((continue_retry + 1))
+				# ハッシュベース反復防止: 最近リジェクトされたハッシュと同一なら拒否
+				HASH_STAGING=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
+				_prune_expired_rejected_hashes >/dev/null 2>&1 || true
+				if [ -n "$HASH_STAGING" ] && [ -f "$HOST_REJECTED_HASHES_FILE" ]; then
+					if _is_recently_rejected_for_rollback "$HASH_STAGING"; then
+						log "[IMPROVE] ハッシュ反復検出: $HASH_STAGING (過去にリジェクト済み)"
+						VALIDATE_ERROR="この変更は過去にリジェクトされた戦略と同一 (hash=$HASH_STAGING)。別のアプローチを試せ。"
+						_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
+						if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
+							continue_retry=$((continue_retry + 1))
 						continue
 					fi
 					_improve_note "continuation budget exhausted for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; restart with clean sandbox"

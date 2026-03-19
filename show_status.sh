@@ -36,6 +36,7 @@ BRANCH_HARD_COMP_GAP=${BRANCH_HARD_COMP_GAP:-220}
 BRANCH_HARD_P50_GAP=${BRANCH_HARD_P50_GAP:-180}
 BRANCH_HARD_P25_GAP=${BRANCH_HARD_P25_GAP:-260}
 BRANCH_HARD_MIN_BREACH_COUNT=${BRANCH_HARD_MIN_BREACH_COUNT:-2}
+REJECTED_REEVALUATE_TTL_SEC=${REJECTED_REEVALUATE_TTL_SEC:-21600}
 RADIO_STATE_STALE_SEC=${RADIO_STATE_STALE_SEC:-600}
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
@@ -598,7 +599,44 @@ if h:
 PY
 			)"
 		fi
-	[[ -f $TMP_HISTORY_DIR/rejected_hashes.txt ]] && rejected_count=$(wc -l < $TMP_HISTORY_DIR/rejected_hashes.txt | tr -d ' ')
+	[[ -f $TMP_HISTORY_DIR/rejected_hashes.txt ]] && rejected_count=$(python3 - <<PY 2>/dev/null
+import json
+import time
+from pathlib import Path
+
+rejected_path = Path("$TMP_HISTORY_DIR/rejected_hashes.txt")
+meta_path = Path("$TMP_STATE_DIR/rejected_hash_metrics.json")
+ttl_sec = int(${REJECTED_REEVALUATE_TTL_SEC})
+
+try:
+    hashes = [line.strip() for line in rejected_path.read_text().splitlines() if line.strip()]
+except Exception:
+    print(0)
+    raise SystemExit
+
+try:
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    if not isinstance(meta, dict):
+        meta = {}
+except Exception:
+    meta = {}
+
+now = int(time.time())
+active = 0
+for hash_ in hashes:
+    entry = meta.get(hash_)
+    if not isinstance(entry, dict):
+        continue
+    updated_at = int(entry.get("updated_at", 0) or 0)
+    if updated_at <= 0:
+        continue
+    if ttl_sec > 0 and now - updated_at >= ttl_sec:
+        continue
+    active += 1
+
+print(active)
+PY
+)
 
 	# --- リバートバックアップ ---
 	local revert_available=false

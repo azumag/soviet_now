@@ -596,6 +596,7 @@ _find_strategy_file_by_hash() {
 }
 
 _refresh_best_strategy_anchor() {
+	_prune_expired_rejected_hashes >/dev/null 2>&1 || true
 	[ -f "$ROLLING_SCORES_FILE" ] || return 0
 	local current_hash="${1:-}"
 	python3 - "$ROLLING_SCORES_FILE" "$BEST_STRATEGY_ANCHOR_FILE" "$MIN_GAMES_FOR_BEST_ROLLBACK" "$RANK_LCB_Z" "$RANK_WEIGHT_P50" "$RANK_WEIGHT_P25" "$RANK_WEIGHT_LCB" "$current_hash" "$STRATEGY_HASH_ARCHIVE_DIR" "$REJECTED_HASHES_FILE" <<'PY'
@@ -964,8 +965,107 @@ print(
 PY
 }
 
+_prune_expired_rejected_hashes() {
+	[ -f "$REJECTED_HASHES_FILE" ] || return 0
+	local prune_result=""
+	prune_result=$(python3 - "$REJECTED_HASHES_FILE" "$REJECTED_HASH_META_FILE" "$REJECTED_REEVALUATE_TTL_SEC" <<'PY' 2>/dev/null
+import json
+import os
+import sys
+import time
+
+rejected_file, meta_file, ttl_raw = sys.argv[1:4]
+ttl_sec = int(ttl_raw or 0)
+
+try:
+    with open(rejected_file, encoding="utf-8", errors="ignore") as f:
+        raw_hashes = [line.strip() for line in f if line.strip()]
+except Exception:
+    raise SystemExit(0)
+
+if not raw_hashes:
+    print("kept=0")
+    raise SystemExit(0)
+
+try:
+    with open(meta_file, encoding="utf-8") as f:
+        meta = json.load(f)
+        if not isinstance(meta, dict):
+            meta = {}
+except Exception:
+    meta = {}
+
+now = int(time.time())
+last_index = {}
+for idx, hash_ in enumerate(raw_hashes):
+    last_index[hash_] = idx
+
+ordered = sorted(last_index.items(), key=lambda item: item[1])
+kept = []
+kept_set = set()
+expired = []
+legacy = []
+
+for hash_, _ in ordered:
+    entry = meta.get(hash_)
+    if not isinstance(entry, dict):
+        legacy.append(hash_)
+        continue
+    updated_at = int(entry.get("updated_at", 0) or 0)
+    if updated_at <= 0:
+        legacy.append(hash_)
+        continue
+    age = max(0, now - updated_at)
+    if ttl_sec > 0 and age >= ttl_sec:
+        expired.append(f"{hash_}|{age}|{ttl_sec}")
+        continue
+    kept.append(hash_)
+    kept_set.add(hash_)
+
+new_meta = {hash_: meta[hash_] for hash_ in kept if hash_ in meta}
+file_changed = kept != raw_hashes
+meta_changed = set(new_meta.keys()) != set(meta.keys())
+
+if file_changed:
+    with open(rejected_file, "w", encoding="utf-8") as f:
+        if kept:
+            f.write("\n".join(kept) + "\n")
+        else:
+            f.write("")
+
+if meta_changed:
+    with open(meta_file, "w", encoding="utf-8") as f:
+        json.dump(new_meta, f, ensure_ascii=False)
+
+print(f"kept={len(kept)}")
+for hash_ in legacy:
+    print(f"legacy|{hash_}")
+for row in expired:
+    print(f"expired|{row}")
+PY
+)
+	[ -z "$prune_result" ] && return 0
+	local line
+	while IFS= read -r line; do
+		case "$line" in
+		expired'|'*)
+			local payload hash_value age ttl
+			payload="${line#expired|}"
+			IFS='|' read -r hash_value age ttl <<<"$payload"
+			log "[REGRESSION] rejected期限切れを再許可: ${hash_value} age=${age}s ttl=${ttl}s" >&2
+			;;
+		legacy'|'*)
+			log "[REGRESSION] rejectedメタなしを再許可: ${line#legacy|}" >&2
+			;;
+		esac
+	done <<EOF
+$prune_result
+EOF
+}
+
 _is_recently_rejected_for_rollback() {
 	local h="$1"
+	_prune_expired_rejected_hashes >/dev/null 2>&1 || true
 	[ -n "$h" ] || return 1
 	[ -f "$REJECTED_HASHES_FILE" ] || return 1
 	grep -qF "$h" "$REJECTED_HASHES_FILE" 2>/dev/null || return 1
@@ -1129,6 +1229,7 @@ PY
 
 _pick_best_rollback_candidate() {
 	local current_hash="$1"
+	_prune_expired_rejected_hashes >/dev/null 2>&1 || true
 	[ -f "$ROLLING_SCORES_FILE" ] || return 1
 	local current_metrics current_comp
 	current_metrics=$(_get_current_strategy_run_metrics "$current_hash" 2>/dev/null || true)
@@ -1199,6 +1300,10 @@ PY
 		[ -z "$line" ] && continue
 		IFS='|' read -r h comp p50 p25 lcb n <<<"$line"
 		if [ -n "$current_comp" ] && ! awk "BEGIN{exit !($comp > $current_comp)}"; then
+			continue
+		fi
+		if _is_recently_rejected_for_rollback "$h"; then
+			log "[REGRESSION] rollback候補スキップ: $h はrejected TTL内" >&2
 			continue
 		fi
 		if _is_blocked_reverse_rollback_pair "$current_hash" "$h"; then
@@ -1437,6 +1542,7 @@ check_regression() {
 	# 単世代の揺らぎでは戻さず、branch の budget が尽きても anchor から明確に劣後する場合だけ rollback。
 	REGRESSION_ROLLBACK_DONE=0
 	REGRESSION_ROLLBACK_HASH=""
+	_prune_expired_rejected_hashes >/dev/null 2>&1 || true
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")
 	_refresh_best_strategy_anchor "" >/dev/null 2>&1 || true
