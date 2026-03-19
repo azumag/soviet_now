@@ -49,7 +49,7 @@ _auto_vote_prediction() {
 	sleep 5
 
 	# 所持ポイントを取得して10%を計算
-	local channel_login="${TWITCH_CHANNEL_LOGIN:-azumag}"
+	local channel_login="${TWITCH_CHANNEL_LOGIN:-azumagbanjo}"
 	local balance_resp vote_points
 	balance_resp=$(curl -sf --max-time 10 -X POST \
 		"https://gql.twitch.tv/gql" \
