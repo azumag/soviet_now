@@ -39,22 +39,23 @@ TOKEN="${TOKEN#oauth:}"
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
 PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-480}"
 PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-12}"
-PREDICTION_STALE_GRACE_SEC="${TWITCH_PREDICTION_STALE_GRACE_SEC:-300}"
+# 投票受付時間を過ぎても、12ゲーム完了までは resolve 用 state を保持する。
+# 必要なら明示的に max age を設定して最終的な掃除だけ行う。
+PREDICTION_STATE_MAX_AGE_SEC="${TWITCH_PREDICTION_STATE_MAX_AGE_SEC:-0}"
 AUTO_VOTE_POINTS="${TWITCH_AUTO_VOTE_POINTS:-10}"
 
 _prediction_state_stale_reason() {
 	local current_game_num="${1:-0}"
 	[ -f "$PREDICTION_STATE_FILE" ] || return 1
-	python3 - "$PREDICTION_STATE_FILE" "$current_game_num" "$PREDICTION_WINDOW_SEC" "$PREDICTION_STALE_GRACE_SEC" "$PREDICTION_MAX_GAMES" <<'PY' 2>/dev/null
+	python3 - "$PREDICTION_STATE_FILE" "$current_game_num" "$PREDICTION_MAX_GAMES" "$PREDICTION_STATE_MAX_AGE_SEC" <<'PY' 2>/dev/null
 import json
 import sys
 import time
 
-state_file, current_game_raw, window_raw, grace_raw, max_games_raw = sys.argv[1:6]
+state_file, current_game_raw, max_games_raw, max_age_raw = sys.argv[1:5]
 current_game = int(current_game_raw or 0)
-window_sec = int(window_raw or 0)
-grace_sec = int(grace_raw or 0)
 max_games = int(max_games_raw or 0)
+max_age_sec = int(max_age_raw or 0)
 
 try:
     state = json.load(open(state_file))
@@ -73,7 +74,7 @@ if not prediction_id or len(outcome_ids) < 2:
 
 if created_at > 0:
     age = max(0, int(time.time()) - created_at)
-    if window_sec > 0 and age >= window_sec + grace_sec:
+    if max_age_sec > 0 and age >= max_age_sec:
         reasons.append(f"age={age}s")
 
 if current_game > 0 and start_game > 0 and max_games > 0:

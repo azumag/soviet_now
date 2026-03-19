@@ -21,7 +21,8 @@ GAME_NUM_SNAPSHOT="$4"
 TURNS_SNAPSHOT="$5"
 
 # 進捗モニタリング用メタ情報
-IMPROVE_SELF_PID="${BASHPID:-$$}"
+# improve_state には、実際にバックグラウンドで管理されるトップレベル bash の PID を記録する。
+IMPROVE_SELF_PID="$$"
 IMPROVE_STATE_JSON=$(_read_improve_state)
 IMPROVE_BASE_HASH=$(echo "$IMPROVE_STATE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null || echo "")
 [ -z "$IMPROVE_BASE_HASH" ] && IMPROVE_BASE_HASH=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
@@ -40,6 +41,27 @@ _improve_progress() {
 _improve_note() {
 	local msg="$*"
 	printf '[%s] [IMPROVE] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
+}
+
+_launch_detached_strategy_radio() {
+	local strategy_diff="$1" scores="$2" game_num="$3" best_score="$4"
+	local diff_file
+	diff_file=$(mktemp "$TMP_STATE_DIR/strategy_commentary_diff.XXXXXX") || return 1
+	printf '%s\n' "$strategy_diff" >"$diff_file" || {
+		rm -f "$diff_file" 2>/dev/null || true
+		return 1
+	}
+
+	nohup bash -lc '
+		cd "$1" || exit 1
+		source ./eloop_lib.sh
+		local_diff=$(cat "$2" 2>/dev/null || true)
+		rm -f "$2" 2>/dev/null || true
+		[ -n "$local_diff" ] || exit 0
+		start_radio_corner_strategy "$local_diff" "$3" "$4" "$5"
+	' _ "$SCRIPT_DIR" "$diff_file" "$scores" "$game_num" "$best_score" >/dev/null 2>&1 </dev/null &
+	disown || true
+	return 0
 }
 
 _strategy_change_is_numeric_only() {
@@ -1024,12 +1046,16 @@ if $improve_ok; then
 	fi
 
 	# --- Phase D: 戦略解説コーナー (変更があった場合のみ) ---
-	# 改善ジョブ自体は先に完了扱いにし、ラジオは非同期で流す。
+	# 改善ジョブ自体は先に完了扱いにし、ラジオは完全に切り離して harvest を止めない。
 	if [ -n "$strategy_diff" ]; then
 		_improve_progress "radio" "95" "strategy_commentary"
 		best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
 		_improve_progress "done" "100" "awaiting_harvest"
-		start_radio_corner_strategy "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now" &
+		if _launch_detached_strategy_radio "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now"; then
+			_improve_note "strategy commentary launched in detached worker"
+		else
+			log "[IMPROVE] strategy commentary launch failed"
+		fi
 	else
 		_improve_progress "done" "100" "awaiting_harvest"
 	fi
