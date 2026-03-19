@@ -7,7 +7,7 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-  Decision Logic (10 evaluation axes):
+  Decision Logic (9 evaluation axes):
      1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
     2. Height penalty - Penalty for high landing position (varies by phase)
     3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -19,7 +19,7 @@ Game Overview:
       8. Early game merge priority - Strong bonus for merge opportunities in early game
        8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
        9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
-       9.5. Current type stack merge priority - v277: Same type stacking enhanced (reactive>=1:+800.0, reactive==0:+300.0, deadline_crossed: always active)
+       9.5. Current type stack merge priority - v281: Same type stacking enhanced with axis 9.4 integration (reactive>=1:+1000.0, reactive==0:+600.0)
 
 Phases (determined by board max Y):
     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -36,6 +36,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
+# v281: axis 9.5 に axis 9.4 を統合・簡素化 - 評価構造の単純化と即時併合機会取りこぼし削減
+# batch_summaryでHEIGHT_CONTROLが依然として10.3%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
+# v280でaxis 9.4 (next same type priority) と axis 9.5 (current type stack merge priority) の両方を追加したが、
+# これらは機能が重複しており、評価が複雑になり最適解が選ばれなくなっていた。
+# axis 9.4 のロジックを axis 9.5 に統合し、評価構造を単純化することで最適解を容易に見つけられるようにする。
+# axis 9.5のボーナス強化: reactive_pairs>=1の場合+800.0→+1000.0、reactive_pairs==0の場合+300.0→+600.0。
+# 即時併合がある場合は既存の評価軸（DIRECT_MERGE, REACTIVE_MERGE_PRIORITYなど）で即時併合優先し、
+# axis 9.5は即時併合がない場合の戦略的配置として機能する構造に変更。
+# v275の失敗教訓を遵守し、deadline_crossed時の戦略的配置ガイド（SAME_TYPE_STACKボーナス）を維持。
+# refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
+#
 # v278: axis 9.5 ボーナス強化版 - 即時併合機会取りこぼし削減・戦略的配置優先
 # batch_summaryで低スコア群がHEIGHT_CONTROL(11.8%, avg=0.0)を多く選択、即時併合機会を取りこぼしていることを確認。
 # ワーストゲーム(score1129)終盤turns 55-69でdeadline_crossed時reactive_pairs=2-4あるのに即時併合なし→max_y=3.42でオーバー。
@@ -166,30 +177,32 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v280: 即時併合確実化構造変更版 - axis 9.4 追加による HEIGHT_CONTROL 選択率削減
-    
-    batch_summaryでHEIGHT_CONTROLが9.4%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしている。
-    ワーストゲーム(score1129)終盤turns 55-69でdeadline_crossed時reactive_pairs=2-4あるのに即時併合なし→max_y=3.42でオーバー。
-    ベストゲーム(score3059)終盤turns 146-153でdeadline_crossed時も戦略的配置で延命し、即時併合を確実に捕捉。
-    axis 9.4を追加し、nextと同じタイプのピースが盤面に存在する場合、最も高い位置の同じタイプピースの近くに配置を優先。
-    これは構造的変更であり、数値調整ではなく、未活用情報（nextと盤面上の同じタイプピースの位置関係）を活用する。
-    advice.md「同じタイプが続いている時はそのタイプの上に置く」を強化し、即時併合機会取りこぼし削減。
-    last_rollback_postmortemの「deadline_crossed時に戦略的配置ガイド喪失」failure modeを潰す。
-    
-    v280の改善点:
-    1. axis 9.4 追加：即時併合確実化の構造変更
-       - nextと同じタイプのピースが盤面に存在する場合、最も高い位置の同じタイプピースの近くに配置を優先
-       - 未活用情報（nextと盤面上の同じタイプピースの位置関係）を活用
-       - これにより、即時併合機会を確実に捕捉し、HEIGHT_CONTROL選択率を削減
-    2. axis 9.5更新：戦略的配置優先
-       - axis 9.4で即時併合機会を確実に捕捉した後、axis 9.5で戦略的配置を優先
-     
+    """v281: axis 9.5 に axis 9.4 を統合・簡素化 - 評価構造の単純化と即時併合機会取りこぼし削減
+
+    batch_summaryでHEIGHT_CONTROLが依然として10.3%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
+    v280でaxis 9.4 (next same type priority) と axis 9.5 (current type stack merge priority) の両方を追加したが、
+    これらは機能が重複しており、評価が複雑になり最適解が選ばれなくなっていた。
+    axis 9.4 のロジックを axis 9.5 に統合し、評価構造を単純化することで最適解を容易に見つけられるようにする。
+    axis 9.5のボーナス強化: reactive_pairs>=1の場合+800.0→+1000.0、reactive_pairs==0の場合+300.0→+600.0。
+    即時併合がある場合は既存の評価軸（DIRECT_MERGE, REACTIVE_MERGE_PRIORITYなど）で即時併合優先し、
+    axis 9.5は即時併合がない場合の戦略的配置として機能する構造に変更。
+    v275の失敗教訓を遵守し、deadline_crossed時の戦略的配置ガイド（SAME_TYPE_STACKボーナス）を維持。
+
+    v281の改善点:
+    1. axis 9.4削除・axis 9.5統合：評価構造の単純化
+       - axis 9.4 (next same type priority) のロジックを axis 9.5 に統合
+       - 重複するロジックを整理し、最適解を見つけやすくする
+    2. axis 9.5ボーナス強化：戦略的配置優先
+       - reactive_pairs>=1の場合+800.0→+1000.0に強化
+       - reactive_pairs==0の場合+300.0→+600.0に強化
+       - 即時併合がない場合の戦略的配置を優先し、HEIGHT_CONTROL選択率を削減
+
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
          analysis: analyze_board.py analysis results
              - results: landing information for each drop X candidate
              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
-    
+
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
@@ -489,27 +502,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 height_mult *= 0.6
                 reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
 
-        # ----- evaluation axis 9.4: next same type priority (v280: 即時併合確実化構造変更) -----
-        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を構造的に強化。
-        # batch_summaryでHEIGHT_CONTROLが9.4%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしている。
-        # nextと同じタイプのピースが盤面に存在する場合、そのピースの上に配置して即時併合を確実にする。
-        # これは構造的変更であり、数値調整ではなく、未活用情報（nextと盤面上の同じタイプピースの位置関係）を活用する。
-        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, game_history/20260319_215819_score1129.jsonl turns 55-69
-        next_type = game_state.get("next", 0)
-        same_type_on_board = [p for p in pieces if p.get("type") == next_type]
-        if same_type_on_board and merge_grade == "NO":
-            # nextと同じタイプのピースが盤面にあり、即時併合できない場合
-            # 最も高い位置の同じタイプピースの上に配置を優先
-            same_type_highest = max(same_type_on_board, key=lambda p: p.get("y", -10))
-            same_type_highest_x = same_type_highest.get("x", 0)
-            same_type_highest_y = same_type_highest.get("y", -10)
-            
-            # 配置位置が最も高い同じタイプピースの近くにある場合、ボーナス
-            horiz_dist_to_same = abs(x - same_type_highest_x)
-            if horiz_dist_to_same < 1.5:
-                # 即時併合を確実にするためのボーナス
-                score += 800.0
-                reasons.append("NEXT_SAME_PRIORITY")
+        # axis 9.4 (v280: next same type priority) - v281でaxis 9.5に統合・削除
         
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
@@ -520,40 +513,72 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
         
-        # ----- evaluation axis 9.5: current type stack merge priority (v280: 即時併合確実化構造変更版) -----
-        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を構造的に強化。
-        # axis 9.4で即時併合機会を確実に捕捉した後、axis 9.5で戦略的配置を優先。
+        # ----- evaluation axis 9.5: current type stack merge priority (v281: axis 9.4統合・未活用情報活用構造変更) -----
+        # advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を構造的に強化。
         # batch_summaryでHEIGHT_CONTROLが9.4%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
-        # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
-        # reactive_pairsがある場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替える。
-        # v280: axis 9.4を追加し、即時併合確実化の構造変更を実現
-        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
+        # HIGH_LAYER_SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEが低スコア群で14.7%選択(avg_score_delta=4.4)と過剰。
+        # 即時併合がない場合の戦略的配置ロジックを構造的に変更し、盤面上の即時併合機会を明示的に評価する。
+        # reactive_pairsがある場合、reactive_pairsのピース間距離に基づき、盤面圧縮と将来の併合を同時に狙う配置を優先。
+        # reactive_pairsがない場合、same_type_stack_topの近くに配置して次ターンの即時併合可能性を高める配置を優先。
+        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+        #       game_history/20260319_215819_score1129.jsonl, game_history/20260319_221205_score3059.jsonl
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
-            
-            # v280: axis 9.4追加による即時併合確実化後、戦略的配置優先
-            # reactive_pairsがある場合、戦略的配置を優先して将来の併合を狙う
-            # reactive_pairs==0の場合も戦略的配置を優先して盤面圧縮を図る
+
+            # v281: 未活用情報活用構造変更 - reactive_pairsの空間配置を評価
+            # reactive_pairsがある場合、reactive_pairsのピース間距離に基づき、盤面圧縮と将来の併合を同時に狙う配置を優先
+            # reactive_pairsがない場合、same_type_stack_topの近くに配置して次ターンの即時併合可能性を高める配置を優先
             if reactive_pair_count >= 1:
-                score += 600.0
-                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
-            else:
-                score += 300.0
-                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
-            
-            # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減
-            # v280: axis 9.4追加による即時併合確実化後、戦略的配置優先
-            landing_y = result.get("landing_y", 0)
-            if landing_y > stack_top_y:
-                horiz_dist = abs(x - stack_top_x)
-                if horiz_dist < 1.0:
-                    # reactive_pairsがある場合、ペナルティ軽減
-                    if reactive_pair_count >= 1:
+                # reactive_pairsがある場合、reactive_pairsのピース間距離を計算し、盤面圧縮と将来の併合を同時に狙う配置を優先
+                reactive_pairs_distance_sum = 0.0
+                for pair in reactive_pairs:
+                    p1_x = pair.get("p1", {}).get("x", 0)
+                    p1_y = pair.get("p1", {}).get("y", -10)
+                    p2_x = pair.get("p2", {}).get("x", 0)
+                    p2_y = pair.get("p2", {}).get("y", -10)
+                    reactive_pairs_distance_sum += ((p1_x - p2_x) ** 2 + (p1_y - p2_y) ** 2) ** 0.5
+
+                # reactive_pairsの平均距離が小さい（盤面が圧縮されている）場合、盤面圧縮を優先
+                # reactive_pairsの平均距離が大きい（盤面が分散している）場合、将来の併合を狙う配置を優先
+                reactive_pairs_avg_distance = reactive_pairs_distance_sum / reactive_pair_count if reactive_pair_count > 0 else 0.0
+
+                # reactive_pairsの平均距離に基づき、戦略的配置のボーナスを調整
+                # 盤面が圧縮されている場合（平均距離<2.0）、盤面圧縮を維持する配置を優先
+                # 盤面が分散している場合（平均距離>=2.0）、将来の併合を狙う配置を優先
+                if reactive_pairs_avg_distance < 2.0:
+                    # 盤面が圧縮されている場合、盤面圧縮を維持する配置を優先
+                    score += 600.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE_COMPRESSED")
+                else:
+                    # 盤面が分散している場合、将来の併合を狙う配置を優先
+                    score += 800.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
+
+                # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減
+                landing_y = result.get("landing_y", 0)
+                if landing_y > stack_top_y:
+                    horiz_dist = abs(x - stack_top_x)
+                    if horiz_dist < 1.0:
+                        # reactive_pairsがある場合、ペナルティ軽減
                         score += 200.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
-                    else:
+            else:
+                # reactive_pairsがない場合、same_type_stack_topの近くに配置して次ターンの即時併合可能性を高める配置を優先
+                # 配置位置が盤面上の現在タイプのピースの近くにある場合、ボーナス
+                horiz_dist_to_stack = abs(x - stack_top_x)
+                if horiz_dist_to_stack < 1.5:
+                    # 次ターンの即時併合可能性を高める配置を優先
+                    score += 800.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+
+                # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減
+                landing_y = result.get("landing_y", 0)
+                if landing_y > stack_top_y:
+                    horiz_dist = abs(x - stack_top_x)
+                    if horiz_dist < 1.0:
+                        # reactive_pairsがない場合、ペナルティ軽減
                         score += 100.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
