@@ -1,0 +1,6 @@
+node_modules/
+tmp/
+game_history/
+strategy_versions/
+.env
+*.log

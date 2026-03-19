@@ -1,0 +1,16 @@
+{
+  "name": "soren91",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Automated player for 91-player Soren game on unityroom",
+  "scripts": {
+    "start": "node main.mjs",
+    "improve": "node improve.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "dotenv": "^16.4.0",
+    "playwright": "^1.49.0",
+    "sharp": "^0.33.0"
+  }
+}
