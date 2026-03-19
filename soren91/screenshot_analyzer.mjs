@@ -455,13 +455,26 @@ function measureGarbage(data, width, height, calibration) {
  * 順位はYOUR下部に白/シアン文字で表示 (1-91)
  */
 function detectRank(data, width, height, board) {
-  // 順位表示エリア: board.left基準で左上
+  // 順位表示エリア: YOUR下部の大きな数字 (y≈60-82 付近)
   const x1 = board.left - 9;
   const x2 = board.left + 36;
-  const y1 = board.top + 1;
-  const y2 = board.top + 17;
+  const scanY1 = board.top + 40;
+  const scanY2 = board.top + 68;
 
-  if (x1 < 0 || y2 > height || x2 > width) return null;
+  if (x1 < 0 || scanY2 > height || x2 > width) return null;
+
+  // 明るい行の範囲を自動検出
+  let y1 = scanY2, y2 = scanY1;
+  for (let y = scanY1; y < scanY2; y++) {
+    for (let x = x1; x < x2; x++) {
+      const idx = (y * width + x) * 4;
+      if ((data[idx] + data[idx + 1] + data[idx + 2]) / 3 > 90) {
+        if (y < y1) y1 = y;
+        if (y + 1 > y2) y2 = y + 1;
+      }
+    }
+  }
+  if (y2 <= y1 || y2 - y1 < 4) return null;
 
   // 列ごとの明るいピクセル数
   const colBright = [];
