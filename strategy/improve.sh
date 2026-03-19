@@ -459,7 +459,7 @@ trigger_adaptive_improvement() {
 		# リグレッション検知 → リバート済み、蓄積データクリア
 		# チャネルポイント予想: 粛清として解決
 		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-			./twitch_predictions.sh resolve 3 2>/dev/null &
+			./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
 		fi
 		_clear_accumulated_data
 		return
@@ -525,7 +525,7 @@ trigger_adaptive_improvement() {
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 		local pred_best=0
 		pred_best=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
-		./twitch_predictions.sh resolve "$pred_best" 2>/dev/null &
+		./twitch_predictions.sh resolve "$pred_best" >>tmp/prediction.log 2>&1 || true
 	fi
 	# 蓄積データから履歴ファイル・スコアを統合
 	local all_history_files all_scores any_soviet

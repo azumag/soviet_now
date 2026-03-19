@@ -38,7 +38,63 @@ TOKEN="${TOKEN#oauth:}"
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
 PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-480}"
+PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-12}"
+PREDICTION_STALE_GRACE_SEC="${TWITCH_PREDICTION_STALE_GRACE_SEC:-300}"
 AUTO_VOTE_POINTS="${TWITCH_AUTO_VOTE_POINTS:-10}"
+
+_prediction_state_stale_reason() {
+	local current_game_num="${1:-0}"
+	[ -f "$PREDICTION_STATE_FILE" ] || return 1
+	python3 - "$PREDICTION_STATE_FILE" "$current_game_num" "$PREDICTION_WINDOW_SEC" "$PREDICTION_STALE_GRACE_SEC" "$PREDICTION_MAX_GAMES" <<'PY' 2>/dev/null
+import json
+import sys
+import time
+
+state_file, current_game_raw, window_raw, grace_raw, max_games_raw = sys.argv[1:6]
+current_game = int(current_game_raw or 0)
+window_sec = int(window_raw or 0)
+grace_sec = int(grace_raw or 0)
+max_games = int(max_games_raw or 0)
+
+try:
+    state = json.load(open(state_file))
+except Exception:
+    print("invalid_json")
+    raise SystemExit(0)
+
+prediction_id = str(state.get("prediction_id", "") or "")
+outcome_ids = state.get("outcome_ids", []) or []
+created_at = int(state.get("created_at", 0) or 0)
+start_game = int(state.get("game_num", 0) or 0)
+reasons = []
+
+if not prediction_id or len(outcome_ids) < 2:
+    reasons.append("invalid_state")
+
+if created_at > 0:
+    age = max(0, int(time.time()) - created_at)
+    if window_sec > 0 and age >= window_sec + grace_sec:
+        reasons.append(f"age={age}s")
+
+if current_game > 0 and start_game > 0 and max_games > 0:
+    game_delta = current_game - start_game
+    if game_delta >= max_games:
+        reasons.append(f"games={game_delta}")
+
+if reasons:
+    print(",".join(reasons))
+PY
+}
+
+_clear_stale_prediction_state_if_any() {
+	local current_game_num="${1:-0}"
+	local stale_reason=""
+	stale_reason=$(_prediction_state_stale_reason "$current_game_num" || true)
+	[ -n "$stale_reason" ] || return 1
+	_log "STALE: clearing local prediction state (${stale_reason})"
+	rm -f "$PREDICTION_STATE_FILE"
+	return 0
+}
 
 # --- azumagdev 自動投票 (Twitch GQL API) ---
 _auto_vote_prediction() {
@@ -136,14 +192,15 @@ print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
 # --- サブコマンド ---
 case "${1:-}" in
 create)
+	GAME_NUM="${2:-0}"
+	_clear_stale_prediction_state_if_any "$GAME_NUM" || true
+
 	# 既存の予想が残っていたらスキップ
 	if [ -f "$PREDICTION_STATE_FILE" ]; then
 		_log "SKIP: prediction already active"
 		cat "$PREDICTION_STATE_FILE"
 		exit 0
 	fi
-
-	GAME_NUM="${2:-0}"
 
 	# JSON ペイロード生成
 	payload=$(python3 - "$BROADCASTER_ID" "$PREDICTION_WINDOW_SEC" <<'PY'
@@ -257,6 +314,10 @@ PY
 		-d "$payload" 2>/dev/null)
 
 	if [ $? -ne 0 ]; then
+		if _clear_stale_prediction_state_if_any 0; then
+			_log "WARN: prediction resolve failed, but stale local state was cleared"
+			exit 0
+		fi
 		_log "WARN: prediction resolve failed"
 		exit 1
 	fi
@@ -301,12 +362,26 @@ PY
 		-H "Content-Type: application/json" \
 		-d "$payload" >/dev/null 2>&1
 
+	if [ $? -ne 0 ]; then
+		if _clear_stale_prediction_state_if_any 0; then
+			_log "WARN: prediction cancel failed, but stale local state was cleared"
+			exit 0
+		fi
+		_log "WARN: prediction cancel failed"
+		exit 1
+	fi
+
 	_log "prediction canceled"
 	rm -f "$PREDICTION_STATE_FILE"
 	;;
 
+cleanup)
+	GAME_NUM="${2:-0}"
+	_clear_stale_prediction_state_if_any "$GAME_NUM" || true
+	;;
+
 *)
-	echo "Usage: $0 {create|resolve <outcome_index>|cancel}" >&2
+	echo "Usage: $0 {create|resolve <outcome_index>|cancel|cleanup [game_num]}" >&2
 	echo "  outcome_index: 0=建国なし, 1=ロシア建国, 2=ソ連建国, 3=粛清" >&2
 	exit 1
 	;;

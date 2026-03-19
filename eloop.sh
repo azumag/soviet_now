@@ -292,6 +292,7 @@ post_game_bookkeeping() {
 	fi
 
 	# チャネルポイント予想: 新サイクル初戦なら賭けを作成（改善中は待機）
+	./twitch_predictions.sh cleanup "$game_num_display" >>tmp/prediction.log 2>&1 || true
 	if [ ! -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 		local acc_count_for_pred=0
 		if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
@@ -300,7 +301,7 @@ post_game_bookkeeping() {
 		local improve_status=""
 		improve_status=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('status',''))" 2>/dev/null || echo "")
 		if [ "${acc_count_for_pred:-0}" -eq 0 ] && [ "$improve_status" != "running" ]; then
-			./twitch_predictions.sh create "$game_num_display" 2>/dev/null
+			./twitch_predictions.sh create "$game_num_display" >>tmp/prediction.log 2>&1 || true
 		fi
 	fi
 
@@ -335,7 +336,7 @@ json.dump(d,open(f,'w'))
 		handle_soviet_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
 		# チャネルポイント予想: ソ連建国で即 resolve（HALT 後は trigger_adaptive_improvement が呼ばれないため）
 		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-			./twitch_predictions.sh resolve 2 2>/dev/null &
+			./twitch_predictions.sh resolve 2 >>tmp/prediction.log 2>&1 || true
 		fi
 		HALT_STRATEGY_AFTER_SOVIET=1
 		LAST_RUSSIA="false"
