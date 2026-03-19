@@ -1,18 +1,19 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v14)
+ * strategy.mjs - ドロップ位置決定戦略 (v15)
  *
- * v14改善点 (v13からの修正):
- * - 根本原因修正: CRITICAL_GBG_T1ループの原因を特定・修正
- *   → 91人対戦の大量ガベージ環境でT1ピースとしてゴミが誤検出される
- *   → CRITICAL+GBG時にT1マージを追うと score=0のまま79ターン浪費（v13の主因）
- *   → 修正: CRITICAL+GBGモードはnextType>=2のみマージを追う (T1はスキップ)
- * - ガベージフラッドモード追加: score=0 + rawPieceCount>30 + avgHeight>0.3
- *   → T1/T2マージをスキップ(ゴミ誤検出が多い)、高タイプマージ優先 + 最低列フォールバック
- *   → HOLDでT1-2を温存し次の良いピースを待つ
- * - ウルトラマスモード追加 (rawPieceCount>=80):
- *   → T3+マージのみ追う、それ以外は純粋な最低列ドロップ
- *   → T1-2はHOLDして温存
- * - rawPieceCount: cap前の実際のピース数を使って各モード判定
+ * v15改善点 (v14からの根本修正):
+ * - garbageFloodMode過剰抑制の修正
+ *   → v14の問題: score=0+pieces>30+avgHeight>0.3でT1/T2マージを完全スキップ
+ *   → 91人対戦では序盤から重ガベージが来るとこの条件が即発動
+ *   → T1/T2しかない序盤でマージゼロ → score=0のまま43ターン消耗 (game#144の主因)
+ *   → 修正: 発動閾値を大幅引き上げ (pieces>50 && avgHeight>1.2)
+ * - garbageFloodModeでのT2マージ許可 (スキップはT1のみ)
+ *   → T2以上は誤検出が少なく、マージで得点・ガベージ除去が可能
+ * - CRITICAL+GBGのcritGbgMinTypeを2に統一 (floodModeでもT2+マージ許可)
+ * - CRITICAL pathのminMergeType: garbageFloodMode時もT2以上は許可
+ * - GBG pathのgbgMinType: garbageFloodMode時もT2以上は許可
+ * - ultraMassMode: T2マージ許可 (旧: T3+のみ)
+ * - ultraMassMode T1 HOLD: 次ピースがT2+の場合のみ (旧: 無条件HOLD)
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -62,10 +63,12 @@ export function decide(boardState) {
     ? validH.reduce((a, b) => a + b, 0) / validH.length
     : -3.0;
 
-  // ガベージフラッドモード: score=0 + 多ピース + 一定高さ
-  // → T1/T2はゴミ誤検出の可能性が高い（91人対戦では特に顕著）
+  // v15: ガベージフラッドモード閾値を大幅引き上げ
+  // v14問題: pieces>30+avgHeight>0.3で即発動 → 序盤でT1/T2マージゼロ → score=0のまま終了
+  // v15修正: pieces>50+avgHeight>1.2の深刻な状況のみ発動
+  // さらに: floodModeでもT2マージは許可 (T1のみスキップ)
   const currentScore = typeof score === 'number' ? score : 0;
-  const garbageFloodMode = currentScore === 0 && rawPieceCount > 30 && avgHeight > 0.3;
+  const garbageFloodMode = currentScore === 0 && rawPieceCount > 50 && avgHeight > 1.2;
 
   // ウルトラマスモード: 80以上のピース検出 → 純粋生存優先
   const ultraMassMode = rawPieceCount >= ULTRA_MASS_THRESHOLD;
@@ -85,21 +88,24 @@ export function decide(boardState) {
   const isCritical = nearDeadlineCount >= 3 || overDeadlineCount >= 2;
   const isWarn = colHeights.some(h => h > WARN_Y + 0.5);
 
-  // --- ウルトラマスモード: T3+マージのみ、それ以外は最低列 ---
+  // --- v15: ウルトラマスモード: T2+マージ優先 (旧: T3+のみ) ---
   if (ultraMassMode) {
-    // T3以上なら高タイプHOLDをスワップ
+    // T3以上のHOLDをスワップ (高タイプマージ優先)
     if (canHold && hold && hold.type >= 3 && hold.type > nextType) {
       const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
       if (holdMerge !== null) return { x: 0, reason: `ULTRA_HOLD_T${hold.type}`, hold: true };
     }
-    // T3以上のマージを追う
-    if (nextType >= 3) {
+    // v15: T2以上のマージを追う (旧: T3以上)
+    if (nextType >= 2) {
       const highMergeX = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
       if (highMergeX !== null) return { x: highMergeX, reason: `ULTRA_MERGE_T${nextType}` };
     }
-    // T1-2はHOLDで温存（HOLDが空の場合のみ）
-    if (canHold && nextType <= 2 && !hold) {
-      return { x: 0, reason: `ULTRA_HOLD_SAVE_T${nextType}`, hold: true };
+    // v15: T1は次ピースがT2+の場合のみHOLD (旧: T1/T2を無条件HOLD)
+    if (canHold && nextType === 1 && !hold) {
+      const nextPieceType = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+      if (nextPieceType >= 2) {
+        return { x: 0, reason: `ULTRA_HOLD_T1_NEXT_T${nextPieceType}`, hold: true };
+      }
     }
     const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
     return { x: lowestDrop.x, reason: `ULTRA_LOWEST_Y${colHeights[lowestDrop.idx].toFixed(1)}` };
@@ -120,9 +126,9 @@ export function decide(boardState) {
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
     }
 
-    // v14: CRITICAL+GBG時はT2以上のみマージを追う
-    // garbageFloodMode時はT3以上に引き上げ（T1/T2はゴミ誤検出の可能性が高い）
-    const critGbgMinType = garbageFloodMode ? 3 : 2;
+    // v15: CRITICAL+GBG時はT2以上のマージを追う (garbageFloodModeでも同様)
+    // T1のみスキップ (ゴミ誤検出の可能性があるが、T2以上は信頼性高い)
+    const critGbgMinType = 2;
     if (garbageUrgent && nextType >= critGbgMinType) {
       const lowLimit = Math.min(avgHeight + 0.2, DEADLINE_Y - 0.4);
       const critGbgMerge = findMergeInLowCol(activePieces, nextType, colHeights, lowLimit, dangerBias);
@@ -131,17 +137,9 @@ export function decide(boardState) {
       }
     }
 
-    // v14: ガベージフラッドモードでT1-2 + HOLD可能: HOLDで高タイプに交換
-    if (garbageFloodMode && nextType <= 2 && canHold) {
-      if (hold && hold.type >= 3) {
-        return { x: 0, reason: `FLOOD_CRIT_SWAP_T${hold.type}`, hold: true };
-      }
-      if (!hold) {
-        const nextPieceType = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
-        if (nextPieceType >= 3) {
-          return { x: 0, reason: `FLOOD_CRIT_SAVE_T${nextType}_NEXT_T${nextPieceType}`, hold: true };
-        }
-      }
+    // v15: T1+floodMode時、HOLDにT2+があれば交換 (T2マージが狙えるようにする)
+    if (garbageFloodMode && nextType === 1 && canHold && hold && hold.type >= 2) {
+      return { x: 0, reason: `FLOOD_CRIT_SWAP_T${hold.type}`, hold: true };
     }
 
     if (canHold && hold && hold.type) {
@@ -157,8 +155,8 @@ export function decide(boardState) {
     const lowestColH = colHeights[lowestDrop.idx];
 
     const lowMergeLimit = Math.min(avgHeight + 0.2, DEADLINE_Y - 0.4);
-    // v14: garbageFloodModeではT3以上のみマージを追う
-    const minMergeType = garbageFloodMode ? 3 : 1;
+    // v15: garbageFloodModeでもT2以上はマージを追う (T1のみスキップ)
+    const minMergeType = (garbageFloodMode && nextType === 1) ? 99 : 1;
     const lowColMerge = nextType >= minMergeType
       ? findMergeInLowCol(activePieces, nextType, colHeights, lowMergeLimit, dangerBias)
       : null;
@@ -199,13 +197,13 @@ export function decide(boardState) {
       }
     }
 
-    // v14: ガベージフラッドモードでT1-2ならHOLDして良いピースを待つ
-    if (garbageFloodMode && nextType <= 2 && canHold && !hold) {
-      return { x: 0, reason: `FLOOD_GBG_HOLD_T${nextType}`, hold: true };
+    // v15: T1のみHOLDして良いピースを待つ (T2はマージを試みる)
+    if (garbageFloodMode && nextType === 1 && canHold && !hold) {
+      return { x: 0, reason: `FLOOD_GBG_HOLD_T1`, hold: true };
     }
 
-    // v14: ガベージフラッドモードではT3以上のみマージを追う
-    const gbgMinType = garbageFloodMode ? 3 : 1;
+    // v15: garbageFloodModeでもT2以上はマージを追う (旧: T3以上のみ)
+    const gbgMinType = garbageFloodMode ? 2 : 1;
     if (nextType >= gbgMinType) {
       const gbgMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, true, 0);
       if (gbgMerge) return { ...gbgMerge, reason: `GBG_MERGE_T${nextType}` };
