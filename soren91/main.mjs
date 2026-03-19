@@ -297,10 +297,13 @@ async function gameLoop(page, calibration, gameNumber) {
       // 盤面解析
       const { analyzeScreenshot } = await loadModule('./screenshot_analyzer.mjs');
       const boardState = await analyzeScreenshot(screenshotPath, calibration);
-      console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank}, conf=${boardState.confidence.toFixed(2)}`);
+      // ランク追跡
+      if (boardState.rank != null) lastKnownRank = boardState.rank;
+      console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}`);
 
       // ゲームオーバー処理
       if (boardState.state === 'GAMEOVER') {
+        if (!boardState.rank && lastKnownRank) boardState.rank = lastKnownRank;
         console.log(`[game] GAMEOVER at turn ${turn}, rank=${boardState.rank}`);
         await handleGameOver(page, gameNumber, turn, boardState, historyFile);
         return;
@@ -312,8 +315,10 @@ async function gameLoop(page, calibration, gameNumber) {
 
         // ラウンド終了判定: ゲーム中 (turn>5) に連続3回以上WAITINGが続いたらラウンド終了
         if (turn > 5 && waitingCount >= 3 && !roundEnded) {
-          console.log(`[game] Round ended at turn ${turn}`);
+          console.log(`[game] Round ended at turn ${turn}, final rank=${lastKnownRank ?? '?'}`);
           roundEnded = true;
+          // 最終順位をboardStateに付与
+          if (lastKnownRank) boardState.rank = lastKnownRank;
           // 履歴保存 + AI改善 (非同期 — ゲームループをブロックしない)
           handleGameOver(page, gameNumber, turn, boardState, historyFile)
             .catch(e => console.error('[game] Post-game error:', e.message));
@@ -322,6 +327,7 @@ async function gameLoop(page, calibration, gameNumber) {
           turn = 0;
           calibrated = false;
           moveCount = 0;
+          lastKnownRank = null;
         }
 
         if (!waitingLogged) {
