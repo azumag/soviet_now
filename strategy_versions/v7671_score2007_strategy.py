@@ -39,17 +39,16 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-  # --- Change History ---
-# v275: 危険域危険ピース多数即時併合優先版 - deadline_crossed=danger_piece_count>0でのHEIGHT_CONTROL禁止・危険ピース多数で即時併合優先
-# last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-# 中間スコアゲーム（score1227, score1511）終盤でdeadline_crossed=trueでdanger_piece_count=2-5ありながら即時併合がなく、戦略的配置が続きmax_yを2.2-2.4で安定せず、危険ピース増加でゲームオーバー。
-# ワーストゲーム（score0735）終盤turns 63-71でdanger_piece_count=5-1増加中に即時併合がなくmax_y=3.62でオーバー。
-# batch_summaryでHEIGHT_CONTROLが8.5%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系がavg_score_delta=45.8（高価値）だが選択率4.7%と低い。
-# v274のdanger_piece_count増強即時併合ボーナスでは、危険ピース数増加に対応できていたが、危険ピース多数（>=3）で即時併合候補がある場合に即時併合が強制的に選ばれる問題があった。
-# axis 8.5改善：危険ピースが多数（>=3）かつ即時併合候補がある場合、危険ピース消去即時併合を優先。
-# 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
-# last_rollback_postmortemの「DANGER_ZONE_MERGE_PRIORITY: NEAR_MERGE > DIRECT_MERGE > REACTIVE_PAIRS_COMPRESSION > HEIGHT_CONTROL」という制約を遵守。
-# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260319_084501_score0735.jsonl turns 63-71, game_history/20260319_083847_score1227.jsonl turns 60-72, game_history/20260319_084214_score1511.jsonl turns 80-90
+   # --- Change History ---
+# v276: deadline_crossed時reactive_pairsベース即時併合不可ペナルティ段階化版 - 即時併合取りこぼし削減
+# ワーストゲーム(score0652)終盤turns 60-67でdeadline_crossed=true, reactive_pairs=2-3があるにもかかわらず即時併合不可が続きmax_y=3.5でオーバー。
+# ベストゲーム(score2808)終盤turns 114-121でdeadline_crossed時もreactive_pairs>=3で確実に即時併合を実行し延命。
+# batch_summaryでHIGH_TOWER_DANGER_ZONE_IMMEDIATE_MERGE_PRIORITYがavg_score_delta=20.0（高価値）だが選択率7.2%と低いことを確認。
+# v275の即時併合不可時の一律-800.0ペナルティでは、reactive_pairsが少ない場合でも過剰なペナルティで戦略的配置の余地が不足していた。
+# axis 8.5改善：deadline_crossed時の即時併合不可時にreactive_pairsに応じて段階的なペナルティを導入。
+# reactive_pairs<=1の場合は-600.0（緩和して戦略的配置の余地を確保）、==2で-800.0（従来通りのペナルティ）、>=3で-1000.0（強力なペナルティで即時併合逃しを回避）。
+# last_rollback_postmortemの「DANGER_ZONE_MERGE_PRIORITY: NEAR_MERGE > DIRECT_MERGE > REACTIVE_PAIRS_COMPRESSION > HEIGHT_CONTROL」という制約を遵守し、即時併合逃しを潰す。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260319_125207_score0652.jsonl turns 60-67, game_history/20260319_124004_score2808.jsonl turns 114-121
 #
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
@@ -484,8 +483,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 1000.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
-                # deadline_crossed状態で即時併合機会がない場合：強力なペナルティでHEIGHT_CONTROLを抑制
-                score -= 800.0
+                # deadline_crossed状態で即時併合機会がない場合：reactive_pairsに応じて段階的ペナルティを適用
+                # reactive_pairsが少ない場合は戦略的配置の余地を確保し、多い場合は強力なペナルティで即時併合逃しを回避
+                if reactive_pair_count <= 1:
+                    score -= 600.0  # reactive_pairs<=1の場合は緩和したペナルティで戦略的配置の余地を確保
+                elif reactive_pair_count == 2:
+                    score -= 800.0  # reactive_pairs==2の場合は従来通りのペナルティを維持
+                else:
+                    score -= 1000.0  # reactive_pairs>=3の場合は強力なペナルティで即時併合逃しを回避
                 reasons.append("DANGER_ZONE_MERGE_REQUIRED")
         elif danger_piece_count > 0:
             # deadline_crossedしていないが危険ピースがある場合：従来のボーナスとペナルティ
