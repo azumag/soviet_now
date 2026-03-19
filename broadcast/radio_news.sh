@@ -304,14 +304,14 @@ _append_news_read_source() {
 	local source_key="$1"
 	[ -n "$source_key" ] || return 0
 	echo "$source_key" >>"$PAST_NEWS_READ_SOURCES"
-	tail -120 "$PAST_NEWS_READ_SOURCES" >"${PAST_NEWS_READ_SOURCES}.tmp" && mv "${PAST_NEWS_READ_SOURCES}.tmp" "$PAST_NEWS_READ_SOURCES"
+	tail -400 "$PAST_NEWS_READ_SOURCES" >"${PAST_NEWS_READ_SOURCES}.tmp" && mv "${PAST_NEWS_READ_SOURCES}.tmp" "$PAST_NEWS_READ_SOURCES"
 }
 
 _append_news_read_url_hash() {
 	local url_hash="$1"
 	[ -n "$url_hash" ] || return 0
 	echo "$url_hash" >>"$PAST_NEWS_URL_HASHES"
-	tail -"${PAST_NEWS_URL_HASHES_KEEP:-200}" "$PAST_NEWS_URL_HASHES" >"${PAST_NEWS_URL_HASHES}.tmp" && \
+	tail -"${PAST_NEWS_URL_HASHES_KEEP:-500}" "$PAST_NEWS_URL_HASHES" >"${PAST_NEWS_URL_HASHES}.tmp" && \
 		mv "${PAST_NEWS_URL_HASHES}.tmp" "$PAST_NEWS_URL_HASHES"
 }
 

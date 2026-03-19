@@ -87,9 +87,9 @@ start_radio_corner_news() {
 		[ -n "$selected_topic_key" ] && echo "$selected_topic_key" >>"$PAST_NEWS_TOPIC_KEYS"
 		_append_news_read_source "$selected_source_key"
 		_append_news_read_url_hash "$selected_url_hash"
-		tail -60 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
-		tail -120 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
-		tail -40 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
+		tail -200 "$PAST_NEWS_READ" >"${PAST_NEWS_READ}.tmp" && mv "${PAST_NEWS_READ}.tmp" "$PAST_NEWS_READ"
+		tail -400 "$PAST_NEWS_READ_KEYS" >"${PAST_NEWS_READ_KEYS}.tmp" && mv "${PAST_NEWS_READ_KEYS}.tmp" "$PAST_NEWS_READ_KEYS"
+		tail -120 "$PAST_NEWS_TOPIC_KEYS" >"${PAST_NEWS_TOPIC_KEYS}.tmp" && mv "${PAST_NEWS_TOPIC_KEYS}.tmp" "$PAST_NEWS_TOPIC_KEYS"
 		log "[NEWS] 既読記録: ${selected_news}"
 	fi
 
@@ -1006,9 +1006,9 @@ start_radio_corner_jiji() {
 	if [ -n "$headline_key" ]; then
 		echo "$headline" >>"$TMP_HISTORY_DIR/.past_jiji_titles.txt"
 		echo "$headline_key" >>"$TMP_HISTORY_DIR/.past_jiji_keys.txt"
-		tail -60 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" \
+		tail -200 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" \
 			&& mv "$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_titles.txt"
-		tail -120 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" \
+		tail -400 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" \
 			&& mv "$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_keys.txt"
 		# URL hash で重複排除（同じ記事が別タイトルで出現するケースに対応）
 		local jiji_url_hash=""
@@ -1017,7 +1017,7 @@ start_radio_corner_jiji() {
 		fi
 		if [ -n "$jiji_url_hash" ]; then
 			echo "$jiji_url_hash" >>"$PAST_JIJI_URL_HASHES"
-			tail -200 "$PAST_JIJI_URL_HASHES" >"${PAST_JIJI_URL_HASHES}.tmp" && \
+			tail -500 "$PAST_JIJI_URL_HASHES" >"${PAST_JIJI_URL_HASHES}.tmp" && \
 				mv "${PAST_JIJI_URL_HASHES}.tmp" "$PAST_JIJI_URL_HASHES"
 		fi
 	fi

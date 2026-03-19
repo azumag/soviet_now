@@ -85,7 +85,7 @@ if cand_key in history_keys:
     raise SystemExit(0)
 
 cand_keywords = keywords(candidate)
-for past in reversed(read_tail(history_bodies_path, 80)):
+for past in reversed(read_tail(history_bodies_path, 200)):
     past_key = normalize(past)
     if not past_key:
         continue
@@ -243,6 +243,6 @@ _pick_soviet_theme() {
 	local soviet_key="${soviet_theme%%。*}"
 	[ "$soviet_key" = "$soviet_theme" ] && soviet_key="${soviet_theme%%を深掘り*}"
 	echo "$soviet_key" >>"$past_soviet_file"
-	tail -"${PAST_SOVIET_TOPICS_KEEP:-100}" "$past_soviet_file" >"${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
+	tail -"${PAST_SOVIET_TOPICS_KEEP:-300}" "$past_soviet_file" >"${past_soviet_file}.tmp" && mv "${past_soviet_file}.tmp" "$past_soviet_file"
 	echo "$soviet_theme"
 }
