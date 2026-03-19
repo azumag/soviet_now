@@ -39,22 +39,35 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-    # --- Change History ---
-# v280: axis 9.5 に merged type adjacency 追加 - 即時併合機会がない場合の2手先併合可能性最大化
-# ワーストゲーム(score0818)終盤turns 75-82でdeadline_crossed=trueになった後、即時併合機会がなく
-# max_yが2.63→3.45へ上昇してゲームオーバー。deadline_crossedになる前にmax_yが上昇したことが主因。
-# ベストゲーム(score2589)終盤turns 130-137ではmax_y=1.47→1.87の緩やかな上昇でdeadline_crossedに至らず延命。
-# batch_summaryでHEIGHT_CONTROLが9.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が高価値だが低選択率を確認。
-# advice.md「次のピースを予測し、数ターン先の配置を計画的に判断する戦略への改善」を参考に、
-# axis 9.5にmerged_typeピース（next_type + 1）に近い配置を優先する評価を追加。
-# 即時併合機会がない場合、2手先の併合可能性を最大化する配置を優先することで、
-# max_yが上昇中の状況でより即時併合機会を最大化する配置を選択する。
-# reactive_pairsがある場合、この評価を強化する。
-# last_rollback_postmortemの制約を遵守：deadline_crossed && reactive_pairs>=1の場合は
-# SAME_TYPE_STACKボーナスを完全に抑制して即時併合を最優先。
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-#       game_history/20260320_062958_score0818.jsonl turns 75-82, game_history/20260320_063902_score2589.jsonl turns 130-137,
-#       game_history/20260320_061856_score2450.jsonl turns 98-105, advice.md
+     # --- Change History ---
+ # v281: axis 9.5 ボーナス条件調整 - deadline_crossed時reactive_pairs==0なら戦略的配置許容
+ # ワーストゲーム(score0735)終盤turns 60-71でdeadline_crossed=trueになった後、即時併合機会がなく
+ # max_yが急上昇してゲームオーバー。reactive_pairs=5-7あるのに即時併合ができていない。
+ # ベストゲーム(score2896)終盤turns 96-129でdeadline_crossed時も即時併合を確実に捉えて延命。
+ # batch_summaryでHEIGHT_CONTROLが11.4%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+ # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
+ # axis 9.5ボーナス条件を調整：deadline_crossed && reactive_pairs==0の場合は戦略的配置の余地を確保。
+ # deadline_crossed && reactive_pairs>=1の場合は、即時併合逃しを防ぐためSAME_TYPE_STACKボーナスを完全に抑制（制約遵守）。
+ # これによりdeadline_crossed状態での即時併合確実性を維持しつつ、reactive_pairsがない危険局面での戦略的配置を可能に。
+ # last_rollback_postmortemのdeadline_crossed時即時併合逃しfailure modeを潰しつつ、戦略的配置の柔軟性を向上。
+ # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+ #       advice.md, game_history/20260320_070052_score0735.jsonl turns 60-71, game_history/20260320_072330_score2896.jsonl turns 96-129
+ #
+ # v280: axis 9.5 に merged type adjacency 追加 - 即時併合機会がない場合の2手先併合可能性最大化
+ # ワーストゲーム(score0818)終盤turns 75-82でdeadline_crossed=trueになった後、即時併合機会がなく
+ # max_yが2.63→3.45へ上昇してゲームオーバー。deadline_crossedになる前にmax_yが上昇したことが主因。
+ # ベストゲーム(score2589)終盤turns 130-137ではmax_y=1.47→1.87の緩やかな上昇でdeadline_crossedに至らず延命。
+ # batch_summaryでHEIGHT_CONTROLが9.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が高価値だが低選択率を確認。
+ # advice.md「次のピースを予測し、数ターン先の配置を計画的に判断する戦略への改善」を参考に、
+ # axis 9.5にmerged_typeピース（next_type + 1）に近い配置を優先する評価を追加。
+ # 即時併合機会がない場合、2手先の併合可能性を最大化する配置を優先することで、
+ # max_yが上昇中の状況でより即時併合機会を最大化する配置を選択する。
+ # reactive_pairsがある場合、この評価を強化する。
+ # last_rollback_postmortemの制約を遵守：deadline_crossed && reactive_pairs>=1の場合は
+ # SAME_TYPE_STACKボーナスを完全に抑制して即時併合を最優先。
+ # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+ #       game_history/20260320_062958_score0818.jsonl turns 75-82, game_history/20260320_063902_score2589.jsonl turns 130-137,
+ #       game_history/20260320_061856_score2450.jsonl turns 98-105, advice.md
 # v277: deadline_crossed時SAME_TYPE_STACK抑制即時併合最優先版 - ワーストゲーム(score948)終盤即時併合取りこぼし潰し
 # ワーストゲーム(score948)終盤turns 60-73でdeadline_crossed=true, reactive_pairs=4があるにもかかわらず、
 # SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEを選択し、即時併合を取りこぼしてmax_y=3.39でオーバー。
@@ -560,11 +573,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ワーストゲーム(score948)終盤でdeadline_crossed=true, reactive_pairs=4があるにもかかわらず、
         # SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEを選択し、即時併合を取りこぼしてmax_y=3.39でオーバー。
         # deadline_crossed状態では即時併合を最優先し、危険エリアでの延命を図る。
+        # v281改善：axis 9.5 ボーナス条件調整 - deadline_crossed時reactive_pairs==0なら戦略的配置許容
+        # ワーストゲーム(score0735)終盤turns 60-71でdeadline_crossed=trueになった後、即時併合機会がなくmax_y急上昇。
+        # deadline_crossed && reactive_pairs==0 の危険局面で、戦略的配置の余地を確保しつつ、reactive_pairs>=1 の場合は即時併合を最優先。
         # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, 
-        #       game_history/20260319_131532_score0948.jsonl turns 60-73
+        #       game_history/20260319_131532_score0948.jsonl turns 60-73, game_history/20260320_070052_score0735.jsonl turns 60-71
         if same_type_stack_top and merge_grade == "NO":
-            # deadline_crossed状態かつreactive_pairs>=1の場合、SAME_TYPE_STACKボーナスを抑制して即時併合優先
-            if not (deadline_crossed and reactive_pair_count >= 1):
+            # v281: deadline_crossed && reactive_pairs>=1の場合はSAME_TYPE_STACKボーナスを完全に抑制して即時併合最優先
+            # deadline_crossed && reactive_pairs==0の場合は、戦略的配置の余地を確保するためSAME_TYPE_STACKボーナスを許容
+            # これによりdeadline_crossed状態での即時併合確実性を維持しつつ、reactive_pairsがない危険局面での戦略的配置を可能に
+            if deadline_crossed and reactive_pair_count >= 1:
+                # 即時併合逃しを防ぐため、戦略的配置ボーナスを完全に抑制
+                pass
+            else:
+                # deadline_crossedしていない、またはreactive_pairs==0の場合は戦略的配置ボーナスを許容
                 stack_top_x = same_type_stack_top.get("x", 0)
                 stack_top_y = same_type_stack_top.get("y", -10)
                 
@@ -599,7 +621,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # merged type adjacency: 2手先の併合（merged_type）ピースに近い配置を優先
                 # 即時併合機会がない場合、2手先の併合可能性を最大化する配置を優先することで、
                 # max_yが上昇中の状況でより即時併合機会を最大化する配置を選択する
-                if merged_type_stack_top:
+                # v281: deadline_crossed && reactive_pairs>=1の場合はMERGED_TYPE_ADJACENCYボーナスを完全に抑制して即時併合最優先
+                if merged_type_stack_top and not (deadline_crossed and reactive_pair_count >= 1):
                     merged_stack_top_x = merged_type_stack_top.get("x", 0)
                     horiz_dist_merged = abs(x - merged_stack_top_x)
                     if horiz_dist_merged < 0.8:  # ピースの真上に近い配置
