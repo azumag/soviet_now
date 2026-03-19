@@ -74,6 +74,16 @@ start_radio_corner_news() {
 	selected_news=$(printf '%s\n' "$selected_block" | head -n 1 | sed 's/^■ //')
 	log "[NEWS] スクリプト選定: ${selected_news}"
 
+	# AIスパム判定（宣伝・アフィリエイト記事を弾く）
+	if _news_ai_spam_check "$selected_news" "$selected_block"; then
+		log "[NEWS] SPAM検出 → 既読記録して別記事を再選定"
+		local spam_key
+		spam_key=$(_news_title_key "$selected_news")
+		[ -n "$spam_key" ] && echo "$spam_key" >>"$PAST_NEWS_READ_KEYS"
+		# 再帰せず単純にスキップ（次回のラジオで別記事が選ばれる）
+		return 1
+	fi
+
 	# 選定直後に既読記録（AI生成を待たずに確定）
 	local selected_key selected_topic_key selected_source_name selected_source_key selected_url_hash
 	selected_key=$(_news_title_key "$selected_news")

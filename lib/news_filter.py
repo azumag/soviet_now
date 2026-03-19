@@ -14,28 +14,6 @@ import sys
 import unicodedata
 
 
-_SPAM_PATTERNS = [
-    re.compile(r'partner\s*code', re.I),
-    re.compile(r'promo\s*code', re.I),
-    re.compile(r'coupon\s*code', re.I),
-    re.compile(r'referral\s*code', re.I),
-    re.compile(r'bonus\s*code', re.I),
-    re.compile(r'discount\s*code', re.I),
-    re.compile(r'sign\s*up\s*bonus', re.I),
-    re.compile(r'how\s*to\s*use\s*it', re.I),
-    re.compile(r'how\s*to\s*get\s*free', re.I),
-    re.compile(r'(?:best|top)\s*(?:vpn|casino|betting|forex|crypto)\s*(?:site|app|platform)', re.I),
-    re.compile(r'(?:earn|make)\s*(?:money|cash)\s*(?:online|fast|from\s*home)', re.I),
-    re.compile(r'\b[A-Z0-9]{4,8}\b.*(?:code|coupon|promo)', re.I),
-]
-
-
-def is_spam(title: str, body: str = "") -> bool:
-    """Detect promotional / spam articles by title or body patterns."""
-    text = f"{title} {body}"
-    return any(p.search(text) for p in _SPAM_PATTERNS)
-
-
 def key(s: str) -> str:
     """Normalize a news title to a dedup key."""
     s = unicodedata.normalize("NFKC", s).strip().lower()
@@ -127,9 +105,6 @@ def cmd_filter_unread():
         if k in past_keys:
             continue
         if uh and uh in past_url_hashes:
-            continue
-        body_text = " ".join(line.strip() for line in b[1:])
-        if is_spam(title, body_text):
             continue
         seen.add(k)
         if uh:

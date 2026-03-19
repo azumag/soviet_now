@@ -1,6 +1,34 @@
 # broadcast/radio_news.sh - ニュース取得・フィルタ・再生
 
 
+# --- AIスパム判定 (opencode glmflash) ---
+_news_ai_spam_check() {
+	local title="$1" block="$2"
+	# タイトル+本文冒頭をAIに判定させる
+	local body_excerpt
+	body_excerpt=$(printf '%s' "$block" | head -n 5 | tail -n +2 | head -c 300)
+
+	local verdict
+	verdict=$(opencode run --agent=glmflash --format=json \
+		"以下の記事がニュースとして紹介する価値があるか判定してください。
+宣伝、広告、アフィリエイト、プロモーションコード紹介、商品レビュー偽装、SEOスパム、企業PR記事であれば SPAM と答えてください。
+正当な報道・ニュース・時事であれば NEWS と答えてください。
+SPAM か NEWS の1単語だけ答えてください。
+
+タイトル: ${title}
+本文冒頭: ${body_excerpt}" 2>/dev/null \
+		| grep '"type":"text"' \
+		| python3 -c "import json,sys;[print(json.loads(l).get('part',{}).get('text','')) for l in sys.stdin]" 2>/dev/null \
+		| tr -d '[:space:]')
+
+	if [ "$verdict" = "SPAM" ]; then
+		log "[NEWS:SPAM] AI判定: SPAM → ${title}"
+		return 0  # spam detected
+	fi
+	log "[NEWS:SPAM] AI判定: ${verdict:-UNKNOWN}(PASS) → ${title}"
+	return 1  # not spam
+}
+
 _news_title_key() {
 	local title="$1"
 	python3 - "$title" <<'PY'
