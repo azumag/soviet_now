@@ -39,19 +39,16 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-    # --- Change History ---
-# v277: deadline_crossed時SAME_TYPE_STACK抑制即時併合最優先版 - ワーストゲーム(score948)終盤即時併合取りこぼし潰し
-# ワーストゲーム(score948)終盤turns 60-73でdeadline_crossed=true, reactive_pairs=4があるにもかかわらず、
-# SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEを選択し、即時併合を取りこぼしてmax_y=3.39でオーバー。
-# ベストゲーム(score4107)終盤turns 140-151でdeadline_crossed時も即時併合を確実に実行し延命。
-# batch_summaryでHEIGHT_CONTROLが9.1%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が高価値だが選択率低いことを確認。
-# v276の即時併合不可ペナルティ段階化では、deadline_crossed状態でSAME_TYPE_STACKボーナスが有効なままであり、
-# 即時併合機会がある場合でもSAME_TYPE_STACKが優先され、即時併合を取りこぼす問題が残っていた。
-# axis 9.5改善：deadline_crossed状態かつreactive_pairs>=1の場合、SAME_TYPE_STACKボーナスを抑制して即時併合最優先。
-# これによりdeadline_crossed状態では即時併合を強制的に最優先し、危険エリアでの延命を図る。
-# last_rollback_postmortemの「DANGER_ZONE_MERGE_PRIORITY: NEAR_MERGE > DIRECT_MERGE > REACTIVE_PAIRS_COMPRESSION > HEIGHT_CONTROL」という制約を遵守。
-# refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, 
-#       game_history/20260319_131532_score0948.jsonl turns 60-73, game_history/20260319_133336_score4107.jsonl turns 140-151
+   # --- Change History ---
+# v276: deadline_crossed時reactive_pairsベース即時併合不可ペナルティ段階化版 - 即時併合取りこぼし削減
+# ワーストゲーム(score0652)終盤turns 60-67でdeadline_crossed=true, reactive_pairs=2-3があるにもかかわらず即時併合不可が続きmax_y=3.5でオーバー。
+# ベストゲーム(score2808)終盤turns 114-121でdeadline_crossed時もreactive_pairs>=3で確実に即時併合を実行し延命。
+# batch_summaryでHIGH_TOWER_DANGER_ZONE_IMMEDIATE_MERGE_PRIORITYがavg_score_delta=20.0（高価値）だが選択率7.2%と低いことを確認。
+# v275の即時併合不可時の一律-800.0ペナルティでは、reactive_pairsが少ない場合でも過剰なペナルティで戦略的配置の余地が不足していた。
+# axis 8.5改善：deadline_crossed時の即時併合不可時にreactive_pairsに応じて段階的なペナルティを導入。
+# reactive_pairs<=1の場合は-600.0（緩和して戦略的配置の余地を確保）、==2で-800.0（従来通りのペナルティ）、>=3で-1000.0（強力なペナルティで即時併合逃しを回避）。
+# last_rollback_postmortemの「DANGER_ZONE_MERGE_PRIORITY: NEAR_MERGE > DIRECT_MERGE > REACTIVE_PAIRS_COMPRESSION > HEIGHT_CONTROL」という制約を遵守し、即時併合逃しを潰す。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, game_history/20260319_125207_score0652.jsonl turns 60-67, game_history/20260319_124004_score2808.jsonl turns 114-121
 #
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
@@ -532,45 +529,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 即時併合機会がない場合、盤面上の現在タイプの最も高い位置のピースに配置を優先し、将来の併合可能性を最大化。
         # reactive_pairs >= 1 の場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う。
         # last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-        # v277改善：deadline_crossed状態かつreactive_pairs>=1の場合、即時併合優先のためにSAME_TYPE_STACKボーナスを抑制
-        # ワーストゲーム(score948)終盤でdeadline_crossed=true, reactive_pairs=4があるにもかかわらず、
-        # SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEを選択し、即時併合を取りこぼしてmax_y=3.39でオーバー。
-        # deadline_crossed状態では即時併合を最優先し、危険エリアでの延命を図る。
-        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, 
-        #       game_history/20260319_131532_score0948.jsonl turns 60-73
+        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
         if same_type_stack_top and merge_grade == "NO":
-            # deadline_crossed状態かつreactive_pairs>=1の場合、SAME_TYPE_STACKボーナスを抑制して即時併合優先
-            if not (deadline_crossed and reactive_pair_count >= 1):
-                stack_top_x = same_type_stack_top.get("x", 0)
-                stack_top_y = same_type_stack_top.get("y", -10)
-                
-                # 配置位置が最上位の同タイプピースに近い場合、ボーナスを付与
+            stack_top_x = same_type_stack_top.get("x", 0)
+            stack_top_y = same_type_stack_top.get("y", -10)
+            
+            # 配置位置が最上位の同タイプピースに近い場合、ボーナスを付与
+            horiz_dist = abs(x - stack_top_x)
+            if horiz_dist < 0.8:  # ピースの真上に近い配置
+                # reactive_pairsがある場合、ボーナスを強化
+                if reactive_pair_count >= 1:
+                    score += 600.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
+                else:
+                    score += 300.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+            
+            # 配置位置が盤面上の現在タイプのピースの上になる場合、移動ペナルティを軽減
+            landing_y = result.get("landing_y", 0)
+            if landing_y > stack_top_y:
                 horiz_dist = abs(x - stack_top_x)
-                if horiz_dist < 0.8:  # ピースの真上に近い配置
-                    # reactive_pairsがある場合、ボーナスを強化
+                if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
+                    # reactive_pairsがある場合、ペナルティ軽減を強化
                     if reactive_pair_count >= 1:
-                        score += 600.0
-                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
+                        # 移動ペナルティを40%軽減
+                        score += 200.0
+                        if "SAME_TYPE_STACK" not in "_".join(reasons):
+                            reasons.append("SAME_TYPE_STACK")
                     else:
-                        score += 300.0
-                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
-                
-                # 配置位置が盤面上の現在タイプのピースの上になる場合、移動ペナルティを軽減
-                landing_y = result.get("landing_y", 0)
-                if landing_y > stack_top_y:
-                    horiz_dist = abs(x - stack_top_x)
-                    if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                        # reactive_pairsがある場合、ペナルティ軽減を強化
-                        if reactive_pair_count >= 1:
-                            # 移動ペナルティを40%軽減
-                            score += 200.0
-                            if "SAME_TYPE_STACK" not in "_".join(reasons):
-                                reasons.append("SAME_TYPE_STACK")
-                        else:
-                            # 移動ペナルティを20%軽減
-                            score += 100.0
-                            if "SAME_TYPE_STACK" not in "_".join(reasons):
-                                reasons.append("SAME_TYPE_STACK")
+                        # 移動ペナルティを20%軽減
+                        score += 100.0
+                        if "SAME_TYPE_STACK" not in "_".join(reasons):
+                            reasons.append("SAME_TYPE_STACK")
 
         # ----- update best candidate -----
         if score > best_score:
