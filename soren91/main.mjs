@@ -313,6 +313,18 @@ async function gameLoop(page, calibration, gameNumber) {
       if (boardState.state === 'WAITING') {
         waitingCount++;
 
+        // ランキング画面検出: WAITING中にスクリーンショットからランキング数字を探す
+        if (turn > 5 && !roundEnded) {
+          try {
+            const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
+            const rankFromScreen = await detectRankingScreen(screenshotPath);
+            if (rankFromScreen != null) {
+              lastKnownRank = rankFromScreen;
+              console.log(`[game] RANKING screen detected! Final rank: ${rankFromScreen}`);
+            }
+          } catch (e) { /* detectRankingScreen may not exist yet */ }
+        }
+
         // ラウンド終了判定: ゲーム中 (turn>5) に連続3回以上WAITINGが続いたらラウンド終了
         if (turn > 5 && waitingCount >= 3 && !roundEnded) {
           console.log(`[game] Round ended at turn ${turn}, final rank=${lastKnownRank ?? '?'}`);

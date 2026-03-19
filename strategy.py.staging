@@ -38,6 +38,7 @@ Phases (determined by board max Y):
 # v164: v155成功パラメータ復帰・バランス補正強化版 - v162の密度カウント版からv154/v155の密度評価ロジック（3つの最も近いピース評価）に戻す。v155の成功パラメータ（chain_distance=5.0、chain_bonus_multiplier=450.0）を維持し、v162のバランス補正強化（MEDIUM: 40.0）を組み合わせる。
 # v165: Chain merge density evaluation - Fix CHAIN_MERGE logic to evaluate merged_type piece density instead of just closest distance. This improves chain merge opportunity evaluation accuracy. Based on batch_summary showing HEIGHT_CONTROL has very low avg_score_delta=0.5 (26.2% selection rate) while CHAIN_MERGE-related reasons have high avg_score_delta=26.0-44.8 but low selection rate. Density evaluation better captures configurations where multiple merged_type pieces cluster around merge target, indicating high chain probability.
 # v166: Physical deadline-based phase judgment (axis 8.7) and reactive_pairs dynamic penalty (axis 9) - Change phase judgment from absolute Y thresholds to deadline_margin based judgment using physical deadline (y=3.32). Reinforce immediate merge priority in CRITICAL phase by changing merge_mult from 0.6 to 1.0. Add dynamic penalty (100.0 per reactive_pair) to non-merge candidates when reactive_pairs exist, forcing immediate merges in dangerous situations.
+# v167: Enhanced reactive_pairs penalty (axis 9.1) - Increase reactive_pairs penalty from 100.0 to 150.0 per reactive pair to further reinforce immediate merge priority in CRITICAL phase. This more aggressively forces merge candidates when reactive_pairs exist, reducing board height more quickly in dangerous situations.
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -45,12 +46,13 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v166: Physical deadline-based phase judgment & reactive_pairs dynamic penalty
+    """v167: Enhanced reactive_pairs penalty (axis 9.1)
 
-    Change phase judgment from absolute Y thresholds to deadline_margin based judgment
-    using physical deadline (y=3.32). Reinforce immediate merge priority in CRITICAL phase
-    by changing merge_mult from 0.6 to 1.0. Add dynamic penalty (100.0 per reactive_pair)
-    to non-merge candidates when reactive_pairs exist, forcing immediate merges in dangerous situations.
+    Increase reactive_pairs penalty from 100.0 to 150.0 per reactive pair to further
+    reinforce immediate merge priority in CRITICAL phase. This more aggressively
+    forces merge candidates when reactive_pairs exist, reducing board height more quickly
+    in dangerous situations. (Based on v166: Physical deadline-based phase judgment
+    using deadline_margin, merge_mult=1.0 in CRITICAL phase)
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -103,10 +105,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_mult = 1.0  # CRITICAL height penalty basic value only
         merge_mult = 1.0  # axis 9: Remove merge suppression to reinforce immediate merge
 
-    # --- reactive_pairs dynamic penalty (axis 9) ---
+    # --- reactive_pairs dynamic penalty (axis 9.1) ---
     # Dynamic penalty to reinforce immediate merge priority when reactive pairs exist
     reactive_pairs = reactor.get("reactive_pairs", 0)
-    reactive_penalty = reactive_pairs * 100.0  # Dynamic penalty: 100.0 per reactive pair
+    reactive_penalty = reactive_pairs * 150.0  # Dynamic penalty: 150.0 per reactive pair (v167)
 
     # --- next piece information ---
     next_piece = game_state.get("next", {})

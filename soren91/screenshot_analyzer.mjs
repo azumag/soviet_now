@@ -621,4 +621,205 @@ function hammingDistance(a, b) {
   return count;
 }
 
+/**
+ * ランキング画面を検出し、確定順位を返す
+ * ランキング画面: 画面下半分が明るい(プレイヤーリスト)、上部に星と数字
+ * @param {string} screenshotPath
+ * @returns {number|null} 確定順位 (1-91) or null (ランキング画面でない場合)
+ */
+export async function detectRankingScreen(screenshotPath) {
+  const image = sharp(screenshotPath);
+  const metadata = await image.metadata();
+  const { data } = await image.raw().ensureAlpha().toBuffer({ resolveWithObject: true });
+  const { width, height } = metadata;
+
+  // ランキング画面判定: 画面下半分(y=300-650)の中央(x=200-1000)が明るいか
+  let brightCount = 0, totalCount = 0;
+  const step = 8;
+  for (let y = Math.floor(height * 0.4); y < Math.floor(height * 0.9); y += step) {
+    for (let x = Math.floor(width * 0.15); x < Math.floor(width * 0.85); x += step) {
+      const idx = (y * width + x) * 4;
+      const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+      totalCount++;
+      if (br > 80) brightCount++;
+    }
+  }
+  const brightRatio = totalCount > 0 ? brightCount / totalCount : 0;
+
+  // ランキング画面は下半分が明るい (>60%)、ゲーム中は暗い (<30%)
+  if (brightRatio < 0.5) return null;
+
+  // ランキング画面確定 — 星の中の数字を探す
+  // 星はRANKINGテキストの右側、画面上部 (y=100-250, x=500-850)
+  // 大きな白い数字を探す
+  const rankArea = {
+    x1: Math.floor(width * 0.45),
+    x2: Math.floor(width * 0.75),
+    y1: Math.floor(height * 0.08),
+    y2: Math.floor(height * 0.25),
+  };
+
+  // 白い大文字を探す (星の中の数字は白)
+  const colBright = [];
+  for (let x = rankArea.x1; x < rankArea.x2; x++) {
+    let cnt = 0;
+    for (let y = rankArea.y1; y < rankArea.y2; y++) {
+      const idx = (y * width + x) * 4;
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+      // 白い文字: 高輝度かつ低彩度
+      const br = (r + g + b) / 3;
+      const sat = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
+      if (br > 180 && sat < 0.3) cnt++;
+    }
+    colBright.push(cnt);
+  }
+
+  // 明るい行範囲を自動検出
+  let y1 = rankArea.y2, y2 = rankArea.y1;
+  for (let y = rankArea.y1; y < rankArea.y2; y++) {
+    for (let x = rankArea.x1; x < rankArea.x2; x++) {
+      const idx = (y * width + x) * 4;
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+      const br = (r + g + b) / 3;
+      const sat = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
+      if (br > 180 && sat < 0.3) {
+        if (y < y1) y1 = y;
+        if (y + 1 > y2) y2 = y + 1;
+      }
+    }
+  }
+  if (y2 - y1 < 10) return null; // 十分な大きさの白文字がない
+
+  // 列の明るさを再計算 (正確なy範囲で)
+  const refinedCols = [];
+  for (let x = rankArea.x1; x < rankArea.x2; x++) {
+    let cnt = 0;
+    for (let y = y1; y < y2; y++) {
+      const idx = (y * width + x) * 4;
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+      const br = (r + g + b) / 3;
+      const sat = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
+      if (br > 180 && sat < 0.3) cnt++;
+    }
+    refinedCols.push(cnt);
+  }
+
+  // 数字コンテンツの範囲
+  let firstB = -1, lastB = -1;
+  for (let i = 0; i < refinedCols.length; i++) {
+    if (refinedCols[i] >= 2) {
+      if (firstB < 0) firstB = i;
+      lastB = i;
+    }
+  }
+  if (firstB < 0) return null;
+
+  const absFirst = firstB + rankArea.x1;
+  const absLast = lastB + rankArea.x1 + 1;
+  const totalWidth = absLast - absFirst;
+
+  // 1桁 or 2桁の判定とパターンマッチ
+  let digitRanges;
+  if (totalWidth <= 40) {
+    digitRanges = [{ start: absFirst, end: absLast }];
+  } else {
+    // 最も暗い中間点で分割
+    const mid = firstB + Math.floor((lastB - firstB) * 0.3);
+    const midEnd = firstB + Math.floor((lastB - firstB) * 0.7);
+    let splitCol = mid, minBr = Infinity;
+    for (let i = mid; i <= midEnd; i++) {
+      if (refinedCols[i] < minBr) { minBr = refinedCols[i]; splitCol = i; }
+    }
+    digitRanges = [
+      { start: absFirst, end: splitCol + rankArea.x1 },
+      { start: splitCol + rankArea.x1 + 1, end: absLast },
+    ];
+  }
+
+  const digits = [];
+  for (const r of digitRanges) {
+    if (r.end - r.start < 5) continue;
+    const d = recognizeDigitWhite(data, width, r.start, r.end, y1, y2);
+    if (d !== null) digits.push(d);
+  }
+
+  if (digits.length === 0) return null;
+  let rank = 0;
+  for (const d of digits) rank = rank * 10 + d;
+  if (rank < 1 || rank > 91) return null;
+
+  return rank;
+}
+
+/**
+ * 白文字の数字を認識 (ランキング画面用、大きいフォント)
+ */
+function recognizeDigitWhite(data, width, xStart, xEnd, yStart, yEnd) {
+  const gw = xEnd - xStart;
+  const gh = yEnd - yStart;
+  const cellW = gw / 3;
+  const cellH = gh / 5;
+
+  let pattern = 0;
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 3; col++) {
+      const cx1 = Math.floor(xStart + col * cellW);
+      const cx2 = Math.floor(xStart + (col + 1) * cellW);
+      const cy1 = Math.floor(yStart + row * cellH);
+      const cy2 = Math.floor(yStart + (row + 1) * cellH);
+
+      let bright = 0, total = 0;
+      for (let y = cy1; y < cy2; y++) {
+        for (let x = cx1; x < cx2; x++) {
+          const idx = (y * width + x) * 4;
+          const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+          const br = (r + g + b) / 3;
+          const sat = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
+          total++;
+          if (br > 180 && sat < 0.3) bright++;
+        }
+      }
+      if (total > 0 && bright / total > 0.2) {
+        pattern |= 1 << (14 - (row * 3 + col));
+      }
+    }
+  }
+
+  // ランキング画面の数字は大きく描画されるため、テンプレートマッチの許容距離を広めに
+  const TEMPLATES = {
+    0: 0b111_101_101_101_111,
+    1: 0b010_110_010_010_111,
+    2: 0b111_001_111_100_111,
+    3: 0b111_001_111_001_111,
+    4: 0b101_101_111_001_001,
+    5: 0b111_100_111_001_111,
+    6: 0b111_100_111_101_111,
+    7: 0b111_001_001_001_001,
+    8: 0b111_101_111_101_111,
+    9: 0b111_101_111_001_111,
+  };
+
+  const ALT = {
+    1: [0b110_010_010_010_111, 0b010_010_010_010_010, 0b001_001_001_001_001,
+        0b100_100_100_100_100, 0b010_010_010_010_111, 0b110_010_010_010_010],
+    5: [0b111_100_111_001_110],
+    7: [0b111_001_001_010_010, 0b111_001_010_010_100],
+  };
+
+  let bestDigit = -1, bestDist = 16;
+  for (const [d, t] of Object.entries(TEMPLATES)) {
+    const dist = hammingDistance(pattern, t);
+    if (dist < bestDist) { bestDist = dist; bestDigit = parseInt(d); }
+  }
+  for (const [d, tmpls] of Object.entries(ALT)) {
+    for (const t of tmpls) {
+      const dist = hammingDistance(pattern, t);
+      if (dist < bestDist) { bestDist = dist; bestDigit = parseInt(d); }
+    }
+  }
+
+  if (bestDist > 5) return null;
+  return bestDigit;
+}
+
 export { TYPE_RADII };
