@@ -96,6 +96,12 @@ _clear_stale_prediction_state_if_any() {
 	return 0
 }
 
+_load_prediction_state_json() {
+	local state_file="${1:-$PREDICTION_STATE_FILE}"
+	[ -f "$state_file" ] || return 1
+	cat "$state_file"
+}
+
 # --- azumagdev 自動投票 (Twitch GQL API) ---
 _auto_vote_prediction() {
 	local state_json="$1"
@@ -262,11 +268,10 @@ PY
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
 	./twitch_chat.sh send "チャネルポイント予想スタート！「12ゲーム中に建国できる？」投票受付中（$((PREDICTION_WINDOW_SEC / 60))分） ※ソ連建国・粛清は即確定。ロシア建国は12ゲーム後にソ連不成立なら的中" 2>/dev/null &
 
-	# azumagdev ボットがランダムに1票入れる（GQL API）— 独立プロセスで実行
-	(
-		_auto_vote_prediction "$result"
-	) </dev/null >>tmp/auto_vote.log 2>&1 &
-	disown
+	# azumagdev ボットがランダムに1票入れる（GQL API）
+	# 独立した再実行可能なサブコマンドとして起動し、親シェル終了の影響を受けにくくする。
+	nohup "$0" autovote "$PREDICTION_STATE_FILE" >>tmp/auto_vote.log 2>&1 </dev/null &
+	disown || true
 
 	echo "$result"
 	;;
@@ -375,13 +380,23 @@ PY
 	rm -f "$PREDICTION_STATE_FILE"
 	;;
 
+autovote)
+	STATE_FILE="${2:-$PREDICTION_STATE_FILE}"
+	state_json=$(_load_prediction_state_json "$STATE_FILE") || {
+		_log "AUTO_VOTE: skip (missing state file: ${STATE_FILE})"
+		exit 0
+	}
+	_log "AUTO_VOTE: start"
+	_auto_vote_prediction "$state_json"
+	;;
+
 cleanup)
 	GAME_NUM="${2:-0}"
 	_clear_stale_prediction_state_if_any "$GAME_NUM" || true
 	;;
 
 *)
-	echo "Usage: $0 {create|resolve <outcome_index>|cancel|cleanup [game_num]}" >&2
+	echo "Usage: $0 {create|resolve <outcome_index>|cancel|autovote [state_file]|cleanup [game_num]}" >&2
 	echo "  outcome_index: 0=建国なし, 1=ロシア建国, 2=ソ連建国, 3=粛清" >&2
 	exit 1
 	;;
