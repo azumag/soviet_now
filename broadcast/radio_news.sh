@@ -1,7 +1,7 @@
 # broadcast/radio_news.sh - ニュース取得・フィルタ・再生
 
 
-# --- AIスパム判定 (opencode glmflash) ---
+# --- AIスパム判定 (opencode glm) ---
 _news_ai_spam_check() {
 	local title="$1" block="$2"
 	local spam_timeout="${NEWS_SPAM_CHECK_TIMEOUT_SEC:-20}"
