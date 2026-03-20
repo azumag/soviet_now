@@ -30,6 +30,15 @@ tmp/screenshots/         # ゲーム中スクリーンショット (ラウンド
 tmp/summaries/           # ラウンドサマリーJSON
 ```
 
+手動で現在戦略を殿堂入り保存したい時:
+
+```bash
+cd soren91
+node hall_of_fame.mjs --note "strong run"
+```
+
+保存先は `strategy_versions/best_manual_*_strategy.mjs`、メタデータは `strategy_versions/hall_of_fame.json`。
+
 ## ゲームフロー
 
 ```
