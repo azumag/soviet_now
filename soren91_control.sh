@@ -87,6 +87,14 @@ soren91_start() {
 	sleep 5
 	if kill -0 "$pid" 2>/dev/null; then
 		log "[SOREN91] Started successfully (PID=$pid, start_game=$start_game)"
+		# 読み上げアナウンス (バックグラウンド)
+		{
+			local announce_file
+			announce_file=$(mktemp /tmp/eloop_soren91_announce.XXXXXX)
+			printf '%s\n' "中華AIが戦略改善中、メリケンAIがソ連ゲーム91で皆様を迎え撃ちます、挑戦お待ちしています" > "$announce_file"
+			SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$announce_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+			rm -f "$announce_file"
+		} &
 	else
 		log "[SOREN91] WARNING: Process died immediately (PID=$pid)"
 		rm -f "$SOREN91_PID_FILE"
