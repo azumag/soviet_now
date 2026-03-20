@@ -84,6 +84,10 @@ function readCommands() {
         } catch (e) {
           console.log('Failed to parse JSON:', trimmed);
         }
+      } else if (trimmed.toLowerCase() === 'mute') {
+        commands.push({ action: 'mute' });
+      } else if (trimmed.toLowerCase() === 'unmute') {
+        commands.push({ action: 'unmute' });
       } else {
         // x,y format (canvas coords) — convert to game X coord
         const parts = trimmed.split(',').map(s => parseInt(s.trim()));
@@ -155,6 +159,20 @@ async function executeCommand(page, command) {
     console.log(`Executing: DROP at x=${command.x.toFixed(3)}`);
     await page.evaluate((x) => { window.__sorenCommand = 'DROP:' + x; }, command.x);
     await page.waitForTimeout(500);
+  } else if (command.action === 'mute') {
+    console.log('Executing: MUTE');
+    await page.evaluate(() => {
+      (window.__sorenAudioContexts || []).forEach(ctx => {
+        try { ctx.suspend(); } catch {}
+      });
+    });
+  } else if (command.action === 'unmute') {
+    console.log('Executing: UNMUTE');
+    await page.evaluate(() => {
+      (window.__sorenAudioContexts || []).forEach(ctx => {
+        try { ctx.resume(); } catch {}
+      });
+    });
   }
 
   // Update state after command
@@ -203,6 +221,20 @@ async function runLocalController() {
 
   console.log('=== Soren Local Game Controller ===');
   console.log(`Navigating to http://localhost:${SERVE_PORT}...`);
+
+  // Track AudioContext instances for MUTE/UNMUTE support
+  await page.addInitScript(() => {
+    window.__sorenAudioContexts = [];
+    const _OrigAC = window.AudioContext;
+    if (_OrigAC) {
+      window.AudioContext = function(...args) {
+        const ctx = new _OrigAC(...args);
+        window.__sorenAudioContexts.push(ctx);
+        return ctx;
+      };
+      window.AudioContext.prototype = _OrigAC.prototype;
+    }
+  });
 
   await page.goto(`http://localhost:${SERVE_PORT}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 

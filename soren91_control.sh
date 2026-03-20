@@ -99,6 +99,9 @@ soren91_start() {
 	sleep 5
 	if kill -0 "$pid" 2>/dev/null; then
 		log "[SOREN91] Started successfully (PID=$pid, start_game=$start_game)"
+		# 中華AI側のBGMをミュート（改善中は不要）
+		echo "MUTE" > "$ELOOP_LIB_DIR/$COMMANDS"
+		log "[SOREN91] Muted local game BGM"
 		# 読み上げアナウンス (バックグラウンド)
 		{
 			local announce_file
@@ -180,6 +183,9 @@ soren91_stop() {
 	eg=$(_soren91_record_end_game)
 
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE"
+	# 中華AI側のBGMをアンミュート（改善終了・復帰）
+	echo "UNMUTE" > "$ELOOP_LIB_DIR/$COMMANDS"
+	log "[SOREN91] Unmuted local game BGM"
 	log "[SOREN91] Stopped (end_game=$eg)"
 	return 0
 }
