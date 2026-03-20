@@ -1346,3 +1346,65 @@ RETRYCOMMENT
 	echo "${comment_pid}|${comment_parent_pid}|${comment_started_at}" >tmp/.twitch_chat/comment_gen.pid
 	disown "$comment_pid"
 }
+
+#=== soren91 ゲーム感想 ===
+
+generate_soren91_game_commentary() {
+	soren91_is_running 2>/dev/null || return 0
+
+	# コメントキューにファイルがあれば感想は不要
+	local queued_count=0
+	queued_count=$(ls -1 "$COMMENT_QUEUE_DIR"/comment_*.txt "$COMMENT_QUEUE_DIR"/comment_*.playing 2>/dev/null | wc -l)
+	[ "${queued_count:-0}" -gt 0 ] && return 0
+
+	# 最新のゲームサマリーを探す
+	local latest_summary=""
+	latest_summary=$(ls -1 "$SOREN91_DIR/tmp/summaries"/game_*.json 2>/dev/null | sort -V | tail -1)
+	[ -n "$latest_summary" ] || return 0
+
+	local latest_game=""
+	latest_game=$(python3 -c "import json; print(json.load(open('$latest_summary'))['gameNumber'])" 2>/dev/null)
+	[ -n "$latest_game" ] || return 0
+
+	# 既にコメント済みのゲームならスキップ
+	local last_commented=0
+	[ -f "$SOREN91_LAST_COMMENTED_GAME_FILE" ] && last_commented=$(cat "$SOREN91_LAST_COMMENTED_GAME_FILE" 2>/dev/null)
+	case "$last_commented" in ''|*[!0-9]*) last_commented=0 ;; esac
+	[ "$latest_game" -gt "$last_commented" ] || return 0
+
+	# 最小インターバル（連続感想を防ぐ）
+	local last_ts=0 now_ts
+	now_ts=$(date +%s)
+	if [ -f "$SOREN91_LAST_COMMENTED_GAME_FILE" ]; then
+		last_ts=$(stat -f %m "$SOREN91_LAST_COMMENTED_GAME_FILE" 2>/dev/null || echo 0)
+	fi
+	[ $((now_ts - last_ts)) -ge "$SOREN91_GAME_COMMENTARY_INTERVAL" ] || return 0
+
+	# ゲーム番号を即座に記録（二重生成防止）
+	echo "$latest_game" > "$SOREN91_LAST_COMMENTED_GAME_FILE"
+
+	local summary_json=""
+	summary_json=$(cat "$latest_summary" 2>/dev/null)
+	local score turns pieces_at_end
+	score=$(echo "$summary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('score',0))" 2>/dev/null)
+	turns=$(echo "$summary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turns',0))" 2>/dev/null)
+	pieces_at_end=$(echo "$summary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('piecesAtEnd',0))" 2>/dev/null)
+
+	log "[SOREN91] ゲーム${latest_game}の感想を生成 (score=${score}, turns=${turns})"
+
+	# バックグラウンドでAI感想生成 → キューに追加
+	(
+		local commentary=""
+		commentary=$(claude -p "あなたはメリケンAI（アメリカ製AI）。ソ連ゲーム91（対戦版）をプレイ中。
+いま終わったゲームの感想を1〜2文で述べてください。陽気なアメリカンな口調で。
+出力はトーク本文のみ（カッコや注釈なし）。
+
+ゲーム${latest_game}: スコア${score}点、${turns}ターン、終了時ピース${pieces_at_end}個" --model haiku 2>/dev/null)
+		if [ -n "$commentary" ]; then
+			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
+			echo "$commentary" > "$queue_file"
+			log "[SOREN91] ゲーム${latest_game}感想キュー追加: ${#commentary}字"
+		fi
+	) &
+	disown $!
+}

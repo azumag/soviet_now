@@ -202,6 +202,19 @@ start_comment_watcher() {
 			else
 				# idle時は pending から生成（成功時に処理済み行のみ削除）
 				generate_comment_response
+				# コメントがなく soren91 プレイ中なら、ゲーム感想を生成
+				local _new_gen_running=false
+				if [ -f "$gen_pidfile" ]; then
+					local _ng_pid
+					_ng_pid=$(cat "$gen_pidfile" 2>/dev/null)
+					_ng_pid="${_ng_pid%%|*}"
+					case "$_ng_pid" in ''|*[!0-9]*) ;; *)
+						kill -0 "$_ng_pid" 2>/dev/null && _new_gen_running=true
+					;; esac
+				fi
+				if [ "$_new_gen_running" = "false" ]; then
+					generate_soren91_game_commentary 2>/dev/null || true
+				fi
 			fi
 
 			sleep "$COMMENT_WATCHER_INTERVAL"
