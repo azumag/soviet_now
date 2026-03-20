@@ -103,6 +103,73 @@ _load_prediction_state_json() {
 	cat "$state_file"
 }
 
+_prediction_id_from_state_json() {
+	python3 -c 'import json,sys; print(json.load(sys.stdin).get("prediction_id",""))' 2>/dev/null
+}
+
+_fetch_remote_prediction_json() {
+	local prediction_id="$1"
+	[ -n "$prediction_id" ] || return 1
+	local response=""
+	response=$(curl -sf --max-time 15 -G \
+		"https://api.twitch.tv/helix/predictions" \
+		-H "Authorization: Bearer ${TOKEN}" \
+		-H "Client-Id: ${CLIENT_ID}" \
+		--data-urlencode "broadcaster_id=${BROADCASTER_ID}" \
+		--data-urlencode "first=20" 2>/dev/null) || return 1
+	python3 - "$response" "$prediction_id" <<'PY' 2>/dev/null
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+prediction_id = sys.argv[2]
+
+for item in data.get("data", []):
+    if str(item.get("id", "")) == prediction_id:
+        print(json.dumps(item))
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+_sync_prediction_state_with_remote() {
+	[ -f "$PREDICTION_STATE_FILE" ] || return 1
+	local state_json=""
+	state_json=$(_load_prediction_state_json "$PREDICTION_STATE_FILE") || return 1
+	local prediction_id=""
+	prediction_id=$(echo "$state_json" | _prediction_id_from_state_json)
+	if [ -z "$prediction_id" ]; then
+		_log "SYNC: clearing local prediction state (invalid_state)"
+		rm -f "$PREDICTION_STATE_FILE"
+		return 0
+	fi
+
+	local remote_json=""
+	remote_json=$(_fetch_remote_prediction_json "$prediction_id") || return 1
+	local remote_status=""
+	remote_status=$(echo "$remote_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null)
+
+	case "$remote_status" in
+	ACTIVE|LOCKED)
+		return 1
+		;;
+	RESOLVED|CANCELED)
+		_log "SYNC: clearing local prediction state (remote_status=${remote_status})"
+		rm -f "$PREDICTION_STATE_FILE"
+		return 0
+		;;
+	"")
+		return 1
+		;;
+	*)
+		_log "SYNC: clearing local prediction state (remote_status=${remote_status})"
+		rm -f "$PREDICTION_STATE_FILE"
+		return 0
+		;;
+	esac
+}
+
 # --- azumagdev 自動投票 (Twitch GQL API) ---
 _auto_vote_prediction() {
 	local state_json="$1"
@@ -201,6 +268,7 @@ case "${1:-}" in
 create)
 	GAME_NUM="${2:-0}"
 	_clear_stale_prediction_state_if_any "$GAME_NUM" || true
+	_sync_prediction_state_with_remote || true
 
 	# 既存の予想が残っていたらスキップ
 	if [ -f "$PREDICTION_STATE_FILE" ]; then
@@ -320,6 +388,10 @@ PY
 		-d "$payload" 2>/dev/null)
 
 	if [ $? -ne 0 ]; then
+		if _sync_prediction_state_with_remote; then
+			_log "WARN: prediction resolve failed, but remote sync cleared local state"
+			exit 0
+		fi
 		if _clear_stale_prediction_state_if_any 0; then
 			_log "WARN: prediction resolve failed, but stale local state was cleared"
 			exit 0
@@ -369,6 +441,10 @@ PY
 		-d "$payload" >/dev/null 2>&1
 
 	if [ $? -ne 0 ]; then
+		if _sync_prediction_state_with_remote; then
+			_log "WARN: prediction cancel failed, but remote sync cleared local state"
+			exit 0
+		fi
 		if _clear_stale_prediction_state_if_any 0; then
 			_log "WARN: prediction cancel failed, but stale local state was cleared"
 			exit 0
@@ -394,6 +470,7 @@ autovote)
 cleanup)
 	GAME_NUM="${2:-0}"
 	_clear_stale_prediction_state_if_any "$GAME_NUM" || true
+	_sync_prediction_state_with_remote || true
 	;;
 
 *)
