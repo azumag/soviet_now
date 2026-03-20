@@ -315,7 +315,7 @@ async function gameLoop(page, calibration, gameNumber) {
         waitingCount++;
 
         // WAITING中のフレームごとにランキング画面を即座に検出
-        if (turn > 5 && !roundEnded && !rankingDetected) {
+        if (!rankingDetected) {
           try {
             const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
             const rankResult = await detectRankingScreen(screenshotPath);
