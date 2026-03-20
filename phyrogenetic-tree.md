@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-20 10:44:22 JST`
-- Nodes: `622`
-- Edges: `880`
-- Current: `d5c1cf0a8981`
+- Updated: `2026-03-20 11:33:38 JST`
+- Nodes: `623`
+- Edges: `881`
+- Current: `cd08271f19b0`
 - Anchor: `d5c1cf0a8981`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_1d954126e373["1d954126e373<br/>g=14 n=14<br/>comp=1320.1"]
     h_cdfe94687752["cdfe94687752<br/>g=13 n=13<br/>comp=1042.3"]
     h_2f1f5b99b8c2["2f1f5b99b8c2<br/>g=14 n=14<br/>comp=1276.1"]
     h_7ef8916aba20["7ef8916aba20<br/>g=23 n=20<br/>comp=1149.0"]
@@ -70,13 +69,13 @@ flowchart TD
     h_aa34486df2a1["aa34486df2a1<br/>g=14 n=14<br/>comp=1484.9"]
     h_3176e7d0e4e6["3176e7d0e4e6<br/>g=13 n=13<br/>comp=1308.6"]
     h_d3f101466026["d3f101466026<br/>g=13 n=13<br/>comp=1620.7"]
-    h_d5c1cf0a8981["d5c1cf0a8981<br/>CURRENT ANCHOR<br/>g=30 n=20<br/>comp=1863.6"]
+    h_d5c1cf0a8981["d5c1cf0a8981<br/>ANCHOR<br/>g=42 n=20<br/>comp=1851.7"]
     h_7d2e7fc0a919["7d2e7fc0a919<br/>g=12 n=12<br/>comp=1643.9"]
     h_a968ee59bc60["a968ee59bc60<br/>g=12 n=12<br/>comp=1577.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_cd08271f19b0["cd08271f19b0<br/>CURRENT<br/>g=0"]
 
-    h_1d954126e373 -->|improve| h_cdfe94687752
     h_2f1f5b99b8c2 -->|improve| h_7ef8916aba20
     h_7ef8916aba20 -->|improve| h_fdf81ffa7ff2
     h_fdf81ffa7ff2 -->|improve| h_9ac152ac3839
@@ -156,13 +155,13 @@ flowchart TD
     h_7d2e7fc0a919 -. rollback .-> h_d5c1cf0a8981
     h_d5c1cf0a8981 -->|improve| h_a968ee59bc60
     h_a968ee59bc60 -. rollback .-> h_d5c1cf0a8981
+    h_d5c1cf0a8981 -->|improve| h_cd08271f19b0
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_1d954126e373 plain;
     class h_cdfe94687752 plain;
     class h_2f1f5b99b8c2 plain;
     class h_7ef8916aba20 plain;
@@ -217,11 +216,12 @@ flowchart TD
     class h_aa34486df2a1 plain;
     class h_3176e7d0e4e6 plain;
     class h_d3f101466026 plain;
-    class h_d5c1cf0a8981 current_anchor;
+    class h_d5c1cf0a8981 anchor;
     class h_7d2e7fc0a919 plain;
     class h_a968ee59bc60 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_cd08271f19b0 current;
 ```
 
 ## Detail 1/8
@@ -2223,9 +2223,9 @@ flowchart TD
 
 ## Detail 8/8
 
-- Range: `4e4943f7f65c` .. `a3aae72a4e37`
-- Nodes in this diagram: `62`
-- Internal edges in this diagram: `85`
+- Range: `4e4943f7f65c` .. `cd08271f19b0`
+- Nodes in this diagram: `63`
+- Internal edges in this diagram: `86`
 - Cross-chunk link: `467e45d0adc3 --improve--> 4e4943f7f65c`
 - Cross-chunk link: `4e4943f7f65c -.rollback.-> 4da6ecce5bb9`
 - Cross-chunk link: `467e45d0adc3 --improve--> ddd4637d2985`
@@ -2299,11 +2299,12 @@ flowchart TD
     h_aa34486df2a1["aa34486df2a1<br/>g=14 n=14<br/>comp=1484.9"]
     h_3176e7d0e4e6["3176e7d0e4e6<br/>g=13 n=13<br/>comp=1308.6"]
     h_d3f101466026["d3f101466026<br/>g=13 n=13<br/>comp=1620.7"]
-    h_d5c1cf0a8981["d5c1cf0a8981<br/>CURRENT ANCHOR<br/>g=30 n=20<br/>comp=1863.6"]
+    h_d5c1cf0a8981["d5c1cf0a8981<br/>ANCHOR<br/>g=42 n=20<br/>comp=1851.7"]
     h_7d2e7fc0a919["7d2e7fc0a919<br/>g=12 n=12<br/>comp=1643.9"]
     h_a968ee59bc60["a968ee59bc60<br/>g=12 n=12<br/>comp=1577.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_cd08271f19b0["cd08271f19b0<br/>CURRENT<br/>g=0"]
 
     h_ddd4637d2985 -->|improve| h_1d954126e373
     h_1d954126e373 -->|improve| h_cdfe94687752
@@ -2390,6 +2391,7 @@ flowchart TD
     h_7d2e7fc0a919 -. rollback .-> h_d5c1cf0a8981
     h_d5c1cf0a8981 -->|improve| h_a968ee59bc60
     h_a968ee59bc60 -. rollback .-> h_d5c1cf0a8981
+    h_d5c1cf0a8981 -->|improve| h_cd08271f19b0
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2453,14 +2455,25 @@ flowchart TD
     class h_aa34486df2a1 plain;
     class h_3176e7d0e4e6 plain;
     class h_d3f101466026 plain;
-    class h_d5c1cf0a8981 current_anchor;
+    class h_d5c1cf0a8981 anchor;
     class h_7d2e7fc0a919 plain;
     class h_a968ee59bc60 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_cd08271f19b0 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#8037 `d5c1cf0a -> cd08271f`
+
+- scores: `2478 1191 2468 2065 1955 1332 2527 3049 1323 1450 2935 1597`
+- v288: deadline_crossed時即時併合不可能局面のheight_mult緩和 - v282 rollback failure mode修正
+- v282の-1000.0ペナルティはdeadline_crossed && reactive_pairs>=2 && merge_grade=="NO"で適用されていたが、
+- 即時併合不可能な局面で戦略的配置を禁止し、強制的な高配置を招いていた。
+- last_rollback_postmortemの制約遵守：直接ペナルティではなくheight_mult=0.6緩和で戦略的配置を可能にする。
+- 危険ピースがある場合は即時併合可能時のみ-1000.0ペナルティを維持し、即時併合不可能時はheight_mult=0.6で戦略的配置余地を確保。
+- deadline_crossed状態で即時併合機会がない場合：height_mult=0.6で戦略的配置の余地を確保
 
 ### Rollback Game#8025 `a968ee59 -> d5c1cf0a`
 
