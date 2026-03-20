@@ -1162,11 +1162,13 @@ _radio_generate_and_play() {
 			if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
 				immediate_cc_text=$(_build_cc_attribution_text "$selected_news")
 			fi
+			local radio_vo_speaker=""
+			radio_vo_speaker=$(_radio_voicevox_speaker_override 2>/dev/null || true)
 			_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
 			if [ "$no_preempt" = true ]; then
-				SAY_CC_TEXT="$immediate_cc_text" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
+				SAY_CC_TEXT="$immediate_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
 			else
-				SAY_CC_TEXT="$immediate_cc_text" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
+				SAY_CC_TEXT="$immediate_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
 			fi
 			if [ "$play_rc" -ne 0 ]; then
 				debug_dump="$TMP_DEBUG_DIR/radio_play_failed_${corner_name}_$(date +%s).txt"

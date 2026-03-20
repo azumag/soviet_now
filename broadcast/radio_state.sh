@@ -80,10 +80,12 @@ _interrupt_current_audio_playback() {
 _play_priority_audio_file() {
 	local audio_file="$1" corner_name="$2"
 	[ -s "$audio_file" ] || return 1
+	local radio_vo_speaker=""
+	radio_vo_speaker=$(_radio_voicevox_speaker_override 2>/dev/null || true)
 	_interrupt_current_audio_playback "priority:${corner_name}"
 	_radio_set_state "playing" "$corner_name"
 	_refresh_radio_intro_for_playback_file "$audio_file" "$corner_name"
-	SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
+	SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$audio_file" "$RADIO_SAY_RATE" 0
 }
 
 _cancel_russia_celebration_worker() {
@@ -205,11 +207,13 @@ _play_deferred_radio_queue_once() {
 				deferred_news_title=$(cat "$news_title_file" 2>/dev/null)
 				[ -n "$deferred_news_title" ] && deferred_cc_text=$(_build_cc_attribution_text "$deferred_news_title")
 			fi
+			local radio_vo_speaker=""
+			radio_vo_speaker=$(_radio_voicevox_speaker_override 2>/dev/null || true)
 			_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 			log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
 			# deferred radio is executed by the comment player itself, so it must not
 			# yield to comments queued after this point or playback deadlocks.
-			if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+			if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
 				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
 				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else

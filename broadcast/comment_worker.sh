@@ -52,7 +52,7 @@ _play_comment_queue() {
 				if soren91_is_running 2>/dev/null; then
 					_cw_vo_speaker="${SOREN91_VOICEVOX_SPEAKER:-46}"
 				fi
-				if VOICEVOX_SPEAKER="${_cw_vo_speaker:-$VOICEVOX_SPEAKER}" SAY_CONTEXT_LABEL="comment" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+				if SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="comment" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
 						_remember_spoken_comment "$playing_file"
 					fi
 				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生完了: $playing_file" >> tmp/.say_queue/debug.log

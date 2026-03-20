@@ -127,6 +127,7 @@ fi
 # サイドカーが存在する場合はランダム選択をスキップ。
 USE_VOICEVOX=0
 VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-109}"
+SAY_VOICEVOX_SPEAKER_OVERRIDE="${SAY_VOICEVOX_SPEAKER_OVERRIDE:-}"
 # コンテンツファイルのサイドカー .voice ファイルをチェック（リトライ時の声の一貫性）
 # deferred ラジオファイルのみ対象（コメント等では不要なので作成しない）
 _content_file="${1:-}"
@@ -159,6 +160,15 @@ elif [ -f "tmp/voicevox_voice.txt" ]; then
         VOICEVOX_SPEAKER="$_vo_line"
         VOICEVOX_RANDOM_MODE=0
     fi
+    USE_VOICEVOX=1
+    USE_COEIROINK=0
+fi
+
+# 呼び出し元が明示した speaker override を最優先する。
+if [ -n "$SAY_VOICEVOX_SPEAKER_OVERRIDE" ]; then
+    VOICEVOX_SPEAKER="$SAY_VOICEVOX_SPEAKER_OVERRIDE"
+    VOICEVOX_RANDOM_MODE=0
+    VOICEVOX_RANDOM_VOICE_NAME=""
     USE_VOICEVOX=1
     USE_COEIROINK=0
 fi
