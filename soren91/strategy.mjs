@@ -1,17 +1,16 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v16)
+ * strategy.mjs - ドロップ位置決定戦略 (v17)
  *
- * v16改善点 (v15からの改善):
- * - garbageFloodModeからscore===0条件を除去
- *   → boardState.scoreがundefinedの場合currentScore=0になり常にfloodMode判定
- *   → rawPieceCount>55 && avgHeight>1.3 の物理的指標のみで判定
- * - ULTRA閾値を70に引き下げ (80→70): より早期に生存モード発動
- * - ULTRAモードでT1マージも許可 (旧: T2以上のみ)
- *   → score=0で49ターンCRITICAL+16ターンULTRAはT1マージ抑制が原因の可能性
- * - ULTRAモードにクラスタリングフォールバック追加
- *   → マージ失敗時は最低列でなく同タイプ近くに配置 (将来マージ準備)
- * - チェーンスコアリング強化: c1*8+c2*4+c3*2 (旧 c1*6+c2*3+c3*1.5)
- * - findBestMergeの高列ペナルティ軽減: avgHeight+0.8超ペナルティ -5→-2
+ * v17改善点 (v16からの改善):
+ * - CRITICAL mode: lowMergeLimit を avgHeight+0.2 → DEADLINE_Y-0.1 に大幅拡大
+ *   → 実測: 24ピース時でも CRITICAL_LOW_COL_Y-5.0 (空列落下) が頻発していた問題を修正
+ *   → avgHeight+0.2 は狭すぎてほぼ全列を除外していた (ガベージ多い91人対戦で致命的)
+ * - CRITICAL mode: merge vs lowest column の閾値を -0.6 → -1.2 に変更
+ *   → マージを積極的に優先、わずかな高さ差で空列逃げしないよう改善
+ * - CRITICAL mode: findMergeInLowCol 失敗時に findBestMerge をフォールバック追加
+ *   → 「CRITICAL_LOW_COL_Y-5.0 (空列落下)」→「CRITICAL_ANY_MERGE_T*」へ置き換え
+ * - garbageUrgent CRITICAL path の lowLimit も同様に拡大 (avgHeight+0.2 → DEADLINE_Y-0.1)
+ * - HOLD評価の lowLimit も拡大 (avgHeight+0.3 → DEADLINE_Y-0.1)
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -119,10 +118,12 @@ export function decide(boardState) {
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
     }
 
+    // v17: lowLimit を DEADLINE_Y-0.1 に拡大 (旧: avgHeight+0.2 は狭すぎてほぼ全列除外)
+    const critMergeLimit = DEADLINE_Y - 0.1;
+
     const critGbgMinType = 2;
     if (garbageUrgent && nextType >= critGbgMinType) {
-      const lowLimit = Math.min(avgHeight + 0.2, DEADLINE_Y - 0.4);
-      const critGbgMerge = findMergeInLowCol(activePieces, nextType, colHeights, lowLimit, dangerBias);
+      const critGbgMerge = findMergeInLowCol(activePieces, nextType, colHeights, critMergeLimit, dangerBias);
       if (critGbgMerge) {
         return { x: critGbgMerge.x, reason: `CRITICAL_GBG_T${nextType}` };
       }
@@ -133,9 +134,9 @@ export function decide(boardState) {
     }
 
     if (canHold && hold && hold.type) {
-      const lowLimit = Math.min(avgHeight + 0.3, DEADLINE_Y - 0.4);
-      const holdLowMerge = countLowColMerge(activePieces, hold.type, colHeights, lowLimit);
-      const nextLowMerge = countLowColMerge(activePieces, nextType, colHeights, lowLimit);
+      // v17: HOLD評価の lowLimit も拡大 (旧: avgHeight+0.3)
+      const holdLowMerge = countLowColMerge(activePieces, hold.type, colHeights, critMergeLimit);
+      const nextLowMerge = countLowColMerge(activePieces, nextType, colHeights, critMergeLimit);
       if (holdLowMerge > 0 && nextLowMerge === 0) {
         return { x: 0, reason: `CRITICAL_HOLD_T${hold.type}`, hold: true };
       }
@@ -144,24 +145,36 @@ export function decide(boardState) {
     const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
     const lowestColH = colHeights[lowestDrop.idx];
 
-    const lowMergeLimit = Math.min(avgHeight + 0.2, DEADLINE_Y - 0.4);
     const minMergeType = (garbageFloodMode && nextType === 1) ? 99 : 1;
     const lowColMerge = nextType >= minMergeType
-      ? findMergeInLowCol(activePieces, nextType, colHeights, lowMergeLimit, dangerBias)
+      ? findMergeInLowCol(activePieces, nextType, colHeights, critMergeLimit, dangerBias)
       : null;
 
     if (lowColMerge) {
       const mergeColH = colHeights[nearestColIdx(lowColMerge.x)];
-      if (lowestColH < mergeColH - 0.6) {
+      // v17: -0.6 → -1.2 に変更: わずかな高さ差でマージを捨てない
+      if (lowestColH < mergeColH - 1.2) {
         return { x: lowestDrop.x, reason: `CRITICAL_LOW_COL_Y${lowestColH.toFixed(1)}` };
       }
       return { x: lowColMerge.x, reason: `CRITICAL_MERGE_T${nextType}` };
     }
 
+    // v17: findMergeInLowCol 失敗時に findBestMerge でフォールバック
+    // → CRITICAL_LOW_COL_Y-5.0 (空列落下) を CRITICAL_ANY_MERGE に置き換え
+    if (nextType >= 1) {
+      const critFallbackMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0);
+      if (critFallbackMerge) {
+        const mergeColH = colHeights[nearestColIdx(critFallbackMerge.x)];
+        if (mergeColH < DEADLINE_Y + 0.1) {
+          return { x: critFallbackMerge.x, reason: `CRITICAL_ANY_MERGE_T${nextType}` };
+        }
+      }
+    }
+
     if (canHold && !hold) {
       const nextPieceType = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
       if (nextPieceType > 0) {
-        const nextHasLowMerge = countLowColMerge(activePieces, nextPieceType, colHeights, lowMergeLimit) > 0;
+        const nextHasLowMerge = countLowColMerge(activePieces, nextPieceType, colHeights, critMergeLimit) > 0;
         if (nextHasLowMerge) {
           return { x: 0, reason: `CRITICAL_HOLD_SAVE_T${nextType}_FOR_T${nextPieceType}`, hold: true };
         }
