@@ -36,17 +36,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-# v284: reactive_pairs活用盤面圧縮強化版 - 即時併合不可時のreactive_pairs>=3盤面圧縮優先
-# ワーストゲーム(score0642)終盤turns 60-67でreactive_pairs=3-5あるのに即時併合不可、max_y=2.19→3.15に上昇してゲームオーバー。
-# ベストゲーム(score1624)終盤turns 95-102では即時併合を確実に捉えてスコア1624を出している。
-# batch_summaryでHEIGHT_CONTROLが10.3%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
-# advice.md「盤面が低いときにも積極的に併合を狙う戦略」に基づき、即時併合不可時のreactive_pairs活用を強化。
-# reactive_pairs>=3 && merge_grade=="NO" && danger_piece_count==0の場合、戦略的配置ボーナスを+1000.0に強化し、盤面圧縮を最優先。
-# danger_piece_count>0の場合はaxis 8.5で即時併合優先が適用されるため、ボーナスを抑制。
+# v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
+# v284の変更（reactive_pairs>=3 && merge_grade=="NO" && danger_piece_count==0で戦略的配置ボーナス+1000.0）は、
+# 即時併合機会がない場合の盤面圧縮を優先する意図だったが、実際には即時併合機会を取りこぼす原因となった。
+# ワーストゲーム(score1116)終盤turns 63-70でreactive_pairs=2-4あるのに即時併合不可、戦略的配置が続きmax_y=1.82→2.95に上昇してゲームオーバー。
+# ベストゲーム(score2831)終盤turns 97-124では即時併合を確実に捉えてスコア2831を出している。
+# batch_summaryでHEIGHT_CONTROLが9.3%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+# advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づき、
+# reactive_pairs>=3 && merge_grade=="NO"の場合の戦略的配置ボーナス+1000.0を削除し、即時併合機会を優先する戦略へ修正。
+# danger_piece_count==0でreactive_pairs>=1の場合の戦略的配置ボーナス+800.0は維持し、即時併合機会がない場合の戦略的配置余地を確保。
 # last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
-# axis 9.5で即時併合不可時のreactive_pairs活用を強化し、盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替え。
 # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-#       game_history/20260320_190846_score0642.jsonl turns 60-67, game_history/20260320_191254_score1624.jsonl turns 95-102
+#       game_history/20260320_204749_score1116.jsonl turns 63-70, game_history/20260320_204506_score2831.jsonl turns 97-124
 #
 # v283: danger_piece_count条件精緻化版 - v281 rollback failure mode (max_y>=2.0危険域判定過剰ペナルティ)潰し
 # v281の変更（max_y>=2.0を危険域判定条件に追加）は即時併合不可時の過剰ペナルティを招いたためロールバック。
@@ -192,24 +193,28 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v283: danger_piece_count条件精緻化版 - v281 rollback failure mode (max_y>=2.0危険域判定過剰ペナルティ)潰し
-    
-    v281の変更（max_y>=2.0 を危険域判定条件に追加）は、即時併合不可時の過剰ペナルティを招き、戦略的配置の余地を失ったためロールバック。
-    last_rollback_postmortemの制約「max_y>=2.0 を危険域判定条件に追加することを禁止」を遵守し、
-    危険ピース(danger_piece_count)の有無で戦略的配置と即時併合優先をバランスよく制御。
-    advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を強化。
-    batch_summaryでNEAR_MERGE系が選択率4.9%と低いことを踏まえ、即時併合機会を確実に捉える戦略的配置を強化。
-    
-    v283の改善点:
-    1. axis 9.5精緻化：danger_piece_count条件を追加
+    """v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
+
+    v284の変更（reactive_pairs>=3 && merge_grade=="NO" && danger_piece_count==0で戦略的配置ボーナス+1000.0）は、
+    即時併合機会がない場合の盤面圧縮を優先する意図だったが、実際には即時併合機会を取りこぼす原因となった。
+    ワーストゲーム(score1116)終盤でreactive_pairs>=3あるのに即時併合不可、戦略的配置が続きmax_y上昇してゲームオーバー。
+    ベストゲーム(score2831)では即時併合を確実に捉えてスコア2831を出している。
+    batch_summaryでHEIGHT_CONTROLが9.3%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+    advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づき、
+    reactive_pairs>=3 && merge_grade=="NO"の場合の戦略的配置ボーナス+1000.0を削除し、即時併合機会を優先する戦略へ修正。
+    last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
+
+    v285の改善点:
+    1. axis 9.5修正：reactive_pairs>=3 && merge_grade=="NO"の戦略的配置ボーナス+1000.0を削除
        - danger_piece_count == 0 の場合、戦略的配置ボーナスを維持（即時併合不可時）
-         * reactive_pairs>=1: +800.0, reactive_pairs==0: +300.0
+         * reactive_pairs>=1: +800.0（即時併合機会を優先）
+         * reactive_pairs==0: +300.0
          * landing_y > stack_top_y時のペナルティ軽減も維持
        - danger_piece_count > 0 の場合、axis 8.5で即時併合優先が適用されるためボーナスを抑制
          * reactive_pairs>=1: +100.0（最小限の戦略的配置余地を確保）
          * reactive_pairs==0: ボーナスなし
          * landing_y > stack_top_y時のペナルティ軽減も抑制
-    2. 即時併合不可時の戦略的配置を強化しつつ、危険ピースがある場合は即時併合優先を維持
+    2. 即時併合機会を優先する戦略へ修正し、v284の「戦略的配置優先で即時併合取りこぼし」failure modeを潰す
     3. v277のdeadline_crossed時有効化を維持し、v281 rollback failure modeを潰す
 
     Args:
@@ -548,17 +553,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
             
-            # v284: 即時併合不可時のreactive_pairs活用盤面圧縮強化
-            # danger_piece_count == 0 の場合、reactive_pairsに応じて戦略的配置ボーナスを強化
-            # reactive_pairs>=3で即時併合不可の場合、戦略的配置を優先して盤面圧縮と将来の併合を狙う
+            # v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
+            # danger_piece_count == 0 の場合、reactive_pairs>=3 && merge_grade=="NO"の戦略的配置ボーナス+1000.0を削除
+            # ワーストゲームの「reactive_pairs>=3あるのに即時併合不可で戦略的配置を選び、max_y上昇」を回避するため
+            # 即時併合機会を優先する戦略へ修正
             if danger_piece_count == 0:
-                if reactive_pair_count >= 3:
-                    # v284: reactive_pairs>=3で即時併合不可の場合、戦略的配置を優先して盤面圧縮
-                    # ワーストゲームの「reactive_pairs>=3あるのに即時併合不可で戦略的配置を選び、max_y上昇」を回避するため
-                    # ボーナスを強化（+800.0→+1000.0）して盤面圧縮を最優先
-                    score += 1000.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE_COMPRESSION")
-                elif reactive_pair_count >= 1:
+                if reactive_pair_count >= 1:
                     score += 800.0
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
                 else:
