@@ -12,6 +12,7 @@ SOREN91_IMPROVE_PID_FILE="$SOREN91_DIR/tmp/soren91_improve.pid"
 SOREN91_IMPROVE_LOCK="$SOREN91_DIR/tmp/soren91_improve.lock"
 SOREN91_SESSION_FILE="$SOREN91_DIR/tmp/session_games.json"
 SOREN91_STOP_FILE="$SOREN91_DIR/tmp/stop"
+SOREN91_VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}"
 
 _soren91_enabled() {
 	[ "${SOREN91_ENABLED:-0}" = "1" ]
@@ -92,7 +93,7 @@ soren91_start() {
 			local announce_file
 			announce_file=$(mktemp /tmp/eloop_soren91_announce.XXXXXX)
 			printf '%s\n' "中華AIが戦略改善中、メリケンAIがソ連ゲーム91で皆様を迎え撃ちます、挑戦お待ちしています" > "$announce_file"
-			SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$announce_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+			VOICEVOX_SPEAKER="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$announce_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 			rm -f "$announce_file"
 		} &
 	else

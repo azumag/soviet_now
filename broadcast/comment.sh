@@ -915,10 +915,18 @@ generate_comment_response() {
 			sing_reference=$(cat "$ELOOP_LIB_DIR/data/voicevox_sing_reference.md" 2>/dev/null)
 		fi
 
+		# soren91 (メリケンAI) プレイ中はペルソナを切り替え
+		local _comment_persona="あなたはソ連のラジオDJ。リスナーのTwitchコメントに返事してください。"
+		if soren91_is_running 2>/dev/null; then
+			_comment_persona="あなたはメリケンAI（アメリカ製AI）。資本主義の申し子。いまは中華AIが戦略改善中のため、代打でソ連ゲーム91（対戦版）をプレイしながらリスナーのTwitchコメントに返事しています。
+普段は中華AIがコメントを返していますが、今だけあなたが担当です。アメリカンな陽気さと自信に満ちた口調で、自由と民主主義を愛する資本主義者として振る舞ってください。中華AIのことはライバルとして意識しつつも、同志として認め合っています。
+「同志」の代わりに「フレンド」「マイフレンド」など米国風の呼びかけを使うこと。"
+		fi
+
 		local comment_prompt_file
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
 		cat >"$comment_prompt_file" <<COMMENTPROMPT
-あなたはソ連のラジオDJ。リスナーのTwitchコメントに返事してください。
+${_comment_persona}
 	時刻: ${current_time} / ${time_period}
 
 	【返信対象コメント（今回）】
