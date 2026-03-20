@@ -12,6 +12,7 @@ SOREN91_IMPROVE_PID_FILE="$SOREN91_DIR/tmp/soren91_improve.pid"
 SOREN91_IMPROVE_LOCK="$SOREN91_DIR/tmp/soren91_improve.lock"
 SOREN91_SESSION_FILE="$SOREN91_DIR/tmp/session_games.json"
 SOREN91_STOP_FILE="$SOREN91_DIR/tmp/stop"
+SOREN91_RUNNER_SCRIPT="$SOREN91_DIR/run_player_loop.sh"
 SOREN91_VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}"
 
 _soren91_enabled() {
@@ -31,7 +32,7 @@ soren91_is_running() {
 	fi
 	local cmd
 	cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-	if echo "$cmd" | grep -q "main.mjs"; then
+	if echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh'; then
 		return 0
 	fi
 	return 1
@@ -76,10 +77,10 @@ soren91_start() {
 	printf '{"start_game":%d,"start_time":"%s"}\n' "$start_game" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		> "$SOREN91_SESSION_FILE"
 
-	# soren91 ディレクトリで node main.mjs をバックグラウンド起動
+	# 再試行付きランナーをバックグラウンド起動
 	(
 		cd "$SOREN91_DIR" && \
-		SOREN91_EXTERNAL_IMPROVE=1 node main.mjs >> "$SOREN91_DIR/tmp/soren91.log" 2>&1
+		/bin/bash "$SOREN91_RUNNER_SCRIPT"
 	) &
 	local pid=$!
 	echo "$pid" > "$SOREN91_PID_FILE"
@@ -237,7 +238,7 @@ soren91_cleanup() {
 			if kill -0 "$pid" 2>/dev/null; then
 				local cmd
 				cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-				if echo "$cmd" | grep -q "main.mjs"; then
+				if echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh'; then
 					log "[SOREN91] Cleanup: stopping player (PID=$pid)"
 					_stop_loop_descendants "$pid"
 					_stop_pid_with_fallback "$pid" "soren91_player"
