@@ -9,6 +9,7 @@
 import { createHash } from 'crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
+import { refreshLineageArtifacts } from './lineage.mjs';
 
 const STRATEGY_PATH = 'strategy.mjs';
 const VERSIONS_DIR = 'strategy_versions';
@@ -127,6 +128,7 @@ function main() {
   };
   manifest.push(entry);
   saveManifest(manifest);
+  refreshLineageArtifacts(strategyHash);
 
   console.log(JSON.stringify({
     status: 'saved',

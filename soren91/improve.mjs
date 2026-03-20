@@ -13,6 +13,13 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlink
 import { join } from 'path';
 import { execFile } from 'child_process';
 import sharp from 'sharp';
+import {
+  archiveStrategySnapshotByHash,
+  buildImproveReferenceContext,
+  computeStrategyHashFromSource,
+  ensureLineageInitialized,
+  recordImprovementTransition,
+} from './lineage.mjs';
 
 const STRATEGY_PATH = 'strategy.mjs';
 const VERSIONS_DIR = 'strategy_versions';
@@ -20,6 +27,28 @@ const PROMPT_PATH = 'prompts/improve_strategy.md';
 const SCREENSHOTS_DIR = 'tmp/screenshots';
 
 let improving = false; // 排他ロック
+
+function normalizeRank(rank) {
+  const value = Number.parseInt(String(rank), 10);
+  return Number.isInteger(value) && value >= 1 && value <= 91 ? value : null;
+}
+
+function readSummaryMeta(summaryPath) {
+  if (!existsSync(summaryPath)) return {};
+  try {
+    const summary = JSON.parse(readFileSync(summaryPath, 'utf-8'));
+    return {
+      turns: Number(summary.turns || 0),
+      rank: normalizeRank(summary.rank),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function formatRankToken(rank) {
+  return rank == null ? 'na' : String(rank).padStart(2, '0');
+}
 
 /**
  * ゲーム後の改善フローを実行
@@ -47,9 +76,13 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
 
   // 2. 現在の戦略を読み込み
   const currentStrategy = readFileSync(STRATEGY_PATH, 'utf-8');
+  const currentStrategyHash = computeStrategyHashFromSource(currentStrategy);
+  archiveStrategySnapshotByHash(STRATEGY_PATH, currentStrategyHash);
+  ensureLineageInitialized();
+  const lineageContext = buildImproveReferenceContext(currentStrategyHash);
 
   // 3. AI呼び出し (claude CLI)
-  const promptText = buildPromptText(gameSummary, currentStrategy);
+  const promptText = buildPromptText(gameSummary, currentStrategy, lineageContext);
   console.log('[improve] Calling claude CLI...');
 
   let newStrategy;
@@ -76,13 +109,23 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
   }
 
   // 5. 現戦略をバックアップ + 新戦略を適用
-  const score = extractScore(summaryPath);
-  const versionName = `v${gameNumber}_score${score}_strategy.mjs`;
+  const summaryMeta = readSummaryMeta(summaryPath);
+  const versionName = `v${gameNumber}_turns${String(summaryMeta.turns || 0).padStart(3, '0')}_rank${formatRankToken(summaryMeta.rank)}_strategy.mjs`;
   const backupPath = join(VERSIONS_DIR, versionName);
   writeFileSync(backupPath, currentStrategy);
   console.log(`[improve] Backed up current strategy to ${backupPath}`);
 
   writeFileSync(STRATEGY_PATH, newStrategy);
+  const newStrategyHash = computeStrategyHashFromSource(newStrategy);
+  archiveStrategySnapshotByHash(STRATEGY_PATH, newStrategyHash);
+  recordImprovementTransition({
+    fromHash: currentStrategyHash,
+    toHash: newStrategyHash,
+    note: `single-game improve #${gameNumber}`,
+    gameStart: gameNumber,
+    gameEnd: gameNumber,
+    bestGame: gameNumber,
+  });
   console.log('[improve] New strategy applied!');
 
   // 6. スクリーンショット削除
@@ -159,7 +202,7 @@ function generateSummary(historyPath, summaryPath) {
 /**
  * AI改善プロンプトのテキスト部分を構築
  */
-function buildPromptText(gameSummary, currentStrategy) {
+function buildPromptText(gameSummary, currentStrategy, lineageContext = '') {
   let promptTemplate = '';
   if (existsSync(PROMPT_PATH)) {
     promptTemplate = readFileSync(PROMPT_PATH, 'utf-8');
@@ -175,6 +218,8 @@ ${gameSummary}
 ${currentStrategy}
 \`\`\`
 
+${lineageContext ? `${lineageContext}\n` : ''}\
+
 ## Instructions
 Based on the game analysis and screenshots above, improve the strategy.mjs code.
 The function signature must remain: export function decide(boardState) -> { x: number, reason: string, hold?: boolean }
@@ -185,6 +230,9 @@ HOLD mechanic: right-click saves current piece to HOLD slot, or swaps with held 
 - boardState.canHold: true if hold is available this turn (resets after each drop)
 - Return hold: true to use HOLD (x is ignored, bot will re-analyze after swap)
 - HOLD logic MUST be preserved in any improvement.
+
+Prefer changes that improve stable survival turns against the current anchor.
+Use rank as a strong hint only when it was actually detected; do not overfit to sparse rank samples.
 
 Return ONLY the complete improved strategy.mjs code, enclosed in a single code block.
 Focus on practical improvements based on the observed game behavior.`;
@@ -452,13 +500,17 @@ async function runStandaloneImprovement(startGame, endGame) {
 
   // 現在の戦略を読み込み
   const currentStrategy = readFileSync(STRATEGY_PATH, 'utf-8');
+  const currentStrategyHash = computeStrategyHashFromSource(currentStrategy);
+  archiveStrategySnapshotByHash(STRATEGY_PATH, currentStrategyHash);
+  ensureLineageInitialized();
+  const lineageContext = buildImproveReferenceContext(currentStrategyHash);
 
   // 個別ゲームのサマリーも生成
   const gameSummary = generateSummary(bestHistoryPath, bestSummaryPath);
 
   // プロンプト構築 (集約 + ベストゲーム詳細)
   const combinedSummary = `${aggregateSummary}\n\n## Best Game Details\n${gameSummary}`;
-  const promptText = buildPromptText(combinedSummary, currentStrategy);
+  const promptText = buildPromptText(combinedSummary, currentStrategy, lineageContext);
 
   console.log('[improve] Calling claude CLI (standalone)...');
   let newStrategy;
@@ -481,12 +533,23 @@ async function runStandaloneImprovement(startGame, endGame) {
   }
 
   // バックアップ + 適用
-  const versionName = `v${endGame}_aggregate_strategy.mjs`;
+  const bestSummaryMeta = readSummaryMeta(bestSummaryPath);
+  const versionName = `v${endGame}_aggregate_turns${String(bestTurns || 0).padStart(3, '0')}_rank${formatRankToken(bestSummaryMeta.rank)}_strategy.mjs`;
   const backupPath = join(VERSIONS_DIR, versionName);
   writeFileSync(backupPath, currentStrategy);
   console.log(`[improve] Backed up current strategy to ${backupPath}`);
 
   writeFileSync(STRATEGY_PATH, newStrategy);
+  const newStrategyHash = computeStrategyHashFromSource(newStrategy);
+  archiveStrategySnapshotByHash(STRATEGY_PATH, newStrategyHash);
+  recordImprovementTransition({
+    fromHash: currentStrategyHash,
+    toHash: newStrategyHash,
+    note: `standalone improve ${startGame + 1}-${endGame}`,
+    gameStart: startGame + 1,
+    gameEnd: endGame,
+    bestGame,
+  });
   console.log('[improve] New strategy applied (standalone)!');
   cleanupScreenshots();
 }

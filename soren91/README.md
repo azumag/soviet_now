@@ -39,6 +39,21 @@ node hall_of_fame.mjs --note "strong run"
 
 保存先は `strategy_versions/best_manual_*_strategy.mjs`、メタデータは `strategy_versions/hall_of_fame.json`。
 
+系統樹改善のローカル状態:
+
+- `tmp/state/rolling_ranks.json` — turns 主体 + rank 補助の rolling 指標
+- `tmp/state/best_strategy_anchor.json` — 現在の anchor
+- `tmp/state/lineage_summary.md` — 改善プロンプトに渡す lineage 要約
+- `tmp/state/strategy_phylogeny.mmd` — Mermaid 系統樹
+- `strategy_versions/by_hash/*.mjs` — ハッシュ別アーカイブ
+
+既存履歴から lineage を再構築したい時:
+
+```bash
+cd soren91
+node lineage.mjs rebuild
+```
+
 ## ゲームフロー
 
 ```

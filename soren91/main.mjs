@@ -11,14 +11,19 @@ import { parse as parseDotenv } from 'dotenv';
 import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import {
+  computeStrategyHashFromFile,
+  recordCompletedGame,
+  snapshotCurrentStrategyForGame,
+} from './lineage.mjs';
 // calibration.mjs, screenshot_analyzer.mjs は動的ロード (ホットリロード対応)
 async function loadModule(name) {
   const url = new URL(name, `file://${process.cwd()}/`).href;
   return await import(url + '?t=' + Date.now());
 }
 // strategy.mjs は毎ターン動的にロード (AI改善で更新されるため)
-async function loadStrategy() {
-  const url = new URL('./strategy.mjs', `file://${process.cwd()}/`).href;
+async function loadStrategy(strategyPath = './strategy.mjs') {
+  const url = new URL(strategyPath, `file://${process.cwd()}/`).href;
   return await import(url + '?t=' + Date.now());
 }
 
@@ -35,7 +40,7 @@ const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 
 // ディレクトリ確保
-[SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions'].forEach(dir => {
+[SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state'].forEach(dir => {
   mkdirSync(dir, { recursive: true });
 });
 
@@ -269,6 +274,7 @@ async function fetchGameUrl() {
  */
 async function gameLoop(page, calibration, gameNumber) {
   const historyFile = join(HISTORY_DIR, 'latest.jsonl');
+  let currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
   let turn = 0;
   let lastDropTime = 0;
   let consecutiveErrors = 0;
@@ -283,6 +289,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let pendingGameOver = null;
 
   console.log('[game] Game loop started');
+  console.log(`[game] Round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
 
   while (true) {
     try {
@@ -307,7 +314,7 @@ async function gameLoop(page, calibration, gameNumber) {
       if (boardState.state === 'GAMEOVER') {
         if (!boardState.rank && lastKnownRank) boardState.rank = lastKnownRank;
         console.log(`[game] GAMEOVER at turn ${turn}, rank=${boardState.rank}`);
-        await handleGameOver(page, gameNumber, turn, boardState, historyFile);
+        await handleGameOver(page, gameNumber, turn, boardState, historyFile, currentStrategySnapshot);
         return;
       }
 
@@ -344,11 +351,14 @@ async function gameLoop(page, calibration, gameNumber) {
           // 最終順位をboardStateに付与
           if (lastKnownRank) boardState.rank = lastKnownRank;
           // 履歴保存 + AI改善 (非同期 — ゲームループをブロックしない)
-          pendingGameOver = handleGameOver(page, gameNumber, turn, boardState, historyFile)
+          const finishedSnapshot = currentStrategySnapshot;
+          pendingGameOver = handleGameOver(page, gameNumber, turn, boardState, historyFile, finishedSnapshot)
             .catch(e => console.error('[game] Post-game error:', e.message))
             .finally(() => { pendingGameOver = null; });
           // 次ラウンド用にリセット
           gameNumber++;
+          currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
+          console.log(`[game] Next round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
           turn = 0;
           calibrated = false;
           moveCount = 0;
@@ -412,7 +422,7 @@ async function gameLoop(page, calibration, gameNumber) {
 
       // 戦略決定 (canHoldを付与)
       boardState.canHold = !holdUsedThisTurn;
-      const { decide } = await loadStrategy();
+      const { decide } = await loadStrategy(`./${currentStrategySnapshot.snapshotPath}`);
       const decision = decide(boardState);
       console.log(`[game] Decision: x=${decision.x.toFixed(2)}, reason=${decision.reason}${decision.hold ? ' [HOLD]' : ''}`);
 
@@ -508,7 +518,7 @@ async function executeDrop(page, gameX, calibration) {
  * ラウンド終了処理: 履歴保存 + AI改善ループ
  * ラウンド制なのでリトライ不要（自動で次ラウンドが始まる）
  */
-async function handleGameOver(page, gameNumber, turns, finalState, historyFile) {
+async function handleGameOver(page, gameNumber, turns, finalState, historyFile, strategySnapshot) {
   // 履歴ファイルをリネーム保存
   const archivePath = join(HISTORY_DIR, `game_${String(gameNumber).padStart(4, '0')}.jsonl`);
   if (existsSync(historyFile)) {
@@ -520,17 +530,34 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile) 
     }
   }
 
+  const strategyHash = strategySnapshot?.strategyHash
+    || computeStrategyHashFromFile(strategySnapshot?.snapshotPath || 'strategy.mjs');
+
   // ゲームサマリー保存
   const summary = {
     gameNumber,
     turns,
     rank: (finalState.rank && finalState.rank > 0) ? finalState.rank : null,
     piecesAtEnd: finalState.pieces.length,
+    strategyHash: strategyHash || null,
     timestamp: new Date().toISOString(),
   };
   const summaryPath = join('tmp/summaries', `game_${String(gameNumber).padStart(4, '0')}.json`);
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
-  console.log(`[game] Summary: turns=${turns}, rank=${finalState.rank}`);
+  console.log(`[game] Summary: turns=${turns}, rank=${finalState.rank}, hash=${strategyHash}`);
+
+  try {
+    const lineageResult = recordCompletedGame({
+      strategySnapshotPath: strategySnapshot?.snapshotPath || '',
+      strategyHash,
+      summary,
+      archivePath,
+      summaryPath,
+    });
+    console.log(`[lineage] ${lineageResult.status}: hash=${lineageResult.strategyHash || 'n/a'}`);
+  } catch (err) {
+    console.log(`[lineage] update failed: ${err.message}`);
+  }
 
   // 外部制御モード: 内蔵改善をスキップ (親プロセスが soren91_improve() で管理)
   if (process.env.SOREN91_EXTERNAL_IMPROVE === '1') {
