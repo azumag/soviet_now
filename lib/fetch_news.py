@@ -38,6 +38,17 @@ REQUEST_TIMEOUT = 8.0
 USER_AGENT = "soren-news-fetcher/1.0"
 
 DISABLED_SOURCE_NAMES = {"首相官邸", "Kantei", "kantei"}
+FILTER_REASON_KEYS = (
+    "missing_identity",
+    "past_title",
+    "past_link",
+    "past_link_hash",
+    "duplicate_title",
+    "duplicate_link",
+    "duplicate_link_hash",
+    "passed",
+)
+FILTER_SAMPLE_LIMIT = 3
 
 
 def should_exclude_wikinews_author(author: str, source_key: str) -> bool:
@@ -288,6 +299,39 @@ def write_fetch_status(data: dict) -> None:
     write_json(FETCH_STATUS_FILE, payload)
 
 
+def new_filter_reason_counts() -> dict[str, int]:
+    return {key: 0 for key in FILTER_REASON_KEYS}
+
+
+def new_filter_stats() -> dict:
+    return {
+        "overall": new_filter_reason_counts(),
+        "by_source": {},
+        "samples": {},
+    }
+
+
+def note_filter_reason(stats: dict, source_key: str, reason: str, item: dict) -> None:
+    overall = stats.setdefault("overall", new_filter_reason_counts())
+    overall[reason] = int(overall.get(reason, 0) or 0) + 1
+
+    by_source = stats.setdefault("by_source", {})
+    source_counts = by_source.setdefault(source_key, new_filter_reason_counts())
+    source_counts[reason] = int(source_counts.get(reason, 0) or 0) + 1
+
+    if reason == "passed":
+        return
+
+    title = collapse_ws((item or {}).get("title", ""))
+    if not title:
+        return
+
+    samples = stats.setdefault("samples", {}).setdefault(reason, [])
+    if title in samples or len(samples) >= FILTER_SAMPLE_LIMIT:
+        return
+    samples.append(title)
+
+
 def load_lines(path: str) -> list[str]:
     if not os.path.exists(path):
         return []
@@ -531,7 +575,7 @@ def fetch_source_items(source: dict) -> list[dict]:
     return items
 
 
-def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> dict[str, list[dict]]:
+def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> tuple[dict[str, list[dict]], dict]:
     past_title_keys = {title_key(title) for title in load_lines(PAST_NEWS)}
     past_links = set(load_lines(PAST_NEWS_LINKS))
     past_link_hashes = set(load_lines(PAST_NEWS_LINK_HASHES))
@@ -539,6 +583,7 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> dict[str, list
     seen_links: set[str] = set()
     seen_link_hashes: set[str] = set()
     filtered: dict[str, list[dict]] = {}
+    filter_stats = new_filter_stats()
 
     for source in SOURCES:
         key = source["key"]
@@ -547,11 +592,24 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> dict[str, list
             item_title_key = title_key(item["title"])
             item_link = item["url"]
             item_link_hash = link_hash(item_link)
+            reason = "passed"
             if not item_title_key or not item_link:
-                continue
-            if item_title_key in past_title_keys or item_link in past_links or (item_link_hash and item_link_hash in past_link_hashes):
-                continue
-            if item_title_key in seen_title_keys or item_link in seen_links or (item_link_hash and item_link_hash in seen_link_hashes):
+                reason = "missing_identity"
+            elif item_title_key in past_title_keys:
+                reason = "past_title"
+            elif item_link in past_links:
+                reason = "past_link"
+            elif item_link_hash and item_link_hash in past_link_hashes:
+                reason = "past_link_hash"
+            elif item_title_key in seen_title_keys:
+                reason = "duplicate_title"
+            elif item_link in seen_links:
+                reason = "duplicate_link"
+            elif item_link_hash and item_link_hash in seen_link_hashes:
+                reason = "duplicate_link_hash"
+
+            note_filter_reason(filter_stats, key, reason, item)
+            if reason != "passed":
                 continue
             seen_title_keys.add(item_title_key)
             seen_links.add(item_link)
@@ -560,7 +618,7 @@ def dedupe_candidates(all_source_items: dict[str, list[dict]]) -> dict[str, list
             source_items.append(item)
         if source_items:
             filtered[key] = source_items
-    return filtered
+    return filtered, filter_stats
 
 
 def pick_articles(candidates: dict[str, list[dict]]) -> list[dict]:
@@ -652,10 +710,16 @@ def main() -> int:
         )
         return 0
 
-    candidates = dedupe_candidates(all_source_items)
+    candidates, filter_stats = dedupe_candidates(all_source_items)
     candidate_source_count = sum(1 for items in candidates.values() if items)
     candidate_item_count = sum(len(items) for items in candidates.values())
     selected = pick_articles(candidates)
+    selected_source_counts: dict[str, int] = {}
+    for item in selected:
+        source_key = item.get("source_key", "")
+        if not source_key:
+            continue
+        selected_source_counts[source_key] = selected_source_counts.get(source_key, 0) + 1
     if not selected:
         clear_outputs()
         write_fetch_status(
@@ -668,6 +732,10 @@ def main() -> int:
                 "candidate_item_count": candidate_item_count,
                 "selected_item_count": 0,
                 "source_item_counts": source_item_counts,
+                "filter_breakdown": filter_stats.get("overall", {}),
+                "filter_breakdown_by_source": filter_stats.get("by_source", {}),
+                "filter_samples": filter_stats.get("samples", {}),
+                "selected_source_counts": selected_source_counts,
                 "allow_stale_cache": NEWS_ALLOW_STALE_CACHE == "1",
             }
         )
@@ -688,6 +756,10 @@ def main() -> int:
                 "candidate_item_count": candidate_item_count,
                 "selected_item_count": len(selected),
                 "source_item_counts": source_item_counts,
+                "filter_breakdown": filter_stats.get("overall", {}),
+                "filter_breakdown_by_source": filter_stats.get("by_source", {}),
+                "filter_samples": filter_stats.get("samples", {}),
+                "selected_source_counts": selected_source_counts,
                 "allow_stale_cache": NEWS_ALLOW_STALE_CACHE == "1",
             }
         )
@@ -707,6 +779,10 @@ def main() -> int:
             "candidate_item_count": candidate_item_count,
             "selected_item_count": len(selected),
             "source_item_counts": source_item_counts,
+            "filter_breakdown": filter_stats.get("overall", {}),
+            "filter_breakdown_by_source": filter_stats.get("by_source", {}),
+            "filter_samples": filter_stats.get("samples", {}),
+            "selected_source_counts": selected_source_counts,
             "allow_stale_cache": NEWS_ALLOW_STALE_CACHE == "1",
         }
     )

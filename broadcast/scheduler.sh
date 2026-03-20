@@ -18,12 +18,40 @@ fetched_sources = int(data.get("fetched_source_count", 0) or 0)
 fetched_items = int(data.get("fetched_item_count", 0) or 0)
 candidate_items = int(data.get("candidate_item_count", 0) or 0)
 selected_items = int(data.get("selected_item_count", 0) or 0)
+filter_breakdown = data.get("filter_breakdown") or {}
+
+labels = {
+    "missing_identity": "無効",
+    "past_title": "既読タイトル",
+    "past_link": "既読URL",
+    "past_link_hash": "既読URLハッシュ",
+    "duplicate_title": "今回タイトル重複",
+    "duplicate_link": "今回URL重複",
+    "duplicate_link_hash": "今回URLハッシュ重複",
+}
+reason_order = [
+    "past_title",
+    "past_link",
+    "past_link_hash",
+    "duplicate_title",
+    "duplicate_link",
+    "duplicate_link_hash",
+    "missing_identity",
+]
+
+parts = []
+for key in reason_order:
+    count = int(filter_breakdown.get(key, 0) or 0)
+    if count > 0:
+        parts.append(f"{labels.get(key, key)}={count}")
+filter_summary = ", ".join(parts)
 
 messages = {
     "ok": f"取得成功: selected={selected_items}件 (sources={fetched_sources}/{source_count}, fetched={fetched_items}, candidates={candidate_items})",
     "stale_cache_restored": f"取得失敗のため前回成功キャッシュを復元 (sources={fetched_sources}/{source_count})",
     "fetch_failed": f"取得失敗: RSS取得成功 source=0/{source_count}",
-    "all_seen_or_filtered": f"取得成功だが未読候補なし (sources={fetched_sources}/{source_count}, fetched={fetched_items}, candidates={candidate_items})",
+    "all_seen_or_filtered": f"取得成功だが未読候補なし (sources={fetched_sources}/{source_count}, fetched={fetched_items}, candidates={candidate_items})"
+    + (f" | filter={filter_summary}" if filter_summary else ""),
     "render_empty": f"取得成功だが本文生成結果が空 (selected={selected_items})",
     "running": "取得状態不明: fetch_news.py が途中終了した可能性",
 }

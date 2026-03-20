@@ -650,56 +650,39 @@ export async function detectRankingScreen(screenshotPath) {
   if (brightRatio < 0.5) return null;
 
   // ランキング画面確定 — 星の中の数字を探す
-  // 星はRANKINGテキストの右側、画面上部 (y=100-250, x=500-850)
-  // 大きな白い数字を探す
+  // RANKINGテキスト右の星: 画面上部 (y=2%-18%, x=50%-70%)
+  // 数字の色: 高輝度 (白/黄色/明るい色)
   const rankArea = {
-    x1: Math.floor(width * 0.45),
-    x2: Math.floor(width * 0.75),
-    y1: Math.floor(height * 0.08),
-    y2: Math.floor(height * 0.25),
+    x1: Math.floor(width * 0.50),
+    x2: Math.floor(width * 0.70),
+    y1: Math.floor(height * 0.02),
+    y2: Math.floor(height * 0.18),
   };
 
-  // 白い大文字を探す (星の中の数字は白)
-  const colBright = [];
-  for (let x = rankArea.x1; x < rankArea.x2; x++) {
-    let cnt = 0;
-    for (let y = rankArea.y1; y < rankArea.y2; y++) {
-      const idx = (y * width + x) * 4;
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-      // 白い文字: 高輝度かつ低彩度
-      const br = (r + g + b) / 3;
-      const sat = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
-      if (br > 180 && sat < 0.3) cnt++;
-    }
-    colBright.push(cnt);
-  }
+  // 高輝度ピクセルを探す (色に関わらず明るい文字)
+  const isBright = (idx) => {
+    const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+    return (r + g + b) / 3 > 200;
+  };
 
   // 明るい行範囲を自動検出
   let y1 = rankArea.y2, y2 = rankArea.y1;
   for (let y = rankArea.y1; y < rankArea.y2; y++) {
     for (let x = rankArea.x1; x < rankArea.x2; x++) {
-      const idx = (y * width + x) * 4;
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-      const br = (r + g + b) / 3;
-      const sat = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
-      if (br > 180 && sat < 0.3) {
+      if (isBright((y * width + x) * 4)) {
         if (y < y1) y1 = y;
         if (y + 1 > y2) y2 = y + 1;
       }
     }
   }
-  if (y2 - y1 < 10) return null; // 十分な大きさの白文字がない
+  if (y2 - y1 < 15) return null; // 十分な大きさの文字がない
 
-  // 列の明るさを再計算 (正確なy範囲で)
+  // 列の明るさ (正確なy範囲で)
   const refinedCols = [];
   for (let x = rankArea.x1; x < rankArea.x2; x++) {
     let cnt = 0;
     for (let y = y1; y < y2; y++) {
-      const idx = (y * width + x) * 4;
-      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-      const br = (r + g + b) / 3;
-      const sat = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
-      if (br > 180 && sat < 0.3) cnt++;
+      if (isBright((y * width + x) * 4)) cnt++;
     }
     refinedCols.push(cnt);
   }
@@ -772,11 +755,9 @@ function recognizeDigitWhite(data, width, xStart, xEnd, yStart, yEnd) {
       for (let y = cy1; y < cy2; y++) {
         for (let x = cx1; x < cx2; x++) {
           const idx = (y * width + x) * 4;
-          const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-          const br = (r + g + b) / 3;
-          const sat = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
+          const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
           total++;
-          if (br > 180 && sat < 0.3) bright++;
+          if (br > 200) bright++;
         }
       }
       if (total > 0 && bright / total > 0.2) {
