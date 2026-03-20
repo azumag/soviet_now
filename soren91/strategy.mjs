@@ -1,16 +1,15 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v21)
+ * strategy.mjs - ドロップ位置決定戦略 (v22)
  *
- * v21改善点 (v20からの改善):
- * - 【根本修正】findT1ChainAnchor T1フラッドモード:
- *   v20問題: `if (nearT2 === 0) continue` → T1フラッド初期(T2未形成)で全T1をスキップしnull返却
- *            → ULTRA_CHAIN_ANCHOR_T1がnullを返してULTRA_MERGE_T1にフォールバック
- *            → T1を散在配置しフラッド悪化・チェーン発生しない
- *   v21修正: t1FloodMode(T1>15)時はnearT1>=2があればT2なしでも実行、T1クラスタリングボーナス付加
- * - 新関数 findT1DenseColumn: T1が2個以上密集(r<0.8)した列を探してそこに誘導し T1→T2 を強制
- * - ULTRA_MASS_THRESHOLD: 60→50 (早期介入で手遅れ防止)
- * - ULTRAモードT1フラッド: findT1DenseColumn → findT1ChainAnchor(flood) の順で実行
- * - 通常モードT1フラッド: findT1DenseColumn を早期適用
+ * v22改善点 (v21からの改善):
+ * - 【根本修正】extremeT1FloodMode (T1>30): ULTRA T1フラッドで findT1DenseColumn をスキップ
+ *   v21問題: T1が30個超過しても findT1DenseColumn が常にnon-nullを返し ULTRA_T1_DENSE が続く
+ *            → T1を密集列に積み続けても新T2が形成されず高さが増加するだけ
+ *   v22修正: extremeT1Flood時はHOLD活用 or 最低列配置に切り替え
+ * - 【生存モード追加】rawPieceCount >= 78: マージ or 最低列のシンプルループ (CRITICAL除外)
+ * - 【findT1DenseColumn改善】高さペナルティ強化(5.0→10.0)、WARN_Y以上の列を除外
+ * - 【HOLD強化】extremeT1Flood時に次ピースがT2+ならT1をHOLD
+ * - EXTREME_T1_FLOOD_THRESHOLD = 30, SURVIVAL_PIECE_THRESHOLD = 78 追加
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -18,7 +17,9 @@ const DEADLINE_Y = 2.5;
 const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 65;
-const ULTRA_MASS_THRESHOLD = 50;  // v21: 60→50
+const ULTRA_MASS_THRESHOLD = 50;
+const EXTREME_T1_FLOOD_THRESHOLD = 30;  // v22: T1極端洪水しきい値
+const SURVIVAL_PIECE_THRESHOLD = 78;    // v22: 生存最優先モードしきい値
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -49,9 +50,10 @@ export function decide(boardState) {
     return { x: safeX, reason: `SPREAD_UNRELIABLE_X${safeX.toFixed(1)}` };
   }
 
-  // v21: T1フラッド検出
+  // v22: T1フラッド検出 (extremeT1Flood追加)
   const t1Count = activePieces.filter(p => p.type === 1).length;
   const t1FloodMode = t1Count > 15;
+  const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
 
   const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
   const garbageHeight = garbage ? (garbage.height || -5) : -5;
@@ -83,6 +85,19 @@ export function decide(boardState) {
   const isCritical = nearDeadlineCount >= 3 || overDeadlineCount >= 2;
   const isWarn = colHeights.some(h => h > WARN_Y + 0.5);
 
+  // --- v22: 生存最優先モード (ピース数が極端に多い時、CRITICAL除外) ---
+  if (rawPieceCount >= SURVIVAL_PIECE_THRESHOLD && !isCritical) {
+    // HOLDに高タイプがあれば積極的に使う
+    if (canHold && hold && hold.type >= 2) {
+      const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
+      if (holdMerge !== null) return { x: 0, reason: `SURVIVE_HOLD_T${hold.type}`, hold: true };
+    }
+    const survivalMerge = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
+    if (survivalMerge !== null) return { x: survivalMerge, reason: `SURVIVE_MERGE_T${nextType}_PC${rawPieceCount}` };
+    const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
+    return { x: lowestDrop.x, reason: `SURVIVE_LOW_PC${rawPieceCount}` };
+  }
+
   // --- ULTRAマスモード ---
   if (ultraMassMode) {
     if (Math.abs(balanceBias) >= 2) {
@@ -96,7 +111,30 @@ export function decide(boardState) {
     }
 
     if (nextType === 1) {
-      // v21: T1フラッドモードでは密集列を優先してT1→T2チェーンを促進
+      // v22: extremeT1Flood時はfindT1DenseColumnをスキップ (無効化)
+      if (extremeT1Flood) {
+        // HOLDが空でnext2/3がT2+ならT1をHOLD
+        if (canHold && !hold) {
+          const next2Type = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+          const next3Type = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
+          const bestNext = Math.max(next2Type, next3Type);
+          if (bestNext >= 2) {
+            return { x: 0, reason: `ULTRA_EXTREME_HOLD_T1_FOR_T${bestNext}`, hold: true };
+          }
+        }
+        // HOLDにT2+があれば使う
+        if (canHold && hold && hold.type >= 2) {
+          const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
+          if (holdMerge !== null) return { x: 0, reason: `ULTRA_EXTREME_SWAP_T${hold.type}`, hold: true };
+        }
+        // 極端洪水: チェーンアンカーを試みてから最低列
+        const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
+        if (chainAnchor !== null) return { x: chainAnchor, reason: 'ULTRA_EXTREME_T1_ANCHOR' };
+        const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
+        return { x: lowestDrop.x, reason: `ULTRA_EXTREME_T1_LOWEST` };
+      }
+
+      // 通常T1フラッドモード (T1<=30)
       if (t1FloodMode) {
         const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
         if (denseX !== null) return { x: denseX, reason: 'ULTRA_T1_DENSE' };
@@ -234,11 +272,18 @@ export function decide(boardState) {
     if (holdResult) return holdResult;
   }
 
-  // v21: T1ピースは早期にT1フラッドチェック (通常モードにも拡張)
+  // T1ピースは早期にT1フラッドチェック
   if (nextType === 1) {
-    if (t1FloodMode) {
+    if (t1FloodMode && !extremeT1Flood) {
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
       if (denseX !== null) return { x: denseX, reason: 'T1_FLOOD_DENSE' };
+    }
+    if (extremeT1Flood) {
+      // 通常モードでもextremeT1Flood時は最低列優先
+      const t1Chain = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
+      if (t1Chain !== null) return { x: t1Chain, reason: 'T1_EXTREME_ANCHOR' };
+      const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
+      return { x: lowestDrop.x, reason: `T1_EXTREME_LOWEST` };
     }
     const t1Chain = findT1ChainAnchor(activePieces, colHeights, dangerBias, t1FloodMode);
     if (t1Chain !== null) return { x: t1Chain, reason: 'T1_CHAIN_ANCHOR' };
@@ -290,6 +335,7 @@ function computeBalanceBias(pieces, colHeights) {
 
 /**
  * T1フラッドモード専用: T1が最も密集した列に誘導してT1→T2チェーン促進
+ * v22: 高さペナルティ強化(5.0→10.0)、WARN_Y以上の列を除外
  */
 function findT1DenseColumn(pieces, colHeights, dangerBias) {
   const t1Pieces = pieces.filter(p =>
@@ -302,6 +348,8 @@ function findT1DenseColumn(pieces, colHeights, dangerBias) {
 
   for (let i = 0; i < FINE_COLS.length; i++) {
     const cx = FINE_COLS[i];
+    // v22: WARN_Y以上の列は除外 (高い列にT1を積まない)
+    if (colHeights[i] >= WARN_Y) continue;
     if (colHeights[i] >= DEADLINE_Y + 0.1) continue;
     const nearT1 = t1Pieces.filter(p => Math.abs(p.x - cx) < 0.8).length;
     if (nearT1 < 2) continue;
@@ -310,7 +358,7 @@ function findT1DenseColumn(pieces, colHeights, dangerBias) {
     let s = nearT1 * 20;
     s += nearT2 * 10;
     s += nearT3 * 5;
-    s -= colHeights[i] * 5.0;
+    s -= colHeights[i] * 10.0;  // v22: 5.0→10.0 高さペナルティ強化
     s -= Math.abs(cx) * 2.0;
     if (Math.abs(cx) > 2.2) s -= 8;
     if (dangerBias >= 2 && cx > 0) s -= 15;
@@ -345,7 +393,6 @@ function findT1ChainAnchor(pieces, colHeights, dangerBias, t1Flood = false) {
     const nearT3 = countNear(pieces, t1.x, 3, 2.2);
     const nearT4 = countNear(pieces, t1.x, 4, 2.4);
 
-    // v21: T1フラッドモードではT2なしでも許可、ただしT1が2個以上近くに必要
     if (!t1Flood && nearT2 === 0) continue;
     if (t1Flood && nearT2 === 0 && nearT1 < 2) continue;
 
