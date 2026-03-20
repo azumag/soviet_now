@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-21 02:45:48 JST`
-- Nodes: `633`
-- Edges: `896`
-- Current: `51c175adcd5d`
-- Anchor: `51c175adcd5d`
+- Updated: `2026-03-21 03:30:06 JST`
+- Nodes: `634`
+- Edges: `897`
+- Current: `63f836102d11`
+- Anchor: `8105d20e4330`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_c20213c71bd2["c20213c71bd2<br/>g=14 n=14<br/>comp=1313.8"]
     h_1597df9bcac2["1597df9bcac2<br/>g=27 n=20<br/>comp=1134.3"]
     h_9a3b1ec437d3["9a3b1ec437d3<br/>g=14 n=14<br/>comp=1328.9"]
     h_537f3be41b86["537f3be41b86<br/>g=13 n=13<br/>comp=1243.9"]
@@ -68,15 +67,15 @@ flowchart TD
     h_fde77e8443bd["fde77e8443bd<br/>g=12 n=12<br/>comp=1321.9"]
     h_76aa40108046["76aa40108046<br/>g=26 n=20<br/>comp=1622.6"]
     h_53f72171e961["53f72171e961<br/>g=21 n=20<br/>comp=1633.6"]
-    h_8105d20e4330["8105d20e4330<br/>g=12 n=12<br/>comp=1704.0"]
+    h_8105d20e4330["8105d20e4330<br/>ANCHOR<br/>g=12 n=12<br/>comp=1704.0"]
     h_52ec90a8aeb0["52ec90a8aeb0<br/>g=12 n=12<br/>comp=1529.8"]
     h_b1220235126f["b1220235126f<br/>g=12 n=12<br/>comp=1424.1"]
-    h_51c175adcd5d["51c175adcd5d<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=1895.3"]
+    h_51c175adcd5d["51c175adcd5d<br/>g=24 n=20<br/>comp=1582.9"]
     h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=1485.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_63f836102d11["63f836102d11<br/>CURRENT"]
 
-    h_c20213c71bd2 -->|improve| h_1597df9bcac2
     h_1597df9bcac2 -->|improve| h_9a3b1ec437d3
     h_9a3b1ec437d3 -->|improve| h_537f3be41b86
     h_537f3be41b86 -. rollback .-> h_1597df9bcac2
@@ -161,13 +160,13 @@ flowchart TD
     h_b1220235126f -->|improve| h_51c175adcd5d
     h_51c175adcd5d -->|improve| h_2a8e4a612c27
     h_2a8e4a612c27 -. rollback .-> h_51c175adcd5d
+    h_51c175adcd5d -->|improve| h_63f836102d11
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_c20213c71bd2 plain;
     class h_1597df9bcac2 plain;
     class h_9a3b1ec437d3 plain;
     class h_537f3be41b86 plain;
@@ -220,13 +219,14 @@ flowchart TD
     class h_fde77e8443bd plain;
     class h_76aa40108046 plain;
     class h_53f72171e961 plain;
-    class h_8105d20e4330 plain;
+    class h_8105d20e4330 anchor;
     class h_52ec90a8aeb0 plain;
     class h_b1220235126f plain;
-    class h_51c175adcd5d current_anchor;
+    class h_51c175adcd5d plain;
     class h_2a8e4a612c27 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_63f836102d11 current;
 ```
 
 ## Detail 1/8
@@ -2228,9 +2228,9 @@ flowchart TD
 
 ## Detail 8/8
 
-- Range: `4e4943f7f65c` .. `a3aae72a4e37`
-- Nodes in this diagram: `73`
-- Internal edges in this diagram: `101`
+- Range: `4e4943f7f65c` .. `63f836102d11`
+- Nodes in this diagram: `74`
+- Internal edges in this diagram: `102`
 - Cross-chunk link: `467e45d0adc3 --improve--> 4e4943f7f65c`
 - Cross-chunk link: `4e4943f7f65c -.rollback.-> 4da6ecce5bb9`
 - Cross-chunk link: `467e45d0adc3 --improve--> ddd4637d2985`
@@ -2313,13 +2313,14 @@ flowchart TD
     h_fde77e8443bd["fde77e8443bd<br/>g=12 n=12<br/>comp=1321.9"]
     h_76aa40108046["76aa40108046<br/>g=26 n=20<br/>comp=1622.6"]
     h_53f72171e961["53f72171e961<br/>g=21 n=20<br/>comp=1633.6"]
-    h_8105d20e4330["8105d20e4330<br/>g=12 n=12<br/>comp=1704.0"]
+    h_8105d20e4330["8105d20e4330<br/>ANCHOR<br/>g=12 n=12<br/>comp=1704.0"]
     h_52ec90a8aeb0["52ec90a8aeb0<br/>g=12 n=12<br/>comp=1529.8"]
     h_b1220235126f["b1220235126f<br/>g=12 n=12<br/>comp=1424.1"]
-    h_51c175adcd5d["51c175adcd5d<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=1895.3"]
+    h_51c175adcd5d["51c175adcd5d<br/>g=24 n=20<br/>comp=1582.9"]
     h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=1485.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_63f836102d11["63f836102d11<br/>CURRENT"]
 
     h_ddd4637d2985 -->|improve| h_1d954126e373
     h_1d954126e373 -->|improve| h_cdfe94687752
@@ -2422,6 +2423,7 @@ flowchart TD
     h_b1220235126f -->|improve| h_51c175adcd5d
     h_51c175adcd5d -->|improve| h_2a8e4a612c27
     h_2a8e4a612c27 -. rollback .-> h_51c175adcd5d
+    h_51c175adcd5d -->|improve| h_63f836102d11
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2494,16 +2496,27 @@ flowchart TD
     class h_fde77e8443bd plain;
     class h_76aa40108046 plain;
     class h_53f72171e961 plain;
-    class h_8105d20e4330 plain;
+    class h_8105d20e4330 anchor;
     class h_52ec90a8aeb0 plain;
     class h_b1220235126f plain;
-    class h_51c175adcd5d current_anchor;
+    class h_51c175adcd5d plain;
     class h_2a8e4a612c27 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_63f836102d11 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#8258 `51c175ad -> 63f83610`
+
+- scores: `1749 2196 1907 1053 1989 1071 845 824 1620 1355 2432 1501`
+- 3. Drift penalty - Penalty for post-landing drift due to polygon shape
+- 4. Left-right balance correction - Bonus for correcting piece count bias
+- 5. nextNext centering - Center for next merge opportunity if nextNext same type
+- 5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
+- 6. Chain merge bonus - Evaluate possibility of further merges after merge
+- 7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
 
 ### Rollback Game#8246 `2a8e4a61 -> 51c175ad`
 
