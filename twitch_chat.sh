@@ -472,6 +472,40 @@ PY
     return 0
 }
 
+#--- announce (ピン留めアナウンス) ---
+_announce() {
+    local msg="$1" color="${2:-primary}"
+    [ -n "$msg" ] || {
+        echo "Usage: $0 announce <message> [color]" >&2
+        return 1
+    }
+    local token="${TWITCH_BOT_TOKEN:-}"
+    local client_id="${TWITCH_CLIENT_ID:-}"
+    local broadcaster_id="${TWITCH_BROADCASTER_ID:-}"
+    if [ -z "$token" ] || [ -z "$client_id" ] || [ -z "$broadcaster_id" ]; then
+        echo "WARNING: TWITCH_BOT_TOKEN, TWITCH_CLIENT_ID, or TWITCH_BROADCASTER_ID not set" >&2
+        return 1
+    fi
+    token="${token#oauth:}"
+    local moderator_id="$broadcaster_id"
+    local resp http_code
+    resp=$(curl -s -w "\n%{http_code}" -X POST \
+        "https://api.twitch.tv/helix/chat/announcements?broadcaster_id=${broadcaster_id}&moderator_id=${moderator_id}" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Client-Id: ${client_id}" \
+        -H "Content-Type: application/json" \
+        -d "{\"message\":$(printf '%s' "$msg" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'),\"color\":\"${color}\"}" \
+        2>/dev/null)
+    http_code=$(printf '%s' "$resp" | tail -1)
+    if [ "$http_code" = "204" ] || [ "$http_code" = "200" ]; then
+        _log "announce送信成功"
+        return 0
+    else
+        _log "announce送信失敗 (HTTP=$http_code): $(printf '%s' "$resp" | head -1)"
+        return 1
+    fi
+}
+
 #--- stop ---
 _stop() {
     local stopped=false
@@ -525,7 +559,8 @@ case "$CMD" in
     ack-batch) _ack_batch "$2" ;;
     claim)  _claim ;;
     send)   _send "$2" ;;
+    announce) _announce "$2" "${3:-primary}" ;;
     stop)   _stop ;;
     status) _status ;;
-    *)      echo "Usage: $0 {start|fetch|ack|ack-batch|claim|send|stop|status} [channel|batch_file|message]" >&2; exit 1 ;;
+    *)      echo "Usage: $0 {start|fetch|ack|ack-batch|claim|send|announce|stop|status} [channel|batch_file|message]" >&2; exit 1 ;;
 esac
