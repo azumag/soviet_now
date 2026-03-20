@@ -487,7 +487,14 @@ _announce() {
         return 1
     fi
     token="${token#oauth:}"
-    local moderator_id="$broadcaster_id"
+    # moderator_id はトークン所有者(bot)のIDを使う
+    local moderator_id
+    moderator_id=$(curl -s -H "Authorization: Bearer ${token}" -H "Client-Id: ${client_id}" \
+        https://api.twitch.tv/helix/users 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin)['data'][0]['id'])" 2>/dev/null)
+    if [ -z "$moderator_id" ]; then
+        echo "WARNING: could not resolve moderator_id from token" >&2
+        return 1
+    fi
     local resp http_code
     resp=$(curl -s -w "\n%{http_code}" -X POST \
         "https://api.twitch.tv/helix/chat/announcements?broadcaster_id=${broadcaster_id}&moderator_id=${moderator_id}" \
