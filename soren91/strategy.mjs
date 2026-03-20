@@ -1,13 +1,12 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v26)
+ * strategy.mjs - ドロップ位置決定戦略 (v27)
  *
- * v26改善点 (v25からの改善):
- * - 【ULTRAモード改善】非T1マージをバランスチェックより前に優先実行
- * - 【T1早期検知強化】t1FloodMode閾値 12→9、extreme閾値 30→22
- * - 【T1即時マージ幅拡大】列ピース検出幅 0.45→0.55（スクリーンショット誤差耐性向上）
- * - 【通常モードT1早期介入】t1Count>=5でT1即時マージを試みる（フラッド前予防）
- * - 【バランス回復改善】findLowestOnTargetSideで軽い側へ直接ドロップ
- * - 【T1関数のバイアスペナルティ強化】重い側へのT1ドロップ抑制: 15→22
+ * v27監修点 (v26からの調整):
+ * - 【T1過敏反応の抑制】t1FloodMode閾値を 9→12、extreme閾値を 22→30 に戻す
+ * - 【通常モードの早すぎるT1介入を停止】t1Count>=5 の即時マージ分岐を削除
+ * - 【T1即時マージ判定を精密化】列ピース検出幅を 0.55→0.45 に戻す
+ * - 【T1系の片側バイアスを緩和】重い側ペナルティを v25 水準へ戻す
+ * - 【非T1のULTRA早期マージは維持】T1 cleanup と競合しにくい改善だけ残す
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -16,7 +15,7 @@ const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 65;
 const ULTRA_MASS_THRESHOLD = 45;
-const EXTREME_T1_FLOOD_THRESHOLD = 22; // v26: was 30
+const EXTREME_T1_FLOOD_THRESHOLD = 30;
 const SURVIVAL_PIECE_THRESHOLD = 72;
 
 export function decide(boardState) {
@@ -48,9 +47,9 @@ export function decide(boardState) {
     return { x: safeX, reason: `SPREAD_UNRELIABLE_X${safeX.toFixed(1)}` };
   }
 
-  // v26: T1フラッド検出閾値 9 (was 12), extreme 22 (was 30)
+  // v27: T1フラッド検出は v25 水準まで戻して過敏反応を抑える
   const t1Count = activePieces.filter(p => p.type === 1).length;
-  const t1FloodMode = t1Count > 9;
+  const t1FloodMode = t1Count > 12;
   const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
 
   const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
@@ -108,10 +107,13 @@ export function decide(boardState) {
     }
 
     if (Math.abs(balanceBias) >= 2) {
-      // v26: 軽い側への直接ドロップ (balanceBias<0=左が重い→右へ)
-      const targetRight = balanceBias < 0;
-      const balanceDrop = findLowestOnTargetSide(colHeights, targetRight);
-      return { x: balanceDrop, reason: `ULTRA_BALANCE_BIAS${balanceBias > 0 ? 'R' : 'L'}` };
+      if (nextType > 1) {
+        const targetRight = balanceBias < 0;
+        const balanceDrop = findLowestOnTargetSide(colHeights, targetRight);
+        return { x: balanceDrop, reason: `ULTRA_BALANCE_BIAS${balanceBias > 0 ? 'R' : 'L'}` };
+      }
+      const balanceDrop = findLowestSafeDrop(colHeights, dangerBias);
+      return { x: balanceDrop.x, reason: `ULTRA_BALANCE_BIAS${balanceBias > 0 ? 'R' : 'L'}` };
     }
 
     if (canHold && hold && hold.type >= 2 && hold.type > nextType) {
@@ -143,7 +145,7 @@ export function decide(boardState) {
         return { x: lowestDrop.x, reason: `ULTRA_EXTREME_T1_LOWEST` };
       }
 
-      // 通常T1フラッドモード (9 < t1Count <= 22)
+      // 通常T1フラッドモード (12 < t1Count <= 30)
       if (t1FloodMode) {
         const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
         if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_T1_IMMEDIATE' };
@@ -302,12 +304,6 @@ export function decide(boardState) {
     if (holdResult) return holdResult;
   }
 
-  // v26: T1が5個以上なら早期に即時マージ試みる（フラッド前予防）
-  if (nextType === 1 && t1Count >= 5) {
-    const earlyImmediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
-    if (earlyImmediateX !== null) return { x: earlyImmediateX, reason: 'T1_EARLY_IMMEDIATE' };
-  }
-
   // T1ピースは早期にT1フラッドチェック
   if (nextType === 1) {
     if (t1FloodMode && !extremeT1Flood) {
@@ -373,7 +369,7 @@ function computeBalanceBias(pieces, colHeights) {
 }
 
 /**
- * v26新機能: バランス回復用に軽い側の最低列を直接選択
+ * バランス回復用に軽い側の最低列を直接選択
  */
 function findLowestOnTargetSide(colHeights, targetRight) {
   let bestScore = -Infinity;
@@ -422,9 +418,8 @@ function findT1DenseColumn(pieces, colHeights, dangerBias) {
     s -= colHeights[i] * 10.0;
     s -= Math.abs(cx) * 2.0;
     if (Math.abs(cx) > 2.2) s -= 8;
-    // v26: 重い側のペナルティ強化 15→22
-    if (dangerBias >= 2 && cx > 0) s -= 22;
-    if (dangerBias <= -2 && cx < 0) s -= 22;
+    if (dangerBias >= 2 && cx > 0) s -= 15;
+    if (dangerBias <= -2 && cx < 0) s -= 15;
     if (dangerBias >= 1 && cx > 0.5) s -= 8;
     if (dangerBias <= -1 && cx < -0.5) s -= 8;
     if (s > bestScore) { bestScore = s; bestCol = i; }
@@ -470,9 +465,8 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
       if (topNarrow.type === 1) s += 40;
     }
 
-    // v26: 重い側のペナルティ強化 15→22
-    if (dangerBias >= 2 && cx > 0) s -= 22;
-    if (dangerBias <= -2 && cx < 0) s -= 22;
+    if (dangerBias >= 2 && cx > 0) s -= 15;
+    if (dangerBias <= -2 && cx < 0) s -= 15;
     if (dangerBias >= 1 && cx > 0.5) s -= 6;
     if (dangerBias <= -1 && cx < -0.5) s -= 6;
 
@@ -484,7 +478,6 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
 
 /**
  * 列トップがT1の列を検出して即時T1→T2マージを狙う
- * v26: 列ピース検出幅 0.45→0.55（スクリーンショット誤差耐性向上）
  */
 function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
   let bestScore = -Infinity;
@@ -494,8 +487,7 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
     const cx = FINE_COLS[i];
     if (colHeights[i] >= DEADLINE_Y) continue;
 
-    // v26: 0.45 → 0.55
-    const colPieces = pieces.filter(p => Math.abs(p.x - cx) < 0.55 && p.y < DEADLINE_Y);
+    const colPieces = pieces.filter(p => Math.abs(p.x - cx) < 0.45 && p.y < DEADLINE_Y);
     if (colPieces.length === 0) continue;
 
     const topPiece = colPieces.reduce((a, b) =>
@@ -513,9 +505,8 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
     s += nearT3 * 8;
 
     if (Math.abs(cx) > 2.2) s -= 8;
-    // v26: 重い側のペナルティ強化 15→22
-    if (dangerBias >= 2 && cx > 0) s -= 22;
-    if (dangerBias <= -2 && cx < 0) s -= 22;
+    if (dangerBias >= 2 && cx > 0) s -= 15;
+    if (dangerBias <= -2 && cx < 0) s -= 15;
     if (dangerBias >= 1 && cx > 0.5) s -= 6;
     if (dangerBias <= -1 && cx < -0.5) s -= 6;
 
@@ -558,9 +549,8 @@ function findT1ChainAnchor(pieces, colHeights, dangerBias, t1Flood = false) {
     if (Math.abs(t1.x) > 2.2) s -= 8;
     if (dangerBias < 0 && t1.x < -0.5) s -= 8;
     if (dangerBias > 0 && t1.x > 0.5) s -= 8;
-    // v26: 重い側のペナルティ強化 15→22
-    if (dangerBias >= 2 && t1.x > 0) s -= 22;
-    if (dangerBias <= -2 && t1.x < 0) s -= 22;
+    if (dangerBias >= 2 && t1.x > 0) s -= 15;
+    if (dangerBias <= -2 && t1.x < 0) s -= 15;
 
     if (s > bestScore) { bestScore = s; best = t1; }
   }

@@ -26,6 +26,23 @@ SOREN91_SESSION_FILE="$SOREN91_DIR/tmp/session_games.json"
 SOREN91_STOP_FILE="$SOREN91_DIR/tmp/stop"
 SOREN91_RUNNER_SCRIPT="$SOREN91_DIR/run_player_loop.sh"
 SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/null || printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}")"
+SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
+
+_soren91_switch_obs_layout() {
+	local mode="${1:-}"
+	[ -x "$SOREN91_OBS_CONTROL" ] || return 0
+	case "$mode" in
+	meriken)
+		"$SOREN91_OBS_CONTROL" batch soren show:91 hide:console1,console2,console3 >/dev/null 2>&1 &
+		;;
+	china)
+		"$SOREN91_OBS_CONTROL" batch soren hide:91 show:console1,console2,console3 >/dev/null 2>&1 &
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
 
 _soren91_enabled() {
 	[ "${SOREN91_ENABLED:-0}" = "1" ]
@@ -128,6 +145,7 @@ ${strategy_header}" --model haiku 2>/dev/null)
 				fi
 			fi
 		} &
+		_soren91_switch_obs_layout meriken || true
 	else
 		log "[SOREN91] WARNING: Process died immediately (PID=$pid)"
 		rm -f "$SOREN91_PID_FILE"
@@ -203,6 +221,7 @@ soren91_stop() {
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE"
 	# 中華AI側のBGMをアンミュート（改善終了・復帰）
 	echo "UNMUTE" > "$ELOOP_LIB_DIR/$COMMANDS"
+	_soren91_switch_obs_layout china || true
 	log "[SOREN91] Unmuted local game BGM"
 	log "[SOREN91] Stopped (end_game=$eg)"
 	return 0
