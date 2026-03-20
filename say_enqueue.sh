@@ -126,7 +126,7 @@ fi
 # <content_file>.voice サイドカーファイルに保存する。
 # サイドカーが存在する場合はランダム選択をスキップ。
 USE_VOICEVOX=0
-VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-109}"
+VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-108}"
 SAY_VOICEVOX_SPEAKER_OVERRIDE="${SAY_VOICEVOX_SPEAKER_OVERRIDE:-}"
 # コンテンツファイルのサイドカー .voice ファイルをチェック（リトライ時の声の一貫性）
 # deferred ラジオファイルのみ対象（コメント等では不要なので作成しない）
