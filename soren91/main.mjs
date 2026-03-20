@@ -507,7 +507,7 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile) 
   const summary = {
     gameNumber,
     turns,
-    rank: finalState.rank || null,
+    rank: (finalState.rank && finalState.rank > 0) ? finalState.rank : null,
     piecesAtEnd: finalState.pieces.length,
     timestamp: new Date().toISOString(),
   };
