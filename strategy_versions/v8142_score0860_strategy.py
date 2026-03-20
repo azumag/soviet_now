@@ -36,6 +36,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
+# v283: danger_piece_count条件精緻化版 - v281 rollback failure mode (max_y>=2.0危険域判定過剰ペナルティ)潰し
+# v281の変更（max_y>=2.0を危険域判定条件に追加）は即時併合不可時の過剰ペナルティを招いたためロールバック。
+# last_rollback_postmortemの制約「max_y>=2.0 を危険域判定条件に追加することを禁止」を遵守。
+# danger_piece_countの有無で戦略的配置と即時併合優先をバランスよく制御する精緻化を実装。
+# danger_piece_count == 0 の場合、戦略的配置ボーナスを維持して即時併合機会を最大化。
+# danger_piece_count > 0 の場合、axis 8.5で即時併合優先が適用されるためボーナスを抑制。
+# refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+#       game_history/20260320_175428_score0781.jsonl turns 53-60, game_history/20260320_183325_score3283.jsonl turns 131-138
+# #
 # v277: deadline_crossed時もSAME_TYPE_STACK有効版 - v275 rollback failure mode (deadline_crossed時に戦略的配置ガイド喪失)潰し
 # v275の変更（deadline_crossed時のSAME_TYPE_STACK無効化）は戦略的配置ガイドを消失させたためロールバック。
 # advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を強化するため、axis 9.5を強化。
@@ -164,20 +173,25 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v277: deadline_crossed時もSAME_TYPE_STACK有効版 - v275 rollback failure mode (deadline_crossed時に戦略的配置ガイド喪失)潰し
+    """v283: danger_piece_count条件精緻化版 - v281 rollback failure mode (max_y>=2.0危険域判定過剰ペナルティ)潰し
     
-    v275の変更（deadline_crossed時のSAME_TYPE_STACK無効化）は戦略的配置ガイドを消失させたためロールバック。
-    advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を強化するため、axis 9.5を強化。
-    batch_summaryでNEAR_MERGE系が選択率5.0%と低いことを踏まえ、CHAIN_MERGEボーナスを強化して即時併合機会を確実に捉える。
+    v281の変更（max_y>=2.0 を危険域判定条件に追加）は、即時併合不可時の過剰ペナルティを招き、戦略的配置の余地を失ったためロールバック。
+    last_rollback_postmortemの制約「max_y>=2.0 を危険域判定条件に追加することを禁止」を遵守し、
+    危険ピース(danger_piece_count)の有無で戦略的配置と即時併合優先をバランスよく制御。
+    advice.md「同じタイプが続いている時はそのタイプの上に置き、併合チャンスを優先する」を強化。
+    batch_summaryでNEAR_MERGE系が選択率4.9%と低いことを踏まえ、即時併合機会を確実に捉える戦略的配置を強化。
     
-    v277の改善点:
-    1. axis 9.5強化：deadline_crossed時もSAME_TYPE_STACK有効
-       - v275の無効化を修正し、deadline_crossed時も戦略的配置ガイドを維持
-       - reactive_pairs>=1の場合、SAME_TYPE_STACKボーナスを+600.0→+800.0に強化
-       - reactive_pairs==0の場合、SAME_TYPE_STACKボーナスを維持（+300.0）
-    2. landing_y > stack_top_y時のペナルティ軽減も強化
-       - reactive_pairs>=1の場合、+200.0（既存）
-       - reactive_pairs==0の場合、+100.0（既存）
+    v283の改善点:
+    1. axis 9.5精緻化：danger_piece_count条件を追加
+       - danger_piece_count == 0 の場合、戦略的配置ボーナスを維持（即時併合不可時）
+         * reactive_pairs>=1: +800.0, reactive_pairs==0: +300.0
+         * landing_y > stack_top_y時のペナルティ軽減も維持
+       - danger_piece_count > 0 の場合、axis 8.5で即時併合優先が適用されるためボーナスを抑制
+         * reactive_pairs>=1: +100.0（最小限の戦略的配置余地を確保）
+         * reactive_pairs==0: ボーナスなし
+         * landing_y > stack_top_y時のペナルティ軽減も抑制
+    2. 即時併合不可時の戦略的配置を強化しつつ、危険ピースがある場合は即時併合優先を維持
+    3. v277のdeadline_crossed時有効化を維持し、v281 rollback failure modeを潰す
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -498,28 +512,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
         
-        # ----- evaluation axis 9.5: current type stack merge priority (v277: deadline_crossed時も有効版) -----
+        # ----- evaluation axis 9.5: current type stack merge priority (v283: danger_piece_count条件精緻化版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
         # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
         # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
         # reactive_pairsがある場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替える。
-        # v277: deadline_crossed時も有効化し、v275の無効化を修正
+        # v283: danger_piece_count条件精緻化 - 危険ピースがない場合の戦略的配置を強化
+        # danger_piece_count == 0 の場合、axis 8.5 の即時併合優先ペナルティが適用されないため、
+        # ここで戦略的配置を優先することで即時併合機会を最大化
+        # danger_piece_count > 0 の場合は axis 8.5 で即時併合優先が適用されるため、ボーナスを抑制
+        # v277のdeadline_crossed時有効化を維持し、v281 rollback failure mode (max_y>=2.0危険域判定過剰ペナルティ) を潰す
         # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
             
-            # v277: reactive_pairs強化版 - advice.md反映とdeadline_crossed時有効化
-            if reactive_pair_count >= 1:
-                score += 800.0
-                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
+            # v283: danger_piece_count条件精�化 - 危険ピースがない場合の戦略的配置を強化
+            # danger_piece_count == 0 の場合、戦略的配置ボーナスを維持
+            # danger_piece_count > 0 の場合、axis 8.5で即時併合優先が適用されるためボーナスを抑制
+            if danger_piece_count == 0:
+                if reactive_pair_count >= 1:
+                    score += 800.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
+                else:
+                    score += 300.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             else:
-                score += 300.0
-                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+                # danger_piece_count > 0 の場合は即時併合優先が適用されるため、ボーナスを抑制
+                # reactive_pairsがある場合のみ、最小限のボーナスを適用して戦略的配置の余地を確保
+                if reactive_pair_count >= 1:
+                    score += 100.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_DANGER")
             
             # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
+            # danger_piece_count == 0 の場合のみ、ペナルティ軽減を適用
             landing_y = result.get("landing_y", 0)
-            if landing_y > stack_top_y:
+            if landing_y > stack_top_y and danger_piece_count == 0:
                 horiz_dist = abs(x - stack_top_x)
                 if horiz_dist < 1.0:
                     # reactive_pairsがある場合、ペナルティ軽減を強化
