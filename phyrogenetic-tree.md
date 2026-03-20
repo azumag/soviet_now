@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-21 06:58:24 JST`
-- Nodes: `637`
-- Edges: `901`
-- Current: `3f5d04fbf3e5`
-- Anchor: `3f5d04fbf3e5`
+- Updated: `2026-03-21 07:48:52 JST`
+- Nodes: `638`
+- Edges: `902`
+- Current: `94f76057d4b6`
+- Anchor: `2e9fe5d1f791`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_e7220ae7a691["e7220ae7a691<br/>g=43 n=20<br/>comp=1198.6"]
     h_35002f03dde3["35002f03dde3<br/>g=12 n=12<br/>comp=1182.5"]
     h_bace268d0534["bace268d0534<br/>g=27 n=20<br/>comp=1293.6"]
     h_853d8220d56e["853d8220d56e<br/>g=28 n=20<br/>comp=1213.1"]
@@ -70,15 +69,13 @@ flowchart TD
     h_51c175adcd5d["51c175adcd5d<br/>g=24 n=20<br/>comp=1582.9"]
     h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=1485.1"]
     h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=1577.5"]
-    h_2e9fe5d1f791["2e9fe5d1f791<br/>g=12 n=12<br/>comp=1918.9"]
-    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=2093.8"]
+    h_2e9fe5d1f791["2e9fe5d1f791<br/>ANCHOR<br/>g=12 n=12<br/>comp=1918.9"]
+    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>g=24 n=20<br/>comp=1859.5"]
     h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=1679.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_94f76057d4b6["94f76057d4b6<br/>CURRENT"]
 
-    h_e7220ae7a691 -->|improve| h_35002f03dde3
-    h_35002f03dde3 -. rollback .-> h_e7220ae7a691
-    h_e7220ae7a691 -->|improve| h_bace268d0534
     h_bace268d0534 -->|improve| h_853d8220d56e
     h_853d8220d56e -->|improve| h_3de1a7e6ddf4
     h_3de1a7e6ddf4 -. rollback .-> h_853d8220d56e
@@ -93,8 +90,6 @@ flowchart TD
     h_922d37760c2b -->|improve| h_7cde6f5b4387
     h_7cde6f5b4387 -. rollback .-> h_922d37760c2b
     h_4f39face490d -. rollback .-> h_b6e0c3b6e909
-    h_b6e0c3b6e909 -. rollback .-> h_e7220ae7a691
-    h_e7220ae7a691 -->|improve| h_346c7685b489
     h_aa241c208ce0 -->|improve| h_999fa1987f46
     h_999fa1987f46 -. rollback .-> h_aa241c208ce0
     h_aa241c208ce0 -->|improve| h_994de46c98dd
@@ -162,13 +157,13 @@ flowchart TD
     h_2e9fe5d1f791 -->|improve| h_3f5d04fbf3e5
     h_3f5d04fbf3e5 -->|improve| h_6c61d1962cec
     h_6c61d1962cec -. rollback .-> h_3f5d04fbf3e5
+    h_3f5d04fbf3e5 -->|improve| h_94f76057d4b6
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_e7220ae7a691 plain;
     class h_35002f03dde3 plain;
     class h_bace268d0534 plain;
     class h_853d8220d56e plain;
@@ -223,11 +218,12 @@ flowchart TD
     class h_51c175adcd5d plain;
     class h_2a8e4a612c27 plain;
     class h_63f836102d11 plain;
-    class h_2e9fe5d1f791 plain;
-    class h_3f5d04fbf3e5 current_anchor;
+    class h_2e9fe5d1f791 anchor;
+    class h_3f5d04fbf3e5 plain;
     class h_6c61d1962cec plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_94f76057d4b6 current;
 ```
 
 ## Detail 1/8
@@ -2229,9 +2225,9 @@ flowchart TD
 
 ## Detail 8/8
 
-- Range: `4e4943f7f65c` .. `a3aae72a4e37`
-- Nodes in this diagram: `77`
-- Internal edges in this diagram: `106`
+- Range: `4e4943f7f65c` .. `94f76057d4b6`
+- Nodes in this diagram: `78`
+- Internal edges in this diagram: `107`
 - Cross-chunk link: `467e45d0adc3 --improve--> 4e4943f7f65c`
 - Cross-chunk link: `4e4943f7f65c -.rollback.-> 4da6ecce5bb9`
 - Cross-chunk link: `467e45d0adc3 --improve--> ddd4637d2985`
@@ -2320,11 +2316,12 @@ flowchart TD
     h_51c175adcd5d["51c175adcd5d<br/>g=24 n=20<br/>comp=1582.9"]
     h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=1485.1"]
     h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=1577.5"]
-    h_2e9fe5d1f791["2e9fe5d1f791<br/>g=12 n=12<br/>comp=1918.9"]
-    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=2093.8"]
+    h_2e9fe5d1f791["2e9fe5d1f791<br/>ANCHOR<br/>g=12 n=12<br/>comp=1918.9"]
+    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>g=24 n=20<br/>comp=1859.5"]
     h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=1679.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_94f76057d4b6["94f76057d4b6<br/>CURRENT"]
 
     h_ddd4637d2985 -->|improve| h_1d954126e373
     h_1d954126e373 -->|improve| h_cdfe94687752
@@ -2432,6 +2429,7 @@ flowchart TD
     h_2e9fe5d1f791 -->|improve| h_3f5d04fbf3e5
     h_3f5d04fbf3e5 -->|improve| h_6c61d1962cec
     h_6c61d1962cec -. rollback .-> h_3f5d04fbf3e5
+    h_3f5d04fbf3e5 -->|improve| h_94f76057d4b6
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2510,14 +2508,25 @@ flowchart TD
     class h_51c175adcd5d plain;
     class h_2a8e4a612c27 plain;
     class h_63f836102d11 plain;
-    class h_2e9fe5d1f791 plain;
-    class h_3f5d04fbf3e5 current_anchor;
+    class h_2e9fe5d1f791 anchor;
+    class h_3f5d04fbf3e5 plain;
     class h_6c61d1962cec plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_94f76057d4b6 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#8318 `3f5d04fb -> 94f76057`
+
+- scores: `1252 3213 2314 1499 1741 918 2057 1951 1665 2042 1498 2021`
+- v298: axis 8.5/9.5戦略的配置ボーナス削除版 - 即時併合優先シンプル化
+- ワーストゲーム(score0571)終盤turns 69-76でreactive_pairs=2-4あるのに即時併合不可、戦略的配置が続きmax_y=3.08に上昇してゲームオーバー。
+- ベストゲーム(score2739)終盤turns 103-110では即時併合を確実に捉えてスコア2739を出している。
+- batch_summaryでHEIGHT_CONTROLが12.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+- axis 8.5(danger zone immediate merge priority)とaxis 9.5(SAME_TYPE_STACK_MERGE_PRIORITY)の戦略的配置ボーナスを削除し、即時併合優先へシンプル化。
+- advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「即時併合の判断をシンプルな原則に基づかせる方向で改善」に基づき、即時併合機会を最優先する戦略へ修正。
 
 ### Rollback Game#8306 `6c61d196 -> 3f5d04fb`
 
