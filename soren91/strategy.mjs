@@ -1,17 +1,17 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v29)
+ * strategy.mjs - ドロップ位置決定戦略 (v30)
  *
- * v29改善点 (v28からの調整):
- * - 【ULTRA閾値を引き上げ】62→70: ベストアンカー(v16)水準に戻す
- *   → v28実測: 58/105ターン(55%)がULTRA — まだ多すぎる
- *   → v16は70で comp=121.3 を達成、閾値を一致させる
- * - 【SURVIVAL閾値引き上げ】80→90: 誤検出ノイズ(208ピース等)への過剰反応を抑制
- * - 【T1/バランス振動バグを修正】extremeT1FloodモードではT1処理をバランス補正より優先
- *   → 実測: ULTRA_EXTREME_T1_IMMEDIATE と ULTRA_BALANCE_BIASL が交互に発生
- *   → T1がバランスを崩す → バランス補正 → T1が再び崩す → ループ
- *   → Fix: extremeT1Flood時は先にT1処理、バランス閾値をabs(3)に引き上げ
- * - 【バランス閾値を条件付き引き上げ】T1フラッド時はabs(2)→abs(3)で振動抑制
- * - 他のv28改善点は維持 (look-ahead, T1フラッド閾値 15/36, HOLD評価)
+ * v30改善点 (v29からの改善):
+ * - 【ランク向上: 高タイプマージ積極化】
+ *   findBestMerge: タイプ加点 1.5→2.0、チェーンスコア c1: 8→10、c2: 4→5
+ *   → ランク評価は得点。大きなマージ・チェーン反応をより積極的に狙う
+ * - 【T5+ピースのHOLD保護強化】pieces.length > 15条件を削除、常に保護
+ *   → 大ピースを無駄な低列ドロップから保護してチェーン機会を温存
+ * - 【T4ピース条件付きHOLD追加】マージなし & pieces > 10 のとき保存
+ * - 【T1早期予防モード追加】t1Count >= 8 で早期T1マージ試行 (フラッド閾値15の前)
+ * - 【ULTRAモードでT4+にfindBestMerge使用】チェーン反応考慮の最適マージ位置選択
+ *   → T5+はマージなければHOLD保護
+ * - v29のバランス振動修正・ULTRA/SURVIVAL閾値・extremeT1処理を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -22,6 +22,7 @@ const MAX_ACTIVE_PIECES = 70;
 const ULTRA_MASS_THRESHOLD = 70;
 const EXTREME_T1_FLOOD_THRESHOLD = 36;
 const SURVIVAL_PIECE_THRESHOLD = 90;
+const EARLY_T1_THRESHOLD = 8;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -52,10 +53,10 @@ export function decide(boardState) {
     return { x: safeX, reason: `SPREAD_UNRELIABLE_X${safeX.toFixed(1)}` };
   }
 
-  // v28: T1フラッド閾値を引き上げ (誤検出ノイズ対策)
   const t1Count = activePieces.filter(p => p.type === 1).length;
   const t1FloodMode = t1Count > 15;
   const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
+  const earlyT1Mode = t1Count >= EARLY_T1_THRESHOLD && t1Count < 15; // v30: 早期T1予防
 
   const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
   const garbageHeight = garbage ? (garbage.height || -5) : -5;
@@ -104,18 +105,27 @@ export function decide(boardState) {
 
   // --- ULTRAマスモード ---
   if (ultraMassMode) {
-    // 非T1ならマージをバランスチェックより先に試みる
     if (nextType > 1) {
       if (canHold && hold && hold.type >= nextType + 2) {
         const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
         if (holdMerge !== null) return { x: 0, reason: `ULTRA_HOLD_UPGRADE_T${hold.type}`, hold: true };
       }
-      const earlyMergeX = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
-      if (earlyMergeX !== null) return { x: earlyMergeX, reason: `ULTRA_MERGE_T${nextType}` };
+
+      // v30: T4+はfindBestMergeでチェーン反応考慮の最適マージ位置を選択
+      if (nextType >= 4) {
+        const bestMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0);
+        if (bestMerge) return { ...bestMerge, reason: `ULTRA_BEST_T${nextType}` };
+        // T5+はマージなければHOLD保護
+        if (nextType >= 5 && canHold && !hold && !isWarn) {
+          return { x: 0, reason: `ULTRA_HOLD_PROTECT_T${nextType}`, hold: true };
+        }
+      } else {
+        const earlyMergeX = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
+        if (earlyMergeX !== null) return { x: earlyMergeX, reason: `ULTRA_MERGE_T${nextType}` };
+      }
     }
 
     // v29: extremeT1Flood時はバランス補正より先にT1処理 (振動バグ修正)
-    // 実測: ULTRA_EXTREME_T1_IMMEDIATE ↔ ULTRA_BALANCE_BIASL の交互発火を防ぐ
     if (nextType === 1 && extremeT1Flood) {
       if (canHold && !hold) {
         const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
@@ -314,6 +324,14 @@ export function decide(boardState) {
   if (canHold) {
     const holdResult = evaluateHold(activePieces, nextType, hold, nextPieces, isWarn);
     if (holdResult) return holdResult;
+  }
+
+  // v30: T1早期予防モード (フラッド前の予防的処置)
+  if (nextType === 1 && earlyT1Mode) {
+    const earlyMerge = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
+    if (earlyMerge !== null) return { x: earlyMerge, reason: 'EARLY_T1_MERGE' };
+    const earlyAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, false);
+    if (earlyAnchor !== null) return { x: earlyAnchor, reason: 'EARLY_T1_ANCHOR' };
   }
 
   // T1ピースは早期にT1フラッドチェック
@@ -655,19 +673,26 @@ function evaluateHold(pieces, nextType, hold, nextPieces, isWarn) {
       return { x: 0, reason: `HOLD_SWAP_HUGE_T${hold.type}`, hold: true };
     }
   } else {
-    if (nextMergeCount === 0 && pieces.length > 15 && !isWarn) {
-      const futurePieces = [
-        nextPieces && nextPieces[1] ? nextPieces[1].type : 0,
-        nextPieces && nextPieces[2] ? nextPieces[2].type : 0,
-      ].filter(t => t > 0 && t !== nextType);
-      for (const futureType of futurePieces) {
-        const futureHasMerge = pieces.filter(p => p.type === futureType && p.y < safeY).length > 0;
-        if (futureHasMerge) {
-          return { x: 0, reason: `HOLD_SAVE_T${nextType}_FOR_T${futureType}`, hold: true };
-        }
-      }
-      if (nextType >= 5 && !isWarn) {
+    if (nextMergeCount === 0 && !isWarn) {
+      // v30: T5+は常にHOLD保護（pieces.length条件を削除）
+      if (nextType >= 5) {
         return { x: 0, reason: `HOLD_SAVE_BIG_T${nextType}`, hold: true };
+      }
+      // v30: T4も条件付きHOLD（pieces > 10 で保護）
+      if (nextType >= 4 && pieces.length > 10) {
+        return { x: 0, reason: `HOLD_SAVE_T4_T${nextType}`, hold: true };
+      }
+      if (pieces.length > 15) {
+        const futurePieces = [
+          nextPieces && nextPieces[1] ? nextPieces[1].type : 0,
+          nextPieces && nextPieces[2] ? nextPieces[2].type : 0,
+        ].filter(t => t > 0 && t !== nextType);
+        for (const futureType of futurePieces) {
+          const futureHasMerge = pieces.filter(p => p.type === futureType && p.y < safeY).length > 0;
+          if (futureHasMerge) {
+            return { x: 0, reason: `HOLD_SAVE_T${nextType}_FOR_T${futureType}`, hold: true };
+          }
+        }
       }
     }
   }
@@ -754,13 +779,13 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     s -= colH * 4.0;
     if (colH > DEADLINE_Y - 0.4) s -= 10;
     if (colH > avgHeight + 0.8) s -= 2;
-    s += nextType * 1.5;
+    s += nextType * 2.0; // v30: 1.5→2.0 で高タイプマージを積極化
 
     const c1 = countNear(pieces, t.x, nextType + 1, 1.8);
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
     const c4 = countNear(pieces, t.x, nextType + 4, 3.0);
-    const chainScore = c1 * 8 + c2 * 4 + c3 * 2 + c4 * 1;
+    const chainScore = c1 * 10 + c2 * 5 + c3 * 2 + c4 * 1; // v30: c1: 8→10、c2: 4→5
     if (chainScore < minChainScore) continue;
     s += chainScore;
 
