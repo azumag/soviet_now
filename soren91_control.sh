@@ -4,7 +4,19 @@
 # SOREN91_ENABLED=1 (.env) でなければ全関数は即 return 0。
 
 # --- 定数 ---
-SOREN91_ENABLED="${SOREN91_ENABLED:-0}"
+_soren91_env_get() {
+	local key="$1"
+	local env_file="$ELOOP_LIB_DIR/.env"
+	[ -f "$env_file" ] || return 1
+	local value=""
+	value=$(grep -E "^${key}=" "$env_file" 2>/dev/null | tail -n 1 | cut -d= -f2-)
+	[ -n "$value" ] || return 1
+	value="${value#\"}"
+	value="${value%\"}"
+	printf '%s' "$value"
+}
+
+SOREN91_ENABLED="$(_soren91_env_get SOREN91_ENABLED 2>/dev/null || printf '%s' "${SOREN91_ENABLED:-0}")"
 SOREN91_STOP_TIMEOUT="${SOREN91_STOP_TIMEOUT:-120}"
 SOREN91_DIR="$ELOOP_LIB_DIR/soren91"
 SOREN91_PID_FILE="$SOREN91_DIR/tmp/soren91.pid"
@@ -13,7 +25,7 @@ SOREN91_IMPROVE_LOCK="$SOREN91_DIR/tmp/soren91_improve.lock"
 SOREN91_SESSION_FILE="$SOREN91_DIR/tmp/session_games.json"
 SOREN91_STOP_FILE="$SOREN91_DIR/tmp/stop"
 SOREN91_RUNNER_SCRIPT="$SOREN91_DIR/run_player_loop.sh"
-SOREN91_VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}"
+SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/null || printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}")"
 
 _soren91_enabled() {
 	[ "${SOREN91_ENABLED:-0}" = "1" ]
@@ -30,12 +42,10 @@ soren91_is_running() {
 	if ! kill -0 "$pid" 2>/dev/null; then
 		return 1
 	fi
-	local cmd
-	cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-	if echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh'; then
-		return 0
-	fi
-	return 1
+	# pid file は soren91 起動用の bash subshell を指すことがあり、
+	# 実行環境によっては ps でそのコマンドラインを安定取得できない。
+	# start/stop で専用 PID ファイルを管理しているため、生存中なら稼働中とみなす。
+	return 0
 }
 
 _soren91_is_improve_process() {
@@ -238,7 +248,7 @@ soren91_cleanup() {
 			if kill -0 "$pid" 2>/dev/null; then
 				local cmd
 				cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-				if echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh'; then
+				if echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh|soren_loop\.sh'; then
 					log "[SOREN91] Cleanup: stopping player (PID=$pid)"
 					_stop_loop_descendants "$pid"
 					_stop_pid_with_fallback "$pid" "soren91_player"
