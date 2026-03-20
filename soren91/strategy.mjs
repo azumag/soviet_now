@@ -1,22 +1,26 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v27)
+ * strategy.mjs - ドロップ位置決定戦略 (v28)
  *
- * v27監修点 (v26からの調整):
- * - 【T1過敏反応の抑制】t1FloodMode閾値を 9→12、extreme閾値を 22→30 に戻す
- * - 【通常モードの早すぎるT1介入を停止】t1Count>=5 の即時マージ分岐を削除
- * - 【T1即時マージ判定を精密化】列ピース検出幅を 0.55→0.45 に戻す
- * - 【T1系の片側バイアスを緩和】重い側ペナルティを v25 水準へ戻す
- * - 【非T1のULTRA早期マージは維持】T1 cleanup と競合しにくい改善だけ残す
+ * v28改善点 (v27からの調整):
+ * - 【ULTRA閾値を引き上げ】45→62: ULTRAモード過多問題を解消
+ *   → 実測: 79/113ターン(70%)がULTRA — 正常戦略を動かす余裕がなかった
+ *   → ベストアンカー(v16)は閾値70で comp=121.3 を達成
+ * - 【SURVIVAL閾値引き上げ】72→80 (同じ理由)
+ * - 【T1フラッド閾値を引き上げ】t1FloodMode 12→15, extreme 30→36
+ *   → スクリーンショット誤検出によるT1過剰カウント対策
+ * - 【MAX_ACTIVE_PIECES引き上げ】65→70: より多くのピースを活用
+ * - 【look-ahead追加】findBestHeightDropでnextPieces[1]の置き場も加点
+ * - 【HOLD評価改善】T4以上の保留ピースをより積極的にスワップ
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
 const DEADLINE_Y = 2.5;
 const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
-const MAX_ACTIVE_PIECES = 65;
-const ULTRA_MASS_THRESHOLD = 45;
-const EXTREME_T1_FLOOD_THRESHOLD = 30;
-const SURVIVAL_PIECE_THRESHOLD = 72;
+const MAX_ACTIVE_PIECES = 70;
+const ULTRA_MASS_THRESHOLD = 62;
+const EXTREME_T1_FLOOD_THRESHOLD = 36;
+const SURVIVAL_PIECE_THRESHOLD = 80;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -47,9 +51,9 @@ export function decide(boardState) {
     return { x: safeX, reason: `SPREAD_UNRELIABLE_X${safeX.toFixed(1)}` };
   }
 
-  // v27: T1フラッド検出は v25 水準まで戻して過敏反応を抑える
+  // v28: T1フラッド閾値を引き上げ (誤検出ノイズ対策)
   const t1Count = activePieces.filter(p => p.type === 1).length;
-  const t1FloodMode = t1Count > 12;
+  const t1FloodMode = t1Count > 15;
   const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
 
   const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
@@ -82,6 +86,9 @@ export function decide(boardState) {
   const isCritical = nearDeadlineCount >= 3 || overDeadlineCount >= 2;
   const isWarn = colHeights.some(h => h > WARN_Y + 0.5);
 
+  // next2 type for look-ahead
+  const next2Type = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+
   // --- 生存最優先モード ---
   if (rawPieceCount >= SURVIVAL_PIECE_THRESHOLD && !isCritical) {
     if (canHold && hold && hold.type >= 2) {
@@ -96,7 +103,7 @@ export function decide(boardState) {
 
   // --- ULTRAマスモード ---
   if (ultraMassMode) {
-    // v26: 非T1ならマージをバランスチェックより先に試みる
+    // 非T1ならマージをバランスチェックより先に試みる
     if (nextType > 1) {
       if (canHold && hold && hold.type >= nextType + 2) {
         const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
@@ -124,9 +131,9 @@ export function decide(boardState) {
     if (nextType === 1) {
       if (extremeT1Flood) {
         if (canHold && !hold) {
-          const next2Type = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
-          const next3Type = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
-          const bestNext = Math.max(next2Type, next3Type);
+          const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+          const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
+          const bestNext = Math.max(next2T, next3T);
           if (bestNext >= 2) {
             return { x: 0, reason: `ULTRA_EXTREME_HOLD_T1_FOR_T${bestNext}`, hold: true };
           }
@@ -145,7 +152,7 @@ export function decide(boardState) {
         return { x: lowestDrop.x, reason: `ULTRA_EXTREME_T1_LOWEST` };
       }
 
-      // 通常T1フラッドモード (12 < t1Count <= 30)
+      // 通常T1フラッドモード (15 < t1Count <= 36)
       if (t1FloodMode) {
         const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
         if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_T1_IMMEDIATE' };
@@ -331,7 +338,7 @@ export function decide(boardState) {
       const bigMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0);
       if (bigMerge) return bigMerge;
     }
-    const heightDrop = findBestHeightDrop(activePieces, nextType, colHeights, dangerBias, avgHeight);
+    const heightDrop = findBestHeightDrop(activePieces, nextType, colHeights, dangerBias, avgHeight, next2Type);
     if (heightDrop) return { ...heightDrop, reason: `PRESSURE_${heightDrop.reason}` };
   }
 
@@ -349,7 +356,7 @@ export function decide(boardState) {
   const clusterPlace = findClusterDrop(activePieces, nextType, colHeights, dangerBias);
   if (clusterPlace) return { ...clusterPlace, reason: `CLUSTER_T${nextType}` };
 
-  return findBestHeightDrop(activePieces, nextType, colHeights, dangerBias, avgHeight)
+  return findBestHeightDrop(activePieces, nextType, colHeights, dangerBias, avgHeight, next2Type)
     || { x: 0.0, reason: 'CENTER_FALLBACK' };
 }
 
@@ -636,10 +643,10 @@ function evaluateHold(pieces, nextType, hold, nextPieces, isWarn) {
     if (holdMergeCount > nextMergeCount && nextMergeCount === 0) {
       return { x: 0, reason: `HOLD_SWAP_T${hold.type}vs${nextType}`, hold: true };
     }
-    if (hold.type >= 5 && nextType <= 3 && holdMergeCount >= 1) {
+    if (hold.type >= 4 && nextType <= 2 && holdMergeCount >= 1) {
       return { x: 0, reason: `HOLD_SWAP_BIGTYPE_T${hold.type}`, hold: true };
     }
-    if (hold.type >= 7 && nextType <= 4 && holdMergeCount >= 1) {
+    if (hold.type >= 6 && nextType <= 3 && holdMergeCount >= 1) {
       return { x: 0, reason: `HOLD_SWAP_HUGE_T${hold.type}`, hold: true };
     }
   } else {
@@ -769,7 +776,10 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
   return { x: clampX(bestTarget.x), reason: `MERGE_T${nextType}_X${bestTarget.x.toFixed(1)}` };
 }
 
-function findBestHeightDrop(pieces, nextType, colHeights, dangerBias, avgHeight) {
+/**
+ * 高さベースのドロップ位置決定 (look-ahead: next2Type のマージ準備も加点)
+ */
+function findBestHeightDrop(pieces, nextType, colHeights, dangerBias, avgHeight, next2Type = 0) {
   let bestIdx = -1;
   let bestScore = -Infinity;
 
@@ -781,6 +791,13 @@ function findBestHeightDrop(pieces, nextType, colHeights, dangerBias, avgHeight)
     s += pieces.filter(p =>
       p.type === nextType && Math.abs(p.x - cx) < 1.2 && p.y < DEADLINE_Y
     ).length * 2.5;
+
+    // look-ahead: next2ピースのマージ準備位置に加点
+    if (next2Type > 0 && next2Type !== nextType) {
+      s += pieces.filter(p =>
+        p.type === next2Type && Math.abs(p.x - cx) < 1.5 && p.y < DEADLINE_Y
+      ).length * 1.2;
+    }
 
     const leftH = i > 0 ? colHeights[i - 1] : colHeights[i];
     const rightH = i < FINE_COLS.length - 1 ? colHeights[i + 1] : colHeights[i];
