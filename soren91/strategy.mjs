@@ -1,14 +1,12 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v23)
+ * strategy.mjs - ドロップ位置決定戦略 (v24)
  *
- * v23改善点 (v22からの改善):
- * - 【T1極端洪水: 積み列優先】findT1StackColumn追加
- *   T1が縦に積み重なった列を検出し直接ドロップ → 物理マージ促進
- *   v22問題: findT1ChainAnchor はT1の水平隣接を探すが縦積みマージが発生しない場合がある
- *   v23修正: findT1StackColumn → findT1ChainAnchor の順で試行
- * - 【ULTRA extremeT1Flood優先順位変更】stack列優先
- * - 【生存モード早期化】SURVIVAL_PIECE_THRESHOLD: 78 → 72
- * - 【ULTRA_MASS早期化】ULTRA_MASS_THRESHOLD: 50 → 45
+ * v24改善点 (v23からの改善):
+ * - 【CRITICAL T1フラッド対応】CRITICAL+T1フラッド時にfindT1StackColumn/findT1ChainAnchorを試行
+ *   v23ではultraMassModeのみ適用だったがcriticalモードでも同様に有効
+ *   garbageFloodMode時は除外 (T1マージ無効フラグと競合するため)
+ * - 【CRITICAL HOLD upgrade】hold.type >= nextType+2 かつ lowColMergeあり → 積極的HOLD swap
+ *   既存比較ロジックはcount比較のみ; 高タイプのHOLDはchain反応が大きいため count≤でも優先
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -197,8 +195,26 @@ export function decide(boardState) {
       }
     }
 
+    // v24: HOLD upgrade — hold が nextType+2以上で低列マージがある場合は count比較なしで優先
+    // 高タイプのマージはチェーン反応が大きくゲームボード圧力を解消しやすい
+    if (canHold && hold && hold.type >= nextType + 2) {
+      const holdUpgrade = countLowColMerge(activePieces, hold.type, colHeights, critMergeLimit);
+      if (holdUpgrade > 0) {
+        return { x: 0, reason: `CRITICAL_HOLD_UPGRADE_T${hold.type}`, hold: true };
+      }
+    }
+
     const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
     const lowestColH = colHeights[lowestDrop.idx];
+
+    // v24: CRITICAL + T1フラッドモード時はstack列 → chain anchorを試行
+    // garbageFloodMode時はT1マージ無効(minMergeType=99)と競合するため除外
+    if (nextType === 1 && t1FloodMode && !garbageFloodMode) {
+      const critT1Stack = findT1StackColumn(activePieces, colHeights, dangerBias);
+      if (critT1Stack !== null) return { x: critT1Stack, reason: 'CRITICAL_T1_STACK' };
+      const critT1Chain = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
+      if (critT1Chain !== null) return { x: critT1Chain, reason: 'CRITICAL_T1_ANCHOR' };
+    }
 
     const minMergeType = (garbageFloodMode && nextType === 1) ? 99 : 1;
     const lowColMerge = nextType >= minMergeType
