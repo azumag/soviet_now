@@ -1,14 +1,14 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v19)
+ * strategy.mjs - ドロップ位置決定戦略 (v20)
  *
- * v19改善点 (v18からの改善):
- * - ULTRA_MASS_THRESHOLD: 70 → 60 (より早くULTRAモードへ移行し危機を防ぐ)
- * - ボードバランス検出: 左右の質量差から強制バイアスを計算 (右偏り修正)
- * - 全スコアリング関数にセンターバイアス強化 (-|x|*1.5 → -|x|*2.0)
- * - findT1ChainAnchor: T2クラスタスコア増強 (12→16) + バランスバイアス反映
- * - findLowestSafeDrop: バランスバイアスを強く反映 (危険側へのドロップを強く抑制)
- * - ULTRA mode: バランスバイアスが強い場合はマージより優先して低い側へドロップ
- * - findBestMerge: チェーンスコア計算にT+4まで追加
+ * v20改善点 (v19からの改善):
+ * - 【根本修正】CRITICAL mode merge/drop決定バグ修正:
+ *   v19問題: lowestColH=-5.0(空列)があると条件 lowestColH < mergeColH-1.2 が常にtrue
+ *            → マージが全くされずピースが増加し続けてゲームオーバー
+ *   v20修正: 安全マージ(DEADLINE_Y未満の列)を常に優先、空列より合体を選ぶ
+ * - 通常モードにT1チェーンアンカー探索を追加 (ULTRAモード専用→全モード拡張)
+ * - 通常モード早期T1マージ探索: T1ピースは積極的にT1+T1→T2を促進
+ * - CRITICAL HOLD評価改善: HOLDがnextより多くのマージ機会を持つ場合も交換
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -16,7 +16,7 @@ const DEADLINE_Y = 2.5;
 const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 65;
-const ULTRA_MASS_THRESHOLD = 60; // v19: 70→60
+const ULTRA_MASS_THRESHOLD = 60;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -63,13 +63,12 @@ export function decide(boardState) {
   const massMode = activePieces.length >= MAX_ACTIVE_PIECES - 5;
   const boardPressure = activePieces.length > 55;
 
-  // v19: ボードバランス計算 (左右の質量差)
   const balanceBias = computeBalanceBias(activePieces, colHeights);
 
   const dangerPieces = activePieces.filter(p => p.y > WARN_Y);
   const leftDanger = dangerPieces.filter(p => p.x < -0.3).length;
   const rightDanger = dangerPieces.filter(p => p.x > 0.3).length;
-  let dangerBias = balanceBias; // v19: dangerBiasをbalanceBiasで初期化
+  let dangerBias = balanceBias;
   if (leftDanger > rightDanger + 3) dangerBias = Math.min(dangerBias - 1, -1);
   else if (rightDanger > leftDanger + 3) dangerBias = Math.max(dangerBias + 1, 1);
 
@@ -80,7 +79,6 @@ export function decide(boardState) {
 
   // --- ULTRAマスモード ---
   if (ultraMassMode) {
-    // v19: バランスバイアスが強い場合はまずバランス修正
     if (Math.abs(balanceBias) >= 2) {
       const balanceDrop = findLowestSafeDrop(colHeights, dangerBias);
       return { x: balanceDrop.x, reason: `ULTRA_BALANCE_BIAS${balanceBias > 0 ? 'R' : 'L'}` };
@@ -143,7 +141,8 @@ export function decide(boardState) {
     if (canHold && hold && hold.type) {
       const holdLowMerge = countLowColMerge(activePieces, hold.type, colHeights, critMergeLimit);
       const nextLowMerge = countLowColMerge(activePieces, nextType, colHeights, critMergeLimit);
-      if (holdLowMerge > 0 && nextLowMerge === 0) {
+      // v20: HOLDがnextより多くマージできる場合も交換 (v19: nextMerge===0の時のみ)
+      if (holdLowMerge > nextLowMerge && holdLowMerge > 0) {
         return { x: 0, reason: `CRITICAL_HOLD_T${hold.type}`, hold: true };
       }
     }
@@ -157,10 +156,9 @@ export function decide(boardState) {
       : null;
 
     if (lowColMerge) {
-      const mergeColH = colHeights[nearestColIdx(lowColMerge.x)];
-      if (lowestColH < mergeColH - 1.2) {
-        return { x: lowestDrop.x, reason: `CRITICAL_LOW_COL_Y${lowestColH.toFixed(1)}` };
-      }
+      // v20: 【根本修正】常にマージを優先
+      // v19: lowestColH=-5.0(空列)があると常に空列を選んでいた → マージ0でピース増加
+      // v20: 安全な列にマージがあれば必ず実行 → ピース削減・チェーン反応を促進
       return { x: lowColMerge.x, reason: `CRITICAL_MERGE_T${nextType}` };
     }
 
@@ -229,6 +227,15 @@ export function decide(boardState) {
     if (holdResult) return holdResult;
   }
 
+  // v20: T1ピースは早期にチェーンアンカーを探す (ULTRA専用→通常モードにも拡張)
+  if (nextType === 1) {
+    const t1Chain = findT1ChainAnchor(activePieces, colHeights, dangerBias);
+    if (t1Chain !== null) return { x: t1Chain, reason: 'T1_CHAIN_ANCHOR' };
+    // T1同士のシンプルマージも早期に探す
+    const t1Merge = findAnyMerge(activePieces, 1, colHeights, dangerBias);
+    if (t1Merge !== null) return { x: t1Merge, reason: 'T1_MERGE' };
+  }
+
   if (boardPressure) {
     if (nextType >= 4) {
       const bigMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0);
@@ -257,7 +264,7 @@ export function decide(boardState) {
 }
 
 /**
- * v19新機能: ボードバランスバイアス計算
+ * ボードバランスバイアス計算
  * 左右の加重質量差から強制バイアスを返す
  * 正=右が重い(左寄りに打て), 負=左が重い(右寄りに打て)
  * 0=バランス, ±1=軽微, ±2=強制
@@ -273,7 +280,6 @@ function computeBalanceBias(pieces, colHeights) {
   const massDiff = rightMass - leftMass;
   const heightDiff = avgRightH - avgLeftH;
 
-  // 質量差と高さ差を組み合わせてバイアス算出
   const combined = massDiff * 0.02 + heightDiff * 0.5;
   if (combined > 1.2) return 2;   // 右重い → 強制左へ
   if (combined > 0.5) return 1;   // 右重い → 左寄り
@@ -283,7 +289,7 @@ function computeBalanceBias(pieces, colHeights) {
 }
 
 /**
- * T1専用チェーンアンカー (v19改善: T2スコア増強 + バランスバイアス反映)
+ * T1専用チェーンアンカー
  * T1+T1=T2 の着地位置が T2クラスタ近くになる T1ターゲットを探す
  */
 function findT1ChainAnchor(pieces, colHeights, dangerBias) {
@@ -305,17 +311,16 @@ function findT1ChainAnchor(pieces, colHeights, dangerBias) {
 
     if (nearT2 === 0) continue;
 
-    let s = nearT2 * 16;  // v19: 12→16
-    s += nearT3 * 8;      // v19: 6→8
-    s += nearT4 * 4;      // v19: 3→4
+    let s = nearT2 * 16;
+    s += nearT3 * 8;
+    s += nearT4 * 4;
     s -= colHeights[ci] * 4.0;
-    s -= Math.abs(t1.x) * 2.0; // v19: 0.8→2.0 センターバイアス強化
+    s -= Math.abs(t1.x) * 2.0;
     if (Math.abs(t1.x) > 2.2) s -= 8;
-    // v19: バランスバイアス反映
     if (dangerBias < 0 && t1.x < -0.5) s -= 8;
     if (dangerBias > 0 && t1.x > 0.5) s -= 8;
-    if (dangerBias >= 2 && t1.x > 0) s -= 15; // 強制左側
-    if (dangerBias <= -2 && t1.x < 0) s -= 15; // 強制右側
+    if (dangerBias >= 2 && t1.x > 0) s -= 15;
+    if (dangerBias <= -2 && t1.x < 0) s -= 15;
 
     if (s > bestScore) { bestScore = s; best = t1; }
   }
@@ -323,7 +328,7 @@ function findT1ChainAnchor(pieces, colHeights, dangerBias) {
   return best ? clampX(best.x) : null;
 }
 
-/** 大量ピースモード用 - 安全列のマージを探す (v19: センターバイアス強化) */
+/** 大量ピースモード用 - 安全列のマージを探す */
 function findAnyMerge(pieces, nextType, colHeights, dangerBias) {
   const candidates = pieces.filter(p =>
     p.type === nextType && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y
@@ -337,7 +342,7 @@ function findAnyMerge(pieces, nextType, colHeights, dangerBias) {
     const ci = nearestColIdx(t.x);
     if (colHeights[ci] >= DEADLINE_Y + 0.2) continue;
     let s = -colHeights[ci] * 6.0;
-    s -= Math.abs(t.x) * 2.0; // v19: 0.8→2.0
+    s -= Math.abs(t.x) * 2.0;
     if (Math.abs(t.x) > 2.2) s -= 6;
     if (dangerBias <= -1 && t.x < -0.5) s -= 6;
     if (dangerBias >= 1 && t.x > 0.5) s -= 6;
@@ -391,7 +396,7 @@ function findMergeInLowCol(pieces, nextType, colHeights, heightLimit, dangerBias
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     s += c1 * 6;
     s += c2 * 3;
-    s -= Math.abs(t.x) * 2.0; // v19: 0.6→2.0
+    s -= Math.abs(t.x) * 2.0;
     if (Math.abs(t.x) > 2.2) s -= 4;
     if (dangerBias <= -1 && t.x < -0.5) s -= 6;
     if (dangerBias >= 1 && t.x > 0.5) s -= 6;
@@ -454,7 +459,7 @@ function findClusterDrop(pieces, nextType, colHeights, dangerBias) {
     if (nearSame === 0) continue;
     let s = nearSame * 5.0;
     s -= colHeights[i] * 3.0;
-    s -= Math.abs(cx) * 2.0; // v19: 0.6→2.0
+    s -= Math.abs(cx) * 2.0;
     if (Math.abs(cx) > 2.2) s -= 3;
     if (dangerBias <= -1 && cx < -0.5) s -= 5;
     if (dangerBias >= 1 && cx > 0.5) s -= 5;
@@ -482,7 +487,7 @@ function findLowestColIdx(colHeights) {
   return minIdx;
 }
 
-/** 最低かつ安全な列へドロップ (v19: バランスバイアス強化) */
+/** 最低かつ安全な列へドロップ */
 function findLowestSafeDrop(colHeights, dangerBias) {
   let bestScore = -Infinity;
   let bestIdx = 5;
@@ -490,9 +495,8 @@ function findLowestSafeDrop(colHeights, dangerBias) {
   for (let i = 0; i < FINE_COLS.length; i++) {
     if (colHeights[i] >= DEADLINE_Y + 0.2) continue;
     let s = -colHeights[i] * 8.0;
-    s -= Math.abs(FINE_COLS[i]) * 1.0; // v19: 0.3→1.0
+    s -= Math.abs(FINE_COLS[i]) * 1.0;
     if (Math.abs(FINE_COLS[i]) > 2.2) s -= 3;
-    // v19: バランスバイアスを強く反映
     if (dangerBias <= -1 && FINE_COLS[i] < -1.0) s -= 10;
     if (dangerBias >= 1 && FINE_COLS[i] > 1.0) s -= 10;
     if (dangerBias <= -2 && FINE_COLS[i] < 0) s -= 8;
@@ -505,7 +509,7 @@ function findLowestSafeDrop(colHeights, dangerBias) {
 }
 
 /**
- * 最良マージ位置を探す (v19: T+4チェーン追加, センターバイアス強化)
+ * 最良マージ位置を探す
  * minChainScore: 0=全マージ, 4=チェーン期待が高いもののみ
  */
 function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, minChainScore) {
@@ -531,7 +535,7 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     const c1 = countNear(pieces, t.x, nextType + 1, 1.8);
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
-    const c4 = countNear(pieces, t.x, nextType + 4, 3.0); // v19: T+4追加
+    const c4 = countNear(pieces, t.x, nextType + 4, 3.0);
     const chainScore = c1 * 8 + c2 * 4 + c3 * 2 + c4 * 1;
     if (chainScore < minChainScore) continue;
     s += chainScore;
@@ -543,7 +547,7 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     if (dangerBias >= 1 && t.x > 0.5) s -= 6;
     if (dangerBias <= -2 && t.x < 0) s -= 8;
     if (dangerBias >= 2 && t.x > 0) s -= 8;
-    s -= Math.abs(t.x) * 2.0; // v19: 0.8→2.0
+    s -= Math.abs(t.x) * 2.0;
     if (Math.abs(t.x) > 2.2) s -= 4;
 
     if (garbageUrgent) s += 15;
@@ -555,7 +559,7 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
   return { x: clampX(bestTarget.x), reason: `MERGE_T${nextType}_X${bestTarget.x.toFixed(1)}` };
 }
 
-/** 高さバランスを優先した着弾位置 (v19: センターバイアス強化) */
+/** 高さバランスを優先した着弾位置 */
 function findBestHeightDrop(pieces, nextType, colHeights, dangerBias, avgHeight) {
   let bestIdx = -1;
   let bestScore = -Infinity;
@@ -575,7 +579,7 @@ function findBestHeightDrop(pieces, nextType, colHeights, dangerBias, avgHeight)
     const gap = Math.max(leftH, rightH) - colHeights[i];
     if (gap > 1.0) s -= (gap - 1.0) * 2.0;
 
-    s -= Math.abs(cx) * 2.0; // v19: 0.7→2.0
+    s -= Math.abs(cx) * 2.0;
     if (Math.abs(cx) > 2.2) s -= 3;
 
     if (dangerBias <= -1 && cx < -0.5) s -= 5;
