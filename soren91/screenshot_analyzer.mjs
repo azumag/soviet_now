@@ -633,105 +633,28 @@ export async function detectRankingScreen(screenshotPath) {
   const { data } = await image.raw().ensureAlpha().toBuffer({ resolveWithObject: true });
   const { width, height } = metadata;
 
-  // ランキング画面判定: 画面下半分(y=300-650)の中央(x=200-1000)が明るいか
-  let brightCount = 0, totalCount = 0;
-  const step = 8;
-  for (let y = Math.floor(height * 0.4); y < Math.floor(height * 0.9); y += step) {
-    for (let x = Math.floor(width * 0.15); x < Math.floor(width * 0.85); x += step) {
+  // ランキング画面判定: 画面中央(ゲームボード領域)が明るいかチェック
+  // ゲーム中: ボード中央は暗い(dark ratio高い)。ランキング画面: 全体が明るい
+  // 厳密に中央列の30-70%範囲でチェック (サイドパネルの影響を除外)
+  let centerBright = 0, centerTotal = 0;
+  const step = 6;
+  for (let y = Math.floor(height * 0.3); y < Math.floor(height * 0.85); y += step) {
+    for (let x = Math.floor(width * 0.35); x < Math.floor(width * 0.65); x += step) {
       const idx = (y * width + x) * 4;
       const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-      totalCount++;
-      if (br > 80) brightCount++;
+      centerTotal++;
+      if (br > 100) centerBright++;
     }
   }
-  const brightRatio = totalCount > 0 ? brightCount / totalCount : 0;
+  const centerBrightRatio = centerTotal > 0 ? centerBright / centerTotal : 0;
 
-  // ランキング画面は下半分が明るい (>60%)、ゲーム中は暗い (<30%)
-  if (brightRatio < 0.5) return null;
+  // ランキング画面は中央が明るい (>70%)、ゲーム中は中央が暗い (<40%)
+  if (centerBrightRatio < 0.65) return null;
 
-  // ランキング画面確定 — 星の中の数字を探す
-  // RANKINGテキスト右の星: 画面上部 (y=2%-18%, x=50%-70%)
-  // 数字の色: 高輝度 (白/黄色/明るい色)
-  const rankArea = {
-    x1: Math.floor(width * 0.50),
-    x2: Math.floor(width * 0.70),
-    y1: Math.floor(height * 0.02),
-    y2: Math.floor(height * 0.18),
-  };
-
-  // 高輝度ピクセルを探す (色に関わらず明るい文字)
-  const isBright = (idx) => {
-    const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-    return (r + g + b) / 3 > 200;
-  };
-
-  // 明るい行範囲を自動検出
-  let y1 = rankArea.y2, y2 = rankArea.y1;
-  for (let y = rankArea.y1; y < rankArea.y2; y++) {
-    for (let x = rankArea.x1; x < rankArea.x2; x++) {
-      if (isBright((y * width + x) * 4)) {
-        if (y < y1) y1 = y;
-        if (y + 1 > y2) y2 = y + 1;
-      }
-    }
-  }
-  if (y2 - y1 < 15) return null; // 十分な大きさの文字がない
-
-  // 列の明るさ (正確なy範囲で)
-  const refinedCols = [];
-  for (let x = rankArea.x1; x < rankArea.x2; x++) {
-    let cnt = 0;
-    for (let y = y1; y < y2; y++) {
-      if (isBright((y * width + x) * 4)) cnt++;
-    }
-    refinedCols.push(cnt);
-  }
-
-  // 数字コンテンツの範囲
-  let firstB = -1, lastB = -1;
-  for (let i = 0; i < refinedCols.length; i++) {
-    if (refinedCols[i] >= 2) {
-      if (firstB < 0) firstB = i;
-      lastB = i;
-    }
-  }
-  if (firstB < 0) return null;
-
-  const absFirst = firstB + rankArea.x1;
-  const absLast = lastB + rankArea.x1 + 1;
-  const totalWidth = absLast - absFirst;
-
-  // 1桁 or 2桁の判定とパターンマッチ
-  let digitRanges;
-  if (totalWidth <= 40) {
-    digitRanges = [{ start: absFirst, end: absLast }];
-  } else {
-    // 最も暗い中間点で分割
-    const mid = firstB + Math.floor((lastB - firstB) * 0.3);
-    const midEnd = firstB + Math.floor((lastB - firstB) * 0.7);
-    let splitCol = mid, minBr = Infinity;
-    for (let i = mid; i <= midEnd; i++) {
-      if (refinedCols[i] < minBr) { minBr = refinedCols[i]; splitCol = i; }
-    }
-    digitRanges = [
-      { start: absFirst, end: splitCol + rankArea.x1 },
-      { start: splitCol + rankArea.x1 + 1, end: absLast },
-    ];
-  }
-
-  const digits = [];
-  for (const r of digitRanges) {
-    if (r.end - r.start < 5) continue;
-    const d = recognizeDigitWhite(data, width, r.start, r.end, y1, y2);
-    if (d !== null) digits.push(d);
-  }
-
-  if (digits.length === 0) return null;
-  let rank = 0;
-  for (const d of digits) rank = rank * 10 + d;
-  if (rank < 1 || rank > 91) return null;
-
-  return rank;
+  // ランキング画面確定 — 画面がランキング画面であることを返す
+  // (数字の正確なOCRは困難なため、検出フラグのみ返す)
+  // 呼び出し側でlastKnownRankをフォールバックとして使用
+  return -1; // -1 = ランキング画面検出、ただし数字未読み取り
 }
 
 /**

@@ -320,13 +320,14 @@ async function gameLoop(page, calibration, gameNumber) {
             const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
             const rankResult = await detectRankingScreen(screenshotPath);
             if (rankResult != null) {
-              lastKnownRank = rankResult;
               rankingDetected = true;
-              // ランキング画面スクショを即座にコピー保存
+              // ランキング画面スクショを保存（後で手動確認用）
               const { copyFileSync } = await import('fs');
               const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
               try { copyFileSync(screenshotPath, rkPath); } catch {}
-              console.log(`[game] RANKING screen found! Final rank: ${rankResult}`);
+              // rankResult > 0 なら正確な値、-1 ならlastKnownRankをフォールバック
+              if (rankResult > 0) lastKnownRank = rankResult;
+              console.log(`[game] RANKING screen detected! rank=${rankResult > 0 ? rankResult : 'using realtime=' + lastKnownRank}`);
             }
           } catch (e) {
             if (!e.message?.includes('is not a function')) {
