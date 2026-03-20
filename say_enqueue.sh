@@ -15,6 +15,7 @@
 
 set -uo pipefail
 cd "$(dirname "$0")"
+[ -z "${VOICEVOX_URL:-}" ] && [ -f .env ] && . ./.env
 
 # フラグ処理
 NO_PREEMPT=false

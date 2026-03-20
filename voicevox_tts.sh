@@ -6,6 +6,8 @@
 #   ./voicevox_tts.sh "テキスト"          # テキストを音声合成+再生
 #   ./voicevox_tts.sh -o out.wav "テキスト"  # ファイル出力
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -z "${VOICEVOX_URL:-}" ] && [ -f "$SCRIPT_DIR/.env" ] && . "$SCRIPT_DIR/.env"
 VOICEVOX_URL="${VOICEVOX_URL:-http://127.0.0.1:50021}"
 VOICEVOX_SPEAKER="${VOICEVOX_SPEAKER:-3}"  # デフォルト: ずんだもん ノーマル
 VOICEVOX_TIMEOUT="${VOICEVOX_TIMEOUT:-30}"

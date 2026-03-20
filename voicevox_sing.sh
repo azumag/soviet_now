@@ -6,10 +6,11 @@
 #   ./voicevox_sing.sh -o out.wav score.json  # 楽譜ファイルから合成
 #   ./voicevox_sing.sh -o out.wav -           # stdin から楽譜JSON
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -z "${VOICEVOX_URL:-}" ] && [ -f "$SCRIPT_DIR/.env" ] && . "$SCRIPT_DIR/.env"
 VOICEVOX_URL="${VOICEVOX_URL:-http://127.0.0.1:50021}"
 VOICEVOX_SING_SPEAKER="${VOICEVOX_SING_SPEAKER:-6000}"  # 波音リツ (sing用)
 VOICEVOX_SING_TIMEOUT="${VOICEVOX_SING_TIMEOUT:-120}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEFAULT_SCORE="$SCRIPT_DIR/data/songs/default.json"
 
 check_server() {
