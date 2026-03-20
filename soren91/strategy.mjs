@@ -1,16 +1,13 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v17)
+ * strategy.mjs - ドロップ位置決定戦略 (v18)
  *
- * v17改善点 (v16からの改善):
- * - CRITICAL mode: lowMergeLimit を avgHeight+0.2 → DEADLINE_Y-0.1 に大幅拡大
- *   → 実測: 24ピース時でも CRITICAL_LOW_COL_Y-5.0 (空列落下) が頻発していた問題を修正
- *   → avgHeight+0.2 は狭すぎてほぼ全列を除外していた (ガベージ多い91人対戦で致命的)
- * - CRITICAL mode: merge vs lowest column の閾値を -0.6 → -1.2 に変更
- *   → マージを積極的に優先、わずかな高さ差で空列逃げしないよう改善
- * - CRITICAL mode: findMergeInLowCol 失敗時に findBestMerge をフォールバック追加
- *   → 「CRITICAL_LOW_COL_Y-5.0 (空列落下)」→「CRITICAL_ANY_MERGE_T*」へ置き換え
- * - garbageUrgent CRITICAL path の lowLimit も同様に拡大 (avgHeight+0.2 → DEADLINE_Y-0.1)
- * - HOLD評価の lowLimit も拡大 (avgHeight+0.3 → DEADLINE_Y-0.1)
+ * v18改善点 (v17からの改善):
+ * - findAnyMerge: チェーンスコアリング強化 (c1: 4→10, c2: +5, c3: +3)
+ *   → ULTRA_MERGE_T1 でT2+連鎖を誘発する配置を優先
+ * - ULTRA mode T1専用: findT1ChainAnchor 追加
+ *   → T1+T1=T2 が T2クラスタ近くに着地し即座にT3+連鎖を誘発
+ * - ULTRA mode: HOLDスワップ閾値を T3→T2 に緩和 (連鎖機会増加)
+ * - findMergeInLowCol: チェーンスコア追加 (CRITICAL時も連鎖を狙う)
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -59,8 +56,6 @@ export function decide(boardState) {
     ? validH.reduce((a, b) => a + b, 0) / validH.length
     : -3.0;
 
-  // v16: score===0条件を除去 (score=undefinedが常に0になる問題回避)
-  // rawPieceCount>55 && avgHeight>1.3 の物理的指標のみで判定
   const garbageFloodMode = rawPieceCount > 55 && avgHeight > 1.3;
 
   const ultraMassMode = rawPieceCount >= ULTRA_MASS_THRESHOLD;
@@ -81,14 +76,21 @@ export function decide(boardState) {
 
   // --- ULTRAマスモード ---
   if (ultraMassMode) {
-    // T3以上のHOLDをスワップ (高タイプマージ優先)
-    if (canHold && hold && hold.type >= 3 && hold.type > nextType) {
+    // v18: T2以上のHOLDをスワップ (旧: T3以上)
+    if (canHold && hold && hold.type >= 2 && hold.type > nextType) {
       const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
       if (holdMerge !== null) return { x: 0, reason: `ULTRA_HOLD_T${hold.type}`, hold: true };
     }
-    // v16: T1含む全タイプのマージを追う (旧: T2以上のみ)
+
+    // v18: T1専用チェーンアンカー (T1+T1=T2 がT2クラスタ近くに着地する位置)
+    if (nextType === 1) {
+      const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias);
+      if (chainAnchor !== null) return { x: chainAnchor, reason: `ULTRA_CHAIN_ANCHOR_T1` };
+    }
+
     const ultraMergeX = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
     if (ultraMergeX !== null) return { x: ultraMergeX, reason: `ULTRA_MERGE_T${nextType}` };
+
     // T1: 次ピースがT2+の場合のみHOLD
     if (canHold && nextType === 1 && !hold) {
       const nextPieceType = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
@@ -96,7 +98,6 @@ export function decide(boardState) {
         return { x: 0, reason: `ULTRA_HOLD_T1_NEXT_T${nextPieceType}`, hold: true };
       }
     }
-    // v16: クラスタリングフォールバック (最低列でなく同タイプ近くに配置)
     const ultraCluster = findClusterDrop(activePieces, nextType, colHeights, dangerBias);
     if (ultraCluster) return { x: ultraCluster.x, reason: `ULTRA_CLUSTER_T${nextType}` };
     const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
@@ -118,7 +119,6 @@ export function decide(boardState) {
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
     }
 
-    // v17: lowLimit を DEADLINE_Y-0.1 に拡大 (旧: avgHeight+0.2 は狭すぎてほぼ全列除外)
     const critMergeLimit = DEADLINE_Y - 0.1;
 
     const critGbgMinType = 2;
@@ -134,7 +134,6 @@ export function decide(boardState) {
     }
 
     if (canHold && hold && hold.type) {
-      // v17: HOLD評価の lowLimit も拡大 (旧: avgHeight+0.3)
       const holdLowMerge = countLowColMerge(activePieces, hold.type, colHeights, critMergeLimit);
       const nextLowMerge = countLowColMerge(activePieces, nextType, colHeights, critMergeLimit);
       if (holdLowMerge > 0 && nextLowMerge === 0) {
@@ -152,15 +151,12 @@ export function decide(boardState) {
 
     if (lowColMerge) {
       const mergeColH = colHeights[nearestColIdx(lowColMerge.x)];
-      // v17: -0.6 → -1.2 に変更: わずかな高さ差でマージを捨てない
       if (lowestColH < mergeColH - 1.2) {
         return { x: lowestDrop.x, reason: `CRITICAL_LOW_COL_Y${lowestColH.toFixed(1)}` };
       }
       return { x: lowColMerge.x, reason: `CRITICAL_MERGE_T${nextType}` };
     }
 
-    // v17: findMergeInLowCol 失敗時に findBestMerge でフォールバック
-    // → CRITICAL_LOW_COL_Y-5.0 (空列落下) を CRITICAL_ANY_MERGE に置き換え
     if (nextType >= 1) {
       const critFallbackMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0);
       if (critFallbackMerge) {
@@ -253,7 +249,48 @@ export function decide(boardState) {
     || { x: 0.0, reason: 'CENTER_FALLBACK' };
 }
 
-/** 大量ピースモード用 - 安全列のマージを探す */
+/**
+ * v18新機能: T1専用チェーンアンカー
+ * T1+T1=T2 の着地位置が T2クラスタ近くになる T1ターゲットを探す
+ * → T1マージ後すぐにT2+T2=T3連鎖を誘発する位置を優先
+ */
+function findT1ChainAnchor(pieces, colHeights, dangerBias) {
+  const t1Pieces = pieces.filter(p =>
+    p.type === 1 && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y
+  );
+  if (t1Pieces.length === 0) return null;
+
+  let best = null;
+  let bestScore = -Infinity;
+
+  for (const t1 of t1Pieces) {
+    const ci = nearestColIdx(t1.x);
+    if (colHeights[ci] >= DEADLINE_Y + 0.2) continue;
+
+    // T1+T1=T2 の着地点 t1.x 付近にT2がいくつあるか
+    const nearT2 = countNear(pieces, t1.x, 2, 2.0);
+    const nearT3 = countNear(pieces, t1.x, 3, 2.2);
+    const nearT4 = countNear(pieces, t1.x, 4, 2.4);
+
+    // チェーン期待がなければスキップ
+    if (nearT2 === 0) continue;
+
+    let s = nearT2 * 12;  // T2が近い = T1マージ後すぐT2連鎖
+    s += nearT3 * 6;      // T3も近ければT3連鎖も期待
+    s += nearT4 * 3;
+    s -= colHeights[ci] * 4.0;
+    s -= Math.abs(t1.x) * 0.8;
+    if (Math.abs(t1.x) > 2.2) s -= 5;
+    if (dangerBias < 0 && t1.x < -0.5) s -= 5;
+    if (dangerBias > 0 && t1.x > 0.5) s -= 5;
+
+    if (s > bestScore) { bestScore = s; best = t1; }
+  }
+
+  return best ? clampX(best.x) : null;
+}
+
+/** 大量ピースモード用 - 安全列のマージを探す (v18: チェーンスコア強化) */
 function findAnyMerge(pieces, nextType, colHeights, dangerBias) {
   const candidates = pieces.filter(p =>
     p.type === nextType && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y
@@ -271,8 +308,13 @@ function findAnyMerge(pieces, nextType, colHeights, dangerBias) {
     if (Math.abs(t.x) > 2.2) s -= 5;
     if (dangerBias < 0 && t.x < -0.5) s -= 5;
     if (dangerBias > 0 && t.x > 0.5) s -= 5;
+    // v18: チェーンスコア強化 (c1: 4→10, c2: +5, c3: +3)
     const c1 = countNear(pieces, t.x, nextType + 1, 1.8);
-    s += c1 * 4;
+    const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
+    const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
+    s += c1 * 10;
+    s += c2 * 5;
+    s += c3 * 3;
     if (s > bestScore) { bestScore = s; best = t; }
   }
 
@@ -290,7 +332,7 @@ function countLowColMerge(pieces, type, colHeights, heightLimit) {
   }).length;
 }
 
-/** 低列(colH <= heightLimit)でのマージ先を探す - CRITICAL用 */
+/** 低列(colH <= heightLimit)でのマージ先を探す - CRITICAL用 (v18: チェーンスコア追加) */
 function findMergeInLowCol(pieces, nextType, colHeights, heightLimit, dangerBias) {
   const candidates = pieces.filter(p => {
     const ci = nearestColIdx(p.x);
@@ -311,8 +353,11 @@ function findMergeInLowCol(pieces, nextType, colHeights, heightLimit, dangerBias
     s += nextType * 1.5;
     const nearSame = candidates.filter(p => p !== t && Math.abs(p.x - t.x) < 1.2).length;
     s += nearSame * 4;
+    // v18: チェーンスコア追加
     const c1 = countNear(pieces, t.x, nextType + 1, 1.8);
-    s += c1 * 5;
+    const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
+    s += c1 * 6;
+    s += c2 * 3;
     s -= Math.abs(t.x) * 0.6;
     if (Math.abs(t.x) > 2.2) s -= 4;
     if (dangerBias < 0 && t.x < -0.5) s -= 6;
@@ -444,14 +489,12 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     let s = 0;
     s -= colH * 4.0;
     if (colH > DEADLINE_Y - 0.4) s -= 10;
-    // v16: 高列ペナルティ軽減 (-5→-2): ガベージ除去効果を重視
     if (colH > avgHeight + 0.8) s -= 2;
     s += nextType * 1.5;
 
     const c1 = countNear(pieces, t.x, nextType + 1, 1.8);
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
-    // v16: チェーンスコアリング強化
     const chainScore = c1 * 8 + c2 * 4 + c3 * 2;
     if (chainScore < minChainScore) continue;
     s += chainScore;
