@@ -25,20 +25,12 @@ Game Overview:
       9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
       9.5. Current type stack merge priority - Bonus for stacking on same type pieces when no immediate merge (v272: same type stacking)
 
- Phases (determined by board max Y):
-     LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
-     MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
-     HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
-     CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
-
-【Jiji Fact Check 2026-03-20】
-日米首脳会談、トランプ大統領、日本、NATO、対イラン対策、防衛費、在日米軍、二国間同盟、集団防衛、安保3文書
-削除: 具体的日付（2026年3月、2025年2月28日、2025年10月21日、2025年1月20日、2025年11月、2025年12月）
-削除: 人物名（高市早苗、アリー・ハーメネイー、中国の大阪総領事）
-削除: 事件名（ホルムズ海峡危機、イラン戦争）
-削除: 具体的数値（1970年代以来最悪）
-削除: 具体的法律名（平安全保障法制）
- """
+Phases (determined by board max Y):
+    LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
+    MEDIUM   (0.8 <= max_y < 1.8) : Mid game. Height management (height_mult=1.4)
+    HIGH     (1.8 <= max_y < 3.0) : Late game. Merge opportunity (height_mult=1.8)
+    CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
+"""
 
 # Fixed interface:
 # decide(game_state: dict, analysis: dict) -> dict
@@ -331,18 +323,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
         height_penalty = landing_y * 50.0 * height_mult
 
-        # v282: reactive_pairsあり時の非併合heightペナルティ緩和調整版 - v270/v279失敗モード潰し
-        # v270のheight_mult緩和(0.8)は戦略的配置を可能にしたが、batch_summaryでHIGH_LAYER_SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEのavg_score_delta=5.5（低スコア傾向）を確認。
-        # ワーストゲーム(score0950)終盤turns 69-78でHIGH_TOWER_DANGER_ZONE_MERGE_REQUIREDが続き、即時併合機会を取りこぼしてmax_y=3.04オーバー。
-        # v279のdeadline_crossed時戦略的配置優先は失敗。deadline_crossed && reactive_pairs>=1の場合は即時併合を最優先。
-        # v282では、deadline_crossedしていない場合でも、reactive_pairs>=1 && merge_grade=="NO"のheight_mult緩和を0.8→0.9に強化し、戦略的配置の余地を少し制限。
-        # これにより即時併合機会の取りこぼしを削減し、max_yの上昇を抑制。reactive_pairsを活用した将来の併合を狙う戦略的思考は維持。
-        # v268/v270/v279 rollback教訓: 戦略的配置の余地を確保しつつ、即時併合機会の取りこぼしを回避。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260320_080117_score0950.jsonl turns 69-78, game_history/20260320_080414_score1072.jsonl turns 56-71
+        # v270 fix: reactive_pairsあり時の非併合heightペナルティ緩和版 - 危険域での戦略的配置余地を確保
+        # ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3あるのにmerge_available=falseが続き、
+        # -1500.0ペナルティにより強制的に高配置となりゲームオーバー。
+        # ベストゲーム(score2945)終盤turns 127-133でも同様の状況だが、より多くのターンを耐えている。
+        # axis 8.5の-1500.0ペナルティは全候補を一律に下げるため、「強制配置」の問題が残る。
+        # reactive_pairs>=1かつmerge_grade=="NO"の場合、height_multを0.8に緩和し、
+        # 戦略的配置の余地を確保しつつdeadline緊急性を維持。reactive_pairsを活用して将来の併合を狙う戦略的思考へ切り替える。
+        # v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133
         if reactive_pair_count >= 1 and merge_grade == "NO":
             # reactive_pairsがある場合は、将来の併合を狙える戦略的配置を可能にするためheight_multを緩和
-            # v282: 0.8→0.9に強化し、戦略的配置の余地を少し制限して即時併合優先を強化
-            height_mult *= 0.9
+            height_mult *= 0.8
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -457,39 +449,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
-
-        # ----- evaluation axis 6.5: post-merge adjacency bonus (NEW: merged_type adjacency evaluation) -----
-        # advice.md「国typeAが併合して国typeBになる際、周囲の国typeAとの隣接を戦略的に評価し、将来のさらなる併合可能性を最大化する配置を考慮すること」に基づく構造的改善。
-        # batch_summaryでHIGH_LAYER_SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEがavg_score_delta=5.5（低スコア傾向）を確認。
-        # 即時併合後、merged_typeになる位置の周囲に現在タイプ（next_type）のピースが多く隣接している場合、将来のさらなる併合可能性が高まる。
-        # 併合候補位置の周囲1.5以内に現在タイプのピースがどれくらいあるかを評価し、将来の連鎖的併合機会を最大化。
-        # reactive_pairsがある場合、この評価を強化して盤面圧縮と将来の併合を同時に狙う。
-        # refs: advice.md (プリパラ煉獄丸, Pitman_live), tmp/batch_summary.txt
-        if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
-            merges = result["merges"]
-            if merges:
-                best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
-                target_x = best_merge.get("x", 0)
-                target_y = best_merge.get("y", 0)
-
-                # 併合後のmerged_type位置の周囲1.5以内に現在タイプのピースを数える
-                adjacent_same_type_count = 0
-                for p in pieces:
-                    if p.get("type") == next_type:
-                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
-                        if dist < 1.5:
-                            adjacent_same_type_count += 1
-
-                # 隣接している現在タイプのピースが多い場合、将来の併合可能性を最大化するボーナスを付与
-                if adjacent_same_type_count >= 1:
-                    # reactive_pairsがある場合、ボーナスを強化
-                    if reactive_pair_count >= 1:
-                        adjacency_bonus = adjacent_same_type_count * 400.0
-                        reasons.append("POST_MERGE_ADJACENCY_REACTIVE")
-                    else:
-                        adjacency_bonus = adjacent_same_type_count * 200.0
-                        reasons.append("POST_MERGE_ADJACENCY")
-                    score += adjacency_bonus
 
         # ----- evaluation axis 7: early game merge priority -----
         # 初期12ターンでマージ機会がある場合、強力なボーナスを付与
