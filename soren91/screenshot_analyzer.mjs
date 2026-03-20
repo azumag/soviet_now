@@ -88,10 +88,9 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     ? detectHoldPiece(data, width, height, board)
     : null;
 
-  // 6. 順位検出 (YOUR領域の数字)
-  const rank = state === 'MOVE'
-    ? detectRank(data, width, height, board)
-    : null;
+  // 6. 順位検出 — リアルタイムOCRは精度不足のため無効化
+  // ランキング画面からの検出 (detectRankingScreen) に委ねる
+  const rank = null;
 
   return {
     state,
