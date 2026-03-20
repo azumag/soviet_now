@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-20 19:28:14 JST`
+- Updated: `2026-03-20 20:54:18 JST`
 - Nodes: `628`
-- Edges: `889`
-- Current: `53f72171e961`
+- Edges: `890`
+- Current: `76aa40108046`
 - Anchor: `d5c1cf0a8981`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -71,10 +71,10 @@ flowchart TD
     h_f02b10f65ec4["f02b10f65ec4<br/>g=16 n=16<br/>comp=1622.3"]
     h_44ea003f3e78["44ea003f3e78<br/>g=12 n=12<br/>comp=1180.5"]
     h_fde77e8443bd["fde77e8443bd<br/>g=12 n=12<br/>comp=1321.9"]
-    h_76aa40108046["76aa40108046<br/>g=13 n=13<br/>comp=1486.0"]
+    h_76aa40108046["76aa40108046<br/>CURRENT<br/>g=14 n=14<br/>comp=1481.9"]
+    h_53f72171e961["53f72171e961<br/>g=21 n=20<br/>comp=1633.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_53f72171e961["53f72171e961<br/>CURRENT"]
 
     h_62c7a96cd8dd -->|improve| h_7bceafea8432
     h_7bceafea8432 -->|improve| h_a971843b52a8
@@ -159,6 +159,7 @@ flowchart TD
     h_fde77e8443bd -. rollback .-> h_b4533b8c7dc6
     h_b4533b8c7dc6 -->|improve| h_76aa40108046
     h_76aa40108046 -->|improve| h_53f72171e961
+    h_53f72171e961 -->|improve| h_76aa40108046
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -221,10 +222,10 @@ flowchart TD
     class h_f02b10f65ec4 plain;
     class h_44ea003f3e78 plain;
     class h_fde77e8443bd plain;
-    class h_76aa40108046 plain;
+    class h_76aa40108046 current;
+    class h_53f72171e961 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_53f72171e961 current;
 ```
 
 ## Detail 1/8
@@ -2226,9 +2227,9 @@ flowchart TD
 
 ## Detail 8/8
 
-- Range: `4e4943f7f65c` .. `53f72171e961`
+- Range: `4e4943f7f65c` .. `a3aae72a4e37`
 - Nodes in this diagram: `68`
-- Internal edges in this diagram: `94`
+- Internal edges in this diagram: `95`
 - Cross-chunk link: `467e45d0adc3 --improve--> 4e4943f7f65c`
 - Cross-chunk link: `4e4943f7f65c -.rollback.-> 4da6ecce5bb9`
 - Cross-chunk link: `467e45d0adc3 --improve--> ddd4637d2985`
@@ -2309,10 +2310,10 @@ flowchart TD
     h_f02b10f65ec4["f02b10f65ec4<br/>g=16 n=16<br/>comp=1622.3"]
     h_44ea003f3e78["44ea003f3e78<br/>g=12 n=12<br/>comp=1180.5"]
     h_fde77e8443bd["fde77e8443bd<br/>g=12 n=12<br/>comp=1321.9"]
-    h_76aa40108046["76aa40108046<br/>g=13 n=13<br/>comp=1486.0"]
+    h_76aa40108046["76aa40108046<br/>CURRENT<br/>g=14 n=14<br/>comp=1481.9"]
+    h_53f72171e961["53f72171e961<br/>g=21 n=20<br/>comp=1633.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_53f72171e961["53f72171e961<br/>CURRENT"]
 
     h_ddd4637d2985 -->|improve| h_1d954126e373
     h_1d954126e373 -->|improve| h_cdfe94687752
@@ -2408,6 +2409,7 @@ flowchart TD
     h_fde77e8443bd -. rollback .-> h_b4533b8c7dc6
     h_b4533b8c7dc6 -->|improve| h_76aa40108046
     h_76aa40108046 -->|improve| h_53f72171e961
+    h_53f72171e961 -->|improve| h_76aa40108046
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2478,13 +2480,23 @@ flowchart TD
     class h_f02b10f65ec4 plain;
     class h_44ea003f3e78 plain;
     class h_fde77e8443bd plain;
-    class h_76aa40108046 plain;
+    class h_76aa40108046 current;
+    class h_53f72171e961 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_53f72171e961 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#8173 `53f72171 -> 76aa4010`
+
+- scores: `3305 1474`
+- v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
+- v284の変更（reactive_pairs>=3 && merge_grade=="NO" && danger_piece_count==0で戦略的配置ボーナス+1000.0）は、
+- 即時併合機会がない場合の盤面圧縮を優先する意図だったが、実際には即時併合機会を取りこぼす原因となった。
+- ワーストゲーム(score1116)終盤turns 63-70でreactive_pairs=2-4あるのに即時併合不可、戦略的配置が続きmax_y=1.82→2.95に上昇してゲームオーバー。
+- ベストゲーム(score2831)終盤turns 97-124では即時併合を確実に捉えてスコア2831を出している。
+- batch_summaryでHEIGHT_CONTROLが9.3%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
 
 ### Improve Game#8151 `76aa4010 -> 53f72171`
 
