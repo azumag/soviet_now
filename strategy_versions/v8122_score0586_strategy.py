@@ -40,6 +40,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
     # --- Change History ---
+# v281: 危険域(max_y>=2.0)即時併合強化版 - 下振れ耐性向上
+# batch_summaryでNEAR_MERGE_HIGH_LAYER_CHAIN_MERGE_REACTIVE_MERGE_PRIORITYがavg_score_delta=39.8と高価値だが選択率が5.0%と低いことを確認。
+# ワーストゲーム(score0330)終盤turns 42-49でmax_y=1.10→2.53、merge_hits=2、score_gain=21。
+# ベストゲーム(score2812)終盤turns 133-140でmax_y=0.22→3.77、merge_hits=4、score_delta=230。
+# last_rollback_analysisでp25悪化(1003.0→1458.8)が特定されており、危険域での即時併合取りこぼしが下振れの主要因と推定。
+# axis 8.5の条件をdeadline_crossedからmax_y>=2.0に拡張し、危険域での即時併合機会取りこぼしを削減。
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md,
+#       game_history/20260320_163724_score0330.jsonl turns 42-49, game_history/20260320_164243_score2812.jsonl turns 133-140
+#
 # v277: deadline_crossed時SAME_TYPE_STACK抑制即時併合最優先版 - ワーストゲーム(score948)終盤即時併合取りこぼし潰し
 # ワーストゲーム(score948)終盤turns 60-73でdeadline_crossed=true, reactive_pairs=4があるにもかかわらず、
 # SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEを選択し、即時併合を取りこぼしてmax_y=3.39でオーバー。
@@ -161,23 +170,21 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v274: 危険ピース数増強即時併合優先版 - ワーストゲーム(score0508)終盤危険エリア即時併合取りこぼし潰し
+    """v281: 危険域(max_y>=2.0)即時併合強化版 - 下振れ耐性向上
 
-    ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
-    ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
-    batch_summaryでHEIGHT_CONTROLが12.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が3.0-4.2%選択(avg_score_delta=22.3-37.9)と低選択率を確認。
-    v273の固定+800.0ボーナスでは、danger_piece_countの緊急性を十分反映できていなかった問題を解消。
-    axis 8.5改善：danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
-    即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
-    last_rollback_postmortemの「deadline_crossed=true && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守。
-    即時併合機会がある候補が強化されることで、危険エリアでの即時併合優先が強化され、
-    ワーストゲームのような「danger_piece_count増加中に即時併合取りこぼし」問題を解消。
+    batch_summaryでNEAR_MERGE_HIGH_LAYER_CHAIN_MERGE_REACTIVE_MERGE_PRIORITYがavg_score_delta=39.8と高価値だが選択率が5.0%と低いことを確認。
+    ワーストゲーム(score0330)終盤turns 42-49でmax_y=1.10→2.53、merge_hits=2、score_gain=21。
+    ベストゲーム(score2812)終盤turns 133-140でmax_y=0.22→3.77、merge_hits=4、score_delta=230。
+    last_rollback_analysisでp25悪化(1003.0→1458.8)が特定されており、危険域での即時併合取りこぼしが下振れの主要因と推定。
+    axis 8.5の条件をdeadline_crossedからmax_y>=2.0に拡張し、危険域での即時併合機会取りこぼしを削減。
+    deadline_crossed状態または危険域(max_y>=2.0)で、即時併合機会のボーナスを強化し、
+    危険エリアでの即時併合取りこぼしを削減して下振れ耐性を向上させる。
 
-    v274の改善点:
-    1. axis 8.5改善：danger_piece_count増強即時併合優先
-       - danger_piece_countに応じて即時併合ボーナスを段階的に強化: 1個+800.0, 2個+1000.0, 3個以上+1200.0
-       - 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保
-    2. v273のaxis 9.5（same type stacking）を維持
+    v281の改善点:
+    1. axis 8.5改善：危険域(max_y>=2.0)即時併合強化
+       - deadline_crossedまたはmax_y>=2.0の場合、即時併合機会のボーナスを強化
+       - reactive_pairs>=1の場合、即時併合不可時のペナルティを段階的に強化
+    2. v277のaxis 9.5（same type stacking）を維持
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -462,15 +469,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ワーストゲーム(score0735)終盤turns 63-71でdeadline_crossed=true,danger_piece_count=5-1の即時併合取りこぼしでmax_y=3.62オーバー。
         # ベストゲーム(score5090)終盤turns 190-197でdeadline_crossed時も即時併合を確実に捕捉して延命。
         # deadline_crossed状態の強制的な即時併合優先により、危険エリアでの回復戦略を強化。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md (Pitman_live),
-        #       game_history/20260319_084501_score0735.jsonl turns 63-71, game_history/20260319_082101_score5090.jsonl turns 190-197
+        # 
+        # v281: 危険域(max_y>=2.0)即時併合強化版 - 下振れ耐性向上
+        # batch_summaryでNEAR_MERGE_HIGH_LAYER_CHAIN_MERGE_REACTIVE_MERGE_PRIORITYがavg_score_delta=39.8と高価値だが選択率が5.0%と低いことを確認。
+        # ワーストゲーム(score0330)終盤turns 42-49でmax_y=1.10→2.53、merge_hits=2、score_gain=21。
+        # ベストゲーム(score2812)終盤turns 133-140でmax_y=0.22→3.77、merge_hits=4、score_delta=230。
+        # last_rollback_analysisでp25悪化(1003.0→1458.8)が特定されており、危険域での即時併合取りこぼしが下振れの主要因と推定。
+        # axis 8.5の条件をdeadline_crossedからmax_y>=2.0に拡張し、危険域での即時併合機会取りこぼしを削減。
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, advice.md,
+        #       game_history/20260320_163724_score0330.jsonl turns 42-49, game_history/20260320_164243_score2812.jsonl turns 133-140
 
         deadline_crossed = reactor.get("deadline_crossed", False)
         danger_piece_count = reactor.get("danger_piece_count", 0)
         danger_direct_merge_available = result.get("danger_direct_merge_available", False)
+        danger_zone = max_y >= 2.0  # 危険域判定: max_y>=2.0
 
-        if deadline_crossed:
-            # deadline_crossed状態：強制的に即時併合優先し、HEIGHT_CONTROLを完全に抑制
+        if deadline_crossed or danger_zone:
+            # deadline_crossed状態または危険域(max_y>=2.0)：強制的に即時併合優先し、HEIGHT_CONTROLを完全に抑制
             if merge_grade in ["DIRECT", "NEAR"]:
                 # 危険ピース数に応じて即時併合ボーナスを段階的に強化し、緊急性を反映
                 # 1個: +1200.0, 2個: +1500.0, 3個以上: +1800.0
@@ -482,11 +497,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 1200.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif danger_direct_merge_available:
-                # deadline_crossed状態で即時併合可能だが、この候補では併合できない場合：強力なペナルティ
+                # deadline_crossed状態または危険域で即時併合可能だが、この候補では併合できない場合：強力なペナルティ
                 score -= 1000.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
-                # deadline_crossed状態で即時併合機会がない場合：reactive_pairsに応じて段階的ペナルティを適用
+                # deadline_crossed状態または危険域で即時併合機会がない場合：reactive_pairsに応じて段階的ペナルティを適用
                 # reactive_pairsが少ない場合は戦略的配置の余地を確保し、多い場合は強力なペナルティで即時併合逃しを回避
                 if reactive_pair_count <= 1:
                     score -= 600.0  # reactive_pairs<=1の場合は緩和したペナルティで戦略的配置の余地を確保
