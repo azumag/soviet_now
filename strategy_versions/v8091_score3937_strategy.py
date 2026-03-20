@@ -40,18 +40,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
       # --- Change History ---
- # v283: v282 rollback failure mode修正 - reactive_pairs height_mult緩和を戦略的配置の後に移動
- # v282の問題点：reactive_pairs>=1 && merge_grade=="NO"のheight_mult*=0.8が戦略的配置の前に適用され、
- # deadline_crossed状態でもaxis 8.5の戦略的配置を阻害していた。
- # ワーストゲーム(score0552)終盤turns 50-57でdeadline_crossed=true, reactive_pairs=4-5あるのに即時併合不可、
- # max_yが2.07→2.82に上昇してゲームオーバー。
- # ベストゲーム(score2371)終盤turns 105-111ではdeadline_crossed状態でも即時併合を確実に捉えてmax_yを2.29→2.15に下げ延命。
- # batch_summaryでHEIGHT_CONTROLが11.7%選択(avg_score_delta=0.1)と過剰、即時併合機会取りこぼしが問題。
- # last_rollback_postmortemの制約遵守：戦略的配置後にheight_mult緩和を適用し、deadline_crossed状態での
- # 戦略的配置を阻害しないようにする。axis 8.5でreactive_pairs>=1の場合height_mult=0.8、
- # reactive_pairs==0の場合height_mult=0.6を適用し、適切な戦略的配置を可能にする。
+ # v285: axis 10.0 追加 - 高type集中育成戦略
+ # ワーストゲーム(score0530)終盤turns 48-55でreactive_pairs=5-7あるのに即時併合不可、max_y=2.08でオーバー。
+ # ベストゲーム(score3807)終盤turns 147-154で即時併合を確実に捉えてスコア3807を出している。
+ # batch_summaryでHEIGHT_CONTROLが低スコア群で11.4%選択と過剰、即時併合機会取りこぼしが問題。
+ # advice.md「中途半端に育てたパーツをたくさん作る戦略はうまく行かない。1〜2箇所に集中して大きく育てる戦略へ転換」に基づき、
+ # 即時併合がない場合に盤面上の最も高いtypeのピースに近い配置を優先する新しい評価軸（axis 10.0）を追加。
+ # reactive_pairsがある場合はこの評価を強化し、高typeピースを集中的に育てる戦略を実装。
+ # last_rollback_postmortemの制約を遵守：戦略的配置を強化しつつ即時併合最優先を維持。
  # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
- #       game_history/20260320_125821_score0552.jsonl turns 50-57, game_history/20260320_124908_score2371.jsonl turns 105-111
+ #       advice.md, game_history/20260320_133354_score0530.jsonl turns 48-55, game_history/20260320_140838_score3807.jsonl turns 147-154
  #
  # v281: axis 9.5 ボーナス条件調整 - deadline_crossed時reactive_pairs==0なら戦略的配置許容
  # ワーストゲーム(score0735)終盤turns 60-71でdeadline_crossed=trueになった後、即時併合機会がなく
@@ -629,23 +627,74 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                 reasons.append("SAME_TYPE_STACK")
                 
                 # merged type adjacency: 2手先の併合（merged_type）ピースに近い配置を優先
+                # v284: reactive_pairs==0の場合、merged_type adjacencyボーナスを強化して2手先の併合可能性を最大化
                 # 即時併合機会がない場合、2手先の併合可能性を最大化する配置を優先することで、
                 # max_yが上昇中の状況でより即時併合機会を最大化する配置を選択する
+                # advice.md「中途半端に育てたパーツをたくさん作る戦略はうまく行かない」に基づき、
+                # 1〜2箇所に集中して大きく育てる戦略へ転換。reactive_pairsがない場合、
+                # merged_type adjacencyボーナスを強化して将来の併合可能性を最大化
                 # v281: deadline_crossed && reactive_pairs>=1の場合はMERGED_TYPE_ADJACENCYボーナスを完全に抑制して即時併合最優先
                 if merged_type_stack_top and not (deadline_crossed and reactive_pair_count >= 1):
                     merged_stack_top_x = merged_type_stack_top.get("x", 0)
                     horiz_dist_merged = abs(x - merged_stack_top_x)
                     if horiz_dist_merged < 0.8:  # ピースの真上に近い配置
+                        # v284: reactive_pairs==0の場合、merged_type adjacencyボーナスを500.0に強化して2手先の併合可能性を最大化
                         # reactive_pairsがある場合、ボーナスを強化
                         if reactive_pair_count >= 1:
                             score += 500.0
                             if "MERGED_TYPE_ADJACENCY_REACTIVE" not in "_".join(reasons):
                                 reasons.append("MERGED_TYPE_ADJACENCY_REACTIVE")
                         else:
-                            score += 250.0
+                            # v284: reactive_pairs==0の場合、将来の併合可能性を最大化するためボーナスを500.0に強化
+                            score += 500.0
                             if "MERGED_TYPE_ADJACENCY" not in "_".join(reasons):
-                                reasons.append("MERGED_TYPE_ADJACENCY")
-
+                             reasons.append("MERGED_TYPE_ADJACENCY")
+ 
+        # ----- evaluation axis 10.0: high type集中育成戦略 (NEW: 高typeピースを集中して育てる戦略) -----
+        # advice.md「中途半端に育てたパーツをたくさん作る戦略はうまくいかない。1〜2箇所に集中して大きく育てる戦略へ転換」に基づく構造的改善。
+        # batch_summaryでHEIGHT_CONTROLが低スコア群で11.4%選択と過剰、即時併合機会取りこぼしが問題。
+        # 即時併合がない場合、盤面上の最も高いtypeのピースに近い配置を優先し、将来の成長パイプラインを維持。
+        # reactive_pairsがある場合はこの評価を強化し、高typeピースを集中的に育てる。
+        # 未活用のpieces type情報を活用し、高typeピースに近い配置を優先することで、将来の高type成長を確保。
+        if not pieces:
+            max_type_piece = None
+            max_type = 0
+        else:
+            max_type_piece = max(pieces, key=lambda p: p.get("type", 0))
+            max_type = max_type_piece.get("type", 0)
+        
+        if max_type_piece and merge_grade == "NO":
+            max_stack_x = max_type_piece.get("x", 0)
+            max_stack_y = max_type_piece.get("y", -10)
+            
+            # 配置位置が最上位の最大typeピースに近い場合、ボーナスを付与
+            horiz_dist_max_type = abs(x - max_stack_x)
+            if horiz_dist_max_type < 0.8:  # ピースの真上に近い配置
+                # reactive_pairsがある場合、ボーナスを強化
+                if reactive_pair_count >= 1:
+                    score += 700.0
+                    reasons.append("HIGH_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
+                else:
+                    score += 400.0
+                    reasons.append("HIGH_TYPE_STACK_MERGE_PRIORITY")
+            
+            # 配置位置が盤面上の最大typeのピースの上になる場合、移動ペナルティを軽減
+            landing_y = result.get("landing_y", 0)
+            if landing_y > max_stack_y:
+                horiz_dist = abs(x - max_stack_x)
+                if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
+                    # reactive_pairsがある場合、ペナルティ軽減を強化
+                    if reactive_pair_count >= 1:
+                        # 移動ペナルティを50%軽減
+                        score += 250.0
+                        if "HIGH_TYPE_STACK" not in "_".join(reasons):
+                            reasons.append("HIGH_TYPE_STACK")
+                    else:
+                        # 移動ペナルティを30%軽減
+                        score += 150.0
+                        if "HIGH_TYPE_STACK" not in "_".join(reasons):
+                            reasons.append("HIGH_TYPE_STACK")
+ 
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
