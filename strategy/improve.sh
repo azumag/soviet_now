@@ -215,8 +215,15 @@ with open(rs_file, 'w') as f:
 			# soren91 (メリケンAI) を停止 → バックグラウンド改善開始
 			soren91_stop
 			soren91_improve
-			# Twitch チャットに戦略改善終了を通知
-			./twitch_chat.sh send "戦略改善終了。中華AI復帰、メリケンAIは改善タイム" 2>/dev/null &
+			# 読み上げ + Twitch チャットに戦略改善終了を通知
+			{
+				local _end_file
+				_end_file=$(mktemp /tmp/eloop_soren91_end.XXXXXX)
+				printf '%s\n' "戦略改善終了。交代します" > "$_end_file"
+				VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$_end_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+				rm -f "$_end_file"
+			} &
+			./twitch_chat.sh send "戦略改善終了。交代します" 2>/dev/null &
 		fi
 	fi
 }
@@ -461,7 +468,7 @@ _start_improvement_job() {
 		# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
 		soren91_start
 		# Twitch チャットに戦略改善開始を通知
-		./twitch_chat.sh send "戦略改善中。中華AIはおやすみ、メリケンAIが代打プレイ中" 2>/dev/null &
+		./twitch_chat.sh send "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています" 2>/dev/null &
 		return 0
 	else
 		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死)"
