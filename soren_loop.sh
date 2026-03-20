@@ -172,6 +172,9 @@ while true; do
 		exit 130
 	fi
 
+	# .env を毎試合再読込（再起動なしで設定変更を反映）
+	[ -f .env ] && set -a && . ./.env && set +a
+
 	# eloop_lib.sh は全モジュールをsourceするshim
 	if ! source ./eloop_lib.sh 2>/dev/null; then
 		log "WARNING: eloop_lib.sh の読み込みに失敗 (前回の定義で継続)"
