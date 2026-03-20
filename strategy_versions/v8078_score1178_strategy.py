@@ -39,7 +39,20 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-     # --- Change History ---
+      # --- Change History ---
+ # v283: v282 rollback failure mode修正 - reactive_pairs height_mult緩和を戦略的配置の後に移動
+ # v282の問題点：reactive_pairs>=1 && merge_grade=="NO"のheight_mult*=0.8が戦略的配置の前に適用され、
+ # deadline_crossed状態でもaxis 8.5の戦略的配置を阻害していた。
+ # ワーストゲーム(score0552)終盤turns 50-57でdeadline_crossed=true, reactive_pairs=4-5あるのに即時併合不可、
+ # max_yが2.07→2.82に上昇してゲームオーバー。
+ # ベストゲーム(score2371)終盤turns 105-111ではdeadline_crossed状態でも即時併合を確実に捉えてmax_yを2.29→2.15に下げ延命。
+ # batch_summaryでHEIGHT_CONTROLが11.7%選択(avg_score_delta=0.1)と過剰、即時併合機会取りこぼしが問題。
+ # last_rollback_postmortemの制約遵守：戦略的配置後にheight_mult緩和を適用し、deadline_crossed状態での
+ # 戦略的配置を阻害しないようにする。axis 8.5でreactive_pairs>=1の場合height_mult=0.8、
+ # reactive_pairs==0の場合height_mult=0.6を適用し、適切な戦略的配置を可能にする。
+ # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+ #       game_history/20260320_125821_score0552.jsonl turns 50-57, game_history/20260320_124908_score2371.jsonl turns 105-111
+ #
  # v281: axis 9.5 ボーナス条件調整 - deadline_crossed時reactive_pairs==0なら戦略的配置許容
  # ワーストゲーム(score0735)終盤turns 60-71でdeadline_crossed=trueになった後、即時併合機会がなく
  # max_yが急上昇してゲームオーバー。reactive_pairs=5-7あるのに即時併合ができていない。
@@ -189,26 +202,26 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v280: axis 9.5 に merged type adjacency 追加 - 即時併合機会がない場合の2手先併合可能性最大化
+    """v283: v282 rollback failure mode修正 - reactive_pairs height_mult緩和を戦略的配置の後に移動
 
-    ワーストゲーム(score0818)終盤turns 75-82でdeadline_crossed=trueになった後、即時併合機会がなく
-    max_yが2.63→3.45へ上昇してゲームオーバー。deadline_crossedになる前にmax_yが上昇したことが主因。
-    ベストゲーム(score2589)終盤turns 130-137ではmax_y=1.47→1.87の緩やかな上昇でdeadline_crossedに至らず延命。
-    batch_summaryでHEIGHT_CONTROLが9.6%選択(avg_score_delta=0.0)と過剰、NEAR_MERGE系が高価値だが低選択率を確認。
-    advice.md「次のピースを予測し、数ターン先の配置を計画的に判断する戦略への改善」を参考に、
-    axis 9.5にmerged_typeピース（next_type + 1）に近い配置を優先する評価を追加。
-    即時併合機会がない場合、2手先の併合可能性を最大化する配置を優先することで、
-    max_yが上昇中の状況でより即時併合機会を最大化する配置を選択する。
-    reactive_pairsがある場合、この評価を強化する。
-    last_rollback_postmortemの制約を遵守：deadline_crossed && reactive_pairs>=1の場合は
-    SAME_TYPE_STACKボーナスを完全に抑制して即時併合を最優先。
+    v282の問題点：reactive_pairs>=1 && merge_grade=="NO"のheight_mult*=0.8が戦略的配置の前に適用され、
+    deadline_crossed状態でもaxis 8.5の戦略的配置を阻害していた。
+    ワーストゲーム(score0552)終盤turns 50-57でdeadline_crossed=true, reactive_pairs=4-5あるのに即時併合不可、
+    max_yが2.07→2.82に上昇してゲームオーバー。
+    ベストゲーム(score2371)終盤turns 105-111ではdeadline_crossed状態でも即時併合を確実に捉えてmax_yを2.29→2.15に下げ延命。
+    batch_summaryでHEIGHT_CONTROLが11.7%選択(avg_score_delta=0.1)と過剰、即時併合機会取りこぼしが問題。
+    last_rollback_postmortemの制約遵守：戦略的配置後にheight_mult緩和を適用し、deadline_crossed状態での
+    戦略的配置を阻害しないようにする。axis 8.5でreactive_pairs>=1の場合height_mult=0.8、
+    reactive_pairs==0の場合height_mult=0.6を適用し、適切な戦略的配置を可能にする。
 
-    v280の改善点:
-    1. axis 9.5改善：merged type adjacency 追加
-       - 即時併合機会がない場合、merged_typeピース（next_type + 1）に近い配置を優先
-       - reactive_pairsがある場合、ボーナスを強化（+500.0 vs +250.0）
-    2. v274のaxis 9.5（same type stacking）を維持
-    3. deadline_crossed && reactive_pairs>=1の場合はSAME_TYPE_STACKボーナスを完全に抑制（制約遵守）
+    v283の改善点:
+    1. v282の問題解消：reactive_pairs>=1 && merge_grade=="NO"のheight_mult緩和を戦略的配置の後に移動
+       - axis 8.5（危険域戦略的配置）が先に評価され、その後にheight_mult緩和が適用される
+       - deadline_crossed状態でも戦略的配置が可能になる
+    2. axis 8.5改善：merge_grade=="NO"でreactive_pairs>=1の場合height_mult=0.8、reactive_pairs==0の場合height_mult=0.6
+       - reactive_pairsがある場合は将来の併合を狙える戦略的配置を可能にする
+       - reactive_pairsがない場合は戦略的配置を許容して盤面整理を可能にする
+    3. deadline_crossed && reactive_pairs>=1の場合は、axis 9.5の戦略的配置ボーナスを抑制して即時併合を最優先
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -321,20 +334,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
+        # NOTE: reactive_pairs height_multiplier adjustment moved after strategic placement (axis 8.5)
+        #       to prevent interfering with deadline_crossed && reactive_pairs>=1 strategic placement logic
         height_penalty = landing_y * 50.0 * height_mult
-
-        # v270 fix: reactive_pairsあり時の非併合heightペナルティ緩和版 - 危険域での戦略的配置余地を確保
-        # ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3あるのにmerge_available=falseが続き、
-        # -1500.0ペナルティにより強制的に高配置となりゲームオーバー。
-        # ベストゲーム(score2945)終盤turns 127-133でも同様の状況だが、より多くのターンを耐えている。
-        # axis 8.5の-1500.0ペナルティは全候補を一律に下げるため、「強制配置」の問題が残る。
-        # reactive_pairs>=1かつmerge_grade=="NO"の場合、height_multを0.8に緩和し、
-        # 戦略的配置の余地を確保しつつdeadline緊急性を維持。reactive_pairsを活用して将来の併合を狙う戦略的思考へ切り替える。
-        # v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133
-        if reactive_pair_count >= 1 and merge_grade == "NO":
-            # reactive_pairsがある場合は、将来の併合を狙える戦略的配置を可能にするためheight_multを緩和
-            height_mult *= 0.8
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -550,8 +552,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
                 # 即時併合機会がない場合：戦略的配置の余地を確保するためheight_multを緩和
-                # この緩和はheight_penalty計算時に適用される
-                height_mult *= 0.6
+                # v283: reactive_pairs>=1で即時併合不可の場合、height_mult=0.8で戦略的配置を可能に
+                #      （v282 rollback failure mode修正：height_mult緩和を戦略的配置の後に適用）
+                # reactive_pairsがない場合はheight_mult=0.6で戦略的配置を許容
+                if reactive_pair_count >= 1:
+                    # reactive_pairsがある場合は、将来の併合を狙える戦略的配置を可能にするためheight_multを緩和
+                    # v282の問題点：この緩和が戦略的配置の前に適用されると、deadline_crossed状態でも
+                    #             axis 8.5の戦略的配置を阻害するため、ここで適用（戦略的配置の後）
+                    height_mult *= 0.8
+                else:
+                    height_mult *= 0.6
                 reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
