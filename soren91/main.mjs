@@ -279,7 +279,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let roundEnded = false;
   let holdUsedThisTurn = false;
   let lastKnownRank = null;
-  let waitingScreenshots = null;
+  let rankingDetected = false;
 
   console.log('[game] Game loop started');
 
@@ -314,37 +314,29 @@ async function gameLoop(page, calibration, gameNumber) {
       if (boardState.state === 'WAITING') {
         waitingCount++;
 
-        // WAITING中のスクショパスを記録（ラウンド終了確定後にまとめて解析）
-        if (turn > 5 && !roundEnded) {
-          if (!waitingScreenshots) waitingScreenshots = [];
-          waitingScreenshots.push(screenshotPath);
+        // WAITING中のフレームごとにランキング画面を即座に検出
+        if (turn > 5 && !roundEnded && !rankingDetected) {
+          try {
+            const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
+            const rankResult = await detectRankingScreen(screenshotPath);
+            if (rankResult != null) {
+              lastKnownRank = rankResult;
+              rankingDetected = true;
+              // ランキング画面スクショを即座にコピー保存
+              const { copyFileSync } = await import('fs');
+              const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
+              try { copyFileSync(screenshotPath, rkPath); } catch {}
+              console.log(`[game] RANKING screen found! Final rank: ${rankResult}`);
+            }
+          } catch (e) {
+            if (!e.message?.includes('is not a function')) {
+              console.log(`[game] Ranking detection error: ${e.message}`);
+            }
+          }
         }
 
         // ラウンド終了判定: ゲーム中 (turn>5) に連続3回以上WAITINGが続いたらラウンド終了
         if (turn > 5 && waitingCount >= 3 && !roundEnded) {
-          // WAITINGスクショからランキング画面を検出
-          if (waitingScreenshots && waitingScreenshots.length > 0) {
-            try {
-              const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
-              for (const ws of waitingScreenshots) {
-                try {
-                  const rankResult = await detectRankingScreen(ws);
-                  if (rankResult != null) {
-                    lastKnownRank = rankResult;
-                    // ランキング画面のスクショを保存
-                    const { copyFileSync } = await import('fs');
-                    const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
-                    try { copyFileSync(ws, rkPath); } catch {}
-                    console.log(`[game] RANKING screen found! Final rank: ${rankResult}`);
-                    break;
-                  }
-                } catch {}
-              }
-            } catch (e) {
-              console.log(`[game] Ranking detection error: ${e.message}`);
-            }
-          }
-
           console.log(`[game] Round ended at turn ${turn}, final rank=${lastKnownRank ?? '?'}`);
           roundEnded = true;
           // 最終順位をboardStateに付与
@@ -358,7 +350,7 @@ async function gameLoop(page, calibration, gameNumber) {
           calibrated = false;
           moveCount = 0;
           lastKnownRank = null;
-          waitingScreenshots = null;
+          rankingDetected = false;
         }
 
         if (!waitingLogged) {
