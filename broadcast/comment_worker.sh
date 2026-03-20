@@ -67,6 +67,8 @@ _play_comment_queue() {
 }
 
 COMMENT_PLAYER_PID_FILE="tmp/.comment_queue/player.pid"
+COMMENT_PLAYER_TOKEN_FILE="tmp/.comment_queue/player.token"
+COMMENT_WATCHER_TOKEN_FILE="tmp/.comment_queue/watcher.token"
 
 _is_comment_worker_healthy() {
 	local pid_file="$1" heartbeat_file="$2" ttl="${3:-30}"
@@ -110,18 +112,21 @@ start_comment_player() {
 		rm -f "$COMMENT_PLAYER_PID_FILE"
 	fi
 	rm -f "$COMMENT_PLAYER_HEARTBEAT_FILE"
+	rm -f "$COMMENT_PLAYER_TOKEN_FILE"
 	mkdir -p "$(dirname "$COMMENT_PLAYER_PID_FILE")"
+	local player_token
+	player_token="player_$(date +%s)_$$_$RANDOM"
+	echo "$player_token" > "$COMMENT_PLAYER_TOKEN_FILE"
 
 	(
-		# サブシェル内でPIDファイルを自分のPIDで上書き
-		# NOTE: local はサブシェル直下では使えない (関数内でのみ有効)
-		_cp_my_pid=$(_my_pid)
-		echo "$_cp_my_pid" > "$COMMENT_PLAYER_PID_FILE" 2>/dev/null
+		# バックグラウンド subshell の実PIDは親が保持する $! とズレることがあるため、
+		# 置き換え判定は PID ではなく ownership token で行う。
+		_cp_my_pid=$(_my_pid 2>/dev/null || echo $$)
+		_cp_owner_token="$player_token"
 		_recover_orphan_comment_playing_files
 		while true; do
-			# PIDファイルが自分のPIDでなくなったら終了（別プレイヤーに交代された）
-			_cp_file_pid=$(cat "$COMMENT_PLAYER_PID_FILE" 2>/dev/null)
-			if [ "$_cp_file_pid" != "$_cp_my_pid" ]; then
+			_cp_file_token=$(cat "$COMMENT_PLAYER_TOKEN_FILE" 2>/dev/null)
+			if [ "$_cp_file_token" != "$_cp_owner_token" ]; then
 				exit 0
 			fi
 			if ! source ./eloop_lib.sh 2>/dev/null; then
@@ -148,6 +153,7 @@ stop_comment_player() {
 		rm -f "$COMMENT_PLAYER_PID_FILE"
 	fi
 	rm -f "$COMMENT_PLAYER_HEARTBEAT_FILE"
+	rm -f "$COMMENT_PLAYER_TOKEN_FILE"
 }
 
 #=== コメント監視デーモン ===
@@ -167,15 +173,18 @@ start_comment_watcher() {
 		rm -f "$COMMENT_WATCHER_PID_FILE"
 	fi
 	rm -f "$COMMENT_WATCHER_HEARTBEAT_FILE"
+	rm -f "$COMMENT_WATCHER_TOKEN_FILE"
 	mkdir -p "$(dirname "$COMMENT_WATCHER_PID_FILE")"
+	local watcher_token
+	watcher_token="watcher_$(date +%s)_$$_$RANDOM"
+	echo "$watcher_token" > "$COMMENT_WATCHER_TOKEN_FILE"
 
 	(
-		_cw_my_pid=$(_my_pid)
-		echo "$_cw_my_pid" > "$COMMENT_WATCHER_PID_FILE" 2>/dev/null
+		_cw_my_pid=$(_my_pid 2>/dev/null || echo $$)
+		_cw_owner_token="$watcher_token"
 		while true; do
-			# PIDファイルが自分でなくなったら終了
-			_cw_file_pid=$(cat "$COMMENT_WATCHER_PID_FILE" 2>/dev/null)
-			if [ "$_cw_file_pid" != "$_cw_my_pid" ]; then
+			_cw_file_token=$(cat "$COMMENT_WATCHER_TOKEN_FILE" 2>/dev/null)
+			if [ "$_cw_file_token" != "$_cw_owner_token" ]; then
 				exit 0
 			fi
 			source ./eloop_lib.sh 2>/dev/null || true
@@ -238,6 +247,7 @@ stop_comment_watcher() {
 		rm -f "$COMMENT_WATCHER_PID_FILE"
 	fi
 	rm -f "$COMMENT_WATCHER_HEARTBEAT_FILE"
+	rm -f "$COMMENT_WATCHER_TOKEN_FILE"
 }
 
 #=== プロセス管理 ===
