@@ -1307,6 +1307,16 @@ RETRYCOMMENT
 				continue
 			fi
 
+			# kill耐性: キュー追加直後にack→処理済みマークし、再生成を防ぐ
+			if ./twitch_chat.sh ack-batch "$comment_batch_file"; then
+				_mark_comment_batch_processed "$comment_batch_hash"
+				_record_processed_comment_lines "$twitch_comments"
+			else
+				log "[COMMENT] ack-batch 失敗 → 個別行ハッシュ記録で次回重複除外"
+				_record_processed_comment_lines "$twitch_comments"
+				_mark_comment_batch_processed "$comment_batch_hash"
+			fi
+
 			# 本文が有効なときだけアドバイスを追記
 			if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
 				_append_strategy_advice_item "$advice_item"
@@ -1320,14 +1330,6 @@ RETRYCOMMENT
 
 			comments_talk="$attempt_talk"
 			comment_model_used="$attempt_model"
-			if ./twitch_chat.sh ack-batch "$comment_batch_file"; then
-				_mark_comment_batch_processed "$comment_batch_hash"
-				_record_processed_comment_lines "$twitch_comments"
-			else
-				log "[COMMENT] ack-batch 失敗 → 個別行ハッシュ記録で次回重複除外"
-				_record_processed_comment_lines "$twitch_comments"
-				_mark_comment_batch_processed "$comment_batch_hash"
-			fi
 			log "[COMMENT] コメント返し ${#comments_talk}字 → キュー追加: $queue_file (model=${comment_model_used:-unknown}, batch=${comment_batch_hash:-none}, attempt=${attempt}/${comment_retry_max})"
 			generation_ok=true
 			break

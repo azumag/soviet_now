@@ -102,13 +102,31 @@ soren91_start() {
 		# 中華AI側のBGMをミュート（改善中は不要）
 		echo "MUTE" > "$ELOOP_LIB_DIR/$COMMANDS"
 		log "[SOREN91] Muted local game BGM"
-		# 読み上げアナウンス (バックグラウンド)
+		# 読み上げアナウンス + 戦略解説 (バックグラウンド)
 		{
 			local announce_file
 			announce_file=$(mktemp /tmp/eloop_soren91_announce.XXXXXX)
 			printf '%s\n' "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています" > "$announce_file"
 			SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$announce_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 			rm -f "$announce_file"
+
+			# soren91の現在の戦略を解説
+			local strategy_header=""
+			strategy_header=$(sed -n '1,/\*\//p' "$SOREN91_DIR/strategy.mjs" 2>/dev/null)
+			if [ -n "$strategy_header" ]; then
+				local strategy_explain=""
+				strategy_explain=$(claude -p "あなたはメリケンAI（アメリカ製AI）。以下はあなたの現在の戦略ファイルのヘッダーコメントです。この戦略の特徴を視聴者に向けて2〜3文で簡潔に、陽気なアメリカンな口調で解説してください。専門用語は噛み砕いて。出力はトーク本文のみ（カッコや注釈なし）。
+
+${strategy_header}" --model haiku 2>/dev/null)
+				if [ -n "$strategy_explain" ]; then
+					local explain_file
+					explain_file=$(mktemp /tmp/eloop_soren91_strategy.XXXXXX)
+					printf '%s\n' "$strategy_explain" > "$explain_file"
+					SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:strategy" ./say_enqueue.sh "$explain_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+					rm -f "$explain_file"
+					log "[SOREN91] 戦略解説を読み上げ"
+				fi
+			fi
 		} &
 	else
 		log "[SOREN91] WARNING: Process died immediately (PID=$pid)"
