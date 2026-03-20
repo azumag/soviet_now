@@ -108,7 +108,11 @@ function formatRank(value) {
 
 function readHallOfFameManifest() {
   const payload = readJson(HALL_OF_FAME_MANIFEST, []);
-  return Array.isArray(payload) ? payload : [];
+  if (!Array.isArray(payload)) return [];
+  return payload.map(entry => ({
+    ...entry,
+    strategyHash: String(entry?.strategyHash || '').slice(0, 12),
+  }));
 }
 
 function makeEmptyEntry() {
@@ -479,6 +483,12 @@ export function buildImproveReferenceContext(currentHash = '') {
     if (!referenceHashes.includes(item.hash)) referenceHashes.push(item.hash);
     if (referenceHashes.length >= 2) break;
   }
+  for (const entry of hallEntries) {
+    if (entry?.strategyHash && !referenceHashes.includes(entry.strategyHash)) {
+      referenceHashes.push(entry.strategyHash);
+      break;
+    }
+  }
   if (resolvedCurrentHash && !referenceHashes.includes(resolvedCurrentHash)) {
     referenceHashes.push(resolvedCurrentHash);
   }
@@ -513,6 +523,7 @@ export function writePhyrogeneticTree(currentHash = '') {
   const hallHashes = new Set(readHallOfFameManifest().map(entry => entry?.strategyHash).filter(Boolean));
   const resolvedCurrentHash = currentHash || currentHashIfAvailable();
   const ranked = buildRankedEntries(rolling);
+  const seenNodeHashes = new Set(ranked.map(item => item.hash));
 
   const lines = ['graph TD'];
   for (const item of ranked) {
@@ -524,6 +535,10 @@ export function writePhyrogeneticTree(currentHash = '') {
     ];
     if (item.metrics.rank_p50 != null) labelParts.push(`r50=${formatRank(item.metrics.rank_p50)}`);
     lines.push(`  ${id}["${labelParts.join('<br/>')}"]`);
+  }
+  for (const hallHash of hallHashes) {
+    if (seenNodeHashes.has(hallHash)) continue;
+    lines.push(`  h_${hallHash}["${shortHash(hallHash)}<br/>manual HOF"]`);
   }
 
   const emitted = new Set();

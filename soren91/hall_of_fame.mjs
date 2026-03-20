@@ -6,10 +6,9 @@
  *   node hall_of_fame.mjs --note "very strong run"
  */
 
-import { createHash } from 'crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
-import { refreshLineageArtifacts } from './lineage.mjs';
+import { computeStrategyHashFromSource, refreshLineageArtifacts } from './lineage.mjs';
 
 const STRATEGY_PATH = 'strategy.mjs';
 const VERSIONS_DIR = 'strategy_versions';
@@ -79,10 +78,6 @@ function readManifest() {
   }
 }
 
-function sha256(text) {
-  return createHash('sha256').update(text).digest('hex');
-}
-
 function saveManifest(entries) {
   writeFileSync(MANIFEST_PATH, `${JSON.stringify(entries, null, 2)}\n`);
 }
@@ -92,11 +87,11 @@ function main() {
 
   const { note } = parseArgs(process.argv.slice(2));
   const strategyText = readCurrentStrategy();
-  const strategyHash = sha256(strategyText);
+  const strategyHash = computeStrategyHashFromSource(strategyText);
   const strategyVersion = extractStrategyVersion(strategyText);
   const latestSummary = readLatestSummary();
   const manifest = readManifest();
-  const duplicate = manifest.find(entry => entry.strategyHash === strategyHash);
+  const duplicate = manifest.find(entry => String(entry.strategyHash || '').slice(0, 12) === strategyHash);
 
   if (duplicate) {
     console.log(JSON.stringify({
