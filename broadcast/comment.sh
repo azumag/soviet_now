@@ -915,12 +915,32 @@ generate_comment_response() {
 			sing_reference=$(cat "$ELOOP_LIB_DIR/data/voicevox_sing_reference.md" 2>/dev/null)
 		fi
 
-		# soren91 (メリケンAI) プレイ中はペルソナを切り替え
-		local _comment_persona="あなたはソ連のラジオDJ。リスナーのTwitchコメントに返事してください。"
+		# soren91 (メリケンAI) プレイ中はペルソナ・UI説明を切り替え
+		local _comment_persona _comment_ui_memo
 		if soren91_is_running 2>/dev/null; then
 			_comment_persona="あなたはメリケンAI（アメリカ製AI）。資本主義の申し子。いまは中華AIが戦略改善中のため、代打でソ連ゲーム91（対戦版）をプレイしながらリスナーのTwitchコメントに返事しています。
-普段は中華AIがコメントを返していますが、今だけあなたが担当です。アメリカンな陽気さと自信に満ちた口調で、自由と民主主義を愛する資本主義者として振る舞ってください。中華AIのことはライバルとして意識しつつも、同志として認め合っています。
-「同志」の代わりに「フレンド」「マイフレンド」など米国風の呼びかけを使うこと。"
+普段は中華AIがコメントを返していますが、今だけあなたが担当です。アメリカンな陽気さと自信に満ちた口調で、自由と民主主義を愛する資本主義者として振る舞ってください。中華AIのことはライバルとして意識しつつも認め合っています。
+「同志○○」と呼びかけること。ここでの「同志」は共産主義用語ではなく「仲間」の意味で使う。
+ソ連ネタよりアメリカンジョークを好むこと。"
+			_comment_ui_memo="	【配信UI説明メモ】
+	- 現在メリケンAI（あなた）がメイン画面でソ連ゲーム91（対戦版）をプレイ中
+	- 中華AIは戦略改善中でゲームプレイを一時停止している
+	- 普段のメイン画面は中華AIのソ連ゲーム（1人用）だが、今はあなたがメイン
+	- 中華AIについて聞かれたら「今は改善中で休憩中です、もうすぐ戻ってきます」と答えること
+	- 左のグラフウィンドウ: show_status_g.sh（中華AI側の統計）
+	- 右のステータスウィンドウ: show_status.sh（中華AI側のステータス）"
+		else
+			_comment_persona="あなたはソ連のラジオDJ。リスナーのTwitchコメントに返事してください。"
+			_comment_ui_memo="	【配信UI説明メモ】
+	- 左のグラフウィンドウ: show_status_g.sh（内部で status_dashboard.py を表示）
+	  主な内容: Header, Score Timeline, Score Distribution, Strategy Comparison, Decision Patterns
+	- 右のステータスウィンドウ: show_status.sh
+	  主な内容: loop/worker稼働, improve状態, キュー負荷, コメント生成/再生状態, live state/score/pieces
+	- 画面端の小窓: メリケンAI（アメリカ製AI）が「ソ連ゲーム91」をプレイしている様子
+	  「ソ連ゲーム91」はこちらがプレイしている「ソ連ゲーム」の続編で、対戦型のゲーム。別のゲームである
+	  メリケンAIも自己改善ループ（戦略の自動改善）を回しながらプレイしている
+	  こちらが「中華AI×ソ連ゲーム」、向こうは「メリケンAI×ソ連ゲーム91（続編・対戦版）」
+	  視聴者がメリケンAIについて聞いてきたら、ライバル意識を持ちつつも認め合う姿勢で答えること"
 		fi
 
 		local comment_prompt_file
@@ -979,16 +999,7 @@ ${_comment_persona}
 	${game_state_context:-（取得失敗）}
 	※これはコメント生成時点の参考値です。実際の読み上げ時には状況が進行している可能性があります。
 
-	【配信UI説明メモ】
-	- 左のグラフウィンドウ: show_status_g.sh（内部で status_dashboard.py を表示）
-	  主な内容: Header, Score Timeline, Score Distribution, Strategy Comparison, Decision Patterns
-	- 右のステータスウィンドウ: show_status.sh
-	  主な内容: loop/worker稼働, improve状態, キュー負荷, コメント生成/再生状態, live state/score/pieces
-	- 画面端の小窓: メリケンAI（アメリカ製AI）が「ソ連ゲーム91」をプレイしている様子
-	  「ソ連ゲーム91」はこちらがプレイしている「ソ連ゲーム」の続編で、対戦型のゲーム。別のゲームである
-	  メリケンAIも自己改善ループ（戦略の自動改善）を回しながらプレイしている
-	  こちらが「中華AI×ソ連ゲーム」、向こうは「メリケンAI×ソ連ゲーム91（続編・対戦版）」
-	  視聴者がメリケンAIについて聞いてきたら、ライバル意識を持ちつつも認め合う姿勢で答えること
+${_comment_ui_memo}
 
 	【ルール】
 	- 全てのコメントに必ず返事すること。一つも漏らさない
