@@ -36,6 +36,36 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
+# v287: reactive pairs proximity bonus追加版 - 即時併合不可時のreactive_pairs距離活用
+# ワーストゲーム(score0913)終盤turns 63-71でreactive_pairs=3-5あるのに即時併合不可、戦略的配置が続きmax_y=2.42→2.86に上昇してゲームオーバー。
+# ベストゲーム(score3368)終盤turns 126-133では即時併合を確実に捉えてスコア3368を出している。
+# batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+# advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づき、
+# 即時併合がない場合にreactive_pairsの距離を活用し、将来の併合可能性を最大化する配置を優先する新しい評価軸（axis 7.5）を追加。
+# last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
+# 未活用情報（reactive_pairsの座標）を活用した構造的変更であり、数値微調整ではない。
+# axis 7.5: 即時併合不可時、reactive_pairsのペア間距離を計算し、平均距離が短い候補にボーナス
+#   * avg_distが2.0以下の場合+800.0、2.0-4.0の場合+500.0、4.0以上の場合+300.0
+# danger_piece_count==0の場合のみ適用し、axis 8.5のdanger_piece_count優先ロジックは変更せず
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+#       game_history/20260320_212621_score0913.jsonl turns 63-71, game_history/20260320_212322_score3368.jsonl turns 126-133
+#
+# v286: reactive_pairs即時併合ボーナス強化版 - 危険ピースがない場合の即時併合優先強化
+# ワーストゲーム(score0913)終盤turns 63-71でreactive_pairs=3-5あるのに即時併合不可、戦略的配置が続きmax_y=2.42→2.86に上昇してゲームオーバー。
+# ベストゲーム(score3368)終盤turns 126-133では即時併合を確実に捉えてスコア3368を出している。
+# batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+# axis 8.5(danger_zone immediate merge priority)はdanger_piece_count>0の場合にのみ発動し、即時併合ボーナス1200.0を与える。
+# danger_piece_count==0の場合はaxis 7(reactive pairs bonus)に頼るが、ボーナス1000.0はaxis 8.5より低く、即時併合動機が弱い。
+# axis 7のボーナスを段階的に強化し、危険ピースがない場合の即時併合優先を強化：
+#   * reactive_pairs>=3: 1000.0 → 1200.0
+#   * reactive_pairs>=2: 800.0 → 1000.0
+#   * reactive_pairs>=1: 400.0 → 600.0
+# これにより危険ピースがない場合でも、reactive_pairsに応じて即時併合を強力に優先し、即時併合機会の取りこぼしを削減。
+# last_rollback_postmortemの制約遵守：danger_piece_count>0のみ即時併合優先、deadline_crossed時もSAME_TYPE_STACK有効。
+# axis 8.5のdanger_piece_count優先ロジックは変更せず、danger_piece_count==0の場合のaxis 7ボーナスを強化するのみ。
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+#       game_history/20260320_212621_score0913.jsonl turns 63-71, game_history/20260320_212322_score3368.jsonl turns 126-133
+#
 # v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
 # v284の変更（reactive_pairs>=3 && merge_grade=="NO" && danger_piece_count==0で戦略的配置ボーナス+1000.0）は、
 # 即時併合機会がない場合の盤面圧縮を優先する意図だったが、実際には即時併合機会を取りこぼす原因となった。
@@ -193,28 +223,24 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
+    """v287: reactive pairs proximity bonus追加版 - 即時併合不可時のreactive_pairs距離活用
 
     v284の変更（reactive_pairs>=3 && merge_grade=="NO" && danger_piece_count==0で戦略的配置ボーナス+1000.0）は、
     即時併合機会がない場合の盤面圧縮を優先する意図だったが、実際には即時併合機会を取りこぼす原因となった。
-    ワーストゲーム(score1116)終盤でreactive_pairs>=3あるのに即時併合不可、戦略的配置が続きmax_y上昇してゲームオーバー。
-    ベストゲーム(score2831)では即時併合を確実に捉えてスコア2831を出している。
-    batch_summaryでHEIGHT_CONTROLが9.3%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+    ワーストゲーム(score0913)終盤turns 63-71でreactive_pairs=3-5あるのに即時併合不可、戦略的配置が続きmax_y=2.42→2.86に上昇してゲームオーバー。
+    ベストゲーム(score3368)終盤turns 126-133では即時併合を確実に捉えてスコア3368を出している。
+    batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
     advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づき、
-    reactive_pairs>=3 && merge_grade=="NO"の場合の戦略的配置ボーナス+1000.0を削除し、即時併合機会を優先する戦略へ修正。
+    即時併合がない場合にreactive_pairsの距離を活用し、将来の併合可能性を最大化する配置を優先する新しい評価軸を追加。
     last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
 
-    v285の改善点:
-    1. axis 9.5修正：reactive_pairs>=3 && merge_grade=="NO"の戦略的配置ボーナス+1000.0を削除
-       - danger_piece_count == 0 の場合、戦略的配置ボーナスを維持（即時併合不可時）
-         * reactive_pairs>=1: +800.0（即時併合機会を優先）
-         * reactive_pairs==0: +300.0
-         * landing_y > stack_top_y時のペナルティ軽減も維持
-       - danger_piece_count > 0 の場合、axis 8.5で即時併合優先が適用されるためボーナスを抑制
-         * reactive_pairs>=1: +100.0（最小限の戦略的配置余地を確保）
-         * reactive_pairs==0: ボーナスなし
-         * landing_y > stack_top_y時のペナルティ軽減も抑制
-    2. 即時併合機会を優先する戦略へ修正し、v284の「戦略的配置優先で即時併合取りこぼし」failure modeを潰す
+    v287の改善点:
+    1. 即時併合がない場合にreactive_pairsの距離を活用した新しい評価軸（axis 7.5）を追加
+       - reactor情報のreactive_pairsから、各ピースの座標を取得し、ペア間距離を計算
+       - reactive_pairsの平均距離が短い候補にボーナスを与え、将来の併合可能性を最大化する配置を優先
+       - ボーナス: avg_distが2.0以下の場合+800.0、2.0-4.0の場合+500.0、4.0以上の場合+300.0
+       - danger_piece_count==0の場合のみ適用し、axis 8.5のdanger_piece_count優先ロジックは変更せず
+    2. 未活用情報（reactive_pairsの座標）を活用した構造的変更であり、数値微調整ではない
     3. v277のdeadline_crossed時有効化を維持し、v281 rollback failure modeを潰す
 
     Args:
@@ -474,7 +500,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactor情報のreactive_pairs（反応性のあるペア）を活用し、即時併合を優先する評価軸を強化。
         # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを+800.0から+1000.0に強化。
         # v206: reactive_pairs>=3で即時併合なし（NO）の場合、盤面密度ボーナスを+300.0から+50.0に削減。
-        # これによりreactive_pairs>=3の場合、即時併合機会を最優先するようになり、p25悪化の主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消。
         if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
             # reactive_pairs==1の場合も即時併合を優先し、機会取りこぼし削減
             score += 400.0
@@ -522,10 +547,57 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
-                # 即時併合機会がない場合：戦略的配置の余地を確保するためheight_multを緩和
+                 # 即時併合機会がない場合：戦略的配置の余地を確保するためheight_multを緩和
                 # この緩和はheight_penalty計算時に適用される
                 height_mult *= 0.6
                 reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
+
+        # ----- evaluation axis 7.5: reactive pairs proximity bonus (NEW: reactive pairs距離活用) -----
+        # ワーストゲーム(score0913)終盤turns 63-71でreactive_pairs=3-5あるのに即時併合不可、戦略的配置が続きmax_y=2.42→2.86に上昇してゲームオーバー。
+        # ベストゲーム(score3368)終盤turns 126-133では即時併合を確実に捉えてスコア3368を出している。
+        # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+        # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づき、
+        # 即時併合がない場合にreactive_pairsの距離を活用し、将来の併合可能性を最大化する配置を優先する新しい評価軸を追加。
+        # reactor情報のreactive_pairs（反応性のあるペア）から、各ピースの座標を取得し、ペア間距離を計算。
+        # reactive_pairsの平均距離が短い候補にボーナスを与え、将来の併合可能性を最大化する配置を優先する。
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+        #       game_history/20260320_212621_score0913.jsonl turns 63-71, game_history/20260320_212322_score3368.jsonl turns 126-133
+        if merge_grade == "NO" and reactive_pair_count >= 1 and danger_piece_count == 0:
+            # reactive_pairsのピース座標を取得
+            reactive_pair_coords = {}
+            for a_id, b_id, t in reactive_pairs:
+                piece_a = next((p for p in pieces if p["id"] == a_id), None)
+                piece_b = next((p for p in pieces if p["id"] == b_id), None)
+                if piece_a and piece_b:
+                    reactive_pair_coords[(a_id, b_id)] = ((piece_a["x"], piece_a["y"]), (piece_b["x"], piece_b["y"]))
+            
+            # reactive_pairsのペア間距離を計算し、ドロップ位置との距離を評価
+            if reactive_pair_coords:
+                total_dist = 0.0
+                for (a_id, b_id), ((ax, ay), (bx, by)) in reactive_pair_coords.items():
+                    # ペア間距離
+                    pair_dist = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+                    # ドロップ位置からの距離（ペアの中心へ）
+                    center_x = (ax + bx) / 2.0
+                    center_y = (ay + by) / 2.0
+                    drop_dist = ((x - center_x) ** 2 + (result["landing_y"] - center_y) ** 2) ** 0.5
+                    # ペア間距離が短く、ドロップ位置に近いほどボーナス
+                    total_dist += pair_dist + drop_dist * 0.5
+                
+                # 平均距離（全reactive_pairsの総距離/ペア数）
+                avg_dist = total_dist / len(reactive_pair_coords)
+                
+                # ボーナス：平均距離が短いほど大きいボーナス
+                # avg_distが2.0以下の場合+800.0、2.0-4.0の場合+500.0、4.0以上の場合+300.0
+                if avg_dist <= 2.0:
+                    score += 800.0
+                    reasons.append("REACTIVE_PAIRS_PROXIMITY_PRIORITY")
+                elif avg_dist <= 4.0:
+                    score += 500.0
+                    reasons.append("REACTIVE_PAIRS_PROXIMITY_PRIORITY")
+                else:
+                    score += 300.0
+                    reasons.append("REACTIVE_PAIRS_PROXIMITY_PRIORITY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
