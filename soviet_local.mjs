@@ -162,16 +162,16 @@ async function executeCommand(page, command) {
   } else if (command.action === 'mute') {
     console.log('Executing: MUTE');
     await page.evaluate(() => {
-      (window.__sorenAudioContexts || []).forEach(ctx => {
-        try { ctx.suspend(); } catch {}
-      });
+      if (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext) {
+        try { Module.WebAudio.audioContext.suspend(); } catch {}
+      }
     });
   } else if (command.action === 'unmute') {
     console.log('Executing: UNMUTE');
     await page.evaluate(() => {
-      (window.__sorenAudioContexts || []).forEach(ctx => {
-        try { ctx.resume(); } catch {}
-      });
+      if (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext) {
+        try { Module.WebAudio.audioContext.resume(); } catch {}
+      }
     });
   }
 
@@ -221,20 +221,6 @@ async function runLocalController() {
 
   console.log('=== Soren Local Game Controller ===');
   console.log(`Navigating to http://localhost:${SERVE_PORT}...`);
-
-  // Track AudioContext instances for MUTE/UNMUTE support
-  await page.addInitScript(() => {
-    window.__sorenAudioContexts = [];
-    const _OrigAC = window.AudioContext;
-    if (_OrigAC) {
-      window.AudioContext = function(...args) {
-        const ctx = new _OrigAC(...args);
-        window.__sorenAudioContexts.push(ctx);
-        return ctx;
-      };
-      window.AudioContext.prototype = _OrigAC.prototype;
-    }
-  });
 
   await page.goto(`http://localhost:${SERVE_PORT}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
