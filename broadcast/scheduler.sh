@@ -57,8 +57,33 @@ messages = {
 }
 
 message = messages.get(status, f"取得状態不明: status={status or 'unknown'}")
-print(f"{status}|{message}")
+	print(f"{status}|{message}")
 PY
+}
+
+_resolve_jiji_interval_sec() {
+	local base_interval="${JIJI_INTERVAL_SEC:-7200}"
+	local no_news_interval="${JIJI_INTERVAL_NO_NEWS_SEC:-3600}"
+	local news_fetch_status="" news_fetch_message="" news_status_line=""
+
+	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
+		echo "$base_interval"
+		return 0
+	fi
+
+	news_status_line=$(_news_fetch_status_snapshot || true)
+	if [ -n "$news_status_line" ]; then
+		IFS='|' read -r news_fetch_status news_fetch_message <<<"$news_status_line"
+	fi
+
+	case "$news_fetch_status" in
+	all_seen_or_filtered|fetch_failed|render_empty)
+		echo "$no_news_interval"
+		;;
+	*)
+		echo "$base_interval"
+		;;
+	esac
 }
 
 fetch_and_play_news() {
@@ -361,11 +386,12 @@ schedule_nonessential_audio_jobs() {
 		start_random_radio_corner "$game_num" "$score" &
 	fi
 
-	# 時事ニュースコーナー（2時間に1回）
-	local jiji_interval_sec=7200
-	local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
-	local jiji_last_ts now_ts jiji_elapsed
-	now_ts=$(date +%s)
+		# 時事ニュースコーナー（通常2時間、通常ニュースが空のときは短縮）
+		local jiji_interval_sec
+		jiji_interval_sec=$(_resolve_jiji_interval_sec)
+		local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
+		local jiji_last_ts now_ts jiji_elapsed
+		now_ts=$(date +%s)
 	jiji_last_ts=$(cat "$jiji_last_file" 2>/dev/null || echo 0)
 	jiji_elapsed=$((now_ts - jiji_last_ts))
 	if [ "$jiji_elapsed" -ge "$jiji_interval_sec" ]; then
@@ -485,11 +511,12 @@ _legacy_schedule_nonessential_audio_jobs() {
 		fi
 	fi
 
-	# 時事ニュースコーナー（2時間に1回）
-	local jiji_interval_sec=7200
-	local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
-	local jiji_last_ts now_ts jiji_elapsed
-	now_ts=$(date +%s)
+		# 時事ニュースコーナー（通常2時間、通常ニュースが空のときは短縮）
+		local jiji_interval_sec
+		jiji_interval_sec=$(_resolve_jiji_interval_sec)
+		local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
+		local jiji_last_ts now_ts jiji_elapsed
+		now_ts=$(date +%s)
 	jiji_last_ts=$(cat "$jiji_last_file" 2>/dev/null || echo 0)
 	jiji_elapsed=$((now_ts - jiji_last_ts))
 	if [ "$jiji_elapsed" -ge "$jiji_interval_sec" ]; then
