@@ -132,7 +132,10 @@ soren91_start() {
 			strategy_header=$(sed -n '1,/\*\//p' "$SOREN91_DIR/strategy.mjs" 2>/dev/null)
 			if [ -n "$strategy_header" ]; then
 				local strategy_explain=""
-				strategy_explain=$(claude -p "あなたはメリケンAI（アメリカ製AI）。以下はあなたの現在の戦略ファイルのヘッダーコメントです。この戦略の特徴を視聴者に向けて2〜3文で簡潔に、陽気なアメリカンな口調で解説してください。専門用語は噛み砕いて。出力はトーク本文のみ（カッコや注釈なし）。
+				strategy_explain=$(claude -p "あなたはメリケンAI（アメリカ製AI）。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
+この「91用戦略」の特徴だけを、視聴者向けに2〜3文で簡潔に、陽気なアメリカンな口調で解説してください。専門用語は噛み砕いてください。
+元のソ連ゲームの戦略や strategy.py には触れないこと。T1、ULTRA、HOLD、balance などの語は、91の盤面制御・置き方のクセとして説明すること。
+出力はトーク本文のみ（カッコや注釈なし）。
 
 ${strategy_header}" --model haiku 2>/dev/null)
 				if [ -n "$strategy_explain" ]; then
