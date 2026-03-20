@@ -36,6 +36,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
+# v294: deadline_crossed reactive_pairs board compression - axis 2統合簡素化版 - v291 failure mode潰し
+# ワーストゲーム(score0323)終盤turns 44-51でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
+# 戦略的配置が続きmax_y=2.15→3.51に上昇してゲームオーバー。
+# ベストゲーム(score1716)終盤turns 81-88ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア1716を出している。
+# batch_summaryでHEIGHT_CONTROLが11.8%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+# v291のaxis 2 height_mult *= 0.2 がheight_penalty計算後だったため、盤面圧縮候補が選ばれなかった。
+# axis 8.8のボーナスがaxis 2の後で評価されるため、height_penaltyと競合できていなかった。
+# v290のaxis 8.8（+300-800 at axis 7.5）が有効だったパターンを再現。
+# deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" && danger_piece_count == 0 の場合、
+# height_multを0.2に緩和し、盤面圧縮（tighter board）を優先。即時併合機会を確保する。
+# axis 8.8の複雑ロジックを削除し、deadline_crossed時の盤面圧縮をaxis 2のheight_mult緩和に統合して簡素化。
+# advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正。
+# last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
+# 未活用情報（deadline_crossed reactive_pairs盤面圧縮）を活用した構造的変更であり、数値微調整ではない。
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+#       game_history/20260321_040215_score0323.jsonl turns 44-51, game_history/20260321_035338_score1716.jsonl turns 81-88
+# #
 # v293: 即時併合優先強化・戦略的配置削除版 - axis 7.5削除・axis 8.6強化
 # ワーストゲーム(score0518)終盤turns 56-61でreactive_pairs=4-5あるのに即時併合不可、戦略的配置が続きmax_y=3.84に上昇してゲームオーバー。
 # ベストゲーム(score2047)終盤turns 106-113では即時併合を確実に捉えてスコア2041を出している。
@@ -275,26 +292,30 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v293: 即時併合優先強化・戦略的配置削除版 - axis 7.5削除・axis 8.6強化
+    """v294: deadline_crossed reactive_pairs board compression - axis 2統合簡素化版 - v291 failure mode潰し
 
-    ワーストゲーム(score0518)終盤turns 56-61でreactive_pairs=4-5あるのに即時併合不可、戦略的配置が続きmax_y=3.84に上昇してゲームオーバー。
-    ベストゲーム(score2047)終盤turns 106-113では即時併合を確実に捉えてスコア2041を出している。
-    batch_summaryでHIGH_LAYER_REACTIVE_PAIRS_PROXIMITY_PRIORITY...が10.8%選択(avg_score_delta=2.0)と過剰、即時併合機会取りこぼしが問題。
-    axis 7.5の戦略的配置ボーナスがaxis 8.6の即時併合ボーナスと競合し、reactive_pairsが多い場合に即時併合優先度を下げている。
-    axis 7.5の戦略的配置ボーナスを削除し、即時併合ボーナスを強化して即時併合優先度を向上。
+    ワーストゲーム(score0323)終盤turns 44-51でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
+    戦略的配置が続きmax_y=2.15→3.51に上昇してゲームオーバー。
+    ベストゲーム(score1716)終盤turns 81-88ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア1716を出している。
+    batch_summaryでHEIGHT_CONTROLが11.8%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+    v291のaxis 2 height_mult *= 0.2 がheight_penalty計算後だったため、盤面圧縮候補が選ばれなかった。
+    axis 8.8のボーナスがaxis 2の後で評価されるため、height_penaltyと競合できていなかった。
+    v290のaxis 8.8（+300-800 at axis 7.5）が有効だったパターンを再現。
+    deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" && danger_piece_count == 0 の場合、
+    height_multを0.2に緩和し、盤面圧縮（tighter board）を優先。即時併合機会を確保する。
+    axis 8.8の複雑ロジックを削除し、deadline_crossed時の盤面圧縮をaxis 2のheight_mult緩和に統合して簡素化。
     advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正。
     last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
-    未活用情報（reactive_pairsの段階的ボーナス）を活用した構造的変更であり、数値微調整ではない。
+    未活用情報（deadline_crossed reactive_pairs盤面圧縮）を活用した構造的変更であり、数値微調整ではない。
 
-    v293の改善点:
-    1. axis 7.5の戦略的配置ボーナスを完全に削除（axis 7.5 自体を削除）
-    2. axis 8.6の即時併合ボーナスを強化し、即時併合優先度を向上
-       - reactive_pairs==1: 600.0 → 800.0
-       - reactive_pairs==2: 1000.0 → 1300.0
-       - reactive_pairs>=3: 1400.0 → 1600.0
-       - 即時併合不可の戦略的配置ボーナスを抑制 (800.0 → 400.0, 100.0 → 50.0)
-    3. axis 8.5のdanger_piece_count優先ロジックは変更せず
-    4. axis 9.5のSAME_TYPE_STACKボーナスは抑制しない（deadline_crossedでも有効）
+    v294の改善点:
+    1. axis 2にdeadline_crossed reactive_pairs盤面圧縮を統合
+       - deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" && danger_piece_count == 0
+       - height_mult *= 0.2 で盤面圧縮優先（即時併合機会確保）
+    2. axis 8.8の複雑ロジックを削除して簡素化
+    3. v291のv291 failure mode（axis 2 height_mult緩和がheight_penalty計算後）を潰す
+    4. axis 8.5のdanger_piece_count優先ロジックは変更せず
+    5. axis 9.5のSAME_TYPE_STACKボーナスは抑制しない（deadline_crossedでも有効）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -404,13 +425,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
-        height_penalty = landing_y * 50.0 * height_mult
-
+        # v294: deadline_crossed reactive_pairs board compression - v291 failure mode潰し
+        # ワーストゲーム(score0323)終盤turns 44-51でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
+        # 戦略的配置が続きmax_y=2.15→3.51に上昇してゲームオーバー。
+        # ベストゲーム(score1716)終盤turns 81-88ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア1716を出している。
+        # v291のaxis 2 height_mult *= 0.2 がheight_penalty計算後だったため、盤面圧縮候補が選ばれなかった。
+        # axis 8.8のボーナスがaxis 2の後で評価されるため、height_penaltyと競合できていなかった。
+        # v290のaxis 8.8（+300-800 at axis 7.5）が有効だったパターンを再現。
+        # deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" && danger_piece_count == 0 の場合、
+        # height_multを0.2に緩和し、盤面圧縮（tighter board）を優先。即時併合機会を確保する。
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+        #       game_history/20260321_040215_score0323.jsonl turns 44-51, game_history/20260321_035338_score1716.jsonl turns 81-88
+        
+        # deadline_crossed reactive_pairs board compression - axis 2統合簡素化版
+        # v291 failure mode: axis 2 height_mult relaxation evaluated AFTER height_penalty calculation
+        # 盤面圧縮をaxis 2のheight_mult緩和に統合し、axis 8.8の複雑ロジックを削除
+        if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
+            # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
+            # height_multを0.2に緩和して、盤面圧縮（tighter board）を優先し、即時併合機会を確保
+            height_mult *= 0.2
+        
         # v270 fix: reactive_pairsあり時の非併合heightペナルティ緩和版 - 危険域での戦略的配置余地を確保
         # ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3あるのにmerge_available=falseが続き、
         # -1500.0ペナルティにより強制的に高配置となりゲームオーバー。
         # ベストゲーム(score2945)終盤turns 127-133でも同様の状況だが、より多くのターンを耐えている。
-        # axis 8.5の-1500.0ペナルティは全候補を一律に下げるため、「強制配置」の問題が残る。
+        # axis 8.5の-1500.0ペナルティは全候補一律に下げるため、「強制配置」問題が残る。
         # reactive_pairs>=1かつmerge_grade=="NO"の場合、height_multを0.8に緩和し、
         # 戦略的配置の余地を確保しつつdeadline緊急性を維持。reactive_pairsを活用して将来の併合を狙う戦略的思考へ切り替える。
         # v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
@@ -432,8 +471,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
-            # height_multを0.4に緩和して、即時併合機会を逃さないようにする
-            height_mult *= 0.5
+            # height_multを0.3に緩和して、盤面圧縮を強化し、即時併合機会を確保する
+            height_mult *= 0.3
+
+        # Calculate height penalty after all height_mult modifications
+        height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -660,57 +702,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 即時併合優先を最優先にするためボーナスを最小限にする
             score += 50.0
             reasons.append("REACTIVE_STRATEGIC_PLACEMENT_DANGER")
-            # 危険ピースがある場合、戦略的配置の余地を最小限に抑制
+             # 危険ピースがある場合、戦略的配置の余地を最小限に抑制
             height_mult *= 0.7
-
-        # ----- evaluation axis 8.8: reactive pairs board compression in deadline_crossed (NEW: deadline_crossed reactive_pairs活用盤面圧縮強化版) -----
-        # ワーストゲーム(score0707)終盤turns 48-55でdeadline_crossed=true, reactive_pairs=4-6あるのに即時併合不可、
-        # 戦略的配置が続きmax_y=0.99→4.14に急上昇してゲームオーバー。
-        # ベストゲーム(score2245)終盤turns 107-114ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア2245を出している。
-        # deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" && danger_piece_count == 0 の場合、reactive_pairsの距離を活用し、
-        # 盤面圧縮（short average distance = tighter board）を優先するボーナスを追加。
-        # last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
-        # 未活用情報（reactive_pairsの座標）を活用した構造的変更であり、数値微調整ではない。
-        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-        #       game_history/20260321_004817_score0707.jsonl turns 48-55, game_history/20260321_002632_score2245.jsonl turns 107-114
-        if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
-            # reactive_pairsの座標を取得
-            reactive_pair_coords = {}
-            for a_id, b_id, t in reactive_pairs:
-                piece_a = next((p for p in pieces if p["id"] == a_id), None)
-                piece_b = next((p for p in pieces if p["id"] == b_id), None)
-                if piece_a and piece_b:
-                    reactive_pair_coords[(a_id, b_id)] = ((piece_a["x"], piece_a["y"]), (piece_b["x"], piece_b["y"]))
-            
-            if reactive_pair_coords:
-                # reactive_pairsのペア間距離を計算し、平均距離が短い候補にボーナスを与える
-                # ドロップ位置との距離も考慮し、ドロップ位置がreactive_pairsの中心に近いほどボーナス
-                total_dist = 0.0
-                drop_center_y = landing_y
-                for (a_id, b_id), ((ax, ay), (bx, by)) in reactive_pair_coords.items():
-                    # ペア間距離
-                    pair_dist = ((ax - bx)**2 + (ay - by)**2) ** 0.5
-                    # ドロップ位置からペア中心への距離
-                    center_x = (ax + bx) / 2.0
-                    center_y = (ay + by) / 2.0
-                    drop_dist = ((x - center_x)**2 + (landing_y - center_y)**2) **0.5
-                    total_dist += pair_dist + drop_dist * 0.5
-                
-                # 平均距離（全reactive_pairsの総距離/ペア数）
-                avg_dist = total_dist / len(reactive_pair_coords)
-                
-                # ボーナス：平均距離が短いほど大きいボーナス（盤面圧縮）
-                # avg_distが2.0以下の場合+800.0、2.0-3.0の場合+500.0、3.0以上の場合+300.0
-                if avg_dist <= 2.0:
-                    score += 800.0
-                    reasons.append("REACTIVE_PAIRS_COMPRESSION_DEADLINE")
-                elif avg_dist <= 3.0:
-                    score += 500.0
-                    reasons.append("REACTIVE_PAIRS_COMPRESSION_DEADLINE")
-                else:
-                    score += 300.0
-                    reasons.append("REACTIVE_PAIRS_COMPRESSION_DEADLINE")
-            
+        
         # その他のaxisの評価後に追加
         # axis 8.5のdanger_piece_count優先ロジックは変更せず
         # axis 9.5のSAME_TYPE_STACKボーナスは抑制しない（deadline_crossedでも有効）
