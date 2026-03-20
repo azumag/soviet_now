@@ -1,16 +1,17 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v28)
+ * strategy.mjs - ドロップ位置決定戦略 (v29)
  *
- * v28改善点 (v27からの調整):
- * - 【ULTRA閾値を引き上げ】45→62: ULTRAモード過多問題を解消
- *   → 実測: 79/113ターン(70%)がULTRA — 正常戦略を動かす余裕がなかった
- *   → ベストアンカー(v16)は閾値70で comp=121.3 を達成
- * - 【SURVIVAL閾値引き上げ】72→80 (同じ理由)
- * - 【T1フラッド閾値を引き上げ】t1FloodMode 12→15, extreme 30→36
- *   → スクリーンショット誤検出によるT1過剰カウント対策
- * - 【MAX_ACTIVE_PIECES引き上げ】65→70: より多くのピースを活用
- * - 【look-ahead追加】findBestHeightDropでnextPieces[1]の置き場も加点
- * - 【HOLD評価改善】T4以上の保留ピースをより積極的にスワップ
+ * v29改善点 (v28からの調整):
+ * - 【ULTRA閾値を引き上げ】62→70: ベストアンカー(v16)水準に戻す
+ *   → v28実測: 58/105ターン(55%)がULTRA — まだ多すぎる
+ *   → v16は70で comp=121.3 を達成、閾値を一致させる
+ * - 【SURVIVAL閾値引き上げ】80→90: 誤検出ノイズ(208ピース等)への過剰反応を抑制
+ * - 【T1/バランス振動バグを修正】extremeT1FloodモードではT1処理をバランス補正より優先
+ *   → 実測: ULTRA_EXTREME_T1_IMMEDIATE と ULTRA_BALANCE_BIASL が交互に発生
+ *   → T1がバランスを崩す → バランス補正 → T1が再び崩す → ループ
+ *   → Fix: extremeT1Flood時は先にT1処理、バランス閾値をabs(3)に引き上げ
+ * - 【バランス閾値を条件付き引き上げ】T1フラッド時はabs(2)→abs(3)で振動抑制
+ * - 他のv28改善点は維持 (look-ahead, T1フラッド閾値 15/36, HOLD評価)
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -18,9 +19,9 @@ const DEADLINE_Y = 2.5;
 const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 70;
-const ULTRA_MASS_THRESHOLD = 62;
+const ULTRA_MASS_THRESHOLD = 70;
 const EXTREME_T1_FLOOD_THRESHOLD = 36;
-const SURVIVAL_PIECE_THRESHOLD = 80;
+const SURVIVAL_PIECE_THRESHOLD = 90;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -113,7 +114,34 @@ export function decide(boardState) {
       if (earlyMergeX !== null) return { x: earlyMergeX, reason: `ULTRA_MERGE_T${nextType}` };
     }
 
-    if (Math.abs(balanceBias) >= 2) {
+    // v29: extremeT1Flood時はバランス補正より先にT1処理 (振動バグ修正)
+    // 実測: ULTRA_EXTREME_T1_IMMEDIATE ↔ ULTRA_BALANCE_BIASL の交互発火を防ぐ
+    if (nextType === 1 && extremeT1Flood) {
+      if (canHold && !hold) {
+        const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+        const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
+        const bestNext = Math.max(next2T, next3T);
+        if (bestNext >= 2) {
+          return { x: 0, reason: `ULTRA_EXTREME_HOLD_T1_FOR_T${bestNext}`, hold: true };
+        }
+      }
+      if (canHold && hold && hold.type >= 2) {
+        const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
+        if (holdMerge !== null) return { x: 0, reason: `ULTRA_EXTREME_SWAP_T${hold.type}`, hold: true };
+      }
+      const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
+      if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
+      const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
+      if (chainAnchor !== null) return { x: chainAnchor, reason: 'ULTRA_EXTREME_T1_ANCHOR' };
+      const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
+      if (stackCol !== null) return { x: stackCol, reason: 'ULTRA_EXTREME_T1_STACK' };
+      const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
+      return { x: lowestDrop.x, reason: `ULTRA_EXTREME_T1_LOWEST` };
+    }
+
+    // バランス補正 (v29: T1フラッド時は閾値を3に引き上げて振動抑制)
+    const balanceThreshold = t1FloodMode ? 3 : 2;
+    if (Math.abs(balanceBias) >= balanceThreshold) {
       if (nextType > 1) {
         const targetRight = balanceBias < 0;
         const balanceDrop = findLowestOnTargetSide(colHeights, targetRight);
@@ -129,29 +157,6 @@ export function decide(boardState) {
     }
 
     if (nextType === 1) {
-      if (extremeT1Flood) {
-        if (canHold && !hold) {
-          const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
-          const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
-          const bestNext = Math.max(next2T, next3T);
-          if (bestNext >= 2) {
-            return { x: 0, reason: `ULTRA_EXTREME_HOLD_T1_FOR_T${bestNext}`, hold: true };
-          }
-        }
-        if (canHold && hold && hold.type >= 2) {
-          const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
-          if (holdMerge !== null) return { x: 0, reason: `ULTRA_EXTREME_SWAP_T${hold.type}`, hold: true };
-        }
-        const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
-        if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
-        const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
-        if (chainAnchor !== null) return { x: chainAnchor, reason: 'ULTRA_EXTREME_T1_ANCHOR' };
-        const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
-        if (stackCol !== null) return { x: stackCol, reason: 'ULTRA_EXTREME_T1_STACK' };
-        const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
-        return { x: lowestDrop.x, reason: `ULTRA_EXTREME_T1_LOWEST` };
-      }
-
       // 通常T1フラッドモード (15 < t1Count <= 36)
       if (t1FloodMode) {
         const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
