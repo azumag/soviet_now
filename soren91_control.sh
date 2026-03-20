@@ -36,6 +36,17 @@ soren91_is_running() {
 	return 1
 }
 
+_soren91_is_improve_process() {
+	# PIDが soren91 improve プロセスかどうか確認
+	local pid="$1"
+	case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	local cmd
+	cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+	echo "$cmd" | grep -q "improve.mjs" && return 0
+	return 1
+}
+
 soren91_start() {
 	_soren91_enabled || return 0
 	if soren91_is_running; then
@@ -46,6 +57,15 @@ soren91_start() {
 	log "[SOREN91] Starting soren91 (メリケンAI)..."
 	rm -f "$SOREN91_STOP_FILE"
 	mkdir -p "$SOREN91_DIR/tmp" 2>/dev/null || true
+
+	# 前回の soren91 improve がまだ実行中なら session_games.json を上書きしない
+	if [ -f "$SOREN91_IMPROVE_LOCK" ] && [ -f "$SOREN91_IMPROVE_PID_FILE" ]; then
+		local prev_imp_pid
+		prev_imp_pid=$(cat "$SOREN91_IMPROVE_PID_FILE" 2>/dev/null)
+		if _soren91_is_improve_process "$prev_imp_pid"; then
+			log "[SOREN91] Previous improve still running (PID=$prev_imp_pid), keeping session_games.json"
+		fi
+	fi
 
 	# セッション開始時のゲーム番号を記録
 	local start_game=0
@@ -75,16 +95,45 @@ soren91_start() {
 	return 0
 }
 
+_soren91_record_end_game() {
+	# セッション終了時のゲーム番号を記録 (stop/早期終了の両方から呼ばれる)
+	local end_game=0
+	if [ -d "$SOREN91_DIR/game_history" ]; then
+		end_game=$(ls -1 "$SOREN91_DIR/game_history"/game_*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+	fi
+	if [ -f "$SOREN91_SESSION_FILE" ]; then
+		python3 -c "
+import json, sys
+with open('$SOREN91_SESSION_FILE') as f:
+    sess = json.load(f)
+sess['end_game'] = $end_game
+sess['end_time'] = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+with open('$SOREN91_SESSION_FILE', 'w') as f:
+    json.dump(sess, f)
+" 2>/dev/null || true
+	fi
+	echo "$end_game"
+}
+
 soren91_stop() {
 	_soren91_enabled || return 0
-	if ! soren91_is_running; then
-		log "[SOREN91] Not running, skip stop"
+
+	local pid=""
+	if [ -f "$SOREN91_PID_FILE" ]; then
+		pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
+		case "$pid" in ''|*[!0-9]*) pid="" ;; esac
+	fi
+
+	if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+		# プロセスが既に終了 → end_game だけ記録して終了
+		log "[SOREN91] Not running, recording end_game"
+		local eg
+		eg=$(_soren91_record_end_game)
 		rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE"
+		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
 	fi
 
-	local pid
-	pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
 	log "[SOREN91] Stopping soren91 (PID=$pid)..."
 
 	# graceful stop: stop ファイルを作成して現在のゲーム終了を待つ
@@ -107,25 +156,11 @@ soren91_stop() {
 		_stop_pid_with_fallback "$pid" "soren91"
 	fi
 
-	# セッション終了時のゲーム番号を記録
-	local end_game=0
-	if [ -d "$SOREN91_DIR/game_history" ]; then
-		end_game=$(ls -1 "$SOREN91_DIR/game_history"/game_*.jsonl 2>/dev/null | wc -l | tr -d ' ')
-	fi
-	if [ -f "$SOREN91_SESSION_FILE" ]; then
-		python3 -c "
-import json, sys
-with open('$SOREN91_SESSION_FILE') as f:
-    sess = json.load(f)
-sess['end_game'] = $end_game
-sess['end_time'] = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
-with open('$SOREN91_SESSION_FILE', 'w') as f:
-    json.dump(sess, f)
-" 2>/dev/null || true
-	fi
+	local eg
+	eg=$(_soren91_record_end_game)
 
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE"
-	log "[SOREN91] Stopped (end_game=$end_game)"
+	log "[SOREN91] Stopped (end_game=$eg)"
 	return 0
 }
 
@@ -183,7 +218,7 @@ soren91_improve() {
 soren91_cleanup() {
 	_soren91_enabled || return 0
 
-	# プレイヤープロセス停止
+	# プレイヤープロセス停止 (コマンド名を検証して誤kill防止)
 	if [ -f "$SOREN91_PID_FILE" ]; then
 		local pid
 		pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
@@ -191,15 +226,21 @@ soren91_cleanup() {
 		''|*[!0-9]*) ;;
 		*)
 			if kill -0 "$pid" 2>/dev/null; then
-				log "[SOREN91] Cleanup: stopping player (PID=$pid)"
-				_stop_loop_descendants "$pid"
-				_stop_pid_with_fallback "$pid" "soren91_player"
+				local cmd
+				cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+				if echo "$cmd" | grep -q "main.mjs"; then
+					log "[SOREN91] Cleanup: stopping player (PID=$pid)"
+					_stop_loop_descendants "$pid"
+					_stop_pid_with_fallback "$pid" "soren91_player"
+				else
+					log "[SOREN91] Cleanup: PID=$pid is not soren91 player ($cmd), skipping"
+				fi
 			fi
 			;;
 		esac
 	fi
 
-	# 改善プロセス停止
+	# 改善プロセス停止 (コマンド名を検証)
 	if [ -f "$SOREN91_IMPROVE_PID_FILE" ]; then
 		local imp_pid
 		imp_pid=$(cat "$SOREN91_IMPROVE_PID_FILE" 2>/dev/null)
@@ -207,9 +248,15 @@ soren91_cleanup() {
 		''|*[!0-9]*) ;;
 		*)
 			if kill -0 "$imp_pid" 2>/dev/null; then
-				log "[SOREN91] Cleanup: stopping improve (PID=$imp_pid)"
-				_stop_loop_descendants "$imp_pid"
-				_stop_pid_with_fallback "$imp_pid" "soren91_improve"
+				local cmd
+				cmd=$(ps -p "$imp_pid" -o command= 2>/dev/null || echo "")
+				if echo "$cmd" | grep -q "improve.mjs"; then
+					log "[SOREN91] Cleanup: stopping improve (PID=$imp_pid)"
+					_stop_loop_descendants "$imp_pid"
+					_stop_pid_with_fallback "$imp_pid" "soren91_improve"
+				else
+					log "[SOREN91] Cleanup: PID=$imp_pid is not soren91 improve ($cmd), skipping"
+				fi
 			fi
 			;;
 		esac
