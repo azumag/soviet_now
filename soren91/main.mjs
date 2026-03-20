@@ -9,7 +9,7 @@
 import 'dotenv/config';
 import { parse as parseDotenv } from 'dotenv';
 import { chromium } from 'playwright';
-import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync } from 'fs';
+import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 // calibration.mjs, screenshot_analyzer.mjs は動的ロード (ホットリロード対応)
 async function loadModule(name) {
@@ -280,6 +280,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let holdUsedThisTurn = false;
   let lastKnownRank = null;
   let rankingDetected = false;
+  let pendingGameOver = null;
 
   console.log('[game] Game loop started');
 
@@ -343,8 +344,9 @@ async function gameLoop(page, calibration, gameNumber) {
           // 最終順位をboardStateに付与
           if (lastKnownRank) boardState.rank = lastKnownRank;
           // 履歴保存 + AI改善 (非同期 — ゲームループをブロックしない)
-          handleGameOver(page, gameNumber, turn, boardState, historyFile)
-            .catch(e => console.error('[game] Post-game error:', e.message));
+          pendingGameOver = handleGameOver(page, gameNumber, turn, boardState, historyFile)
+            .catch(e => console.error('[game] Post-game error:', e.message))
+            .finally(() => { pendingGameOver = null; });
           // 次ラウンド用にリセット
           gameNumber++;
           turn = 0;
@@ -352,6 +354,21 @@ async function gameLoop(page, calibration, gameNumber) {
           moveCount = 0;
           lastKnownRank = null;
           rankingDetected = false;
+
+          // Stop file チェック (外部からの graceful stop 要求)
+          if (existsSync('tmp/stop')) {
+            console.log(`[game] Stop requested, waiting for pending game data save...`);
+            if (pendingGameOver) await pendingGameOver;
+            console.log('[game] Exiting gracefully');
+            return;
+          }
+        }
+
+        // Stop file チェック (ラウンド間での安全な停止)
+        if (existsSync('tmp/stop') && turn <= 1) {
+          if (pendingGameOver) await pendingGameOver;
+          console.log('[game] Stop requested between rounds, exiting');
+          return;
         }
 
         if (!waitingLogged) {
@@ -514,6 +531,12 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile) 
   const summaryPath = join('tmp/summaries', `game_${String(gameNumber).padStart(4, '0')}.json`);
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
   console.log(`[game] Summary: turns=${turns}, rank=${finalState.rank}`);
+
+  // 外部制御モード: 内蔵改善をスキップ (親プロセスが soren91_improve() で管理)
+  if (process.env.SOREN91_EXTERNAL_IMPROVE === '1') {
+    console.log(`[game] External improvement mode, skipping internal for game #${gameNumber}`);
+    return;
+  }
 
   const { interval: improvementIntervalGames, source: improvementIntervalSource } = loadImprovementSchedule();
   if (gameNumber % improvementIntervalGames !== 0) {

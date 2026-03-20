@@ -362,3 +362,145 @@ function cleanupScreenshots() {
     console.log(`[improve] Cleaned up ${deleted} screenshots`);
   }
 }
+
+/**
+ * 複数ゲームの集約サマリーを生成
+ */
+function generateAggregateSummary(startGame, endGame) {
+  const summariesDir = 'tmp/summaries';
+  const lines = [];
+  const games = [];
+
+  for (let i = startGame + 1; i <= endGame; i++) {
+    const summaryPath = join(summariesDir, `game_${String(i).padStart(4, '0')}.json`);
+    if (!existsSync(summaryPath)) continue;
+    try {
+      const summary = JSON.parse(readFileSync(summaryPath, 'utf-8'));
+      games.push(summary);
+    } catch {}
+  }
+
+  if (games.length === 0) {
+    return '## Aggregate Summary\nNo game data available.';
+  }
+
+  const turns = games.map(g => g.turns || 0);
+  const ranks = games.map(g => g.rank).filter(r => r != null && r > 0);
+
+  lines.push(`## Aggregate Summary (${games.length} games, #${startGame + 1}-#${endGame})`);
+  lines.push(`- Total games: ${games.length}`);
+  lines.push(`- Turn range: [${Math.min(...turns)}, ${Math.max(...turns)}]`);
+  lines.push(`- Avg turns: ${(turns.reduce((a, b) => a + b, 0) / turns.length).toFixed(1)}`);
+  if (ranks.length > 0) {
+    lines.push(`- Rank range: [${Math.min(...ranks)}, ${Math.max(...ranks)}]`);
+    lines.push(`- Avg rank: ${(ranks.reduce((a, b) => a + b, 0) / ranks.length).toFixed(1)}`);
+    lines.push(`- Best rank: ${Math.min(...ranks)}`);
+  }
+
+  // ゲーム一覧
+  lines.push('');
+  lines.push('## Per-Game Details');
+  for (const g of games) {
+    lines.push(`- Game #${g.gameNumber}: turns=${g.turns}, rank=${g.rank ?? '?'}, pieces=${g.piecesAtEnd ?? '?'}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * standaloneモード: 指定範囲のゲームデータから最良ゲームを選んで改善
+ */
+async function runStandaloneImprovement(startGame, endGame) {
+  console.log(`[improve] Standalone improvement for games ${startGame}-${endGame}`);
+
+  const summariesDir = 'tmp/summaries';
+  const historyDir = 'game_history';
+  let bestGame = null;
+  let bestTurns = -1;
+
+  // サマリーを走査し最長turnsのゲームを特定
+  for (let i = startGame + 1; i <= endGame; i++) {
+    const summaryPath = join(summariesDir, `game_${String(i).padStart(4, '0')}.json`);
+    if (!existsSync(summaryPath)) continue;
+    try {
+      const summary = JSON.parse(readFileSync(summaryPath, 'utf-8'));
+      const turns = summary.turns || 0;
+      if (turns > bestTurns) {
+        bestTurns = turns;
+        bestGame = i;
+      }
+    } catch {}
+  }
+
+  if (bestGame === null) {
+    console.log('[improve] No valid game summaries found, skipping');
+    return;
+  }
+
+  const bestHistoryPath = join(historyDir, `game_${String(bestGame).padStart(4, '0')}.jsonl`);
+  const bestSummaryPath = join(summariesDir, `game_${String(bestGame).padStart(4, '0')}.json`);
+
+  if (!existsSync(bestHistoryPath)) {
+    console.log(`[improve] Best game history not found: ${bestHistoryPath}`);
+    return;
+  }
+
+  console.log(`[improve] Best game: #${bestGame} (turns=${bestTurns})`);
+
+  // 集約サマリー生成
+  const aggregateSummary = generateAggregateSummary(startGame, endGame);
+
+  // 現在の戦略を読み込み
+  const currentStrategy = readFileSync(STRATEGY_PATH, 'utf-8');
+
+  // 個別ゲームのサマリーも生成
+  const gameSummary = generateSummary(bestHistoryPath, bestSummaryPath);
+
+  // プロンプト構築 (集約 + ベストゲーム詳細)
+  const combinedSummary = `${aggregateSummary}\n\n## Best Game Details\n${gameSummary}`;
+  const promptText = buildPromptText(combinedSummary, currentStrategy);
+
+  console.log('[improve] Calling claude CLI (standalone)...');
+  let newStrategy;
+  try {
+    newStrategy = await callClaude(promptText);
+  } catch (err) {
+    console.error('[improve] API call failed:', err.message);
+    return;
+  }
+
+  if (!newStrategy) {
+    console.log('[improve] No strategy improvement returned');
+    return;
+  }
+
+  const isValid = await validateStrategy(newStrategy);
+  if (!isValid) {
+    console.log('[improve] New strategy failed validation, keeping current');
+    return;
+  }
+
+  // バックアップ + 適用
+  const versionName = `v${endGame}_aggregate_strategy.mjs`;
+  const backupPath = join(VERSIONS_DIR, versionName);
+  writeFileSync(backupPath, currentStrategy);
+  console.log(`[improve] Backed up current strategy to ${backupPath}`);
+
+  writeFileSync(STRATEGY_PATH, newStrategy);
+  console.log('[improve] New strategy applied (standalone)!');
+  cleanupScreenshots();
+}
+
+// CLI: node improve.mjs --standalone <startGame> <endGame>
+const args = process.argv.slice(2);
+if (args[0] === '--standalone') {
+  const start = parseInt(args[1], 10);
+  const end = parseInt(args[2], 10);
+  if (isNaN(start) || isNaN(end)) {
+    console.error('Usage: node improve.mjs --standalone <startGame> <endGame>');
+    process.exit(1);
+  }
+  runStandaloneImprovement(start, end)
+    .then(() => process.exit(0))
+    .catch(e => { console.error(e); process.exit(1); });
+}

@@ -197,6 +197,13 @@ while true; do
 		continue
 	fi
 
+	# 改善中は中華AIのゲームプレイを一時停止 (soren91が代わりにプレイ中)
+	if _is_improve_running; then
+		log "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
+		sleep 10
+		continue
+	fi
+
 	# 非同期ジョブに渡すため、試合開始時点の値を固定
 	SCHEDULE_GAME_NUM="$GAME_NUM"
 	SCHEDULE_SCORE=$(_last_score)

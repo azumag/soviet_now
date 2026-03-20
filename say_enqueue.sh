@@ -189,13 +189,12 @@ LAUNCHED_EXPECTED_SEC=0
 cp "$CONTENT_FILE" "$MY_CONTENT"
 
 # 読み上げ修正: よくある誤読を事前に置換（WAVモード時はスキップ）
-if [ "$WAV_MODE" = "false" ]; then
-    sed -i '' \
-        -e 's/AI/エーアイ/g' \
-        -e 's/zoumotu3/ザモートゥ/g' \
-        -e 's/静寂/せいじゃく/g' \
-        -e 's/地政学的/ちせいがくてき/g' \
-        -e 's/地政学/ちせいがく/g' \
+	if [ "$WAV_MODE" = "false" ]; then
+	    sed -i '' \
+	        -e 's/zoumotu3/ザモートゥ/g' \
+	        -e 's/静寂/せいじゃく/g' \
+	        -e 's/地政学的/ちせいがくてき/g' \
+	        -e 's/地政学/ちせいがく/g' \
         "$MY_CONTENT"
 fi
 

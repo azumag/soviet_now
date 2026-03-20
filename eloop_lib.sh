@@ -34,3 +34,5 @@ source "$ELOOP_LIB_DIR/broadcast/comment_worker.sh"
 source "$ELOOP_LIB_DIR/broadcast/scheduler.sh"
 # Layer 4: インフラ
 source "$ELOOP_LIB_DIR/infra/cleanup.sh"
+# Layer 5: soren91 integration (optional)
+[ -f "$ELOOP_LIB_DIR/soren91_control.sh" ] && source "$ELOOP_LIB_DIR/soren91_control.sh"

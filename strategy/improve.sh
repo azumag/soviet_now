@@ -1,6 +1,28 @@
 # strategy/improve.sh - improve_state管理, accumulate, trigger_adaptive_improvement
 
 
+#=== 改善中判定 (soren_loop.sh のスキップ判定用) ===
+
+_is_improve_running() {
+	[ -f "$IMPROVE_STATE_FILE" ] || return 1
+	local state status pid
+	state=$(cat "$IMPROVE_STATE_FILE" 2>/dev/null) || return 1
+	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
+	[ "$status" = "running" ] || return 1
+	pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
+	case "$pid" in
+	''|0|*[!0-9]*) return 1 ;;
+	esac
+	if kill -0 "$pid" 2>/dev/null; then
+		local cmd
+		cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+		if echo "$cmd" | grep -q "eloop_improve"; then
+			return 0
+		fi
+	fi
+	return 1
+}
+
 #=== 改善ステート管理 ===
 
 _read_improve_state() {
@@ -190,8 +212,11 @@ with open(rs_file, 'w') as f:
 			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
+			# soren91 (メリケンAI) を停止 → バックグラウンド改善開始
+			soren91_stop
+			soren91_improve
 			# Twitch チャットに戦略改善終了を通知
-			./twitch_chat.sh send "戦略改善終了しました。中華AIはコメントに戻れます" 2>/dev/null &
+			./twitch_chat.sh send "戦略改善終了。中華AI復帰、メリケンAIは改善タイム" 2>/dev/null &
 		fi
 	fi
 }
@@ -433,8 +458,10 @@ _start_improvement_job() {
 		else
 			log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count} 試合)"
 		fi
+		# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
+		soren91_start
 		# Twitch チャットに戦略改善開始を通知
-		./twitch_chat.sh send "戦略改善中。中華AIが忙しくしている間、メリケンAIが同志として代わりに返答します" 2>/dev/null &
+		./twitch_chat.sh send "戦略改善中。中華AIはおやすみ、メリケンAIが代打プレイ中" 2>/dev/null &
 		return 0
 	else
 		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死)"

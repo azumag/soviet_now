@@ -210,6 +210,9 @@ cleanup_all() {
 	_kill_comment_gen
 	stop_comment_player
 
+	# soren91 完全停止
+	soren91_cleanup 2>/dev/null || true
+
 	# Twitchチャット停止
 	./twitch_chat.sh stop 2>/dev/null || true
 
