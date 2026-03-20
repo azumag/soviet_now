@@ -40,6 +40,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
      # --- Change History ---
+ # v288: deadline_crossed時即時併合不可能局面のheight_mult緩和 - v282 rollback failure mode修正
+ # v282の-1000.0ペナルティはdeadline_crossed && reactive_pairs>=2 && merge_grade=="NO"で適用されていたが、
+ # 即時併合不可能な局面で戦略的配置を禁止し、強制的な高配置を招いていた。
+ # last_rollback_postmortemの制約遵守：直接ペナルティではなくheight_mult=0.6緩和で戦略的配置を可能にする。
+ # 危険ピースがある場合は即時併合可能時のみ-1000.0ペナルティを維持し、即時併合不可能時はheight_mult=0.6で戦略的配置余地を確保。
+ # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
+ #
  # v281: axis 9.5 ボーナス条件調整 - deadline_crossed時reactive_pairs==0なら戦略的配置許容
  # ワーストゲーム(score0735)終盤turns 60-71でdeadline_crossed=trueになった後、即時併合機会がなく
  # max_yが急上昇してゲームオーバー。reactive_pairs=5-7あるのに即時併合ができていない。
@@ -523,14 +530,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 1000.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
-                # deadline_crossed状態で即時併合機会がない場合：reactive_pairsに応じて段階的ペナルティを適用
-                # reactive_pairsが少ない場合は戦略的配置の余地を確保し、多い場合は強力なペナルティで即時併合逃しを回避
-                if reactive_pair_count <= 1:
-                    score -= 600.0  # reactive_pairs<=1の場合は緩和したペナルティで戦略的配置の余地を確保
-                elif reactive_pair_count == 2:
-                    score -= 800.0  # reactive_pairs==2の場合は従来通りのペナルティを維持
-                else:
-                    score -= 1000.0  # reactive_pairs>=3の場合は強力なペナルティで即時併合逃しを回避
+                # deadline_crossed状態で即時併合機会がない場合：height_mult=0.6で戦略的配置の余地を確保
+                # last_rollback_postmortemの制約遵守：直接ペナルティではなくheight_mult緩和で戦略的配置を可能に
+                # danger_direct_merge_available==falseで即時併合不可能な場合、-1000.0ペナルティは強制的な高配置を招くため削除
+                # reactive_pairs>=1のdeadline_crossed時は、height_mult=0.6で制御された高さ変動を許容し、即時併合できない状況での戦略的配置を可能に
+                height_mult *= 0.6
                 reasons.append("DANGER_ZONE_MERGE_REQUIRED")
         elif danger_piece_count > 0:
             # deadline_crossedしていないが危険ピースがある場合：従来のボーナスとペナルティ
