@@ -99,15 +99,6 @@ _run_opencode_comment() {
 		sed '/^[[:space:]]*$/d'
 	rm -f "$raw_file"
 }
-		return 1
-	fi
-	printf '%s' "$output"
-}
-
-# 後方互換
-_run_opencode_comment() {
-	_run_zai_comment "$@"
-}
 
 _run_claude_comment_with_model() {
 	local prompt_file="$1"

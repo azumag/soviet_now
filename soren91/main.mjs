@@ -36,6 +36,7 @@ const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲー�
 const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
 const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
+const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 
@@ -89,9 +90,133 @@ function loadImprovementSchedule() {
   return { interval: DEFAULT_IMPROVEMENT_INTERVAL_GAMES, source: 'default' };
 }
 
+function loadAudioGainMultiplier() {
+  const raw = process.env.SOREN91_AUDIO_GAIN_MULTIPLIER;
+  if (raw == null || raw === '') {
+    return DEFAULT_AUDIO_GAIN_MULTIPLIER;
+  }
+
+  const value = Number.parseFloat(String(raw));
+  if (Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+
+  console.log(`[config] Ignoring invalid SOREN91_AUDIO_GAIN_MULTIPLIER=${raw}`);
+  return DEFAULT_AUDIO_GAIN_MULTIPLIER;
+}
+
+async function installAudioGainLimiter(page, multiplier) {
+  if (!Number.isFinite(multiplier) || multiplier < 0) {
+    return;
+  }
+
+  await page.addInitScript(({ multiplierValue }) => {
+    const gainMultiplier = Number(multiplierValue);
+    if (!Number.isFinite(gainMultiplier) || gainMultiplier < 0) {
+      return;
+    }
+
+    const AudioNodeCtor = globalThis.AudioNode;
+    if (AudioNodeCtor?.prototype && typeof AudioNodeCtor.prototype.connect === 'function') {
+      const originalConnect = AudioNodeCtor.prototype.connect;
+
+      const ensureMasterGain = (ctx) => {
+        if (!ctx.__soren91MasterGain) {
+          const masterGain = ctx.createGain();
+          masterGain.gain.value = gainMultiplier;
+          originalConnect.call(masterGain, ctx.destination);
+          Object.defineProperty(ctx, '__soren91MasterGain', {
+            value: masterGain,
+            configurable: true,
+          });
+        } else if (ctx.__soren91MasterGain?.gain) {
+          ctx.__soren91MasterGain.gain.value = gainMultiplier;
+        }
+        return ctx.__soren91MasterGain;
+      };
+
+      if (!globalThis.__soren91AudioGainPatched) {
+        AudioNodeCtor.prototype.connect = function patchedConnect(destination, ...args) {
+          try {
+            if (destination && this?.context && destination === this.context.destination) {
+              const masterGain = ensureMasterGain(this.context);
+              return originalConnect.call(this, masterGain, ...args);
+            }
+          } catch (_) {
+            // Fall through to the native connect path.
+          }
+          return originalConnect.call(this, destination, ...args);
+        };
+
+        Object.defineProperty(globalThis, '__soren91AudioGainPatched', {
+          value: true,
+          configurable: true,
+        });
+      }
+    }
+
+    const applyMediaVolume = (elem) => {
+      try {
+        if (elem && typeof elem.volume === 'number' && elem.volume > gainMultiplier) {
+          elem.volume = gainMultiplier;
+        }
+      } catch (_) {
+        // Ignore media volume failures and keep gameplay alive.
+      }
+    };
+
+    const sweepMedia = () => {
+      try {
+        document.querySelectorAll('audio,video').forEach(applyMediaVolume);
+      } catch (_) {
+        // Ignore missing DOM during early boot.
+      }
+    };
+
+    if (typeof HTMLMediaElement === 'function' && !globalThis.__soren91MediaPlayPatched) {
+      const originalPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function patchedPlay(...args) {
+        applyMediaVolume(this);
+        return originalPlay.apply(this, args);
+      };
+      Object.defineProperty(globalThis, '__soren91MediaPlayPatched', {
+        value: true,
+        configurable: true,
+      });
+    }
+
+    const installObserver = () => {
+      if (globalThis.__soren91MediaObserverInstalled || !document.documentElement) {
+        return;
+      }
+      const observer = new MutationObserver(() => sweepMedia());
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      Object.defineProperty(globalThis, '__soren91MediaObserverInstalled', {
+        value: true,
+        configurable: true,
+      });
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        sweepMedia();
+        installObserver();
+      }, { once: true });
+    } else {
+      sweepMedia();
+      installObserver();
+    }
+
+    globalThis.addEventListener('load', () => sweepMedia(), { once: true });
+    globalThis.__soren91AudioGainMultiplier = gainMultiplier;
+  }, { multiplierValue: multiplier });
+}
+
 // --- メイン ---
 async function main() {
   console.log('[main] 同志AI 起動...');
+  const audioGainMultiplier = loadAudioGainMultiplier();
+  console.log(`[main] soren91 audio gain multiplier=${audioGainMultiplier}`);
 
   // Step 1: headless でトップページを開き、ゲームURLを取得
   console.log('[main] Fetching game URL (headless)...');
@@ -112,6 +237,7 @@ async function main() {
   try {
     // ゲームURLに直接遷移 + HTML intercept で unityInstance 取得
     const gamePage = await context.newPage();
+    await installAudioGainLimiter(gamePage, audioGainMultiplier);
     await gamePage.route('**/*play.unityroom.com/**', async route => {
       if (route.request().resourceType() === 'document') {
         const response = await route.fetch();

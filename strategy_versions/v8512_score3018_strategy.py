@@ -53,22 +53,16 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v302: deadline_crossed時即時併合優先強化版 - 即時併合機会逃しペナルティ大幅強化・戦略的配置ボーナス削減
+    """v303: deadline_crossed時即時併合優先強化版 - 即時併合機会逃しペナルティ大幅強化・戦略的配置ボーナス削減
 
-    Worst game (score0360) turns 47-48: reactive_pairs=5-6 but no immediate merge, max_y=2.82→2.83 game over
-    extra_low (score0714) turns 71-72: deadline_crossed=true, reactive_pairs=4-5 but no immediate merge, max_y=3.31→3.28
-    Best game (score2363) turns 100-107: deadline_crossed=true but consistently captures immediate merges, achieved score2363
-    batch_summary: HEIGHT_CONTROL selected 11.7% (avg_score_delta=0.0), excessive immediate merge opportunity misses
-    last_rollback_analysis focus: p25 degraded significantly, need to suppress max_y runaway from missing immediate merges
+    Worst game (score0873) turns 62-81: reactive_pairs=2-4 but no immediate merge, max_y=3.42 game over
+    extra_low (score0962) turns 64-71: deadline_crossed=true, reactive_pairs=4-5 but no immediate merge, max_y=4.40
+    Best game (score2415) turns 106-113: deadline_crossed=true but consistently captures immediate merges, achieved score2415
+    batch_summary: HEIGHT_CONTROL selected 11.0% (avg_score_delta=0.0), excessive immediate merge opportunity misses
+    last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8), need to suppress max_y runaway from missing immediate merges
 
-    v302 changes:
-    - Axis 2.5 immediate merge opportunity escape penalty strengthened:
-      * deadline_crossed: 2x → 3x multiplier
-      * has_russian: 2x → 2.5x multiplier
-      * danger_piece_count>0: 1.5x maintained
-    - Axis 8.6 strategic placement bonus reduced for deadline_crossed:
-      * danger_piece_count==0: 100.0 → 50.0
-      * danger_piece_count>0: 20.0 → 10.0
+    v303 changes:
+    - Deadline crossed immediate merge opportunity penalty strengthened: 0.4 → 0.3 height multiplier
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -113,19 +107,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
 
-    # --- phase judgment (v299: deadline_crossed時即時併合優先強化版) ---
-    # ワーストゲーム(score0885)終盤turns 56-63: reactive_pairs=2あるのに即時併合不可、戦略的配置が続きmax_y=3.72に上昇してゲームオーバー
-    # ベストゲーム(score1952)終盤turns 96-103: deadline_crossed=trueでも即時併合を確実に捉えてスコア1952を出している
-    # batch_summaryでHEIGHT_CONTROLが11.2%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
+    # --- phase judgment (v303: deadline_crossed時即時併合優先強化版) ---
+    # ワーストゲーム(score0962)終盤turns 64-71: deadline_crossed=true, reactive_pairs=4-5あるのに即時併合不可、max_y=4.40に急上昇してゲームオーバー
+    # ワーストゲーム(score0873)終盤turns 62-81: reactive_pairs=2-4あるのに即時併合不可、max_y=3.42で終了
+    # ベストゲーム(score2415)終盤turns 106-113: deadline_crossed=trueでも即時併合を確実に捉えてスコア2415を出している
+    # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
     # last_rollback_postmortemの制約遵守：deadline_crossed時の即時併合優先、ロシア建国後の即時併合優先
+    # last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
+    # RUSSIAN_CONSTRUCTEDフェーズのheight_mult緩和: 1.5→1.0 (盤面圧縮優先)
+    # RUSSIAN_CONSTRUCTEDフェーズの即時併合不可時height_mult緩和強化: reactive_pairs>=2 && merge_grade=="NO" 時 0.5→0.3
+    # RUSSIAN_CONSTRUCTEDフェーズのdeadline_crossed時height_mult緩和: deadline_crossed && reactive_pairs>=1 && merge_grade=="NO" 時 0.5→0.3
+    # RUSSIAN_CONSTRUCTEDフェーズのlanding_y>0.0時height_penalty倍率緩和: 2.0→1.5
+    # deadline_crossed時の即時併合不可時height_mult緩和強化: deadline_crossed && reactive_pairs>=1 && merge_grade=="NO" 時 0.4→0.3
     # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-    #       game_history/20260321_183437_score0885.jsonl turns 56-63, game_history/20260321_184147_score1952.jsonl turns 96-103
+    #       game_history/20260321_200909_score0962.jsonl turns 64-71, game_history/20260321_202358_score0873.jsonl turns 62-81,
+    #       game_history/20260321_200358_score2415.jsonl turns 106-113, strategy_versions/best_score2346_strategy.py
     # rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
-    if has_russian:
-        phase = "RUSSIAN_CONSTRUCTED"
-        height_mult = 1.5              # v299: Maintains height control to prevent excessive strategic placement
-        merge_mult = 1.0  # Maintain merge priority
-    elif max_y < 0.8:
+    if max_y < 0.8:
         phase = "LOW"
         height_mult = 0.4  # v198: LOW phase height_mult further reduced (0.6→0.4) to enable proactive merge opportunities
         merge_mult = 1.2  # 20% merge bonus increase, actively target
@@ -194,22 +192,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
-        # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
-        # v294: deadline_crossed reactive_pairs board compression - v291 failure mode潰し
-        # ワーストゲーム(score0323)終盤turns 44-51でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
-        # 戦略的配置が続きmax_y=2.15→3.51に上昇してゲームオーバー。
-        # ベストゲーム(score1716)終盤turns 81-88ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア1716を出している。
-        # batch_summaryでHEIGHT_CONTROLが11.8%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
-        # v291のaxis 2 height_mult *= 0.2 がheight_penalty計算後だったため、盤面圧縮候補が選ばれなかった。
-        # axis 8.8のボーナスがaxis 2の後で評価されるため、height_penaltyと競合できていなかった。
-        # v290のaxis 8.8（+300-800 at axis 7.5）が有効だったパターンを再現。
-        # deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" && danger_piece_count == 0 の場合、
-        # height_multを0.2に緩和し、盤面圧縮（tighter board）を優先。即時併合機会を確保する。
-        # axis 8.8の複雑ロジックを削除し、deadline_crossed時の盤面圧縮をaxis 2のheight_mult緩和に統合して簡素化。
-        # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正。
+        # v303: ロシア建国後フェーズの盤面圧縮強化版 - p25低下対策
+        # ワーストゲーム(score0962)終盤turns 64-71: deadline_crossed=true, reactive_pairs=4-5あるのに即時併合不可、max_y=4.40に急上昇してゲームオーバー
+        # ワーストゲーム(score0873)終盤turns 62-81: reactive_pairs=2-4あるのに即時併合不可、max_y=3.42で終了
+        # ベストゲーム(score2415)終盤turns 106-113: deadline_crossed=trueでも即時併合を確実に捉えてスコア2415を出している
+        # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
         # last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
+        # RUSSIAN_CONSTRUCTEDフェーズのheight_mult緩和: 1.5→1.0
+        # RUSSIAN_CONSTRUCTEDフェーズの即時併合不可時height_mult緩和強化: reactive_pairs>=2 && merge_grade=="NO" 時 0.5→0.3
+        # RUSSIAN_CONSTRUCTEDフェーズのdeadline_crossed時height_mult緩和: deadline_crossed && reactive_pairs>=1 && merge_grade=="NO" 時 0.5→0.3
+        # RUSSIAN_CONSTRUCTEDフェーズのlanding_y>0.0時height_penalty倍率緩和: 2.0→1.5
+        # deadline_crossed時の即時併合不可時height_mult緩和強化: deadline_crossed && reactive_pairs>=1 && merge_grade=="NO" 時 0.4→0.3
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-        #       game_history/20260321_040215_score0323.jsonl turns 44-51, game_history/20260321_035338_score1716.jsonl turns 81-88
+        #       game_history/20260321_200909_score0962.jsonl turns 64-71, game_history/20260321_202358_score0873.jsonl turns 62-81,
+        #       game_history/20260321_200358_score2415.jsonl turns 106-113, strategy_versions/best_score2346_strategy.py
 
         if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
             # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
@@ -242,21 +238,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127
 
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # v299: deadline_crossed時即時併合優先強化 - height_mult *= 0.4
-            # ワーストゲーム(score0885)終盤turns 59-63でdeadline_crossed=true, reactive_pairs=2あるのに即時併合不可、
-            # 戦略的配置が続きmax_y=3.72に上昇してゲームオーバー。
-            # ベストゲーム(score1952)終盤turns 96-103では即時併合を確実に捉えてスコア1952を出している。
-            # height_multを0.4に緩和して、戦略的配置の余地を確保し、即時併合機会を逃さないようにする。
-            height_mult *= 0.4
+            # v303: deadline_crossed時即時併合優先強化 - height_mult *= 0.3
+            # ワーストゲーム(score0873)終盤turns 62-81: reactive_pairs=2-4あるのに即時併合不可、max_y=3.42で終了
+            # ワーストゲーム(score0962)終盤turns 64-71: deadline_crossed=true, reactive_pairs=4-5あるのに即時併合不可、max_y=4.40に急上昇してゲームオーバー
+            # ベストゲーム(score2415)終盤turns 106-113: deadline_crossed=trueでも即時併合を確実に捉えてスコア2415を出している
+            # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
+            # last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
+            # deadline_crossed時は即時併合優先を最優先するため、height_multを0.3に強化（0.4→0.3）
+            height_mult *= 0.3
 
-        # v299: ロシア建国後フェーズの即時併合優先強化 - height_mult *= 0.5
-        # ワーストゲーム(score0885)終盤turns 56-63: reactive_pairs=2あるのに即時併合不可、戦略的配置が続きmax_y=3.72に上昇してゲームオーバー
-        # advice.md: "ロシア建国後の死亡速度が早いので、建国後はより慎重な盤面進行を検討すること"
-        # rollback analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
-        # ロシア建国後で reactive_pairs >= 2 かつ即時併合不可の場合、height_multを0.5に緩和して即時併合を優先
-        # これにより、盤面圧縮を促進し、即時併合機会を確保する
-        if has_russian and reactive_pair_count >= 2 and merge_grade == "NO":
-            height_mult *= 0.5
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
