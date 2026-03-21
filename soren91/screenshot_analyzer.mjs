@@ -83,6 +83,14 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     ? measureGarbage(data, width, height, calibration)
     : { ratio: 0, height: 0 };
 
+  // 4b. おじゃまゲージ検出 (左壁の予告ゲージ)
+  if (state === 'MOVE') {
+    const gauge = detectOjamaGauge(data, width, height, calibration);
+    garbage.gauge = gauge.level;
+  } else {
+    garbage.gauge = 0;
+  }
+
   // 5. HOLD ピース検出
   const hold = state === 'MOVE'
     ? detectHoldPiece(data, width, height, board)
@@ -99,7 +107,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     next,             // { type, r } — 1つ目 (後方互換)
     nextPieces,       // [{ type, r }, ...] — 最大3つ
     hold,             // { type, r } or null
-    garbage,          // { ratio: 0-1, height: ゲーム座標でのおじゃまの高さ }
+    garbage,          // { ratio: 0-1, height: ゲーム座標でのおじゃまの高さ, gauge: 0-1 おじゃまゲージレベル }
     confidence: pieces.length > 0 ? 0.5 : 0.3,
   };
 }
@@ -450,6 +458,91 @@ function measureGarbage(data, width, height, calibration) {
 }
 
 /**
+ * おじゃまゲージを検出する
+ * ボード左壁の外側にある縦ゲージ（アメリカ国旗から降ってくるおじゃま予告）のレベルを検出
+ * ゲージが下まで到達するとおじゃまブロックが降ってくる
+ *
+ * 検出方法: 左壁の外側〜壁境界の細い領域をスキャンし、
+ * 通常の壁色(灰色)やミニボード背景(黄/オレンジ)でない
+ * 着色ピクセル(赤/青/白のアメリカ国旗カラー等)の縦方向の広がりを測定
+ */
+function detectOjamaGauge(data, width, height, calibration) {
+  const { board, walls } = calibration;
+  if (!walls) return { level: 0 };
+
+  // ゲージ領域: ボード左壁の外側〜壁境界にかけての細い縦領域
+  const scanLeft = Math.max(0, walls.leftOuter - 15);
+  const scanRight = walls.leftOuter + 3;
+  const scanTop = board.top + 10;
+  const scanBottom = board.bottom - 5;
+  const totalHeight = scanBottom - scanTop;
+
+  if (totalHeight <= 0 || scanLeft >= scanRight) return { level: 0 };
+
+  // セクションごとにスキャン (10px単位)
+  const sectionSize = 8;
+  const rowStep = 2;
+  let filledSections = 0;
+  let totalSections = 0;
+  let lowestFilledY = scanTop;
+
+  for (let sy = scanTop; sy < scanBottom; sy += sectionSize) {
+    totalSections++;
+    let coloredCount = 0;
+    let sampleCount = 0;
+    const syEnd = Math.min(sy + sectionSize, scanBottom);
+
+    for (let y = sy; y < syEnd; y += rowStep) {
+      for (let x = scanLeft; x < scanRight; x += 2) {
+        const idx = (y * width + x) * 4;
+        const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+        const brightness = (r + g + b) / 3;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const sat = max > 0 ? (max - min) / max : 0;
+
+        sampleCount++;
+
+        // 除外: 暗い背景(brightness<55)
+        if (brightness < 55) continue;
+        // 除外: 通常の壁色 (灰色: brightness 140-250, sat<0.12)
+        if (brightness >= 140 && brightness <= 250 && sat < 0.12) continue;
+        // 除外: ミニボード背景の黄/オレンジ (r>160,g>100,b<90)
+        if (r > 160 && g > 100 && b < 90) continue;
+
+        // ゲージの色: アメリカ国旗カラー or 明るく彩度のある色
+        const isRed = r > 150 && g < 100 && b < 100;
+        const isBlue = r < 100 && g < 100 && b > 140;
+        const isWhiteBright = brightness > 210 && sat < 0.2;
+        const isSaturated = sat > 0.25 && brightness > 80;
+
+        if (isRed || isBlue || isWhiteBright || isSaturated) {
+          coloredCount++;
+        }
+      }
+    }
+
+    // セクションの25%以上が着色 → ゲージ充填あり
+    if (sampleCount > 0 && coloredCount / sampleCount > 0.25) {
+      filledSections++;
+      if (sy + sectionSize > lowestFilledY) lowestFilledY = sy + sectionSize;
+    }
+  }
+
+  if (filledSections === 0) return { level: 0 };
+
+  // ノイズフィルタ: 全セクションの8%未満ならノイズ
+  if (filledSections / totalSections < 0.08) return { level: 0 };
+
+  // ゲージレベル: 上から下への充填度合い (0=空, 1=満タン→おじゃま発動)
+  const level = Math.min(1.0, (lowestFilledY - scanTop) / totalHeight);
+
+  return {
+    level: Math.round(level * 100) / 100,
+  };
+}
+
+/**
  * YOUR領域から現在の順位を検出する
  * 順位はYOUR下部に白/シアン文字で表示 (1-91)
  */
@@ -647,13 +740,13 @@ export async function detectRankingScreen(screenshotPath) {
   }
   const centerBrightRatio = centerTotal > 0 ? centerBright / centerTotal : 0;
 
-  // ランキング画面は中央が明るい (>70%)、ゲーム中は中央が暗い (<40%)
-  if (centerBrightRatio < 0.65) return null;
+  // ランキング画面は中央が明るい (>50%)、ゲーム中は中央が暗い (<40%)
+  // 閾値を緩めにして検出漏れを防ぐ (スクショは毎フレーム上書きされるため、誤検出は後のフレームで補正)
+  if (centerBrightRatio < 0.50) return null;
 
   // ランキング画面確定 — 画面がランキング画面であることを返す
-  // (数字の正確なOCRは困難なため、検出フラグのみ返す)
-  // 呼び出し側でlastKnownRankをフォールバックとして使用
-  return -1; // -1 = ランキング画面検出、ただし数字未読み取り
+  // Tesseract OCR (result_screen_ocr.mjs) が後で正確な順位を抽出する
+  return -1; // -1 = ランキング画面検出、数字はOCRに委譲
 }
 
 /**

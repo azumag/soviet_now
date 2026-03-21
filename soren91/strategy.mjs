@@ -1,12 +1,14 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v38)
+ * strategy.mjs - ドロップ位置決定戦略 (v39)
  *
- * v38監修点:
- * - 【低質量CRITICALの緩和】固定ガベージ由来の2本スパイクだけで
- *   初手からCRITICALへ落ちるケースを緩和し、garbageUrgent処理へ逃がす
- * - 【CRITICAL T1の低列優先】T1即時マージ候補が高い列に偏るときは
- *   より低い列のT1マージを優先して無駄な往復を減らす
- * - v37の非T1改善は維持
+ * v39: おじゃまブロック対策強化
+ * - 【おじゃまゲージ監視】左壁のゲージレベル(garbage.gauge)を読み取り、
+ *   おじゃまが来る前にマージ準備モード(GAUGE_MERGE)に移行
+ * - 【中程度ガベージ対応】garbageRatio>0.15でOJAMA_MERGEモードに移行し、
+ *   garbageUrgent(>0.4)を待たずに早期のマージ優先行動を開始
+ * - 【ojamaBoost】ガベージ/ゲージ状態に応じてfindBestMergeに
+ *   マージ優先ブースト(+5〜+12)を付与、下部マージにも+5ボーナス
+ * - v38の改善は全て維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -20,6 +22,8 @@ const SURVIVAL_PIECE_THRESHOLD = 78;
 const LOW_MASS_CRITICAL_RELIEF_PIECE_THRESHOLD = 32;
 const LOW_MASS_CRITICAL_RELIEF_AVG_HEIGHT = 1.45;
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.55;
+const GARBAGE_MODERATE_RATIO = 0.15;
+const GARBAGE_MODERATE_HEIGHT = 0.3;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -72,6 +76,19 @@ export function decide(boardState) {
   const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
   const garbageHeight = garbage ? (garbage.height || -5) : -5;
   const garbageUrgent = garbageRatio > 0.4 || garbageHeight > 1.2;
+  const garbageModerate = !garbageUrgent && (
+    garbageRatio > GARBAGE_MODERATE_RATIO ||
+    (garbageHeight > GARBAGE_MODERATE_HEIGHT && garbageRatio > 0.05)
+  );
+  const garbagePresent = garbageRatio > 0.05;
+  const gaugeLevel = garbage ? (garbage.gauge || 0) : 0;
+
+  // おじゃまマージブースト: ガベージ状態/ゲージに応じてマージ優先度を加算
+  let ojamaBoost = 0;
+  if (garbageModerate) ojamaBoost = 12;
+  else if (garbagePresent) ojamaBoost = 8;
+  else if (gaugeLevel >= 0.6) ojamaBoost = 10;
+  else if (gaugeLevel >= 0.3) ojamaBoost = 5;
 
   // colHeights already computed above
   const validH = colHeights.filter(h => h > -4.5);
@@ -381,6 +398,44 @@ export function decide(boardState) {
     return { x: lowestDrop.x, reason: `GBG_LOW_COL_Y${colHeights[lowestDrop.idx].toFixed(1)}` };
   }
 
+  // --- おじゃまブロック中程度 → マージ優先モード ---
+  if (garbageModerate) {
+    // HOLDスワップ: 高タイプのマージ候補があればスワップ
+    if (canHold && hold && hold.type && hold.type > nextType) {
+      const holdMergeCount = activePieces.filter(p =>
+        p.type === hold.type && p.y < DEADLINE_Y - 0.1
+      ).length;
+      if (holdMergeCount > 0) {
+        return { x: 0, reason: `OJAMA_HOLD_T${hold.type}`, hold: true };
+      }
+    }
+    // マージ優先 (ojamaBoost付き)
+    const ojamaMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0, ojamaBoost);
+    if (ojamaMerge) return { ...ojamaMerge, reason: `OJAMA_MERGE_T${nextType}` };
+    // T1もマージ優先
+    if (nextType === 1) {
+      const t1Merge = findAnyMerge(activePieces, 1, colHeights, dangerBias);
+      if (t1Merge !== null) return { x: t1Merge, reason: 'OJAMA_T1_MERGE' };
+    }
+    // マージなければ低い列へ
+    const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
+    return { x: lowestDrop.x, reason: `OJAMA_LOW_COL` };
+  }
+
+  // --- おじゃまゲージ警告 → マージ準備 ---
+  if (gaugeLevel >= 0.3 && !garbagePresent) {
+    // ゲージが充填中: おじゃまが来る前にマージ可能な配置を優先
+    if (nextType > 1) {
+      const gaugeMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0, ojamaBoost);
+      if (gaugeMerge) return { ...gaugeMerge, reason: `GAUGE_MERGE_T${nextType}` };
+    }
+    if (nextType === 1) {
+      const t1Merge = findAnyMerge(activePieces, 1, colHeights, dangerBias);
+      if (t1Merge !== null) return { x: t1Merge, reason: 'GAUGE_T1_MERGE' };
+    }
+    // マージなければ通常フローへ (ojamaBoost付きで下のfindBestMergeが効く)
+  }
+
   // --- HOLD判定 (非CRITICAL時) ---
   if (canHold) {
     const holdResult = evaluateHold(activePieces, nextType, hold, nextPieces, isWarn, t1Count);
@@ -390,7 +445,7 @@ export function decide(boardState) {
   // isWarn時のpre-criticalマージ強化 (T2+のみ)
   // HOLD評価後にT2+ピースがあれば積極的マージでCRITICAL到達を抑制
   if (isWarn && !isCritical && nextType > 1) {
-    const warnMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0);
+    const warnMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0, ojamaBoost);
     if (warnMerge) return { ...warnMerge, reason: `PREWARN_MERGE_T${nextType}` };
   }
 
@@ -426,7 +481,7 @@ export function decide(boardState) {
 
   if (boardPressure) {
     if (nextType >= 2) {
-      const bigMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0);
+      const bigMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0, ojamaBoost);
       if (bigMerge) return bigMerge;
     }
     const heightDrop = findBestHeightDrop(activePieces, nextType, colHeights, dangerBias, avgHeight, next2Type);
@@ -434,14 +489,14 @@ export function decide(boardState) {
   }
 
   if (nextType >= 6) {
-    const bigMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0);
+    const bigMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0, ojamaBoost);
     if (bigMerge) return bigMerge;
   }
 
-  const chainMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 4);
+  const chainMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 4, ojamaBoost);
   if (chainMerge) return chainMerge;
 
-  const normalMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0);
+  const normalMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0, ojamaBoost);
   if (normalMerge) return normalMerge;
 
   const clusterPlace = findClusterDrop(activePieces, nextType, colHeights, dangerBias);
@@ -873,7 +928,7 @@ function findLowestSafeDrop(colHeights, dangerBias) {
   return { x: clampX(FINE_COLS[bestIdx]), idx: bestIdx };
 }
 
-function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, minChainScore) {
+function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, minChainScore, ojamaBoost = 0) {
   const candidates = pieces.filter(p =>
     p.type === nextType && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y - 0.1
   );
@@ -910,6 +965,9 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     s -= Math.abs(t.x) * 2.0;
     if (Math.abs(t.x) > 2.2) s -= 4;
     if (garbageUrgent) s += 15;
+    s += ojamaBoost;
+    // おじゃまブロック時: ボード下部のマージを優先 (おじゃまは下に溜まるため)
+    if (ojamaBoost > 0 && t.y < -1.0) s += 5;
 
     if (s > bestScore) { bestScore = s; bestTarget = t; }
   }

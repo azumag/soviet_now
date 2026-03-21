@@ -66,6 +66,7 @@ tmp/summaries/           # ラウンドサマリーJSON
 - **壁検出**: 水平スキャンで明→暗遷移、暗領域150px以上でゲームボード壁と判定
 - **ピース検出**: gridStep=4のblob検出、背景(brightness<60)除外、低彩度(壁/灰色)除外
 - **おじゃま測定**: 灰色(brightness100-200, saturation<0.1)の割合と高さを`boardState.garbage`で提供
+- **おじゃまゲージ検出**: 左壁外側のゲージバーを検出し`boardState.garbage.gauge`(0-1)で提供。1に近いほどおじゃま発動が近い
 - **HOLD検出**: 画面上部HOLD領域のピースを検出。`boardState.hold`で提供 ({type, r}|null)
 - **NEXT検出**: 画面上部NEXT領域を3分割して最大3ピースを検出。`boardState.nextPieces`で配列提供、`boardState.next`は1つ目（後方互換）
 
@@ -81,6 +82,7 @@ tmp/summaries/           # ラウンドサマリーJSON
 - Board Y: -5.0 (floor) to +3.32 (deadline)
 - 15種のピース (type 1-15)、同type接触で上位typeに併合
 - おじゃまブロック: 相手から送られる灰色ブロック、併合で消える
+- おじゃまゲージ: 左壁のゲージバー、充填されるとおじゃまブロックが降る。garbage.gauge (0-1) で取得
 
 ## 技術的制約
 - Unity WebGLにJSブリッジなし → スクリーンショット解析必須

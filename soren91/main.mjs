@@ -612,20 +612,24 @@ async function gameLoop(page, calibration, gameNumber) {
       if (boardState.state === 'WAITING') {
         waitingCount++;
 
-        // WAITING中のフレームごとにランキング画面を即座に検出
-        if (!rankingDetected) {
+        // WAITING中: 毎フレームでランキング画面を検出し、スクショを上書き保存
+        // (最初のフレームは遷移中の場合があるため、最後に検出したフレームが最も正確)
+        if (!roundEnded) {
           try {
             const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
             const rankResult = await detectRankingScreen(screenshotPath);
             if (rankResult != null) {
+              const isFirst = !rankingDetected;
               rankingDetected = true;
-              // ランキング画面スクショを保存（後で手動確認用）
+              // ランキング画面スクショを上書き保存（後のフレームほど完全なランキング表示）
               const { copyFileSync } = await import('fs');
               const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
               try { copyFileSync(screenshotPath, rkPath); } catch {}
               // rankResult > 0 なら正確な値、-1 ならlastKnownRankをフォールバック
               if (rankResult > 0) lastKnownRank = rankResult;
-              console.log(`[game] RANKING screen detected! rank=${rankResult > 0 ? rankResult : 'using realtime=' + lastKnownRank}`);
+              if (isFirst) {
+                console.log(`[game] RANKING screen detected! rank=${rankResult > 0 ? rankResult : 'pending OCR'}`);
+              }
             }
           } catch (e) {
             if (!e.message?.includes('is not a function')) {
@@ -634,8 +638,9 @@ async function gameLoop(page, calibration, gameNumber) {
           }
         }
 
-        // ラウンド終了判定: ゲーム中 (turn>5) に連続3回以上WAITINGが続いたらラウンド終了
-        if (turn > 5 && waitingCount >= 3 && !roundEnded) {
+        // ラウンド終了判定: ゲーム中 (turn>5) に連続6回以上WAITINGが続いたらラウンド終了
+        // (ランキング画面が完全に表示されるまで待つため、3→6に増加)
+        if (turn > 5 && waitingCount >= 6 && !roundEnded) {
           console.log(`[game] Round ended at turn ${turn}, final rank=${lastKnownRank ?? '?'}`);
           roundEnded = true;
           // 最終順位をboardStateに付与

@@ -245,7 +245,7 @@ ${lineageContext ? `${lineageContext}\n` : ''}\
 ## Instructions
 Based on the game analysis and screenshots above, improve the strategy.mjs code.
 The function signature must remain: export function decide(boardState) -> { x: number, reason: string, hold?: boolean }
-where boardState has: { pieces: [{type, x, y, r}], next: {type, r}, nextPieces: [{type, r}, ...] (up to 3), hold: {type, r}|null, canHold: boolean, score: number, confidence: number, garbage: {ratio, height, pixelCount} }
+where boardState has: { pieces: [{type, x, y, r}], next: {type, r}, nextPieces: [{type, r}, ...] (up to 3), hold: {type, r}|null, canHold: boolean, score: number, confidence: number, garbage: {ratio, height, pixelCount, gauge} } (gauge: ojama gauge level 0-1, higher = ojama drop imminent)
 
 HOLD mechanic: right-click saves current piece to HOLD slot, or swaps with held piece.
 - boardState.hold: currently held piece (null if empty)
@@ -374,7 +374,7 @@ async function validateStrategy(code) {
       canHold: true,
       score: 100,
       confidence: 0.5,
-      garbage: { ratio: 0, height: -5, pixelCount: 0 },
+      garbage: { ratio: 0, height: -5, pixelCount: 0, gauge: 0 },
     };
 
     const result = module.decide(dummyState);

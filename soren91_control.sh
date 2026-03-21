@@ -36,10 +36,10 @@ _soren91_switch_obs_layout() {
 	[ -x "$SOREN91_OBS_CONTROL" ] || return 0
 	case "$mode" in
 	meriken)
-		"$SOREN91_OBS_CONTROL" batch soren "show:${SOREN91_OBS_INPUT_NAME:-91}" hide:console1,console2,console3 >/dev/null 2>&1 &
+		"$SOREN91_OBS_CONTROL" batch soren hide:console1,console2,console3 >/dev/null 2>&1 &
 		;;
 	china)
-		"$SOREN91_OBS_CONTROL" batch soren "hide:${SOREN91_OBS_INPUT_NAME:-91}" show:console1,console2,console3 >/dev/null 2>&1 &
+		"$SOREN91_OBS_CONTROL" batch soren show:console1,console2,console3 >/dev/null 2>&1 &
 		;;
 	*)
 		return 1
