@@ -1,15 +1,16 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v41)
+ * strategy.mjs - ドロップ位置決定戦略 (v42)
  *
- * v41: T1フラッド早期対策 + ガベージ下でのT1管理強化
- * - 【EXTREME T1閾値引き下げ】30→25（より早くextreme T1対応を開始）
- * - 【ULTRA extreme T1 HOLD条件改善】T1即時マージがある場合はT2のためにHOLDしない
+ * v42: v41のT1過敏介入を後退、v27ベースの安定性回復
+ * - 【EXTREME T1閾値戻し】25→30（v27水準に戻す）
+ *   v27がベストアンカー(rank_p50=7.0)の主因の一つ
+ * - 【T1超早期介入削除】t1Count>=5での即時マージ介入を削除（normal flow）
+ *   v27で明示的に削除された変更を再度削除
+ * - 【ガベージモデレートT1早期介入削除】garbageModerate + t1Count>=5ブロックを削除
+ *   v41追加の変更、v27との整合性のため削除
+ * - 【ULTRA extreme T1 HOLD条件改善は維持】T1即時マージがある場合はT2のためにHOLDしない
  *   T3+の場合のみ無条件HOLD（T2は即時マージがある場合はスキップ）
- * - 【ガベージモデレート+T1管理】t1Count>=5でT1即時/密集マージをfindBestMerge前に試行
- *   ガベージ圧力下でT1が溜まることを防ぐ
- * - 【通常フローT1超早期介入】t1Count>=5〜7でT1即時マージを試みる
- *   t1Count>=8の予防HOLDより先に即時マージで対処
- * - v40の改善は全て維持
+ * - v40以前の改善は全て維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -18,7 +19,7 @@ const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 85;
 const ULTRA_MASS_THRESHOLD = 62;
-const EXTREME_T1_FLOOD_THRESHOLD = 25;
+const EXTREME_T1_FLOOD_THRESHOLD = 30;
 const SURVIVAL_PIECE_THRESHOLD = 78;
 const LOW_MASS_CRITICAL_RELIEF_PIECE_THRESHOLD = 32;
 const LOW_MASS_CRITICAL_RELIEF_AVG_HEIGHT = 1.45;
@@ -167,7 +168,7 @@ export function decide(boardState) {
         const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
         const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
         const bestNext = Math.max(next2T, next3T);
-        // v41: T2のためにHOLDするのはT1即時マージがない場合のみ。T3+は無条件HOLD
+        // v41維持: T2のためにHOLDするのはT1即時マージがない場合のみ。T3+は無条件HOLD
         if (bestNext >= 3) {
           return { x: 0, reason: `ULTRA_EXTREME_HOLD_T1_FOR_T${bestNext}`, hold: true };
         }
@@ -220,7 +221,7 @@ export function decide(boardState) {
     }
 
     if (nextType === 1) {
-      // 通常T1フラッドモード (12 < t1Count <= 25)
+      // 通常T1フラッドモード (12 < t1Count <= 30)
       if (t1FloodMode) {
         const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
         if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_T1_IMMEDIATE' };
@@ -417,13 +418,6 @@ export function decide(boardState) {
         return { x: 0, reason: `OJAMA_HOLD_T${hold.type}`, hold: true };
       }
     }
-    // v41: T1フラッド対策 (ガベージ圧力下でT1が溜まったら即時マージ優先)
-    if (nextType === 1 && t1Count >= 5) {
-      const gbgT1Immediate = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
-      if (gbgT1Immediate !== null) return { x: gbgT1Immediate, reason: 'OJAMA_T1_IMMEDIATE' };
-      const gbgT1Dense = findT1DenseColumn(activePieces, colHeights, dangerBias);
-      if (gbgT1Dense !== null) return { x: gbgT1Dense, reason: 'OJAMA_T1_DENSE' };
-    }
     // マージ優先 (ojamaBoost付き)
     const ojamaMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0, ojamaBoost);
     if (ojamaMerge) return { ...ojamaMerge, reason: `OJAMA_MERGE_T${nextType}` };
@@ -481,11 +475,6 @@ export function decide(boardState) {
 
   // T1ピースは早期にT1フラッドチェック
   if (nextType === 1) {
-    // v41: T1超早期介入 (t1Count 5-7): 予防HOLDより先にT1即時マージで対処
-    if (t1Count >= 5 && t1Count < 8 && !isWarn) {
-      const superEarlyT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
-      if (superEarlyT1 !== null) return { x: superEarlyT1, reason: 'T1_SUPER_EARLY_IMMEDIATE' };
-    }
     // v36: T1プレフラッド対策 (t1Count 8-11): flood閾値到達前から密集誘導+チェーン
     if (t1Count >= 8 && !t1FloodMode && !extremeT1Flood) {
       const preFloodDense = findT1DenseColumn(activePieces, colHeights, dangerBias);
