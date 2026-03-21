@@ -22,15 +22,15 @@ EOF
 }
 
 ACTION="${1:-}"
-SCENE="${2:-}"
+TARGET="${2:-}"
 
 case "$ACTION" in
 show|hide)
-	[ -n "$SCENE" ] || usage
+	[ -n "$TARGET" ] || usage
 	[ "$#" -ge 3 ] || usage
 	;;
 batch)
-	[ -n "$SCENE" ] || usage
+	[ -n "$TARGET" ] || usage
 	[ "$#" -ge 3 ] || usage
 	;;
 *)
@@ -53,7 +53,7 @@ const crypto = require('crypto');
 
 const argv = process.argv.slice(2);
 const action = argv[0];
-const sceneName = argv[1];
+const targetName = argv[1];
 const rawArgs = argv.slice(2);
 
 const host = process.env.OBS_WEBSOCKET_HOST || '127.0.0.1';
@@ -247,10 +247,11 @@ async function connectAndIdentify() {
 }
 
 async function main() {
-  const operations = parseOperations();
   const obs = await connectAndIdentify();
 
   try {
+    const sceneName = targetName;
+    const operations = parseOperations();
     const response = await obs.request('GetSceneItemList', { sceneName });
     const items = Array.isArray(response.sceneItems) ? response.sceneItems : [];
 

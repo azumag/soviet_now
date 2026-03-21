@@ -27,16 +27,18 @@ SOREN91_STOP_FILE="$SOREN91_DIR/tmp/stop"
 SOREN91_RUNNER_SCRIPT="$SOREN91_DIR/run_player_loop.sh"
 SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/null || printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}")"
 SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
+SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-91}")"
+SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
 
 _soren91_switch_obs_layout() {
 	local mode="${1:-}"
 	[ -x "$SOREN91_OBS_CONTROL" ] || return 0
 	case "$mode" in
 	meriken)
-		"$SOREN91_OBS_CONTROL" batch soren show:91 hide:console1,console2,console3 >/dev/null 2>&1 &
+		"$SOREN91_OBS_CONTROL" batch soren "show:${SOREN91_OBS_INPUT_NAME:-91}" hide:console1,console2,console3 >/dev/null 2>&1 &
 		;;
 	china)
-		"$SOREN91_OBS_CONTROL" batch soren hide:91 show:console1,console2,console3 >/dev/null 2>&1 &
+		"$SOREN91_OBS_CONTROL" batch soren "hide:${SOREN91_OBS_INPUT_NAME:-91}" show:console1,console2,console3 >/dev/null 2>&1 &
 		;;
 	*)
 		return 1
@@ -133,7 +135,7 @@ soren91_start() {
 	# 再試行付きランナーをバックグラウンド起動
 	(
 		cd "$SOREN91_DIR" && \
-		/bin/bash "$SOREN91_RUNNER_SCRIPT"
+		SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" /bin/bash "$SOREN91_RUNNER_SCRIPT"
 	) &
 	local pid=$!
 	echo "$pid" > "$SOREN91_PID_FILE"
@@ -145,6 +147,7 @@ soren91_start() {
 		# 中華AI側のBGMをミュート（改善中は不要）
 		echo "MUTE" > "$ELOOP_LIB_DIR/$COMMANDS"
 		log "[SOREN91] Muted local game BGM"
+		log "[SOREN91] soren91 browser audio gain=${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}"
 		# 読み上げアナウンス + 戦略解説 (バックグラウンド)
 		{
 			local announce_file

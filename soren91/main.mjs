@@ -105,6 +105,8 @@ async function main() {
   });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
+    locale: 'ja-JP',
+    timezoneId: 'Asia/Tokyo',
   });
 
   try {
@@ -246,7 +248,7 @@ async function handleTitleScreen(page) {
 async function fetchGameUrl() {
   const headless = await chromium.launch({ headless: true });
   try {
-    const ctx = await headless.newContext();
+    const ctx = await headless.newContext({ locale: 'ja-JP', timezoneId: 'Asia/Tokyo' });
     const page = await ctx.newPage();
     await page.goto(GAME_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(2000);
