@@ -36,37 +36,44 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-  # v303-2: dangerous_situationフィルタリング追加版 - 構造的変更
-  # reactive_pairs >= 2 && max_y >= 1.8の場合、即時併合機会（DIRECT/NEAR/FAR）がある候補だけを評価対象にするフィルタリングを追加
+  # v304: deadline_crossed時即時併合逃しペナルティ条件強化版 - 構造的変更
+  # deadline_crossed時にreactive_pairsが4個以上の場合、さらに1.5倍の係数を追加
+  # deadline_crossed時にdeadline_margin < 0.5の場合、さらに1.5倍の係数を追加
+  # ワーストゲーム(score0840)終盤turns 64-65: deadline_crossed=true, reactive_pairs=4あるのに即時併合不可、max_y=2.68→2.69でゲームオーバー
+  # extra_low(score1078)終盤turns 73-77: deadline_crossed=true, reactive_pairs=6, deadline_margin=-1.64あるのに即時併合不可、max_y=2.46→2.78に上昇
+  # ベストゲーム(score2611)終盤turns 127-134: deadline_crossed=trueでも即時併合を確実に捉えてスコア2611を出している
   # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
   # last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
-  # best_score5694_strategy.pyのフィルタリングロジックを参考に実装
-  # 構造的変更：単なる数値調整ではなく、候補をフィルタリングするロジックの追加
-  # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, strategy_versions/best_score5694_strategy.py
-  #       game_history/20260321_210149_score0881.jsonl, game_history/20260321_204459_score3018.jsonl
-  # rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
+  # last_rollback_postmortemの制約遵守：deadline_crossed時の即時併合優先、ロシア建国後の即時併合優先
+  # advice.md「盤面が詰まっても即時併合を狙うべき。盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき即時併合優先を強化
+  # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+  #       game_history/20260321_215346_score0840.jsonl turns 64-65, game_history/20260321_214805_score1078.jsonl turns 73-77,
+  #       game_history/20260321_213838_score2611.jsonl turns 127-134
+  # rollback failure mode: deadline_crossed時の即時併合機会の取りこぼしによる max_y runaway
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v303: 即時併合機会逃し完全防止版 - axis 8.6戦略的配置ボーナス完全削減・height_mult強力緩和
+    """v304: deadline_crossed時即時併合逃しペナルティ条件強化版 - 構造的変更
 
-    Worst game (score0881) turns 62-69: reactive_pairs=1-2 but strategic placement continues, max_y=3.60 game over
-    Best game (score3018) turns 115-136: deadline_crossed=true but consistently captures immediate merges, achieved score3018
+    Worst game (score0840) turns 64-65: deadline_crossed=true, reactive_pairs=4 but no immediate merge, max_y=2.68→2.69 game over
+    extra_low (score1078) turns 73-77: deadline_crossed=true, reactive_pairs=6, deadline_margin=-1.64 but no immediate merge, max_y=2.46→2.78
+    Best game (score2611) turns 127-134: deadline_crossed=true but consistently captures immediate merges, achieved score2611
     batch_summary: HEIGHT_CONTROL selected 11.0% (avg_score_delta=0.0), excessive immediate merge opportunity misses
     last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8), need to suppress max_y runaway from missing immediate merges
     last_rollback_postmortem: deadline_crossed時の即時併合優先、ロシア建国後の即時併合優先を遵守
 
-    v303 changes:
-    - axis 8.6 strategic placement bonus eliminated: reactive_pairs>=1 && merge_grade=="NO" cases get 0.0 bonus
-    - axis 8.6 height_mult strongly relaxed: danger_piece_count==0: 0.7→0.5, >0: 0.6→0.4
-    - axis 2.5 merge opportunity escape penalty strengthened: has_russian penalty 2.5x→3.0x
-    - deadline_crossed && reactive_pairs>=1 && merge_grade=="NO" height_mult relaxed: 0.3→0.2
-    - refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md,
-           game_history/20260321_210149_score0881.jsonl turns 62-69, game_history/20260321_204459_score3018.jsonl turns 115-136
-    - rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
+    v304 changes:
+    - axis 2.5 merge opportunity escape penalty: deadline_crossed時に構造的条件追加
+      * reactive_pairs >= 4: さらに1.5倍の係数を追加
+      * deadline_margin < 0.5: さらに1.5倍の係数を追加
+    - advice.md「盤面が詰まっても即時併合を狙うべき。盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき即時併合優先を強化
+    - refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+           game_history/20260321_215346_score0840.jsonl turns 64-65, game_history/20260321_214805_score1078.jsonl turns 73-77,
+           game_history/20260321_213838_score2611.jsonl turns 127-134
+    - rollback failure mode: deadline_crossed時の即時併合機会の取りこぼしによる max_y runaway
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -308,7 +315,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         deadline_margin = deadline_info.get("deadline_margin", 5.0)
         danger_merge_available = result.get("danger_direct_merge_available", False)
 
-        # 即時併合機会を逃したことのペナルティを計算（v303: has_russian時強化版）
+        # 即時併合機会を逃したことのペナルティを計算（v304: 構造的条件追加版）
         # 盤面が高い（deadline_marginが小さい）ほど、即時併合を逃したことのペナルティが大きい
         # reactive_pairsが多いほど、即時併合を逃したことのペナルティが大きい
         # deadline_crossed時は即時併合優先を最優先し、戦略的配置を強く抑制する
@@ -317,11 +324,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 基本ペナルティ：盤面の高さとreactive_pairs数に基づく
             base_penalty = 50.0 * (deadline_y - top_edge_y) * reactive_pair_count
 
-            # v303: deadline_crossed時は即時併合優先を最優先するため、ペナルティを3倍に強化
+            # deadline_crossed時の即時併合優先を構造的に強化
             if deadline_crossed:
-                base_penalty *= 3.0
-            # v303: ロシア建国後も即時併合優先を強化（2.5倍→3.0倍）
-            # ロシア建国後は盤面が狭く、即時併合機会を逃すと即死するため強化
+                # 基本係数：deadline_crossed時は4倍
+                multiplier = 4.0
+
+                # v304: deadline_crossed時にreactive_pairsが4個以上の場合、さらに1.5倍
+                # ワーストゲーム(score0840): reactive_pairs=4で即時併合不可、max_y runaway
+                # extra_low(score1078): reactive_pairs=6で即時併合不可、max_y runaway
+                if reactive_pair_count >= 4:
+                    multiplier *= 1.5
+
+                # v304: deadline_crossed時にdeadline_margin < 0.5の場合、さらに1.5倍
+                # extra_low(score1078): deadline_margin=-1.64で即時併合不可、max_y runaway
+                if deadline_margin < 0.5:
+                    multiplier *= 1.5
+
+                base_penalty *= multiplier
+            # ロシア建国後も即時併合優先を強化（3.0倍）
             elif has_russian:
                 base_penalty *= 3.0
             # danger_piece_count>0の場合はペナルティを1.5倍

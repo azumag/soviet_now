@@ -1,20 +1,21 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v36)
+ * strategy.mjs - ドロップ位置決定戦略 (v37)
  *
- * v36改善点 (v35からの改善):
- * - 【CRITICAL T1フラッドの早期HOLDセーブ移動】
- *   T1フラッドCRITICAL時、canHold && !hold && nextPieces[1].type > 1 の場合
- *   T1をHOLDして次のT2+ピースを優先使用 (T1→T1→T1連鎖ループを中断)
- *   従来のhold-save check(CRITICAL末尾)をT1フラッド処理の前に移動
- * - 【ULTRA_MASS_THRESHOLD: 62→68】過剰早期ULTRA移行を緩和
- *   60台のpiece数でULTRAモードに入る過剰反応を抑制
- * - 【SURVIVAL_PIECE_THRESHOLD: 78→84】過剰早期サバイバルモードを緩和
- * - 【T1プレフラッド: 閾値7→8、チェーンアンカーも追加】
- *   t1Count>=8でdense誘導 + チェーンアンカー検索も追加して
- *   T1フラッドへの移行をより効果的に防止
- * - 【序盤保護モード継承】rawPieceCount<10の序盤保護は維持
- * - 【findT1ImmediateMerge: 低Y優先ボーナス継承】colH<0で+20、<WARN_Yで+10
- * - 【isWarn時のpre-criticalマージ強化継承】T2+ピースの積極マージ維持
+ * v37改善点 (v36からの改善):
+ * - 【ULTRA_MASS_THRESHOLD: 68→62】v36の過剰緩和を修正 (CRITICAL FIX)
+ *   63-67ピース時にULTRAモードが発動せずCRITICALに落ちる問題を修正
+ *   v36では43/50ターンがCRITICALモード: 63-67ピースが全てCRITICAL処理に入っていた
+ *   ULTRAモードのT1専用処理・バランス調整はCRITICALより高ピース数で効果的
+ * - 【SURVIVAL_PIECE_THRESHOLD: 84→78】v36の過剰緩和を修正
+ * - 【boardPressureモードのT2マージ強化】nextType>=4→>=2
+ *   T2/T3ピースも圧力下でfindBestMergeを活用し積み上がり防止
+ *   T2蓄積がCRITICAL到達の一因のため早期マージを促進
+ * - 【CRITICAL T1早期HOLD: nextPieces[2]も確認】
+ *   2nd pieceに機会がない場合も3rd pieceのT2+マージ機会を確認
+ * - v36の有益な変更は維持:
+ *   - CRITICAL T1早期HOLDセーブ (T1→T1→T1ループ中断)
+ *   - T1プレフラッド (t1Count>=8) + チェーンアンカー
+ *   - T1フラッドモード閾値12/extreme 30
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -22,9 +23,9 @@ const DEADLINE_Y = 2.5;
 const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 85;
-const ULTRA_MASS_THRESHOLD = 68;
+const ULTRA_MASS_THRESHOLD = 62;
 const EXTREME_T1_FLOOD_THRESHOLD = 30;
-const SURVIVAL_PIECE_THRESHOLD = 84;
+const SURVIVAL_PIECE_THRESHOLD = 78;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -266,14 +267,22 @@ export function decide(boardState) {
       }
     }
 
-    // v36: T1の場合、T1フラッド処理より前に早期HOLDセーブを実行
+    // v37: T1の場合、T1フラッド処理より前に早期HOLDセーブを実行
     // T1→T1→T1の連鎖ループをHOLDで中断し、次のT2+ピースのマージを優先
+    // nextPieces[1]に機会がない場合はnextPieces[2]も確認
     if (canHold && !hold && nextType === 1) {
       const next2Piece = nextPieces && nextPieces[1];
+      const next3Piece = nextPieces && nextPieces[2];
       if (next2Piece && next2Piece.type > 1) {
         const next2LowMerge = countLowColMerge(activePieces, next2Piece.type, colHeights, critMergeLimit);
         if (next2LowMerge > 0) {
           return { x: 0, reason: `CRITICAL_T1_EARLY_HOLD_FOR_T${next2Piece.type}`, hold: true };
+        }
+      }
+      if (next3Piece && next3Piece.type > 1) {
+        const next3LowMerge = countLowColMerge(activePieces, next3Piece.type, colHeights, critMergeLimit);
+        if (next3LowMerge > 0) {
+          return { x: 0, reason: `CRITICAL_T1_EARLY_HOLD_FOR_T${next3Piece.type}_3RD`, hold: true };
         }
       }
     }
@@ -402,7 +411,7 @@ export function decide(boardState) {
   }
 
   if (boardPressure) {
-    if (nextType >= 4) {
+    if (nextType >= 2) {
       const bigMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, garbageUrgent, 0);
       if (bigMerge) return bigMerge;
     }
