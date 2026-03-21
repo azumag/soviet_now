@@ -36,28 +36,29 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v298: Russian construction phase - RUSSIAN_CONSTRUCTED phase added for second Russian development
-# Worst game (score0766) turns 61-68: type 15 appeared but immediate merge missed, max_y=3.04 game over
-# Best game (score2408): type 15 appeared but continued immediate merges, achieved score2408
-# advice.md: "ロシア建国後の2つ目ロシア育成戦略" - Added RUSSIAN_CONSTRUCTED phase when type 15 exists
-# height_mult=2.5 after Russian construction, height_penalty x2 when landing_y>0.0 to avoid board compression
-# Maintains immediate merge priority (axis 8.6/9.5) while prioritizing space for second Russian development
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md,
-#       game_history/20260321_152851_score0766.jsonl turns 61-68, game_history/20260321_152605_score2408.jsonl
-# rollback failure mode: reactive_pairs available but strategic placement chosen instead of immediate merge, max_y runaway
+# v300: deadline_crossed簡素即時併合優先版 - 複雑ロジックを削除・統合
+# ワーストゲーム(score0943)終盤turns 65-72でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
+# 戦略的配置が続きmax_y=1.96→3.67に急上昇してゲームオーバー。
+# ベストゲーム(score3843)終盤turns 139-155ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア3840を出している。
+# batch_summaryでHEIGHT_CONTROLが10.3%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+# v298の複雑なdeadline_crossed reactive_pairsロジック(3段階height_mult調整)を削除し、
+# danger_piece_countに基づく即時併合優先評価軸を追加。deadline_crossed時の即時併合ボーナスを明確化。
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+#       game_history/20260321_161111_score0943.jsonl turns 65-72, game_history/20260321_162003_score3843.jsonl turns 139-155
+# rollback failure mode: deadline_crossed時の即時併合機会の取りこぼしによる max_y runaway
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v298: Russian construction phase - RUSSIAN_CONSTRUCTED phase added for second Russian development
+    """v300: deadline_crossed簡素即時併合優先版 - 複雑ロジックを削除・統合
 
-    Worst game (score0766) turns 61-68: type 15 appeared but immediate merge missed, max_y=3.04 game over
-    Best game (score2408): type 15 appeared but continued immediate merges, achieved score2408
-    advice.md: "ロシア建国後の2つ目ロシア育成戦略" - Added RUSSIAN_CONSTRUCTED phase when type 15 exists
-    height_mult=2.5 after Russian construction, height_penalty x2 when landing_y>0.0 to avoid board compression
-    Maintains immediate merge priority (axis 8.6/9.5) while prioritizing space for second Russian development
+    ワーストゲーム(score0943)終盤turns 65-72でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
+    戦略的配置が続きmax_y=1.96→3.67に急上昇してゲームオーバー。
+    ベストゲーム(score3843)終盤turns 139-155ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア3840を出している。
+    v298の複雑なdeadline_crossed reactive_pairsロジック(3段階height_mult調整)を削除し、
+    danger_piece_countに基づく即時併合優先評価軸を追加。deadline_crossed時の即時併合ボーナスを明確化。
     last_rollback_postmortem constraint: prioritize immediate merges, SAME_TYPE_STACK valid when deadline_crossed
 
     Args:
@@ -194,12 +195,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
         #       game_history/20260321_040215_score0323.jsonl turns 44-51, game_history/20260321_035338_score1716.jsonl turns 81-88
 
-        if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
-            # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
-            # height_multを0.2に緩和して、盤面圧縮（tighter board）を優先。即時併合機会を確保
-            height_mult *= 0.2
+        # v294: deadline_crossed reactive_pairs board compression - v291 failure mode潰し (v300: 整合済み)
+        # ワーストゲーム(score0323)終盤turns 44-51でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
+        # 戦略的配置が続きmax_y=2.15→3.51に上昇してゲームオーバー。
+        # ベストゲーム(score1716)終盤turns 81-88ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア1716を出している。
+        # batch_summaryでHEIGHT_CONTROLが11.8%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+        # v291のaxis 2 height_mult *= 0.2 がheight_penalty計算後だったため、盤面圧縮候補が選ばれなかった。
+        # axis 8.8のボーナスがaxis 2の後で評価されるため、height_penaltyと競合できていなかった。
+        # v290のaxis 8.8（+300-800 at axis 7.5）が有効だったパターンを再現。
+        # deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" && danger_piece_count == 0 の場合、
+        # height_multを0.2に緩和し、盤面圧縮（tighter board）を優先。即時併合機会を確保する。
+        # axis 8.8の複雑ロジックを削除し、deadline_crossed時の盤面圧縮をaxis 2のheight_mult緩和に統合して簡素化。
+        # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正。
+        # last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+        #       game_history/20260321_040215_score0323.jsonl turns 44-51, game_history/20260321_035338_score1716.jsonl turns 81-88
+        # v300でdeadline_crossedロジックに統合されたため、この条件はv300内で評価
 
-        # v270 fix: reactive_pairsあり時の非併合heightペナルティ緩和版 - 危険域での戦略的配置余地を確保
+        # v270: reactive_pairsあり時の非併合heightペナルティ緩和版 - 危険域での戦略的配置余地を確保 (v300: 整合済み)
         # ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3あるのにmerge_available=falseが続き、
         # -1500.0ペナルティにより強制的に高配置となりゲームオーバー。
         # ベストゲーム(score2945)終盤turns 127-133でも同様の状況だが、より多くのターンを耐えている。
@@ -208,26 +221,69 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 戦略的配置の余地を確保しつつdeadline緊急性を維持。reactive_pairsを活用して将来の併合を狙う戦略的思考へ切り替える。
         # v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133
-        if reactive_pair_count >= 1 and merge_grade == "NO":
+        # v300でdeadline_crossedロジックに統合されたため、この条件はv300内で評価
+
+        # v300: deadline_crossed簡素即時併合優先版 - 複雑ロジックを削除・統合
+        # ワーストゲーム(score0943)終盤turns 65-72でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
+        # 戦略的配置が続きmax_y=1.96→3.67に急上昇してゲームオーバー。
+        # ベストゲーム(score3843)終盤turns 139-155ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア3840を出している。
+        # batch_summaryでHEIGHT_CONTROLが10.3%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+        # last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
+        # v298の複雑なdeadline_crossed reactive_pairsロジック(3段階height_mult調整)を削除し、
+        # danger_piece_countに基づく即時併合優先評価軸を追加。deadline_crossed時の即時併合ボーナスを明確化。
+        # v294/v270ロジックを統合し、単一の評価軸として簡素化。
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+        #       game_history/20260321_161111_score0943.jsonl turns 65-72, game_history/20260321_162003_score3843.jsonl turns 139-155
+
+        danger_piece_count = reactor.get("danger_piece_count", 0)
+        danger_direct_merge_available = result.get("danger_direct_merge_available", False)
+
+        if deadline_crossed and merge_grade in ["DIRECT", "NEAR"]:
+            # deadline_crossed時、即時併合機会があれば最優先、危険ピース数に応じてボーナスを付与
+            # reactive_pairsは考慮せず、即時併合できるなら確実に実行する
+            if danger_piece_count >= 3:
+                score += 1200.0
+                reasons.append("DEADLINE_IMMEDIATE_MERGE_PRIORITY")
+            elif danger_piece_count >= 2:
+                score += 1000.0
+                reasons.append("DEADLINE_IMMEDIATE_MERGE_PRIORITY")
+            else:
+                score += 800.0
+                reasons.append("DEADLINE_IMMEDIATE_MERGE_PRIORITY")
+        elif deadline_crossed and merge_grade == "NO" and reactive_pair_count >= 2 and danger_piece_count == 0:
+            # v294統合: deadline_crossed時、reactive_pairsが多数(>=2)ある即時併合不可時に、盤面圧縮を優先
+            # height_multを0.2に緩和して、盤面圧縮（tighter board）を優先。即時併合機会を確保
+            height_mult *= 0.2
+            reasons.append("DEADLINE_BOARD_COMPRESSION")
+        elif deadline_crossed and merge_grade == "NO" and reactive_pair_count >= 1:
+            # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を最小限にし
+            # height_multを緩和して、盤面圧縮を強化し、即時併合機会を確保
+            if danger_piece_count > 0:
+                # 危険ピースがある場合、戦略的配置の余地を最小限に抑制
+                # height_multを0.5に緩和して、即時併合優先を妨げないようにする
+                height_mult *= 0.5
+                reasons.append("DEADLINE_STRATEGIC_PLACEMENT")
+            else:
+                # 危険ピースがない場合、戦略的配置の余地を最小限にする
+                # height_multを0.7に緩和して、即時併合優先を明確にする
+                height_mult *= 0.7
+                reasons.append("DEADLINE_STRATEGIC_PLACEMENT")
+        elif reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
+            # deadline_crossedでない場合、reactive_pairs>=1で即時併合機会がある場合は即時併合優先
+            if reactive_pair_count == 1:
+                score += 800.0
+                reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+            elif reactive_pair_count >= 2:
+                score += 1000.0
+                reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+            else:
+                score += 1200.0
+                reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+        elif reactive_pair_count >= 1 and merge_grade == "NO":
+            # v270統合: deadline_crossedでなく即時併合がない場合、将来の併合を狙える戦略的配置を優先
             # reactive_pairsがある場合は、将来の併合を狙える戦略的配置を可能にするためheight_multを緩和
             height_mult *= 0.8
-
-        # v288: deadline_crossed時戦略的配置強化版 - 即時併合機会取りこぼし削減
-        # ワーストゲーム(score0877)終盤turns 67-69でdeadline_crossed=true, reactive_pairs=4あるのに即時併合不可、
-        # 戦略的配置が続きmax_y=2.77→3.59に上昇してゲームオーバー。
-        # ベストゲーム(score2693)終盤turns 121-127でdeadline_crossed=trueでも即時併合を確実に捉えてスコア2693を出している。
-        # batch_summaryでHEIGHT_CONTROLが10.1%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
-        # last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
-        # deadline_crossed && reactive_pair_count >= 1 && merge_grade == "NO" の場合、height_multを0.4に緩和して、
-        # 戦略的配置の余地を更に確保し、即時併合機会を逃さないようにする。
-        # 未活用情報（deadline_crossed）を活用した構造的変更であり、数値微調整ではない。
-        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-        #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127
-
-        if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
-            # height_multを0.4に緩和して、盤面圧縮を強化し、即時併合機会を確保する
-            height_mult *= 0.4
+            reasons.append("REACTIVE_STRATEGIC_PLACEMENT")
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
