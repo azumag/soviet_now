@@ -252,6 +252,28 @@ async function runLocalController() {
   const page = await context.newPage();
 
   console.log('=== Soren Local Game Controller ===');
+
+  // Hook AudioContext to track all instances for mute/unmute control
+  await page.addInitScript(() => {
+    window.__sorenAudioContexts = [];
+    window.__sorenMuted = false;
+    const OrigAudioContext = window.AudioContext || window.webkitAudioContext;
+    if (OrigAudioContext) {
+      const Wrapped = function(...args) {
+        const ctx = new OrigAudioContext(...args);
+        window.__sorenAudioContexts.push(ctx);
+        // If currently muted, immediately suspend new contexts
+        if (window.__sorenMuted) {
+          try { ctx.suspend(); } catch {}
+        }
+        return ctx;
+      };
+      Wrapped.prototype = OrigAudioContext.prototype;
+      window.AudioContext = Wrapped;
+      if (window.webkitAudioContext) window.webkitAudioContext = Wrapped;
+    }
+  });
+
   console.log(`Navigating to http://localhost:${SERVE_PORT}...`);
 
   await page.goto(`http://localhost:${SERVE_PORT}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -378,19 +400,29 @@ async function runLocalController() {
     // Check mute flag file (independent of commands.txt to avoid race condition)
     const shouldMute = fs.existsSync(MUTE_FLAG_FILE);
     if (shouldMute && !isMuted) {
-      console.log('MUTE flag detected, suspending audio');
+      console.log('MUTE flag detected, muting audio');
       await page.evaluate(() => {
+        window.__sorenMuted = true;
+        // Suspend all known AudioContexts
         if (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext) {
           try { Module.WebAudio.audioContext.suspend(); } catch {}
         }
+        // Also suspend any contexts we've tracked
+        (window.__sorenAudioContexts || []).forEach(ctx => {
+          try { ctx.suspend(); } catch {}
+        });
       });
       isMuted = true;
     } else if (!shouldMute && isMuted) {
       console.log('MUTE flag removed, resuming audio');
       await page.evaluate(() => {
+        window.__sorenMuted = false;
         if (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext) {
           try { Module.WebAudio.audioContext.resume(); } catch {}
         }
+        (window.__sorenAudioContexts || []).forEach(ctx => {
+          try { ctx.resume(); } catch {}
+        });
       });
       isMuted = false;
     }
