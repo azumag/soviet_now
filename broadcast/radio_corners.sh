@@ -922,8 +922,8 @@ _run_opencode_jiji_research() {
 	local agent="$1" prompt_file="$2"
 	local raw_file permission cleaned
 	raw_file=$(mktemp /tmp/eloop_jiji_research_raw_XXXXXXXX)
-	# bash許可でAIにWeb検索させる
-	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow"}'
+	# bash許可 + web-searchプラグインでAIにWeb検索させる
+	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow","web-search":"allow"}'
 	timeout "${RADIO_OPENCODE_TIMEOUT}" \
 		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$permission' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
 	local rc=$?
