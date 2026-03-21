@@ -24,7 +24,12 @@ function usefulLine(line) {
   const signal = (text.match(/[A-Za-z0-9ぁ-んァ-ヶ一-龠々]/g) || []).length;
   if (signal < 4) return false;
   if (!/\s/.test(text) && text.length <= 3) return false;
-  return signal / text.length >= 0.45;
+  if (signal / text.length < 0.45) return false;
+  if (!/[ぁ-んァ-ヶ一-龠々]/.test(text)) {
+    const hasLongToken = text.split(' ').some(token => /[A-Za-z0-9]{4,}/.test(token));
+    if (!hasLongToken) return false;
+  }
+  return true;
 }
 
 function parseTsvRows(tsv) {
