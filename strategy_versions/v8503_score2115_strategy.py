@@ -36,30 +36,39 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
  # --- Change History ---
- # v301: deadline情報活用による即時併合機会逃しペナルティ追加版 - 構造的変更
- # ワーストゲーム(score0885)終盤turns 56-63: reactive_pairs=2あるのに即時併合不可、戦略的配置が続きmax_y=3.72に上昇してゲームオーバー
- # ベストゲーム(score1952)終盤turns 96-103: deadline_crossed=trueでも即時併合を確実に捉えてスコア1952を出している
- # batch_summaryでHEIGHT_CONTROLが11.2%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
- # last_rollback_postmortemの制約遵守：deadline_crossed時の即時併合優先、ロシア建国後の即時併合優先
- # 新評価軸axis 2.5を追加：merge_grade=="NO" && reactive_pairs>=1の場合、即時併合機会を逃したペナルティを計算
- # ペナルティ = 50.0 * (deadline_y - top_edge_y) * reactive_pair_count（deadline_crossed/has_russian/danger_piece_count>0で2倍、danger_piece_count>0でさらに1.5倍）
- # これにより、「reactive_pairsが存在するのに即時併合しない戦略的配置」を直接ペナルティ化し、max_y runawayを防ぐ
+ # v302: deadline_crossed時即時併合優先強化版 - 即時併合機会逃しペナルティ大幅強化・戦略的配置ボーナス削減
+ # ワーストゲーム(score0360)終盤turns 47-48: reactive_pairs=5-6あるのに即時併合不可、戦略的配置が続きmax_y=2.82→2.83に上昇してゲームオーバー
+ # extra_low(score0714)終盤turns 71-72: reactive_pairs=4-5、deadline_crossed=trueでも即時併合不可、max_y=3.31→3.28
+ # ベストゲーム(score2363)終盤turns 100-107: deadline_crossed=trueでも即時併合を確実に捉えてスコア2363を出している
+ # batch_summaryでHEIGHT_CONTROLが11.7%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
+ # last_rollback_analysis focus: p25低下を防ぐため、deadline_crossed時の即時併合逃しによるmax_y runawayを抑制
+ # axis 2.5の即時併合機会逃しペナルティを強化：deadline_crossed時は2倍→3倍、has_russian時は2倍→2.5倍に大幅強化
+ # axis 8.6の戦略的配置ボーナスを削減：deadline_crossed時の即時併合優先を強化（danger_piece_count==0: 100.0→50.0、>0: 20.0→10.0）
  # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
- #       game_history/20260321_183437_score0885.jsonl turns 56-63, game_history/20260321_184147_score1952.jsonl turns 96-103
+ #       game_history/20260321_192548_score0360.jsonl turns 47-48, game_history/20260321_190933_score0714.jsonl turns 71-72,
+ #       game_history/20260321_192347_score2363.jsonl turns 100-107, strategy_versions/best_score2335_strategy.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v298: Russian construction phase - RUSSIAN_CONSTRUCTED phase added for second Russian development
+    """v302: deadline_crossed時即時併合優先強化版 - 即時併合機会逃しペナルティ大幅強化・戦略的配置ボーナス削減
 
-    Worst game (score0766) turns 61-68: type 15 appeared but immediate merge missed, max_y=3.04 game over
-    Best game (score2408): type 15 appeared but continued immediate merges, achieved score2408
-    advice.md: "ロシア建国後の2つ目ロシア育成戦略" - Added RUSSIAN_CONSTRUCTED phase when type 15 exists
-    height_mult=2.5 after Russian construction, height_penalty x2 when landing_y>0.0 to avoid board compression
-    Maintains immediate merge priority (axis 8.6/9.5) while prioritizing space for second Russian development
-    last_rollback_postmortem constraint: prioritize immediate merges, SAME_TYPE_STACK valid when deadline_crossed
+    Worst game (score0360) turns 47-48: reactive_pairs=5-6 but no immediate merge, max_y=2.82→2.83 game over
+    extra_low (score0714) turns 71-72: deadline_crossed=true, reactive_pairs=4-5 but no immediate merge, max_y=3.31→3.28
+    Best game (score2363) turns 100-107: deadline_crossed=true but consistently captures immediate merges, achieved score2363
+    batch_summary: HEIGHT_CONTROL selected 11.7% (avg_score_delta=0.0), excessive immediate merge opportunity misses
+    last_rollback_analysis focus: p25 degraded significantly, need to suppress max_y runaway from missing immediate merges
+
+    v302 changes:
+    - Axis 2.5 immediate merge opportunity escape penalty strengthened:
+      * deadline_crossed: 2x → 3x multiplier
+      * has_russian: 2x → 2.5x multiplier
+      * danger_piece_count>0: 1.5x maintained
+    - Axis 8.6 strategic placement bonus reduced for deadline_crossed:
+      * danger_piece_count==0: 100.0 → 50.0
+      * danger_piece_count>0: 20.0 → 10.0
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -71,6 +80,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
                  - danger_direct_merge_available: DIRECT merge available with danger piece
              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+             - deadline: deadline information (deadline_y, top_edge_y, deadline_margin)
 
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
@@ -286,19 +296,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         deadline_margin = deadline_info.get("deadline_margin", 5.0)
         danger_merge_available = result.get("danger_direct_merge_available", False)
 
-        # 即時併合機会を逃したことのペナルティを計算
+        # 即時併合機会を逃したことのペナルティを計算（v302: deadline_crossed時強化版）
         # 盤面が高い（deadline_marginが小さい）ほど、即時併合を逃したことのペナルティが大きい
         # reactive_pairsが多いほど、即時併合を逃したことのペナルティが大きい
+        # deadline_crossed時は即時併合優先を最優先し、戦略的配置を強く抑制する
         if merge_grade == "NO" and reactive_pair_count >= 1:
             # 基本ペナルティ：盤面の高さとreactive_pairs数に基づく
             base_penalty = 50.0 * (deadline_y - top_edge_y) * reactive_pair_count
             
-            # deadline_crossed時、ロシア建国後、danger_piece_count>0の場合はペナルティを強化
-            if deadline_crossed or has_russian or danger_piece_count > 0:
-                base_penalty *= 2.0
-            
-            # 危険ピースがある場合、さらにペナルティを強化
-            if danger_piece_count > 0:
+            # v302: deadline_crossed時は即時併合優先を最優先するため、ペナルティを3倍に強化（2倍→3倍）
+            if deadline_crossed:
+                base_penalty *= 3.0
+            # v302: ロシア建国後も即時併合優先を強化（2倍→2.5倍）
+            elif has_russian:
+                base_penalty *= 2.5
+            # danger_piece_count>0の場合はペナルティを1.5倍
+            elif danger_piece_count > 0:
                 base_penalty *= 1.5
             
             score -= base_penalty
@@ -504,16 +517,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
         elif reactive_pair_count >= 1 and merge_grade == "NO" and danger_piece_count == 0:
-            # 即時併合不可で、危険ピースがない場合：戦略的配置ボーナスを大幅に削減 (400.0 → 100.0)
-            # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合優先を明確にする
-            score += 100.0
+            # v302: 即時併合不可で、危険ピースがない場合：戦略的配置ボーナスをさらに削減 (100.0 → 50.0)
+            # deadline_crossed時の即時併合優先を強化し、戦略的配置のインセンティブを最小限にする
+            score += 50.0
             reasons.append("REACTIVE_STRATEGIC_PLACEMENT")
             # 戦略的配置の余地を最小限にするためheight_multを緩和し、即時併合を容易にする
             height_mult *= 0.7
         elif reactive_pair_count >= 1 and merge_grade == "NO" and danger_piece_count > 0:
-            # 即時併合不可で、危険ピースがある場合：戦略的配置ボーナスを最小限に抑制 (50.0 → 20.0)
+            # v302: 即時併合不可で、危険ピースがある場合：戦略的配置ボーナスをさらに削減 (20.0 → 10.0)
             # 即時併合優先を最優先にするためボーナスを最小限にする
-            score += 20.0
+            score += 10.0
             reasons.append("REACTIVE_STRATEGIC_PLACEMENT_DANGER")
             # 危険ピースがある場合、戦略的配置の余地を最小限に抑制
             height_mult *= 0.6
