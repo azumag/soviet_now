@@ -160,8 +160,11 @@ _broadcast_expected_mode_matches() {
 }
 
 _radio_voicevox_speaker_override() {
+	local corner="${1:-}"
 	if [ "$(_radio_host_mode)" = "soren91" ]; then
 		printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}"
+	elif [ "$corner" = "rollback" ]; then
+		printf '%s' "${ROLLBACK_VOICEVOX_SPEAKER:-13}"
 	fi
 }
 

@@ -1176,7 +1176,7 @@ _radio_generate_and_play() {
 				immediate_cc_text=$(_build_cc_attribution_text "$selected_news")
 			fi
 			local radio_vo_speaker=""
-			radio_vo_speaker=$(_radio_voicevox_speaker_override 2>/dev/null || true)
+			radio_vo_speaker=$(_radio_voicevox_speaker_override "$corner_name" 2>/dev/null || true)
 			_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
 			if [ "$no_preempt" = true ]; then
 				SAY_CC_TEXT="$immediate_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
