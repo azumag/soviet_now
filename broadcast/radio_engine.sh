@@ -1,58 +1,48 @@
 # broadcast/radio_engine.sh - AI実行ラッパー, パース, サニタイズ, 生成&再生
 
 
-#=== z.ai エンドポイント経由で claude CLI を実行 ===
+#=== opencode run を疑似TTY付きで実行 ===
 
-_run_zai_radio() {
-	local model="$1" prompt_file="$2"
-	local output timeout_sec stderr_file
-	# RADIO_OPENCODE_TIMEOUT による上書きも後方互換で受け付ける
-	timeout_sec="${RADIO_OPENCODE_TIMEOUT:-${ZAI_TIMEOUT:-180}}"
-	if [ ! -s "$prompt_file" ]; then
-		return 1
-	fi
-	log "[RADIO] zai call (model=$model, prompt=$(wc -c < "$prompt_file" | tr -d ' ')B)" >&2
-	stderr_file=$(mktemp /tmp/eloop_zai_radio_stderr_XXXXXXXX)
-	local stderr_preview="" provider_error=false
-	output=$(
-		export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
-		export ANTHROPIC_API_KEY="$ZAI_API_KEY"
-		export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
-		cat "$prompt_file" | timeout "$timeout_sec" claude -p --model haiku --tools "$ZAI_RADIO_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
-	)
+_run_opencode_radio() {
+	local agent="$1" prompt_file="$2"
+	local raw_file cleaned
+	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
+	timeout "${RADIO_OPENCODE_TIMEOUT}" \
+		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$RADIO_OPENCODE_PERMISSION' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
 	local rc=$?
-	if [ -s "$stderr_file" ]; then
-		stderr_preview=$(head -c 4000 "$stderr_file")
-	fi
-	if _contains_provider_error_text "$output" || { [ -n "$stderr_preview" ] && _contains_provider_error_text "$stderr_preview"; }; then
-		provider_error=true
-	fi
-	[ -n "$stderr_preview" ] && log "[RADIO] zai stderr: $(printf '%s' "$stderr_preview" | head -c 500)" >&2
-	rm -f "$stderr_file"
 	if [ $rc -eq 124 ]; then
-		log "[RADIO] zai timeout (${timeout_sec}s, model=$model)" >&2
-		return 1
-	fi
-	if [ "$provider_error" = "true" ]; then
-		log "[RADIO] zai provider error treated as failure (model=$model)" >&2
+		log "[RADIO] opencode timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
+		rm -f "$raw_file"
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
-		log "[RADIO] zai failed (rc=$rc, model=$model)" >&2
+		log "[RADIO] opencode failed (rc=$rc, agent=$agent)" >&2
+		rm -f "$raw_file"
 		return 1
 	fi
-	printf '%s' "$output"
+	cleaned=$(cat "$raw_file" |
+		_strip_ansi |
+		grep -v '^>' |
+		grep -v '^\^D' |
+		grep -v '^Script started on ' |
+		grep -v '^Script done on ' |
+		grep -v '^/[^ ]*$' |
+		grep -v '^[[:space:]]*/Users/' |
+		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
+		sed '/^[[:space:]]*$/d')
+	rm -f "$raw_file"
+	if _contains_provider_error_text "$cleaned"; then
+		log "[RADIO] opencode provider error treated as failure (agent=$agent)" >&2
+		return 1
+	fi
+	printf '%s' "$cleaned"
 }
 
-# 後方互換: 既存の呼び出し元がそのまま動くようにエイリアス
-_run_opencode_radio() {
-	_run_zai_radio "$@"
-}
-
-_run_zai_comment() {
-	local model="$1" prompt_file="$2"
-	local sandbox_dir sandbox_prompt output timeout_sec
-	timeout_sec="${ZAI_TIMEOUT:-180}"
+_run_opencode_comment() {
+	local agent="$1" prompt_file="$2"
+	local raw_file sandbox_dir sandbox_prompt timeout_sec
+	timeout_sec="${COMMENT_OPENCODE_TIMEOUT:-$RADIO_OPENCODE_TIMEOUT}"
+	raw_file=$(mktemp /tmp/eloop_comment_raw_XXXXXXXX)
 	sandbox_dir=$(create_sandbox \
 		"README.md" \
 		"strategy.py" \
@@ -68,46 +58,47 @@ _run_zai_comment() {
 		"status_dashboard.py" \
 		"tmp/.comment_queue/comment_screenshot.jpg")
 	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
-		log "[COMMENT] sandbox作成失敗 -> direct zai" >&2
-		_run_zai_radio "$model" "$prompt_file"
+		log "[COMMENT] sandbox作成失敗 -> direct opencode" >&2
+		rm -f "$raw_file"
+		_run_opencode_radio "$agent" "$prompt_file"
 		return
 	fi
 	sandbox_prompt="$sandbox_dir/tmp/comment_prompt.txt"
 	mkdir -p "$(dirname "$sandbox_prompt")"
 	cp "$prompt_file" "$sandbox_prompt" 2>/dev/null || {
 		destroy_sandbox "$sandbox_dir"
+		rm -f "$raw_file"
 		return 1
 	}
-	local stderr_file
-	stderr_file=$(mktemp /tmp/eloop_zai_comment_stderr_XXXXXXXX)
-	local stderr_preview="" provider_error=false
-	output=$(
-		export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
-		export ANTHROPIC_API_KEY="$ZAI_API_KEY"
-		export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
-		cd "$sandbox_dir" &&
-			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model haiku --tools "$ZAI_COMMENT_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
+	(
+		cd "$sandbox_dir" || exit 1
+		timeout "$timeout_sec" \
+			script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$COMMENT_OPENCODE_PERMISSION' opencode run --agent \"$agent\" \"\$(cat 'tmp/comment_prompt.txt')\" 2>&1" >/dev/null 2>&1
 	)
 	local rc=$?
-	if [ -s "$stderr_file" ]; then
-		stderr_preview=$(head -c 4000 "$stderr_file")
-	fi
-	if _contains_provider_error_text "$output" || { [ -n "$stderr_preview" ] && _contains_provider_error_text "$stderr_preview"; }; then
-		provider_error=true
-	fi
-	[ -n "$stderr_preview" ] && log "[COMMENT] zai stderr: $(printf '%s' "$stderr_preview" | head -c 500)" >&2
-	rm -f "$stderr_file"
 	destroy_sandbox "$sandbox_dir"
 	if [ $rc -eq 124 ]; then
-		log "[COMMENT] zai timeout (${timeout_sec}s, model=$model)" >&2
-		return 1
-	fi
-	if [ "$provider_error" = "true" ]; then
-		log "[COMMENT] zai provider error treated as failure (model=$model)" >&2
+		log "[COMMENT] opencode timeout (${timeout_sec}s, agent=$agent)" >&2
+		rm -f "$raw_file"
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
-		log "[COMMENT] zai failed (rc=$rc, model=$model)" >&2
+		log "[COMMENT] opencode failed (rc=$rc, agent=$agent)" >&2
+		rm -f "$raw_file"
+		return 1
+	fi
+	cat "$raw_file" |
+		_strip_ansi |
+		grep -v '^>' |
+		grep -v '^\^D' |
+		grep -v '^Script started on ' |
+		grep -v '^Script done on ' |
+		grep -v '^/[^ ]*$' |
+		grep -v '^[[:space:]]*/Users/' |
+		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
+		sed '/^[[:space:]]*$/d'
+	rm -f "$raw_file"
+}
 		return 1
 	fi
 	printf '%s' "$output"

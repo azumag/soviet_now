@@ -919,44 +919,40 @@ _filter_unread_jiji_blocks() {
 }
 
 _run_opencode_jiji_research() {
-	local model="$1" prompt_file="$2"
-	local output timeout_sec stderr_file
-	timeout_sec="${ZAI_TIMEOUT:-180}"
-	if [ ! -s "$prompt_file" ]; then
-		return 1
-	fi
-	log "[JIJI] zai research call (model=$model)" >&2
-	stderr_file=$(mktemp /tmp/eloop_zai_jiji_stderr_XXXXXXXX)
-	local stderr_preview="" provider_error=false
-	# WebSearch,WebFetch でWeb検索させる（旧: bash許可でcurl等）
-	output=$(
-		export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
-		export ANTHROPIC_API_KEY="$ZAI_API_KEY"
-		export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
-		cat "$prompt_file" | timeout "$timeout_sec" claude -p --model haiku --tools "default,WebSearch,WebFetch" --permission-mode dontAsk 2>"$stderr_file"
-	)
+	local agent="$1" prompt_file="$2"
+	local raw_file permission cleaned
+	raw_file=$(mktemp /tmp/eloop_jiji_research_raw_XXXXXXXX)
+	# bash許可でAIにWeb検索させる
+	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow"}'
+	timeout "${RADIO_OPENCODE_TIMEOUT}" \
+		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$permission' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
 	local rc=$?
-	if [ -s "$stderr_file" ]; then
-		stderr_preview=$(head -c 4000 "$stderr_file")
-	fi
-	if _contains_provider_error_text "$output" || { [ -n "$stderr_preview" ] && _contains_provider_error_text "$stderr_preview"; }; then
-		provider_error=true
-	fi
-	[ -n "$stderr_preview" ] && log "[JIJI] zai stderr: $(printf '%s' "$stderr_preview" | head -c 500)" >&2
-	rm -f "$stderr_file"
 	if [ $rc -eq 124 ]; then
-		log "[JIJI] zai research timeout (${timeout_sec}s, model=$model)" >&2
-		return 1
-	fi
-	if [ "$provider_error" = "true" ]; then
-		log "[JIJI] zai provider error treated as failure (model=$model)" >&2
+		log "[JIJI] opencode research timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
+		rm -f "$raw_file"
 		return 1
 	fi
 	if [ $rc -ne 0 ]; then
-		log "[JIJI] zai research failed (rc=$rc, model=$model)" >&2
+		log "[JIJI] opencode research failed (rc=$rc, agent=$agent)" >&2
+		rm -f "$raw_file"
 		return 1
 	fi
-	printf '%s' "$output"
+	cleaned=$(cat "$raw_file" |
+		_strip_ansi |
+		grep -v '^>' |
+		grep -v '^\^D' |
+		grep -v '^Script started on ' |
+		grep -v '^Script done on ' |
+		grep -v '^/[^ ]*$' |
+		grep -v '^[[:space:]]*/Users/' |
+		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
+		sed '/^[[:space:]]*$/d')
+	rm -f "$raw_file"
+	if _contains_provider_error_text "$cleaned"; then
+		log "[JIJI] opencode provider error treated as failure (agent=$agent)" >&2
+		return 1
+	fi
+	printf '%s' "$cleaned"
 }
 
 start_radio_corner_jiji() {
