@@ -76,6 +76,32 @@ _soren91_is_improve_process() {
 	return 1
 }
 
+_soren91_text_has_japanese() {
+	printf '%s' "$1" | grep -q '[ぁ-んァ-ヶ一-龠々ー]'
+}
+
+_soren91_generate_strategy_explanation() {
+	local strategy_header="$1"
+	[ -n "$strategy_header" ] || return 1
+	claude -p "あなたはメリケンAI（アメリカ製AI）。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
+この「91用戦略」の特徴だけを、視聴者向けに2〜3文で簡潔に、陽気なアメリカンな口調で解説してください。専門用語は噛み砕いてください。
+元のソ連ゲームの戦略や strategy.py には触れないこと。T1、ULTRA、HOLD、balance などの語は、91の盤面制御・置き方のクセとして説明すること。
+【最重要】出力は自然な日本語のみ。英語の文、英語だけの箇条書き、ローマ字だけの文は禁止。アメリカンなキャラクターでも話す言語は日本語です。
+出力はトーク本文のみ（カッコや注釈なし）。
+
+${strategy_header}" --model haiku 2>/dev/null
+}
+
+_soren91_rewrite_strategy_explanation_to_japanese() {
+	local raw_text="$1"
+	[ -n "$raw_text" ] || return 1
+	claude -p "以下の戦略解説を、意味を変えずに自然な日本語の話し言葉2〜3文へ言い換えてください。
+メリケンAIの陽気さは残してよいですが、英語の文は禁止です。
+出力は日本語のトーク本文のみ（カッコや注釈なし）。
+
+${raw_text}" --model haiku 2>/dev/null
+}
+
 soren91_start() {
 	_soren91_enabled || return 0
 	if soren91_is_running; then
@@ -128,20 +154,23 @@ soren91_start() {
 			rm -f "$announce_file"
 
 			# soren91の現在の戦略を解説
-			local strategy_header=""
-			strategy_header=$(sed -n '1,/\*\//p' "$SOREN91_DIR/strategy.mjs" 2>/dev/null)
-			if [ -n "$strategy_header" ]; then
-				local strategy_explain=""
-				strategy_explain=$(claude -p "あなたはメリケンAI（アメリカ製AI）。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
-この「91用戦略」の特徴だけを、視聴者向けに2〜3文で簡潔に、陽気なアメリカンな口調で解説してください。専門用語は噛み砕いてください。
-元のソ連ゲームの戦略や strategy.py には触れないこと。T1、ULTRA、HOLD、balance などの語は、91の盤面制御・置き方のクセとして説明すること。
-出力はトーク本文のみ（カッコや注釈なし）。
-
-${strategy_header}" --model haiku 2>/dev/null)
-				if [ -n "$strategy_explain" ]; then
-					local explain_file
-					explain_file=$(mktemp /tmp/eloop_soren91_strategy.XXXXXX)
-					printf '%s\n' "$strategy_explain" > "$explain_file"
+				local strategy_header=""
+				strategy_header=$(sed -n '1,/\*\//p' "$SOREN91_DIR/strategy.mjs" 2>/dev/null)
+				if [ -n "$strategy_header" ]; then
+					local strategy_explain=""
+					strategy_explain=$(_soren91_generate_strategy_explanation "$strategy_header")
+					if [ -n "$strategy_explain" ] && ! _soren91_text_has_japanese "$strategy_explain"; then
+						log "[SOREN91] 戦略解説が英語寄りのため日本語へ再生成"
+						strategy_explain=$(_soren91_rewrite_strategy_explanation_to_japanese "$strategy_explain")
+					fi
+					if [ -n "$strategy_explain" ] && ! _soren91_text_has_japanese "$strategy_explain"; then
+						log "[SOREN91] 戦略解説の日本語化に失敗したため読み上げをスキップ"
+						strategy_explain=""
+					fi
+					if [ -n "$strategy_explain" ]; then
+						local explain_file
+						explain_file=$(mktemp /tmp/eloop_soren91_strategy.XXXXXX)
+						printf '%s\n' "$strategy_explain" > "$explain_file"
 					SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:strategy" ./say_enqueue.sh "$explain_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 					rm -f "$explain_file"
 					log "[SOREN91] 戦略解説を読み上げ"
