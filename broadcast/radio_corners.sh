@@ -930,8 +930,8 @@ _run_opencode_jiji_research() {
 	local stderr_preview="" provider_error=false
 	# WebSearch,WebFetch でWeb検索させる（旧: bash許可でcurl等）
 	output=$(
-		ANTHROPIC_BASE_URL="$ZAI_BASE_URL" \
-		ANTHROPIC_DEFAULT_HAIKU_MODEL="$model" \
+		export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
+		export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
 		cat "$prompt_file" | timeout "$timeout_sec" claude -p --model haiku --tools "default,WebSearch,WebFetch" --permission-mode dontAsk 2>"$stderr_file"
 	)
 	local rc=$?

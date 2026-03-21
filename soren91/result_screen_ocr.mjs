@@ -56,7 +56,7 @@ function parseTsvRows(tsv) {
   return rows;
 }
 
-function rowsToLines(rows, minConf = 45) {
+function mergeRowsToLineObjects(rows, minConf = 0) {
   const buckets = new Map();
   for (const row of rows) {
     const text = normalizeLine(row.text);
@@ -70,9 +70,23 @@ function rowsToLines(rows, minConf = 45) {
   for (const parts of buckets.values()) {
     parts.sort((a, b) => a.left - b.left);
     const text = normalizeLine(parts.map(p => p.text).join(' '));
-    if (usefulLine(text)) merged.push(text);
+    const validConf = parts.map(p => p.conf).filter(conf => conf >= 0);
+    merged.push({
+      text,
+      top: Math.min(...parts.map(p => p.top)),
+      left: Math.min(...parts.map(p => p.left)),
+      conf: validConf.length > 0 ? (validConf.reduce((sum, conf) => sum + conf, 0) / validConf.length) : 0,
+    });
   }
-  return [...new Set(merged)];
+  return merged.sort((a, b) => {
+    if (a.top !== b.top) return a.top - b.top;
+    return a.left - b.left;
+  });
+}
+
+function rowsToLines(rows, minConf = 45) {
+  const merged = mergeRowsToLineObjects(rows, minConf);
+  return [...new Set(merged.map(line => line.text).filter(usefulLine))];
 }
 
 function extractRankCandidates(rows, minConf = 55) {
@@ -110,6 +124,46 @@ function chooseBestRank(candidates) {
   if (best.count >= 2) return best.value;
   if (ranked.length === 1 && best.confSum >= 70) return best.value;
   return null;
+}
+
+function normalizeDetectedRankString(rawDigits) {
+  const digits = String(rawDigits || '').replace(/\D+/g, '');
+  if (!digits) return null;
+  const direct = Number.parseInt(digits, 10);
+  if (direct >= 1 && direct <= 91) return direct;
+  if (digits.length >= 2) {
+    const tail2 = Number.parseInt(digits.slice(-2), 10);
+    if (tail2 >= 1 && tail2 <= 91) return tail2;
+  }
+  if (digits.length >= 1) {
+    const tail1 = Number.parseInt(digits.slice(-1), 10);
+    if (tail1 >= 1 && tail1 <= 9) return tail1;
+  }
+  return null;
+}
+
+function extractRankFromRankingLines(lineObjects, height) {
+  const topLimit = Math.floor((height || 720) * 0.28);
+  const candidates = [];
+  for (const line of lineObjects) {
+    const text = normalizeLine(line?.text || '');
+    if (!text) continue;
+    if (line.top > topLimit) continue;
+    const compact = text.toUpperCase().replace(/\s+/g, '');
+    if (!compact.includes('RANK')) continue;
+    const rank = normalizeDetectedRankString(text);
+    if (rank == null) continue;
+    candidates.push({
+      rank,
+      conf: Number(line.conf || 0),
+      top: Number(line.top || 0),
+    });
+  }
+  candidates.sort((a, b) => {
+    if (b.conf !== a.conf) return b.conf - a.conf;
+    return a.top - b.top;
+  });
+  return candidates[0]?.rank ?? null;
 }
 
 function runTesseractTsv(imagePath, args = []) {
@@ -202,9 +256,11 @@ export async function analyzeResultScreen(imagePath) {
 
     const collectedLines = [];
     const rankCandidates = [];
+    const rawLineObjects = [];
     for (const variant of variants) {
       const tsv = runTesseractTsv(variant.path, variant.tesseractArgs);
       const rows = parseTsvRows(tsv);
+      rawLineObjects.push(...mergeRowsToLineObjects(rows, 0));
       collectedLines.push(...rowsToLines(rows, variant.lineMinConf));
       if (variant.allowRank) {
         rankCandidates.push(...extractRankCandidates(rows, variant.rankMinConf));
@@ -212,11 +268,13 @@ export async function analyzeResultScreen(imagePath) {
     }
 
     const lines = [...new Set(collectedLines)].slice(0, 10);
-    const rank = chooseBestRank(rankCandidates);
+    const rankingLineRank = extractRankFromRankingLines(rawLineObjects, height);
+    const rank = rankingLineRank ?? chooseBestRank(rankCandidates);
     return {
       imagePath: basename(imagePath),
       detected: true,
       rank,
+      rankSource: rankingLineRank != null ? 'ranking_line' : (rank != null ? 'raw_digit' : null),
       rankCandidates: [...new Set(rankCandidates.map(item => item.value))].sort((a, b) => a - b),
       lines,
     };
