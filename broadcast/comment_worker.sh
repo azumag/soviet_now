@@ -29,11 +29,22 @@ _play_comment_queue() {
 	_recover_orphan_comment_playing_files
 	for qf in $(ls -1t "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | sort); do
 		if [ -f "$qf" ]; then
+			local expected_mode="" current_mode=""
+			expected_mode=$(_broadcast_read_expected_mode "$qf" 2>/dev/null || true)
+			current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+			if [ -n "$expected_mode" ] && [ "$expected_mode" != "$current_mode" ]; then
+				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] mode不一致で破棄: $qf expected=$expected_mode current=$current_mode" >> tmp/.say_queue/debug.log
+				_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
+				rm -f "$qf"
+				continue
+			fi
+
 			# 重複チェック: 同じ内容を再度再生しない
 			local file_hash
 			file_hash=$(md5 -q "$qf" 2>/dev/null)
 			if [ -n "$file_hash" ] && grep -qF "$file_hash" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null; then
 				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 重複スキップ: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
+				_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
 				rm -f "$qf"
 				continue
 			fi
@@ -41,6 +52,14 @@ _play_comment_queue() {
 			# 再生前にリネームして他プレイヤーとの二重再生を防ぐ
 			local playing_file="${qf%.txt}.playing"
 			if mv "$qf" "$playing_file" 2>/dev/null; then
+				expected_mode=$(_broadcast_read_expected_mode "$playing_file" 2>/dev/null || true)
+				current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+				if [ -n "$expected_mode" ] && [ "$expected_mode" != "$current_mode" ]; then
+					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] mode不一致で再生前破棄: $playing_file expected=$expected_mode current=$current_mode" >> tmp/.say_queue/debug.log
+					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+					rm -f "$playing_file"
+					continue
+				fi
 				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生開始: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
 				# ハッシュを記録（再生開始前に記録して、kill時にも重複防止）
 				echo "$file_hash" >> "$COMMENT_PLAYED_HASHES_FILE"
@@ -56,6 +75,7 @@ _play_comment_queue() {
 						_remember_spoken_comment "$playing_file"
 					fi
 				echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
+				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 				rm -f "$playing_file"
 			fi
 		fi

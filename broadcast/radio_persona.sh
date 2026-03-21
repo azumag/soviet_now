@@ -102,12 +102,61 @@ path.write_text(updated, encoding="utf-8")
 PY
 }
 
-_radio_host_mode() {
+_broadcast_host_mode() {
 	if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
 		echo "soren91"
 	else
 		echo "main"
 	fi
+}
+
+_radio_host_mode() {
+	_broadcast_host_mode
+}
+
+_broadcast_mode_sidecar_path() {
+	local target="$1"
+	case "$target" in
+	*.playing) printf '%s.mode' "${target%.playing}" ;;
+	*.txt)     printf '%s.mode' "${target%.txt}" ;;
+	*)         printf '%s.mode' "$target" ;;
+	esac
+}
+
+_broadcast_mark_expected_mode() {
+	local target="$1" expected_mode="${2:-}"
+	[ -n "$target" ] || return 1
+	[ -n "$expected_mode" ] || expected_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+	local sidecar
+	sidecar=$(_broadcast_mode_sidecar_path "$target")
+	printf '%s\n' "$expected_mode" >"$sidecar"
+}
+
+_broadcast_read_expected_mode() {
+	local target="$1"
+	[ -n "$target" ] || return 1
+	local sidecar
+	sidecar=$(_broadcast_mode_sidecar_path "$target")
+	[ -f "$sidecar" ] || return 1
+	cat "$sidecar" 2>/dev/null
+}
+
+_broadcast_clear_expected_mode() {
+	local target="$1"
+	[ -n "$target" ] || return 0
+	local sidecar
+	sidecar=$(_broadcast_mode_sidecar_path "$target")
+	rm -f "$sidecar"
+}
+
+_broadcast_expected_mode_matches() {
+	local target="$1"
+	[ -n "$target" ] || return 0
+	local expected_mode current_mode
+	expected_mode=$(_broadcast_read_expected_mode "$target" 2>/dev/null || true)
+	[ -n "$expected_mode" ] || return 0
+	current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+	[ "$expected_mode" = "$current_mode" ]
 }
 
 _radio_voicevox_speaker_override() {

@@ -116,12 +116,13 @@ _radio_mark_done() {
 }
 
 _enqueue_deferred_radio_talk() {
-	local talk_file="$1" game_num="$2" corner_name="$3"
+	local talk_file="$1" game_num="$2" corner_name="$3" expected_mode="${4:-}"
 	[ -s "$talk_file" ] || return 1
 	mkdir -p "$RADIO_DEFERRED_QUEUE_DIR" 2>/dev/null || true
 	local deferred_file
 	deferred_file="$RADIO_DEFERRED_QUEUE_DIR/radio_$(date +%s)_${game_num}_${corner_name}_${RANDOM}.txt"
 	cp "$talk_file" "$deferred_file" 2>/dev/null || return 1
+	_broadcast_mark_expected_mode "$deferred_file" "$expected_mode" 2>/dev/null || true
 	echo "$deferred_file"
 }
 
@@ -192,8 +193,26 @@ _play_deferred_radio_queue_once() {
 	[ -n "$qf" ] || return 0
 	[ -f "$qf" ] || return 0
 
+	local deferred_expected_mode="" deferred_current_mode=""
+	deferred_expected_mode=$(_broadcast_read_expected_mode "$qf" 2>/dev/null || true)
+	deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+	if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
+		log "[RADIO:deferred] mode不一致で破棄: $(basename "$qf") expected=${deferred_expected_mode} current=${deferred_current_mode}"
+		_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
+		rm -f "$qf" "${qf%.txt}.news_title" "${qf%.txt}.cc_text" "${qf%.txt}.voice"
+		return 0
+	fi
+
 	local playing_file="${qf%.txt}.playing"
 	if mv "$qf" "$playing_file" 2>/dev/null; then
+		deferred_expected_mode=$(_broadcast_read_expected_mode "$playing_file" 2>/dev/null || true)
+		deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+		if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
+			log "[RADIO:deferred] mode不一致で再生前破棄: $(basename "$playing_file") expected=${deferred_expected_mode} current=${deferred_current_mode}"
+			_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+			rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
+			return 0
+		fi
 		local deferred_corner=""
 			deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/' )
 			# CC表記は say_enqueue.sh の再生開始時に投稿（SAY_CC_TEXT 経由）
@@ -214,10 +233,12 @@ _play_deferred_radio_queue_once() {
 			# deferred radio is executed by the comment player itself, so it must not
 			# yield to comments queued after this point or playback deadlocks.
 			if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
 				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 		else
 			if [ -f "tmp/.say_queue/kill_flag" ]; then
+				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 				rm -f "tmp/.say_queue/kill_flag" "$playing_file" "${playing_file%.playing}.voice"
 				log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
 			else

@@ -936,6 +936,8 @@ _radio_generate_and_play() {
 	_write_radio_corner_status "generating" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
 	log "[RADIO:${corner_name}] トーク生成中..."
 	local talk prompt_snapshot debug_dump=""
+	local host_mode_generated=""
+	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
 	if [ -z "$talk" ]; then
@@ -1128,13 +1130,24 @@ _radio_generate_and_play() {
 	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
 	log "[RADIO:${corner_name}] ${#talk_body}字"
 
+	local host_mode_now=""
+	host_mode_now=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+	if [ "$host_mode_now" != "$host_mode_generated" ]; then
+		log "[RADIO:${corner_name}] mode changed during generation (${host_mode_generated} -> ${host_mode_now}) -> discard"
+		_write_radio_corner_status "stale_mode_discarded" "$corner_name" "$game_num" "$score" "$topic" "mode_changed" "$selected_news" "{\"expected_mode\": \"${host_mode_generated}\", \"current_mode\": \"${host_mode_now}\"}"
+		rm -f "$talk_file"
+		_radio_clear_state "$corner_name" "stale_mode_discarded"
+		rmdir "$inflight_dir" 2>/dev/null || true
+		return 0
+	fi
+
 	# コメント未消化がある間は再生を deferred キューへ積み、生成は止めない
 	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
 	comment_queued=${comment_queued:-0}
 	comment_playing=${comment_playing:-0}
 	comment_total=$((comment_queued + comment_playing))
 	if [ "$comment_total" -gt 0 ]; then
-		deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "$corner_name" || true)
+		deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "$corner_name" "$host_mode_generated" || true)
 		# deferred再生時のCC投稿用にニュースタイトルを保存
 		if [ -n "$deferred_file" ] && [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
 			echo "$selected_news" > "${deferred_file%.txt}.news_title"

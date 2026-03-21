@@ -937,6 +937,8 @@ generate_comment_response() {
 		fi
 
 		# soren91 (メリケンAI) プレイ中はペルソナ・UI説明を切り替え
+		local _comment_mode_generated=""
+		_comment_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 		local _comment_persona _comment_ui_memo _comment_channel_intro
 		if soren91_is_running 2>/dev/null; then
 			_comment_persona="あなたはメリケンAI（アメリカ製AI）。資本主義の申し子。いまは中華AIが戦略改善中のため、代打でソ連ゲーム91（対戦版）をプレイしながらリスナーのTwitchコメントに返事しています。
@@ -1327,12 +1329,22 @@ RETRYCOMMENT
 				fi
 			fi
 
+			local _comment_mode_now=""
+			_comment_mode_now=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+			if [ "$_comment_mode_now" != "$_comment_mode_generated" ]; then
+				log "[COMMENT] mode changed during generation (${_comment_mode_generated} -> ${_comment_mode_now}) -> discard without ack"
+				rm -f "$comment_prompt_file"
+				exit 0
+			fi
+
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
 			echo "$attempt_talk" >"$queue_file"
+			_broadcast_mark_expected_mode "$queue_file" "$_comment_mode_generated" 2>/dev/null || true
 			local new_hash
 			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
 			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
 				log "[COMMENT] 重複コメント返し検出 → 再生成 (hash=$new_hash, attempt ${attempt}/${comment_retry_max})"
+				_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
 				rm -f "$queue_file"
 				attempt=$((attempt + 1))
 				continue
