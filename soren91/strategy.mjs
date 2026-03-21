@@ -1,19 +1,23 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v33)
+ * strategy.mjs - ドロップ位置決定戦略 (v34)
  *
- * v33改善点 (v32からの改善):
- * - 【ULTRA_EXTREME T1: dense優先に変更】
- *   immediateの前にdenseColumnを試行: T1密集列への集中→バルクT2チェーン促進
- *   → 異なるT1トップ列を渡り歩く振動パターンを抑制（v32でdenseはdeadコードだった）
- * - 【findT1ImmediateMerge: chain加点を大幅強化】nearT2ボーナス15→35, nearT3 8→18
- *   → T1→T2後のT2→T3チェーン期待値を強く優先
- *   → T2密集エリアに留まりやすくなり振動を抑制
- * - 【findT1ImmediateMerge: wall抑制強化】|cx|>2.0で-12, |cx|>2.4で-20
- *   → ±2.5端列への反射的落下を防ぎ中央寄りを促進（旧: >2.2で-8のみ）
- * - 【findT1DenseColumn: T2chain加点強化】nearT2 10→20, nearT3 5→10
- *   → T2が近くにある密集T1列を優先し、T1→T2→T3連鎖可能性を向上
- * - 【MAX_ACTIVE_PIECES 70→85】107ピース時のサンプリング精度向上
- * - 【v32の有効な改善を維持】
+ * v34改善点 (v33からの改善):
+ * - 【ULTRA_EXTREME T1: immediateを再優先 (v33のdense優先を戻す)】
+ *   top=T1列への落下は物理的に確実なT1→T2マージを引き起こす
+ *   dense列はT1が近くにあっても物理的に接触しないと合体しない
+ *   → v33でdense優先にしたが振動が継続 → immediate優先に戻す
+ * - 【findT1DenseColumn: WARN_Y硬直cutoff廃止→softペナルティ化】
+ *   `if (colHeights >= WARN_Y) continue` を削除
+ *   `s -= (h - WARN_Y) * 15` の追加ペナルティに変更
+ *   → 全列がWARN_Y超えの極端T1フラッド時でも動作する (現在はnullを返してfallback)
+ * - 【findT1ImmediateMerge: tall列ペナルティ追加】
+ *   height > WARN_Y+0.5 に追加ペナルティ (×30) 追加
+ *   → nearT2*35ボーナスにより非常に高い列が選ばれすぎるのを抑制
+ * - 【findLowestSafeDrop: wall penalty強化】
+ *   |x|>2.2: -3→-8, |x|>2.4: 追加-15
+ *   → turn76で発生したx=2.5端列への意図しない落下を防止
+ * - 【v33の有効な改善を維持】
+ *   dense T2/T3 chain加点強化、immediate wall抑制強化
  *   findBestMerge: タイプ加点 2.0、チェーンスコア c1:10, c2:5
  *   ULTRAモードでT4+にfindBestMerge使用
  *   evaluateHold: T1蓄積時(t1Count>=5)のfuture-save HOLD抑制
@@ -114,7 +118,7 @@ export function decide(boardState) {
         if (holdMerge !== null) return { x: 0, reason: `ULTRA_HOLD_UPGRADE_T${hold.type}`, hold: true };
       }
 
-      // v30: T4+はfindBestMergeでチェーン反応考慮の最適マージ位置を選択
+      // T4+はfindBestMergeでチェーン反応考慮の最適マージ位置を選択
       if (nextType >= 4) {
         const bestMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0);
         if (bestMerge) return { ...bestMerge, reason: `ULTRA_BEST_T${nextType}` };
@@ -128,7 +132,7 @@ export function decide(boardState) {
       }
     }
 
-    // v33: extremeT1Flood時はバランス補正より先にT1処理
+    // extremeT1Flood時はバランス補正より先にT1処理
     if (nextType === 1 && extremeT1Flood) {
       if (canHold && !hold) {
         const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
@@ -142,12 +146,12 @@ export function decide(boardState) {
         const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
         if (holdMerge !== null) return { x: 0, reason: `ULTRA_EXTREME_SWAP_T${hold.type}`, hold: true };
       }
-      // v33: denseをimmediate前に配置 (v32でdenseはdeadコードだった問題を修正)
-      // dense列にT1を集中させてバルクT2→T3チェーンを促進、振動を抑制
-      const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
-      if (denseX !== null) return { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE' };
+      // v34: immediateをdense前に戻す (top=T1は物理的に確実なマージ)
+      // dense列はT1が近くにあっても接触しないと合体しない
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
       if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
+      const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
+      if (denseX !== null) return { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE' };
       const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
       if (chainAnchor !== null) return { x: chainAnchor, reason: 'ULTRA_EXTREME_T1_ANCHOR' };
       const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
@@ -156,7 +160,7 @@ export function decide(boardState) {
       return { x: lowestDrop.x, reason: `ULTRA_EXTREME_T1_LOWEST` };
     }
 
-    // バランス補正 (v29: T1フラッド時は閾値を3に引き上げて振動抑制)
+    // バランス補正 (T1フラッド時は閾値を3に引き上げて振動抑制)
     const balanceThreshold = t1FloodMode ? 3 : 2;
     if (Math.abs(balanceBias) >= balanceThreshold) {
       if (nextType > 1) {
@@ -423,7 +427,8 @@ function findLowestOnTargetSide(colHeights, targetRight) {
 
 /**
  * T1フラッドモード専用: T1が最も密集した列に誘導してT1→T2チェーン促進
- * v33: nearT2 10→20, nearT3 5→10 でT2chain加点強化
+ * v34: WARN_Y硬直cutoff廃止→softペナルティ化
+ *   全列がWARN_Y超えでもnullを返さずに最善列を返す
  */
 function findT1DenseColumn(pieces, colHeights, dangerBias) {
   const t1Pieces = pieces.filter(p =>
@@ -436,16 +441,18 @@ function findT1DenseColumn(pieces, colHeights, dangerBias) {
 
   for (let i = 0; i < FINE_COLS.length; i++) {
     const cx = FINE_COLS[i];
-    if (colHeights[i] >= WARN_Y) continue;
+    // v34: WARN_Y hard cutoffを廃止 (DEADLINE_Y hard cutoffは維持)
     if (colHeights[i] >= DEADLINE_Y + 0.1) continue;
     const nearT1 = t1Pieces.filter(p => Math.abs(p.x - cx) < 0.8).length;
     if (nearT1 < 2) continue;
     const nearT2 = countNear(pieces, cx, 2, 1.5);
     const nearT3 = countNear(pieces, cx, 3, 2.0);
     let s = nearT1 * 20;
-    s += nearT2 * 20;  // v33: 10→20 T2→T3チェーン可能性を強く評価
-    s += nearT3 * 10;  // v33: 5→10
+    s += nearT2 * 20;
+    s += nearT3 * 10;
     s -= colHeights[i] * 10.0;
+    // v34: WARN_Y超えには追加ペナルティ (soft penalty)
+    if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 15;
     s -= Math.abs(cx) * 2.0;
     if (Math.abs(cx) > 2.2) s -= 8;
     if (dangerBias >= 2 && cx > 0) s -= 15;
@@ -508,7 +515,8 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
 
 /**
  * 列トップがT1の列を検出して即時T1→T2マージを狙う
- * v33: chain加点強化 (nearT2 15→35, nearT3 8→18), wall抑制強化
+ * v34: tall列への追加ペナルティ (WARN_Y+0.5超えで×30)
+ *   nearT2*35ボーナスにより高すぎる列が選ばれすぎるのを防止
  */
 function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
   let bestScore = -Infinity;
@@ -528,14 +536,16 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
 
     let s = 50;
     s -= colHeights[i] * 8.0;
+    // v34: tall列への追加ペナルティ (WARN_Y+0.5超えで急激に増加)
+    if (colHeights[i] > WARN_Y + 0.5) s -= (colHeights[i] - WARN_Y - 0.5) * 30;
     s -= Math.abs(cx) * 2.0;
 
     const nearT2 = countNear(pieces, cx, 2, 2.0);
     const nearT3 = countNear(pieces, cx, 3, 2.4);
-    s += nearT2 * 35;  // v33: 15→35 T2→T3チェーンを強く優先 (振動抑制)
-    s += nearT3 * 18;  // v33: 8→18
+    s += nearT2 * 35;
+    s += nearT3 * 18;
 
-    // v33: wall抑制強化 (旧: >2.2で-8のみ)
+    // wall抑制
     if (Math.abs(cx) > 2.0) s -= 12;
     if (Math.abs(cx) > 2.4) s -= 20;
 
@@ -661,7 +671,7 @@ function findMergeInLowCol(pieces, nextType, colHeights, heightLimit, dangerBias
   return best ? { x: clampX(best.x) } : null;
 }
 
-// v32: t1Count引数を追加してT1蓄積時のfuture-save HOLD抑制
+// T1蓄積時(t1Count>=5)のfuture-save HOLD抑制
 function evaluateHold(pieces, nextType, hold, nextPieces, isWarn, t1Count = 0) {
   const safeY = DEADLINE_Y - 0.3;
   const nextMergeCount = pieces.filter(p => p.type === nextType && p.y < safeY).length;
@@ -679,15 +689,13 @@ function evaluateHold(pieces, nextType, hold, nextPieces, isWarn, t1Count = 0) {
     }
   } else {
     if (nextMergeCount === 0 && !isWarn) {
-      // v31: T5+はpieces.length > 15の条件を復活（v30の常時保護を元に戻す）
       if (nextType >= 5 && pieces.length > 15) {
         return { x: 0, reason: `HOLD_SAVE_BIG_T${nextType}`, hold: true };
       }
-      // v31: T4はpieces > 20 (v30の10から緩和して過剰なHOLD保護を抑制)
       if (nextType >= 4 && pieces.length > 20) {
         return { x: 0, reason: `HOLD_SAVE_T4_T${nextType}`, hold: true };
       }
-      // v32: T1蓄積時(t1Count>=5)はT1のfuture-save HOLDをスキップ
+      // T1蓄積時(t1Count>=5)はT1のfuture-save HOLDをスキップ
       if (pieces.length > 15 && (nextType !== 1 || t1Count < 5)) {
         const futurePieces = [
           nextPieces && nextPieces[1] ? nextPieces[1].type : 0,
@@ -747,6 +755,10 @@ function findLowestColIdx(colHeights) {
   return minIdx;
 }
 
+/**
+ * v34: wall penalty強化 (|x|>2.2: -3→-8, |x|>2.4: 追加-15)
+ * turn76のx=2.5端列への意図しない落下を防止
+ */
 function findLowestSafeDrop(colHeights, dangerBias) {
   let bestScore = -Infinity;
   let bestIdx = 5;
@@ -755,7 +767,8 @@ function findLowestSafeDrop(colHeights, dangerBias) {
     if (colHeights[i] >= DEADLINE_Y + 0.2) continue;
     let s = -colHeights[i] * 8.0;
     s -= Math.abs(FINE_COLS[i]) * 1.0;
-    if (Math.abs(FINE_COLS[i]) > 2.2) s -= 3;
+    if (Math.abs(FINE_COLS[i]) > 2.2) s -= 8;   // v34: -3→-8
+    if (Math.abs(FINE_COLS[i]) > 2.4) s -= 15;  // v34: 新規追加
     if (dangerBias <= -1 && FINE_COLS[i] < -1.0) s -= 10;
     if (dangerBias >= 1 && FINE_COLS[i] > 1.0) s -= 10;
     if (dangerBias <= -2 && FINE_COLS[i] < 0) s -= 8;
