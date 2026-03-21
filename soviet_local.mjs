@@ -221,7 +221,7 @@ async function runLocalController() {
   try {
     browser = await chromium.launch({
       headless: false,
-      args: ['--window-size=1280,720', `--remote-debugging-port=${CDP_PORT}`],
+      args: ['--window-size=1300,800', `--remote-debugging-port=${CDP_PORT}`],
     });
   } catch (e) {
     console.error(`Failed to launch browser: ${e.message}`);
@@ -275,6 +275,44 @@ async function runLocalController() {
   }
 
   console.log('Unity canvas ready');
+
+  // Force canvas to fill viewport exactly — hide footer, reset margins, override container positioning
+  const canvasInfo = await page.evaluate(() => {
+    // Hide footer
+    const footer = document.getElementById('unity-footer');
+    if (footer) footer.style.display = 'none';
+    // Hide loading bar
+    const loadingBar = document.getElementById('unity-loading-bar');
+    if (loadingBar) loadingBar.style.display = 'none';
+    // Reset body
+    document.body.style.margin = '0';
+    document.body.style.padding = '0';
+    document.body.style.overflow = 'hidden';
+    // Override container — remove centering transform, pin to top-left
+    const container = document.getElementById('unity-container');
+    if (container) {
+      container.style.position = 'absolute';
+      container.style.left = '0';
+      container.style.top = '0';
+      container.style.transform = 'none';
+    }
+    // Ensure canvas fills exactly
+    const canvas = document.getElementById('unity-canvas');
+    if (canvas) {
+      canvas.style.width = '1280px';
+      canvas.style.height = '720px';
+      canvas.style.display = 'block';
+    }
+    return {
+      canvasWidth: canvas?.width,
+      canvasHeight: canvas?.height,
+      cssWidth: canvas?.style.width,
+      cssHeight: canvas?.style.height,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+    };
+  });
+  console.log('Canvas layout:', JSON.stringify(canvasInfo));
 
   // Capture browser console for debugging
   page.on('console', msg => {
