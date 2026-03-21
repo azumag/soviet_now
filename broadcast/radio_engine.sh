@@ -933,16 +933,19 @@ _radio_generate_and_play() {
 	_radio_set_state "generating" "$corner_name"
 	_write_radio_corner_status "generating" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
 	log "[RADIO:${corner_name}] トーク生成中..."
-	local talk prompt_snapshot debug_dump=""
+	local talk prompt_snapshot debug_dump="" provider_used=""
 	local host_mode_generated=""
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
+	[ -n "$talk" ] && provider_used="$RADIO_AGENT"
 	if [ -z "$talk" ]; then
 		talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$prompt_file")
+		[ -n "$talk" ] && provider_used="$RADIO_FALLBACK"
 	fi
 	if [ -z "$talk" ]; then
 		talk=$(_run_claude_radio "$prompt_file")
+		[ -n "$talk" ] && provider_used="claude:${RADIO_CLAUDE_MODEL}"
 	fi
 	rm -f "$prompt_file"
 
@@ -964,6 +967,7 @@ _radio_generate_and_play() {
 		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
 	fi
+	log "[RADIO:${corner_name}] 生成プロバイダ: ${provider_used:-unknown}"
 
 	local talk_body talk_summary parse_dir
 	parse_dir=$(mktemp -d /tmp/eloop_radio_parse_XXXXXXXX)

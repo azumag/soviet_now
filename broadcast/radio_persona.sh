@@ -226,9 +226,9 @@ _radio_output_rules() {
 	local min_chars="$1" max_chars="$2"
 	local flavor_rule=""
 	if [ "$(_radio_host_mode)" = "soren91" ]; then
-		flavor_rule="- アメリカンな比喩や資本主義ジョークを少量だけ混ぜる。ソ連っぽい言い回しは使わない"
+		flavor_rule="アメリカンな比喩や資本主義ジョークを少量だけ混ぜる。ソ連っぽい言い回しは使わない"
 	else
-		flavor_rule="- ソ連っぽい言い回しをさりげなく混ぜる。スパイス程度に。"
+		flavor_rule="ソ連っぽい言い回しをさりげなく混ぜる。スパイス程度に。"
 	fi
 	cat <<RULES
 【出力ルール】
@@ -248,7 +248,7 @@ _radio_output_rules() {
 - たまに本音がポロッと漏れる瞬間がある。
 - 感嘆符「!」は控えめに
 - ${flavor_rule}
-- 陰謀論系の話題では、最初から「陰謀論」と決めつけて思考停止で否定しない。何が事実として確認できるかを切り分け、真実の可能性やありうるシナリオを検討し、根拠と反証の両方を踏まえて深く考察すること
+- 未確認情報や立場の分かれる話題では、確認できる事実と推測を分けて話すこと。断定できない細部は盛らないこと
 - 「誰も聞いていない」「聞き手がいない」「過疎」「無人放送」など、視聴者不在を示す自虐表現は禁止
 - 「〜といわれます」「〜とされています」「〜とみられます」などの無責任な逃げ表現は禁止。断定できない細部は削るか、「ここで確認できるのは〜までです」のように言い換える
 - マークダウンや記号は使わない。読み上げ用のプレーンテキストのみ
@@ -264,8 +264,65 @@ RULES
 
 _radio_past_topics_block() {
 	local past_topics=""
+	local limit="${RADIO_PAST_TOPICS_LIMIT:-12}"
 	if [ -f "$PAST_RADIO_TOPICS" ]; then
-		past_topics=$(grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null | tail -80)
+		past_topics=$(python3 - "$PAST_RADIO_TOPICS" "$limit" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+try:
+    limit = max(1, int(sys.argv[2]))
+except Exception:
+    limit = 12
+
+try:
+    rows = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+except Exception:
+    rows = []
+
+entries = []
+corner_labels = {
+    "strategy": "戦略変更の解説をしました",
+    "rollback": "戦略の失敗分析をしました",
+    "news": "ニュース考察をしました",
+    "jiji": "時事ニュースの考察をしました",
+    "theme": "脱線テーマの雑談をしました",
+    "soviet": "ソ連史や社会の話をしました",
+    "market": "市場や景気の話をしました",
+    "weather": "天気の話をしました",
+    "fortune": "占いコーナーをしました",
+    "dinner": "夕飯の話をしました",
+    "world_dinner": "世界の食卓の話をしました",
+    "night_snack": "夜食の話をしました",
+    "deals": "節約や暮らしの話をしました",
+    "survival": "サバイバル知識の話をしました",
+    "rakugo": "創作落語をしました",
+    "bluegrass": "音楽雑談をしました",
+    "soviet_lifehack": "生活の小ネタを話しました",
+    "breakfast": "世界の朝食を紹介しました",
+    "redefine": "言葉の再定義をしました",
+    "devil_dict": "悪魔辞典の話をしました",
+}
+for raw in rows:
+    m = re.match(r'^\[(\d{2}:\d{2})\] Game#\d+(?: [^ ]+)? \[([^\]]+)\]:\s*(.*)$', raw)
+    if not m:
+        continue
+    time_text, corner, _payload = m.groups()
+    summary = corner_labels.get(corner, "別の題材を扱いました")
+    entries.append(f"- {time_text} [{corner}] {summary}")
+
+entries = entries[-limit:]
+if not entries:
+    print("まだ過去のトークはありません。自由に話してください。")
+else:
+    print("直近ラジオの重複回避メモ:")
+    for line in entries:
+        print(line)
+    print("- 同じ固有名詞の読み直しではなく、切り口を変えること")
+PY
+)
 	fi
 	echo "${past_topics:-まだ過去のトークはありません。自由に話してください。}"
 }
