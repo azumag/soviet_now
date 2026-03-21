@@ -757,6 +757,27 @@ _append_strategy_advice_item() {
 	log "[COMMENT] 戦略アドバイス追記 → $STRATEGY_ADVICE_FILE"
 }
 
+_append_soviet_theme_item() {
+	local theme_item="$1"
+	theme_item=$(printf '%s' "$theme_item" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+	[ -n "$theme_item" ] || return 0
+	# 「を深掘りして」で終わっていなければ付与
+	if ! echo "$theme_item" | grep -q 'を深掘りして$'; then
+		theme_item="${theme_item}を深掘りして"
+	fi
+	local soviet_themes_file="$ELOOP_LIB_DIR/data/radio_soviet_themes.txt"
+	[ -f "$soviet_themes_file" ] || return 0
+	# 重複チェック: キー部分（最初の句点 or 「を深掘り」の前）で既存テーマと比較
+	local theme_key="${theme_item%%。*}"
+	[ "$theme_key" = "$theme_item" ] && theme_key="${theme_item%%を深掘り*}"
+	if grep -qF "$theme_key" "$soviet_themes_file" 2>/dev/null; then
+		log "[COMMENT] ソ連テーマ重複スキップ: $theme_key"
+		return 0
+	fi
+	printf '%s\n' "$theme_item" >>"$soviet_themes_file"
+	log "[COMMENT] ソ連テーマ自動追加: $theme_item"
+}
+
 generate_comment_response() {
 	_kill_comment_gen
 	mkdir -p "tmp/.twitch_chat"
@@ -1244,6 +1265,13 @@ RETRYCOMMENT
 				sing_score='{"notes":[{"key":null,"frame_length":15,"lyric":""},{"key":60,"frame_length":45,"lyric":"き"},{"key":60,"frame_length":45,"lyric":"ら"},{"key":67,"frame_length":45,"lyric":"き"},{"key":67,"frame_length":45,"lyric":"ら"},{"key":69,"frame_length":45,"lyric":"ひ"},{"key":69,"frame_length":45,"lyric":"か"},{"key":67,"frame_length":90,"lyric":"る"},{"key":null,"frame_length":10,"lyric":""},{"key":65,"frame_length":45,"lyric":"お"},{"key":65,"frame_length":45,"lyric":"そ"},{"key":64,"frame_length":45,"lyric":"ら"},{"key":64,"frame_length":45,"lyric":"の"},{"key":62,"frame_length":45,"lyric":"ほ"},{"key":62,"frame_length":45,"lyric":"し"},{"key":60,"frame_length":90,"lyric":"よ"},{"key":null,"frame_length":15,"lyric":""}]}'
 			fi
 
+			# ソ連テーマを抽出
+			local soviet_theme_part=""
+			if echo "$attempt_talk" | grep -q '^===SOVIET_THEME==='; then
+				soviet_theme_part=$(echo "$attempt_talk" | sed -n '/^===SOVIET_THEME===/,/^===SOVIET_THEME===/ p' | sed '1d;$d')
+				attempt_talk=$(echo "$attempt_talk" | sed '/^===SOVIET_THEME===/,/^===SOVIET_THEME===/ d')
+			fi
+
 			# 戦略アドバイスを抽出（本文確定後に追記する）
 			local advice_part advice_item
 			advice_part=$(echo "$attempt_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
@@ -1328,6 +1356,15 @@ RETRYCOMMENT
 					[ -n "$advice_line" ] || continue
 					_append_strategy_advice_item "$advice_line"
 				done <<<"$strategy_advice_candidates"
+			fi
+
+			# ソ連テーマを追記
+			if [ -n "$soviet_theme_part" ]; then
+				local soviet_theme_line
+				soviet_theme_line=$(printf '%s' "$soviet_theme_part" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+				if [ -n "$soviet_theme_line" ]; then
+					_append_soviet_theme_item "$soviet_theme_line"
+				fi
 			fi
 
 			comments_talk="$attempt_talk"
