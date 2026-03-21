@@ -1,17 +1,17 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v30)
+ * strategy.mjs - ドロップ位置決定戦略 (v31)
  *
- * v30改善点 (v29からの改善):
- * - 【ランク向上: 高タイプマージ積極化】
- *   findBestMerge: タイプ加点 1.5→2.0、チェーンスコア c1: 8→10、c2: 4→5
- *   → ランク評価は得点。大きなマージ・チェーン反応をより積極的に狙う
- * - 【T5+ピースのHOLD保護強化】pieces.length > 15条件を削除、常に保護
- *   → 大ピースを無駄な低列ドロップから保護してチェーン機会を温存
- * - 【T4ピース条件付きHOLD追加】マージなし & pieces > 10 のとき保存
- * - 【T1早期予防モード追加】t1Count >= 8 で早期T1マージ試行 (フラッド閾値15の前)
- * - 【ULTRAモードでT4+にfindBestMerge使用】チェーン反応考慮の最適マージ位置選択
- *   → T5+はマージなければHOLD保護
- * - v29のバランス振動修正・ULTRA/SURVIVAL閾値・extremeT1処理を維持
+ * v31改善点 (v30からの改善):
+ * - 【T1過敏反応の再修正】早期T1モード(EARLY_T1_THRESHOLD=8)を削除
+ *   → v27 HOFが同様の早期介入を削除して実績あり。過剰なT1介入を抑制
+ * - 【T1フラッド閾値をv27/HOF値に戻す】t1FloodMode: 15→12, extremeT1Flood: 36→30
+ *   → v27 HOFの実績値。早めの検出でT1蓄積を防ぐ
+ * - 【T5+ HOLDを条件付きに戻す】pieces.length > 15 の条件を復活
+ *   → 常時HOLD保護は高圧状況でマージ機会を逃す問題あり
+ * - 【T4 HOLD閾値を緩和】pieces > 10 → pieces > 20 (過剰なHOLD保護を抑制)
+ * - 【v30の有効な改善を維持】
+ *   findBestMerge: タイプ加点 2.0、チェーンスコア c1:10, c2:5
+ *   ULTRAモードでT4+にfindBestMerge使用
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -20,9 +20,8 @@ const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 70;
 const ULTRA_MASS_THRESHOLD = 70;
-const EXTREME_T1_FLOOD_THRESHOLD = 36;
+const EXTREME_T1_FLOOD_THRESHOLD = 30;
 const SURVIVAL_PIECE_THRESHOLD = 90;
-const EARLY_T1_THRESHOLD = 8;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -54,9 +53,8 @@ export function decide(boardState) {
   }
 
   const t1Count = activePieces.filter(p => p.type === 1).length;
-  const t1FloodMode = t1Count > 15;
+  const t1FloodMode = t1Count > 12;
   const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
-  const earlyT1Mode = t1Count >= EARLY_T1_THRESHOLD && t1Count < 15; // v30: 早期T1予防
 
   const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
   const garbageHeight = garbage ? (garbage.height || -5) : -5;
@@ -167,7 +165,7 @@ export function decide(boardState) {
     }
 
     if (nextType === 1) {
-      // 通常T1フラッドモード (15 < t1Count <= 36)
+      // 通常T1フラッドモード (12 < t1Count <= 30)
       if (t1FloodMode) {
         const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
         if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_T1_IMMEDIATE' };
@@ -324,14 +322,6 @@ export function decide(boardState) {
   if (canHold) {
     const holdResult = evaluateHold(activePieces, nextType, hold, nextPieces, isWarn);
     if (holdResult) return holdResult;
-  }
-
-  // v30: T1早期予防モード (フラッド前の予防的処置)
-  if (nextType === 1 && earlyT1Mode) {
-    const earlyMerge = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
-    if (earlyMerge !== null) return { x: earlyMerge, reason: 'EARLY_T1_MERGE' };
-    const earlyAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, false);
-    if (earlyAnchor !== null) return { x: earlyAnchor, reason: 'EARLY_T1_ANCHOR' };
   }
 
   // T1ピースは早期にT1フラッドチェック
@@ -674,12 +664,12 @@ function evaluateHold(pieces, nextType, hold, nextPieces, isWarn) {
     }
   } else {
     if (nextMergeCount === 0 && !isWarn) {
-      // v30: T5+は常にHOLD保護（pieces.length条件を削除）
-      if (nextType >= 5) {
+      // v31: T5+はpieces.length > 15の条件を復活（v30の常時保護を元に戻す）
+      if (nextType >= 5 && pieces.length > 15) {
         return { x: 0, reason: `HOLD_SAVE_BIG_T${nextType}`, hold: true };
       }
-      // v30: T4も条件付きHOLD（pieces > 10 で保護）
-      if (nextType >= 4 && pieces.length > 10) {
+      // v31: T4はpieces > 20 (v30の10から緩和して過剰なHOLD保護を抑制)
+      if (nextType >= 4 && pieces.length > 20) {
         return { x: 0, reason: `HOLD_SAVE_T4_T${nextType}`, hold: true };
       }
       if (pieces.length > 15) {
