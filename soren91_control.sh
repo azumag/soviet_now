@@ -219,8 +219,8 @@ soren91_start() {
 	if kill -0 "$pid" 2>/dev/null; then
 		log "[SOREN91] Started successfully (PID=$pid, start_game=$start_game)"
 		# 中華AI側のBGMをミュート（改善中は不要）
-		echo "MUTE" > "$ELOOP_LIB_DIR/$COMMANDS"
-		log "[SOREN91] Muted local game BGM"
+		touch "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+		log "[SOREN91] Muted local game BGM (flag file)"
 		log "[SOREN91] soren91 browser audio gain=${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}"
 		# 読み上げアナウンス + 戦略解説 (バックグラウンド)
 		{
@@ -329,9 +329,9 @@ soren91_stop() {
 
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE"
 	# 中華AI側のBGMをアンミュート（改善終了・復帰）
-	echo "UNMUTE" > "$ELOOP_LIB_DIR/$COMMANDS"
+	rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_soren91_switch_obs_layout china || true
-	log "[SOREN91] Unmuted local game BGM"
+	log "[SOREN91] Unmuted local game BGM (flag file removed)"
 	log "[SOREN91] Stopped (end_game=$eg)"
 	return 0
 }
@@ -436,5 +436,6 @@ soren91_cleanup() {
 
 	# ファイルクリーンアップ
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_IMPROVE_PID_FILE" \
-		"$SOREN91_IMPROVE_LOCK" "$SOREN91_STOP_FILE"
+		"$SOREN91_IMPROVE_LOCK" "$SOREN91_STOP_FILE" \
+		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 }

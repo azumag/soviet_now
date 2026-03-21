@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
+const MUTE_FLAG_FILE = 'tmp/mute_local_bgm';
 const SERVE_PORT = 8080;
 const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
 const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
@@ -372,7 +373,28 @@ async function runLocalController() {
 
   let checkCount = 0;
   let nullStateCount = 0;
+  let isMuted = false;
   while (true) {
+    // Check mute flag file (independent of commands.txt to avoid race condition)
+    const shouldMute = fs.existsSync(MUTE_FLAG_FILE);
+    if (shouldMute && !isMuted) {
+      console.log('MUTE flag detected, suspending audio');
+      await page.evaluate(() => {
+        if (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext) {
+          try { Module.WebAudio.audioContext.suspend(); } catch {}
+        }
+      });
+      isMuted = true;
+    } else if (!shouldMute && isMuted) {
+      console.log('MUTE flag removed, resuming audio');
+      await page.evaluate(() => {
+        if (typeof Module !== 'undefined' && Module.WebAudio && Module.WebAudio.audioContext) {
+          try { Module.WebAudio.audioContext.resume(); } catch {}
+        }
+      });
+      isMuted = false;
+    }
+
     const commands = readCommands();
 
     if (commands.length > processedCount) {
