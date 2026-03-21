@@ -16,6 +16,7 @@ _run_zai_radio() {
 	local stderr_preview="" provider_error=false
 	output=$(
 		export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
+		export ANTHROPIC_API_KEY="$ZAI_API_KEY"
 		export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
 		cat "$prompt_file" | timeout "$timeout_sec" claude -p --model haiku --tools "$ZAI_RADIO_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
 	)
@@ -82,6 +83,7 @@ _run_zai_comment() {
 	local stderr_preview="" provider_error=false
 	output=$(
 		export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
+		export ANTHROPIC_API_KEY="$ZAI_API_KEY"
 		export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
 		cd "$sandbox_dir" &&
 			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model haiku --tools "$ZAI_COMMENT_TOOLS" --permission-mode dontAsk 2>"$stderr_file"

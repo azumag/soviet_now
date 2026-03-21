@@ -22,6 +22,7 @@ GAME_COUNT_FILE="game_count.txt"
 
 # z.ai Anthropic互換エンドポイント経由でGLMモデルをclaude CLIから使う
 ZAI_BASE_URL="${ZAI_BASE_URL:-https://api.z.ai/api/anthropic}"
+ZAI_API_KEY="${ZAI_API_KEY:-$ANTHROPIC_AUTH_TOKEN}"
 ZAI_MODEL="${ZAI_MODEL:-glm-4.7}"
 ZAI_FALLBACK_MODEL="${ZAI_FALLBACK_MODEL:-glm-4.7}"
 ZAI_RADIO_TOOLS="${ZAI_RADIO_TOOLS:-default,WebSearch,WebFetch}"

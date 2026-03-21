@@ -213,6 +213,14 @@ export async function analyzeResultScreen(imagePath) {
         allowRank: true,
       },
       {
+        name: 'full_line_raw',
+        path: imagePath,
+        tesseractArgs: ['-l', 'eng+jpn', '--psm', '11'],
+        lineMinConf: 100,
+        rankMinConf: 100,
+        allowRank: false,
+      },
+      {
         name: 'full_sparse',
         path: await writeVariant(imagePath, tempDir, 'full_sparse', img =>
           img.grayscale().normalize().sharpen()

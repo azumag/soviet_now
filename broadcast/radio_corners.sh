@@ -931,6 +931,7 @@ _run_opencode_jiji_research() {
 	# WebSearch,WebFetch でWeb検索させる（旧: bash許可でcurl等）
 	output=$(
 		export ANTHROPIC_BASE_URL="$ZAI_BASE_URL"
+		export ANTHROPIC_API_KEY="$ZAI_API_KEY"
 		export ANTHROPIC_DEFAULT_HAIKU_MODEL="$model"
 		cat "$prompt_file" | timeout "$timeout_sec" claude -p --model haiku --tools "default,WebSearch,WebFetch" --permission-mode dontAsk 2>"$stderr_file"
 	)
