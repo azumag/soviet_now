@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-21 13:59:04 JST`
-- Nodes: `643`
-- Edges: `910`
-- Current: `3f5d04fbf3e5`
+- Updated: `2026-03-21 14:49:33 JST`
+- Nodes: `644`
+- Edges: `911`
+- Current: `a9d3868684e2`
 - Anchor: `3f5d04fbf3e5`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_b6e0c3b6e909["b6e0c3b6e909<br/>g=33 n=20<br/>comp=1138.1"]
     h_4d7f786718b8["4d7f786718b8<br/>g=14 n=14<br/>comp=1185.7"]
     h_2b031b4f385b["2b031b4f385b<br/>g=31 n=20<br/>comp=1346.7"]
     h_23858122e5c6["23858122e5c6"]
@@ -65,7 +64,7 @@ flowchart TD
     h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=1485.1"]
     h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=1577.5"]
     h_2e9fe5d1f791["2e9fe5d1f791<br/>g=36 n=20<br/>comp=1585.4"]
-    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=1859.5"]
+    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>ANCHOR<br/>g=36 n=20<br/>comp=1802.9"]
     h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=1679.0"]
     h_94f76057d4b6["94f76057d4b6<br/>g=12 n=12<br/>comp=1479.3"]
     h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=1718.1"]
@@ -75,15 +74,14 @@ flowchart TD
     h_0c0301a98e5f["0c0301a98e5f<br/>g=12 n=12<br/>comp=1008.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_a9d3868684e2["a9d3868684e2<br/>CURRENT"]
 
-    h_b6e0c3b6e909 -->|improve| h_4d7f786718b8
     h_4d7f786718b8 -->|improve| h_2b031b4f385b
     h_2b031b4f385b -->|improve| h_23858122e5c6
     h_23858122e5c6 -. rollback .-> h_2b031b4f385b
     h_2b031b4f385b -->|improve| h_922d37760c2b
     h_922d37760c2b -->|improve| h_7cde6f5b4387
     h_7cde6f5b4387 -. rollback .-> h_922d37760c2b
-    h_4f39face490d -. rollback .-> h_b6e0c3b6e909
     h_aa241c208ce0 -->|improve| h_999fa1987f46
     h_999fa1987f46 -. rollback .-> h_aa241c208ce0
     h_aa241c208ce0 -->|improve| h_994de46c98dd
@@ -160,13 +158,13 @@ flowchart TD
     h_0e06d456a6c9 -->|improve| h_9fe9a7007268
     h_9fe9a7007268 -->|improve| h_0c0301a98e5f
     h_0c0301a98e5f -. rollback .-> h_3f5d04fbf3e5
+    h_3f5d04fbf3e5 -->|improve| h_a9d3868684e2
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_b6e0c3b6e909 plain;
     class h_4d7f786718b8 plain;
     class h_2b031b4f385b plain;
     class h_23858122e5c6 plain;
@@ -216,7 +214,7 @@ flowchart TD
     class h_2a8e4a612c27 plain;
     class h_63f836102d11 plain;
     class h_2e9fe5d1f791 plain;
-    class h_3f5d04fbf3e5 current_anchor;
+    class h_3f5d04fbf3e5 anchor;
     class h_6c61d1962cec plain;
     class h_94f76057d4b6 plain;
     class h_c06979d29d37 plain;
@@ -226,6 +224,7 @@ flowchart TD
     class h_0c0301a98e5f plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_a9d3868684e2 current;
 ```
 
 ## Detail 1/9
@@ -2242,7 +2241,7 @@ flowchart TD
 - Cross-chunk link: `346c7685b489 -.rollback.-> e8c175933cd7`
 - Cross-chunk link: `e8c175933cd7 --improve--> aa241c208ce0`
 - Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
-- Cross-chunk link: `... and 1 more`
+- Cross-chunk link: `... and 2 more`
 
 ```mermaid
 flowchart TD
@@ -2319,7 +2318,7 @@ flowchart TD
     h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=1485.1"]
     h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=1577.5"]
     h_2e9fe5d1f791["2e9fe5d1f791<br/>g=36 n=20<br/>comp=1585.4"]
-    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=1859.5"]
+    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>ANCHOR<br/>g=36 n=20<br/>comp=1802.9"]
     h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=1679.0"]
     h_94f76057d4b6["94f76057d4b6<br/>g=12 n=12<br/>comp=1479.3"]
     h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=1718.1"]
@@ -2519,7 +2518,7 @@ flowchart TD
     class h_2a8e4a612c27 plain;
     class h_63f836102d11 plain;
     class h_2e9fe5d1f791 plain;
-    class h_3f5d04fbf3e5 current_anchor;
+    class h_3f5d04fbf3e5 anchor;
     class h_6c61d1962cec plain;
     class h_94f76057d4b6 plain;
     class h_c06979d29d37 plain;
@@ -2530,20 +2529,22 @@ flowchart TD
 
 ## Detail 9/9
 
-- Range: `0c0301a98e5f` .. `a3aae72a4e37`
-- Nodes in this diagram: `3`
+- Range: `0c0301a98e5f` .. `a9d3868684e2`
+- Nodes in this diagram: `4`
 - Internal edges in this diagram: `0`
 - Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
+- Cross-chunk link: `0c0301a98e5f -.rollback.-> 3f5d04fbf3e5`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `0c0301a98e5f -.rollback.-> 3f5d04fbf3e5`
+- Cross-chunk link: `3f5d04fbf3e5 --improve--> a9d3868684e2`
 
 ```mermaid
 flowchart TD
     h_0c0301a98e5f["0c0301a98e5f<br/>g=12 n=12<br/>comp=1008.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_a9d3868684e2["a9d3868684e2<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -2554,9 +2555,20 @@ flowchart TD
     class h_0c0301a98e5f plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_a9d3868684e2 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#8426 `3f5d04fb -> a9d38686`
+
+- scores: `2137 1504 1368 2209 1867 2396 3133 5421 1897 1926 936 1763`
+- v297: 即時併合優先シンプル化版 - axis 8.6/9.5戦略的配置ボーナス大幅削減
+- ワーストゲーム(score0606)終盤turns 36-42でreactive_pairs=4あるのに即時併合不可、戦略的配置が続きmax_y=-0.29→0.09に上昇し、43ターン以降で急上昇してゲームオーバー。
+- ベストゲーム(score4839)終盤turns 120-186では即時併合を確実に捉えてスコア4839を出している。
+- batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+- axis 8.6の戦略的配置ボーナスを大幅に削減（danger_piece_count==0: 400.0→100.0, danger_piece_count>0: 50.0→20.0）。
+- axis 9.5の戦略的配置ボーナスを大幅に削減（reactive>=1:+800.0→+200.0, reactive==0:+300.0→+100.0, SAME:+200.0→+50.0）。
 
 ### Rollback Game#8414 `0c0301a9 -> 3f5d04fb`
 
