@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-21 14:49:33 JST`
-- Nodes: `644`
-- Edges: `911`
-- Current: `a9d3868684e2`
+- Updated: `2026-03-21 15:43:02 JST`
+- Nodes: `645`
+- Edges: `912`
+- Current: `502d6ae93732`
 - Anchor: `3f5d04fbf3e5`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_4d7f786718b8["4d7f786718b8<br/>g=14 n=14<br/>comp=1185.7"]
     h_2b031b4f385b["2b031b4f385b<br/>g=31 n=20<br/>comp=1346.7"]
     h_23858122e5c6["23858122e5c6"]
     h_922d37760c2b["922d37760c2b<br/>g=26 n=20<br/>comp=1132.7"]
@@ -72,11 +71,11 @@ flowchart TD
     h_0e06d456a6c9["0e06d456a6c9<br/>g=12 n=12<br/>comp=1780.7"]
     h_9fe9a7007268["9fe9a7007268<br/>g=12 n=12<br/>comp=1593.6"]
     h_0c0301a98e5f["0c0301a98e5f<br/>g=12 n=12<br/>comp=1008.1"]
+    h_a9d3868684e2["a9d3868684e2<br/>g=12 n=12<br/>comp=1577.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_a9d3868684e2["a9d3868684e2<br/>CURRENT"]
+    h_502d6ae93732["502d6ae93732<br/>CURRENT"]
 
-    h_4d7f786718b8 -->|improve| h_2b031b4f385b
     h_2b031b4f385b -->|improve| h_23858122e5c6
     h_23858122e5c6 -. rollback .-> h_2b031b4f385b
     h_2b031b4f385b -->|improve| h_922d37760c2b
@@ -159,13 +158,13 @@ flowchart TD
     h_9fe9a7007268 -->|improve| h_0c0301a98e5f
     h_0c0301a98e5f -. rollback .-> h_3f5d04fbf3e5
     h_3f5d04fbf3e5 -->|improve| h_a9d3868684e2
+    h_a9d3868684e2 -->|improve| h_502d6ae93732
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_4d7f786718b8 plain;
     class h_2b031b4f385b plain;
     class h_23858122e5c6 plain;
     class h_922d37760c2b plain;
@@ -222,9 +221,10 @@ flowchart TD
     class h_0e06d456a6c9 plain;
     class h_9fe9a7007268 plain;
     class h_0c0301a98e5f plain;
+    class h_a9d3868684e2 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_a9d3868684e2 current;
+    class h_502d6ae93732 current;
 ```
 
 ## Detail 1/9
@@ -2529,23 +2529,25 @@ flowchart TD
 
 ## Detail 9/9
 
-- Range: `0c0301a98e5f` .. `a9d3868684e2`
-- Nodes in this diagram: `4`
-- Internal edges in this diagram: `0`
+- Range: `0c0301a98e5f` .. `502d6ae93732`
+- Nodes in this diagram: `5`
+- Internal edges in this diagram: `1`
 - Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
 - Cross-chunk link: `0c0301a98e5f -.rollback.-> 3f5d04fbf3e5`
+- Cross-chunk link: `3f5d04fbf3e5 --improve--> a9d3868684e2`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `3f5d04fbf3e5 --improve--> a9d3868684e2`
 
 ```mermaid
 flowchart TD
     h_0c0301a98e5f["0c0301a98e5f<br/>g=12 n=12<br/>comp=1008.1"]
+    h_a9d3868684e2["a9d3868684e2<br/>g=12 n=12<br/>comp=1577.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_a9d3868684e2["a9d3868684e2<br/>CURRENT"]
+    h_502d6ae93732["502d6ae93732<br/>CURRENT"]
 
+    h_a9d3868684e2 -->|improve| h_502d6ae93732
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2553,12 +2555,23 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_0c0301a98e5f plain;
+    class h_a9d3868684e2 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_a9d3868684e2 current;
+    class h_502d6ae93732 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#8438 `a9d38686 -> 502d6ae9`
+
+- scores: `1168 1944 2034 1638 2710 1472 1529 1711 1161 2796 1094 2146`
+- v298: Russian construction phase - RUSSIAN_CONSTRUCTED phase added for second Russian development
+- Worst game (score0766) turns 61-68: type 15 appeared but immediate merge missed, max_y=3.04 game over
+- Best game (score2408): type 15 appeared but continued immediate merges, achieved score2408
+- advice.md: "ロシア建国後の2つ目ロシア育成戦略" - Added RUSSIAN_CONSTRUCTED phase when type 15 exists
+- height_mult=2.5 after Russian construction, height_penalty x2 when landing_y>0.0 to avoid board compression
+- Maintains immediate merge priority (axis 8.6/9.5) while prioritizing space for second Russian development
 
 ### Improve Game#8426 `3f5d04fb -> a9d38686`
 
