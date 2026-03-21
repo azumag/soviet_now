@@ -36,15 +36,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v298: Russian construction phase - RUSSIAN_CONSTRUCTED phase added for second Russian development
-# Worst game (score0766) turns 61-68: type 15 appeared but immediate merge missed, max_y=3.04 game over
-# Best game (score2408): type 15 appeared but continued immediate merges, achieved score2408
-# advice.md: "ロシア建国後の2つ目ロシア育成戦略" - Added RUSSIAN_CONSTRUCTED phase when type 15 exists
-# height_mult=2.5 after Russian construction, height_penalty x2 when landing_y>0.0 to avoid board compression
-# Maintains immediate merge priority (axis 8.6/9.5) while prioritizing space for second Russian development
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md,
-#       game_history/20260321_152851_score0766.jsonl turns 61-68, game_history/20260321_152605_score2408.jsonl
-# rollback failure mode: reactive_pairs available but strategic placement chosen instead of immediate merge, max_y runaway
+# v299: ロシア建国後フェーズの即時併合優先強化版 - reactive_pairs>=2時のheight_mult緩和
+# ワーストゲーム（score0546）終盤：reactive_pairs=7-9 あるのに即時併合不可、戦略的配置が続き max_y=2.12 でゲームオーバー
+# ベストゲーム（score2522）終盤：deadline_crossed=true でも即時併合を確実に捉えてスコア2522を出している
+# advice.md: "盤面が詰まっても即時併合を狙うべき。盤面がどうだろうが即時併合狙った方が絶対勝率高い"
+# rollback analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
+# RUSSIAN_CONSTRUCTEDフェーズのheight_multを2.5から1.8に緩和（HIGHフェーズと同等に）
+# ロシア建国後で reactive_pairs >= 2 && merge_grade == "NO" の場合、height_multを0.5に緩和して即時併合を優先
+# これにより、「ロシア建国後の盤面圧縮を防ぐ」ための height_mult強化を維持しつつ、「reactive_pairsが多い場合は即時併合を優先する」という方針で調整
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+#       game_history/20260321_172246_score0546.jsonl turns 42-50, game_history/20260321_173321_score2522.jsonl turns 108-116
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -101,12 +102,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pairs = reactor.get("reactive_pairs", [])
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
 
-    # --- phase judgment (v298: Russian construction special phase) ---
-    # Worst game analysis: after type 15 appears, board becomes narrow, missing immediate merge causes rapid game over
-    # After Russian construction, height_mult is strengthened for more conservative board progression, prioritizing second Russian development
+    # --- phase judgment (v299: Russian construction immediate merge priority enhancement) ---
+    # Worst game analysis: after type 15 appears, reactive_pairs=7-9 available but immediate merge missed, strategic placement continued, max_y=2.12 game over
+    # Best game: deadline_crossed=true but immediate merges captured consistently, score2522 achieved
+    # advice.md: "盤面が詰まっても即時併合を狙うべき。盤面がどうだろうが即時併合狙った方が絶対勝率高い"
+    # Rollback analysis focus: p25 significantly degraded (1297.5 vs target=1778.8), prioritize immediate merge in reactive-rich situations
     if has_russian:
         phase = "RUSSIAN_CONSTRUCTED"
-        height_mult = 2.5  # After Russian construction, strengthen height penalty, prioritize avoiding board compression
+        height_mult = 1.8  # v299: Reduced from 2.5 to 1.8 (same as HIGH phase) to avoid excessive strategic placement
         merge_mult = 1.0  # Maintain merge priority
     elif max_y < 0.8:
         phase = "LOW"
@@ -228,6 +231,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
             # height_multを0.4に緩和して、盤面圧縮を強化し、即時併合機会を確保する
             height_mult *= 0.4
+
+        # v299: ロシア建国後フェーズの即時併合優先強化
+        # ロシア建国後で reactive_pairs が多い場合は即時併合を優先するため、height_multを緩和
+        # ワーストゲーム（score0546）終盤：reactive_pairs=7-9 あるのに即時併合不可、戦略的配置が続き max_y=2.12 でゲームオーバー
+        # advice.md: "盤面が詰まっても即時併合を狙うべき。盤面がどうだろうが即時併合狙った方が絶対勝率高い"
+        # rollback analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
+        if has_russian and reactive_pair_count >= 2 and merge_grade == "NO":
+            # ロシア建国後で reactive_pairs >= 2 かつ即時併合不可の場合、height_multを0.5に緩和して即時併合を優先
+            # これにより、盤面圧縮を促進し、即時併合機会を確保する
+            height_mult *= 0.5
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
