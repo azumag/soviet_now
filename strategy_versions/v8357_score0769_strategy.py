@@ -35,15 +35,14 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-   # --- Change History ---
-# v295: reactive_pairs段階的戦略的配置ボーナス調整版 - v298 failure mode潰し
-# ワーストゲーム(score0762)終盤turns 69-76でreactive_pairs=2-4あるのに即時併合不可、戦略的配置が続きmax_y=3.08に上昇してゲームオーバー。
-# ベストゲーム(score2739)終盤turns 103-110では即時併合を確実に捉えてスコア2739を出している。
-# last_rollback_postmortemの「height_mult抑制によるreactive_pairs盤面圧縮防止」failure modeを潰す。
-# axis 9.5のボーナスをreactive_pairs数に応じて段階的に調整し、即時併合機会がない場合の盤面圧縮を促進。
-# height_multを0.5-0.7の範囲で緩和し、deadline_crossed時でも柔軟な盤面圧縮を維持。
+# --- Change History ---
+# v297: deadline_crossed時 reactive_pairs>=2即時併合優先ボーナス拡張版 - v296 failure mode潰し
+# ワーストゲーム(score0689)終盤turns 52-56でdeadline_crossed=true, reactive_pairs=4-6, merge_available=falseが続き、戦略的配置が続きmax_yが急上昇してゲームオーバー。
+# ベストゲーム(score2808)終盤turns 105-112では即時併合を確実に捉え、max_yを2.90程度で安定させている。
+# deadline_crossed時 reactive_pairs>=2 の場合、即時併合機会がなくても axis 8.6 reactive_pairs 即時併合ボーナスを適用し、即時併合優先を強化。
+# これにより deadline_crossed 時の盤面圧縮を強化し、reactive_pairs 多数での戦略的配置選択を抑制。
 # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-#       game_history/20260321_082545_score0762.jsonl turns 69-76, game_history/20260321_064738_score2739.jsonl turns 103-110
+#       game_history/20260321_094859_score0689.jsonl turns 52-56, game_history/20260321_094644_score2808.jsonl turns 105-112
 #
 # v294: deadline_crossed reactive_pairs board compression - axis 2統合簡素化版 - v291 failure mode潰し
 # ワーストゲーム(score0323)終盤turns 44-51でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
@@ -301,26 +300,22 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v295: reactive_pairs段階的戦略的配置ボーナス調整版 - v298 failure mode潰し
+    """v296: deadline_crossed reactive_pairs board compression 高度抑制緩和版 - v295 failure mode (盤面崩壊)潰し
 
-    ワーストゲーム(score0762)終盤turns 69-76でreactive_pairs=2-4あるのに即時併合不可、戦略的配置が続きmax_y=3.08に上昇してゲームオーバー。
-    ベストゲーム(score2739)終盤turns 103-110では即時併合を確実に捉えてスコア2739を出している。
-    last_rollback_postmortemの「height_mult抑制によるreactive_pairs盤面圧縮防止」failure modeを潰す。
-    axis 9.5のボーナスをreactive_pairs数に応じて段階的に調整し、即時併合機会がない場合の盤面圧縮を促進。
-    height_multを0.5-0.7の範囲で緩和し、deadline_crossed時でも柔軟な盤面圧縮を維持。
+    ワーストゲーム(score0689)終盤turns 52-56でdeadline_crossed=true, reactive_pairs=4-6, merge_available=falseが続き、
+    v295のheight_mult *= 0.3 (reactive_pairs>=3) が危険度を低く見積もりすぎ、max_yが1.88→3.33へ急上昇してゲームオーバー。
+    ベストゲーム(score2808)終盤turns 105-112では即時併合を確実に捉え、max_yを2.90程度で安定させている。
+    axis 2のdeadline_crossed時height_mult調整を緩和し、盤面の上昇を抑制。
+    reactive_pairs>=3でheight_mult *= 0.3をheight_mult *= 0.5に緩和することで、戦略的配置の余地を維持しつつ盤面の上昇を抑制。
+    last_rollback_postmortemの制約「height_mult < 0.5禁止」を遵守。
 
-    v295の改善点:
-    1. axis 9.5の戦略的配置ボーナスをreactive_pairs数に応じて段階的に調整
-       - reactive_pairs>=3: +400.0（強めに戦略的配置ボーナス）
-       - reactive_pairs==2: +300.0（中程度に戦略的配置ボーナス）
-       - reactive_pairs==1: +200.0（緩めに戦略的配置ボーナス）
-       - reactive_pairs==0: +300.0（基本レベルの戦略的配置ボーナス）
-    2. axis 2のdeadline_crossed時盤面圧縮ロジックを段階的に調整
+    v296の改善点:
+    1. axis 2のdeadline_crossed時height_mult調整を緩和し、盤面の上昇を抑制
        - reactive_pairs==1: height_mult *= 0.7（緩めに盤面圧縮）
-       - reactive_pairs==2: height_mult *= 0.5（中程度に盤面圧縮）
-       - reactive_pairs>=3: height_mult *= 0.3（強めに盤面圧縮）
-    3. v298のaxis 8.5/9.5削除による戦略的配置余地消失問題を解決
-    4. 即時併合不可時に戦略的配置ボーナスを段階的に付与し、盤面圧縮を促進
+       - reactive_pairs==2: height_mult *= 0.6（中程度に盤面圧縮）
+       - reactive_pairs>=3: height_mult *= 0.5（中程度に盤面圧縮・高度抑制緩和）
+    2. v295のaxis 9.5の戦略的配置ボーナスを維持
+    3. 即時併合不可時に戦略的配置ボーナスを段階的に付与し、盤面圧縮を促進
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -451,17 +446,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # reactive_pairsがある場合は、将来の併合を狙える戦略的配置を可能にするためheight_multを緩和
             height_mult *= 0.8
         
-        # v295: deadline_crossed reactive_pairs board compression - v298 failure mode潰し
-        # axis 2にdeadline_crossed時の盤面圧縮ロジックを追加
-        # reactive_pairs数に応じて段階的にheight_multを緩和し、即時併合不可時に盤面圧縮を促進
+        # v296: deadline_crossed reactive_pairs board compression 高度抑制緩和版 - v295 failure mode (盤面崩壊)潰し
+        # ワーストゲーム(score0689)終盤turns 52-56でdeadline_crossed=true, reactive_pairs=4-6, merge_available=falseが続き、
+        # v295のheight_mult *= 0.3 (reactive_pairs>=3) が危険度を低く見積もりすぎ、max_yが1.88→3.33へ急上昇してゲームオーバー。
+        # ベストゲーム(score2808)終盤turns 105-112では即時併合を確実に捉え、max_yを2.90程度で安定させている。
+        # axis 2のdeadline_crossed時height_mult調整を緩和し、盤面の上昇を抑制。
+        # reactive_pairs>=3でheight_mult *= 0.3をheight_mult *= 0.5に緩和することで、戦略的配置の余地を維持しつつ盤面の上昇を抑制。
+        # last_rollback_postmortemの制約「height_mult < 0.5禁止」を遵守。
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+        #       game_history/20260321_094859_score0689.jsonl turns 52-56, game_history/20260321_094644_score2808.jsonl turns 105-112
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO" and danger_piece_count == 0:
             # reactive_pairs数に応じて段階的に調整
             if reactive_pair_count == 1:
                 height_mult *= 0.7  # 緩めに戦略的配置ボーナスを付与（盤面圧縮・将来の併合機会確保）
             elif reactive_pair_count == 2:
-                height_mult *= 0.5  # 中程度に戦略的配置ボーナス（盤面圧縮・将来の併合機会確保）
+                height_mult *= 0.6  # 中程度に戦略的配置ボーナス（盤面圧縮・将来の併合機会確保）
             else: # reactive_pair_count >= 3
-                height_mult *= 0.3  # 強めに戦略的配置ボーナス（盤面圧縮・将来の併合機会確保）
+                height_mult *= 0.5  # 中程度に戦略的配置ボーナス（盤面圧縮・将来の併合機会確保、高度抑制緩和）
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
@@ -663,12 +664,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # axis 7.5の戦略的配置ボーナスを削除し、即時併合ボーナスを強化して即時併合優先度を向上。
         # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正。
         # last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
-        # 未活用情報（reactive_pairsの段階的ボーナス）を活用した構造的変更であり、数値微調整ではない。
-        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-        #       game_history/20260321_030943_score0518.jsonl turns 56-61, game_history/20260321_032007_score2047.jsonl turns 106-113
-        if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
-            # reactive_pairs==1: 即時併合ボーナスを強化 (600.0 → 800.0)
+        # v296: deadline_crossed時 reactive_pairs>=2 の場合、即時併合優先ボーナスを拡張適用し、deadline_crossed時の盤面圧縮を強化
+        # refs: advice.md (Pitman_live), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+        #       game_history/20260321_094859_score0689.jsonl turns 52-56, game_history/20260321_094644_score2808.jsonl turns 105-112
+        if reactive_pair_count == 1 and (merge_grade in ["DIRECT", "NEAR"] or deadline_crossed):
+            # reactive_pairs==1: 即時併合ボーナスを強化 (600.0 → 800.0)。deadline_crossed時も即時併合優先
             score += 800.0
+            reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+        elif reactive_pair_count >= 2 and reactive_pair_count < 3 and (merge_grade in ["DIRECT", "NEAR"] or deadline_crossed):
+            # reactive_pairs==2: 即時併合ボーナスを強化 (1000.0 → 1300.0)。deadline_crossed時も即時併合優先
+            score += 1300.0
+            reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+        elif reactive_pair_count >= 3 and (merge_grade in ["DIRECT", "NEAR"] or deadline_crossed):
+            # reactive_pairs>=3: 即時併合ボーナスを強化 (1400.0 → 1600.0)。即時併合機会を最優先。deadline_crossed時も適用
+            score += 1600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
         elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"]:
             # reactive_pairs==2: 即時併合ボーナスを強化 (1000.0 → 1300.0)
