@@ -195,13 +195,23 @@ soren91_start() {
 	printf '{"start_game":%d,"start_time":"%s"}\n' "$start_game" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		> "$SOREN91_SESSION_FILE"
 
-	# 再試行付きランナーをバックグラウンド起動
-	(
-		cd "$SOREN91_DIR" && \
+	# 再試行付きランナーを完全 detach 起動
+	# manual_meriken_mode を起動したターミナルを閉じても継続するよう、
+	# HUP を無視して stdin/stdout/stderr を端末から切り離す。
+	local pid=""
+	pid=$(
+		cd "$SOREN91_DIR" || exit 1
 		SOREN91_SHARED_BROWSER=1 \
-		SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" /bin/bash "$SOREN91_RUNNER_SCRIPT"
-	) &
-	local pid=$!
+		SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
+			/usr/bin/nohup /bin/bash "$SOREN91_RUNNER_SCRIPT" </dev/null >/dev/null 2>&1 &
+		echo $!
+	)
+	case "$pid" in
+	''|*[!0-9]*)
+		log "[SOREN91] Failed to launch detached runner"
+		return 1
+		;;
+	esac
 	echo "$pid" > "$SOREN91_PID_FILE"
 
 	# 5秒後に生存チェック

@@ -271,6 +271,22 @@ async function connectToSharedBrowser() {
   return null;
 }
 
+function chooseSharedBrowserContext(browser) {
+  const contexts = browser.contexts();
+  if (contexts.length === 0) return null;
+
+  const withLocalPage = contexts.find(ctx =>
+    ctx.pages().some(page => {
+      const url = page.url();
+      return url.startsWith('http://localhost:') || url.startsWith('http://127.0.0.1:');
+    })
+  );
+  if (withLocalPage) return withLocalPage;
+
+  const withAnyPage = contexts.find(ctx => ctx.pages().length > 0);
+  return withAnyPage || contexts[0];
+}
+
 // --- メイン ---
 async function main() {
   console.log('[main] 同志AI 起動...');
@@ -290,18 +306,42 @@ async function main() {
     headless: false,
     args: ['--window-size=1280,720'],
   });
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 720 },
-    locale: 'ja-JP',
-    timezoneId: 'Asia/Tokyo',
-  });
+  let context = null;
+  let ownsContext = false;
   if (isSharedMode) {
-    console.log('[main] Running in shared browser mode (new context/tab)');
+    context = chooseSharedBrowserContext(browser);
+    if (context) {
+      console.log('[main] Running in shared browser mode (existing context/new tab)');
+    } else {
+      console.log('[main] Shared browser has no reusable context; creating isolated context');
+      context = await browser.newContext({
+        viewport: { width: 1280, height: 720 },
+        locale: 'ja-JP',
+        timezoneId: 'Asia/Tokyo',
+      });
+      ownsContext = true;
+    }
+  } else {
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      locale: 'ja-JP',
+      timezoneId: 'Asia/Tokyo',
+    });
+    ownsContext = true;
+  }
+  if (isSharedMode) {
+    console.log(`[main] Shared browser contexts=${browser.contexts().length}`);
   }
 
+  let gamePage = null;
   try {
     // ゲームURLに直接遷移 + HTML intercept で unityInstance 取得
-    const gamePage = await context.newPage();
+    gamePage = await context.newPage();
+    if (isSharedMode) {
+      try {
+        await gamePage.setViewportSize({ width: 1280, height: 720 });
+      } catch {}
+    }
     await installAudioGainLimiter(gamePage, audioGainMultiplier);
     await gamePage.route('**/*play.unityroom.com/**', async route => {
       if (route.request().resourceType() === 'document') {
@@ -368,10 +408,17 @@ async function main() {
     console.error('[main] Fatal error:', err.message);
   } finally {
     if (isSharedMode) {
-      // 共有モード: context を close してから CDP 接続を切断
+      // 共有モード: 既存 context を再利用した場合は context 全体を閉じない。
       // browser.close() on a CDP-connected browser only disconnects
       // (does NOT kill the external Chromium)
-      await context.close();
+      if (!ownsContext && gamePage && !gamePage.isClosed()) {
+        try {
+          await gamePage.close();
+        } catch {}
+      }
+      if (ownsContext) {
+        await context.close();
+      }
       // soviet_local のページを前面に戻す
       try {
         const contexts = browser.contexts();
