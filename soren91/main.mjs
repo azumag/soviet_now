@@ -287,6 +287,31 @@ function chooseSharedBrowserContext(browser) {
   return withAnyPage || contexts[0];
 }
 
+function chooseSharedBrowserAnchorPage(context) {
+  const pages = context.pages();
+  if (pages.length === 0) return null;
+
+  const localPage = pages.find(page => {
+    const url = page.url();
+    return url.startsWith('http://localhost:') || url.startsWith('http://127.0.0.1:');
+  });
+  return localPage || pages[0];
+}
+
+async function openSharedBrowserTab(context) {
+  const anchorPage = chooseSharedBrowserAnchorPage(context);
+  if (!anchorPage) {
+    return await context.newPage();
+  }
+
+  const popupPromise = context.waitForEvent('page');
+  await anchorPage.evaluate(() => {
+    window.open('about:blank', '_blank');
+  });
+  const popupPage = await popupPromise;
+  return popupPage;
+}
+
 // --- メイン ---
 async function main() {
   console.log('[main] 同志AI 起動...');
@@ -336,7 +361,9 @@ async function main() {
   let gamePage = null;
   try {
     // ゲームURLに直接遷移 + HTML intercept で unityInstance 取得
-    gamePage = await context.newPage();
+    gamePage = (isSharedMode && !ownsContext)
+      ? await openSharedBrowserTab(context)
+      : await context.newPage();
     if (isSharedMode) {
       try {
         await gamePage.setViewportSize({ width: 1280, height: 720 });
