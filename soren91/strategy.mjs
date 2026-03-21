@@ -1,26 +1,22 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v34)
+ * strategy.mjs - ドロップ位置決定戦略 (v35)
  *
- * v34改善点 (v33からの改善):
- * - 【ULTRA_EXTREME T1: immediateを再優先 (v33のdense優先を戻す)】
- *   top=T1列への落下は物理的に確実なT1→T2マージを引き起こす
- *   dense列はT1が近くにあっても物理的に接触しないと合体しない
- *   → v33でdense優先にしたが振動が継続 → immediate優先に戻す
- * - 【findT1DenseColumn: WARN_Y硬直cutoff廃止→softペナルティ化】
- *   `if (colHeights >= WARN_Y) continue` を削除
- *   `s -= (h - WARN_Y) * 15` の追加ペナルティに変更
- *   → 全列がWARN_Y超えの極端T1フラッド時でも動作する (現在はnullを返してfallback)
- * - 【findT1ImmediateMerge: tall列ペナルティ追加】
- *   height > WARN_Y+0.5 に追加ペナルティ (×30) 追加
- *   → nearT2*35ボーナスにより非常に高い列が選ばれすぎるのを抑制
- * - 【findLowestSafeDrop: wall penalty強化】
- *   |x|>2.2: -3→-8, |x|>2.4: 追加-15
- *   → turn76で発生したx=2.5端列への意図しない落下を防止
- * - 【v33の有効な改善を維持】
- *   dense T2/T3 chain加点強化、immediate wall抑制強化
- *   findBestMerge: タイプ加点 2.0、チェーンスコア c1:10, c2:5
- *   ULTRAモードでT4+にfindBestMerge使用
- *   evaluateHold: T1蓄積時(t1Count>=5)のfuture-save HOLD抑制
+ * v35改善点 (v34からの改善):
+ * - 【序盤保護モード rawPieceCount<10】序盤の崩壊を防ぐ
+ *   マージがあれば実行、なければ中央寄りの安全な列にドロップ
+ *   (game#416の8ターン終了など序盤壊滅を防止)
+ * - 【ULTRA_MASS_THRESHOLD: 70→62】早期ULTRA移行でCRITICAL到達を抑制
+ *   (43/83ターンがCRITICALという過剰なクリティカル状態への対策)
+ * - 【SURVIVAL_PIECE_THRESHOLD: 90→78】早期サバイバルモードでマージ優先
+ * - 【findT1ImmediateMerge: 低Y優先ボーナス】
+ *   colH < 0 で+20、colH < WARN_Y で+10のボーナス追加
+ *   高い列のT1をさらに積み上げるリスクを抑制
+ * - 【isWarn時のpre-criticalマージ強化 (T2+のみ)】
+ *   HOLD評価後にT2+ピースがあれば積極的マージでCRITICAL到達を抑制
+ * - 【T1プレフラッド: t1Count>=7 でdense誘導開始】
+ *   t1FloodMode閾値(12)到達前から早期T1集中を行いflood状態を予防
+ * - 【ULTRA extreme T1: 保有T3+との強制スワップ追加】
+ *   extremeT1Flood時にheld T3+(mergeあり or T5+)があればスワップして活用
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -28,9 +24,9 @@ const DEADLINE_Y = 2.5;
 const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 85;
-const ULTRA_MASS_THRESHOLD = 70;
+const ULTRA_MASS_THRESHOLD = 62;
 const EXTREME_T1_FLOOD_THRESHOLD = 30;
-const SURVIVAL_PIECE_THRESHOLD = 90;
+const SURVIVAL_PIECE_THRESHOLD = 78;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -61,6 +57,21 @@ export function decide(boardState) {
     return { x: safeX, reason: `SPREAD_UNRELIABLE_X${safeX.toFixed(1)}` };
   }
 
+  // v35: colHeightsを早期に計算 (序盤保護モードで使用)
+  const colHeights = computeColHeights(activePieces);
+
+  // v35: 序盤保護モード (rawPieceCount < 10)
+  // 序盤の壊滅的失敗を防ぐ: マージ優先、なければ中央寄りの安全列にドロップ
+  if (rawPieceCount < 10) {
+    if (nextType > 1) {
+      const earlyMerge = findAnyMerge(activePieces, nextType, colHeights, 0);
+      if (earlyMerge !== null) return { x: earlyMerge, reason: `EARLY_MERGE_T${nextType}` };
+    }
+    const earlyDrop = findLowestSafeDrop(colHeights, 0);
+    const earlyX = Math.max(-2.0, Math.min(2.0, earlyDrop.x));
+    return { x: earlyX, reason: `EARLY_SAFE` };
+  }
+
   const t1Count = activePieces.filter(p => p.type === 1).length;
   const t1FloodMode = t1Count > 12;
   const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
@@ -69,7 +80,7 @@ export function decide(boardState) {
   const garbageHeight = garbage ? (garbage.height || -5) : -5;
   const garbageUrgent = garbageRatio > 0.4 || garbageHeight > 1.2;
 
-  const colHeights = computeColHeights(activePieces);
+  // colHeights already computed above
   const validH = colHeights.filter(h => h > -4.5);
   const avgHeight = validH.length > 0
     ? validH.reduce((a, b) => a + b, 0) / validH.length
@@ -146,8 +157,14 @@ export function decide(boardState) {
         const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
         if (holdMerge !== null) return { x: 0, reason: `ULTRA_EXTREME_SWAP_T${hold.type}`, hold: true };
       }
+      // v35: extremeT1Flood時、held T3+(mergeあり or T5+)があればスワップして活用
+      if (canHold && hold && hold.type >= 3) {
+        const upgradeMerge = findBestMerge(activePieces, hold.type, colHeights, dangerBias, avgHeight, false, 0);
+        if (upgradeMerge || hold.type >= 5) {
+          return { x: 0, reason: `ULTRA_EXTREME_UPGRADE_T${hold.type}`, hold: true };
+        }
+      }
       // v34: immediateをdense前に戻す (top=T1は物理的に確実なマージ)
-      // dense列はT1が近くにあっても接触しないと合体しない
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
       if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
@@ -337,8 +354,20 @@ export function decide(boardState) {
     if (holdResult) return holdResult;
   }
 
+  // v35: isWarn時のpre-criticalマージ強化 (T2+のみ)
+  // HOLD評価後にT2+ピースがあれば積極的マージでCRITICAL到達を抑制
+  if (isWarn && !isCritical && nextType > 1) {
+    const warnMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0);
+    if (warnMerge) return { ...warnMerge, reason: `PREWARN_MERGE_T${nextType}` };
+  }
+
   // T1ピースは早期にT1フラッドチェック
   if (nextType === 1) {
+    // v35: T1プレフラッド対策 (t1Count 7-11): flood閾値到達前から密集誘導
+    if (t1Count >= 7 && !t1FloodMode && !extremeT1Flood) {
+      const preFloodDense = findT1DenseColumn(activePieces, colHeights, dangerBias);
+      if (preFloodDense !== null) return { x: preFloodDense, reason: 'T1_PREFLOOD_DENSE' };
+    }
     if (t1FloodMode && !extremeT1Flood) {
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
       if (denseX !== null) return { x: denseX, reason: 'T1_FLOOD_DENSE' };
@@ -516,7 +545,8 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
 /**
  * 列トップがT1の列を検出して即時T1→T2マージを狙う
  * v34: tall列への追加ペナルティ (WARN_Y+0.5超えで×30)
- *   nearT2*35ボーナスにより高すぎる列が選ばれすぎるのを防止
+ * v35: 低Y位置ボーナス追加 (colH<0で+20、colH<WARN_Yで+10)
+ *   高い列のT1をさらに積むことを抑制し、低い位置のマージを優先
  */
 function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
   let bestScore = -Infinity;
@@ -538,6 +568,9 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
     s -= colHeights[i] * 8.0;
     // v34: tall列への追加ペナルティ (WARN_Y+0.5超えで急激に増加)
     if (colHeights[i] > WARN_Y + 0.5) s -= (colHeights[i] - WARN_Y - 0.5) * 30;
+    // v35: 低Y位置ボーナス - 低い列のT1マージはT2を安全な高さに生成
+    if (colHeights[i] < 0) s += 20;
+    else if (colHeights[i] < WARN_Y) s += 10;
     s -= Math.abs(cx) * 2.0;
 
     const nearT2 = countNear(pieces, cx, 2, 2.0);
