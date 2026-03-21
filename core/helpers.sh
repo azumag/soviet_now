@@ -76,7 +76,7 @@ _strip_ansi() {
 }
 
 _contains_provider_error_text() {
-	printf '%s' "$1" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticat(e|ed)|api error[: ]|request_id|invalid error token|invalid token|not logged in|please run /login'
+	printf '%s' "$1" | grep -Eiq 'invalid bearer token|authentication_error|failed to authenticat(e|ed)|api error[: ]|request_id|invalid error token|invalid token|not logged in|please run /login|potentially unsafe or sensitive content|avoid using prompts that may generate sensitive content|unsafe or sensitive content in input or generation|content policy|safety policy'
 }
 
 _contains_claude_login_error_text() {
