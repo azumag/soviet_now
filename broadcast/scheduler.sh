@@ -247,15 +247,15 @@ start_random_radio_corner() {
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(_last_score)
 
-	local candidates=("theme" "soviet")
-
-	local pick="${candidates[$((RANDOM % ${#candidates[@]}))]}"
-	log "[RADIO] コーナー選択: ${pick}"
-
-	case "$pick" in
-	theme)   start_radio_corner_theme "$game_num" "$score" ;;
-	soviet)  start_radio_corner_soviet "$game_num" "$score" ;;
-	esac
+	# 1/3 の確率でソ連テーマ限定、それ以外は全テーマから選択
+	# (全テーマからでも [soviet] タグ付きが選ばれればソ連モードになる)
+	if [ $((RANDOM % 3)) -eq 0 ]; then
+		log "[RADIO] コーナー選択: theme (soviet filter)"
+		start_radio_corner_theme "$game_num" "$score" "soviet"
+	else
+		log "[RADIO] コーナー選択: theme"
+		start_radio_corner_theme "$game_num" "$score"
+	fi
 }
 
 schedule_nonessential_audio_jobs() {
