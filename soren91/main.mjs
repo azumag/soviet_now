@@ -533,18 +533,40 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
   const strategyHash = strategySnapshot?.strategyHash
     || computeStrategyHashFromFile(strategySnapshot?.snapshotPath || 'strategy.mjs');
 
+  const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
+  let resultScreenOcr = null;
+  if (existsSync(rankingImagePath)) {
+    try {
+      const { analyzeResultScreen } = await loadModule('./result_screen_ocr.mjs');
+      resultScreenOcr = await analyzeResultScreen(rankingImagePath);
+    } catch (err) {
+      console.log(`[game] Result OCR failed: ${err.message}`);
+    }
+  }
+
+  const detectedRank = (finalState.rank && finalState.rank > 0)
+    ? finalState.rank
+    : (resultScreenOcr?.rank && resultScreenOcr.rank > 0 ? resultScreenOcr.rank : null);
+
   // ゲームサマリー保存
   const summary = {
     gameNumber,
     turns,
-    rank: (finalState.rank && finalState.rank > 0) ? finalState.rank : null,
+    rank: detectedRank,
     piecesAtEnd: finalState.pieces.length,
     strategyHash: strategyHash || null,
     timestamp: new Date().toISOString(),
   };
+  if (resultScreenOcr && (resultScreenOcr.rank != null || (resultScreenOcr.lines || []).length > 0)) {
+    summary.resultScreenOcr = {
+      imagePath: resultScreenOcr.imagePath || null,
+      rank: resultScreenOcr.rank ?? null,
+      lines: (resultScreenOcr.lines || []).slice(0, 8),
+    };
+  }
   const summaryPath = join('tmp/summaries', `game_${String(gameNumber).padStart(4, '0')}.json`);
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
-  console.log(`[game] Summary: turns=${turns}, rank=${finalState.rank}, hash=${strategyHash}`);
+  console.log(`[game] Summary: turns=${turns}, rank=${summary.rank}, hash=${strategyHash}`);
 
   try {
     const lineageResult = recordCompletedGame({

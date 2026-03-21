@@ -1437,22 +1437,56 @@ generate_soren91_game_commentary() {
 
 	local summary_json=""
 	summary_json=$(cat "$latest_summary" 2>/dev/null)
-	local score turns pieces_at_end
-	score=$(echo "$summary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('score',0))" 2>/dev/null)
+	local rank turns pieces_at_end ocr_rank ocr_lines ranking_image ocr_json rank_label result_context
+	rank=$(echo "$summary_json" | python3 -c "import json,sys; d=json.load(sys.stdin); r=d.get('rank'); print('' if r is None else r)" 2>/dev/null)
 	turns=$(echo "$summary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turns',0))" 2>/dev/null)
 	pieces_at_end=$(echo "$summary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('piecesAtEnd',0))" 2>/dev/null)
+	ocr_rank=$(echo "$summary_json" | python3 -c "import json,sys; d=json.load(sys.stdin); r=((d.get('resultScreenOcr') or {}).get('rank')); print('' if r is None else r)" 2>/dev/null)
+	ocr_lines=$(echo "$summary_json" | python3 -c "import json,sys; d=json.load(sys.stdin); lines=((d.get('resultScreenOcr') or {}).get('lines') or []); print('\n'.join(f'- {line}' for line in lines[:6]))" 2>/dev/null)
 
-	log "[SOREN91] ゲーム${latest_game}の感想を生成 (score=${score}, turns=${turns})"
+	ranking_image=$(printf '%s/tmp/summaries/ranking_%04d.png' "$SOREN91_DIR" "$latest_game")
+	if { [ -z "$rank" ] || [ -z "$ocr_lines" ]; } && [ -f "$ranking_image" ] && [ -f "$SOREN91_DIR/result_screen_ocr.mjs" ]; then
+		ocr_json=$(node "$SOREN91_DIR/result_screen_ocr.mjs" "$ranking_image" 2>/dev/null || true)
+		if [ -n "$ocr_json" ]; then
+			[ -z "$rank" ] && rank=$(printf '%s' "$ocr_json" | python3 -c "import json,sys; d=json.load(sys.stdin); r=d.get('rank'); print('' if r is None else r)" 2>/dev/null)
+			[ -z "$ocr_rank" ] && ocr_rank=$(printf '%s' "$ocr_json" | python3 -c "import json,sys; d=json.load(sys.stdin); r=d.get('rank'); print('' if r is None else r)" 2>/dev/null)
+			[ -z "$ocr_lines" ] && ocr_lines=$(printf '%s' "$ocr_json" | python3 -c "import json,sys; d=json.load(sys.stdin); lines=(d.get('lines') or []); print('\n'.join(f'- {line}' for line in lines[:6]))" 2>/dev/null)
+		fi
+	fi
+
+	if [ -n "$rank" ]; then
+		rank_label="${rank}位"
+	elif [ -n "$ocr_rank" ]; then
+		rank_label="${ocr_rank}位 (結果画面OCR)"
+	else
+		rank_label="不明"
+	fi
+	if [ -n "$ocr_lines" ]; then
+		result_context="$ocr_lines"
+	elif [ -f "$ranking_image" ]; then
+		result_context="（ランキング画面は保存されていますが、文字読み取りは不完全でした）"
+	else
+		result_context="（結果画面OCRなし）"
+	fi
+
+	log "[SOREN91] ゲーム${latest_game}の感想を生成 (rank=${rank_label}, turns=${turns})"
 
 	# バックグラウンドでAI感想生成 → キューに追加
 	(
 		local commentary=""
 		commentary=$(claude -p "あなたはメリケンAI（アメリカ製AI）。自分自身がソ連ゲーム91（対戦版）をプレイしているプレイヤー。
-いま自分が終えたゲームの感想を日本語で1〜2文で述べてください。「自分はこうだった」「この試合は〜」のようにプレイヤー当事者として語ること。
+いま自分が終えたゲームの感想を日本語で2〜3文で述べてください。「自分はこうだった」「この試合は〜」のようにプレイヤー当事者として語ること。
 陽気なアメリカンな口調で。全て日本語で出力すること（英語禁止）。出力はトーク本文のみ（カッコや注釈なし）。
 文末は「です・ます」調で統一すること。
+ソ連ゲーム91にはスコアはありません。スコアの話は一切せず、順位・ターン数・結果画面の内容で振り返ること。
+順位が分かるなら必ず触れること。順位が不明なら不明と明言し、読めた範囲の結果画面内容だけを使うこと。
+結果画面OCRメモはノイズを含むので、読める単語や文章だけに触れ、読めない部分を勝手に補完しないこと。
+結果画面に「RANKING」や「WAITING FOR THE NEXT GAME...」のような文言が読める場合は、次戦待機まで戻っている状況として軽く触れてよい。
 
-ゲーム${latest_game}: スコア${score}点、${turns}ターン、終了時ピース${pieces_at_end}個" --model haiku 2>/dev/null)
+ゲーム${latest_game}: ${turns}ターン、終了時ピース${pieces_at_end}個
+今回の順位: ${rank_label}
+結果画面OCRメモ:
+${result_context}" --model haiku 2>/dev/null)
 		if [ -n "$commentary" ]; then
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
 			echo "$commentary" > "$queue_file"

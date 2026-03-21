@@ -16,7 +16,8 @@ _run_zai_radio() {
 	local stderr_preview="" provider_error=false
 	output=$(
 		ANTHROPIC_BASE_URL="$ZAI_BASE_URL" \
-		cat "$prompt_file" | timeout "$timeout_sec" claude -p --model "$model" --tools "$ZAI_RADIO_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
+		ANTHROPIC_DEFAULT_HAIKU_MODEL="$model" \
+		cat "$prompt_file" | timeout "$timeout_sec" claude -p --model haiku --tools "$ZAI_RADIO_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
@@ -82,7 +83,8 @@ _run_zai_comment() {
 	output=$(
 		cd "$sandbox_dir" &&
 		ANTHROPIC_BASE_URL="$ZAI_BASE_URL" \
-			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model "$model" --tools "$ZAI_COMMENT_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
+		ANTHROPIC_DEFAULT_HAIKU_MODEL="$model" \
+			cat 'tmp/comment_prompt.txt' | timeout "$timeout_sec" claude -p --model haiku --tools "$ZAI_COMMENT_TOOLS" --permission-mode dontAsk 2>"$stderr_file"
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
