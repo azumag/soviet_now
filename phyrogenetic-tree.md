@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-21 12:31:32 JST`
-- Nodes: `642`
-- Edges: `908`
-- Current: `9fe9a7007268`
+- Updated: `2026-03-21 13:24:24 JST`
+- Nodes: `643`
+- Edges: `909`
+- Current: `0c0301a98e5f`
 - Anchor: `3f5d04fbf3e5`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_371db8fee677["371db8fee677<br/>g=15 n=15<br/>comp=1314.1"]
     h_b6e0c3b6e909["b6e0c3b6e909<br/>g=33 n=20<br/>comp=1138.1"]
     h_4d7f786718b8["4d7f786718b8<br/>g=14 n=14<br/>comp=1185.7"]
     h_2b031b4f385b["2b031b4f385b<br/>g=31 n=20<br/>comp=1346.7"]
@@ -72,11 +71,11 @@ flowchart TD
     h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=1718.1"]
     h_e5cecbe37d12["e5cecbe37d12<br/>g=12 n=12<br/>comp=1250.3"]
     h_0e06d456a6c9["0e06d456a6c9<br/>g=12 n=12<br/>comp=1780.7"]
+    h_9fe9a7007268["9fe9a7007268<br/>g=12 n=12<br/>comp=1593.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9fe9a7007268["9fe9a7007268<br/>CURRENT"]
+    h_0c0301a98e5f["0c0301a98e5f<br/>CURRENT"]
 
-    h_371db8fee677 -->|improve| h_b6e0c3b6e909
     h_b6e0c3b6e909 -->|improve| h_4d7f786718b8
     h_4d7f786718b8 -->|improve| h_2b031b4f385b
     h_2b031b4f385b -->|improve| h_23858122e5c6
@@ -159,13 +158,13 @@ flowchart TD
     h_e5cecbe37d12 -. rollback .-> h_2e9fe5d1f791
     h_2e9fe5d1f791 -->|improve| h_0e06d456a6c9
     h_0e06d456a6c9 -->|improve| h_9fe9a7007268
+    h_9fe9a7007268 -->|improve| h_0c0301a98e5f
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_371db8fee677 plain;
     class h_b6e0c3b6e909 plain;
     class h_4d7f786718b8 plain;
     class h_2b031b4f385b plain;
@@ -222,9 +221,10 @@ flowchart TD
     class h_c06979d29d37 plain;
     class h_e5cecbe37d12 plain;
     class h_0e06d456a6c9 plain;
+    class h_9fe9a7007268 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9fe9a7007268 current;
+    class h_0c0301a98e5f current;
 ```
 
 ## Detail 1/9
@@ -2226,9 +2226,9 @@ flowchart TD
 
 ## Detail 8/9
 
-- Range: `4e4943f7f65c` .. `389b56537573`
+- Range: `4e4943f7f65c` .. `9fe9a7007268`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `112`
+- Internal edges in this diagram: `113`
 - Cross-chunk link: `467e45d0adc3 --improve--> 4e4943f7f65c`
 - Cross-chunk link: `4e4943f7f65c -.rollback.-> 4da6ecce5bb9`
 - Cross-chunk link: `467e45d0adc3 --improve--> ddd4637d2985`
@@ -2240,8 +2240,7 @@ flowchart TD
 - Cross-chunk link: `923af923a304 --improve--> 4f39face490d`
 - Cross-chunk link: `346c7685b489 -.rollback.-> e8c175933cd7`
 - Cross-chunk link: `e8c175933cd7 --improve--> aa241c208ce0`
-- Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
-- Cross-chunk link: `... and 2 more`
+- Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
 
 ```mermaid
 flowchart TD
@@ -2324,7 +2323,7 @@ flowchart TD
     h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=1718.1"]
     h_e5cecbe37d12["e5cecbe37d12<br/>g=12 n=12<br/>comp=1250.3"]
     h_0e06d456a6c9["0e06d456a6c9<br/>g=12 n=12<br/>comp=1780.7"]
-    h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
+    h_9fe9a7007268["9fe9a7007268<br/>g=12 n=12<br/>comp=1593.6"]
 
     h_ddd4637d2985 -->|improve| h_1d954126e373
     h_1d954126e373 -->|improve| h_cdfe94687752
@@ -2438,6 +2437,7 @@ flowchart TD
     h_c06979d29d37 -->|improve| h_e5cecbe37d12
     h_e5cecbe37d12 -. rollback .-> h_2e9fe5d1f791
     h_2e9fe5d1f791 -->|improve| h_0e06d456a6c9
+    h_0e06d456a6c9 -->|improve| h_9fe9a7007268
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2523,21 +2523,24 @@ flowchart TD
     class h_c06979d29d37 plain;
     class h_e5cecbe37d12 plain;
     class h_0e06d456a6c9 plain;
-    class h_389b56537573 plain;
+    class h_9fe9a7007268 plain;
 ```
 
 ## Detail 9/9
 
-- Range: `a3aae72a4e37` .. `9fe9a7007268`
-- Nodes in this diagram: `2`
+- Range: `389b56537573` .. `0c0301a98e5f`
+- Nodes in this diagram: `3`
 - Internal edges in this diagram: `0`
+- Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
+- Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `0e06d456a6c9 --improve--> 9fe9a7007268`
+- Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
 
 ```mermaid
 flowchart TD
+    h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9fe9a7007268["9fe9a7007268<br/>CURRENT"]
+    h_0c0301a98e5f["0c0301a98e5f<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -2545,11 +2548,22 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9fe9a7007268 current;
+    class h_0c0301a98e5f current;
 ```
 
 ## Transition Notes
+
+### Improve Game#8402 `9fe9a700 -> 0c0301a9`
+
+- scores: `938 1472 1955 1803 1706 1014 1923 2191 1703 710 1976 2758`
+- --- Change History ---
+- v300: deadline_crossed時即時併合優先強化版 - v297 failure mode潰し
+- deadline_crossed時はaxis 8.5/axis 8.6の即時併合優先を最優先し、axis 9.5戦略的配置ボーナスを抑制
+- v297失敗モード（reactive_pairs>=3 && deadline_crossed && merge_grade=="NO" && danger_piece_count==0でheight_mult=0.5緩和によるmax_y runaway）を潰す
+- 即時併合機会の取りこぼしを削減し、deadline_crossed時のmax_y上昇を抑制することで下振れ耐性を向上
+- ワーストゲーム(score0423)終盤turns 46-53でdeadline_crossed=true, reactive_pairs=4-5, merge_available=false続き、
 
 ### Improve Game#8390 `0e06d456 -> 9fe9a700`
 
