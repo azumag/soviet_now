@@ -36,16 +36,26 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-# v295: reactive_pairs段階的戦略的配置ボーナス調整版 - v298 failure mode潰し
-# ワーストゲーム(score0762)終盤turns 69-76でdeadline_crossed=true, reactive_pairs=2-4あるのに即時併合不可、
-# 戦略的配置が続きmax_y=3.08に上昇してゲームオーバー。
-# ベストゲーム(score2739)終盤turns 103-110では即時併合を確実に捉えてスコア2739を出している。
-# last_rollback_postmortemの「height_mult抑制によるreactive_pairs盤面圧縮防止」failure modeを潰す。
-# axis 8.6のボーナスをreactive_pairs数に応じて段階的に調整し、即時併合機会がない場合の盤面圧縮を促進。
-# height_multを0.5-0.7の範囲で緩和し、deadline_crossed時でも柔軟な盤面圧縮を維持。
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-#       game_history/20260321_082545_score0762.jsonl turns 69-76, game_history/20260321_064738_score2739.jsonl turns 103-110
-# #
+ # v299: deadline_crossed時戦略的配置抑制版 - v297 failure mode潰し
+ # deadline_crossed時はaxis 8.6の即時併合優先を最優先するため、axis 9.5戦略的配置ボーナスを抑制
+ # ワーストゲーム(score0553)終盤turns 50-57でdeadline_crossed=true, reactive_pairs>=2あるのに即時併合不可、
+ # 戦略的配置が続きmax_y=0.89→3.49に急上昇してゲームオーバー。
+ # ベストゲーム(score2335)終盤turns 71-89ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア2335を出している。
+ # axis 9.5の適用条件に `not deadline_crossed` を追加し、deadline_crossed時はaxis 8.6の即時併合優先を優先
+ # v297失敗モード（deadline_crossed時の戦略的配置によるmax_y runaway）を潰す
+ # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+ #       game_history/20260321_122737_score0553.jsonl turns 50-57, game_history/20260321_121209_score2335.jsonl turns 71-89
+ # #
+ # v295: reactive_pairs段階的戦略的配置ボーナス調整版 - v298 failure mode潰し
+ # ワーストゲーム(score0762)終盤turns 69-76でdeadline_crossed=true, reactive_pairs=2-4あるのに即時併合不可、
+ # 戦略的配置が続きmax_y=3.08に上昇してゲームオーバー。
+ # ベストゲーム(score2739)終盤turns 103-110では即時併合を確実に捉えてスコア2739を出している。
+ # last_rollback_postmortemの「height_mult抑制によるreactive_pairs盤面圧縮防止」failure modeを潰す。
+ # axis 8.6のボーナスをreactive_pairs数に応じて段階的に調整し、即時併合機会がない場合の盤面圧縮を促進。
+ # height_multを0.5-0.7の範囲で緩和し、deadline_crossed時でも柔軟な盤面圧縮を維持。
+ # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+ #       game_history/20260321_082545_score0762.jsonl turns 69-76, game_history/20260321_064738_score2739.jsonl turns 103-110
+ # #
 # v294: deadline_crossed reactive_pairs board compression - axis 2統合簡素化版 - v291 failure mode潰し
 # ワーストゲーム(score0323)終盤turns 44-51でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
 # 戦略的配置が続きmax_y=2.15→3.51に上昇してゲームオーバー。
@@ -302,25 +312,24 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v295: reactive_pairs段階的戦略的配置ボーナス調整版 - v298 failure mode潰し
+    """v299: deadline_crossed時戦略的配置抑制版 - v297 failure mode潰し
 
-    ワーストゲーム(score0762)終盤turns 69-76でdeadline_crossed=true, reactive_pairs=2-4あるのに即時併合不可、
-    戦略的配置が続きmax_y=3.08に上昇してゲームオーバー。
-    ベストゲーム(score2739)終盤turns 103-110では即時併合を確実に捉えてスコア2739を出している。
-    last_rollback_postmortemの「height_mult抑制によるreactive_pairs盤面圧縮防止」failure modeを潰す。
-    axis 8.6のボーナスをreactive_pairs数に応じて段階的に調整し、即時併合機会がない場合の盤面圧縮を促進。
-    height_multを0.5-0.7の範囲で緩和し、deadline_crossed時でも柔軟な盤面圧縮を維持。
+    deadline_crossed時はaxis 8.6の即時併合優先を最優先するため、axis 9.5戦略的配置ボーナスを抑制
+    ワーストゲーム(score0553)終盤turns 50-57でdeadline_crossed=true, reactive_pairs>=2あるのに即時併合不可、
+    戦略的配置が続きmax_y=0.89→3.49に急上昇してゲームオーバー。
+    ベストゲーム(score2335)終盤turns 71-89ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア2335を出している。
+    v297失敗モード：deadline_crossed時の戦略的配置ボーナスが即時併合優先を阻害し、max_y runawayの原因
+    axis 9.5の適用条件に `not deadline_crossed` を追加し、deadline_crossed時はaxis 8.6の即時併合優先を優先
     refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-          game_history/20260321_082545_score0762.jsonl turns 69-76, game_history/20260321_064738_score2739.jsonl turns 103-110
+          game_history/20260321_122737_score0553.jsonl turns 50-57, game_history/20260321_121209_score2335.jsonl turns 71-89
 
-    v295の改善点:
-    1. axis 8.6のreactive_pairs段階的戦略的配置ボーナス調整
-       - reactive_pairs==1: height_mult *= 0.7（0.5 → 0.7）で盤面圧縮促進
-       - reactive_pairs==2: height_mult *= 0.6（0.5 → 0.6）で盤面圧縮促進
-       - reactive_pairs>=3: height_mult *= 0.5（維持）で強力な盤面圧縮
-    2. deadline_crossed時の即時併合不可状況で、reactive_pairs数に応じた段階的盤面圧縮を促進
-    3. last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効
-    4. v298 failure mode（reactive_pairs盤面圧縮不足によるmax_y上昇）を潰す
+    v299の改善点:
+    1. axis 9.5の適用条件に `not deadline_crossed` を追加
+       - deadline_crossed時はaxis 8.6の即時併合優先を最優先するため、戦略的配置ボーナスを抑制
+       - deadline_crossed && danger_piece_count==0の場合、axis 9.5ボーナスを適用せずaxis 8.6の即時併合優先を優先
+       - v297失敗モード（deadline_crossed時の戦略的配置によるmax_y runaway）を潰す
+    2. danger_piece_count == 0 の場合のみ戦略的配置ボーナスを維持
+       - 危険ピースがない場合のみ戦略的配置を優先し、即時併合機会を確保
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -745,20 +754,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
         
-        # ----- evaluation axis 9.5: current type stack merge priority (v284: reactive_pairs活用盤面圧縮強化版) -----
-        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
-        # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
-        # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
-        # reactive_pairsがある場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替える。
-        # v284: 即時併合不可時のreactive_pairs活用盤面圧縮強化
-        # reactive_pairs>=3 && merge_grade=="NO" && danger_piece_count==0の場合、戦略的配置ボーナスを強化して盤面圧縮優先
-        # ワーストゲーム(score0642)終盤でreactive_pairs>=3あるのに即時併合不可で戦略的配置を選び、max_y上昇
-        # ベストゲーム(score1624)終盤では即時併合を確実に捉えてスコアを稼いでいる
-        # danger_piece_count > 0 の場合は axis 8.5 で即時併合優先が適用されるため、axis 9.5ボーナスを抑制
-        # v281 rollback failure mode (max_y>=2.0危険域判定過剰ペナルティ) を遵守
-        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-        #       game_history/20260320_190846_score0642.jsonl turns 60-67, game_history/20260320_191254_score1624.jsonl turns 95-102, advice.md
-        if same_type_stack_top and merge_grade == "NO":
+         # ----- evaluation axis 9.5: current type stack merge priority (v299: deadline_crossed時戦略的配置抑制版 - v297 failure mode潰し) -----
+         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
+         # batch_summaryでHEIGHT_CONTROLが9.4%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
+         # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
+         # reactive_pairsがある場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替える。
+         # v297失敗モード：deadline_crossed時の戦略的配置ボーナスが即時併合優先を阻害し、max_y runawayの原因
+         # deadline_crossed時はaxis 8.6の即時併合優先を最優先するため、axis 9.5ボーナスを抑制
+         # ワーストゲーム(score0553)終盤turns 50-57でdeadline_crossed=true, reactive_pairs>=2あるのに即時併合不可、
+         # 戦略的配置が続きmax_y=0.89→3.49に急上昇してゲームオーバー。
+         # ベストゲーム(score2335)終盤turns 71-89ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア2335を出している。
+         # danger_piece_count > 0 の場合は axis 8.5 で即時併合優先が適用されるため、axis 9.5ボーナスを抑制
+         # v281 rollback failure mode (max_y>=2.0危険域判定過剰ペナルティ) を遵守
+         # last_rollback_postmortemの「deadline_crossed && danger_piece_count>0でHEIGHT_CONTROL優先禁止」制約を遵守
+         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+         #       game_history/20260321_122737_score0553.jsonl turns 50-57, game_history/20260321_121209_score2335.jsonl turns 71-89
+         #
+          # v299の変更点:
+          # 1. axis 9.5の適用条件に `not deadline_crossed` を追加
+          #    - deadline_crossed時はaxis 8.6の即時併合優先を最優先するため、戦略的配置ボーナスを抑制
+          #    - deadline_crossed && danger_piece_count==0の場合、axis 9.5ボーナスを適用せずaxis 8.6の即時併合優先を優先
+          #    - v297失敗モード（deadline_crossed時の戦略的配置によるmax_y runaway）を潰す
+          # 2. danger_piece_count == 0 の場合のみ戦略的配置ボーナスを維持
+          #    - 危険ピースがない場合のみ戦略的配置を優先し、即時併合機会を確保
+        if same_type_stack_top and merge_grade == "NO" and not deadline_crossed:
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
             
