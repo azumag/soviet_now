@@ -1,22 +1,29 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v32)
+ * strategy.mjs - ドロップ位置決定戦略 (v33)
  *
- * v32改善点 (v31からの改善):
- * - 【ULTRA_EXTREME T1にdenseColumn追加】immediateの後にfindT1DenseColumnを挿入
- *   → 列トップT1が見つからない場合、T1密集列にドロップしてバルクT2チェーン促進
- *   → 128ピース時に同一列を繰り返す問題を緩和し、早期カスケード誘発
- * - 【evaluateHold: T1蓄積時のHOLD抑制】t1Count >= 5時はT1のfuture-save HOLDをスキップ
- *   → T1過多時にT1をHOLDして板詰まりを防ぐ（T1はHOLDより直接マージを優先）
- * - 【v31の有効な改善を維持】
+ * v33改善点 (v32からの改善):
+ * - 【ULTRA_EXTREME T1: dense優先に変更】
+ *   immediateの前にdenseColumnを試行: T1密集列への集中→バルクT2チェーン促進
+ *   → 異なるT1トップ列を渡り歩く振動パターンを抑制（v32でdenseはdeadコードだった）
+ * - 【findT1ImmediateMerge: chain加点を大幅強化】nearT2ボーナス15→35, nearT3 8→18
+ *   → T1→T2後のT2→T3チェーン期待値を強く優先
+ *   → T2密集エリアに留まりやすくなり振動を抑制
+ * - 【findT1ImmediateMerge: wall抑制強化】|cx|>2.0で-12, |cx|>2.4で-20
+ *   → ±2.5端列への反射的落下を防ぎ中央寄りを促進（旧: >2.2で-8のみ）
+ * - 【findT1DenseColumn: T2chain加点強化】nearT2 10→20, nearT3 5→10
+ *   → T2が近くにある密集T1列を優先し、T1→T2→T3連鎖可能性を向上
+ * - 【MAX_ACTIVE_PIECES 70→85】107ピース時のサンプリング精度向上
+ * - 【v32の有効な改善を維持】
  *   findBestMerge: タイプ加点 2.0、チェーンスコア c1:10, c2:5
  *   ULTRAモードでT4+にfindBestMerge使用
+ *   evaluateHold: T1蓄積時(t1Count>=5)のfuture-save HOLD抑制
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
 const DEADLINE_Y = 2.5;
 const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
-const MAX_ACTIVE_PIECES = 70;
+const MAX_ACTIVE_PIECES = 85;
 const ULTRA_MASS_THRESHOLD = 70;
 const EXTREME_T1_FLOOD_THRESHOLD = 30;
 const SURVIVAL_PIECE_THRESHOLD = 90;
@@ -121,7 +128,7 @@ export function decide(boardState) {
       }
     }
 
-    // v29: extremeT1Flood時はバランス補正より先にT1処理 (振動バグ修正)
+    // v33: extremeT1Flood時はバランス補正より先にT1処理
     if (nextType === 1 && extremeT1Flood) {
       if (canHold && !hold) {
         const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
@@ -135,11 +142,12 @@ export function decide(boardState) {
         const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
         if (holdMerge !== null) return { x: 0, reason: `ULTRA_EXTREME_SWAP_T${hold.type}`, hold: true };
       }
-      const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
-      if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
-      // v32: denseColumnをextremeパスに追加 (immediate失敗時にT1密集列へ誘導)
+      // v33: denseをimmediate前に配置 (v32でdenseはdeadコードだった問題を修正)
+      // dense列にT1を集中させてバルクT2→T3チェーンを促進、振動を抑制
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
       if (denseX !== null) return { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE' };
+      const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
+      if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
       const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
       if (chainAnchor !== null) return { x: chainAnchor, reason: 'ULTRA_EXTREME_T1_ANCHOR' };
       const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
@@ -415,6 +423,7 @@ function findLowestOnTargetSide(colHeights, targetRight) {
 
 /**
  * T1フラッドモード専用: T1が最も密集した列に誘導してT1→T2チェーン促進
+ * v33: nearT2 10→20, nearT3 5→10 でT2chain加点強化
  */
 function findT1DenseColumn(pieces, colHeights, dangerBias) {
   const t1Pieces = pieces.filter(p =>
@@ -434,8 +443,8 @@ function findT1DenseColumn(pieces, colHeights, dangerBias) {
     const nearT2 = countNear(pieces, cx, 2, 1.5);
     const nearT3 = countNear(pieces, cx, 3, 2.0);
     let s = nearT1 * 20;
-    s += nearT2 * 10;
-    s += nearT3 * 5;
+    s += nearT2 * 20;  // v33: 10→20 T2→T3チェーン可能性を強く評価
+    s += nearT3 * 10;  // v33: 5→10
     s -= colHeights[i] * 10.0;
     s -= Math.abs(cx) * 2.0;
     if (Math.abs(cx) > 2.2) s -= 8;
@@ -499,6 +508,7 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
 
 /**
  * 列トップがT1の列を検出して即時T1→T2マージを狙う
+ * v33: chain加点強化 (nearT2 15→35, nearT3 8→18), wall抑制強化
  */
 function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
   let bestScore = -Infinity;
@@ -522,10 +532,13 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
 
     const nearT2 = countNear(pieces, cx, 2, 2.0);
     const nearT3 = countNear(pieces, cx, 3, 2.4);
-    s += nearT2 * 15;
-    s += nearT3 * 8;
+    s += nearT2 * 35;  // v33: 15→35 T2→T3チェーンを強く優先 (振動抑制)
+    s += nearT3 * 18;  // v33: 8→18
 
-    if (Math.abs(cx) > 2.2) s -= 8;
+    // v33: wall抑制強化 (旧: >2.2で-8のみ)
+    if (Math.abs(cx) > 2.0) s -= 12;
+    if (Math.abs(cx) > 2.4) s -= 20;
+
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
     if (dangerBias >= 1 && cx > 0.5) s -= 6;
@@ -772,13 +785,13 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     s -= colH * 4.0;
     if (colH > DEADLINE_Y - 0.4) s -= 10;
     if (colH > avgHeight + 0.8) s -= 2;
-    s += nextType * 2.0; // v30: 1.5→2.0 で高タイプマージを積極化
+    s += nextType * 2.0;
 
     const c1 = countNear(pieces, t.x, nextType + 1, 1.8);
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
     const c4 = countNear(pieces, t.x, nextType + 4, 3.0);
-    const chainScore = c1 * 10 + c2 * 5 + c3 * 2 + c4 * 1; // v30: c1: 8→10、c2: 4→5
+    const chainScore = c1 * 10 + c2 * 5 + c3 * 2 + c4 * 1;
     if (chainScore < minChainScore) continue;
     s += chainScore;
 
