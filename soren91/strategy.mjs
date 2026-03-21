@@ -1,15 +1,13 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v31)
+ * strategy.mjs - ドロップ位置決定戦略 (v32)
  *
- * v31改善点 (v30からの改善):
- * - 【T1過敏反応の再修正】早期T1モード(EARLY_T1_THRESHOLD=8)を削除
- *   → v27 HOFが同様の早期介入を削除して実績あり。過剰なT1介入を抑制
- * - 【T1フラッド閾値をv27/HOF値に戻す】t1FloodMode: 15→12, extremeT1Flood: 36→30
- *   → v27 HOFの実績値。早めの検出でT1蓄積を防ぐ
- * - 【T5+ HOLDを条件付きに戻す】pieces.length > 15 の条件を復活
- *   → 常時HOLD保護は高圧状況でマージ機会を逃す問題あり
- * - 【T4 HOLD閾値を緩和】pieces > 10 → pieces > 20 (過剰なHOLD保護を抑制)
- * - 【v30の有効な改善を維持】
+ * v32改善点 (v31からの改善):
+ * - 【ULTRA_EXTREME T1にdenseColumn追加】immediateの後にfindT1DenseColumnを挿入
+ *   → 列トップT1が見つからない場合、T1密集列にドロップしてバルクT2チェーン促進
+ *   → 128ピース時に同一列を繰り返す問題を緩和し、早期カスケード誘発
+ * - 【evaluateHold: T1蓄積時のHOLD抑制】t1Count >= 5時はT1のfuture-save HOLDをスキップ
+ *   → T1過多時にT1をHOLDして板詰まりを防ぐ（T1はHOLDより直接マージを優先）
+ * - 【v31の有効な改善を維持】
  *   findBestMerge: タイプ加点 2.0、チェーンスコア c1:10, c2:5
  *   ULTRAモードでT4+にfindBestMerge使用
  */
@@ -139,6 +137,9 @@ export function decide(boardState) {
       }
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
       if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
+      // v32: denseColumnをextremeパスに追加 (immediate失敗時にT1密集列へ誘導)
+      const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
+      if (denseX !== null) return { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE' };
       const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
       if (chainAnchor !== null) return { x: chainAnchor, reason: 'ULTRA_EXTREME_T1_ANCHOR' };
       const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
@@ -320,7 +321,7 @@ export function decide(boardState) {
 
   // --- HOLD判定 (非CRITICAL時) ---
   if (canHold) {
-    const holdResult = evaluateHold(activePieces, nextType, hold, nextPieces, isWarn);
+    const holdResult = evaluateHold(activePieces, nextType, hold, nextPieces, isWarn, t1Count);
     if (holdResult) return holdResult;
   }
 
@@ -647,7 +648,8 @@ function findMergeInLowCol(pieces, nextType, colHeights, heightLimit, dangerBias
   return best ? { x: clampX(best.x) } : null;
 }
 
-function evaluateHold(pieces, nextType, hold, nextPieces, isWarn) {
+// v32: t1Count引数を追加してT1蓄積時のfuture-save HOLD抑制
+function evaluateHold(pieces, nextType, hold, nextPieces, isWarn, t1Count = 0) {
   const safeY = DEADLINE_Y - 0.3;
   const nextMergeCount = pieces.filter(p => p.type === nextType && p.y < safeY).length;
 
@@ -672,7 +674,8 @@ function evaluateHold(pieces, nextType, hold, nextPieces, isWarn) {
       if (nextType >= 4 && pieces.length > 20) {
         return { x: 0, reason: `HOLD_SAVE_T4_T${nextType}`, hold: true };
       }
-      if (pieces.length > 15) {
+      // v32: T1蓄積時(t1Count>=5)はT1のfuture-save HOLDをスキップ
+      if (pieces.length > 15 && (nextType !== 1 || t1Count < 5)) {
         const futurePieces = [
           nextPieces && nextPieces[1] ? nextPieces[1].type : 0,
           nextPieces && nextPieces[2] ? nextPieces[2].type : 0,
