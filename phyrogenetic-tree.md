@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-22 02:24:09 JST`
-- Nodes: `655`
-- Edges: `924`
-- Current: `7cf265bae6ef`
-- Anchor: `3f5d04fbf3e5`
+- Updated: `2026-03-22 03:19:42 JST`
+- Nodes: `656`
+- Edges: `925`
+- Current: `085a14fbeb1f`
+- Anchor: `7cf265bae6ef`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_fc1f9b57c228["fc1f9b57c228<br/>g=12 n=12<br/>comp=1253.1"]
     h_59b034e69dc5["59b034e69dc5<br/>g=12 n=12<br/>comp=1471.6"]
     h_e07035eae709["e07035eae709<br/>g=41 n=20<br/>comp=1659.4"]
     h_04ccf12d38e1["04ccf12d38e1<br/>g=12 n=12<br/>comp=1438.6"]
@@ -53,7 +52,7 @@ flowchart TD
     h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=1485.1"]
     h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=1577.5"]
     h_2e9fe5d1f791["2e9fe5d1f791<br/>g=36 n=20<br/>comp=1585.4"]
-    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>ANCHOR<br/>g=36 n=20<br/>comp=1802.9"]
+    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>g=36 n=20<br/>comp=1802.9"]
     h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=1679.0"]
     h_94f76057d4b6["94f76057d4b6<br/>g=12 n=12<br/>comp=1479.3"]
     h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=1718.1"]
@@ -72,9 +71,10 @@ flowchart TD
     h_2537fc9be12e["2537fc9be12e<br/>g=12 n=12<br/>comp=1733.5"]
     h_1f0d87a2411f["1f0d87a2411f<br/>g=12 n=12<br/>comp=1425.7"]
     h_550d15119e1e["550d15119e1e<br/>g=12 n=12<br/>comp=1764.4"]
+    h_7cf265bae6ef["7cf265bae6ef<br/>ANCHOR<br/>g=12 n=12<br/>comp=2206.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_7cf265bae6ef["7cf265bae6ef<br/>CURRENT"]
+    h_085a14fbeb1f["085a14fbeb1f<br/>CURRENT"]
 
     h_e07035eae709 -->|improve| h_04ccf12d38e1
     h_e07035eae709 -->|improve| h_ed7175aba8a7
@@ -157,13 +157,13 @@ flowchart TD
     h_1f0d87a2411f -. rollback .-> h_c3ae4e32c788
     h_c3ae4e32c788 -->|improve| h_550d15119e1e
     h_550d15119e1e -->|improve| h_7cf265bae6ef
+    h_7cf265bae6ef -->|improve| h_085a14fbeb1f
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_fc1f9b57c228 plain;
     class h_59b034e69dc5 plain;
     class h_e07035eae709 plain;
     class h_04ccf12d38e1 plain;
@@ -201,7 +201,7 @@ flowchart TD
     class h_2a8e4a612c27 plain;
     class h_63f836102d11 plain;
     class h_2e9fe5d1f791 plain;
-    class h_3f5d04fbf3e5 anchor;
+    class h_3f5d04fbf3e5 plain;
     class h_6c61d1962cec plain;
     class h_94f76057d4b6 plain;
     class h_c06979d29d37 plain;
@@ -220,9 +220,10 @@ flowchart TD
     class h_2537fc9be12e plain;
     class h_1f0d87a2411f plain;
     class h_550d15119e1e plain;
+    class h_7cf265bae6ef anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_7cf265bae6ef current;
+    class h_085a14fbeb1f current;
 ```
 
 ## Detail 1/9
@@ -2316,7 +2317,7 @@ flowchart TD
     h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=1485.1"]
     h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=1577.5"]
     h_2e9fe5d1f791["2e9fe5d1f791<br/>g=36 n=20<br/>comp=1585.4"]
-    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>ANCHOR<br/>g=36 n=20<br/>comp=1802.9"]
+    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>g=36 n=20<br/>comp=1802.9"]
     h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=1679.0"]
     h_94f76057d4b6["94f76057d4b6<br/>g=12 n=12<br/>comp=1479.3"]
     h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=1718.1"]
@@ -2516,7 +2517,7 @@ flowchart TD
     class h_2a8e4a612c27 plain;
     class h_63f836102d11 plain;
     class h_2e9fe5d1f791 plain;
-    class h_3f5d04fbf3e5 anchor;
+    class h_3f5d04fbf3e5 plain;
     class h_6c61d1962cec plain;
     class h_94f76057d4b6 plain;
     class h_c06979d29d37 plain;
@@ -2527,9 +2528,9 @@ flowchart TD
 
 ## Detail 9/9
 
-- Range: `0c0301a98e5f` .. `7cf265bae6ef`
-- Nodes in this diagram: `15`
-- Internal edges in this diagram: `13`
+- Range: `0c0301a98e5f` .. `085a14fbeb1f`
+- Nodes in this diagram: `16`
+- Internal edges in this diagram: `14`
 - Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
 - Cross-chunk link: `0c0301a98e5f -.rollback.-> 3f5d04fbf3e5`
 - Cross-chunk link: `3f5d04fbf3e5 --improve--> a9d3868684e2`
@@ -2551,9 +2552,10 @@ flowchart TD
     h_2537fc9be12e["2537fc9be12e<br/>g=12 n=12<br/>comp=1733.5"]
     h_1f0d87a2411f["1f0d87a2411f<br/>g=12 n=12<br/>comp=1425.7"]
     h_550d15119e1e["550d15119e1e<br/>g=12 n=12<br/>comp=1764.4"]
+    h_7cf265bae6ef["7cf265bae6ef<br/>ANCHOR<br/>g=12 n=12<br/>comp=2206.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_7cf265bae6ef["7cf265bae6ef<br/>CURRENT"]
+    h_085a14fbeb1f["085a14fbeb1f<br/>CURRENT"]
 
     h_a9d3868684e2 -->|improve| h_502d6ae93732
     h_502d6ae93732 -->|improve| h_46d67246f7a7
@@ -2568,6 +2570,7 @@ flowchart TD
     h_1f0d87a2411f -. rollback .-> h_c3ae4e32c788
     h_c3ae4e32c788 -->|improve| h_550d15119e1e
     h_550d15119e1e -->|improve| h_7cf265bae6ef
+    h_7cf265bae6ef -->|improve| h_085a14fbeb1f
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2586,12 +2589,23 @@ flowchart TD
     class h_2537fc9be12e plain;
     class h_1f0d87a2411f plain;
     class h_550d15119e1e plain;
+    class h_7cf265bae6ef anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_7cf265bae6ef current;
+    class h_085a14fbeb1f current;
 ```
 
 ## Transition Notes
+
+### Improve Game#8594 `7cf265ba -> 085a14fb`
+
+- scores: `1713 2547 1344 1944 5287 3609 2801 2766 2173 1772 1982 3974`
+- --- Change History ---
+- v306: 危険局面即時併合強制フィルタリング追加版 - 構造的変更
+- ワーストゲーム(score1028)終盤turns 74-81: reactive_pairs=7-9あるのに即時併合不可、戦略的配置が続きmax_y=3.23→ゲームオーバー
+- extra_low(score1335)終盤turns 71-74: reactive_pairs=7-8あるのに即時併合不可、戦略的配置が続きmax_y=2.91→2.92
+- ベストゲーム(score4717)終盤turns 193-200: 即時併合を確実に捉えてスコア4717を出している
+- batch_summaryでHEIGHT_CONTROLが11.4%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
 
 ### Improve Game#8582 `550d1511 -> 7cf265ba`
 
