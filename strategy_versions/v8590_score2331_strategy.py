@@ -36,38 +36,40 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-  # v304: 危険局面即時併合強制版 - reactive_pairs >= 2 && max_y >= 1.8 フィルタリング維持
-  # reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runawayを抑制する強化版
-  # danger_piece_count >= 4 の戦略的配置を完全抑制: height_mult *= 0.1（強力緩和）
-  # deadline_crossed && danger_piece_count >= 4 && merge_grade=="NO" の height_multを0.1に強力緩和
-  # has_russian && reactive_pair_count >= 2 && merge_grade=="NO" の height_multを0.3に緩和
+  # v305: 危険局面フィルタリング強化版 - max_y閾値緩和
+  # extra_low game (score1138) 終盤turns 75-82: reactive_pairs=3-5あるのにmax_y=2.06→3.37に上昇してゲームオーバー
+  # best game (score2051) 終盤turns 92-99: deadline_crossed=trueでも即時併合を確実に捉えてスコア2051を出している
+  # batch_summaryでHEIGHT_CONTROLが11.4%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
+  # last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
+  # max_y閾値を1.8から1.2に緩和し、deadline_crossed時は即時併合機会をより早期に優先
+  # これにより「reactive_pairsがあるのにmax_y runawayする」失敗モードを抑制
   # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-  #       advice.md, game_history/20260322_012426_score0576.jsonl turns 51-58, game_history/20260322_005753_score2365.jsonl turns 108-115
-  #       strategy_versions/best_score2335_strategy.py
-  # rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
-  # Fixes rollback failure mode: danger_piece_count>=4で即時併合を強制し、ワーストゲームのmax_y runawayを抑制
+  #       game_history/20260322_021759_score1138.jsonl turns 75-82, game_history/20260322_021136_score2349.jsonl turns 92-99,
+  #       strategy_versions/best_score5694_strategy.py, advice.md
+  # Fixes rollback failure mode: deadline_crossed時の即時併合機会の取りこぼしによる max_y runaway
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v303: 即時併合機会逃し完全防止版 - axis 8.6戦略的配置ボーナス完全削減・height_mult強力緩和
+    """v305: 危険局面フィルタリング強化版 - max_y閾値緩和
 
-    Worst game (score0881) turns 62-69: reactive_pairs=1-2 but strategic placement continues, max_y=3.60 game over
-    Best game (score3018) turns 115-136: deadline_crossed=true but consistently captures immediate merges, achieved score3018
-    batch_summary: HEIGHT_CONTROL selected 11.0% (avg_score_delta=0.0), excessive immediate merge opportunity misses
+    extra_low game (score1138) 終盤turns 75-82: reactive_pairs=3-5あるのにmax_y=2.06→3.37に上昇してゲームオーバー
+    best game (score2051) 終盤turns 92-99: deadline_crossed=trueでも即時併合を確実に捉えてスコア2051を出している
+    batch_summary: HEIGHT_CONTROL selected 11.4% (avg_score_delta=0.0), excessive immediate merge opportunity misses
     last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8), need to suppress max_y runaway from missing immediate merges
     last_rollback_postmortem: deadline_crossed時の即時併合優先、ロシア建国後の即時併合優先を遵守
 
-    v303 changes:
-    - axis 8.6 strategic placement bonus eliminated: reactive_pairs>=1 && merge_grade=="NO" cases get 0.0 bonus
-    - axis 8.6 height_mult strongly relaxed: danger_piece_count==0: 0.7→0.5, >0: 0.6→0.4
-    - axis 2.5 merge opportunity escape penalty strengthened: has_russian penalty 2.5x→3.0x
-    - deadline_crossed && reactive_pairs>=1 && merge_grade=="NO" height_mult relaxed: 0.3→0.2
-    - refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md,
-           game_history/20260321_210149_score0881.jsonl turns 62-69, game_history/20260321_204459_score3018.jsonl turns 115-136
-    - rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
+    v305 changes:
+    - max_y閾値を1.8から1.2に緩和し、より早期に即時併合機会を優先
+    - deadline_crossed時はreactive_pairs>=1で即時併合機会をフィルタリング対象に追加
+    - best_score5694_strategy.pyのフィルタリングロジックをベースにmax_y閾値緩和
+    - これにより「reactive_pairsがあるのにmax_y runawayする」失敗モードを抑制
+    - refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+           game_history/20260322_021759_score1138.jsonl turns 75-82, game_history/20260322_021136_score2349.jsonl turns 92-99,
+           strategy_versions/best_score5694_strategy.py
+    - rollback failure mode: deadline_crossed時の即時併合機会の取りこぼしによる max_y runaway
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -168,14 +170,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
     type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
     # =======================================================================
-    #  v303-2: dangerous_situationフィルタリング（構造的変更）
-    # reactive_pairs >= 2 && max_y >= 1.8の場合、即時併合機会を優先するため候補をフィルタリング
-    # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
+    #  v305: 危険局面フィルタリング強化版 - max_y閾値緩和
+    # extra_low game (score1138) 終盤turns 75-82: reactive_pairs=3-5あるのにmax_y=2.06→3.37に上昇してゲームオーバー
+    # best game (score2051) 終盤turns 92-99: deadline_crossed=trueでも即時併合を確実に捉えてスコア2051を出している
+    # batch_summaryでHEIGHT_CONTROLが11.4%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
     # last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
-    # best_score5694_strategy.pyのフィルタリングロジックを参考に実装
-    # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, strategy_versions/best_score5694_strategy.py
+    # max_y閾値を1.8から1.2に緩和し、deadline_crossed時は即時併合機会をより早期に優先
+    # これにより「reactive_pairsがあるのにmax_y runawayする」失敗モードを抑制
+    # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+    #       game_history/20260322_021759_score1138.jsonl turns 75-82, game_history/20260322_021136_score2349.jsonl turns 92-99,
+    #       strategy_versions/best_score5694_strategy.py
+    # rollback failure mode: deadline_crossed時の即時併合機会の取りこぼしによる max_y runaway
+    # Fixes: max_y閾値緩和とdeadline_crossed時のフィルタリング強化
     # =======================================================================
-    if reactive_pair_count >= 2 and max_y >= 1.8:
+    if (reactive_pair_count >= 2 and max_y >= 1.2) or (deadline_crossed and reactive_pair_count >= 1):
         merge_results = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR", "FAR"]]
         if merge_results:
             filtered_results = merge_results
