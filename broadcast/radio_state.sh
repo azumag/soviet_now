@@ -115,14 +115,61 @@ _radio_mark_done() {
 	fi
 }
 
+_radio_history_sidecar_path() {
+	local target="$1"
+	case "$target" in
+	*.playing) printf '%s.history' "${target%.playing}" ;;
+	*.txt)     printf '%s.history' "${target%.txt}" ;;
+	*)         printf '%s.history' "$target" ;;
+	esac
+}
+
+_radio_store_spoken_history_line() {
+	local target="$1" history_line="$2"
+	[ -n "$target" ] || return 1
+	[ -n "$history_line" ] || return 1
+	local sidecar
+	sidecar=$(_radio_history_sidecar_path "$target")
+	printf '%s\n' "$history_line" >"$sidecar"
+}
+
+_radio_clear_spoken_history_line() {
+	local target="$1"
+	[ -n "$target" ] || return 0
+	local sidecar
+	sidecar=$(_radio_history_sidecar_path "$target")
+	rm -f "$sidecar"
+}
+
+_radio_append_spoken_history_line() {
+	local history_line="$1"
+	[ -n "$history_line" ] || return 0
+	{
+		[ -f "$PAST_RADIO_TOPICS" ] && grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null || true
+		printf '%s\n' "$history_line"
+	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
+}
+
+_radio_commit_spoken_history_for_file() {
+	local target="$1"
+	[ -n "$target" ] || return 0
+	local sidecar history_line
+	sidecar=$(_radio_history_sidecar_path "$target")
+	[ -f "$sidecar" ] || return 0
+	history_line=$(cat "$sidecar" 2>/dev/null)
+	_radio_clear_spoken_history_line "$target"
+	[ -n "$history_line" ] && _radio_append_spoken_history_line "$history_line"
+}
+
 _enqueue_deferred_radio_talk() {
-	local talk_file="$1" game_num="$2" corner_name="$3" expected_mode="${4:-}"
+	local talk_file="$1" game_num="$2" corner_name="$3" expected_mode="${4:-}" history_line="${5:-}"
 	[ -s "$talk_file" ] || return 1
 	mkdir -p "$RADIO_DEFERRED_QUEUE_DIR" 2>/dev/null || true
 	local deferred_file
 	deferred_file="$RADIO_DEFERRED_QUEUE_DIR/radio_$(date +%s)_${game_num}_${corner_name}_${RANDOM}.txt"
 	cp "$talk_file" "$deferred_file" 2>/dev/null || return 1
 	_broadcast_mark_expected_mode "$deferred_file" "$expected_mode" 2>/dev/null || true
+	[ -n "$history_line" ] && _radio_store_spoken_history_line "$deferred_file" "$history_line" 2>/dev/null || true
 	echo "$deferred_file"
 }
 
@@ -199,6 +246,7 @@ _play_deferred_radio_queue_once() {
 	if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
 		log "[RADIO:deferred] mode不一致で破棄: $(basename "$qf") expected=${deferred_expected_mode} current=${deferred_current_mode}"
 		_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
+		_radio_clear_spoken_history_line "$qf" 2>/dev/null || true
 		rm -f "$qf" "${qf%.txt}.news_title" "${qf%.txt}.cc_text" "${qf%.txt}.voice"
 		return 0
 	fi
@@ -210,6 +258,7 @@ _play_deferred_radio_queue_once() {
 		if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
 			log "[RADIO:deferred] mode不一致で再生前破棄: $(basename "$playing_file") expected=${deferred_expected_mode} current=${deferred_current_mode}"
 			_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+			_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
 			rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
 			return 0
 		fi
@@ -231,16 +280,18 @@ _play_deferred_radio_queue_once() {
 			_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 			log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
 			# deferred radio is executed by the comment player itself, so it must not
-			# yield to comments queued after this point or playback deadlocks.
-			if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
-				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
-				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
-				log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
-		else
-			if [ -f "tmp/.say_queue/kill_flag" ]; then
-				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
-				rm -f "tmp/.say_queue/kill_flag" "$playing_file" "${playing_file%.playing}.voice"
-				log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
+				# yield to comments queued after this point or playback deadlocks.
+				if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+					_radio_commit_spoken_history_for_file "$playing_file" 2>/dev/null || true
+					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+					rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
+					log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
+			else
+				if [ -f "tmp/.say_queue/kill_flag" ]; then
+					_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
+					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+					rm -f "tmp/.say_queue/kill_flag" "$playing_file" "${playing_file%.playing}.voice"
+					log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
 			else
 				local retry_file="${playing_file%.playing}.txt"
 				mv "$playing_file" "$retry_file" 2>/dev/null || true

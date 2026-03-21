@@ -1121,13 +1121,11 @@ _radio_generate_and_play() {
 	local talk_file
 	local comment_queued=0 comment_playing=0 comment_total=0
 	local deferred_file=""
+	local history_line=""
 	local play_rc=0
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 	echo "$talk_body" >"$talk_file"
-	{
-		[ -f "$PAST_RADIO_TOPICS" ] && grep -E '^\[[0-9]{2}:[0-9]{2}\] Game#[0-9]+ ' "$PAST_RADIO_TOPICS" 2>/dev/null || true
-		echo "[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
-	} | tail -100 >"${PAST_RADIO_TOPICS}.tmp" && mv "${PAST_RADIO_TOPICS}.tmp" "$PAST_RADIO_TOPICS"
+	history_line="[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
 	log "[RADIO:${corner_name}] ${#talk_body}字"
 
 	local host_mode_now=""
@@ -1147,7 +1145,7 @@ _radio_generate_and_play() {
 	comment_playing=${comment_playing:-0}
 	comment_total=$((comment_queued + comment_playing))
 	if [ "$comment_total" -gt 0 ]; then
-		deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "$corner_name" "$host_mode_generated" || true)
+		deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "$corner_name" "$host_mode_generated" "$history_line" || true)
 		# deferred再生時のCC投稿用にニュースタイトルを保存
 		if [ -n "$deferred_file" ] && [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
 			echo "$selected_news" > "${deferred_file%.txt}.news_title"
@@ -1201,6 +1199,7 @@ _radio_generate_and_play() {
 				rmdir "$inflight_dir" 2>/dev/null || true
 				return 1
 			fi
+			_radio_append_spoken_history_line "$history_line"
 		fi
 	rm -f "$talk_file"
 	_radio_mark_done "$done_marker"
