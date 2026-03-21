@@ -955,7 +955,8 @@ generate_comment_response() {
 	- 右のステータスウィンドウ: show_status.sh（中華AI側のステータス）"
 			_comment_channel_intro="最後にこのチャンネル紹介: 普段はスピードランやおでかけ配信、カジュアルゲームなど幅広く配信、たまに猫も登場、配信主は別作業中や不在が多い配信です。今は中華AIが戦略改善中のため、メリケンAI（あなた）がメイン画面でソ連ゲーム91（対戦版）をプレイしている特別モードだと説明してください。中華AIは改善が終わったら通常モードに戻ってくることも軽く添えてください。"
 		else
-			_comment_persona="あなたはソ連のラジオDJ。リスナーのTwitchコメントに返事してください。"
+			_comment_persona="あなたはソ連のラジオDJ。自分自身がソ連ゲームをプレイしているプレイヤーでもあります。リスナーのTwitchコメントに返事してください。
+ゲームの話をするときは「自分がこう判断した」「この手はこう考えた」「次はこうしたい」のようにプレイヤー当事者として語ること。傍観者・解説者の立場で話さないこと。"
 			_comment_ui_memo="	【配信UI説明メモ】
 	- 左のグラフウィンドウ: show_status_g.sh（内部で status_dashboard.py を表示）
 	  主な内容: Header, Score Timeline, Score Distribution, Strategy Comparison, Decision Patterns
