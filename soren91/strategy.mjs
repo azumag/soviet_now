@@ -1,16 +1,13 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v42)
+ * strategy.mjs - ドロップ位置決定戦略 (v43)
  *
- * v42: v41のT1過敏介入を後退、v27ベースの安定性回復
- * - 【EXTREME T1閾値戻し】25→30（v27水準に戻す）
- *   v27がベストアンカー(rank_p50=7.0)の主因の一つ
- * - 【T1超早期介入削除】t1Count>=5での即時マージ介入を削除（normal flow）
- *   v27で明示的に削除された変更を再度削除
- * - 【ガベージモデレートT1早期介入削除】garbageModerate + t1Count>=5ブロックを削除
- *   v41追加の変更、v27との整合性のため削除
- * - 【ULTRA extreme T1 HOLD条件改善は維持】T1即時マージがある場合はT2のためにHOLDしない
- *   T3+の場合のみ無条件HOLD（T2は即時マージがある場合はスキップ）
- * - v40以前の改善は全て維持
+ * v43: v42ベース + 序盤ゲージ対応・EMERGENCY改善
+ * - 【gaugeLevel早期計算】序盤保護モード前に移動して早期参照可能に
+ * - 【序盤ゲージ対応】rawPieceCount<10でgauge>=0.6時、X範囲を±1.5に制限
+ *   大型チェーンクリア後のおじゃまフラッド到来直前に壁付近に置くリスクを軽減
+ * - 【EMERGENCY マージ優先】EMERGENCY_ALL_DANGERでT2+マージが可能なら先に実行
+ *   ピース削減でチェーン機会を作り即死を1手でも先延ばし
+ * - v42以前の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -60,6 +57,8 @@ export function decide(boardState) {
   const colHeights = computeColHeights(activePieces);
   const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
   const garbageHeight = garbage ? (garbage.height || -5) : -5;
+  // [v43] gaugeLevel を序盤保護モード前に計算
+  const gaugeLevel = garbage ? (garbage.gauge || 0) : 0;
 
   // 序盤保護モード (rawPieceCount < 10 かつガベージ少ない)
   // ガベージが多い場合は通常フローでガベージ処理
@@ -69,7 +68,9 @@ export function decide(boardState) {
       if (earlyMerge !== null) return { x: earlyMerge, reason: `EARLY_MERGE_T${nextType}` };
     }
     const earlyDrop = findLowestSafeDrop(colHeights, 0);
-    const earlyX = Math.max(-2.0, Math.min(2.0, earlyDrop.x));
+    // [v43] ゲージ高い場合は中央寄りに (おじゃまフラッド対策)
+    const earlyXLimit = gaugeLevel >= 0.6 ? 1.5 : 2.0;
+    const earlyX = Math.max(-earlyXLimit, Math.min(earlyXLimit, earlyDrop.x));
     return { x: earlyX, reason: `EARLY_SAFE` };
   }
 
@@ -83,7 +84,7 @@ export function decide(boardState) {
     (garbageHeight > GARBAGE_MODERATE_HEIGHT && garbageRatio > 0.05)
   );
   const garbagePresent = garbageRatio > 0.05;
-  const gaugeLevel = garbage ? (garbage.gauge || 0) : 0;
+  // gaugeLevel already computed above
 
   // おじゃまマージブースト: ガベージ状態/ゲージに応じてマージ優先度を加算
   let ojamaBoost = 0;
@@ -261,6 +262,11 @@ export function decide(boardState) {
   // --- CRITICAL を garbageUrgent より先に処理 ---
   if (isCritical) {
     if (overDeadlineCount >= FINE_COLS.length - 3) {
+      // [v43] T2+マージが可能なら先に実行 (ピース削減でチェーン機会)
+      if (nextType >= 2) {
+        const emergMerge = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
+        if (emergMerge !== null) return { x: emergMerge, reason: `EMERGENCY_MERGE_T${nextType}` };
+      }
       const emergencyIdx = findLowestColIdx(colHeights);
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
     }

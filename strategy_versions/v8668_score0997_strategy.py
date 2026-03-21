@@ -7,7 +7,7 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-   Decision Logic (10 evaluation axes):
+    Decision Logic (11 evaluation axes):
       1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
      2. Height penalty - Penalty for high landing position (varies by phase)
       3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -19,7 +19,8 @@ Game Overview:
         8. Early game merge priority - Strong bonus for merge opportunities in early game
          8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
          9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
-         9.5. Current type stack merge priority - v277: Same type stacking enhanced (reactive>=1:+800.0, reactive==0:+300.0, deadline_crossed: always active)
+          9.5. Current type stack merge priority - v296: Same type stacking enhanced with Russian phase handling (reactive>=2:+1200.0, reactive>=1:+1000.0, reactive=0:+500.0 for Russian phase)
+          9.6. Russian phase space management - v296: Post-type-15 narrow board handling, penalize too close/too far placement when only 1 type 15 exists
 
 Phases (determined by board max Y):
      LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -36,27 +37,30 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v295: axis 2 インデント修正版 - v294 failure mode（deadline_crossed reactive_pairs即時併合優先）を維持
-# axis 2評価部分のインデントエラーを修正し、forループ内に正しく配置。
+# v296: Russian phase handling & reactive_pairs immediate merge priority enhancement
+# ロシア建国後フェーズ（type 15存在時）の検出と狭いボードでの空間管理ロジックを追加
+# axis 8.6: ロシアフェーズで即時併合優先ボーナスを+1500.0に強化、戦略的配置ボーナスを抑制
+# axis 9.5: ロシアフェーズでSAME_TYPE_STACKボーナスを強化（reactive_pairs>=2:+1200.0, reactive_pairs>=1:+1000.0, reactive_pairs=0:+500.0）
+# axis 9.6: 新規追加 - ロシアフェーズでtype 15が1つしかない場合、第二type 15配置のための空間管理
+# 既存のtype 15の近すぎる配置（-300.0）と離れすぎた配置（-200.0）をペナルティし、適切な距離（1.5-2.5）を維持
 # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md
+#       game_history/20260322_071717_score0821.jsonl, game_history/20260322_074053_score3683.jsonl
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v294: deadline_crossed reactive_pairs board compression - axis 2統合簡素化版 - v291 failure mode潰し
+    """v296: Russian phase handling & reactive_pairs immediate merge priority enhancement
 
-    ワーストゲーム(score0323)終盤turns 44-51でdeadline_crossed=true, reactive_pairs=5-6あるのに即時併合不可、
-    戦略的配置が続きmax_y=2.15→3.51に上昇してゲームオーバー。
-    ベストゲーム(score1716)終盤turns 81-88ではdeadline_crossed=trueでも即時併合を確実に捉えてスコア1716を出している。
-    batch_summaryでHEIGHT_CONTROLが11.8%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
-    v291のaxis 2 height_mult *= 0.2 がheight_penalty計算後だったため、盤面圧縮候補が選ばれなかった。
-    axis 8.8のボーナスがaxis 2の後で評価されるため、height_penaltyと競合できていなかった。
-    v290のaxis 8.8（+300-800 at axis 7.5）が有効だったパターンを再現。
-    deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" && danger_piece_count == 0 の場合、
-    height_multを0.2に緩和し、盤面圧縮（tighter board）を優先。即時併合機会を確保する。
-    axis 8.8の複雑ロジックを削除し、deadline_crossed時の盤面圧縮をaxis 2のheight_mult緩和に統合して簡素化。
+    ワーストゲーム(score0821)終盤でtype 15(ロシア)が1つしか作成されず、即時併合機会を取りこぼしてゲームオーバー。
+    ベストゲーム(score3683)では積極的に即時併合を確実に捉え、ロシア建国後フェーズでも継続してプレイ。
+    batch_summaryでHEIGHT_CONTROLが9.7%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
+    ロシア建国後フェーズ（type 15存在時）の検出と狭いボードでの空間管理ロジックを追加。
+    axis 8.6: ロシアフェーズで即時併合優先ボーナスを+1500.0に強化、戦略的配置ボーナスを抑制。
+    axis 9.5: ロシアフェーズでSAME_TYPE_STACKボーナスを強化（reactive_pairs>=2:+1200.0, reactive_pairs>=1:+1000.0, reactive_pairs=0:+500.0）。
+    axis 9.6: 新規追加 - ロシアフェーズでtype 15が1つしかない場合、第二type 15配置のための空間管理。
+    既存のtype 15の近すぎる配置（-300.0）と離れすぎた配置（-200.0）をペナルティし、適切な距離（1.5-2.5）を維持。
     advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正。
     last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
 
@@ -95,6 +99,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
+
+    # --- Russian phase detection (NEW: post-type-15 narrow board handling) ---
+    # ロシア建国後フェーズ: type 15(ロシア)が盤面にある場合、ボードは狭くなり高タイプのピースが支配的
+    # 2つのtype 15を併合してtype 16(ソ連)を作成する必要がある
+    has_russia = any(p.get("type") == 15 for p in pieces)
+    is_russian_phase = has_russia
+    russian_piece_count = sum(1 for p in pieces if p.get("type") == 15)
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -400,6 +411,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
 
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (NEW: 即時併合優先強化・戦略的配置削除版)
+        # v295: Russian phase immediate merge priority enhancement
 
         # v293: ワーストゲーム(score0518)終盤turns 56-61でreactive_pairs=4-5あるのに即時併合不可、戦略的配置が続きmax_y=3.84に上昇してゲームオーバー。
         # ベストゲーム(score2047)終盤turns 106-113では即時併合を確実に捉えてスコア2041を出している。
@@ -408,8 +420,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正。
         # last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
+        # v295: ロシア建国後フェーズで即時併合優先をさらに強化し、狭いボードでの延命と第二type 15準備を支援
 
-        if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
+        if is_russian_phase:
+            # ロシア建国後フェーズ：即時併合優先をさらに強化
+            if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
+                # reactive_pairsがある場合、即時併合を最優先
+                score += 1500.0
+                reasons.append("RUSSIAN_PHASE_IMMEDIATE_MERGE_PRIORITY")
+            elif reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
+                # reactive_pairsが2以上あり即時併合不可の場合、戦略的配置の余地を最小限に
+                score += 200.0
+                reasons.append("RUSSIAN_PHASE_STRATEGIC_PLACEMENT_MINIMAL")
+                height_mult *= 0.6
+            elif reactive_pair_count >= 1 and merge_grade == "NO" and danger_piece_count == 0:
+                # reactive_pairsがあり即時併合不可の場合、戦略的配置の余地を抑制
+                score += 100.0
+                reasons.append("RUSSIAN_PHASE_STRATEGIC_PLACEMENT")
+                height_mult *= 0.7
+        elif reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
             # reactive_pairs==1: 即時併合ボーナスを強化 (600.0 → 800.0)
             score += 800.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
@@ -451,6 +480,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
         # ----- evaluation axis 9.5: current type stack merge priority (v284: reactive_pairs活用盤面圧縮強化版)
+        # v295: Russian phase handling added for post-type-15 narrow board
 
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
         # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
@@ -464,6 +494,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 危険ピースがない場合にreactive_pairsがある状況で即時併合不可の場合、このaxisで戦略的配置の余地を確保
         # 危険ピースがない場合にreactive_pairsがある状況で即時併合不可の場合、このaxisで戦略的配置の余地を確保
         # 戦略的配置の余地を最小限にするためheight_multを緩和
+        # v295: ロシア建国後フェーズ（type 15存在時）に即時併合優先を強化し、狭いボードでの第二type 15準備を支援
 
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
@@ -475,7 +506,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 即時併合機会を優先する戦略へ修正
 
             if danger_piece_count == 0:
-                if reactive_pair_count >= 1:
+                if is_russian_phase:
+                    # ロシア建国後フェーズ：即時併合機会を最優先、狭いボードでの第二type 15準備
+                    if reactive_pair_count >= 2:
+                        # reactive_pairsが2以上あり、即時併合不可の場合、盤面圧縮と将来の併合を同時に狙う
+                        score += 1200.0
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE_HIGH")
+                    elif reactive_pair_count >= 1:
+                        # reactive_pairsがある場合、強力な即時併合優先
+                        score += 1000.0
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE")
+                    else:
+                        # reactive_pairsがない場合も、ロシアフェーズでは即時併合を重視
+                        score += 500.0
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN")
+                elif reactive_pair_count >= 1:
                     score += 800.0
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
                 else:
@@ -506,6 +551,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += 100.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
+
+        # ----- evaluation axis 9.6: Russian phase space management (NEW: post-type-15 narrow board handling) -----
+        # ロシア建国後フェーズで、type 15(ロシア)が1つしかない場合、第二type 15を配置するための空間管理
+        # 狭いボードなので、既存のtype 15の近くに配置する際は注意が必要
+        if is_russian_phase and russian_piece_count == 1 and merge_grade == "NO":
+            # 2番目のtype 15を配置するための空間を確保
+            # 既存のtype 15の位置を取得
+            russia_pieces = [p for p in pieces if p.get("type") == 15]
+            if russia_pieces:
+                russia_piece = russia_pieces[0]
+                russia_x = russia_piece.get("x", 0)
+                russia_y = russia_piece.get("y", -10)
+
+                # 既存のtype 15の真上に配置しようとする場合、第二type 15のスペースを確保するためにペナルティ
+                landing_y = result.get("landing_y", 0)
+                horiz_dist = abs(x - russia_x)
+
+                if landing_y > russia_y and horiz_dist < 1.5:
+                    # 既存のtype 15の近くに配置する場合、第二type 15を配置するためのスペースを確保
+                    # ペナルティを与えて、より広い場所を探索させる
+                    score -= 300.0
+                    reasons.append("RUSSIAN_PHASE_SPACE_MANAGEMENT")
+                elif horiz_dist > 2.5:
+                    # 既存のtype 15から離れすぎた場合、第二type 15の併合が困難になるためペナルティ
+                    score -= 200.0
+                    reasons.append("RUSSIAN_PHASE_PROXIMITY_PENALTY")
 
         # ----- update best candidate -----
         if score > best_score:
