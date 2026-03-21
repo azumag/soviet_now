@@ -2,11 +2,16 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const BUILD_DIR = 'sorengame/build';
 const COMMAND_FILE = 'commands.txt';
 const GAME_STATE_PATH = 'game_state.json';
 const SERVE_PORT = 8080;
+const CDP_PORT = parseInt(process.env.SOREN_CDP_PORT || '9222', 10);
+const CDP_ENDPOINT_FILE = path.join(__dirname, 'tmp', 'cdp_endpoint.json');
 
 // MIME types for Unity WebGL build
 const MIME_TYPES = {
@@ -201,16 +206,34 @@ async function runLocalController() {
   }
 
   // Cleanup on exit
+  function removeCdpEndpoint() {
+    try { fs.unlinkSync(CDP_ENDPOINT_FILE); } catch {}
+  }
   process.on('SIGINT', () => {
     console.log('\nShutting down...');
+    removeCdpEndpoint();
     server.close();
     process.exit(0);
   });
+  process.on('exit', removeCdpEndpoint);
 
   const browser = await chromium.launch({
     headless: false,
-    args: ['--window-size=1280,720'],
+    args: ['--window-size=1280,720', `--remote-debugging-port=${CDP_PORT}`],
   });
+
+  // Write CDP endpoint file for soren91 shared browser mode
+  try {
+    fs.writeFileSync(CDP_ENDPOINT_FILE, JSON.stringify({
+      url: `http://localhost:${CDP_PORT}`,
+      port: CDP_PORT,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+    }));
+    console.log(`CDP endpoint written: ${CDP_ENDPOINT_FILE} (port=${CDP_PORT})`);
+  } catch (e) {
+    console.warn(`Failed to write CDP endpoint file: ${e.message}`);
+  }
 
   const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },

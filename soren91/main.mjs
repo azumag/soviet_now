@@ -10,7 +10,8 @@ import 'dotenv/config';
 import { parse as parseDotenv } from 'dotenv';
 import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import {
   computeStrategyHashFromFile,
   recordCompletedGame,
@@ -212,6 +213,34 @@ async function installAudioGainLimiter(page, multiplier) {
   }, { multiplierValue: multiplier });
 }
 
+/**
+ * 共有ブラウザ接続を試行 (CDP経由)
+ * SOREN91_SHARED_BROWSER=1 の場合のみ有効
+ * 失敗時は null を返し、呼び出し元で単独起動にフォールバック
+ */
+async function connectToSharedBrowser() {
+  if (process.env.SOREN91_SHARED_BROWSER !== '1') return null;
+
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const cdpEndpointFile = join(__dirname, '..', 'tmp', 'cdp_endpoint.json');
+
+  if (!existsSync(cdpEndpointFile)) {
+    console.log('[main] CDP endpoint file not found, falling back to standalone browser');
+    return null;
+  }
+
+  try {
+    const endpoint = JSON.parse(readFileSync(cdpEndpointFile, 'utf-8'));
+    console.log(`[main] Connecting to shared browser at ${endpoint.url}...`);
+    const browser = await chromium.connectOverCDP(endpoint.url);
+    console.log('[main] Connected to shared browser via CDP');
+    return browser;
+  } catch (e) {
+    console.log(`[main] CDP connection failed: ${e.message}, falling back to standalone browser`);
+    return null;
+  }
+}
+
 // --- メイン ---
 async function main() {
   console.log('[main] 同志AI 起動...');
@@ -224,7 +253,10 @@ async function main() {
   console.log('[main] Game URL:', gameUrl);
 
   // Step 2: 非headless でゲームURLだけを開く (広告なし)
-  const browser = await chromium.launch({
+  // 共有ブラウザ接続を試行、失敗なら従来の単独起動
+  const sharedBrowser = await connectToSharedBrowser();
+  const isSharedMode = sharedBrowser != null;
+  const browser = sharedBrowser || await chromium.launch({
     headless: false,
     args: ['--window-size=1280,720'],
   });
@@ -233,6 +265,9 @@ async function main() {
     locale: 'ja-JP',
     timezoneId: 'Asia/Tokyo',
   });
+  if (isSharedMode) {
+    console.log('[main] Running in shared browser mode (new context/tab)');
+  }
 
   try {
     // ゲームURLに直接遷移 + HTML intercept で unityInstance 取得
@@ -299,8 +334,25 @@ async function main() {
   } catch (err) {
     console.error('[main] Fatal error:', err.message);
   } finally {
-    await browser.close();
-    console.log('[main] Browser closed.');
+    if (isSharedMode) {
+      // 共有モード: context のみ close、browser は close しない
+      await context.close();
+      console.log('[main] Shared browser context closed.');
+      // soviet_local のページを前面に戻す
+      try {
+        const contexts = browser.contexts();
+        for (const ctx of contexts) {
+          const pages = ctx.pages();
+          if (pages.length > 0) {
+            await pages[0].bringToFront();
+            break;
+          }
+        }
+      } catch {}
+    } else {
+      await browser.close();
+      console.log('[main] Browser closed.');
+    }
   }
 }
 
