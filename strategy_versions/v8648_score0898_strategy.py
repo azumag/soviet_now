@@ -35,41 +35,44 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-  # --- Change History ---
-  # v305: 危険局面フィルタリング強化版 - max_y閾値緩和
-  # extra_low game (score1138) 終盤turns 75-82: reactive_pairs=3-5あるのにmax_y=2.06→3.37に上昇してゲームオーバー
-  # best game (score2051) 終盤turns 92-99: deadline_crossed=trueでも即時併合を確実に捉えてスコア2051を出している
-  # batch_summaryでHEIGHT_CONTROLが11.4%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
-  # last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
-  # max_y閾値を1.8から1.2に緩和し、deadline_crossed時は即時併合機会をより早期に優先
-  # これにより「reactive_pairsがあるのにmax_y runawayする」失敗モードを抑制
-  # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-  #       game_history/20260322_021759_score1138.jsonl turns 75-82, game_history/20260322_021136_score2349.jsonl turns 92-99,
-  #       strategy_versions/best_score5694_strategy.py, advice.md
-  # Fixes rollback failure mode: deadline_crossed時の即時併合機会の取りこぼしによる max_y runaway
+#  # --- Change History ---
+#  # v305: 危険局面フィルタリング強化版 - max_y閾値緩和
+#  # extra_low game (score1138) 終盤turns 75-82: reactive_pairs=3-5あるのにmax_y=2.06→3.37に上昇してゲームオーバー
+#  # best game (score2051) 終盤turns 92-99: deadline_crossed=trueでも即時併合を確実に捉えてスコア2051を出している
+#  # batch_summaryでHEIGHT_CONTROLが11.4%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
+#  # last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
+#  # max_y閾値を1.8から1.2に緩和し、deadline_crossed時は即時併合機会をより早期に優先
+#  # これにより「reactive_pairsがあるのにmax_y runawayする」失敗モードを抑制
+# # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+#  #       game_history/20260322_021759_score1138.jsonl turns 75-82, game_history/20260322_021136_score2349.jsonl turns 92-99,
+#  #       strategy_versions/best_score5694_strategy.py, advice.md
+# # Fixes rollback failure mode: deadline_crossed時の即時併合機会の取りこぼしによる max_y runaway
+# v306: ロシア建国後即時併合優先強化版 - axis 9.5ボーナス削減でv306失敗モード解消
+# ワーストゲーム(score0868)終盤turns 35-41: reactive_pairs=1,2-3あるのに即時併合不可、戦略的配置が続きmax_y runawayでゲームオーバー
+# ベストゲーム(score4790)終盤turns 172-181: ロシア建国済みだが即時併合を確実に捉えて高スコア稼ぎ
+# last_rollback_postmortem: ロシア建国後フェーズでの戦略的配置ボーナス付与を禁止
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md,
+#       game_history/20260322_054821_score0868.jsonl turns 35-41, game_history/20260322_053744_score0796.jsonl turns 38-41
+# Fixes rollback failure mode: ロシア建国後の即時併合機会逃しによる max_y runaway
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v305: 危険局面フィルタリング強化版 - max_y閾値緩和
+    """v306: ロシア建国後即時併合優先強化版 - axis 9.5ボーナス削減でv306失敗モード解消
 
-    extra_low game (score1138) 終盤turns 75-82: reactive_pairs=3-5あるのにmax_y=2.06→3.37に上昇してゲームオーバー
-    best game (score2051) 終盤turns 92-99: deadline_crossed=trueでも即時併合を確実に捉えてスコア2051を出している
-    batch_summary: HEIGHT_CONTROL selected 11.4% (avg_score_delta=0.0), excessive immediate merge opportunity misses
-    last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8), need to suppress max_y runaway from missing immediate merges
-    last_rollback_postmortem: deadline_crossed時の即時併合優先、ロシア建国後の即時併合優先を遵守
+    ワーストゲーム(score0868)終盤turns 35-41: reactive_pairs=1,2-3あるのに即時併合不可、戦略的配置が続きmax_y runawayでゲームオーバー
+    ベストゲーム(score4790)終盤turns 172-181: ロシア建国済みだが即時併合を確実に捉えて高スコア稼ぎ
+    last_rollback_postmortem: ロシア建国後フェーズでの戦略的配置ボーナス付与を禁止
+    refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md,
+           game_history/20260322_054821_score0868.jsonl turns 35-41, game_history/20260322_053744_score0796.jsonl turns 38-41
+    Fixes rollback failure mode: ロシア建国後の即時併合機会逃しによる max_y runaway
 
-    v305 changes:
-    - max_y閾値を1.8から1.2に緩和し、より早期に即時併合機会を優先
-    - deadline_crossed時はreactive_pairs>=1で即時併合機会をフィルタリング対象に追加
-    - best_score5694_strategy.pyのフィルタリングロジックをベースにmax_y閾値緩和
-    - これにより「reactive_pairsがあるのにmax_y runawayする」失敗モードを抑制
-    - refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-           game_history/20260322_021759_score1138.jsonl turns 75-82, game_history/20260322_021136_score2349.jsonl turns 92-99,
-           strategy_versions/best_score5694_strategy.py
-    - rollback failure mode: deadline_crossed時の即時併合機会の取りこぼしによる max_y runaway
+    v306 changes:
+    - axis 9.5のSAME_TYPE_STACKボーナスをロシア建国後フェーズで完全削除
+    - ロシア建国後(has_russian && max_y >= 0.0)の場合、ボーナスを付与せず即時併合を強制
+    - これによりv306失敗モードを直接解消：戦略的配置ボーナスが消え、即時併合優先が機能する
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -612,45 +615,61 @@ def decide(game_state: dict, analysis: dict) -> dict:
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
 
-            # v297: 即時併合優先シンプル化 - 戦略的配置ボーナスを大幅に削減
-            # danger_piece_count == 0 の場合、戦略的配置ボーナスを最小限に削減（reactive>=1:+200.0, reactive==0:+100.0）
-            # reactive_pairsがある場合は即時併合優先を強化し、戦略的配置の余地を最小限にする
-            # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先
-
-            if danger_piece_count == 0:
-                if reactive_pair_count >= 1:
-                    score += 200.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
-                    # 戦略的配置の余地を最小限にするためheight_multを緩和し、即時併合を容易にする
-                    height_mult *= 0.8
-                else:
-                    score += 100.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
-
+            # v306: ロシア建国後フェーズでは戦略的配置ボーナスを完全削除し、即時併合を強制
+            # v306失敗の根本原因: ロシア建国後フェーズでaxis 9.5のSAME_TYPE_STACKボーナス(+200.0)が残っていたことで、
+            # reactive_pairsがある状況でも戦略的配置が選ばれ、即時併合機会を逃してmax_y runawayを招いた。
+            # rollback postmortemの制約: 「ロシア建国後フェーズでの戦略的配置ボーナス付与を禁止」
+            if has_russian and max_y >= 0.0:
+                # ロシア建国後フェーズ：即時併合優先を強制
+                # ボーナスを付与せず、height_multはaxis 8.6の即時併合不可ロジックで制御される
+                pass
             else:
-                # danger_piece_count > 0 の場合は即時併合優先が適用されるためボーナスを最小限に抑制
-                # axis 8.5の即時併合優先評価を妨げないよう、最小限のボーナスを維持
-                if reactive_pair_count >= 1:
-                    score += 50.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_DANGER")
-                # 危険ピースがある場合、戦略的配置の余地を最小限に抑制
-                height_mult *= 0.7
+                # ロシア建国前：v297の戦略的配置ボーナスを維持
+                # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、戦略的配置ボーナスを維持
+                # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
+                # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
+                # reactive_pairsがある場合、戦略的配置の余地を最小限にする。
+                # v297: 即時併合優先シンプル化 - axis 9.5戦略的配置ボーナスを大幅に削減
+                # ワーストゲーム(score0606)終盤turns 36-42でreactive_pairs=4あるのに即時併合不可、戦略的配置が続きmax_y=-0.29→0.09に上昇し、43ターン以降で急上昇してゲームオーバー。
+                # ベストゲーム(score4839)終盤turns 120-186では即時併合を確実に捉えてスコア4839を出している。
+                # axis 8.6の戦略的配置ボーナス削減に加え、axis 9.5の戦略的配置ボーナスも大幅に削減し、即時併合優先を徹底。
+                # danger_piece_countがない場合も戦略的配置ボーナスを最小限にし、即時併合機会を最優先。
+                # reactive_pairsがある場合は戦略的配置の余地を最小限にするためheight_multを緩和し、即時併合を容易にする。
 
-            # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
-            # danger_piece_count == 0 の場合のみペナルティ軽減を適用し、ボーナスを最小限に削減
-            landing_y = result.get("landing_y", 0)
-            if landing_y > stack_top_y and danger_piece_count == 0:
-                horiz_dist = abs(x - stack_top_x)
-                if horiz_dist < 1.0:
-                    # reactive_pairsがある場合、ペナルティ軽減を最小限に削減（200.0→50.0）
+                if danger_piece_count == 0:
+                    if reactive_pair_count >= 1:
+                        score += 200.0
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
+                        # 戦略的配置の余地を最小限にするためheight_multを緩和し、即時併合を容易にする
+                        height_mult *= 0.8
+                    else:
+                        score += 100.0
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+
+                else:
+                    # danger_piece_count > 0 の場合は即時併合優先が適用されるためボーナスを最小限に抑制
+                    # axis 8.5の即時併合優先評価を妨げないよう、最小限のボーナスを維持
                     if reactive_pair_count >= 1:
                         score += 50.0
-                        if "SAME_TYPE_STACK" not in "_".join(reasons):
-                            reasons.append("SAME_TYPE_STACK")
-                    else:
-                        score += 25.0
-                        if "SAME_TYPE_STACK" not in "_".join(reasons):
-                            reasons.append("SAME_TYPE_STACK")
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_DANGER")
+                    # 危険ピースがある場合、戦略的配置の余地を最小限に抑制
+                    height_mult *= 0.7
+
+                # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
+                # danger_piece_count == 0 の場合のみペナルティ軽減を適用し、ボーナスを最小限に削減
+                landing_y = result.get("landing_y", 0)
+                if landing_y > stack_top_y and danger_piece_count == 0:
+                    horiz_dist = abs(x - stack_top_x)
+                    if horiz_dist < 1.0:
+                        # reactive_pairsがある場合、ペナルティ軽減を最小限に削減（200.0→50.0）
+                        if reactive_pair_count >= 1:
+                            score += 50.0
+                            if "SAME_TYPE_STACK" not in "_".join(reasons):
+                                reasons.append("SAME_TYPE_STACK")
+                        else:
+                            score += 25.0
+                            if "SAME_TYPE_STACK" not in "_".join(reasons):
+                                reasons.append("SAME_TYPE_STACK")
 
         # ----- update best candidate -----
         if score > best_score:
