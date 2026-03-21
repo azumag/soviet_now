@@ -201,6 +201,14 @@ while true; do
 	fi
 
 	# 改善中は中華AIのゲームプレイを一時停止 (soren91が代わりにプレイ中)
+	if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
+		if command -v soren91_is_running >/dev/null 2>&1 && ! soren91_is_running 2>/dev/null; then
+			soren91_start 2>/dev/null || true
+		fi
+		log "[PAUSE] manual_meriken_mode: ゲームプレイ一時停止 (メリケンAI手動モード)"
+		sleep 10
+		continue
+	fi
 	if _is_improve_running; then
 		log "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
 		sleep 10

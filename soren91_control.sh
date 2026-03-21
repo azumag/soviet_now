@@ -29,6 +29,7 @@ SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/nul
 SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
 SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-91}")"
 SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
+MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
 
 _soren91_switch_obs_layout() {
 	local mode="${1:-}"
@@ -48,6 +49,68 @@ _soren91_switch_obs_layout() {
 
 _soren91_enabled() {
 	[ "${SOREN91_ENABLED:-0}" = "1" ]
+}
+
+_write_manual_meriken_mode_state() {
+	local enabled="$1" note="${2:-}"
+	mkdir -p "$(dirname "$MANUAL_MERIKEN_MODE_FILE")" 2>/dev/null || true
+	python3 - "$MANUAL_MERIKEN_MODE_FILE" "$enabled" "$note" <<'PY' >/dev/null 2>&1
+import json
+import sys
+from datetime import datetime, timezone
+
+out_file, enabled_raw, note = sys.argv[1:4]
+enabled = enabled_raw == "1"
+payload = {
+    "enabled": enabled,
+    "note": note,
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+}
+with open(out_file, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False)
+PY
+}
+
+manual_meriken_mode_is_enabled() {
+	[ -f "$MANUAL_MERIKEN_MODE_FILE" ] || return 1
+	python3 - "$MANUAL_MERIKEN_MODE_FILE" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+raise SystemExit(0 if data.get("enabled") else 1)
+PY
+}
+
+manual_meriken_mode_enable() {
+	_soren91_enabled || return 0
+	_write_manual_meriken_mode_state "1" "manual_override"
+	log "[SOREN91] manual_meriken_mode=on"
+	soren91_start
+}
+
+manual_meriken_mode_disable() {
+	_soren91_enabled || return 0
+	if [ -f "$MANUAL_MERIKEN_MODE_FILE" ]; then
+		rm -f "$MANUAL_MERIKEN_MODE_FILE"
+	fi
+	log "[SOREN91] manual_meriken_mode=off"
+	if command -v _is_improve_running >/dev/null 2>&1 && _is_improve_running; then
+		log "[SOREN91] 改善中のため、メリケンAIは継続"
+		return 0
+	fi
+	soren91_stop
+}
+
+manual_meriken_mode_status() {
+	if manual_meriken_mode_is_enabled; then
+		printf 'on'
+	else
+		printf 'off'
+	fi
 }
 
 soren91_is_running() {
@@ -135,6 +198,7 @@ soren91_start() {
 	# 再試行付きランナーをバックグラウンド起動
 	(
 		cd "$SOREN91_DIR" && \
+		SOREN91_SHARED_BROWSER=1 \
 		SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" /bin/bash "$SOREN91_RUNNER_SCRIPT"
 	) &
 	local pid=$!

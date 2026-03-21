@@ -212,18 +212,22 @@ with open(rs_file, 'w') as f:
 			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
-			# soren91 (メリケンAI) を停止 → バックグラウンド改善開始
-			soren91_stop
-			soren91_improve
-			# 読み上げ + Twitch チャットに戦略改善終了を通知
-			{
-				local _end_file
-				_end_file=$(mktemp /tmp/eloop_soren91_end.XXXXXX)
-				printf '%s\n' "戦略改善終了。交代します" > "$_end_file"
-				VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$_end_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
-				rm -f "$_end_file"
-			} &
-			./twitch_chat.sh send "戦略改善終了。交代します" 2>/dev/null &
+			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
+				log "[IMPROVE] manual_meriken_mode=on のため、メリケンAI継続"
+			else
+				# soren91 (メリケンAI) を停止 → バックグラウンド改善開始
+				soren91_stop
+				soren91_improve
+				# 読み上げ + Twitch チャットに戦略改善終了を通知
+				{
+					local _end_file
+					_end_file=$(mktemp /tmp/eloop_soren91_end.XXXXXX)
+					printf '%s\n' "戦略改善終了。交代します" > "$_end_file"
+					VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$_end_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+					rm -f "$_end_file"
+				} &
+				./twitch_chat.sh send "戦略改善終了。交代します" 2>/dev/null &
+			fi
 		fi
 	fi
 }

@@ -12,6 +12,7 @@ import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 import {
   computeStrategyHashFromFile,
   recordCompletedGame,
@@ -38,6 +39,7 @@ const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
 const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
+const DEFAULT_SHARED_CDP_PORT = 9222;
 const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 
@@ -223,22 +225,50 @@ async function connectToSharedBrowser() {
 
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const cdpEndpointFile = join(__dirname, '..', 'tmp', 'cdp_endpoint.json');
+  const cdpPort = Number.parseInt(process.env.SOREN_CDP_PORT || '', 10) || DEFAULT_SHARED_CDP_PORT;
+  const fallbackUrl = `http://127.0.0.1:${cdpPort}`;
+  const candidateUrls = [];
+  let endpointPidAlive = true;
 
-  if (!existsSync(cdpEndpointFile)) {
-    console.log('[main] CDP endpoint file not found, falling back to standalone browser');
-    return null;
+  if (existsSync(cdpEndpointFile)) {
+    try {
+      const endpoint = JSON.parse(readFileSync(cdpEndpointFile, 'utf-8'));
+      if (endpoint?.url) candidateUrls.push(endpoint.url);
+      if (endpoint?.pid) {
+        try {
+          execSync(`kill -0 ${endpoint.pid}`, { stdio: 'ignore' });
+        } catch {
+          endpointPidAlive = false;
+          console.log(`[main] CDP endpoint writer PID ${endpoint.pid} is not alive; trying browser port directly`);
+        }
+      }
+    } catch (e) {
+      console.log(`[main] Failed to parse CDP endpoint file: ${e.message}`);
+    }
+  } else {
+    console.log('[main] CDP endpoint file not found; trying shared browser port directly');
   }
 
-  try {
-    const endpoint = JSON.parse(readFileSync(cdpEndpointFile, 'utf-8'));
-    console.log(`[main] Connecting to shared browser at ${endpoint.url}...`);
-    const browser = await chromium.connectOverCDP(endpoint.url);
-    console.log('[main] Connected to shared browser via CDP');
-    return browser;
-  } catch (e) {
-    console.log(`[main] CDP connection failed: ${e.message}, falling back to standalone browser`);
-    return null;
+  if (!candidateUrls.includes(fallbackUrl)) {
+    candidateUrls.push(fallbackUrl);
   }
+
+  for (const url of candidateUrls) {
+    try {
+      console.log(`[main] Connecting to shared browser at ${url}...`);
+      const browser = await chromium.connectOverCDP(url);
+      console.log('[main] Connected to shared browser via CDP');
+      return browser;
+    } catch (e) {
+      console.log(`[main] CDP connection failed at ${url}: ${e.message}`);
+      if (url !== fallbackUrl && !endpointPidAlive) {
+        try { unlinkSync(cdpEndpointFile); } catch {}
+      }
+    }
+  }
+
+  console.log('[main] Shared browser unavailable, falling back to standalone browser');
+  return null;
 }
 
 // --- メイン ---
@@ -288,6 +318,9 @@ async function main() {
       }
     });
     await gamePage.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    if (isSharedMode) {
+      await gamePage.bringToFront();
+    }
 
     // Unity canvas ロード待機
     console.log('[main] Waiting for Unity canvas...');
@@ -335,9 +368,10 @@ async function main() {
     console.error('[main] Fatal error:', err.message);
   } finally {
     if (isSharedMode) {
-      // 共有モード: context のみ close、browser は close しない
+      // 共有モード: context を close してから CDP 接続を切断
+      // browser.close() on a CDP-connected browser only disconnects
+      // (does NOT kill the external Chromium)
       await context.close();
-      console.log('[main] Shared browser context closed.');
       // soviet_local のページを前面に戻す
       try {
         const contexts = browser.contexts();
@@ -349,6 +383,8 @@ async function main() {
           }
         }
       } catch {}
+      await browser.close();
+      console.log('[main] Shared browser CDP disconnected.');
     } else {
       await browser.close();
       console.log('[main] Browser closed.');

@@ -1,21 +1,12 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v37)
+ * strategy.mjs - ドロップ位置決定戦略 (v38)
  *
- * v37改善点 (v36からの改善):
- * - 【ULTRA_MASS_THRESHOLD: 68→62】v36の過剰緩和を修正 (CRITICAL FIX)
- *   63-67ピース時にULTRAモードが発動せずCRITICALに落ちる問題を修正
- *   v36では43/50ターンがCRITICALモード: 63-67ピースが全てCRITICAL処理に入っていた
- *   ULTRAモードのT1専用処理・バランス調整はCRITICALより高ピース数で効果的
- * - 【SURVIVAL_PIECE_THRESHOLD: 84→78】v36の過剰緩和を修正
- * - 【boardPressureモードのT2マージ強化】nextType>=4→>=2
- *   T2/T3ピースも圧力下でfindBestMergeを活用し積み上がり防止
- *   T2蓄積がCRITICAL到達の一因のため早期マージを促進
- * - 【CRITICAL T1早期HOLD: nextPieces[2]も確認】
- *   2nd pieceに機会がない場合も3rd pieceのT2+マージ機会を確認
- * - v36の有益な変更は維持:
- *   - CRITICAL T1早期HOLDセーブ (T1→T1→T1ループ中断)
- *   - T1プレフラッド (t1Count>=8) + チェーンアンカー
- *   - T1フラッドモード閾値12/extreme 30
+ * v38監修点:
+ * - 【低質量CRITICALの緩和】固定ガベージ由来の2本スパイクだけで
+ *   初手からCRITICALへ落ちるケースを緩和し、garbageUrgent処理へ逃がす
+ * - 【CRITICAL T1の低列優先】T1即時マージ候補が高い列に偏るときは
+ *   より低い列のT1マージを優先して無駄な往復を減らす
+ * - v37の非T1改善は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -26,6 +17,9 @@ const MAX_ACTIVE_PIECES = 85;
 const ULTRA_MASS_THRESHOLD = 62;
 const EXTREME_T1_FLOOD_THRESHOLD = 30;
 const SURVIVAL_PIECE_THRESHOLD = 78;
+const LOW_MASS_CRITICAL_RELIEF_PIECE_THRESHOLD = 32;
+const LOW_MASS_CRITICAL_RELIEF_AVG_HEIGHT = 1.45;
+const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.55;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -102,7 +96,14 @@ export function decide(boardState) {
 
   const nearDeadlineCount = colHeights.filter(h => h > DEADLINE_Y - 0.3).length;
   const overDeadlineCount = colHeights.filter(h => h > DEADLINE_Y + 0.1).length;
-  const isCritical = nearDeadlineCount >= 3 || overDeadlineCount >= 2;
+  const hardCritical = nearDeadlineCount >= 3 || overDeadlineCount >= 2;
+  const isCritical = hardCritical && !shouldRelieveLowMassCritical(
+    nearDeadlineCount,
+    overDeadlineCount,
+    rawPieceCount,
+    avgHeight,
+    garbageHeight,
+  );
   const isWarn = colHeights.some(h => h > WARN_Y + 0.5);
 
   // next2 type for look-ahead
@@ -289,9 +290,22 @@ export function decide(boardState) {
 
     const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
     const lowestColH = colHeights[lowestDrop.idx];
+    const critLowT1Merge = nextType === 1
+      ? findMergeInLowCol(activePieces, 1, colHeights, critMergeLimit, dangerBias)
+      : null;
 
     if (nextType === 1 && t1FloodMode && !garbageFloodMode) {
       const critT1Immediate = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
+      if (shouldPreferLowT1CriticalMerge(
+        colHeights,
+        critT1Immediate,
+        critLowT1Merge ? critLowT1Merge.x : null,
+        garbageHeight,
+        garbageRatio,
+        lowestColH,
+      )) {
+        return { x: critLowT1Merge.x, reason: 'CRITICAL_T1_LOW_MERGE' };
+      }
       if (critT1Immediate !== null) return { x: critT1Immediate, reason: 'CRITICAL_T1_IMMEDIATE' };
       const critT1Stack = findT1StackColumn(activePieces, colHeights, dangerBias);
       if (critT1Stack !== null) return { x: critT1Stack, reason: 'CRITICAL_T1_STACK' };
@@ -301,7 +315,7 @@ export function decide(boardState) {
 
     const minMergeType = (garbageFloodMode && nextType === 1) ? 99 : 1;
     const lowColMerge = nextType >= minMergeType
-      ? findMergeInLowCol(activePieces, nextType, colHeights, critMergeLimit, dangerBias)
+      ? (nextType === 1 ? critLowT1Merge : findMergeInLowCol(activePieces, nextType, colHeights, critMergeLimit, dangerBias))
       : null;
 
     if (lowColMerge) {
@@ -450,6 +464,30 @@ function computeBalanceBias(pieces, colHeights) {
   if (combined < -1.2) return -2;
   if (combined < -0.5) return -1;
   return 0;
+}
+
+function shouldRelieveLowMassCritical(nearDeadlineCount, overDeadlineCount, rawPieceCount, avgHeight, garbageHeight) {
+  if (overDeadlineCount !== 2) return false;
+  if (nearDeadlineCount > 2) return false;
+  if (rawPieceCount >= LOW_MASS_CRITICAL_RELIEF_PIECE_THRESHOLD) return false;
+  if (avgHeight >= LOW_MASS_CRITICAL_RELIEF_AVG_HEIGHT) return false;
+  return garbageHeight >= DEADLINE_Y;
+}
+
+function shouldPreferLowT1CriticalMerge(colHeights, immediateX, lowMergeX, garbageHeight, garbageRatio, lowestColH) {
+  if (lowMergeX === null) return false;
+  if (immediateX === null) return true;
+
+  const immediateH = colHeights[nearestColIdx(immediateX)];
+  const lowMergeH = colHeights[nearestColIdx(lowMergeX)];
+
+  if (garbageHeight >= DEADLINE_Y + 0.5 && lowMergeH <= immediateH - T1_LOW_MERGE_HEIGHT_ADVANTAGE) {
+    return true;
+  }
+  if (garbageRatio >= 0.3 && lowMergeH <= lowestColH + 0.3 && immediateH >= lowMergeH + 0.35) {
+    return true;
+  }
+  return false;
 }
 
 /**

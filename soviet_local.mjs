@@ -217,10 +217,18 @@ async function runLocalController() {
   });
   process.on('exit', removeCdpEndpoint);
 
-  const browser = await chromium.launch({
-    headless: false,
-    args: ['--window-size=1280,720', `--remote-debugging-port=${CDP_PORT}`],
-  });
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: false,
+      args: ['--window-size=1280,720', `--remote-debugging-port=${CDP_PORT}`],
+    });
+  } catch (e) {
+    console.error(`Failed to launch browser: ${e.message}`);
+    removeCdpEndpoint();
+    server.close();
+    process.exit(1);
+  }
 
   // Write CDP endpoint file for soren91 shared browser mode
   try {

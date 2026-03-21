@@ -58,6 +58,7 @@ RADIO_THEME_PICK_STATUS_FILE="$TMP_STATE_DIR/.radio_theme_pick_status.json"
 RADIO_CORNER_STATUS_FILE="$TMP_STATE_DIR/.radio_corner_status.json"
 COMMENT_GEN_STATE_FILE="$TMP_STATE_DIR/.comment_gen_state"
 LAST_PHYROGENETIC_CHAT_COMMIT_FILE="$TMP_STATE_DIR/last_phyrogenetic_chat_commit.txt"
+MANUAL_MERIKEN_MODE_FILE="$TMP_STATE_DIR/manual_meriken_mode.json"
 RADIO_OPENCODE_PERMISSION='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web-search":"allow"}'
 COMMENT_OPENCODE_PERMISSION_DEFAULT='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow","web-search":"allow"}'
 COMMENT_OPENCODE_PERMISSION="${COMMENT_OPENCODE_PERMISSION:-$COMMENT_OPENCODE_PERMISSION_DEFAULT}"
