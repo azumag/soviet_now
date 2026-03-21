@@ -36,15 +36,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-  # v303-2: dangerous_situationフィルタリング追加版 - 構造的変更
-  # reactive_pairs >= 2 && max_y >= 1.8の場合、即時併合機会（DIRECT/NEAR/FAR）がある候補だけを評価対象にするフィルタリングを追加
-  # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題
-  # last_rollback_analysis focus: p25 significantly degraded (1297.5 vs target=1778.8)
-  # best_score5694_strategy.pyのフィルタリングロジックを参考に実装
-  # 構造的変更：単なる数値調整ではなく、候補をフィルタリングするロジックの追加
-  # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, strategy_versions/best_score5694_strategy.py
-  #       game_history/20260321_210149_score0881.jsonl, game_history/20260321_204459_score3018.jsonl
+  # v304: 危険局面即時併合強制版 - reactive_pairs >= 2 && max_y >= 1.8 フィルタリング維持
+  # reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runawayを抑制する強化版
+  # danger_piece_count >= 4 の戦略的配置を完全抑制: height_mult *= 0.1（強力緩和）
+  # deadline_crossed && danger_piece_count >= 4 && merge_grade=="NO" の height_multを0.1に強力緩和
+  # has_russian && reactive_pair_count >= 2 && merge_grade=="NO" の height_multを0.3に緩和
+  # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+  #       advice.md, game_history/20260322_012426_score0576.jsonl turns 51-58, game_history/20260322_005753_score2365.jsonl turns 108-115
+  #       strategy_versions/best_score2335_strategy.py
   # rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
+  # Fixes rollback failure mode: danger_piece_count>=4で即時併合を強制し、ワーストゲームのmax_y runawayを抑制
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -233,6 +234,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
             # height_multを0.2に緩和して、盤面圧縮（tighter board）を優先。即時併合機会を確保
             height_mult *= 0.2
+        elif deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO" and danger_piece_count >= 4:
+            # v304: deadline_crossed && 危険ピースが非常に多い場合、即時併合を強制
+            # danger_piece_count >= 4の時は、height_multを0.1に強力緩和し、即時併合を最優先
+            # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+            #       game_history/20260322_012426_score0576.jsonl turns 51-58, game_history/20260322_005753_score2365.jsonl turns 108-115
+            # rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
+            height_mult *= 0.1
 
         # v270 fix: reactive_pairsあり時の非併合heightペナルティ緩和版 - 危険域での戦略的配置余地を確保
         # ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3あるのにmerge_available=falseが続き、
@@ -540,14 +548,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 即時併合を容易にするためheight_multをさらに緩和
             height_mult *= 0.5
         elif reactive_pair_count >= 1 and merge_grade == "NO" and danger_piece_count > 0:
-            # v303: 即時併合不可で、危険ピースがある場合：戦略的配置ボーナスを完全削減 (10.0 → 0.0)
-            # 危険ピースがある場合でも、即時併合を最優先にするためボーナスを完全に削除
-            # height_multを0.6→0.4に緩和し、即時併合をさらに容易にする
-            # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, game_history/20260321_210149_score0881.jsonl turns 62-69
+            # v304: 即時併合不可で、危険ピースがある場合：戦略的配置を完全抑制
+            # 危険ピースが多いほど即時併合を強制するため、height_multを段階的に緩和
+            # danger_piece_count >= 3: height_mult *= 0.2, >= 4: height_mult *= 0.1（強力な緩和）
+            # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+            #       game_history/20260322_012426_score0576.jsonl turns 51-58, game_history/20260322_005753_score2365.jsonl turns 108-115
+            # rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
             score += 0.0
             reasons.append("REACTIVE_STRATEGIC_PLACEMENT_DANGER")
-            # 危険ピースがある場合でも即時併合を容易にするためheight_multをさらに緩和
-            height_mult *= 0.4
+            # 危険ピース数に応じて段階的に緩和し、即時併合を強制
+            if danger_piece_count >= 4:
+                # 危険度が非常に高い場合、即時併合を強制
+                height_mult *= 0.1
+            else:
+                height_mult *= 0.2
+
+        # v304: ロシア建国後の即時併合優先強化 - has_russian && reactive_pair_count >= 2 && merge_grade == "NO"
+        # ロシア建国後は盤面が狭く、即時併合機会を逃すと即死するため強力に緩和
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+        #       advice.md, game_history/20260322_012426_score0576.jsonl, game_history/20260322_005753_score2365.jsonl
+        # rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
+        if has_russian and reactive_pair_count >= 2 and merge_grade == "NO":
+            # ロシア建国後で即時併合機会がない場合、height_multを0.3に緩和し即時併合を強制
+            height_mult *= 0.3
+            if "REACTIVE_STRATEGIC_PLACEMENT" not in "_".join(reasons) and "REACTIVE_STRATEGIC_PLACEMENT_DANGER" not in "_".join(reasons):
+                reasons.append("RUSSIAN_IMMEDIATE_MERGE_PRIORITY")
 
         # その他のaxisの評価後に追加
         # axis 8.5のdanger_piece_count優先ロジックは変更せず

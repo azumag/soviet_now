@@ -1,14 +1,15 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v39)
+ * strategy.mjs - ドロップ位置決定戦略 (v40)
  *
- * v39: おじゃまブロック対策強化
- * - 【おじゃまゲージ監視】左壁のゲージレベル(garbage.gauge)を読み取り、
- *   おじゃまが来る前にマージ準備モード(GAUGE_MERGE)に移行
- * - 【中程度ガベージ対応】garbageRatio>0.15でOJAMA_MERGEモードに移行し、
- *   garbageUrgent(>0.4)を待たずに早期のマージ優先行動を開始
- * - 【ojamaBoost】ガベージ/ゲージ状態に応じてfindBestMergeに
- *   マージ優先ブースト(+5〜+12)を付与、下部マージにも+5ボーナス
- * - v38の改善は全て維持
+ * v40: 連鎖設計強化 + T1フラッド予防改善
+ * - 【序盤ガベージ対応】ガベージ比率>=0.1の場合は序盤保護モードをスキップして
+ *   通常フローでガベージ処理（35ターン級の早期ゲームオーバー対策）
+ * - 【T1フラッド予防HOLD】t1Count>=8でT3+が次に来るならT1をHOLDして優先活用
+ *   t1Count>=8でT2+マージ可能ならT1をHOLDして即時マージ
+ * - 【連鎖スコアリング強化】findBestMergeの連鎖重みを増加 (c1*12, c2*6, c3*3, c4*2)
+ * - 【おじゃまモード閾値調整】GARBAGE_MODERATE_RATIOを0.15→0.20に引き上げ
+ *   （過剰なOJAMA_MERGEモード介入を抑制）
+ * - v39の改善は全て維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -22,7 +23,7 @@ const SURVIVAL_PIECE_THRESHOLD = 78;
 const LOW_MASS_CRITICAL_RELIEF_PIECE_THRESHOLD = 32;
 const LOW_MASS_CRITICAL_RELIEF_AVG_HEIGHT = 1.45;
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.55;
-const GARBAGE_MODERATE_RATIO = 0.15;
+const GARBAGE_MODERATE_RATIO = 0.20;
 const GARBAGE_MODERATE_HEIGHT = 0.3;
 
 export function decide(boardState) {
@@ -54,12 +55,14 @@ export function decide(boardState) {
     return { x: safeX, reason: `SPREAD_UNRELIABLE_X${safeX.toFixed(1)}` };
   }
 
-  // colHeightsを早期に計算 (序盤保護モードで使用)
+  // colHeights & garbageRatioを早期に計算 (序盤保護モードで使用)
   const colHeights = computeColHeights(activePieces);
+  const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
+  const garbageHeight = garbage ? (garbage.height || -5) : -5;
 
-  // 序盤保護モード (rawPieceCount < 10)
-  // 序盤の壊滅的失敗を防ぐ: マージ優先、なければ中央寄りの安全列にドロップ
-  if (rawPieceCount < 10) {
+  // 序盤保護モード (rawPieceCount < 10 かつガベージ少ない)
+  // ガベージが多い場合は通常フローでガベージ処理
+  if (rawPieceCount < 10 && garbageRatio < 0.1) {
     if (nextType > 1) {
       const earlyMerge = findAnyMerge(activePieces, nextType, colHeights, 0);
       if (earlyMerge !== null) return { x: earlyMerge, reason: `EARLY_MERGE_T${nextType}` };
@@ -73,8 +76,6 @@ export function decide(boardState) {
   const t1FloodMode = t1Count > 12;
   const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
 
-  const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
-  const garbageHeight = garbage ? (garbage.height || -5) : -5;
   const garbageUrgent = garbageRatio > 0.4 || garbageHeight > 1.2;
   const garbageModerate = !garbageUrgent && (
     garbageRatio > GARBAGE_MODERATE_RATIO ||
@@ -434,6 +435,21 @@ export function decide(boardState) {
       if (t1Merge !== null) return { x: t1Merge, reason: 'GAUGE_T1_MERGE' };
     }
     // マージなければ通常フローへ (ojamaBoost付きで下のfindBestMergeが効く)
+  }
+
+  // --- T1フラッド予防HOLD (t1Count>=8, isWarnでない場合) ---
+  // T1が溜まり始めたらHOLDで次のT2+ピースを先取りしてフラッドを防ぐ
+  if (canHold && !hold && nextType === 1 && t1Count >= 8 && !isWarn) {
+    const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+    const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
+    const bestNextT = Math.max(next2T, next3T);
+    if (bestNextT >= 3) {
+      return { x: 0, reason: `T1_FLOOD_HOLD_T${bestNextT}`, hold: true };
+    }
+    if (bestNextT === 2) {
+      const t2Merge = findAnyMerge(activePieces, 2, colHeights, dangerBias);
+      if (t2Merge !== null) return { x: 0, reason: 'T1_FLOOD_HOLD_T2', hold: true };
+    }
   }
 
   // --- HOLD判定 (非CRITICAL時) ---
@@ -952,7 +968,7 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
     const c4 = countNear(pieces, t.x, nextType + 4, 3.0);
-    const chainScore = c1 * 10 + c2 * 5 + c3 * 2 + c4 * 1;
+    const chainScore = c1 * 12 + c2 * 6 + c3 * 3 + c4 * 2;
     if (chainScore < minChainScore) continue;
     s += chainScore;
 
