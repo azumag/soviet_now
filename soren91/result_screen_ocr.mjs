@@ -151,7 +151,8 @@ function extractRankFromRankingLines(lineObjects, height) {
     if (line.top > topLimit) continue;
     const compact = text.toUpperCase().replace(/\s+/g, '');
     if (!compact.includes('RANK')) continue;
-    const rank = normalizeDetectedRankString(text);
+    const rankSlice = compact.slice(compact.indexOf('RANK'));
+    const rank = normalizeDetectedRankString(rankSlice);
     if (rank == null) continue;
     candidates.push({
       rank,

@@ -36,33 +36,29 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v297: 即時併合優先シンプル化版 - axis 8.6/9.5戦略的配置ボーナス大幅削減
-# ワーストゲーム(score0606)終盤turns 36-42でreactive_pairs=4あるのに即時併合不可、戦略的配置が続きmax_y=-0.29→0.09に上昇し、43ターン以降で急上昇してゲームオーバー。
-# ベストゲーム(score4839)終盤turns 120-186では即時併合を確実に捉えてスコア4839を出している。
-# batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
-# axis 8.6の戦略的配置ボーナスを大幅に削減（danger_piece_count==0: 400.0→100.0, danger_piece_count>0: 50.0→20.0）。
-# axis 9.5の戦略的配置ボーナスを大幅に削減（reactive>=1:+800.0→+200.0, reactive==0:+300.0→+100.0, SAME:+200.0→+50.0）。
-# reactive_pairsがある場合、height_multを緩和して戦略的配置の余地を最小限にし、即時併合を容易にする。
-# advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正。
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-#       game_history/20260321_144309_score0606.jsonl turns 36-68, game_history/20260321_143350_score4839.jsonl turns 120-186
-# rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
+# v298: Russian construction phase - RUSSIAN_CONSTRUCTED phase added for second Russian development
+# Worst game (score0766) turns 61-68: type 15 appeared but immediate merge missed, max_y=3.04 game over
+# Best game (score2408): type 15 appeared but continued immediate merges, achieved score2408
+# advice.md: "ロシア建国後の2つ目ロシア育成戦略" - Added RUSSIAN_CONSTRUCTED phase when type 15 exists
+# height_mult=2.5 after Russian construction, height_penalty x2 when landing_y>0.0 to avoid board compression
+# Maintains immediate merge priority (axis 8.6/9.5) while prioritizing space for second Russian development
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md,
+#       game_history/20260321_152851_score0766.jsonl turns 61-68, game_history/20260321_152605_score2408.jsonl
+# rollback failure mode: reactive_pairs available but strategic placement chosen instead of immediate merge, max_y runaway
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v297: 即時併合優先シンプル化版 - axis 8.6/9.5戦略的配置ボーナス大幅削減
+    """v298: Russian construction phase - RUSSIAN_CONSTRUCTED phase added for second Russian development
 
-    ワーストゲーム(score0606)終盤turns 36-42でreactive_pairs=4あるのに即時併合不可、戦略的配置が続きmax_y=-0.29→0.09に上昇し、43ターン以降で急上昇してゲームオーバー。
-    ベストゲーム(score4839)終盤turns 120-186では即時併合を確実に捉えてスコア4839を出している。
-    batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
-    advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、axis 8.6の戦略的配置ボーナスを削減（400.0→100.0, 50.0→20.0）。
-    axis 9.5の戦略的配置ボーナスを大幅に削減（reactive>=1:+800.0→+200.0, reactive==0:+300.0→+100.0, SAME:+200.0→+50.0）。
-    reactive_pairsがある場合、height_multを緩和して戦略的配置の余地を最小限にし、即時併合優先を徹底。
-    axis 8.6とaxis 9.5の戦略的配置ボーナスを最小限に削減し、即時併合機会の取りこぼしを大幅に削減。
-    last_rollback_postmortemの制約遵守：即時併合機会を優先し、deadline_crossed時もSAME_TYPE_STACK有効。
+    Worst game (score0766) turns 61-68: type 15 appeared but immediate merge missed, max_y=3.04 game over
+    Best game (score2408): type 15 appeared but continued immediate merges, achieved score2408
+    advice.md: "ロシア建国後の2つ目ロシア育成戦略" - Added RUSSIAN_CONSTRUCTED phase when type 15 exists
+    height_mult=2.5 after Russian construction, height_penalty x2 when landing_y>0.0 to avoid board compression
+    Maintains immediate merge priority (axis 8.6/9.5) while prioritizing space for second Russian development
+    last_rollback_postmortem constraint: prioritize immediate merges, SAME_TYPE_STACK valid when deadline_crossed
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -92,6 +88,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
 
+    # --- Russian construction detection (v298) ---
+    # Worst game analysis: after type 15 (Russian) appears, board becomes narrow, missing immediate merge causes rapid game over
+    # advice.md: "ロシア建国後の死亡速度が早いので、建国後はより慎重な盤面進行を検討すること" reflected in strategy
+    has_russian = any(p.get("type") == 15 for p in pieces)
+
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
 
@@ -100,8 +101,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pairs = reactor.get("reactive_pairs", [])
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
 
-    # --- phase judgment (v42 thresholds) ---
-    if max_y < 0.8:
+    # --- phase judgment (v298: Russian construction special phase) ---
+    # Worst game analysis: after type 15 appears, board becomes narrow, missing immediate merge causes rapid game over
+    # After Russian construction, height_mult is strengthened for more conservative board progression, prioritizing second Russian development
+    if has_russian:
+        phase = "RUSSIAN_CONSTRUCTED"
+        height_mult = 2.5  # After Russian construction, strengthen height penalty, prioritize avoiding board compression
+        merge_mult = 1.0  # Maintain merge priority
+    elif max_y < 0.8:
         phase = "LOW"
         height_mult = 0.4  # v198: LOW phase height_mult further reduced (0.6→0.4) to enable proactive merge opportunities
         merge_mult = 1.2  # 20% merge bonus increase, actively target
@@ -225,7 +232,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
 
-        if phase == "HIGH" and landing_y > 0.5:
+        if phase == "RUSSIAN_CONSTRUCTED":
+            # v298: After Russian construction, board is narrow and high placement is more dangerous
+            # Double height penalty when landing_y > 0.0 to encourage more conservative placement
+            if landing_y > 0.0:
+                height_penalty *= 2.0
+                reasons.append("RUSSIAN_TOWER")
+            elif landing_y > -0.5:
+                reasons.append("RUSSIAN_LAYER")
+        elif phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:

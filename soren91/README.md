@@ -41,7 +41,7 @@ node hall_of_fame.mjs --note "strong run"
 
 系統樹改善のローカル状態:
 
-- `tmp/state/rolling_ranks.json` — turns 主体 + rank 補助の rolling 指標
+- `tmp/state/rolling_ranks.json` — rank 主体 + turns 補助の rolling 指標
 - `tmp/state/best_strategy_anchor.json` — 現在の anchor
 - `tmp/state/lineage_summary.md` — 改善プロンプトに渡す lineage 要約
 - `tmp/state/strategy_phylogeny.mmd` — Mermaid 系統樹
@@ -52,6 +52,13 @@ node hall_of_fame.mjs --note "strong run"
 ```bash
 cd soren91
 node lineage.mjs rebuild
+```
+
+結果画面 OCR で過去 summary の rank を埋め直したい時:
+
+```bash
+cd soren91
+node backfill_result_ranks.mjs
 ```
 
 ## ゲームフロー
@@ -74,7 +81,7 @@ node lineage.mjs rebuild
 
 12ゲームごとに `claude -p --model sonnet` で戦略を改善する:
 
-1. ゲーム履歴からテキストサマリー (ターン数、ドロップ分布、理由分布) を生成
+1. ゲーム履歴からテキストサマリー (順位、ターン数、ドロップ分布、理由分布) を生成
 2. 現在の `strategy.mjs` + サマリーを Claude に送信
 3. 返ってきた新コードをバリデーション (構文チェック + スモークテスト)
 4. パスしたら適用、旧版を `strategy_versions/` にバックアップ

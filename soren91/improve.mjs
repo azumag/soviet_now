@@ -46,6 +46,30 @@ function readSummaryMeta(summaryPath) {
   }
 }
 
+function formatRankLabel(rank) {
+  return rank == null ? 'unknown' : `#${rank}`;
+}
+
+function isBetterGameSummary(candidate, currentBest) {
+  if (!candidate) return false;
+  if (!currentBest) return true;
+  const candidateRank = normalizeRank(candidate.rank);
+  const bestRank = normalizeRank(currentBest.rank);
+  if (candidateRank != null && bestRank != null) {
+    if (candidateRank !== bestRank) return candidateRank < bestRank;
+  } else if (candidateRank != null) {
+    return true;
+  } else if (bestRank != null) {
+    return false;
+  }
+  const candidateTurns = Number(candidate.turns || 0);
+  const bestTurns = Number(currentBest.turns || 0);
+  if (candidateTurns !== bestTurns) return candidateTurns > bestTurns;
+  const candidatePieces = Number(candidate.piecesAtEnd || 0);
+  const bestPieces = Number(currentBest.piecesAtEnd || 0);
+  return candidatePieces < bestPieces;
+}
+
 function formatRankToken(rank) {
   return rank == null ? 'na' : String(rank).padStart(2, '0');
 }
@@ -144,9 +168,12 @@ function generateSummary(historyPath, summaryPath) {
     const summary = JSON.parse(readFileSync(summaryPath, 'utf-8'));
     lines.push(`## Game Summary`);
     lines.push(`- Game #${summary.gameNumber}`);
-    lines.push(`- Score: ${summary.score}`);
     lines.push(`- Turns: ${summary.turns}`);
+    lines.push(`- Rank: ${summary.rank == null ? 'unknown' : summary.rank}`);
     lines.push(`- Pieces at end: ${summary.piecesAtEnd}`);
+    if (summary.resultScreenOcr?.lines?.length) {
+      lines.push(`- Result screen OCR: ${summary.resultScreenOcr.lines.join(' / ')}`);
+    }
     lines.push('');
   }
 
@@ -159,10 +186,6 @@ function generateSummary(historyPath, summaryPath) {
 
     if (turns.length > 0) {
       lines.push(`## Turn History (${turns.length} turns)`);
-
-      // スコア推移
-      const scores = turns.map(t => t.state?.score || 0);
-      lines.push(`- Score progression: ${scores.filter((_, i) => i % 10 === 0).join(' → ')}`);
 
       // ドロップ位置分布
       const xs = turns.map(t => t.decision?.x || 0);
@@ -188,10 +211,9 @@ function generateSummary(historyPath, summaryPath) {
       const lastTurns = turns.slice(-10);
       lastTurns.forEach(t => {
         const pieces = t.state?.pieces?.length || 0;
-        const score = t.state?.score || 0;
         const x = t.decision?.x?.toFixed(2) || '?';
         const reason = t.decision?.reason || 'UNKNOWN';
-        lines.push(`- Turn ${t.turn}: score=${score}, pieces=${pieces}, drop_x=${x}, reason=${reason}`);
+        lines.push(`- Turn ${t.turn}: pieces=${pieces}, drop_x=${x}, reason=${reason}`);
       });
     }
   }
@@ -437,19 +459,21 @@ function generateAggregateSummary(startGame, endGame) {
 
   lines.push(`## Aggregate Summary (${games.length} games, #${startGame + 1}-#${endGame})`);
   lines.push(`- Total games: ${games.length}`);
+  lines.push(`- Rank coverage: ${ranks.length}/${games.length}`);
+  if (ranks.length > 0) {
+    lines.push(`- Best rank: ${Math.min(...ranks)}`);
+    lines.push(`- Avg rank: ${(ranks.reduce((a, b) => a + b, 0) / ranks.length).toFixed(1)}`);
+    lines.push(`- Rank range: [${Math.min(...ranks)}, ${Math.max(...ranks)}]`);
+  }
   lines.push(`- Turn range: [${Math.min(...turns)}, ${Math.max(...turns)}]`);
   lines.push(`- Avg turns: ${(turns.reduce((a, b) => a + b, 0) / turns.length).toFixed(1)}`);
-  if (ranks.length > 0) {
-    lines.push(`- Rank range: [${Math.min(...ranks)}, ${Math.max(...ranks)}]`);
-    lines.push(`- Avg rank: ${(ranks.reduce((a, b) => a + b, 0) / ranks.length).toFixed(1)}`);
-    lines.push(`- Best rank: ${Math.min(...ranks)}`);
-  }
 
   // ゲーム一覧
   lines.push('');
   lines.push('## Per-Game Details');
   for (const g of games) {
-    lines.push(`- Game #${g.gameNumber}: turns=${g.turns}, rank=${g.rank ?? '?'}, pieces=${g.piecesAtEnd ?? '?'}`);
+    const resultMemo = g.resultScreenOcr?.lines?.length ? `, result="${g.resultScreenOcr.lines.join(' / ')}"` : '';
+    lines.push(`- Game #${g.gameNumber}: rank=${g.rank ?? '?'}, turns=${g.turns}, pieces=${g.piecesAtEnd ?? '?'}${resultMemo}`);
   }
 
   return lines.join('\n');
@@ -464,17 +488,16 @@ async function runStandaloneImprovement(startGame, endGame) {
   const summariesDir = 'tmp/summaries';
   const historyDir = 'game_history';
   let bestGame = null;
-  let bestTurns = -1;
+  let bestSummary = null;
 
-  // サマリーを走査し最長turnsのゲームを特定
+  // サマリーを走査し最良rankを優先、同率ならturnsでベストゲームを特定
   for (let i = startGame + 1; i <= endGame; i++) {
     const summaryPath = join(summariesDir, `game_${String(i).padStart(4, '0')}.json`);
     if (!existsSync(summaryPath)) continue;
     try {
       const summary = JSON.parse(readFileSync(summaryPath, 'utf-8'));
-      const turns = summary.turns || 0;
-      if (turns > bestTurns) {
-        bestTurns = turns;
+      if (isBetterGameSummary(summary, bestSummary)) {
+        bestSummary = summary;
         bestGame = i;
       }
     } catch {}
@@ -493,7 +516,7 @@ async function runStandaloneImprovement(startGame, endGame) {
     return;
   }
 
-  console.log(`[improve] Best game: #${bestGame} (turns=${bestTurns})`);
+  console.log(`[improve] Best game: #${bestGame} (rank=${formatRankLabel(bestSummary?.rank)}, turns=${bestSummary?.turns ?? 0})`);
 
   // 集約サマリー生成
   const aggregateSummary = generateAggregateSummary(startGame, endGame);
@@ -534,7 +557,7 @@ async function runStandaloneImprovement(startGame, endGame) {
 
   // バックアップ + 適用
   const bestSummaryMeta = readSummaryMeta(bestSummaryPath);
-  const versionName = `v${endGame}_aggregate_turns${String(bestTurns || 0).padStart(3, '0')}_rank${formatRankToken(bestSummaryMeta.rank)}_strategy.mjs`;
+  const versionName = `v${endGame}_aggregate_turns${String(bestSummaryMeta.turns || 0).padStart(3, '0')}_rank${formatRankToken(bestSummaryMeta.rank)}_strategy.mjs`;
   const backupPath = join(VERSIONS_DIR, versionName);
   writeFileSync(backupPath, currentStrategy);
   console.log(`[improve] Backed up current strategy to ${backupPath}`);

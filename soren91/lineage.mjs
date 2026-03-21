@@ -1,8 +1,8 @@
 /**
  * lineage.mjs - soren91 向けの系統樹改善基盤
  *
- * turns を主指標にしつつ、取得できた rank を補助信号として使う。
- * rank OCR は欠損が多いため、rank だけではなく turns も常に保持する。
+ * rank を主指標にしつつ、欠損時の fallback / 補助として turns を使う。
+ * soren91 では実質的な成績指標は順位なので、rank が取れたゲームを最優先で評価する。
  */
 
 import { createHash } from 'crypto';
@@ -25,10 +25,11 @@ const PHYROGENETIC_TREE_FILE = join(TMP_STATE_DIR, 'strategy_phylogeny.mmd');
 const PHYROGENETIC_EVENTS_FILE = 'phyrogenetic-events.jsonl';
 
 const METRIC_LCB_Z = 1.28;
-const TURN_WEIGHT_P50 = 0.55;
-const TURN_WEIGHT_P25 = 0.30;
-const TURN_WEIGHT_LCB = 0.15;
-const RANK_BONUS_WEIGHT = 0.75;
+const METRIC_WEIGHT_P50 = 0.55;
+const METRIC_WEIGHT_P25 = 0.30;
+const METRIC_WEIGHT_LCB = 0.15;
+const TURN_SUPPORT_WEIGHT = 0.12;
+const TURN_ONLY_FALLBACK_WEIGHT = 0.20;
 const RESULT_KEEP = 24;
 const RECENT_PATH_KEEP = 50;
 const MIN_GAMES_FOR_ANCHOR = Number.parseInt(process.env.SOREN91_MIN_GAMES_FOR_ANCHOR || '8', 10);
@@ -80,7 +81,7 @@ function calcHigherBetterMetrics(values) {
     : 0;
   const std = Math.sqrt(variance);
   const lcb = mean - (METRIC_LCB_Z * (std / Math.sqrt(nums.length)));
-  const comp = (TURN_WEIGHT_P50 * p50) + (TURN_WEIGHT_P25 * p25) + (TURN_WEIGHT_LCB * lcb);
+  const comp = (METRIC_WEIGHT_P50 * p50) + (METRIC_WEIGHT_P25 * p25) + (METRIC_WEIGHT_LCB * lcb);
   return { n: nums.length, mean, p25, p50, lcb, comp };
 }
 
@@ -153,7 +154,9 @@ function summarizeEntry(strategyHash, entry) {
   const turnMetrics = calcHigherBetterMetrics(turns);
   const rankPointMetrics = calcHigherBetterMetrics(validRanks.map(rankToPoints));
   const rankCoverage = results.length > 0 ? validRanks.length / results.length : 0;
-  const comp = (turnMetrics?.comp || 0) + (((rankPointMetrics?.comp || 0) * RANK_BONUS_WEIGHT) * rankCoverage);
+  const comp = rankPointMetrics
+    ? (rankPointMetrics.comp + ((turnMetrics?.comp || 0) * TURN_SUPPORT_WEIGHT))
+    : ((turnMetrics?.comp || 0) * TURN_ONLY_FALLBACK_WEIGHT);
   return {
     hash: strategyHash,
     games_total: Number(entry?.games_total || results.length || 0),
@@ -163,6 +166,7 @@ function summarizeEntry(strategyHash, entry) {
     turn_metrics: turnMetrics,
     rank_sample_n: validRanks.length,
     rank_coverage: rankCoverage,
+    rank_metrics: rankPointMetrics,
     rank_p50: rankPointMetrics ? (92 - rankPointMetrics.p50) : null,
     rank_p25: rankPointMetrics ? (92 - rankPointMetrics.p25) : null,
     best_rank: validRanks.length > 0 ? Math.min(...validRanks) : null,
@@ -173,12 +177,15 @@ function summarizeEntry(strategyHash, entry) {
 function sortRankedEntries(entries) {
   return [...entries].sort((a, b) => {
     if (b.metrics.comp !== a.metrics.comp) return b.metrics.comp - a.metrics.comp;
-    const aTurns = a.metrics.turn_metrics?.p50 || 0;
-    const bTurns = b.metrics.turn_metrics?.p50 || 0;
-    if (bTurns !== aTurns) return bTurns - aTurns;
     const aRank = a.metrics.rank_p50 ?? 999;
     const bRank = b.metrics.rank_p50 ?? 999;
     if (aRank !== bRank) return aRank - bRank;
+    const aRankCoverage = a.metrics.rank_coverage || 0;
+    const bRankCoverage = b.metrics.rank_coverage || 0;
+    if (bRankCoverage !== aRankCoverage) return bRankCoverage - aRankCoverage;
+    const aTurns = a.metrics.turn_metrics?.p50 || 0;
+    const bTurns = b.metrics.turn_metrics?.p50 || 0;
+    if (bTurns !== aTurns) return bTurns - aTurns;
     return (b.metrics.games_total || 0) - (a.metrics.games_total || 0);
   });
 }
@@ -406,8 +413,8 @@ export function buildImproveReferenceContext(currentHash = '') {
   const lines = [];
 
   lines.push('## Strategy Lineage Snapshot');
-  lines.push('- soren91 では turns を主指標、rank は OCR 取得時の補助指標として使う。');
-  lines.push('- rank が欠損したゲームは turns のみで評価される。');
+  lines.push('- soren91 では rank を主指標として使う。良い戦略かどうかは、まず順位で判断する。');
+  lines.push('- turns は rank 欠損時の fallback と、同程度の rank を分ける補助指標としてのみ使う。');
   lines.push('');
 
   if (resolvedCurrentHash) {
@@ -416,8 +423,8 @@ export function buildImproveReferenceContext(currentHash = '') {
     lines.push('### Current Strategy');
     if (currentMetrics) {
       lines.push(`- hash=${resolvedCurrentHash} comp=${formatMetric(currentMetrics.comp)} games=${currentMetrics.games_total} sample=${currentMetrics.sample_n}`);
-      lines.push(`- turns_p50=${formatMetric(currentMetrics.turn_metrics?.p50)} turns_p25=${formatMetric(currentMetrics.turn_metrics?.p25)}`);
       lines.push(`- rank_p50=${formatRank(currentMetrics.rank_p50)} rank_coverage=${formatMetric(currentMetrics.rank_coverage * 100)}%`);
+      lines.push(`- turns_p50=${formatMetric(currentMetrics.turn_metrics?.p50)} turns_p25=${formatMetric(currentMetrics.turn_metrics?.p25)}`);
     } else {
       lines.push(`- hash=${resolvedCurrentHash} (まだ rolling データなし)`);
     }
@@ -427,7 +434,7 @@ export function buildImproveReferenceContext(currentHash = '') {
   lines.push('### Best Anchor');
   if (anchor?.hash) {
     lines.push(`- hash=${anchor.hash} comp=${formatMetric(anchor.comp)} games=${anchor.gamesTotal}`);
-    lines.push(`- turns_p50=${formatMetric(anchor.turnsP50)} turns_p25=${formatMetric(anchor.turnsP25)} rank_p50=${formatRank(anchor.rankP50)}`);
+    lines.push(`- rank_p50=${formatRank(anchor.rankP50)} turns_p50=${formatMetric(anchor.turnsP50)} turns_p25=${formatMetric(anchor.turnsP25)}`);
   } else {
     lines.push('- まだ anchor なし');
   }
@@ -441,7 +448,7 @@ export function buildImproveReferenceContext(currentHash = '') {
     for (const item of mature) {
       lines.push(
         `- ${shortHash(item.hash)} comp=${formatMetric(item.metrics.comp)} games=${item.metrics.games_total} ` +
-        `turns_p50=${formatMetric(item.metrics.turn_metrics?.p50)} rank_p50=${formatRank(item.metrics.rank_p50)} ` +
+        `rank_p50=${formatRank(item.metrics.rank_p50)} turns_p50=${formatMetric(item.metrics.turn_metrics?.p50)} ` +
         `rank_cov=${formatMetric(item.metrics.rank_coverage * 100)}%`
       );
     }
