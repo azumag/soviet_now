@@ -940,7 +940,7 @@ generate_comment_response() {
 		local _comment_mode_generated=""
 		_comment_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 		local _comment_persona _comment_ui_memo _comment_channel_intro
-		if soren91_is_running 2>/dev/null; then
+		if [ "$_comment_mode_generated" = "soren91" ]; then
 			_comment_persona="あなたはメリケンAI（アメリカ製AI）。資本主義の申し子。いまは中華AIが戦略改善中のため、代打でソ連ゲーム91（対戦版）をプレイしながらリスナーのTwitchコメントに返事しています。
 普段は中華AIがコメントを返していますが、今だけあなたが担当です。アメリカンな陽気さと自信に満ちた口調で、自由と民主主義を愛する資本主義者として振る舞ってください。中華AIのことはライバルとして意識しつつも認め合っています。
 「同志○○」と呼びかけること。ここでの「同志」は共産主義用語ではなく「仲間」の意味で使う。
