@@ -1,14 +1,17 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v48)
+ * strategy.mjs - ドロップ位置決定戦略 (v49)
  *
- * v48: v47ベース + 極端T1フラッド時の壁落下ループ抑制
- * - 【ULTRA_EXTREMEでの壁ペナルティ動的強化 (pieces>75時)】
- *   findT1ImmediateMergeとfindT1DenseColumnの壁ペナルティをwallPenaltyMult=2.5倍化
- *   ±2.5への繰り返し落下ループを防止し、盤面中央への収束を促進
- * - 【findT1ImmediateMergeのベース壁ペナルティ引き上げ】12→15 / 20→25
- *   全モードで壁落下をより強く抑制
- * - 【EXTREME_T1_WALL_PIECE_THRESHOLD = 75 追加】壁ペナルティ強化のトリガー閾値
- * - v47以前の全改善を維持
+ * v49: v48ベース + T1早期管理改善・CRITICAL脱出強化
+ * - 【T1プレフラッド閾値を定数化・引き下げ (T1_PREFLOOD_THRESHOLD=6)】
+ *   t1Count>=6でプレフラッド管理を開始 (旧:8)
+ *   T1フラッドをより早期に検出し、T2+連鎖の準備機会を増やす
+ * - 【CRITICAL時のfallbackマージ列制限緩和 (DEADLINE_Y+0.1→+0.3)】
+ *   critFallbackMergeの対象列を少し拡大 (2.6→2.8)
+ *   CRITICAL時でも同type隣接ならマージを優先して連鎖脱出を促進
+ * - 【CRITICAL最終マージ試行追加 (T2+, findAnyMerge)】
+ *   critFallbackMerge失敗後にT2+のfindAnyMergeを試みる
+ *   HOLDセーブより前にマージ機会を消化して確実なピース削減を確保
+ * - v48以前の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -25,6 +28,7 @@ const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.55;
 const GARBAGE_MODERATE_RATIO = 0.22;
 const GARBAGE_MODERATE_HEIGHT = 0.3;
 const EXTREME_T1_WALL_PIECE_THRESHOLD = 75; // [v48] 壁ペナルティ強化閾値
+const T1_PREFLOOD_THRESHOLD = 6; // [v49] T1プレフラッド開始閾値 (旧:8)
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -362,9 +366,19 @@ export function decide(boardState) {
       const critFallbackMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0);
       if (critFallbackMerge) {
         const mergeColH = colHeights[nearestColIdx(critFallbackMerge.x)];
-        if (mergeColH < DEADLINE_Y + 0.1) {
+        // [v49] 列制限を DEADLINE_Y+0.1 → +0.3 に緩和してより多くのマージ機会を確保
+        if (mergeColH < DEADLINE_Y + 0.3) {
           return { x: critFallbackMerge.x, reason: `CRITICAL_ANY_MERGE_T${nextType}` };
         }
+      }
+    }
+
+    // [v49] CRITICAL最終マージ: T2+のfindAnyMergeをHOLDセーブより前に試みる
+    // 列高さ制限は findAnyMerge 内部の DEADLINE_Y+0.2 のみ
+    if (nextType >= 2) {
+      const critLastMerge = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
+      if (critLastMerge !== null) {
+        return { x: critLastMerge, reason: `CRITICAL_LAST_MERGE_T${nextType}` };
       }
     }
 
@@ -476,9 +490,9 @@ export function decide(boardState) {
     // マージなければ通常フローへ (ojamaBoost付きで下のfindBestMergeが効く)
   }
 
-  // --- T1フラッド予防HOLD (t1Count>=8, isWarnでない場合) ---
-  // T1が溜まり始めたらHOLDで次のT2+ピースを先取りしてフラッドを防ぐ
-  if (canHold && !hold && nextType === 1 && t1Count >= 8 && !isWarn) {
+  // --- T1フラッド予防HOLD (t1Count>=T1_PREFLOOD_THRESHOLD, isWarnでない場合) ---
+  // [v49] 閾値を8→T1_PREFLOOD_THRESHOLD(6)に引き下げてより早期にT1フラッドを予防
+  if (canHold && !hold && nextType === 1 && t1Count >= T1_PREFLOOD_THRESHOLD && !isWarn) {
     const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
     const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
     const bestNextT = Math.max(next2T, next3T);
@@ -514,8 +528,8 @@ export function decide(boardState) {
 
   // T1ピースは早期にT1フラッドチェック
   if (nextType === 1) {
-    // v36: T1プレフラッド対策 (t1Count 8-11): flood閾値到達前から密集誘導+チェーン
-    if (t1Count >= 8 && !t1FloodMode && !extremeT1Flood) {
+    // [v49] T1プレフラッド対策 (t1Count T1_PREFLOOD_THRESHOLD-11): flood閾値到達前から密集誘導+チェーン
+    if (t1Count >= T1_PREFLOOD_THRESHOLD && !t1FloodMode && !extremeT1Flood) {
       const preFloodDense = findT1DenseColumn(activePieces, colHeights, dangerBias);
       if (preFloodDense !== null) return { x: preFloodDense, reason: 'T1_PREFLOOD_DENSE' };
       // v36: チェーンアンカーも追加してより効果的にT1を集中
