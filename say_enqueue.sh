@@ -181,6 +181,10 @@ CURRENT_SOURCE_FILE="$QUEUE_DIR/current_source"
 PLAYED_LOG_FILE="$QUEUE_DIR/played.log"
 LAST_RADIO_PLAYED_FILE="tmp/state/radio_talk_played"
 LOCK_STALE_SEC=180
+VOICEVOX_SYNTH_LOCK="$QUEUE_DIR/.voicevox_synth_lock"
+VOICEVOX_SYNTH_OWNER_FILE="$VOICEVOX_SYNTH_LOCK/owner_pid"
+VOICEVOX_SYNTH_HEARTBEAT_FILE="$VOICEVOX_SYNTH_LOCK/heartbeat"
+VOICEVOX_SYNTH_LOCK_STALE_SEC="${VOICEVOX_SYNTH_LOCK_STALE_SEC:-180}"
 
 if [ ! -s "$CONTENT_FILE" ]; then
     echo "[say_enqueue] content file missing or empty: $CONTENT_FILE" >&2
@@ -192,6 +196,7 @@ MY_TOKEN="${BASHPID:-$$}_${RANDOM}_$(date +%s)"
 MY_OWNER="${BASHPID:-$$}:${MY_TOKEN}"
 MY_CONTENT="$QUEUE_DIR/content_${MY_TOKEN}.txt"
 LOCK_HELD=0
+VOICEVOX_SYNTH_LOCK_HELD=0
 LAUNCHED_SAY_PID=""
 LAUNCHED_EXPECTED_SEC=0
 
@@ -378,9 +383,79 @@ _release_lock() {
     LOCK_HELD=0
 }
 
+_is_voicevox_synth_lock_owner() {
+    [ -d "$VOICEVOX_SYNTH_LOCK" ] || return 1
+    [ "$(cat "$VOICEVOX_SYNTH_OWNER_FILE" 2>/dev/null || true)" = "$MY_OWNER" ]
+}
+
+_touch_voicevox_synth_lock_heartbeat() {
+    _is_voicevox_synth_lock_owner || return 0
+    echo "$MY_OWNER" > "$VOICEVOX_SYNTH_OWNER_FILE" 2>/dev/null || true
+    date +%s > "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null || true
+}
+
+_release_voicevox_synth_lock() {
+    [ "$VOICEVOX_SYNTH_LOCK_HELD" -eq 1 ] || return 0
+    if ! _is_voicevox_synth_lock_owner; then
+        VOICEVOX_SYNTH_LOCK_HELD=0
+        return 0
+    fi
+    rm -f "$VOICEVOX_SYNTH_OWNER_FILE" "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null
+    rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
+    VOICEVOX_SYNTH_LOCK_HELD=0
+}
+
+_acquire_voicevox_synth_lock() {
+    local timeout_sec="${1:-30}" waited=0 max_waits
+    max_waits=$((timeout_sec * 2))
+    while ! mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; do
+        if [ -d "$VOICEVOX_SYNTH_LOCK" ]; then
+            local lock_owner_raw lock_owner_pid lock_hb now lock_age owner_alive=false
+            lock_owner_raw=$(cat "$VOICEVOX_SYNTH_OWNER_FILE" 2>/dev/null || true)
+            lock_owner_pid="${lock_owner_raw%%:*}"
+            case "$lock_owner_pid" in
+            ''|*[!0-9]*) lock_owner_pid="" ;;
+            esac
+            if [ -n "$lock_owner_pid" ] && kill -0 "$lock_owner_pid" 2>/dev/null; then
+                owner_alive=true
+            fi
+            lock_hb=$(cat "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null || true)
+            case "$lock_hb" in
+            ''|*[!0-9]*)
+                lock_hb=$(stat -f %m "$VOICEVOX_SYNTH_LOCK" 2>/dev/null || true)
+                ;;
+            esac
+            now=$(date +%s)
+            case "$lock_hb" in
+            ''|*[!0-9]*|0) lock_age=0 ;;
+            *) lock_age=$((now - lock_hb)) ;;
+            esac
+            if [ "$owner_alive" = false ] && [ "$lock_age" -gt "$VOICEVOX_SYNTH_LOCK_STALE_SEC" ]; then
+                _log "VOICEVOX合成 stale lock検出 (owner=${lock_owner_pid:-?}, ${lock_age}秒) → 強制解除"
+                rm -f "$VOICEVOX_SYNTH_OWNER_FILE" "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null
+                rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
+                continue
+            fi
+        fi
+        sleep 0.5
+        waited=$((waited + 1))
+        if [ "$waited" -ge "$max_waits" ]; then
+            return 1
+        fi
+    done
+    echo "$MY_OWNER" > "$VOICEVOX_SYNTH_OWNER_FILE" 2>/dev/null || {
+        rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
+        return 1
+    }
+    date +%s > "$VOICEVOX_SYNTH_HEARTBEAT_FILE" 2>/dev/null || true
+    VOICEVOX_SYNTH_LOCK_HELD=1
+    return 0
+}
+
 # クリーンアップ: 終了時にロック解放 + 自分のコンテンツ削除
 _cleanup() {
     _clear_current_source_if_owner
+    _release_voicevox_synth_lock
     _release_lock
     rm -f "$MY_CONTENT"
     rm -f "${MY_CONTENT%.txt}_chunks.txt" 2>/dev/null
@@ -585,12 +660,12 @@ _stream_voicevox_play() {
     fi
 
     # SYNTH_LOCK をストリーミングセッション全体で保持
-    local _stream_locked=0 _slw=0
-    while ! mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; do
-        sleep 0.3; _slw=$((_slw + 1))
-        [ "$_slw" -ge 100 ] && break  # 30s timeout
-    done
-    [ "$_slw" -lt 100 ] && _stream_locked=1
+    local _stream_locked=0
+    if _acquire_voicevox_synth_lock 30; then
+        _stream_locked=1
+    else
+        _log "ストリーミング用 VOICEVOX合成ロック取得タイムアウト"
+    fi
 
     # 残りチャンクを逐次合成→再生
     local i=0
@@ -600,6 +675,7 @@ _stream_voicevox_play() {
 
         # 現チャンク再生中に次チャンクを合成（フォアグラウンド）
         if [ "$_stream_locked" -eq 1 ]; then
+            _touch_voicevox_synth_lock_heartbeat
             if _synthesize_chunk "${chunks[$i]}" "$next_wav"; then
                 synth_ok=0
             fi
@@ -608,6 +684,7 @@ _stream_voicevox_play() {
         # 現チャンク再生完了を待機
         while kill -0 "$play_pid" 2>/dev/null; do
             _touch_lock_heartbeat
+            [ "$_stream_locked" -eq 1 ] && _touch_voicevox_synth_lock_heartbeat
             sleep 0.5
         done
         wait "$play_pid" 2>/dev/null
@@ -630,6 +707,7 @@ _stream_voicevox_play() {
     if [ -n "$play_pid" ] && kill -0 "$play_pid" 2>/dev/null; then
         while kill -0 "$play_pid" 2>/dev/null; do
             _touch_lock_heartbeat
+            [ "$_stream_locked" -eq 1 ] && _touch_voicevox_synth_lock_heartbeat
             sleep 0.5
         done
         wait "$play_pid" 2>/dev/null
@@ -637,7 +715,10 @@ _stream_voicevox_play() {
     rm -f "$current_wav" 2>/dev/null
 
     # SYNTH_LOCK 解放
-    [ "$_stream_locked" -eq 1 ] && { rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; _stream_locked=0; }
+    if [ "$_stream_locked" -eq 1 ]; then
+        _release_voicevox_synth_lock
+        _stream_locked=0
+    fi
 
     # ストリーミング一時ファイル削除
     rm -rf "$stream_dir" 2>/dev/null
@@ -731,29 +812,30 @@ _launch_say() {
         local vo_wav
         vo_wav="${MY_CONTENT%.txt}.wav"
         # フォールバック合成時もVOICEVOX合成ロックを取得（同時1リクエスト制限）
-        local _vo_synth_locked=0 _vo_synth_wait=0
-        while ! mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; do
-            sleep 0.5
-            _vo_synth_wait=$((_vo_synth_wait + 1))
-            if [ "$_vo_synth_wait" -ge 60 ]; then break; fi  # 30s timeout
-        done
-        if [ "$_vo_synth_wait" -ge 60 ]; then
+        local _vo_synth_locked=0 _hb_pid=""
+        if ! _acquire_voicevox_synth_lock 30; then
             _log "VOICEVOX合成ロック取得タイムアウト → リトライへ"
         else
             _vo_synth_locked=1
         fi
-        # 合成中もheartbeatを更新（stale判定回避）
-        ( while true; do _touch_lock_heartbeat; sleep 2; done ) &
-        local _hb_pid=$!
         local _vo_ok=0
         if [ "$_vo_synth_locked" -eq 1 ]; then
+            # 合成中もheartbeatを更新（stale判定回避）
+            ( while true; do _touch_lock_heartbeat; _touch_voicevox_synth_lock_heartbeat; sleep 2; done ) &
+            _hb_pid=$!
             if VOICEVOX_SPEAKER="$VOICEVOX_SPEAKER" VOICEVOX_PITCH="$vo_pitch" VOICEVOX_TEMPO="$vo_tempo" VOICEVOX_INTONATION="$vo_intonation" VOICEVOX_TIMEOUT=60 \
                ./voicevox_tts.sh -o "$vo_wav" -f "$MY_CONTENT" 2>/dev/null && [ -s "$vo_wav" ]; then
                 _vo_ok=1
             fi
         fi
-        kill "$_hb_pid" 2>/dev/null; wait "$_hb_pid" 2>/dev/null
-        [ "$_vo_synth_locked" -eq 1 ] && { rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; _vo_synth_locked=0; }
+        if [ -n "$_hb_pid" ]; then
+            kill "$_hb_pid" 2>/dev/null
+            wait "$_hb_pid" 2>/dev/null
+        fi
+        if [ "$_vo_synth_locked" -eq 1 ]; then
+            _release_voicevox_synth_lock
+            _vo_synth_locked=0
+        fi
         if [ "$_vo_ok" -eq 1 ]; then
             # vo_random 時はチャットに話者名を投稿
             if [ -n "$vo_voice_name" ] && [ "${VOICEVOX_RANDOM_MODE:-0}" = "1" ]; then
@@ -1050,14 +1132,15 @@ _prepare_playback_turn() {
 
 # --- VOICEVOX 事前合成（ロック取得前＝前の再生中に並行合成） ---
 PRE_SYNTH_WAV=""
-VOICEVOX_SYNTH_LOCK="$QUEUE_DIR/.voicevox_synth_lock"
 if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
     # 事前合成は同時1つに制限（VOICEVOX APIの同時リクエスト制限回避）
-    if ! mkdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; then
+    if ! _acquire_voicevox_synth_lock 30; then
         _log "事前合成スキップ（別プロセスが合成中）"
     else
-    trap 'rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null; _cleanup' EXIT
     _log "事前合成開始"
+    _pre_synth_hb_pid=""
+    ( while true; do _touch_voicevox_synth_lock_heartbeat; sleep 2; done ) &
+    _pre_synth_hb_pid=$!
 
     # ワンショットスピーカー指定 (!NTROB等)
     if [ -f "tmp/voicevox_oneshot_speaker.txt" ]; then
@@ -1156,8 +1239,9 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
             fi
         fi
     fi
-    rmdir "$VOICEVOX_SYNTH_LOCK" 2>/dev/null
-    trap '_cleanup' EXIT
+    kill "$_pre_synth_hb_pid" 2>/dev/null
+    wait "$_pre_synth_hb_pid" 2>/dev/null
+    _release_voicevox_synth_lock
     fi
 fi
 
