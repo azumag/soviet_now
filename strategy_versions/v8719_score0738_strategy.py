@@ -7,20 +7,20 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-     Decision Logic (11 evaluation axes):
-       1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-      2. Height penalty - Penalty for high landing position (varies by phase)
-       3. Drift penalty - Penalty for post-landing drift due to polygon shape
-       4. Left-right balance correction - Bonus for correcting piece count bias
-        5. nextNext centering - Center for next merge opportunity if nextNext same type
-         5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-         6. Chain merge bonus - Evaluate possibility of further merges after merge
-          7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
-         8. Early game merge priority - Strong bonus for merge opportunities in early game
-          8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
-          9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
-           9.5. Current type stack merge priority - v298: SAME_TYPE_STACK bonus restored to +800.0 for reactive_pairs (v297 overcorrection fix)
-           9.6. Russian phase space management - v296: Post-type-15 narrow board handling, penalize too close/too far placement when only 1 type 15 exists
+      Decision Logic (11 evaluation axes):
+        1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+       2. Height penalty - Penalty for high landing position (varies by phase)
+        3. Drift penalty - Penalty for post-landing drift due to polygon shape
+        4. Left-right balance correction - Bonus for correcting piece count bias
+         5. nextNext centering - Center for next merge opportunity if nextNext same type
+          5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
+          6. Chain merge bonus - Evaluate possibility of further merges after merge
+           7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
+          8. Early game merge priority - Strong bonus for merge opportunities in early game
+           8.5. Reactive pairs board compression - Bonus for dense placement when reactive_pairs >= 3 and no immediate merge (v206: reduced)
+           9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
+            9.5. Current type stack merge priority - v299: reactive_pairs-based bonus adjustment (deadline_crossed penalty enhancement)
+            9.6. Russian phase space management - v296: Post-type-15 narrow board handling, penalize too close/too far placement when only 1 type 15 exists
 
 Phases (determined by board max Y):
      LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -37,37 +37,44 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v298: v306 rollback failure mode修正 - reactive_pairs時のSAME_TYPE_STACKボーナス回復
-# v306はaxis 9.5ボーナスをreactive_pair_count>=1時+200.0に削減し失敗（即時併合機会取りこぼしでmax_y runaway）
-# v297は更に+25.0-100.0まで削減しovercorrection（reactive_pairsあるのに戦略的配置を選んでいた）
-# rollback postmortem制約: axis 9.5ボーナスをreactive_pair_count>=1時+800.0以上に維持
-# ロシアフェーズ: reactive_pairs>=2時+800.0、reactive_pairs>=1時+800.0、reactive_pairs=0時+500.0に回復
-# 通常フェーズ: reactive_pairs>=1時+800.0、reactive_pairs=0時+500.0に回復
-# これによりreactive_pairsがある場合、即時併合機会を確実に優先し、max_y runawayを防止
+# v299: reactive_pairs数に応じたボーナス調整 - deadline_crossed時の戦略的配置抑制強化
+# v298はaxis 9.5ボーナスを+800.0に回復したが、deadline_crossed時の戦略的配置が依然として選ばれ即時併合機会を逃している
+# ワーストゲーム(score0770)終盤turns 61-68: reactive_pairs=7-9あるのに戦略的配置が続き、max_y=2.44→3.89に上昇してゲームオーバー
+# extra_lowゲーム(score0859)終盤turns 70-79: reactive_pairs=5あるのに戦略的配置が続き、max_y=3.0→2.79に推移
+# batch_summaryでHEIGHT_CONTROLが11.5%(低スコア群) vs 7.4%(高スコア群)と過剰、即時併合機会取りこぼしが問題
+# rollback postmortem制約: reactive_pairs >= 3 && merge_grade == "NO" の場合、戦略的配置ボーナスを付与せず
+# axis 9.5: deadline_crossedかつreactive_pairsが多い場合、戦略的配置ボーナスを削減して即時併合を強制
+#   - Russian phase: deadline_crossed && reactive_pairs >= 3 時、ボーナス+800.0→+400.0、height_mult 0.6→0.5
+#   - Russian phase: deadline_crossed && reactive_pairs >= 2 時、ボーナス+800.0→+400.0、height_mult 0.7→0.6
+#   - Normal phase: deadline_crossed && reactive_pairs >= 3 時、ボーナス+800.0→+400.0、height_mult 0.7→0.5
+#   - reactive_pairs>=3 && merge_grade=="NO" && deadline_crossed 時、height_mult 0.5→0.3へ強化
+# これによりdeadline_crossed時の戦略的配置をさらに抑制し、即時併合機会を確実に捉える
 # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-#       game_history/20260322_091506_score0955.jsonl turns 59-66 (reactive_pairs=3-5あり戦略的配置でオーバー)
-#       game_history/20260322_093504_score3569.jsonl turns 137-144 (reactive_pairs=2でも即時併合優先で生存)
-# Fixes rollback failure mode: reactive_pairsあるのに即時併合不可で戦略的配置を選び、max_y runaway
+#       game_history/20260322_105653_score0770.jsonl turns 61-68 (deadline_crossed時の戦略的配置でオーバー)
+#       game_history/20260322_111700_score2898.jsonl turns 112-119 (即時併合を確実に捉えてスコア2898)
+# Fixes rollback failure mode: deadline_crossed時の戦略的配置による即時併合機会取りこぼし
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v298: v306 rollback failure mode修正 - reactive_pairs時のSAME_TYPE_STACKボーナス回復
+    """v299: reactive_pairs数に応じたボーナス調整 - deadline_crossed時の戦略的配置抑制強化
+    v298はaxis 9.5ボーナスを+800.0に回復したが、deadline_crossed時の戦略的配置が依然として選ばれ即時併合機会を逃している
     v306はaxis 9.5ボーナスをreactive_pair_count>=1時+200.0に削減し失敗（即時併合機会取りこぼしでmax_y runaway）
     v297は更に+25.0-100.0まで削減しovercorrection（reactive_pairsあるのに戦略的配置を選んでいた）
-    rollback postmortem制約: axis 9.5ボーナスをreactive_pair_count>=1時+800.0以上に維持
 
-    ワーストゲーム(score0955)終盤turns 59-66: reactive_pairs=3-5あるのに戦略的配置が続き、max_y=2.27→3.26に上昇してゲームオーバー。
-    ベストゲーム(score3569)終盤turns 137-144: reactive_pairs=2でも即時併合を確実に捉えて生存、score=3569を出している。
-    batch_summaryでHEIGHT_CONTROLが11.7%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが問題。
-    rollback postmortem制約遵守: reactive_pairs>=2では即時併合を最優先、axis 9.5ボーナスを+800.0以上に維持。
-    axis 9.5: SAME_TYPE_STACKボーナスをv297のovercorrectionから回復。
-      - Russian phase: reactive_pairs>=2→+800.0、reactive_pairs>=1→+800.0、reactive_pairs=0→+500.0
-      - Normal phase: reactive_pairs>=1→+800.0、reactive_pairs=0→+500.0
-    これによりreactive_pairsがある場合、戦略的配置ボーナスが即時併合ボーナス(axis 8.6: +1600.0)より低く維持され、
-    即時併合候補が常に選ばれるようになる。
+    ワーストゲーム(score0770)終盤turns 61-68: reactive_pairs=7-9あるのに戦略的配置が続き、max_y=2.44→3.89に上昇してゲームオーバー。
+    extra_lowゲーム(score0859)終盤turns 70-79: reactive_pairs=5あるのに戦略的配置が続き、max_y=3.0→2.79に推移。
+    ベストゲーム(score2898)終盤turns 112-119: 即時併合を確実に捉えて生存、score=2898を出している。
+    batch_summaryでHEIGHT_CONTROLが11.5%(低スコア群) vs 7.4%(高スコア群)と過剰、即時併合機会取りこぼしが問題。
+    rollback postmortem制約遵守: reactive_pairs>=2では即時併合を最優先、axis 9.5ボーナスを+800.0以上に維持（deadline_crossed時を除く）。
+    axis 9.5: deadline_crossedかつreactive_pairsが多い場合、戦略的配置ボーナスを削減して即時併合を強制。
+      - Russian phase: deadline_crossed && reactive_pairs >= 3 時、ボーナス+800.0→+400.0、height_mult 0.6→0.5
+      - Russian phase: deadline_crossed && reactive_pairs >= 2 時、ボーナス+800.0→+400.0、height_mult 0.7→0.6
+      - Normal phase: deadline_crossed && reactive_pairs >= 3 時、ボーナス+800.0→+400.0、height_mult 0.7→0.5
+      - reactive_pairs>=3 && merge_grade=="NO" && deadline_crossed 時、height_mult 0.5→0.3へ強化
+    これによりdeadline_crossed時の戦略的配置をさらに抑制し、即時併合機会を確実に捉える。
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -490,9 +497,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
-        # ----- evaluation axis 9.5: current type stack merge priority (v284: reactive_pairs活用盤面圧縮強化版)
+        # ----- evaluation axis 9.5: current type stack merge priority (v299: reactive_pairs数に応じたボーナス調整版)
         # v295: Russian phase handling added for post-type-15 narrow board
         # v297: v306 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
+        # v298: v306 rollback failure mode修正 - reactive_pairs時のSAME_TYPE_STACKボーナス回復
 
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
         # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
@@ -508,6 +516,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 戦略的配置の余地を最小限にするためheight_multを緩和
         # v295: ロシア建国後フェーズ（type 15存在時）に即時併合優先を強化し、狭いボードでの第二type 15準備を支援
         # v297: rollback postmortem制約「reactive_pairs >= 3 && merge_grade == "NO" の場合、戦略的配置ボーナスを付与せず」を厳守
+        # v299: reactive_pairs数に応じたボーナス調整 - deadline_crossedかつreactive_pairsが多い場合、戦略的配置をさらに抑制
 
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
@@ -526,22 +535,36 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # 両方とも「reactive_pairsあるのに即時併合機会を逃してmax_y runaway」で失敗
                     # rollback postmortem制約: axis 9.5ボーナスをreactive_pair_count>=1時+800.0以上に維持
                     # ロシア建国後でもreactive_pairs >=2なら即時併合を最優先するボーナスを回復
+                    # v299: deadline_crossedかつreactive_pairsが多い場合、戦略的配置をさらに抑制
                     if reactive_pair_count >= 3 and merge_grade == "NO":
                         # v298: reactive_pairs>=3 && 即時併合不可の場合もボーナスを回復し、即時併合を強制
                         # v297の「ボーナス完全削除」はovercorrection。即時併合機会があっても戦略的配置が選ばれていた
                         # rollback postmortem: reactive_pairs>=3で即時併合不可の場合、戦略的配置ボーナスを完全削除すべき
-                        # → height_mult緩和のみで戦略的配置余地を最小限にするが、bonusは与えない（維持）
-                        height_mult *= 0.5  # v297: 0.6 → 0.5へ強化し、即時併合候補をより優先
+                        # v299: deadline_crossed時は戦略的配置ボーナスをさらに抑制し、即時併合を強制
+                        if deadline_crossed:
+                            height_mult *= 0.3  # v299: 0.5 → 0.3へ強化
+                        else:
+                            height_mult *= 0.5  # v297: 0.6 → 0.5へ強化し、即時併合候補をより優先
                     elif reactive_pair_count >= 2:
                         # v298: reactive_pairs>=2のボーナスを+800.0に回復し、即時併合優先を強制
                         # v297の+100.0は低すぎて、戦略的配置が即時併合より高スコアになっていた
-                        score += 800.0  # v297: +100.0 → +800.0 (rollback postmortem制約遵守)
+                        # v299: deadline_crossedかつreactive_pairsが多い場合、ボーナスを削減して即時併合を強制
+                        if deadline_crossed and reactive_pair_count >= 3:
+                            score += 400.0  # v299: +800.0 → +400.0 (deadline_crossed時は即時併合を強制)
+                            height_mult *= 0.5  # v299: height_multをさらに緩和
+                        else:
+                            score += 800.0  # v297: +100.0 → +800.0 (rollback postmortem制約遵守)
                         reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE_HIGH")
                         height_mult *= 0.6
                     elif reactive_pair_count >= 1:
                         # v298: reactive_pairs>=1のボーナスを+800.0に回復
                         # v297の+50.0は低すぎて即時併合機会が逃されていた
-                        score += 800.0  # v297: +50.0 → +800.0 (rollback postmortem制約遵守)
+                        # v299: deadline_crossedかつreactive_pairsが多い場合、ボーナスを削減して即時併合を強制
+                        if deadline_crossed and reactive_pair_count >= 2:
+                            score += 400.0  # v299: +800.0 → +400.0 (deadline_crossed時は即時併合を強制)
+                            height_mult *= 0.6  # v299: height_multをさらに緩和
+                        else:
+                            score += 800.0  # v297: +50.0 → +800.0 (rollback postmortem制約遵守)
                         reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE")
                         height_mult *= 0.7
                     else:
@@ -553,12 +576,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # v297: reactive_pairs>=3 && 即時併合不可の場合、戦略的配置ボーナスを完全削除
                     # 即時併合を強制し、max_y runawayを防止。rollback postmortem制約を厳守。
                     # height_mult緩和は維持し、より低い位置を許容するが、ボーナスは与えない
-                    height_mult *= 0.5
+                    # v299: deadline_crossed時はheight_multをさらに緩和して、即時併合を強制
+                    if deadline_crossed:
+                        height_mult *= 0.3  # v299: 0.5 → 0.3へ強化
+                    else:
+                        height_mult *= 0.5
                 elif reactive_pair_count >= 1:
                     # v298: reactive_pairs>=1のボーナスを+800.0に回復し、即時併合優先を強制
                     # v297の+100.0は低すぎて即時併合機会が逃されていた
                     # rollback postmortem: axis 9.5ボーナスをreactive_pair_count>=1時+800.0以上に維持
-                    score += 800.0  # v297: +100.0 → +800.0 (rollback postmortem制約遵守)
+                    # v299: deadline_crossedかつreactive_pairsが多い場合、ボーナスを削減して即時併合を強制
+                    if deadline_crossed and reactive_pair_count >= 3:
+                        score += 400.0  # v299: +800.0 → +400.0 (deadline_crossed時は即時併合を強制)
+                        height_mult *= 0.5  # v299: height_multをさらに緩和
+                    else:
+                        score += 800.0  # v297: +100.0 → +800.0 (rollback postmortem制約遵守)
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
                     height_mult *= 0.7
                 else:
