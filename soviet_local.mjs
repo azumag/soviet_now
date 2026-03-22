@@ -427,6 +427,12 @@ async function runLocalController() {
       isMuted = false;
     }
 
+    // Muted = meriken mode active, skip all page interactions to avoid stealing tab focus
+    if (isMuted) {
+      await page.waitForTimeout(1000);
+      continue;
+    }
+
     const commands = readCommands();
 
     if (commands.length > processedCount) {
