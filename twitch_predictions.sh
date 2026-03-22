@@ -87,13 +87,15 @@ if reasons:
 PY
 }
 
-_resolve_prediction_as_no_kenkou() {
-	# stale な予想を「建国なし」(outcome index 0) で resolve する
+_resolve_prediction_with_best_outcome() {
+	# stale な予想を best_outcome で resolve する (未記録なら「建国なし」= index 0)
 	[ -f "$PREDICTION_STATE_FILE" ] || return 1
-	local state prediction_id winning_outcome_id payload
+	local state prediction_id winning_outcome_id payload best_outcome
 	state=$(cat "$PREDICTION_STATE_FILE")
 	prediction_id=$(echo "$state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prediction_id"])' 2>/dev/null)
-	winning_outcome_id=$(echo "$state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["outcome_ids"][0])' 2>/dev/null)
+	# best_outcome をサイクル中の記録から読む (eloop.sh:324 で更新される)
+	best_outcome=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
+	winning_outcome_id=$(echo "$state" | python3 -c "import json,sys; d=json.load(sys.stdin); idx=min(int('$best_outcome'),len(d['outcome_ids'])-1); print(d['outcome_ids'][idx])" 2>/dev/null)
 	[ -n "$prediction_id" ] && [ -n "$winning_outcome_id" ] || return 1
 
 	payload=$(python3 -c "
@@ -119,10 +121,10 @@ _clear_stale_prediction_state_if_any() {
 	local stale_reason=""
 	stale_reason=$(_prediction_state_stale_reason "$current_game_num" || true)
 	[ -n "$stale_reason" ] || return 1
-	_log "STALE: resolving prediction as 建国なし before clearing (${stale_reason})"
-	if _resolve_prediction_as_no_kenkou; then
+	_log "STALE: resolving prediction with best_outcome before clearing (${stale_reason})"
+	if _resolve_prediction_with_best_outcome; then
 		_log "STALE: prediction resolved on Twitch"
-		./twitch_chat.sh send "予想結果：「建国なし」でした！" 2>/dev/null &
+		./twitch_chat.sh send "予想結果が確定しました！" 2>/dev/null &
 	else
 		_log "STALE: resolve failed, prediction may need manual cleanup"
 	fi
