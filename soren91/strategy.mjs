@@ -1,21 +1,13 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v54)
+ * strategy.mjs - ドロップ位置決定戦略 (v55)
  *
- * v54: v53ベース + T1フラッド管理改善・ULTRA閾値調整
- * - 【ULTRA_MASS_THRESHOLDを62→70に引き上げ】
- *   62ピース時点でのサバイバルモード早期突入を抑制し、積極的なチェーン構築を維持
- * - 【T1_PREFLOOD_THRESHOLDを10→8に戻す】
- *   v52の実績ある閾値に戻し、早期T1フラッド予防HOLDを強化
- * - 【T1フラッドHOLD条件改善: T3+next時にボード上のマージ対象を確認】
- *   マージ対象がないT3+のためにHOLDしても無駄なため、存在確認してからHOLD
- * - 【findT1ImmediateMerge: ピース数に応じた動的重み付け(pieceCount引数追加)】
- *   ピース数>85時はチェーンボーナスを削減し、列高さペナルティを強化
- *   超高密度ボード(>105)では生存優先で高さを最重視
- * - 【nearT4ボーナス強化: 10→15】
- *   3段チェーン設定（T1→T2→T3→T4）をより積極的に評価
- * - 【heavyGarbageStart CRITICAL閾値: nearDeadline>=6→>=7に変更】
- *   開幕ガベージによる誤緩和を減らし真の危機への対応精度向上
- * - v53の全改善を維持
+ * v55: v54ベース + T1過剰即時マージの抑制
+ * - 【garbageUrgent + T1で低列マージを優先】
+ *   緊急ガベージ時に高い列のT1即時マージへ吸われすぎるのを抑え、
+ *   低い列の安全マージを選ぶ分岐を追加
+ * - 【ULTRA_EXTREME/T1_EXTREMEのimmediateを高密度時に軽くスロットル】
+ *   immediate先の列が高い/壁寄りで、dense/stackの代替が十分安全ならそちらを優先
+ * - v54の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -214,14 +206,25 @@ export function decide(boardState) {
       }
       // [v48] 壁ペナルティ動的強化: pieces>75の場合、壁落下ループを抑制
       const t1WallMult = rawPieceCount > EXTREME_T1_WALL_PIECE_THRESHOLD ? 2.5 : 1.0;
-      // immediateをdense前に (top=T1は物理的に確実なマージ)
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, t1WallMult, rawPieceCount);
-      if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias, t1WallMult);
+      const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
+      const saferT1Alt = pickSaferT1Alternative(
+        colHeights,
+        immediateX,
+        [
+          { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE_SAFE' },
+          { x: stackCol, reason: 'ULTRA_EXTREME_T1_STACK_SAFE' },
+        ],
+        rawPieceCount,
+        gaugeLevel,
+      );
+      if (saferT1Alt) return saferT1Alt;
+      // immediateをdense前に維持しつつ、高密度では明らかに安全な代替を許可
+      if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
       if (denseX !== null) return { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE' };
       const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
       if (chainAnchor !== null) return { x: chainAnchor, reason: 'ULTRA_EXTREME_T1_ANCHOR' };
-      const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
       if (stackCol !== null) return { x: stackCol, reason: 'ULTRA_EXTREME_T1_STACK' };
       const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
       return { x: lowestDrop.x, reason: `ULTRA_EXTREME_T1_LOWEST` };
@@ -433,6 +436,30 @@ export function decide(boardState) {
       return { x: 0, reason: `FLOOD_GBG_HOLD_T1`, hold: true };
     }
 
+    if (nextType === 1) {
+      const gbgImmediateT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
+      const gbgLowT1Merge = findMergeInLowCol(activePieces, 1, colHeights, DEADLINE_Y - 0.2, dangerBias);
+      const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
+      const lowestColH = colHeights[lowestDrop.idx];
+
+      if (shouldPreferLowT1GarbageMerge(
+        colHeights,
+        gbgImmediateT1,
+        gbgLowT1Merge ? gbgLowT1Merge.x : null,
+        garbageHeight,
+        garbageRatio,
+        lowestColH,
+        rawPieceCount,
+        t1Count,
+      )) {
+        return { x: gbgLowT1Merge.x, reason: 'GBG_T1_LOW_MERGE' };
+      }
+
+      if (gbgImmediateT1 !== null) {
+        return { x: gbgImmediateT1, reason: 'GBG_T1_IMMEDIATE' };
+      }
+    }
+
     const gbgMinType = garbageFloodMode ? 2 : 1;
     if (nextType >= gbgMinType) {
       const gbgMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, true, 0);
@@ -584,8 +611,20 @@ export function decide(boardState) {
     }
     if (extremeT1Flood) {
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
-      if (immediateX !== null) return { x: immediateX, reason: 'T1_EXTREME_IMMEDIATE' };
+      const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
       const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
+      const saferT1Alt = pickSaferT1Alternative(
+        colHeights,
+        immediateX,
+        [
+          { x: denseX, reason: 'T1_EXTREME_DENSE_SAFE' },
+          { x: stackCol, reason: 'T1_EXTREME_STACK_SAFE' },
+        ],
+        rawPieceCount,
+        gaugeLevel,
+      );
+      if (saferT1Alt) return saferT1Alt;
+      if (immediateX !== null) return { x: immediateX, reason: 'T1_EXTREME_IMMEDIATE' };
       if (stackCol !== null) return { x: stackCol, reason: 'T1_EXTREME_STACK' };
       const t1Chain = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
       if (t1Chain !== null) return { x: t1Chain, reason: 'T1_EXTREME_ANCHOR' };
@@ -662,6 +701,63 @@ function shouldPreferLowT1CriticalMerge(colHeights, immediateX, lowMergeX, garba
     return true;
   }
   return false;
+}
+
+function shouldPreferLowT1GarbageMerge(
+  colHeights,
+  immediateX,
+  lowMergeX,
+  garbageHeight,
+  garbageRatio,
+  lowestColH,
+  rawPieceCount,
+  t1Count,
+) {
+  if (lowMergeX === null) return false;
+  if (immediateX === null) return true;
+
+  const immediateH = colHeights[nearestColIdx(immediateX)];
+  const lowMergeH = colHeights[nearestColIdx(lowMergeX)];
+
+  if (garbageHeight >= DEADLINE_Y + 0.5 && lowMergeH <= immediateH - 0.3) {
+    return true;
+  }
+  if (garbageRatio >= 0.28 && t1Count >= 12 && lowMergeH <= lowestColH + 0.35 && immediateH >= lowMergeH + 0.25) {
+    return true;
+  }
+  if (rawPieceCount >= 45 && lowMergeH <= immediateH - 0.5) {
+    return true;
+  }
+  return false;
+}
+
+function pickSaferT1Alternative(colHeights, immediateX, candidates, rawPieceCount, gaugeLevel) {
+  if (immediateX === null) return null;
+  if (rawPieceCount < 90 && gaugeLevel < 0.65) return null;
+
+  const immediateH = colHeights[nearestColIdx(immediateX)];
+  const immediateWall = Math.abs(immediateX) >= 2.0;
+  const viable = candidates
+    .filter(candidate => candidate && candidate.x !== null)
+    .map(candidate => ({
+      ...candidate,
+      h: colHeights[nearestColIdx(candidate.x)],
+    }))
+    .sort((a, b) => (a.h - b.h) || (Math.abs(a.x) - Math.abs(b.x)));
+
+  if (viable.length === 0) return null;
+
+  const best = viable[0];
+  if (immediateWall && best.h <= immediateH + 0.15) {
+    return { x: best.x, reason: best.reason };
+  }
+  if (immediateH > WARN_Y + 0.35 && best.h <= immediateH - 0.35) {
+    return { x: best.x, reason: best.reason };
+  }
+  if (rawPieceCount >= 105 && best.h <= immediateH + 0.2 && Math.abs(best.x) <= Math.abs(immediateX)) {
+    return { x: best.x, reason: best.reason };
+  }
+  return null;
 }
 
 /**
