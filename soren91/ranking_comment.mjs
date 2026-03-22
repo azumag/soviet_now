@@ -67,46 +67,39 @@ function extractCommentOnly(raw) {
   if (!raw) return null;
   const trimmed = raw.trim();
 
-  // マークダウンのヘッダーや箇条書きが含まれていたら、最後のプレーンテキスト部分を取る
+  // マークダウンのヘッダーや箇条書きが含まれていたら、プレーンテキスト行だけ結合
   if (trimmed.includes('**') || trimmed.includes('- ') || trimmed.includes('1.')) {
     const lines = trimmed.split('\n').map(l => l.trim()).filter(Boolean);
-    // 末尾から、マークダウン記号を含まない行を探す
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i];
-      if (!line.startsWith('-') && !line.startsWith('*') && !line.startsWith('#') &&
-          !line.match(/^\d+\./) && !line.startsWith('|') &&
-          line.length >= 5 && line.length <= 120) {
-        return line.replace(/^[「『]|[」』]$/g, '').trim();
-      }
+    const plainLines = lines.filter(line =>
+      !line.startsWith('-') && !line.startsWith('*') && !line.startsWith('#') &&
+      !line.match(/^\d+\./) && !line.startsWith('|') && line.length >= 3
+    );
+    if (plainLines.length > 0) {
+      return plainLines.join('').replace(/^[「『]|[」』]$/g, '').trim().slice(0, 350);
     }
   }
 
-  // 短い単一行ならそのまま返す
-  if (!trimmed.includes('\n') && trimmed.length <= 120) {
-    return trimmed.replace(/^[「『]|[」』]$/g, '').trim();
+  // 200文字以内ならそのまま返す（改行は除去して結合）
+  const joined = trimmed.split('\n').map(l => l.trim()).filter(Boolean).join('');
+  if (joined.length <= 350) {
+    return joined.replace(/^[「『]|[」』]$/g, '').trim();
   }
 
-  // 複数行の場合、最後の行が短ければそれがコメント
-  const lines = trimmed.split('\n').map(l => l.trim()).filter(Boolean);
-  const lastLine = lines[lines.length - 1];
-  if (lastLine && lastLine.length <= 120 && lastLine.length >= 5) {
-    return lastLine.replace(/^[「『]|[」』]$/g, '').trim();
-  }
-
-  return trimmed.slice(0, 120);
+  return joined.slice(0, 350);
 }
 
 function callClaudeForComment(base64Image, gameNumber, myRank) {
   const rankInfo = myRank != null ? `自分の順位: ${myRank}位/91人中。` : '';
 
-  const promptText = `あなたは「メリケンAI」。アメリカ製AIで、ソ連ゲーム91をプレイ中。陽気なアメリカン口調の日本語で話す。
+  const promptText = `あなたは「メリケンAI」。アメリカ製AIで、資本主義の力でソ連ゲーム91を制覇しようとしている。丁寧なですます調だが、随所にアメリカンジョークや資本主義ネタを挟む陽気なキャラクター。
 ${rankInfo}
-このランキング画面を見て、試合後の一言コメントを生成せよ。
+このランキング画面を見て、試合後のコメントを生成せよ。
 
 ルール:
 - 画面のプレイヤー名を読み取り、NPC（ロシア風の名前）以外の人間プレイヤーがいれば名前に言及
-- 自然な日本語の話し言葉のみ（英語禁止）
-- 1〜2文、最大50文字
+- 資本主義者としての誇りやアメリカンジョークを自然に織り交ぜる
+- 自然な日本語のですます調のみ（英語禁止）
+- 3〜4文、最大150文字
 - コメント本文のみ出力（分析・説明・カッコ・注釈は一切不要）`;
 
   const content = [
@@ -244,7 +237,6 @@ export async function generateMidgameComment(screenshotPath, gameNumber, turn, b
     try { writeFileSync(COMMENT_LOG_PATH, logLine, { flag: 'a' }); } catch {}
 
     speakComment(comment, 'soren91:midgame_comment');
-    postToTwitch(comment);
 
     return comment;
   } catch (err) {
@@ -261,14 +253,16 @@ function callClaudeForMidgame(base64Image, gameNumber, turn, boardState) {
     ? `おじゃまブロック: ${(garbageRatio * 100).toFixed(0)}%、ゲージ: ${(gauge * 100).toFixed(0)}%。`
     : '';
 
-  const promptText = `あなたは「メリケンAI」。アメリカ製AIで、ソ連ゲーム91（91人対戦・落ちものパズル）をプレイ中。陽気なアメリカン口調の日本語で話す。
+  const promptText = `あなたは「メリケンAI」。アメリカ製AIで、資本主義の力でソ連ゲーム91（91人対戦・落ちものパズル）を制覇しようとしている。丁寧なですます調だが、随所にアメリカンジョークや資本主義ネタを挟む陽気なキャラクター。
 現在ターン${turn}、盤面にピース${pieces}個。${garbageInfo}
 この盤面スクリーンショットを見て、試合中の実況コメントを生成せよ。
 
 ルール:
-- 盤面の状況（ピースの積み上がり具合、危険度、チャンスなど）に言及
-- 自然な日本語の話し言葉のみ（英語禁止）
-- 1〜2文、最大50文字
+- 盤面の状況（ピースの積み上がり具合、危険度、大きなピースの有無、チャンスなど）に具体的に言及
+- 画面に見えるピースの色や大きさ、積み上がりの高さなどを観察して述べる
+- 資本主義者としての誇りやアメリカンジョークを自然に織り交ぜる
+- 自然な日本語のですます調のみ（英語禁止）
+- 5〜7文、200〜300文字程度でしっかり語る
 - コメント本文のみ出力（分析・説明・カッコ・注釈は一切不要）`;
 
   const content = [

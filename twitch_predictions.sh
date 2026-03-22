@@ -87,12 +87,45 @@ if reasons:
 PY
 }
 
+_resolve_prediction_as_no_kenkou() {
+	# stale な予想を「建国なし」(outcome index 0) で resolve する
+	[ -f "$PREDICTION_STATE_FILE" ] || return 1
+	local state prediction_id winning_outcome_id payload
+	state=$(cat "$PREDICTION_STATE_FILE")
+	prediction_id=$(echo "$state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prediction_id"])' 2>/dev/null)
+	winning_outcome_id=$(echo "$state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["outcome_ids"][0])' 2>/dev/null)
+	[ -n "$prediction_id" ] && [ -n "$winning_outcome_id" ] || return 1
+
+	payload=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'broadcaster_id': '$BROADCASTER_ID',
+    'id': '$prediction_id',
+    'status': 'RESOLVED',
+    'winning_outcome_id': '$winning_outcome_id'
+}))
+" 2>/dev/null)
+
+	curl -sf --max-time 15 -X PATCH \
+		"https://api.twitch.tv/helix/predictions" \
+		-H "Authorization: Bearer ${TOKEN}" \
+		-H "Client-Id: ${CLIENT_ID}" \
+		-H "Content-Type: application/json" \
+		-d "$payload" >/dev/null 2>&1
+}
+
 _clear_stale_prediction_state_if_any() {
 	local current_game_num="${1:-0}"
 	local stale_reason=""
 	stale_reason=$(_prediction_state_stale_reason "$current_game_num" || true)
 	[ -n "$stale_reason" ] || return 1
-	_log "STALE: clearing local prediction state (${stale_reason})"
+	_log "STALE: resolving prediction as 建国なし before clearing (${stale_reason})"
+	if _resolve_prediction_as_no_kenkou; then
+		_log "STALE: prediction resolved on Twitch"
+		./twitch_chat.sh send "予想結果：「建国なし」でした！" 2>/dev/null &
+	else
+		_log "STALE: resolve failed, prediction may need manual cleanup"
+	fi
 	rm -f "$PREDICTION_STATE_FILE"
 	return 0
 }

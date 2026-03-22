@@ -797,8 +797,8 @@ async function gameLoop(page, calibration, gameNumber) {
       turn++;
       consecutiveErrors = 0;
 
-      // 試合中コメント: ターン20で一度だけ生成 (非同期、ゲームをブロックしない)
-      if (turn === 20 && !midgameCommentDone) {
+      // 試合中コメント: ターン60で一度だけ生成 (非同期、ゲームをブロックしない)
+      if (turn === 60 && !midgameCommentDone) {
         midgameCommentDone = true;
         (async () => {
           try {

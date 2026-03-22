@@ -238,13 +238,18 @@ schedule_nonessential_audio_jobs() {
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(_last_score)
 
-	# 配信演出の頻度: 12ゲームサイクルに合わせる
-	# cycle_pos=2 で雑談ラジオ、cycle_pos=5 でニュース
+	# 配信演出の頻度: 改善サイクル (accumulated_games) に合わせる
+	# cycle_pos=2 で雑談ラジオ、cycle_pos=5 でニュース、cycle_pos=8 で時事
 	# コメント優先の判定は維持しつつ、生成は止めない。
 	# 再生段で deferred キューへ回して、コメント消化後に再生する。
 	local comment_backlog_skip_threshold=1
 	local improve_cycle=${MIN_GAMES_BEFORE_IMPROVE:-12}
-	local cycle_pos=$(( game_num % improve_cycle ))
+	# 蓄積数ベースでサイクル位置を決定 (粛清/リセットでもズレない)
+	local acc_count=0
+	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+		acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+	fi
+	local cycle_pos=$(( acc_count % improve_cycle ))
 
 	local comment_queued=0 comment_playing=0 comment_total=0
 	local comment_backlog_high=false
