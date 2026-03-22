@@ -213,8 +213,8 @@ function postToTwitch(comment) {
  * @param {object} boardState - 盤面状態
  */
 export async function generateMidgameComment(gameNumber, turn, boardState) {
-  if (!boardState) {
-    console.log('[midgame_comment] No board state available');
+  if (!boardState || !boardState.pieces || boardState.pieces.length === 0) {
+    console.log('[midgame_comment] No board state or empty pieces');
     return null;
   }
 
@@ -247,9 +247,9 @@ function formatBoardStateForPrompt(boardState, turn) {
   const hold = boardState?.hold;
   const nextPieces = boardState?.nextPieces ?? [];
 
-  // 盤面の高さ（最も高いピースの y）
+  // 盤面の高さ（最も高いピースの上端 = y + r）
   const maxY = pieces.length > 0
-    ? Math.max(...pieces.map(p => p.y ?? -5))
+    ? Math.max(...pieces.map(p => (p.y ?? -5) + (p.r ?? 0)))
     : -5;
   const deadlineY = 3.32;
   const heightPct = Math.max(0, Math.min(100, ((maxY + 5) / (deadlineY + 5)) * 100)).toFixed(0);
