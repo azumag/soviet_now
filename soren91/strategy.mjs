@@ -1,13 +1,14 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v43)
+ * strategy.mjs - ドロップ位置決定戦略 (v44)
  *
- * v43: v42ベース + 序盤ゲージ対応・EMERGENCY改善
- * - 【gaugeLevel早期計算】序盤保護モード前に移動して早期参照可能に
- * - 【序盤ゲージ対応】rawPieceCount<10でgauge>=0.6時、X範囲を±1.5に制限
- *   大型チェーンクリア後のおじゃまフラッド到来直前に壁付近に置くリスクを軽減
- * - 【EMERGENCY マージ優先】EMERGENCY_ALL_DANGERでT2+マージが可能なら先に実行
- *   ピース削減でチェーン機会を作り即死を1手でも先延ばし
- * - v42以前の全改善を維持
+ * v44: v43ベース + T1→T2即時連鎖誘発の強化
+ * - 【findT1ImmediateMerge近接T2優先】radius 0.8内のT2に大ボーナス(55)
+ *   T1→T2マージ直後にT2+T2→T3の即時連鎖を狙うポジションを優先
+ * - 【findT1ChainAnchor近接T2優先】同様にradius 0.8内T2を分離評価
+ *   チェーンアンカーとしてより連鎖誘発しやすい位置を選択
+ * - 【findBestMergeチェーンスコア増強】c1ボーナス12→16
+ *   T_{n+1}隣接時の評価を上げ、チェーン設定を積極的に追求
+ * - v43以前の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -691,7 +692,8 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
  * 列トップがT1の列を検出して即時T1→T2マージを狙う
  * tall列への追加ペナルティ (WARN_Y+0.5超えで×30)
  * 低Y位置ボーナス追加 (colH<0で+20、colH<WARN_Yで+10)
- *   高い列のT1をさらに積むことを抑制し、低い位置のマージを優先
+ * [v44] nearT2Close (r=0.8): T2が極近傍にある列を大幅優先
+ *   T1→T2マージ直後にT2+T2→T3の即時連鎖を誘発する
  */
 function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
   let bestScore = -Infinity;
@@ -718,9 +720,12 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
     else if (colHeights[i] < WARN_Y) s += 10;
     s -= Math.abs(cx) * 2.0;
 
+    // [v44] 近接T2 (r=0.8): T1→T2後の即時T2+T2連鎖を強く優先
+    const nearT2Close = countNear(pieces, cx, 2, 0.8);
     const nearT2 = countNear(pieces, cx, 2, 2.0);
     const nearT3 = countNear(pieces, cx, 3, 2.4);
-    s += nearT2 * 35;
+    s += nearT2Close * 55;
+    s += (nearT2 - nearT2Close) * 25;
     s += nearT3 * 18;
 
     // wall抑制
@@ -740,6 +745,7 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
 
 /**
  * T1専用チェーンアンカー
+ * [v44] nearT2Close (r=0.8): T2が極近傍の位置を強く優先
  */
 function findT1ChainAnchor(pieces, colHeights, dangerBias, t1Flood = false) {
   const t1Pieces = pieces.filter(p =>
@@ -755,6 +761,8 @@ function findT1ChainAnchor(pieces, colHeights, dangerBias, t1Flood = false) {
     if (colHeights[ci] >= DEADLINE_Y + 0.2) continue;
 
     const nearT1 = t1Pieces.filter(p => p !== t1 && Math.abs(p.x - t1.x) < 1.2).length;
+    // [v44] 近接T2 (r=0.8) を分離評価
+    const nearT2Close = countNear(pieces, t1.x, 2, 0.8);
     const nearT2 = countNear(pieces, t1.x, 2, 2.0);
     const nearT3 = countNear(pieces, t1.x, 3, 2.2);
     const nearT4 = countNear(pieces, t1.x, 4, 2.4);
@@ -762,7 +770,8 @@ function findT1ChainAnchor(pieces, colHeights, dangerBias, t1Flood = false) {
     if (!t1Flood && nearT2 === 0) continue;
     if (t1Flood && nearT2 === 0 && nearT1 < 2) continue;
 
-    let s = nearT2 * 16;
+    // [v44] 近接T2に大ボーナス、通常T2も維持
+    let s = nearT2Close * 28 + (nearT2 - nearT2Close) * 12;
     s += nearT3 * 8;
     s += nearT4 * 4;
     if (t1Flood) s += nearT1 * 10;
@@ -982,7 +991,8 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
     const c4 = countNear(pieces, t.x, nextType + 4, 3.0);
-    const chainScore = c1 * 12 + c2 * 6 + c3 * 3 + c4 * 2;
+    // [v44] c1ボーナスを12→16に増強: T_{n+1}隣接のチェーン設定を積極的に追求
+    const chainScore = c1 * 16 + c2 * 6 + c3 * 3 + c4 * 2;
     if (chainScore < minChainScore) continue;
     s += chainScore;
 
