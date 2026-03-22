@@ -8,19 +8,19 @@ Game Overview:
   - Player controls only drop X coordinate
 
    Decision Logic (11 evaluation axes):
-       1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-      2. Height penalty - Penalty for high landing position (varies by phase)
-       3. Drift penalty - Penalty for post-landing drift due to polygon shape
-       4. Left-right balance correction - Bonus for correcting piece count bias
-        5. nextNext centering - Center for next merge opportunity if nextNext same type
-         5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-         6. Chain merge bonus - Evaluate possibility of further merges after merge
-          7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
-         8. Early game merge priority - Strong bonus for merge opportunities in early game
-          8.5. Danger zone immediate merge priority - v307: deadline_crossed reactive_pairs即時併合優先強化
-          9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
-          9.5. Current type stack merge priority - v277: Same type stacking enhanced (reactive>=1:+800.0, reactive==0:+300.0, deadline_crossed: always active)
-          9.6. Reactive pairs immediate merge bonus - v306: 戦略的配置ボーナス完全削除版
+        1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+       2. Height penalty - Penalty for high landing position (varies by phase)
+        3. Drift penalty - Penalty for post-landing drift due to polygon shape
+        4. Left-right balance correction - Bonus for correcting piece count bias
+         5. nextNext centering - Center for next merge opportunity if nextNext same type
+          5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
+          6. Chain merge bonus - Evaluate possibility of further merges after merge
+           7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
+          8. Early game merge priority - Strong bonus for merge opportunities in early game
+           8.5. Danger zone immediate merge priority - v308: deadline_crossed時の即時併合優先強化版
+           9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
+           9.5. Current type stack merge priority - v277: Same type stacking enhanced (reactive>=1:+800.0, reactive==0:+300.0, deadline_crossed: always active)
+           9.6. Reactive pairs immediate merge bonus - v306: 戦略的配置ボーナス完全削除版
 
 Phases (determined by board max Y):
      LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -37,28 +37,29 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
  # --- Change History ---
-# v307: deadline_crossed reactive_pairs即時併合優先強化版
-# v306 failure mode: deadline_crossed時、reactive_pairsがあるのに即時併合不可の場合、戦略的配置ボーナスが付与され続け、max_y runaway → ゲームオーバー
-# ワーストゲーム(score0767)終盤turns 47-54でreactive_pairs=2-4あるのに即時併合不可、戦略的配置が続きmax_y=2.04→2.71に上昇してゲームオーバー
-# ベストゲーム(score2405)終盤turns 113-120では即時併合機会（NEAR_MERGE）を確実に捉えてスコア2405を出している
-# deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" の場合、height_penaltyを強化して戦略的配置を抑制
-# danger_piece_count==0でもdeadline_crossed && reactive_pair_count >= 2ならheight_penaltyを強化して即時併合を優先
+# v308: deadline_crossed時の即時併合優先強化版 - 危険ピースなし時の戦略的配置ボーナス削減
+# v307 failure mode: deadline_crossed && reactive_pair_count < 2 && merge_grade == "NO" の場合、height_mult *= 0.6で戦略的配置の余地を残していたため、即時併合機会を逃してmax_y runaway
+# ワーストゲーム(score0534)終盤turns 52-59でdeadline_crossed後も戦略的配置を継続しmax_y=2.98→3.64に上昇してゲームオーバー
+# ベストゲーム(score3244)終盤turns 116-123ではdeadline_crossed後も即時併合機会を確実に捉えてスコア稼いでいる
+# batch_summaryでHEIGHT_CONTROLが18.9%選択(avg_score_delta=0.1)と過剰、即時併合機会取りこぼしが問題
+# deadline_crossed && danger_piece_count == 0 && merge_grade == "NO" の場合、height_multを0.6から15.0に変更して戦略的配置を抑制し、即時併合機会を待つようにする
 # last_rollback_postmortem制約遵守：即時併合（DIRECT/NEAR）が可能な場合、常に即時併合を優先する
 # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-#       game_history/20260322_143035_score0767.jsonl turns 47-54, game_history/20260322_145021_score2405.jsonl turns 113-120
+#       game_history/20260322_153355_score0534.jsonl turns 52-59, game_history/20260322_152431_score3299.jsonl turns 116-123,
+#       strategy_versions/best_score5694_strategy.py
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v307: deadline_crossed reactive_pairs即時併合優先強化版
+    """v308: deadline_crossed時の即時併合優先強化版 - 危険ピースなし時の戦略的配置ボーナス削減
 
-    v306 failure mode: deadline_crossed時、reactive_pairsがあるのに即時併合不可の場合、戦略的配置ボーナスが付与され続け、max_y runaway → ゲームオーバー
-    ワーストゲーム(score0767)終盤turns 47-54でreactive_pairs=2-4あるのに即時併合不可、戦略的配置が続きmax_y=2.04→2.71に上昇してゲームオーバー
-    ベストゲーム(score2405)終盤turns 113-120では即時併合機会（NEAR_MERGE）を確実に捉えてスコア2405を出している
-    deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" の場合、height_penaltyを強化して戦略的配置を抑制
-    danger_piece_count==0でもdeadline_crossed && reactive_pair_count >= 2ならheight_penaltyを強化して即時併合を優先
+    v307 failure mode: deadline_crossed && reactive_pair_count < 2 && merge_grade == "NO" の場合、height_mult *= 0.6で戦略的配置の余地を残していたため、即時併合機会を逃してmax_y runaway
+    ワーストゲーム(score0534)終盤turns 52-59でdeadline_crossed後も戦略的配置を継続しmax_y=2.98→3.64に上昇してゲームオーバー
+    ベストゲーム(score3244)終盤turns 116-123ではdeadline_crossed後も即時併合機会を確実に捉えてスコア稼いでいる
+    batch_summaryでHEIGHT_CONTROLが18.9%選択(avg_score_delta=0.1)と過剰、即時併合機会取りこぼしが問題
+    deadline_crossed && danger_piece_count == 0 && merge_grade == "NO" の場合、height_multを0.6から15.0に変更して戦略的配置を抑制し、即時併合機会を待つようにする
     last_rollback_postmortem制約遵守：即時併合（DIRECT/NEAR）が可能な場合、常に即時併合を優先する
 
     Args:
@@ -405,11 +406,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 即時併合可能だが、この候補では併合できない場合：ペナルティ
                 score -= 500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
-            elif merge_grade == "NO" and not (deadline_crossed and reactive_pair_count >= 2):
+            elif merge_grade == "NO":
                  # 即時併合機会がない場合：戦略的配置の余地を確保するためheight_multを緩和
-                 # deadline_crossed && reactive_pair_count >= 2の場合は緩和しない（v307）
-                 # この緩和はheight_penalty計算時に適用される
-                 height_mult *= 0.6
+                 # v308: deadline_crossed時は即時併合優先を強化し、戦略的配置を抑制
+                 if deadline_crossed:
+                     # deadline_crossed時は危険ピースがない限り、即時併合不可でも危険な高配置を避ける
+                     # height_multを15.0にして戦略的配置ボーナスを削減
+                     height_mult *= 15.0
+                 else:
+                     # 非deadline_crossed時は戦略的配置の余地を確保
+                     height_mult *= 0.6
                  reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
 
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v306: 戦略的配置ボーナス完全削除版)
