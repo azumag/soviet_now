@@ -35,10 +35,13 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
-# v295: axis 2 インデント修正版 - v294 failure mode（deadline_crossed reactive_pairs即時併合優先）を維持
-# axis 2評価部分のインデントエラーを修正し、forループ内に正しく配置。
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md
+ # --- Change History ---
+# v306: 即時併合不可時の戦略的配置ボーナス完全削除版
+# v299 rollback failure mode: deadline_crossed時、reactive_pairsがあるのに即時併合不可の場合、戦略的配置ボーナスが付与され続け、max_y runaway → ゲームオーバー
+# axis 8.6の戦略的配置ボーナス（即時併合不可時に400.0/50.0を付与）を完全削除し、即時併合を最優先
+# 即時併合不可の場合、純粋に他の評価軸（height/drift/balance/chainなど）で判断させる
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
+#       game_history/20260322_120731_score0738.jsonl, game_history/20260322_074935_score2869.jsonl
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -399,43 +402,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  height_mult *= 0.6
                  reasons.append("DANGER_ZONE_STRATEGIC_PLACEMENT")
 
-        # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (NEW: 即時併合優先強化・戦略的配置削除版)
+        # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v306: 戦略的配置ボーナス完全削除版)
 
-        # v293: ワーストゲーム(score0518)終盤turns 56-61でreactive_pairs=4-5あるのに即時併合不可、戦略的配置が続きmax_y=3.84に上昇してゲームオーバー。
-        # ベストゲーム(score2047)終盤turns 106-113では即時併合を確実に捉えてスコア2041を出している。
-        # batch_summaryでHIGH_LAYER_REACTIVE_PAIRS_PROXIMITY_PRIORITY...が10.8%選択(avg_score_delta=2.0)と過剰、即時併合機会取りこぼしが問題。
-        # axis 7.5の戦略的配置ボーナスがaxis 8.6の即時併合ボーナスと競合し、reactive_pairsが多い場合に即時併合優先度を下げている。
-
-        # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正。
-        # last_rollback_postmortemの制約遵守：max_y>=2.0を危険域判定条件に追加しない、deadline_crossed時もSAME_TYPE_STACK有効。
+        # v299 rollback failure mode: deadline_crossed時、reactive_pairsがあるのに即時併合不可の場合、戦略的配置ボーナスが付与され続け、max_y runaway → ゲームオーバーした。
+        # ワーストゲーム(score0738)終盤turns 40-51でreactive_pairs=1-2あるのに即時併合不可、戦略的配置が続きmax_y=0.38→2.42に上昇してゲームオーバー。
+        # ベストゲーム(score2869)終盤turns 50-53では即時併合機会（NEAR_MERGE）を確実に捉えてscore_delta=202を獲得。
+        # axis 8.6の戦略的配置ボーナス（即時併合不可時に400.0/50.0を付与）が、即時併合機会を逃す原因になっている。
+        # last_rollback_postmortemの制約「reactive_pairsがある場合、即時併合が可能ならaxis 9.5ボーナスを付与するが、即時併合不可の場合は戦略的配置ボーナスを完全削除する」を厳守。
+        # 即時併合不可の場合、axis 8.6で戦略的配置ボーナスを完全削除し、純粋に他の評価軸（height/drift/balance/chainなど）で判断させる。
 
         if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
-            # reactive_pairs==1: 即時併合ボーナスを強化 (600.0 → 800.0)
+            # reactive_pairs==1: 即時併合ボーナス
             score += 800.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
         elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"]:
-            # reactive_pairs==2: 即時併合ボーナスを強化 (1000.0 → 1300.0)
+            # reactive_pairs==2: 即時併合ボーナス
             score += 1300.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
         elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
-            # reactive_pairs>=3: 即時併合ボーナスを強化 (1400.0 → 1600.0)
-            # 即時併合機会を最優先
+            # reactive_pairs>=3: 即時併合ボーナス（最優先）
             score += 1600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 1 and merge_grade == "NO" and danger_piece_count == 0:
-            # 即時併合不可で、危険ピースがない場合：戦略的配置ボーナスを抑制 (800.0 → 400.0)
-            # 即時併合優先を明確にする
-            score += 400.0
-            reasons.append("REACTIVE_STRATEGIC_PLACEMENT")
-            # 戦略的配置の余地を最小限にするためheight_multを緩和
-            height_mult *= 0.5
-        elif reactive_pair_count >= 1 and merge_grade == "NO" and danger_piece_count > 0:
-            # 即時併合不可で、危険ピースがある場合：戦略的配置ボーナスを最小限に抑制
-            # 即時併合優先を最優先にするためボーナスを最小限にする
-            score += 50.0
-            reasons.append("REACTIVE_STRATEGIC_PLACEMENT_DANGER")
-            # 危険ピースがある場合、戦略的配置の余地を最小限に抑制
-            height_mult *= 0.7
+        # 即時併合不可の場合、戦略的配置ボーナスは付与せず、他の評価軸で判断する
 
         # その他のaxisの評価後に追加
         # axis 8.5のdanger_piece_count優先ロジックは変更せず
