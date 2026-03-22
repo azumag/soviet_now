@@ -263,25 +263,13 @@ schedule_nonessential_audio_jobs() {
 	[ -z "$game_num" ] && game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	[ -z "$score" ] && score=$(_last_score)
 
-	# 配信演出の頻度 (変更しても毎ループ source で即反映)
-	local news_interval=4
-	local news_phase=1
-	local radio_interval=5
-	local radio_phase=0
+	# 配信演出の頻度: 12ゲームサイクルに合わせる
+	# cycle_pos=2 で雑談ラジオ、cycle_pos=5 でニュース
 	# コメント優先の判定は維持しつつ、生成は止めない。
 	# 再生段で deferred キューへ回して、コメント消化後に再生する。
 	local comment_backlog_skip_threshold=1
-
-	# 改善タイミング（12ゲームサイクルの10〜12ゲーム目）ではニュース・ランダムラジオをスキップ
-	# メリケンAI起動と重なるとラジオの読み上げが遅れるため
-	# 定時コーナーはそのまま通す
 	local improve_cycle=${MIN_GAMES_BEFORE_IMPROVE:-12}
 	local cycle_pos=$(( game_num % improve_cycle ))
-	local near_improve=false
-	if [ "$cycle_pos" -ge $((improve_cycle - 2)) ] || [ "$cycle_pos" -eq 0 ]; then
-		near_improve=true
-		log "[SCHEDULER] 改善タイミング付近 (cycle_pos=${cycle_pos}/${improve_cycle}): ニュース・ランダムラジオをスキップ"
-	fi
 
 	local comment_queued=0 comment_playing=0 comment_total=0
 	local comment_backlog_high=false
@@ -293,7 +281,8 @@ schedule_nonessential_audio_jobs() {
 		comment_backlog_high=true
 	fi
 
-	if [ "$near_improve" != true ] && (( game_num % news_interval == news_phase )); then
+	# ニュース: 12ゲームサイクルの5ゲーム目
+	if [ "$cycle_pos" -eq 5 ]; then
 		if [ "$comment_backlog_high" = true ]; then
 			log "[NEWS] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
 		fi
@@ -396,8 +385,8 @@ schedule_nonessential_audio_jobs() {
 		_run_timed_corner "survival" start_radio_corner_survival "$game_num" "$score" &
 	fi
 
-	# 時間帯コーナー発火時 or 改善タイミング付近はランダムラジオをスキップ
-	if [ "$timed_corner_fired" = false ] && [ "$near_improve" != true ] && (( game_num % radio_interval == radio_phase )); then
+	# 雑談ラジオ: 12ゲームサイクルの2ゲーム目（時間帯コーナー発火時はスキップ）
+	if [ "$timed_corner_fired" = false ] && [ "$cycle_pos" -eq 2 ]; then
 		if [ "$comment_backlog_high" = true ]; then
 			log "[RADIO] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
 		fi
