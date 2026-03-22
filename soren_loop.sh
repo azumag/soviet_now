@@ -258,6 +258,14 @@ while true; do
 		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
 			log "[MERIKEN_TIME] サイクル区切り+22時台: メリケンAIタイム開始 (1時間)"
 			soren91_start 2>/dev/null || true
+			# メリケンAIタイム専用アナウンス (読み上げ + Twitch投稿)
+			{
+				_mt_file=$(mktemp /tmp/eloop_meriken_time.XXXXXX)
+				printf '%s\n' "22時から23時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" > "$_mt_file"
+				SAY_VOICEVOX_SPEAKER_OVERRIDE="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="meriken_time:announce" ./say_enqueue.sh "$_mt_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+				rm -f "$_mt_file"
+			} &
+			./twitch_chat.sh send "22時から23時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
 			# 1時間ループ: soren91が動いている間、中華AIは休止
 			_meriken_end=$(($(date +%s) + 3600))
 			while [ "$(date +%s)" -lt "$_meriken_end" ]; do
