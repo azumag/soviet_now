@@ -1,17 +1,18 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v49)
+ * strategy.mjs - ドロップ位置決定戦略 (v50)
  *
- * v49: v48ベース + T1早期管理改善・CRITICAL脱出強化
- * - 【T1プレフラッド閾値を定数化・引き下げ (T1_PREFLOOD_THRESHOLD=6)】
- *   t1Count>=6でプレフラッド管理を開始 (旧:8)
- *   T1フラッドをより早期に検出し、T2+連鎖の準備機会を増やす
- * - 【CRITICAL時のfallbackマージ列制限緩和 (DEADLINE_Y+0.1→+0.3)】
- *   critFallbackMergeの対象列を少し拡大 (2.6→2.8)
- *   CRITICAL時でも同type隣接ならマージを優先して連鎖脱出を促進
- * - 【CRITICAL最終マージ試行追加 (T2+, findAnyMerge)】
- *   critFallbackMerge失敗後にT2+のfindAnyMergeを試みる
- *   HOLDセーブより前にマージ機会を消化して確実なピース削減を確保
- * - v48以前の全改善を維持
+ * v50: v49ベース + T1管理閾値の最適化・中盤チェーン構築改善
+ * - 【T1プレフラッド閾値を8に戻す (T1_PREFLOOD_THRESHOLD=8)】
+ *   t1Count>=8でプレフラッド管理を開始 (旧v49:6)
+ *   v27アンカー分析: 過剰な早期T1介入が通常マージフローを妨げる可能性
+ *   → 閾値を引き上げて通常マージフローを優先
+ * - 【中盤チェーンファースト対象をT3に拡張 (minChainScore=6)】
+ *   T3も rawPieceCount 15-60 の中盤でチェーン位置を積極的に探す
+ *   T4+は従来通り minChainScore=8
+ * - 【3段連鎖ボーナス追加 (findBestMerge)】
+ *   c1>0 && c2>0 && c3>0の3段連鎖設定に+8ボーナス
+ *   より深い連鎖準備位置を強く優先して高スコア連鎖を狙う
+ * - v49以前の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -28,7 +29,7 @@ const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.55;
 const GARBAGE_MODERATE_RATIO = 0.22;
 const GARBAGE_MODERATE_HEIGHT = 0.3;
 const EXTREME_T1_WALL_PIECE_THRESHOLD = 75; // [v48] 壁ペナルティ強化閾値
-const T1_PREFLOOD_THRESHOLD = 6; // [v49] T1プレフラッド開始閾値 (旧:8)
+const T1_PREFLOOD_THRESHOLD = 8; // [v50] 8に戻す (v49の6は過剰な早期T1介入)
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -491,7 +492,7 @@ export function decide(boardState) {
   }
 
   // --- T1フラッド予防HOLD (t1Count>=T1_PREFLOOD_THRESHOLD, isWarnでない場合) ---
-  // [v49] 閾値を8→T1_PREFLOOD_THRESHOLD(6)に引き下げてより早期にT1フラッドを予防
+  // [v50] 閾値をT1_PREFLOOD_THRESHOLD=8に戻す (v49の6は過剰な早期T1介入)
   if (canHold && !hold && nextType === 1 && t1Count >= T1_PREFLOOD_THRESHOLD && !isWarn) {
     const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
     const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
@@ -511,11 +512,11 @@ export function decide(boardState) {
     if (holdResult) return holdResult;
   }
 
-  // [v46] 中盤チェーンファースト: 非WARN・T4+・ピース15-60でチェーン優先
-  // T4以上が来たとき、T_{n+1}隣接位置に置いて大型連鎖を設定
-  // (T3はchain-first不要: 通常マージフローで十分)
-  if (!isWarn && !isCritical && nextType >= 4 && rawPieceCount >= 15 && rawPieceCount < 60) {
-    const midChain = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 8, 0);
+  // [v46] 中盤チェーンファースト: 非WARN・T3+・ピース15-60でチェーン優先
+  // [v50] T3に拡張 (minChainScore=6), T4+は従来通り (minChainScore=8)
+  if (!isWarn && !isCritical && nextType >= 3 && rawPieceCount >= 15 && rawPieceCount < 60) {
+    const chainThreshold = nextType >= 4 ? 8 : 6;
+    const midChain = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, chainThreshold, 0);
     if (midChain) return { ...midChain, reason: `MID_CHAIN_T${nextType}` };
   }
 
@@ -528,7 +529,7 @@ export function decide(boardState) {
 
   // T1ピースは早期にT1フラッドチェック
   if (nextType === 1) {
-    // [v49] T1プレフラッド対策 (t1Count T1_PREFLOOD_THRESHOLD-11): flood閾値到達前から密集誘導+チェーン
+    // [v50] T1プレフラッド対策 (t1Count T1_PREFLOOD_THRESHOLD-11): 閾値8から12の間
     if (t1Count >= T1_PREFLOOD_THRESHOLD && !t1FloodMode && !extremeT1Flood) {
       const preFloodDense = findT1DenseColumn(activePieces, colHeights, dangerBias);
       if (preFloodDense !== null) return { x: preFloodDense, reason: 'T1_PREFLOOD_DENSE' };
@@ -1048,6 +1049,8 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     let chainScore = c1 * 16 + c2 * 6 + c3 * 3 + c4 * 2;
     // [v47] 2段連鎖確定ボーナス: N+N→N+1後にN+1がN+1と隣接してN+2連鎖
     if (c1 > 0 && c2 > 0) chainScore += 15;
+    // [v50] 3段連鎖ボーナス: より深い連鎖設定を強く優先
+    if (c1 > 0 && c2 > 0 && c3 > 0) chainScore += 8;
     // [v47] 多重T_{N+1}ボーナス: 複数の即時チェーンターゲット = 確実連鎖
     if (c1 > 1) chainScore += (c1 - 1) * 8;
     if (chainScore < minChainScore) continue;
