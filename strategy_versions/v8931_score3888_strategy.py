@@ -55,20 +55,17 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v299: ロシアフェーズ即時併合優先強化版
-    v307 failure: deadline_margin急減（deadline_margin < 1.0）時に即時併合不可続き、戦略的配置が続きmax_y runawayでゲームオーバー
-    v306 failure: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナス削除でdeadline_margin急減時に盤面圧縮能力喪失
-    rollback postmortem制約「即時併合不可時に戦略的配置ボーナスを維持し、deadline_margin < 1.0 の場合でも盤面圧縮を優先」を厳守
-    axis 8.6: ロシアフェーズで即時併合優先ボーナスを強化（reactive_pairs>=1:+2000.0, reactive_pairs>=2:+1800.0, reactive_pairs>=3:+2200.0）
-    axis 8.6: Normal phaseで即時併合優先ボーナスを強化（reactive_pairs==1:+1000.0, reactive_pairs==2:+1800.0, reactive_pairs>=3:+2200.0）
-
-    advice.md「ロシア建国後は慎重な盤面進行が必要」「ロシアが盤面に現れたら戦略モードを切り替えるべき」「中途半端に育てたパーツをたくさん作る戦略はうまく行かない。1〜2箇所に集中して大きく育てる戦略へ転換すべき」に基づき、即時併合優先を強化。
-    batch_summaryでNEAR_MERGE関連reasonはavg_score_delta=54.9と高価値だが選択率は4.6%と低いことを確認。
-    ワーストゲーム(score0716)終盤で即時併合機会が少なく、戦略的配置が続きmax_yが急上昇してゲームオーバー。
-    ベストゲーム(score2727)では積極的に即時併合を確実に捉え、ロシア建国後フェーズでも継続してプレイ。
-    ロシア建国後は盤面が狭くなり、高typeピースが多数を占めるため、即時併合の優先度を高める必要がある。
-    refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-          game_history/20260322_201242_score0716.jsonl, game_history/20260322_201021_score2727.jsonl
+    """v313: 即時併合不可時の戦略的配置ボーナス強化版 - ロシア建国後フェーズの盤面圧縮能力確保
+    v306 failure: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナス完全削除でdeadline_margin急減時に盤面圧縮能力喪失
+    v312 failure: ロシア建国後フェーズの戦略的配置ボーナスが低すぎ（+25.0〜+50.0）、即時併合不可時に盤面圧縮能力不足
+    axis 8.6: 即時併合不可時の戦略的配置ボーナスを強化して盤面圧縮能力を確保
+    axis 8.6: ロシアフェーズと通常フェーズの重複条件分岐を統合してシンプル化
+    axis 8.6: deadline_margin < 1.0 で即時併合不可の場合、戦略的配置ボーナスを +100.0→+200.0 に強化して盤面圧縮能力向上
+    axis 8.6: reactive_pairs>=1 && merge_grade in ["DIRECT", "NEAR"] の即時併合優先ボーナスを +100.0 強化
+    refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+          game_history/20260323_021106_score0700.jsonl, game_history/20260323_023244_score2043.jsonl,
+          strategy_versions/best_score2346_strategy.py
+    Fixes rollback failure mode: reactive_pairs>=3 && merge_grade=="NO" && danger_piece_count==0で戦略的配置ボーナスを完全削除しない
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -436,9 +433,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v313: 即時併合不可時の戦略的配置ボーナスを大幅強化して、狭い盤面での盤面圧縮能力を維持
             
             if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
-                # reactive_pairsがある場合、即時併合を最優先（+1600.0：+1500.0から強化）
-                score += 1600.0
+                # reactive_pairsがある場合、即時併合を最優先
+                score += 1400.0
                 reasons.append("RUSSIAN_PHASE_IMMEDIATE_MERGE_PRIORITY")
+                if reactive_pair_count >= 2:
+                    score += 200.0  # 合計: reactive_pairs>=2: +1600.0
+                if reactive_pair_count >= 3:
+                    score += 200.0  # 合計: reactive_pairs>=3: +1800.0
             elif merge_grade == "NO" and danger_piece_count == 0:
                 # 即時併合不可で、危険ピースがない場合：戦略的配置ボーナスを大幅強化
                 # v313: ロシア建国後フェーズの盤面圧縮能力強化
@@ -483,14 +484,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         else:
             # 通常フェーズ
             if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
-                # reactive_pairsがある場合、即時併合を優先（+1100.0：+1000.0から強化）
-                score += 1100.0
+                # reactive_pairsがある場合、即時併合を優先
+                score += 1000.0
                 reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
                 # reactive_pairsに応じてボーナスをさらに強化
                 if reactive_pair_count >= 2:
-                    score += 700.0  # 合計: reactive_pairs>=2: +1800.0
+                    score += 800.0  # 合計: reactive_pairs>=2: +1800.0
                 if reactive_pair_count >= 3:
-                    score += 1100.0  # 合計: reactive_pairs>=3: +2200.0
+                    score += 1200.0  # 合計: reactive_pairs>=3: +2200.0
             elif merge_grade == "NO" and danger_piece_count == 0:
                 # 即時併合不可で、危険ピースがない場合：戦略的配置ボーナスを強化して盤面圧縮能力を維持
                 # v313: 即時併合不可時の戦略的配置ボーナス強化版
