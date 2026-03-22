@@ -1,18 +1,21 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v50)
+ * strategy.mjs - ドロップ位置決定戦略 (v51)
  *
- * v50: v49ベース + T1管理閾値の最適化・中盤チェーン構築改善
- * - 【T1プレフラッド閾値を8に戻す (T1_PREFLOOD_THRESHOLD=8)】
- *   t1Count>=8でプレフラッド管理を開始 (旧v49:6)
- *   v27アンカー分析: 過剰な早期T1介入が通常マージフローを妨げる可能性
- *   → 閾値を引き上げて通常マージフローを優先
- * - 【中盤チェーンファースト対象をT3に拡張 (minChainScore=6)】
- *   T3も rawPieceCount 15-60 の中盤でチェーン位置を積極的に探す
- *   T4+は従来通り minChainScore=8
- * - 【3段連鎖ボーナス追加 (findBestMerge)】
- *   c1>0 && c2>0 && c3>0の3段連鎖設定に+8ボーナス
- *   より深い連鎖準備位置を強く優先して高スコア連鎖を狙う
- * - v49以前の全改善を維持
+ * v51: v50ベース + CRITICAL頻度削減・中盤安定化・ガベージ早期対応
+ * - 【CRITICAL nearDeadline閾値を3→4に緩和】
+ *   hardCritical: nearDeadlineCount >= 3 → >= 4
+ *   v50での46%CRITICAL発生率を削減し通常チェーン構築モードを増加
+ *   overDeadlineCount >= 2 は維持 (真の危機は確実に捕捉)
+ * - 【ガベージゲージ早期反応 (gauge >= 0.2)】
+ *   v50の0.3から0.2に引き下げ + ojamaBoost=3で早期マージ準備
+ *   おじゃま来襲前の連鎖設定を一手早める
+ * - 【garbageFloodMode高さ閾値を1.1に緩和】
+ *   rawPieceCount > 55 && avgHeight > 1.3 → > 1.1
+ *   T1ガベージフラッドモードへの移行を前倒しして積み上がりを防止
+ * - 【中盤プリエンプティブマージ追加 (rawPieces 20-55, avgHeight > 0.6)】
+ *   CRITICAL到達前に高さを削減するプリエンプティブマージ
+ *   T2+ピース、非警戒・非緊急時にminChainScore=0でマージを積極活用
+ * - v50以前の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -99,6 +102,7 @@ export function decide(boardState) {
   else if (garbagePresent) ojamaBoost = 8;
   else if (gaugeLevel >= 0.6) ojamaBoost = 10;
   else if (gaugeLevel >= 0.3) ojamaBoost = 5;
+  else if (gaugeLevel >= 0.2) ojamaBoost = 3; // [v51] 早期ゲージ反応
 
   // colHeights already computed above
   const validH = colHeights.filter(h => h > -4.5);
@@ -106,7 +110,8 @@ export function decide(boardState) {
     ? validH.reduce((a, b) => a + b, 0) / validH.length
     : -3.0;
 
-  const garbageFloodMode = rawPieceCount > 55 && avgHeight > 1.3;
+  // [v51] garbageFloodMode height threshold lowered from 1.3 to 1.1
+  const garbageFloodMode = rawPieceCount > 55 && avgHeight > 1.1;
 
   const ultraMassMode = rawPieceCount >= ULTRA_MASS_THRESHOLD;
   const massMode = activePieces.length >= MAX_ACTIVE_PIECES - 5;
@@ -123,7 +128,8 @@ export function decide(boardState) {
 
   const nearDeadlineCount = colHeights.filter(h => h > DEADLINE_Y - 0.3).length;
   const overDeadlineCount = colHeights.filter(h => h > DEADLINE_Y + 0.1).length;
-  const hardCritical = nearDeadlineCount >= 3 || overDeadlineCount >= 2;
+  // [v51] nearDeadlineCount threshold raised from 3 to 4 to reduce CRITICAL frequency
+  const hardCritical = nearDeadlineCount >= 4 || overDeadlineCount >= 2;
   const isCritical = hardCritical && !shouldRelieveLowMassCritical(
     nearDeadlineCount,
     overDeadlineCount,
@@ -468,7 +474,8 @@ export function decide(boardState) {
   }
 
   // --- おじゃまゲージ警告 → マージ準備 ---
-  if (gaugeLevel >= 0.3 && !garbagePresent) {
+  // [v51] threshold lowered from 0.3 to 0.2 for earlier gauge response
+  if (gaugeLevel >= 0.2 && !garbagePresent) {
     // ゲージが充填中: おじゃまが来る前にマージ可能な配置を優先
     if (nextType > 1) {
       const gaugeMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0, ojamaBoost);
@@ -510,6 +517,14 @@ export function decide(boardState) {
   if (canHold) {
     const holdResult = evaluateHold(activePieces, nextType, hold, nextPieces, isWarn, t1Count);
     if (holdResult) return holdResult;
+  }
+
+  // [v51] 中盤プリエンプティブマージ: 高さが上昇する前にマージを実行してCRITICAL到達を防止
+  // 非警戒・非緊急・T2+・ピース20-55・avgHeight > 0.6 の条件で積極マージ
+  if (!isWarn && !isCritical && !garbageUrgent && !garbageModerate &&
+      nextType >= 2 && rawPieceCount >= 20 && rawPieceCount <= 55 && avgHeight > 0.6) {
+    const preHeightMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0, 0);
+    if (preHeightMerge) return { ...preHeightMerge, reason: `HPREMERGE_T${nextType}` };
   }
 
   // [v46] 中盤チェーンファースト: 非WARN・T3+・ピース15-60でチェーン優先
