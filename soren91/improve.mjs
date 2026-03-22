@@ -148,10 +148,26 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
     return;
   }
 
-  // 4. バリデーション
-  const isValid = await validateStrategy(newStrategy);
-  if (!isValid) {
-    console.log('[improve] New strategy failed validation, keeping current');
+  // 4. バリデーション (失敗時はリトライ)
+  let validationResult = await validateStrategy(newStrategy);
+  for (let retry = 1; !validationResult.valid && retry <= MAX_FIX_RETRIES; retry++) {
+    console.log(`[improve] Validation failed, retry ${retry}/${MAX_FIX_RETRIES}: ${validationResult.error}`);
+    try {
+      const fixed = await callClaudeToFix(newStrategy, validationResult.error, screenshots);
+      if (fixed) {
+        newStrategy = fixed;
+        validationResult = await validateStrategy(newStrategy);
+      } else {
+        console.log(`[improve] Fix retry ${retry} returned no code`);
+        break;
+      }
+    } catch (err) {
+      console.log(`[improve] Fix retry ${retry} failed: ${err.message}`);
+      break;
+    }
+  }
+  if (!validationResult.valid) {
+    console.log('[improve] New strategy failed validation after retries, keeping current');
     cleanupScreenshots();
     return;
   }
@@ -505,14 +521,40 @@ function parseStreamJsonOutput(stdout) {
   return stdout;
 }
 
+const MAX_FIX_RETRIES = 2;
+
 /**
- * 新しい戦略コードをバリデーション
+ * バリデーション失敗時にAIにエラーを伝えて修正させる
+ */
+async function callClaudeToFix(failedCode, validationError, screenshots = []) {
+  const fixPrompt = `Your previous strategy.mjs output failed validation with the following error:
+
+## Validation Error
+${validationError}
+
+## Your Previous (Failed) Output
+\`\`\`javascript
+${failedCode.slice(0, 3000)}${failedCode.length > 3000 ? '\n... (truncated)' : ''}
+\`\`\`
+
+## Fix Instructions
+- Fix the above error and return the COMPLETE corrected strategy.mjs code
+- The function signature MUST be: export function decide(boardState) -> { x: number, reason: string, hold?: boolean }
+- Return ONLY the complete strategy.mjs code in a single code block
+- Do NOT import external modules - pure logic only
+- HOLD logic MUST be preserved`;
+
+  return callClaude(fixPrompt, screenshots);
+}
+
+/**
+ * 新しい戦略コードをバリデーション (エラー理由も返す)
  */
 async function validateStrategy(code) {
   // 1. decide関数が存在するか
   if (!code.includes('export function decide')) {
     console.log('[improve] Validation failed: no decide() function');
-    return false;
+    return { valid: false, error: 'no decide() function found in output. You must include "export function decide(boardState)" in the code.' };
   }
 
   // 2. 構文チェック: 一時ファイルに書き出して dynamic import
@@ -527,7 +569,7 @@ async function validateStrategy(code) {
     // 3. decide関数が export されているか
     if (typeof module.decide !== 'function') {
       console.log('[improve] Validation failed: decide is not a function');
-      return false;
+      return { valid: false, error: 'decide is not exported as a function' };
     }
 
     // 4. スモークテスト: ダミー入力で実行
@@ -550,21 +592,21 @@ async function validateStrategy(code) {
     // 戻り値の形式チェック
     if (typeof result !== 'object' || typeof result.x !== 'number' || typeof result.reason !== 'string') {
       console.log('[improve] Validation failed: invalid return format', result);
-      return false;
+      return { valid: false, error: `decide() returned invalid format: ${JSON.stringify(result)}. Must return { x: number, reason: string }` };
     }
 
     // xが範囲内か
     if (result.x < -3.0 || result.x > 3.0) {
       console.log('[improve] Validation failed: x out of range', result.x);
-      return false;
+      return { valid: false, error: `decide() returned x=${result.x} which is out of range [-3.0, 3.0]` };
     }
 
     console.log('[improve] Validation passed:', JSON.stringify(result));
-    return true;
+    return { valid: true, error: null };
 
   } catch (err) {
     console.log('[improve] Validation failed:', err.message);
-    return false;
+    return { valid: false, error: `Code error: ${err.message}` };
   } finally {
     // 一時ファイル削除
     try { unlinkSync(tmpPath); } catch {}
@@ -747,9 +789,25 @@ async function runStandaloneImprovement(startGame, endGame) {
     return;
   }
 
-  const isValid = await validateStrategy(newStrategy);
-  if (!isValid) {
-    console.log('[improve] New strategy failed validation, keeping current');
+  let validationResult = await validateStrategy(newStrategy);
+  for (let retry = 1; !validationResult.valid && retry <= MAX_FIX_RETRIES; retry++) {
+    console.log(`[improve] Validation failed, retry ${retry}/${MAX_FIX_RETRIES}: ${validationResult.error}`);
+    try {
+      const fixed = await callClaudeToFix(newStrategy, validationResult.error, allScreenshots);
+      if (fixed) {
+        newStrategy = fixed;
+        validationResult = await validateStrategy(newStrategy);
+      } else {
+        console.log(`[improve] Fix retry ${retry} returned no code`);
+        break;
+      }
+    } catch (err) {
+      console.log(`[improve] Fix retry ${retry} failed: ${err.message}`);
+      break;
+    }
+  }
+  if (!validationResult.valid) {
+    console.log('[improve] New strategy failed validation after retries, keeping current');
     return;
   }
 
