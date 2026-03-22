@@ -1,7 +1,12 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v51)
+ * strategy.mjs - ドロップ位置決定戦略 (v52)
  *
- * v51: v50ベース + CRITICAL頻度削減・中盤安定化・ガベージ早期対応
+ * v52: v51ベース + findT1ImmediateMerge チェーン探索強化
+ * - nearT3検出半径を2.4→2.8に拡大 (より遠いT3も連鎖候補に)
+ * - nearT4 (r=3.0) 追加で3段連鎖ルックアヘッド
+ * - nearT2Close>=2時に+40ボーナス (T2ペア→T3カスケード促進)
+ * - nearT3スコアを18→22に引き上げ
+ * - v51: CRITICAL頻度削減・中盤安定化・ガベージ早期対応
  * - 【CRITICAL nearDeadline閾値を3→4に緩和】
  *   hardCritical: nearDeadlineCount >= 3 → >= 4
  *   v50での46%CRITICAL発生率を削減し通常チェーン構築モードを増加
@@ -759,6 +764,7 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
  *   T1→T2マージ直後にT2+T2→T3の即時連鎖を誘発する
  * [v48] wallPenaltyMult追加: ULTRA_EXTREMEでpieces>75の時に壁ペナルティを強化
  *   ベースペナルティも12→15 / 20→25に引き上げ
+ * [v52] nearT3検出半径2.4→2.8、nearT4追加、nearT2Closeペアボーナス、nearT3スコア18→22
  */
 function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0) {
   let bestScore = -Infinity;
@@ -786,12 +792,16 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 
     s -= Math.abs(cx) * 2.0;
 
     // [v44] 近接T2 (r=0.8): T1→T2後の即時T2+T2連鎖を強く優先
+    // [v52] nearT3検出半径2.4→2.8、nearT4追加 (3段連鎖ルックアヘッド)
     const nearT2Close = countNear(pieces, cx, 2, 0.8);
     const nearT2 = countNear(pieces, cx, 2, 2.0);
-    const nearT3 = countNear(pieces, cx, 3, 2.4);
+    const nearT3 = countNear(pieces, cx, 3, 2.8); // [v52] was 2.4 — expand detection
+    const nearT4 = countNear(pieces, cx, 4, 3.0); // [v52] new — 3-step chain look-ahead
+    if (nearT2Close >= 2) s += 40;               // [v52] T2 pair bonus — T2→T3 cascade
     s += nearT2Close * 55;
     s += (nearT2 - nearT2Close) * 25;
-    s += nearT3 * 18;
+    s += nearT3 * 22;                            // [v52] up from 18
+    s += nearT4 * 10;                            // [v52] new
 
     // wall抑制 [v48: ベースペナルティ引き上げ + 動的乗数]
     if (Math.abs(cx) > 2.0) s -= Math.round(15 * wallPenaltyMult);
