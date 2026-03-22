@@ -179,6 +179,22 @@ _dispatch_manual_audio_trigger() {
 		log "[MANUAL] jiji トリガー受付: $(basename "$cmd_file")"
 		_run_jiji_corner_guarded "$game_num" "$score" &
 		;;
+	health)
+		log "[MANUAL] health トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_health "$game_num" "$score" &
+		;;
+	wiki)
+		log "[MANUAL] wiki トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_wiki "$game_num" "$score" &
+		;;
+	sightseeing)
+		log "[MANUAL] sightseeing トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_sightseeing "$game_num" "$score" &
+		;;
+	whatday)
+		log "[MANUAL] whatday トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_whatday "$game_num" "$score" &
+		;;
 	*)
 		log "[MANUAL] 未知の音声トリガーを破棄: $(basename "$cmd_file") cmd=${cmd_name}"
 		return 1
@@ -300,6 +316,10 @@ schedule_nonessential_audio_jobs() {
 		rm -f "$TMP_MARKERS_DIR/.timed_corner_inflight_${name}"
 	}
 
+	if _try_timed_corner "health" 6 0; then
+		timed_corner_fired=true
+		_run_timed_corner "health" start_radio_corner_health "$game_num" "$score" &
+	fi
 	if _try_timed_corner "rakugo" 1 0; then
 		timed_corner_fired=true
 		_run_timed_corner "rakugo" start_radio_corner_rakugo "$game_num" "$score" &
@@ -311,6 +331,14 @@ schedule_nonessential_audio_jobs() {
 	if _try_timed_corner "weather" 8 0; then
 		timed_corner_fired=true
 		_run_timed_corner "weather" start_radio_corner_weather "$game_num" "$score" &
+	fi
+	if _try_timed_corner "wiki" 9 0; then
+		timed_corner_fired=true
+		_run_timed_corner "wiki" start_radio_corner_wiki "$game_num" "$score" &
+	fi
+	if _try_timed_corner "sightseeing" 10 0; then
+		timed_corner_fired=true
+		_run_timed_corner "sightseeing" start_radio_corner_sightseeing "$game_num" "$score" &
 	fi
 	if _try_timed_corner "lunch" 11 30; then
 		timed_corner_fired=true
@@ -351,6 +379,10 @@ schedule_nonessential_audio_jobs() {
 	if _try_timed_corner "world_dinner" 19 0; then
 		timed_corner_fired=true
 		_run_timed_corner "world_dinner" start_radio_corner_world_dinner "$game_num" "$score" &
+	fi
+	if _try_timed_corner "whatday" 20 0; then
+		timed_corner_fired=true
+		_run_timed_corner "whatday" start_radio_corner_whatday "$game_num" "$score" &
 	fi
 	if _try_timed_corner "deals" 21 0; then
 		timed_corner_fired=true

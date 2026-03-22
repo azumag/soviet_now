@@ -194,8 +194,11 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | 時刻 | コーナー | 内容 |
 |---|---|---|
 | 01:00 | rakugo | 深夜の落語創作 |
+| 06:00 | health | 健康情報 |
 | 07:00 | breakfast | 世界の朝食 |
 | 08:00 | weather | ソ連天気予報 |
+| 09:00 | wiki | きょうのWikipedia |
+| 10:00 | sightseeing | おすすめ観光地 |
 | 11:30 | lunch | 世界の昼食 |
 | 12:00 | fortune | ソ連占い |
 | 13:00 | devil_dict | 悪魔の辞典 |
@@ -206,6 +209,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | 17:30 | redefine | 概念の再定義 |
 | 18:00 | soviet_lifehack | ソビエト式生活改善 |
 | 19:00 | world_dinner | 世界の夕食 |
+| 20:00 | whatday | 今日は何の日？ |
 | 21:00 | deals | お得情報 |
 | 21:30 | night_snack | 世界の夜食 |
 | 22:00 | survival | サバイバル知識 |

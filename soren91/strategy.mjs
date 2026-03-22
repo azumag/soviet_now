@@ -1,26 +1,20 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v52)
+ * strategy.mjs - ドロップ位置決定戦略 (v53)
  *
- * v52: v51ベース + findT1ImmediateMerge チェーン探索強化
- * - nearT3検出半径を2.4→2.8に拡大 (より遠いT3も連鎖候補に)
- * - nearT4 (r=3.0) 追加で3段連鎖ルックアヘッド
- * - nearT2Close>=2時に+40ボーナス (T2ペア→T3カスケード促進)
- * - nearT3スコアを18→22に引き上げ
- * - v51: CRITICAL頻度削減・中盤安定化・ガベージ早期対応
- * - 【CRITICAL nearDeadline閾値を3→4に緩和】
- *   hardCritical: nearDeadlineCount >= 3 → >= 4
- *   v50での46%CRITICAL発生率を削減し通常チェーン構築モードを増加
- *   overDeadlineCount >= 2 は維持 (真の危機は確実に捕捉)
- * - 【ガベージゲージ早期反応 (gauge >= 0.2)】
- *   v50の0.3から0.2に引き下げ + ojamaBoost=3で早期マージ準備
- *   おじゃま来襲前の連鎖設定を一手早める
- * - 【garbageFloodMode高さ閾値を1.1に緩和】
- *   rawPieceCount > 55 && avgHeight > 1.3 → > 1.1
- *   T1ガベージフラッドモードへの移行を前倒しして積み上がりを防止
- * - 【中盤プリエンプティブマージ追加 (rawPieces 20-55, avgHeight > 0.6)】
- *   CRITICAL到達前に高さを削減するプリエンプティブマージ
- *   T2+ピース、非警戒・非緊急時にminChainScore=0でマージを積極活用
- * - v50以前の全改善を維持
+ * v53: v52ベース + 重ガベージ開幕対応強化
+ * - 【heavyGarbageStart モード (garbageRatio>0.25 && avgHeight>1.5)】
+ *   34%ガベージ開幕でピースが押し上げられ誤CRITICAL/EMERGENCYが頻発する問題を修正
+ *   hardCritical閾値緩和: nearDeadline>=6 || overDeadline>=3 (通常: 4/2)
+ *   序盤のチェーン構築フローを保ち EMERGENCY_ALL_DANGERへの落下を防止
+ * - 【EMERGENCY時T1即時マージ追加】
+ *   EMERGENCY_ALL_DANGERフォールバック前にfindT1ImmediateMergeを試みる
+ *   T1だけ来る緊急状態でも最善連鎖候補を選択しガベージ除去を促進
+ * - 【ゲージ満タン直前HOLDセーブ (gauge>=0.85)】
+ *   おじゃま発動直前にT2以下をHOLDに退避、次のT3+ピースで反撃準備
+ *   次ピースにT3+が控えている場合のみ発動 (無駄なHOLDを回避)
+ * - 【T1_PREFLOOD_THRESHOLD=10に引き上げ】
+ *   v52の8から10へ。t1Count<10では通常フローでチェーン構築を優先
+ * - v52の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -37,7 +31,7 @@ const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.55;
 const GARBAGE_MODERATE_RATIO = 0.22;
 const GARBAGE_MODERATE_HEIGHT = 0.3;
 const EXTREME_T1_WALL_PIECE_THRESHOLD = 75; // [v48] 壁ペナルティ強化閾値
-const T1_PREFLOOD_THRESHOLD = 8; // [v50] 8に戻す (v49の6は過剰な早期T1介入)
+const T1_PREFLOOD_THRESHOLD = 10; // [v53] 8→10 (v52の過剰介入を抑制)
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -133,8 +127,12 @@ export function decide(boardState) {
 
   const nearDeadlineCount = colHeights.filter(h => h > DEADLINE_Y - 0.3).length;
   const overDeadlineCount = colHeights.filter(h => h > DEADLINE_Y + 0.1).length;
-  // [v51] nearDeadlineCount threshold raised from 3 to 4 to reduce CRITICAL frequency
-  const hardCritical = nearDeadlineCount >= 4 || overDeadlineCount >= 2;
+  // [v53] heavyGarbageStart: 開幕大量ガベージでピースが押し上げられた状態を検出
+  const heavyGarbageStart = garbageRatio > 0.25 && avgHeight > 1.5;
+  // [v53] ガベージ開幕時はCRITICAL閾値を緩和 (高さはガベージが原因であり真の危機ではない)
+  const hardCritical = heavyGarbageStart
+    ? (nearDeadlineCount >= 6 || overDeadlineCount >= 3)
+    : (nearDeadlineCount >= 4 || overDeadlineCount >= 2);
   const isCritical = hardCritical && !shouldRelieveLowMassCritical(
     nearDeadlineCount,
     overDeadlineCount,
@@ -286,6 +284,11 @@ export function decide(boardState) {
       if (nextType >= 2) {
         const emergMerge = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
         if (emergMerge !== null) return { x: emergMerge, reason: `EMERGENCY_MERGE_T${nextType}` };
+      }
+      // [v53] T1もEMERGENCY_ALL_DANGERより前にimmediate mergeを試みる
+      if (nextType === 1) {
+        const emergT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
+        if (emergT1 !== null) return { x: emergT1, reason: 'EMERGENCY_T1_IMMEDIATE' };
       }
       const emergencyIdx = findLowestColIdx(colHeights);
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
@@ -503,8 +506,17 @@ export function decide(boardState) {
     // マージなければ通常フローへ (ojamaBoost付きで下のfindBestMergeが効く)
   }
 
+  // [v53] ゲージ満タン直前HOLDセーブ: おじゃま発動前にT2以下を退避し次のT3+で反撃
+  if (gaugeLevel >= 0.85 && canHold && !hold && nextType <= 2 && !isWarn && !isCritical) {
+    const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+    const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
+    if (Math.max(next2T, next3T) >= 3) {
+      return { x: 0, reason: `PRE_OJAMA_HOLD_T${nextType}`, hold: true };
+    }
+  }
+
   // --- T1フラッド予防HOLD (t1Count>=T1_PREFLOOD_THRESHOLD, isWarnでない場合) ---
-  // [v50] 閾値をT1_PREFLOOD_THRESHOLD=8に戻す (v49の6は過剰な早期T1介入)
+  // [v53] 閾値をT1_PREFLOOD_THRESHOLD=10に引き上げ (v52の8は過剰介入)
   if (canHold && !hold && nextType === 1 && t1Count >= T1_PREFLOOD_THRESHOLD && !isWarn) {
     const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
     const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;

@@ -852,6 +852,223 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "night_snack"
 }
 
+start_radio_corner_health() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】早朝の健康情報コーナー
+1. 早朝の挨拶と軽いオープニング（2-3文）
+   - 「早起きの同志諸君、健康は革命の資本です」のような導入
+2. 健康情報を1つ紹介
+   - 毎回1つのテーマに絞って紹介する（睡眠、栄養、運動、ストレッチ、姿勢、目の疲れ、水分補給 等）
+   - 科学的根拠やエビデンスに基づいた情報を心がける
+   - デスクワーカーやゲーマーに役立つ実践的なアドバイス
+   - ソ連的なユーモアを交えつつも、情報自体は正確に
+   - 「同志の身体は国家の財産である」的な切り口
+3. 軽いクロージング（1-2文）
+
+※ 毎回必ず異なるテーマを取り上げること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "health"
+}
+
+start_radio_corner_wiki() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	# Wikipedia「今日の記事」からランダムなトピックを取得
+	local wiki_data=""
+	local today_mmdd
+	today_mmdd=$(date +%-m月%-d日)
+	wiki_data=$(curl -sf "https://ja.wikipedia.org/wiki/${today_mmdd}" 2>/dev/null | python3 -c "
+import sys, html, re
+text = sys.stdin.read()
+# 本文から最初の数段落を抽出
+body = re.search(r'<div id=\"mw-content-text\"[^>]*>(.*?)</div>\s*</div>', text, re.DOTALL)
+if body:
+    paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', body.group(1), re.DOTALL)
+    clean = []
+    for p in paragraphs[:8]:
+        t = re.sub(r'<[^>]+>', '', p)
+        t = html.unescape(t).strip()
+        if len(t) > 20:
+            clean.append(t)
+    print('\n'.join(clean[:5]))
+" 2>/dev/null || echo "")
+	[ -z "$wiki_data" ] && wiki_data="今日のWikipedia情報を取得できませんでした。自分の知識から興味深いトピックを1つ選んで紹介してください。"
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【Wikipedia「${today_mmdd}」のページから抜粋】
+${wiki_data}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】きょうのWikipediaコーナー
+1. 軽いオープニング（2-3文）
+   - 「同志諸君、今日もWikipediaで知識を共有しましょう」のような導入
+2. 今日にちなんだWikipediaトピックを1つ紹介
+   - 上記のWikipediaデータから興味深い出来事・人物・記念日を1つ選ぶ
+   - そのトピックについて分かりやすく面白く解説する
+   - 歴史的背景や意外なエピソードを添える
+   - ソ連・共産圏に関連があれば、そこを膨らませてもよい
+   - 「知識は人民の共有財産である」的な切り口
+3. 軽いクロージング（1-2文）
+
+※ 毎回必ず異なるトピックを取り上げること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "wiki"
+}
+
+start_radio_corner_sightseeing() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local grounding_context=""
+	# ランダムに地域を選んで観光情報を取得
+	local regions=("北海道" "東北" "関東" "中部" "近畿" "中国" "四国" "九州" "沖縄" "ロシア" "中央アジア" "東欧" "北欧" "東南アジア" "南米" "アフリカ" "中東" "オセアニア")
+	local region="${regions[$((RANDOM % ${#regions[@]}))]}"
+	grounding_context=$(_radio_fetch_theme_grounding_context "sightseeing" "${region} おすすめ観光地")
+	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【今回の地域】${region}
+
+【Web検索で得られた参考情報】
+${grounding_context}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】おすすめ観光地コーナー
+1. 軽いオープニング（2-3文）
+   - 「同志諸君、今日は旅の話をしましょう」のような導入
+2. おすすめ観光地を1つ紹介
+   - 上記の地域から具体的な観光スポットを1つ選んで紹介
+   - そのスポットの見どころ、歴史、文化的背景
+   - ベストシーズン、アクセス方法、周辺のグルメ情報
+   - 旅行者目線での実用的なアドバイス
+   - ソ連ラジオらしく「労働者の休暇は権利である」「同志にはリフレッシュが必要だ」的な切り口
+   - 旧ソ連圏の観光地の場合は、ソ連時代のエピソードも交える
+3. 軽いクロージング（1-2文）
+
+※ 毎回必ず異なる観光地を取り上げること。紹介する情報は正確であること。
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "sightseeing" --topic "${region}"
+}
+
+start_radio_corner_whatday() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	# 今日は何の日？データを取得
+	local today_date today_mmdd whatday_data=""
+	today_date=$(date +%Y年%-m月%-d日)
+	today_mmdd=$(date +%-m月%-d日)
+	whatday_data=$(curl -sf "https://ja.wikipedia.org/wiki/${today_mmdd}" 2>/dev/null | python3 -c "
+import sys, html, re
+text = sys.stdin.read()
+# 「できごと」「誕生日」「記念日・年中行事」セクションを探す
+sections = {}
+for section_name in ['できごと', '誕生日', '記念日・年中行事']:
+    pattern = rf'<span[^>]*>{section_name}</span>.*?<ul>(.*?)</ul>'
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        items = re.findall(r'<li>(.*?)</li>', match.group(1), re.DOTALL)
+        clean = []
+        for item in items[:5]:
+            t = re.sub(r'<[^>]+>', '', item)
+            t = html.unescape(t).strip()
+            if t:
+                clean.append(t)
+        if clean:
+            sections[section_name] = clean
+for name, items in sections.items():
+    print(f'■ {name}')
+    for item in items:
+        print(f'  - {item}')
+" 2>/dev/null || echo "")
+	[ -z "$whatday_data" ] && whatday_data="今日の記念日データを取得できませんでした。自分の知識から今日の日付にちなんだ出来事を紹介してください。"
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【今日の日付】${today_date}
+
+【「${today_mmdd}」のWikipedia情報】
+${whatday_data}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】今日は何の日？コーナー
+1. 軽いオープニング（2-3文）
+   - 「同志諸君、今日${today_mmdd}は何の日かご存知ですか？」のような導入
+2. 今日にちなんだ出来事・記念日を2-3個紹介
+   - 歴史的な出来事（特にソ連・共産圏に関連するものがあれば優先）
+   - 有名人の誕生日・命日
+   - 記念日・年中行事
+   - それぞれについて短く面白いエピソードを添える
+   - 「歴史を知ることは未来を切り拓くことである」的な切り口
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "whatday"
+}
+
 #=== lib/eloop_radio.sh から移行した関数 ===
 
 
