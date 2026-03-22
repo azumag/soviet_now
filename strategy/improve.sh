@@ -560,7 +560,7 @@ _start_improvement_job() {
 		# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
 		soren91_start
 		# Twitch チャットに戦略改善開始を通知
-		./twitch_chat.sh send "中華AIが戦略改善に逃げたので、仕方なくメリケンAIがソ連ゲーム91に出ますよ。別に出たかったわけじゃないですけど ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
+		./twitch_chat.sh send "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
 		return 0
 	else
 		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死)"
