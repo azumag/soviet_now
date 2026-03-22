@@ -317,7 +317,7 @@ soren91_stop() {
 		log "[SOREN91] Not running, recording end_game"
 		local eg
 		eg=$(_soren91_record_end_game)
-		rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE"
+		rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_DIR/tmp/in_game"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
 	fi
@@ -329,10 +329,13 @@ soren91_stop() {
 
 	local in_game_file="$SOREN91_DIR/tmp/in_game"
 
-	# Phase 1: 試合中なら試合終了を待つ (上限なし、ただしプロセス生存チェック)
-	while [ -f "$in_game_file" ] && kill -0 "$pid" 2>/dev/null; do
-		log "[SOREN91] Game in progress, waiting for round to end..."
+	# Phase 1: 試合中なら試合終了を待つ (上限600秒、プロセス生存チェック付き)
+	local game_waited=0
+	local max_game_wait=600
+	while [ -f "$in_game_file" ] && kill -0 "$pid" 2>/dev/null && [ "$game_waited" -lt "$max_game_wait" ]; do
+		log "[SOREN91] Game in progress, waiting for round to end... (${game_waited}s/${max_game_wait}s)"
 		sleep 5
+		game_waited=$((game_waited + 5))
 	done
 
 	# Phase 2: 試合終了後、graceful exit を短時間待つ

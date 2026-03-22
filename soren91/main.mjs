@@ -582,6 +582,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let midgameCommentDone = false;
 
   console.log('[game] Game loop started');
+  try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
   console.log(`[game] Round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
 
   while (true) {
@@ -626,8 +627,8 @@ async function gameLoop(page, calibration, gameNumber) {
         }
         if (!boardState.rank && lastKnownRank) boardState.rank = lastKnownRank;
         console.log(`[game] Final rank=${boardState.rank ?? '?'}`);
-        try { unlinkSync('tmp/in_game'); } catch {}
         await handleGameOver(page, gameNumber, turn, boardState, historyFile, currentStrategySnapshot);
+        try { unlinkSync('tmp/in_game'); } catch {}
         return;
       }
 
@@ -668,7 +669,6 @@ async function gameLoop(page, calibration, gameNumber) {
         if (turn > 5 && waitingCount >= 6 && !roundEnded) {
           console.log(`[game] Round ended at turn ${turn}, final rank=${lastKnownRank ?? '?'}`);
           roundEnded = true;
-          try { unlinkSync('tmp/in_game'); } catch {}
           // 最終順位をboardStateに付与
           if (lastKnownRank) boardState.rank = lastKnownRank;
           // 履歴保存 + AI改善 (非同期 — ゲームループをブロックしない)
