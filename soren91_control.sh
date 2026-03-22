@@ -30,6 +30,7 @@ SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
 SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-91}")"
 SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
 MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
+SOREN91_MERIKEN_IMPROVE_INTERVAL="${SOREN91_MERIKEN_IMPROVE_INTERVAL:-3}"
 
 _soren91_switch_obs_layout() {
 	local mode="${1:-}"
@@ -195,6 +196,23 @@ soren91_start() {
 	printf '{"start_game":%d,"start_time":"%s"}\n' "$start_game" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		> "$SOREN91_SESSION_FILE"
 
+	# メリケンAIモード判定 (手動発火 or 22-23時)
+	# メリケンモードでは内部改善を有効化 (3ゲームごと)
+	local _meriken_mode=0
+	if manual_meriken_mode_is_enabled; then
+		_meriken_mode=1
+	elif [ "$(date +%H)" = "22" ] || [ "$(date +%H)" = "23" ]; then
+		_meriken_mode=1
+	fi
+
+	local _ext_improve=1
+	local _improve_interval=""
+	if [ "$_meriken_mode" -eq 1 ]; then
+		_ext_improve=0
+		_improve_interval="$SOREN91_MERIKEN_IMPROVE_INTERVAL"
+		log "[SOREN91] メリケンAIモード: 内部改善有効 (${_improve_interval}ゲームごと)"
+	fi
+
 	# 再試行付きランナーを完全 detach 起動
 	# manual_meriken_mode を起動したターミナルを閉じても継続するよう、
 	# HUP を無視して stdin/stdout/stderr を端末から切り離す。
@@ -203,6 +221,8 @@ soren91_start() {
 		cd "$SOREN91_DIR" || exit 1
 		SOREN91_SHARED_BROWSER=1 \
 		SOREN91_AUDIO_GAIN_MULTIPLIER="${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}" \
+		SOREN91_EXTERNAL_IMPROVE="$_ext_improve" \
+		IMPROVEMENT_INTERVAL_GAMES="${_improve_interval:-}" \
 			/usr/bin/nohup /bin/bash "$SOREN91_RUNNER_SCRIPT" </dev/null >/dev/null 2>&1 &
 		echo $!
 	)

@@ -1,4 +1,15 @@
-#!/usr/bin/env python3
+# --- Change History ---
+# v310: deadline_margin急減時の盤面圧縮強化版 - 即時併合の取りこぼし削減
+# v307 failure: deadline_margin急減（deadline_margin < 1.0）時に即時併合不可続き、戦略的配置が続きmax_y runawayでゲームオーバー
+# v306 failure: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナス完全削除でdeadline_margin急減時に盤面圧縮能力喪失
+# rollback postmortem制約「即時併合不可時に戦略的配置ボーナスを維持し、deadline_margin < 1.0 の場合でも盤面圧縮を優先」を厳守
+# deadline_margin急減時（deadline_margin < 1.0）に即時併合不可が続き、戦略的配置ボーナスを追加して盤面圧縮を強化
+# axis 8.6: deadline_margin < 1.0 && merge_grade == "NO" で戦略的配置ボーナス +100.0 を追加
+# axis 8.6: ロシアフェーズでの即時併合優先ボーナス強化（reactive_pairs>=1: +200.0→+1500.0）
+# axis 8.6: Normal phase即時併合優先ボーナス強化（reactive_pairs==1: +1000.0→+3000.0, reactive_pairs==2: +1800.0→+2500.0, reactive_pairs>=3: +2200.0→+3000.0）
+# refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+#       game_history/20260322_213711_score1044.jsonl turns 86-93, game_history/20260322_212401_score2898.jsonl turns 118-129
+# Fixes rollback failure mode: deadline_margin急減時に即時併合がない場合の盤面圧縮能力喪失
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
 Game Overview:
@@ -37,15 +48,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
  # --- Change History ---
- # v307: v306 rollback failure mode潰し - 即時併合不可時の戦略的配置ボーナス復活版
- # v306 failure: reactive_pairs=2-3あるのに戦略的配置ボーナスが高すぎ、即時併合機会を逃してmax_y runawayでゲームオーバー
- # axis 8.6: reactive_pairs>=3 && 即時併合不可の場合、戦略的配置ボーナスを完全削除（+400.0）→復活（danger_piece_count==0時のみ適用）
- # axis 8.6: reactive_pairs>=1 && 即時併合不可の場合、戦略的配置ボーナスを強化（+50.0→+400.0）
- # axis 8.6: ロシアフェーズ即時併合優先ボーナス強化（reactive_pairs>=1: +200.0→+1500.0）
- # axis 8.6: Normal phase即時併合優先ボーナス強化（reactive_pairs==1: +1000.0→+3000.0, reactive_pairs==2: +1800.0→+2500.0, reactive_pairs>=3: +2200.0→+3000.0）
- # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
- #       game_history/20260322_201242_score0716.jsonl, game_history/20260322_201021_score2727.jsonl
- # Fixes rollback failure mode: 即時併合不可時の戦略的配置ボーナス完全削除でdeadline_margin急減時に盤面圧縮能力喪失
+  # v310: deadline_margin急減時の盤面圧縮強化版 - 即時併合機会の取りこぼし削減
+    # v307 failure: deadline_margin急減（deadline_margin < 1.0）時に即時併合不可続き、戦略的配置が続きmax_y runawayでゲームオーバー
+    # v306 failure: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナス削除でdeadline_margin急減時に盤面圧縮能力喪失
+    # rollback postmortem制約「即時併合不可時に戦略的配置ボーナスを維持し、deadline_margin < 1.0 の場合でも盤面圧縮を優先」を厳守
+    # deadline_margin急減時（deadline_margin < 1.0）に即時併合不可が続き、deadline_marginが1.0未満の場合、戦略的配置ボーナスを追加して盤面圧縮を強化
+    # axis 8.6: deadline_margin < 1.0 && merge_grade == "NO" で戦略的配置ボーナス +100.0〜+200.0 を追加（reactive_pairsに応じて調整）
+    # axis 8.6: ロシアフェーズでの即時併合優先ボーナス強化（reactive_pairs>=1: +200.0→+1500.0）
+    # axis 8.6: Normal phase即時併合優先ボーナス強化（reactive_pairs==1: +1000.0→+1500.0, reactive_pairs==2: +1800.0→+2000.0, reactive_pairs>=3: +2200.0→+2500.0）
+    # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+    #       game_history/20260322_213711_score1044.jsonl turns 86-93, game_history/20260322_212401_score2898.jsonl turns 118-129
+    # Fixes rollback failure mode: deadline_margin急減時に即時併合がない場合の盤面圧縮能力喪失
+    # advice.md「盤面が詰まっても即時併合を狙うべき。盤面がどうだろうが即時併合狙った方が絶対勝率高い」を重視
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
@@ -579,13 +593,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             # height_mult緩和は維持し、より低い位置を許容するが、ボーナスは与えない
                             height_mult *= 0.5
                         elif reactive_pair_count >= 2:
-                            # reactive_pairsが2以上あり即時併合不可の場合、盤面圧縮と将来の併合を同時に狙う
-                            score += 100.0  # v297: +1200.0から大幅削減
+                            # v310: deadline_margin急減時の盤面圧縮強化
+                            if deadline_margin < 1.0 and merge_grade == "NO":
+                                score += 200.0  # 盤面圧縮ボーナス
+                                reasons.append("REACTIVE_STRATEGIC_PLACEMENT_DANGER_MARGIN")
+                            # 即時併合優先ボーナス強化
+                            score += 1800.0  # v310: 即時併合優先ボーナス強化
                             reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE_HIGH")
                             height_mult *= 0.6
                         elif reactive_pair_count >= 1:
-                            # reactive_pairsがある場合、即時併合を重視
-                            score += 50.0  # v297: +1000.0から大幅削減
+                            # v310: deadline_margin急減時の盤面圧縮強化
+                            if deadline_margin < 1.0 and merge_grade == "NO":
+                                score += 150.0  # 盤面圧縮ボーナス
+                                reasons.append("REACTIVE_STRATEGIC_PLACEMENT_DANGER_MARGIN")
+                            # 即時併合優先ボーナス強化
+                            score += 1500.0  # v310: 即時併合優先ボーナス強化
                             reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE")
                             height_mult *= 0.7
                         else:
@@ -596,12 +618,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 else:
                     # Normal phase handling
                     if reactive_pair_count >= 3 and merge_grade == "NO":
+                        # v310: deadline_margin急減時の盤面圧縮強化
+                        if deadline_margin < 1.0:
+                            score += 150.0  # 盤面圧縮ボーナス
+                            reasons.append("REACTIVE_STRATEGIC_PLACEMENT_DANGER_MARGIN")
                         # v297: reactive_pairs>=3 && 即時併合不可の場合、戦略的配置ボーナスを完全削除
                         # 即時併合を強制し、max_y runawayを防止。rollback postmortem制約を厳守。
                         # height_mult緩和は維持し、より低い位置を許容するが、ボーナスは与えない
                         height_mult *= 0.5
                     elif reactive_pair_count >= 1:
-                        score += 100.0  # v297: +800.0から大幅削減
+                        # v310: deadline_margin急減時の盤面圧縮強化
+                        if deadline_margin < 1.0 and merge_grade == "NO":
+                            score += 100.0  # 盤面圧縮ボーナス
+                            reasons.append("REACTIVE_STRATEGIC_PLACEMENT_DANGER_MARGIN")
+                        # 即時併合優先ボーナス強化
+                        score += 2500.0  # v310: 即時併合優先ボーナス強化
                         reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
                         height_mult *= 0.7
                     else:

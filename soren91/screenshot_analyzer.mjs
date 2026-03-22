@@ -725,9 +725,13 @@ export async function detectRankingScreen(screenshotPath) {
   const { data } = await image.raw().ensureAlpha().toBuffer({ resolveWithObject: true });
   const { width, height } = metadata;
 
-  // ランキング画面判定: 画面中央(ゲームボード領域)が明るいかチェック
-  // ゲーム中: ボード中央は暗い(dark ratio高い)。ランキング画面: 全体が明るい
-  // 厳密に中央列の30-70%範囲でチェック (サイドパネルの影響を除外)
+  // 1. 赤い星の数字を直接探す (最も信頼性が高い — 星があれば即確定)
+  const starRank = readRankFromRedStar(data, width, height);
+  if (starRank != null && starRank >= 1 && starRank <= 91) {
+    return starRank;
+  }
+
+  // 2. フォールバック: 中央の明るさでランキング画面を推定
   let centerBright = 0, centerTotal = 0;
   const step = 6;
   for (let y = Math.floor(height * 0.3); y < Math.floor(height * 0.85); y += step) {
@@ -740,13 +744,109 @@ export async function detectRankingScreen(screenshotPath) {
   }
   const centerBrightRatio = centerTotal > 0 ? centerBright / centerTotal : 0;
 
-  // ランキング画面は中央が明るい (>50%)、ゲーム中は中央が暗い (<40%)
-  // 閾値を緩めにして検出漏れを防ぐ (スクショは毎フレーム上書きされるため、誤検出は後のフレームで補正)
   if (centerBrightRatio < 0.50) return null;
 
-  // ランキング画面確定 — 画面がランキング画面であることを返す
-  // Tesseract OCR (result_screen_ocr.mjs) が後で正確な順位を抽出する
-  return -1; // -1 = ランキング画面検出、数字はOCRに委譲
+  return -1; // ランキング画面だが星の数字読み取り失敗
+}
+
+/**
+ * ランキング画面の赤い星の中の白い数字を読み取る
+ * 星は画面上部(5-33%)の中央右寄り(55-72%)に表示される
+ */
+function readRankFromRedStar(data, width, height) {
+  const digitY1 = Math.floor(height * 0.05);
+  const digitY2 = Math.floor(height * 0.24);
+  const digitX1 = Math.floor(width * 0.55);
+  const digitX2 = Math.floor(width * 0.72);
+
+  // 0. 検索エリアに赤い星(集中した赤ピクセル)が存在するか確認
+  let redInArea = 0;
+  for (let y = digitY1; y < digitY2; y += 3) {
+    for (let x = digitX1; x < digitX2; x += 3) {
+      const idx = (y * width + x) * 4;
+      if (data[idx] > 180 && data[idx + 1] < 100 && data[idx + 2] < 80) redInArea++;
+    }
+  }
+  if (redInArea < 1500) return null; // 星がなければスキップ (ranking≈2200, game-over≈500-1200)
+
+  // 1. 白ピクセル(br>180)の列分布で桁候補セグメントを検出
+  //    閾値を緩め(180)にして細いストロークも拾う
+  const colWhite = new Array(digitX2 - digitX1).fill(0);
+  for (let y = digitY1; y < digitY2; y++) {
+    for (let x = digitX1; x < digitX2; x++) {
+      const idx = (y * width + x) * 4;
+      const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+      if (br > 180) colWhite[x - digitX1]++;
+    }
+  }
+
+  const minColHits = 2;
+  const rawSegs = [];
+  let inSeg = false, segStart = 0;
+  for (let i = 0; i <= colWhite.length; i++) {
+    const active = i < colWhite.length && colWhite[i] >= minColHits;
+    if (active && !inSeg) { segStart = i; inSeg = true; }
+    else if (!active && inSeg) {
+      const w = i - segStart;
+      if (w >= 8) rawSegs.push({ start: segStart + digitX1, end: i + digitX1, w });
+      inSeg = false;
+    }
+  }
+
+  if (rawSegs.length === 0) return null;
+
+  // 2. 各セグメントの行範囲を取得し、最大高さのセグメントを基準にする
+  for (const seg of rawSegs) {
+    let rowMin = digitY2, rowMax = digitY1;
+    for (let y = digitY1; y < digitY2; y++) {
+      for (let x = seg.start; x < seg.end; x++) {
+        const idx = (y * width + x) * 4;
+        const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+        if (br > 180) { if (y < rowMin) rowMin = y; if (y > rowMax) rowMax = y; }
+      }
+    }
+    seg.rowMin = rowMin;
+    seg.rowMax = rowMax;
+    seg.h = rowMax - rowMin;
+  }
+
+  // 最も高いセグメント(主桁)を基準に高さフィルタ
+  // 高さ20px未満は除外、残りの中から右端の1-2セグメントを桁として採用
+  // (RANKINGテキスト断片は左側にあるため、右端が数字)
+  const maxH = Math.max(...rawSegs.map(s => s.h));
+  if (maxH < 20) return null;
+  const candidates = rawSegs.filter(s => s.h >= 15).sort((a, b) => a.start - b.start);
+  if (candidates.length === 0) return null;
+
+  // 右端から最大2セグメントを取得 (近接チェック: ギャップ50px以内)
+  let digitSegs;
+  if (candidates.length === 1) {
+    digitSegs = [candidates[0]];
+  } else {
+    const last = candidates[candidates.length - 1];
+    const secondLast = candidates[candidates.length - 2];
+    const gap = last.start - secondLast.end;
+    if (gap >= 0 && gap <= 50) {
+      digitSegs = [secondLast, last];
+    } else {
+      digitSegs = [last];
+    }
+  }
+
+  // 3. 基準高さの行範囲を統一して各桁を認識
+  const refRowMin = Math.min(...digitSegs.map(s => s.rowMin));
+  const refRowMax = Math.max(...digitSegs.map(s => s.rowMax));
+
+  const digits = [];
+  for (const seg of digitSegs) {
+    const digit = recognizeDigitWhite(data, width, seg.start, seg.end, refRowMin, refRowMax + 1);
+    if (digit == null) return null;
+    digits.push(digit);
+  }
+
+  if (digits.length === 0) return null;
+  const rank = digits.length === 1 ? digits[0] : digits[0] * 10 + digits[1];
+  return (rank >= 1 && rank <= 91) ? rank : null;
 }
 
 /**
@@ -797,9 +897,17 @@ function recognizeDigitWhite(data, width, xStart, xEnd, yStart, yEnd) {
 
   const ALT = {
     1: [0b110_010_010_010_111, 0b010_010_010_010_010, 0b001_001_001_001_001,
-        0b100_100_100_100_100, 0b010_010_010_010_111, 0b110_010_010_010_010],
-    5: [0b111_100_111_001_110],
-    7: [0b111_001_001_010_010, 0b111_001_010_010_100],
+        0b100_100_100_100_100, 0b010_010_010_010_111, 0b110_010_010_010_010,
+        0b110_110_110_110_111],
+    2: [0b111_101_001_011_111, 0b111_001_011_100_111, 0b111_001_111_110_111,
+        0b111_101_011_110_111, 0b111_001_011_110_111],
+    3: [0b111_001_011_001_111, 0b111_001_111_001_110],
+    4: [0b101_101_111_001_011, 0b100_101_111_001_001],
+    5: [0b111_100_111_001_110, 0b111_110_111_001_111],
+    6: [0b111_100_111_101_110, 0b110_100_111_101_111],
+    7: [0b111_001_001_010_010, 0b111_001_010_010_100, 0b111_001_001_001_011],
+    8: [0b111_101_011_101_111, 0b111_101_111_101_110],
+    9: [0b111_101_111_001_110, 0b111_101_111_011_111],
   };
 
   let bestDigit = -1, bestDist = 16;

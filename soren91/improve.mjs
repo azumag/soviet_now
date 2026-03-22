@@ -70,6 +70,26 @@ function isBetterGameSummary(candidate, currentBest) {
   return candidatePieces < bestPieces;
 }
 
+function isWorseGameSummary(candidate, currentWorst) {
+  if (!candidate) return false;
+  if (!currentWorst) return true;
+  const candidateRank = normalizeRank(candidate.rank);
+  const worstRank = normalizeRank(currentWorst.rank);
+  if (candidateRank != null && worstRank != null) {
+    if (candidateRank !== worstRank) return candidateRank > worstRank;
+  } else if (candidateRank != null) {
+    return true;
+  } else if (worstRank != null) {
+    return false;
+  }
+  const candidateTurns = Number(candidate.turns || 0);
+  const worstTurns = Number(currentWorst.turns || 0);
+  if (candidateTurns !== worstTurns) return candidateTurns < worstTurns;
+  const candidatePieces = Number(candidate.piecesAtEnd || 0);
+  const worstPieces = Number(currentWorst.piecesAtEnd || 0);
+  return candidatePieces > worstPieces;
+}
+
 function formatRankToken(rank) {
   return rank == null ? 'na' : String(rank).padStart(2, '0');
 }
@@ -105,13 +125,17 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
   ensureLineageInitialized();
   const lineageContext = buildImproveReferenceContext(currentStrategyHash);
 
-  // 3. AI呼び出し (claude CLI)
-  const promptText = buildPromptText(gameSummary, currentStrategy, lineageContext);
+  // 3. スクリーンショット収集 + AI呼び出し (claude CLI)
+  const screenshots = await selectGameScreenshots(gameNumber, 2);
+  if (screenshots.length > 0) {
+    console.log(`[improve] Collected ${screenshots.length} screenshots for game #${gameNumber}`);
+  }
+  const promptText = buildPromptText(gameSummary, currentStrategy, lineageContext, screenshots);
   console.log('[improve] Calling claude CLI...');
 
   let newStrategy;
   try {
-    newStrategy = await callClaude(promptText);
+    newStrategy = await callClaude(promptText, screenshots);
   } catch (err) {
     console.error('[improve] API call failed:', err.message);
     cleanupScreenshots();
@@ -155,6 +179,20 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
   // 6. スクリーンショット削除
   cleanupScreenshots();
   console.log('[improve] Improvement complete');
+}
+
+function formatTurnDetail(t) {
+  const pieces = t.state?.pieces?.length || 0;
+  const maxY = Math.max(...(t.state?.pieces || [{ y: -5 }]).map(p => p.y ?? -5));
+  const x = t.decision?.x?.toFixed(2) || '?';
+  const reason = t.decision?.reason || 'UNKNOWN';
+  const garbageRatio = (t.state?.garbage?.ratio || 0).toFixed(2);
+  const gauge = (t.state?.garbage?.gauge || 0).toFixed(2);
+  const typeDist = {};
+  (t.state?.pieces || []).forEach(p => { typeDist[p.type] = (typeDist[p.type] || 0) + 1; });
+  const topTypes = Object.entries(typeDist).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([type, count]) => `t${type}:${count}`).join(',');
+  return `Turn ${t.turn}: pieces=${pieces} max_y=${maxY.toFixed(2)} x=${x} reason=${reason} garbage=${garbageRatio} gauge=${gauge} types=[${topTypes}]`;
 }
 
 /**
@@ -205,16 +243,53 @@ function generateSummary(historyPath, summaryPath) {
       const pieceCounts = turns.map(t => t.state?.pieces?.length || 0);
       lines.push(`- Piece count range: [${Math.min(...pieceCounts)}, ${Math.max(...pieceCounts)}]`);
 
-      // 最後の10ターンの詳細
+      // フェーズ別ターン分析 (Early/Mid/Late + Death Sequence)
+      const totalTurns = turns.length;
+      const earlyEnd = Math.floor(totalTurns * 0.2);
+      const midEnd = Math.floor(totalTurns * 0.6);
+
+      const phases = [
+        { name: 'Early', start: 0, end: earlyEnd, sample: 3 },
+        { name: 'Mid', start: earlyEnd, end: midEnd, sample: 3 },
+        { name: 'Late', start: midEnd, end: totalTurns, sample: 3 },
+      ];
+
+      for (const phase of phases) {
+        const phaseSlice = turns.slice(phase.start, phase.end);
+        if (phaseSlice.length === 0) continue;
+
+        lines.push('');
+        lines.push(`### ${phase.name} Phase (turns ${phase.start + 1}-${phase.end})`);
+
+        // フェーズ集約統計
+        const phaseMaxY = Math.max(...phaseSlice.map(t =>
+          Math.max(...(t.state?.pieces || [{ y: -5 }]).map(p => p.y ?? -5))));
+        const phaseAvgPieces = phaseSlice.reduce((s, t) => s + (t.state?.pieces?.length || 0), 0) / phaseSlice.length;
+        const phaseReasons = {};
+        phaseSlice.forEach(t => {
+          const r = (t.decision?.reason || 'UNKNOWN').split('_')[0];
+          phaseReasons[r] = (phaseReasons[r] || 0) + 1;
+        });
+        lines.push(`- Avg pieces: ${phaseAvgPieces.toFixed(1)}, max_y: ${phaseMaxY.toFixed(2)}`);
+        lines.push(`- Reasons: ${JSON.stringify(phaseReasons)}`);
+
+        // 代表ターンをサンプリング
+        const step = Math.max(1, Math.floor(phaseSlice.length / phase.sample));
+        const sampled = [];
+        for (let i = 0; i < phaseSlice.length && sampled.length < phase.sample; i += step) {
+          sampled.push(phaseSlice[i]);
+        }
+        for (const t of sampled) {
+          lines.push(`  ${formatTurnDetail(t)}`);
+        }
+      }
+
+      // Death Sequence (最後3ターン)
       lines.push('');
-      lines.push('## Last 10 Turns');
-      const lastTurns = turns.slice(-10);
-      lastTurns.forEach(t => {
-        const pieces = t.state?.pieces?.length || 0;
-        const x = t.decision?.x?.toFixed(2) || '?';
-        const reason = t.decision?.reason || 'UNKNOWN';
-        lines.push(`- Turn ${t.turn}: pieces=${pieces}, drop_x=${x}, reason=${reason}`);
-      });
+      lines.push('### Death Sequence (last 3 turns)');
+      for (const t of turns.slice(-3)) {
+        lines.push(`  ${formatTurnDetail(t)}`);
+      }
     }
   }
 
@@ -224,17 +299,28 @@ function generateSummary(historyPath, summaryPath) {
 /**
  * AI改善プロンプトのテキスト部分を構築
  */
-function buildPromptText(gameSummary, currentStrategy, lineageContext = '') {
+function buildPromptText(gameSummary, currentStrategy, lineageContext = '', screenshots = []) {
   let promptTemplate = '';
   if (existsSync(PROMPT_PATH)) {
     promptTemplate = readFileSync(PROMPT_PATH, 'utf-8');
+  }
+
+  let screenshotSection = '';
+  if (screenshots.length > 0) {
+    const bestShots = screenshots.filter(s => s.filename.includes(`game_${''}`)).length; // all are labeled
+    screenshotSection = `
+## Game Screenshots
+${screenshots.length} board screenshots are provided as images above (best game + worst game, early/mid/late phases).
+Use these to visually understand piece placement, board density, height distribution, and garbage block patterns.
+Combine visual observations with the turn history data for a more complete analysis.
+`;
   }
 
   return `${promptTemplate}
 
 ## Game Analysis
 ${gameSummary}
-
+${screenshotSection}
 ## Current Strategy Code
 \`\`\`javascript
 ${currentStrategy}
@@ -243,7 +329,7 @@ ${currentStrategy}
 ${lineageContext ? `${lineageContext}\n` : ''}\
 
 ## Instructions
-Based on the game analysis and screenshots above, improve the strategy.mjs code.
+Based on the game analysis${screenshots.length > 0 ? ' and screenshots' : ''} above, improve the strategy.mjs code.
 The function signature must remain: export function decide(boardState) -> { x: number, reason: string, hold?: boolean }
 where boardState has: { pieces: [{type, x, y, r}], next: {type, r}, nextPieces: [{type, r}, ...] (up to 3), hold: {type, r}|null, canHold: boolean, score: number, confidence: number, garbage: {ratio, height, pixelCount, gauge} } (gauge: ojama gauge level 0-1, higher = ojama drop imminent)
 
@@ -260,39 +346,42 @@ Return ONLY the complete improved strategy.mjs code, enclosed in a single code b
 Focus on practical improvements based on the observed game behavior.`;
 }
 
+const GAME_SCREENSHOTS_DIR = 'tmp/game_screenshots';
+
 /**
- * ゲーム中のスクリーンショットから代表的なものを選んでbase64エンコード
- * 最大5枚: 序盤、中盤、終盤 + ゲームオーバー付近
+ * アーカイブ済みゲームスクリーンショットをbase64エンコードして返す
  */
-async function selectScreenshots() {
-  if (!existsSync(SCREENSHOTS_DIR)) return [];
-  const files = readdirSync(SCREENSHOTS_DIR)
+async function selectGameScreenshots(gameNumber, maxShots = 2) {
+  const gameDir = join(GAME_SCREENSHOTS_DIR, `game_${String(gameNumber).padStart(4, '0')}`);
+  if (!existsSync(gameDir)) return [];
+  const files = readdirSync(gameDir)
     .filter(f => f.startsWith('turn_') && f.endsWith('.png'))
     .sort();
-
   if (files.length === 0) return [];
 
-  // 均等に最大5枚選択
-  const maxShots = 5;
-  const step = Math.max(1, Math.floor(files.length / maxShots));
+  // maxShots枚を選択: 最後のフレーム(終盤)を必ず含め、残りを均等に
   const selected = [];
-  for (let i = 0; i < files.length && selected.length < maxShots; i += step) {
-    selected.push(files[i]);
-  }
-  // 最後のスクリーンショットも必ず含める
-  if (selected[selected.length - 1] !== files[files.length - 1]) {
+  if (files.length <= maxShots) {
+    selected.push(...files);
+  } else {
+    // 最後のフレームを確保し、残りスロットで前方から均等選択
+    const remaining = maxShots - 1;
+    const step = Math.max(1, Math.floor((files.length - 1) / remaining));
+    for (let i = 0; i < files.length - 1 && selected.length < remaining; i += step) {
+      selected.push(files[i]);
+    }
     selected.push(files[files.length - 1]);
   }
 
   const results = [];
   for (const f of selected) {
     try {
-      const buf = await sharp(join(SCREENSHOTS_DIR, f))
+      const buf = await sharp(join(gameDir, f))
         .resize(640, 360)
         .jpeg({ quality: 70 })
         .toBuffer();
       results.push({
-        filename: f,
+        filename: `game_${gameNumber}_${f}`,
         base64: buf.toString('base64'),
         mediaType: 'image/jpeg',
       });
@@ -304,11 +393,27 @@ async function selectScreenshots() {
 }
 
 /**
- * claude CLI を呼び出してテキスト応答を取得 (非同期)
+ * claude CLI レスポンスからstrategy.mjsコードを抽出
  */
-function callClaude(promptText) {
+function extractStrategyFromResponse(text) {
+  const trimmed = text.trim();
+  const codeMatch = trimmed.match(/```(?:javascript|js)?\n([\s\S]*?)```/);
+  if (codeMatch) return codeMatch[1].trim();
+  if (trimmed.includes('export function decide')) return trimmed;
+  return null;
+}
+
+/**
+ * claude CLI を呼び出してテキスト応答を取得 (非同期)
+ * screenshots が渡された場合は --input-format stream-json で画像付きリクエスト
+ */
+function callClaude(promptText, screenshots = []) {
   const promptFile = 'tmp/improve_prompt.txt';
   writeFileSync(promptFile, promptText);
+
+  if (screenshots.length > 0) {
+    return callClaudeWithImages(promptText, screenshots);
+  }
 
   return new Promise((resolve, reject) => {
     const child = execFile('claude', ['-p', '--model', 'sonnet', '--output-format', 'text'], {
@@ -319,22 +424,85 @@ function callClaude(promptText) {
         if (stderr) console.error('[improve] claude stderr:', stderr.slice(0, 500));
         return reject(err);
       }
-      const text = stdout.trim();
-
-      // コードブロックを抽出
-      const codeMatch = text.match(/```(?:javascript|js)?\n([\s\S]*?)```/);
-      if (codeMatch) return resolve(codeMatch[1].trim());
-
-      // コードブロックがない場合、全文をコードとして扱う
-      if (text.includes('export function decide')) return resolve(text.trim());
-
-      resolve(null);
+      resolve(extractStrategyFromResponse(stdout));
     });
 
-    // stdinでプロンプトを送信
     child.stdin.write(promptText);
     child.stdin.end();
   });
+}
+
+/**
+ * claude CLI に画像付きでリクエストを送信 (stream-json format)
+ */
+function callClaudeWithImages(promptText, screenshots) {
+  // content blocks: 画像 + テキスト
+  const content = [];
+  for (const ss of screenshots) {
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: ss.mediaType, data: ss.base64 },
+    });
+  }
+  content.push({ type: 'text', text: promptText });
+
+  const message = JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content },
+  });
+
+  return new Promise((resolve, reject) => {
+    const child = execFile('claude', [
+      '-p', '--model', 'sonnet',
+      '--input-format', 'stream-json', '--output-format', 'stream-json',
+      '--verbose',
+    ], {
+      encoding: 'utf-8',
+      maxBuffer: 4 * 1024 * 1024,
+    }, (err, stdout, stderr) => {
+      if (err) {
+        if (stderr) console.error('[improve] claude stderr:', stderr.slice(0, 500));
+        return reject(err);
+      }
+      // stream-json出力: 各行がJSONオブジェクト、type=result行からtextを抽出
+      const resultText = parseStreamJsonOutput(stdout);
+      resolve(extractStrategyFromResponse(resultText));
+    });
+
+    // EPIPE エラーを無視 (claude プロセスが先に終了した場合)
+    child.stdin.on('error', () => {});
+    child.stdin.write(message + '\n');
+    child.stdin.end();
+  });
+}
+
+/**
+ * stream-json出力からテキスト結果を抽出
+ */
+function parseStreamJsonOutput(stdout) {
+  const lines = stdout.trim().split('\n');
+  // result イベントを優先 (最終結果)
+  // なければ全 assistant テキストチャンクを結合
+  let resultText = null;
+  const assistantTexts = [];
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+      if (obj.type === 'result' && obj.result) {
+        resultText = obj.result;
+      }
+      if (obj.type === 'assistant' && obj.message?.content) {
+        const textBlocks = obj.message.content
+          .filter(b => b.type === 'text')
+          .map(b => b.text);
+        assistantTexts.push(...textBlocks);
+      }
+    } catch {}
+  }
+  if (resultText) return resultText;
+  if (assistantTexts.length > 0) return assistantTexts.join('\n');
+  // フォールバック: 全出力を返す
+  return stdout;
 }
 
 /**
@@ -489,8 +657,10 @@ async function runStandaloneImprovement(startGame, endGame) {
   const historyDir = 'game_history';
   let bestGame = null;
   let bestSummary = null;
+  let worstGame = null;
+  let worstSummary = null;
 
-  // サマリーを走査し最良rankを優先、同率ならturnsでベストゲームを特定
+  // サマリーを走査し最良/最悪ゲームを特定
   for (let i = startGame + 1; i <= endGame; i++) {
     const summaryPath = join(summariesDir, `game_${String(i).padStart(4, '0')}.json`);
     if (!existsSync(summaryPath)) continue;
@@ -499,6 +669,10 @@ async function runStandaloneImprovement(startGame, endGame) {
       if (isBetterGameSummary(summary, bestSummary)) {
         bestSummary = summary;
         bestGame = i;
+      }
+      if (isWorseGameSummary(summary, worstSummary)) {
+        worstSummary = summary;
+        worstGame = i;
       }
     } catch {}
   }
@@ -531,14 +705,38 @@ async function runStandaloneImprovement(startGame, endGame) {
   // 個別ゲームのサマリーも生成
   const gameSummary = generateSummary(bestHistoryPath, bestSummaryPath);
 
-  // プロンプト構築 (集約 + ベストゲーム詳細)
-  const combinedSummary = `${aggregateSummary}\n\n## Best Game Details\n${gameSummary}`;
-  const promptText = buildPromptText(combinedSummary, currentStrategy, lineageContext);
+  // ワーストゲームのサマリー生成 (ベストと同一でなければ)
+  let worstGameSummary = '';
+  if (worstGame !== null && worstGame !== bestGame) {
+    const worstHistoryPath = join(historyDir, `game_${String(worstGame).padStart(4, '0')}.jsonl`);
+    const worstSummaryPath = join(summariesDir, `game_${String(worstGame).padStart(4, '0')}.json`);
+    if (existsSync(worstHistoryPath)) {
+      worstGameSummary = generateSummary(worstHistoryPath, worstSummaryPath);
+      console.log(`[improve] Worst game: #${worstGame} (rank=${formatRankLabel(worstSummary?.rank)}, turns=${worstSummary?.turns ?? 0})`);
+    }
+  }
+
+  // スクリーンショット収集 (ベスト最大2枚 + ワースト最大2枚 = 最大4枚)
+  const bestScreenshots = await selectGameScreenshots(bestGame, 2);
+  const worstScreenshots = (worstGame && worstGame !== bestGame)
+    ? await selectGameScreenshots(worstGame, 2)
+    : [];
+  const allScreenshots = [...bestScreenshots, ...worstScreenshots];
+  if (allScreenshots.length > 0) {
+    console.log(`[improve] Collected ${allScreenshots.length} screenshots (best=${bestScreenshots.length}, worst=${worstScreenshots.length})`);
+  }
+
+  // プロンプト構築 (集約 + ベストゲーム詳細 + ワーストゲーム詳細)
+  let combinedSummary = `${aggregateSummary}\n\n## Best Game Details\n${gameSummary}`;
+  if (worstGameSummary) {
+    combinedSummary += `\n\n## Worst Game Details (failure pattern analysis)\n${worstGameSummary}`;
+  }
+  const promptText = buildPromptText(combinedSummary, currentStrategy, lineageContext, allScreenshots);
 
   console.log('[improve] Calling claude CLI (standalone)...');
   let newStrategy;
   try {
-    newStrategy = await callClaude(promptText);
+    newStrategy = await callClaude(promptText, allScreenshots);
   } catch (err) {
     console.error('[improve] API call failed:', err.message);
     return;

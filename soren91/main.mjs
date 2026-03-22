@@ -9,7 +9,7 @@
 import 'dotenv/config';
 import { parse as parseDotenv } from 'dotenv';
 import { chromium } from 'playwright';
-import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync } from 'fs';
+import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync, copyFileSync, rmdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
@@ -44,7 +44,7 @@ const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 
 // ディレクトリ確保
-[SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state'].forEach(dir => {
+[SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots'].forEach(dir => {
   mkdirSync(dir, { recursive: true });
 });
 
@@ -63,6 +63,10 @@ function parsePositiveInt(value) {
 }
 
 function loadImprovementSchedule() {
+  // 環境変数オーバーライド (最優先 — soren91_control.sh メリケンモード等で使用)
+  const envInterval = parsePositiveInt(process.env.IMPROVEMENT_INTERVAL_GAMES);
+  if (envInterval) return { interval: envInterval, source: 'process.env' };
+
   if (existsSync(RUNTIME_CONFIG_PATH)) {
     try {
       const config = JSON.parse(readFileSync(RUNTIME_CONFIG_PATH, 'utf-8'));
@@ -86,9 +90,6 @@ function loadImprovementSchedule() {
       console.log(`[config] Failed to parse ${ENV_PATH}: ${err.message}`);
     }
   }
-
-  const envInterval = parsePositiveInt(process.env.IMPROVEMENT_INTERVAL_GAMES);
-  if (envInterval) return { interval: envInterval, source: 'process.env' };
 
   return { interval: DEFAULT_IMPROVEMENT_INTERVAL_GAMES, source: 'default' };
 }
@@ -577,6 +578,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let lastKnownRank = null;
   let rankingDetected = false;
   let pendingGameOver = null;
+  let midgameCommentDone = false;
 
   console.log('[game] Game loop started');
   console.log(`[game] Round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
@@ -638,16 +640,18 @@ async function gameLoop(page, calibration, gameNumber) {
             const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
             const rankResult = await detectRankingScreen(screenshotPath);
             if (rankResult != null) {
-              const isFirst = !rankingDetected;
-              rankingDetected = true;
               // ランキング画面スクショを上書き保存（後のフレームほど完全なランキング表示）
-              const { copyFileSync } = await import('fs');
               const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
               try { copyFileSync(screenshotPath, rkPath); } catch {}
-              // rankResult > 0 なら正確な値、-1 ならlastKnownRankをフォールバック
-              if (rankResult > 0) lastKnownRank = rankResult;
-              if (isFirst) {
-                console.log(`[game] RANKING screen detected! rank=${rankResult > 0 ? rankResult : 'pending OCR'}`);
+              // rankResult > 0 なら正確な値で確定、-1 は星なし(late pathで再試行)
+              if (rankResult > 0) {
+                lastKnownRank = rankResult;
+                if (!rankingDetected) {
+                  console.log(`[game] RANKING screen detected! rank=${rankResult}`);
+                }
+                rankingDetected = true;
+              } else if (!rankingDetected) {
+                console.log(`[game] RANKING screen detected (star not yet visible)`);
               }
             }
           } catch (e) {
@@ -678,6 +682,7 @@ async function gameLoop(page, calibration, gameNumber) {
           moveCount = 0;
           lastKnownRank = null;
           rankingDetected = false;
+          midgameCommentDone = false;
 
           // Stop file チェック (外部からの graceful stop 要求)
           if (existsSync('tmp/stop')) {
@@ -686,6 +691,33 @@ async function gameLoop(page, calibration, gameNumber) {
             console.log('[game] Exiting gracefully');
             return;
           }
+        }
+
+        // ラウンド終了後もランキング画面を検出し続ける (星は遅れて表示される)
+        // waitingCount 7-16 の間 (roundEnd後 ~1-10秒) だけ検出を継続
+        if (roundEnded && !rankingDetected && waitingCount >= 7 && waitingCount <= 16) {
+          try {
+            const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
+            const lateRankResult = await detectRankingScreen(screenshotPath);
+            if (lateRankResult != null && lateRankResult > 0) {
+              rankingDetected = true;
+              const prevGameNum = gameNumber - 1;
+              // ランキングスクリーンショット保存
+              const rkPath = join('tmp/summaries', `ranking_${String(prevGameNum).padStart(4, '0')}.png`);
+              try { copyFileSync(screenshotPath, rkPath); } catch {}
+              // ゲームサマリーにランクを追記 (星検出はOCRより信頼性が高いため上書き可)
+              const summaryPath = join('tmp/summaries', `game_${String(prevGameNum).padStart(4, '0')}.json`);
+              if (existsSync(summaryPath)) {
+                try {
+                  const summary = JSON.parse(readFileSync(summaryPath, 'utf-8'));
+                  const prevRank = summary.rank;
+                  summary.rank = lateRankResult;
+                  writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
+                  console.log(`[game] Late ranking detection: game #${prevGameNum} rank=${lateRankResult}${prevRank != null ? ` (was ${prevRank})` : ''}`);
+                } catch {}
+              }
+            }
+          } catch {}
         }
 
         // Stop file チェック (ラウンド間での安全な停止)
@@ -765,6 +797,19 @@ async function gameLoop(page, calibration, gameNumber) {
       turn++;
       consecutiveErrors = 0;
 
+      // 試合中コメント: ターン20で一度だけ生成 (非同期、ゲームをブロックしない)
+      if (turn === 20 && !midgameCommentDone) {
+        midgameCommentDone = true;
+        (async () => {
+          try {
+            const { generateMidgameComment } = await loadModule('./ranking_comment.mjs');
+            await generateMidgameComment(screenshotPath, gameNumber, turn, boardState);
+          } catch (err) {
+            console.log(`[game] Midgame comment error: ${err.message}`);
+          }
+        })();
+      }
+
     } catch (err) {
       consecutiveErrors++;
       console.error(`[game] Error (${consecutiveErrors}):`, err.message);
@@ -833,6 +878,39 @@ async function executeDrop(page, gameX, calibration) {
  * ラウンド制なのでリトライ不要（自動で次ラウンドが始まる）
  */
 async function handleGameOver(page, gameNumber, turns, finalState, historyFile, strategySnapshot) {
+  // ゲーム別スクリーンショットをアーカイブ (3枚: 序盤/中盤/終盤)
+  // 同期処理 — 次ラウンドのスクリーンショット上書き前に完了する
+  const gameScreenshotDir = join('tmp/game_screenshots', `game_${String(gameNumber).padStart(4, '0')}`);
+  try {
+    mkdirSync(gameScreenshotDir, { recursive: true });
+    const ssFiles = readdirSync(SCREENSHOT_DIR)
+      .filter(f => f.startsWith('turn_') && f.endsWith('.png')).sort();
+    if (ssFiles.length > 0) {
+      const earlyIdx = Math.min(2, ssFiles.length - 1);
+      const midIdx = Math.floor(ssFiles.length / 2);
+      const lateIdx = ssFiles.length - 1;
+      for (const idx of [...new Set([earlyIdx, midIdx, lateIdx])]) {
+        copyFileSync(
+          join(SCREENSHOT_DIR, ssFiles[idx]),
+          join(gameScreenshotDir, ssFiles[idx])
+        );
+      }
+      console.log(`[game] Archived ${[...new Set([earlyIdx, midIdx, lateIdx])].length} screenshots to ${gameScreenshotDir}`);
+    }
+  } catch (e) {
+    console.log(`[game] Screenshot archive failed: ${e.message}`);
+  }
+
+  // 古いゲームスクリーンショット削除 (最新24ゲーム分のみ保持)
+  try {
+    const gameSSDirs = readdirSync('tmp/game_screenshots').filter(d => d.startsWith('game_')).sort();
+    for (const d of gameSSDirs.slice(0, Math.max(0, gameSSDirs.length - 24))) {
+      const dirPath = join('tmp/game_screenshots', d);
+      readdirSync(dirPath).forEach(f => unlinkSync(join(dirPath, f)));
+      rmdirSync(dirPath);
+    }
+  } catch {}
+
   // 履歴ファイルをリネーム保存
   const archivePath = join(HISTORY_DIR, `game_${String(gameNumber).padStart(4, '0')}.jsonl`);
   if (existsSync(historyFile)) {
@@ -881,6 +959,18 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
   const summaryPath = join('tmp/summaries', `game_${String(gameNumber).padStart(4, '0')}.json`);
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
   console.log(`[game] Summary: turns=${turns}, rank=${summary.rank}, hash=${strategyHash}`);
+
+  // ランキング画面コメント生成 (非同期、ゲームループをブロックしない)
+  if (existsSync(rankingImagePath)) {
+    (async () => {
+      try {
+        const { generateRankingComment } = await loadModule('./ranking_comment.mjs');
+        await generateRankingComment(rankingImagePath, gameNumber, detectedRank);
+      } catch (err) {
+        console.log(`[game] Ranking comment error: ${err.message}`);
+      }
+    })();
+  }
 
   try {
     const lineageResult = recordCompletedGame({

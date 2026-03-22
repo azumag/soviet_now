@@ -16,7 +16,7 @@ while true; do
 	attempt=$((attempt + 1))
 	printf '[%s] [runner] launch attempt=%d\n' "$(date '+%H:%M:%S')" "$attempt" >>"$LOG_FILE" 2>/dev/null || true
 
-	SOREN91_EXTERNAL_IMPROVE=1 node main.mjs >>"$LOG_FILE" 2>&1
+	SOREN91_EXTERNAL_IMPROVE="${SOREN91_EXTERNAL_IMPROVE:-1}" node main.mjs >>"$LOG_FILE" 2>&1
 	rc=$?
 
 	[ -f "$STOP_FILE" ] && exit 0

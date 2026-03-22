@@ -109,3 +109,4 @@ small pieces (type 1〜4) は落下時の衝撃で周囲のピースを揺らす
 - Return value MUST be `{ x: number, reason: string, hold?: boolean }` where x is in [-3.0, 3.0]
 - HOLD logic (checking boardState.hold and canHold) MUST be preserved
 - Do NOT use async/await, fetch, fs, or any side effects - pure computation only
+- 時間がかかってもいいので端折ったりせず品質を優先すること。ゲーム分析・戦略コードの両方を丁寧に読み込み、根拠のある改善を行うこと
