@@ -37,8 +37,8 @@ Phases (determined by board max Y):
 
  # --- Change History ---
 # v306: 即時併合不可時の戦略的配置ボーナス完全削除版
-# v299 rollback failure mode: deadline_crossed時、reactive_pairsがあるのに即時併合不可の場合、戦略的配置ボーナスが付与され続け、max_y runaway → ゲームオーバー
-# axis 8.6の戦略的配置ボーナス（即時併合不可時に400.0/50.0を付与）を完全削除し、即時併合を最優先
+# v299 rollback failure mode: 即時併合不可時に戦略的配置ボーナスが付与され続け、max_y runaway → ゲームオーバー
+# axis 8.6とaxis 9.5の戦略的配置ボーナス（即時併合不可時に400.0/50.0/800.0/300.0/100.0/200.0を付与）を完全削除
 # 即時併合不可の場合、純粋に他の評価軸（height/drift/balance/chainなど）で判断させる
 # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
 #       game_history/20260322_120731_score0738.jsonl, game_history/20260322_074935_score2869.jsonl
@@ -438,62 +438,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
-        # ----- evaluation axis 9.5: current type stack merge priority (v284: reactive_pairs活用盤面圧縮強化版)
+        # ----- evaluation axis 9.5: current type stack merge priority (v306: 戦略的配置ボーナス完全削除版) -----
 
-        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
-        # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
-        # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
-        # reactive_pairsがある場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替える。
-        # v284: 即時併合不可時のreactive_pairs活用盤面圧縮強化
-        # reactive_pairs>=3 && merge_grade=="NO" && danger_piece_count==0の場合、戦略的配置ボーナスを強化して盤面圧縮優先
-        # ワーストゲーム(score0642)終盤でreactive_pairs>=3あるのに即時併合不可で戦略的配置を選び、max_y上昇
-        # ベストゲーム(score1624)終盤で即時併合を確実に捉えてスコア稼いでいる
-        # danger_piece_count > 0 の場合は axis 8.5で即時併合優先が適用されるため、axis 9.5ボーナスを抑制
-        # 危険ピースがない場合にreactive_pairsがある状況で即時併合不可の場合、このaxisで戦略的配置の余地を確保
-        # 危険ピースがない場合にreactive_pairsがある状況で即時併合不可の場合、このaxisで戦略的配置の余地を確保
-        # 戦略的配置の余地を最小限にするためheight_multを緩和
+        # v306: 即時併合不可時の戦略的配置ボーナス完全削除
+        # v299 rollback failure mode: 即時併合不可時に戦略的配置ボーナスが付与され続け、max_y runaway → ゲームオーバー
+        # axis 9.5の戦略的配置ボーナス（即時併合不可時に800.0/300.0/100.0/200.0を付与）を完全削除
+        # 即時併合不可の場合、純粋に他の評価軸（height/drift/balance/chainなど）で判断させる
+        # last_rollback_postmortemの制約遵守：reactive_pairsがある場合、即時併合が可能なら即時併合機会を優先するが、即時併合不可の場合は戦略的配置ボーナスを完全削除する
 
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
 
-            # v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
-            # danger_piece_count == 0 の場合、reactive_pairs>=3 && merge_grade=="NO"の戦略的配置ボーナス+1000.0を削除
-            # ワーストゲームの「reactive_pairs>=3あるのに即時併合不可で戦略的配置を選び、max_y上昇」を回避するため
-            # 即時併合機会を優先する戦略へ修正
-
-            if danger_piece_count == 0:
-                if reactive_pair_count >= 1:
-                    score += 800.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
-                else:
-                    score += 300.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
-
-            else:
-                # danger_piece_count > 0 の場合は即時併合優先が適用されるためボーナスを抑制
-                # axis 8.5の即時併合優先評価を妨げないよう、最小限のボーナスを維持
-                if reactive_pair_count >= 1:
-                    score += 100.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_DANGER")
-                # 危険ピースがある場合、戦略的配置の余地を最小限に抑制
+            # 即時併合不可の場合、戦略的配置ボーナスは付与しない
+            # 危険ピースがある場合のみ、height_multを緩和して戦略的配置の余地を最小限に確保
+            if danger_piece_count > 0:
                 height_mult *= 0.7
-
-            # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
-            # danger_piece_count == 0 の場合のみペナルティ軽減を適用
-            landing_y = result.get("landing_y", 0)
-            if landing_y > stack_top_y and danger_piece_count == 0:
-                horiz_dist = abs(x - stack_top_x)
-                if horiz_dist < 1.0:
-                    # reactive_pairsがある場合、ペナルティ軽減を強化
-                    if reactive_pair_count >= 1:
-                        score += 200.0
-                        if "SAME_TYPE_STACK" not in "_".join(reasons):
-                            reasons.append("SAME_TYPE_STACK")
-                    else:
-                        score += 100.0
-                        if "SAME_TYPE_STACK" not in "_".join(reasons):
-                            reasons.append("SAME_TYPE_STACK")
 
         # ----- update best candidate -----
         if score > best_score:
