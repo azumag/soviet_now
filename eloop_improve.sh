@@ -1045,20 +1045,19 @@ if $improve_ok; then
 		_post_phyrogenetic_tree_link_to_chat "improve" "$HASH_BEFORE" "$HASH_AFTER"
 	fi
 
-	# --- Phase D: 戦略解説コーナー (変更があった場合のみ) ---
-	# 改善ジョブ自体は先に完了扱いにし、ラジオは完全に切り離して harvest を止めない。
+	# --- Phase D: 戦略解説ラジオをペンディング保存 (次サイクル1試合目に発火) ---
 	if [ -n "$strategy_diff" ]; then
-		_improve_progress "radio" "95" "strategy_commentary"
+		_improve_progress "radio" "95" "strategy_commentary_pending"
 		best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
-		_improve_progress "done" "100" "awaiting_harvest"
-		if _launch_detached_strategy_radio "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now"; then
-			_improve_note "strategy commentary launched in detached worker"
-		else
-			log "[IMPROVE] strategy commentary launch failed"
+		local _pending_diff_file
+		_pending_diff_file=$(mktemp "$TMP_STATE_DIR/pending_strategy_diff.XXXXXX") || true
+		if [ -n "$_pending_diff_file" ]; then
+			printf '%s\n' "$strategy_diff" > "$_pending_diff_file"
+			_save_pending_cycle_radio_improvement "$_pending_diff_file" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now"
+			_improve_note "strategy commentary pending for next cycle"
 		fi
-	else
-		_improve_progress "done" "100" "awaiting_harvest"
 	fi
+	_improve_progress "done" "100" "awaiting_harvest"
 else
 	log "[IMPROVE] 改善失敗のため commit/radio をスキップ"
 	_improve_note "failed_no_apply: ${VALIDATE_ERROR:-unknown}"

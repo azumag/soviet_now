@@ -1987,7 +1987,7 @@ PY
 		if [ "$phylo_push_ok" = true ]; then
 			_post_phyrogenetic_tree_link_to_chat "rollback" "$strategy_hash" "$rolled_hash"
 		fi
-		[ -f "$ROLLBACK_ANALYSIS_FILE" ] && start_radio_corner_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash" &
+		[ -f "$ROLLBACK_ANALYSIS_FILE" ] && _save_pending_cycle_radio_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash"
 		return 0
 	fi
 

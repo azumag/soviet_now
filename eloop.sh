@@ -388,6 +388,15 @@ print(d.get('score', 0) + bonus)
 	# 改善用の rolling/queued 記録はここで一度だけ行う
 	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
 
+	# サイクル1試合目: 前サイクルの改善結果 or 粛清ラジオをここで発火
+	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+		local _acc_count
+		_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+		if [ "${_acc_count:-0}" -eq 1 ]; then
+			fire_pending_cycle_radio
+		fi
+	fi
+
 	# 予想サイクル進捗をチャットに投稿
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		local pred_progress

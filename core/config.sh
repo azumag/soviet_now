@@ -104,6 +104,7 @@ ROLLBACK_POSTMORTEM_FILE="$TMP_STATE_DIR/last_rollback_postmortem.md"
 ROLLBACK_POSTMORTEM_CONTEXT_FILE="$TMP_STATE_DIR/last_rollback_postmortem_context.md"
 ROLLBACK_POSTMORTEM_PID_FILE="$TMP_STATE_DIR/rollback_postmortem.pid"
 ROLLBACK_POSTMORTEM_AI_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/rollback_postmortem_ai.log"
+PENDING_CYCLE_RADIO_FILE="$TMP_STATE_DIR/pending_cycle_radio.json"
 BEST_STRATEGY_ANCHOR_FILE="$TMP_STATE_DIR/best_strategy_anchor.json"
 ACTIVE_BRANCH_FILE="$TMP_STATE_DIR/active_branch.json"
 REGRESSION_ROLLBACK_DONE=0

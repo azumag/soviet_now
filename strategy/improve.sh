@@ -400,6 +400,89 @@ PY
 	fi
 }
 
+#=== サイクル頭ラジオ (改善結果 or 粛清) のペンディング管理 ===
+
+# 改善結果をペンディング保存 (即座にラジオを鳴らさず、次サイクル1試合目に流す)
+_save_pending_cycle_radio_improvement() {
+	local diff_file="$1" scores="$2" game_num="$3" best_score="$4"
+	python3 -c "
+import json
+data = {
+    'type': 'improvement',
+    'diff_file': '$diff_file',
+    'scores': '$scores',
+    'game_num': '$game_num',
+    'best_score': '$best_score',
+}
+with open('$PENDING_CYCLE_RADIO_FILE', 'w') as f:
+    json.dump(data, f)
+" 2>/dev/null
+	log "[CYCLE_RADIO] Pending improvement radio saved"
+}
+
+# 粛清をペンディング保存
+_save_pending_cycle_radio_rollback() {
+	local analysis_file="$1" game_num="$2" from_hash="$3" to_hash="$4"
+	python3 -c "
+import json
+data = {
+    'type': 'rollback',
+    'analysis_file': '$analysis_file',
+    'game_num': '$game_num',
+    'from_hash': '$from_hash',
+    'to_hash': '$to_hash',
+}
+with open('$PENDING_CYCLE_RADIO_FILE', 'w') as f:
+    json.dump(data, f)
+" 2>/dev/null
+	log "[CYCLE_RADIO] Pending rollback radio saved"
+}
+
+# サイクル1試合目: ペンディングラジオを消化
+fire_pending_cycle_radio() {
+	[ -f "$PENDING_CYCLE_RADIO_FILE" ] || return 0
+	local radio_type diff_file scores game_num best_score analysis_file from_hash to_hash
+	eval "$(python3 -c "
+import json, shlex
+with open('$PENDING_CYCLE_RADIO_FILE') as f:
+    d = json.load(f)
+t = d.get('type', '')
+print(f'radio_type={shlex.quote(t)}')
+if t == 'improvement':
+    print(f'diff_file={shlex.quote(d.get(\"diff_file\",\"\"))}')
+    print(f'scores={shlex.quote(d.get(\"scores\",\"\"))}')
+    print(f'game_num={shlex.quote(str(d.get(\"game_num\",\"0\")))}')
+    print(f'best_score={shlex.quote(str(d.get(\"best_score\",\"0\")))}')
+elif t == 'rollback':
+    print(f'analysis_file={shlex.quote(d.get(\"analysis_file\",\"\"))}')
+    print(f'game_num={shlex.quote(str(d.get(\"game_num\",\"0\")))}')
+    print(f'from_hash={shlex.quote(d.get(\"from_hash\",\"\"))}')
+    print(f'to_hash={shlex.quote(d.get(\"to_hash\",\"\"))}')
+" 2>/dev/null)"
+
+	rm -f "$PENDING_CYCLE_RADIO_FILE"
+
+	case "$radio_type" in
+	improvement)
+		if [ -n "$diff_file" ] && [ -f "$diff_file" ]; then
+			local strategy_diff
+			strategy_diff=$(cat "$diff_file" 2>/dev/null)
+			rm -f "$diff_file" 2>/dev/null || true
+			if [ -n "$strategy_diff" ]; then
+				log "[CYCLE_RADIO] Firing improvement radio (game_num=$game_num)"
+				start_radio_corner_strategy "$strategy_diff" "$scores" "$game_num" "$best_score" &
+			fi
+		fi
+		;;
+	rollback)
+		if [ -n "$analysis_file" ] && [ -f "$analysis_file" ]; then
+			log "[CYCLE_RADIO] Firing rollback radio (game_num=$game_num)"
+			start_radio_corner_rollback "$analysis_file" "$game_num" "$from_hash" "$to_hash" &
+		fi
+		;;
+	esac
+}
+
 record_completed_game_for_adaptive_improvement() {
 	local archive_file="$1" score="$2" soviet="$3" russia="${4:-false}"
 	local played_hash="" current_hash=""
