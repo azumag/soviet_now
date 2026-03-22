@@ -206,6 +206,10 @@ _dispatch_manual_audio_trigger() {
 		log "[MANUAL] danger_zone トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_danger_zone "$game_num" "$score" &
 		;;
+	ai_knowledge)
+		log "[MANUAL] ai_knowledge トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_ai_knowledge "$game_num" "$score" &
+		;;
 	music_knowledge)
 		log "[MANUAL] music_knowledge トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_music_knowledge "$game_num" "$score" &
@@ -378,6 +382,10 @@ schedule_nonessential_audio_jobs() {
 	if _try_timed_corner "devil_dict" 13 0; then
 		timed_corner_fired=true
 		_run_timed_corner "devil_dict" start_radio_corner_devil_dict "$game_num" "$score" &
+	fi
+	if _try_timed_corner "ai_knowledge" 13 30; then
+		timed_corner_fired=true
+		_run_timed_corner "ai_knowledge" start_radio_corner_ai_knowledge "$game_num" "$score" &
 	fi
 	if _try_timed_corner "soviet_quiz" 14 0; then
 		timed_corner_fired=true

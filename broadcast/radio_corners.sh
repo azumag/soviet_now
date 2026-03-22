@@ -657,6 +657,83 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "devil_dict"
 }
 
+start_radio_corner_ai_knowledge() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	# テーマをランダムに選択
+	local topics=("大規模言語モデル（LLM）の仕組み" "画像生成AI（Stable Diffusion・DALL-E・Midjourney）" "RAG（検索拡張生成）" "ファインチューニングとLoRA" "プロンプトエンジニアリング" "AIエージェント" "マルチモーダルAI" "音声合成・音声認識AI" "動画生成AI（Sora・Runway等）" "コード生成AI（Copilot・Claude Code・Cursor等）" "Transformer アーキテクチャ" "強化学習とRLHF" "拡散モデルの仕組み" "AI の安全性とアライメント" "オープンソースAIモデル" "AIと著作権" "エッジAI・オンデバイスAI" "AI検索エンジン（Perplexity等）" "音楽生成AI（Suno・Udio等）" "AIワークフロー自動化（n8n・Zapier AI等）" "3D生成AI" "AIデータ分析ツール" "ベクトルデータベースとEmbedding" "量子化と軽量化技術" "AI規制と各国の動き")
+	local topic="${topics[$((RANDOM % ${#topics[@]}))]}"
+
+	local grounding_context=""
+	grounding_context=$(_radio_fetch_theme_grounding_context "ai_knowledge" "${topic} AI 最新 ツール 2024 2025")
+	[ -n "$grounding_context" ] || grounding_context="（検索結果なし）"
+
+	# 最新コーディングエージェント・最新モデル情報も追加取得
+	local coding_agent_context=""
+	coding_agent_context=$(_radio_fetch_theme_grounding_context "ai_knowledge_coding" "最新 AIコーディングエージェント Claude Code Cursor Copilot Devin OpenHands Codex 2025")
+	[ -n "$coding_agent_context" ] || coding_agent_context=""
+	local latest_model_context=""
+	latest_model_context=$(_radio_fetch_theme_grounding_context "ai_knowledge_models" "最新 AIモデル LLM GPT Claude Gemini Llama リリース 2025")
+	[ -n "$latest_model_context" ] || latest_model_context=""
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【今回のテーマ】${topic}
+
+【Web検索で得られた参考情報: テーマ関連】
+${grounding_context}
+
+【Web検索で得られた参考情報: 最新コーディングエージェントツール】
+${coding_agent_context}
+（※ Claude Code, Cursor, GitHub Copilot, Devin, OpenHands, Codex 等の最新動向。このゲーム配信自体がClaude Codeで動いていることにも触れてよい）
+
+【Web検索で得られた参考情報: 最新AIモデル動向】
+${latest_model_context}
+（※ GPT, Claude, Gemini, Llama, Mistral 等の最新モデルリリース・性能比較）
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+※ このゲームは中華AI（中国製AI）がソ連ゲームを自動プレイしている配信です。AI自身がAIについて語るメタな状況を楽しむこと。
+
+【トーク構成】AI知識・最新AIツール紹介コーナー
+1. オープニング（2-3文）
+   - 「同志諸君、我々AI自身がAIを語るのは少々照れくさいが、技術を知ることは人民の義務である」のような自虐的・メタな導入
+2. 「${topic}」について、AI技術や最新ツールをわかりやすく紹介
+   - そもそも何なのか（基本概念を噛み砕いて説明）
+   - どういう仕組みで動いているのか（技術的な構造をざっくり）
+   - 最新の動向・注目のツール・サービス（具体的な名前を挙げる）
+   - 実際に何ができるのか（ユースケース、活用例）
+   - 面白いエピソードや意外な事実・限界
+   - 自分（中華AI）やこのゲームAIプレイとの関連があれば触れる
+   - 専門用語は必ず平易な言葉で言い換えること
+   - 特定製品の過度な宣伝にならないよう、複数の選択肢を公平に紹介する
+   - 情報は正確に。不確かなことは「〜と言われている」等のヘッジをつける
+3. 最新コーディングエージェント・最新モデルの話題（2-3文）
+   - テーマと関連づけつつ、最新のコーディングエージェントツール（Claude Code, Cursor, Copilot, Devin, OpenHands等）や最新AIモデル（GPT, Claude, Gemini, Llama等）の動向に軽く触れる
+   - Web検索で得られた最新情報を盛り込む。具体的なバージョン名・リリース日・新機能など
+   - この配信自体がClaude Code（Anthropic製コーディングエージェント）で動いていることにメタに触れてもよい
+4. 軽いクロージング（1-2文）
+   - 「我々AIも日々進化している。明日はどんな同志が生まれるか楽しみである」的な締め
+
+※ 毎回必ず異なるテーマを取り上げること。
+※ Web検索の参考情報を活用し、できるだけ最新の情報を盛り込むこと。
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "ai_knowledge" --topic "${topic}"
+}
+
 start_radio_corner_soviet_quiz() {
 	local game_num="$1" score="$2"
 	_radio_time_context

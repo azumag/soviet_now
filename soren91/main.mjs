@@ -579,7 +579,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let lastKnownRank = null;
   let rankingDetected = false;
   let pendingGameOver = null;
-  let midgameCommentDone = false;
+
 
   console.log('[game] Game loop started');
   try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
@@ -685,7 +685,7 @@ async function gameLoop(page, calibration, gameNumber) {
           moveCount = 0;
           lastKnownRank = null;
           rankingDetected = false;
-          midgameCommentDone = false;
+
 
           // Stop file チェック (外部からの graceful stop 要求)
           if (existsSync('tmp/stop')) {
@@ -801,9 +801,8 @@ async function gameLoop(page, calibration, gameNumber) {
       try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
       consecutiveErrors = 0;
 
-      // 試合中コメント: ターン60で一度だけ生成 (非同期、ゲームをブロックしない)
-      if (turn === 60 && !midgameCommentDone) {
-        midgameCommentDone = true;
+      // 試合中コメント: 20ターンごとに生成 (非同期、ゲームをブロックしない)
+      if (turn > 0 && turn % 20 === 0) {
         (async () => {
           try {
             const { generateMidgameComment } = await loadModule('./ranking_comment.mjs');

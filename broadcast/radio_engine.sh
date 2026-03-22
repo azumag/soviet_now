@@ -861,6 +861,7 @@ _ensure_corner_announce() {
 		rakugo) announce="深夜の落語創作コーナーです。" ;;
 		finance) announce="金融の仕組みコーナーです。" ;;
 		music_knowledge) announce="音楽知識コーナーです。" ;;
+		ai_knowledge) announce="AI知識・最新AIツール紹介コーナーです。" ;;
 		*)        announce="" ;;
 	esac
 	[ -z "$announce" ] && { printf '%s' "$text"; return 0; }
