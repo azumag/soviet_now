@@ -206,25 +206,18 @@ function postToTwitch(comment) {
 
 /**
  * 試合中の盤面コメントを生成 (1試合1回)
- * @param {string} screenshotPath - 盤面スクリーンショットのパス
  * @param {number} gameNumber - ゲーム番号
  * @param {number} turn - 現在のターン数
  * @param {object} boardState - 盤面状態
  */
-export async function generateMidgameComment(screenshotPath, gameNumber, turn, boardState) {
-  if (!screenshotPath || !existsSync(screenshotPath)) {
-    console.log('[midgame_comment] No screenshot available');
+export async function generateMidgameComment(gameNumber, turn, boardState) {
+  if (!boardState) {
+    console.log('[midgame_comment] No board state available');
     return null;
   }
 
   try {
-    const imageBuffer = await sharp(screenshotPath)
-      .resize(960, 540)
-      .jpeg({ quality: 75 })
-      .toBuffer();
-    const base64Image = imageBuffer.toString('base64');
-
-    const comment = await callClaudeForMidgame(base64Image, gameNumber, turn, boardState);
+    const comment = await callClaudeForMidgame(gameNumber, turn, boardState);
     if (!comment) {
       console.log('[midgame_comment] No comment generated');
       return null;
@@ -244,60 +237,89 @@ export async function generateMidgameComment(screenshotPath, gameNumber, turn, b
   }
 }
 
-function callClaudeForMidgame(base64Image, gameNumber, turn, boardState) {
-  const pieces = boardState?.pieces?.length ?? '?';
+function formatBoardStateForPrompt(boardState, turn) {
+  const pieces = boardState?.pieces ?? [];
+  const pieceCount = pieces.length;
   const garbageRatio = boardState?.garbage?.ratio ?? 0;
   const gauge = boardState?.garbage?.gauge ?? 0;
-  const garbageInfo = garbageRatio > 0.05
-    ? `おじゃまブロック: ${(garbageRatio * 100).toFixed(0)}%、ゲージ: ${(gauge * 100).toFixed(0)}%。`
-    : '';
+  const hold = boardState?.hold;
+  const nextPieces = boardState?.nextPieces ?? [];
+
+  // 盤面の高さ（最も高いピースの y）
+  const maxY = pieces.length > 0
+    ? Math.max(...pieces.map(p => p.y ?? -5))
+    : -5;
+  const deadlineY = 3.32;
+  const heightPct = Math.max(0, Math.min(100, ((maxY + 5) / (deadlineY + 5)) * 100)).toFixed(0);
+
+  // ピースのtype別集計
+  const typeCounts = {};
+  for (const p of pieces) {
+    const t = p.type ?? '?';
+    typeCounts[t] = (typeCounts[t] || 0) + 1;
+  }
+  const typeStr = Object.entries(typeCounts)
+    .sort((a, b) => Number(b[0]) - Number(a[0]))
+    .map(([t, c]) => `type${t}×${c}`)
+    .join(', ');
+
+  let info = `ターン${turn}、盤面にピース${pieceCount}個。`;
+  info += `\n盤面の高さ: ${heightPct}%（デッドラインまで）、最高地点y=${maxY.toFixed(1)}`;
+  info += `\nピース内訳: ${typeStr || 'なし'}`;
+
+  if (garbageRatio > 0.05) {
+    info += `\nおじゃまブロック: ${(garbageRatio * 100).toFixed(0)}%、ゲージ: ${(gauge * 100).toFixed(0)}%`;
+  }
+  if (hold) {
+    info += `\nHOLD: type${hold.type}`;
+  }
+  if (nextPieces.length > 0) {
+    info += `\nNEXT: ${nextPieces.map(p => `type${p.type}`).join(', ')}`;
+  }
+
+  return info;
+}
+
+function callClaudeForMidgame(gameNumber, turn, boardState) {
+  const boardInfo = formatBoardStateForPrompt(boardState, turn);
 
   const promptText = `あなたは「メリケンAI」。アメリカ製AIで、資本主義の力でソ連ゲーム91（91人対戦・落ちものパズル）を制覇しようとしている。丁寧なですます調だが、ちょっとひねくれている。盤面が良くても「まあ悪くないですかね」、ピンチでも「想定の範囲内です」と強がる。自分の判断に自信があるフリをしつつ、内心焦っている様子がにじむ。アメリカンジョークや資本主義ネタを挟むが、皮肉と自虐が混ざっている。
-現在ターン${turn}、盤面にピース${pieces}個。${garbageInfo}
-この盤面スクリーンショットを見て、試合中の実況コメントを生成せよ。
+
+【盤面データ】
+${boardInfo}
+
+※ type番号が大きいほど大きなピース。同type同士が接触すると併合してtype+1に。type15が最大。
+
+この盤面データをもとに、試合中の実況コメントを生成せよ。
 
 ルール:
 - 盤面の状況（ピースの積み上がり具合、危険度、大きなピースの有無、チャンスなど）に具体的に言及
-- 画面に見えるピースの色や大きさ、積み上がりの高さなどを観察して述べる
+- ピースの大きさの分布、盤面の高さ、おじゃまブロックの状況などを踏まえて述べる
 - ひねくれた資本主義者として、強がり・皮肉・負け惜しみ・斜に構えた自己評価を自然に織り交ぜる
 - 自然な日本語のですます調のみ（英語禁止）
 - 5〜7文、200〜300文字程度でしっかり語る
 - コメント本文のみ出力（分析・説明・カッコ・注釈は一切不要）`;
 
-  const content = [
-    {
-      type: 'image',
-      source: { type: 'base64', media_type: 'image/jpeg', data: base64Image },
-    },
-    { type: 'text', text: promptText },
-  ];
-
-  const message = JSON.stringify({
-    type: 'user',
-    message: { role: 'user', content },
-  });
-
   return new Promise((resolve, reject) => {
     const child = execFile('claude', [
       '-p', '--model', 'haiku',
-      '--input-format', 'stream-json', '--output-format', 'stream-json',
       '--verbose',
     ], {
       encoding: 'utf-8',
       maxBuffer: 2 * 1024 * 1024,
       timeout: 30000,
       cwd: '/tmp',
+      env: { ...process.env, CLAUDE_INPUT: promptText },
     }, (err, stdout, stderr) => {
       if (err) {
         if (stderr) console.error('[midgame_comment] claude stderr:', stderr.slice(0, 300));
         return reject(err);
       }
-      const raw = parseStreamJsonOutput(stdout);
-      resolve(extractCommentOnly(raw));
+      resolve(extractCommentOnly(stdout.trim()));
     });
 
     child.stdin.on('error', () => {});
-    child.stdin.write(message + '\n');
+    child.stdin.write(promptText);
     child.stdin.end();
   });
 }
