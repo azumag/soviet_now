@@ -44,6 +44,54 @@ start_radio_corner_theme() {
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "$corner_name" --topic "$theme"
 }
 
+_news_self_search_fallback() {
+	local game_num="$1" score="$2" reason="$3"
+	log "[NEWS] ${reason} → AIによる自主ニュース探索モード"
+
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【重要】ニュースフィードからの記事取得に失敗しました。
+あなた自身の知識から、最近（ここ数日〜1週間以内）の注目ニュースや話題を1つ選び、ニュースコーナーとして紹介してください。
+- 政治、経済、テクノロジー、科学、文化、スポーツなど分野は問わない
+- 日本国内のニュースでも海外のニュースでもよい
+- 自分が確信を持てる事実に基づいて話すこと（曖昧な記憶で断定しないこと）
+- 「本日のRSS取得に失敗した」等のメタ情報はリスナーに伝えないこと。普通のニュースコーナーとして振る舞うこと
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. ニュースコーナー
+   - 自分が選んだニュースのタイトルを日本語で1文だけ読み上げること
+   - 1000字程度で深く語る
+   - 単なる冷笑やツッコミで終わらせず、「なぜこうなったのか」「この先どうなるのか」「歴史的に見るとどういう位置づけか」など自分なりの洞察や意見を述べる
+   - 斜に構えつつも知性を感じさせる分析を
+3. 軽いクロージング（1-2文）
+
+【事実と意見の切り分け（必須）】
+- 確認できる事実、そこから言える推測、自分の意見を切り分けて話すこと
+- 作り話、誤情報の上乗せは禁止
+- 賛否や立場の違いがある話題では、少なくとも別の見え方があることを示すこと
+- 感情的な煽りや、特定の集団を嘲笑・敵視するトーンは使わないこと
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "news"
+}
+
 start_radio_corner_news() {
 	local game_num="$1" score="$2"
 	_radio_time_context
@@ -54,14 +102,17 @@ start_radio_corner_news() {
 	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
 		news_headlines=$(cat "tmp/news.txt")
 	fi
-	[ -z "$news_headlines" ] && return 1
+	if [ -z "$news_headlines" ]; then
+		_news_self_search_fallback "$game_num" "$score" "ニュース取得失敗または空"
+		return
+	fi
 
 	# 正規化キーで未読のみ抽出（表記揺れを吸収）
 	local unread_news_headlines=""
 	unread_news_headlines=$(printf '%s\n' "$news_headlines" | _filter_unread_news_blocks)
 	if [ -z "$unread_news_headlines" ]; then
-		log "[NEWS] 全ニュースが既読または新規なし → 今回はスキップ"
-		return 1
+		_news_self_search_fallback "$game_num" "$score" "全ニュースが既読または新規なし"
+		return
 	fi
 	unread_news_headlines=$(_prepare_news_prompt_blocks "$unread_news_headlines")
 
@@ -69,8 +120,8 @@ start_radio_corner_news() {
 	local selected_news selected_block
 	selected_block=$(_random_pick_news_block "$unread_news_headlines")
 	if [ -z "$selected_block" ]; then
-		log "[NEWS] ニュースブロック選定失敗 → スキップ"
-		return 1
+		_news_self_search_fallback "$game_num" "$score" "ニュースブロック選定失敗"
+		return
 	fi
 	selected_news=$(printf '%s\n' "$selected_block" | head -n 1 | sed 's/^■ //')
 	log "[NEWS] スクリプト選定: ${selected_news}"
@@ -81,8 +132,8 @@ start_radio_corner_news() {
 		local spam_key
 		spam_key=$(_news_title_key "$selected_news")
 		[ -n "$spam_key" ] && echo "$spam_key" >>"$PAST_NEWS_READ_KEYS"
-		# 再帰せず単純にスキップ（次回のラジオで別記事が選ばれる）
-		return 1
+		_news_self_search_fallback "$game_num" "$score" "SPAM検出のため代替探索"
+		return
 	fi
 
 	# 選定直後に既読記録（AI生成を待たずに確定）
@@ -852,6 +903,115 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "night_snack"
 }
 
+start_radio_corner_finance() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	# テーマをランダムに選択
+	local topics=("株式市場" "債券" "為替・FX" "中央銀行と金融政策" "保険の仕組み" "銀行の仕組み" "投資信託・ETF" "デリバティブ（先物・オプション）" "暗号資産・ブロックチェーン" "インフレとデフレ" "年金制度" "信用創造" "国債と財政" "ベンチャーキャピタル" "不動産金融（REIT等）" "マイクロファイナンス" "金本位制の歴史" "恐慌・バブルの歴史" "ソ連の計画経済と金融" "イスラム金融")
+	local topic="${topics[$((RANDOM % ${#topics[@]}))]}"
+
+	local grounding_context=""
+	grounding_context=$(_radio_fetch_theme_grounding_context "finance" "${topic} 金融 仕組み 解説")
+	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【今回のテーマ】${topic}
+
+【Web検索で得られた参考情報】
+${grounding_context}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】金融の仕組みコーナー
+1. 深夜の雰囲気に合わせたオープニング（2-3文）
+   - 「同志諸君、資本主義の道具を知ることは、それに支配されないための第一歩である」のような導入
+2. 「${topic}」について、仕組みをわかりやすく解説
+   - そもそも何なのか（基本概念を噛み砕いて説明）
+   - どういう仕組みで動いているのか（お金の流れ、関係者、メカニズム）
+   - 歴史的な成り立ち（いつ、なぜ生まれたのか）
+   - 日常生活との関わり（一般人にどう影響するか）
+   - 面白いエピソードや意外な事実
+   - ソ連・社会主義経済との対比があれば触れる（計画経済ではどうだったか等）
+   - 専門用語は必ず平易な言葉で言い換えること
+   - 正確さを重視し、投資の推奨や具体的な金融アドバイスはしない
+3. 軽いクロージング（1-2文）
+   - 「仕組みを知れば、世界の見え方が変わる」的な締め
+
+※ 毎回必ず異なるテーマを取り上げること。
+※ 特定の金融商品の推奨・勧誘にならないよう注意すること。
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "finance" --topic "${topic}"
+}
+
+start_radio_corner_music_knowledge() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	# テーマをランダムに選択
+	local topics=("ソナタ形式" "対位法とフーガ" "オーケストラの楽器配置" "調性と移調" "和声の基礎（三和音・七の和音）" "リズムと拍子の種類" "ブルースとペンタトニック" "ジャズの即興演奏" "電子音楽とシンセサイザー" "音律と平均律" "オペラの歴史" "ロシア五人組" "ソ連の音楽政策" "ショスタコーヴィチとソ連" "バロック音楽の特徴" "ロマン派の革新" "民族音楽と国民楽派" "音楽の記譜法の歴史" "レコードからストリーミングまで" "ワールドミュージックの潮流" "ラーガとマカーム" "ガムランとポリリズム" "映画音楽の技法" "音響心理学と協和音" "ミニマルミュージック")
+	local topic="${topics[$((RANDOM % ${#topics[@]}))]}"
+
+	local grounding_context=""
+	grounding_context=$(_radio_fetch_theme_grounding_context "music_knowledge" "${topic} 音楽 解説 歴史")
+	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【今回のテーマ】${topic}
+
+【Web検索で得られた参考情報】
+${grounding_context}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】音楽知識コーナー
+1. 早朝の雰囲気に合わせたオープニング（2-3文）
+   - 「同志諸君、音楽は人民の魂の言語である。今日もその奥深い世界を覗いてみよう」のような導入
+2. 「${topic}」について、音楽の仕組み・歴史をわかりやすく解説
+   - そもそも何なのか（基本概念を噛み砕いて説明）
+   - どういう仕組み・理論なのか（音楽的な構造、ルール、特徴）
+   - 歴史的な成り立ち（いつ、どこで、なぜ生まれたのか）
+   - 代表的な作曲家・演奏家・作品（具体例で理解を助ける）
+   - 面白いエピソードや意外な事実
+   - ソ連・ロシア音楽との関わりがあれば積極的に触れる
+   - 専門用語は必ず平易な言葉で言い換えること
+   - 聴いたことがない人でもイメージできるよう、音の特徴を言葉で描写する
+3. 軽いクロージング（1-2文）
+   - 「音楽を知ると、聴こえ方が変わる」的な締め
+
+※ 毎回必ず異なるテーマを取り上げること。
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "music_knowledge" --topic "${topic}"
+}
+
 start_radio_corner_danger_zone() {
 	local game_num="$1" score="$2"
 	_radio_time_context
@@ -1312,21 +1472,27 @@ start_radio_corner_jiji() {
 	# 1. Google News トップ見出し取得
 	log "[JIJI] Google News 見出し取得..."
 	python3 "$ELOOP_LIB_DIR/lib/fetch_google_headlines.py" 2>/dev/null
-	if [ ! -f "tmp/google_headlines.txt" ] || [ ! -s "tmp/google_headlines.txt" ]; then
-		log "[JIJI] 見出し取得失敗、スキップ"
-		return 1
+
+	# 2. 見出しから1件選択（取得失敗/未読なし時はAI自主探索）
+	local headlines="" unread_headlines="" headline="" jiji_self_search=false
+	if [ -f "tmp/google_headlines.txt" ] && [ -s "tmp/google_headlines.txt" ]; then
+		headlines=$(cat "tmp/google_headlines.txt")
+		unread_headlines=$(printf '%s\n' "$headlines" | _filter_unread_jiji_blocks)
+		if [ -n "$unread_headlines" ]; then
+			# 先頭の見出しを選択（■ プレフィックスを除去）
+			headline=$(printf '%s\n' "$unread_headlines" | head -1 | sed 's/^■ //')
+		else
+			log "[JIJI] 未読見出しなし → AIによる自主探索モード"
+			jiji_self_search=true
+		fi
+	else
+		log "[JIJI] 見出し取得失敗 → AIによる自主探索モード"
+		jiji_self_search=true
 	fi
 
-	# 2. 未読の見出しから1件選択
-	local headlines unread_headlines headline
-	headlines=$(cat "tmp/google_headlines.txt")
-	unread_headlines=$(printf '%s\n' "$headlines" | _filter_unread_jiji_blocks)
-	if [ -z "$unread_headlines" ]; then
-		log "[JIJI] 未読見出しなし、スキップ"
-		return 1
+	if [ "$jiji_self_search" = true ]; then
+		headline="最近の注目ニュースやトレンドを自分で探して1つ選んでください"
 	fi
-	# 先頭の見出しを選択（■ プレフィックスを除去）
-	headline=$(printf '%s\n' "$unread_headlines" | head -1 | sed 's/^■ //')
 
 	# 3. AIにWeb検索で調査させる（bash許可）
 	log "[JIJI] AI調査中: $headline"
@@ -1352,10 +1518,10 @@ start_radio_corner_jiji() {
 	[ -z "$grounding_context" ] && grounding_context="（検索結果なし）"
 	log "[JIJI] 調査完了 (${#grounding_context}字)"
 
-	# 4. 既読記録（選択時点で記録）
+	# 4. 既読記録（選択時点で記録、自主探索モード時はスキップ）
 	local headline_key
 	headline_key=$(_news_title_key "$headline")
-	if [ -n "$headline_key" ]; then
+	if [ "$jiji_self_search" != true ] && [ -n "$headline_key" ]; then
 		echo "$headline" >>"$TMP_HISTORY_DIR/.past_jiji_titles.txt"
 		echo "$headline_key" >>"$TMP_HISTORY_DIR/.past_jiji_keys.txt"
 		tail -200 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" \

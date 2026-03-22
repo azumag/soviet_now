@@ -198,9 +198,17 @@ _dispatch_manual_audio_trigger() {
 		log "[MANUAL] local_japan トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_local_japan "$game_num" "$score" &
 		;;
+	finance)
+		log "[MANUAL] finance トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_finance "$game_num" "$score" &
+		;;
 	danger_zone)
 		log "[MANUAL] danger_zone トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_danger_zone "$game_num" "$score" &
+		;;
+	music_knowledge)
+		log "[MANUAL] music_knowledge トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_music_knowledge "$game_num" "$score" &
 		;;
 	*)
 		log "[MANUAL] 未知の音声トリガーを破棄: $(basename "$cmd_file") cmd=${cmd_name}"
@@ -323,9 +331,17 @@ schedule_nonessential_audio_jobs() {
 		rm -f "$TMP_MARKERS_DIR/.timed_corner_inflight_${name}"
 	}
 
+	if _try_timed_corner "finance" 4 0; then
+		timed_corner_fired=true
+		_run_timed_corner "finance" start_radio_corner_finance "$game_num" "$score" &
+	fi
 	if _try_timed_corner "danger_zone" 5 0; then
 		timed_corner_fired=true
 		_run_timed_corner "danger_zone" start_radio_corner_danger_zone "$game_num" "$score" &
+	fi
+	if _try_timed_corner "music_knowledge" 5 30; then
+		timed_corner_fired=true
+		_run_timed_corner "music_knowledge" start_radio_corner_music_knowledge "$game_num" "$score" &
 	fi
 	if _try_timed_corner "health" 6 0; then
 		timed_corner_fired=true

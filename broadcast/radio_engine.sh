@@ -859,6 +859,8 @@ _ensure_corner_announce() {
 		jiji)     announce="時事ニュースコーナーです。" ;;
 		rollback) announce="粛清ラジオです。" ;;
 		rakugo) announce="深夜の落語創作コーナーです。" ;;
+		finance) announce="金融の仕組みコーナーです。" ;;
+		music_knowledge) announce="音楽知識コーナーです。" ;;
 		*)        announce="" ;;
 	esac
 	[ -z "$announce" ] && { printf '%s' "$text"; return 0; }
