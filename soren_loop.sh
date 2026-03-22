@@ -252,6 +252,27 @@ while true; do
 	improve_rc=$?
 	_abort_if_interrupted "$improve_rc" "trigger_adaptive_improvement"
 
+	# 22時台メリケンAIタイム: サイクル区切り（12ゲーム目）で22時台なら1時間メリケンモード
+	_meriken_cycle=${MIN_GAMES_BEFORE_IMPROVE:-12}
+	if (( GAME_NUM % _meriken_cycle == 0 )) && [ "$(date +%H)" = "22" ]; then
+		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
+			log "[MERIKEN_TIME] サイクル区切り+22時台: メリケンAIタイム開始 (1時間)"
+			soren91_start 2>/dev/null || true
+			# 1時間ループ: soren91が動いている間、中華AIは休止
+			_meriken_end=$(($(date +%s) + 3600))
+			while [ "$(date +%s)" -lt "$_meriken_end" ]; do
+				# 外部からの停止要求チェック
+				[ -f tmp/stop ] && break
+				# コメント系ワーカーは維持
+				start_comment_player 2>/dev/null || true
+				start_comment_watcher 2>/dev/null || true
+				sleep 15
+			done
+			log "[MERIKEN_TIME] メリケンAIタイム終了"
+			soren91_stop 2>/dev/null || true
+		fi
+	fi
+
 	# 次の試合準備
 	prepare_next_game
 	next_rc=$?
