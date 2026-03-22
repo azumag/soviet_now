@@ -37,13 +37,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v297: v306 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス完全削除
-# v306 failure: reactive_pairs=2-3あるのに戦略的配置ボーナスが高すぎ、即時併合機会を逃してmax_y runawayでゲームオーバー
-# rollback postmortem制約「reactive_pairs >= 3 && merge_grade == "NO" の場合、戦略的配置ボーナスを付与せず、即時併合を優先」を厳守
-# axis 8.6: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナスを完全削除し、height_mult調整のみに
-#   - Russian phase: reactive_pairs>=2 && merge_grade=="NO" でボーナス +200.0→+50.0、reactive_pairs>=1 && merge_grade=="NO" で +100.0→+25.0
-#   - Normal phase: reactive_pairs>=1 && merge_grade=="NO" でボーナス +400.0→+50.0
-# axis 9.5: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナスを完全削除
+# v298: v307 deadline_margin急減時の戦略的配置ボーナス追加版
+# v307 failure: deadline_margin急減（deadline_margin < 1.0）時に即時併合不可続き、戦略的配置が続きmax_y runawayでゲームオーバー
+# v306 failure: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナス削除でdeadline_margin急減時に盤面圧縮能力喪失
+# rollback postmortem制約「即時併合不可時に戦略的配置ボーナスを維持し、deadline_margin < 1.0 の場合でも盤面圧縮を優先」を厳守
+# deadline_margin急減時に即時併合不可が続き、deadline_margin < 1.0 の場合、戦略的配置ボーナスを追加して盤面圧縮を強化
+# axis 8.6: deadline_margin < 1.0 && merge_grade == "NO" で戦略的配置ボーナス +100.0 を追加
+# axis 9.5: deadline_margin < 1.0 && merge_grade == "NO" で戦略的配置ボーナス +75.0 を追加（ロシアフェーズ）
+# refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+#       game_history/20260322_182144_score0687.jsonl turns 35-42, game_history/20260322_183103_score0958.jsonl turns 32-42
 #   - Russian phase: reactive_pairs>=2 && merge_grade=="NO" でボーナス +1200.0→+100.0、reactive_pairs>=1 && merge_grade=="NO" で +1000.0→+50.0、reactive_pairs=0 で +500.0→+25.0
 #   - Normal phase: reactive_pairs>=1 && merge_grade=="NO" でボーナス +800.0→+100.0、reactive_pairs=0 で +300.0→+50.0
 #   - reactive_pairs>=3 && merge_grade=="NO" で SAME_TYPE_STACK ペナルティ軽減も抑制
@@ -57,10 +59,11 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v297: v306 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス完全削除
-    v306 failure: reactive_pairs=2-3あるのに戦略的配置ボーナスが高すぎ、即時併合機会を逃してmax_y runawayでゲームオーバー
-    rollback postmortem制約「reactive_pairs >= 3 && merge_grade == "NO" の場合、戦略的配置ボーナスを付与せず、即時併合を優先」を厳守
-    axis 8.6, 9.5: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナスを完全削除し、即時併合を強制
+    """v298: v307 deadline_margin急減時の戦略的配置ボーナス追加版
+    v307 failure: deadline_margin急減（deadline_margin < 1.0）時に即時併合不可続き、戦略的配置が続きmax_y runawayでゲームオーバー
+    v306 failure: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナス削除でdeadline_margin急減時に盤面圧縮能力喪失
+    rollback postmortem制約「即時併合不可時に戦略的配置ボーナスを維持し、deadline_margin < 1.0 の場合でも盤面圧縮を優先」を厳守
+    axis 8.6, 9.5: reactive_pairs>=3 && merge_grade=="NO" の戦略的配置ボーナスを削除し、即時併合を強制
 
     ワーストゲーム(score0821)終盤でtype 15(ロシア)が1つしか作成されず、即時併合機会を取りこぼしてゲームオーバー。
     ベストゲーム(score3683)では積極的に即時併合を確実に捉え、ロシア建国後フェーズでも継続してプレイ。
@@ -450,6 +453,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 25.0  # v297: +100.0から大幅削減
                 reasons.append("RUSSIAN_PHASE_STRATEGIC_PLACEMENT")
                 height_mult *= 0.7
+            elif reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
+                # reactive_pairs==1: 即時併合ボーナスを強化 (600.0 → 800.0)
+                score += 800.0
+                reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+            elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"]:
+                # reactive_pairs==2: 即時併合ボーナスを強化 (1000.0 → 1300.0)
+                score += 1300.0
+                reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+            elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
+                # reactive_pairs>=3: 即時併合ボーナスを強化 (1400.0 → 1600.0)
+                # 即時併合機会を最優先
+                score += 1600.0
+                reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+            elif reactive_pair_count >= 3 and merge_grade == "NO" and danger_piece_count == 0:
+                # v297: reactive_pairs>=3 && 即時併合不可の場合、戦略的配置ボーナスを完全削除
+                # 即時併合を強制し、max_y runawayを防止。rollback postmortem制約を厳守。
+                # height_mult緩和は維持し、より低い位置を許容するが、ボーナスは与えない
+                # v298: deadline_margin急減時の戦略的配置ボーナス追加
+                deadline_margin = analysis.get("deadline_margin", 10.0)
+                if deadline_margin < 1.0:
+                    # deadline_margin急減時、即時併合不可の場合、戦略的配置ボーナスを追加して盤面圧縮を強化
+                    score += 100.0
+                    reasons.append("DEADLINE_MARGIN_CRASH_STRATEGIC_PLACEMENT")
+                    # height_multは維持し、より低い位置を許容する
+                else:
+                    # deadline_marginが1.0以上ある場合、height_multのみの緩和
+                    height_mult *= 0.5
         elif reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
             # reactive_pairs==1: 即時併合ボーナスを強化 (600.0 → 800.0)
             score += 800.0
@@ -527,40 +557,51 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
             if danger_piece_count == 0:
                 if is_russian_phase:
-                    # ロシア建国後フェーズ：即時併合機会を最優先、狭いボードでの第二type 15準備
+                        # ロシア建国後フェーズ：即時併合機会を最優先、狭いボードでの第二type 15準備
+                        # v298: deadline_margin急減時の戦略的配置ボーナス追加
+                        # deadline_margin急減（deadline_margin < 1.0）で即時併合不可の場合、戦略的配置ボーナスを追加して盤面圧縮を強化
+                        deadline_margin = analysis.get("deadline_margin", 10.0)
+                        if deadline_margin < 1.0:
+                            # deadline_margin急減時、即時併合不可の場合、戦略的配置ボーナスを追加して盤面圧縮を強化
+                            score += 75.0
+                            reasons.append("RUSSIAN_PHASE_DEADLINE_STRATEGIC_PLACEMENT")
+                            # 盤面圧縮を強化するためheight_multを緩和
+                            height_mult *= 0.6
+                        elif reactive_pair_count >= 3 and merge_grade == "NO":
+                            # v297: reactive_pairs>=3 && 即時併合不可の場合、戦略的配置ボーナスを完全削除
+                            # 即時併合を強制し、max_y runawayを防止。rollback postmortem制約を厳守。
+                            # height_mult緩和は維持し、より低い位置を許容するが、ボーナスは与えない
+                            height_mult *= 0.5
+                        elif reactive_pair_count >= 2:
+                            # reactive_pairsが2以上あり即時併合不可の場合、盤面圧縮と将来の併合を同時に狙う
+                            score += 100.0  # v297: +1200.0から大幅削減
+                            reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE_HIGH")
+                            height_mult *= 0.6
+                        elif reactive_pair_count >= 1:
+                            # reactive_pairsがある場合、即時併合を重視
+                            score += 50.0  # v297: +1000.0から大幅削減
+                            reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE")
+                            height_mult *= 0.7
+                        else:
+                            # reactive_pairsがない場合も、ロシアフェーズでは即時併合を重視
+                            score += 25.0  # v297: +500.0から大幅削減
+                            reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN")
+                            height_mult *= 0.8
+                else:
+                    # Normal phase handling
                     if reactive_pair_count >= 3 and merge_grade == "NO":
                         # v297: reactive_pairs>=3 && 即時併合不可の場合、戦略的配置ボーナスを完全削除
                         # 即時併合を強制し、max_y runawayを防止。rollback postmortem制約を厳守。
                         # height_mult緩和は維持し、より低い位置を許容するが、ボーナスは与えない
-                        height_mult *= 0.6
-                    elif reactive_pair_count >= 2:
-                        # reactive_pairsが2以上あり、即時併合不可の場合、盤面圧縮と将来の併合を同時に狙う
-                        score += 100.0  # v297: +1200.0から大幅削減
-                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE_HIGH")
-                        height_mult *= 0.6
+                        height_mult *= 0.5
                     elif reactive_pair_count >= 1:
-                        # reactive_pairsがある場合、即時併合を重視
-                        score += 50.0  # v297: +1000.0から大幅削減
-                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN_REACTIVE")
+                        score += 100.0  # v297: +800.0から大幅削減
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
                         height_mult *= 0.7
                     else:
-                        # reactive_pairsがない場合も、ロシアフェーズでは即時併合を重視
-                        score += 25.0  # v297: +500.0から大幅削減
-                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_RUSSIAN")
+                        score += 50.0  # v297: +300.0から削減
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
                         height_mult *= 0.8
-                elif reactive_pair_count >= 3 and merge_grade == "NO":
-                    # v297: reactive_pairs>=3 && 即時併合不可の場合、戦略的配置ボーナスを完全削除
-                    # 即時併合を強制し、max_y runawayを防止。rollback postmortem制約を厳守。
-                    # height_mult緩和は維持し、より低い位置を許容するが、ボーナスは与えない
-                    height_mult *= 0.5
-                elif reactive_pair_count >= 1:
-                    score += 100.0  # v297: +800.0から大幅削減
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
-                    height_mult *= 0.7
-                else:
-                    score += 50.0  # v297: +300.0から削減
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
-                    height_mult *= 0.8
 
             else:
                 # danger_piece_count > 0 の場合は即時併合優先が適用されるためボーナスを抑制
