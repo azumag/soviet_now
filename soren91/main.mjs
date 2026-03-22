@@ -435,6 +435,7 @@ async function main() {
   } catch (err) {
     console.error('[main] Fatal error:', err.message);
   } finally {
+    try { unlinkSync('tmp/in_game'); } catch {}
     if (isSharedMode) {
       // 共有モード: 既存 context を再利用した場合は context 全体を閉じない。
       // browser.close() on a CDP-connected browser only disconnects
@@ -625,6 +626,7 @@ async function gameLoop(page, calibration, gameNumber) {
         }
         if (!boardState.rank && lastKnownRank) boardState.rank = lastKnownRank;
         console.log(`[game] Final rank=${boardState.rank ?? '?'}`);
+        try { unlinkSync('tmp/in_game'); } catch {}
         await handleGameOver(page, gameNumber, turn, boardState, historyFile, currentStrategySnapshot);
         return;
       }
@@ -666,6 +668,7 @@ async function gameLoop(page, calibration, gameNumber) {
         if (turn > 5 && waitingCount >= 6 && !roundEnded) {
           console.log(`[game] Round ended at turn ${turn}, final rank=${lastKnownRank ?? '?'}`);
           roundEnded = true;
+          try { unlinkSync('tmp/in_game'); } catch {}
           // 最終順位をboardStateに付与
           if (lastKnownRank) boardState.rank = lastKnownRank;
           // 履歴保存 + AI改善 (非同期 — ゲームループをブロックしない)
@@ -795,6 +798,7 @@ async function gameLoop(page, calibration, gameNumber) {
       appendFileSync(historyFile, JSON.stringify(record) + '\n');
 
       turn++;
+      try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
       consecutiveErrors = 0;
 
       // 試合中コメント: ターン60で一度だけ生成 (非同期、ゲームをブロックしない)

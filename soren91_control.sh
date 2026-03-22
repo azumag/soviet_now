@@ -327,19 +327,29 @@ soren91_stop() {
 	# graceful stop: stop ファイルを作成して現在のゲーム終了を待つ
 	touch "$SOREN91_STOP_FILE"
 
+	local in_game_file="$SOREN91_DIR/tmp/in_game"
+
+	# Phase 1: 試合中なら試合終了を待つ (上限なし、ただしプロセス生存チェック)
+	while [ -f "$in_game_file" ] && kill -0 "$pid" 2>/dev/null; do
+		log "[SOREN91] Game in progress, waiting for round to end..."
+		sleep 5
+	done
+
+	# Phase 2: 試合終了後、graceful exit を短時間待つ
 	local waited=0
-	while [ "$waited" -lt "$SOREN91_STOP_TIMEOUT" ]; do
+	local post_game_timeout=30
+	while [ "$waited" -lt "$post_game_timeout" ]; do
 		if ! kill -0 "$pid" 2>/dev/null; then
-			log "[SOREN91] Stopped gracefully after ${waited}s"
+			log "[SOREN91] Stopped gracefully after game ended"
 			break
 		fi
 		sleep 2
 		waited=$((waited + 2))
 	done
 
-	# タイムアウト: 子プロセス含めて強制停止
+	# Phase 3: それでも生きていたら強制停止 (従来通り)
 	if kill -0 "$pid" 2>/dev/null; then
-		log "[SOREN91] Timeout after ${SOREN91_STOP_TIMEOUT}s, force stopping..."
+		log "[SOREN91] Post-game timeout, force stopping..."
 		_stop_loop_descendants "$pid"
 		_stop_pid_with_fallback "$pid" "soren91"
 	fi
@@ -347,7 +357,7 @@ soren91_stop() {
 	local eg
 	eg=$(_soren91_record_end_game)
 
-	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE"
+	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_DIR/tmp/in_game"
 	# 中華AI側のBGMをアンミュート（改善終了・復帰）
 	rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_soren91_switch_obs_layout china || true
@@ -468,5 +478,6 @@ soren91_cleanup() {
 	# ファイルクリーンアップ
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_IMPROVE_PID_FILE" \
 		"$SOREN91_IMPROVE_LOCK" "$SOREN91_STOP_FILE" \
+		"$SOREN91_DIR/tmp/in_game" \
 		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 }
