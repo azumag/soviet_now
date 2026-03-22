@@ -5,10 +5,10 @@
 
 _is_improve_running() {
 	[ -f "$IMPROVE_STATE_FILE" ] || return 1
-	local state status pid
+	local state imp_status pid
 	state=$(cat "$IMPROVE_STATE_FILE" 2>/dev/null) || return 1
-	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
-	[ "$status" = "running" ] || return 1
+	imp_status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
+	[ "$imp_status" = "running" ] || return 1
 	pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
 	case "$pid" in
 	''|0|*[!0-9]*) return 1 ;;

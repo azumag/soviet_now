@@ -352,6 +352,17 @@ soren91_stop() {
 	rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_soren91_switch_obs_layout china || true
 	log "[SOREN91] Unmuted local game BGM (flag file removed)"
+
+	# メリケンAI終了あいさつ (TTS + Twitch)
+	{
+		local _bye_file
+		_bye_file=$(mktemp /tmp/eloop_soren91_bye.XXXXXX)
+		printf '%s\n' "対戦ありがとうございました。メリケンAIはここで退場するぜ、またな！" > "$_bye_file"
+		SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:bye" ./say_enqueue.sh "$_bye_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+		rm -f "$_bye_file"
+	} &
+	./twitch_chat.sh send "対戦ありがとうございました。メリケンAIはここで退場するぜ、またな！" 2>/dev/null &
+
 	log "[SOREN91] Stopped (end_game=$eg)"
 	return 0
 }
