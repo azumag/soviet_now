@@ -199,6 +199,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
         #       game_history/20260321_040215_score0323.jsonl turns 44-51, game_history/20260321_035338_score1716.jsonl turns 81-88
 
+        danger_piece_count = reactor.get("danger_piece_count", 0)
+        danger_direct_merge_available = result.get("danger_direct_merge_available", False)
+
         if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
             # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
             # height_multを0.2に緩和して、盤面圧縮（tighter board）を優先。即時併合機会を確保
@@ -390,9 +393,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 即時併合機会がある場合はheight_multを0.6に緩和して戦略的配置の余地を確保。
         # ワーストゲーム(score0508)終盤turns 58-61でdanger_piece_count=1-4増加中に即時併合なし→max_y=3.1でオーバー。
         # ベストゲーム(score2160)終盤turns 102-106でdanger_piece_count=5-7あり、即時併合3回成功→score_delta=166で延命。
-
-        danger_piece_count = reactor.get("danger_piece_count", 0)
-        danger_direct_merge_available = result.get("danger_direct_merge_available", False)
 
         if danger_piece_count > 0:
             if merge_grade in ["DIRECT", "NEAR"]:

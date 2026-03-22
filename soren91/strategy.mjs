@@ -1,14 +1,16 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v44)
+ * strategy.mjs - ドロップ位置決定戦略 (v45)
  *
- * v44: v43ベース + T1→T2即時連鎖誘発の強化
- * - 【findT1ImmediateMerge近接T2優先】radius 0.8内のT2に大ボーナス(55)
- *   T1→T2マージ直後にT2+T2→T3の即時連鎖を狙うポジションを優先
- * - 【findT1ChainAnchor近接T2優先】同様にradius 0.8内T2を分離評価
- *   チェーンアンカーとしてより連鎖誘発しやすい位置を選択
- * - 【findBestMergeチェーンスコア増強】c1ボーナス12→16
- *   T_{n+1}隣接時の評価を上げ、チェーン設定を積極的に追求
- * - v43以前の全改善を維持
+ * v45: v44ベース + チェーン反応優先・GBGモード改善
+ * - 【GARBAGE_MODERATE_RATIO調整】0.20→0.22（GBGモード過早発動を抑制）
+ *   小量ガベージで即GBGに入り低列ランダム積みになるのを防ぐ
+ * - 【GBGモードにチェーン統合】garbageModerate時: T2+向けにチェーン優先マージ(minChainScore=8)
+ *   単純最低列落としの前にT_{n+1}隣接を確認して2段連鎖を狙う
+ * - 【GBGモードにクラスター追加】マージ候補なしの場合、最低列より同type集約を優先
+ *   ランダム積みを防いで将来のマージ機会を温存する
+ * - 【中盤チェーンファースト】HOLD評価後、非WARN・T3+・ピース15-60でチェーン先行
+ *   T4〜T5が来たとき早めにT_{n+1}と隣接配置して大型連鎖を設定
+ * - v44以前の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -22,7 +24,7 @@ const SURVIVAL_PIECE_THRESHOLD = 78;
 const LOW_MASS_CRITICAL_RELIEF_PIECE_THRESHOLD = 32;
 const LOW_MASS_CRITICAL_RELIEF_AVG_HEIGHT = 1.45;
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.55;
-const GARBAGE_MODERATE_RATIO = 0.20;
+const GARBAGE_MODERATE_RATIO = 0.22;
 const GARBAGE_MODERATE_HEIGHT = 0.3;
 
 export function decide(boardState) {
@@ -425,6 +427,11 @@ export function decide(boardState) {
         return { x: 0, reason: `OJAMA_HOLD_T${hold.type}`, hold: true };
       }
     }
+    // [v45] T2+: チェーン優先マージ (T_{n+1}が隣接する位置を優先してピース削減を加速)
+    if (nextType >= 2) {
+      const ojamaChainMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 8, ojamaBoost);
+      if (ojamaChainMerge) return { ...ojamaChainMerge, reason: `OJAMA_CHAIN_T${nextType}` };
+    }
     // マージ優先 (ojamaBoost付き)
     const ojamaMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0, ojamaBoost);
     if (ojamaMerge) return { ...ojamaMerge, reason: `OJAMA_MERGE_T${nextType}` };
@@ -433,6 +440,9 @@ export function decide(boardState) {
       const t1Merge = findAnyMerge(activePieces, 1, colHeights, dangerBias);
       if (t1Merge !== null) return { x: t1Merge, reason: 'OJAMA_T1_MERGE' };
     }
+    // [v45] マージなければ同type集約 (最低列ランダム積みを防いで将来マージ機会を温存)
+    const ojamaCluster = findClusterDrop(activePieces, nextType, colHeights, dangerBias);
+    if (ojamaCluster) return { ...ojamaCluster, reason: `OJAMA_CLUSTER_T${nextType}` };
     // マージなければ低い列へ
     const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
     return { x: lowestDrop.x, reason: `OJAMA_LOW_COL` };
@@ -471,6 +481,13 @@ export function decide(boardState) {
   if (canHold) {
     const holdResult = evaluateHold(activePieces, nextType, hold, nextPieces, isWarn, t1Count);
     if (holdResult) return holdResult;
+  }
+
+  // [v45] 中盤チェーンファースト: 非WARN・T3+・ピース15-60でチェーン優先
+  // HOLD評価後にT3+が来たとき、T_{n+1}隣接位置に置いて大型連鎖を設定
+  if (!isWarn && !isCritical && nextType >= 3 && rawPieceCount >= 15 && rawPieceCount < 60) {
+    const midChain = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 8, 0);
+    if (midChain) return { ...midChain, reason: `MID_CHAIN_T${nextType}` };
   }
 
   // isWarn時のpre-criticalマージ強化 (T2+のみ)
