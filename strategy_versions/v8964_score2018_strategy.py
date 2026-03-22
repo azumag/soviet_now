@@ -37,33 +37,35 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
  # --- Change History ---
- # v313: reactive_pairs>=2時の戦略的配置ボーナス完全削除版 - 即時併合不可時のmax_y runaway防止
- # ワーストゲーム(score0636)終盤でreactive_pairs=4-7あるのに即時併合不可続き、戦略的配置ボーナスが選ばれmax_y runawayでゲームオーバー
- # v297 failure: reactive_pairs>=3 && merge_grade=="NO" での戦略的配置ボーナス削除のみでは不十分
- # reactive_pairs>=2 && 即時併合不可の場合、戦略的配置ボーナスを完全削除し、即時併合を強制的に優先
- # axis 8.6: reactive_pairs>=2 && merge_grade=="NO" && danger_piece_count==0 で戦略的配置ボーナスを完全削除
- #   - Russian phase: reactive_pairs>=2 && 即時併合不可でボーナス +50.0→削除、reactive_pairs>=1 && 即時併合不可で +25.0→削除
- #   - Normal phase: reactive_pairs>=2 && 即時併合不可でボーナス削除、reactive_pairs>=1 && 即時併合不可で +50.0→削除
- # axis 9.5: reactive_pairs>=2 && merge_grade=="NO" && danger_piece_count==0 で戦略的配置ボーナスを完全削除
- #   - Russian phase: reactive_pairs>=2 && 即時併合不可でボーナス +100.0→削除、reactive_pairs>=1 && 即時併合不可で +50.0→削除
- #   - Normal phase: reactive_pairs>=2 && 即時併合不可でボーナス削除、reactive_pairs>=1 && 即時併合不可で +100.0→維持
- # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、即時併合機会を最優先する戦略へ修正
- # refs: tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
- #       game_history/20260323_042257_score0636.jsonl turns 50-57, game_history/20260323_045322_score2620.jsonl turns 120-127
- # Fixes rollback failure mode: reactive_pairs>=2 && 即時併合不可時に戦略的配置ボーナスが選ばれmax_y runaway
+ # v314: 危険局面候補フィルタリング導入版 - reactive_pairs>=2時のmax_y runaway防止
+ # ワーストゲーム(score0266)終盤でreactive_pairs>=2あるのに即時併合機会が少なく、戦略的配置が続きmax_y runawayでゲームオーバー
+ # 中間スコアゲーム(score0458)終盤でreactive_pairs>=4あるのに即時併合機会がなく、HIGH_LAYERを選び続けてmax_y=2.81でオーバー
+ # v313 failure: reactive_pairs>=2 && merge_grade=="NO"の戦略的配置ボーナス完全削除のみでは、即時併合機会がない場合の盤面圧縮能力不足
+ # 殿堂入り戦略(best_score5694)の危険局面候補フィルタリングを導入し、即時併合機会を強制的に優先
+ # dangerous_situation: max_y >= 1.8 && reactive_pairs >= 2
+ # 即時併合候補がある場合: merge_grade in ["DIRECT", "NEAR", "FAR"]の候補のみを評価
+ # 即時併合候補がない場合: 全候補を評価（フォールバック）
+ # refs: tmp/state/last_rollback_analysis.md, tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+ #       game_history/20260323_051526_score0266.jsonl, game_history/20260323_054221_score1835.jsonl, game_history/20260323_053816_score0458.jsonl
+ #       strategy_versions/best_score5694_strategy.py
+ # Fixes rollback failure mode: reactive_pairs>=2 && 即時併合不可時に戦略的配置が選ばれmax_y runaway
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v313: reactive_pairs>=2時の戦略的配置ボーナス完全削除版 - 即時併合不可時のmax_y runaway防止
-    ワーストゲーム(score0636)終盤でreactive_pairs=4-7あるのに即時併合不可続き、戦略的配置ボーナスが選ばれmax_y runawayでゲームオーバー。
-    v297 failure: reactive_pairs>=3 && merge_grade=="NO" での戦略的配置ボーナス削除のみでは不十分。
-    axis 8.6, 9.5: reactive_pairs>=2 && merge_grade=="NO" の戦略的配置ボーナスを完全削除し、即時併合を強制。
+    """v314: 危険局面候補フィルタリング導入版 - reactive_pairs>=2時のmax_y runaway防止
+    ワーストゲーム(score0266)終盤でreactive_pairs>=2あるのに即時併合機会が少なく、戦略的配置が続きmax_y runawayでゲームオーバー。
+    中間スコアゲーム(score0458)終盤でreactive_pairs>=4あるのに即時併合機会がなく、HIGH_LAYERを選び続けてmax_y=2.81でオーバー。
+    v313 failure: reactive_pairs>=2 && merge_grade=="NO"の戦略的配置ボーナス完全削除のみでは、即時併合機会がない場合の盤面圧縮能力不足。
+    殿堂入り戦略(best_score5694)の危険局面候補フィルタリングを導入し、即時併合機会を強制的に優先。
+    dangerous_situation: max_y >= 1.8 && reactive_pairs >= 2
+    即時併合候補がある場合: merge_grade in ["DIRECT", "NEAR", "FAR"]の候補のみを評価
+    即時併合候補がない場合: 全候補を評価（フォールバック）
 
-    ベストゲーム(score2620)終盤でmax_y>=2.0の危険域に入っても即時併合を確実に捉え、max_y runawayを抑制してスコア稼ぎ。
-    ワーストゲーム(score0636)終盤でreactive_pairs>=2あるのに即時併合不可続き、戦略的配置が選ばれmax_y runaway。
+    ベストゲーム(score1835)終盤でmax_y>=2.0の危険域に入っても即時併合を確実に捉え、max_y runawayを抑制してスコア稼ぎ。
+    ワーストゲーム(score0266)終盤でreactive_pairs>=2あるのに即時併合機会が少なく、戦略的配置が続きmax_y runaway。
     batch_summaryでHEIGHT_CONTROLが10.1%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが主要な敗因。
     axis 8.6: reactive_pairs>=2 && merge_grade=="NO" && danger_piece_count==0 で戦略的配置ボーナスを完全削除。
     axis 9.5: reactive_pairs>=2 && merge_grade=="NO" && danger_piece_count==0 で戦略的配置ボーナスを完全削除。
@@ -105,6 +107,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
+
+    # --- v314: 危険局面判定（候補フィルタリング用） ---
+    # 条件: max_y >= 1.8 && reactive_pairs >= 2
+    # ワーストゲーム(score0266)終盤でreactive_pairs>=2あるのに即時併合機会が少なく、戦略的配置が続きmax_y runaway
+    # 殿堂入り戦略(best_score5694)の危険局面候補フィルタリングを導入し、即時併合機会を強制的に優先
+    dangerous_situation = max_y >= 1.8 and reactive_pair_count >= 2
 
     # --- Russian phase detection (NEW: post-type-15 narrow board handling) ---
     # ロシア建国後フェーズ: type 15(ロシア)が盤面にある場合、ボードは狭くなり高タイプのピースが支配的
@@ -154,9 +162,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
     type_merge_bonus = SCORE_TABLE.get(merge_result_type, 10) * 10 + 300
 
     # =======================================================================
+    #  v314: 危険局面候補フィルタリング
+    # =======================================================================
+    # 危険局面(max_y >= 1.8 && reactive_pairs >= 2)の場合、即時併合機会を優先
+    # 即時併合候補がある場合: merge_grade in ["DIRECT", "NEAR", "FAR"]の候補のみを評価
+    # 即時併合候補がない場合: 全候補を評価（フォールバック）
+    # ワーストゲーム(score0266)終盤でreactive_pairs>=2あるのに即時併合機会が少なく、戦略的配置が続きmax_y runaway
+    # 殿堂入り戦略(best_score5694)の危険局面候補フィルタリングを導入し、即時併合機会を強制的に優先
+    if dangerous_situation:
+        merge_results = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR", "FAR"]]
+        if merge_results:
+            filtered_results = merge_results
+        else:
+            # 全候補を評価（即時併合機会がない場合のフォールバック）
+            filtered_results = results
+    else:
+        filtered_results = results
+
+    # =======================================================================
     #  score each drop candidate (x coordinate) with 6 evaluation axes
     # =======================================================================
-    for result in results:
+    for result in filtered_results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
