@@ -1,16 +1,16 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v45)
+ * strategy.mjs - ドロップ位置決定戦略 (v46)
  *
- * v45: v44ベース + チェーン反応優先・GBGモード改善
- * - 【GARBAGE_MODERATE_RATIO調整】0.20→0.22（GBGモード過早発動を抑制）
- *   小量ガベージで即GBGに入り低列ランダム積みになるのを防ぐ
- * - 【GBGモードにチェーン統合】garbageModerate時: T2+向けにチェーン優先マージ(minChainScore=8)
- *   単純最低列落としの前にT_{n+1}隣接を確認して2段連鎖を狙う
- * - 【GBGモードにクラスター追加】マージ候補なしの場合、最低列より同type集約を優先
- *   ランダム積みを防いで将来のマージ機会を温存する
- * - 【中盤チェーンファースト】HOLD評価後、非WARN・T3+・ピース15-60でチェーン先行
- *   T4〜T5が来たとき早めにT_{n+1}と隣接配置して大型連鎖を設定
- * - v44以前の全改善を維持
+ * v46: v45ベース + 生存安定化・連鎖準備改善
+ * - 【MID_CHAIN threshold調整】nextType>=3→>=4（T3はchain-first不要、通常マージフローに委ねる）
+ *   T3中盤のchain-first発動を抑制して自然なマージ機会と高さ管理を優先
+ * - 【OJAMA_CHAIN permissive化】minChainScore 8→4（GBGモードでチェーン要求を緩和）
+ *   T2+向けGBGモードで直接マージを逃す問題を修正、より多くのマージ機会を捉える
+ * - 【T5+HOLD優先スワップ追加】hold.type>=5 && nextType<=3 → HOLDスワップで大型ピース使用
+ *   T5保存よりT5即時マージ(→T6)を優先して大型チェーン機会を増やす
+ * - 【garbageUrgent fallbackにcluster追加】最低列落としの前にclusterDropを試みる
+ *   マージ先なしのGBG緊急時でも同type集約で将来のマージ準備を維持
+ * - v45以前の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -412,6 +412,9 @@ export function decide(boardState) {
         return { x: 0, reason: `GBG_HOLD_SWAP_T${hold.type}`, hold: true };
       }
     }
+    // [v46] クラスター配置を最低列フォールバックの前に試みる
+    const gbgCluster = findClusterDrop(activePieces, nextType, colHeights, dangerBias);
+    if (gbgCluster) return { ...gbgCluster, reason: `GBG_CLUSTER_T${nextType}` };
     const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
     return { x: lowestDrop.x, reason: `GBG_LOW_COL_Y${colHeights[lowestDrop.idx].toFixed(1)}` };
   }
@@ -427,9 +430,9 @@ export function decide(boardState) {
         return { x: 0, reason: `OJAMA_HOLD_T${hold.type}`, hold: true };
       }
     }
-    // [v45] T2+: チェーン優先マージ (T_{n+1}が隣接する位置を優先してピース削減を加速)
+    // [v46] T2+: チェーン優先マージ (minChainScore=4に緩和: より多くのマージ機会を捉える)
     if (nextType >= 2) {
-      const ojamaChainMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 8, ojamaBoost);
+      const ojamaChainMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 4, ojamaBoost);
       if (ojamaChainMerge) return { ...ojamaChainMerge, reason: `OJAMA_CHAIN_T${nextType}` };
     }
     // マージ優先 (ojamaBoost付き)
@@ -483,9 +486,10 @@ export function decide(boardState) {
     if (holdResult) return holdResult;
   }
 
-  // [v45] 中盤チェーンファースト: 非WARN・T3+・ピース15-60でチェーン優先
-  // HOLD評価後にT3+が来たとき、T_{n+1}隣接位置に置いて大型連鎖を設定
-  if (!isWarn && !isCritical && nextType >= 3 && rawPieceCount >= 15 && rawPieceCount < 60) {
+  // [v46] 中盤チェーンファースト: 非WARN・T4+・ピース15-60でチェーン優先
+  // T4以上が来たとき、T_{n+1}隣接位置に置いて大型連鎖を設定
+  // (T3はchain-first不要: 通常マージフローで十分)
+  if (!isWarn && !isCritical && nextType >= 4 && rawPieceCount >= 15 && rawPieceCount < 60) {
     const midChain = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 8, 0);
     if (midChain) return { ...midChain, reason: `MID_CHAIN_T${nextType}` };
   }
@@ -887,6 +891,10 @@ function evaluateHold(pieces, nextType, hold, nextPieces, isWarn, t1Count = 0) {
     }
     if (hold.type >= 4 && nextType <= 2 && holdMergeCount >= 1) {
       return { x: 0, reason: `HOLD_SWAP_BIGTYPE_T${hold.type}`, hold: true };
+    }
+    // [v46] T5+保有時にT3以下が来たらスワップしてT5を即活用 (T5→T6チェーン機会を優先)
+    if (hold.type >= 5 && nextType <= 3 && holdMergeCount >= 1) {
+      return { x: 0, reason: `HOLD_SWAP_T5PLUS_T${hold.type}`, hold: true };
     }
     if (hold.type >= 6 && nextType <= 3 && holdMergeCount >= 1) {
       return { x: 0, reason: `HOLD_SWAP_HUGE_T${hold.type}`, hold: true };
