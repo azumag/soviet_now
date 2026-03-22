@@ -79,16 +79,15 @@ fetch_and_play_news() {
 		if [ "$news_fetch_status" = "stale_cache_restored" ] && [ -n "$news_fetch_message" ]; then
 			log "[NEWS] ${news_fetch_message}"
 		fi
-		if ! start_radio_corner_news "$game_num" "$score"; then
-			log "[NEWS] 読み上げ対象の未読ニュースなし、スキップ"
-		fi
 	else
 		if [ -n "$news_fetch_message" ]; then
 			log "[NEWS] ${news_fetch_message}"
 		else
-			log "[NEWS] ニュースなし、スキップ"
+			log "[NEWS] ニュース取得失敗"
 		fi
 	fi
+	# 取得成功/失敗に関わらずコーナーを起動（失敗時はAI自主探索モード）
+	start_radio_corner_news "$game_num" "$score"
 }
 
 _build_manual_strategy_diff() {
@@ -194,6 +193,14 @@ _dispatch_manual_audio_trigger() {
 	whatday)
 		log "[MANUAL] whatday トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_whatday "$game_num" "$score" &
+		;;
+	local_japan)
+		log "[MANUAL] local_japan トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_local_japan "$game_num" "$score" &
+		;;
+	danger_zone)
+		log "[MANUAL] danger_zone トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_danger_zone "$game_num" "$score" &
 		;;
 	*)
 		log "[MANUAL] 未知の音声トリガーを破棄: $(basename "$cmd_file") cmd=${cmd_name}"
@@ -316,6 +323,10 @@ schedule_nonessential_audio_jobs() {
 		rm -f "$TMP_MARKERS_DIR/.timed_corner_inflight_${name}"
 	}
 
+	if _try_timed_corner "danger_zone" 5 0; then
+		timed_corner_fired=true
+		_run_timed_corner "danger_zone" start_radio_corner_danger_zone "$game_num" "$score" &
+	fi
 	if _try_timed_corner "health" 6 0; then
 		timed_corner_fired=true
 		_run_timed_corner "health" start_radio_corner_health "$game_num" "$score" &
@@ -395,6 +406,10 @@ schedule_nonessential_audio_jobs() {
 	if _try_timed_corner "survival" 22 0; then
 		timed_corner_fired=true
 		_run_timed_corner "survival" start_radio_corner_survival "$game_num" "$score" &
+	fi
+	if _try_timed_corner "local_japan" 23 30; then
+		timed_corner_fired=true
+		_run_timed_corner "local_japan" start_radio_corner_local_japan "$game_num" "$score" &
 	fi
 
 	# 雑談ラジオ: 12ゲームサイクルの2ゲーム目（時間帯コーナー発火時はスキップ）

@@ -852,6 +852,61 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "night_snack"
 }
 
+start_radio_corner_danger_zone() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	# 地域をランダムに選択
+	local regions=("アフリカ" "中東" "南米" "中央アジア" "東南アジア" "南アジア" "東欧" "中米・カリブ" "オセアニア" "北アフリカ")
+	local region="${regions[$((RANDOM % ${#regions[@]}))]}"
+
+	local grounding_context=""
+	grounding_context=$(_radio_fetch_theme_grounding_context "danger_zone" "${region} 危険地域 治安 紛争 旅行注意")
+	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【今回の地域】${region}
+
+【Web検索で得られた参考情報】
+${grounding_context}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】世界危険地域コーナー
+1. 深夜〜早朝の雰囲気に合わせたオープニング（2-3文）
+   - 「同志諸君、世界には我々の知らない危険な場所がある。知識こそが身を守る武器です」のような導入
+2. ${region}から具体的な危険地域・国・都市を1つ選び、深掘りして紹介
+   - なぜ危険なのか（紛争、治安、自然環境、犯罪、政情不安 等）
+   - 歴史的背景（なぜそうなったのか、植民地時代の影響、冷戦の影響 等）
+   - 現地の人々の暮らし（危険な中でも日常がある。文化・食・風習）
+   - 意外な魅力や知られざる一面（美しい自然、豊かな文化遺産、温かい人々）
+   - 旅行者への注意点（外務省危険情報レベル、具体的なリスク）
+   - ソ連・冷戦との関わりがあれば触れる（代理戦争、武器供与、同盟関係 等）
+   - 情報は正確に。センセーショナルにならず、客観的かつ敬意をもって紹介する
+   - 「その地域の人々を一方的に危険視するのではなく、構造的な問題を理解する」姿勢
+3. 軽いクロージング（1-2文）
+   - 「知ることが平和への第一歩である」的な締め
+
+※ 毎回必ず異なる地域を取り上げること。
+※ 差別的・偏見を助長する表現は絶対に避けること。
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "danger_zone" --topic "${region}"
+}
+
 start_radio_corner_health() {
 	local game_num="$1" score="$2"
 	_radio_time_context
@@ -1067,6 +1122,75 @@ ${past_topics}
 $(_radio_output_rules 800 1500)
 PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "whatday"
+}
+
+start_radio_corner_local_japan() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	# 都道府県からランダムに1つ選び、さらに市区町村を絞り込む
+	local prefectures=(
+		"北海道" "青森県" "岩手県" "宮城県" "秋田県" "山形県" "福島県"
+		"茨城県" "栃木県" "群馬県" "埼玉県" "千葉県" "東京都" "神奈川県"
+		"新潟県" "富山県" "石川県" "福井県" "山梨県" "長野県" "岐阜県" "静岡県" "愛知県"
+		"三重県" "滋賀県" "京都府" "大阪府" "兵庫県" "奈良県" "和歌山県"
+		"鳥取県" "島根県" "岡山県" "広島県" "山口県"
+		"徳島県" "香川県" "愛媛県" "高知県"
+		"福岡県" "佐賀県" "長崎県" "熊本県" "大分県" "宮崎県" "鹿児島県" "沖縄県"
+	)
+	local pref="${prefectures[$((RANDOM % ${#prefectures[@]}))]}"
+
+	local grounding_context=""
+	grounding_context=$(_radio_fetch_theme_grounding_context "local_japan" "${pref} 市区町村 観光 名物 文化")
+	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【今回の都道府県】${pref}
+
+【Web検索で得られた参考情報】
+${grounding_context}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】日本地域情報コーナー
+1. 軽いオープニング（2-3文）
+   - 「同志諸君、今夜は日本のある地域を深掘りしましょう」のような導入
+2. ${pref}の中から特定の市区町村・地区を1つ選び、深く掘り下げて紹介する
+   - 必ず都道府県レベルではなく、市区町村・地区レベルまで絞り込むこと（例: 「京都府」ではなく「京都府宮津市」）
+   - 以下の観点から多角的に紹介する（すべて網羅する必要はない。3-4個を選んで深掘りする）:
+     * 地理・地形（山・川・海・気候の特徴）
+     * 歴史（その土地の成り立ち、城下町・宿場町・港町などの歴史的背景）
+     * 名産品・特産物（農産物、海産物、工芸品、地酒など）
+     * 郷土料理・ご当地グルメ（B級グルメ、名物料理、食文化）
+     * 祭り・伝統行事（地域固有の祭り、風習、民俗芸能）
+     * 方言・ことば（地域特有の言い回し、イントネーション）
+     * 観光スポット（名所、穴場、自然景観、温泉）
+     * 産業・経済（地場産業、企業城下町、農業・漁業）
+     * 著名な出身者やゆかりの人物
+     * 地元の人しか知らないようなトリビア
+   - Web検索の情報を参考にしつつ、生き生きとした語り口で伝える
+   - ソ連ラジオらしく「地方こそ国家の礎である」「同志たちの暮らす土地を知ることは連帯の第一歩」的な切り口
+3. 軽いクロージング（1-2文）
+   - その地域への敬意を込めた締めくくり
+
+※ 毎回必ず異なる市区町村を取り上げること。紹介する情報は正確であること。
+※ 上記の参考情報に具体的な市区町村名があればそこから選んでもよいし、自分の知識から選んでもよい。
+
+$(_radio_output_rules 1000 2000)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "local_japan" --topic "${pref}"
 }
 
 #=== lib/eloop_radio.sh から移行した関数 ===
