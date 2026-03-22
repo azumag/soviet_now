@@ -1,16 +1,14 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v46)
+ * strategy.mjs - ドロップ位置決定戦略 (v47)
  *
- * v46: v45ベース + 生存安定化・連鎖準備改善
- * - 【MID_CHAIN threshold調整】nextType>=3→>=4（T3はchain-first不要、通常マージフローに委ねる）
- *   T3中盤のchain-first発動を抑制して自然なマージ機会と高さ管理を優先
- * - 【OJAMA_CHAIN permissive化】minChainScore 8→4（GBGモードでチェーン要求を緩和）
- *   T2+向けGBGモードで直接マージを逃す問題を修正、より多くのマージ機会を捉える
- * - 【T5+HOLD優先スワップ追加】hold.type>=5 && nextType<=3 → HOLDスワップで大型ピース使用
- *   T5保存よりT5即時マージ(→T6)を優先して大型チェーン機会を増やす
- * - 【garbageUrgent fallbackにcluster追加】最低列落としの前にclusterDropを試みる
- *   マージ先なしのGBG緊急時でも同type集約で将来のマージ準備を維持
- * - v45以前の全改善を維持
+ * v47: v46ベース + 連鎖カスケード予測強化・ゲージ中間対応
+ * - 【2段連鎖カスケードボーナス】findBestMergeにダブルチェーン検出追加
+ *   N+N→N+1後にN+1がN+1と隣接(→N+2連鎖)する確定チェーン機会に+15加点
+ *   複数N+1隣接(c1>1)にも追加ボーナスで多重連鎖を優先
+ * - 【ゲージ中間層対応 (gauge>=0.45)】おじゃま到着前の準備を強化
+ *   T2+: マージなければクラスター集約でおじゃま着弾後の連鎖準備
+ *   T1: マージなければchainAnchorで次のT2連鎖を仕込む
+ * - v46以前の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -457,10 +455,20 @@ export function decide(boardState) {
     if (nextType > 1) {
       const gaugeMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0, ojamaBoost);
       if (gaugeMerge) return { ...gaugeMerge, reason: `GAUGE_MERGE_T${nextType}` };
+      // [v47] ゲージ中間以上: マージなければクラスター集約でおじゃま着弾後の連鎖準備
+      if (gaugeLevel >= 0.45) {
+        const gaugeCluster = findClusterDrop(activePieces, nextType, colHeights, dangerBias);
+        if (gaugeCluster) return { ...gaugeCluster, reason: `GAUGE_CLUSTER_T${nextType}` };
+      }
     }
     if (nextType === 1) {
       const t1Merge = findAnyMerge(activePieces, 1, colHeights, dangerBias);
       if (t1Merge !== null) return { x: t1Merge, reason: 'GAUGE_T1_MERGE' };
+      // [v47] ゲージ中間以上: T1はchainAnchorで次のT2連鎖を仕込む
+      if (gaugeLevel >= 0.45) {
+        const gaugeT1Anchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, false);
+        if (gaugeT1Anchor !== null) return { x: gaugeT1Anchor, reason: 'GAUGE_T1_ANCHOR' };
+      }
     }
     // マージなければ通常フローへ (ojamaBoost付きで下のfindBestMergeが効く)
   }
@@ -1016,8 +1024,12 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
     const c4 = countNear(pieces, t.x, nextType + 4, 3.0);
-    // [v44] c1ボーナスを12→16に増強: T_{n+1}隣接のチェーン設定を積極的に追求
-    const chainScore = c1 * 16 + c2 * 6 + c3 * 3 + c4 * 2;
+    // [v47] let に変更してカスケードボーナスを追加
+    let chainScore = c1 * 16 + c2 * 6 + c3 * 3 + c4 * 2;
+    // [v47] 2段連鎖確定ボーナス: N+N→N+1後にN+1がN+1と隣接してN+2連鎖
+    if (c1 > 0 && c2 > 0) chainScore += 15;
+    // [v47] 多重T_{N+1}ボーナス: 複数の即時チェーンターゲット = 確実連鎖
+    if (c1 > 1) chainScore += (c1 - 1) * 8;
     if (chainScore < minChainScore) continue;
     s += chainScore;
 
