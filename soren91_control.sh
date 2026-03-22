@@ -357,11 +357,11 @@ soren91_stop() {
 	{
 		local _bye_file
 		_bye_file=$(mktemp /tmp/eloop_soren91_bye.XXXXXX)
-		printf '%s\n' "対戦ありがとうございました。メリケンAIはここで退場するぜ、またな！" > "$_bye_file"
+		printf '%s\n' "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" > "$_bye_file"
 		SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:bye" ./say_enqueue.sh "$_bye_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 		rm -f "$_bye_file"
 	} &
-	./twitch_chat.sh send "対戦ありがとうございました。メリケンAIはここで退場するぜ、またな！" 2>/dev/null &
+	./twitch_chat.sh send "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" 2>/dev/null &
 
 	log "[SOREN91] Stopped (end_game=$eg)"
 	return 0
