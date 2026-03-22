@@ -272,6 +272,17 @@ schedule_nonessential_audio_jobs() {
 	# 再生段で deferred キューへ回して、コメント消化後に再生する。
 	local comment_backlog_skip_threshold=1
 
+	# 改善タイミング（12ゲームサイクルの10〜12ゲーム目）ではニュース・ランダムラジオをスキップ
+	# メリケンAI起動と重なるとラジオの読み上げが遅れるため
+	# 定時コーナーはそのまま通す
+	local improve_cycle=${MIN_GAMES_BEFORE_IMPROVE:-12}
+	local cycle_pos=$(( game_num % improve_cycle ))
+	local near_improve=false
+	if [ "$cycle_pos" -ge $((improve_cycle - 2)) ] || [ "$cycle_pos" -eq 0 ]; then
+		near_improve=true
+		log "[SCHEDULER] 改善タイミング付近 (cycle_pos=${cycle_pos}/${improve_cycle}): ニュース・ランダムラジオをスキップ"
+	fi
+
 	local comment_queued=0 comment_playing=0 comment_total=0
 	local comment_backlog_high=false
 	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
@@ -282,7 +293,7 @@ schedule_nonessential_audio_jobs() {
 		comment_backlog_high=true
 	fi
 
-	if (( game_num % news_interval == news_phase )); then
+	if [ "$near_improve" != true ] && (( game_num % news_interval == news_phase )); then
 		if [ "$comment_backlog_high" = true ]; then
 			log "[NEWS] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
 		fi
@@ -385,8 +396,8 @@ schedule_nonessential_audio_jobs() {
 		_run_timed_corner "survival" start_radio_corner_survival "$game_num" "$score" &
 	fi
 
-	# 時間帯コーナー発火時はランダムラジオをスキップ (重複防止)
-	if [ "$timed_corner_fired" = false ] && (( game_num % radio_interval == radio_phase )); then
+	# 時間帯コーナー発火時 or 改善タイミング付近はランダムラジオをスキップ
+	if [ "$timed_corner_fired" = false ] && [ "$near_improve" != true ] && (( game_num % radio_interval == radio_phase )); then
 		if [ "$comment_backlog_high" = true ]; then
 			log "[RADIO] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
 		fi
@@ -394,18 +405,21 @@ schedule_nonessential_audio_jobs() {
 	fi
 
 	# 時事ニュースコーナー（通常2時間、通常ニュースが空のときは短縮）
-	local jiji_interval_sec
-	jiji_interval_sec=$(_resolve_jiji_interval_sec)
-	local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
-	local jiji_last_ts now_ts jiji_elapsed
-	now_ts=$(date +%s)
-	jiji_last_ts=$(cat "$jiji_last_file" 2>/dev/null || echo 0)
-	jiji_elapsed=$((now_ts - jiji_last_ts))
-	if [ "$jiji_elapsed" -ge "$jiji_interval_sec" ]; then
-		if [ "$comment_backlog_high" = true ]; then
-			log "[JIJI] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
+	# 改善タイミング付近はスキップ（メリケンAI起動との競合回避）
+	if [ "$near_improve" != true ]; then
+		local jiji_interval_sec
+		jiji_interval_sec=$(_resolve_jiji_interval_sec)
+		local jiji_last_file="$TMP_STATE_DIR/.jiji_last_run"
+		local jiji_last_ts now_ts jiji_elapsed
+		now_ts=$(date +%s)
+		jiji_last_ts=$(cat "$jiji_last_file" 2>/dev/null || echo 0)
+		jiji_elapsed=$((now_ts - jiji_last_ts))
+		if [ "$jiji_elapsed" -ge "$jiji_interval_sec" ]; then
+			if [ "$comment_backlog_high" = true ]; then
+				log "[JIJI] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
+			fi
+			_run_jiji_corner_guarded "$game_num" "$score" &
 		fi
-		_run_jiji_corner_guarded "$game_num" "$score" &
 	fi
 }
 
