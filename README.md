@@ -15,6 +15,12 @@ AI ループ (3種類から選択)
     ├── soren_loop.sh      ← 自己改善ループ (推奨、eloop.sh/eloop_lib.sh/eloop_improve.sh を統括)
     ├── jloop.sh           ← JSON構造データ版ループ
     └── sloop.sh           ← 画像認識版ループ (レガシー)
+
+soren91/                   ← 91人対戦版 (メリケンAI) 自動プレイヤー (スクリーンショットベース)
+    ├── main.mjs           ← エントリポイント: ブラウザ制御 + ゲームループ
+    ├── strategy.mjs       ← ドロップ位置決定 (AI改変対象)
+    ├── improve.mjs        ← AI改善ループ
+    └── soren91_control.sh ← 親ループからの起動・停止・改善キック管理
 ```
 
 ## AI ループ
@@ -53,7 +59,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 |---------|------|
 | `soren_loop.sh` | 親スクリプト（エントリーポイント）。メインループ・初期化。AI書き換え対象外 |
 | `eloop.sh` | 1試合のゲームプレイ関数。毎試合 source で読み込み、AI書き換え可 |
-| `eloop_lib.sh` | 共通ライブラリ（ヘルパー・ラジオ・AI実行・バリデーション・サンドボックス） |
+| `eloop_lib.sh` | 全モジュールを source する shim (~40行) |
 | `eloop_improve.sh` | バックグラウンド改善サブプロセス |
 | `strategy.py` | AI が改善する決定関数。`decide(game_state, analysis) -> {x, reason}` |
 | `strategy_runner.py` | 内側ループ。strategy.py で1試合プレイ + JSONL履歴記録 |
@@ -64,6 +70,18 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `best_score.txt` | ハイスコア記録 |
 | `say_enqueue.sh` | macOS `say` のFIFOキュー管理（排他制御・異常終了/途中切断リトライ付き） |
 | `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用）。`./google_tts.sh "テキスト"`, `--list`, `--demo` |
+| `soren91_control.sh` | soren91 (メリケンAI) の起動・停止・改善キック管理 |
+
+**シェルモジュール構成:**
+
+`eloop_lib.sh` が以下のモジュールを source する:
+
+| ディレクトリ | モジュール | 役割 |
+|---|---|---|
+| `core/` | `config.sh`, `helpers.sh`, `game_state.sh`, `version.sh`, `phyrogenetic.sh` | 定数・ヘルパー・状態管理・バージョン管理 |
+| `strategy/` | `ai.sh`, `sandbox.sh`, `regression.sh`, `improve.sh` | AI実行・サンドボックス・回帰検出・改善管理 |
+| `broadcast/` | `radio_engine.sh`, `radio_persona.sh`, `radio_themes.sh`, `radio_news.sh`, `radio_factcheck.sh`, `radio_corners.sh`, `radio_state.sh`, `radio_celebration.sh`, `comment.sh`, `comment_worker.sh`, `scheduler.sh` | ラジオ・コメント・スケジューリング |
+| `infra/` | `cleanup.sh` | PID停止・クリーンアップ |
 
 **ラジオDJ機能:**
 
@@ -89,6 +107,62 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - `tmp/.manual_audio_triggers/*.cmd` に `news` / `soviet` / `strategy` / `theme` / `recap` のコマンドファイルを置くと、常駐ループが数秒以内に拾って手動起動する
 - 便利スクリプト [`enqueue_audio_trigger.sh`](/Users/azumag/work/sandbox/soren/enqueue_audio_trigger.sh) で `./enqueue_audio_trigger.sh news` のようにキュー投入できる
 - メリケンAIを手動固定したいときは [`manual_meriken_mode.sh`](/Users/azumag/work/sandbox/soren/manual_meriken_mode.sh) を使う。`./manual_meriken_mode.sh on` で `soren91` を維持し、`off` で通常運用へ戻す
+
+**ラジオスケジュール:**
+
+12ゲーム1サイクルでスケジューリング (`broadcast/scheduler.sh`)。
+
+サイクルベース（ゲーム番号 % 12）:
+
+| サイクル位置 | コーナー | 備考 |
+|---|---|---|
+| Game 2 | 雑談テーマ | 1/3でソ連テーマ。時刻コーナー発火時はスキップ |
+| Game 5 | ニュース読み上げ | `fetch_and_play_news()` |
+| Game 8 | 時事ニュース（jiji） | AI Web検索でトレンド紹介。改善タイミング付近はスキップ |
+
+時刻ベース（±15分ウィンドウ、1日1回のみ）:
+
+| 時刻 | コーナー | 内容 |
+|---|---|---|
+| 01:00 | rakugo | 深夜の落語創作 |
+| 07:00 | breakfast | 世界の朝食 |
+| 08:00 | weather | ソ連天気予報 |
+| 11:30 | lunch | 世界の昼食 |
+| 12:00 | fortune | ソ連占い |
+| 13:00 | devil_dict | 悪魔の辞典 |
+| 14:00 | soviet_quiz | ソ連クイズ |
+| 15:30 | market | 株価・経済 |
+| 16:00 | bluegrass | ブルーグラス音楽紹介 |
+| 17:00 | dinner | 今日の献立 |
+| 17:30 | redefine | 概念の再定義 |
+| 18:00 | soviet_lifehack | ソビエト式生活改善 |
+| 19:00 | world_dinner | 世界の夕食 |
+| 21:00 | deals | お得情報 |
+| 21:30 | night_snack | 世界の夜食 |
+| 22:00 | survival | サバイバル知識 |
+
+コメントキューがあるとラジオ再生は deferred queue に回し、コメント消化後に再生。
+
+### soren91 — 91人対戦版自動プレイヤー (メリケンAI)
+
+`soren91/` ディレクトリに独立したサブプロジェクト。unityroom の91人対戦版ソ連ゲームをスクリーンショットベースで自動プレイする。
+
+```bash
+cd soren91
+npm install          # 初回のみ
+node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごとにAI改善
+```
+
+| ファイル | 役割 |
+|---------|------|
+| `soren91/main.mjs` | エントリポイント: ブラウザ制御 + ゲームループ |
+| `soren91/screenshot_analyzer.mjs` | スクリーンショット → 盤面状態 (Sharp) |
+| `soren91/strategy.mjs` | ドロップ位置決定 (AI改変対象) |
+| `soren91/improve.mjs` | ラウンド後AI改善ループ (claude CLI) |
+| `soren91/ranking_comment.mjs` | ランキング画面コメント生成 + 試合中盤面コメント (Claude vision + TTS) |
+| `soren91_control.sh` | 親ループ (`soren_loop.sh`) からの起動・停止・改善キック管理 |
+
+親プロジェクトの `soren_loop.sh` から `soren91_control.sh` 経由で連携。`SOREN91_ENABLED=1` (.env) で有効化。詳細は `soren91/CLAUDE.md` を参照。
 
 ### jloop.sh — JSON-based State Loop
 

@@ -73,6 +73,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `stop_soren.sh` | soren_loop.sh 安全停止 (tmp/stop + SIGINT) |
 | `analyze_board.py` | 盤面解析 (併合判定・着地予測・反応器状態) |
 | `soviet_local.mjs` | ローカルビルドで AI プレイ（Playwright + JS Bridge） |
+| `soren91_control.sh` | soren91 (メリケンAI) の起動・停止・改善キック管理 |
 
 ### モジュール (shell)
 
