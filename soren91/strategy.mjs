@@ -1,14 +1,14 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v47)
+ * strategy.mjs - ドロップ位置決定戦略 (v48)
  *
- * v47: v46ベース + 連鎖カスケード予測強化・ゲージ中間対応
- * - 【2段連鎖カスケードボーナス】findBestMergeにダブルチェーン検出追加
- *   N+N→N+1後にN+1がN+1と隣接(→N+2連鎖)する確定チェーン機会に+15加点
- *   複数N+1隣接(c1>1)にも追加ボーナスで多重連鎖を優先
- * - 【ゲージ中間層対応 (gauge>=0.45)】おじゃま到着前の準備を強化
- *   T2+: マージなければクラスター集約でおじゃま着弾後の連鎖準備
- *   T1: マージなければchainAnchorで次のT2連鎖を仕込む
- * - v46以前の全改善を維持
+ * v48: v47ベース + 極端T1フラッド時の壁落下ループ抑制
+ * - 【ULTRA_EXTREMEでの壁ペナルティ動的強化 (pieces>75時)】
+ *   findT1ImmediateMergeとfindT1DenseColumnの壁ペナルティをwallPenaltyMult=2.5倍化
+ *   ±2.5への繰り返し落下ループを防止し、盤面中央への収束を促進
+ * - 【findT1ImmediateMergeのベース壁ペナルティ引き上げ】12→15 / 20→25
+ *   全モードで壁落下をより強く抑制
+ * - 【EXTREME_T1_WALL_PIECE_THRESHOLD = 75 追加】壁ペナルティ強化のトリガー閾値
+ * - v47以前の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -24,6 +24,7 @@ const LOW_MASS_CRITICAL_RELIEF_AVG_HEIGHT = 1.45;
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.55;
 const GARBAGE_MODERATE_RATIO = 0.22;
 const GARBAGE_MODERATE_HEIGHT = 0.3;
+const EXTREME_T1_WALL_PIECE_THRESHOLD = 75; // [v48] 壁ペナルティ強化閾値
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -192,10 +193,12 @@ export function decide(boardState) {
           return { x: 0, reason: `ULTRA_EXTREME_UPGRADE_T${hold.type}`, hold: true };
         }
       }
+      // [v48] 壁ペナルティ動的強化: pieces>75の場合、壁落下ループを抑制
+      const t1WallMult = rawPieceCount > EXTREME_T1_WALL_PIECE_THRESHOLD ? 2.5 : 1.0;
       // immediateをdense前に (top=T1は物理的に確実なマージ)
-      const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias);
+      const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, t1WallMult);
       if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
-      const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
+      const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias, t1WallMult);
       if (denseX !== null) return { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE' };
       const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
       if (chainAnchor !== null) return { x: chainAnchor, reason: 'ULTRA_EXTREME_T1_ANCHOR' };
@@ -633,8 +636,9 @@ function findLowestOnTargetSide(colHeights, targetRight) {
  * T1フラッドモード専用: T1が最も密集した列に誘導してT1→T2チェーン促進
  * WARN_Y硬直cutoff廃止→softペナルティ化
  *   全列がWARN_Y超えでもnullを返さずに最善列を返す
+ * [v48] wallPenaltyMult追加: ULTRA_EXTREMEでpieces>75の時に壁ペナルティを強化
  */
-function findT1DenseColumn(pieces, colHeights, dangerBias) {
+function findT1DenseColumn(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0) {
   const t1Pieces = pieces.filter(p =>
     p.type === 1 && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y
   );
@@ -658,7 +662,7 @@ function findT1DenseColumn(pieces, colHeights, dangerBias) {
     // WARN_Y超えには追加ペナルティ (soft penalty)
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 15;
     s -= Math.abs(cx) * 2.0;
-    if (Math.abs(cx) > 2.2) s -= 8;
+    if (Math.abs(cx) > 2.2) s -= Math.round(8 * wallPenaltyMult);
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
     if (dangerBias >= 1 && cx > 0.5) s -= 8;
@@ -723,8 +727,10 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
  * 低Y位置ボーナス追加 (colH<0で+20、colH<WARN_Yで+10)
  * [v44] nearT2Close (r=0.8): T2が極近傍にある列を大幅優先
  *   T1→T2マージ直後にT2+T2→T3の即時連鎖を誘発する
+ * [v48] wallPenaltyMult追加: ULTRA_EXTREMEでpieces>75の時に壁ペナルティを強化
+ *   ベースペナルティも12→15 / 20→25に引き上げ
  */
-function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
+function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0) {
   let bestScore = -Infinity;
   let bestCol = null;
 
@@ -757,9 +763,9 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias) {
     s += (nearT2 - nearT2Close) * 25;
     s += nearT3 * 18;
 
-    // wall抑制
-    if (Math.abs(cx) > 2.0) s -= 12;
-    if (Math.abs(cx) > 2.4) s -= 20;
+    // wall抑制 [v48: ベースペナルティ引き上げ + 動的乗数]
+    if (Math.abs(cx) > 2.0) s -= Math.round(15 * wallPenaltyMult);
+    if (Math.abs(cx) > 2.4) s -= Math.round(25 * wallPenaltyMult);
 
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
