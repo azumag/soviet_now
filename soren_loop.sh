@@ -278,12 +278,13 @@ while true; do
 	improve_rc=$?
 	_abort_if_interrupted "$improve_rc" "trigger_adaptive_improvement"
 
-	# 22時台メリケンAIタイム: 改善サイクル区切り（蓄積数=0=改善直後）で22時台なら1時間メリケンモード
-	_meriken_acc_count=0
+	# 22時台メリケンAIタイム: 改善サイクル区切り（蓄積0かつファイルあり=改善直後）で22時台なら1時間メリケンモード
+	# ファイルなし(初回起動)では発火しない。MERIKEN_TIME_PENDINGパスとは別の入口。
+	_meriken_acc_count=-1
 	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
-		_meriken_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+		_meriken_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo -1)
 	fi
-	if [ "${_meriken_acc_count:-0}" -eq 0 ] && [ "$(date +%H)" = "22" ]; then
+	if [ "${_meriken_acc_count}" -eq 0 ] && [ "$(date +%H)" = "22" ]; then
 		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
 			log "[MERIKEN_TIME] サイクル区切り+22時台: メリケンAIタイム開始 (1時間)"
 			soren91_start 2>/dev/null || true
