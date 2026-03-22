@@ -149,8 +149,8 @@ _soren91_text_has_japanese() {
 _soren91_generate_strategy_explanation() {
 	local strategy_header="$1"
 	[ -n "$strategy_header" ] || return 1
-	claude -p "あなたはメリケンAI（アメリカ製AI）。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
-この「91用戦略」の特徴だけを、視聴者向けに2〜3文で簡潔に、陽気なアメリカンな口調で解説してください。専門用語は噛み砕いてください。
+	claude -p "あなたはメリケンAI（アメリカ製AI）。ちょっとひねくれた性格で、素直に物事を認めない。自信満々に見せかけつつ内心不安、褒める時も「まあ悪くないんじゃないですか」と斜に構える。皮肉・自虐・負け惜しみが自然に出る。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
+この「91用戦略」の特徴だけを、視聴者向けに2〜3文で簡潔に、ひねくれた口調で解説してください。専門用語は噛み砕いてください。
 元のソ連ゲームの戦略や strategy.py には触れないこと。T1、ULTRA、HOLD、balance などの語は、91の盤面制御・置き方のクセとして説明すること。
 【最重要】出力は自然な日本語のみ。英語の文、英語だけの箇条書き、ローマ字だけの文は禁止。アメリカンなキャラクターでも話す言語は日本語です。
 出力はトーク本文のみ（カッコや注釈なし）。
@@ -162,7 +162,7 @@ _soren91_rewrite_strategy_explanation_to_japanese() {
 	local raw_text="$1"
 	[ -n "$raw_text" ] || return 1
 	claude -p "以下の戦略解説を、意味を変えずに自然な日本語の話し言葉2〜3文へ言い換えてください。
-メリケンAIの陽気さは残してよいですが、英語の文は禁止です。
+メリケンAIのひねくれた感じ（皮肉・強がり・斜に構えた感じ）は残してよいですが、英語の文は禁止です。
 出力は日本語のトーク本文のみ（カッコや注釈なし）。
 
 ${raw_text}" --model haiku 2>/dev/null
@@ -246,7 +246,7 @@ soren91_start() {
 		{
 			local announce_file
 			announce_file=$(mktemp /tmp/eloop_soren91_announce.XXXXXX)
-			printf '%s\n' "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています" > "$announce_file"
+			printf '%s\n' "中華AIが戦略改善に逃げたようなので、仕方なくメリケンAIがソ連ゲーム91に出ますよ。別に出たかったわけじゃないですけど。挑戦お待ちしています" > "$announce_file"
 			SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$announce_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 			rm -f "$announce_file"
 
@@ -357,11 +357,11 @@ soren91_stop() {
 	{
 		local _bye_file
 		_bye_file=$(mktemp /tmp/eloop_soren91_bye.XXXXXX)
-		printf '%s\n' "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" > "$_bye_file"
+		printf '%s\n' "まあ、そろそろ中華AIに席を返してあげますよ。別にこっちが疲れたとかじゃないですけどね。対戦してくれた方、どうもです" > "$_bye_file"
 		SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:bye" ./say_enqueue.sh "$_bye_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 		rm -f "$_bye_file"
 	} &
-	./twitch_chat.sh send "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" 2>/dev/null &
+	./twitch_chat.sh send "まあ、そろそろ中華AIに席を返してあげますよ。別にこっちが疲れたとかじゃないですけどね。対戦してくれた方、どうもです" 2>/dev/null &
 
 	log "[SOREN91] Stopped (end_game=$eg)"
 	return 0
