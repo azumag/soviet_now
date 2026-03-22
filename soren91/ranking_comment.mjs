@@ -48,9 +48,8 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
     const logLine = `[${new Date().toISOString()}] game=#${gameNumber} rank=${myRank ?? '?'}: ${comment}\n`;
     try { writeFileSync(COMMENT_LOG_PATH, logLine, { flag: 'a' }); } catch {}
 
-    // TTS読み上げ + Twitch投稿 (非同期、エラーは無視)
+    // TTS読み上げ (非同期、エラーは無視)
     speakComment(comment, 'soren91:ranking_comment');
-    postToTwitch(comment);
 
     return comment;
   } catch (err) {
