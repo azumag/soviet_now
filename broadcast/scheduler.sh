@@ -61,31 +61,6 @@ print(f"{status}|{message}")
 PY
 }
 
-_resolve_jiji_interval_sec() {
-	local base_interval="${JIJI_INTERVAL_SEC:-7200}"
-	local no_news_interval="${JIJI_INTERVAL_NO_NEWS_SEC:-3600}"
-	local news_fetch_status="" news_fetch_message="" news_status_line=""
-
-	if [ -f "tmp/news.txt" ] && [ -s "tmp/news.txt" ]; then
-		echo "$base_interval"
-		return 0
-	fi
-
-	news_status_line=$(_news_fetch_status_snapshot || true)
-	if [ -n "$news_status_line" ]; then
-		IFS='|' read -r news_fetch_status news_fetch_message <<<"$news_status_line"
-	fi
-
-	case "$news_fetch_status" in
-	all_seen_or_filtered|fetch_failed|render_empty)
-		echo "$no_news_interval"
-		;;
-	*)
-		echo "$base_interval"
-		;;
-	esac
-}
-
 fetch_and_play_news() {
 	local game_num="$1" score="$2"
 	local news_fetch_status="" news_fetch_message="" news_status_line=""
