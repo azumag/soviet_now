@@ -1,13 +1,16 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v55)
+ * strategy.mjs - ドロップ位置決定戦略 (v56)
  *
- * v55: v54ベース + T1過剰即時マージの抑制
- * - 【garbageUrgent + T1で低列マージを優先】
- *   緊急ガベージ時に高い列のT1即時マージへ吸われすぎるのを抑え、
- *   低い列の安全マージを選ぶ分岐を追加
- * - 【ULTRA_EXTREME/T1_EXTREMEのimmediateを高密度時に軽くスロットル】
- *   immediate先の列が高い/壁寄りで、dense/stackの代替が十分安全ならそちらを優先
- * - v54の全改善を維持
+ * v56: v55ベース + T1フラッド根本対策の強化
+ * - 【t1FloodMode非ULTRAでT1即時マージを追加】
+ *   t1Count 12-30 (t1FloodMode) かつ ultraMassMode外の通常フローで
+ *   findT1ImmediateMergeが呼ばれていなかったバグを修正
+ *   → T1→T2変換を早期化してT1フラッド抑制
+ * - 【GBG早期でT1をHOLD→T2+マージ優先】
+ *   GBG緊急 + 序盤(pieces<45) + T1 + HOLD空 + next2がT2+マージ可能 → HOLD
+ * - 【pickSaferT1Alternativeの感度向上】
+ *   piece閾値90→80、高さ閾値WARN_Y+0.35→WARN_Y+0.2
+ * - v55の全改善を維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -405,6 +408,17 @@ export function decide(boardState) {
       return { x: 0, reason: `FLOOD_GBG_HOLD_T1`, hold: true };
     }
 
+    // [v56新規] GBG緊急+序盤+T1+HOLD空: next2がT2+でマージ可能ならT1をHOLD
+    if (nextType === 1 && canHold && !hold && rawPieceCount < 45 && !isWarn) {
+      const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+      if (next2T >= 2) {
+        const next2Merge = findAnyMerge(activePieces, next2T, colHeights, dangerBias);
+        if (next2Merge !== null) {
+          return { x: 0, reason: `GBG_HOLD_T1_FOR_T${next2T}`, hold: true };
+        }
+      }
+    }
+
     if (nextType === 1) {
       const gbgImmediateT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
       const gbgLowT1Merge = findMergeInLowCol(activePieces, 1, colHeights, DEADLINE_Y - 0.2, dangerBias);
@@ -551,6 +565,9 @@ export function decide(boardState) {
       if (preFloodAnchor !== null) return { x: preFloodAnchor, reason: 'T1_PREFLOOD_ANCHOR' };
     }
     if (t1FloodMode && !extremeT1Flood) {
+      // [v56修正] t1FloodMode時にimmediateを追加 (T1→T2変換の早期化)
+      const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
+      if (immediateX !== null) return { x: immediateX, reason: 'T1_FLOOD_IMMEDIATE' };
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
       if (denseX !== null) return { x: denseX, reason: 'T1_FLOOD_DENSE' };
     }
@@ -678,7 +695,8 @@ function shouldPreferLowT1GarbageMerge(
 
 function pickSaferT1Alternative(colHeights, immediateX, candidates, rawPieceCount, gaugeLevel) {
   if (immediateX === null) return null;
-  if (rawPieceCount < 90 && gaugeLevel < 0.65) return null;
+  // [v56] piece閾値90→80、高さ閾値WARN_Y+0.35→WARN_Y+0.2 で感度向上
+  if (rawPieceCount < 80 && gaugeLevel < 0.65) return null;
 
   const immediateH = colHeights[nearestColIdx(immediateX)];
   const immediateWall = Math.abs(immediateX) >= 2.0;
@@ -696,7 +714,7 @@ function pickSaferT1Alternative(colHeights, immediateX, candidates, rawPieceCoun
   if (immediateWall && best.h <= immediateH + 0.15) {
     return { x: best.x, reason: best.reason };
   }
-  if (immediateH > WARN_Y + 0.35 && best.h <= immediateH - 0.35) {
+  if (immediateH > WARN_Y + 0.2 && best.h <= immediateH - 0.35) {
     return { x: best.x, reason: best.reason };
   }
   if (rawPieceCount >= 105 && best.h <= immediateH + 0.2 && Math.abs(best.x) <= Math.abs(immediateX)) {
