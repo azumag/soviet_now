@@ -3,7 +3,7 @@
 
 _write_rollback_analysis_file() {
 	local current_hash="$1" rollback_hash="$2" regression_result="$3" rollback_note="$4" game_num="${5:-}"
-	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$current_hash" "$rollback_hash" "$regression_result" "$rollback_note" "$ROLLBACK_ANALYSIS_FILE" "score_history.txt" "$game_num" <<'PY'
+	python3 - "$ROLLING_SCORES_FILE" "$CURRENT_STRATEGY_RUN_FILE" "$current_hash" "$rollback_hash" "$regression_result" "$rollback_note" "$ROLLBACK_ANALYSIS_FILE" "score_history.txt" "$game_num" "eval_score_history.txt" <<'PY'
 import json
 import math
 import os
@@ -449,6 +449,7 @@ _generate_rollback_postmortem_with_ai() {
 		"$ROLLBACK_POSTMORTEM_CONTEXT_FILE"
 		"$ROLLING_SCORES_FILE"
 		"score_history.txt"
+		"eval_score_history.txt"
 		"analyze_board.py"
 	)
 	local f

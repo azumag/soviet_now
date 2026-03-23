@@ -49,8 +49,8 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 ### 粛清（regression rollback）基準
 - anchor戦略（過去の安定戦略）と現戦略の composite/p50/p25 を比較
-- Hard fail（即時粛清 — branch depth/patience超過時）: comp gap≥330, p50 gap≥270, p25 gap≥390 のうち2つ以上で発動
-- Soft fail（通常の回帰検出）: comp gap≥180, p50 gap≥150, p25 gap≥270 のうち2つ以上で発動
+- Hard fail（即時粛清 — branch depth/patience超過時）: comp gap≥2200, p50 gap≥1800, p25 gap≥2600 のうち2つ以上で発動
+- Soft fail（通常の回帰検出）: comp gap≥1200, p50 gap≥1000, p25 gap≥1800 のうち2つ以上で発動
 - composite = 0.55×p50 + 0.30×p25 + 0.15×lcb
 - Branch制御: max_depth=4, max_games=48, patience=3
 
