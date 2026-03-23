@@ -240,19 +240,27 @@ export async function generateMidgameComment(gameNumber, turn, boardState) {
 }
 
 function formatBoardStateForPrompt(boardState, turn) {
-  const pieces = boardState?.pieces ?? [];
-  const pieceCount = pieces.length;
+  const rawPieces = boardState?.pieces ?? [];
   const garbageRatio = boardState?.garbage?.ratio ?? 0;
   const gauge = boardState?.garbage?.gauge ?? 0;
   const hold = boardState?.hold;
   const nextPieces = boardState?.nextPieces ?? [];
 
+  // UI要素の誤検出(ゴーストピース)を除外
+  const GHOST_POSITIONS = [
+    { x: -3.27, y: 3.25 }, { x: -1.44, y: 3.14 },
+    { x: -1.64, y: 1.91 }, { x: -0.03, y: 0.77 },
+  ];
+  const pieces = rawPieces.filter(p => {
+    const px = p.x ?? 0, py = p.y ?? -5;
+    return !GHOST_POSITIONS.some(g => Math.abs(px - g.x) < 0.15 && Math.abs(py - g.y) < 0.15);
+  });
+  const pieceCount = pieces.length;
+
   // 盤面の高さ（最も高いピースの上端 = y + r）
-  // デッドライン付近(y>2.8)のUI誤検出を除外して計算
   const deadlineY = 3.32;
-  const validPieces = pieces.filter(p => (p.y ?? -5) < deadlineY - 0.5);
-  const maxY = validPieces.length > 0
-    ? Math.max(...validPieces.map(p => (p.y ?? -5) + (p.r ?? 0)))
+  const maxY = pieces.length > 0
+    ? Math.max(...pieces.map(p => (p.y ?? -5) + (p.r ?? 0)))
     : -5;
   const heightPct = Math.max(0, Math.min(100, ((maxY + 5) / (deadlineY + 5)) * 100)).toFixed(0);
 
