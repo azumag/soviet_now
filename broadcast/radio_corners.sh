@@ -1126,6 +1126,82 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "finance" --topic "${topic}"
 }
 
+start_radio_corner_capitalism() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local topics=(
+		"株主優待"
+		"ポイント還元経済"
+		"サブスクリプション地獄"
+		"クーポン文化"
+		"会員制倉庫店"
+		"ブラックフライデー"
+		"フランチャイズ商法"
+		"広告で無料に見せるビジネス"
+		"クレジットカードのポイント競争"
+		"リボ払いという甘い罠"
+		"翌日配送を支える物流"
+		"ファストフードの薄利多売"
+		"巨大テック企業の囲い込み"
+		"ベンチャーキャピタル"
+		"スポーツの年俸ビジネス"
+		"プライベートブランド戦争"
+		"ショッピングモール文化"
+		"スーパーの安売り合戦"
+		"価格比較サイト"
+		"会員ランク制度"
+	)
+	local topic="${topics[$((RANDOM % ${#topics[@]}))]}"
+
+	local grounding_context=""
+	grounding_context=$(_radio_fetch_theme_grounding_context "capitalism" "${topic} 資本主義 アメリカ 仕組み 歴史")
+	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【今回の資本主義ネタ】${topic}
+
+【Web検索で得られた参考情報】
+${grounding_context}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】資本主義ネタコーナー
+1. アメリカ製人工知能らしい景気のいい導入（2-3文）
+   - メリケンAIとして「これぞ資本主義です」くらいの大げさな入りにする
+   - ただし英語は使わない
+2. 「${topic}」をネタにしつつ、ちゃんと中身を説明する
+   - それが何なのかを、初見でもわかるように噛み砕いて説明する
+   - どういう商売の理屈で成立しているのかを話す
+   - アメリカっぽさ、競争社会っぽさ、消費文化っぽさが出る点を面白く語る
+   - 単なる罵倒ではなく、なぜ広まったのか、便利さと嫌な点の両方を話す
+   - 必要ならソ連の計画経済と雑に比べてよいが、話の主役はあくまで資本主義ネタにする
+3. 軽い締め（1-2文）
+   - 「自由競争はうるさいけど見世物としては最高です」くらいのテンションで締める
+
+【追加ルール】
+- これは金融講座ではなく、資本主義の変な仕組みや笑える癖を取り上げるコーナーです
+- ただし中身は雑にしすぎず、仕組みの説明は正確さを優先すること
+- 投資助言、購買の推奨、特定企業の宣伝にしないこと
+- 毎回必ず別の題材に見える切り口にすること
+
+$(_radio_output_rules 900 1700)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "capitalism" --topic "${topic}"
+}
+
 start_radio_corner_music_knowledge() {
 	local game_num="$1" score="$2"
 	_radio_time_context

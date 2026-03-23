@@ -31,6 +31,7 @@ SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null ||
 SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
 MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
 SOREN91_MERIKEN_IMPROVE_INTERVAL="${SOREN91_MERIKEN_IMPROVE_INTERVAL:-12}"
+SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
 
 _soren91_switch_obs_layout() {
 	local mode="${1:-}"
@@ -144,6 +145,30 @@ _soren91_is_improve_process() {
 
 _soren91_text_has_japanese() {
 	printf '%s' "$1" | grep -q '[ぁ-んァ-ヶ一-龠々ー]'
+}
+
+_soren91_start_capitalism_corner() {
+	[ "${SOREN91_CAPITALISM_CORNER_ENABLED:-1}" = "1" ] || return 0
+	command -v start_radio_corner_capitalism >/dev/null 2>&1 || return 0
+
+	local radio_game_num="${GAME_NUM:-}"
+	case "$radio_game_num" in
+	''|*[!0-9]*) radio_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0) ;;
+	esac
+	case "$radio_game_num" in
+	''|*[!0-9]*) radio_game_num=0 ;;
+	esac
+
+	local radio_score=""
+	if command -v _last_score >/dev/null 2>&1; then
+		radio_score=$(_last_score 2>/dev/null || true)
+	fi
+	case "$radio_score" in
+	''|*[!0-9]*) radio_score=0 ;;
+	esac
+
+	log "[SOREN91] 資本主義ネタコーナー開始 (game=${radio_game_num}, score=${radio_score})"
+	start_radio_corner_capitalism "$radio_game_num" "$radio_score"
 }
 
 _soren91_generate_strategy_explanation() {
@@ -274,6 +299,7 @@ soren91_start() {
 				fi
 			fi
 		} &
+		_soren91_start_capitalism_corner >/dev/null 2>&1 &
 		_soren91_switch_obs_layout meriken || true
 	else
 		log "[SOREN91] WARNING: Process died immediately (PID=$pid)"
