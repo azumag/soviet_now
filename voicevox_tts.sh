@@ -37,6 +37,9 @@ _synthesize_one() {
     local text="$1"
     local output="$2"
 
+    # VOICEVOXクラッシュ防止: 推論を壊す文字を除去
+    text=$(printf '%s' "$text" | tr -d '#＃')
+
     # Step 1: audio_query
     local query_json http_code
     query_json=$(curl -s --max-time "$VOICEVOX_TIMEOUT" \
