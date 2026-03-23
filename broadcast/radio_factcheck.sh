@@ -52,6 +52,10 @@ _radio_fetch_web_grounding() {
 _radio_should_fact_check() {
 	local corner_name="$1"
 	[ "${RADIO_FACT_CHECK_ENABLED:-1}" != "0" ] || return 1
+	# 戦略分析系コーナーはファクトチェック不要（自己生成データのみ）
+	case "$corner_name" in
+	rollback|strategy|celebration) return 1 ;;
+	esac
 	local skip_list=" ${RADIO_FACT_CHECK_SKIP_CORNERS:-} "
 	case "$skip_list" in
 	*" ${corner_name} "*) return 1 ;;

@@ -495,7 +495,7 @@ _legacy_start_random_radio_corner() {
 	[ -z "$score" ] && score=$(tail -1 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' || echo 0)
 
 	# ニュースは毎ゲーム別途実行するので、ここでは除外
-	local candidates=("theme" "soviet" "recap")
+	local candidates=("theme" "soviet")
 
 	local pick="${candidates[$((RANDOM % ${#candidates[@]}))]}"
 	log "[RADIO] コーナー選択: ${pick}"
@@ -503,7 +503,6 @@ _legacy_start_random_radio_corner() {
 	case "$pick" in
 	theme)   start_radio_corner_theme "$game_num" "$score" ;;
 	soviet)  start_radio_corner_soviet "$game_num" "$score" ;;
-	recap)   start_radio_corner_recap "$game_num" "$score" ;;
 	esac
 }
 

@@ -1455,31 +1455,6 @@ start_radio_corner_soviet() {
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "soviet"
 }
 
-start_radio_corner_recap() {
-	local game_num="$1" score="$2"
-	_radio_time_context
-	local past_topics
-	past_topics=$(_radio_past_topics_block)
-
-	local best_score
-	best_score=$(cat best_score.txt 2>/dev/null || echo 0)
-	local recent_scores=""
-	[ -f "score_history.txt" ] && recent_scores=$(tail -10 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}')
-
-	local prompt_file
-	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
-
-	export persona_block
-	persona_block=$(_radio_persona_block)
-	export output_rules
-	output_rules=$(_radio_output_rules 1000 2000)
-	export _rc_time _rc_period _rc_mood past_topics game_num score best_score
-	export recent_scores="${recent_scores:-まだ履歴がありません}"
-	envsubst < "$ELOOP_LIB_DIR/prompts/radio_recap.md" > "$prompt_file"
-	unset persona_block output_rules _rc_time _rc_period _rc_mood past_topics recent_scores
-
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "recap"
-}
 
 #=== 時事ニュースコーナー (jiji) ===
 
