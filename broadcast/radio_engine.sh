@@ -815,6 +815,7 @@ for raw_line in text.splitlines():
 out = "\n".join(filtered_lines)
 for pat, repl in patterns:
     out = re.sub(pat, repl, out, flags=re.IGNORECASE)
+out = re.sub(r'[#＃]', '', out)
 out = re.sub(r'\n{3,}', '\n\n', out).strip()
 sys.stdout.write(out)
 PY
