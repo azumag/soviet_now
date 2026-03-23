@@ -773,7 +773,6 @@ function findT1DenseColumn(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0
     s -= colHeights[i] * 10.0;
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 15;
     s -= Math.abs(cx) * 2.0;
-    // v59: 壁ペナルティ 8→20
     if (Math.abs(cx) > 2.2) s -= Math.round(20 * wallPenaltyMult);
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
@@ -809,7 +808,6 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
     s += colT1.length * 5;
     s -= colHeights[i] * 8.0;
     s -= Math.abs(cx) * 2.0;
-    // v59: 壁ペナルティ 8→20 + T1数依存ペナルティ (壁T1タワーの正帰還を遮断)
     if (Math.abs(cx) > 2.2) {
       s -= 20;
       if (colT1.length >= 4) s -= (colT1.length - 3) * 12;
@@ -870,11 +868,9 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 
     s += Math.round(nearT3 * 22 * chainMult);
     s += Math.round(nearT4 * 15 * chainMult);
 
-    // v59: T1列飽和ペナルティ (同列にT1が4個以上でタワー抑制)
     const colT1Count = pieces.filter(p => Math.abs(p.x - cx) < 0.7 && p.type === 1 && p.y < DEADLINE_Y).length;
     if (colT1Count >= 4) s -= (colT1Count - 3) * 12;
 
-    // v59: 壁ペナルティ強化 (15→22, 25→38) + extraWallPenalty強化 (0/10/20→5/18/30)
     const extraWallPenalty = pieceCount > 40 ? 30 : pieceCount > 20 ? 18 : 5;
     if (Math.abs(cx) > 2.0) s -= Math.round(22 * wallPenaltyMult) + extraWallPenalty;
     if (Math.abs(cx) > 2.4) s -= Math.round(38 * wallPenaltyMult) + extraWallPenalty;
@@ -918,7 +914,6 @@ function findT1ChainAnchor(pieces, colHeights, dangerBias, t1Flood = false) {
     if (t1Flood) s += nearT1 * 10;
     s -= colHeights[ci] * 4.0;
     s -= Math.abs(t1.x) * 2.0;
-    // v59: 壁ペナルティ 8→15
     if (Math.abs(t1.x) > 2.2) s -= 15;
     if (dangerBias < 0 && t1.x < -0.5) s -= 8;
     if (dangerBias > 0 && t1.x > 0.5) s -= 8;
@@ -991,7 +986,6 @@ function findMergeInLowCol(pieces, nextType, colHeights, heightLimit, dangerBias
     s += countNear(pieces, t.x, nextType + 1, 1.8) * 6;
     s += countNear(pieces, t.x, nextType + 2, 2.2) * 3;
     s -= Math.abs(t.x) * 2.0;
-    // v59: 壁ペナルティ追加 (旧: |x|>2.2 で-4 のみ → |x|>2.0 で-15、|x|>2.4 で-35)
     if (Math.abs(t.x) > 2.4) s -= 35;
     else if (Math.abs(t.x) > 2.0) s -= 15;
     if (dangerBias <= -1 && t.x < -0.5) s -= 6;
