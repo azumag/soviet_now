@@ -1,22 +1,19 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v59)
+ * strategy.mjs - ドロップ位置決定戦略 (v60)
  *
- * v59: T1壁スタック防止の強化
- * - 【findMergeInLowCol: 壁ペナルティ追加】
- *   CRITICAL_T1_LOW_MERGEが壁位置(x=2.6等)を選択する問題を修正。
- *   弱い-4を廃止し、|x|>2.0で-15、|x|>2.4で-35の壁ペナルティを追加。
- *   → T1フラッド + クリティカルで右壁にT1が積み上がる連鎖を遮断
- * - 【findT1ImmediateMerge: 壁ペナルティ強化+T1飽和ペナルティ追加】
- *   基本壁ペナルティ (15→22, 25→38) 強化。
- *   extraWallPenalty: (0/10/20 → 5/18/30)。
- *   同列に4個以上T1がある場合に追加ペナルティ (colT1Count-3)*12 でタワー抑制。
- * - 【findT1DenseColumn: 壁ペナルティ 8→20】
- * - 【findT1ChainAnchor: 壁ペナルティ 8→15】
- * - 【findT1StackColumn: 壁ペナルティ 8→20、T1数依存ペナルティ追加】
- * - 【CRITICAL T1 path: wallPenaltyMult 1.0→2.0】
- *   クリティカルモードでのT1即時マージの壁ペナルティを2倍に強化。
- * - 【GBG urgent T1 path: 壁位置即時マージ時にdenseカラム内側代替を検討】
- * - v58のその他の改善は維持
+ * v60: GBG+T1フラッド時の戦略改善
+ * - 【GBG urgent T1 path: HOLD チェック追加】
+ *   t1FloodMode 中に GBG urgent で nextType=1 の場合、
+ *   次のピースが type>=3 でマージターゲットがあれば HOLD。
+ *   → T1 フラッドの連鎖を断ち切り、有効なマージにつなぐ
+ * - 【GBG urgent T1 path: 即時マージなし時の dense/anchor フォールバック追加】
+ *   findT1ImmediateMerge が null の場合（列 top==T1 がない場合）、
+ *   findT1DenseColumn → findT1ChainAnchor を試みる。
+ *   → T1 が埋もれている場合でも密集地点に追加してマージ促進
+ * - 【GBG moderate T1 path: dense/anchor 改善】
+ *   moderate garbage 時も T1 dense + anchor fallback を追加。
+ *   t1Count>=8 時は dense を anyMerge より優先。
+ * - v59 のその他の改善は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -415,6 +412,19 @@ export function decide(boardState) {
       return { x: 0, reason: `FLOOD_GBG_HOLD_T1`, hold: true };
     }
 
+    // T1フラッド中、次ピースに良いマージがあれば T1 を HOLD
+    if (nextType === 1 && canHold && !hold && t1FloodMode) {
+      const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+      const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
+      const bestNextGbg = Math.max(next2T, next3T);
+      if (bestNextGbg >= 3) {
+        const hasMergeGbg = findAnyMerge(activePieces, bestNextGbg, colHeights, dangerBias) !== null;
+        if (hasMergeGbg) {
+          return { x: 0, reason: `GBG_HOLD_T1_NEXT_T${bestNextGbg}`, hold: true };
+        }
+      }
+    }
+
     if (nextType === 1) {
       const gbgImmediateT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
       const gbgLowT1Merge = findMergeInLowCol(activePieces, 1, colHeights, DEADLINE_Y - 0.2, dangerBias);
@@ -442,6 +452,14 @@ export function decide(boardState) {
           }
         }
         return { x: gbgImmediateT1, reason: 'GBG_T1_IMMEDIATE' };
+      }
+
+      // 即時マージなし: dense → anchor フォールバック
+      if (t1Count >= 5) {
+        const gbgDenseT1 = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0);
+        if (gbgDenseT1 !== null) return { x: gbgDenseT1, reason: 'GBG_T1_DENSE' };
+        const gbgAnchorT1 = findT1ChainAnchor(activePieces, colHeights, dangerBias, t1FloodMode);
+        if (gbgAnchorT1 !== null) return { x: gbgAnchorT1, reason: 'GBG_T1_ANCHOR' };
       }
     }
 
@@ -482,8 +500,18 @@ export function decide(boardState) {
     const ojamaMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0, ojamaBoost);
     if (ojamaMerge) return { ...ojamaMerge, reason: `OJAMA_MERGE_T${nextType}` };
     if (nextType === 1) {
+      // T1 密集時は dense を優先
+      if (t1Count >= 8) {
+        const ojamaDenseT1 = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0);
+        if (ojamaDenseT1 !== null) return { x: ojamaDenseT1, reason: 'OJAMA_T1_DENSE' };
+      }
       const t1Merge = findAnyMerge(activePieces, 1, colHeights, dangerBias);
       if (t1Merge !== null) return { x: t1Merge, reason: 'OJAMA_T1_MERGE' };
+      // マージなし時のアンカーフォールバック
+      if (t1Count >= 5) {
+        const ojamaAnchorT1 = findT1ChainAnchor(activePieces, colHeights, dangerBias, t1FloodMode);
+        if (ojamaAnchorT1 !== null) return { x: ojamaAnchorT1, reason: 'OJAMA_T1_ANCHOR' };
+      }
     }
     const ojamaCluster = findClusterDrop(activePieces, nextType, colHeights, dangerBias);
     if (ojamaCluster) return { ...ojamaCluster, reason: `OJAMA_CLUSTER_T${nextType}` };
