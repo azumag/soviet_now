@@ -279,7 +279,24 @@ ${analysis_text}
 
 $(_radio_output_rules 900 1600)
 PROMPT
-	_radio_generate_and_play "$prompt_file" "$game_num" "0" "rollback"
+	# rollbackはopencode不安定のため、claude CLIで直接生成してからplay
+	local talk=""
+	talk=$(timeout 45 claude -p --model haiku < "$prompt_file" 2>/dev/null | _sanitize_onair_text | _normalize_radio_tone)
+	rm -f "$prompt_file"
+	if [ -z "$talk" ]; then
+		log "[RADIO:rollback] claude生成失敗"
+		return 1
+	fi
+	local talk_file
+	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
+	printf '%s' "$talk" > "$talk_file"
+	log "[RADIO:rollback] 生成完了 (${#talk}字)"
+	SAY_CONTEXT_LABEL="radio:rollback" ./say_enqueue.sh "$talk_file" "${RADIO_SAY_RATE:-150}" 0 || {
+		log "[RADIO:rollback] 再生失敗"
+		rm -f "$talk_file"
+		return 1
+	}
+	rm -f "$talk_file"
 }
 
 #=== 時間帯コーナー ===
