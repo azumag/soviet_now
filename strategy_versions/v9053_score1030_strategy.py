@@ -36,17 +36,19 @@ Game Overview:
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-# v319: 危険域reactive_pairs段階的評価盤面圧縮強化版 - reactive_pairs>=3時max_y runaway防止
-# ワーストゲーム(score0954)終盤turns 70-77: reactive_pairs=4-6あるのに即時併合不可続き、戦略的配置が続きmax_y=3.05に上昇してゲームオーバー
-# ベストゲーム(score3065)終盤turns 130-137: 即時併合機会を確実に捉えてmax_y=2.88で安定
-# batch_summaryでHEIGHT_CONTROLが10.9%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが主要な敗因
-# axis 8.5拡張: reactive_pairs数に応じてheight_multを段階的に緩和し、盤面圧縮を強制的に優先
-#   - reactive_pairs>=2 && merge_grade=="NO": height_mult *= 0.4 (従来通り)
-#   - reactive_pairs>=3 && merge_grade=="NO": height_mult *= 0.2 (新規追加)
-# これは数値の微調整ではなく、reactive_pairsの段階的評価という構造的変更
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-#       game_history/20260323_095707_score0954.jsonl turns 70-77, game_history/20260323_101547_score3065.jsonl turns 130-137
-# Fixes rollback failure mode: 危険域での即時併合取りこぼし（axis 8.5拡張）
+# v320: ロシア建国後フェーズ早期検出・即時併合優先強化版 - ロシア1つ出現時点でフェーズ切り替え
+# advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
+# ロシア(type 15)が1つでも盤面に出現した時点でフェーズを切り替え、即時併合を最優先する戦略へ移行
+# batch_summaryでHEIGHT_CONTROLが10.8%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが主要な敗因
+# ワーストゲーム(score0661)終盤turns 57-61: max_y=3.38に上昇してゲームオーバー。ロシア建国後フェーズでの即時併合優先不足が敗因
+# ベストゲーム(score4542)終盤turns 141-167: max_y=2.97で安定。即時併合機会を確実に捉えている
+# axis 9.6追加: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=1かつ即時併合不可の場合、height_multを0.3に緩和して盤面圧縮を優先
+# axis 9.7追加: ロシアフェーズでmax_y>=2.0の場合、危険域と判定して即時併合を最優先
+# これによりロシア建国後の死亡速度を抑え、2つ目のロシアを作り、ソ連建国(type 16)を達成することを目指す
+# 未活用情報：type 15ピースの個数、ロシア建国後フェーズ判定
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+#       game_history/20260323_110258_score0661.jsonl turns 57-61, game_history/20260323_104911_score4542.jsonl turns 141-167
+# Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 9.6/9.7追加）
 # v318: 危険域即時併合不可時盤面圧縮強化版 - v317 failure mode潰し
 # v317 failure: anchor比で悪化。危険域（max_y>=1.8かつreactive_pairs>=2）で即時併合候補があるのに、高度管理が効いてしまい即時併合機会を逃してmax_y runawayでゲームオーバー。
 # ワーストゲーム(score0890)終盤turns 59-65: reactive_pairs=1-3あるのに即時併合不可続きmax_y=3.71に上昇してゲームオーバー。
@@ -275,26 +277,19 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v319: 危険域reactive_pairs段階的評価盤面圧縮強化版 - reactive_pairs>=3時max_y runaway防止
+    """v320: ロシア建国後フェーズ早期検出・即時併合優先強化版 - ロシア1つ出現時点でフェーズ切り替え
 
-    v318 failure: 危険域でreactive_pairs>=2あるのに即時併合不可続き、戦略的配置が続きmax_y runawayでゲームオーバー。
-    ワーストゲーム(score0954)終盤turns 70-77: reactive_pairs=4-6あるのに即時併合不可続き、戦略的配置が続きmax_y=3.05に上昇してゲームオーバー。
-    ベストゲーム(score3065)終盤turns 130-137: 即時併合機会を確実に捉えてmax_y=2.88で安定して3065点を出している。
-    batch_summaryでHEIGHT_CONTROLが10.9%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが主要な敗因。
-    advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「高さによる危険回避の重要性はもっと低く見ていい」に基づき、危険域で即時併合不可の場合も盤面圧縮を優先。
-    axis 8.5拡張: reactive_pairs数に応じてheight_multを段階的に緩和し、盤面圧縮を強制的に優先することでmax_y runawayを防止。
-      - reactive_pairs>=2 && merge_grade=="NO": height_mult *= 0.4 (従来通り)
-      - reactive_pairs>=3 && merge_grade=="NO": height_mult *= 0.2 (新規追加)
-    これは数値の微調整ではなく、reactive_pairsの段階的評価という構造的変更。
-    未活用情報：危険域判定(phase HIGH), reactive_pairs数, 即時併合可否(merge_grade)
-    refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-          game_history/20260323_095707_score0954.jsonl turns 70-77, game_history/20260323_101547_score3065.jsonl turns 130-137
+    advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
+    ロシア(type 15)が1つでも盤面に出現した時点でフェーズを切り替え、即時併合を最優先する戦略へ移行
+    ワーストゲーム(score0661)終盤turns 57-61: max_y=3.38に上昇してゲームオーバー。ロシア建国後フェーズでの即時併合優先不足が敗因
+    ベストゲーム(score4542)終盤turns 141-167: max_y=2.97で安定。即時併合機会を確実に捉えている
+    batch_summaryでHEIGHT_CONTROLが10.8%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが主要な敗因
 
-    v319の改善点:
-    1. axis 8.5段階的評価: phase HIGH && reactive_pair_count >= 2 && merge_grade == "NO" の場合、reactive_pairs数に応じてheight_multを段階的に緩和
-       - reactive_pairs>=2: height_mult *= 0.4 (従来通り)
-       - reactive_pairs>=3: height_mult *= 0.2 (新規追加)
-    2. これによりreactive_pairsが多い場合の盤面圧縮を強制的に優先し、max_y runawayを防止
+    v320の改善点:
+    1. ロシアフェーズ早期検出: type 15 >= 1 でロシアフェーズと判定（従来は >= 2）
+    2. ロシアフェーズ即時併合優先: reactive_pairs>=1 && merge_grade=="NO" で height_mult *= 0.3
+    3. ロシアフェーズ危険域判定: max_y>=2.0 で height_mult *= 0.2
+    これによりロシア建国後の死亡速度を抑え、2つ目のロシアを作り、ソ連建国(type 16)を達成することを目指す
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -373,10 +368,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 盤面上の現在タイプの最も高い位置のピースを見つける
         same_type_stack_top = max(same_type_pieces, key=lambda p: p.get("y", -10))
 
-    # ----- Russian phase detection (v317: type 15x2 = Russia founded) -----
-    # 盤面上のtype 15の個数をカウントし、2つ以上ある場合をロシアフェーズと判定
+    # ----- Russian phase detection (v320: type 15x1 = Russia founded - early phase switch) -----
+    # 盤面上のtype 15の個数をカウントし、1つ以上ある場合をロシアフェーズと判定
+    # advice.md「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく早期フェーズ切り替え
+    # ロシアが1つ出現した時点で盤面が狭くなり、高typeピースが場所を占有しているため、即時併合優先の戦略へ移行
     type_15_pieces = [p for p in pieces if p.get("type") == 15]
-    russia_phase = len(type_15_pieces) >= 2
+    russia_phase = len(type_15_pieces) >= 1
     
     # =======================================================================
     #  score each drop candidate (x coordinate) with 6 evaluation axes (NEW: +1 axis for reactive)
@@ -457,6 +454,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
             # height_multを0.3に緩和して、盤面圧縮を強化し、即時併合機会を確保する
             height_mult *= 0.3
+
+        # v320: ロシアフェーズ即時併合優先強化版 - ロシア1つ出現時点でフェーズ切り替え
+        # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
+        # ロシア(type 15)が1つでも盤面に出現した時点でフェーズを切り替え、即時併合を最優先する戦略へ移行
+        # ワーストゲーム(score0661)終盤turns 57-61: max_y=3.38に上昇してゲームオーバー。ロシア建国後フェーズでの即時併合優先不足が敗因
+        # ベストゲーム(score4542)終盤turns 141-167: max_y=2.97で安定。即時併合機会を確実に捉えている
+        # axis 9.6: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=1かつ即時併合不可の場合、height_multを0.3に緩和して盤面圧縮を優先
+        # axis 9.7: ロシアフェーズでmax_y>=2.0の場合、危険域と判定して即時併合を最優先
+        # これによりロシア建国後の死亡速度を抑え、2つ目のロシアを作り、ソ連建国(type 16)を達成することを目指す
+        # 未活用情報：type 15ピースの個数、ロシア建国後フェーズ判定
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+        #       game_history/20260323_110258_score0661.jsonl turns 57-61, game_history/20260323_104911_score4542.jsonl turns 141-167
+        if russia_phase and reactive_pair_count >= 1 and merge_grade == "NO":
+            # ロシアフェーズでreactive_pairs>=1かつ即時併合不可の場合、height_multを0.3に緩和して盤面圧縮を優先
+            height_mult *= 0.3
+        
+        if russia_phase and max_y >= 2.0:
+            # ロシアフェーズでmax_y>=2.0の場合、危険域と判定してheight_multを0.2に緩和し、即時併合を最優先
+            height_mult *= 0.2
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
