@@ -42,7 +42,8 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 
 ### 建国ボーナス指標
 - 戦略評価（rolling_scores, regression, 改善AI向け蓄積）には「建国ボーナス込みスコア（EVAL_SCORE）」を使用
-- ゲームオーバー時の最終盤面のピースtype別ボーナスを加算: type 1-5: 0,0,1,1,2 / type 6-10: 3,4,6,10,16 / type 11-15: 26,40,70,120,240 / ソ連建国: +800
+- ゲームオーバー時の最終盤面のピースtype別ボーナスを加算: type 1-5: 0,0,1,3,7 / type 6-10: 15,32,67,141,296 / type 11-15: 622,1306,2743,5760,12096 / ソ連建国: +800
+- 隣接比≈2.1で、type(N+1)×1 > type(N)×2 が常に成立（併合インセンティブ）
 - 表示用スコア（best_score.txt, commit, ダッシュボード）は raw スコアのまま
 - `strategy_runner.py` が `final_types` を出力 → `eloop.sh` の `post_game_bookkeeping()` でボーナス計算
 
