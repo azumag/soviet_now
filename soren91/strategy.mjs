@@ -1,20 +1,20 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v57)
+ * strategy.mjs - ドロップ位置決定戦略 (v58)
  *
- * v57: v56 + v27アンカーへの回帰修正 (rank退行の根本原因対応)
- * - 【T1_PREFLOOD_THRESHOLDを 8→13 に引き上げ】
- *   t1Count <= 12 でのHOLD介入を停止 → v27「早すぎるT1介入停止」の再実施
- *   T1フラッドモード（>12）に達するまで先読みHOLDを行わない
- * - 【GBG緊急時のT1 HOLDを削除】(v56新機能を撤回)
- *   GBG時は即座にT1をマージすべき。HOLDで温存しても効果なし
- * - 【T1フラッドHOLDのT2ケース削除】T3+マージ時のみHOLD
- *   → T2の場合はそのままマージに使う
- * - 【pickSaferT1AlternativeのしきいをV55水準に戻す】
- *   piece閾値 80→90、高さ閾値 WARN_Y+0.2→WARN_Y+0.35
- *   → T1即時マージからの不要な迂回を抑制
- * - 【ゲージ警告時T1フラッドモードで高品質マージ関数を使用】
- *   gaugeLevel>=0.5 かつ t1FloodMode 時、findAnyMerge→findT1ImmediateMerge+findT1DenseColumn
- * - v56の他の改善は維持
+ * v58: T1プレフラッドdead code修正 + 壁ペナルティ強化
+ * - 【T1_PREFLOOD_DENSE_THRESHOLDを分離 (9)】
+ *   v57でT1_PREFLOOD_THRESHOLD=13に引き上げた際、preflood dense/anchor (t1Count 9-12)
+ *   がdead codeになっていたバグを修正。
+ *   HOLD介入しきい=13(T1_PREFLOOD_THRESHOLD)は維持。
+ *   dense/anchorしきい=9(T1_PREFLOOD_DENSE_THRESHOLD)として分離し機能を復活。
+ *   → t1Count 9-12 でT1集約が再び機能し、フラッド前にT1を集めて連鎖準備できる
+ * - 【findT1ImmediateMerge: 壁ペナルティ強化】
+ *   pieceCount > 20 で追加壁ペナルティ（+10〜+20）
+ *   → 中程度のピース数での壁列T1スタックを抑制 (turn28のx=2.50問題対応)
+ * - 【findT1DenseColumn: T2カスケードボーナス追加】
+ *   T1→T2マージ後に非常に近いT2(0.8以内)が2つ以上あれば +25
+ *   → T1マージがT2+T2連鎖につながる位置を優先
+ * - v57のその他の改善は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -32,6 +32,7 @@ const GARBAGE_MODERATE_RATIO = 0.22;
 const GARBAGE_MODERATE_HEIGHT = 0.3;
 const EXTREME_T1_WALL_PIECE_THRESHOLD = 75;
 const T1_PREFLOOD_THRESHOLD = 13;
+const T1_PREFLOOD_DENSE_THRESHOLD = 9;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -412,9 +413,6 @@ export function decide(boardState) {
       return { x: 0, reason: `FLOOD_GBG_HOLD_T1`, hold: true };
     }
 
-    // v56のGBG T1 HOLD (GBG緊急+T1+HOLD空+next2マージ可能) を削除
-    // → GBG時はT1を即座にマージすべきでHOLDは逆効果
-
     if (nextType === 1) {
       const gbgImmediateT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
       const gbgLowT1Merge = findMergeInLowCol(activePieces, 1, colHeights, DEADLINE_Y - 0.2, dangerBias);
@@ -532,7 +530,7 @@ export function decide(boardState) {
         return { x: 0, reason: `T1_FLOOD_HOLD_T${bestNextT}`, hold: true };
       }
     }
-    // T2ケースを削除: T2の場合はそのままマージに使う (v56のT1_FLOOD_HOLD_T2を撤回)
+    // T2ケースを削除: T2の場合はそのままマージに使う
   }
 
   // --- HOLD判定 ---
@@ -559,7 +557,8 @@ export function decide(boardState) {
   }
 
   if (nextType === 1) {
-    if (t1Count >= T1_PREFLOOD_THRESHOLD && !t1FloodMode && !extremeT1Flood) {
+    // T1_PREFLOOD_DENSE_THRESHOLD=9: t1Count 9-12 でdense/anchorを有効化 (v57でdead codeだったバグ修正)
+    if (t1Count >= T1_PREFLOOD_DENSE_THRESHOLD && !t1FloodMode && !extremeT1Flood) {
       const preFloodDense = findT1DenseColumn(activePieces, colHeights, dangerBias);
       if (preFloodDense !== null) return { x: preFloodDense, reason: 'T1_PREFLOOD_DENSE' };
       const preFloodAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
@@ -763,6 +762,10 @@ function findT1DenseColumn(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0
     let s = nearT1 * 20;
     s += nearT2 * 20;
     s += nearT3 * 10;
+    // T2カスケードボーナス: T1→T2マージ後に非常に近いT2(0.8以内)と連鎖できるか
+    const nearT2VeryClose = countNear(pieces, cx, 2, 0.8);
+    if (nearT2VeryClose >= 2) s += 25;  // T2+T2連鎖ほぼ確定
+    else if (nearT2VeryClose >= 1) s += 8;
     s -= colHeights[i] * 10.0;
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 15;
     s -= Math.abs(cx) * 2.0;
@@ -858,8 +861,10 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 
     s += Math.round(nearT3 * 22 * chainMult);
     s += Math.round(nearT4 * 15 * chainMult);
 
-    if (Math.abs(cx) > 2.0) s -= Math.round(15 * wallPenaltyMult);
-    if (Math.abs(cx) > 2.4) s -= Math.round(25 * wallPenaltyMult);
+    // 壁ペナルティ強化: pieceCount > 20 で追加ペナルティ (壁列へのT1スタック抑制)
+    const extraWallPenalty = pieceCount > 40 ? 20 : pieceCount > 20 ? 10 : 0;
+    if (Math.abs(cx) > 2.0) s -= Math.round(15 * wallPenaltyMult) + extraWallPenalty;
+    if (Math.abs(cx) > 2.4) s -= Math.round(25 * wallPenaltyMult) + extraWallPenalty;
 
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
