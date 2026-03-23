@@ -67,6 +67,31 @@ while true; do
             payload="${payload#* }"
         fi
 
+        # サブスク/ギフトサブ検出 (USERNOTICE)
+        if [[ "$payload" == *"USERNOTICE"* ]] && [ -n "$tags" ]; then
+            local sub_msg_id=""
+            sub_msg_id=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^msg-id=//p' | head -n1)
+            case "$sub_msg_id" in
+            sub|resub|subgift|submysterygift|anonsubgift)
+                local sub_display=""
+                sub_display=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^display-name=//p' | head -n1)
+                sub_display=$(printf '%s' "$sub_display" | sed -e 's/\\s/ /g' -e 's/\\:/;/g' -e 's/\\\\/\\/g')
+                [ -z "$sub_display" ] && sub_display=$(echo "$payload" | sed -n 's/^:\([^!]*\)!.*/\1/p')
+                sub_display=$(echo "$sub_display" | tr -d '`$\\{}|;<>&')
+                local sub_user_msg=""
+                sub_user_msg=$(echo "$payload" | sed 's/^.*USERNOTICE [^ ]* ://' | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
+                local sub_label="サブスクありがとう"
+                case "$sub_msg_id" in
+                    subgift|anonsubgift) sub_label="サブスクギフトありがとう" ;;
+                    resub) sub_label="サブスク継続ありがとう" ;;
+                esac
+                local sub_line="[SUB] ${sub_display}: ${sub_label}"
+                [ -n "$sub_user_msg" ] && sub_line="[SUB] ${sub_display}: ${sub_label} / ${sub_user_msg}"
+                echo "${sub_line}" >> "$RAW_LOG"
+                ;;
+            esac
+        fi
+
         if [[ "$payload" == *"PRIVMSG"* ]]; then
             login_user=$(echo "$payload" | sed -n 's/^:\([^!]*\)!.*/\1/p')
             display_name=""
@@ -89,7 +114,17 @@ while true; do
             # サニタイズ: 制御文字 + シェルメタ文字除去
             msg=$(echo "$msg" | tr -d '\000-\010\013-\037\r' | tr -d '`$\\{}|;<>&')
             user=$(echo "$user" | tr -d '`$\\{}|;<>&')
-            clean_line="${user}: ${msg}"
+
+            # ビッツ(Cheer)検出: tagsに bits= があればタグ付与
+            local bits_tag=""
+            if [ -n "$tags" ]; then
+                local bits_amount=""
+                bits_amount=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^bits=//p' | head -n1)
+                if [ -n "$bits_amount" ]; then
+                    bits_tag="[BITS] "
+                fi
+            fi
+            clean_line="${bits_tag}${user}: ${msg}"
 
             # !clip コマンド検出（クールダウン付き、TWITCH_CLIP_CMD_ENABLED=1 で有効）
             if [ "${TWITCH_CLIP_CMD_ENABLED:-0}" = "1" ] && [[ "$msg" =~ ^[[:space:]]*!clip([[:space:]]|$) ]]; then

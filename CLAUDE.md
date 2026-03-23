@@ -214,8 +214,9 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | 20:00 | whatday | 今日は何の日？ |
 | 20:30 | zaitech | 財テクコーナー |
 | 21:00 | deals | お得情報 |
-| 21:30 | night_snack | 世界の夜食 |
+| 21:30 | fudosan | 不動産情報コーナー |
 | 22:00 | survival | サバイバル知識 |
+| 22:30 | night_snack | 世界の夜食 |
 | 23:30 | local_japan | 日本地域情報 |
 
 #### 再生制御

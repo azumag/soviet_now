@@ -477,6 +477,43 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "zaitech"
 }
 
+start_radio_corner_fudosan() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. 不動産情報コーナー — 批判的・多角的な視点で
+   - 住宅購入・賃貸・不動産投資・住宅ローンなどの話題
+   - **よいしょ・提灯記事は厳禁。批判的な視点を基本とすること**
+   - 「持ち家信仰」の危うさ、住宅ローンの本当の総支払額、金利上昇リスク
+   - 不動産投資の空室リスク・修繕費・流動性の低さ・出口戦略の難しさ
+   - 新築プレミアムの罠、タワマン修繕積立金問題、人口減少と地価下落
+   - 不動産業界やメディアが語りたがらない不都合な真実に切り込む
+   - 「ソ連では住居は国家が提供した」「資本主義では家すら投機対象」的な皮肉な切り口
+   - 毎回異なるテーマを取り上げること
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "fudosan"
+}
+
 start_radio_corner_deals() {
 	local game_num="$1" score="$2"
 	_radio_time_context
