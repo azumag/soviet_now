@@ -212,6 +212,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | 18:00 | soviet_lifehack | ソビエト式生活改善 |
 | 19:00 | world_dinner | 世界の夕食 |
 | 20:00 | whatday | 今日は何の日？ |
+| 20:30 | zaitech | 財テクコーナー |
 | 21:00 | deals | お得情報 |
 | 21:30 | night_snack | 世界の夜食 |
 | 22:00 | survival | サバイバル知識 |

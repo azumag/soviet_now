@@ -441,6 +441,42 @@ PROMPT
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "dinner"
 }
 
+start_radio_corner_zaitech() {
+	local game_num="$1" score="$2"
+	_radio_time_context
+	local past_topics
+	past_topics=$(_radio_past_topics_block)
+
+	local prompt_file
+	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+	cat >"$prompt_file" <<PROMPT
+$(_radio_persona_block)
+
+【現在時刻】${_rc_time_spoken} ${_rc_period}
+【時間帯の雰囲気】${_rc_mood}
+
+【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
+${past_topics}
+
+【状況】ゲーム${game_num}回目開始。前回スコア${score}点。
+
+【トーク構成】
+1. 時間帯に合わせた軽いオープニング（2-3文）
+2. 財テクコーナー — 批判的・多角的な資産運用トーク
+   - 投資・資産運用・マネーリテラシーに関する話題（株式・債券・不動産・暗号資産・NISA・iDeCo等）
+   - **よいしょ・提灯記事は厳禁。批判的な視点を基本とすること**
+   - メリットよりもリスク・落とし穴・見落としがちなコストに重点を置く
+   - 「NISAは非課税だがそもそも元本割れリスクがある」「新興国投資のカントリーリスク」「暗号資産の規制不透明性」など具体的なリスクシナリオを掘り下げる
+   - 金融機関やメディアが語りたがらない不都合な真実にも切り込む
+   - 「計画経済 vs 自由市場」「ソ連式貯蓄 vs 西側式投資」など、ソ連ラジオならではの皮肉な切り口
+   - 毎回異なるテーマを取り上げること
+3. 軽いクロージング（1-2文）
+
+$(_radio_output_rules 800 1500)
+PROMPT
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "zaitech"
+}
+
 start_radio_corner_deals() {
 	local game_num="$1" score="$2"
 	_radio_time_context

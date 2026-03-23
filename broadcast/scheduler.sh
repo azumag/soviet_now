@@ -194,6 +194,10 @@ _dispatch_manual_audio_trigger() {
 		log "[MANUAL] whatday トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_whatday "$game_num" "$score" &
 		;;
+	zaitech)
+		log "[MANUAL] zaitech トリガー受付: $(basename "$cmd_file")"
+		start_radio_corner_zaitech "$game_num" "$score" &
+		;;
 	local_japan)
 		log "[MANUAL] local_japan トリガー受付: $(basename "$cmd_file")"
 		start_radio_corner_local_japan "$game_num" "$score" &
@@ -418,6 +422,10 @@ schedule_nonessential_audio_jobs() {
 	if _try_timed_corner "whatday" 20 0; then
 		timed_corner_fired=true
 		_run_timed_corner "whatday" start_radio_corner_whatday "$game_num" "$score" &
+	fi
+	if _try_timed_corner "zaitech" 20 30; then
+		timed_corner_fired=true
+		_run_timed_corner "zaitech" start_radio_corner_zaitech "$game_num" "$score" &
 	fi
 	if _try_timed_corner "deals" 21 0; then
 		timed_corner_fired=true
