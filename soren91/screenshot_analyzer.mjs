@@ -313,18 +313,20 @@ function classifyBlob(blob, calibration) {
   const gameY = -5.0 + normalizedY * 8.32; // total range: -5.0 to 3.32
 
   // UI要素の誤検出を除外 (固定位置に常に現れるゴーストピース)
-  // データ分析で全ゲーム全ターンに存在する固定座標を特定
-  const GHOST_POSITIONS = [
-    { x: -3.27, y: 3.25 },  // デッドライン左マーカー
-    { x: -1.44, y: 3.14 },  // デッドライン付近UI
-    { x: -1.64, y: 1.91 },  // ボード中央左UI
-    { x: -0.03, y: 0.77 },  // ボード中央UI
-  ];
+  // デッドライン付近は座標のみ、ボード内部はtype一致も要求(本物のピースを消さない)
   const gx = Math.round(gameX * 100) / 100;
   const gy = Math.round(gameY * 100) / 100;
+  const GHOST_POSITIONS = [
+    { x: -3.27, y: 3.25, type: null },  // デッドライン左: 座標のみで除外
+    { x: -1.44, y: 3.14, type: null },  // デッドライン付近: 座標のみで除外
+    { x: -1.64, y: 1.91, type: 1 },     // ボード中央左: type1のみ除外
+    { x: -0.03, y: 0.77, type: 4 },     // ボード中央: type4のみ除外
+  ];
   for (const ghost of GHOST_POSITIONS) {
     if (Math.abs(gx - ghost.x) < 0.15 && Math.abs(gy - ghost.y) < 0.15) {
-      return null;  // UI要素として除外
+      if (ghost.type === null || bestType === ghost.type) {
+        return null;
+      }
     }
   }
 

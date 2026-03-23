@@ -245,13 +245,17 @@ function formatBoardStateForPrompt(boardState, turn) {
   const nextPieces = boardState?.nextPieces ?? [];
 
   // UI要素の誤検出(ゴーストピース)を除外
+  // デッドライン付近は座標のみ、ボード内部はtype一致も要求(本物のピースを消さない)
   const GHOST_POSITIONS = [
-    { x: -3.27, y: 3.25 }, { x: -1.44, y: 3.14 },
-    { x: -1.64, y: 1.91 }, { x: -0.03, y: 0.77 },
+    { x: -3.27, y: 3.25, type: null }, { x: -1.44, y: 3.14, type: null },
+    { x: -1.64, y: 1.91, type: 1 },   { x: -0.03, y: 0.77, type: 4 },
   ];
   const pieces = rawPieces.filter(p => {
-    const px = p.x ?? 0, py = p.y ?? -5;
-    return !GHOST_POSITIONS.some(g => Math.abs(px - g.x) < 0.15 && Math.abs(py - g.y) < 0.15);
+    const px = p.x ?? 0, py = p.y ?? -5, pt = p.type;
+    return !GHOST_POSITIONS.some(g =>
+      Math.abs(px - g.x) < 0.15 && Math.abs(py - g.y) < 0.15 &&
+      (g.type === null || pt === g.type)
+    );
   });
   const pieceCount = pieces.length;
 
