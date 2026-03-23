@@ -1,19 +1,16 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v60)
+ * strategy.mjs - ドロップ位置決定戦略 (v61)
  *
- * v60: GBG+T1フラッド時の戦略改善
- * - 【GBG urgent T1 path: HOLD チェック追加】
- *   t1FloodMode 中に GBG urgent で nextType=1 の場合、
- *   次のピースが type>=3 でマージターゲットがあれば HOLD。
- *   → T1 フラッドの連鎖を断ち切り、有効なマージにつなぐ
- * - 【GBG urgent T1 path: 即時マージなし時の dense/anchor フォールバック追加】
- *   findT1ImmediateMerge が null の場合（列 top==T1 がない場合）、
- *   findT1DenseColumn → findT1ChainAnchor を試みる。
- *   → T1 が埋もれている場合でも密集地点に追加してマージ促進
- * - 【GBG moderate T1 path: dense/anchor 改善】
- *   moderate garbage 時も T1 dense + anchor fallback を追加。
- *   t1Count>=8 時は dense を anyMerge より優先。
- * - v59 のその他の改善は維持
+ * v61: T1フラッド耐性 - T2チェーン設計の優先化
+ * - 【findT1ChainSetup 追加】T1ドロップ後にT2が生成され、
+ *   隣接T2とさらに合併できる位置を優先的に選択する新関数
+ *   T1+T1→T2, T2+T2→T3 の2段連鎖を狙う
+ * - 【T1フラッドモードでの chainSetup 優先】t1FloodMode / extremeT1Flood 時:
+ *   findT1ImmediateMerge より chainSetup を先に試みる
+ * - 【GBG urgent T1 HOLD: 過剰 HOLD の抑制】
+ *   t1Count >= 20 の場合は GBG urgent での T1 HOLD チェックをスキップ
+ *   大量T1時は HOLD より即時マージを優先
+ * - v60 のその他の改善は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -194,6 +191,7 @@ export function decide(boardState) {
         }
       }
       const t1WallMult = rawPieceCount > EXTREME_T1_WALL_PIECE_THRESHOLD ? 2.5 : 1.0;
+      const chainSetupX = findT1ChainSetup(activePieces, colHeights, dangerBias);
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, t1WallMult, rawPieceCount);
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias, t1WallMult);
       const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
@@ -201,6 +199,7 @@ export function decide(boardState) {
         colHeights,
         immediateX,
         [
+          { x: chainSetupX, reason: 'ULTRA_EXTREME_T1_CHAIN_SAFE' },
           { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE_SAFE' },
           { x: stackCol, reason: 'ULTRA_EXTREME_T1_STACK_SAFE' },
         ],
@@ -208,6 +207,7 @@ export function decide(boardState) {
         gaugeLevel,
       );
       if (saferT1Alt) return saferT1Alt;
+      if (chainSetupX !== null) return { x: chainSetupX, reason: 'ULTRA_EXTREME_T1_CHAIN' };
       if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
       if (denseX !== null) return { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE' };
       const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
@@ -235,6 +235,8 @@ export function decide(boardState) {
 
     if (nextType === 1) {
       if (t1FloodMode) {
+        const chainSetupX = findT1ChainSetup(activePieces, colHeights, dangerBias);
+        if (chainSetupX !== null) return { x: chainSetupX, reason: 'ULTRA_T1_CHAIN_SETUP' };
         const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
         if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_T1_IMMEDIATE' };
         const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
@@ -412,8 +414,8 @@ export function decide(boardState) {
       return { x: 0, reason: `FLOOD_GBG_HOLD_T1`, hold: true };
     }
 
-    // T1フラッド中、次ピースに良いマージがあれば T1 を HOLD
-    if (nextType === 1 && canHold && !hold && t1FloodMode) {
+    // T1フラッド中、次ピースに良いマージがあれば T1 を HOLD (T1が大量の場合はスキップ)
+    if (nextType === 1 && canHold && !hold && t1FloodMode && t1Count < 20) {
       const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
       const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
       const bestNextGbg = Math.max(next2T, next3T);
@@ -597,12 +599,15 @@ export function decide(boardState) {
       if (preFloodAnchor !== null) return { x: preFloodAnchor, reason: 'T1_PREFLOOD_ANCHOR' };
     }
     if (t1FloodMode && !extremeT1Flood) {
+      const chainSetupX = findT1ChainSetup(activePieces, colHeights, dangerBias);
+      if (chainSetupX !== null) return { x: chainSetupX, reason: 'T1_FLOOD_CHAIN_SETUP' };
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
       if (immediateX !== null) return { x: immediateX, reason: 'T1_FLOOD_IMMEDIATE' };
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
       if (denseX !== null) return { x: denseX, reason: 'T1_FLOOD_DENSE' };
     }
     if (extremeT1Flood) {
+      const chainSetupX = findT1ChainSetup(activePieces, colHeights, dangerBias);
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
       const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
@@ -610,6 +615,7 @@ export function decide(boardState) {
         colHeights,
         immediateX,
         [
+          { x: chainSetupX, reason: 'T1_EXTREME_CHAIN_SAFE' },
           { x: denseX, reason: 'T1_EXTREME_DENSE_SAFE' },
           { x: stackCol, reason: 'T1_EXTREME_STACK_SAFE' },
         ],
@@ -617,6 +623,7 @@ export function decide(boardState) {
         gaugeLevel,
       );
       if (saferT1Alt) return saferT1Alt;
+      if (chainSetupX !== null) return { x: chainSetupX, reason: 'T1_EXTREME_CHAIN' };
       if (immediateX !== null) return { x: immediateX, reason: 'T1_EXTREME_IMMEDIATE' };
       if (stackCol !== null) return { x: stackCol, reason: 'T1_EXTREME_STACK' };
       const t1Chain = findT1ChainAnchor(activePieces, colHeights, dangerBias, true);
@@ -901,6 +908,52 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 
     if (Math.abs(cx) > 2.0) s -= Math.round(22 * wallPenaltyMult) + extraWallPenalty;
     if (Math.abs(cx) > 2.4) s -= Math.round(38 * wallPenaltyMult) + extraWallPenalty;
 
+    if (dangerBias >= 2 && cx > 0) s -= 15;
+    if (dangerBias <= -2 && cx < 0) s -= 15;
+    if (dangerBias >= 1 && cx > 0.5) s -= 6;
+    if (dangerBias <= -1 && cx < -0.5) s -= 6;
+
+    if (s > bestScore) { bestScore = s; bestCol = i; }
+  }
+
+  return bestCol !== null ? clampX(FINE_COLS[bestCol]) : null;
+}
+
+function findT1ChainSetup(pieces, colHeights, dangerBias) {
+  // T1+T1→T2 が生成され、隣接T2+T2→T3 の連鎖が期待できる位置を探す
+  const t2Pieces = pieces.filter(p =>
+    p.type === 2 && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y
+  );
+  if (t2Pieces.length < 2) return null;
+
+  let bestScore = -Infinity;
+  let bestCol = null;
+
+  for (let i = 0; i < FINE_COLS.length; i++) {
+    const cx = FINE_COLS[i];
+    if (colHeights[i] >= DEADLINE_Y) continue;
+
+    // 列top がT1であること (T1ドロップでT2生成)
+    const colPieces = pieces.filter(p => Math.abs(p.x - cx) < 0.45 && p.y < DEADLINE_Y);
+    if (colPieces.length === 0) continue;
+    const topPiece = colPieces.reduce((a, b) =>
+      (b.y + (b.r || 0.3)) > (a.y + (a.r || 0.3)) ? b : a
+    );
+    if (topPiece.type !== 1) continue;
+
+    // 2つ以上のT2が近くにあること (T2+T2→T3 連鎖可能)
+    const nearT2Close = t2Pieces.filter(p => Math.abs(p.x - cx) < 1.0).length;
+    const nearT2 = t2Pieces.filter(p => Math.abs(p.x - cx) < 2.0).length;
+    if (nearT2 < 2) continue;
+
+    let s = nearT2Close * 45 + (nearT2 - nearT2Close) * 22;
+    s += countNear(pieces, cx, 3, 2.5) * 12; // T3 近くにあるとさらに連鎖可能
+    s += countNear(pieces, cx, 4, 3.0) * 6;
+    s -= colHeights[i] * 10.0;
+    if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 18;
+    if (colHeights[i] < 0) s += 15;
+    s -= Math.abs(cx) * 2.5;
+    if (Math.abs(cx) > 2.2) s -= 30;
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
     if (dangerBias >= 1 && cx > 0.5) s -= 6;
