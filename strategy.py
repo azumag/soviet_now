@@ -342,6 +342,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pairs = reactor.get("reactive_pairs", [])
     # reactive_pairs is a list, count pairs for evaluation
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
+    danger_piece_count = reactor.get("danger_piece_count", 0)
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -673,8 +674,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v2346のロジックを参考に、phase HIGH && reactive_pair_count >= 2 で即時併合ボーナスを優先する評価軸を確立。
         # 未活用情報：危険域判定(max_y>=1.8), reactive_pairs数
         # refs: strategy_versions/best_score2346_strategy.py, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-
-        danger_piece_count = reactor.get("danger_piece_count", 0)
 
         if phase == "HIGH" and reactive_pair_count >= 2:
             if merge_grade in ["DIRECT", "NEAR"]:
