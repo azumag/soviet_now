@@ -1,5 +1,5 @@
 /**
- * ranking_comment.mjs - メリケンAIコメント生成 (ランキング画面 + 試合中盤面)
+ * comment.mjs - メリケンAIコメント生成 (ランキング画面 + 試合中盤面)
  *
  * Claude haiku (vision) を使用して:
  * 1. ランキング画面のプレイヤー名認識 + 試合後コメント
@@ -7,10 +7,20 @@
  * 3. TTS読み上げ + Twitchチャット投稿
  */
 
-import { existsSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { execFile } from 'child_process';
 import { join } from 'path';
 import sharp from 'sharp';
+
+const PROMPTS_DIR = join(import.meta.dirname || '.', 'prompts');
+
+function loadPrompt(filename, vars = {}) {
+  let text = readFileSync(join(PROMPTS_DIR, filename), 'utf-8');
+  for (const [key, value] of Object.entries(vars)) {
+    text = text.replaceAll(`{{${key}}}`, value);
+  }
+  return text;
+}
 
 const PARENT_DIR = join(import.meta.dirname || '.', '..');
 const SAY_ENQUEUE_SCRIPT = join(PARENT_DIR, 'say_enqueue.sh');
@@ -89,19 +99,7 @@ function extractCommentOnly(raw) {
 
 function callClaudeForComment(base64Image, gameNumber, myRank) {
   const rankInfo = myRank != null ? `自分の順位: ${myRank}位/91人中。` : '';
-
-  const promptText = `あなたは「メリケンAI」。アメリカ製AIで、資本主義の力でソ連ゲーム91を制覇しようとしている。丁寧なですます調だが、ちょっとひねくれている。アメリカンジョークや資本主義ネタを挟むが、どこか皮肉っぽい。
-${rankInfo}
-このランキング画面を見て、試合後のコメントを生成せよ。
-
-ルール:
-- 画面のプレイヤー名を読み取り、NPC（ロシア風の名前）以外の人間プレイヤーがいれば名前に言及
-- 順位や他プレイヤーの名前を踏まえて、勝ち負けの状況を分析
-- 勝っていても負けていても、ひねくれた資本主義者として強がり・皮肉を織り交ぜる
-- 面白いプレイヤー名には言及し面白く解説する
-- 自然な日本語のですます調のみ（英語禁止）
-- 5〜10文、200〜350文字程度でしっかり語る
-- コメント本文のみ出力（分析・説明・カッコ・注釈は一切不要）`;
+  const promptText = loadPrompt('ranking_comment.md', { rankInfo });
 
   const content = [
     {
@@ -257,12 +255,21 @@ function formatBoardStateForPrompt(boardState, turn) {
   });
   const pieceCount = pieces.length;
 
-  // 盤面の高さ（最も高いピースの上端 = y + r）
+  // 面積ベースの盤面充填率（ピース面積合計 / 盤面面積）
+  const boardArea = 7.0 * 8.32; // board width * height in game coords
+  let pieceArea = 0;
+  for (const p of pieces) {
+    const r = p.r ?? 0.2;
+    pieceArea += Math.PI * r * r;
+  }
+  const fillPct = Math.max(0, Math.min(100, (pieceArea / boardArea) * 100)).toFixed(0);
+
+  // 最高地点（デッドラインへの近さ = 危険度）
   const deadlineY = 3.32;
   const maxY = pieces.length > 0
     ? Math.max(...pieces.map(p => (p.y ?? -5) + (p.r ?? 0)))
     : -5;
-  const heightPct = Math.max(0, Math.min(100, ((maxY + 5) / (deadlineY + 5)) * 100)).toFixed(0);
+  const dangerPct = Math.max(0, Math.min(100, ((maxY + 5) / (deadlineY + 5)) * 100)).toFixed(0);
 
   // ピースのtype別集計
   const typeCounts = {};
@@ -276,7 +283,8 @@ function formatBoardStateForPrompt(boardState, turn) {
     .join(', ');
 
   let info = `ターン${turn}、盤面にピース${pieceCount}個。`;
-  info += `\n盤面の高さ: ${heightPct}%（デッドラインまで）、最高地点y=${maxY.toFixed(1)}`;
+  info += `\n盤面充填率: ${fillPct}%（ピース面積ベース）`;
+  info += `\nデッドライン危険度: ${dangerPct}%（最高地点y=${maxY.toFixed(1)}）`;
   info += `\nピース内訳: ${typeStr || 'なし'}`;
 
   if (garbageRatio > 0.05) {
@@ -295,25 +303,7 @@ function formatBoardStateForPrompt(boardState, turn) {
 function callClaudeForMidgame(gameNumber, turn, boardState) {
   const boardInfo = formatBoardStateForPrompt(boardState, turn);
 
-  const promptText = `あなたは「メリケンAI」。アメリカ製AIで、資本主義の力でソ連ゲーム91（91人対戦・落ちものパズル）を制覇しようとしている。
-  丁寧なですます調だが、ちょっとひねくれている。
-  自分の判断に自信があるフリをしつつ、内心焦っている様子がにじむ。
-  アメリカンジョークや資本主義ネタを挟む。
-
-【盤面データ】
-${boardInfo}
-
-※ type番号が大きいほど大きなピース。同type同士が接触すると併合してtype+1に。type15が最大。
-
-この盤面データをもとに、試合中の実況コメントを生成せよ。
-
-ルール:
-- 盤面の状況（ピースの積み上がり具合、危険度、大きなピースの有無、チャンスなど）に具体的に言及
-- ピースの大きさの分布、盤面の高さ、おじゃまブロックの状況などを踏まえて述べる
-- ひねくれた資本主義者として、強がり・皮肉・負け惜しみ・斜に構えた自己評価を自然に織り交ぜる
-- 自然な日本語のですます調のみ（英語禁止）
-- 5〜7文、200〜300文字程度でしっかり語る
-- コメント本文のみ出力（分析・説明・カッコ・注釈は一切不要）`;
+  const promptText = loadPrompt('midgame_comment.md', { boardInfo });
 
   return new Promise((resolve, reject) => {
     const child = execFile('claude', [
@@ -339,14 +329,14 @@ ${boardInfo}
   });
 }
 
-// CLI: node ranking_comment.mjs <ranking_image_path> [gameNumber] [rank]
+// CLI: node comment.mjs <ranking_image_path> [gameNumber] [rank]
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { mkdirSync } = await import('fs');
   const imagePath = process.argv[2];
   const gameNum = parseInt(process.argv[3] || '0', 10);
   const rank = process.argv[4] ? parseInt(process.argv[4], 10) : null;
   if (!imagePath) {
-    console.error('Usage: node ranking_comment.mjs <ranking_image_path> [gameNumber] [rank]');
+    console.error('Usage: node comment.mjs <ranking_image_path> [gameNumber] [rank]');
     process.exit(1);
   }
   mkdirSync('tmp', { recursive: true });

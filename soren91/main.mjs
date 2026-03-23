@@ -805,7 +805,7 @@ async function gameLoop(page, calibration, gameNumber) {
       if (turn > 0 && turn % 20 === 0) {
         (async () => {
           try {
-            const { generateMidgameComment } = await loadModule('./ranking_comment.mjs');
+            const { generateMidgameComment } = await loadModule('./comment.mjs');
             await generateMidgameComment(gameNumber, turn, boardState);
           } catch (err) {
             console.log(`[game] Midgame comment error: ${err.message}`);
@@ -967,7 +967,7 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
   if (existsSync(rankingImagePath)) {
     (async () => {
       try {
-        const { generateRankingComment } = await loadModule('./ranking_comment.mjs');
+        const { generateRankingComment } = await loadModule('./comment.mjs');
         await generateRankingComment(rankingImagePath, gameNumber, detectedRank);
       } catch (err) {
         console.log(`[game] Ranking comment error: ${err.message}`);
