@@ -378,6 +378,9 @@ if soviet: bonus += 800
 print(d.get('score', 0) + bonus)
 " 2>/dev/null || echo "$LAST_SCORE")
 
+	# EVAL_SCORE履歴（ボーナス込み）
+	printf '%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z' | sed 's/\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/')" "$EVAL_SCORE" >> eval_score_history.txt
+
 	local _bonus=$(( EVAL_SCORE - LAST_SCORE ))
 	if [ "$_bonus" -gt 0 ]; then
 		local _top_types
