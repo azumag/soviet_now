@@ -823,6 +823,7 @@ generate_comment_response() {
 	else
 		rm -f "$comment_screenshot"
 	fi
+	rm -f "$comment_screenshot" 2>/dev/null || true
 
 	local comment_batch_file=""
 	comment_batch_file=$(mktemp /tmp/eloop_comment_batch_XXXXXXXX 2>/dev/null || true)
