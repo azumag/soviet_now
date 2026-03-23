@@ -250,6 +250,9 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
     if (ocr?.rank != null) {
       lines.push(`- OCR推定順位: ${ocr.rank}位/91人中。`);
     }
+    if (ocr?.playerNames?.length) {
+      lines.push(`- OCRプレイヤー名候補: ${ocr.playerNames.slice(0, 8).join(' / ')}`);
+    }
     if (ocr?.lines?.length) {
       lines.push(...ocr.lines.slice(0, 8).map(line => `- ${line}`));
     }

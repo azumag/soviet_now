@@ -22,7 +22,12 @@ screenshot_analyzer.mjs  # スクリーンショット → 盤面状態 (Sharp)
 calibration.mjs          # ゲームボード壁検出 + 座標変換
 strategy.mjs             # ドロップ位置決定 (AI改変対象)
 improve.mjs              # ラウンド後AI改善ループ (claude CLI)
-prompts/improve_strategy.md  # AI改善プロンプト
+comment.mjs              # コメント生成 (ランキング画面 + 試合中盤面)
+radio_bridge.sh          # 親プロジェクトの定時ラジオを呼び出すブリッジ
+prompts/
+  improve_strategy.md    # AI改善プロンプト
+  midgame_comment.md     # 試合中コメント用プロンプト
+  ranking_comment.md     # ランキングコメント用プロンプト
 
 game_history/            # ラウンドごとのJSONLターンログ
 strategy_versions/       # strategy.mjs のバックアップ

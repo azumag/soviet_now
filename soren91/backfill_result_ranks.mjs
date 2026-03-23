@@ -50,6 +50,7 @@ async function backfill() {
       rank: ocr.rank ?? null,
       rankSource: ocr.rankSource || null,
       lines: (ocr.lines || []).slice(0, 8),
+      playerNames: (ocr.playerNames || []).slice(0, 8),
     };
     if (JSON.stringify(summary.resultScreenOcr || null) !== JSON.stringify(nextOcr)) {
       next.resultScreenOcr = nextOcr;

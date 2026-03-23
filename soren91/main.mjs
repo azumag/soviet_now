@@ -991,11 +991,19 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
     strategyHash: strategyHash || null,
     timestamp: new Date().toISOString(),
   };
-  if (resultScreenOcr && (resultScreenOcr.rank != null || (resultScreenOcr.lines || []).length > 0)) {
+  if (
+    resultScreenOcr
+    && (
+      resultScreenOcr.rank != null
+      || (resultScreenOcr.lines || []).length > 0
+      || (resultScreenOcr.playerNames || []).length > 0
+    )
+  ) {
     summary.resultScreenOcr = {
       imagePath: resultScreenOcr.imagePath || null,
       rank: resultScreenOcr.rank ?? null,
       lines: (resultScreenOcr.lines || []).slice(0, 8),
+      playerNames: (resultScreenOcr.playerNames || []).slice(0, 8),
     };
   }
   const summaryPath = join('tmp/summaries', `game_${String(gameNumber).padStart(4, '0')}.json`);

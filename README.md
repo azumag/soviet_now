@@ -68,6 +68,8 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `strategy_versions/` | strategy.py のバージョン履歴 |
 | `game_history/` | 試合ごとのターンログ (JSONL) |
 | `best_score.txt` | ハイスコア記録 |
+| `score_history.txt` | rawスコア履歴 (TSV: timestamp, score) |
+| `eval_score_history.txt` | EVAL_SCORE履歴 (rawスコア+建国ボーナス) |
 | `say_enqueue.sh` | macOS `say` のFIFOキュー管理（排他制御・異常終了/途中切断リトライ付き） |
 | `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用）。`./google_tts.sh "テキスト"`, `--list`, `--demo` |
 | `soren91_control.sh` | soren91 (メリケンAI) の起動・停止・改善キック管理 |
@@ -99,12 +101,16 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 - ニュースコーナーは既読タイトルに加えて話題キー（例: カイロス、iPS など）も保持し、同一トピックの連投を抑制する。未読がない場合やRSS取得失敗時は再読せずスキップする（再読を許可したい場合のみ `NEWS_ALLOW_STALE_CACHE=1`）
 - コメントキュー（`tmp/.comment_queue`）が混雑している間もラジオ生成は継続し、再生のみ `tmp/.radio_deferred_queue` に退避してコメント再生の後ろに並べる（コメント消化後に順次再生）
 - コメント返しは `twitch_chat.sh fetch` で未読を取得し、生成が成功したときだけ `ack-batch` で処理済み行のみを pending から削除する。生成失敗やサニタイズ失敗時は pending を維持し、同一バッチで再生成をリトライする
+- **サブスク/ビッツ検出**: Twitch IRC の USERNOTICE (sub/resub/subgift) と PRIVMSG の bits タグを検出し、`[SUB]` / `[BITS]` タグ付きでコメントキューに入れる。コメント応答AIが名前を呼んでお礼する（金額には言及しない）
+- **歌声シンガー固定**: 歌リクエスト時、中華AIは九州そら(id=3016)、メリケンAIは冥鳴ひまり(id=3014)で歌う
 - ラジオ原稿は生成後に別AIでファクトチェック兼リライトを行う。必要なら `RADIO_FACT_CHECK_ENABLED=0` で無効化できる
+- `rollback` / `strategy` / `celebration` コーナーはファクトチェックをスキップ（自己生成データのみで外部事実の検証不要）
+- ファクトチェックの判定範囲は「事実誤認・嘘・でっちあげ」のみ。政治・戦争・軍事の話題は事実に基づく限り通す。ブロック対象は性的コンテンツのみ
 - ファクトチェック出力の書式が崩れても、本文抽出をやり直して極力再生する。最終的に検証出力が使えない場合でも、無音スキップせず元原稿で続行する
 - `theme` / `soviet` / `news` はファクトチェック前に Web 由来の資料も取得して検証AIへ渡す。既定では `fetch_radio_grounding.py` が Wikipedia と Google News RSS を引く
 - 検証モデルは `RADIO_FACT_CHECK_AGENT` / `RADIO_FACT_CHECK_FALLBACK` / `RADIO_FACT_CHECK_CLAUDE_MODEL` で調整できる
 - Web資料取得は `RADIO_WEB_GROUNDING_ENABLED=0` で無効化できる。キャッシュや量は `RADIO_WEB_GROUNDING_TTL_SEC` / `RADIO_WEB_GROUNDING_MAX_SOURCES` で調整できる
-- `tmp/.manual_audio_triggers/*.cmd` に `news` / `soviet` / `strategy` / `theme` / `recap` のコマンドファイルを置くと、常駐ループが数秒以内に拾って手動起動する
+- `tmp/.manual_audio_triggers/*.cmd` に `news` / `soviet` / `strategy` / `theme` のコマンドファイルを置くと、常駐ループが数秒以内に拾って手動起動する
 - 便利スクリプト [`enqueue_audio_trigger.sh`](/Users/azumag/work/sandbox/soren/enqueue_audio_trigger.sh) で `./enqueue_audio_trigger.sh news` のようにキュー投入できる
 - メリケンAIを手動固定したいときは [`manual_meriken_mode.sh`](/Users/azumag/work/sandbox/soren/manual_meriken_mode.sh) を使う。`./manual_meriken_mode.sh on` で `soren91` を維持し、`off` で通常運用へ戻す
 
@@ -116,7 +122,7 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 
 | サイクル位置 | コーナー | 備考 |
 |---|---|---|
-| Game 2 | 雑談テーマ | 1/3でソ連テーマ。時刻コーナー発火時はスキップ |
+| Game 2 | 雑談テーマ | 1/2でソ連テーマ。時刻コーナー発火時はスキップ |
 | Game 5 | ニュース読み上げ | `fetch_and_play_news()` |
 | Game 8 | 時事ニュース（jiji） | AI Web検索でトレンド紹介。改善タイミング付近はスキップ |
 
@@ -125,8 +131,12 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 | 時刻 | コーナー | 内容 |
 |---|---|---|
 | 01:00 | rakugo | 深夜の落語創作 |
+| 05:00 | danger_zone | 世界危険地域 |
+| 06:00 | health | 健康情報 |
 | 07:00 | breakfast | 世界の朝食 |
 | 08:00 | weather | ソ連天気予報 |
+| 09:00 | wiki | きょうのWikipedia |
+| 10:00 | sightseeing | おすすめ観光地 |
 | 11:30 | lunch | 世界の昼食 |
 | 12:00 | fortune | ソ連占い |
 | 13:00 | devil_dict | 悪魔の辞典 |
@@ -137,9 +147,13 @@ soren_loop にはソ連ラジオDJ機能が組み込まれている。試合終�
 | 17:30 | redefine | 概念の再定義 |
 | 18:00 | soviet_lifehack | ソビエト式生活改善 |
 | 19:00 | world_dinner | 世界の夕食 |
+| 20:00 | whatday | 今日は何の日？ |
+| 20:30 | zaitech | 財テクコーナー |
 | 21:00 | deals | お得情報 |
-| 21:30 | night_snack | 世界の夜食 |
+| 21:30 | fudosan | 不動産コーナー |
 | 22:00 | survival | サバイバル知識 |
+| 22:30 | night_snack | 世界の夜食 |
+| 23:30 | local_japan | 日本地域情報 |
 
 コメントキューがあるとラジオ再生は deferred queue に回し、コメント消化後に再生。
 
@@ -159,7 +173,8 @@ node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごと
 | `soren91/screenshot_analyzer.mjs` | スクリーンショット → 盤面状態 (Sharp) |
 | `soren91/strategy.mjs` | ドロップ位置決定 (AI改変対象) |
 | `soren91/improve.mjs` | ラウンド後AI改善ループ (claude CLI) |
-| `soren91/ranking_comment.mjs` | ランキング画面コメント生成 + 試合中盤面コメント (Claude vision + TTS) |
+| `soren91/comment.mjs` | コメント生成 (ランキング画面 + 試合中盤面)。プロンプトは `soren91/prompts/` に分離 |
+| `soren91/radio_bridge.sh` | 親プロジェクトの定時ラジオコーナーを soren91 から呼び出すブリッジ |
 | `soren91_control.sh` | 親ループ (`soren_loop.sh`) からの起動・停止・改善キック管理 |
 
 親プロジェクトの `soren_loop.sh` から `soren91_control.sh` 経由で連携。`SOREN91_ENABLED=1` (.env) で有効化。詳細は `soren91/CLAUDE.md` を参照。
