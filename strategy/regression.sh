@@ -1978,6 +1978,9 @@ PY
 		append_phyrogenetic_event "rollback" "$strategy_hash" "$rolled_hash" "$rollback_game_num" "" \
 			"$rollback_analysis_summary" "$rollback_event_analysis"
 		refresh_phyrogenetic_tree --pending-edge rollback "$strategy_hash" "$rolled_hash" >/dev/null 2>&1 || true
+		# 粛清ラジオをgit操作の前に保存（git pushのタイムアウトで実行されないのを防止）
+		[ -f "$ROLLBACK_ANALYSIS_FILE" ] && _save_pending_cycle_radio_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash"
+
 		git add strategy.py strategy_helpers/ "$PHYROGENETIC_TREE_FILE" "$PHYROGENETIC_EVENTS_FILE" 2>/dev/null || true
 		local phylo_push_ok=false
 		if git commit -m "eloop Auto-revert: regression detected ($result, target=${rollback_note})" 2>/dev/null; then
@@ -1988,7 +1991,6 @@ PY
 		if [ "$phylo_push_ok" = true ]; then
 			_post_phyrogenetic_tree_link_to_chat "rollback" "$strategy_hash" "$rolled_hash"
 		fi
-		[ -f "$ROLLBACK_ANALYSIS_FILE" ] && _save_pending_cycle_radio_rollback "$ROLLBACK_ANALYSIS_FILE" "$rollback_game_num" "$strategy_hash" "$rolled_hash"
 		return 0
 	fi
 
