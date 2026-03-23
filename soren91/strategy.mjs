@@ -340,7 +340,6 @@ export function decide(boardState) {
       : null;
 
     if (nextType === 1 && t1FloodMode && !garbageFloodMode) {
-      // v59: wallPenaltyMult 1.0→2.0 でクリティカル時の壁T1マージを強く抑制
       const critT1Immediate = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 2.0, rawPieceCount);
       if (shouldPreferLowT1CriticalMerge(
         colHeights,
@@ -436,7 +435,6 @@ export function decide(boardState) {
       }
 
       if (gbgImmediateT1 !== null) {
-        // v59: 壁位置の即時マージより内側のdenseカラムを優先
         if (Math.abs(gbgImmediateT1) > 2.0) {
           const gbgDenseAlt = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0);
           if (gbgDenseAlt !== null && Math.abs(gbgDenseAlt) <= 2.0) {
