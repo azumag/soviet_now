@@ -39,6 +39,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
+  # v326: 危険ピース存在時のペナルティ強化版 - max_y runaway防止
+  # v325 failure: axis 9.2のペナルティがdanger_piece_countを考慮しておらず、危険ピースが存在する際に盤面圧縮が選ばれmax_y runawayでゲームオーバー
+  # ワーストゲーム(score0915)終盤turns 75-80: reactive_pairs=2-3, danger_piece_count=1-2, merge_available=false続きで非併合配置が選ばれmax_y=2.14→2.85に上昇してゲームオーバー
+  # ベストゲーム(score1784)では危険域でも即時併合機会を確実に捉え、戦略的配置を維持して安定
+  # v326の改善点:
+  # 1. axis 9.2修正: 危険ピース(danger_piece_count > 0)がある場合、ペナルティを加重(max -4500.0)してより強力に抑制
+  # 2. 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0 (capped at 2 pieces)
+  # 3. これにより危険ピースが2つ以上ある場合、盤面圧縮ボーナスを完全に無効化し即時併合を優先
+  # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+  #       game_history/20260324_021413_score0915.jsonl turns 75-80, game_history/20260324_023617_score1784.jsonl
+  # Fixes rollback failure mode: 危険ピース存在下でのmax_y runaway（axis 9.2 danger_piece_count加重ペナルティ）
+  #
   # v325: reactive_pairs盤面圧縮ボーナス削除版 - 即時併合機会優先化
   # v324 failure: reactive_pairs >= 3 && merge_grade == "NO"の場合、axis 9.5の+800.0ボーナスがaxis 9.2の-2500.0ペナルティを上書きし、盤面圧縮（非併合配置）が選ばれてmax_y runawayでゲームオーバー
   # ワーストゲーム(score0611)終盤turns 42-48: reactive_pairs=3-4, merge_grade="NO"続きで非併合配置が選ばれmax_y=0.16→1.78→3.51に上昇してゲームオーバー
@@ -183,17 +195,16 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v325: reactive_pairs盤面圧縮ボーナス削除版 - 即時併合機会優先化
+    """v326: 危険ピース存在時のペナルティ強化版 - max_y runaway防止
 
-    v324 failure: reactive_pairs >= 3 && merge_grade == "NO"の場合、axis 9.5の+800.0ボーナスがaxis 9.2の-2500.0ペナルティを上書きし、盤面圧縮（非併合配置）が選ばれてmax_y runawayでゲームオーバー
-    ワーストゲーム(score0611)終盤turns 42-48: reactive_pairs=3-4, merge_grade="NO"続きで非併合配置が選ばれmax_y=0.16→1.78→3.51に上昇してゲームオーバー
-    ベストゲーム(score2481)ではreactive_pairsがある場合でも即時併合機会を確実に捉え、盤面圧縮より即時併合を優先して安定
-    batch_summaryでHEIGHT_CONTROLが過剰選択され、即時併合機会取りこぼしが主要な敗因
+    v325 failure: axis 9.2のペナルティがdanger_piece_countを考慮しておらず、危険ピースが存在する際に盤面圧縮が選ばれmax_y runawayでゲームオーバー
+    ワーストゲーム(score0915)終盤turns 75-80: reactive_pairs=2-3, danger_piece_count=1-2, merge_available=false続きで非併合配置が選ばれmax_y=2.14→2.85に上昇してゲームオーバー
+    ベストゲーム(score1784)では危険域でも即時併合機会を確実に捉え、戦略的配置を維持して安定
 
-    v325の改善点:
-    1. axis 9.5修正: reactive_pair_count >= 1 && merge_grade == "NO"の場合の+800.0ボーナスを削除
-    2. reactive_pairsがある場合はaxis 9.2の-2500.0ペナルティを優先させ、即時併合機会を確実に待つ戦略へ切り替え
-    3. reactive_pairsがない場合のみ+300.0ボーナスを適用し、盤面圧縮を優先
+    v326の改善点:
+    1. axis 9.2修正: 危険ピース(danger_piece_count > 0)がある場合、ペナルティを加重(max -4500.0)してより強力に抑制
+    2. 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0 (capped at 2 pieces)
+    3. これにより危険ピースが2つ以上ある場合、盤面圧縮ボーナスを完全に無効化し即時併合を優先
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -613,16 +624,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # deadline_crossed=false時にSAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEで非併合を選択し、盤面圧迫が進みdeadline_crossed=trueでゲームオーバー
         # ベストゲーム(score2461)では危険域でも即時併合機会を確実に捉え、戦略的配置を維持して安定
         # axis 9.2修正: deadline_crossed条件を追加し、deadline_crossed時もreactive_pairs>=2で即時併合不可の場合に強力なペナルティを適用
-        # max_y>=2.0 || deadline_crossed でreactive_pair_count>=2 && merge_grade=="NO"の場合、非併合配置に-2500.0ペナルティを与え、
-        # SAME_TYPE_STACK_MERGE_PRIORITYボーナスを上書きして、即時併合機会を強制的に待つ戦略へ切り替える
-        # 未活用情報：deadline_crossed, 危険域判定(max_y>=2.0)とreactive_pairs>=2の複合条件による非併合ペナルティ
-        # refs: game_history/20260324_010847_score0651.jsonl turns 42-47, game_history/20260324_010300_score2461.jsonl
-        # Fixes rollback failure mode: deadline_crossed時の即時併合取りこぼし（axis 9.2 deadline_crossed対応）
+        # v326: 危険ピース存在時のペナルティ強化版 - ワーストゲーム(score0915)の失敗モード潰し
+        # 危険ピース(danger_piece_count > 0)がある場合、ペナルティを加重してmax_y runawayを防止
+        # 基本ペナルティ: -2500.0, 危険ピース毎に追加-1000.0 (例: danger_piece_count=2 → -4500.0)
+        # 未活用情報：deadline_crossed, 危険域判定(max_y>=2.0), reactive_pairs>=2, danger_piece_count加重
+        # refs: game_history/20260324_010847_score0651.jsonl turns 42-47, game_history/20260324_010300_score2461.jsonl,
+        #       game_history/20260324_021413_score0915.jsonl (turns 75-80: danger_pieces存在でmax_y runaway)
+        # Fixes rollback failure mode: deadline_crossed時の即時併合取りこぼし、危険ピース存在下でのmax_y runaway
 
         if (max_y >= 2.0 or deadline_crossed) and reactive_pair_count >= 2 and merge_grade == "NO":
             # 危険域またはdeadline_crossed時、reactive_pairsが多数あるのに即時併合不可の場合、非併合配置を強力にペナルティ
-            # -2500.0はaxis 9.5の+800.0ボーナスを確実に上書きし、即時併合機会を優先させる
-            score -= 2500.0
+            # v326: 危険ピースがある場合、ペナルティを加重してより強力に抑制
+            # 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0（最大-4500.0）
+            # これにより危険ピースが2つ以上ある場合、盤面圧縮ボーナスを完全に無効化し即時併合を優先
+            danger_penalty = 2500.0 + min(danger_piece_count, 2) * 1000.0
+            score -= danger_penalty
             reasons.append("DANGER_ZONE_REACTIVE_PENALTY_NO_MERGE")
 
         # ----- evaluation axis 9.5: current type stack merge priority (v325: reactive_pairsボーナス削除版) -----
