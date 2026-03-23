@@ -282,6 +282,10 @@ _read_accumulated_data() {
 
 _clear_accumulated_data() {
 	rm -f "$ACCUMULATED_GAMES_FILE"
+	# 予想もサイクルに連動: 蓄積リセット時に現予想を確定し、次サイクルで新規作成させる
+	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+		./twitch_predictions.sh cleanup "999999" >>tmp/prediction.log 2>&1 || true
+	fi
 }
 
 _reset_current_strategy_run() {
