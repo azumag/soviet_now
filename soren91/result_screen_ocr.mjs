@@ -129,6 +129,7 @@ function normalizePlayerName(line) {
     .replace(/\s*・\s*/g, '・')
     .replace(/\s*[:：]\s*/g, ':')
     .replace(/\s+/g, ' ')
+    .replace(/^ー+|ー+$/g, '')
     .replace(/^[\s.:'"-]+|[\s.:'"-]+$/g, '')
     .trim();
 }
@@ -148,10 +149,25 @@ function usefulPlayerName(line, { japaneseAvailable = true } = {}) {
   if (!text || text.length < 3) return false;
   if (/(RANK|WAITING|NEXT|GAME|YOUR|HOLD|K\.?O\.?)/i.test(text)) return false;
   if (/^\d+$/.test(text)) return false;
+  if (/ー{4,}|一{4,}/.test(text)) return false;
+  if ((text.match(/[="'`*_\\/|{}\[\]<>]/g) || []).length >= 2) return false;
   const signal = (text.match(/[A-Za-z0-9ぁ-んァ-ヶー一-龠々]/g) || []).length;
   if (signal < 3) return false;
   if (signal / text.length < 0.5) return false;
-  if (/[ぁ-んァ-ヶー一-龠々]/.test(text)) return true;
+  if (/[ぁ-んァ-ヶー一-龠々]/.test(text)) {
+    if (/\s/.test(text)) return false;
+    const jpLetters = (text.match(/[ぁ-んァ-ヶー一-龠々]/g) || []).length;
+    const asciiLetters = (text.match(/[A-Za-z]/g) || []).length;
+    if (/・/.test(text)) {
+      if (jpLetters < 4) return false;
+      if (/[a-z]{2,}/.test(text)) return false;
+      return true;
+    }
+    if (asciiLetters > 0) {
+      return jpLetters >= 3 && asciiLetters >= 2;
+    }
+    return jpLetters >= 5;
+  }
   if (!japaneseAvailable) {
     if (!/^[\x20-\x7E]+$/.test(text)) return false;
     return plausibleLatinPlayerName(text);
@@ -164,6 +180,20 @@ function canonicalizePlayerName(text) {
     .replace(/\s+/g, '')
     .replace(/[:：]/g, ':')
     .replace(/[・･]/g, '・');
+}
+
+function dedupeTextList(values, limit = 12) {
+  const seen = new Set();
+  const out = [];
+  for (const value of values) {
+    const normalized = normalizeLine(value);
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function parseTsvRows(tsv) {
@@ -267,6 +297,52 @@ function extractPlayerNamesFromLineObjects(lineObjects) {
       if (b.count !== a.count) return b.count - a.count;
       if (b.confSum !== a.confSum) return b.confSum - a.confSum;
       return a.top - b.top;
+    })
+    .map(item => item.text)
+    .slice(0, 12);
+}
+
+function extractPlayerNamesFromTextBlocks(blocks) {
+  const japaneseAvailable = hasTesseractLanguage('jpn');
+  const buckets = new Map();
+  let order = 0;
+  for (const block of blocks) {
+    const lines = String(block || '').split(/\r?\n/);
+    for (const rawLine of lines) {
+      const cleaned = normalizePlayerName(rawLine)
+        .replace(/^[^A-Za-z0-9ぁ-んァ-ヶー一-龠々]+/, '')
+        .replace(/[。.,'`"]+$/g, '')
+        .trim();
+      const extracted = [];
+      const dottedMatches = cleaned.match(/[A-Za-z0-9ぁ-んァ-ヶー一-龠々:]+(?:・[A-Za-z0-9ぁ-んァ-ヶー一-龠々:]+)+/g) || [];
+      if (dottedMatches.length > 0) {
+        extracted.push(...dottedMatches);
+      } else {
+        extracted.push(cleaned);
+      }
+      for (const candidate of extracted) {
+        const name = normalizePlayerName(candidate);
+        if (!usefulPlayerName(name, { japaneseAvailable })) continue;
+        const key = canonicalizePlayerName(name);
+        if (!key) continue;
+        const current = buckets.get(key) || {
+          text: name,
+          count: 0,
+          firstSeen: order++,
+        };
+        current.count += 1;
+        if (name.length > current.text.length) {
+          current.text = name;
+        }
+        buckets.set(key, current);
+      }
+    }
+  }
+  return [...buckets.values()]
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      if (b.text.length !== a.text.length) return b.text.length - a.text.length;
+      return a.firstSeen - b.firstSeen;
     })
     .map(item => item.text)
     .slice(0, 12);
@@ -377,6 +453,32 @@ function runTesseractTsv(imagePath, options = {}) {
   }
 }
 
+function runTesseractText(imagePath, options = {}) {
+  const languages = resolveTesseractLanguages(options.languages || ['eng']);
+  if (!languages) return '';
+  try {
+    return execFileSync(
+      'tesseract',
+      [
+        imagePath,
+        'stdout',
+        '-l',
+        languages,
+        '--psm',
+        String(options.psm || 6),
+        ...(options.extraArgs || []),
+      ],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: getTesseractEnv(),
+      }
+    );
+  } catch {
+    return '';
+  }
+}
+
 async function writeVariant(sourcePath, tempDir, name, transform) {
   const outPath = join(tempDir, `${name}.png`);
   let pipeline = sharp(sourcePath);
@@ -407,6 +509,41 @@ export async function analyzeResultScreen(imagePath) {
   const rankingNameRect = relativeRect(width, height, RANKING_NAME_REGION);
 
   try {
+    const rankingListGrayPath = await writeVariant(imagePath, tempDir, 'ranking_list_gray', img =>
+      img
+        .extract(rankingListRect)
+        .resize({ width: rankingListRect.width * 2 })
+        .grayscale()
+        .normalize()
+        .sharpen()
+    );
+    const rankingListThresholdPath = await writeVariant(imagePath, tempDir, 'ranking_list_threshold', img =>
+      img
+        .extract(rankingListRect)
+        .resize({ width: rankingListRect.width * 2 })
+        .grayscale()
+        .normalize()
+        .sharpen()
+        .threshold(150)
+    );
+    const rankingNamesGrayPath = await writeVariant(imagePath, tempDir, 'ranking_names_gray', img =>
+      img
+        .extract(rankingNameRect)
+        .resize({ width: rankingNameRect.width * 3 })
+        .grayscale()
+        .normalize()
+        .sharpen()
+    );
+    const rankingNamesThresholdPath = await writeVariant(imagePath, tempDir, 'ranking_names_threshold', img =>
+      img
+        .extract(rankingNameRect)
+        .resize({ width: rankingNameRect.width * 3 })
+        .grayscale()
+        .normalize()
+        .sharpen()
+        .threshold(150)
+    );
+
     const variants = [
       {
         name: 'full_rank_raw',
@@ -458,14 +595,7 @@ export async function analyzeResultScreen(imagePath) {
       },
       {
         name: 'ranking_list_gray',
-        path: await writeVariant(imagePath, tempDir, 'ranking_list_gray', img =>
-          img
-            .extract(rankingListRect)
-            .resize({ width: rankingListRect.width * 2 })
-            .grayscale()
-            .normalize()
-            .sharpen()
-        ),
+        path: rankingListGrayPath,
         languages: ['jpn', 'eng'],
         psm: 4,
         lineMinConf: 18,
@@ -476,15 +606,7 @@ export async function analyzeResultScreen(imagePath) {
       },
       {
         name: 'ranking_list_threshold',
-        path: await writeVariant(imagePath, tempDir, 'ranking_list_threshold', img =>
-          img
-            .extract(rankingListRect)
-            .resize({ width: rankingListRect.width * 2 })
-            .grayscale()
-            .normalize()
-            .sharpen()
-            .threshold(150)
-        ),
+        path: rankingListThresholdPath,
         languages: ['jpn', 'eng'],
         psm: 4,
         lineMinConf: 18,
@@ -495,14 +617,7 @@ export async function analyzeResultScreen(imagePath) {
       },
       {
         name: 'ranking_names_gray',
-        path: await writeVariant(imagePath, tempDir, 'ranking_names_gray', img =>
-          img
-            .extract(rankingNameRect)
-            .resize({ width: rankingNameRect.width * 3 })
-            .grayscale()
-            .normalize()
-            .sharpen()
-        ),
+        path: rankingNamesGrayPath,
         languages: ['jpn', 'eng'],
         psm: 6,
         lineMinConf: 12,
@@ -513,15 +628,7 @@ export async function analyzeResultScreen(imagePath) {
       },
       {
         name: 'ranking_names_threshold',
-        path: await writeVariant(imagePath, tempDir, 'ranking_names_threshold', img =>
-          img
-            .extract(rankingNameRect)
-            .resize({ width: rankingNameRect.width * 3 })
-            .grayscale()
-            .normalize()
-            .sharpen()
-            .threshold(150)
-        ),
+        path: rankingNamesThresholdPath,
         languages: ['jpn', 'eng'],
         psm: 6,
         lineMinConf: 12,
@@ -536,6 +643,7 @@ export async function analyzeResultScreen(imagePath) {
     const rankCandidates = [];
     const rankLineObjects = [];
     const playerNameLineObjects = [];
+    const playerNameTextBlocks = [];
 
     for (const variant of variants) {
       const tsv = runTesseractTsv(variant.path, {
@@ -561,13 +669,35 @@ export async function analyzeResultScreen(imagePath) {
       }
     }
 
-    const playerNames = extractPlayerNamesFromLineObjects(playerNameLineObjects);
-    const lines = [...new Set([...playerNames, ...collectedLines])].slice(0, 12);
+    for (const variant of [
+      { path: rankingListGrayPath, psm: 4 },
+      { path: rankingListThresholdPath, psm: 4 },
+      { path: rankingNamesGrayPath, psm: 6 },
+      { path: rankingNamesThresholdPath, psm: 6 },
+      { path: rankingListGrayPath, psm: 11 },
+      { path: rankingNamesThresholdPath, psm: 11 },
+    ]) {
+      const text = runTesseractText(variant.path, {
+        languages: ['jpn', 'eng'],
+        psm: variant.psm,
+      });
+      if (text) playerNameTextBlocks.push(text);
+    }
+
+    const playerNamesRaw = dedupeTextList([
+      ...extractPlayerNamesFromTextBlocks(playerNameTextBlocks),
+      ...extractPlayerNamesFromLineObjects(playerNameLineObjects),
+    ], 12);
     const starRank = await detectRankingScreen(imagePath);
     const rankingLineRank = extractRankFromRankingLines(rankLineObjects, height);
     const rank = (starRank != null && starRank > 0)
       ? starRank
       : (rankingLineRank ?? chooseBestRank(rankCandidates));
+    const rankingLikely = starRank != null || rankingLineRank != null || rank != null;
+    const playerNames = rankingLikely ? playerNamesRaw : [];
+    const lines = rankingLikely
+      ? [...new Set([...playerNames, ...collectedLines])].slice(0, 12)
+      : [];
 
     return {
       imagePath: basename(imagePath),
