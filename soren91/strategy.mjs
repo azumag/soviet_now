@@ -1,20 +1,22 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v58)
+ * strategy.mjs - ドロップ位置決定戦略 (v59)
  *
- * v58: T1プレフラッドdead code修正 + 壁ペナルティ強化
- * - 【T1_PREFLOOD_DENSE_THRESHOLDを分離 (9)】
- *   v57でT1_PREFLOOD_THRESHOLD=13に引き上げた際、preflood dense/anchor (t1Count 9-12)
- *   がdead codeになっていたバグを修正。
- *   HOLD介入しきい=13(T1_PREFLOOD_THRESHOLD)は維持。
- *   dense/anchorしきい=9(T1_PREFLOOD_DENSE_THRESHOLD)として分離し機能を復活。
- *   → t1Count 9-12 でT1集約が再び機能し、フラッド前にT1を集めて連鎖準備できる
- * - 【findT1ImmediateMerge: 壁ペナルティ強化】
- *   pieceCount > 20 で追加壁ペナルティ（+10〜+20）
- *   → 中程度のピース数での壁列T1スタックを抑制 (turn28のx=2.50問題対応)
- * - 【findT1DenseColumn: T2カスケードボーナス追加】
- *   T1→T2マージ後に非常に近いT2(0.8以内)が2つ以上あれば +25
- *   → T1マージがT2+T2連鎖につながる位置を優先
- * - v57のその他の改善は維持
+ * v59: T1壁スタック防止の強化
+ * - 【findMergeInLowCol: 壁ペナルティ追加】
+ *   CRITICAL_T1_LOW_MERGEが壁位置(x=2.6等)を選択する問題を修正。
+ *   弱い-4を廃止し、|x|>2.0で-15、|x|>2.4で-35の壁ペナルティを追加。
+ *   → T1フラッド + クリティカルで右壁にT1が積み上がる連鎖を遮断
+ * - 【findT1ImmediateMerge: 壁ペナルティ強化+T1飽和ペナルティ追加】
+ *   基本壁ペナルティ (15→22, 25→38) 強化。
+ *   extraWallPenalty: (0/10/20 → 5/18/30)。
+ *   同列に4個以上T1がある場合に追加ペナルティ (colT1Count-3)*12 でタワー抑制。
+ * - 【findT1DenseColumn: 壁ペナルティ 8→20】
+ * - 【findT1ChainAnchor: 壁ペナルティ 8→15】
+ * - 【findT1StackColumn: 壁ペナルティ 8→20、T1数依存ペナルティ追加】
+ * - 【CRITICAL T1 path: wallPenaltyMult 1.0→2.0】
+ *   クリティカルモードでのT1即時マージの壁ペナルティを2倍に強化。
+ * - 【GBG urgent T1 path: 壁位置即時マージ時にdenseカラム内側代替を検討】
+ * - v58のその他の改善は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -338,7 +340,8 @@ export function decide(boardState) {
       : null;
 
     if (nextType === 1 && t1FloodMode && !garbageFloodMode) {
-      const critT1Immediate = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
+      // v59: wallPenaltyMult 1.0→2.0 でクリティカル時の壁T1マージを強く抑制
+      const critT1Immediate = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 2.0, rawPieceCount);
       if (shouldPreferLowT1CriticalMerge(
         colHeights,
         critT1Immediate,
@@ -433,6 +436,13 @@ export function decide(boardState) {
       }
 
       if (gbgImmediateT1 !== null) {
+        // v59: 壁位置の即時マージより内側のdenseカラムを優先
+        if (Math.abs(gbgImmediateT1) > 2.0) {
+          const gbgDenseAlt = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0);
+          if (gbgDenseAlt !== null && Math.abs(gbgDenseAlt) <= 2.0) {
+            return { x: gbgDenseAlt, reason: 'GBG_T1_DENSE_INTERIOR' };
+          }
+        }
         return { x: gbgImmediateT1, reason: 'GBG_T1_IMMEDIATE' };
       }
     }
@@ -494,7 +504,6 @@ export function decide(boardState) {
       }
     }
     if (nextType === 1) {
-      // T1フラッドモード時は高品質なT1マージ関数を使用 (findAnyMergeより正確)
       if (t1FloodMode && gaugeLevel >= 0.5) {
         const gaugeT1Immediate = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
         if (gaugeT1Immediate !== null) return { x: gaugeT1Immediate, reason: 'GAUGE_T1_IMMEDIATE' };
@@ -519,7 +528,6 @@ export function decide(boardState) {
   }
 
   // --- T1フラッド予防HOLD ---
-  // T1_PREFLOOD_THRESHOLD=13: t1FloodMode(>12)に達した時のみ有効 (早期介入を防ぐ)
   if (canHold && !hold && nextType === 1 && t1Count >= T1_PREFLOOD_THRESHOLD && !isWarn) {
     const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
     const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
@@ -530,7 +538,6 @@ export function decide(boardState) {
         return { x: 0, reason: `T1_FLOOD_HOLD_T${bestNextT}`, hold: true };
       }
     }
-    // T2ケースを削除: T2の場合はそのままマージに使う
   }
 
   // --- HOLD判定 ---
@@ -557,7 +564,6 @@ export function decide(boardState) {
   }
 
   if (nextType === 1) {
-    // T1_PREFLOOD_DENSE_THRESHOLD=9: t1Count 9-12 でdense/anchorを有効化 (v57でdead codeだったバグ修正)
     if (t1Count >= T1_PREFLOOD_DENSE_THRESHOLD && !t1FloodMode && !extremeT1Flood) {
       const preFloodDense = findT1DenseColumn(activePieces, colHeights, dangerBias);
       if (preFloodDense !== null) return { x: preFloodDense, reason: 'T1_PREFLOOD_DENSE' };
@@ -694,7 +700,6 @@ function shouldPreferLowT1GarbageMerge(
 
 function pickSaferT1Alternative(colHeights, immediateX, candidates, rawPieceCount, gaugeLevel) {
   if (immediateX === null) return null;
-  // v57: v55水準に戻す (piece閾値90, 高さ閾値WARN_Y+0.35)
   if (rawPieceCount < 90 && gaugeLevel < 0.65) return null;
 
   const immediateH = colHeights[nearestColIdx(immediateX)];
@@ -762,14 +767,14 @@ function findT1DenseColumn(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0
     let s = nearT1 * 20;
     s += nearT2 * 20;
     s += nearT3 * 10;
-    // T2カスケードボーナス: T1→T2マージ後に非常に近いT2(0.8以内)と連鎖できるか
     const nearT2VeryClose = countNear(pieces, cx, 2, 0.8);
-    if (nearT2VeryClose >= 2) s += 25;  // T2+T2連鎖ほぼ確定
+    if (nearT2VeryClose >= 2) s += 25;
     else if (nearT2VeryClose >= 1) s += 8;
     s -= colHeights[i] * 10.0;
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 15;
     s -= Math.abs(cx) * 2.0;
-    if (Math.abs(cx) > 2.2) s -= Math.round(8 * wallPenaltyMult);
+    // v59: 壁ペナルティ 8→20
+    if (Math.abs(cx) > 2.2) s -= Math.round(20 * wallPenaltyMult);
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
     if (dangerBias >= 1 && cx > 0.5) s -= 8;
@@ -804,7 +809,11 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
     s += colT1.length * 5;
     s -= colHeights[i] * 8.0;
     s -= Math.abs(cx) * 2.0;
-    if (Math.abs(cx) > 2.2) s -= 8;
+    // v59: 壁ペナルティ 8→20 + T1数依存ペナルティ (壁T1タワーの正帰還を遮断)
+    if (Math.abs(cx) > 2.2) {
+      s -= 20;
+      if (colT1.length >= 4) s -= (colT1.length - 3) * 12;
+    }
 
     const colPiecesNarrow = pieces.filter(p => Math.abs(p.x - cx) < 0.45 && p.y < DEADLINE_Y);
     if (colPiecesNarrow.length > 0) {
@@ -861,10 +870,14 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 
     s += Math.round(nearT3 * 22 * chainMult);
     s += Math.round(nearT4 * 15 * chainMult);
 
-    // 壁ペナルティ強化: pieceCount > 20 で追加ペナルティ (壁列へのT1スタック抑制)
-    const extraWallPenalty = pieceCount > 40 ? 20 : pieceCount > 20 ? 10 : 0;
-    if (Math.abs(cx) > 2.0) s -= Math.round(15 * wallPenaltyMult) + extraWallPenalty;
-    if (Math.abs(cx) > 2.4) s -= Math.round(25 * wallPenaltyMult) + extraWallPenalty;
+    // v59: T1列飽和ペナルティ (同列にT1が4個以上でタワー抑制)
+    const colT1Count = pieces.filter(p => Math.abs(p.x - cx) < 0.7 && p.type === 1 && p.y < DEADLINE_Y).length;
+    if (colT1Count >= 4) s -= (colT1Count - 3) * 12;
+
+    // v59: 壁ペナルティ強化 (15→22, 25→38) + extraWallPenalty強化 (0/10/20→5/18/30)
+    const extraWallPenalty = pieceCount > 40 ? 30 : pieceCount > 20 ? 18 : 5;
+    if (Math.abs(cx) > 2.0) s -= Math.round(22 * wallPenaltyMult) + extraWallPenalty;
+    if (Math.abs(cx) > 2.4) s -= Math.round(38 * wallPenaltyMult) + extraWallPenalty;
 
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
@@ -905,7 +918,8 @@ function findT1ChainAnchor(pieces, colHeights, dangerBias, t1Flood = false) {
     if (t1Flood) s += nearT1 * 10;
     s -= colHeights[ci] * 4.0;
     s -= Math.abs(t1.x) * 2.0;
-    if (Math.abs(t1.x) > 2.2) s -= 8;
+    // v59: 壁ペナルティ 8→15
+    if (Math.abs(t1.x) > 2.2) s -= 15;
     if (dangerBias < 0 && t1.x < -0.5) s -= 8;
     if (dangerBias > 0 && t1.x > 0.5) s -= 8;
     if (dangerBias >= 2 && t1.x > 0) s -= 15;
@@ -977,7 +991,9 @@ function findMergeInLowCol(pieces, nextType, colHeights, heightLimit, dangerBias
     s += countNear(pieces, t.x, nextType + 1, 1.8) * 6;
     s += countNear(pieces, t.x, nextType + 2, 2.2) * 3;
     s -= Math.abs(t.x) * 2.0;
-    if (Math.abs(t.x) > 2.2) s -= 4;
+    // v59: 壁ペナルティ追加 (旧: |x|>2.2 で-4 のみ → |x|>2.0 で-15、|x|>2.4 で-35)
+    if (Math.abs(t.x) > 2.4) s -= 35;
+    else if (Math.abs(t.x) > 2.0) s -= 15;
     if (dangerBias <= -1 && t.x < -0.5) s -= 6;
     if (dangerBias >= 1 && t.x > 0.5) s -= 6;
     if (s > bestScore) { bestScore = s; best = t; }
