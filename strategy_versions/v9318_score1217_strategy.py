@@ -7,23 +7,23 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-     Decision Logic (11 evaluation axes):
-        1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-       2. Height penalty - Penalty for high landing position (varies by phase)
-        3. Drift penalty - Penalty for post-landing drift due to polygon shape
-        4. Left-right balance correction - Bonus for correcting piece count bias
-         5. nextNext centering - Center for next merge opportunity if nextNext same type
-          5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-           6. Chain merge bonus - Evaluate possibility of further merges after merge
-           7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
-           8. Early game merge priority - Strong bonus for merge opportunities in early game
-            8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
-            8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
-            8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
-            8.8. Reactive pairs >= 3 no merge penalty - v329: 高配置強力抑制版
-            9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
-            9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-            9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
+      Decision Logic (11 evaluation axes):
+         1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+        2. Height penalty - Penalty for high landing position (varies by phase)
+         3. Drift penalty - Penalty for post-landing drift due to polygon shape
+         4. Left-right balance correction - Bonus for correcting piece count bias
+          5. nextNext centering - Center for next merge opportunity if nextNext same type
+           5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
+            6. Chain merge bonus - Evaluate possibility of further merges after merge
+            7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
+            8. Early game merge priority - Strong bonus for merge opportunities in early game
+             8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
+             8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
+             8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
+             8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
+             9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
+             9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
+             9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
 
 
 Phases (determined by board max Y):
@@ -40,18 +40,31 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-    # --- Change History ---
-    # v331: deadline_crossed時の即時併合優先強化版 - 危険域でのmax_y runaway防止
-    # last_rollback_postmortemのfailure mode: "deadline_crossed時にreactive_pairs>=1でも即時併合不可で延命配置のみ続き、max_y runaway"
-    # ワーストゲーム(score0825)終盤turns 55-62: deadline_crossed=false→trueでreactive_pairs=2-3, merge_available=false続きでHIGH_LAYERが選ばれmax_y=2.94に上昇してゲームオーバー
-    # ワーストゲーム(score0866)終盤turns 63-70: deadline_crossed=true, reactive_pairs=4-9, merge_available=false続きでREACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=3.25に上昇してゲームオーバー
-    # ベストゲーム(score3080)終盤turns 120-132: max_y=2.73→3.00の危険域でも即時併合機会を確実に捉えて3080点を出している
-    # axis 8.5修正: deadline_crossed条件を追加し、deadline_crossed時には即時併合ボーナスを強化（DIRECT: 500.0→1200.0, NEAR: 300.0→600.0）
-    # これによりdeadline_crossed時の危険域で即時併合がより強力に推奨され、延命配置によるmax_y runawayを防止
-    # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
-    #       game_history/20260324_060500_score0825.jsonl turns 55-62, game_history/20260324_063459_score0866.jsonl turns 63-70,
-    #       game_history/20260324_062439_score3080.jsonl turns 120-132
-    # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 8.5 deadline_crossed条件追加）
+     # --- Change History ---
+     # v332: reactive_pairs>=3での即時併合最優先化版 - axis 8.8ペナルティ有効化・max_y runaway防止
+     # v331 failure: height_mult緩和(Line 408, 424)がreactive_pairs>=3でも適用され、axis 8.8ペナルティが打ち消されmax_y runawayでゲームオーバー
+     # ワーストゲーム(score0754)終盤turns 58-65: reactive_pairs=3-5, merge_available=falseでheight_mult *= 0.24が適用され、axis 8.8ペナルティ(-9000.0)が打ち消されmax_y=2.10→3.15に上昇してゲームオーバー
+     # ワーストゲーム(score0831)終盤turns 51-63: reactive_pairs=3-6, merge_available=false続きで同様の現象
+     # ベストゲーム(score2920)終盤turns 131, 133, 138: 即時併合機会を確実に捉えて2920点を出している
+     # Line 408, 424修正: reactive_pairs>=3の場合はheight_mult緩和をスキップし、axis 8.8ペナルティを有効にする
+     # これによりreactive_pairs>=3の超危険域では即時併合機会を逃した場合のペナルティが有効に機能し、即時併合を強制的に待つ戦略へ切り替え
+     # last_rollback_postmortemのconstraint: "reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず即時併合を最優先するペナルティを適用する（deadline_crossed条件を含める）"を遵守
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
+     #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63,
+     #       game_history/20260324_070830_score2920.jsonl turns 131, 133, 138
+     # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（height_mult緩和スキップによるaxis 8.8ペナルティ有効化）
+     #
+     # v331: deadline_crossed時の即時併合優先強化版 - 危険域でのmax_y runaway防止
+     # last_rollback_postmortemのfailure mode: "deadline_crossed時にreactive_pairs>=1でも即時併合不可で延命配置のみ続き、max_y runaway"
+     # ワーストゲーム(score0825)終盤turns 55-62: deadline_crossed=false→trueでreactive_pairs=2-3, merge_available=false続きでHIGH_LAYERが選ばれmax_y=2.94に上昇してゲームオーバー
+     # ワーストゲーム(score0866)終盤turns 63-70: deadline_crossed=true, reactive_pairs=4-9, merge_available=false続きでREACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=3.25に上昇してゲームオーバー
+     # ベストゲーム(score3080)終盤turns 120-132: max_y=2.73→3.00の危険域でも即時併合機会を確実に捉えて3080点を出している
+     # axis 8.5修正: deadline_crossed条件を追加し、deadline_crossed時には即時併合ボーナスを強化（DIRECT: 500.0→1200.0, NEAR: 300.0→600.0）
+     # これによりdeadline_crossed時の危険域で即時併合がより強力に推奨され、延命配置によるmax_y runawayを防止
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
+     #       game_history/20260324_060500_score0825.jsonl turns 55-62, game_history/20260324_063459_score0866.jsonl turns 63-70,
+     #       game_history/20260324_062439_score3080.jsonl turns 120-132
+     # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 8.5 deadline_crossed条件追加）
     #
     # v330: axis 9.5盤面圧縮ボーナス条件厳格化版 - 即時併合優先強化・ロシアフェーズ改善
     # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
@@ -402,9 +415,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactive_pairs>=1かつmerge_grade=="NO"の場合、height_multを0.8に緩和し、
         # 戦略的配置の余地を確保しつつdeadline緊急性を維持。reactive_pairsを活用して将来の併合を狙う戦略的思考へ切り替える。
         # v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133
-        if reactive_pair_count >= 1 and merge_grade == "NO":
-            # reactive_pairsがある場合は、将来の併合を狙える戦略的配置を可能にするためheight_multを緩和
+        # v332: reactive_pairs>=3の場合はheight_mult緩和をスキップし、即時併合を最優先する戦略へ切り替え
+        # ワーストゲーム(score0754)終盤turns 58-65: reactive_pairs=3-5, merge_available=falseでheight_mult緩和が適用され、axis 8.8ペナルティが打ち消されmax_y runawayでゲームオーバー
+        # ワーストゲーム(score0831)終盤turns 51-63: reactive_pairs=3-6, merge_available=false続きで同様の現象
+        # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える必要がある
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+        #       game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133,
+        #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
+        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
+            # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
+            # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 0.8
 
         # v288: deadline_crossed時戦略的配置強化版 - 即時併合機会取りこぼし削減
@@ -416,11 +436,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # deadline_crossed && reactive_pair_count >= 1 && merge_grade == "NO" の場合、height_multを0.4に緩和して、
         # 戦略的配置の余地を更に確保し、即時併合機会を逃さないようにする。
         # 未活用情報（deadline_crossed）を活用した構造的変更であり、数値微調整ではない。
+        # v332: reactive_pairs>=3の場合はheight_mult緩和をスキップし、即時併合を最優先する戦略へ切り替え
+        # ワーストゲーム(score0754)終盤turns 58-65: reactive_pairs=3-5, merge_available=falseでheight_mult緩和が適用され、axis 8.8ペナルティが打ち消されmax_y runawayでゲームオーバー
+        # ワーストゲーム(score0831)終盤turns 51-63: reactive_pairs=3-6, merge_available=false続きで同様の現象
+        # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える必要がある
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-        #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127
-        if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
+        #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127,
+        #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
+        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
-            # height_multを0.3に緩和して、盤面圧縮を強化し、即時併合機会を確保する
+            # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
+            # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 0.3
 
         # Calculate height penalty after all height_mult modifications
