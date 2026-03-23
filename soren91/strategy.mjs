@@ -1,16 +1,20 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v56)
+ * strategy.mjs - ドロップ位置決定戦略 (v57)
  *
- * v56: v55ベース + T1フラッド根本対策の強化
- * - 【t1FloodMode非ULTRAでT1即時マージを追加】
- *   t1Count 12-30 (t1FloodMode) かつ ultraMassMode外の通常フローで
- *   findT1ImmediateMergeが呼ばれていなかったバグを修正
- *   → T1→T2変換を早期化してT1フラッド抑制
- * - 【GBG早期でT1をHOLD→T2+マージ優先】
- *   GBG緊急 + 序盤(pieces<45) + T1 + HOLD空 + next2がT2+マージ可能 → HOLD
- * - 【pickSaferT1Alternativeの感度向上】
- *   piece閾値90→80、高さ閾値WARN_Y+0.35→WARN_Y+0.2
- * - v55の全改善を維持
+ * v57: v56 + v27アンカーへの回帰修正 (rank退行の根本原因対応)
+ * - 【T1_PREFLOOD_THRESHOLDを 8→13 に引き上げ】
+ *   t1Count <= 12 でのHOLD介入を停止 → v27「早すぎるT1介入停止」の再実施
+ *   T1フラッドモード（>12）に達するまで先読みHOLDを行わない
+ * - 【GBG緊急時のT1 HOLDを削除】(v56新機能を撤回)
+ *   GBG時は即座にT1をマージすべき。HOLDで温存しても効果なし
+ * - 【T1フラッドHOLDのT2ケース削除】T3+マージ時のみHOLD
+ *   → T2の場合はそのままマージに使う
+ * - 【pickSaferT1AlternativeのしきいをV55水準に戻す】
+ *   piece閾値 80→90、高さ閾値 WARN_Y+0.2→WARN_Y+0.35
+ *   → T1即時マージからの不要な迂回を抑制
+ * - 【ゲージ警告時T1フラッドモードで高品質マージ関数を使用】
+ *   gaugeLevel>=0.5 かつ t1FloodMode 時、findAnyMerge→findT1ImmediateMerge+findT1DenseColumn
+ * - v56の他の改善は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -27,7 +31,7 @@ const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.55;
 const GARBAGE_MODERATE_RATIO = 0.22;
 const GARBAGE_MODERATE_HEIGHT = 0.3;
 const EXTREME_T1_WALL_PIECE_THRESHOLD = 75;
-const T1_PREFLOOD_THRESHOLD = 8;
+const T1_PREFLOOD_THRESHOLD = 13;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -408,16 +412,8 @@ export function decide(boardState) {
       return { x: 0, reason: `FLOOD_GBG_HOLD_T1`, hold: true };
     }
 
-    // [v56新規] GBG緊急+序盤+T1+HOLD空: next2がT2+でマージ可能ならT1をHOLD
-    if (nextType === 1 && canHold && !hold && rawPieceCount < 45 && !isWarn) {
-      const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
-      if (next2T >= 2) {
-        const next2Merge = findAnyMerge(activePieces, next2T, colHeights, dangerBias);
-        if (next2Merge !== null) {
-          return { x: 0, reason: `GBG_HOLD_T1_FOR_T${next2T}`, hold: true };
-        }
-      }
-    }
+    // v56のGBG T1 HOLD (GBG緊急+T1+HOLD空+next2マージ可能) を削除
+    // → GBG時はT1を即座にマージすべきでHOLDは逆効果
 
     if (nextType === 1) {
       const gbgImmediateT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
@@ -500,6 +496,13 @@ export function decide(boardState) {
       }
     }
     if (nextType === 1) {
+      // T1フラッドモード時は高品質なT1マージ関数を使用 (findAnyMergeより正確)
+      if (t1FloodMode && gaugeLevel >= 0.5) {
+        const gaugeT1Immediate = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
+        if (gaugeT1Immediate !== null) return { x: gaugeT1Immediate, reason: 'GAUGE_T1_IMMEDIATE' };
+        const gaugeT1Dense = findT1DenseColumn(activePieces, colHeights, dangerBias);
+        if (gaugeT1Dense !== null) return { x: gaugeT1Dense, reason: 'GAUGE_T1_DENSE' };
+      }
       const t1Merge = findAnyMerge(activePieces, 1, colHeights, dangerBias);
       if (t1Merge !== null) return { x: t1Merge, reason: 'GAUGE_T1_MERGE' };
       if (gaugeLevel >= 0.45) {
@@ -518,6 +521,7 @@ export function decide(boardState) {
   }
 
   // --- T1フラッド予防HOLD ---
+  // T1_PREFLOOD_THRESHOLD=13: t1FloodMode(>12)に達した時のみ有効 (早期介入を防ぐ)
   if (canHold && !hold && nextType === 1 && t1Count >= T1_PREFLOOD_THRESHOLD && !isWarn) {
     const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
     const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
@@ -528,10 +532,7 @@ export function decide(boardState) {
         return { x: 0, reason: `T1_FLOOD_HOLD_T${bestNextT}`, hold: true };
       }
     }
-    if (bestNextT === 2) {
-      const t2Merge = findAnyMerge(activePieces, 2, colHeights, dangerBias);
-      if (t2Merge !== null) return { x: 0, reason: 'T1_FLOOD_HOLD_T2', hold: true };
-    }
+    // T2ケースを削除: T2の場合はそのままマージに使う (v56のT1_FLOOD_HOLD_T2を撤回)
   }
 
   // --- HOLD判定 ---
@@ -565,7 +566,6 @@ export function decide(boardState) {
       if (preFloodAnchor !== null) return { x: preFloodAnchor, reason: 'T1_PREFLOOD_ANCHOR' };
     }
     if (t1FloodMode && !extremeT1Flood) {
-      // [v56修正] t1FloodMode時にimmediateを追加 (T1→T2変換の早期化)
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
       if (immediateX !== null) return { x: immediateX, reason: 'T1_FLOOD_IMMEDIATE' };
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias);
@@ -695,8 +695,8 @@ function shouldPreferLowT1GarbageMerge(
 
 function pickSaferT1Alternative(colHeights, immediateX, candidates, rawPieceCount, gaugeLevel) {
   if (immediateX === null) return null;
-  // [v56] piece閾値90→80、高さ閾値WARN_Y+0.35→WARN_Y+0.2 で感度向上
-  if (rawPieceCount < 80 && gaugeLevel < 0.65) return null;
+  // v57: v55水準に戻す (piece閾値90, 高さ閾値WARN_Y+0.35)
+  if (rawPieceCount < 90 && gaugeLevel < 0.65) return null;
 
   const immediateH = colHeights[nearestColIdx(immediateX)];
   const immediateWall = Math.abs(immediateX) >= 2.0;
@@ -714,7 +714,7 @@ function pickSaferT1Alternative(colHeights, immediateX, candidates, rawPieceCoun
   if (immediateWall && best.h <= immediateH + 0.15) {
     return { x: best.x, reason: best.reason };
   }
-  if (immediateH > WARN_Y + 0.2 && best.h <= immediateH - 0.35) {
+  if (immediateH > WARN_Y + 0.35 && best.h <= immediateH - 0.35) {
     return { x: best.x, reason: best.reason };
   }
   if (rawPieceCount >= 105 && best.h <= immediateH + 0.2 && Math.abs(best.x) <= Math.abs(immediateX)) {
