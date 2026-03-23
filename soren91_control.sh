@@ -30,7 +30,7 @@ SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
 SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-91}")"
 SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
 MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
-SOREN91_MERIKEN_IMPROVE_INTERVAL="${SOREN91_MERIKEN_IMPROVE_INTERVAL:-3}"
+SOREN91_MERIKEN_IMPROVE_INTERVAL="${SOREN91_MERIKEN_IMPROVE_INTERVAL:-12}"
 
 _soren91_switch_obs_layout() {
 	local mode="${1:-}"
@@ -197,7 +197,7 @@ soren91_start() {
 		> "$SOREN91_SESSION_FILE"
 
 	# メリケンAIモード判定 (手動発火 or 22-23時)
-	# メリケンモードでは内部改善を有効化 (3ゲームごと)
+	# メリケンモードでは内部改善を有効化 (12ゲームごと、env override可)
 	local _meriken_mode=0
 	if manual_meriken_mode_is_enabled; then
 		_meriken_mode=1

@@ -12,7 +12,7 @@ import { chromium } from 'playwright';
 import { writeFileSync, appendFileSync, mkdirSync, existsSync, renameSync, readdirSync, readFileSync, unlinkSync, copyFileSync, rmdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { execSync, execFile } from 'child_process';
 import {
   computeStrategyHashFromFile,
   recordCompletedGame,
@@ -711,6 +711,20 @@ async function gameLoop(page, calibration, gameNumber) {
           rankingDetected = false;
 
 
+          // 定時ラジオチェック (親プロジェクトの時刻ベースコーナーをメリケンAIペルソナで実行)
+          try {
+            const prevGameNum = gameNumber - 1;
+            const radioProc = execFile('/bin/bash', [join(dirname(fileURLToPath(import.meta.url)), 'radio_bridge.sh'), String(prevGameNum), '0'], {
+              cwd: dirname(fileURLToPath(import.meta.url)),
+            }, (err) => {
+              if (err && err.killed) console.log('[radio] bridge killed');
+              else if (err) console.log(`[radio] bridge error: ${err.message}`);
+            });
+            radioProc.unref(); // Node.js の終了を妨げない
+          } catch (e) {
+            console.log(`[radio] bridge launch error: ${e.message}`);
+          }
+
           // Stop file チェック (外部からの graceful stop 要求)
           if (existsSync('tmp/stop')) {
             console.log(`[game] Stop requested, waiting for pending game data save...`);
@@ -826,7 +840,8 @@ async function gameLoop(page, calibration, gameNumber) {
       consecutiveErrors = 0;
 
       // 試合中コメント: 20ターンごとに生成 (非同期、ゲームをブロックしない)
-      if (turn > 0 && turn % 20 === 0) {
+      // pieces < 3 はマッチング画面の誤検出の可能性が高いためスキップ
+      if (turn > 0 && turn % 20 === 0 && boardState.pieces.length >= 3) {
         (async () => {
           try {
             const { generateMidgameComment } = await loadModule('./comment.mjs');

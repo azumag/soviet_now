@@ -1322,7 +1322,7 @@ RETRYCOMMENT
 						done
 						[ "$_sing_lock_wait" -lt 120 ] && _sing_lock_held=1
 						if [ "$_sing_lock_held" -eq 1 ]; then
-							if "$ELOOP_LIB_DIR/voicevox_sing.sh" -o "$sing_wav" "$score_file" 2>/dev/null; then
+							if VOICEVOX_SING_HOST_MODE="$_comment_mode_generated" "$ELOOP_LIB_DIR/voicevox_sing.sh" -o "$sing_wav" "$score_file" 2>/dev/null; then
 								rmdir "$_sing_lock" 2>/dev/null; _sing_lock_held=0
 								SAY_CONTEXT_LABEL="comment:sing" "$ELOOP_LIB_DIR/say_enqueue.sh" --no-preempt --wav "$sing_wav" 150 0
 								rm -f "$sing_wav"

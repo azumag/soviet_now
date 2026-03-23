@@ -830,12 +830,15 @@ function readRankFromRedStar(data, width, height) {
     seg.h = rowMax - rowMin;
   }
 
-  // 最も高いセグメント(主桁)を基準に高さフィルタ
-  // 高さ20px未満は除外、残りの中から右端の1-2セグメントを桁として採用
-  // (RANKINGテキスト断片は左側にあるため、右端が数字)
+  // 最も高いセグメント(主桁)を基準に高さ・縦位置フィルタ
   const maxH = Math.max(...rawSegs.map(s => s.h));
   if (maxH < 20) return null;
-  const candidates = rawSegs.filter(s => s.h >= 15).sort((a, b) => a.start - b.start);
+  const tallest = rawSegs.find(s => s.h === maxH);
+  // 主桁と縦方向で重なり、かつ高さが主桁の60%以上のセグメントのみ候補
+  const candidates = rawSegs.filter(s =>
+    s.h >= maxH * 0.6 &&
+    s.rowMin < tallest.rowMax && s.rowMax > tallest.rowMin
+  ).sort((a, b) => a.start - b.start);
   if (candidates.length === 0) return null;
 
   // 右端から最大2セグメントを取得 (近接チェック: ギャップ50px以内)

@@ -43,6 +43,18 @@ build_prompt() {
 	fi
 }
 
+_run_cmd_timeout_bin() {
+	if command -v timeout >/dev/null 2>&1; then
+		command -v timeout
+		return 0
+	fi
+	if command -v gtimeout >/dev/null 2>&1; then
+		command -v gtimeout
+		return 0
+	fi
+	return 1
+}
+
 #=== コマンド実行 ===
 
 _opencode_latest_session_id_for_dir() {
@@ -113,6 +125,20 @@ run_cmd() {
 	local cmd_log_tag="${RUN_CMD_LOG_TAG:-$type}"
 	local prompt_body="$prompt"
 	local resume_session=""
+	local timeout_sec="${RUN_CMD_TIMEOUT_SEC:-}"
+	local timeout_bin=""
+	local timeout_label="none"
+	case "$timeout_sec" in
+	''|*[!0-9]*) timeout_sec="" ;;
+	esac
+	if [ -n "$timeout_sec" ] && [ "$timeout_sec" -gt 0 ]; then
+		timeout_bin=$(_run_cmd_timeout_bin 2>/dev/null || true)
+		if [ -z "$timeout_bin" ]; then
+			log "[CMD] timeout requested (${timeout_sec}s) but no timeout binary found"
+			timeout_sec=""
+		fi
+	fi
+	[ -n "$timeout_sec" ] && timeout_label="${timeout_sec}s"
 	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
 		resume_session=$(_run_cmd_load_resume_session "$spec" 2>/dev/null || true)
 	fi
@@ -130,9 +156,9 @@ run_cmd() {
 		mkdir -p "$(dirname "$cmd_log_file")" 2>/dev/null || true
 		_trim_log_file "$cmd_log_file" "$IMPROVE_AI_LOG_KEEP_LINES" "$IMPROVE_AI_LOG_TRIM_LINES"
 		if [ -n "$resume_session" ]; then
-			printf '[%s] [AI:%s] START spec=%s target=%s continue_session=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" "$resume_session" >>"$cmd_log_file" 2>/dev/null || true
+			printf '[%s] [AI:%s] START spec=%s target=%s timeout=%s continue_session=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" "$timeout_label" "$resume_session" >>"$cmd_log_file" 2>/dev/null || true
 		else
-			printf '[%s] [AI:%s] START spec=%s target=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" >>"$cmd_log_file" 2>/dev/null || true
+			printf '[%s] [AI:%s] START spec=%s target=%s timeout=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$spec" "$target" "$timeout_label" >>"$cmd_log_file" 2>/dev/null || true
 		fi
 	fi
 
@@ -143,51 +169,107 @@ run_cmd() {
 		[ -n "$resume_session" ] && glm_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-				OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
+				if [ -n "$timeout_sec" ]; then
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
+				else
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
+				fi
 			else
-				opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
+				if [ -n "$timeout_sec" ]; then
+					"$timeout_bin" "$timeout_sec" opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
+				else
+					opencode "${glm_args[@]}" >>"$cmd_log_file" 2>&1 &
+				fi
 			fi
 		else
 			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-				OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${glm_args[@]}" &
+				if [ -n "$timeout_sec" ]; then
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" opencode "${glm_args[@]}" &
+				else
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${glm_args[@]}" &
+				fi
 			else
-				opencode "${glm_args[@]}" &
+				if [ -n "$timeout_sec" ]; then
+					"$timeout_bin" "$timeout_sec" opencode "${glm_args[@]}" &
+				else
+					opencode "${glm_args[@]}" &
+				fi
 			fi
 		fi
 		;;
 	gemini)
 		if [ -n "$cmd_log_file" ]; then
-			gemini -p "$prompt_body" -y -s >>"$cmd_log_file" 2>&1 &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" gemini -p "$prompt_body" -y -s >>"$cmd_log_file" 2>&1 &
+			else
+				gemini -p "$prompt_body" -y -s >>"$cmd_log_file" 2>&1 &
+			fi
 		else
-			gemini -p "$prompt_body" -y -s &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" gemini -p "$prompt_body" -y -s &
+			else
+				gemini -p "$prompt_body" -y -s &
+			fi
 		fi
 		;;
 	gemini-flash)
 		if [ -n "$cmd_log_file" ]; then
-			gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash >>"$cmd_log_file" 2>&1 &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash >>"$cmd_log_file" 2>&1 &
+			else
+				gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash >>"$cmd_log_file" 2>&1 &
+			fi
 		else
-			gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash &
+			else
+				gemini -p "$prompt_body" -y -s --model=gemini-2.5-flash &
+			fi
 		fi
 		;;
 	sonnet)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			else
+				claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			fi
 		else
-			claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
+			else
+				claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
+			fi
 		fi
 		;;
 	opus)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			else
+				claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			fi
 		else
-			claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
+			else
+				claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
+			fi
 		fi
 		;;
 	claude)
 		if [ -n "$cmd_log_file" ]; then
-			claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			else
+				claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			fi
 		else
-			claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
+			else
+				claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
+			fi
 		fi
 		;;
 	opencode)
@@ -196,15 +278,31 @@ run_cmd() {
 		[ -n "$resume_session" ] && opencode_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-				OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+				if [ -n "$timeout_sec" ]; then
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+				else
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+				fi
 			else
-				opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+				if [ -n "$timeout_sec" ]; then
+					"$timeout_bin" "$timeout_sec" opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+				else
+					opencode "${opencode_args[@]}" >>"$cmd_log_file" 2>&1 &
+				fi
 			fi
 		else
 			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
-				OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${opencode_args[@]}" &
+				if [ -n "$timeout_sec" ]; then
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" "$timeout_bin" "$timeout_sec" opencode "${opencode_args[@]}" &
+				else
+					OPENCODE_PERMISSION="$RUN_CMD_OPENCODE_PERMISSION" opencode "${opencode_args[@]}" &
+				fi
 			else
-				opencode "${opencode_args[@]}" &
+				if [ -n "$timeout_sec" ]; then
+					"$timeout_bin" "$timeout_sec" opencode "${opencode_args[@]}" &
+				else
+					opencode "${opencode_args[@]}" &
+				fi
 			fi
 		fi
 		;;
@@ -222,6 +320,12 @@ run_cmd() {
 	local ret=$?
 	if [ "$interrupted" -eq 1 ]; then
 		ret=130
+	fi
+	if [ "$ret" -eq 124 ] && [ -n "$timeout_sec" ]; then
+		log "[CMD] timeout after ${timeout_sec}s → $type"
+		if [ -n "$cmd_log_file" ]; then
+			printf '[%s] [AI:%s] TIMEOUT after %ss\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$timeout_sec" >>"$cmd_log_file" 2>/dev/null || true
+		fi
 	fi
 	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
 		_run_cmd_store_resume_session "$spec" "$PWD"

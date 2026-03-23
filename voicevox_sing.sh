@@ -46,21 +46,18 @@ for s in singers:
 "
 }
 
-# /singers から frame_decode 対応のスピーカーIDをランダム選択
+# 歌声シンガー選択: 中華AI=九州そら(3016), メリケンAI=冥鳴ひまり(3014)
 pick_synth_speaker() {
-    curl -s --max-time 5 "$VOICEVOX_URL/singers" | python3 -c "
-import json, sys, random
-singers = json.load(sys.stdin)
-fd_ids = []
-for s in singers:
-    for st in s.get('styles', []):
-        if st.get('type') == 'frame_decode':
-            fd_ids.append(st['id'])
-if not fd_ids:
-    print('', end='')
-    sys.exit(1)
-print(random.choice(fd_ids), end='')
-" 2>/dev/null
+    local mode="${VOICEVOX_SING_HOST_MODE:-}"
+    if [ "$mode" = "soren91" ]; then
+        printf '%s' "${VOICEVOX_SING_SPEAKER_SOREN91:-3014}"
+        return
+    elif [ -n "$mode" ]; then
+        printf '%s' "${VOICEVOX_SING_SPEAKER_MAIN:-3016}"
+        return
+    fi
+    # ホストモード未設定時はデフォルト: 九州そら
+    printf '%s' "${VOICEVOX_SING_SPEAKER_MAIN:-3016}"
 }
 
 synthesize_song() {

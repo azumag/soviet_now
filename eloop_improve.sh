@@ -762,9 +762,11 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	RUN_CMD_SESSION_DIR="$PWD/$TMP_STATE_DIR/.improve_retry_sessions"
 	RUN_CMD_TMP_DIR="$PWD/$TMP_STATE_DIR/.run_cmd_tmp"
 	RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
+	RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-3600}"
 	export RUN_CMD_SESSION_DIR
 	export RUN_CMD_TMP_DIR
 	export RUN_CMD_OPENCODE_PERMISSION
+	export RUN_CMD_TIMEOUT_SEC
 	mkdir -p "$RUN_CMD_SESSION_DIR" 2>/dev/null || true
 	mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
 	fresh_retry=1
@@ -973,6 +975,7 @@ fi
 unset RUN_CMD_SESSION_DIR
 unset RUN_CMD_TMP_DIR
 unset RUN_CMD_OPENCODE_PERMISSION
+unset RUN_CMD_TIMEOUT_SEC
 
 if [ "$in_sandbox" = true ]; then
 	popd >/dev/null || true

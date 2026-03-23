@@ -1,16 +1,18 @@
 /**
  * comment.mjs - メリケンAIコメント生成 (ランキング画面 + 試合中盤面)
  *
- * Claude haiku (vision) を使用して:
+ * Claude haiku (vision) を優先し、失敗時は opencode にフォールバックして:
  * 1. ランキング画面のプレイヤー名認識 + 試合後コメント
  * 2. 試合中の盤面スクリーンショットから中間コメント (1試合1回)
  * 3. TTS読み上げ + Twitchチャット投稿
  */
 
-import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
+import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdtempSync, rmSync } from 'fs';
 import { execFile } from 'child_process';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import sharp from 'sharp';
+import { analyzeResultScreen } from './result_screen_ocr.mjs';
 
 const PROMPTS_DIR = join(import.meta.dirname || '.', 'prompts');
 
@@ -26,6 +28,198 @@ const PARENT_DIR = join(import.meta.dirname || '.', '..');
 const SAY_ENQUEUE_SCRIPT = join(PARENT_DIR, 'say_enqueue.sh');
 const TWITCH_CHAT_SCRIPT = join(PARENT_DIR, 'twitch_chat.sh');
 const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
+const DEFAULT_CLAUDE_MODEL = process.env.SOREN91_COMMENT_CLAUDE_MODEL || 'haiku';
+const DEFAULT_OPENCODE_AGENT = process.env.SOREN91_COMMENT_OPENCODE_AGENT || process.env.RADIO_FALLBACK || 'glmflash';
+const DEFAULT_CLAUDE_TIMEOUT_MS = 30000;
+const DEFAULT_OPENCODE_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SOREN91_COMMENT_OPENCODE_TIMEOUT || process.env.COMMENT_OPENCODE_TIMEOUT || '30', 10) * 1000,
+);
+const DEFAULT_OPENCODE_PERMISSION = process.env.SOREN91_COMMENT_OPENCODE_PERMISSION
+  || process.env.COMMENT_OPENCODE_PERMISSION
+  || '{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow","web-search":"allow"}';
+
+function stripAnsi(text) {
+  return String(text || '')
+    .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/[\x00-\x09\x0b-\x0d\x0e-\x1f]/g, '')
+    .replace(/\r/g, '');
+}
+
+function containsProviderErrorText(text) {
+  return /invalid bearer token|authentication_error|failed to authenticat(?:e|ed)|api error[: ]|request_id|invalid error token|invalid token|not logged in|please run \/login|potentially unsafe or sensitive content|avoid using prompts that may generate sensitive content|unsafe or sensitive content in input or generation|content policy|safety policy|rate limit|rate_limit|too many requests|429\b|overloaded_error|quota/i.test(String(text || ''));
+}
+
+function containsClaudeLoginErrorText(text) {
+  return /not logged in|please run \/login/i.test(String(text || ''));
+}
+
+function shellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function cleanOpencodeOutput(raw) {
+  const lines = stripAnsi(raw).split('\n');
+  const kept = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('>')) continue;
+    if (trimmed === '^D') continue;
+    if (trimmed.startsWith('Script started on ')) continue;
+    if (trimmed.startsWith('Script done on ')) continue;
+    if (/^\/[^ ]*$/.test(trimmed)) continue;
+    if (/^\/Users\//.test(trimmed)) continue;
+    if (/^⚙/.test(trimmed)) continue;
+    if (/^\{\s*"query"/.test(trimmed)) continue;
+    if (/^[✗✕×].*\b(read|glob|grep|ls|edit|write|multiedit)\b.*\bfailed\b/i.test(trimmed)) continue;
+    if (/^[✱→►▸]\s*(read|glob|grep|ls|edit|write|multiedit)\b/i.test(trimmed)) continue;
+    if (/^(read|glob|grep|ls|edit|write|multiedit)\b/i.test(trimmed)) continue;
+    if (/^(error|warning)\s*:/i.test(trimmed)) continue;
+    if (/file not found:|no such file or directory|permission denied|invalid arguments/i.test(trimmed)) continue;
+    kept.push(
+      line.replace(/<\/?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>/g, '').trim(),
+    );
+  }
+  return kept.filter(Boolean).join('\n').trim();
+}
+
+function makeProviderError(message, detail = '') {
+  const err = new Error(detail ? `${message}: ${detail}` : message);
+  err.providerFailure = true;
+  return err;
+}
+
+function runClaudeJsonComment(tag, content) {
+  const message = JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content },
+  });
+
+  return new Promise((resolve, reject) => {
+    const child = execFile('claude', [
+      '-p', '--model', DEFAULT_CLAUDE_MODEL,
+      '--input-format', 'stream-json', '--output-format', 'stream-json',
+      '--verbose',
+    ], {
+      encoding: 'utf-8',
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: DEFAULT_CLAUDE_TIMEOUT_MS,
+      cwd: '/tmp',
+    }, (err, stdout, stderr) => {
+      const stderrPreview = String(stderr || '').slice(0, 500);
+      const combined = `${stdout || ''}\n${stderr || ''}`;
+      if (containsClaudeLoginErrorText(combined)) {
+        console.log(`[${tag}] claude unavailable: not logged in`);
+      }
+      if (containsProviderErrorText(combined)) {
+        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
+        return reject(makeProviderError('claude provider/rate-limit failure', stderrPreview || String(stdout || '').slice(0, 300)));
+      }
+      if (err) {
+        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
+        return reject(err);
+      }
+      const raw = parseStreamJsonOutput(stdout);
+      const comment = extractCommentOnly(raw);
+      if (!comment) {
+        return reject(new Error('claude returned empty comment'));
+      }
+      resolve(comment);
+    });
+
+    child.stdin.on('error', () => {});
+    child.stdin.write(message + '\n');
+    child.stdin.end();
+  });
+}
+
+function runClaudeTextComment(tag, promptText) {
+  return new Promise((resolve, reject) => {
+    const child = execFile('claude', [
+      '-p', '--model', DEFAULT_CLAUDE_MODEL,
+      '--verbose',
+    ], {
+      encoding: 'utf-8',
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: DEFAULT_CLAUDE_TIMEOUT_MS,
+      cwd: '/tmp',
+    }, (err, stdout, stderr) => {
+      const stderrPreview = String(stderr || '').slice(0, 500);
+      const combined = `${stdout || ''}\n${stderr || ''}`;
+      if (containsClaudeLoginErrorText(combined)) {
+        console.log(`[${tag}] claude unavailable: not logged in`);
+      }
+      if (containsProviderErrorText(combined)) {
+        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
+        return reject(makeProviderError('claude provider/rate-limit failure', stderrPreview || String(stdout || '').slice(0, 300)));
+      }
+      if (err) {
+        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
+        return reject(err);
+      }
+      const comment = extractCommentOnly(String(stdout || '').trim());
+      if (!comment) {
+        return reject(new Error('claude returned empty comment'));
+      }
+      resolve(comment);
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.write(promptText);
+    child.stdin.end();
+  });
+}
+
+function runOpencodeComment(tag, promptText, agent = DEFAULT_OPENCODE_AGENT) {
+  const tempDir = mkdtempSync(join(tmpdir(), 'soren91_opencode_comment_'));
+  const promptFile = join(tempDir, 'prompt.txt');
+  const rawFile = join(tempDir, 'raw.txt');
+  writeFileSync(promptFile, promptText, 'utf-8');
+
+  return new Promise((resolve, reject) => {
+    const command = `LC_ALL=en_US.UTF-8 opencode run --agent ${shellSingleQuote(agent)} "$(cat ${shellSingleQuote(promptFile)})" 2>&1`;
+    execFile('script', ['-q', rawFile, 'bash', '-lc', command], {
+      encoding: 'utf-8',
+      timeout: DEFAULT_OPENCODE_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        OPENCODE_PERMISSION: DEFAULT_OPENCODE_PERMISSION,
+      },
+      maxBuffer: 2 * 1024 * 1024,
+    }, (err) => {
+      try {
+        const raw = existsSync(rawFile) ? readFileSync(rawFile, 'utf-8') : '';
+        const cleaned = cleanOpencodeOutput(raw);
+        if (containsProviderErrorText(cleaned)) {
+          return reject(makeProviderError(`opencode provider failure (${agent})`, cleaned.slice(0, 300)));
+        }
+        if (err) {
+          if (cleaned) console.error(`[${tag}] opencode raw:`, cleaned.slice(0, 500));
+          return reject(err);
+        }
+        const comment = extractCommentOnly(cleaned);
+        if (!comment) {
+          return reject(new Error(`opencode returned empty comment (${agent})`));
+        }
+        resolve(comment);
+      } finally {
+        try { unlinkSync(promptFile); } catch {}
+        try { unlinkSync(rawFile); } catch {}
+        try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
+      }
+    });
+  });
+}
+
+async function withOpencodeFallback(tag, claudeRunner, opencodePromptBuilder) {
+  try {
+    return await claudeRunner();
+  } catch (err) {
+    console.log(`[${tag}] claude failed -> opencode fallback (${err.message})`);
+    const fallbackPrompt = await opencodePromptBuilder();
+    return runOpencodeComment(tag, fallbackPrompt);
+  }
+}
 
 /**
  * ランキング画面からコメントを生成して読み上げ + Twitch投稿
@@ -46,7 +240,7 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
       .toBuffer();
     const base64Image = imageBuffer.toString('base64');
 
-    const comment = await callClaudeForComment(base64Image, gameNumber, myRank);
+    const comment = await callClaudeForComment(rankingImagePath, base64Image, gameNumber, myRank);
     if (!comment) {
       console.log('[ranking_comment] No comment generated');
       return null;
@@ -97,7 +291,31 @@ function extractCommentOnly(raw) {
   return joined.slice(0, 350);
 }
 
-function callClaudeForComment(base64Image, gameNumber, myRank) {
+async function buildRankingOpencodePrompt(rankingImagePath, promptText, myRank) {
+  const helpLines = [
+    '画像は添付できていないので、以下の補助情報だけで自然なコメントを作ってください。',
+    '補助情報にないプレイヤー名や順位を捏造しないでください。',
+  ];
+  if (myRank != null) {
+    helpLines.push(`自分の順位: ${myRank}位/91人中。`);
+  }
+  try {
+    const ocr = await analyzeResultScreen(rankingImagePath);
+    if (ocr?.rank != null && ocr.rank !== myRank) {
+      helpLines.push(`OCR推定順位: ${ocr.rank}位/91人中。`);
+    }
+    if (ocr?.lines?.length) {
+      helpLines.push(`OCR抽出テキスト: ${ocr.lines.slice(0, 8).join(' / ')}`);
+    } else {
+      helpLines.push('OCR抽出テキストは十分に得られませんでした。');
+    }
+  } catch (err) {
+    helpLines.push(`OCR補助情報の取得失敗: ${err.message}`);
+  }
+  return `${promptText}\n\n【補助情報】\n- ${helpLines.join('\n- ')}`;
+}
+
+function callClaudeForComment(rankingImagePath, base64Image, gameNumber, myRank) {
   const rankInfo = myRank != null ? `自分の順位: ${myRank}位/91人中。` : '';
   const promptText = loadPrompt('ranking_comment.md', { rankInfo });
 
@@ -108,36 +326,11 @@ function callClaudeForComment(base64Image, gameNumber, myRank) {
     },
     { type: 'text', text: promptText },
   ];
-
-  const message = JSON.stringify({
-    type: 'user',
-    message: { role: 'user', content },
-  });
-
-  return new Promise((resolve, reject) => {
-    const child = execFile('claude', [
-      '-p', '--model', 'haiku',
-      '--input-format', 'stream-json', '--output-format', 'stream-json',
-      '--verbose',
-    ], {
-      encoding: 'utf-8',
-      maxBuffer: 2 * 1024 * 1024,
-      timeout: 30000,
-      cwd: '/tmp', // CLAUDE.md 読み込みを回避してトークン節約
-    }, (err, stdout, stderr) => {
-      if (err) {
-        if (stderr) console.error('[ranking_comment] claude stderr:', stderr.slice(0, 300));
-        return reject(err);
-      }
-      const raw = parseStreamJsonOutput(stdout);
-      resolve(extractCommentOnly(raw));
-    });
-
-    // EPIPE エラーを無視 (claude プロセスが先に終了した場合)
-    child.stdin.on('error', () => {});
-    child.stdin.write(message + '\n');
-    child.stdin.end();
-  });
+  return withOpencodeFallback(
+    'ranking_comment',
+    () => runClaudeJsonComment('ranking_comment', content),
+    async () => buildRankingOpencodePrompt(rankingImagePath, promptText, myRank),
+  );
 }
 
 function parseStreamJsonOutput(stdout) {
@@ -270,11 +463,13 @@ function formatBoardStateForPrompt(boardState, turn) {
   const fillPct = Math.max(0, Math.min(100, (pieceArea / boardArea) * 100)).toFixed(0);
 
   // 最高地点（デッドラインへの近さ = 危険度）
+  // 警告ライン(y=1.2)以下は0%、デッドライン(y=3.32)で100%
+  const warnY = 1.2;
   const deadlineY = 3.32;
   const maxY = pieces.length > 0
     ? Math.max(...pieces.map(p => (p.y ?? -5) + (p.r ?? 0)))
     : -5;
-  const dangerPct = Math.max(0, Math.min(100, ((maxY + 5) / (deadlineY + 5)) * 100)).toFixed(0);
+  const dangerPct = Math.max(0, Math.min(100, ((maxY - warnY) / (deadlineY - warnY)) * 100)).toFixed(0);
 
   // ピースのtype別集計
   const typeCounts = {};
@@ -287,9 +482,13 @@ function formatBoardStateForPrompt(boardState, turn) {
     .map(([t, c]) => `type${t}×${c}`)
     .join(', ');
 
+  // 状況を自然言語で表現（数値を直接見せない）
+  const fillLevel = fillPct < 20 ? 'スカスカ' : fillPct < 40 ? 'まだ余裕あり' : fillPct < 60 ? 'そこそこ埋まっている' : fillPct < 80 ? 'かなり埋まっている' : 'ほぼ満杯';
+  const dangerLevel = dangerPct <= 0 ? '安全' : dangerPct < 30 ? 'まだ余裕あり' : dangerPct < 50 ? 'やや高くなってきた' : dangerPct < 70 ? '危険が迫っている' : dangerPct < 90 ? 'かなり危険' : '瀕死';
+
   let info = `ターン${turn}、盤面にピース${pieceCount}個。`;
-  info += `\n盤面充填率: ${fillPct}%（ピース面積ベース）`;
-  info += `\nデッドライン危険度: ${dangerPct}%（最高地点y=${maxY.toFixed(1)}）`;
+  info += `\n盤面の状態: ${fillLevel}`;
+  info += `\n積み上がり: ${dangerLevel}`;
   info += `\nピース内訳: ${typeStr || 'なし'}`;
 
   if (garbageRatio > 0.05) {
@@ -322,59 +521,22 @@ async function callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath
   }
 
   if (base64Image) {
-    // Vision: 画像 + テキストプロンプト (stream-json形式)
     const content = [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Image } },
       { type: 'text', text: promptText },
     ];
-    const message = JSON.stringify({ type: 'user', message: { role: 'user', content } });
-
-    return new Promise((resolve, reject) => {
-      const child = execFile('claude', [
-        '-p', '--model', 'haiku',
-        '--input-format', 'stream-json', '--output-format', 'stream-json',
-        '--verbose',
-      ], {
-        encoding: 'utf-8',
-        maxBuffer: 2 * 1024 * 1024,
-        timeout: 30000,
-        cwd: '/tmp',
-      }, (err, stdout, stderr) => {
-        if (err) {
-          if (stderr) console.error('[midgame_comment] claude stderr:', stderr.slice(0, 300));
-          return reject(err);
-        }
-        const raw = parseStreamJsonOutput(stdout);
-        resolve(extractCommentOnly(raw));
-      });
-      child.stdin.on('error', () => {});
-      child.stdin.write(message + '\n');
-      child.stdin.end();
-    });
+    return withOpencodeFallback(
+      'midgame_comment',
+      () => runClaudeJsonComment('midgame_comment', content),
+      async () => `${promptText}\n\n画像は添付できていないので、盤面データだけを根拠に自然な実況コメントを作ってください。`,
+    );
   }
 
-  // フォールバック: テキストのみ
-  return new Promise((resolve, reject) => {
-    const child = execFile('claude', [
-      '-p', '--model', 'haiku',
-      '--verbose',
-    ], {
-      encoding: 'utf-8',
-      maxBuffer: 2 * 1024 * 1024,
-      timeout: 30000,
-      cwd: '/tmp',
-      env: { ...process.env, CLAUDE_INPUT: promptText },
-    }, (err, stdout, stderr) => {
-      if (err) {
-        if (stderr) console.error('[midgame_comment] claude stderr:', stderr.slice(0, 300));
-        return reject(err);
-      }
-      resolve(extractCommentOnly(stdout.trim()));
-    });
-    child.stdin.on('error', () => {});
-    child.stdin.write(promptText);
-    child.stdin.end();
-  });
+  return withOpencodeFallback(
+    'midgame_comment',
+    () => runClaudeTextComment('midgame_comment', promptText),
+    async () => `${promptText}\n\n盤面データだけを根拠に自然な実況コメントを作ってください。`,
+  );
 }
 
 // CLI: node comment.mjs <ranking_image_path> [gameNumber] [rank]
