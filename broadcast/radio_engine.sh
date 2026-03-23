@@ -28,6 +28,8 @@ _run_opencode_radio() {
 		grep -v '^Script done on ' |
 		grep -v '^/[^ ]*$' |
 		grep -v '^[[:space:]]*/Users/' |
+		grep -v '^[[:space:]]*⚙' |
+		grep -v '^[[:space:]]*{[[:space:]]*"query"' |
 		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
 		sed '/^[[:space:]]*$/d')
 	rm -f "$raw_file"
