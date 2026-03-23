@@ -39,6 +39,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
+  # v325: reactive_pairs盤面圧縮ボーナス削除版 - 即時併合機会優先化
+  # v324 failure: reactive_pairs >= 3 && merge_grade == "NO"の場合、axis 9.5の+800.0ボーナスがaxis 9.2の-2500.0ペナルティを上書きし、盤面圧縮（非併合配置）が選ばれてmax_y runawayでゲームオーバー
+  # ワーストゲーム(score0611)終盤turns 42-48: reactive_pairs=3-4, merge_grade="NO"続きで非併合配置が選ばれmax_y=0.16→1.78→3.51に上昇してゲームオーバー
+  # ベストゲーム(score2481)ではreactive_pairsがある場合でも即時併合機会を確実に捉え、盤面圧縮より即時併合を優先して安定
+  # axis 9.5修正: reactive_pair_count >= 1 && merge_grade == "NO"の場合の+800.0ボーナスを削除
+  # reactive_pairsがある場合はaxis 9.2の-2500.0ペナルティを優先させ、即時併合機会を確実に待つ戦略へ切り替え
+  # reactive_pairsがない場合のみ+300.0ボーナスを適用し、盤面圧縮を優先
+  # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+  #       game_history/20260324_012537_score0611.jsonl turns 42-48, game_history/20260324_020024_score2481.jsonl
+  # Fixes rollback failure mode: reactive_pairs盤面圧縮ボーナスによる即時併合機会取りこぼし（axis 9.5 reactive_pairsボーナス削除）
+  #
   # v324: deadline_crossed対応・ロシアフェーズ強化版 - v323 failure mode潰し
   # v323 failure: axis 9.2にdeadline_crossed条件が含まれておらず、deadline_crossed時でもreactive_pairs>=3の即時併合不可でペナルティが適用されない
   # ワーストゲーム(score0651)終盤turns 42-47: max_y=0.16→1.78 (deadline_crossed: false→true→false), reactive_pairs=3-4, merge_available=false続き
@@ -172,18 +183,17 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v324: deadline_crossed対応・ロシアフェーズ強化版 - v323 failure mode潰し
+    """v325: reactive_pairs盤面圧縮ボーナス削除版 - 即時併合機会優先化
 
-    v323 failure: axis 9.2にdeadline_crossed条件が含まれておらず、deadline_crossed時でもreactive_pairs>=3の即時併合不可でペナルティが適用されない
-    ワーストゲーム(score0651)終盤turns 42-47: max_y=0.16→1.78 (deadline_crossed: false→true→false), reactive_pairs=3-4, merge_available=false続き
-    deadline_crossed=false時にSAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEで非併合を選択し、盤面圧迫が進みdeadline_crossed=trueでゲームオーバー
-    ベストゲーム(score2461)では危険域でも即時併合機会を確実に捉え、戦略的配置を維持して安定
-    batch_summaryでHIGH_TOWERが過剰選択され、即時併合機会取りこぼしが主要な敗因
+    v324 failure: reactive_pairs >= 3 && merge_grade == "NO"の場合、axis 9.5の+800.0ボーナスがaxis 9.2の-2500.0ペナルティを上書きし、盤面圧縮（非併合配置）が選ばれてmax_y runawayでゲームオーバー
+    ワーストゲーム(score0611)終盤turns 42-48: reactive_pairs=3-4, merge_grade="NO"続きで非併合配置が選ばれmax_y=0.16→1.78→3.51に上昇してゲームオーバー
+    ベストゲーム(score2481)ではreactive_pairsがある場合でも即時併合機会を確実に捉え、盤面圧縮より即時併合を優先して安定
+    batch_summaryでHEIGHT_CONTROLが過剰選択され、即時併合機会取りこぼしが主要な敗因
 
-    v324の改善点:
-    1. axis 9.2修正: deadline_crossed条件を追加し、deadline_crossed時でもreactive_pairs>=2で即時併合不可の場合に-2500.0ペナルティを適用
-    2. axis 8.7強化: ロシアフェーズで即時併合がない場合のボーナスを強化（deadline_crossed時は900.0、通常時は800.0）
-    3. axis 2修正: deadline_crossed時のheight_mult緩和条件にdanger_piece_count==0を追加し、危険ピースがある状況での過度なheight_mult緩和を防止
+    v325の改善点:
+    1. axis 9.5修正: reactive_pair_count >= 1 && merge_grade == "NO"の場合の+800.0ボーナスを削除
+    2. reactive_pairsがある場合はaxis 9.2の-2500.0ペナルティを優先させ、即時併合機会を確実に待つ戦略へ切り替え
+    3. reactive_pairsがない場合のみ+300.0ボーナスを適用し、盤面圧縮を優先
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -260,18 +270,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ----- evaluation axis 9.5: current type stack merge priority (NEW: same type stacking) -----
     # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」（Pitman_live）に基づく構造的改善。
     # batch_summaryでHEIGHT_CONTROLが15.9%選択(avg_score_delta=0.1)と過剰であり、即時併合機会を取りこぼしていることを確認。
-    # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
-    # reactive_pairsがある場合、盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替える。
-    # refs: advice.md (Pitman_live), tmp/batch_summary.txt
+    # 危険域（max_y >= 2.0）では、盤面圧縮より即時併合優先を優先するため、盤面圧縮ボーナスを抑制
+    # refs: advice.md (Pitman_live), tmp/batch_summary.txt, last_rollback_postmortem.md
     same_type_pieces = [p for p in pieces if p.get("type") == next_type]
     same_type_stack_top = None
     if same_type_pieces:
         # 盤面上の現在タイプの最も高い位置のピースを見つける
         same_type_stack_top = max(same_type_pieces, key=lambda p: p.get("y", -10))
-
-    
+     
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 6 evaluation axes (NEW: +1 axis for reactive)
+    # score each drop candidate (x coordinate) with 6 evaluation axes (NEW: +1 axis for reactive)
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -617,13 +625,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 2500.0
             reasons.append("DANGER_ZONE_REACTIVE_PENALTY_NO_MERGE")
 
-        # ----- evaluation axis 9.5: current type stack merge priority (v322: ロシアフェーズ対応強化版) -----
+        # ----- evaluation axis 9.5: current type stack merge priority (v325: reactive_pairsボーナス削除版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
         # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
         # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
-        # reactive_pairsがある場合、ボーナスを強化して盤面圧縮と将来の併合を同時に狙う戦略的思考へ切り替える。
-        # v284: 即時併合不可時のreactive_pairs活用盤面圧縮強化
-        # v322: ロシアフェーズ対応 - ロシアフェーズでの即時併合優先はaxis 8.7で実装済み
+        # v325: reactive_pairsがある場合のボーナスを削除し、即時併合機会を優先する戦略へ切り替え
+        # reactive_pairsがない場合のみボーナスを適用し、盤面圧縮を優先
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md
         
         if same_type_stack_top and merge_grade == "NO":
@@ -634,13 +641,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # danger_piece_count == 0 の場合、reactive_pairs>=3 && merge_grade=="NO"の戦略的配置ボーナス+1000.0を削除
             # ワーストゲームの「reactive_pairs>=3あるのに即時併合不可で戦略的配置を選び、max_y上昇」を回避するため
             # 即時併合機会を優先する戦略へ修正
+            # v325: reactive_pairsがある場合の+800.0ボーナスを削除 - 即時併合機会を優先する戦略へ
+            # reactive_pair_count >= 1 && merge_grade=="NO"の場合、+800.0ボーナスがaxis 9.2の-2500.0ペナルティと競合し、
+            # 盤面圧縮（非併合配置）が選ばれてmax_y runawayでゲームオーバーする失敗モードを解消
+            # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt
             if danger_piece_count == 0:
-                if reactive_pair_count >= 1:
-                    score += 800.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY_REACTIVE")
-                else:
+                # v325: reactive_pairsがある場合はボーナスを削除し、即時併合機会を優先
+                if reactive_pair_count == 0:
                     score += 300.0
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+                # reactive_pair_count >= 1の場合はボーナスなし（axis 9.2の-2500.0ペナルティを適用）
             else:
                 # danger_piece_count > 0 の場合は即時併合優先が適用されるため、ボーナスを抑制
                 # axis 8.5の即時併合優先評価を妨げないよう、最小限のボーナスを維持
@@ -650,19 +660,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
             # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
             # danger_piece_count == 0 の場合のみ、ペナルティ軽減を適用
+            # v325: reactive_pairsがある場合はペナルティ軽減ボーナスを削除 - 即時併合機会優先化
+            # reactive_pair_count >= 1の場合、軸9.2の-2500.0ペナルティを優先させ、即時併合機会を待つ戦略へ
             landing_y = result.get("landing_y", 0)
             if landing_y > stack_top_y and danger_piece_count == 0:
                 horiz_dist = abs(x - stack_top_x)
                 if horiz_dist < 1.0:
-                    # reactive_pairsがある場合、ペナルティ軽減を強化
-                    if reactive_pair_count >= 1:
-                        score += 200.0
-                        if "SAME_TYPE_STACK" not in "_".join(reasons):
-                            reasons.append("SAME_TYPE_STACK")
-                    else:
+                    # v325: reactive_pairsがない場合のみペナルティ軽減を適用
+                    if reactive_pair_count == 0:
                         score += 100.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
+                    # reactive_pair_count >= 1の場合はボーナスなし（axis 9.2の-2500.0ペナルティを適用）
 
         # ----- update best candidate -----
         if score > best_score:
