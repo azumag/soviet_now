@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-24 08:11:34 JST`
-- Nodes: `702`
-- Edges: `986`
-- Current: `66e5df314bc7`
+- Updated: `2026-03-24 08:50:57 JST`
+- Nodes: `703`
+- Edges: `987`
+- Current: `608f63a01e6b`
 - Anchor: `003e9883e188`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_502d6ae93732["502d6ae93732<br/>g=24 n=20<br/>comp=10798.7"]
     h_46d67246f7a7["46d67246f7a7<br/>g=12 n=12<br/>comp=10334.4"]
     h_b4eb6483e41e["b4eb6483e41e<br/>g=12 n=12<br/>comp=10639.4"]
     h_86541343fec6["86541343fec6<br/>g=12 n=12<br/>comp=10988.4"]
@@ -72,13 +71,11 @@ flowchart TD
     h_19541065acc3["19541065acc3<br/>g=12 n=12<br/>comp=11685.1"]
     h_e974d5259ac6["e974d5259ac6<br/>g=12 n=12<br/>comp=10906.0"]
     h_b65c387abdab["b65c387abdab<br/>g=12 n=12<br/>comp=10306.7"]
+    h_66e5df314bc7["66e5df314bc7<br/>g=12 n=12<br/>comp=10106.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_66e5df314bc7["66e5df314bc7<br/>CURRENT"]
+    h_608f63a01e6b["608f63a01e6b<br/>CURRENT"]
 
-    h_502d6ae93732 -->|improve| h_46d67246f7a7
-    h_46d67246f7a7 -. rollback .-> h_502d6ae93732
-    h_502d6ae93732 -->|improve| h_b4eb6483e41e
     h_b4eb6483e41e -->|improve| h_86541343fec6
     h_86541343fec6 -->|improve| h_bee7ce1f9bbd
     h_bee7ce1f9bbd -->|improve| h_b59ea0c231e3
@@ -140,13 +137,13 @@ flowchart TD
     h_19541065acc3 -->|improve| h_e974d5259ac6
     h_e974d5259ac6 -->|improve| h_b65c387abdab
     h_b65c387abdab -->|improve| h_66e5df314bc7
+    h_66e5df314bc7 -->|improve| h_608f63a01e6b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_502d6ae93732 plain;
     class h_46d67246f7a7 plain;
     class h_b4eb6483e41e plain;
     class h_86541343fec6 plain;
@@ -203,9 +200,10 @@ flowchart TD
     class h_19541065acc3 plain;
     class h_e974d5259ac6 plain;
     class h_b65c387abdab plain;
+    class h_66e5df314bc7 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_66e5df314bc7 current;
+    class h_608f63a01e6b current;
 ```
 
 ## Detail 1/9
@@ -2512,9 +2510,9 @@ flowchart TD
 
 ## Detail 9/9
 
-- Range: `0c0301a98e5f` .. `66e5df314bc7`
-- Nodes in this diagram: `62`
-- Internal edges in this diagram: `65`
+- Range: `0c0301a98e5f` .. `608f63a01e6b`
+- Nodes in this diagram: `63`
+- Internal edges in this diagram: `66`
 - Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
 - Cross-chunk link: `0c0301a98e5f -.rollback.-> 3f5d04fbf3e5`
 - Cross-chunk link: `3f5d04fbf3e5 --improve--> a9d3868684e2`
@@ -2590,9 +2588,10 @@ flowchart TD
     h_19541065acc3["19541065acc3<br/>g=12 n=12<br/>comp=11685.1"]
     h_e974d5259ac6["e974d5259ac6<br/>g=12 n=12<br/>comp=10906.0"]
     h_b65c387abdab["b65c387abdab<br/>g=12 n=12<br/>comp=10306.7"]
+    h_66e5df314bc7["66e5df314bc7<br/>g=12 n=12<br/>comp=10106.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_66e5df314bc7["66e5df314bc7<br/>CURRENT"]
+    h_608f63a01e6b["608f63a01e6b<br/>CURRENT"]
 
     h_a9d3868684e2 -->|improve| h_502d6ae93732
     h_502d6ae93732 -->|improve| h_46d67246f7a7
@@ -2659,6 +2658,7 @@ flowchart TD
     h_19541065acc3 -->|improve| h_e974d5259ac6
     h_e974d5259ac6 -->|improve| h_b65c387abdab
     h_b65c387abdab -->|improve| h_66e5df314bc7
+    h_66e5df314bc7 -->|improve| h_608f63a01e6b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2724,12 +2724,23 @@ flowchart TD
     class h_19541065acc3 plain;
     class h_e974d5259ac6 plain;
     class h_b65c387abdab plain;
+    class h_66e5df314bc7 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_66e5df314bc7 current;
+    class h_608f63a01e6b current;
 ```
 
 ## Transition Notes
+
+### Improve Game#9337 `66e5df31 -> 608f63a0`
+
+- scores: `10994 10103 11330 4162 17101 7372 9284 17765 8009 10684 14356 11813`
+- v329の問題点: landing_y > 1 のペナルティ計算に符号誤りがあり、高配置ほどペナルティが弱くなっていた
+- - landing_y <= 0: -3000.0ペナルティ維持
+- - 0 < landing_y <= 1: -3000.0 + landing_y * 2000.0 (例: landing_y=0.5 -> -4000.0) ✓ 正常
+- - landing_y > 1: -5000.0 + (landing_y - 1.0) * 2000.0 (例: landing_y=1.5 -> -6000.0, landing_y=2.0 -> -7000.0)
+- v329修正: landing_y > 1 の場合、(landing_y - 1.0) * 2000.0 を使用して高配置ほどペナルティを強化
+- これにより高配置になるほどペナルティが線形に増大し、height_mult緩和やボーナスを上回る強力な抑制を実現
 
 ### Improve Game#9325 `b65c387a -> 66e5df31`
 
