@@ -255,8 +255,11 @@ if acc.get('hash') and curr_hash and acc.get('hash') != curr_hash:
 elif curr_hash:
     acc['hash'] = curr_hash
 
+raw_score = os.environ.get('LAST_RAW_SCORE', '')
 acc['files'].append('$archive_file')
 acc['scores'] = (acc['scores'] + ' $score').strip()
+if raw_score:
+    acc['raw_scores'] = (acc.get('raw_scores', '') + ' ' + raw_score).strip()
 if '$soviet' == 'true':
     acc['soviet'] = True
 if '$russia' == 'true':

@@ -389,6 +389,7 @@ print(d.get('score', 0) + bonus)
 	fi
 
 	# 改善用の rolling/queued 記録はここで一度だけ行う
+	export LAST_RAW_SCORE="$LAST_SCORE"
 	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
 
 	# サイクル序盤: 前サイクルの改善結果 or 粛清ラジオをここで発火
@@ -406,16 +407,23 @@ print(d.get('score', 0) + bonus)
 	# 予想サイクル進捗をチャットに投稿
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		local pred_progress
-		pred_progress=$(python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" <<'PY'
+		pred_progress=$(python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" "$EVAL_SCORE" <<'PY'
 import json, sys
 acc = json.load(open(sys.argv[1]))
 count = acc.get("count", 0)
 scores = acc.get("scores", "").split()
-avg = sum(int(s) for s in scores) // len(scores) if scores else 0
+eval_avg = sum(int(s) for s in scores) // len(scores) if scores else 0
+raw_scores = acc.get("raw_scores", "").split()
+raw_avg = sum(int(s) for s in raw_scores) // len(raw_scores) if raw_scores else 0
 remain = 12 - count
 russia = acc.get("russia_count", 0)
 russia_str = f" 🇷🇺×{russia}" if russia > 0 else ""
-print(f"サイクル進捗 [{count}/12] score={sys.argv[2]} | avg={avg}{russia_str} (次の戦略改善まであと{remain}試合)")
+raw = sys.argv[2]
+eval_s = sys.argv[3]
+bonus = int(eval_s) - int(raw)
+bonus_str = f"(+{bonus})" if bonus > 0 else ""
+raw_avg_str = f"raw_avg={raw_avg} " if raw_scores else ""
+print(f"[{count}/12] score={raw}{bonus_str} | {raw_avg_str}eval_avg={eval_avg}{russia_str} (あと{remain}試合)")
 PY
 		)
 		./twitch_chat.sh send "${pred_progress}" 2>/dev/null &
