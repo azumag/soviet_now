@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-23 17:49:57 JST`
+- Updated: `2026-03-23 18:35:07 JST`
 - Nodes: `691`
-- Edges: `970`
-- Current: `b4f65529d44a`
-- Anchor: `cbd3e0e2f570`
+- Edges: `972`
+- Current: `1fab86e56ddc`
+- Anchor: `1fab86e56ddc`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,66 +15,67 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=1577.5"]
-    h_2e9fe5d1f791["2e9fe5d1f791<br/>g=36 n=20<br/>comp=1585.4"]
-    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>g=60 n=20<br/>comp=1554.5"]
-    h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=1679.0"]
-    h_94f76057d4b6["94f76057d4b6<br/>g=12 n=12<br/>comp=1479.3"]
-    h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=1718.1"]
-    h_e5cecbe37d12["e5cecbe37d12<br/>g=12 n=12<br/>comp=1250.3"]
-    h_0e06d456a6c9["0e06d456a6c9<br/>g=24 n=20<br/>comp=1552.8"]
-    h_9fe9a7007268["9fe9a7007268<br/>g=12 n=12<br/>comp=1593.6"]
-    h_0c0301a98e5f["0c0301a98e5f<br/>g=12 n=12<br/>comp=1008.1"]
-    h_a9d3868684e2["a9d3868684e2<br/>g=12 n=12<br/>comp=1577.2"]
-    h_502d6ae93732["502d6ae93732<br/>g=24 n=20<br/>comp=1647.9"]
-    h_46d67246f7a7["46d67246f7a7<br/>g=12 n=12<br/>comp=1627.3"]
-    h_b4eb6483e41e["b4eb6483e41e<br/>g=12 n=12<br/>comp=1672.9"]
-    h_86541343fec6["86541343fec6<br/>g=12 n=12<br/>comp=1729.3"]
-    h_bee7ce1f9bbd["bee7ce1f9bbd<br/>g=12 n=12<br/>comp=1779.2"]
-    h_b59ea0c231e3["b59ea0c231e3<br/>g=12 n=12<br/>comp=1653.4"]
-    h_c3ae4e32c788["c3ae4e32c788<br/>g=24 n=20<br/>comp=1776.4"]
-    h_2537fc9be12e["2537fc9be12e<br/>g=12 n=12<br/>comp=1733.5"]
-    h_1f0d87a2411f["1f0d87a2411f<br/>g=12 n=12<br/>comp=1425.7"]
-    h_550d15119e1e["550d15119e1e<br/>g=12 n=12<br/>comp=1764.4"]
-    h_7cf265bae6ef["7cf265bae6ef<br/>g=36 n=20<br/>comp=1722.4"]
-    h_085a14fbeb1f["085a14fbeb1f<br/>g=12 n=12<br/>comp=1430.7"]
-    h_713eae62a2e4["713eae62a2e4<br/>g=12 n=12<br/>comp=1581.6"]
-    h_dff2a8ce1158["dff2a8ce1158<br/>g=12 n=12<br/>comp=1452.2"]
-    h_8c8c6a7eca5d["8c8c6a7eca5d<br/>g=12 n=12<br/>comp=1544.1"]
-    h_0b09e6f9213f["0b09e6f9213f<br/>g=36 n=20<br/>comp=1653.3"]
-    h_39b6da4c414b["39b6da4c414b<br/>g=12 n=12<br/>comp=1655.3"]
-    h_db63f1e22f67["db63f1e22f67<br/>g=12 n=12<br/>comp=1600.8"]
-    h_52401ce37fac["52401ce37fac<br/>g=12 n=12<br/>comp=1321.3"]
-    h_d66fe5b0e266["d66fe5b0e266<br/>g=12 n=12<br/>comp=1669.5"]
-    h_7132fb7a8ddb["7132fb7a8ddb<br/>g=12 n=12<br/>comp=1589.0"]
-    h_d2edb10705a4["d2edb10705a4<br/>g=12 n=12<br/>comp=1489.5"]
-    h_82f7b2693691["82f7b2693691<br/>g=12 n=12<br/>comp=1697.8"]
-    h_d4c94e87c479["d4c94e87c479<br/>g=12 n=12<br/>comp=1629.8"]
-    h_4e795c3ae3bb["4e795c3ae3bb<br/>g=12 n=12<br/>comp=1339.6"]
-    h_b82e78f29aca["b82e78f29aca<br/>g=12 n=12<br/>comp=1573.2"]
-    h_cf520bbb7509["cf520bbb7509<br/>g=19 n=19<br/>comp=1546.6"]
-    h_27ce39e51504["27ce39e51504<br/>g=36 n=20<br/>comp=1611.2"]
+    h_1fab86e56ddc["1fab86e56ddc<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12704.2"]
+    h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=9699.2"]
+    h_2e9fe5d1f791["2e9fe5d1f791<br/>g=36 n=20<br/>comp=10486.0"]
+    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>g=60 n=20<br/>comp=9461.5"]
+    h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=10083.2"]
+    h_94f76057d4b6["94f76057d4b6<br/>g=12 n=12<br/>comp=9278.0"]
+    h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=11064.1"]
+    h_e5cecbe37d12["e5cecbe37d12<br/>g=12 n=12<br/>comp=8635.5"]
+    h_0e06d456a6c9["0e06d456a6c9<br/>g=24 n=20<br/>comp=10504.0"]
+    h_9fe9a7007268["9fe9a7007268<br/>g=12 n=12<br/>comp=9942.9"]
+    h_0c0301a98e5f["0c0301a98e5f<br/>g=12 n=12<br/>comp=8318.3"]
+    h_a9d3868684e2["a9d3868684e2<br/>g=12 n=12<br/>comp=10302.6"]
+    h_502d6ae93732["502d6ae93732<br/>g=24 n=20<br/>comp=10798.7"]
+    h_46d67246f7a7["46d67246f7a7<br/>g=12 n=12<br/>comp=10334.4"]
+    h_b4eb6483e41e["b4eb6483e41e<br/>g=12 n=12<br/>comp=10639.4"]
+    h_86541343fec6["86541343fec6<br/>g=12 n=12<br/>comp=10988.4"]
+    h_bee7ce1f9bbd["bee7ce1f9bbd<br/>g=12 n=12<br/>comp=10387.1"]
+    h_b59ea0c231e3["b59ea0c231e3<br/>g=12 n=12<br/>comp=10830.5"]
+    h_c3ae4e32c788["c3ae4e32c788<br/>g=24 n=20<br/>comp=10691.4"]
+    h_2537fc9be12e["2537fc9be12e<br/>g=12 n=12<br/>comp=10594.7"]
+    h_1f0d87a2411f["1f0d87a2411f<br/>g=12 n=12<br/>comp=9492.3"]
+    h_550d15119e1e["550d15119e1e<br/>g=12 n=12<br/>comp=10916.0"]
+    h_7cf265bae6ef["7cf265bae6ef<br/>g=36 n=20<br/>comp=10655.8"]
+    h_085a14fbeb1f["085a14fbeb1f<br/>g=12 n=12<br/>comp=9931.5"]
+    h_713eae62a2e4["713eae62a2e4<br/>g=12 n=12<br/>comp=10828.6"]
+    h_dff2a8ce1158["dff2a8ce1158<br/>g=12 n=12<br/>comp=9427.0"]
+    h_8c8c6a7eca5d["8c8c6a7eca5d<br/>g=12 n=12<br/>comp=9831.9"]
+    h_0b09e6f9213f["0b09e6f9213f<br/>g=36 n=20<br/>comp=10594.9"]
+    h_39b6da4c414b["39b6da4c414b<br/>g=12 n=12<br/>comp=11144.9"]
+    h_db63f1e22f67["db63f1e22f67<br/>g=12 n=12<br/>comp=10789.8"]
+    h_52401ce37fac["52401ce37fac<br/>g=12 n=12<br/>comp=9517.2"]
+    h_d66fe5b0e266["d66fe5b0e266<br/>g=12 n=12<br/>comp=10610.6"]
+    h_7132fb7a8ddb["7132fb7a8ddb<br/>g=12 n=12<br/>comp=9592.5"]
+    h_d2edb10705a4["d2edb10705a4<br/>g=12 n=12<br/>comp=9755.9"]
+    h_82f7b2693691["82f7b2693691<br/>g=12 n=12<br/>comp=11168.8"]
+    h_d4c94e87c479["d4c94e87c479<br/>g=12 n=12<br/>comp=9710.2"]
+    h_4e795c3ae3bb["4e795c3ae3bb<br/>g=12 n=12<br/>comp=8352.5"]
+    h_b82e78f29aca["b82e78f29aca<br/>g=12 n=12<br/>comp=10357.3"]
+    h_cf520bbb7509["cf520bbb7509<br/>g=19 n=19<br/>comp=10039.9"]
+    h_27ce39e51504["27ce39e51504<br/>g=36 n=20<br/>comp=10110.8"]
     h_455f76305eb1["455f76305eb1<br/>g=1 n=1<br/>comp=2057.0"]
-    h_573b22daa1ae["573b22daa1ae<br/>g=12 n=12<br/>comp=1348.1"]
-    h_7f3565633498["7f3565633498<br/>g=12 n=12<br/>comp=1563.9"]
-    h_8f9dab5b9198["8f9dab5b9198<br/>g=12 n=12<br/>comp=1561.8"]
-    h_980abcc574c3["980abcc574c3<br/>g=12 n=12<br/>comp=1638.5"]
-    h_00276c327ece["00276c327ece<br/>g=12 n=12<br/>comp=1450.8"]
-    h_f6f30d9bbafe["f6f30d9bbafe<br/>g=12 n=12<br/>comp=1632.8"]
-    h_1534cccd7585["1534cccd7585<br/>g=12 n=12<br/>comp=1625.2"]
-    h_ede288659cc0["ede288659cc0<br/>g=12 n=12<br/>comp=1329.0"]
-    h_177e228d6908["177e228d6908<br/>g=12 n=12<br/>comp=1484.1"]
-    h_a3c68675933a["a3c68675933a<br/>g=25 n=20<br/>comp=1697.9"]
-    h_b0ae904c0e57["b0ae904c0e57<br/>g=12 n=12<br/>comp=1700.3"]
-    h_65b1f5370d60["65b1f5370d60<br/>g=12 n=12<br/>comp=1474.3"]
-    h_8de4cab8c8f0["8de4cab8c8f0<br/>g=12 n=12<br/>comp=1523.4"]
-    h_ec17666b9ae7["ec17666b9ae7<br/>g=12 n=12<br/>comp=1336.6"]
-    h_0fe801339bf1["0fe801339bf1<br/>g=12 n=12<br/>comp=1804.4"]
-    h_4bd5583eebf5["4bd5583eebf5<br/>g=12 n=12<br/>comp=1944.6"]
-    h_cbd3e0e2f570["cbd3e0e2f570<br/>ANCHOR<br/>g=12 n=12<br/>comp=2897.9"]
+    h_573b22daa1ae["573b22daa1ae<br/>g=12 n=12<br/>comp=8179.3"]
+    h_7f3565633498["7f3565633498<br/>g=12 n=12<br/>comp=10320.0"]
+    h_8f9dab5b9198["8f9dab5b9198<br/>g=12 n=12<br/>comp=10244.5"]
+    h_980abcc574c3["980abcc574c3<br/>g=12 n=12<br/>comp=10485.4"]
+    h_00276c327ece["00276c327ece<br/>g=12 n=12<br/>comp=8654.5"]
+    h_f6f30d9bbafe["f6f30d9bbafe<br/>g=12 n=12<br/>comp=10395.5"]
+    h_1534cccd7585["1534cccd7585<br/>g=12 n=12<br/>comp=9452.2"]
+    h_ede288659cc0["ede288659cc0<br/>g=12 n=12<br/>comp=8836.1"]
+    h_177e228d6908["177e228d6908<br/>g=12 n=12<br/>comp=9287.7"]
+    h_a3c68675933a["a3c68675933a<br/>g=25 n=20<br/>comp=11103.7"]
+    h_b0ae904c0e57["b0ae904c0e57<br/>g=12 n=12<br/>comp=10452.4"]
+    h_65b1f5370d60["65b1f5370d60<br/>g=12 n=12<br/>comp=9119.8"]
+    h_8de4cab8c8f0["8de4cab8c8f0<br/>g=12 n=12<br/>comp=8522.7"]
+    h_ec17666b9ae7["ec17666b9ae7<br/>g=12 n=12<br/>comp=8306.7"]
+    h_0fe801339bf1["0fe801339bf1<br/>g=12 n=12<br/>comp=10893.9"]
+    h_4bd5583eebf5["4bd5583eebf5<br/>g=12 n=12<br/>comp=11323.8"]
+    h_cbd3e0e2f570["cbd3e0e2f570<br/>g=24 n=20<br/>comp=9606.7"]
+    h_b4f65529d44a["b4f65529d44a<br/>g=2 n=2<br/>comp=9358.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_b4f65529d44a["b4f65529d44a<br/>CURRENT"]
 
     h_63f836102d11 -->|improve| h_2e9fe5d1f791
     h_2e9fe5d1f791 -->|improve| h_3f5d04fbf3e5
@@ -149,12 +150,15 @@ flowchart TD
     h_0fe801339bf1 -->|improve| h_4bd5583eebf5
     h_4bd5583eebf5 -->|improve| h_cbd3e0e2f570
     h_cbd3e0e2f570 -->|improve| h_b4f65529d44a
+    h_b4f65529d44a -. rollback .-> h_cbd3e0e2f570
+    h_cbd3e0e2f570 -. rollback .-> h_1fab86e56ddc
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_1fab86e56ddc current_anchor;
     class h_63f836102d11 plain;
     class h_2e9fe5d1f791 plain;
     class h_3f5d04fbf3e5 plain;
@@ -211,10 +215,10 @@ flowchart TD
     class h_ec17666b9ae7 plain;
     class h_0fe801339bf1 plain;
     class h_4bd5583eebf5 plain;
-    class h_cbd3e0e2f570 anchor;
+    class h_cbd3e0e2f570 plain;
+    class h_b4f65529d44a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_b4f65529d44a current;
 ```
 
 ## Detail 1/9
@@ -1668,7 +1672,7 @@ flowchart TD
     h_d7e505ff9490["d7e505ff9490<br/>g=11 n=11<br/>comp=1001.7"]
     h_74d2be53d875["74d2be53d875<br/>g=14 n=14<br/>comp=1035.4"]
     h_3bc61278c800["3bc61278c800<br/>g=12 n=12<br/>comp=888.3"]
-    h_9d6fe31baf81["9d6fe31baf81<br/>g=30 n=20<br/>comp=1338.5"]
+    h_9d6fe31baf81["9d6fe31baf81<br/>g=30 n=20<br/>comp=9489.4"]
     h_cffc0644c1fb["cffc0644c1fb<br/>g=11 n=11<br/>comp=1028.8"]
     h_af010e4e7088["af010e4e7088<br/>g=11 n=11<br/>comp=1089.0"]
     h_8dd849e1c259["8dd849e1c259<br/>g=27 n=20<br/>comp=1092.8"]
@@ -1713,24 +1717,24 @@ flowchart TD
     h_8479963ec45c["8479963ec45c<br/>g=14 n=14<br/>comp=1123.3"]
     h_924cfcf7e0d2["924cfcf7e0d2<br/>g=11 n=11<br/>comp=900.4"]
     h_3c4475f0b59d["3c4475f0b59d<br/>g=17 n=17<br/>comp=1055.4"]
-    h_900c44e033ca["900c44e033ca<br/>g=58 n=20<br/>comp=976.8"]
+    h_900c44e033ca["900c44e033ca<br/>g=58 n=20<br/>comp=9140.2"]
     h_26287fbc6945["26287fbc6945<br/>g=23 n=20<br/>comp=1132.2"]
     h_a6f551f457fc["a6f551f457fc<br/>g=13 n=13<br/>comp=1287.7"]
-    h_8d2792a50aba["8d2792a50aba<br/>g=73 n=20<br/>comp=1190.8"]
+    h_8d2792a50aba["8d2792a50aba<br/>g=73 n=20<br/>comp=9805.8"]
     h_4237be147960["4237be147960<br/>g=12 n=12<br/>comp=1063.8"]
-    h_8219f97aba7a["8219f97aba7a<br/>g=12 n=12<br/>comp=849.7"]
-    h_a2cb3537b678["a2cb3537b678<br/>g=12 n=12<br/>comp=1028.3"]
-    h_23345b5829ed["23345b5829ed<br/>g=12 n=12<br/>comp=1059.4"]
-    h_13fdd446d98f["13fdd446d98f<br/>g=15 n=15<br/>comp=1130.3"]
-    h_17b90a6091ab["17b90a6091ab<br/>g=16 n=16<br/>comp=1127.5"]
-    h_edbe5d85ae1a["edbe5d85ae1a<br/>g=13 n=13<br/>comp=905.8"]
-    h_8b0f3c625308["8b0f3c625308<br/>g=14 n=14<br/>comp=1274.6"]
-    h_4cfb010e2add["4cfb010e2add<br/>g=14 n=14<br/>comp=923.5"]
-    h_e60ffd95cb26["e60ffd95cb26<br/>g=13 n=13<br/>comp=1137.6"]
-    h_636722a45a6e["636722a45a6e<br/>g=13 n=13<br/>comp=1154.5"]
-    h_56747e968f87["56747e968f87<br/>g=14 n=14<br/>comp=1300.2"]
-    h_3ef39a374acf["3ef39a374acf<br/>g=13 n=13<br/>comp=1080.0"]
-    h_e2a889360de0["e2a889360de0<br/>g=26 n=20<br/>comp=1082.0"]
+    h_8219f97aba7a["8219f97aba7a<br/>g=12 n=12<br/>comp=8112.5"]
+    h_a2cb3537b678["a2cb3537b678<br/>g=12 n=12<br/>comp=9311.7"]
+    h_23345b5829ed["23345b5829ed<br/>g=12 n=12<br/>comp=10236.9"]
+    h_13fdd446d98f["13fdd446d98f<br/>g=15 n=15<br/>comp=9683.8"]
+    h_17b90a6091ab["17b90a6091ab<br/>g=16 n=16<br/>comp=9860.4"]
+    h_edbe5d85ae1a["edbe5d85ae1a<br/>g=13 n=13<br/>comp=8744.8"]
+    h_8b0f3c625308["8b0f3c625308<br/>g=14 n=14<br/>comp=10501.0"]
+    h_4cfb010e2add["4cfb010e2add<br/>g=14 n=14<br/>comp=9954.7"]
+    h_e60ffd95cb26["e60ffd95cb26<br/>g=13 n=13<br/>comp=9815.9"]
+    h_636722a45a6e["636722a45a6e<br/>g=13 n=13<br/>comp=10059.3"]
+    h_56747e968f87["56747e968f87<br/>g=14 n=14<br/>comp=10984.9"]
+    h_3ef39a374acf["3ef39a374acf<br/>g=13 n=13<br/>comp=9230.2"]
+    h_e2a889360de0["e2a889360de0<br/>g=26 n=20<br/>comp=9845.6"]
 
     h_82d52dfb6031 -->|improve| h_f55c14077c2a
     h_f55c14077c2a -->|improve| h_4dddf9d3a5a3
@@ -1927,90 +1931,90 @@ flowchart TD
 - Cross-chunk link: `923af923a304 --improve--> fc1b183def64`
 - Cross-chunk link: `fc1b183def64 -.rollback.-> 923af923a304`
 - Cross-chunk link: `923af923a304 --improve--> 4f39face490d`
-- Cross-chunk link: `... and 2 more`
+- Cross-chunk link: `... and 3 more`
 
 ```mermaid
 flowchart TD
-    h_6d9586d182e0["6d9586d182e0<br/>g=14 n=14<br/>comp=853.7"]
-    h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=1244.7"]
-    h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=1045.9"]
-    h_8783d96fea8f["8783d96fea8f<br/>g=14 n=14<br/>comp=1270.3"]
-    h_e4a3ff55afbf["e4a3ff55afbf<br/>g=20 n=20<br/>comp=912.4"]
-    h_f93db007ea2d["f93db007ea2d<br/>g=15 n=15<br/>comp=1157.0"]
-    h_8cecce8bb7c6["8cecce8bb7c6<br/>g=17 n=17<br/>comp=1226.5"]
-    h_c61f446bc071["c61f446bc071<br/>g=19 n=19<br/>comp=1130.1"]
-    h_67f84a19927e["67f84a19927e<br/>g=18 n=18<br/>comp=998.2"]
-    h_faae21cf61e0["faae21cf61e0<br/>g=21 n=20<br/>comp=1224.1"]
-    h_04234237c864["04234237c864<br/>g=17 n=17<br/>comp=965.8"]
-    h_8c76e22ff7c8["8c76e22ff7c8<br/>g=15 n=15<br/>comp=1143.0"]
-    h_cf42a97de4d5["cf42a97de4d5<br/>g=22 n=20<br/>comp=985.1"]
-    h_f2e07b06f8f1["f2e07b06f8f1<br/>g=14 n=14<br/>comp=1213.4"]
-    h_b778f2a512ef["b778f2a512ef<br/>g=13 n=13<br/>comp=1206.8"]
-    h_e94c0f0ab470["e94c0f0ab470<br/>g=14 n=14<br/>comp=1029.7"]
-    h_9d94bf5a9aec["9d94bf5a9aec<br/>g=14 n=14<br/>comp=1361.4"]
-    h_80c9a9c65f4f["80c9a9c65f4f<br/>g=16 n=16<br/>comp=1257.5"]
-    h_c3d205b91761["c3d205b91761<br/>g=19 n=19<br/>comp=1198.0"]
-    h_73df06b7c8b4["73df06b7c8b4<br/>g=15 n=15<br/>comp=1237.8"]
-    h_e8c175933cd7["e8c175933cd7<br/>g=29 n=20<br/>comp=1280.3"]
-    h_fccc64cd2326["fccc64cd2326<br/>g=72 n=20<br/>comp=1347.0"]
-    h_0c419a7e906c["0c419a7e906c<br/>g=15 n=15<br/>comp=1131.9"]
-    h_a4ad3ca358d9["a4ad3ca358d9<br/>g=13 n=13<br/>comp=1188.2"]
-    h_229f1b115fd9["229f1b115fd9<br/>g=13 n=13<br/>comp=1246.4"]
-    h_4162271548a1["4162271548a1<br/>g=14 n=14<br/>comp=1207.2"]
-    h_aadc74dd62a7["aadc74dd62a7<br/>g=26 n=20<br/>comp=1327.5"]
-    h_92d45dc0ae05["92d45dc0ae05<br/>g=13 n=13<br/>comp=1222.5"]
-    h_f121c3a5c869["f121c3a5c869<br/>g=13 n=13<br/>comp=1080.2"]
-    h_69fb91cb8907["69fb91cb8907<br/>g=13 n=13<br/>comp=1257.6"]
-    h_a3e1051a0c6d["a3e1051a0c6d<br/>g=13 n=13<br/>comp=1166.8"]
-    h_e8fe85e17249["e8fe85e17249<br/>g=14 n=14<br/>comp=1218.1"]
-    h_c32336e8228a["c32336e8228a<br/>g=16 n=16<br/>comp=1312.0"]
-    h_b645f6da7910["b645f6da7910<br/>g=42 n=20<br/>comp=1275.2"]
-    h_9ea35a35fc54["9ea35a35fc54<br/>g=12 n=12<br/>comp=1085.0"]
-    h_340d4a08b62a["340d4a08b62a<br/>g=15 n=15<br/>comp=1265.8"]
-    h_6fc76d37f76a["6fc76d37f76a<br/>g=13 n=13<br/>comp=1237.7"]
-    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>g=75 n=20<br/>comp=1202.8"]
-    h_8013dc80e4f3["8013dc80e4f3<br/>g=29 n=20<br/>comp=1207.7"]
-    h_d6fe29751fc9["d6fe29751fc9<br/>g=12 n=12<br/>comp=776.1"]
-    h_6e0f0a2c7486["6e0f0a2c7486<br/>g=41 n=20<br/>comp=1292.5"]
-    h_857a8f93be44["857a8f93be44<br/>g=20 n=20<br/>comp=1237.8"]
-    h_5e9735de41ac["5e9735de41ac<br/>g=27 n=20<br/>comp=1147.4"]
-    h_9eb59f4bcdd8["9eb59f4bcdd8<br/>g=12 n=12<br/>comp=1100.3"]
-    h_5559d0b91da6["5559d0b91da6<br/>g=12 n=12<br/>comp=1079.1"]
-    h_cc74585d1fa6["cc74585d1fa6<br/>g=13 n=13<br/>comp=1261.5"]
-    h_b3c32d709d62["b3c32d709d62<br/>g=45 n=20<br/>comp=1148.8"]
-    h_eb2461c06609["eb2461c06609<br/>g=12 n=12<br/>comp=904.3"]
-    h_870fabf058b5["870fabf058b5<br/>g=26 n=20<br/>comp=1147.8"]
-    h_3835dc75df3f["3835dc75df3f<br/>g=12 n=12<br/>comp=1169.7"]
-    h_55357f97ee00["55357f97ee00<br/>g=12 n=12<br/>comp=1050.2"]
-    h_25e0ff7f9225["25e0ff7f9225<br/>g=12 n=12<br/>comp=1128.6"]
-    h_c76be42c2045["c76be42c2045<br/>g=12 n=12<br/>comp=1065.4"]
-    h_a35784f5c9d6["a35784f5c9d6<br/>g=13 n=13<br/>comp=1292.0"]
-    h_a1c73824d54e["a1c73824d54e<br/>g=47 n=20<br/>comp=1227.3"]
-    h_923af923a304["923af923a304<br/>g=49 n=20<br/>comp=1196.9"]
-    h_27e29e219aba["27e29e219aba<br/>g=12 n=12<br/>comp=1171.2"]
-    h_d0a0985c1de6["d0a0985c1de6<br/>g=12 n=12<br/>comp=1058.6"]
-    h_938fb6a1a482["938fb6a1a482<br/>g=14 n=14<br/>comp=1301.0"]
-    h_23864d38e12b["23864d38e12b<br/>g=14 n=14<br/>comp=1132.8"]
-    h_c54079cc16e3["c54079cc16e3<br/>g=12 n=12<br/>comp=1095.5"]
-    h_087de14c986d["087de14c986d<br/>g=29 n=20<br/>comp=1124.0"]
-    h_f6e3395deb71["f6e3395deb71<br/>g=12 n=12<br/>comp=1284.7"]
-    h_467e45d0adc3["467e45d0adc3<br/>g=119 n=20<br/>comp=1323.1"]
-    h_53d0278dac36["53d0278dac36<br/>g=45 n=20<br/>comp=1231.0"]
-    h_4da6ecce5bb9["4da6ecce5bb9<br/>g=36 n=20<br/>comp=1192.4"]
-    h_8f22f3e3c974["8f22f3e3c974<br/>g=12 n=12<br/>comp=1222.3"]
-    h_5052b939f23f["5052b939f23f<br/>g=13 n=13<br/>comp=1293.6"]
-    h_5c442079edc8["5c442079edc8<br/>g=12 n=12<br/>comp=1226.9"]
-    h_b1f764752264["b1f764752264<br/>g=13 n=13<br/>comp=1176.8"]
-    h_f4a86d6cf2f4["f4a86d6cf2f4<br/>g=44 n=20<br/>comp=1317.9"]
-    h_f45c1115e925["f45c1115e925<br/>g=12 n=12<br/>comp=1200.9"]
-    h_0d1cb89482eb["0d1cb89482eb<br/>g=12 n=12<br/>comp=824.0"]
-    h_67ca531a9e2c["67ca531a9e2c<br/>g=12 n=12<br/>comp=1050.4"]
-    h_597dde8a9032["597dde8a9032<br/>g=12 n=12<br/>comp=1264.3"]
-    h_1fab86e56ddc["1fab86e56ddc<br/>g=12 n=12<br/>comp=1402.1"]
-    h_7f3bfa93dbef["7f3bfa93dbef<br/>g=43 n=20<br/>comp=1340.7"]
-    h_a9b396182ae6["a9b396182ae6<br/>g=22 n=20<br/>comp=1364.1"]
-    h_7df607868da2["7df607868da2<br/>g=12 n=12<br/>comp=894.6"]
-    h_424c0fa79ba4["424c0fa79ba4<br/>g=12 n=12<br/>comp=964.7"]
+    h_6d9586d182e0["6d9586d182e0<br/>g=14 n=14<br/>comp=8753.6"]
+    h_8c79ef457733["8c79ef457733<br/>g=14 n=14<br/>comp=10844.9"]
+    h_51d6d7502cab["51d6d7502cab<br/>g=14 n=14<br/>comp=9797.0"]
+    h_8783d96fea8f["8783d96fea8f<br/>g=14 n=14<br/>comp=9824.0"]
+    h_e4a3ff55afbf["e4a3ff55afbf<br/>g=20 n=20<br/>comp=9154.3"]
+    h_f93db007ea2d["f93db007ea2d<br/>g=15 n=15<br/>comp=10225.2"]
+    h_8cecce8bb7c6["8cecce8bb7c6<br/>g=17 n=17<br/>comp=9597.3"]
+    h_c61f446bc071["c61f446bc071<br/>g=19 n=19<br/>comp=10284.9"]
+    h_67f84a19927e["67f84a19927e<br/>g=18 n=18<br/>comp=9614.2"]
+    h_faae21cf61e0["faae21cf61e0<br/>g=21 n=20<br/>comp=10381.3"]
+    h_04234237c864["04234237c864<br/>g=17 n=17<br/>comp=8949.9"]
+    h_8c76e22ff7c8["8c76e22ff7c8<br/>g=15 n=15<br/>comp=9840.4"]
+    h_cf42a97de4d5["cf42a97de4d5<br/>g=22 n=20<br/>comp=9373.4"]
+    h_f2e07b06f8f1["f2e07b06f8f1<br/>g=14 n=14<br/>comp=9971.7"]
+    h_b778f2a512ef["b778f2a512ef<br/>g=13 n=13<br/>comp=10264.4"]
+    h_e94c0f0ab470["e94c0f0ab470<br/>g=14 n=14<br/>comp=9615.1"]
+    h_9d94bf5a9aec["9d94bf5a9aec<br/>g=14 n=14<br/>comp=10912.9"]
+    h_80c9a9c65f4f["80c9a9c65f4f<br/>g=16 n=16<br/>comp=10409.9"]
+    h_c3d205b91761["c3d205b91761<br/>g=19 n=19<br/>comp=10327.6"]
+    h_73df06b7c8b4["73df06b7c8b4<br/>g=15 n=15<br/>comp=9872.9"]
+    h_e8c175933cd7["e8c175933cd7<br/>g=29 n=20<br/>comp=10589.6"]
+    h_fccc64cd2326["fccc64cd2326<br/>g=72 n=20<br/>comp=10137.2"]
+    h_0c419a7e906c["0c419a7e906c<br/>g=15 n=15<br/>comp=10512.9"]
+    h_a4ad3ca358d9["a4ad3ca358d9<br/>g=13 n=13<br/>comp=10593.9"]
+    h_229f1b115fd9["229f1b115fd9<br/>g=13 n=13<br/>comp=10781.7"]
+    h_4162271548a1["4162271548a1<br/>g=14 n=14<br/>comp=10992.9"]
+    h_aadc74dd62a7["aadc74dd62a7<br/>g=26 n=20<br/>comp=10779.2"]
+    h_92d45dc0ae05["92d45dc0ae05<br/>g=13 n=13<br/>comp=10130.8"]
+    h_f121c3a5c869["f121c3a5c869<br/>g=13 n=13<br/>comp=10446.6"]
+    h_69fb91cb8907["69fb91cb8907<br/>g=13 n=13<br/>comp=10256.8"]
+    h_a3e1051a0c6d["a3e1051a0c6d<br/>g=13 n=13<br/>comp=9854.9"]
+    h_e8fe85e17249["e8fe85e17249<br/>g=14 n=14<br/>comp=10110.4"]
+    h_c32336e8228a["c32336e8228a<br/>g=16 n=16<br/>comp=10002.4"]
+    h_b645f6da7910["b645f6da7910<br/>g=42 n=20<br/>comp=10993.6"]
+    h_9ea35a35fc54["9ea35a35fc54<br/>g=12 n=12<br/>comp=8893.6"]
+    h_340d4a08b62a["340d4a08b62a<br/>g=15 n=15<br/>comp=11038.0"]
+    h_6fc76d37f76a["6fc76d37f76a<br/>g=13 n=13<br/>comp=10852.9"]
+    h_b6bfeb3b27ac["b6bfeb3b27ac<br/>g=75 n=20<br/>comp=10451.4"]
+    h_8013dc80e4f3["8013dc80e4f3<br/>g=29 n=20<br/>comp=10044.4"]
+    h_d6fe29751fc9["d6fe29751fc9<br/>g=12 n=12<br/>comp=8041.2"]
+    h_6e0f0a2c7486["6e0f0a2c7486<br/>g=41 n=20<br/>comp=10640.6"]
+    h_857a8f93be44["857a8f93be44<br/>g=20 n=20<br/>comp=11264.2"]
+    h_5e9735de41ac["5e9735de41ac<br/>g=27 n=20<br/>comp=9394.7"]
+    h_9eb59f4bcdd8["9eb59f4bcdd8<br/>g=12 n=12<br/>comp=9996.2"]
+    h_5559d0b91da6["5559d0b91da6<br/>g=12 n=12<br/>comp=9866.1"]
+    h_cc74585d1fa6["cc74585d1fa6<br/>g=13 n=13<br/>comp=10469.8"]
+    h_b3c32d709d62["b3c32d709d62<br/>g=45 n=20<br/>comp=11064.5"]
+    h_eb2461c06609["eb2461c06609<br/>g=12 n=12<br/>comp=8480.1"]
+    h_870fabf058b5["870fabf058b5<br/>g=26 n=20<br/>comp=10324.0"]
+    h_3835dc75df3f["3835dc75df3f<br/>g=12 n=12<br/>comp=10365.2"]
+    h_55357f97ee00["55357f97ee00<br/>g=12 n=12<br/>comp=9091.8"]
+    h_25e0ff7f9225["25e0ff7f9225<br/>g=12 n=12<br/>comp=10477.8"]
+    h_c76be42c2045["c76be42c2045<br/>g=12 n=12<br/>comp=9783.8"]
+    h_a35784f5c9d6["a35784f5c9d6<br/>g=13 n=13<br/>comp=10423.5"]
+    h_a1c73824d54e["a1c73824d54e<br/>g=47 n=20<br/>comp=9621.5"]
+    h_923af923a304["923af923a304<br/>g=49 n=20<br/>comp=10684.1"]
+    h_27e29e219aba["27e29e219aba<br/>g=12 n=12<br/>comp=10503.9"]
+    h_d0a0985c1de6["d0a0985c1de6<br/>g=12 n=12<br/>comp=9986.9"]
+    h_938fb6a1a482["938fb6a1a482<br/>g=14 n=14<br/>comp=10712.5"]
+    h_23864d38e12b["23864d38e12b<br/>g=14 n=14<br/>comp=9775.2"]
+    h_c54079cc16e3["c54079cc16e3<br/>g=12 n=12<br/>comp=9986.5"]
+    h_087de14c986d["087de14c986d<br/>g=29 n=20<br/>comp=10277.5"]
+    h_f6e3395deb71["f6e3395deb71<br/>g=12 n=12<br/>comp=11145.6"]
+    h_467e45d0adc3["467e45d0adc3<br/>g=119 n=20<br/>comp=10833.7"]
+    h_53d0278dac36["53d0278dac36<br/>g=45 n=20<br/>comp=10818.9"]
+    h_4da6ecce5bb9["4da6ecce5bb9<br/>g=36 n=20<br/>comp=10738.7"]
+    h_8f22f3e3c974["8f22f3e3c974<br/>g=12 n=12<br/>comp=10003.4"]
+    h_5052b939f23f["5052b939f23f<br/>g=13 n=13<br/>comp=10757.7"]
+    h_5c442079edc8["5c442079edc8<br/>g=12 n=12<br/>comp=10031.2"]
+    h_b1f764752264["b1f764752264<br/>g=13 n=13<br/>comp=10253.3"]
+    h_f4a86d6cf2f4["f4a86d6cf2f4<br/>g=44 n=20<br/>comp=10839.0"]
+    h_f45c1115e925["f45c1115e925<br/>g=12 n=12<br/>comp=9393.1"]
+    h_0d1cb89482eb["0d1cb89482eb<br/>g=12 n=12<br/>comp=8260.5"]
+    h_67ca531a9e2c["67ca531a9e2c<br/>g=12 n=12<br/>comp=9024.9"]
+    h_597dde8a9032["597dde8a9032<br/>g=12 n=12<br/>comp=10541.8"]
+    h_1fab86e56ddc["1fab86e56ddc<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12704.2"]
+    h_7f3bfa93dbef["7f3bfa93dbef<br/>g=43 n=20<br/>comp=10745.3"]
+    h_a9b396182ae6["a9b396182ae6<br/>g=22 n=20<br/>comp=11063.9"]
+    h_7df607868da2["7df607868da2<br/>g=12 n=12<br/>comp=9145.5"]
+    h_424c0fa79ba4["424c0fa79ba4<br/>g=12 n=12<br/>comp=9247.9"]
 
     h_6d9586d182e0 -->|improve| h_8c79ef457733
     h_8c79ef457733 -->|improve| h_51d6d7502cab
@@ -2207,7 +2211,7 @@ flowchart TD
     class h_0d1cb89482eb plain;
     class h_67ca531a9e2c plain;
     class h_597dde8a9032 plain;
-    class h_1fab86e56ddc plain;
+    class h_1fab86e56ddc current_anchor;
     class h_7f3bfa93dbef plain;
     class h_a9b396182ae6 plain;
     class h_7df607868da2 plain;
@@ -2235,86 +2239,86 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    h_4e4943f7f65c["4e4943f7f65c<br/>g=13 n=13<br/>comp=1199.3"]
-    h_ddd4637d2985["ddd4637d2985<br/>g=46 n=20<br/>comp=1201.6"]
-    h_1d954126e373["1d954126e373<br/>g=14 n=14<br/>comp=1320.1"]
-    h_cdfe94687752["cdfe94687752<br/>g=13 n=13<br/>comp=1042.3"]
-    h_2f1f5b99b8c2["2f1f5b99b8c2<br/>g=14 n=14<br/>comp=1276.1"]
-    h_7ef8916aba20["7ef8916aba20<br/>g=23 n=20<br/>comp=1149.0"]
-    h_fdf81ffa7ff2["fdf81ffa7ff2<br/>g=15 n=15<br/>comp=1281.6"]
-    h_9ac152ac3839["9ac152ac3839<br/>g=23 n=20<br/>comp=1275.0"]
-    h_2a950d0b89c0["2a950d0b89c0<br/>g=12 n=12<br/>comp=957.7"]
-    h_62c7a96cd8dd["62c7a96cd8dd<br/>g=14 n=14<br/>comp=1161.9"]
-    h_7bceafea8432["7bceafea8432<br/>g=47 n=20<br/>comp=1314.9"]
-    h_a971843b52a8["a971843b52a8<br/>g=32 n=20<br/>comp=1222.7"]
-    h_471181cba78c["471181cba78c<br/>g=12 n=12<br/>comp=1084.6"]
-    h_c20213c71bd2["c20213c71bd2<br/>g=14 n=14<br/>comp=1313.8"]
-    h_1597df9bcac2["1597df9bcac2<br/>g=27 n=20<br/>comp=1134.3"]
-    h_9a3b1ec437d3["9a3b1ec437d3<br/>g=14 n=14<br/>comp=1328.9"]
-    h_537f3be41b86["537f3be41b86<br/>g=13 n=13<br/>comp=1243.9"]
-    h_e7220ae7a691["e7220ae7a691<br/>g=43 n=20<br/>comp=1198.6"]
-    h_35002f03dde3["35002f03dde3<br/>g=12 n=12<br/>comp=1182.5"]
-    h_bace268d0534["bace268d0534<br/>g=27 n=20<br/>comp=1293.6"]
-    h_853d8220d56e["853d8220d56e<br/>g=28 n=20<br/>comp=1213.1"]
-    h_3de1a7e6ddf4["3de1a7e6ddf4<br/>g=12 n=12<br/>comp=1144.0"]
-    h_371db8fee677["371db8fee677<br/>g=15 n=15<br/>comp=1314.1"]
-    h_b6e0c3b6e909["b6e0c3b6e909<br/>g=33 n=20<br/>comp=1138.1"]
-    h_4d7f786718b8["4d7f786718b8<br/>g=14 n=14<br/>comp=1185.7"]
-    h_2b031b4f385b["2b031b4f385b<br/>g=31 n=20<br/>comp=1346.7"]
+    h_4e4943f7f65c["4e4943f7f65c<br/>g=13 n=13<br/>comp=10824.1"]
+    h_ddd4637d2985["ddd4637d2985<br/>g=46 n=20<br/>comp=10382.4"]
+    h_1d954126e373["1d954126e373<br/>g=14 n=14<br/>comp=10735.0"]
+    h_cdfe94687752["cdfe94687752<br/>g=13 n=13<br/>comp=9457.4"]
+    h_2f1f5b99b8c2["2f1f5b99b8c2<br/>g=14 n=14<br/>comp=10484.6"]
+    h_7ef8916aba20["7ef8916aba20<br/>g=23 n=20<br/>comp=10467.3"]
+    h_fdf81ffa7ff2["fdf81ffa7ff2<br/>g=15 n=15<br/>comp=10878.6"]
+    h_9ac152ac3839["9ac152ac3839<br/>g=23 n=20<br/>comp=10505.9"]
+    h_2a950d0b89c0["2a950d0b89c0<br/>g=12 n=12<br/>comp=9107.9"]
+    h_62c7a96cd8dd["62c7a96cd8dd<br/>g=14 n=14<br/>comp=10324.2"]
+    h_7bceafea8432["7bceafea8432<br/>g=47 n=20<br/>comp=11126.6"]
+    h_a971843b52a8["a971843b52a8<br/>g=32 n=20<br/>comp=10470.6"]
+    h_471181cba78c["471181cba78c<br/>g=12 n=12<br/>comp=10149.4"]
+    h_c20213c71bd2["c20213c71bd2<br/>g=14 n=14<br/>comp=9680.1"]
+    h_1597df9bcac2["1597df9bcac2<br/>g=27 n=20<br/>comp=9924.3"]
+    h_9a3b1ec437d3["9a3b1ec437d3<br/>g=14 n=14<br/>comp=10416.0"]
+    h_537f3be41b86["537f3be41b86<br/>g=13 n=13<br/>comp=9635.3"]
+    h_e7220ae7a691["e7220ae7a691<br/>g=43 n=20<br/>comp=11253.3"]
+    h_35002f03dde3["35002f03dde3<br/>g=12 n=12<br/>comp=10750.2"]
+    h_bace268d0534["bace268d0534<br/>g=27 n=20<br/>comp=11159.3"]
+    h_853d8220d56e["853d8220d56e<br/>g=28 n=20<br/>comp=11282.1"]
+    h_3de1a7e6ddf4["3de1a7e6ddf4<br/>g=12 n=12<br/>comp=9502.0"]
+    h_371db8fee677["371db8fee677<br/>g=15 n=15<br/>comp=11086.6"]
+    h_b6e0c3b6e909["b6e0c3b6e909<br/>g=33 n=20<br/>comp=9575.1"]
+    h_4d7f786718b8["4d7f786718b8<br/>g=14 n=14<br/>comp=10114.5"]
+    h_2b031b4f385b["2b031b4f385b<br/>g=31 n=20<br/>comp=10713.4"]
     h_23858122e5c6["23858122e5c6"]
-    h_922d37760c2b["922d37760c2b<br/>g=26 n=20<br/>comp=1132.7"]
-    h_7cde6f5b4387["7cde6f5b4387<br/>g=12 n=12<br/>comp=1290.2"]
-    h_fc1b183def64["fc1b183def64<br/>g=14 n=14<br/>comp=1208.5"]
-    h_4f39face490d["4f39face490d<br/>g=12 n=12<br/>comp=1066.1"]
-    h_346c7685b489["346c7685b489<br/>g=12 n=12<br/>comp=988.9"]
-    h_aa241c208ce0["aa241c208ce0<br/>g=39 n=20<br/>comp=1255.6"]
-    h_999fa1987f46["999fa1987f46<br/>g=12 n=12<br/>comp=1202.1"]
-    h_994de46c98dd["994de46c98dd<br/>g=49 n=20<br/>comp=1560.9"]
-    h_fc1f9b57c228["fc1f9b57c228<br/>g=12 n=12<br/>comp=1253.1"]
-    h_59b034e69dc5["59b034e69dc5<br/>g=12 n=12<br/>comp=1471.6"]
-    h_e07035eae709["e07035eae709<br/>g=41 n=20<br/>comp=1659.4"]
-    h_04ccf12d38e1["04ccf12d38e1<br/>g=12 n=12<br/>comp=1438.6"]
-    h_ed7175aba8a7["ed7175aba8a7<br/>g=14 n=14<br/>comp=1493.1"]
-    h_28f565693d84["28f565693d84<br/>g=13 n=13<br/>comp=1606.7"]
-    h_4eadb4f5eb3c["4eadb4f5eb3c<br/>g=13 n=13<br/>comp=1370.4"]
-    h_d88a7d1bba56["d88a7d1bba56<br/>g=51 n=20<br/>comp=1565.7"]
-    h_88e10e16f2c3["88e10e16f2c3<br/>g=43 n=20<br/>comp=1540.4"]
-    h_63b6794f9167["63b6794f9167<br/>g=13 n=13<br/>comp=1612.4"]
-    h_3b6ca2f80b46["3b6ca2f80b46<br/>g=12 n=12<br/>comp=1479.1"]
-    h_c8d603f06e3d["c8d603f06e3d<br/>g=76 n=20<br/>comp=1516.5"]
-    h_3b3c2479f429["3b3c2479f429<br/>g=40 n=20<br/>comp=1653.4"]
-    h_c35afe41a4f4["c35afe41a4f4<br/>g=25 n=20<br/>comp=1659.2"]
-    h_22fc9a6d3ec2["22fc9a6d3ec2<br/>g=12 n=12<br/>comp=1430.8"]
-    h_b4533b8c7dc6["b4533b8c7dc6<br/>g=63 n=20<br/>comp=1637.3"]
-    h_dd33e5c3775b["dd33e5c3775b<br/>g=30 n=20<br/>comp=1634.4"]
+    h_922d37760c2b["922d37760c2b<br/>g=26 n=20<br/>comp=10030.2"]
+    h_7cde6f5b4387["7cde6f5b4387<br/>g=12 n=12<br/>comp=10286.0"]
+    h_fc1b183def64["fc1b183def64<br/>g=14 n=14<br/>comp=10281.6"]
+    h_4f39face490d["4f39face490d<br/>g=12 n=12<br/>comp=9160.9"]
+    h_346c7685b489["346c7685b489<br/>g=12 n=12<br/>comp=9915.4"]
+    h_aa241c208ce0["aa241c208ce0<br/>g=39 n=20<br/>comp=9681.8"]
+    h_999fa1987f46["999fa1987f46<br/>g=12 n=12<br/>comp=11685.9"]
+    h_994de46c98dd["994de46c98dd<br/>g=49 n=20<br/>comp=10526.5"]
+    h_fc1f9b57c228["fc1f9b57c228<br/>g=12 n=12<br/>comp=9132.5"]
+    h_59b034e69dc5["59b034e69dc5<br/>g=12 n=12<br/>comp=9374.0"]
+    h_e07035eae709["e07035eae709<br/>g=41 n=20<br/>comp=10331.9"]
+    h_04ccf12d38e1["04ccf12d38e1<br/>g=12 n=12<br/>comp=9857.3"]
+    h_ed7175aba8a7["ed7175aba8a7<br/>g=14 n=14<br/>comp=10463.8"]
+    h_28f565693d84["28f565693d84<br/>g=13 n=13<br/>comp=10167.3"]
+    h_4eadb4f5eb3c["4eadb4f5eb3c<br/>g=13 n=13<br/>comp=9841.5"]
+    h_d88a7d1bba56["d88a7d1bba56<br/>g=51 n=20<br/>comp=10237.5"]
+    h_88e10e16f2c3["88e10e16f2c3<br/>g=43 n=20<br/>comp=10329.6"]
+    h_63b6794f9167["63b6794f9167<br/>g=13 n=13<br/>comp=10265.5"]
+    h_3b6ca2f80b46["3b6ca2f80b46<br/>g=12 n=12<br/>comp=10101.9"]
+    h_c8d603f06e3d["c8d603f06e3d<br/>g=76 n=20<br/>comp=9842.5"]
+    h_3b3c2479f429["3b3c2479f429<br/>g=40 n=20<br/>comp=10725.4"]
+    h_c35afe41a4f4["c35afe41a4f4<br/>g=25 n=20<br/>comp=9906.4"]
+    h_22fc9a6d3ec2["22fc9a6d3ec2<br/>g=12 n=12<br/>comp=10166.4"]
+    h_b4533b8c7dc6["b4533b8c7dc6<br/>g=63 n=20<br/>comp=10007.3"]
+    h_dd33e5c3775b["dd33e5c3775b<br/>g=30 n=20<br/>comp=10458.7"]
     h_17daee8db72a["17daee8db72a<br/>g=0"]
-    h_1497aa8c82aa["1497aa8c82aa<br/>g=12 n=12<br/>comp=1526.9"]
-    h_aa34486df2a1["aa34486df2a1<br/>g=14 n=14<br/>comp=1484.9"]
-    h_3176e7d0e4e6["3176e7d0e4e6<br/>g=13 n=13<br/>comp=1308.6"]
-    h_d3f101466026["d3f101466026<br/>g=13 n=13<br/>comp=1620.7"]
-    h_d5c1cf0a8981["d5c1cf0a8981<br/>g=61 n=20<br/>comp=1693.7"]
-    h_7d2e7fc0a919["7d2e7fc0a919<br/>g=12 n=12<br/>comp=1643.9"]
-    h_a968ee59bc60["a968ee59bc60<br/>g=12 n=12<br/>comp=1577.2"]
-    h_cd08271f19b0["cd08271f19b0<br/>g=13 n=13<br/>comp=1619.3"]
-    h_f02b10f65ec4["f02b10f65ec4<br/>g=16 n=16<br/>comp=1622.3"]
-    h_44ea003f3e78["44ea003f3e78<br/>g=12 n=12<br/>comp=1180.5"]
-    h_fde77e8443bd["fde77e8443bd<br/>g=12 n=12<br/>comp=1321.9"]
-    h_76aa40108046["76aa40108046<br/>g=26 n=20<br/>comp=1622.6"]
-    h_53f72171e961["53f72171e961<br/>g=21 n=20<br/>comp=1633.6"]
-    h_8105d20e4330["8105d20e4330<br/>g=12 n=12<br/>comp=1704.0"]
-    h_52ec90a8aeb0["52ec90a8aeb0<br/>g=12 n=12<br/>comp=1529.8"]
-    h_b1220235126f["b1220235126f<br/>g=12 n=12<br/>comp=1424.1"]
-    h_51c175adcd5d["51c175adcd5d<br/>g=24 n=20<br/>comp=1582.9"]
-    h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=1485.1"]
-    h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=1577.5"]
-    h_2e9fe5d1f791["2e9fe5d1f791<br/>g=36 n=20<br/>comp=1585.4"]
-    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>g=60 n=20<br/>comp=1554.5"]
-    h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=1679.0"]
-    h_94f76057d4b6["94f76057d4b6<br/>g=12 n=12<br/>comp=1479.3"]
-    h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=1718.1"]
-    h_e5cecbe37d12["e5cecbe37d12<br/>g=12 n=12<br/>comp=1250.3"]
-    h_0e06d456a6c9["0e06d456a6c9<br/>g=24 n=20<br/>comp=1552.8"]
-    h_9fe9a7007268["9fe9a7007268<br/>g=12 n=12<br/>comp=1593.6"]
+    h_1497aa8c82aa["1497aa8c82aa<br/>g=12 n=12<br/>comp=9931.5"]
+    h_aa34486df2a1["aa34486df2a1<br/>g=14 n=14<br/>comp=9562.2"]
+    h_3176e7d0e4e6["3176e7d0e4e6<br/>g=13 n=13<br/>comp=9024.4"]
+    h_d3f101466026["d3f101466026<br/>g=13 n=13<br/>comp=10488.0"]
+    h_d5c1cf0a8981["d5c1cf0a8981<br/>g=61 n=20<br/>comp=10802.5"]
+    h_7d2e7fc0a919["7d2e7fc0a919<br/>g=12 n=12<br/>comp=9910.9"]
+    h_a968ee59bc60["a968ee59bc60<br/>g=12 n=12<br/>comp=10452.9"]
+    h_cd08271f19b0["cd08271f19b0<br/>g=13 n=13<br/>comp=10409.2"]
+    h_f02b10f65ec4["f02b10f65ec4<br/>g=16 n=16<br/>comp=10317.9"]
+    h_44ea003f3e78["44ea003f3e78<br/>g=12 n=12<br/>comp=8281.2"]
+    h_fde77e8443bd["fde77e8443bd<br/>g=12 n=12<br/>comp=8493.9"]
+    h_76aa40108046["76aa40108046<br/>g=26 n=20<br/>comp=10643.3"]
+    h_53f72171e961["53f72171e961<br/>g=21 n=20<br/>comp=10594.9"]
+    h_8105d20e4330["8105d20e4330<br/>g=12 n=12<br/>comp=10192.9"]
+    h_52ec90a8aeb0["52ec90a8aeb0<br/>g=12 n=12<br/>comp=9716.5"]
+    h_b1220235126f["b1220235126f<br/>g=12 n=12<br/>comp=9806.8"]
+    h_51c175adcd5d["51c175adcd5d<br/>g=24 n=20<br/>comp=10521.5"]
+    h_2a8e4a612c27["2a8e4a612c27<br/>g=12 n=12<br/>comp=10080.5"]
+    h_63f836102d11["63f836102d11<br/>g=12 n=12<br/>comp=9699.2"]
+    h_2e9fe5d1f791["2e9fe5d1f791<br/>g=36 n=20<br/>comp=10486.0"]
+    h_3f5d04fbf3e5["3f5d04fbf3e5<br/>g=60 n=20<br/>comp=9461.5"]
+    h_6c61d1962cec["6c61d1962cec<br/>g=12 n=12<br/>comp=10083.2"]
+    h_94f76057d4b6["94f76057d4b6<br/>g=12 n=12<br/>comp=9278.0"]
+    h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=11064.1"]
+    h_e5cecbe37d12["e5cecbe37d12<br/>g=12 n=12<br/>comp=8635.5"]
+    h_0e06d456a6c9["0e06d456a6c9<br/>g=24 n=20<br/>comp=10504.0"]
+    h_9fe9a7007268["9fe9a7007268<br/>g=12 n=12<br/>comp=9942.9"]
 
     h_ddd4637d2985 -->|improve| h_1d954126e373
     h_1d954126e373 -->|improve| h_cdfe94687752
@@ -2519,9 +2523,9 @@ flowchart TD
 
 ## Detail 9/9
 
-- Range: `0c0301a98e5f` .. `b4f65529d44a`
+- Range: `0c0301a98e5f` .. `a3aae72a4e37`
 - Nodes in this diagram: `51`
-- Internal edges in this diagram: `53`
+- Internal edges in this diagram: `54`
 - Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
 - Cross-chunk link: `0c0301a98e5f -.rollback.-> 3f5d04fbf3e5`
 - Cross-chunk link: `3f5d04fbf3e5 --improve--> a9d3868684e2`
@@ -2534,60 +2538,61 @@ flowchart TD
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
+- Cross-chunk link: `... and 1 more`
 
 ```mermaid
 flowchart TD
-    h_0c0301a98e5f["0c0301a98e5f<br/>g=12 n=12<br/>comp=1008.1"]
-    h_a9d3868684e2["a9d3868684e2<br/>g=12 n=12<br/>comp=1577.2"]
-    h_502d6ae93732["502d6ae93732<br/>g=24 n=20<br/>comp=1647.9"]
-    h_46d67246f7a7["46d67246f7a7<br/>g=12 n=12<br/>comp=1627.3"]
-    h_b4eb6483e41e["b4eb6483e41e<br/>g=12 n=12<br/>comp=1672.9"]
-    h_86541343fec6["86541343fec6<br/>g=12 n=12<br/>comp=1729.3"]
-    h_bee7ce1f9bbd["bee7ce1f9bbd<br/>g=12 n=12<br/>comp=1779.2"]
-    h_b59ea0c231e3["b59ea0c231e3<br/>g=12 n=12<br/>comp=1653.4"]
-    h_c3ae4e32c788["c3ae4e32c788<br/>g=24 n=20<br/>comp=1776.4"]
-    h_2537fc9be12e["2537fc9be12e<br/>g=12 n=12<br/>comp=1733.5"]
-    h_1f0d87a2411f["1f0d87a2411f<br/>g=12 n=12<br/>comp=1425.7"]
-    h_550d15119e1e["550d15119e1e<br/>g=12 n=12<br/>comp=1764.4"]
-    h_7cf265bae6ef["7cf265bae6ef<br/>g=36 n=20<br/>comp=1722.4"]
-    h_085a14fbeb1f["085a14fbeb1f<br/>g=12 n=12<br/>comp=1430.7"]
-    h_713eae62a2e4["713eae62a2e4<br/>g=12 n=12<br/>comp=1581.6"]
-    h_dff2a8ce1158["dff2a8ce1158<br/>g=12 n=12<br/>comp=1452.2"]
-    h_8c8c6a7eca5d["8c8c6a7eca5d<br/>g=12 n=12<br/>comp=1544.1"]
-    h_0b09e6f9213f["0b09e6f9213f<br/>g=36 n=20<br/>comp=1653.3"]
-    h_39b6da4c414b["39b6da4c414b<br/>g=12 n=12<br/>comp=1655.3"]
-    h_db63f1e22f67["db63f1e22f67<br/>g=12 n=12<br/>comp=1600.8"]
-    h_52401ce37fac["52401ce37fac<br/>g=12 n=12<br/>comp=1321.3"]
-    h_d66fe5b0e266["d66fe5b0e266<br/>g=12 n=12<br/>comp=1669.5"]
-    h_7132fb7a8ddb["7132fb7a8ddb<br/>g=12 n=12<br/>comp=1589.0"]
-    h_d2edb10705a4["d2edb10705a4<br/>g=12 n=12<br/>comp=1489.5"]
-    h_82f7b2693691["82f7b2693691<br/>g=12 n=12<br/>comp=1697.8"]
-    h_d4c94e87c479["d4c94e87c479<br/>g=12 n=12<br/>comp=1629.8"]
-    h_4e795c3ae3bb["4e795c3ae3bb<br/>g=12 n=12<br/>comp=1339.6"]
-    h_b82e78f29aca["b82e78f29aca<br/>g=12 n=12<br/>comp=1573.2"]
-    h_cf520bbb7509["cf520bbb7509<br/>g=19 n=19<br/>comp=1546.6"]
-    h_27ce39e51504["27ce39e51504<br/>g=36 n=20<br/>comp=1611.2"]
+    h_0c0301a98e5f["0c0301a98e5f<br/>g=12 n=12<br/>comp=8318.3"]
+    h_a9d3868684e2["a9d3868684e2<br/>g=12 n=12<br/>comp=10302.6"]
+    h_502d6ae93732["502d6ae93732<br/>g=24 n=20<br/>comp=10798.7"]
+    h_46d67246f7a7["46d67246f7a7<br/>g=12 n=12<br/>comp=10334.4"]
+    h_b4eb6483e41e["b4eb6483e41e<br/>g=12 n=12<br/>comp=10639.4"]
+    h_86541343fec6["86541343fec6<br/>g=12 n=12<br/>comp=10988.4"]
+    h_bee7ce1f9bbd["bee7ce1f9bbd<br/>g=12 n=12<br/>comp=10387.1"]
+    h_b59ea0c231e3["b59ea0c231e3<br/>g=12 n=12<br/>comp=10830.5"]
+    h_c3ae4e32c788["c3ae4e32c788<br/>g=24 n=20<br/>comp=10691.4"]
+    h_2537fc9be12e["2537fc9be12e<br/>g=12 n=12<br/>comp=10594.7"]
+    h_1f0d87a2411f["1f0d87a2411f<br/>g=12 n=12<br/>comp=9492.3"]
+    h_550d15119e1e["550d15119e1e<br/>g=12 n=12<br/>comp=10916.0"]
+    h_7cf265bae6ef["7cf265bae6ef<br/>g=36 n=20<br/>comp=10655.8"]
+    h_085a14fbeb1f["085a14fbeb1f<br/>g=12 n=12<br/>comp=9931.5"]
+    h_713eae62a2e4["713eae62a2e4<br/>g=12 n=12<br/>comp=10828.6"]
+    h_dff2a8ce1158["dff2a8ce1158<br/>g=12 n=12<br/>comp=9427.0"]
+    h_8c8c6a7eca5d["8c8c6a7eca5d<br/>g=12 n=12<br/>comp=9831.9"]
+    h_0b09e6f9213f["0b09e6f9213f<br/>g=36 n=20<br/>comp=10594.9"]
+    h_39b6da4c414b["39b6da4c414b<br/>g=12 n=12<br/>comp=11144.9"]
+    h_db63f1e22f67["db63f1e22f67<br/>g=12 n=12<br/>comp=10789.8"]
+    h_52401ce37fac["52401ce37fac<br/>g=12 n=12<br/>comp=9517.2"]
+    h_d66fe5b0e266["d66fe5b0e266<br/>g=12 n=12<br/>comp=10610.6"]
+    h_7132fb7a8ddb["7132fb7a8ddb<br/>g=12 n=12<br/>comp=9592.5"]
+    h_d2edb10705a4["d2edb10705a4<br/>g=12 n=12<br/>comp=9755.9"]
+    h_82f7b2693691["82f7b2693691<br/>g=12 n=12<br/>comp=11168.8"]
+    h_d4c94e87c479["d4c94e87c479<br/>g=12 n=12<br/>comp=9710.2"]
+    h_4e795c3ae3bb["4e795c3ae3bb<br/>g=12 n=12<br/>comp=8352.5"]
+    h_b82e78f29aca["b82e78f29aca<br/>g=12 n=12<br/>comp=10357.3"]
+    h_cf520bbb7509["cf520bbb7509<br/>g=19 n=19<br/>comp=10039.9"]
+    h_27ce39e51504["27ce39e51504<br/>g=36 n=20<br/>comp=10110.8"]
     h_455f76305eb1["455f76305eb1<br/>g=1 n=1<br/>comp=2057.0"]
-    h_573b22daa1ae["573b22daa1ae<br/>g=12 n=12<br/>comp=1348.1"]
-    h_7f3565633498["7f3565633498<br/>g=12 n=12<br/>comp=1563.9"]
-    h_8f9dab5b9198["8f9dab5b9198<br/>g=12 n=12<br/>comp=1561.8"]
-    h_980abcc574c3["980abcc574c3<br/>g=12 n=12<br/>comp=1638.5"]
-    h_00276c327ece["00276c327ece<br/>g=12 n=12<br/>comp=1450.8"]
-    h_f6f30d9bbafe["f6f30d9bbafe<br/>g=12 n=12<br/>comp=1632.8"]
-    h_1534cccd7585["1534cccd7585<br/>g=12 n=12<br/>comp=1625.2"]
-    h_ede288659cc0["ede288659cc0<br/>g=12 n=12<br/>comp=1329.0"]
-    h_177e228d6908["177e228d6908<br/>g=12 n=12<br/>comp=1484.1"]
-    h_a3c68675933a["a3c68675933a<br/>g=25 n=20<br/>comp=1697.9"]
-    h_b0ae904c0e57["b0ae904c0e57<br/>g=12 n=12<br/>comp=1700.3"]
-    h_65b1f5370d60["65b1f5370d60<br/>g=12 n=12<br/>comp=1474.3"]
-    h_8de4cab8c8f0["8de4cab8c8f0<br/>g=12 n=12<br/>comp=1523.4"]
-    h_ec17666b9ae7["ec17666b9ae7<br/>g=12 n=12<br/>comp=1336.6"]
-    h_0fe801339bf1["0fe801339bf1<br/>g=12 n=12<br/>comp=1804.4"]
-    h_4bd5583eebf5["4bd5583eebf5<br/>g=12 n=12<br/>comp=1944.6"]
-    h_cbd3e0e2f570["cbd3e0e2f570<br/>ANCHOR<br/>g=12 n=12<br/>comp=2897.9"]
+    h_573b22daa1ae["573b22daa1ae<br/>g=12 n=12<br/>comp=8179.3"]
+    h_7f3565633498["7f3565633498<br/>g=12 n=12<br/>comp=10320.0"]
+    h_8f9dab5b9198["8f9dab5b9198<br/>g=12 n=12<br/>comp=10244.5"]
+    h_980abcc574c3["980abcc574c3<br/>g=12 n=12<br/>comp=10485.4"]
+    h_00276c327ece["00276c327ece<br/>g=12 n=12<br/>comp=8654.5"]
+    h_f6f30d9bbafe["f6f30d9bbafe<br/>g=12 n=12<br/>comp=10395.5"]
+    h_1534cccd7585["1534cccd7585<br/>g=12 n=12<br/>comp=9452.2"]
+    h_ede288659cc0["ede288659cc0<br/>g=12 n=12<br/>comp=8836.1"]
+    h_177e228d6908["177e228d6908<br/>g=12 n=12<br/>comp=9287.7"]
+    h_a3c68675933a["a3c68675933a<br/>g=25 n=20<br/>comp=11103.7"]
+    h_b0ae904c0e57["b0ae904c0e57<br/>g=12 n=12<br/>comp=10452.4"]
+    h_65b1f5370d60["65b1f5370d60<br/>g=12 n=12<br/>comp=9119.8"]
+    h_8de4cab8c8f0["8de4cab8c8f0<br/>g=12 n=12<br/>comp=8522.7"]
+    h_ec17666b9ae7["ec17666b9ae7<br/>g=12 n=12<br/>comp=8306.7"]
+    h_0fe801339bf1["0fe801339bf1<br/>g=12 n=12<br/>comp=10893.9"]
+    h_4bd5583eebf5["4bd5583eebf5<br/>g=12 n=12<br/>comp=11323.8"]
+    h_cbd3e0e2f570["cbd3e0e2f570<br/>g=24 n=20<br/>comp=9606.7"]
+    h_b4f65529d44a["b4f65529d44a<br/>g=2 n=2<br/>comp=9358.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_b4f65529d44a["b4f65529d44a<br/>CURRENT"]
 
     h_a9d3868684e2 -->|improve| h_502d6ae93732
     h_502d6ae93732 -->|improve| h_46d67246f7a7
@@ -2642,6 +2647,7 @@ flowchart TD
     h_0fe801339bf1 -->|improve| h_4bd5583eebf5
     h_4bd5583eebf5 -->|improve| h_cbd3e0e2f570
     h_cbd3e0e2f570 -->|improve| h_b4f65529d44a
+    h_b4f65529d44a -. rollback .-> h_cbd3e0e2f570
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2695,13 +2701,28 @@ flowchart TD
     class h_ec17666b9ae7 plain;
     class h_0fe801339bf1 plain;
     class h_4bd5583eebf5 plain;
-    class h_cbd3e0e2f570 anchor;
+    class h_cbd3e0e2f570 plain;
+    class h_b4f65529d44a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_b4f65529d44a current;
 ```
 
 ## Transition Notes
+
+### Rollback Game#9145 `cbd3e0e2 -> 1fab86e5`
+
+- - rollback from cbd3e0e2f570 to 1fab86e56ddc at game 9145
+- - reasons: hard_fail+anchor_direct
+- - current comp/p50/p25=9270.4/9923.5/7953.8 vs target 12704.2/14377.5/10122.5
+- - bad recent scores: 11264 17664 15244 8340 7125 8010 10303 16139
+- anchor 比で明確な悪化が出て即時停止条件に触れた。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- current: comp=9270.4 p50=9923.5 p25=7953.8 mean=10803.8 n=12
+- rollback_target: comp=12704.2 p50=14377.5 p25=10122.5 mean=13077.8 n=12
+- metric_gap_vs_target: comp=-3433.9 p50=-4454.0 p25=-2168.8 mean=-2273.9
+- recent12_avg: bad=10803.8 target=13077.8
+- recent12_floor: bad=7125 target=7340
+- anchor 比で急激に悪化した局面を重点的に調べること。特に p25 を落とした試合群の共通条件を抽出する。
 
 ### Improve Game#9131 `cbd3e0e2 -> b4f65529`
 
