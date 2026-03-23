@@ -319,6 +319,30 @@ async function main() {
   const audioGainMultiplier = loadAudioGainMultiplier();
   console.log(`[main] soren91 audio gain multiplier=${audioGainMultiplier}`);
 
+  // 前回セッションの未消化TTS音声をクリア (古いランキングコメント等の再生を防止)
+  try {
+    const queueDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.say_queue');
+    const tmpDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp');
+    let cleared = 0;
+    // say_queueの古いpre-synth wavとテキストをクリア
+    if (existsSync(queueDir)) {
+      for (const f of readdirSync(queueDir)) {
+        if (f.startsWith('content_') && (f.endsWith('_pre.wav') || f.endsWith('.txt') || f.endsWith('_chunks.txt'))) {
+          try { unlinkSync(join(queueDir, f)); cleared++; } catch {}
+        }
+      }
+    }
+    // 残留ranking_commentテキストファイルもクリア
+    for (const f of readdirSync(tmpDir)) {
+      if (f.startsWith('ranking_comment_') && f.endsWith('.txt')) {
+        try { unlinkSync(join(tmpDir, f)); cleared++; } catch {}
+      }
+    }
+    if (cleared > 0) console.log(`[main] Cleared ${cleared} stale TTS queue files`);
+  } catch (err) {
+    console.log(`[main] TTS queue cleanup skipped: ${err.message}`);
+  }
+
   // Step 1: headless でトップページを開き、ゲームURLを取得
   console.log('[main] Fetching game URL (headless)...');
   const gameUrl = await fetchGameUrl();
