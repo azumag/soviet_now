@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-24 02:52:57 JST`
-- Nodes: `695`
-- Edges: `979`
-- Current: `9a2f96ec23e1`
+- Updated: `2026-03-24 03:47:26 JST`
+- Nodes: `696`
+- Edges: `980`
+- Current: `fda0fec1a28b`
 - Anchor: `82f7b2693691`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_94f76057d4b6["94f76057d4b6<br/>g=12 n=12<br/>comp=9278.0"]
     h_c06979d29d37["c06979d29d37<br/>g=12 n=12<br/>comp=11064.1"]
     h_e5cecbe37d12["e5cecbe37d12<br/>g=12 n=12<br/>comp=8635.5"]
     h_0e06d456a6c9["0e06d456a6c9<br/>g=24 n=20<br/>comp=10504.0"]
@@ -72,9 +71,10 @@ flowchart TD
     h_888e7f7b3e23["888e7f7b3e23<br/>g=12 n=12<br/>comp=11152.4"]
     h_e0794c23cf9f["e0794c23cf9f<br/>g=12 n=12<br/>comp=11059.1"]
     h_566f8f1f8c82["566f8f1f8c82<br/>g=12 n=12<br/>comp=10799.3"]
+    h_9a2f96ec23e1["9a2f96ec23e1<br/>g=12 n=12<br/>comp=11042.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9a2f96ec23e1["9a2f96ec23e1<br/>CURRENT"]
+    h_fda0fec1a28b["fda0fec1a28b<br/>CURRENT"]
 
     h_c06979d29d37 -->|improve| h_e5cecbe37d12
     h_0e06d456a6c9 -->|improve| h_9fe9a7007268
@@ -139,13 +139,13 @@ flowchart TD
     h_888e7f7b3e23 -->|improve| h_e0794c23cf9f
     h_e0794c23cf9f -->|improve| h_566f8f1f8c82
     h_566f8f1f8c82 -->|improve| h_9a2f96ec23e1
+    h_9a2f96ec23e1 -->|improve| h_fda0fec1a28b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_94f76057d4b6 plain;
     class h_c06979d29d37 plain;
     class h_e5cecbe37d12 plain;
     class h_0e06d456a6c9 plain;
@@ -202,9 +202,10 @@ flowchart TD
     class h_888e7f7b3e23 plain;
     class h_e0794c23cf9f plain;
     class h_566f8f1f8c82 plain;
+    class h_9a2f96ec23e1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9a2f96ec23e1 current;
+    class h_fda0fec1a28b current;
 ```
 
 ## Detail 1/9
@@ -2511,9 +2512,9 @@ flowchart TD
 
 ## Detail 9/9
 
-- Range: `0c0301a98e5f` .. `9a2f96ec23e1`
-- Nodes in this diagram: `55`
-- Internal edges in this diagram: `58`
+- Range: `0c0301a98e5f` .. `fda0fec1a28b`
+- Nodes in this diagram: `56`
+- Internal edges in this diagram: `59`
 - Cross-chunk link: `9fe9a7007268 --improve--> 0c0301a98e5f`
 - Cross-chunk link: `0c0301a98e5f -.rollback.-> 3f5d04fbf3e5`
 - Cross-chunk link: `3f5d04fbf3e5 --improve--> a9d3868684e2`
@@ -2582,9 +2583,10 @@ flowchart TD
     h_888e7f7b3e23["888e7f7b3e23<br/>g=12 n=12<br/>comp=11152.4"]
     h_e0794c23cf9f["e0794c23cf9f<br/>g=12 n=12<br/>comp=11059.1"]
     h_566f8f1f8c82["566f8f1f8c82<br/>g=12 n=12<br/>comp=10799.3"]
+    h_9a2f96ec23e1["9a2f96ec23e1<br/>g=12 n=12<br/>comp=11042.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9a2f96ec23e1["9a2f96ec23e1<br/>CURRENT"]
+    h_fda0fec1a28b["fda0fec1a28b<br/>CURRENT"]
 
     h_a9d3868684e2 -->|improve| h_502d6ae93732
     h_502d6ae93732 -->|improve| h_46d67246f7a7
@@ -2644,6 +2646,7 @@ flowchart TD
     h_888e7f7b3e23 -->|improve| h_e0794c23cf9f
     h_e0794c23cf9f -->|improve| h_566f8f1f8c82
     h_566f8f1f8c82 -->|improve| h_9a2f96ec23e1
+    h_9a2f96ec23e1 -->|improve| h_fda0fec1a28b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2702,12 +2705,23 @@ flowchart TD
     class h_888e7f7b3e23 plain;
     class h_e0794c23cf9f plain;
     class h_566f8f1f8c82 plain;
+    class h_9a2f96ec23e1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9a2f96ec23e1 current;
+    class h_fda0fec1a28b current;
 ```
 
 ## Transition Notes
+
+### Improve Game#9253 `9a2f96ec -> fda0fec1`
+
+- scores: `9943 10584 10650 18904 10451 12317 12032 15963 15413 9439 15178 9040`
+- 7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
+- 8. Early game merge priority - Strong bonus for merge opportunities in early game
+- 8.5. Danger zone immediate merge bonus - v321: 危険域即時併合強化
+- 8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
+- 8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
+- 9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
 
 ### Improve Game#9241 `566f8f1f -> 9a2f96ec`
 
