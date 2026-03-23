@@ -57,8 +57,7 @@ _run_opencode_comment() {
 		"$ROLLING_SCORES_FILE" \
 		"show_status.sh" \
 		"show_status_g.sh" \
-		"status_dashboard.py" \
-		"tmp/.comment_queue/comment_screenshot.jpg")
+		"status_dashboard.py")
 	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
 		log "[COMMENT] sandbox作成失敗 -> direct opencode" >&2
 		rm -f "$raw_file"
@@ -119,8 +118,7 @@ _run_claude_comment_with_model() {
 		"$ROLLING_SCORES_FILE" \
 		"show_status.sh" \
 		"show_status_g.sh" \
-		"status_dashboard.py" \
-		"tmp/.comment_queue/comment_screenshot.jpg")
+		"status_dashboard.py")
 	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
 		log "[COMMENT] sandbox作成失敗 -> direct claude" >&2
 		_run_claude_radio_with_model "$prompt_file" "$model"

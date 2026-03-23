@@ -1,9 +1,9 @@
 /**
  * comment.mjs - メリケンAIコメント生成 (ランキング画面 + 試合中盤面)
  *
- * Claude haiku (vision) を優先し、失敗時は opencode にフォールバックして:
- * 1. ランキング画面のプレイヤー名認識 + 試合後コメント
- * 2. 試合中の盤面スクリーンショットから中間コメント (1試合1回)
+ * Claude を優先し、失敗時は opencode にフォールバックして:
+ * 1. ランキング画面OCR + 試合後コメント
+ * 2. 試合中の盤面解析データから中間コメント (1試合1回)
  * 3. TTS読み上げ + Twitchチャット投稿
  */
 
@@ -11,7 +11,6 @@ import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdtempSync, rmSyn
 import { execFile } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import sharp from 'sharp';
 import { analyzeResultScreen } from './result_screen_ocr.mjs';
 
 const PROMPTS_DIR = join(import.meta.dirname || '.', 'prompts');
@@ -88,50 +87,6 @@ function makeProviderError(message, detail = '') {
   const err = new Error(detail ? `${message}: ${detail}` : message);
   err.providerFailure = true;
   return err;
-}
-
-function runClaudeJsonComment(tag, content) {
-  const message = JSON.stringify({
-    type: 'user',
-    message: { role: 'user', content },
-  });
-
-  return new Promise((resolve, reject) => {
-    const child = execFile('claude', [
-      '-p', '--model', DEFAULT_CLAUDE_MODEL,
-      '--input-format', 'stream-json', '--output-format', 'stream-json',
-      '--verbose',
-    ], {
-      encoding: 'utf-8',
-      maxBuffer: 2 * 1024 * 1024,
-      timeout: DEFAULT_CLAUDE_TIMEOUT_MS,
-      cwd: '/tmp',
-    }, (err, stdout, stderr) => {
-      const stderrPreview = String(stderr || '').slice(0, 500);
-      const combined = `${stdout || ''}\n${stderr || ''}`;
-      if (containsClaudeLoginErrorText(combined)) {
-        console.log(`[${tag}] claude unavailable: not logged in`);
-      }
-      if (containsProviderErrorText(combined)) {
-        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
-        return reject(makeProviderError('claude provider/rate-limit failure', stderrPreview || String(stdout || '').slice(0, 300)));
-      }
-      if (err) {
-        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
-        return reject(err);
-      }
-      const raw = parseStreamJsonOutput(stdout);
-      const comment = extractCommentOnly(raw);
-      if (!comment) {
-        return reject(new Error('claude returned empty comment'));
-      }
-      resolve(comment);
-    });
-
-    child.stdin.on('error', () => {});
-    child.stdin.write(message + '\n');
-    child.stdin.end();
-  });
 }
 
 function runClaudeTextComment(tag, promptText) {
@@ -234,13 +189,8 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
   }
 
   try {
-    const imageBuffer = await sharp(rankingImagePath)
-      .resize(960, 540)
-      .jpeg({ quality: 75 })
-      .toBuffer();
-    const base64Image = imageBuffer.toString('base64');
-
-    const comment = await callClaudeForComment(rankingImagePath, base64Image, gameNumber, myRank);
+    const promptText = await buildRankingTextPrompt(rankingImagePath, myRank);
+    const comment = await callClaudeForComment(promptText);
     if (!comment) {
       console.log('[ranking_comment] No comment generated');
       return null;
@@ -291,63 +241,33 @@ function extractCommentOnly(raw) {
   return joined.slice(0, 350);
 }
 
-async function buildRankingOpencodePrompt(rankingImagePath, promptText, myRank) {
-  const helpLines = [
-    '画像は添付できていないので、以下の補助情報だけで自然なコメントを作ってください。',
-    '補助情報にないプレイヤー名や順位を捏造しないでください。',
-  ];
-  if (myRank != null) {
-    helpLines.push(`自分の順位: ${myRank}位/91人中。`);
-  }
+async function buildRankingTextPrompt(rankingImagePath, myRank) {
+  const rankInfo = myRank != null ? `自分の順位: ${myRank}位/91人中。` : '';
+  let ocrInfo = '- OCR抽出テキストは十分に得られませんでした。';
   try {
     const ocr = await analyzeResultScreen(rankingImagePath);
-    if (ocr?.rank != null && ocr.rank !== myRank) {
-      helpLines.push(`OCR推定順位: ${ocr.rank}位/91人中。`);
+    const lines = [];
+    if (ocr?.rank != null) {
+      lines.push(`- OCR推定順位: ${ocr.rank}位/91人中。`);
     }
     if (ocr?.lines?.length) {
-      helpLines.push(`OCR抽出テキスト: ${ocr.lines.slice(0, 8).join(' / ')}`);
-    } else {
-      helpLines.push('OCR抽出テキストは十分に得られませんでした。');
+      lines.push(...ocr.lines.slice(0, 8).map(line => `- ${line}`));
+    }
+    if (lines.length > 0) {
+      ocrInfo = lines.join('\n');
     }
   } catch (err) {
-    helpLines.push(`OCR補助情報の取得失敗: ${err.message}`);
+    ocrInfo = `- OCR補助情報の取得失敗: ${err.message}`;
   }
-  return `${promptText}\n\n【補助情報】\n- ${helpLines.join('\n- ')}`;
+  return loadPrompt('ranking_comment.md', { rankInfo, ocrInfo });
 }
 
-function callClaudeForComment(rankingImagePath, base64Image, gameNumber, myRank) {
-  const rankInfo = myRank != null ? `自分の順位: ${myRank}位/91人中。` : '';
-  const promptText = loadPrompt('ranking_comment.md', { rankInfo });
-
-  const content = [
-    {
-      type: 'image',
-      source: { type: 'base64', media_type: 'image/jpeg', data: base64Image },
-    },
-    { type: 'text', text: promptText },
-  ];
+function callClaudeForComment(promptText) {
   return withOpencodeFallback(
     'ranking_comment',
-    () => runClaudeJsonComment('ranking_comment', content),
-    async () => buildRankingOpencodePrompt(rankingImagePath, promptText, myRank),
+    () => runClaudeTextComment('ranking_comment', promptText),
+    async () => promptText,
   );
-}
-
-function parseStreamJsonOutput(stdout) {
-  const lines = stdout.trim().split('\n');
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      if (obj.type === 'result' && obj.result) return obj.result;
-      if (obj.type === 'assistant' && obj.message?.content) {
-        const textBlocks = obj.message.content
-          .filter(b => b.type === 'text')
-          .map(b => b.text);
-        if (textBlocks.length > 0) return textBlocks.join('\n');
-      }
-    } catch {}
-  }
-  return stdout;
 }
 
 /**
@@ -402,16 +322,16 @@ function postToTwitch(comment) {
  * @param {number} gameNumber - ゲーム番号
  * @param {number} turn - 現在のターン数
  * @param {object} boardState - 盤面状態
- * @param {string} [screenshotPath] - スクリーンショットのパス (Vision用)
+ * @param {string} [_screenshotPath] - 後方互換のため残す未使用引数
  */
-export async function generateMidgameComment(gameNumber, turn, boardState, screenshotPath) {
+export async function generateMidgameComment(gameNumber, turn, boardState, _screenshotPath) {
   if (!boardState || !boardState.pieces || boardState.pieces.length === 0) {
     console.log('[midgame_comment] No board state or empty pieces');
     return null;
   }
 
   try {
-    const comment = await callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath);
+    const comment = await callClaudeForMidgame(gameNumber, turn, boardState);
     if (!comment) {
       console.log('[midgame_comment] No comment generated');
       return null;
@@ -504,38 +424,14 @@ function formatBoardStateForPrompt(boardState, turn) {
   return info;
 }
 
-async function callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath) {
+async function callClaudeForMidgame(gameNumber, turn, boardState) {
   const boardInfo = formatBoardStateForPrompt(boardState, turn);
   const promptText = loadPrompt('midgame_comment.md', { boardInfo });
-
-  // スクリーンショットがあればVision入力で盤面を直接見せる
-  let base64Image = null;
-  if (screenshotPath && existsSync(screenshotPath)) {
-    try {
-      const imageBuffer = await sharp(screenshotPath)
-        .resize(640, 360)
-        .jpeg({ quality: 60 })
-        .toBuffer();
-      base64Image = imageBuffer.toString('base64');
-    } catch {}
-  }
-
-  if (base64Image) {
-    const content = [
-      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Image } },
-      { type: 'text', text: promptText },
-    ];
-    return withOpencodeFallback(
-      'midgame_comment',
-      () => runClaudeJsonComment('midgame_comment', content),
-      async () => `${promptText}\n\n画像は添付できていないので、盤面データだけを根拠に自然な実況コメントを作ってください。`,
-    );
-  }
 
   return withOpencodeFallback(
     'midgame_comment',
     () => runClaudeTextComment('midgame_comment', promptText),
-    async () => `${promptText}\n\n盤面データだけを根拠に自然な実況コメントを作ってください。`,
+    async () => promptText,
   );
 }
 

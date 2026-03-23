@@ -805,10 +805,21 @@ generate_comment_response() {
 		return
 	fi
 
-	# コメント処理時点のTwitch配信サムネイルを取得
+	# コメント処理時点のTwitch配信サムネイルを取得し、文字情報だけOCR化して使う
 	local comment_screenshot="tmp/.comment_queue/comment_screenshot.jpg"
+	local comment_thumbnail_ocr_context="（配信サムネイルOCRなし）"
 	if curl -sf -o "$comment_screenshot" -m 5 "https://static-cdn.jtvnw.net/previews-ttv/live_user_azumagbanjo-1280x720.jpg" 2>/dev/null; then
 		log "[COMMENT] 配信サムネイル取得: $comment_screenshot"
+		local comment_thumbnail_ocr_json=""
+		local comment_ocr_script="$ELOOP_LIB_DIR/soren91/result_screen_ocr.mjs"
+		if [ -f "$comment_ocr_script" ]; then
+			comment_thumbnail_ocr_json=$(node "$comment_ocr_script" "$comment_screenshot" 2>/dev/null || true)
+			if [ -n "$comment_thumbnail_ocr_json" ]; then
+				comment_thumbnail_ocr_context=$(printf '%s' "$comment_thumbnail_ocr_json" | python3 -c "import json,sys; d=json.load(sys.stdin); lines=(d.get('lines') or [])[:8]; print('\n'.join(f'- {line}' for line in lines) if lines else '（OCRで読める文字なし）')" 2>/dev/null)
+			else
+				comment_thumbnail_ocr_context="（配信サムネイルOCR失敗）"
+			fi
+		fi
 	else
 		rm -f "$comment_screenshot"
 	fi
@@ -1005,12 +1016,12 @@ ${_comment_persona}
 	${celebration_history_context:-（なし）}
 	※ ロシア建国・ソ連建国の過去履歴です。いつ起きたか、何回あったか、直近がいつかを聞かれたらこの日時付き履歴を優先して使うこと
 
-	【Twitch配信サムネイル（必要時のみ）】
-	tmp/.comment_queue/comment_screenshot.jpg にTwitch配信サムネイルがあります。
-	コメントが配信画面の様子（猫、画面、盤面の見た目、配信の雰囲気など）に言及している場合のみ、
-	Readツールで読んで、実際に見える内容を踏まえて返事してください。
-	画面に関係ないコメントでは読む必要はありません。
-	※ ファイルが存在しない場合は配信オフラインの可能性があります。
+	【Twitch配信サムネイルOCRメモ（必要時のみ）】
+	${comment_thumbnail_ocr_context}
+	※ これは配信サムネイルから機械抽出した文字メモです。画像ファイルそのものは参照しないこと。
+	※ コメントが配信画面の様子（画面表示、盤面、配信の雰囲気など）に言及している場合のみ使うこと。
+	※ OCRに無い内容、読めない盤面配置、猫の有無、細かい見た目を勝手に補完しないこと。
+	※ 画面に関係ないコメントではこのメモを無理に使わないこと。
 
 		【追加参照可能ファイル（必要時のみ）】
 		- tmp/.comment_queue/spoken_history/*.txt: 最近実際に読み上げたコメント返し全文
@@ -1124,7 +1135,7 @@ ${_comment_ui_memo}
 - マークダウンや記号は使わない。読み上げ用プレーンテキストのみ
 - 前置きや補足説明は不要。コメント返し本文のみ出力
 		- コメントの中にゲーム戦略へのアドバイスが含まれていた場合、言い訳せず真摯に受け止め、「次の戦略改善に取り入れます」と具体的に説明すること
-		- 盤面への言及（例: 右が高い、左が詰まってる、次の駒が弱い等）は、配信サムネイル（上記）をReadツールで読んで、実際に見える状況を踏まえて返すこと
+		- 盤面や配信画面への言及（例: 右が高い、左が詰まってる、次の駒が弱い等）は、上の配信サムネイルOCRメモと game_state メモ、show_status系の文字情報だけを根拠に返すこと
 		- 盤面の位置・駒タイプ・配置を断定しないこと。断定が必要な聞かれ方でも「配信の流れ上そう見えます」など柔らかく返すこと
 		- ハイスコアを聞かれた時だけ、上の game_state メモ（record）を使って答えること
 		- 現在スコアを聞かれた時は、生成時からラグがあるので今は断定しないと説明すること
