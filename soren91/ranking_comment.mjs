@@ -248,10 +248,12 @@ function formatBoardStateForPrompt(boardState, turn) {
   const nextPieces = boardState?.nextPieces ?? [];
 
   // 盤面の高さ（最も高いピースの上端 = y + r）
-  const maxY = pieces.length > 0
-    ? Math.max(...pieces.map(p => (p.y ?? -5) + (p.r ?? 0)))
-    : -5;
+  // デッドライン付近(y>2.8)のUI誤検出を除外して計算
   const deadlineY = 3.32;
+  const validPieces = pieces.filter(p => (p.y ?? -5) < deadlineY - 0.5);
+  const maxY = validPieces.length > 0
+    ? Math.max(...validPieces.map(p => (p.y ?? -5) + (p.r ?? 0)))
+    : -5;
   const heightPct = Math.max(0, Math.min(100, ((maxY + 5) / (deadlineY + 5)) * 100)).toFixed(0);
 
   // ピースのtype別集計

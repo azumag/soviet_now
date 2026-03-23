@@ -189,7 +189,10 @@ function detectPieces(data, width, height, calibration) {
   const gridStep = 4; // ピクセル単位のスキャン間隔 (91人対戦ではピースが小さい)
   const visited = new Set();
 
-  for (let y = board.top; y < board.bottom; y += gridStep) {
+  // デッドラインUI要素の誤検出を防ぐため、ボード上端に余白を設ける
+  // (y=3.25, y=3.14付近のゴーストピースを排除)
+  const topMargin = Math.max(12, gridStep * 3);
+  for (let y = board.top + topMargin; y < board.bottom; y += gridStep) {
     for (let x = board.left; x < board.right; x += gridStep) {
       const key = `${Math.floor(x / gridStep)}_${Math.floor(y / gridStep)}`;
       if (visited.has(key)) continue;
@@ -309,10 +312,26 @@ function classifyBlob(blob, calibration) {
   const normalizedY = (board.bottom - blob.centerY) / board.height;
   const gameY = -5.0 + normalizedY * 8.32; // total range: -5.0 to 3.32
 
+  // UI要素の誤検出を除外 (固定位置に常に現れるゴーストピース)
+  // データ分析で全ゲーム全ターンに存在する固定座標を特定
+  const GHOST_POSITIONS = [
+    { x: -3.27, y: 3.25 },  // デッドライン左マーカー
+    { x: -1.44, y: 3.14 },  // デッドライン付近UI
+    { x: -1.64, y: 1.91 },  // ボード中央左UI
+    { x: -0.03, y: 0.77 },  // ボード中央UI
+  ];
+  const gx = Math.round(gameX * 100) / 100;
+  const gy = Math.round(gameY * 100) / 100;
+  for (const ghost of GHOST_POSITIONS) {
+    if (Math.abs(gx - ghost.x) < 0.15 && Math.abs(gy - ghost.y) < 0.15) {
+      return null;  // UI要素として除外
+    }
+  }
+
   return {
     type: bestType,
-    x: Math.round(gameX * 100) / 100,
-    y: Math.round(gameY * 100) / 100,
+    x: gx,
+    y: gy,
     r: TYPE_RADII[bestType],
   };
 }
@@ -769,14 +788,12 @@ function readRankFromRedStar(data, width, height) {
   }
   if (redInArea < 1500) return null; // 星がなければスキップ (ranking≈2200, game-over≈500-1200)
 
-  // 1. 白ピクセル(br>180)の列分布で桁候補セグメントを検出
-  //    閾値を緩め(180)にして細いストロークも拾う
+  // 1. 白ピクセル(RGB全チャンネル>180)の列分布で桁候補セグメントを検出
   const colWhite = new Array(digitX2 - digitX1).fill(0);
   for (let y = digitY1; y < digitY2; y++) {
     for (let x = digitX1; x < digitX2; x++) {
       const idx = (y * width + x) * 4;
-      const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-      if (br > 180) colWhite[x - digitX1]++;
+      if (data[idx] > 180 && data[idx + 1] > 180 && data[idx + 2] > 180) colWhite[x - digitX1]++;
     }
   }
 
@@ -801,8 +818,9 @@ function readRankFromRedStar(data, width, height) {
     for (let y = digitY1; y < digitY2; y++) {
       for (let x = seg.start; x < seg.end; x++) {
         const idx = (y * width + x) * 4;
-        const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-        if (br > 180) { if (y < rowMin) rowMin = y; if (y > rowMax) rowMax = y; }
+        if (data[idx] > 180 && data[idx + 1] > 180 && data[idx + 2] > 180) {
+          if (y < rowMin) rowMin = y; if (y > rowMax) rowMax = y;
+        }
       }
     }
     seg.rowMin = rowMin;
@@ -870,12 +888,13 @@ function recognizeDigitWhite(data, width, xStart, xEnd, yStart, yEnd) {
       for (let y = cy1; y < cy2; y++) {
         for (let x = cx1; x < cx2; x++) {
           const idx = (y * width + x) * 4;
-          const br = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+          const r = data[idx], g = data[idx + 1], b = data[idx + 2];
           total++;
-          if (br > 200) bright++;
+          // 白色判定: RGB全チャンネルが高い(赤い星背景の除外)
+          if (r > 180 && g > 180 && b > 180) bright++;
         }
       }
-      if (total > 0 && bright / total > 0.2) {
+      if (total > 0 && bright / total > 0.38) {
         pattern |= 1 << (14 - (row * 3 + col));
       }
     }
@@ -906,7 +925,8 @@ function recognizeDigitWhite(data, width, xStart, xEnd, yStart, yEnd) {
     4: [0b101_101_111_001_011, 0b100_101_111_001_001,
         0b011_111_111_111_111, 0b111_111_111_011_011],
     5: [0b111_100_111_001_110, 0b111_110_111_001_111],
-    6: [0b111_100_111_101_110, 0b110_100_111_101_111],
+    6: [0b111_100_111_101_110, 0b110_100_111_101_111,
+        0b111_100_110_101_111, 0b111_100_110_101_110],
     7: [0b111_001_001_010_010, 0b111_001_010_010_100, 0b111_001_001_001_011,
         0b111_001_010_010_011, 0b111_001_011_010_010],
     8: [0b111_101_011_101_111, 0b111_101_111_101_110],
