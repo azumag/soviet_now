@@ -36,7 +36,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
-# v317: 危険域即時併合優先強化・ロシアフェーズ対応版 - v316 failure mode潰し
+# v318: 危険域即時併合不可時盤面圧縮強化版 - v317 failure mode潰し
+# v317 failure: anchor比で悪化。危険域（max_y>=1.8かつreactive_pairs>=2）で即時併合候補があるのに、高度管理が効いてしまい即時併合機会を逃してmax_y runawayでゲームオーバー。
+# ワーストゲーム(score0890)終盤turns 59-65: reactive_pairs=1-3あるのに即時併合不可続きmax_y=3.71に上昇してゲームオーバー。
+# ベストゲーム(score2551)終盤turns 112-116: reactive_pairs=2-3あるのに即時併合を確実に捉えてmax_y=2.84で安定して2551点を出している。
+# batch_summaryでHEIGHT_CONTROLが11.1%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが主要な敗因。
+# advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、危険域で即時併合不可の場合も盤面圧縮を優先する戦略へ修正。
+# axis 8.5拡張: 危険域でreactive_pairs>=2かつ即時併合不可の場合、height_multを0.4に強力緩和して盤面圧縮を強制的に優先
+# 未活用情報：危険域判定(phase HIGH), reactive_pairs数, 即時併合可否(merge_grade)
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+#       game_history/20260323_091428_score0890.jsonl turns 59-65, game_history/20260323_090838_score2551.jsonl turns 112-116
+# Fixes rollback failure mode: 危険域での即時併合取りこぼし（axis 8.5拡張）
 # v316 failure: anchor比で悪化。max_y>=1.8かつreactive_pairs>=2ある危険域で即時併合候補があるのに、高度管理（height_mult強化）が効いてしまい、即時併合機会を逃してmax_y runawayでゲームオーバー。
 # ワーストゲーム(score0518)終盤turns 56-61: reactive_pairs=4-5あるのに即時併合不可、戦略的配置が続きmax_y=3.84に上昇してゲームオーバー。
 # ベストゲーム(score2928)終盤turns 114-122: reactive_pairs=4-5あるのに即時併合を確実に捉えてスコア2928を出している。
@@ -44,9 +54,9 @@ Phases (determined by board max Y):
 # v2346のロジックにある危険域即時併合優先ロジック（phase HIGH && reactive_pairs >= 2 -> direct +300.0, near +100.0）を導入。
 # axis 8.6のreactive_pairsボーナスを整理し、危険域（HIGH phase）で即時併合機会がある場合、最優先する評価軸を確立。
 # ロシアフェーズ対応：type 15が2つ以上ある場合、盤面が狭く即時併合ができないため、盤面圧縮と即時併合優先をバランスよく調整する戦略へ切り替える。
-# 未活用情報：危険域判定(max_y>=1.8), reactive_pairs数, 盤面上のtype15個数。
+# 未活用情報：危険域判定(phase HIGH), reactive_pairs数, 即時併合可否(merge_grade)
 # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
-#       game_history/20260323_084535_score0518.jsonl turns 56-61, game_history/20260323_083643_score2928.jsonl turns 114-122, strategy_versions/best_score2346_strategy.py
+#       game_history/20260323_091428_score0890.jsonl turns 59-65, game_history/20260323_090838_score2551.jsonl turns 112-116
 #       strategy_versions/best_score2346_strategy.py (ロジックアーカイブ参照: v2346の危険域ロジック)
 # Fixes rollback failure mode: 危険域での即時併合取りこぼし（axis 8.5導入）と、ロシア建国後の即時併合取りこぼし（axis 8.7導入）。
 #
@@ -603,12 +613,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if phase == "HIGH" and reactive_pair_count >= 2:
             if merge_grade in ["DIRECT", "NEAR"]:
                 # 危険域で即時併合候補がある場合、最優先するボーナスを付与
-                # DIRECT: +300.0, NEAR: +100.0
                 if merge_grade == "DIRECT":
                     score += 300.0
+                    reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
                 else:
                     score += 100.0
-                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
+                    reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
+            elif merge_grade == "NO":
+                # v318: 危険域即時併合不可時の盤面圧縮強化 - 即時併合不可時のmax_y runaway防止
+                # ワーストゲーム(score0890)終盤turns 59-65: reactive_pairs=1-3あるのに即時併合不可続きmax_y=3.71に上昇してゲームオーバー
+                # ベストゲーム(score2551)終盤turns 112-116: reactive_pairs=2-3あるのに即時併合を確実に捉えてmax_y=2.84で安定
+                # batch_summaryでHEIGHT_CONTROLが11.1%選択(avg_score_delta=0.0)と過剰、即時併合機会取りこぼしが主要な敗因
+                # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づき、危険域で即時併合不可の場合も盤面圧縮を優先
+                # reactive_pairsが多い＝盤面に併合機会が密集している＝盤面圧縮機会がある
+                # height_multを0.4に強力緩和し、盤面圧縮を強制的に優先することでmax_y runawayを防止
+                height_mult *= 0.4
+                reasons.append("DANGER_ZONE_COMPRESSION")
 
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v317: 即時併合ボーナス強化・簡素化) -----
         # v295 failure: 複雑なheight_mult緩和分岐とdeadline_crossed分岐が、即時併合機会の取りこぼしを招いた。
