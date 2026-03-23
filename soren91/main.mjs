@@ -830,7 +830,7 @@ async function gameLoop(page, calibration, gameNumber) {
         (async () => {
           try {
             const { generateMidgameComment } = await loadModule('./comment.mjs');
-            await generateMidgameComment(gameNumber, turn, boardState);
+            await generateMidgameComment(gameNumber, turn, boardState, screenshotPath);
           } catch (err) {
             console.log(`[game] Midgame comment error: ${err.message}`);
           }

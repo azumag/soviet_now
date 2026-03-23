@@ -209,15 +209,16 @@ function postToTwitch(comment) {
  * @param {number} gameNumber - ゲーム番号
  * @param {number} turn - 現在のターン数
  * @param {object} boardState - 盤面状態
+ * @param {string} [screenshotPath] - スクリーンショットのパス (Vision用)
  */
-export async function generateMidgameComment(gameNumber, turn, boardState) {
+export async function generateMidgameComment(gameNumber, turn, boardState, screenshotPath) {
   if (!boardState || !boardState.pieces || boardState.pieces.length === 0) {
     console.log('[midgame_comment] No board state or empty pieces');
     return null;
   }
 
   try {
-    const comment = await callClaudeForMidgame(gameNumber, turn, boardState);
+    const comment = await callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath);
     if (!comment) {
       console.log('[midgame_comment] No comment generated');
       return null;
@@ -304,11 +305,55 @@ function formatBoardStateForPrompt(boardState, turn) {
   return info;
 }
 
-function callClaudeForMidgame(gameNumber, turn, boardState) {
+async function callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath) {
   const boardInfo = formatBoardStateForPrompt(boardState, turn);
-
   const promptText = loadPrompt('midgame_comment.md', { boardInfo });
 
+  // スクリーンショットがあればVision入力で盤面を直接見せる
+  let base64Image = null;
+  if (screenshotPath && existsSync(screenshotPath)) {
+    try {
+      const imageBuffer = await sharp(screenshotPath)
+        .resize(640, 360)
+        .jpeg({ quality: 60 })
+        .toBuffer();
+      base64Image = imageBuffer.toString('base64');
+    } catch {}
+  }
+
+  if (base64Image) {
+    // Vision: 画像 + テキストプロンプト (stream-json形式)
+    const content = [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64Image } },
+      { type: 'text', text: promptText },
+    ];
+    const message = JSON.stringify({ type: 'user', message: { role: 'user', content } });
+
+    return new Promise((resolve, reject) => {
+      const child = execFile('claude', [
+        '-p', '--model', 'haiku',
+        '--input-format', 'stream-json', '--output-format', 'stream-json',
+        '--verbose',
+      ], {
+        encoding: 'utf-8',
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 30000,
+        cwd: '/tmp',
+      }, (err, stdout, stderr) => {
+        if (err) {
+          if (stderr) console.error('[midgame_comment] claude stderr:', stderr.slice(0, 300));
+          return reject(err);
+        }
+        const raw = parseStreamJsonOutput(stdout);
+        resolve(extractCommentOnly(raw));
+      });
+      child.stdin.on('error', () => {});
+      child.stdin.write(message + '\n');
+      child.stdin.end();
+    });
+  }
+
+  // フォールバック: テキストのみ
   return new Promise((resolve, reject) => {
     const child = execFile('claude', [
       '-p', '--model', 'haiku',
@@ -326,7 +371,6 @@ function callClaudeForMidgame(gameNumber, turn, boardState) {
       }
       resolve(extractCommentOnly(stdout.trim()));
     });
-
     child.stdin.on('error', () => {});
     child.stdin.write(promptText);
     child.stdin.end();
