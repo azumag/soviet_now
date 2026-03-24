@@ -55,6 +55,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
  # --- Change History ---
+            # v343: deadline_crossed時盤面圧縮ペナルティ化版 - 即時併合待ち強化
+           # advice.md「デッドラインを超える配置を避ける。危険盤面時こそデッドライン超え判定をより厳格に適用する」に基づき、deadline_crossed時は盤面圧縮より即時併合優先
+            # last_rollback_postmortem: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode
+            # ワーストゲーム(score0634): deadline_crossed時、reactive_pairs>=3, merge_available=false続きでREACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=2.02→3.24に上昇してゲームオーバー
+            # ベストゲーム(score3421): deadline_crossed時、reactive_pairs=3, merge_available=false続きでREACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=2.43→2.90で安定
+            # deadline_crossed時の盤面圧縮ボーナス（compression_bonus）を0にし、即時併合待ち動作を強化する
+            # 盤面圧縮を優先しすぎて高配置（x=3.0）を選んでmax_y runawayを防ぐため、compression_bonusを0にする
+            # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+            #       game_history/20260325_025231_score0634.jsonl turns 54-61, game_history/20260325_031002_score3421.jsonl turns 132-139, strategy.py.staging
+            # Fixes rollback failure mode: deadline_crossed時の盤面圧縮ボーナスによる高配置 runway（axis 9.6ペナルティ化）
             # v342: axis 9.7水平バランス戦略削除版 - 盤面圧縮戦略へ統合
             # v341 failure mode: axis 9.7の水平バランス戦略（REACTIVE_PAIRS_HORIZONTAL_BALANCE）が即時併合優先と競合し、HEIGHT_CONTROLが続き即時併合機会を取りこぼしている
             # last_rollback_postmortem: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode
@@ -456,21 +466,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
-        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
+        # ----- evaluation axis 9.6: reactive pairs stacking bonus (v343: deadline_crossed時盤面圧縮ペナルティ化版 - 即時併合待ち強化) -----
+         # advice.md「デッドラインを超える配置を避ける。危険盤面時こそデッドライン超え判定をより厳格に適用する」に基づき、deadline_crossed時は盤面圧縮より即時併合優先
         # batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=1.2)と過剛、即時併合機会を取りこぼしていることを確認
         # reactive_pairsがあるがmerge_grade=="NO"の場合、HEIGHT_CONTROLではなく戦略的配置を優先する
-        # v340 failure mode: reactive_pairs>=3 && deadline_crossed && merge_grade=="NO"の超危険域でaxis 9.6が強力に機能し、高配置 runawayでゲームオーバー
-        # ワーストゲーム(score0638)終盤turns 55-61: reactive_pairs=7-8, deadline_crossed=true, merge_available=false続きで
-        # axis 9.6のstacking bonus（stack_yが高いほど大ボーナス）がaxis 8.8の-3000~-7000ペナルティを上回り、高配置が選ばれmax_y=2.37→3.59に上昇してゲームオーバー
-        # axis 8.8の即時併合ペナルティを優先させ、超危険域での高配置 runaway を防止
-        # v339 failure: axis 9.7の盤面圧縮ボーナスが削除されたため、axis 9.6のstacking bonusが過剰に機能するようになった
-        # reactive_pairs>=3 && deadline_crossed && merge_grade=="NO"の場合は盤面が過密で即時併合待ちが最優先すべき局面
-        # axis 9.6を無効化し、axis 8.8のペナルティを優先させることで即時併合機会の取りこぼしを削減
+         # v342 failure mode: deadline_crossed時、reactive_pairs>=3, merge_available=false続きでREACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=2.02→3.24に上昇してゲームオーバー
+         # ワーストゲーム(score0634)終盤turns 54-61: deadline_crossed時、reactive_pairs>=3, merge_available=false続きで
+         # axis 9.6のcompression_bonus（(-landing_y) * 200.0）が高配置を優先し、max_y=2.02→3.24に上昇してゲームオーバー
+         # ベストゲーム(score3421)終盤turns 132-139: deadline_crossed時、reactive_pairs=3, merge_available=false続きで
+         # axis 9.6のcompression_bonusがあってもmax_y=2.43→2.90で安定し、即時併合待ちが有効に機能
+         # deadline_crossed時の盤面圧縮ボーナス（compression_bonus）を0にし、即時併合待ち動作を強化する
+         # 盤面圧縮を優先しすぎて高配置（x=3.0）を選んでmax_y runawayを防ぐため、compression_bonusを0にする
         # reactive_pairs<3の場合は、盤面圧縮準備としてaxis 9.6のstacking bonusを維持
-        # 未活用情報：deadline_crossed, reactive_pairs>=3, merge_grade, stack_y
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt,
-        #       game_history/20260324_210005_score0638.jsonl turns 55-61, game_history/20260324_210741_score2602.jsonl
+         # 未活用情報：deadline_crossed, reactive_pairs>=3, merge_grade, compression_bonus
+         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+         #       game_history/20260325_025231_score0634.jsonl turns 54-61, game_history/20260325_031002_score3421.jsonl turns 132-139, strategy.py.staging
         # Fixes rollback failure mode: reactive_pairs>=3 && deadline_crossedでの高配置 runaway（axis 9.6超危険域無効化）
 
         # axis 9.6: reactive pairs stacking bonus (v342: axis 9.7水平バランス戦略削除版 - 盤面圧縮戦略へ統合)
@@ -485,11 +495,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 9.6を完全に無効化（reactive_pairs>=3 && deadline_crossedでの高配置 runway防止）
             pass
         elif reactive_pair_count >= 1 and merge_grade == "NO":
-            # 盤面圧縮ボーナス（same_type_stack_topの有無に関わらず適用）
-            # 下層配置を優先し、高配置を抑制する戦略的思考
-            # same_type_stack_topがある場合は即時併合機会を最大化、ない場合も盤面圧縮を優先
-            # compression_bonus = (-landing_y) * 200.0 に変更し、低い位置ほどボーナス大
-            compression_bonus = (-landing_y) * 200.0  # landing_y=-2.5なら500.0、-1.0なら200.0、0なら0.0
+            # v343: deadline_crossed時は盤面圧縮ボーナスをペナルティ化（0にする）
+            # 高配置（x=3.0）を選んでmax_y runawayを防ぐため、即時併合待ち動作を強化する
+            if deadline_crossed:
+                compression_bonus = 0.0
+            else:
+                # 盤面圧縮ボーナス（same_type_stack_topの有無に関わらず適用）
+                # 下層配置を優先し、高配置を抑制する戦略的思考
+                # same_type_stack_topがある場合は即時併合機会を最大化、ない場合も盤面圧縮を優先
+                # compression_bonus = (-landing_y) * 200.0 に変更し、低い位置ほどボーナス大
+                compression_bonus = (-landing_y) * 200.0  # landing_y=-2.5なら500.0、-1.0なら200.0、0なら0.0
             score += compression_bonus
             reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
