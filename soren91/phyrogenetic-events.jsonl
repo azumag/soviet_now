@@ -41,3 +41,4 @@
 {"eventType":"improve","fromHash":"28e99306148b","toHash":"71da2c021d70","note":"standalone improve 716-717","gameStart":716,"gameEnd":717,"bestGame":717,"recordedAt":"2026-03-24T12:37:56.420Z"}
 {"eventType":"improve","fromHash":"71da2c021d70","toHash":"228974b27246","note":"standalone improve 759-763","gameStart":759,"gameEnd":763,"bestGame":761,"recordedAt":"2026-03-24T17:01:26.729Z"}
 {"eventType":"improve","fromHash":"228974b27246","toHash":"41d045d5fbcc","note":"standalone improve 764-764","gameStart":764,"gameEnd":764,"bestGame":764,"recordedAt":"2026-03-24T17:46:18.469Z"}
+{"eventType":"improve","fromHash":"41d045d5fbcc","toHash":"387fbe8fecc0","note":"standalone improve 765-766","gameStart":765,"gameEnd":766,"bestGame":765,"recordedAt":"2026-03-24T18:31:51.346Z"}
