@@ -1,16 +1,17 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v62)
+ * strategy.mjs - ドロップ位置決定戦略 (v63)
  *
- * v62: T1フラッド優先順序修正 + HOLD閾値修正
- * - 【chainSetup優先順序修正】T1フラッドモードで immediateX → chainSetup の順に変更
- *   v61では chainSetup が immediateX より先に試みられており、
- *   高い列への不適切なドロップが発生していた (rank 回帰の主因)
- *   対象: T1_FLOOD, T1_EXTREME, ULTRA_T1_FLOOD, ULTRA_EXTREME の全4箇所
- * - 【GBG urgent HOLD閾値緩和】t1Count < 20 → t1Count < 30
- *   おじゃまブロックがT1として誤認識されることでt1CountがインフレしHOLDが
- *   スキップされる問題を修正
- * - findT1ChainSetup 関数自体は維持（immediateX のフォールバックとして有効）
- * - v61のその他の改善は維持
+ * v63: ゲージ緊急時のCRITICAL対応強化 + GBG大型HOLD改善
+ * - 【gaugeSevere モード追加】gauge>=0.88 をgaugeSevereとして定義
+ *   CRITICALモードでgaugeSevere時: ガベージ到来直前に積極的にHOLD/マージ準備
+ *   (game #687 Turn32: gauge=1.00 で CRITICAL_T1_IMMEDIATE していた問題を修正)
+ * - 【critMergeLimit 動的調整】gaugeSevere時はDEADLINE_Y+0.15まで許容
+ *   全列がデッドライン付近(max_y=2.77等)でもHOLD/マージ判定が機能するよう
+ * - 【EMERGENCY HOLDチェック追加】EMERGENCYブロック冒頭でHOLDスワップを試みる
+ *   大量ピース+gauge高時に大型HOLDピースを活かせるよう
+ * - 【GBG HOLD swap改善】hold.type>=6ならT1が多くても優先スワップ
+ *   大型HOLDピースがT1の多さで無視される問題を削減
+ * - v62のその他の改善は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -92,6 +93,9 @@ export function decide(boardState) {
   else if (gaugeLevel >= 0.6) ojamaBoost = 10;
   else if (gaugeLevel >= 0.3) ojamaBoost = 5;
   else if (gaugeLevel >= 0.2) ojamaBoost = 3;
+
+  // ゲージが高い = ガベージ到来直前の緊急度フラグ
+  const gaugeSevere = gaugeLevel >= 0.88;
 
   const validH = colHeights.filter(h => h > -4.5);
   const avgHeight = validH.length > 0
@@ -274,6 +278,11 @@ export function decide(boardState) {
   // --- CRITICAL ---
   if (isCritical) {
     if (overDeadlineCount >= FINE_COLS.length - 3) {
+      // [v63] EMERGENCY: HOLDの大型ピースを先に活かす
+      if (canHold && hold && hold.type >= 2) {
+        const holdEmergMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
+        if (holdEmergMerge !== null) return { x: 0, reason: `EMERGENCY_HOLD_T${hold.type}`, hold: true };
+      }
       if (nextType >= 2) {
         const emergMerge = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
         if (emergMerge !== null) return { x: emergMerge, reason: `EMERGENCY_MERGE_T${nextType}` };
@@ -286,7 +295,8 @@ export function decide(boardState) {
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
     }
 
-    const critMergeLimit = DEADLINE_Y - 0.1;
+    // [v63] gaugeSevere時はcritMergeLimitを緩和 (全列高くてもマージ/HOLD判定が機能するよう)
+    const critMergeLimit = gaugeSevere ? DEADLINE_Y + 0.15 : DEADLINE_Y - 0.1;
 
     const critGbgMinType = 2;
     if (garbageUrgent && nextType >= critGbgMinType) {
@@ -298,6 +308,34 @@ export function decide(boardState) {
 
     if (garbageFloodMode && nextType === 1 && canHold && hold && hold.type >= 2) {
       return { x: 0, reason: `FLOOD_CRIT_SWAP_T${hold.type}`, hold: true };
+    }
+
+    // [v63] gaugeSevere: ガベージ到来直前の緊急準備
+    // gauge>=0.88の時、ガベージが次ターンに来る可能性が高い。
+    // 小型ピースをHOLDして大型ピースに備えるか、大型ピースでANYマージを試みる。
+    if (gaugeSevere && !garbageUrgent) {
+      // HOLDにある大型ピース→任意マージ (高い列でも可)
+      if (canHold && hold && hold.type >= 3) {
+        const holdAnyMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
+        if (holdAnyMerge !== null) return { x: 0, reason: `CRIT_PGBG_HOLD_T${hold.type}`, hold: true };
+      }
+      // 小型nextをHOLDして次の大型ピースに備える
+      if (canHold && !hold && nextType <= 2) {
+        const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
+        const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
+        const bestNext = Math.max(next2T, next3T);
+        if (bestNext >= 3) {
+          const hasMerge = findAnyMerge(activePieces, bestNext, colHeights, dangerBias) !== null;
+          if (hasMerge) {
+            return { x: 0, reason: `CRIT_PGBG_HOLD_T${nextType}_FOR_T${bestNext}`, hold: true };
+          }
+        }
+      }
+      // 中型以上のnextピース→任意マージ
+      if (nextType >= 3) {
+        const pgbgMerge = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
+        if (pgbgMerge !== null) return { x: pgbgMerge, reason: `CRIT_PGBG_T${nextType}` };
+      }
     }
 
     if (canHold && hold && hold.type) {
@@ -405,7 +443,8 @@ export function decide(boardState) {
       const nextMergeCount = activePieces.filter(p =>
         p.type === nextType && p.y < DEADLINE_Y - 0.1
       ).length;
-      if (holdMergeCount > 0 && holdMergeCount >= nextMergeCount) {
+      // [v63] hold.type>=6の大型ピースはT1が多くても優先スワップ
+      if (holdMergeCount > 0 && (holdMergeCount >= nextMergeCount || hold.type >= 6)) {
         return { x: 0, reason: `GBG_HOLD_UPGRADE_T${hold.type}`, hold: true };
       }
     }
