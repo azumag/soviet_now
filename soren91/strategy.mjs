@@ -1,17 +1,14 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v63)
+ * strategy.mjs - ドロップ位置決定戦略 (v64)
  *
- * v63: ゲージ緊急時のCRITICAL対応強化 + GBG大型HOLD改善
- * - 【gaugeSevere モード追加】gauge>=0.88 をgaugeSevereとして定義
- *   CRITICALモードでgaugeSevere時: ガベージ到来直前に積極的にHOLD/マージ準備
- *   (game #687 Turn32: gauge=1.00 で CRITICAL_T1_IMMEDIATE していた問題を修正)
- * - 【critMergeLimit 動的調整】gaugeSevere時はDEADLINE_Y+0.15まで許容
- *   全列がデッドライン付近(max_y=2.77等)でもHOLD/マージ判定が機能するよう
- * - 【EMERGENCY HOLDチェック追加】EMERGENCYブロック冒頭でHOLDスワップを試みる
- *   大量ピース+gauge高時に大型HOLDピースを活かせるよう
- * - 【GBG HOLD swap改善】hold.type>=6ならT1が多くても優先スワップ
- *   大型HOLDピースがT1の多さで無視される問題を削減
- * - v62のその他の改善は維持
+ * v64: 壁トラップ死亡パターン修正
+ * - 【壁位置死亡トラップ修正 #1】findT1ImmediateMerge: pieceCount>80時の壁ペナルティを
+ *   extraWallPenalty=30→55に増加。高ピース数時に壁列が選ばれやすくなる問題を修正
+ *   (game #704 Turn53: pieces=88でx=-2.5がULTRA_EXTREME_T1_IMMEDIATEとして選択された主因)
+ * - 【壁位置死亡トラップ修正 #2】pickSaferT1Alternative: 非壁候補(|x|<2.2)を壁候補より
+ *   優先してソート。壁列が低くても"safer"として選択されないよう修正
+ *   (game #704 Turn52: chainSetupX=2.5がCHAIN_SAFEとして選択された主因)
+ * - v63のその他の改善は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -765,6 +762,7 @@ function shouldPreferLowT1GarbageMerge(
   return false;
 }
 
+// [v64] 非壁候補を壁候補より優先: 壁列が低くても"safer"として選択されないよう修正
 function pickSaferT1Alternative(colHeights, immediateX, candidates, rawPieceCount, gaugeLevel) {
   if (immediateX === null) return null;
   if (rawPieceCount < 90 && gaugeLevel < 0.65) return null;
@@ -776,8 +774,13 @@ function pickSaferT1Alternative(colHeights, immediateX, candidates, rawPieceCoun
     .map(candidate => ({
       ...candidate,
       h: colHeights[nearestColIdx(candidate.x)],
+      isWall: Math.abs(candidate.x) >= 2.2,
     }))
-    .sort((a, b) => (a.h - b.h) || (Math.abs(a.x) - Math.abs(b.x)));
+    // Sort: non-wall first, then by height (lower = better), then by distance from center
+    .sort((a, b) => {
+      if (a.isWall !== b.isWall) return a.isWall ? 1 : -1;
+      return (a.h - b.h) || (Math.abs(a.x) - Math.abs(b.x));
+    });
 
   if (viable.length === 0) return null;
 
@@ -899,6 +902,7 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
   return bestCol !== null ? clampX(FINE_COLS[bestCol]) : null;
 }
 
+// [v64] pieceCount>80時の壁ペナルティを55に増加 (30→55)
 function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0, pieceCount = 0) {
   const chainMult = pieceCount > 105 ? 0.35 : pieceCount > 85 ? 0.65 : 1.0;
   const heightMult = pieceCount > 105 ? 1.8 : pieceCount > 85 ? 1.35 : 1.0;
@@ -938,7 +942,8 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 
     const colT1Count = pieces.filter(p => Math.abs(p.x - cx) < 0.7 && p.type === 1 && p.y < DEADLINE_Y).length;
     if (colT1Count >= 4) s -= (colT1Count - 3) * 12;
 
-    const extraWallPenalty = pieceCount > 40 ? 30 : pieceCount > 20 ? 18 : 5;
+    // [v64] pieceCount>80時の壁ペナルティを強化: 30→55
+    const extraWallPenalty = pieceCount > 80 ? 55 : pieceCount > 40 ? 30 : pieceCount > 20 ? 18 : 5;
     if (Math.abs(cx) > 2.0) s -= Math.round(22 * wallPenaltyMult) + extraWallPenalty;
     if (Math.abs(cx) > 2.4) s -= Math.round(38 * wallPenaltyMult) + extraWallPenalty;
 
