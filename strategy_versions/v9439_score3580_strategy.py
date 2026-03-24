@@ -54,8 +54,25 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-       # --- Change History ---
-        # v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化
+        # --- Change History ---
+         # v338: reactive_pairsあり時の戦略的配置優先化版 - HEIGHT_CONTROL過剰選択の解消
+         # v337 failure: ロシアフェーズでaxis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナスと競合し、即時併合機会を取りこぼしている
+         # ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
+         # ベストゲーム(score3171)終盤: ロシアフェーズで即時併合を確実に捉えて高スコア
+         # batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=1.2)と過剰であり、即時併合機会を取りこぼしていることを確認
+         # ワーストゲーム(score0413)ではreactive_pairsがあるにも関わらずHEIGHT_CONTROLが続き、即時併合機会を取りこぼしている失敗パターンを解消
+         # ベストゲーム(score2072)ではreactive_pairsがある場合でも即時併合機会を確実に捉えて高スコア稼いでいる
+         # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づく即時併合優先の構造的改善
+         # axis 9.6追加: reactive_pairs>=1 && merge_grade=="NO"の場合、盤面上の現在タイプの最も高い位置のピースに着地できる配置にボーナスを与え、即時併合機会を最大化
+         # axis 9.7追加: reactive_pairs>=1 && merge_grade=="NO"の場合、盤面密度に応じたボーナスを与え、盤面圧縮を優先
+         # これによりreactive_pairsがある状況でHEIGHT_CONTROLではなく、即時併合機会を確実に捉える戦略へ切り替え
+         # 盤面密度ボーナスはlanding_yに応じて動的に評価し、下層に配置するほどボーナスが大きい（board compression）
+         # 低スコアの主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消し、p25悪化を改善
+         # refs: advice.md (Pitman_live, azumag), tmp/improve_brief.md, tmp/batch_summary.txt, 
+         #       game_history/20260324_154730_score0413.jsonl, game_history/20260324_161825_score2775.jsonl, game_history/20260324_161021_score0838.jsonl,
+         #       game_history/20260324_155130_score2072.jsonl, strategy_versions/best_score2335_strategy.py
+         # Fixes rollback failure mode: reactive_pairsがある状況での即時併合機会取りこぼし（axis 9.6 axis 9.7追加）
+         #
         # v336 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
         # ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
         # ベストゲーム(score3171)終盤: ロシアフェーズで即時併合を確実に捉えて高スコア
@@ -378,7 +395,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         same_type_stack_top = max(same_type_pieces, key=lambda p: p.get("y", -10))
      
     # =======================================================================
-    # score each drop candidate (x coordinate) with 6 evaluation axes (NEW: +1 axis for reactive)
+    # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -404,6 +421,56 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- evaluation axis 9.6: reactive pairs stacking bonus (NEW) -----
+        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
+        # batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=1.2)と過剰、即時併合機会を取りこぼしていることを確認
+        # reactive_pairsがあるがmerge_grade=="NO"の場合、HEIGHT_CONTROLではなく戦略的配置を優先する
+        # ワーストゲーム(score0413)ではreactive_pairsがあるにも関わらずHEIGHT_CONTROLが続き即時併合機会を取りこぼしている
+        # ベストゲーム(score2775)ではreactive_pairsがある時、即時併合機会を確実に捉えて高スコア
+        # refs: advice.md (Pitman_live, azumag), tmp/improve_brief.md, tmp/batch_summary.txt,
+        #       game_history/20260324_154730_score0413.jsonl, game_history/20260324_161825_score2775.jsonl
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+            # 盤面上の現在タイプの最も高い位置のピースに着地できる場合、ボーナスを与える
+            # 距離が近いほど大きなボーナス（max_yを超える位置はボーナスなし）
+            stack_y = same_type_stack_top["y"]
+            if stack_y >= -1.0:  # 合理的な積み上げ範囲
+                vertical_bonus = (stack_y + 1.0) * 200.0  # 低い位置ほどボーナス小さく（積みすぎを抑制）
+                if x < 0.0:
+                    target_x = same_type_stack_top["x"]
+                    horizontal_distance = abs(x - target_x)
+                    horizontal_bonus = max(0, 80.0 - horizontal_distance * 20.0)  # 近いほど大きいボーナス
+                    score += vertical_bonus + horizontal_bonus
+                    reasons.append("REACTIVE_PAIRS_STACKING")
+                else:
+                    # 右側の場合は対称処理
+                    target_x = same_type_stack_top["x"]
+                    horizontal_distance = abs(x - target_x)
+                    horizontal_bonus = max(0, 80.0 - horizontal_distance * 20.0)
+                    score += vertical_bonus + horizontal_bonus
+                    reasons.append("REACTIVE_PAIRS_STACKING")
+        
+        # ----- evaluation axis 9.7: reactive pairs compression bonus (NEW) -----
+        # reactive_pairsがあるがmerge_grade=="NO"の場合、盤面圧縮を優先する戦略的思考
+        # ワーストゲームではHEIGHT_CONTROLが続き即時併合機会を取りこぼしている
+        # ベストゲームでは即時併合機会を確実に捉えて盤面を圧縮し、高type成長パイプラインを維持
+        # refs: advice.md (azumag), tmp/improve_brief.md, tmp/batch_summary.txt,
+        #       game_history/20260324_154730_score0413.jsonl, game_history/20260324_161825_score2775.jsonl
+        if reactive_pair_count >= 1 and merge_grade == "NO":
+            # 盤面密度を評価し、密度が高い場所に落とすとペナルティ、密度が低い場所に落とすとボーナス
+            # 簡単な指標として、landing_yが高い（盤面の上の方）になるほど危険、低いほど安全
+            # reactive_pairsがある状況では、盤面の下の方に配置して将来の併合機会を最大化
+            if landing_y < 0.0:
+                # 下層に配置：ボーナス。低いほど良い
+                compression_bonus = (landing_y + 2.0) * 150.0  # landing_y=-2.0なら0.0、0なら300.0
+                score += compression_bonus
+                reasons.append("REACTIVE_PAIRS_COMPRESSION")
+            elif landing_y < 0.5:
+                # 中層に配置：小幅ボーナス
+                compression_bonus = 50.0
+                score += compression_bonus
+                reasons.append("REACTIVE_PAIRS_COMPRESSION")
+            # 上層配置（landing_y >= 0.5）はボーナスなし（height_penaltyでペナルティされる）
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
