@@ -54,18 +54,21 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
+ # --- Change History ---
+            # v342: axis 9.7水平バランス戦略削除版 - 盤面圧縮戦略へ統合
+            # v341 failure mode: axis 9.7の水平バランス戦略（REACTIVE_PAIRS_HORIZONTAL_BALANCE）が即時併合優先と競合し、HEIGHT_CONTROLが続き即時併合機会を取りこぼしている
+            # last_rollback_postmortem: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode
+            # batch_summary: HEIGHT_CONTROLが11.2%選択（avg_score_delta=0.0）と過剰、即時併合機会を取りこぼしている
+            # ワーストゲーム(score0714)終盤: max_y=2.82でゲームオーバー、即時併合不足
+            # ベストゲーム(score2350)終盤: max_y=3.40でも即時併合機会を確実に捉えて高スコア
+            # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」がログで支持されている
+            # axis 9.7削除: 水平バランス戦略を削除し、axis 9.6と統合して盤面圧縮戦略へ一本化
+            # same_type_stack_topの有無によらず、常に盤面圧縮ボーナス（compression_bonus = (-landing_y) * 200.0）を与える
+            # 下層配置を優先し、即時併合機会を最大化する戦略へ統一
+            # refs: last_rollback_postmortem.md, last_rollback_analysis.md, improve_brief.md, batch_summary.txt, advice.md,
+            #       game_history/20260325_022335_score0714.jsonl, game_history/20260325_023517_score2350.jsonl, strategy.py.staging
+            # Fixes rollback failure mode: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足（axis 9.7水平バランス戦略削除・盤面圧縮戦略へ統合）
            # v341: axis 9.7盤面圧縮ボーナス修正版 - 低配置でもボーナスが発生するように改善
-           # v338 failure mode: compression_bonus = (landing_y + 2.5) * 200.0 だと landing_y=-2.5でボーナス0になり、HEIGHT_CONTROLが選ばれる失敗パターン
-           # ワーストゲーム(score0813)終盤: reactive_pairs=1, max_y=-0.56 (安定して低い) でHEIGHT_CONTROLが続き、即時併合機会を取りこぼしている
-           # ベストゲーム(score2540)終盤: axis 9.7の盤面圧縮ボーナスが戦略的に機能し、即時併合機会を確実に捉えて高スコア
-           # compression_bonus = (-landing_y) * 200.0 に変更し、landing_y=-2.5なら500.0、-1.0なら200.0、0なら0.0（低い位置ほどボーナス大）
-           # same_type_stack_top is None 条件を削除し、axis 9.6とaxis 9.7が排他的に機能するように改善
-           # Fixes rollback failure mode: reactive_pairs>=1 && merge_grade=="NO" 時の低配置でボーナス0の失敗パターン（axis 9.7ボーナス修正）
-           # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
-           #       game_history/20260324_214039_score0813.jsonl, game_history/20260324_214827_score2540.jsonl
-           # Fixes rollback failure mode: reactive_pairs>=1 && merge_grade=="NO" 時の低配置でボーナス0の失敗パターン（axis 9.7ボーナス修正）
-          #
          # v340: reactive_pairs>=3時deadline_crossed併合最優先版 - axis 9.6超危険域無効化
          # Fixes rollback failure mode: reactive_pairs>=3 && deadline_crossedでの高配置 runway（axis 9.6無効化）
          # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt,
@@ -313,21 +316,33 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v341: axis 9.7盤面圧縮ボーナス修正版 - 低配置でもボーナスが発生するように改善
+    """v342: axis 9.7水平バランス戦略削除版 - 盤面圧縮戦略へ統合
 
-    v338 failure mode: compression_bonus = (landing_y + 2.5) * 200.0 だと landing_y=-2.5でボーナス0になり、HEIGHT_CONTROLが選ばれる失敗パターン
-    ワーストゲーム(score0813)終盤: reactive_pairs=1, max_y=-0.56 (安定して低い) でHEIGHT_CONTROLが続き、即時併合機会を取りこぼしている
-    ベストゲーム(score2540)終盤: axis 9.7の盤面圧縮ボーナスが戦略的に機能し、即時併合機会を確実に捉えて高スコア
-    compression_bonus = (-landing_y) * 200.0 に変更し、landing_y=-2.5なら500.0、-1.0なら200.0、0なら0.0（低い位置ほどボーナス大）
-    same_type_stack_top is None 条件を削除し、axis 9.6とaxis 9.7が排他的に機能するように改善
+    v341 failure mode: axis 9.7の水平バランス戦略（REACTIVE_PAIRS_HORIZONTAL_BALANCE）が即時併合優先と競合し、HEIGHT_CONTROLが続き即時併合機会を取りこぼしている
+    last_rollback_postmortem: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode
+    batch_summary: HEIGHT_CONTROLが11.2%選択（avg_score_delta=0.0）と過剰、即時併合機会を取りこぼしている
+    ワーストゲーム(score0714)終盤: max_y=2.82でゲームオーバー、即時併合不足
+    ベストゲーム(score2350)終盤: max_y=3.40でも即時併合機会を確実に捉えて高スコア
+    advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」がログで支持されている
+    axis 9.7削除: 水平バランス戦略を削除し、axis 9.6と統合して盤面圧縮戦略へ一本化
+    same_type_stack_topの有無によらず、常に盤面圧縮ボーナス（compression_bonus = (-landing_y) * 200.0）を与える
+    下層配置を優先し、即時併合機会を最大化する戦略へ統一
 
-    v340の改善点:
-     1. axis 9.6修正: reactive_pairs>=3 && deadline_crossed && merge_grade=="NO"の場合、axis 9.6を完全に無効化
-     2. 超危険域では即時併合待ちを最優先し、axis 8.8の-3000~-7000ペナルティを優先させることで高配置 runway を防止
-     3. reactive_pairs<3の場合は、盤面圧縮準備としてaxis 9.6のstacking bonusを維持
-     4. v339のaxis 9.7削除によって過剰に機能するようになったaxis 9.6を抑制し、即時併合優先を回復
-     5. refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
-     #       game_history/20260324_210005_score0638.jsonl, game_history/20260324_210741_score2602.jsonl
+    v341の改善点:
+     1. axis 9.7削除: v341の水平バランス戦略を削除し、axis 9.6と統合して盤面圧縮戦略へ一本化
+              - last_rollback_postmortem: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode
+              - batch_summary: HEIGHT_CONTROLが11.2%選択（avg_score_delta=0.0）と過剰、即時併合機会を取りこぼしている
+              - advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」がログで支持されている
+              - ワーストゲーム: max_y=2.82でゲームオーバー、即時併合不足
+              - ベストゲーム: max_y=3.40でもスコア2350、即時併合機会を確実に捉えている
+              - axis 9.7の水平バランス戦略が即時併合優先と競合しているため削除
+              - same_type_stack_topの有無によらず、常に盤面圧縮ボーナス（compression_bonus = (-landing_y) * 200.0）を与える
+              - 下層配置を優先し、即時併合機会を最大化する戦略へ統一
+     2. axis 9.6修正: reactive_pairs>=3 && deadline_crossed && merge_grade=="NO"の場合、axis 9.6を完全に無効化
+      3. 超危険域では即時併合待ちを最優先し、axis 8.8の-3000~-7000ペナルティを優先させることで高配置 runway を防止
+      4. reactive_pairs<3の場合は、盤面圧縮準備としてaxis 9.6のstacking bonusを維持
+      5. refs: last_rollback_postmortem.md, last_rollback_analysis.md, improve_brief.md, batch_summary.txt, advice.md,
+      #       game_history/20260325_022335_score0714.jsonl, game_history/20260325_023517_score2350.jsonl, strategy.py.staging
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -458,28 +473,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_210005_score0638.jsonl turns 55-61, game_history/20260324_210741_score2602.jsonl
         # Fixes rollback failure mode: reactive_pairs>=3 && deadline_crossedでの高配置 runaway（axis 9.6超危険域無効化）
 
-        # axis 9.6: reactive pairs stacking bonus (same_type_stack_topがある場合)
+        # axis 9.6: reactive pairs stacking bonus (v342: axis 9.7水平バランス戦略削除版 - 盤面圧縮戦略へ統合)
+        # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」がログで支持されている
+        # batch_summary: HEIGHT_CONTROLが11.2%選択（avg_score_delta=0.0）と過剰、即時併合機会を取りこぼしている
+        # last_rollback_postmortem: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode
+        # ワーストゲーム: max_y=2.82でゲームオーバー、即時併合不足
+        # ベストゲーム: max_y=3.40でも即時併合機会を確実に捉えて高スコア
+        # axis 9.7削除: 水平バランス戦略を削除し、axis 9.6と統合して盤面圧縮戦略へ一本化
+        # same_type_stack_topの有無によらず、常に盤面圧縮ボーナスを与えることで即時併合機会を最大化
         if reactive_pair_count >= 3 and deadline_crossed and merge_grade == "NO":
-            # axis 9.6を完全に無効化（reactive_pairs>=3 && deadline_crossedでの高配置 runaway防止）
+            # axis 9.6を完全に無効化（reactive_pairs>=3 && deadline_crossedでの高配置 runway防止）
             pass
-        elif reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
-            # 盤面圧縮ボーナス（same_type_stack_topがある場合のみ適用）
+        elif reactive_pair_count >= 1 and merge_grade == "NO":
+            # 盤面圧縮ボーナス（same_type_stack_topの有無に関わらず適用）
             # 下層配置を優先し、高配置を抑制する戦略的思考
+            # same_type_stack_topがある場合は即時併合機会を最大化、ない場合も盤面圧縮を優先
             # compression_bonus = (-landing_y) * 200.0 に変更し、低い位置ほどボーナス大
             compression_bonus = (-landing_y) * 200.0  # landing_y=-2.5なら500.0、-1.0なら200.0、0なら0.0
             score += compression_bonus
             reasons.append("REACTIVE_PAIRS_COMPRESSION")
-        # axis 9.7: reactive pairs horizontal balance and position strategy (same_type_stack_topがない場合)
-        # same_type_stack_topがない場合、現在タイプのスタッキング候補がないため、水平方向のバランスと位置戦略を優先
-        # 未活用情報の水平位置を活用：盤面の中心寄りの配置を優先し、左右の偏りを修正する戦略的思考
-        # v341: axis 9.7を盤面圧縮ボーナスから水平バランス戦略へ再定義（構造的改善）
-        # 左右に同タイプの国が2つある状況で真ん中に落として併合を逃している問題を解消（advice.md: Pitman_live）
-        elif reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None:
-            # 水平バランスボーナス：盤面の中心（x=0.0）に近いほどボーナス大
-            # |x|が大きいほど盤面の端に配置され、将来の併合機会が減少するためペナルティ
-            horizontal_balance_bonus = -abs(x) * 100.0  # x=0なら0.0、x=±3.0なら-300.0
-            score += horizontal_balance_bonus
-            reasons.append("REACTIVE_PAIRS_HORIZONTAL_BALANCE")
+
 
 
         # ----- evaluation axis 2: height penalty -----
