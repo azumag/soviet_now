@@ -214,9 +214,9 @@ with open(rs_file, 'w') as f:
 			log "[IMPROVE] 改善完了 → idle"
 			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 				log "[IMPROVE] manual_meriken_mode=on のため、メリケンAI継続"
-			elif [ "$(date +%H)" = "22" ]; then
-				# 22時台: メリケンAIタイムに移行するため停止しない
-				log "[IMPROVE] 22時台: メリケンAIタイムに移行 → soren91継続"
+			elif [ "$(date +%H)" = "20" ]; then
+				# 20時台: メリケンAIタイムに移行するため停止しない
+				log "[IMPROVE] 20時台: メリケンAIタイムに移行 → soren91継続"
 				soren91_improve
 				MERIKEN_TIME_PENDING=1
 			else

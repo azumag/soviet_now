@@ -850,7 +850,7 @@ generate_comment_response() {
 	if _comment_has_manual_claude_trigger "$twitch_comments"; then
 		comment_force_claude_manual=true
 		twitch_comments_for_prompt=$(_strip_comment_control_prefixes "$twitch_comments")
-		log "[COMMENT] azumagbanjo の !claude トリガを検出 → claude sonnet を優先"
+		log "[COMMENT] azumagbanjo の !claude トリガを検出 → claude ${RADIO_CLAUDE_MODEL} を優先"
 	fi
 	if [ -z "$twitch_comments_for_prompt" ]; then
 		log "[COMMENT] !claude 制御コメントのみのため返信生成をスキップ"
@@ -1176,7 +1176,7 @@ COMMENTPROMPT
 		local comments_talk="" comment_model_used=""
 		if [ "$comment_force_claude_manual" = "true" ]; then
 			comment_claude_only=true
-			log "[COMMENT] !claude 指定のため claude sonnet で生成"
+			log "[COMMENT] !claude 指定のため claude ${RADIO_CLAUDE_MODEL} で生成"
 		elif _comment_should_use_claude_only; then
 			comment_claude_only=true
 			log "[COMMENT] improve実行中のため claude専用モードで生成"

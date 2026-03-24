@@ -78,13 +78,13 @@ node backfill_result_ranks.mjs
 [ラウンドループ]
   Matching待ち → ゲームプレイ → ランキング
   → 履歴保存 (game_NNNN.jsonl)
-  → 12ゲームごとにAI改善 (claude -p --model sonnet で strategy.mjs 更新)
+  → 12ゲームごとにAI改善 (claude -p --model haiku で strategy.mjs 更新)
   → 次ラウンドへ (自動)
 ```
 
 ## AI自動改善
 
-12ゲームごとに `claude -p --model sonnet` で戦略を改善する:
+12ゲームごとに `claude -p --model haiku` で戦略を改善する:
 
 1. ゲーム履歴からテキストサマリー (順位、ターン数、ドロップ分布、理由分布) を生成
 2. 現在の `strategy.mjs` + サマリーを Claude に送信

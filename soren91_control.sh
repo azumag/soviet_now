@@ -32,6 +32,9 @@ SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 
 MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
 SOREN91_MERIKEN_IMPROVE_INTERVAL="${SOREN91_MERIKEN_IMPROVE_INTERVAL:-12}"
 SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
+MERIKEN_TIME_START_HOUR="${MERIKEN_TIME_START_HOUR:-20}"
+MERIKEN_TIME_END_HOUR="${MERIKEN_TIME_END_HOUR:-21}"
+MERIKEN_TIME_STATE_FILE="${MERIKEN_TIME_STATE_FILE:-$TMP_STATE_DIR/meriken_time_state.json}"
 
 _soren91_switch_obs_layout() {
 	local mode="${1:-}"
@@ -113,6 +116,116 @@ manual_meriken_mode_status() {
 	else
 		printf 'off'
 	fi
+}
+
+_meriken_time_slot_end_epoch() {
+	python3 - "$MERIKEN_TIME_END_HOUR" <<'PY' 2>/dev/null
+import sys
+from datetime import datetime
+
+try:
+    end_hour = int(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+
+now = datetime.now().astimezone()
+end_dt = now.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+if now >= end_dt:
+    print(0)
+else:
+    print(int(end_dt.timestamp()))
+PY
+}
+
+_write_meriken_time_state() {
+	local end_epoch="$1" reason="${2:-scheduled}"
+	mkdir -p "$(dirname "$MERIKEN_TIME_STATE_FILE")" 2>/dev/null || true
+	python3 - "$MERIKEN_TIME_STATE_FILE" "$end_epoch" "$reason" <<'PY' >/dev/null 2>&1
+import json
+import sys
+from datetime import datetime, timezone
+
+out_file, end_epoch_raw, reason = sys.argv[1:4]
+try:
+    end_epoch = int(end_epoch_raw)
+except Exception:
+    raise SystemExit(1)
+payload = {
+    "active": True,
+    "reason": reason,
+    "end_epoch": end_epoch,
+    "updated_at": datetime.now(timezone.utc).isoformat(),
+}
+with open(out_file, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False)
+PY
+}
+
+_clear_meriken_time_state() {
+	rm -f "$MERIKEN_TIME_STATE_FILE" 2>/dev/null || true
+}
+
+_meriken_time_state_end_epoch() {
+	[ -f "$MERIKEN_TIME_STATE_FILE" ] || return 1
+	python3 - "$MERIKEN_TIME_STATE_FILE" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+    print(int(data.get("end_epoch", 0) or 0))
+except Exception:
+    raise SystemExit(1)
+PY
+}
+
+scheduled_meriken_time_is_active() {
+	local end_epoch=0
+	end_epoch=$(_meriken_time_state_end_epoch 2>/dev/null || echo 0)
+	case "$end_epoch" in
+	''|*[!0-9]*) end_epoch=0 ;;
+	esac
+	if [ "${end_epoch:-0}" -le 0 ]; then
+		_clear_meriken_time_state
+		return 1
+	fi
+	if [ "$(date +%s)" -lt "$end_epoch" ]; then
+		return 0
+	fi
+	_clear_meriken_time_state
+	return 1
+}
+
+scheduled_meriken_time_begin() {
+	local reason="${1:-scheduled}"
+	local end_epoch=0
+	end_epoch=$(_meriken_time_slot_end_epoch 2>/dev/null || echo 0)
+	case "$end_epoch" in
+	''|*[!0-9]*) end_epoch=0 ;;
+	esac
+	if [ "${end_epoch:-0}" -le "$(date +%s)" ]; then
+		return 1
+	fi
+	_write_meriken_time_state "$end_epoch" "$reason" || return 1
+	printf '%s' "$end_epoch"
+}
+
+scheduled_meriken_time_end_label() {
+	local end_epoch="${1:-0}"
+	case "$end_epoch" in
+	''|*[!0-9]*) end_epoch=0 ;;
+	esac
+	[ "$end_epoch" -gt 0 ] || return 1
+	python3 - "$end_epoch" <<'PY' 2>/dev/null
+import sys
+from datetime import datetime
+
+try:
+    end_epoch = int(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+print(datetime.fromtimestamp(end_epoch).astimezone().strftime('%H:%M %Z'))
+PY
 }
 
 soren91_is_running() {
@@ -221,12 +334,16 @@ soren91_start() {
 	printf '{"start_game":%d,"start_time":"%s"}\n' "$start_game" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		> "$SOREN91_SESSION_FILE"
 
-	# メリケンAIモード判定 (手動発火 or 22-23時)
+	# メリケンAIモード判定 (手動発火 or 定時メリケン枠の継続中)
 	# メリケンモードでは内部改善を有効化 (12ゲームごと、env override可)
 	local _meriken_mode=0
 	if manual_meriken_mode_is_enabled; then
 		_meriken_mode=1
-	elif [ "$(date +%H)" = "22" ] || [ "$(date +%H)" = "23" ]; then
+	elif scheduled_meriken_time_is_active; then
+		_meriken_mode=1
+	elif [ "$(date +%H)" = "$MERIKEN_TIME_START_HOUR" ]; then
+		# 定時メリケン枠の開始時刻に起動されたセッションはメリケンモード扱いにする。
+		# 継続判定は state file の end_epoch を優先する。
 		_meriken_mode=1
 	fi
 
@@ -343,6 +460,7 @@ soren91_stop() {
 		log "[SOREN91] Not running, recording end_game"
 		local eg
 		eg=$(_soren91_record_end_game)
+		_clear_meriken_time_state
 		rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_DIR/tmp/in_game"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
@@ -387,6 +505,7 @@ soren91_stop() {
 	eg=$(_soren91_record_end_game)
 
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_DIR/tmp/in_game"
+	_clear_meriken_time_state
 	# 中華AI側のBGMをアンミュート（改善終了・復帰）
 	rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_soren91_switch_obs_layout china || true
@@ -509,4 +628,5 @@ soren91_cleanup() {
 		"$SOREN91_IMPROVE_LOCK" "$SOREN91_STOP_FILE" \
 		"$SOREN91_DIR/tmp/in_game" \
 		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+	_clear_meriken_time_state
 }

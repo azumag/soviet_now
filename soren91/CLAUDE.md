@@ -41,12 +41,12 @@ tmp/summaries/           # ラウンドサマリーJSON
 [ラウンドループ]
   Matching待ち → ゲームプレイ → ランキング
   → 履歴保存 (game_NNNN.jsonl)
-  → 12ゲームごとにAI改善 (claude -p --model sonnet でstrategy.mjs更新)
+  → 12ゲームごとにAI改善 (claude -p --model haiku でstrategy.mjs更新)
   → 次ラウンドへ (自動)
 ```
 
 ## AI改善ループ
-- 12ゲームごとに `claude -p --model sonnet` を非同期呼び出し
+- 12ゲームごとに `claude -p --model haiku` を非同期呼び出し
 - テキストサマリー (ターン数、ドロップ分布、理由分布) を送信
 - 返ってきた新strategy.mjsをバリデーション (構文 + スモークテスト)
 - パスしたら適用、旧版をstrategy_versions/にバックアップ

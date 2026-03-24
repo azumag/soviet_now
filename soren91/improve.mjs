@@ -25,6 +25,9 @@ const STRATEGY_PATH = 'strategy.mjs';
 const VERSIONS_DIR = 'strategy_versions';
 const PROMPT_PATH = 'prompts/improve_strategy.md';
 const SCREENSHOTS_DIR = 'tmp/screenshots';
+const IMPROVE_CLAUDE_MODEL = process.env.SOREN91_IMPROVE_CLAUDE_MODEL || 'haiku';
+const IMPROVE_PROMPT_WARN_CHARS = Number.parseInt(process.env.SOREN91_IMPROVE_PROMPT_WARN_CHARS || '120000', 10);
+const IMPROVE_IMAGE_WARN_CHARS = Number.parseInt(process.env.SOREN91_IMPROVE_IMAGE_WARN_CHARS || '1500000', 10);
 
 let improving = false; // 排他ロック
 
@@ -131,11 +134,11 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
     console.log(`[improve] Collected ${screenshots.length} screenshots for game #${gameNumber}`);
   }
   const promptText = buildPromptText(gameSummary, currentStrategy, lineageContext, screenshots);
-  console.log('[improve] Calling claude CLI...');
+  console.log(`[improve] Calling claude CLI (model=${IMPROVE_CLAUDE_MODEL})...`);
 
   let newStrategy;
   try {
-    newStrategy = await callClaude(promptText, screenshots);
+    newStrategy = await callClaude(promptText, screenshots, 'improve');
   } catch (err) {
     console.error('[improve] API call failed:', err.message);
     cleanupScreenshots();
@@ -209,6 +212,33 @@ function formatTurnDetail(t) {
   const topTypes = Object.entries(typeDist).sort((a, b) => b[1] - a[1]).slice(0, 5)
     .map(([type, count]) => `t${type}:${count}`).join(',');
   return `Turn ${t.turn}: pieces=${pieces} max_y=${maxY.toFixed(2)} x=${x} reason=${reason} garbage=${garbageRatio} gauge=${gauge} types=[${topTypes}]`;
+}
+
+function getClaudeContextStats(promptText, screenshots = []) {
+  const promptChars = String(promptText || '').length;
+  const imagePayloadChars = screenshots.reduce((sum, ss) => sum + String(ss?.base64 || '').length, 0);
+  return {
+    promptChars,
+    imageCount: screenshots.length,
+    imagePayloadChars,
+    approxTotalChars: promptChars + imagePayloadChars,
+  };
+}
+
+function logClaudeContextStats(promptText, screenshots = [], tag = 'improve') {
+  const stats = getClaudeContextStats(promptText, screenshots);
+  console.log(
+    `[${tag}] Claude context ` +
+    `(model=${IMPROVE_CLAUDE_MODEL}, prompt_chars=${stats.promptChars}, images=${stats.imageCount}, ` +
+    `image_payload_chars=${stats.imagePayloadChars}, approx_total_chars=${stats.approxTotalChars})`
+  );
+  if (stats.promptChars > IMPROVE_PROMPT_WARN_CHARS || stats.imagePayloadChars > IMPROVE_IMAGE_WARN_CHARS) {
+    console.warn(
+      `[${tag}] Claude context is large ` +
+      `(prompt_warn=${IMPROVE_PROMPT_WARN_CHARS}, image_warn=${IMPROVE_IMAGE_WARN_CHARS})`
+    );
+  }
+  return stats;
 }
 
 /**
@@ -423,16 +453,17 @@ function extractStrategyFromResponse(text) {
  * claude CLI を呼び出してテキスト応答を取得 (非同期)
  * screenshots が渡された場合は --input-format stream-json で画像付きリクエスト
  */
-function callClaude(promptText, screenshots = []) {
+function callClaude(promptText, screenshots = [], tag = 'improve') {
   const promptFile = 'tmp/improve_prompt.txt';
   writeFileSync(promptFile, promptText);
+  logClaudeContextStats(promptText, screenshots, tag);
 
   if (screenshots.length > 0) {
     return callClaudeWithImages(promptText, screenshots);
   }
 
   return new Promise((resolve, reject) => {
-    const child = execFile('claude', ['-p', '--model', 'sonnet', '--output-format', 'text'], {
+    const child = execFile('claude', ['-p', '--model', IMPROVE_CLAUDE_MODEL, '--output-format', 'text'], {
       encoding: 'utf-8',
       maxBuffer: 2 * 1024 * 1024,
     }, (err, stdout, stderr) => {
@@ -469,7 +500,7 @@ function callClaudeWithImages(promptText, screenshots) {
 
   return new Promise((resolve, reject) => {
     const child = execFile('claude', [
-      '-p', '--model', 'sonnet',
+      '-p', '--model', IMPROVE_CLAUDE_MODEL,
       '--input-format', 'stream-json', '--output-format', 'stream-json',
       '--verbose',
     ], {
@@ -544,7 +575,7 @@ ${failedCode.slice(0, 3000)}${failedCode.length > 3000 ? '\n... (truncated)' : '
 - Do NOT import external modules - pure logic only
 - HOLD logic MUST be preserved`;
 
-  return callClaude(fixPrompt, screenshots);
+  return callClaude(fixPrompt, screenshots, 'improve_fix');
 }
 
 /**
@@ -775,10 +806,10 @@ async function runStandaloneImprovement(startGame, endGame) {
   }
   const promptText = buildPromptText(combinedSummary, currentStrategy, lineageContext, allScreenshots);
 
-  console.log('[improve] Calling claude CLI (standalone)...');
+  console.log(`[improve] Calling claude CLI (standalone, model=${IMPROVE_CLAUDE_MODEL})...`);
   let newStrategy;
   try {
-    newStrategy = await callClaude(promptText, allScreenshots);
+    newStrategy = await callClaude(promptText, allScreenshots, 'improve_standalone');
   } catch (err) {
     console.error('[improve] API call failed:', err.message);
     return;

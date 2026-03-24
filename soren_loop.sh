@@ -120,6 +120,40 @@ _abort_if_interrupted() {
 	return 0
 }
 
+_run_scheduled_meriken_time_window() {
+	local reason="${1:-scheduled}"
+	local start_log="${2:-[MERIKEN_TIME] メリケンAIタイム開始}"
+	local end_epoch="" end_label=""
+	if command -v scheduled_meriken_time_begin >/dev/null 2>&1; then
+		end_epoch=$(scheduled_meriken_time_begin "$reason" 2>/dev/null || true)
+	fi
+	case "$end_epoch" in
+	''|*[!0-9]*) end_epoch=0 ;;
+	esac
+	if [ "${end_epoch:-0}" -le "$(date +%s)" ]; then
+		log "[MERIKEN_TIME] 定時枠の終了時刻を過ぎているため開始しない"
+		soren91_stop 2>/dev/null || true
+		return 1
+	fi
+	if command -v scheduled_meriken_time_end_label >/dev/null 2>&1; then
+		end_label=$(scheduled_meriken_time_end_label "$end_epoch" 2>/dev/null || true)
+	fi
+	if [ -n "$end_label" ]; then
+		log "${start_log} (until ${end_label})"
+	else
+		log "${start_log}"
+	fi
+	while [ "$(date +%s)" -lt "$end_epoch" ]; do
+		[ -f tmp/stop ] && break
+		start_comment_player 2>/dev/null || true
+		start_comment_watcher 2>/dev/null || true
+		sleep 15
+	done
+	log "[MERIKEN_TIME] メリケンAIタイム終了"
+	soren91_stop 2>/dev/null || true
+	return 0
+}
+
 # --- 初期化 ---
 log "=== Soren Evolution Loop ==="
 log "strategy.py → 1game → adaptive improve → repeat"
@@ -215,29 +249,21 @@ while true; do
 		continue
 	fi
 
-	# 改善完了が22時台だった場合: soren91を停止せずメリケンAIタイムに移行
+	# 改善完了が20時台だった場合: soren91を停止せずメリケンAIタイムに移行
 	if [ "${MERIKEN_TIME_PENDING:-0}" -eq 1 ]; then
 		MERIKEN_TIME_PENDING=0
 		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
-			log "[MERIKEN_TIME] 改善完了→22時台: メリケンAIタイム開始 (1時間)"
 			# soren91は既に動いているのでstartは不要。アナウンスのみ
 			{
 				_mt_file=$(mktemp /tmp/eloop_meriken_time.XXXXXX)
-				printf '%s\n' "22時から23時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" > "$_mt_file"
+				printf '%s\n' "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" > "$_mt_file"
 				SAY_VOICEVOX_SPEAKER_OVERRIDE="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="meriken_time:announce" ./say_enqueue.sh "$_mt_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 				rm -f "$_mt_file"
 			} &
-			./twitch_chat.sh send "22時から23時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
-			# 1時間ループ: soren91が動いている間、中華AIは休止
-			_meriken_end=$(($(date +%s) + 3600))
-			while [ "$(date +%s)" -lt "$_meriken_end" ]; do
-				[ -f tmp/stop ] && break
-				start_comment_player 2>/dev/null || true
-				start_comment_watcher 2>/dev/null || true
-				sleep 15
-			done
-			log "[MERIKEN_TIME] メリケンAIタイム終了"
-			soren91_stop 2>/dev/null || true
+			./twitch_chat.sh send "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
+			_run_scheduled_meriken_time_window \
+				"improve_complete" \
+				"[MERIKEN_TIME] 改善完了→20時台: メリケンAIタイム開始"
 		fi
 	fi
 
@@ -278,36 +304,26 @@ while true; do
 	improve_rc=$?
 	_abort_if_interrupted "$improve_rc" "trigger_adaptive_improvement"
 
-	# 22時台メリケンAIタイム: 改善サイクル区切り（蓄積0かつファイルあり=改善直後）で22時台なら1時間メリケンモード
+	# 20時台メリケンAIタイム: 改善サイクル区切り（蓄積0かつファイルあり=改善直後）で定時枠終了までメリケンモード
 	# ファイルなし(初回起動)では発火しない。MERIKEN_TIME_PENDINGパスとは別の入口。
 	_meriken_acc_count=-1
 	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		_meriken_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo -1)
 	fi
-	if [ "${_meriken_acc_count}" -eq 0 ] && [ "$(date +%H)" = "22" ]; then
+	if [ "${_meriken_acc_count}" -eq 0 ] && [ "$(date +%H)" = "20" ]; then
 		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
-			log "[MERIKEN_TIME] サイクル区切り+22時台: メリケンAIタイム開始 (1時間)"
 			soren91_start 2>/dev/null || true
 			# メリケンAIタイム専用アナウンス (読み上げ + Twitch投稿)
 			{
 				_mt_file=$(mktemp /tmp/eloop_meriken_time.XXXXXX)
-				printf '%s\n' "22時から23時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" > "$_mt_file"
+				printf '%s\n' "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" > "$_mt_file"
 				SAY_VOICEVOX_SPEAKER_OVERRIDE="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="meriken_time:announce" ./say_enqueue.sh "$_mt_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 				rm -f "$_mt_file"
 			} &
-			./twitch_chat.sh send "22時から23時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
-			# 1時間ループ: soren91が動いている間、中華AIは休止
-			_meriken_end=$(($(date +%s) + 3600))
-			while [ "$(date +%s)" -lt "$_meriken_end" ]; do
-				# 外部からの停止要求チェック
-				[ -f tmp/stop ] && break
-				# コメント系ワーカーは維持
-				start_comment_player 2>/dev/null || true
-				start_comment_watcher 2>/dev/null || true
-				sleep 15
-			done
-			log "[MERIKEN_TIME] メリケンAIタイム終了"
-			soren91_stop 2>/dev/null || true
+			./twitch_chat.sh send "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
+			_run_scheduled_meriken_time_window \
+				"cycle_boundary" \
+				"[MERIKEN_TIME] サイクル区切り+20時台: メリケンAIタイム開始"
 		fi
 	fi
 
