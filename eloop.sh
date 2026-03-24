@@ -300,6 +300,14 @@ post_game_bookkeeping() {
 			cur_outcome=2
 		elif [ "${LAST_RUSSIA:-false}" = "true" ]; then
 			cur_outcome=1
+			# ロシア建国フラグを記録（12ゲーム後の判定用）
+			python3 -c "
+import json
+f='$TMP_STATE_DIR/current_prediction.json'
+d=json.load(open(f))
+d['russia_created']=True
+json.dump(d,open(f,'w'))
+" 2>/dev/null
 		fi
 		if [ "$cur_outcome" -gt 0 ]; then
 			local prev_best=0
@@ -347,10 +355,6 @@ json.dump(d,open(f,'w'))
 		log "[HALT] ソ連建国達成: strategy実行を停止し、retry/次ゲーム操作を無効化"
 	elif [ "$LAST_RUSSIA" = "true" ] && [ "${LAST_RUSSIA_ANNOUNCED:-false}" != "true" ]; then
 		handle_russia_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
-		# チャネルポイント予想: ロシア建国で即 resolve
-		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-			./twitch_predictions.sh resolve 1 >>tmp/prediction.log 2>&1 || true
-		fi
 		LAST_RUSSIA="false"
 		LAST_RUSSIA_ANNOUNCED="false"
 	fi

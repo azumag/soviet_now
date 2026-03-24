@@ -94,7 +94,19 @@ _resolve_prediction_with_best_outcome() {
 	state=$(cat "$PREDICTION_STATE_FILE")
 	prediction_id=$(echo "$state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prediction_id"])' 2>/dev/null)
 	# best_outcome をサイクル中の記録から読む (eloop.sh:324 で更新される)
-	best_outcome=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
+	# ロシア建国フラグも考慮：russia_created=trueなら最低1（ロシア建国）
+	best_outcome=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$TMP_STATE_DIR/current_prediction.json'))
+    outcome = d.get('best_outcome', 0)
+    # ロシア建国したがまだベストが更新されていない場合、ロシア建国を設定
+    if d.get('russia_created', False) and outcome < 1:
+        outcome = 1
+    print(outcome)
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
 	winning_outcome_id=$(echo "$state" | python3 -c "import json,sys; d=json.load(sys.stdin); idx=min(int('$best_outcome'),len(d['outcome_ids'])-1); print(d['outcome_ids'][idx])" 2>/dev/null)
 	[ -n "$prediction_id" ] && [ -n "$winning_outcome_id" ] || return 1
 
@@ -186,10 +198,10 @@ _sync_prediction_state_with_remote() {
 	remote_status=$(echo "$remote_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null)
 
 	case "$remote_status" in
-	ACTIVE|LOCKED)
+	ACTIVE | LOCKED)
 		return 1
 		;;
-	RESOLVED|CANCELED)
+	RESOLVED | CANCELED)
 		_log "SYNC: clearing local prediction state (remote_status=${remote_status})"
 		rm -f "$PREDICTION_STATE_FILE"
 		return 0
@@ -313,7 +325,8 @@ create)
 	fi
 
 	# JSON ペイロード生成
-	payload=$(python3 - "$BROADCASTER_ID" "$PREDICTION_WINDOW_SEC" <<'PY'
+	payload=$(
+		python3 - "$BROADCASTER_ID" "$PREDICTION_WINDOW_SEC" <<'PY'
 import json, sys
 bid, window = sys.argv[1], int(sys.argv[2])
 print(json.dumps({
@@ -328,7 +341,7 @@ print(json.dumps({
     "prediction_window": window
 }))
 PY
-)
+	)
 
 	response=$(curl -sf --max-time 15 -X POST \
 		"https://api.twitch.tv/helix/predictions" \
@@ -343,7 +356,8 @@ PY
 	fi
 
 	# レスポンスから prediction_id と outcome_ids を抽出
-	result=$(python3 - "$response" "$GAME_NUM" <<'PY' 2>/dev/null
+	result=$(
+		python3 - "$response" "$GAME_NUM" <<'PY' 2>/dev/null
 import json, sys, time
 data = json.loads(sys.argv[1])
 pred = data.get("data", [{}])[0]
@@ -360,7 +374,7 @@ state = {
 }
 print(json.dumps(state))
 PY
-)
+	)
 
 	if [ $? -ne 0 ] || [ -z "$result" ]; then
 		_log "WARN: failed to parse prediction response"
@@ -368,7 +382,7 @@ PY
 	fi
 
 	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
-	echo "$result" > "$PREDICTION_STATE_FILE"
+	echo "$result" >"$PREDICTION_STATE_FILE"
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
 	./twitch_chat.sh send "チャネルポイント予想スタート！「12ゲーム中に建国できる？」投票受付中（$((PREDICTION_WINDOW_SEC / 60))分） ※ソ連建国・粛清は即確定。ロシア建国は12ゲーム後にソ連不成立なら的中" 2>/dev/null &
 
@@ -390,12 +404,13 @@ resolve)
 
 	state=$(cat "$PREDICTION_STATE_FILE")
 	PREDICTION_ID=$(echo "$state" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prediction_id"])' 2>/dev/null)
-	WINNING_OUTCOME_ID=$(python3 - "$state" "$OUTCOME_INDEX" <<'PY' 2>/dev/null
+	WINNING_OUTCOME_ID=$(
+		python3 - "$state" "$OUTCOME_INDEX" <<'PY' 2>/dev/null
 import json, sys
 data = json.loads(sys.argv[1])
 print(data["outcome_ids"][int(sys.argv[2])])
 PY
-)
+	)
 
 	if [ -z "$PREDICTION_ID" ] || [ -z "$WINNING_OUTCOME_ID" ]; then
 		_log "WARN: invalid state file"
@@ -403,7 +418,8 @@ PY
 		exit 1
 	fi
 
-	payload=$(python3 - "$BROADCASTER_ID" "$PREDICTION_ID" "$WINNING_OUTCOME_ID" <<'PY'
+	payload=$(
+		python3 - "$BROADCASTER_ID" "$PREDICTION_ID" "$WINNING_OUTCOME_ID" <<'PY'
 import json, sys
 bid, pid, wid = sys.argv[1], sys.argv[2], sys.argv[3]
 print(json.dumps({
@@ -413,7 +429,7 @@ print(json.dumps({
     "winning_outcome_id": wid
 }))
 PY
-)
+	)
 
 	response=$(curl -sf --max-time 15 -X PATCH \
 		"https://api.twitch.tv/helix/predictions" \
@@ -457,7 +473,8 @@ cancel)
 		exit 1
 	fi
 
-	payload=$(python3 - "$BROADCASTER_ID" "$PREDICTION_ID" <<'PY'
+	payload=$(
+		python3 - "$BROADCASTER_ID" "$PREDICTION_ID" <<'PY'
 import json, sys
 bid, pid = sys.argv[1], sys.argv[2]
 print(json.dumps({
@@ -466,7 +483,7 @@ print(json.dumps({
     "status": "CANCELED"
 }))
 PY
-)
+	)
 
 	curl -sf --max-time 15 -X PATCH \
 		"https://api.twitch.tv/helix/predictions" \
