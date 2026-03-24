@@ -1,14 +1,16 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v64)
+ * strategy.mjs - ドロップ位置決定戦略 (v65)
  *
- * v64: 壁トラップ死亡パターン修正
- * - 【壁位置死亡トラップ修正 #1】findT1ImmediateMerge: pieceCount>80時の壁ペナルティを
- *   extraWallPenalty=30→55に増加。高ピース数時に壁列が選ばれやすくなる問題を修正
- *   (game #704 Turn53: pieces=88でx=-2.5がULTRA_EXTREME_T1_IMMEDIATEとして選択された主因)
- * - 【壁位置死亡トラップ修正 #2】pickSaferT1Alternative: 非壁候補(|x|<2.2)を壁候補より
- *   優先してソート。壁列が低くても"safer"として選択されないよう修正
- *   (game #704 Turn52: chainSetupX=2.5がCHAIN_SAFEとして選択された主因)
- * - v63のその他の改善は維持
+ * v65: T1フラッド時の連鎖カスケード効率改善
+ * - 【T1即時マージのchainMult緩和】findT1ImmediateMerge: 高ピース数時のchainMult削減を
+ *   緩和 (pieceCount>85: 0.65→0.78, pieceCount>105: 0.35→0.52)。極高ピース数でも
+ *   連鎖ボーナスを適切に重視するよう修正
+ * - 【ULTRA_EXTREME T1連鎖優先】extremeT1Flood時にchainSetupX(t2隣接2個確認済み)が
+ *   immediateXと同程度の高さ(+0.45以内)なら、chainSetupXを優先採用
+ *   (t1→t2→t3連鎖ポテンシャルが高い列を優先することで大規模カスケードを誘発)
+ * - 【CRITICAL extremeT1Flood連鎖チェック追加】CRITICAL_T1_IMMEDIATEの前に
+ *   findT1ChainSetupを試みる。t2隣接確認済みの列でCRITICAL_T1_CASCADEを発動
+ * - v64のその他の修正(壁トラップ修正#1/#2)は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -208,6 +210,14 @@ export function decide(boardState) {
         gaugeLevel,
       );
       if (saferT1Alt) return saferT1Alt;
+      // [v65] chainSetup has t2-adjacency guarantee → prefer when heights comparable
+      if (chainSetupX !== null && immediateX !== null) {
+        const csH = colHeights[nearestColIdx(chainSetupX)];
+        const imH = colHeights[nearestColIdx(immediateX)];
+        if (csH <= imH + 0.45 && csH < DEADLINE_Y) {
+          return { x: chainSetupX, reason: 'ULTRA_EXTREME_T1_CHAIN_PRIORITY' };
+        }
+      }
       if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
       if (chainSetupX !== null) return { x: chainSetupX, reason: 'ULTRA_EXTREME_T1_CHAIN' };
       if (denseX !== null) return { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE' };
@@ -379,6 +389,16 @@ export function decide(boardState) {
         lowestColH,
       )) {
         return { x: critLowT1Merge.x, reason: 'CRITICAL_T1_LOW_MERGE' };
+      }
+      // [v65] In extreme t1 flood, prefer cascade chain position (t2-adjacency guaranteed)
+      if (extremeT1Flood) {
+        const critChain = findT1ChainSetup(activePieces, colHeights, dangerBias);
+        if (critChain !== null) {
+          const chainH = colHeights[nearestColIdx(critChain)];
+          if (chainH < DEADLINE_Y - 0.1) {
+            return { x: critChain, reason: 'CRITICAL_T1_CASCADE' };
+          }
+        }
       }
       if (critT1Immediate !== null) return { x: critT1Immediate, reason: 'CRITICAL_T1_IMMEDIATE' };
       const critT1Stack = findT1StackColumn(activePieces, colHeights, dangerBias);
@@ -903,9 +923,10 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
 }
 
 // [v64] pieceCount>80時の壁ペナルティを55に増加 (30→55)
+// [v65] chainMult緩和: pieceCount>85: 0.65→0.78, pieceCount>105: 0.35→0.52
 function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0, pieceCount = 0) {
-  const chainMult = pieceCount > 105 ? 0.35 : pieceCount > 85 ? 0.65 : 1.0;
-  const heightMult = pieceCount > 105 ? 1.8 : pieceCount > 85 ? 1.35 : 1.0;
+  const chainMult = pieceCount > 105 ? 0.52 : pieceCount > 85 ? 0.78 : 1.0;
+  const heightMult = pieceCount > 105 ? 1.65 : pieceCount > 85 ? 1.22 : 1.0;
 
   let bestScore = -Infinity;
   let bestCol = null;
