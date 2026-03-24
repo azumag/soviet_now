@@ -1,16 +1,18 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v65)
+ * strategy.mjs - ドロップ位置決定戦略 (v66)
  *
- * v65: T1フラッド時の連鎖カスケード効率改善
- * - 【T1即時マージのchainMult緩和】findT1ImmediateMerge: 高ピース数時のchainMult削減を
- *   緩和 (pieceCount>85: 0.65→0.78, pieceCount>105: 0.35→0.52)。極高ピース数でも
- *   連鎖ボーナスを適切に重視するよう修正
- * - 【ULTRA_EXTREME T1連鎖優先】extremeT1Flood時にchainSetupX(t2隣接2個確認済み)が
- *   immediateXと同程度の高さ(+0.45以内)なら、chainSetupXを優先採用
- *   (t1→t2→t3連鎖ポテンシャルが高い列を優先することで大規模カスケードを誘発)
- * - 【CRITICAL extremeT1Flood連鎖チェック追加】CRITICAL_T1_IMMEDIATEの前に
- *   findT1ChainSetupを試みる。t2隣接確認済みの列でCRITICAL_T1_CASCADEを発動
- * - v64のその他の修正(壁トラップ修正#1/#2)は維持
+ * v66: ULTRA_EXTREME壁トラップ修正 + CHAIN_PRIORITY精密化
+ * - 【CHAIN_PRIORITY壁トラップ修正】ULTRA_EXTREME T1連鎖優先判定に壁チェック追加:
+ *   chainSetupXが壁位置(|x|>=2.0)の場合はCHAIN_PRIORITYを発動しない。
+ *   game#716でx=-2.50がCHAIN_PRIORITYで選ばれmax_y=3.02になった問題を修正
+ * - 【CHAIN_PRIORITY高さマージン縮小】+0.45→+0.20に縮小。チェイン列が
+ *   明確に低い場合のみCHAIN_PRIORITYを発動（わずかに高くても発動する問題を修正）
+ * - 【findT1ChainSetup壁ペナルティ強化+近接T2必須化】壁ペナルティ30→50、
+ *   さらに近接T2(1.0以内)が0個の場合はその列をスキップ。壁位置のチェインセットアップ
+ *   を抑制し、確実に近接T2がある内側の列でのT1-T2チェインを優先する
+ * - 【CRITICAL_T1_CASCADE壁チェック追加+高さ厳格化】critChainが壁位置の場合は
+ *   スキップ。高さチェックも-0.1→-0.2に厳格化（余裕がある場合のみ発動）
+ * - v65のその他の修正(chainMult緩和, pickSaferT1Alternative改善)は維持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -210,11 +212,12 @@ export function decide(boardState) {
         gaugeLevel,
       );
       if (saferT1Alt) return saferT1Alt;
-      // [v65] chainSetup has t2-adjacency guarantee → prefer when heights comparable
+      // [v66] chain priority: interior columns only, tightened margin 0.45→0.20
       if (chainSetupX !== null && immediateX !== null) {
         const csH = colHeights[nearestColIdx(chainSetupX)];
         const imH = colHeights[nearestColIdx(immediateX)];
-        if (csH <= imH + 0.45 && csH < DEADLINE_Y) {
+        const csIsWall = Math.abs(chainSetupX) >= 2.0;
+        if (!csIsWall && csH <= imH + 0.20 && csH < DEADLINE_Y - 0.1) {
           return { x: chainSetupX, reason: 'ULTRA_EXTREME_T1_CHAIN_PRIORITY' };
         }
       }
@@ -390,12 +393,13 @@ export function decide(boardState) {
       )) {
         return { x: critLowT1Merge.x, reason: 'CRITICAL_T1_LOW_MERGE' };
       }
-      // [v65] In extreme t1 flood, prefer cascade chain position (t2-adjacency guaranteed)
+      // [v66] In extreme t1 flood, prefer cascade chain position: interior only, height tightened -0.1→-0.2
       if (extremeT1Flood) {
         const critChain = findT1ChainSetup(activePieces, colHeights, dangerBias);
         if (critChain !== null) {
           const chainH = colHeights[nearestColIdx(critChain)];
-          if (chainH < DEADLINE_Y - 0.1) {
+          const critChainWall = Math.abs(critChain) >= 2.0;
+          if (!critChainWall && chainH < DEADLINE_Y - 0.2) {
             return { x: critChain, reason: 'CRITICAL_T1_CASCADE' };
           }
         }
@@ -979,6 +983,7 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 
   return bestCol !== null ? clampX(FINE_COLS[bestCol]) : null;
 }
 
+// [v66] 壁ペナルティ強化 30→50 + 近接T2(1.0以内)必須化
 function findT1ChainSetup(pieces, colHeights, dangerBias) {
   const t2Pieces = pieces.filter(p =>
     p.type === 2 && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y
@@ -1002,6 +1007,8 @@ function findT1ChainSetup(pieces, colHeights, dangerBias) {
     const nearT2Close = t2Pieces.filter(p => Math.abs(p.x - cx) < 1.0).length;
     const nearT2 = t2Pieces.filter(p => Math.abs(p.x - cx) < 2.0).length;
     if (nearT2 < 2) continue;
+    // [v66] Require at least one close T2 for reliable chain
+    if (nearT2Close === 0) continue;
 
     let s = nearT2Close * 45 + (nearT2 - nearT2Close) * 22;
     s += countNear(pieces, cx, 3, 2.5) * 12;
@@ -1010,7 +1017,7 @@ function findT1ChainSetup(pieces, colHeights, dangerBias) {
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 18;
     if (colHeights[i] < 0) s += 15;
     s -= Math.abs(cx) * 2.5;
-    if (Math.abs(cx) > 2.2) s -= 30;
+    if (Math.abs(cx) > 2.2) s -= 50;  // [v66] 30→50
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
     if (dangerBias >= 1 && cx > 0.5) s -= 6;
