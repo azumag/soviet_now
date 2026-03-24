@@ -520,8 +520,7 @@ autovote)
 	;;
 
 cleanup)
-	GAME_NUM="${2:-0}"
-	_clear_stale_prediction_state_if_any "$GAME_NUM" || true
+	_clear_stale_prediction_state_if_any "${2:-0}" || true
 	_sync_prediction_state_with_remote || true
 	;;
 
