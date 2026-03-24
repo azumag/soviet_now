@@ -1,7 +1,6 @@
 ${persona_block}
 
-【現在時刻】${_rc_time} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time}
 
 【状況】ゲーム${game_num}回目付近。スコア履歴: ${scores}。最高スコア: ${best_score}点。
 

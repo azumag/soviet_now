@@ -14,31 +14,6 @@ _radio_time_context() {
 	else
 		_rc_time_spoken="${_rc_hour_num}時${_rc_min_num}分"
 	fi
-	if [ "$_rc_hour" -ge 5 ] && [ "$_rc_hour" -lt 9 ]; then
-		_rc_period="朝"
-		_rc_mood="朝放送。静かな時間帯に合わせて、寝ぼけた頭で毒が鈍い分、たまに本音が漏れる"
-	elif [ "$_rc_hour" -ge 9 ] && [ "$_rc_hour" -lt 12 ]; then
-		_rc_period="午前"
-		_rc_mood="午前中の放送。人工知能はいつでも全力"
-	elif [ "$_rc_hour" -ge 12 ] && [ "$_rc_hour" -lt 14 ]; then
-		_rc_period="昼"
-		_rc_mood="昼の放送。昼食後の時間帯で、眠気と戦いながらゲームを回す感じ。"
-	elif [ "$_rc_hour" -ge 14 ] && [ "$_rc_hour" -lt 17 ]; then
-		_rc_period="午後"
-		_rc_mood="午後の放送。眠くなる時間帯。"
-	elif [ "$_rc_hour" -ge 17 ] && [ "$_rc_hour" -lt 20 ]; then
-		_rc_period="夕方"
-		_rc_mood="夕方の放送。ちょっと詩的に"
-	elif [ "$_rc_hour" -ge 20 ] && [ "$_rc_hour" -lt 23 ]; then
-		_rc_period="夜"
-		_rc_mood="夜の放送。"
-	elif [ "$_rc_hour" -ge 23 ] || [ "$_rc_hour" -lt 2 ]; then
-		_rc_period="深夜"
-		_rc_mood="深夜放送。やけに饒舌になる"
-	else
-		_rc_period="未明"
-		_rc_mood="未明の放送。哲学的に"
-	fi
 }
 
 _refresh_radio_intro_for_playback_file() {
@@ -55,7 +30,7 @@ _refresh_radio_intro_for_playback_file() {
 		greet="こんにちは"
 	fi
 
-	python3 - "$target_file" "$corner_name" "$greet" "$_rc_period" "$_rc_time_spoken" <<'PY'
+	python3 - "$target_file" "$corner_name" "$greet" "$_rc_time_spoken" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -63,8 +38,7 @@ import sys
 path = Path(sys.argv[1])
 corner = sys.argv[2]
 greet = sys.argv[3]
-period = sys.argv[4]
-time_text = sys.argv[5]
+time_text = sys.argv[4]
 
 try:
     text = path.read_text(encoding="utf-8")
@@ -75,7 +49,7 @@ lines = text.splitlines()
 if not lines:
     raise SystemExit(0)
 
-intro = f"{greet}、{period}の放送です。現在時刻は{time_text}です。"
+intro = f"{greet}、現在時刻は{time_text}です。"
 intro_like = re.compile(
     r"(現在時刻|[0-2]?\d[:時][0-5]\d(?:分)?|おはよう|こんにちは|こんばんは|朝|午前|昼|午後|夕方|夕暮れ|夜|深夜|未明)"
 )

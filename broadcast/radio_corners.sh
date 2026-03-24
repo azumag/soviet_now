@@ -37,9 +37,9 @@ start_radio_corner_theme() {
 	persona_block=$(_radio_persona_block)
 	export output_rules
 	output_rules=$(_radio_output_rules 1000 2400)
-	export _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics game_num score
+	export _rc_time theme grounding_context category_guidance past_topics game_num score
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_theme.md" > "$prompt_file"
-	unset persona_block output_rules _rc_time _rc_period _rc_mood theme grounding_context category_guidance past_topics
+	unset persona_block output_rules _rc_time theme grounding_context category_guidance past_topics
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "$corner_name" --topic "$theme"
 }
@@ -57,8 +57,7 @@ _news_self_search_fallback() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重要】ニュースフィードからの記事取得に失敗しました。
 あなた自身の知識から、最近（ここ数日〜1週間以内）の注目ニュースや話題を1つ選び、ニュースコーナーとして紹介してください。
@@ -160,8 +159,7 @@ start_radio_corner_news() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【本日のニュース】
 以下のニュースについて、本文の内容を踏まえて感想・考察・ツッコミを交えてしっかり語ってください。
@@ -214,8 +212,7 @@ start_radio_corner_strategy() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -260,8 +257,7 @@ start_radio_corner_rollback() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 【コーナー名】粛清ラジオ
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
@@ -339,8 +335,7 @@ start_radio_corner_weather() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【今日の天気データ（実測）】
 ${weather_data}
@@ -376,8 +371,7 @@ start_radio_corner_fortune() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -419,8 +413,7 @@ start_radio_corner_market() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -456,8 +449,7 @@ start_radio_corner_dinner() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -490,8 +482,7 @@ start_radio_corner_zaitech() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -526,8 +517,7 @@ start_radio_corner_fudosan() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -563,8 +553,7 @@ start_radio_corner_deals() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -596,8 +585,7 @@ start_radio_corner_survival() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -629,8 +617,7 @@ start_radio_corner_rakugo() {
     cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -668,8 +655,7 @@ start_radio_corner_breakfast() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -705,8 +691,7 @@ start_radio_corner_lunch() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -741,8 +726,7 @@ start_radio_corner_devil_dict() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -795,8 +779,7 @@ start_radio_corner_ai_knowledge() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【今回のテーマ】${topic}
 
@@ -856,8 +839,7 @@ start_radio_corner_soviet_quiz() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -895,8 +877,7 @@ start_radio_corner_bluegrass() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -933,8 +914,7 @@ start_radio_corner_redefine() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -971,8 +951,7 @@ start_radio_corner_soviet_lifehack() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -1028,8 +1007,7 @@ start_radio_corner_world_dinner() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -1064,8 +1042,7 @@ start_radio_corner_night_snack() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -1110,8 +1087,7 @@ start_radio_corner_finance() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【今回のテーマ】${topic}
 
@@ -1185,8 +1161,7 @@ start_radio_corner_capitalism() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【今回の資本主義ネタ】${topic}
 
@@ -1241,8 +1216,7 @@ start_radio_corner_music_knowledge() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【今回のテーマ】${topic}
 
@@ -1295,8 +1269,7 @@ start_radio_corner_danger_zone() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【今回の地域】${region}
 
@@ -1342,8 +1315,7 @@ start_radio_corner_health() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【重複回避メモ: 直近の話題とかぶる切り口は避けること。政治・戦争・歴史・人名そのものは扱ってよい】
 ${past_topics}
@@ -1400,8 +1372,7 @@ if body:
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【Wikipedia「${today_mmdd}」のページから抜粋】
 ${wiki_data}
@@ -1447,8 +1418,7 @@ start_radio_corner_sightseeing() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【今回の地域】${region}
 
@@ -1519,8 +1489,7 @@ for name, items in sections.items():
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【今日の日付】${today_date}
 
@@ -1575,8 +1544,7 @@ start_radio_corner_local_japan() {
 	cat >"$prompt_file" <<PROMPT
 $(_radio_persona_block)
 
-【現在時刻】${_rc_time_spoken} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time_spoken}
 
 【今回の都道府県】${pref}
 
@@ -1635,9 +1603,9 @@ start_radio_corner_soviet() {
 	persona_block=$(_radio_persona_block)
 	export output_rules
 	output_rules=$(_radio_output_rules 1000 2400)
-	export _rc_time _rc_period _rc_mood soviet_theme past_topics game_num score
+	export _rc_time soviet_theme past_topics game_num score
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_soviet.md" > "$prompt_file"
-	unset persona_block output_rules _rc_time _rc_period _rc_mood soviet_theme past_topics
+	unset persona_block output_rules _rc_time soviet_theme past_topics
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "soviet"
 }
@@ -1786,9 +1754,9 @@ start_radio_corner_jiji() {
 	persona_block=$(_radio_persona_block)
 	export output_rules
 	output_rules=$(_radio_output_rules 1000 2000)
-	export _rc_time _rc_period _rc_mood past_topics game_num score headline grounding_context
+	export _rc_time past_topics game_num score headline grounding_context
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_jiji.md" > "$prompt_file"
-	unset persona_block output_rules _rc_time _rc_period _rc_mood past_topics headline grounding_context
+	unset persona_block output_rules _rc_time past_topics headline grounding_context
 
 	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji"
 }

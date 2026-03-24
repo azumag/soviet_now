@@ -1,7 +1,6 @@
 ${persona_block}
 
-【現在時刻】${_rc_time} ${_rc_period}
-【時間帯の雰囲気】${_rc_mood}
+【現在時刻】${_rc_time}
 
 【今回のソ連ネタ指定】
 ${soviet_theme}

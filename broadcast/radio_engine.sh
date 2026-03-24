@@ -902,7 +902,7 @@ _ensure_radio_intro() {
 	fi
 
 	local intro_line
-	intro_line="${greet}、${_rc_period}の放送です。現在時刻は${_rc_time_spoken}です。"
+	intro_line="${greet}、現在時刻は${_rc_time_spoken}です。"
 
 	printf '%s\n%s' "$intro_line" "$text"
 }
