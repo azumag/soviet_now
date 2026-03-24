@@ -337,7 +337,7 @@ _should_skip_stale_soren91_ranking() {
 			local flag_ts
 			flag_ts=$(cat "$flag_file" 2>/dev/null || echo "0")
 			local current_ts
-			current_ts=$(date +%s)000 # ミリ秒
+			current_ts=$(date +%s)000
 			# フラグのタイムスタンプ（秒をミリ秒に変換）
 			local flag_ts_ms=$((flag_ts * 1000))
 			# フラグが5分以内に作成された場合、古い ranking_comment をスキップ
@@ -1234,7 +1234,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 			case "${SOURCE_LABEL:-}" in
 			comment | comment:*)
 				local _asmr_result
-				_asmr_result=$(_pick_asmr_voicevox_speaker)
+				_asmr_result=$(_pick_asmr_voicevox_speaker 2>/dev/null || echo "")
 				VOICEVOX_SPEAKER="${_asmr_result%%|*}"
 				VOICEVOX_RANDOM_VOICE_NAME="${_asmr_result#*|}"
 				VOICEVOX_RANDOM_MODE=1
