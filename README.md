@@ -57,7 +57,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 
 | ファイル | 役割 |
 |---------|------|
-| `soren_loop.sh` | 親スクリプト（エントリーポイント）。メインループ・初期化。AI書き換え対象外 |
+| `soren_loop.sh` | 親スクリプト（エントリーポイント）。メインループ・初期化・シグナル制御（SIGINT/SIGTERM）・多重起動防止。AI書き換え対象外 |
 | `eloop.sh` | 1試合のゲームプレイ関数。毎試合 source で読み込み、AI書き換え可 |
 | `eloop_lib.sh` | 全モジュールを source する shim (~40行) |
 | `eloop_improve.sh` | バックグラウンド改善サブプロセス |
@@ -70,9 +70,11 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `best_score.txt` | ハイスコア記録 |
 | `score_history.txt` | rawスコア履歴 (TSV: timestamp, score) |
 | `eval_score_history.txt` | EVAL_SCORE履歴 (rawスコア+建国ボーナス) |
-| `say_enqueue.sh` | macOS `say` のFIFOキュー管理（排他制御・異常終了/途中切断リトライ付き） |
-| `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用）。`./google_tts.sh "テキスト"`, `--list`, `--demo` |
-| `soren91_control.sh` | soren91 (メリケンAI) の起動・停止・改善キック管理 |
+| `say_enqueue.sh` | VOICEVOX/COEIROINK TTS のFIFOキュー管理（mkdirロック排他・ストリーミング合成・異常終了リトライ・voice sidecar永続化） |
+| `voicevox_tts.sh` | VOICEVOX TTS wrapper（チャンク分割合成・ピッチ/テンポ/抑揚調整） |
+| `voicevox_sing.sh` | VOICEVOX 歌声合成（中華AI=九州そら、メリケンAI=冥鳴ひまり） |
+| `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用） |
+| `soren91_control.sh` | soren91の起動・停止・改善キック・手動メリケンモード・OBS連携 |
 
 **シェルモジュール構成:**
 
@@ -172,10 +174,12 @@ node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごと
 | `soren91/main.mjs` | エントリポイント: ブラウザ制御 + ゲームループ |
 | `soren91/screenshot_analyzer.mjs` | スクリーンショット → 盤面状態 (Sharp) |
 | `soren91/strategy.mjs` | ドロップ位置決定 (AI改変対象) |
-| `soren91/improve.mjs` | ラウンド後AI改善ループ (claude CLI) |
+| `soren91/improve.mjs` | ラウンド後AI改善ループ (claude -p --model haiku) |
 | `soren91/comment.mjs` | コメント生成 (ランキング画面 + 試合中盤面)。プロンプトは `soren91/prompts/` に分離 |
+| `soren91/result_screen_ocr.mjs` | ランキング画面OCR (Tesseract、複数画像変換＋赤星検出) |
 | `soren91/radio_bridge.sh` | 親プロジェクトの定時ラジオコーナーを soren91 から呼び出すブリッジ |
-| `soren91_control.sh` | 親ループ (`soren_loop.sh`) からの起動・停止・改善キック管理 |
+| `soren91/backfill_result_ranks.mjs` | 過去サマリーのrank情報をOCRで補完するユーティリティ |
+| `soren91_control.sh` | 親ループからの起動・停止・改善キック・手動メリケンモード・OBS連携 |
 
 親プロジェクトの `soren_loop.sh` から `soren91_control.sh` 経由で連携。`SOREN91_ENABLED=1` (.env) で有効化。詳細は `soren91/CLAUDE.md` を参照。
 

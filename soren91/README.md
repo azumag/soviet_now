@@ -111,6 +111,7 @@ IMPROVEMENT_INTERVAL_GAMES=12
 全モジュールが実行時に動的importされるため、ファイル編集が即反映される (再起動不要):
 
 - `strategy.mjs` / `screenshot_analyzer.mjs` / `calibration.mjs` -- 毎ターン
+- `comment.mjs` / `result_screen_ocr.mjs` -- 毎コメント/ランキング
 - `improve.mjs` -- 12ゲームごと
 
 ## 盤面解析
