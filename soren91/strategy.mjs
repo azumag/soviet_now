@@ -1,13 +1,12 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v69)
+ * strategy.mjs - ドロップ位置決定戦略 (v70)
  *
- * v69: Improved wall column usage and gauge-aware consolidation
- * - 【ULTRA極限ウォール許容】pieces>=100時、ウォールペナルティ軽減で密集T1をウォール配置許可
- * - 【ゲージ0.6+連鎖優先強化】findT1ChainSetupスコアを gauge>=0.6時 +30ブースト
- * - 【T1フラッド閾値動的調整】gauge>=0.55時に11→10に引き下げ、より早期の積極対応
- * - 【密集度ベースウォール許容】findT1DenseColumnで pieces>90かつ密集度高時、ウォール使用を許可
- * - 【ULTRA EXTREME即時マージ優先】pieces>=110 & gauge>=0.65時、チェーンセットアップより即時マージ優先
- * - v68のゲージブースト体系は維持
+ * v70: Stabilization after v69 gauge over-aggression
+ * - 【T1フラッド閾値を固定値に戻す】gauge>=0.55での10への引き下げを廃止、固定11/30に
+ * - 【ゲージ加算の適度化】chainSetupの+30を削除、+15のまま
+ * - 【ULTRA EXTREME即時マージ優先を廃止】pieces>=110でも chain setup を優先
+ * - 【ウォール許容の慎重化】pieces>90時の壁ペナルティ軽減は維持するが、interior優先バイアス強化
+ * - 【チェーン構築優先】スコア蓄積よりも連鎖設計を重視、早期piece増加を抑制
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -73,8 +72,8 @@ export function decide(boardState) {
   }
 
   const t1Count = activePieces.filter(p => p.type === 1).length;
-  // [v69] Dynamic T1 flood threshold at gauge >= 0.55
-  const t1FloodModeThreshold = gaugeLevel >= 0.55 ? 10 : T1_PREFLOOD_THRESHOLD;
+  // [v70] Fixed T1 flood thresholds (reverted from dynamic)
+  const t1FloodModeThreshold = T1_PREFLOOD_THRESHOLD;
   const t1FloodMode = t1Count > t1FloodModeThreshold;
   const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
 
@@ -90,12 +89,12 @@ export function decide(boardState) {
   let ojamaBoost = 0;
   if (garbageModerate) ojamaBoost = 12;
   else if (garbagePresent) ojamaBoost = 8;
-  else if (gaugeLevel >= 0.6) ojamaBoost = 10;
+  else if (gaugeLevel >= 0.6) ojamaBoost = 8;
   else if (gaugeLevel >= 0.3) ojamaBoost = 5;
   else if (gaugeLevel >= 0.2) ojamaBoost = 3;
 
-  if (gaugeLevel >= 0.5) ojamaBoost += 8;
-  if (gaugeLevel >= 0.7) ojamaBoost += 12;
+  if (gaugeLevel >= 0.5) ojamaBoost += 6;
+  if (gaugeLevel >= 0.7) ojamaBoost += 8;
 
   const gaugeSevere = gaugeLevel >= 0.88;
 
@@ -198,12 +197,9 @@ export function decide(boardState) {
       }
       const t1WallMult = rawPieceCount > EXTREME_T1_WALL_PIECE_THRESHOLD ? 2.5 : 1.0;
       
-      // [v69] Prioritize immediate merge at very high piece counts
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, t1WallMult, rawPieceCount, garbageRatio, gaugeLevel);
-      if (rawPieceCount >= 110 && gaugeLevel >= 0.65 && immediateX !== null) {
-        return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE_PRIORITY' };
-      }
       
+      // [v70] Prioritize chain setup over immediate merge (reverted from v69 override)
       const chainSetupX = findT1ChainSetup(activePieces, colHeights, dangerBias, garbageRatio, gaugeLevel, rawPieceCount);
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias, t1WallMult, rawPieceCount);
       const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
@@ -608,7 +604,8 @@ export function decide(boardState) {
     }
   }
 
-  const dynamicT1PrefThresh = gaugeLevel >= 0.5 ? 9 : T1_PREFLOOD_THRESHOLD;
+  // [v70] Reverted to fixed threshold
+  const dynamicT1PrefThresh = T1_PREFLOOD_THRESHOLD;
 
   // --- T1フラッド予防HOLD ---
   if (canHold && !hold && nextType === 1 && t1Count >= dynamicT1PrefThresh && !isWarn) {
@@ -866,9 +863,9 @@ function findT1DenseColumn(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 15;
     s -= Math.abs(cx) * 2.0;
     
-    // [v69] Reduce wall penalty when pieces > 90 for better extreme consolidation
+    // [v70] Keep wall reduction but more conservative
     if (Math.abs(cx) > 2.2) {
-      const wallPenalty = pieceCount > 90 ? 8 : 20;
+      const wallPenalty = pieceCount > 90 ? 12 : 20;
       s -= Math.round(wallPenalty * wallPenaltyMult);
     }
     
@@ -933,9 +930,7 @@ function findT1StackColumn(pieces, colHeights, dangerBias) {
 function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0, pieceCount = 0, garbageRatio = 0, gaugeLevel = 0) {
   let chainMult = pieceCount > 105 ? 0.52 : pieceCount > 85 ? 0.78 : 1.0;
   if (garbageRatio > 0.25) chainMult += 0.10;
-  if (gaugeLevel >= 0.6) chainMult += 0.12;
-  // [v69] More aggressive gauge response at 0.65+
-  if (gaugeLevel >= 0.65) chainMult += 0.08;
+  if (gaugeLevel >= 0.6) chainMult += 0.08;
   
   const heightMult = pieceCount > 105 ? 1.65 : pieceCount > 85 ? 1.22 : 1.0;
 
@@ -1018,9 +1013,9 @@ function findT1ChainSetup(pieces, colHeights, dangerBias, garbageRatio = 0, gaug
     s += countNear(pieces, cx, 3, 2.5) * 12;
     s += countNear(pieces, cx, 4, 3.0) * 6;
     if (garbageRatio > 0.25) s += 15;
-    if (pieceCount >= 70 && gaugeLevel >= 0.6) s += 25;
-    // [v69] More aggressive boost at gauge >= 0.65
-    if (gaugeLevel >= 0.65) s += 30;
+    // [v70] Moderate gauge boost instead of +30
+    if (pieceCount >= 70 && gaugeLevel >= 0.6) s += 15;
+    if (gaugeLevel >= 0.65) s += 12;
     
     s -= colHeights[i] * 10.0;
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 18;

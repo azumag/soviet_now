@@ -327,26 +327,28 @@ _radio_should_yield_to_comment() {
 	_has_pending_comment_queue
 }
 
-_has_pending_soren91_ranking() {
-	# soren91:ranking_comment がキューに待機中かチェック
-	local last_ranking_ts current_ts
-
-	# debug.log の最新行から "soren91:ranking_comment" が含まれる queued 行を探す
-	tail -50 "$DEBUG_LOG_FILE" 2>/dev/null | grep -q "soren91:ranking_comment.*queued" && return 0
-
-	return 1
-}
-
-_radio_should_yield_to_soren91() {
+_should_skip_stale_soren91_ranking() {
+	# soren91:ranking_comment で、かつ soren91 モード開始フラグより古い場合はスキップ
 	case "${SOURCE_LABEL:-}" in
-	radio | radio:*) ;;
-	*)
-		return 1
+	soren91:ranking_comment)
+		# フラグファイルを確認
+		local flag_file="tmp/.soren91_mode_active"
+		if [ -f "$flag_file" ]; then
+			local flag_ts
+			flag_ts=$(cat "$flag_file" 2>/dev/null || echo "0")
+			local current_ts
+			current_ts=$(date +%s)000 # ミリ秒
+			# フラグのタイムスタンプ（秒をミリ秒に変換）
+			local flag_ts_ms=$((flag_ts * 1000))
+			# フラグが5分以内に作成された場合、古い ranking_comment をスキップ
+			if [ $((current_ts - flag_ts_ms)) -lt 300000 ]; then
+				_log "soren91 mode active, skipping old ranking_comment"
+				return 0
+			fi
+		fi
 		;;
 	esac
-
-	# soren91:ranking_comment がキューにあるなら譲る
-	_has_pending_soren91_ranking
+	return 1
 }
 
 _yield_turn_to_pending_comment() {
@@ -997,6 +999,13 @@ _launch_say() {
 	LAUNCHED_SAY_PID="$!"
 }
 
+# --- soren91:ranking_comment の古い再生をスキップ ---
+if _should_skip_stale_soren91_ranking; then
+	_log "skipping stale soren91:ranking_comment"
+	_release_lock
+	exit 0
+fi
+
 _play_with_retry() {
 	local retry=0 backoff="$SAY_RETRY_SLEEP_SEC"
 	LAST_SAY_PID=""
@@ -1106,14 +1115,9 @@ _wait_for_turn() {
 			exit 0
 		fi
 		_set_current_source "waiting"
-		if _radio_should_yield_to_comment || _radio_should_yield_to_soren91; then
-			if _radio_should_yield_to_soren91; then
-				yield_count=$((yield_count + 1))
-				_log "soren91:ranking_comment を優先するため ${SOURCE_LABEL:-unknown} が順番を譲る (${yield_count})"
-			else
-				yield_count=$((yield_count + 1))
-				_log "comment backlog を優先するため radio が順番を譲る (${yield_count})"
-			fi
+		if _radio_should_yield_to_comment; then
+			yield_count=$((yield_count + 1))
+			_log "comment backlog を優先するため radio が順番を譲る (${yield_count})"
 			_release_lock
 			sleep 1
 			continue
@@ -1132,7 +1136,7 @@ _prepare_playback_turn() {
 			if [ -n "$prev_pid" ] && kill -0 "$prev_pid" 2>/dev/null; then
 				_log "前のsay (PID=$prev_pid) がまだ再生中 → 終了待ち"
 				while kill -0 "$prev_pid" 2>/dev/null; do
-					if _radio_should_yield_to_comment || _radio_should_yield_to_soren91; then
+					if _radio_should_yield_to_comment; then
 						_yield_turn_to_pending_comment
 						continue 2
 					fi
@@ -1168,7 +1172,7 @@ _prepare_playback_turn() {
 		_log "トーク開始まで ${pre_delay}秒 待機..."
 		waited_pre=0
 		while [ "$waited_pre" -lt "$pre_delay" ]; do
-			if _radio_should_yield_to_comment || _radio_should_yield_to_soren91; then
+			if _radio_should_yield_to_comment; then
 				_yield_turn_to_pending_comment
 				continue 2
 			fi
@@ -1177,7 +1181,7 @@ _prepare_playback_turn() {
 			waited_pre=$((waited_pre + 1))
 		done
 
-		if _radio_should_yield_to_comment || _radio_should_yield_to_soren91; then
+		if _radio_should_yield_to_comment; then
 			_yield_turn_to_pending_comment
 			continue
 		fi

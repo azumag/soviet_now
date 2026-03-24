@@ -202,6 +202,10 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
     const logLine = `[${new Date().toISOString()}] game=#${gameNumber} rank=${myRank ?? '?'}: ${comment}\n`;
     try { writeFileSync(COMMENT_LOG_PATH, logLine, { flag: 'a' }); } catch {}
 
+    // soren91 モードフラグを削除（新しい ranking_comment を再生可能にする）
+    const flagFile = join(PARENT_DIR, 'tmp', '.soren91_mode_active');
+    try { unlinkSync(flagFile); } catch {}
+
     // TTS読み上げ (非同期、エラーは無視)
     speakComment(comment, 'soren91:ranking_comment');
 

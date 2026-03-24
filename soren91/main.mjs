@@ -319,28 +319,14 @@ async function main() {
   const audioGainMultiplier = loadAudioGainMultiplier();
   console.log(`[main] soren91 audio gain multiplier=${audioGainMultiplier}`);
 
-  // 前回セッションの未消化TTS音声をクリア (古いランキングコメント等の再生を防止)
+  // soren91 モード開始フラグを立てる
+  // say_enqueue.sh はこのフラグがある場合、古い soren91:ranking_comment の再生をスキップする
   try {
-    const queueDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.say_queue');
-    const tmpDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp');
-    let cleared = 0;
-    // say_queueの古いpre-synth wavとテキストをクリア
-    if (existsSync(queueDir)) {
-      for (const f of readdirSync(queueDir)) {
-        if (f.startsWith('content_') && (f.endsWith('_pre.wav') || f.endsWith('.txt') || f.endsWith('_chunks.txt'))) {
-          try { unlinkSync(join(queueDir, f)); cleared++; } catch {}
-        }
-      }
-    }
-    // 残留ranking_commentテキストファイルもクリア
-    for (const f of readdirSync(tmpDir)) {
-      if (f.startsWith('ranking_comment_') && f.endsWith('.txt')) {
-        try { unlinkSync(join(tmpDir, f)); cleared++; } catch {}
-      }
-    }
-    if (cleared > 0) console.log(`[main] Cleared ${cleared} stale TTS queue files`);
+    const flagFile = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.soren91_mode_active');
+    writeFileSync(flagFile, String(Date.now()));
+    console.log('[main] soren91 mode flag set');
   } catch (err) {
-    console.log(`[main] TTS queue cleanup skipped: ${err.message}`);
+    console.log(`[main] Failed to set soren91 mode flag: ${err.message}`);
   }
 
   // Step 1: headless でトップページを開き、ゲームURLを取得
