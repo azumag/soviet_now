@@ -459,21 +459,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3 && deadline_crossedでの高配置 runaway（axis 9.6超危険域無効化）
 
         # axis 9.6: reactive pairs stacking bonus (same_type_stack_topがある場合)
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+        if reactive_pair_count >= 3 and deadline_crossed and merge_grade == "NO":
+            # axis 9.6を完全に無効化（reactive_pairs>=3 && deadline_crossedでの高配置 runaway防止）
+            pass
+        elif reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
             # 盤面圧縮ボーナス（same_type_stack_topがある場合のみ適用）
             # 下層配置を優先し、高配置を抑制する戦略的思考
             # compression_bonus = (-landing_y) * 200.0 に変更し、低い位置ほどボーナス大
             compression_bonus = (-landing_y) * 200.0  # landing_y=-2.5なら500.0、-1.0なら200.0、0なら0.0
             score += compression_bonus
             reasons.append("REACTIVE_PAIRS_COMPRESSION")
-        # axis 9.7: reactive pairs board compression (same_type_stack_topがない場合)
+        # axis 9.7: reactive pairs horizontal balance and position strategy (same_type_stack_topがない場合)
+        # same_type_stack_topがない場合、現在タイプのスタッキング候補がないため、水平方向のバランスと位置戦略を優先
+        # 未活用情報の水平位置を活用：盤面の中心寄りの配置を優先し、左右の偏りを修正する戦略的思考
+        # v341: axis 9.7を盤面圧縮ボーナスから水平バランス戦略へ再定義（構造的改善）
+        # 左右に同タイプの国が2つある状況で真ん中に落として併合を逃している問題を解消（advice.md: Pitman_live）
         elif reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None:
-            # 盤面圧縮ボーナス（same_type_stack_topがない場合のみ適用）
-            # 下層配置を優先し、高配置を抑制する戦略的思考
-            # compression_bonus = (-landing_y) * 200.0 に変更し、低い位置ほどボーナス大
-            compression_bonus = (-landing_y) * 200.0  # landing_y=-2.5なら500.0、-1.0なら200.0、0なら0.0
-            score += compression_bonus
-            reasons.append("REACTIVE_PAIRS_COMPRESSION")
+            # 水平バランスボーナス：盤面の中心（x=0.0）に近いほどボーナス大
+            # |x|が大きいほど盤面の端に配置され、将来の併合機会が減少するためペナルティ
+            horizontal_balance_bonus = -abs(x) * 100.0  # x=0なら0.0、x=±3.0なら-300.0
+            score += horizontal_balance_bonus
+            reasons.append("REACTIVE_PAIRS_HORIZONTAL_BALANCE")
 
 
         # ----- evaluation axis 2: height penalty -----
