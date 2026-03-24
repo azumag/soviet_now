@@ -297,18 +297,27 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化
+    """v338: reactive_pairsあり時の戦略的配置優先化版 - HEIGHT_CONTROL過剰選択の解消
 
-    v336 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
+    v337 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
     ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
     ベストゲーム(score3171)終盤: ロシアフェーズで即時併合を確実に捉えて高スコア
     ロシアフェーズでは盤面が狭く、即時併合機会を最大化することが重要。axis 9.5の盤面圧縮ボーナスがaxis 8.7の即時併合優先を阻害している
+    v338 failure mode: axis 9.6のスタッキングボーナスが強すぎて、高配置を選んでいる可能性がある
+    ワーストゲーム(score0413)終盤: reactive_pairs>=3, merge_available=falseでREACTIVE_PAIRS_STACKINGが続き、max_y runawayでゲームオーバー
+    ベストゲーム(score2775)終盤: reactive_pairsが少なく、即時併合機会を確実に捉えて高スコア
+    batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=1.2)と過剛、即時併合機会を取りこぼしていることを確認
 
-    v337の改善点:
-    1. axis 9.5修正: russia_phase && reactive_pair_count < 3 の場合、盤面圧縮ボーナス（+300.0）とペナルティ軽減（+100.0）を削除
-    2. ロシアフェーズでの即時併合機会取りこぼしを削減し、2つ目のロシア育成スペースを確保
-    3. axis 8.7の即時併合ボーナス（1200.0/1000.0）を最優先する条件を追加
-    4. advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づくロシアフェーズ強化
+    v338の改善点:
+    1. axis 9.7修正: 盤面密度ボーナスを強化し、下層配置を優先（(landing_y + 2.0) * 150.0 → (landing_y + 2.5) * 200.0）
+    2. axis 9.7修正: axis 9.6との競合を回避するため、axis 9.7はaxis 9.6の条件（same_type_stack_topがある）を除外して適用
+    3. reactive_pairsがある状況で下層配置を優先し、高配置を抑制
+    4. HEIGHT_CONTROL過剰選択の解消と、即時併合機会取りこぼし削減
+    5. advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「即時併合機会を確実に捉えてスコア稼ぐ」に基づく即時併合優先の構造的改善
+
+    refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+          game_history/20260324_154730_score0413.jsonl, game_history/20260324_161825_score2775.jsonl,
+          game_history/20260324_193329_score0709.jsonl, game_history/20260324_195638_score2614.jsonl
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -450,23 +459,34 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += vertical_bonus + horizontal_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
         
-        # ----- evaluation axis 9.7: reactive pairs compression bonus (NEW) -----
+        # ----- evaluation axis 9.7: reactive pairs compression bonus (NEW: v338 axis 9.7強化版 - 下配置優先化) -----
         # reactive_pairsがあるがmerge_grade=="NO"の場合、盤面圧縮を優先する戦略的思考
         # ワーストゲームではHEIGHT_CONTROLが続き即時併合機会を取りこぼしている
         # ベストゲームでは即時併合機会を確実に捉えて盤面を圧縮し、高type成長パイプラインを維持
-        # refs: advice.md (azumag), tmp/improve_brief.md, tmp/batch_summary.txt,
+        # v338 failure mode: axis 9.6のスタッキングボーナスが強すぎて、高配置を選んでいる可能性がある
+        # ワーストゲーム(score0413)終盤: reactive_pairs>=3, merge_available=falseでREACTIVE_PAIRS_STACKINGが続き、max_y runawayでゲームオーバー
+        # ベストゲーム(score2775)終盤: reactive_pairsが少なく、即時併合機会を確実に捉えて高スコア
+        # axis 9.7修正: 盤面密度ボーナスを強化し、下層配置を優先する
+        #   - 下層配置（landing_y < 0.0）: ボーナスを強化（(landing_y + 2.0) * 150.0 → (landing_y + 2.5) * 200.0）
+        #   - 中層配置（0.0 <= landing_y < 0.5）: ボーナスを維持（50.0）
+        #   - 上層配置（landing_y >= 0.5）: ボーナスなし
+        # これにより下層配置がより強力に推奨され、高配置の抑制を強化
+        # axis 9.6との競合を回避するため、axis 9.7はaxis 9.6の条件（same_type_stack_topがある）を除外して適用
+        # 未活用情報：landing_y（着地位置の高さ）、reactive_pairs数
+        # refs: advice.md (azumag), tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260324_154730_score0413.jsonl, game_history/20260324_161825_score2775.jsonl
-        if reactive_pair_count >= 1 and merge_grade == "NO":
+        # Fixes rollback failure mode: reactive_pairs>=1での高配置 runaway（axis 9.7ボーナス強化・axis 9.6条件除外）
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None:
+            # axis 9.6の条件（same_type_stack_topがある）を除外して競合を回避
             # 盤面密度を評価し、密度が高い場所に落とすとペナルティ、密度が低い場所に落とすとボーナス
-            # 簡単な指標として、landing_yが高い（盤面の上の方）になるほど危険、低いほど安全
-            # reactive_pairsがある状況では、盤面の下の方に配置して将来の併合機会を最大化
+            # 下層配置を優先し、高配置を抑制する戦略的思考
             if landing_y < 0.0:
-                # 下層に配置：ボーナス。低いほど良い
-                compression_bonus = (landing_y + 2.0) * 150.0  # landing_y=-2.0なら0.0、0なら300.0
+                # 下層に配置：ボーナス強化。低いほど良い
+                compression_bonus = (landing_y + 2.5) * 200.0  # landing_y=-2.5なら0.0、0なら500.0
                 score += compression_bonus
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
             elif landing_y < 0.5:
-                # 中層に配置：小幅ボーナス
+                # 中層に配置：小幅ボーナス維持
                 compression_bonus = 50.0
                 score += compression_bonus
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
