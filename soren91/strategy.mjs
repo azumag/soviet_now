@@ -311,15 +311,11 @@ export function decide(boardState) {
     }
 
     // [v63] gaugeSevere: ガベージ到来直前の緊急準備
-    // gauge>=0.88の時、ガベージが次ターンに来る可能性が高い。
-    // 小型ピースをHOLDして大型ピースに備えるか、大型ピースでANYマージを試みる。
     if (gaugeSevere && !garbageUrgent) {
-      // HOLDにある大型ピース→任意マージ (高い列でも可)
       if (canHold && hold && hold.type >= 3) {
         const holdAnyMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
         if (holdAnyMerge !== null) return { x: 0, reason: `CRIT_PGBG_HOLD_T${hold.type}`, hold: true };
       }
-      // 小型nextをHOLDして次の大型ピースに備える
       if (canHold && !hold && nextType <= 2) {
         const next2T = nextPieces && nextPieces[1] ? nextPieces[1].type : 0;
         const next3T = nextPieces && nextPieces[2] ? nextPieces[2].type : 0;
@@ -331,7 +327,6 @@ export function decide(boardState) {
           }
         }
       }
-      // 中型以上のnextピース→任意マージ
       if (nextType >= 3) {
         const pgbgMerge = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
         if (pgbgMerge !== null) return { x: pgbgMerge, reason: `CRIT_PGBG_T${nextType}` };
@@ -959,7 +954,6 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 
 }
 
 function findT1ChainSetup(pieces, colHeights, dangerBias) {
-  // T1+T1→T2 が生成され、隣接T2+T2→T3 の連鎖が期待できる位置を探す
   const t2Pieces = pieces.filter(p =>
     p.type === 2 && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y
   );
@@ -972,7 +966,6 @@ function findT1ChainSetup(pieces, colHeights, dangerBias) {
     const cx = FINE_COLS[i];
     if (colHeights[i] >= DEADLINE_Y) continue;
 
-    // 列top がT1であること (T1ドロップでT2生成)
     const colPieces = pieces.filter(p => Math.abs(p.x - cx) < 0.45 && p.y < DEADLINE_Y);
     if (colPieces.length === 0) continue;
     const topPiece = colPieces.reduce((a, b) =>
@@ -980,13 +973,12 @@ function findT1ChainSetup(pieces, colHeights, dangerBias) {
     );
     if (topPiece.type !== 1) continue;
 
-    // 2つ以上のT2が近くにあること (T2+T2→T3 連鎖可能)
     const nearT2Close = t2Pieces.filter(p => Math.abs(p.x - cx) < 1.0).length;
     const nearT2 = t2Pieces.filter(p => Math.abs(p.x - cx) < 2.0).length;
     if (nearT2 < 2) continue;
 
     let s = nearT2Close * 45 + (nearT2 - nearT2Close) * 22;
-    s += countNear(pieces, cx, 3, 2.5) * 12; // T3 近くにあるとさらに連鎖可能
+    s += countNear(pieces, cx, 3, 2.5) * 12;
     s += countNear(pieces, cx, 4, 3.0) * 6;
     s -= colHeights[i] * 10.0;
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 18;
