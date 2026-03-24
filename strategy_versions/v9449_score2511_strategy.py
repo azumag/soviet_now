@@ -35,9 +35,10 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
-             9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-             9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
+              9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
+              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
+              9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
+              9.7. Reactive pairs compression penalty - v339: reactive_pairs滞留防止版
 
 
 Phases (determined by board max Y):
@@ -54,8 +55,24 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-        # --- Change History ---
-         # v338: reactive_pairsあり時の戦略的配置優先化版 - HEIGHT_CONTROL過剰選択の解消
+         # --- Change History ---
+          # v339: reactive_pairs滞留防止版 - axis 9.7ペナルティ化による即時併合強化
+          # v338 failure: 最差ゲーム(score0584)でreactive_avg=6.6, max_y=3.70, score=584という極端な結果
+          # reactive_pairsが増え続けているが即時併合がない場合、REACTIVE_PAIRS_COMPRESSIONボーナスによって
+          # 盤面を圧縮しようとしている配置が選ばれ、reactive_pairsの消化を遅らせている
+          # これにより、本来併合すべきでない場所にピースを置き、reactive_pairsの消化を遅らせている
+          # 結果として、reactive_pairsが滞留し続け、盤面が圧迫され、最終的にmax_y runawayでゲームオーバー
+          # ワーストゲームではHEIGHT_CONTROLが続き即時併合機会を取りこぼしている
+          # ベストゲーム(score3580)ではreactive_avg=2.2, max_y=3.35, score=3580と安定
+          # axis 9.7修正: reactive_pair_count >= 1 && merge_grade == "NO"の場合、盤面圧縮ボーナスを削除
+          # 代わりに、landing_y >= 0.5の場所に配置する場合、reactive_pairs消化遅延ペナルティを適用
+          # これによりreactive_pairsがあるのに即時併合がない場合、高配置を避けて即時併合機会を最大化
+          # refs: tmp/improve_brief.md, tmp/batch_summary.txt,
+          #       game_history/20260324_171541_score0584.jsonl (reactive_pairs滞留でmax_y runaway),
+          #       game_history/20260324_165512_score3580.jsonl (安定した即時併合消化)
+          # Fixes rollback failure mode: reactive_pairs滞留によるmax_y runaway（axis 9.7ペナルティ化）
+          #
+          # v338: reactive_pairsあり時の戦略的配置優先化版 - HEIGHT_CONTROL過剰選択の解消
          # v337 failure: ロシアフェーズでaxis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナスと競合し、即時併合機会を取りこぼしている
          # ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
          # ベストゲーム(score3171)終盤: ロシアフェーズで即時併合を確実に捉えて高スコア
@@ -297,18 +314,21 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化
+    """v339: reactive_pairs滞留防止版 - axis 9.7ペナルティ化による即時併合強化
 
-    v336 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
-    ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
-    ベストゲーム(score3171)終盤: ロシアフェーズで即時併合を確実に捉えて高スコア
-    ロシアフェーズでは盤面が狭く、即時併合機会を最大化することが重要。axis 9.5の盤面圧縮ボーナスがaxis 8.7の即時併合優先を阻害している
+    v338 failure: 最差ゲーム(score0584)でreactive_avg=6.6, max_y=3.70, score=584という極端な結果
+    reactive_pairsが増え続けているが即時併合がない場合、REACTIVE_PAIRS_COMPRESSIONボーナスによって
+    盤面を圧縮しようとしている配置が選ばれ、reactive_pairsの消化を遅らせている
+    これにより、本来併合すべきでない場所にピースを置き、reactive_pairsの消化を遅らせている
+    結果として、reactive_pairsが滞留し続け、盤面が圧迫され、最終的にmax_y runawayでゲームオーバー
+    ワーストゲームではHEIGHT_CONTROLが続き即時併合機会を取りこぼしている
+    ベストゲーム(score3580)ではreactive_avg=2.2, max_y=3.35, score=3580と安定
 
-    v337の改善点:
-    1. axis 9.5修正: russia_phase && reactive_pair_count < 3 の場合、盤面圧縮ボーナス（+300.0）とペナルティ軽減（+100.0）を削除
-    2. ロシアフェーズでの即時併合機会取りこぼしを削減し、2つ目のロシア育成スペースを確保
-    3. axis 8.7の即時併合ボーナス（1200.0/1000.0）を最優先する条件を追加
-    4. advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づくロシアフェーズ強化
+    v339の改善点:
+    1. axis 9.7修正: reactive_pair_count >= 1 && merge_grade == "NO"の場合、盤面圧縮ボーナスを削除
+    2. 代わりに、landing_y >= 0.5の場所に配置する場合、reactive_pairs消化遅延ペナルティを適用
+    3. これによりreactive_pairsがあるのに即時併合がない場合、高配置を避けて即時併合機会を最大化
+    4. reactive_pairs滞留によるmax_y runawayを防止し、p25悪化を改善
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -450,27 +470,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += vertical_bonus + horizontal_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
         
-        # ----- evaluation axis 9.7: reactive pairs compression bonus (NEW) -----
-        # reactive_pairsがあるがmerge_grade=="NO"の場合、盤面圧縮を優先する戦略的思考
+        # ----- evaluation axis 9.7: reactive pairs compression penalty (FIXED: reactive_pairs滞留防止) -----
+        # reactive_pairsがあるがmerge_grade=="NO"の場合、盤面圧縮よりも即時併合機会の確保を優先
+        # v338 failure: 最差ゲーム(score0584)でreactive_avg=6.6, max_y=3.70, score=584という極端な結果
+        # reactive_pairsが増え続けているが即時併合がない場合、REACTIVE_PAIRS_COMPRESSIONボーナスによって
+        # 盤面を圧縮しようとしている配置が選ばれ、reactive_pairsの消化を遅らせている
         # ワーストゲームではHEIGHT_CONTROLが続き即時併合機会を取りこぼしている
-        # ベストゲームでは即時併合機会を確実に捉えて盤面を圧縮し、高type成長パイプラインを維持
-        # refs: advice.md (azumag), tmp/improve_brief.md, tmp/batch_summary.txt,
-        #       game_history/20260324_154730_score0413.jsonl, game_history/20260324_161825_score2775.jsonl
+        # ベストゲーム(score3580)ではreactive_avg=2.2, max_y=3.35, score=3580と安定
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt,
+        #       game_history/20260324_171541_score0584.jsonl (reactive_pairs滞留でmax_y runaway),
+        #       game_history/20260324_165512_score3580.jsonl (安定した即時併合消化)
+        # Fixes reactive_pairs滞留によるmax_y runaway（ボーナス削除・即時併合優先強化）
         if reactive_pair_count >= 1 and merge_grade == "NO":
-            # 盤面密度を評価し、密度が高い場所に落とすとペナルティ、密度が低い場所に落とすとボーナス
-            # 簡単な指標として、landing_yが高い（盤面の上の方）になるほど危険、低いほど安全
-            # reactive_pairsがある状況では、盤面の下の方に配置して将来の併合機会を最大化
-            if landing_y < 0.0:
-                # 下層に配置：ボーナス。低いほど良い
-                compression_bonus = (landing_y + 2.0) * 150.0  # landing_y=-2.0なら0.0、0なら300.0
-                score += compression_bonus
-                reasons.append("REACTIVE_PAIRS_COMPRESSION")
-            elif landing_y < 0.5:
-                # 中層に配置：小幅ボーナス
-                compression_bonus = 50.0
-                score += compression_bonus
-                reasons.append("REACTIVE_PAIRS_COMPRESSION")
-            # 上層配置（landing_y >= 0.5）はボーナスなし（height_penaltyでペナルティされる）
+            # reactive_pairsがあるのに即時併合がない場合、盤面圧縮ボーナスを削除
+            # 代わりに、即時併合機会を最大化する配置を優先
+            # landing_yが高い場所に配置する場合、reactive_pairs消化遅延のペナルティを適用
+            if landing_y >= 0.5:
+                # 上層配置：即時併合機会がない場合、reactive_pairs消化遅延ペナルティ
+                compression_penalty = (landing_y - 0.5) * 400.0  # landing_y=1.0なら-200.0, 2.0なら-600.0
+                score -= compression_penalty
+                reasons.append("REACTIVE_PAIRS_COMPRESSION_DELAY")
+            # 下層・中層配置はペナルティなし（height_penaltyのみ適用）
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
