@@ -31,11 +31,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v180: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制
-# reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを450.0→500.0に強化
+# v181: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制強化
+# reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを500.0→600.0に強化
+# REACTIVE_PAIRS_COMPRESSIONボーナス係数を600.0→700.0に強化
 # batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
 # refs: batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, advice.md
-# Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（height_multiplier 10倍強化）
+# Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（height_multiplier 12倍強化、REACTIVE_PAIRS_COMPRESSIONボーナス強化）
 #
 # v179: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制
 # reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを300.0→400.0に強化
@@ -107,13 +108,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v180: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制
+    """v181: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制強化
 
+    reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを500.0→600.0に強化
+    REACTIVE_PAIRS_COMPRESSIONボーナス係数を600.0→700.0に強化
+    batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
+    refs: batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, advice.md
+    Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（height_multiplier 12倍強化、REACTIVE_PAIRS_COMPRESSIONボーナス強化）
+
+    v180: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制
     reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを450.0→500.0に強化
     batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
     refs: batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, advice.md
     Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（height_multiplier 10倍強化）
-    
+
     v179: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制
     reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを300.0→400.0に強化
     batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
@@ -272,11 +280,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
         height_multiplier = 50.0
         if reactive_pair_count > 0 and merge_grade == "NO":
-            # v180: reactive_pairsがある状況で即時併合がない場合、height_penaltyをさらに強化
+            # v181: reactive_pairsがある状況で即時併合がない場合、height_penaltyをさらに強化
             # HEIGHT_CONTROL選択を抑制し、REACTIVE_PAIRS_COMPRESSIONを優先する戦略へ切り替え
             # refs: batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしている
             # refs: advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」
-            height_multiplier = 500.0  # reactive_pairsがある場合はheight_penaltyを10倍に強化し、HEIGHT_CONTROL過剰選択を抑制
+            height_multiplier = 600.0  # reactive_pairsがある場合はheight_penaltyを12倍に強化し、HEIGHT_CONTROL過剰選択を抑制
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -341,11 +349,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 else:
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
-        # ----- evaluation axis 8: REACTIVE_PAIRS_COMPRESSION (v173: board density-based compression bonus强化) -----
+        # ----- evaluation axis 8: REACTIVE_PAIRS_COMPRESSION (v181: board density-based compression bonus强化) -----
         # axis 4 (v170) already handles reactive_pairs stacking, but it prioritizes highest piece proximity
-        # axis 9.6 adds density-based compression: when reactive_pairs>=1 && merge_grade=="NO", discourage dropping in board center area
-        # v173: REACTIVE_PAIRS_COMPRESSIONボーナスを強化し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
-        # refs: batch_summaryで低スコア群がHEIGHT_CONTROLを36.4%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
+        # axis 9.7 adds density-based compression: when reactive_pairs>=1 && merge_grade=="NO", discourage dropping in board center area
+        # v181: REACTIVE_PAIRS_COMPRESSIONボーナスをさらに強化し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
+        # refs: batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
         # Lower board center density = more compression opportunities for future reactive pair interactions
         # Board center calculation: center of mass of all pieces
         stacking_density_bonus = 0.0
@@ -356,9 +364,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Distance from board center (higher = lower density = safer)
             dist_from_center = ((x - board_center_x) ** 2 + (landing_y - board_center_y) ** 2) ** 0.5
             # Bonus for dropping far from center (lower density = more space for future reactive pairs)
-            # v173: ボーナス係数を強化（200.0 → 600.0）し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
-            # Max bonus of 600.0 at distance 4.5+, no penalty at center
-            stacking_density_bonus = max(0, 600.0 * (dist_from_center / 4.5))
+            # v181: ボーナス係数を強化（600.0 → 700.0）し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
+            # Max bonus of 700.0 at distance 4.5+, no penalty at center
+            stacking_density_bonus = max(0, 700.0 * (dist_from_center / 4.5))
             if stacking_density_bonus > 0:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
                 score += stacking_density_bonus
