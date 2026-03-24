@@ -19,7 +19,21 @@ Game Overview:
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
              8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
-             8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
+              8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
+              # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼす
+              # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
+              # ベストゲーム(score2162)終盤: reactive_pairsが少なく、即時併合機会を確実に捉えて高スコア
+              # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
+              # ロシア建国後は明確にフェーズが切り替わるべき。具体的には:
+              #   - 既存のロシア(type 15)の位置を保護しつつ、2つ目のロシアへの成長パイプラインを確保
+              #   - ロシアが盤面にある状態で type 13, 14 級のピースをどこに育てるかの空間計画が必要
+              #   - 盤面が狭いため、小typeの効率的な消化（併合による盤面確保）がより重要になる
+              # axis 8.7修正: ロシアフェーズ && reactive_pairs>=1の場合、即時併合ボーナスを強化
+              #  これによりロシア建国後の狭い盤面で、即時併合機会を優先し、盤面圧縮で2つ目のロシア育成スペースを確保
+              # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づくロシアフェーズ強化
+              # refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, tmp/sandbox_files.md,
+              #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
+              # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
@@ -41,24 +55,24 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
        # --- Change History ---
-       # v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し
-       # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
-       # bad_strategy(ee2c76235324, v334): deadline_crossed時に即時ゲームオーバー判定を行い、reactive_pairsの併合機会を失っている
-       # rollback_target(608f63a01e6b, v330): deadline_crossed時も danger_piece_count == 0 の場合はプレイを継続し、reactive pairs を併合して高スコアを達成している
-       # v334 failure: axis 2とaxis 9.5からdanger_piece_count条件を削除したため、danger_piece_count > 0 の状況でも戦略的配置が選ばれてしまい、即時併合機会を取りこぼしている
-       # ワーストゲーム(score0720)終盤turns 49-57: deadline_crossed=true, reactive_pairs=3-6, danger_piece_count=2-6で即時併合不可続きmax_y=3.21に上昇してゲームオーバー
-       # ベストゲーム(score2599)終盤turns 116-123: deadline_crossed=trueでも即時併合機会を確実に捉えて2599点を出している
-       # axis 9.6追加: deadline_crossed時にreactive_pairsがある場合、即時併合を逃した非併合配置に強力なペナルティ(-4500.0)を適用
-       # axis 9.5修正: deadline_crossed && reactive_pair_count >= 1 && merge_grade == "NO"を条件に追加し、即時併合機会を最大化
-       # axis 9.2修正: deadline_crossed条件を追加し、即時併合機会を最大化
-       # axis 2: deadline_crossed && reactive_pair_count >= 2 && merge_grade == "NO" && danger_piece_count == 0 の条件を維持
-       # これによりdeadline_crossed時にreactive_pairsがある状況で即時併合機会を最大化し、危険ピースがない状況では戦略的配置を可能にする
-       # 危険ピースがある場合は即時ゲームオーバーを維持し、危険ピースがない場合は戦略的配置の余地を確保
-       # last_rollback_postmortemのconstraint: "deadline_crossed && danger_piece_count>0でHEIGHT_CONTROL優先禁止"を遵守
-       # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「即時併合機会を確実に捉えてスコア稼ぐ」に基づく即時併合最優先戦略の実装
-       # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
-       #       game_history/20260324_122310_score0720.jsonl, game_history/20260324_120021_score2599.jsonl
-       # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
+        # v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化・reactive_pairs<3でも即時併合優先
+        # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
+        # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼしている
+        # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
+        # ベストゲーム(score2162)終盤: reactive_pairsが少なく、即時併合機会を確実に捉えて高スコア
+        # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
+        # ロシア建国後は明確にフェーズが切り替わるべき。具体的には:
+        #   - 既存のロシア(type 15)の位置を保護しつつ、2つ目のロシアへの成長パイプラインを確保
+        #   - ロシアが盤面にある状態で type 13, 14 級のピースをどこに育てるかの空間計画が必要
+        #   - 盤面が狭いため、小typeの効率的な消化（併合による盤面確保）がより重要になる
+        # axis 8.7修正: ロシアフェーズでreactive_pairs>=1の場合、即時併合ボーナスを強化（reactive_pairs<3でも1000.0/1200.0、>=3で1200.0/1400.0）
+        # axis 8.7修正: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0→400.0）し、即時併合機会を優先
+        # これによりロシア建国後の狭い盤面で、即時併合機会を優先し、盤面圧縮で2つ目のロシア育成スペースを確保
+        # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づくロシアフェーズ強化
+        # refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, tmp/sandbox_files.md,
+        #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
+        # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化・reactive_pairs<3でも即時併合優先）
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md
        #
      # v331: deadline_crossed時の即時併合優先強化版 - 危険域でのmax_y runaway防止
      # last_rollback_postmortemのfailure mode: "deadline_crossed時にreactive_pairs>=1でも即時併合不可で延命配置のみ続き、max_y runaway"
@@ -693,39 +707,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_075741_score0589.jsonl, game_history/20260324_074224_score2162.jsonl
 
         if russia_phase:
-            # ロシアフェーズでの即時併合優先
-            if merge_grade in ["DIRECT", "NEAR"]:
-                # 即時併合候補がある場合、最優先（強力なボーナス）
-                # v333: reactive_pairs>=3 の場合、ボーナスを強化
-                if reactive_pair_count >= 3:
-                    # reactive_pairs>=3の超危険域では、より強力なボーナスを付与
-                    if merge_grade == "DIRECT":
-                        score += 1400.0
-                    else:
-                        score += 1200.0
-                else:
-                    if merge_grade == "DIRECT":
-                        score += 1000.0
-                    else:
-                        score += 800.0
-                reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
-            elif merge_grade == "NO":
-                # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
-                # v333: reactive_pairs>=3 の場合、盤面圧縮ボーナスを削除
-                # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させ、即時併合を強制的に待つ戦略へ切り替え
-                if reactive_pair_count < 3 and danger_piece_count == 0:
-                    # reactive_pairs<3 の場合、危険ピースがない場合のみ盤面圧縮を優先
-                    if deadline_crossed:
-                        # deadline_crossed時で危険ピースがない場合、盤面圧縮をより強力に優先
-                        score += 900.0
-                        reasons.append("RUSSIA_PHASE_DEADLINE_BOARD_COMPRESSION")
-                    else:
-                        # 危険ピースがない場合、盤面圧縮を優先
-                        score += 800.0
-                        reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                # reactive_pairs>=3 の場合は盤面圧縮ボーナスを付与しない（axis 8.8ペナルティ優先）
-                # v327: danger_piece_count > 0 の場合のボーナスを削除 - axis 9.2のペナルティを優先
-                # 危険ピースがある状況では、即時併合を最優先する戦略へ切り替え
+             # ロシアフェーズでの即時併合優先
+             # 即時併合候補がある場合、最優先（強力なボーナス）
+             if merge_grade in ["DIRECT", "NEAR"]:
+                 # v336: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
+                 if reactive_pair_count >= 1:
+                     # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
+                     if merge_grade == "DIRECT":
+                         score += 1400.0 if reactive_pair_count >= 3 else 1200.0
+                     else:
+                         score += 1200.0 if reactive_pair_count >= 3 else 1000.0
+                 else:
+                     # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
+                     if merge_grade == "DIRECT":
+                         score += 1400.0
+                     else:
+                         score += 1200.0
+                 reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
+             elif merge_grade == "NO":
+                 # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
+                 # v336: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
+                 if reactive_pair_count >= 3:
+                     # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
+                     # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
+                     score += 900.0
+                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                 elif reactive_pair_count >= 1:
+                     # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
+                     # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
+                     score += 400.0
+                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                 else:
+                      # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
+                      # 盤面圧縮を優先しつつ、type 15保護を徹底
+                      score += 800.0
+                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
