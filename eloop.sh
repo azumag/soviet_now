@@ -120,7 +120,7 @@ _handle_decide_exception_recovery() {
 
 	# ロールバック直後は即改善せず、ロールバック戦略の実績を一定数ためてから改善する
 	if [ "$rollback_applied" = true ]; then
-		echo "${MIN_GAMES_BEFORE_IMPROVE:-12}" > "$RUNTIME_RECOVERY_GATE_FILE"
+		echo "${MIN_GAMES_BEFORE_IMPROVE:-12}" >"$RUNTIME_RECOVERY_GATE_FILE"
 		log "[RECOVERY] 改善ゲート設定: ロールバック戦略で ${MIN_GAMES_BEFORE_IMPROVE:-12} 試合蓄積後に改善開始"
 	else
 		rm -f "$RUNTIME_RECOVERY_GATE_FILE" 2>/dev/null || true
@@ -152,13 +152,14 @@ play_one_game() {
 	# 代わりに python3 をバックグラウンド実行 + tail -f でリアルタイム表示。
 	local runner_tmpfile
 	runner_tmpfile=$(mktemp /tmp/eloop_runner.XXXXXX)
-	python3 -u strategy_runner.py > "$runner_tmpfile" 2>&1 &
+	python3 -u strategy_runner.py >"$runner_tmpfile" 2>&1 &
 	local py_pid=$!
 	tail -n +1 -f "$runner_tmpfile" &
 	local tail_pid=$!
 	wait "$py_pid"
 	local py_rc=$?
-	kill "$tail_pid" 2>/dev/null; wait "$tail_pid" 2>/dev/null || true
+	kill "$tail_pid" 2>/dev/null
+	wait "$tail_pid" 2>/dev/null || true
 	if [ "$py_rc" -eq 130 ] || [ "$py_rc" -eq 143 ]; then
 		log "[SIGNAL] strategy_runner が割り込み終了 (py_rc=$py_rc)"
 		rm -f "$runner_tmpfile"
@@ -221,7 +222,7 @@ handle_russia_celebration() {
 	log "!!! RUSSIA CREATED !!!"
 
 	# 既存の読み上げを停止して祝賀を優先 (afplayのみ、say_enqueueはkill_flagでリトライ抑止)
-	echo "1" > tmp/.say_queue/kill_flag
+	echo "1" >tmp/.say_queue/kill_flag
 	pgrep -x 'afplay' 2>/dev/null | xargs kill -9 2>/dev/null || true
 	rm -f tmp/.say_queue/.lock/owner_pid tmp/.say_queue/.lock/heartbeat 2>/dev/null
 	rmdir tmp/.say_queue/.lock 2>/dev/null || true
@@ -256,7 +257,7 @@ handle_soviet_celebration() {
 
 	# 既存の読み上げを停止して祝賀を優先 (say_enqueueごとkill)
 	log "[CELEBRATION] 既存読み上げを停止"
-	echo "1" > tmp/.say_queue/kill_flag
+	echo "1" >tmp/.say_queue/kill_flag
 	pgrep -x 'afplay' 2>/dev/null | xargs kill -9 2>/dev/null || true
 	rm -f tmp/.say_queue/.lock/owner_pid tmp/.say_queue/.lock/heartbeat 2>/dev/null
 	rmdir tmp/.say_queue/.lock 2>/dev/null || true
@@ -291,21 +292,8 @@ post_game_bookkeeping() {
 		_create_twitch_clip "🏆 NEW HIGH SCORE: ${LAST_SCORE}! (Game #${game_num_display})" "$game_num_display"
 	fi
 
-	# チャネルポイント予想: 新サイクル初戦なら賭けを作成（改善中は待機）
-	./twitch_predictions.sh cleanup "$game_num_display" >>tmp/prediction.log 2>&1 || true
-	if [ ! -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-		local acc_count_for_pred=0
-		if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
-			acc_count_for_pred=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
-		fi
-		local improve_status=""
-		improve_status=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('status',''))" 2>/dev/null || echo "")
-		if [ "${acc_count_for_pred:-0}" -eq 0 ] && [ "$improve_status" != "running" ]; then
-			./twitch_predictions.sh create "$game_num_display" >>tmp/prediction.log 2>&1 || true
-		fi
-	fi
-
 	# チャネルポイント予想: 今回の結果を best_outcome に蓄積（リセット前に判定）
+	# ※cleanup前に実行し、建国イベントが確実に記録されるようにする
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 		local cur_outcome=0
 		if [ "${LAST_SOVIET:-false}" = "true" ]; then
@@ -328,6 +316,20 @@ json.dump(d,open(f,'w'))
 		fi
 	fi
 
+	# チャネルポイント予想: 新サイクル初戦なら賭けを作成（改善中は待機）
+	./twitch_predictions.sh cleanup "$game_num_display" >>tmp/prediction.log 2>&1 || true
+	if [ ! -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+		local acc_count_for_pred=0
+		if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+			acc_count_for_pred=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+		fi
+		local improve_status=""
+		improve_status=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('status',''))" 2>/dev/null || echo "")
+		if [ "${acc_count_for_pred:-0}" -eq 0 ] && [ "$improve_status" != "running" ]; then
+			./twitch_predictions.sh create "$game_num_display" >>tmp/prediction.log 2>&1 || true
+		fi
+	fi
+
 	# 蓄積用にロシア建国フラグを保存（後でリセットされるため）
 	local _russia_for_acc="$LAST_RUSSIA"
 
@@ -345,12 +347,16 @@ json.dump(d,open(f,'w'))
 		log "[HALT] ソ連建国達成: strategy実行を停止し、retry/次ゲーム操作を無効化"
 	elif [ "$LAST_RUSSIA" = "true" ] && [ "${LAST_RUSSIA_ANNOUNCED:-false}" != "true" ]; then
 		handle_russia_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
+		# チャネルポイント予想: ロシア建国で即 resolve
+		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+			./twitch_predictions.sh resolve 1 >>tmp/prediction.log 2>&1 || true
+		fi
 		LAST_RUSSIA="false"
 		LAST_RUSSIA_ANNOUNCED="false"
 	fi
 
 	# スコア履歴
-	printf '%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z' | sed 's/\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/')" "$LAST_SCORE" >> score_history.txt
+	printf '%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z' | sed 's/\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/')" "$LAST_SCORE" >>score_history.txt
 
 	# ダッシュボード更新（GAMEOVER状態で生成→表示される）
 	log "[DASHBOARD] Generating GAMEOVER dashboard..."
@@ -379,9 +385,9 @@ print(d.get('score', 0) + bonus)
 " 2>/dev/null || echo "$LAST_SCORE")
 
 	# EVAL_SCORE履歴（ボーナス込み）
-	printf '%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z' | sed 's/\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/')" "$EVAL_SCORE" >> eval_score_history.txt
+	printf '%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z' | sed 's/\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/')" "$EVAL_SCORE" >>eval_score_history.txt
 
-	local _bonus=$(( EVAL_SCORE - LAST_SCORE ))
+	local _bonus=$((EVAL_SCORE - LAST_SCORE))
 	if [ "$_bonus" -gt 0 ]; then
 		local _top_types
 		_top_types=$(echo "$RESULT_JSON" | python3 -c "import json,sys;ts=json.load(sys.stdin).get('final_types',[]);print(sorted(ts,reverse=True)[:5])" 2>/dev/null || echo "[]")
@@ -407,7 +413,8 @@ print(d.get('score', 0) + bonus)
 	# 予想サイクル進捗をチャットに投稿
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		local pred_progress
-		pred_progress=$(python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" "$EVAL_SCORE" <<'PY'
+		pred_progress=$(
+			python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" "$EVAL_SCORE" <<'PY'
 import json, sys
 acc = json.load(open(sys.argv[1]))
 count = acc.get("count", 0)
@@ -435,7 +442,7 @@ PY
 
 	# git commit
 	git add -A
-	git commit -m "eloop Game #${game_num_display}: score=${LAST_SCORE}" 2>/dev/null && \
+	git commit -m "eloop Game #${game_num_display}: score=${LAST_SCORE}" 2>/dev/null &&
 		git push 2>/dev/null || true
 	_post_pending_phyrogenetic_tree_link_to_chat_if_any
 }
