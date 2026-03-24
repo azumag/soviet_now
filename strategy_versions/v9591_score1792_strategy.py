@@ -606,7 +606,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             height_mult *= 0.3
 
         # Calculate height penalty after all height_mult modifications
-        height_penalty = landing_y * 50.0 * height_mult
+        # v168: reactive_pairsあり時HEIGHT_CONTROL抑制強化版
+        # last_rollback_postmortem: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode
+        # batch_summary: HEIGHT_CONTROLが過剰、即時併合機会を取りこぼしている
+        # ワーストゲーム(score0717)終盤turns 65-72: reactive_pairs=8, merge_available=falseでREACTIVE_PAIRS_COMPRESSIONが続きmax_y=2.34→3.71に上昇してゲームオーバー
+        # ベストゲーム(score3530)終盤turns 139-146: 即時併合機会を確実に捉えて3530点を出している
+        # axis 2修正: reactive_pairs>0 && merge_grade=="NO"の場合、height_multiplierを50.0から100.0に増やし、高配置を強力に抑制
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+        #       game_history/20260325_044915_score0717.jsonl turns 65-72, game_history/20260325_042216_score3530.jsonl turns 139-146
+        # Fixes rollback failure mode: reactive_pairs>=1 && merge_grade=="NO"での戦略的配置不足（axis 2 height_multiplier増強）
+        height_base_mult = 50.0
+        if reactive_pair_count > 0 and merge_grade == "NO":
+            height_base_mult = 100.0
+        height_penalty = landing_y * height_base_mult * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0

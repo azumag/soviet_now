@@ -30,6 +30,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v168: reactive_pairsあり時HEIGHT_CONTROL抑制強化版 - 即時併合機会取りこぼし削減
+# last_rollback_postmortemのfailure mode: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足
+# ワーストゲーム(score0717)終盤: reactive_pairs=8, merge_available=false続きでREACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=2.34→3.71に上昇してゲームオーバー
+# ベストゲーム(score3530)終盤: 即時併合機会を確実に捉えて高スコア
+# batch_summaryでHEIGHT_CONTROLが6.7%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
+# advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「デッドラインを超える配置を避ける。危険盤面時こそデッドライン超え判定をより厳格に適用する」がログで支持されている
+# axis 2修正: reactive_pairs > 0 && merge_grade == "NO"の場合、height_multiplierを50.0→100.0に強化
+# これによりreactive_pairsがある状況でHEIGHT_CONTROL選択を強力に抑制し、即時併合機会を優先する戦略へ切り替え
+# refs: last_rollback_postmortem.md, last_rollback_analysis.md, improve_brief.md, batch_summary.txt, advice.md,
+#       game_history/20260325_044915_score0717.jsonl turns 65-72, game_history/20260325_042216_score3530.jsonl turns 139-146, strategy.py.staging
+# Fixes rollback failure mode: reactive_pairsがある状況での即時併合機会取りこぼし（axis 2 reactive_pairs強化）
+#
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # v151-v155: CHAIN_MERGE enhanced versions (coefficients 200.0->300.0->400.0, chain_distance 3.0->3.5->4.0->4.5->5.0)
 # [BEST:4026] v155: chain_distance 4.5->5.0, chain_bonus 400.0->450.0 achieved best score 4026
@@ -162,7 +174,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
-        height_penalty = landing_y * 50.0 * height_mult
+        height_multiplier = 50.0
+        if reactive_pairs > 0 and merge_grade == "NO":
+            # v168: reactive_pairsがある状況で即時併合がない場合、height_penaltyを強化
+            # HEIGHT_CONTROL選択を抑制し、即時併合機会を優先する戦略へ切り替え
+            # refs: advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」
+            height_multiplier = 100.0  # reactive_pairsがある場合はheight_penaltyを2倍に強化
+        
+        height_penalty = landing_y * height_multiplier * height_mult
+
+        if deadline_crossed and reactive_pairs >= 1 and danger_piece_count > 0 and merge_grade == "NO":
+            # v169: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" の超危険域でheight_penaltyを2倍に強化
+            # 危険ピースが多い deadline_crossed状況では、即時併合待ちが唯一の生還ルート
+            # refs: last_rollback_postmortem.md (reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode)
+            # ワーストゲーム(score0717)終盤: deadline_crossed, reactive_pairs=8, danger_piece_count=8, merge_available=false続きでmax_y=2.34→3.71に上昇
+            # refs: game_history/20260325_044915_score0717.jsonl turns 65-72, game_history/20260325_042216_score3530.jsonl turns 139-146
+            # Fixes rollback failure mode: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1での高配置 runway（height_penalty 2倍強化）
+            height_penalty *= 2.0
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
