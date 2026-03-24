@@ -203,6 +203,11 @@ start_radio_corner_strategy() {
 	_radio_time_context
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
+	# raw score（視聴者が見ているスコア）を取得
+	local raw_scores=""
+	if [ -f "score_history.txt" ]; then
+		raw_scores=$(tail -12 score_history.txt 2>/dev/null | awk -F'\t' '{print $NF}' | tr '\n' ' ')
+	fi
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
