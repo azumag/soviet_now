@@ -16,9 +16,14 @@ import { analyzeResultScreen } from './result_screen_ocr.mjs';
 const PROMPTS_DIR = join(import.meta.dirname || '.', 'prompts');
 
 function loadPrompt(filename, vars = {}) {
-  let text = readFileSync(join(PROMPTS_DIR, filename), 'utf-8');
+  const path = join(PROMPTS_DIR, filename);
+  if (!existsSync(path)) {
+    console.error(`[comment] Prompt file not found: ${path}`);
+    return '';
+  }
+  let text = readFileSync(path, 'utf-8');
   for (const [key, value] of Object.entries(vars)) {
-    text = text.replaceAll(`{{${key}}}`, value);
+    text = text.replaceAll(`{{${key}}}`, String(value ?? ''));
   }
   return text;
 }
