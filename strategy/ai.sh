@@ -257,18 +257,18 @@ run_cmd() {
 			fi
 		fi
 		;;
-	claude)
+	haiku|claude)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 			else
-				claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
 			else
-				claude -p "$prompt_body" --model=Haiku --permission-mode=acceptEdits &
+				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
 			fi
 		fi
 		;;

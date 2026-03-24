@@ -31,6 +31,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v180: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制
+# reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを450.0→500.0に強化
+# batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
+# refs: batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, advice.md
+# Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（height_multiplier 10倍強化）
+#
+# v179: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制
+# reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを300.0→400.0に強化
+# batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
+# refs: batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, advice.md
+# Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（height_multiplier 8倍強化）
+#
 # v171: axis 8.7統合・ロシアフェーズ強化版 - ロシア建国後の即時併合優先
 # axis 4 (v170) と axis 8.7 (v171) を統合し、ロシアフェーズで即時併合機会を最大化する戦略を強化
 # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
@@ -95,7 +107,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v171: axis 8.7統合・ロシアフェーズ強化版 - ロシア建国後の即時併合優先
+    """v180: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制
+
+    reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを450.0→500.0に強化
+    batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
+    refs: batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, advice.md
+    Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（height_multiplier 10倍強化）
+    
+    v179: axis 2 reactive_pairs強化版 - HEIGHT_CONTROL過剰選択抑制
+    reactive_pairs>=1 && merge_grade=="NO" 時のheight_multiplierを300.0→400.0に強化
+    batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
+    refs: batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, advice.md
+    Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（height_multiplier 8倍強化）
+    
+    v171: axis 8.7統合・ロシアフェーズ強化版 - ロシア建国後の即時併合優先
 
     axis 4 (v170) と axis 8.7 (v171) を統合し、ロシアフェーズで即時併合機会を最大化する戦略を強化。
     ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分。
@@ -247,21 +272,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # additional multiplier if HIGH/MEDIUM landing high (>0.5)
         height_multiplier = 50.0
         if reactive_pair_count > 0 and merge_grade == "NO":
-            # v168: reactive_pairsがある状況で即時併合がない場合、height_penaltyを強化
-            # HEIGHT_CONTROL選択を抑制し、即時併合機会を優先する戦略へ切り替え
+            # v180: reactive_pairsがある状況で即時併合がない場合、height_penaltyをさらに強化
+            # HEIGHT_CONTROL選択を抑制し、REACTIVE_PAIRS_COMPRESSIONを優先する戦略へ切り替え
+            # refs: batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしている
             # refs: advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」
-            height_multiplier = 100.0  # reactive_pairsがある場合はheight_penaltyを2倍に強化
+            height_multiplier = 500.0  # reactive_pairsがある場合はheight_penaltyを10倍に強化し、HEIGHT_CONTROL過剰選択を抑制
 
         height_penalty = landing_y * height_multiplier * height_mult
 
         if deadline_crossed and reactive_pair_count >= 1 and danger_piece_count > 0 and merge_grade == "NO":
-            # v169: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" の超危険域でheight_penaltyを2倍に強化
+            # v177: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" の超危険域でheight_penaltyをさらに強化
             # 危険ピースが多い deadline_crossed状況では、即時併合待ちが唯一の生還ルート
             # refs: last_rollback_postmortem.md (reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode)
             # ワーストゲーム(score0717)終盤: deadline_crossed, reactive_pairs=8, danger_piece_count=8, merge_available=false続きでmax_y=2.34→3.71に上昇
             # refs: game_history/20260325_044915_score0717.jsonl turns 65-72, game_history/20260325_042216_score3530.jsonl turns 139-146
-            # Fixes rollback failure mode: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1での高配置 runway（height_penalty 2倍強化）
-            height_penalty *= 2.0
+            # Fixes rollback failure mode: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1での高配置 runway（height_penalty 5倍強化）
+            height_penalty *= 5.0
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -315,10 +341,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 else:
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
-        # ----- evaluation axis 8: REACTIVE_PAIRS_COMPRESSION (v172: board density-based compression bonus) -----
+        # ----- evaluation axis 8: REACTIVE_PAIRS_COMPRESSION (v173: board density-based compression bonus强化) -----
         # axis 4 (v170) already handles reactive_pairs stacking, but it prioritizes highest piece proximity
         # axis 9.6 adds density-based compression: when reactive_pairs>=1 && merge_grade=="NO", discourage dropping in board center area
-        # refs: batch_summary (REACTIVE_PAIRS_COMPRESSION avg_score_delta=1.4 in high-score games, but still below reactive pair target)
+        # v173: REACTIVE_PAIRS_COMPRESSIONボーナスを強化し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
+        # refs: batch_summaryで低スコア群がHEIGHT_CONTROLを36.4%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
         # Lower board center density = more compression opportunities for future reactive pair interactions
         # Board center calculation: center of mass of all pieces
         stacking_density_bonus = 0.0
@@ -329,8 +356,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Distance from board center (higher = lower density = safer)
             dist_from_center = ((x - board_center_x) ** 2 + (landing_y - board_center_y) ** 2) ** 0.5
             # Bonus for dropping far from center (lower density = more space for future reactive pairs)
-            # Max bonus of 200.0 at distance 4.5+, no penalty at center
-            stacking_density_bonus = max(0, 200.0 * (dist_from_center / 4.5))
+            # v173: ボーナス係数を強化（200.0 → 600.0）し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
+            # Max bonus of 600.0 at distance 4.5+, no penalty at center
+            stacking_density_bonus = max(0, 600.0 * (dist_from_center / 4.5))
             if stacking_density_bonus > 0:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
                 score += stacking_density_bonus

@@ -957,6 +957,10 @@ generate_comment_response() {
 		_comment_persona=$(cat "$ELOOP_LIB_DIR/prompts/comment_persona_${_mode_suffix}.md" 2>/dev/null)
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
 		_comment_channel_intro=$(cat "$ELOOP_LIB_DIR/prompts/comment_channel_intro_${_mode_suffix}.md" 2>/dev/null)
+		if [ -z "$_comment_persona" ]; then
+			log "[COMMENT] ERROR: prompts/comment_persona_${_mode_suffix}.md not found, skip"
+			return 1
+		fi
 
 		# Pre-resolve defaults for envsubst
 		comment_batch_context="${comment_batch_context:-（なし）}"
@@ -977,8 +981,14 @@ generate_comment_response() {
 
 		local comment_prompt_file
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
+		local _comment_template="$ELOOP_LIB_DIR/prompts/comment_template.md"
+		if [ ! -f "$_comment_template" ]; then
+			log "[COMMENT] ERROR: prompts/comment_template.md not found, skip"
+			rm -f "$comment_prompt_file"
+			return 1
+		fi
 		envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference}' \
-			< "$ELOOP_LIB_DIR/prompts/comment_template.md" > "$comment_prompt_file"
+			< "$_comment_template" > "$comment_prompt_file"
 
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
 		case "$comment_retry_max" in
@@ -1242,91 +1252,5 @@ RETRYCOMMENT
 	disown "$comment_pid"
 }
 
-#=== soren91 ゲーム感想 ===
-
-generate_soren91_game_commentary() {
-	soren91_is_running 2>/dev/null || return 0
-
-	# コメントキューにファイルがあれば感想は不要
-	local queued_count=0
-	queued_count=$(ls -1 "$COMMENT_QUEUE_DIR"/comment_*.txt "$COMMENT_QUEUE_DIR"/comment_*.playing 2>/dev/null | wc -l)
-	[ "${queued_count:-0}" -gt 0 ] && return 0
-
-	# 最新のゲームサマリーを探す
-	local latest_summary=""
-	latest_summary=$(ls -1 "$SOREN91_DIR/tmp/summaries"/game_*.json 2>/dev/null | sort -V | tail -1)
-	[ -n "$latest_summary" ] || return 0
-
-	local latest_game=""
-	latest_game=$(python3 -c "import json; print(json.load(open('$latest_summary'))['gameNumber'])" 2>/dev/null)
-	[ -n "$latest_game" ] || return 0
-
-	# 既にコメント済みのゲームならスキップ
-	local last_commented=0
-	[ -f "$SOREN91_LAST_COMMENTED_GAME_FILE" ] && last_commented=$(cat "$SOREN91_LAST_COMMENTED_GAME_FILE" 2>/dev/null)
-	case "$last_commented" in ''|*[!0-9]*) last_commented=0 ;; esac
-	[ "$latest_game" -gt "$last_commented" ] || return 0
-
-	# 最小インターバル（連続感想を防ぐ）
-	local last_ts=0 now_ts
-	now_ts=$(date +%s)
-	if [ -f "$SOREN91_LAST_COMMENTED_GAME_FILE" ]; then
-		last_ts=$(stat -f %m "$SOREN91_LAST_COMMENTED_GAME_FILE" 2>/dev/null || echo 0)
-	fi
-	[ $((now_ts - last_ts)) -ge "$SOREN91_GAME_COMMENTARY_INTERVAL" ] || return 0
-
-	# ゲーム番号を即座に記録（二重生成防止）
-	echo "$latest_game" > "$SOREN91_LAST_COMMENTED_GAME_FILE"
-
-	local summary_json=""
-	summary_json=$(cat "$latest_summary" 2>/dev/null)
-	local rank turns pieces_at_end ocr_rank ocr_lines ranking_image ocr_json rank_label result_context
-	rank=$(echo "$summary_json" | python3 -c "import json,sys; d=json.load(sys.stdin); r=d.get('rank'); print('' if r is None else r)" 2>/dev/null)
-	turns=$(echo "$summary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turns',0))" 2>/dev/null)
-	pieces_at_end=$(echo "$summary_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('piecesAtEnd',0))" 2>/dev/null)
-	ocr_rank=$(echo "$summary_json" | python3 -c "import json,sys; d=json.load(sys.stdin); r=((d.get('resultScreenOcr') or {}).get('rank')); print('' if r is None else r)" 2>/dev/null)
-	ocr_lines=$(echo "$summary_json" | python3 -c "import json,sys; d=json.load(sys.stdin); lines=((d.get('resultScreenOcr') or {}).get('lines') or []); print('\n'.join(f'- {line}' for line in lines[:6]))" 2>/dev/null)
-
-	ranking_image=$(printf '%s/tmp/summaries/ranking_%04d.png' "$SOREN91_DIR" "$latest_game")
-	if { [ -z "$rank" ] || [ -z "$ocr_lines" ]; } && [ -f "$ranking_image" ] && [ -f "$SOREN91_DIR/result_screen_ocr.mjs" ]; then
-		ocr_json=$(node "$SOREN91_DIR/result_screen_ocr.mjs" "$ranking_image" 2>/dev/null || true)
-		if [ -n "$ocr_json" ]; then
-			[ -z "$rank" ] && rank=$(printf '%s' "$ocr_json" | python3 -c "import json,sys; d=json.load(sys.stdin); r=d.get('rank'); print('' if r is None else r)" 2>/dev/null)
-			[ -z "$ocr_rank" ] && ocr_rank=$(printf '%s' "$ocr_json" | python3 -c "import json,sys; d=json.load(sys.stdin); r=d.get('rank'); print('' if r is None else r)" 2>/dev/null)
-			[ -z "$ocr_lines" ] && ocr_lines=$(printf '%s' "$ocr_json" | python3 -c "import json,sys; d=json.load(sys.stdin); lines=(d.get('lines') or []); print('\n'.join(f'- {line}' for line in lines[:6]))" 2>/dev/null)
-		fi
-	fi
-
-	if [ -n "$rank" ]; then
-		rank_label="${rank}位"
-	elif [ -n "$ocr_rank" ]; then
-		rank_label="${ocr_rank}位 (結果画面OCR)"
-	else
-		rank_label="不明"
-	fi
-	if [ -n "$ocr_lines" ]; then
-		result_context="$ocr_lines"
-	elif [ -f "$ranking_image" ]; then
-		result_context="（ランキング画面は保存されていますが、文字読み取りは不完全でした）"
-	else
-		result_context="（結果画面OCRなし）"
-	fi
-
-	log "[SOREN91] ゲーム${latest_game}の感想を生成 (rank=${rank_label}, turns=${turns})"
-
-	# バックグラウンドでAI感想生成 → キューに追加
-	(
-		local commentary=""
-		export latest_game turns pieces_at_end rank_label result_context
-		local _commentary_prompt=""
-		_commentary_prompt=$(envsubst '${latest_game} ${turns} ${pieces_at_end} ${rank_label} ${result_context}' \
-			< "$ELOOP_LIB_DIR/prompts/comment_soren91_game_commentary.md" 2>/dev/null)
-		commentary=$(claude -p "$_commentary_prompt" --model haiku 2>/dev/null)
-		if [ -n "$commentary" ]; then
-			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
-			echo "$commentary" > "$queue_file"
-			log "[SOREN91] ゲーム${latest_game}感想キュー追加: ${#commentary}字"
-		fi
-	) &
-	disown $!
-}
+# soren91 ゲーム感想は soren91/comment.mjs (generateRankingComment) で生成するため、
+# 親プロジェクト側での重複生成は廃止。
