@@ -129,7 +129,7 @@ run_cmd() {
 	local timeout_bin=""
 	local timeout_label="none"
 	case "$timeout_sec" in
-	''|*[!0-9]*) timeout_sec="" ;;
+	'' | *[!0-9]*) timeout_sec="" ;;
 	esac
 	if [ -n "$timeout_sec" ] && [ "$timeout_sec" -gt 0 ]; then
 		timeout_bin=$(_run_cmd_timeout_bin 2>/dev/null || true)
@@ -230,30 +230,30 @@ run_cmd() {
 	sonnet)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 			else
-				claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
 			else
-				claude -p "$prompt_body" --model=sonnet --permission-mode=acceptEdits &
+				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
 			fi
 		fi
 		;;
 	opus)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 			else
-				claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
-				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
+				"$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
 			else
-				claude -p "$prompt_body" --model=opus --permission-mode=acceptEdits &
+				claude -p "$prompt_body" --model=haiku --permission-mode=acceptEdits &
 			fi
 		fi
 		;;
@@ -352,7 +352,8 @@ run_cmd() {
 _build_no_edit_retry_prompt() {
 	local original_prompt="$1" expect="$2" attempt="$3" primary_attempts="$4" resume_session="$5"
 	local short_followup
-	short_followup=$(cat <<EOF
+	short_followup=$(
+		cat <<EOF
 前回の応答は \`$expect\` を実際には変更していないため失敗扱いです。
 同じタスクを続けて、今回は必ず実ファイル編集まで完了してください。
 - いま必要なのは説明ではなく \`$expect\` の実編集
@@ -364,7 +365,7 @@ _build_no_edit_retry_prompt() {
 - 終了前に、\`$expect\` に差分が入った状態にすること
 - これは no-edit 後の再試行 ${attempt}/${primary_attempts}
 EOF
-)
+	)
 	if [ -n "$resume_session" ]; then
 		printf '%s\n' "$short_followup"
 	else
@@ -400,7 +401,7 @@ run_ai() {
 
 	local primary_attempts="${RUN_AI_PRIMARY_RETRIES:-1}"
 	case "$primary_attempts" in
-	''|*[!0-9]*) primary_attempts=1 ;;
+	'' | *[!0-9]*) primary_attempts=1 ;;
 	esac
 	[ "$primary_attempts" -lt 1 ] && primary_attempts=1
 
@@ -467,9 +468,32 @@ run_ai() {
 			fi
 		fi
 		if [ "$expect_written_fb" != true ]; then
+			# --- last resort ---
+			local last_resort="${MODEL_LAST_RESORT:-}"
+			if [ -n "$last_resort" ]; then
+				log "[$label] fallback failed → last_resort=$last_resort"
+				RUN_CMD_LOG_TAG="${label}:last_resort"
+				run_cmd "$last_resort" "$prompt"
+				local expect_written_lr=false
+				if [ -s "$expect" ]; then
+					if [ -n "$expect_snapshot" ] && [ -f "$expect_snapshot" ]; then
+						if ! cmp -s "$expect_snapshot" "$expect" 2>/dev/null; then
+							expect_written_lr=true
+						fi
+					else
+						expect_written_lr=true
+					fi
+				fi
+				if [ "$expect_written_lr" = true ]; then
+					rm -f "$expect_snapshot" 2>/dev/null || true
+					if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+					log "[$label] last_resort OK ($expect written)"
+					return 0
+				fi
+			fi
 			rm -f "$expect_snapshot" 2>/dev/null || true
 			if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
-			log "[$label] fallback also failed ($expect not written)"
+			log "[$label] all attempts failed ($expect not written)"
 			return 1
 		fi
 	fi

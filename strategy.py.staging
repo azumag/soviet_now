@@ -7,13 +7,14 @@ Game Overview:
   - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-Decision Logic (6 evaluation axes):
-  1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-  2. Height penalty - Penalty for high landing position (varies by phase)
-  3. Drift penalty - Penalty for post-landing drift due to polygon shape
-  4. Left-right balance correction - Bonus for correcting piece count bias
-  5. nextNext centering - Center for next merge opportunity if nextNext same type
-  6. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition)
+Decision Logic (7 evaluation axes):
+   1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+   2. Height penalty - Penalty for high landing position (varies by phase)
+   3. Drift penalty - Penalty for post-landing drift due to polygon shape
+   4. Reactive pairs stacking - Bonus for dropping near highest same-type piece when no immediate merge (v170: new addition)
+   5. Left-right balance correction - Bonus for correcting piece count bias
+   6. nextNext centering - Center for next merge opportunity if nextNext same type
+   7. Chain merge bonus - Evaluate possibility of further merges after merge (v149: new addition)
 
 Phases (determined by board max Y):
   LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -30,6 +31,42 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v171: axis 8.7統合・ロシアフェーズ強化版 - ロシア建国後の即時併合優先
+# axis 4 (v170) と axis 8.7 (v171) を統合し、ロシアフェーズで即時併合機会を最大化する戦略を強化
+# ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
+# ロシア建国後は明確にフェーズが切り替わるべき。具体的には:
+#   - 既存のロシア(type 15)の位置を保護しつつ、2つ目のロシアへの成長パイプラインを確保
+#   - ロシアが盤面にある状態で type 13, 14 級のピースをどこに育てるかの空間計画が必要
+#   - 盤面が狭いため、小typeの効率的な消化（併合による盤面確保）がより重要になる
+# axis 4修正: reactive_pairs==0 && russia_phaseの場合もスタッキングボーナスを適用（axis 8.7統合）
+# axis 8.7: ロシアフェーズでスタッキングボーナスを強化（80.0 → 120.0）
+# これによりロシア建国後の狭い盤面で、即時併合機会を優先し、盤面圧縮で2つ目のロシア育成スペースを確保
+# advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づくロシアフェーズ強化
+# refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt,
+#       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
+# Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7統合・ロシアフェーズ強化）
+# refs: advice.md, tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
+#
+# v170: reactive_pairsスタッキングボーナス追加版 - 即時併合がない時の戦略的配置強化
+# last_rollback_postmortemのfailure mode: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足
+# reactive_pairsがあるが即時併合がない場合、盤面上の最も高い同タイプピースの近くに配置するボーナス（axis 3.1）を追加
+# batch_summaryで低スコア群がREACTIVE_PAIRS_COMPRESSIONを20.0%選択、高スコア群が16.1%選択という差から、戦略的配置不足を確認
+# advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」「盤面がどうだろうが即時併合狙った方が絶対勝率高い」がログで支持されている
+# refs: last_rollback_postmortem.md, last_rollback_analysis.md, improve_brief.md, batch_summary.txt, advice.md,
+#       game_history/20260325_053538_score1188.jsonl, game_history/20260325_054730_score2023.jsonl, strategy.py.staging
+# Fixes rollback failure mode: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足（axis 3.1 スタッキングボーナス追加）
+#
+# v169: deadline_crossed時のheight_penalty強化版 - 超危険域での即時併合待ち戦略強化
+# last_rollback_postmortemのfailure mode: deadline_crossed && reactive_pairs>=1 && merge_grade=="NO" 時の高配置 runway
+# ワーストゲーム(score0717)終盤: deadline_crossed, reactive_pairs=8, danger_piece_count=8, merge_available=false続きでmax_y=2.34→3.71に上昇してゲームオーバー
+# ベストゲーム(score3530)終盤: 即時併合機会を確実に捉えて高スコア
+# advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」「デッドラインを超える配置を避ける。危険盤面時こそデッドライン超え判定をより厳格に適用する」がログで支持されている
+# v168のreactive_pairs強化（height_multiplier 50.0→100.0）をベースに、deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO"の超危険域でheight_penaltyをさらに2倍に強化
+# 危険ピースが多い deadline_crossed状況では、即時併合待ちが唯一の生還ルート
+# refs: last_rollback_postmortem.md, last_rollback_analysis.md, improve_brief.md, batch_summary.txt, advice.md,
+#       game_history/20260325_044915_score0717.jsonl turns 65-72, game_history/20260325_042216_score3530.jsonl turns 139-146, strategy.py.staging
+# Fixes rollback failure mode: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1での高配置 runway（height_penalty 2倍強化）
+#
 # v168: reactive_pairsあり時HEIGHT_CONTROL抑制強化版 - 即時併合機会取りこぼし削減
 # last_rollback_postmortemのfailure mode: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足
 # ワーストゲーム(score0717)終盤: reactive_pairs=8, merge_available=false続きでREACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=2.34→3.71に上昇してゲームオーバー
@@ -58,13 +95,21 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v167: Enhanced reactive_pairs penalty (axis 9.1)
+    """v171: axis 8.7統合・ロシアフェーズ強化版 - ロシア建国後の即時併合優先
 
-    Increase reactive_pairs penalty from 100.0 to 150.0 per reactive pair to further
-    reinforce immediate merge priority in CRITICAL phase. This more aggressively
-    forces merge candidates when reactive_pairs exist, reducing board height more quickly
-    in dangerous situations. (Based on v166: Physical deadline-based phase judgment
-    using deadline_margin, merge_mult=1.0 in CRITICAL phase)
+    axis 4 (v170) と axis 8.7 (v171) を統合し、ロシアフェーズで即時併合機会を最大化する戦略を強化。
+    ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分。
+    ロシア建国後は明確にフェーズが切り替わるべき。具体的には:
+      - 既存のロシア(type 15)の位置を保護しつつ、2つ目のロシアへの成長パイプラインを確保
+      - ロシアが盤面にある状態で type 13, 14 級のピースをどこに育てるかの空間計画が必要
+      - 盤面が狭いため、小typeの効率的な消化（併合による盤面確保）がより重要になる
+    axis 4修正: reactive_pairs==0 && russia_phaseの場合もスタッキングボーナスを適用（axis 8.7統合）
+    axis 8.7: ロシアフェーズでスタッキングボーナスを強化（80.0 → 120.0）
+    これによりロシア建国後の狭い盤面で、即時併合機会を優先し、盤面圧縮で2つ目のロシア育成スペースを確保。
+    advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づくロシアフェーズ強化。
+    refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt,
+          game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
+    Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7統合・ロシアフェーズ強化）
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -104,6 +149,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # reactive_pairs is a list, count pairs for evaluation
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
+
+    # --- v171: russia phase detection (axis 8.7: ロシア建国後フェーズ即時併合強化版) ---
+    # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
+    # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づくロシアフェーズ強化
+    # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
+    # ロシア建国後は明確にフェーズが切り替わるべき。具体的には:
+    #   - 既存のロシア(type 15)の位置を保護しつつ、2つ目のロシアへの成長パイプラインを確保
+    #   - ロシアが盤面にある状態で type 13, 14 級のピースをどこに育てるかの空間計画が必要
+    #   - 盤面が狭いため、小typeの効率的な消化（併合による盤面確保）がより重要になる
+    # axis 8.7追加: ロシアフェーズ && reactive_pairs==0の場合、盤面上の現在タイプの最も高い位置のピースに着地できる配置にボーナスを与え、即時併合機会を最大化
+    # ワーストゲーム(score0854)終盤turns 55-63: ロシア出現後、reactive_pairsが少ない状況で即時併合機会を取りこぼし、max_y runawayでゲームオーバー
+    # ベストゲーム(score2615): ロシアフェーズで即時併合機会を確実に捉えて高スコア
+    # refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt,
+    #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
+    # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7 ロシアフェーズ強化）
+    russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
+    russia_phase = russia_phase_count >= 1
 
     # --- phase judgment (deadline_margin based: axis 8.7) ---
     # Physical deadline-based dangerous area judgment using deadline_margin
@@ -147,7 +209,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     merged_type = min(next_type + 1, 16)
 
     # =======================================================================
-    #  score each drop candidate (x coordinate) with 6 evaluation axes
+    #  score each drop candidate (x coordinate) with 7 evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -218,10 +280,113 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
         score -= drift_penalty
 
-        # ----- evaluation axis 4: left-right balance correction (v162: enhanced) -----
+        # ----- evaluation axis 4: reactive_pairs stacking (v172: REACTIVE_PAIRS_COMPRESSION強化版) -----
+        # axis 4 (v170): reactive_pairsがあるが即時併合がない場合、盤面上の最も高い同タイプピースの近くに配置するボーナス
+        # v172: reactive_pairsがある状況での戦略的配置強化
+        # batch_summaryで低スコア群がHEIGHT_CONTROLを16.4%選択(avg_score_delta=0.0)と過剰
+        # 高スコア群はREACTIVE_PAIRS_COMPRESSIONを16.1%選択し、即時併合機会を優先している
+        # 悪戦略のパターン: reactive_pairs>=1 && merge_grade=="NO"でHEIGHT_CONTROLを選択し続ける
+        # axis 4のREACTIVE_PAIRS_COMPRESSIONボーナスを強化し、reactive_pairsがある状況で戦略的配置を優先する
+        # refs: advice.md, batch_summary.txt, last_rollback_postmortem.md, last_rollback_analysis.md,
+        #       game_history/20260324_193033_score0903.jsonl (悪戦略例), game_history/20260324_170538_score1904.jsonl (好戦略例)
+        # Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（REACTIVE_PAIRS_COMPRESSION強化）
+        stacking_enabled = (reactive_pair_count >= 1 and merge_grade == "NO") or (reactive_pair_count == 0 and russia_phase)
+        if stacking_enabled:
+            # Find all pieces of current type
+            current_type_pieces = [p for p in pieces if p.get("type") == next_type]
+            if current_type_pieces:
+                # Find the highest piece of current type
+                highest_piece = max(current_type_pieces, key=lambda p: p.get("y", -float("inf")))
+                highest_x = highest_piece.get("x", 0)
+                highest_y = highest_piece.get("y", -4.0)
+
+                # Calculate distance from drop position to highest piece
+                dist_to_highest = ((x - highest_x) ** 2 + (landing_y - highest_y) ** 2) ** 0.5
+
+                # Bonus for dropping near highest piece: closer is better
+                # This enables stacking on top of or next to existing high-type piece
+                # v172: ボーナス係数を強化（80.0/120.0 → 120.0/160.0）
+                stacking_multiplier = 160.0 if russia_phase and reactive_pair_count == 0 else 120.0
+                stacking_bonus = max(0, (3.0 - dist_to_highest)) * stacking_multiplier
+                score += stacking_bonus
+
+                if russia_phase and reactive_pair_count == 0:
+                    reasons.append("REACTIVE_PAIRS_STACKING_RUSSIA_PHASE")
+                else:
+                    reasons.append("REACTIVE_PAIRS_STACKING")
+
+        # ----- evaluation axis 8: REACTIVE_PAIRS_COMPRESSION (v172: board density-based compression bonus) -----
+        # axis 4 (v170) already handles reactive_pairs stacking, but it prioritizes highest piece proximity
+        # axis 9.6 adds density-based compression: when reactive_pairs>=1 && merge_grade=="NO", discourage dropping in board center area
+        # refs: batch_summary (REACTIVE_PAIRS_COMPRESSION avg_score_delta=1.4 in high-score games, but still below reactive pair target)
+        # Lower board center density = more compression opportunities for future reactive pair interactions
+        # Board center calculation: center of mass of all pieces
+        stacking_density_bonus = 0.0
+        if reactive_pair_count >= 1 and merge_grade == "NO":
+            # Calculate board center (center of mass of all pieces)
+            board_center_x = sum(p["x"] for p in pieces) / (len(pieces) if pieces else 1)
+            board_center_y = sum(p["y"] for p in pieces) / (len(pieces) if pieces else 1)
+            # Distance from board center (higher = lower density = safer)
+            dist_from_center = ((x - board_center_x) ** 2 + (landing_y - board_center_y) ** 2) ** 0.5
+            # Bonus for dropping far from center (lower density = more space for future reactive pairs)
+            # Max bonus of 200.0 at distance 4.5+, no penalty at center
+            stacking_density_bonus = max(0, 200.0 * (dist_from_center / 4.5))
+            if stacking_density_bonus > 0:
+                reasons.append("REACTIVE_PAIRS_COMPRESSION")
+                score += stacking_density_bonus
+        # v165: Changed from closest distance evaluation to density evaluation.
+        # Evaluate how many merged_type pieces are within chain_distance of merge target.
+        # This better captures configurations where multiple pieces cluster around merge target = high chain probability.
+        # v155's successful parameters: chain_distance=5.0, chain_bonus_multiplier=450.0
+        if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
+            merges = result["merges"]
+            if merges:
+                # get best merge target (closest distance)
+                best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
+                target_x = best_merge.get("x", 0)
+                target_y = best_merge.get("y", 0)
+
+                # v165: Evaluate density of merged_type pieces within chain_distance
+                # Count pieces within distance, not just closest one
+                chain_distance = 5.0
+                nearby_pieces = []
+                for p in pieces:
+                    if p.get("type") == merged_type:
+                        dist = ((p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2) ** 0.5
+                        if dist < chain_distance:
+                            nearby_pieces.append((dist, p))
+
+                # Sort by distance
+                nearby_pieces.sort(key=lambda x: x[0])
+
+                # Bonus calculation based on piece density (count, not just closest distance)
+                # v165: Use count-based tiered bonus
+                # 1st piece: (chain_distance - dist) * chain_bonus_multiplier
+                # 2nd piece: (chain_distance - dist) * chain_bonus_multiplier * 0.5
+                # 3rd piece: (chain_distance - dist) * chain_bonus_multiplier * 0.25
+                if len(nearby_pieces) >= 1:
+                    dist, _ = nearby_pieces[0]
+                    chain_bonus = (chain_distance - dist) * 450.0
+                    score += chain_bonus
+
+                if len(nearby_pieces) >= 2:
+                    dist, _ = nearby_pieces[1]
+                    chain_bonus = (chain_distance - dist) * 450.0 * 0.5
+                    score += chain_bonus
+
+                if len(nearby_pieces) >= 3:
+                    dist, _ = nearby_pieces[2]
+                    chain_bonus = (chain_distance - dist) * 450.0 * 0.25
+                    score += chain_bonus
+
+                if nearby_pieces:
+                    reasons.append("CHAIN_MERGE")
+
+        # ----- evaluation axis 5: left-right balance correction (v162: enhanced) -----
         # bonus for correcting left-right piece count bias.
         # balance_bias > 0 means right majority -> left (x<0) placement reduces penalty
         # v162: MEDIUM phase balance correction enhanced (35.0->40.0)
+        # v170: axis 4 reactive_pairs stacking added
         balance_strength = 20.0
         if phase == "HIGH":
             balance_strength = 50.0  # v148: HIGH balance control even stricter (40.0->50.0)
@@ -235,7 +400,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # ----- evaluation axis 5: nextNext centering -----
+        # ----- evaluation axis 6: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
         if next_next_type == next_type:
@@ -243,7 +408,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 6: chain merge bonus (v165: density evaluation) -----
+
         # v165: Changed from closest distance evaluation to density evaluation.
         # Evaluate how many merged_type pieces are within chain_distance of merge target.
         # This better captures configurations where multiple pieces cluster around merge target = high chain probability.
@@ -305,6 +470,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     return {"x": best_x, "reason": best_reason}
 
 
+# v171: axis 8.7ロシアフェーズ統合・スタッキングボーナス強化
+
 # --- AI modification prohibited zone ---
 if __name__ == "__main__":
     import json
@@ -344,3 +511,4 @@ if __name__ == "__main__":
 
     result = decide(game_state, analysis)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    # v171: axis 8.7統合・ロシアフェーズ強化版

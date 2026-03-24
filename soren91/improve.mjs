@@ -25,7 +25,7 @@ const STRATEGY_PATH = 'strategy.mjs';
 const VERSIONS_DIR = 'strategy_versions';
 const PROMPT_PATH = 'prompts/improve_strategy.md';
 const SCREENSHOTS_DIR = 'tmp/screenshots';
-const IMPROVE_CLAUDE_MODEL = process.env.SOREN91_IMPROVE_CLAUDE_MODEL || 'haiku';
+const IMPROVE_CLAUDE_MODEL = process.env.SOREN91_IMPROVE_CLAUDE_MODEL || 'sonnet';
 const IMPROVE_PROMPT_WARN_CHARS = Number.parseInt(process.env.SOREN91_IMPROVE_PROMPT_WARN_CHARS || '120000', 10);
 const IMPROVE_IMAGE_WARN_CHARS = Number.parseInt(process.env.SOREN91_IMPROVE_IMAGE_WARN_CHARS || '1500000', 10);
 

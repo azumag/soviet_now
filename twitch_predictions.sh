@@ -370,7 +370,8 @@ state = {
     "prediction_id": pred_id,
     "outcome_ids": outcome_ids,
     "game_num": int(sys.argv[2]),
-    "created_at": int(time.time())
+    "created_at": int(time.time()),
+    "russia_created": False
 }
 print(json.dumps(state))
 PY
