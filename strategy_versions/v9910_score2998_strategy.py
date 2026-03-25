@@ -40,7 +40,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
    # --- Change History ---
-  # v328: reactive_pairs>=3で即時併合なし時の強力ペナルティ追加版 - 即時併合機会取りこぼし削減
+  # v329: reactive_pairs=1-2中間危険域対応版 - v347 failure mode潰し
+# v347 failure: axis 9.6（ボーナスアプローチ）の条件スキップ後に、reactive_pairs=1-2用の抑制策がない
+# deadline_crossed && danger_piece_count>0 && reactive_pairs=1-2 && merge_grade=="NO" の状況で、axis 9.6もaxis 8.8も適用されず、高配置候補が選ばれる
+# ワーストゲーム(score0929, 0815, 0838)終盤: deadline_crossed=true, danger_piece_count>0, reactive_pairs=1-4, merge_available=false続きで高配置が選ばれmax_y runawayでゲームオーバー
+# ベストゲーム(score2475)終盤: deadline_crossed状態でmerge_available=true、danger_merge_available=trueの場合に即時併合を優先し、max_y上昇を許容
+# axis 9.2修正: deadline_crossed && danger_piece_count>0 の場合、reactive_pairs>=1 からペナルティを適用
+# これによりreactive_pairs=1-2の中間危険域でも即時併合待ちをペナルティで強制。axis 9.6のスキップ条件に依存しない明示的な抑制
+# reactive_pairs=1: -2000.0, reactive_pairs>=2: -2500.0 + 危険ピース毎に-1000.0（最大-4500.0）
+# last_rollback_postmortem constraint遵守: "deadline_crossed && danger_piece_count>0 での即時併合待ちは、reactive_pairs>=1 からペナルティを適用する"
+# refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+#       game_history/20260326_045000_score0929.jsonl turns 70-77, game_history/20260326_044450_score0815.jsonl turns 41-48,
+#       game_history/20260326_044709_score0838.jsonl turns 55-62, game_history/20260325_081942_score2475.jsonl turns 116-123
+# Fixes rollback failure mode: reactive_pairs=1-2の中間危険域で即時併合不可時の高配置選択（axis 9.2 reactive_pairs>=1拡張）
+#
+# v328: reactive_pairs>=3で即時併合なし時の強力ペナルティ追加版 - 即時併合機会取りこぼし削減
   # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
   # ワーストゲーム(score0649)終盤turns 39-68: reactive_pairs=4-6, merge_available=false続きでHIGH_LAYER/MEDIUM_TOWER/REACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=0.94→3.04に上昇してゲームオーバー
   # ワーストゲーム(score0677)終盤turns 64-75: reactive_pairs=4-5, merge_available=false続きでREACTIVE_PAIRS_COMPRESSION/HIGH_LAYERが選ばれmax_y=0.63→2.90に上昇してゲームオーバー
@@ -197,16 +211,17 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v327: 危険ピース時axis 9.5ボーナス削除版 - 即時併合優先強化
+    """v329: reactive_pairs=1-2中間危険域対応版 - v347 failure mode潰し
 
-    v326 failure: axis 9.5でdanger_piece_count > 0 && reactive_pair_count >= 1の場合に+100.0ボーナスを付与し、axis 9.2のペナルティと競合して危険な高配置が選ばれてmax_y runawayでゲームオーバー
-    ワーストゲーム(score0871, 0967, 1529)終盤: deadline_crossed時、reactive_pairs=4-6, danger_piece_count=5-10, merge_available=false続きでSAME_TYPE_STACK_MERGE_PRIORITY_DANGERが選ばれmax_y runaway
-    ベストゲーム(score2984)終盤: deadline_crossed時、reactive_pairs=0-2, danger_piece_count=5-8だが即時併合を確実に捉えて安定
+    v347 failure: axis 9.6（ボーナスアプローチ）の条件スキップ後に、reactive_pairs=1-2用の抑制策がない
+    deadline_crossed && danger_piece_count>0 && reactive_pairs=1-2 && merge_grade=="NO" の状況で、axis 9.6もaxis 8.8も適用されず、高配置候補が選ばれる
+    ワーストゲーム(score0929, 0815, 0838)終盤: deadline_crossed=true, danger_piece_count>0, reactive_pairs=1-4, merge_available=false続きで高配置が選ばれmax_y runawayでゲームオーバー
+    ベストゲーム(score2475)終盤: deadline_crossed状態でmerge_available=true、danger_merge_available=trueの場合に即時併合を優先し、max_y上昇を許容
 
-    v327の改善点:
-    1. axis 9.5修正: 危険ピース(danger_piece_count > 0)がある場合のボーナスを削除し、axis 9.2のペナルティを優先
-    2. axis 8.7修正: ロシアフェーズで危険ピースがある場合のボーナスを削除し、axis 9.2のペナルティを優先
-    3. これにより危険ピースがある状況では即時併合を最優先し、max_y runawayを防止
+    v329の改善点:
+    1. axis 9.2修正: deadline_crossed && danger_piece_count>0 の場合、reactive_pairs>=1 からペナルティを適用
+    2. これによりreactive_pairs=1-2の中間危険域でも即時併合待ちをペナルティで強制。axis 9.6のスキップ条件に依存しない明示的な抑制
+    3. last_rollback_postmortem constraint遵守: "deadline_crossed && danger_piece_count>0 での即時併合待ちは、reactive_pairs>=1 からペナルティを適用する"
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -641,26 +656,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
-        # ----- evaluation axis 9.2: danger zone reactive penalty (v324: deadline_crossed対応強化版 - v323 failure mode潰し) -----
-        # v323 failure: axis 9.2にdeadline_crossed条件が含まれておらず、deadline_crossed時でもreactive_pairs>=3の即時併合不可でペナルティが適用されない
-        # ワーストゲーム(score0651)終盤turns 42-47: max_y=0.16→1.78 (deadline_crossed: false→true→false), reactive_pairs=3-4, merge_available=false続き
-        # deadline_crossed=false時にSAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEで非併合を選択し、盤面圧迫が進みdeadline_crossed=trueでゲームオーバー
-        # ベストゲーム(score2461)では危険域でも即時併合機会を確実に捉え、戦略的配置を維持して安定
-        # axis 9.2修正: deadline_crossed条件を追加し、deadline_crossed時もreactive_pairs>=2で即時併合不可の場合に強力なペナルティを適用
-        # v326: 危険ピース存在時のペナルティ強化版 - ワーストゲーム(score0915)の失敗モード潰し
-        # 危険ピース(danger_piece_count > 0)がある場合、ペナルティを加重してmax_y runawayを防止
-        # 基本ペナルティ: -2500.0, 危険ピース毎に追加-1000.0 (例: danger_piece_count=2 → -4500.0)
-        # 未活用情報：deadline_crossed, 危険域判定(max_y>=2.0), reactive_pairs>=2, danger_piece_count加重
-        # refs: game_history/20260324_010847_score0651.jsonl turns 42-47, game_history/20260324_010300_score2461.jsonl,
-        #       game_history/20260324_021413_score0915.jsonl (turns 75-80: danger_pieces存在でmax_y runaway)
-        # Fixes rollback failure mode: deadline_crossed時の即時併合取りこぼし、危険ピース存在下でのmax_y runaway
+        # ----- evaluation axis 9.2: danger zone reactive penalty (v329: reactive_pairs=1-2中間危険域対応版 - v347 failure mode潰し) -----
+        # v347 failure: axis 9.6（ボーナスアプローチ）の条件スキップ後に、reactive_pairs=1-2用の抑制策がない
+        # deadline_crossed && danger_piece_count>0 && reactive_pairs=1-2 && merge_grade=="NO" の状況で、axis 9.6もaxis 8.8も適用されず、高配置候補が選ばれる
+        # ワーストゲーム(score0929, 0815, 0838)終盤: deadline_crossed=true, danger_piece_count>0, reactive_pairs=1-4, merge_available=false続きで高配置が選ばれmax_y runawayでゲームオーバー
+        # ベストゲーム(score2475)終盤: deadline_crossed状態でmerge_available=true、danger_merge_available=trueの場合に即時併合を優先し、max_y上昇を許容
+        # axis 9.2修正: deadline_crossed && danger_piece_count>0 の場合、reactive_pairs>=1 からペナルティを適用
+        # これによりreactive_pairs=1-2の中間危険域でも即時併合待ちをペナルティで強制。axis 9.6のスキップ条件に依存しない明示的な抑制
+        # reactive_pairs=1: -2000.0, reactive_pairs>=2: -2500.0 + 危険ピース毎に-1000.0（最大-4500.0）
+        # last_rollback_postmortem constraint遵守: "deadline_crossed && danger_piece_count>0 での即時併合待ちは、reactive_pairs>=1 からペナルティを適用する"
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+        #       game_history/20260326_045000_score0929.jsonl turns 70-77, game_history/20260326_044450_score0815.jsonl turns 41-48,
+        #       game_history/20260326_044709_score0838.jsonl turns 55-62, game_history/20260325_081942_score2475.jsonl turns 116-123
+        # Fixes rollback failure mode: reactive_pairs=1-2の中間危険域で即時併合不可時の高配置選択（axis 9.2 reactive_pairs>=1拡張）
 
-        if (max_y >= 2.0 or deadline_crossed) and reactive_pair_count >= 2 and merge_grade == "NO":
-            # 危険域またはdeadline_crossed時、reactive_pairsが多数あるのに即時併合不可の場合、非併合配置を強力にペナルティ
-            # v326: 危険ピースがある場合、ペナルティを加重してより強力に抑制
-            # 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0（最大-4500.0）
-            # これにより危険ピースが2つ以上ある場合、盤面圧縮ボーナスを完全に無効化し即時併合を優先
-            danger_penalty = 2500.0 + min(danger_piece_count, 2) * 1000.0
+        # 危険域（max_y >= 2.0）またはdeadline_crossed時、reactive_pairsがあるのに即時併合不可の場合にペナルティ
+        # 特に deadline_crossed && danger_piece_count>0 の場合は reactive_pairs>=1 からペナルティを適用
+        reactive_penalty_threshold = 2 if not (deadline_crossed and danger_piece_count > 0) else 1
+        if (max_y >= 2.0 or deadline_crossed) and reactive_pair_count >= reactive_penalty_threshold and merge_grade == "NO":
+            # 危険ピースがある場合、ペナルティを加重してより強力に抑制
+            # reactive_pairs=1: -2000.0, reactive_pairs>=2: -2500.0 + 危険ピース毎に-1000.0（最大-4500.0）
+            if reactive_pair_count == 1:
+                danger_penalty = 2000.0
+            else:
+                danger_penalty = 2500.0 + min(danger_piece_count, 2) * 1000.0
             score -= danger_penalty
             reasons.append("DANGER_ZONE_REACTIVE_PENALTY_NO_MERGE")
 
