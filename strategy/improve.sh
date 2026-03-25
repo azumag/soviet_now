@@ -567,6 +567,8 @@ _start_improvement_job() {
 		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)"
 		if [ "$reason" = "post_regression" ]; then
 			log "[IMPROVE] 回帰ロールバック後の改善開始 (PID=$IMPROVE_PID, base=${REGRESSION_ROLLBACK_HASH:-unknown})"
+		elif [ "${IMPROVE_DAEMON_MODE:-0}" = "1" ]; then
+			log "[IMPROVE] デーモンモード: フォアグラウンド実行開始 (PID=$IMPROVE_PID, ${acc_count} 試合)"
 		else
 			log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count} 試合)"
 		fi
@@ -574,6 +576,11 @@ _start_improvement_job() {
 		soren91_start
 		# Twitch チャットに戦略改善開始を通知
 		./twitch_chat.sh send "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
+		# デーモンモードではフォアグラウンド実行（完了まで wait → 即 harvest 可能になる）
+		if [ "${IMPROVE_DAEMON_MODE:-0}" = "1" ]; then
+			wait "$IMPROVE_PID" || true
+			log "[IMPROVE] フォアグラウンド実行完了 (PID=$IMPROVE_PID)"
+		fi
 		return 0
 	else
 		log "[IMPROVE] 起動失敗 (PID=$IMPROVE_PID 即死)"

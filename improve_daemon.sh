@@ -14,6 +14,10 @@ cd "$SCRIPT_DIR"
 
 [ -f .env ] && set -a && . ./.env && set +a
 
+# デーモンモード: _start_improvement_job() が eloop_improve.sh を
+# フォアグラウンド実行（wait）するよう指示するフラグ
+export IMPROVE_DAEMON_MODE=1
+
 source ./eloop_lib.sh
 
 POLL_INTERVAL=${IMPROVE_DAEMON_POLL_INTERVAL:-30}
