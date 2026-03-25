@@ -360,6 +360,26 @@ while true; do
 		fi
 	fi
 
+	# サイクル到達時: デーモンが改善を起動するまで待機してから次のゲームへ
+	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+		_wait_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+		if [ "${_wait_acc_count:-0}" -ge "$MIN_GAMES_BEFORE_IMPROVE" ]; then
+			log "[CYCLE] ${_wait_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 → 改善起動待ち"
+			local _wait_max=60 _waited=0
+			while [ "$_waited" -lt "$_wait_max" ]; do
+				if _is_improve_running || [ ! -f "$ACCUMULATED_GAMES_FILE" ]; then
+					log "[CYCLE] 改善起動確認 (${_waited}s) → 続行"
+					break
+				fi
+				sleep 3
+				_waited=$((_waited + 3))
+			done
+			if [ "$_waited" -ge "$_wait_max" ]; then
+				log "[CYCLE] 改善起動タイムアウト (${_wait_max}s)"
+			fi
+		fi
+	fi
+
 	# 次の試合準備
 	prepare_next_game
 	next_rc=$?
