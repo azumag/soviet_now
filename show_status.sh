@@ -206,7 +206,6 @@ _print_ai_output_lines() {
 _fullscreen_commands() {
 	local -a cmds
 	cmds=()
-	(( $+commands[nyancat] )) && cmds+=("nyancat")
 	(( $+commands[genact] )) && cmds+=("genact")
 	(( $+commands[cmatrix] )) && cmds+=("cmatrix")
 	(( $+commands[tty-clock] )) && cmds+=("tty-clock")
@@ -217,10 +216,6 @@ _fullscreen_commands() {
 _run_fullscreen_command() {
 	local cmd="$1"
 	case "$cmd" in
-	nyancat)
-		TERM=vt100 timeout 10 nyancat 2>/dev/null || true
-		printf '\033[0m\n'
-		;;
 	genact)
 		timeout 12 genact 2>/dev/null || true
 		printf '\033[0m\n'
