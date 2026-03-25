@@ -335,15 +335,11 @@ run_cmd() {
 		log "[CMD] トークン超過検出 → セッションクリア"
 		ret=77
 	fi
-	# 空応答検出: 10秒以内に完了 + ログに実質的な出力なし → セッション汚染を防止
-	if [ "$ret" -eq 0 ] && [ "${_cmd_elapsed:-999}" -le 10 ] && [ -n "$cmd_log_file" ]; then
-		# END行の直前の出力行を確認（モデルヘッダ以外の出力があるか）
-		local _last_content
-		_last_content=$(tail -3 "$cmd_log_file" 2>/dev/null | grep -v '^\[' | grep -v '^>' | grep -v '^\[0m$' | grep -v '^$' | head -1)
-		if [ -z "$_last_content" ]; then
-			log "[CMD] 空応答検出 (${_cmd_elapsed}s) → セッションクリア"
-			ret=78
-		fi
+	# 空応答検出: 10秒以内に rc=0 で完了 → モデルが実質的な応答を返していない
+	# (実際の改善作業は最低30秒以上かかる)
+	if [ "$ret" -eq 0 ] && [ "${_cmd_elapsed:-999}" -le 10 ]; then
+		log "[CMD] 空応答検出 (${_cmd_elapsed}s) → セッションクリア"
+		ret=78
 	fi
 	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
 		if [ "$ret" -eq 77 ] || [ "$ret" -eq 78 ]; then

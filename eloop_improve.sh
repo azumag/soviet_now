@@ -775,6 +775,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
 	fresh_retry=1
 	continue_retry=0
+	_consecutive_empty=0
 	IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-2400}"
 	_improve_wall_start=$(date +%s)
 	while [ "$fresh_retry" -le "$IMPROVE_MAX_RETRIES" ]; do
@@ -808,6 +809,16 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK_IMPROVE" \
 				"prompts/improve_strategy.md" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
+			if [ $? -ne 0 ]; then
+				_consecutive_empty=$((_consecutive_empty + 1))
+			else
+				_consecutive_empty=0
+			fi
+			if [ "$_consecutive_empty" -ge 2 ]; then
+				log "[IMPROVE] モデル連続無応答 (${_consecutive_empty}回) → 全リトライ中止"
+				_improve_note "consecutive model failures ${_consecutive_empty} → abort"
+				break 2>/dev/null || { fresh_retry=$((IMPROVE_MAX_RETRIES + 1)); break; }
+			fi
 		else
 			# continue fix内でもウォールタイムチェック
 			_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
@@ -826,7 +837,19 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			run_ai "FIX(${fresh_retry}.${continue_retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK_IMPROVE" \
 				"$fix_prompt_file" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
+			local _fix_rc=$?
 			rm -f "$fix_prompt_file"
+			if [ "$_fix_rc" -ne 0 ]; then
+				_consecutive_empty=$((_consecutive_empty + 1))
+			else
+				_consecutive_empty=0
+			fi
+			if [ "$_consecutive_empty" -ge 2 ]; then
+				log "[IMPROVE] モデル連続無応答 (${_consecutive_empty}回) → 全リトライ中止"
+				_improve_note "consecutive model failures ${_consecutive_empty} → abort"
+				fresh_retry=$((IMPROVE_MAX_RETRIES + 1))
+				break
+			fi
 		fi
 
 		if [ -n "$SANDBOX_TOPLEVEL_PY_BASELINE" ] && [ -f "$SANDBOX_TOPLEVEL_PY_BASELINE" ]; then
