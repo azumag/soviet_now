@@ -220,6 +220,11 @@ while true; do
 	# ゲーム番号を毎試合読み直す
 	GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 
+	# 改善中pauseループ内でも stale/完了した改善ジョブを確実に回収する。
+	# improve_daemon は改善開始後に wait でブロックするため、
+	# ここで watchdog/harvest を回さないと running 状態が残留しうる。
+	check_and_harvest_improvement
+
 	# コメント系ワーカーは壊れたPIDファイルからも自己回復させる
 	start_comment_player
 	start_comment_watcher

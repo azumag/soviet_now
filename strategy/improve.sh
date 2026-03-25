@@ -9,6 +9,14 @@ _is_improve_running() {
 	state=$(cat "$IMPROVE_STATE_FILE" 2>/dev/null) || return 1
 	imp_status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
 	[ "$imp_status" = "running" ] || return 1
+	# soren_loop はこのファイルを毎周回 source するため、ここで self-heal しておくと
+	# 既に動いているループでも stale/完了済み改善ジョブを即時に回収できる。
+	if command -v check_and_harvest_improvement >/dev/null 2>&1; then
+		check_and_harvest_improvement
+		state=$(cat "$IMPROVE_STATE_FILE" 2>/dev/null) || return 1
+		imp_status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
+		[ "$imp_status" = "running" ] || return 1
+	fi
 	pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
 	case "$pid" in
 	''|0|*[!0-9]*) return 1 ;;

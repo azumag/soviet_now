@@ -308,6 +308,7 @@ run_cmd() {
 		;;
 	esac
 	local cmd_pid=$!
+	RUN_CMD_ACTIVE_PID=$cmd_pid
 	local _cmd_start_epoch
 	_cmd_start_epoch=$(date +%s)
 
@@ -316,10 +317,11 @@ run_cmd() {
 	local prev_int_trap interrupted
 	prev_int_trap=$(trap -p INT || true)
 	interrupted=0
-	trap 'interrupted=1; stop_spinner; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; log "Interrupted"' INT
+	trap 'interrupted=1; stop_spinner; _stop_loop_descendants "$cmd_pid"; kill "$cmd_pid" 2>/dev/null; wait "$cmd_pid" 2>/dev/null; RUN_CMD_ACTIVE_PID=0; log "Interrupted"' INT
 
 	wait "$cmd_pid" 2>/dev/null
 	local ret=$?
+	RUN_CMD_ACTIVE_PID=0
 	local _cmd_elapsed=$(( $(date +%s) - _cmd_start_epoch ))
 	if [ "$interrupted" -eq 1 ]; then
 		ret=130

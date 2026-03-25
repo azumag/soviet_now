@@ -33,6 +33,18 @@ _trim_log_file "$RUN_CMD_LOG_FILE" "$IMPROVE_AI_LOG_KEEP_LINES" "$IMPROVE_AI_LOG
 printf '[%s] [IMPROVE] attached pid=%s game=%s\n' "$(date '+%H:%M:%S')" "$IMPROVE_SELF_PID" "${GAME_NUM_SNAPSHOT:-?}" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
 export RUN_CMD_LOG_FILE
 
+_improve_cleanup_active_ai() {
+	local active_pid="${RUN_CMD_ACTIVE_PID:-0}"
+	case "$active_pid" in
+	''|0|*[!0-9]*) return 0 ;;
+	esac
+	_stop_loop_descendants "$active_pid"
+	_stop_pid_with_fallback "$active_pid" "improve_ai_child"
+}
+
+trap '_improve_cleanup_active_ai' EXIT
+trap 'exit 130' INT TERM
+
 _improve_progress() {
 	local phase="$1" progress="$2" detail="$3"
 	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT"
