@@ -121,6 +121,9 @@ create_sandbox() {
 	fi
 	[ -f "$sandbox_dir/strategy_helpers/__init__.py" ] || : > "$sandbox_dir/strategy_helpers/__init__.py"
 
+	# opencode が親 git repo にエスケープしないよう、サンドボックスを独立 git repo にする
+	(cd "$sandbox_dir" && git init -q && git add -A && git commit -q -m "sandbox init" --no-gpg-sign) >/dev/null 2>&1 || true
+
 	echo "$sandbox_dir"
 }
 

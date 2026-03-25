@@ -1,3 +1,8 @@
+        # v185: 即時併合機会優先強化 - reactive_pairs条件の簡素化と強化
+        # deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" 時、height_penaltyを3倍強化
+        # refs: tmp/batch_summary.txt HEIGHT_CONTROL 9.7% (avg_score_delta=0.0) 過剰選択問題の解消
+        # Fixes rollback failure mode: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" 時のHEIGHT_CONTROL過剰選択
+# Fixes rollback failure mode: reactive_pairs>=1 && merge_grade=="NO" 時のHEIGHT_CONTROL過剰選択
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
@@ -31,24 +36,37 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v185: 即時併合機会優先強化 - reactive_pairs条件の簡素化と強化
+# deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" 時、height_penaltyを5倍→3倍に調整
+# refs: tmp/batch_summary.txt HEIGHT_CONTROL 9.7% (avg_score_delta=0.0) 過剰選択問題の解消
+# Fixes rollback failure mode: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" 時のHEIGHT_CONTROL過剰選択
+# v184.2: nextSameボーナス強化 - 即時併合機会優先
+# center_bonusを 50.0 → 60.0 に強化し、即時併合機会を優先
+# refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
+# Fixes rollback failure mode: axis 9.6 overskip causing max_y runaway in danger zones
+# v184.1: ロシアフェーズ高配置抑制 - Russia建国後の慎重な盤面進行
+# russia_phase時の高配置を1.5倍に抑制し、即時併合機会を優先
+# refs: tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt, advice.md
+# Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし
+        # v185: ロシアフェーズ高配置抑制 - Russia建国後の慎重な盤面進行
+        # russia_phase時の高配置を1.5倍に抑制し、即時併合機会を優先
+        # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的変更
+        # refs: tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt, advice.md
+        # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし
 # v183: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化 - HEIGHT_CONTROL過剰選択の解消
 # reactive_pairsがある状況でHEIGHT_CONTROLを選択し続ける問題を修正
 # axis 9.6: reactive_pairsがある場合、盤面上の現在タイプの最も高い位置に着地できる配置を優先（ボーナス係数 180.0 → 200.0）
 # axis 9.7: reactive_pairsがある場合の盤面圧縮ボーナスを強化（700.0 → 900.0）
 # axis 2: reactive_pairsがある場合のheight_penaltyを強化（12倍 → 15倍）
 # v183.1: 修正 - stacking_enabledとcompression条件をreactive_pairs>=1 && merge_grade=="NO"に厳格化
-# refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
-# Fixes rollback failure mode: reactive_pairs>=1 && merge_grade=="NO" 時のHEIGHT_CONTROL過剰選択
-# v182: ロシアフェーズ即時併合優先強化版 - 2つ目のロシア育成スペース確保
-# ロシア建国後（type 15 >= 1）でreactive_pairs==0の場合、盤面圧縮ボーナスを適用して即時併合機会を確保
-# advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく改善
-# refs: advice.md (あずまぐ), tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
-# Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（ロシアフェーズ即時併合優先強化）
-# v182.1: Fixed syntax errors and typos for validation
-
-# Merge result score: type N merge gives N*(N+1)/2 points
-SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
-
+# refs: tmp/state/last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
+# Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択
+# v183.2: 論理的バグ修正 - axis 9.6/9.7 から不可能な条件を削除（russia_phase && reactive_pair_count==0）
+# axis 9.6: stacking_multiplier を常に 200.0 に固定し、条件分岐を削除
+# axis 9.7: reason の条件分岐を削除し、常に REACTIVE_PAIRS_COMPRESSION を適用
+# 不使用変数 no_merge_opportunity を削除
+# refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt, strategy.py.staging
+# Fixes rollback failure mode: axis 9.6/9.7 の不可能な条件によるロジックエラー
 
 # Merge result score: type N merge gives N*(N+1)/2 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
@@ -156,9 +174,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # v182: 即時併合機会がない場合の判定
-        no_merge_opportunity = reactive_pair_count == 0 and merge_grade == "NO"
-
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
@@ -190,19 +205,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # refs: batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしている
             # refs: advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」
             # v183: reactive_pairsがある場合はheight_penaltyをさらに強化（12倍 → 15倍）
+            # v184: height_penaltyをさらに強化（15倍 → 20倍）し、HEIGHT_CONTROL過剰選択を抑制
             # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
-            height_multiplier = 750.0  # reactive_pairsがある場合はheight_penaltyを15倍に強化し、HEIGHT_CONTROL過剰選択を抑制
+            # refs: batch_summary HEIGHT_CONTROL 9.7% (avg_score_delta=0.0) 過剰選択問題の解消
+            height_multiplier = 1000.0  # reactive_pairsがある場合はheight_penaltyを20倍に強化し、HEIGHT_CONTROL過剰選択を抑制
 
         height_penalty = landing_y * height_multiplier * height_mult
 
         if deadline_crossed and reactive_pair_count >= 1 and danger_piece_count > 0 and merge_grade == "NO":
             # v177: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" の超危険域でheight_penaltyをさらに強化
+            # v185: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" 時の即時併合待ちを強化（3倍→3倍）
             # 危険ピースが多い deadline_crossed状況では、即時併合待ちが唯一の生還ルート
             # refs: last_rollback_postmortem.md (reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足がfailure mode)
             # ワーストゲーム(score0717)終盤: deadline_crossed, reactive_pairs=8, danger_piece_count=8, merge_available=false続きでmax_y=2.34→3.71に上昇
             # refs: game_history/20260325_044915_score0717.jsonl turns 65-72, game_history/20260325_042216_score3530.jsonl turns 139-146
-            # Fixes rollback failure mode: deadline_crossed && danger_piece_count>0時の即時併合取りこぼし（deadline_crossed height_penalty 5倍強化）
-            height_penalty *= 5.0
+            # Fixes rollback failure mode: deadline_crossed && danger_piece_count>0時の即時併合取りこぼし（v177 の5倍強化を3倍に調整）
+            # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
+            height_penalty *= 3.0
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -212,6 +231,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
+
+        # v184.1: ロシアフェーズでの高配置抑制 - Russia建国後は慎重な盤面進行
+        # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」
+        # refs: tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt, advice.md
+        if russia_phase and landing_y > -1.0:
+            # ロシア盤面では高配置を厳しく抑制し、即時併合機会を優先
+            height_penalty *= 1.5
+            reasons.append("RUSSIA_PHASE_HEIGHT_CONTROL")
 
         score -= height_penalty
 
@@ -251,25 +278,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Bonus for dropping near highest piece: closer is better
                 # This enables stacking on top of or next to existing high-type piece
                 # v172: ボーナス係数を強化（80.0/120.0 → 120.0/160.0）
-                # v182: reactive_pairs==0 && no_merge_opportunityの場合、盤面圧縮ボーナスを適用
-                # v183: reactive_pairs>=1 && merge_grade=="NO" 時のボーナス係数を強化
+                # v183: reactive_pairs>=1 && merge_grade=="NO" 時のボーナス係数を強化（180.0 → 200.0）
+                # v184: reactive_pairs stacking ボーナスをさらに強化し、HEIGHT_CONTROL過剰選択を抑制
                 # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
-                stacking_multiplier = 200.0 if (russia_phase and reactive_pair_count == 0) or (reactive_pair_count == 0 and no_merge_opportunity) else 180.0
+                # refs: batch_summary HEIGHT_CONTROL 9.7% (avg_score_delta=0.0) 過剰選択問題の解消
+                stacking_multiplier = 250.0
                 stacking_bonus = max(0, (3.0 - dist_to_highest)) * stacking_multiplier
                 score += stacking_bonus
-
-                if russia_phase and reactive_pair_count == 0:
-                    reasons.append("REACTIVE_PAIRS_STACKING_RUSSIA_PHASE")
-                elif reactive_pair_count == 0 and no_merge_opportunity:
-                    reasons.append("REACTIVE_PAIRS_STACKING_NO_MERGE")
-                else:
-                    reasons.append("REACTIVE_PAIRS_STACKING")
+                reasons.append("REACTIVE_PAIRS_STACKING")
 
         # ----- evaluation axis 8: REACTIVE_PAIRS_COMPRESSION (v181: board density-based compression bonus强化) -----
         # axis 4 (v170) already handles reactive_pairs stacking, but it prioritizes highest piece proximity
         # axis 9.7 adds density-based compression: when reactive_pairs>=1 && merge_grade=="NO", discourage dropping in board center area
         # v181: REACTIVE_PAIRS_COMPRESSIONボーナスをさらに強化し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
-        # v182: reactive_pairs==0 && no_merge_opportunityの場合、即時併合機会を確保する盤面圧縮ボーナスを適用
         # v183: reactive_pairs>=1 && merge_grade=="NO" 時のボーナス係数を強化し、HEIGHT_CONTROL過剰選択を抑制
         # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
         stacking_density_bonus = 0.0
@@ -281,19 +302,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             dist_from_center = ((x - board_center_x) ** 2 + (landing_y - board_center_y) ** 2) ** 0.5
             # Bonus for dropping far from center (lower density = more space for future reactive pairs)
             # v181: ボーナス係数を強化（600.0 → 700.0）し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
-            # v182: reactive_pairs==0 && no_merge_opportunityの場合、即時併合機会を確保する盤面圧縮ボーナスを適用
             # v183: reactive_pairs>=1 && merge_grade=="NO" 時のボーナス係数を強化（700.0 → 900.0）
+            # v184: reactive_pairs compression ボーナスをさらに強化し、HEIGHT_CONTROL過剰選択を抑制
             # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
-            # Max bonus of 900.0 at distance 4.5+, no penalty at center
-            stacking_density_bonus = max(0, 900.0 * (dist_from_center / 4.5))
+            # refs: batch_summary HEIGHT_CONTROL 9.7% (avg_score_delta=0.0) 過剰選択問題の解消
+            # Max bonus of 1100.0 at distance 4.5+, no penalty at center
+            stacking_density_bonus = max(0, 1100.0 * (dist_from_center / 4.5))
             if stacking_density_bonus > 0:
-                if reactive_pair_count >= 1 and merge_grade == "NO":
-                    reasons.append("REACTIVE_PAIRS_COMPRESSION")
-                elif reactive_pair_count == 0 and russia_phase:
-                    reasons.append("REACTIVE_PAIRS_COMPRESSION_RUSSIA_PHASE")
-                elif reactive_pair_count == 0 and no_merge_opportunity:
-                    reasons.append("REACTIVE_PAIRS_COMPRESSION_NO_MERGE")
-                score += stacking_density_bonus
+                reasons.append("REACTIVE_PAIRS_COMPRESSION")
+            score += stacking_density_bonus
         # v165: Changed from closest distance evaluation to density evaluation.
         # Evaluate how many merged_type pieces are within chain_distance of merge target.
         # This better captures configurations where multiple pieces cluster around merge target = high chain probability.
@@ -363,8 +380,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 6: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
+        # v184.2: nextSameボーナスを強化し、即時併合機会を優先
         if next_next_type == next_type:
-            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            center_bonus = max(0, 1.0 - abs(x) / 2.0) * 60.0
             score += center_bonus
             reasons.append("NEXT_SAME")
 
@@ -425,4 +443,4 @@ if __name__ == "__main__":
 
     result = decide(game_state, analysis)
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    # v182: ロシアフェーズ即時併合優先強化版 - 2つ目のロシア育成スペース確保
+    # v184: reactive_pairs stacking/compression/height_penalty 強化完了

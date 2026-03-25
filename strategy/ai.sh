@@ -165,7 +165,7 @@ run_cmd() {
 	case "$type" in
 	glm)
 		local -a glm_args
-		glm_args=(run "$prompt_body" --agent="zai")
+		glm_args=(run "添付プロンプトの指示に従ってください" --agent="zai" --file "$prompt_file")
 		[ -n "$resume_session" ] && glm_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
@@ -274,7 +274,7 @@ run_cmd() {
 		;;
 	opencode)
 		local -a opencode_args
-		opencode_args=(run "$prompt_body" --agent="${agent:-glmflash}")
+		opencode_args=(run "添付プロンプトの指示に従ってください" --agent="${agent:-glmflash}" --file "$prompt_file")
 		[ -n "$resume_session" ] && opencode_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
@@ -327,8 +327,20 @@ run_cmd() {
 			printf '[%s] [AI:%s] TIMEOUT after %ss\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$timeout_sec" >>"$cmd_log_file" 2>/dev/null || true
 		fi
 	fi
+	# トークン超過エラー検出 → セッション継続しても無駄なので rc=77 で通知
+	if [ -n "$cmd_log_file" ] && tail -5 "$cmd_log_file" 2>/dev/null | grep -qi "exceeds.*context length\|exceeds.*maximum.*token" 2>/dev/null; then
+		log "[CMD] トークン超過検出 → セッションクリア"
+		ret=77
+	fi
 	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
-		_run_cmd_store_resume_session "$spec" "$PWD"
+		if [ "$ret" -eq 77 ]; then
+			# トークン超過時はセッションを保存しない（次回は新規セッション）
+			local meta_file
+			meta_file=$(_run_cmd_session_meta_file "${RUN_CMD_SESSION_DIR:-}" "$spec" 2>/dev/null || true)
+			[ -n "$meta_file" ] && rm -f "$meta_file" 2>/dev/null || true
+		else
+			_run_cmd_store_resume_session "$spec" "$PWD"
+		fi
 	fi
 	if [ -n "$cmd_log_file" ]; then
 		printf '[%s] [AI:%s] END rc=%s\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$ret" >>"$cmd_log_file" 2>/dev/null || true
@@ -418,6 +430,11 @@ run_ai() {
 		fi
 		run_cmd "$primary" "$attempt_prompt"
 		primary_ret=$?
+		# トークン超過: これ以上同じセッションでリトライしても無駄 → primary ループ打ち切り
+		if [ "$primary_ret" -eq 77 ]; then
+			log "[$label] token limit exceeded → skip remaining primary attempts"
+			break
+		fi
 		if [ -n "$expect" ]; then
 			local expect_written=false
 			if [ -s "$expect" ]; then
@@ -456,6 +473,13 @@ run_ai() {
 	log "[$label] primary failed → fallback=$fallback"
 	RUN_CMD_LOG_TAG="${label}:fallback"
 	run_cmd "$fallback" "$prompt"
+	local fallback_ret=$?
+	if [ "$fallback_ret" -eq 77 ]; then
+		log "[$label] fallback token limit → skip last_resort"
+		rm -f "$expect_snapshot" 2>/dev/null || true
+		if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+		return 1
+	fi
 	if [ -n "$expect" ]; then
 		local expect_written_fb=false
 		if [ -s "$expect" ]; then
@@ -474,6 +498,13 @@ run_ai() {
 				log "[$label] fallback failed → last_resort=$last_resort"
 				RUN_CMD_LOG_TAG="${label}:last_resort"
 				run_cmd "$last_resort" "$prompt"
+				local last_resort_ret=$?
+				if [ "$last_resort_ret" -eq 77 ]; then
+					log "[$label] last_resort token limit → abort"
+					rm -f "$expect_snapshot" 2>/dev/null || true
+					if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
+					return 1
+				fi
 				local expect_written_lr=false
 				if [ -s "$expect" ]; then
 					if [ -n "$expect_snapshot" ] && [ -f "$expect_snapshot" ]; then
