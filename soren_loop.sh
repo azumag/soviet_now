@@ -316,6 +316,20 @@ while true; do
 		_clear_accumulated_data
 	fi
 
+	# 予想サイクル管理: improve_daemon が動いていない場合、
+	# MIN_GAMES_BEFORE_IMPROVE に達したら予想を resolve して蓄積をリセット
+	if ! _is_improve_running && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+		_cycle_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+		if [ "${_cycle_acc_count:-0}" -ge "$MIN_GAMES_BEFORE_IMPROVE" ]; then
+			log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 (改善デーモンなし) → 予想resolve+蓄積リセット"
+			if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+				_cycle_pred_best=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
+				./twitch_predictions.sh resolve "$_cycle_pred_best" >>tmp/prediction.log 2>&1 || true
+			fi
+			_clear_accumulated_data
+		fi
+	fi
+
 	# 20時台メリケンAIタイム: 改善サイクル区切り（蓄積0かつファイルあり=改善直後）で定時枠終了までメリケンモード
 	# ファイルなし(初回起動)では発火しない。MERIKEN_TIME_PENDINGパスとは別の入口。
 	_meriken_acc_count=-1
