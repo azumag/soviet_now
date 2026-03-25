@@ -577,8 +577,13 @@ _start_improvement_job() {
 		# Twitch チャットに戦略改善開始を通知
 		./twitch_chat.sh send "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
 		# デーモンモードではフォアグラウンド実行（完了まで wait → 即 harvest 可能になる）
+		# run_cmd が stdout/stderr をログファイルにリダイレクトするため、
+		# tail -f でログをターミナルに中継する
 		if [ "${IMPROVE_DAEMON_MODE:-0}" = "1" ]; then
+			tail -n +1 -f "$improve_ai_log" &
+			local _tail_pid=$!
 			wait "$IMPROVE_PID" || true
+			kill "$_tail_pid" 2>/dev/null; wait "$_tail_pid" 2>/dev/null || true
 			log "[IMPROVE] フォアグラウンド実行完了 (PID=$IMPROVE_PID)"
 		fi
 		return 0
