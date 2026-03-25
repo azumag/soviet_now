@@ -972,12 +972,14 @@ generate_comment_response() {
 		game_state_context="${game_state_context:-（取得失敗）}"
 
 		# Export all template variables (safe: inside subshell)
+		local _prediction_cycle_games="${MIN_GAMES_BEFORE_IMPROVE:-12}"
 		export _comment_persona current_time time_period twitch_comments_for_prompt \
 			comment_batch_context strategy_advice_candidates previous_comments_context \
 			recent_spoken_comment_context comment_followup_hints past_topics \
 			celebration_history_context comment_thumbnail_ocr_context \
 			PAST_RADIO_TOPICS RUSSIA_CREATION_HISTORY_FILE SOVIET_CREATION_HISTORY_FILE ROLLING_SCORES_FILE \
-			game_state_context _comment_ui_memo _comment_channel_intro sing_reference
+			game_state_context _comment_ui_memo _comment_channel_intro sing_reference \
+			_prediction_cycle_games
 
 		local comment_prompt_file
 		comment_prompt_file=$(mktemp /tmp/eloop_comment_prompt_XXXXXXXX)
@@ -987,7 +989,7 @@ generate_comment_response() {
 			rm -f "$comment_prompt_file"
 			return 1
 		fi
-		envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference}' \
+		envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 			< "$_comment_template" > "$comment_prompt_file"
 
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"

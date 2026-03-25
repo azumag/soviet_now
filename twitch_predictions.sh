@@ -38,8 +38,10 @@ TOKEN="${TOKEN#oauth:}"
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
 PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-480}"
-PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-12}"
-# 投票受付時間を過ぎても、12ゲーム完了までは resolve 用 state を保持する。
+# config.sh から MIN_GAMES_BEFORE_IMPROVE を取得してデフォルトに使う
+_cfg_min_games=$(grep -oP 'MIN_GAMES_BEFORE_IMPROVE=\K[0-9]+' core/config.sh 2>/dev/null || echo 12)
+PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-$_cfg_min_games}"
+# 投票受付時間を過ぎても、サイクル完了までは resolve 用 state を保持する。
 # 必要なら明示的に max age を設定して最終的な掃除だけ行う。
 PREDICTION_STATE_MAX_AGE_SEC="${TWITCH_PREDICTION_STATE_MAX_AGE_SEC:-0}"
 AUTO_VOTE_POINTS="${TWITCH_AUTO_VOTE_POINTS:-10}"
