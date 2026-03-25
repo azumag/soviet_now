@@ -1078,7 +1078,7 @@ if $improve_ok; then
 	last_score=$(echo "$SCORES" | awk '{print $NF}')
 	HASH_AFTER=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	phylo_push_ok=false
-	local phylo_improve_summary=""
+	phylo_improve_summary=""
 	if [ -n "$strategy_diff" ]; then
 		phylo_improve_summary=$(printf '%s' "$strategy_diff" | _summarize_strategy_diff_for_phylo)
 	fi
