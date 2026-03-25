@@ -316,9 +316,8 @@ while true; do
 		_clear_accumulated_data
 	fi
 
-	# 予想サイクル管理: improve_daemon が動いていない場合、
-	# MIN_GAMES_BEFORE_IMPROVE に達したら予想を resolve して蓄積をリセット
-	# サイクル到達時はデーモンのポーリング間隔分待ち、改善が起動したらスキップ
+	# 予想サイクル管理: improve_daemon が動いていない場合のフォールバック
+	# サイクル到達時はデーモンのポーリング間隔分待ち、デーモンが蓄積を消化したらスキップ
 	if ! _is_improve_running && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		_cycle_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
 		if [ "${_cycle_acc_count:-0}" -ge "$MIN_GAMES_BEFORE_IMPROVE" ]; then
@@ -326,9 +325,9 @@ while true; do
 			local _daemon_wait=${IMPROVE_DAEMON_POLL_INTERVAL:-30}
 			log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 → デーモン待機 (${_daemon_wait}s)"
 			sleep "$_daemon_wait"
-			# 待機後に改善が起動していたらデーモンに任せる
-			if _is_improve_running; then
-				log "[CYCLE] 改善デーモンが起動 → デーモンに委任"
+			# 待機後: デーモンが蓄積を消化済み or 改善起動中ならスキップ
+			if _is_improve_running || [ ! -f "$ACCUMULATED_GAMES_FILE" ]; then
+				log "[CYCLE] デーモンが処理済み → スキップ"
 			else
 				log "[CYCLE] 改善デーモン未起動 → 予想resolve+蓄積リセット"
 				if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
