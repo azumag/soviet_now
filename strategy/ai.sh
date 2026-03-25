@@ -169,6 +169,7 @@ run_cmd() {
 		[ -n "$resume_session" ] && zai_claude_args+=(-c)
 		local -a zai_env=(
 			ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic"
+			ANTHROPIC_AUTH_TOKEN="${ZAI_API_KEY:-}"
 			ANTHROPIC_API_KEY="${ZAI_API_KEY:-}"
 			ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-4.7"
 		)
