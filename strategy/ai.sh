@@ -165,7 +165,7 @@ run_cmd() {
 	case "$type" in
 	glm)
 		local -a glm_args
-		glm_args=(run "添付プロンプトの指示に従ってください" --agent="zai" --file "$prompt_file")
+		glm_args=(run "$prompt_body" --agent="zai")
 		[ -n "$resume_session" ] && glm_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
@@ -274,7 +274,7 @@ run_cmd() {
 		;;
 	opencode)
 		local -a opencode_args
-		opencode_args=(run "添付プロンプトの指示に従ってください" --agent="${agent:-glmflash}" --file "$prompt_file")
+		opencode_args=(run "$prompt_body" --agent="${agent:-glmflash}")
 		[ -n "$resume_session" ] && opencode_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then
@@ -308,6 +308,8 @@ run_cmd() {
 		;;
 	esac
 	local cmd_pid=$!
+	local _cmd_start_epoch
+	_cmd_start_epoch=$(date +%s)
 
 	start_spinner "$type thinking..."
 
@@ -318,6 +320,7 @@ run_cmd() {
 
 	wait "$cmd_pid" 2>/dev/null
 	local ret=$?
+	local _cmd_elapsed=$(( $(date +%s) - _cmd_start_epoch ))
 	if [ "$interrupted" -eq 1 ]; then
 		ret=130
 	fi
@@ -332,9 +335,19 @@ run_cmd() {
 		log "[CMD] トークン超過検出 → セッションクリア"
 		ret=77
 	fi
+	# 空応答検出: 10秒以内に完了 + ログに実質的な出力なし → セッション汚染を防止
+	if [ "$ret" -eq 0 ] && [ "${_cmd_elapsed:-999}" -le 10 ] && [ -n "$cmd_log_file" ]; then
+		# END行の直前の出力行を確認（モデルヘッダ以外の出力があるか）
+		local _last_content
+		_last_content=$(tail -3 "$cmd_log_file" 2>/dev/null | grep -v '^\[' | grep -v '^>' | grep -v '^\[0m$' | grep -v '^$' | head -1)
+		if [ -z "$_last_content" ]; then
+			log "[CMD] 空応答検出 (${_cmd_elapsed}s) → セッションクリア"
+			ret=78
+		fi
+	fi
 	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
-		if [ "$ret" -eq 77 ]; then
-			# トークン超過時はセッションを保存しない（次回は新規セッション）
+		if [ "$ret" -eq 77 ] || [ "$ret" -eq 78 ]; then
+			# トークン超過 or 空応答時はセッションを保存しない（次回は新規セッション）
 			local meta_file
 			meta_file=$(_run_cmd_session_meta_file "${RUN_CMD_SESSION_DIR:-}" "$spec" 2>/dev/null || true)
 			[ -n "$meta_file" ] && rm -f "$meta_file" 2>/dev/null || true
@@ -430,9 +443,9 @@ run_ai() {
 		fi
 		run_cmd "$primary" "$attempt_prompt"
 		primary_ret=$?
-		# トークン超過: これ以上同じセッションでリトライしても無駄 → primary ループ打ち切り
-		if [ "$primary_ret" -eq 77 ]; then
-			log "[$label] token limit exceeded → skip remaining primary attempts"
+		# トークン超過 or 空応答: セッションが汚染されている → primary ループ打ち切り
+		if [ "$primary_ret" -eq 77 ] || [ "$primary_ret" -eq 78 ]; then
+			log "[$label] session poisoned (rc=$primary_ret) → skip remaining primary attempts"
 			break
 		fi
 		if [ -n "$expect" ]; then
@@ -474,8 +487,8 @@ run_ai() {
 	RUN_CMD_LOG_TAG="${label}:fallback"
 	run_cmd "$fallback" "$prompt"
 	local fallback_ret=$?
-	if [ "$fallback_ret" -eq 77 ]; then
-		log "[$label] fallback token limit → skip last_resort"
+	if [ "$fallback_ret" -eq 77 ] || [ "$fallback_ret" -eq 78 ]; then
+		log "[$label] fallback session poisoned (rc=$fallback_ret) → skip last_resort"
 		rm -f "$expect_snapshot" 2>/dev/null || true
 		if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 		return 1
@@ -499,8 +512,8 @@ run_ai() {
 				RUN_CMD_LOG_TAG="${label}:last_resort"
 				run_cmd "$last_resort" "$prompt"
 				local last_resort_ret=$?
-				if [ "$last_resort_ret" -eq 77 ]; then
-					log "[$label] last_resort token limit → abort"
+				if [ "$last_resort_ret" -eq 77 ] || [ "$last_resort_ret" -eq 78 ]; then
+					log "[$label] last_resort session poisoned (rc=$last_resort_ret) → abort"
 					rm -f "$expect_snapshot" 2>/dev/null || true
 					if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 					return 1
