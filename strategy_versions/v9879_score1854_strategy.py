@@ -19,7 +19,7 @@ Game Overview:
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
              8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
-              8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
+              8.7. Russia phase immediate merge priority - v346: 危険ピースなし時盤面圧縮強化版 - axis 8.7改善
               # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼす
               # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
               # ベストゲーム(score2162)終盤: reactive_pairsが少なく、即時併合機会を確実に捉えて高スコア
@@ -55,6 +55,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v346: ロシアフェーズ危険ピースなし時盤面圧縮強化版 - axis 8.7改善
+# v337 failure: ロシアフェーズでreactive_pairs<3の場合、即時併合がない時に盤面圧縮ボーナスが抑制(400.0)されており、狭い盤面で戦略的配置が不十分
+# ワーストゲーム(score0943)終盤turns 71-77: deadline_crossed=true, danger_piece_count=3-4, reactive_pairs=4-5, merge_available=false続きで盤面圧縮が不十分でmax_y=2.77→2.88へ上昇してゲームオーバー
+# ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
+# ベストゲーム(score3171)終盤: ロシアフェーズで即時併合を確実に捉えて高スコア
+# batch_summary: HEIGHT_CONTROLが12.3%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしている
+# advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づき、ロシア建国後の狭い盤面で戦略的配置を優先
+# axis 8.7修正: russia_phase && danger_piece_count==0 && reactive_pair_count>=1 && merge_grade=="NO"の場合、盤面圧縮ボーナスを強化（400.0 → 1200.0）
+# 危険ピースがない状況では、戦略的配置を優先し、2つ目のロシア育成スペースを確保する。ロシア建国後の狭い盤面で特に重要
+# 危険ピースがある場合は、即時併合優先を維持し、axis 8.8のペナルティを優先させる
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+#       game_history/20260326_051350_score0943.jsonl turns 71-77, game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl, strategy.py.staging
+# Fixes rollback failure mode: ロシア建国後の狭い盤面で即時併合がない場合の戦略的配置不足（axis 8.7 danger_piece_count==0時強化）
 # v344: deadline_crossed時盤面圧縮強化版 - danger_piece_count==0時の戦略的配置優先化
 # v343 failure mode: deadline_crossed時compression_bonus=0にしたが、reactive_pairs>=2で即時併合機会がない場合、axis 8.8ペナルティ（reactive_pairs>=3）も効かず、高配置（x=3.0）が選ばれmax_y runawayでゲームオーバー
 # ワーストゲーム(score0776)終盤turns 67-70: deadline_crossed=true, reactive_pairs=2-3, danger_piece_count=2-3, merge_available=false続きでREACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=2.85→2.84に上昇
@@ -865,19 +878,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
+        # ----- evaluation axis 8.7: russia phase immediate merge priority (v346: 危険ピースなし時盤面圧縮強化版 - ロシア建国後の狭い盤面対応) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
         # ロシアフェーズ（type 15 >= 1）で即時併合を最優先する戦略へ切り替え
         # 即時併合候補がある場合: 即時併合を最優先（強力なボーナス）
         # 即時併合がない場合: 危険ピースがない場合のみ盤面圧縮を優先しつつ、type 15保護を徹底
         # 危険ピースがある場合は即時併合優先を維持（axis 9.2のペナルティを優先）
         # v337: axis 9.5の盤面圧縮ボーナスがaxis 8.7の即時併合ボーナスと競合しているため、russia_phase && reactive_pair_count < 3 の場合にaxis 9.5を抑制
+        # v346: danger_piece_count==0の場合の盤面圧縮ボーナスを強化し、ロシア建国後の狭い盤面で戦略的配置を優先
         #   - 即時併合ボーナス強化: DIRECT: +1400.0, NEAR: +1200.0
-        #   - 盤面圧縮ボーナス抑制: reactive_pairs>=3 && merge_grade == "NO" の場合、盤面圧縮ボーナスを付与しない
-        #   - v337: russia_phase && reactive_pair_count < 3 の場合、axis 9.5のボーナス（+300.0）と軽減（+100.0）を削除し、即時併合を最優先
+        #   - 盤面圧縮ボーナス強化: danger_piece_count==0 && reactive_pairs>=1 && merge_grade=="NO" の場合、盤面圧縮ボーナスを強化（400.0 → 1200.0）
+        #   - これによりロシア建国後の狭い盤面で、危険ピースがない場合に戦略的配置を優先し、2つ目のロシア育成スペースを確保
         # 未活用情報：盤面上のtype 15個数、即時併合可否(merge_grade)、reactive_pairs、danger_piece_count
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
         #       game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl
+        # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7 danger_piece_count==0時強化）
 
         if russia_phase:
             # ロシアフェーズでの即時併合優先
@@ -899,8 +914,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
                 # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
-                # v336: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
-                if reactive_pair_count >= 3:
+                # v346: danger_piece_count==0の場合の盤面圧縮ボーナスを強化し、ロシア建国後の狭い盤面で戦略的配置を優先
+                if danger_piece_count == 0 and reactive_pair_count >= 1:
+                    # v346: 危険ピースがない場合、盤面圧縮ボーナスを強化（400.0 → 1200.0）
+                    # これによりロシア建国後の狭い盤面で、即時併合がない場合に戦略的配置を優先し、2つ目のロシア育成スペースを確保
+                    score += 1200.0
+                    reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                elif reactive_pair_count >= 3:
                     # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
                     # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
                     score += 900.0
