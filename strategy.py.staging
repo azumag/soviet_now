@@ -1,5 +1,5 @@
-        # v185: 即時併合機会優先強化 - reactive_pairs条件の簡素化と強化
-        # deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" 時、height_penaltyを3倍強化
+        # v185.1 即時併合機会優先強化 - reactive_pairs条件の簡素化と強化
+        # deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" 時、height_penaltyを5倍→3倍に調整
         # refs: tmp/batch_summary.txt HEIGHT_CONTROL 9.7% (avg_score_delta=0.0) 過剰選択問題の解消
         # Fixes rollback failure mode: deadline_crossed && danger_piece_count>0 && reactive_pairs>=1 && merge_grade=="NO" 時のHEIGHT_CONTROL過剰選択
 # Fixes rollback failure mode: reactive_pairs>=1 && merge_grade=="NO" 時のHEIGHT_CONTROL過剰選択
