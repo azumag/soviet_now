@@ -15,7 +15,7 @@ PHYROGENETIC_TREE_FILE="phyrogenetic-tree.md"
 PHYROGENETIC_EVENTS_FILE="phyrogenetic-events.jsonl"
 PHYROGENETIC_TREE_URL="${PHYROGENETIC_TREE_URL:-https://github.com/azumag/soviet_now/blob/main/phyrogenetic-tree.md}"
 
-MODEL_PRIMARY="glm"
+MODEL_PRIMARY="zai"
 MODEL_FALLBACK="haiku"
 MODEL_FALLBACK_IMPROVE="opencode:glmflash"
 MODEL_LAST_RESORT="opencode:glmflash"

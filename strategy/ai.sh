@@ -139,7 +139,7 @@ run_cmd() {
 		fi
 	fi
 	[ -n "$timeout_sec" ] && timeout_label="${timeout_sec}s"
-	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+	if [ "$type" = "glm" ] || [ "$type" = "opencode" ] || [ "$type" = "zai" ]; then
 		resume_session=$(_run_cmd_load_resume_session "$spec" 2>/dev/null || true)
 	fi
 
@@ -163,6 +163,28 @@ run_cmd() {
 	fi
 
 	case "$type" in
+	zai)
+		local -a zai_claude_args
+		zai_claude_args=(-p "$prompt_body" --model=haiku --permission-mode=acceptEdits)
+		[ -n "$resume_session" ] && zai_claude_args+=(-c)
+		local -a zai_env=(
+			ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic"
+			ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-4.7"
+		)
+		if [ -n "$cmd_log_file" ]; then
+			if [ -n "$timeout_sec" ]; then
+				env "${zai_env[@]}" "$timeout_bin" "$timeout_sec" claude "${zai_claude_args[@]}" >>"$cmd_log_file" 2>&1 &
+			else
+				env "${zai_env[@]}" claude "${zai_claude_args[@]}" >>"$cmd_log_file" 2>&1 &
+			fi
+		else
+			if [ -n "$timeout_sec" ]; then
+				env "${zai_env[@]}" "$timeout_bin" "$timeout_sec" claude "${zai_claude_args[@]}" &
+			else
+				env "${zai_env[@]}" claude "${zai_claude_args[@]}" &
+			fi
+		fi
+		;;
 	glm)
 		local -a glm_args
 		glm_args=(run "$prompt_body" --agent="zai")
@@ -343,7 +365,7 @@ run_cmd() {
 		log "[CMD] 空応答検出 (${_cmd_elapsed}s) → セッションクリア"
 		ret=78
 	fi
-	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
+	if [ "$type" = "glm" ] || [ "$type" = "opencode" ] || [ "$type" = "zai" ]; then
 		if [ "$ret" -eq 77 ] || [ "$ret" -eq 78 ]; then
 			# トークン超過 or 空応答時はセッションを保存しない（次回は新規セッション）
 			local meta_file
