@@ -219,6 +219,7 @@ with open(rs_file, 'w') as f:
 				log "[IMPROVE] 20時台: メリケンAIタイムに移行 → soren91継続"
 				soren91_improve
 				MERIKEN_TIME_PENDING=1
+				touch "tmp/state/meriken_time_pending"
 			else
 				# soren91 (メリケンAI) を停止 → バックグラウンド改善開始
 				soren91_stop
@@ -552,6 +553,10 @@ _start_improvement_job() {
 	: >"$improve_ai_log"
 	printf '[%s] [IMPROVE] job start reason=%s game=%s scores=%s\n' \
 		"$(date '+%H:%M:%S')" "$reason" "${GAME_NUM:-?}" "${all_scores:-}" >>"$improve_ai_log" 2>/dev/null || true
+
+	# デーモンコンテキストではファイルからフォールバック読み取り
+	[ "${GAME_NUM:-0}" -eq 0 ] && GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
+	[ "${LAST_TURNS:-0}" -eq 0 ] && LAST_TURNS=$(cat "tmp/state/last_turns.txt" 2>/dev/null || echo 0)
 
 	# バックグラウンド改善開始
 	RUN_CMD_LOG_FILE="$improve_ai_log" ./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" &

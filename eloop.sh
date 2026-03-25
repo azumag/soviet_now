@@ -283,6 +283,9 @@ post_game_bookkeeping() {
 		return 0
 	fi
 
+	# LAST_TURNS をデーモン向けにファイル保存
+	echo "${LAST_TURNS:-0}" > "tmp/state/last_turns.txt" 2>/dev/null || true
+
 	local game_num_display=$((GAME_NUM + 1))
 
 	# ハイスコア判定を先行実行（クリップは早いほど良い）

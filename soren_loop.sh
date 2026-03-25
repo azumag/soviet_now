@@ -220,8 +220,6 @@ while true; do
 	# ゲーム番号を毎試合読み直す
 	GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 
-	# 前回の改善が完了したか確認
-	check_and_harvest_improvement
 	# コメント系ワーカーは壊れたPIDファイルからも自己回復させる
 	start_comment_player
 	start_comment_watcher
@@ -250,6 +248,11 @@ while true; do
 	fi
 
 	# 改善完了が20時台だった場合: soren91を停止せずメリケンAIタイムに移行
+	# improve_daemon からのファイルベース通知を読み取る
+	if [ -f "tmp/state/meriken_time_pending" ]; then
+		rm -f "tmp/state/meriken_time_pending"
+		MERIKEN_TIME_PENDING=1
+	fi
 	if [ "${MERIKEN_TIME_PENDING:-0}" -eq 1 ]; then
 		MERIKEN_TIME_PENDING=0
 		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
@@ -298,11 +301,6 @@ while true; do
 		sleep 5
 		continue
 	fi
-
-	# アダプティブ改善トリガー
-	trigger_adaptive_improvement
-	improve_rc=$?
-	_abort_if_interrupted "$improve_rc" "trigger_adaptive_improvement"
 
 	# 20時台メリケンAIタイム: 改善サイクル区切り（蓄積0かつファイルあり=改善直後）で定時枠終了までメリケンモード
 	# ファイルなし(初回起動)では発火しない。MERIKEN_TIME_PENDINGパスとは別の入口。
