@@ -31,6 +31,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v183: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化 - HEIGHT_CONTROL過剰選択の解消
+# reactive_pairsがある状況でHEIGHT_CONTROLを選択し続ける問題を修正
+# axis 9.6: reactive_pairsがある場合、盤面上の現在タイプの最も高い位置に着地できる配置を優先（ボーナス係数 180.0 → 200.0）
+# axis 9.7: reactive_pairsがある場合の盤面圧縮ボーナスを強化（700.0 → 900.0）
+# axis 2: reactive_pairsがある場合のheight_penaltyを強化（12倍 → 15倍）
+# v183.1: 修正 - stacking_enabledとcompression条件をreactive_pairs>=1 && merge_grade=="NO"に厳格化
+# refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
+# Fixes rollback failure mode: reactive_pairs>=1 && merge_grade=="NO" 時のHEIGHT_CONTROL過剰選択
 # v182: ロシアフェーズ即時併合優先強化版 - 2つ目のロシア育成スペース確保
 # ロシア建国後（type 15 >= 1）でreactive_pairs==0の場合、盤面圧縮ボーナスを適用して即時併合機会を確保
 # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく改善
@@ -42,19 +50,20 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
-def decide(game_state: dict, analysis: dict) -> dict:
-
 # Merge result score: type N merge gives N*(N+1)/2 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
-
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v182: ロシアフェーズ即時併合優先強化版 - 2つ目のロシア育成スペース確保
- 
-    ロシア建国後（type 15 >= 1）でreactive_pairs==0の場合、盤面圧縮ボーナスを適用して即時併合機会を確保
-    advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく改善
-     
-      # v182.1: Fix - Added russia_phase variable with proper scope to resolve validation
+    """v183: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化 - HEIGHT_CONTROL過剰選択の解消
+
+    reactive_pairsがある状況でHEIGHT_CONTROLを選択し続ける問題を修正
+    axis 9.6: reactive_pairsがある場合、盤面上の現在タイプの最も高い位置に着地できる配置を優先
+    axis 9.7: reactive_pairsがある場合の盤面圧縮ボーナスを強化
+    axis 2: reactive_pairsがある場合のheight_penaltyを強化
+
+    refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
+
+       # v182.1: Fix - Added russia_phase variable with proper scope to resolve validation
 
     Args:
         game_state: game state (pieces, next, nextNext, score, etc.)
@@ -180,7 +189,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # HEIGHT_CONTROL選択を抑制し、REACTIVE_PAIRS_COMPRESSIONを優先する戦略へ切り替え
             # refs: batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしている
             # refs: advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」
-            height_multiplier = 600.0  # reactive_pairsがある場合はheight_penaltyを12倍に強化し、HEIGHT_CONTROL過剰選択を抑制
+            # v183: reactive_pairsがある場合はheight_penaltyをさらに強化（12倍 → 15倍）
+            # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
+            height_multiplier = 750.0  # reactive_pairsがある場合はheight_penaltyを15倍に強化し、HEIGHT_CONTROL過剰選択を抑制
 
         height_penalty = landing_y * height_multiplier * height_mult
 
@@ -220,8 +231,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: advice.md, batch_summary.txt, last_rollback_postmortem.md, last_rollback_analysis.md,
         #       game_history/20260324_193033_score0903.jsonl (悪戦略例), game_history/20260324_170538_score1904.jsonl (好戦略例)
         # Fixes rollback failure mode: reactive_pairsがある状況でのHEIGHT_CONTROL過剰選択（REACTIVE_PAIRS_COMPRESSION強化）
-        # v182: reactive_pairs==0 && no_merge_opportunityの場合、即時併合機会を確保する盤面圧縮ボーナスを適用
-        stacking_enabled = (reactive_pair_count >= 1 and merge_grade == "NO") or (reactive_pair_count == 0 and russia_phase) or (reactive_pair_count == 0 and no_merge_opportunity)
+        # v183: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化 - 盤面上の現在タイプピースの最も高い位置に着地できる配置を優先
+        # axis 9.6: reactive_pairsがある場合、盤面上の現在タイプの最も高い位置に着地できる配置を優先
+        # v183: ボーナス係数を強化し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
+        # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
+        stacking_enabled = reactive_pair_count >= 1 and merge_grade == "NO"
         if stacking_enabled:
             # Find all pieces of current type
             current_type_pieces = [p for p in pieces if p.get("type") == next_type]
@@ -238,8 +252,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # This enables stacking on top of or next to existing high-type piece
                 # v172: ボーナス係数を強化（80.0/120.0 → 120.0/160.0）
                 # v182: reactive_pairs==0 && no_merge_opportunityの場合、盤面圧縮ボーナスを適用
-                # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく改善
-                stacking_multiplier = 160.0 if (russia_phase and reactive_pair_count == 0) or (reactive_pair_count == 0 and no_merge_opportunity) else 120.0
+                # v183: reactive_pairs>=1 && merge_grade=="NO" 時のボーナス係数を強化
+                # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
+                stacking_multiplier = 200.0 if (russia_phase and reactive_pair_count == 0) or (reactive_pair_count == 0 and no_merge_opportunity) else 180.0
                 stacking_bonus = max(0, (3.0 - dist_to_highest)) * stacking_multiplier
                 score += stacking_bonus
 
@@ -255,11 +270,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # axis 9.7 adds density-based compression: when reactive_pairs>=1 && merge_grade=="NO", discourage dropping in board center area
         # v181: REACTIVE_PAIRS_COMPRESSIONボーナスをさらに強化し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
         # v182: reactive_pairs==0 && no_merge_opportunityの場合、即時併合機会を確保する盤面圧縮ボーナスを適用
-        # refs: batch_summaryでHEIGHT_CONTROLが16.6%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしていることを確認
-        # Lower board center density = more compression opportunities for future reactive pair interactions
-        # Board center calculation: center of mass of all pieces
+        # v183: reactive_pairs>=1 && merge_grade=="NO" 時のボーナス係数を強化し、HEIGHT_CONTROL過剰選択を抑制
+        # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
         stacking_density_bonus = 0.0
-        if (reactive_pair_count >= 1 and merge_grade == "NO") or (reactive_pair_count == 0 and russia_phase) or (reactive_pair_count == 0 and no_merge_opportunity):
+        if reactive_pair_count >= 1 and merge_grade == "NO":
             # Calculate board center (center of mass of all pieces)
             board_center_x = sum(p["x"] for p in pieces) / (len(pieces) if pieces else 1)
             board_center_y = sum(p["y"] for p in pieces) / (len(pieces) if pieces else 1)
@@ -268,8 +282,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Bonus for dropping far from center (lower density = more space for future reactive pairs)
             # v181: ボーナス係数を強化（600.0 → 700.0）し、reactive_pairsがある状況でHEIGHT_CONTROLを選択するのを抑制
             # v182: reactive_pairs==0 && no_merge_opportunityの場合、即時併合機会を確保する盤面圧縮ボーナスを適用
-            # Max bonus of 700.0 at distance 4.5+, no penalty at center
-            stacking_density_bonus = max(0, 700.0 * (dist_from_center / 4.5))
+            # v183: reactive_pairs>=1 && merge_grade=="NO" 時のボーナス係数を強化（700.0 → 900.0）
+            # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
+            # Max bonus of 900.0 at distance 4.5+, no penalty at center
+            stacking_density_bonus = max(0, 900.0 * (dist_from_center / 4.5))
             if stacking_density_bonus > 0:
                 if reactive_pair_count >= 1 and merge_grade == "NO":
                     reasons.append("REACTIVE_PAIRS_COMPRESSION")
@@ -365,6 +381,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     return {"x": best_x, "reason": best_reason}
 
 
+# v183: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化 - HEIGHT_CONTROL過剰選択の解消
+# v183.1: 修正 - stacking_enabledとcompression条件をreactive_pairs>=1 && merge_grade=="NO"に厳格化
 # v182: ロシアフェーズ即時併合優先強化版 - 2つ目のロシア育成スペース確保
 # v171: axis 8.7ロシアフェーズ統合・スタッキングボーナス強化
 

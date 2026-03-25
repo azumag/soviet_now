@@ -637,23 +637,27 @@ for bf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
 		hall_of_fame_files+=("$bf")
 	fi
 done
-# ハッシュアーカイブ全て
-for hf in "$STRATEGY_HASH_ARCHIVE_DIR"/*.py; do
+# ハッシュアーカイブ上位10件（スコア降順）
+for hf in $(ls -1t "$STRATEGY_HASH_ARCHIVE_DIR"/*.py 2>/dev/null | head -10); do
 	[ -f "$hf" ] && sandbox_ref_files+=("$hf")
 done
-# 全試合のJSONL
+# 全試合のJSONL（スクショはbest/worstのみ）
 for hf in $HISTORY_FILES; do
 	if [ -f "$hf" ]; then
 		sandbox_ref_files+=("$hf")
 		all_history_files+=("$hf")
-		for kind in board next; do
-			history_shot=$(_history_gameover_asset_path "$hf" "$kind" 2>/dev/null || true)
-			if [ -n "$history_shot" ] && [ -f "$history_shot" ]; then
-				sandbox_ref_files+=("$history_shot")
-				history_screenshot_files+=("$history_shot")
-			fi
-		done
 	fi
+done
+# スクリーンショットはbest/worstゲームのみ（コンテキスト節約）
+for _bw_path in "$best_game_path" "$worst_game_path"; do
+	[ -n "$_bw_path" ] && [ -f "$_bw_path" ] || continue
+	for kind in board next; do
+		history_shot=$(_history_gameover_asset_path "$_bw_path" "$kind" 2>/dev/null || true)
+		if [ -n "$history_shot" ] && [ -f "$history_shot" ]; then
+			sandbox_ref_files+=("$history_shot")
+			history_screenshot_files+=("$history_shot")
+		fi
+	done
 done
 # ゲームソースコード
 for cs in sorengame/_extracted/soren-game-fixed/Assets/SORENGAMEFIXED/Script/*.cs; do
@@ -696,7 +700,7 @@ manifest_file="tmp/sandbox_files.md"
 	done
 	echo ""
 	echo "### 補助スクリーンショット（任意）"
-	echo "- gameover時の盤面補助画像。終盤ログを主、画像を補助として使うこと。画像だけで敗因を断定しないこと"
+	echo "- gameover時の盤面補助画像（best/worstのみ）。終盤ログを主、画像を補助として使うこと。画像だけで敗因を断定しないこと"
 	if [ "${#history_screenshot_files[@]}" -gt 0 ]; then
 		for sf in "${history_screenshot_files[@]}"; do
 			printf -- '  - \`%s\`\n' "$sf"
@@ -714,7 +718,7 @@ manifest_file="tmp/sandbox_files.md"
 	for bf in "${hall_of_fame_files[@]}"; do
 		printf -- '  - \`%s\`\n' "$bf"
 	done
-	echo '- `strategy_versions/by_hash/*.py` — ハッシュ別アーカイブ（全戦略）'
+	echo '- `strategy_versions/by_hash/*.py` — ハッシュ別アーカイブ（直近上位10件）'
 	echo ""
 	echo "### ゲーム実装・理論（条件付きで必須）"
 	echo '- `prompts/game_theory.md` — ゲーム理論的背景'
