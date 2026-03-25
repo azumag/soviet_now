@@ -208,6 +208,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v184: height_penaltyをさらに強化（15倍 → 20倍）し、HEIGHT_CONTROL過剰選択を抑制
             # refs: last_rollback_analysis.md Priority 1: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化
             # refs: batch_summary HEIGHT_CONTROL 9.7% (avg_score_delta=0.0) 過剰選択問題の解消
+            # v185.2: ロシアフェーズ - Russia建国後の慎重な盤面進行
+            # advice.md「ロシア建国後は慎重な盤面進行を検討すること」
+            if russia_phase and reactive_pair_count > 0 and merge_grade == "NO":
+                # ロシアフェーズでは盤面圧縮よりも即時併合優先
+                height_multiplier = 1250.0
+            elif russia_phase:
+                # ロシア盤面では盤面圧縮を優先し、即時併合機会は慎重に優先
+                height_multiplier = 1500.0
             height_multiplier = 1000.0  # reactive_pairsがある場合はheight_penaltyを20倍に強化し、HEIGHT_CONTROL過剰選択を抑制
 
         height_penalty = landing_y * height_multiplier * height_mult
