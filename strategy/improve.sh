@@ -600,15 +600,18 @@ trigger_adaptive_improvement() {
 		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 	fi
 
-	# Step 2: リグレッション検知 (成熟ランキングで上位 REGRESSION_MAX_RANK 位圏外なら自動リバート)
-	if check_regression; then
-		# リグレッション検知 → リバート済み、蓄積データクリア
-		# チャネルポイント予想: 粛清として解決
-		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-			./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
+	# Step 2: リグレッション検知
+	# soren_loop.sh 側で毎試合 check_regression を呼んでいるため、
+	# daemon モードでは重複実行を避けてスキップ。
+	# soren_loop なし（旧構成互換）の場合のみここで実行。
+	if [ "${IMPROVE_DAEMON_MODE:-0}" != "1" ]; then
+		if check_regression; then
+			if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+				./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
+			fi
+			_clear_accumulated_data
+			return
 		fi
-		_clear_accumulated_data
-		return
 	fi
 
 	# Step 3: 改善プロセス実行中?

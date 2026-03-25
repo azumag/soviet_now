@@ -302,6 +302,15 @@ while true; do
 		continue
 	fi
 
+	# 粛清チェック: improve_daemon とは独立して毎試合実行
+	# (daemon は改善中にブロックされるため、soren_loop 側で必ず走らせる)
+	if check_regression; then
+		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+			./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
+		fi
+		_clear_accumulated_data
+	fi
+
 	# 20時台メリケンAIタイム: 改善サイクル区切り（蓄積0かつファイルあり=改善直後）で定時枠終了までメリケンモード
 	# ファイルなし(初回起動)では発火しない。MERIKEN_TIME_PENDINGパスとは別の入口。
 	_meriken_acc_count=-1
