@@ -775,7 +775,16 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	mkdir -p "$RUN_CMD_TMP_DIR" 2>/dev/null || true
 	fresh_retry=1
 	continue_retry=0
+	IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-2400}"
+	_improve_wall_start=$(date +%s)
 	while [ "$fresh_retry" -le "$IMPROVE_MAX_RETRIES" ]; do
+		# ウォールタイム制限（デフォルト40分）
+		_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
+		if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
+			log "[IMPROVE] wall timeout ${IMPROVE_WALL_TIMEOUT}s exceeded (${_improve_wall_elapsed}s elapsed) → abort"
+			_improve_note "wall timeout after ${_improve_wall_elapsed}s"
+			break
+		fi
 		ai_progress=""
 		validate_progress=""
 		if [ "$IMPROVE_MAX_RETRIES" -le 1 ]; then
@@ -800,6 +809,14 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				"prompts/improve_strategy.md" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
 		else
+			# continue fix内でもウォールタイムチェック
+			_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
+			if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
+				log "[IMPROVE] wall timeout ${IMPROVE_WALL_TIMEOUT}s in continue fix → abort"
+				_improve_note "wall timeout after ${_improve_wall_elapsed}s during continue fix"
+				fresh_retry=$((IMPROVE_MAX_RETRIES + 1))
+				break
+			fi
 			_improve_progress "fix_retry${fresh_retry}_${continue_retry}" "$validate_progress" "continue_same_session_fix"
 			log "[IMPROVE] 継続修正 ${continue_retry}/${IMPROVE_CONTINUE_MAX} (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, 前回エラー: ${VALIDATE_ERROR:0:80})"
 			_improve_note "continue fix ${continue_retry}/${IMPROVE_CONTINUE_MAX} on same session for fresh retry ${fresh_retry}/${IMPROVE_MAX_RETRIES}; preserve current staging/helpers; fix only: ${VALIDATE_ERROR:0:160}"
