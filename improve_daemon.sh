@@ -21,9 +21,12 @@ export IMPROVE_DAEMON_MODE=1
 source ./eloop_lib.sh
 
 POLL_INTERVAL=${IMPROVE_DAEMON_POLL_INTERVAL:-30}
+IMPROVE_DAEMON_PID_FILE="tmp/state/improve_daemon.pid"
 echo "[$(date '+%H:%M:%S')] [improve_daemon] 起動 (poll=${POLL_INTERVAL}s)"
+echo $$ > "$IMPROVE_DAEMON_PID_FILE"
 
 _daemon_cleanup() {
+	rm -f "$IMPROVE_DAEMON_PID_FILE"
 	echo "[$(date '+%H:%M:%S')] [improve_daemon] 終了"
 	exit 0
 }

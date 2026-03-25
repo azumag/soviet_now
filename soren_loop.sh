@@ -317,25 +317,23 @@ while true; do
 	fi
 
 	# 予想サイクル管理: improve_daemon が動いていない場合のフォールバック
-	# サイクル到達時はデーモンのポーリング間隔分待ち、デーモンが蓄積を消化したらスキップ
-	if ! _is_improve_running && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+	# improve_daemon 起動中はデーモン側に完全委任
+	_improve_daemon_alive=false
+	if [ -f "tmp/state/improve_daemon.pid" ]; then
+		_daemon_pid=$(cat "tmp/state/improve_daemon.pid" 2>/dev/null)
+		if [ -n "$_daemon_pid" ] && kill -0 "$_daemon_pid" 2>/dev/null; then
+			_improve_daemon_alive=true
+		fi
+	fi
+	if [ "$_improve_daemon_alive" = false ] && ! _is_improve_running && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		_cycle_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
 		if [ "${_cycle_acc_count:-0}" -ge "$MIN_GAMES_BEFORE_IMPROVE" ]; then
-			# デーモンが拾うのを待つ（ポーリング間隔 + マージン）
-			local _daemon_wait=${IMPROVE_DAEMON_POLL_INTERVAL:-30}
-			log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 → デーモン待機 (${_daemon_wait}s)"
-			sleep "$_daemon_wait"
-			# 待機後: デーモンが蓄積を消化済み or 改善起動中ならスキップ
-			if _is_improve_running || [ ! -f "$ACCUMULATED_GAMES_FILE" ]; then
-				log "[CYCLE] デーモンが処理済み → スキップ"
-			else
-				log "[CYCLE] 改善デーモン未起動 → 予想resolve+蓄積リセット"
-				if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-					_cycle_pred_best=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
-					./twitch_predictions.sh resolve "$_cycle_pred_best" >>tmp/prediction.log 2>&1 || true
-				fi
-				_clear_accumulated_data
+			log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 (デーモンなし) → 予想resolve+蓄積リセット"
+			if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+				_cycle_pred_best=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
+				./twitch_predictions.sh resolve "$_cycle_pred_best" >>tmp/prediction.log 2>&1 || true
 			fi
+			_clear_accumulated_data
 		fi
 	fi
 
