@@ -220,6 +220,8 @@ with open(rs_file, 'w') as f:
 			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
+			# OBS: 改善中コンソール非表示
+			./obs_control.sh hide soren console4 2>/dev/null &
 			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
 				log "[IMPROVE] manual_meriken_mode=on のため、メリケンAI継続"
 			elif [ "$(date +%H)" = "20" ]; then
@@ -580,6 +582,8 @@ _start_improvement_job() {
 		else
 			log "[IMPROVE] バックグラウンド開始 (PID=$IMPROVE_PID, ${acc_count} 試合)"
 		fi
+		# OBS: 改善中コンソール表示
+		./obs_control.sh show soren console4 2>/dev/null &
 		# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
 		soren91_start
 		# Twitch チャットに戦略改善開始を通知
