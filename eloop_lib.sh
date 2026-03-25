@@ -6,6 +6,7 @@
 
 ELOOP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ELOOP_LIB_DIR"
+ZAI_API_KEY="${ANTHROPIC_AUTH_TOKEN:-}"
 unset ANTHROPIC_AUTH_TOKEN
 
 # Layer 0: 定数・初期化

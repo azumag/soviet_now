@@ -37,10 +37,12 @@ fi
 TOKEN="${TOKEN#oauth:}"
 
 PREDICTION_STATE_FILE="tmp/state/current_prediction.json"
-PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-480}"
 # config.sh から MIN_GAMES_BEFORE_IMPROVE を取得してデフォルトに使う
-_cfg_min_games=$(grep -oP 'MIN_GAMES_BEFORE_IMPROVE=\K[0-9]+' core/config.sh 2>/dev/null || echo 12)
+_cfg_min_games=$(sed -n 's/^MIN_GAMES_BEFORE_IMPROVE=\([0-9]*\).*/\1/p' core/config.sh 2>/dev/null)
+_cfg_min_games="${_cfg_min_games:-12}"
 PREDICTION_MAX_GAMES="${TWITCH_PREDICTION_MAX_GAMES:-$_cfg_min_games}"
+# 投票受付時間: 1試合あたり40秒 × サイクル試合数 (base: 12*40=480秒=8分)
+PREDICTION_WINDOW_SEC="${TWITCH_PREDICTION_WINDOW_SEC:-$(( _cfg_min_games * 40 ))}"
 # 投票受付時間を過ぎても、サイクル完了までは resolve 用 state を保持する。
 # 必要なら明示的に max age を設定して最終的な掃除だけ行う。
 PREDICTION_STATE_MAX_AGE_SEC="${TWITCH_PREDICTION_STATE_MAX_AGE_SEC:-0}"
@@ -387,7 +389,13 @@ PY
 	mkdir -p "$(dirname "$PREDICTION_STATE_FILE")"
 	echo "$result" >"$PREDICTION_STATE_FILE"
 	_log "prediction created: $(echo "$result" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f"id={d[\"prediction_id\"]}")' 2>/dev/null)"
-	./twitch_chat.sh send "チャネルポイント予想スタート！「${PREDICTION_MAX_GAMES}ゲーム中に建国できる？」投票受付中（$((PREDICTION_WINDOW_SEC / 60))分） ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}ゲーム後にソ連不成立なら的中" 2>/dev/null &
+	# 受付時間の表示: 60秒以上なら「N分」、未満なら「N秒」
+	if [ "$PREDICTION_WINDOW_SEC" -ge 60 ]; then
+		_window_display="$((PREDICTION_WINDOW_SEC / 60))分"
+	else
+		_window_display="${PREDICTION_WINDOW_SEC}秒"
+	fi
+	./twitch_chat.sh send "チャネルポイント予想スタート！「${PREDICTION_MAX_GAMES}ゲーム中に建国できる？」投票受付中（${_window_display}） ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}ゲーム後にソ連不成立なら的中" 2>/dev/null &
 
 	# azumagdev ボットがランダムに1票入れる（GQL API）
 	# 独立した再実行可能なサブコマンドとして起動し、親シェル終了の影響を受けにくくする。
