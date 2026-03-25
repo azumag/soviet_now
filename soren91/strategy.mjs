@@ -1,12 +1,12 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v71)
+ * strategy.mjs - ドロップ位置決定戦略 (v72)
  *
- * v71: Stability restoration toward v27 anchor (comp=91.6)
- * - 【T1フラッド閾値を12に戻す】t1FloodMode threshold: 11→12、より保守的に
- * - 【ULTRA EXTREME mode の簡素化】複雑性削減、即時マージ優先を控える
- * - 【chain setup 優先】連鎖設計を即時マージより重視
- * - 【garbage moderate threshold の調整】0.22→0.25 で過度な早期介入を抑制
- * - 【piece accumulation rate の低下】早期フェーズで piece を抑える
+ * v72: T1タワー形成強化 + EMERGENCY改善
+ * - 【T1タワーボーナス追加】findT1DenseColumnでnarrow(0.55)内3+T1→強力ボーナス
+ * - 【T1比率パージモード】T1が62%超かつt1Count>15でtower buildingを最優先
+ * - 【GBG T1優先順変更】t1Count>=14時にtower→immediateの順で試みる
+ * - 【EXTREME閾値引き下げ】30→25で早期対応
+ * - 【EMERGENCY中央寄り】extreme wall落下を抑制（center bias追加）
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -15,7 +15,7 @@ const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 85;
 const ULTRA_MASS_THRESHOLD = 70;
-const EXTREME_T1_FLOOD_THRESHOLD = 30;
+const EXTREME_T1_FLOOD_THRESHOLD = 25;
 const SURVIVAL_PIECE_THRESHOLD = 78;
 const LOW_MASS_CRITICAL_RELIEF_PIECE_THRESHOLD = 32;
 const LOW_MASS_CRITICAL_RELIEF_AVG_HEIGHT = 1.45;
@@ -25,6 +25,7 @@ const GARBAGE_MODERATE_HEIGHT = 0.3;
 const EXTREME_T1_WALL_PIECE_THRESHOLD = 75;
 const T1_PREFLOOD_THRESHOLD = 12;
 const T1_PREFLOOD_DENSE_THRESHOLD = 10;
+const T1_RATIO_PURGE_THRESHOLD = 0.62;
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
@@ -75,6 +76,10 @@ export function decide(boardState) {
   const t1FloodModeThreshold = T1_PREFLOOD_THRESHOLD;
   const t1FloodMode = t1Count > t1FloodModeThreshold;
   const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
+
+  // T1比率パージモード: T1がボードの62%超かつ15個超の場合、tower buildingを最優先
+  const t1Ratio = activePieces.length > 0 ? t1Count / activePieces.length : 0;
+  const t1RatioPurge = t1Ratio > T1_RATIO_PURGE_THRESHOLD && t1Count > 15;
 
   const garbageUrgent = garbageRatio > 0.4 || garbageHeight > 1.2;
   const garbageModerate = !garbageUrgent && (
@@ -186,7 +191,13 @@ export function decide(boardState) {
         const holdMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
         if (holdMerge !== null) return { x: 0, reason: `ULTRA_EXTREME_SWAP_T${hold.type}`, hold: true };
       }
-      
+
+      // T1比率パージモード: tower buildingを最優先
+      if (t1RatioPurge) {
+        const purgeX = findT1DenseColumn(activePieces, colHeights, dangerBias, 2.0, rawPieceCount);
+        if (purgeX !== null) return { x: purgeX, reason: 'ULTRA_T1_PURGE_TOWER' };
+      }
+
       const t1WallMult = rawPieceCount > EXTREME_T1_WALL_PIECE_THRESHOLD ? 2.0 : 1.0;
       const chainSetupX = findT1ChainSetup(activePieces, colHeights, dangerBias, garbageRatio, gaugeLevel, rawPieceCount);
       const immediateX = findT1ImmediateMerge(activePieces, colHeights, dangerBias, t1WallMult, rawPieceCount, garbageRatio, gaugeLevel);
@@ -279,7 +290,8 @@ export function decide(boardState) {
         const emergT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount, garbageRatio, gaugeLevel);
         if (emergT1 !== null) return { x: emergT1, reason: 'EMERGENCY_T1_IMMEDIATE' };
       }
-      const emergencyIdx = findLowestColIdx(colHeights);
+      // 中央寄りの緊急落下（壁際を避ける）
+      const emergencyIdx = findLowestCenterColIdx(colHeights);
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
     }
 
@@ -471,6 +483,14 @@ export function decide(boardState) {
         t1Count,
       )) {
         return { x: gbgLowT1Merge.x, reason: 'GBG_T1_LOW_MERGE' };
+      }
+
+      // T1が大量にある場合はタワー形成を優先（散在させない）
+      if (t1Count >= 14) {
+        const gbgTowerX = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
+        if (gbgTowerX !== null && Math.abs(gbgTowerX) <= 2.0) {
+          return { x: gbgTowerX, reason: 'GBG_T1_TOWER' };
+        }
       }
 
       if (gbgImmediateT1 !== null) {
@@ -791,15 +811,21 @@ function findT1DenseColumn(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0
     const nearT2VeryClose = countNear(pieces, cx, 2, 0.8);
     if (nearT2VeryClose >= 2) s += 25;
     else if (nearT2VeryClose >= 1) s += 8;
+
+    // タワーボーナス: narrow window(0.55)内に3+T1が積まれていると連鎖しやすい
+    const colT1Narrow = t1Pieces.filter(p => Math.abs(p.x - cx) < 0.55).length;
+    if (colT1Narrow >= 3) s += (colT1Narrow - 2) * 45;
+    if (colT1Narrow >= 5) s += 40;
+
     s -= colHeights[i] * 10.0;
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 15;
     s -= Math.abs(cx) * 2.0;
-    
+
     if (Math.abs(cx) > 2.2) {
       const wallPenalty = pieceCount > 90 ? 15 : 22;
       s -= Math.round(wallPenalty * wallPenaltyMult);
     }
-    
+
     if (dangerBias >= 2 && cx > 0) s -= 15;
     if (dangerBias <= -2 && cx < 0) s -= 15;
     if (dangerBias >= 1 && cx > 0.5) s -= 8;
@@ -862,7 +888,7 @@ function findT1ImmediateMerge(pieces, colHeights, dangerBias, wallPenaltyMult = 
   let chainMult = pieceCount > 105 ? 0.48 : pieceCount > 85 ? 0.75 : 1.0;
   if (garbageRatio > 0.25) chainMult += 0.08;
   if (gaugeLevel >= 0.6) chainMult += 0.06;
-  
+
   const heightMult = pieceCount > 105 ? 1.5 : pieceCount > 85 ? 1.15 : 1.0;
 
   let bestScore = -Infinity;
@@ -946,7 +972,7 @@ function findT1ChainSetup(pieces, colHeights, dangerBias, garbageRatio = 0, gaug
     if (garbageRatio > 0.25) s += 12;
     if (pieceCount >= 70 && gaugeLevel >= 0.6) s += 12;
     if (gaugeLevel >= 0.65) s += 10;
-    
+
     s -= colHeights[i] * 10.0;
     if (colHeights[i] > WARN_Y) s -= (colHeights[i] - WARN_Y) * 17;
     if (colHeights[i] < 0) s += 15;
@@ -1158,6 +1184,19 @@ function findLowestColIdx(colHeights) {
     if (colHeights[i] < minH) { minH = colHeights[i]; minIdx = i; }
   }
   return minIdx;
+}
+
+// 緊急時の中央寄り落下: 壁際を避けてできるだけ中央に近い最低列を選ぶ
+function findLowestCenterColIdx(colHeights) {
+  let bestScore = -Infinity;
+  let bestIdx = 5;
+  for (let i = 0; i < colHeights.length; i++) {
+    let s = -colHeights[i] * 10.0;
+    s -= Math.abs(FINE_COLS[i]) * 5.0; // 中央優先（壁ペナルティ強化）
+    if (Math.abs(FINE_COLS[i]) > 2.2) s -= 25; // 壁際は強く避ける
+    if (s > bestScore) { bestScore = s; bestIdx = i; }
+  }
+  return bestIdx;
 }
 
 function findLowestSafeDrop(colHeights, dangerBias) {
