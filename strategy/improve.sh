@@ -687,6 +687,14 @@ trigger_adaptive_improvement() {
 	fi
 
 	# Step 5: idle → 改善開始
+	# リグレッション検知 (daemon モードでも改善開始直前にチェック)
+	if check_regression; then
+		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+			./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
+		fi
+		_clear_accumulated_data
+		return
+	fi
 	# チャネルポイント予想: サイクル終了 → best_outcome で解決
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 		local pred_best=0
