@@ -41,6 +41,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
     # --- Change History ---
+    # v331: axis 9.2 reactive_pairs>=1拡張版 - v348 failure mode潰し
+    # last_rollback_postmortemのfailure mode: "deadline_crossed && reactive_pairs=1-2 && merge_grade=="NO" の戦略的死lock状態"
+    # ワーストゲーム(score0569)終盤turns 66-69: deadline_crossed=true, reactive_pairs=1, merge_available=false続きでmax_y=1.65→2.39に急上昇してゲームオーバー
+    # ベストゲーム(score2710)終盤turns 106-113: 即時併合機会を確実に捉えてmax_y=2.73で安定
+    # axis 9.2修正: 適用条件を reactive_pair_count >= 2 から reactive_pair_count >= 1 に緩和
+    # reactive_pairs==1の場合: 基本ペナルティ-2000.0を適用し、戦略的死lock状態を解消
+    # reactive_pairs>=2の場合: 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0（最大-4500.0）を維持
+    # これによりaxis 8.8（reactive_pairs>=3のみ）とaxis 9.2の間にgapがあるreactive_pairs=1-2の状況でも、戦略的配置の余地を確保
+    # advice.md「deadline_crossed時の即時併合強化」に基づく即時併合優先戦略の実装
+    # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+    #       game_history/20260326_093527_score0569.jsonl turns 66-69, game_history/20260324_055424_score2710.jsonl turns 106-113
+    # Fixes rollback failure mode: v348の戦略的死lock状態（deadline_crossed && reactive_pairs=1-2 && merge_grade=="NO"）
+    #
     # v330: axis 9.5盤面圧縮ボーナス条件厳格化版 - 即時併合優先強化・ロシアフェーズ改善
     # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
     # ワーストゲーム(score0634)終盤turns 52-59: reactive_pairs=1-4あるのに即時併合不可続き、HIGH_TOWER/HIGH_LAYERが選ばれmax_y=2.12に悪化してゲームオーバー
@@ -225,17 +238,18 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v330: axis 9.5盤面圧縮ボーナス条件厳格化版 - 即時併合優先強化
+    """v331: axis 9.2 reactive_pairs>=1拡張版 - v348 failure mode潰し
 
-    last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
-    ワーストゲーム(score0634)終盤turns 52-59: reactive_pairs=1-4あるのに即時併合不可続き、HIGH_TOWER/HIGH_LAYERが選ばれmax_y=2.12に悪化してゲームオーバー
+    last_rollback_postmortemのfailure mode: "deadline_crossed && reactive_pairs=1-2 && merge_grade=="NO" の戦略的死lock状態"
+    ワーストゲーム(score0569)終盤turns 66-69: deadline_crossed=true, reactive_pairs=1, merge_available=false続きでmax_y=1.65→2.39に急上昇してゲームオーバー
     ベストゲーム(score2710)終盤turns 106-113: 即時併合機会を確実に捉えてmax_y=2.73で安定
 
-    v330の改善点:
-    1. axis 9.5修正: 盤面圧縮ボーナスの適用条件を danger_piece_count == 0 から danger_piece_count == 0 && reactive_pair_count == 0 に厳格化
-    2. reactive_pairsが存在する場合は盤面圧縮ボーナスが適用されなくなり、即時併合機会を優先する戦略へ切り替わる
-    3. axis 9.2の即時併合なしペナルティと競合しなくなり、即時併合機会を確実に確保
-    4. advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づく即時併合優先戦略の実装
+    v331の改善点:
+    1. axis 9.2修正: 適用条件を reactive_pair_count >= 2 から reactive_pair_count >= 1 に緩和
+    2. reactive_pairs==1の場合: 基本ペナルティ-2000.0を適用し、戦略的死lock状態を解消
+    3. reactive_pairs>=2の場合: 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0（最大-4500.0）を維持
+    4. axis 8.8（reactive_pairs>=3のみ）とaxis 9.2の間にgapがあるreactive_pairs=1-2の状況でも、戦略的配置の余地を確保
+    5. advice.md「deadline_crossed時の即時併合強化」に基づく即時併合優先戦略の実装
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -679,7 +693,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
-        # ----- evaluation axis 9.2: danger zone reactive penalty (v324: deadline_crossed対応強化版 - v323 failure mode潰し) -----
+        # ----- evaluation axis 9.2: danger zone reactive penalty (v331: reactive_pairs>=1拡張版 - v348 failure mode潰し) -----
         # v323 failure: axis 9.2にdeadline_crossed条件が含まれておらず、deadline_crossed時でもreactive_pairs>=3の即時併合不可でペナルティが適用されない
         # ワーストゲーム(score0651)終盤turns 42-47: max_y=0.16→1.78 (deadline_crossed: false→true→false), reactive_pairs=3-4, merge_available=false続き
         # deadline_crossed=false時にSAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEで非併合を選択し、盤面圧迫が進みdeadline_crossed=trueでゲームオーバー
@@ -688,17 +702,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v326: 危険ピース存在時のペナルティ強化版 - ワーストゲーム(score0915)の失敗モード潰し
         # 危険ピース(danger_piece_count > 0)がある場合、ペナルティを加重してmax_y runawayを防止
         # 基本ペナルティ: -2500.0, 危険ピース毎に追加-1000.0 (例: danger_piece_count=2 → -4500.0)
-        # 未活用情報：deadline_crossed, 危険域判定(max_y>=2.0), reactive_pairs>=2, danger_piece_count加重
+        # v331: reactive_pairs>=1に条件を緩和し、v348のfailure mode「deadline_crossed && reactive_pairs=1-2 && merge_grade=="NO" の戦略的死lock状態」を解消
+        # reactive_pairs==1: 基本ペナルティ-2000.0, reactive_pairs>=2: 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0（最大-4500.0）
+        # これによりaxis 8.8（reactive_pairs>=3のみ）とaxis 9.2の間にgapがあるreactive_pairs=1-2の状況でも、戦略的配置の余地を確保
+        # 未活用情報：deadline_crossed, 危険域判定(max_y>=2.0), reactive_pairs>=1, danger_piece_count加重
         # refs: game_history/20260324_010847_score0651.jsonl turns 42-47, game_history/20260324_010300_score2461.jsonl,
         #       game_history/20260324_021413_score0915.jsonl (turns 75-80: danger_pieces存在でmax_y runaway)
-        # Fixes rollback failure mode: deadline_crossed時の即時併合取りこぼし、危険ピース存在下でのmax_y runaway
+        #       tmp/state/last_rollback_postmortem.md (v348 failure mode: deadline_crossed && reactive_pairs=1-2 && merge_grade=="NO")
+        # Fixes rollback failure mode: deadline_crossed時の即時併合取りこぼし、危険ピース存在下でのmax_y runaway、v348の戦略的死lock状態
 
-        if (max_y >= 2.0 or deadline_crossed) and reactive_pair_count >= 2 and merge_grade == "NO":
-            # 危険域またはdeadline_crossed時、reactive_pairsが多数あるのに即時併合不可の場合、非併合配置を強力にペナルティ
-            # v326: 危険ピースがある場合、ペナルティを加重してより強力に抑制
-            # 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0（最大-4500.0）
-            # これにより危険ピースが2つ以上ある場合、盤面圧縮ボーナスを完全に無効化し即時併合を優先
-            danger_penalty = 2500.0 + min(danger_piece_count, 2) * 1000.0
+        if (max_y >= 2.0 or deadline_crossed) and reactive_pair_count >= 1 and merge_grade == "NO":
+            # 危険域またはdeadline_crossed時、reactive_pairsがあるのに即時併合不可の場合、非併合配置を強力にペナルティ
+            # v331: reactive_pairs==1の場合にもペナルティを適用し、戦略的死lock状態を解消
+            # reactive_pairs==1: 基本ペナルティ-2000.0, reactive_pairs>=2: 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0（最大-4500.0）
+            if reactive_pair_count == 1:
+                danger_penalty = 2000.0
+            else:
+                danger_penalty = 2500.0 + min(danger_piece_count, 2) * 1000.0
             score -= danger_penalty
             reasons.append("DANGER_ZONE_REACTIVE_PENALTY_NO_MERGE")
 
