@@ -7,7 +7,7 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-      Decision Logic (11 evaluation axes):
+      Decision Logic (evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -35,9 +35,10 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
+             9. Reactive pairs stacking bonus - v338: reactive_pairs>=1 && merge_grade=="NO"の場合、盤面上の現在タイプの最も高い位置のピースに着地できる配置にボーナス
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
+             # v339: axis 9.7 (REACTIVE_PAIRS_COMPRESSION) 削除 - 即時併合機会最大化のため評価軸シンプル化
 
 
 Phases (determined by board max Y):
@@ -55,6 +56,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
+         # v339: axis 9.7削除による即時併合機会最大化版 - 評価軸シンプル化
+         # v338の問題点: axis 9.7のcompression_bonus（最大300.0）が「戦略的配置」を促し、即時併合機会と競合して取りこぼしを招いている
+         # batch_summaryでREACTIVE_PAIRS_COMPRESSIONが10%前後選択されているがavg_score_delta=5.2と低い。即時併合関連reasonはavg_score_deltaが高い（52.4, 56.8）が選択率が低い（3-4%）
+         # axis 9.7はreactive_pairs>=1 && merge_grade=="NO"の場合に盤面圧縮ボーナスを与えるが、これはaxis 9.6のstacking bonusと競合し、評価を複雑にしている
+         # last_rollback_postmortemのfailure mode: "deadline_crossed時の即時併合機会取りこぼしに対する強制ペナルティ不足"に対処
+         # v339: axis 9.7（REACTIVE_PAIRS_COMPRESSION）を削除し、評価軸をシンプル化
+         #   - axis 9.6（REACTIVE_PAIRS_STACKING）は維持し、即時併合機会を最大化
+         #   - 評価軸の競合を削減し、即時併合機会の取りこぼしを防止
+         #   - deadline_crossed時の即時併合強制ペナルティ（axis 9.6: -4500.0）を維持
+         #   - reactive_pairs>=3での戦略的死ロック状態回避
+         # best_score2335_strategy.pyのシンプル構造（5つの評価軸）に近づけ、評価軸の複雑化による即時併合機会取りこぼしを削減
+         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+         #       strategy_versions/best_score2335_strategy.py, game_history/20260327_011325_score1174.jsonl, game_history/20260327_010021_score3694.jsonl
+         # Fixes rollback failure mode: axis 9.7 compression_bonusによる即時併合機会取りこぼし（axis 9.7削除）
+         #
          # v338: reactive_pairsあり時の戦略的配置優先化版 - HEIGHT_CONTROL過剰選択の解消
          # v337 failure: ロシアフェーズでaxis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナスと競合し、即時併合機会を取りこぼしている
          # ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
@@ -325,6 +341,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
          {"x": drop X coordinate, "reason": selection reason}
     """
 
+    # v339: axis 9.7削除による即時併合機会最大化版
+    # axis 9.7（REACTIVE_PAIRS_COMPRESSION）を削除し、評価軸をシンプル化
+    # 即時併合機会の取りこぼしを削減し、deadline_crossed時の戦略的死ロック状態を回避
+
     results = analysis.get("results", [])
 
     if not results:
@@ -449,28 +469,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     horizontal_bonus = max(0, 80.0 - horizontal_distance * 20.0)
                     score += vertical_bonus + horizontal_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
-        
-        # ----- evaluation axis 9.7: reactive pairs compression bonus (NEW) -----
-        # reactive_pairsがあるがmerge_grade=="NO"の場合、盤面圧縮を優先する戦略的思考
-        # ワーストゲームではHEIGHT_CONTROLが続き即時併合機会を取りこぼしている
-        # ベストゲームでは即時併合機会を確実に捉えて盤面を圧縮し、高type成長パイプラインを維持
-        # refs: advice.md (azumag), tmp/improve_brief.md, tmp/batch_summary.txt,
-        #       game_history/20260324_154730_score0413.jsonl, game_history/20260324_161825_score2775.jsonl
-        if reactive_pair_count >= 1 and merge_grade == "NO":
-            # 盤面密度を評価し、密度が高い場所に落とすとペナルティ、密度が低い場所に落とすとボーナス
-            # 簡単な指標として、landing_yが高い（盤面の上の方）になるほど危険、低いほど安全
-            # reactive_pairsがある状況では、盤面の下の方に配置して将来の併合機会を最大化
-            if landing_y < 0.0:
-                # 下層に配置：ボーナス。低いほど良い
-                compression_bonus = (landing_y + 2.0) * 150.0  # landing_y=-2.0なら0.0、0なら300.0
-                score += compression_bonus
-                reasons.append("REACTIVE_PAIRS_COMPRESSION")
-            elif landing_y < 0.5:
-                # 中層に配置：小幅ボーナス
-                compression_bonus = 50.0
-                score += compression_bonus
-                reasons.append("REACTIVE_PAIRS_COMPRESSION")
-            # 上層配置（landing_y >= 0.5）はボーナスなし（height_penaltyでペナルティされる）
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
