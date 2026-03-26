@@ -37,7 +37,7 @@ Game Overview:
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9. Reactive pairs stacking bonus - v340: reactive_pairs>=1 && merge_grade=="NO" && 現在タイプにreactive/near pairがある場合、merged_type(N+1)に隣接する同タイプピースに着地する配置にボーナス
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-             9.5. Current type stack merge priority - v342: v341基盤・現在タイプ非反応時スタッキング許可版
+             9.5. Current type stack merge priority - v344: type-scaled stacking bonus for high-type growth pipeline
              # v339: axis 9.7 (REACTIVE_PAIRS_COMPRESSION) 削除 - 即時併合機会最大化のため評価軸シンプル化
 
 
@@ -56,6 +56,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
+        # v344: axis 9.5同タイプスタッキングボーナスを併合スコア比例に変更 - 高type成長パイプライン強化
+        # 固定+100/+300ボーナスはtype 2(併合値3)とtype 14(併合値105)を同列に扱い、高type成長インセンティブ不足だった
+        # SCORE_TABLE[type] * multiplierに変更し、高typeほど強いスタッキング incentiveを付与
+        # merge_grade=="NO"かつdanger==0の安全条件下のみ適用のため即時併合優先と競合しない
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md (zoumotu3), strategy.py.staging,
+        #       game_history/20260327_045416_score0289.jsonl turns 52-59, game_history/20260327_052539_score2184.jsonl turns 98-105,
+        #       strategy_versions/best_score2335_strategy.py
+        # Fixes rollback failure mode: 高type成長パイプライン不足によるロシア到達率低下（axis 9.5 type-scaled bonus）
+        #
         # v343: chain_bonus height-scaling削除 - 高位置併合の逆インセンティブ除去
         # chain_bonus_multiplierの着地高動的調整を削除し固定値(495.0)に。高位置ほどchain_bonusが大きくなる
         # 逆インセンティブを解消し、height_penaltyとの適切なバランスを回復。連鎖ボーナスなしのゲーム仕様に整合。
@@ -345,7 +354,17 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v343: chain_bonus height-scaling削除版 - 高位置併合の逆インセンティブ除去
+    """v344: axis 9.5同タイプスタッキングボーナスを併合スコア比例に変更 - 高type成長パイプライン強化
+
+    v343 status quo: SAME_TYPE_STACK/MERGE_PRIORITYボーナスが固定(+100/+300)でtypeに依存しない。
+    type 14のスタッキング(併合値105)とtype 2のスタッキング(併合値3)が同列に扱われ、
+    高type成長パイプラインの構築 incentive が不足していた。
+    ワーストゲーム(score0289)はtype 12止まり、ベストゲーム(score2184)はtype 13-14到達で2184点。
+    v344: SCORE_TABLE[type]に比例したボーナスに変更し、高typeほど強いスタッキング incentiveを付与。
+      - SAME_TYPE_STACK: max(50, SCORE_TABLE[type]*2) → type10=110, type12=156, type14=210
+      - SAME_TYPE_STACK_MERGE_PRIORITY: max(100, SCORE_TABLE[type]*3) → type10=165, type12=234, type14=315
+      - 即時併合(DIRECT=1200, NEAR=600)やreactive_pairs>=3のpenalty(-3000+)より常に小さい
+      - merge_grade=="NO"かつdanger==0の条件下のみ適用、既存の安全機構は全て維持
 
     v342 status quo: chain_bonus_multiplier = 495 + max(0, landing_y+1.5)*150 で高位置ほどchain_bonusが大きくなり、
     deadline超えの危険なNEAR mergeがheight_penaltyを上回って選択される逆インセンティブがあった
@@ -989,7 +1008,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v327: danger_piece_count > 0 の場合のペナルティ軽減ボーナスも削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のペナルティ軽減ボーナスも削除 - 即時併合優先強化
 
-        # ----- evaluation axis 9.5: current type stack merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版) -----
+        # ----- evaluation axis 9.5: current type stack merge priority (v344: type-scaled stacking bonus) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
         # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
         # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
@@ -1028,7 +1047,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 if danger_piece_count == 0 and reactive_pair_count == 0:
                     # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
-                    score += 300.0
+                    # v344: 併合スコア比例ボーナス - 高typeほど強い成長パイプライン incentive
+                    # type 10→165, type 12→234, type 14→315 (max 3*SCORE_TABLE[type], floor 100)
+                    score += max(100.0, SCORE_TABLE.get(next_type, 0) * 3.0)
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             # v327: danger_piece_count > 0 の場合のボーナスブロックを削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のボーナスブロックを追加 - axis 9.2のペナルティを優先
@@ -1054,7 +1075,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if landing_y > stack_top_y and danger_piece_count == 0 and stacking_eligible:
                     horiz_dist = abs(x - stack_top_x)
                     if horiz_dist < 1.0:
-                        score += 100.0
+                        # v344: 併合スコア比例ボーナス - 高typeほど強いスタッキング incentive
+                        # type 8→72, type 10→110, type 12→156, type 14→210 (max 2*SCORE_TABLE[type], floor 50)
+                        score += max(50.0, SCORE_TABLE.get(next_type, 0) * 2.0)
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
