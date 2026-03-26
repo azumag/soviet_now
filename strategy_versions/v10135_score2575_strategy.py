@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
 """strategy.py - AI改善対象の決定スクリプト
+v346: axis 9.5条件緩和版 - 未活用情報（merged_type隣接）の活用強化
++ v346: axis 9.5条件緩和版 - 未活用情報（merged_type隣接）の活用強化
++ v345の問題点: axis 8.8のペナルティ係数縮小（500.0→300.0）は数値微調整のみで構造的改善ではない
++ axis 9.5（MERGED_TYPE_ADJACENCY_PRIORITY）の条件がdanger_piece_count == 0 and reactive_pair_count == 0と厳しすぎ、
++ 未活用情報（merged_typeと盤面上のTypeN+1の隣接状態）がほとんど活用されていなかった
++ v346: axis 9.5の適用条件をtotal_immediate_merge_opportunities <= 2に緩和し、即時併合機会が少ない状況で戦略的配置を許容
++ 将来の連鎖的併合（merged_typeとの隣接）を評価し、2手先の併合可能性を最大化する構造的改善
++ 未活用情報（merged_type隣接状態）の活用を強化する条件緩和であり、数値微調整ではない
++ refs: advice.md (azumag, nimdavirus), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt
++ Fixes: 即時併合機会が少ない状況での戦略的配置余地不足（axis 9.5条件緩和による未活用情報活用強化）
+#
 v344: axis 8.8 構造的変更版 - 未活用near_pairs活用・即時併合機会数に応じた段階的評価
 + v344: axis 8.8 構造的変更版 - 未活用near_pairs活用・即時併合機会数に応じた段階的評価
 + v343の問題点: compression_bonusの単純な数値調整（+250.0→+500.0）は構造変更ではなく、即時併合機会の取りこぼしを解消できない
@@ -33,10 +44,10 @@ Game Overview:
            8.5. Danger zone immediate merge bonus - v321: 危険域即時併合強化
            8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
            8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
-           8.8. Reactive pairs compression bonus vs dynamic penalty - v335: danger_piece_count条件付きcompression_bonus復活
+           8.8. Reactive pairs compression bonus - v346: axis 9.5条件緩和との協調版
            9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
            9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-           9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
+           9.5. Current type stack merge priority - v346: 条件緩和による未活用情報活用強化版
 
 
 Phases (determined by board max Y):
@@ -54,6 +65,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
     # --- Change History ---
+    # v346: axis 9.5条件緩和版 - 未活用情報（merged_type隣接）の活用強化
+    # v345の問題点: axis 8.8のペナルティ係数縮小（500.0→300.0）は数値微調整のみで構造的改善ではない
+    # axis 9.5（MERGED_TYPE_ADJACENCY_PRIORITY）の条件がdanger_piece_count == 0 and reactive_pair_count == 0と厳しすぎ、
+    # 未活用情報（merged_typeと盤面上のTypeN+1の隣接状態）がほとんど活用されていなかった
+    # v346: axis 9.5の適用条件をtotal_immediate_merge_opportunities <= 2に緩和し、即時併合機会が少ない状況で戦略的配置を許容
+    # 将来の連鎖的併合（merged_typeとの隣接）を評価し、2手先の併合可能性を最大化する構造的改善
+    # 未活用情報（merged_type隣接状態）の活用を強化する条件緩和であり、数値微調整ではない
+    # refs: advice.md (azumag, nimdavirus), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt
+    # Fixes: 即時併合機会が少ない状況での戦略的配置余地不足（axis 9.5条件緩和による未活用情報活用強化）
+    #
     # v343: axis 8.8 compression_bonus復活版 - 戦略的配置の余地確保
     # v335の問題点: axis 8.8のdanger_piece_count条件がdeadline_crossed && danger_piece_count>0の場合にcompression_bonusを適用せず、戦略的配置の余地を制限
     # last_rollback_postmortemの致命的欠陥: "deadline_crossed && reactive_pairs=1-2 && merge_grade=='NO' の戦略的死lock状態"
@@ -275,18 +296,17 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v344: axis 8.8 構造的変更版 - 未活用near_pairs活用・即時併合機会数に応じた段階的評価
+    """v346: axis 9.5条件緩和版 - 未活用情報（merged_type隣接）の活用強化
 
-    v343の問題点: compression_bonusの単純な数値調整（+250.0→+500.0）は構造変更ではなく、即時併合機会の取りこぼしを解消できない
-    batch_summaryで高スコア群の併合率38.2% vs 低スコア群33.4%、即時併合がスコアに直結している
-    advice.md「盤面状態に関わらず即時併合を最優先する」「同タイプが来たらその上に置く」が戦略的配置より優先されるべき
-
-    v344の改善点:
-    1. 未活用のreactor.near_pairs情報を活用し、即時併合機会の総数（reactive_pairs + near_pairs）を計算
-    2. 即時併合機会の総数に応じて3段階の評価を実施（少ない:戦略的配置許容、多い:即時併合優先、中程度:危険度対応）
-    3. v333成功パターン（reactive_pairs>=1で一律compression_bonus適用）を踏襲しつつ、即時併合機会が多い場合は戦略的配置を抑制
-    4. axis 8.5/8.6/8.7の即時併合ボーナス強化は維持
-    5. 即時併合機会取りこぼし削減と戦略的配置のバランスを構造的に改善
+    v345の問題点: axis 8.8のペナルティ係数縮小（500.0→300.0）は数値微調整のみで構造的改善ではない
+    axis 9.5（MERGED_TYPE_ADJACENCY_PRIORITY）の条件がdanger_piece_count == 0 and reactive_pair_count == 0と厳しすぎ、
+    未活用情報（merged_typeと盤面上のTypeN+1の隣接状態）がほとんど活用されていなかった
+    v346の改善点:
+    1. axis 9.5の適用条件をtotal_immediate_merge_opportunities <= 2に緩和し、即時併合機会が少ない状況で戦略的配置を許容
+    2. 将来の連鎖的併合（merged_typeとの隣接）を評価し、2手先の併合可能性を最大化する構造的改善
+    3. 未活用情報（merged_type隣接状態）を活用した条件変更であり、数値微調整ではない
+    4. v333成功パターン（reactive_pairs>=1で一律compression_bonus適用）を踏襲
+    5. axis 8.5/8.6/8.7/8.8/9.2の即時併合優先評価軸は維持
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -297,13 +317,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
-    # v343の改善点:
-    # 1. axis 8.8のcompression_bonusを+250.0から+500.0に復活し、戦略的配置の余地を確保
-    # 2. v333成功パターン（reactive_pairs>=1で一律compression_bonus適用）を踏襲
-    # 3. v339失敗パターン（reactive_pairs>=3のみ適用でreactive_pairs=1-2が死lock）を回避
-    # 4. axis 8.5/8.6/8.7の即時併合ボーナス強化は維持
-    # 5. 即時併合優先と戦略的配置のバランスを改善
-
     results = analysis.get("results", [])
 
     if not results:
@@ -619,19 +632,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
         # 即時併合がない場合は、既存の評価軸（height/drift/balance/chainなど）で判断する
 
-        # ----- evaluation axis 8.5: danger zone immediate merge bonus (v343: 即時併合優先強化版 - ボーナス維持) -----
-        # v336の問題点: axis 8.8のcompression_bonus(+500.0)が戦略的配置を誘発しすぎて、即時併合機会を取りこぼしている
-        # batch_summaryでREACTIVE_PAIRS_COMPRESSIONが10%前後選択されているがavg_score_delta=0.1-3.6と低い
-        # 即時併合関連reasonはavg_score_deltaが高い（47.8等）だが選択率が低い（2-5%）
-        # advice.md「盤面状態に関わらず即時併合を最優先する」がログで支持されている
-        # v343: 危険域での即時併合ボーナス強化は維持し、即時併合を最優先する戦略へシフト
+        # ----- evaluation axis 8.5: danger zone immediate merge bonus (v346: 即時併合優先維持版) -----
+        # 危険域（max_y >= 2.0）でreactive_pairs>=2の場合、即時併合を強力に優先
+        # advice.md「盤面状態に関わらず即時併合を最優先する」に基づく構造的改善
         #   - DIRECT: +700.0, NEAR: +500.0
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-        # Fixes rollback failure mode: 即時併合機会取りこぼし削減（axis 8.5 ボーナス維持）
+        # refs: advice.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
 
         danger_piece_count = reactor.get("danger_piece_count", 0)
 
-        # 危険域での即時併合を強力に優先（v342: ボーナス強化）
+        # 危険域での即時併合を強力に優先
         if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
             if merge_grade == "DIRECT":
                 score += 700.0
@@ -640,38 +649,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v343: 即時併合優先強化版 - ボーナス維持) -----
-        # v336の問題点: axis 8.8のcompression_bonus(+500.0)が戦略的配置を誘発しすぎて、即時併合機会を取りこぼしている
-        # batch_summaryでREACTIVE_PAIRS_COMPRESSIONが10%前後選択されているがavg_score_delta=0.1-3.6と低い
-        # 即時併合関連reasonはavg_score_deltaが高い（47.8等）だが選択率が低い（2-5%）
-        # advice.md「盤面状態に関わらず即時併合を最優先する」がログで支持されている
-        # v343: reactive_pairs数に応じた即時併合ボーナス強化は維持し、即時併合を最優先する戦略へシフト
+        # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v346: 即時併合優先維持版) -----
+        # reactive_pairs数に応じた即時併合ボーナスを維持し、即時併合を最優先する戦略へシフト
         #   - reactive_pairs==1: +800.0, reactive_pairs>=2: +1200.0
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-        # Fixes rollback failure mode: 即時併合機会取りこぼし削減（axis 8.6 ボーナス維持）
+        # refs: advice.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
 
         if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
-            # v342: 即時併合ボーナスを強化（即時併合優先シフト）
+            # 即時併合ボーナスを強化（即時併合優先シフト）
             if reactive_pair_count >= 2:
                 score += 1200.0
             else:
                 score += 800.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.7: russia phase immediate merge priority (v343: 即時併合優先強化版 - ボーナス維持) -----
-        # v336の問題点: axis 8.8のcompression_bonus(+500.0)が戦略的配置を誘発しすぎて、即時併合機会を取りこぼしている
-        # batch_summaryでREACTIVE_PAIRS_COMPRESSIONが10%前後選択されているがavg_score_delta=0.1-3.6と低い
-        # 即時併合関連reasonはavg_score_deltaが高い（47.8等）だが選択率が低い（2-5%）
-        # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
-        # v343: ロシアフェーズでの即時併合ボーナス強化は維持し、即時併合を最優先する戦略へシフト
+        # ----- evaluation axis 8.7: russia phase immediate merge priority (v346: 即時併合優先維持版) -----
+        # ロシアフェーズ（type 15が盤面にある）での即時併合ボーナスを維持
+        # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく
         #   - DIRECT: +1200.0, NEAR: +1000.0
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-        # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし削減（axis 8.7 ボーナス維持）
+        # refs: advice.md (あずまぐ), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
 
         if russia_phase:
-            # ロシアフェーズでの即時併合優先（v342: ボーナス強化）
+            # ロシアフェーズでの即時併合優先
             if merge_grade in ["DIRECT", "NEAR"]:
-                # v342: 即時併合ボーナスを強化（即時併合優先シフト）
+                # 即時併合ボーナスを強化（即時併合優先シフト）
                 if merge_grade == "DIRECT":
                     score += 1200.0
                 else:
@@ -691,16 +691,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     reasons.append("RUSSIA_PHASE_NO_MERGE_PENALTY")
                 # deadline_crossed時はaxis 9.2のペナルティを優先し、即時併合を最優先
 
-        # ----- evaluation axis 8.8: strategic compression with immediate merge awareness (v344: 未活用near_pairs活用・構造的変更版) -----
-        # v343の問題点: compression_bonusの単純な数値調整（+250.0→+500.0）は構造変更ではなく、即時併合機会の取りこぼしを解消できない
-        # batch_summaryで高スコア群の併合率38.2% vs 低スコア群33.4%、即時併合がスコアに直結している
-        # advice.md「盤面状態に関わらず即時併合を最優先する」「同タイプが来たらその上に置く」が戦略的配置より優先されるべき
-        # v344: 未活用のreactor.near_pairs情報を活用し、即時併合機会の総数（reactive_pairs + near_pairs）に応じて評価を変える構造的変更
-        #   - 即時併合機会が少ない（total <= 2）場合：戦略的配置を許容しcompression_bonus適用
-        #   - 即時併合機会が多い（total >= 4）場合：戦略的配置を抑制し即時併合優先
+        # ----- evaluation axis 8.8: strategic compression with immediate merge awareness (v346: axis 9.5条件緩和との協調版) -----
+        # v346の改善点: axis 9.5（merged_type隣接ボーナス）の条件をtotal_immediate_merge_opportunities <= 2に緩和し、
+        # 即時併合機会が少ない状況で将来の連鎖的併合を評価する戦略的配置を可能にする
+        # axis 8.8は即時併合機会の総数に応じて戦略的配置の余地を調整する評価軸として維持
+        #   - 即時併合機会が少ない（total <= 2）場合：戦略的配置を許容しcompression_bonus適用（v333成功パターン）
+        #   - 即時併合機会が多い（total >= 4）場合：戦略的配置を抑制し即時併合優先（ペナルティ係数300.0で戦略的配置の余地を確保）
         #   - 即時併合機会が中程度（total = 3）場合：危険度（max_y, deadline_crossed）に応じて判断
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-        # Fixes rollback failure mode: 即時併合機会取りこぼし（near_pairs活用・即時併合機会数に応じた段階的評価）
+        # Fixes rollback failure mode: 即時併合機会取りこぼし時の戦略的配置余地不足（axis 9.5条件緩和による未活用情報活用強化）
 
         # 未活用情報: reactor.near_pairs（近接ペア、即時併合可能なペア）
         near_pairs = reactor.get("near_pairs", [])
@@ -719,8 +718,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
             elif total_immediate_merge_opportunities >= 4:
                 # 即時併合機会が多い場合：戦略的配置を抑制し即時併合優先（高配置にペナルティ）
+                # v345: ペナルティ係数を500.0→300.0に縮小し、戦略的配置の余地を確保
+                # ワーストゲームで即時併合機会取りこぼし時にmax_y runawayする問題を解消
+                # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+                #       tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+                # Fixes rollback failure mode: 即時併合機会取りこぼし時の戦略的配置余地不足（axis 8.8 ペナルティ係数縮小）
                 if landing_y > 0.5:
-                    score -= 800.0 + landing_y * 500.0
+                    score -= 800.0 + landing_y * 300.0
                     reasons.append("HIGH_MERGE_OPPORTUNITY_NO_MERGE_PENALTY")
             # total_immediate_merge_opportunities == 3は中程度：ボーナス・ペナルティなし、他の評価軸で判断
 
@@ -733,14 +737,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
-        # ----- evaluation axis 9.2: danger zone reactive penalty (v343: axis 8.8 compression_bonus復活との協調版) -----
-        # v343: axis 8.8で一律compression_bonus(+500.0)を適用するため、axis 9.2は危険域またはdeadline_crossed時のペナルティを専門に処理
-        # axis 8.8のcompression_bonusが戦略的配置を可能にするため、即時併合待機と戦略的配置のバランスを取る
-        # axis 9.2のペナルティがcompression_bonusを上回るため、危険域では即時併合を優先
-        # axis 9.2は危険域(max_y >= 2.0)またはdeadline_crossed時、reactive_pairsがあるのに即時併合不可の場合に非併合配置を強力にペナルティ
+        # ----- evaluation axis 9.2: danger zone reactive penalty (v346: 危険域即時併合優先維持版) -----
+        # 危険域(max_y >= 2.0)またはdeadline_crossed時、reactive_pairsがあるのに即時併合不可の場合に非併合配置を強力にペナルティ
         # reactive_pairs==1: 基本ペナルティ-3000.0, reactive_pairs>=2: 基本ペナルティ-4000.0 + 危険ピース毎に-1000.0（最大-6000.0）
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-        # Fixes rollback failure mode: 危険域での即時併合取りこぼし（axis 9.2とaxis 8.8の協調強化）
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, advice.md
 
         if (max_y >= 2.0 or deadline_crossed) and reactive_pair_count >= 1 and merge_grade == "NO":
             # 危険域またはdeadline_crossed時、reactive_pairsがあるのに即時併合不可の場合、非併合配置を強力にペナルティ
@@ -753,13 +753,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= danger_penalty
             reasons.append("DANGER_ZONE_REACTIVE_PENALTY_NO_MERGE")
 
-        # ----- evaluation axis 9.5: current type stack merge priority (v340: TypeN+1隣接考慮版 - 構造的改善) -----
+        # ----- evaluation axis 9.5: current type stack merge priority (v346: 条件緩和による未活用情報活用強化版) -----
         # advice.md「盤面にTypeNが二つ並んでいてnextもTypeNのとき、TypeN+1と隣接している方を優先してドロップする」を実装。
-        # 従来のaxis 9.5は単にsame_type_stack_topの上に置くだけであり、併合後のTypeN+1と隣接するかを考慮していなかった。
-        # この改善で、併合後に生成されるTypeN+1が盤面上のTypeN+1ピースと隣接する配置を優先し、将来の連鎖的併合を最大化する。
-        # 未活用情報（併合後タイプmerged_typeとその隣接状態）を活用した構造的変更であり、数値微調整ではない。
-        # refs: advice.md (azumag, nimdavirus), tmp/batch_summary.txt
-        # Fixes: 単に同タイプ上に置くだけの戦略から、併合後の連鎖を考慮した戦略への構造的転換
+        # v340でmerged_type（併合後のTypeN+1）と盤面上のTypeN+1の隣接を評価する構造的改善を実施したが、
+        # 適用条件がdanger_piece_count == 0 and reactive_pair_count == 0と厳しすぎて未活用だった。
+        # v346: 適用条件をtotal_immediate_merge_opportunities <= 2に緩和し、即時併合機会が少ない状況で
+        # 将来の連鎖的併合（merged_type隣接）を評価する戦略的配置を可能にする。
+        # 未活用情報（merged_type隣接状態）の活用を強化する条件緩和であり、数値微調整ではない。
+        # refs: advice.md (azumag, nimdavirus), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt
+        # Fixes: 即時併合機会が少ない状況での戦略的配置余地不足（axis 9.5条件緩和による未活用情報活用強化）
 
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
@@ -785,7 +787,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         adjacency_bonus = (2.0 - horiz_dist_to_merged) * 200.0  # 距離が近いほど高ボーナス
                         best_adjacent_bonus = max(best_adjacent_bonus, adjacency_bonus)
 
-            if best_adjacent_bonus > 0 and danger_piece_count == 0 and reactive_pair_count == 0:
+            # v346: 即時併合機会が少ない状況で、将来の連鎖的併合（merged_type隣接）を評価する構造的改善
+            # 従来のdanger_piece_count == 0 and reactive_pair_count == 0条件は厳しすぎて未活用
+            # total_immediate_merge_opportunities <= 2（即時併合機会が少ない）場合に戦略的配置を許容し、
+            # merged_typeとの隣接ボーナスを適用して将来の連鎖的併合可能性を最大化する
+            # refs: advice.md (Pitman_live), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
+            if best_adjacent_bonus > 0 and total_immediate_merge_opportunities <= 2:
                 score += best_adjacent_bonus
                 reasons.append("MERGED_TYPE_ADJACENCY_PRIORITY")
 
