@@ -81,6 +81,7 @@ IMPROVE_PID=0
 HALT_STRATEGY_AFTER_SOVIET=0
 STOP_REQUESTED=0
 _SOREN_CLEANED_UP=0
+DEFER_NEXT_GAME_PREP=0
 
 _cleanup_once() {
 	local reason="${1:-unknown}"
@@ -151,6 +152,44 @@ _run_scheduled_meriken_time_window() {
 	done
 	log "[MERIKEN_TIME] メリケンAIタイム終了"
 	soren91_stop 2>/dev/null || true
+	return 0
+}
+
+_wait_for_cycle_boundary() {
+	[ -f "$ACCUMULATED_GAMES_FILE" ] || return 0
+
+	local wait_acc_count=0
+	wait_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+	if [ "${wait_acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then
+		return 0
+	fi
+
+	log "[CYCLE] ${wait_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 → 改善起動待ち"
+	local wait_max="${CYCLE_BOUNDARY_WAIT_MAX_SEC:-60}"
+	case "$wait_max" in
+	''|*[!0-9]*) wait_max=60 ;;
+	esac
+	local waited=0
+	while [ "$waited" -lt "$wait_max" ]; do
+		if _is_improve_running; then
+			log "[CYCLE] 改善起動確認 (${waited}s) → 次ゲーム準備を保留"
+			return 1
+		fi
+
+		local current_acc_count=0
+		if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+			current_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
+		fi
+		if [ "${current_acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then
+			log "[CYCLE] サイクル境界処理完了 (${waited}s, acc=${current_acc_count:-0})"
+			return 0
+		fi
+
+		sleep 3
+		waited=$((waited + 3))
+	done
+
+	log "[CYCLE] 改善起動タイムアウト (${wait_max}s)"
 	return 0
 }
 
@@ -275,6 +314,14 @@ while true; do
 		fi
 	fi
 
+	if [ "${DEFER_NEXT_GAME_PREP:-0}" -eq 1 ]; then
+		log "[CYCLE] 改善明け: 保留していた次ゲーム準備を実行"
+		prepare_next_game
+		defer_rc=$?
+		_abort_if_interrupted "$defer_rc" "prepare_next_game(deferred)"
+		DEFER_NEXT_GAME_PREP=0
+	fi
+
 	# 非同期ジョブに渡すため、試合開始時点の値を固定
 	SCHEDULE_GAME_NUM="$GAME_NUM"
 	SCHEDULE_SCORE=$(_last_score)
@@ -367,24 +414,21 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 		fi
 	fi
 
-	# サイクル到達時: デーモンが改善を起動するまで待機してから次のゲームへ
-	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
-		_wait_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
-		if [ "${_wait_acc_count:-0}" -ge "$MIN_GAMES_BEFORE_IMPROVE" ]; then
-			log "[CYCLE] ${_wait_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 → 改善起動待ち"
-			local _wait_max=60 _waited=0
-			while [ "$_waited" -lt "$_wait_max" ]; do
-				if _is_improve_running || [ ! -f "$ACCUMULATED_GAMES_FILE" ]; then
-					log "[CYCLE] 改善起動確認 (${_waited}s) → 続行"
-					break
-				fi
-				sleep 3
-				_waited=$((_waited + 3))
-			done
-			if [ "$_waited" -ge "$_wait_max" ]; then
-				log "[CYCLE] 改善起動タイムアウト (${_wait_max}s)"
-			fi
-		fi
+	# サイクル到達時: 改善開始が見えたら次ゲーム準備を保留し、
+	# 改善完了後に改めて retry する。
+	if _wait_for_cycle_boundary; then
+		:
+	else
+		DEFER_NEXT_GAME_PREP=1
+		sleep 2
+		continue
+	fi
+
+	if _is_improve_running; then
+		log "[CYCLE] 改善開始を直前検出 → 次ゲーム準備を保留"
+		DEFER_NEXT_GAME_PREP=1
+		sleep 2
+		continue
 	fi
 
 	# 次の試合準備
