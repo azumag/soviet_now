@@ -171,6 +171,7 @@ run_cmd() {
 			ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic"
 			ANTHROPIC_AUTH_TOKEN="${ZAI_API_KEY:-}"
 			ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-5-turbo"
+			CLAUDE_CODE_EFFORT_LEVEL="max"
 		)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
