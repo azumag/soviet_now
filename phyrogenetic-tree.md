@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-27 01:29:21 JST`
-- Nodes: `748`
-- Edges: `1046`
-- Current: `d063eeb0f357`
+- Updated: `2026-03-27 02:15:47 JST`
+- Nodes: `749`
+- Edges: `1047`
+- Current: `d1611efd730f`
 - Anchor: `acd5803d8ef7`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_b4f65529d44a["b4f65529d44a<br/>g=2 n=2<br/>comp=9358.5"]
     h_888e7f7b3e23["888e7f7b3e23<br/>g=12 n=12<br/>comp=11152.4"]
     h_e0794c23cf9f["e0794c23cf9f<br/>g=12 n=12<br/>comp=11059.1"]
     h_566f8f1f8c82["566f8f1f8c82<br/>g=12 n=12<br/>comp=10799.3"]
@@ -72,9 +71,10 @@ flowchart TD
     h_e023e3f9ff45["e023e3f9ff45<br/>g=0"]
     h_880278a14edf["880278a14edf<br/>g=13 n=13<br/>comp=11151.8"]
     h_b9b4224aa237["b9b4224aa237<br/>g=12 n=12<br/>comp=9043.8"]
+    h_d063eeb0f357["d063eeb0f357<br/>g=13 n=13<br/>comp=10566.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_d063eeb0f357["d063eeb0f357<br/>CURRENT"]
+    h_d1611efd730f["d1611efd730f<br/>CURRENT"]
 
     h_888e7f7b3e23 -->|improve| h_e0794c23cf9f
     h_e0794c23cf9f -->|improve| h_566f8f1f8c82
@@ -146,13 +146,13 @@ flowchart TD
     h_880278a14edf -->|improve| h_b9b4224aa237
     h_b9b4224aa237 -. rollback .-> h_acd5803d8ef7
     h_acd5803d8ef7 -->|improve| h_d063eeb0f357
+    h_d063eeb0f357 -->|improve| h_d1611efd730f
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_b4f65529d44a plain;
     class h_888e7f7b3e23 plain;
     class h_e0794c23cf9f plain;
     class h_566f8f1f8c82 plain;
@@ -209,9 +209,10 @@ flowchart TD
     class h_e023e3f9ff45 plain;
     class h_880278a14edf plain;
     class h_b9b4224aa237 plain;
+    class h_d063eeb0f357 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_d063eeb0f357 current;
+    class h_d1611efd730f current;
 ```
 
 ## Detail 1/10
@@ -2796,9 +2797,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `d063eeb0f357`
-- Nodes in this diagram: `28`
-- Internal edges in this diagram: `22`
+- Range: `7bd6203f37b5` .. `d1611efd730f`
+- Nodes in this diagram: `29`
+- Internal edges in this diagram: `23`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2840,9 +2841,10 @@ flowchart TD
     h_e023e3f9ff45["e023e3f9ff45<br/>g=0"]
     h_880278a14edf["880278a14edf<br/>g=13 n=13<br/>comp=11151.8"]
     h_b9b4224aa237["b9b4224aa237<br/>g=12 n=12<br/>comp=9043.8"]
+    h_d063eeb0f357["d063eeb0f357<br/>g=13 n=13<br/>comp=10566.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_d063eeb0f357["d063eeb0f357<br/>CURRENT"]
+    h_d1611efd730f["d1611efd730f<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2866,6 +2868,7 @@ flowchart TD
     h_e023e3f9ff45 -. rollback .-> h_2e8948ea5fce
     h_2e8948ea5fce -->|improve| h_880278a14edf
     h_880278a14edf -->|improve| h_b9b4224aa237
+    h_d063eeb0f357 -->|improve| h_d1611efd730f
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2897,12 +2900,23 @@ flowchart TD
     class h_e023e3f9ff45 plain;
     class h_880278a14edf plain;
     class h_b9b4224aa237 plain;
+    class h_d063eeb0f357 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_d063eeb0f357 current;
+    class h_d1611efd730f current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10215 `d063eeb0 -> d1611efd`
+
+- scores: `12621 10950 9264 9106 9331 15403 11792 12750 11883 10215 13299 11478`
+- 9. Reactive pairs stacking bonus - v340: reactive_pairs>=1 && merge_grade=="NO" && 現在タイプにreactive/near pairがある場合、merged_type(N+1)に隣接する同タイプピースに着地する配置にボーナス
+- v340: axis 9.6 type-aware stacking版 - 未活用reactive_pairs type情報活用・高位スタッキング防止
+- v339 failure: vertical_bonus = (stack_y + 1.0) * 200.0 が高位ほど大きいボーナスを与え、
+- reactive_pairsはあるが現在タイプにreactive_pairsがない場合も高位に積み上げてmax_y悪化
+- ワーストゲーム(score0853)終盤turns 70-71: reactive=5だがnext_type=2にはreactive_pairsがなく、
+- type 2のy=2.4に積み上げてmax_y→3.11に悪化してゲームオーバー
 
 ### Improve Game#10202 `acd5803d -> d063eeb0`
 
