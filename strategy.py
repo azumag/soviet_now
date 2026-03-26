@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """strategy.py - AI改善対象の決定スクリプト
-v340: reactive_pairs>=3のみにaxis 8.8適用範囲を限定し即時併合優先強化
+v341: axis 9.2適用範囲をreactive_pairs<3に限定し戦略的配置余地確保
 
-+ v339の問題点: reactive_pairs < 3の時にaxis 8.8の+500.0圧縮ボーナスが高すぎて、即時併合機会を犠牲に戦略的配置を優先しすぎている
-+ batch_summaryで低スコア群がREACTIVE_PAIRS_COMPRESSIONを18.7%使っているがavg_score_delta=2.9と低く、即時併合機会を取りこぼしている
-+ advice.md「盤面状態に関わらず即時併合を最優先する。同タイプが来たらその上に置く。左右に同タイプがある場合は確実に併合できる位置を選ぶ」
-+ v340の改善点: axis 8.8の適用範囲をreactive_pairs >= 3のみに限定し、即時併合を優先する戦略へ切り替え
-+ reactive_pairs < 3の場合はcompression_bonusを削除し、axis 9.2のペナルティを優先して即時併合機会を確実に優先
-+ refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-+ Fixes rollback failure mode: reactive_pairs<3での戦略的配置優先による即時併合機会取りこぼし（axis 8.8 適用範囲限定）
++ v340の問題点: axis 9.2のペナルティ(-4500.0~-6500.0)がreactive_pairs>=1で一律に適用され、reactive_pairs>=3でもaxis 8.8のcompression_bonusを上回るため戦略的配置の余地が制限される
++ ワーストゲーム(score0859)終盤turns 74-79: reactive_pairs=3-4, merge_available=falseでaxis 9.2ペナルティが適用され続け、戦略的配置の選択肢が限られてmax_y runawayでゲームオーバー
++ ベストゲーム(score2069)終盤: reactive_pairs>=3で戦略的配置を維持しつつ即時併合を確実に捉えて高スコア
++ v341の改善点: axis 9.2の適用範囲をreactive_pairs < 3に限定し、reactive_pairs >= 3ではaxis 8.8のcompression_bonusだけで評価
++   - reactive_pairs >= 3: axis 9.2ペナルティを適用せず、axis 8.8のcompression_bonusだけで戦略的配置を判断
++   - reactive_pairs < 3: axis 9.2ペナルティを適用し、即時併合を強制的に待機（戦略的死lock状態回避）
++ refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
++ Fixes rollback failure mode: reactive_pairs>=3でのaxis 9.2ペナルティによる戦略的配置制限（axis 9.2 適用範囲をreactive_pairs<3に限定）
 
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
@@ -29,9 +30,9 @@ Game Overview:
            8.5. Danger zone immediate merge bonus - v321: 危険域即時併合強化
            8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
            8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
-           8.8. Reactive pairs compression bonus - v340: reactive_pairs>=3のみに適用範囲を限定し即時併合優先強化
+           8.8. Reactive pairs compression bonus - v341: reactive_pairs>=3で戦略的配置余地確保版
            9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
-           9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
+           9.2. Danger zone reactive penalty - v341: reactive_pairs<3のみ適用し戦略的配置余地確保
            9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
 
 
@@ -50,6 +51,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
     # --- Change History ---
+    # v341: axis 9.2適用範囲をreactive_pairs<3に限定し戦略的配置余地確保
+    # v340の問題点: axis 9.2のペナルティ(-4500.0~-6500.0)がreactive_pairs>=1で一律に適用され、reactive_pairs>=3でもaxis 8.8のcompression_bonusを上回るため戦略的配置の余地が制限される
+    # ワーストゲーム(score0859)終盤turns 74-79: reactive_pairs=3-4, merge_available=falseでaxis 9.2ペナルティが適用され続け、戦略的配置の選択肢が限られてmax_y runawayでゲームオーバー
+    # ベストゲーム(score2069)終盤: reactive_pairs>=3で戦略的配置を維持しつつ即時併合を確実に捉えて高スコア
+    # axis 9.2の適用範囲をreactive_pairs < 3に限定し、reactive_pairs >= 3ではaxis 8.8のcompression_bonusだけで評価
+    #   - reactive_pairs >= 3: axis 9.2ペナルティを適用せず、axis 8.8のcompression_bonusだけで戦略的配置を判断
+    #   - reactive_pairs < 3: axis 9.2ペナルティを適用し、即時併合を強制的に待機（戦略的死lock状態回避）
+    # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+    #       game_history/20260326_162430_score0859.jsonl turns 73-80, game_history/20260326_162857_score2069.jsonl turns 104-111
+    # Fixes rollback failure mode: reactive_pairs>=3でのaxis 9.2ペナルティによる戦略的配置制限（axis 9.2 適用範囲をreactive_pairs<3に限定）
+    #
     # v340: reactive_pairs>=3のみにaxis 8.8適用範囲を限定し即時併合優先強化
     # v339の問題点: reactive_pairs < 3の時にaxis 8.8の+500.0圧縮ボーナスが高すぎて、即時併合機会を犠牲に戦略的配置を優先しすぎている
     # batch_summaryで低スコア群がREACTIVE_PAIRS_COMPRESSIONを18.7%使っているがavg_score_delta=2.9と低く、即時併合機会を取りこぼしている
@@ -714,12 +726,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # v327: danger_piece_count > 0 の場合のボーナスを削除 - axis 9.2のペナルティを優先
                 # 危険ピースがある状況では、即時併合を最優先する戦略へ切り替え
 
-        # ----- evaluation axis 8.8: reactive pairs compression bonus (v340: reactive_pairs>=3のみに適用範囲を限定し即時併合優先強化) -----
-        # v340: reactive_pairs >= 3の場合のみcompression_bonusを適用し、即時併合を優先する戦略へ切り替え
-        # reactive_pairs < 3の場合はcompression_bonusを削除し、axis 9.2のペナルティを優先して即時併合を最優先
-        # advice.md「盤面状態に関わらず即時併合を最優先する。同タイプが来たらその上に置く。左右に同タイプがある場合は確実に併合できる位置を選ぶ」
-        # batch_summaryで低スコア群がREACTIVE_PAIRS_COMPRESSIONを18.7%使っているがavg_score_delta=2.9と低く、即時併合機会を犠牲に戦略的配置を優先しすぎている
-        # reactive_pairs < 3のcompression_bonus(+500.0)を削除し、axis 9.2のペナルティを優先して即時併合機会を確実に優先
+        # ----- evaluation axis 8.8: reactive pairs compression bonus (v341: reactive_pairs>=3で戦略的配置余地確保版) -----
+        # v341: axis 9.2の適用範囲をreactive_pairs < 3に限定し、reactive_pairs >= 3ではaxis 8.8のcompression_bonusだけで戦略的配置を判断
+        # v340の問題点: axis 9.2のペナルティ(-4500.0~-6500.0)がreactive_pairs>=1で一律に適用され、reactive_pairs>=3でもaxis 8.8のcompression_bonusを上回るため戦略的配置の余地が制限される
+        # ワーストゲーム(score0859)終盤turns 74-79: reactive_pairs=3-4, merge_available=falseでaxis 9.2ペナルティが適用され続け、戦略的配置の選択肢が限られてmax_y runawayでゲームオーバー
+        # ベストゲーム(score2069)終盤: reactive_pairs>=3で戦略的配置を維持しつつ即時併合を確実に捉えて高スコア
+        # axis 8.8のcompression_bonusはreactive_pairs >= 3でのみ適用され、axis 9.2ペナルティが適用されないため戦略的配置の余地を確保
         # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
         # Fixes rollback failure mode: reactive_pairs<3での戦略的配置優先による即時併合機会取りこぼし（axis 8.8 適用範囲限定）
 
@@ -743,14 +755,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if reactive_pair_count >= 1:
                 reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
-        # ----- evaluation axis 9.2: danger zone reactive penalty (v340: reactive_pairs<3でcompression_bonus削除し即時併合優先強化) -----
-        # v340: reactive_pairs < 3の場合にaxis 8.8のcompression_bonusを削除し、axis 9.2のペナルティを優先して即時併合を最優先
-        # reactive_pairs >= 3の場合：axis 8.8の+300.0圧縮ボーナスによって戦略的配置の余地を確保
-        # axis 9.2のペナルティ（-4500.0~-6500.0）はcompression_bonusを上回るため、即時併合がある場合は即時併合が優先される
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-        # Fixes rollback failure mode: reactive_pairs<3での戦略的配置優先による即時併合機会取りこぼし（axis 8.8 適用範囲限定）
+        # ----- evaluation axis 9.2: danger zone reactive penalty (v341: reactive_pairs<3のみ適用し戦略的配置余地確保) -----
+        # v340の問題点: axis 9.2のペナルティ(-4500.0~-6500.0)がreactive_pairs>=1で一律に適用され、reactive_pairs>=3でもaxis 8.8のcompression_bonusを上回るため戦略的配置の余地が制限される
+        # ワーストゲーム(score0859)終盤turns 74-79: reactive_pairs=3-4, merge_available=falseでaxis 9.2ペナルティが適用され続け、戦略的配置の選択肢が限られてmax_y runawayでゲームオーバー
+        # ベストゲーム(score2069)終盤: reactive_pairs>=3で戦略的配置を維持しつつ即時併合を確実に捉えて高スコア
+        # v341: axis 9.2の適用範囲をreactive_pairs < 3に限定し、reactive_pairs >= 3ではaxis 8.8のcompression_bonusだけで評価
+        #   - reactive_pairs >= 3: axis 9.2ペナルティを適用せず、axis 8.8のcompression_bonusだけで戦略的配置を判断
+        #   - reactive_pairs < 3: axis 9.2ペナルティを適用し、即時併合を強制的に待機（戦略的死lock状態回避）
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+        #       game_history/20260326_162430_score0859.jsonl turns 73-80, game_history/20260326_162857_score2069.jsonl turns 104-111
+        # Fixes rollback failure mode: reactive_pairs>=3でのaxis 9.2ペナルティによる戦略的配置制限（axis 9.2 適用範囲をreactive_pairs<3に限定）
 
-        if (max_y >= 2.0 or deadline_crossed) and reactive_pair_count >= 1 and merge_grade == "NO":
+        if (max_y >= 2.0 or deadline_crossed) and reactive_pair_count < 3 and merge_grade == "NO":
             # 危険域またはdeadline_crossed時、reactive_pairsがあるのに即時併合不可の場合、非併合配置を強力にペナルティ
             # v338: reactive_pairs中間危険域での即時併合優先を強化
             # reactive_pairs == 1: 基本ペナルティ-3500.0, reactive_pairs >= 2: 基本ペナルティ-4500.0 + 危険ピース毎に-1000.0（最大-6500.0）
