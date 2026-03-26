@@ -1,12 +1,13 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v73)
+ * strategy.mjs - ドロップ位置決定戦略 (v74)
  *
- * v73: T1マージ優先度修正
- * - 【GBGモードT1順序修正】immediateマージをtower buildingより先に評価
- *   (v72でt1Count>=14時にtowerを優先→T1スタックのみでT2生成ゼロが続く問題を修正)
- * - 【ULTRA_EXTREMEパージモード修正】T1RatioPurgeをchain/immediateの後フォールバックとして配置
- *   (v72でchain/immediateより前に割り込み、マージ保証なしtower buildingを最優先していた問題を修正)
- * - 継承: v72のT1タワーボーナス・EMERGENCY中央寄りは保持
+ * v74: EMERGENCY マージ検出修正
+ * - 【EMERGENCY 高さフィルタ修正】盤面が DEADLINE_Y を超えた状態でも t3/t6/t7/t8 等の
+ *   高価値ピースをマージ候補として発見できるよう findEmergencyMergeRelaxed を追加
+ *   (v73問題: findAnyMerge が p.y < 2.5 フィルタで全候補除外 → EMERGENCY_ALL_DANGER に連続落下)
+ *   (death例: turn107 types=[t1:24,t3:6,t6:3,t7:3,t8:3] でマージゼロ → 2ターン連続EMERGENCY_ALL_DANGER)
+ * - 【EMERGENCY hold最終手段】nextType マージ不可時に hold 型でも試みる
+ * - 継承: v73 の T1 マージ優先度修正 (GBG モード T1 順序修正, ULTRA_EXTREME パージ修正)
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -279,17 +280,23 @@ export function decide(boardState) {
 
   if (isCritical) {
     if (overDeadlineCount >= FINE_COLS.length - 3) {
+      // [v74修正] findAnyMerge → findEmergencyMergeRelaxed: DEADLINE_Y 上のピースも検出
       if (canHold && hold && hold.type >= 2) {
-        const holdEmergMerge = findAnyMerge(activePieces, hold.type, colHeights, dangerBias);
+        const holdEmergMerge = findEmergencyMergeRelaxed(activePieces, hold.type, colHeights);
         if (holdEmergMerge !== null) return { x: 0, reason: `EMERGENCY_HOLD_T${hold.type}`, hold: true };
       }
       if (nextType >= 2) {
-        const emergMerge = findAnyMerge(activePieces, nextType, colHeights, dangerBias);
+        const emergMerge = findEmergencyMergeRelaxed(activePieces, nextType, colHeights);
         if (emergMerge !== null) return { x: emergMerge, reason: `EMERGENCY_MERGE_T${nextType}` };
       }
       if (nextType === 1) {
         const emergT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount, garbageRatio, gaugeLevel);
         if (emergT1 !== null) return { x: emergT1, reason: 'EMERGENCY_T1_IMMEDIATE' };
+      }
+      // [v74追加] hold の最終手段: nextType がマージできなくても hold 型で試みる
+      if (canHold && hold && hold.type) {
+        const holdLastMerge = findEmergencyMergeRelaxed(activePieces, hold.type, colHeights);
+        if (holdLastMerge !== null) return { x: 0, reason: `EMERGENCY_HOLD_LAST_T${hold.type}`, hold: true };
       }
       const emergencyIdx = findLowestCenterColIdx(colHeights);
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
@@ -1340,4 +1347,35 @@ function findLeastOccupiedX(pieces) {
 
 function clampX(x) {
   return Math.max(-3.0, Math.min(3.0, x));
+}
+
+// [v74追加] EMERGENCY 用の高さフィルタ緩和マージ検出
+// findAnyMerge は p.y < DEADLINE_Y (2.5) で全候補除外するため、
+// 盤面が溢れた状態では t3/t6/t7/t8 等のマージ機会を完全に見逃す。
+// この関数は DEADLINE_Y + 0.7 まで候補を拡大し、真の緊急時にマージを発見する。
+function findEmergencyMergeRelaxed(pieces, nextType, colHeights) {
+  const candidates = pieces.filter(p =>
+    p.type === nextType && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y + 0.7
+  );
+  if (candidates.length === 0) return null;
+
+  let best = null;
+  let bestScore = -Infinity;
+
+  for (const t of candidates) {
+    const ci = nearestColIdx(t.x);
+    // 通常より緩い高さ上限 (DEADLINE_Y + 0.6)
+    if (colHeights[ci] >= DEADLINE_Y + 0.6) continue;
+    let s = 50;
+    s -= colHeights[ci] * 12.0; // 高さペナルティを強化
+    s -= Math.abs(t.x) * 3.0;  // 壁際ペナルティを強化
+    // チェイン可能性ボーナス (緊急時も連鎖を狙う)
+    s += countNear(pieces, t.x, nextType + 1, 2.0) * 12;
+    s += countNear(pieces, t.x, nextType + 2, 2.5) * 6;
+    // 高価値タイプボーナス
+    s += nextType * 3;
+    if (s > bestScore) { bestScore = s; best = t; }
+  }
+
+  return best ? clampX(best.x) : null;
 }
