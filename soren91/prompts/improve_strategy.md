@@ -7,21 +7,14 @@ You are 同志AI — improving the strategy for a Suika-style (watermelon game /
 ### ピースと併合
 - 15種類のピース (type 1〜15)。type が大きいほどサイズ（半径）が大きい
 - **同じ type のピース同士が物理的に接触すると、1つ上の type に併合**: type N + type N → type N+1
-- 併合するとスコア加算。高い type ほど高得点
-- type 15 が最大（ソ連建国）。type 15 同士の併合はない
+- 併合するとランダムな対戦相手におじゃまを送れる。高い type ほど多く送れる
+- type 15 が最大（ソ連建国）。type 15 同士の併合すると消える
 - **併合は物理的に接触したペアのみ発生**。同じ type でも離れていれば併合しない
 
 ### 物理エンジンの挙動
 - ピースは**重力で落下**し、他のピースや壁・床と**衝突・回転**する
 - ピースは円ではなく**国土形状の凸ポリゴン**（異方性がある）。着地後に回転・転がりが発生し、最終位置の正確な予測は困難
 - **併合時に爆発衝撃波が発生**。周囲のピースが押しのけられ、空間配置が大きく変わる
-- この衝撃波が**連鎖反応の主因**: 併合 → 衝撃波 → 別のピースが接触 → さらに併合
-
-### 連鎖反応（チェイン）— 高得点の鍵
-- type N-1 のペアを type N の近くに事前配置 → N-1 併合の衝撃波で type N 同士も接触 → 多段連鎖
-- **連鎖を設計することが高スコアへの最重要戦略**
-- 壁際での併合は反対方向への射出を引き起こし、予想外の連鎖が生まれることもある
-- 小ピース (type 1〜4) の落下衝撃で周囲のピースが動く「攪拌効果」も間接的な併合トリガーになる
 
 ### 盤面
 - Board X range: [-3.0, +3.0] (walls at ±3.5)
@@ -32,7 +25,7 @@ You are 同志AI — improving the strategy for a Suika-style (watermelon game /
 ### 91人対戦版の特徴
 - 他プレイヤーとリアルタイム対戦。生存とスコアの両方が重要
 - **おじゃまブロック**: 対戦相手から送られる灰色ブロック（後述）
-- おじゃまゲージ: 相手の併合活動に応じて溜まり、満タンで自分の盤面におじゃまが降る
+- おじゃまゲージ: 相手の併合活動があるとカウントが始まり、カウントがゼロになるとおじゃまゲージが時間に準じて溜まる。、満タンで自分の盤面におじゃまが降る
 
 ## Strategy Interface
 ```javascript
@@ -101,8 +94,6 @@ small pieces (type 1〜4) は落下時の衝撃で周囲のピースを揺らす
 
 ## Important Constraints
 - Input comes from screenshot analysis (imperfect - pieces may be misclassified)
-- Strategy should be noise-tolerant
-- Keep the code simple and readable
 - Do NOT import external modules - pure logic only
 - You MUST only output strategy.mjs code. Do NOT modify any other files
 - The function signature `export function decide(boardState)` MUST be preserved
