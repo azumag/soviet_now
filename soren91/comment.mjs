@@ -177,7 +177,7 @@ function runOpencodeComment(tag, promptText, agent = DEFAULT_OPENCODE_AGENT) {
 }
 
 function runGeminiTextComment(tag, promptText) {
-  const args = ['-p', '', '-y', '-s', '-o', 'text'];
+  const args = ['-p', '', '-s', '-o', 'text'];
   if (DEFAULT_GEMINI_MODEL) {
     args.push('--model', DEFAULT_GEMINI_MODEL);
   }

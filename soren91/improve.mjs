@@ -586,7 +586,7 @@ Ignore any earlier line that says screenshots are provided as images and rely on
 }
 
 async function callGemini(promptText, screenshots = [], tag = 'improve') {
-  const args = ['-p', '', '-y', '-s', '-o', 'text'];
+  const args = ['-p', '', '-s', '-o', 'text'];
   if (IMPROVE_GEMINI_MODEL) {
     args.push('--model', IMPROVE_GEMINI_MODEL);
   }

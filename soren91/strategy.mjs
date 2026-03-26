@@ -1,12 +1,15 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v75)
+ * strategy.mjs - ドロップ位置決定戦略 (v76)
  *
- * v75: 高typeピース活用改善 + EXTREME閾値調整
- * - 【findBestMergeRelaxed追加】type>=5のピースがDEADLINE_Y付近(+0.4まで)にある場合も
- *   マージ対象として検出 (v74問題: t7:4等がy=2.4+にある場合findBestMergeで除外)
- *   ultraMassMode/isCriticalでnextType>=5の高value mergeを確実に捕捉
- * - 【EXTREME_T1_FLOOD_THRESHOLD 25→30】v27ベストアンカー水準に戻す
- *   過剰なextreme介入を抑制し自然な連鎖形成を妨げない
+ * v76: 高typeピース/T1管理の改善と高さペナルティ強化
+ * - 【findBestMergeの高さペナルティ強化】WARN_Y超え、またはavgHeightが高レベルの場合、
+ *   ドロップ候補の高さペナルティを強化。ボード全体の高さ上昇に早期対応し、デッドライン接近を緩和。
+ * - 【findBestMergeRelaxedの壁際ペナルティ緩和】type>=5の高価値マージがDEADLINE_Y付近で発生する場合、
+ *   壁際配置のペナルティを若干緩和。緊急時に有効なマージ機会を見逃さないようにする。
+ * - 【ULTRA_EXTREME_HOLD_T1_FOR_T2の条件調整】ultraMassMode & extremeT1FloodでnextTypeが1の場合、
+ *   nextPiecesにtype 2がある場合のHOLD条件を調整。現在のT1で即時マージできない場合にのみHOLDする。
+ *   これにより、即時利用可能なT1を無駄にHOLDすることを防ぐ。
+ * - 継承: v75の高typeピース活用改善 + EXTREME閾値調整
  * - 継承: v74のEMERGENCY修正 (findEmergencyMergeRelaxed, hold最終手段)
  */
 
@@ -185,9 +188,10 @@ export function decide(boardState) {
             return { x: 0, reason: `ULTRA_EXTREME_HOLD_T1_FOR_T${bestNext}`, hold: true };
           }
         }
+        // [v76] type 2の場合も、現在のT1で即時マージできないならHOLD
         if (bestNext === 2) {
-          const hasImmediateMerge = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount, garbageRatio, gaugeLevel) !== null;
-          if (!hasImmediateMerge) {
+          const currentT1ImmediateMerge = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount, garbageRatio, gaugeLevel);
+          if (currentT1ImmediateMerge === null) {
             return { x: 0, reason: `ULTRA_EXTREME_HOLD_T1_FOR_T${bestNext}`, hold: true };
           }
         }
@@ -271,7 +275,7 @@ export function decide(boardState) {
       }
     }
     const ultraCluster = findClusterDrop(activePieces, nextType, colHeights, dangerBias);
-    if (ultraCluster) return { x: ultraCluster.x, reason: `ULTRA_CLUSTER_T${nextType}` };
+    if (ultraCluster) return { ...ultraCluster, reason: `ULTRA_CLUSTER_T${nextType}` };
     const lowestDrop = findLowestSafeDrop(colHeights, dangerBias);
     return { x: lowestDrop.x, reason: `ULTRA_LOWEST_Y${colHeights[lowestDrop.idx].toFixed(1)}` };
   }
@@ -1040,8 +1044,8 @@ function findT1ChainAnchor(pieces, colHeights, dangerBias, t1Flood = false, garb
     if (Math.abs(t1.x) > 2.2) s -= 13;
     if (dangerBias < 0 && t1.x < -0.5) s -= 8;
     if (dangerBias > 0 && t1.x > 0.5) s -= 8;
-    if (dangerBias >= 2 && t1.x > 0) s -= 15;
-    if (dangerBias <= -2 && t1.x < 0) s -= 15;
+    if (dangerBias >= 2 && t1.x < 0) s -= 15;
+    if (dangerBias <= -2 && t1.x > 0) s -= 15;
 
     if (s > bestScore) { bestScore = s; best = t1; }
   }
@@ -1221,15 +1225,16 @@ function findLowestSafeDrop(colHeights, dangerBias) {
   let bestIdx = 5;
 
   for (let i = 0; i < FINE_COLS.length; i++) {
+    const cx = FINE_COLS[i];
     if (colHeights[i] >= DEADLINE_Y + 0.2) continue;
     let s = -colHeights[i] * 8.0;
-    s -= Math.abs(FINE_COLS[i]) * 1.0;
-    if (Math.abs(FINE_COLS[i]) > 2.2) s -= 8;
-    if (Math.abs(FINE_COLS[i]) > 2.4) s -= 15;
-    if (dangerBias <= -1 && FINE_COLS[i] < -1.0) s -= 10;
-    if (dangerBias >= 1 && FINE_COLS[i] > 1.0) s -= 10;
-    if (dangerBias <= -2 && FINE_COLS[i] < 0) s -= 8;
-    if (dangerBias >= 2 && FINE_COLS[i] > 0) s -= 8;
+    s -= Math.abs(cx) * 1.0;
+    if (Math.abs(cx) > 2.2) s -= 8;
+    if (Math.abs(cx) > 2.4) s -= 15;
+    if (dangerBias <= -1 && cx < -1.0) s -= 10;
+    if (dangerBias >= 1 && cx > 1.0) s -= 10;
+    if (dangerBias <= -2 && cx < 0) s -= 8;
+    if (dangerBias >= 2 && cx > 0) s -= 8;
     if (s > bestScore) { bestScore = s; bestIdx = i; }
   }
 
@@ -1253,6 +1258,14 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
 
     let s = 0;
     s -= colH * 4.0;
+    // [v76] 高さペナルティを強化
+    if (colH > WARN_Y) {
+      s -= (colH - WARN_Y) * 8.0;
+    }
+    if (avgHeight > WARN_Y + 0.3) {
+      s -= colH * 2.0;
+    }
+
     if (colH > DEADLINE_Y - 0.4) s -= 10;
     if (colH > avgHeight + 0.8) s -= 2;
     s += nextType * 2.0;
@@ -1425,7 +1438,8 @@ function findBestMergeRelaxed(pieces, nextType, colHeights, dangerBias) {
     // 同typeが複数あればボーナス (即時マージ可能性)
     s += candidates.filter(p => p !== t && Math.abs(p.x - t.x) < 1.5).length * 8;
 
-    s -= Math.abs(t.x) * 3.0;
+    // [v76] 壁際ペナルティを若干緩和
+    s -= Math.abs(t.x) * 2.0;
     if (Math.abs(t.x) > 2.2) s -= 10;
     if (dangerBias <= -2 && t.x < 0) s -= 10;
     if (dangerBias >= 2 && t.x > 0) s -= 10;

@@ -282,13 +282,13 @@ _soren91_run_text_provider() {
 			claude -p "$prompt" >"$out_file" 2>"$err_file"
 		fi
 		;;
-	gemini)
-		if [ -n "$model" ]; then
-			gemini -p "$prompt" -y -s -o text --model "$model" >"$out_file" 2>"$err_file"
-		else
-			gemini -p "$prompt" -y -s -o text >"$out_file" 2>"$err_file"
-		fi
-		;;
+		gemini)
+			if [ -n "$model" ]; then
+				gemini -p "$prompt" -s -o text --model "$model" >"$out_file" 2>"$err_file"
+			else
+				gemini -p "$prompt" -s -o text >"$out_file" 2>"$err_file"
+			fi
+			;;
 	*)
 		rm -f "$out_file" "$err_file"
 		return 1
