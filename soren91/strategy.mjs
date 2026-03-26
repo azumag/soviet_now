@@ -1,13 +1,13 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v74)
+ * strategy.mjs - ドロップ位置決定戦略 (v75)
  *
- * v74: EMERGENCY マージ検出修正
- * - 【EMERGENCY 高さフィルタ修正】盤面が DEADLINE_Y を超えた状態でも t3/t6/t7/t8 等の
- *   高価値ピースをマージ候補として発見できるよう findEmergencyMergeRelaxed を追加
- *   (v73問題: findAnyMerge が p.y < 2.5 フィルタで全候補除外 → EMERGENCY_ALL_DANGER に連続落下)
- *   (death例: turn107 types=[t1:24,t3:6,t6:3,t7:3,t8:3] でマージゼロ → 2ターン連続EMERGENCY_ALL_DANGER)
- * - 【EMERGENCY hold最終手段】nextType マージ不可時に hold 型でも試みる
- * - 継承: v73 の T1 マージ優先度修正 (GBG モード T1 順序修正, ULTRA_EXTREME パージ修正)
+ * v75: 高typeピース活用改善 + EXTREME閾値調整
+ * - 【findBestMergeRelaxed追加】type>=5のピースがDEADLINE_Y付近(+0.4まで)にある場合も
+ *   マージ対象として検出 (v74問題: t7:4等がy=2.4+にある場合findBestMergeで除外)
+ *   ultraMassMode/isCriticalでnextType>=5の高value mergeを確実に捕捉
+ * - 【EXTREME_T1_FLOOD_THRESHOLD 25→30】v27ベストアンカー水準に戻す
+ *   過剰なextreme介入を抑制し自然な連鎖形成を妨げない
+ * - 継承: v74のEMERGENCY修正 (findEmergencyMergeRelaxed, hold最終手段)
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -16,7 +16,7 @@ const WARN_Y = 1.2;
 const WALL_MARGIN = 2.8;
 const MAX_ACTIVE_PIECES = 85;
 const ULTRA_MASS_THRESHOLD = 70;
-const EXTREME_T1_FLOOD_THRESHOLD = 25;
+const EXTREME_T1_FLOOD_THRESHOLD = 30;
 const SURVIVAL_PIECE_THRESHOLD = 78;
 const LOW_MASS_CRITICAL_RELIEF_PIECE_THRESHOLD = 32;
 const LOW_MASS_CRITICAL_RELIEF_AVG_HEIGHT = 1.45;
@@ -160,6 +160,11 @@ export function decide(boardState) {
       if (nextType >= 4) {
         const bestMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0);
         if (bestMerge) return { ...bestMerge, reason: `ULTRA_BEST_T${nextType}` };
+        // [v75] 高さフィルタ緩和マージ: t5+ピースがDEADLINE_Y付近にある場合も捕捉
+        if (nextType >= 5) {
+          const relaxedMerge = findBestMergeRelaxed(activePieces, nextType, colHeights, dangerBias);
+          if (relaxedMerge) return { ...relaxedMerge, reason: `ULTRA_RELAX_T${nextType}` };
+        }
         if (nextType >= 5 && canHold && !hold && !isWarn) {
           return { x: 0, reason: `ULTRA_HOLD_PROTECT_T${nextType}`, hold: true };
         }
@@ -421,6 +426,11 @@ export function decide(boardState) {
         if (mergeColH < DEADLINE_Y + 0.3) {
           return { x: critFallbackMerge.x, reason: `CRITICAL_ANY_MERGE_T${nextType}` };
         }
+      }
+      // [v75] 高さフィルタ緩和マージ: t5+ピースがDEADLINE_Y付近にいる場合も捕捉
+      if (nextType >= 5) {
+        const critRelaxMerge = findBestMergeRelaxed(activePieces, nextType, colHeights, dangerBias);
+        if (critRelaxMerge) return { ...critRelaxMerge, reason: `CRITICAL_RELAX_T${nextType}` };
       }
     }
 
@@ -1378,4 +1388,53 @@ function findEmergencyMergeRelaxed(pieces, nextType, colHeights) {
   }
 
   return best ? clampX(best.x) : null;
+}
+
+// [v75追加] 高typeピース (type>=5) 用の高さフィルタ緩和マージ検出
+// findBestMerge は p.y < DEADLINE_Y - 0.1 フィルタを使用するため、
+// t7:4 等がy=2.4+ にある場合に ultraMassMode/isCritical でマージ機会を見逃す。
+// この関数は DEADLINE_Y + 0.4 まで候補を拡大してt5+の高value mergeを捕捉する。
+function findBestMergeRelaxed(pieces, nextType, colHeights, dangerBias) {
+  if (nextType < 5) return null;
+
+  const candidates = pieces.filter(p =>
+    p.type === nextType && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y + 0.4
+  );
+  if (candidates.length === 0) return null;
+
+  let bestTarget = null;
+  let bestScore = -Infinity;
+
+  for (const t of candidates) {
+    const colIdx = nearestColIdx(t.x);
+    const colH = colHeights[colIdx];
+    if (colH > DEADLINE_Y + 0.35) continue;
+
+    let s = 60;
+    s -= colH * 6.0;
+    s += nextType * 4.0; // 高typeほど価値が高い
+
+    // 連鎖ポテンシャル
+    const c1 = countNear(pieces, t.x, nextType + 1, 2.0);
+    const c2 = countNear(pieces, t.x, nextType + 2, 2.5);
+    const c3 = countNear(pieces, t.x, nextType + 3, 3.0);
+    let chainScore = c1 * 20 + c2 * 10 + c3 * 5;
+    if (c1 > 0 && c2 > 0) chainScore += 15;
+    s += chainScore;
+
+    // 同typeが複数あればボーナス (即時マージ可能性)
+    s += candidates.filter(p => p !== t && Math.abs(p.x - t.x) < 1.5).length * 8;
+
+    s -= Math.abs(t.x) * 3.0;
+    if (Math.abs(t.x) > 2.2) s -= 10;
+    if (dangerBias <= -2 && t.x < 0) s -= 10;
+    if (dangerBias >= 2 && t.x > 0) s -= 10;
+    if (dangerBias <= -1 && t.x < -0.5) s -= 5;
+    if (dangerBias >= 1 && t.x > 0.5) s -= 5;
+
+    if (s > bestScore) { bestScore = s; bestTarget = t; }
+  }
+
+  if (!bestTarget) return null;
+  return { x: clampX(bestTarget.x), reason: `MERGE_RELAX_T${nextType}_X${bestTarget.x.toFixed(1)}` };
 }
