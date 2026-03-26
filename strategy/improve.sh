@@ -624,6 +624,11 @@ trigger_adaptive_improvement() {
 	if [ "${IMPROVE_DAEMON_MODE:-0}" != "1" ]; then
 		if check_regression; then
 			if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+				python3 -c "
+import json
+f='$TMP_STATE_DIR/current_prediction.json'
+d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
+" 2>/dev/null || true
 				./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
 			fi
 			_clear_accumulated_data
@@ -690,6 +695,11 @@ trigger_adaptive_improvement() {
 	# リグレッション検知 (daemon モードでも改善開始直前にチェック)
 	if check_regression; then
 		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+			python3 -c "
+import json
+f='$TMP_STATE_DIR/current_prediction.json'
+d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
+" 2>/dev/null || true
 			./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
 		fi
 		_clear_accumulated_data

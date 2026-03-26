@@ -311,6 +311,13 @@ while true; do
 	# (daemon は改善中にブロックされるため、soren_loop 側で必ず走らせる)
 	if check_regression; then
 		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+			# best_outcome を粛清(3)に更新: resolve失敗時でも _clear_accumulated_data の
+			# cleanup が best_outcome=3 で resolve するようにする
+			python3 -c "
+import json
+f='$TMP_STATE_DIR/current_prediction.json'
+d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
+" 2>/dev/null || true
 			./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
 		fi
 		_clear_accumulated_data
