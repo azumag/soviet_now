@@ -37,7 +37,8 @@ Game Overview:
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9. Reactive pairs stacking bonus - v340: reactive_pairs>=1 && merge_grade=="NO" && 現在タイプにreactive/near pairがある場合、merged_type(N+1)に隣接する同タイプピースに着地する配置にボーナス
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-             9.5. Current type stack merge priority - v344: type-scaled stacking bonus for high-type growth pipeline
+             9.5. Current type stack merge priority - v345: stacking height_mult reduction + type-scaled bonus
+             # v345: height_mult reduction for same-type stacking - high-type growth pipeline enablement
              # v339: axis 9.7 (REACTIVE_PAIRS_COMPRESSION) 削除 - 即時併合機会最大化のため評価軸シンプル化
 
 
@@ -56,6 +57,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
+        # v345: 同typeスタッキングheight_mult reduction - 高type成長パイプライン構築強化
+        # ワーストゲーム(score0733)でmerge_available=falseが7連続しmax_type=13止まりの即死。
+        # 既存stacking bonusはheight penaltyに打ち消され同typeスタッキングが選ばれない。
+        # axis 2のheight_multを同type近接位置で0.6xに減らす構造的改善。
+        # refs: game_history/20260327_060657_score0733.jsonl, game_history/20260327_061654_score2026.jsonl
+        # Fixes rollback failure mode: 即時併合機会なし時の高type成長パイプライン構築不能
+        #
         # v344: axis 9.5同タイプスタッキングボーナスを併合スコア比例に変更 - 高type成長パイプライン強化
         # 固定+100/+300ボーナスはtype 2(併合値3)とtype 14(併合値105)を同列に扱い、高type成長インセンティブ不足だった
         # SCORE_TABLE[type] * multiplierに変更し、高typeほど強いスタッキング incentiveを付与
@@ -354,9 +362,16 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v344: axis 9.5同タイプスタッキングボーナスを併合スコア比例に変更 - 高type成長パイプライン強化
+    """v345: 同typeスタッキングheight_mult reduction - 高type成長パイプライン構築強化
 
-    v343 status quo: SAME_TYPE_STACK/MERGE_PRIORITYボーナスが固定(+100/+300)でtypeに依存しない。
+    v345: ワーストゲーム(score0733)終盤でmerge_available=falseが7連続しmax_type=13止まりの即死。
+    既存stacking bonus(+50〜+315)はMEDIUM/HIGH phaseのheight_penaltyに打ち消され、
+    同typeスタッキングが選ばれずHEIGHT_CONTROL(低配置)がデフォルトになる。
+    axis 2のheight_multを同type近接位置で0.6xに減らし、stacking bonusがheight penaltyを
+    上回れるようにする構造的改善。高typeの同type近接配置が高type成長パイプラインを構築し、
+    最終的にtype 14-15到達率を向上させる。
+
+    v344: type-scaled stacking bonus was too small to overcome height penalty in MEDIUM/HIGH phase SAME_TYPE_STACK/MERGE_PRIORITYボーナスが固定(+100/+300)でtypeに依存しない。
     type 14のスタッキング(併合値105)とtype 2のスタッキング(併合値3)が同列に扱われ、
     高type成長パイプラインの構築 incentive が不足していた。
     ワーストゲーム(score0289)はtype 12止まり、ベストゲーム(score2184)はtype 13-14到達で2184点。
@@ -641,6 +656,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 0.3
+
+        # ----- v345: same-type stacking height_mult reduction - high-type growth pipeline enablement -----
+        # ワーストゲーム(score0733)終盤turns 48-55: deadline_crossed=true, reactive_pairs=3-5あるが
+        # next_typeが一致せず7連続でmerge_available=false。type 1/5/6/7/9が来るが盤面上の
+        # 同type位置から遠く配置され、成長パイプラインが構築できない
+        # ベストゲーム(score2026)終盤turns 77-86: type 14が存在し、高type同士の併合で166点獲得
+        # 差分: ワーストはmax_type=13止まり、ベストはtype 14存在。高type育成の成否がスコアを分ける
+        # 既存のaxis 9.5 stacking bonus (+50〜+315) はMEDIUM/HIGH phaseのheight_penaltyに
+        # 完全打ち消され、同typeスタッキングが選ばれない。HEIGHT_CONTROL(低配置)がデフォルトになる
+        # height_multを同type近接位置で減らし、stacking bonusがheight penaltyを上回れるようにする
+        # 安全条件: merge_grade=="NO"(即時併合なし), reactive<3(超危険域除外),
+        #   deadline未到達, danger==0, russia_phase抑制, stacking_eligible(現在type非反応)
+        # 即時併合優先・axis 8.8ペナルティ・nextNext block回避・russia phase抑制は全て維持
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md (zoumotu3, garsy38),
+        #       game_history/20260327_060657_score0733.jsonl turns 48-57, game_history/20260327_061654_score2026.jsonl turns 77-86
+        # Fixes rollback failure mode: 即時併合機会がない時の高type成長パイプライン構築不能（height_mult stacking reduction追加）
+        if (merge_grade == "NO"
+            and not deadline_crossed
+            and reactive_pair_count < 3
+            and danger_piece_count == 0
+            and not (russia_phase and reactive_pair_count < 3)
+            and same_type_stack_top is not None):
+            stacking_eligible = (reactive_pair_count == 0 or
+                                 (reactive_pair_count > 0 and not current_type_has_reactive and not current_type_has_near))
+            if stacking_eligible:
+                stack_top_x = same_type_stack_top.get("x", 0)
+                horiz_dist = abs(x - stack_top_x)
+                if horiz_dist < 1.5:
+                    height_mult *= 0.6
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
