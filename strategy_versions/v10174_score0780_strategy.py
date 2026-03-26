@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
 """strategy.py - AI改善対象の決定スクリプト
+v348: deadline_crossed時戦略的配置無効化版 - 即時併合最優先強化
++ v348: deadline_crossed時戦略的配置無効化版 - 即時併合最優先強化
++ v347の問題点: deadline_crossed時にもaxis 8.8のcompression_bonusが適用され、戦略的配置の余地が残って即時併合機会を取りこぼす
++ ワーストゲーム(score0758)終盤: deadline_crossed=true, reactive_pairs=6-8あるのに戦略的配置が続きmax_y=2.53→3.03に上昇してゲームオーバー
++ ベストゲーム(score2637)終盤: deadline_crossed=trueでも即時併合を繰り返しmax_y=2.94で安定して高スコア
++ v348: axis 8.8の適用条件に`and not deadline_crossed`を追加し、deadline_crossed時はcompression_bonusを無効化
++   - deadline_crossed時はaxis 9.2のペナルティを優先し、即時併合を強制的に待機
++   - v333の成功パターン（reactive_pairs>=1で一律にcompression_bonus適用）を維持しつつ、deadline_crossed時は例外処理
++   - ロシア建国後の戦略的配置無効化（v347）も維持
++ deadline_crossed時の明確な即時併合優先戦略を実現する構造的改善であり、数値調整ではない
++ refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
++       game_history/20260326_224815_score0758.jsonl turns 56-63, game_history/20260326_230618_score2637.jsonl turns 101-108
++ Fixes rollback failure mode: deadline_crossed時の戦略的配置による即時併合機会取りこぼし（axis 8.8 適用条件にdeadline_crossed除外追加）
+#
 v347: ロシア建国後戦略的配置無効化版 - 即時併合最優先フェーズ切り替え
 + v347: ロシア建国後戦略的配置無効化版 - 即時併合最優先フェーズ切り替え
 + v346の問題点: ロシア建国後もaxis 8.8/9.5のcompression_bonusが適用され、戦略的配置が選ばれて即時併合機会を取りこぼす
@@ -48,10 +62,10 @@ Game Overview:
            8.5. Danger zone immediate merge bonus - v321: 危険域即時併合強化
            8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
            8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
-           8.8. Reactive pairs compression bonus - v347: ロシア建国後戦略的配置無効化版
+           8.8. Reactive pairs compression bonus - v348: deadline_crossed時戦略的配置無効化版
            9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
            9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-           9.5. Current type stack merge priority - v347: ロシア建国後戦略的配置無効化版
+           9.5. Current type stack merge priority - v348: deadline_crossed時戦略的配置無効化版
 
 
 Phases (determined by board max Y):
@@ -314,18 +328,18 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v347: ロシア建国後戦略的配置無効化版 - 即時併合最優先フェーズ切り替え
+    """v348: deadline_crossed時戦略的配置無効化版 - 即時併合最優先強化
 
-    v346の問題点: ロシア建国後もaxis 8.8/9.5のcompression_bonusが適用され、戦略的配置が選ばれて即時併合機会を取りこぼす
-    advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
-    ワーストゲーム(score0781)はロシア建国なしでmax_y=3.32即死、score2575はロシア建国後も即時併合継続で2575点
-    ロシア建国後は盤面が狭く、戦略的配置の余地が限られているため、即時併合機会を逃すと致命的
-    v347の改善点:
-    1. axis 8.8/9.5の適用条件に`and not russia_phase`を追加し、ロシア建国後は戦略的配置を完全無効化
-    2. ロシア建国後はaxis 9.2のペナルティとaxis 8.7の即時併合ボーナスで評価し、即時併合を強制的に待機
-    3. axis 2のheight_penaltyで低配置を促し、戦略的配置の余地をaxis 9.2の危険域ペナルティで確保
-    4. ロシア建国後の明確なフェーズ切り替えを実現する構造的改善であり、数値調整ではない
-    5. axis 8.5/8.6/8.7/8.8/9.2の即時併合優先評価軸は維持
+    v347の問題点: deadline_crossed時にもaxis 8.8/9.5のcompression_bonusが適用され、戦略的配置の余地が残って即時併合機会を取りこぼす
+    ワーストゲーム(score0758)終盤: deadline_crossed=true, reactive_pairs=6-8あるのに戦略的配置が続きmax_y=2.53→3.03に上昇してゲームオーバー
+    ベストゲーム(score2637)終盤: deadline_crossed=trueでも即時併合を繰り返しmax_y=2.94で安定して高スコア
+    v348の改善点:
+    1. axis 8.8/9.5の適用条件に`and not deadline_crossed`を追加し、deadline_crossed時は戦略的配置を完全無効化
+    2. deadline_crossed時はaxis 9.2のペナルティを優先し、即時併合を強制的に待機
+    3. v333の成功パターン（reactive_pairs>=1で一律にcompression_bonus適用）を維持しつつ、deadline_crossed時は例外処理
+    4. ロシア建国後の戦略的配置無効化（v347）も維持
+    5. deadline_crossed時の明確な即時併合優先戦略を実現する構造的改善であり、数値調整ではない
+    6. axis 8.5/8.6/8.7/8.8/9.2の即時併合優先評価軸は維持
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -710,7 +724,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     reasons.append("RUSSIA_PHASE_NO_MERGE_PENALTY")
                 # deadline_crossed時はaxis 9.2のペナルティを優先し、即時併合を最優先
 
-        # ----- evaluation axis 8.8: strategic compression with immediate merge awareness (v347: ロシア建国後戦略的配置無効化版) -----
+        # ----- evaluation axis 8.8: strategic compression with immediate merge awareness (v348: deadline_crossed時戦略的配置無効化版) -----
+        # v348: deadline_crossed時は戦略的配置を無効化し、即時併合を最優先
+        # v347の問題点: deadline_crossed時にもaxis 8.8のcompression_bonusが適用され、戦略的配置の余地が残って即時併合機会を取りこぼす
+        # ワーストゲーム(score0758)終盤: deadline_crossed=true, reactive_pairs=6-8あるのに戦略的配置が続きmax_y runawayでゲームオーバー
+        # ベストゲーム(score2637)終盤: deadline_crossed=trueでも即時併合を繰り返し高スコア
+        # v348: axis 8.8の適用条件に`and not deadline_crossed`を追加し、deadline_crossed時はcompression_bonusを無効化
+        #   - deadline_crossed時はaxis 9.2のペナルティを優先し、即時併合を強制的に待機
+        #   - v333の成功パターン（reactive_pairs>=1で一律にcompression_bonus適用）を維持しつつ、deadline_crossed時は例外処理
+        #   - ロシア建国後の戦略的配置無効化（v347）も維持
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+        #       game_history/20260326_224815_score0758.jsonl turns 56-63, game_history/20260326_230618_score2637.jsonl turns 101-108
+        # Fixes rollback failure mode: deadline_crossed時の戦略的配置による即時併合機会取りこぼし（axis 8.8 適用条件にdeadline_crossed除外追加）
+        #
         # v347: ロシア建国後の戦略的配置を無効化し、即時併合を最優先
         # v346の問題点: ロシア建国後もaxis 8.8のcompression_bonusが適用され、戦略的配置が選ばれて即時併合機会を取りこぼす
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
@@ -727,8 +753,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         near_pair_count = len(near_pairs) if isinstance(near_pairs, list) else 0
         total_immediate_merge_opportunities = reactive_pair_count + near_pair_count
 
+        # v348: deadline_crossed時は戦略的配置を無効化し、即時併合を最優先
         # v347: ロシア建国後は戦略的配置を無効化し、即時併合を最優先
-        if merge_grade == "NO" and total_immediate_merge_opportunities >= 1 and not russia_phase:
+        # deadline_crossed時はaxis 8.8のcompression_bonusを無効化し、axis 9.2のペナルティを優先して即時併合を強制的に待機
+        # ワーストゲーム(score0758)終盤: deadline_crossed=true, reactive_pairs=6-8あるのに戦略的配置が続きmax_y runawayでゲームオーバー
+        # ベストゲーム(score2637)終盤: deadline_crossed=trueでも即時併合を繰り返し高スコア
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md,
+        #       game_history/20260326_224815_score0758.jsonl turns 56-63, game_history/20260326_230618_score2637.jsonl turns 101-108
+        # Fixes rollback failure mode: deadline_crossed時の戦略的配置による即時併合機会取りこぼし（axis 8.8 適用条件にdeadline_crossed除外追加）
+        if merge_grade == "NO" and total_immediate_merge_opportunities >= 1 and not russia_phase and not deadline_crossed:
             # 即時併合機会の総数に応じて戦略的配置の余地を調整
             if total_immediate_merge_opportunities <= 2:
                 # 即時併合機会が少ない場合：戦略的配置を許容しcompression_bonus適用（v333成功パターン）
@@ -775,7 +808,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= danger_penalty
             reasons.append("DANGER_ZONE_REACTIVE_PENALTY_NO_MERGE")
 
-        # ----- evaluation axis 9.5: current type stack merge priority (v347: ロシア建国後戦略的配置無効化版) -----
+        # ----- evaluation axis 9.5: current type stack merge priority (v348: deadline_crossed時戦略的配置無効化版) -----
         # advice.md「盤面にTypeNが二つ並んでいてnextもTypeNのとき、TypeN+1と隣接している方を優先してドロップする」を実装。
         # v346でmerged_type（併合後のTypeN+1）と盤面上のTypeN+1の隣接を評価する構造的改善を実施したが、
         # 適用条件がdanger_piece_count == 0 and reactive_pair_count == 0と厳しすぎて未活用だった。
@@ -785,10 +818,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
         # ロシア建国後は盤面が狭く、将来の連鎖的併合を狙う戦略的配置は危険
         # v347: 適用条件に`and not russia_phase`を追加し、ロシア建国後はmerged_type隣接ボーナスを無効化
+        # v348: deadline_crossed時は戦略的配置を無効化し、即時併合を最優先
+        # deadline_crossed時は将来の連鎖的併合を狙う戦略的配置は危険で、即時併合を最優先すべき
+        # v348: 適用条件に`and not deadline_crossed`を追加し、deadline_crossed時はmerged_type隣接ボーナスを無効化
         # 未活用情報（merged_type隣接状態）の活用を強化する条件緩和であり、数値微調整ではない。
         # refs: advice.md (azumag, nimdavirus, あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt
         # Fixes: 即時併合機会が少ない状況での戦略的配置余地不足（axis 9.5条件緩和による未活用情報活用強化）
         #        ロシア建国後の戦略的配置による即時併合機会取りこぼし（axis 9.5 適用条件にrussia_phase除外追加）
+        #        deadline_crossed時の戦略的配置による即時併合機会取りこぼし（axis 9.5 適用条件にdeadline_crossed除外追加）
 
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
@@ -814,13 +851,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         adjacency_bonus = (2.0 - horiz_dist_to_merged) * 200.0  # 距離が近いほど高ボーナス
                         best_adjacent_bonus = max(best_adjacent_bonus, adjacency_bonus)
 
+            # v348: deadline_crossed時は戦略的配置を無効化し、即時併合を最優先
             # v346: 即時併合機会が少ない状況で、将来の連鎖的併合（merged_type隣接）を評価する構造的改善
             # 従来のdanger_piece_count == 0 and reactive_pair_count == 0条件は厳しすぎて未活用
             # total_immediate_merge_opportunities <= 2（即時併合機会が少ない）場合に戦略的配置を許容し、
             # merged_typeとの隣接ボーナスを適用して将来の連鎖的併合可能性を最大化する
             # refs: advice.md (Pitman_live), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
             # v347: ロシア建国後は戦略的配置を無効化し、即時併合を最優先
-            if best_adjacent_bonus > 0 and total_immediate_merge_opportunities <= 2 and not russia_phase:
+            # v348: deadline_crossed時は戦略的配置を無効化し、即時併合を最優先
+            if best_adjacent_bonus > 0 and total_immediate_merge_opportunities <= 2 and not russia_phase and not deadline_crossed:
                 score += best_adjacent_bonus
                 reasons.append("MERGED_TYPE_ADJACENCY_PRIORITY")
 
