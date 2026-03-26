@@ -1,12 +1,12 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v72)
+ * strategy.mjs - ドロップ位置決定戦略 (v73)
  *
- * v72: T1タワー形成強化 + EMERGENCY改善
- * - 【T1タワーボーナス追加】findT1DenseColumnでnarrow(0.55)内3+T1→強力ボーナス
- * - 【T1比率パージモード】T1が62%超かつt1Count>15でtower buildingを最優先
- * - 【GBG T1優先順変更】t1Count>=14時にtower→immediateの順で試みる
- * - 【EXTREME閾値引き下げ】30→25で早期対応
- * - 【EMERGENCY中央寄り】extreme wall落下を抑制（center bias追加）
+ * v73: T1マージ優先度修正
+ * - 【GBGモードT1順序修正】immediateマージをtower buildingより先に評価
+ *   (v72でt1Count>=14時にtowerを優先→T1スタックのみでT2生成ゼロが続く問題を修正)
+ * - 【ULTRA_EXTREMEパージモード修正】T1RatioPurgeをchain/immediateの後フォールバックとして配置
+ *   (v72でchain/immediateより前に割り込み、マージ保証なしtower buildingを最優先していた問題を修正)
+ * - 継承: v72のT1タワーボーナス・EMERGENCY中央寄りは保持
  */
 
 const FINE_COLS = [-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5];
@@ -77,7 +77,6 @@ export function decide(boardState) {
   const t1FloodMode = t1Count > t1FloodModeThreshold;
   const extremeT1Flood = t1Count > EXTREME_T1_FLOOD_THRESHOLD;
 
-  // T1比率パージモード: T1がボードの62%超かつ15個超の場合、tower buildingを最優先
   const t1Ratio = activePieces.length > 0 ? t1Count / activePieces.length : 0;
   const t1RatioPurge = t1Ratio > T1_RATIO_PURGE_THRESHOLD && t1Count > 15;
 
@@ -192,11 +191,9 @@ export function decide(boardState) {
         if (holdMerge !== null) return { x: 0, reason: `ULTRA_EXTREME_SWAP_T${hold.type}`, hold: true };
       }
 
-      // T1比率パージモード: tower buildingを最優先
-      if (t1RatioPurge) {
-        const purgeX = findT1DenseColumn(activePieces, colHeights, dangerBias, 2.0, rawPieceCount);
-        if (purgeX !== null) return { x: purgeX, reason: 'ULTRA_T1_PURGE_TOWER' };
-      }
+      // [v73修正] T1RatioPurgeを削除: chain/immediateより前の割り込みをなくす
+      // (旧: t1RatioPurge → findT1DenseColumn → ULTRA_T1_PURGE_TOWER で早期return)
+      // マージ保証なしのtower buildingを優先するのは非効率のため後段フォールバックに移動
 
       const t1WallMult = rawPieceCount > EXTREME_T1_WALL_PIECE_THRESHOLD ? 2.0 : 1.0;
       const chainSetupX = findT1ChainSetup(activePieces, colHeights, dangerBias, garbageRatio, gaugeLevel, rawPieceCount);
@@ -215,7 +212,11 @@ export function decide(boardState) {
       }
       if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
       if (chainSetupX !== null) return { x: chainSetupX, reason: 'ULTRA_EXTREME_T1_CHAIN' };
-      if (denseX !== null) return { x: denseX, reason: 'ULTRA_EXTREME_T1_DENSE' };
+      // [v73] T1RatioPurgeはdenseXフォールバックとして統合
+      if (denseX !== null) {
+        const denseReason = t1RatioPurge ? 'ULTRA_T1_PURGE_TOWER' : 'ULTRA_EXTREME_T1_DENSE';
+        return { x: denseX, reason: denseReason };
+      }
       const chainAnchor = findT1ChainAnchor(activePieces, colHeights, dangerBias, true, garbageRatio, gaugeLevel);
       if (chainAnchor !== null) return { x: chainAnchor, reason: 'ULTRA_EXTREME_T1_ANCHOR' };
       if (stackCol !== null) return { x: stackCol, reason: 'ULTRA_EXTREME_T1_STACK' };
@@ -290,7 +291,6 @@ export function decide(boardState) {
         const emergT1 = findT1ImmediateMerge(activePieces, colHeights, dangerBias, 1.0, rawPieceCount, garbageRatio, gaugeLevel);
         if (emergT1 !== null) return { x: emergT1, reason: 'EMERGENCY_T1_IMMEDIATE' };
       }
-      // 中央寄りの緊急落下（壁際を避ける）
       const emergencyIdx = findLowestCenterColIdx(colHeights);
       return { x: clampX(FINE_COLS[emergencyIdx]), reason: 'EMERGENCY_ALL_DANGER' };
     }
@@ -485,14 +485,8 @@ export function decide(boardState) {
         return { x: gbgLowT1Merge.x, reason: 'GBG_T1_LOW_MERGE' };
       }
 
-      // T1が大量にある場合はタワー形成を優先（散在させない）
-      if (t1Count >= 14) {
-        const gbgTowerX = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
-        if (gbgTowerX !== null && Math.abs(gbgTowerX) <= 2.0) {
-          return { x: gbgTowerX, reason: 'GBG_T1_TOWER' };
-        }
-      }
-
+      // [v73修正] immediateマージを最優先 (T1+T1→T2を確実に実行)
+      // 旧v72: t1Count>=14でtower→immediateの順だったがマージせずスタックのみで非効率
       if (gbgImmediateT1 !== null) {
         if (Math.abs(gbgImmediateT1) > 2.0) {
           const gbgDenseAlt = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
@@ -501,6 +495,14 @@ export function decide(boardState) {
           }
         }
         return { x: gbgImmediateT1, reason: 'GBG_T1_IMMEDIATE' };
+      }
+
+      // タワー形成はimmediate mergeがない場合のfallback
+      if (t1Count >= 14) {
+        const gbgTowerX = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
+        if (gbgTowerX !== null && Math.abs(gbgTowerX) <= 2.0) {
+          return { x: gbgTowerX, reason: 'GBG_T1_TOWER' };
+        }
       }
 
       if (t1Count >= 5) {
@@ -812,7 +814,6 @@ function findT1DenseColumn(pieces, colHeights, dangerBias, wallPenaltyMult = 1.0
     if (nearT2VeryClose >= 2) s += 25;
     else if (nearT2VeryClose >= 1) s += 8;
 
-    // タワーボーナス: narrow window(0.55)内に3+T1が積まれていると連鎖しやすい
     const colT1Narrow = t1Pieces.filter(p => Math.abs(p.x - cx) < 0.55).length;
     if (colT1Narrow >= 3) s += (colT1Narrow - 2) * 45;
     if (colT1Narrow >= 5) s += 40;
@@ -1186,14 +1187,13 @@ function findLowestColIdx(colHeights) {
   return minIdx;
 }
 
-// 緊急時の中央寄り落下: 壁際を避けてできるだけ中央に近い最低列を選ぶ
 function findLowestCenterColIdx(colHeights) {
   let bestScore = -Infinity;
   let bestIdx = 5;
   for (let i = 0; i < colHeights.length; i++) {
     let s = -colHeights[i] * 10.0;
-    s -= Math.abs(FINE_COLS[i]) * 5.0; // 中央優先（壁ペナルティ強化）
-    if (Math.abs(FINE_COLS[i]) > 2.2) s -= 25; // 壁際は強く避ける
+    s -= Math.abs(FINE_COLS[i]) * 5.0;
+    if (Math.abs(FINE_COLS[i]) > 2.2) s -= 25;
     if (s > bestScore) { bestScore = s; bestIdx = i; }
   }
   return bestIdx;
