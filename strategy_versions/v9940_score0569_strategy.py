@@ -55,6 +55,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v348: reactive_pairs>=1時の戦略的配置ペナルティ軽減削除版 - 即時併合優先強化
+# batch_summary: HEIGHT_CONTROLが8.9%選択(avg_score_delta=0.0)、REACTIVE_PAIRS_COMPRESSIONが7.0%選択(avg_score_delta=1.6)と過剰
+# reactive_pairsがある状況で戦略的配置を優先しすぎ、即時併合機会を取りこぼしている
+# 高スコア群ではREACTIVE_PAIRS_COMPRESSIONが5.5%、低スコア群では9.2%と、戦略的配置優先がスコア低下を招いている
+# advice.md「盤面がどうだろうが即時併合を最優先する」「同タイプが来たらその上に置く」がログで支持されている
+# axis 9.5修正: reactive_pairs>=1 && merge_grade=="NO"の場合のペナルティ軽減を削除し、即時併合を最優先
+# reactive_pairsがない場合のみペナルティ軽減を適用し、戦略的配置を優先
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
+#       game_history/20260326_090336_score0632.jsonl, game_history/20260326_085123_score2630.jsonl
+# Fixes rollback failure mode: reactive_pairs>=1時の戦略的配置優先による即時併合取りこぼし（axis 9.5ペナルティ軽減条件厳格化）
 # v345: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化版 - axis 9.5修正
 # last_rollback_postmortemのfailure mode: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足
 # batch_summary: HEIGHT_CONTROLが19.9%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしている
@@ -352,15 +362,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v345: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化版 - axis 9.5修正
+    """v348: reactive_pairs>=1時の戦略的配置ペナルティ軽減削除版 - 即時併合優先強化
+    batch_summary: HEIGHT_CONTROLが8.9%選択(avg_score_delta=0.0)、REACTIVE_PAIRS_COMPRESSIONが7.0%選択(avg_score_delta=1.6)と過剰
+    reactive_pairsがある状況で戦略的配置を優先しすぎ、即時併合機会を取りこぼしている
+    高スコア群ではREACTIVE_PAIRS_COMPRESSIONが5.5%、低スコア群では9.2%と、戦略的配置優先がスコア低下を招いている
+    advice.md「盤面がどうだろうが即時併合を最優先する」「同タイプが来たらその上に置く」がログで支持されている
+    axis 9.5修正: reactive_pairs>=1 && merge_grade=="NO"の場合のペナルティ軽減を削除し、即時併合を最優先
+    reactive_pairsがない場合のみペナルティ軽減を適用し、戦略的配置を優先
+    last_rollback_postmortem constraint遵守: deadline_crossed && reactive_pairs>=1 && merge_grade=="NO" の中間危険域で即時併合待機を強制
+
+    v345: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化版 - axis 9.5修正
     last_rollback_postmortemのfailure mode: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足
-    batch_summary: HEIGHT_CONTROLが19.9%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしている
+    batch_summary: HEIGHT_CONTROLが19.9%選択(avg_score_delta=0.0)と過剛、即時併合機会を取りこぼしている
     ワーストゲーム(score0714)終盤: max_y=2.82でゲームオーバー、即時併合不足
     ベストゲーム(score2350)終盤: max_y=3.40でも即時併合機会を確実に捉えて高スコア
-    advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」がログで支持されている
-    axis 9.5修正: reactive_pairs>=1 && merge_grade=="NO"の場合、ペナルティ軽減を適用し、戦略的配置を優先
-    即時併合機会を最大化しつつ、盤面圧縮（axis 9.6）と将来の併合可能性を同時に狙う
-    axis 9.5削除の条件を緩和し、reactive_pairsがある状況でも戦略的配置を優先
 
     v342: axis 9.7水平バランス戦略削除版 - 盤面圧縮戦略へ統合
 
@@ -1074,23 +1089,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # reactive_pairsがある状況では、即時併合を最優先する戦略へ切り替え
 
             # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
-            # v338: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置強化 - 即時併合機会を最大化
-            # last_rollback_postmortemのfailure mode: reactive_pairs>=1 && merge_grade=="NO" 時の戦略的配置不足
-            # batch_summary: HEIGHT_CONTROLが19.9%選択(avg_score_delta=0.0)と過剰、即時併合機会を取りこぼしている
-            # ワーストゲーム(score0714)終盤: max_y=2.82でゲームオーバー、即時併合不足
-            # ベストゲーム(score2350)終盤: max_y=3.40でも即時併合機会を確実に捉えて高スコア
-            # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」がログで支持されている
-            # axis 9.5修正: reactive_pairs>=1 && merge_grade=="NO"の場合、ペナルティ軽減を適用し、戦略的配置を優先
-            # 即時併合機会を最大化しつつ、盤面圧縮（axis 9.6）と将来の併合可能性を同時に狙う
+            # v348: reactive_pairs>=1時の戦略的配置ペナルティ軽減削除版 - 即時併合優先強化
+            # batch_summary: HEIGHT_CONTROLが8.9%選択(avg_score_delta=0.0)、REACTIVE_PAIRS_COMPRESSIONが7.0%選択(avg_score_delta=1.6)と過剰
+            # reactive_pairsがある状況で戦略的配置を優先しすぎ、即時併合機会を取りこぼしている
+            # 高スコア群ではREACTIVE_PAIRS_COMPRESSIONが5.5%、低スコア群では9.2%と、戦略的配置優先がスコア低下を招いている
+            # advice.md「盤面がどうだろうが即時併合を最優先する」「同タイプが来たらその上に置く」がログで支持されている
+            # axis 9.5修正: reactive_pairs>=1 && merge_grade=="NO"の場合のペナルティ軽減を削除し、即時併合を最優先
+            # reactive_pairsがない場合のみペナルティ軽減を適用し、戦略的配置を優先
+            # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
+            #       game_history/20260326_090336_score0632.jsonl, game_history/20260326_085123_score2630.jsonl
+            # Fixes rollback failure mode: reactive_pairs>=1時の戦略的配置優先による即時併合取りこぼし（axis 9.5ペナルティ軽減条件厳格化）
             landing_y = result.get("landing_y", 0)
             if landing_y > stack_top_y:
                 horiz_dist = abs(x - stack_top_x)
                 if horiz_dist < 1.0:
-                    # reactive_pairs>=1 && merge_grade=="NO"の場合もペナルティ軽減を適用し、戦略的配置を優先
-                    score += 100.0
-                    if "SAME_TYPE_STACK" not in "_".join(reasons):
-                        reasons.append("SAME_TYPE_STACK")
-                    # reactive_pairs>=1の場合もボーナスを適用し、即時併合機会を最大化
+                    # reactive_pairsがない場合のみペナルティ軽減を適用し、戦略的配置を優先
+                    # reactive_pairs>=1の場合は即時併合機会を優先するためペナルティ軽減を適用しない
+                    if reactive_pair_count == 0:
+                        score += 100.0
+                        if "SAME_TYPE_STACK" not in "_".join(reasons):
+                            reasons.append("SAME_TYPE_STACK")
+            # v348: reactive_pairs>=1の場合のペナルティ軽減を削除 - 即時併合優先強化
+            # last_rollback_postmortem constraint遵守: deadline_crossed && reactive_pairs>=1 && merge_grade=="NO" の中間危険域で即時併合待機を強制
             # v327: 危険ピース(danger_piece_count > 0)がある場合のペナルティ軽減ボーナスも削除 - axis 9.2のペナルティを優先
             # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ペナルティ軽減も削除 - axis 8.7即時併合優先
             landing_y = result.get("landing_y", 0)
