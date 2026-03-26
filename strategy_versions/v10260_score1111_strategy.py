@@ -14,7 +14,7 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-            6. Chain merge bonus - Evaluate possibility of further merges after merge
+            6. Chain merge bonus - Evaluate possibility of further merges after merge (v343: height-scaling removed)
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
@@ -56,6 +56,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
+        # v343: chain_bonus height-scaling削除 - 高位置併合の逆インセンティブ除去
+        # chain_bonus_multiplierの着地高動的調整を削除し固定値(495.0)に。高位置ほどchain_bonusが大きくなる
+        # 逆インセンティブを解消し、height_penaltyとの適切なバランスを回復。連鎖ボーナスなしのゲーム仕様に整合。
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, strategy.py.staging,
+        #       game_history/20260327_042603_score0614.jsonl turns 64-71, game_history/20260327_042327_score2432.jsonl turns 86-93
+        # Fixes rollback failure mode: 高位置NEAR mergeのchain_bonus過大評価によるdeadline超え（axis 6 height-scaling削除）
+        #
         # v342: axis 9.5 SAME_TYPE_STACK条件緩和 - reactive_pairs!=0でも現在タイプ非反応時にスタッキング許可
         # reactive_pairsがあってもnext_typeにreactive/near pairがない場合、同タイプスタッキングを許可しHEIGHT_CONTROL連続を削減
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, game_history/20260327_033824_score0501.jsonl, strategy.py.staging
@@ -338,19 +345,16 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v342: axis 9.5 SAME_TYPE_STACK条件緩和 - reactive_pairs!=0でも現在タイプ非反応時にスタッキング許可
+    """v343: chain_bonus height-scaling削除版 - 高位置併合の逆インセンティブ除去
 
-    v341 failure: reactive_pairsがあってもnext_typeにreactive/near pairがない場合、axis 9.5のSAME_TYPE_STACK(+100)ボーナスが
-    reactive_pair_count==0の条件で完全にブロックされ、連続HEIGHT_CONTROLでmax_y runawayが発生
-    ワーストゲーム(score0501)終盤: reactive=3-4あるがnext_typeにはreactive_pairsがなく、
-      HEIGHT_CONTROLが連続してmax_y=1.64→2.73に上昇してゲームオーバー
-    ベストゲーム(score3171)終盤: reactive=3あってもsame-type stackingで配置を安定させ高スコア
-    v342: axis 9.5のSAME_TYPE_STACK(+100)ボーナス条件を緩和し、reactive_pairsがあっても
-      現在タイプにreactive/near pairがない場合はスタッキングを許可
-      これにより反応のないタイプの配置指針がHEIGHT_CONTROLからSAME_TYPE_STACKに切り替わり、
-      将来の併合機会を構築しながらmax_yの上昇を抑制
-    refs: advice.md (Pitman_live), tmp/improve_brief.md, tmp/batch_summary.txt,
-          game_history/20260327_033824_score0501.jsonl turns 55-57, game_history/20260327_034941_score3171.jsonl turns 116-119
+    v342 status quo: chain_bonus_multiplier = 495 + max(0, landing_y+1.5)*150 で高位置ほどchain_bonusが大きくなり、
+    deadline超えの危険なNEAR mergeがheight_penaltyを上回って選択される逆インセンティブがあった
+    ワーストゲーム(score0614)終盤turn 67: multiplier=1137のchain_bonusがheight_penalty(500)を上回り、
+    NEAR mergeがy=3.71へピースを押し上げてゲームオーバー。ゲーム仕様上連鎖ボーナスはない。
+    v343: chain_bonus_multiplierを固定値(495.0)にし、chain_distance_maxも固定(5.0)にして
+    高位置併合の過大評価を解消。初期段階のchain評価(base=495)は維持。
+    refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+          game_history/20260327_042603_score0614.jsonl turns 64-71, game_history/20260327_042327_score2432.jsonl turns 86-93
 
     v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
 
@@ -721,11 +725,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 例: landing_y=-3.0 → distance_max=3.2, multiplier=495.0（初期段階、有効なボーナス）
                 # 例: landing_y=0.0 → distance_max=5.0, multiplier=495.0（基本値、動的調整なし）
                 # 例: landing_y=1.0 → distance_max=5.6, multiplier=645.0
-                # 例: landing_y=2.0 → distance_max=6.2, multiplier=795.0
-                chain_distance_max = 5.0 + landing_y * 0.6
-                # v196: 初期段階CHAIN_MERGE有効化 - 初期段階でのCHAIN_MERGE選択を有効化
-                # 初期段階で有効なCHAIN_MERGE評価のために、初期値を495.0に固定し、着地高による動的調整を開始地点から行う
-                chain_bonus_multiplier = 495.0 + max(0, landing_y + 1.5) * 150.0
+                # v343: chain_bonus height-scaling削除 - 高位置併合の逆インセンティブ除去
+                # v196の着地高による動的調整（multiplier += max(0, landing_y+1.5)*150, distance += landing_y*0.6）は、
+                # 高位置ほどchain_bonusが大きくなる逆インセンティブを生んでいた
+                # ワーストゲーム(score0614)終盤turn 67: NEAR mergeのchain_bonus_multiplier=1137が
+                #   height_penalty(500)を上回り、y=3.71への危険な併合を選択→ゲームオーバー
+                # ゲーム仕様上連鎖ボーナスはない（prompt: "連鎖ボーナスはない"）。chain_bonusは
+                #   merged_type近傍の空間評価のみを目的とすべきで、着地高で増幅する必要はない
+                # 固定値にすることで高位置併合のchain_bonus過大評価を解消し、height_penaltyとの
+                #   適切なバランスを回復。初期段階のbase値(495)は維持し早期chain評価を保持
+                chain_distance_max = 5.0
+                chain_bonus_multiplier = 495.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
