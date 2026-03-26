@@ -20,7 +20,7 @@ Game Overview:
            8.5. Danger zone immediate merge bonus - v321: 危険域即時併合強化
            8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
            8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
-           8.8. Reactive pairs >= 3 no merge penalty - v329: 高配置強力抑制版
+           8.8. Reactive pairs >= 2 no merge penalty - v332: 高配置強力抑制版
            9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
            9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
            9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
@@ -41,6 +41,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
     # --- Change History ---
+    # v332: axis 8.8 reactive_pairs>=2拡張版 - v331 failure mode潰し
+    # v331の問題点: axis 9.2の固定ペナルティ(-2000/-2500)はheight_mult緩和と競合して不十分
+    # ワーストゲーム(score0585)終盤turns 51-56: reactive_pairs=2, merge_available=falseでHIGH_TOWERが続き、max_y=2.44→3.91に急上昇してゲームオーバー
+    # ベストゲーム(score2988)終盤turns 129-136: 即時併合機会を確実に捉えてmax_y=2.88で安定し2988点を出している
+    # axis 8.8の動的ペナルティはlanding_yに応じて指数関数的に増大するため、height_mult緩和を上回る強力な抑制が可能
+    # reactive_pairs==1はaxis 9.2の-2000.0ペナルティで対応、reactive_pairs>=2はaxis 8.8の動的ペナルティで対応することでgapを解消
+    # axis 8.8の適用条件をreactive_pairs>=3からreactive_pairs>=2に緩和し、v348のfailure modeを解消
+    # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
+    #       game_history/20260326_105834_score0585.jsonl turns 51-56, game_history/20260326_105244_score2988.jsonl turns 129-136
+    # Fixes rollback failure mode: reactive_pairs>=2での高配置 runaway（v331 axis 9.2固定ペナルティ→v332 axis 8.8動的ペナルティ拡張）
+    #
     # v331: axis 9.2 reactive_pairs>=1拡張版 - v348 failure mode潰し
     # last_rollback_postmortemのfailure mode: "deadline_crossed && reactive_pairs=1-2 && merge_grade=="NO" の戦略的死lock状態"
     # ワーストゲーム(score0569)終盤turns 66-69: deadline_crossed=true, reactive_pairs=1, merge_available=false続きでmax_y=1.65→2.39に急上昇してゲームオーバー
@@ -238,18 +249,20 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v331: axis 9.2 reactive_pairs>=1拡張版 - v348 failure mode潰し
+    """v333: axis 8.8 compression_bonus転換版 - v332 failure mode潰し
 
-    last_rollback_postmortemのfailure mode: "deadline_crossed && reactive_pairs=1-2 && merge_grade=="NO" の戦略的死lock状態"
-    ワーストゲーム(score0569)終盤turns 66-69: deadline_crossed=true, reactive_pairs=1, merge_available=false続きでmax_y=1.65→2.39に急上昇してゲームオーバー
-    ベストゲーム(score2710)終盤turns 106-113: 即時併合機会を確実に捉えてmax_y=2.73で安定
+    v332の問題点: axis 8.8の動的ペナルティ(-3000~-9000)は高配置を強力に抑制するが、戦略的死lock状態は解消していない
+    last_rollback_postmortemの致命的欠陥: "deadline_crossed && reactive_pairs=1-2 && merge_grade=='NO' の戦略的死lock状態"
+      v348: axis 9.6 compression_bonusがreactive_pairs>=3 && deadline_crossed && merge_grade=='NO'で完全無効化
+      v332: axis 8.8のペナルティもreactive_pairs>=2 && merge_grade=='NO'で一律に下げるため、「強制配置」問題が残る
+    v330 (rollback_target) の成功パターン: reactive_pairs>=1ならcompression_bonusが有効で、戦略的配置で即時併合を待機できる
 
-    v331の改善点:
-    1. axis 9.2修正: 適用条件を reactive_pair_count >= 2 から reactive_pair_count >= 1 に緩和
-    2. reactive_pairs==1の場合: 基本ペナルティ-2000.0を適用し、戦略的死lock状態を解消
-    3. reactive_pairs>=2の場合: 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0（最大-4500.0）を維持
-    4. axis 8.8（reactive_pairs>=3のみ）とaxis 9.2の間にgapがあるreactive_pairs=1-2の状況でも、戦略的配置の余地を確保
-    5. advice.md「deadline_crossed時の即時併合強化」に基づく即時併合優先戦略の実装
+    v333の改善点:
+    1. axis 8.8を「ペナルティ」から「compression_bonus」へ構造的に転換
+    2. reactive_pairs>=1の全状況で戦略的配置を可能にするcompression_bonus設計
+    3. landing_yに応じた動的ボーナス（低配置ほど高ボーナス）で盤面圧縮を優先
+    4. reactive_pairs==1でもcompression_bonusを適用し、v348/v332のfailure modeを解消
+    5. 危険域ではaxis 9.2のペナルティがcompression_bonusを上回り、即時併合を優先
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -655,34 +668,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # v327: danger_piece_count > 0 の場合のボーナスを削除 - axis 9.2のペナルティを優先
                 # 危険ピースがある状況では、即時併合を最優先する戦略へ切り替え
 
-        # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
-        # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
-        # ワーストゲーム(score0636)終盤turns 56-62: reactive_pairs=3-5, merge_available=false, deadline_crossed=trueでmax_y=2.45→3.12に上昇
-        # ワーストゲーム(score0725)終盤turns 61-62: reactive_pairs=3, merge_available=falseでmax_y=3.39→2.81の高配置が選ばれゲームオーバー
-        # ベストゲーム(score3996)終盤turns 150-154: 即時併合機会を確実に捉えてtype 15を保護しつつ3996点を出している
-        # v328の問題点: -3000.0固定ペナルティはheight_mult緩和(axis 2, 364, 379-382)や盤面圧縮ボーナス(axis 9.5)と競合し、高配置が選ばれる
-        # 解決策: reactive_pairs>=3 && merge_grade=="NO"の場合、landing_yに応じた動的ペナルティを追加
-        #   - landing_y <= 0: 既存の-3000.0ペナルティ維持
-        #   - 0 < landing_y <= 1: -3000.0 + landing_y * 2000.0 (例: landing_y=0.5 -> -4000.0)
-        #   - landing_y > 1: -5000.0 + landing_y * 2000.0 (例: landing_y=1.5 -> -8000.0, landing_y=2.0 -> -9000.0)
-        # これにより高配置になるほどペナルティが指数関数的に増大し、height_mult緩和やボーナスを上回る強力な抑制を実現
-        # last_rollback_postmortemのconstraint: "reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず即時併合を最優先するペナルティを適用する（deadline_crossed条件を含める）"を遵守
-        # 未活用情報：reactive_pairs>=3, merge_grade=="NO", landing_y (着地位置の高さ)
+        # ----- evaluation axis 8.8: reactive pairs compression bonus (v333: ペナルティ→ボーナス転換版 - reactive_pairs>=1で戦略的配置を可能にするcompression_bonus設計) -----
+        # v332の問題点: axis 8.8の動的ペナルティ(-3000~-9000)は高配置を強力に抑制するが、戦略的死lock状態は解消していない
+        # last_rollback_postmortemの致命的欠陥: "deadline_crossed && reactive_pairs=1-2 && merge_grade=="NO" の戦略的死lock状態"
+        #   v348: axis 9.6 compression_bonusがreactive_pairs>=3 && deadline_crossed && merge_grade=="NO"で完全無効化され、戦略的配置の余地が完全に失われる
+        #   v332: axis 8.8のペナルティも同様にreactive_pairs>=2 && merge_grade=="NO"で一律に下げるため、「強制配置」問題が残る
+        # v330 (rollback_target) の成功パターン: reactive_pairs>=1ならcompression_bonusが有効で、戦略的配置で即時併合を待機できる
+        # v333: axis 8.8を「ペナルティ」から「compression_bonus」へ構造的に転換し、reactive_pairs>=1の全状況で戦略的配置を可能にする
+        #   - landing_yが低いほど大きなボーナスを与え、盤面圧縮（tighter board）を優先する配置を選ぶ
+        #   - landing_y <= 0: +1200.0（低配置、盤面圧縮強化）
+        #   - 0 < landing_y <= 1: +1200.0 - landing_y * 400.0（例: landing_y=0.5 -> +1000.0）
+        #   - landing_y > 1: +1000.0 - landing_y * 300.0（例: landing_y=1.5 -> +550.0, landing_y=2.0 -> +400.0）
+        # reactive_pairs==1でもcompression_bonusを適用し、v348/v332のfailure mode「deadline_crossed && reactive_pairs=1-2 && merge_grade=="NO"」を解消
+        # compression_bonusは即時併合がない場合の戦略的配置を可能にし、max_y runawayを防止しつつ将来の併合を待機する戦略的思考を実現
+        # 未活用情報：reactive_pairs==1の状況、盤面圧縮による戦略的配置
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
-        #       game_history/20260324_045921_score0636.jsonl turns 56-62, game_history/20260324_043823_score0725.jsonl turns 61-62,
-        #       game_history/20260324_044502_score3996.jsonl turns 150-154
-        # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ）
+        #       game_history/20260326_093527_score0569.jsonl turns 66-69 (v348 failure mode), game_history/20260324_062802_score1741.jsonl turns 62-69 (v330 success),
+        #       game_history/20260326_105834_score0585.jsonl turns 51-56, game_history/20260326_105244_score2988.jsonl turns 129-136
+        # Fixes rollback failure mode: reactive_pairs>=1での戦略的死lock状態解消（v332 axis 8.8ペナルティ→v333 axis 8.8 compression_bonus転換）
 
-        if reactive_pair_count >= 3 and merge_grade == "NO":
-            # reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず強力なペナルティを適用
-            # landing_yに応じて動的にペナルティを強化し、高配置を積極的に抑制
+        if reactive_pair_count >= 1 and merge_grade == "NO":
+            # reactive_pairs>=1で即時併合がない場合、盤面圧縮ボーナスを適用して戦略的配置を可能にする
+            # landing_yが低いほど大きなボーナスを与え、盤面圧縮（tighter board）を優先
             if landing_y <= 0:
-                score -= 3000.0
+                score += 1200.0
             elif landing_y <= 1:
-                score -= 3000.0 + landing_y * 2000.0
+                score += 1200.0 - landing_y * 400.0
             else:
-                score -= 5000.0 + landing_y * 2000.0
-            reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+                score += 1000.0 - landing_y * 300.0
+            reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
