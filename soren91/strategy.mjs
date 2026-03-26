@@ -1,14 +1,13 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v76)
+ * strategy.mjs - ドロップ位置決定戦略 (v77)
  *
- * v76: 高typeピース/T1管理の改善と高さペナルティ強化
- * - 【findBestMergeの高さペナルティ強化】WARN_Y超え、またはavgHeightが高レベルの場合、
- *   ドロップ候補の高さペナルティを強化。ボード全体の高さ上昇に早期対応し、デッドライン接近を緩和。
- * - 【findBestMergeRelaxedの壁際ペナルティ緩和】type>=5の高価値マージがDEADLINE_Y付近で発生する場合、
- *   壁際配置のペナルティを若干緩和。緊急時に有効なマージ機会を見逃さないようにする。
- * - 【ULTRA_EXTREME_HOLD_T1_FOR_T2の条件調整】ultraMassMode & extremeT1FloodでnextTypeが1の場合、
- *   nextPiecesにtype 2がある場合のHOLD条件を調整。現在のT1で即時マージできない場合にのみHOLDする。
- *   これにより、即時利用可能なT1を無駄にHOLDすることを防ぐ。
+ * v77: ガベージ・高typeT1の低位置マージ優先度調整とボード全体高さペナルティ強化
+ * - 【shouldPreferLowT1GarbageMergeの閾値調整】ガベージ時のT1低位置マージ優先度をさらに高めるため、
+ *   条件閾値 (garbageHeight, garbageRatio, t1Count, height diff) をわずかに緩和。
+ *   早期から盤面下部でのガベージ処理を促す。
+ * - 【findBestMergeの高さペナルティ強化（ボード全体）】avgHeightが高レベルの場合、
+ *   ドロップ候補の高さペナルティをさらに強化。ボード全体の高さ上昇に早期対応し、デッドライン接近をより積極的に緩和。
+ * - 継承: v76の高typeピース/T1管理の改善と高さペナルティ強化
  * - 継承: v75の高typeピース活用改善 + EXTREME閾値調整
  * - 継承: v74のEMERGENCY修正 (findEmergencyMergeRelaxed, hold最終手段)
  */
@@ -779,10 +778,12 @@ function shouldPreferLowT1GarbageMerge(
   const immediateH = colHeights[nearestColIdx(immediateX)];
   const lowMergeH = colHeights[nearestColIdx(lowMergeX)];
 
-  if (garbageHeight >= DEADLINE_Y + 0.5 && lowMergeH <= immediateH - 0.3) {
+  // [v77] garbageHeight閾値を緩和 (DEADLINE_Y + 0.5 -> 0.4)
+  if (garbageHeight >= DEADLINE_Y + 0.4 && lowMergeH <= immediateH - 0.3) {
     return true;
   }
-  if (garbageRatio >= 0.28 && t1Count >= 12 && lowMergeH <= lowestColH + 0.35 && immediateH >= lowMergeH + 0.25) {
+  // [v77] garbageRatio, t1Count閾値を緩和し、height diffも緩和
+  if (garbageRatio >= 0.25 && t1Count >= 10 && lowMergeH <= lowestColH + 0.3 && immediateH >= lowMergeH + 0.2) {
     return true;
   }
   if (rawPieceCount >= 45 && lowMergeH <= immediateH - 0.5) {
@@ -1211,7 +1212,7 @@ function findLowestColIdx(colHeights) {
 function findLowestCenterColIdx(colHeights) {
   let bestScore = -Infinity;
   let bestIdx = 5;
-  for (let i = 0; i < colHeights.length; i++) {
+  for (let i = 0; i < FINE_COLS.length; i++) {
     let s = -colHeights[i] * 10.0;
     s -= Math.abs(FINE_COLS[i]) * 5.0;
     if (Math.abs(FINE_COLS[i]) > 2.2) s -= 25;
@@ -1262,8 +1263,9 @@ function findBestMerge(pieces, nextType, colHeights, dangerBias, avgHeight, garb
     if (colH > WARN_Y) {
       s -= (colH - WARN_Y) * 8.0;
     }
+    // [v77] avgHeightが高レベルの場合、高さペナルティをさらに強化 (colH * 2.0 -> 3.0)
     if (avgHeight > WARN_Y + 0.3) {
-      s -= colH * 2.0;
+      s -= colH * 3.0; // Increased penalty
     }
 
     if (colH > DEADLINE_Y - 0.4) s -= 10;
