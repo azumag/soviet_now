@@ -37,7 +37,7 @@ Game Overview:
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9. Reactive pairs stacking bonus - v340: reactive_pairs>=1 && merge_grade=="NO" && 現在タイプにreactive/near pairがある場合、merged_type(N+1)に隣接する同タイプピースに着地する配置にボーナス
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-             9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
+             9.5. Current type stack merge priority - v341: v335重複削除・ロシアフェーズ完全抑制版
              # v339: axis 9.7 (REACTIVE_PAIRS_COMPRESSION) 削除 - 即時併合機会最大化のため評価軸シンプル化
 
 
@@ -56,6 +56,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
+        # v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
+        # コード監査でaxis 9.5が2ブロック存在(v335 lines 919-949 と v337 lines 967-1011)し、
+        #   非ロシア時danger==0/reactive==0でSAME_TYPE_STACK_MERGE_PRIORITY +600/+200が二重に加算されていた
+        #   ロシアフェーズ時 reactive<3でv335ブロックがv337の抑制をバイパスし+300/+100が漏れていた
+        # v335ブロックを`if False`で無効化しv337ブロックのみ有効化することで修正
+        # refs: strategy.py.staging, tmp/improve_batch.txt, tmp/state/last_rollback_postmortem.md, advice.md,
+        #       game_history/20260327_022708_score0494.jsonl (turns 52-59: ロシア未達成だが類似死螺旋)
+        # Fixes rollback failure mode: axis 9.5重複によるロシアフェーズstacking抑制不完全
+        #
          # v340: axis 9.6 type-aware stacking版 - 未活用reactive_pairs type情報活用・高位スタッキング防止
          # v339 failure: vertical_bonus = (stack_y + 1.0) * 200.0 が高位ほど大きいボーナスを与え、
          #   reactive_pairsはあるが現在タイプにreactive_pairsがない場合も高位に積み上げてmax_y悪化
@@ -324,7 +333,7 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化
+    """v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
 
     v336 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
     ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
@@ -914,9 +923,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # axis 9.2修正: deadline_crossed条件をaxis 9.5に統合
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
         #       game_history/20260324_122310_score0720.jsonl, game_history/20260324_120941_score1207.jsonl
-        # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.5 deadline_crossed条件統合）
+        # v341: disabled - v335 block duplicated by v337 block below, causing double-counting
+        # (+600/+200 instead of +300/+100) and bypassing v337's Russia phase suppression
+        # refs: strategy.py.staging structure audit, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md
+        # Fixes rollback failure mode: axis 9.5重複によるロシアフェーズstacking抑制不完全
 
-        if same_type_stack_top and merge_grade == "NO":
+        if False and same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
  
