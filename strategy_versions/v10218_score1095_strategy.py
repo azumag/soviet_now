@@ -35,7 +35,7 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9. Reactive pairs stacking bonus - v338: reactive_pairs>=1 && merge_grade=="NO"の場合、盤面上の現在タイプの最も高い位置のピースに着地できる配置にボーナス
+             9. Reactive pairs stacking bonus - v340: reactive_pairs>=1 && merge_grade=="NO" && 現在タイプにreactive/near pairがある場合、merged_type(N+1)に隣接する同タイプピースに着地する配置にボーナス
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
              # v339: axis 9.7 (REACTIVE_PAIRS_COMPRESSION) 削除 - 即時併合機会最大化のため評価軸シンプル化
@@ -56,6 +56,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
+         # v340: axis 9.6 type-aware stacking版 - 未活用reactive_pairs type情報活用・高位スタッキング防止
+         # v339 failure: vertical_bonus = (stack_y + 1.0) * 200.0 が高位ほど大きいボーナスを与え、
+         #   reactive_pairsはあるが現在タイプにreactive_pairsがない場合も高位に積み上げてmax_y悪化
+         # ワーストゲーム(score0853)終盤turns 70-71: reactive=5だがnext_type=2にはreactive_pairsがなく、
+         #   type 2のy=2.4に積み上げてmax_y→3.11に悪化してゲームオーバー
+         # v340: 現在タイプにreactive/near pairがある場合のみスタッキングボーナスを付与し、高位スタッキング防止
+         #   merged_type(N+1)に隣接する同タイプピースを優先し、連鎖的併合の道筋を作る構造的改善
+         # refs: advice.md (azumag, nimdavirus), tmp/improve_brief.md, tmp/batch_summary.txt, analyze_board.py,
+         #       game_history/20260327_020329_score0853.jsonl, game_history/20260327_014958_score1936.jsonl
+         # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合の高位スタッキング
+         #
          # v339: axis 9.7削除による即時併合機会最大化版 - 評価軸シンプル化
          # v338の問題点: axis 9.7のcompression_bonus（最大300.0）が「戦略的配置」を促し、即時併合機会と競合して取りこぼしを招いている
          # batch_summaryでREACTIVE_PAIRS_COMPRESSIONが10%前後選択されているがavg_score_delta=5.2と低い。即時併合関連reasonはavg_score_deltaが高い（52.4, 56.8）が選択率が低い（3-4%）
@@ -368,7 +379,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # reactive_pairs is a list, count pairs for evaluation
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
-    
+
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
@@ -399,6 +410,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_next_piece = game_state.get("nextNext", {})
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
+
+    # --- v340: per-type reactive/near pair extraction (unutilized reactor info) ---
+    # reactive_pairs is list of (piece_id_1, piece_id_2, type) tuples
+    # near_pairs is list of (piece_id_1, piece_id_2, type, gap) tuples
+    # Extract which types have reactive pairs for type-aware stacking decisions
+    near_pairs = reactor.get("near_pairs", [])
+    current_type_has_reactive = any(
+        rp[2] == next_type for rp in reactive_pairs if isinstance(rp, (list, tuple)) and len(rp) >= 3
+    )
+    current_type_has_near = any(
+        np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
+    )
 
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
@@ -442,32 +465,55 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- evaluation axis 9.6: reactive pairs stacking bonus (NEW) -----
-        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
-        # batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=1.2)と過剰、即時併合機会を取りこぼしていることを確認
-        # reactive_pairsがあるがmerge_grade=="NO"の場合、HEIGHT_CONTROLではなく戦略的配置を優先する
-        # ワーストゲーム(score0413)ではreactive_pairsがあるにも関わらずHEIGHT_CONTROLが続き即時併合機会を取りこぼしている
-        # ベストゲーム(score2775)ではreactive_pairsがある時、即時併合機会を確実に捉えて高スコア
-        # refs: advice.md (Pitman_live, azumag), tmp/improve_brief.md, tmp/batch_summary.txt,
-        #       game_history/20260324_154730_score0413.jsonl, game_history/20260324_161825_score2775.jsonl
+        # ----- evaluation axis 9.6: reactive pairs stacking bonus - v340: type-aware stacking ---
+        # advice.md「盤面にTypeNが二つ並んでいてnextもTypeNのとき、TypeN+1と隣接している方を優先してドロップする」（azumag, nimdavirus）
+        # v339 failure: vertical_bonus = (stack_y + 1.0) * 200.0 が高位ほど大きいボーナスを与え、
+        #   reactive_pairsはあるが現在タイプにreactive_pairsがない場合も同じタイプの高位に積み上げてmax_yを悪化させる
+        # ワーストゲーム(score0853)終盤turns 70-71: reactive=5だがnext_type=2にはreactive_pairsがなく、
+        #   type 2のy=2.4-2.67に積み上げてmax_y=2.59→2.67→3.11に悪化してゲームオーバー
+        # ベストゲーム(score1936)終盤turns 84-91: reactive=1-2でnext_type=11/5にはreactive_pairsがあり、
+        #   即時併合→type 12×2生成で高スコア
+        # v340: 現在タイプにreactive_pairsまたはnear_pairsがある場合のみスタッキングボーナスを付与
+        #   高位スタッキングによるmax_y悪化を防止し、未活用のreactive_pairs type情報を活用
+        #   同タイプのうちmerged_type(N+1)に隣接するピースを優先し、連鎖的併合の道筋を作る
+        # refs: advice.md (azumag, nimdavirus), tmp/improve_brief.md, tmp/batch_summary.txt,
+        #       game_history/20260327_020329_score0853.jsonl turns 69-76, game_history/20260327_014958_score1936.jsonl turns 84-91
+        # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合の高位スタッキング（type-aware条件追加）
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
-            # 盤面上の現在タイプの最も高い位置のピースに着地できる場合、ボーナスを与える
-            # 距離が近いほど大きなボーナス（max_yを超える位置はボーナスなし）
-            stack_y = same_type_stack_top["y"]
-            if stack_y >= -1.0:  # 合理的な積み上げ範囲
-                vertical_bonus = (stack_y + 1.0) * 200.0  # 低い位置ほどボーナス小さく（積みすぎを抑制）
-                if x < 0.0:
-                    target_x = same_type_stack_top["x"]
-                    horizontal_distance = abs(x - target_x)
-                    horizontal_bonus = max(0, 80.0 - horizontal_distance * 20.0)  # 近いほど大きいボーナス
-                    score += vertical_bonus + horizontal_bonus
-                    reasons.append("REACTIVE_PAIRS_STACKING")
-                else:
-                    # 右側の場合は対称処理
-                    target_x = same_type_stack_top["x"]
-                    horizontal_distance = abs(x - target_x)
-                    horizontal_bonus = max(0, 80.0 - horizontal_distance * 20.0)
-                    score += vertical_bonus + horizontal_bonus
+            if current_type_has_reactive or current_type_has_near:
+                # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
+                # merged_type(N+1)に隣接する同タイプピースを優先し、連鎖的併合の道筋を作る
+                best_stack_target = same_type_stack_top  # デフォルト: 最も高い同タイプ
+                best_chain_score = 0.0
+
+                # 同タイプピースのうち、merged_typeに最も近いものを探す
+                for sp in same_type_pieces:
+                    sp_x = sp.get("x", 0)
+                    sp_y = sp.get("y", -10)
+                    # merged_typeピースとの最短距離を計算
+                    min_merged_dist = float("inf")
+                    for p in pieces:
+                        if p.get("type") == merged_type:
+                            dist = ((p["x"] - sp_x) ** 2 + (p["y"] - sp_y) ** 2) ** 0.5
+                            if dist < min_merged_dist:
+                                min_merged_dist = dist
+                    # 連鎖スコア: merged_typeに近いほど高く、高位すぎる場合は減衰
+                    if min_merged_dist < float("inf"):
+                        chain_score = max(0, 300.0 - min_merged_dist * 80.0)
+                        # 高位すぎる場合は減衰（max_yに近づくと危険）
+                        if sp_y > 1.0:
+                            chain_score *= max(0, 1.0 - (sp_y - 1.0) * 0.5)
+                        if chain_score > best_chain_score:
+                            best_chain_score = chain_score
+                            best_stack_target = sp
+
+                # best_stack_targetに近い配置にボーナス（高さに依存しない固定ボーナス）
+                target_x = best_stack_target.get("x", 0)
+                horizontal_distance = abs(x - target_x)
+                if horizontal_distance < 2.0:
+                    # merged_type隣接ボーナス + 水平近接ボーナス
+                    stacking_bonus = best_chain_score + max(0, 100.0 - horizontal_distance * 40.0)
+                    score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
         # ----- evaluation axis 2: height penalty -----

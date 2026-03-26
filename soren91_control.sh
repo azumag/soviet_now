@@ -29,6 +29,7 @@ SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/nul
 SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
 SOREN91_OBS_INPUT_NAME="$(_soren91_env_get SOREN91_OBS_INPUT_NAME 2>/dev/null || printf '%s' "${SOREN91_OBS_INPUT_NAME:-91}")"
 SOREN91_AUDIO_GAIN_MULTIPLIER="$(_soren91_env_get SOREN91_AUDIO_GAIN_MULTIPLIER 2>/dev/null || printf '%s' "${SOREN91_AUDIO_GAIN_MULTIPLIER:-0.70}")"
+SOREN91_GEMINI_FALLBACK_MODEL="$(_soren91_env_get SOREN91_GEMINI_FALLBACK_MODEL 2>/dev/null || printf '%s' "${SOREN91_GEMINI_FALLBACK_MODEL:-gemini-2.5-flash}")"
 MANUAL_MERIKEN_MODE_FILE="${MANUAL_MERIKEN_MODE_FILE:-$TMP_STATE_DIR/manual_meriken_mode.json}"
 SOREN91_MERIKEN_IMPROVE_INTERVAL="${SOREN91_MERIKEN_IMPROVE_INTERVAL:-12}"
 SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
@@ -260,6 +261,92 @@ _soren91_text_has_japanese() {
 	printf '%s' "$1" | grep -q '[ぁ-んァ-ヶ一-龠々ー]'
 }
 
+_soren91_provider_error_preview() {
+	printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[[:space:]]\+/ /g' | cut -c1-160
+}
+
+_soren91_run_text_provider() {
+	local provider="$1" prompt="$2" model="${3:-}"
+	local out_file err_file rc stdout stderr
+	out_file=$(mktemp /tmp/soren91_"$provider"_out.XXXXXX) || return 1
+	err_file=$(mktemp /tmp/soren91_"$provider"_err.XXXXXX) || {
+		rm -f "$out_file"
+		return 1
+	}
+
+	case "$provider" in
+	claude)
+		if [ -n "$model" ]; then
+			claude -p "$prompt" --model "$model" >"$out_file" 2>"$err_file"
+		else
+			claude -p "$prompt" >"$out_file" 2>"$err_file"
+		fi
+		;;
+	gemini)
+		if [ -n "$model" ]; then
+			gemini -p "$prompt" -y -s -o text --model "$model" >"$out_file" 2>"$err_file"
+		else
+			gemini -p "$prompt" -y -s -o text >"$out_file" 2>"$err_file"
+		fi
+		;;
+	*)
+		rm -f "$out_file" "$err_file"
+		return 1
+		;;
+	esac
+	rc=$?
+	stdout=$(cat "$out_file" 2>/dev/null || true)
+	stderr=$(cat "$err_file" 2>/dev/null || true)
+	rm -f "$out_file" "$err_file"
+
+	if [ "$rc" -eq 0 ] && [ -n "$(printf '%s' "$stdout" | tr -d '[:space:]')" ]; then
+		printf '%s' "$stdout"
+		return 0
+	fi
+
+	{
+		[ -n "$stderr" ] && printf '%s\n' "$stderr"
+		[ -n "$stdout" ] && printf '%s\n' "$stdout"
+	} | sed '/^$/d' >&2
+	return 1
+}
+
+_soren91_generate_text_with_gemini_fallback() {
+	local tag="$1" prompt="$2" claude_model="${3:-haiku}"
+	local result="" err_file="" err_preview=""
+
+	err_file=$(mktemp /tmp/soren91_ai_err.XXXXXX) || return 1
+	if result=$(_soren91_run_text_provider claude "$prompt" "$claude_model" 2>"$err_file"); then
+		rm -f "$err_file"
+		printf '%s' "$result"
+		return 0
+	fi
+	err_preview=$(_soren91_provider_error_preview "$(cat "$err_file" 2>/dev/null || true)")
+	rm -f "$err_file"
+
+	if ! command -v gemini >/dev/null 2>&1; then
+		[ -n "$err_preview" ] && log "[SOREN91] ${tag}: Claude失敗, Gemini未導入 (${err_preview})"
+		return 1
+	fi
+
+	if [ -n "$err_preview" ]; then
+		log "[SOREN91] ${tag}: Claude失敗 -> Gemini fallback (${err_preview})"
+	else
+		log "[SOREN91] ${tag}: Claude失敗 -> Gemini fallback"
+	fi
+
+	err_file=$(mktemp /tmp/soren91_ai_err.XXXXXX) || return 1
+	if result=$(_soren91_run_text_provider gemini "$prompt" "$SOREN91_GEMINI_FALLBACK_MODEL" 2>"$err_file"); then
+		rm -f "$err_file"
+		printf '%s' "$result"
+		return 0
+	fi
+	err_preview=$(_soren91_provider_error_preview "$(cat "$err_file" 2>/dev/null || true)")
+	rm -f "$err_file"
+	[ -n "$err_preview" ] && log "[SOREN91] ${tag}: Gemini fallback失敗 (${err_preview})"
+	return 1
+}
+
 _soren91_start_capitalism_corner() {
 	[ "${SOREN91_CAPITALISM_CORNER_ENABLED:-1}" = "1" ] || return 0
 	command -v start_radio_corner_capitalism >/dev/null 2>&1 || return 0
@@ -287,23 +374,23 @@ _soren91_start_capitalism_corner() {
 _soren91_generate_strategy_explanation() {
 	local strategy_header="$1"
 	[ -n "$strategy_header" ] || return 1
-	claude -p "あなたはメリケンAI（アメリカ製AI）。ちょっとひねくれた性格で、素直に物事を認めない。自信満々に見せかけつつ内心不安、褒める時も「まあ悪くないんじゃないですか」と斜に構える。皮肉・自虐・負け惜しみが自然に出る。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
+	_soren91_generate_text_with_gemini_fallback "strategy_explanation" "あなたはメリケンAI（アメリカ製AI）。ちょっとひねくれた性格で、素直に物事を認めない。自信満々に見せかけつつ内心不安、褒める時も「まあ悪くないんじゃないですか」と斜に構える。皮肉・自虐・負け惜しみが自然に出る。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
 この「91用戦略」の特徴だけを、視聴者向けに2〜3文で簡潔に、ひねくれた口調で解説してください。専門用語は噛み砕いてください。
 元のソ連ゲームの戦略や strategy.py には触れないこと。T1、ULTRA、HOLD、balance などの語は、91の盤面制御・置き方のクセとして説明すること。
 【最重要】出力は自然な日本語のみ。英語の文、英語だけの箇条書き、ローマ字だけの文は禁止。アメリカンなキャラクターでも話す言語は日本語です。
 出力はトーク本文のみ（カッコや注釈なし）。
 
-${strategy_header}" --model haiku 2>/dev/null
+${strategy_header}" "haiku"
 }
 
 _soren91_rewrite_strategy_explanation_to_japanese() {
 	local raw_text="$1"
 	[ -n "$raw_text" ] || return 1
-	claude -p "以下の戦略解説を、意味を変えずに自然な日本語の話し言葉2〜3文へ言い換えてください。
+	_soren91_generate_text_with_gemini_fallback "strategy_explanation_rewrite" "以下の戦略解説を、意味を変えずに自然な日本語の話し言葉2〜3文へ言い換えてください。
 メリケンAIのひねくれた感じ（皮肉・強がり・斜に構えた感じ）は残してよいですが、英語の文は禁止です。
 出力は日本語のトーク本文のみ（カッコや注釈なし）。
 
-${raw_text}" --model haiku 2>/dev/null
+${raw_text}" "haiku"
 }
 
 soren91_start() {

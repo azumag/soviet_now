@@ -26,6 +26,11 @@ const VERSIONS_DIR = 'strategy_versions';
 const PROMPT_PATH = 'prompts/improve_strategy.md';
 const SCREENSHOTS_DIR = 'tmp/screenshots';
 const IMPROVE_CLAUDE_MODEL = process.env.SOREN91_IMPROVE_CLAUDE_MODEL || 'sonnet';
+const IMPROVE_GEMINI_MODEL = process.env.SOREN91_IMPROVE_GEMINI_MODEL || process.env.SOREN91_GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
+const IMPROVE_GEMINI_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SOREN91_IMPROVE_GEMINI_TIMEOUT || '180', 10) * 1000,
+);
 const IMPROVE_PROMPT_WARN_CHARS = Number.parseInt(process.env.SOREN91_IMPROVE_PROMPT_WARN_CHARS || '120000', 10);
 const IMPROVE_IMAGE_WARN_CHARS = Number.parseInt(process.env.SOREN91_IMPROVE_IMAGE_WARN_CHARS || '1500000', 10);
 
@@ -134,11 +139,11 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
     console.log(`[improve] Collected ${screenshots.length} screenshots for game #${gameNumber}`);
   }
   const promptText = buildPromptText(gameSummary, currentStrategy, lineageContext, screenshots);
-  console.log(`[improve] Calling claude CLI (model=${IMPROVE_CLAUDE_MODEL})...`);
+  console.log(`[improve] Calling primary strategy model (claude=${IMPROVE_CLAUDE_MODEL}, gemini_fallback=${IMPROVE_GEMINI_MODEL})...`);
 
   let newStrategy;
   try {
-    newStrategy = await callClaude(promptText, screenshots, 'improve');
+    newStrategy = await callStrategyModelWithFallback(promptText, screenshots, 'improve');
   } catch (err) {
     console.error('[improve] API call failed:', err.message);
     cleanupScreenshots();
@@ -212,6 +217,16 @@ function formatTurnDetail(t) {
   const topTypes = Object.entries(typeDist).sort((a, b) => b[1] - a[1]).slice(0, 5)
     .map(([type, count]) => `t${type}:${count}`).join(',');
   return `Turn ${t.turn}: pieces=${pieces} max_y=${maxY.toFixed(2)} x=${x} reason=${reason} garbage=${garbageRatio} gauge=${gauge} types=[${topTypes}]`;
+}
+
+function containsProviderFailureText(text) {
+  return /invalid bearer token|authentication_error|failed to authenticat(?:e|ed)|api error[: ]|request_id|invalid error token|invalid token|not logged in|please run \/login|potentially unsafe or sensitive content|avoid using prompts that may generate sensitive content|unsafe or sensitive content in input or generation|content policy|safety policy|rate limit|rate_limit|too many requests|429\b|overloaded_error|overloaded|quota|timed out|timeout|temporarily unavailable|service unavailable|socket hang up|econnreset/i.test(String(text || ''));
+}
+
+function makeProviderError(message, detail = '') {
+  const err = new Error(detail ? `${message}: ${detail}` : message);
+  err.providerFailure = true;
+  return err;
 }
 
 function getClaudeContextStats(promptText, screenshots = []) {
@@ -449,6 +464,34 @@ function extractStrategyFromResponse(text) {
   return null;
 }
 
+function runPromptThroughCli(bin, args, promptText, options = {}) {
+  const { tag = 'improve', label = bin, maxBuffer = 2 * 1024 * 1024, timeout = 0, cwd } = options;
+  return new Promise((resolve, reject) => {
+    const child = execFile(bin, args, {
+      encoding: 'utf-8',
+      maxBuffer,
+      ...(timeout > 0 ? { timeout } : {}),
+      ...(cwd ? { cwd } : {}),
+    }, (err, stdout, stderr) => {
+      const stderrPreview = String(stderr || '').slice(0, 500);
+      const combined = `${stdout || ''}\n${stderr || ''}`;
+      if (containsProviderFailureText(combined)) {
+        if (stderrPreview) console.error(`[${tag}] ${label} stderr:`, stderrPreview);
+        return reject(makeProviderError(`${label} provider/rate-limit failure`, stderrPreview || String(stdout || '').slice(0, 300)));
+      }
+      if (err) {
+        if (stderrPreview) console.error(`[${tag}] ${label} stderr:`, stderrPreview);
+        return reject(err);
+      }
+      resolve(String(stdout || ''));
+    });
+
+    child.stdin.on('error', () => {});
+    child.stdin.write(promptText);
+    child.stdin.end();
+  });
+}
+
 /**
  * claude CLI を呼び出してテキスト応答を取得 (非同期)
  * screenshots が渡された場合は --input-format stream-json で画像付きリクエスト
@@ -459,30 +502,21 @@ function callClaude(promptText, screenshots = [], tag = 'improve') {
   logClaudeContextStats(promptText, screenshots, tag);
 
   if (screenshots.length > 0) {
-    return callClaudeWithImages(promptText, screenshots);
+    return callClaudeWithImages(promptText, screenshots, tag);
   }
 
-  return new Promise((resolve, reject) => {
-    const child = execFile('claude', ['-p', '--model', IMPROVE_CLAUDE_MODEL, '--output-format', 'text'], {
-      encoding: 'utf-8',
-      maxBuffer: 2 * 1024 * 1024,
-    }, (err, stdout, stderr) => {
-      if (err) {
-        if (stderr) console.error('[improve] claude stderr:', stderr.slice(0, 500));
-        return reject(err);
-      }
-      resolve(extractStrategyFromResponse(stdout));
-    });
-
-    child.stdin.write(promptText);
-    child.stdin.end();
-  });
+  return runPromptThroughCli(
+    'claude',
+    ['-p', '--model', IMPROVE_CLAUDE_MODEL, '--output-format', 'text'],
+    promptText,
+    { tag, label: 'claude', maxBuffer: 2 * 1024 * 1024 },
+  ).then(extractStrategyFromResponse);
 }
 
 /**
  * claude CLI に画像付きでリクエストを送信 (stream-json format)
  */
-function callClaudeWithImages(promptText, screenshots) {
+function callClaudeWithImages(promptText, screenshots, tag = 'improve') {
   // content blocks: 画像 + テキスト
   const content = [];
   for (const ss of screenshots) {
@@ -498,28 +532,16 @@ function callClaudeWithImages(promptText, screenshots) {
     message: { role: 'user', content },
   });
 
-  return new Promise((resolve, reject) => {
-    const child = execFile('claude', [
+  return runPromptThroughCli('claude', [
       '-p', '--model', IMPROVE_CLAUDE_MODEL,
       '--input-format', 'stream-json', '--output-format', 'stream-json',
       '--verbose',
-    ], {
-      encoding: 'utf-8',
-      maxBuffer: 4 * 1024 * 1024,
-    }, (err, stdout, stderr) => {
-      if (err) {
-        if (stderr) console.error('[improve] claude stderr:', stderr.slice(0, 500));
-        return reject(err);
-      }
-      // stream-json出力: 各行がJSONオブジェクト、type=result行からtextを抽出
-      const resultText = parseStreamJsonOutput(stdout);
-      resolve(extractStrategyFromResponse(resultText));
-    });
-
-    // EPIPE エラーを無視 (claude プロセスが先に終了した場合)
-    child.stdin.on('error', () => {});
-    child.stdin.write(message + '\n');
-    child.stdin.end();
+    ],
+    message + '\n',
+    { tag, label: 'claude', maxBuffer: 4 * 1024 * 1024 },
+  ).then((stdout) => {
+    const resultText = parseStreamJsonOutput(stdout);
+    return extractStrategyFromResponse(resultText);
   });
 }
 
@@ -554,6 +576,50 @@ function parseStreamJsonOutput(stdout) {
 
 const MAX_FIX_RETRIES = 2;
 
+function buildGeminiFallbackPrompt(promptText, screenshots = []) {
+  if (screenshots.length === 0) return promptText;
+  return `${promptText}
+
+## Fallback Note
+This fallback run does NOT include the image attachments mentioned above.
+Ignore any earlier line that says screenshots are provided as images and rely only on the textual summaries in this prompt.`;
+}
+
+async function callGemini(promptText, screenshots = [], tag = 'improve') {
+  const args = ['-p', '', '-y', '-s', '-o', 'text'];
+  if (IMPROVE_GEMINI_MODEL) {
+    args.push('--model', IMPROVE_GEMINI_MODEL);
+  }
+  const stdout = await runPromptThroughCli(
+    'gemini',
+    args,
+    buildGeminiFallbackPrompt(promptText, screenshots),
+    {
+      tag,
+      label: 'gemini',
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: IMPROVE_GEMINI_TIMEOUT_MS,
+      cwd: '/tmp',
+    },
+  );
+  return extractStrategyFromResponse(stdout);
+}
+
+async function callStrategyModelWithFallback(promptText, screenshots = [], tag = 'improve') {
+  try {
+    const result = await callClaude(promptText, screenshots, tag);
+    if (result) return result;
+    throw makeProviderError('claude returned no strategy code');
+  } catch (err) {
+    console.warn(`[${tag}] Claude failed -> Gemini fallback (${err.message})`);
+    const fallbackResult = await callGemini(promptText, screenshots, tag);
+    if (!fallbackResult) {
+      throw makeProviderError('gemini returned no strategy code');
+    }
+    return fallbackResult;
+  }
+}
+
 /**
  * バリデーション失敗時にAIにエラーを伝えて修正させる
  */
@@ -575,7 +641,7 @@ ${failedCode.slice(0, 3000)}${failedCode.length > 3000 ? '\n... (truncated)' : '
 - Do NOT import external modules - pure logic only
 - HOLD logic MUST be preserved`;
 
-  return callClaude(fixPrompt, screenshots, 'improve_fix');
+  return callStrategyModelWithFallback(fixPrompt, screenshots, 'improve_fix');
 }
 
 /**
@@ -806,10 +872,10 @@ async function runStandaloneImprovement(startGame, endGame) {
   }
   const promptText = buildPromptText(combinedSummary, currentStrategy, lineageContext, allScreenshots);
 
-  console.log(`[improve] Calling claude CLI (standalone, model=${IMPROVE_CLAUDE_MODEL})...`);
+  console.log(`[improve] Calling primary strategy model (standalone, claude=${IMPROVE_CLAUDE_MODEL}, gemini_fallback=${IMPROVE_GEMINI_MODEL})...`);
   let newStrategy;
   try {
-    newStrategy = await callClaude(promptText, allScreenshots, 'improve_standalone');
+    newStrategy = await callStrategyModelWithFallback(promptText, allScreenshots, 'improve_standalone');
   } catch (err) {
     console.error('[improve] API call failed:', err.message);
     return;

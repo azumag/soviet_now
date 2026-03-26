@@ -1,7 +1,7 @@
 /**
  * comment.mjs - メリケンAIコメント生成 (ランキング画面 + 試合中盤面)
  *
- * Claude を優先し、失敗時は opencode にフォールバックして:
+ * Claude を優先し、失敗時は Gemini → opencode にフォールバックして:
  * 1. ランキング画面OCR + 試合後コメント
  * 2. 試合中の盤面解析データから中間コメント (1試合1回)
  * 3. TTS読み上げ + Twitchチャット投稿
@@ -33,8 +33,13 @@ const SAY_ENQUEUE_SCRIPT = join(PARENT_DIR, 'say_enqueue.sh');
 const TWITCH_CHAT_SCRIPT = join(PARENT_DIR, 'twitch_chat.sh');
 const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
 const DEFAULT_CLAUDE_MODEL = process.env.SOREN91_COMMENT_CLAUDE_MODEL || 'haiku';
+const DEFAULT_GEMINI_MODEL = process.env.SOREN91_COMMENT_GEMINI_MODEL || process.env.SOREN91_GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
 const DEFAULT_OPENCODE_AGENT = process.env.SOREN91_COMMENT_OPENCODE_AGENT || process.env.RADIO_FALLBACK || 'glmflash';
 const DEFAULT_CLAUDE_TIMEOUT_MS = 30000;
+const DEFAULT_GEMINI_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SOREN91_COMMENT_GEMINI_TIMEOUT || process.env.COMMENT_GEMINI_TIMEOUT || '30', 10) * 1000,
+);
 const DEFAULT_OPENCODE_TIMEOUT_MS = Math.max(
   1000,
   Number.parseInt(process.env.SOREN91_COMMENT_OPENCODE_TIMEOUT || process.env.COMMENT_OPENCODE_TIMEOUT || '30', 10) * 1000,
@@ -171,13 +176,51 @@ function runOpencodeComment(tag, promptText, agent = DEFAULT_OPENCODE_AGENT) {
   });
 }
 
-async function withOpencodeFallback(tag, claudeRunner, opencodePromptBuilder) {
+function runGeminiTextComment(tag, promptText) {
+  const args = ['-p', '', '-y', '-s', '-o', 'text'];
+  if (DEFAULT_GEMINI_MODEL) {
+    args.push('--model', DEFAULT_GEMINI_MODEL);
+  }
+  return new Promise((resolve, reject) => {
+    const child = execFile('gemini', args, {
+      encoding: 'utf-8',
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: DEFAULT_GEMINI_TIMEOUT_MS,
+      cwd: '/tmp',
+    }, (err, stdout, stderr) => {
+      const stderrPreview = String(stderr || '').slice(0, 500);
+      const combined = `${stdout || ''}\n${stderr || ''}`;
+      if (containsProviderErrorText(combined)) {
+        if (stderrPreview) console.error(`[${tag}] gemini stderr:`, stderrPreview);
+        return reject(makeProviderError('gemini provider/rate-limit failure', stderrPreview || String(stdout || '').slice(0, 300)));
+      }
+      if (err) {
+        if (stderrPreview) console.error(`[${tag}] gemini stderr:`, stderrPreview);
+        return reject(err);
+      }
+      const comment = extractCommentOnly(String(stdout || '').trim());
+      if (!comment) {
+        return reject(new Error('gemini returned empty comment'));
+      }
+      resolve(comment);
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.write(promptText);
+    child.stdin.end();
+  });
+}
+
+async function withTextFallbacks(tag, promptText, claudeRunner) {
   try {
     return await claudeRunner();
   } catch (err) {
-    console.log(`[${tag}] claude failed -> opencode fallback (${err.message})`);
-    const fallbackPrompt = await opencodePromptBuilder();
-    return runOpencodeComment(tag, fallbackPrompt);
+    console.log(`[${tag}] claude failed -> gemini fallback (${err.message})`);
+    try {
+      return await runGeminiTextComment(tag, promptText);
+    } catch (geminiErr) {
+      console.log(`[${tag}] gemini failed -> opencode fallback (${geminiErr.message})`);
+      return runOpencodeComment(tag, promptText);
+    }
   }
 }
 
@@ -275,10 +318,10 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
 }
 
 function callClaudeForComment(promptText) {
-  return withOpencodeFallback(
+  return withTextFallbacks(
     'ranking_comment',
+    promptText,
     () => runClaudeTextComment('ranking_comment', promptText),
-    async () => promptText,
   );
 }
 
@@ -440,10 +483,10 @@ async function callClaudeForMidgame(gameNumber, turn, boardState) {
   const boardInfo = formatBoardStateForPrompt(boardState, turn);
   const promptText = loadPrompt('midgame_comment.md', { boardInfo });
 
-  return withOpencodeFallback(
+  return withTextFallbacks(
     'midgame_comment',
+    promptText,
     () => runClaudeTextComment('midgame_comment', promptText),
-    async () => promptText,
   );
 }
 
