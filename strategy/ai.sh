@@ -356,9 +356,9 @@ run_cmd() {
 			printf '[%s] [AI:%s] TIMEOUT after %ss\n' "$(date '+%H:%M:%S')" "$cmd_log_tag" "$timeout_sec" >>"$cmd_log_file" 2>/dev/null || true
 		fi
 	fi
-	# トークン超過エラー検出 → セッション継続しても無駄なので rc=77 で通知
-	if [ -n "$cmd_log_file" ] && tail -5 "$cmd_log_file" 2>/dev/null | grep -qi "exceeds.*context length\|exceeds.*maximum.*token" 2>/dev/null; then
-		log "[CMD] トークン超過検出 → セッションクリア"
+	# コンテキスト上限/トークン超過エラー検出 → セッション継続しても無駄なので rc=77 で通知
+	if [ -n "$cmd_log_file" ] && tail -20 "$cmd_log_file" 2>/dev/null | grep -qiE "exceeds.*context length|exceeds.*maximum.*token|context window limit|maximum context length|prompt is too long|too many tokens" 2>/dev/null; then
+		log "[CMD] コンテキスト上限検出 → セッションクリア"
 		ret=77
 	fi
 	# 空応答検出: 10秒以内に rc=0 で完了 → モデルが実質的な応答を返していない
