@@ -37,7 +37,7 @@ Game Overview:
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9. Reactive pairs stacking bonus - v340: reactive_pairs>=1 && merge_grade=="NO" && 現在タイプにreactive/near pairがある場合、merged_type(N+1)に隣接する同タイプピースに着地する配置にボーナス
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-             9.5. Current type stack merge priority - v341: v335重複削除・ロシアフェーズ完全抑制版
+             9.5. Current type stack merge priority - v342: v341基盤・現在タイプ非反応時スタッキング許可版
              # v339: axis 9.7 (REACTIVE_PAIRS_COMPRESSION) 削除 - 即時併合機会最大化のため評価軸シンプル化
 
 
@@ -56,6 +56,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
+        # v342: axis 9.5 SAME_TYPE_STACK条件緩和 - reactive_pairs!=0でも現在タイプ非反応時にスタッキング許可
+        # reactive_pairsがあってもnext_typeにreactive/near pairがない場合、同タイプスタッキングを許可しHEIGHT_CONTROL連続を削減
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, game_history/20260327_033824_score0501.jsonl, strategy.py.staging
+        # Fixes rollback failure mode: reactive_pairsあるが現在タイプに反応がない場合の連続HEIGHT_CONTROL
+        #
         # v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
         # コード監査でaxis 9.5が2ブロック存在(v335 lines 919-949 と v337 lines 967-1011)し、
         #   非ロシア時danger==0/reactive==0でSAME_TYPE_STACK_MERGE_PRIORITY +600/+200が二重に加算されていた
@@ -333,7 +338,21 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
+    """v342: axis 9.5 SAME_TYPE_STACK条件緩和 - reactive_pairs!=0でも現在タイプ非反応時にスタッキング許可
+
+    v341 failure: reactive_pairsがあってもnext_typeにreactive/near pairがない場合、axis 9.5のSAME_TYPE_STACK(+100)ボーナスが
+    reactive_pair_count==0の条件で完全にブロックされ、連続HEIGHT_CONTROLでmax_y runawayが発生
+    ワーストゲーム(score0501)終盤: reactive=3-4あるがnext_typeにはreactive_pairsがなく、
+      HEIGHT_CONTROLが連続してmax_y=1.64→2.73に上昇してゲームオーバー
+    ベストゲーム(score3171)終盤: reactive=3あってもsame-type stackingで配置を安定させ高スコア
+    v342: axis 9.5のSAME_TYPE_STACK(+100)ボーナス条件を緩和し、reactive_pairsがあっても
+      現在タイプにreactive/near pairがない場合はスタッキングを許可
+      これにより反応のないタイプの配置指針がHEIGHT_CONTROLからSAME_TYPE_STACKに切り替わり、
+      将来の併合機会を構築しながらmax_yの上昇を抑制
+    refs: advice.md (Pitman_live), tmp/improve_brief.md, tmp/batch_summary.txt,
+          game_history/20260327_033824_score0501.jsonl turns 55-57, game_history/20260327_034941_score3171.jsonl turns 116-119
+
+    v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
 
     v336 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
     ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
@@ -1006,18 +1025,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ボーナスブロックを適用 - axis 8.7即時併合優先
             # reactive_pairsがある状況では、即時併合を最優先する戦略へ切り替え
             
-            # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
-            # danger_piece_count == 0 && reactive_pair_count == 0 の場合のみ、ペナルティ軽減を適用
-            # v325: reactive_pairsがある場合はペナルティ軽減ボーナスを削除 - 即時併合機会優先化
-            # v327: 危険ピース(danger_piece_count > 0)がある場合のペナルティ軽減ボーナスも削除 - axis 9.2のペナルティを優先
-            # v330: reactive_pairs >= 1 の場合のペナルティ軽減ボーナスも削除 - 即時併合優先強化
-            # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ペナルティ軽減も削除 - axis 8.7即時併合優先
+            # 配置位置が盤面上の現在タイプのピースの上になる場合、スタッキングボーナス
+            # v325/v327/v330/v337: reactive_pairsがある場合はボーナスを削除し即時併合優先としていたが、
+            #   reactive_pairsがあっても現在タイプにreactive/near pairがない場合、
+            #   同タイプにスタックして将来の併合機会を構築する方がHEIGHT_CONTROLより有益
+            # v342: 現在タイプにreactive/near pairがない場合もスタッキングボーナスを許可する条件緩和
+            #   ワーストゲーム(score0501)終盤: reactive=3-4あるがnext_typeにはreactive_pairsがなく、
+            #     HEIGHT_CONTROLが連続してmax_y runawayでゲームオーバー（即時併合機会が来ない状況で何もできない）
+            #   +100ボーナスはheight_penalty（y=1.5で135+）より小さく、axis 8.8ペナルティ(-3000+)より遥かに小さい
+            #   したがって即時併合優先や高位置回避を阻害せず、反応のないタイプの配置指針として機能
+            # refs: advice.md (Pitman_live), tmp/improve_brief.md, tmp/batch_summary.txt,
+            #       game_history/20260327_033824_score0501.jsonl turns 55-57, game_history/20260327_034941_score3171.jsonl turns 116-119
+            # Fixes rollback failure mode: reactive_pairsあるが現在タイプに反応がない場合の連続HEIGHT_CONTROL（axis 9.5条件緩和）
             landing_y = result.get("landing_y", 0)
             if not (russia_phase and reactive_pair_count < 3):
-                if landing_y > stack_top_y and danger_piece_count == 0 and reactive_pair_count == 0:
+                # スタッキング条件: reactive_pairs==0 または (reactive_pairs>0 かつ現在タイプにreactive/nearなし)
+                stacking_eligible = reactive_pair_count == 0 or (reactive_pair_count > 0 and not current_type_has_reactive and not current_type_has_near)
+                if landing_y > stack_top_y and danger_piece_count == 0 and stacking_eligible:
                     horiz_dist = abs(x - stack_top_x)
                     if horiz_dist < 1.0:
-                        # v325: reactive_pairsがない場合のみペナルティ軽減を適用
                         score += 100.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
