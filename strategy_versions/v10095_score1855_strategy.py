@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
 """strategy.py - AI改善対象の決定スクリプト
+v337: axis 8.7 ロシア建国後即時併合ペナルティ追加版 - 即時併合優先強化
++ v337: axis 8.7 ロシア建国後即時併合ペナルティ追加版 - 即時併合優先強化
++ v336の問題点: axis 8.7でロシアフェーズの即時併合なし時に盤面圧縮ボーナス(+800.0~+900.0)を与えており、戦略的配置を優先してしまい即時併合機会を逃す
++ ワーストゲーム(score344)終盤turns 50-52: reactive_pairs=8あるのに即時併合できずmax_y runawayでゲームオーバー
++ extra_highゲーム(score1774)終盤turns 75-77: ロシア(type 14)がある中で即時併合を繰り返し高スコア
++ advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
++ v337: axis 8.7でロシアフェーズの即時併合なし時に盤面圧縮ボーナスを削除し、代わりに強力なペナルティを適用して即時併合を強制的に待機
++   - deadline_crossedでない場合のみ、即時併合なしにペナルティを適用（axis 9.2との競合を回避）
++   - reactive_pairs>=1: -2500.0, reactive_pairs==0: -1500.0
++ ロシア建国後は盤面が狭く、戦略的配置の余地が限られているため、即時併合機会を確実に優先
++ refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md,
++       game_history/20260326_174203_score1774.jsonl turns 75-77, game_history/20260326_180429_score0344.jsonl turns 50-52
++ Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7 ペナルティ追加）
+#
 v336: axis 8.8 danger_piece_count条件削除版 - 戦略的死lock状態解消
 
 Game Overview:
@@ -263,35 +277,42 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v333: axis 8.8 compression_bonus転換版 - v332 failure mode潰し
+    """v337: axis 8.7 ロシア建国後即時併合ペナルティ追加版 - 即時併合優先強化
 
-    v332の問題点: axis 8.8の動的ペナルティ(-3000~-9000)は高配置を強力に抑制するが、戦略的死lock状態は解消していない
-    last_rollback_postmortemの致命的欠陥: "deadline_crossed && reactive_pairs=1-2 && merge_grade=='NO' の戦略的死lock状態"
-      v348: axis 9.6 compression_bonusがreactive_pairs>=3 && deadline_crossed && merge_grade=='NO'で完全無効化
-      v332: axis 8.8のペナルティもreactive_pairs>=2 && merge_grade=='NO'で一律に下げるため、「強制配置」問題が残る
-    v330 (rollback_target) の成功パターン: reactive_pairs>=1ならcompression_bonusが有効で、戦略的配置で即時併合を待機できる
+    v336の問題点: axis 8.7でロシアフェーズの即時併合なし時に盤面圧縮ボーナス(+800.0~+900.0)を与えており、
+                  戦略的配置を優先してしまい、即時併合機会を逃してゲームオーバーになるケースがある
+    ワーストゲーム(score344)終盤turns 50-52: reactive_pairs=8あるのに即時併合できずmax_y runawayでゲームオーバー
+    extra_highゲーム(score1774)終盤turns 75-77: ロシア(type 14)がある中で即時併合を繰り返し高スコア
+    advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
 
-    v333の改善点:
-    1. axis 8.8を「ペナルティ」から「compression_bonus」へ構造的に転換
-    2. reactive_pairs>=1の全状況で戦略的配置を可能にするcompression_bonus設計
-    3. landing_yに応じた動的ボーナス（低配置ほど高ボーナス）で盤面圧縮を優先
-    4. reactive_pairs==1でもcompression_bonusを適用し、v348/v332のfailure modeを解消
-    5. 危険域ではaxis 9.2のペナルティがcompression_bonusを上回り、即時併合を優先
+    v337の改善点:
+    1. axis 8.7でロシアフェーズの即時併合なし時に、盤面圧縮ボーナスを削除
+    2. 代わりに強力なペナルティを適用し、即時併合を強制的に待機
+       - deadline_crossedでない場合のみ、即時併合なしにペナルティを適用（axis 9.2との競合を回避）
+       - reactive_pairs>=1: -2500.0, reactive_pairs==0: -1500.0
+    3. ロシア建国後は盤面が狭く、戦略的配置の余地が限られているため、即時併合機会を確実に優先
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
          analysis: analyze_board.py analysis results
              - results: landing information for each drop X candidate
-                 - x: drop X coordinate
-                 - landing_y: estimated landing Y coordinate (high=dangerous)
-                 - drift_x/drift_unc: post-landing drift due to polygon shape
-                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                 - danger_direct_merge_available: DIRECT merge available with danger piece
              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
+    # v332の問題点: axis 8.8の動的ペナルティ(-3000~-9000)は高配置を強力に抑制するが、戦略的死lock状態は解消していない
+    # last_rollback_postmortemの致命的欠陥: "deadline_crossed && reactive_pairs=1-2 && merge_grade=='NO' の戦略的死lock状態"
+    #   v348: axis 9.6 compression_bonusがreactive_pairs>=3 && deadline_crossed && merge_grade=='NO'で完全無効化
+    #   v332: axis 8.8のペナルティもreactive_pairs>=2 && merge_grade=='NO'で一律に下げるため、「強制配置」問題が残る
+    # v330 (rollback_target) の成功パターン: reactive_pairs>=1ならcompression_bonusが有効で、戦略的配置で即時併合を待機できる
+    #
+    # v333の改善点:
+    # 1. axis 8.8を「ペナルティ」から「compression_bonus」へ構造的に転換
+    # 2. reactive_pairs>=1の全状況で戦略的配置を可能にするcompression_bonus設計
+    # 3. landing_yに応じた動的ボーナス（低配置ほど高ボーナス）で盤面圧縮を優先
+    # 4. reactive_pairs==1でもcompression_bonusを適用し、v348/v332のfailure modeを解消
+    # 5. 危険域ではaxis 9.2のペナルティがcompression_bonusを上回り、即時併合を優先
 
     results = analysis.get("results", [])
 
@@ -645,16 +666,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.7: russia phase immediate merge priority (v327: 危険ピース時ボーナス削除版 - 即時併合優先強化) -----
+        # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: 即時併合なし時ペナルティ追加版 - ロシア建国後の即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
         # ロシアフェーズ（type 15 >= 1）で即時併合を最優先する戦略へ切り替え
         # 即時併合候補がある場合: 即時併合を最優先（強力なボーナス）
-        # 即時併合がない場合: 危険ピースがない場合のみ盤面圧縮を優先しつつ、type 15保護を徹底
-        # 危険ピースがある場合は即時併合優先を維持（axis 9.2のペナルティを優先）
-        # v327: 危険ピース(danger_piece_count > 0)がある場合のボーナスを削除 - axis 9.2のペナルティを優先させ即時併合を最優先
-        # 未活用情報：盤面上のtype 15個数、即時併合可否(merge_grade)、danger_piece_count
-        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
-        #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
+        # 即時併合がない場合: 強力なペナルティを適用し、即時併合を強制的に待機
+        #   - deadline_crossed時はaxis 9.2のペナルティを優先し、競合を避ける
+        #   - deadline_crossedでない場合のみ、即時併合なしにペナルティを適用
+        # 未活用情報：盤面上のtype 15個数、即時併合可否(merge_grade)、deadline_crossed
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md,
+        #       game_history/20260326_174203_score1774.jsonl turns 75-77 (ロシア建国後即時併合で高スコア),
+        #       game_history/20260326_180429_score0344.jsonl turns 50-52 (即時併合できずゲームオーバー)
+        # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7 ペナルティ追加）
 
         if russia_phase:
             # ロシアフェーズでの即時併合優先
@@ -666,21 +689,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 800.0
                 reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
-                # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
-                # v324: ワーストゲーム(score0651)のような「ロシア建国後の即時併合機会取りこぼし」を防止するためボーナス強化
-                # deadline_crossed時でも盤面圧縮を優先し、戦略的配置の余地を確保
-                if danger_piece_count == 0:
-                    # 危険ピースがない場合のみ盤面圧縮を優先
-                    if deadline_crossed:
-                        # deadline_crossed時で危険ピースがない場合、盤面圧縮をより強力に優先
-                        score += 900.0
-                        reasons.append("RUSSIA_PHASE_DEADLINE_BOARD_COMPRESSION")
+                # v337: 即時併合がない場合に強力なペナルティを適用し、即時併合を強制的に待機
+                # ロシア建国後は盤面が狭く、戦略的配置の余地が限られているため、即時併合機会を逃すと致命的
+                # deadline_crossed時はaxis 9.2のペナルティを優先し、競合を避ける
+                if not deadline_crossed:
+                    # deadline_crossedでない場合のみ、即時併合なしにペナルティを適用
+                    # reactive_pairsがある場合はより強力なペナルティを適用
+                    if reactive_pair_count >= 1:
+                        score -= 2500.0
                     else:
-                        # 危険ピースがない場合、盤面圧縮を優先
-                        score += 800.0
-                        reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                # v327: danger_piece_count > 0 の場合のボーナスを削除 - axis 9.2のペナルティを優先
-                # 危険ピースがある状況では、即時併合を最優先する戦略へ切り替え
+                        score -= 1500.0
+                    reasons.append("RUSSIA_PHASE_NO_MERGE_PENALTY")
+                # deadline_crossed時はaxis 9.2のペナルティを優先し、即時併合を最優先
 
         # ----- evaluation axis 8.8: reactive pairs compression bonus (v336: danger_piece_count条件削除版 - 戦略的死lock状態解消) -----
         # v335の問題点: axis 8.8のdanger_piece_count条件がdeadline_crossed && danger_piece_count>0の場合にcompression_bonusを適用せず、戦略的配置の余地を制限
