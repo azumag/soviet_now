@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """strategy.py - AI改善対象の決定スクリプト
-v346: axis 9.5条件緩和版 - 未活用情報（merged_type隣接）の活用強化
-+ v346: axis 9.5条件緩和版 - 未活用情報（merged_type隣接）の活用強化
-+ v345の問題点: axis 8.8のペナルティ係数縮小（500.0→300.0）は数値微調整のみで構造的改善ではない
-+ axis 9.5（MERGED_TYPE_ADJACENCY_PRIORITY）の条件がdanger_piece_count == 0 and reactive_pair_count == 0と厳しすぎ、
-+ 未活用情報（merged_typeと盤面上のTypeN+1の隣接状態）がほとんど活用されていなかった
-+ v346: axis 9.5の適用条件をtotal_immediate_merge_opportunities <= 2に緩和し、即時併合機会が少ない状況で戦略的配置を許容
-+ 将来の連鎖的併合（merged_typeとの隣接）を評価し、2手先の併合可能性を最大化する構造的改善
-+ 未活用情報（merged_type隣接状態）の活用を強化する条件緩和であり、数値微調整ではない
-+ refs: advice.md (azumag, nimdavirus), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt
-+ Fixes: 即時併合機会が少ない状況での戦略的配置余地不足（axis 9.5条件緩和による未活用情報活用強化）
+v347: ロシア建国後戦略的配置無効化版 - 即時併合最優先フェーズ切り替え
++ v347: ロシア建国後戦略的配置無効化版 - 即時併合最優先フェーズ切り替え
++ v346の問題点: ロシア建国後もaxis 8.8/9.5のcompression_bonusが適用され、戦略的配置が選ばれて即時併合機会を取りこぼす
++ advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
++ ワーストゲーム(score0781)はロシア建国なしでmax_y=3.32即死、score2575はロシア建国後も即時併合継続で2575点
++ ロシア建国後は盤面が狭く、戦略的配置の余地が限られているため、即時併合機会を逃すと致命的
++ v347: axis 8.8/9.5の適用条件に`and not russia_phase`を追加し、ロシア建国後は戦略的配置を完全無効化
++   - ロシア建国後はaxis 9.2のペナルティとaxis 8.7の即時併合ボーナスで評価し、即時併合を強制的に待機
++   - axis 2のheight_penaltyで低配置を促し、戦略的配置の余地をaxis 9.2の危険域ペナルティで確保
++ ロシア建国後の明確なフェーズ切り替えを実現する構造的改善であり、数値調整ではない
++ refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt,
++       game_history/20260326_211032_score0781.jsonl turn 70 (ロシア建国なしで即死),
++       game_history/20260326_213252_score2575.jsonl (ロシア建国後の即時併合継続で高スコア)
++ Fixes rollback failure mode: ロシア建国後の戦略的配置による即時併合機会取りこぼし（axis 8.8/9.5 適用条件にrussia_phase除外追加）
 #
 v344: axis 8.8 構造的変更版 - 未活用near_pairs活用・即時併合機会数に応じた段階的評価
 + v344: axis 8.8 構造的変更版 - 未活用near_pairs活用・即時併合機会数に応じた段階的評価
@@ -44,10 +48,10 @@ Game Overview:
            8.5. Danger zone immediate merge bonus - v321: 危険域即時併合強化
            8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
            8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
-           8.8. Reactive pairs compression bonus - v346: axis 9.5条件緩和との協調版
+           8.8. Reactive pairs compression bonus - v347: ロシア建国後戦略的配置無効化版
            9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
            9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-           9.5. Current type stack merge priority - v346: 条件緩和による未活用情報活用強化版
+           9.5. Current type stack merge priority - v347: ロシア建国後戦略的配置無効化版
 
 
 Phases (determined by board max Y):
@@ -65,6 +69,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
     # --- Change History ---
+    # v347: ロシア建国後戦略的配置無効化版 - 即時併合最優先フェーズ切り替え
+    # v346の問題点: ロシア建国後もaxis 8.8/9.5のcompression_bonusが適用され、戦略的配置が選ばれて即時併合機会を取りこぼす
+    # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
+    # ワーストゲーム(score0781)はロシア建国なしでmax_y=3.32即死、score2575はロシア建国後も即時併合継続で2575点
+    # ロシア建国後は盤面が狭く、戦略的配置の余地が限られているため、即時併合機会を逃すと致命的
+    # v347: axis 8.8/9.5の適用条件に`and not russia_phase`を追加し、ロシア建国後は戦略的配置を完全無効化
+    #   - ロシア建国後はaxis 9.2のペナルティとaxis 8.7の即時併合ボーナスで評価し、即時併合を強制的に待機
+    #   - axis 2のheight_penaltyで低配置を促し、戦略的配置の余地をaxis 9.2の危険域ペナルティで確保
+    # ロシア建国後の明確なフェーズ切り替えを実現する構造的改善であり、数値調整ではない
+    # refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt,
+    #       game_history/20260326_211032_score0781.jsonl turn 70 (ロシア建国なしで即死),
+    #       game_history/20260326_213252_score2575.jsonl (ロシア建国後の即時併合継続で高スコア)
+    # Fixes rollback failure mode: ロシア建国後の戦略的配置による即時併合機会取りこぼし（axis 8.8/9.5 適用条件にrussia_phase除外追加）
+    #
     # v346: axis 9.5条件緩和版 - 未活用情報（merged_type隣接）の活用強化
     # v345の問題点: axis 8.8のペナルティ係数縮小（500.0→300.0）は数値微調整のみで構造的改善ではない
     # axis 9.5（MERGED_TYPE_ADJACENCY_PRIORITY）の条件がdanger_piece_count == 0 and reactive_pair_count == 0と厳しすぎ、
@@ -296,16 +314,17 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v346: axis 9.5条件緩和版 - 未活用情報（merged_type隣接）の活用強化
+    """v347: ロシア建国後戦略的配置無効化版 - 即時併合最優先フェーズ切り替え
 
-    v345の問題点: axis 8.8のペナルティ係数縮小（500.0→300.0）は数値微調整のみで構造的改善ではない
-    axis 9.5（MERGED_TYPE_ADJACENCY_PRIORITY）の条件がdanger_piece_count == 0 and reactive_pair_count == 0と厳しすぎ、
-    未活用情報（merged_typeと盤面上のTypeN+1の隣接状態）がほとんど活用されていなかった
-    v346の改善点:
-    1. axis 9.5の適用条件をtotal_immediate_merge_opportunities <= 2に緩和し、即時併合機会が少ない状況で戦略的配置を許容
-    2. 将来の連鎖的併合（merged_typeとの隣接）を評価し、2手先の併合可能性を最大化する構造的改善
-    3. 未活用情報（merged_type隣接状態）を活用した条件変更であり、数値微調整ではない
-    4. v333成功パターン（reactive_pairs>=1で一律compression_bonus適用）を踏襲
+    v346の問題点: ロシア建国後もaxis 8.8/9.5のcompression_bonusが適用され、戦略的配置が選ばれて即時併合機会を取りこぼす
+    advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
+    ワーストゲーム(score0781)はロシア建国なしでmax_y=3.32即死、score2575はロシア建国後も即時併合継続で2575点
+    ロシア建国後は盤面が狭く、戦略的配置の余地が限られているため、即時併合機会を逃すと致命的
+    v347の改善点:
+    1. axis 8.8/9.5の適用条件に`and not russia_phase`を追加し、ロシア建国後は戦略的配置を完全無効化
+    2. ロシア建国後はaxis 9.2のペナルティとaxis 8.7の即時併合ボーナスで評価し、即時併合を強制的に待機
+    3. axis 2のheight_penaltyで低配置を促し、戦略的配置の余地をaxis 9.2の危険域ペナルティで確保
+    4. ロシア建国後の明確なフェーズ切り替えを実現する構造的改善であり、数値調整ではない
     5. axis 8.5/8.6/8.7/8.8/9.2の即時併合優先評価軸は維持
 
     Args:
@@ -691,22 +710,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     reasons.append("RUSSIA_PHASE_NO_MERGE_PENALTY")
                 # deadline_crossed時はaxis 9.2のペナルティを優先し、即時併合を最優先
 
-        # ----- evaluation axis 8.8: strategic compression with immediate merge awareness (v346: axis 9.5条件緩和との協調版) -----
-        # v346の改善点: axis 9.5（merged_type隣接ボーナス）の条件をtotal_immediate_merge_opportunities <= 2に緩和し、
-        # 即時併合機会が少ない状況で将来の連鎖的併合を評価する戦略的配置を可能にする
-        # axis 8.8は即時併合機会の総数に応じて戦略的配置の余地を調整する評価軸として維持
-        #   - 即時併合機会が少ない（total <= 2）場合：戦略的配置を許容しcompression_bonus適用（v333成功パターン）
-        #   - 即時併合機会が多い（total >= 4）場合：戦略的配置を抑制し即時併合優先（ペナルティ係数300.0で戦略的配置の余地を確保）
-        #   - 即時併合機会が中程度（total = 3）場合：危険度（max_y, deadline_crossed）に応じて判断
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-        # Fixes rollback failure mode: 即時併合機会取りこぼし時の戦略的配置余地不足（axis 9.5条件緩和による未活用情報活用強化）
+        # ----- evaluation axis 8.8: strategic compression with immediate merge awareness (v347: ロシア建国後戦略的配置無効化版) -----
+        # v347: ロシア建国後の戦略的配置を無効化し、即時併合を最優先
+        # v346の問題点: ロシア建国後もaxis 8.8のcompression_bonusが適用され、戦略的配置が選ばれて即時併合機会を取りこぼす
+        # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
+        # ロシア建国後は盤面が狭く、戦略的配置の余地が限られているため、即時併合機会を逃すと致命的
+        # v347: axis 8.8の適用条件に`and not russia_phase`を追加し、ロシア建国後はcompression_bonusを無効化
+        #   - ロシア建国後はaxis 9.2のペナルティとaxis 8.7の即時併合ボーナスで評価し、即時併合を強制的に待機
+        # refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt,
+        #       game_history/20260326_211032_score0781.jsonl turn 70 (russia_phaseなしで即死),
+        #       game_history/20260326_213252_score2575.jsonl (ロシア建国後の即時併合継続で高スコア)
+        # Fixes rollback failure mode: ロシア建国後の戦略的配置による即時併合機会取りこぼし（axis 8.8 適用条件にrussia_phase除外追加）
 
         # 未活用情報: reactor.near_pairs（近接ペア、即時併合可能なペア）
         near_pairs = reactor.get("near_pairs", [])
         near_pair_count = len(near_pairs) if isinstance(near_pairs, list) else 0
         total_immediate_merge_opportunities = reactive_pair_count + near_pair_count
 
-        if merge_grade == "NO" and total_immediate_merge_opportunities >= 1:
+        # v347: ロシア建国後は戦略的配置を無効化し、即時併合を最優先
+        if merge_grade == "NO" and total_immediate_merge_opportunities >= 1 and not russia_phase:
             # 即時併合機会の総数に応じて戦略的配置の余地を調整
             if total_immediate_merge_opportunities <= 2:
                 # 即時併合機会が少ない場合：戦略的配置を許容しcompression_bonus適用（v333成功パターン）
@@ -753,15 +775,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= danger_penalty
             reasons.append("DANGER_ZONE_REACTIVE_PENALTY_NO_MERGE")
 
-        # ----- evaluation axis 9.5: current type stack merge priority (v346: 条件緩和による未活用情報活用強化版) -----
+        # ----- evaluation axis 9.5: current type stack merge priority (v347: ロシア建国後戦略的配置無効化版) -----
         # advice.md「盤面にTypeNが二つ並んでいてnextもTypeNのとき、TypeN+1と隣接している方を優先してドロップする」を実装。
-        # v340でmerged_type（併合後のTypeN+1）と盤面上のTypeN+1の隣接を評価する構造的改善を実施したが、
+        # v346でmerged_type（併合後のTypeN+1）と盤面上のTypeN+1の隣接を評価する構造的改善を実施したが、
         # 適用条件がdanger_piece_count == 0 and reactive_pair_count == 0と厳しすぎて未活用だった。
         # v346: 適用条件をtotal_immediate_merge_opportunities <= 2に緩和し、即時併合機会が少ない状況で
         # 将来の連鎖的併合（merged_type隣接）を評価する戦略的配置を可能にする。
+        # v347: ロシア建国後は戦略的配置を無効化し、即時併合を最優先
+        # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」がログで支持されている
+        # ロシア建国後は盤面が狭く、将来の連鎖的併合を狙う戦略的配置は危険
+        # v347: 適用条件に`and not russia_phase`を追加し、ロシア建国後はmerged_type隣接ボーナスを無効化
         # 未活用情報（merged_type隣接状態）の活用を強化する条件緩和であり、数値微調整ではない。
-        # refs: advice.md (azumag, nimdavirus), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt
+        # refs: advice.md (azumag, nimdavirus, あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md, tmp/batch_summary.txt
         # Fixes: 即時併合機会が少ない状況での戦略的配置余地不足（axis 9.5条件緩和による未活用情報活用強化）
+        #        ロシア建国後の戦略的配置による即時併合機会取りこぼし（axis 9.5 適用条件にrussia_phase除外追加）
 
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
@@ -792,7 +819,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # total_immediate_merge_opportunities <= 2（即時併合機会が少ない）場合に戦略的配置を許容し、
             # merged_typeとの隣接ボーナスを適用して将来の連鎖的併合可能性を最大化する
             # refs: advice.md (Pitman_live), tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
-            if best_adjacent_bonus > 0 and total_immediate_merge_opportunities <= 2:
+            # v347: ロシア建国後は戦略的配置を無効化し、即時併合を最優先
+            if best_adjacent_bonus > 0 and total_immediate_merge_opportunities <= 2 and not russia_phase:
                 score += best_adjacent_bonus
                 reasons.append("MERGED_TYPE_ADJACENCY_PRIORITY")
 
