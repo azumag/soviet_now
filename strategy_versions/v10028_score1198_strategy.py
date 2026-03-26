@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - AI改善対象の決定スクリプト
-v336: axis 8.8 danger_piece_count条件削除版 - 戦略的死lock状態解消
+v337: reactive_pairs>=3でcompression_bonus縮小版 - 高配置抑制強化
 
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
@@ -42,18 +42,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
     # --- Change History ---
-    # v336: axis 8.8 danger_piece_count条件削除版 - 戦略的死lock状態解消
-    # v335の問題点: axis 8.8のdanger_piece_count条件がdeadline_crossed && danger_piece_count>0の場合にcompression_bonusを適用せず、戦略的配置の余地を制限
-    # last_rollback_postmortemの致命的欠陥: "deadline_crossed && reactive_pairs=1-2 && merge_grade=='NO' の戦略的死lock状態"
-    # v330 (rollback_target) の成功パターン: reactive_pairs>=1ならcompression_bonusが有効で、戦略的配置で即時併合を待機できる
-    # v336: danger_piece_count条件を削除し、reactive_pair_count >= 1 && merge_grade == "NO"で一律にcompression_bonusを適用
-    #   - deadline_crossed時でも戦略的配置の余地を確保し、即時併合を待機しつつmax_y上昇を抑える戦略を実現
-    #   - compression_bonus基本値を+500.0に強化し、戦略的配置の価値を高める
-    #   - axis 9.2の危険域ペナルティがcompression_bonusを上回るため、危険域では即時併合を優先
+    # v337: reactive_pairs>=3でcompression_bonus縮小版 - 高配置抑制強化
+    # v336の問題点: reactive_pairs=4の状況でaxis 8.8のcompression_bonus(+500.0)が戦略的配置を優先し、即時併合機会が来ない場合にmax_y runawayでゲームオーバー
+    # ワーストゲーム(score0925)終盤turns 65-72: reactive_pairs=4-3, merge_available=false続きで戦略的配置が続きmax_y=1.94→2.90に上昇してゲームオーバー
+    # 高スコアゲーム(score2223)終盤turns 95-104: reactive_pairs=1-2, merge_available=false続きで戦略的配置が続きmax_y=2.38→3.41に上昇
+    # axis 9.2のペナルティは全候補一律に適用されるため、戦略的配置が選ばれ続ける問題がある
+    # v337: reactive_pairs >= 3の場合、compression_bonusを縮小し、戦略的配置の余地を制限しつつ戦略的死lock状態を回避
+    #   - reactive_pairs >= 3: compression_bonusを1/5に縮小（+100.0）。即時併合をより強制的に待機
+    #   - reactive_pairs < 3: compression_bonusを維持（+500.0）。戦略的死lock状態を回避
+    # last_rollback_postmortemの制約遵守: reactive_pairs=1-2でcompression_bonusを維持し、戦略的死lock状態を回避
     # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
-    #       game_history/20260326_093527_score0569.jsonl turns 66-69 (v348 failure mode), game_history/20260324_062802_score1741.jsonl turns 62-69 (v330 success),
-    #       game_history/20260326_131533_score0399.jsonl, game_history/20260326_131332_score3455.jsonl
-    # Fixes rollback failure mode: deadline_crossed && reactive_pairs=1-2での戦略的死lock状態解消（v335 danger_piece_count条件削除）
+    #       game_history/20260326_135537_score0925.jsonl, game_history/20260326_133846_score2223.jsonl,
+    #       game_history/20260326_140826_score4199.jsonl, strategy.py.staging (v336), tmp/change_log.txt
+    # Fixes rollback failure mode: reactive_pairs>=3での戦略的配置優先によるmax_y runaway（v336 compression_bonus縮小）
     #
     # v332: axis 8.8 reactive_pairs>=2拡張版 - v331 failure mode潰し
     # v331の問題点: axis 9.2の固定ペナルティ(-2000/-2500)はheight_mult緩和と競合して不十分
@@ -682,30 +683,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # v327: danger_piece_count > 0 の場合のボーナスを削除 - axis 9.2のペナルティを優先
                 # 危険ピースがある状況では、即時併合を最優先する戦略へ切り替え
 
-        # ----- evaluation axis 8.8: reactive pairs compression bonus (v336: danger_piece_count条件削除版 - 戦略的死lock状態解消) -----
-        # v335の問題点: axis 8.8のdanger_piece_count条件がdeadline_crossed && danger_piece_count>0の場合にcompression_bonusを適用せず、戦略的配置の余地を制限
-        # last_rollback_postmortemの致命的欠陥: "deadline_crossed && reactive_pairs=1-2 && merge_grade=='NO' の戦略的死lock状態"
-        # v330 (rollback_target) の成功パターン: reactive_pairs>=1ならcompression_bonusが有効で、戦略的配置で即時併合を待機できる
-        # v336: danger_piece_count条件を削除し、reactive_pair_count >= 1 && merge_grade == "NO"で一律にcompression_bonusを適用
-        #   - deadline_crossed時でも戦略的配置の余地を確保し、即時併合を待機しつつmax_y上昇を抑える戦略を実現
-        #   - compression_bonus基本値を+500.0に強化し、戦略的配置の価値を高める
-        #   - compression_bonus: landing_y <= 0: +500.0, 0 < landing_y <= 1: +500.0 - landing_y * 200.0, landing_y > 1: -100.0 - landing_y * 200.0
-        # axis 9.2の危険域ペナルティ(-3000.0~-6000.0)がcompression_bonusを上回るため、危険域では即時併合を優先
+        # ----- evaluation axis 8.8: reactive pairs compression bonus (v337: reactive_pairs>=3でcompression_bonus縮小版 - 高配置抑制強化) -----
+        # v336の問題点: reactive_pairs=4の状況でaxis 8.8のcompression_bonus(+500.0)が戦略的配置を優先し、即時併合機会が来ない場合にmax_y runawayでゲームオーバー
+        # ワーストゲーム(score0925)終盤turns 65-72: reactive_pairs=4-3, merge_available=false続きで戦略的配置が続きmax_y=1.94→2.90に上昇してゲームオーバー
+        # 高スコアゲーム(score2223)終盤turns 95-104: reactive_pairs=1-2, merge_available=false続きで戦略的配置が続きmax_y=2.38→3.41に上昇
+        # axis 9.2のペナルティは全候補一律に適用されるため、戦略的配置が選ばれ続ける問題がある
+        # v337: reactive_pairs >= 3の場合、compression_bonusを縮小し、戦略的配置の余地を制限しつつ戦略的死lock状態を回避
+        #   - reactive_pairs >= 3: compression_bonusを1/5に縮小（+100.0）。即時併合をより強制的に待機
+        #   - reactive_pairs < 3: compression_bonusを維持（+500.0）。戦略的死lock状態を回避
+        # last_rollback_postmortemの制約遵守: reactive_pairs=1-2でcompression_bonusを維持し、戦略的死lock状態を回避
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
-        #       game_history/20260326_093527_score0569.jsonl turns 66-69 (v348 failure mode), game_history/20260324_062802_score1741.jsonl turns 62-69 (v330 success)
-        # Fixes rollback failure mode: deadline_crossed && reactive_pairs=1-2での戦略的死lock状態解消（v335 danger_piece_count条件削除）
+        #       game_history/20260326_135537_score0925.jsonl turns 65-72, game_history/20260326_133846_score2223.jsonl turns 95-104
+        # Fixes rollback failure mode: reactive_pairs>=3での戦略的配置優先によるmax_y runaway（v336 compression_bonus縮小）
 
         if reactive_pair_count >= 1 and merge_grade == "NO":
-            # v336: danger_piece_count条件を削除し、一律にcompression_bonusを適用
-            # deadline_crossed時でも戦略的配置の余地を確保し、即時併合を待機しつつmax_y上昇を抑える戦略を実現
-            # 低配置ほどボーナスが大きく、高配置ほどペナルティが大きくなるように設計
-            # compression_bonus基本値を+500.0に強化し、戦略的配置の価値を高める
-            if landing_y <= 0:
-                score += 500.0
-            elif landing_y <= 1:
-                score += 500.0 - landing_y * 200.0
+            # v337: reactive_pairs >= 3の場合、compression_bonusを縮小し、即時併合をより強制的に待機
+            # reactive_pairs < 3の場合、compression_bonusを維持し、戦略的死lock状態を回避
+            if reactive_pair_count >= 3:
+                # reactive_pairs >= 3: compression_bonusを1/5に縮小
+                if landing_y <= 0:
+                    score += 100.0
+                elif landing_y <= 1:
+                    score += 100.0 - landing_y * 40.0
+                else:
+                    score -= 20.0 + landing_y * 40.0
             else:
-                score -= 100.0 + landing_y * 200.0
+                # reactive_pairs < 3: compression_bonusを維持（戦略的死lock状態回避）
+                if landing_y <= 0:
+                    score += 500.0
+                elif landing_y <= 1:
+                    score += 500.0 - landing_y * 200.0
+                else:
+                    score -= 100.0 + landing_y * 200.0
             reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
