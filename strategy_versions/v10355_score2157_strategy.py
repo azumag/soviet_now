@@ -7,18 +7,19 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-        # v349: deep safe stacking bonus in reactive dead zone gap
-        # v348 status quo: axis 9.5 dead zone when current_type_has_reactive_or_near=True —
-        #   no stacking bonus. Axis 9.6 covers mid-range (stack_y >= -1.0) only.
-        #   Deep targets (stack_y < -1.0) → zero incentive → HEIGHT_CONTROL default.
-        # ワースト(score0487) turns 50-51: reactive=1, type9 target y=-1.69 → dead zone → MEDIUM_TOWER
-        # 低スコア群: HEIGHT_CONTROL 18.2% (vs high 8.8%), 55-68ターンでtype 11-12止まり
-        # v349: elif branch — current_type reactive + deep target (y<-1.0) + safe landing (y<=0.0)
-        #   → type-scaled bonus. Fills gap between axis 9.5 (reactive==0) and axis 9.6 (mid-range).
+        # v350: extend same-type stacking to danger zones when current type has no reactive pair
+        # v349 status quo: axis 9.5 v342 requires danger_piece_count==0. When reactive>=1 but current
+        #   type has no reactive pair AND danger>0 → no stacking bonus, no height_mult reduction
+        #   → defaults to HEIGHT_CONTROL even when same-type pieces exist on the board.
+        # ワースト(score0614) turn 60: reactive=4, danger=2, next_type=1, no reactive for type 1
+        #   → HEIGHT_CONTROL. Turn 65: reactive=5, danger=5, next_type=11, no reactive for type 11
+        #   → HEIGHT_CONTROL. 68ターンでtype 12止まりの即死。
+        # Safety guard: current_type_has_reactive_or_near==False means current type CANNOT merge,
+        #   so stacking guidance doesn't compete with immediate merge priority.
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
-        #       strategy.py.staging, game_history/20260327_104023_score0487.jsonl,
-        #       game_history/20260327_102231_score0533.jsonl, advice.md (zoumotu3, Pitman_live)
-        # Fixes rollback failure mode: merge_available=false連続時の成長パイプライン構築不能（dead zone gap）
+        #       strategy.py.staging, game_history/20260327_114142_score0614.jsonl turns 60-68,
+        #       game_history/20260327_114404_score0729.jsonl turns 55-62, advice.md (zoumotu3)
+        # Fixes rollback failure mode: danger>0 + current_type no reactive pair → no stacking guidance
 
         # v348: type-scaled stacking bonus restoration (lost in rollback from acd5803d8ef7)
         # SAME_TYPE_STACK_MERGE_PRIORITY: max(100, SCORE_TABLE[type]*3) → type10=165, type14=315
@@ -43,7 +44,7 @@ Game Overview:
              8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
               8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9.5. Current type stack merge priority - v349: deep safe stacking in reactive dead zone
+             9.5. Current type stack merge priority - v350: stacking in danger zone when current type no reactive
              9.6. Reactive pairs stacking bonus - v340: type-aware stacking (current_type_has_reactive guard)
 
 
@@ -311,7 +312,7 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v349: deep safe stacking bonus in reactive dead zone gap
+    """v350: extend same-type stacking to danger zones when current type has no reactive pair
 
     v344 introduced SCORE_TABLE-proportional stacking bonus but was lost when branch rolled back
     to anchor acd5803d8ef7. Postmortem constraint explicitly requires:
@@ -562,11 +563,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reduce height_mult to 0.6x so stacking bonus can overcome height_penalty
         # Without this, stacking bonus (+200-300) was overwhelmed by height_penalty in MEDIUM/HIGH phase,
         # preventing growth pipeline construction (missing_height_mult_reduction_for_pipelining failure mode)
-        # refs: tmp/state/last_rollback_postmortem.md, game_history/20260327_071520_score0423.jsonl
-        if merge_grade == "NO" and same_type_stack_top is not None and danger_piece_count == 0:
+        # v350: extend to also apply when current_type has no reactive pair (can't merge anyway),
+        # with stack_y < 1.0 safety guard to prevent high-position stacking incentive
+        # refs: tmp/state/last_rollback_postmortem.md, game_history/20260327_071520_score0423.jsonl,
+        #       game_history/20260327_114142_score0614.jsonl turns 60-68
+        if merge_grade == "NO" and same_type_stack_top is not None:
             stack_x = same_type_stack_top.get("x", 0)
-            if abs(x - stack_x) < 1.5:
-                height_mult *= 0.6
+            stack_y_check = same_type_stack_top.get("y", -10)
+            # Original v345: danger==0, any stack_y
+            # v350 extension: danger>0 but current type can't merge AND stack target is in safe zone
+            if danger_piece_count == 0 or (not current_type_has_reactive_or_near and stack_y_check < 1.0):
+                if abs(x - stack_x) < 1.5:
+                    height_mult *= 0.6
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
@@ -976,6 +984,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # v342: allow stacking when current type has no reactive/near pairs
                     # v348: type-scaled (lower multiplier since reactive pairs exist for other types)
                     score += max(50.0, SCORE_TABLE[next_type] * 1.5)
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+                elif danger_piece_count > 0 and reactive_pair_count >= 1 and not current_type_has_reactive_or_near:
+                    # v350: extend stacking to danger zones when current type can't merge
+                    # Previous: danger>0 blocked all stacking → HEIGHT_CONTROL default
+                    # Worst game turns 60,65: reactive=4-5, danger=2-5, current type no reactive
+                    #   → HEIGHT_CONTROL wasted turns instead of building growth pipeline
+                    # Reduced bonus (1.0x vs 1.5x) to respect immediate merge priority for other types
+                    score += max(30.0, SCORE_TABLE[next_type] * 1.0)
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
                 # v349: deep safe stacking in reactive dead zone
                 # When current_type_has_reactive_or_near=True, the two blocks above give zero bonus.
