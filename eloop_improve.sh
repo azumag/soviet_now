@@ -649,6 +649,13 @@ for bf in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
 		hall_of_fame_files+=("$bf")
 	fi
 done
+# 保護戦略（過去の特に優秀な戦略）
+for pf in "$STRATEGY_VERSIONS_DIR"/protected/*_strategy.py; do
+	if [ -f "$pf" ]; then
+		sandbox_ref_files+=("$pf")
+		hall_of_fame_files+=("$pf")
+	fi
+done
 # ハッシュアーカイブ上位10件（スコア降順）
 for hf in $(ls -1t "$STRATEGY_HASH_ARCHIVE_DIR"/*.py 2>/dev/null | head -10); do
 	[ -f "$hf" ] && sandbox_ref_files+=("$hf")
