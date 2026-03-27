@@ -1,17 +1,18 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v79)
+ * strategy.mjs - ドロップ位置決定戦略 (v80)
  *
- * v79: CRITICALモードのマージ探索強化とT1過密時の処理改善
- * - 【CRITICALモード: Aggressive Merge導入】
- *   CRITICALモードにおいて、findMergeInLowColで適切なマージが見つからない場合、
- *   全てのタイプに対して `findAggressiveCriticalMerge` を試行する。
- *   これは、候補ピースのY座標フィルタを緩和しつつ、高さペナルティを大幅に強化することで、
- *   デッドライン付近のピースを積極的にマージして盤面をクリアすることを目的とする。
- * - 【CRITICALモード: T1過密時のタワー形成優先】
- *   CRITICALモードでT1が過密 (t1RatioPurge) かつ即時マージ (critT1Immediate) が見つからない場合、
- *   `findT1DenseColumn` で密集タワー形成を優先し、T1による盤面圧迫の早期解消を試みる。
- * - 【shouldPreferLowT1CriticalMerge / shouldPreferLowT1GarbageMergeの閾値調整】 (v78からの変更なし)
- *   おじゃまゲージが高い場合、より積極的にT1低位置マージを優先する条件を維持。
+ * v80: CRITICAL/ULTRAモードでのT1管理とアグレッシブマージ戦略を強化
+ * - 【ULTRAモード: T1過密時の低位置密集タワー優先】
+ *   ULTRAモードでT1が過密 (extremeT1Flood & t1RatioPurge) かつ即時マージ (immediateX) が高所に位置する場合、
+ *   密集タワー形成 (denseX) を積極的に優先し、盤面圧迫の早期解消を試みる。
+ *   これにより、高い位置でのT1併合を避け、より安定した盤面形成を促す。
+ * - 【CRITICALモード: Aggressive Mergeのスコアリング強化】
+ *   `findAggressiveCriticalMerge` において、連鎖ポテンシャルと高typeピースの価値ボーナスを強化。
+ *   緊急時により効果的なマージを優先し、盤面クリアの確率を高める。
+ * - 【CRITICALモード: 低位置T1マージ優先度調整】
+ *   `shouldPreferLowT1CriticalMerge` のおじゃまゲージに対する感度を微調整。
+ *   ゲージが高く危険な状況下では、より積極的に低位置でのT1マージを優先する。
+ * - 継承: v79のCRITICALモードのマージ探索強化とT1過密時の処理改善
  * - 継承: v78のガベージ・緊急時のT1低位置マージ優先度とT1過密時の処理、HOLD戦略の強化
  * - 継承: v77のガベージ・高typeT1の低位置マージ優先度調整とボード全体高さペナルティ強化
  * - 継承: v76の高typeピース/T1管理の改善と高さペナルティ強化
@@ -213,9 +214,19 @@ export function decide(boardState) {
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias, t1WallMult, rawPieceCount);
       const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
 
-      if (immediateX !== null) return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
+      if (immediateX !== null) {
+        const immediateH = colHeights[nearestColIdx(immediateX)];
+        // [v80] T1が過密の場合、即時マージが高所に位置するなら密集タワー形成を優先
+        if (t1RatioPurge && denseX !== null) {
+          const denseH = colHeights[nearestColIdx(denseX)];
+          if (immediateH > WARN_Y && denseH < immediateH - 0.5) { // If immediate merge is high, but a dense column is significantly lower
+            return { x: denseX, reason: 'ULTRA_T1_PURGE_TOWER_AGGRESSIVE_PREFER_LOW' };
+          }
+        }
+        return { x: immediateX, reason: 'ULTRA_EXTREME_T1_IMMEDIATE' };
+      }
 
-      // [v78] T1が過密の場合、即時マージの次に密集タワー形成を優先
+      // If immediateX was null or not preferred, then check the denseX
       if (t1RatioPurge && denseX !== null) {
           return { x: denseX, reason: 'ULTRA_T1_PURGE_TOWER_AGGRESSIVE' };
       }
@@ -712,7 +723,17 @@ export function decide(boardState) {
       const denseX = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
       const stackCol = findT1StackColumn(activePieces, colHeights, dangerBias);
 
-      if (immediateX !== null) return { x: immediateX, reason: 'T1_EXTREME_IMMEDIATE' };
+      if (immediateX !== null) {
+        const immediateH = colHeights[nearestColIdx(immediateX)];
+        // [v80] T1が過密の場合、即時マージが高所に位置するなら密集タワー形成を優先
+        if (t1RatioPurge && denseX !== null) {
+          const denseH = colHeights[nearestColIdx(denseX)];
+          if (immediateH > WARN_Y && denseH < immediateH - 0.5) {
+            return { x: denseX, reason: 'T1_EXTREME_PURGE_TOWER_AGGRESSIVE_PREFER_LOW' };
+          }
+        }
+        return { x: immediateX, reason: 'T1_EXTREME_IMMEDIATE' };
+      }
 
       // [v78] T1が過密の場合、即時マージの次に密集タワー形成を優先
       if (t1RatioPurge && denseX !== null) {
@@ -807,8 +828,11 @@ function shouldPreferLowT1CriticalMerge(colHeights, immediateX, lowMergeX, garba
   if (garbageRatio >= 0.3 && lowMergeH <= lowestColH + 0.3 && immediateH >= lowMergeH + 0.35) {
     return true;
   }
-  // [v78] ゲージが高い場合、より積極的に低位置マージを優先
-  if (gaugeLevel >= 0.7 && lowMergeH < immediateH + 0.1 && immediateH > lowestColH + 0.5) {
+  // [v80] ゲージが高い場合、より積極的に低位置マージを優先 (条件を微調整)
+  if (gaugeLevel >= 0.7 && lowMergeH < immediateH + 0.1 && immediateH > lowestColH + 0.4) {
+    return true;
+  }
+  if (gaugeLevel >= 0.8 && lowMergeH < immediateH + 0.2) { // Even stronger preference for very high gauge
     return true;
   }
   return false;
@@ -1595,17 +1619,18 @@ function findAggressiveCriticalMerge(pieces, nextType, colHeights, dangerBias, a
       s -= colH * 5.0; // Additional penalty for high board
     }
 
-    s += nextType * 3.0; // Type value bonus
+    // [v80] Type value bonus強化
+    s += nextType * 4.0; 
 
-    // Chain potential, similar to findBestMerge but slightly higher bonus
+    // [v80] Chain potential, slightly higher bonus for critical aggressive merge
     const c1 = countNear(pieces, t.x, nextType + 1, 1.8);
     const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
     const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
     const c4 = countNear(pieces, t.x, nextType + 4, 3.0);
-    let chainScore = c1 * 18 + c2 * 8 + c3 * 4 + c4 * 2;
-    if (c1 > 0 && c2 > 0) chainScore += 20;
-    if (c1 > 0 && c2 > 0 && c3 > 0) chainScore += 10;
-    if (c1 > 1) chainScore += (c1 - 1) * 10;
+    let chainScore = c1 * 20 + c2 * 10 + c3 * 5 + c4 * 3; // Increased multipliers
+    if (c1 > 0 && c2 > 0) chainScore += 25; // Slightly more for a good chain start
+    if (c1 > 0 && c2 > 0 && c3 > 0) chainScore += 12;
+    if (c1 > 1) chainScore += (c1 - 1) * 12;
     s += chainScore;
 
     // Bonus for nearby same-type pieces, to encourage clustering for future merges
