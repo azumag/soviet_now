@@ -14,7 +14,6 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-           5.6. Growth center proximity - v358: compact board around highest-type piece
             6. Chain merge bonus - Evaluate possibility of further merges after merge
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
@@ -57,15 +56,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
-        # v358: growth center proximity bonus - reduce HEIGHT_CONTROL over-selection
-        # batch_summary: HEIGHT_CONTROL 16.6% in low-score vs 10.3% in high-score games.
-        # Small bonus (max 50) for positions near deepest highest-type piece keeps board
-        # compact and concentrates growth pipeline in 1-2 locations (advice: zoumotu3).
-        # v354 was rolled back as part of 9-change batch; re-introduced as single change.
-        # refs: advice.md (zoumotu3, kbb246), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
-        #       game_history/20260328_001833_score0911.jsonl, game_history/20260328_004656_score2843.jsonl,
-        #       strategy.py.staging, strategy_versions/best_score4319_strategy.py, strategy_versions/protected_e6f534c37e28_median12789_strategy.py
-        # Fixes pattern: HEIGHT_CONTROL over-selection scattering pieces and preventing high-type growth
         # v357: suppress stacking bonus when reactive_pairs>=3 (axis 9.6 + v355 guard)
         # reactive>=3 で -4500 が一適用される局面で stacking bonus が候補差分化を生み
         # HEIGHT_CONTROL より中程度の高さ配置が選ばれる failure mode を修正
@@ -357,14 +347,7 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v358: growth center proximity bonus - v357ベース
-
-    v358: 盤面の最高typeピース（最も深い位置）に近い配置に最大50のボーナス。
-    advice.md「1〜2箇所に集中して大きく育てる戦略へ転換すべき」（zoumotu3）に基づく。
-    batch_summary: HEIGHT_CONTROL 16.6% (low-score) vs 10.3% (high-score) の差を縮める構造的改善。
-    russia_phase時は発動しない（axis 8.7が専任）。reactive>=3時は発動しない（penaltyが支配）。
-    max_type >= 6 のみ適用（低typeは成長センタの対象外）。ボーナスは小さく（最大50）、
-    height penalty差（MEDIUM: >70, HIGH: >90）を上回らない範囲。
+    """v357: suppress stacking bonus when reactive_pairs>=3 - v356ベース
 
     v357: reactive_pairs>=3 && merge_grade=NO の場合、axis 9.6 stacking bonus と axis 9.5 v355
     same-type stacking bonus を抑制。reactive>=3 では axis 8.8 の -4500 penalty が全候補に
@@ -782,33 +765,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score -= 400.0  # 未来の併合機会を潰すためのペナルティ
                         reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
-
-        # ----- evaluation axis 5.6: growth center proximity (v358) -----
-        # advice.md「1〜2箇所に集中して大きく育てる戦略へ転換すべき」（zoumotu3, kbb246）
-        # batch_summary: HEIGHT_CONTROL 16.6% in low-score vs 10.3% in high-score games
-        # When no merge or reactive stacking available, default is HEIGHT_CONTROL (lowest position).
-        # This scatters pieces and prevents high-type growth. Small bonus for positions near the
-        # highest-type piece keeps board compact and concentrates growth pipeline.
-        # v354 growth center was rolled back as part of a batch of 9 changes, but postmortem noted
-        # "v354 GROWTH_CENTER bonus 自体は値が小さい（最大~24）ので単独では影響少ないはず"
-        # This re-introduces growth center as a single, isolated change with safe conditions.
-        # Conditions: not russia_phase (has dedicated axis 8.7), reactive < 3 (penalties dominate),
-        # max_type >= 6 (don't center around low types). Bonus: max 50 at distance 0, small enough
-        # to not override height penalty differences (>70 in MEDIUM, >90 in HIGH).
-        # refs: advice.md (zoumotu3, kbb246), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
-        # Fixes pattern: HEIGHT_CONTROL over-selection reducing growth pipeline efficiency
-        if not russia_phase and reactive_pair_count < 3:
-            max_type = max((p.get("type", 0) for p in pieces), default=0) if pieces else 0
-            if max_type >= 6:
-                high_type_pieces = [p for p in pieces if p.get("type", 0) == max_type]
-                if high_type_pieces:
-                    gc = min(high_type_pieces, key=lambda p: p.get("y", 0))
-                    gc_dist = abs(x - gc.get("x", 0))
-                    if gc_dist < 2.5:
-                        gc_bonus = max(0, 50.0 - gc_dist * 20.0)
-                        score += gc_bonus
-                        reasons.append("GROWTH_CENTER")
-
+ 
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
