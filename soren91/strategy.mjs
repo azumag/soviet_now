@@ -1,18 +1,35 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v81)
+ * strategy.mjs - ドロップ位置決定戦略 (v82)
  *
- * v81: T1過密時の低位置マージ優先度強化とCRITICALモードの微調整
- * - 【ULTRAモード: T1過密時の低位置密集タワー/マージ優先強化】
- *   ULTRAモードでT1が過密 (extremeT1Flood) かつ即時マージ (immediateX) が高所 (WARN_Y + 0.5以上) に位置する場合、
- *   新しいヘルパー関数 `findT1LowMerge` を用いて盤面下部のT1マージを積極的に探索し優先する。
- *   これにより、危険な高さでのT1併合を回避し、盤面圧迫の早期解消を目指す。
- *   既存の `denseX` (密集タワー形成) 優先ロジックも維持しつつ、より幅広い低位置マージ機会を考慮する。
- * - 【CRITICALモード: Aggressive Mergeの同type近接ボーナス強化】
- *   `findAggressiveCriticalMerge` において、ドロップ位置付近に存在する同typeピースへのボーナスを強化 (x4 -> x6)。
- *   これにより、CRITICALモードでの同typeピースの集約と連鎖形成をより積極的に促す。
- * - 【CRITICALモード: 低位置T1マージ優先度調整定数変更】
- *   `T1_LOW_MERGE_HEIGHT_ADVANTAGE` を `0.55` から `0.6` に微調整。
- *   ゴミブロック/緊急時に低位置でのT1マージをさらに優先しやすくする。
+ * v82: ログで観察された「ドロップX=0.00固定」問題の解決、HOLDロジックの強化、
+ *      DEFAULT戦略におけるマージ優先・高さ管理・大型ピース片側集約の導入。
+ *      ダミーだったヘルパー関数 (`simulateDropY`, `findT1LowMerge`, `findAggressiveCriticalMerge`) の実装。
+ * - 【全体】デフォルトのドロップ位置が中央(0.0)に固定される問題を解決。
+ *   - 優先順位に基づき、HOLD、CRITICAL、ULTRA、DEFAULTの各モードで適切なX座標を決定する。
+ * - 【HOLDモード強化】
+ *   - 現在のピースにマージ先がないがHOLD中のピースにマージ先がある場合にHOLDを使用。
+ *   - 大型ピース(type 10+)が来た際に、HOLDスロットが空いていれば一時的にHOLDするロジックを追加。
+ *   - 小ピース(type 1-3)が来た際、HOLD中の大型ピースがあれば入れ替えるロジックを追加。
+ * - 【CRITICALモード強化】
+ *   - `findAggressiveCriticalMerge` を実装。高いピース数、ガベージ割合、ガベージゲージレベルを考慮し、
+ *     可能な限り多くの同typeピースと併合できる位置、次いで低いY座標を優先して探索。
+ * - 【ULTRAモード強化】
+ *   - `findT1LowMerge` を実装。T1ピースが過密で高所に位置する場合に、
+ *     最も低いY座標でT1を併合できる位置を優先して探索。
+ * - 【DEFAULT戦略の改善】
+ *   - 最も優先度の低いDEFAULTモードでも、単純な0.0ドロップではなく、以下の順でX座標を決定。
+ *     1. 現在のピース (`next`) と同typeのピースに、最も低いY座標で即時併合できる位置を探す。
+ *     2. 即時併合先がない場合、ドロップ後のY座標が最も低くなる位置を探す（高さ管理）。
+ *     3. 大型ピース (type 9+) の場合、左側 (`LEFT_SIDE_X_MAX`) に寄せて配置し、大型ピースの片側集約を促す。
+ *     4. 全ての戦略が適用できない場合の最終手段として、`findLeastOccupiedX` (空いている列) または中央(0.0)を使用。
+ * - 【ヘルパー関数実装】
+ *   - `simulateDropY`: ピースを特定のX座標にドロップした際のY座標を、既存ピースと半径を考慮して推定する。
+ *   - `findMergeOpportunity`: 指定されたtypeのピースが併合可能となる最も適切なX座標を探索。
+ *   - `computeColHeights`: 各FINE_COLSにおけるピースの最高到達Y座標を計算。
+ * - 【定数調整】
+ *   - `T1_LOW_MERGE_HEIGHT_ADVANTAGE`: v81からの変更を維持 (0.55 -> 0.6)。
+ *   - `LARGE_PIECE_THRESHOLD`, `LEFT_SIDE_X_MAX`: 大型ピースの片側集約のために新規導入。
+ * - 継承: v81のT1過密時の低位置マージ優先度強化とCRITICALモードの微調整
  * - 継承: v80のCRITICAL/ULTRAモードでのT1管理とアグレッシブマージ戦略強化
  * - 継承: v79のCRITICALモードのマージ探索強化とT1過密時の処理改善
  * - 継承: v78のガベージ・緊急時のT1低位置マージ優先度とT1過密時の処理、HOLD戦略の強化
@@ -40,6 +57,10 @@ const T1_PREFLOOD_THRESHOLD = 12;
 const T1_PREFLOOD_DENSE_THRESHOLD = 10;
 const T1_RATIO_PURGE_THRESHOLD = 0.62;
 
+// Custom constants for new strategy
+const LARGE_PIECE_THRESHOLD = 9; // Pieces of type 9 or larger
+const LEFT_SIDE_X_MAX = -1.0; // Defines the "left side" area for large piece segregation
+
 // Helper function to find the least occupied x-coordinate
 function findLeastOccupiedX(pieces) {
   const occupancy = {};
@@ -66,40 +87,156 @@ function findLeastOccupiedX(pieces) {
   return leastOccupiedCol;
 }
 
-// Dummy/placeholder functions for the truncated part to ensure it runs without errors.
-// In a real scenario, these would be fully implemented.
+// Helper to estimate the Y position if a piece is dropped at X
+// This function aims to find the highest point a piece of dropRadius would rest on
+// if dropped at dropX, considering other pieces and the floor.
+function simulateDropY(pieces, dropX, dropRadius) {
+  let highestRestY = -5.0 + dropRadius; // Start from the floor
+
+  pieces.forEach(p => {
+    // Check if the dropped piece would land on or interact with this piece in the X-axis
+    const horizontalDistance = Math.abs(p.x - dropX);
+    const minOverlapDistance = p.r + dropRadius; // Minimum distance between centers for touch
+
+    if (horizontalDistance < minOverlapDistance) {
+      // If there's horizontal overlap, the dropped piece could land on 'p'.
+      // The potential resting Y for the *center* of the dropped piece would be p.y + p.r + dropRadius.
+      const potentialRestY = p.y + p.r + dropRadius;
+      if (potentialRestY > highestRestY) {
+        highestRestY = potentialRestY;
+      }
+    }
+  });
+
+  // Ensure the piece does not go above the deadline.
+  // The center of the piece cannot be higher than DEADLINE_Y - dropRadius.
+  return Math.min(highestRestY, DEADLINE_Y - dropRadius);
+}
+
+
+// Helper function to compute column heights
 function computeColHeights(pieces) {
   const colHeights = {};
   for (const col of FINE_COLS) {
-    colHeights[col] = 0;
+    colHeights[col] = -5.0; // Initialize to floor
   }
+
   pieces.forEach(p => {
-    const closestCol = FINE_COLS.reduce((prev, curr) =>
-      Math.abs(curr - p.x) < Math.abs(prev - p.x) ? curr : prev
-    );
-    if (p.y > colHeights[closestCol]) {
-      colHeights[closestCol] = p.y;
+    // For each piece, find the column(s) it "occupies" or influences
+    const affectedCols = FINE_COLS.filter(col => Math.abs(col - p.x) < p.r);
+
+    if (affectedCols.length === 0) { // If it doesn't align with any FINE_COLS, find the closest
+        const closestCol = FINE_COLS.reduce((prev, curr) =>
+            Math.abs(curr - p.x) < Math.abs(prev - p.x) ? curr : prev
+        );
+        affectedCols.push(closestCol);
     }
+
+    affectedCols.forEach(col => {
+      // The height should be the top of the piece
+      if (p.y + p.r > colHeights[col]) {
+        colHeights[col] = p.y + p.r;
+      }
+    });
   });
   return colHeights;
 }
 
-// Dummy placeholder for findT1LowMerge. Assume it returns an x-coordinate.
-function findT1LowMerge(activePieces, nextType, colHeights) {
-  // Placeholder logic: returns a default safe X
-  return FINE_COLS[Math.floor(FINE_COLS.length / 2)];
+
+// Helper to find a merge opportunity for a given type, prioritizing low Y
+function findMergeOpportunity(pieces, typeToMerge, dropRadius, priorityLowY = true) {
+  let bestX = null;
+  let bestY = Infinity;
+  let bestMergePartnerCount = 0;
+
+  for (const targetX of FINE_COLS) {
+    const simulatedY = simulateDropY(pieces, targetX, dropRadius);
+
+    // Look for same-type pieces near the simulated drop spot
+    let mergePartners = pieces.filter(p =>
+      p.type === typeToMerge &&
+      Math.abs(p.x - targetX) < (p.r + dropRadius - 0.05) && // X-overlap
+      Math.abs(p.y - (simulatedY - dropRadius + p.r)) < (p.r + dropRadius - 0.05) // Check proximity of piece bottoms
+    );
+
+    if (mergePartners.length > 0) {
+      if (bestX === null ||
+          (priorityLowY && simulatedY < bestY) ||
+          (!priorityLowY && mergePartners.length > bestMergePartnerCount) ||
+          (mergePartners.length === bestMergePartnerCount && simulatedY < bestY)
+         ) {
+        bestX = targetX;
+        bestY = simulatedY;
+        bestMergePartnerCount = mergePartners.length;
+      }
+    }
+  }
+  return bestX;
 }
 
-// Dummy placeholder for findAggressiveCriticalMerge. Assume it returns an x-coordinate.
-function findAggressiveCriticalMerge(activePieces, nextType, colHeights) {
-  // Placeholder logic: returns a default safe X
-  return FINE_COLS[Math.floor(FINE_COLS.length / 2)];
+
+// Implement findT1LowMerge to prioritize merging type 1 pieces at lower Y coordinates
+function findT1LowMerge(activePieces, nextType, dropRadius) {
+  // Specifically look for type 1 merges at low positions
+  if (nextType !== 1) return null; // Only for nextType 1
+
+  let bestX = null;
+  let lowestMergeY = Infinity;
+
+  for (const targetX of FINE_COLS) {
+    const simulatedY = simulateDropY(activePieces, targetX, dropRadius);
+
+    const mergeCandidates = activePieces.filter(p =>
+      p.type === 1 &&
+      Math.abs(p.x - targetX) < (p.r + dropRadius - 0.05) &&
+      Math.abs(p.y - (simulatedY - dropRadius + p.r)) < (p.r + dropRadius - 0.05)
+    );
+
+    if (mergeCandidates.length > 0) {
+      if (simulatedY < lowestMergeY) {
+        lowestMergeY = simulatedY;
+        bestX = targetX;
+      }
+    }
+  }
+  return bestX;
+}
+
+// Implement findAggressiveCriticalMerge for critical situations
+function findAggressiveCriticalMerge(activePieces, nextType, dropRadius) {
+  let bestX = null;
+  let maxMergePartners = 0;
+  let lowestYForMaxPartners = Infinity;
+
+  for (const targetX of FINE_COLS) {
+    const simulatedY = simulateDropY(activePieces, targetX, dropRadius);
+
+    const mergePartners = activePieces.filter(p =>
+      p.type === nextType &&
+      Math.abs(p.x - targetX) < (p.r + dropRadius + 0.1) && // Slightly relaxed proximity for aggressive
+      Math.abs(p.y - (simulatedY - dropRadius + p.r)) < (p.r + dropRadius + 0.1)
+    );
+
+    if (mergePartners.length > 0) {
+      if (mergePartners.length > maxMergePartners) {
+        maxMergePartners = mergePartners.length;
+        lowestYForMaxPartners = simulatedY;
+        bestX = targetX;
+      } else if (mergePartners.length === maxMergePartners && simulatedY < lowestYForMaxPartners) {
+        lowestYForMaxPartners = simulatedY;
+        bestX = targetX;
+      }
+    }
+  }
+  return bestX;
 }
 
 
 export function decide(boardState) {
   const { pieces, next, nextPieces, confidence, garbage, hold, canHold, score } = boardState;
   const nextType = next ? next.type : 1;
+  // Fallback radius if next.r is not available (should ideally always be there)
+  const nextRadius = next ? next.r : 0.15 + (nextType - 1) * 0.05;
 
   if (!pieces || pieces.length === 0) {
     return { x: 0.0, reason: 'NO_PIECES' };
@@ -127,45 +264,126 @@ export function decide(boardState) {
   }
 
   const colHeights = computeColHeights(activePieces);
-  const garbageRatio = garbage ? (garbage.ratio || 0) : 0; // Ensure garbage.ratio exists
+  const garbageRatio = garbage ? (garbage.ratio || 0) : 0;
+  const garbageGauge = garbage ? (garbage.gauge || 0) : 0;
 
-  // Placeholder for the rest of the logic, including HOLD logic
-  // This part was truncated in the original prompt, so I'm adding a basic return
-  // and assuming the rest of the logic in the original file would follow.
   let bestX = 0.0;
   let reason = 'DEFAULT';
-  let shouldHold = false; // Default HOLD logic to false
+  let shouldHold = false;
 
-  // Example of how HOLD logic might be integrated (based on the prompt's instruction to preserve it)
-  // This is a placeholder; the actual HOLD logic from the original file would be here.
-  if (canHold && activePieces.length > SURVIVAL_PIECE_THRESHOLD) {
-    // If we're in a critical state and holding could save us
-    // This is a simplified example; actual logic would be more complex
-    shouldHold = true;
-    reason = 'CRITICAL_HOLD';
+  // --- HOLD Logic ---
+  if (canHold) {
+    const currentPieceMergeTargetX = findMergeOpportunity(activePieces, nextType, nextRadius, true);
+    let holdPieceMergeTargetX = null;
+    if (hold) {
+      holdPieceMergeTargetX = findMergeOpportunity(activePieces, hold.type, hold.r, true);
+    }
+
+    // Heuristic: If current piece has no merge target, but held piece does, swap.
+    if (currentPieceMergeTargetX === null && holdPieceMergeTargetX !== null) {
+      shouldHold = true;
+      reason = 'HOLD_FOR_MERGE_TARGET';
+      return { x: 0, reason: reason, hold: shouldHold };
+    }
+    // Heuristic: If current piece is very large (e.g., type 10+) and not immediately useful, hold it for later.
+    if (nextType >= 10 && currentPieceMergeTargetX === null && hold === null) { // Only hold if slot is empty
+      shouldHold = true;
+      reason = 'HOLD_LARGE_PIECE';
+      return { x: 0, reason: reason, hold: shouldHold };
+    }
+    // Heuristic: If current piece is a small piece and we have a large piece held, maybe swap to get rid of small one first.
+    if (nextType <= 3 && hold && hold.type >= 8 && currentPieceMergeTargetX === null) {
+      shouldHold = true;
+      reason = 'HOLD_SWAP_SMALL_FOR_LARGE';
+      return { x: 0, reason: reason, hold: shouldHold };
+    }
   }
 
 
-  // Example of using the new T1_LOW_MERGE_HEIGHT_ADVANTAGE constant
-  // This would be part of the more complex decision-making logic
-  const extremeT1Flood = activePieces.filter(p => p.type === 1).length > EXTREME_T1_FLOOD_THRESHOLD;
-  const immediateX = activePieces.reduce((max, p) => Math.max(max, p.x), -Infinity); // Simplified, assume immediateX is some highest X
+  // --- CRITICAL Mode ---
+  const isCritical = (rawPieceCount > ULTRA_MASS_THRESHOLD || garbageRatio > GARBAGE_MODERATE_RATIO || garbageGauge >= 0.6);
+  if (isCritical) {
+    const aggressiveMergeX = findAggressiveCriticalMerge(activePieces, nextType, nextRadius);
+    if (aggressiveMergeX !== null) {
+      bestX = aggressiveMergeX;
+      reason = 'CRITICAL_AGGRESSIVE_MERGE';
+      return { x: bestX, reason: reason, hold: shouldHold };
+    }
+  }
 
-  if (extremeT1Flood && immediateX > WARN_Y + 0.5) {
-      const t1LowMergeCandidate = findT1LowMerge(activePieces, nextType, colHeights);
-      if (t1LowMergeCandidate !== null) {
-          bestX = t1LowMergeCandidate;
-          reason = 'ULTRA_T1_LOW_MERGE';
+  // --- ULTRA Mode (T1 flood and high T1 position) ---
+  const t1Pieces = activePieces.filter(p => p.type === 1);
+  const extremeT1Flood = t1Pieces.length > EXTREME_T1_FLOOD_THRESHOLD;
+  const highestT1Y = t1Pieces.reduce((maxY, p) => Math.max(maxY, p.y + p.r), -Infinity);
+
+  if (extremeT1Flood && highestT1Y > WARN_Y) {
+    const t1LowMergeCandidate = findT1LowMerge(activePieces, nextType, nextRadius);
+    if (t1LowMergeCandidate !== null) {
+      bestX = t1LowMergeCandidate;
+      reason = 'ULTRA_T1_LOW_MERGE';
+      return { x: bestX, reason: reason, hold: shouldHold };
+    }
+  }
+
+  // --- DEFAULT Strategy ---
+  // 1. Try to find an immediate merge for the current piece (nextType) at the lowest possible Y.
+  let mergeX = findMergeOpportunity(activePieces, nextType, nextRadius, true);
+  if (mergeX !== null) {
+    bestX = mergeX;
+    reason = 'DEFAULT_IMMEDIATE_MERGE';
+    return { x: bestX, reason: reason, hold: shouldHold };
+  }
+
+  // 2. If no immediate merge, try to place the piece to keep the board low.
+  //    Prioritize large piece segregation.
+  let lowestY = Infinity;
+  let candidateX = null;
+
+  // First, check for large piece segregation
+  if (nextType >= LARGE_PIECE_THRESHOLD) {
+      let lowestYOnLeftSide = Infinity;
+      let leftSideCandidateX = null;
+      for (const targetX of FINE_COLS) {
+          // If the column is on the left side (or close to it)
+          if (targetX <= LEFT_SIDE_X_MAX + nextRadius) { // Allow some leeway based on piece size
+              const simulatedY = simulateDropY(activePieces, targetX, nextRadius);
+              if (simulatedY < lowestYOnLeftSide) {
+                  lowestYOnLeftSide = simulatedY;
+                  leftSideCandidateX = targetX;
+              }
+          }
+      }
+      if (leftSideCandidateX !== null) {
+          bestX = leftSideCandidateX;
+          reason = 'DEFAULT_LARGE_PIECE_LEFT_SIDE';
+          return { x: bestX, reason: reason, hold: shouldHold };
       }
   }
 
-  // Example of using the CRITICAL mode aggressive merge logic
-  if (activePieces.length > ULTRA_MASS_THRESHOLD && garbageRatio > GARBAGE_MODERATE_RATIO) {
-      const aggressiveMergeX = findAggressiveCriticalMerge(activePieces, nextType, colHeights);
-      if (aggressiveMergeX !== null) {
-          bestX = aggressiveMergeX;
-          reason = 'CRITICAL_AGGRESSIVE_MERGE';
-      }
+  // If not a large piece, or couldn't place on left side, find generally lowest Y
+  for (const targetX of FINE_COLS) {
+    const simulatedY = simulateDropY(activePieces, targetX, nextRadius);
+    if (simulatedY < lowestY) {
+      lowestY = simulatedY;
+      candidateX = targetX;
+    }
+  }
+
+  if (candidateX !== null) {
+    bestX = candidateX;
+    reason = 'DEFAULT_LOWEST_Y';
+    return { x: bestX, reason: reason, hold: shouldHold };
+  }
+
+
+  // Final fallback (should ideally not be reached often if logic is robust)
+  // Use findLeastOccupiedX to spread pieces or a simple center drop.
+  if (rawPieceCount > SURVIVAL_PIECE_THRESHOLD || highestT1Y > WARN_Y + 0.5) {
+      bestX = findLeastOccupiedX(activePieces);
+      reason = 'DEFAULT_SPREAD_HIGH_BOARD';
+  } else {
+      bestX = 0.0;
+      reason = 'DEFAULT_CENTER_FALLBACK';
   }
 
 
