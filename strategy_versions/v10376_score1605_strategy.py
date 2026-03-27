@@ -7,6 +7,20 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
+        # v352: axis 9.6 landing_y gate - prevent stacking bonus at dangerous heights
+        # v351 status quo: axis 9.6 gives stacking bonus when TARGET stack_y is mid-range [-1.0, 1.0),
+        #   but LANDING position can be much higher due to intermediate pieces. Stacking bonus
+        #   (200-280) offsets reactive penalty at dangerous heights, causing pieces to land at
+        #   y=2.5+ on speculative stacking. All positions cross deadline in HIGH phase, so the
+        #   bonus differentiator picks the worst position instead of the lowest.
+        # ワーストゲーム(score0219) turn 45: next_type=9, axis 9.6 at x=-3.0 → landing_y=2.65
+        #   (max_y 1.89→2.65). Score_delta=0, game ends 4 turns later. Landing_y gate prevents
+        #   bonus from making dangerous positions seem attractive when all positions are bad.
+        # refs: game_history/20260327_133711_score0219.jsonl, game_history/20260327_133519_score2925.jsonl,
+        #       game_history/20260327_130837_score0526.jsonl, tmp/state/last_rollback_postmortem.md,
+        #       tmp/batch_summary.txt, advice.md
+        # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING high-landing incentive
+
         # v351: crosses_deadline per-drop gating for no-merge penalties + danger merge bonus
         # Safe drops (below deadline) no longer get -4500/-3000~-9000 penalties → stacking works during deadline
         # danger_merge_available (per-drop) now gives +400 bonus for merges targeting danger pieces
@@ -482,23 +496,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260327_071520_score0423.jsonl turns 47-56, game_history/20260327_073021_score3460.jsonl
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
             if current_type_has_reactive_or_near:
-                # Type-aware: only stack when current type has reactive/near pairs
-                stack_y = same_type_stack_top["y"]
-                if stack_y >= -1.0 and stack_y < 1.0:
-                    # Mid-range stacking only - no high-position incentive (prevents max_y runaway)
-                    # Prioritize positions near merged_type(N+1) for chain potential
-                    merged_type_adjacency_bonus = 0.0
-                    for p in pieces:
-                        if p.get("type") == merged_type:
-                            adj_dist = abs(x - p["x"])
-                            if adj_dist < 2.0:
-                                merged_type_adjacency_bonus += max(0, (2.0 - adj_dist) * 100.0)
-                    base_bonus = 200.0
-                    target_x = same_type_stack_top["x"]
-                    horizontal_distance = abs(x - target_x)
-                    horizontal_bonus = max(0, 80.0 - horizontal_distance * 20.0)
-                    score += base_bonus + horizontal_bonus + merged_type_adjacency_bonus
-                    reasons.append("REACTIVE_PAIRS_STACKING")
+                # v352: gate by landing_y, not just target stack_y
+                # Target at mid-range (stack_y in [-1,1)) but landing at y=2.5+ is dangerous.
+                # Stacking bonus should not overcome height penalty at dangerous heights.
+                if landing_y <= 0.5:
+                    stack_y = same_type_stack_top["y"]
+                    if stack_y >= -1.0 and stack_y < 1.0:
+                        # Mid-range stacking only - no high-position incentive (prevents max_y runaway)
+                        # Prioritize positions near merged_type(N+1) for chain potential
+                        merged_type_adjacency_bonus = 0.0
+                        for p in pieces:
+                            if p.get("type") == merged_type:
+                                adj_dist = abs(x - p["x"])
+                                if adj_dist < 2.0:
+                                    merged_type_adjacency_bonus += max(0, (2.0 - adj_dist) * 100.0)
+                        base_bonus = 200.0
+                        target_x = same_type_stack_top["x"]
+                        horizontal_distance = abs(x - target_x)
+                        horizontal_bonus = max(0, 80.0 - horizontal_distance * 20.0)
+                        score += base_bonus + horizontal_bonus + merged_type_adjacency_bonus
+                        reasons.append("REACTIVE_PAIRS_STACKING")
         
         # --- v339: axis 9.7 (REACTIVE_PAIRS_COMPRESSION) deleted ---
         # POSTMORTEM FIX: Simplified evaluation axes by removing compression bonus
