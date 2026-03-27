@@ -1,5 +1,12 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v82)
+ * strategy.mjs - ドロップ位置決定戦略 (v83)
+ *
+ * v83: 物理エンジン挙動の複雑さを考慮し、併合条件の判定をよりロバスト化。
+ *      ピースが円形と仮定した場合の2D中心間距離に基づく併合判定を導入し、
+ *      併合の厳密性を調整するための `MERGE_BUFFER` 定数を追加。
+ *      `simulateDropY` は既存の垂直スタックモデルを維持するが、これはポリゴン特性による
+ *      回転や転がりを完全に予測できないという限界を考慮したもの。
+ *      全体的な戦略の優先順位とHOLDロジックはv82から維持。
  *
  * v82: ログで観察された「ドロップX=0.00固定」問題の解決、HOLDロジックの強化、
  *      DEFAULT戦略におけるマージ優先・高さ管理・大型ピース片側集約の導入。
@@ -60,6 +67,7 @@ const T1_RATIO_PURGE_THRESHOLD = 0.62;
 // Custom constants for new strategy
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of type 9 or larger
 const LEFT_SIDE_X_MAX = -1.0; // Defines the "left side" area for large piece segregation
+const MERGE_BUFFER = 0.01; // Small buffer for merge proximity (e.g., 0.01 for slight overlap)
 
 // Helper function to find the least occupied x-coordinate
 function findLeastOccupiedX(pieces) {
@@ -95,13 +103,18 @@ function simulateDropY(pieces, dropX, dropRadius) {
 
   pieces.forEach(p => {
     // Check if the dropped piece would land on or interact with this piece in the X-axis
+    // The horizontal distance between centers must be less than the sum of their radii for them to touch.
     const horizontalDistance = Math.abs(p.x - dropX);
-    const minOverlapDistance = p.r + dropRadius; // Minimum distance between centers for touch
+    const minOverlapDistance = p.r + dropRadius;
 
     if (horizontalDistance < minOverlapDistance) {
       // If there's horizontal overlap, the dropped piece could land on 'p'.
-      // The potential resting Y for the *center* of the dropped piece would be p.y + p.r + dropRadius.
-      const potentialRestY = p.y + p.r + dropRadius;
+      // Calculate the potential resting Y for the *center* of the dropped piece
+      // assuming it stacks directly on top, using Pythagoras for circular collision.
+      // sqrt((r1+r2)^2 - dx^2) gives the vertical distance between centers.
+      const dy = Math.sqrt(Math.max(0, minOverlapDistance * minOverlapDistance - horizontalDistance * horizontalDistance));
+      const potentialRestY = p.y + dy;
+
       if (potentialRestY > highestRestY) {
         highestRestY = potentialRestY;
       }
@@ -153,11 +166,17 @@ function findMergeOpportunity(pieces, typeToMerge, dropRadius, priorityLowY = tr
     const simulatedY = simulateDropY(pieces, targetX, dropRadius);
 
     // Look for same-type pieces near the simulated drop spot
-    let mergePartners = pieces.filter(p =>
-      p.type === typeToMerge &&
-      Math.abs(p.x - targetX) < (p.r + dropRadius - 0.05) && // X-overlap
-      Math.abs(p.y - (simulatedY - dropRadius + p.r)) < (p.r + dropRadius - 0.05) // Check proximity of piece bottoms
-    );
+    const mergePartners = pieces.filter(p => {
+      if (p.type === typeToMerge) {
+        // Calculate 2D distance between centers
+        const distance = Math.sqrt(
+          Math.pow(p.x - targetX, 2) + Math.pow(p.y - simulatedY, 2)
+        );
+        // Merge if centers are close enough (within sum of radii, minus a small buffer for overlap)
+        return distance < (p.r + dropRadius - MERGE_BUFFER);
+      }
+      return false;
+    });
 
     if (mergePartners.length > 0) {
       if (bestX === null ||
@@ -186,11 +205,17 @@ function findT1LowMerge(activePieces, nextType, dropRadius) {
   for (const targetX of FINE_COLS) {
     const simulatedY = simulateDropY(activePieces, targetX, dropRadius);
 
-    const mergeCandidates = activePieces.filter(p =>
-      p.type === 1 &&
-      Math.abs(p.x - targetX) < (p.r + dropRadius - 0.05) &&
-      Math.abs(p.y - (simulatedY - dropRadius + p.r)) < (p.r + dropRadius - 0.05)
-    );
+    const mergeCandidates = activePieces.filter(p => {
+      if (p.type === 1) {
+        // Calculate 2D distance between centers
+        const distance = Math.sqrt(
+          Math.pow(p.x - targetX, 2) + Math.pow(p.y - simulatedY, 2)
+        );
+        // Merge if centers are close enough (within sum of radii, minus a small buffer for overlap)
+        return distance < (p.r + dropRadius - MERGE_BUFFER);
+      }
+      return false;
+    });
 
     if (mergeCandidates.length > 0) {
       if (simulatedY < lowestMergeY) {
@@ -211,11 +236,17 @@ function findAggressiveCriticalMerge(activePieces, nextType, dropRadius) {
   for (const targetX of FINE_COLS) {
     const simulatedY = simulateDropY(activePieces, targetX, dropRadius);
 
-    const mergePartners = activePieces.filter(p =>
-      p.type === nextType &&
-      Math.abs(p.x - targetX) < (p.r + dropRadius + 0.1) && // Slightly relaxed proximity for aggressive
-      Math.abs(p.y - (simulatedY - dropRadius + p.r)) < (p.r + dropRadius + 0.1)
-    );
+    const mergePartners = activePieces.filter(p => {
+      if (p.type === nextType) {
+        // Calculate 2D distance between centers for aggressive merge (slightly more permissive buffer)
+        const distance = Math.sqrt(
+          Math.pow(p.x - targetX, 2) + Math.pow(p.y - simulatedY, 2)
+        );
+        // Aggressive merge, so use a slightly larger or no buffer, or even a positive one for more leniency
+        return distance < (p.r + dropRadius + MERGE_BUFFER); // Increased leniency for aggressive merge
+      }
+      return false;
+    });
 
     if (mergePartners.length > 0) {
       if (mergePartners.length > maxMergePartners) {
