@@ -55,6 +55,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v362: high-reactive same-type proximity guidance + height_mult floor restoration
+     # Fixes: reactive>=3 && merge=NO でpiece_count増加しゲームオーバーする failure mode (postmortem: piece_count 41→score1060)
+     # reactive>=3でaxis8.8が一律ペナルティ→エッジ投棄→piece_count増加。same-type近接ボーナス(最大60)でtie-breaking改善。
+     # height_mult床(0.5)復元し、3ゲート累積(0.048x)によるheight penalty無効化防止。
+     # refs: tmp/state/last_rollback_postmortem.md, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py, tmp/batch_summary.txt, game_history/20260328_055838_score0459.jsonl, game_history/20260328_052956_score2898.jsonl, advice.md
      # v361: piece_count-aware height penalty - axis 9.7 nesting回避 + piece_count圧縮指標導入
      # v360: axis 9.6 type-aware stacking + axis 9.7 removal
      # axis 9.6をv340 type-aware stackingに置換: 現在タイプにreactive/near pairがある場合のみスタッキングボーナス発動
@@ -530,6 +535,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
+        # ----- v362: same-type proximity guidance at reactive>=3 -----
+        # postmortem: worst game ends with 41 pieces, reactive=9, merge=NO for 7 turns.
+        # When reactive>=3 and no merge, axis 8.8 (-3000~-7000) dominates all candidates equally.
+        # Without guidance, pieces are dumped at edges (x=±3) which doesn't help compression.
+        # Small bonus (max ~60) for proximity to lowest same-type piece breaks height ties
+        # and guides toward merge paths, reducing piece_count accumulation.
+        # Bonus too small to override axis 8.8 or height penalty, only breaks ties.
+        # No reactive_pair_count<3 guard — works at ALL reactive levels (postmortem constraint).
+        # refs: tmp/state/last_rollback_postmortem.md, game_history/20260328_055838_score0459.jsonl T49-56,
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        if reactive_pair_count >= 3 and merge_grade == "NO" and same_type_stack_top is not None:
+            # Find the lowest (most accessible) same-type piece as guidance target
+            lowest_same = min(same_type_pieces, key=lambda p: p.get("y", 10))
+            target_x = lowest_same.get("x", 0)
+            target_y = lowest_same.get("y", -10)
+            horiz_dist = abs(x - target_x)
+            if horiz_dist < 2.0:
+                proximity_bonus = max(0, 60.0 - horiz_dist * 30.0)
+                # Decay bonus if target is high — don't override height control for high targets
+                if target_y > 1.0:
+                    proximity_bonus *= max(0.0, 1.0 - (target_y - 1.0) * 0.5)
+                if proximity_bonus > 0:
+                    score += proximity_bonus
+
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
@@ -604,6 +633,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 0.3
+
+        # v362: height_mult floor — prevent compounding nullification
+        # 3 gates (0.2x/0.8x/0.3x) compound to 0.048x, nullifying height penalty.
+        # Floor of 0.5 keeps height penalty meaningful while allowing strategic flexibility.
+        # Previously validated in v356 (protected strategy median 12789), lost in v359 rollback.
+        # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+        #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
+        height_mult = max(height_mult, 0.5)
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult

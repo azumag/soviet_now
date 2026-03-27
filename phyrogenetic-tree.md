@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-28 05:22:09 JST`
-- Nodes: `769`
-- Edges: `1076`
-- Current: `1ccd69078373`
+- Updated: `2026-03-28 06:17:34 JST`
+- Nodes: `770`
+- Edges: `1077`
+- Current: `b6f6b5fc153a`
 - Anchor: `af7789a91d5a`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_060b82e85a13["060b82e85a13<br/>g=12 n=12<br/>comp=9699.4"]
     h_e3cc375bcd69["e3cc375bcd69<br/>g=12 n=12<br/>comp=11037.4"]
     h_1e3a09db9b72["1e3a09db9b72<br/>g=12 n=12<br/>comp=10064.8"]
     h_af7789a91d5a["af7789a91d5a<br/>ANCHOR<br/>g=36 n=20<br/>comp=11283.8"]
@@ -72,9 +71,10 @@ flowchart TD
     h_e6f534c37e28["e6f534c37e28<br/>g=41 n=20<br/>comp=9054.8"]
     h_301fa13ab0ab["301fa13ab0ab<br/>g=13 n=13<br/>comp=9077.4"]
     h_3391cd05995a["3391cd05995a<br/>g=12 n=12<br/>comp=9401.8"]
+    h_1ccd69078373["1ccd69078373<br/>g=12 n=12<br/>comp=10217.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_1ccd69078373["1ccd69078373<br/>CURRENT"]
+    h_b6f6b5fc153a["b6f6b5fc153a<br/>CURRENT"]
 
     h_e3cc375bcd69 -->|improve| h_1e3a09db9b72
     h_1e3a09db9b72 -->|improve| h_af7789a91d5a
@@ -138,13 +138,13 @@ flowchart TD
     h_af7789a91d5a -->|improve| h_3391cd05995a
     h_3391cd05995a -. rollback .-> h_af7789a91d5a
     h_af7789a91d5a -->|improve| h_1ccd69078373
+    h_1ccd69078373 -->|improve| h_b6f6b5fc153a
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_060b82e85a13 plain;
     class h_e3cc375bcd69 plain;
     class h_1e3a09db9b72 plain;
     class h_af7789a91d5a anchor;
@@ -201,9 +201,10 @@ flowchart TD
     class h_e6f534c37e28 plain;
     class h_301fa13ab0ab plain;
     class h_3391cd05995a plain;
+    class h_1ccd69078373 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_1ccd69078373 current;
+    class h_b6f6b5fc153a current;
 ```
 
 ## Detail 1/10
@@ -2789,9 +2790,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `1ccd69078373`
-- Nodes in this diagram: `49`
-- Internal edges in this diagram: `43`
+- Range: `7bd6203f37b5` .. `b6f6b5fc153a`
+- Nodes in this diagram: `50`
+- Internal edges in this diagram: `44`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2854,9 +2855,10 @@ flowchart TD
     h_e6f534c37e28["e6f534c37e28<br/>g=41 n=20<br/>comp=9054.8"]
     h_301fa13ab0ab["301fa13ab0ab<br/>g=13 n=13<br/>comp=9077.4"]
     h_3391cd05995a["3391cd05995a<br/>g=12 n=12<br/>comp=9401.8"]
+    h_1ccd69078373["1ccd69078373<br/>g=12 n=12<br/>comp=10217.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_1ccd69078373["1ccd69078373<br/>CURRENT"]
+    h_b6f6b5fc153a["b6f6b5fc153a<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2901,6 +2903,7 @@ flowchart TD
     h_e6f534c37e28 -->|improve| h_301fa13ab0ab
     h_301fa13ab0ab -. rollback .-> h_78d702e43155
     h_78d702e43155 -. rollback .-> h_e6f534c37e28
+    h_1ccd69078373 -->|improve| h_b6f6b5fc153a
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2953,12 +2956,23 @@ flowchart TD
     class h_e6f534c37e28 plain;
     class h_301fa13ab0ab plain;
     class h_3391cd05995a plain;
+    class h_1ccd69078373 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_1ccd69078373 current;
+    class h_b6f6b5fc153a current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10565 `1ccd6907 -> b6f6b5fc`
+
+- scores: `19683 9106 18254 14639 10075 8129 13584 18237 6762 8757 11379 9272`
+- v362: high-reactive same-type proximity guidance + height_mult floor restoration
+- Fixes: reactive>=3 && merge=NO でpiece_count増加しゲームオーバーする failure mode (postmortem: piece_count 41→score1060)
+- reactive>=3でaxis8.8が一律ペナルティ→エッジ投棄→piece_count増加。same-type近接ボーナス(最大60)でtie-breaking改善。
+- height_mult床(0.5)復元し、3ゲート累積(0.048x)によるheight penalty無効化防止。
+- ----- v362: same-type proximity guidance at reactive>=3 -----
+- postmortem: worst game ends with 41 pieces, reactive=9, merge=NO for 7 turns.
 
 ### Improve Game#10553 `af7789a9 -> 1ccd6907`
 
