@@ -66,11 +66,12 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `analyze_board.py` | 盤面解析。併合判定・着地予測・期待値計算 |
 | `prompts/improve_strategy.md` | AI改善用プロンプト |
 | `strategy_versions/` | strategy.py のバージョン履歴 |
+| `strategy_versions/protected/` | 特に優秀な戦略の保護領域（自動クリーンアップ対象外） |
 | `game_history/` | 試合ごとのターンログ (JSONL) |
 | `best_score.txt` | ハイスコア記録 |
 | `score_history.txt` | rawスコア履歴 (TSV: timestamp, score) |
 | `eval_score_history.txt` | EVAL_SCORE履歴 (rawスコア+建国ボーナス) |
-| `say_enqueue.sh` | VOICEVOX/COEIROINK TTS のFIFOキュー管理（mkdirロック排他・ストリーミング合成・異常終了リトライ・voice sidecar永続化） |
+| `say_enqueue.sh` | VOICEVOX/COEIROINK TTS のFIFOキュー管理（mkdirロック排他・ストリーミング合成・異常終了リトライ・voice sidecar永続化）。事前合成セクションはトップレベルスコープで実行される点に注意 |
 | `voicevox_tts.sh` | VOICEVOX TTS wrapper（チャンク分割合成・ピッチ/テンポ/抑揚調整） |
 | `voicevox_sing.sh` | VOICEVOX 歌声合成（中華AI=九州そら、メリケンAI=冥鳴ひまり） |
 | `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用） |
@@ -171,10 +172,11 @@ node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごと
 
 | ファイル | 役割 |
 |---------|------|
-| `soren91/main.mjs` | エントリポイント: ブラウザ制御 + ゲームループ |
+| `soren91/run_player_loop.sh` | 自動再起動ラッパー（main.mjs の異常終了時に3秒後に再起動） |
+| `soren91/main.mjs` | エントリポイント: ブラウザ制御 + ゲームループ（複数ラウンドを1プロセスで処理） |
 | `soren91/screenshot_analyzer.mjs` | スクリーンショット → 盤面状態 (Sharp) |
 | `soren91/strategy.mjs` | ドロップ位置決定 (AI改変対象) |
-| `soren91/improve.mjs` | ラウンド後AI改善ループ (claude -p --model haiku) |
+| `soren91/improve.mjs` | ラウンド後AI改善ループ (claude -p --model haiku)。スモークテスト3ケース + ESLint no-undef 静的解析でバリデーション |
 | `soren91/comment.mjs` | コメント生成 (ランキング画面 + 試合中盤面)。プロンプトは `soren91/prompts/` に分離 |
 | `soren91/result_screen_ocr.mjs` | ランキング画面OCR (Tesseract、複数画像変換＋赤星検出) |
 | `soren91/radio_bridge.sh` | 親プロジェクトの定時ラジオコーナーを soren91 から呼び出すブリッジ |
@@ -247,7 +249,8 @@ RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
 
 | スペック | CLI コマンド | 説明 |
 |---------|------------|------|
-| `glm` | `opencode run --agent="zai"` | GLM-4.7 (zhipu) — **zai エージェント**として設定済み |
+| `zai` | `claude -p --model=haiku` (z.ai API経由) | z.ai エンドポイント (GLM-5.1)。`ANTHROPIC_BASE_URL` を差し替えて claude CLI で実行 |
+| `glm` | `opencode run --agent="zai"` | GLM-4.7 (zhipu) — opencode の **zai エージェント**として設定済み |
 | `opencode:glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash (軽量フォールバック) |
 | `opencode:<agent>` | `opencode run --agent="<agent>"` | 任意の opencode エージェント |
 | `sonnet` | `claude -p --model=sonnet --permission-mode=acceptEdits` | Claude Sonnet |
@@ -620,8 +623,9 @@ flowchart TD
 
 `eloop_improve.sh` が `pushd "$SANDBOX_DIR"` でサンドボックスに移動してから `run_ai` を呼び出す。AI のカレントディレクトリは `/tmp` 配下なので、ホストのファイルに直接アクセスできない。
 
-- 最大3回リトライ（バリデーション失敗時は staging をリセットして再試行）
+- 最大3回 fresh リトライ × 各最大6回 continue リトライ（バリデーション失敗時は staging をリセットして再試行）
 - リトライ時には前回のエラーメッセージをプロンプトに含めて修正を促す
+- AI 実行タイムアウト: デフォルト1100秒（`IMPROVE_RUN_CMD_TIMEOUT_SEC` で変更可）。全体のウォールタイムアウトは2400秒（`IMPROVE_WALL_TIMEOUT`）
 
 #### (3) validate — staging ファイルの検証
 
@@ -632,6 +636,7 @@ flowchart TD
 - `strategy_helpers/` 内の symlink 検査
 - `__init__.py` の存在確認
 - `extract_decide_hash.py` によるハッシュベースの反復防止（過去にリジェクトされた戦略と同一なら拒否）
+- 数値・文字列のみの微調整や、固定ターン数ゲートの追加を検出して拒否
 
 #### (4) harvest_sandbox — 許可ファイルのみ抽出
 
@@ -699,3 +704,4 @@ sandbox にコピーするファイルリスト (`sandbox_ref_files`) と LLM �
 ### 関連文献
 
 - `strategy_versions/best_score*_strategy.py` — ハイスコア時の戦略 (殿堂入り)
+- `strategy_versions/protected/*_strategy.py` — 中央値が特に高かった優秀戦略の保護コピー（AI改善プロンプトでも参照される）
