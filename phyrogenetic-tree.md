@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-27 21:47:07 JST`
-- Nodes: `766`
-- Edges: `1066`
-- Current: `e6f534c37e28`
+- Updated: `2026-03-28 01:07:12 JST`
+- Nodes: `767`
+- Edges: `1067`
+- Current: `301fa13ab0ab`
 - Anchor: `78d702e43155`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_29199c40687a["29199c40687a<br/>g=12 n=12<br/>comp=10737.9"]
     h_acd5803d8ef7["acd5803d8ef7<br/>g=49 n=20<br/>comp=10427.2"]
     h_ab10263e8ab7["ab10263e8ab7<br/>g=12 n=12<br/>comp=9674.7"]
     h_060b82e85a13["060b82e85a13<br/>g=12 n=12<br/>comp=9699.4"]
@@ -72,11 +71,11 @@ flowchart TD
     h_bc85edb25d78["bc85edb25d78<br/>g=12 n=12<br/>comp=11129.5"]
     h_78d702e43155["78d702e43155<br/>ANCHOR<br/>g=12 n=12<br/>comp=11719.0"]
     h_d37c7572b29b["d37c7572b29b<br/>g=12 n=12<br/>comp=10084.8"]
+    h_e6f534c37e28["e6f534c37e28<br/>g=36 n=20<br/>comp=11452.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_e6f534c37e28["e6f534c37e28<br/>CURRENT"]
+    h_301fa13ab0ab["301fa13ab0ab<br/>CURRENT"]
 
-    h_29199c40687a -->|improve| h_acd5803d8ef7
     h_acd5803d8ef7 -->|improve| h_ab10263e8ab7
     h_060b82e85a13 -. rollback .-> h_acd5803d8ef7
     h_acd5803d8ef7 -->|improve| h_e3cc375bcd69
@@ -140,13 +139,13 @@ flowchart TD
     h_bc85edb25d78 -->|improve| h_78d702e43155
     h_78d702e43155 -->|improve| h_d37c7572b29b
     h_d37c7572b29b -->|improve| h_e6f534c37e28
+    h_e6f534c37e28 -->|improve| h_301fa13ab0ab
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_29199c40687a plain;
     class h_acd5803d8ef7 plain;
     class h_ab10263e8ab7 plain;
     class h_060b82e85a13 plain;
@@ -203,9 +202,10 @@ flowchart TD
     class h_bc85edb25d78 plain;
     class h_78d702e43155 anchor;
     class h_d37c7572b29b plain;
+    class h_e6f534c37e28 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_e6f534c37e28 current;
+    class h_301fa13ab0ab current;
 ```
 
 ## Detail 1/10
@@ -2790,9 +2790,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `e6f534c37e28`
-- Nodes in this diagram: `46`
-- Internal edges in this diagram: `40`
+- Range: `7bd6203f37b5` .. `301fa13ab0ab`
+- Nodes in this diagram: `47`
+- Internal edges in this diagram: `41`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2852,9 +2852,10 @@ flowchart TD
     h_bc85edb25d78["bc85edb25d78<br/>g=12 n=12<br/>comp=11129.5"]
     h_78d702e43155["78d702e43155<br/>ANCHOR<br/>g=12 n=12<br/>comp=11719.0"]
     h_d37c7572b29b["d37c7572b29b<br/>g=12 n=12<br/>comp=10084.8"]
+    h_e6f534c37e28["e6f534c37e28<br/>g=36 n=20<br/>comp=11452.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_e6f534c37e28["e6f534c37e28<br/>CURRENT"]
+    h_301fa13ab0ab["301fa13ab0ab<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2896,6 +2897,7 @@ flowchart TD
     h_bc85edb25d78 -->|improve| h_78d702e43155
     h_78d702e43155 -->|improve| h_d37c7572b29b
     h_d37c7572b29b -->|improve| h_e6f534c37e28
+    h_e6f534c37e28 -->|improve| h_301fa13ab0ab
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2945,12 +2947,23 @@ flowchart TD
     class h_bc85edb25d78 plain;
     class h_78d702e43155 anchor;
     class h_d37c7572b29b plain;
+    class h_e6f534c37e28 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_e6f534c37e28 current;
+    class h_301fa13ab0ab current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10480 `e6f534c3 -> 301fa13a`
+
+- scores: `13148 11996 11648 11119 10784 18781 8797 11944 15263 18883 8871 11913`
+- 5.6. Growth center proximity - v358: compact board around highest-type piece
+- v358: growth center proximity bonus - reduce HEIGHT_CONTROL over-selection
+- batch_summary: HEIGHT_CONTROL 16.6% in low-score vs 10.3% in high-score games.
+- Small bonus (max 50) for positions near deepest highest-type piece keeps board
+- compact and concentrates growth pipeline in 1-2 locations (advice: zoumotu3).
+- v354 was rolled back as part of 9-change batch; re-introduced as single change.
 
 ### Improve Game#10444 `d37c7572 -> e6f534c3`
 
