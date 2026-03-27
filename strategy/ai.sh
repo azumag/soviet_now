@@ -347,6 +347,12 @@ run_cmd() {
 	local ret=$?
 	RUN_CMD_ACTIVE_PID=0
 	local _cmd_elapsed=$(( $(date +%s) - _cmd_start_epoch ))
+	# デバッグ: wait直後の状態をログに記録 (リトライ未到達問題の調査用)
+	if [ -n "$cmd_log_file" ]; then
+		printf '[%s] [AI:%s] WAIT_DONE rc=%s elapsed=%ss interrupted=%s\n' \
+			"$(date '+%H:%M:%S')" "$cmd_log_tag" "$ret" "$_cmd_elapsed" "$interrupted" \
+			>>"$cmd_log_file" 2>/dev/null || true
+	fi
 	if [ "$interrupted" -eq 1 ]; then
 		ret=130
 	fi
@@ -465,6 +471,7 @@ run_ai() {
 		fi
 		run_cmd "$primary" "$attempt_prompt"
 		primary_ret=$?
+		log "[$label] run_cmd returned rc=$primary_ret (attempt ${attempt}/${primary_attempts})"
 		# トークン超過 or 空応答: セッションが汚染されている → primary ループ打ち切り
 		if [ "$primary_ret" -eq 77 ] || [ "$primary_ret" -eq 78 ]; then
 			log "[$label] session poisoned (rc=$primary_ret) → skip remaining primary attempts"
@@ -481,6 +488,7 @@ run_ai() {
 					expect_written=true
 				fi
 			fi
+			log "[$label] expect_check: written=$expect_written file=$expect"
 			if [ "$expect_written" = true ]; then
 				rm -f "$expect_snapshot" 2>/dev/null || true
 				if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi

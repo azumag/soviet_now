@@ -778,7 +778,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	RUN_CMD_SESSION_DIR="$PWD/$TMP_STATE_DIR/.improve_retry_sessions"
 	RUN_CMD_TMP_DIR="$PWD/$TMP_STATE_DIR/.run_cmd_tmp"
 	RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
-	RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1800}"
+	RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1100}"
 	export RUN_CMD_SESSION_DIR
 	export RUN_CMD_TMP_DIR
 	export RUN_CMD_OPENCODE_PERMISSION
@@ -821,7 +821,9 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK_IMPROVE" \
 				"prompts/improve_strategy.md" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
-			if [ $? -ne 0 ]; then
+			local _run_ai_rc=$?
+			_improve_note "run_ai returned rc=${_run_ai_rc} (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES})"
+			if [ "$_run_ai_rc" -ne 0 ]; then
 				_consecutive_empty=$((_consecutive_empty + 1))
 			else
 				_consecutive_empty=0
@@ -885,6 +887,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 		fi
 
 		# 差分チェック
+		_improve_note "entering validation (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}, wall_elapsed=$(( $(date +%s) - _improve_wall_start ))s)"
 		_improve_progress "validate_retry${fresh_retry}" "$validate_progress" "diff_and_validation_checks"
 		staging_changed=false
 		helper_changed=false
