@@ -666,6 +666,32 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 		fi
 	fi
 
+	# Step 3.5: failed_no_apply 後のクールダウン (連続再試行防止)
+	# 改善が戦略変更なしで終了した場合、同じ蓄積データですぐ再試行しても
+	# 同じ結果になる。新しいゲームデータが追加されるまで待つ。
+	if [ -f "$TMP_STATE_DIR/last_improve_failed_at" ]; then
+		local _fail_ts _now_ts _fail_acc_count
+		_fail_ts=$(cat "$TMP_STATE_DIR/last_improve_failed_at" 2>/dev/null || echo 0)
+		_now_ts=$(date +%s)
+		# 蓄積数が失敗時から増えたか確認（新データが追加されたらリトライOK）
+		_fail_acc_count=$(python3 -c "
+import json, os
+f='$ACCUMULATED_GAMES_FILE'
+if os.path.exists(f):
+    print(json.load(open(f)).get('count',0))
+else:
+    print(0)
+" 2>/dev/null || echo 0)
+		local _fail_cooldown=${IMPROVE_FAIL_COOLDOWN:-600}  # デフォルト10分
+		if [ $((_now_ts - _fail_ts)) -lt "$_fail_cooldown" ]; then
+			log "[IMPROVE] failed_no_apply クールダウン中 (残$(((_fail_cooldown - (_now_ts - _fail_ts))))秒)"
+			return
+		else
+			log "[IMPROVE] failed_no_apply クールダウン終了 → 再試行許可"
+			rm -f "$TMP_STATE_DIR/last_improve_failed_at"
+		fi
+	fi
+
 	# Step 4: 最低10試合ゲート
 	local acc_data
 	acc_data=$(_read_accumulated_data)
@@ -722,5 +748,6 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 	if _start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "normal"; then
 		# 通常改善のみ、起動成功後に蓄積をクリア (即死時は保持)
 		_clear_accumulated_data
+		rm -f "$TMP_STATE_DIR/last_improve_failed_at"
 	fi
 }

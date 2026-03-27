@@ -7,6 +7,21 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
+        # v353: type-scaled merge bonus (growth pipeline toward high types)
+        # All merges got identical 1200/600/200 base bonus. Hall-of-fame best_score4319 had
+        # type_merge_bonus = SCORE_TABLE[merged_type] * 10 + 300. Restored with *8 multiplier.
+        # Worst game (score0769): max_type stuck at 13, flat type distribution, 9 turns delta=0.
+        # Fixes rollback failure mode: high-type growth pipeline absence due to merge-value agnostic bonus
+        # refs: strategy_versions/best_score4319_strategy.py, tmp/improve_brief.md,
+        #       tmp/batch_summary.txt, game_history/20260327_141640_score0769.jsonl,
+        #       game_history/20260327_143347_score3468.jsonl, advice.md (zoumotu3)
+        #
+        # v354: growth center proximity - reduce HEIGHT_CONTROL over-selection
+        # HEIGHT_CONTROL selected 13.0% (batch) with avg_score_delta=1.2. Low-score: 15.7% vs high 11.1%.
+        # When no merge/stacking, default is HEIGHT_CONTROL (lowest position). Add small bonus for
+        # positions near highest-type piece to keep board compact around growth center.
+        # advice.md (kbb246, zoumotu3, プリパラ煉獄丸, あずまぐ)
+        #
         # v352: axis 9.6 landing_y gate - prevent stacking bonus at dangerous heights
         # v351 status quo: axis 9.6 gives stacking bonus when TARGET stack_y is mid-range [-1.0, 1.0),
         #   but LANDING position can be much higher due to intermediate pieces. Stacking bonus
@@ -53,7 +68,7 @@ Game Overview:
         # This caused strategic placement lockout when other types had reactive pairs but current type didn't
 
       Decision Logic (evaluation axes):
-         1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+         1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR) (v353: type-scaled)
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
          4. Left-right balance correction - Bonus for correcting piece count bias
@@ -69,6 +84,7 @@ Game Overview:
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版 (v351: crosses_deadline gate)
              9.5. Current type stack merge priority - v350: stacking in danger zone when current type no reactive
              9.6. Reactive pairs stacking bonus - v340: type-aware stacking (current_type_has_reactive guard)
+            10. Growth center proximity - v354: reduce HEIGHT_CONTROL by preferring positions near max_type
 
 
 Phases (determined by board max Y):
@@ -335,9 +351,10 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v351: crosses_deadline per-drop gating for no-merge penalties + danger merge bonus
+    """v353: type-scaled merge bonus - growth pipeline toward high types
 
-    v350 status quo: deadline_crossed -4500 penalty and reactive>=3 -3000~-9000 penalty apply
+    v352 status quo: All merge grades give identical base bonus regardless of resulting type.
+    Merging type 1+1→2 (+3pts) and type 14+14→15 (+105pts) both get 1200/600/200.
     uniformly to ALL non-merge candidates, including drops that land safely below deadline.
     analyze_board.py computes `crosses_deadline` per-drop but strategy ignores it entirely.
     When deadline_crossed=true but a specific drop stays below deadline (crosses_deadline=false),
@@ -476,14 +493,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # DIRECT: direct hit target (success rate 95.7%)
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
+        # v353: type-scaled merge bonus (restored from hall-of-fame best_score4319 v156)
+        # All merges (type 1→2 giving +3pts and type 14→15 giving +105pts) received identical
+        # 1200/600/200 base bonus, so growth-pipeline merges toward high types weren't prioritized.
+        # Hall-of-fame strategy had type_merge_bonus = SCORE_TABLE[merged_type] * 10 + 300.
+        # Worst game (score0769): max_type stuck at 13, flat type distribution (count 1-3 per type),
+        #   9 consecutive turns with delta=0. No incentive to build toward high types.
+        # Best game (score3468): chain at turn 109 created type 15 from type 14+14 merge (+368).
+        # v353 uses a conservative multiplier (*8, lower than v156's *10) to avoid competing with
+        # existing reactive/danger bonuses. type1→2: +46, type7→8: +108, type10→11: +150,
+        # type12→13: +204, type14→15: +264. This differentiates high-value growth merges from
+        # low-value same-type cleanup without disrupting existing axis priorities.
+        type_merge_bonus = SCORE_TABLE[merged_type] * 8
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += (1200.0 + type_merge_bonus) * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += (600.0 + type_merge_bonus) * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            score += (200.0 + type_merge_bonus) * merge_mult
             reasons.append("FAR_MERGE")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: type-aware stacking) -----
@@ -1087,7 +1116,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
-
+        # ----- evaluation axis 10: growth center proximity (v354) -----
+        # HEIGHT_CONTROL is selected 13.0% (batch_summary) with avg_score_delta=1.2.
+        # Low-score games: 15.7% vs high-score 11.1%. Over-conservative height avoidance
+        # prevents growth pipeline construction. When no merge/stacking, default is HEIGHT_CONTROL.
+        # advice.md (kbb246): "孤立配置を避け、中央集約を優先する"
+        # advice.md (zoumotu3): "1〜2箇所に集中して大きく育てる戦略へ転換すべき"
+        # advice.md (プリパラ煉獄丸): "高さ回避の重要性は低く見てよい"
+        # advice.md (あずまぐ): "高さが明確にリスクになる盤面はほぼ詰んでいることが多い"
+        if merge_grade == "NO":
+            max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
+            if max_type_on_board >= 4:
+                for p in pieces:
+                    if p.get("type") == max_type_on_board:
+                        dist = abs(x - p["x"])
+                        if dist < 2.0:
+                            score += (2.0 - dist) * max(10.0, SCORE_TABLE[max_type_on_board] * 0.2)
+                            reasons.append("GROWTH_CENTER")
+                            break
 
 
         # ----- update best candidate -----
