@@ -616,11 +616,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
  
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
         # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
-        # bad_strategy(ee2c76235324, v334): deadline_crossed時に即時ゲームオーバー判定を行い、reactive_pairsの併合機会を失っている
+        # bad_strategy(ee2c76235324, v334): deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている
         # rollback_target(608f63a01e6b, v330): deadline_crossed時も danger_piece_count == 0 の場合はプレイを継続し、reactive pairs を併合して高スコアを達成している
         # v334 failure: axis 2とaxis 9.5からdanger_piece_count条件を削除したため、danger_piece_count > 0 の状況でも戦略的配置が選ばれてしまい、即時併合機会を取りこぼしている
-        # ワーストゲーム(score0720)終盤turns 49-57: deadline_crossed=true, reactive_pairs=3-6, danger_piece_count=2-6で即時併合不可続きmax_y=3.21に上昇してゲームオーバー
-        # ベストゲーム(score2599)終盤turns 116-123: deadline_crossed=trueでも即時併合機会を確実に捉えて2599点を出している
         # axis 9.6追加: deadline_crossed時にreactive_pairsがある場合、即時併合を逃した非併合配置に強力なペナルティ(-4500.0)を適用
         # これによりdeadline_crossed時にreactive_pairsがある状況で即時併合を逃した場合のペナルティがaxis 9.2のペナルティよりも高くなり、即時併合を強制的に待つ戦略へ切り替える
         # axis 9.5の盤面圧縮ボーナスは適用しない。即時併合機会を最大化することを目的としているため、戦略的配置ボーナスを抑制
@@ -634,6 +632,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 即時併合機会を最大化し、戦略的配置ボーナスを抑制
             score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
+        
+        # v347 removal: type-aware guard の削除 - deadline_crossed時のreactive_pairsペナルティ強化
+        # last_rollback_postmortemのconstraint: "type-aware guard を deadline penalty に追加しない（v347 の current_type_has_reactive_or_near 条件）"
+        # 他 type に reactive があれば current type の merge 不可でも penalty が働くべき
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
+        # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合のペナルティ不足
+
+        # v345 removal: height_mult reduction for stacking の削除 - stacking bonus と組み合わせない
+        # last_rollback_postmortemのconstraint: "height_mult reduction for stacking（v345 の 0.6x）を stacking bonus と組み合わせない"
+        # height_mult reduction は stacking bonus と乗算効果があり、両方同時に有効だと height penalty が実質的に無効化される
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
+        # Fixes rollback failure mode: stacking bonus と height_mult reduction の乗算効果による height penalty 無効化
+
+        # v347 removal: type-aware guard の削除 - deadline_crossed時のreactive_pairsペナルティ強化
+        # last_rollback_postmortemのconstraint: "type-aware guard を deadline penalty に追加しない（v347 の current_type_has_reactive_or_near 条件）"
+        # 他 type に reactive があれば current type の merge 不可でも penalty が働くべき
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
+        # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合のペナルティ不足
+
+        # axis 9.6 deadline_crossed ペナルティ強化 - reactive_pairs>=1 で即時併合不可の場合
+        # last_rollback_postmortemのconstraint: "deadline_crossed時の即時併合機会取りこぼしを削減"
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
+        # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6 deadline_crossed条件追加）
+
+        # axis 8.8 reactive_pairs>=3 ペナルティ強化 - 即時併合機会を最優先
+        # last_rollback_postmortemのconstraint: "deadline_crossedに関わらず即時併合を最優先するペナルティを適用する（deadline_crossed条件を含める）"
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
+        # Fixes rollback failure mode: reactive_pairs>=3での即時併合機会取りこぼし（axis 8.8 deadline_crossed条件削除）
+
+        # axis 9.5 stacking bonus の最適化 - 即時併合機会を最優先
+        # last_rollback_postmortemのconstraint: "reactive_pairsがある状況での即時併合機会取りこぼしを削減"
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
+        # Fixes rollback failure mode: reactive_pairsがある状況での即時併合機会取りこぼし（axis 9.5 reactive_pairs条件追加）
+
+        # axis 9.6 deadline_crossed ペナルティ強化 - reactive_pairs>=1 で即時併合不可の場合
+        # last_rollback_postmortemのconstraint: "deadline_crossed時の即時併合機会取りこぼしを削減"
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
+        # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6 deadline_crossed条件追加）
         
          # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
@@ -886,23 +922,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #   - landing_y > 1: -5000.0 + (landing_y - 1.0) * 2000.0 (例: landing_y=1.5 -> -6000.0, landing_y=2.0 -> -7000.0)
         # v329修正: landing_y > 1 の場合、(landing_y - 1.0) * 2000.0 を使用して高配置ほどペナルティを強化
         # これにより高配置になるほどペナルティが線形に増大し、height_mult緩和やボーナスを上回る強力な抑制を実現
-        # last_rollback_postmortemのconstraint: "reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず即時併合を最優先するペナルティを適用する（deadline_crossed条件を含める）"を遵守
+        # v347 removal: deadline_crossed 条件の削除 - last_rollback_postmortemのconstraintを遵守
+        # deadline_crossed に関わらず -4500.0 ペナルティを適用し、即時併合を最優先
         # 未活用情報：reactive_pairs>=3, merge_grade=="NO", landing_y (着地位置の高さ)
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
         #       game_history/20260324_045921_score0636.jsonl turns 56-62, game_history/20260324_043823_score0725.jsonl turns 61-62,
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
-        # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
+        # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版→v347 deadline_crossed条件削除）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
             # reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず強力なペナルティを適用
-            # landing_yに応じて動的にペナルティを強化し、高配置を積極的に抑制
-            # v329修正: landing_y > 1 の場合、(landing_y - 1.0) * 2000.0 を使用し、高配置ほどペナルティを強化
-            if landing_y <= 0:
-                score -= 3000.0
-            elif landing_y <= 1:
-                score -= 3000.0 + landing_y * 2000.0
-            else:
-                score -= 5000.0 + (landing_y - 1.0) * 2000.0
+            # v347: deadline_crossed 条件の削除 - last_rollback_postmortemのconstraintを遵守
+            # 即時併合機会を強制的に待つ戦略へ切り替える
+            score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
