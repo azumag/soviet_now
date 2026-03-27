@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-27 10:13:13 JST`
-- Nodes: `757`
-- Edges: `1056`
-- Current: `977a30ec57a8`
+- Updated: `2026-03-27 11:12:02 JST`
+- Nodes: `758`
+- Edges: `1057`
+- Current: `7a1c956dd212`
 - Anchor: `9029bd07d8b9`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_e974d5259ac6["e974d5259ac6<br/>g=12 n=12<br/>comp=10906.0"]
     h_b65c387abdab["b65c387abdab<br/>g=12 n=12<br/>comp=10306.7"]
     h_66e5df314bc7["66e5df314bc7<br/>g=12 n=12<br/>comp=10106.0"]
     h_608f63a01e6b["608f63a01e6b<br/>g=36 n=20<br/>comp=11038.1"]
@@ -72,11 +71,11 @@ flowchart TD
     h_f48d789a8edf["f48d789a8edf<br/>g=12 n=12<br/>comp=9263.1"]
     h_2557979ccf35["2557979ccf35<br/>g=12 n=12<br/>comp=10537.9"]
     h_f0346bcbba3c["f0346bcbba3c<br/>g=12 n=12<br/>comp=10429.7"]
+    h_977a30ec57a8["977a30ec57a8<br/>g=12 n=12<br/>comp=10715.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_977a30ec57a8["977a30ec57a8<br/>CURRENT"]
+    h_7a1c956dd212["7a1c956dd212<br/>CURRENT"]
 
-    h_e974d5259ac6 -->|improve| h_b65c387abdab
     h_b65c387abdab -->|improve| h_66e5df314bc7
     h_66e5df314bc7 -->|improve| h_608f63a01e6b
     h_608f63a01e6b -->|improve| h_b8d37aebbd1a
@@ -144,13 +143,13 @@ flowchart TD
     h_acd5803d8ef7 -->|improve| h_2557979ccf35
     h_2557979ccf35 -->|improve| h_f0346bcbba3c
     h_f0346bcbba3c -->|improve| h_977a30ec57a8
+    h_977a30ec57a8 -->|improve| h_7a1c956dd212
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_e974d5259ac6 plain;
     class h_b65c387abdab plain;
     class h_66e5df314bc7 plain;
     class h_608f63a01e6b plain;
@@ -207,9 +206,10 @@ flowchart TD
     class h_f48d789a8edf plain;
     class h_2557979ccf35 plain;
     class h_f0346bcbba3c plain;
+    class h_977a30ec57a8 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_977a30ec57a8 current;
+    class h_7a1c956dd212 current;
 ```
 
 ## Detail 1/10
@@ -2794,9 +2794,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `977a30ec57a8`
-- Nodes in this diagram: `37`
-- Internal edges in this diagram: `30`
+- Range: `7bd6203f37b5` .. `7a1c956dd212`
+- Nodes in this diagram: `38`
+- Internal edges in this diagram: `31`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2847,9 +2847,10 @@ flowchart TD
     h_f48d789a8edf["f48d789a8edf<br/>g=12 n=12<br/>comp=9263.1"]
     h_2557979ccf35["2557979ccf35<br/>g=12 n=12<br/>comp=10537.9"]
     h_f0346bcbba3c["f0346bcbba3c<br/>g=12 n=12<br/>comp=10429.7"]
+    h_977a30ec57a8["977a30ec57a8<br/>g=12 n=12<br/>comp=10715.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_977a30ec57a8["977a30ec57a8<br/>CURRENT"]
+    h_7a1c956dd212["7a1c956dd212<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2881,6 +2882,7 @@ flowchart TD
     h_13084f72a598 -->|improve| h_f48d789a8edf
     h_2557979ccf35 -->|improve| h_f0346bcbba3c
     h_f0346bcbba3c -->|improve| h_977a30ec57a8
+    h_977a30ec57a8 -->|improve| h_7a1c956dd212
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2921,12 +2923,23 @@ flowchart TD
     class h_f48d789a8edf plain;
     class h_2557979ccf35 plain;
     class h_f0346bcbba3c plain;
+    class h_977a30ec57a8 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_977a30ec57a8 current;
+    class h_7a1c956dd212 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10336 `977a30ec -> 7a1c956d`
+
+- scores: `9000 8920 7963 13312 25904 12158 6613 11786 16350 14502 12075 7647`
+- v349: deep safe stacking bonus in reactive dead zone gap
+- v348 status quo: axis 9.5 dead zone when current_type_has_reactive_or_near=True —
+- no stacking bonus. Axis 9.6 covers mid-range (stack_y >= -1.0) only.
+- Deep targets (stack_y < -1.0) → zero incentive → HEIGHT_CONTROL default.
+- ワースト(score0487) turns 50-51: reactive=1, type9 target y=-1.69 → dead zone → MEDIUM_TOWER
+- 低スコア群: HEIGHT_CONTROL 18.2% (vs high 8.8%), 55-68ターンでtype 11-12止まり
 
 ### Improve Game#10324 `f0346bcb -> 977a30ec`
 
