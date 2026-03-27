@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-27 13:54:11 JST`
-- Nodes: `761`
-- Edges: `1060`
-- Current: `fcd6d3725de6`
+- Updated: `2026-03-27 15:11:34 JST`
+- Nodes: `762`
+- Edges: `1061`
+- Current: `c3a4d0caf321`
 - Anchor: `9029bd07d8b9`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_b8d37aebbd1a["b8d37aebbd1a<br/>g=66 n=20<br/>comp=9661.5"]
     h_ee2c76235324["ee2c76235324<br/>g=12 n=12<br/>comp=9869.3"]
     h_4052d8dd8449["4052d8dd8449<br/>g=12 n=12<br/>comp=11150.4"]
     h_ec2ae6392eb2["ec2ae6392eb2<br/>g=12 n=12<br/>comp=10676.5"]
@@ -72,11 +71,11 @@ flowchart TD
     h_7a1c956dd212["7a1c956dd212<br/>g=12 n=12<br/>comp=9594.8"]
     h_036bd1b24fea["036bd1b24fea<br/>g=12 n=12<br/>comp=11066.8"]
     h_a64837b1edc1["a64837b1edc1<br/>g=12 n=12<br/>comp=11394.9"]
+    h_fcd6d3725de6["fcd6d3725de6<br/>g=12 n=12<br/>comp=10836.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_fcd6d3725de6["fcd6d3725de6<br/>CURRENT"]
+    h_c3a4d0caf321["c3a4d0caf321<br/>CURRENT"]
 
-    h_b8d37aebbd1a -->|improve| h_ee2c76235324
     h_4052d8dd8449 -->|improve| h_ec2ae6392eb2
     h_ec2ae6392eb2 -->|improve| h_11e54fb5a8f0
     h_11e54fb5a8f0 -->|improve| h_29199c40687a
@@ -99,8 +98,6 @@ flowchart TD
     h_2ffec13b0141 -->|improve| h_31da7cda98a8
     h_31da7cda98a8 -. rollback .-> h_2ffec13b0141
     h_2ffec13b0141 -. rollback .-> h_7bd6203f37b5
-    h_7bd6203f37b5 -. rollback .-> h_b8d37aebbd1a
-    h_b8d37aebbd1a -->|improve| h_c333071675cc
     h_c333071675cc -. rollback .-> h_216f251b5089
     h_216f251b5089 -->|improve| h_413548ba9827
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -140,13 +137,13 @@ flowchart TD
     h_7a1c956dd212 -->|improve| h_036bd1b24fea
     h_036bd1b24fea -->|improve| h_a64837b1edc1
     h_a64837b1edc1 -->|improve| h_fcd6d3725de6
+    h_fcd6d3725de6 -->|improve| h_c3a4d0caf321
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_b8d37aebbd1a plain;
     class h_ee2c76235324 plain;
     class h_4052d8dd8449 plain;
     class h_ec2ae6392eb2 plain;
@@ -203,9 +200,10 @@ flowchart TD
     class h_7a1c956dd212 plain;
     class h_036bd1b24fea plain;
     class h_a64837b1edc1 plain;
+    class h_fcd6d3725de6 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_fcd6d3725de6 current;
+    class h_c3a4d0caf321 current;
 ```
 
 ## Detail 1/10
@@ -2790,9 +2788,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `fcd6d3725de6`
-- Nodes in this diagram: `41`
-- Internal edges in this diagram: `34`
+- Range: `7bd6203f37b5` .. `c3a4d0caf321`
+- Nodes in this diagram: `42`
+- Internal edges in this diagram: `35`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2847,9 +2845,10 @@ flowchart TD
     h_7a1c956dd212["7a1c956dd212<br/>g=12 n=12<br/>comp=9594.8"]
     h_036bd1b24fea["036bd1b24fea<br/>g=12 n=12<br/>comp=11066.8"]
     h_a64837b1edc1["a64837b1edc1<br/>g=12 n=12<br/>comp=11394.9"]
+    h_fcd6d3725de6["fcd6d3725de6<br/>g=12 n=12<br/>comp=10836.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_fcd6d3725de6["fcd6d3725de6<br/>CURRENT"]
+    h_c3a4d0caf321["c3a4d0caf321<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2885,6 +2884,7 @@ flowchart TD
     h_7a1c956dd212 -->|improve| h_036bd1b24fea
     h_036bd1b24fea -->|improve| h_a64837b1edc1
     h_a64837b1edc1 -->|improve| h_fcd6d3725de6
+    h_fcd6d3725de6 -->|improve| h_c3a4d0caf321
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2929,12 +2929,23 @@ flowchart TD
     class h_7a1c956dd212 plain;
     class h_036bd1b24fea plain;
     class h_a64837b1edc1 plain;
+    class h_fcd6d3725de6 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_fcd6d3725de6 current;
+    class h_c3a4d0caf321 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10384 `fcd6d372 -> c3a4d0ca`
+
+- scores: `8557 6990 12822 11445 18714 11038 16747 11267 9371 20908 14646 9822`
+- v353: type-scaled merge bonus (growth pipeline toward high types)
+- All merges got identical 1200/600/200 base bonus. Hall-of-fame best_score4319 had
+- type_merge_bonus = SCORE_TABLE[merged_type] * 10 + 300. Restored with *8 multiplier.
+- Worst game (score0769): max_type stuck at 13, flat type distribution, 9 turns delta=0.
+- Fixes rollback failure mode: high-type growth pipeline absence due to merge-value agnostic bonus
+- tmp/batch_summary.txt, game_history/20260327_141640_score0769.jsonl,
 
 ### Improve Game#10372 `a64837b1 -> fcd6d372`
 
