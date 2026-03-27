@@ -55,10 +55,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-          # v359: axis 9.7 de-nest fix — add compression bonus for same_type_stack_top==None case
-          #   Nested axis 9.7 inside axis 9.6 meant no bonus when no same-type on board → HEIGHT_CONTROL
-          #   Fixes postmortem primary failure mode: reactive>=1 && merge=="NO" && no same-type → HEIGHT_CONTROL
-          #   refs: last_rollback_postmortem.md, protected_e6f534c37e28, score0732.jsonl, batch_summary.txt, advice.md
           # v341: axis 9.7盤面圧縮ボーナス修正版 - 低配置でもボーナスが発生するように改善
           # v338 failure mode: compression_bonus = (landing_y + 2.5) * 200.0 だと landing_y=-2.5でボーナス0になり、HEIGHT_CONTROLが選ばれる失敗パターン
           # ワーストゲーム(score0813)終盤: reactive_pairs=1, max_y=-0.56 (安定して低い) でHEIGHT_CONTROLが続き、即時併合機会を取りこぼしている
@@ -526,20 +522,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  reasons.append("REACTIVE_PAIRS_COMPRESSION")
              # 上層配置（landing_y >= 0.5）はボーナスなし（height_penaltyでペナルティされる）
 
-        # v359: axis 9.7 sibling — compression bonus when same_type_stack_top is None
-        # v341 intended 9.6/9.7 to be exclusive (9.6 when same_type exists, 9.7 when not),
-        # but 9.7 was nested inside 9.6, so when same_type_stack_top is None neither fires → HEIGHT_CONTROL.
-        # This is the postmortem primary failure mode. Guard: reactive < 3 per protected strategy pattern.
-        # Fixes rollback failure mode: reactive>=1 && merge=="NO" with no same-type on board → HEIGHT_CONTROL
-        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is None:
-            if landing_y < 0.0:
-                compression_bonus = (-landing_y) * 200.0
-                score += compression_bonus
-                reasons.append("REACTIVE_PAIRS_COMPRESSION")
-            elif landing_y < 0.5:
-                compression_bonus = 50.0
-                score += compression_bonus
-                reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
