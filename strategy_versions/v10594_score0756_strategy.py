@@ -14,6 +14,7 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
+           5.6. Growth center proximity - Compact board around highest-type piece (v364)
             6. Chain merge bonus - Evaluate possibility of further merges after merge
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
@@ -55,6 +56,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v364: growth center proximity — reduce piece scattering via board concentration
+     # Re-introduce v358 concept lost in rollback cascade (301fa13ab0ab batch rollback).
+     # Worst game ends with 35 scattered pieces (type 11 spread x=-2..x=2.5), 0 merges final 5 turns.
+     # Best game concentrates growth around highest-type, reaches Russia phase with 5 merges final 8 turns.
+     # Small bonus (max 50) for placing near deepest highest-type piece encourages concentration
+     # (advice: zoumotu3 "1-2 locations for growth") without overriding merge/height priorities.
+     # Fires only when max_type >= 6, not in russia_phase, not at reactive >= 3.
+     # refs: advice.md (zoumotu3), tmp/batch_summary.txt, game_history/20260328_073826_score0883.jsonl T62-69,
+     #       game_history/20260328_074802_score0970.jsonl T64-65, strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
+     # Fixes rollback failure mode: piece scattering prevents merge paths (v359 rollback collateral)
      # v363: axis 9.6 stacking extension to reactive>=3 — v340 guard removal
      # v340 guardは旧スタッキング公式(vertical_bonus=(stack_y+1)*200)の高位スタッキング防止用だった。
      # v360でmerged_type近接度ベースに変更後、高さインセンティブは消滅(max~400, y>1で減衰)。
@@ -747,7 +758,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score -= 400.0  # 未来の併合機会を潰すためのペナルティ
                         reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
- 
+
+        # ----- evaluation axis 5.6: growth center proximity (v364) -----
+        # Re-introduce growth center proximity lost in rollback cascade.
+        # batch_summary: HEIGHT_CONTROL 20.9% in low-score vs 16.3% in high-score games.
+        # Worst game ends with 35 pieces scattered (type 11 spread x=-2..x=2.5), 0 merges final 5 turns.
+        # Best game concentrates growth around highest-type, reaches Russia phase with 5 merges.
+        # Small bonus (max 50) for placing near deepest highest-type piece encourages concentration
+        # (advice: zoumotu3 "1-2 locations for growth") without overriding merge/height priorities.
+        # Fires only when max_type >= 6 (low types aren't growth targets), not in russia_phase
+        # (axis 8.7 handles russia), not at reactive >= 3 (axis 8.8 penalty dominates all candidates).
+        # refs: advice.md (zoumotu3), tmp/batch_summary.txt,
+        #       game_history/20260328_073826_score0883.jsonl T62-69,
+        #       game_history/20260328_074802_score0970.jsonl T64-65,
+        #       strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
+        # Fixes pattern: piece scattering prevents merge paths, piece_count accumulation
+        if not russia_phase and reactive_pair_count < 3:
+            max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
+            if max_type_on_board >= 6:
+                # Find the deepest (lowest y) highest-type piece as growth center
+                growth_center = min(
+                    (p for p in pieces if p.get("type") == max_type_on_board),
+                    key=lambda p: p.get("y", 10),
+                    default=None,
+                )
+                if growth_center:
+                    gc_x = growth_center.get("x", 0)
+                    gc_y = growth_center.get("y", -10)
+                    horiz_dist = abs(x - gc_x)
+                    if horiz_dist < 2.5:
+                        proximity = max(0, 50.0 - horiz_dist * 20.0)
+                        # Decay if growth center is high — don't override height control
+                        if gc_y > 0:
+                            proximity *= max(0.0, 1.0 - gc_y * 0.5)
+                        score += proximity
+
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
