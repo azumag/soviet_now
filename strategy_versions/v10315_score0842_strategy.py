@@ -7,6 +7,11 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
+        # v347: deadline_crossed no-merge penalty type-aware guard
+        # -4500.0 penalty now only applies when current_type_has_reactive_or_near (matching axis 9.6 guard)
+        # Previous: reactive_pair_count >= 1 globally → penalized even when current type had no reactive pairs
+        # This caused strategic placement lockout when other types had reactive pairs but current type didn't
+
       Decision Logic (evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
         2. Height penalty - Penalty for high landing position (varies by phase)
@@ -289,17 +294,24 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v346: reactive stacking type-aware fix - untargeted stacking/chain height/axis 9.7削除
+    """v347: deadline no-merge penalty type-aware fix
 
-    POSTMORTEM FIX: 3つのfailure modeを修正
-    1. untargeted_reactive_stacking: axis 9.6にcurrent_type_has_reactive_or_near条件追加(v340)
-       ワーストゲーム(score0423)終盤: reactive_pairs=5-7あるがcurrent typeにreactive pairがなく、
-       REACTIVE_PAIRS_STACKINGが連続してmax_y=2.12→3.62に悪化してゲームオーバー
-    2. chain_bonus_height_amplification: chain_bonus_multiplierを495.0に固定化(v343)
-       高位置NEAR mergeが過大評価され危険な配置を選択していた逆インセンティブを解消
-    3. missing_height_mult_reduction_for_pipelining: 同type近接位置でheight_mult 0.6xに減衰(v345)
-       MEDIUM/HIGH phaseでstacking bonusがheight_penaltyに打ち消される問題を解消
-    追加: axis 9.7削除(v339)、v335重複ブロック無効化(v341)、v342条件緩和
+    POSTMORTEM FIX: deadline_crossed -4500 penalty が current_type_has_reactive_or_near を確認せず、
+    他typeのreactive_pairsがあるだけで全候補に-4500を付与していた。これによりcurrent typeに
+    reactive pairがないのにaxis 9.6のstacking bonusやaxis 9.5のsame-type stackingが打ち消され、
+    戦略的配置ができずにHEIGHT_CONTROL連続→max_y runawayが発生
+    ワーストゲーム(score0836)終盤: reactive_pairs=4あるがnext_type=5/11/4/8/5/1/8にはreactive pairがなく、
+    deadline_crossed=trueで-4500 penaltyが全候補に適用され、max_y=2.53→2.95でゲームオーバー(67ターン)
+    ベストゲーム(score3186)終盤: reactive_pairs=1のみでpenalty影響小、126ターン継続
+    v346までの修正: axis 9.6 type-aware(v340), chain_bonus固定化(v343), axis 9.7削除(v339),
+      v335重複無効化(v341), v342条件緩和, v345 height_mult reduction
+    refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md (azumag, Pitman_live),
+      tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+      game_history/20260327_085432_score0836.jsonl turns 60-67,
+      game_history/20260327_091009_score3186.jsonl turns 119-126,
+      strategy_versions/best_score5694_strategy.py
+    Fixes rollback failure mode: deadline_crossed時のcurrent type非反応での-4500全面適用による
+      戦略的配置不能（type-aware guard追加で、current typeにreactive pairがある時のみpenalty適用）
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -574,9 +586,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_122310_score0720.jsonl turns 49-57, game_history/20260324_120021_score2599.jsonl turns 116-123
         # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
 
-        if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # deadline_crossed時にreactive_pairsがある場合、即時併合を逃した非併合配置に強力なペナルティ
-            # 即時併合機会を最大化し、戦略的配置ボーナスを抑制
+        if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO" and current_type_has_reactive_or_near:
+            # v347: type-aware guard追加 - current_type_has_reactive_or_nearの場合のみpenalty適用
+            # 以前はreactive_pair_count>=1(全type)で-4500を適用しており、current typeにreactive pairがない
+            # にも関わらず戦略的配置(axis 9.5/9.6)が打ち消され、HEIGHT_CONTROL連続でmax_y runaway
+            # ワーストゲーム(score0836)終盤: reactive_pairs=4あるがnext_typeにはreactive pairがなく、
+            # 全候補に-4500が適用されmax_y=2.53→2.95で67ターンでゲームオーバー
+            # refs: game_history/20260327_085432_score0836.jsonl turns 60-67,
+            #       game_history/20260327_091009_score3186.jsonl turns 119-126
             score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
         
