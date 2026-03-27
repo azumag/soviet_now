@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-27 13:03:23 JST`
-- Nodes: `760`
-- Edges: `1059`
-- Current: `a64837b1edc1`
+- Updated: `2026-03-27 13:54:11 JST`
+- Nodes: `761`
+- Edges: `1060`
+- Current: `fcd6d3725de6`
 - Anchor: `9029bd07d8b9`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_608f63a01e6b["608f63a01e6b<br/>g=36 n=20<br/>comp=11038.1"]
     h_b8d37aebbd1a["b8d37aebbd1a<br/>g=66 n=20<br/>comp=9661.5"]
     h_ee2c76235324["ee2c76235324<br/>g=12 n=12<br/>comp=9869.3"]
     h_4052d8dd8449["4052d8dd8449<br/>g=12 n=12<br/>comp=11150.4"]
@@ -72,21 +71,17 @@ flowchart TD
     h_977a30ec57a8["977a30ec57a8<br/>g=12 n=12<br/>comp=10715.5"]
     h_7a1c956dd212["7a1c956dd212<br/>g=12 n=12<br/>comp=9594.8"]
     h_036bd1b24fea["036bd1b24fea<br/>g=12 n=12<br/>comp=11066.8"]
+    h_a64837b1edc1["a64837b1edc1<br/>g=12 n=12<br/>comp=11394.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_a64837b1edc1["a64837b1edc1<br/>CURRENT"]
+    h_fcd6d3725de6["fcd6d3725de6<br/>CURRENT"]
 
-    h_608f63a01e6b -->|improve| h_b8d37aebbd1a
     h_b8d37aebbd1a -->|improve| h_ee2c76235324
-    h_ee2c76235324 -. rollback .-> h_608f63a01e6b
-    h_608f63a01e6b -->|improve| h_4052d8dd8449
     h_4052d8dd8449 -->|improve| h_ec2ae6392eb2
     h_ec2ae6392eb2 -->|improve| h_11e54fb5a8f0
     h_11e54fb5a8f0 -->|improve| h_29199c40687a
     h_29199c40687a -->|improve| h_acd5803d8ef7
     h_acd5803d8ef7 -->|improve| h_ab10263e8ab7
-    h_ab10263e8ab7 -. rollback .-> h_608f63a01e6b
-    h_608f63a01e6b -->|improve| h_060b82e85a13
     h_060b82e85a13 -. rollback .-> h_acd5803d8ef7
     h_acd5803d8ef7 -->|improve| h_e3cc375bcd69
     h_e3cc375bcd69 -->|improve| h_1e3a09db9b72
@@ -144,13 +139,13 @@ flowchart TD
     h_977a30ec57a8 -->|improve| h_7a1c956dd212
     h_7a1c956dd212 -->|improve| h_036bd1b24fea
     h_036bd1b24fea -->|improve| h_a64837b1edc1
+    h_a64837b1edc1 -->|improve| h_fcd6d3725de6
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_608f63a01e6b plain;
     class h_b8d37aebbd1a plain;
     class h_ee2c76235324 plain;
     class h_4052d8dd8449 plain;
@@ -207,9 +202,10 @@ flowchart TD
     class h_977a30ec57a8 plain;
     class h_7a1c956dd212 plain;
     class h_036bd1b24fea plain;
+    class h_a64837b1edc1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_a64837b1edc1 current;
+    class h_fcd6d3725de6 current;
 ```
 
 ## Detail 1/10
@@ -2794,9 +2790,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `a64837b1edc1`
-- Nodes in this diagram: `40`
-- Internal edges in this diagram: `33`
+- Range: `7bd6203f37b5` .. `fcd6d3725de6`
+- Nodes in this diagram: `41`
+- Internal edges in this diagram: `34`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2850,9 +2846,10 @@ flowchart TD
     h_977a30ec57a8["977a30ec57a8<br/>g=12 n=12<br/>comp=10715.5"]
     h_7a1c956dd212["7a1c956dd212<br/>g=12 n=12<br/>comp=9594.8"]
     h_036bd1b24fea["036bd1b24fea<br/>g=12 n=12<br/>comp=11066.8"]
+    h_a64837b1edc1["a64837b1edc1<br/>g=12 n=12<br/>comp=11394.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_a64837b1edc1["a64837b1edc1<br/>CURRENT"]
+    h_fcd6d3725de6["fcd6d3725de6<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2887,6 +2884,7 @@ flowchart TD
     h_977a30ec57a8 -->|improve| h_7a1c956dd212
     h_7a1c956dd212 -->|improve| h_036bd1b24fea
     h_036bd1b24fea -->|improve| h_a64837b1edc1
+    h_a64837b1edc1 -->|improve| h_fcd6d3725de6
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2930,12 +2928,23 @@ flowchart TD
     class h_977a30ec57a8 plain;
     class h_7a1c956dd212 plain;
     class h_036bd1b24fea plain;
+    class h_a64837b1edc1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_a64837b1edc1 current;
+    class h_fcd6d3725de6 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10372 `a64837b1 -> fcd6d372`
+
+- scores: `11818 8383 18579 13426 8392 16631 16379 9429 17418 7588 9848 15220`
+- v352: axis 9.6 landing_y gate - prevent stacking bonus at dangerous heights
+- v351 status quo: axis 9.6 gives stacking bonus when TARGET stack_y is mid-range [-1.0, 1.0),
+- but LANDING position can be much higher due to intermediate pieces. Stacking bonus
+- (200-280) offsets reactive penalty at dangerous heights, causing pieces to land at
+- y=2.5+ on speculative stacking. All positions cross deadline in HIGH phase, so the
+- bonus differentiator picks the worst position instead of the lowest.
 
 ### Improve Game#10360 `036bd1b2 -> a64837b1`
 
