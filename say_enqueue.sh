@@ -833,7 +833,6 @@ _launch_say() {
 		# 合成直前に粛清リストを再チェック — 粛清済みなら別のスピーカーに差し替え
 		if [ -f "config/voicevox_exclude_ids.txt" ] && grep -q "^${VOICEVOX_SPEAKER}\b" "config/voicevox_exclude_ids.txt" 2>/dev/null; then
 			_log "speaker=$VOICEVOX_SPEAKER は粛清済み → 再選択"
-			local _reroll
 			_reroll=$(_pick_random_voicevox_speaker)
 			VOICEVOX_SPEAKER="${_reroll%%|*}"
 			VOICEVOX_RANDOM_VOICE_NAME="${_reroll#*|}"
@@ -1233,7 +1232,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 		if [ "${USE_VOICEVOX:-0}" = "1" ] && [ -f "tmp/voicevox_asmr.txt" ]; then
 			case "${SOURCE_LABEL:-}" in
 			comment | comment:*)
-				local _asmr_result
+				_asmr_result=""
 				_asmr_result=$(_pick_asmr_voicevox_speaker 2>/dev/null || echo "")
 				VOICEVOX_SPEAKER="${_asmr_result%%|*}"
 				VOICEVOX_RANDOM_VOICE_NAME="${_asmr_result#*|}"
@@ -1248,7 +1247,7 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 			# 粛清チェック
 			if [ -f "config/voicevox_exclude_ids.txt" ] && grep -q "^${VOICEVOX_SPEAKER}\b" "config/voicevox_exclude_ids.txt" 2>/dev/null; then
 				_log "speaker=$VOICEVOX_SPEAKER は粛清済み → 再選択"
-				local _reroll
+				_reroll=""
 				_reroll=$(_pick_random_voicevox_speaker)
 				VOICEVOX_SPEAKER="${_reroll%%|*}"
 				VOICEVOX_RANDOM_VOICE_NAME="${_reroll#*|}"
@@ -1256,12 +1255,12 @@ if [ "$WAV_MODE" = "false" ] && [ "${USE_VOICEVOX:-0}" = "1" ]; then
 
 			# ピッチ・テンポ（スクリプトレベル変数に保存 → _launch_say でチャット投稿に使用）
 			PRE_SYNTH_PITCH="" PRE_SYNTH_TEMPO="" PRE_SYNTH_INTONATION=""
-			local vo_pitch="" vo_tempo="" vo_intonation=""
+			vo_pitch="" vo_tempo="" vo_intonation=""
 			[ -f "config/voicevox_pitch_map.txt" ] && vo_pitch=$(grep "^${VOICEVOX_SPEAKER}|" "config/voicevox_pitch_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
 			[ -f "config/voicevox_tempo_map.txt" ] && vo_tempo=$(grep "^${VOICEVOX_SPEAKER}|" "config/voicevox_tempo_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
 			[ -f "config/voicevox_intonation_map.txt" ] && vo_intonation=$(grep "^${VOICEVOX_SPEAKER}|" "config/voicevox_intonation_map.txt" 2>/dev/null | tail -1 | cut -d'|' -f2)
 			PRE_SYNTH_PITCH="$vo_pitch" PRE_SYNTH_TEMPO="$vo_tempo" PRE_SYNTH_INTONATION="$vo_intonation"
-			local vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
+			vo_voice_name="${VOICEVOX_RANDOM_VOICE_NAME:-}"
 			_log "VOICEVOX 事前合成 speaker=$VOICEVOX_SPEAKER${vo_voice_name:+ ($vo_voice_name)}${vo_pitch:+ pitch=$vo_pitch}${vo_tempo:+ tempo=$vo_tempo}${vo_intonation:+ intonation=$vo_intonation}"
 
 			PRE_SYNTH_WAV="${MY_CONTENT%.txt}_pre.wav"

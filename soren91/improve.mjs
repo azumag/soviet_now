@@ -684,21 +684,73 @@ async function validateStrategy(code) {
       garbage: { ratio: 0, height: -5, pixelCount: 0, gauge: 0 },
     };
 
-    const result = module.decide(dummyState);
+    // スモークテストケース: 主要な分岐をカバー
+    const smokeTests = [
+      { label: 'basic', state: dummyState },
+      { label: 'critical+hold+garbage', state: {
+        pieces: Array.from({ length: 25 }, (_, i) => ({
+          type: (i % 5) + 1, x: -2.5 + (i % 6), y: -4 + Math.floor(i / 6) * 1.5, r: 0.207 + (i % 5) * 0.05,
+        })),
+        next: { type: 1, r: 0.207 },
+        nextPieces: [{ type: 1, r: 0.207 }, { type: 3, r: 0.316 }],
+        hold: { type: 3, r: 0.316 },
+        canHold: true,
+        score: 500,
+        confidence: 0.5,
+        garbage: { ratio: 0.5, height: 2.0, pixelCount: 100, gauge: 0.8 },
+      }},
+      { label: 'warn-height', state: {
+        pieces: Array.from({ length: 20 }, (_, i) => ({
+          type: (i % 4) + 1, x: -2 + (i % 5), y: -2 + Math.floor(i / 5) * 1.2, r: 0.207 + (i % 4) * 0.05,
+        })),
+        next: { type: 2, r: 0.259 },
+        nextPieces: [{ type: 2, r: 0.259 }],
+        hold: null,
+        canHold: true,
+        score: 300,
+        confidence: 0.8,
+        garbage: { ratio: 0, height: -5, pixelCount: 0, gauge: 0 },
+      }},
+    ];
 
-    // 戻り値の形式チェック
-    if (typeof result !== 'object' || typeof result.x !== 'number' || typeof result.reason !== 'string') {
-      console.log('[improve] Validation failed: invalid return format', result);
-      return { valid: false, error: `decide() returned invalid format: ${JSON.stringify(result)}. Must return { x: number, reason: string }` };
+    for (const { label, state } of smokeTests) {
+      const result = module.decide(state);
+
+      // 戻り値の形式チェック
+      if (typeof result !== 'object' || typeof result.x !== 'number' || typeof result.reason !== 'string') {
+        console.log(`[improve] Validation failed (${label}): invalid return format`, result);
+        return { valid: false, error: `decide() returned invalid format in "${label}" test: ${JSON.stringify(result)}. Must return { x: number, reason: string }` };
+      }
+
+      // xが範囲内か
+      if (result.x < -3.0 || result.x > 3.0) {
+        console.log(`[improve] Validation failed (${label}): x out of range`, result.x);
+        return { valid: false, error: `decide() returned x=${result.x} in "${label}" test, out of range [-3.0, 3.0]` };
+      }
+
+      console.log(`[improve] Smoke test "${label}" passed:`, JSON.stringify(result));
     }
 
-    // xが範囲内か
-    if (result.x < -3.0 || result.x > 3.0) {
-      console.log('[improve] Validation failed: x out of range', result.x);
-      return { valid: false, error: `decide() returned x=${result.x} which is out of range [-3.0, 3.0]` };
+    // 5. ESLint 静的解析: 未定義変数の検出
+    try {
+      const { execSync } = await import('child_process');
+      const eslintResult = execSync(
+        `npx --yes eslint@8 --no-eslintrc --parser-options=ecmaVersion:2022,sourceType:module --rule '{"no-undef":"error"}' --env es2022 "${tmpPath}" 2>&1`,
+        { encoding: 'utf-8', timeout: 30000 }
+      );
+    } catch (eslintErr) {
+      const output = eslintErr.stdout || eslintErr.stderr || '';
+      // ESLint エラー出力から no-undef のみ抽出
+      const undefErrors = output.split('\n').filter(l => l.includes('no-undef'));
+      if (undefErrors.length > 0) {
+        const msg = undefErrors.slice(0, 5).join('; ');
+        console.log(`[improve] ESLint no-undef errors: ${msg}`);
+        return { valid: false, error: `Undefined variable detected: ${msg}` };
+      }
+      // ESLint自体の実行失敗はスキップ (npx不在など)
     }
 
-    console.log('[improve] Validation passed:', JSON.stringify(result));
+    console.log('[improve] All validation passed');
     return { valid: true, error: null };
 
   } catch (err) {

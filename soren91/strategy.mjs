@@ -364,8 +364,8 @@ export function decide(boardState) {
 
     // [v78] CRITICALモードのHOLD戦略強化
     if (canHold && hold && (nextType <= 2)) { // Only consider swapping if nextType is low
-      const nextMergeScore = calculateMergeScore(activePieces, nextType, colHeights, dangerBias, avgHeight, 0, ojamaBoost);
-      const holdMergeScore = calculateMergeScore(activePieces, hold.type, colHeights, dangerBias, avgHeight, 0, ojamaBoost);
+      const nextMergeScore = calculateMergeScore(activePieces, nextType, colHeights, dangerBias, avgHeight, 0, ojamaBoost, garbageUrgent);
+      const holdMergeScore = calculateMergeScore(activePieces, hold.type, colHeights, dangerBias, avgHeight, 0, ojamaBoost, garbageUrgent);
       // If holding a better merging piece, and current piece is not urgent to place.
       // Score threshold is arbitrary, based on typical merge scores.
       if (holdMergeScore > nextMergeScore + 20 && nextMergeScore < 50) {
@@ -1517,7 +1517,7 @@ function findBestMergeRelaxed(pieces, nextType, colHeights, dangerBias) {
 }
 
 // [v78追加] マージスコアを計算するヘルパー関数
-function calculateMergeScore(pieces, type, colHeights, dangerBias, avgHeight, minChainScore, ojamaBoost = 0) {
+function calculateMergeScore(pieces, type, colHeights, dangerBias, avgHeight, minChainScore, ojamaBoost = 0, garbageUrgent = false) {
   const candidates = pieces.filter(p =>
     p.type === type && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y - 0.1
   );
