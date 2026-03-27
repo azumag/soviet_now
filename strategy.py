@@ -14,7 +14,6 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-           5.6. Growth center proximity - v358: compact board around highest-type piece
             6. Chain merge bonus - Evaluate possibility of further merges after merge
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
@@ -57,29 +56,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
-        # v358: growth center proximity bonus - reduce HEIGHT_CONTROL over-selection
-        # batch_summary: HEIGHT_CONTROL 16.6% in low-score vs 10.3% in high-score games.
-        # Small bonus (max 50) for positions near deepest highest-type piece keeps board
-        # compact and concentrates growth pipeline in 1-2 locations (advice: zoumotu3).
-        # v354 was rolled back as part of 9-change batch; re-introduced as single change.
-        # refs: advice.md (zoumotu3, kbb246), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
-        #       game_history/20260328_001833_score0911.jsonl, game_history/20260328_004656_score2843.jsonl,
-        #       strategy.py.staging, strategy_versions/best_score4319_strategy.py, strategy_versions/protected_e6f534c37e28_median12789_strategy.py
-        # Fixes pattern: HEIGHT_CONTROL over-selection scattering pieces and preventing high-type growth
-        # v357: suppress stacking bonus when reactive_pairs>=3 (axis 9.6 + v355 guard)
-        # reactive>=3 で -4500 が一適用される局面で stacking bonus が候補差分化を生み
-        # HEIGHT_CONTROL より中程度の高さ配置が選ばれる failure mode を修正
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
-        #       game_history/20260327_211014_score0590.jsonl T42,
-        #       game_history/20260327_211213_score0619.jsonl T44-51
-        # Fixes rollback failure mode: stacking bonus overrides uniform -4500 at reactive>=3
-        # v356: height_mult floor (max(height_mult, 0.5)) — 3つのheight_mult減衰(0.2x/0.8x/0.3x)
-        # がdeadline_crossed+reactive併合dry時に0.048xまで累積し、height penaltyが実質無効化されて
-        # REACTIVE_PAIRS_STACKING bonusがHEIGHT_CONTROLを上回るfailure modeを修正。
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
-        #       game_history/20260327_195340_score0799.jsonl turns 48-53,
-        #       game_history/20260327_192700_score0928.jsonl turns 65-72
-        # Fixes rollback failure mode: stacking bonus overrides height penalty during merge drought
         # v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
         # コード監査でaxis 9.5が2ブロック存在(v335 lines 919-949 と v337 lines 967-1011)し、
         #   非ロシア時danger==0/reactive==0でSAME_TYPE_STACK_MERGE_PRIORITY +600/+200が二重に加算されていた
@@ -357,27 +333,7 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v358: growth center proximity bonus - v357ベース
-
-    v358: 盤面の最高typeピース（最も深い位置）に近い配置に最大50のボーナス。
-    advice.md「1〜2箇所に集中して大きく育てる戦略へ転換すべき」（zoumotu3）に基づく。
-    batch_summary: HEIGHT_CONTROL 16.6% (low-score) vs 10.3% (high-score) の差を縮める構造的改善。
-    russia_phase時は発動しない（axis 8.7が専任）。reactive>=3時は発動しない（penaltyが支配）。
-    max_type >= 6 のみ適用（低typeは成長センタの対象外）。ボーナスは小さく（最大50）、
-    height penalty差（MEDIUM: >70, HIGH: >90）を上回らない範囲。
-
-    v357: reactive_pairs>=3 && merge_grade=NO の場合、axis 9.6 stacking bonus と axis 9.5 v355
-    same-type stacking bonus を抑制。reactive>=3 では axis 8.8 の -4500 penalty が全候補に
-    一様適用されるべきだが、stacking bonus (~60-300) が候補間の差分化を生み、
-    HEIGHT_CONTROL（最低位置）より中程度の高さ（y=0.5-1.5）の配置が選ばれるfailure modeを修正。
-    batch_summary: REACTIVE_PAIRS_STACKING at reactive>=3 の avg_delta=5.2（19回、2.0%）。
-    ワーストゲーム(score0590) T42: reactive=5, deadline_margin=0.04 でstacking at y=0.89 →
-    T43 でNEAR_MERGE失敗→deadline到達→4ターンでゲームオーバー。
-
-    v356: 3つのheight_mult減衰(axis 2: 0.2x/0.8x/0.3x)がdeadline_crossed+reactive
-    併合dry時に0.048xまで累積し、height penaltyが実質無効化されてREACTIVE_PAIRS_STACKING
-    bonus(~400)がHEIGHT_CONTROLを上回るfailure modeを修正。height_multにmin 0.5の床を設定し、
-    deadline中のmerge droughtでもheight penaltyがstacking bonusを上回る範囲を維持。
+    """v355: non-deadline merge drought stacking guidance - v341ベース
 
     v355: axis 9.5にreactive>=1 && !deadline_crossedの場合の軽い積み上げガイダンス(+150)を追加。
     merge drought中だがdeadlineでない場合、盤面はまだ詰んでいない可能性が高い。
@@ -540,19 +496,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: advice.md (azumag, nimdavirus), tmp/improve_brief.md, tmp/batch_summary.txt,
         #       game_history/20260327_020329_score0853.jsonl turns 69-76, game_history/20260327_014958_score1936.jsonl turns 84-91
         # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合の高位スタッキング（type-aware条件追加）
-        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None:
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
             if current_type_has_reactive or current_type_has_near:
                 # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
-                # v357: reactive_pair_count < 3 ガード追加
-                # reactive_pairs>=3 では axis 8.8 の -4500 ペナルティが全候補に一様適用される。
-                # この時スタッキングボーナス（~60-300）が候補間の差分化を生み、
-                # HEIGHT_CONTROL（最低位置）よりも中程度の高さ（y=0.5-1.5）の配置が選ばれる。
-                # batch_summary: REACTIVE_PAIRS_STACKING at reactive>=3 の avg_delta=5.2（19回、2.0%）。
-                # スタッキングが併合を生むことは稀で、高所配置によるdeadline到達加速がリスク超過。
-                # refs: tmp/batch_summary.txt (REACTIVE_PAIRS_STACKING_HIGH_TOWER... avg_delta=5.2),
-                #       tmp/state/last_rollback_postmortem.md (stacking bonus balance constraint),
-                #       game_history/20260327_211014_score0590.jsonl T42 (stacking at y=0.89 → deadline edge)
-                # Fixes rollback failure mode: stacking bonus overrides uniform -4500 penalty at reactive>=3
                 # merged_type(N+1)に隣接する同タイプピースを優先し、連鎖的併合の道筋を作る
                 best_stack_target = same_type_stack_top  # デフォルト: 最も高い同タイプ
                 best_chain_score = 0.0
@@ -663,9 +609,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             height_mult *= 0.3
 
         # Calculate height penalty after all height_mult modifications
-        # v356: height_mult floor prevents compounding (0.2*0.8*0.3=0.048) from nullifying
-        # height penalty. Postmortem: "stacking bonus は height penalty とのバランスを維持"
-        height_mult = max(height_mult, 0.5)
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
@@ -782,33 +725,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score -= 400.0  # 未来の併合機会を潰すためのペナルティ
                         reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
-
-        # ----- evaluation axis 5.6: growth center proximity (v358) -----
-        # advice.md「1〜2箇所に集中して大きく育てる戦略へ転換すべき」（zoumotu3, kbb246）
-        # batch_summary: HEIGHT_CONTROL 16.6% in low-score vs 10.3% in high-score games
-        # When no merge or reactive stacking available, default is HEIGHT_CONTROL (lowest position).
-        # This scatters pieces and prevents high-type growth. Small bonus for positions near the
-        # highest-type piece keeps board compact and concentrates growth pipeline.
-        # v354 growth center was rolled back as part of a batch of 9 changes, but postmortem noted
-        # "v354 GROWTH_CENTER bonus 自体は値が小さい（最大~24）ので単独では影響少ないはず"
-        # This re-introduces growth center as a single, isolated change with safe conditions.
-        # Conditions: not russia_phase (has dedicated axis 8.7), reactive < 3 (penalties dominate),
-        # max_type >= 6 (don't center around low types). Bonus: max 50 at distance 0, small enough
-        # to not override height penalty differences (>70 in MEDIUM, >90 in HIGH).
-        # refs: advice.md (zoumotu3, kbb246), tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
-        # Fixes pattern: HEIGHT_CONTROL over-selection reducing growth pipeline efficiency
-        if not russia_phase and reactive_pair_count < 3:
-            max_type = max((p.get("type", 0) for p in pieces), default=0) if pieces else 0
-            if max_type >= 6:
-                high_type_pieces = [p for p in pieces if p.get("type", 0) == max_type]
-                if high_type_pieces:
-                    gc = min(high_type_pieces, key=lambda p: p.get("y", 0))
-                    gc_dist = abs(x - gc.get("x", 0))
-                    if gc_dist < 2.5:
-                        gc_bonus = max(0, 50.0 - gc_dist * 20.0)
-                        score += gc_bonus
-                        reasons.append("GROWTH_CENTER")
-
+ 
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
@@ -1124,12 +1041,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
                     score += 300.0
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
-                elif danger_piece_count == 0 and not deadline_crossed and reactive_pair_count < 3:
+                elif danger_piece_count == 0 and not deadline_crossed:
                     # v355: non-deadline merge drought stacking guidance
-                    # v357: reactive_pair_count < 3 ガード追加
-                    # reactive>=3 では axis 8.8 -4500 が一適用され HEIGHT_CONTROL が勝つべき。
-                    # +150 ボーナスが差分化を生み、中程度の高さ配置を許容するのを防ぐ。
-                    # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
                     # advice.md「高さペナルティ回避と併合のバランス：高さが明確にリスクになる盤面は
                     # ほぼ詰んでいることが多い。高さ回避の重要性は低く見てよい。安全重視になりすぎた
                     # 盤面硬直化を防ぐこと」（プリパラ煉獄丸）
