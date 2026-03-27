@@ -56,6 +56,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
+        # v357: suppress stacking bonus when reactive_pairs>=3 (axis 9.6 + v355 guard)
+        # reactive>=3 で -4500 が一適用される局面で stacking bonus が候補差分化を生み
+        # HEIGHT_CONTROL より中程度の高さ配置が選ばれる failure mode を修正
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+        #       game_history/20260327_211014_score0590.jsonl T42,
+        #       game_history/20260327_211213_score0619.jsonl T44-51
+        # Fixes rollback failure mode: stacking bonus overrides uniform -4500 at reactive>=3
         # v356: height_mult floor (max(height_mult, 0.5)) — 3つのheight_mult減衰(0.2x/0.8x/0.3x)
         # がdeadline_crossed+reactive併合dry時に0.048xまで累積し、height penaltyが実質無効化されて
         # REACTIVE_PAIRS_STACKING bonusがHEIGHT_CONTROLを上回るfailure modeを修正。
@@ -340,7 +347,15 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v356: height_mult floor to prevent compounding nullification - v355ベース
+    """v357: suppress stacking bonus when reactive_pairs>=3 - v356ベース
+
+    v357: reactive_pairs>=3 && merge_grade=NO の場合、axis 9.6 stacking bonus と axis 9.5 v355
+    same-type stacking bonus を抑制。reactive>=3 では axis 8.8 の -4500 penalty が全候補に
+    一様適用されるべきだが、stacking bonus (~60-300) が候補間の差分化を生み、
+    HEIGHT_CONTROL（最低位置）より中程度の高さ（y=0.5-1.5）の配置が選ばれるfailure modeを修正。
+    batch_summary: REACTIVE_PAIRS_STACKING at reactive>=3 の avg_delta=5.2（19回、2.0%）。
+    ワーストゲーム(score0590) T42: reactive=5, deadline_margin=0.04 でstacking at y=0.89 →
+    T43 でNEAR_MERGE失敗→deadline到達→4ターンでゲームオーバー。
 
     v356: 3つのheight_mult減衰(axis 2: 0.2x/0.8x/0.3x)がdeadline_crossed+reactive
     併合dry時に0.048xまで累積し、height penaltyが実質無効化されてREACTIVE_PAIRS_STACKING
@@ -508,9 +523,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: advice.md (azumag, nimdavirus), tmp/improve_brief.md, tmp/batch_summary.txt,
         #       game_history/20260327_020329_score0853.jsonl turns 69-76, game_history/20260327_014958_score1936.jsonl turns 84-91
         # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合の高位スタッキング（type-aware条件追加）
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None:
             if current_type_has_reactive or current_type_has_near:
                 # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
+                # v357: reactive_pair_count < 3 ガード追加
+                # reactive_pairs>=3 では axis 8.8 の -4500 ペナルティが全候補に一様適用される。
+                # この時スタッキングボーナス（~60-300）が候補間の差分化を生み、
+                # HEIGHT_CONTROL（最低位置）よりも中程度の高さ（y=0.5-1.5）の配置が選ばれる。
+                # batch_summary: REACTIVE_PAIRS_STACKING at reactive>=3 の avg_delta=5.2（19回、2.0%）。
+                # スタッキングが併合を生むことは稀で、高所配置によるdeadline到達加速がリスク超過。
+                # refs: tmp/batch_summary.txt (REACTIVE_PAIRS_STACKING_HIGH_TOWER... avg_delta=5.2),
+                #       tmp/state/last_rollback_postmortem.md (stacking bonus balance constraint),
+                #       game_history/20260327_211014_score0590.jsonl T42 (stacking at y=0.89 → deadline edge)
+                # Fixes rollback failure mode: stacking bonus overrides uniform -4500 penalty at reactive>=3
                 # merged_type(N+1)に隣接する同タイプピースを優先し、連鎖的併合の道筋を作る
                 best_stack_target = same_type_stack_top  # デフォルト: 最も高い同タイプ
                 best_chain_score = 0.0
@@ -1056,8 +1081,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
                     score += 300.0
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
-                elif danger_piece_count == 0 and not deadline_crossed:
+                elif danger_piece_count == 0 and not deadline_crossed and reactive_pair_count < 3:
                     # v355: non-deadline merge drought stacking guidance
+                    # v357: reactive_pair_count < 3 ガード追加
+                    # reactive>=3 では axis 8.8 -4500 が一適用され HEIGHT_CONTROL が勝つべき。
+                    # +150 ボーナスが差分化を生み、中程度の高さ配置を許容するのを防ぐ。
+                    # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
                     # advice.md「高さペナルティ回避と併合のバランス：高さが明確にリスクになる盤面は
                     # ほぼ詰んでいることが多い。高さ回避の重要性は低く見てよい。安全重視になりすぎた
                     # 盤面硬直化を防ぐこと」（プリパラ煉獄丸）
