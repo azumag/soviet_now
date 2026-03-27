@@ -7,16 +7,22 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
+        # v349: deep safe stacking bonus in reactive dead zone gap
+        # v348 status quo: axis 9.5 dead zone when current_type_has_reactive_or_near=True —
+        #   no stacking bonus. Axis 9.6 covers mid-range (stack_y >= -1.0) only.
+        #   Deep targets (stack_y < -1.0) → zero incentive → HEIGHT_CONTROL default.
+        # ワースト(score0487) turns 50-51: reactive=1, type9 target y=-1.69 → dead zone → MEDIUM_TOWER
+        # 低スコア群: HEIGHT_CONTROL 18.2% (vs high 8.8%), 55-68ターンでtype 11-12止まり
+        # v349: elif branch — current_type reactive + deep target (y<-1.0) + safe landing (y<=0.0)
+        #   → type-scaled bonus. Fills gap between axis 9.5 (reactive==0) and axis 9.6 (mid-range).
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+        #       strategy.py.staging, game_history/20260327_104023_score0487.jsonl,
+        #       game_history/20260327_102231_score0533.jsonl, advice.md (zoumotu3, Pitman_live)
+        # Fixes rollback failure mode: merge_available=false連続時の成長パイプライン構築不能（dead zone gap）
+
         # v348: type-scaled stacking bonus restoration (lost in rollback from acd5803d8ef7)
-        # v344 introduced SCORE_TABLE-proportional stacking bonus but was lost when branch rolled back.
-        # Postmortem constraint: "type-scaled stacking bonus の維持" — MEDIUM/HIGH phaseで height_penalty に
-        # 打ち消されないtype-scaled bonusが必要。現行のflat +300/+100はtype 2とtype 14を同列に扱い、
-        # 高type成長パイプラインの構築incentiveが不足していた。
         # SAME_TYPE_STACK_MERGE_PRIORITY: max(100, SCORE_TABLE[type]*3) → type10=165, type14=315
         # SAME_TYPE_STACK (on-top): max(50, SCORE_TABLE[type]*2) → type10=110, type14=210
-        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
-        #       tmp/change_log.txt (v344), advice.md (zoumotu3), strategy.py.staging
-        # Fixes rollback failure mode: type-scaled stacking bonus lost in branch rollback (v344 restoration)
 
         # v347: deadline_crossed no-merge penalty type-aware guard
         # -4500.0 penalty now only applies when current_type_has_reactive_or_near (matching axis 9.6 guard)
@@ -37,7 +43,7 @@ Game Overview:
              8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
               8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9.5. Current type stack merge priority - v342: type-aware stacking + relaxed conditions
+             9.5. Current type stack merge priority - v349: deep safe stacking in reactive dead zone
              9.6. Reactive pairs stacking bonus - v340: type-aware stacking (current_type_has_reactive guard)
 
 
@@ -305,7 +311,7 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v348: type-scaled stacking bonus restoration (lost in rollback, was v344)
+    """v349: deep safe stacking bonus in reactive dead zone gap
 
     v344 introduced SCORE_TABLE-proportional stacking bonus but was lost when branch rolled back
     to anchor acd5803d8ef7. Postmortem constraint explicitly requires:
@@ -971,6 +977,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # v348: type-scaled (lower multiplier since reactive pairs exist for other types)
                     score += max(50.0, SCORE_TABLE[next_type] * 1.5)
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+                # v349: deep safe stacking in reactive dead zone
+                # When current_type_has_reactive_or_near=True, the two blocks above give zero bonus.
+                # Axis 9.6 (line ~453) covers mid-range (stack_y >= -1.0) only.
+                # Deep targets (stack_y < -1.0) fall into a dead zone → HEIGHT_CONTROL default.
+                # This fills the gap: when the stacking target is deep and landing is safe (y <= 0.0),
+                # give a type-scaled bonus to enable growth pipeline construction during reactive periods.
+                # Safe conditions: danger==0, deep target, near target, landing below board midpoint.
+                # Does NOT use vertical_bonus=(stack_y+1.0)*K (postmortem forbidden pattern).
+                # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+                #       game_history/20260327_104023_score0487.jsonl turns 50-51,
+                #       game_history/20260327_102231_score0533.jsonl turns 61-67
+                elif danger_piece_count == 0 and current_type_has_reactive_or_near:
+                    stk_y = same_type_stack_top.get("y", -10)
+                    stk_x = same_type_stack_top.get("x", 0)
+                    if stk_y < -1.0 and abs(x - stk_x) < 1.5 and landing_y <= 0.0:
+                        score += max(50.0, SCORE_TABLE[next_type] * 2)
+                        reasons.append("SAME_TYPE_STACK")
             # v327: danger_piece_count > 0 の場合のボーナスブロックを削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のボーナスブロックを追加 - axis 9.2のペナルティを優先
             # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ボーナスブロックを適用 - axis 8.7即時併合優先
