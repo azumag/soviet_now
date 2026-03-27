@@ -35,7 +35,7 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9.6. Reactive pairs type-aware stacking - v360: 現在タイプにreactive/near pairがある場合のみmerged_type近接スタッキング
+             9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
 
@@ -55,6 +55,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v363: axis 9.6 stacking extension to reactive>=3 — v340 guard removal
+     # v340 guardは旧スタッキング公式(vertical_bonus=(stack_y+1)*200)の高位スタッキング防止用だった。
+     # v360でmerged_type近接度ベースに変更後、高さインセンティブは消滅(max~400, y>1で減衰)。
+     # axis 8.8(-3000~-7000)が全候補を支配するreactive>=3でも、~400のスタッキングボーナスはtie-breakingに有用。
+     # 現在のreactive>=3 NO_MERGE時: axis8.8一律ペナルティ→HEIGHT_CONTROL→エッジ投棄→piece_count増加。
+     # postmortem制約遵守: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, game_history/20260328_063347_score0563.jsonl T58-65
      # v362: high-reactive same-type proximity guidance + height_mult floor restoration
      # Fixes: reactive>=3 && merge=NO でpiece_count増加しゲームオーバーする failure mode (postmortem: piece_count 41→score1060)
      # reactive>=3でaxis8.8が一律ペナルティ→エッジ投棄→piece_count増加。same-type近接ボーナス(最大60)でtie-breaking改善。
@@ -488,7 +495,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_210005_score0638.jsonl turns 55-61, game_history/20260324_210741_score2602.jsonl
         # Fixes rollback failure mode: reactive_pairs>=3 && deadline_crossedでの高配置 runaway（axis 9.6超危険域無効化）
         
-        # ----- evaluation axis 9.6: reactive pairs stacking bonus - v360: type-aware stacking -----
+        # ----- evaluation axis 9.6: reactive pairs stacking bonus - v363: stacking extension to reactive>=3 -----
         # v339/v340 failure: vertical_bonus = (stack_y + 1.0) * 200.0 rewards high positions,
         #   causing high-tower stacking when reactive pairs exist for other types but not current type
         # Worst(score0653): turns 57-64 reactive=1-2, REACTIVE_PAIRS_STACKING_HIGH_TOWER at y=1.1-2.7
@@ -502,7 +509,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260328_051045_score0653.jsonl turns 57-64,
         #       game_history/20260327_020329_score0853.jsonl turns 69-76
         # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合の高位スタッキング
-        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None:
+        # v363: v340 guard(reactive<3)を除去。旧スタッキング公式の高さインセンティブはv360で解消済み。
+        # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
+        # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
+        # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
             if current_type_has_reactive or current_type_has_near:
                 # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
                 # 高位スタッキングによるmax_y悪化を防止
