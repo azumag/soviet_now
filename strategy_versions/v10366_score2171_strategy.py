@@ -7,6 +7,14 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
+        # v351: crosses_deadline per-drop gating for no-merge penalties + danger merge bonus
+        # Safe drops (below deadline) no longer get -4500/-3000~-9000 penalties → stacking works during deadline
+        # danger_merge_available (per-drop) now gives +400 bonus for merges targeting danger pieces
+        # refs: analyze_board.py, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
+        #       game_history/20260327_123610_score0661.jsonl, game_history/20260327_122957_score2403.jsonl,
+        #       strategy_versions/best_score2335_strategy.py, strategy_versions/best_score5310_strategy.py
+        # Fixes rollback failure mode: safe stacking blocked by uniform deadline penalties
+
         # v350: extend same-type stacking to danger zones when current type has no reactive pair
         # v349 status quo: axis 9.5 v342 requires danger_piece_count==0. When reactive>=1 but current
         #   type has no reactive pair AND danger>0 → no stacking bonus, no height_mult reduction
@@ -42,8 +50,9 @@ Game Overview:
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
              8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
+             8.6b. Danger merge priority - v351: per-drop danger_merge_available bonus
               8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
-             8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
+             8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版 (v351: crosses_deadline gate)
              9.5. Current type stack merge priority - v350: stacking in danger zone when current type no reactive
              9.6. Reactive pairs stacking bonus - v340: type-aware stacking (current_type_has_reactive guard)
 
@@ -312,18 +321,26 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v350: extend same-type stacking to danger zones when current type has no reactive pair
+    """v351: crosses_deadline per-drop gating for no-merge penalties + danger merge bonus
 
-    v344 introduced SCORE_TABLE-proportional stacking bonus but was lost when branch rolled back
-    to anchor acd5803d8ef7. Postmortem constraint explicitly requires:
-    "MEDIUM/HIGH phase で height_penalty に打ち消されない type-scaled stacking bonus の維持"
-    Current flat +300/+100 treats type 2 and type 14 equally, giving no extra incentive for
-    high-type growth pipeline. Restored: SAME_TYPE_STACK_MERGE_PRIORITY = max(100, SCORE_TABLE[type]*3)
-    and SAME_TYPE_STACK(on-top) = max(50, SCORE_TABLE[type]*2).
+    v350 status quo: deadline_crossed -4500 penalty and reactive>=3 -3000~-9000 penalty apply
+    uniformly to ALL non-merge candidates, including drops that land safely below deadline.
+    analyze_board.py computes `crosses_deadline` per-drop but strategy ignores it entirely.
+    When deadline_crossed=true but a specific drop stays below deadline (crosses_deadline=false),
+    the stacking bonus (~30-300) is overwhelmed by penalties → HEIGHT_CONTROL default.
+    This wastes turns that could build growth pipelines during danger periods.
+    Also: danger_merge_available (per-drop) is unutilized — merges targeting danger pieces
+    reduce danger count and should be prioritized over safe-piece merges.
+    Worst game (score0661) turns 52-59: deadline_crossed=true all turns, reactive=6-7,
+    but merge_available=false on 7/15 turns. Every non-merge candidate gets -3000~-7000
+    regardless of whether the drop crosses deadline → consecutive HEIGHT_CONTROL → max_y runaway.
     refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
-      tmp/change_log.txt, advice.md (zoumotu3), strategy.py.staging,
-      game_history/20260327_095343_score0515.jsonl, game_history/20260327_100222_score2974.jsonl
-    Fixes rollback failure mode: type-scaled stacking bonus lost in branch rollback (v344 restoration)
+      tmp/change_log.txt, advice.md (あずまぐ, Pitman_live), strategy.py.staging, analyze_board.py,
+      game_history/20260327_123610_score0661.jsonl turns 45-59,
+      game_history/20260327_122957_score2403.jsonl turns 107-114,
+      game_history/20260327_122533_score1115.jsonl turns 66-73,
+      strategy_versions/best_score2335_strategy.py, strategy_versions/best_score5310_strategy.py
+    Fixes rollback failure mode: safe stacking blocked by uniform deadline penalties
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -430,6 +447,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
+
+        # v351: per-drop deadline crossing flag (unutilized analysis data)
+        # crosses_deadline=true means THIS specific drop pushes piece top to deadline_y or above
+        # When deadline_crossed=true but crosses_deadline=false, the drop is safe
+        drop_crosses_deadline = result.get("crosses_deadline", False)
+        drop_danger_merge = result.get("danger_merge_available", False)
 
         score = 0.0
         reasons = []
@@ -607,14 +630,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO" and current_type_has_reactive_or_near:
             # v347: type-aware guard追加 - current_type_has_reactive_or_nearの場合のみpenalty適用
-            # 以前はreactive_pair_count>=1(全type)で-4500を適用しており、current typeにreactive pairがない
-            # にも関わらず戦略的配置(axis 9.5/9.6)が打ち消され、HEIGHT_CONTROL連続でmax_y runaway
-            # ワーストゲーム(score0836)終盤: reactive_pairs=4あるがnext_typeにはreactive pairがなく、
-            # 全候補に-4500が適用されmax_y=2.53→2.95で67ターンでゲームオーバー
+            # v351: crosses_deadline gate - safe drops (landing below deadline) should NOT be penalized
+            # analyze_board.py computes per-drop crosses_deadline but it was unused until now.
+            # When board is at deadline but this specific drop stays safely below, stacking bonuses
+            # (axis 9.5) can guide strategic placement instead of defaulting to HEIGHT_CONTROL.
+            # Previously: ALL non-merge candidates got -4500 → HEIGHT_CONTROL lockout during deadline.
+            # Now: only drops that actually cross deadline get the penalty.
             # refs: game_history/20260327_085432_score0836.jsonl turns 60-67,
-            #       game_history/20260327_091009_score3186.jsonl turns 119-126
-            score -= 4500.0
-            reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
+            #       game_history/20260327_123610_score0661.jsonl turns 52-59 (deadline all turns, safe drops blocked)
+            if drop_crosses_deadline:
+                score -= 4500.0
+                reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
         
          # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
@@ -801,6 +827,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
+        # ----- evaluation axis 8.6b: danger merge priority (v351: per-drop danger_merge_available) -----
+        # analyze_board.py computes danger_merge_available per-drop but it was unused until now.
+        # When a merge targets a danger piece (near deadline or on redline timer), it reduces danger count
+        # and should be prioritized over merges with safe pieces. This helps prevent deadline runaway.
+        # refs: analyze_board.py, tmp/improve_brief.md, advice.md (zoumotu3, あずまぐ)
+        if drop_danger_merge and merge_grade in ["DIRECT", "NEAR"]:
+            score += 400.0
+            reasons.append("DANGER_MERGE_PRIORITY")
+
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
         # ロシアフェーズ（type 15 >= 1）で即時併合を最優先する戦略へ切り替え
@@ -871,10 +906,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
-        if reactive_pair_count >= 3 and merge_grade == "NO":
-            # reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず強力なペナルティを適用
-            # landing_yに応じて動的にペナルティを強化し、高配置を積極的に抑制
-            # v329修正: landing_y > 1 の場合、(landing_y - 1.0) * 2000.0 を使用し、高配置ほどペナルティを強化
+        if reactive_pair_count >= 3 and merge_grade == "NO" and drop_crosses_deadline:
+            # reactive_pairs>=3で即時併合がない場合、強力なペナルティを適用
+            # v351: crosses_deadline gate - only penalize drops that actually cross deadline
+            # Safe drops (below deadline) get reduced penalty to allow stacking bonuses to work.
+            # When ALL candidates are non-merge and some are safe, safe stacking is better than
+            # HEIGHT_CONTROL default that wastes turns without building growth pipeline.
+            # refs: game_history/20260327_123610_score0661.jsonl turns 52-59 (reactive=6-7, all turns
+            #   deadline, safe drops got full penalty → HEIGHT_CONTROL lockout → 59 turns)
             if landing_y <= 0:
                 score -= 3000.0
             elif landing_y <= 1:
