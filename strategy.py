@@ -56,6 +56,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
         # --- Change History ---
+        # v356: height_mult floor (max(height_mult, 0.5)) — 3つのheight_mult減衰(0.2x/0.8x/0.3x)
+        # がdeadline_crossed+reactive併合dry時に0.048xまで累積し、height penaltyが実質無効化されて
+        # REACTIVE_PAIRS_STACKING bonusがHEIGHT_CONTROLを上回るfailure modeを修正。
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+        #       game_history/20260327_195340_score0799.jsonl turns 48-53,
+        #       game_history/20260327_192700_score0928.jsonl turns 65-72
+        # Fixes rollback failure mode: stacking bonus overrides height penalty during merge drought
         # v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
         # コード監査でaxis 9.5が2ブロック存在(v335 lines 919-949 と v337 lines 967-1011)し、
         #   非ロシア時danger==0/reactive==0でSAME_TYPE_STACK_MERGE_PRIORITY +600/+200が二重に加算されていた
@@ -333,7 +340,12 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v355: non-deadline merge drought stacking guidance - v341ベース
+    """v356: height_mult floor to prevent compounding nullification - v355ベース
+
+    v356: 3つのheight_mult減衰(axis 2: 0.2x/0.8x/0.3x)がdeadline_crossed+reactive
+    併合dry時に0.048xまで累積し、height penaltyが実質無効化されてREACTIVE_PAIRS_STACKING
+    bonus(~400)がHEIGHT_CONTROLを上回るfailure modeを修正。height_multにmin 0.5の床を設定し、
+    deadline中のmerge droughtでもheight penaltyがstacking bonusを上回る範囲を維持。
 
     v355: axis 9.5にreactive>=1 && !deadline_crossedの場合の軽い積み上げガイダンス(+150)を追加。
     merge drought中だがdeadlineでない場合、盤面はまだ詰んでいない可能性が高い。
@@ -609,6 +621,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             height_mult *= 0.3
 
         # Calculate height penalty after all height_mult modifications
+        # v356: height_mult floor prevents compounding (0.2*0.8*0.3=0.048) from nullifying
+        # height penalty. Postmortem: "stacking bonus は height penalty とのバランスを維持"
+        height_mult = max(height_mult, 0.5)
         height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
