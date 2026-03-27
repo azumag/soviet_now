@@ -37,7 +37,7 @@ Game Overview:
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9. Reactive pairs stacking bonus - v340: reactive_pairs>=1 && merge_grade=="NO" && 現在タイプにreactive/near pairがある場合、merged_type(N+1)に隣接する同タイプピースに着地する配置にボーナス
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-             9.5. Current type stack merge priority - v341: v335重複削除・ロシアフェーズ完全抑制版
+             9.5. Current type stack merge priority - v341: v335重複削除・ロシアフェーズ完全抑制版 (v355: non-deadline drought stacking)
              # v339: axis 9.7 (REACTIVE_PAIRS_COMPRESSION) 削除 - 即時併合機会最大化のため評価軸シンプル化
 
 
@@ -333,7 +333,15 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
+    """v355: non-deadline merge drought stacking guidance - v341ベース
+
+    v355: axis 9.5にreactive>=1 && !deadline_crossedの場合の軽い積み上げガイダンス(+150)を追加。
+    merge drought中だがdeadlineでない場合、盤面はまだ詰んでいない可能性が高い。
+    advice.md「高さ回避の重要性は低く見てよい。安全重視になりすぎた盤面硬直化を防ぐこと」に基づく。
+    deadline_crossed時は付与しない（postmortem constraint: height_mult削減との悪相互作用回避）。
+    高スコア群HEIGHT_CONTROL 15.5% vs 低スコア群23.1%の差を縮める構造的改善。
+
+    v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
 
     v336 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
     ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
@@ -1032,6 +1040,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if danger_piece_count == 0 and reactive_pair_count == 0:
                     # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
                     score += 300.0
+                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+                elif danger_piece_count == 0 and not deadline_crossed:
+                    # v355: non-deadline merge drought stacking guidance
+                    # advice.md「高さペナルティ回避と併合のバランス：高さが明確にリスクになる盤面は
+                    # ほぼ詰んでいることが多い。高さ回避の重要性は低く見てよい。安全重視になりすぎた
+                    # 盤面硬直化を防ぐこと」（プリパラ煉獄丸）
+                    # reactive>=1だがdeadlineでない場合、盤面はまだ詰んでいない可能性が高い。
+                    # 同タイプへの近接配置で将来の併合パイプラインを構築する軽いインセンティブ。
+                    # deadline_crossed時は付与しない（postmortem constraint: height_mult削減との
+                    # 悪相互作用回避。v345 failure mode: stacking bonus + height_mult reduction で
+                    # height penalty が実質無効化される）。
+                    # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+                    score += 150.0
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             # v327: danger_piece_count > 0 の場合のボーナスブロックを削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のボーナスブロックを追加 - axis 9.2のペナルティを優先
