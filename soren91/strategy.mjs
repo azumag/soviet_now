@@ -1,16 +1,18 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v78)
+ * strategy.mjs - ドロップ位置決定戦略 (v79)
  *
- * v78: ガベージ/緊急時のT1低位置マージ優先度とT1過密時の処理、HOLD戦略の強化
- * - 【shouldPreferLowT1GarbageMerge / shouldPreferLowT1CriticalMergeの閾値調整】
- *   おじゃまゲージが高い場合、より積極的にT1低位置マージを優先する条件を追加。
- *   緊急時でもゲージ状況に応じてマージを急ぐ。
- * - 【ULTRAモードT1処理順序の調整】
- *   T1が過密（t1RatioPurge）の場合、即時マージの次に密集タワー形成を優先するよう順序を変更。
- *   T1による盤面圧迫の早期解消を試みる。
- * - 【CRITICALモードのHOLD戦略強化】
- *   次ドロップピースが低タイプでマージ機会が少ない場合、HOLD中の高タイプピースがより良いマージ機会を持つなら交換する条件を追加。
- *   危機的状況でのマージ効率を向上させる。
+ * v79: CRITICALモードのマージ探索強化とT1過密時の処理改善
+ * - 【CRITICALモード: Aggressive Merge導入】
+ *   CRITICALモードにおいて、findMergeInLowColで適切なマージが見つからない場合、
+ *   全てのタイプに対して `findAggressiveCriticalMerge` を試行する。
+ *   これは、候補ピースのY座標フィルタを緩和しつつ、高さペナルティを大幅に強化することで、
+ *   デッドライン付近のピースを積極的にマージして盤面をクリアすることを目的とする。
+ * - 【CRITICALモード: T1過密時のタワー形成優先】
+ *   CRITICALモードでT1が過密 (t1RatioPurge) かつ即時マージ (critT1Immediate) が見つからない場合、
+ *   `findT1DenseColumn` で密集タワー形成を優先し、T1による盤面圧迫の早期解消を試みる。
+ * - 【shouldPreferLowT1CriticalMerge / shouldPreferLowT1GarbageMergeの閾値調整】 (v78からの変更なし)
+ *   おじゃまゲージが高い場合、より積極的にT1低位置マージを優先する条件を維持。
+ * - 継承: v78のガベージ・緊急時のT1低位置マージ優先度とT1過密時の処理、HOLD戦略の強化
  * - 継承: v77のガベージ・高typeT1の低位置マージ優先度調整とボード全体高さペナルティ強化
  * - 継承: v76の高typeピース/T1管理の改善と高さペナルティ強化
  * - 継承: v75の高typeピース活用改善 + EXTREME閾値調整
@@ -411,10 +413,18 @@ export function decide(boardState) {
         garbageHeight,
         garbageRatio,
         lowestColH,
-        gaugeLevel // [v78] gaugeLevelを追加
+        gaugeLevel
       )) {
         return { x: critLowT1Merge.x, reason: 'CRITICAL_T1_LOW_MERGE' };
       }
+      // [v79] CRITICALモードでT1が過密かつ即時マージがない場合、密集タワー形成を優先
+      if (critT1Immediate === null && t1RatioPurge) {
+        const critDenseT1 = findT1DenseColumn(activePieces, colHeights, dangerBias, 1.0, rawPieceCount);
+        if (critDenseT1 !== null) {
+          return { x: critDenseT1, reason: 'CRITICAL_T1_PURGE_TOWER_AGGRESSIVE' };
+        }
+      }
+      if (critT1Immediate !== null) return { x: critT1Immediate, reason: 'CRITICAL_T1_IMMEDIATE' };
       if (extremeT1Flood) {
         const critChain = findT1ChainSetup(activePieces, colHeights, dangerBias, garbageRatio, gaugeLevel, rawPieceCount);
         if (critChain !== null) {
@@ -425,7 +435,6 @@ export function decide(boardState) {
           }
         }
       }
-      if (critT1Immediate !== null) return { x: critT1Immediate, reason: 'CRITICAL_T1_IMMEDIATE' };
       const critT1Stack = findT1StackColumn(activePieces, colHeights, dangerBias);
       if (critT1Stack !== null) return { x: critT1Stack, reason: 'CRITICAL_T1_STACK' };
       const critT1Chain = findT1ChainAnchor(activePieces, colHeights, dangerBias, true, garbageRatio, gaugeLevel);
@@ -441,6 +450,15 @@ export function decide(boardState) {
       return { x: lowColMerge.x, reason: `CRITICAL_MERGE_T${nextType}` };
     }
 
+    // [v79] Aggressive critical merge for all types if lowColMerge is not found
+    // This new merge strategy is introduced here to be more proactive in critical situations.
+    if (nextType >= 1) { // Apply for all types
+      const aggressiveCritMerge = findAggressiveCriticalMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, ojamaBoost);
+      if (aggressiveCritMerge) {
+        return aggressiveCritMerge;
+      }
+    }
+
     if (nextType >= 1) {
       const critFallbackMerge = findBestMerge(activePieces, nextType, colHeights, dangerBias, avgHeight, false, 0);
       if (critFallbackMerge) {
@@ -449,7 +467,7 @@ export function decide(boardState) {
           return { x: critFallbackMerge.x, reason: `CRITICAL_ANY_MERGE_T${nextType}` };
         }
       }
-      // [v75] 高さフィルタ緩和マージ: t5+ピースがDEADLINE_Y付近にいる場合も捕捉
+      // [v75] 高さフィルタ緩和マージ: t5+ピースがDEADLINE_Y付近にある場合も捕捉
       if (nextType >= 5) {
         const critRelaxMerge = findBestMergeRelaxed(activePieces, nextType, colHeights, dangerBias);
         if (critRelaxMerge) return { ...critRelaxMerge, reason: `CRITICAL_RELAX_T${nextType}` };
@@ -520,7 +538,7 @@ export function decide(boardState) {
         lowestColH,
         rawPieceCount,
         t1Count,
-        gaugeLevel // [v78] gaugeLevelを追加
+        gaugeLevel
       )) {
         return { x: gbgLowT1Merge.x, reason: 'GBG_T1_LOW_MERGE' };
       }
@@ -1279,7 +1297,10 @@ function findLowestSafeDrop(colHeights, dangerBias) {
     if (s > bestScore) { bestScore = s; bestIdx = i; }
   }
 
-  if (bestScore === -Infinity) bestIdx = findLowestColIdx(colHeights);
+  if (bestScore === -Infinity) {
+    const lowestIdx = findLowestColIdx(colHeights);
+    return { x: clampX(FINE_COLS[lowestIdx]), idx: lowestIdx };
+  }
   return { x: clampX(FINE_COLS[bestIdx]), idx: bestIdx };
 }
 
@@ -1548,4 +1569,65 @@ function calculateMergeScore(pieces, type, colHeights, dangerBias, avgHeight, mi
     if (s > bestScore) { bestScore = s; }
   }
   return bestScore;
+}
+
+// [v79追加] CRITICALモード用のマージ検出（候補ピースのY座標フィルタを緩和し、高さペナルティを強化）
+function findAggressiveCriticalMerge(pieces, nextType, colHeights, dangerBias, avgHeight, ojamaBoost = 0) {
+  const candidates = pieces.filter(p =>
+    p.type === nextType && Math.abs(p.x) < WALL_MARGIN && p.y < DEADLINE_Y + 0.1 // Relaxed Y filter for candidates
+  );
+  if (candidates.length === 0) return null;
+
+  let bestTarget = null;
+  let bestScore = -Infinity;
+
+  for (const t of candidates) {
+    const colIdx = nearestColIdx(t.x);
+    const colH = colHeights[colIdx];
+    if (colH > DEADLINE_Y + 0.2) continue; // Still a strict overall height limit for resulting column
+
+    let s = 0;
+    s -= colH * 10.0; // Very aggressive height penalty
+    if (colH > WARN_Y) {
+      s -= (colH - WARN_Y) * 15.0; // Even more aggressive penalty above warning Y
+    }
+    if (avgHeight > WARN_Y + 0.3) {
+      s -= colH * 5.0; // Additional penalty for high board
+    }
+
+    s += nextType * 3.0; // Type value bonus
+
+    // Chain potential, similar to findBestMerge but slightly higher bonus
+    const c1 = countNear(pieces, t.x, nextType + 1, 1.8);
+    const c2 = countNear(pieces, t.x, nextType + 2, 2.2);
+    const c3 = countNear(pieces, t.x, nextType + 3, 2.6);
+    const c4 = countNear(pieces, t.x, nextType + 4, 3.0);
+    let chainScore = c1 * 18 + c2 * 8 + c3 * 4 + c4 * 2;
+    if (c1 > 0 && c2 > 0) chainScore += 20;
+    if (c1 > 0 && c2 > 0 && c3 > 0) chainScore += 10;
+    if (c1 > 1) chainScore += (c1 - 1) * 10;
+    s += chainScore;
+
+    // Bonus for nearby same-type pieces, to encourage clustering for future merges
+    s += candidates.filter(p => p !== t && Math.abs(p.x - t.x) < 1.2).length * 4;
+
+    // Wall penalty, slightly increased
+    s -= Math.abs(t.x) * 2.5;
+    if (Math.abs(t.x) > 2.2) s -= 8;
+
+    // Danger bias penalty
+    if (dangerBias <= -1 && t.x < -0.5) s -= 8;
+    if (dangerBias >= 1 && t.x > 0.5) s -= 8;
+    if (dangerBias <= -2 && t.x < 0) s -= 12;
+    if (dangerBias >= 2 && t.x > 0) s -= 12;
+
+    // Ojama boost, slightly increased, and prefer lower merges for ojama clearing
+    s += ojamaBoost * 1.5;
+    if (ojamaBoost > 0 && t.y < -1.0) s += 8;
+
+    if (s > bestScore) { bestScore = s; bestTarget = t; }
+  }
+
+  if (!bestTarget) return null;
+  return { x: clampX(bestTarget.x), reason: `AGGRESSIVE_CRIT_MERGE_T${nextType}_X${bestTarget.x.toFixed(1)}` };
 }
