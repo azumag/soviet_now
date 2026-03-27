@@ -7,38 +7,23 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-      Decision Logic (evaluation axes):
-         1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-        2. Height penalty - Penalty for high landing position (varies by phase)
-         3. Drift penalty - Penalty for post-landing drift due to polygon shape
-         4. Left-right balance correction - Bonus for correcting piece count bias
-          5. nextNext centering - Center for next merge opportunity if nextNext same type
-           5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-            6. Chain merge bonus - Evaluate possibility of further merges after merge
-            7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
-            8. Early game merge priority - Strong bonus for merge opportunities in early game
-             8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
-             8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
-              8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
-              # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼす
-              # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
-              # ベストゲーム(score2162)終盤: reactive_pairsが少なく、即時併合機会を確実に捉えて高スコア
-              # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
-              # ロシア建国後は明確にフェーズが切り替わるべき。具体的には:
-              #   - 既存のロシア(type 15)の位置を保護しつつ、2つ目のロシアへの成長パイプラインを確保
-              #   - ロシアが盤面にある状態で type 13, 14 級のピースをどこに育てるかの空間計画が必要
-              #   - 盤面が狭いため、小typeの効率的な消化（併合による盤面確保）がより重要になる
-              # axis 8.7修正: ロシアフェーズ && reactive_pairs>=1の場合、即時併合ボーナスを強化
-              #  これによりロシア建国後の狭い盤面で、即時併合機会を優先し、盤面圧縮で2つ目のロシア育成スペースを確保
-              # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づくロシアフェーズ強化
-              # refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, tmp/sandbox_files.md,
-              #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
-              # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
-             8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9. Reactive pairs stacking bonus - v340: reactive_pairs>=1 && merge_grade=="NO" && 現在タイプにreactive/near pairがある場合、merged_type(N+1)に隣接する同タイプピースに着地する配置にボーナス
-             9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-             9.5. Current type stack merge priority - v341: v335重複削除・ロシアフェーズ完全抑制版 (v355: non-deadline drought stacking)
-             # v339: axis 9.7 (REACTIVE_PAIRS_COMPRESSION) 削除 - 即時併合機会最大化のため評価軸シンプル化
+   Decision Logic (11 evaluation axes):
+       1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+      2. Height penalty - Penalty for high landing position (varies by phase)
+       3. Drift penalty - Penalty for post-landing drift due to polygon shape
+       4. Left-right balance correction - Bonus for correcting piece count bias
+        5. nextNext centering - Center for next merge opportunity if nextNext same type
+         5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
+          6. Chain merge bonus - Evaluate possibility of further merges after merge
+          7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
+          8. Early game merge priority - Strong bonus for merge opportunities in early game
+           8.5. Danger zone immediate merge bonus - v321: 危険域即時併合強化
+           8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
+           8.7. Russia phase immediate merge priority - v327: 危険ピース時ボーナス削除版
+           8.8. Reactive pairs >= 3 no merge penalty - v329: 高配置強力抑制版
+           9. Reactive pairs default - Default to REACTIVE_PAIRS_COMPRESSION when reactive_pairs >= 1 and no immediate merge
+           9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
+           9.5. Current type stack merge priority - v330: reactive_pairs条件追加版
 
 
 Phases (determined by board max Y):
@@ -55,101 +40,7 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-        # --- Change History ---
-        # v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
-        # コード監査でaxis 9.5が2ブロック存在(v335 lines 919-949 と v337 lines 967-1011)し、
-        #   非ロシア時danger==0/reactive==0でSAME_TYPE_STACK_MERGE_PRIORITY +600/+200が二重に加算されていた
-        #   ロシアフェーズ時 reactive<3でv335ブロックがv337の抑制をバイパスし+300/+100が漏れていた
-        # v335ブロックを`if False`で無効化しv337ブロックのみ有効化することで修正
-        # refs: strategy.py.staging, tmp/improve_batch.txt, tmp/state/last_rollback_postmortem.md, advice.md,
-        #       game_history/20260327_022708_score0494.jsonl (turns 52-59: ロシア未達成だが類似死螺旋)
-        # Fixes rollback failure mode: axis 9.5重複によるロシアフェーズstacking抑制不完全
-        #
-         # v340: axis 9.6 type-aware stacking版 - 未活用reactive_pairs type情報活用・高位スタッキング防止
-         # v339 failure: vertical_bonus = (stack_y + 1.0) * 200.0 が高位ほど大きいボーナスを与え、
-         #   reactive_pairsはあるが現在タイプにreactive_pairsがない場合も高位に積み上げてmax_y悪化
-         # ワーストゲーム(score0853)終盤turns 70-71: reactive=5だがnext_type=2にはreactive_pairsがなく、
-         #   type 2のy=2.4に積み上げてmax_y→3.11に悪化してゲームオーバー
-         # v340: 現在タイプにreactive/near pairがある場合のみスタッキングボーナスを付与し、高位スタッキング防止
-         #   merged_type(N+1)に隣接する同タイプピースを優先し、連鎖的併合の道筋を作る構造的改善
-         # refs: advice.md (azumag, nimdavirus), tmp/improve_brief.md, tmp/batch_summary.txt, analyze_board.py,
-         #       game_history/20260327_020329_score0853.jsonl, game_history/20260327_014958_score1936.jsonl
-         # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合の高位スタッキング
-         #
-         # v339: axis 9.7削除による即時併合機会最大化版 - 評価軸シンプル化
-         # v338の問題点: axis 9.7のcompression_bonus（最大300.0）が「戦略的配置」を促し、即時併合機会と競合して取りこぼしを招いている
-         # batch_summaryでREACTIVE_PAIRS_COMPRESSIONが10%前後選択されているがavg_score_delta=5.2と低い。即時併合関連reasonはavg_score_deltaが高い（52.4, 56.8）が選択率が低い（3-4%）
-         # axis 9.7はreactive_pairs>=1 && merge_grade=="NO"の場合に盤面圧縮ボーナスを与えるが、これはaxis 9.6のstacking bonusと競合し、評価を複雑にしている
-         # last_rollback_postmortemのfailure mode: "deadline_crossed時の即時併合機会取りこぼしに対する強制ペナルティ不足"に対処
-         # v339: axis 9.7（REACTIVE_PAIRS_COMPRESSION）を削除し、評価軸をシンプル化
-         #   - axis 9.6（REACTIVE_PAIRS_STACKING）は維持し、即時併合機会を最大化
-         #   - 評価軸の競合を削減し、即時併合機会の取りこぼしを防止
-         #   - deadline_crossed時の即時併合強制ペナルティ（axis 9.6: -4500.0）を維持
-         #   - reactive_pairs>=3での戦略的死ロック状態回避
-         # best_score2335_strategy.pyのシンプル構造（5つの評価軸）に近づけ、評価軸の複雑化による即時併合機会取りこぼしを削減
-         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
-         #       strategy_versions/best_score2335_strategy.py, game_history/20260327_011325_score1174.jsonl, game_history/20260327_010021_score3694.jsonl
-         # Fixes rollback failure mode: axis 9.7 compression_bonusによる即時併合機会取りこぼし（axis 9.7削除）
-         #
-         # v338: reactive_pairsあり時の戦略的配置優先化版 - HEIGHT_CONTROL過剰選択の解消
-         # v337 failure: ロシアフェーズでaxis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナスと競合し、即時併合機会を取りこぼしている
-         # ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
-         # ベストゲーム(score3171)終盤: ロシアフェーズで即時併合を確実に捉えて高スコア
-         # batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=1.2)と過剰であり、即時併合機会を取りこぼしていることを確認
-         # ワーストゲーム(score0413)ではreactive_pairsがあるにも関わらずHEIGHT_CONTROLが続き、即時併合機会を取りこぼしている失敗パターンを解消
-         # ベストゲーム(score2072)ではreactive_pairsがある場合でも即時併合機会を確実に捉えて高スコア稼いでいる
-         # advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づく即時併合優先の構造的改善
-         # axis 9.6追加: reactive_pairs>=1 && merge_grade=="NO"の場合、盤面上の現在タイプの最も高い位置のピースに着地できる配置にボーナスを与え、即時併合機会を最大化
-         # axis 9.7追加: reactive_pairs>=1 && merge_grade=="NO"の場合、盤面密度に応じたボーナスを与え、盤面圧縮を優先
-         # これによりreactive_pairsがある状況でHEIGHT_CONTROLではなく、即時併合機会を確実に捉える戦略へ切り替え
-         # 盤面密度ボーナスはlanding_yに応じて動的に評価し、下層に配置するほどボーナスが大きい（board compression）
-         # 低スコアの主要因である「併合機会があるのにHEIGHT_CONTROL」問題を解消し、p25悪化を改善
-         # refs: advice.md (Pitman_live, azumag), tmp/improve_brief.md, tmp/batch_summary.txt, 
-         #       game_history/20260324_154730_score0413.jsonl, game_history/20260324_161825_score2775.jsonl, game_history/20260324_161021_score0838.jsonl,
-         #       game_history/20260324_155130_score2072.jsonl, strategy_versions/best_score2335_strategy.py
-         # Fixes rollback failure mode: reactive_pairsがある状況での即時併合機会取りこぼし（axis 9.6 axis 9.7追加）
-         #
-        # v336 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
-        # ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
-        # ベストゲーム(score3171)終盤: ロシアフェーズで即時併合を確実に捉えて高スコア
-        # ロシアフェーズでは盤面が狭く、即時併合機会を最大化することが重要。axis 9.5の盤面圧縮ボーナスがaxis 8.7の即時併合優先を阻害している
-        # axis 9.5修正: russia_phase && reactive_pair_count < 3 の場合、盤面圧縮ボーナス（+300.0）とペナルティ軽減（+100.0）を削除し、即時併合機会を最優先
-        # これによりロシアフェーズでの即時併合機会取りこぼしを削減し、2つ目のロシア育成スペースを確保
-        # refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, tmp/sandbox_files.md,
-        #       game_history/20260324_141236_score0731.jsonl turns 66-73, game_history/20260324_144026_score3171.jsonl turns 119-126
-        # Fixes rollback failure mode: ロシアフェーズでの即時併合機会取りこぼし（axis 9.5 russia_phase条件追加）
-        #
-        # v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化・reactive_pairs<3でも即時併合優先
-        # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
-        # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼしている
-        # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
-        # ベストゲーム(score2162)終盤: reactive_pairsが少なく、即時併合機会を確実に捉えて高スコア
-        # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
-        # ロシア建国後は明確にフェーズが切り替わるべき。具体的には:
-        #   - 既存のロシア(type 15)の位置を保護しつつ、2つ目のロシアへの成長パイプラインを確保
-        #   - ロシアが盤面にある状態で type 13, 14 級のピースをどこに育てるかの空間計画が必要
-        #   - 盤面が狭いため、小typeの効率的な消化（併合による盤面確保）がより重要になる
-        # axis 8.7修正: ロシアフェーズでreactive_pairs>=1の場合、即時併合ボーナスを強化（reactive_pairs<3でも1000.0/1200.0、>=3で1200.0/1400.0）
-        # axis 8.7修正: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0→400.0）し、即時併合機会を優先
-        # これによりロシア建国後の狭い盤面で、即時併合機会を優先し、盤面圧縮で2つ目のロシア育成スペースを確保
-        # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づくロシアフェーズ強化
-        # refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, tmp/sandbox_files.md,
-        #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
-        # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化・reactive_pairs<3でも即時併合優先）
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md
-       #
-     # v331: deadline_crossed時の即時併合優先強化版 - 危険域でのmax_y runaway防止
-     # last_rollback_postmortemのfailure mode: "deadline_crossed時にreactive_pairs>=1でも即時併合不可で延命配置のみ続き、max_y runaway"
-     # ワーストゲーム(score0825)終盤turns 55-62: deadline_crossed=false→trueでreactive_pairs=2-3, merge_available=false続きでHIGH_LAYERが選ばれmax_y=2.94に上昇してゲームオーバー
-     # ワーストゲーム(score0866)終盤turns 63-70: deadline_crossed=true, reactive_pairs=4-9, merge_available=false続きでREACTIVE_PAIRS_COMPRESSIONが選ばれmax_y=3.25に上昇してゲームオーバー
-     # ベストゲーム(score3080)終盤turns 120-132: max_y=2.73→3.00の危険域でも即時併合機会を確実に捉えて3080点を出している
-     # axis 8.5修正: deadline_crossed条件を追加し、deadline_crossed時には即時併合ボーナスを強化（DIRECT: 500.0→1200.0, NEAR: 300.0→600.0）
-     # これによりdeadline_crossed時の危険域で即時併合がより強力に推奨され、延命配置によるmax_y runawayを防止
-     # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
-     #       game_history/20260324_060500_score0825.jsonl turns 55-62, game_history/20260324_063459_score0866.jsonl turns 63-70,
-     #       game_history/20260324_062439_score3080.jsonl turns 120-132
-     # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 8.5 deadline_crossed条件追加）
-    #
+    # --- Change History ---
     # v330: axis 9.5盤面圧縮ボーナス条件厳格化版 - 即時併合優先強化・ロシアフェーズ改善
     # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
     # ワーストゲーム(score0634)終盤turns 52-59: reactive_pairs=1-4あるのに即時併合不可続き、HIGH_TOWER/HIGH_LAYERが選ばれmax_y=2.12に悪化してゲームオーバー
@@ -332,46 +223,34 @@ Phases (determined by board max Y):
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
+
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v355: non-deadline merge drought stacking guidance - v341ベース
+    """v330: axis 9.5盤面圧縮ボーナス条件厳格化版 - 即時併合優先強化
 
-    v355: axis 9.5にreactive>=1 && !deadline_crossedの場合の軽い積み上げガイダンス(+150)を追加。
-    merge drought中だがdeadlineでない場合、盤面はまだ詰んでいない可能性が高い。
-    advice.md「高さ回避の重要性は低く見てよい。安全重視になりすぎた盤面硬直化を防ぐこと」に基づく。
-    deadline_crossed時は付与しない（postmortem constraint: height_mult削減との悪相互作用回避）。
-    高スコア群HEIGHT_CONTROL 15.5% vs 低スコア群23.1%の差を縮める構造的改善。
+    last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
+    ワーストゲーム(score0634)終盤turns 52-59: reactive_pairs=1-4あるのに即時併合不可続き、HIGH_TOWER/HIGH_LAYERが選ばれmax_y=2.12に悪化してゲームオーバー
+    ベストゲーム(score2710)終盤turns 106-113: 即時併合機会を確実に捉えてmax_y=2.73で安定
 
-    v341: axis 9.5 v335重複ブロック無効化 - ロシアフェーズstacking完全抑制・通常時二重カウント修正
-
-    v336 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
-    ワーストゲーム(score0731)終盤: reactive_pairsが少ないが即時併合機会を取りこぼし、max_y runawayでゲームオーバー
-    ベストゲーム(score3171)終盤: ロシアフェーズで即時併合を確実に捉えて高スコア
-    ロシアフェーズでは盤面が狭く、即時併合機会を最大化することが重要。axis 9.5の盤面圧縮ボーナスがaxis 8.7の即時併合優先を阻害している
-
-    v337の改善点:
-    1. axis 9.5修正: russia_phase && reactive_pair_count < 3 の場合、盤面圧縮ボーナス（+300.0）とペナルティ軽減（+100.0）を削除
-    2. ロシアフェーズでの即時併合機会取りこぼしを削減し、2つ目のロシア育成スペースを確保
-    3. axis 8.7の即時併合ボーナス（1200.0/1000.0）を最優先する条件を追加
-    4. advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づくロシアフェーズ強化
+    v330の改善点:
+    1. axis 9.5修正: 盤面圧縮ボーナスの適用条件を danger_piece_count == 0 から danger_piece_count == 0 && reactive_pair_count == 0 に厳格化
+    2. reactive_pairsが存在する場合は盤面圧縮ボーナスが適用されなくなり、即時併合機会を優先する戦略へ切り替わる
+    3. axis 9.2の即時併合なしペナルティと競合しなくなり、即時併合機会を確実に確保
+    4. advice.md「盤面がどうだろうが即時併合狙った方が絶対勝率高い」に基づく即時併合優先戦略の実装
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
          analysis: analyze_board.py analysis results
-              - results: landing information for each drop X candidate
-                  - x: drop X coordinate
-                  - landing_y: estimated landing Y coordinate (high=dangerous)
-                  - drift_x/drift_unc: post-landing drift due to polygon shape
-                  - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
-                  - danger_direct_merge_available: DIRECT merge available with danger piece
-              - reactor: reactor state (reactive_pairs, near_pairs, etc.)
+             - results: landing information for each drop X candidate
+                 - x: drop X coordinate
+                 - landing_y: estimated landing Y coordinate (high=dangerous)
+                 - drift_x/drift_unc: post-landing drift due to polygon shape
+                 - merge_grade: best merge judgment (DIRECT/NEAR/FAR/NO)
+                 - danger_direct_merge_available: DIRECT merge available with danger piece
+             - reactor: reactor state (reactive_pairs, near_pairs, etc.)
 
     Returns:
          {"x": drop X coordinate, "reason": selection reason}
     """
-
-    # v339: axis 9.7削除による即時併合機会最大化版
-    # axis 9.7（REACTIVE_PAIRS_COMPRESSION）を削除し、評価軸をシンプル化
-    # 即時併合機会の取りこぼしを削減し、deadline_crossed時の戦略的死ロック状態を回避
 
     results = analysis.get("results", [])
 
@@ -395,8 +274,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pairs = reactor.get("reactive_pairs", [])
     # reactive_pairs is a list, count pairs for evaluation
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
-    danger_piece_count = reactor.get("danger_piece_count", 0)
-
+    
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
@@ -428,18 +306,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
-    # --- v340: per-type reactive/near pair extraction (unutilized reactor info) ---
-    # reactive_pairs is list of (piece_id_1, piece_id_2, type) tuples
-    # near_pairs is list of (piece_id_1, piece_id_2, type, gap) tuples
-    # Extract which types have reactive pairs for type-aware stacking decisions
-    near_pairs = reactor.get("near_pairs", [])
-    current_type_has_reactive = any(
-        rp[2] == next_type for rp in reactive_pairs if isinstance(rp, (list, tuple)) and len(rp) >= 3
-    )
-    current_type_has_near = any(
-        np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
-    )
-
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
     
@@ -455,7 +321,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         same_type_stack_top = max(same_type_pieces, key=lambda p: p.get("y", -10))
      
     # =======================================================================
-    # score each drop candidate (x coordinate) with evaluation axes
+    # score each drop candidate (x coordinate) with 6 evaluation axes (NEW: +1 axis for reactive)
     # =======================================================================
     for result in results:
         x = result["x"]
@@ -481,57 +347,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
-
-        # ----- evaluation axis 9.6: reactive pairs stacking bonus - v340: type-aware stacking ---
-        # advice.md「盤面にTypeNが二つ並んでいてnextもTypeNのとき、TypeN+1と隣接している方を優先してドロップする」（azumag, nimdavirus）
-        # v339 failure: vertical_bonus = (stack_y + 1.0) * 200.0 が高位ほど大きいボーナスを与え、
-        #   reactive_pairsはあるが現在タイプにreactive_pairsがない場合も同じタイプの高位に積み上げてmax_yを悪化させる
-        # ワーストゲーム(score0853)終盤turns 70-71: reactive=5だがnext_type=2にはreactive_pairsがなく、
-        #   type 2のy=2.4-2.67に積み上げてmax_y=2.59→2.67→3.11に悪化してゲームオーバー
-        # ベストゲーム(score1936)終盤turns 84-91: reactive=1-2でnext_type=11/5にはreactive_pairsがあり、
-        #   即時併合→type 12×2生成で高スコア
-        # v340: 現在タイプにreactive_pairsまたはnear_pairsがある場合のみスタッキングボーナスを付与
-        #   高位スタッキングによるmax_y悪化を防止し、未活用のreactive_pairs type情報を活用
-        #   同タイプのうちmerged_type(N+1)に隣接するピースを優先し、連鎖的併合の道筋を作る
-        # refs: advice.md (azumag, nimdavirus), tmp/improve_brief.md, tmp/batch_summary.txt,
-        #       game_history/20260327_020329_score0853.jsonl turns 69-76, game_history/20260327_014958_score1936.jsonl turns 84-91
-        # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合の高位スタッキング（type-aware条件追加）
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
-            if current_type_has_reactive or current_type_has_near:
-                # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
-                # merged_type(N+1)に隣接する同タイプピースを優先し、連鎖的併合の道筋を作る
-                best_stack_target = same_type_stack_top  # デフォルト: 最も高い同タイプ
-                best_chain_score = 0.0
-
-                # 同タイプピースのうち、merged_typeに最も近いものを探す
-                for sp in same_type_pieces:
-                    sp_x = sp.get("x", 0)
-                    sp_y = sp.get("y", -10)
-                    # merged_typeピースとの最短距離を計算
-                    min_merged_dist = float("inf")
-                    for p in pieces:
-                        if p.get("type") == merged_type:
-                            dist = ((p["x"] - sp_x) ** 2 + (p["y"] - sp_y) ** 2) ** 0.5
-                            if dist < min_merged_dist:
-                                min_merged_dist = dist
-                    # 連鎖スコア: merged_typeに近いほど高く、高位すぎる場合は減衰
-                    if min_merged_dist < float("inf"):
-                        chain_score = max(0, 300.0 - min_merged_dist * 80.0)
-                        # 高位すぎる場合は減衰（max_yに近づくと危険）
-                        if sp_y > 1.0:
-                            chain_score *= max(0, 1.0 - (sp_y - 1.0) * 0.5)
-                        if chain_score > best_chain_score:
-                            best_chain_score = chain_score
-                            best_stack_target = sp
-
-                # best_stack_targetに近い配置にボーナス（高さに依存しない固定ボーナス）
-                target_x = best_stack_target.get("x", 0)
-                horizontal_distance = abs(x - target_x)
-                if horizontal_distance < 2.0:
-                    # merged_type隣接ボーナス + 水平近接ボーナス
-                    stacking_bonus = best_chain_score + max(0, 100.0 - horizontal_distance * 40.0)
-                    score += stacking_bonus
-                    reasons.append("REACTIVE_PAIRS_STACKING")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
@@ -574,16 +389,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactive_pairs>=1かつmerge_grade=="NO"の場合、height_multを0.8に緩和し、
         # 戦略的配置の余地を確保しつつdeadline緊急性を維持。reactive_pairsを活用して将来の併合を狙う戦略的思考へ切り替える。
         # v268/v270 rollback教訓: 強制的な高配置回避。reactive_pairs活用のシンプルな改善を採用。
-        # v332: reactive_pairs>=3の場合はheight_mult緩和をスキップし、即時併合を最優先する戦略へ切り替え
-        # ワーストゲーム(score0754)終盤turns 58-65: reactive_pairs=3-5, merge_available=falseでheight_mult緩和が適用され、axis 8.8ペナルティが打ち消されmax_y runawayでゲームオーバー
-        # ワーストゲーム(score0831)終盤turns 51-63: reactive_pairs=3-6, merge_available=false続きで同様の現象
-        # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える必要がある
-        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-        #       game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133,
-        #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
-            # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
-            # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
+        # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133
+        if reactive_pair_count >= 1 and merge_grade == "NO":
+            # reactive_pairsがある場合は、将来の併合を狙える戦略的配置を可能にするためheight_multを緩和
             height_mult *= 0.8
 
         # v288: deadline_crossed時戦略的配置強化版 - 即時併合機会取りこぼし削減
@@ -595,17 +403,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # deadline_crossed && reactive_pair_count >= 1 && merge_grade == "NO" の場合、height_multを0.4に緩和して、
         # 戦略的配置の余地を更に確保し、即時併合機会を逃さないようにする。
         # 未活用情報（deadline_crossed）を活用した構造的変更であり、数値微調整ではない。
-        # v332: reactive_pairs>=3の場合はheight_mult緩和をスキップし、即時併合を最優先する戦略へ切り替え
-        # ワーストゲーム(score0754)終盤turns 58-65: reactive_pairs=3-5, merge_available=falseでheight_mult緩和が適用され、axis 8.8ペナルティが打ち消されmax_y runawayでゲームオーバー
-        # ワーストゲーム(score0831)終盤turns 51-63: reactive_pairs=3-6, merge_available=false続きで同様の現象
-        # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える必要がある
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-        #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127,
-        #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
+        #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127
+        if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
-            # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
-            # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
+            # height_multを0.3に緩和して、盤面圧縮を強化し、即時併合機会を確保する
             height_mult *= 0.3
 
         # Calculate height penalty after all height_mult modifications
@@ -621,65 +423,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
- 
-        # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
-        # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
-        # bad_strategy(ee2c76235324, v334): deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている
-        # rollback_target(608f63a01e6b, v330): deadline_crossed時も danger_piece_count == 0 の場合はプレイを継続し、reactive pairs を併合して高スコアを達成している
-        # v334 failure: axis 2とaxis 9.5からdanger_piece_count条件を削除したため、danger_piece_count > 0 の状況でも戦略的配置が選ばれてしまい、即時併合機会を取りこぼしている
-        # axis 9.6追加: deadline_crossed時にreactive_pairsがある場合、即時併合を逃した非併合配置に強力なペナルティ(-4500.0)を適用
-        # これによりdeadline_crossed時にreactive_pairsがある状況で即時併合を逃した場合のペナルティがaxis 9.2のペナルティよりも高くなり、即時併合を強制的に待つ戦略へ切り替える
-        # axis 9.5の盤面圧縮ボーナスは適用しない。即時併合機会を最大化することを目的としているため、戦略的配置ボーナスを抑制
-        # 未活用情報：deadline_crossed, reactive_pair_count, merge_grade
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
-        #       game_history/20260324_122310_score0720.jsonl turns 49-57, game_history/20260324_120021_score2599.jsonl turns 116-123
-        # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
 
-        if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # deadline_crossed時にreactive_pairsがある場合、即時併合を逃した非併合配置に強力なペナルティ
-            # 即時併合機会を最大化し、戦略的配置ボーナスを抑制
-            score -= 4500.0
-            reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-        
-        # v347 removal: type-aware guard の削除 - deadline_crossed時のreactive_pairsペナルティ強化
-        # last_rollback_postmortemのconstraint: "type-aware guard を deadline penalty に追加しない（v347 の current_type_has_reactive_or_near 条件）"
-        # 他 type に reactive があれば current type の merge 不可でも penalty が働くべき
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
-        # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合のペナルティ不足
-
-        # v345 removal: height_mult reduction for stacking の削除 - stacking bonus と組み合わせない
-        # last_rollback_postmortemのconstraint: "height_mult reduction for stacking（v345 の 0.6x）を stacking bonus と組み合わせない"
-        # height_mult reduction は stacking bonus と乗算効果があり、両方同時に有効だと height penalty が実質的に無効化される
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
-        # Fixes rollback failure mode: stacking bonus と height_mult reduction の乗算効果による height penalty 無効化
-
-        # v347 removal: type-aware guard の削除 - deadline_crossed時のreactive_pairsペナルティ強化
-        # last_rollback_postmortemのconstraint: "type-aware guard を deadline penalty に追加しない（v347 の current_type_has_reactive_or_near 条件）"
-        # 他 type に reactive があれば current type の merge 不可でも penalty が働くべき
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
-        # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合のペナルティ不足
-
-        # axis 9.6 deadline_crossed ペナルティ強化 - reactive_pairs>=1 で即時併合不可の場合
-        # last_rollback_postmortemのconstraint: "deadline_crossed時の即時併合機会取りこぼしを削減"
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
-        # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6 deadline_crossed条件追加）
-
-        # axis 8.8 reactive_pairs>=3 ペナルティ強化 - 即時併合機会を最優先
-        # last_rollback_postmortemのconstraint: "deadline_crossedに関わらず即時併合を最優先するペナルティを適用する（deadline_crossed条件を含める）"
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
-        # Fixes rollback failure mode: reactive_pairs>=3での即時併合機会取りこぼし（axis 8.8 deadline_crossed条件削除）
-
-        # axis 9.5 stacking bonus の最適化 - 即時併合機会を最優先
-        # last_rollback_postmortemのconstraint: "reactive_pairsがある状況での即時併合機会取りこぼしを削減"
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
-        # Fixes rollback failure mode: reactive_pairsがある状況での即時併合機会取りこぼし（axis 9.5 reactive_pairs条件追加）
-
-        # axis 9.6 deadline_crossed ペナルティ強化 - reactive_pairs>=1 で即時併合不可の場合
-        # last_rollback_postmortemのconstraint: "deadline_crossed時の即時併合機会取りこぼしを削減"
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/improve_brief.md
-        # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6 deadline_crossed条件追加）
-        
-         # ----- evaluation axis 3: drift penalty -----
+        # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
@@ -838,18 +583,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 危険域での即時併合を強力に優先
         if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
             if merge_grade == "DIRECT":
-                # v331: deadline_crossed時はボーナスを強化（500.0→1200.0）
-                if deadline_crossed:
-                    score += 1200.0
-                else:
-                    score += 500.0
+                score += 500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             else:
-                # v331: deadline_crossed時はボーナスを強化（300.0→600.0）
-                if deadline_crossed:
-                    score += 600.0
-                else:
-                    score += 300.0
+                score += 300.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v321: 即時併合ボーナス維持) -----
@@ -867,56 +604,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
+        # ----- evaluation axis 8.7: russia phase immediate merge priority (v327: 危険ピース時ボーナス削除版 - 即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
         # ロシアフェーズ（type 15 >= 1）で即時併合を最優先する戦略へ切り替え
         # 即時併合候補がある場合: 即時併合を最優先（強力なボーナス）
         # 即時併合がない場合: 危険ピースがない場合のみ盤面圧縮を優先しつつ、type 15保護を徹底
         # 危険ピースがある場合は即時併合優先を維持（axis 9.2のペナルティを優先）
-        # v337: axis 9.5の盤面圧縮ボーナスがaxis 8.7の即時併合ボーナスと競合しているため、russia_phase && reactive_pair_count < 3 の場合にaxis 9.5を抑制
-        #   - 即時併合ボーナス強化: DIRECT: +1400.0, NEAR: +1200.0
-        #   - 盤面圧縮ボーナス抑制: reactive_pairs>=3 && merge_grade == "NO" の場合、盤面圧縮ボーナスを付与しない
-        #   - v337: russia_phase && reactive_pair_count < 3 の場合、axis 9.5のボーナス（+300.0）と軽減（+100.0）を削除し、即時併合を最優先
-        # 未活用情報：盤面上のtype 15個数、即時併合可否(merge_grade)、reactive_pairs、danger_piece_count
+        # v327: 危険ピース(danger_piece_count > 0)がある場合のボーナスを削除 - axis 9.2のペナルティを優先させ即時併合を最優先
+        # 未活用情報：盤面上のtype 15個数、即時併合可否(merge_grade)、danger_piece_count
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
-        #       game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl
+        #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
 
         if russia_phase:
-             # ロシアフェーズでの即時併合優先
-             # 即時併合候補がある場合、最優先（強力なボーナス）
-             if merge_grade in ["DIRECT", "NEAR"]:
-                 # v336: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
-                 if reactive_pair_count >= 1:
-                     # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
-                     if merge_grade == "DIRECT":
-                         score += 1400.0 if reactive_pair_count >= 3 else 1200.0
-                     else:
-                         score += 1200.0 if reactive_pair_count >= 3 else 1000.0
-                 else:
-                     # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
-                     if merge_grade == "DIRECT":
-                         score += 1400.0
-                     else:
-                         score += 1200.0
-                 reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
-             elif merge_grade == "NO":
-                 # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
-                 # v336: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
-                 if reactive_pair_count >= 3:
-                     # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
-                     # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
-                     score += 900.0
-                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 elif reactive_pair_count >= 1:
-                     # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
-                     # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
-                     score += 400.0
-                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 else:
-                      # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
-                      # 盤面圧縮を優先しつつ、type 15保護を徹底
-                      score += 800.0
-                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+            # ロシアフェーズでの即時併合優先
+            if merge_grade in ["DIRECT", "NEAR"]:
+                # 即時併合候補がある場合、最優先（強力なボーナス）
+                if merge_grade == "DIRECT":
+                    score += 1000.0
+                else:
+                    score += 800.0
+                reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
+            elif merge_grade == "NO":
+                # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
+                # v324: ワーストゲーム(score0651)のような「ロシア建国後の即時併合機会取りこぼし」を防止するためボーナス強化
+                # deadline_crossed時でも盤面圧縮を優先し、戦略的配置の余地を確保
+                if danger_piece_count == 0:
+                    # 危険ピースがない場合のみ盤面圧縮を優先
+                    if deadline_crossed:
+                        # deadline_crossed時で危険ピースがない場合、盤面圧縮をより強力に優先
+                        score += 900.0
+                        reasons.append("RUSSIA_PHASE_DEADLINE_BOARD_COMPRESSION")
+                    else:
+                        # 危険ピースがない場合、盤面圧縮を優先
+                        score += 800.0
+                        reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                # v327: danger_piece_count > 0 の場合のボーナスを削除 - axis 9.2のペナルティを優先
+                # 危険ピースがある状況では、即時併合を最優先する戦略へ切り替え
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
@@ -924,25 +647,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ワーストゲーム(score0725)終盤turns 61-62: reactive_pairs=3, merge_available=falseでmax_y=3.39→2.81の高配置が選ばれゲームオーバー
         # ベストゲーム(score3996)終盤turns 150-154: 即時併合機会を確実に捉えてtype 15を保護しつつ3996点を出している
         # v328の問題点: -3000.0固定ペナルティはheight_mult緩和(axis 2, 364, 379-382)や盤面圧縮ボーナス(axis 9.5)と競合し、高配置が選ばれる
-        # v329の問題点: landing_y > 1 のペナルティ計算に符号誤りがあり、高配置ほどペナルティが弱くなっていた
-        #   - landing_y <= 0: -3000.0ペナルティ維持
-        #   - 0 < landing_y <= 1: -3000.0 + landing_y * 2000.0 (例: landing_y=0.5 -> -4000.0) ✓ 正常
-        #   - landing_y > 1: -5000.0 + (landing_y - 1.0) * 2000.0 (例: landing_y=1.5 -> -6000.0, landing_y=2.0 -> -7000.0)
-        # v329修正: landing_y > 1 の場合、(landing_y - 1.0) * 2000.0 を使用して高配置ほどペナルティを強化
-        # これにより高配置になるほどペナルティが線形に増大し、height_mult緩和やボーナスを上回る強力な抑制を実現
-        # v347 removal: deadline_crossed 条件の削除 - last_rollback_postmortemのconstraintを遵守
-        # deadline_crossed に関わらず -4500.0 ペナルティを適用し、即時併合を最優先
+        # 解決策: reactive_pairs>=3 && merge_grade=="NO"の場合、landing_yに応じた動的ペナルティを追加
+        #   - landing_y <= 0: 既存の-3000.0ペナルティ維持
+        #   - 0 < landing_y <= 1: -3000.0 + landing_y * 2000.0 (例: landing_y=0.5 -> -4000.0)
+        #   - landing_y > 1: -5000.0 + landing_y * 2000.0 (例: landing_y=1.5 -> -8000.0, landing_y=2.0 -> -9000.0)
+        # これにより高配置になるほどペナルティが指数関数的に増大し、height_mult緩和やボーナスを上回る強力な抑制を実現
+        # last_rollback_postmortemのconstraint: "reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず即時併合を最優先するペナルティを適用する（deadline_crossed条件を含める）"を遵守
         # 未活用情報：reactive_pairs>=3, merge_grade=="NO", landing_y (着地位置の高さ)
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
         #       game_history/20260324_045921_score0636.jsonl turns 56-62, game_history/20260324_043823_score0725.jsonl turns 61-62,
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
-        # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版→v347 deadline_crossed条件削除）
+        # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
             # reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず強力なペナルティを適用
-            # v347: deadline_crossed 条件の削除 - last_rollback_postmortemのconstraintを遵守
-            # 即時併合機会を強制的に待つ戦略へ切り替える
-            score -= 4500.0
+            # landing_yに応じて動的にペナルティを強化し、高配置を積極的に抑制
+            if landing_y <= 0:
+                score -= 3000.0
+            elif landing_y <= 1:
+                score -= 3000.0 + landing_y * 2000.0
+            else:
+                score -= 5000.0 + landing_y * 2000.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
@@ -950,57 +675,34 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
         # reactive_pairsがある場合、即時併合がない時のデフォルト選択をHEIGHT_CONTROLからREACTIVE_PAIRS_COMPRESSIONへ変更し、盤面圧縮を優先。
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, game_history/20260313_231816_score0814.jsonl turns 54-57
-        # ----- evaluation axis 9.5: current type stack merge priority (v335: deadline_crossed即時併合優先強化版) -----
-        # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
-        # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
-        # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
-        # v330: reactive_pairsがある場合の盤面圧縮ボーナス条件を厳格化 - 即時併合優先強化
-        # v334: deadline_crossed時の即時併合優先強化版 - v334 failure mode潰し
-        # bad_strategy(ee2c76235324, v334): deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている
-        # rollback_target(608f63a01e6b, v330): deadline_crossed時も danger_piece_count == 0 の場合はプレイを継続し、reactive pairs を併合して高スコアを達成している
-        # v334 failure: axis 2とaxis 9.5からdanger_piece_count条件を削除したため、danger_piece_count > 0 の状況でも戦略的配置が選ばれてしまい、即時併合機会を取りこぼしている
-        # axis 9.5修正: 盤面圧縮ボーナス適用条件からdeadline_crossed条件を削除し、即時併合機会を最大化
-        # axis 9.2修正: deadline_crossed条件をaxis 9.5に統合
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
-        #       game_history/20260324_122310_score0720.jsonl, game_history/20260324_120941_score1207.jsonl
-        # v341: disabled - v335 block duplicated by v337 block below, causing double-counting
-        # (+600/+200 instead of +300/+100) and bypassing v337's Russia phase suppression
-        # refs: strategy.py.staging structure audit, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md
-        # Fixes rollback failure mode: axis 9.5重複によるロシアフェーズstacking抑制不完全
+        if not reasons:
+            if reactive_pair_count >= 1:
+                reasons.append("REACTIVE_PAIRS_COMPRESSION")
 
-        if False and same_type_stack_top and merge_grade == "NO":
-            stack_top_x = same_type_stack_top.get("x", 0)
-            stack_top_y = same_type_stack_top.get("y", -10)
- 
-            # v334: v330のdanger_piece_count条件削除版
-            # v330: danger_piece_count == 0 && reactive_pair_count == 0 の場合のみボーナスを適用
-            # 盤面圧縮ボーナスは即時併合機会がない場合のみ適用し、即時併合機会を優先
-            # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-            if danger_piece_count == 0 and reactive_pair_count == 0:
-                # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
-                score += 300.0
-                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
-            # v334: danger_piece_count条件を削除 - axis 9.6ペナルティと競合するため、即時併合機会を優先する戦略へ切り替え
-            # danger_piece_count > 0 の場合、axis 9.6のペナルティが適用され、即時併合機会を強制的に待つ戦略へ切り替わる
+        # ----- evaluation axis 9.2: danger zone reactive penalty (v324: deadline_crossed対応強化版 - v323 failure mode潰し) -----
+        # v323 failure: axis 9.2にdeadline_crossed条件が含まれておらず、deadline_crossed時でもreactive_pairs>=3の即時併合不可でペナルティが適用されない
+        # ワーストゲーム(score0651)終盤turns 42-47: max_y=0.16→1.78 (deadline_crossed: false→true→false), reactive_pairs=3-4, merge_available=false続き
+        # deadline_crossed=false時にSAME_TYPE_STACK_MERGE_PRIORITY_REACTIVEで非併合を選択し、盤面圧迫が進みdeadline_crossed=trueでゲームオーバー
+        # ベストゲーム(score2461)では危険域でも即時併合機会を確実に捉え、戦略的配置を維持して安定
+        # axis 9.2修正: deadline_crossed条件を追加し、deadline_crossed時もreactive_pairs>=2で即時併合不可の場合に強力なペナルティを適用
+        # v326: 危険ピース存在時のペナルティ強化版 - ワーストゲーム(score0915)の失敗モード潰し
+        # 危険ピース(danger_piece_count > 0)がある場合、ペナルティを加重してmax_y runawayを防止
+        # 基本ペナルティ: -2500.0, 危険ピース毎に追加-1000.0 (例: danger_piece_count=2 → -4500.0)
+        # 未活用情報：deadline_crossed, 危険域判定(max_y>=2.0), reactive_pairs>=2, danger_piece_count加重
+        # refs: game_history/20260324_010847_score0651.jsonl turns 42-47, game_history/20260324_010300_score2461.jsonl,
+        #       game_history/20260324_021413_score0915.jsonl (turns 75-80: danger_pieces存在でmax_y runaway)
+        # Fixes rollback failure mode: deadline_crossed時の即時併合取りこぼし、危険ピース存在下でのmax_y runaway
 
-            # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
-            # danger_piece_count == 0 && reactive_pair_count == 0 の場合のみペナルティ軽減を適用
-            # v325: reactive_pairsがない場合のみペナルティ軽減を適用 - 即時併合機会優先化
-            # v327: 危険ピース(danger_piece_count > 0)がある場合のペナルティ軽減ボーナスも削除 - axis 9.2のペナルティを優先
-            # v330: reactive_pairs >= 1 の場合のペナルティ軽減ボーナスも削除 - 即時併合優先強化
-            landing_y = result.get("landing_y", 0)
-            if landing_y > stack_top_y and danger_piece_count == 0 and reactive_pair_count == 0:
-                horiz_dist = abs(x - stack_top_x)
-                if horiz_dist < 1.0:
-                    # v325: reactive_pairsがない場合のみペナルティ軽減を適用
-                    score += 100.0
-                    if "SAME_TYPE_STACK" not in "_".join(reasons):
-                        reasons.append("SAME_TYPE_STACK")
-                    # reactive_pair_count >= 1の場合はボーナスなし（axis 9.6の-4500.0ペナルティを適用）
-            # v327: danger_piece_count > 0 の場合のペナルティ軽減ボーナスも削除 - axis 9.2のペナルティを優先
-            # v330: reactive_pairs >= 1 の場合のペナルティ軽減ボーナスも削除 - 即時併合優先強化
+        if (max_y >= 2.0 or deadline_crossed) and reactive_pair_count >= 2 and merge_grade == "NO":
+            # 危険域またはdeadline_crossed時、reactive_pairsが多数あるのに即時併合不可の場合、非併合配置を強力にペナルティ
+            # v326: 危険ピースがある場合、ペナルティを加重してより強力に抑制
+            # 基本ペナルティ-2500.0 + 危険ピース毎に-1000.0（最大-4500.0）
+            # これにより危険ピースが2つ以上ある場合、盤面圧縮ボーナスを完全に無効化し即時併合を優先
+            danger_penalty = 2500.0 + min(danger_piece_count, 2) * 1000.0
+            score -= danger_penalty
+            reasons.append("DANGER_ZONE_REACTIVE_PENALTY_NO_MERGE")
 
-        # ----- evaluation axis 9.5: current type stack merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版) -----
+        # ----- evaluation axis 9.5: current type stack merge priority (v330: reactive_pairs条件追加版 - 即時併合優先強化) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」を強化。
         # batch_summaryでHEIGHT_CONTROLが11.0%選択(avg_score_delta=0.0)と過剰であり、即時併合機会を取りこぼしていることを確認。
         # 盤面上の現在タイプの最も高い位置のピースに配置を優先し、即時併合機会を最大化。
@@ -1008,19 +710,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v327: 危険ピース(danger_piece_count > 0)がある場合のボーナスを削除 - axis 9.2のペナルティを優先させ即時併合を最優先
         # v330: reactive_pairsがある場合の盤面圧縮ボーナスを削除 - 即時併合優先強化
         # reactive_pairsがある状況で盤面圧縮ボーナスを適用すると、axis 9.2の-4500.0ペナルティと競合し、即時併合機会を取りこぼす
-        # v335: deadline_crossed && reactive_pair_count >= 1 && merge_grade == "NO"を条件に追加し、即時併合機会を最大化
-        # v337: russia_phase && reactive_pair_count < 3 の場合、ボーナスを削除しaxis 8.7即時併合優先
         # danger_piece_count == 0 && reactive_pair_count == 0 の場合のみボーナスを適用し、即時併合機会を確実に優先
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, advice.md,
-        #       game_history/20260324_141236_score0731.jsonl turns 66-73, game_history/20260324_144026_score3171.jsonl turns 119-126
+        #       game_history/20260324_054633_score0634.jsonl turns 52-59, game_history/20260324_055424_score2710.jsonl turns 106-113
         # Fixes rollback failure mode: reactive_pairsがある状況での即時併合機会取りこぼし（axis 9.5 reactive_pairs条件追加）
-        #         Fixes failure mode: ロシアフェーズでの即時併合機会取りこぼし（axis 9.5 russia_phase条件追加）
-        
+
         if same_type_stack_top and merge_grade == "NO":
             stack_top_x = same_type_stack_top.get("x", 0)
             stack_top_y = same_type_stack_top.get("y", -10)
-            
-             # v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
+
+            # v285: v284 rollback failure mode潰し - reactive_pairs>=3時の戦略的配置ボーナス削除
             # danger_piece_count == 0 の場合、reactive_pairs>=3 && merge_grade=="NO"の戦略的配置ボーナス+1000.0を削除
             # ワーストゲームの「reactive_pairs>=3あるのに即時併合不可で戦略的配置を選び、max_y上昇」を回避するため
             # 即時併合機会を優先する戦略へ修正
@@ -1029,51 +728,34 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # 盤面圧縮（非併合配置）が選ばれてmax_y runawayでゲームオーバーする失敗モードを解消
             # v327: 危険ピース(danger_piece_count > 0)がある場合のボーナスを削除 - axis 9.2のペナルティを優先させ即時併合を最優先
             # v330: reactive_pairsがある場合の盤面圧縮ボーナスを削除 - 即時併合優先強化
-            # v338: ロシアフェーズ && reactive_pair_count < 3 の場合、axis 9.5盤面圧縮ボーナスを完全削除
-            # v337 failure: ロシアフェーズでreactive_pairs<3の場合、axis 9.5の盤面圧縮ボーナス（+300.0）がaxis 8.7の即時併合ボーナス（1200.0/1000.0）と競合し、即時併合機会を取りこぼしている
-            # 即時併合機会を最大化し、盤面圧縮で2つ目のロシア育成スペースを確保する戦略へ切り替え
-            if russia_phase and reactive_pair_count < 3:
-                # ロシアフェーズでreactive_pairs<3の場合、axis 9.5のボーナスを完全に削除
-                # 即時併合機会を最大化し、axis 8.7の即時併合ボーナスを最優先
-                pass
-            else:
-                if danger_piece_count == 0 and reactive_pair_count == 0:
-                    # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
-                    score += 300.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
-                elif danger_piece_count == 0 and not deadline_crossed:
-                    # v355: non-deadline merge drought stacking guidance
-                    # advice.md「高さペナルティ回避と併合のバランス：高さが明確にリスクになる盤面は
-                    # ほぼ詰んでいることが多い。高さ回避の重要性は低く見てよい。安全重視になりすぎた
-                    # 盤面硬直化を防ぐこと」（プリパラ煉獄丸）
-                    # reactive>=1だがdeadlineでない場合、盤面はまだ詰んでいない可能性が高い。
-                    # 同タイプへの近接配置で将来の併合パイプラインを構築する軽いインセンティブ。
-                    # deadline_crossed時は付与しない（postmortem constraint: height_mult削減との
-                    # 悪相互作用回避。v345 failure mode: stacking bonus + height_mult reduction で
-                    # height penalty が実質無効化される）。
-                    # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-                    score += 150.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+            # reactive_pairsがある状況で盤面圧縮ボーナスを適用すると、axis 9.2の-4500.0ペナルティと競合し、即時併合機会を取りこぼす
+            # danger_piece_count == 0 && reactive_pair_count == 0 の場合のみボーナスを適用
+            # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+            if danger_piece_count == 0 and reactive_pair_count == 0:
+                # v325: reactive_pairsがない場合のみボーナスを適用し、即時併合機会を優先
+                score += 300.0
+                reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             # v327: danger_piece_count > 0 の場合のボーナスブロックを削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のボーナスブロックを追加 - axis 9.2のペナルティを優先
-            # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ボーナスブロックを適用 - axis 8.7即時併合優先
             # reactive_pairsがある状況では、即時併合を最優先する戦略へ切り替え
-            
+
             # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
             # danger_piece_count == 0 && reactive_pair_count == 0 の場合のみ、ペナルティ軽減を適用
             # v325: reactive_pairsがある場合はペナルティ軽減ボーナスを削除 - 即時併合機会優先化
             # v327: 危険ピース(danger_piece_count > 0)がある場合のペナルティ軽減ボーナスも削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のペナルティ軽減ボーナスも削除 - 即時併合優先強化
-            # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ペナルティ軽減も削除 - axis 8.7即時併合優先
+            # reactive_pair_count >= 1の場合、axis 9.2の-4500.0ペナルティを優先させ、即時併合機会を待つ戦略へ
             landing_y = result.get("landing_y", 0)
-            if not (russia_phase and reactive_pair_count < 3):
-                if landing_y > stack_top_y and danger_piece_count == 0 and reactive_pair_count == 0:
-                    horiz_dist = abs(x - stack_top_x)
-                    if horiz_dist < 1.0:
-                        # v325: reactive_pairsがない場合のみペナルティ軽減を適用
-                        score += 100.0
-                        if "SAME_TYPE_STACK" not in "_".join(reasons):
-                            reasons.append("SAME_TYPE_STACK")
+            if landing_y > stack_top_y and danger_piece_count == 0 and reactive_pair_count == 0:
+                horiz_dist = abs(x - stack_top_x)
+                if horiz_dist < 1.0:
+                    # v325: reactive_pairsがない場合のみペナルティ軽減を適用
+                    score += 100.0
+                    if "SAME_TYPE_STACK" not in "_".join(reasons):
+                        reasons.append("SAME_TYPE_STACK")
+                    # reactive_pair_count >= 1の場合はボーナスなし（axis 9.2の-4500.0ペナルティを適用）
+            # v327: danger_piece_count > 0 の場合のペナルティ軽減ボーナスも削除 - axis 9.2のペナルティを優先
+            # v330: reactive_pairs >= 1 の場合のペナルティ軽減ボーナスも削除 - 即時併合優先強化
 
 
 
