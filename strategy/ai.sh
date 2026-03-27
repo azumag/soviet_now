@@ -170,7 +170,7 @@ run_cmd() {
 		local -a zai_env=(
 			ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic"
 			ANTHROPIC_AUTH_TOKEN="${ZAI_API_KEY:-}"
-			ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-5-turbo"
+			ANTHROPIC_DEFAULT_HAIKU_MODEL="glm-5.1"
 			CLAUDE_CODE_EFFORT_LEVEL="max"
 		)
 		if [ -n "$cmd_log_file" ]; then
