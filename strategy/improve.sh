@@ -211,10 +211,13 @@ with open(rs_file, 'w') as f:
 			else
 				log "[IMPROVE] failed_no_apply: 戦略変更なし (phase=${prev_phase:-?}, progress=${prev_progress:-0}, detail=${prev_detail:-})"
 				# 戦略が変わっていない → 蓄積データはそのまま有効
+				# failed_no_apply タイムスタンプを記録 (連続再試行防止用)
+				date +%s > "$TMP_STATE_DIR/last_improve_failed_at"
 			fi
 
 			if [ "$hash_before" != "$hash_now" ]; then
 				_write_improve_state "idle" "0" "" "" "0" ""
+				rm -f "$TMP_STATE_DIR/last_improve_failed_at"
 			else
 				_write_improve_state "idle" "0" "" "failed_no_apply" "100" "${prev_detail:-process_exited_without_apply}"
 			fi
