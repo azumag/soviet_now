@@ -7,6 +7,17 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
+        # v348: type-scaled stacking bonus restoration (lost in rollback from acd5803d8ef7)
+        # v344 introduced SCORE_TABLE-proportional stacking bonus but was lost when branch rolled back.
+        # Postmortem constraint: "type-scaled stacking bonus の維持" — MEDIUM/HIGH phaseで height_penalty に
+        # 打ち消されないtype-scaled bonusが必要。現行のflat +300/+100はtype 2とtype 14を同列に扱い、
+        # 高type成長パイプラインの構築incentiveが不足していた。
+        # SAME_TYPE_STACK_MERGE_PRIORITY: max(100, SCORE_TABLE[type]*3) → type10=165, type14=315
+        # SAME_TYPE_STACK (on-top): max(50, SCORE_TABLE[type]*2) → type10=110, type14=210
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+        #       tmp/change_log.txt (v344), advice.md (zoumotu3), strategy.py.staging
+        # Fixes rollback failure mode: type-scaled stacking bonus lost in branch rollback (v344 restoration)
+
         # v347: deadline_crossed no-merge penalty type-aware guard
         # -4500.0 penalty now only applies when current_type_has_reactive_or_near (matching axis 9.6 guard)
         # Previous: reactive_pair_count >= 1 globally → penalized even when current type had no reactive pairs
@@ -294,24 +305,18 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v347: deadline no-merge penalty type-aware fix
+    """v348: type-scaled stacking bonus restoration (lost in rollback, was v344)
 
-    POSTMORTEM FIX: deadline_crossed -4500 penalty が current_type_has_reactive_or_near を確認せず、
-    他typeのreactive_pairsがあるだけで全候補に-4500を付与していた。これによりcurrent typeに
-    reactive pairがないのにaxis 9.6のstacking bonusやaxis 9.5のsame-type stackingが打ち消され、
-    戦略的配置ができずにHEIGHT_CONTROL連続→max_y runawayが発生
-    ワーストゲーム(score0836)終盤: reactive_pairs=4あるがnext_type=5/11/4/8/5/1/8にはreactive pairがなく、
-    deadline_crossed=trueで-4500 penaltyが全候補に適用され、max_y=2.53→2.95でゲームオーバー(67ターン)
-    ベストゲーム(score3186)終盤: reactive_pairs=1のみでpenalty影響小、126ターン継続
-    v346までの修正: axis 9.6 type-aware(v340), chain_bonus固定化(v343), axis 9.7削除(v339),
-      v335重複無効化(v341), v342条件緩和, v345 height_mult reduction
-    refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md (azumag, Pitman_live),
-      tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-      game_history/20260327_085432_score0836.jsonl turns 60-67,
-      game_history/20260327_091009_score3186.jsonl turns 119-126,
-      strategy_versions/best_score5694_strategy.py
-    Fixes rollback failure mode: deadline_crossed時のcurrent type非反応での-4500全面適用による
-      戦略的配置不能（type-aware guard追加で、current typeにreactive pairがある時のみpenalty適用）
+    v344 introduced SCORE_TABLE-proportional stacking bonus but was lost when branch rolled back
+    to anchor acd5803d8ef7. Postmortem constraint explicitly requires:
+    "MEDIUM/HIGH phase で height_penalty に打ち消されない type-scaled stacking bonus の維持"
+    Current flat +300/+100 treats type 2 and type 14 equally, giving no extra incentive for
+    high-type growth pipeline. Restored: SAME_TYPE_STACK_MERGE_PRIORITY = max(100, SCORE_TABLE[type]*3)
+    and SAME_TYPE_STACK(on-top) = max(50, SCORE_TABLE[type]*2).
+    refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+      tmp/change_log.txt, advice.md (zoumotu3), strategy.py.staging,
+      game_history/20260327_095343_score0515.jsonl, game_history/20260327_100222_score2974.jsonl
+    Fixes rollback failure mode: type-scaled stacking bonus lost in branch rollback (v344 restoration)
 
     Args:
          game_state: game state (pieces, next, nextNext, score, etc.)
@@ -957,13 +962,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pass
             else:
                 if danger_piece_count == 0 and reactive_pair_count == 0:
-                    # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
-                    score += 300.0
+                    # v348: type-scaled bonus (restored from v344, lost in rollback)
+                    # High-type stacking incentivizes growth pipeline toward Russia/Soviet
+                    score += max(100.0, SCORE_TABLE[next_type] * 3)
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
                 elif danger_piece_count == 0 and reactive_pair_count >= 1 and not current_type_has_reactive_or_near:
                     # v342: allow stacking when current type has no reactive/near pairs
-                    # prevents consecutive HEIGHT_CONTROL when reactive_pairs exist for OTHER types
-                    score += 100.0
+                    # v348: type-scaled (lower multiplier since reactive pairs exist for other types)
+                    score += max(50.0, SCORE_TABLE[next_type] * 1.5)
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             # v327: danger_piece_count > 0 の場合のボーナスブロックを削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のボーナスブロックを追加 - axis 9.2のペナルティを優先
@@ -981,8 +987,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if landing_y > stack_top_y and danger_piece_count == 0 and reactive_pair_count == 0:
                     horiz_dist = abs(x - stack_top_x)
                     if horiz_dist < 1.0:
-                        # v325: reactive_pairsがない場合のみペナルティ軽減を適用
-                        score += 100.0
+                        # v348: type-scaled on-top bonus (restored from v344, lost in rollback)
+                        score += max(50.0, SCORE_TABLE[next_type] * 2)
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
