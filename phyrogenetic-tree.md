@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-29 02:15:43 JST`
-- Nodes: `785`
-- Edges: `1093`
-- Current: `b6b3fec418fa`
+- Updated: `2026-03-29 03:07:09 JST`
+- Nodes: `786`
+- Edges: `1094`
+- Current: `9a7d71d20cfb`
 - Anchor: `1813ba4eef44`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_7f14656b19f8["7f14656b19f8<br/>g=12 n=12<br/>comp=9224.3"]
     h_6479a8c1a527["6479a8c1a527<br/>g=12 n=12<br/>comp=9026.2"]
     h_9378430a0783["9378430a0783<br/>g=12 n=12<br/>comp=8960.8"]
     h_dba57ae02a3e["dba57ae02a3e<br/>g=13 n=13<br/>comp=10100.2"]
@@ -72,9 +71,10 @@ flowchart TD
     h_f26a4019f5fe["f26a4019f5fe<br/>g=12 n=12<br/>comp=10244.2"]
     h_ee1b93ba7260["ee1b93ba7260<br/>g=12 n=12<br/>comp=10972.3"]
     h_8d69c9c393b9["8d69c9c393b9<br/>g=12 n=12<br/>comp=11145.3"]
+    h_b6b3fec418fa["b6b3fec418fa<br/>g=12 n=12<br/>comp=10542.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_b6b3fec418fa["b6b3fec418fa<br/>CURRENT"]
+    h_9a7d71d20cfb["9a7d71d20cfb<br/>CURRENT"]
 
     h_dba57ae02a3e -->|improve| h_420504e4ebd4
     h_420504e4ebd4 -->|improve| h_6c6b780b2a88
@@ -132,13 +132,13 @@ flowchart TD
     h_f26a4019f5fe -->|improve| h_ee1b93ba7260
     h_ee1b93ba7260 -->|improve| h_8d69c9c393b9
     h_8d69c9c393b9 -->|improve| h_b6b3fec418fa
+    h_b6b3fec418fa -->|improve| h_9a7d71d20cfb
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_7f14656b19f8 plain;
     class h_6479a8c1a527 plain;
     class h_9378430a0783 plain;
     class h_dba57ae02a3e plain;
@@ -195,9 +195,10 @@ flowchart TD
     class h_f26a4019f5fe plain;
     class h_ee1b93ba7260 plain;
     class h_8d69c9c393b9 plain;
+    class h_b6b3fec418fa plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_b6b3fec418fa current;
+    class h_9a7d71d20cfb current;
 ```
 
 ## Detail 1/10
@@ -2783,9 +2784,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `b6b3fec418fa`
-- Nodes in this diagram: `65`
-- Internal edges in this diagram: `60`
+- Range: `7bd6203f37b5` .. `9a7d71d20cfb`
+- Nodes in this diagram: `66`
+- Internal edges in this diagram: `61`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2864,9 +2865,10 @@ flowchart TD
     h_f26a4019f5fe["f26a4019f5fe<br/>g=12 n=12<br/>comp=10244.2"]
     h_ee1b93ba7260["ee1b93ba7260<br/>g=12 n=12<br/>comp=10972.3"]
     h_8d69c9c393b9["8d69c9c393b9<br/>g=12 n=12<br/>comp=11145.3"]
+    h_b6b3fec418fa["b6b3fec418fa<br/>g=12 n=12<br/>comp=10542.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_b6b3fec418fa["b6b3fec418fa<br/>CURRENT"]
+    h_9a7d71d20cfb["9a7d71d20cfb<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2928,6 +2930,7 @@ flowchart TD
     h_f26a4019f5fe -->|improve| h_ee1b93ba7260
     h_ee1b93ba7260 -->|improve| h_8d69c9c393b9
     h_8d69c9c393b9 -->|improve| h_b6b3fec418fa
+    h_b6b3fec418fa -->|improve| h_9a7d71d20cfb
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2996,12 +2999,23 @@ flowchart TD
     class h_f26a4019f5fe plain;
     class h_ee1b93ba7260 plain;
     class h_8d69c9c393b9 plain;
+    class h_b6b3fec418fa plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_b6b3fec418fa current;
+    class h_9a7d71d20cfb current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10805 `b6b3fec4 -> 9a7d71d2`
+
+- scores: `13755 9369 11703 13368 10994 9610 11002 9652 14242 11009 11959 8721`
+- v379: growth center alignment for axis 9.7 pipeline guidance
+- Worst game T59-66: 35 pieces scattered x=[-3,+3], axis 9.7 guides toward nearest adjacent-type
+- regardless of direction → reinforces scatter. Best game T75-82: types concentrated around gc.
+- Pre-compute growth center before candidate loop; in axis 9.7, boost pipeline bonus when
+- the adjacent-type target is near growth center. Aligns pipeline (9.7) with concentration (5.6).
+- NOT axis 9.6 stacking_bonus suppression (v372 constraint OK — this is axis 9.7 only).
 
 ### Improve Game#10793 `8d69c9c3 -> b6b3fec4`
 
