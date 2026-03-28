@@ -59,6 +59,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v377: axis 9.7 congestion scaling — reduce scatter when no same-type on board
+     # axis 9.6b (v369) and 5.6 (v370) have congestion scaling but axis 9.7 did not.
+     # At high pc, pipeline guidance (~80) was invisible vs height penalty diff (~112 at reduced height_mult).
+     # With scaling at pc=39: ~186, competitive with height diff → guides toward adjacent-type cluster.
+     # Worst T63: next=5, no type 5, axis 9.7 ~50 vs height ~112 → scatter to x=-3.0 (edge).
+     # NOT axis 9.6 (v372 constraint OK). Fixes postmortem: no guidance when no same-type → pc accumulation
+     # refs: postmortem, batch_summary, score1003 T63, score4244 T149, protected_e6f534c37e28, advice.md
      # v376: flatten axis 8.8 gradient when no merge available — stacking guidance can work
      # When merge_available=false, steep axis 8.8 gradient (2000/y_unit) overwhelms stacking bonus
      # (~300-400), pushing all pieces to lowest position without building merge paths.
@@ -735,6 +742,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         best_adjacent_target = p
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
+                # v377: congestion scaling — consistent with axis 9.6b/5.6
+                # Without scaling, axis 9.7 (~80) is invisible vs height penalty diff (~112)
+                # at high pc when height_mult is reduced. Scaling makes it competitive,
+                # reducing scatter toward edges when no same-type on board.
+                # Not piece_count suppression of stacking (v372 constraint OK — this is axis 9.7).
+                # Fixes postmortem: no guidance when no same-type → pc accumulation
+                if piece_count >= 28:
+                    congestion_scale = 1.0 + (piece_count - 28) * 0.12
+                    pipeline_bonus *= min(congestion_scale, 3.0)
                 score += pipeline_bonus
 
         # ----- v362/v368 → v369 → v371: merged_type-aware targeting + congestion-aware proximity -----
