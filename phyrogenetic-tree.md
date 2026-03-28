@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-28 07:54:14 JST`
-- Nodes: `772`
-- Edges: `1079`
-- Current: `53e584297370`
+- Updated: `2026-03-28 10:12:29 JST`
+- Nodes: `773`
+- Edges: `1080`
+- Current: `b1af357f0fbb`
 - Anchor: `af7789a91d5a`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -72,9 +72,10 @@ flowchart TD
     h_1ccd69078373["1ccd69078373<br/>g=12 n=12<br/>comp=10217.6"]
     h_b6f6b5fc153a["b6f6b5fc153a<br/>g=12 n=12<br/>comp=11171.3"]
     h_e24de3a4fc60["e24de3a4fc60<br/>g=12 n=12<br/>comp=9988.3"]
+    h_53e584297370["53e584297370<br/>g=24 n=20<br/>comp=10501.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_53e584297370["53e584297370<br/>CURRENT"]
+    h_b1af357f0fbb["b1af357f0fbb<br/>CURRENT"]
 
     h_af7789a91d5a -->|improve| h_bcf6915c6c58
     h_bcf6915c6c58 -->|improve| h_419d1e554c03
@@ -139,6 +140,7 @@ flowchart TD
     h_1ccd69078373 -->|improve| h_b6f6b5fc153a
     h_b6f6b5fc153a -->|improve| h_e24de3a4fc60
     h_e24de3a4fc60 -->|improve| h_53e584297370
+    h_53e584297370 -->|improve| h_b1af357f0fbb
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -202,9 +204,10 @@ flowchart TD
     class h_1ccd69078373 plain;
     class h_b6f6b5fc153a plain;
     class h_e24de3a4fc60 plain;
+    class h_53e584297370 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_53e584297370 current;
+    class h_b1af357f0fbb current;
 ```
 
 ## Detail 1/10
@@ -2790,9 +2793,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `53e584297370`
-- Nodes in this diagram: `52`
-- Internal edges in this diagram: `46`
+- Range: `7bd6203f37b5` .. `b1af357f0fbb`
+- Nodes in this diagram: `53`
+- Internal edges in this diagram: `47`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2858,9 +2861,10 @@ flowchart TD
     h_1ccd69078373["1ccd69078373<br/>g=12 n=12<br/>comp=10217.6"]
     h_b6f6b5fc153a["b6f6b5fc153a<br/>g=12 n=12<br/>comp=11171.3"]
     h_e24de3a4fc60["e24de3a4fc60<br/>g=12 n=12<br/>comp=9988.3"]
+    h_53e584297370["53e584297370<br/>g=24 n=20<br/>comp=10501.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_53e584297370["53e584297370<br/>CURRENT"]
+    h_b1af357f0fbb["b1af357f0fbb<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2908,6 +2912,7 @@ flowchart TD
     h_1ccd69078373 -->|improve| h_b6f6b5fc153a
     h_b6f6b5fc153a -->|improve| h_e24de3a4fc60
     h_e24de3a4fc60 -->|improve| h_53e584297370
+    h_53e584297370 -->|improve| h_b1af357f0fbb
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2963,12 +2968,23 @@ flowchart TD
     class h_1ccd69078373 plain;
     class h_b6f6b5fc153a plain;
     class h_e24de3a4fc60 plain;
+    class h_53e584297370 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_53e584297370 current;
+    class h_b1af357f0fbb current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10613 `53e58429 -> b1af357f`
+
+- scores: `8045 13656 10361 8893 10702 9413 13066 20261 11120 10115 7161 21192`
+- 9.5. Current type stack merge priority - v337: russia_phase抑制版
+- v365: remove duplicated axis 9.5 (v334 block) — fix double-bonus bug
+- axis 9.5 existed twice: old v334 block (lines ~1039-1070) and v337 block (lines ~1087-1131).
+- Both fired for non-russia cases, doubling SAME_TYPE_STACK_MERGE_PRIORITY(+600) and
+- SAME_TYPE_STACK(+200) bonuses when reactive==0 && danger==0. The v337 block is the
+- correct version with russia_phase suppression. The v334 block was dead code.
 
 ### Improve Game#10589 `e24de3a4 -> 53e58429`
 
