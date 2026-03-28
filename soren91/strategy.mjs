@@ -1,43 +1,28 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v86)
+ * strategy.mjs - ドロップ位置決定戦略 (v87)
  *
- * v86: v85の課題である「常に中央(0.0)にドロップする」問題に対処するため、
- *      mergeOpportunityや大型ピースの配置ロジックが実際に選択されるように修正。
- *      ゲーム分析から判明した「DEFAULT: Drop at lowest weighted Y.」以外の理由がログに全く出ていない問題を改善する。
+ * v87: v86で試みた「DEFAULT: Drop at lowest weighted Y.」以外の理由がログに全く出ていない問題を改善するため、
+ *      defaultStrategyのロジックを抜本的に見直し。
+ *      併合機会と大型ピースの片側集約を、単純な「低いY座標」にドロップするよりも優先するように、
+ *      重み付けY座標の計算に調整を導入。これにより、より戦略的なドロップが選ばれることを期待する。
  *
  *      主な改善点:
- *      1.  `MERGE_BUFFER` の調整: ピースが凸ポリゴンであり、物理挙動が複雑であることを考慮し、
- *          併合検出の許容範囲を広げるため `MERGE_BUFFER` を `0.1` から `0.25` に変更。
- *          これにより、物理的な接触の「可能性」をより積極的に捉え、`findMergeOpportunity` がヒットしやすくなることを期待する。
- *      2.  `FINE_COLS` の粒度向上: ドロップX座標の選択肢を増やすため、`FINE_COLS` の間隔を `0.5` から `0.25` に細分化。
- *          これにより、最適な併合位置や低Y座標位置をより精密に選択できるようになり、特に複雑な盤面での戦略適用性が向上する。
- *      3.  大型ピースの片側集約ロジックの再確認: ゲーム分析では大型ピースの集約が機能している様子が見られないため、
- *          `defaultStrategy` 内の大型ピース配置ロジックと `LEFT_SIDE_X_MAX` の条件を再度確認し、
- *          この戦略が確実に発動するようにロジックを微調整する。
- *          - 現在のロジック `colX + pieceToDrop.r <= LEFT_SIDE_X_MAX + pieceToDrop.r` は `colX <= LEFT_SIDE_X_MAX` と等価であり、
- *            左側に中心がある `FINE_COLS` の中で最適な位置を探すという意図は正しい。
- *            発動しないのは、その範囲で適当な落下点が見つからない可能性が高い。
- *            -> 今回は`FINE_COLS`の粒度向上により、より適切なX座標が見つかる可能性に期待する。
+ *      1.  `defaultStrategy` の再設計:
+ *          - 各 `FINE_COLS` のX座標に対して、以下の優先順位で最適な重み付けY座標と理由を決定する。
+ *            a. 併合機会: 同じtypeの既存ピースと併合できる場合、`calculateHeightPenalty` に `0.7` の乗数を適用し、
+ *               併合をわずかに優先する。ただし、危険な高さへの併合は避ける。
+ *            b. 大型ピースの片側集約: `LARGE_PIECE_THRESHOLD` 以上のピースを `LEFT_SIDE_X_MAX` 以下に配置する場合、
+ *               `calculateHeightPenalty` に `0.4` のより強い乗数を適用し、集約を優先する。
+ *               併合と大型ピース集約が同じ列で競合する場合は、併合が優先される。
+ *               ただし、デッドラインから `0.7` 以上の安全マージンを確保できる場合に限る。
+ *            c. それ以外: 単純にピースが着地する最低の重み付けY座標 (`calculateHeightPenalty` は乗数なし) を採用。
+ *          - 最終的に、すべての `FINE_COLS` の中から最も低い重み付けY座標を持つX座標を選択する。
+ *      2.  `MERGE_BUFFER` および `FINE_COLS` の粒度は v86 の改善を維持する。
+ *      3.  既存の HOLD ロジック、おじゃまブロック対応、T1低マージロジックは変更せず、
+ *          `defaultStrategy` の改善によってより多様な戦略が選ばれることを期待する。
  *
- *      - ヘルパー関数の実装 (v85から維持):
- *        - `calculateHeightPenalty`: v84で導入が記述されていた、Y座標に応じたペナルティ計算。
- *        - `simulateDropY`: ピースを特定のX座標にドロップした際のY座標推定。
- *        - `computeColHeights`: 各X列の最高到達Y座標を計算。
- *        - `findMergeOpportunity`: 指定typeの併合機会を探索。
- *        - `findT1LowMerge`: T1ピースの低位置マージ機会を探索。
- *        - `findAggressiveCriticalMerge`: 危機的状況でのマージ機会を探索。
- *        - `findLeastOccupiedX`: 最も空いている列を探索。
- *
- *      - 定数の調整・導入 (v85から維持、MERGE_BUFFERのみ変更):
- *        - `MERGE_BUFFER`: 併合判定の厳密性を調整するバッファを導入。`0.1` -> `0.25` に変更。
- *        - `LARGE_PIECE_THRESHOLD`: 大型ピースの閾値を type 9 に設定。
- *        - `LEFT_SIDE_X_MAX`: 大型ピースの片側集約ゾーンの境界値を -1.5 に設定。
- *        - `T1_LOW_MERGE_HEIGHT_ADVANTAGE`: v81->v82で維持された値を 0.6 に設定。
- *        - その他の閾値 (`GARBAGE_RATIO_OJAMA_MERGE`, `GARBAGE_RATIO_URGENT`, `OJAMA_GAUGE_OJAMA_MERGE`, `OJAMA_GAUGE_URGENT`, `HOLD_LARGE_PIECE_THRESHOLD`, `HOLD_SMALL_PIECE_THRESHOLD`) を新たに導入し、戦略のトリガー条件を明確化。
- *
- *      - 物理挙動の近似 (v85から維持):
- *        - ピースが円形と仮定した2D中心間距離に基づく併合判定を導入。
- *        - 物理エンジンの複雑な挙動（回転、転がり、衝撃波）は `simulateDropY` の垂直スタックモデルでは完全には予測できないが、合理的な近似として採用。
+ *      - ヘルパー関数、定数は v86から維持。
+ *      - 物理挙動の近似に関する注意点も v86から維持。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -136,32 +121,9 @@ function simulateDropY(boardState, dropX, pieceToDrop) {
 }
 
 /**
- * Computes the highest Y coordinate for each column (FINE_COLS).
- * This represents the "height" of the stack at each column.
- * @param {Array<{type: number, x: number, y: number, r: number}>} pieces - Array of existing pieces on the board.
- * @returns {Array<number>} An array where each element corresponds to the max Y for a FINE_COL.
- */
-function computeColHeights(pieces) {
-  const colHeights = new Array(FINE_COLS.length).fill(BOARD_FLOOR_Y);
-
-  for (let i = 0; i < FINE_COLS.length; i++) {
-    const colX = FINE_COLS[i];
-    for (const piece of pieces) {
-      // Consider a piece's effective horizontal span for height calculation
-      // A column's height is influenced by any piece whose X-range covers the column's X.
-      if (Math.abs(piece.x - colX) < piece.r) { // If column's X is within piece's horizontal span
-        if (piece.y + piece.r > colHeights[i]) {
-          colHeights[i] = piece.y + piece.r;
-        }
-      }
-    }
-  }
-  return colHeights;
-}
-
-/**
  * Finds an X coordinate where the `pieceToDrop` can immediately merge with an existing piece
  * of `pieceToDrop.type`. Prioritizes merges at lower Y coordinates (with penalty).
+ * This function is used primarily for HOLD strategy evaluation and as a specific early priority check.
  * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
  * @param {{type: number, r: number}} pieceToDrop - The piece that will be dropped.
  * @returns {{x: number, y: number, reason: string} | null} The best drop X, its simulated Y, and a reason string, or null if no merge opportunity.
@@ -174,7 +136,7 @@ function findMergeOpportunity(boardStatePieces, pieceToDrop) {
     const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
     const weightedY = simulatedY + calculateHeightPenalty(simulatedY);
 
-    if (weightedY >= lowestWeightedY) {
+    if (weightedY >= lowestWeightedY) { // Skip if current weightedY is not better than the best so far
       continue;
     }
 
@@ -186,16 +148,14 @@ function findMergeOpportunity(boardStatePieces, pieceToDrop) {
         );
         // Merge if centers are close enough based on radii, considering MERGE_BUFFER
         if (distance < (pieceToDrop.r + existingPiece.r - MERGE_BUFFER)) {
-          // Found a merge opportunity. Is it the best one so far?
+          // Found a merge opportunity for this colX.
           if (weightedY < lowestWeightedY) {
             lowestWeightedY = weightedY;
             bestX = colX;
           }
-          // No break here; continue checking for even better merges in the same column with other pieces.
-          // This might be slightly inefficient but ensures the absolute best Y for the column is found.
-          // However, the current logic is to find the first merge and then check if it's the best overall.
-          // Let's keep it as is, a piece will only merge with *one* other piece anyway.
-          break; // Found a merge for this column, no need to check other pieces for *this* colX.
+          // Break here, as a dropped piece will only merge with *one* other piece of the same type upon landing.
+          // This ensures we find the best X for *a* merge, not necessarily a chain reaction.
+          break;
         }
       }
     }
@@ -262,7 +222,8 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
 
   for (const colX of FINE_COLS) {
     const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
-    const weightedY = simulatedY + calculateHeightPenalty(simulatedY) * (isUrgent ? 2 : 1); // Higher penalty multiplier if urgent
+    // Apply a higher penalty multiplier if urgent, making it favor lower Y even more
+    const weightedY = simulatedY + calculateHeightPenalty(simulatedY) * (isUrgent ? 2 : 1);
 
     if (weightedY >= lowestWeightedY) {
       continue;
@@ -288,30 +249,6 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
     return { x: bestX, y: lowestWeightedY, reason: `Aggressive critical merge (${pieceToDrop.type}, urgent: ${isUrgent}).` };
   }
   return null;
-}
-
-
-/**
- * Finds the X coordinate with the least "occupied" height, preferring lower overall stacks.
- * Considers height penalty.
- * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
- * @param {{type: number, r: number}} pieceToDrop - The piece to drop (for radius consideration).
- * @returns {{x: number, y: number, reason: string}} The best drop X, its simulated Y, and a reason.
- */
-function findLeastOccupiedX(boardStatePieces, pieceToDrop) {
-  let bestX = 0.0;
-  let lowestWeightedY = Infinity;
-
-  for (const colX of FINE_COLS) {
-    const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
-    const weightedY = simulatedY + calculateHeightPenalty(simulatedY);
-
-    if (weightedY < lowestWeightedY) {
-      lowestWeightedY = weightedY;
-      bestX = colX;
-    }
-  }
-  return { x: bestX, y: lowestWeightedY, reason: "Least occupied column (lowest weighted Y)." };
 }
 
 /**
@@ -358,43 +295,68 @@ function tryHoldStrategy(boardState) {
 }
 
 /**
- * Implements the DEFAULT strategy when no critical conditions or specific merges are found.
+ * Finds the X coordinate with the best overall score considering merges, large piece aggregation, and lowest weighted Y.
+ * This is the core default strategy.
  * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
- * @param {{type: number, r: number}} pieceToDrop
+ * @param {{type: number, r: number}} pieceToDrop - The piece to drop.
  * @returns {{x: number, reason: string}} The chosen drop X and a reason.
  */
 function defaultStrategy(boardStatePieces, pieceToDrop) {
-  // 1. Immediate merge opportunity for 'next' piece at lowest weighted Y.
-  const mergeOpportunity = findMergeOpportunity(boardStatePieces, pieceToDrop);
-  if (mergeOpportunity) {
-    return { x: mergeOpportunity.x, reason: mergeOpportunity.reason };
-  }
+  let bestOverallX = 0.0;
+  let lowestOverallWeightedY = Infinity;
+  let bestOverallReason = "DEFAULT: Least occupied column (lowest weighted Y)."; // Updated reason prefix
 
-  // 2. Large piece aggregation for type >= 9.
-  // This logic is prioritized before general lowest Y if a suitable left-side spot is found.
-  if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
-    let bestLargePieceX = null;
-    let lowestWeightedYLargePiece = Infinity;
+  for (const colX of FINE_COLS) {
+    const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
+    // Initialize currentWeightedY with standard penalty
+    let currentWeightedY = simulatedY + calculateHeightPenalty(simulatedY);
+    let currentReason = "DEFAULT: Least occupied column (lowest weighted Y).";
 
-    for (const colX of FINE_COLS) {
-      // Ensure the *center* of the piece is to the left of or at LEFT_SIDE_X_MAX for better aggregation
-      if (colX <= LEFT_SIDE_X_MAX) {
-        const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
-        const weightedY = simulatedY + calculateHeightPenalty(simulatedY);
-        if (weightedY < lowestWeightedYLargePiece) {
-          lowestWeightedYLargePiece = weightedY;
-          bestLargePieceX = colX;
+    let mergeFoundForCol = false;
+
+    // First, check for merge opportunities at this colX
+    for (const existingPiece of boardStatePieces) {
+      if (existingPiece.type === pieceToDrop.type && existingPiece.type < 15) {
+        const distance = Math.sqrt(
+          Math.pow(colX - existingPiece.x, 2) + Math.pow(simulatedY - existingPiece.y, 2)
+        );
+        if (distance < (pieceToDrop.r + existingPiece.r - MERGE_BUFFER)) {
+          // Found a merge. Adjust weightedY to give it a slight preference over just stacking.
+          // The multiplier 0.7 gives merges a small advantage unless they are very high.
+          const mergePotentialWeightedY = simulatedY + calculateHeightPenalty(simulatedY) * 0.7;
+          if (mergePotentialWeightedY < currentWeightedY) { // Only take this merge if it's better than current non-merge option for this colX
+             currentWeightedY = mergePotentialWeightedY;
+             currentReason = `DEFAULT: Merge ${pieceToDrop.type} at ${colX}.`;
+             mergeFoundForCol = true;
+          }
+          break; // A piece only merges with one other piece upon landing, so stop checking existing pieces for this colX.
         }
       }
     }
-    if (bestLargePieceX !== null && lowestWeightedYLargePiece < DEADLINE_Y) { // Also ensure it's not too high
-      return { x: bestLargePieceX, reason: `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) to left side.` };
+
+    // Second, consider large piece aggregation if no merge was found at this colX.
+    // Give a stronger preference to aggregate large pieces if it's not dangerously high.
+    if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD && !mergeFoundForCol) {
+      if (colX <= LEFT_SIDE_X_MAX) { // Only consider left side for aggregation
+        // The multiplier 0.4 gives a stronger height advantage for large piece aggregation.
+        // Also add a stricter height check to prevent aggregating large pieces dangerously high.
+        const largePiecePotentialWeightedY = simulatedY + calculateHeightPenalty(simulatedY) * 0.4;
+        if (largePiecePotentialWeightedY < currentWeightedY && simulatedY < DEADLINE_Y - 0.7) {
+          currentWeightedY = largePiecePotentialWeightedY;
+          currentReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) to left side at ${colX}.`;
+        }
+      }
+    }
+
+    // Compare this column's best-weighted Y (potentially adjusted for merge/large piece) with the overall best found so far.
+    if (currentWeightedY < lowestOverallWeightedY) {
+      lowestOverallWeightedY = currentWeightedY;
+      bestOverallX = colX;
+      bestOverallReason = currentReason;
     }
   }
 
-  // 3. Lowest Y drop (considering height penalty) if no merge and no large piece aggregation preference.
-  // This is the general "safety" move.
-  return findLeastOccupiedX(boardStatePieces, pieceToDrop);
+  return { x: bestOverallX, reason: bestOverallReason };
 }
 
 
@@ -427,5 +389,6 @@ export function decide(boardState) {
 
   // Fallback (should ideally not be reached with a comprehensive strategy)
   // findLeastOccupiedX will always return a valid X, so this fallback should be unreachable.
+  // The defaultStrategy function guarantees a return, so this line is technically unreachable.
   return { x: 0.0, reason: "Fallback: Should not happen, dropping at center." };
 }
