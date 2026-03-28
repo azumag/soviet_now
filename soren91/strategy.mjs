@@ -1,23 +1,26 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v90)
+ * strategy.mjs - ドロップ位置決定戦略 (v91)
  *
- * v90: v89のゲーム分析で「DEFAULT: Least occupied column (lowest weighted Y).」が常に選択される問題に対応するため、
- *      defaultStrategyにおける併合機会と大型ピース集約の優先度を「スコアリングメカニズム」に根本的に変更。
- *      これにより、単なる高さの低さだけでなく、戦略的な配置に明確なボーナスを付与し、能動的な挙動を促す。
- *      また、物理挙動の不確実性を考慮し、併合判定の許容誤差を微増。
+ * v91: v90をベースに、ゲーム分析と戦略原則（特に「先読み」「大型ピースの片側集約」「連鎖設計」）をより深く反映させるための改善。
+ *      物理エンジンの不確実性に対応しつつ、より能動的・計画的なピース配置を促すためのスコアリング調整を行う。
  *
  *      主な改善点:
- *      1.  `defaultStrategy` をスコアリングベースに再構築:
- *          - 各ドロップX座標に対して総合スコアを計算し、最も高いスコアのX座標を選択するように変更。
- *          - `BASE_Y_PREFERENCE_WEIGHT`: 低いY座標を明確に評価（高いスコア）。
- *          - `HEIGHT_PENALTY_WEIGHT`: 高いY座標に対するペナルティをスコアから減算。
- *          - `MERGE_BONUS_SCORE`: 併合機会に対して大きなボーナススコアを付与。
- *          - `LARGE_PIECE_AGGREGATION_BONUS_SCORE`: 大型ピースの片側集約に対してボーナススコアを付与。
- *          - これにより、併合や大型ピースの計画的な配置が、単に空いている場所を探すよりも優先されることを保証。
- *      2.  併合判定の許容誤差 (`MERGE_BUFFER`) を調整:
- *          - 物理挙動の複雑さ（凸ポリゴン、衝撃波）を考慮し、`MERGE_BUFFER` を `0.25` から `0.35` に微増。
- *          - 併合機会をより多く検出できるようにする。
- *      3.  ヘルパー関数、定数は v89から維持（一部名称変更）。
+ *      1.  `nextPieces[1]` (次に降ってくるピース) を考慮した**先読み（Look-ahead）ボーナス**を追加:
+ *          - 現在のピースを置いた後に、次に降るピースがその場所に隣接して併合できる場合にボーナスを付与。
+ *          - これにより、単発の併合だけでなく、連続的な併合機会を創出する配置を奨励する。
+ *      2.  **大型ピース集約の動的化** (`DYNAMIC_AGGREGATION_BONUS_SCORE`):
+ *          - `LEFT_SIDE_X_MAX` のような静的な左右どちらかへの集約ではなく、既に配置されている大型ピースの重心X座標に
+ *            現在の大型ピースを近づけることでボーナスを付与。これにより、盤面状況に応じた柔軟な集約を促す。
+ *      3.  **併合ボーナスの type スケーリング** (`MERGE_BONUS_BASE_SCORE`):
+ *          - 単一の併合ボーナスではなく、併合によって生成されるピースの type が大きいほど高いボーナスを与えるように調整。
+ *          - 高い type の併合は盤面クリア効果も高く、おじゃまを多く送れるため、戦略的価値が高い。
+ *      4.  **おじゃまブロック緊急時の低Y併合ボーナス強化** (`GARBAGE_LOW_MERGE_URGENT_BONUS`):
+ *          - `GARBAGE_RATIO_URGENT` や `OJAMA_GAUGE_URGENT` のような非常に危険な状況下での併合機会を、より強く優先させるため、
+ *            低Yでの併合ボーナスを大幅に強化。これにより、緊急時のおじゃまクリア能力向上を図る。
+ *      5.  既存のスコアリング重みの微調整:
+ *          - `defaultStrategy` 内の各種ボーナス/ペナルティのバランスを調整し、戦略的行動が「最低Y優先」だけでなく、
+ *            より積極的に選択されるように再調整。
+ *
  *      - 物理挙動の近似に関する注意点も維持。
  */
 
@@ -34,7 +37,7 @@ const PENALTY_WARN_CENTER_Y = 0.8;       // The center Y coordinate where height
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.35; // Adjusted from 0.25 to 0.35 to increase merge detection tolerance (v90)
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
-const LEFT_SIDE_X_MAX = -1.5; // Large pieces are aggregated to the left of this X.
+// LEFT_SIDE_X_MAX is removed for dynamic aggregation
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.6; // Bonus for T1 merges at low Y.
 
 // Garbage / Critical Mode Thresholds
@@ -42,16 +45,18 @@ const GARBAGE_RATIO_OJAMA_MERGE = 0.15; // When garbage ratio exceeds this, prio
 const GARBAGE_RATIO_URGENT = 0.3;       // When garbage ratio is very high, aggressive merges.
 const OJAMA_GAUGE_OJAMA_MERGE = 0.3;    // When ojama gauge is high, prioritize merges.
 const OJAMA_GAUGE_URGENT = 0.5;         // When ojama gauge is very high, aggressive merges.
-const GARBAGE_LOW_MERGE_BONUS = 1.0;    // Bonus for merges below board center when urgent garbage.
+const GARBAGE_LOW_MERGE_BONUS = 1.0;    // Small bonus for low merges when not urgent garbage.
+const GARBAGE_LOW_MERGE_URGENT_BONUS = 50.0; // Significant bonus for low merges when urgent garbage.
 
 // HOLD Strategy Thresholds
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
-// Default Strategy Scoring Weights (v90)
+// Default Strategy Scoring Weights (v91 adjustments)
 const HEIGHT_PENALTY_WEIGHT = 1.0; // How much to penalize calculated height penalty (higher is worse)
-const MERGE_BONUS_SCORE = 100.0; // Significant bonus for merge opportunities
-const LARGE_PIECE_AGGREGATION_BONUS_SCORE = 50.0; // Bonus for aggregating large pieces
+const MERGE_BONUS_BASE_SCORE = 80.0; // Base for scaling merge bonus by piece type
+const DYNAMIC_AGGREGATION_BONUS_SCORE = 40.0; // Bonus for aggregating large pieces near centroid
+const LOOKAHEAD_MERGE_BONUS_SCORE = 30.0; // Bonus for a merge opportunity for nextPieces[1]
 const BASE_Y_PREFERENCE_WEIGHT = 5.0; // Preference for lower Y (higher score for lower Y)
 
 
@@ -205,8 +210,11 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
 
     // Add bonus for low merges when urgent garbage is present
     if (isUrgent && simulatedY < 0.0) {
-      weightedY -= GARBAGE_LOW_MERGE_BONUS;
+      weightedY -= GARBAGE_LOW_MERGE_URGENT_BONUS; // Use the new, higher urgent bonus
+    } else if (simulatedY < 0.0) {
+      weightedY -= GARBAGE_LOW_MERGE_BONUS; // Small bonus for low merges if not urgent
     }
+
 
     if (weightedY >= lowestWeightedY) {
       continue;
@@ -273,16 +281,36 @@ function tryHoldStrategy(boardState) {
 }
 
 /**
+ * Calculates the average X coordinate of existing large pieces to guide aggregation.
+ * @param {Array<{type: number, x: number, y: number, r: number}>} pieces - Array of pieces on the board.
+ * @returns {number} The average X coordinate of large pieces, or 0 if none exist.
+ */
+function calculateLargePieceCentroid(pieces) {
+  let totalX = 0;
+  let largePieceCount = 0;
+  for (const p of pieces) {
+    if (p.type >= LARGE_PIECE_THRESHOLD) {
+      totalX += p.x;
+      largePieceCount++;
+    }
+  }
+  return largePieceCount > 0 ? totalX / largePieceCount : 0; // Default to center if no large pieces
+}
+
+/**
  * Finds the X coordinate with the best overall score considering merges, large piece aggregation, and lowest weighted Y.
- * This is the core default strategy. (Refactored to use a scoring mechanism in v90)
+ * This is the core default strategy. (Refactored to use a scoring mechanism in v90, improved in v91)
  * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
  * @param {{type: number, r: number}} pieceToDrop - The piece to drop.
+ * @param {Array<{type: number, r: number}> | undefined} nextPieces - Array of next pieces for look-ahead (nextPieces[1] specifically).
  * @returns {{x: number, reason: string}} The chosen drop X and a reason.
  */
-function defaultStrategy(boardStatePieces, pieceToDrop) {
+function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces) {
   let bestOverallX = 0.0;
   let highestOverallScore = -Infinity; // We want to maximize the score
   let bestOverallReason = "DEFAULT: Least occupied column (lowest weighted Y).";
+
+  const largePieceCentroidX = calculateLargePieceCentroid(boardStatePieces);
 
   for (const colX of FINE_COLS) {
     const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
@@ -295,42 +323,62 @@ function defaultStrategy(boardStatePieces, pieceToDrop) {
     let currentScore = 0;
     let columnReason = "DEFAULT: Least occupied column (lowest weighted Y).";
 
-    // 1. Base preference for lower Y: lower Y means higher score.
+    // 1. Base preference for lower Y & Height Penalty
     // (GAME_OVER_TOP_Y - simulatedY) gives a higher positive number for lower Y.
     currentScore += (GAME_OVER_TOP_Y - simulatedY) * BASE_Y_PREFERENCE_WEIGHT;
-
-    // 2. Height Penalty: subtract the calculated penalty.
     currentScore -= calculateHeightPenalty(simulatedY) * HEIGHT_PENALTY_WEIGHT;
 
-    // 3. Merge Opportunity Bonus
-    let mergeFound = false;
+    // 2. Merge Opportunity Bonus (scaled by type)
+    let mergeFoundForNext = false;
     for (const existingPiece of boardStatePieces) {
       if (existingPiece.type === pieceToDrop.type && existingPiece.type < 15) {
         const distance = Math.sqrt(
           Math.pow(colX - existingPiece.x, 2) + Math.pow(simulatedY - existingPiece.y, 2)
         );
         if (distance < (pieceToDrop.r + existingPiece.r - MERGE_BUFFER)) {
-          mergeFound = true;
+          mergeFoundForNext = true;
+          // Scale merge bonus by type: higher type merges are more valuable
+          currentScore += MERGE_BONUS_BASE_SCORE * (1 + (pieceToDrop.type / 15));
+          columnReason = `DEFAULT: Merge ${pieceToDrop.type} at ${colX}.`;
           break;
         }
       }
     }
-    if (mergeFound) {
-      currentScore += MERGE_BONUS_SCORE;
-      columnReason = `DEFAULT: Merge ${pieceToDrop.type} at ${colX}.`;
+
+    // 3. Dynamic Large Piece Aggregation Bonus
+    if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
+      // Calculate distance to the centroid of other large pieces. Closer is better.
+      const distanceToCentroid = Math.abs(colX - largePieceCentroidX);
+      // Bonus scales down from DYNAMIC_AGGREGATION_BONUS_SCORE as distance increases
+      const aggregationBonus = DYNAMIC_AGGREGATION_BONUS_SCORE * (1 - Math.min(1, distanceToCentroid / WALL_MARGIN));
+      currentScore += aggregationBonus;
+      if (!mergeFoundForNext) { // Only assign this reason if no merge was found, merge is higher priority.
+         columnReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) near centroid at ${colX}.`;
+      }
     }
 
-    // 4. Large Piece Aggregation Bonus
-    if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
-      if (colX <= LEFT_SIDE_X_MAX) {
-        // Stricter height check for large piece aggregation (don't aggregate if already too high)
-        if (simulatedY < PENALTY_CRITICAL_CENTER_Y - 0.7) {
-          currentScore += LARGE_PIECE_AGGREGATION_BONUS_SCORE;
-          if (!mergeFound) { // Only assign this reason if no merge was found, merge is higher priority.
-             columnReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) to left side at ${colX}.`;
-          }
+    // 4. Look-ahead Bonus for nextPieces[1]
+    if (nextPieces && nextPieces.length > 1 && nextPieces[1]) {
+        const next1Piece = nextPieces[1];
+        // Create a hypothetical board state by adding the current pieceToDrop at simulatedY
+        const hypotheticalPieces = [...boardStatePieces, { type: pieceToDrop.type, x: colX, y: simulatedY, r: pieceToDrop.r }];
+
+        // Simulate nextPieces[1] landing at the same colX on this hypothetical board
+        const simulatedY_next1 = simulateDropY({ pieces: hypotheticalPieces }, colX, next1Piece);
+
+        // Check for merge opportunity for nextPieces[1] in the hypothetical board
+        for (const existingPiece of hypotheticalPieces) {
+            if (existingPiece.type === next1Piece.type && existingPiece.type < 15) {
+                const distance = Math.sqrt(
+                    Math.pow(colX - existingPiece.x, 2) + Math.pow(simulatedY_next1 - existingPiece.y, 2)
+                );
+                if (distance < (next1Piece.r + existingPiece.r - MERGE_BUFFER)) {
+                    currentScore += LOOKAHEAD_MERGE_BONUS_SCORE;
+                    // No need to change columnReason here, as it's a secondary bonus
+                    break;
+                }
+            }
         }
-      }
     }
 
     // Compare with highest score found so far
@@ -346,7 +394,7 @@ function defaultStrategy(boardStatePieces, pieceToDrop) {
 
 
 export function decide(boardState) {
-  const { pieces, next, hold, canHold, garbage } = boardState;
+  const { pieces, next, hold, canHold, garbage, nextPieces } = boardState; // Destructure nextPieces
 
   // --- Priority 1: HOLD Logic ---
   let action = tryHoldStrategy(boardState);
@@ -355,12 +403,15 @@ export function decide(boardState) {
   // --- Priority 2: CRITICAL Mode (Garbage) ---
   // Triggered by high garbage ratio or gauge.
   // Prioritize aggressive merges.
-  if (garbage.gauge >= OJAMA_GAUGE_URGENT || garbage.ratio > GARBAGE_RATIO_URGENT) { // GBG_URGENT
-    action = findAggressiveCriticalMerge(pieces, next, true); // true for urgent
+  const isUrgentGarbage = garbage.gauge >= OJAMA_GAUGE_URGENT || garbage.ratio > GARBAGE_RATIO_URGENT;
+  const isOjamaMerge = garbage.gauge >= OJAMA_GAUGE_OJAMA_MERGE || garbage.ratio > GARBAGE_RATIO_OJAMA_MERGE;
+
+  if (isUrgentGarbage) {
+    action = findAggressiveCriticalMerge(pieces, next, true);
     if (action) return action;
   }
-  if (garbage.gauge >= OJAMA_GAUGE_OJAMA_MERGE || garbage.ratio > GARBAGE_RATIO_OJAMA_MERGE) { // OJAMA_MERGE
-    action = findAggressiveCriticalMerge(pieces, next, false); // false for less urgent
+  if (isOjamaMerge) {
+    action = findAggressiveCriticalMerge(pieces, next, false);
     if (action) return action;
   }
 
@@ -369,7 +420,7 @@ export function decide(boardState) {
   if (action) return action;
 
   // --- Priority 4: DEFAULT Strategy ---
-  action = defaultStrategy(pieces, next);
+  action = defaultStrategy(pieces, next, nextPieces); // Pass nextPieces for look-ahead
   if (action) return action;
 
   // Fallback (should ideally not be reached with a comprehensive strategy)
