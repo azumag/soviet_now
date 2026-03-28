@@ -9,6 +9,7 @@ Game Overview:
 
       Decision Logic (11 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
+         1.5. NEAR merge deadline risk - Penalty for risky NEAR merges at deadline (v366)
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
          4. Left-right balance correction - Bonus for correcting piece count bias
@@ -56,6 +57,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v366: NEAR merge risk penalty at deadline — reduce piece_count accumulation from failed NEAR merges
+     # Worst game T50-52: 3 consecutive NEAR at deadline_crossed, all fail (delta=0), pc 32->35.
+     # Penalty: deadline_crossed && merge_grade==NEAR && landing_y>0 → -landing_y*300.
+     # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at deadline
+     # refs: game_history/20260328_102644_score0654.jsonl, game_history/20260328_101741_score2213.jsonl,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, strategy_versions/protected_e6f534c37e28
      # v365: remove duplicated axis 9.5 (v334 block) — fix double-bonus bug
      # axis 9.5 existed twice: old v334 block (lines ~1039-1070) and v337 block (lines ~1087-1131).
      # Both fired for non-russia cases, doubling SAME_TYPE_STACK_MERGE_PRIORITY(+600) and
@@ -500,6 +507,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- v366: NEAR merge risk penalty at deadline -----
+        # postmortem: piece_count accumulation is the key failure predictor.
+        # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail
+        # (score_delta=0), piece_count grows 32->35. Best game succeeds with merges.
+        # NEAR merge success rate is 68.5%. At deadline, failed NEAR adds a high piece
+        # with no benefit, worsening the already dangerous board state.
+        # This penalty reduces NEAR merge incentive proportionally to landing_y when
+        # deadline is crossed, making the strategy prefer DIRECT merges (unchanged)
+        # or lower-position NEAR merges over risky high-position NEAR at deadline.
+        # Does NOT affect: DIRECT merges, NEAR when !deadline_crossed, or NO merge.
+        # postmortem constraint: combines landing_y with deadline state (not landing_y-only).
+        # refs: game_history/20260328_102644_score0654.jsonl T49-58 (NEAR fails, pc 32->38),
+        #       game_history/20260328_101741_score2213.jsonl T103-112 (merge succeeds),
+        #       tmp/state/last_rollback_postmortem.md (piece_count predictor),
+        #       tmp/batch_summary.txt (low-score 5.4% NEAR_HIGH_LAYER vs high-score 3.9%)
+        # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at deadline
+        if deadline_crossed and merge_grade == "NEAR" and landing_y > 0:
+            near_risk_penalty = landing_y * 300.0
+            score -= near_risk_penalty
+            reasons.append("NEAR_DEADLINE_RISK")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
