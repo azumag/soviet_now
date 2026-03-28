@@ -1,14 +1,18 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v94)
+ * strategy.mjs - ドロップ位置決定戦略 (v95)
  *
- * v94: v93をベースに、ゲーム分析（特に max_y が高すぎる問題）と戦略原則をより深く反映させるための改善。
+ * v95: v94をベースに、ゲーム分析（特に max_y が高すぎる問題）と戦略原則をより深く反映させるための改善。
  *      物理エンジンの不確実性に対応しつつ、より能動的・計画的なピース配置を促すためのスコアリング調整を継続する。
  *
  *      主な改善点:
  *      1.  **高さ管理の抜本的強化のさらなる強化**:
- *          - `HEIGHT_PENALTY_WEIGHT` をさらに引き上げ、高さに対するペナルティの影響力を増大。
- *          - `calculateHeightPenalty` のペナルティ乗数をさらに増加させ、Y座標がデッドラインに近づくほど急峻なペナルティとなるように調整。
+ *          - `HEIGHT_PENALTY_WEIGHT` をさらに引き上げ、高さに対するペナルティの影響力を増大（2.5 → 4.0）。
+ *          - `calculateHeightPenalty` のペナルティ乗数をさらに増加させ、Y座標がデッドラインに近づくほど急峻なペナルティとなるように調整（5000 → 12000）。
  *          - 分析結果から、既存の高さ管理強化でもmax_yがデッドラインを超えるケースが見られたため、さらなるペナルティ強化が必要と判断。
+ *
+ *      2.  **T1 Low Merge ボーナスの強化**:
+ *          - `T1_LOW_MERGE_HEIGHT_ADVANTAGE` のボーナス乗数を引き上げ（0.6 → 1.0）。
+ *          - ガーベージ除去に貢献する低YでのT1マージをより強く奨励する。
  *
  *      - 物理挙動の近似に関する注意点も維持。
  */
@@ -26,7 +30,7 @@ const PENALTY_WARN_CENTER_Y = 0.8;       // The center Y coordinate where height
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.4; // Adjusted from 0.35 to 0.4 for increased merge detection tolerance (v92)
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
-const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.6; // Bonus for T1 merges at low Y.
+const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.0; // Increased from 0.6. Bonus for T1 merges at low Y.
 
 // Garbage / Critical Mode Thresholds
 const GARBAGE_RATIO_OJAMA_MERGE = 0.15; // When garbage ratio exceeds this, prioritize merges.
@@ -40,8 +44,8 @@ const GARBAGE_LOW_MERGE_URGENT_BONUS = 100.0; // Increased from 75.0
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
-// Default Strategy Scoring Weights (v94 adjustments)
-const HEIGHT_PENALTY_WEIGHT = 2.5; // Increased from 1.5 to give height much more influence
+// Default Strategy Scoring Weights (v95 adjustments)
+const HEIGHT_PENALTY_WEIGHT = 4.0; // Increased from 2.5 to give height much more influence
 const MERGE_BONUS_BASE_SCORE = 120.0; // Keep as v92, balance with increased penalties/other bonuses
 const DYNAMIC_AGGREGATION_BONUS_SCORE = 80.0; // Keep as v92
 const LOOKAHEAD_MERGE_BONUS_SCORE = 50.0; // Keep as v92
@@ -60,12 +64,12 @@ function calculateHeightPenalty(y) {
     return 0;
   }
   if (y >= PENALTY_CRITICAL_CENTER_Y) {
-    return 10000; // Effectively game over if piece center is at or above critical Y
+    return 100000; // Effectively game over if piece center is at or above critical Y, greatly increased to reflect criticality
   }
   // Linear penalty between WARN_CENTER_Y and CRITICAL_CENTER_Y, then cubic exponential
   const linearRange = PENALTY_CRITICAL_CENTER_Y - PENALTY_WARN_CENTER_Y;
   const normalizedY = (y - PENALTY_WARN_CENTER_Y) / linearRange; // 0 to 1 in the warn range
-  return Math.pow(normalizedY, 3) * 5000; // Adjusted from 3000 to 5000 for significantly higher impact
+  return Math.pow(normalizedY, 3) * 12000; // Adjusted from 5000 to 12000 for significantly higher impact
 }
 
 /**
