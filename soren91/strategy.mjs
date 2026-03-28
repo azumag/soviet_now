@@ -1,25 +1,20 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v91)
+ * strategy.mjs - ドロップ位置決定戦略 (v92)
  *
- * v91: v90をベースに、ゲーム分析と戦略原則（特に「先読み」「大型ピースの片側集約」「連鎖設計」）をより深く反映させるための改善。
- *      物理エンジンの不確実性に対応しつつ、より能動的・計画的なピース配置を促すためのスコアリング調整を行う。
+ * v92: v91をベースに、ゲーム分析と戦略原則（特に「ガベージブロックへの対応強化」「戦略的ボーナスの影響力向上」）をより深く反映させるための改善。
+ *      物理エンジンの不確実性に対応しつつ、より能動的・計画的なピース配置を促すためのスコアリング調整を継続する。
  *
  *      主な改善点:
- *      1.  `nextPieces[1]` (次に降ってくるピース) を考慮した**先読み（Look-ahead）ボーナス**を追加:
- *          - 現在のピースを置いた後に、次に降るピースがその場所に隣接して併合できる場合にボーナスを付与。
- *          - これにより、単発の併合だけでなく、連続的な併合機会を創出する配置を奨励する。
- *      2.  **大型ピース集約の動的化** (`DYNAMIC_AGGREGATION_BONUS_SCORE`):
- *          - `LEFT_SIDE_X_MAX` のような静的な左右どちらかへの集約ではなく、既に配置されている大型ピースの重心X座標に
- *            現在の大型ピースを近づけることでボーナスを付与。これにより、盤面状況に応じた柔軟な集約を促す。
- *      3.  **併合ボーナスの type スケーリング** (`MERGE_BONUS_BASE_SCORE`):
- *          - 単一の併合ボーナスではなく、併合によって生成されるピースの type が大きいほど高いボーナスを与えるように調整。
- *          - 高い type の併合は盤面クリア効果も高く、おじゃまを多く送れるため、戦略的価値が高い。
- *      4.  **おじゃまブロック緊急時の低Y併合ボーナス強化** (`GARBAGE_LOW_MERGE_URGENT_BONUS`):
- *          - `GARBAGE_RATIO_URGENT` や `OJAMA_GAUGE_URGENT` のような非常に危険な状況下での併合機会を、より強く優先させるため、
- *            低Yでの併合ボーナスを大幅に強化。これにより、緊急時のおじゃまクリア能力向上を図る。
- *      5.  既存のスコアリング重みの微調整:
- *          - `defaultStrategy` 内の各種ボーナス/ペナルティのバランスを調整し、戦略的行動が「最低Y優先」だけでなく、
- *            より積極的に選択されるように再調整。
+ *      1.  **ガベージブロック対応の強化**:
+ *          - `decide` 関数の優先順位付けを見直し、クリティカルなガベージ状況 (`isUrgentGarbage` / `isOjamaMerge`) では
+ *            `findAggressiveCriticalMerge` を優先的に試みる。
+ *          - `defaultStrategy` 内でもガベージ状況を認識し、マージボーナスに加えて、マージが見つからない場合でも
+ *            低いY座標への配置に対して追加のボーナスを付与するように調整。これにより、ガベージ下の盤面クリアをより積極的に奨励する。
+ *          - `GARBAGE_LOW_MERGE_BONUS` と `GARBAGE_LOW_MERGE_URGENT_BONUS` の重みをさらに増加。
+ *      2.  **戦略的ボーナスの影響力向上**:
+ *          - `MERGE_BONUS_BASE_SCORE`, `DYNAMIC_AGGREGATION_BONUS_SCORE`, `LOOKAHEAD_MERGE_BONUS_SCORE` の値を全体的に引き上げ。
+ *          - `HEIGHT_PENALTY_WEIGHT` をわずかに減らし、高さ管理の厳しさを維持しつつ、他の戦略的ボーナスが選択に与える影響力を増大させる。
+ *          - `MERGE_BUFFER` を `0.4` に調整し、物理的な接触の不確実性に対する許容度を向上。
  *
  *      - 物理挙動の近似に関する注意点も維持。
  */
@@ -35,9 +30,8 @@ const PENALTY_CRITICAL_CENTER_Y = 2.0;   // The center Y coordinate where height
 const PENALTY_WARN_CENTER_Y = 0.8;       // The center Y coordinate where height penalty starts.
 
 // Strategy-specific constants (General)
-const MERGE_BUFFER = 0.35; // Adjusted from 0.25 to 0.35 to increase merge detection tolerance (v90)
+const MERGE_BUFFER = 0.4; // Adjusted from 0.35 to 0.4 for increased merge detection tolerance (v92)
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
-// LEFT_SIDE_X_MAX is removed for dynamic aggregation
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.6; // Bonus for T1 merges at low Y.
 
 // Garbage / Critical Mode Thresholds
@@ -45,18 +39,18 @@ const GARBAGE_RATIO_OJAMA_MERGE = 0.15; // When garbage ratio exceeds this, prio
 const GARBAGE_RATIO_URGENT = 0.3;       // When garbage ratio is very high, aggressive merges.
 const OJAMA_GAUGE_OJAMA_MERGE = 0.3;    // When ojama gauge is high, prioritize merges.
 const OJAMA_GAUGE_URGENT = 0.5;         // When ojama gauge is very high, aggressive merges.
-const GARBAGE_LOW_MERGE_BONUS = 1.0;    // Small bonus for low merges when not urgent garbage.
-const GARBAGE_LOW_MERGE_URGENT_BONUS = 50.0; // Significant bonus for low merges when urgent garbage.
+const GARBAGE_LOW_MERGE_BONUS = 2.0;    // Increased from 1.0 (will be multiplied more in defaultStrategy)
+const GARBAGE_LOW_MERGE_URGENT_BONUS = 75.0; // Increased from 50.0 (will be multiplied more in defaultStrategy)
 
 // HOLD Strategy Thresholds
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
-// Default Strategy Scoring Weights (v91 adjustments)
-const HEIGHT_PENALTY_WEIGHT = 1.0; // How much to penalize calculated height penalty (higher is worse)
-const MERGE_BONUS_BASE_SCORE = 80.0; // Base for scaling merge bonus by piece type
-const DYNAMIC_AGGREGATION_BONUS_SCORE = 40.0; // Bonus for aggregating large pieces near centroid
-const LOOKAHEAD_MERGE_BONUS_SCORE = 30.0; // Bonus for a merge opportunity for nextPieces[1]
+// Default Strategy Scoring Weights (v92 adjustments)
+const HEIGHT_PENALTY_WEIGHT = 0.8; // Reduced from 1.0 to give other bonuses more influence
+const MERGE_BONUS_BASE_SCORE = 120.0; // Increased from 80.0
+const DYNAMIC_AGGREGATION_BONUS_SCORE = 80.0; // Increased from 40.0
+const LOOKAHEAD_MERGE_BONUS_SCORE = 50.0; // Increased from 30.0
 const BASE_Y_PREFERENCE_WEIGHT = 5.0; // Preference for lower Y (higher score for lower Y)
 
 
@@ -127,7 +121,8 @@ function findMergeOpportunity(boardStatePieces, pieceToDrop) {
 
     // Check for merge with existing pieces of the same type
     for (const existingPiece of boardStatePieces) {
-      if (existingPiece.type === pieceToDrop.type && existingPiece.type < 15) { // Type 15 merges *and disappears*, so avoid planning merges for it unless it's critical.
+      // Type 15 merges *and disappears*, so avoid planning merges for it unless it's critical.
+      if (existingPiece.type === pieceToDrop.type && existingPiece.type < 15) {
         const distance = Math.sqrt(
           Math.pow(colX - existingPiece.x, 2) + Math.pow(simulatedY - existingPiece.y, 2)
         );
@@ -194,6 +189,7 @@ function findT1LowMerge(boardStatePieces, pieceToDrop) {
 /**
  * Finds aggressive merge opportunities in critical situations (high garbage).
  * Prioritizes any merge opportunity that can occur at a lower Y.
+ * This function focuses *only* on finding a merge, letting defaultStrategy handle low Y bonuses if no merge is found.
  * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
  * @param {{type: number, r: number}} pieceToDrop - The piece to drop.
  * @param {boolean} isUrgent - True if in an extremely urgent garbage situation.
@@ -206,15 +202,8 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
   for (const colX of FINE_COLS) {
     const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
     // Apply a higher penalty multiplier if urgent, making it favor lower Y even more
-    let weightedY = simulatedY + calculateHeightPenalty(simulatedY) * (isUrgent ? 2 : 1);
-
-    // Add bonus for low merges when urgent garbage is present
-    if (isUrgent && simulatedY < 0.0) {
-      weightedY -= GARBAGE_LOW_MERGE_URGENT_BONUS; // Use the new, higher urgent bonus
-    } else if (simulatedY < 0.0) {
-      weightedY -= GARBAGE_LOW_MERGE_BONUS; // Small bonus for low merges if not urgent
-    }
-
+    // The explicit low Y merge bonus will be handled by defaultStrategy, here we focus on finding ANY merge.
+    let weightedY = simulatedY + calculateHeightPenalty(simulatedY) * (isUrgent ? 1.2 : 1); // Slightly increased penalty influence for urgent.
 
     if (weightedY >= lowestWeightedY) {
       continue;
@@ -299,13 +288,15 @@ function calculateLargePieceCentroid(pieces) {
 
 /**
  * Finds the X coordinate with the best overall score considering merges, large piece aggregation, and lowest weighted Y.
- * This is the core default strategy. (Refactored to use a scoring mechanism in v90, improved in v91)
+ * This is the core default strategy, now also garbage-aware.
  * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
  * @param {{type: number, r: number}} pieceToDrop - The piece to drop.
  * @param {Array<{type: number, r: number}> | undefined} nextPieces - Array of next pieces for look-ahead (nextPieces[1] specifically).
+ * @param {boolean} isUrgentGarbage - True if in an extremely urgent garbage situation.
+ * @param {boolean} isOjamaMerge - True if in a general ojama merge situation.
  * @returns {{x: number, reason: string}} The chosen drop X and a reason.
  */
-function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces) {
+function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarbage, isOjamaMerge) {
   let bestOverallX = 0.0;
   let highestOverallScore = -Infinity; // We want to maximize the score
   let bestOverallReason = "DEFAULT: Least occupied column (lowest weighted Y).";
@@ -322,14 +313,13 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces) {
 
     let currentScore = 0;
     let columnReason = "DEFAULT: Least occupied column (lowest weighted Y).";
+    let mergeFoundForNext = false; // Track if a merge is found for the current piece
 
     // 1. Base preference for lower Y & Height Penalty
-    // (GAME_OVER_TOP_Y - simulatedY) gives a higher positive number for lower Y.
     currentScore += (GAME_OVER_TOP_Y - simulatedY) * BASE_Y_PREFERENCE_WEIGHT;
     currentScore -= calculateHeightPenalty(simulatedY) * HEIGHT_PENALTY_WEIGHT;
 
-    // 2. Merge Opportunity Bonus (scaled by type)
-    let mergeFoundForNext = false;
+    // 2. Merge Opportunity Bonus (scaled by type, now garbage-aware)
     for (const existingPiece of boardStatePieces) {
       if (existingPiece.type === pieceToDrop.type && existingPiece.type < 15) {
         const distance = Math.sqrt(
@@ -337,27 +327,36 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces) {
         );
         if (distance < (pieceToDrop.r + existingPiece.r - MERGE_BUFFER)) {
           mergeFoundForNext = true;
-          // Scale merge bonus by type: higher type merges are more valuable
-          currentScore += MERGE_BONUS_BASE_SCORE * (1 + (pieceToDrop.type / 15));
-          columnReason = `DEFAULT: Merge ${pieceToDrop.type} at ${colX}.`;
+          let mergeBonus = MERGE_BONUS_BASE_SCORE * (1 + (pieceToDrop.type / 15));
+          if (isUrgentGarbage) {
+              mergeBonus *= 2.0; // Double merge bonus in urgent garbage
+              columnReason = `DEFAULT: Merge ${pieceToDrop.type} at ${colX} (Urgent Garbage Merge).`;
+          } else if (isOjamaMerge) {
+              mergeBonus *= 1.5; // 1.5x merge bonus in ojama merge
+              columnReason = `DEFAULT: Merge ${pieceToDrop.type} at ${colX} (Ojama Merge).`;
+          } else {
+              columnReason = `DEFAULT: Merge ${pieceToDrop.type} at ${colX}.`;
+          }
+          currentScore += mergeBonus;
           break;
         }
       }
     }
 
-    // 3. Dynamic Large Piece Aggregation Bonus
+    // 3. Dynamic Large Piece Aggregation Bonus (Increased weight)
     if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
       // Calculate distance to the centroid of other large pieces. Closer is better.
       const distanceToCentroid = Math.abs(colX - largePieceCentroidX);
       // Bonus scales down from DYNAMIC_AGGREGATION_BONUS_SCORE as distance increases
       const aggregationBonus = DYNAMIC_AGGREGATION_BONUS_SCORE * (1 - Math.min(1, distanceToCentroid / WALL_MARGIN));
       currentScore += aggregationBonus;
-      if (!mergeFoundForNext) { // Only assign this reason if no merge was found, merge is higher priority.
+      // Only assign this reason if no merge was found, merge is higher priority.
+      if (!mergeFoundForNext && columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") {
          columnReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) near centroid at ${colX}.`;
       }
     }
 
-    // 4. Look-ahead Bonus for nextPieces[1]
+    // 4. Look-ahead Bonus for nextPieces[1] (Increased weight)
     if (nextPieces && nextPieces.length > 1 && nextPieces[1]) {
         const next1Piece = nextPieces[1];
         // Create a hypothetical board state by adding the current pieceToDrop at simulatedY
@@ -381,6 +380,19 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces) {
         }
     }
 
+    // 5. Additional Low Y Preference when garbage is active AND no merge found for current piece
+    if (!mergeFoundForNext) {
+        if (isUrgentGarbage && simulatedY < 0.0) {
+            currentScore += GARBAGE_LOW_MERGE_URGENT_BONUS * 2.0; // Significantly boost for urgent low Y without merge
+            columnReason = `DEFAULT: Urgent Garbage Low Y Preference at ${colX}.`; // Overwrite if this is the primary driver
+        } else if (isOjamaMerge && simulatedY < 0.0) {
+            currentScore += GARBAGE_LOW_MERGE_BONUS * 3.0; // Significantly boost for ojama low Y without merge
+            if (columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") { // Only if not overridden by aggregation
+                columnReason = `DEFAULT: Ojama Low Y Preference at ${colX}.`;
+            }
+        }
+    }
+
     // Compare with highest score found so far
     if (currentScore > highestOverallScore) {
       highestOverallScore = currentScore;
@@ -394,33 +406,31 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces) {
 
 
 export function decide(boardState) {
-  const { pieces, next, hold, canHold, garbage, nextPieces } = boardState; // Destructure nextPieces
+  const { pieces, next, hold, canHold, garbage, nextPieces } = boardState;
 
   // --- Priority 1: HOLD Logic ---
   let action = tryHoldStrategy(boardState);
   if (action) return action;
 
-  // --- Priority 2: CRITICAL Mode (Garbage) ---
-  // Triggered by high garbage ratio or gauge.
-  // Prioritize aggressive merges.
+  // --- Garbage Conditions ---
   const isUrgentGarbage = garbage.gauge >= OJAMA_GAUGE_URGENT || garbage.ratio > GARBAGE_RATIO_URGENT;
   const isOjamaMerge = garbage.gauge >= OJAMA_GAUGE_OJAMA_MERGE || garbage.ratio > GARBAGE_RATIO_OJAMA_MERGE;
 
-  if (isUrgentGarbage) {
-    action = findAggressiveCriticalMerge(pieces, next, true);
-    if (action) return action;
-  }
-  if (isOjamaMerge) {
-    action = findAggressiveCriticalMerge(pieces, next, false);
+  // --- Priority 2: CRITICAL Mode (Garbage - direct merge attempt) ---
+  // If in any garbage situation, first try to find an aggressive merge.
+  if (isUrgentGarbage || isOjamaMerge) {
+    action = findAggressiveCriticalMerge(pieces, next, isUrgentGarbage);
     if (action) return action;
   }
 
   // --- Priority 3: ULTRA Mode (T1 Low Merge) ---
+  // This is a specific merge for small pieces that can help clear the board.
   action = findT1LowMerge(pieces, next);
   if (action) return action;
 
   // --- Priority 4: DEFAULT Strategy ---
-  action = defaultStrategy(pieces, next, nextPieces); // Pass nextPieces for look-ahead
+  // The comprehensive scoring strategy, now also garbage-aware.
+  action = defaultStrategy(pieces, next, nextPieces, isUrgentGarbage, isOjamaMerge);
   if (action) return action;
 
   // Fallback (should ideally not be reached with a comprehensive strategy)
