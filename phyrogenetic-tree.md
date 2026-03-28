@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-28 11:47:18 JST`
-- Nodes: `775`
-- Edges: `1082`
-- Current: `0a1b5dfabf95`
+- Updated: `2026-03-28 12:46:11 JST`
+- Nodes: `776`
+- Edges: `1083`
+- Current: `b1515125bcf7`
 - Anchor: `af7789a91d5a`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_af7789a91d5a["af7789a91d5a<br/>ANCHOR<br/>g=36 n=20<br/>comp=11283.8"]
-    h_939e5ac4ed1f["939e5ac4ed1f<br/>g=12 n=12<br/>comp=10340.3"]
     h_f8aa9dc2e031["f8aa9dc2e031<br/>g=12 n=12<br/>comp=10130.3"]
     h_2ffec13b0141["2ffec13b0141<br/>g=53 n=20<br/>comp=9661.9"]
     h_3c7551fe053c["3c7551fe053c<br/>g=7 n=7<br/>comp=12162.9"]
@@ -73,11 +72,11 @@ flowchart TD
     h_53e584297370["53e584297370<br/>g=24 n=20<br/>comp=10501.0"]
     h_b1af357f0fbb["b1af357f0fbb<br/>g=12 n=12<br/>comp=10254.0"]
     h_e784ee80c6b0["e784ee80c6b0<br/>g=12 n=12<br/>comp=10412.1"]
+    h_0a1b5dfabf95["0a1b5dfabf95<br/>g=12 n=12<br/>comp=11274.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_0a1b5dfabf95["0a1b5dfabf95<br/>CURRENT"]
+    h_b1515125bcf7["b1515125bcf7<br/>CURRENT"]
 
-    h_939e5ac4ed1f -->|improve| h_f8aa9dc2e031
     h_f8aa9dc2e031 -->|improve| h_2ffec13b0141
     h_2ffec13b0141 -->|improve| h_3c7551fe053c
     h_3c7551fe053c -->|improve| h_216f251b5089
@@ -140,6 +139,7 @@ flowchart TD
     h_53e584297370 -->|improve| h_b1af357f0fbb
     h_b1af357f0fbb -->|improve| h_e784ee80c6b0
     h_e784ee80c6b0 -->|improve| h_0a1b5dfabf95
+    h_0a1b5dfabf95 -->|improve| h_b1515125bcf7
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -147,7 +147,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_af7789a91d5a anchor;
-    class h_939e5ac4ed1f plain;
     class h_f8aa9dc2e031 plain;
     class h_2ffec13b0141 plain;
     class h_3c7551fe053c plain;
@@ -204,9 +203,10 @@ flowchart TD
     class h_53e584297370 plain;
     class h_b1af357f0fbb plain;
     class h_e784ee80c6b0 plain;
+    class h_0a1b5dfabf95 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_0a1b5dfabf95 current;
+    class h_b1515125bcf7 current;
 ```
 
 ## Detail 1/10
@@ -2792,9 +2792,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `0a1b5dfabf95`
-- Nodes in this diagram: `55`
-- Internal edges in this diagram: `49`
+- Range: `7bd6203f37b5` .. `b1515125bcf7`
+- Nodes in this diagram: `56`
+- Internal edges in this diagram: `50`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2863,9 +2863,10 @@ flowchart TD
     h_53e584297370["53e584297370<br/>g=24 n=20<br/>comp=10501.0"]
     h_b1af357f0fbb["b1af357f0fbb<br/>g=12 n=12<br/>comp=10254.0"]
     h_e784ee80c6b0["e784ee80c6b0<br/>g=12 n=12<br/>comp=10412.1"]
+    h_0a1b5dfabf95["0a1b5dfabf95<br/>g=12 n=12<br/>comp=11274.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_0a1b5dfabf95["0a1b5dfabf95<br/>CURRENT"]
+    h_b1515125bcf7["b1515125bcf7<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2916,6 +2917,7 @@ flowchart TD
     h_53e584297370 -->|improve| h_b1af357f0fbb
     h_b1af357f0fbb -->|improve| h_e784ee80c6b0
     h_e784ee80c6b0 -->|improve| h_0a1b5dfabf95
+    h_0a1b5dfabf95 -->|improve| h_b1515125bcf7
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2974,12 +2976,23 @@ flowchart TD
     class h_53e584297370 plain;
     class h_b1af357f0fbb plain;
     class h_e784ee80c6b0 plain;
+    class h_0a1b5dfabf95 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_0a1b5dfabf95 current;
+    class h_b1515125bcf7 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10649 `0a1b5dfa -> b1515125`
+
+- scores: `9149 6768 12428 9441 16264 9945 14767 11473 17661 17288 25905 11440`
+- 9.6b. Same-type proximity guidance - v368: reactive 1-2非reactive current type時のsame-type近接誘導
+- v368: same-type proximity guidance extended to reactive 1-2 — fills gap when current type has no reactive/near
+- When reactive_pair_count is 1-2 and current type has no reactive/near pairs but same-type exists on board,
+- there was NO placement guidance (axis 9.6 requires current_type_has_reactive, axis 9.7 requires no same-type).
+- This gap → HEIGHT_CONTROL default → piece_count accumulation (postmortem key failure mode).
+- Worst(score1069) final turns: reactive_avg=2.0, reasons=HIGH_LAYER/HIGH_TOWER, no merge guidance.
 
 ### Improve Game#10637 `e784ee80 -> 0a1b5dfa`
 
