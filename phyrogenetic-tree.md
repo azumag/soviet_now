@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-28 13:35:27 JST`
-- Nodes: `777`
-- Edges: `1084`
-- Current: `bb768f9ca0bf`
-- Anchor: `af7789a91d5a`
+- Updated: `2026-03-28 14:36:23 JST`
+- Nodes: `778`
+- Edges: `1085`
+- Current: `d7c863da186d`
+- Anchor: `bb768f9ca0bf`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,8 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_af7789a91d5a["af7789a91d5a<br/>ANCHOR<br/>g=36 n=20<br/>comp=11283.8"]
-    h_2ffec13b0141["2ffec13b0141<br/>g=53 n=20<br/>comp=9661.9"]
     h_3c7551fe053c["3c7551fe053c<br/>g=7 n=7<br/>comp=12162.9"]
     h_216f251b5089["216f251b5089<br/>g=42 n=20<br/>comp=10323.0"]
     h_7bd6203f37b5["7bd6203f37b5<br/>g=87 n=20<br/>comp=11137.3"]
@@ -73,18 +71,14 @@ flowchart TD
     h_e784ee80c6b0["e784ee80c6b0<br/>g=12 n=12<br/>comp=10412.1"]
     h_0a1b5dfabf95["0a1b5dfabf95<br/>g=12 n=12<br/>comp=11274.1"]
     h_b1515125bcf7["b1515125bcf7<br/>g=12 n=12<br/>comp=10341.6"]
+    h_bb768f9ca0bf["bb768f9ca0bf<br/>ANCHOR<br/>g=12 n=12<br/>comp=11529.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_bb768f9ca0bf["bb768f9ca0bf<br/>CURRENT"]
+    h_d7c863da186d["d7c863da186d<br/>CURRENT"]
 
-    h_2ffec13b0141 -->|improve| h_3c7551fe053c
     h_3c7551fe053c -->|improve| h_216f251b5089
     h_216f251b5089 -->|improve| h_7bd6203f37b5
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
-    h_08bae60c8d28 -. rollback .-> h_2ffec13b0141
-    h_2ffec13b0141 -->|improve| h_31da7cda98a8
-    h_31da7cda98a8 -. rollback .-> h_2ffec13b0141
-    h_2ffec13b0141 -. rollback .-> h_7bd6203f37b5
     h_c333071675cc -. rollback .-> h_216f251b5089
     h_216f251b5089 -->|improve| h_413548ba9827
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -129,9 +123,6 @@ flowchart TD
     h_e6f534c37e28 -->|improve| h_301fa13ab0ab
     h_301fa13ab0ab -. rollback .-> h_78d702e43155
     h_78d702e43155 -. rollback .-> h_e6f534c37e28
-    h_af7789a91d5a -->|improve| h_3391cd05995a
-    h_3391cd05995a -. rollback .-> h_af7789a91d5a
-    h_af7789a91d5a -->|improve| h_1ccd69078373
     h_1ccd69078373 -->|improve| h_b6f6b5fc153a
     h_b6f6b5fc153a -->|improve| h_e24de3a4fc60
     h_e24de3a4fc60 -->|improve| h_53e584297370
@@ -140,14 +131,13 @@ flowchart TD
     h_e784ee80c6b0 -->|improve| h_0a1b5dfabf95
     h_0a1b5dfabf95 -->|improve| h_b1515125bcf7
     h_b1515125bcf7 -->|improve| h_bb768f9ca0bf
+    h_bb768f9ca0bf -->|improve| h_d7c863da186d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_af7789a91d5a anchor;
-    class h_2ffec13b0141 plain;
     class h_3c7551fe053c plain;
     class h_216f251b5089 plain;
     class h_7bd6203f37b5 plain;
@@ -204,9 +194,10 @@ flowchart TD
     class h_e784ee80c6b0 plain;
     class h_0a1b5dfabf95 plain;
     class h_b1515125bcf7 plain;
+    class h_bb768f9ca0bf anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_bb768f9ca0bf current;
+    class h_d7c863da186d current;
 ```
 
 ## Detail 1/10
@@ -2604,7 +2595,7 @@ flowchart TD
     h_060b82e85a13["060b82e85a13<br/>g=12 n=12<br/>comp=9699.4"]
     h_e3cc375bcd69["e3cc375bcd69<br/>g=12 n=12<br/>comp=11037.4"]
     h_1e3a09db9b72["1e3a09db9b72<br/>g=12 n=12<br/>comp=10064.8"]
-    h_af7789a91d5a["af7789a91d5a<br/>ANCHOR<br/>g=36 n=20<br/>comp=11283.8"]
+    h_af7789a91d5a["af7789a91d5a<br/>g=36 n=20<br/>comp=11283.8"]
     h_bcf6915c6c58["bcf6915c6c58<br/>g=13 n=13<br/>comp=11183.0"]
     h_419d1e554c03["419d1e554c03<br/>g=12 n=12<br/>comp=10052.5"]
     h_939e5ac4ed1f["939e5ac4ed1f<br/>g=12 n=12<br/>comp=10340.3"]
@@ -2780,7 +2771,7 @@ flowchart TD
     class h_060b82e85a13 plain;
     class h_e3cc375bcd69 plain;
     class h_1e3a09db9b72 plain;
-    class h_af7789a91d5a anchor;
+    class h_af7789a91d5a plain;
     class h_bcf6915c6c58 plain;
     class h_419d1e554c03 plain;
     class h_939e5ac4ed1f plain;
@@ -2792,9 +2783,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `bb768f9ca0bf`
-- Nodes in this diagram: `57`
-- Internal edges in this diagram: `51`
+- Range: `7bd6203f37b5` .. `d7c863da186d`
+- Nodes in this diagram: `58`
+- Internal edges in this diagram: `52`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2865,9 +2856,10 @@ flowchart TD
     h_e784ee80c6b0["e784ee80c6b0<br/>g=12 n=12<br/>comp=10412.1"]
     h_0a1b5dfabf95["0a1b5dfabf95<br/>g=12 n=12<br/>comp=11274.1"]
     h_b1515125bcf7["b1515125bcf7<br/>g=12 n=12<br/>comp=10341.6"]
+    h_bb768f9ca0bf["bb768f9ca0bf<br/>ANCHOR<br/>g=12 n=12<br/>comp=11529.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_bb768f9ca0bf["bb768f9ca0bf<br/>CURRENT"]
+    h_d7c863da186d["d7c863da186d<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2920,6 +2912,7 @@ flowchart TD
     h_e784ee80c6b0 -->|improve| h_0a1b5dfabf95
     h_0a1b5dfabf95 -->|improve| h_b1515125bcf7
     h_b1515125bcf7 -->|improve| h_bb768f9ca0bf
+    h_bb768f9ca0bf -->|improve| h_d7c863da186d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2980,12 +2973,23 @@ flowchart TD
     class h_e784ee80c6b0 plain;
     class h_0a1b5dfabf95 plain;
     class h_b1515125bcf7 plain;
+    class h_bb768f9ca0bf anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_bb768f9ca0bf current;
+    class h_d7c863da186d current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10673 `bb768f9c -> d7c863da`
+
+- scores: `10469 9712 13882 11638 9823 14684 12782 19223 13390 15502 8213 11334`
+- 5.6. Growth center proximity - Compact board around highest-type piece (v370: all-reactive, congestion-aware)
+- v370: growth center proximity extended to all reactive levels with congestion scaling
+- Fixes postmortem failure mode: piece scattering prevents merge paths (type concentration)
+- Worst game T78: 38 pieces, types 1-12 scattered x=[-3,+3], reactive=8, no merge, dies at turn 85.
+- Best game T142: types 14/13x2/12x2 concentrated around growth center, survives 149 turns.
+- Key gap: axis 5.6 only fired at reactive<3 with max bonus 50 — too weak and too narrow.
 
 ### Improve Game#10661 `b1515125 -> bb768f9c`
 
