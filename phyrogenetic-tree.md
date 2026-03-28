@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-28 12:46:11 JST`
-- Nodes: `776`
-- Edges: `1083`
-- Current: `b1515125bcf7`
+- Updated: `2026-03-28 13:35:27 JST`
+- Nodes: `777`
+- Edges: `1084`
+- Current: `bb768f9ca0bf`
 - Anchor: `af7789a91d5a`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_af7789a91d5a["af7789a91d5a<br/>ANCHOR<br/>g=36 n=20<br/>comp=11283.8"]
-    h_f8aa9dc2e031["f8aa9dc2e031<br/>g=12 n=12<br/>comp=10130.3"]
     h_2ffec13b0141["2ffec13b0141<br/>g=53 n=20<br/>comp=9661.9"]
     h_3c7551fe053c["3c7551fe053c<br/>g=7 n=7<br/>comp=12162.9"]
     h_216f251b5089["216f251b5089<br/>g=42 n=20<br/>comp=10323.0"]
@@ -73,11 +72,11 @@ flowchart TD
     h_b1af357f0fbb["b1af357f0fbb<br/>g=12 n=12<br/>comp=10254.0"]
     h_e784ee80c6b0["e784ee80c6b0<br/>g=12 n=12<br/>comp=10412.1"]
     h_0a1b5dfabf95["0a1b5dfabf95<br/>g=12 n=12<br/>comp=11274.1"]
+    h_b1515125bcf7["b1515125bcf7<br/>g=12 n=12<br/>comp=10341.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_b1515125bcf7["b1515125bcf7<br/>CURRENT"]
+    h_bb768f9ca0bf["bb768f9ca0bf<br/>CURRENT"]
 
-    h_f8aa9dc2e031 -->|improve| h_2ffec13b0141
     h_2ffec13b0141 -->|improve| h_3c7551fe053c
     h_3c7551fe053c -->|improve| h_216f251b5089
     h_216f251b5089 -->|improve| h_7bd6203f37b5
@@ -140,6 +139,7 @@ flowchart TD
     h_b1af357f0fbb -->|improve| h_e784ee80c6b0
     h_e784ee80c6b0 -->|improve| h_0a1b5dfabf95
     h_0a1b5dfabf95 -->|improve| h_b1515125bcf7
+    h_b1515125bcf7 -->|improve| h_bb768f9ca0bf
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -147,7 +147,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_af7789a91d5a anchor;
-    class h_f8aa9dc2e031 plain;
     class h_2ffec13b0141 plain;
     class h_3c7551fe053c plain;
     class h_216f251b5089 plain;
@@ -204,9 +203,10 @@ flowchart TD
     class h_b1af357f0fbb plain;
     class h_e784ee80c6b0 plain;
     class h_0a1b5dfabf95 plain;
+    class h_b1515125bcf7 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_b1515125bcf7 current;
+    class h_bb768f9ca0bf current;
 ```
 
 ## Detail 1/10
@@ -2792,9 +2792,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `b1515125bcf7`
-- Nodes in this diagram: `56`
-- Internal edges in this diagram: `50`
+- Range: `7bd6203f37b5` .. `bb768f9ca0bf`
+- Nodes in this diagram: `57`
+- Internal edges in this diagram: `51`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2864,9 +2864,10 @@ flowchart TD
     h_b1af357f0fbb["b1af357f0fbb<br/>g=12 n=12<br/>comp=10254.0"]
     h_e784ee80c6b0["e784ee80c6b0<br/>g=12 n=12<br/>comp=10412.1"]
     h_0a1b5dfabf95["0a1b5dfabf95<br/>g=12 n=12<br/>comp=11274.1"]
+    h_b1515125bcf7["b1515125bcf7<br/>g=12 n=12<br/>comp=10341.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_b1515125bcf7["b1515125bcf7<br/>CURRENT"]
+    h_bb768f9ca0bf["bb768f9ca0bf<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2918,6 +2919,7 @@ flowchart TD
     h_b1af357f0fbb -->|improve| h_e784ee80c6b0
     h_e784ee80c6b0 -->|improve| h_0a1b5dfabf95
     h_0a1b5dfabf95 -->|improve| h_b1515125bcf7
+    h_b1515125bcf7 -->|improve| h_bb768f9ca0bf
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2977,12 +2979,23 @@ flowchart TD
     class h_b1af357f0fbb plain;
     class h_e784ee80c6b0 plain;
     class h_0a1b5dfabf95 plain;
+    class h_b1515125bcf7 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_b1515125bcf7 current;
+    class h_bb768f9ca0bf current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10661 `b1515125 -> bb768f9c`
+
+- scores: `8932 10976 6958 11273 9410 19441 8425 15311 15586 13195 13044 8589`
+- 9.6b. Same-type proximity guidance - v369: congestion-aware unified proximity (replaces v362/v368 split)
+- v369: unified congestion-aware proximity guidance — replaces v362/v368 reactive-level split
+- Postmortem: piece_count is the key predictor. At reactive>=3, axis 8.8 makes all candidates similar,
+- but v362 bonus (max 60) is too small for meaningful tie-breaking. v368 (max 120 at reactive 1-2)
+- leaves reactive>=3 under-guided → HEIGHT_CONTROL default → pc accumulation during drought.
+- Replace reactive-level split with piece_count-based scaling. At pc=35: ~157 vs v362's ~45.
 
 ### Improve Game#10649 `0a1b5dfa -> b1515125`
 
