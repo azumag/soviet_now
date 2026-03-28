@@ -40,7 +40,7 @@ Game Overview:
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              1.5. NEAR merge deadline risk - v378: pc congestion scaling near max_y (extends v374)
-             9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+             9.7. Pipeline-aware placement guidance - v380: horizontal-only distance + N+1 priority + magnitude match (extends v367) 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.5. Current type stack merge priority - v337: russia_phase抑制版
 
@@ -750,44 +750,50 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
-        # ----- v367: axis 9.7 pipeline-aware placement guidance (sibling to 9.6) -----
-        # Postmortem constraint: axis 9.7 should be a sibling of axis 9.6, not nested inside it.
-        # Fires when: same_type_stack_top is None (no same-type on board), reactive >= 1, merge_grade == "NO"
-        # This is the case that v359 (REACTIVE_PAIRS_COMPRESSION with landing_y-only bonus) tried to fix
-        # but failed due to landing_y-only approach and reactive < 3 guard.
-        # v359 rollback: "replaces HEIGHT_CONTROL with naive compression based solely on landing_y"
-        # This version uses reactor["pipeline"] (unutilized info): list of (type, type+1, min_distance) tuples.
-        # Finds nearest adjacent-type (next_type ± 1) piece on board via pipeline data.
-        # Bonus for proximity to adjacent-type piece guides placement toward merge pipeline,
-        # creating future merge opportunities instead of aimless low placement.
-        # Worst game T58: reactive=3, type=10, no same-type 10 → MEDIUM_TOWER (no guidance) → pc grows.
-        # If type 9 or type 11 pieces existed, this guidance would direct placement near them.
-        # Bonus magnitude: max ~80 (tie-breaking only, won't override axis 8.8 or height penalty).
-        # No reactive_pair_count < 3 guard (postmortem constraint: works at ALL reactive levels).
-        # Not landing_y-only (postmortem constraint: uses pipeline proximity to specific types).
-        # refs: tmp/state/last_rollback_postmortem.md (axis 9.7 nesting fix, piece_count predictor),
-        #       analyze_board.py (reactor["pipeline"] structure),
-        #       game_history/20260328_112219_score0613.jsonl T58 (reactive=3, no same-type, no guidance),
-        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
-        #       tmp/batch_summary.txt, advice.md (zoumotu3: growth concentration)
-        # Fixes postmortem failure mode: no guidance when same_type_stack_top is None → piece_count accumulation
+        # ----- v380: axis 9.7 pipeline-aware placement guidance — horizontal distance + N+1 priority (v367 structural fix) -----
+        # v380 changes from v367/v377/v379:
+        # 1. Distance metric: Euclidean → horizontal-only. The player controls only x (horizontal position);
+        #    vertical position (landing_y) is determined by the board. Euclidean distance mixed x and y,
+        #    diluting the horizontal guidance signal. A piece at x=-1.3 next to a target at (-1.27, 0.52)
+        #    got Euclidean dist 1.02 (mostly vertical gap) → weak bonus 49. With horizontal dist 0.03 → 120.
+        #    This makes axis 9.7 consistent with axis 9.6b which already uses horizontal distance.
+        # 2. Base bonus: 80→120, decay: 30→50. Matches axis 9.6b magnitude (120 - dist*50).
+        #    With horizontal distance, the effective range is smaller (x-only), so base must be larger
+        #    to maintain competitive signal vs height penalty differences (~100-200 per y unit).
+        #    At pc=34 with gc alignment: 120 * 1.72 * 1.64 = 338 (vs old 80 * ... = 226).
+        # 3. N+1 target priority: when both (N-1) and (N+1) adjacent types exist, prefer N+1.
+        #    After N+N→N+1 merge, being near N+1 enables immediate N+1+N+1→N+2 (advice: azumag, nimdavirus).
+        #    N-1 adjacent requires building N first, then merging near existing N-1 — lower expected value.
+        # Not piece_count suppression of stacking (v372 constraint OK — this is axis 9.7).
+        # Not CHAIN_MERGE strengthening (constraint OK — this is pipeline guidance).
+        # refs: game_history/20260329_032253_score0599.jsonl T56-62 (scattered x=-3 to +3, guidance too weak),
+        #       game_history/20260329_031329_score0981.jsonl T56-67 (reactive drought, HEIGHT_CONTROL default),
+        #       game_history/20260329_033657_score1999.jsonl T71-87 (type 14 on board, successful merges at high danger),
+        #       strategy_versions/best_score4999_strategy.py (board density bonus concept),
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (flat -4500 reference),
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md (zoumotu3, azumag, nimdavirus)
+        # Fixes rollback failure mode: reactive pairs drought → scattered placement → piece_count accumulation
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None:
             # Find nearest piece whose type is adjacent to current type (next_type ± 1)
-            # Priority: next_type - 1 (merge up path) then next_type + 1 (if next_type-1 not found)
+            # v380: horizontal-only distance. Player controls x only; y is board-determined.
+            # Prefer N+1 targets: after N+N→N+1, near N+1 enables immediate N+1+N+1→N+2.
             best_adjacent_target = None
             best_adjacent_dist = float("inf")
             for p in pieces:
                 p_type = p.get("type", 0)
                 if p_type == next_type - 1 or p_type == next_type + 1:
                     p_x = p.get("x", 0)
-                    p_y = p.get("y", 10)
-                    # Prefer deeper (lower y) pieces — more accessible for future merges
-                    adj_dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
-                    if adj_dist < best_adjacent_dist:
-                        best_adjacent_dist = adj_dist
+                    # v380: horizontal-only distance — consistent with axis 9.6b
+                    horiz_adj_dist = abs(x - p_x)
+                    # N+1 priority: slightly prefer N+1 targets (higher merge chain value)
+                    if p_type == next_type - 1:
+                        horiz_adj_dist *= 1.3  # N-1 targets treated as 30% farther
+                    if horiz_adj_dist < best_adjacent_dist:
+                        best_adjacent_dist = horiz_adj_dist
                         best_adjacent_target = p
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
-                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
+                # v380: base 120, decay 50 — matches axis 9.6b magnitude
+                pipeline_bonus = max(0, 120.0 - best_adjacent_dist * 50.0)
                 # v379: growth center alignment — prefer adjacent-type pieces near growth center
                 # Aligns pipeline guidance with concentration strategy (advice: zoumotu3).
                 # Without this, axis 9.7 may guide toward distant adjacent-type pieces,
