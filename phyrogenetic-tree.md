@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-29 03:07:09 JST`
-- Nodes: `786`
-- Edges: `1094`
-- Current: `9a7d71d20cfb`
+- Updated: `2026-03-29 04:08:20 JST`
+- Nodes: `787`
+- Edges: `1095`
+- Current: `9ef3157c7ea7`
 - Anchor: `1813ba4eef44`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_6479a8c1a527["6479a8c1a527<br/>g=12 n=12<br/>comp=9026.2"]
     h_9378430a0783["9378430a0783<br/>g=12 n=12<br/>comp=8960.8"]
     h_dba57ae02a3e["dba57ae02a3e<br/>g=13 n=13<br/>comp=10100.2"]
     h_420504e4ebd4["420504e4ebd4<br/>g=13 n=13<br/>comp=9647.1"]
@@ -72,9 +71,10 @@ flowchart TD
     h_ee1b93ba7260["ee1b93ba7260<br/>g=12 n=12<br/>comp=10972.3"]
     h_8d69c9c393b9["8d69c9c393b9<br/>g=12 n=12<br/>comp=11145.3"]
     h_b6b3fec418fa["b6b3fec418fa<br/>g=12 n=12<br/>comp=10542.1"]
+    h_9a7d71d20cfb["9a7d71d20cfb<br/>g=12 n=12<br/>comp=11890.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9a7d71d20cfb["9a7d71d20cfb<br/>CURRENT"]
+    h_9ef3157c7ea7["9ef3157c7ea7<br/>CURRENT"]
 
     h_dba57ae02a3e -->|improve| h_420504e4ebd4
     h_420504e4ebd4 -->|improve| h_6c6b780b2a88
@@ -133,13 +133,13 @@ flowchart TD
     h_ee1b93ba7260 -->|improve| h_8d69c9c393b9
     h_8d69c9c393b9 -->|improve| h_b6b3fec418fa
     h_b6b3fec418fa -->|improve| h_9a7d71d20cfb
+    h_9a7d71d20cfb -->|improve| h_9ef3157c7ea7
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_6479a8c1a527 plain;
     class h_9378430a0783 plain;
     class h_dba57ae02a3e plain;
     class h_420504e4ebd4 plain;
@@ -196,9 +196,10 @@ flowchart TD
     class h_ee1b93ba7260 plain;
     class h_8d69c9c393b9 plain;
     class h_b6b3fec418fa plain;
+    class h_9a7d71d20cfb plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9a7d71d20cfb current;
+    class h_9ef3157c7ea7 current;
 ```
 
 ## Detail 1/10
@@ -2784,9 +2785,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `9a7d71d20cfb`
-- Nodes in this diagram: `66`
-- Internal edges in this diagram: `61`
+- Range: `7bd6203f37b5` .. `9ef3157c7ea7`
+- Nodes in this diagram: `67`
+- Internal edges in this diagram: `62`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2866,9 +2867,10 @@ flowchart TD
     h_ee1b93ba7260["ee1b93ba7260<br/>g=12 n=12<br/>comp=10972.3"]
     h_8d69c9c393b9["8d69c9c393b9<br/>g=12 n=12<br/>comp=11145.3"]
     h_b6b3fec418fa["b6b3fec418fa<br/>g=12 n=12<br/>comp=10542.1"]
+    h_9a7d71d20cfb["9a7d71d20cfb<br/>g=12 n=12<br/>comp=11890.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9a7d71d20cfb["9a7d71d20cfb<br/>CURRENT"]
+    h_9ef3157c7ea7["9ef3157c7ea7<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2931,6 +2933,7 @@ flowchart TD
     h_ee1b93ba7260 -->|improve| h_8d69c9c393b9
     h_8d69c9c393b9 -->|improve| h_b6b3fec418fa
     h_b6b3fec418fa -->|improve| h_9a7d71d20cfb
+    h_9a7d71d20cfb -->|improve| h_9ef3157c7ea7
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3000,12 +3003,23 @@ flowchart TD
     class h_ee1b93ba7260 plain;
     class h_8d69c9c393b9 plain;
     class h_b6b3fec418fa plain;
+    class h_9a7d71d20cfb plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9a7d71d20cfb current;
+    class h_9ef3157c7ea7 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10817 `9a7d71d2 -> 9ef3157c`
+
+- scores: `13139 8245 13008 11640 6384 13741 11612 11143 16747 11540 16324 13362`
+- 9.7. Pipeline-aware placement guidance - v380: horizontal-only distance + N+1 priority + magnitude match (extends v367) 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+- ----- v380: axis 9.7 pipeline-aware placement guidance — horizontal distance + N+1 priority (v367 structural fix) -----
+- v380 changes from v367/v377/v379:
+- 1. Distance metric: Euclidean → horizontal-only. The player controls only x (horizontal position);
+- vertical position (landing_y) is determined by the board. Euclidean distance mixed x and y,
+- diluting the horizontal guidance signal. A piece at x=-1.3 next to a target at (-1.27, 0.52)
 
 ### Improve Game#10805 `b6b3fec4 -> 9a7d71d2`
 
