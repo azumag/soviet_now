@@ -39,6 +39,7 @@ Game Overview:
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
+             1.5. NEAR merge deadline risk - v378: pc congestion scaling near max_y (extends v374)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.5. Current type stack merge priority - v337: russia_phase抑制版
@@ -59,6 +60,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v378: NEAR deadline risk pc congestion scaling — reduce failed NEAR near max_y at high piece_count
+     # Worst game T70-73: 3 failed NEAR at deadline, landing near max_y, pc 34-36 → game over at pc=39.
+     # Reactive/danger bonuses (+1600-2200) override v374 quadratic penalty at moderate pc.
+     # v378: scale penalty with pc when landing_y near max_y (within 0.5). pc=37+ → NO_MERGE preferred.
+     # Best game T110-117: pc 29-33 (below threshold), NEAR at safe y=1.45 → unchanged.
+     # NOT axis 9.6 stacking_bonus suppression (v372 constraint OK). refs: postmortem, batch_summary, advice.md
+     # Fixes rollback failure mode: piece_count accumulation from failed NEAR near max_y at high pc
+     # refs: game_history/20260329_015217_score1059.jsonl, game_history/20260329_014604_score1148.jsonl,
+     #       game_history/20260329_015956_score3493.jsonl, tmp/state/last_rollback_postmortem.md,
+     #       tmp/batch_summary.txt, advice.md, analyze_board.py, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v377: axis 9.7 congestion scaling — reduce scatter when no same-type on board
      # axis 9.6b (v369) and 5.6 (v370) have congestion scaling but axis 9.7 did not.
      # At high pc, pipeline guidance (~80) was invisible vs height penalty diff (~112 at reduced height_mult).
@@ -600,29 +611,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- v374: NEAR merge deadline risk — quadratic scaling + ceiling breach penalty -----
-        # v366 used linear (landing_y * 300). Worst game T59: NEAR at y=3.63 (max_y=2.20)
-        # failed (delta=0), max_y jumped to 3.63 → game over. Linear penalty (1089) was too
-        # weak vs NEAR bonuses (~2300). Failed NEAR at high landing_y is disproportionately
-        # fatal — the piece becomes an unreachable ceiling.
-        # v374 changes: (1) Quadratic scaling (landing_y²*200) — better reflects exponential
-        # risk. At y=3.63: 2635 vs v366's 1089. At y=1.0: 200 vs 300 (safer NEAR encouraged).
-        # (2) Ceiling breach penalty (+800 when landing_y > max_y+0.5) — prevents NEAR that
-        # would place piece above current ceiling, making future merges much harder.
-        # Total worst case: 2635+800=3435 > NEAR bonuses(~2300) → NO_MERGE preferred → prevents fatal NEAR.
-        # Does NOT affect: DIRECT merges, NEAR when !deadline_crossed, or NO merge.
-        # postmortem constraint: combines landing_y with deadline state and max_y (not landing_y-only).
-        # refs: game_history/20260328_225115_score0562.jsonl T59 (NEAR at y=3.63 failed, fatal),
-        #       game_history/20260328_231228_score0855.jsonl T65 (NEAR at deadline failed),
-        #       game_history/20260328_231639_score2341.jsonl T103 (NEAR at y~2.0, below ceiling → still preferred),
-        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md
-        # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at deadline
+        # ----- v378: NEAR merge deadline risk — quadratic + ceiling breach + pc congestion scaling -----
+        # v374 used quadratic (landing_y²*200) + ceiling breach (+800). Worst: y=3.63 → 3435 > bonuses(~2300).
+        # But reactive/danger bonuses (+1600-2200) still make NEAR attractive at moderate heights:
+        # worst game T70: NEAR at y=2.7 → penalty 1458, bonuses 2200 → NEAR chosen (failed, pc 34→35).
+        # At high piece_count, failed NEAR near max_y is catastrophic — piece becomes unreachable ceiling
+        # with no recovery room. pc=39 worst game dies, pc=32 best game survives.
+        # v378: scale penalty with piece_count when NEAR lands near max_y (within 0.5 units).
+        # At pc=35: 1.4x (penalty 2041 vs bonuses 2200 → NEAR still chosen for safe heights).
+        # At pc=37+: penalty exceeds bonuses → safe NO_MERGE placement preferred.
+        # At pc<33: no scaling (board has recovery room). Low landing_y unaffected.
+        # NOT axis 9.6 stacking_bonus suppression (v372 constraint OK — this is axis 1.5 NEAR risk).
+        # refs: game_history/20260329_015217_score1059.jsonl T70-77 (3 failed NEAR at pc 34-36),
+        #       game_history/20260329_014604_score1148.jsonl T68-75 (pc 39-42, failed NEAR at high y),
+        #       game_history/20260329_015956_score3493.jsonl T110-117 (pc 29-33, NEAR at safe y=1.45),
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md (あずまぐ: 確実な併合)
+        # Fixes rollback failure mode: piece_count accumulation from failed NEAR near max_y at high pc
         if deadline_crossed and merge_grade == "NEAR" and landing_y > 0:
             # v374: quadratic scaling — risk grows non-linearly with height
             near_risk_penalty = landing_y * landing_y * 200.0
             # Ceiling breach: landing above max_y+0.5 creates unreachable ceiling piece
             if landing_y > max_y + 0.5:
                 near_risk_penalty += 800.0
+            # v378: piece_count congestion scaling when NEAR would land near max_y
+            # Failed NEAR near max_y at high pc = unreachable ceiling, no recovery room.
+            # Scale gradually: pc=33→1.2x, pc=37→2.0x, pc=43→2.5x(capped).
+            # Only activates near max_y (within 0.5) where the failure is most damaging.
+            if piece_count >= 33 and landing_y > max_y - 0.5:
+                pc_risk_scale = 1.0 + (piece_count - 33) * 0.20
+                near_risk_penalty *= min(pc_risk_scale, 2.5)
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
