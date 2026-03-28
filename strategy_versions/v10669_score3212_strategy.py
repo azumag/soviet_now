@@ -38,7 +38,7 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
-             9.6b. Same-type proximity guidance - v368: reactive 1-2非reactive current type時のsame-type近接誘導
+             9.6b. Same-type proximity guidance - v369: congestion-aware unified proximity (replaces v362/v368 split)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.5. Current type stack merge priority - v337: russia_phase抑制版
@@ -59,6 +59,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v369: unified congestion-aware proximity guidance — replaces v362/v368 reactive-level split
+     # Postmortem: piece_count is the key predictor. At reactive>=3, axis 8.8 makes all candidates similar,
+     # but v362 bonus (max 60) is too small for meaningful tie-breaking. v368 (max 120 at reactive 1-2)
+     # leaves reactive>=3 under-guided → HEIGHT_CONTROL default → pc accumulation during drought.
+     # Replace reactive-level split with piece_count-based scaling. At pc=35: ~157 vs v362's ~45.
+     # No reactive<3 guard (postmortem constraint). Not landing_y-only (proximity + piece_count + height).
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md (garsy38 type concentration),
+     #       game_history/20260328_130927_score0696.jsonl T50-59, game_history/20260328_132746_score0718.jsonl T55-62
+     # Fixes postmortem failure mode: weak guidance at reactive>=3 → HEIGHT_CONTROL → pc accumulation
      # v368: same-type proximity guidance extended to reactive 1-2 — fills gap when current type has no reactive/near
      # When reactive_pair_count is 1-2 and current type has no reactive/near pairs but same-type exists on board,
      # there was NO placement guidance (axis 9.6 requires current_type_has_reactive, axis 9.7 requires no same-type).
@@ -660,27 +669,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
-        # ----- v362/v368: same-type proximity guidance — extended to reactive 1-2 -----
-        # v362: reactive>=3 tie-breaking (axis 8.8 dominates all equally, max ~60 bonus).
-        # v368: extend to reactive 1-2 when current type has no reactive/near pairs.
-        #   Gap identified: at reactive 1-2 with merge=NO and same_type on board but
-        #   current_type has no reactive/near, there is NO placement guidance:
-        #   - axis 9.6 requires current_type_has_reactive or current_type_has_near
-        #   - axis 9.7 requires same_type_stack_top is None
-        #   → HEIGHT_CONTROL default → piece_count accumulation (postmortem key failure).
-        #   Worst(score1069) final turns: reactive_avg=2.0, reasons=HIGH_LAYER/HIGH_TOWER.
-        #   Batch: low-score HEIGHT_CONTROL 21.2% vs high-score 11.2% — gap is guidance.
-        #   Low-score games place LOWER (early avg_y=-2.62 vs -2.02) but can't convert to merges.
-        #   Bonus at reactive 1-2: max ~120 (overrides height diffs ~75, won't override merges).
-        #   Postmortem constraints: not landing_y-only, considers type proximity distribution,
-        #   no reactive<3 guard (works at ALL reactive levels).
+        # ----- v362/v368 → v369: unified congestion-aware same-type proximity guidance -----
+        # v369: Replace reactive-level split with piece_count-based scaling.
+        # Gap: at reactive >= 3, v362 bonus (max 60) is too small for axis 8.8 tie-breaking.
+        # Second worst (score0718) T59-62: 5 consecutive no-merge turns at reactive 7-11, pc 35-39.
+        # The strategy defaults to HEIGHT_CONTROL (lowest position) during these droughts,
+        # adding pieces without building merge paths. Postmortem: piece_count is the key predictor.
+        # Fix: scale bonus with piece_count so guidance grows as the board becomes more congested.
+        # At pc=28: base bonus (max ~120). At pc=35: ~1.84x (max ~221). At pc=40: ~2.48x (max ~298).
+        # Still small vs axis 8.8 diffs (~1000-2000 per landing_y unit), but meaningful for
+        # tie-breaking between candidates at similar heights — guides toward same-type pieces
+        # instead of random low placement. No reactive<3 guard (postmortem constraint).
+        # Not landing_y-only (proximity + piece_count + target height).
         # refs: tmp/state/last_rollback_postmortem.md (piece_count predictor),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL gap, piece_count correlation),
-        #       game_history/20260328_115143_score1069.jsonl T79-86 (reactive=2, HIGH_LAYER),
-        #       game_history/20260328_115426_score0647.jsonl T60-68 (reactive 3→6, pc 42→45),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.4% low vs 14.1% high),
+        #       game_history/20260328_130927_score0696.jsonl T50-59 (pc 30→37, reactive 2-6),
+        #       game_history/20260328_132746_score0718.jsonl T55-62 (pc 35→39, reactive 7-11),
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
-        #       advice.md (zoumotu3: growth concentration, garsy38: type concentration)
-        # Fixes rollback failure mode: no guidance at reactive 1-2 → HEIGHT_CONTROL → pc accumulation
+        #       advice.md (garsy38: type concentration, zoumotu3: growth concentration)
+        # Fixes postmortem failure mode: weak guidance at reactive>=3 → HEIGHT_CONTROL → pc accumulation
         if merge_grade == "NO" and same_type_stack_top is not None:
             if not (current_type_has_reactive or current_type_has_near):
                 # Current type doesn't have reactive/near pairs — axis 9.6 won't fire.
@@ -691,18 +698,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 target_y = lowest_same.get("y", -10)
                 horiz_dist = abs(x - target_x)
                 if horiz_dist < 2.0:
-                    if reactive_pair_count >= 3:
-                        # v362: small tie-breaking (axis 8.8 -3000~-7000 dominates all equally)
-                        proximity_bonus = max(0, 60.0 - horiz_dist * 30.0)
-                        if target_y > 1.0:
-                            proximity_bonus *= max(0.0, 1.0 - (target_y - 1.0) * 0.5)
-                    else:
-                        # v368: reactive 1-2 — larger bonus to meaningfully guide placement
-                        # Max ~120 at horiz_dist=0, decays with distance and target height
-                        # Not landing_y-only: uses horizontal proximity to specific same-type pieces
-                        proximity_bonus = max(0, 120.0 - horiz_dist * 60.0)
-                        if target_y > 0:
-                            proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
+                    # v369: unified congestion-aware proximity — no reactive level split
+                    # Postmortem: piece_count is the key predictor of final score.
+                    # At high piece_count, axis 8.8 (-3000~-7000) makes all candidates similar,
+                    # so guidance must scale with congestion to be meaningful.
+                    # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
+                    # Not landing_y-only (considers horizontal proximity, piece_count, target height).
+                    proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
+                    if piece_count >= 28:
+                        # Scale proportionally with congestion: at pc=35, bonus *= 1.84
+                        # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
+                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
+                        proximity_bonus *= min(congestion_scale, 3.0)
+                    if target_y > 0:
+                        proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
