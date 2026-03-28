@@ -37,7 +37,7 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9.6. Reactive pairs type-aware stacking - v372: congestion-aware stacking suppression (piece_count-based)
+             9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
@@ -59,12 +59,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v372: axis 9.6 critical congestion stacking suppression — reduce scatter at high piece_count
-     # Worst game: pc 32→39, 8 turns of 0 delta, stacking chases changing next_types across board
-     # Best game: pc 28-31, never reaches suppression threshold. Fixes postmortem: pc accumulation from scattered stacking
-     # refs: game_history/20260328_195039_score0679.jsonl, game_history/20260328_194747_score2808.jsonl,
-     #       tmp/state/last_rollback_postmortem.md, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
-     #       tmp/batch_summary.txt, strategy.py.staging (v371)
      # v371: axis 9.6b merged_type-aware targeting — prefer same-type closest to merged_type(N+1) for chain building
      # Fixes postmortem failure mode: type scattering without merge paths (piece_count accumulation)
      # Worst game: 40 pieces, max type 12, types scattered. Best game: 31 pieces, type 15 on board, types concentrated.
@@ -655,20 +649,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 horizontal_distance = abs(x - target_x)
                 if horizontal_distance < 2.0:
                     stacking_bonus = best_chain_score + max(0, 100.0 - horizontal_distance * 40.0)
-                    # v372: critical congestion stacking suppression
-                    # Postmortem: piece_count is the key predictor (pc39→624, pc31→2808).
-                    # When axis 8.8 makes all candidates equally penalized (-3000~-7000),
-                    # axis 9.6 bonus (~400) breaks the tie but scatters pieces across the
-                    # board by chasing frequently-changing next_types (worst: types 9,2,7,10,4,1,5
-                    # in 8 consecutive turns). This prevents merge paths from forming.
-                    # At pc>=33, board is critically congested: scatter prevention (keeping low)
-                    # outweighs merge guidance (chasing same-type). Best game pc never reaches 33.
-                    # No reactive_pair_count guard (postmortem constraint: works at all levels).
-                    # Not landing_y-only (uses piece_count + proximity + chain_score).
-                    # Fixes postmortem failure mode: piece_count accumulation from scattered stacking
-                    if piece_count >= 33:
-                        congestion_suppress = max(0.2, 1.0 - (piece_count - 33) * 0.12)
-                        stacking_bonus *= congestion_suppress
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
