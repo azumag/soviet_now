@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-28 10:56:03 JST`
-- Nodes: `774`
-- Edges: `1081`
-- Current: `e784ee80c6b0`
+- Updated: `2026-03-28 11:47:18 JST`
+- Nodes: `775`
+- Edges: `1082`
+- Current: `0a1b5dfabf95`
 - Anchor: `af7789a91d5a`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_af7789a91d5a["af7789a91d5a<br/>ANCHOR<br/>g=36 n=20<br/>comp=11283.8"]
-    h_419d1e554c03["419d1e554c03<br/>g=12 n=12<br/>comp=10052.5"]
     h_939e5ac4ed1f["939e5ac4ed1f<br/>g=12 n=12<br/>comp=10340.3"]
     h_f8aa9dc2e031["f8aa9dc2e031<br/>g=12 n=12<br/>comp=10130.3"]
     h_2ffec13b0141["2ffec13b0141<br/>g=53 n=20<br/>comp=9661.9"]
@@ -73,11 +72,11 @@ flowchart TD
     h_e24de3a4fc60["e24de3a4fc60<br/>g=12 n=12<br/>comp=9988.3"]
     h_53e584297370["53e584297370<br/>g=24 n=20<br/>comp=10501.0"]
     h_b1af357f0fbb["b1af357f0fbb<br/>g=12 n=12<br/>comp=10254.0"]
+    h_e784ee80c6b0["e784ee80c6b0<br/>g=12 n=12<br/>comp=10412.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_e784ee80c6b0["e784ee80c6b0<br/>CURRENT"]
+    h_0a1b5dfabf95["0a1b5dfabf95<br/>CURRENT"]
 
-    h_419d1e554c03 -->|improve| h_939e5ac4ed1f
     h_939e5ac4ed1f -->|improve| h_f8aa9dc2e031
     h_f8aa9dc2e031 -->|improve| h_2ffec13b0141
     h_2ffec13b0141 -->|improve| h_3c7551fe053c
@@ -140,6 +139,7 @@ flowchart TD
     h_e24de3a4fc60 -->|improve| h_53e584297370
     h_53e584297370 -->|improve| h_b1af357f0fbb
     h_b1af357f0fbb -->|improve| h_e784ee80c6b0
+    h_e784ee80c6b0 -->|improve| h_0a1b5dfabf95
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -147,7 +147,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_af7789a91d5a anchor;
-    class h_419d1e554c03 plain;
     class h_939e5ac4ed1f plain;
     class h_f8aa9dc2e031 plain;
     class h_2ffec13b0141 plain;
@@ -204,9 +203,10 @@ flowchart TD
     class h_e24de3a4fc60 plain;
     class h_53e584297370 plain;
     class h_b1af357f0fbb plain;
+    class h_e784ee80c6b0 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_e784ee80c6b0 current;
+    class h_0a1b5dfabf95 current;
 ```
 
 ## Detail 1/10
@@ -2792,9 +2792,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `e784ee80c6b0`
-- Nodes in this diagram: `54`
-- Internal edges in this diagram: `48`
+- Range: `7bd6203f37b5` .. `0a1b5dfabf95`
+- Nodes in this diagram: `55`
+- Internal edges in this diagram: `49`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2862,9 +2862,10 @@ flowchart TD
     h_e24de3a4fc60["e24de3a4fc60<br/>g=12 n=12<br/>comp=9988.3"]
     h_53e584297370["53e584297370<br/>g=24 n=20<br/>comp=10501.0"]
     h_b1af357f0fbb["b1af357f0fbb<br/>g=12 n=12<br/>comp=10254.0"]
+    h_e784ee80c6b0["e784ee80c6b0<br/>g=12 n=12<br/>comp=10412.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_e784ee80c6b0["e784ee80c6b0<br/>CURRENT"]
+    h_0a1b5dfabf95["0a1b5dfabf95<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2914,6 +2915,7 @@ flowchart TD
     h_e24de3a4fc60 -->|improve| h_53e584297370
     h_53e584297370 -->|improve| h_b1af357f0fbb
     h_b1af357f0fbb -->|improve| h_e784ee80c6b0
+    h_e784ee80c6b0 -->|improve| h_0a1b5dfabf95
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2971,12 +2973,23 @@ flowchart TD
     class h_e24de3a4fc60 plain;
     class h_53e584297370 plain;
     class h_b1af357f0fbb plain;
+    class h_e784ee80c6b0 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_e784ee80c6b0 current;
+    class h_0a1b5dfabf95 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10637 `e784ee80 -> 0a1b5dfa`
+
+- scores: `11301 17862 8673 11309 8554 15943 7915 7099 15025 14881 10430 14227`
+- 9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+- v367: axis 9.7 pipeline-aware placement guidance — sibling to axis 9.6, fires when same_type_stack_top is None
+- Uses reactor["pipeline"] (unutilized) to guide placement near adjacent-type pieces (next_type ± 1).
+- Fixes postmortem: no guidance when no same-type on board → piece_count accumulation (worst T58: reactive=3, MEDIUM_TOWER).
+- No reactive < 3 guard, not landing_y-only. Bonus max ~80 (tie-breaking). refs: postmortem, analyze_board.py, score0613, protected_e6f534c37e28, batch_summary, advice.md
+- --- v367: pipeline extraction (unutilized reactor info) ---
 
 ### Improve Game#10625 `b1af357f -> e784ee80`
 
