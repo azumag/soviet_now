@@ -7,9 +7,10 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-      Decision Logic (12 evaluation axes):
+      Decision Logic (13 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Penalty for risky NEAR merges at deadline (v366)
+         1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -60,6 +61,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v383: danger NEAR merge priority — utilize unutilized danger_merge_available from analysis
+     # v382 addressed danger DIRECT merges (+800). NEAR merges targeting danger pieces were unutilized
+     # despite removing danger pieces being critical for survival. Postmortem: "deadline_crossed下での
+     # DIRECT_MERGEの優先度を最大化" — natural extension to NEAR. Bonus 600 (deadline) / 300 (normal)
+     # makes danger NEAR competitive while NEAR deadline risk penalty still discourages high-risk attempts.
+     # Purely additive, no suppression. Fixes rollback failure mode: endgame scoring starvation.
+     # refs: tmp/state/last_rollback_postmortem.md, analyze_board.py, tmp/batch_summary.txt,
+     #       game_history/20260329_081450_score0774.jsonl, game_history/20260329_080000_score3902.jsonl,
+     #       game_history/20260329_080456_score2801.jsonl, protected_e6f534c37e28_median12789
+     #
      # v382: danger DIRECT merge priority — utilize unutilized danger_direct_merge_available from analysis
      # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること"
      # target score1359 T77: DIRECT_MERGE_HIGH_LAYER with danger_direct_merge_available=true, +100.
@@ -626,6 +637,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT":
             score += 800.0
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
+
+        # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
+        # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
+        # danger_merge_available covers NEAR merges targeting danger pieces. Removing a danger piece
+        # (redLineTime>0 or past deadline) prevents game over. Currently unutilized — strategy only
+        # reads danger_direct_merge_available.
+        # Worst game T58/T68/T74: NEAR+danger selected but failed (delta=0). Best game T170: NEAR+danger
+        # succeeded (+144). The bonus makes danger NEAR more decisive when multiple NEAR candidates exist.
+        # NEAR deadline risk penalty (landing_y*300) still discourages high-risk NEAR: at y=2.0 with
+        # deadline bonus, net = 0+600-600 = 0 (marginal). At y=1.0: net = 600+600-300 = 900 (encouraged).
+        # Below DIRECT merge (1200) — priority ordering maintained. Purely additive, no suppression.
+        # Fixes rollback failure mode: endgame scoring starvation (danger NEAR merge undervalued)
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+        #       tmp/batch_summary.txt, analyze_board.py (danger_merge_available L398-404),
+        #       game_history/20260329_081450_score0774.jsonl, game_history/20260329_080000_score3902.jsonl,
+        #       game_history/20260329_080456_score2801.jsonl, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        if result.get("danger_merge_available", False) and merge_grade == "NEAR":
+            bonus = 600.0 if deadline_crossed else 300.0
+            score += bonus
+            reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
