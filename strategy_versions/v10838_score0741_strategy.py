@@ -940,6 +940,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 0.3
 
+        # v381: merge drought height relief — complement v376 flat axis 8.8 with reduced height gradient
+        # v376 made axis 8.8 flat (-3000) when merge_available=false, intending stacking/proximity
+        # guidance (9.6/9.6b/9.7/5.6) to influence tie-breaking among NO_MERGE candidates.
+        # However, height_penalty gradient (50*height_mult*phase_mult) still overwhelms guidance:
+        # HIGH phase: ~180/y-unit vs guidance ~220 total → guidance only wins at nearest target.
+        # Existing height_mult gates (0.2x/0.8x/0.3x) only apply for reactive<3 or require deadline_crossed.
+        # For reactive>=3 without deadline, height_mult stays at phase value → HEIGHT_CONTROL default.
+        # Worst game (score974) T62-70: reactive_avg=3.1, 1 NEAR fails at HIGH_TOWER, then 7 turns
+        # of REACTIVE_PAIRS_NO_MERGE_PENALTY with HEIGHT_CONTROL default → game over.
+        # Extra low (score975) T58-69: reactive_avg=7.4, mostly HIGH_TOWER/HIGH_LAYER with
+        # REACTIVE_PAIRS_NO_MERGE_PENALTY — tons of reactive pairs but guidance can't overcome height.
+        # Best game (score3152) T122-130: reactive_avg=4.1, 4 successful NEAR merges with guidance.
+        # Fix: reduce height_mult when reactive>=3 and no merge candidate exists anywhere.
+        # Height penalty still meaningful (floor 0.5 ensures min 50*y), but guidance (~220) can
+        # compete over 2-3 y-units instead of ~1, enabling merge path construction.
+        # NOT piece_count suppression of stacking_bonus (v372 OK — reduces height counter-pressure).
+        # NOT landing_y-only (condition uses reactive_pair_count + merge_available state).
+        # refs: game_history/20260329_041948_score0974.jsonl T62-70,
+        #       game_history/20260329_041704_score0975.jsonl T58-69,
+        #       game_history/20260329_044125_score3152.jsonl T122-130,
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
+        if reactive_pair_count >= 3 and merge_grade == "NO" and not merge_available:
+            height_mult *= 0.6
+
         # v362: height_mult floor — prevent compounding nullification
         # 3 gates (0.2x/0.8x/0.3x) compound to 0.048x, nullifying height penalty.
         # Floor of 0.5 keeps height penalty meaningful while allowing strategic flexibility.
