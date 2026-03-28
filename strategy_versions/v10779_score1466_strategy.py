@@ -59,6 +59,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v376: flatten axis 8.8 gradient when no merge available — stacking guidance can work
+     # When merge_available=false, steep axis 8.8 gradient (2000/y_unit) overwhelms stacking bonus
+     # (~300-400), pushing all pieces to lowest position without building merge paths.
+     # Worst game T57-64: 44 pieces, reactive=7-8, 0 merges in 8 turns. Protected strategy
+     # (median 12789) used flat -4500 successfully. Height penalty still prevents high placement.
+     # NOT piece_count-based (v372 constraint OK). Fixes postmortem: pc accumulation from gradient.
+     # refs: protected_e6f534c37e28, score0523 T57-64, score2007 T96-103, postmortem, batch_summary
      # v374: NEAR merge deadline risk — quadratic scaling + ceiling breach penalty
      # Failed NEAR at high landing_y is disproportionately fatal. Worst T59: NEAR at y=3.63 (max_y=2.20) failed → max_y→3.63 → game over.
      # Quadratic (landing_y²*200) better reflects exponential risk vs v366 linear (landing_y*300).
@@ -484,6 +491,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
+
+    # --- merge availability (for axis 8.8 gradient control) ---
+    # When no candidate has DIRECT/NEAR/FAR merge, steep axis 8.8 gradient
+    # pushes all pieces to lowest position, preventing stacking guidance from working.
+    merge_available = game_state.get("merge_available", False)
 
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
@@ -1227,15 +1239,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず強力なペナルティを適用
-            # landing_yに応じて動的にペナルティを強化し、高配置を積極的に抑制
-            # v329修正: landing_y > 1 の場合、(landing_y - 1.0) * 2000.0 を使用し、高配置ほどペナルティを強化
-            if landing_y <= 0:
+            # v376: flatten gradient when no merge candidate exists
+            # Worst game T57-64: reactive=7-8, merge_available=false, 0 merges in 8 turns,
+            # axis 8.8 gradient (2000/y_unit) overwhelms stacking bonus (~300-400),
+            # pushing ALL pieces to lowest position (HEIGHT_CONTROL) without building merge paths.
+            # When merge_available=true, gradient is needed to push toward the merge candidate.
+            # When merge_available=false, gradient is counterproductive — height penalty (axis 2)
+            # and congestion penalty still prevent high placements; flat penalty lets stacking/
+            # proximity guidance (axis 9.6/9.6b/9.7/5.6) influence tie-breaking.
+            # Protected strategy (median 12789) used flat -4500 (v328) successfully.
+            # NOT piece_count-based suppression of stacking_bonus (v372 rollback constraint).
+            # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+            #       game_history/20260328_234810_score0523.jsonl T57-64 (44pc, 0 merges, gradient dominated),
+            #       game_history/20260329_000442_score2007.jsonl T96-103 (33pc, 2 merges, merge_available=true),
+            #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
+            # Fixes rollback failure mode: piece_count accumulation from gradient overwhelming stacking
+            if not merge_available:
+                # No merge for any candidate — flat penalty lets stacking guide placement
                 score -= 3000.0
-            elif landing_y <= 1:
-                score -= 3000.0 + landing_y * 2000.0
             else:
-                score -= 5000.0 + (landing_y - 1.0) * 2000.0
+                # Merge exists somewhere — strong gradient pushes toward it
+                if landing_y <= 0:
+                    score -= 3000.0
+                elif landing_y <= 1:
+                    score -= 3000.0 + landing_y * 2000.0
+                else:
+                    score -= 5000.0 + (landing_y - 1.0) * 2000.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
