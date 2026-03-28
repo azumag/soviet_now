@@ -38,7 +38,7 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
-             9.6b. Same-type proximity guidance - v369: congestion-aware unified proximity (replaces v362/v368 split)
+             9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.5. Current type stack merge priority - v337: russia_phase抑制版
@@ -59,6 +59,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v371: axis 9.6b merged_type-aware targeting — prefer same-type closest to merged_type(N+1) for chain building
+     # Fixes postmortem failure mode: type scattering without merge paths (piece_count accumulation)
+     # Worst game: 40 pieces, max type 12, types scattered. Best game: 31 pieces, type 15 on board, types concentrated.
+     # refs: advice.md (azumag, nimdavirus: N+1 adjacent priority), game_history/20260328_151000_score0486.jsonl T54-61,
+     #       game_history/20260328_151437_score3261.jsonl T112-119, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, analyze_board.py
      # v370: growth center proximity extended to all reactive levels with congestion scaling
      # Fixes postmortem failure mode: piece scattering prevents merge paths (type concentration)
      # Worst game T78: 38 pieces, types 1-12 scattered x=[-3,+3], reactive=8, no merge, dies at turn 85.
@@ -686,39 +692,48 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
-        # ----- v362/v368 → v369: unified congestion-aware same-type proximity guidance -----
-        # v369: Replace reactive-level split with piece_count-based scaling.
-        # Gap: at reactive >= 3, v362 bonus (max 60) is too small for axis 8.8 tie-breaking.
-        # Second worst (score0718) T59-62: 5 consecutive no-merge turns at reactive 7-11, pc 35-39.
-        # The strategy defaults to HEIGHT_CONTROL (lowest position) during these droughts,
-        # adding pieces without building merge paths. Postmortem: piece_count is the key predictor.
-        # Fix: scale bonus with piece_count so guidance grows as the board becomes more congested.
-        # At pc=28: base bonus (max ~120). At pc=35: ~1.84x (max ~221). At pc=40: ~2.48x (max ~298).
-        # Still small vs axis 8.8 diffs (~1000-2000 per landing_y unit), but meaningful for
-        # tie-breaking between candidates at similar heights — guides toward same-type pieces
-        # instead of random low placement. No reactive<3 guard (postmortem constraint).
-        # Not landing_y-only (proximity + piece_count + target height).
-        # refs: tmp/state/last_rollback_postmortem.md (piece_count predictor),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.4% low vs 14.1% high),
-        #       game_history/20260328_130927_score0696.jsonl T50-59 (pc 30→37, reactive 2-6),
-        #       game_history/20260328_132746_score0718.jsonl T55-62 (pc 35→39, reactive 7-11),
-        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
-        #       advice.md (garsy38: type concentration, zoumotu3: growth concentration)
-        # Fixes postmortem failure mode: weak guidance at reactive>=3 → HEIGHT_CONTROL → pc accumulation
+        # ----- v362/v368 → v369 → v371: merged_type-aware targeting + congestion-aware proximity -----
+        # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
+        # advice.md "TypeN+1と隣接している方を優先してドロップする" (azumag, nimdavirus).
+        # After N+N→N+1 merge, the resulting piece is near existing N+1 → immediate N+1+N+1 opportunity.
+        # v369 targeted lowest same-type (accessibility) but ignored chain potential.
+        # Worst game: 40 pieces, max type 12 scattered. Best game: 31 pieces, type 15 concentrated.
+        # If no merged_type piece on board, falls back to lowest (same as v369).
+        # Bonus magnitude, congestion scaling, and target_y decay unchanged from v369.
+        # No reactive<3 guard (postmortem constraint). Not landing_y-only (proximity + pc + target_y).
+        # refs: advice.md (azumag, nimdavirus), tmp/state/last_rollback_postmortem.md,
+        #       tmp/batch_summary.txt, game_history/20260328_151000_score0486.jsonl T54-61,
+        #       game_history/20260328_151437_score3261.jsonl T112-119,
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        # Fixes postmortem failure mode: type scattering → piece_count accumulation
         if merge_grade == "NO" and same_type_stack_top is not None:
             if not (current_type_has_reactive or current_type_has_near):
-                # Current type doesn't have reactive/near pairs — axis 9.6 won't fire.
-                # Provide proximity guidance toward lowest same-type piece to build
-                # future merge pipeline, reducing piece_count accumulation.
-                lowest_same = min(same_type_pieces, key=lambda p: p.get("y", 10))
-                target_x = lowest_same.get("x", 0)
-                target_y = lowest_same.get("y", -10)
+                # v371: Find same-type piece closest to merged_type(N+1) for chain building.
+                # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
+                merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
+                best_proximity_target = None
+                best_proximity_dist = float("inf")
+                for sp in same_type_pieces:
+                    sp_x = sp.get("x", 0)
+                    sp_y = sp.get("y", -10)
+                    min_mt_dist = float("inf")
+                    for mp in merged_type_pieces:
+                        mt_dist = ((sp_x - mp["x"]) ** 2 + (sp_y - mp["y"]) ** 2) ** 0.5
+                        if mt_dist < min_mt_dist:
+                            min_mt_dist = mt_dist
+                    if min_mt_dist < best_proximity_dist:
+                        best_proximity_dist = min_mt_dist
+                        best_proximity_target = sp
+                # Fallback to lowest same-type if no merged_type on board
+                if best_proximity_target is None or best_proximity_dist == float("inf"):
+                    best_proximity_target = min(same_type_pieces, key=lambda p: p.get("y", 10))
+
+                target_x = best_proximity_target.get("x", 0)
+                target_y = best_proximity_target.get("y", -10)
                 horiz_dist = abs(x - target_x)
                 if horiz_dist < 2.0:
-                    # v369: unified congestion-aware proximity — no reactive level split
+                    # v369 congestion-aware proximity — no reactive level split
                     # Postmortem: piece_count is the key predictor of final score.
-                    # At high piece_count, axis 8.8 (-3000~-7000) makes all candidates similar,
-                    # so guidance must scale with congestion to be meaningful.
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
                     proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
