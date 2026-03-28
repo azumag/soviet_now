@@ -284,6 +284,17 @@ Phases (determined by board max Y):
   #       game_history/20260324_012537_score0611.jsonl turns 42-48, game_history/20260324_020024_score2481.jsonl
   # Fixes rollback failure mode: reactive_pairs盤面圧縮ボーナスによる即時併合機会取りこぼし（axis 9.5 reactive_pairsボーナス削除）
   #
+  # v373: deadline_crossed時のAVOID_BLOCK_NEXTNEXT抑制 — reactive pairs配置ガイダンスとの衝突解消
+  # Worst game T60-65: 4/6 fatal turnsにAVOID_BLOCK_NEXTNEXTが発火、-400ペナルティがsame-type proximityや
+  # growth center guidanceと競合し、ピース配置を断片化してpiece_countを蓄積。deadline_crossed下でreactive pairs
+  # が存在する場合、現在の反応機会を活用する配置を優先すべき。future nextNext merge保持はdeadline下では
+  # 価値が低い（次ターンに到達できない可能性が高い）。
+  # advice: "連鎖よりも目の前の併合の確実性を優先する"
+  # refs: advice.md, tmp/batch_summary.txt, game_history/20260328_215508_score0738.jsonl,
+  #       game_history/20260328_222716_score0779.jsonl, game_history/20260328_214829_score2678.jsonl,
+  #       tmp/state/last_rollback_postmortem.md
+  # Fixes rollback failure mode: conflicting placement signals at deadline → piece_count accumulation
+  #
   # v324: deadline_crossed対応・ロシアフェーズ強化版 - v323 failure mode潰し
   # v323 failure: axis 9.2にdeadline_crossed条件が含まれておらず、deadline_crossed時でもreactive_pairs>=3の即時併合不可でペナルティが適用されない
   # ワーストゲーム(score0651)終盤turns 42-47: max_y=0.16→1.78 (deadline_crossed: false→true→false), reactive_pairs=3-4, merge_available=false続き
@@ -916,17 +927,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
         # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
         # refs: advice.md (Pitman_live, azumag), batch_summary.txt
-        for p in pieces:
-            if p.get("type") == next_next_type:
-                piece_y = p.get("y", -10)
-                landing_y = result.get("landing_y", 0)
-                if landing_y > piece_y:
-                    # 着地位置がnextNext typeのピースの上になる場合
-                    horiz_dist = abs(x - p["x"])
-                    if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                        score -= 400.0  # 未来の併合機会を潰すためのペナルティ
-                        reasons.append("AVOID_BLOCK_NEXTNEXT")
-                        break
+        # v373: suppress at deadline when no merge and reactive pairs exist.
+        # deadline下でreactive pairsが存在する場合、future nextNext merge保持より
+        # 現在の反応機会活用(same-type proximity, growth center)を優先。
+        # -400が配置ガイダンスと競合してpiece_count accumulationを助長するのを防ぐ。
+        # advice: "連鎖よりも目の前の併合の確実性を優先する"
+        if not (deadline_crossed and merge_grade == "NO" and reactive_pair_count >= 1):
+            for p in pieces:
+                if p.get("type") == next_next_type:
+                    piece_y = p.get("y", -10)
+                    landing_y = result.get("landing_y", 0)
+                    if landing_y > piece_y:
+                        # 着地位置がnextNext typeのピースの上になる場合
+                        horiz_dist = abs(x - p["x"])
+                        if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
+                            score -= 400.0  # 未来の併合機会を潰すためのペナルティ
+                            reasons.append("AVOID_BLOCK_NEXTNEXT")
+                            break
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
         # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
