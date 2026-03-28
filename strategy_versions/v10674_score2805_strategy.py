@@ -15,7 +15,7 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-           5.6. Growth center proximity - Compact board around highest-type piece (v364)
+           5.6. Growth center proximity - Compact board around highest-type piece (v370: all-reactive, congestion-aware)
             6. Chain merge bonus - Evaluate possibility of further merges after merge
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
@@ -59,7 +59,24 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v369: unified congestion-aware proximity guidance — replaces v362/v368 reactive-level split
+     # v370: growth center proximity extended to all reactive levels with congestion scaling
+     # Fixes postmortem failure mode: piece scattering prevents merge paths (type concentration)
+     # Worst game T78: 38 pieces, types 1-12 scattered x=[-3,+3], reactive=8, no merge, dies at turn 85.
+     # Best game T142: types 14/13x2/12x2 concentrated around growth center, survives 149 turns.
+     # Key gap: axis 5.6 only fired at reactive<3 with max bonus 50 — too weak and too narrow.
+     # At reactive 0-2, bonus 50 is comparable to height penalty diff (~70-120) but easily overridden.
+     # At reactive >= 3, no growth center guidance fires at all — axis 8.8 is sole differentiator.
+     # v370: (1) Remove reactive<3 guard — growth center guidance at ALL reactive levels.
+     # (2) Match axis 9.6b base bonus (50→100) for competitive tie-breaking signal.
+     # (3) Add piece_count congestion scaling — stronger guidance as board congests (postmortem).
+     # At pc=28: 100. At pc=35: 198. At pc=40: 268. Still safe vs axis 8.8 (-3000 to -7000).
+     # No reactive<3 guard (postmortem constraint). Not landing_y-only (proximity + piece_count + gc_y).
+     # refs: advice.md (zoumotu3: growth concentration, garsy38: type concentration),
+     #       game_history/20260328_141811_score0926.jsonl T78 (worst: 38pc scattered),
+     #       game_history/20260328_140715_score3212.jsonl T142 (best: 36pc concentrated),
+     #       tmp/state/last_rollback_postmortem.md (piece_count predictor),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 18.7% low vs 13.4% high)
+     # Fixes rollback failure mode: type scattering → piece_count accumulation → game over
      # Postmortem: piece_count is the key predictor. At reactive>=3, axis 8.8 makes all candidates similar,
      # but v362 bonus (max 60) is too small for meaningful tie-breaking. v368 (max 120 at reactive 1-2)
      # leaves reactive>=3 under-guided → HEIGHT_CONTROL default → pc accumulation during drought.
@@ -896,21 +913,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
 
-        # ----- evaluation axis 5.6: growth center proximity (v364) -----
-        # Re-introduce growth center proximity lost in rollback cascade.
-        # batch_summary: HEIGHT_CONTROL 20.9% in low-score vs 16.3% in high-score games.
-        # Worst game ends with 35 pieces scattered (type 11 spread x=-2..x=2.5), 0 merges final 5 turns.
-        # Best game concentrates growth around highest-type, reaches Russia phase with 5 merges.
-        # Small bonus (max 50) for placing near deepest highest-type piece encourages concentration
-        # (advice: zoumotu3 "1-2 locations for growth") without overriding merge/height priorities.
-        # Fires only when max_type >= 6 (low types aren't growth targets), not in russia_phase
-        # (axis 8.7 handles russia), not at reactive >= 3 (axis 8.8 penalty dominates all candidates).
-        # refs: advice.md (zoumotu3), tmp/batch_summary.txt,
-        #       game_history/20260328_073826_score0883.jsonl T62-69,
-        #       game_history/20260328_074802_score0970.jsonl T64-65,
+        # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
+        # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
+        # Re-introduced in v364 but was limited to reactive<3 with max bonus 50 — too weak.
+        # Worst game (score0926) T78: 38 pieces, types 1-12 scattered, reactive=8, no merge.
+        # Best game (score3212) T142: types 14/13x2/12x2 concentrated, reactive=1.
+        # Growth center guidance encourages placing pieces near highest-type pieces,
+        # naturally concentrating types for merge path creation (advice: zoumotu3).
+        # v370 changes from v364:
+        # 1. Removed reactive<3 guard — guidance now fires at ALL reactive levels.
+        #    At reactive>=3, axis 8.8 dominates but guidance provides better tie-breaking.
+        # 2. Increased base bonus to 100 (from 50) — matches axis 9.6b magnitude for competitive signal.
+        # 3. Added piece_count congestion scaling — stronger guidance as board congests.
+        #    At pc=28: 100. At pc=35: ~198. At pc=40: ~268. Safe vs axis 8.8 (-3000 to -7000).
+        # 4. Changed decay: gc_y > 0 now uses 0.4 decay (from 0.5) — slightly less aggressive decay.
+        # Postmortem constraints: no reactive<3 guard, not landing_y-only (proximity+pc+gc_y).
+        # refs: advice.md (zoumotu3, garsy38), tmp/batch_summary.txt,
+        #       game_history/20260328_141811_score0926.jsonl, game_history/20260328_140715_score3212.jsonl,
+        #       tmp/state/last_rollback_postmortem.md (piece_count predictor),
         #       strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
-        # Fixes pattern: piece scattering prevents merge paths, piece_count accumulation
-        if not russia_phase and reactive_pair_count < 3:
+        # Fixes rollback failure mode: type scattering → piece_count accumulation
+        if not russia_phase:
             max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
             if max_type_on_board >= 6:
                 # Find the deepest (lowest y) highest-type piece as growth center
@@ -924,11 +947,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     gc_y = growth_center.get("y", -10)
                     horiz_dist = abs(x - gc_x)
                     if horiz_dist < 2.5:
-                        proximity = max(0, 50.0 - horiz_dist * 20.0)
+                        # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
+                        proximity = max(0, 100.0 - horiz_dist * 40.0)
                         # Decay if growth center is high — don't override height control
                         if gc_y > 0:
-                            proximity *= max(0.0, 1.0 - gc_y * 0.5)
-                        score += proximity
+                            proximity *= max(0.0, 1.0 - gc_y * 0.4)
+                        # v370: congestion-aware scaling — postmortem: piece_count is key predictor
+                        # At high piece_count, guidance needs to be stronger to compete with
+                        # height differences and provide meaningful redirect toward growth center.
+                        if piece_count >= 28:
+                            congestion_scale = 1.0 + (piece_count - 28) * 0.14
+                            proximity *= min(congestion_scale, 3.5)
+                        if proximity > 0:
+                            score += proximity
 
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
