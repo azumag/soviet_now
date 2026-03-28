@@ -59,6 +59,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v374: NEAR merge deadline risk — quadratic scaling + ceiling breach penalty
+     # Failed NEAR at high landing_y is disproportionately fatal. Worst T59: NEAR at y=3.63 (max_y=2.20) failed → max_y→3.63 → game over.
+     # Quadratic (landing_y²*200) better reflects exponential risk vs v366 linear (landing_y*300).
+     # Ceiling breach (+800 when landing_y > max_y+0.5) prevents NEAR that would create unreachable ceiling.
+     # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at deadline
+     # refs: game_history/20260328_225115_score0562.jsonl T59, game_history/20260328_231228_score0855.jsonl T65,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md
      # v371: axis 9.6b merged_type-aware targeting — prefer same-type closest to merged_type(N+1) for chain building
      # Fixes postmortem failure mode: type scattering without merge paths (piece_count accumulation)
      # Worst game: 40 pieces, max type 12, types scattered. Best game: 31 pieces, type 15 on board, types concentrated.
@@ -574,26 +581,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- v366: NEAR merge risk penalty at deadline -----
-        # postmortem: piece_count accumulation is the key failure predictor.
-        # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail
-        # (score_delta=0), piece_count grows 32->35. Best game succeeds with merges.
-        # NEAR merge success rate is 68.5%. At deadline, failed NEAR adds a high piece
-        # with no benefit, worsening the already dangerous board state.
-        # This penalty reduces NEAR merge incentive proportionally to landing_y when
-        # deadline is crossed, making the strategy prefer DIRECT merges (unchanged)
-        # or lower-position NEAR merges over risky high-position NEAR at deadline.
+        # ----- v374: NEAR merge deadline risk — quadratic scaling + ceiling breach penalty -----
+        # v366 used linear (landing_y * 300). Worst game T59: NEAR at y=3.63 (max_y=2.20)
+        # failed (delta=0), max_y jumped to 3.63 → game over. Linear penalty (1089) was too
+        # weak vs NEAR bonuses (~2300). Failed NEAR at high landing_y is disproportionately
+        # fatal — the piece becomes an unreachable ceiling.
+        # v374 changes: (1) Quadratic scaling (landing_y²*200) — better reflects exponential
+        # risk. At y=3.63: 2635 vs v366's 1089. At y=1.0: 200 vs 300 (safer NEAR encouraged).
+        # (2) Ceiling breach penalty (+800 when landing_y > max_y+0.5) — prevents NEAR that
+        # would place piece above current ceiling, making future merges much harder.
+        # Total worst case: 2635+800=3435 > NEAR bonuses(~2300) → NO_MERGE preferred → prevents fatal NEAR.
         # Does NOT affect: DIRECT merges, NEAR when !deadline_crossed, or NO merge.
-        # postmortem constraint: combines landing_y with deadline state (not landing_y-only).
-        # refs: game_history/20260328_102644_score0654.jsonl T49-58 (NEAR fails, pc 32->38),
-        #       game_history/20260328_101741_score2213.jsonl T103-112 (merge succeeds),
-        #       tmp/state/last_rollback_postmortem.md (piece_count predictor),
-        #       tmp/batch_summary.txt (low-score 5.4% NEAR_HIGH_LAYER vs high-score 3.9%)
+        # postmortem constraint: combines landing_y with deadline state and max_y (not landing_y-only).
+        # refs: game_history/20260328_225115_score0562.jsonl T59 (NEAR at y=3.63 failed, fatal),
+        #       game_history/20260328_231228_score0855.jsonl T65 (NEAR at deadline failed),
+        #       game_history/20260328_231639_score2341.jsonl T103 (NEAR at y~2.0, below ceiling → still preferred),
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md
         # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at deadline
         if deadline_crossed and merge_grade == "NEAR" and landing_y > 0:
-            near_risk_penalty = landing_y * 300.0
+            # v374: quadratic scaling — risk grows non-linearly with height
+            near_risk_penalty = landing_y * landing_y * 200.0
+            # Ceiling breach: landing above max_y+0.5 creates unreachable ceiling piece
+            if landing_y > max_y + 0.5:
+                near_risk_penalty += 800.0
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
+
+        # v375: NEAR merge ceiling breach risk at any phase — failed NEAR above max_y creates unreachable ceiling
+        # v374 covers deadline_crossed; v375 extends ceiling breach to all phases.
+        # Worst game T59: NEAR at y=3.63 (max_y=2.20) fails → max_y→3.63 → game over.
+        # Best game T103: NEAR at y~2.0 (max_y~2.0) — no breach → no penalty → NEAR preferred.
+        # Penalty scales with excess: (landing_y - max_y) * 500. At +1.0: -500. Does NOT affect deadline (v374) or landing_y <= max_y+0.5.
+        elif merge_grade == "NEAR" and landing_y > max_y + 0.5:
+            ceiling_excess = landing_y - max_y
+            score -= ceiling_excess * 500.0
+            reasons.append("NEAR_CEILING_RISK")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
