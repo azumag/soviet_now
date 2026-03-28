@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-28 14:36:23 JST`
-- Nodes: `778`
-- Edges: `1085`
-- Current: `d7c863da186d`
+- Updated: `2026-03-28 15:27:45 JST`
+- Nodes: `779`
+- Edges: `1086`
+- Current: `1813ba4eef44`
 - Anchor: `bb768f9ca0bf`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_3c7551fe053c["3c7551fe053c<br/>g=7 n=7<br/>comp=12162.9"]
     h_216f251b5089["216f251b5089<br/>g=42 n=20<br/>comp=10323.0"]
     h_7bd6203f37b5["7bd6203f37b5<br/>g=87 n=20<br/>comp=11137.3"]
     h_08bae60c8d28["08bae60c8d28<br/>g=41 n=20<br/>comp=10390.2"]
@@ -72,11 +71,11 @@ flowchart TD
     h_0a1b5dfabf95["0a1b5dfabf95<br/>g=12 n=12<br/>comp=11274.1"]
     h_b1515125bcf7["b1515125bcf7<br/>g=12 n=12<br/>comp=10341.6"]
     h_bb768f9ca0bf["bb768f9ca0bf<br/>ANCHOR<br/>g=12 n=12<br/>comp=11529.9"]
+    h_d7c863da186d["d7c863da186d<br/>g=12 n=12<br/>comp=10116.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_d7c863da186d["d7c863da186d<br/>CURRENT"]
+    h_1813ba4eef44["1813ba4eef44<br/>CURRENT"]
 
-    h_3c7551fe053c -->|improve| h_216f251b5089
     h_216f251b5089 -->|improve| h_7bd6203f37b5
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_c333071675cc -. rollback .-> h_216f251b5089
@@ -132,13 +131,13 @@ flowchart TD
     h_0a1b5dfabf95 -->|improve| h_b1515125bcf7
     h_b1515125bcf7 -->|improve| h_bb768f9ca0bf
     h_bb768f9ca0bf -->|improve| h_d7c863da186d
+    h_d7c863da186d -->|improve| h_1813ba4eef44
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_3c7551fe053c plain;
     class h_216f251b5089 plain;
     class h_7bd6203f37b5 plain;
     class h_08bae60c8d28 plain;
@@ -195,9 +194,10 @@ flowchart TD
     class h_0a1b5dfabf95 plain;
     class h_b1515125bcf7 plain;
     class h_bb768f9ca0bf anchor;
+    class h_d7c863da186d plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_d7c863da186d current;
+    class h_1813ba4eef44 current;
 ```
 
 ## Detail 1/10
@@ -2783,9 +2783,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `d7c863da186d`
-- Nodes in this diagram: `58`
-- Internal edges in this diagram: `52`
+- Range: `7bd6203f37b5` .. `1813ba4eef44`
+- Nodes in this diagram: `59`
+- Internal edges in this diagram: `53`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2857,9 +2857,10 @@ flowchart TD
     h_0a1b5dfabf95["0a1b5dfabf95<br/>g=12 n=12<br/>comp=11274.1"]
     h_b1515125bcf7["b1515125bcf7<br/>g=12 n=12<br/>comp=10341.6"]
     h_bb768f9ca0bf["bb768f9ca0bf<br/>ANCHOR<br/>g=12 n=12<br/>comp=11529.9"]
+    h_d7c863da186d["d7c863da186d<br/>g=12 n=12<br/>comp=10116.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_d7c863da186d["d7c863da186d<br/>CURRENT"]
+    h_1813ba4eef44["1813ba4eef44<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2913,6 +2914,7 @@ flowchart TD
     h_0a1b5dfabf95 -->|improve| h_b1515125bcf7
     h_b1515125bcf7 -->|improve| h_bb768f9ca0bf
     h_bb768f9ca0bf -->|improve| h_d7c863da186d
+    h_d7c863da186d -->|improve| h_1813ba4eef44
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -2974,12 +2976,23 @@ flowchart TD
     class h_0a1b5dfabf95 plain;
     class h_b1515125bcf7 plain;
     class h_bb768f9ca0bf anchor;
+    class h_d7c863da186d plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_d7c863da186d current;
+    class h_1813ba4eef44 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10685 `d7c863da -> 1813ba4e`
+
+- scores: `17841 11170 12580 10058 9512 12381 8415 8021 11095 7249 22587 9994`
+- 9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
+- v371: axis 9.6b merged_type-aware targeting — prefer same-type closest to merged_type(N+1) for chain building
+- Fixes postmortem failure mode: type scattering without merge paths (piece_count accumulation)
+- Worst game: 40 pieces, max type 12, types scattered. Best game: 31 pieces, type 15 on board, types concentrated.
+- game_history/20260328_151437_score3261.jsonl T112-119, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+- tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, analyze_board.py
 
 ### Improve Game#10673 `bb768f9c -> d7c863da`
 
