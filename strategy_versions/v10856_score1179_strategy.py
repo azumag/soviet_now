@@ -7,9 +7,10 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-      Decision Logic (11 evaluation axes):
+      Decision Logic (12 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Penalty for risky NEAR merges at deadline (v366)
+         1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
          4. Left-right balance correction - Bonus for correcting piece count bias
@@ -59,6 +60,22 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v382: danger DIRECT merge priority — utilize unutilized danger_direct_merge_available from analysis
+     # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること"
+     # target score1359 T77: DIRECT_MERGE_HIGH_LAYER with danger_direct_merge_available=true, +100.
+     # target score2083 T92: HIGH_TOWER→type13 merge +119, T95-98 NEAR merge at deadline +130.
+     # Worst game T54/T56: NEAR merge attempted but failed (delta=0), pc grew 37→39, no DIRECT merge found.
+     # Current strategy never reads result["danger_direct_merge_available"] — per-candidate flag
+     # indicating a DIRECT merge with a danger piece (near/past deadline). This is the highest-value
+     # merge: 95.7% success + danger piece removal. Strong bonus ensures this is chosen over
+     # non-danger DIRECT merges and over risky NEAR at deadline. Does NOT penalize NEAR or
+     # suppress any existing behavior — purely additive.
+     # Fixes rollback failure mode: endgame scoring starvation (DIRECT merge missed at deadline)
+     # refs: game_history/20260329_071549_score0597.jsonl T54-61,
+     #       game_history/20260329_070630_score4475.jsonl T176-183,
+     #       game_history/20260328_222114_score1359.jsonl T72-79,
+     #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       tmp/batch_summary.txt, analyze_board.py (danger_direct_merge_available)
      # v371: axis 9.6b merged_type-aware targeting — prefer same-type closest to merged_type(N+1) for chain building
      # Fixes postmortem failure mode: type scattering without merge paths (piece_count accumulation)
      # Worst game: 40 pieces, max type 12, types scattered. Best game: 31 pieces, type 15 on board, types concentrated.
@@ -583,6 +600,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
             near_risk_penalty = landing_y * 300.0
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
+
+        # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
+        # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
+        # targetのscore1359 T77(DIRECT_MERGE_HIGH_LAYER, +100)が示す通り、danger_direct_mergeは
+        # deadline下の主要スコア源。" danger_direct_merge_available is a per-candidate flag from
+        # analyze_board.py indicating this drop position achieves a DIRECT merge with a danger piece
+        # (piece near/past deadline y=3.32). This is the highest-value merge opportunity:
+        # 1. DIRECT merge = 95.7% success rate (vs NEAR 68.5%)
+        # 2. Danger piece removal = prevents game over from that piece
+        # 3. At deadline_crossed, danger pieces are the most urgent targets
+        # Currently UNUTILIZED — strategy reads danger_direct_merge_available from game_state but
+        # not from per-candidate analysis results. Adding this ensures the strategy strongly prefers
+        # DIRECT merges that also resolve danger pieces, especially at deadline.
+        # Bonus magnitude: 800 — competitive with DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY (500-1200)
+        # but additive (stacks with it). Ensures danger DIRECT beats non-danger DIRECT at deadline.
+        # NOT a NEAR penalty or suppression — purely additive bonus for DIRECT merges with danger.
+        # Postmortem constraints respected: no gradient flattening, no NEAR suppression,
+        # no AVOID_BLOCK_NEXTNEXT suppression, no piece_count scaling.
+        # refs: game_history/20260328_222114_score1359.jsonl T77 (DIRECT_MERGE_HIGH_LAYER, +100,
+        #       danger_direct_merge_available=true, deadline_crossed=true),
+        #       analyze_board.py L391-397 (danger_direct_merge_available calculation),
+        #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
+        # Fixes rollback failure mode: endgame scoring starvation at deadline
+        if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT":
+            score += 800.0
+            reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
