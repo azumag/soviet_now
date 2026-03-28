@@ -1,23 +1,14 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v93)
+ * strategy.mjs - ドロップ位置決定戦略 (v94)
  *
- * v93: v92をベースに、ゲーム分析（特に max_y が高すぎる問題）と戦略原則をより深く反映させるための改善。
+ * v94: v93をベースに、ゲーム分析（特に max_y が高すぎる問題）と戦略原則をより深く反映させるための改善。
  *      物理エンジンの不確実性に対応しつつ、より能動的・計画的なピース配置を促すためのスコアリング調整を継続する。
  *
  *      主な改善点:
- *      1.  **高さ管理の抜本的強化**:
- *          - `HEIGHT_PENALTY_WEIGHT` を大幅に引き上げ、高さに対するペナルティの影響力を増大。
+ *      1.  **高さ管理の抜本的強化のさらなる強化**:
+ *          - `HEIGHT_PENALTY_WEIGHT` をさらに引き上げ、高さに対するペナルティの影響力を増大。
  *          - `calculateHeightPenalty` のペナルティ乗数をさらに増加させ、Y座標がデッドラインに近づくほど急峻なペナルティとなるように調整。
- *          - `findAggressiveCriticalMerge`, `findT1LowMerge`, `findMergeOpportunity` の各関数もスコアリングベースに変換し、
- *            高さペナルティがこれらの優先的なマージ探索にも適切に適用されるように修正。
- *      2.  **ガベージブロック対応の強化（低Y優先度の上昇）**:
- *          - `defaultStrategy` 内で、ガベージ状況 (`isUrgentGarbage` / `isOjamaMerge`) における低Y座標への配置ボーナスを、
- *            他のマージ機会の有無にかかわらず無条件で適用するように変更。これにより、盤面クリアの優先度をさらに高める。
- *          - `GARBAGE_LOW_MERGE_BONUS` と `GARBAGE_LOW_MERGE_URGENT_BONUS` の基本値を引き上げ、低Y配置をさらに強力に奨励。
- *          - `findAggressiveCriticalMerge` も同様に、緊急ガベージ状況下での低Y配置ボーナスを考慮するよう改善。
- *      3.  **戦略的ボーナスの影響力調整**:
- *          - 全体的なボーナス/ペナルティのバランスを見直し、高さ管理が最も重要な要素となるように調整。
- *          - 各関数の内部で一貫したスコアリングロジックを使用し、優先順位の競合をより適切に解決。
+ *          - 分析結果から、既存の高さ管理強化でもmax_yがデッドラインを超えるケースが見られたため、さらなるペナルティ強化が必要と判断。
  *
  *      - 物理挙動の近似に関する注意点も維持。
  */
@@ -49,8 +40,8 @@ const GARBAGE_LOW_MERGE_URGENT_BONUS = 100.0; // Increased from 75.0
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
-// Default Strategy Scoring Weights (v93 adjustments)
-const HEIGHT_PENALTY_WEIGHT = 1.5; // Increased from 0.8 to give height much more influence
+// Default Strategy Scoring Weights (v94 adjustments)
+const HEIGHT_PENALTY_WEIGHT = 2.5; // Increased from 1.5 to give height much more influence
 const MERGE_BONUS_BASE_SCORE = 120.0; // Keep as v92, balance with increased penalties/other bonuses
 const DYNAMIC_AGGREGATION_BONUS_SCORE = 80.0; // Keep as v92
 const LOOKAHEAD_MERGE_BONUS_SCORE = 50.0; // Keep as v92
@@ -74,7 +65,7 @@ function calculateHeightPenalty(y) {
   // Linear penalty between WARN_CENTER_Y and CRITICAL_CENTER_Y, then cubic exponential
   const linearRange = PENALTY_CRITICAL_CENTER_Y - PENALTY_WARN_CENTER_Y;
   const normalizedY = (y - PENALTY_WARN_CENTER_Y) / linearRange; // 0 to 1 in the warn range
-  return Math.pow(normalizedY, 3) * 3000; // Adjusted from 2000 to 3000 for higher impact
+  return Math.pow(normalizedY, 3) * 5000; // Adjusted from 3000 to 5000 for significantly higher impact
 }
 
 /**
