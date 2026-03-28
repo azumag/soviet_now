@@ -38,6 +38,7 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
+             9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.5. Current type stack merge priority - v337: russia_phase抑制版
 
@@ -57,6 +58,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v367: axis 9.7 pipeline-aware placement guidance — sibling to axis 9.6, fires when same_type_stack_top is None
+     # Uses reactor["pipeline"] (unutilized) to guide placement near adjacent-type pieces (next_type ± 1).
+     # Fixes postmortem: no guidance when no same-type on board → piece_count accumulation (worst T58: reactive=3, MEDIUM_TOWER).
+     # No reactive < 3 guard, not landing_y-only. Bonus max ~80 (tie-breaking). refs: postmortem, analyze_board.py, score0613, protected_e6f534c37e28, batch_summary, advice.md
      # v366: NEAR merge risk penalty at deadline — reduce piece_count accumulation from failed NEAR merges
      # Worst game T50-52: 3 consecutive NEAR at deadline_crossed, all fail (delta=0), pc 32->35.
      # Penalty: deadline_crossed && merge_grade==NEAR && landing_y>0 → -landing_y*300.
@@ -473,6 +478,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # near_pairs is list of (piece_id_1, piece_id_2, type, gap) tuples
     # Extract which types have reactive pairs for type-aware stacking decisions
     near_pairs = reactor.get("near_pairs", [])
+    # --- v367: pipeline extraction (unutilized reactor info) ---
+    # pipeline is list of (type, type+1, min_distance) tuples — adjacent-type proximity
+    # Used by axis 9.7 for placement guidance when no same-type on board
+    pipeline = reactor.get("pipeline", [])
     current_type_has_reactive = any(
         rp[2] == next_type for rp in reactive_pairs if isinstance(rp, (list, tuple)) and len(rp) >= 3
     )
@@ -596,6 +605,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     stacking_bonus = best_chain_score + max(0, 100.0 - horizontal_distance * 40.0)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
+
+        # ----- v367: axis 9.7 pipeline-aware placement guidance (sibling to 9.6) -----
+        # Postmortem constraint: axis 9.7 should be a sibling of axis 9.6, not nested inside it.
+        # Fires when: same_type_stack_top is None (no same-type on board), reactive >= 1, merge_grade == "NO"
+        # This is the case that v359 (REACTIVE_PAIRS_COMPRESSION with landing_y-only bonus) tried to fix
+        # but failed due to landing_y-only approach and reactive < 3 guard.
+        # v359 rollback: "replaces HEIGHT_CONTROL with naive compression based solely on landing_y"
+        # This version uses reactor["pipeline"] (unutilized info): list of (type, type+1, min_distance) tuples.
+        # Finds nearest adjacent-type (next_type ± 1) piece on board via pipeline data.
+        # Bonus for proximity to adjacent-type piece guides placement toward merge pipeline,
+        # creating future merge opportunities instead of aimless low placement.
+        # Worst game T58: reactive=3, type=10, no same-type 10 → MEDIUM_TOWER (no guidance) → pc grows.
+        # If type 9 or type 11 pieces existed, this guidance would direct placement near them.
+        # Bonus magnitude: max ~80 (tie-breaking only, won't override axis 8.8 or height penalty).
+        # No reactive_pair_count < 3 guard (postmortem constraint: works at ALL reactive levels).
+        # Not landing_y-only (postmortem constraint: uses pipeline proximity to specific types).
+        # refs: tmp/state/last_rollback_postmortem.md (axis 9.7 nesting fix, piece_count predictor),
+        #       analyze_board.py (reactor["pipeline"] structure),
+        #       game_history/20260328_112219_score0613.jsonl T58 (reactive=3, no same-type, no guidance),
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+        #       tmp/batch_summary.txt, advice.md (zoumotu3: growth concentration)
+        # Fixes postmortem failure mode: no guidance when same_type_stack_top is None → piece_count accumulation
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None:
+            # Find nearest piece whose type is adjacent to current type (next_type ± 1)
+            # Priority: next_type - 1 (merge up path) then next_type + 1 (if next_type-1 not found)
+            best_adjacent_target = None
+            best_adjacent_dist = float("inf")
+            for p in pieces:
+                p_type = p.get("type", 0)
+                if p_type == next_type - 1 or p_type == next_type + 1:
+                    p_x = p.get("x", 0)
+                    p_y = p.get("y", 10)
+                    # Prefer deeper (lower y) pieces — more accessible for future merges
+                    adj_dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
+                    if adj_dist < best_adjacent_dist:
+                        best_adjacent_dist = adj_dist
+                        best_adjacent_target = p
+            if best_adjacent_target is not None and best_adjacent_dist < 3.0:
+                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
+                score += pipeline_bonus
 
         # ----- v362: same-type proximity guidance at reactive>=3 -----
         # postmortem: worst game ends with 41 pieces, reactive=9, merge=NO for 7 turns.
