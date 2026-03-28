@@ -1,28 +1,39 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v87)
+ * strategy.mjs - ドロップ位置決定戦略 (v88)
  *
- * v87: v86で試みた「DEFAULT: Drop at lowest weighted Y.」以外の理由がログに全く出ていない問題を改善するため、
- *      defaultStrategyのロジックを抜本的に見直し。
- *      併合機会と大型ピースの片側集約を、単純な「低いY座標」にドロップするよりも優先するように、
- *      重み付けY座標の計算に調整を導入。これにより、より戦略的なドロップが選ばれることを期待する。
+ * v88: v87で導入されたdefaultStrategy内の併合機会と大型ピースの片側集約ロジックが、
+ *      ログに「Least occupied column (lowest weighted Y)」として記録され続ける問題に対応するため、
+ *      defaultStrategyのロジックをさらに改善。
+ *      各X座標（カラム）ごとに、標準的な落下位置、併合機会、大型ピース集約の3つの選択肢を評価し、
+ *      そのカラムにおける最適な重み付けY座標と理由を決定した上で、全カラムで最も良い選択肢を選ぶように修正。
+ *      これにより、併合や大型ピース集約が実際に選択された場合に、その理由が正しく反映されるようになることを期待する。
+ *
+ *      また、ゲーム分析で示された継続的な高Y座標到達の問題に対応するため、
+ *      `calculateHeightPenalty` のペナルティ関数をより急峻（三次関数）にし、乗数も引き上げて、
+ *      デッドライン付近の配置をより強く抑制するように調整。
+ *
+ *      おじゃまブロックによるゲームオーバー頻発の分析結果に基づき、
+ *      CRITICALモードのトリガー閾値を引き下げ（より早期に発動するよう変更）し、
+ *      `findAggressiveCriticalMerge` の理由ログにピースタイプを追加して分析しやすくした。
  *
  *      主な改善点:
- *      1.  `defaultStrategy` の再設計:
- *          - 各 `FINE_COLS` のX座標に対して、以下の優先順位で最適な重み付けY座標と理由を決定する。
- *            a. 併合機会: 同じtypeの既存ピースと併合できる場合、`calculateHeightPenalty` に `0.7` の乗数を適用し、
- *               併合をわずかに優先する。ただし、危険な高さへの併合は避ける。
- *            b. 大型ピースの片側集約: `LARGE_PIECE_THRESHOLD` 以上のピースを `LEFT_SIDE_X_MAX` 以下に配置する場合、
- *               `calculateHeightPenalty` に `0.4` のより強い乗数を適用し、集約を優先する。
- *               併合と大型ピース集約が同じ列で競合する場合は、併合が優先される。
- *               ただし、デッドラインから `0.7` 以上の安全マージンを確保できる場合に限る。
- *            c. それ以外: 単純にピースが着地する最低の重み付けY座標 (`calculateHeightPenalty` は乗数なし) を採用。
- *          - 最終的に、すべての `FINE_COLS` の中から最も低い重み付けY座標を持つX座標を選択する。
- *      2.  `MERGE_BUFFER` および `FINE_COLS` の粒度は v86 の改善を維持する。
- *      3.  既存の HOLD ロジック、おじゃまブロック対応、T1低マージロジックは変更せず、
- *          `defaultStrategy` の改善によってより多様な戦略が選ばれることを期待する。
+ *      1.  `defaultStrategy` のロジック修正:
+ *          - 各 `colX` に対して、標準落下、併合、大型ピース集約のそれぞれにおける重み付けY座標と理由を計算。
+ *          - これら3つの選択肢の中から、その `colX` における最も低い重み付けY座標と対応する理由を選択。
+ *          - 全ての `FINE_COLS` の中で、この「カラムごとの最適な選択肢」を比較し、最終的なドロップ位置と理由を決定。
+ *          - これにより、戦略的判断の透明性を高め、ログに実際の選択理由が反映されるようになる。
+ *      2.  `calculateHeightPenalty` の調整:
+ *          - `Math.pow(normalizedY, 2) * 500` から `Math.pow(normalizedY, 3) * 1000` へ変更。
+ *            高所の配置に対するペナルティをより厳しくし、デッドライン超えのリスクを低減する。
+ *      3.  おじゃまモードの閾値調整:
+ *          - `OJAMA_GAUGE_URGENT`: 0.6 -> 0.5
+ *          - `GARBAGE_RATIO_URGENT`: 0.4 -> 0.3
+ *            より早期におじゃま対策モードに移行し、マージを優先するよう促す。
+ *      4.  `findAggressiveCriticalMerge` の理由ログ改善:
+ *          - どのタイプがマージされたかを理由に含めるようにし、デバッグと分析を容易にする。
  *
- *      - ヘルパー関数、定数は v86から維持。
- *      - 物理挙動の近似に関する注意点も v86から維持。
+ *      - ヘルパー関数、定数は v87から維持。
+ *      - 物理挙動の近似に関する注意点も v87から維持。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -38,11 +49,11 @@ const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered
 const LEFT_SIDE_X_MAX = -1.5; // Large pieces are aggregated to the left of this X (v82). Use colX + pieceToDrop.r <= LEFT_SIDE_X_MAX for effective placement.
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 0.6; // (v82, maintained from v81)
 
-// Garbage / Critical Mode Thresholds
+// Garbage / Critical Mode Thresholds (adjusted in v88)
 const GARBAGE_RATIO_OJAMA_MERGE = 0.15; // When garbage ratio exceeds this, prioritize merges (v84)
-const GARBAGE_RATIO_URGENT = 0.4;       // When garbage ratio is very high, aggressive merges (v84)
+const GARBAGE_RATIO_URGENT = 0.3;       // When garbage ratio is very high, aggressive merges (v88, from 0.4)
 const OJAMA_GAUGE_OJAMA_MERGE = 0.3;    // When ojama gauge is high, prioritize merges (v84)
-const OJAMA_GAUGE_URGENT = 0.6;         // When ojama gauge is very high, aggressive merges (v84)
+const OJAMA_GAUGE_URGENT = 0.5;         // When ojama gauge is very high, aggressive merges (v88, from 0.6)
 
 // HOLD Strategy Thresholds (v82)
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
@@ -52,6 +63,7 @@ const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large 
  * Calculates a height-based penalty for a given Y coordinate.
  * Higher Y values (closer to DEADLINE_Y) result in higher penalties.
  * Penalty starts linearly from WARN_Y and becomes exponential near DEADLINE_Y.
+ * (Adjusted in v88 to be more aggressive)
  * @param {number} y - The Y coordinate of the piece's center.
  * @returns {number} The calculated penalty.
  */
@@ -62,10 +74,10 @@ function calculateHeightPenalty(y) {
   if (y >= DEADLINE_Y) {
     return 10000; // Effectively game over if piece center is at or above deadline
   }
-  // Linear penalty between WARN_Y and DEADLINE_Y, then exponential
+  // Linear penalty between WARN_Y and DEADLINE_Y, then cubic exponential
   const linearRange = DEADLINE_Y - WARN_Y;
   const normalizedY = (y - WARN_Y) / linearRange; // 0 to 1 in the warn range
-  return Math.pow(normalizedY, 2) * 500; // Exponential penalty, adjust multiplier as needed
+  return Math.pow(normalizedY, 3) * 1000; // Adjusted to cubic and higher multiplier (v88)
 }
 
 /**
@@ -136,7 +148,7 @@ function findMergeOpportunity(boardStatePieces, pieceToDrop) {
     const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
     const weightedY = simulatedY + calculateHeightPenalty(simulatedY);
 
-    if (weightedY >= lowestWeightedY) { // Skip if current weightedY is not better than the best so far
+    if (weightedY >= lowestWeightedY) {
       continue;
     }
 
@@ -211,6 +223,7 @@ function findT1LowMerge(boardStatePieces, pieceToDrop) {
 /**
  * Finds aggressive merge opportunities in critical situations (high garbage).
  * Prioritizes any merge opportunity that can occur at a lower Y.
+ * (Reason string improved in v88)
  * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
  * @param {{type: number, r: number}} pieceToDrop - The piece to drop.
  * @param {boolean} isUrgent - True if in an extremely urgent garbage situation.
@@ -246,7 +259,7 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
   }
 
   if (bestX !== null) {
-    return { x: bestX, y: lowestWeightedY, reason: `Aggressive critical merge (${pieceToDrop.type}, urgent: ${isUrgent}).` };
+    return { x: bestX, y: lowestWeightedY, reason: `Aggressive critical merge type ${pieceToDrop.type} (urgent: ${isUrgent}).` }; // Reason improved (v88)
   }
   return null;
 }
@@ -296,7 +309,7 @@ function tryHoldStrategy(boardState) {
 
 /**
  * Finds the X coordinate with the best overall score considering merges, large piece aggregation, and lowest weighted Y.
- * This is the core default strategy.
+ * This is the core default strategy. (Refactored in v88)
  * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
  * @param {{type: number, r: number}} pieceToDrop - The piece to drop.
  * @returns {{x: number, reason: string}} The chosen drop X and a reason.
@@ -304,55 +317,65 @@ function tryHoldStrategy(boardState) {
 function defaultStrategy(boardStatePieces, pieceToDrop) {
   let bestOverallX = 0.0;
   let lowestOverallWeightedY = Infinity;
-  let bestOverallReason = "DEFAULT: Least occupied column (lowest weighted Y)."; // Updated reason prefix
+  let bestOverallReason = "DEFAULT: Least occupied column (lowest weighted Y).";
 
   for (const colX of FINE_COLS) {
     const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
-    // Initialize currentWeightedY with standard penalty
-    let currentWeightedY = simulatedY + calculateHeightPenalty(simulatedY);
-    let currentReason = "DEFAULT: Least occupied column (lowest weighted Y).";
 
-    let mergeFoundForCol = false;
+    // If simulated Y is already above deadline, this column is immediately disqualified.
+    // Add a small buffer (0.1) for safety margin above the piece's radius.
+    if (simulatedY + pieceToDrop.r > DEADLINE_Y + 0.1) {
+        continue;
+    }
 
-    // First, check for merge opportunities at this colX
+    // --- Option 1: Standard Placement (Base for comparison) ---
+    let currentColumnBestWeightedY = simulatedY + calculateHeightPenalty(simulatedY);
+    let currentColumnBestReason = "DEFAULT: Least occupied column (lowest weighted Y).";
+
+    // --- Option 2: Merge Opportunity ---
+    let mergePotentialWeightedY = Infinity;
+    let mergeFound = false;
     for (const existingPiece of boardStatePieces) {
       if (existingPiece.type === pieceToDrop.type && existingPiece.type < 15) {
         const distance = Math.sqrt(
           Math.pow(colX - existingPiece.x, 2) + Math.pow(simulatedY - existingPiece.y, 2)
         );
         if (distance < (pieceToDrop.r + existingPiece.r - MERGE_BUFFER)) {
-          // Found a merge. Adjust weightedY to give it a slight preference over just stacking.
-          // The multiplier 0.7 gives merges a small advantage unless they are very high.
-          const mergePotentialWeightedY = simulatedY + calculateHeightPenalty(simulatedY) * 0.7;
-          if (mergePotentialWeightedY < currentWeightedY) { // Only take this merge if it's better than current non-merge option for this colX
-             currentWeightedY = mergePotentialWeightedY;
-             currentReason = `DEFAULT: Merge ${pieceToDrop.type} at ${colX}.`;
-             mergeFoundForCol = true;
-          }
-          break; // A piece only merges with one other piece upon landing, so stop checking existing pieces for this colX.
+          // Found a merge. Apply the merge priority multiplier (0.7).
+          mergePotentialWeightedY = simulatedY + calculateHeightPenalty(simulatedY) * 0.7;
+          mergeFound = true;
+          break; // A piece only merges with one other piece upon landing.
         }
       }
     }
 
-    // Second, consider large piece aggregation if no merge was found at this colX.
-    // Give a stronger preference to aggregate large pieces if it's not dangerously high.
-    if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD && !mergeFoundForCol) {
+    if (mergeFound && mergePotentialWeightedY < currentColumnBestWeightedY) {
+      currentColumnBestWeightedY = mergePotentialWeightedY;
+      currentColumnBestReason = `DEFAULT: Merge ${pieceToDrop.type} at ${colX}.`;
+    }
+
+    // --- Option 3: Large Piece Aggregation ---
+    // Only consider if it's a large piece and not dangerously high.
+    if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
       if (colX <= LEFT_SIDE_X_MAX) { // Only consider left side for aggregation
-        // The multiplier 0.4 gives a stronger height advantage for large piece aggregation.
-        // Also add a stricter height check to prevent aggregating large pieces dangerously high.
-        const largePiecePotentialWeightedY = simulatedY + calculateHeightPenalty(simulatedY) * 0.4;
-        if (largePiecePotentialWeightedY < currentWeightedY && simulatedY < DEADLINE_Y - 0.7) {
-          currentWeightedY = largePiecePotentialWeightedY;
-          currentReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) to left side at ${colX}.`;
+        // Stricter height check (0.7 buffer from DEADLINE_Y) for large piece aggregation
+        if (simulatedY < DEADLINE_Y - 0.7) {
+          // Apply a stronger preference multiplier (0.4) for large piece aggregation.
+          const largePiecePotentialWeightedY = simulatedY + calculateHeightPenalty(simulatedY) * 0.4;
+          if (largePiecePotentialWeightedY < currentColumnBestWeightedY) {
+            currentColumnBestWeightedY = largePiecePotentialWeightedY;
+            currentColumnBestReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) to left side at ${colX}.`;
+          }
         }
       }
     }
 
-    // Compare this column's best-weighted Y (potentially adjusted for merge/large piece) with the overall best found so far.
-    if (currentWeightedY < lowestOverallWeightedY) {
-      lowestOverallWeightedY = currentWeightedY;
+    // Compare this column's best-weighted Y (potentially adjusted for merge/large piece)
+    // with the overall best found so far across all columns.
+    if (currentColumnBestWeightedY < lowestOverallWeightedY) {
+      lowestOverallWeightedY = currentColumnBestWeightedY;
       bestOverallX = colX;
-      bestOverallReason = currentReason;
+      bestOverallReason = currentColumnBestReason;
     }
   }
 
@@ -368,7 +391,7 @@ export function decide(boardState) {
   if (action) return action;
 
   // --- Priority 2: CRITICAL Mode (Garbage) ---
-  // Triggered by high garbage ratio or gauge.
+  // Triggered by high garbage ratio or gauge. (Thresholds adjusted in v88)
   // Prioritize aggressive merges.
   if (garbage.gauge >= OJAMA_GAUGE_URGENT || garbage.ratio > GARBAGE_RATIO_URGENT) { // GBG_URGENT
     action = findAggressiveCriticalMerge(pieces, next, true); // true for urgent
@@ -384,11 +407,11 @@ export function decide(boardState) {
   if (action) return action;
 
   // --- Priority 4: DEFAULT Strategy ---
+  // This will now correctly log the specific reason if merge or aggregation is chosen.
   action = defaultStrategy(pieces, next);
   if (action) return action;
 
   // Fallback (should ideally not be reached with a comprehensive strategy)
-  // findLeastOccupiedX will always return a valid X, so this fallback should be unreachable.
   // The defaultStrategy function guarantees a return, so this line is technically unreachable.
   return { x: 0.0, reason: "Fallback: Should not happen, dropping at center." };
 }
