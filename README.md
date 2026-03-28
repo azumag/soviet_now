@@ -61,6 +61,7 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `eloop.sh` | 1試合のゲームプレイ関数。毎試合 source で読み込み、AI書き換え可 |
 | `eloop_lib.sh` | 全モジュールを source する shim (~40行) |
 | `eloop_improve.sh` | バックグラウンド改善サブプロセス |
+| `improve_daemon.sh` | 改善ループ独立デーモン。soren_loop.sh とは別ターミナルで起動し、ファイルベース IPC (tmp/state/) で連携 |
 | `strategy.py` | AI が改善する決定関数。`decide(game_state, analysis) -> {x, reason}` |
 | `strategy_runner.py` | 内側ループ。strategy.py で1試合プレイ + JSONL履歴記録 |
 | `analyze_board.py` | 盤面解析。併合判定・着地予測・期待値計算 |
@@ -74,7 +75,10 @@ soren_loop.sh (親スクリプト・エントリーポイント、AI書き換え
 | `say_enqueue.sh` | VOICEVOX/COEIROINK TTS のFIFOキュー管理（mkdirロック排他・ストリーミング合成・異常終了リトライ・voice sidecar永続化）。事前合成セクションはトップレベルスコープで実行される点に注意 |
 | `voicevox_tts.sh` | VOICEVOX TTS wrapper（チャンク分割合成・ピッチ/テンポ/抑揚調整） |
 | `voicevox_sing.sh` | VOICEVOX 歌声合成（中華AI=九州そら、メリケンAI=冥鳴ひまり） |
+| `coeiroink_tts.sh` | COEIROINK v2 TTS wrapper（話者一覧・テスト音声生成） |
 | `google_tts.sh` | Google Cloud TTS wrapper（gcloud認証、開発/テスト用） |
+| `obs_control.sh` | OBS WebSocket v5 wrapper（シーン・ソースの show/hide 制御） |
+| `manual_meriken_mode.sh` | メリケンAI手動固定 (`on` で soren91 維持、`off` で通常運用) |
 | `soren91_control.sh` | soren91の起動・停止・改善キック・手動メリケンモード・OBS連携 |
 
 **シェルモジュール構成:**
@@ -179,6 +183,9 @@ node main.mjs        # ゲーム起動 → 自動プレイ → 12ゲームごと
 | `soren91/improve.mjs` | ラウンド後AI改善ループ (claude -p --model haiku)。スモークテスト3ケース + ESLint no-undef 静的解析でバリデーション |
 | `soren91/comment.mjs` | コメント生成 (ランキング画面 + 試合中盤面)。プロンプトは `soren91/prompts/` に分離 |
 | `soren91/result_screen_ocr.mjs` | ランキング画面OCR (Tesseract、複数画像変換＋赤星検出) |
+| `soren91/calibration.mjs` | ゲームキャンバスの座標キャリブレーション（ボード境界検出・座標変換） |
+| `soren91/lineage.mjs` | 系統樹改善基盤。rank を主指標にした戦略の進化系統管理 |
+| `soren91/hall_of_fame.mjs` | 現行戦略の殿堂入り保存ユーティリティ |
 | `soren91/radio_bridge.sh` | 親プロジェクトの定時ラジオコーナーを soren91 から呼び出すブリッジ |
 | `soren91/backfill_result_ranks.mjs` | 過去サマリーのrank情報をOCRで補完するユーティリティ |
 | `soren91_control.sh` | 親ループからの起動・停止・改善キック・手動メリケンモード・OBS連携 |
