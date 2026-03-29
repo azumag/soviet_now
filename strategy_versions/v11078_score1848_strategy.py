@@ -37,7 +37,7 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-              v397: merge_drought height_mult cap — guidance tie-breaking enabler
+              v399: stacking target height decay — prevent height accumulation during merge drought
               v398: merge drought scatter prevention — stacking extension + congestion suppression + edge penalty
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
@@ -77,7 +77,7 @@ Phases (determined by board max Y):
      # Net effect: center placement gains ~88-204 pt advantage during drought, robustly preventing
      # HEIGHT_CONTROL scatter death spiral. Stacking bonus (~200-400 * reactive_density_mult)
      # provides center-biased guidance; edge penalty prevents floor-edge escape.
-     # v397 height_mult cap (0.5) and axis 8.8 (-3000) still enforce overall discipline.
+     # v399 target height decay on stacking_bonus replaces v397's blunt height_mult cap (0.5)
      # NOT reactive<3 guard (primary use case). NOT danger bonus. NOT stacking suppression.
      # NOT numerical tweak of existing values. Structural condition changes only.
      # Fixes rollback failure mode: weak guidance at merge drought → HEIGHT_CONTROL → pc accumulation
@@ -98,6 +98,16 @@ Phases (determined by board max Y):
      # Fixes: guidance overwhelmed by height_mult in reactive>=3 merge drought
      # refs: score0452 T52-57, score0966 T64-77, score3203 T132-134, batch_summary,
      #       last_rollback_postmortem.md, protected_e6f534c37e28
+     # v399: stacking target height decay — replace v397 height_mult cap with target-aware decay
+     # v397 cap (height_mult=0.5) made height penalty too weak vs stacking_bonus (~740 with reactive_density_mult),
+     # allowing stacking at dangerous heights (y>1.5). Target-aware decay suppresses stacking toward high targets
+     # while leaving low-target stacking intact. Matches axis 9.6b (v371) decay formula (1.0 - target_y * 0.3).
+     # Worst T63-66: stacking at y=2.77-3.19 toward high targets → pc 34→41 → death spiral.
+     # Best T130-139: stacking toward targets at y<0 → decay 0 → unaffected.
+     # Fixes rollback failure mode: piece accumulation from stacking at high targets during merge drought
+     # refs: game_history/20260330_011442_score0845.jsonl, game_history/20260330_013925_score3155.jsonl,
+     #       game_history/20260330_015513_score0762.jsonl, tmp/batch_summary.txt,
+     #       tmp/state/last_rollback_postmortem.md, protected_e6f534c37e28, analyze_board.py, advice.md
      # v396: reactive merge zone proximity — guide toward reactive pair cluster during congested droughts
      # When reactive>=3 and no merge for any candidate, placement near reactive pair "merge zone"
      # enables catalytic chain merges through shake/explosion (HIGH_TOWER_RP_NO_MERGE delta=13.1
@@ -979,6 +989,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         stacking_bonus *= max(0.2, 1.0 - vertical_gap * 0.12)
                     # v395: amplify stacking with reactive density — same as v394 logic for fallback guidance
                     stacking_bonus *= reactive_density_mult
+                    # v399: target height decay — stacking toward high targets adds pieces at height
+                    # without immediate merge benefit. Replaces v397 height_mult cap (0.5).
+                    # Matches axis 9.6b (v371) target_y decay (1.0 - target_y * 0.3) for consistency.
+                    # At target_y=1.0: 0.7x. target_y=1.5: 0.55x. target_y=2.0: 0.4x. target_y>=2.5: 0.25x.
+                    # Prevents stacking accumulation at dangerous heights during merge drought.
+                    # Worst T63-66: stacking at y=2.77-3.19 → pc 34→41 → death.
+                    # Best T130-139: stacking at y<0 → no decay → unaffected.
+                    if target_y_pos > 0:
+                        stacking_bonus *= max(0.25, 1.0 - target_y_pos * 0.3)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
@@ -1256,8 +1275,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.5% low vs 10.6% high),
         #       tmp/state/last_rollback_postmortem.md,
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-        if not merge_available and reactive_pair_count >= 3:
-            height_mult = 0.5
+        # v399: removed v397 height_mult cap (0.5) — replaced with target height decay in axis 9.6 stacking_bonus
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
