@@ -61,6 +61,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v395: reactive density stacking amplification — apply reactive_density_mult to axis 9.6 stacking_bonus
+     # v394 amplified fallback guidance (centroid/rp_attract/proximity) but NOT primary stacking_bonus.
+     # At reactive>=5, stacking_bonus (~200-400) still loses to height diffs (~300-500) → HEIGHT_CONTROL scatter.
+     # Worst T73-80: reactive=9-12, stacking fires but overpowered → pc 37→43, game over.
+     # Best T92-99: reactive=1-2, mult=1.0 → unchanged. At reactive=10: mult=1.9 → stacking ~760, competitive.
+     # NOT stacking suppression (v372 OK). NOT reactive<3 guard. NOT danger bonus. Amplification only.
+     # refs: score0883 T73-80, score2290 T92-99, batch_summary (HEIGHT_CONTROL 16.0%, delta=1.0),
+     #       tmp/state/last_rollback_postmortem.md, advice.md (即時併合最優先)
+     # v394: reactive density guidance amplification — scale v392/v393/v371 bonuses with reactive_pair_count
+     # When reactive>=5, guidance bonuses (~100-400) too weak vs height diffs (~200-500) → HEIGHT_CONTROL scatter.
+     # Worst T73-80: reactive=9-12, guidance overpowered → pc 37→43, game over. Best T92-99: reactive=1-2, unaffected.
+     # Fixes rollback failure mode: weak guidance at high reactive → HEIGHT_CONTROL → pc accumulation
+     # refs: score0883 T73-80, score2290 T92-99, score0922 T65-72, batch_summary, analyze_board.py,
+     #       protected_e6f534c37e28, tmp/state/last_rollback_postmortem.md, advice.md
      # v392: reactive pair centroid attraction — axis 9.7 fallback when no adjacent-type target found
      # When reactive pairs exist (>= 2) but axis 9.7 finds no adjacent-type piece within range,
      # placement gets NO guidance → HEIGHT_CONTROL default scatters to edges → isolated pieces → pc spiral.
@@ -668,6 +682,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         _nrp_best = abs(_mid_x)
                         nearest_rp_mid_x = _mid_x
 
+    # --- v394: reactive density guidance amplification ---
+    # When reactive_pair_count is high (>=5), guidance bonuses (v392 centroid, v393 nearest-rp,
+    # v371 proximity) are too weak to overcome height penalty differences (~200-500), causing
+    # HEIGHT_CONTROL scatter in congested boards. Worst game T73-80: reactive=9-12, guidance
+    # ~100-400 vs height diff ~300-500 → scatter to edges → pc spiral → game over.
+    # Best game T92-99: reactive=1-2, mult=1.0 → no change.
+    # Scale: reactive=5→1.15x, reactive=9→1.75x, reactive=12+→2.0x(cap).
+    # Uses unutilized reactive_pair_count signal in guidance. NOT reactive<3 guard (amplifies, not suppresses).
+    # NOT stacking bonus modification (axis 9.6 unchanged). NOT danger bonus. NOT numerical tweak.
+    # Fixes: guidance gap at high reactive → HEIGHT_CONTROL → pc accumulation → dead end
+    # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 16.0%, reactive_avg worst=10.5 vs best=1.9),
+    #       game_history/20260329_213230_score0883.jsonl T73-80 (reactive=9-12, HEIGHT_CONTROL scatter),
+    #       game_history/20260329_213622_score2290.jsonl T92-99 (reactive=1-2, stacking works),
+    #       game_history/20260329_212614_score0922.jsonl T65-72 (reactive=3, no effect),
+    #       analyze_board.py (reactive_pairs structure), strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+    #       tmp/state/last_rollback_postmortem.md
+    # Fixes rollback failure mode: weak guidance at reactive>=5 → HEIGHT_CONTROL → pc accumulation
+    reactive_density_mult = 1.0
+    if reactive_pair_count >= 5:
+        reactive_density_mult = min(1.0 + (reactive_pair_count - 4) * 0.15, 2.0)
+
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
@@ -885,6 +920,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if landing_y > target_y_pos + 1.0:
                         vertical_gap = landing_y - target_y_pos - 1.0
                         stacking_bonus *= max(0.2, 1.0 - vertical_gap * 0.12)
+                    # v395: amplify stacking with reactive density — same as v394 logic for fallback guidance
+                    stacking_bonus *= reactive_density_mult
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
@@ -973,6 +1010,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     centroid_bonus = max(0, 100.0 - centroid_dist * 50.0)
                     if piece_count >= 25:
                         centroid_bonus *= min(1.0 + (piece_count - 25) * 0.10, 2.5)
+                    # v394: amplify with reactive density
+                    centroid_bonus *= reactive_density_mult
                     score += centroid_bonus
             elif nearest_rp_mid_x is not None and abs(nearest_rp_mid_x) < 1.5:
                 # v393: nearest reactive pair attraction — axis 9.7 fallback
@@ -984,6 +1023,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     rp_attract = max(0, 70.0 - rp_dist * 25.0)
                     if piece_count >= 25:
                         rp_attract *= min(1.0 + (piece_count - 25) * 0.08, 2.0)
+                    # v394: amplify with reactive density
+                    rp_attract *= reactive_density_mult
                     score += rp_attract
 
         # ----- v362/v368 → v369 → v371: merged_type-aware targeting + congestion-aware proximity -----
@@ -1052,6 +1093,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             decay_boost = min(0.5, max(0.0, 1.5 - deadline_margin) / 1.5 * 0.5)
                             proximity_decay = min(1.0, proximity_decay + decay_boost)
                         proximity_bonus *= proximity_decay
+                    # v394: amplify with reactive density when current type has no reactive pairs
+                    # Guidance must remain competitive with height diff at high reactive congestion
+                    proximity_bonus *= reactive_density_mult
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
