@@ -1,25 +1,25 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v103)
+ * strategy.mjs - ドロップ位置決定戦略 (v104)
  *
- * v103: v102をベースに、ゲーム分析（max_y がデッドラインを超える問題が依然として発生）と戦略原則を深く再分析。
+ * v104: v103をベースに、ゲーム分析（max_y がデッドラインを超える問題が依然として発生）と戦略原則を深く再分析。
  *      特に高さ管理の精度と積極性をさらに向上させ、大型ピースの集約を強化するための調整を行う。
  *      物理エンジンの不確実性に対応するため、より保守的かつ計画的なピース配置を促すためのスコアリング調整に注力する。
  *
- *      主な改善点 (v102からの調整点):
+ *      主な改善点 (v103からの調整点):
  *      1.  **高さ管理の劇的強化と早期化の継続**:
- *          - `TOP_Y_CRITICAL_PENALTY_START` を 1.8 から 1.7 に引き下げ。致命的な高さペナルティの適用開始点をさらに早期化。
- *          - `TOP_Y_WARN_PENALTY_START` を 1.4 から 1.3 に引き下げ。警告ペナルティの適用開始点をさらに早期化。
- *          - `GAME_OVER_DANGER_Y_THRESHOLD` を 0.4 から 0.5 に拡大。ゲームオーバーに直結する超臨界域の判定を広げ、即時巨大ペナルティの適用機会を増加。
- *          - `HEIGHT_PENALTY_WEIGHT` を 25.0 から 35.0 に増強。高さペナルティが全体スコア決定においてさらに強力な影響力を持つように調整。
- *          - `calculateHeightPenalty` 関数における線形から立方へのペナルティ勾配の乗数を 150000 から 250000 に増加。ペナルティの上昇を急峻化。
- *          - 即時ゲームオーバー回避のペナルティを 1000000 から 1500000 に増強。
- *          - `calculateHeightPenalty` 内の `TOP_Y_CRITICAL_PENALTY_START` 超過時のペナルティを 200000 から 500000 に増強。
+ *          - `TOP_Y_CRITICAL_PENALTY_START` を 1.7 から 1.6 に引き下げ。致命的な高さペナルティの適用開始点をさらに早期化。
+ *          - `TOP_Y_WARN_PENALTY_START` を 1.3 から 1.2 に引き下げ。警告ペナルティの適用開始点をさらに早期化。
+ *          - `GAME_OVER_DANGER_Y_THRESHOLD` を 0.5 から 0.6 に拡大。ゲームオーバーに直結する超臨界域の判定を広げ、即時巨大ペナルティの適用機会を増加。
+ *          - `HEIGHT_PENALTY_WEIGHT` を 35.0 から 45.0 に増強。高さペナルティが全体スコア決定においてさらに強力な影響力を持つように調整。
+ *          - `calculateHeightPenalty` 関数における線形から立方へのペナルティ勾配の乗数を 250000 から 350000 に増加。ペナルティの上昇を急峻化。
+ *          - 即時ゲームオーバー回避のペナルティを 1500000 から 2000000 に増強。
+ *          - `calculateHeightPenalty` 内の `TOP_Y_CRITICAL_PENALTY_START` 超過時のペナルティを 500000 から 750000 に増強。
  *
- *      2.  **大型ピースの集約ボーナス/ペナルティの強化**:
- *          - `DYNAMIC_AGGREGATION_BONUS_SCORE` を 300.0 から 400.0 に増強。大型ピースを既存の集約側に寄せるインセンティブを強化。
- *          - 新たに `LARGE_PIECE_DIVERGENCE_PENALTY` を導入。大型ピースが既存の集約方向と異なる側に配置される場合に強いペナルティを課す。
+ *      2.  **大型ピースの集約ボーナス/ペナルティの強化**: (v103から変更なし)
+ *          - `DYNAMIC_AGGREGATION_BONUS_SCORE` は 400.0 を維持。
+ *          - `LARGE_PIECE_DIVERGENCE_PENALTY` は 2000.0 を維持。
  *
- *      3.  **併合判定の物理的緩衝の維持**:
+ *      3.  **併合判定の物理的緩衝の維持**: (v103から変更なし)
  *          - `MERGE_BUFFER` は 0.5 を維持。国土形状の凸ポリゴンの不確実性を考慮し、併合の物理的接触判定をわずかに緩く（より近い距離で併合判定する）調整し、戦略コードでの併合予測と実際のゲーム内併合の一貫性を向上させる。
  *
  * - 物理挙動の近似に関する注意点も維持。
@@ -32,9 +32,9 @@ const WALL_MARGIN = 2.8; // Max X before hitting wall. Walls are at +/-3.5, but 
 
 // Strategy-specific constants (Height Management)
 const GAME_OVER_TOP_Y = 2.5;             // The Y coordinate for the TOP of the piece that means game over (from rules "〜y=2.5 を超えるとゲームオーバー").
-const TOP_Y_CRITICAL_PENALTY_START = 1.7; // Adjusted (was 1.8): If piece's top Y reaches this, penalty becomes extremely high.
-const TOP_Y_WARN_PENALTY_START = 1.3;     // Adjusted (was 1.4): If piece's top Y reaches this, penalty starts.
-const GAME_OVER_DANGER_Y_THRESHOLD = 0.5; // Adjusted (was 0.4): If simulatedY + piece.r is within this distance of GAME_OVER_TOP_Y, apply massive penalty.
+const TOP_Y_CRITICAL_PENALTY_START = 1.6; // Adjusted (was 1.7): If piece's top Y reaches this, penalty becomes extremely high.
+const TOP_Y_WARN_PENALTY_START = 1.2;     // Adjusted (was 1.3): If piece's top Y reaches this, penalty starts.
+const GAME_OVER_DANGER_Y_THRESHOLD = 0.6; // Adjusted (was 0.5): If simulatedY + piece.r is within this distance of GAME_OVER_TOP_Y, apply massive penalty.
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.5; // Adjusted (was 0.4, then 0.5): Increased to account for irregular shapes (凸ポリゴン)
@@ -53,11 +53,11 @@ const GARBAGE_LOW_MERGE_URGENT_BONUS = 100.0;
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
-// Default Strategy Scoring Weights (v103 adjustments)
-const HEIGHT_PENALTY_WEIGHT = 35.0; // Adjusted (was 25.0): Increased to give height significantly more influence
+// Default Strategy Scoring Weights (v104 adjustments)
+const HEIGHT_PENALTY_WEIGHT = 45.0; // Adjusted (was 35.0): Increased to give height significantly more influence
 const MERGE_BONUS_BASE_SCORE = 120.0;
-const DYNAMIC_AGGREGATION_BONUS_SCORE = 400.0; // Adjusted (was 300.0)
-const LARGE_PIECE_DIVERGENCE_PENALTY = 2000.0; // NEW: Penalty for dropping large pieces away from aggregation side
+const DYNAMIC_AGGREGATION_BONUS_SCORE = 400.0; // Unchanged from v103
+const LARGE_PIECE_DIVERGENCE_PENALTY = 2000.0; // Unchanged from v103
 const LOOKAHEAD_MERGE_BONUS_SCORE = 80.0;
 const BASE_Y_PREFERENCE_WEIGHT = 7.0;
 
@@ -76,14 +76,14 @@ function calculateHeightPenalty(y, r) {
   // Immediately apply an immense penalty if the piece's top is very close to the game over line.
   // This is a last-resort safety measure due to physics engine approximations.
   if (topY >= GAME_OVER_TOP_Y - GAME_OVER_DANGER_Y_THRESHOLD) {
-    return 1500000; // Adjusted (was 1000000): Massive penalty to strongly discourage game-over imminent placements
+    return 2000000; // Adjusted (was 1500000): Massive penalty to strongly discourage game-over imminent placements
   }
 
   if (topY < TOP_Y_WARN_PENALTY_START) {
     return 0;
   }
   if (topY >= TOP_Y_CRITICAL_PENALTY_START) {
-    return 500000; // Adjusted (was 200000): Existing critical penalty, but now stronger
+    return 750000; // Adjusted (was 500000): Existing critical penalty, but now stronger
   }
   // Linear penalty between WARN_PENALTY_START and CRITICAL_PENALTY_START, then cubic exponential
   const linearRange = TOP_Y_CRITICAL_PENALTY_START - TOP_Y_WARN_PENALTY_START;
@@ -92,7 +92,7 @@ function calculateHeightPenalty(y, r) {
   const normalizedTopY = (topY - TOP_Y_WARN_PENALTY_START) / linearRange; // 0 to 1 in the warn range
   // Clamp normalizedTopY to [0, 1] to prevent negative results or extreme values if topY somehow exceeds critical start
   const clampedNormalizedTopY = Math.max(0, Math.min(1, normalizedTopY));
-  return Math.pow(clampedNormalizedTopY, 3) * 250000; // Adjusted (was 150000) for significantly higher impact
+  return Math.pow(clampedNormalizedTopY, 3) * 350000; // Adjusted (was 250000) for significantly higher impact
 }
 
 /**
