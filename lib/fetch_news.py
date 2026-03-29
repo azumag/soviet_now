@@ -787,8 +787,8 @@ def main() -> int:
         }
     )
 
-    append_and_trim(PAST_NEWS, [item["title"] for item in selected], 120)
-    append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 200)
+    append_and_trim(PAST_NEWS, [item["title"] for item in selected], 60)
+    append_and_trim(PAST_NEWS_LINKS, [item["url"] for item in selected], 80)
     return 0
 
 

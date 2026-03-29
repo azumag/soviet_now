@@ -352,7 +352,7 @@ _append_news_read_url_hash() {
 	local url_hash="$1"
 	[ -n "$url_hash" ] || return 0
 	echo "$url_hash" >>"$PAST_NEWS_URL_HASHES"
-	tail -"${PAST_NEWS_URL_HASHES_KEEP:-500}" "$PAST_NEWS_URL_HASHES" >"${PAST_NEWS_URL_HASHES}.tmp" && \
+	tail -"${PAST_NEWS_URL_HASHES_KEEP:-80}" "$PAST_NEWS_URL_HASHES" >"${PAST_NEWS_URL_HASHES}.tmp" && \
 		mv "${PAST_NEWS_URL_HASHES}.tmp" "$PAST_NEWS_URL_HASHES"
 }
 
