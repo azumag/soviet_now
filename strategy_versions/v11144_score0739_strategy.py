@@ -61,6 +61,28 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v405: danger piece rescue bonus — per-candidate danger_merge_available utilization (unused info)
+     # analyze_board.py computes danger_merge_available per candidate (can this merge target a danger piece?)
+     # but strategy never reads it. When true, merging removes a redline-expiring piece, preventing game
+     # over before global deadline_crossed. Axis 8.5 only boosts at max_y>=2.0 + reactive>=2 globally.
+     # danger_merge_available catches isolated danger pieces at any board height/reactive level.
+     # Evidence: T125 in score3785 (DIRECT danger rescue, delta=153). Fires ~2.3% of turns (25/1100).
+     # refs: analyze_board.py (danger_merge_available field), game_history/20260330_071937_score3785.jsonl,
+     #       tmp/state/last_rollback_postmortem.md, advice.md (即時併合最優先)
+     # v404: extend reactive zone proximity to reactive>=2 — fill guidance gap at reactive=2 merge drought
+     # v396 reactive zone proximity only fires at reactive>=3, leaving reactive=2 merge droughts unguided.
+     # Extra_low game T72-78: reactive=2, merge_available=false for 7 consecutive turns, only HEIGHT_CONTROL
+     # fires → pieces scatter → pc 35→42 → death at 1076. No reactive zone guidance reaches this gap.
+     # Axis 9.7 centroid/rp_attract handles same_type_stack_top=None case, but when same_type exists,
+     # axis 9.6/9.6b guide toward same-type (not reactive zones), and v396 requires reactive>=3.
+     # Lowering threshold to reactive>=2 fills this gap: ~80 bonus provides tie-breaking toward reactive
+     # zones, enabling catalytic merges (batch: RP_NO_MERGE delta=10.0 in high-score 4.3% vs 2.5%).
+     # At reactive=2, reactive_density_mult=1.0 (requires reactive>=5), so bonus stays at ~80 — won't
+     # override height safety (~200-500 height diffs). No _merge_drought, no stacking modification.
+     # Fixes postmortem: piece_count accumulation from HEIGHT_CONTROL scatter at reactive=2 merge drought
+     # refs: game_history/20260330_070257_score1076.jsonl T72-78, game_history/20260330_073834_score0973.jsonl,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, analyze_board.py,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v403: suppress stacking at reactive<3 when no merge available — drought height runaway prevention
      # When merge_available=false, stacking guidance directs pieces toward same-type targets, but since
      # no position can achieve a merge, the reactive/near pairs are geometrically unreachable. The
@@ -1540,6 +1562,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 300.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
+        # ----- v405: danger piece rescue bonus (unused per-candidate info utilization) -----
+        # result["danger_merge_available"] indicates if this candidate can DIRECT/NEAR merge with a
+        # danger piece (redLineTime > 0 or crosses deadline). This per-candidate field is computed by
+        # analyze_board.py but never used in strategy scoring — purely unused information.
+        # When true, the merge would remove a blinking/expiring piece from the board, preventing game
+        # over from redline expiry even before global deadline_crossed triggers. Axis 8.5 only boosts
+        # merges when max_y >= 2.0 and reactive >= 2 globally; danger_merge_available catches isolated
+        # danger pieces at lower reactive levels and before the board globally crosses deadline.
+        # DIRECT rescue: +400 (sure merge, removes danger piece). NEAR rescue: +200 (probabilistic,
+        # suppressed when crossing_deadline + high pc per v401 logic to avoid catastrophic failure).
+        # Fires ~2.3% of turns in batch. Complements axis 8.5 without overriding basic merge priority.
+        # refs: analyze_board.py (danger_merge_available, danger_direct_merge_available),
+        #       game_history/20260330_071937_score3785.jsonl T125 (DIRECT rescue, delta=153),
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md
+        if merge_grade in ["DIRECT", "NEAR"] and result.get("danger_merge_available", False):
+            if merge_grade == "DIRECT" or result.get("danger_direct_merge_available", False):
+                score += 400.0
+            elif not _near_crossing_high_pc:
+                score += 200.0
+            reasons.append("DANGER_PIECE_RESCUE")
+
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v321: 即時併合ボーナス維持) -----
         # v317: reactive_pairs数に応じた即時併合ボーナスを維持
         # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
@@ -1678,7 +1721,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_224041_score2285.jsonl T93-105 (catalytic merges),
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
         #       prompts/game_theory.md (catalyst concept), tmp/state/last_rollback_postmortem.md
-        if reactive_pair_count >= 3 and merge_grade == "NO" and not merge_available and same_type_stack_top is not None:
+        # v404: lowered threshold reactive>=3 → reactive>=2
+        # At reactive=2, merge_available=false: axis 8.8 doesn't fire (requires reactive>=3),
+        # axis 9.6 stacking requires merge_available=true (v403 guard), axis 9.7 handles
+        # same_type_stack_top=None case. The gap: same_type exists but guidance doesn't target
+        # reactive merge zones → HEIGHT_CONTROL scatter → pc accumulation.
+        # Extra_low game T72-78: 7 turns at reactive=2 with no zone guidance → pc 35→42 → death.
+        # ~80 bonus at reactive=2 (reactive_density_mult=1.0) is tie-breaking only.
+        if reactive_pair_count >= 2 and merge_grade == "NO" and not merge_available and same_type_stack_top is not None:
             _rz_target = None
             if reactive_centroid_x is not None and abs(reactive_centroid_x) < 1.5:
                 _rz_target = reactive_centroid_x
