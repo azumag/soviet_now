@@ -60,6 +60,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v390: stacking vertical gap decay — axis 9.6 stacking toward deep targets from high landing positions
+     # Worst game T61-62: reactive=12, NO merge, same-type target at y=-3.37, but piece lands at y=2.59
+     # due to tower above. Stacking bonus(~400) wins vs height diff between candidates, placing piece
+     # at dangerous height without enabling merge path. The piece is on top of an unrelated tower,
+     # horizontally close to target but vertically unreachable.
+     # Fix: decay stacking_bonus when landing_y is far above target_y (gap > 1.0). At gap=5: 0.4x.
+     # This preserves stacking guidance for same-height targets while preventing high-y phantom stacking.
+     # NOT reactive<3 guard (postmortem constraint). NOT height_mult tweak.
+     # refs: game_history/20260329_145415_score0631.jsonl T61-62, tmp/batch_summary.txt,
+     #       advice.md (akai235: height management priority)
      # v389: deadline proximity urgency — approaching deadline, reduce target_y decay in axis 9.6b/boost 9.7
      # Uses reactor["deadline_margin"] (unused) for smooth urgency gradient in merge path construction.
      # Worst T48-50: reactive=3 (other types), NO merge, margin≈0.1 → 9.6b gave ~88 vs height ~140 → scatter.
@@ -784,9 +794,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             best_stack_target = sp
                 # best_stack_targetに近い配置にボーナス（高さに依存しない固定ボーナス）
                 target_x = best_stack_target.get("x", 0)
+                target_y_pos = best_stack_target.get("y", -10)
                 horizontal_distance = abs(x - target_x)
                 if horizontal_distance < 2.0:
                     stacking_bonus = best_chain_score + max(0, 100.0 - horizontal_distance * 40.0)
+                    # v390: vertical gap decay — landing far above target is unproductive stacking
+                    # Worst T61: target y=-3.37, landing y=2.59, gap=5.96 → bonus * 0.28
+                    # Allows height penalty to dominate when piece can't reach same-type target
+                    if landing_y > target_y_pos + 1.0:
+                        vertical_gap = landing_y - target_y_pos - 1.0
+                        stacking_bonus *= max(0.2, 1.0 - vertical_gap * 0.12)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
