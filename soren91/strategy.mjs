@@ -1,35 +1,36 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v108)
+ * strategy.mjs - ドロップ位置決定戦略 (v109)
  *
- * v108: v107をベースに、ゲーム分析結果と物理エンジンの挙動の不確実性を考慮し、
- *      高さ管理と初期配置のバランスを改善します。
+ * v109: v108をベースに、ゲーム分析結果（特に高Y到達と小型ピースの散乱）を深く考察し、
+ *      高さ管理の強化、小型ピースの集約ボーナス、大型ピースの分散ペナルティの再調整、
+ *      おじゃまブロック処理の優先度向上を行います。
  *
- *      主な改善点 (v107からの調整点):
- *      1.  **高さ管理の明確化とペナルティ調整**:
- *          - 実際のゲームオーバーライン `DEADLINE_Y` を `2.5` として定義。
- *          - シミュレーションでドロップ位置を排除する安全ライン `SIMULATED_MAX_Y` を `2.3` に維持。
- *            これにより、物理的な揺れや回転による予想外の積み上がりでゲームオーバーになるリスクを低減します。
- *          - `calculateHeightPenalty` 関数を調整し、ペナルティが `DEADLINE_Y` に近づくにつれて
- *            より急峻に増加する指数関数的なカーブに変更。`TOP_Y_CRITICAL_PENALTY_START`と
- *            `TOP_Y_WARN_PENALTY_START`も調整し、より早い段階からペナルティが適用されるようにしました。
- *            特に worst game で max_y が 3.02 に達していた問題への対処を目的とします。
- *          - `GAME_OVER_DANGER_Y_THRESHOLD` を `0.3` に減少させ、より手前から強烈なペナルティを適用。
+ *      主な改善点 (v108からの調整点):
+ *      1.  **高さ管理の抜本的強化**:
+ *          - `SIMULATED_MAX_Y` を `2.3` から `2.1` へ引き下げ、シミュレーション段階での
+ *            危険な高さをより早期に、厳しく排除します。これにより、物理挙動の不確実性による
+ *            予想外の積み上がりでゲームオーバーになるリスクをさらに低減します。
+ *          - `HEIGHT_PENALTY_WEIGHT` を `40.0` から `70.0` へ増加させ、`SIMULATED_MAX_Y`に
+ *            達しないまでも、高い位置へのドロップに対するペナルティを大幅に強化します。
+ *          - `GAME_OVER_DANGER_Y_THRESHOLD` を `0.3` から `0.2` へ減少させ、ゲームオーバーラインに
+ *            対する危険閾値を広げ、より早期に最大級のペナルティを適用します。
  *
- *      2.  **初期の大型ピース配置のバイアス除去**:
- *          - 大型ピースがまだ盤面にない場合、初期配置で左側へ誘導していたソフトなバイアスを削除。
- *            これにより、ゲーム開始時のドロップがより中央に近くなり、初期の盤面の偏りを軽減し、
- *            worst game で見られた一方的な積み上がりの一因を解消する可能性を狙います。
+ *      2.  **小型ピースの集約ボーナス導入**:
+ *          - `SMALL_PIECE_DENSITY_BONUS` (`500.0`) を新設し、`type 1〜4` の小型ピースを
+ *            同種または小型ピースが密集しているエリアにドロップする際に強力なボーナスを与えます。
+ *            これにより、散乱しがちな小型ピースを戦略的に集約し、併合の連鎖を促します。
+ *          - `SMALL_PIECE_THRESHOLD_FOR_DENSITY` (`4`) と `DENSITY_SEARCH_RADIUS_X` (`0.5`),
+ *            `DENSITY_SEARCH_RADIUS_Y` (`1.0`) を定義し、密度検出の範囲を調整します。
  *
- *      3.  **大型ピースの集約ペナルティの緩和**:
- *          - `LARGE_PIECE_DIVERGENCE_PENALTY` を `2000.0` から `1500.0` に減少。
- *            大型ピースを非優勢側に置くことに対するペナルティをわずかに緩和し、
- *            盤面全体の高さを管理する柔軟性を少し高めます。
+ *      3.  **大型ピースの分散ペナルティの再強化**:
+ *          - `LARGE_PIECE_DIVERGENCE_PENALTY` を `1500.0` から `2500.0` へ大幅に増加させます。
+ *            大型ピースを既存の大型ピース群と異なる側に配置することに対するペナルティを再強化し、
+ *            「大型ピースの片側集約」原則をより厳格に遵守させます。
  *
- *      4.  **おじゃまブロック処理のボーナス緩和**:
- *          - `GARBAGE_LOW_MERGE_URGENT_BONUS` の乗数を `5.0` から `4.0` に、
- *            `GARBAGE_LOW_MERGE_BONUS` の乗数を `6.0` から `5.0` にそれぞれ減少。
- *            過度な低Yへの集中が結果的に早期ゲームオーバーに繋がる可能性を考慮し、
- *            低Yマージの優先度をわずかに下げ、よりバランスの取れた配置を促します。
+ *      4.  **おじゃまブロック処理ボーナスの再調整**:
+ *          - `GARBAGE_LOW_MERGE_URGENT_BONUS` を `400.0`、`GARBAGE_LOW_MERGE_BONUS` を `350.0` に再設定。
+ *            これらのボーナスは、緊急時および通常のおじゃま対策時における低Yマージの優先度を直接高めるスコアとして機能します。
+ *            v108で緩和されたボーナスを再強化し、おじゃまブロックの迅速な処理を促します。
  *
  * - 物理挙動の近似に関する注意点も維持。
  */
@@ -41,33 +42,37 @@ const WALL_MARGIN = 2.8; // Max X before hitting wall. Walls are at +/-3.5, but 
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
-const SIMULATED_MAX_Y = 2.3;             // The simulated Y coordinate for the TOP of the piece that means game over. (Safety margin applied for disqualification in simulateDropY)
+const SIMULATED_MAX_Y = 2.1;             // The simulated Y coordinate for the TOP of the piece that means game over. (Safety margin applied for disqualification in simulateDropY)
 const TOP_Y_CRITICAL_PENALTY_START = 1.8; // If piece's top Y reaches this, penalty becomes extremely high.
 const TOP_Y_WARN_PENALTY_START = 1.0;     // If piece's top Y reaches this, penalty starts.
-const GAME_OVER_DANGER_Y_THRESHOLD = 0.3; // If simulatedY + piece.r is within this distance of DEADLINE_Y, apply massive penalty.
+const GAME_OVER_DANGER_Y_THRESHOLD = 0.2; // If simulatedY + piece.r is within this distance of DEADLINE_Y, apply massive penalty.
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.5; // Increased to account for irregular shapes (凸ポリゴン)
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y.
+const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
+const SMALL_PIECE_DENSITY_BONUS = 500.0; // Bonus for dropping small pieces into dense areas of other small pieces.
+const DENSITY_SEARCH_RADIUS_X = 0.5; // Horizontal search radius for density.
+const DENSITY_SEARCH_RADIUS_Y = 1.0; // Vertical search radius for density.
 
-// Garbage / Critical Mode Thresholds
+// Garbage / Critical Mode Thresholds (these are now direct bonus values)
 const GARBAGE_RATIO_OJAMA_MERGE = 0.15; // When garbage ratio exceeds this, prioritize merges.
 const GARBAGE_RATIO_URGENT = 0.3;       // When garbage ratio is very high, aggressive merges.
 const OJAMA_GAUGE_OJAMA_MERGE = 0.3;    // When ojama gauge is high, prioritize merges.
 const OJAMA_GAUGE_URGENT = 0.5;         // When ojama gauge is very high, aggressive merges.
-const GARBAGE_LOW_MERGE_BONUS = 3.0;
-const GARBAGE_LOW_MERGE_URGENT_BONUS = 100.0;
+const GARBAGE_LOW_MERGE_BONUS = 350.0; // Adjusted direct bonus value
+const GARBAGE_LOW_MERGE_URGENT_BONUS = 400.0; // Adjusted direct bonus value
 
 // HOLD Strategy Thresholds
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
 // Default Strategy Scoring Weights
-const HEIGHT_PENALTY_WEIGHT = 40.0; // Slightly reduced from 45.0 in v106.
+const HEIGHT_PENALTY_WEIGHT = 70.0; // Increased from 40.0
 const MERGE_BONUS_BASE_SCORE = 120.0;
 const DYNAMIC_AGGREGATION_BONUS_SCORE = 400.0;
-const LARGE_PIECE_DIVERGENCE_PENALTY = 1500.0; // Reduced from 2000.0
+const LARGE_PIECE_DIVERGENCE_PENALTY = 2500.0; // Increased from 1500.0
 const LOOKAHEAD_MERGE_BONUS_SCORE = 80.0;
 const BASE_Y_PREFERENCE_WEIGHT = 7.0;
 
@@ -271,9 +276,9 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
 
     // Add a strong bonus for low Y when urgent, similar to defaultStrategy
     if (isUrgent && simulatedY < 0.0) {
-        currentScore += GARBAGE_LOW_MERGE_URGENT_BONUS * 4.0; // Reduced from 5.0
+        currentScore += GARBAGE_LOW_MERGE_URGENT_BONUS; // Adjusted to direct bonus value
     } else if (simulatedY < 0.0) { // For non-urgent critical merges, still prefer low Y
-        currentScore += GARBAGE_LOW_MERGE_BONUS * 5.0; // Reduced from 6.0
+        currentScore += GARBAGE_LOW_MERGE_BONUS; // Adjusted to direct bonus value
     }
 
     for (const existingPiece of boardStatePieces) {
@@ -422,13 +427,13 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
 
     // 2. Additional Direct Low Y Preference when garbage is active (moved earlier for higher impact)
     if (isUrgentGarbage && simulatedY < 0.0) {
-        currentScore += GARBAGE_LOW_MERGE_URGENT_BONUS * 4.0; // Reduced from 5.0
+        currentScore += GARBAGE_LOW_MERGE_URGENT_BONUS; // Using direct bonus value
         // Overwrite reason only if not already a more specific merge reason
         if (!mergeFoundForNext && !columnReason.includes("Merge")) {
             columnReason = `DEFAULT: Urgent Garbage Low Y Preference at ${colX}.`;
         }
     } else if (isOjamaMerge && simulatedY < 0.0) {
-        currentScore += GARBAGE_LOW_MERGE_BONUS * 5.0; // Reduced from 6.0
+        currentScore += GARBAGE_LOW_MERGE_BONUS; // Using direct bonus value
         // Overwrite reason only if not a merge or urgent garbage reason
         if (!mergeFoundForNext && !columnReason.includes("Merge") && !columnReason.includes("Urgent Garbage")) {
             columnReason = `DEFAULT: Ojama Low Y Preference at ${colX}.`;
@@ -459,13 +464,34 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
       }
     }
 
-    // 4. Dynamic Large Piece Aggregation Bonus/Penalty
+    // NEW: 4. Small Piece Density Bonus
+    if (pieceToDrop.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
+        let densityCount = 0;
+        for (const existingPiece of boardStatePieces) {
+            // Check for similar small pieces in a defined radius
+            if (existingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY && existingPiece.type !== pieceToDrop.type) {
+                const horizontalDistance = Math.abs(colX - existingPiece.x);
+                const verticalDistance = Math.abs(simulatedY - existingPiece.y);
+                if (horizontalDistance < DENSITY_SEARCH_RADIUS_X && verticalDistance < DENSITY_SEARCH_RADIUS_Y) {
+                    densityCount++;
+                }
+            }
+        }
+        if (densityCount > 0) {
+            currentScore += SMALL_PIECE_DENSITY_BONUS * densityCount;
+            if (!mergeFoundForNext && !columnReason.includes("Merge") && !columnReason.includes("Garbage")) {
+                 columnReason = `DEFAULT: Small piece (type ${pieceToDrop.type}) density bonus at ${colX}.`;
+            }
+        }
+    }
+
+    // 5. Dynamic Large Piece Aggregation Bonus/Penalty (now 4. in original, moved to 5.)
     if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
         if (aggregationInfo) {
             const { targetX, dominantSide } = aggregationInfo;
 
             if (dominantSide === 'none') {
-                // If large pieces exist but no clear dominant side, aim for their average X
+                // If large pieces exist but no clear dominant side, aim for their overall average X
                 const distanceToOverallAvg = Math.abs(colX - targetX);
                 const aggregationBonus = DYNAMIC_AGGREGATION_BONUS_SCORE * (1 - Math.min(1, distanceToOverallAvg / (WALL_MARGIN * 2)));
                 currentScore += aggregationBonus;
@@ -478,7 +504,7 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
 
                 if ((dominantSide === 'left' && isRight) || (dominantSide === 'right' && isLeft)) {
                     // If dropping a large piece on the non-dominant side, apply a strong penalty
-                    currentScore -= LARGE_PIECE_DIVERGENCE_PENALTY;
+                    currentScore -= LARGE_PIECE_DIVERGENCE_PENALTY; // Adjusted value
                     if (!mergeFoundForNext) { // Only overwrite if no strong merge reason
                         columnReason = `DEFAULT: Penalty for large piece (type ${pieceToDrop.type}) on non-dominant side.`;
                     }
@@ -499,7 +525,7 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
         }
     }
 
-    // 5. Look-ahead Bonus for nextPieces[1]
+    // 6. Look-ahead Bonus for nextPieces[1] (now 5. in original, moved to 6.)
     if (nextPieces && nextPieces.length > 1 && nextPieces[1]) {
         const next1Piece = nextPieces[1];
         // Create a hypothetical board state by adding the current pieceToDrop at simulatedY
