@@ -1,27 +1,29 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v101)
+ * strategy.mjs - ドロップ位置決定戦略 (v102)
  *
- * v101: v100をベースに、ゲーム分析（max_y がデッドラインを超える問題が依然として発生）と戦略原則を深く再分析。
+ * v102: v101をベースに、ゲーム分析（max_y がデッドラインを超える問題が依然として発生）と戦略原則を深く再分析。
  *      特に高さ管理の精度と積極性をさらに向上させ、大型ピースの集約を強化するための調整を行う。
  *      物理エンジンの不確実性に対応するため、より保守的かつ計画的なピース配置を促すためのスコアリング調整に注力する。
  *
- *      主な改善点 (v100からの調整点):
- *      1.  **高さ管理の劇的強化の継続と深化**:
- *          - `calculateHeightPenalty` 関数における `HEIGHT_PENALTY_WEIGHT` を 15.0 から 20.0 に増強。
- *            これにより、高さペナルティが全体スコア決定においてさらに強力な影響力を持つように調整。
- *          - `TOP_Y_CRITICAL_PENALTY_START` を 2.0 から 1.9 に引き下げ。
- *            致命的な高さペナルティの適用開始点をわずかに早めることで、デッドライン接近のリスクをより早期に、厳しく評価。
- *          - `GAME_OVER_DANGER_Y_THRESHOLD` を 0.2 から 0.3 に拡大。
- *            ゲームオーバーに直結する超臨界域の判定を広げ、即時巨大ペナルティの適用機会を増加。
- *          - 線形から立方へのペナルティ勾配の乗数を 75000 から 100000 に増加。
- *            `TOP_Y_WARN_PENALTY_START` から `TOP_Y_CRITICAL_PENALTY_START` の範囲におけるペナルティの上昇を急峻化。
+ *      主な改善点 (v101からの調整点):
+ *      1.  **高さ管理の劇的強化と早期化**:
+ *          - `TOP_Y_CRITICAL_PENALTY_START` を 1.9 から 1.8 に引き下げ。致命的な高さペナルティの適用開始点を早期化。
+ *          - `TOP_Y_WARN_PENALTY_START` を 1.5 から 1.4 に引き下げ。警告ペナルティの適用開始点を早期化。
+ *          - `GAME_OVER_DANGER_Y_THRESHOLD` を 0.3 から 0.4 に拡大。ゲームオーバーに直結する超臨界域の判定を広げ、即時巨大ペナルティの適用機会を増加。
+ *          - `HEIGHT_PENALTY_WEIGHT` を 20.0 から 25.0 に増強。高さペナルティが全体スコア決定においてさらに強力な影響力を持つように調整。
+ *          - `calculateHeightPenalty` 関数における線形から立方へのペナルティ勾配の乗数を 100000 から 150000 に増加。ペナルティの上昇を急峻化。
+ *          - 即時ゲームオーバー回避のペナルティを 500000 から 1000000 に倍増。
  *
- *      2.  **T1ピースの過剰反応抑制**:
- *          - `T1_LOW_MERGE_HEIGHT_ADVANTAGE` を 2.0 から 1.5 に引き下げ。
- *            T1ピースの低Yでの併合に対するボーナスを調整し、安易なT1併合を抑制することで、
- *            より戦略的かつ安定した配置を促す。（過去の成功戦略の示唆を反映）
+ *      2.  **大型ピースの集約ボーナス強化**:
+ *          - `DYNAMIC_AGGREGATION_BONUS_SCORE` を 200.0 から 300.0 に増強。大型ピースを既存の集約側に寄せるインセンティブを強化。
  *
- *      - 物理挙動の近似に関する注意点も維持。
+ *      3.  **併合判定の物理的緩衝の調整**:
+ *          - `MERGE_BUFFER` を 0.4 から 0.5 に拡大。国土形状の凸ポリゴンの不確実性を考慮し、併合の物理的接触判定をわずかに緩く（より近い距離で併合判定する）調整し、戦略コードでの併合予測と実際のゲーム内併合の一貫性を向上させる。
+ *
+ *      4.  **Garbage / Ojamaモードにおける低Y配置の優先順位付け**:
+ *          - `defaultStrategy` 内で、`isUrgentGarbage` や `isOjamaMerge` 時の低Y配置ボーナスを、他のボーナス計算よりも早い段階で適用するようにロジックを移動。これにより、緊急時の高さ回避とガベージクリアへの意識をさらに強化。
+ *
+ * - 物理挙動の近似に関する注意点も維持。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -31,14 +33,14 @@ const WALL_MARGIN = 2.8; // Max X before hitting wall. Walls are at +/-3.5, but 
 
 // Strategy-specific constants (Height Management)
 const GAME_OVER_TOP_Y = 2.5;             // The Y coordinate for the TOP of the piece that means game over (from rules "〜y=2.5 を超えるとゲームオーバー").
-const TOP_Y_CRITICAL_PENALTY_START = 1.9; // Adjusted: If piece's top Y reaches this, penalty becomes extremely high. (was 2.0)
-const TOP_Y_WARN_PENALTY_START = 1.5;     // New: If piece's top Y reaches this, penalty starts.
-const GAME_OVER_DANGER_Y_THRESHOLD = 0.3; // Adjusted: If simulatedY + piece.r is within this distance of GAME_OVER_TOP_Y, apply massive penalty. (was 0.2)
+const TOP_Y_CRITICAL_PENALTY_START = 1.8; // Adjusted (was 1.9): If piece's top Y reaches this, penalty becomes extremely high.
+const TOP_Y_WARN_PENALTY_START = 1.4;     // Adjusted (was 1.5): If piece's top Y reaches this, penalty starts.
+const GAME_OVER_DANGER_Y_THRESHOLD = 0.4; // Adjusted (was 0.3): If simulatedY + piece.r is within this distance of GAME_OVER_TOP_Y, apply massive penalty.
 
 // Strategy-specific constants (General)
-const MERGE_BUFFER = 0.4;
+const MERGE_BUFFER = 0.5; // Adjusted (was 0.4): Increased to account for irregular shapes (凸ポリゴン)
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
-const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Adjusted: Bonus for T1 merges at low Y. (was 2.0)
+const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y. (from v101, unchanged)
 
 // Garbage / Critical Mode Thresholds
 const GARBAGE_RATIO_OJAMA_MERGE = 0.15; // When garbage ratio exceeds this, prioritize merges.
@@ -52,10 +54,10 @@ const GARBAGE_LOW_MERGE_URGENT_BONUS = 100.0;
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
-// Default Strategy Scoring Weights (v101 adjustments)
-const HEIGHT_PENALTY_WEIGHT = 20.0; // Adjusted: Increased from 15.0 to give height significantly more influence
+// Default Strategy Scoring Weights (v102 adjustments)
+const HEIGHT_PENALTY_WEIGHT = 25.0; // Adjusted (was 20.0): Increased to give height significantly more influence
 const MERGE_BONUS_BASE_SCORE = 120.0;
-const DYNAMIC_AGGREGATION_BONUS_SCORE = 200.0;
+const DYNAMIC_AGGREGATION_BONUS_SCORE = 300.0; // Adjusted (was 200.0)
 const LOOKAHEAD_MERGE_BONUS_SCORE = 80.0;
 const BASE_Y_PREFERENCE_WEIGHT = 7.0;
 
@@ -74,19 +76,19 @@ function calculateHeightPenalty(y, r) {
   // Immediately apply an immense penalty if the piece's top is very close to the game over line.
   // This is a last-resort safety measure due to physics engine approximations.
   if (topY >= GAME_OVER_TOP_Y - GAME_OVER_DANGER_Y_THRESHOLD) {
-    return 500000; // Massive penalty to strongly discourage game-over imminent placements
+    return 1000000; // Adjusted (was 500000): Massive penalty to strongly discourage game-over imminent placements
   }
 
   if (topY < TOP_Y_WARN_PENALTY_START) {
     return 0;
   }
   if (topY >= TOP_Y_CRITICAL_PENALTY_START) {
-    return 150000; // Existing critical penalty
+    return 200000; // Adjusted (was 150000): Existing critical penalty
   }
   // Linear penalty between WARN_PENALTY_START and CRITICAL_PENALTY_START, then cubic exponential
   const linearRange = TOP_Y_CRITICAL_PENALTY_START - TOP_Y_WARN_PENALTY_START;
   const normalizedTopY = (topY - TOP_Y_WARN_PENALTY_START) / linearRange; // 0 to 1 in the warn range
-  return Math.pow(normalizedTopY, 3) * 100000; // Adjusted: from 75000 for significantly higher impact
+  return Math.pow(normalizedTopY, 3) * 150000; // Adjusted (was 100000) for significantly higher impact
 }
 
 /**
@@ -393,7 +395,22 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
     currentScore += (GAME_OVER_TOP_Y - simulatedY) * BASE_Y_PREFERENCE_WEIGHT;
     currentScore -= calculateHeightPenalty(simulatedY, pieceToDrop.r) * HEIGHT_PENALTY_WEIGHT;
 
-    // 2. Merge Opportunity Bonus (scaled by type, now garbage-aware)
+    // 2. Additional Direct Low Y Preference when garbage is active (moved earlier for higher impact)
+    if (isUrgentGarbage && simulatedY < 0.0) {
+        currentScore += GARBAGE_LOW_MERGE_URGENT_BONUS * 5.0;
+        // Overwrite reason only if not already a more specific merge reason
+        if (!mergeFoundForNext && !columnReason.includes("Merge")) {
+            columnReason = `DEFAULT: Urgent Garbage Low Y Preference at ${colX}.`;
+        }
+    } else if (isOjamaMerge && simulatedY < 0.0) {
+        currentScore += GARBAGE_LOW_MERGE_BONUS * 6.0;
+        // Overwrite reason only if not a merge or urgent garbage reason
+        if (!mergeFoundForNext && !columnReason.includes("Merge") && !columnReason.includes("Urgent Garbage")) {
+            columnReason = `DEFAULT: Ojama Low Y Preference at ${colX}.`;
+        }
+    }
+
+    // 3. Merge Opportunity Bonus (scaled by type, now garbage-aware)
     for (const existingPiece of boardStatePieces) {
       if (existingPiece.type === pieceToDrop.type && existingPiece.type < 15) {
         const distance = Math.sqrt(
@@ -417,7 +434,7 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
       }
     }
 
-    // 3. Dynamic Large Piece Aggregation Bonus
+    // 4. Dynamic Large Piece Aggregation Bonus
     if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
         if (aggregationInfo) {
             const { targetX } = aggregationInfo;
@@ -440,7 +457,7 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
         }
     }
 
-    // 4. Look-ahead Bonus for nextPieces[1]
+    // 5. Look-ahead Bonus for nextPieces[1]
     if (nextPieces && nextPieces.length > 1 && nextPieces[1]) {
         const next1Piece = nextPieces[1];
         // Create a hypothetical board state by adding the current pieceToDrop at simulatedY
@@ -468,19 +485,6 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
         }
     }
 
-    // 5. Additional Direct Low Y Preference when garbage is active (always applied if conditions met)
-    // This provides a strong incentive to place pieces low during garbage crises, even if a high-Y merge is available.
-    if (isUrgentGarbage && simulatedY < 0.0) {
-        currentScore += GARBAGE_LOW_MERGE_URGENT_BONUS * 5.0;
-        if (!mergeFoundForNext && !columnReason.includes("Merge")) { // Only overwrite reason if not already a merge reason
-            columnReason = `DEFAULT: Urgent Garbage Low Y Preference at ${colX}.`;
-        }
-    } else if (isOjamaMerge && simulatedY < 0.0) {
-        currentScore += GARBAGE_LOW_MERGE_BONUS * 6.0;
-        if (!mergeFoundForNext && !columnReason.includes("Merge") && !columnReason.includes("Urgent Garbage")) { // Only overwrite if not a merge or urgent garbage reason
-            columnReason = `DEFAULT: Ojama Low Y Preference at ${colX}.`;
-        }
-    }
 
     // Compare with highest score found so far
     if (currentScore > highestOverallScore) {
