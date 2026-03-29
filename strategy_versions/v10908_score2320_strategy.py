@@ -62,6 +62,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v386: restore v340 guard — suppress axis 9.6 stacking at reactive>=3 && deadline_crossed
+     # v363 removed the guard reasoning "axis 8.8 dominates, stacking is tie-breaking only."
+     # But height_mult floor (0.5) makes height penalty weak; stacking bonus (+100-300)
+     # overcomes height diffs, pulling pieces to high-y same-type targets during droughts.
+     # Worst game: 4x REACTIVE_PAIRS_STACKING_HIGH_TOWER in final 8 turns, pc 37→43.
+     # Fixes postmortem: flat axis 8.8 + NEAR suppression death spiral
+     # refs: game_history/20260329_104925_score0650.jsonl T58-62, tmp/state/last_rollback_postmortem.md,
+     #       tmp/batch_summary.txt, advice.md, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       analyze_board.py, game_history/20260329_110246_score3767.jsonl, game_history/20260329_104342_score0963.jsonl
+     #
      # v385: NEAR deadline crossing risk — strengthen NEAR penalty when drop crosses deadline
      # Unutilized per-candidate crosses_deadline from analysis: when NEAR merge attempt's
      # own top edge crosses deadline_y, failure means piece above deadline (unrecoverable).
@@ -756,7 +766,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
         # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+        # v386: restore v340 guard — suppress stacking at reactive>=3 && deadline_crossed
+        # v363 removed the v340 guard, reasoning that "axis 8.8 dominates, stacking is tie-breaking only."
+        # However, the height_mult floor (0.5) makes height penalty weak (~25/y_unit), so
+        # stacking bonus (+100-300) overcomes height differences between candidates, directing
+        # pieces toward high-y same-type targets during merge droughts.
+        # Worst game T58-62: 4x REACTIVE_PAIRS_STACKING_HIGH_TOWER at y=2.15-2.71, pc 37→43,
+        # max_y 2.15→3.30. Stacking guidance accelerates death spiral at deadline.
+        # Guard condition: reactive>=3 && deadline_crossed → skip stacking, axis 8.8 dominates.
+        # NOT gradient flattening (v376 OK). NOT pc scaling (v378 OK). Single-axis structural change.
+        # Fixes postmortem failure mode: flat axis 8.8 + NEAR suppression death spiral
+        # refs: game_history/20260329_104925_score0650.jsonl T58-62,
+        #       game_history/20260329_104342_score0963.jsonl T80-82,
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md,
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not (reactive_pair_count >= 3 and deadline_crossed):
             if current_type_has_reactive or current_type_has_near:
                 # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
                 # 高位スタッキングによるmax_y悪化を防止
