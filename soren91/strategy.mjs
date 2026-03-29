@@ -1,27 +1,26 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v110)
+ * strategy.mjs - ドロップ位置決定戦略 (v111)
  *
- * v110: v109をベースに、ゲーム分析結果（特に高Y到達と小型ピースの散乱、そしてパフォーマンス差）を深く考察し、
+ * v111: v110をベースに、ゲーム分析結果（特に高Y到達と小型ピースの散乱、そしてパフォーマンス差）を深く考察し、
  *      以下の調整を行います。
  *
- *      主な改善点 (v109からの調整点):
- *      1.  **高さ管理のさらなる強化**:
- *          - `HEIGHT_PENALTY_WEIGHT` を `70.0` から `100.0` へ増加させ、
- *            シミュレートされたY座標が高い位置へのドロップに対するペナルティをさらに強化します。
+ *      主な改善点 (v110からの調整点):
+ *      1.  **高さ管理のさらなる強化 (第2段階)**:
+ *          - `HEIGHT_PENALTY_WEIGHT` を `100.0` から `120.0` へさらに増加させ、
+ *            シミュレートされたY座標が高い位置へのドロップに対するペナルティを強化します。
+ *            また、`calculateHeightPenalty` 内の最大ペナルティ係数を `500000` から `750000` へ増加させ、
+ *            デッドラインに近い位置への積み上がりを一層厳しく抑制します。
  *            これにより、ゲームオーバーに繋がる不必要な高積み上がりを厳しく抑制し、
  *            安定した盤面維持を促進します。
- *
- *      2.  **小型ピースの集約ボーナスロジックの改善**:
- *          - `SMALL_PIECE_DENSITY_BONUS` の適用条件を見直し、
- *            小型ピース (`type 1〜4`) が「同種または小型ピースが密集しているエリア」に
- *            ドロップされる際の判定ロジックを修正します。
- *            具体的には、`densityCount` の計算で `existingPiece.type !== pieceToDrop.type` の条件を削除し、
- *            **ドロップするピースと同種の小型ピースも密度計算に含める**ようにします。
- *            これにより、「同 type ピースの集約」原則をより強力に推進し、
- *            意図しない散乱を防ぎつつ、併合の連鎖を効率的に促します。
- *            （コメント: 「同種または小型ピースが密集しているエリア」という指示に、既存の実装が
- *            `existingPiece.type !== pieceToDrop.type` を含んでいたため、同種での密度を
- *            考慮していなかった点を修正します。）
+ *      2.  **おじゃまブロック処理の強化**:
+ *          - `GARBAGE_LOW_MERGE_BONUS` を `350.0` から `400.0` へ、
+ *            `GARBAGE_LOW_MERGE_URGENT_BONUS` を `400.0` から `500.0` へそれぞれ増加させます。
+ *            これにより、おじゃまブロックが存在する状況での低位置マージの優先度を大幅に高め、
+ *            盤面の安全確保と積極的なおじゃま除去を促します。
+ *      3.  **先読みの重視**:
+ *          - `LOOKAHEAD_MERGE_BONUS_SCORE` を `80.0` から `100.0` へ増加させます。
+ *            これにより、次に来るピース（nextPieces[1]）の併合機会を創出するドロップ位置に
+ *            より高いボーナスを与え、長期的な連鎖形成とスコア効率の向上を目指します。
  *
  * - 物理挙動の近似に関する注意点も維持。
  */
@@ -52,19 +51,19 @@ const GARBAGE_RATIO_OJAMA_MERGE = 0.15; // When garbage ratio exceeds this, prio
 const GARBAGE_RATIO_URGENT = 0.3;       // When garbage ratio is very high, aggressive merges.
 const OJAMA_GAUGE_OJAMA_MERGE = 0.3;    // When ojama gauge is high, prioritize merges.
 const OJAMA_GAUGE_URGENT = 0.5;         // When ojama gauge is very high, aggressive merges.
-const GARBAGE_LOW_MERGE_BONUS = 350.0; // Adjusted direct bonus value
-const GARBAGE_LOW_MERGE_URGENT_BONUS = 400.0; // Adjusted direct bonus value
+const GARBAGE_LOW_MERGE_BONUS = 400.0; // Adjusted direct bonus value (from 350.0)
+const GARBAGE_LOW_MERGE_URGENT_BONUS = 500.0; // Adjusted direct bonus value (from 400.0)
 
 // HOLD Strategy Thresholds
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
 // Default Strategy Scoring Weights
-const HEIGHT_PENALTY_WEIGHT = 100.0; // Increased from 70.0 to 100.0
+const HEIGHT_PENALTY_WEIGHT = 120.0; // Increased from 100.0 to 120.0
 const MERGE_BONUS_BASE_SCORE = 120.0;
 const DYNAMIC_AGGREGATION_BONUS_SCORE = 400.0;
 const LARGE_PIECE_DIVERGENCE_PENALTY = 2500.0;
-const LOOKAHEAD_MERGE_BONUS_SCORE = 80.0;
+const LOOKAHEAD_MERGE_BONUS_SCORE = 100.0; // Increased from 80.0 to 100.0
 const BASE_Y_PREFERENCE_WEIGHT = 7.0;
 
 
@@ -72,8 +71,8 @@ const BASE_Y_PREFERENCE_WEIGHT = 7.0;
  * Calculates a height-based penalty for a given Y coordinate and radius.
  * Higher Y values (closer to DEADLINE_Y) result in higher penalties.
  * Penalty starts linearly from TOP_Y_WARN_PENALTY_START and becomes exponential near DEADLINE_Y.
- * @param {number} y - The Y coordinate of the piece's center.
- * @param {number} r - The radius of the piece.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {number} y - The Y coordinate of the piece's center.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {number} r - The radius of the piece.
  * @returns {number} The calculated penalty.
  */
 function calculateHeightPenalty(y, r) {
@@ -96,15 +95,15 @@ function calculateHeightPenalty(y, r) {
   const clampedProgress = Math.max(0, Math.min(1, progressIntoDangerZone));
 
   // Use a power function to make the penalty exponential. Higher power for steeper increase.
-  return Math.pow(clampedProgress, 4) * 500000; // Max penalty can be 500k
+  return Math.pow(clampedProgress, 4) * 750000; // Max penalty increased from 500k to 750k
 }
 
 /**
  * Simulates the Y coordinate where a piece would land if dropped at a given X.
  * This is a simplified vertical stack model, ignoring complex physics like rotation/rolling.
- * @param {{pieces: Array<{type: number, x: number, y: number, r: number}>}} boardState - The full board state or an object containing only the pieces.
- * @param {number} dropX - The X coordinate where the piece is dropped.
- * @param {{type: number, r: number}} pieceToDrop - The piece being dropped.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {{pieces: Array<{type: number, x: number, y: number, r: number}>}} boardState - The full board state or an object containing only the pieces.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {number} dropX - The X coordinate where the piece is dropped.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {{type: number, r: number}} pieceToDrop - The piece being dropped.
  * @returns {number} The estimated Y coordinate of the piece's center after landing.
  */
 function simulateDropY(boardState, dropX, pieceToDrop) {
@@ -132,8 +131,8 @@ function simulateDropY(boardState, dropX, pieceToDrop) {
  * Finds an X coordinate where the `pieceToDrop` can immediately merge with an existing piece
  * of `pieceToDrop.type`. Uses a scoring system that includes height penalties.
  * This function is used primarily for HOLD strategy evaluation and as a specific early priority check.
- * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
- * @param {{type: number, r: number}} pieceToDrop - The piece that will be dropped.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {{type: number, r: number}} pieceToDrop - The piece that will be dropped.
  * @returns {{x: number, y: number, reason: string} | null} The best drop X, its simulated Y, and a reason string, or null if no merge opportunity.
  */
 function findMergeOpportunity(boardStatePieces, pieceToDrop) {
@@ -185,8 +184,8 @@ function findMergeOpportunity(boardStatePieces, pieceToDrop) {
  * Finds a low Y merge opportunity specifically for type 1 pieces.
  * Prioritizes positions where a T1 piece can merge low, potentially clearing garbage.
  * Uses a scoring system that includes height penalties.
- * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
- * @param {{type: number, r: number}} pieceToDrop - The piece that will be dropped (expected to be type 1).
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {{type: number, r: number}} pieceToDrop - The piece that will be dropped (expected to be type 1).
  * @returns {{x: number, y: number, reason: string} | null} The best drop X, its simulated Y, and a reason, or null.
  */
 function findT1LowMerge(boardStatePieces, pieceToDrop) {
@@ -243,9 +242,9 @@ function findT1LowMerge(boardStatePieces, pieceToDrop) {
  * Finds aggressive merge opportunities in critical situations (high garbage).
  * Prioritizes any merge opportunity that can occur with a high score (low Y, merge bonus).
  * Uses a scoring system.
- * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
- * @param {{type: number, r: number}} pieceToDrop - The piece to drop.
- * @param {boolean} isUrgent - True if in an extremely urgent garbage situation.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {{type: number, r: number}} pieceToDrop - The piece to drop.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {boolean} isUrgent - True if in an extremely urgent garbage situation.
  * @returns {{x: number, y: number, reason: string} | null} The best drop X, its simulated Y, and a reason, or null.
  */
 function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
@@ -305,7 +304,7 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
 /**
  * Determines the dominant side for large pieces and calculates an average X for that side.
  * This aims to fulfill the "大型ピースの片側集約" principle more directly.
- * @param {Array<{type: number, x: number, y: number, r: number}>} pieces - Array of pieces on the board.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {Array<{type: number, x: number, y: number, r: number}>} pieces - Array of pieces on the board.
  * @returns {{targetX: number, dominantSide: 'left'|'right'|'none'}|null} An object with the target X and dominant side, or null if no large pieces.
  */
 function getLargePieceAggregationInfo(pieces) {
@@ -348,7 +347,7 @@ function getLargePieceAggregationInfo(pieces) {
 
 /**
  * Implements the HOLD strategy.
- * @param {{pieces: Array<{type: number, x: number, y: number, r: number}>, hold: {type: number, r: number} | null, canHold: boolean, next: {type: number, r: number}}} boardState
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {{pieces: Array<{type: number, x: number, y: number, r: number}>, hold: {type: number, r: number} | null, canHold: boolean, next: {type: number, r: number}}} boardState
  * @returns {{x: number, reason: string, hold: boolean} | null} Action if HOLD should be used, otherwise null.
  */
 function tryHoldStrategy(boardState) {
@@ -387,11 +386,11 @@ function tryHoldStrategy(boardState) {
 /**
  * Finds the X coordinate with the best overall score considering merges, large piece aggregation, and lowest weighted Y.
  * This is the core default strategy, now also garbage-aware.
- * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
- * @param {{type: number, r: number}} pieceToDrop - The piece to drop.
- * @param {Array<{type: number, r: number}> | undefined} nextPieces - Array of next pieces for look-ahead (nextPieces[1] specifically).
- * @param {boolean} isUrgentGarbage - True if in an extremely urgent garbage situation.
- * @param {boolean} isOjamaMerge - True if in a general ojama merge situation.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {{type: number, r: number}} pieceToDrop - The piece to drop.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {Array<{type: number, r: number}> | undefined} nextPieces - Array of next pieces for look-ahead (nextPieces[1] specifically).
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {boolean} isUrgentGarbage - True if in an extremely urgent garbage situation.
+ * @peerconnect-review-main/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {boolean} isOjamaMerge - True if in a general ojama merge situation.
  * @returns {{x: number, reason: string}} The chosen drop X and a reason.
  */
 function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarbage, isOjamaMerge) {
