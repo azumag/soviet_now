@@ -7,7 +7,7 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-      Decision Logic (13 evaluation axes):
+      Decision Logic (14 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Penalty for risky NEAR merges at deadline (v366)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
@@ -43,6 +43,7 @@ Game Overview:
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
+             9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v337: russia_phase抑制版
 
 
@@ -61,6 +62,22 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v384: reactive pair blocking avoidance — preserve merge paths by penalizing placement between reactive pairs
+     # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
+     # Placing between reactive pairs of different types physically blocks their future merge,
+     # leading to piece_count accumulation and game over.
+     # Worst game T37-47: 6-8 reactive pairs, pieces placed between them at y=2.58,
+     # no merges for 11 turns, piece_count grows 30→40, game over at T55.
+     # Penalty per blocked pair (200, capped 500) redirects placement to non-blocking positions,
+     # preserving merge paths and reducing piece_count accumulation.
+     # NOT a NEAR suppression or axis 8.8 change (postmortem constraints respected).
+     # Purely additive penalty, does not suppress any existing behavior.
+     # Fixes rollback failure mode: piece_count accumulation from blocking reactive merge paths
+     # refs: advice.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+     #       game_history/20260329_090616_score0296.jsonl T37-47,
+     #       game_history/20260329_090011_score0811.jsonl T73-80,
+     #       game_history/20260329_083840_score3207.jsonl, analyze_board.py
+     #
      # v383: danger NEAR merge priority — utilize unutilized danger_merge_available from analysis
      # v382 addressed danger DIRECT merges (+800). NEAR merges targeting danger pieces were unutilized
      # despite removing danger pieces being critical for survival. Postmortem: "deadline_crossed下での
@@ -556,6 +573,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # pipeline is list of (type, type+1, min_distance) tuples — adjacent-type proximity
     # Used by axis 9.7 for placement guidance when no same-type on board
     pipeline = reactor.get("pipeline", [])
+
+    # --- v384: pre-compute piece positions for reactive pair blocking avoidance ---
+    # Used by axis 9.3 to check if landing position is between reactive pair pieces.
+    # Computed once before the candidate loop since pieces don't change between candidates.
+    piece_pos_by_id = {p["id"]: (p["x"], p["y"]) for p in pieces}
     current_type_has_reactive = any(
         rp[2] == next_type for rp in reactive_pairs if isinstance(rp, (list, tuple)) and len(rp) >= 3
     )
@@ -820,6 +842,42 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
                     if proximity_bonus > 0:
                         score += proximity_bonus
+
+        # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
+        # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
+        # Placing a piece between reactive pairs of different types can physically block
+        # their future merge, leading to piece_count accumulation and game over.
+        # Worst game T37-47: 6-8 reactive pairs, pieces placed at y=2.58 between reactive
+        # pairs, no merges for 11 turns, piece_count grows 30→40.
+        # Penalty per blocked pair: 200, capped at 500 total. Small enough to not override
+        # merge opportunities (DIRECT +1200, NEAR +600) or axis 8.8 (-3000 to -9000).
+        # Only fires when merge_grade=="NO" (no immediate merge to suppress).
+        # Uses reactive_pairs position data from analyze_board.py (rp format: (id1, id2, type)).
+        # refs: advice.md, tmp/state/last_rollback_postmortem.md,
+        #       game_history/20260329_090616_score0296.jsonl T37-47,
+        #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
+        if merge_grade == "NO" and reactive_pair_count >= 1 and piece_count >= 25:
+            blocking_penalty = 0.0
+            for rp in reactive_pairs:
+                if isinstance(rp, (list, tuple)) and len(rp) >= 3:
+                    rp_type = rp[2]
+                    if rp_type != next_type:
+                        pos1 = piece_pos_by_id.get(rp[0])
+                        pos2 = piece_pos_by_id.get(rp[1])
+                        if pos1 and pos2:
+                            x1, y1 = pos1
+                            x2, y2 = pos2
+                            # Check if landing is within the horizontal span of the reactive pair
+                            span_min = min(x1, x2) - 0.5
+                            span_max = max(x1, x2) + 0.5
+                            if span_min <= x <= span_max:
+                                # Penalize if landing at or above the reactive pair level
+                                pair_min_y = min(y1, y2)
+                                if landing_y >= pair_min_y:
+                                    blocking_penalty += 200.0
+            if blocking_penalty > 0:
+                score -= min(blocking_penalty, 500.0)
+                reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
