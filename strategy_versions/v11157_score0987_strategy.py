@@ -61,6 +61,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v406: restore stacking guidance during merge droughts at reactive<3 — match protected strategy
+     # v403 added merge_available guard to prevent wedge-case height spike (T62-T63: type 9 wedged
+     # between towers, landed at y=3.24 vs expected 2.05). But this disabled stacking guidance
+     # during reactive<3 merge droughts where HEIGHT_CONTROL scatter accumulates piece_count.
+     # Protected strategy (median 12789 EVAL) allows stacking WITHOUT merge_available guard and
+     # achieves higher comp. v390 vertical gap decay + v361 congestion penalty provide sufficient
+     # protection against high stacking: at pc>=30, congestion penalty (pc-29)*ly*20 competes with
+     # stacking bonus (~400); at pc>=35, congestion (120-240) can overcome stacking. The wedge
+     # case is an outlier (<1% of turns) where landing prediction was wrong by 1.19 units; the
+     # median benefit of keeping pieces concentrated (enabling future merges) outweighs this risk.
+     # Fixes postmortem: piece_count accumulation from HEIGHT_CONTROL scatter at reactive<3 droughts
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+     #       game_history/20260330_075838_score0739.jsonl T38-T55 reactive=1-2 scatter,
+     #       game_history/20260330_075211_score0893.jsonl T58-65 drought, analyze_board.py
      # v405: danger piece rescue bonus — per-candidate danger_merge_available utilization (unused info)
      # analyze_board.py computes danger_merge_available per candidate (can this merge target a danger piece?)
      # but strategy never reads it. When true, merging removes a redline-expiring piece, preventing game
@@ -981,8 +996,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Stacking bonus (~250-400) overwhelms weakened height penalty (height_mult=0.5 floor from
         # deadline_crossed relaxations), causing pieces to land on tall structures. Worst game: type 9
         # wedged between tower pieces, max_y jumped from 1.55 to 3.24 in one turn → game over.
-        # When merge_available=false, HEIGHT_CONTROL (lowest landing_y) becomes default → safer board.
-        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_available and merge_grade == "NO" and same_type_stack_top is not None:
+        # v406: merge_available guard removed — stacking during droughts is future-oriented (2-turn
+        # planning), not immediate-merge. Protected strategy proves median benefit. v390 vertical
+        # gap decay + v361 congestion penalty provide safety against high stacking.
+        # Previous v403 guard caused guidance gap: reactive<3, merge_available=false, same_type exists
+        # → NO guidance → HEIGHT_CONTROL scatter → piece_count accumulation.
+        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None:
             if current_type_has_reactive or current_type_has_near:
                 # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
                 # 高位スタッキングによるmax_y悪化を防止

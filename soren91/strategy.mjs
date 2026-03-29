@@ -1,33 +1,30 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v116)
+ * strategy.mjs - ドロップ位置決定戦略 (v117)
  *
- * v116: v115をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
- *       特に、高Y到達と小型ピースの散乱の問題、そして大型ピースの集約と連鎖設計を強化します。
+ * v117: v116をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
+ *       特に、高Y到達と小型ピースの散乱の問題、大型ピースの集約と連鎖設計の強化、および先読みの導入を行います。
  *
- *      主な改善点 (v115からの調整点):
+ *      主な改善点 (v116からの調整点):
  *      1.  **高さ管理のさらなる強化とシミュレーションの調整**:
- *          - `simulateDropY` の「settling」バッファを `0.15` から `0.2` に増加。
- *            物理挙動の不確実性と凸ポリゴン形状による実際の高さ到達をより厳しく見積もることで、
- *            デッドライン到達のリスクをさらに過小評価しないようにします。
- *          - `HEIGHT_PENALTY_WEIGHT` を `180.0` から `250.0` に増加。
- *            高すぎる位置への配置に対するペナルティをより強くし、デッドライン到達のリスクを積極的に抑制します。
- *          - 高さペナルティ計算における `heightOverCritical` の乗数を `5` から `7` に増加。
- *            これにより、クリティカルな高さでのペナルティが指数関数的にさらに急峻になり、デッドライン付近への配置をより強力に抑制します。
- *      2.  **小型ピース（特にType 1）の管理戦略の見直し**:
- *          - `SMALL_PIECE_DENSITY_BONUS` を完全に削除。
- *            小型ピースの密集は必ずしも併合に繋がらず、盤面を高くする原因となるため、
- *            単純な密度ボーナスではなく、小型ピースによる積極的な併合を促す方向に転換します。
- *          - `calculateMergeOpportunities` に、小型ピースが併合をトリガーした場合の追加ボーナスを導入。
- *            これにより、小型ピースが「触媒」として機能し、既存のピースを巻き込んで併合を促進する配置を奨励します。
- *      3.  **おじゃまブロックの緊急モード閾値の調整**:
- *          - `GARBAGE_RATIO_URGENT` を `0.3` から `0.4` へ、`OJAMA_GAUGE_URGENT` を `0.5` から `0.6` へ調整。
- *            これは、戦略原則に記載されている「When garbage.ratio > 0.4, enter GBG_URGENT mode」
- *            および「gauge >= 0.6: ojama imminent (aggressively prioritize merges)」に合わせるものです。
- *            これにより、緊急モードへの突入をより適切なタイミングに調整し、過度な早期反応を抑制します。
- *      4.  大型ピースの集約ボーナス計算において、最も多くの大型ピースが存在する側に寄せるための小さな追加ボーナスを導入。
- *          これにより、大型ピースの片側集約原則を強化します。
- *      5.  HOLDアドバンテージ閾値、マージボーナス、低Yマージボーナス、ゴミブロック関連の重みはv115の調整を維持します。
- *      6.  物理挙動の近似に関する注意点も引き続き維持します。
+ *          - `simulateDropY` の「settling」バッファを `0.2` から `0.4` に増加。
+ *            物理挙動の不確実性や凸ポリゴン形状による実際の高さ到達がシミュレーションよりも高くなる傾向があるため、
+ *            デッドライン到達のリスクをさらに過小評価しないように、より悲観的にY座標を予測します。
+ *            これにより、デッドライン付近への危険な配置をより強く抑制します。
+ *      2.  **先読み (Look-ahead) の導入**:
+ *          - `boardState.nextPieces[1]` (次々ピース) を考慮した1ステップ先の簡易的な先読みを導入。
+ *            `boardState.next` の配置決定時に、その後の盤面で `nextPieces[1]` が最もスコアが高くなる配置も合わせて評価し、
+ *            そのスコアを `LOOK_AHEAD_WEIGHT` (0.5) で加算することで、より長期的な視点での配置選択を可能にします。
+ *            これにより、パイプライン維持や連鎖設計の原則を間接的に強化します。
+ *          - HOLD判断にもこの先読みロジックを適用し、HOLDした後の次ピースの最適配置も考慮します。
+ *      3.  その他の調整 (v116からの維持):
+ *          - `HEIGHT_PENALTY_WEIGHT` および高さペナルティ計算における乗数はv116の調整を維持し、強力な高さ抑制を継続します。
+ *          - 小型ピースの管理戦略（密度ボーナス削除、マージ触媒ボーナス導入）はv116の調整を維持します。
+ *          - おじゃまブロックの緊急モード閾値もv116の調整を維持します。
+ *          - 大型ピースの集約ボーナス計算はv116のロジックを維持します。
+ *
+ *      注意点:
+ *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
+ *        先読みもあくまで簡易的なものであり、これらの不確実性を考慮する必要があります。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -69,6 +66,7 @@ const LOW_Y_MERGE_THRESHOLD = -0.5; // Y coordinate below which a merge gets a b
 const LOW_Y_MERGE_BONUS = 1000; // Base bonus for merges at low Y
 const LOW_Y_GARBAGE_MERGE_BONUS = 3000; // Extra bonus for low Y merges when garbage is active.
 const SMALL_PIECE_MERGE_TRIGGER_BONUS = 750; // New: Bonus for small pieces causing a merge.
+const LOOK_AHEAD_WEIGHT = 0.5; // Weight for the score contribution of the second piece in look-ahead.
 
 // Piece radii map (approximate, actual radii come from boardState.pieces[i].r)
 const PIECE_RADII = {
@@ -127,8 +125,9 @@ function simulateDropY(droppingPiece, targetX, currentPieces) {
         }
     }
     // Add a small buffer for "settling" and non-perfect circle physics/rolling
-    // Increased from 0.15 (v115) to 0.2 for more pessimistic height estimation.
-    return maxY + 0.2;
+    // Increased from 0.2 (v116) to 0.4 for more pessimistic height estimation,
+    // reflecting that pieces often settle higher due to irregular shapes and rotations.
+    return maxY + 0.4;
 }
 
 /**
@@ -285,36 +284,34 @@ function calculateGarbageImpact(boardState) {
  * @param {number} simulatedX - The simulated X position.
  * @param {number} simulatedY - The simulated Y position.
  * @param {object} boardState - The current board state.
- * @param {boolean} isHeldPiece - True if this piece came from HOLD.
+ * @param {Array<object>} currentBoardPieces - The array of pieces to consider for physics and merges (can be boardState.pieces or a hypothetical board).
  * @returns {number} The total calculated score. Returns -Infinity if move is invalid (e.g., game over).
  */
-function calculateOverallScore(droppingPiece, simulatedX, simulatedY, boardState, isHeldPiece = false) {
+function calculateOverallScore(droppingPiece, simulatedX, simulatedY, boardState, currentBoardPieces) {
     let score = 0;
     const pieceRadius = getPieceRadius(droppingPiece);
-
-    // Create a hypothetical board including the dropped piece for local analysis
-    const simulatedBoard = [...boardState.pieces, {
-        type: droppingPiece.type,
-        x: simulatedX,
-        y: simulatedY,
-        r: pieceRadius
-    }];
 
     // 1. Height Penalty - Most critical factor
     const heightPenalty = calculateHeightPenalty(simulatedY, pieceRadius);
     if (heightPenalty === -Infinity) return -Infinity; // If this move causes immediate game over, disqualify
     score += heightPenalty;
 
+    // Create a hypothetical board including the dropped piece for local analysis
+    const simulatedBoardWithNewPiece = [...currentBoardPieces, {
+        type: droppingPiece.type,
+        x: simulatedX,
+        y: simulatedY,
+        r: pieceRadius
+    }];
+
     // 2. Merge Opportunities
-    const mergeScore = calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simulatedBoard, boardState);
+    const mergeScore = calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simulatedBoardWithNewPiece, boardState);
     score += mergeScore;
 
-    // 3. Small Piece Density Bonus - Removed in v116
+    // 3. Large Piece Grouping Bonus
+    score += calculateLargePieceGrouping(droppingPiece, simulatedX, simulatedBoardWithNewPiece);
 
-    // 4. Large Piece Grouping Bonus
-    score += calculateLargePieceGrouping(droppingPiece, simulatedX, simulatedBoard);
-
-    // 5. Garbage Impact Bonus (if applicable, increases merge value)
+    // 4. Garbage Impact Bonus (if applicable, increases merge value)
     score += calculateGarbageImpact(boardState);
 
     // Penalize dropping outside the playable area horizontally
@@ -328,59 +325,122 @@ function calculateOverallScore(droppingPiece, simulatedX, simulatedY, boardState
 
 
 export function decide(boardState) {
-    let bestScore = -Infinity;
+    let bestOverallScore = -Infinity;
     let bestX = 0;
     let reason = "Default drop position";
     let shouldHold = false;
 
-    // --- Evaluate dropping the next piece (boardState.next) ---
-    let bestScoreForNextPiece = -Infinity;
+    // --- Evaluate dropping the next piece (boardState.next) with 1-step look-ahead ---
+    let bestScoreForNextPiecePath = -Infinity;
     let bestXForNextPiece = 0;
 
-    for (const xCandidate of FINE_COLS) {
-        const simulatedY = simulateDropY(boardState.next, xCandidate, boardState.pieces);
-        const currentScore = calculateOverallScore(boardState.next, xCandidate, simulatedY, boardState);
+    for (const xCandidate1 of FINE_COLS) {
+        const simulatedY1 = simulateDropY(boardState.next, xCandidate1, boardState.pieces);
+        const score1 = calculateOverallScore(boardState.next, xCandidate1, simulatedY1, boardState, boardState.pieces);
 
-        if (currentScore > bestScoreForNextPiece) {
-            bestScoreForNextPiece = currentScore;
-            bestXForNextPiece = xCandidate;
+        if (score1 === -Infinity) { // If the first drop leads to game over, disqualify this path
+            continue;
         }
-    }
 
-    // Initialize overall best with next piece's best
-    bestScore = bestScoreForNextPiece;
-    bestX = bestXForNextPiece;
-    reason = `Dropping next piece (type ${boardState.next.type}) at best scored X`;
+        let totalScoreForThisPath = score1;
 
-    // --- Evaluate using HOLD if available ---
-    if (boardState.canHold && boardState.hold !== null) {
-        let bestScoreForHeldPiece = -Infinity;
-        let bestXForHeldPiece = 0;
+        // 1-step look-ahead: consider the next piece (nextPieces[1])
+        if (boardState.nextPieces.length > 1) {
+            const nextNextPiece = boardState.nextPieces[1];
+            let bestScoreForNextNextPiece = -Infinity;
 
-        for (const xCandidate of FINE_COLS) {
-            const simulatedY = simulateDropY(boardState.hold, xCandidate, boardState.pieces);
-            const currentScore = calculateOverallScore(boardState.hold, xCandidate, simulatedY, boardState, true);
+            // Create a hypothetical board after the first piece drops
+            const hypotheticalBoard1 = [...boardState.pieces, {
+                type: boardState.next.type,
+                x: xCandidate1,
+                y: simulatedY1,
+                r: getPieceRadius(boardState.next)
+            }];
 
-            if (currentScore > bestScoreForHeldPiece) {
-                bestScoreForHeldPiece = currentScore;
-                bestXForHeldPiece = xCandidate;
+            for (const xCandidate2 of FINE_COLS) {
+                const simulatedY2 = simulateDropY(nextNextPiece, xCandidate2, hypotheticalBoard1);
+                // When calculating score for the second piece, use the hypothetical board after the first drop for physics/merges
+                const score2 = calculateOverallScore(nextNextPiece, xCandidate2, simulatedY2, boardState, hypotheticalBoard1);
+
+                if (score2 > bestScoreForNextNextPiece) {
+                    bestScoreForNextNextPiece = score2;
+                }
+            }
+            if (bestScoreForNextNextPiece !== -Infinity) {
+                totalScoreForThisPath += bestScoreForNextNextPiece * LOOK_AHEAD_WEIGHT;
             }
         }
 
-        // Decide whether to HOLD based on score difference
-        // If holding the current piece would lead to a much better situation (represented by bestScoreForHeldPiece)
-        // than dropping the next piece, then HOLD.
-        if (bestScoreForHeldPiece > bestScoreForNextPiece + HOLD_ADVANTAGE_THRESHOLD) {
-            shouldHold = true;
-            // The x here doesn't matter for the HOLD action itself, but we can set it to the optimal for the held piece
-            // in case the system needs a valid 'x' even with hold: true.
-            bestX = bestXForHeldPiece;
-            reason = `HOLD (swap next piece for held type ${boardState.hold.type})`;
+        if (totalScoreForThisPath > bestScoreForNextPiecePath) {
+            bestScoreForNextPiecePath = totalScoreForThisPath;
+            bestXForNextPiece = xCandidate1;
         }
     }
 
-    // Fallback if no good position found (should not happen with -Infinity init, but for safety)
-    if (bestScore === -Infinity) {
+    // Initialize overall best with next piece's best path
+    bestOverallScore = bestScoreForNextPiecePath;
+    bestX = bestXForNextPiece;
+    reason = `Dropping next piece (type ${boardState.next.type}) at best scored X with look-ahead`;
+
+    // --- Evaluate using HOLD if available ---
+    if (boardState.canHold && boardState.hold !== null) {
+        let bestScoreForHeldPiecePath = -Infinity;
+        let bestXForHeldPiece = 0;
+
+        for (const xCandidate1 of FINE_COLS) {
+            const simulatedY1 = simulateDropY(boardState.hold, xCandidate1, boardState.pieces);
+            // Pass true for isHeldPiece (though current calculateOverallScore doesn't use it directly).
+            const score1 = calculateOverallScore(boardState.hold, xCandidate1, simulatedY1, boardState, boardState.pieces);
+
+            if (score1 === -Infinity) {
+                continue;
+            }
+
+            let totalScoreForHeldPiecePath = score1;
+
+            // 1-step look-ahead for the piece that would drop AFTER the held piece
+            // This would be boardState.next if the hold happens.
+            if (boardState.nextPieces.length > 0) { // If there's a next piece after hold
+                const nextPieceAfterHold = boardState.next; // This is the piece that would drop next
+                let bestScoreForNextPieceAfterHold = -Infinity;
+
+                const hypotheticalBoard1AfterHold = [...boardState.pieces, {
+                    type: boardState.hold.type,
+                    x: xCandidate1,
+                    y: simulatedY1,
+                    r: getPieceRadius(boardState.hold)
+                }];
+
+                for (const xCandidate2 of FINE_COLS) {
+                    const simulatedY2 = simulateDropY(nextPieceAfterHold, xCandidate2, hypotheticalBoard1AfterHold);
+                    const score2 = calculateOverallScore(nextPieceAfterHold, xCandidate2, simulatedY2, boardState, hypotheticalBoard1AfterHold);
+
+                    if (score2 > bestScoreForNextPieceAfterHold) {
+                        bestScoreForNextPieceAfterHold = score2;
+                    }
+                }
+                if (bestScoreForNextPieceAfterHold !== -Infinity) {
+                    totalScoreForHeldPiecePath += bestScoreForNextPieceAfterHold * LOOK_AHEAD_WEIGHT;
+                }
+            }
+
+            if (totalScoreForHeldPiecePath > bestScoreForHeldPiecePath) {
+                bestScoreForHeldPiecePath = totalScoreForHeldPiecePath;
+                bestXForHeldPiece = xCandidate1;
+            }
+        }
+
+        // Decide whether to HOLD based on score difference with look-ahead
+        if (bestScoreForHeldPiecePath > bestOverallScore + HOLD_ADVANTAGE_THRESHOLD) {
+            shouldHold = true;
+            bestX = bestXForHeldPiece; // Use the best X found for the held piece's path
+            reason = `HOLD (swap next piece for held type ${boardState.hold.type}) with look-ahead`;
+            bestOverallScore = bestScoreForHeldPiecePath; // Update overall best score if HOLD is chosen
+        }
+    }
+
+    // Final fallback
+    if (bestOverallScore === -Infinity) {
         bestX = 0;
         reason = "No valid move found, defaulting to center";
     }
