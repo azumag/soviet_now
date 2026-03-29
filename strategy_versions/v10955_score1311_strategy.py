@@ -60,6 +60,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v389: deadline proximity urgency — approaching deadline, reduce target_y decay in axis 9.6b/boost 9.7
+     # Uses reactor["deadline_margin"] (unused) for smooth urgency gradient in merge path construction.
+     # Worst T48-50: reactive=3 (other types), NO merge, margin≈0.1 → 9.6b gave ~88 vs height ~140 → scatter.
+     # With boost: ~199 vs 140 → proximity wins. Best T72: +199 chain after stacking guidance fired.
+     # Fixes rollback failure mode: weak guidance at deadline + no merge → HEIGHT_CONTROL scatter
+     # refs: score0924 T48-50, score2638 T70-72, analyze_board.py, batch_summary, postmortem,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v388: NEAR crossing-deadline risk — utilize per-candidate crosses_deadline outside global deadline
      # Fixes rollback failure mode: failed NEAR at crossing-deadline positions → unrecoverable piece
      # refs: analyze_board.py, 20260329_131740_score0473 T49/T54/T57, 20260329_132445_score1571,
@@ -537,7 +544,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # reactive_pairs is a list, count pairs for evaluation
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
-    
+
+    # --- v389: deadline proximity urgency (continuous danger signal) ---
+    # reactor["deadline_margin"] = DEADLINE_Y - top_edge_y. Previously unused.
+    # Provides continuous measure of danger vs binary deadline_crossed boolean.
+    # Used by axis 9.6b (target_y decay relief) and axis 9.7 (pipeline bonus boost)
+    # when approaching deadline but no immediate merge available.
+    deadline_margin = reactor.get("deadline_margin", 10.0)
+
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
@@ -828,6 +842,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if piece_count >= 28:
                     congestion_scale = 1.0 + (piece_count - 28) * 0.12
                     pipeline_bonus *= min(congestion_scale, 3.0)
+                # v389: deadline proximity urgency — when approaching deadline and no same-type
+                # on board, pipeline guidance toward adjacent-type pieces needs to be stronger.
+                # Without this, HEIGHT_CONTROL scatters pieces at deadline instead of building
+                # toward future merges via adjacent-type proximity.
+                # At deadline_margin=0: 1.5x boost. At margin=1.5: no change.
+                # NOT danger bonus (postmortem constraint OK — no fixed danger bonus).
+                if deadline_margin < 1.5:
+                    urgency_scale = 1.0 + max(0.0, 1.5 - deadline_margin) / 1.5 * 0.5
+                    pipeline_bonus *= urgency_scale
                 score += pipeline_bonus
 
         # ----- v362/v368 → v369 → v371: merged_type-aware targeting + congestion-aware proximity -----
@@ -881,7 +904,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         congestion_scale = 1.0 + (piece_count - 28) * 0.12
                         proximity_bonus *= min(congestion_scale, 3.0)
                     if target_y > 0:
-                        proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
+                        proximity_decay = max(0.0, 1.0 - target_y * 0.3)
+                        # v389: deadline proximity urgency — approaching deadline means
+                        # we need merge paths quickly, not ground-up building.
+                        # High-y same-type targets are already on the board and closer to
+                        # reactive pairs; placing near them is the fastest path to merges.
+                        # Without this, HEIGHT_CONTROL (low placement) wins because target_y
+                        # decay reduces proximity bonus below height+congestion penalty.
+                        # Worst T48: margin≈0.1, target_y=1.5 → decay 0.55+0.46=1.0 (was 0.55).
+                        # Bonus: 120*1.24*1.0=149 vs height+congestion=105 → proximity wins.
+                        # NOT stacking suppression (postmortem constraint: no reactive<3 guard).
+                        # NOT danger bonus (postmortem constraint: no fixed danger bonus).
+                        if deadline_margin < 1.5:
+                            decay_boost = min(0.5, max(0.0, 1.5 - deadline_margin) / 1.5 * 0.5)
+                            proximity_decay = min(1.0, proximity_decay + decay_boost)
+                        proximity_bonus *= proximity_decay
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
