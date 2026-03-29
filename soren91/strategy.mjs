@@ -1,23 +1,26 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v99)
+ * strategy.mjs - ドロップ位置決定戦略 (v100)
  *
- * v99: v98をベースに、ゲーム分析（max_y がデッドラインを超える問題が依然として発生）と戦略原則を深く再分析。
+ * v100: v99をベースに、ゲーム分析（max_y がデッドラインを超える問題が依然として発生）と戦略原則を深く再分析。
  *      特に高さ管理の精度と積極性をさらに向上させ、大型ピースの集約を強化するための調整を行う。
  *      物理エンジンの不確実性に対応するため、より保守的かつ計画的なピース配置を促すためのスコアリング調整に注力する。
  *
  *      主な改善点:
- *      1.  **高さ管理の劇的強化 (継続)**:
- *          - `PENALTY_CRITICAL_CENTER_Y` を 1.2 → 1.0 にさらに引き下げ、非常に高い位置への配置をより厳しく、早く抑制。
- *            特に大型ピースがデッドラインに到達するのを早期に防ぐ。
- *          - `PENALTY_WARN_CENTER_Y` を 0.8 → 0.6 に引き下げ、ペナルティが開始されるY座標を低くする。
- *          - `calculateHeightPenalty` のペナルティ乗数を 50000 → 75000 に増加させ、デッドラインに近づくほどペナルティが極めて急峻になるように調整。
- *            特にクリティカル領域での直接リターンも 100000 → 150000 に増加。
- *          - `HEIGHT_PENALTY_WEIGHT` を 10.0 → 15.0 に引き上げ、高さに対するペナルティの影響力を決定的に増大。
- *          - `BASE_Y_PREFERENCE_WEIGHT` を 5.0 → 7.0 に引き上げ、全体的に低い位置への配置を奨励する。
+ *      1.  **高さ管理の劇的強化 (継続かつより正確に)**:
+ *          - `calculateHeightPenalty` 関数を `y` (中心座標) だけでなく `r` (半径) も考慮するように変更。
+ *            ピースの最上部 `(y + r)` がデッドラインに近づくほどペナルティを課すように調整。
+ *            これにより、大型ピースが高所に置かれることへのペナルティをより早期に、厳しく適用。
+ *          - 高さペナルティの閾値を `PENALTY_CRITICAL_CENTER_Y` と `PENALTY_WARN_CENTER_Y` から、
+ *            ピースの最上部のY座標を基準とした `TOP_Y_CRITICAL_PENALTY_START` と `TOP_Y_WARN_PENALTY_START` に変更。
+ *            これにより、より直感的かつゲームオーバー条件に即したペナルティ適用が可能に。
+ *          - `GAME_OVER_DANGER_Y_THRESHOLD` に基づく超臨界域での即時巨大ペナルティを追加。
+ *            デッドラインへのごく僅かな接近でも致命的なリスクとして評価する。
  *
- *      2.  **大型ピースの片側集約ボーナス強化 (継続)**:
- *          - `DYNAMIC_AGGREGATION_BONUS_SCORE` を 150.0 → 200.0 に引き上げ、大型ピースの集約をより強力に奨励。
- *            これにより、散らばりやすい大型ピースがボードの片側にまとまりやすくなり、将来的な併合機会を創出。
+ *      2.  **大型ピースの片側集約ロジック強化**:
+ *          - `calculateLargePieceCentroid` を廃止し、`getLargePieceAggregationInfo` を導入。
+ *            ボード上の大型ピースが左右どちらに偏っているかを判断し、その「支配的な側」に新たな大型ピースを誘導。
+ *            これにより「大型ピースは片側に集約する」という戦略原則をより明示的に強化。
+ *          - 支配的な側がまだ存在しない場合、微細なボーナスを適用して片側（デフォルトでは左側）に集約を促すヒューリスティックを追加。
  *
  *      3.  **先行ピース（nextPieces[1]）連鎖設計の強化**: (v98で実施済み、今回は維持)
  *          - `LOOKAHEAD_MERGE_BONUS_SCORE` は 80.0 で維持。
@@ -35,8 +38,8 @@ const WALL_MARGIN = 2.8; // Max X before hitting wall. Walls are at +/-3.5, but 
 
 // Strategy-specific constants (Height Management)
 const GAME_OVER_TOP_Y = 2.5;             // The Y coordinate for the TOP of the piece that means game over (from rules "〜y=2.5 を超えるとゲームオーバー").
-const PENALTY_CRITICAL_CENTER_Y = 1.0;   // Adjusted from 1.2 to 1.0. The center Y coordinate where height penalty becomes extremely high.
-const PENALTY_WARN_CENTER_Y = 0.6;       // Adjusted from 0.8 to 0.6. The center Y coordinate where height penalty starts.
+const TOP_Y_CRITICAL_PENALTY_START = 2.0; // New: If piece's top Y reaches this, penalty becomes extremely high.
+const TOP_Y_WARN_PENALTY_START = 1.5;     // New: If piece's top Y reaches this, penalty starts.
 const GAME_OVER_DANGER_Y_THRESHOLD = 0.2; // If simulatedY + piece.r is within this distance of GAME_OVER_TOP_Y, apply massive penalty.
 
 // Strategy-specific constants (General)
@@ -65,24 +68,32 @@ const BASE_Y_PREFERENCE_WEIGHT = 7.0; // Increased from 5.0
 
 
 /**
- * Calculates a height-based penalty for a given Y coordinate.
- * Higher Y values (closer to PENALTY_CRITICAL_CENTER_Y) result in higher penalties.
- * Penalty starts linearly from PENALTY_WARN_CENTER_Y and becomes exponential near PENALTY_CRITICAL_CENTER_Y.
+ * Calculates a height-based penalty for a given Y coordinate and radius.
+ * Higher Y values (closer to TOP_Y_CRITICAL_PENALTY_START) result in higher penalties.
+ * Penalty starts linearly from TOP_Y_WARN_PENALTY_START and becomes exponential near TOP_Y_CRITICAL_PENALTY_START.
  * @param {number} y - The Y coordinate of the piece's center.
+ * @param {number} r - The radius of the piece.
  * @returns {number} The calculated penalty.
  */
-function calculateHeightPenalty(y) {
-  if (y < PENALTY_WARN_CENTER_Y) {
+function calculateHeightPenalty(y, r) {
+  const topY = y + r;
+
+  // Immediately apply an immense penalty if the piece's top is very close to the game over line.
+  // This is a last-resort safety measure due to physics engine approximations.
+  if (topY >= GAME_OVER_TOP_Y - GAME_OVER_DANGER_Y_THRESHOLD) {
+    return 500000; // Massive penalty to strongly discourage game-over imminent placements
+  }
+
+  if (topY < TOP_Y_WARN_PENALTY_START) {
     return 0;
   }
-  if (y >= PENALTY_CRITICAL_CENTER_Y) {
-    // Greatly increased to reflect criticality earlier
-    return 150000; // Increased from 100000 (v98 was 50000)
+  if (topY >= TOP_Y_CRITICAL_PENALTY_START) {
+    return 150000; // Existing critical penalty
   }
-  // Linear penalty between WARN_CENTER_Y and CRITICAL_CENTER_Y, then cubic exponential
-  const linearRange = PENALTY_CRITICAL_CENTER_Y - PENALTY_WARN_CENTER_Y;
-  const normalizedY = (y - PENALTY_WARN_CENTER_Y) / linearRange; // 0 to 1 in the warn range
-  return Math.pow(normalizedY, 3) * 75000; // Adjusted from 50000 for significantly higher impact
+  // Linear penalty between WARN_PENALTY_START and CRITICAL_PENALTY_START, then cubic exponential
+  const linearRange = TOP_Y_CRITICAL_PENALTY_START - TOP_Y_WARN_PENALTY_START;
+  const normalizedTopY = (topY - TOP_Y_WARN_PENALTY_START) / linearRange; // 0 to 1 in the warn range
+  return Math.pow(normalizedTopY, 3) * 75000; // Adjusted from 50000 for significantly higher impact
 }
 
 /**
@@ -129,14 +140,10 @@ function findMergeOpportunity(boardStatePieces, pieceToDrop) {
     if (simulatedY + pieceToDrop.r > GAME_OVER_TOP_Y) {
         continue;
     }
-    // New: Critical danger zone for game over
-    if ((GAME_OVER_TOP_Y - (simulatedY + pieceToDrop.r)) < GAME_OVER_DANGER_Y_THRESHOLD) {
-        continue; // Immediately disqualify this position
-    }
 
     let currentScore = 0;
     currentScore += (GAME_OVER_TOP_Y - simulatedY) * BASE_Y_PREFERENCE_WEIGHT;
-    currentScore -= calculateHeightPenalty(simulatedY) * HEIGHT_PENALTY_WEIGHT;
+    currentScore -= calculateHeightPenalty(simulatedY, pieceToDrop.r) * HEIGHT_PENALTY_WEIGHT;
 
     // Check for merge with existing pieces of the same type
     for (const existingPiece of boardStatePieces) {
@@ -188,17 +195,13 @@ function findT1LowMerge(boardStatePieces, pieceToDrop) {
     if (simulatedY + pieceToDrop.r > GAME_OVER_TOP_Y) {
         continue;
     }
-    // New: Critical danger zone for game over
-    if ((GAME_OVER_TOP_Y - (simulatedY + pieceToDrop.r)) < GAME_OVER_DANGER_Y_THRESHOLD) {
-        continue; // Immediately disqualify this position
-    }
 
     let currentScore = 0;
     currentScore += (GAME_OVER_TOP_Y - simulatedY) * BASE_Y_PREFERENCE_WEIGHT;
-    currentScore -= calculateHeightPenalty(simulatedY) * HEIGHT_PENALTY_WEIGHT;
+    currentScore -= calculateHeightPenalty(simulatedY, pieceToDrop.r) * HEIGHT_PENALTY_WEIGHT;
 
     // Apply T1_LOW_MERGE_HEIGHT_ADVANTAGE to make low merges even more attractive
-    if (simulatedY < PENALTY_WARN_CENTER_Y) { // Use PENALTY_WARN_CENTER_Y as a proxy for "low"
+    if (simulatedY < TOP_Y_WARN_PENALTY_START) { // Use TOP_Y_WARN_PENALTY_START as a proxy for "low" based on topY
       currentScore += T1_LOW_MERGE_HEIGHT_ADVANTAGE * MERGE_BONUS_BASE_SCORE; // Boosted T1 low merge bonus
     }
 
@@ -249,15 +252,11 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
     if (simulatedY + pieceToDrop.r > GAME_OVER_TOP_Y) {
         continue;
     }
-    // New: Critical danger zone for game over
-    if ((GAME_OVER_TOP_Y - (simulatedY + pieceToDrop.r)) < GAME_OVER_DANGER_Y_THRESHOLD) {
-        continue; // Immediately disqualify this position
-    }
 
     let currentScore = 0;
     // Base preference for lower Y
     currentScore += (GAME_OVER_TOP_Y - simulatedY) * BASE_Y_PREFERENCE_WEIGHT;
-    currentScore -= calculateHeightPenalty(simulatedY) * HEIGHT_PENALTY_WEIGHT;
+    currentScore -= calculateHeightPenalty(simulatedY, pieceToDrop.r) * HEIGHT_PENALTY_WEIGHT;
 
     // Add a strong bonus for low Y when urgent, similar to defaultStrategy
     if (isUrgent && simulatedY < 0.0) {
@@ -293,6 +292,41 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
     return { x: bestX, y: finalSimulatedY, reason: `Aggressive critical merge type ${pieceToDrop.type} (urgent: ${isUrgent}).` };
   }
   return null;
+}
+
+/**
+ * Determines the dominant side for large pieces and calculates an average X for that side.
+ * This aims to fulfill the "大型ピースの片側集約" principle more directly.
+ * @param {Array<{type: number, x: number, y: number, r: number}>} pieces - Array of pieces on the board.
+ * @returns {{targetX: number, dominantSide: 'left'|'right'}|null} An object with the target X and dominant side, or null if no clear dominant side.
+ */
+function getLargePieceAggregationInfo(pieces) {
+  let leftSidePieces = [];
+  let rightSidePieces = [];
+
+  for (const p of pieces) {
+    if (p.type >= LARGE_PIECE_THRESHOLD) {
+      if (p.x < 0) {
+        leftSidePieces.push(p);
+      } else {
+        rightSidePieces.push(p);
+      }
+    }
+  }
+
+  const leftCount = leftSidePieces.length;
+  const rightCount = rightSidePieces.length;
+
+  // A side is dominant if it has at least 2 pieces more than the other side.
+  if (leftCount >= rightCount + 2) {
+    const avgX = leftSidePieces.reduce((sum, p) => sum + p.x, 0) / leftCount;
+    return { targetX: avgX, dominantSide: 'left' };
+  } else if (rightCount >= leftCount + 2) {
+    const avgX = rightSidePieces.reduce((sum, p) => sum + p.x, 0) / rightCount;
+    return { targetX: avgX, dominantSide: 'right' };
+  } else {
+    return null; // No clear dominant side
+  }
 }
 
 /**
@@ -334,23 +368,6 @@ function tryHoldStrategy(boardState) {
 }
 
 /**
- * Calculates the average X coordinate of existing large pieces to guide aggregation.
- * @param {Array<{type: number, x: number, y: number, r: number}>} pieces - Array of pieces on the board.
- * @returns {number} The average X coordinate of large pieces, or 0 if none exist.
- */
-function calculateLargePieceCentroid(pieces) {
-  let totalX = 0;
-  let largePieceCount = 0;
-  for (const p of pieces) {
-    if (p.type >= LARGE_PIECE_THRESHOLD) {
-      totalX += p.x;
-      largePieceCount++;
-    }
-  }
-  return largePieceCount > 0 ? totalX / largePieceCount : 0; // Default to center if no large pieces
-}
-
-/**
  * Finds the X coordinate with the best overall score considering merges, large piece aggregation, and lowest weighted Y.
  * This is the core default strategy, now also garbage-aware.
  * @param {Array<{type: number, x: number, y: number, r: number}>} boardStatePieces - Only pieces from boardState.
@@ -365,7 +382,7 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
   let highestOverallScore = -Infinity; // We want to maximize the score
   let bestOverallReason = "DEFAULT: Least occupied column (lowest weighted Y).";
 
-  const largePieceCentroidX = calculateLargePieceCentroid(boardStatePieces);
+  const aggregationInfo = getLargePieceAggregationInfo(boardStatePieces);
 
   for (const colX of FINE_COLS) {
     const simulatedY = simulateDropY({pieces: boardStatePieces}, colX, pieceToDrop);
@@ -374,10 +391,6 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
     if (simulatedY + pieceToDrop.r > GAME_OVER_TOP_Y) {
         continue;
     }
-    // New: Critical danger zone for game over
-    if ((GAME_OVER_TOP_Y - (simulatedY + pieceToDrop.r)) < GAME_OVER_DANGER_Y_THRESHOLD) {
-        continue; // Immediately disqualify this position
-    }
 
     let currentScore = 0;
     let columnReason = "DEFAULT: Least occupied column (lowest weighted Y).";
@@ -385,7 +398,7 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
 
     // 1. Base preference for lower Y & Height Penalty (significantly increased)
     currentScore += (GAME_OVER_TOP_Y - simulatedY) * BASE_Y_PREFERENCE_WEIGHT;
-    currentScore -= calculateHeightPenalty(simulatedY) * HEIGHT_PENALTY_WEIGHT;
+    currentScore -= calculateHeightPenalty(simulatedY, pieceToDrop.r) * HEIGHT_PENALTY_WEIGHT;
 
     // 2. Merge Opportunity Bonus (scaled by type, now garbage-aware)
     for (const existingPiece of boardStatePieces) {
@@ -411,20 +424,30 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
       }
     }
 
-    // 3. Dynamic Large Piece Aggregation Bonus (Increased weight)
+    // 3. Dynamic Large Piece Aggregation Bonus
     if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
-      // Calculate distance to the centroid of other large pieces. Closer is better.
-      const distanceToCentroid = Math.abs(colX - largePieceCentroidX);
-      // Bonus scales down from DYNAMIC_AGGREGATION_BONUS_SCORE as distance increases
-      const aggregationBonus = DYNAMIC_AGGREGATION_BONUS_SCORE * (1 - Math.min(1, distanceToCentroid / WALL_MARGIN));
-      currentScore += aggregationBonus;
-      // Only assign this reason if no merge was found, merge is higher priority.
-      if (!mergeFoundForNext && columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") {
-         columnReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) near centroid at ${colX}.`;
-      }
+        if (aggregationInfo) {
+            const { targetX } = aggregationInfo;
+            const distanceToTarget = Math.abs(colX - targetX);
+            // Bonus scales down from DYNAMIC_AGGREGATION_BONUS_SCORE as distance increases
+            const aggregationBonus = DYNAMIC_AGGREGATION_BONUS_SCORE * (1 - Math.min(1, distanceToTarget / (WALL_MARGIN * 2)));
+            currentScore += aggregationBonus;
+            if (!mergeFoundForNext && columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") {
+                 columnReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) towards dominant side target at ${targetX.toFixed(2)}.`;
+            }
+        } else {
+            // If no dominant side yet, subtly encourage placing large pieces on the left to start aggregation
+            // This is a heuristic to try and establish a preferred side early.
+            if (colX < 0) { // Favor left side for initiating aggregation
+                currentScore += DYNAMIC_AGGREGATION_BONUS_SCORE / 8; // Small bonus
+                if (!mergeFoundForNext && columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") {
+                    columnReason = `DEFAULT: Initiate large piece aggregation towards left for type ${pieceToDrop.type}.`;
+                }
+            }
+        }
     }
 
-    // 4. Look-ahead Bonus for nextPieces[1] (Increased weight and dynamic for large pieces)
+    // 4. Look-ahead Bonus for nextPieces[1]
     if (nextPieces && nextPieces.length > 1 && nextPieces[1]) {
         const next1Piece = nextPieces[1];
         // Create a hypothetical board state by adding the current pieceToDrop at simulatedY
