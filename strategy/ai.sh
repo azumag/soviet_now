@@ -165,7 +165,7 @@ run_cmd() {
 	case "$type" in
 	zai)
 		local -a zai_claude_args
-		zai_claude_args=(-p "$prompt_body" --model=haiku --permission-mode=acceptEdits)
+		zai_claude_args=(--print -p "$prompt_body" --model=haiku --permission-mode=acceptEdits)
 		[ -n "$resume_session" ] && zai_claude_args+=(-c)
 		local -a zai_env=(
 			ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic"
