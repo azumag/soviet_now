@@ -1,17 +1,32 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v105)
+ * strategy.mjs - ドロップ位置決定戦略 (v106)
  *
- * v105: v104をベースに、ゲーム分析と戦略原則をさらに踏まえ、特に「大型ピースの片側集約」原則の初期段階での強化を試みる。
- *      この調整は、大型ピースが盤面に現れ始めた際に、より明確な集約方向を促し、後の配置の安定化に寄与することを目的とする。
+ * v106: v105をベースに、大型ピースの集約戦略をさらに洗練し、より柔軟な初期集約と高さ管理の微調整を行います。
+ *      v105で強化された初期集約バイアスが特定の状況で盤面を窮屈にしていた可能性を考慮し、
+ *      より盤面の状況に応じた自然な集約形成を促すように変更します。
  *
- *      主な改善点 (v104からの調整点):
- *      1.  **大型ピースの初期集約バイアスの強化**:
- *          - `defaultStrategy` 内において、盤面にまだ明確な大型ピースの集約側がない場合に、
- *            大型ピースを左側に配置する際の初期ボーナスを `DYNAMIC_AGGREGATION_BONUS_SCORE / 8` から `DYNAMIC_AGGREGATION_BONUS_SCORE / 4` に増強。
- *            これにより、ゲーム序盤や集約の初期段階で大型ピースの配置がより一貫した片側に誘導されやすくなることを期待する。
+ *      主な改善点 (v105からの調整点):
+ *      1.  **大型ピース集約ロジックの改善**:
+ *          - `getLargePieceAggregationInfo` 関数を修正し、盤面に大型ピースが存在するが、
+ *            まだ明確な左右どちらかの「優勢側」が確立されていない場合に、
+ *            全ての大型ピースの平均X座標をターゲットとして返すように変更。
+ *            これにより、固定的な初期左側バイアスに依存せず、ピースが自然に集まり始めた場所へ
+ *            次の大型ピースを誘導しやすくなります。
+ *          - `defaultStrategy` 内の大型ピースの配置決定ロジックを、上記の変更に合わせて更新。
+ *            優勢側がない場合は、全体平均Xへの近さを評価基準に追加。
+ *          - 盤面に大型ピースが全く存在しない場合の初期左側バイアスを、`DYNAMIC_AGGREGATION_BONUS_SCORE / 4`
+ *            から `DYNAMIC_AGGREGATION_BONUS_SCORE / 8` に緩和。
+ *            これにより、ゲーム開始直後の大型ピース配置の自由度を高め、不必要な高さ積み上げリスクを低減。
+ *            これはv105で強化された部分を再調整するものです。
  *
- *      その他、v104で導入された高さ管理の劇的強化や、おじゃまブロック対応、LOOKAHEADボーナス、MERGE_BUFFERなどの調整は維持。
- *      物理エンジンの不確実性に対応するための保守的かつ計画的なピース配置を促すスコアリング調整は引き続き重要視される。
+ *      2.  **高さペナルティの微調整**:
+ *          - `HEIGHT_PENALTY_WEIGHT` を `45.0` から `40.0` にわずかに減少。
+ *            `calculateHeightPenalty` 関数自体が非常にアグレッシブなペナルティを持っているため、
+ *            他のスコアリング要素（特にマージボーナス）がより効果的に働く余地を確保し、
+ *            全体のスコアバランスを改善することを目的とします。
+ *
+ *      その他、v104/v105で導入された高さ管理の劇的強化や、おじゃまブロック対応、LOOKAHEADボーナス、MERGE_BUFFERなどの調整は維持。
+ *      物理エンジンの不確実性に対応するための保守的かつ計画的なピース配置を促すスコアリング調整は引き続き重要視されます。
  *
  * - 物理挙動の近似に関する注意点も維持。
  */
@@ -45,7 +60,7 @@ const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
 // Default Strategy Scoring Weights (v104 adjustments)
-const HEIGHT_PENALTY_WEIGHT = 45.0; // Adjusted (was 35.0): Increased to give height significantly more influence
+const HEIGHT_PENALTY_WEIGHT = 40.0; // Adjusted from 45.0 to 40.0: Slightly reduced
 const MERGE_BONUS_BASE_SCORE = 120.0;
 const DYNAMIC_AGGREGATION_BONUS_SCORE = 400.0; // Unchanged from v103
 const LARGE_PIECE_DIVERGENCE_PENALTY = 2000.0; // Unchanged from v103
@@ -67,7 +82,7 @@ function calculateHeightPenalty(y, r) {
   // Immediately apply an immense penalty if the piece's top is very close to the game over line.
   // This is a last-resort safety measure due to physics engine approximations.
   if (topY >= GAME_OVER_TOP_Y - GAME_OVER_DANGER_Y_THRESHOLD) {
-    return 2000000; // Adjusted (was 1500000): Massive penalty to strongly discourage game-over imminent placements
+    return 2000000; // Massive penalty to strongly discourage game-over imminent placements
   }
 
   if (topY < TOP_Y_WARN_PENALTY_START) {
@@ -75,7 +90,7 @@ function calculateHeightPenalty(y, r) {
   }
   // If topY is above critical start but not yet in the immense penalty zone, apply strong critical penalty
   if (topY >= TOP_Y_CRITICAL_PENALTY_START) {
-    return 750000; // Adjusted (was 500000): Existing critical penalty, but now stronger
+    return 750000; // Existing critical penalty, but now stronger
   }
   // Linear penalty between WARN_PENALTY_START and CRITICAL_PENALTY_START, then cubic exponential
   const linearRange = TOP_Y_CRITICAL_PENALTY_START - TOP_Y_WARN_PENALTY_START;
@@ -84,7 +99,7 @@ function calculateHeightPenalty(y, r) {
   const normalizedTopY = (topY - TOP_Y_WARN_PENALTY_START) / linearRange; // 0 to 1 in the warn range
   // Clamp normalizedTopY to [0, 1] to prevent negative results or extreme values if topY somehow exceeds critical start
   const clampedNormalizedTopY = Math.max(0, Math.min(1, normalizedTopY));
-  return Math.pow(clampedNormalizedTopY, 3) * 350000; // Adjusted (was 250000) for significantly higher impact
+  return Math.pow(clampedNormalizedTopY, 3) * 350000; // For significantly higher impact
 }
 
 /**
@@ -293,20 +308,26 @@ function findAggressiveCriticalMerge(boardStatePieces, pieceToDrop, isUrgent) {
  * Determines the dominant side for large pieces and calculates an average X for that side.
  * This aims to fulfill the "大型ピースの片側集約" principle more directly.
  * @param {Array<{type: number, x: number, y: number, r: number}>} pieces - Array of pieces on the board.
- * @returns {{targetX: number, dominantSide: 'left'|'right'}|null} An object with the target X and dominant side, or null if no clear dominant side.
+ * @returns {{targetX: number, dominantSide: 'left'|'right'|'none'}|null} An object with the target X and dominant side, or null if no large pieces.
  */
 function getLargePieceAggregationInfo(pieces) {
   let leftSidePieces = [];
   let rightSidePieces = [];
+  let allLargePieces = [];
 
   for (const p of pieces) {
     if (p.type >= LARGE_PIECE_THRESHOLD) {
+      allLargePieces.push(p);
       if (p.x < 0) {
         leftSidePieces.push(p);
       } else {
         rightSidePieces.push(p);
       }
     }
+  }
+
+  if (allLargePieces.length === 0) {
+      return null; // No large pieces at all
   }
 
   const leftCount = leftSidePieces.length;
@@ -321,7 +342,9 @@ function getLargePieceAggregationInfo(pieces) {
     const avgX = rightSidePieces.reduce((sum, p) => sum + p.x, 0) / rightCount;
     return { targetX: avgX, dominantSide: 'right' };
   } else {
-    return null; // No clear dominant side
+    // If no clear dominant side, but there are large pieces, return their overall average X
+    const overallAvgX = allLargePieces.reduce((sum, p) => sum + p.x, 0) / allLargePieces.length;
+    return { targetX: overallAvgX, dominantSide: 'none' }; // 'none' indicates no strong dominance, but an aggregation point exists
   }
 }
 
@@ -439,33 +462,42 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
     if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
         if (aggregationInfo) {
             const { targetX, dominantSide } = aggregationInfo;
-            // Check if dropping on the "wrong" side or too far from the aggregation point
-            const isLeft = colX < 0;
-            const isRight = colX >= 0;
 
-            if ((dominantSide === 'left' && isRight) || (dominantSide === 'right' && isLeft)) {
-                // If dropping a large piece on the non-dominant side, apply a strong penalty
-                currentScore -= LARGE_PIECE_DIVERGENCE_PENALTY;
-                if (!mergeFoundForNext) { // Only overwrite if no strong merge reason
-                    columnReason = `DEFAULT: Penalty for large piece (type ${pieceToDrop.type}) on non-dominant side.`;
-                }
-            } else {
-                // If on the dominant side, give a bonus based on proximity to targetX
-                const distanceToTarget = Math.abs(colX - targetX);
-                // Bonus scales down from DYNAMIC_AGGREGATION_BONUS_SCORE as distance increases
-                const aggregationBonus = DYNAMIC_AGGREGATION_BONUS_SCORE * (1 - Math.min(1, distanceToTarget / (WALL_MARGIN * 2)));
+            if (dominantSide === 'none') {
+                // If large pieces exist but no clear dominant side, aim for their average X
+                const distanceToOverallAvg = Math.abs(colX - targetX);
+                const aggregationBonus = DYNAMIC_AGGREGATION_BONUS_SCORE * (1 - Math.min(1, distanceToOverallAvg / (WALL_MARGIN * 2)));
                 currentScore += aggregationBonus;
                 if (!mergeFoundForNext && columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") {
-                     columnReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) towards dominant side target at ${targetX.toFixed(2)}.`;
+                    columnReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) towards overall average X at ${targetX.toFixed(2)}.`;
+                }
+            } else { // There is a clear dominant side
+                const isLeft = colX < 0;
+                const isRight = colX >= 0;
+
+                if ((dominantSide === 'left' && isRight) || (dominantSide === 'right' && isLeft)) {
+                    // If dropping a large piece on the non-dominant side, apply a strong penalty
+                    currentScore -= LARGE_PIECE_DIVERGENCE_PENALTY;
+                    if (!mergeFoundForNext) { // Only overwrite if no strong merge reason
+                        columnReason = `DEFAULT: Penalty for large piece (type ${pieceToDrop.type}) on non-dominant side.`;
+                    }
+                } else {
+                    // If on the dominant side, give a bonus based on proximity to targetX
+                    const distanceToTarget = Math.abs(colX - targetX);
+                    // Bonus scales down from DYNAMIC_AGGREGATION_BONUS_SCORE as distance increases
+                    const aggregationBonus = DYNAMIC_AGGREGATION_BONUS_SCORE * (1 - Math.min(1, distanceToTarget / (WALL_MARGIN * 2)));
+                    currentScore += aggregationBonus;
+                    if (!mergeFoundForNext && columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") {
+                         columnReason = `DEFAULT: Aggregate large piece (type ${pieceToDrop.type}) towards dominant side target at ${targetX.toFixed(2)}.`;
+                    }
                 }
             }
         } else {
-            // If no dominant side yet, subtly encourage placing large pieces on the left to start aggregation
-            // This is a heuristic to try and establish a preferred side early, matching historical drop patterns.
-            if (colX < 0) { // Favor left side for initiating aggregation
-                currentScore += DYNAMIC_AGGREGATION_BONUS_SCORE / 4; // Adjusted from /8 to /4: Increased initial bonus
+            // No large pieces on board at all. Apply a softer initial left bias.
+            if (colX < 0) { // Favor left side for initiating aggregation, but softly
+                currentScore += DYNAMIC_AGGREGATION_BONUS_SCORE / 8; // Reverted to /8 from /4 (v105 adjustment)
                 if (!mergeFoundForNext && columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") {
-                    columnReason = `DEFAULT: Initiate large piece aggregation towards left for type ${pieceToDrop.type}.`;
+                    columnReason = `DEFAULT: Softly initiate large piece aggregation towards left for type ${pieceToDrop.type}.`;
                 }
             }
         }
@@ -498,7 +530,6 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
             }
         }
     }
-
 
     // Compare with highest score found so far
     if (currentScore > highestOverallScore) {

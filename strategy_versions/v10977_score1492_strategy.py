@@ -60,6 +60,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v391: suppress chain bonus for NEAR at crossing-deadline with high pc — death spiral prevention
+     # Worst game T71-76: 4 consecutive failed NEAR at crossing-deadline, pc 43→47, max_y 2.73→3.58→game over
+     # Chain bonus (axis 6, ~4000-6000) overwhelms NEAR risk penalty (v374/v378 max ~3650 at pc=43),
+     # making high-landing NEAR candidates irresistible even though NEAR has 31.5% failure rate.
+     # Failed NEAR at crossing-deadline adds unrecoverable piece above deadline → pc accumulation → death.
+     # Best game T160: critical chain merge at pc=33 (below threshold) → unaffected, +256 preserved.
+     # DIRECT (95.7% success) and NEAR at non-crossing-deadline retain chain bonus.
+     # Effect: among NEAR candidates at crossing-deadline + high pc, selection is based on reactive/danger
+     # bonuses and risk penalties (prefering lower landing_y) rather than chain potential.
+     # NOT chain bonus expansion (structural condition, not numerical tuning). NOT danger bonus (postmortem OK).
+     # Fixes rollback failure mode: piece_count accumulation from failed NEAR at crossing-deadline
+     # refs: game_history/20260329_160648_score0782.jsonl T71-76,
+     #       game_history/20260329_161326_score4068.jsonl T160,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+     #       analyze_board.py (crosses_deadline field)
      # v390: stacking vertical gap decay — axis 9.6 stacking toward deep targets from high landing positions
      # Worst game T61-62: reactive=12, NO merge, same-type target at y=-3.37, but piece lands at y=2.59
      # due to tower above. Stacking bonus(~400) wins vs height diff between candidates, placing piece
@@ -1170,7 +1185,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 初期段階でのCHAIN_MERGE選択を有効化するためにchain_bonus_multiplierの初期値を495.0に固定し、着地高による動的調整を開始地点から行うようにする。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
-            if merges:
+            # v391: suppress chain bonus for NEAR at crossing-deadline with high pc
+            # At pc>=40, chain bonus (4000-6000) is based on hypothetical future merges
+            # that won't happen if NEAR fails (31.5% failure). Failed NEAR at crossing-deadline
+            # adds unrecoverable piece → death spiral (worst T71-76: 4 consecutive failures).
+            # Without chain bonus, NEAR candidate selection prefers lower landing_y (safer if fail).
+            # DIRECT (95.7% success) retains chain bonus regardless of pc/crossing_deadline.
+            _chain_suppressed = merge_grade == "NEAR" and piece_count >= 40 and result.get("crosses_deadline", False)
+            if merges and not _chain_suppressed:
                 # get best merge target (closest distance)
                 best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
                 target_x = best_merge.get("x", 0)
