@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-30 07:48:29 JST`
-- Nodes: `810`
-- Edges: `1121`
-- Current: `4b745328e58f`
+- Updated: `2026-03-30 08:42:55 JST`
+- Nodes: `811`
+- Edges: `1122`
+- Current: `a4c1fa9f26bd`
 - Anchor: `84d04da1d615`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_13084f72a598["13084f72a598<br/>g=12 n=12<br/>comp=9970.2"]
     h_f48d789a8edf["f48d789a8edf<br/>g=12 n=12<br/>comp=9263.1"]
     h_2557979ccf35["2557979ccf35<br/>g=12 n=12<br/>comp=10537.9"]
     h_f0346bcbba3c["f0346bcbba3c<br/>g=12 n=12<br/>comp=10429.7"]
@@ -72,11 +71,11 @@ flowchart TD
     h_161970edb74c["161970edb74c<br/>g=12 n=12<br/>comp=10818.4"]
     h_65ae830f19e1["65ae830f19e1<br/>g=12 n=12<br/>comp=10834.2"]
     h_9af5391861ee["9af5391861ee<br/>g=12 n=12<br/>comp=11217.3"]
+    h_4b745328e58f["4b745328e58f<br/>g=12 n=12<br/>comp=10161.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_4b745328e58f["4b745328e58f<br/>CURRENT"]
+    h_a4c1fa9f26bd["a4c1fa9f26bd<br/>CURRENT"]
 
-    h_13084f72a598 -->|improve| h_f48d789a8edf
     h_2557979ccf35 -->|improve| h_f0346bcbba3c
     h_f0346bcbba3c -->|improve| h_977a30ec57a8
     h_977a30ec57a8 -->|improve| h_7a1c956dd212
@@ -135,13 +134,13 @@ flowchart TD
     h_161970edb74c -->|improve| h_65ae830f19e1
     h_65ae830f19e1 -->|improve| h_9af5391861ee
     h_9af5391861ee -->|improve| h_4b745328e58f
+    h_4b745328e58f -->|improve| h_a4c1fa9f26bd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_13084f72a598 plain;
     class h_f48d789a8edf plain;
     class h_2557979ccf35 plain;
     class h_f0346bcbba3c plain;
@@ -198,9 +197,10 @@ flowchart TD
     class h_161970edb74c plain;
     class h_65ae830f19e1 plain;
     class h_9af5391861ee plain;
+    class h_4b745328e58f plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_4b745328e58f current;
+    class h_a4c1fa9f26bd current;
 ```
 
 ## Detail 1/11
@@ -3055,9 +3055,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `4b745328e58f`
-- Nodes in this diagram: `10`
-- Internal edges in this diagram: `6`
+- Range: `422188c46bb8` .. `a4c1fa9f26bd`
+- Nodes in this diagram: `11`
+- Internal edges in this diagram: `7`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3074,9 +3074,10 @@ flowchart TD
     h_161970edb74c["161970edb74c<br/>g=12 n=12<br/>comp=10818.4"]
     h_65ae830f19e1["65ae830f19e1<br/>g=12 n=12<br/>comp=10834.2"]
     h_9af5391861ee["9af5391861ee<br/>g=12 n=12<br/>comp=11217.3"]
+    h_4b745328e58f["4b745328e58f<br/>g=12 n=12<br/>comp=10161.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_4b745328e58f["4b745328e58f<br/>CURRENT"]
+    h_a4c1fa9f26bd["a4c1fa9f26bd<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3084,6 +3085,7 @@ flowchart TD
     h_161970edb74c -->|improve| h_65ae830f19e1
     h_65ae830f19e1 -->|improve| h_9af5391861ee
     h_9af5391861ee -->|improve| h_4b745328e58f
+    h_4b745328e58f -->|improve| h_a4c1fa9f26bd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3097,12 +3099,23 @@ flowchart TD
     class h_161970edb74c plain;
     class h_65ae830f19e1 plain;
     class h_9af5391861ee plain;
+    class h_4b745328e58f plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_4b745328e58f current;
+    class h_a4c1fa9f26bd current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11153 `4b745328 -> a4c1fa9f`
+
+- scores: `10086 15058 7023 12881 11420 8591 9080 9707 11326 11475 9292 14154`
+- v406: restore stacking guidance during merge droughts at reactive<3 — match protected strategy
+- v403 added merge_available guard to prevent wedge-case height spike (T62-T63: type 9 wedged
+- between towers, landed at y=3.24 vs expected 2.05). But this disabled stacking guidance
+- during reactive<3 merge droughts where HEIGHT_CONTROL scatter accumulates piece_count.
+- Protected strategy (median 12789 EVAL) allows stacking WITHOUT merge_available guard and
+- achieves higher comp. v390 vertical gap decay + v361 congestion penalty provide sufficient
 
 ### Improve Game#11141 `9af53918 -> 4b745328`
 
