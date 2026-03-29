@@ -1,43 +1,36 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v113)
+ * strategy.mjs - ドロップ位置決定戦略 (v114)
  *
- * v113: v112をベースに、ゲーム分析結果（特に高Y到達と小型ピースの散乱、そしてパフォーマンス差）を深く考察し、
- *      以下の調整を行います。
+ * v114: v113をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
+ *       特に、高Y到達と小型ピースの散乱の問題、そして大型ピースの集約と連鎖設計を強化します。
  *
- *      主な改善点 (v112からの調整点):
- *      1.  **高さ管理のさらなる強化 (第3段階)**:
- *          - `HEIGHT_PENALTY_WEIGHT` を `120.0` から `150.0` へさらに増加させ、
- *            シミュレートされたY座標が高い位置へのドロップに対するペナルティを強化します。
- *            また、`calculateHeightPenalty` 内の最大ペナルティ係数を `750000` から `1000000` へ増加させ、
- *            デッドラインに近い位置への積み上がりを一層厳しく抑制します。
- *            これにより、ゲームオーバーに繋がる不必要な高積み上がりを厳しく抑制し、
- *            安定した盤面維持を促進します。
- *      2.  **小型ピース密度ボーナスの調整**:
- *          - `SMALL_PIECE_DENSITY_BONUS` を `500.0` から `300.0` へ減少させます。
- *            ゲーム分析から、小型ピースが密集しすぎてマージに繋がらないまま高くなるケースが見られました。
- *            このボーナスを抑制することで、小型ピースの無計画な高積み上がりを緩和し、
- *            実際のマージ機会や他の戦略的要因（高さ管理、大型ピース集約など）をより優先させることを目指します。
- *            これにより、ただ単に密集させるだけでなく、より意味のある配置を促します。
- *      3.  **基本的な戦略ロジックの実装**:
- *          - `decide` 関数に、ボードの状態を評価し、最適なドロップ位置を決定するための初期戦略ロジックを導入します。
- *            これには、以下の要素が含まれます。
- *              - ドロップ位置のシミュレーション (`simulateDropY`)
- *              - ピースの半径取得ヘルパー (`getPieceRadius`)
- *              - 合体機会の評価 (`calculateMergeOpportunities`)
- *              - 高さに関するペナルティの計算 (`calculateHeightPenalty`)
- *              - 小型ピース密度のボーナス計算 (`calculateSmallPieceDensity`)
- *              - 大型ピースの集約ボーナス計算 (`calculateLargePieceGrouping`)
- *              - おじゃまブロックによる影響の評価とボーナス加算 (`calculateGarbageImpact`)
- *              - 全体的なスコア計算 (`calculateOverallScore`)
- *          - これらの要素を組み合わせ、各ドロップ候補位置に対してスコアを算出し、最も高いスコアの位置を選択します。
- *      4.  **HOLDメカニクスの統合**:
- *          - HOLDが利用可能な場合、現在の`next`ピースと`hold`ピースを比較し、より有利なドロップを生成できる方を優先的に使用するロジックを追加します。これにより、戦略的なピース選択の幅が広がります。
- *      5.  **定数の追加と調整**:
- *          - 戦略ロジックに必要な新しい定数（`MERGE_BONUS_BASE`, `MERGE_BONUS_PER_TYPE` など）を追加し、
- *            既存の定数も必要に応じて調整します。
- *          - `PIECE_RADII`マップを追加し、ピースタイプから近似半径を取得できるようにします。
- *
- * - 物理挙動の近似に関する注意点も維持。
+ *      主な改善点 (v113からの調整点):
+ *      1.  **高さ管理の再強化と明確化**:
+ *          - `SIMULATED_MAX_Y` の概念を廃止し、実際の `DEADLINE_Y` を基準に `topY` でのゲームオーバー判定を直接行います。
+ *            これにより、ピースの半径を考慮した正確なデッドライン到達判定を行います。
+ *          - 高さペナルティの開始Y座標を `DEADLINE_Y` から相対的に定義し、ピースのサイズに依存しない一貫した危険度評価を導入。
+ *            `HEIGHT_PENALTY_WEIGHT` を `150.0` から `180.0` へ増加させ、
+ *            デッドラインに近い位置への積み上がりに対するペナルティをさらに強化します。
+ *          - 最大ペナルティも維持し、ゲームオーバーに繋がる動きを厳しく抑制します。
+ *      2.  **小型ピース密度ボーナスのさらなる抑制**:
+ *          - `SMALL_PIECE_DENSITY_BONUS` を `300.0` から `150.0` へさらに減少させます。
+ *            分析から、小型ピースが密集しすぎてマージに繋がらないまま高くなるケースが依然見られたため、
+ *            無計画な小型ピースの積み上がりを抑制し、より戦略的なマージ機会創出に集中させます。
+ *      3.  **マージボーナスの強化と低Y位置でのマージ推奨**:
+ *          - `MERGE_BONUS_BASE` を `1000` から `1200` へ、`MERGE_BONUS_PER_TYPE` を `500` から `600` へ増加させ、
+ *            マージ自体の価値を全体的に高めます。
+ *          - **新機能**: `LOW_Y_MERGE_THRESHOLD` を導入し、ボードの下部 (`-0.5` 以下) でのマージに対して
+ *            `LOW_Y_MERGE_BONUS` を加算。特に `GARBAGE` がアクティブな状態であればこのボーナスをさらに増加させ、
+ *            おじゃまブロックの除去と盤面整理を促進します。
+ *            これは「Merging near the bottom of the board is more effective for clearing garbage」という原則に対応。
+ *      4.  **大型ピース集約ボーナスの強化**:
+ *          - `LARGE_PIECE_GROUPING_BONUS` を `800` から `1000` へ増加させます。
+ *            大型ピースを片側に集約する戦略をより強く推奨し、将来的な大型マージの機会を最大化します。
+ *      5.  **HOLDアドバンテージ閾値の調整**:
+ *          - `HOLD_ADVANTAGE_THRESHOLD` を `1000` から `1500` へ増加させ、
+ *            HOLDを使うためにはより明確なスコア上の優位性が必要となるように調整します。
+ *            これにより、安易なHOLDを避け、本当に有利な状況でのみHOLDを使用するようにします。
+ *      6.  **物理挙動の近似に関する注意点も維持。**
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -47,17 +40,15 @@ const WALL_MARGIN = 2.8; // Max X before hitting wall. Walls are at +/-3.5, but 
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
-const SIMULATED_MAX_Y = 2.1;             // The simulated Y coordinate for the TOP of the piece that means game over. (Safety margin applied for disqualification in simulateDropY)
-const TOP_Y_CRITICAL_PENALTY_START = 1.8; // If piece's top Y reaches this, penalty becomes extremely high.
-const TOP_Y_WARN_PENALTY_START = 1.0;     // If piece's top Y reaches this, penalty starts.
-const GAME_OVER_DANGER_Y_THRESHOLD = 0.2; // If simulatedY + piece.r is within this distance of DEADLINE_Y, apply massive penalty.
+const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.5; // Start critical penalty when topY is 0.5 units below DEADLINE_Y
+const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.0;     // Start warning penalty when topY is 1.0 units below DEADLINE_Y
 
 // Strategy-specific constants (General)
-const MERGE_BUFFER = 0.5; // Increased to account for irregular shapes (凸ポリゴン)
+const MERGE_BUFFER = 0.6; // Increased from 0.5 to 0.6 for more aggressive merging due to shockwave.
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y. (Currently not used but kept for potential future use)
 const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
-const SMALL_PIECE_DENSITY_BONUS = 300.0; // Adjusted from 500.0
+const SMALL_PIECE_DENSITY_BONUS = 150.0; // Adjusted from 300.0 (v113) to further suppress small piece accumulation.
 const DENSITY_SEARCH_RADIUS_X = 0.5; // Horizontal search radius for density.
 const DENSITY_SEARCH_RADIUS_Y = 1.0; // Vertical search radius for density.
 
@@ -68,13 +59,18 @@ const OJAMA_GAUGE_OJAMA_MERGE = 0.3;    // When ojama gauge is high, prioritize 
 const OJAMA_GAUGE_URGENT = 0.5;         // When ojama gauge is very high, aggressive merges.
 
 // Scoring weights (New constants for strategy logic)
-const MERGE_BONUS_BASE = 1000;
-const MERGE_BONUS_PER_TYPE = 500;
-const HEIGHT_PENALTY_WEIGHT = 150.0; // From v112
-const GARBAGE_MERGE_BONUS = 2000; // Bonus for merges when garbage is high
-const GARBAGE_URGENT_MERGE_BONUS = 5000; // Higher bonus for critical garbage
-const LARGE_PIECE_GROUPING_BONUS = 800; // Bonus for placing large pieces near other large pieces
-const HOLD_ADVANTAGE_THRESHOLD = 1000; // How much better a held piece must be to warrant a HOLD
+const MERGE_BONUS_BASE = 1200; // Increased from 1000 (v113)
+const MERGE_BONUS_PER_TYPE = 600; // Increased from 500 (v113)
+const HEIGHT_PENALTY_WEIGHT = 180.0; // Increased from 150.0 (v113)
+const GARBAGE_MERGE_BONUS = 2500; // Increased from 2000 (v113)
+const GARBAGE_URGENT_MERGE_BONUS = 6000; // Increased from 5000 (v113)
+const LARGE_PIECE_GROUPING_BONUS = 1000; // Increased from 800 (v113)
+const HOLD_ADVANTAGE_THRESHOLD = 1500; // Increased from 1000 (v113)
+
+// New: Bonus for merges at lower Y, especially with garbage
+const LOW_Y_MERGE_THRESHOLD = -0.5; // Y coordinate below which a merge gets a bonus
+const LOW_Y_MERGE_BONUS = 1000; // Base bonus for merges at low Y
+const LOW_Y_GARBAGE_MERGE_BONUS = 3000; // Extra bonus for low Y merges when garbage is active.
 
 // Piece radii map (approximate, actual radii come from boardState.pieces[i].r)
 const PIECE_RADII = {
@@ -97,7 +93,7 @@ const PIECE_RADII = {
 
 /**
  * Helper function to get a piece's radius. Prefers actual 'r' from piece object, falls back to PIECE_RADII map.
- * @param {object} piece - The piece object {type, r, x, y}
+ * @param {object} piece - The piece object {type, r}.
  * @returns {number} The radius of the piece.
  */
 function getPieceRadius(piece) {
@@ -143,11 +139,13 @@ function simulateDropY(droppingPiece, targetX, currentPieces) {
  * @param {number} simulatedX - The simulated X position of the dropped piece.
  * @param {number} simulatedY - The simulated Y position of the dropped piece.
  * @param {Array<object>} simulatedBoard - The hypothetical board state after dropping the piece.
+ * @param {object} boardState - The current board state for garbage context.
  * @returns {number} The score from merge opportunities.
  */
-function calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simulatedBoard) {
+function calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simulatedBoard, boardState) {
     let mergeScore = 0;
     const droppingRadius = getPieceRadius(droppingPiece);
+    let hasMerge = false;
 
     for (const existingPiece of simulatedBoard) {
         // Skip if it's the piece we just added (or about to add for simulation)
@@ -165,6 +163,15 @@ function calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simu
         // MERGE_BUFFER accounts for irregular shapes and impact.
         if (droppingPiece.type === existingPiece.type && distance < (droppingRadius + existingRadius + MERGE_BUFFER)) {
             mergeScore += MERGE_BONUS_BASE + (droppingPiece.type * MERGE_BONUS_PER_TYPE);
+            hasMerge = true;
+
+            // Apply bonus for merges occurring at low Y, especially if garbage is active
+            if (simulatedY < LOW_Y_MERGE_THRESHOLD) {
+                mergeScore += LOW_Y_MERGE_BONUS;
+                if (boardState.garbage.ratio >= GARBAGE_RATIO_OJAMA_MERGE || boardState.garbage.gauge >= OJAMA_GAUGE_OJAMA_MERGE) {
+                    mergeScore += LOW_Y_GARBAGE_MERGE_BONUS;
+                }
+            }
         }
     }
     return mergeScore;
@@ -172,7 +179,7 @@ function calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simu
 
 /**
  * Calculates a penalty based on the simulated height of the dropped piece.
- * @param {number} simulatedY - The simulated Y position of the dropped piece.
+ * @param {number} simulatedY - The simulated Y position of the piece's center.
  * @param {number} pieceRadius - The radius of the dropped piece.
  * @returns {number} The height penalty (a negative score), or -Infinity if game over.
  */
@@ -180,17 +187,16 @@ function calculateHeightPenalty(simulatedY, pieceRadius) {
     const topY = simulatedY + pieceRadius;
     let penalty = 0;
 
-    if (topY >= DEADLINE_Y - (GAME_OVER_DANGER_Y_THRESHOLD / 2)) { // Very critical, almost game over
-        return -1000000; // As per v112 instructions, increased from 750000 to 1M
+    // Direct game over check: if any part of the piece is beyond the deadline.
+    if (topY >= DEADLINE_Y) {
+        return -Infinity; // Disqualify this move
     }
 
-    if (topY >= SIMULATED_MAX_Y) {
-        // Disqualify if it's above the game over threshold with safety margin
-        return -Infinity;
-    }
+    const TOP_Y_CRITICAL_PENALTY_START = DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE;
+    const TOP_Y_WARN_PENALTY_START = DEADLINE_Y - TOP_Y_WARN_PENALTY_START_RELATIVE;
 
     if (topY >= TOP_Y_CRITICAL_PENALTY_START) {
-        // Exponential penalty for critical height
+        // Exponential penalty for critical height, closer to deadline
         const heightOverCritical = topY - TOP_Y_CRITICAL_PENALTY_START;
         penalty += HEIGHT_PENALTY_WEIGHT * Math.pow(heightOverCritical * 5, 3); // Much steeper
     } else if (topY >= TOP_Y_WARN_PENALTY_START) {
@@ -241,7 +247,7 @@ function calculateSmallPieceDensity(droppingPiece, simulatedX, simulatedY, simul
 /**
  * Calculates a bonus for grouping large pieces together.
  * @param {object} droppingPiece - The piece being dropped.
- * @param {number} targetX - The target X position of the dropped piece.
+ * @param {number} targetX - The target X position of the dropped piece (center).
  * @param {Array<object>} simulatedBoard - The hypothetical board state after dropping the piece.
  * @returns {number} The large piece grouping bonus.
  */
@@ -255,7 +261,7 @@ function calculateLargePieceGrouping(droppingPiece, targetX, simulatedBoard) {
 
     // Find existing large pieces on the board
     const existingLargePieces = simulatedBoard.filter(p => p.type >= LARGE_PIECE_THRESHOLD &&
-        !(p.x === targetX && p.y === droppingPiece.y && p.type === droppingPiece.type)); // Exclude the piece itself
+        !(p.x === targetX && p.y === droppingPiece.y && p.type === droppingPiece.type && getPieceRadius(p) === droppingRadius)); // Exclude the piece itself
 
     if (existingLargePieces.length === 0) {
         // If this is the first large piece, encourage placement near a wall
@@ -306,22 +312,23 @@ function calculateGarbageImpact(boardState) {
  */
 function calculateOverallScore(droppingPiece, simulatedX, simulatedY, boardState, isHeldPiece = false) {
     let score = 0;
+    const pieceRadius = getPieceRadius(droppingPiece);
 
     // Create a hypothetical board including the dropped piece for local analysis
     const simulatedBoard = [...boardState.pieces, {
         type: droppingPiece.type,
         x: simulatedX,
         y: simulatedY,
-        r: getPieceRadius(droppingPiece)
+        r: pieceRadius
     }];
 
     // 1. Height Penalty - Most critical factor
-    const heightPenalty = calculateHeightPenalty(simulatedY, getPieceRadius(droppingPiece));
+    const heightPenalty = calculateHeightPenalty(simulatedY, pieceRadius);
     if (heightPenalty === -Infinity) return -Infinity; // If this move causes immediate game over, disqualify
     score += heightPenalty;
 
     // 2. Merge Opportunities
-    const mergeScore = calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simulatedBoard);
+    const mergeScore = calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simulatedBoard, boardState);
     score += mergeScore;
 
     // 3. Small Piece Density Bonus
@@ -334,7 +341,7 @@ function calculateOverallScore(droppingPiece, simulatedX, simulatedY, boardState
     score += calculateGarbageImpact(boardState);
 
     // Penalize dropping outside the playable area horizontally
-    if (Math.abs(simulatedX) + getPieceRadius(droppingPiece) > WALL_MARGIN) {
+    if (Math.abs(simulatedX) + pieceRadius > WALL_MARGIN) {
         score -= 50000; // Large penalty
     }
 
