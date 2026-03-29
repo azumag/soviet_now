@@ -61,6 +61,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v400: NEAR crossing-deadline risk — elif priority fix + v378 pc congestion scaling extension
+     # Fix elif ordering: NEAR_CROSSING_RISK (quadratic, stronger) now checked before NEAR_CEILING_RISK (linear, weaker).
+     # When NEAR would both breach ceiling AND cross deadline, the weaker penalty was firing, allowing
+     # catastrophic NEAR at extreme heights (worst T61: penalty 425 instead of 2841). Failed → game over.
+     # Also extend v378 pc congestion scaling to crossing-deadline case (same formula as NEAR_DEADLINE_RISK).
+     # Fixes rollback failure mode: NEAR failure at crossing-deadline → unrecoverable piece
+     # refs: game_history/20260330_031339_score0459.jsonl, game_history/20260330_025807_score0683.jsonl,
+     #       analyze_board.py, tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
      # v396: reactive merge zone proximity — guide toward reactive pair cluster during congested droughts
      # When reactive>=3 and no merge for any candidate, placement near reactive pair "merge zone"
      # enables catalytic chain merges through shake/explosion (HIGH_TOWER_RP_NO_MERGE delta=13.1
@@ -824,36 +832,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
-        # v375: NEAR merge ceiling breach risk at any phase — failed NEAR above max_y creates unreachable ceiling
-        # v374 covers deadline_crossed; v375 extends ceiling breach to all phases.
-        # Worst game T59: NEAR at y=3.63 (max_y=2.20) fails → max_y→3.63 → game over.
-        # Best game T103: NEAR at y~2.0 (max_y~2.0) — no breach → no penalty → NEAR preferred.
-        # Penalty scales with excess: (landing_y - max_y) * 500. At +1.0: -500. Does NOT affect deadline (v374) or landing_y <= max_y+0.5.
+        # ----- v400: NEAR crossing-deadline risk — elif priority fix + v378 pc congestion scaling -----
+        # v388 NEAR_CROSSING_RISK (quadratic) was AFTER v375 NEAR_CEILING_RISK (linear) in elif chain.
+        # When NEAR would BOTH breach ceiling (landing_y > max_y+0.5) AND cross deadline
+        # (crosses_deadline=true), the weaker linear penalty (425 at worst T61) fired instead of
+        # the stronger quadratic (2841). Failed NEAR at extreme height → piece above deadline → game over.
+        # Fix: reorder elif so crossing-deadline (stronger) takes priority over ceiling breach (weaker).
+        # Also extend v378 pc congestion scaling to crossing-deadline case for consistency with
+        # NEAR_DEADLINE_RISK. At pc=45: 2841*2.5=7104, overwhelming merge bonuses (~2700).
+        # Worst T61: NEAR at y=3.77 (max_y=2.92), crosses_deadline=true, deadline_crossed=false.
+        # Before: NEAR_CEILING_RISK 425 → NEAR chosen → failed → game over at 378 points.
+        # After: NEAR_CROSSING_RISK 7104 → safe placement chosen → survive.
+        # Fixes rollback failure mode: NEAR failure at crossing-deadline → unrecoverable piece above deadline
+        # refs: game_history/20260330_031339_score0459.jsonl T61,
+        #       game_history/20260330_025807_score0683.jsonl T52,
+        #       analyze_board.py (crosses_deadline, DEADLINE_Y=2.5),
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        elif merge_grade == "NEAR" and result.get("crosses_deadline", False):
+            near_risk_penalty = landing_y * landing_y * 200.0
+            # Ceiling breach add-on: same structure as v374 NEAR_DEADLINE_RISK
+            if landing_y > max_y + 0.5:
+                near_risk_penalty += 800.0
+            # v400: extend v378 pc congestion scaling to crossing-deadline case
+            # Failed NEAR near deadline at high pc = nearly unrecoverable piece above deadline.
+            # Same formula as NEAR_DEADLINE_RISK for consistency.
+            # pc=33→1.2x, pc=37→2.0x, pc=43→2.5x(capped).
+            if piece_count >= 33 and landing_y > max_y - 0.5:
+                pc_risk_scale = 1.0 + (piece_count - 33) * 0.20
+                near_risk_penalty *= min(pc_risk_scale, 2.5)
+            score -= near_risk_penalty
+            reasons.append("NEAR_CROSSING_RISK")
+
+        # v375: NEAR merge ceiling breach risk — fires when NOT crossing deadline (crosses_deadline handled above)
+        # v374 covers deadline_crossed; v400 covers crosses_deadline; v375 covers remaining ceiling breach.
         elif merge_grade == "NEAR" and landing_y > max_y + 0.5:
             ceiling_excess = landing_y - max_y
             score -= ceiling_excess * 500.0
             reasons.append("NEAR_CEILING_RISK")
-
-        # ----- v388: NEAR crossing-deadline risk — extends NEAR risk to per-candidate crosses_deadline -----
-        # When a NEAR merge attempt's own top edge would cross deadline_y, failure means the piece
-        # lands above deadline — nearly unrecoverable. Currently unutilized: result["crosses_deadline"]
-        # is per-candidate (unlike board-level deadline_crossed), so this fires even before global
-        # deadline is crossed. Worst game T49/T54/T57: NEAR attempted with crosses_deadline=true
-        # but deadline_crossed=false, NEAR failed (delta=0), piece stranded above deadline.
-        # Existing v374/v378 handles deadline_crossed case. This fills the gap: crosses_deadline
-        # BEFORE global deadline is crossed, where no NEAR risk penalty currently applies.
-        # Quadratic (landing_y^2 * 200) maintains postmortem constraint. At y=1.5: -450, y=2.0: -800.
-        # NOT DIRECT (95.7% success, low risk). NOT pc scaling (kept minimal).
-        # refs: analyze_board.py (crosses_deadline field),
-        #       game_history/20260329_131740_score0473.jsonl T49/T54/T57 (NEAR crosses_deadline, fails),
-        #       game_history/20260329_132445_score1571.jsonl T89-96 (best: no crossing NEAR at non-deadline),
-        #       tmp/batch_summary.txt, advice.md (あずまぐ: 確実な併合優先),
-        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-        # Fixes rollback failure mode: failed NEAR at crossing-deadline positions → unrecoverable piece
-        elif merge_grade == "NEAR" and result.get("crosses_deadline", False):
-            near_risk_penalty = landing_y * landing_y * 200.0
-            score -= near_risk_penalty
-            reasons.append("NEAR_CROSSING_RISK")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
