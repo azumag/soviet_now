@@ -1,31 +1,20 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v106)
+ * strategy.mjs - ドロップ位置決定戦略 (v107)
  *
- * v106: v105をベースに、大型ピースの集約戦略をさらに洗練し、より柔軟な初期集約と高さ管理の微調整を行います。
- *      v105で強化された初期集約バイアスが特定の状況で盤面を窮屈にしていた可能性を考慮し、
- *      より盤面の状況に応じた自然な集約形成を促すように変更します。
+ * v107: v106をベースに、高さ管理戦略をさらに強化します。
+ *      v106で worst game (#1191) が dead line (y=2.5) を超えてしまうケースが確認されたため、
+ *      物理エンジンの挙動の不確実性を考慮し、シミュレーション上のデッドラインを厳しく設定します。
  *
- *      主な改善点 (v105からの調整点):
- *      1.  **大型ピース集約ロジックの改善**:
- *          - `getLargePieceAggregationInfo` 関数を修正し、盤面に大型ピースが存在するが、
- *            まだ明確な左右どちらかの「優勢側」が確立されていない場合に、
- *            全ての大型ピースの平均X座標をターゲットとして返すように変更。
- *            これにより、固定的な初期左側バイアスに依存せず、ピースが自然に集まり始めた場所へ
- *            次の大型ピースを誘導しやすくなります。
- *          - `defaultStrategy` 内の大型ピースの配置決定ロジックを、上記の変更に合わせて更新。
- *            優勢側がない場合は、全体平均Xへの近さを評価基準に追加。
- *          - 盤面に大型ピースが全く存在しない場合の初期左側バイアスを、`DYNAMIC_AGGREGATION_BONUS_SCORE / 4`
- *            から `DYNAMIC_AGGREGATION_BONUS_SCORE / 8` に緩和。
- *            これにより、ゲーム開始直後の大型ピース配置の自由度を高め、不必要な高さ積み上げリスクを低減。
- *            これはv105で強化された部分を再調整するものです。
+ *      主な改善点 (v106からの調整点):
+ *      1.  **ゲームオーバーY座標の保守的な調整**:
+ *          - `GAME_OVER_TOP_Y` を `2.5` から `2.3` に減少。
+ *            これにより、シミュレーションでピースの最上部が `2.3` を超える位置へのドロップを即座に排除します。
+ *            実際のゲームオーバーライン (2.5) より低い位置に安全マージンを設けることで、
+ *            物理的な揺れや回転による予想外の積み上がりでゲームオーバーになるリスクを低減します。
+ *            特に worst game で max_y が 3.02 に達していた問題への対処を目的とします。
  *
- *      2.  **高さペナルティの微調整**:
- *          - `HEIGHT_PENALTY_WEIGHT` を `45.0` から `40.0` にわずかに減少。
- *            `calculateHeightPenalty` 関数自体が非常にアグレッシブなペナルティを持っているため、
- *            他のスコアリング要素（特にマージボーナス）がより効果的に働く余地を確保し、
- *            全体のスコアバランスを改善することを目的とします。
- *
- *      その他、v104/v105で導入された高さ管理の劇的強化や、おじゃまブロック対応、LOOKAHEADボーナス、MERGE_BUFFERなどの調整は維持。
+ *      その他、v106で導入された大型ピース集約ロジックの改善、高さペナルティの微調整、
+ *      おじゃまブロック対応、LOOKAHEADボーナス、MERGE_BUFFERなどの調整は維持します。
  *      物理エンジンの不確実性に対応するための保守的かつ計画的なピース配置を促すスコアリング調整は引き続き重要視されます。
  *
  * - 物理挙動の近似に関する注意点も維持。
@@ -37,15 +26,15 @@ const BOARD_FLOOR_Y = -5.0; // The lowest Y coordinate for pieces.
 const WALL_MARGIN = 2.8; // Max X before hitting wall. Walls are at +/-3.5, but consider piece radius.
 
 // Strategy-specific constants (Height Management)
-const GAME_OVER_TOP_Y = 2.5;             // The Y coordinate for the TOP of the piece that means game over (from rules "〜y=2.5 を超えるとゲームオーバー").
-const TOP_Y_CRITICAL_PENALTY_START = 1.6; // Adjusted (was 1.7): If piece's top Y reaches this, penalty becomes extremely high.
-const TOP_Y_WARN_PENALTY_START = 1.2;     // Adjusted (was 1.3): If piece's top Y reaches this, penalty starts.
-const GAME_OVER_DANGER_Y_THRESHOLD = 0.6; // Adjusted (was 0.5): If simulatedY + piece.r is within this distance of GAME_OVER_TOP_Y, apply massive penalty.
+const GAME_OVER_TOP_Y = 2.3;             // Adjusted from 2.5 to 2.3: The simulated Y coordinate for the TOP of the piece that means game over. (Safety margin applied)
+const TOP_Y_CRITICAL_PENALTY_START = 1.6; // If piece's top Y reaches this, penalty becomes extremely high.
+const TOP_Y_WARN_PENALTY_START = 1.2;     // If piece's top Y reaches this, penalty starts.
+const GAME_OVER_DANGER_Y_THRESHOLD = 0.6; // If simulatedY + piece.r is within this distance of GAME_OVER_TOP_Y (adjusted), apply massive penalty.
 
 // Strategy-specific constants (General)
-const MERGE_BUFFER = 0.5; // Adjusted (was 0.4, then 0.5): Increased to account for irregular shapes (凸ポリゴン)
+const MERGE_BUFFER = 0.5; // Increased to account for irregular shapes (凸ポリゴン)
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
-const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y. (from v101, unchanged)
+const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y.
 
 // Garbage / Critical Mode Thresholds
 const GARBAGE_RATIO_OJAMA_MERGE = 0.15; // When garbage ratio exceeds this, prioritize merges.
@@ -59,18 +48,18 @@ const GARBAGE_LOW_MERGE_URGENT_BONUS = 100.0;
 const HOLD_LARGE_PIECE_THRESHOLD = 10; // Type 10+ for holding
 const HOLD_SMALL_PIECE_THRESHOLD = 3;  // Type 1-3 for swapping with held large piece
 
-// Default Strategy Scoring Weights (v104 adjustments)
-const HEIGHT_PENALTY_WEIGHT = 40.0; // Adjusted from 45.0 to 40.0: Slightly reduced
+// Default Strategy Scoring Weights
+const HEIGHT_PENALTY_WEIGHT = 40.0; // Slightly reduced from 45.0 in v106.
 const MERGE_BONUS_BASE_SCORE = 120.0;
-const DYNAMIC_AGGREGATION_BONUS_SCORE = 400.0; // Unchanged from v103
-const LARGE_PIECE_DIVERGENCE_PENALTY = 2000.0; // Unchanged from v103
+const DYNAMIC_AGGREGATION_BONUS_SCORE = 400.0;
+const LARGE_PIECE_DIVERGENCE_PENALTY = 2000.0;
 const LOOKAHEAD_MERGE_BONUS_SCORE = 80.0;
 const BASE_Y_PREFERENCE_WEIGHT = 7.0;
 
 
 /**
  * Calculates a height-based penalty for a given Y coordinate and radius.
- * Higher Y values (closer to TOP_Y_CRITICAL_PENALTY_START) result in higher penalties.
+ * Higher Y values (closer to GAME_OVER_TOP_Y) result in higher penalties.
  * Penalty starts linearly from TOP_Y_WARN_PENALTY_START and becomes exponential near TOP_Y_CRITICAL_PENALTY_START.
  * @param {number} y - The Y coordinate of the piece's center.
  * @param {number} r - The radius of the piece.
@@ -495,7 +484,7 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
         } else {
             // No large pieces on board at all. Apply a softer initial left bias.
             if (colX < 0) { // Favor left side for initiating aggregation, but softly
-                currentScore += DYNAMIC_AGGREGATION_BONUS_SCORE / 8; // Reverted to /8 from /4 (v105 adjustment)
+                currentScore += DYNAMIC_AGGREGATION_BONUS_SCORE / 8;
                 if (!mergeFoundForNext && columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") {
                     columnReason = `DEFAULT: Softly initiate large piece aggregation towards left for type ${pieceToDrop.type}.`;
                 }
