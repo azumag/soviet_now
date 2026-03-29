@@ -61,6 +61,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v402: revert v363 stacking extension — reactive<3 guard on axis 9.6 stacking
+     # v395 reactive_density_mult (up to 2.0x at reactive=12+) amplifies stacking_bonus to ~800,
+     # overriding height penalty differences between candidates and guiding to edge positions.
+     # Worst game T52-54: reactive=8, stacking guided to x=±3.0 (edges), pc 38→41 with 0 merges.
+     # Protected strategy (median 12789) has reactive<3 guard — axis 8.8 (-4500) dominates at
+     # reactive>=3, preventing edge scatter. v363 removed guard assuming stacking was weak tie-breaker,
+     # but v395 amplification invalidated that assumption. Postmortem "piece_count suppression during
+     # reactive>=3 drought" priority is served by removing stacking competition with axis 8.8.
+     # axis 9.6b proximity (v371) retains all-reactive operation — weaker tie-breaking is harmless.
+     # Fixes postmortem: piece_count accumulation from stacking guidance overriding height at high reactive
+     # refs: game_history/20260330_050648_score0265.jsonl T49-58, game_history/20260330_044448_score0718.jsonl T46-53,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, analyze_board.py
      # v400: NEAR crossing-deadline risk — elif priority fix + v378 pc congestion scaling extension
      # Fix elif ordering: NEAR_CROSSING_RISK (quadratic, stronger) now checked before NEAR_CEILING_RISK (linear, weaker).
      # When NEAR would both breach ceiling AND cross deadline, the weaker penalty was firing, allowing
@@ -922,8 +935,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v363: v340 guard(reactive<3)を除去。旧スタッキング公式の高さインセンティブはv360で解消済み。
         # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
-        # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+        # v402: reactive<3 guard restored — v395 reactive_density_mult made stacking override height at reactive>=3
+        # At reactive>=3, axis 8.8 (-3000) + height + congestion should dominate unimpeded (protected strategy proven).
+        # Stacking bonus * reactive_density_mult (up to ~800) was guiding to edge positions in congested boards.
+        # axis 9.6b proximity (below) still fires at all reactive levels — weaker tie-breaking is harmless.
+        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None:
             if current_type_has_reactive or current_type_has_near:
                 # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
                 # 高位スタッキングによるmax_y悪化を防止
