@@ -1,54 +1,45 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v114)
+ * strategy.mjs - ドロップ位置決定戦略 (v115)
  *
- * v114: v113をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
+ * v115: v114をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
  *       特に、高Y到達と小型ピースの散乱の問題、そして大型ピースの集約と連鎖設計を強化します。
  *
- *      主な改善点 (v113からの調整点):
- *      1.  **高さ管理の再強化と明確化**:
- *          - `SIMULATED_MAX_Y` の概念を廃止し、実際の `DEADLINE_Y` を基準に `topY` でのゲームオーバー判定を直接行います。
- *            これにより、ピースの半径を考慮した正確なデッドライン到達判定を行います。
- *          - 高さペナルティの開始Y座標を `DEADLINE_Y` から相対的に定義し、ピースのサイズに依存しない一貫した危険度評価を導入。
- *            `HEIGHT_PENALTY_WEIGHT` を `150.0` から `180.0` へ増加させ、
- *            デッドラインに近い位置への積み上がりに対するペナルティをさらに強化します。
- *          - 最大ペナルティも維持し、ゲームオーバーに繋がる動きを厳しく抑制します。
+ *      主な改善点 (v114からの調整点):
+ *      1.  **高さ管理のさらなる強化とシミュレーションの調整**:
+ *          - `simulateDropY` の「settling」バッファを `0.05` から `0.15` に増加。
+ *            物理挙動の不確実性と凸ポリゴン形状による実際の高さ到達をより厳しく見積もることで、
+ *            デッドライン到達のリスクを過小評価しないようにします。
+ *          - 高さペナルティの開始Y座標 (`TOP_Y_CRITICAL_PENALTY_START_RELATIVE`) を `0.5` から `0.3` へ減少。
+ *            これにより、デッドラインにより近い位置でのクリティカルなペナルティが開始されるY座標が、
+ *            実際のゲームオーバーラインにさらに接近し、高Yでの積み上がりに対する戦略的な抑制を強化します。
  *      2.  **小型ピース密度ボーナスのさらなる抑制**:
- *          - `SMALL_PIECE_DENSITY_BONUS` を `300.0` から `150.0` へさらに減少させます。
+ *          - `SMALL_PIECE_DENSITY_BONUS` を `150.0` から `75.0` へさらに減少させます。
  *            分析から、小型ピースが密集しすぎてマージに繋がらないまま高くなるケースが依然見られたため、
- *            無計画な小型ピースの積み上がりを抑制し、より戦略的なマージ機会創出に集中させます。
- *      3.  **マージボーナスの強化と低Y位置でのマージ推奨**:
- *          - `MERGE_BONUS_BASE` を `1000` から `1200` へ、`MERGE_BONUS_PER_TYPE` を `500` から `600` へ増加させ、
- *            マージ自体の価値を全体的に高めます。
- *          - **新機能**: `LOW_Y_MERGE_THRESHOLD` を導入し、ボードの下部 (`-0.5` 以下) でのマージに対して
- *            `LOW_Y_MERGE_BONUS` を加算。特に `GARBAGE` がアクティブな状態であればこのボーナスをさらに増加させ、
- *            おじゃまブロックの除去と盤面整理を促進します。
- *            これは「Merging near the bottom of the board is more effective for clearing garbage」という原則に対応。
- *      4.  **大型ピース集約ボーナスの強化**:
- *          - `LARGE_PIECE_GROUPING_BONUS` を `800` から `1000` へ増加させます。
- *            大型ピースを片側に集約する戦略をより強く推奨し、将来的な大型マージの機会を最大化します。
- *      5.  **HOLDアドバンテージ閾値の調整**:
- *          - `HOLD_ADVANTAGE_THRESHOLD` を `1000` から `1500` へ増加させ、
- *            HOLDを使うためにはより明確なスコア上の優位性が必要となるように調整します。
- *            これにより、安易なHOLDを避け、本当に有利な状況でのみHOLDを使用するようにします。
- *      6.  **物理挙動の近似に関する注意点も維持。**
+ *            無計画な小型ピースの積み上がりをより強く抑制し、より戦略的なマージ機会創出に集中させます。
+ *      3.  **水平方向の配置制限の明確化**:
+ *          - `WALL_MARGIN` を `BOARD_X_MAX_LIMIT` に名称変更し、実際の壁の位置 `3.5` に設定。
+ *            ピースの半径を考慮した上で、ボードの端にピースがはみ出さないようにするペナルティの条件をより正確にします。
+ *            これにより、特に大型ピースがボード外に配置されようとする不自然な動きを抑制し、ゲーム終盤での「No valid move found」発生原因の一つを解消します。
+ *      4.  HOLDアドバンテージ閾値、マージボーナス、大型ピース集約ボーナス、低Yマージボーナス、ゴミブロック関連の重みはv114の調整を維持します。
+ *      5.  物理挙動の近似に関する注意点も引き続き維持します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
 const FINE_COLS = [-2.75, -2.5, -2.25, -2.0, -1.75, -1.5, -1.25, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75];
 const BOARD_FLOOR_Y = -5.0; // The lowest Y coordinate for pieces.
-const WALL_MARGIN = 2.8; // Max X before hitting wall. Walls are at +/-3.5, but consider piece radius.
+const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center* can be at is 3.5 - pieceRadius.
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
-const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.5; // Start critical penalty when topY is 0.5 units below DEADLINE_Y
+const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.3; // Adjusted from 0.5 (v114). Start critical penalty when topY is 0.3 units below DEADLINE_Y
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.0;     // Start warning penalty when topY is 1.0 units below DEADLINE_Y
 
 // Strategy-specific constants (General)
-const MERGE_BUFFER = 0.6; // Increased from 0.5 to 0.6 for more aggressive merging due to shockwave.
+const MERGE_BUFFER = 0.6; // Increased from 0.5 to 0.6 for more aggressive merging due to shockwave. (v114)
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y. (Currently not used but kept for potential future use)
 const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
-const SMALL_PIECE_DENSITY_BONUS = 150.0; // Adjusted from 300.0 (v113) to further suppress small piece accumulation.
+const SMALL_PIECE_DENSITY_BONUS = 75.0; // Adjusted from 150.0 (v114) to further suppress small piece accumulation.
 const DENSITY_SEARCH_RADIUS_X = 0.5; // Horizontal search radius for density.
 const DENSITY_SEARCH_RADIUS_Y = 1.0; // Vertical search radius for density.
 
@@ -129,8 +120,8 @@ function simulateDropY(droppingPiece, targetX, currentPieces) {
         }
     }
     // Add a small buffer for "settling" and non-perfect circle physics/rolling
-    // This value is critical and may need tuning.
-    return maxY + 0.05;
+    // Increased from 0.05 (v114) to 0.15 for more pessimistic height estimation.
+    return maxY + 0.15;
 }
 
 /**
@@ -266,7 +257,8 @@ function calculateLargePieceGrouping(droppingPiece, targetX, simulatedBoard) {
     if (existingLargePieces.length === 0) {
         // If this is the first large piece, encourage placement near a wall
         // to start a 'large piece side'. This is a heuristic.
-        if (Math.abs(targetX) > WALL_MARGIN - (droppingRadius * 2)) {
+        // WALL_MARGIN is now BOARD_X_MAX_LIMIT, so using it directly for heuristic.
+        if (Math.abs(targetX) > BOARD_X_MAX_LIMIT - (droppingRadius * 2.5)) { // Use a slightly larger factor to prefer closer to edge
             bonus += LARGE_PIECE_GROUPING_BONUS / 2;
         }
     } else {
@@ -341,8 +333,9 @@ function calculateOverallScore(droppingPiece, simulatedX, simulatedY, boardState
     score += calculateGarbageImpact(boardState);
 
     // Penalize dropping outside the playable area horizontally
-    if (Math.abs(simulatedX) + pieceRadius > WALL_MARGIN) {
-        score -= 50000; // Large penalty
+    // Uses BOARD_X_MAX_LIMIT (actual wall) instead of WALL_MARGIN (v114)
+    if (Math.abs(simulatedX) + pieceRadius > BOARD_X_MAX_LIMIT) {
+        score -= 50000; // Large penalty to effectively disqualify out-of-bounds moves
     }
 
     return score;
