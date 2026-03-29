@@ -9,7 +9,7 @@ Game Overview:
 
       Decision Logic (14 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-         1.5. NEAR merge deadline risk - Penalty for risky NEAR merges at deadline (v366)
+         1.5. NEAR merge deadline risk - Penalty for risky NEAR merges at deadline (v366/v385: per-candidate crosses_deadline)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
@@ -62,6 +62,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v385: NEAR deadline crossing risk — strengthen NEAR penalty when drop crosses deadline
+     # Unutilized per-candidate crosses_deadline from analysis: when NEAR merge attempt's
+     # own top edge crosses deadline_y, failure means piece above deadline (unrecoverable).
+     # v382/v383 danger bonuses (+800/+600) compound with reactive bonuses to make risky
+     # NEAR irresistible (~4400 bonus vs ~867 risk). Worst game T56-63: 3 failed danger NEAR
+     # at deadline, pc 36→42, max_y 2.31→3.83. Additional penalty based on over_deadline
+     # distance restores risk-reward balance for deadline-crossing NEAR attempts.
+     # NOT pc scaling (v378), NOT gradient flattening (v376), NOT NEAR_CEILING outside deadline (v375).
+     # Purely utilizes unutilized analysis data. Fixes postmortem: endgame scoring starvation.
+     # refs: game_history/20260329_100508_score0360.jsonl, analyze_board.py, postmortem, batch_summary
+     #
      # v384: reactive pair blocking avoidance — preserve merge paths by penalizing placement between reactive pairs
      # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
      # Placing between reactive pairs of different types physically blocks their future merge,
@@ -613,24 +624,54 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- v366: NEAR merge risk penalty at deadline -----
-        # postmortem: piece_count accumulation is the key failure predictor.
-        # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail
-        # (score_delta=0), piece_count grows 32->35. Best game succeeds with merges.
-        # NEAR merge success rate is 68.5%. At deadline, failed NEAR adds a high piece
-        # with no benefit, worsening the already dangerous board state.
-        # This penalty reduces NEAR merge incentive proportionally to landing_y when
-        # deadline is crossed, making the strategy prefer DIRECT merges (unchanged)
-        # or lower-position NEAR merges over risky high-position NEAR at deadline.
+        # ----- v366/v385: NEAR merge risk penalty at deadline -----
+        # v366: postmortem: piece_count accumulation is the key failure predictor.
+        # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail.
+        # v385: strengthen using unutilized per-candidate crosses_deadline from analysis.
+        # After v382/v383 added danger DIRECT(+800) and danger NEAR(+600) bonuses,
+        # the old linear penalty (landing_y*300) became too weak: stacked bonuses
+        # (~3100-3700) overwhelm risk (~867 at y=2.89), causing risky NEAR at deadline.
+        # Worst game T56-63: 3 failed danger NEAR at deadline (delta=0 each), piece
+        # jumps 36→42, max_y 2.31→3.83. Each failed NEAR at deadline-crossing
+        # position is nearly fatal: the piece lands at/past deadline, impossible to
+        # merge later, directly worsening the emergency.
+        # Per-candidate crosses_deadline accounts for actual piece radius
+        # (landing_y alone doesn't reflect that a piece with radius 0.8 at y=1.8
+        # has top at 2.6, crossing deadline). When crosses_deadline is true, the
+        # failure cost is much higher → stronger penalty.
         # Does NOT affect: DIRECT merges, NEAR when !deadline_crossed, or NO merge.
-        # postmortem constraint: combines landing_y with deadline state (not landing_y-only).
-        # refs: game_history/20260328_102644_score0654.jsonl T49-58 (NEAR fails, pc 32->38),
-        #       game_history/20260328_101741_score2213.jsonl T103-112 (merge succeeds),
-        #       tmp/state/last_rollback_postmortem.md (piece_count predictor),
-        #       tmp/batch_summary.txt (low-score 5.4% NEAR_HIGH_LAYER vs high-score 3.9%)
-        # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at deadline
+        # NOT piece_count scaling (v378 forbidden). NOT gradient flattening (v376).
+        # NOT NEAR_CEILING_RISK outside deadline (v375 forbidden).
+        # Purely utilizes unutilized analysis data (crosses_deadline per candidate).
+        # refs: game_history/20260329_100508_score0360.jsonl T56-63 (worst: 3 failed
+        #       danger NEAR at deadline, pc 36→42, max_y runaway),
+        #       game_history/20260329_101121_score3844.jsonl T150-157 (best: NEAR at
+        #       safe y=2.28 succeeds, DIRECT at deadline succeeds),
+        #       game_history/20260329_092459_score0845.jsonl T53-60 (extra_low: NEAR
+        #       at high y fails, DIRECT at deadline succeeds +66),
+        #       analyze_board.py (crosses_deadline, top_y_after_drop fields),
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md
+        # Fixes postmortem failure mode: endgame scoring starvation from failed NEAR
+        #   at deadline — compounding danger bonuses make risky NEAR irresistible
         if deadline_crossed and merge_grade == "NEAR" and landing_y > 0:
             near_risk_penalty = landing_y * 300.0
+            # v385: per-candidate deadline crossing — the drop itself crosses deadline
+            # A failed NEAR at this position means the piece is above deadline, nearly
+            # impossible to recover. Stack: +600 danger +600 reactive +1000 reactive +
+            # 1000 reactive + 1200 danger_zone = ~4400 total bonus vs ~867 risk at y=2.89.
+            # Additional penalty needed: when drop crosses deadline, failure means
+            # the piece itself becomes a new danger piece (past deadline).
+            if result.get("crosses_deadline", False):
+                # Penalty scales with how far above deadline the piece top lands.
+                # At y=2.0 with r=0.8: top=2.8, margin=0.3 → penalty=600
+                # At y=3.0 with r=0.8: top=3.8, margin=1.3 → penalty=2600
+                # This makes risky NEAR less attractive than safe NO_MERGE placement
+                # when the drop itself crosses the deadline.
+                top_y = result.get("top_y_after_drop", landing_y)
+                deadline_y = analysis.get("reactor", {}).get("deadline_y", 2.5)
+                over_deadline = top_y - deadline_y
+                if over_deadline > 0:
+                    near_risk_penalty += over_deadline * 2000.0
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
