@@ -73,6 +73,19 @@ Phases (determined by board max Y):
      #       game_history/20260329_170607_score2480.jsonl T103-110,
      #       tmp/batch_summary.txt, analyze_board.py,
      #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+     # v393: nearest reactive pair attraction — axis 9.7 fallback when centroid unavailable
+     # When reactive pairs exist (>=1) but centroid can't be used (reactive==1 or centroid at edge),
+     # no guidance fires → HEIGHT_CONTROL scatters to edges → isolated pieces → pc accumulation.
+     # Guide toward nearest reactive pair midpoint to keep pieces in merge ecosystem.
+     # Magnitude: max ~70+congestion (tie-breaking, won't override axis 8.8 or merge).
+     # Guard: abs<1.5 prevents edge attraction. Extends v392 centroid to single-pair case.
+     # NOT reactive<3 guard (primary use case: reactive==1). NOT danger bonus.
+     # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 19.8% low vs 13.5% high),
+     #       game_history/20260329_195543_score0715.jsonl T47-54 (reactive=3, HEIGHT_CONTROL scatter),
+     #       game_history/20260329_202136_score0867.jsonl T63-70 (reactive=5.9, HEIGHT_CONTROL scatter),
+     #       analyze_board.py, strategy.py.staging axis 9.7
+     # Fixes: guidance gap when reactive==1 or centroid at edge → HEIGHT_CONTROL → pc accumulation
+     # Fixes rollback failure mode: weak guidance at reactive==1 → HEIGHT_CONTROL → pc accumulation
      # v391: suppress chain bonus for NEAR at crossing-deadline with high pc — death spiral prevention
      # Worst game T71-76: 4 consecutive failed NEAR at crossing-deadline, pc 43→47, max_y 2.73→3.58→game over
      # Chain bonus (axis 6, ~4000-6000) overwhelms NEAR risk penalty (v374/v378 max ~3650 at pc=43),
@@ -638,6 +651,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reactive_centroid_x = _rc_rx / _rc_count
             reactive_centroid_y = _rc_ry / _rc_count
 
+    # --- v393: pre-compute nearest reactive pair midpoint to center ---
+    # Used by axis 9.7 fallback when centroid is unavailable (reactive==1 or centroid at edge).
+    # Finds reactive pair whose midpoint is closest to center (abs(mid_x) smallest).
+    # Guard: only used when abs(nearest_rp_mid_x) < 1.5 (prevents edge attraction).
+    nearest_rp_mid_x = None
+    if reactive_pair_count >= 1:
+        _nrp_best = float("inf")
+        for rp in reactive_pairs:
+            if isinstance(rp, (list, tuple)) and len(rp) >= 2:
+                _p1 = next((pp for pp in pieces if pp.get("id") == rp[0]), None)
+                _p2 = next((pp for pp in pieces if pp.get("id") == rp[1]), None)
+                if _p1 and _p2:
+                    _mid_x = (_p1["x"] + _p2["x"]) / 2
+                    if abs(_mid_x) < _nrp_best:
+                        _nrp_best = abs(_mid_x)
+                        nearest_rp_mid_x = _mid_x
+
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
@@ -944,6 +974,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if piece_count >= 25:
                         centroid_bonus *= min(1.0 + (piece_count - 25) * 0.10, 2.5)
                     score += centroid_bonus
+            elif nearest_rp_mid_x is not None and abs(nearest_rp_mid_x) < 1.5:
+                # v393: nearest reactive pair attraction — axis 9.7 fallback
+                # Centroid unavailable (reactive==1 or edge). Without guidance, HEIGHT_CONTROL
+                # scatters → isolated pieces → pc spiral. Guide toward nearest reactive pair
+                # midpoint to keep pieces in merge ecosystem.
+                rp_dist = abs(x - nearest_rp_mid_x)
+                if rp_dist < 2.0:
+                    rp_attract = max(0, 70.0 - rp_dist * 25.0)
+                    if piece_count >= 25:
+                        rp_attract *= min(1.0 + (piece_count - 25) * 0.08, 2.0)
+                    score += rp_attract
 
         # ----- v362/v368 → v369 → v371: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
