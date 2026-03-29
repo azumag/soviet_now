@@ -61,6 +61,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v403: suppress stacking at reactive<3 when no merge available — drought height runaway prevention
+     # When merge_available=false, stacking guidance directs pieces toward same-type targets, but since
+     # no position can achieve a merge, the reactive/near pairs are geometrically unreachable. The
+     # stacking bonus (~250-400) overwhelms height penalty (height_mult=0.5 floor from deadline_crossed
+     # relaxations), causing pieces to land on tall structures. Worst T62→T63: type 9 dropped at x=2.20,
+     # wedged between tower pieces at y=1.05/1.55, landed at y=3.24 (expected ~2.05), max_y jump +1.69.
+     # At reactive>=3, axis 8.8 (-3000 flat) + v402 guard already prevent this. This extends protection
+     # to reactive=1-2 by requiring merge_available for stacking. When no merge possible, HEIGHT_CONTROL
+     # (lowest landing_y) becomes default → safer board → more room for future merges.
+     # Low game T62-66: same pattern at reactive=1, stacking guided upward, pc 31→36.
+     # Fixes postmortem: piece_count accumulation from stacking when merge unreachable
+     # refs: game_history/20260330_060930_score0962.jsonl, game_history/20260330_055019_score1080.jsonl,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       strategy_versions/v11129_score0962_strategy.py, analyze_board.py
      # v402: revert v363 stacking extension — reactive<3 guard on axis 9.6 stacking
      # v395 reactive_density_mult (up to 2.0x at reactive=12+) amplifies stacking_bonus to ~800,
      # overriding height penalty differences between candidates and guiding to edge positions.
@@ -939,7 +954,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # At reactive>=3, axis 8.8 (-3000) + height + congestion should dominate unimpeded (protected strategy proven).
         # Stacking bonus * reactive_density_mult (up to ~800) was guiding to edge positions in congested boards.
         # axis 9.6b proximity (below) still fires at all reactive levels — weaker tie-breaking is harmless.
-        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None:
+        # v403: merge_available guard — when no merge possible for any position, stacking toward same-type
+        # targets is futile (reactive/near pairs are geometrically unreachable from all x positions).
+        # Stacking bonus (~250-400) overwhelms weakened height penalty (height_mult=0.5 floor from
+        # deadline_crossed relaxations), causing pieces to land on tall structures. Worst game: type 9
+        # wedged between tower pieces, max_y jumped from 1.55 to 3.24 in one turn → game over.
+        # When merge_available=false, HEIGHT_CONTROL (lowest landing_y) becomes default → safer board.
+        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_available and merge_grade == "NO" and same_type_stack_top is not None:
             if current_type_has_reactive or current_type_has_near:
                 # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
                 # 高位スタッキングによるmax_y悪化を防止
