@@ -41,6 +41,7 @@ Game Overview:
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              1.5. NEAR merge deadline risk - v378: pc congestion scaling near max_y (extends v374)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+               9.7b. Reactive centroid attraction - v392: axis 9.7 fallback when no adjacent-type target (merge zone attraction)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.5. Current type stack merge priority - v337: russia_phase抑制版
 
@@ -60,6 +61,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v392: reactive pair centroid attraction — axis 9.7 fallback when no adjacent-type target found
+     # When reactive pairs exist (>= 2) but axis 9.7 finds no adjacent-type piece within range,
+     # placement gets NO guidance → HEIGHT_CONTROL default scatters to edges → isolated pieces → pc spiral.
+     # Centroid of reactive pair midpoints identifies the "merge zone"; attraction keeps pieces in ecosystem.
+     # Magnitude: max ~100 (tie-breaking, won't override axis 8.8 or height penalty).
+     # Congestion scaling: 1.0x at pc<25, up to 2.5x at pc=50.
+     # Guard: abs(centroid_x) < 1.5 prevents edge-dominant centroid attraction (scatter artifact).
+     # NOT reactive<3 guard (postmortem constraint). NOT landing_y-only. NOT danger bonus.
+     # refs: game_history/20260329_173803_score0716.jsonl T55-61,
+     #       game_history/20260329_170607_score2480.jsonl T103-110,
+     #       tmp/batch_summary.txt, analyze_board.py,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v391: suppress chain bonus for NEAR at crossing-deadline with high pc — death spiral prevention
      # Worst game T71-76: 4 consecutive failed NEAR at crossing-deadline, pc 43→47, max_y 2.73→3.58→game over
      # Chain bonus (axis 6, ~4000-6000) overwhelms NEAR risk penalty (v374/v378 max ~3650 at pc=43),
@@ -602,6 +615,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 growth_center_x = _gc.get("x", 0)
                 growth_center_y = _gc.get("y", -10)
 
+    # --- v392: pre-compute reactive pair centroid ---
+    # Centroid of midpoint positions of reactive pairs. Used by axis 9.7 fallback
+    # to guide placement toward the "merge zone" when no adjacent-type target found.
+    # Requires >= 2 reactive pairs for statistical stability (single pair is too noisy).
+    # abs(centroid_x) < 1.5 guard prevents attraction to edge-dominant centroids (scatter artifact).
+    reactive_centroid_x = None
+    reactive_centroid_y = None
+    if reactive_pair_count >= 2:
+        _rc_rx = 0.0
+        _rc_ry = 0.0
+        _rc_count = 0
+        for rp in reactive_pairs:
+            if isinstance(rp, (list, tuple)) and len(rp) >= 2:
+                p1 = next((pp for pp in pieces if pp.get("id") == rp[0]), None)
+                p2 = next((pp for pp in pieces if pp.get("id") == rp[1]), None)
+                if p1 and p2:
+                    _rc_rx += (p1["x"] + p2["x"]) / 2
+                    _rc_ry += (p1["y"] + p2["y"]) / 2
+                    _rc_count += 1
+        if _rc_count >= 2:
+            reactive_centroid_x = _rc_rx / _rc_count
+            reactive_centroid_y = _rc_ry / _rc_count
+
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
@@ -884,6 +920,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     urgency_scale = 1.0 + max(0.0, 1.5 - deadline_margin) / 1.5 * 0.5
                     pipeline_bonus *= urgency_scale
                 score += pipeline_bonus
+            elif reactive_pair_count >= 2 and reactive_centroid_x is not None and abs(reactive_centroid_x) < 1.5:
+                # v392: reactive pair centroid attraction — fallback when no adjacent-type target found.
+                # When reactive pairs exist (merge potential somewhere) but no piece of next_type±1 is
+                # within range, the current code provides NO guidance → HEIGHT_CONTROL scatters to edges.
+                # This creates isolated pieces that don't participate in any merge path → pc accumulation.
+                # The centroid of reactive pair midpoints identifies the "merge zone" where merges are
+                # likely to happen. Attraction toward this zone keeps pieces in the merge ecosystem.
+                # Congestion scaling: urgency increases with piece_count (>= 25), max 2.5x at pc=50.
+                # Magnitude: max ~100 (tie-breaking, won't override axis 8.8 or height penalty).
+                # Guard: abs(centroid_x) < 1.5 prevents attraction to edge-dominant centroids (scatter).
+                # NOT reactive<3 guard (postmortem constraint: works at reactive >= 2).
+                # NOT landing_y-only (postmortem constraint: uses x-proximity to centroid).
+                # NOT danger bonus (postmortem OK — gradient proximity bonus, not fixed danger threshold).
+                # refs: game_history/20260329_173803_score0716.jsonl T55-61 (reactive=2-5, no merge, scatter to edges),
+                #       game_history/20260329_170607_score2480.jsonl T103-110 (reactive=1-2, concentrated merges),
+                #       tmp/batch_summary.txt (HEIGHT_CONTROL over-selection 16.8%, delta=0.1 in low-score),
+                #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no pipeline guidance),
+                #       analyze_board.py (reactive_pairs tuple structure: (id1, id2, type))
+                centroid_dist = abs(x - reactive_centroid_x)
+                if centroid_dist < 2.0:
+                    centroid_bonus = max(0, 100.0 - centroid_dist * 50.0)
+                    if piece_count >= 25:
+                        centroid_bonus *= min(1.0 + (piece_count - 25) * 0.10, 2.5)
+                    score += centroid_bonus
 
         # ----- v362/v368 → v369 → v371: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
