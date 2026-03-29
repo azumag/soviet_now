@@ -1,26 +1,17 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v104)
+ * strategy.mjs - ドロップ位置決定戦略 (v105)
  *
- * v104: v103をベースに、ゲーム分析（max_y がデッドラインを超える問題が依然として発生）と戦略原則を深く再分析。
- *      特に高さ管理の精度と積極性をさらに向上させ、大型ピースの集約を強化するための調整を行う。
- *      物理エンジンの不確実性に対応するため、より保守的かつ計画的なピース配置を促すためのスコアリング調整に注力する。
+ * v105: v104をベースに、ゲーム分析と戦略原則をさらに踏まえ、特に「大型ピースの片側集約」原則の初期段階での強化を試みる。
+ *      この調整は、大型ピースが盤面に現れ始めた際に、より明確な集約方向を促し、後の配置の安定化に寄与することを目的とする。
  *
- *      主な改善点 (v103からの調整点):
- *      1.  **高さ管理の劇的強化と早期化の継続**:
- *          - `TOP_Y_CRITICAL_PENALTY_START` を 1.7 から 1.6 に引き下げ。致命的な高さペナルティの適用開始点をさらに早期化。
- *          - `TOP_Y_WARN_PENALTY_START` を 1.3 から 1.2 に引き下げ。警告ペナルティの適用開始点をさらに早期化。
- *          - `GAME_OVER_DANGER_Y_THRESHOLD` を 0.5 から 0.6 に拡大。ゲームオーバーに直結する超臨界域の判定を広げ、即時巨大ペナルティの適用機会を増加。
- *          - `HEIGHT_PENALTY_WEIGHT` を 35.0 から 45.0 に増強。高さペナルティが全体スコア決定においてさらに強力な影響力を持つように調整。
- *          - `calculateHeightPenalty` 関数における線形から立方へのペナルティ勾配の乗数を 250000 から 350000 に増加。ペナルティの上昇を急峻化。
- *          - 即時ゲームオーバー回避のペナルティを 1500000 から 2000000 に増強。
- *          - `calculateHeightPenalty` 内の `TOP_Y_CRITICAL_PENALTY_START` 超過時のペナルティを 500000 から 750000 に増強。
+ *      主な改善点 (v104からの調整点):
+ *      1.  **大型ピースの初期集約バイアスの強化**:
+ *          - `defaultStrategy` 内において、盤面にまだ明確な大型ピースの集約側がない場合に、
+ *            大型ピースを左側に配置する際の初期ボーナスを `DYNAMIC_AGGREGATION_BONUS_SCORE / 8` から `DYNAMIC_AGGREGATION_BONUS_SCORE / 4` に増強。
+ *            これにより、ゲーム序盤や集約の初期段階で大型ピースの配置がより一貫した片側に誘導されやすくなることを期待する。
  *
- *      2.  **大型ピースの集約ボーナス/ペナルティの強化**: (v103から変更なし)
- *          - `DYNAMIC_AGGREGATION_BONUS_SCORE` は 400.0 を維持。
- *          - `LARGE_PIECE_DIVERGENCE_PENALTY` は 2000.0 を維持。
- *
- *      3.  **併合判定の物理的緩衝の維持**: (v103から変更なし)
- *          - `MERGE_BUFFER` は 0.5 を維持。国土形状の凸ポリゴンの不確実性を考慮し、併合の物理的接触判定をわずかに緩く（より近い距離で併合判定する）調整し、戦略コードでの併合予測と実際のゲーム内併合の一貫性を向上させる。
+ *      その他、v104で導入された高さ管理の劇的強化や、おじゃまブロック対応、LOOKAHEADボーナス、MERGE_BUFFERなどの調整は維持。
+ *      物理エンジンの不確実性に対応するための保守的かつ計画的なピース配置を促すスコアリング調整は引き続き重要視される。
  *
  * - 物理挙動の近似に関する注意点も維持。
  */
@@ -82,6 +73,7 @@ function calculateHeightPenalty(y, r) {
   if (topY < TOP_Y_WARN_PENALTY_START) {
     return 0;
   }
+  // If topY is above critical start but not yet in the immense penalty zone, apply strong critical penalty
   if (topY >= TOP_Y_CRITICAL_PENALTY_START) {
     return 750000; // Adjusted (was 500000): Existing critical penalty, but now stronger
   }
@@ -471,7 +463,7 @@ function defaultStrategy(boardStatePieces, pieceToDrop, nextPieces, isUrgentGarb
             // If no dominant side yet, subtly encourage placing large pieces on the left to start aggregation
             // This is a heuristic to try and establish a preferred side early, matching historical drop patterns.
             if (colX < 0) { // Favor left side for initiating aggregation
-                currentScore += DYNAMIC_AGGREGATION_BONUS_SCORE / 8; // Small bonus
+                currentScore += DYNAMIC_AGGREGATION_BONUS_SCORE / 4; // Adjusted from /8 to /4: Increased initial bonus
                 if (!mergeFoundForNext && columnReason === "DEFAULT: Least occupied column (lowest weighted Y).") {
                     columnReason = `DEFAULT: Initiate large piece aggregation towards left for type ${pieceToDrop.type}.`;
                 }
