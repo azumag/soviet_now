@@ -37,6 +37,7 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
+              v397: merge_drought height_mult cap — guidance tie-breaking enabler
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              1.5. NEAR merge deadline risk - v378: pc congestion scaling near max_y (extends v374)
@@ -61,6 +62,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v397: height_mult guidance cap for merge drought — complete v376 intent
+     # When merge_available=false and reactive>=3, cap height_mult to 0.5 so guidance
+     # bonuses can compete with height penalty for tie-breaking. v376 flattened axis 8.8
+     # to -3000 to let guidance work, but height_mult stayed at phase value (up to 1.8)
+     # creating 800+ pt gap vs guidance ~300-500 → HEIGHT_CONTROL scatter.
+     # Protected strategy deliberately chose HEIGHT_CONTROL at reactive>=3; this change
+     # enables guidance-driven placement instead, betting that near-reactive placement
+     # enables catalytic merges (batch: HIGH_TOWER_RP_NO_MERGE delta=13.1 in high-score).
+     # Congestion penalty still prevents extreme heights. Only applies merge drought.
+     # NOT reactive<3 guard. NOT danger bonus. NOT stacking suppression.
+     # Fixes: guidance overwhelmed by height_mult in reactive>=3 merge drought
+     # refs: score0452 T52-57, score0966 T64-77, score3203 T132-134, batch_summary,
+     #       last_rollback_postmortem.md, protected_e6f534c37e28
      # v396: reactive merge zone proximity — guide toward reactive pair cluster during congested droughts
      # When reactive>=3 and no merge for any candidate, placement near reactive pair "merge zone"
      # enables catalytic chain merges through shake/explosion (HIGH_TOWER_RP_NO_MERGE delta=13.1
@@ -1188,6 +1202,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
         #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
         height_mult = max(height_mult, 0.5)
+
+        # v397: height_mult guidance cap — complete v376 intent for merge drought
+        # v376 flattened axis 8.8 to -3000 when merge_available=false, intending to let
+        # stacking/proximity guidance compete for tie-breaking. But height_mult stays at
+        # phase value (up to 1.8) when reactive>=3 (all relaxations have reactive<3 guard),
+        # creating 800+ point height+congestion gap that overwhelms guidance (~300-500).
+        # When merge_available=false and reactive>=3, ALL candidates have no merge, so
+        # axis 8.8 (-3000 flat) already enforces merge priority globally. The cap allows
+        # guidance to compete for tie-breaking. Congestion penalty prevents extremes.
+        # Worst T52-55: reactive=4, merge_avail=false, height_mult=1.8 → scatter → death.
+        # Protected (v357): deliberately chose HEIGHT_CONTROL (flat -4500 + height_mult=1.8).
+        # This change: flat -3000 + height_mult=0.5 → guidance wins for y=0-1.
+        # Fixes rollback failure mode: piece_count accumulation from guidance gap
+        # refs: game_history/20260329_231835_score0452.jsonl T52-57 (reactive=4, scatter),
+        #       game_history/20260329_235422_score0966.jsonl T64-77 (reactive=5.5, scatter),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.5% low vs 10.6% high),
+        #       tmp/state/last_rollback_postmortem.md,
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        if not merge_available and reactive_pair_count >= 3:
+            height_mult = 0.5
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
