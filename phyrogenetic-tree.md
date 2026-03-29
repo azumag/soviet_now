@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-30 00:11:19 JST`
-- Nodes: `803`
-- Edges: `1113`
-- Current: `422188c46bb8`
+- Updated: `2026-03-30 01:10:27 JST`
+- Nodes: `804`
+- Edges: `1114`
+- Current: `a3e3965087ab`
 - Anchor: `58a2f66626b3`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_880278a14edf["880278a14edf<br/>g=13 n=13<br/>comp=11151.8"]
     h_b9b4224aa237["b9b4224aa237<br/>g=12 n=12<br/>comp=9043.8"]
     h_d063eeb0f357["d063eeb0f357<br/>g=13 n=13<br/>comp=10566.6"]
     h_d1611efd730f["d1611efd730f<br/>g=12 n=12<br/>comp=9891.3"]
@@ -72,11 +71,11 @@ flowchart TD
     h_a4fb085329bc["a4fb085329bc<br/>g=12 n=12<br/>comp=9868.9"]
     h_9f937369d294["9f937369d294<br/>g=12 n=12<br/>comp=9942.6"]
     h_58a2f66626b3["58a2f66626b3<br/>ANCHOR<br/>g=12 n=12<br/>comp=11960.1"]
+    h_422188c46bb8["422188c46bb8<br/>g=12 n=12<br/>comp=10994.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_422188c46bb8["422188c46bb8<br/>CURRENT"]
+    h_a3e3965087ab["a3e3965087ab<br/>CURRENT"]
 
-    h_880278a14edf -->|improve| h_b9b4224aa237
     h_d063eeb0f357 -->|improve| h_d1611efd730f
     h_d1611efd730f -->|improve| h_9029bd07d8b9
     h_9029bd07d8b9 -->|improve| h_76a54228d519
@@ -135,13 +134,13 @@ flowchart TD
     h_a4fb085329bc -->|improve| h_9f937369d294
     h_9f937369d294 -->|improve| h_58a2f66626b3
     h_58a2f66626b3 -->|improve| h_422188c46bb8
+    h_422188c46bb8 -->|improve| h_a3e3965087ab
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_880278a14edf plain;
     class h_b9b4224aa237 plain;
     class h_d063eeb0f357 plain;
     class h_d1611efd730f plain;
@@ -198,9 +197,10 @@ flowchart TD
     class h_a4fb085329bc plain;
     class h_9f937369d294 plain;
     class h_58a2f66626b3 anchor;
+    class h_422188c46bb8 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_422188c46bb8 current;
+    class h_a3e3965087ab current;
 ```
 
 ## Detail 1/11
@@ -3055,32 +3055,45 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `389b56537573` .. `422188c46bb8`
-- Nodes in this diagram: `3`
-- Internal edges in this diagram: `0`
+- Range: `422188c46bb8` .. `a3e3965087ab`
+- Nodes in this diagram: `4`
+- Internal edges in this diagram: `1`
+- Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 
 ```mermaid
 flowchart TD
+    h_422188c46bb8["422188c46bb8<br/>g=12 n=12<br/>comp=10994.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_422188c46bb8["422188c46bb8<br/>CURRENT"]
+    h_a3e3965087ab["a3e3965087ab<br/>CURRENT"]
 
+    h_422188c46bb8 -->|improve| h_a3e3965087ab
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
+    class h_422188c46bb8 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_422188c46bb8 current;
+    class h_a3e3965087ab current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11057 `422188c4 -> a3e39650`
+
+- scores: `12915 12969 6654 11029 9581 12596 11130 12755 8551 9667 13414 14890`
+- v398: merge drought scatter prevention — stacking extension + congestion suppression + edge penalty
+- v398: merge drought scatter prevention — coordinate stacking/congestion/edge for reactive>=3 no-merge
+- When merge_available=false AND reactive_pair_count>=3 (merge drought), pieces scatter to floor
+- edges (x=±3) because congestion penalty inversion (low-y bonus ~100-200) overwhelms guidance
+- (~150-400). Edge placement isolates pieces from reactive pair "merge zone", preventing catalytic
+- chain merges → piece_count spiral → game over. Worst T44-55: reactive=5-6, 4 consecutive scatter
 
 ### Improve Game#11045 `58a2f666 -> 422188c4`
 
