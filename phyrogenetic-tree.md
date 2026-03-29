@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-30 06:52:42 JST`
-- Nodes: `809`
-- Edges: `1120`
-- Current: `9af5391861ee`
+- Updated: `2026-03-30 07:48:29 JST`
+- Nodes: `810`
+- Edges: `1121`
+- Current: `4b745328e58f`
 - Anchor: `84d04da1d615`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_89945a89a279["89945a89a279<br/>g=12 n=12<br/>comp=10037.6"]
     h_13084f72a598["13084f72a598<br/>g=12 n=12<br/>comp=9970.2"]
     h_f48d789a8edf["f48d789a8edf<br/>g=12 n=12<br/>comp=9263.1"]
     h_2557979ccf35["2557979ccf35<br/>g=12 n=12<br/>comp=10537.9"]
@@ -72,11 +71,11 @@ flowchart TD
     h_3e8d0e52a172["3e8d0e52a172<br/>g=12 n=12<br/>comp=10170.9"]
     h_161970edb74c["161970edb74c<br/>g=12 n=12<br/>comp=10818.4"]
     h_65ae830f19e1["65ae830f19e1<br/>g=12 n=12<br/>comp=10834.2"]
+    h_9af5391861ee["9af5391861ee<br/>g=12 n=12<br/>comp=11217.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9af5391861ee["9af5391861ee<br/>CURRENT"]
+    h_4b745328e58f["4b745328e58f<br/>CURRENT"]
 
-    h_89945a89a279 -->|improve| h_13084f72a598
     h_13084f72a598 -->|improve| h_f48d789a8edf
     h_2557979ccf35 -->|improve| h_f0346bcbba3c
     h_f0346bcbba3c -->|improve| h_977a30ec57a8
@@ -135,13 +134,13 @@ flowchart TD
     h_3e8d0e52a172 -->|improve| h_161970edb74c
     h_161970edb74c -->|improve| h_65ae830f19e1
     h_65ae830f19e1 -->|improve| h_9af5391861ee
+    h_9af5391861ee -->|improve| h_4b745328e58f
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_89945a89a279 plain;
     class h_13084f72a598 plain;
     class h_f48d789a8edf plain;
     class h_2557979ccf35 plain;
@@ -198,9 +197,10 @@ flowchart TD
     class h_3e8d0e52a172 plain;
     class h_161970edb74c plain;
     class h_65ae830f19e1 plain;
+    class h_9af5391861ee plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9af5391861ee current;
+    class h_4b745328e58f current;
 ```
 
 ## Detail 1/11
@@ -3055,9 +3055,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `9af5391861ee`
-- Nodes in this diagram: `9`
-- Internal edges in this diagram: `5`
+- Range: `422188c46bb8` .. `4b745328e58f`
+- Nodes in this diagram: `10`
+- Internal edges in this diagram: `6`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3073,15 +3073,17 @@ flowchart TD
     h_3e8d0e52a172["3e8d0e52a172<br/>g=12 n=12<br/>comp=10170.9"]
     h_161970edb74c["161970edb74c<br/>g=12 n=12<br/>comp=10818.4"]
     h_65ae830f19e1["65ae830f19e1<br/>g=12 n=12<br/>comp=10834.2"]
+    h_9af5391861ee["9af5391861ee<br/>g=12 n=12<br/>comp=11217.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9af5391861ee["9af5391861ee<br/>CURRENT"]
+    h_4b745328e58f["4b745328e58f<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
     h_3e8d0e52a172 -->|improve| h_161970edb74c
     h_161970edb74c -->|improve| h_65ae830f19e1
     h_65ae830f19e1 -->|improve| h_9af5391861ee
+    h_9af5391861ee -->|improve| h_4b745328e58f
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3094,12 +3096,23 @@ flowchart TD
     class h_3e8d0e52a172 plain;
     class h_161970edb74c plain;
     class h_65ae830f19e1 plain;
+    class h_9af5391861ee plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9af5391861ee current;
+    class h_4b745328e58f current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11141 `9af53918 -> 4b745328`
+
+- scores: `12945 9614 11023 14103 13199 8028 22595 16950 10185 9782 16385 9274`
+- v405: danger piece rescue bonus — per-candidate danger_merge_available utilization (unused info)
+- analyze_board.py computes danger_merge_available per candidate (can this merge target a danger piece?)
+- but strategy never reads it. When true, merging removes a redline-expiring piece, preventing game
+- over before global deadline_crossed. Axis 8.5 only boosts at max_y>=2.0 + reactive>=2 globally.
+- danger_merge_available catches isolated danger pieces at any board height/reactive level.
+- Evidence: T125 in score3785 (DIRECT danger rescue, delta=153). Fires ~2.3% of turns (25/1100).
 
 ### Improve Game#11129 `65ae830f -> 9af53918`
 
