@@ -39,7 +39,7 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
+             9.6. Reactive pairs type-aware stacking - v387: merged_type近接スタッキング(reactive<3限定、v386ガード拡張)
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
@@ -62,6 +62,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v387: extend v386 guard to reactive>=3 ALL phases — stacking suppressed at reactive>=3 regardless of deadline_crossed
+     # v386 guarded stacking at reactive>=3 && deadline_crossed, but extra_low game (score0648) T54-56
+     # shows REACTIVE_PAIRS_STACKING_HIGH_TOWER at reactive=4-5, max_y=2.49-3.32 where deadline not crossed.
+     # height_mult floor (0.5) → stacking bonus (+100) overcomes height diffs → high placement.
+     # At reactive>=3, axis 8.8 dominates; stacking is unnecessary tie-breaking.
+     # Fixes rollback failure mode: stacking at reactive>=3 without deadline causing height spiral
+     # refs: game_history/20260329_113632_score0648.jsonl, game_history/20260329_111948_score0466.jsonl,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, analyze_board.py,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+     #
      # v386: restore v340 guard — suppress axis 9.6 stacking at reactive>=3 && deadline_crossed
      # v363 removed the guard reasoning "axis 8.8 dominates, stacking is tie-breaking only."
      # But height_mult floor (0.5) makes height penalty weak; stacking bonus (+100-300)
@@ -780,7 +790,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_104342_score0963.jsonl T80-82,
         #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, advice.md,
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not (reactive_pair_count >= 3 and deadline_crossed):
+        # v387: extend v386 guard to reactive>=3 ALL phases (remove deadline_crossed condition)
+        # v386 suppressed stacking at reactive>=3 && deadline_crossed, but extra_low game
+        # (score0648) T54-56 shows REACTIVE_PAIRS_STACKING_HIGH_TOWER at reactive=4-5,
+        # max_y=2.49-3.32 where deadline_crossed=false (max_y < deadline_y).
+        # height_mult floor (0.5) makes height penalty ~25/y_unit, allowing stacking
+        # horizontal bonus (+100) to overcome height diffs and pull pieces high.
+        # At reactive>=3, axis 8.8 dominates all candidates equally — stacking is
+        # unnecessary tie-breaking that can flip decisions toward higher-y positions.
+        # Remaining guidance at reactive>=3: axis 9.6b, 9.7, 5.6, 9.3, 9.5.
+        # NOT gradient flattening (v376). NOT pc scaling (v378). NOT NEAR_CEILING (v375).
+        # Fixes postmortem failure mode: stacking at reactive>=3 without deadline
+        # refs: game_history/20260329_113632_score0648.jsonl T52-56,
+        #       game_history/20260329_111948_score0466.jsonl T50-57,
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
+        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None:
             if current_type_has_reactive or current_type_has_near:
                 # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
                 # 高位スタッキングによるmax_y悪化を防止
