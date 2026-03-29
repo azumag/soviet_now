@@ -61,6 +61,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v396: reactive merge zone proximity — guide toward reactive pair cluster during congested droughts
+     # When reactive>=3 and no merge for any candidate, placement near reactive pair "merge zone"
+     # enables catalytic chain merges through shake/explosion (HIGH_TOWER_RP_NO_MERGE delta=13.1
+     # in high-score 4.3% vs low-score 2.5%). Complements axis 9.7 centroid/rp fallback (same_type
+     # exists case). Fixes postmortem: weak guidance at reactive>=3 with no merge → scatter.
+     # refs: batch_summary, score0536 T54-57, score2285 T93-105, protected_e6f534c37e28,
+     #       game_theory.md (catalyst), last_rollback_postmortem.md
      # v395: reactive density stacking amplification — apply reactive_density_mult to axis 9.6 stacking_bonus
      # v394 amplified fallback guidance (centroid/rp_attract/proximity) but NOT primary stacking_bonus.
      # At reactive>=5, stacking_bonus (~200-400) still loses to height diffs (~300-500) → HEIGHT_CONTROL scatter.
@@ -1568,6 +1575,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 else:
                     score -= 5000.0 + (landing_y - 1.0) * 2000.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+
+        # ----- v396: reactive merge zone proximity — catalytic chain merge guidance -----
+        # When reactive>=3 and no merge candidate exists for any position, guide toward
+        # reactive pair cluster (merge zone) to enable catalytic chain merges through
+        # shake/explosion effects, even when the placed piece itself doesn't merge.
+        # Evidence: HIGH_TOWER_REACTIVE_PAIRS_NO_MERGE_PENALTY has avg_score_delta=13.1
+        # in high-score games (4.3% of turns) vs low-score (2.5%) — catalytic NO-merge
+        # placements produce positive score through physics-triggered merges of OTHER types.
+        # Worst game T54-57: reactive=6-7, merge_available=false, 4 consecutive drought turns
+        # with no catalytic merge. Best game T93-105: reactive=3-4, merge_available=false turns
+        # interleaved with successful DIRECT/NEAR merges — placement near reactive zone
+        # enables shake-triggered chain merges between drought turns.
+        # Complements axis 9.7 centroid/rp_attract (fires when same_type_stack_top is None).
+        # This fires when same_type exists, filling the guidance gap for "reactive pairs
+        # exist for other types but not current type" case during congested drought.
+        # Magnitude: max ~80 * reactive_density_mult (tie-breaking, won't override axis 8.8
+        # or height penalty). Guard: abs < 1.5 prevents edge attraction (scatter artifact).
+        # NOT reactive<3 guard (primary use case: reactive>=3). NOT danger bonus.
+        # NOT stacking suppression (v372 constraint OK — this is separate from axis 9.6).
+        # Fixes rollback failure mode: weak guidance during reactive>=3 drought → HEIGHT_CONTROL scatter
+        # refs: tmp/batch_summary.txt (HIGH_TOWER_RP_NO_MERGE delta=13.1, 4.3% vs 2.5%),
+        #       game_history/20260329_224954_score0536.jsonl T54-57 (reactive=6, scatter),
+        #       game_history/20260329_224041_score2285.jsonl T93-105 (catalytic merges),
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+        #       prompts/game_theory.md (catalyst concept), tmp/state/last_rollback_postmortem.md
+        if reactive_pair_count >= 3 and merge_grade == "NO" and not merge_available and same_type_stack_top is not None:
+            _rz_target = None
+            if reactive_centroid_x is not None and abs(reactive_centroid_x) < 1.5:
+                _rz_target = reactive_centroid_x
+            elif nearest_rp_mid_x is not None and abs(nearest_rp_mid_x) < 1.5:
+                _rz_target = nearest_rp_mid_x
+            if _rz_target is not None:
+                _rz_dist = abs(x - _rz_target)
+                if _rz_dist < 2.0:
+                    _rz_bonus = max(0, 80.0 - _rz_dist * 30.0)
+                    _rz_bonus *= reactive_density_mult
+                    score += _rz_bonus
+                    reasons.append("REACTIVE_ZONE_PROXIMITY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
