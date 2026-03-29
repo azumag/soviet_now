@@ -1,27 +1,33 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v115)
+ * strategy.mjs - ドロップ位置決定戦略 (v116)
  *
- * v115: v114をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
+ * v116: v115をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
  *       特に、高Y到達と小型ピースの散乱の問題、そして大型ピースの集約と連鎖設計を強化します。
  *
- *      主な改善点 (v114からの調整点):
+ *      主な改善点 (v115からの調整点):
  *      1.  **高さ管理のさらなる強化とシミュレーションの調整**:
- *          - `simulateDropY` の「settling」バッファを `0.05` から `0.15` に増加。
+ *          - `simulateDropY` の「settling」バッファを `0.15` から `0.2` に増加。
  *            物理挙動の不確実性と凸ポリゴン形状による実際の高さ到達をより厳しく見積もることで、
- *            デッドライン到達のリスクを過小評価しないようにします。
- *          - 高さペナルティの開始Y座標 (`TOP_Y_CRITICAL_PENALTY_START_RELATIVE`) を `0.5` から `0.3` へ減少。
- *            これにより、デッドラインにより近い位置でのクリティカルなペナルティが開始されるY座標が、
- *            実際のゲームオーバーラインにさらに接近し、高Yでの積み上がりに対する戦略的な抑制を強化します。
- *      2.  **小型ピース密度ボーナスのさらなる抑制**:
- *          - `SMALL_PIECE_DENSITY_BONUS` を `150.0` から `75.0` へさらに減少させます。
- *            分析から、小型ピースが密集しすぎてマージに繋がらないまま高くなるケースが依然見られたため、
- *            無計画な小型ピースの積み上がりをより強く抑制し、より戦略的なマージ機会創出に集中させます。
- *      3.  **水平方向の配置制限の明確化**:
- *          - `WALL_MARGIN` を `BOARD_X_MAX_LIMIT` に名称変更し、実際の壁の位置 `3.5` に設定。
- *            ピースの半径を考慮した上で、ボードの端にピースがはみ出さないようにするペナルティの条件をより正確にします。
- *            これにより、特に大型ピースがボード外に配置されようとする不自然な動きを抑制し、ゲーム終盤での「No valid move found」発生原因の一つを解消します。
- *      4.  HOLDアドバンテージ閾値、マージボーナス、大型ピース集約ボーナス、低Yマージボーナス、ゴミブロック関連の重みはv114の調整を維持します。
- *      5.  物理挙動の近似に関する注意点も引き続き維持します。
+ *            デッドライン到達のリスクをさらに過小評価しないようにします。
+ *          - `HEIGHT_PENALTY_WEIGHT` を `180.0` から `250.0` に増加。
+ *            高すぎる位置への配置に対するペナルティをより強くし、デッドライン到達のリスクを積極的に抑制します。
+ *          - 高さペナルティ計算における `heightOverCritical` の乗数を `5` から `7` に増加。
+ *            これにより、クリティカルな高さでのペナルティが指数関数的にさらに急峻になり、デッドライン付近への配置をより強力に抑制します。
+ *      2.  **小型ピース（特にType 1）の管理戦略の見直し**:
+ *          - `SMALL_PIECE_DENSITY_BONUS` を完全に削除。
+ *            小型ピースの密集は必ずしも併合に繋がらず、盤面を高くする原因となるため、
+ *            単純な密度ボーナスではなく、小型ピースによる積極的な併合を促す方向に転換します。
+ *          - `calculateMergeOpportunities` に、小型ピースが併合をトリガーした場合の追加ボーナスを導入。
+ *            これにより、小型ピースが「触媒」として機能し、既存のピースを巻き込んで併合を促進する配置を奨励します。
+ *      3.  **おじゃまブロックの緊急モード閾値の調整**:
+ *          - `GARBAGE_RATIO_URGENT` を `0.3` から `0.4` へ、`OJAMA_GAUGE_URGENT` を `0.5` から `0.6` へ調整。
+ *            これは、戦略原則に記載されている「When garbage.ratio > 0.4, enter GBG_URGENT mode」
+ *            および「gauge >= 0.6: ojama imminent (aggressively prioritize merges)」に合わせるものです。
+ *            これにより、緊急モードへの突入をより適切なタイミングに調整し、過度な早期反応を抑制します。
+ *      4.  大型ピースの集約ボーナス計算において、最も多くの大型ピースが存在する側に寄せるための小さな追加ボーナスを導入。
+ *          これにより、大型ピースの片側集約原則を強化します。
+ *      5.  HOLDアドバンテージ閾値、マージボーナス、低Yマージボーナス、ゴミブロック関連の重みはv115の調整を維持します。
+ *      6.  物理挙動の近似に関する注意点も引き続き維持します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -39,20 +45,20 @@ const MERGE_BUFFER = 0.6; // Increased from 0.5 to 0.6 for more aggressive mergi
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y. (Currently not used but kept for potential future use)
 const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
-const SMALL_PIECE_DENSITY_BONUS = 75.0; // Adjusted from 150.0 (v114) to further suppress small piece accumulation.
+// Removed SMALL_PIECE_DENSITY_BONUS to discourage accumulation.
 const DENSITY_SEARCH_RADIUS_X = 0.5; // Horizontal search radius for density.
 const DENSITY_SEARCH_RADIUS_Y = 1.0; // Vertical search radius for density.
 
 // Garbage / Critical Mode Thresholds (these are now direct bonus values)
 const GARBAGE_RATIO_OJAMA_MERGE = 0.15; // When garbage ratio exceeds this, prioritize merges.
-const GARBAGE_RATIO_URGENT = 0.3;       // When garbage ratio is very high, aggressive merges.
+const GARBAGE_RATIO_URGENT = 0.4;       // Adjusted from 0.3 (v115) to align with strategic principles.
 const OJAMA_GAUGE_OJAMA_MERGE = 0.3;    // When ojama gauge is high, prioritize merges.
-const OJAMA_GAUGE_URGENT = 0.5;         // When ojama gauge is very high, aggressive merges.
+const OJAMA_GAUGE_URGENT = 0.6;         // Adjusted from 0.5 (v115) to align with strategic principles.
 
 // Scoring weights (New constants for strategy logic)
 const MERGE_BONUS_BASE = 1200; // Increased from 1000 (v113)
 const MERGE_BONUS_PER_TYPE = 600; // Increased from 500 (v113)
-const HEIGHT_PENALTY_WEIGHT = 180.0; // Increased from 150.0 (v113)
+const HEIGHT_PENALTY_WEIGHT = 250.0; // Adjusted from 180.0 (v115) for more aggressive height control.
 const GARBAGE_MERGE_BONUS = 2500; // Increased from 2000 (v113)
 const GARBAGE_URGENT_MERGE_BONUS = 6000; // Increased from 5000 (v113)
 const LARGE_PIECE_GROUPING_BONUS = 1000; // Increased from 800 (v113)
@@ -62,6 +68,7 @@ const HOLD_ADVANTAGE_THRESHOLD = 1500; // Increased from 1000 (v113)
 const LOW_Y_MERGE_THRESHOLD = -0.5; // Y coordinate below which a merge gets a bonus
 const LOW_Y_MERGE_BONUS = 1000; // Base bonus for merges at low Y
 const LOW_Y_GARBAGE_MERGE_BONUS = 3000; // Extra bonus for low Y merges when garbage is active.
+const SMALL_PIECE_MERGE_TRIGGER_BONUS = 750; // New: Bonus for small pieces causing a merge.
 
 // Piece radii map (approximate, actual radii come from boardState.pieces[i].r)
 const PIECE_RADII = {
@@ -120,8 +127,8 @@ function simulateDropY(droppingPiece, targetX, currentPieces) {
         }
     }
     // Add a small buffer for "settling" and non-perfect circle physics/rolling
-    // Increased from 0.05 (v114) to 0.15 for more pessimistic height estimation.
-    return maxY + 0.15;
+    // Increased from 0.15 (v115) to 0.2 for more pessimistic height estimation.
+    return maxY + 0.2;
 }
 
 /**
@@ -136,7 +143,7 @@ function simulateDropY(droppingPiece, targetX, currentPieces) {
 function calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simulatedBoard, boardState) {
     let mergeScore = 0;
     const droppingRadius = getPieceRadius(droppingPiece);
-    let hasMerge = false;
+    // let hasMerge = false; // This variable is currently not used but kept if needed for future logic
 
     for (const existingPiece of simulatedBoard) {
         // Skip if it's the piece we just added (or about to add for simulation)
@@ -154,7 +161,7 @@ function calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simu
         // MERGE_BUFFER accounts for irregular shapes and impact.
         if (droppingPiece.type === existingPiece.type && distance < (droppingRadius + existingRadius + MERGE_BUFFER)) {
             mergeScore += MERGE_BONUS_BASE + (droppingPiece.type * MERGE_BONUS_PER_TYPE);
-            hasMerge = true;
+            // hasMerge = true; // Set to true if a merge is detected
 
             // Apply bonus for merges occurring at low Y, especially if garbage is active
             if (simulatedY < LOW_Y_MERGE_THRESHOLD) {
@@ -162,6 +169,10 @@ function calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simu
                 if (boardState.garbage.ratio >= GARBAGE_RATIO_OJAMA_MERGE || boardState.garbage.gauge >= OJAMA_GAUGE_OJAMA_MERGE) {
                     mergeScore += LOW_Y_GARBAGE_MERGE_BONUS;
                 }
+            }
+            // New: Bonus if this small piece causes a merge
+            if (droppingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
+                mergeScore += SMALL_PIECE_MERGE_TRIGGER_BONUS;
             }
         }
     }
@@ -189,7 +200,8 @@ function calculateHeightPenalty(simulatedY, pieceRadius) {
     if (topY >= TOP_Y_CRITICAL_PENALTY_START) {
         // Exponential penalty for critical height, closer to deadline
         const heightOverCritical = topY - TOP_Y_CRITICAL_PENALTY_START;
-        penalty += HEIGHT_PENALTY_WEIGHT * Math.pow(heightOverCritical * 5, 3); // Much steeper
+        // The power of 3 makes it very steep. Adjusted multiplier for more impact.
+        penalty += HEIGHT_PENALTY_WEIGHT * Math.pow(heightOverCritical * 7, 3); // Increased from 5 (v115) for steeper penalty
     } else if (topY >= TOP_Y_WARN_PENALTY_START) {
         // Linear penalty for warning height
         const heightOverWarn = topY - TOP_Y_WARN_PENALTY_START;
@@ -197,42 +209,6 @@ function calculateHeightPenalty(simulatedY, pieceRadius) {
     }
 
     return -penalty; // Return as a negative score
-}
-
-/**
- * Calculates a bonus for dropping small pieces into dense areas of other small pieces.
- * @param {object} droppingPiece - The piece being dropped.
- * @param {number} simulatedX - The simulated X position of the dropped piece.
- * @param {number} simulatedY - The simulated Y position of the dropped piece.
- * @param {Array<object>} simulatedBoard - The hypothetical board state after dropping the piece.
- * @returns {number} The small piece density bonus.
- */
-function calculateSmallPieceDensity(droppingPiece, simulatedX, simulatedY, simulatedBoard) {
-    if (droppingPiece.type > SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
-        return 0; // Only small pieces get this bonus
-    }
-
-    let densityCount = 0;
-    const droppingRadius = getPieceRadius(droppingPiece);
-
-    for (const existingPiece of simulatedBoard) {
-        // Skip self-comparison
-        if (existingPiece.x === simulatedX && existingPiece.y === simulatedY && existingPiece.type === droppingPiece.type && existingPiece.r === droppingRadius) {
-            continue;
-        }
-
-        if (existingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
-            const dx = Math.abs(simulatedX - existingPiece.x);
-            const dy = Math.abs(simulatedY - existingPiece.y);
-
-            // Check if within search radius
-            if (dx < DENSITY_SEARCH_RADIUS_X + droppingRadius && dy < DENSITY_SEARCH_RADIUS_Y + droppingRadius) {
-                densityCount++;
-            }
-        }
-    }
-    // Apply a bonus, slightly increasing with more density
-    return densityCount * SMALL_PIECE_DENSITY_BONUS * (1 + densityCount / 5);
 }
 
 /**
@@ -257,18 +233,28 @@ function calculateLargePieceGrouping(droppingPiece, targetX, simulatedBoard) {
     if (existingLargePieces.length === 0) {
         // If this is the first large piece, encourage placement near a wall
         // to start a 'large piece side'. This is a heuristic.
-        // WALL_MARGIN is now BOARD_X_MAX_LIMIT, so using it directly for heuristic.
-        if (Math.abs(targetX) > BOARD_X_MAX_LIMIT - (droppingRadius * 2.5)) { // Use a slightly larger factor to prefer closer to edge
+        // BOARD_X_MAX_LIMIT is the actual wall. We want to be *inside* the wall,
+        // so checking if it's near the edge of the playable area.
+        if (Math.abs(targetX) > BOARD_X_MAX_LIMIT - (droppingRadius * 3)) { // Use a slightly larger factor to prefer closer to edge
             bonus += LARGE_PIECE_GROUPING_BONUS / 2;
         }
     } else {
         // Try to group with existing large pieces
+        // Calculate the side where most large pieces are located
+        const leftSideLargePieces = existingLargePieces.filter(p => p.x < 0).length;
+        const rightSideLargePieces = existingLargePieces.filter(p => p.x > 0).length;
+        const preferredSide = leftSideLargePieces > rightSideLargePieces ? 'left' : 'right';
+
         for (const existingLargePiece of existingLargePieces) {
             const dx = Math.abs(targetX - existingLargePiece.x);
             const combinedRadius = droppingRadius + getPieceRadius(existingLargePiece);
             // If it's placed close enough to an existing large piece
             if (dx < combinedRadius * 1.5) { // Within 1.5 times combined radius for grouping
                 bonus += LARGE_PIECE_GROUPING_BONUS;
+                // Add an additional bonus if placed on the preferred side
+                if ((preferredSide === 'left' && targetX < 0) || (preferredSide === 'right' && targetX > 0)) {
+                    bonus += LARGE_PIECE_GROUPING_BONUS / 4; // Smaller bonus for alignment
+                }
             }
         }
     }
@@ -323,8 +309,7 @@ function calculateOverallScore(droppingPiece, simulatedX, simulatedY, boardState
     const mergeScore = calculateMergeOpportunities(droppingPiece, simulatedX, simulatedY, simulatedBoard, boardState);
     score += mergeScore;
 
-    // 3. Small Piece Density Bonus
-    score += calculateSmallPieceDensity(droppingPiece, simulatedX, simulatedY, simulatedBoard);
+    // 3. Small Piece Density Bonus - Removed in v116
 
     // 4. Large Piece Grouping Bonus
     score += calculateLargePieceGrouping(droppingPiece, simulatedX, simulatedBoard);
