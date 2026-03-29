@@ -37,8 +37,6 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-              v399: stacking target height decay — prevent height accumulation during merge drought
-              v398: merge drought scatter prevention — stacking extension + congestion suppression + edge penalty
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去)
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              1.5. NEAR merge deadline risk - v378: pc congestion scaling near max_y (extends v374)
@@ -63,51 +61,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v398: merge drought scatter prevention — coordinate stacking/congestion/edge for reactive>=3 no-merge
-     # When merge_available=false AND reactive_pair_count>=3 (merge drought), pieces scatter to floor
-     # edges (x=±3) because congestion penalty inversion (low-y bonus ~100-200) overwhelms guidance
-     # (~150-400). Edge placement isolates pieces from reactive pair "merge zone", preventing catalytic
-     # chain merges → piece_count spiral → game over. Worst T44-55: reactive=5-6, 4 consecutive scatter
-     # to x=±3 → pc 33→39 → death. Best T125-132: reactive=1, concentrated board → +269 chain.
-     # Four coordinated changes using _merge_drought flag:
-     #   1. Extend axis 9.6 stacking to ALL types during drought (line ~920 condition: add _merge_drought)
-     #   2. Suppress axis 9.6b proximity during drought (line ~1078: add _merge_drought to exclusion)
-     #   3. Suppress congestion penalty during drought (line ~1262: add `and not _merge_drought`)
-     #   4. Add edge scatter penalty: |x|>2.0 → -80*(|x|-2.0), up to -80 at board edge
-     # Net effect: center placement gains ~88-204 pt advantage during drought, robustly preventing
-     # HEIGHT_CONTROL scatter death spiral. Stacking bonus (~200-400 * reactive_density_mult)
-     # provides center-biased guidance; edge penalty prevents floor-edge escape.
-     # v399 target height decay on stacking_bonus replaces v397's blunt height_mult cap (0.5)
-     # NOT reactive<3 guard (primary use case). NOT danger bonus. NOT stacking suppression.
-     # NOT numerical tweak of existing values. Structural condition changes only.
-     # Fixes rollback failure mode: weak guidance at merge drought → HEIGHT_CONTROL → pc accumulation
-     # refs: batch_summary (HEIGHT_CONTROL 16.0-19.5% low vs 10.6% high),
-     #       score0453 T44-55 (reactive=5-6, scatter to x=±3), score0775 T57-62 (6 HIGH_TOWER),
-     #       score2424 T125-132 (reactive=1, concentrated → +269), score2207 T113-124 (catalytic chain),
-     #       tmp/state/last_rollback_postmortem.md, protected_e6f534c37e28
-     # v397: height_mult guidance cap for merge drought — complete v376 intent
-     # When merge_available=false and reactive>=3, cap height_mult to 0.5 so guidance
-     # bonuses can compete with height penalty for tie-breaking. v376 flattened axis 8.8
-     # to -3000 to let guidance work, but height_mult stayed at phase value (up to 1.8)
-     # creating 800+ pt gap vs guidance ~300-500 → HEIGHT_CONTROL scatter.
-     # Protected strategy deliberately chose HEIGHT_CONTROL at reactive>=3; this change
-     # enables guidance-driven placement instead, betting that near-reactive placement
-     # enables catalytic merges (batch: HIGH_TOWER_RP_NO_MERGE delta=13.1 in high-score).
-     # Congestion penalty still prevents extreme heights. Only applies merge drought.
-     # NOT reactive<3 guard. NOT danger bonus. NOT stacking suppression.
-     # Fixes: guidance overwhelmed by height_mult in reactive>=3 merge drought
-     # refs: score0452 T52-57, score0966 T64-77, score3203 T132-134, batch_summary,
-     #       last_rollback_postmortem.md, protected_e6f534c37e28
-     # v399: stacking target height decay — replace v397 height_mult cap with target-aware decay
-     # v397 cap (height_mult=0.5) made height penalty too weak vs stacking_bonus (~740 with reactive_density_mult),
-     # allowing stacking at dangerous heights (y>1.5). Target-aware decay suppresses stacking toward high targets
-     # while leaving low-target stacking intact. Matches axis 9.6b (v371) decay formula (1.0 - target_y * 0.3).
-     # Worst T63-66: stacking at y=2.77-3.19 toward high targets → pc 34→41 → death spiral.
-     # Best T130-139: stacking toward targets at y<0 → decay 0 → unaffected.
-     # Fixes rollback failure mode: piece accumulation from stacking at high targets during merge drought
-     # refs: game_history/20260330_011442_score0845.jsonl, game_history/20260330_013925_score3155.jsonl,
-     #       game_history/20260330_015513_score0762.jsonl, tmp/batch_summary.txt,
-     #       tmp/state/last_rollback_postmortem.md, protected_e6f534c37e28, analyze_board.py, advice.md
      # v396: reactive merge zone proximity — guide toward reactive pair cluster during congested droughts
      # When reactive>=3 and no merge for any candidate, placement near reactive pair "merge zone"
      # enables catalytic chain merges through shake/explosion (HIGH_TOWER_RP_NO_MERGE delta=13.1
@@ -757,16 +710,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     if reactive_pair_count >= 5:
         reactive_density_mult = min(1.0 + (reactive_pair_count - 4) * 0.15, 2.0)
 
-    # --- v398: merge drought flag — pre-computed for use in axes 9.6, 9.6b, congestion ---
-    # merge drought: no merge available for ANY candidate AND reactive_pair_count >= 3.
-    # This state causes HEIGHT_CONTROL scatter: congestion low-y bonus (~100-200) overwhelms
-    # guidance (~150-400), placing pieces at y=-2 to -4 (floor edges x=±3).
-    # The flag coordinates multiple changes: extend stacking, suppress proximity, cap congestion.
-    # NOT reactive<3 guard (primary use case IS reactive>=3). NOT danger bonus.
-    # refs: batch_summary (HEIGHT_CONTROL 16.0-19.5% low vs 10.6% high),
-    #       score0453 T44-55 (scatter to x=±3), score0775 T57-62 (6 consecutive HIGH_TOWER)
-    _merge_drought = (not merge_available) and (reactive_pair_count >= 3)
-
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
@@ -948,11 +891,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
         # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
-            if current_type_has_reactive or current_type_has_near or _merge_drought:
-                # v398: during merge drought, extend stacking to ALL types (not just current_type
-                # with reactive/near). Drought scatters pieces to edges via congestion low-y bonus;
-                # stacking provides center-biased guidance toward same-type targets regardless of
-                # reactive status. Stacking magnitude (~200-400) remains tie-breaking vs axis 8.8 (-3000).
+            if current_type_has_reactive or current_type_has_near:
+                # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
                 # 高位スタッキングによるmax_y悪化を防止
                 # merged_type(N+1)に隣接する同タイプピースを優先し、連鎖的併合の道筋を作る
                 best_stack_target = same_type_stack_top
@@ -989,15 +929,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         stacking_bonus *= max(0.2, 1.0 - vertical_gap * 0.12)
                     # v395: amplify stacking with reactive density — same as v394 logic for fallback guidance
                     stacking_bonus *= reactive_density_mult
-                    # v399: target height decay — stacking toward high targets adds pieces at height
-                    # without immediate merge benefit. Replaces v397 height_mult cap (0.5).
-                    # Matches axis 9.6b (v371) target_y decay (1.0 - target_y * 0.3) for consistency.
-                    # At target_y=1.0: 0.7x. target_y=1.5: 0.55x. target_y=2.0: 0.4x. target_y>=2.5: 0.25x.
-                    # Prevents stacking accumulation at dangerous heights during merge drought.
-                    # Worst T63-66: stacking at y=2.77-3.19 → pc 34→41 → death.
-                    # Best T130-139: stacking at y<0 → no decay → unaffected.
-                    if target_y_pos > 0:
-                        stacking_bonus *= max(0.25, 1.0 - target_y_pos * 0.3)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
@@ -1118,7 +1049,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
         # Fixes postmortem failure mode: type scattering → piece_count accumulation
         if merge_grade == "NO" and same_type_stack_top is not None:
-            if not (current_type_has_reactive or current_type_has_near or _merge_drought):
+            if not (current_type_has_reactive or current_type_has_near):
                 # v371: Find same-type piece closest to merged_type(N+1) for chain building.
                 # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
                 merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
@@ -1258,25 +1189,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
         height_mult = max(height_mult, 0.5)
 
-        # v397: height_mult guidance cap — complete v376 intent for merge drought
-        # v376 flattened axis 8.8 to -3000 when merge_available=false, intending to let
-        # stacking/proximity guidance compete for tie-breaking. But height_mult stays at
-        # phase value (up to 1.8) when reactive>=3 (all relaxations have reactive<3 guard),
-        # creating 800+ point height+congestion gap that overwhelms guidance (~300-500).
-        # When merge_available=false and reactive>=3, ALL candidates have no merge, so
-        # axis 8.8 (-3000 flat) already enforces merge priority globally. The cap allows
-        # guidance to compete for tie-breaking. Congestion penalty prevents extremes.
-        # Worst T52-55: reactive=4, merge_avail=false, height_mult=1.8 → scatter → death.
-        # Protected (v357): deliberately chose HEIGHT_CONTROL (flat -4500 + height_mult=1.8).
-        # This change: flat -3000 + height_mult=0.5 → guidance wins for y=0-1.
-        # Fixes rollback failure mode: piece_count accumulation from guidance gap
-        # refs: game_history/20260329_231835_score0452.jsonl T52-57 (reactive=4, scatter),
-        #       game_history/20260329_235422_score0966.jsonl T64-77 (reactive=5.5, scatter),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.5% low vs 10.6% high),
-        #       tmp/state/last_rollback_postmortem.md,
-        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-        # v399: removed v397 height_mult cap (0.5) — replaced with target height decay in axis 9.6 stacking_bonus
-
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
 
@@ -1300,29 +1212,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # No reactive_pair_count guard — works at ALL reactive levels (postmortem constraint).
         # refs: tmp/state/last_rollback_postmortem.md (piece_count 41→1060 vs 21→4645),
         #       tmp/batch_summary.txt (high-score merge_rate=38.6% vs low-score 33.6%)
-        if piece_count >= 30 and landing_y > -1.0 and not _merge_drought:
+        if piece_count >= 30 and landing_y > -1.0:
             # v365: increased multiplier 8→20 — old value was too weak to affect behavior
             # (piece_count=37, landing_y=1.0: 64 vs height diff ~140). New value provides
             # meaningful tie-breaking for axis 8.8 uniform penalty without overriding merges.
             congestion_penalty = (piece_count - 29) * landing_y * 20.0
             score -= congestion_penalty
-
-        # ----- v398: merge drought edge scatter penalty -----
-        # During merge drought (no merge_available, reactive>=3), congestion low-y bonus
-        # (inverted penalty at negative landing_y) creates incentive to place at floor edges
-        # (x=±2.5 to ±3.0). These positions are isolated from reactive pairs, preventing
-        # catalytic chain merges. Edge penalty counteracts the scatter: at |x|=2.5: -40,
-        # at |x|=3.0: -80, making center placement ~88-204 pts more attractive.
-        # Magnitude: tie-breaking level (won't override merge candidates, axis 8.8, or height).
-        # Only fires during merge drought + NO merge grade (all candidates have no merge).
-        # NOT reactive<3 guard. NOT danger bonus. NOT stacking suppression.
-        # refs: score0453 T44-55 (scatter to x=±3), score0775 T57-62 (6 HIGH_TOWER),
-        #       batch_summary (HEIGHT_CONTROL 16.0% low vs 10.6% high)
-        if _merge_drought and merge_grade == "NO":
-            _edge_excess = abs(x) - 2.0
-            if _edge_excess > 0:
-                score -= _edge_excess * 80.0
-                reasons.append("DROUGHT_EDGE_AVOID")
 
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
         # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
