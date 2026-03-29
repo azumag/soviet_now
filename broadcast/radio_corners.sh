@@ -1731,9 +1731,9 @@ start_radio_corner_jiji() {
 	if [ "$jiji_self_search" != true ] && [ -n "$headline_key" ]; then
 		echo "$headline" >>"$TMP_HISTORY_DIR/.past_jiji_titles.txt"
 		echo "$headline_key" >>"$TMP_HISTORY_DIR/.past_jiji_keys.txt"
-		tail -200 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" \
+		tail -100 "$TMP_HISTORY_DIR/.past_jiji_titles.txt" >"$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" \
 			&& mv "$TMP_HISTORY_DIR/.past_jiji_titles.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_titles.txt"
-		tail -400 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" \
+		tail -200 "$TMP_HISTORY_DIR/.past_jiji_keys.txt" >"$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" \
 			&& mv "$TMP_HISTORY_DIR/.past_jiji_keys.txt.tmp" "$TMP_HISTORY_DIR/.past_jiji_keys.txt"
 		# URL hash で重複排除（同じ記事が別タイトルで出現するケースに対応）
 		local jiji_url_hash=""
@@ -1742,7 +1742,7 @@ start_radio_corner_jiji() {
 		fi
 		if [ -n "$jiji_url_hash" ]; then
 			echo "$jiji_url_hash" >>"$PAST_JIJI_URL_HASHES"
-			tail -500 "$PAST_JIJI_URL_HASHES" >"${PAST_JIJI_URL_HASHES}.tmp" && \
+			tail -100 "$PAST_JIJI_URL_HASHES" >"${PAST_JIJI_URL_HASHES}.tmp" && \
 				mv "${PAST_JIJI_URL_HASHES}.tmp" "$PAST_JIJI_URL_HASHES"
 		fi
 	fi
