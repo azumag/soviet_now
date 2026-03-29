@@ -9,7 +9,7 @@ Game Overview:
 
       Decision Logic (11 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-         1.5. NEAR merge deadline risk - Penalty for risky NEAR merges at deadline (v366)
+         1.5. NEAR merge deadline risk - Penalty for risky NEAR merges at deadline (v366/v385: per-candidate crosses_deadline)
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
          4. Left-right balance correction - Bonus for correcting piece count bias
@@ -60,6 +60,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v388: NEAR crossing-deadline risk — utilize per-candidate crosses_deadline outside global deadline
+     # Fixes rollback failure mode: failed NEAR at crossing-deadline positions → unrecoverable piece
+     # refs: analyze_board.py, 20260329_131740_score0473 T49/T54/T57, 20260329_132445_score1571,
+     #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v379: growth center alignment for axis 9.7 pipeline guidance
      # Worst game T59-66: 35 pieces scattered x=[-3,+3], axis 9.7 guides toward nearest adjacent-type
      # regardless of direction → reinforces scatter. Best game T75-82: types concentrated around gc.
@@ -681,6 +686,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
             ceiling_excess = landing_y - max_y
             score -= ceiling_excess * 500.0
             reasons.append("NEAR_CEILING_RISK")
+
+        # ----- v388: NEAR crossing-deadline risk — extends NEAR risk to per-candidate crosses_deadline -----
+        # When a NEAR merge attempt's own top edge would cross deadline_y, failure means the piece
+        # lands above deadline — nearly unrecoverable. Currently unutilized: result["crosses_deadline"]
+        # is per-candidate (unlike board-level deadline_crossed), so this fires even before global
+        # deadline is crossed. Worst game T49/T54/T57: NEAR attempted with crosses_deadline=true
+        # but deadline_crossed=false, NEAR failed (delta=0), piece stranded above deadline.
+        # Existing v374/v378 handles deadline_crossed case. This fills the gap: crosses_deadline
+        # BEFORE global deadline is crossed, where no NEAR risk penalty currently applies.
+        # Quadratic (landing_y^2 * 200) maintains postmortem constraint. At y=1.5: -450, y=2.0: -800.
+        # NOT DIRECT (95.7% success, low risk). NOT pc scaling (kept minimal).
+        # refs: analyze_board.py (crosses_deadline field),
+        #       game_history/20260329_131740_score0473.jsonl T49/T54/T57 (NEAR crosses_deadline, fails),
+        #       game_history/20260329_132445_score1571.jsonl T89-96 (best: no crossing NEAR at non-deadline),
+        #       tmp/batch_summary.txt, advice.md (あずまぐ: 確実な併合優先),
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        # Fixes rollback failure mode: failed NEAR at crossing-deadline positions → unrecoverable piece
+        elif merge_grade == "NEAR" and result.get("crosses_deadline", False):
+            near_risk_penalty = landing_y * landing_y * 200.0
+            score -= near_risk_penalty
+            reasons.append("NEAR_CROSSING_RISK")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
