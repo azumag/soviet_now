@@ -69,6 +69,22 @@ Phases (determined by board max Y):
      # Fixes rollback failure mode: NEAR failure at crossing-deadline → unrecoverable piece
      # refs: game_history/20260330_031339_score0459.jsonl, game_history/20260330_025807_score0683.jsonl,
      #       analyze_board.py, tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
+     # v401: NEAR crossing-deadline high-pc bonus suppression — death spiral prevention
+     # When NEAR crosses deadline at pc>=33, failure (~31.5%) adds unrecoverable piece above deadline.
+     # v391 suppressed chain bonus at pc>=40, but worst games start failing at pc=33-34 where chain
+     # bonus (~5000) still overwhelms risk penalty. Lower to pc>=33: covers death spiral onset.
+     # Also suppress DANGER_ZONE_IMMEDIATE and REACTIVE_IMMEDIATE bonuses for NEAR at crossing_deadline
+     # with pc>=33: these assume merge succeeds, but at crossing_deadline + high pc, expected value is
+     # negative. DIRECT retains all bonuses (95.7% success, doesn't cross deadline).
+     # Lower v378/v400 pc congestion threshold 33→28: risk penalty activates earlier in drought.
+     # Worst T58-60: reactive=2, NEAR at crossing_deadline fails 3x → pc 33→36 → death spiral.
+     # With change: reactive<3, NEAR rejected (net negative), low-y placement preserved.
+     # Fixes postmortem: NEAR failure at crossing-deadline + high pc → piece_count accumulation
+     # refs: game_history/20260330_034401_score0638.jsonl T58-65,
+     #       game_history/20260330_041357_score0585.jsonl T56-60,
+     #       game_history/20260330_040836_score2594.jsonl T112-119,
+     #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       tmp/batch_summary.txt, analyze_board.py
      # v396: reactive merge zone proximity — guide toward reactive pair cluster during congested droughts
      # When reactive>=3 and no merge for any candidate, placement near reactive pair "merge zone"
      # enables catalytic chain merges through shake/explosion (HIGH_TOWER_RP_NO_MERGE delta=13.1
@@ -824,10 +840,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 near_risk_penalty += 800.0
             # v378: piece_count congestion scaling when NEAR would land near max_y
             # Failed NEAR near max_y at high pc = unreachable ceiling, no recovery room.
-            # Scale gradually: pc=33→1.2x, pc=37→2.0x, pc=43→2.5x(capped).
+            # v401: lowered threshold 33→28 — risk penalty activates earlier in drought
+            # Scale: pc=28→1.0x, pc=33→2.0x, pc=38→3.0→2.5x(capped).
             # Only activates near max_y (within 0.5) where the failure is most damaging.
-            if piece_count >= 33 and landing_y > max_y - 0.5:
-                pc_risk_scale = 1.0 + (piece_count - 33) * 0.20
+            if piece_count >= 28 and landing_y > max_y - 0.5:
+                pc_risk_scale = 1.0 + (piece_count - 28) * 0.20
                 near_risk_penalty *= min(pc_risk_scale, 2.5)
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
@@ -857,9 +874,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v400: extend v378 pc congestion scaling to crossing-deadline case
             # Failed NEAR near deadline at high pc = nearly unrecoverable piece above deadline.
             # Same formula as NEAR_DEADLINE_RISK for consistency.
-            # pc=33→1.2x, pc=37→2.0x, pc=43→2.5x(capped).
-            if piece_count >= 33 and landing_y > max_y - 0.5:
-                pc_risk_scale = 1.0 + (piece_count - 33) * 0.20
+            # v401: lowered threshold 33→28 — same as NEAR_DEADLINE_RISK above
+            if piece_count >= 28 and landing_y > max_y - 0.5:
+                pc_risk_scale = 1.0 + (piece_count - 28) * 0.20
                 near_risk_penalty *= min(pc_risk_scale, 2.5)
             score -= near_risk_penalty
             reasons.append("NEAR_CROSSING_RISK")
@@ -1359,7 +1376,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # adds unrecoverable piece → death spiral (worst T71-76: 4 consecutive failures).
             # Without chain bonus, NEAR candidate selection prefers lower landing_y (safer if fail).
             # DIRECT (95.7% success) retains chain bonus regardless of pc/crossing_deadline.
-            _chain_suppressed = merge_grade == "NEAR" and piece_count >= 40 and result.get("crosses_deadline", False)
+            _chain_suppressed = merge_grade == "NEAR" and piece_count >= 33 and result.get("crosses_deadline", False)
             if merges and not _chain_suppressed:
                 # get best merge target (closest distance)
                 best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
@@ -1461,8 +1478,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         danger_piece_count = reactor.get("danger_piece_count", 0)
 
+        # v401: suppress danger/immediate bonuses for NEAR at crossing_deadline with high pc
+        # When NEAR crosses deadline at pc>=33, failure probability is high and consequence is
+        # catastrophic (piece above deadline). DANGER_ZONE and REACTIVE_IMMEDIATE bonuses assume
+        # merge succeeds, but expected value is negative in this scenario.
+        # DIRECT retains all bonuses (95.7% success, doesn't cross deadline).
+        _near_crossing_high_pc = (merge_grade == "NEAR" and piece_count >= 33
+                                    and result.get("crosses_deadline", False))
+
         # 危険域での即時併合を強力に優先
-        if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+        if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"] and not _near_crossing_high_pc:
             if merge_grade == "DIRECT":
                 # v331: deadline_crossed時はボーナスを強化（500.0→1200.0）
                 if deadline_crossed:
@@ -1485,7 +1510,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 未活用情報：reactive_pairsの段階的ボーナス
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
 
-        if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
+        if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"] and not _near_crossing_high_pc:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
             if reactive_pair_count >= 2:
                 score += 1000.0
