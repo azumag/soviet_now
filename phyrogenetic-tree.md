@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-29 16:03:02 JST`
-- Nodes: `797`
-- Edges: `1107`
-- Current: `017f868809b0`
+- Updated: `2026-03-29 16:55:33 JST`
+- Nodes: `798`
+- Edges: `1108`
+- Current: `61d579cd973c`
 - Anchor: `84d04da1d615`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_889399ef2cd1["889399ef2cd1<br/>g=13 n=13<br/>comp=10392.7"]
     h_7915348f1fe9["7915348f1fe9<br/>g=13 n=13<br/>comp=10137.1"]
     h_6eed532ab516["6eed532ab516<br/>g=13 n=13<br/>comp=10578.5"]
     h_ae16169e2913["ae16169e2913<br/>g=13 n=13<br/>comp=9921.7"]
@@ -72,11 +71,11 @@ flowchart TD
     h_59b54cf8e47c["59b54cf8e47c<br/>g=12 n=12<br/>comp=9410.3"]
     h_a4fe1ab8ef54["a4fe1ab8ef54<br/>g=12 n=12<br/>comp=9903.5"]
     h_610ceddcbaf9["610ceddcbaf9<br/>g=12 n=12<br/>comp=10978.8"]
+    h_017f868809b0["017f868809b0<br/>g=12 n=12<br/>comp=11110.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_017f868809b0["017f868809b0<br/>CURRENT"]
+    h_61d579cd973c["61d579cd973c<br/>CURRENT"]
 
-    h_889399ef2cd1 -->|improve| h_7915348f1fe9
     h_7915348f1fe9 -->|improve| h_6eed532ab516
     h_6eed532ab516 -->|improve| h_ae16169e2913
     h_ae16169e2913 -->|improve| h_2e8948ea5fce
@@ -136,13 +135,13 @@ flowchart TD
     h_9a7d71d20cfb -->|improve| h_a4fe1ab8ef54
     h_a4fe1ab8ef54 -->|improve| h_610ceddcbaf9
     h_610ceddcbaf9 -->|improve| h_017f868809b0
+    h_017f868809b0 -->|improve| h_61d579cd973c
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_889399ef2cd1 plain;
     class h_7915348f1fe9 plain;
     class h_6eed532ab516 plain;
     class h_ae16169e2913 plain;
@@ -199,9 +198,10 @@ flowchart TD
     class h_59b54cf8e47c plain;
     class h_a4fe1ab8ef54 plain;
     class h_610ceddcbaf9 plain;
+    class h_017f868809b0 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_017f868809b0 current;
+    class h_61d579cd973c current;
 ```
 
 ## Detail 1/10
@@ -2787,9 +2787,9 @@ flowchart TD
 
 ## Detail 10/10
 
-- Range: `7bd6203f37b5` .. `017f868809b0`
-- Nodes in this diagram: `77`
-- Internal edges in this diagram: `74`
+- Range: `7bd6203f37b5` .. `61d579cd973c`
+- Nodes in this diagram: `78`
+- Internal edges in this diagram: `75`
 - Cross-chunk link: `216f251b5089 --improve--> 7bd6203f37b5`
 - Cross-chunk link: `08bae60c8d28 -.rollback.-> 2ffec13b0141`
 - Cross-chunk link: `2ffec13b0141 --improve--> 31da7cda98a8`
@@ -2880,9 +2880,10 @@ flowchart TD
     h_59b54cf8e47c["59b54cf8e47c<br/>g=12 n=12<br/>comp=9410.3"]
     h_a4fe1ab8ef54["a4fe1ab8ef54<br/>g=12 n=12<br/>comp=9903.5"]
     h_610ceddcbaf9["610ceddcbaf9<br/>g=12 n=12<br/>comp=10978.8"]
+    h_017f868809b0["017f868809b0<br/>g=12 n=12<br/>comp=11110.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_017f868809b0["017f868809b0<br/>CURRENT"]
+    h_61d579cd973c["61d579cd973c<br/>CURRENT"]
 
     h_7bd6203f37b5 -->|improve| h_08bae60c8d28
     h_413548ba9827 -->|improve| h_7f14656b19f8
@@ -2958,6 +2959,7 @@ flowchart TD
     h_9a7d71d20cfb -->|improve| h_a4fe1ab8ef54
     h_a4fe1ab8ef54 -->|improve| h_610ceddcbaf9
     h_610ceddcbaf9 -->|improve| h_017f868809b0
+    h_017f868809b0 -->|improve| h_61d579cd973c
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3038,12 +3040,23 @@ flowchart TD
     class h_59b54cf8e47c plain;
     class h_a4fe1ab8ef54 plain;
     class h_610ceddcbaf9 plain;
+    class h_017f868809b0 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_017f868809b0 current;
+    class h_61d579cd973c current;
 ```
 
 ## Transition Notes
+
+### Improve Game#10973 `017f8688 -> 61d579cd`
+
+- scores: `7800 23411 7986 14997 13508 9458 10111 11589 24243 11746 11301 13389`
+- v391: suppress chain bonus for NEAR at crossing-deadline with high pc — death spiral prevention
+- Worst game T71-76: 4 consecutive failed NEAR at crossing-deadline, pc 43→47, max_y 2.73→3.58→game over
+- Chain bonus (axis 6, ~4000-6000) overwhelms NEAR risk penalty (v374/v378 max ~3650 at pc=43),
+- making high-landing NEAR candidates irresistible even though NEAR has 31.5% failure rate.
+- Failed NEAR at crossing-deadline adds unrecoverable piece above deadline → pc accumulation → death.
+- Best game T160: critical chain merge at pc=33 (below threshold) → unaffected, +256 preserved.
 
 ### Improve Game#10961 `610ceddc -> 017f8688`
 
