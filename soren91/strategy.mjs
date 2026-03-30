@@ -1,28 +1,28 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v124)
+ * strategy.mjs - ドロップ位置決定戦略 (v125)
  *
- * v124: v123をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
- *       特に、デッドラインを越える挙動が観察されたことから、高さ管理をより厳格化し、
- *       おじゃまブロック存在時の挙動をプロンプトの記述と一致させ、
- *       大型ピースの片側集約ロジックをさらに強化することで、
- *       安定した盤面形成と生存ターン数の最大化、そしてより良いランキングを目指します。
+ * v125: v124をベースに、ゲーム分析結果（特に、デッドライン超えによるゲームオーバー）を考慮し、
+ *       高さ管理の厳格化をさらに進めます。
+ *       また、おじゃまブロック存在時の高所への配置ペナルティも強化し、
+ *       より安定した盤面維持と生存ターンの最大化を目指します。
  *
- *      主な改善点 (v123からの調整点):
- *      1.  **高さ管理のさらなる厳格化**:
- *          - `HEIGHT_PENALTY_WEIGHT` を `450.0` から `600.0` へ増加。
- *            (警告ゾーンにおける線形ペナルティを強化し、早めの高さ抑制を促します。)
- *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `15` から `20` へ増加。
- *            (クリティカルゾーンにおける二次ペナルティを大幅に強化し、デッドライン接近を強く抑制します。)
- *          - `ojamaUrgentMode` (ガベージ比率が高いかゲージが危険水準) の際、`simulatedY > -1.0` でドロップする場合に、
- *            追加の線形ペナルティの乗数 (`50` から `150`) を増加。
- *            緊急のおじゃま状況下で、さらに盤面を高くする行為をより強く抑制します。
- *            これは `max_y` がデッドラインを超える事例が観察されたため、ペナルティを強化することで対応します。
- *      2.  **緊急時おじゃまブロック存在時の低Yマージボーナス強化**:
- *          - プロンプトの「底近くでの併合はガベージクリアにより効果的」という原則に基づき、
- *            ガベージが存在し、かつ `targetY < -2.0` (ボード下部) で併合が発生する場合のボーナスを強化。
- *            `droppingPiece.type` に応じてボーナスがスケールするようにし、
- *            `ojamaUrgentMode` の際にはさらに追加ボーナス (`+500`) を加算。
- *            これにより、低位置での大型ピースの併合が緊急時ガベージクリアにおいて強く推奨されます。
+ *      主な改善点 (v124からの調整点):
+ *      1.  **高さ管理のさらなる厳格化と早期適用**:
+ *          - `TOP_Y_CRITICAL_PENALTY_START_RELATIVE` を `0.4` から `0.7` へ増加。
+ *            (クリティカルペナルティの開始Y座標を `2.1` から `1.8` へ引き下げ、より低い位置から警告を発します。)
+ *          - `TOP_Y_WARN_PENALTY_START_RELATIVE` を `1.2` から `1.5` へ増加。
+ *            (警告ペナルティの開始Y座標を `1.3` から `1.0` へ引き下げ、早期の高さ抑制を促します。)
+ *          - `HEIGHT_PENALTY_WEIGHT` を `600.0` から `800.0` へ増加。
+ *            (警告ゾーンにおける線形ペナルティの重みをさらに強化します。)
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `20` から `30` へ増加。
+ *            (クリティカルゾーンにおける二次ペナルティの乗数を大幅に強化し、デッドライン接近をより強く抑制します。)
+ *            これらの変更は、ゲーム分析で `max_y` が `DEADLINE_Y` を超えていた事例が複数見られたことへの対応です。
+ *      2.  **おじゃまブロック存在時の高所配置ペナルティ強化**:
+ *          - `boardState.garbage.ratio > 0.1` かつ `simulatedY > -1.0` でドロップする場合の
+ *            追加ペナルティの基本値と乗数を強化 (`(200 + (simulatedY + 1.0) * 100)` -> `(300 + (simulatedY + 1.0) * 120)`).
+ *          - `ojamaUrgentMode` 時の追加ペナルティの乗数を強化 (`150` -> `200`).
+ *            これにより、おじゃまブロックがある状況で盤面を高くする行為をさらに強く抑制し、
+ *            低位置での併合によるガベージクリアを促進します。
  *
  *      注意点:
  *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
@@ -36,11 +36,11 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
-// Adjusted relative values to make penalties start earlier (lower Y)
-const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.4; // Increased from 0.3 (v122) - Critical penalty starts at Y=2.1
-const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.2;     // Increased from 1.0 (v122) - Warning penalty starts at Y=1.3
-const HEIGHT_PENALTY_WEIGHT = 600.0; // Increased from 450.0 (v123)
-const CRITICAL_Y_PENALTY_MULTIPLIER = 20; // Increased from 15 (v123)
+// Adjusted relative values to make penalties start earlier (lower Y) - v125
+const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.7; // Increased from 0.4 (v124) - Critical penalty starts at Y=1.8
+const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.5;     // Increased from 1.2 (v124) - Warning penalty starts at Y=1.0
+const HEIGHT_PENALTY_WEIGHT = 800.0; // Increased from 600.0 (v124)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 30; // Increased from 20 (v124)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -203,14 +203,14 @@ export function decide(boardState) {
       // Penalize height
       currentPlacementScore -= calculateHeightPenalty(simulatedY);
 
-      // Refined in v122: Additional penalty if placing high when a lot of garbage is present
+      // v125: Additional penalty if placing high when a lot of garbage is present (reinforced)
       if (boardState.garbage.ratio > 0.1 && simulatedY > -1.0) { // If garbage is significant and we are placing above a certain Y
         // More predictable and stronger penalty: base + scaled by Y
-        currentPlacementScore -= (200 + (simulatedY + 1.0) * 100);
+        currentPlacementScore -= (300 + (simulatedY + 1.0) * 120); // Increased from (200 + ... * 100) (v124)
 
-        // v124: Add extra penalty if in urgent ojama mode and placing high (increased multiplier)
+        // v125: Add extra penalty if in urgent ojama mode and placing high (increased multiplier)
         if (ojamaUrgentMode) {
-            currentPlacementScore -= (simulatedY + 1.0) * 150; // Increased from 50 (v123)
+            currentPlacementScore -= (simulatedY + 1.0) * 200; // Increased from 150 (v124)
         }
       }
 
@@ -229,16 +229,16 @@ export function decide(boardState) {
 
           // If current X is on the same side as the average of existing large pieces, add a bonus
           if ((avgLargePieceX < 0 && x < 0) || (avgLargePieceX > 0 && x > 0)) {
-            currentPlacementScore += 300; // Increased bonus from 250 (v122)
+            currentPlacementScore += 300;
           } else if (Math.abs(avgLargePieceX) < 0.5 && Math.abs(x) < 0.5) { // If large pieces are mostly centered, and we're dropping centrally
-             currentPlacementScore += 50; // Small bonus for continuing central if already central
+             currentPlacementScore += 50;
           } else { // If we're dropping a large piece on the opposite side of existing large pieces
-             currentPlacementScore -= 250; // Increased penalty from 200 (v122) for scattering large pieces
+             currentPlacementScore -= 250;
           }
         } else {
             // If this is the first large piece, try to place it significantly off-center to encourage starting a stack
-            if (x < -1.0 || x > 1.0) { // Prefer starting large piece accumulation towards the sides
-                currentPlacementScore += 200; // Increased bonus from 150 (v122)
+            if (x < -1.0 || x > 1.0) {
+                currentPlacementScore += 200;
             }
         }
       }
