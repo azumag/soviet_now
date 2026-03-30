@@ -44,6 +44,7 @@ Game Overview:
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
+             9.4. High-type piece protection - v410: avoid placing small pieces above large pieces (type 10+) when no merge available
              9.5. Current type stack merge priority - v337: russia_phase抑制版
 
 
@@ -72,6 +73,22 @@ Phases (determined by board max Y):
      # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
      #       game_history/20260330_115102_score0447.jsonl, game_history/20260330_115755_score0839.jsonl,
      #       analyze_board.py, advice.md
+     # v410: high-type piece protection — avoid creating "lids" with small pieces
+     # When no merge is available, placing a small piece above a large piece (type 10+)
+     # creates a "lid" that blocks future merges involving the large piece. Worst game
+     # T67-70: types 8,7,5,1 placed above type 13 → junk layer → game over at score 952.
+     # Extra_low T85-92: similar junk layer pattern → NEAR fails cascade → death at 1462.
+     # Advice: "大きい国の下にスペースを先確保してから小さい国を入れる" (zoumotu3),
+     # "ロシアが中層に生成されると蓋になり下の国の併合が困難になる" (プリパラ煉獄丸).
+     # Penalty: type_gap * 25 (gap = max_type_below - next_type). Redirects small pieces
+     # toward positions near same-type targets (enabling merges) instead of blocking high types.
+     # Only fires: merge_grade=NO, piece_count>=25, type_gap>=4, max_type_below>=10.
+     # Purely additive — does not suppress any existing behavior or merge priority.
+     # Fixes rollback failure mode: piece_count accumulation from junk layer above high types
+     # refs: game_history/20260330_125626_score0952.jsonl T67-70,
+     #       game_history/20260330_123551_score1462.jsonl T85-92,
+     #       tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_postmortem.md,
+     #       analyze_board.py, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v408: axis 9.6 piece_count congestion scaling — match 9.6b formula for reactive stacking
      # Axis 9.6b (same-type proximity) has piece_count congestion scaling but axis 9.6
      # (reactive stacking) does not. At high pc (30+), stacking_bonus (~100-400) is
@@ -1040,6 +1057,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # meaningful tie-breaking for axis 8.8 uniform penalty without overriding merges.
             congestion_penalty = (piece_count - 29) * landing_y * 20.0
             score -= congestion_penalty
+
+        # ----- evaluation axis 9.4: high-type piece protection (v410: avoid "lids") -----
+        # When no merge is available for this candidate, placing a small piece above a
+        # large piece (type 10+) creates an impassable barrier that blocks future merges
+        # involving the large piece. This is the primary death mechanism in low-score games:
+        # low-type junk accumulates above high-type pieces, preventing their merge paths.
+        # Worst game T67-70: types 8,7,5,1 placed above type 13 → junk layer → game over.
+        # Advice: "大きい国の下にスペースを先確保してから小さい国を入れる配置順序" (zoumotu3)
+        # Advice: "ロシアが中層に生成されると蓋になり下の国の併合が困難になる" (プリパラ煉獄丸)
+        # Only fires when merge_grade=NO (no immediate merge to suppress).
+        # Does NOT fire for merge candidates — purely redirects "junk" placements.
+        # Not landing_y-only: considers piece types and relative vertical positions.
+        # No reactive_pair_count guard (postmortem constraint: works at ALL reactive levels).
+        # Penalty per-candidate: type_gap * 25. At gap=5: -125. At gap=12: -300.
+        # Significant enough for tie-breaking vs height diffs (~200-450) but far below
+        # merge bonuses (1200+), so never suppresses a merge opportunity.
+        if merge_grade == "NO" and piece_count >= 25:
+            max_type_below = 0
+            for p in pieces:
+                p_y = p.get("y", 10)
+                p_x = p.get("x", 0)
+                # Check if piece is below landing position and within horizontal range
+                # (piece must be roughly in the same column to be "below" the drop)
+                if p_y < landing_y and abs(p_x - x) < 1.5:
+                    max_type_below = max(max_type_below, p.get("type", 0))
+            type_gap = max_type_below - next_type
+            if type_gap >= 4 and max_type_below >= 10:
+                score -= type_gap * 25.0
+                reasons.append("HIGH_TYPE_PROTECTION")
 
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
         # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
