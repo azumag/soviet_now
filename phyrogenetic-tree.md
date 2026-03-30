@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-30 15:03:44 JST`
-- Nodes: `816`
-- Edges: `1129`
-- Current: `1e00ebfbb96a`
+- Updated: `2026-03-30 16:03:30 JST`
+- Nodes: `817`
+- Edges: `1130`
+- Current: `8a2c0083198b`
 - Anchor: `9efec03deebb`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_036bd1b24fea["036bd1b24fea<br/>g=12 n=12<br/>comp=11066.8"]
     h_a64837b1edc1["a64837b1edc1<br/>g=15 n=15<br/>comp=9127.4"]
     h_fcd6d3725de6["fcd6d3725de6<br/>g=12 n=12<br/>comp=10836.8"]
     h_c3a4d0caf321["c3a4d0caf321<br/>g=12 n=12<br/>comp=9455.0"]
@@ -72,11 +71,11 @@ flowchart TD
     h_f830ed5e32bd["f830ed5e32bd<br/>g=12 n=12<br/>comp=10313.9"]
     h_9efec03deebb["9efec03deebb<br/>ANCHOR<br/>g=24 n=20<br/>comp=11602.6"]
     h_b0e0e0739f44["b0e0e0739f44<br/>g=12 n=12<br/>comp=9953.4"]
+    h_1e00ebfbb96a["1e00ebfbb96a<br/>g=13 n=13<br/>comp=10632.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_1e00ebfbb96a["1e00ebfbb96a<br/>CURRENT"]
+    h_8a2c0083198b["8a2c0083198b<br/>CURRENT"]
 
-    h_036bd1b24fea -->|improve| h_a64837b1edc1
     h_a64837b1edc1 -->|improve| h_fcd6d3725de6
     h_fcd6d3725de6 -->|improve| h_c3a4d0caf321
     h_bc85edb25d78 -->|improve| h_78d702e43155
@@ -138,13 +137,13 @@ flowchart TD
     h_9efec03deebb -->|improve| h_b0e0e0739f44
     h_b0e0e0739f44 -. rollback .-> h_9efec03deebb
     h_9efec03deebb -->|improve| h_1e00ebfbb96a
+    h_1e00ebfbb96a -->|improve| h_8a2c0083198b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_036bd1b24fea plain;
     class h_a64837b1edc1 plain;
     class h_fcd6d3725de6 plain;
     class h_c3a4d0caf321 plain;
@@ -201,9 +200,10 @@ flowchart TD
     class h_f830ed5e32bd plain;
     class h_9efec03deebb anchor;
     class h_b0e0e0739f44 plain;
+    class h_1e00ebfbb96a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_1e00ebfbb96a current;
+    class h_8a2c0083198b current;
 ```
 
 ## Detail 1/11
@@ -3058,9 +3058,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `1e00ebfbb96a`
-- Nodes in this diagram: `16`
-- Internal edges in this diagram: `12`
+- Range: `422188c46bb8` .. `8a2c0083198b`
+- Nodes in this diagram: `17`
+- Internal edges in this diagram: `13`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3085,9 +3085,10 @@ flowchart TD
     h_f830ed5e32bd["f830ed5e32bd<br/>g=12 n=12<br/>comp=10313.9"]
     h_9efec03deebb["9efec03deebb<br/>ANCHOR<br/>g=24 n=20<br/>comp=11602.6"]
     h_b0e0e0739f44["b0e0e0739f44<br/>g=12 n=12<br/>comp=9953.4"]
+    h_1e00ebfbb96a["1e00ebfbb96a<br/>g=13 n=13<br/>comp=10632.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_1e00ebfbb96a["1e00ebfbb96a<br/>CURRENT"]
+    h_8a2c0083198b["8a2c0083198b<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3101,6 +3102,7 @@ flowchart TD
     h_9efec03deebb -->|improve| h_b0e0e0739f44
     h_b0e0e0739f44 -. rollback .-> h_9efec03deebb
     h_9efec03deebb -->|improve| h_1e00ebfbb96a
+    h_1e00ebfbb96a -->|improve| h_8a2c0083198b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3120,12 +3122,23 @@ flowchart TD
     class h_f830ed5e32bd plain;
     class h_9efec03deebb anchor;
     class h_b0e0e0739f44 plain;
+    class h_1e00ebfbb96a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_1e00ebfbb96a current;
+    class h_8a2c0083198b current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11249 `1e00ebfb -> 8a2c0083`
+
+- scores: `8896 12913 18170 9659 10195 9816 7821 16099 11360 16817 12897 13594`
+- v412: nextNext-aware proximity — strengthen same-type guidance when next two pieces are same type
+- When next_type == next_next_type and merge_grade=NO, the next turn is guaranteed to have a
+- merge opportunity (same-type pieces exist on board). Placing the current (different-type) piece
+- near same-type targets creates a merge-assist position: after next merges (creating N+1), the
+- remaining same-type pieces are nearby for subsequent merges. This addresses the advice
+- "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る".
 
 ### Improve Game#11237 `9efec03d -> 1e00ebfb`
 
