@@ -1,34 +1,25 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v119)
+ * strategy.mjs - ドロップ位置決定戦略 (v120)
  *
- * v119: v118をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
- *       特に、最悪ゲームで示された「おじゃまブロック」への対応強化と、デッドライン到達リスクのさらなる抑制、
- *       そして小型ピースの「濃度管理」を促すためのクラスタリングボーナスの導入を行います。
+ * v120: v119をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
+ *       特に、シミュレーションされた高さがデッドラインを越える配置を厳格に禁止し、
+ *       高さペナルティをさらに強化することで、デッドライン到達リスクの抑制を徹底します。
+ *       また、小型ピースの「濃度管理」と「触媒利用」を両立させるため、クラスタリングボーナスを洗練します。
  *
- *      主な改善点 (v118からの調整点):
- *      1.  **高さ管理のさらなる強化とシミュレーションの調整**:
- *          - `simulateDropY` の「settling」バッファを `0.5` から `0.6` に増加。
- *            物理挙動の不確実性や凸ポリゴン形状による実際の高さ到達がシミュレーションよりも高くなる傾向があるため、
- *            デッドライン到達のリスクをさらに過小評価しないように、より悲観的にY座標を予測します。
- *            これにより、デッドライン付近への危険な配置をより強く抑制します。
- *          - `HEIGHT_PENALTY_WEIGHT` を `300.0` から `350.0` に増加。
- *            高さペナルティの全体的な影響を強化し、高Yへの配置をさらに抑制します。
- *          - `calculateHeightPenalty` 内のクリティカル高Yペナルティの乗数を `8` から `10` に増加。
+ *      主な改善点 (v119からの調整点):
+ *      1.  **高さ管理の厳格化とペナルティのさらなる強化**:
+ *          - `evaluatePlacement` 関数内で、シミュレートされた着地Y座標 (`simulatedY`) にピースの半径 (`droppingPiece.r`) を加えた値が `DEADLINE_Y` を超える場合、そのドロップ位置を即座に無効化（スコア-Infinity相当）します。
+ *            これにより、デッドラインを越える可能性がある危険な配置を完全に排除します。
+ *          - `HEIGHT_PENALTY_WEIGHT` を `350.0` から `400.0` に増加。
+ *            高Yへの配置に対する全体的なペナルティをさらに強化し、低く保つインセンティブを増やします。
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `10` から `12` に増加。
  *            デッドラインに近づくにつれてペナルティが指数関数的に急増する効果をさらに高めます。
- *      2.  **おじゃまブロック緊急モードのさらなる優先**:
- *          - `GARBAGE_MERGE_BONUS` を `2500` から `3000` に増加。
- *            おじゃまブロックの影響下でのマージ活動の基本的な優先度を向上させます。
- *          - `GARBAGE_URGENT_MERGE_BONUS` を `8000` から `10000` に増加。
- *            おじゃまブロックが差し迫っている、または深刻な状況下でのマージ活動の優先度を大幅に高めます。
- *          - `GARBAGE_RATIO_OJAMA_MERGE` を `0.15` から `0.1` に、
- *            `OJAMA_GAUGE_OJAMA_MERGE` を `0.3` から `0.2` にそれぞれ引き下げ。
- *            おじゃまブロックへの反応をより早期に開始し、手遅れになる前に対処する機会を増やします。
- *      3.  **小型ピースの濃度管理インセンティブの導入**:
- *          - 新たに `SMALL_PIECE_CLUSTER_BONUS` を導入。
- *            小型ピース（type 1〜4）を同タイプの他の小型ピースの近くに配置する際にボーナスを与えます。
- *            これにより、「濃度管理（同 type 集約）」原則を小型ピースにも適用し、
- *            将来的な併合機会を創出しやすくなります。
- *            これは `SMALL_PIECE_MERGE_TRIGGER_BONUS` とは異なり、直接併合しないまでも集約を促すものです。
+ *      2.  **小型ピースのクラスタリングボーナスの洗練**:
+ *          - `calculateClusterBonus` 関数を修正。
+ *            小型ピース（type 1〜4）を同タイプの他の小型ピースの近くに配置する際に、より高いボーナス (`SMALL_PIECE_CLUSTER_BONUS * 1.5`) を与え、
+ *            「濃度管理（同 type 集約）」原則を強力に推進します。
+ *          - さらに、小型ピースを同タイプではないが近くにある他の小型ピースの近くに配置する際にも、小さいボーナス (`SMALL_PIECE_CLUSTER_BONUS * 0.5`) を与えます。
+ *            これにより、小型ピースの一般的な密度を高め、「小ピースの触媒利用」原則に基づく攪拌効果を促します。
  *
  *      注意点:
  *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
@@ -42,23 +33,23 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
-const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.3; // Adjusted from 0.5 (v114). Start critical penalty when topY is 0.3 units below DEADLINE_Y
+const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.3; // Start critical penalty when topY is 0.3 units below DEADLINE_Y
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.0;     // Start warning penalty when topY is 1.0 units below DEADLINE_Y
-const HEIGHT_PENALTY_WEIGHT = 350.0; // Increased from 300.0 (v118)
-const CRITICAL_Y_PENALTY_MULTIPLIER = 10; // Increased from 8 (v119)
+const HEIGHT_PENALTY_WEIGHT = 400.0; // Increased from 350.0 (v119)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 12; // Increased from 10 (v119)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Increased from 0.5 to 0.6 for more aggressive merging due to shockwave. (v114)
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y. (Currently not used but kept for potential future use)
 const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
-const SMALL_PIECE_CLUSTER_BONUS = 500; // New constant introduced in v119
+const SMALL_PIECE_CLUSTER_BONUS = 500; // Base cluster bonus for small pieces.
 
 // Garbage Block Management Constants
-const GARBAGE_MERGE_BONUS = 3000;    // Increased from 2500 (v118)
-const GARBAGE_URGENT_MERGE_BONUS = 10000; // Increased from 8000 (v118)
-const GARBAGE_RATIO_OJAMA_MERGE = 0.1; // Decreased from 0.15 (v118)
-const OJAMA_GAUGE_OJAMA_MERGE = 0.2;  // Decreased from 0.3 (v118)
+const GARBAGE_MERGE_BONUS = 3000;
+const GARBAGE_URGENT_MERGE_BONUS = 10000;
+const GARBAGE_RATIO_OJAMA_MERGE = 0.1;
+const OJAMA_GAUGE_OJAMA_MERGE = 0.2;
 
 // Default initial drop X
 const INITIAL_DROP_X = 0.0;
@@ -75,7 +66,7 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  const settlingBuffer = 0.6; // Increased from 0.5 to 0.6 (v119)
+  const settlingBuffer = 0.6;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap
@@ -135,7 +126,7 @@ function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, ga
           bonus += GARBAGE_MERGE_BONUS;
         }
         // Additional bonus for merging near the bottom to clear garbage
-        if (garbageState.ratio > 0 && targetY < -2.0) { // arbitrary low Y for "near bottom"
+        if (garbageState.ratio > 0.05 && targetY < -2.0) { // arbitrary low Y for "near bottom"
           bonus += 200;
         }
       }
@@ -144,17 +135,21 @@ function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, ga
   return bonus;
 }
 
-// Calculate small piece clustering bonus
+// Calculate small piece clustering bonus (for concentration management and catalyst effect)
 function calculateClusterBonus(droppingPiece, targetX, targetY, existingPieces) {
   let clusterBonus = 0;
   if (droppingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
     for (const existingPiece of existingPieces) {
-      if (existingPiece.type === droppingPiece.type && existingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
-        const dist = distance({ x: targetX, y: targetY }, existingPiece);
-        // If nearby, add a cluster bonus
-        // Slightly larger buffer for clustering, as it's about proximity for future merges, not immediate ones.
-        if (dist < droppingPiece.r + existingPiece.r + MERGE_BUFFER * 1.5) {
-          clusterBonus += SMALL_PIECE_CLUSTER_BONUS;
+      const dist = distance({ x: targetX, y: targetY }, existingPiece);
+      // Use a slightly larger buffer for clustering, as it's about proximity for future merges, not immediate ones.
+      if (dist < droppingPiece.r + existingPiece.r + MERGE_BUFFER * 1.5) {
+        // Stronger bonus for same-type small piece clustering ("濃度管理")
+        if (existingPiece.type === droppingPiece.type && existingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
+          clusterBonus += SMALL_PIECE_CLUSTER_BONUS * 1.5;
+        }
+        // Weaker bonus for general small piece proximity ("触媒利用")
+        else if (existingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
+          clusterBonus += SMALL_PIECE_CLUSTER_BONUS * 0.5;
         }
       }
     }
@@ -185,6 +180,14 @@ export function decide(boardState) {
       }
 
       const simulatedY = simulateDropY(pieceToDrop, x, boardState.pieces);
+
+      // --- NEW in v120: Hard limit for exceeding deadline ---
+      // If any part of the piece (center + radius) goes above the deadline, it's an invalid move.
+      if (simulatedY + pieceToDrop.r > DEADLINE_Y) {
+          continue; // This placement is immediately invalid
+      }
+      // --- END NEW ---
+
       let currentPlacementScore = 0;
 
       // Penalize height
@@ -193,7 +196,7 @@ export function decide(boardState) {
       // Bonus for merge opportunities
       currentPlacementScore += calculateMergeBonus(pieceToDrop, x, simulatedY, boardState.pieces, boardState.garbage);
 
-      // Bonus for small piece clustering
+      // Bonus for small piece clustering and general small piece density
       currentPlacementScore += calculateClusterBonus(pieceToDrop, x, simulatedY, boardState.pieces);
 
       // Encourage large pieces to be on one side (simple approximation)
