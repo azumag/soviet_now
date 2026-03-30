@@ -63,6 +63,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v426: AVOID_BLOCK suppression gap fix — AND→OR to match postmortem specified range
+     # Postmortem: "AVOID_BLOCK が rp>=5 または max_y>=3.0+deadline のみが正しい抑制範囲"
+     # v417 used AND: (rp>=5 and max_y>=2.5), leaving a gap at max_y 2.0-2.5 with rp>=5.
+     # Worst game T41: max_y=2.33, rp=6, deadline=true → AVOID_BLOCK fired, pushed to x=-3.0
+     # edge. With OR: rp=6 >= 5 → suppressed, stacking/proximity guidance (~300-500) would
+     # direct placement near same-type instead of isolated edge scatter. Protected strategy
+     # (median 12789) had no AVOID_BLOCK_REACTIVE_PAIR — OR brings closer to that baseline.
+     # At rp>=5 the board is congested enough that blocking one of many reactive pairs is
+     # less harmful than edge scatter. Fixes postmortem failure mode: edge scatter → piece
+     # isolation → merge drought → p25 collapse.
+     # refs: tmp/state/last_rollback_postmortem.md (correct suppression range),
+     #       game_history/20260331_060052_score0520.jsonl T41 (max_y=2.33, rp=6, edge scatter),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v425: downstream NEAR bonus suppression when HIGH_PC_NEAR fires
      # v422 cancels base NEAR bonus (−600*merge_mult) at pc>=33+deadline+y>=1.0, but
      # downstream axes still stack: REACTIVE_MERGE (+400-1000), DANGER_ZONE_IMMEDIATE (+600),
@@ -1115,13 +1128,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_090616_score0296.jsonl T37-47,
         #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
         if merge_grade == "NO" and reactive_pair_count >= 1 and piece_count >= 25:
-            # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
-            # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
-            # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
-            # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
+            # v417/v426: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
+            # v426 fix: postmortem specifies correct range as rp>=5 OR max_y>=3.0+deadline,
+            # not AND. v417's (rp>=5 AND max_y>=2.5) left gap at max_y 2.0-2.5 where
+            # AVOID_BLOCK pushed pieces to x=±3.0 edges despite high rp. At rp>=5 the board
+            # is congested; blocking one of many reactive pairs is less harmful than edge scatter.
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
-                or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or reactive_pair_count >= 5
             )
             if not board_congested:
                 blocking_penalty = 0.0
