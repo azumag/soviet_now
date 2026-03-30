@@ -62,6 +62,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v411: deadline-crossing NO-merge penalty — utilize unutilized per-candidate crosses_deadline
+     # analyze_board.py computes crosses_deadline per-candidate (top_after_drop >= DEADLINE_Y) but strategy
+     # never reads it. When merge_grade=NO, placing a piece that crosses the deadline is the worst
+     # possible move: adds a piece with no merge benefit AND pushes board closer to game-over.
+     # Worst game T60-T61: crosses_deadline=true + merge_grade=NO with no penalty → pieces placed at deadline.
+     # Extra_low T75: crosses_deadline=true + merge_grade=NO → game over with 37 pieces.
+     # Penalty -1200 overrides stacking/proximity bonuses (~200-900) but not merge bonuses (DIRECT/NEAR).
+     # Not russia_phase: Russia growth strategy (RUSSIA_PHASE_BOARD_COMPRESSION) intentionally places
+     # near deadline; this penalty must not interfere. NOT a merge-path blocker (postmortem-safe):
+     # it redirects from positions where no future merge is possible anyway (deadline-crossing).
+     # Fixes postmortem: survival at reactive<3 when board reaches deadline before reactive accumulates
+     # refs: analyze_board.py (crosses_deadline per-candidate, top_y_after_drop),
+     #       game_history/20260330_144015_score0665.jsonl T60-61,
+     #       game_history/20260330_143501_score0994.jsonl T74-75,
+     #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
      # v409: graduated NEAR deadline risk — replace binary deadline_crossed with reactor deadline_margin
      # v366 used binary deadline_crossed: pieces just before deadline get 0 penalty, just after get full.
      # reactor deadline_margin is continuous (<0 crossed, 0-1 approaching). Graduated penalty provides
@@ -1450,8 +1465,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
-
-
+        # ----- v411: deadline-crossing NO-merge penalty (unutilized crosses_deadline) -----
+        # analyze_board.py computes crosses_deadline per-candidate: whether this drop position
+        # pushes the piece's top edge past the deadline (top_after_drop >= DEADLINE_Y=3.32).
+        # When no merge is available, this is the worst possible placement: it increases
+        # piece count AND pushes toward game-over with zero score benefit.
+        # The height penalty (axis 2) penalizes high landing_y but doesn't account for
+        # piece radius (top_y_after_drop = landing_y + radius). A piece at landing_y=2.8 with
+        # radius=0.5 has top_y_after_drop=3.3, crossing deadline — but axis 2 penalty at y=2.8
+        # is only moderate (~250 in HIGH phase). The crosses_deadline field captures this gap.
+        # Penalty (-1200) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
+        # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires only at
+        # merge_grade=NO and not russia_phase (Russia growth intentionally crosses deadline).
+        # refs: analyze_board.py L412 (crosses_deadline computation),
+        #       game_history/20260330_144015_score0665.jsonl T60-61,
+        #       game_history/20260330_143501_score0994.jsonl T74-75
+        if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
+            score -= 1200.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:
