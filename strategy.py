@@ -63,6 +63,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v423: axis 8.8 flat penalty — restore guidance competitiveness at reactive>=3
+     # v329 dynamic (-3000 to -9000 by landing_y) creates ~4700 height differentiation,
+     # making all guidance (stacking ~500, proximity ~350) irrelevant → HEIGHT_CONTROL
+     # edge scatter (x=±3.0) → piece_count accumulation → merge drought death.
+     # Protected strategy (median 12789) uses flat -4500 — guidance competes in tie-breaking.
+     # Safety nets added since v329 prevent original high-stacking failure: v411 CROSSES_DEADLINE,
+     # v416 stacking redirect, v422 HIGH_PC_NEAR. NOT a proximity boost (postmortem forbidden).
+     # Fixes postmortem: edge scatter → piece_count accumulation → merge drought death
+     # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+     #       game_history/20260331_035751_score1028.jsonl T82-T83,
+     #       game_history/20260331_041756_score3019.jsonl,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       strategy.py.staging (v422), analyze_board.py
      # v422: high pc NEAR merge penalty — structural fork cancels NEAR bonus at pc>=33+deadline+y>=1.0.
      # v421 gap: net NEAR still +75 at pc=35,deadline,y=1.0. New axis: -600*merge_mult penalty.
      # Preserves safe NEAR (y<1.0): best game T82 recovery at pc=33,deadline,y<0 unaffected.
@@ -1555,15 +1568,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず強力なペナルティを適用
-            # landing_yに応じて動的にペナルティを強化し、高配置を積極的に抑制
-            # v329修正: landing_y > 1 の場合、(landing_y - 1.0) * 2000.0 を使用し、高配置ほどペナルティを強化
-            if landing_y <= 0:
-                score -= 3000.0
-            elif landing_y <= 1:
-                score -= 3000.0 + landing_y * 2000.0
-            else:
-                score -= 5000.0 + (landing_y - 1.0) * 2000.0
+            # v423: flat -4500 — restore guidance competitiveness at reactive>=3
+            # v329 dynamic created ~4700 height diff between y=0 and y=2, making stacking
+            # (~500) and proximity (~350) guidance irrelevant. Result: HEIGHT_CONTROL edge
+            # scatter (x=±3.0), pieces isolated, merge drought → piece_count death.
+            # Protected strategy (median 12789) used flat -4500 — guidance competes in
+            # tie-breaking (~700 height diff at pc=40 vs stacking ~500).
+            # Safety: v411 CROSSES_DEADLINE (-1200) catches y>3.32, v416 stacking redirect
+            # targets lowest same-type in congested mode, v422 HIGH_PC_NEAR suppresses
+            # risky NEAR at pc>=33+deadline+y>=1.0. These guardrails didn't exist when v329
+            # was introduced — they now prevent the original high-stacking failure mode.
+            score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
