@@ -62,6 +62,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v407: growth center proximity in russia_phase — enable 2nd Russia growth pipeline
+     # During russia_phase, axis 5.6 was disabled. But concentrating pieces
+     # around the existing Russia piece is critical for 2nd Russia growth.
+     # The growth center naturally targets the deepest type 15 piece.
+     # Bonus is small (~50-100) due to gc_y decay — won't override height safety.
+     # Fixes prompt priority: "ロシア建国後フェーズ（最重要課題）"
+     # refs: tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md, advice.md,
+     #       game_history/20260330_100106_score4264.jsonl turns 155-162,
+     #       game_history/20260330_095109_score2724.jsonl turns 115-122
      # v384: reactive pair blocking avoidance — preserve merge paths by penalizing placement between reactive pairs
      # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
      # Placing between reactive pairs of different types physically blocks their future merge,
@@ -1080,33 +1089,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md (piece_count predictor),
         #       strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
         # Fixes rollback failure mode: type scattering → piece_count accumulation
-        if not russia_phase:
-            max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
-            if max_type_on_board >= 6:
-                # Find the deepest (lowest y) highest-type piece as growth center
-                growth_center = min(
-                    (p for p in pieces if p.get("type") == max_type_on_board),
-                    key=lambda p: p.get("y", 10),
-                    default=None,
-                )
-                if growth_center:
-                    gc_x = growth_center.get("x", 0)
-                    gc_y = growth_center.get("y", -10)
-                    horiz_dist = abs(x - gc_x)
-                    if horiz_dist < 2.5:
-                        # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
-                        proximity = max(0, 100.0 - horiz_dist * 40.0)
-                        # Decay if growth center is high — don't override height control
-                        if gc_y > 0:
-                            proximity *= max(0.0, 1.0 - gc_y * 0.4)
-                        # v370: congestion-aware scaling — postmortem: piece_count is key predictor
-                        # At high piece_count, guidance needs to be stronger to compete with
-                        # height differences and provide meaningful redirect toward growth center.
-                        if piece_count >= 28:
-                            congestion_scale = 1.0 + (piece_count - 28) * 0.14
-                            proximity *= min(congestion_scale, 3.5)
-                        if proximity > 0:
-                            score += proximity
+        # v407: removed russia_phase guard — growth center guidance now active in ALL phases
+        max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
+        if max_type_on_board >= 6:
+            # Find the deepest (lowest y) highest-type piece as growth center
+            growth_center = min(
+                (p for p in pieces if p.get("type") == max_type_on_board),
+                key=lambda p: p.get("y", 10),
+                default=None,
+            )
+            if growth_center:
+                gc_x = growth_center.get("x", 0)
+                gc_y = growth_center.get("y", -10)
+                horiz_dist = abs(x - gc_x)
+                if horiz_dist < 2.5:
+                    # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
+                    proximity = max(0, 100.0 - horiz_dist * 40.0)
+                    # Decay if growth center is high — don't override height control
+                    if gc_y > 0:
+                        proximity *= max(0.0, 1.0 - gc_y * 0.4)
+                    # v370: congestion-aware scaling — postmortem: piece_count is key predictor
+                    # At high piece_count, guidance needs to be stronger to compete with
+                    # height differences and provide meaningful redirect toward growth center.
+                    if piece_count >= 28:
+                        congestion_scale = 1.0 + (piece_count - 28) * 0.14
+                        proximity *= min(congestion_scale, 3.5)
+                    if proximity > 0:
+                        score += proximity
 
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
