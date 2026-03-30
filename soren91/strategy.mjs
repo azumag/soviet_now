@@ -45,6 +45,7 @@ const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.3; // Adjusted from 0.5 (v114). Start critical penalty when topY is 0.3 units below DEADLINE_Y
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.0;     // Start warning penalty when topY is 1.0 units below DEADLINE_Y
 const HEIGHT_PENALTY_WEIGHT = 350.0; // Increased from 300.0 (v118)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 10; // Increased from 8 (v119)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Increased from 0.5 to 0.6 for more aggressive merging due to shockwave. (v114)
@@ -62,18 +63,193 @@ const OJAMA_GAUGE_OJAMA_MERGE = 0.2;  // Decreased from 0.3 (v118)
 // Default initial drop X
 const INITIAL_DROP_X = 0.0;
 
+// Helper function to calculate Euclidean distance between two pieces' centers
+function distance(p1, p2) {
+  return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+}
+
+// Simplified simulation of where a piece would land
+// Accounts for existing pieces and the floor, but not complex physics like rolling or chain reactions.
+function simulateDropY(droppingPiece, targetX, existingPieces) {
+  let maxY = BOARD_FLOOR_Y; // Start at the floor
+
+  // The settling buffer accounts for physical uncertainties and convex polygon shapes.
+  // Pieces might settle slightly higher than a perfect circular stack.
+  const settlingBuffer = 0.6; // Increased from 0.5 to 0.6 (v119)
+
+  for (const existingPiece of existingPieces) {
+    // Check for horizontal overlap
+    // Using a slightly wider check for overlap due to convex shapes and imperfect radius detection
+    if (Math.abs(targetX - existingPiece.x) < droppingPiece.r + existingPiece.r - settlingBuffer) {
+      // If there's overlap, the dropping piece will land on top of the existing piece
+      // Its center will be existingPiece.y + existingPiece.r + droppingPiece.r
+      maxY = Math.max(maxY, existingPiece.y + existingPiece.r + droppingPiece.r);
+    }
+  }
+  return maxY;
+}
+
+// Calculate penalty based on the simulated Y position
+function calculateHeightPenalty(simulatedY) {
+  const criticalY = DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE;
+  const warningY = DEADLINE_Y - TOP_Y_WARN_PENALTY_START_RELATIVE;
+  let penalty = 0;
+
+  if (simulatedY > warningY) {
+    // Linear penalty increases as Y gets higher in the warning zone
+    penalty = (simulatedY - warningY) * HEIGHT_PENALTY_WEIGHT;
+  }
+  if (simulatedY > criticalY) {
+    // Exponentially higher penalty in the critical zone
+    penalty += Math.pow((simulatedY - criticalY) / TOP_Y_CRITICAL_PENALTY_START_RELATIVE, 2) * HEIGHT_PENALTY_WEIGHT * CRITICAL_Y_PENALTY_MULTIPLIER;
+  }
+  return penalty;
+}
+
+// Calculate merge bonus for a potential drop
+function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, garbageState) {
+  let bonus = 0;
+  let ojamaMode = false;
+  let ojamaUrgentMode = false;
+
+  if (garbageState.ratio >= GARBAGE_RATIO_OJAMA_MERGE || garbageState.gauge >= OJAMA_GAUGE_OJAMA_MERGE) {
+    ojamaMode = true;
+  }
+  // From prompt: When garbage.ratio > 0.4, enter GBG_URGENT mode (aggressive clearing)
+  // From prompt: gauge >= 0.6: ojama imminent (aggressively prioritize merges)
+  if (garbageState.ratio > 0.4 || garbageState.gauge >= 0.6) {
+    ojamaUrgentMode = true;
+  }
+
+  for (const existingPiece of existingPieces) {
+    if (droppingPiece.type === existingPiece.type) {
+      const dist = distance({ x: targetX, y: targetY }, existingPiece);
+      // If pieces are close enough to merge, give a bonus
+      // MERGE_BUFFER accounts for shockwave and imperfect detection
+      if (dist < droppingPiece.r + existingPiece.r + MERGE_BUFFER) {
+        // Higher type merges get more bonus
+        bonus += droppingPiece.type * 100; // Base bonus
+        if (ojamaUrgentMode) {
+          bonus += GARBAGE_URGENT_MERGE_BONUS;
+        } else if (ojamaMode) {
+          bonus += GARBAGE_MERGE_BONUS;
+        }
+        // Additional bonus for merging near the bottom to clear garbage
+        if (garbageState.ratio > 0 && targetY < -2.0) { // arbitrary low Y for "near bottom"
+          bonus += 200;
+        }
+      }
+    }
+  }
+  return bonus;
+}
+
+// Calculate small piece clustering bonus
+function calculateClusterBonus(droppingPiece, targetX, targetY, existingPieces) {
+  let clusterBonus = 0;
+  if (droppingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
+    for (const existingPiece of existingPieces) {
+      if (existingPiece.type === droppingPiece.type && existingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
+        const dist = distance({ x: targetX, y: targetY }, existingPiece);
+        // If nearby, add a cluster bonus
+        // Slightly larger buffer for clustering, as it's about proximity for future merges, not immediate ones.
+        if (dist < droppingPiece.r + existingPiece.r + MERGE_BUFFER * 1.5) {
+          clusterBonus += SMALL_PIECE_CLUSTER_BONUS;
+        }
+      }
+    }
+  }
+  return clusterBonus;
+}
+
 export function decide(boardState) {
-  // This is a placeholder implementation.
-  // In a real strategy, this function would analyze the boardState
-  // and determine the optimal 'x' coordinate for the next piece,
-  // potentially using the constants defined above.
+  let bestX = INITIAL_DROP_X;
+  let maxScore = -Infinity;
+  let bestReason = "No optimal placement found, defaulting to center.";
+  let useHold = false;
 
-  // For now, it just returns a default x and a simple reason.
-  // The 'hold' logic would also be determined here based on the boardState.
+  // Function to evaluate a given piece (current or held) for all X positions
+  const evaluatePlacement = (pieceToDrop, isHoldingAttempt = false) => {
+    let currentBestX = INITIAL_DROP_X;
+    let currentMaxScore = -Infinity;
+    let currentBestReason = "Defaulting to center.";
 
-  return {
-    x: INITIAL_DROP_X,
-    reason: "Placeholder strategy: placing at initial drop point.",
-    // hold: false // Optional, can be omitted if not needed or explicitly set.
+    if (!pieceToDrop) {
+      return { x: currentBestX, score: -Infinity, reason: "No piece to drop." };
+    }
+
+    for (const x of FINE_COLS) {
+      // Ensure the piece doesn't go through walls
+      if (x - pieceToDrop.r < -BOARD_X_MAX_LIMIT || x + pieceToDrop.r > BOARD_X_MAX_LIMIT) {
+        continue; // Skip if piece goes out of bounds
+      }
+
+      const simulatedY = simulateDropY(pieceToDrop, x, boardState.pieces);
+      let currentPlacementScore = 0;
+
+      // Penalize height
+      currentPlacementScore -= calculateHeightPenalty(simulatedY);
+
+      // Bonus for merge opportunities
+      currentPlacementScore += calculateMergeBonus(pieceToDrop, x, simulatedY, boardState.pieces, boardState.garbage);
+
+      // Bonus for small piece clustering
+      currentPlacementScore += calculateClusterBonus(pieceToDrop, x, simulatedY, boardState.pieces);
+
+      // Encourage large pieces to be on one side (simple approximation)
+      // This helps with "大型ピースの片側集約" principle.
+      if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
+        const leftSideDensity = boardState.pieces.filter(p => p.x < 0).length;
+        const rightSideDensity = boardState.pieces.filter(p => p.x > 0).length;
+
+        // Favor placing large pieces on the side that currently has less density or where the first large piece landed.
+        // A more sophisticated approach would track the 'heavy side'. For now, a simple heuristic:
+        if (leftSideDensity < rightSideDensity && x < 0) {
+          currentPlacementScore += 100;
+        } else if (rightSideDensity < leftSideDensity && x > 0) {
+          currentPlacementScore += 100;
+        } else if (Math.abs(x) < 0.5) { // Mild penalty for dropping large piece in center if sides are unbalanced
+            currentPlacementScore -= 20;
+        }
+      }
+
+      // Prioritize clearing garbage by placing pieces lower if garbage exists
+      // "Merging near the bottom of the board is more effective for clearing garbage"
+      if (boardState.garbage.ratio > 0.05 && simulatedY < boardState.garbage.height) {
+        currentPlacementScore += 50; // Small bonus for staying below garbage height to enable clearing
+      }
+
+      if (currentPlacementScore > currentMaxScore) {
+        currentMaxScore = currentPlacementScore;
+        currentBestX = x;
+        currentBestReason = `Evaluated drop for type ${pieceToDrop.type} at x=${x.toFixed(2)}`;
+        if (isHoldingAttempt) {
+            currentBestReason += " (using HOLD)";
+        }
+      }
+    }
+    return { x: currentBestX, score: currentMaxScore, reason: currentBestReason };
   };
+
+  // 1. Evaluate current next piece
+  const { x: nextX, score: nextScore, reason: nextReason } = evaluatePlacement(boardState.next);
+  maxScore = nextScore;
+  bestX = nextX;
+  bestReason = nextReason;
+
+  // 2. Evaluate held piece if available and canHold
+  if (boardState.canHold && boardState.hold) {
+    const { x: holdX, score: holdScore, reason: holdReason } = evaluatePlacement(boardState.hold, true);
+    if (holdScore > maxScore) {
+      maxScore = holdScore;
+      // Note: The x from the held piece evaluation is conceptually the 'best place *if* we hold',
+      // but the actual `x` returned when `hold: true` is set is ignored by the game system.
+      // We keep it here for internal consistency/debugging if needed.
+      bestX = holdX;
+      bestReason = holdReason;
+      useHold = true;
+    }
+  }
+
+  return { x: bestX, reason: bestReason, hold: useHold };
 }
