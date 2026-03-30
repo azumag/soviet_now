@@ -62,6 +62,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v417: AVOID_BLOCK suppression in congested endgame — prevent edge scatter
+     # Postmortem: worst games show x=±3.0 edge scatter when rp>=5, max_y>=2.5, NO merge.
+     # AVOID_BLOCK_REACTIVE_PAIR (axis 9.3, -500 cap) overwhelms stacking/proximity guidance
+     # (~200-900) and height penalty diffs (~250), pushing pieces to isolated edge positions
+     # where they can never contribute to merges. Suppressing in congested regime allows
+     # v416 stacking redirect (lowest same-type) and proximity guidance to compete with height.
+     # T53-T54: x=3.0 scatter, T57: x=-3.0 scatter, T71: x=1.8 blocked from center.
+     # Fixes postmortem: p25 collapse from piece_count accumulation via edge scatter
+     # refs: game_history/20260330_211924_score0634.jsonl T53-60,
+     #       game_history/20260330_213224_score0664.jsonl T65-72,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+     #       tmp/state/last_rollback_analysis.md, tmp/improve_brief.md
      # v416: stacking target redirection — replace v414/v415 binary block with state-dependent
      # target selection fork. v414/v415 blocked stacking entirely in danger → HEIGHT_CONTROL
      # scatter (avg_score_delta=1.7) took over with no guidance. v416: stacking ALWAYS fires but
@@ -982,27 +994,36 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_090616_score0296.jsonl T37-47,
         #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
         if merge_grade == "NO" and reactive_pair_count >= 1 and piece_count >= 25:
-            blocking_penalty = 0.0
-            for rp in reactive_pairs:
-                if isinstance(rp, (list, tuple)) and len(rp) >= 3:
-                    rp_type = rp[2]
-                    if rp_type != next_type:
-                        pos1 = piece_pos_by_id.get(rp[0])
-                        pos2 = piece_pos_by_id.get(rp[1])
-                        if pos1 and pos2:
-                            x1, y1 = pos1
-                            x2, y2 = pos2
-                            # Check if landing is within the horizontal span of the reactive pair
-                            span_min = min(x1, x2) - 0.5
-                            span_max = max(x1, x2) + 0.5
-                            if span_min <= x <= span_max:
-                                # Penalize if landing at or above the reactive pair level
-                                pair_min_y = min(y1, y2)
-                                if landing_y >= pair_min_y:
-                                    blocking_penalty += 200.0
-            if blocking_penalty > 0:
-                score -= min(blocking_penalty, 500.0)
-                reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+            # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
+            # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
+            # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
+            # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
+            board_congested = (
+                (max_y >= 3.0 and deadline_crossed)
+                or (reactive_pair_count >= 5 and max_y >= 2.5)
+            )
+            if not board_congested:
+                blocking_penalty = 0.0
+                for rp in reactive_pairs:
+                    if isinstance(rp, (list, tuple)) and len(rp) >= 3:
+                        rp_type = rp[2]
+                        if rp_type != next_type:
+                            pos1 = piece_pos_by_id.get(rp[0])
+                            pos2 = piece_pos_by_id.get(rp[1])
+                            if pos1 and pos2:
+                                x1, y1 = pos1
+                                x2, y2 = pos2
+                                # Check if landing is within the horizontal span of the reactive pair
+                                span_min = min(x1, x2) - 0.5
+                                span_max = max(x1, x2) + 0.5
+                                if span_min <= x <= span_max:
+                                    # Penalize if landing at or above the reactive pair level
+                                    pair_min_y = min(y1, y2)
+                                    if landing_y >= pair_min_y:
+                                        blocking_penalty += 200.0
+                if blocking_penalty > 0:
+                    score -= min(blocking_penalty, 500.0)
+                    reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
