@@ -62,6 +62,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v418: reactive pair density scaling on proximity guidance — reduce type scattering in merge-ready boards
+     # When many reactive pairs exist (rp>=2), the board is merge-ready but pieces may be scattered.
+     # Weak guidance (base ~120) at low-mid game allows HEIGHT_CONTROL to scatter pieces, reducing
+     # future merge opportunities. rp density scaling multiplies proximity_bonus by 1.2-2.5x based
+     # on reactive_pair_count (unutilized in axis 9.6b), strengthening guidance when merge
+     # potential is highest. Suppressed in extreme danger (postmortem constraint).
+     # Batch: HEIGHT_CONTROL 20.6% low vs 12.8% high — guidance too weak to overcome height preference.
+     # Worst T45-52: types 11×2 scattered 1.66u apart → no merge → death at 721.
+     # Extra_low T60-67: rp=6-7, merge_grade=NO → HEIGHT_CONTROL scatter → death at 737.
+     # Fixes postmortem failure mode: type scattering → merge drought → low p25
+     # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+     #       game_history/20260330_223038_score0721.jsonl, game_history/20260330_222528_score0737.jsonl,
+     #       strategy.py.staging (v417 AVOID_BLOCK suppression)
      # v417: AVOID_BLOCK suppression in congested endgame — prevent edge scatter
      # Postmortem: worst games show x=±3.0 edge scatter when rp>=5, max_y>=2.5, NO merge.
      # AVOID_BLOCK_REACTIVE_PAIR (axis 9.3, -500 cap) overwhelms stacking/proximity guidance
@@ -977,6 +990,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # refs: advice.md (Pitman_live), tmp/batch_summary.txt
                     if next_type == next_next_type:
                         proximity_bonus *= 1.5
+                    # v418: reactive pair density scaling — utilize reactive_pair_count in proximity guidance
+                    # When many reactive pairs exist on the board, merge potential is high. Placing near
+                    # same-type targets creates future merge opportunities. At rp=1, guidance is weak
+                    # (board is not merge-ready). At rp>=3, stronger guidance directs pieces toward
+                    # same-type targets, reducing type scattering that causes merge droughts.
+                    # Suppressed in extreme danger to respect postmortem height reduction priority.
+                    rp_guidance_suppressed = (
+                        (max_y >= 3.0 and deadline_crossed)
+                        or (reactive_pair_count >= 5 and max_y >= 2.5)
+                    )
+                    if not rp_guidance_suppressed and reactive_pair_count >= 2:
+                        rp_density_scale = 1.0 + (reactive_pair_count - 1) * 0.2
+                        proximity_bonus *= min(rp_density_scale, 2.5)
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
