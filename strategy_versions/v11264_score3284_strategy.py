@@ -62,6 +62,22 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v413: stacking landing_y decay — prevent stacking override at dangerous heights
+     # v408 congestion scaling makes stacking bonus (~200-900 at pc=35) competitive with height penalty
+     # (~75-270 in HIGH phase with 0.5 floor). But stacking targets same-type piece closest to
+     # merged_type(N+1), and when board is congested, landing near that target can be at y=2.5+.
+     # Existing target_y decay (sp_y > 1.0) covers target height but not landing height — a low
+     # target (y=-0.5) can still result in high landing (y=3.0) when board is congested above it.
+     # Extra_low T66: stacking_bonus=564 (congestion 2x) pulled toward target at y=-0.56, but actual
+     # landing was y=3.72. Height penalty (125) was overwhelmed. Game over at score 1051, 39 pieces.
+     # Landing_y decay complements target_y decay: both must be low for full stacking bonus.
+     # At y=1.0: no decay (safe chain-building). At y=2.0: 50% (height signal competitive).
+     # At y=3.0: 10% floor (extreme height override). Postmortem-safe: bonus reduction not penalty,
+     # doesn't block merge paths, doesn't add type-based placement constraints (cf v410 rollback).
+     # Fixes postmortem failure mode: piece_count accumulation from stacking at high landing positions
+     # refs: game_history/20260330_164453_score1051.jsonl T66 (stacking y=3.72, pc=37),
+     #       game_history/20260330_162017_score1169.jsonl T63-69, tmp/batch_summary.txt,
+     #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
      # v412: nextNext-aware proximity — strengthen same-type guidance when next two pieces are same type
      # When next_type == next_next_type and merge_grade=NO, the next turn is guaranteed to have a
      # merge opportunity (same-type pieces exist on board). Placing the current (different-type) piece
@@ -823,6 +839,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if piece_count >= 28:
                         congestion_scale = 1.0 + (piece_count - 28) * 0.12
                         stacking_bonus *= min(congestion_scale, 3.0)
+                    # v413: landing_y decay — prevent stacking from overriding height safety
+                    # v408 congestion scaling can make stacking_bonus (~500+) exceed height penalty
+                    # (~125-270) at high pc, causing pieces to land at y=2.5+ near same-type targets
+                    # that happen to be on tall structures. Existing target_y decay (sp_y > 1.0) covers
+                    # target height but not landing height — low targets can still yield high landings.
+                    # Decay: y=1.0→100%, y=1.5→75%, y=2.0→50%, y=3.0→10%. Safe stacking at y<1.0
+                    # preserved; dangerous overrides at y>2.0 prevented. Postmortem-safe: bonus reduction.
+                    if landing_y > 1.0:
+                        stacking_bonus *= max(0.1, 1.0 - (landing_y - 1.0) * 0.5)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
