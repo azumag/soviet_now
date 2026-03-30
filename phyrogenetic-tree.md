@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-31 05:41:00 JST`
-- Nodes: `828`
-- Edges: `1143`
-- Current: `5b1ed9feee39`
+- Updated: `2026-03-31 06:29:45 JST`
+- Nodes: `829`
+- Edges: `1144`
+- Current: `35a31ad32371`
 - Anchor: `97a63b4bac79`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_e24de3a4fc60["e24de3a4fc60<br/>g=12 n=12<br/>comp=9988.3"]
     h_53e584297370["53e584297370<br/>g=24 n=20<br/>comp=10501.0"]
     h_b1af357f0fbb["b1af357f0fbb<br/>g=12 n=12<br/>comp=10254.0"]
     h_e784ee80c6b0["e784ee80c6b0<br/>g=12 n=12<br/>comp=10412.1"]
@@ -72,11 +71,11 @@ flowchart TD
     h_5a5041d085a2["5a5041d085a2<br/>g=12 n=12<br/>comp=12075.6"]
     h_97a63b4bac79["97a63b4bac79<br/>ANCHOR<br/>g=12 n=12<br/>comp=12409.2"]
     h_23cb1f623799["23cb1f623799<br/>g=12 n=12<br/>comp=10932.4"]
+    h_5b1ed9feee39["5b1ed9feee39<br/>g=12 n=12<br/>comp=11233.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_5b1ed9feee39["5b1ed9feee39<br/>CURRENT"]
+    h_35a31ad32371["35a31ad32371<br/>CURRENT"]
 
-    h_e24de3a4fc60 -->|improve| h_53e584297370
     h_53e584297370 -->|improve| h_b1af357f0fbb
     h_b1af357f0fbb -->|improve| h_e784ee80c6b0
     h_e784ee80c6b0 -->|improve| h_0a1b5dfabf95
@@ -141,13 +140,13 @@ flowchart TD
     h_5a5041d085a2 -->|improve| h_97a63b4bac79
     h_97a63b4bac79 -->|improve| h_23cb1f623799
     h_23cb1f623799 -->|improve| h_5b1ed9feee39
+    h_5b1ed9feee39 -->|improve| h_35a31ad32371
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_e24de3a4fc60 plain;
     class h_53e584297370 plain;
     class h_b1af357f0fbb plain;
     class h_e784ee80c6b0 plain;
@@ -204,9 +203,10 @@ flowchart TD
     class h_5a5041d085a2 plain;
     class h_97a63b4bac79 anchor;
     class h_23cb1f623799 plain;
+    class h_5b1ed9feee39 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_5b1ed9feee39 current;
+    class h_35a31ad32371 current;
 ```
 
 ## Detail 1/11
@@ -3061,9 +3061,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `5b1ed9feee39`
-- Nodes in this diagram: `28`
-- Internal edges in this diagram: `26`
+- Range: `422188c46bb8` .. `35a31ad32371`
+- Nodes in this diagram: `29`
+- Internal edges in this diagram: `27`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3100,9 +3100,10 @@ flowchart TD
     h_5a5041d085a2["5a5041d085a2<br/>g=12 n=12<br/>comp=12075.6"]
     h_97a63b4bac79["97a63b4bac79<br/>ANCHOR<br/>g=12 n=12<br/>comp=12409.2"]
     h_23cb1f623799["23cb1f623799<br/>g=12 n=12<br/>comp=10932.4"]
+    h_5b1ed9feee39["5b1ed9feee39<br/>g=12 n=12<br/>comp=11233.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_5b1ed9feee39["5b1ed9feee39<br/>CURRENT"]
+    h_35a31ad32371["35a31ad32371<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3130,6 +3131,7 @@ flowchart TD
     h_5a5041d085a2 -->|improve| h_97a63b4bac79
     h_97a63b4bac79 -->|improve| h_23cb1f623799
     h_23cb1f623799 -->|improve| h_5b1ed9feee39
+    h_5b1ed9feee39 -->|improve| h_35a31ad32371
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3161,12 +3163,23 @@ flowchart TD
     class h_5a5041d085a2 plain;
     class h_97a63b4bac79 anchor;
     class h_23cb1f623799 plain;
+    class h_5b1ed9feee39 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_5b1ed9feee39 current;
+    class h_35a31ad32371 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11418 `5b1ed9fe -> 35a31ad3`
+
+- scores: `6436 14745 10610 15708 14589 8584 8695 13528 10880 14809 10318 13272`
+- v426: AVOID_BLOCK suppression gap fix — AND→OR to match postmortem specified range
+- Postmortem: "AVOID_BLOCK が rp>=5 または max_y>=3.0+deadline のみが正しい抑制範囲"
+- v417 used AND: (rp>=5 and max_y>=2.5), leaving a gap at max_y 2.0-2.5 with rp>=5.
+- Worst game T41: max_y=2.33, rp=6, deadline=true → AVOID_BLOCK fired, pushed to x=-3.0
+- edge. With OR: rp=6 >= 5 → suppressed, stacking/proximity guidance (~300-500) would
+- direct placement near same-type instead of isolated edge scatter. Protected strategy
 
 ### Improve Game#11406 `23cb1f62 -> 5b1ed9fe`
 
