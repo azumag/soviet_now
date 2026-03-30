@@ -62,6 +62,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v421: piece_count-aware NEAR deadline risk — reduce risky NEAR at high pc
+     # Postmortem prioritize: "NEAR merge 失敗時の piece_count 蓄積を防ぐため、deadline_crossed 下での
+     # NEAR merge の選択をより慎重にすること" and "piece_count >= 33 を閾値として、DIRECT merge
+     # のみを積極的に狙い、NEAR merge は landing_y < 0 の安全なものに限定するロジック"
+     # Root cause: at high pc, failed NEAR (68.5% success) adds a piece without merge benefit,
+     # accelerating piece_count accumulation → max_y runaway → game over.
+     # Worst T74: pc=41, deadline, DANGER_NEAR_MERGE_PRIORITY overrides NEAR_DEADLINE_RISK,
+     # NEAR at high y fails (delta=0), pc 40→41. Bad score0823: pc=34, NEAR fails ×2, pc→36.
+     # Rollback target score2006: pc=33, DIRECT merge +282, pc 35→27.
+     # Two-part fix: (1) NEAR_DEADLINE_RISK scaled by pc at >=33 (penalty up to 2.7x at pc=40),
+     # (2) DANGER_NEAR_MERGE_PRIORITY suppressed at pc>=33 + landing_y>=1.5 + deadline_crossed.
+     # At pc=35, y=2.0, deadline: net NEAR drops from +1200 to +150. NEAR still taken but
+     # lower-y NEAR strongly preferred (787 point swing), reducing height impact of failure.
+     # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at deadline
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       tmp/batch_summary.txt, game_history/20260331_014942_score0970.jsonl T74,
+     #       game_history/20260331_021953_score1001.jsonl T70-T73, strategy.py.staging (v418)
      # v418: reactive pair density scaling on proximity guidance — reduce type scattering in merge-ready boards
      # When many reactive pairs exist (rp>=2), the board is merge-ready but pieces may be scattered.
      # Weak guidance (base ~120) at low-mid game allows HEIGHT_CONTROL to scatter pieces, reducing
@@ -736,7 +753,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
         if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
             risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
-            near_risk_penalty = landing_y * 300.0 * risk_factor
+            # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
+            # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
+            # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
+            if piece_count >= 33:
+                pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
+            else:
+                pc_risk_scale = 1.0
+            near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
@@ -782,7 +806,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_081450_score0774.jsonl, game_history/20260329_080000_score3902.jsonl,
         #       game_history/20260329_080456_score2801.jsonl, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
         if result.get("danger_merge_available", False) and merge_grade == "NEAR":
-            bonus = 600.0 if deadline_crossed else 300.0
+            # v421: suppress DANGER_NEAR bonus at high pc + high landing_y + deadline
+            # Postmortem: "landing_y >= 1.5 かつ deadline_crossed 時の NEAR merge は
+            # DANGER_NEAR_MERGE_PRIORITY を無効化するか NEAR_DEADLINE_RISK を増強すること"
+            # At pc>=33, deadline, landing_y>=1.5: danger NEAR at high y adds piece if fails
+            # (31.5% rate) with no benefit. Suppress bonus to let enhanced risk penalty work.
+            if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
+                bonus = 0.0
+            else:
+                bonus = 600.0 if deadline_crossed else 300.0
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
