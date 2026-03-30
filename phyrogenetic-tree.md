@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-30 19:26:43 JST`
-- Nodes: `819`
-- Edges: `1133`
-- Current: `28747cec42cd`
+- Updated: `2026-03-30 20:22:07 JST`
+- Nodes: `820`
+- Edges: `1134`
+- Current: `9c0f47044ed1`
 - Anchor: `9efec03deebb`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_c3a4d0caf321["c3a4d0caf321<br/>g=12 n=12<br/>comp=9455.0"]
     h_bc85edb25d78["bc85edb25d78<br/>g=12 n=12<br/>comp=11129.5"]
     h_78d702e43155["78d702e43155<br/>g=17 n=17<br/>comp=7936.3"]
     h_d37c7572b29b["d37c7572b29b<br/>g=12 n=12<br/>comp=10084.8"]
@@ -72,9 +71,10 @@ flowchart TD
     h_1e00ebfbb96a["1e00ebfbb96a<br/>g=13 n=13<br/>comp=10632.4"]
     h_8a2c0083198b["8a2c0083198b<br/>g=24 n=20<br/>comp=11441.5"]
     h_75a5f2792f1c["75a5f2792f1c<br/>g=12 n=12<br/>comp=9934.9"]
+    h_28747cec42cd["28747cec42cd<br/>g=12 n=12<br/>comp=9679.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_28747cec42cd["28747cec42cd<br/>CURRENT"]
+    h_9c0f47044ed1["9c0f47044ed1<br/>CURRENT"]
 
     h_bc85edb25d78 -->|improve| h_78d702e43155
     h_78d702e43155 -->|improve| h_d37c7572b29b
@@ -139,13 +139,13 @@ flowchart TD
     h_8a2c0083198b -->|improve| h_75a5f2792f1c
     h_75a5f2792f1c -. rollback .-> h_8a2c0083198b
     h_8a2c0083198b -->|improve| h_28747cec42cd
+    h_28747cec42cd -->|improve| h_9c0f47044ed1
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_c3a4d0caf321 plain;
     class h_bc85edb25d78 plain;
     class h_78d702e43155 plain;
     class h_d37c7572b29b plain;
@@ -202,9 +202,10 @@ flowchart TD
     class h_1e00ebfbb96a plain;
     class h_8a2c0083198b plain;
     class h_75a5f2792f1c plain;
+    class h_28747cec42cd plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_28747cec42cd current;
+    class h_9c0f47044ed1 current;
 ```
 
 ## Detail 1/11
@@ -3059,9 +3060,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `28747cec42cd`
-- Nodes in this diagram: `19`
-- Internal edges in this diagram: `16`
+- Range: `422188c46bb8` .. `9c0f47044ed1`
+- Nodes in this diagram: `20`
+- Internal edges in this diagram: `17`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3089,9 +3090,10 @@ flowchart TD
     h_1e00ebfbb96a["1e00ebfbb96a<br/>g=13 n=13<br/>comp=10632.4"]
     h_8a2c0083198b["8a2c0083198b<br/>g=24 n=20<br/>comp=11441.5"]
     h_75a5f2792f1c["75a5f2792f1c<br/>g=12 n=12<br/>comp=9934.9"]
+    h_28747cec42cd["28747cec42cd<br/>g=12 n=12<br/>comp=9679.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_28747cec42cd["28747cec42cd<br/>CURRENT"]
+    h_9c0f47044ed1["9c0f47044ed1<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3109,6 +3111,7 @@ flowchart TD
     h_8a2c0083198b -->|improve| h_75a5f2792f1c
     h_75a5f2792f1c -. rollback .-> h_8a2c0083198b
     h_8a2c0083198b -->|improve| h_28747cec42cd
+    h_28747cec42cd -->|improve| h_9c0f47044ed1
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3131,12 +3134,23 @@ flowchart TD
     class h_1e00ebfbb96a plain;
     class h_8a2c0083198b plain;
     class h_75a5f2792f1c plain;
+    class h_28747cec42cd plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_28747cec42cd current;
+    class h_9c0f47044ed1 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11298 `28747cec -> 9c0f4704`
+
+- scores: `16218 10211 13414 9380 9845 9103 9765 13218 9172 9876 9391 9143`
+- v416: stacking target redirection — replace v414/v415 binary block with state-dependent
+- target selection fork. v414/v415 blocked stacking entirely in danger → HEIGHT_CONTROL
+- scatter (avg_score_delta=1.7) took over with no guidance. v416: stacking ALWAYS fires but
+- target changes: normal → merged_type proximity (chain building), congested → lowest
+- same-type piece (height-priority). Preserves stacking incentive in all cases; congested
+- mode naturally reduces landing height while maintaining same-type proximity for merges.
 
 ### Improve Game#11286 `8a2c0083 -> 28747cec`
 
