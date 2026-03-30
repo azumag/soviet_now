@@ -62,6 +62,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v412: nextNext-aware proximity — strengthen same-type guidance when next two pieces are same type
+     # When next_type == next_next_type and merge_grade=NO, the next turn is guaranteed to have a
+     # merge opportunity (same-type pieces exist on board). Placing the current (different-type) piece
+     # near same-type targets creates a merge-assist position: after next merges (creating N+1), the
+     # remaining same-type pieces are nearby for subsequent merges. This addresses the advice
+     # "2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る".
+     # Worst games show HEIGHT_CONTROL scatter at reactive 0-2 when no same-type guidance competes with
+     # height penalty (worst T57-T58: HEIGHT_CONTROL despite same-type pieces at y=-3.4). The 1.5x multiplier
+     # raises guidance from ~190 to ~285 at pc=35 (still below height diffs ~100-200, won't override merges).
+     # Purely additive bonus (postmortem-safe). Uses next_next_type beyond axis 5 equality check.
+     # Fixes postmortem: piece_count accumulation from HEIGHT_CONTROL scatter at merge drought
+     # refs: advice.md (Pitman_live: 2手先の併合可能性最大化), tmp/batch_summary.txt (HEIGHT_CONTROL 17.5%),
+     #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       game_history/20260330_152555_score0769.jsonl T57-T58, analyze_board.py
      # v411: deadline-crossing NO-merge penalty — utilize unutilized per-candidate crosses_deadline
      # analyze_board.py computes crosses_deadline per-candidate (top_after_drop >= DEADLINE_Y) but strategy
      # never reads it. When merge_grade=NO, placing a piece that crosses the deadline is the worst
@@ -904,6 +918,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity_bonus *= min(congestion_scale, 3.0)
                     if target_y > 0:
                         proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
+                    # v412: nextNext-aware proximity — when next two pieces are same type,
+                    # strengthen guidance. After next merges (creating N+1), remaining same-type
+                    # targets are nearby for the next-next piece. 1.5x multiplier raises bonus
+                    # from ~190 to ~285 at pc=35, competitive with height diffs (~100-200).
+                    # Only fires when merge_grade=NO (doesn't compete with immediate merges).
+                    # refs: advice.md (Pitman_live), tmp/batch_summary.txt
+                    if next_type == next_next_type:
+                        proximity_bonus *= 1.5
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
