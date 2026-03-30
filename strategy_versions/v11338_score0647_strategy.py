@@ -62,6 +62,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v419: piece_count-based AVOID_BLOCK suppression — prevent edge scatter in crowded high boards
+     # v417 suppresses AVOID_BLOCK at rp>=5 or max_y>=3.0+deadline, but worst games show AVOID_BLOCK
+     # dominating at rp=1-2 and max_y=2.0-2.5 (below both thresholds). The penalty (-500 max)
+     # overwhelms stacking/proximity guidance (~100-300), pushing pieces to isolated edge positions.
+     # Extra_low 2106: T108 (pc=41, max_y=2.44, rp=2) — AVOID_BLOCK pushes to edge, pc grows 41→48.
+     # Worst 893: T62-66 (pc=33-37, max_y=1.47-2.65) — AVOID_BLOCK dominates, no merge for 5 turns.
+     # piece_count>=35 + max_y>=2.0 captures "board is full and tall" earlier than rp>=5 threshold.
+     # Postmortem: piece_count is the key predictor of final score. At high pc, blocking avoidance
+     # is less important than maintaining any same-type proximity to enable future merges.
+     # Protected strategy (v357) had no AVOID_BLOCK axis — high median without this penalty.
+     # Fixes postmortem failure mode: piece_count accumulation from AVOID_BLOCK edge scatter at rp<5
+     # refs: game_history/20260330_235747_score2106.jsonl T102-116,
+     #       game_history/20260330_234054_score0893.jsonl T60-66,
+     #       game_history/20260330_234338_score0930.jsonl T53-67,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/change_log.txt
      # v418: reactive pair density scaling on proximity guidance — reduce type scattering in merge-ready boards
      # When many reactive pairs exist (rp>=2), the board is merge-ready but pieces may be scattered.
      # Weak guidance (base ~120) at low-mid game allows HEIGHT_CONTROL to scatter pieces, reducing
@@ -1021,12 +1038,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
         if merge_grade == "NO" and reactive_pair_count >= 1 and piece_count >= 25:
             # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
-            # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
-            # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
-            # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
+            # v419: extended with piece_count-based condition. v417 used rp>=5 (too high
+            # for worst games with rp=1-2). piece_count>=35 + max_y>=2.0 captures "full+ tall"
+            # boards earlier, allowing stacking/proximity to compete and reduce isolation.
+            # Protected strategy (v357) had no AVOID_BLOCK — high median without it.
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or (piece_count >= 35 and max_y >= 2.0)
             )
             if not board_congested:
                 blocking_penalty = 0.0
