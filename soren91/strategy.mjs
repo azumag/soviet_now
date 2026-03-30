@@ -1,26 +1,30 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v117)
+ * strategy.mjs - ドロップ位置決定戦略 (v118)
  *
- * v117: v116をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
+ * v118: v117をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
  *       特に、高Y到達と小型ピースの散乱の問題、大型ピースの集約と連鎖設計の強化、および先読みの導入を行います。
  *
- *      主な改善点 (v116からの調整点):
+ *      主な改善点 (v117からの調整点):
  *      1.  **高さ管理のさらなる強化とシミュレーションの調整**:
- *          - `simulateDropY` の「settling」バッファを `0.2` から `0.4` に増加。
+ *          - `simulateDropY` の「settling」バッファを `0.4` から `0.5` に増加。
  *            物理挙動の不確実性や凸ポリゴン形状による実際の高さ到達がシミュレーションよりも高くなる傾向があるため、
  *            デッドライン到達のリスクをさらに過小評価しないように、より悲観的にY座標を予測します。
  *            これにより、デッドライン付近への危険な配置をより強く抑制します。
- *      2.  **先読み (Look-ahead) の導入**:
- *          - `boardState.nextPieces[1]` (次々ピース) を考慮した1ステップ先の簡易的な先読みを導入。
- *            `boardState.next` の配置決定時に、その後の盤面で `nextPieces[1]` が最もスコアが高くなる配置も合わせて評価し、
- *            そのスコアを `LOOK_AHEAD_WEIGHT` (0.5) で加算することで、より長期的な視点での配置選択を可能にします。
- *            これにより、パイプライン維持や連鎖設計の原則を間接的に強化します。
- *          - HOLD判断にもこの先読みロジックを適用し、HOLDした後の次ピースの最適配置も考慮します。
- *      3.  その他の調整 (v116からの維持):
- *          - `HEIGHT_PENALTY_WEIGHT` および高さペナルティ計算における乗数はv116の調整を維持し、強力な高さ抑制を継続します。
- *          - 小型ピースの管理戦略（密度ボーナス削除、マージ触媒ボーナス導入）はv116の調整を維持します。
- *          - おじゃまブロックの緊急モード閾値もv116の調整を維持します。
- *          - 大型ピースの集約ボーナス計算はv116のロジックを維持します。
+ *          - `HEIGHT_PENALTY_WEIGHT` を `250.0` から `300.0` に増加。
+ *            高さペナルティの全体的な影響を強化し、高Yへの配置をさらに抑制します。
+ *          - `calculateHeightPenalty` 内のクリティカル高Yペナルティの乗数を `7` から `8` に増加。
+ *            デッドラインに近づくにつれてペナルティが指数関数的に急増する効果をさらに高めます。
+ *      2.  **大型ピースの集約インセンティブの強化**:
+ *          - `LARGE_PIECE_GROUPING_BONUS` を `1000` から `1500` に増加。
+ *            大型ピースの片側集約戦略の重要性を強調し、既存の大型ピース群に合流させるインセンティブを強化します。
+ *      3.  **おじゃまブロック緊急モードのさらなる優先**:
+ *          - `GARBAGE_URGENT_MERGE_BONUS` を `6000` から `8000` に増加。
+ *            おじゃまブロックが差し迫っている、または深刻な状況下でのマージ活動の優先度を大幅に高めます。
+ *          - `LOW_Y_GARBAGE_MERGE_BONUS` を `3000` から `4000` に増加。
+ *            おじゃまブロックがアクティブな状態での低Yマージに対するボーナスを強化し、効率的な除去を促進します。
+ *      4.  その他の調整 (v117からの維持):
+ *          - 先読み (Look-ahead) のロジックと `LOOK_AHEAD_WEIGHT` はv117の調整を維持します。
+ *          - 小型ピースの管理戦略（密度ボーナス削除、マージ触媒ボーナス導入）はv117の調整を維持します。
  *
  *      注意点:
  *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
@@ -55,16 +59,16 @@ const OJAMA_GAUGE_URGENT = 0.6;         // Adjusted from 0.5 (v115) to align wit
 // Scoring weights (New constants for strategy logic)
 const MERGE_BONUS_BASE = 1200; // Increased from 1000 (v113)
 const MERGE_BONUS_PER_TYPE = 600; // Increased from 500 (v113)
-const HEIGHT_PENALTY_WEIGHT = 250.0; // Adjusted from 180.0 (v115) for more aggressive height control.
+const HEIGHT_PENALTY_WEIGHT = 300.0; // Adjusted from 250.0 (v117) for more aggressive height control.
 const GARBAGE_MERGE_BONUS = 2500; // Increased from 2000 (v113)
-const GARBAGE_URGENT_MERGE_BONUS = 6000; // Increased from 5000 (v113)
-const LARGE_PIECE_GROUPING_BONUS = 1000; // Increased from 800 (v113)
+const GARBAGE_URGENT_MERGE_BONUS = 8000; // Increased from 6000 (v117)
+const LARGE_PIECE_GROUPING_BONUS = 1500; // Increased from 1000 (v117)
 const HOLD_ADVANTAGE_THRESHOLD = 1500; // Increased from 1000 (v113)
 
 // New: Bonus for merges at lower Y, especially with garbage
 const LOW_Y_MERGE_THRESHOLD = -0.5; // Y coordinate below which a merge gets a bonus
 const LOW_Y_MERGE_BONUS = 1000; // Base bonus for merges at low Y
-const LOW_Y_GARBAGE_MERGE_BONUS = 3000; // Extra bonus for low Y merges when garbage is active.
+const LOW_Y_GARBAGE_MERGE_BONUS = 4000; // Extra bonus for low Y merges when garbage is active. (Increased from 3000 in v117)
 const SMALL_PIECE_MERGE_TRIGGER_BONUS = 750; // New: Bonus for small pieces causing a merge.
 const LOOK_AHEAD_WEIGHT = 0.5; // Weight for the score contribution of the second piece in look-ahead.
 
@@ -125,9 +129,9 @@ function simulateDropY(droppingPiece, targetX, currentPieces) {
         }
     }
     // Add a small buffer for "settling" and non-perfect circle physics/rolling
-    // Increased from 0.2 (v116) to 0.4 for more pessimistic height estimation,
+    // Increased from 0.4 (v117) to 0.5 for more pessimistic height estimation,
     // reflecting that pieces often settle higher due to irregular shapes and rotations.
-    return maxY + 0.4;
+    return maxY + 0.5;
 }
 
 /**
@@ -200,7 +204,7 @@ function calculateHeightPenalty(simulatedY, pieceRadius) {
         // Exponential penalty for critical height, closer to deadline
         const heightOverCritical = topY - TOP_Y_CRITICAL_PENALTY_START;
         // The power of 3 makes it very steep. Adjusted multiplier for more impact.
-        penalty += HEIGHT_PENALTY_WEIGHT * Math.pow(heightOverCritical * 7, 3); // Increased from 5 (v115) for steeper penalty
+        penalty += HEIGHT_PENALTY_WEIGHT * Math.pow(heightOverCritical * 8, 3); // Increased from 7 (v117) for steeper penalty
     } else if (topY >= TOP_Y_WARN_PENALTY_START) {
         // Linear penalty for warning height
         const heightOverWarn = topY - TOP_Y_WARN_PENALTY_START;
