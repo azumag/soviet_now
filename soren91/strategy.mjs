@@ -1,34 +1,28 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v123)
+ * strategy.mjs - ドロップ位置決定戦略 (v124)
  *
- * v123: v122をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
+ * v124: v123をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
  *       特に、デッドラインを越える挙動が観察されたことから、高さ管理をより厳格化し、
  *       おじゃまブロック存在時の挙動をプロンプトの記述と一致させ、
  *       大型ピースの片側集約ロジックをさらに強化することで、
  *       安定した盤面形成と生存ターン数の最大化、そしてより良いランキングを目指します。
  *
- *      主な改善点 (v122からの調整点):
+ *      主な改善点 (v123からの調整点):
  *      1.  **高さ管理のさらなる厳格化**:
- *          - `TOP_Y_CRITICAL_PENALTY_START_RELATIVE` を `0.3` から `0.4` へ増加。
- *            (これにより、クリティカルペナルティの開始Y座標が `DEADLINE_Y - 0.4 = 2.1` となり、より低い位置から適用されます。)
- *          - `TOP_Y_WARN_PENALTY_START_RELATIVE` を `1.0` から `1.2` へ増加。
- *            (これにより、ウォーニングペナルティの開始Y座標が `DEADLINE_Y - 1.2 = 1.3` となり、より低い位置から適用されます。)
- *            シミュレーションの限界により実際のピースがデッドラインを超えてしまうケースが散見されたため、
- *            より低い位置からペナルティを適用することで、保守的な高さ管理を促します。
- *      2.  **ガベージブロック存在時の行動ロジックのプロンプトとの一致**:
- *          - `GARBAGE_RATIO_OJAMA_MERGE` を `0.1` から `0.15` へ変更。
- *          - `OJAMA_GAUGE_OJAMA_MERGE` を `0.2` から `0.3` へ変更。
- *            プロンプトに記載されているおじゃまゲージの「準備モード」の閾値と戦略を一致させ、
- *            より早期におじゃま対策を開始します。
- *      3.  **大型ピースの片側集約ロジックの強化 (v122からの追加強化)**:
- *          - 既存の大型ピースがある場合に、その平均X座標側に大型ピースを配置するボーナスを `250` から `300` へ増加。
- *          - 既存の大型ピースと逆側に配置するペナルティを `200` から `250` へ増加。
- *          - 初めての大型ピースをサイド (`x < -1.0` または `x > 1.0`) に配置するボーナスを `150` から `200` へ増加。
- *            「大型ピースの片側集約」原則をより強力に推進し、盤面の整理を促します。
- *      4.  **緊急時おじゃまブロック存在時の追加高さペナルティ**:
- *          - `ojamaUrgentMode` (ガベージ比率が高いかゲージが危険水準) の際、`simulatedY > -1.0` (ある程度の高さ以上) でドロップする場合に、
- *            追加の線形ペナルティ (`(simulatedY + 1.0) * 50`) を導入。
- *            緊急のおじゃま状況下で、さらに盤面を高くする行為を強く抑制します。
+ *          - `HEIGHT_PENALTY_WEIGHT` を `450.0` から `600.0` へ増加。
+ *            (警告ゾーンにおける線形ペナルティを強化し、早めの高さ抑制を促します。)
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `15` から `20` へ増加。
+ *            (クリティカルゾーンにおける二次ペナルティを大幅に強化し、デッドライン接近を強く抑制します。)
+ *          - `ojamaUrgentMode` (ガベージ比率が高いかゲージが危険水準) の際、`simulatedY > -1.0` でドロップする場合に、
+ *            追加の線形ペナルティの乗数 (`50` から `150`) を増加。
+ *            緊急のおじゃま状況下で、さらに盤面を高くする行為をより強く抑制します。
+ *            これは `max_y` がデッドラインを超える事例が観察されたため、ペナルティを強化することで対応します。
+ *      2.  **緊急時おじゃまブロック存在時の低Yマージボーナス強化**:
+ *          - プロンプトの「底近くでの併合はガベージクリアにより効果的」という原則に基づき、
+ *            ガベージが存在し、かつ `targetY < -2.0` (ボード下部) で併合が発生する場合のボーナスを強化。
+ *            `droppingPiece.type` に応じてボーナスがスケールするようにし、
+ *            `ojamaUrgentMode` の際にはさらに追加ボーナス (`+500`) を加算。
+ *            これにより、低位置での大型ピースの併合が緊急時ガベージクリアにおいて強く推奨されます。
  *
  *      注意点:
  *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
@@ -45,8 +39,8 @@ const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 // Adjusted relative values to make penalties start earlier (lower Y)
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.4; // Increased from 0.3 (v122) - Critical penalty starts at Y=2.1
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.2;     // Increased from 1.0 (v122) - Warning penalty starts at Y=1.3
-const HEIGHT_PENALTY_WEIGHT = 450.0; // Maintained from v122
-const CRITICAL_Y_PENALTY_MULTIPLIER = 15; // Maintained from v122
+const HEIGHT_PENALTY_WEIGHT = 600.0; // Increased from 450.0 (v123)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 20; // Increased from 15 (v123)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -111,19 +105,16 @@ function calculateHeightPenalty(simulatedY) {
 }
 
 // Calculate merge bonus for a potential drop
-function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, garbageState) {
+function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, garbageState, ojamaUrgentMode) {
   let bonus = 0;
-  let ojamaMode = false;
-  let ojamaUrgentMode = false;
+  let ojamaMode = false; // Redefine locally for scope or pass from outside
 
   if (garbageState.ratio >= GARBAGE_RATIO_OJAMA_MERGE || garbageState.gauge >= OJAMA_GAUGE_OJAMA_MERGE) {
     ojamaMode = true;
   }
   // From prompt: When garbage.ratio > 0.4, enter GBG_URGENT mode (aggressive clearing)
   // From prompt: gauge >= 0.6: ojama imminent (aggressively prioritize merges)
-  if (garbageState.ratio > 0.4 || garbageState.gauge >= 0.6) {
-    ojamaUrgentMode = true;
-  }
+  // ojamaUrgentMode is now passed as an argument.
 
   for (const existingPiece of existingPieces) {
     if (droppingPiece.type === existingPiece.type) {
@@ -140,7 +131,11 @@ function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, ga
         }
         // Additional bonus for merging near the bottom to clear garbage
         if (garbageState.ratio > 0.05 && targetY < -2.0) { // arbitrary low Y for "near bottom"
-          bonus += 300; // Maintained 300 from v121
+          let lowYGarbageBonus = 300 + (droppingPiece.type * 50); // Scale with piece type
+          if (ojamaUrgentMode) {
+              lowYGarbageBonus += 500; // Additional bonus for urgent mode
+          }
+          bonus += lowYGarbageBonus;
         }
       }
     }
@@ -213,14 +208,14 @@ export function decide(boardState) {
         // More predictable and stronger penalty: base + scaled by Y
         currentPlacementScore -= (200 + (simulatedY + 1.0) * 100);
 
-        // v123 Add extra penalty if in urgent ojama mode and placing high
+        // v124: Add extra penalty if in urgent ojama mode and placing high (increased multiplier)
         if (ojamaUrgentMode) {
-            currentPlacementScore -= (simulatedY + 1.0) * 50; // Extra penalty for high placement during urgent garbage
+            currentPlacementScore -= (simulatedY + 1.0) * 150; // Increased from 50 (v123)
         }
       }
 
       // Bonus for merge opportunities
-      currentPlacementScore += calculateMergeBonus(pieceToDrop, x, simulatedY, boardState.pieces, boardState.garbage);
+      currentPlacementScore += calculateMergeBonus(pieceToDrop, x, simulatedY, boardState.pieces, boardState.garbage, ojamaUrgentMode);
 
       // Bonus for small piece clustering and general small piece density
       currentPlacementScore += calculateClusterBonus(pieceToDrop, x, simulatedY, boardState.pieces);
@@ -250,7 +245,11 @@ export function decide(boardState) {
 
       // Prioritize clearing garbage by placing pieces lower if garbage exists
       // "Merging near the bottom of the board is more effective for clearing garbage"
+      // This logic is now handled more robustly within calculateMergeBonus for low Y merges.
+      // However, a general bonus for clearing garbage still applies based on current logic.
       if (boardState.garbage.ratio > 0.05 && simulatedY < boardState.garbage.height) {
+        // This general bonus is a fallback; the more specific lowYGarbageBonus in calculateMergeBonus is preferred.
+        // Keeping it for broader application if a low-Y merge doesn't specifically trigger.
         currentPlacementScore += 300; // Maintained 300 from v121
       }
 
