@@ -11,6 +11,7 @@ Game Overview:
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
+         1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -62,6 +63,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v422: high pc NEAR merge penalty — structural fork cancels NEAR bonus at pc>=33+deadline+y>=1.0.
+     # v421 gap: net NEAR still +75 at pc=35,deadline,y=1.0. New axis: -600*merge_mult penalty.
+     # Preserves safe NEAR (y<1.0): best game T82 recovery at pc=33,deadline,y<0 unaffected.
+     # Fixes postmortem: piece_count accumulation from failed NEAR at high pc
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       tmp/batch_summary.txt, game_history/20260331_031009_score1030.jsonl,
+     #       game_history/20260331_025511_score2317.jsonl, analyze_board.py, advice.md
      # v421: piece_count-aware NEAR deadline risk — reduce risky NEAR at high pc
      # Postmortem prioritize: "NEAR merge 失敗時の piece_count 蓄積を防ぐため、deadline_crossed 下での
      # NEAR merge の選択をより慎重にすること" and "piece_count >= 33 を閾値として、DIRECT merge
@@ -763,6 +771,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
+
+        # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
+        # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
+        # landing_y < 0 の安全なものに限定するロジック"
+        # v421 added gradual pc_risk_scale but net NEAR still positive at pc=35, deadline,
+        # y=1.0 (+75). Failed NEAR (31.5% success) at high pc adds piece without benefit,
+        # accelerating piece_count accumulation → max_y runaway → game over.
+        # Worst: pc=36, NEAR at high y fails ×2, pc→36. Best: pc=33, NEAR at y<0 (landing
+        # below board surface) succeeds with chain (+267, pc 33→28, recovery).
+        # New axis: at pc>=33, deadline risk (margin<1.0), landing_y>=1.0, cancel base NEAR
+        # bonus (600*merge_mult). Other axes (danger, reactive, chain) still provide NEAR
+        # incentive if warranted. Combined with v421 NEAR_DEADLINE_RISK, net NEAR at
+        # pc=35, deadline, y=1.0: +75 → -525. At pc=33, y=1.5: +337 → -562.
+        # NEAR at y<1.0 still positive — preserves safe recovery path (best game T82).
+        # Structurally similar to v411 (crosses_deadline penalty) and russia_phase fork (axis 8.7).
+        # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at high pc
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+        #       tmp/batch_summary.txt, strategy.py.staging (v421),
+        #       game_history/20260331_031009_score1030.jsonl T76-83,
+        #       game_history/20260331_025511_score2317.jsonl T82-83
+        if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
+            score -= 600.0 * merge_mult
+            reasons.append("HIGH_PC_NEAR_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
