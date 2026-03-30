@@ -1,25 +1,23 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v120)
+ * strategy.mjs - ドロップ位置決定戦略 (v121)
  *
- * v120: v119をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
- *       特に、シミュレーションされた高さがデッドラインを越える配置を厳格に禁止し、
- *       高さペナルティをさらに強化することで、デッドライン到達リスクの抑制を徹底します。
- *       また、小型ピースの「濃度管理」と「触媒利用」を両立させるため、クラスタリングボーナスを洗練します。
+ * v121: v120をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
+ *       特に、ガベージブロック対策と大型ピースの片側集約ロジックを強化することで、
+ *       安定した生存ターンと効率的な盤面形成を目指します。
  *
- *      主な改善点 (v119からの調整点):
- *      1.  **高さ管理の厳格化とペナルティのさらなる強化**:
- *          - `evaluatePlacement` 関数内で、シミュレートされた着地Y座標 (`simulatedY`) にピースの半径 (`droppingPiece.r`) を加えた値が `DEADLINE_Y` を超える場合、そのドロップ位置を即座に無効化（スコア-Infinity相当）します。
- *            これにより、デッドラインを越える可能性がある危険な配置を完全に排除します。
- *          - `HEIGHT_PENALTY_WEIGHT` を `350.0` から `400.0` に増加。
- *            高Yへの配置に対する全体的なペナルティをさらに強化し、低く保つインセンティブを増やします。
- *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `10` から `12` に増加。
- *            デッドラインに近づくにつれてペナルティが指数関数的に急増する効果をさらに高めます。
- *      2.  **小型ピースのクラスタリングボーナスの洗練**:
- *          - `calculateClusterBonus` 関数を修正。
- *            小型ピース（type 1〜4）を同タイプの他の小型ピースの近くに配置する際に、より高いボーナス (`SMALL_PIECE_CLUSTER_BONUS * 1.5`) を与え、
- *            「濃度管理（同 type 集約）」原則を強力に推進します。
- *          - さらに、小型ピースを同タイプではないが近くにある他の小型ピースの近くに配置する際にも、小さいボーナス (`SMALL_PIECE_CLUSTER_BONUS * 0.5`) を与えます。
- *            これにより、小型ピースの一般的な密度を高め、「小ピースの触媒利用」原則に基づく攪拌効果を促します。
+ *      主な改善点 (v120からの調整点):
+ *      1.  **ガベージブロック対策の強化**:
+ *          - `calculateMergeBonus` にて、ガベージブロックが存在する際の「底面付近でのマージボーナス」を `200` から `300` に増加。
+ *            ガベージクリアへのインセンティブを強化します。
+ *          - ガベージがボードを占める割合が高い (`garbage.ratio > 0.1`) かつ、ピースを高く配置する (`simulatedY > -1.0`) 場合に、
+ *            追加のペナルティを導入。これにより、ガベージ問題悪化を招く高所へのドロップを抑制します。
+ *      2.  **大型ピースの片側集約ロジックの改善**:
+ *          - `LARGE_PIECE_THRESHOLD` 以上のピースをドロップする際、既存の大型ピースの平均X座標を計算し、
+ *            その側に配置を誘導するロジックを導入。
+ *            これにより、「大型ピースの片側集約」原則をより効果的に促進します。
+ *          - 既存の大型ピースがない場合は、ボードのサイド (`x < -1.0` または `x > 1.0`) への初期配置にボーナスを与え、
+ *            片側集約の起点を作りやすくします。
+ *      3.  **高さ管理と小型ピースのクラスタリングボーナスはv120の厳格な設定を維持**。
  *
  *      注意点:
  *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
@@ -127,7 +125,7 @@ function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, ga
         }
         // Additional bonus for merging near the bottom to clear garbage
         if (garbageState.ratio > 0.05 && targetY < -2.0) { // arbitrary low Y for "near bottom"
-          bonus += 200;
+          bonus += 300; // Increased from 50 (v120) to 300
         }
       }
     }
@@ -193,33 +191,45 @@ export function decide(boardState) {
       // Penalize height
       currentPlacementScore -= calculateHeightPenalty(simulatedY);
 
+      // NEW in v121: Additional penalty if placing high when a lot of garbage is present
+      if (boardState.garbage.ratio > 0.1 && simulatedY > -1.0) { // If garbage is significant and we are placing above a certain Y
+        const garbagePenaltyMultiplier = (boardState.garbage.ratio * 10) * (simulatedY + 1.0); // Scales with ratio and Y
+        currentPlacementScore -= garbagePenaltyMultiplier * 50; // Significant penalty
+      }
+
       // Bonus for merge opportunities
       currentPlacementScore += calculateMergeBonus(pieceToDrop, x, simulatedY, boardState.pieces, boardState.garbage);
 
       // Bonus for small piece clustering and general small piece density
       currentPlacementScore += calculateClusterBonus(pieceToDrop, x, simulatedY, boardState.pieces);
 
-      // Encourage large pieces to be on one side (simple approximation)
+      // NEW in v121: Refined Large Piece Aggregation
       // This helps with "大型ピースの片側集約" principle.
       if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
-        const leftSideDensity = boardState.pieces.filter(p => p.x < 0).length;
-        const rightSideDensity = boardState.pieces.filter(p => p.x > 0).length;
+        const largePieces = boardState.pieces.filter(p => p.type >= LARGE_PIECE_THRESHOLD);
+        if (largePieces.length > 0) {
+          const avgLargePieceX = largePieces.reduce((sum, p) => sum + p.x, 0) / largePieces.length;
 
-        // Favor placing large pieces on the side that currently has less density or where the first large piece landed.
-        // A more sophisticated approach would track the 'heavy side'. For now, a simple heuristic:
-        if (leftSideDensity < rightSideDensity && x < 0) {
-          currentPlacementScore += 100;
-        } else if (rightSideDensity < leftSideDensity && x > 0) {
-          currentPlacementScore += 100;
-        } else if (Math.abs(x) < 0.5) { // Mild penalty for dropping large piece in center if sides are unbalanced
-            currentPlacementScore -= 20;
+          // If current X is on the same side as the average of existing large pieces, add a bonus
+          if ((avgLargePieceX < 0 && x < 0) || (avgLargePieceX > 0 && x > 0)) {
+            currentPlacementScore += 150; // Increased bonus to encourage aggregation
+          } else if (Math.abs(avgLargePieceX) < 0.5 && Math.abs(x) < 0.5) { // If large pieces are mostly centered, and we're dropping centrally
+             currentPlacementScore += 50; // Small bonus for continuing central if already central
+          } else { // If we're dropping a large piece on the opposite side of existing large pieces
+             currentPlacementScore -= 100; // Penalty for scattering large pieces
+          }
+        } else {
+            // If this is the first large piece, try to place it slightly off-center to encourage starting a stack
+            if (x < -1.0 || x > 1.0) { // Prefer starting large piece accumulation towards the sides
+                currentPlacementScore += 50;
+            }
         }
       }
 
       // Prioritize clearing garbage by placing pieces lower if garbage exists
       // "Merging near the bottom of the board is more effective for clearing garbage"
       if (boardState.garbage.ratio > 0.05 && simulatedY < boardState.garbage.height) {
-        currentPlacementScore += 50; // Small bonus for staying below garbage height to enable clearing
+        currentPlacementScore += 300; // Increased from 50 (v120) to 300
       }
 
       if (currentPlacementScore > currentMaxScore) {
