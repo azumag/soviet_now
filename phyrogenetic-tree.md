@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-30 18:13:08 JST`
-- Nodes: `818`
-- Edges: `1132`
-- Current: `8a2c0083198b`
-- Anchor: `8a2c0083198b`
+- Updated: `2026-03-30 19:26:43 JST`
+- Nodes: `819`
+- Edges: `1133`
+- Current: `28747cec42cd`
+- Anchor: `9efec03deebb`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_fcd6d3725de6["fcd6d3725de6<br/>g=12 n=12<br/>comp=10836.8"]
     h_c3a4d0caf321["c3a4d0caf321<br/>g=12 n=12<br/>comp=9455.0"]
     h_bc85edb25d78["bc85edb25d78<br/>g=12 n=12<br/>comp=11129.5"]
     h_78d702e43155["78d702e43155<br/>g=17 n=17<br/>comp=7936.3"]
@@ -68,15 +67,15 @@ flowchart TD
     h_a4c1fa9f26bd["a4c1fa9f26bd<br/>g=12 n=12<br/>comp=9201.4"]
     h_bf9bc74f22e1["bf9bc74f22e1<br/>g=12 n=12<br/>comp=11227.4"]
     h_f830ed5e32bd["f830ed5e32bd<br/>g=12 n=12<br/>comp=10313.9"]
-    h_9efec03deebb["9efec03deebb<br/>g=24 n=20<br/>comp=11602.6"]
+    h_9efec03deebb["9efec03deebb<br/>ANCHOR<br/>g=24 n=20<br/>comp=11602.6"]
     h_b0e0e0739f44["b0e0e0739f44<br/>g=12 n=12<br/>comp=9953.4"]
     h_1e00ebfbb96a["1e00ebfbb96a<br/>g=13 n=13<br/>comp=10632.4"]
-    h_8a2c0083198b["8a2c0083198b<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12181.6"]
+    h_8a2c0083198b["8a2c0083198b<br/>g=24 n=20<br/>comp=11441.5"]
     h_75a5f2792f1c["75a5f2792f1c<br/>g=12 n=12<br/>comp=9934.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_28747cec42cd["28747cec42cd<br/>CURRENT"]
 
-    h_fcd6d3725de6 -->|improve| h_c3a4d0caf321
     h_bc85edb25d78 -->|improve| h_78d702e43155
     h_78d702e43155 -->|improve| h_d37c7572b29b
     h_d37c7572b29b -->|improve| h_e6f534c37e28
@@ -139,13 +138,13 @@ flowchart TD
     h_1e00ebfbb96a -->|improve| h_8a2c0083198b
     h_8a2c0083198b -->|improve| h_75a5f2792f1c
     h_75a5f2792f1c -. rollback .-> h_8a2c0083198b
+    h_8a2c0083198b -->|improve| h_28747cec42cd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_fcd6d3725de6 plain;
     class h_c3a4d0caf321 plain;
     class h_bc85edb25d78 plain;
     class h_78d702e43155 plain;
@@ -198,13 +197,14 @@ flowchart TD
     class h_a4c1fa9f26bd plain;
     class h_bf9bc74f22e1 plain;
     class h_f830ed5e32bd plain;
-    class h_9efec03deebb plain;
+    class h_9efec03deebb anchor;
     class h_b0e0e0739f44 plain;
     class h_1e00ebfbb96a plain;
-    class h_8a2c0083198b current_anchor;
+    class h_8a2c0083198b plain;
     class h_75a5f2792f1c plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_28747cec42cd current;
 ```
 
 ## Detail 1/11
@@ -3059,9 +3059,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `a3aae72a4e37`
-- Nodes in this diagram: `18`
-- Internal edges in this diagram: `15`
+- Range: `422188c46bb8` .. `28747cec42cd`
+- Nodes in this diagram: `19`
+- Internal edges in this diagram: `16`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3084,13 +3084,14 @@ flowchart TD
     h_a4c1fa9f26bd["a4c1fa9f26bd<br/>g=12 n=12<br/>comp=9201.4"]
     h_bf9bc74f22e1["bf9bc74f22e1<br/>g=12 n=12<br/>comp=11227.4"]
     h_f830ed5e32bd["f830ed5e32bd<br/>g=12 n=12<br/>comp=10313.9"]
-    h_9efec03deebb["9efec03deebb<br/>g=24 n=20<br/>comp=11602.6"]
+    h_9efec03deebb["9efec03deebb<br/>ANCHOR<br/>g=24 n=20<br/>comp=11602.6"]
     h_b0e0e0739f44["b0e0e0739f44<br/>g=12 n=12<br/>comp=9953.4"]
     h_1e00ebfbb96a["1e00ebfbb96a<br/>g=13 n=13<br/>comp=10632.4"]
-    h_8a2c0083198b["8a2c0083198b<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12181.6"]
+    h_8a2c0083198b["8a2c0083198b<br/>g=24 n=20<br/>comp=11441.5"]
     h_75a5f2792f1c["75a5f2792f1c<br/>g=12 n=12<br/>comp=9934.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_28747cec42cd["28747cec42cd<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3107,6 +3108,7 @@ flowchart TD
     h_1e00ebfbb96a -->|improve| h_8a2c0083198b
     h_8a2c0083198b -->|improve| h_75a5f2792f1c
     h_75a5f2792f1c -. rollback .-> h_8a2c0083198b
+    h_8a2c0083198b -->|improve| h_28747cec42cd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3124,16 +3126,27 @@ flowchart TD
     class h_a4c1fa9f26bd plain;
     class h_bf9bc74f22e1 plain;
     class h_f830ed5e32bd plain;
-    class h_9efec03deebb plain;
+    class h_9efec03deebb anchor;
     class h_b0e0e0739f44 plain;
     class h_1e00ebfbb96a plain;
-    class h_8a2c0083198b current_anchor;
+    class h_8a2c0083198b plain;
     class h_75a5f2792f1c plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_28747cec42cd current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11286 `8a2c0083 -> 28747cec`
+
+- scores: `11263 11397 9646 11692 14672 10241 11429 10725 8903 11944 14045 16661`
+- v414: hard block stacking in extreme danger — postmortem failure mode from v413 rollback
+- Postmortem requires: forbid REACTIVE_PAIRS_STACKING when max_y>=3.0 AND merge_grade=NO
+- AND crosses_deadline=true. Also: block when rp>=8 AND merge_grade=NO AND max_y>=2.5
+- (board congested, adding pieces makes it worse). NOT landing_y decay (v413 failed with that).
+- This is a hard guard, not a bonus reduction — stacking at extreme height wastes critical turns.
+- Fixes postmortem: stacking at y=3.70/3.83 with rp=11-14 and NO merge consuming turns
 
 ### Rollback Game#11274 `75a5f279 -> 8a2c0083`
 
