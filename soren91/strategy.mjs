@@ -1,23 +1,28 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v121)
+ * strategy.mjs - ドロップ位置決定戦略 (v122)
  *
- * v121: v120をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
- *       特に、ガベージブロック対策と大型ピースの片側集約ロジックを強化することで、
- *       安定した生存ターンと効率的な盤面形成を目指します。
+ * v122: v121をベースに、ゲーム分析結果と戦略原則をさらに深く考察し、以下の調整を行います。
+ *       特に、高さ管理の厳格化、大型ピースの片側集約ロジックの強化、
+ *       およびガベージブロック存在時の高所へのドロップに対するペナルティを再調整することで、
+ *       デッドライン到達によるゲームオーバーをより効果的に回避し、
+ *       安定した盤面形成と生存ターン数の最大化を目指します。
  *
- *      主な改善点 (v120からの調整点):
- *      1.  **ガベージブロック対策の強化**:
- *          - `calculateMergeBonus` にて、ガベージブロックが存在する際の「底面付近でのマージボーナス」を `200` から `300` に増加。
- *            ガベージクリアへのインセンティブを強化します。
+ *      主な改善点 (v121からの調整点):
+ *      1.  **高さ管理の厳格化**:
+ *          - `HEIGHT_PENALTY_WEIGHT` を `400.0` から `450.0` へ増加。
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `12` から `15` へ増加。
+ *            デッドラインに近い高所へのドロップに対するペナルティをさらに強化し、早期のゲームオーバーを防ぎます。
+ *      2.  **大型ピースの片側集約ロジックの強化**:
+ *          - 既存の大型ピースがある場合に、その平均X座標側に大型ピースを配置するボーナスを `150` から `250` へ増加。
+ *          - 既存の大型ピースと逆側に配置するペナルティを `100` から `200` へ増加。
+ *          - 初めての大型ピースをサイド (`x < -1.0` または `x > 1.0`) に配置するボーナスを `50` から `150` へ増加。
+ *            「大型ピースの片側集約」原則をより強力に推進します。
+ *      3.  **ガベージブロック存在時の高所へのドロップペナルティの再調整**:
  *          - ガベージがボードを占める割合が高い (`garbage.ratio > 0.1`) かつ、ピースを高く配置する (`simulatedY > -1.0`) 場合に、
- *            追加のペナルティを導入。これにより、ガベージ問題悪化を招く高所へのドロップを抑制します。
- *      2.  **大型ピースの片側集約ロジックの改善**:
- *          - `LARGE_PIECE_THRESHOLD` 以上のピースをドロップする際、既存の大型ピースの平均X座標を計算し、
- *            その側に配置を誘導するロジックを導入。
- *            これにより、「大型ピースの片側集約」原則をより効果的に促進します。
- *          - 既存の大型ピースがない場合は、ボードのサイド (`x < -1.0` または `x > 1.0`) への初期配置にボーナスを与え、
- *            片側集約の起点を作りやすくします。
- *      3.  **高さ管理と小型ピースのクラスタリングボーナスはv120の厳格な設定を維持**。
+ *            追加されるペナルティを具体的な固定値とY座標に応じたスケーリングに変更。
+ *            `200 + (simulatedY + 1.0) * 100` とし、より予測可能で強力な抑制効果を狙います。
+ *            これにより、ガベージ問題を悪化させる高所へのドロップをより確実に抑制します。
+ *      4.  **ガベージクリアのための底面付近マージボーナスはv121の`300`を維持**。
  *
  *      注意点:
  *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
@@ -33,8 +38,8 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.3; // Start critical penalty when topY is 0.3 units below DEADLINE_Y
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.0;     // Start warning penalty when topY is 1.0 units below DEADLINE_Y
-const HEIGHT_PENALTY_WEIGHT = 400.0; // Increased from 350.0 (v119)
-const CRITICAL_Y_PENALTY_MULTIPLIER = 12; // Increased from 10 (v119)
+const HEIGHT_PENALTY_WEIGHT = 450.0; // Increased from 400.0 (v121)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 15; // Increased from 12 (v121)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Increased from 0.5 to 0.6 for more aggressive merging due to shockwave. (v114)
@@ -125,7 +130,7 @@ function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, ga
         }
         // Additional bonus for merging near the bottom to clear garbage
         if (garbageState.ratio > 0.05 && targetY < -2.0) { // arbitrary low Y for "near bottom"
-          bonus += 300; // Increased from 50 (v120) to 300
+          bonus += 300; // Maintained 300 from v121
         }
       }
     }
@@ -179,22 +184,20 @@ export function decide(boardState) {
 
       const simulatedY = simulateDropY(pieceToDrop, x, boardState.pieces);
 
-      // --- NEW in v120: Hard limit for exceeding deadline ---
-      // If any part of the piece (center + radius) goes above the deadline, it's an invalid move.
+      // Hard limit for exceeding deadline
       if (simulatedY + pieceToDrop.r > DEADLINE_Y) {
           continue; // This placement is immediately invalid
       }
-      // --- END NEW ---
 
       let currentPlacementScore = 0;
 
       // Penalize height
       currentPlacementScore -= calculateHeightPenalty(simulatedY);
 
-      // NEW in v121: Additional penalty if placing high when a lot of garbage is present
+      // Refined in v122: Additional penalty if placing high when a lot of garbage is present
       if (boardState.garbage.ratio > 0.1 && simulatedY > -1.0) { // If garbage is significant and we are placing above a certain Y
-        const garbagePenaltyMultiplier = (boardState.garbage.ratio * 10) * (simulatedY + 1.0); // Scales with ratio and Y
-        currentPlacementScore -= garbagePenaltyMultiplier * 50; // Significant penalty
+        // More predictable and stronger penalty: base + scaled by Y
+        currentPlacementScore -= (200 + (simulatedY + 1.0) * 100);
       }
 
       // Bonus for merge opportunities
@@ -203,7 +206,7 @@ export function decide(boardState) {
       // Bonus for small piece clustering and general small piece density
       currentPlacementScore += calculateClusterBonus(pieceToDrop, x, simulatedY, boardState.pieces);
 
-      // NEW in v121: Refined Large Piece Aggregation
+      // Refined in v122: Enhanced Large Piece Aggregation
       // This helps with "大型ピースの片側集約" principle.
       if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
         const largePieces = boardState.pieces.filter(p => p.type >= LARGE_PIECE_THRESHOLD);
@@ -212,16 +215,16 @@ export function decide(boardState) {
 
           // If current X is on the same side as the average of existing large pieces, add a bonus
           if ((avgLargePieceX < 0 && x < 0) || (avgLargePieceX > 0 && x > 0)) {
-            currentPlacementScore += 150; // Increased bonus to encourage aggregation
+            currentPlacementScore += 250; // Increased bonus from 150 (v121)
           } else if (Math.abs(avgLargePieceX) < 0.5 && Math.abs(x) < 0.5) { // If large pieces are mostly centered, and we're dropping centrally
              currentPlacementScore += 50; // Small bonus for continuing central if already central
           } else { // If we're dropping a large piece on the opposite side of existing large pieces
-             currentPlacementScore -= 100; // Penalty for scattering large pieces
+             currentPlacementScore -= 200; // Increased penalty from 100 (v121) for scattering large pieces
           }
         } else {
-            // If this is the first large piece, try to place it slightly off-center to encourage starting a stack
+            // If this is the first large piece, try to place it significantly off-center to encourage starting a stack
             if (x < -1.0 || x > 1.0) { // Prefer starting large piece accumulation towards the sides
-                currentPlacementScore += 50;
+                currentPlacementScore += 150; // Increased bonus from 50 (v121)
             }
         }
       }
@@ -229,7 +232,7 @@ export function decide(boardState) {
       // Prioritize clearing garbage by placing pieces lower if garbage exists
       // "Merging near the bottom of the board is more effective for clearing garbage"
       if (boardState.garbage.ratio > 0.05 && simulatedY < boardState.garbage.height) {
-        currentPlacementScore += 300; // Increased from 50 (v120) to 300
+        currentPlacementScore += 300; // Maintained 300 from v121
       }
 
       if (currentPlacementScore > currentMaxScore) {
