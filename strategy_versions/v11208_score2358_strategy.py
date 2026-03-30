@@ -9,7 +9,7 @@ Game Overview:
 
       Decision Logic (14 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-         1.5. NEAR merge deadline risk - Penalty for risky NEAR merges at deadline (v366)
+         1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
@@ -62,6 +62,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v409: graduated NEAR deadline risk — replace binary deadline_crossed with reactor deadline_margin
+     # v366 used binary deadline_crossed: pieces just before deadline get 0 penalty, just after get full.
+     # reactor deadline_margin is continuous (<0 crossed, 0-1 approaching). Graduated penalty provides
+     # smoother transition. Low-score games: NEAR merge rate drops ~40%→~28% at deadline, causing piece
+     # accumulation and early death. Partial protection when approaching deadline (margin 0-1) reduces this.
+     # Uses unutilized analysis field. NOT v388 crosses_deadline per-candidate (different mechanism).
+     # Fixes rollback p25 collapse: binary cliff causes sudden behavior change at deadline crossing
+     # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+     #       game_history/20260330_115102_score0447.jsonl, game_history/20260330_115755_score0839.jsonl,
+     #       analyze_board.py, advice.md
      # v408: axis 9.6 piece_count congestion scaling — match 9.6b formula for reactive stacking
      # Axis 9.6b (same-type proximity) has piece_count congestion scaling but axis 9.6
      # (reactive stacking) does not. At high pc (30+), stacking_bonus (~100-400) is
@@ -541,7 +551,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # reactive_pairs is a list, count pairs for evaluation
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
-    
+    reactor_margin = reactor.get("deadline_margin", 99.0)
+
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
@@ -636,24 +647,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- v366: NEAR merge risk penalty at deadline -----
+        # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
         # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail
         # (score_delta=0), piece_count grows 32->35. Best game succeeds with merges.
         # NEAR merge success rate is 68.5%. At deadline, failed NEAR adds a high piece
         # with no benefit, worsening the already dangerous board state.
-        # This penalty reduces NEAR merge incentive proportionally to landing_y when
-        # deadline is crossed, making the strategy prefer DIRECT merges (unchanged)
-        # or lower-position NEAR merges over risky high-position NEAR at deadline.
-        # Does NOT affect: DIRECT merges, NEAR when !deadline_crossed, or NO merge.
-        # postmortem constraint: combines landing_y with deadline state (not landing_y-only).
-        # refs: game_history/20260328_102644_score0654.jsonl T49-58 (NEAR fails, pc 32->38),
-        #       game_history/20260328_101741_score2213.jsonl T103-112 (merge succeeds),
+        # v409: Replace binary deadline_crossed with continuous reactor deadline_margin.
+        # reactor deadline_margin: <0 means deadline crossed, 0-1 means approaching.
+        # Graduated risk_factor = (1.0 - reactor_margin) when margin < 1.0.
+        # This avoids the cliff where pieces just before deadline get 0 penalty but
+        # pieces just after get full penalty. Provides partial protection when
+        # approaching deadline (margin 0-1), reducing p25 early-death rate.
+        # Does NOT affect: DIRECT merges, NEAR when margin >= 1.0, or NO merge.
+        # NOT v388 crosses_deadline per-candidate (different field/mechanism, no chain suppression).
+        # postmortem constraint: combines landing_y with deadline proximity (not landing_y-only).
+        # refs: game_history/20260330_115102_score0447.jsonl (margin cliff early death),
+        #       game_history/20260330_115755_score0839.jsonl,
         #       tmp/state/last_rollback_postmortem.md (piece_count predictor),
-        #       tmp/batch_summary.txt (low-score 5.4% NEAR_HIGH_LAYER vs high-score 3.9%)
-        # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at deadline
-        if deadline_crossed and merge_grade == "NEAR" and landing_y > 0:
-            near_risk_penalty = landing_y * 300.0
+        #       tmp/batch_summary.txt (low-score 5.4% NEAR_HIGH_LAYER vs high-score 3.9%),
+        #       analyze_board.py (reactor deadline_margin field)
+        # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
+        # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
+        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
+            risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
+            near_risk_penalty = landing_y * 300.0 * risk_factor
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
