@@ -62,6 +62,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v420: current-type-blind proximity boost — axis 8.8 blind-spot guidance
+     # When rp>=3 but current type has no reactive/near pairs, axis 8.8 applies
+     # uniform penalty to all candidates. HEIGHT_CONTROL scatter wins with tiny
+     # margin, placing pieces at x=±3.0 edges where they can never merge.
+     # Extra_low (668) T53-T56: 4 consecutive turns at x=±3.0 with rp=7 but NO
+     # merge for current types. Boost proximity_bonus 3x in axis 9.6b to compete
+     # with axis 8.8 height differential (~1000), guiding toward same-type targets
+     # for future merge setup. target_y decay prevents guidance toward high targets.
+     # Suppressed at extreme danger per postmortem (rp>=8+max_y>=2.5, max_y>=3+deadline).
+     # Fixes postmortem failure mode: piece_count accumulation from HEIGHT_CONTROL
+     # scatter when axis 8.8 blind-spot makes all candidates equally penalized
+     # refs: game_history/20260331_002413_score0668.jsonl T53-56,
+     #       game_history/20260331_002701_score0647.jsonl T60-61,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+     #       strategy.py.staging (v416-v419), analyze_board.py
      # v419: piece_count-based AVOID_BLOCK suppression — prevent edge scatter in crowded high boards
      # v417 suppresses AVOID_BLOCK at rp>=5 or max_y>=3.0+deadline, but worst games show AVOID_BLOCK
      # dominating at rp=1-2 and max_y=2.0-2.5 (below both thresholds). The penalty (-500 max)
@@ -1020,6 +1035,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if not rp_guidance_suppressed and reactive_pair_count >= 2:
                         rp_density_scale = 1.0 + (reactive_pair_count - 1) * 0.2
                         proximity_bonus *= min(rp_density_scale, 2.5)
+                    # v420: current-type-blind proximity boost — axis 8.8 blind-spot guidance
+                    # When rp>=3 but current type has no reactive/near pairs, axis 8.8
+                    # applies uniform penalty to all candidates, falling through to
+                    # HEIGHT_CONTROL scatter (x=±3.0 edges). Extra_low T53-T56: 4 turns
+                    # at x=±3.0 with rp=7 but NO merge for current types. Boost proximity
+                    # 3x to compete with axis 8.8 height differential (~1000), guiding toward
+                    # same-type targets for future merge setup. target_y decay prevents
+                    # guidance toward high targets. Suppressed at extreme danger per postmortem.
+                    if (reactive_pair_count >= 3
+                        and not (max_y >= 3.0 and deadline_crossed)
+                        and not (reactive_pair_count >= 8 and max_y >= 2.5)):
+                        proximity_bonus *= 3.0
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
