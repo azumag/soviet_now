@@ -62,6 +62,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v414: hard block stacking in extreme danger — postmortem failure mode from v413 rollback
+     # Postmortem requires: forbid REACTIVE_PAIRS_STACKING when max_y>=3.0 AND merge_grade=NO
+     # AND crosses_deadline=true. Also: block when rp>=8 AND merge_grade=NO AND max_y>=2.5
+     # (board congested, adding pieces makes it worse). NOT landing_y decay (v413 failed with that).
+     # This is a hard guard, not a bonus reduction — stacking at extreme height wastes critical turns.
+     # Fixes postmortem: stacking at y=3.70/3.83 with rp=11-14 and NO merge consuming turns
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       tmp/batch_summary.txt, game_history/20260330_183636_score0943.jsonl T69-76,
+     #       game_history/20260330_183340_score1047.jsonl T68-75, advice.md
      # v412: nextNext-aware proximity — strengthen same-type guidance when next two pieces are same type
      # When next_type == next_next_type and merge_grade=NO, the next turn is guaranteed to have a
      # merge opportunity (same-type pieces exist on board). Placing the current (different-type) piece
@@ -786,7 +795,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
         # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
-            if current_type_has_reactive or current_type_has_near:
+            # v414: hard block stacking in extreme danger (postmortem failure mode)
+            # v413 used landing_y decay which failed — this uses a hard guard instead.
+            # When board is extremely congested (rp>=8) or at extreme height with deadline
+            # crossed, stacking adds pieces without merge benefit, accelerating game over.
+            stacking_blocked = False
+            if max_y >= 3.0 and deadline_crossed and merge_grade == "NO":
+                stacking_blocked = True
+            if reactive_pair_count >= 8 and max_y >= 2.5 and merge_grade == "NO":
+                stacking_blocked = True
+            if not stacking_blocked and (current_type_has_reactive or current_type_has_near):
                 # 現在タイプにreactive/near pairがある場合のみスタッキングボーナス
                 # 高位スタッキングによるmax_y悪化を防止
                 # merged_type(N+1)に隣接する同タイプピースを優先し、連鎖的併合の道筋を作る
