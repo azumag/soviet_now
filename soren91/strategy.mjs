@@ -1,35 +1,23 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v133)
+ * strategy.mjs - ドロップ位置決定戦略 (v134)
  *
- * v133: v132をベースに、「Defaulting to center」の頻発というゲーム分析結果と、
- *       実際のゲームオーバー要因が高さであることを踏まえ、高さ管理戦略を抜本的に見直します。
- *       特に、デッドライン超えの配置が無効と判断され「Defaulting to center」に陥る問題を解決するため、
- *       致命的な高さの配置を「無効」とするのではなく「極めて高いペナルティ」として評価し、
- *       あらゆる選択肢が厳しい状況でも、最もリスクの低い行動を選べるように改善します。
- *       これにより、ゲームオーバーを遅らせ、スコア機会を増やすことを目指します。
+ * v134: v133をベースに、ゲーム分析から見られた「max_yがDEADLINE_Yを超過しているケースが多い」という課題に対し、
+ *       高さのシミュレーションをより保守的にすることで、エージェントがより低い位置にピースを配置するように誘導します。
+ *       これにより、ゲームオーバーのリスクを低減し、生存ターン数の増加を目指します。
  *
- *      主な改善点 (v132からの調整点):
- *      1.  **高さ管理戦略の根本的な見直しと「Defaulting to center」対策**:
- *          - `simulateDropY` の `settlingBuffer` を `1.3` から `1.25` へ微減。（v131の値に戻す）
- *            (物理的な不確実性への保守性を保ちつつ、無効な配置を減らし、より多くのX座標が選択肢となるよう調整。)
- *          - **致命的な高さでのドロップを`continue`でスキップするのではなく、極めて高いペナルティを付与するように変更**:
- *            `if (simulatedY + pieceToDrop.r > DEADLINE_Y - 0.05)` の`continue`を削除し、
- *            代わりに`currentPlacementScore = -1_000_000;` のような非常に大きな負のスコアを加算。
- *            これにより、どのX座標も高い場合でも、エージェントが最もマシな選択肢を選べるようになります。
- *          - `HEIGHT_PENALTY_WEIGHT` を `2200.0` から `2500.0` へ増加。
- *            (全体的な高所配置に対するペナルティをさらに強化し、ボードが危険な高さになるのを防ぎます。)
- *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `100` から `120` へ増加。
- *            (クリティカルゾーンでのペナルティをさらに強化し、デッドラインに近づくリスクをより厳しく評価します。)
- *      2.  **おじゃまブロック対策のさらなる促進**:
- *          - おじゃまが存在し、かつゴミブロックのY座標以下に配置する場合の汎用ボーナスを `750` から `1200` へ増加。
- *            (おじゃまを積極的に盤面下部で除去するインセンティブを大幅に強化します。)
- *      3. **おじゃま存在時の高所配置ペナルティ強化**:
- *          - おじゃま存在時の高所配置ペナルティのベース値を `900` から `1000` へ、Yによるスケーリング係数を `220` から `250` へ増加。
- *          - 緊急モード (`ojamaUrgentMode`) 時の追加ペナルティスケーリング係数を `450` から `500` へ増加。
+ *      主な改善点 (v133からの調整点):
+ *      1.  **高さ管理戦略の微調整（settlingBufferの再調整）**:
+ *          - `simulateDropY` 内の `settlingBuffer` を `1.25` から `1.3` へ増加。
+ *            (v132の値に戻します。これにより、ピースが着地する予測Y座標がわずかに高めにシミュレーションされ、
+ *            エージェントはより低い位置へのドロップを優先するようになります。ゲームログでmax_yが頻繁に
+ *            DEADLINE_Y (2.5) を超えていることから、高所へのピース配置を抑制し、より安全な盤面構築を促します。)
  *
  *      注意点:
  *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
  *        先読みもあくまで簡易的なものであり、これらの不確実性を考慮する必要があります。
+ *      - `DEADLINE_Y = 2.5` はゲームオーバーの厳密なラインではなく、盤面状況から「危険な高さ」と判断される目安として機能しています。
+ *        実際のゲームオーバーラインは `BOARD_Y_RANGE` の `+3.32` に近いため、`2.5` を超える `max_y` の記録が見られるのはこのためです。
+ *        しかし、`2.5` を超える領域での活動はリスクが高まるため、`settlingBuffer` の調整によりこの領域への到達を遅らせることを目指します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -78,8 +66,8 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  // v133: Reverted to 1.25 from 1.3 (v132 -> v133) to allow more flexibility with high penalty logic.
-  const settlingBuffer = 1.25;
+  // v134: Increased from 1.25 (v133) back to 1.3 for more conservative height estimation.
+  const settlingBuffer = 1.3;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
