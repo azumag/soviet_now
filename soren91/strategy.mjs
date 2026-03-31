@@ -1,32 +1,20 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v126)
+ * strategy.mjs - ドロップ位置決定戦略 (v127)
  *
- * v126: v125をベースに、ゲーム分析結果で頻繁に見られたデッドライン超えによるゲームオーバーを
- *       より強力に防止するため、高さ管理とシミュレーションの保守性をさらに高めます。
- *       また、おじゃまブロック対策をよりプロアクティブにするため、ゲージレベルに応じた
- *       併合ボーナスのスケーリングを導入します。
+ * v127: v126をベースに、ゲーム分析結果で頻繁に見られたデッドライン超えによるゲームオーバーを
+ *       より早期に、より強力に防止するため、高さ管理とシミュレーションの保守性をさらに高めます。
+ *       また、おじゃまブロック対策をよりプロアクティブにするため、おじゃま緊急モードへの移行閾値を調整します。
  *
- *      主な改善点 (v125からの調整点):
- *      1.  **高さシミュレーションの保守性強化**:
- *          - `settlingBuffer` を `0.6` から `0.8` へ増加。
- *            (ピースの実際の物理的な挙動、特に凸ポリゴン形状による不確実性を考慮し、
- *            シミュレーションされる着地Y座標をより高めに、保守的に見積もります。
- *            これにより、高さペナルティが早期に発動しやすくなります。)
- *      2.  **高さ管理ペナルティのさらなる強化**:
- *          - `HEIGHT_PENALTY_WEIGHT` を `800.0` から `1000.0` へ増加。
- *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `30` から `40` へ増加。
+ *      主な改善点 (v126からの調整点):
+ *      1.  **高さ管理ペナルティの早期化とさらなる強化**:
+ *          - `TOP_Y_WARN_PENALTY_START_RELATIVE` を `1.5` から `1.8` へ増加。
+ *            (警告ペナルティがY=0.7から発動するようにし、盤面が低いうちから高さ管理を促します。)
+ *          - `HEIGHT_PENALTY_WEIGHT` を `1000.0` から `1200.0` へ増加。
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `40` から `50` へ増加。
  *            (ゲーム終盤での盤面高騰を防ぎ、デッドライン超えをより断固として回避します。)
- *      3.  **大型ピースの片側集約ロジックの強化**:
- *          - 大型ピースを既存の大型ピース群と同じ側に配置する場合のボーナスを `300` から `400` へ増加。
- *          - 既存の大型ピース群と反対側に配置する場合のペナルティを `-250` から `-350` へ増加。
- *            (大型ピースによる盤面分割をより強く抑制し、「片側集約」原則を徹底します。)
- *      4.  **おじゃまゲージ連動のプロアクティブな併合ボーナス**:
- *          - `calculateMergeBonus` において、`ojamaMode` および `ojamaUrgentMode` 時の
- *            併合ボーナスを `boardState.garbage.gauge` レベルに応じてスケーリングします。
- *            これにより、おじゃまブロックが降ってくる直前（ゲージが高い状態）に
- *            積極的に併合を試み、盤面をクリアするインセンティブを強化します。
- *          - 具体的には、`ojamaMode`では `(1 + gauge)`、`ojamaUrgentMode`では `(1 + gauge * 2)` でスケーリング。
- *          - 低Yでのガベージクリアボーナスも同様に `gauge` でスケーリングします。
+ *      2.  **おじゃま緊急モードの早期化**:
+ *          - `ojamaUrgentMode` の `garbage.ratio` 閾値を `0.4` から `0.35` へ引き下げ。
+ *            (おじゃまブロックがボードに占める割合が少し高くなった段階で、より積極的に併合を促します。)
  *
  *      注意点:
  *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
@@ -40,18 +28,19 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
-// Adjusted relative values to make penalties start earlier (lower Y) - v125
-const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.7; // Critical penalty starts at Y=1.8
-const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.5;     // Warning penalty starts at Y=1.0
-const HEIGHT_PENALTY_WEIGHT = 1000.0; // Increased from 800.0 (v125)
-const CRITICAL_Y_PENALTY_MULTIPLIER = 40; // Increased from 30 (v125)
+// Adjusted relative values to make penalties start earlier (lower Y) - v127
+const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.7; // Critical penalty starts at Y=1.8 (unchanged from v125)
+const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.8;     // Warning penalty starts at Y=0.7 (increased from 1.5 in v126)
+const HEIGHT_PENALTY_WEIGHT = 1200.0; // Increased from 1000.0 (v126)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 50; // Increased from 40 (v126)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y. (Currently not used but kept for potential future use)
-const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
 const SMALL_PIECE_CLUSTER_BONUS = 500; // Base cluster bonus for small pieces.
+const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
+
 
 // Garbage Block Management Constants
 const GARBAGE_MERGE_BONUS = 3000;
@@ -59,6 +48,8 @@ const GARBAGE_URGENT_MERGE_BONUS = 10000;
 // Updated to match prompt
 const GARBAGE_RATIO_OJAMA_MERGE = 0.15;
 const OJAMA_GAUGE_OJAMA_MERGE = 0.3;
+// v127: Lowered threshold for garbage ratio to trigger urgent mode
+const GARBAGE_RATIO_OJAMA_URGENT = 0.35; // Previously 0.4
 
 
 // Default initial drop X
@@ -180,7 +171,8 @@ export function decide(boardState) {
 
   // Determine ojama modes for consistent checks
   let ojamaMode = (boardState.garbage.ratio >= GARBAGE_RATIO_OJAMA_MERGE || boardState.garbage.gauge >= OJAMA_GAUGE_OJAMA_MERGE);
-  let ojamaUrgentMode = (boardState.garbage.ratio > 0.4 || boardState.garbage.gauge >= 0.6);
+  // v127: ojamaUrgentMode now triggers at GARBAGE_RATIO_OJAMA_URGENT
+  let ojamaUrgentMode = (boardState.garbage.ratio >= GARBAGE_RATIO_OJAMA_URGENT || boardState.garbage.gauge >= 0.6);
 
   // Function to evaluate a given piece (current or held) for all X positions
   const evaluatePlacement = (pieceToDrop, isHoldingAttempt = false) => {
