@@ -73,6 +73,17 @@ Phases (determined by board max Y):
      # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
      #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
      #       game_history/20260401_065232_score0690.jsonl, strategy.py.staging (v447)
+     # v449: remove axis 9.6b (same-type proximity guidance) — align with protected strategy
+     # Protected strategy (median 12789, +21% better) has NO axis 9.6b. When current type has
+     # no reactive/near pairs, proximity_bonus (up to ~540: 120*congestion*1.5 nextNext) overwhelms
+     # height differentiation (~50-250 at height_mult floor 0.5). Without 9.6b, non-reactive
+     # NO-merge cases fall through to HEIGHT_CONTROL, correctly minimizing height. Remaining
+     # guidance (9.6 stacking, 9.7 pipeline) preserves merge-relevant direction when current
+     # type HAS reactive pairs. Postmortem warns about 600-1500 additive accumulation.
+      # Fixes postmortem failure mode: additive bonus accumulation masking height differentiation
+      # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+      #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
+      #       game_history/20260401_073858_score0282.jsonl, strategy.py.staging (v448)
      # v447: remove axis 9.5 SAME_TYPE_STACK_MERGE_PRIORITY — reduce additive noise at rp=0
      # SAME_TYPE_STACK_MERGE_PRIORITY has avg_delta=0.4 (essentially zero score impact) and fires
      # 4.2% in low-score games vs 1.6% in high-score games — correlated with bad outcomes.
@@ -1040,7 +1051,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
-        # ----- v362/v368 → v369 → v371: merged_type-aware targeting + congestion-aware proximity -----
+        # ----- axis 9.6b (same-type proximity guidance): REMOVED in v449 — see change history -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
         # advice.md "TypeN+1と隣接している方を優先してドロップする" (azumag, nimdavirus).
         # After N+N→N+1 merge, the resulting piece is near existing N+1 → immediate N+1+N+1 opportunity.
@@ -1054,8 +1065,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260328_151437_score3261.jsonl T112-119,
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
         # Fixes postmortem failure mode: type scattering → piece_count accumulation
-        if merge_grade == "NO" and same_type_stack_top is not None:
-            if not (current_type_has_reactive or current_type_has_near):
+        # v449: axis 9.6b (same-type proximity guidance) REMOVED — align with protected strategy
+        # Protected (median 12789) has NO 9.6b. proximity_bonus up to ~540 overwhelmed height
+        # differentiation (~50-250 at height_mult floor 0.5). Without 9.6b, non-reactive NO-merge
+        # cases fall through to HEIGHT_CONTROL, correctly minimizing height.
+        # Fixes postmortem: additive bonus accumulation masking height differentiation
+        if False and merge_grade == "NO" and same_type_stack_top is not None:  # v449 disabled
+            if False:  # v449: was: if not (current_type_has_reactive or current_type_has_near)
                 # v371: Find same-type piece closest to merged_type(N+1) for chain building.
                 # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
                 merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
