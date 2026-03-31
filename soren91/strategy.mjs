@@ -1,29 +1,28 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v130)
+ * strategy.mjs - ドロップ位置決定戦略 (v131)
  *
- * v130: v129をベースに、ゲーム分析結果と現在の戦略の課題を踏まえ、
- *       特に「高さ管理のさらなる厳格化」と「おじゃまブロック対策の積極的強化」、
- *       そして「パイプライン維持の促進」に重点を置いて調整します。
- *       デッドライン超えによるゲームオーバーをより確実に回避し、おじゃまブロックの脅威に早期かつ強力に対応します。
- *       また、将来的な併合を見据えたピース配置（パイプライン維持）をスコアリングに組み込みます。
+ * v131: v130をベースに、ゲーム分析結果と現在の戦略の課題（特に「Defaulting to center」頻発と
+ *       早期ゲームオーバー）を踏まえ、いくつかのペナルティとボーナスのバランスを再調整します。
+ *       高所配置ペナルティの緩和と、おじゃまブロック対策および濃度管理ボーナスの強化により、
+ *       より多くの有効な配置を見つけやすくし、戦略の柔軟性を高めます。
  *
- *      主な改善点 (v129からの調整点):
- *      1.  **高さ管理のさらなる厳格化と保守性の向上**:
- *          - `simulateDropY` の `settlingBuffer` を `1.2` から `1.3` へ増加。
- *            (物理的な不確実性や凸ポリゴンの影響をさらに保守的に見積もり、シミュレートされるY座標を高くし、高さペナルティをより早期に誘発します。)
- *          - `HEIGHT_PENALTY_WEIGHT` を `1800.0` から `2000.0` へ増加。
- *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `85` から `100` へ増加。
- *      2.  **おじゃまブロック対策のさらなる積極的強化**:
- *          - おじゃま発生時の高所配置ペナルティをさらに強化。
- *            ( `boardState.garbage.ratio > 0.1 && simulatedY > -1.0` のペナルティ値を `(700 + (simulatedY + 1.0) * 200)` から `(900 + (simulatedY + 1.0) * 250)` へ増加。)
- *          - 緊急モード (`ojamaUrgentMode`) 時の追加ペナルティを `(simulatedY + 1.0) * 400` から `(simulatedY + 1.0) * 500` へ増加。
- *          - おじゃまブロックの高さ以下への配置ボーナスを `400` から `500` へ増加。
- *          - `GARBAGE_RATIO_OJAMA_URGENT` の閾値を `0.35` から `0.3` へ引き下げ、緊急モードへの移行を早めます。
- *      3.  **濃度管理（小ピース）の促進**:
- *          - `SMALL_PIECE_CLUSTER_BONUS` を `500` から `600` へ増加。同type小ピース集約の重要性を高めます。
- *      4.  **パイプライン維持ボーナスの導入（新規）**:
- *          - `calculatePipelineBonus` 関数を新設。ドロップピースのtypeが既存の隣接typeピース（N-1 または N+1）に近い場合、ボーナスを加算します。
- *            これにより、「typeの階段配置」を戦略的に促進し、将来の連鎖構築を支援します。
+ *      主な改善点 (v130からの調整点):
+ *      1.  **高さ管理の微調整と柔軟性の向上**:
+ *          - `simulateDropY` の `settlingBuffer` を `1.3` から `1.25` へ微減。
+ *            (物理的な不確実性への保守性は維持しつつ、シミュレートされるY座標をわずかに下げ、ペナルティを若干緩和します。)
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `100` から `90` へ減少。
+ *            (クリティカルゾーンでのペナルティを緩和し、「Defaulting to center」の原因となる極端なマイナススコアの発生を抑制します。)
+ *      2.  **おじゃまブロック対策の再調整**:
+ *          - おじゃま発生時の高所配置ペナルティのベース値を `900` から `800` へ、Yによるスケーリング係数を `250` から `200` へ減少。
+ *          - 緊急モード (`ojamaUrgentMode`) 時の追加ペナルティスケーリング係数を `500` から `400` へ減少。
+ *            (おじゃま存在時の高所配置ペナルティを若干緩和し、選択肢が狭まることによる早期ゲームオーバーのリスクを低減します。)
+ *          - おじゃまブロックの高さ以下への配置ボーナスを `500` から `600` へ増加。
+ *            (おじゃまを積極的に下部で除去するインセンティブをさらに強化します。)
+ *      3.  **濃度管理（小ピース）の促進を強化**:
+ *          - `SMALL_PIECE_CLUSTER_BONUS` を `600` から `650` へ増加。同type小ピース集約の重要性をさらに高めます。
+ *      4.  **大型ピースの片側集約ペナルティの緩和**:
+ *          - 既存の大型ピースの反対側に大型ピースを配置する際のペナルティを `-450` から `-350` へ減少。
+ *            (片側集約の原則は維持しつつ、やむを得ない場合のペナルティを緩和し、柔軟な対応を可能にします。)
  *
  *      注意点:
  *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
@@ -41,13 +40,13 @@ const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.7; // Critical penalty starts at Y=1.8 (unchanged from v125)
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.5;     // Warning penalty starts at Y=1.0 (adjusted from 1.7 in v128)
 const HEIGHT_PENALTY_WEIGHT = 2000.0; // Increased from 1800.0 (v129)
-const CRITICAL_Y_PENALTY_MULTIPLIER = 100; // Increased from 85 (v129)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 90; // Decreased from 100 (v130 -> v131)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const T1_LOW_MERGE_HEIGHT_ADVANTAGE = 1.5; // Bonus for T1 merges at low Y. (Currently not used but kept for potential future use)
-const SMALL_PIECE_CLUSTER_BONUS = 600; // Increased from 500 (v129)
+const SMALL_PIECE_CLUSTER_BONUS = 650; // Increased from 600 (v130 -> v131)
 const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
 
 
@@ -76,8 +75,8 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  // v130: Increased from 1.2 (v129) to be even more conservative.
-  const settlingBuffer = 1.3;
+  // v131: Reduced from 1.3 (v130 -> v131) to be slightly less conservative.
+  const settlingBuffer = 1.25;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
@@ -105,6 +104,7 @@ function calculateHeightPenalty(simulatedY) {
   }
   if (simulatedY > criticalY) {
     // Exponentially higher penalty in the critical zone
+    // v131: CRITICAL_Y_PENALTY_MULTIPLIER reduced from 100 to 90
     penalty += Math.pow((simulatedY - criticalY) / TOP_Y_CRITICAL_PENALTY_START_RELATIVE, 2) * HEIGHT_PENALTY_WEIGHT * CRITICAL_Y_PENALTY_MULTIPLIER;
   }
   return penalty;
@@ -160,7 +160,7 @@ function calculateClusterBonus(droppingPiece, targetX, targetY, existingPieces) 
       // Use a slightly larger buffer for clustering, as it's about proximity for future merges, not immediate ones.
       if (dist < droppingPiece.r + existingPiece.r + MERGE_BUFFER * 1.5) {
         // Stronger bonus for same-type small piece clustering ("濃度管理")
-        // v128: Increased multiplier from 1.5 to 2
+        // v131: Increased multiplier from 600 to 650
         if (existingPiece.type === droppingPiece.type && existingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
           clusterBonus += SMALL_PIECE_CLUSTER_BONUS * 2;
         }
@@ -233,15 +233,15 @@ export function decide(boardState) {
       // Penalize height
       currentPlacementScore -= calculateHeightPenalty(simulatedY);
 
-      // v125 & v130: Additional penalty if placing high when a lot of garbage is present (further reinforced)
+      // v125 & v131: Additional penalty if placing high when a lot of garbage is present (further reinforced then slightly softened)
       if (boardState.garbage.ratio > 0.1 && simulatedY > -1.0) { // If garbage is significant and we are placing above a certain Y
         // More predictable and stronger penalty: base + scaled by Y
-        // v130: Increased penalty values from v129
-        currentPlacementScore -= (900 + (simulatedY + 1.0) * 250);
+        // v131: Reduced penalty values from v130
+        currentPlacementScore -= (800 + (simulatedY + 1.0) * 200);
 
-        // v130: Add extra penalty if in urgent ojama mode and placing high (increased multiplier)
+        // v131: Add extra penalty if in urgent ojama mode and placing high (reduced multiplier)
         if (ojamaUrgentMode) {
-            currentPlacementScore -= (simulatedY + 1.0) * 500;
+            currentPlacementScore -= (simulatedY + 1.0) * 400;
         }
       }
 
@@ -268,8 +268,8 @@ export function decide(boardState) {
           } else if (Math.abs(avgLargePieceX) < 0.5 && Math.abs(x) < 0.5) { // If large pieces are mostly centered, and we're dropping centrally
              currentPlacementScore += 50;
           } else { // If we're dropping a large piece on the opposite side of existing large pieces
-             // v128: Maintained penalty of -450
-             currentPlacementScore -= 450;
+             // v131: Reduced penalty from -450 to -350
+             currentPlacementScore -= 350;
           }
         } else {
             // If this is the first large piece, try to place it significantly off-center to encourage starting a stack
@@ -284,9 +284,9 @@ export function decide(boardState) {
       // "Merging near the bottom of the board is more effective for clearing garbage"
       // This logic is now handled more robustly within calculateMergeBonus for low Y merges.
       // However, a general bonus for clearing garbage still applies based on current logic.
-      // v130: Increased bonus from 400 to 500
+      // v131: Increased bonus from 500 to 600
       if (boardState.garbage.ratio > 0.05 && simulatedY < boardState.garbage.height) {
-        currentPlacementScore += 500;
+        currentPlacementScore += 600;
       }
 
       if (currentPlacementScore > currentMaxScore) {
