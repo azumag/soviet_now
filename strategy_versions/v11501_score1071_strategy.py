@@ -63,6 +63,22 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v431: conditional height_mult relaxation — only relax when current type has reactive/near guidance
+     # Postmortem: rp=1-2 height_mult relaxations (v271 0.8x, v288 0.3x, v294 0.2x) compound to
+     # floor 0.5, enabling HEIGHT_CONTROL edge scatter when current type has no reactive/near pairs.
+     # Worst game T55-62: pc=28-35, rp=2, mg=NO, x=3.0 (HIGH_LAYER scatter) → dies at T62.
+     # When current_type_has_reactive or current_type_has_near, axis 9.6 stacking provides
+     # directional guidance that justifies relaxation. Without guidance, relaxation weakens
+     # height penalty (landing_y * 25) below guidance signal (~120-220), allowing scatter.
+     # Fix: guard all three relaxation blocks with (current_type_has_reactive or
+     # current_type_has_near). When guidance absent, height_mult stays at phase value,
+     # creating stronger height differentiation that prevents edge scatter.
+     # Fixes rollback failure mode: piece_count accumulation from HEIGHT_CONTROL scatter at rp=1-2
+     # refs: game_history/20260331_115149_score0619.jsonl T55-62 (scatter death),
+     #       game_history/20260331_121726_score0735.jsonl T59-66 (scatter death),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.2% low vs 14.9% high),
+     #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       strategy.py.staging (v329 restored), advice.md (中央集約, 孤立配置回避)
      # v422: high pc NEAR merge penalty — structural fork cancels NEAR bonus at pc>=33+deadline+y>=1.0.
      # v421 gap: net NEAR still +75 at pc=35,deadline,y=1.0. New axis: -600*merge_mult penalty.
      # Preserves safe NEAR (y<1.0): best game T82 recovery at pc=33,deadline,y<0 unaffected.
@@ -1143,9 +1159,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
         # danger_piece_count==0の場合に限りheight_multを0.2に緩和して、盤面圧縮（tighter board）を優先し、即時併合機会を確保
         if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
-            # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
-            # height_multを0.2に緩和して、盤面圧縮（tighter board）を優先し、即時併合機会を確保
-            height_mult *= 0.2
+            # v431: only relax when current type has reactive/near guidance
+            # Without guidance for current type, relaxation enables HEIGHT_CONTROL scatter (worst T55-62)
+            # With guidance, relaxation allows axis 9.6 stacking to compete with height penalty
+            if current_type_has_reactive or current_type_has_near:
+                height_mult *= 0.2
 
         # v270 fix: reactive_pairsあり時の非併合heightペナルティ緩和版 - 危険域での戦略的配置余地を確保
         # ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3あるのにmerge_available=falseが続き、
