@@ -62,6 +62,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v442: symmetric AVOID_BLOCK suppression at high pc+deadline — reduce edge scatter
+     # Worst games show both AVOID_BLOCK axes (5.5 NEXTNEXT -400, 9.3 REACTIVE_PAIR -500) firing
+     # at pc>=35 and deadline_crossed, creating combined -900 edge-repulsion that overwhelms
+     # stacking/proximity guidance (~200-400). Pieces scatter to x=±3.0 edges where they can't
+     # contribute to merges → piece_count accumulation → game over. Worst T69-T76: AVOID_BLOCK_NEXTNEXT
+     # fires 6/8 turns, pushing to edges despite stacking guidance available. Protected strategy
+     # (median 12789) has no axis 9.3, avoiding the double scatter. Adding symmetric suppression
+     # to both axes under same conditions (existing board_congested + new pc>=35+deadline) restores
+     # balance. At rp>=3, axis 8.8 (-3000 to -7000) dominates all candidates equally, making
+     # suppression invisible. Only affects rp<3 NO-merge candidates where AVOID_BLOCK scatter
+     # causes piece_count accumulation (postmortem key failure predictor).
+     # Fixes postmortem failure mode: edge scatter during NO-merge drought → piece_count accumulation
+     # refs: tmp/state/last_rollback_postmortem.md (edge scatter failure mode),
+     #       game_history/20260401_012610_score0870.jsonl T69-76 (AVOID_BLOCK x=±3.0),
+     #       game_history/20260401_010854_score1080.jsonl T110-119 (double AVOID_BLOCK at ceiling),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no axis 9.3),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.8% low vs 15.3% high)
      # v421: piece_count-aware NEAR deadline risk — reduce risky NEAR at high pc
      # Postmortem prioritize: "NEAR merge 失敗時の piece_count 蓄積を防ぐため、deadline_crossed 下での
      # NEAR merge の選択をより慎重にすること" and "piece_count >= 33 を閾値として、DIRECT merge
@@ -1059,6 +1076,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or (piece_count >= 35 and deadline_crossed)
             )
             if not board_congested:
                 blocking_penalty = 0.0
@@ -1251,18 +1269,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # batch_summary/adviceで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
         # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
         # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
+        # v442: symmetric suppression with axis 9.3 — suppress in congested endgame to prevent
+        # edge scatter. Same conditions as axis 9.3's board_congested. Merge bonuses (DIRECT +1200,
+        # NEAR +600) dominate AVOID_BLOCK (-400) so suppression only affects NO-merge candidates.
         # refs: advice.md (Pitman_live, azumag), batch_summary.txt
-        for p in pieces:
-            if p.get("type") == next_next_type:
-                piece_y = p.get("y", -10)
-                landing_y = result.get("landing_y", 0)
-                if landing_y > piece_y:
-                    # 着地位置がnextNext typeのピースの上になる場合
-                    horiz_dist = abs(x - p["x"])
-                    if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                        score -= 400.0  # 未来の併合機会を潰すためのペナルティ
-                        reasons.append("AVOID_BLOCK_NEXTNEXT")
-                        break
+        block_nextnext_suppressed = (
+            (max_y >= 3.0 and deadline_crossed)
+            or (reactive_pair_count >= 5 and max_y >= 2.5)
+            or (piece_count >= 35 and deadline_crossed and merge_grade == "NO")
+        )
+        if not block_nextnext_suppressed:
+            for p in pieces:
+                if p.get("type") == next_next_type:
+                    piece_y = p.get("y", -10)
+                    landing_y = result.get("landing_y", 0)
+                    if landing_y > piece_y:
+                        # 着地位置がnextNext typeのピースの上になる場合
+                        horiz_dist = abs(x - p["x"])
+                        if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
+                            score -= 400.0  # 未来の併合機会を潰すためのペナルティ
+                            reasons.append("AVOID_BLOCK_NEXTNEXT")
+                            break
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
         # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
