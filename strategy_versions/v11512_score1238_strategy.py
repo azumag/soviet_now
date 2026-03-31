@@ -63,6 +63,26 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v432: deadline-crossed NO-merge height-dependent penalty — restore height gradient at deadline
+     # Postmortem constraint: "Any NO-merge penalty MUST preserve meaningful height
+     # differentiation (~3000+ between y=0 and y=2)". The old flat -4500 for deadline_crossed
+     # && rp>=1 && NO violated this: all positions equally penalized, removing height guidance
+     # during merge droughts at deadline. Worst T47-T49: deadline crossed, rp=2, NO merge —
+     # flat -4500 made all candidates equally bad → HEIGHT_CONTROL scatter at x=1.54 (crosses
+     # deadline), then type 11 at x=-0.15 bounced to y=3.42. Best game T117-T121: deadline
+     # crossed but lower-y stacking kept max_y controlled despite rp=1-2 NO merge.
+     # New: graduated penalty with ~4000 gradient between y=0 and y=2:
+     #   y<=0: -3000, y=1: -5000, y=2: -7000 (formula: -3000 + max(0, landing_y)*2000)
+     # This matches the postmortem's recommended approach: "add a separate height component
+     # (e.g., -4500 base + landing_y * 1500) to restore gradient without reintroducing
+     # v339 high-stacking failure mode". Existing guardrails (v411 CROSSES_DEADLINE, v416
+     # stacking redirect, v422 HIGH_PC_NEAR) prevent high-stacking abuse.
+     # Fixes postmortem failure mode: piece_count accumulation from scatter at deadline drought
+     # refs: tmp/state/last_rollback_postmortem.md (height gradient constraint),
+     #       game_history/20260331_133110_score0355.jsonl T47-49 (flat -4500 → scatter),
+     #       game_history/20260331_134337_score2559.jsonl T114-121 (gradient survives),
+     #       game_history/20260331_130421_score0892.jsonl T46-48 (scatter death),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.9% low vs 14.9% high)
      # v431: conditional height_mult relaxation — only relax when current type has reactive/near guidance
      # Postmortem: rp=1-2 height_mult relaxations (v271 0.8x, v288 0.3x, v294 0.2x) compound to
      # floor 0.5, enabling HEIGHT_CONTROL edge scatter when current type has no reactive/near pairs.
@@ -1261,9 +1281,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
 
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # deadline_crossed時にreactive_pairsがある場合、即時併合を逃した非併合配置に強力なペナルティ
-            # 即時併合機会を最大化し、戦略的配置ボーナスを抑制
-            score -= 4500.0
+            # v432: height-dependent penalty instead of flat -4500
+            # Restores ~4000 gradient between y=0 and y=2, per postmortem constraint
+            # Formula: -3000 + max(0, landing_y) * 2000
+            # At y<=0: -3000, y=0.5: -4000, y=1: -5000, y=1.5: -6000, y=2: -7000
+            deadline_no_merge_penalty = -3000.0 + max(0.0, landing_y) * 2000.0
+            score += deadline_no_merge_penalty
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
         
          # ----- evaluation axis 3: drift penalty -----
