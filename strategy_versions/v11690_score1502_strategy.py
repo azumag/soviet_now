@@ -62,6 +62,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v446: remove v418 reactive pair density scaling on proximity guidance
+     # v418 multiplied proximity_bonus by 1.0-2.5x based on board-wide reactive_pair_count.
+     # This created excessive additive bonus accumulation (up to ~596 at pc=35, rp=5) that
+     # overwhelmed height differentiation (~50-200) at deadline (height_mult floor 0.5).
+     # Postmortem warns: "bad strategy had 6+ additive bonuses totaling 600-1500 at center
+     # positions, overwhelming height diffs of ~250-450". Protected strategy (median 12789)
+     # has no rp density scaling. Remaining proximity_bonus (~120-360 congestion, ~180-540
+     # with v412 nextNext) still provides meaningful guidance without accumulation risk.
+     # Batch: rp=3-6 NO-merge turns (MEDIUM_TOWER_RP_NO_MERGE_PENALTY) avg_delta=0.0.
+     # Fixes postmortem failure mode: additive bonus accumulation masking height differentiation
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+     #       game_history/20260401_050535_score0630.jsonl T60-64,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v445: flatten axis 8.8 reactive_pairs NO-merge penalty from gradient (-3000 to -7000)
      # to flat -4500, matching protected strategy (median 12789). The v329 gradient
      # overwhelmed horizontal guidance (stacking ~400, proximity ~300) with a 4000-point
@@ -1056,19 +1069,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # refs: advice.md (Pitman_live), tmp/batch_summary.txt
                     if next_type == next_next_type:
                         proximity_bonus *= 1.5
-                    # v418: reactive pair density scaling — utilize reactive_pair_count in proximity guidance
-                    # When many reactive pairs exist on the board, merge potential is high. Placing near
-                    # same-type targets creates future merge opportunities. At rp=1, guidance is weak
-                    # (board is not merge-ready). At rp>=3, stronger guidance directs pieces toward
-                    # same-type targets, reducing type scattering that causes merge droughts.
-                    # Suppressed in extreme danger to respect postmortem height reduction priority.
-                    rp_guidance_suppressed = (
-                        (max_y >= 3.0 and deadline_crossed)
-                        or (reactive_pair_count >= 5 and max_y >= 2.5)
-                    )
-                    if not rp_guidance_suppressed and reactive_pair_count >= 2:
-                        rp_density_scale = 1.0 + (reactive_pair_count - 1) * 0.2
-                        proximity_bonus *= min(rp_density_scale, 2.5)
+                    # v418 reactive pair density scaling REMOVED in v446 — see change history
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
