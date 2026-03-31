@@ -63,6 +63,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v436: low-reactive drought proximity scaling — fill rp=0-1 guidance gap in axis 9.6b
+     # Worst games show HEIGHT_CONTROL at 19.8% (low-score) vs 17.5% (high-score).
+     # MEDIUM game (score1800) T89-93: 5 consecutive rp=0 turns with HEIGHT_CONTROL,
+     # pc grows 38→42, max_y jumps 1.79→2.42 with no merge. During these droughts,
+     # axis 9.6b proximity_bonus has NO rp_density_scale (requires rp>=2), so
+     # guidance (~264 at pc=38) barely competes with height penalty diffs (~158).
+     # Protected strategy (median 12789) avoids this via simpler height_mult (no
+     # relaxation) and board density bonus. This change adds pc-based scaling when
+     # rp < 2 and pc >= 30: the board is congested but guidance is weak.
+     # At pc=38: bonus * 2.35 = ~620, overcoming height diffs for moderate positions.
+     # Purely additive (bonus only), fires only at merge_grade="NO" — no merge suppression.
+     # Fixes: HEIGHT_CONTROL scatter during merge droughts → piece_count accumulation
+     # refs: game_history/20260331_190305_score1800.jsonl T89-93,
+     #       game_history/20260331_184926_score0966.jsonl T63-67,
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.8% low vs 17.5% high),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       strategy_versions/best_score4999_strategy.py, tmp/state/last_rollback_postmortem.md
      # v435: deadline NO-merge sign error fix + rp>=3 double-penalty elimination
      # v432 formula -3000+y*2000 gave +1000 at y=2 (should be -7000). Combined with axis
      # 8.8 (rp>=3 NO merge) cancelled to flat -6000 regardless of y — the exact flat-
@@ -1132,6 +1149,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if not rp_guidance_suppressed and reactive_pair_count >= 2:
                         rp_density_scale = 1.0 + (reactive_pair_count - 1) * 0.2
                         proximity_bonus *= min(rp_density_scale, 2.5)
+                    # v436: low-reactive drought guidance — strengthen proximity when
+                    # board is congested (pc>=30) but reactive_pair_count is 0-1.
+                    # During merge droughts, HEIGHT_CONTROL scatters pieces to edges,
+                    # preventing future merges. pc-based scaling provides guidance
+                    # toward same-type targets without violating postmortem constraints
+                    # (purely additive, fires only at merge_grade="NO").
+                    elif not rp_guidance_suppressed and piece_count >= 30 and reactive_pair_count < 2:
+                        drought_scale = 1.0 + (piece_count - 29) * 0.15
+                        proximity_bonus *= min(drought_scale, 2.5)
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
