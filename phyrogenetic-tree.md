@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-31 11:39:30 JST`
-- Nodes: `832`
-- Edges: `1149`
-- Current: `97a63b4bac79`
-- Anchor: `97a63b4bac79`
+- Updated: `2026-03-31 13:01:38 JST`
+- Nodes: `833`
+- Edges: `1150`
+- Current: `0923a69d1f67`
+- Anchor: `5a5041d085a2`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_0a1b5dfabf95["0a1b5dfabf95<br/>g=12 n=12<br/>comp=11274.1"]
     h_b1515125bcf7["b1515125bcf7<br/>g=12 n=12<br/>comp=10341.6"]
     h_bb768f9ca0bf["bb768f9ca0bf<br/>g=12 n=12<br/>comp=11529.9"]
     h_d7c863da186d["d7c863da186d<br/>g=12 n=12<br/>comp=10116.4"]
@@ -65,8 +64,8 @@ flowchart TD
     h_83703f8c4c67["83703f8c4c67<br/>g=24 n=20<br/>comp=11441.3"]
     h_854dd86604da["854dd86604da<br/>g=12 n=12<br/>comp=9886.7"]
     h_5a79c70f09fb["5a79c70f09fb<br/>g=12 n=12<br/>comp=8970.9"]
-    h_5a5041d085a2["5a5041d085a2<br/>g=12 n=12<br/>comp=12075.6"]
-    h_97a63b4bac79["97a63b4bac79<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12409.2"]
+    h_5a5041d085a2["5a5041d085a2<br/>ANCHOR<br/>g=12 n=12<br/>comp=12075.6"]
+    h_97a63b4bac79["97a63b4bac79<br/>g=25 n=20<br/>comp=11258.1"]
     h_23cb1f623799["23cb1f623799<br/>g=12 n=12<br/>comp=10932.4"]
     h_5b1ed9feee39["5b1ed9feee39<br/>g=12 n=12<br/>comp=11233.4"]
     h_35a31ad32371["35a31ad32371<br/>g=24 n=20<br/>comp=10937.4"]
@@ -75,8 +74,8 @@ flowchart TD
     h_10a880b3f1ee["10a880b3f1ee<br/>g=12 n=12<br/>comp=9009.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_0923a69d1f67["0923a69d1f67<br/>CURRENT"]
 
-    h_0a1b5dfabf95 -->|improve| h_b1515125bcf7
     h_b1515125bcf7 -->|improve| h_bb768f9ca0bf
     h_bb768f9ca0bf -->|improve| h_d7c863da186d
     h_d7c863da186d -->|improve| h_1813ba4eef44
@@ -143,13 +142,13 @@ flowchart TD
     h_4f5e73275eeb -. rollback .-> h_35a31ad32371
     h_35a31ad32371 -->|improve| h_10a880b3f1ee
     h_10a880b3f1ee -. rollback .-> h_97a63b4bac79
+    h_97a63b4bac79 -->|improve| h_0923a69d1f67
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_0a1b5dfabf95 plain;
     class h_b1515125bcf7 plain;
     class h_bb768f9ca0bf plain;
     class h_d7c863da186d plain;
@@ -199,8 +198,8 @@ flowchart TD
     class h_83703f8c4c67 plain;
     class h_854dd86604da plain;
     class h_5a79c70f09fb plain;
-    class h_5a5041d085a2 plain;
-    class h_97a63b4bac79 current_anchor;
+    class h_5a5041d085a2 anchor;
+    class h_97a63b4bac79 plain;
     class h_23cb1f623799 plain;
     class h_5b1ed9feee39 plain;
     class h_35a31ad32371 plain;
@@ -209,6 +208,7 @@ flowchart TD
     class h_10a880b3f1ee plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_0923a69d1f67 current;
 ```
 
 ## Detail 1/11
@@ -3063,9 +3063,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `a3aae72a4e37`
-- Nodes in this diagram: `32`
-- Internal edges in this diagram: `32`
+- Range: `422188c46bb8` .. `0923a69d1f67`
+- Nodes in this diagram: `33`
+- Internal edges in this diagram: `33`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3099,8 +3099,8 @@ flowchart TD
     h_83703f8c4c67["83703f8c4c67<br/>g=24 n=20<br/>comp=11441.3"]
     h_854dd86604da["854dd86604da<br/>g=12 n=12<br/>comp=9886.7"]
     h_5a79c70f09fb["5a79c70f09fb<br/>g=12 n=12<br/>comp=8970.9"]
-    h_5a5041d085a2["5a5041d085a2<br/>g=12 n=12<br/>comp=12075.6"]
-    h_97a63b4bac79["97a63b4bac79<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12409.2"]
+    h_5a5041d085a2["5a5041d085a2<br/>ANCHOR<br/>g=12 n=12<br/>comp=12075.6"]
+    h_97a63b4bac79["97a63b4bac79<br/>g=25 n=20<br/>comp=11258.1"]
     h_23cb1f623799["23cb1f623799<br/>g=12 n=12<br/>comp=10932.4"]
     h_5b1ed9feee39["5b1ed9feee39<br/>g=12 n=12<br/>comp=11233.4"]
     h_35a31ad32371["35a31ad32371<br/>g=24 n=20<br/>comp=10937.4"]
@@ -3109,6 +3109,7 @@ flowchart TD
     h_10a880b3f1ee["10a880b3f1ee<br/>g=12 n=12<br/>comp=9009.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_0923a69d1f67["0923a69d1f67<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3142,6 +3143,7 @@ flowchart TD
     h_4f5e73275eeb -. rollback .-> h_35a31ad32371
     h_35a31ad32371 -->|improve| h_10a880b3f1ee
     h_10a880b3f1ee -. rollback .-> h_97a63b4bac79
+    h_97a63b4bac79 -->|improve| h_0923a69d1f67
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3170,8 +3172,8 @@ flowchart TD
     class h_83703f8c4c67 plain;
     class h_854dd86604da plain;
     class h_5a79c70f09fb plain;
-    class h_5a5041d085a2 plain;
-    class h_97a63b4bac79 current_anchor;
+    class h_5a5041d085a2 anchor;
+    class h_97a63b4bac79 plain;
     class h_23cb1f623799 plain;
     class h_5b1ed9feee39 plain;
     class h_35a31ad32371 plain;
@@ -3180,9 +3182,20 @@ flowchart TD
     class h_10a880b3f1ee plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_0923a69d1f67 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11490 `97a63b4b -> 0923a69d`
+
+- scores: `13470 14530 8169 12875 8530 17340 10292 16594 9086 8995 8817 16907`
+- v431: conditional height_mult relaxation — only relax when current type has reactive/near guidance
+- Postmortem: rp=1-2 height_mult relaxations (v271 0.8x, v288 0.3x, v294 0.2x) compound to
+- floor 0.5, enabling HEIGHT_CONTROL edge scatter when current type has no reactive/near pairs.
+- Worst game T55-62: pc=28-35, rp=2, mg=NO, x=3.0 (HIGH_LAYER scatter) → dies at T62.
+- When current_type_has_reactive or current_type_has_near, axis 9.6 stacking provides
+- directional guidance that justifies relaxation. Without guidance, relaxation weakens
 
 ### Rollback Game#11478 `10a880b3 -> 97a63b4b`
 
