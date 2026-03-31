@@ -1,23 +1,26 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v134)
+ * strategy.mjs - ドロップ位置決定戦略 (v135)
  *
- * v134: v133をベースに、ゲーム分析から見られた「max_yがDEADLINE_Yを超過しているケースが多い」という課題に対し、
- *       高さのシミュレーションをより保守的にすることで、エージェントがより低い位置にピースを配置するように誘導します。
- *       これにより、ゲームオーバーのリスクを低減し、生存ターン数の増加を目指します。
+ * v135: v134をベースに、ゲーム分析から見られた「max_yがDEADLINE_Yを超過しているケースが多い」という課題に対し、
+ *       高さペナルティをさらに強化し、盤面が危険な状態になる前にエージェントがより低い位置にピースを配置するように誘導します。
+ *       また、おじゃまブロック処理のトリガー条件を調整し、大型ピースの片側集約をさらに促進します。
  *
- *      主な改善点 (v133からの調整点):
- *      1.  **高さ管理戦略の微調整（settlingBufferの再調整）**:
- *          - `simulateDropY` 内の `settlingBuffer` を `1.25` から `1.3` へ増加。
- *            (v132の値に戻します。これにより、ピースが着地する予測Y座標がわずかに高めにシミュレーションされ、
- *            エージェントはより低い位置へのドロップを優先するようになります。ゲームログでmax_yが頻繁に
- *            DEADLINE_Y (2.5) を超えていることから、高所へのピース配置を抑制し、より安全な盤面構築を促します。)
- *
- *      注意点:
- *      - 物理挙動の近似には限界があり、特に併合時の爆発衝撃波やランダムな転がりはシミュレーションでは再現できません。
- *        先読みもあくまで簡易的なものであり、これらの不確実性を考慮する必要があります。
- *      - `DEADLINE_Y = 2.5` はゲームオーバーの厳密なラインではなく、盤面状況から「危険な高さ」と判断される目安として機能しています。
- *        実際のゲームオーバーラインは `BOARD_Y_RANGE` の `+3.32` に近いため、`2.5` を超える `max_y` の記録が見られるのはこのためです。
- *        しかし、`2.5` を超える領域での活動はリスクが高まるため、`settlingBuffer` の調整によりこの領域への到達を遅らせることを目指します。
+ *      主な改善点 (v134からの調整点):
+ *      1.  **おじゃまブロック緊急モードの閾値調整**:
+ *          - `GARBAGE_RATIO_OJAMA_URGENT` を `0.3` から `0.4` に増加。
+ *            （ゲームルール説明の「When garbage.ratio > 0.4, enter OJAMA_URGENT mode」に合致させます。
+ *            これにより、盤面内のゴミ比率がより高くなってから緊急モードに移行し、不要な過剰反応を抑えつつ、
+ *            真に危険な状況でのみ積極的なゴミ処理を促します。）
+ *      2.  **高さ管理戦略の強化**:
+ *          - `HEIGHT_PENALTY_WEIGHT` を `2500.0` から `3000.0` へ増加。
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `120` から `150` へ増加。
+ *            （高い位置へのピース配置に対するペナルティを強化することで、デッドライン到達のリスクを積極的に低減し、
+ *            より安全な盤面維持を目指します。ゲームログでmax_yが頻繁にDEADLINE_Y (2.5) を超えているため、
+ *            より早い段階での高所回避を促します。）
+ *      3.  **大型ピース片側集約の強化**:
+ *          - 大型ピースを既存の大型ピースと反対側に置く場合のペナルティを `-350` から `-500` へ増加。
+ *            （「大型ピースの片側集約」原則をより強く適用し、大型ピースが盤面全体に分散することを抑制し、
+ *            マージ機会の創出と管理を容易にします。）
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -30,8 +33,8 @@ const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 // Adjusted relative values to make penalties start earlier (lower Y) - v129
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.7; // Critical penalty starts at Y=1.8 (unchanged from v125)
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.5;     // Warning penalty starts at Y=1.0 (adjusted from 1.7 in v128)
-const HEIGHT_PENALTY_WEIGHT = 2500.0; // Increased from 2200.0 (v132 -> v133)
-const CRITICAL_Y_PENALTY_MULTIPLIER = 120; // Increased from 100 (v132 -> v133)
+const HEIGHT_PENALTY_WEIGHT = 3000.0; // Increased from 2500.0 (v134 -> v135)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 150; // Increased from 120 (v134 -> v135)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -44,11 +47,11 @@ const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are
 // Garbage Block Management Constants
 const GARBAGE_MERGE_BONUS = 3000;
 const GARBAGE_URGENT_MERGE_BONUS = 15000; // Maintained from v128
-// Updated to match prompt
+// Updated to match prompt (v134 -> v135)
 const GARBAGE_RATIO_OJAMA_MERGE = 0.15;
 const OJAMA_GAUGE_OJAMA_MERGE = 0.3;
-// v130: Lowered threshold for garbage ratio to trigger urgent mode
-const GARBAGE_RATIO_OJAMA_URGENT = 0.3; // Maintained from v132
+// v135: Lowered threshold for garbage ratio to trigger urgent mode
+const GARBAGE_RATIO_OJAMA_URGENT = 0.4; // Changed from 0.3 (v134 -> v135)
 
 
 // Default initial drop X
@@ -95,7 +98,7 @@ function calculateHeightPenalty(simulatedY) {
   }
   if (simulatedY > criticalY) {
     // Exponentially higher penalty in the critical zone
-    // v133: CRITICAL_Y_PENALTY_MULTIPLIER increased from 100 to 120
+    // v135: CRITICAL_Y_PENALTY_MULTIPLIER increased from 120 to 150
     penalty += Math.pow((simulatedY - criticalY) / TOP_Y_CRITICAL_PENALTY_START_RELATIVE, 2) * HEIGHT_PENALTY_WEIGHT * CRITICAL_Y_PENALTY_MULTIPLIER;
   }
   return penalty;
@@ -194,7 +197,7 @@ export function decide(boardState) {
 
   // Determine ojama modes for consistent checks
   let ojamaMode = (boardState.garbage.ratio >= GARBAGE_RATIO_OJAMA_MERGE || boardState.garbage.gauge >= OJAMA_GAUGE_OJAMA_MERGE);
-  // v130: ojamaUrgentMode now triggers at GARBAGE_RATIO_OJAMA_URGENT
+  // v135: ojamaUrgentMode now triggers at GARBAGE_RATIO_OJAMA_URGENT = 0.4
   let ojamaUrgentMode = (boardState.garbage.ratio >= GARBAGE_RATIO_OJAMA_URGENT || boardState.garbage.gauge >= 0.6);
 
   // Function to evaluate a given piece (current or held) for all X positions
@@ -262,8 +265,8 @@ export function decide(boardState) {
             } else if (Math.abs(avgLargePieceX) < 0.5 && Math.abs(x) < 0.5) { // If large pieces are mostly centered, and we're dropping centrally
                currentPlacementScore += 50;
             } else { // If we're dropping a large piece on the opposite side of existing large pieces
-               // v131: Reduced penalty from -450 to -350 (maintained in v133)
-               currentPlacementScore -= 350;
+               // v135: Penalty increased from -350 to -500 (v134 -> v135)
+               currentPlacementScore -= 500;
             }
           } else {
               // If this is the first large piece, try to place it significantly off-center to encourage starting a stack
