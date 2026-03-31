@@ -63,7 +63,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v434: moderate-height AVOID_BLOCK suppression with guidance — fill 1.0-2.0 gap
+     # v435: deadline NO-merge sign error fix + rp>=3 double-penalty elimination
+     # v432 formula -3000+y*2000 gave +1000 at y=2 (should be -7000). Combined with axis
+     # 8.8 (rp>=3 NO merge) cancelled to flat -6000 regardless of y — the exact flat-
+     # penalty anti-pattern from the last rollback. Fix: negate formula + skip when rp>=3.
      # Worst games show AVOID_BLOCK pushing pieces to edges at max_y 1.3-2.0 when deadline
      # crossed and pc >= 28. Protected strategy (median 12789) had NO AVOID_BLOCK.
      # Stacking guidance (200-600) can't overcome AVOID_BLOCK (500), causing edge scatter
@@ -1321,12 +1324,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_122310_score0720.jsonl turns 49-57, game_history/20260324_120021_score2599.jsonl turns 116-123
         # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
 
-        if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # v432: height-dependent penalty instead of flat -4500
-            # Restores ~4000 gradient between y=0 and y=2, per postmortem constraint
-            # Formula: -3000 + max(0, landing_y) * 2000
-            # At y<=0: -3000, y=0.5: -4000, y=1: -5000, y=1.5: -6000, y=2: -7000
-            deadline_no_merge_penalty = -3000.0 + max(0.0, landing_y) * 2000.0
+        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
+            # v435: sign error fix in v432 formula + rp>=3 skip to eliminate double-penalty overlap
+            # BUG: v432 had -3000 + y*2000 which gave +1000 at y=2 instead of -7000.
+            # With axis 8.8 (rp>=3 NO merge), both penalties fired and CANCELLED to flat -6000,
+            # violating postmortem "no flat NO-merge penalty" — exactly the failure mode that
+            # caused the last rollback. Protected strategy (median 12789) only has axis 8.8,
+            # confirming this separate deadline penalty should not overlap rp>=3.
+            # Fix: -(3000 + max(0, y)*2000) gives correct gradient -3000 to -7000.
+            # Skip when rp>=3 since axis 8.8 already handles that case.
+            deadline_no_merge_penalty = -(3000.0 + max(0.0, landing_y) * 2000.0)
             score += deadline_no_merge_penalty
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
         
