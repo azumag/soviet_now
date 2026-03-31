@@ -44,7 +44,7 @@ Game Overview:
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-             9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
+             # v384 axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR) removed in v437 — see change history
              9.5. Current type stack merge priority - v337: russia_phase抑制版
 
 
@@ -63,6 +63,24 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v438: remove landing_y scaling from chain_bonus_multiplier — eliminate perverse height incentive
+     # v196 formula (495 + max(0, ly+1.5)*150) gave bigger chain bonuses at higher landing_y,
+     # incentivizing NEAR merges at high y where failure (31.5%) adds pieces without benefit.
+     # Worst game T30-49: repeated NEAR at y=0.5-1.8 with inflated chain bonus, pc 22→36.
+     # Chain potential depends on proximity to merged_type, not height. Height risk is
+     # already captured by axis 2 (height penalty) and axis 8.8 (NO-merge penalty).
+     # v437: remove AVOID_BLOCK_REACTIVE_PAIR (axis 9.3, v384) — protected strategy alignment
+     # Protected strategy (median 12789) did NOT have AVOID_BLOCK_REACTIVE_PAIR. At high pc
+     # with many reactive pairs, the -500 cap penalty fires on most center positions (many
+     # reactive pair spans cover center), pushing pieces to isolated edges where they can't
+     # contribute to merges. Suppression logic (v417/v433/v434) was a regression source.
+     # AVOID_BLOCK_NEXTNEXT (axis 5.5) still protects nextNext merge paths. Growth center
+     # proximity (5.6) and stacking guidance (9.6/9.6b) provide positive center-pull, making
+     # negative AVOID_BLOCK redundant. Also removes piece_pos_by_id pre-computation (dead code).
+     # Fixes postmortem failure mode: piece_count accumulation from edge scatter via AVOID_BLOCK
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       game_history/20260331_200759_score0446.jsonl, game_history/20260331_201108_score0723.jsonl,
+     #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, advice.md
      # v436: low-reactive drought proximity scaling — fill rp=0-1 guidance gap in axis 9.6b
      # Worst games show HEIGHT_CONTROL at 19.8% (low-score) vs 17.5% (high-score).
      # MEDIUM game (score1800) T89-93: 5 consecutive rp=0 turns with HEIGHT_CONTROL,
@@ -781,10 +799,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # Used by axis 9.7 for placement guidance when no same-type on board
     pipeline = reactor.get("pipeline", [])
 
-    # --- v384: pre-compute piece positions for reactive pair blocking avoidance ---
-    # Used by axis 9.3 to check if landing position is between reactive pair pieces.
-    # Computed once before the candidate loop since pieces don't change between candidates.
-    piece_pos_by_id = {p["id"]: (p["x"], p["y"]) for p in pieces}
     current_type_has_reactive = any(
         rp[2] == next_type for rp in reactive_pairs if isinstance(rp, (list, tuple)) and len(rp) >= 3
     )
@@ -1161,64 +1175,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
-        # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
-        # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
-        # Placing a piece between reactive pairs of different types can physically block
-        # their future merge, leading to piece_count accumulation and game over.
-        # Worst game T37-47: 6-8 reactive pairs, pieces placed at y=2.58 between reactive
-        # pairs, no merges for 11 turns, piece_count grows 30→40.
-        # Penalty per blocked pair: 200, capped at 500 total. Small enough to not override
-        # merge opportunities (DIRECT +1200, NEAR +600) or axis 8.8 (-3000 to -9000).
-        # Only fires when merge_grade=="NO" (no immediate merge to suppress).
-        # Uses reactive_pairs position data from analyze_board.py (rp format: (id1, id2, type)).
-        # refs: advice.md, tmp/state/last_rollback_postmortem.md,
-        #       game_history/20260329_090616_score0296.jsonl T37-47,
-        #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
-        if merge_grade == "NO" and reactive_pair_count >= 1 and piece_count >= 25:
-            # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
-            # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
-            # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
-            # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
-            # v433: HIGH phase deadline gap — worst game T71 (max_y=2.36, rp=2, deadline)
-            # showed AVOID_BLOCK pushing to x=3.0 edge. max_y>=3.0 threshold only covers
-            # CRITICAL phase. Adding HIGH phase deadline clause (max_y>=2.0 + deadline + pc>=30)
-            # fills gap. Height guardrails (v432/v411/axis8.8) prevent high-stacking without
-            # AVOID_BLOCK. pc>=30 matches v361 congestion threshold. All three conditions
-            # required (postmortem: no unconditional suppression).
-            board_congested = (
-                (max_y >= 3.0 and deadline_crossed)
-                or (max_y >= 2.0 and deadline_crossed and piece_count >= 30)
-                or (reactive_pair_count >= 5 and max_y >= 2.5)
-                # v434: fill 1.0-2.0 gap — AVOID_BLOCK edge scatter at moderate height
-                # Protected strategy (median 12789) had no AVOID_BLOCK. When current
-                # type has reactive/near pairs, stacking guidance provides directional
-                # placement that justifies center over edge. Four conditions prevent
-                # unconditional suppression (postmortem: height guard required).
-                or (max_y >= 1.0 and deadline_crossed and piece_count >= 28
-                    and (current_type_has_reactive or current_type_has_near))
-            )
-            if not board_congested:
-                blocking_penalty = 0.0
-                for rp in reactive_pairs:
-                    if isinstance(rp, (list, tuple)) and len(rp) >= 3:
-                        rp_type = rp[2]
-                        if rp_type != next_type:
-                            pos1 = piece_pos_by_id.get(rp[0])
-                            pos2 = piece_pos_by_id.get(rp[1])
-                            if pos1 and pos2:
-                                x1, y1 = pos1
-                                x2, y2 = pos2
-                                # Check if landing is within the horizontal span of the reactive pair
-                                span_min = min(x1, x2) - 0.5
-                                span_max = max(x1, x2) + 0.5
-                                if span_min <= x <= span_max:
-                                    # Penalize if landing at or above the reactive pair level
-                                    pair_min_y = min(y1, y2)
-                                    if landing_y >= pair_min_y:
-                                        blocking_penalty += 200.0
-                if blocking_penalty > 0:
-                    score -= min(blocking_penalty, 500.0)
-                    reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+        # ----- v437: axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR) removed -----
+        # Protected strategy (median 12789) did NOT have AVOID_BLOCK_REACTIVE_PAIR.
+        # At high pc with many reactive pairs, the -500 penalty fires on most center
+        # positions (many reactive pair spans cover the center), pushing pieces to
+        # isolated edge positions where they can't contribute to merges. The suppression
+        # logic (v417, v433, v434) was a source of regressions. AVOID_BLOCK_NEXTNEXT
+        # (axis 5.5) still provides "don't block nextNext" protection. Growth center
+        # proximity (axis 5.6) and stacking guidance (9.6/9.6b) provide positive
+        # center-pull that makes negative AVOID_BLOCK redundant.
+        # Worst game: AVOID_BLOCK_REACTIVE_PAIR in 3/8 final turns, contributing to
+        # congestion. Protected strategy achieves higher median without it.
+        # Fixes postmortem failure mode: piece_count accumulation from edge scatter via AVOID_BLOCK
+        # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+        #       game_history/20260331_200759_score0446.jsonl T45-52,
+        #       game_history/20260331_201108_score0723.jsonl T69-76,
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 18.5% low vs 13.9% high),
+        #       tmp/state/last_rollback_postmortem.md, advice.md
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
@@ -1480,9 +1453,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 例: landing_y=1.0 → distance_max=5.6, multiplier=645.0
                 # 例: landing_y=2.0 → distance_max=6.2, multiplier=795.0
                 chain_distance_max = 5.0 + landing_y * 0.6
-                # v196: 初期段階CHAIN_MERGE有効化 - 初期段階でのCHAIN_MERGE選択を有効化
-                # 初期段階で有効なCHAIN_MERGE評価のために、初期値を495.0に固定し、着地高による動的調整を開始地点から行う
-                chain_bonus_multiplier = 495.0 + max(0, landing_y + 1.5) * 150.0
+                # v438: remove landing_y scaling from chain_bonus_multiplier
+                # v196 scaling (495 + max(0, ly+1.5)*150) rewarded higher placement with bigger
+                # chain bonuses, creating perverse incentive for NEAR merges at high y where
+                # failure (31.5%) is catastrophic. Worst game T30-49: repeated NEAR at y=0.5-1.8
+                # with inflated chain bonuses; each failure adds a high piece, accelerating
+                # piece_count accumulation. Chain potential depends on proximity to merged_type,
+                # not height. Height risk is already captured by axis 2 and axis 8.8.
+                # Best game T155-162: DIRECT merges succeed regardless of chain bonus height.
+                # refs: game_history/20260331_200759_score0446.jsonl T30-49,
+                #       game_history/20260331_200551_score3631.jsonl T155-162,
+                #       tmp/batch_summary.txt (NEAR 31.5% fail rate, low-score 18.5% HEIGHT_CONTROL)
+                chain_bonus_multiplier = 495.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
