@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-31 20:40:51 JST`
-- Nodes: `839`
-- Edges: `1156`
-- Current: `699d5b88b7f9`
+- Updated: `2026-03-31 22:02:26 JST`
+- Nodes: `840`
+- Edges: `1157`
+- Current: `da65bde97b9d`
 - Anchor: `5a5041d085a2`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_f26a4019f5fe["f26a4019f5fe<br/>g=12 n=12<br/>comp=10244.2"]
     h_ee1b93ba7260["ee1b93ba7260<br/>g=12 n=12<br/>comp=10972.3"]
     h_8d69c9c393b9["8d69c9c393b9<br/>g=12 n=12<br/>comp=11145.3"]
     h_b6b3fec418fa["b6b3fec418fa<br/>g=12 n=12<br/>comp=10542.1"]
@@ -72,11 +71,11 @@ flowchart TD
     h_152efdf4068b["152efdf4068b<br/>g=24 n=20<br/>comp=11244.4"]
     h_42788a76e00a["42788a76e00a<br/>g=12 n=12<br/>comp=10497.0"]
     h_128f831aab73["128f831aab73<br/>g=12 n=12<br/>comp=10024.8"]
+    h_699d5b88b7f9["699d5b88b7f9<br/>g=12 n=12<br/>comp=10078.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_699d5b88b7f9["699d5b88b7f9<br/>CURRENT"]
+    h_da65bde97b9d["da65bde97b9d<br/>CURRENT"]
 
-    h_f26a4019f5fe -->|improve| h_ee1b93ba7260
     h_ee1b93ba7260 -->|improve| h_8d69c9c393b9
     h_8d69c9c393b9 -->|improve| h_b6b3fec418fa
     h_b6b3fec418fa -->|improve| h_9a7d71d20cfb
@@ -140,13 +139,13 @@ flowchart TD
     h_152efdf4068b -->|improve| h_42788a76e00a
     h_42788a76e00a -->|improve| h_128f831aab73
     h_128f831aab73 -->|improve| h_699d5b88b7f9
+    h_699d5b88b7f9 -->|improve| h_da65bde97b9d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_f26a4019f5fe plain;
     class h_ee1b93ba7260 plain;
     class h_8d69c9c393b9 plain;
     class h_b6b3fec418fa plain;
@@ -203,9 +202,10 @@ flowchart TD
     class h_152efdf4068b plain;
     class h_42788a76e00a plain;
     class h_128f831aab73 plain;
+    class h_699d5b88b7f9 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_699d5b88b7f9 current;
+    class h_da65bde97b9d current;
 ```
 
 ## Detail 1/11
@@ -3060,9 +3060,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `699d5b88b7f9`
-- Nodes in this diagram: `39`
-- Internal edges in this diagram: `39`
+- Range: `422188c46bb8` .. `da65bde97b9d`
+- Nodes in this diagram: `40`
+- Internal edges in this diagram: `40`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3110,9 +3110,10 @@ flowchart TD
     h_152efdf4068b["152efdf4068b<br/>g=24 n=20<br/>comp=11244.4"]
     h_42788a76e00a["42788a76e00a<br/>g=12 n=12<br/>comp=10497.0"]
     h_128f831aab73["128f831aab73<br/>g=12 n=12<br/>comp=10024.8"]
+    h_699d5b88b7f9["699d5b88b7f9<br/>g=12 n=12<br/>comp=10078.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_699d5b88b7f9["699d5b88b7f9<br/>CURRENT"]
+    h_da65bde97b9d["da65bde97b9d<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3153,6 +3154,7 @@ flowchart TD
     h_152efdf4068b -->|improve| h_42788a76e00a
     h_42788a76e00a -->|improve| h_128f831aab73
     h_128f831aab73 -->|improve| h_699d5b88b7f9
+    h_699d5b88b7f9 -->|improve| h_da65bde97b9d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3195,12 +3197,23 @@ flowchart TD
     class h_152efdf4068b plain;
     class h_42788a76e00a plain;
     class h_128f831aab73 plain;
+    class h_699d5b88b7f9 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_699d5b88b7f9 current;
+    class h_da65bde97b9d current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11587 `699d5b88 -> da65bde9`
+
+- scores: `14074 11006 14365 10492 10549 10854 11952 10728 8873 9268 6499 8763`
+- v439: low-height chain bonus restoration — inverted v196 for safe cascade awareness
+- v438 removed v196 height scaling to eliminate risky high-y NEAR incentive. But the
+- protected strategy (median 12789, +20% vs current) HAS v196 scaling. The removal
+- reduced chain awareness at SAFE low heights (ly<0) where DIRECT merges succeed at
+- 95.7% and cascade formation is most beneficial. Batch: CHAIN_MERGE avg_delta=41.0
+- but only 4.4% selection — stronger chain at safe heights increases this.
 
 ### Improve Game#11575 `128f831a -> 699d5b88`
 
