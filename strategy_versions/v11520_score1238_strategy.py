@@ -63,6 +63,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v433: HIGH phase deadline AVOID_BLOCK suppression — prevent edge scatter in crisis
+     # Worst game T71: max_y=2.36, rp=2, deadline_crossed, pc=34 → AVOID_BLOCK penalty (~400)
+     # overwhelms stacking/proximity guidance (~300-700), pushing to x=3.0 edge where merge
+     # potential is zero. Existing suppression (max_y>=3.0+deadline) only fires in CRITICAL
+     # phase, leaving gap at HIGH phase (2.0-3.0) where AVOID_BLOCK still causes edge scatter.
+     # New clause: max_y>=2.0 AND deadline_crossed AND pc>=30 — HIGH phase deadline with
+     # congested board. piece_count >= 30 matches v361 congestion threshold. Height guardrails
+     # (v432 -3000/-7000, v411 -1200, axis 8.8 -3000/-7000) prevent high-stacking.
+     # NOT unconditional: requires ALL three of deadline + height + congestion (postmortem safe).
+     # Fixes rollback failure mode: edge scatter at HIGH phase deadline (T71 x=3.0 → recovery loss)
+     # refs: game_history/20260331_141430_score1007.jsonl T66-71 (edge scatter death),
+     #       game_history/20260331_140152_score1046.jsonl T63-74 (similar pattern),
+     #       tmp/state/last_rollback_postmortem.md (AVOID_BLOCK height guard constraint),
+     #       strategy.py.staging (v417, v432), tmp/batch_summary.txt
      # v432: deadline-crossed NO-merge height-dependent penalty — restore height gradient at deadline
      # Postmortem constraint: "Any NO-merge penalty MUST preserve meaningful height
      # differentiation (~3000+ between y=0 and y=2)". The old flat -4500 for deadline_crossed
@@ -1123,8 +1137,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
             # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
             # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
+            # v433: HIGH phase deadline gap — worst game T71 (max_y=2.36, rp=2, deadline)
+            # showed AVOID_BLOCK pushing to x=3.0 edge. max_y>=3.0 threshold only covers
+            # CRITICAL phase. Adding HIGH phase deadline clause (max_y>=2.0 + deadline + pc>=30)
+            # fills gap. Height guardrails (v432/v411/axis8.8) prevent high-stacking without
+            # AVOID_BLOCK. pc>=30 matches v361 congestion threshold. All three conditions
+            # required (postmortem: no unconditional suppression).
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
+                or (max_y >= 2.0 and deadline_crossed and piece_count >= 30)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
             )
             if not board_congested:
