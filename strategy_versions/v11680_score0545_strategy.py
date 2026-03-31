@@ -62,6 +62,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v445: flatten axis 8.8 reactive_pairs NO-merge penalty from gradient (-3000 to -7000)
+     # to flat -4500, matching protected strategy (median 12789). The v329 gradient
+     # overwhelmed horizontal guidance (stacking ~400, proximity ~300) with a 4000-point
+     # height differential, causing edge scatter (worst game: 4/8 final turns at x=±3.0).
+     # Flat -4500 preserves NO-merge penalty while restoring horizontal guidance influence.
+     # Fixes rollback failure mode: edge scatter at deadline from axis 8.8 gradient
+     # overwhelming horizontal guidance bonuses
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       game_history/20260401_042243_score0853.jsonl, tmp/state/last_rollback_postmortem.md,
+     #       tmp/batch_summary.txt, advice.md, game_history/20260401_042856_score0897.jsonl
      # v444: Russia proximity-aware board compression — replace flat bonus with directional
      # guidance toward existing Russia piece for 2nd Russia growth pipeline.
      # Old: flat +400/+800/+900 (identical for all candidates, zero directional effect).
@@ -1544,15 +1554,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず強力なペナルティを適用
-            # landing_yに応じて動的にペナルティを強化し、高配置を積極的に抑制
-            # v329修正: landing_y > 1 の場合、(landing_y - 1.0) * 2000.0 を使用し、高配置ほどペナルティを強化
-            if landing_y <= 0:
-                score -= 3000.0
-            elif landing_y <= 1:
-                score -= 3000.0 + landing_y * 2000.0
-            else:
-                score -= 5000.0 + (landing_y - 1.0) * 2000.0
+            # v445: revert axis 8.8 gradient to flat -4500, aligning with protected strategy
+            # (median 12789, +10% better). The v329 gradient (-3000 to -7000) created a
+            # 4000-point height differential that overwhelmed all horizontal guidance bonuses
+            # (stacking ~400, proximity ~300, growth center ~200). This made the strategy
+            # pick based almost entirely on landing_y, often choosing edge positions (x=±3.0)
+            # with lower y but no merge potential. Flat -4500 preserves the strong NO-merge
+            # penalty while allowing horizontal guidance to influence placement.
+            # Worst game T53-T60: 4/8 turns at x=±3.0 with rp=3, mg=NO — the gradient
+            # caused edge scatter because stacking/proximity bonuses (~200-400) couldn't
+            # compete with the 4000-point height differential. Protected strategy (flat
+            # -4500) allows bonuses to compete meaningfully (~9% scoring differentiation).
+            score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
