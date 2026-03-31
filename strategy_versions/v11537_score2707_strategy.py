@@ -63,6 +63,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v434: moderate-height AVOID_BLOCK suppression with guidance — fill 1.0-2.0 gap
+     # Worst games show AVOID_BLOCK pushing pieces to edges at max_y 1.3-2.0 when deadline
+     # crossed and pc >= 28. Protected strategy (median 12789) had NO AVOID_BLOCK.
+     # Stacking guidance (200-600) can't overcome AVOID_BLOCK (500), causing edge scatter
+     # that isolates pieces and prevents merges → piece_count accumulation → death.
+     # New clause: max_y >= 1.0 + deadline_crossed + pc >= 28 + guidance_available.
+     # Four conditions ensure suppression only when board is moderately high AND dangerous
+     # AND congested AND stacking guidance exists. Respects postmortem: has height guard,
+     # not unconditional. Fixes: edge scatter at max_y 1.3-2.0 in worst games.
+     # Fixes rollback failure mode: piece_count accumulation from AVOID_BLOCK edge scatter at moderate height
+     # refs: game_history/20260331_153642_score0432.jsonl T48-50, game_history/20260331_150014_score0745.jsonl,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py, tmp/batch_summary.txt,
+     #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt, strategy.py.staging (v433)
      # v433: HIGH phase deadline AVOID_BLOCK suppression — prevent edge scatter in crisis
      # Worst game T71: max_y=2.36, rp=2, deadline_crossed, pc=34 → AVOID_BLOCK penalty (~400)
      # overwhelms stacking/proximity guidance (~300-700), pushing to x=3.0 edge where merge
@@ -1147,6 +1160,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 (max_y >= 3.0 and deadline_crossed)
                 or (max_y >= 2.0 and deadline_crossed and piece_count >= 30)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
+                # v434: fill 1.0-2.0 gap — AVOID_BLOCK edge scatter at moderate height
+                # Protected strategy (median 12789) had no AVOID_BLOCK. When current
+                # type has reactive/near pairs, stacking guidance provides directional
+                # placement that justifies center over edge. Four conditions prevent
+                # unconditional suppression (postmortem: height guard required).
+                or (max_y >= 1.0 and deadline_crossed and piece_count >= 28
+                    and (current_type_has_reactive or current_type_has_near))
             )
             if not board_congested:
                 blocking_penalty = 0.0
