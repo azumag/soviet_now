@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v428: close HIGH_PC_NEAR y=0-1.0 cascade gap — suppress all surface NEAR at pc>=33
+     # v427 graduated penalty at y=0.3 was only 120, but NEAR base (600) + downstream bonuses
+     # (DANGER_ZONE_IMMEDIATE 300-600, REACTIVE_IMMEDIATE 600-1000, CHAIN) overwhelmed it.
+     # Worst T59-T64: 3 consecutive failed NEAR at pc=33-36, y=0-1.0, all delta=0 → death.
+     # Best T132-T133: DIRECT merges at pc=38 rescue the game (95.7% success).
+     # Fix: extend high_pc_near_suppress from y>=1.0 to y>=0 at pc>=33. Only DIRECT and
+     # sub-surface NEAR (y<0) retain bonuses. Closes the piece_count cascade death spiral.
+     # Fixes postmortem failure mode: piece_count cascade from failed NEAR at pc>=33
+     # refs: game_history/20260331_085149_score0877.jsonl, game_history/20260331_083817_score3040.jsonl,
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, strategy.py.staging (v425, v427)
      # v426: AVOID_BLOCK suppression gap fix — AND→OR to match postmortem specified range
      # Postmortem: "AVOID_BLOCK が rp>=5 または max_y>=3.0+deadline のみが正しい抑制範囲"
      # v417 used AND: (rp>=5 and max_y>=2.5), leaving a gap at max_y 2.0-2.5 with rp>=5.
@@ -816,30 +826,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
-        # ----- evaluation axis 1.7: high pc NEAR merge penalty (v427: graduated, deadline-independent) -----
+        # ----- evaluation axis 1.7: high pc NEAR merge penalty (v428: suppress ALL surface NEAR at pc>=33) -----
         # Postmortem: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
         # landing_y < 0 の安全なものに限定するロジック"
-        # v422 was binary: cancel NEAR bonus at pc>=33+deadline+y>=1.0 only. Gap: at
-        # pc>=33 without deadline, NEAR at y=1.0-1.5 still got full axis 8.5/8.6 bonuses
-        # (+900-1600) → risky NEAR chosen, fails (31.5%), pc accumulates → runaway.
-        # Worst: pc=34, no deadline, NEAR at y=1.2 fails (delta=0), pc→35. Batch shows
-        # low-score games: HEIGHT_CONTROL 18.8% (scatter from failed NEAR debris).
-        # v427: graduated penalty at pc>=33 for ALL NEAR with landing_y>=0, proportional
-        # to landing_y. Structural: introduces continuous risk function instead of binary
-        # threshold. At y=0.5: -280 (mild, NEAR still viable). At y=2.0: -1120 (strong
-        # deterrent). Downstream NEAR bonuses still suppressed at y>=1.0 to prevent
-        # cascade stacking (DANGER_ZONE_IMMEDIATE + REACTIVE_IMMEDIATE + CHAIN).
-        # Safe NEAR (y<0, below surface) fully preserved — best game recovery path.
-        # Fixes postmortem: piece_count accumulation from failed NEAR at high pc
-        # refs: tmp/state/last_rollback_postmortem.md, strategy.py.staging (v422, v425),
-        #       tmp/batch_summary.txt (low-score HEIGHT_CONTROL 18.8% vs high-score 14.5%),
-        #       game_history/20260331_071650_score0532.jsonl T51-58 (NEAR cascade at pc>=33)
+        # v427 gap: penalty at y=0.3 was only 120 (0.3*400), but NEAR base bonus (600)
+        # + downstream bonuses (DANGER_ZONE_IMMEDIATE 300-600, REACTIVE_IMMEDIATE 600-1000,
+        # CHAIN_MERGE hundreds-thousands) overwhelmed it. Net NEAR at y=0.3, pc=35: still
+        # strongly positive → risky NEAR chosen, fails (31.5%), pc grows.
+        # Worst game T63: pc=35, NEAR at y~0.3 fails (delta=0), pc→36. T64: pc=36, NEAR
+        # at deadline fails again (delta=0), pc→36. Three consecutive failed NEAR = death.
+        # Best game T82: pc=33, NEAR at y<0 succeeds — recovery path preserved.
+        # v428: suppress ALL downstream NEAR bonuses at pc>=33 when landing_y>=0 (was y>=1.0).
+        # The penalty remains graduated (y*400), but downstream bonuses (axes 1.5b, 6, 7, 8.5,
+        # 8.6) are suppressed for any surface NEAR. Only DIRECT and sub-surface NEAR (y<0)
+        # retain full bonuses. At y=0: penalty=0 but suppress fires → net NEAR drops sharply
+        # from +1500-2000 to ~-100 to +100 (axis 1 bonus only). DIRECT unaffected (95.7%).
+        # Fixes postmortem: piece_count cascade from failed NEAR at pc>=33 (y=0-1.0 gap)
+        # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+        #       game_history/20260331_085149_score0877.jsonl T59-T64 (3 failed NEAR cascade),
+        #       game_history/20260331_083817_score3040.jsonl T132-T133 (DIRECT rescue at pc=38),
+        #       strategy.py.staging (v425, v427)
         if merge_grade == "NEAR" and piece_count >= 33 and landing_y >= 0:
             near_pc_penalty = landing_y * 400.0 * merge_mult
             score -= near_pc_penalty
             reasons.append("HIGH_PC_NEAR_PENALTY")
-            if landing_y >= 1.0:
-                high_pc_near_suppress = True  # v425: suppress downstream NEAR bonuses
+            # v428: suppress at y>=0 (was y>=1.0) — close the y=0-1.0 cascade gap
+            high_pc_near_suppress = True
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
