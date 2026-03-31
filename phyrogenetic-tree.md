@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-31 19:30:34 JST`
-- Nodes: `838`
-- Edges: `1155`
-- Current: `128f831aab73`
+- Updated: `2026-03-31 20:40:51 JST`
+- Nodes: `839`
+- Edges: `1156`
+- Current: `699d5b88b7f9`
 - Anchor: `5a5041d085a2`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_4c9ff4fc8427["4c9ff4fc8427<br/>g=12 n=12<br/>comp=10769.6"]
     h_f26a4019f5fe["f26a4019f5fe<br/>g=12 n=12<br/>comp=10244.2"]
     h_ee1b93ba7260["ee1b93ba7260<br/>g=12 n=12<br/>comp=10972.3"]
     h_8d69c9c393b9["8d69c9c393b9<br/>g=12 n=12<br/>comp=11145.3"]
@@ -72,11 +71,11 @@ flowchart TD
     h_4d15e051ad7a["4d15e051ad7a<br/>g=12 n=12<br/>comp=11240.6"]
     h_152efdf4068b["152efdf4068b<br/>g=24 n=20<br/>comp=11244.4"]
     h_42788a76e00a["42788a76e00a<br/>g=12 n=12<br/>comp=10497.0"]
+    h_128f831aab73["128f831aab73<br/>g=12 n=12<br/>comp=10024.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_128f831aab73["128f831aab73<br/>CURRENT"]
+    h_699d5b88b7f9["699d5b88b7f9<br/>CURRENT"]
 
-    h_4c9ff4fc8427 -->|improve| h_f26a4019f5fe
     h_f26a4019f5fe -->|improve| h_ee1b93ba7260
     h_ee1b93ba7260 -->|improve| h_8d69c9c393b9
     h_8d69c9c393b9 -->|improve| h_b6b3fec418fa
@@ -140,13 +139,13 @@ flowchart TD
     h_4d15e051ad7a -->|improve| h_152efdf4068b
     h_152efdf4068b -->|improve| h_42788a76e00a
     h_42788a76e00a -->|improve| h_128f831aab73
+    h_128f831aab73 -->|improve| h_699d5b88b7f9
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_4c9ff4fc8427 plain;
     class h_f26a4019f5fe plain;
     class h_ee1b93ba7260 plain;
     class h_8d69c9c393b9 plain;
@@ -203,9 +202,10 @@ flowchart TD
     class h_4d15e051ad7a plain;
     class h_152efdf4068b plain;
     class h_42788a76e00a plain;
+    class h_128f831aab73 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_128f831aab73 current;
+    class h_699d5b88b7f9 current;
 ```
 
 ## Detail 1/11
@@ -3060,9 +3060,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `128f831aab73`
-- Nodes in this diagram: `38`
-- Internal edges in this diagram: `38`
+- Range: `422188c46bb8` .. `699d5b88b7f9`
+- Nodes in this diagram: `39`
+- Internal edges in this diagram: `39`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3109,9 +3109,10 @@ flowchart TD
     h_4d15e051ad7a["4d15e051ad7a<br/>g=12 n=12<br/>comp=11240.6"]
     h_152efdf4068b["152efdf4068b<br/>g=24 n=20<br/>comp=11244.4"]
     h_42788a76e00a["42788a76e00a<br/>g=12 n=12<br/>comp=10497.0"]
+    h_128f831aab73["128f831aab73<br/>g=12 n=12<br/>comp=10024.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_128f831aab73["128f831aab73<br/>CURRENT"]
+    h_699d5b88b7f9["699d5b88b7f9<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3151,6 +3152,7 @@ flowchart TD
     h_4d15e051ad7a -->|improve| h_152efdf4068b
     h_152efdf4068b -->|improve| h_42788a76e00a
     h_42788a76e00a -->|improve| h_128f831aab73
+    h_128f831aab73 -->|improve| h_699d5b88b7f9
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3192,12 +3194,23 @@ flowchart TD
     class h_4d15e051ad7a plain;
     class h_152efdf4068b plain;
     class h_42788a76e00a plain;
+    class h_128f831aab73 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_128f831aab73 current;
+    class h_699d5b88b7f9 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11575 `128f831a -> 699d5b88`
+
+- scores: `12522 7219 16785 9050 13640 12561 8427 12955 23185 7155 7956 9372`
+- v384 axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR) removed in v437 — see change history
+- v438: remove landing_y scaling from chain_bonus_multiplier — eliminate perverse height incentive
+- v196 formula (495 + max(0, ly+1.5)*150) gave bigger chain bonuses at higher landing_y,
+- incentivizing NEAR merges at high y where failure (31.5%) adds pieces without benefit.
+- Worst game T30-49: repeated NEAR at y=0.5-1.8 with inflated chain bonus, pc 22→36.
+- Chain potential depends on proximity to merged_type, not height. Height risk is
 
 ### Improve Game#11563 `42788a76 -> 128f831a`
 
