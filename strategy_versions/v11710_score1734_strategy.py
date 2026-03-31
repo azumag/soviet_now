@@ -17,7 +17,7 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-           5.6. Growth center proximity - Compact board around highest-type piece (v370: all-reactive, congestion-aware)
+           5.6. [REMOVED in v448] Growth center proximity - additive noise, protected strategy has no equivalent
             6. Chain merge bonus - Evaluate possibility of further merges after merge
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
@@ -62,6 +62,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v448: remove axis 5.6 (growth center proximity) — reduce additive noise, align with protected strategy
+     # Protected strategy (median 12789, +21% better) has NO growth center guidance. The axis 5.6
+     # bonus (base 100, pc congestion scaling up to ~250) targets the highest-type piece which is
+     # often unrelated to the current piece type — adding center-pull noise without direct merge
+     # relevance. Postmortem warns about 600-1500 additive accumulation overwhelming height diffs.
+     # Removing 5.6 reduces additive noise by ~100-250 per candidate. Remaining guidance (9.6
+     # stacking, 9.6b proximity, 9.7 pipeline) still provides merge-relevant horizontal signal.
+     # Fixes postmortem failure mode: additive bonus accumulation masking height differentiation
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+     #       game_history/20260401_065232_score0690.jsonl, strategy.py.staging (v447)
      # v447: remove axis 9.5 SAME_TYPE_STACK_MERGE_PRIORITY — reduce additive noise at rp=0
      # SAME_TYPE_STACK_MERGE_PRIORITY has avg_delta=0.4 (essentially zero score impact) and fires
      # 4.2% in low-score games vs 1.6% in high-score games — correlated with bad outcomes.
@@ -1291,53 +1302,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
 
-        # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
-        # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
-        # Re-introduced in v364 but was limited to reactive<3 with max bonus 50 — too weak.
-        # Worst game (score0926) T78: 38 pieces, types 1-12 scattered, reactive=8, no merge.
-        # Best game (score3212) T142: types 14/13x2/12x2 concentrated, reactive=1.
-        # Growth center guidance encourages placing pieces near highest-type pieces,
-        # naturally concentrating types for merge path creation (advice: zoumotu3).
-        # v370 changes from v364:
-        # 1. Removed reactive<3 guard — guidance now fires at ALL reactive levels.
-        #    At reactive>=3, axis 8.8 dominates but guidance provides better tie-breaking.
-        # 2. Increased base bonus to 100 (from 50) — matches axis 9.6b magnitude for competitive signal.
-        # 3. Added piece_count congestion scaling — stronger guidance as board congests.
-        #    At pc=28: 100. At pc=35: ~198. At pc=40: ~268. Safe vs axis 8.8 (-3000 to -7000).
-        # 4. Changed decay: gc_y > 0 now uses 0.4 decay (from 0.5) — slightly less aggressive decay.
-        # Postmortem constraints: no reactive<3 guard, not landing_y-only (proximity+pc+gc_y).
-        # refs: advice.md (zoumotu3, garsy38), tmp/batch_summary.txt,
-        #       game_history/20260328_141811_score0926.jsonl, game_history/20260328_140715_score3212.jsonl,
-        #       tmp/state/last_rollback_postmortem.md (piece_count predictor),
-        #       strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
-        # Fixes rollback failure mode: type scattering → piece_count accumulation
-        # v407: removed russia_phase guard — growth center guidance now active in ALL phases
-        max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
-        if max_type_on_board >= 6:
-            # Find the deepest (lowest y) highest-type piece as growth center
-            growth_center = min(
-                (p for p in pieces if p.get("type") == max_type_on_board),
-                key=lambda p: p.get("y", 10),
-                default=None,
-            )
-            if growth_center:
-                gc_x = growth_center.get("x", 0)
-                gc_y = growth_center.get("y", -10)
-                horiz_dist = abs(x - gc_x)
-                if horiz_dist < 2.5:
-                    # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
-                    proximity = max(0, 100.0 - horiz_dist * 40.0)
-                    # Decay if growth center is high — don't override height control
-                    if gc_y > 0:
-                        proximity *= max(0.0, 1.0 - gc_y * 0.4)
-                    # v370: congestion-aware scaling — postmortem: piece_count is key predictor
-                    # At high piece_count, guidance needs to be stronger to compete with
-                    # height differences and provide meaningful redirect toward growth center.
-                    if piece_count >= 28:
-                        congestion_scale = 1.0 + (piece_count - 28) * 0.14
-                        proximity *= min(congestion_scale, 3.5)
-                    if proximity > 0:
-                        score += proximity
+        # ----- axis 5.6 (Growth center proximity): REMOVED in v448 -----
+        # v370 added growth center guidance (base 100, pc congestion scaling up to 3.5×,
+        # gc_y decay) to concentrate pieces near the highest-type piece on the board.
+        # Protected strategy (median 12789, +21% better) has NO axis 5.6 — it achieves
+        # better results with fewer additive axes. Growth center guidance targets the
+        # highest-type piece, which is often unrelated to the current piece type. The
+        # resulting bonus (up to ~250 at pc=40) adds center-pull noise without direct
+        # merge relevance — stacking (axis 9.6) and proximity (axis 9.6b) still provide
+        # merge-relevant horizontal guidance. Postmortem warns: "6+ additive bonuses
+        # totaling 600-1500 at center positions, overwhelming height diffs of ~250-450".
+        # Removing 5.6 reduces additive accumulation by ~100-250 per candidate, allowing
+        # height differentiation to remain the dominant tie-breaking signal (matching
+        # protected strategy structure). HEIGHT_CONTROL in low-score games (23.3%) is
+        # already high — removing one noise source won't cause excessive scatter.
+        # Remaining merge-relevant guidance (9.6 stacking, 9.6b proximity, 9.7 pipeline)
+        # preserves chain building capability.
+        # Fixes postmortem failure mode: additive bonus accumulation masking height differentiation
+        # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no axis 5.6),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 23.3% low vs 16.5% high),
+        #       tmp/state/last_rollback_postmortem.md (additive accumulation warning),
+        #       game_history/20260401_065232_score0690.jsonl T32-48 (merge drought, additive noise),
+        #       strategy.py.staging (v447)
 
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
