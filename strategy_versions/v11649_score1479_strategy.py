@@ -43,7 +43,7 @@ Game Overview:
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
-             9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
+             # axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR) removed in v443 — see change history
              9.5. Current type stack merge priority - v337: russia_phase抑制版
 
 
@@ -62,23 +62,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v442: symmetric AVOID_BLOCK suppression at high pc+deadline — reduce edge scatter
-     # Worst games show both AVOID_BLOCK axes (5.5 NEXTNEXT -400, 9.3 REACTIVE_PAIR -500) firing
-     # at pc>=35 and deadline_crossed, creating combined -900 edge-repulsion that overwhelms
-     # stacking/proximity guidance (~200-400). Pieces scatter to x=±3.0 edges where they can't
-     # contribute to merges → piece_count accumulation → game over. Worst T69-T76: AVOID_BLOCK_NEXTNEXT
-     # fires 6/8 turns, pushing to edges despite stacking guidance available. Protected strategy
-     # (median 12789) has no axis 9.3, avoiding the double scatter. Adding symmetric suppression
-     # to both axes under same conditions (existing board_congested + new pc>=35+deadline) restores
-     # balance. At rp>=3, axis 8.8 (-3000 to -7000) dominates all candidates equally, making
-     # suppression invisible. Only affects rp<3 NO-merge candidates where AVOID_BLOCK scatter
-     # causes piece_count accumulation (postmortem key failure predictor).
+     # v443: remove axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR) + weaken axis 5.5 (AVOID_BLOCK_NEXTNEXT)
+     # Protected strategy (median 12789, +20% vs current) has NO axis 9.3 and axis 5.5 at -400.
+     # v442 added symmetric suppression but suppression thresholds (pc>=35) were too narrow —
+     # worst game T58: AVOID_BLOCK fires at pc=33, rp=3, deadline_crossed, pushing to x=1.4.
+     # T64: BOTH axes fire (-900 total), piece to x=-1.2, pc 37→38, game over in 1 turn.
+     # Postmortem constraint: "forbid removing AVOID_BLOCK_REACTIVE_PAIR without simultaneously
+     # weakening AVOID_BLOCK_NEXTNEXT" — v437 removed only 9.3, causing rollback. v443 removes
+     # 9.3 entirely AND weakens 5.5 from -400 to -200, satisfying symmetric removal constraint.
+     # After removal, height differentiation (~180-450) is no longer overwhelmed by AVOID_BLOCK
+     # (-500/-900), restoring HEIGHT_CONTROL's natural scatter-prevention role.
      # Fixes postmortem failure mode: edge scatter during NO-merge drought → piece_count accumulation
-     # refs: tmp/state/last_rollback_postmortem.md (edge scatter failure mode),
-     #       game_history/20260401_012610_score0870.jsonl T69-76 (AVOID_BLOCK x=±3.0),
-     #       game_history/20260401_010854_score1080.jsonl T110-119 (double AVOID_BLOCK at ceiling),
+     # refs: tmp/state/last_rollback_postmortem.md (edge scatter, one-sided removal failure),
+     #       game_history/20260401_025230_score0642.jsonl T58-65 (AVOID_BLOCK death spiral),
      #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no axis 9.3),
-     #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.8% low vs 15.3% high)
+     #       tmp/batch_summary.txt, tmp/change_log.txt (v437 rollback, v442 suppression)
      # v421: piece_count-aware NEAR deadline risk — reduce risky NEAR at high pc
      # Postmortem prioritize: "NEAR merge 失敗時の piece_count 蓄積を防ぐため、deadline_crossed 下での
      # NEAR merge の選択をより慎重にすること" and "piece_count >= 33 を閾値として、DIRECT merge
@@ -707,10 +705,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # Used by axis 9.7 for placement guidance when no same-type on board
     pipeline = reactor.get("pipeline", [])
 
-    # --- v384: pre-compute piece positions for reactive pair blocking avoidance ---
-    # Used by axis 9.3 to check if landing position is between reactive pair pieces.
-    # Computed once before the candidate loop since pieces don't change between candidates.
-    piece_pos_by_id = {p["id"]: (p["x"], p["y"]) for p in pieces}
+    # --- v384 piece positions removed in v443 (axis 9.3 removed) ---
     current_type_has_reactive = any(
         rp[2] == next_type for rp in reactive_pairs if isinstance(rp, (list, tuple)) and len(rp) >= 3
     )
@@ -1055,51 +1050,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
-        # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
-        # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
-        # Placing a piece between reactive pairs of different types can physically block
-        # their future merge, leading to piece_count accumulation and game over.
-        # Worst game T37-47: 6-8 reactive pairs, pieces placed at y=2.58 between reactive
-        # pairs, no merges for 11 turns, piece_count grows 30→40.
-        # Penalty per blocked pair: 200, capped at 500 total. Small enough to not override
-        # merge opportunities (DIRECT +1200, NEAR +600) or axis 8.8 (-3000 to -9000).
-        # Only fires when merge_grade=="NO" (no immediate merge to suppress).
-        # Uses reactive_pairs position data from analyze_board.py (rp format: (id1, id2, type)).
-        # refs: advice.md, tmp/state/last_rollback_postmortem.md,
-        #       game_history/20260329_090616_score0296.jsonl T37-47,
-        #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
-        if merge_grade == "NO" and reactive_pair_count >= 1 and piece_count >= 25:
-            # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
-            # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
-            # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
-            # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
-            board_congested = (
-                (max_y >= 3.0 and deadline_crossed)
-                or (reactive_pair_count >= 5 and max_y >= 2.5)
-                or (piece_count >= 35 and deadline_crossed)
-            )
-            if not board_congested:
-                blocking_penalty = 0.0
-                for rp in reactive_pairs:
-                    if isinstance(rp, (list, tuple)) and len(rp) >= 3:
-                        rp_type = rp[2]
-                        if rp_type != next_type:
-                            pos1 = piece_pos_by_id.get(rp[0])
-                            pos2 = piece_pos_by_id.get(rp[1])
-                            if pos1 and pos2:
-                                x1, y1 = pos1
-                                x2, y2 = pos2
-                                # Check if landing is within the horizontal span of the reactive pair
-                                span_min = min(x1, x2) - 0.5
-                                span_max = max(x1, x2) + 0.5
-                                if span_min <= x <= span_max:
-                                    # Penalize if landing at or above the reactive pair level
-                                    pair_min_y = min(y1, y2)
-                                    if landing_y >= pair_min_y:
-                                        blocking_penalty += 200.0
-                if blocking_penalty > 0:
-                    score -= min(blocking_penalty, 500.0)
-                    reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+        # ----- axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR): REMOVED in v443 -----
+        # v384 originally added -500 penalty for landing between reactive pairs of different types.
+        # Protected strategy (median 12789) has no axis 9.3 and achieves +20% better median.
+        # Postmortem identified edge scatter from -500 penalty as primary death predictor in
+        # worst games (T58/T60/T64 of score0642). Simultaneously, axis 5.5 weakened from
+        # -400 to -200 to satisfy postmortem constraint on symmetric removal.
+        # refs: tmp/state/last_rollback_postmortem.md,
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+        #       tmp/change_log.txt (v443)
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
@@ -1265,31 +1224,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += center_bonus
             reasons.append("NEXT_SAME")
 
-        # ----- evaluation axis 5.5: avoid blocking nextNext merge (NEW: nextNext info utilization) -----
+        # ----- evaluation axis 5.5: avoid blocking nextNext merge (v203: nextNext info utilization) -----
         # batch_summary/adviceで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
         # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
-        # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
-        # v442: symmetric suppression with axis 9.3 — suppress in congested endgame to prevent
-        # edge scatter. Same conditions as axis 9.3's board_congested. Merge bonuses (DIRECT +1200,
-        # NEAR +600) dominate AVOID_BLOCK (-400) so suppression only affects NO-merge candidates.
-        # refs: advice.md (Pitman_live, azumag), batch_summary.txt
-        block_nextnext_suppressed = (
-            (max_y >= 3.0 and deadline_crossed)
-            or (reactive_pair_count >= 5 and max_y >= 2.5)
-            or (piece_count >= 35 and deadline_crossed and merge_grade == "NO")
-        )
-        if not block_nextnext_suppressed:
-            for p in pieces:
-                if p.get("type") == next_next_type:
-                    piece_y = p.get("y", -10)
-                    landing_y = result.get("landing_y", 0)
-                    if landing_y > piece_y:
-                        # 着地位置がnextNext typeのピースの上になる場合
-                        horiz_dist = abs(x - p["x"])
-                        if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                            score -= 400.0  # 未来の併合機会を潰すためのペナルティ
-                            reasons.append("AVOID_BLOCK_NEXTNEXT")
-                            break
+        # v443: penalty weakened from -400 to -200. Postmortem constraint requires weakening
+        # axis 5.5 when removing axis 9.3 to prevent asymmetric center repulsion.
+        # Protected strategy (median 12789) has axis 5.5 at -400 with NO axis 9.3 — but
+        # postmortem forbids replicating that exact config after the v437 rollback failure.
+        # -200 provides mild nextNext blocking guidance without overwhelming height diffs.
+        # v442 suppression removed (axis 9.3 no longer exists). Protected strategy also has
+        # no suppression on axis 5.5, confirming suppression is unnecessary.
+        # refs: advice.md (Pitman_live, azumag), tmp/batch_summary.txt,
+        #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt (v443)
+        for p in pieces:
+            if p.get("type") == next_next_type:
+                piece_y = p.get("y", -10)
+                landing_y = result.get("landing_y", 0)
+                if landing_y > piece_y:
+                    # 着地位置がnextNext typeのピースの上になる場合
+                    horiz_dist = abs(x - p["x"])
+                    if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
+                        score -= 200.0  # v443: weakened from -400 (postmortem symmetric removal)
+                        reasons.append("AVOID_BLOCK_NEXTNEXT")
+                        break
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
         # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
