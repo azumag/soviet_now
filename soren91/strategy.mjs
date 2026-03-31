@@ -1,26 +1,23 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v135)
+ * strategy.mjs - ドロップ位置決定戦略 (v136)
  *
- * v135: v134をベースに、ゲーム分析から見られた「max_yがDEADLINE_Yを超過しているケースが多い」という課題に対し、
- *       高さペナルティをさらに強化し、盤面が危険な状態になる前にエージェントがより低い位置にピースを配置するように誘導します。
- *       また、おじゃまブロック処理のトリガー条件を調整し、大型ピースの片側集約をさらに促進します。
+ * v136: v135をベースに、ゲーム分析から見られた「max_yがDEADLINE_Yを超過しているケースが多い」という課題に対し、
+ *       高さペナルティと、おじゃまブロック存在時の高所への配置ペナルティをさらに強化します。
+ *       これにより、エージェントがより低い位置にピースを配置するように強く誘導し、デッドライン到達のリスクを一層低減します。
  *
- *      主な改善点 (v134からの調整点):
- *      1.  **おじゃまブロック緊急モードの閾値調整**:
- *          - `GARBAGE_RATIO_OJAMA_URGENT` を `0.3` から `0.4` に増加。
- *            （ゲームルール説明の「When garbage.ratio > 0.4, enter OJAMA_URGENT mode」に合致させます。
- *            これにより、盤面内のゴミ比率がより高くなってから緊急モードに移行し、不要な過剰反応を抑えつつ、
- *            真に危険な状況でのみ積極的なゴミ処理を促します。）
- *      2.  **高さ管理戦略の強化**:
- *          - `HEIGHT_PENALTY_WEIGHT` を `2500.0` から `3000.0` へ増加。
- *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `120` から `150` へ増加。
- *            （高い位置へのピース配置に対するペナルティを強化することで、デッドライン到達のリスクを積極的に低減し、
+ *      主な改善点 (v135からの調整点):
+ *      1.  **高さ管理戦略のさらなる強化**:
+ *          - `HEIGHT_PENALTY_WEIGHT` を `3000.0` から `3500.0` へ増加。
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `150` から `200` へ増加。
+ *            （高い位置へのピース配置に対するペナルティを大幅に強化することで、デッドライン到達のリスクを積極的に低減し、
  *            より安全な盤面維持を目指します。ゲームログでmax_yが頻繁にDEADLINE_Y (2.5) を超えているため、
  *            より早い段階での高所回避を促します。）
- *      3.  **大型ピース片側集約の強化**:
- *          - 大型ピースを既存の大型ピースと反対側に置く場合のペナルティを `-350` から `-500` へ増加。
- *            （「大型ピースの片側集約」原則をより強く適用し、大型ピースが盤面全体に分散することを抑制し、
- *            マージ機会の創出と管理を容易にします。）
+ *      2.  **おじゃまブロック存在時の高所配置ペナルティの強化**:
+ *          - `boardState.garbage.ratio > 0.1` かつ `simulatedY > -1.0` の場合のペナルティを強化。
+ *            ベースペナルティを `(1000 + (simulatedY + 1.0) * 250)` から `(1200 + (simulatedY + 1.0) * 300)` に増加。
+ *            緊急おじゃまモード時の追加ペナルティを `(simulatedY + 1.0) * 500` から `(simulatedY + 1.0) * 600` に増加。
+ *            （おじゃまブロックが存在する状況で高所にピースを配置することへのペナルティを強化します。
+ *            特に緊急おじゃまモードでは、盤面を低く保つことの重要性が増すため、この調整により生存戦略を改善します。）
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -33,8 +30,8 @@ const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 // Adjusted relative values to make penalties start earlier (lower Y) - v129
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.7; // Critical penalty starts at Y=1.8 (unchanged from v125)
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.5;     // Warning penalty starts at Y=1.0 (adjusted from 1.7 in v128)
-const HEIGHT_PENALTY_WEIGHT = 3000.0; // Increased from 2500.0 (v134 -> v135)
-const CRITICAL_Y_PENALTY_MULTIPLIER = 150; // Increased from 120 (v134 -> v135)
+const HEIGHT_PENALTY_WEIGHT = 3500.0; // Increased from 3000.0 (v135 -> v136)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 200; // Increased from 150 (v135 -> v136)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -98,7 +95,7 @@ function calculateHeightPenalty(simulatedY) {
   }
   if (simulatedY > criticalY) {
     // Exponentially higher penalty in the critical zone
-    // v135: CRITICAL_Y_PENALTY_MULTIPLIER increased from 120 to 150
+    // v136: CRITICAL_Y_PENALTY_MULTIPLIER increased from 150 to 200
     penalty += Math.pow((simulatedY - criticalY) / TOP_Y_CRITICAL_PENALTY_START_RELATIVE, 2) * HEIGHT_PENALTY_WEIGHT * CRITICAL_Y_PENALTY_MULTIPLIER;
   }
   return penalty;
@@ -230,15 +227,14 @@ export function decide(boardState) {
         // Penalize height
         currentPlacementScore -= calculateHeightPenalty(simulatedY);
 
-        // v125 & v133: Additional penalty if placing high when a lot of garbage is present (re-reinforced)
+        // v136: Further increased additional penalty if placing high when a lot of garbage is present
         if (boardState.garbage.ratio > 0.1 && simulatedY > -1.0) { // If garbage is significant and we are placing above a certain Y
           // More predictable and stronger penalty: base + scaled by Y
-          // v133: Increased penalty values from v132
-          currentPlacementScore -= (1000 + (simulatedY + 1.0) * 250); // (was 900 + (simulatedY + 1.0) * 220)
+          currentPlacementScore -= (1200 + (simulatedY + 1.0) * 300); // Increased from (1000 + (simulatedY + 1.0) * 250) in v135
 
-          // v133: Add extra penalty if in urgent ojama mode and placing high (increased multiplier)
+          // v136: Increased extra penalty if in urgent ojama mode and placing high
           if (ojamaUrgentMode) {
-              currentPlacementScore -= (simulatedY + 1.0) * 500; // (was 450)
+              currentPlacementScore -= (simulatedY + 1.0) * 600; // Increased from (simulatedY + 1.0) * 500 in v135
           }
         }
 
