@@ -63,6 +63,37 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v430: mid-game drought proximity boost — structural state-dependent mode switch
+     # Postmortem: "mid-game merge drought (pc 25-32, max_y 0-1.5, 5+ consecutive NO-merge) の緩和"
+     # During drought, HEIGHT_CONTROL scatters pieces (16.1% turns, delta=0.4) preventing future
+     # merge formation. Batch: low-score games reach rp>=3 without merges (HIGH_LAYER_REACTIVE_
+     # PAIRS_NO_MERGE_PENALTY 6.1% vs 3.7%). Root cause: piece scattering at pc 25-32 when
+     # rp<2 and board is safe (max_y<2.0). By the time rp reaches 3+, board is too congested.
+     # Structural change: detect drought state (low rp + moderate pc + safe height) via three
+     # independent board signals and boost proximity guidance 2x in axis 9.6b. Switches strategy
+     # from height-optimal to cluster-optimal during drought. NOT a threshold tweak — introduces
+     # state-dependent mode. Only fires at merge_grade="NO" (no immediate merge to compete with).
+     # Protected strategy (median 12789) had stronger base guidance; this partially restores
+     # that competitiveness in the drought-prone regime.
+     # refs: tmp/state/last_rollback_postmortem.md (drought mitigation priority),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 16.1%, delta=0.4),
+     #       game_history/20260331_101537_score0567.jsonl T55-62 (drought→death),
+     #       game_history/20260331_095410_score0594.jsonl T45-52 (drought→death),
+     #       advice.md (中央集約, 孤立配置回避)
+     # v429: high pc DIRECT merge cascade priority — pc-scaled bonus for DIRECT merges at pc>=30
+     # Postmortem priority: "高 pc での DIRECT merge 発生率の向上。NEAR 抑制の代わりに
+     # DIRECT merge を強化する方が期待値上有利 (DIRECT 成功率 95.7%)"
+     # At high pc, DIRECT merge reduces pc by 2-8, creating cascade potential. Base DIRECT
+     # bonus (+1200) is constant regardless of pc, but pc=35 DIRECT is far more valuable
+     # than pc=20 DIRECT. New pc-scaled bonus: pc=30→+100, pc=35→+400, pc=40+→+600.
+     # Best game T101: DIRECT chain +147, pc 39→31. Target score2992 T115: +211, pc 39→32.
+     # Purely additive, doesn't suppress NEAR (postmortem constraint respected).
+     # Fixes postmortem failure mode: insufficient DIRECT merge priority at high pc
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+     #       game_history/20260331_070650_score2992.jsonl T115,
+     #       game_history/20260331_095154_score2220.jsonl T101,
+     #       game_history/20260331_101537_score0567.jsonl T55-62,
+     #       strategy.py.staging (v422, v425), strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v426: AVOID_BLOCK suppression gap fix — AND→OR to match postmortem specified range
      # Postmortem: "AVOID_BLOCK が rp>=5 または max_y>=3.0+deadline のみが正しい抑制範囲"
      # v417 used AND: (rp>=5 and max_y>=2.5), leaving a gap at max_y 2.0-2.5 with rp>=5.
@@ -866,6 +897,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 800.0
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
 
+        # ----- v429: high pc DIRECT merge cascade priority -----
+        # Postmortem priority: "高 pc での DIRECT merge 発生率の向上"
+        # At high pc, DIRECT merge is the most valuable recovery mechanism (95.7% success rate).
+        # Rollback target score2992 T115: DIRECT +211, pc 39→32 (7 pc reduction, game saved).
+        # Best game T101: DIRECT +6 → chain +147, pc 39→31 (cascade recovery at deadline).
+        # Worst game T55-T62: pc 34-40, NO DIRECT available for 7 turns → death at 567.
+        # Base DIRECT bonus (+1200) is pc-independent, but DIRECT at pc=40 is far more valuable
+        # than at pc=20 (cascade potential, game-saving pc reduction). This pc-scaled bonus
+        # corrects that asymmetry without suppressing NEAR (postmortem constraint: no NEAR
+        # suppression outside reactor_margin<1.0+landing_y>=1.0). Stacks additively with
+        # DANGER_DIRECT (pc=35, danger: +400+800=+1200 extra on top of base 1200).
+        # refs: tmp/state/last_rollback_postmortem.md (priority: DIRECT merge boost),
+        #       game_history/20260331_070650_score2992.jsonl T115 (DIRECT +211, pc 39→32),
+        #       game_history/20260331_095154_score2220.jsonl T101 (DIRECT chain +147, pc 39→31),
+        #       tmp/batch_summary.txt, strategy.py.staging (v422, v425)
+        if merge_grade == "DIRECT" and piece_count >= 30:
+            pc_direct_bonus = min((piece_count - 29) * 100, 600)
+            score += pc_direct_bonus
+            reasons.append("HIGH_PC_DIRECT_MERGE")
+
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
         # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
         # danger_merge_available covers NEAR merges targeting danger pieces. Removing a danger piece
@@ -1111,6 +1162,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if not rp_guidance_suppressed and reactive_pair_count >= 2:
                         rp_density_scale = 1.0 + (reactive_pair_count - 1) * 0.2
                         proximity_bonus *= min(rp_density_scale, 2.5)
+                    # v430: mid-game drought proximity boost
+                    # Postmortem: "mid-game merge drought (pc 25-32, max_y 0-1.5, 5+ NO-merge)"
+                    # During drought, HEIGHT_CONTROL scatters pieces (16.1%, delta=0.4) while
+                    # proximity bonus (~120) can't compete with height diffs (~70-100).
+                    # Detect drought state (low rp + moderate pc + safe height) and boost
+                    # proximity 2x to make clustering competitive, creating future merge
+                    # opportunities. Structural mode switch via three independent signals.
+                    if piece_count >= 25 and max_y < 2.0 and reactive_pair_count < 2:
+                        proximity_bonus *= 2.0
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
