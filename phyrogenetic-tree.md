@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-03-31 23:26:11 JST`
+- Updated: `2026-04-01 00:18:54 JST`
 - Nodes: `841`
-- Edges: `1158`
-- Current: `dd9b01603bc8`
+- Edges: `1159`
+- Current: `699d5b88b7f9`
 - Anchor: `5a5041d085a2`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -70,11 +70,11 @@ flowchart TD
     h_152efdf4068b["152efdf4068b<br/>g=24 n=20<br/>comp=11244.4"]
     h_42788a76e00a["42788a76e00a<br/>g=12 n=12<br/>comp=10497.0"]
     h_128f831aab73["128f831aab73<br/>g=12 n=12<br/>comp=10024.8"]
-    h_699d5b88b7f9["699d5b88b7f9<br/>g=12 n=12<br/>comp=10078.0"]
+    h_699d5b88b7f9["699d5b88b7f9<br/>CURRENT<br/>g=12 n=12<br/>comp=10078.0"]
     h_da65bde97b9d["da65bde97b9d<br/>g=12 n=12<br/>comp=10703.3"]
+    h_dd9b01603bc8["dd9b01603bc8<br/>g=12 n=12<br/>comp=9928.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_dd9b01603bc8["dd9b01603bc8<br/>CURRENT"]
 
     h_8d69c9c393b9 -->|improve| h_b6b3fec418fa
     h_b6b3fec418fa -->|improve| h_9a7d71d20cfb
@@ -140,6 +140,7 @@ flowchart TD
     h_128f831aab73 -->|improve| h_699d5b88b7f9
     h_699d5b88b7f9 -->|improve| h_da65bde97b9d
     h_da65bde97b9d -->|improve| h_dd9b01603bc8
+    h_dd9b01603bc8 -->|improve| h_699d5b88b7f9
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -201,11 +202,11 @@ flowchart TD
     class h_152efdf4068b plain;
     class h_42788a76e00a plain;
     class h_128f831aab73 plain;
-    class h_699d5b88b7f9 plain;
+    class h_699d5b88b7f9 current;
     class h_da65bde97b9d plain;
+    class h_dd9b01603bc8 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_dd9b01603bc8 current;
 ```
 
 ## Detail 1/11
@@ -3060,9 +3061,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `dd9b01603bc8`
+- Range: `422188c46bb8` .. `a3aae72a4e37`
 - Nodes in this diagram: `41`
-- Internal edges in this diagram: `41`
+- Internal edges in this diagram: `42`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3110,11 +3111,11 @@ flowchart TD
     h_152efdf4068b["152efdf4068b<br/>g=24 n=20<br/>comp=11244.4"]
     h_42788a76e00a["42788a76e00a<br/>g=12 n=12<br/>comp=10497.0"]
     h_128f831aab73["128f831aab73<br/>g=12 n=12<br/>comp=10024.8"]
-    h_699d5b88b7f9["699d5b88b7f9<br/>g=12 n=12<br/>comp=10078.0"]
+    h_699d5b88b7f9["699d5b88b7f9<br/>CURRENT<br/>g=12 n=12<br/>comp=10078.0"]
     h_da65bde97b9d["da65bde97b9d<br/>g=12 n=12<br/>comp=10703.3"]
+    h_dd9b01603bc8["dd9b01603bc8<br/>g=12 n=12<br/>comp=9928.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_dd9b01603bc8["dd9b01603bc8<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3157,6 +3158,7 @@ flowchart TD
     h_128f831aab73 -->|improve| h_699d5b88b7f9
     h_699d5b88b7f9 -->|improve| h_da65bde97b9d
     h_da65bde97b9d -->|improve| h_dd9b01603bc8
+    h_dd9b01603bc8 -->|improve| h_699d5b88b7f9
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3199,14 +3201,24 @@ flowchart TD
     class h_152efdf4068b plain;
     class h_42788a76e00a plain;
     class h_128f831aab73 plain;
-    class h_699d5b88b7f9 plain;
+    class h_699d5b88b7f9 current;
     class h_da65bde97b9d plain;
+    class h_dd9b01603bc8 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_dd9b01603bc8 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11611 `dd9b0160 -> 699d5b88`
+
+- scores: `9342 12821 11239 9711 12925 9440 14269 9337 11024 10615 8516 9486`
+- v441: flat chain_bonus_multiplier — remove v196 height scaling to eliminate high-y NEAR incentive
+- v440 restored v196 (495 + max(0, ly+1.5)*150) to match protected strategy, but protected's
+- median advantage comes from its SIMPLER overall bonus structure, not from chain height scaling.
+- Protected has fewer competing additive bonuses (no v370 congestion, no v412 nextNext, no
+- v418 density, no v436 drought), so height penalty creates clear position differentiation.
+- Current strategy has 6+ additive bonuses (v370/v408/v412/v418/v436, each 100-300) that
 
 ### Improve Game#11599 `da65bde9 -> dd9b0160`
 
