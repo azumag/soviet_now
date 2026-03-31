@@ -62,6 +62,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v444: Russia proximity-aware board compression — replace flat bonus with directional
+     # guidance toward existing Russia piece for 2nd Russia growth pipeline.
+     # Old: flat +400/+800/+900 (identical for all candidates, zero directional effect).
+     # score2383 T88-102: RUSSIA_PHASE_BOARD_COMPRESSION fired 9 times, pieces scattered to
+     # x=±3.0 edges despite Russia at (0.74, 0.18). Flat bonus cannot guide placement.
+     # New: redistribute based on horizontal proximity to Russia — near Russia: full bonus,
+     # far: 50% bonus. Net additive at non-Russia positions DECREASES (postmortem-safe).
+     # Safety guards: russia_y decay, landing_y decay, rp>=3 suppression.
+     # Fixes rollback failure mode: Russia phase pieces scattered to edges away from Russia
+     # refs: game_history/20260401_033818_score2383.jsonl, protected_e6f534c37e28_median12789,
+     #       tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+     #       strategy.py.staging (v443), advice.md, analyze_board.py
      # v443: remove axis 9.3 (AVOID_BLOCK_REACTIVE_PAIR) + weaken axis 5.5 (AVOID_BLOCK_NEXTNEXT)
      # Protected strategy (median 12789, +20% vs current) has NO axis 9.3 and axis 5.5 at -400.
      # v442 added symmetric suppression but suppression thresholds (pc>=35) were too narrow —
@@ -1470,23 +1482,47 @@ def decide(game_state: dict, analysis: dict) -> dict:
                          score += 1200.0
                  reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
              elif merge_grade == "NO":
-                 # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
-                 # v336: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
-                 if reactive_pair_count >= 3:
-                     # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
-                     # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
-                     score += 900.0
-                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 elif reactive_pair_count >= 1:
-                     # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
-                     # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
-                     score += 400.0
-                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                 # v444: Russia proximity-aware board compression — replace flat bonus with
+                 # directional guidance toward existing Russia piece for 2nd Russia growth.
+                 # Old (v336): flat +400/+800/+900 (identical for ALL candidates, zero directional
+                 # effect — pure noise in reason string). score2383 showed 9 turns of
+                 # RUSSIA_PHASE_BOARD_COMPRESSION with pieces scattered to x=±3.0 edges despite
+                 # Russia sitting at (0.74, 0.18). The flat bonus cannot guide placement.
+                 # New: redistribute based on horizontal proximity to nearest Russia piece.
+                 # Near Russia: full base_bonus. Far: 50% base_bonus. Net additive at non-Russia
+                 # positions DECREASES (postmortem-safe: reduces center-pull accumulation).
+                 # Safety: russia_y decay prevents guidance when Russia is high; landing_y decay
+                 # prevents guidance when column above Russia is full (height safety); rp>=3
+                 # suppression because axis 8.8 (-3000 to -7000) dominates all candidates equally.
+                 # refs: game_history/20260401_033818_score2383.jsonl T88-102,
+                 #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+                 #       tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+                 #       tmp/state/last_rollback_analysis.md, advice.md
+                 # Fixes rollback failure mode: Russia phase pieces scattered to edges, failing to
+                 #   build 2nd Russia growth pipeline (RUSSIA_PHASE_BOARD_COMPRESSION was directionless)
+                 russia_pieces_on_board = [p for p in pieces if p.get("type") == 15]
+                 base_bonus = 900.0 if reactive_pair_count >= 3 else (800.0 if reactive_pair_count == 0 else 400.0)
+                 if russia_pieces_on_board:
+                     nearest_russia = min(russia_pieces_on_board,
+                         key=lambda rp: abs(x - rp.get("x", 0)))
+                     russia_x = nearest_russia.get("x", 0)
+                     russia_y = nearest_russia.get("y", 0)
+                     horiz_dist = abs(x - russia_x)
+                     # Proximity factor: 1.0 at Russia's x, 0.5 at distance 2.5+
+                     proximity_factor = 1.0 - min(0.5, horiz_dist * 0.2)
+                     # Decay if Russia is high — placing near high Russia is risky
+                     if russia_y > 0.5:
+                         proximity_factor *= max(0.0, 1.0 - (russia_y - 0.5) * 0.5)
+                     # Decay if landing would be far above Russia (column is full)
+                     if landing_y > russia_y + 1.0:
+                         proximity_factor *= max(0.0, 1.0 - (landing_y - russia_y - 1.0) * 0.5)
+                     # At rp>=3, axis 8.8 dominates all candidates equally
+                     if reactive_pair_count >= 3:
+                         proximity_factor *= 0.2
+                     score += base_bonus * proximity_factor
                  else:
-                      # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
-                      # 盤面圧縮を優先しつつ、type 15保護を徹底
-                      score += 800.0
-                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                     score += base_bonus
+                 reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
