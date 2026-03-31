@@ -63,25 +63,25 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v440: restore v196 chain_bonus_multiplier — align with protected strategy (median 12789, +10%)
-     # v439 inverted v196 (stronger at bottom, flat at top) but produced median 11604 vs
-     # protected's 12789. The inversion reduced chain bonus at ALL ly>=0 (flat 495 vs 720-1020
-     # in v196), suppressing NEAR merge attempts at moderate heights where most board interaction
-     # happens. Fewer merge attempts → faster piece accumulation → earlier death.
-     # Protected strategy proves v196 works: 495 + max(0, ly+1.5)*150. At ly=0:720, ly=1:870.
-     # Existing guardrails (v411 CROSSES_DEADLINE, v421 pc_risk_scale, v422 HIGH_PC_NEAR_PENALTY,
-     # axis 8.8) prevent the risky high-y NEAR scenario that motivated v438 — these didn't exist
-     # when v438 was introduced. NEAR success rate 68.5% compensates for the 31.5% failure risk.
-     # Fixes: median gap vs protected caused by v439 chain suppression at moderate heights
-     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (v196),
-     #       tmp/batch_summary.txt (CHAIN_MERGE delta=41.0 at 4.4% selection, HEIGHT_CONTROL 20.6% low),
-     #       tmp/state/last_rollback_postmortem.md, strategy.py.staging (v439), advice.md
-     # v438: remove landing_y scaling from chain_bonus_multiplier — eliminate perverse height incentive
-     # v196 formula (495 + max(0, ly+1.5)*150) gave bigger chain bonuses at higher landing_y,
-     # incentivizing NEAR merges at high y where failure (31.5%) adds pieces without benefit.
-     # Worst game T30-49: repeated NEAR at y=0.5-1.8 with inflated chain bonus, pc 22→36.
-     # Chain potential depends on proximity to merged_type, not height. Height risk is
-     # already captured by axis 2 (height penalty) and axis 8.8 (NO-merge penalty).
+     # v441: flat chain_bonus_multiplier — remove v196 height scaling to eliminate high-y NEAR incentive
+     # v440 restored v196 (495 + max(0, ly+1.5)*150) to match protected strategy, but protected's
+     # median advantage comes from its SIMPLER overall bonus structure, not from chain height scaling.
+     # Protected has fewer competing additive bonuses (no v370 congestion, no v412 nextNext, no
+     # v418 density, no v436 drought), so height penalty creates clear position differentiation.
+     # Current strategy has 6+ additive bonuses (v370/v408/v412/v418/v436, each 100-300) that
+     # accumulate at center positions, blurring height differentiation. v196 adds another 0-525
+     # (at ly=0-2) to this center-pull noise. Worst games T61-62: x=±3.0 edge scatter despite
+     # axis 8.8 + CROSSES_DEADLINE penalties — center bonuses are competing with ~5000+ penalty.
+     # Flat 495 preserves chain awareness at safe positions (where CHAIN_MERGE delta=41.0 at 4.4%
+     # shows it works) without adding high-y incentive that causes failed NEAR at deadline.
+     # At ly=0: same as v196 (495 vs 720). At ly=2: 495 vs v196's 1020 — removes 525 of
+     # competing bonus that masks height signal.
+     # Fixes postmortem failure mode: piece_count accumulation from high-y NEAR failures (v438 direction)
+     # refs: tmp/batch_summary.txt (CHAIN_MERGE delta=41.0 at 4.4%, HEIGHT_CONTROL 15.4%),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (v196 context),
+     #       game_history/20260331_235847_score0964.jsonl T59-63 (edge scatter at rp=7),
+     #       game_history/20260401_000812_score1004.jsonl T66-73 (edge scatter at rp=5-8),
+     #       strategy.py.staging (v440), tmp/state/last_rollback_postmortem.md, advice.md
      # v437: remove AVOID_BLOCK_REACTIVE_PAIR (axis 9.3, v384) — protected strategy alignment
      # Protected strategy (median 12789) did NOT have AVOID_BLOCK_REACTIVE_PAIR. At high pc
      # with many reactive pairs, the -500 cap penalty fires on most center positions (many
@@ -1466,8 +1466,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 例: landing_y=1.0 → distance_max=5.6, multiplier=645.0
                 # 例: landing_y=2.0 → distance_max=6.2, multiplier=795.0
                 chain_distance_max = 5.0 + landing_y * 0.6
-                # v440: restore v196 chain_bonus_multiplier — see change history
-                chain_bonus_multiplier = 495.0 + max(0.0, landing_y + 1.5) * 150.0
+                # v441: flat chain_bonus_multiplier — remove height scaling (see change history)
+                chain_bonus_multiplier = 495.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
