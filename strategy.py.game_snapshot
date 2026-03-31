@@ -63,6 +63,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v439: low-height chain bonus restoration — inverted v196 for safe cascade awareness
+     # v438 removed v196 height scaling to eliminate risky high-y NEAR incentive. But the
+     # protected strategy (median 12789, +20% vs current) HAS v196 scaling. The removal
+     # reduced chain awareness at SAFE low heights (ly<0) where DIRECT merges succeed at
+     # 95.7% and cascade formation is most beneficial. Batch: CHAIN_MERGE avg_delta=41.0
+     # but only 4.4% selection — stronger chain at safe heights increases this.
+     # New formula inverts v196: stronger at BOTTOM (safe), flat at TOP (risky):
+     # 495 + max(0, -ly)*200. At ly=-3:1095, ly=-2:895, ly=-1:695, ly=0:495.
+     # v196 at ly=0 gave 720 (protected achieves higher median). At ly>=0 height risk
+     # is captured by axis 2 and axis 8.8 — no additional chain incentive needed.
+     # Fixes postmortem: low p25 from insufficient chain formation at safe positions
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/batch_summary.txt, game_history/20260331_213926_score0705.jsonl,
+     #       game_history/20260331_211629_score1924.jsonl,
+     #       game_history/20260331_212643_score1802.jsonl, advice.md
      # v438: remove landing_y scaling from chain_bonus_multiplier — eliminate perverse height incentive
      # v196 formula (495 + max(0, ly+1.5)*150) gave bigger chain bonuses at higher landing_y,
      # incentivizing NEAR merges at high y where failure (31.5%) adds pieces without benefit.
@@ -1453,18 +1468,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 例: landing_y=1.0 → distance_max=5.6, multiplier=645.0
                 # 例: landing_y=2.0 → distance_max=6.2, multiplier=795.0
                 chain_distance_max = 5.0 + landing_y * 0.6
-                # v438: remove landing_y scaling from chain_bonus_multiplier
-                # v196 scaling (495 + max(0, ly+1.5)*150) rewarded higher placement with bigger
-                # chain bonuses, creating perverse incentive for NEAR merges at high y where
-                # failure (31.5%) is catastrophic. Worst game T30-49: repeated NEAR at y=0.5-1.8
-                # with inflated chain bonuses; each failure adds a high piece, accelerating
-                # piece_count accumulation. Chain potential depends on proximity to merged_type,
-                # not height. Height risk is already captured by axis 2 and axis 8.8.
-                # Best game T155-162: DIRECT merges succeed regardless of chain bonus height.
-                # refs: game_history/20260331_200759_score0446.jsonl T30-49,
-                #       game_history/20260331_200551_score3631.jsonl T155-162,
-                #       tmp/batch_summary.txt (NEAR 31.5% fail rate, low-score 18.5% HEIGHT_CONTROL)
-                chain_bonus_multiplier = 495.0
+                # v439: low-height chain bonus restoration — inverted v196 for safe cascade awareness
+                # v438 removed v196 height scaling (495 + max(0, ly+1.5)*150) to prevent risky
+                # high-y NEAR incentive. Protected strategy (median 12789) retains v196 and
+                # achieves 20% higher median. The removal also reduced chain awareness at
+                # SAFE low heights where DIRECT merges succeed at 95.7% — chain bonus at
+                # ly=-2 went from 720 (v196) to 495 (v438), a 31% reduction in cascade
+                # incentive at the exact positions where cascades are most beneficial.
+                # New formula inverts v196's direction: stronger at BOTTOM, flat at TOP.
+                # At ly<0 (safe low positions): bonus increases up to 1095 at ly=-3.
+                # At ly>=0 (moderate/high): flat 495 — no additional risky incentive.
+                # Height risk at ly>=0 is captured by axis 2 (height penalty), axis 8.8
+                # (NO-merge penalty), v366/v409 (NEAR deadline risk), v422 (HIGH_PC_NEAR).
+                # Aligns with advice "height and combo probability balance" (nimdavirus).
+                # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+                #       tmp/batch_summary.txt (CHAIN_MERGE delta=41.0 at 4.4% selection),
+                #       game_history/20260331_213926_score0705.jsonl T70-80 (death spiral),
+                #       game_history/20260331_211629_score1924.jsonl T108-115 (survival),
+                #       game_history/20260331_212643_score1802.jsonl T83-101 (merge in danger)
+                chain_bonus_multiplier = 495.0 + max(0.0, -landing_y) * 200.0
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
