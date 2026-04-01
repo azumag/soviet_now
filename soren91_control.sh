@@ -17,7 +17,7 @@ _soren91_env_get() {
 }
 
 SOREN91_ENABLED="$(_soren91_env_get SOREN91_ENABLED 2>/dev/null || printf '%s' "${SOREN91_ENABLED:-0}")"
-SOREN91_STOP_TIMEOUT="${SOREN91_STOP_TIMEOUT:-600}"
+SOREN91_STOP_TIMEOUT="${SOREN91_STOP_TIMEOUT:-300}"
 SOREN91_DIR="$ELOOP_LIB_DIR/soren91"
 SOREN91_PID_FILE="$SOREN91_DIR/tmp/soren91.pid"
 SOREN91_MAIN_PID_FILE="$SOREN91_DIR/tmp/main.pid"
@@ -604,9 +604,9 @@ soren91_stop() {
 	# Phase 1: 試合中なら試合終了を待つ。長すぎる居残りを避けるため、
 	# 固定600秒ではなく SOREN91_STOP_TIMEOUT に従う。
 	local game_waited=0
-	local max_game_wait="${SOREN91_STOP_TIMEOUT:-600}"
+	local max_game_wait="${SOREN91_STOP_TIMEOUT:-300}"
 	case "$max_game_wait" in
-	''|*[!0-9]*) max_game_wait=600 ;;
+	''|*[!0-9]*) max_game_wait=300 ;;
 	esac
 	while [ -f "$in_game_file" ] && kill -0 "$pid" 2>/dev/null && [ "$game_waited" -lt "$max_game_wait" ]; do
 		log "[SOREN91] Game in progress, waiting for round to end... (${game_waited}s/${max_game_wait}s)"
