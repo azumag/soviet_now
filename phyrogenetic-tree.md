@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-01 23:30:09 JST`
-- Nodes: `858`
-- Edges: `1179`
-- Current: `ade59a9a5025`
+- Updated: `2026-04-02 00:40:18 JST`
+- Nodes: `859`
+- Edges: `1180`
+- Current: `358c1f400dc9`
 - Anchor: `294aa2554fbf`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_9f937369d294["9f937369d294<br/>g=12 n=12<br/>comp=9942.6"]
     h_58a2f66626b3["58a2f66626b3<br/>g=24 n=20<br/>comp=9969.2"]
     h_422188c46bb8["422188c46bb8<br/>g=12 n=12<br/>comp=10994.8"]
     h_a3e3965087ab["a3e3965087ab<br/>g=12 n=12<br/>comp=11581.9"]
@@ -72,11 +71,11 @@ flowchart TD
     h_734c56523254["734c56523254<br/>g=24 n=20<br/>comp=10952.7"]
     h_98b57969e9e1["98b57969e9e1<br/>g=12 n=12<br/>comp=11869.6"]
     h_294aa2554fbf["294aa2554fbf<br/>ANCHOR<br/>g=12 n=12<br/>comp=12423.4"]
+    h_ade59a9a5025["ade59a9a5025<br/>g=12 n=12<br/>comp=12394.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_ade59a9a5025["ade59a9a5025<br/>CURRENT"]
+    h_358c1f400dc9["358c1f400dc9<br/>CURRENT"]
 
-    h_9f937369d294 -->|improve| h_58a2f66626b3
     h_58a2f66626b3 -->|improve| h_422188c46bb8
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -142,13 +141,13 @@ flowchart TD
     h_734c56523254 -->|improve| h_98b57969e9e1
     h_98b57969e9e1 -->|improve| h_294aa2554fbf
     h_294aa2554fbf -->|improve| h_ade59a9a5025
+    h_ade59a9a5025 -->|improve| h_358c1f400dc9
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_9f937369d294 plain;
     class h_58a2f66626b3 plain;
     class h_422188c46bb8 plain;
     class h_a3e3965087ab plain;
@@ -205,9 +204,10 @@ flowchart TD
     class h_734c56523254 plain;
     class h_98b57969e9e1 plain;
     class h_294aa2554fbf anchor;
+    class h_ade59a9a5025 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_ade59a9a5025 current;
+    class h_358c1f400dc9 current;
 ```
 
 ## Detail 1/11
@@ -3062,9 +3062,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `ade59a9a5025`
-- Nodes in this diagram: `58`
-- Internal edges in this diagram: `62`
+- Range: `422188c46bb8` .. `358c1f400dc9`
+- Nodes in this diagram: `59`
+- Internal edges in this diagram: `63`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3131,9 +3131,10 @@ flowchart TD
     h_734c56523254["734c56523254<br/>g=24 n=20<br/>comp=10952.7"]
     h_98b57969e9e1["98b57969e9e1<br/>g=12 n=12<br/>comp=11869.6"]
     h_294aa2554fbf["294aa2554fbf<br/>ANCHOR<br/>g=12 n=12<br/>comp=12423.4"]
+    h_ade59a9a5025["ade59a9a5025<br/>g=12 n=12<br/>comp=12394.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_ade59a9a5025["ade59a9a5025<br/>CURRENT"]
+    h_358c1f400dc9["358c1f400dc9<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3197,6 +3198,7 @@ flowchart TD
     h_734c56523254 -->|improve| h_98b57969e9e1
     h_98b57969e9e1 -->|improve| h_294aa2554fbf
     h_294aa2554fbf -->|improve| h_ade59a9a5025
+    h_ade59a9a5025 -->|improve| h_358c1f400dc9
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3258,12 +3260,23 @@ flowchart TD
     class h_734c56523254 plain;
     class h_98b57969e9e1 plain;
     class h_294aa2554fbf anchor;
+    class h_ade59a9a5025 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_ade59a9a5025 current;
+    class h_358c1f400dc9 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11889 `ade59a9a -> 358c1f40`
+
+- scores: `22569 10065 15408 9600 7948 17133 12208 19155 18051 10436 7786 15405`
+- v462: fix v458 incomplete apply — axis 5.6 congestion 0.14→0.08, cap 3.5→2.0
+- v458 change_log documents "congestion 0.14→0.08, cap 3.5→2.0" but only base bonus (100→60) was
+- applied to code. At pc=40: current bonus ~431 vs intended ~235 (83% oversized). Docstring at line 21
+- already said "congestion 0.08, cap 2.0" — this is a code/doc mismatch fix, not a new change.
+- Postmortem warned "reduce bonus magnitude to avoid masking height differentiation". Batch confirms
+- low-score games: 18.4% HEIGHT_CONTROL vs 14.0% — additive noise from oversized 5.6 swamps height signal.
 
 ### Improve Game#11877 `294aa255 -> ade59a9a`
 
