@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-02 08:14:02 JST`
-- Nodes: `867`
-- Edges: `1188`
-- Current: `f53cbd71d4ac`
+- Updated: `2026-04-02 08:58:59 JST`
+- Nodes: `868`
+- Edges: `1189`
+- Current: `7fb34a9574aa`
 - Anchor: `e7cf27aac00e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_4b745328e58f["4b745328e58f<br/>g=12 n=12<br/>comp=10161.3"]
     h_a4c1fa9f26bd["a4c1fa9f26bd<br/>g=12 n=12<br/>comp=9201.4"]
     h_bf9bc74f22e1["bf9bc74f22e1<br/>g=12 n=12<br/>comp=11227.4"]
     h_f830ed5e32bd["f830ed5e32bd<br/>g=12 n=12<br/>comp=10313.9"]
@@ -72,11 +71,11 @@ flowchart TD
     h_ece1446454bf["ece1446454bf<br/>g=12 n=12<br/>comp=11422.8"]
     h_10e2128c3467["10e2128c3467<br/>g=12 n=12<br/>comp=11437.2"]
     h_abd5c3448298["abd5c3448298<br/>g=12 n=12<br/>comp=12119.4"]
+    h_f53cbd71d4ac["f53cbd71d4ac<br/>g=12 n=12<br/>comp=11000.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_f53cbd71d4ac["f53cbd71d4ac<br/>CURRENT"]
+    h_7fb34a9574aa["7fb34a9574aa<br/>CURRENT"]
 
-    h_4b745328e58f -->|improve| h_a4c1fa9f26bd
     h_bf9bc74f22e1 -->|improve| h_f830ed5e32bd
     h_f830ed5e32bd -->|improve| h_9efec03deebb
     h_9efec03deebb -->|improve| h_b0e0e0739f44
@@ -141,13 +140,13 @@ flowchart TD
     h_ece1446454bf -->|improve| h_10e2128c3467
     h_10e2128c3467 -->|improve| h_abd5c3448298
     h_abd5c3448298 -->|improve| h_f53cbd71d4ac
+    h_f53cbd71d4ac -->|improve| h_7fb34a9574aa
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_4b745328e58f plain;
     class h_a4c1fa9f26bd plain;
     class h_bf9bc74f22e1 plain;
     class h_f830ed5e32bd plain;
@@ -204,9 +203,10 @@ flowchart TD
     class h_ece1446454bf plain;
     class h_10e2128c3467 plain;
     class h_abd5c3448298 plain;
+    class h_f53cbd71d4ac plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_f53cbd71d4ac current;
+    class h_7fb34a9574aa current;
 ```
 
 ## Detail 1/11
@@ -3061,9 +3061,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `f53cbd71d4ac`
-- Nodes in this diagram: `67`
-- Internal edges in this diagram: `71`
+- Range: `422188c46bb8` .. `7fb34a9574aa`
+- Nodes in this diagram: `68`
+- Internal edges in this diagram: `72`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3139,9 +3139,10 @@ flowchart TD
     h_ece1446454bf["ece1446454bf<br/>g=12 n=12<br/>comp=11422.8"]
     h_10e2128c3467["10e2128c3467<br/>g=12 n=12<br/>comp=11437.2"]
     h_abd5c3448298["abd5c3448298<br/>g=12 n=12<br/>comp=12119.4"]
+    h_f53cbd71d4ac["f53cbd71d4ac<br/>g=12 n=12<br/>comp=11000.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_f53cbd71d4ac["f53cbd71d4ac<br/>CURRENT"]
+    h_7fb34a9574aa["7fb34a9574aa<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3214,6 +3215,7 @@ flowchart TD
     h_ece1446454bf -->|improve| h_10e2128c3467
     h_10e2128c3467 -->|improve| h_abd5c3448298
     h_abd5c3448298 -->|improve| h_f53cbd71d4ac
+    h_f53cbd71d4ac -->|improve| h_7fb34a9574aa
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3284,12 +3286,23 @@ flowchart TD
     class h_ece1446454bf plain;
     class h_10e2128c3467 plain;
     class h_abd5c3448298 plain;
+    class h_f53cbd71d4ac plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_f53cbd71d4ac current;
+    class h_7fb34a9574aa current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11997 `f53cbd71 -> 7fb34a95`
+
+- scores: `12615 18736 11889 10511 19694 9385 8924 12102 5200 8950 13715 15771`
+- 5.6. Growth center proximity - v471: base 90→100 final postmortem step — unconditional activation maintained
+- v471: finalize axis 5.6 growth center proximity base 90→100 — reaching postmortem target (base 100)
+- Postmortem v455: original base 100 was effective; v458 reduced to 60 (too aggressive); v469 restored to
+- 80; v470 raised to 90. v470 still left HEIGHT_CONTROL gap: 20.1% low vs 14.3% high in batch. At HIGH
+- phase (height_mult=1.8, height_diff~90), base 90*1.08=97.2 barely exceeds height diff. Base 100*1.08=108
+- provides clearer 20% margin. At MEDIUM (height_diff~70): 100*1.08=108 vs 90*1.08=97.2 (both exceed).
 
 ### Improve Game#11985 `abd5c344 -> f53cbd71`
 
