@@ -442,6 +442,7 @@ if h:
     current_data = {"hash": h, "scores": [], "games_total": 0}
     if str(current_run.get("hash", "") or "") == h:
         current_data = current_run
+    prev_h = str(current_data.get("prev_hash", "") or rs.get(h, {}).get("prev_hash", "") or "")
     scores = current_data.get("scores", [])
     m = metrics(scores)
     games_total = current_data.get("games_total", len(scores))
