@@ -38,6 +38,18 @@ async function loadStrategy(strategyPath = './strategy.mjs') {
     } catch (e) {
       console.error(`[main] Failed to write tmp/stop upon ${sig}:`, e);
     }
+
+    if (shutdownTimer) {
+      console.log(`[main] Received ${sig} again, forcing immediate cleanup`);
+      void cleanupRuntime(`signal:${sig}`).finally(() => process.exit(0));
+      return;
+    }
+
+    shutdownTimer = setTimeout(() => {
+      console.log(`[main] Graceful stop timed out after ${sig}, forcing cleanup`);
+      void cleanupRuntime(`signal-timeout:${sig}`).finally(() => process.exit(0));
+    }, 5000);
+    shutdownTimer.unref?.();
   });
 });
 
@@ -507,6 +519,11 @@ async function main() {
     console.log(`[main] Shared browser contexts=${browser.contexts().length}`);
   }
 
+  activeBrowser = browser;
+  activeContext = context;
+  activeIsSharedMode = isSharedMode;
+  activeOwnsContext = ownsContext;
+
   let gamePage = null;
   try {
     // ゲームURLに直接遷移 + HTML intercept で unityInstance 取得
@@ -518,6 +535,7 @@ async function main() {
         await gamePage.setViewportSize({ width: 1280, height: 720 });
       } catch {}
     }
+    activeGamePage = gamePage;
     await installAudioGainLimiter(gamePage, audioGainMultiplier);
     await gamePage.route('**/*play.unityroom.com/**', async route => {
       if (route.request().resourceType() === 'document') {
@@ -583,45 +601,7 @@ async function main() {
   } catch (err) {
     console.error('[main] Fatal error:', err.message);
   } finally {
-    try { unlinkSync('tmp/in_game'); } catch {}
-    try { unlinkSync(SOREN91_MAIN_PID_FILE); } catch {}
-    clearSoren91ModeFlag();
-    if (isSharedMode) {
-      // 共有モード: 既存 context を再利用した場合は context 全体を閉じない。
-      // browser.close() on a CDP-connected browser only disconnects
-      // (does NOT kill the external Chromium)
-      if (!ownsContext && gamePage && !gamePage.isClosed()) {
-        try {
-          await gamePage.close();
-        } catch (err) {
-          console.log(`[main] Preferred game tab close failed: ${err.message}`);
-        }
-      }
-      await closeSharedSoren91Pages(browser, gamePage);
-      if (ownsContext) {
-        try {
-          await context.close();
-        } catch (err) {
-          console.log(`[main] Shared context close failed: ${err.message}`);
-        }
-      }
-      // soviet_local のページを前面に戻す
-      try {
-        const contexts = browser.contexts();
-        for (const ctx of contexts) {
-          const pages = ctx.pages();
-          if (pages.length > 0) {
-            await pages[0].bringToFront();
-            break;
-          }
-        }
-      } catch {}
-      await browser.close();
-      console.log('[main] Shared browser CDP disconnected.');
-    } else {
-      await browser.close();
-      console.log('[main] Browser closed.');
-    }
+    await cleanupRuntime('main-finally');
   }
 }
 
