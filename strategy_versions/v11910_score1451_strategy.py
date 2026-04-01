@@ -19,7 +19,7 @@ Game Overview:
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
            5.6. Growth center proximity - v458: reduced magnitude per postmortem (base 60, congestion 0.08, cap 2.0)
-            6. Chain merge bonus - Evaluate possibility of further merges after merge (v460: NEAR suppressed at extreme congestion)
+            6. Chain merge bonus - Evaluate possibility of further merges after merge (v463: NEAR suppressed at pc>=28+deadline)
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
@@ -1480,18 +1480,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v195のchain_bonus_multiplier動的設定では初期段階(landing_y=-3.0)でchain_bonus_multiplier=45.0,ほぼゼロ。
         # 初期段階でのCHAIN_MERGE選択を有効化するためにchain_bonus_multiplierの初期値を495.0に固定し、着地高による動的調整を開始地点から行うようにする。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
-            # v460: re-apply v451 CHAIN_MERGE suppression for NEAR at extreme congestion
-            # v451 was originally applied at Game#11731 but rolled back as collateral in the
-            # v449 branch rollback at Game#11744. The rollback was caused by v449's 9.6b removal,
-            # not v451. The current strategy (v459) still lacks this suppression.
-            # At pc>=35 + deadline_crossed, NEAR merge (68.5% success) has catastrophic failure
-            # cost: adds piece without reducing pc. CHAIN_MERGE bonus (multiplier up to 1110 at
-            # high y, bonus up to ~5300) overwhelms NEAR penalties (~3469 at pc=43, deadline, y=2.55),
-            # causing the strategy to select risky NEAR. Worst T67-69: NEAR fails x2, pc 43→45.
-            # DIRECT (95.7%) retains CHAIN_MERGE — only NEAR is suppressed. NEAR base bonus
-            # still applies; just de-prioritized vs HEIGHT_CONTROL at critical pc.
-            # Fixes v451 collateral rollback: CHAIN_MERGE overrides NEAR risk at extreme congestion
-            chain_suppressed = (merge_grade == "NEAR" and piece_count >= 35 and deadline_crossed)
+            # v463: lower CHAIN_MERGE NEAR suppression from pc>=35 to pc>=28 at deadline
+            # v460 (pc>=35) kicked in too late: worst games die at pc=29-34 where CHAIN_MERGE
+            # bonus (~3000-6000 at deadline y) overwhelms NEAR risk penalties (~600-2000),
+            # making risky NEAR (68.5% success) the "best" candidate. Failed NEAR at pc=31-32
+            # is irrecoverable — adds piece without reducing pc, tightens deadline margin further.
+            # Evidence: score0933 T59(pc=31), T60(pc=32) NEAR fails with CHAIN_MERGE ~4000+,
+            # no suppression fires. score0933 T63(pc=33) HIGH_PC_NEAR_PENALTY fires but
+            # CHAIN_MERGE still overwhelms. score0884 T62(pc=37) already past recovery.
+            # v460 history: originally v451 at pc>=35+deadline, rolled back as v449 collateral,
+            # re-applied as v460. v463 extends to pc>=28: covers the critical failure zone while
+            # preserving CHAIN_MERGE for early-game NEAR (pc<28) where pipeline growth benefits.
+            # DIRECT (95.7%) retains CHAIN_MERGE at all pc — only NEAR is suppressed.
+            # Postmortem compliance: reduces additive bonus magnitude (not axis 5.6 filter).
+            # Rollback failure mode: none expected — only narrows NEAR CHAIN_MERGE window.
+            # Fixes failure mode: CHAIN_MERGE overrides NEAR risk at medium pc (28-34)
+            # refs: game_history/20260402_010847_score0933.jsonl T59-65,
+            #       game_history/20260402_004634_score0884.jsonl T62-69,
+            #       game_history/20260402_011735_score2578.jsonl T118,
+            #       tmp/change_log.txt (v460), strategy.py.staging (v462)
+            chain_suppressed = (merge_grade == "NEAR" and piece_count >= 28 and deadline_crossed)
             merges = result["merges"]
             if merges and not chain_suppressed:
                 # get best merge target (closest distance)
