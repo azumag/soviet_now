@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-01 10:12:51 JST`
-- Nodes: `850`
-- Edges: `1170`
-- Current: `fe57fa24fbe2`
-- Anchor: `fe57fa24fbe2`
+- Updated: `2026-04-01 11:10:27 JST`
+- Nodes: `851`
+- Edges: `1171`
+- Current: `d7744a17c3fe`
+- Anchor: `0923a69d1f67`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_8bad92ca8197["8bad92ca8197<br/>g=12 n=12<br/>comp=10347.7"]
     h_59b54cf8e47c["59b54cf8e47c<br/>g=12 n=12<br/>comp=9410.3"]
     h_a4fe1ab8ef54["a4fe1ab8ef54<br/>g=12 n=12<br/>comp=9903.5"]
     h_610ceddcbaf9["610ceddcbaf9<br/>g=12 n=12<br/>comp=10978.8"]
@@ -55,8 +54,8 @@ flowchart TD
     h_ec180f35c7e5["ec180f35c7e5<br/>g=12 n=12<br/>comp=10577.5"]
     h_4f5e73275eeb["4f5e73275eeb<br/>g=12 n=12<br/>comp=9729.5"]
     h_10a880b3f1ee["10a880b3f1ee<br/>g=12 n=12<br/>comp=9009.6"]
-    h_0923a69d1f67["0923a69d1f67<br/>g=12 n=12<br/>comp=11745.1"]
-    h_fe57fa24fbe2["fe57fa24fbe2<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11956.0"]
+    h_0923a69d1f67["0923a69d1f67<br/>ANCHOR<br/>g=12 n=12<br/>comp=11745.1"]
+    h_fe57fa24fbe2["fe57fa24fbe2<br/>g=25 n=20<br/>comp=10568.5"]
     h_4d15e051ad7a["4d15e051ad7a<br/>g=12 n=12<br/>comp=11240.6"]
     h_152efdf4068b["152efdf4068b<br/>g=24 n=20<br/>comp=11244.4"]
     h_42788a76e00a["42788a76e00a<br/>g=12 n=12<br/>comp=10497.0"]
@@ -75,8 +74,8 @@ flowchart TD
     h_4d221bd60535["4d221bd60535<br/>g=12 n=12<br/>comp=9567.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_d7744a17c3fe["d7744a17c3fe<br/>CURRENT"]
 
-    h_8bad92ca8197 -->|improve| h_59b54cf8e47c
     h_a4fe1ab8ef54 -->|improve| h_610ceddcbaf9
     h_610ceddcbaf9 -->|improve| h_017f868809b0
     h_017f868809b0 -->|improve| h_61d579cd973c
@@ -140,13 +139,13 @@ flowchart TD
     h_b32600722447 -->|improve| h_5369a1d516af
     h_5369a1d516af -->|improve| h_4d221bd60535
     h_4d221bd60535 -. rollback .-> h_fe57fa24fbe2
+    h_fe57fa24fbe2 -->|improve| h_d7744a17c3fe
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_8bad92ca8197 plain;
     class h_59b54cf8e47c plain;
     class h_a4fe1ab8ef54 plain;
     class h_610ceddcbaf9 plain;
@@ -186,8 +185,8 @@ flowchart TD
     class h_ec180f35c7e5 plain;
     class h_4f5e73275eeb plain;
     class h_10a880b3f1ee plain;
-    class h_0923a69d1f67 plain;
-    class h_fe57fa24fbe2 current_anchor;
+    class h_0923a69d1f67 anchor;
+    class h_fe57fa24fbe2 plain;
     class h_4d15e051ad7a plain;
     class h_152efdf4068b plain;
     class h_42788a76e00a plain;
@@ -206,6 +205,7 @@ flowchart TD
     class h_4d221bd60535 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_d7744a17c3fe current;
 ```
 
 ## Detail 1/11
@@ -3060,9 +3060,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `a3aae72a4e37`
-- Nodes in this diagram: `50`
-- Internal edges in this diagram: `53`
+- Range: `422188c46bb8` .. `d7744a17c3fe`
+- Nodes in this diagram: `51`
+- Internal edges in this diagram: `54`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3104,8 +3104,8 @@ flowchart TD
     h_ec180f35c7e5["ec180f35c7e5<br/>g=12 n=12<br/>comp=10577.5"]
     h_4f5e73275eeb["4f5e73275eeb<br/>g=12 n=12<br/>comp=9729.5"]
     h_10a880b3f1ee["10a880b3f1ee<br/>g=12 n=12<br/>comp=9009.6"]
-    h_0923a69d1f67["0923a69d1f67<br/>g=12 n=12<br/>comp=11745.1"]
-    h_fe57fa24fbe2["fe57fa24fbe2<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11956.0"]
+    h_0923a69d1f67["0923a69d1f67<br/>ANCHOR<br/>g=12 n=12<br/>comp=11745.1"]
+    h_fe57fa24fbe2["fe57fa24fbe2<br/>g=25 n=20<br/>comp=10568.5"]
     h_4d15e051ad7a["4d15e051ad7a<br/>g=12 n=12<br/>comp=11240.6"]
     h_152efdf4068b["152efdf4068b<br/>g=24 n=20<br/>comp=11244.4"]
     h_42788a76e00a["42788a76e00a<br/>g=12 n=12<br/>comp=10497.0"]
@@ -3124,6 +3124,7 @@ flowchart TD
     h_4d221bd60535["4d221bd60535<br/>g=12 n=12<br/>comp=9567.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_d7744a17c3fe["d7744a17c3fe<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3178,6 +3179,7 @@ flowchart TD
     h_b32600722447 -->|improve| h_5369a1d516af
     h_5369a1d516af -->|improve| h_4d221bd60535
     h_4d221bd60535 -. rollback .-> h_fe57fa24fbe2
+    h_fe57fa24fbe2 -->|improve| h_d7744a17c3fe
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3214,8 +3216,8 @@ flowchart TD
     class h_ec180f35c7e5 plain;
     class h_4f5e73275eeb plain;
     class h_10a880b3f1ee plain;
-    class h_0923a69d1f67 plain;
-    class h_fe57fa24fbe2 current_anchor;
+    class h_0923a69d1f67 anchor;
+    class h_fe57fa24fbe2 plain;
     class h_4d15e051ad7a plain;
     class h_152efdf4068b plain;
     class h_42788a76e00a plain;
@@ -3234,9 +3236,20 @@ flowchart TD
     class h_4d221bd60535 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_d7744a17c3fe current;
 ```
 
 ## Transition Notes
+
+### Improve Game#11756 `fe57fa24 -> d7744a17`
+
+- scores: `15694 11800 7689 12609 9781 14204 13828 16605 8884 10241 11873 10166`
+- v452: flatten axis 8.8 reactive_pairs NO-merge penalty to flat -4500 — match protected strategy
+- Postmortem constraint: "axis 8.8の低位置ペナルティを-4500未満に下げること。y<=0での-3000（v432）
+- は低位置散布を許容し、pc急増の主因となる。-4500以上を維持。" The v432 gradient (-3000 at
+- y<=0, scaling to -7000 at y=2) allowed additive bonuses (~400-800) to create relative height
+- differences between y=-2 and y=0 positions, causing HEIGHT_CONTROL scatter during merge droughts.
+- Flat -4500 overwhelms all additive bonuses, letting axis 2 height penalty provide the only
 
 ### Rollback Game#11744 `4d221bd6 -> fe57fa24`
 
