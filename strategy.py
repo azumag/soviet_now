@@ -19,11 +19,11 @@ Game Overview:
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
            5.6. Growth center proximity - v458: reduced magnitude per postmortem (base 60, congestion 0.08, cap 2.0)
-            6. Chain merge bonus - Evaluate possibility of further merges after merge (v463: NEAR suppressed at pc>=28+deadline)
+            6. Chain merge bonus - Evaluate possibility of further merges after merge (v466: NEAR suppressed at pc>=32+deadline)
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
-             8.6. Reactive pairs immediate merge bonus - v464: NEAR bonus 60% reduction at pc>=28+deadline (endgame NEAR risk)
+             8.6. Reactive pairs immediate merge bonus - v466: NEAR bonus 60% reduction at pc>=32+deadline (endgame NEAR risk)
               8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
               # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼす
               # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
@@ -63,6 +63,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v466: raise NEAR suppression threshold pc>=28→pc>=32 — restore NEAR merge at medium pc
+     # v463/v464 suppressed NEAR CHAIN_MERGE and NEAR bonus at pc>=28+deadline to prevent
+     # catastrophic NEAR fails. But analysis shows worst games die at pc=29-34 where the
+     # board still has recovery room. Best game T82: NEAR at pc=33 recovered pc 33→28.
+     # At pc=28-31, failed NEAR adds 1 piece but board isn't critically full. At pc>=32,
+     # failure is truly catastrophic. Raising threshold restores NEAR viability at medium
+     # pc where recovery merges reduce piece_count and extend game life.
+     # Fixes failure mode: NEAR merge avoidance at medium pc → piece accumulation → game over
+     # refs: game_history/20260402_035958_score1152.jsonl T77-84 (0 merges final 8 turns),
+     #       game_history/20260402_042732_score1179.jsonl T65-75 (CROSSES_DEADLINE x5),
+     #       game_history/20260402_042432_score4489.jsonl T167 (delta=+410 recovery),
+     #       tmp/batch_summary.txt, tmp/change_log.txt (v463, v464), strategy.py.staging (v465)
      # v465: suppress axis 9.6 stacking at rp>=3+NO — restore v357 guard per protected strategy
      # Protected strategy (median 12789) suppresses stacking at rp>=3; v363 removed guard after
      # stacking formula changed to proximity-based. Worst game: REACTIVE_PAIRS_STACKING×6 in
@@ -1510,7 +1522,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             #       game_history/20260402_004634_score0884.jsonl T62-69,
             #       game_history/20260402_011735_score2578.jsonl T118,
             #       tmp/change_log.txt (v460), strategy.py.staging (v462)
-            chain_suppressed = (merge_grade == "NEAR" and piece_count >= 28 and deadline_crossed)
+            # v466: raise CHAIN_MERGE NEAR suppression from pc>=28 to pc>=32
+            # v463 (pc>=28) was too aggressive: worst games die at pc=29-34 where board
+            # still has recovery room. At pc=28-31, failed NEAR adds 1 piece but board
+            # isn't critically full. Best game T82: NEAR at pc=33 recovered pc 33->28.
+            # At pc>=32, failure is truly catastrophic — suppression stays.
+            # Fixes failure mode: NEAR merge avoidance at medium pc → piece accumulation
+            # refs: game_history/20260402_035958_score1152.jsonl T77-84 (0 merges),
+            #       game_history/20260402_042732_score1179.jsonl T65-75 (CROSSES x5),
+            #       game_history/20260402_042432_score4489.jsonl T167 (delta=+410),
+            #       tmp/batch_summary.txt, tmp/change_log.txt (v463,v464)
+            chain_suppressed = (merge_grade == "NEAR" and piece_count >= 32 and deadline_crossed)
             merges = result["merges"]
             if merges and not chain_suppressed:
                 # get best merge target (closest distance)
@@ -1641,8 +1663,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260402_021836_score0828.jsonl (T60: NEAR fail, pc=34)
 
         if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
-            if merge_grade == "NEAR" and piece_count >= 28 and deadline_crossed:
-                # v464: NEAR at high pc+deadline — 60% bonus reduction to reduce catastrophic fail rate
+            if merge_grade == "NEAR" and piece_count >= 32 and deadline_crossed:
+                # v466: raise threshold from pc>=28 to pc>=32 (match CHAIN_MERGE NEAR suppression)
+                # At pc=28-31, NEAR failure is recoverable. At pc>=32, catastrophic.
                 bonus = 400.0 if reactive_pair_count >= 2 else 240.0
             else:
                 bonus = 1000.0 if reactive_pair_count >= 2 else 600.0
