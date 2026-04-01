@@ -92,6 +92,11 @@ nextPieces[1], [2] を使って 2〜3 手先を計画。次に来るピースの
 ### 7. 小ピースの触媒利用
 small pieces (type 1〜4) は落下時の衝撃で周囲のピースを揺らす。マージ先がない小ピースでも、高密度エリアに落とせば攪拌効果で併合を誘発できる。
 
+## Viewer Advice Handling
+- A soren91-specific viewer advice memo may be injected in the analysis section
+- Treat repeated, concrete advice as useful hypotheses, not absolute commands
+- Ignore comment-style feedback about speech length, phrasing, pronunciation, or card explanations here; this prompt is for gameplay strategy only
+
 ## Important Constraints
 - Input comes from screenshot analysis (imperfect - pieces may be misclassified)
 - Do NOT import external modules - pure logic only

@@ -669,7 +669,7 @@ _read_advice_context_tail() {
 		return 0
 	}
 	local context=""
-	context=$(tail -n "$max_lines" "$advice_file" 2>/dev/null | sed '/^[[:space:]]*$/d')
+	context=$(tail -n "$max_lines" "$advice_file" 2>/dev/null | sed -E '/^[[:space:]]*$/d; /^[[:space:]]*-?[[:space:]]*（なし）[[:space:]]*$/d')
 	if [ -n "$context" ]; then
 		printf '%s' "$context"
 	else
@@ -711,7 +711,8 @@ directive_terms = (
     "避けて", "見るべき", "見て", "考えて", "意識して", "優先", "禁止",
     "改善して", "直して", "変えて", "分けて", "保存して", "参照して",
     "読んで", "増やして", "減らして", "別にして", "統一して", "変換して",
-    "長くして", "短くして", "伸ばして", "抑えて", "残して", "今まで通り"
+    "長くして", "短くして", "伸ばして", "抑えて", "残して", "今まで通り",
+    "ほうがいい", "方がいい", "べき"
 )
 noise_terms = (
     "レイド", "nightbot", "show-status", "show_status", "dashboard", "blackhole",
@@ -915,6 +916,10 @@ _append_advice_item_to_file() {
 	[ -n "$advice_item" ] || return 0
 	local advice_line="- $advice_item"
 	[ -f "$advice_file" ] || : >"$advice_file"
+	if grep -qE '^[[:space:]]*-?[[:space:]]*（なし）[[:space:]]*$' "$advice_file" 2>/dev/null; then
+		grep -vxE '^[[:space:]]*-?[[:space:]]*（なし）[[:space:]]*$' "$advice_file" >"${advice_file}.tmp" 2>/dev/null || true
+		mv "${advice_file}.tmp" "$advice_file" 2>/dev/null || true
+	fi
 	if grep -qxF -- "$advice_line" "$advice_file" 2>/dev/null; then
 		return 0
 	fi
@@ -1185,6 +1190,11 @@ $advice_text"
 		local _comment_length_policy="" _comment_retry_length_policy=""
 		local _mode_suffix="main"
 		[ "$_comment_mode_generated" = "soren91" ] && _mode_suffix="soren91"
+		if [ "$_comment_mode_generated" = "soren91" ]; then
+			strategy_advice_candidates="$strategy_advice_candidates_soren91"
+		else
+			strategy_advice_candidates="$strategy_advice_candidates_main"
+		fi
 		_comment_persona=$(cat "$ELOOP_LIB_DIR/prompts/comment_persona_${_mode_suffix}.md" 2>/dev/null)
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
 		_comment_channel_intro=$(cat "$ELOOP_LIB_DIR/prompts/comment_channel_intro_${_mode_suffix}.md" 2>/dev/null)
