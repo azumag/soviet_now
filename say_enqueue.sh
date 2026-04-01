@@ -217,6 +217,7 @@ if [ "$WAV_MODE" = "false" ]; then
 		-e 's/静寂/せいじゃく/g' \
 		-e 's/地政学的/ちせいがくてき/g' \
 		-e 's/地政学/ちせいがく/g' \
+		-e 's/NISA/ニーサ/g' \
 		"$MY_CONTENT"
 fi
 

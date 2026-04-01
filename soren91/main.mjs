@@ -589,6 +589,7 @@ async function gameLoop(page, calibration, gameNumber) {
   let lastKnownRank = null;
   let rankingDetected = false;
   let pendingGameOver = null;
+  let midgameCommentSent = false;
 
 
   console.log('[game] Game loop started');
@@ -695,6 +696,7 @@ async function gameLoop(page, calibration, gameNumber) {
           moveCount = 0;
           lastKnownRank = null;
           rankingDetected = false;
+          midgameCommentSent = false;
 
 
           // 定時ラジオチェック (親プロジェクトの時刻ベースコーナーをメリケンAIペルソナで実行)
@@ -825,9 +827,10 @@ async function gameLoop(page, calibration, gameNumber) {
       try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
       consecutiveErrors = 0;
 
-      // 試合中コメント: 20ターンごとに生成 (非同期、ゲームをブロックしない)
+      // 試合中コメント: 1試合1回、20ターン到達後に生成 (非同期、ゲームをブロックしない)
       // pieces < 3 はマッチング画面の誤検出の可能性が高いためスキップ
-      if (turn > 0 && turn % 20 === 0 && boardState.pieces.length >= 3) {
+      if (!midgameCommentSent && turn >= 20 && boardState.pieces.length >= 3) {
+        midgameCommentSent = true;
         (async () => {
           try {
             const { generateMidgameComment } = await loadModule('./comment.mjs');

@@ -952,11 +952,16 @@ generate_comment_response() {
 		local _comment_mode_generated=""
 		_comment_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 		local _comment_persona _comment_ui_memo _comment_channel_intro
+		local _comment_length_policy="" _comment_retry_length_policy=""
 		local _mode_suffix="main"
 		[ "$_comment_mode_generated" = "soren91" ] && _mode_suffix="soren91"
 		_comment_persona=$(cat "$ELOOP_LIB_DIR/prompts/comment_persona_${_mode_suffix}.md" 2>/dev/null)
 		_comment_ui_memo=$(cat "$ELOOP_LIB_DIR/prompts/comment_ui_memo_${_mode_suffix}.md" 2>/dev/null)
 		_comment_channel_intro=$(cat "$ELOOP_LIB_DIR/prompts/comment_channel_intro_${_mode_suffix}.md" 2>/dev/null)
+		if [ "$_comment_mode_generated" = "soren91" ]; then
+			_comment_length_policy=$'- メリケンAIモードの通常コメント返しは、各コメントにつき3-5文を基本にすること。今までより一段だけ長めに、感想・理由・補足・軽い返しのどれかを足して、話を少し深く広げること\n- ただし azumagbanjo の「AがBを獲得しました」のようなカードガチャ結果コメントだけは例外。そこだけは今まで通り短めでよく、反応1文 + 本題2-3文を目安に、カード説明を長々広げすぎないこと'
+			_comment_retry_length_policy='- 今回がメリケンAIモードなら、通常コメント返しは各コメントへ3-5文を基本にしてください。ただしカードガチャ結果コメントだけは例外で、今まで通り短めに保ってください。'
+		fi
 		if [ -z "$_comment_persona" ]; then
 			log "[COMMENT] ERROR: prompts/comment_persona_${_mode_suffix}.md not found, skip"
 			return 1
@@ -978,7 +983,7 @@ generate_comment_response() {
 			recent_spoken_comment_context comment_followup_hints past_topics \
 			celebration_history_context comment_thumbnail_ocr_context \
 			PAST_RADIO_TOPICS RUSSIA_CREATION_HISTORY_FILE SOVIET_CREATION_HISTORY_FILE ROLLING_SCORES_FILE \
-			game_state_context _comment_ui_memo _comment_channel_intro sing_reference \
+			game_state_context _comment_ui_memo _comment_channel_intro _comment_length_policy sing_reference \
 			_prediction_cycle_games
 
 		local comment_prompt_file
@@ -1031,6 +1036,9 @@ generate_comment_response() {
 		- Read/Glob/Edit の生ログや Error: File not found、✗ read failed のような内部エラー行を、そのまま本文に含めてはいけません。必要なら日本語で短く言い換えてください。
 		- 「いまソ連ゲームプレイ中だからできない」「配信中だから答えられない」のような拒否文は無効です。質問には必ず何かしら具体的に答えてください。
 RETRYCOMMENT
+				if [ -n "$_comment_retry_length_policy" ]; then
+					printf '%s\n' "$_comment_retry_length_policy" >>"$prompt_for_attempt"
+				fi
 				fi
 
 				local attempt_talk="" attempt_model=""

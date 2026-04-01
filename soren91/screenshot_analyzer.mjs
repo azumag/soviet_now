@@ -50,6 +50,93 @@ const TYPE_COLORS = {
   15: { r: 220, g: 50,  b: 50,  name: 'red-large' },
 };
 
+function getColorStats(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  return {
+    brightness: (r + g + b) / 3,
+    saturation: max > 0 ? (max - min) / max : 0,
+  };
+}
+
+function rgbToHsv(r, g, b) {
+  const nr = r / 255;
+  const ng = g / 255;
+  const nb = b / 255;
+  const max = Math.max(nr, ng, nb);
+  const min = Math.min(nr, ng, nb);
+  const delta = max - min;
+
+  let h = 0;
+  if (delta > 0) {
+    if (max === nr) h = 60 * (((ng - nb) / delta) % 6);
+    else if (max === ng) h = 60 * (((nb - nr) / delta) + 2);
+    else h = 60 * (((nr - ng) / delta) + 4);
+  }
+
+  return {
+    h: h < 0 ? h + 360 : h,
+    s: max > 0 ? delta / max : 0,
+    v: max,
+  };
+}
+
+function hueDistance(a, b) {
+  const diff = Math.abs(a - b);
+  return Math.min(diff, 360 - diff);
+}
+
+function blobAspectRatio(blob) {
+  const shortEdge = Math.max(1, Math.min(blob.bboxWidth, blob.bboxHeight));
+  const longEdge = Math.max(blob.bboxWidth, blob.bboxHeight);
+  return longEdge / shortEdge;
+}
+
+function blobEffectiveRadius(blob) {
+  const sampledArea = Math.max(1, blob.pixelCount) * Math.max(1, blob.sampleStep) * Math.max(1, blob.sampleStep);
+  const areaRadius = Math.sqrt(sampledArea / Math.PI);
+  const bboxRadius = Math.sqrt(Math.max(1, blob.bboxWidth) * Math.max(1, blob.bboxHeight)) / 2;
+  return bboxRadius * 0.55 + areaRadius * 0.45;
+}
+
+function classifyRadius(gameRadius, maxType = 15) {
+  let bestType = 1;
+  let bestDiff = Infinity;
+
+  for (const [type, radius] of Object.entries(TYPE_RADII)) {
+    const numericType = parseInt(type, 10);
+    if (numericType > maxType) continue;
+    const diff = Math.abs(gameRadius - radius);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestType = numericType;
+    }
+  }
+
+  return { type: bestType, diff: bestDiff };
+}
+
+function classifyColorType(avgColor, maxType = 15) {
+  const blobHsv = rgbToHsv(avgColor.r, avgColor.g, avgColor.b);
+  const blobStats = getColorStats(avgColor.r, avgColor.g, avgColor.b);
+  let best = { type: 1, hueDiff: Infinity, brightnessDiff: Infinity, score: Infinity };
+
+  for (const [type, color] of Object.entries(TYPE_COLORS)) {
+    const numericType = parseInt(type, 10);
+    if (numericType > maxType) continue;
+    const colorHsv = rgbToHsv(color.r, color.g, color.b);
+    const colorStats = getColorStats(color.r, color.g, color.b);
+    const currentHueDiff = hueDistance(blobHsv.h, colorHsv.h);
+    const brightnessDiff = Math.abs(blobStats.brightness - colorStats.brightness);
+    const score = currentHueDiff + brightnessDiff * 0.18;
+    if (score < best.score) {
+      best = { type: numericType, hueDiff: currentHueDiff, brightnessDiff, score };
+    }
+  }
+
+  return best;
+}
+
 /**
  * スクリーンショットからゲーム盤面を解析する
  *
@@ -92,13 +179,27 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
   }
 
   // 5. HOLD ピース検出
-  const hold = state === 'MOVE'
+  const holdCandidate = state === 'MOVE'
     ? detectHoldPiece(data, width, height, board)
+    : null;
+  const hold = holdCandidate && !(holdCandidate.fallback && (holdCandidate.confidence ?? 0) < 0.45)
+    ? holdCandidate
     : null;
 
   // 6. 順位検出 — リアルタイムOCRは精度不足のため無効化
   // ランキング画面からの検出 (detectRankingScreen) に委ねる
   const rank = null;
+
+  const previewConfidenceValues = [
+    ...(nextPieces || []).map(piece => piece?.confidence).filter(Number.isFinite),
+    hold?.confidence,
+  ].filter(Number.isFinite);
+  const previewConfidence = previewConfidenceValues.length > 0
+    ? previewConfidenceValues.reduce((sum, value) => sum + value, 0) / previewConfidenceValues.length
+    : 0.4;
+  const baseConfidence = pieces.length > 0 ? 0.58 : 0.35;
+  const calibrationConfidence = Number.isFinite(calibration?.confidence) ? calibration.confidence : 0.4;
+  const confidence = Math.max(0.2, Math.min(0.95, (baseConfidence + calibrationConfidence + previewConfidence) / 3));
 
   return {
     state,
@@ -108,7 +209,7 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
     nextPieces,       // [{ type, r }, ...] — 最大3つ
     hold,             // { type, r } or null
     garbage,          // { ratio: 0-1, height: ゲーム座標でのおじゃまの高さ, gauge: 0-1 おじゃまゲージレベル }
-    confidence: pieces.length > 0 ? 0.5 : 0.3,
+    confidence: Math.round(confidence * 100) / 100,
   };
 }
 
@@ -133,7 +234,8 @@ function detectGameState(data, width, height, board) {
   const centerRight = Math.floor(width * 0.65);
   const topArea = Math.floor(height * 0.1);  // UI上部を除外
 
-  let centerDark = 0;   // 暗いピクセル (ゲームボード背景)
+  let centerDark = 0;   // やや暗いピクセル (ゲームボード背景を広めに拾う)
+  let centerVeryDark = 0;
   let centerRed = 0;    // 赤 (接続画面)
   let centerYellow = 0; // 黄色 (ランキング画面)
   let centerSamples = 0;
@@ -146,7 +248,8 @@ function detectGameState(data, width, height, board) {
       const brightness = (r + g + b) / 3;
       centerSamples++;
 
-      if (brightness < 50) centerDark++;
+      if (brightness < 105) centerDark++;
+      if (brightness < 65) centerVeryDark++;
       if (r > 180 && g < 80 && b < 80) centerRed++;
       if (r > 180 && g > 120 && b < 80) centerYellow++;
     }
@@ -155,12 +258,12 @@ function detectGameState(data, width, height, board) {
   if (centerSamples === 0) return 'WAITING';
 
   const darkRatio = centerDark / centerSamples;
+  const veryDarkRatio = centerVeryDark / centerSamples;
   const redRatio = centerRed / centerSamples;
   const yellowRatio = centerYellow / centerSamples;
 
-  // ゲームボード判定: 暗い部分(ボード背景)が十分あればMOVE
-  // ピースやおじゃまに赤・黄色があってもボード背景の暗さでゲーム中と判別
-  if (darkRatio > 0.1) {
+  // ゲームボード判定: 盤面は暗い領域が広く、しかも深い暗部も少し混じる。
+  if (darkRatio > 0.18 || (darkRatio > 0.10 && veryDarkRatio > 0.03)) {
     return 'MOVE';
   }
 
@@ -237,6 +340,7 @@ function floodFillEstimate(data, width, height, startX, startY, targetR, targetG
   const colorThreshold = 50; // RGB差の許容値
   const queue = [{ x: startX, y: startY }];
   let totalX = 0, totalY = 0, count = 0;
+  let sumR = 0, sumG = 0, sumB = 0;
   let minX = startX, maxX = startX, minY = startY, maxY = startY;
 
   while (queue.length > 0) {
@@ -254,6 +358,9 @@ function floodFillEstimate(data, width, height, startX, startY, targetR, targetG
     totalX += x;
     totalY += y;
     count++;
+    sumR += r;
+    sumG += g;
+    sumB += b;
     if (x < minX) minX = x;
     if (x > maxX) maxX = x;
     if (y < minY) minY = y;
@@ -274,7 +381,12 @@ function floodFillEstimate(data, width, height, startX, startY, targetR, targetG
     pixelCount: count,
     bboxWidth: maxX - minX,
     bboxHeight: maxY - minY,
-    avgColor: { r: targetR, g: targetG, b: targetB },
+    sampleStep: gridStep,
+    avgColor: {
+      r: Math.round(sumR / count),
+      g: Math.round(sumG / count),
+      b: Math.round(sumB / count),
+    },
   };
 }
 
@@ -283,27 +395,26 @@ function floodFillEstimate(data, width, height, startX, startY, targetR, targetG
  */
 function classifyBlob(blob, calibration) {
   const { board } = calibration;
+  const aspectRatio = blobAspectRatio(blob);
+  if (aspectRatio > 3.0) return null;
 
-  // ブロブの平均半径（ピクセル）
-  const blobRadius = Math.sqrt(blob.bboxWidth * blob.bboxHeight) / 2;
+  // ブロブの実効半径（bboxと面積を併用）
+  const blobRadius = blobEffectiveRadius(blob);
 
   // ピクセル→ゲーム座標の変換スケール
   const pixelsPerGameUnit = board.width / 7.0;
 
   // ゲーム座標での半径
   const gameRadius = blobRadius / pixelsPerGameUnit;
+  if (gameRadius < 0.12 || gameRadius > 1.8) return null;
 
-  // 最も近いタイプを見つける
-  let bestType = 1;
-  let bestDiff = Infinity;
-
-  for (const [type, radius] of Object.entries(TYPE_RADII)) {
-    const diff = Math.abs(gameRadius - radius);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      bestType = parseInt(type);
-    }
+  const sizeGuess = classifyRadius(gameRadius, 15);
+  const colorGuess = classifyColorType(blob.avgColor, 15);
+  let bestType = sizeGuess.type;
+  if (colorGuess.hueDiff < 18 && Math.abs(colorGuess.type - sizeGuess.type) <= 1) {
+    bestType = colorGuess.type;
   }
+  if (sizeGuess.diff > 0.22) return null;
 
   // ゲーム座標での中心位置
   const normalizedX = (blob.centerX - board.left) / board.width;
@@ -335,6 +446,7 @@ function classifyBlob(blob, calibration) {
     x: gx,
     y: gy,
     r: TYPE_RADII[bestType],
+    confidence: Math.max(0.3, Math.min(0.9, 0.85 - sizeGuess.diff * 2)),
   };
 }
 
@@ -369,11 +481,11 @@ function detectNextPieces(data, width, height, board) {
     const slotTop = nextAreaTop + slotHeight * i;
     const slotBottom = slotTop + slotHeight;
     const piece = detectPieceInArea(data, width, height, slotTop, slotBottom, nextAreaLeft, nextAreaRight);
-    if (piece) results.push(piece);
+    if (piece && !(piece.fallback && (piece.confidence ?? 0) < 0.45)) results.push(piece);
   }
 
   // 最低1つは返す
-  if (results.length === 0) results.push({ type: 1, r: TYPE_RADII[1] });
+  if (results.length === 0) results.push({ type: 1, r: TYPE_RADII[1], fallback: true });
   return results;
 }
 
@@ -382,8 +494,8 @@ function detectNextPieces(data, width, height, board) {
  * ピースが無い場合は null を返す
  */
 function detectPieceInArea(data, width, height, areaTop, areaBottom, areaLeft, areaRight) {
-  let maxBlobSize = 0;
-  let bestColor = null;
+  let bestBlob = null;
+  let bestScore = 0;
 
   const gridStep = 4;
   const visited = new Set();
@@ -406,30 +518,47 @@ function detectPieceInArea(data, width, height, areaTop, areaBottom, areaLeft, a
       const blob = floodFillEstimate(data, width, height, x, y, r, g, b, gridStep, visited,
         { left: areaLeft, right: areaRight, top: areaTop, bottom: areaBottom });
 
-      if (blob && blob.pixelCount > maxBlobSize) {
-        maxBlobSize = blob.pixelCount;
-        bestColor = blob.avgColor;
+      if (!blob || blob.pixelCount < 4) continue;
+
+      const aspect = blobAspectRatio(blob);
+      if (aspect > 3.2) continue;
+
+      const sampledArea = Math.max(1, blob.pixelCount * gridStep * gridStep);
+      const bboxArea = Math.max(1, blob.bboxWidth * blob.bboxHeight);
+      const fillRatio = Math.min(1.5, sampledArea / bboxArea);
+      const blobColorStats = getColorStats(blob.avgColor.r, blob.avgColor.g, blob.avgColor.b);
+      const compactness = aspect > 2.0 ? 0.45 : 1.0;
+      const score = blob.pixelCount * Math.max(0.25, fillRatio) * compactness * (0.6 + blobColorStats.saturation);
+      if (score > bestScore) {
+        bestScore = score;
+        bestBlob = blob;
       }
     }
   }
 
-  if (!bestColor) return null;
+  if (!bestBlob) return null;
 
-  // 色から最も近いタイプを推定
-  let bestType = 1;
-  let bestDiff = Infinity;
-  for (const [type, color] of Object.entries(TYPE_COLORS)) {
-    const diff = Math.abs(bestColor.r - color.r) + Math.abs(bestColor.g - color.g) + Math.abs(bestColor.b - color.b);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      bestType = parseInt(type);
-    }
-  }
+  const colorGuess = classifyColorType(bestBlob.avgColor, 5);
+  const colorStats = getColorStats(bestBlob.avgColor.r, bestBlob.avgColor.g, bestBlob.avgColor.b);
+  const bestType = Math.max(1, Math.min(5, colorGuess.type));
+  const confidence = Math.max(
+    0.25,
+    Math.min(
+      0.9,
+      0.82
+        - Math.max(0, colorGuess.hueDiff - 12) / 48
+        - Math.max(0, 0.22 - colorStats.saturation) * 1.5
+        - (blobAspectRatio(bestBlob) > 2.0 ? 0.18 : 0),
+    ),
+  );
+  const fallback = confidence < 0.58;
 
-  // ドロップ可能なピースはtype 1-5程度
-  if (bestType > 5) bestType = Math.min(bestType, 5);
-
-  return { type: bestType, r: TYPE_RADII[bestType] };
+  return {
+    type: bestType,
+    r: TYPE_RADII[bestType],
+    fallback,
+    confidence: Math.round(confidence * 100) / 100,
+  };
 }
 
 /**

@@ -24,6 +24,7 @@ SOREN91_IMPROVE_PID_FILE="$SOREN91_DIR/tmp/soren91_improve.pid"
 SOREN91_IMPROVE_LOCK="$SOREN91_DIR/tmp/soren91_improve.lock"
 SOREN91_SESSION_FILE="$SOREN91_DIR/tmp/session_games.json"
 SOREN91_STOP_FILE="$SOREN91_DIR/tmp/stop"
+SOREN91_STOPPING_FILE="$SOREN91_DIR/tmp/stopping"
 SOREN91_RUNNER_SCRIPT="$SOREN91_DIR/run_player_loop.sh"
 SOREN91_VOICEVOX_SPEAKER="$(_soren91_env_get SOREN91_VOICEVOX_SPEAKER 2>/dev/null || printf '%s' "${SOREN91_VOICEVOX_SPEAKER:-46}")"
 SOREN91_OBS_CONTROL="$ELOOP_LIB_DIR/obs_control.sh"
@@ -246,6 +247,26 @@ soren91_is_running() {
 	return 0
 }
 
+_soren91_stop_in_progress() {
+	[ -f "$SOREN91_STOPPING_FILE" ] || return 1
+
+	local pid=""
+	if [ -f "$SOREN91_PID_FILE" ]; then
+		pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
+		case "$pid" in ''|*[!0-9]*) pid="" ;; esac
+	fi
+
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		return 0
+	fi
+	if [ -f "$SOREN91_STOP_FILE" ] || [ -f "$SOREN91_DIR/tmp/in_game" ]; then
+		return 0
+	fi
+
+	rm -f "$SOREN91_STOPPING_FILE" 2>/dev/null || true
+	return 1
+}
+
 _soren91_is_improve_process() {
 	# PIDが soren91 improve プロセスかどうか確認
 	local pid="$1"
@@ -399,6 +420,10 @@ soren91_start() {
 		log "[SOREN91] Already running, skip start"
 		return 0
 	fi
+	if _soren91_stop_in_progress; then
+		log "[SOREN91] Stop in progress, skip start"
+		return 0
+	fi
 
 	log "[SOREN91] Starting soren91 (メリケンAI)..."
 	rm -f "$SOREN91_STOP_FILE"
@@ -535,6 +560,7 @@ with open('$SOREN91_SESSION_FILE', 'w') as f:
 
 soren91_stop() {
 	_soren91_enabled || return 0
+	touch "$SOREN91_STOPPING_FILE"
 
 	local pid=""
 	if [ -f "$SOREN91_PID_FILE" ]; then
@@ -548,7 +574,7 @@ soren91_stop() {
 		local eg
 		eg=$(_soren91_record_end_game)
 		_clear_meriken_time_state
-		rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_DIR/tmp/in_game"
+		rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
 	fi
@@ -591,7 +617,7 @@ soren91_stop() {
 	local eg
 	eg=$(_soren91_record_end_game)
 
-	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_DIR/tmp/in_game"
+	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 	_clear_meriken_time_state
 	# 中華AI側のBGMをアンミュート（改善終了・復帰）
 	rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"

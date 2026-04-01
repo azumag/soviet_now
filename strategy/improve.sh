@@ -589,8 +589,12 @@ _start_improvement_job() {
 		./obs_control.sh show soren console4 2>/dev/null &
 		# soren91 (メリケンAI) を起動 — 中華AI改善中の代打プレイ
 		soren91_start
-		# Twitch チャットに戦略改善開始を通知
-		./twitch_chat.sh send "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
+		if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
+			# Twitch チャットに戦略改善開始を通知
+			./twitch_chat.sh send "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
+		else
+			log "[IMPROVE] soren91 は停止処理中のため起動通知をスキップ"
+		fi
 		# デーモンモードではフォアグラウンド実行（完了まで wait → 即 harvest 可能になる）
 		# run_cmd が stdout/stderr をログファイルにリダイレクトするため、
 		# tail -f でログをターミナルに中継する

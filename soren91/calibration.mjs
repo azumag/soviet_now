@@ -16,6 +16,142 @@ const GAME_X_MAX = 3.0;
 const GAME_Y_MIN = -5.0;  // floor
 const GAME_Y_MAX = 3.32;  // deadline area top
 
+function pixelBrightness(data, width, x, y) {
+  const idx = (y * width + x) * 4;
+  return (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+}
+
+function computeColumnStats(data, width, height, x, scanTop, scanBottom, rowStep = 4) {
+  let bright = 0;
+  let dark = 0;
+  let total = 0;
+  let sum = 0;
+
+  const clampedX = Math.max(0, Math.min(width - 1, x));
+  const y1 = Math.max(0, scanTop);
+  const y2 = Math.min(height, scanBottom);
+  for (let y = y1; y < y2; y += rowStep) {
+    const brightness = pixelBrightness(data, width, clampedX, y);
+    sum += brightness;
+    total++;
+    if (brightness > 170) bright++;
+    if (brightness < 110) dark++;
+  }
+
+  if (total === 0) {
+    return { avgBrightness: 0, brightRatio: 0, darkRatio: 0 };
+  }
+  return {
+    avgBrightness: sum / total,
+    brightRatio: bright / total,
+    darkRatio: dark / total,
+  };
+}
+
+function computeRowStats(data, width, y, scanLeft, scanRight, colStep = 6) {
+  let dark = 0;
+  let total = 0;
+  let sum = 0;
+
+  const x1 = Math.max(0, scanLeft);
+  const x2 = Math.min(width, scanRight);
+  for (let x = x1; x < x2; x += colStep) {
+    const brightness = pixelBrightness(data, width, x, y);
+    sum += brightness;
+    total++;
+    if (brightness < 110) dark++;
+  }
+
+  if (total === 0) {
+    return { avgBrightness: 0, darkRatio: 0 };
+  }
+  return {
+    avgBrightness: sum / total,
+    darkRatio: dark / total,
+  };
+}
+
+function findPeakBrightColumn(data, width, height, startX, endX) {
+  const scanTop = Math.floor(height * 0.20);
+  const scanBottom = Math.floor(height * 0.88);
+  let best = null;
+
+  for (let x = startX; x <= endX; x++) {
+    const stats = computeColumnStats(data, width, height, x, scanTop, scanBottom);
+    const score = stats.brightRatio * 4 + Math.max(0, (stats.avgBrightness - 160) / 80);
+    if (!best || score > best.score) {
+      best = { x, score, ...stats };
+    }
+  }
+
+  return best;
+}
+
+function findInnerWallEdge(data, width, height, wallX, direction) {
+  const scanTop = Math.floor(height * 0.25);
+  const scanBottom = Math.floor(height * 0.88);
+
+  for (let offset = 4; offset <= 64; offset++) {
+    const x = wallX + direction * offset;
+    if (x <= 0 || x >= width - 1) break;
+    const stats = computeColumnStats(data, width, height, x, scanTop, scanBottom);
+    if (stats.darkRatio > 0.25 && stats.avgBrightness < 135) {
+      return x;
+    }
+  }
+
+  return Math.max(0, Math.min(width - 1, wallX + direction * 20));
+}
+
+function findBoardVerticalBounds(data, width, height, leftWallInner, rightWallInner) {
+  const usableWidth = rightWallInner - leftWallInner;
+  if (usableWidth < 120) return null;
+
+  const horizontalMargin = Math.max(12, Math.floor(usableWidth * 0.08));
+  const scanLeft = leftWallInner + horizontalMargin;
+  const scanRight = rightWallInner - horizontalMargin;
+  const startY = Math.floor(height * 0.15);
+  const endY = Math.floor(height * 0.97);
+  const rows = [];
+
+  for (let y = startY; y <= endY; y += 2) {
+    const stats = computeRowStats(data, width, y, scanLeft, scanRight);
+    rows.push({
+      y,
+      ...stats,
+      active: stats.darkRatio > 0.22 && stats.avgBrightness < 140,
+    });
+  }
+
+  const isStableActive = (index) => {
+    let activeCount = 0;
+    let total = 0;
+    for (let i = Math.max(0, index - 2); i <= Math.min(rows.length - 1, index + 2); i++) {
+      total++;
+      if (rows[i].active) activeCount++;
+    }
+    return total > 0 && activeCount >= Math.min(3, total);
+  };
+
+  let top = -1;
+  let bottom = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (isStableActive(i)) {
+      top = rows[i].y;
+      break;
+    }
+  }
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (isStableActive(i)) {
+      bottom = rows[i].y;
+      break;
+    }
+  }
+
+  if (top === -1 || bottom === -1 || bottom - top < 140) return null;
+  return { top, bottom };
+}
+
 /**
  * スクリーンショットからゲームボード領域を検出する。
  * ゲームボードの壁（明るい縦線）を検出して正確な領域を特定。
@@ -34,96 +170,59 @@ export async function calibrate(screenshotPath) {
   const { width, height } = metadata;
   const { data } = await image.raw().ensureAlpha().toBuffer({ resolveWithObject: true });
 
-  // 壁検出: 複数のスキャンラインで明るい縦線（壁）を見つける
-  // ゲームボードの壁は白/明灰色の縦線 (brightness ~150-250)
-  // 壁の内側は暗いゲームボード (brightness ~50)
   let leftWallOuter = -1, leftWallInner = -1;
   let rightWallInner = -1, rightWallOuter = -1;
+  let boardTop = -1, boardBottom = -1;
+  let confidence = 0.35;
+  let method = 'fallback';
 
-  // 複数のスキャンラインで壁を検出 (最頻値を使用)
-  const scanYs = [0.4, 0.5, 0.55, 0.6, 0.7].map(r => Math.floor(height * r));
+  const leftPeak = findPeakBrightColumn(
+    data,
+    width,
+    height,
+    Math.floor(width * 0.25),
+    Math.floor(width * 0.45),
+  );
+  const rightPeak = findPeakBrightColumn(
+    data,
+    width,
+    height,
+    Math.floor(width * 0.55),
+    Math.floor(width * 0.75),
+  );
 
-  for (const scanY of scanYs) {
-    const brightnesses = [];
-    for (let x = 0; x < width; x++) {
-      const idx = (scanY * width + x) * 4;
-      brightnesses.push((data[idx] + data[idx + 1] + data[idx + 2]) / 3);
+  if (
+    leftPeak?.brightRatio > 0.30 &&
+    rightPeak?.brightRatio > 0.30 &&
+    rightPeak.x - leftPeak.x > Math.floor(width * 0.18)
+  ) {
+    leftWallOuter = leftPeak.x;
+    rightWallOuter = rightPeak.x;
+    leftWallInner = findInnerWallEdge(data, width, height, leftWallOuter, +1);
+    rightWallInner = findInnerWallEdge(data, width, height, rightWallOuter, -1);
+    const verticalBounds = findBoardVerticalBounds(data, width, height, leftWallInner, rightWallInner);
+    if (verticalBounds && leftWallInner < rightWallInner) {
+      boardTop = verticalBounds.top;
+      boardBottom = verticalBounds.bottom;
+      confidence = 0.82;
+      method = 'profile';
     }
-
-    // 左壁: 「暗→明(壁)→暗(ボード内、幅100px以上)」パターン
-    for (let x = Math.floor(width * 0.25); x < Math.floor(width * 0.5); x++) {
-      if (brightnesses[x] > 150 && x >= 3 && brightnesses[x - 3] < 60) {
-        // 壁の終わりを探す
-        for (let x2 = x + 1; x2 < x + 25; x2++) {
-          if (brightnesses[x2] < 60) {
-            // 壁の後に十分な暗い領域があるか確認 (ゲームボード)
-            let darkStretch = 0;
-            for (let x3 = x2; x3 < x2 + 200 && x3 < width; x3++) {
-              if (brightnesses[x3] < 60) darkStretch++;
-            }
-            if (darkStretch > 150) { // 200px中150px以上暗い = ゲームボード
-              leftWallOuter = x;
-              leftWallInner = x2;
-            }
-            break;
-          }
-        }
-        if (leftWallInner !== -1) break;
-      }
-    }
-
-    // 右壁: 右から探して「明(壁)の左に暗い領域(ボード)」パターン
-    // 壁の外側(右)はミニボードで明るいので、内側(左)が暗いことで判定
-    for (let x = Math.floor(width * 0.75); x > Math.floor(width * 0.5); x--) {
-      if (brightnesses[x] > 150 && x >= 3 && brightnesses[x - 3] < 60) {
-        // 壁の右端(外側)を探す
-        let wallEnd = x;
-        for (let x2 = x + 1; x2 < x + 25; x2++) {
-          if (brightnesses[x2] < 100) { wallEnd = x2 - 1; break; }
-          wallEnd = x2;
-        }
-        // 壁の左側に十分な暗い領域があるか確認
-        let darkStretch = 0;
-        for (let x3 = x - 3; x3 > x - 203 && x3 >= 0; x3--) {
-          if (brightnesses[x3] < 60) darkStretch++;
-        }
-        if (darkStretch > 150) {
-          rightWallOuter = wallEnd;
-          rightWallInner = x - 1;
-          // 正確な内側: 壁の左端を探す
-          for (let x2 = x - 1; x2 > x - 25; x2--) {
-            if (brightnesses[x2] < 60) { rightWallInner = x2; break; }
-          }
-        }
-        if (rightWallInner !== -1) break;
-      }
-    }
-
-    if (leftWallInner !== -1 && rightWallInner !== -1) break;
   }
 
-  // フォールバック: 壁が見つからない場合は画面中央を推定
-  if (leftWallInner === -1 || rightWallInner === -1) {
-    console.log('[calibration] Wall detection failed, using fallback');
+  if (
+    leftWallInner === -1 || rightWallInner === -1 ||
+    boardTop === -1 || boardBottom === -1 ||
+    rightWallInner - leftWallInner < Math.floor(width * 0.15)
+  ) {
+    console.log('[calibration] Profile detection failed, using fallback');
     leftWallInner = Math.floor(width * 0.35);
     rightWallInner = Math.floor(width * 0.65);
-    leftWallOuter = leftWallInner - 15;
-    rightWallOuter = rightWallInner + 15;
-  }
-
-  // 上下の境界検出: 中央列で暗い領域の範囲
-  const midX = Math.floor((leftWallInner + rightWallInner) / 2);
-  let boardTop = 0, boardBottom = height - 1;
-
-  for (let y = 0; y < height; y++) {
-    const idx = (y * width + midX) * 4;
-    const b = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-    if (b < 60) { boardTop = y; break; }
-  }
-  for (let y = height - 1; y >= 0; y--) {
-    const idx = (y * width + midX) * 4;
-    const b = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-    if (b < 60) { boardBottom = y; break; }
+    leftWallOuter = Math.max(0, leftWallInner - 20);
+    rightWallOuter = Math.min(width - 1, rightWallInner + 20);
+    boardTop = Math.floor(height * 0.42);
+    boardBottom = Math.floor(height * 0.96);
+    confidence = 0.35;
+    method = 'fallback';
   }
 
   // 壁の内側がプレイエリア
@@ -159,6 +258,8 @@ export async function calibrate(screenshotPath) {
       pixelRight: leftWallOuter + Math.floor(pixelsPerUnit * 6.5),
     },
     pixelsPerUnit,
+    confidence,
+    method,
     timestamp: new Date().toISOString(),
   };
 
@@ -166,6 +267,7 @@ export async function calibrate(screenshotPath) {
   writeFileSync(CALIBRATION_PATH, JSON.stringify(calibration, null, 2));
   console.log('[calibration] Saved:', CALIBRATION_PATH);
   console.log('[calibration] Board area:', `${boardWidth}x${boardHeight} at (${boardLeft},${boardTop})`);
+  console.log('[calibration] Method:', `${method} (confidence=${confidence.toFixed(2)})`);
 
   return calibration;
 }

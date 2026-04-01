@@ -93,6 +93,72 @@ function cleanOpencodeOutput(raw) {
   return kept.filter(Boolean).join('\n').trim();
 }
 
+const META_LINE_PATTERNS = [
+  /^(assistant|analysis|final|tool_call|tool_result)$/i,
+  /^(agent|model|provider)\s*[:=]/i,
+  /^(かしこまりました|承知しました|了解しました|もちろんです)[。！]*$/u,
+  /メリケンAIの準備ができています/u,
+  /現在の設定を確認(いたしました|しました)/u,
+  /試合(後|中盤)?コメント生成の役割を担当/u,
+  /スクリーンショットをお送りいただければ/u,
+  /順位情報に基づいてコメントを生成/u,
+  /情報が不足している|情報を教えてほしい/u,
+  /コメント本文のみ/u,
+  /ですます調|敬語/u,
+  /ペルソナ|OCRメモ|順位情報/u,
+  /^(ゲームルール|生成ルール|ルール)[:：]?$/u,
+];
+
+const META_SENTENCE_PATTERNS = [
+  /^(かしこまりました|承知しました|了解しました|もちろんです)[。！]*$/u,
+  /メリケンAIの準備ができています/u,
+  /現在の設定を確認(いたしました|しました)/u,
+  /試合(後|中盤)?コメント生成の役割を担当/u,
+  /スクリーンショットをお送りいただければ/u,
+  /順位情報に基づいてコメントを生成/u,
+  /情報が不足している|情報を教えてほしい/u,
+  /何を(返答|返信|回答)す(れば|るか)/u,
+  /どのコメントに(返答|返信|回答)/u,
+  /ご指示ください|教えてください|送ってください/u,
+  /コメント本文のみ|ですます調|絶対ルール|ペルソナ|OCRメモ|順位情報/u,
+];
+
+function splitSentences(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  const chunks = normalized.match(/[^。！？!?]+[。！？!?]?/gu) || [normalized];
+  return chunks.map(chunk => chunk.trim()).filter(Boolean);
+}
+
+function stripMetaPreamble(text) {
+  const sentences = splitSentences(text);
+  while (sentences.length > 0) {
+    const head = sentences[0];
+    if (META_SENTENCE_PATTERNS.some(pattern => pattern.test(head))) {
+      sentences.shift();
+      continue;
+    }
+    break;
+  }
+  return sentences.join('').trim();
+}
+
+function isValidGeneratedComment(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (normalized.length < 24) return false;
+  if (!/[。！？!?]/u.test(normalized)) return false;
+
+  const head = splitSentences(normalized).slice(0, 4).join(' ');
+  if (META_SENTENCE_PATTERNS.some(pattern => pattern.test(head))) return false;
+  if (/(何を(返答|返信|回答)す(れば|るか)|どのコメントに(返答|返信|回答)|ご指示ください|教えてください|お送りいただければ|送ってください)/u.test(normalized)) {
+    return false;
+  }
+  if (/(コメント本文のみ|ですます調|絶対ルール|ペルソナ|OCRメモ|順位情報)/u.test(head)) {
+    return false;
+  }
+  return true;
+}
+
 function makeProviderError(message, detail = '') {
   const err = new Error(detail ? `${message}: ${detail}` : message);
   err.providerFailure = true;
@@ -123,7 +189,7 @@ function runClaudeTextComment(tag, promptText) {
         if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
         return reject(err);
       }
-      const comment = extractCommentOnly(String(stdout || '').trim());
+      const comment = extractCommentOnly(String(stdout || '').trim(), tag);
       if (!comment) {
         return reject(new Error('claude returned empty comment'));
       }
@@ -162,7 +228,7 @@ function runOpencodeComment(tag, promptText, agent = DEFAULT_OPENCODE_AGENT) {
           if (cleaned) console.error(`[${tag}] opencode raw:`, cleaned.slice(0, 500));
           return reject(err);
         }
-        const comment = extractCommentOnly(cleaned);
+        const comment = extractCommentOnly(cleaned, tag);
         if (!comment) {
           return reject(new Error(`opencode returned empty comment (${agent})`));
         }
@@ -198,7 +264,7 @@ function runGeminiTextComment(tag, promptText) {
         if (stderrPreview) console.error(`[${tag}] gemini stderr:`, stderrPreview);
         return reject(err);
       }
-      const comment = extractCommentOnly(String(stdout || '').trim());
+      const comment = extractCommentOnly(String(stdout || '').trim(), tag);
       if (!comment) {
         return reject(new Error('gemini returned empty comment'));
       }
@@ -268,29 +334,55 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
  * 生の応答テキストからコメント本文のみを抽出
  * AI が分析テキストを付けてしまった場合に最後の短い文を取る
  */
-function extractCommentOnly(raw) {
+function extractCommentOnly(raw, tag = 'comment') {
   if (!raw) return null;
-  const trimmed = raw.trim();
+  const lines = stripAnsi(raw)
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => !line.startsWith('```'))
+    .filter(line => !META_LINE_PATTERNS.some(pattern => pattern.test(line)));
 
-  // マークダウンのヘッダーや箇条書きが含まれていたら、プレーンテキスト行だけ結合
-  if (trimmed.includes('**') || trimmed.includes('- ') || trimmed.includes('1.')) {
-    const lines = trimmed.split('\n').map(l => l.trim()).filter(Boolean);
-    const plainLines = lines.filter(line =>
-      !line.startsWith('-') && !line.startsWith('*') && !line.startsWith('#') &&
-      !line.match(/^\d+\./) && !line.startsWith('|') && line.length >= 3
+  const candidates = [];
+  const plainLines = lines.filter(line =>
+    !line.startsWith('-') &&
+    !line.startsWith('*') &&
+    !line.startsWith('#') &&
+    !line.match(/^\d+\./) &&
+    !line.startsWith('|') &&
+    line.length >= 3
+  );
+  if (plainLines.length > 0) {
+    candidates.push(plainLines.join(' '));
+  }
+
+  const joined = lines.join(' ');
+  if (joined) {
+    candidates.push(joined);
+    const tailSentences = splitSentences(joined).slice(-6).join('');
+    if (tailSentences) candidates.push(tailSentences);
+  }
+
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const cleaned = stripMetaPreamble(
+      candidate
+        .replace(/\*\*/g, '')
+        .replace(/[✓]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/^[「『]|[」』]$/g, '')
+        .trim(),
     );
-    if (plainLines.length > 0) {
-      return plainLines.join('').replace(/^[「『]|[」』]$/g, '').trim().slice(0, 350);
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    if (isValidGeneratedComment(cleaned)) {
+      return cleaned.slice(0, 350);
     }
   }
 
-  // 200文字以内ならそのまま返す（改行は除去して結合）
-  const joined = trimmed.split('\n').map(l => l.trim()).filter(Boolean).join('');
-  if (joined.length <= 350) {
-    return joined.replace(/^[「『]|[」』]$/g, '').trim();
-  }
-
-  return joined.slice(0, 350);
+  const preview = stripAnsi(raw).replace(/\s+/g, ' ').slice(0, 220);
+  console.log(`[${tag}] rejected generated comment preview: ${preview}`);
+  return null;
 }
 
 async function buildRankingTextPrompt(rankingImagePath, myRank) {
@@ -372,6 +464,48 @@ function postToTwitch(comment) {
   });
 }
 
+function bucketForPieceType(type) {
+  const n = Number(type || 1);
+  if (n <= 4) return 'small';
+  if (n <= 9) return 'medium';
+  return 'large';
+}
+
+function summarizePieceBuckets(pieces) {
+  const counts = { small: 0, medium: 0, large: 0 };
+  for (const piece of pieces) {
+    counts[bucketForPieceType(piece?.type)] += 1;
+  }
+  const total = counts.small + counts.medium + counts.large;
+  if (total === 0) return '種類傾向: 判定材料不足';
+
+  if (counts.small >= total * 0.75) return '種類傾向: 小さいピースにかなり偏って見える';
+  if (counts.small >= total * 0.55) return '種類傾向: 小さいピースが多めに見える';
+  if (counts.large >= Math.max(2, total * 0.18)) return '種類傾向: 大きめのピースも少し育っている';
+  if (counts.medium >= total * 0.45) return '種類傾向: 中くらいのピースが混ざっている';
+  return '種類傾向: 小型と中型が混在している';
+}
+
+function summarizeUpcomingPieces(nextPieces) {
+  const detected = (nextPieces || []).filter(piece => piece && piece.fallback !== true);
+  if (detected.length === 0) return 'NEXT傾向: 判定あいまい';
+
+  const buckets = detected.map(piece => bucketForPieceType(piece.type));
+  if (buckets.every(bucket => bucket === 'small')) return 'NEXT傾向: 小さいピース寄り';
+  if (buckets.some(bucket => bucket === 'large')) return 'NEXT傾向: 大きめ候補が混ざる';
+  if (buckets.every(bucket => bucket === 'medium')) return 'NEXT傾向: 中くらいが続きそう';
+  return 'NEXT傾向: 小型と中型が混在';
+}
+
+function summarizeHoldPiece(hold) {
+  if (!hold) return 'HOLD: なし';
+  if (hold.fallback === true) return 'HOLD: 判定あいまい';
+  const bucket = bucketForPieceType(hold.type);
+  if (bucket === 'small') return 'HOLD: 小さいピースあり';
+  if (bucket === 'medium') return 'HOLD: 中くらいのピースあり';
+  return 'HOLD: 大きめのピースあり';
+}
+
 /**
  * 試合中の盤面コメントを生成 (1試合1回)
  * @param {number} gameNumber - ゲーム番号
@@ -446,17 +580,6 @@ function formatBoardStateForPrompt(boardState, turn) {
     : -5;
   const dangerPct = Math.max(0, Math.min(100, ((maxY - warnY) / (deadlineY - warnY)) * 100)).toFixed(0);
 
-  // ピースのtype別集計
-  const typeCounts = {};
-  for (const p of pieces) {
-    const t = p.type ?? '?';
-    typeCounts[t] = (typeCounts[t] || 0) + 1;
-  }
-  const typeStr = Object.entries(typeCounts)
-    .sort((a, b) => Number(b[0]) - Number(a[0]))
-    .map(([t, c]) => `type${t}×${c}`)
-    .join(', ');
-
   // 状況を自然言語で表現（数値を直接見せない）
   const fillLevel = fillPct < 20 ? 'スカスカ' : fillPct < 40 ? 'まだ余裕あり' : fillPct < 60 ? 'そこそこ埋まっている' : fillPct < 80 ? 'かなり埋まっている' : 'ほぼ満杯';
   const dangerLevel = dangerPct <= 0 ? '安全' : dangerPct < 30 ? 'まだ余裕あり' : dangerPct < 50 ? 'やや高くなってきた' : dangerPct < 70 ? '危険が迫っている' : dangerPct < 90 ? 'かなり危険' : '瀕死';
@@ -464,17 +587,14 @@ function formatBoardStateForPrompt(boardState, turn) {
   let info = `ターン${turn}、盤面にピース${pieceCount}個。`;
   info += `\n盤面の状態: ${fillLevel}`;
   info += `\n積み上がり: ${dangerLevel}`;
-  info += `\nピース内訳: ${typeStr || 'なし'}`;
+  info += `\n${summarizePieceBuckets(pieces)}`;
+  info += `\n種類推定の注意: 小さいピース側に誤認しやすいので、特定の国名や個数の断定は禁止`;
 
   if (garbageRatio > 0.05) {
     info += `\nおじゃまブロック: ${(garbageRatio * 100).toFixed(0)}%、ゲージ: ${(gauge * 100).toFixed(0)}%`;
   }
-  if (hold) {
-    info += `\nHOLD: type${hold.type}`;
-  }
-  if (nextPieces.length > 0) {
-    info += `\nNEXT: ${nextPieces.map(p => `type${p.type}`).join(', ')}`;
-  }
+  info += `\n${summarizeHoldPiece(hold)}`;
+  info += `\n${summarizeUpcomingPieces(nextPieces)}`;
 
   return info;
 }
