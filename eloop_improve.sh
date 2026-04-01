@@ -826,7 +826,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK_IMPROVE" \
 				"prompts/improve_strategy.md" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
-			local _run_ai_rc=$?
+			_run_ai_rc=$?
 			_improve_note "run_ai returned rc=${_run_ai_rc} (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES})"
 			if [ "$_run_ai_rc" -ne 0 ]; then
 				_consecutive_empty=$((_consecutive_empty + 1))
@@ -856,7 +856,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			run_ai "FIX(${fresh_retry}.${continue_retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK_IMPROVE" \
 				"$fix_prompt_file" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
-			local _fix_rc=$?
+			_fix_rc=$?
 			rm -f "$fix_prompt_file"
 			if [ "$_fix_rc" -ne 0 ]; then
 				_consecutive_empty=$((_consecutive_empty + 1))
@@ -1116,7 +1116,7 @@ if $improve_ok; then
 	if [ -n "$strategy_diff" ]; then
 		_improve_progress "radio" "95" "strategy_commentary_pending"
 		best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
-		local _pending_diff_file
+		_pending_diff_file=""
 		_pending_diff_file=$(mktemp "$TMP_STATE_DIR/pending_strategy_diff.XXXXXX") || true
 		if [ -n "$_pending_diff_file" ]; then
 			printf '%s\n' "$strategy_diff" > "$_pending_diff_file"
