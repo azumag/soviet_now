@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v454: flatten deadline_crossed NO-merge penalty to flat -4500 — fix v432 sign error
+     # v432 formula -3000 + landing_y*2000 had wrong sign: at y>=1.5 "penalty" became 0 or positive,
+     # rewarding high placement at deadline. Flattened to -4500 matching protected strategy (median 12789)
+     # and axis 8.8 (v452). Fixes rollback failure mode: deadline scatter from inverted gradient
+     # refs: tmp/state/last_rollback_postmortem.md (scatter failure modes, axis 8.8 constraint),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (flat -4500),
+     #       game_history/20260401_125127_score0816.jsonl T55-60 (deadline scatter → y=3.31),
+     #       game_history/20260401_124901_score0890.jsonl T79-84 (x=2.6-3.0 at deadline),
+     #       game_history/20260401_123945_score2962.jsonl T114-122 (edge scatter at deadline),
+     #       tmp/batch_summary.txt, strategy.py.staging (v453)
      # v453: restore axis 9.6b (same-type proximity guidance for non-reactive) — fix rollback failure mode
      # Postmortem constraint VIOLATED by v449: "forbid: axis 9.6b の無効化。merge drought時に
      # 非reactive current type向けの配置ガイドを維持すること。" v449 removed 9.6b entirely, causing
@@ -1312,12 +1322,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
 
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # v432: height-dependent penalty instead of flat -4500
-            # Restores ~4000 gradient between y=0 and y=2, per postmortem constraint
-            # Formula: -3000 + max(0, landing_y) * 2000
-            # At y<=0: -3000, y=0.5: -4000, y=1: -5000, y=1.5: -6000, y=2: -7000
-            deadline_no_merge_penalty = -3000.0 + max(0.0, landing_y) * 2000.0
-            score += deadline_no_merge_penalty
+            # v454: flatten to -4500 — fix v432 sign error + match protected strategy
+            # v432 formula was -3000 + landing_y * 2000 which has OPPOSITE sign to the
+            # documented intent. The comment said "y=2: -7000" but the formula produces
+            # +1000 (a BONUS for high placement). This inverted the penalty: at y>=1.5
+            # the "penalty" becomes zero or positive, incentivizing scatter to high-y
+            # positions at deadline — the exact failure mode the postmortem warns against.
+            # Evidence: worst T59 x=-3.0 at deadline → bounces to y=3.31. Extra_low T79-84
+            # pieces at x=2.6-3.0, y=2.7-3.5. Best game also shows edge scatter at deadline.
+            # Protected strategy (median 12789) uses flat -4500. Same as axis 8.8 (v452).
+            # Flat -4500 overwhelms all additive bonuses (~400-800), letting axis 2
+            # height penalty be the only position differentiator — consistent low placement.
+            # Fixes rollback failure mode: deadline scatter from v432 sign error
+            score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
         
          # ----- evaluation axis 3: drift penalty -----
