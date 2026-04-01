@@ -18,7 +18,7 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-           5.6. Growth center proximity - v458: reduced magnitude per postmortem (base 60, congestion 0.08, cap 2.0)
+           5.6. Growth center proximity - v469: base 60→80 strengthening toward target (base 100) per postmortem magnitude allowance
             6. Chain merge bonus - Evaluate possibility of further merges after merge (v466: NEAR suppressed at pc>=32+deadline)
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
@@ -63,6 +63,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v469: increase axis 5.6 growth center proximity base 60→80 per v455 postmortem magnitude allowance
+     # Postmortem v455: axis 5.6 at base 235(pc=40) was effective; current base 60 yields only 118(pc=40).
+     # Gap: protected strategy (median 12789) has no 5.6 but strong flat guidance; current 5.6 too weak to
+     # redirect scattered HEIGHT_CONTROL placements toward max_type cluster. Worst game T30-T40: type 6-7
+     # cluster at x≈0 but pieces placed at x=±3.0 (proximity 60 < height diff 180+).
+     # At pc=40, horiz_dist=0: old 60*2.48=148.8; new 80*2.48=198.4 (closer to height_penalty 180).
+     # At pc=33, horiz_dist=0: old 60*1.60=96; new 80*1.60=128 (still < height, not overriding).
+     # This is moderate step toward postmortem target of 100 — no 5.6 activation filter changes.
+     # refs: tmp/improve_brief.md, tmp/batch_summary.txt (HEIGHT_CONTROL 21.1% low vs 16.5% high),
+     #       game_history/20260402_064613_score0701.jsonl (worst, T30-T40 scatter),
+     #       tmp/state/last_rollback_postmortem.md (v455, magnitude allowance),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v468: increase axis 9.6b base proximity bonus 120→160 — close guidance gap from v459 9.5 removal
      # v459 removed axis 9.5 (+300 SAME_TYPE_STACK) keeping only 9.6b (~120), weakening net
      # same-type proximity guidance vs protected strategy (median 12789, retains +300, no 9.6b).
@@ -1518,8 +1530,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 gc_y = growth_center.get("y", -10)
                 horiz_dist = abs(x - gc_x)
                 if horiz_dist < 2.5:
-                    # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
-                    proximity = max(0, 60.0 - horiz_dist * 40.0)
+                    # v469: base 60→80 strengthening toward target (base 100) per postmortem
+                    proximity = max(0, 80.0 - horiz_dist * 40.0)
                     # Decay if growth center is high — don't override height control
                     if gc_y > 0:
                         proximity *= max(0.0, 1.0 - gc_y * 0.4)
