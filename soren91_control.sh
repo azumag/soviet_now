@@ -592,9 +592,13 @@ soren91_stop() {
 
 	local in_game_file="$SOREN91_DIR/tmp/in_game"
 
-	# Phase 1: 試合中なら試合終了を待つ (上限600秒、プロセス生存チェック付き)
+	# Phase 1: 試合中なら試合終了を待つ。長すぎる居残りを避けるため、
+	# 固定600秒ではなく SOREN91_STOP_TIMEOUT に従う。
 	local game_waited=0
-	local max_game_wait=600
+	local max_game_wait="${SOREN91_STOP_TIMEOUT:-120}"
+	case "$max_game_wait" in
+	''|*[!0-9]*) max_game_wait=120 ;;
+	esac
 	while [ -f "$in_game_file" ] && kill -0 "$pid" 2>/dev/null && [ "$game_waited" -lt "$max_game_wait" ]; do
 		log "[SOREN91] Game in progress, waiting for round to end... (${game_waited}s/${max_game_wait}s)"
 		sleep 5
