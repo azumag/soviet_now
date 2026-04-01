@@ -63,6 +63,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v467: extend axis 9.6b proximity guidance to rp>=3+reactive gap (0.4x reduced bonus)
+     # At rp>=3+NO merge+current_type has reactive, neither axis 9.6 (v465 guard) nor 9.6b
+     # (requires no reactive) fires → no guidance → HEIGHT_CONTROL/AVOID_BLOCK scatter. Worst game
+     # T72-T76: rp=4, merge_available=false, AVOID_BLOCK pushes to x=3.0 edges, pc 25→29, 0 merges.
+     # Extra-low game T72-T79: rp=4, merge_available=false 6/8 turns, pc 31→36, 1 merge succeeded.
+     # Extension fills gap with small bonus (~50-120) that provides tie-breaking for same-type
+     # proximity without offsetting axis 8.8 (-4500). v465 noise concern respected: 0.4x reduction.
+     # Fixes failure mode: piece_count accumulation from no guidance at rp>=3+reactive+NO
+     # refs: game_history/20260402_051532_score1143.jsonl (T72-T76), game_history/20260402_050854_score1354.jsonl (T72-T79),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py, tmp/batch_summary.txt,
+     #       tmp/state/last_rollback_postmortem.md (v465 guard, axis 9.6 gap), strategy.py.staging (v466)
      # v466: raise NEAR suppression threshold pc>=28→pc>=32 — restore NEAR merge at medium pc
      # v463/v464 suppressed NEAR CHAIN_MERGE and NEAR bonus at pc>=28+deadline to prevent
      # catastrophic NEAR fails. But analysis shows worst games die at pc=29-34 where the
@@ -1151,7 +1162,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
         # Fixes postmortem failure mode: type scattering → piece_count accumulation
         if merge_grade == "NO" and same_type_stack_top is not None:
-            if not (current_type_has_reactive or current_type_has_near):
+            # v467: extend to rp>=3 — fills guidance gap where neither 9.6 (v465 guard)
+            # nor original 9.6b (requires no reactive) fires. At rp<3+reactive, axis 9.6
+            # handles stacking; at rp>=3+reactive, this extension provides proximity tie-breaking.
+            if not (current_type_has_reactive or current_type_has_near) or reactive_pair_count >= 3:
                 # v371: Find same-type piece closest to merged_type(N+1) for chain building.
                 # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
                 merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
@@ -1181,6 +1195,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
                     proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
+                    # v467: at rp>=3+current_type has reactive (extension case), reduce bonus
+                    # by 60% to respect v465 noise concern. Max ~50-120 vs axis 8.8 (-4500).
+                    # Original 9.6b (no reactive) keeps full bonus for stronger guidance.
+                    if reactive_pair_count >= 3 and (current_type_has_reactive or current_type_has_near):
+                        proximity_bonus *= 0.4
                     if piece_count >= 28:
                         # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                         # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
