@@ -1707,7 +1707,7 @@ start_radio_corner_jiji() {
 	research_prompt_file=$(mktemp /tmp/eloop_jiji_research_prompt_XXXXXXXX)
 	export headline
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_jiji_research.md" > "$research_prompt_file"
-	unset headline
+	# headline は後段の本番プロンプトと既読記録でも使うので保持する
 
 	grounding_context=$(_run_opencode_jiji_research "$RADIO_AGENT" "$research_prompt_file")
 	if [ -z "$grounding_context" ]; then
@@ -1756,7 +1756,8 @@ start_radio_corner_jiji() {
 	output_rules=$(_radio_output_rules 1000 2000)
 	export _rc_time past_topics game_num score headline grounding_context
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_jiji.md" > "$prompt_file"
-	unset persona_block output_rules _rc_time past_topics headline grounding_context
+	unset persona_block output_rules _rc_time past_topics grounding_context
 
-	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji"
+	_radio_generate_and_play "$prompt_file" "$game_num" "$score" "jiji" --selected-news "$headline"
+	unset headline
 }

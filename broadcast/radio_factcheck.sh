@@ -7,6 +7,9 @@ _radio_extract_grounding_query() {
 	news)
 		query="$selected_news"
 		;;
+	jiji)
+		query="${selected_news:-$(_radio_extract_prompt_section_value "【本日のニュース見出し】" "$prompt_context")}"
+		;;
 	theme)
 		query=$(_radio_extract_prompt_section_value "【今回の脱線テーマ指定】" "$prompt_context")
 		;;
