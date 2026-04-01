@@ -10,6 +10,7 @@ ${VALIDATE_ERROR}
 - `strategy.py.staging` は continuation 中の実編集対象であり、これを唯一の編集コンテキストとして扱うこと。`strategy.py` を編集根拠として読んではいけない
 - まず現在の `strategy.py.staging` を1回 `Read` して、現状態を確認してから `Edit` すること
 - 問題修正に直接必要な差分だけを入れ、前回の改善方針そのものはむやみに捨てないこと
+- 現在の `strategy.py.staging` と今回触る周辺に明確な既存バグや partial edit 崩れがあれば、低リスクな範囲で一緒に直してよい
 - 1回の改善で1つの変更のみ。シンプルに保て
 - decide(game_state, analysis) のシグネチャは変更禁止
 - if __name__ == "__main__" ブロックは変更禁止
