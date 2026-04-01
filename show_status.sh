@@ -275,12 +275,12 @@ show_status() {
 	local imp_status="idle" imp_pid=0 imp_hash="" imp_phase="" imp_progress=0
 	if [[ -f "$TMP_STATE_DIR/improve_state.json" ]]; then
 		eval $(python3 -c "
-import json
+import json, shlex
 d=json.load(open('$TMP_STATE_DIR/improve_state.json'))
-print(f'imp_status={d.get(\"status\",\"idle\")}')
+print('imp_status=' + shlex.quote(str(d.get('status', 'idle'))))
 print(f'imp_pid={d.get(\"pid\",0)}')
-print(f'imp_hash={d.get(\"strategy_hash_before\",\"\")}')
-print(f'imp_phase={d.get(\"phase\",\"\")}')
+print('imp_hash=' + shlex.quote(str(d.get('strategy_hash_before', ''))))
+print('imp_phase=' + shlex.quote(str(d.get('phase', ''))))
 print(f'imp_progress={int(d.get(\"progress\",0) or 0)}')
 " 2>/dev/null)
 	fi
@@ -342,9 +342,9 @@ END { printf "%s", block }
 	local game_state="" game_score=0 game_pieces=0
 	if [[ -f game_state.json ]]; then
 		eval $(python3 -c "
-import json
+import json, shlex
 d=json.load(open('game_state.json'))
-print(f'game_state={d.get(\"state\",\"?\")}')
+print('game_state=' + shlex.quote(str(d.get('state', '?'))))
 print(f'game_score={d.get(\"score\",0)}')
 print(f'game_pieces={len(d.get(\"pieces\",[]))}')
 " 2>/dev/null)
