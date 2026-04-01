@@ -41,7 +41,7 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v465: v357ガード復元(rp>=3+NOで抑制) + v408: pc混雑スケーリング(9.6b同一)
-             9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
+             9.6b. Same-type proximity guidance - v468: base 120→160 per v459 removal gap vs protected
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
@@ -63,6 +63,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v468: increase axis 9.6b base proximity bonus 120→160 — close guidance gap from v459 9.5 removal
+     # v459 removed axis 9.5 (+300 SAME_TYPE_STACK) keeping only 9.6b (~120), weakening net
+     # same-type proximity guidance vs protected strategy (median 12789, retains +300, no 9.6b).
+     # At pc=30, horiz_dist=0: old 120*1.24=148.8 < height_penalty(180); new 160*1.24=198.4 ≈ height.
+     # At pc=33, horiz_dist=0: old 120*1.60=192; new 160*1.60=256 > height, enabling proximity
+     # to win at moderate congestion where worst games accumulate scattered pieces.
+     # Batch: HEIGHT_CONTROL 19.2% low vs 16.8% high — the 2.4pp gap indicates insufficient guidance.
+     # Worst game T50: type 1 at x=0.97-1.2, placement at x=-2.8 (proximity ~120 < height diff).
+     # Advice: "同タイプが来たらその上に置く" + "孤立配置を避けて中央集約を優先する" (kbb246).
+     # rp_guidance_suppressed still zeros bonus in extreme danger; target_y decay penalizes high targets.
+     # 160 is moderate increase (33%) — well below protected's +300 and axis 8.8 (-4500).
+     # Fixes: piece_count accumulation from scattered NO-merge placement (HEIGHT_CONTROL gap)
+     # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 19.2% low vs 16.8% high),
+     #       advice.md (Pitman_live, kbb246), tmp/improve_brief.md (p25 focus),
+     #       game_history/20260402_053905_score0541.jsonl T50 (type 1 at x=0.97, placed x=-2.8),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (axis 9.5 +300),
+     #       tmp/change_log.txt (v459: axis 9.5 +300 removed), strategy.py.staging (v459)
      # v467: extend axis 9.6b proximity guidance to rp>=3+reactive gap (0.4x reduced bonus)
      # At rp>=3+NO merge+current_type has reactive, neither axis 9.6 (v465 guard) nor 9.6b
      # (requires no reactive) fires → no guidance → HEIGHT_CONTROL/AVOID_BLOCK scatter. Worst game
@@ -1194,7 +1211,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Postmortem: piece_count is the key predictor of final score.
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                    proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
+                    proximity_bonus = max(0, 160.0 - horiz_dist * 50.0)
                     # v467: at rp>=3+current_type has reactive (extension case), reduce bonus
                     # by 60% to respect v465 noise concern. Max ~50-120 vs axis 8.8 (-4500).
                     # Original 9.6b (no reactive) keeps full bonus for stronger guidance.
