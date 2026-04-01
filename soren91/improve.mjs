@@ -929,6 +929,7 @@ async function runStandaloneImprovement(startGame, endGame) {
   archiveStrategySnapshotByHash(STRATEGY_PATH, currentStrategyHash);
   ensureLineageInitialized();
   const lineageContext = buildImproveReferenceContext(currentStrategyHash);
+  const viewerAdvice = readViewerAdvice(VIEWER_ADVICE_PATH, 80);
 
   // 個別ゲームのサマリーも生成
   const gameSummary = generateSummary(bestHistoryPath, bestSummaryPath);
@@ -959,7 +960,7 @@ async function runStandaloneImprovement(startGame, endGame) {
   if (worstGameSummary) {
     combinedSummary += `\n\n## Worst Game Details (failure pattern analysis)\n${worstGameSummary}`;
   }
-  const promptText = buildPromptText(combinedSummary, currentStrategy, lineageContext, allScreenshots);
+  const promptText = buildPromptText(combinedSummary, currentStrategy, lineageContext, allScreenshots, viewerAdvice);
 
   console.log(`[improve] Calling primary strategy model (standalone, claude=${IMPROVE_CLAUDE_MODEL}, gemini_fallback=${IMPROVE_GEMINI_MODEL})...`);
   let newStrategy;
