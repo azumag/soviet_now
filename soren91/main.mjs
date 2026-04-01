@@ -645,7 +645,7 @@ async function fetchGameUrl() {
  * メインゲームループ
  */
 async function gameLoop(page, calibration, gameNumber) {
-  const historyFile = join(HISTORY_DIR, 'latest.jsonl');
+  const historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
   let currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
   let turn = 0;
   let lastDropTime = 0;
@@ -1012,7 +1012,7 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
     }
   } catch {}
 
-  // 履歴ファイルをリネーム保存
+  // 履歴ファイルをゲーム番号付きから確定版へリネーム保存
   const archivePath = join(HISTORY_DIR, `game_${String(gameNumber).padStart(4, '0')}.jsonl`);
   if (existsSync(historyFile)) {
     try {
@@ -1022,6 +1022,16 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
       console.log(`[game] History save failed: ${e.message}`);
     }
   }
+  
+  // 古い latest_*.jsonl ファイルを削除（ゲーム破損時のリカバリ用）
+  try {
+    const latestFiles = readdirSync(HISTORY_DIR)
+      .filter(f => f.startsWith('latest_') && f.endsWith('.jsonl'))
+      .sort();
+    for (const f of latestFiles) {
+      unlinkSync(join(HISTORY_DIR, f));
+    }
+  } catch {}
 
   const strategyHash = strategySnapshot?.strategyHash
     || computeStrategyHashFromFile(strategySnapshot?.snapshotPath || 'strategy.mjs');
