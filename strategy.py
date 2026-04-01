@@ -45,7 +45,7 @@ Game Overview:
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
-             9.5. Current type stack merge priority - v337: russia_phase抑制版
+             9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
 
 
 Phases (determined by board max Y):
@@ -63,6 +63,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v459: remove axis 9.5 +300 SAME_TYPE_STACK_MERGE_PRIORITY bonus
+     # Batch: avg delta=0.8 (worse than HEIGHT_CONTROL 2.8), selected 4.6% in low-score games.
+     # With axis 9.6b providing proximity guidance (~120-540), the +300 was redundant
+     # additive noise that overrode height differentiation when combined with 9.6b's bonus.
+     # Protected strategy (median 12789) has +300 but NO 9.6b — no amplification issue.
+     # Removing aligns current noise profile closer to protected while keeping 9.6b guidance.
+     # Fixes: low-score games disproportionately selecting same_type_stack over lower placement
+     # refs: tmp/batch_summary.txt (SAME_TYPE_STACK_MERGE_PRIORITY avg_delta=0.8, 4.6% low),
+     #       game_history/20260401_194026_score0935.jsonl (worst: 4.6% axis 9.5, HEIGHT_CONTROL 19.7%),
+     #       game_history/20260401_193748_score1042.jsonl (extra_low: axis 9.5 at T83-84),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no 9.6b),
+     #       tmp/state/last_rollback_postmortem.md, strategy.py.staging (v458)
      # v458: reduce axis 5.6 magnitude (postmortem constraint) + remove axis 9.3 pc>=25 gate
      # v456: axis 5.6 base 100→60, congestion 0.14→0.08, cap 3.5→2.0 per postmortem
      # "reduce bonus magnitude rather than filter activation". Fixes v455 rollback failure mode.
@@ -1702,9 +1714,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pass
             else:
                 if danger_piece_count == 0 and reactive_pair_count == 0:
-                    # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
-                    score += 300.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+                    # v459: +300 bonus removed — axis 9.6b already provides proximity guidance
+                    # toward same-type pieces (~120-540). The +300 was redundant additive
+                    # noise that overrode height differentiation when combined with 9.6b's
+                    # bonus (total 420-840 > typical height diffs ~200-450). avg_delta=0.8
+                    # confirmed this axis produced negligible merges vs HEIGHT_CONTROL (2.8).
+                    pass
             # v327: danger_piece_count > 0 の場合のボーナスブロックを削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のボーナスブロックを追加 - axis 9.2のペナルティを優先
             # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ボーナスブロックを適用 - axis 8.7即時併合優先
