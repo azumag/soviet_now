@@ -84,7 +84,10 @@ RUSSIA_CREATION_HISTORY_FILE="$TMP_HISTORY_DIR/russia_creation_history.tsv"
 SOVIET_CREATION_HISTORY_FILE="$TMP_HISTORY_DIR/soviet_creation_history.tsv"
 CELEBRATION_HISTORY_KEEP_LINES="${CELEBRATION_HISTORY_KEEP_LINES:-200}"
 COMMENT_CELEBRATION_HISTORY_ITEMS="${COMMENT_CELEBRATION_HISTORY_ITEMS:-12}"
-STRATEGY_ADVICE_FILE="advice.md"
+MAIN_STRATEGY_ADVICE_FILE="advice.md"
+SOREN91_STRATEGY_ADVICE_FILE="advice91.md"
+COMMENT_ADVICE_FILE="advice_comment.md"
+STRATEGY_ADVICE_FILE="$MAIN_STRATEGY_ADVICE_FILE"
 
 IMPROVE_STATE_FILE="$ELOOP_LIB_DIR/$TMP_STATE_DIR/improve_state.json"
 IMPROVE_AI_LOG_FILE="$ELOOP_LIB_DIR/$TMP_DEBUG_DIR/improve_ai.log"
@@ -179,8 +182,8 @@ mkdir -p "$STRATEGY_VERSIONS_DIR" "$STRATEGY_HASH_ARCHIVE_DIR" "$HISTORY_DIR" \
 	"$COMMENT_QUEUE_DIR" "$COMMENT_SPOKEN_HISTORY_DIR" "$RADIO_DEFERRED_QUEUE_DIR" \
 	"$MANUAL_AUDIO_TRIGGER_DIR" "$RADIO_WEB_GROUNDING_CACHE_DIR" "tmp/.twitch_chat"
 
-if [ -f "tmp/advice.md" ] && [ ! -f "$STRATEGY_ADVICE_FILE" ]; then
-	mv "tmp/advice.md" "$STRATEGY_ADVICE_FILE" 2>/dev/null || cp "tmp/advice.md" "$STRATEGY_ADVICE_FILE" 2>/dev/null || true
+if [ -f "tmp/advice.md" ] && [ ! -f "$MAIN_STRATEGY_ADVICE_FILE" ]; then
+	mv "tmp/advice.md" "$MAIN_STRATEGY_ADVICE_FILE" 2>/dev/null || cp "tmp/advice.md" "$MAIN_STRATEGY_ADVICE_FILE" 2>/dev/null || true
 fi
 
 # --- tmp/ レイアウト移行 (旧パス → 新サブディレクトリ) ---

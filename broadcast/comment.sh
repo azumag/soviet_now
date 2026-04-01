@@ -661,14 +661,32 @@ print(render_block("ソ連建国", soviet_file))
 PY
 }
 
-_extract_strategy_advice_from_comments() {
+_read_advice_context_tail() {
+	local advice_file="$1"
+	local max_lines="${2:-40}"
+	[ -f "$advice_file" ] || {
+		printf '%s' "（なし）"
+		return 0
+	}
+	local context=""
+	context=$(tail -n "$max_lines" "$advice_file" 2>/dev/null | sed '/^[[:space:]]*$/d')
+	if [ -n "$context" ]; then
+		printf '%s' "$context"
+	else
+		printf '%s' "（なし）"
+	fi
+}
+
+_extract_structured_advice_from_comments() {
 	local batch_file="$1"
+	local fallback_mode="${2:-main}"
 	[ -f "$batch_file" ] || return 0
-	python3 - "$batch_file" <<'PY'
+	python3 - "$batch_file" "$fallback_mode" <<'PY'
 import re
 import sys
 
 path = sys.argv[1]
+fallback_mode = sys.argv[2] if len(sys.argv) > 2 else "main"
 
 try:
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -676,23 +694,47 @@ try:
 except Exception:
     raise SystemExit(0)
 
-game_terms = (
-    "戦略", "改善", "盤面", "併合", "連鎖", "next", "nextnext", "next-next",
+strategy_terms = (
+    "戦略", "盤面", "併合", "連鎖", "next", "nextnext", "next-next", "hold",
     "type", "高さ", "左", "右", "上に", "下に", "置く", "置き", "積む",
-    "積み", "デッドライン", "ゲームオーバー", "merge", "sandwich", "サンドイッチ"
+    "積み", "デッドライン", "ゲームオーバー", "merge", "sandwich", "サンドイッチ",
+    "おじゃま", "garbage", "rank", "順位", "ピース", "盤面タイプ", "drop", "gauge"
+)
+comment_terms = (
+    "コメント", "コメント返し", "返答", "返信", "読み上げ", "しゃべり", "話し方",
+    "口調", "文量", "長め", "短め", "テンポ", "語尾", "言い回し", "実況",
+    "試合中コメント", "順位コメント", "戦略説明", "説明文", "カードガチャ",
+    "カード説明", "発音", "読み", "ラジオ", "ニュース", "ニーサ", "nisa"
 )
 directive_terms = (
     "して", "しろ", "すべき", "したほうがいい", "した方がいい", "やめて",
-    "避けて", "見るべき", "見て", "考えて", "計算できる", "意識して",
-    "優先", "禁止", "改善して", "直して"
+    "避けて", "見るべき", "見て", "考えて", "意識して", "優先", "禁止",
+    "改善して", "直して", "変えて", "分けて", "保存して", "参照して",
+    "読んで", "増やして", "減らして", "別にして", "統一して", "変換して",
+    "長くして", "短くして", "伸ばして", "抑えて", "残して", "今まで通り"
 )
 noise_terms = (
-    "レイド", "nightbot", "カード", "獲得しました", "ニュース", "ラジオ",
-    "show-status", "show_status", "dashboard", "blackhole", "ffmpeg"
+    "レイド", "nightbot", "show-status", "show_status", "dashboard", "blackhole",
+    "ffmpeg", "url", "http://", "https://"
 )
+main_terms = (
+    "中華ai", "strategy.py", "[main]", "[soren]"
+)
+soren91_terms = (
+    "メリケン", "メリケンai", "soren91", "[soren91]", "対戦版", "91人",
+    "おじゃま", "hold", "next", "nextnext", "順位", "相手", "試合", "盤面タイプ"
+)
+
+strategy_terms_norm = tuple(term.lower().replace(" ", "") for term in strategy_terms)
+comment_terms_norm = tuple(term.lower().replace(" ", "") for term in comment_terms)
+noise_terms_norm = tuple(term.lower().replace(" ", "") for term in noise_terms)
+main_terms_norm = tuple(term.lower().replace(" ", "") for term in main_terms)
+soren91_terms_norm = tuple(term.lower().replace(" ", "") for term in soren91_terms)
+
 
 def collapse(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
 
 def parse_line(line: str):
     m = re.match(r"([^:]{1,40}):\s*(.+)$", line)
@@ -700,50 +742,177 @@ def parse_line(line: str):
         return m.group(1).strip(), m.group(2).strip()
     return "", line
 
-def looks_like_strategy_advice(text: str) -> bool:
-    raw = collapse(text)
+
+def clean_body(text: str) -> str:
+    body = collapse(text)
+    if body.startswith("[") and body.endswith("]"):
+        body = body[1:-1].strip()
+    return body
+
+
+def has_any(norm: str, terms) -> bool:
+    return any(term in norm for term in terms)
+
+
+def has_directive(raw: str) -> bool:
+    return any(term in raw for term in directive_terms)
+
+
+def looks_like_comment_advice(raw: str) -> bool:
+    if len(raw) < 5:
+        return False
+    norm = raw.lower().replace(" ", "")
+    has_comment = has_any(norm, comment_terms_norm)
+    if has_comment and (has_directive(raw) or "改善" in raw or "今まで通り" in raw):
+        return True
+    if ("nisa" in norm or "ニーサ" in raw) and any(term in raw for term in ("変換", "読み", "発音", "呼び")):
+        return True
+    if ("試合中コメント" in raw or "順位コメント" in raw) and any(term in raw for term in ("1回", "一回", "減ら", "抑え", "禁止")):
+        return True
+    return False
+
+
+def looks_like_strategy_advice(raw: str) -> bool:
     if len(raw) < 6:
         return False
-    if raw.startswith("[") and raw.endswith("]"):
-        raw = raw[1:-1].strip()
+    if looks_like_comment_advice(raw):
+        return False
     norm = raw.lower().replace(" ", "")
-    has_game = any(term in norm for term in game_terms) or bool(re.search(r"type\s*[a-z0-9]+", raw, re.I))
-    has_directive = any(term in raw for term in directive_terms)
-    noisy = any(term.lower() in norm for term in noise_terms)
-    if has_game and has_directive:
+    has_game = has_any(norm, strategy_terms_norm) or bool(re.search(r"type\s*[a-z0-9]+", raw, re.I))
+    noisy = has_any(norm, noise_terms_norm)
+    if noisy and not has_game:
+        return False
+    if has_game and has_directive(raw):
         return True
     if "改善" in raw and has_game:
         return True
     if raw.startswith("[") and raw.endswith("]") and has_game:
         return True
-    if noisy and not has_game:
-        return False
     return False
+
+
+def detect_mode(raw: str) -> str:
+    norm = raw.lower().replace(" ", "")
+    has_main = has_any(norm, main_terms_norm)
+    has_soren91 = has_any(norm, soren91_terms_norm)
+    if has_soren91 and not has_main:
+        return "soren91"
+    if has_main and not has_soren91:
+        return "main"
+    return fallback_mode
+
 
 seen = set()
 for line in lines:
     user, text = parse_line(line)
-    body = collapse(text)
-    if body.startswith("[") and body.endswith("]"):
-        body = body[1:-1].strip()
-    if not looks_like_strategy_advice(body):
+    body = clean_body(text)
+    if not body:
+        continue
+    kind = None
+    mode = "-"
+    if looks_like_comment_advice(body):
+        kind = "comment"
+    elif looks_like_strategy_advice(body):
+        kind = "strategy"
+        mode = detect_mode(body)
+    if not kind:
         continue
     item = f"{user}: {body}" if user else body
     if len(item) > 220:
         item = item[:217].rstrip() + "..."
-    if item in seen:
+    key = (kind, mode, item)
+    if key in seen:
         continue
-    seen.add(item)
-    print(item)
+    seen.add(key)
+    print(f"{kind}\t{mode}\t{item}")
 PY
 }
 
-_append_strategy_advice_item() {
+_extract_named_block() {
+	local marker="$1"
+	python3 - "$marker" <<'PY'
+import re
+import sys
+
+marker = sys.argv[1]
+tag = f"==={marker}==="
+text = sys.stdin.read()
+
+patterns = [
+    re.compile(rf"(?ms)^[ \t]*{re.escape(tag)}[ \t]*\n(.*?)\n^[ \t]*{re.escape(tag)}[ \t]*$"),
+    re.compile(rf"(?ms)^[ \t]*{re.escape(tag)}[ \t]*\n(.*?)(?=\n^[ \t]*===[A-Z_]+===[ \t]*$|\Z)"),
+]
+
+for pattern in patterns:
+    match = pattern.search(text)
+    if match:
+        print(match.group(1).strip())
+        raise SystemExit(0)
+PY
+}
+
+_remove_named_block() {
+	local marker="$1"
+	python3 - "$marker" <<'PY'
+import re
+import sys
+
+marker = sys.argv[1]
+tag = f"==={marker}==="
+text = sys.stdin.read()
+
+patterns = [
+    re.compile(rf"(?ms)\n?^[ \t]*{re.escape(tag)}[ \t]*\n.*?\n^[ \t]*{re.escape(tag)}[ \t]*\n?"),
+    re.compile(rf"(?ms)\n?^[ \t]*{re.escape(tag)}[ \t]*\n.*?(?=\n^[ \t]*===[A-Z_]+===[ \t]*$|\Z)"),
+]
+
+updated = text
+for pattern in patterns:
+    updated, count = pattern.subn("\n", updated, count=1)
+    if count:
+        break
+
+sys.stdout.write(updated)
+PY
+}
+
+_resolve_strategy_advice_file() {
+	local mode="${1:-main}"
+	if [ "$mode" = "soren91" ]; then
+		printf '%s' "$SOREN91_STRATEGY_ADVICE_FILE"
+	else
+		printf '%s' "$MAIN_STRATEGY_ADVICE_FILE"
+	fi
+}
+
+_strip_strategy_advice_mode_prefix() {
+	printf '%s' "$1" | sed -E 's/^\[(main|soren|soren91)\][[:space:]]*//I'
+}
+
+_detect_strategy_advice_target_mode() {
 	local advice_item="$1"
+	local fallback_mode="${2:-main}"
+	local normalized=""
+	normalized=$(printf '%s' "$advice_item" | tr '[:upper:]' '[:lower:]')
+	case "$normalized" in
+	*"[soren91]"*|*"メリケン"*|*"メリケンai"*|*"soren91"*|*"対戦版"*|*"おじゃま"*|*"hold"*|*"next"*|*"順位"*|*"相手"*|*"盤面タイプ"*)
+		printf '%s' "soren91"
+		;;
+	*"[main]"*|*"[soren]"*|*"中華ai"*|*"strategy.py"*)
+		printf '%s' "main"
+		;;
+	*)
+		printf '%s' "$fallback_mode"
+		;;
+	esac
+}
+
+_append_advice_item_to_file() {
+	local advice_file="$1"
+	local advice_item="$2"
+	local log_label="$3"
 	advice_item=$(printf '%s' "$advice_item" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
 	[ -n "$advice_item" ] || return 0
-	mkdir -p tmp 2>/dev/null || true
-	local advice_file="$STRATEGY_ADVICE_FILE"
 	local advice_line="- $advice_item"
 	[ -f "$advice_file" ] || : >"$advice_file"
 	if grep -qxF -- "$advice_line" "$advice_file" 2>/dev/null; then
@@ -754,7 +923,23 @@ _append_strategy_advice_item() {
 		tail -150 "$advice_file" >"${advice_file}.tmp"
 		mv "${advice_file}.tmp" "$advice_file"
 	fi
-	log "[COMMENT] 戦略アドバイス追記 → $STRATEGY_ADVICE_FILE"
+	log "[COMMENT] ${log_label}追記 → $advice_file"
+}
+
+_append_strategy_advice_item() {
+	local advice_item="$1"
+	local fallback_mode="${2:-main}"
+	advice_item=$(_strip_strategy_advice_mode_prefix "$advice_item")
+	local target_mode=""
+	target_mode=$(_detect_strategy_advice_target_mode "$advice_item" "$fallback_mode")
+	local advice_file=""
+	advice_file=$(_resolve_strategy_advice_file "$target_mode")
+	_append_advice_item_to_file "$advice_file" "$advice_item" "戦略アドバイス(${target_mode})"
+}
+
+_append_comment_advice_item() {
+	local advice_item="$1"
+	_append_advice_item_to_file "$COMMENT_ADVICE_FILE" "$advice_item" "コメント改善アドバイス"
 }
 
 _append_soviet_theme_item() {

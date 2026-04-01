@@ -92,11 +92,129 @@ function blobAspectRatio(blob) {
   return longEdge / shortEdge;
 }
 
+function blobSampleArea(blob) {
+  return Math.max(1, blob.pixelCount) * Math.max(1, blob.sampleStep) * Math.max(1, blob.sampleStep);
+}
+
+function blobFillRatio(blob) {
+  const bboxArea = Math.max(
+    1,
+    Math.max(1, blob.bboxWidth + Math.max(1, blob.sampleStep))
+      * Math.max(1, blob.bboxHeight + Math.max(1, blob.sampleStep)),
+  );
+  return Math.min(1.6, blobSampleArea(blob) / bboxArea);
+}
+
 function blobEffectiveRadius(blob) {
-  const sampledArea = Math.max(1, blob.pixelCount) * Math.max(1, blob.sampleStep) * Math.max(1, blob.sampleStep);
+  const sampledArea = blobSampleArea(blob);
   const areaRadius = Math.sqrt(sampledArea / Math.PI);
   const bboxRadius = Math.sqrt(Math.max(1, blob.bboxWidth) * Math.max(1, blob.bboxHeight)) / 2;
-  return bboxRadius * 0.55 + areaRadius * 0.45;
+  const fillRatio = blobFillRatio(blob);
+  const aspect = blobAspectRatio(blob);
+
+  // 実スクショでは国旗模様の断片で面積が小さく出やすい。
+  // fill が低い/横長なブロブほど bbox を重めに見てサイズ縮みを補正する。
+  let bboxWeight = 0.56;
+  if (fillRatio < 0.62) bboxWeight += 0.08;
+  if (fillRatio < 0.48) bboxWeight += 0.07;
+  if (aspect > 1.8) bboxWeight += 0.05;
+  bboxWeight = Math.min(0.78, bboxWeight);
+
+  return bboxRadius * bboxWeight + areaRadius * (1 - bboxWeight);
+}
+
+function blobPixelRadius(blob) {
+  return blobEffectiveRadius(blob);
+}
+
+function blobBounds(blob) {
+  const halfWidth = Math.max(1, blob.bboxWidth) / 2;
+  const halfHeight = Math.max(1, blob.bboxHeight) / 2;
+  return {
+    left: Number.isFinite(blob.minX) ? blob.minX : blob.centerX - halfWidth,
+    right: Number.isFinite(blob.maxX) ? blob.maxX : blob.centerX + halfWidth,
+    top: Number.isFinite(blob.minY) ? blob.minY : blob.centerY - halfHeight,
+    bottom: Number.isFinite(blob.maxY) ? blob.maxY : blob.centerY + halfHeight,
+  };
+}
+
+function blobBoundsGapPx(a, b) {
+  const boundsA = blobBounds(a);
+  const boundsB = blobBounds(b);
+  const dx = Math.max(0, Math.max(boundsA.left, boundsB.left) - Math.min(boundsA.right, boundsB.right));
+  const dy = Math.max(0, Math.max(boundsA.top, boundsB.top) - Math.min(boundsA.bottom, boundsB.bottom));
+  return Math.hypot(dx, dy);
+}
+
+function mergeBlobPair(a, b) {
+  const areaA = blobSampleArea(a);
+  const areaB = blobSampleArea(b);
+  const totalArea = Math.max(1, areaA + areaB);
+  const boundsA = blobBounds(a);
+  const boundsB = blobBounds(b);
+  const minX = Math.min(boundsA.left, boundsB.left);
+  const maxX = Math.max(boundsA.right, boundsB.right);
+  const minY = Math.min(boundsA.top, boundsB.top);
+  const maxY = Math.max(boundsA.bottom, boundsB.bottom);
+
+  return {
+    centerX: (a.centerX * areaA + b.centerX * areaB) / totalArea,
+    centerY: (a.centerY * areaA + b.centerY * areaB) / totalArea,
+    pixelCount: Math.max(1, a.pixelCount + b.pixelCount),
+    bboxWidth: maxX - minX,
+    bboxHeight: maxY - minY,
+    sampleStep: Math.max(1, Math.min(a.sampleStep ?? 1, b.sampleStep ?? 1)),
+    avgColor: {
+      r: Math.round(((a.avgColor?.r ?? 0) * areaA + (b.avgColor?.r ?? 0) * areaB) / totalArea),
+      g: Math.round(((a.avgColor?.g ?? 0) * areaA + (b.avgColor?.g ?? 0) * areaB) / totalArea),
+      b: Math.round(((a.avgColor?.b ?? 0) * areaA + (b.avgColor?.b ?? 0) * areaB) / totalArea),
+    },
+    minX,
+    maxX,
+    minY,
+    maxY,
+  };
+}
+
+function mergeNearbyBlobs(blobs, maxMergedRadiusPx = 96) {
+  const sorted = blobs
+    .filter(blob => blob && blob.pixelCount > 0 && blobAspectRatio(blob) <= 3.1)
+    .sort((a, b) => blobPixelRadius(b) - blobPixelRadius(a));
+  const clusters = [];
+
+  for (const blob of sorted) {
+    const blobRadiusPx = blobPixelRadius(blob);
+    let bestIndex = -1;
+    let bestScore = Infinity;
+
+    for (let i = 0; i < clusters.length; i++) {
+      const cluster = clusters[i];
+      const clusterRadiusPx = blobPixelRadius(cluster);
+      const centerDistancePx = Math.hypot(blob.centerX - cluster.centerX, blob.centerY - cluster.centerY);
+      const gapPx = blobBoundsGapPx(blob, cluster);
+      const distanceThresholdPx = Math.max(blobRadiusPx, clusterRadiusPx) * 1.05 + 8;
+      if (centerDistancePx > distanceThresholdPx) continue;
+      if (gapPx > 12) continue;
+
+      const merged = mergeBlobPair(cluster, blob);
+      if (blobAspectRatio(merged) > 3.1) continue;
+      if (blobPixelRadius(merged) > maxMergedRadiusPx) continue;
+
+      const score = centerDistancePx + gapPx * 1.5;
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex === -1) {
+      clusters.push(blob);
+    } else {
+      clusters[bestIndex] = mergeBlobPair(clusters[bestIndex], blob);
+    }
+  }
+
+  return clusters;
 }
 
 function classifyRadius(gameRadius, maxType = 15) {
@@ -286,7 +404,7 @@ function detectGameState(data, width, height, board) {
  */
 function detectPieces(data, width, height, calibration) {
   const { board } = calibration;
-  const pieces = [];
+  const rawBlobs = [];
 
   // ボード領域内をグリッドスキャンし、色付きブロブを検出
   const gridStep = 4; // ピクセル単位のスキャン間隔 (91人対戦ではピースが小さい)
@@ -321,13 +439,17 @@ function detectPieces(data, width, height, calibration) {
       // この色が新しいblobの開始点か確認
       const blob = floodFillEstimate(data, width, height, x, y, r, g, b, gridStep, visited, board);
       if (blob && blob.pixelCount > 5) { // 最小ブロブサイズ (ゲームの小ピースは小さい)
-        // ブロブサイズからピースタイプを推定
-        const piece = classifyBlob(blob, calibration);
-        if (piece) {
-          pieces.push(piece);
-        }
+        rawBlobs.push(blob);
       }
     }
+  }
+
+  const pieces = [];
+  const maxMergedRadiusPx = Math.max(40, (board.width / 7.0) * 1.65);
+  const mergedBlobs = mergeNearbyBlobs(rawBlobs, maxMergedRadiusPx);
+  for (const blob of mergedBlobs) {
+    const piece = classifyBlob(blob, calibration);
+    if (piece) pieces.push(piece);
   }
 
   return pieces;
@@ -382,6 +504,10 @@ function floodFillEstimate(data, width, height, startX, startY, targetR, targetG
     bboxWidth: maxX - minX,
     bboxHeight: maxY - minY,
     sampleStep: gridStep,
+    minX,
+    maxX,
+    minY,
+    maxY,
     avgColor: {
       r: Math.round(sumR / count),
       g: Math.round(sumG / count),
