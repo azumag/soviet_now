@@ -56,6 +56,13 @@ const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 const SOREN91_MODE_FLAG_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.soren91_mode_active');
 const SOREN91_MAIN_PID_FILE = 'tmp/main.pid';
+let activeBrowser = null;
+let activeContext = null;
+let activeGamePage = null;
+let activeIsSharedMode = false;
+let activeOwnsContext = false;
+let shutdownTimer = null;
+let cleanupPromise = null;
 
 // ディレクトリ確保
 [SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots'].forEach(dir => {
@@ -103,6 +110,76 @@ async function closeSharedSoren91Pages(browser, preferredPage = null) {
       console.log(`[main] Failed to close soren91 shared tab: ${err.message}`);
     }
   }
+}
+
+async function cleanupRuntime(reason = 'normal') {
+  if (cleanupPromise) {
+    return cleanupPromise;
+  }
+
+  cleanupPromise = (async () => {
+    if (shutdownTimer) {
+      clearTimeout(shutdownTimer);
+      shutdownTimer = null;
+    }
+
+    const browser = activeBrowser;
+    const context = activeContext;
+    const gamePage = activeGamePage;
+    const isSharedMode = activeIsSharedMode;
+    const ownsContext = activeOwnsContext;
+
+    activeBrowser = null;
+    activeContext = null;
+    activeGamePage = null;
+    activeIsSharedMode = false;
+    activeOwnsContext = false;
+
+    try { unlinkSync('tmp/in_game'); } catch {}
+    try { unlinkSync(SOREN91_MAIN_PID_FILE); } catch {}
+    clearSoren91ModeFlag();
+
+    if (!browser) return;
+
+    try {
+      if (isSharedMode) {
+        if (!ownsContext && gamePage && !gamePage.isClosed()) {
+          try {
+            await gamePage.close();
+          } catch (err) {
+            console.log(`[main] Preferred game tab close failed during ${reason}: ${err.message}`);
+          }
+        }
+        await closeSharedSoren91Pages(browser, gamePage);
+        if (ownsContext && context) {
+          try {
+            await context.close();
+          } catch (err) {
+            console.log(`[main] Shared context close failed during ${reason}: ${err.message}`);
+          }
+        }
+        try {
+          const contexts = browser.contexts();
+          for (const ctx of contexts) {
+            const pages = ctx.pages();
+            if (pages.length > 0) {
+              await pages[0].bringToFront();
+              break;
+            }
+          }
+        } catch {}
+        await browser.close();
+        console.log(`[main] Shared browser CDP disconnected (${reason}).`);
+      } else {
+        await browser.close();
+        console.log(`[main] Browser closed (${reason}).`);
+      }
+    } catch (err) {
+      console.log(`[main] Browser cleanup failed during ${reason}: ${err.message}`);
+    }
+  })();
+
+  return cleanupPromise;
 }
 
 // --- ゲーム番号管理 ---
