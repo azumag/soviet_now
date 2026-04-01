@@ -29,6 +29,18 @@ async function loadStrategy(strategyPath = './strategy.mjs') {
   return await import(url + '?t=' + Date.now());
 }
 
+// --- シグナルハンドラ ---
+['SIGINT', 'SIGTERM'].forEach(sig => {
+  process.on(sig, () => {
+    console.log(`[main] Received ${sig}, setting stop flag for graceful exit...`);
+    try {
+      writeFileSync('tmp/stop', '');
+    } catch (e) {
+      console.error(`[main] Failed to write tmp/stop upon ${sig}:`, e);
+    }
+  });
+});
+
 // --- 定数 ---
 const GAME_URL = 'https://unityroom.com/games/sorengame91';
 const PLAYER_NAME = 'DoCiAI:US';
@@ -808,7 +820,7 @@ async function gameLoop(page, calibration, gameNumber) {
         }
 
         // Stop file チェック (ラウンド間での安全な停止)
-        if (existsSync('tmp/stop') && turn <= 1) {
+        if (existsSync('tmp/stop')) {
           if (pendingGameOver) await pendingGameOver;
           console.log('[game] Stop requested between rounds, exiting');
           return;
