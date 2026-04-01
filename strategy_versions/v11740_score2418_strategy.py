@@ -62,6 +62,28 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v451: suppress CHAIN_MERGE bonus for NEAR merges at extreme congestion (pc>=35 + deadline_crossed)
+     # Worst game T49: NEAR at y=1.04, pc=36, deadline → CHAIN_MERGE ~800+ overwhelmed NEAR_DEADLINE_RISK
+     # (-624). NEAR failed (31.5%) → pc→37 → death cascade. At extreme congestion, failed NEAR is
+     # catastrophic (adds piece without reducing pc). CHAIN_MERGE assumes success for chain value but
+     # 31.5% failure makes expected value negative. DIRECT (95.7%) retains CHAIN_MERGE. NEAR base bonus
+     # still applies; just de-prioritized vs HEIGHT_CONTROL at critical pc.
+     # refs: game_history/20260401_083410_score0440.jsonl T49, tmp/batch_summary.txt, improve_brief.md
+     # v450: restore axis 5.5 AVOID_BLOCK_NEXTNEXT from -200 to -400 — align with protected strategy
+     # Protected strategy (median 12789, +21% better) has axis 5.5 at -400 with NO axis 9.3.
+     # v443 weakened 5.5 from -400 to -200 based on postmortem claim that "protected achieves
+     # better with NEITHER axis" — but this claim is factually incorrect: protected has 5.5 at -400.
+     # Low-score games show edge scatter (x=±3.0) with AVOID_BLOCK_NEXTNEXT at -200,
+     # insufficient to deter center-blocking placements that block nextNext merge opportunities.
+     # At -400, axis 5.5 provides meaningful nextNext blocking guidance without axis 9.3's
+     # asymmetric center repulsion (postmortem edge scatter failure mode). Protected strategy
+     # proves -400 works safely: it has NO axis 9.3, NO axis 5.6, NO axis 9.6b, NO axis 9.5.
+     # Negative penalty — no additive noise concern per postmortem constraint.
+     # Fixes postmortem failure mode: edge scatter during NO-merge drought via weak AVOID_BLOCK
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (axis 5.5 -400),
+     #       game_history/20260401_083410_score0440.jsonl T53/T58 (x=±3.0 edge scatter),
+     #       game_history/20260401_091254_score0919.jsonl T73/T74 (AVOID_BLOCK_NEXTNEXT at -200),
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, strategy.py.staging (v443)
      # v448: remove axis 5.6 (growth center proximity) — reduce additive noise, align with protected strategy
      # Protected strategy (median 12789, +21% better) has NO growth center guidance. The axis 5.6
      # bonus (base 100, pc congestion scaling up to ~250) targets the highest-type piece which is
@@ -1297,15 +1319,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 5.5: avoid blocking nextNext merge (v203: nextNext info utilization) -----
         # batch_summary/adviceで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
         # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
-        # v443: penalty weakened from -400 to -200. Postmortem constraint requires weakening
-        # axis 5.5 when removing axis 9.3 to prevent asymmetric center repulsion.
-        # Protected strategy (median 12789) has axis 5.5 at -400 with NO axis 9.3 — but
-        # postmortem forbids replicating that exact config after the v437 rollback failure.
-        # -200 provides mild nextNext blocking guidance without overwhelming height diffs.
-        # v442 suppression removed (axis 9.3 no longer exists). Protected strategy also has
-        # no suppression on axis 5.5, confirming suppression is unnecessary.
+        # v450: penalty restored from -200 to -400. Protected strategy (median 12789, +21%)
+        # has axis 5.5 at -400 with NO axis 9.3. v443 weakened to -200 based on incorrect
+        # postmortem claim that protected uses NEITHER axis. At -200, low-score games showed
+        # edge scatter (x=±3.0) with insufficient deterrence against center-blocking placements.
+        # -400 matches protected strategy's proven configuration. No suppression needed
+        # (axis 9.3 no longer exists). Negative penalty — no additive noise concern.
         # refs: advice.md (Pitman_live, azumag), tmp/batch_summary.txt,
-        #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt (v443)
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+        #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt (v443, v450)
         for p in pieces:
             if p.get("type") == next_next_type:
                 piece_y = p.get("y", -10)
@@ -1314,7 +1336,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # 着地位置がnextNext typeのピースの上になる場合
                     horiz_dist = abs(x - p["x"])
                     if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                        score -= 200.0  # v443: weakened from -400 (postmortem symmetric removal)
+                        score -= 400.0  # v450: restored from -200 (match protected strategy)
                         reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
 
@@ -1349,7 +1371,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 初期段階でのCHAIN_MERGE選択を有効化するためにchain_bonus_multiplierの初期値を495.0に固定し、着地高による動的調整を開始地点から行うようにする。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
-            if merges:
+            # v451: suppress speculative CHAIN_MERGE for NEAR at extreme congestion
+            # Worst game (score0440) T49: NEAR at y=1.04, pc=36, deadline_crossed.
+            # CHAIN_MERGE added ~800+ speculative bonus, overwhelming NEAR_DEADLINE_RISK (-624).
+            # NEAR failed (31.5% rate) → pc 36→37 → cascade to game over in 9 turns.
+            # At pc>=35+deadline, failed NEAR is catastrophic: adds piece without reducing pc.
+            # CHAIN_MERGE assumes merge success for future chain value, but 31.5% failure rate
+            # makes expected value deeply negative at extreme congestion. DIRECT merges (95.7%
+            # success) retain CHAIN_MERGE — reliable enough for chain speculation.
+            # NEAR base bonus (600*merge_mult) still applies; NEAR is not suppressed, just
+            # de-prioritized vs HEIGHT_CONTROL when board is critically congested.
+            # Fixes: NEAR cascade failure at deadline with pc>=35
+            # refs: game_history/20260401_083410_score0440.jsonl T49 (NEAR fail → death),
+            #       game_history/20260401_091254_score0919.jsonl T73-T74 (NEAR at deadline),
+            #       tmp/batch_summary.txt (CHAIN_MERGE delta=50.2 at 5.0% selection),
+            #       tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md
+            if merge_grade == "NEAR" and piece_count >= 35 and deadline_crossed:
+                pass  # skip speculative chain bonus for risky NEAR at extreme congestion
+            elif merges:
                 # get best merge target (closest distance)
                 best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
                 target_x = best_merge.get("x", 0)
