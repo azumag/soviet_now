@@ -1,26 +1,26 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v137)
+ * strategy.mjs - ドロップ位置決定戦略 (v138)
  *
- * v137: v136をベースに、ゲーム分析から見られた「max_yがDEADLINE_Yを超過しているケースが多い」という課題に対し、
+ * v138: v137をベースに、ゲーム分析から見られた「max_yがDEADLINE_Yを超過しているケースが多い」という課題に対し、
  *       高さペナルティと、おじゃまブロック存在時の高所への配置ペナルティをさらに強化し、大型ピースの配置戦略も調整します。
  *       これにより、エージェントがより低い位置にピースを配置するように強く誘導し、デッドライン到達のリスクを一層低減します。
  *
- *      主な改善点 (v136からの調整点):
+ *      主な改善点 (v137からの調整点):
  *      1.  **高さ管理戦略のさらなる強化**:
- *          - `HEIGHT_PENALTY_WEIGHT` を `3500.0` から `4000.0` へ増加。
- *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `200` から `250` へ増加。
+ *          - `HEIGHT_PENALTY_WEIGHT` を `4000.0` から `5000.0` へ増加。
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `250` から `300` へ増加。
  *            （ゲームログでmax_yが頻繁にDEADLINE_Y (2.5) を超えているため、
  *            高い位置へのピース配置に対するペナルティをさらに強化することで、デッドライン到達のリスクを積極的に低減し、
  *            より安全な盤面維持を目指します。）
  *      2.  **おじゃまブロック存在時の高所配置ペナルティの強化**:
  *          - `boardState.garbage.ratio > 0.1` かつ `simulatedY > -1.0` の場合のベースペナルティを
- *            `(1200 + (simulatedY + 1.0) * 300)` から `(1500 + (simulatedY + 1.0) * 350)` に増加。
- *          - 緊急おじゃまモード時の追加ペナルティを `(simulatedY + 1.0) * 600` から `(simulatedY + 1.0) * 700` に増加。
+ *            `(1500 + (simulatedY + 1.0) * 350)` から `(2000 + (simulatedY + 1.0) * 400)` に増加。
+ *          - 緊急おじゃまモード時の追加ペナルティを `(simulatedY + 1.0) * 700` から `(simulatedY + 1.0) * 800` に増加。
  *            （おじゃまブロックが存在する状況で高所にピースを配置することへのペナルティをさらに強化し、
  *            特に緊急おじゃまモードでは盤面を低く保つことの重要性が増すため、生存戦略を改善します。）
  *      3.  **大型ピースの片側集約戦略の調整**:
- *          - 大型ピースを既存の大型ピースの反対側に配置する場合のペナルティを `-500` から `-750` に強化。
- *          - 大型ピースを既存の大型ピースと同じ側に配置する場合のボーナスを `500` から `750` に強化。
+ *          - 大型ピースを既存の大型ピースの反対側に配置する場合のペナルティを `-750` から `-1000` に強化。
+ *          - 大型ピースを既存の大型ピースと同じ側に配置する場合のボーナスを `750` から `1000` に強化。
  *            （「大型ピースの片側集約」原則をより強く適用し、大型ピースが盤面全体に散らばるのを防ぎ、
  *            連鎖のための安定した基盤を構築しやすくします。）
  */
@@ -35,8 +35,8 @@ const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 // Adjusted relative values to make penalties start earlier (lower Y) - v129
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.7; // Critical penalty starts at Y=1.8 (unchanged from v125)
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.5;     // Warning penalty starts at Y=1.0 (adjusted from 1.7 in v128)
-const HEIGHT_PENALTY_WEIGHT = 4000.0; // Increased from 3500.0 (v136 -> v137)
-const CRITICAL_Y_PENALTY_MULTIPLIER = 250; // Increased from 200 (v136 -> v137)
+const HEIGHT_PENALTY_WEIGHT = 5000.0; // Increased from 4000.0 (v137 -> v138)
+const CRITICAL_Y_PENALTY_MULTIPLIER = 300; // Increased from 250 (v137 -> v138)
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -100,7 +100,7 @@ function calculateHeightPenalty(simulatedY) {
   }
   if (simulatedY > criticalY) {
     // Exponentially higher penalty in the critical zone
-    // v137: CRITICAL_Y_PENALTY_MULTIPLIER increased from 200 to 250
+    // v138: CRITICAL_Y_PENALTY_MULTIPLIER increased from 250 to 300
     penalty += Math.pow((simulatedY - criticalY) / TOP_Y_CRITICAL_PENALTY_START_RELATIVE, 2) * HEIGHT_PENALTY_WEIGHT * CRITICAL_Y_PENALTY_MULTIPLIER;
   }
   return penalty;
@@ -230,17 +230,17 @@ export function decide(boardState) {
         currentPlacementScore = 0; // Initialize for normal calculation
 
         // Penalize height
-        // v137: HEIGHT_PENALTY_WEIGHT and CRITICAL_Y_PENALTY_MULTIPLIER increased
+        // v138: HEIGHT_PENALTY_WEIGHT and CRITICAL_Y_PENALTY_MULTIPLIER increased
         currentPlacementScore -= calculateHeightPenalty(simulatedY);
 
-        // v137: Further increased additional penalty if placing high when a lot of garbage is present
+        // v138: Further increased additional penalty if placing high when a lot of garbage is present
         if (boardState.garbage.ratio > 0.1 && simulatedY > -1.0) { // If garbage is significant and we are placing above a certain Y
           // More predictable and stronger penalty: base + scaled by Y
-          currentPlacementScore -= (1500 + (simulatedY + 1.0) * 350); // Increased from (1200 + (simulatedY + 1.0) * 300) in v136
+          currentPlacementScore -= (2000 + (simulatedY + 1.0) * 400); // Increased from (1500 + (simulatedY + 1.0) * 350) in v137
 
-          // v137: Increased extra penalty if in urgent ojama mode and placing high
+          // v138: Increased extra penalty if in urgent ojama mode and placing high
           if (ojamaUrgentMode) {
-              currentPlacementScore -= (simulatedY + 1.0) * 700; // Increased from (simulatedY + 1.0) * 600 in v136
+              currentPlacementScore -= (simulatedY + 1.0) * 800; // Increased from (simulatedY + 1.0) * 700 in v137
           }
         }
 
@@ -255,7 +255,7 @@ export function decide(boardState) {
 
         // Refined in v123, v126 & v128: Enhanced Large Piece Aggregation
         // This helps with "大型ピースの片側集約" principle.
-        // v137: Increased bonuses and penalties for large piece aggregation
+        // v138: Increased bonuses and penalties for large piece aggregation
         if (pieceToDrop.type >= LARGE_PIECE_THRESHOLD) {
           const largePieces = boardState.pieces.filter(p => p.x !== x && p.type >= LARGE_PIECE_THRESHOLD); // Exclude the current dropping piece from largePieces for average X calc
           if (largePieces.length > 0) {
@@ -263,11 +263,11 @@ export function decide(boardState) {
 
             // If current X is on the same side as the average of existing large pieces, add a bonus
             if ((avgLargePieceX < 0 && x < 0) || (avgLargePieceX > 0 && x > 0)) {
-              currentPlacementScore += 750; // Increased from 500 (v136 -> v137)
+              currentPlacementScore += 1000; // Increased from 750 (v137 -> v138)
             } else if (Math.abs(avgLargePieceX) < 0.5 && Math.abs(x) < 0.5) { // If large pieces are mostly centered, and we're dropping centrally
                currentPlacementScore += 50;
             } else { // If we're dropping a large piece on the opposite side of existing large pieces
-               currentPlacementScore -= 750; // Increased from -500 (v136 -> v137)
+               currentPlacementScore -= 1000; // Increased from -750 (v137 -> v138)
             }
           } else {
               // If this is the first large piece, try to place it significantly off-center to encourage starting a stack
