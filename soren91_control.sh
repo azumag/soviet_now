@@ -20,6 +20,7 @@ SOREN91_ENABLED="$(_soren91_env_get SOREN91_ENABLED 2>/dev/null || printf '%s' "
 SOREN91_STOP_TIMEOUT="${SOREN91_STOP_TIMEOUT:-120}"
 SOREN91_DIR="$ELOOP_LIB_DIR/soren91"
 SOREN91_PID_FILE="$SOREN91_DIR/tmp/soren91.pid"
+SOREN91_MAIN_PID_FILE="$SOREN91_DIR/tmp/main.pid"
 SOREN91_IMPROVE_PID_FILE="$SOREN91_DIR/tmp/soren91_improve.pid"
 SOREN91_IMPROVE_LOCK="$SOREN91_DIR/tmp/soren91_improve.lock"
 SOREN91_SESSION_FILE="$SOREN91_DIR/tmp/session_games.json"
@@ -61,6 +62,26 @@ _soren91_enabled() {
 
 _clear_soren91_mode_flag() {
 	rm -f "$SOREN91_MODE_FLAG_FILE" 2>/dev/null || true
+}
+
+_soren91_read_alive_player_pid() {
+	local pid="" f="" cmd=""
+	for f in "$SOREN91_MAIN_PID_FILE" "$SOREN91_PID_FILE"; do
+		[ -f "$f" ] || continue
+		pid=$(cat "$f" 2>/dev/null)
+		case "$pid" in ''|*[!0-9]*) pid="" ;; esac
+		[ -n "$pid" ] || continue
+		kill -0 "$pid" 2>/dev/null || continue
+		cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+		if [ "$f" = "$SOREN91_MAIN_PID_FILE" ]; then
+			echo "$cmd" | grep -q "main\.mjs" || continue
+		else
+			echo "$cmd" | grep -q "run_player_loop\.sh" || continue
+		fi
+		printf '%s' "$pid"
+		return 0
+	done
+	return 1
 }
 
 _write_manual_meriken_mode_state() {
@@ -237,15 +258,9 @@ PY
 
 soren91_is_running() {
 	_soren91_enabled || return 1
-	[ -f "$SOREN91_PID_FILE" ] || return 1
-	local pid
-	pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
-	case "$pid" in
-	''|*[!0-9]*) return 1 ;;
-	esac
-	if ! kill -0 "$pid" 2>/dev/null; then
-		return 1
-	fi
+	local pid=""
+	pid=$(_soren91_read_alive_player_pid 2>/dev/null || true)
+	[ -n "$pid" ] || return 1
 	# pid file は soren91 起動用の bash subshell を指すことがあり、
 	# 実行環境によっては ps でそのコマンドラインを安定取得できない。
 	# start/stop で専用 PID ファイルを管理しているため、生存中なら稼働中とみなす。
@@ -256,10 +271,7 @@ _soren91_stop_in_progress() {
 	[ -f "$SOREN91_STOPPING_FILE" ] || return 1
 
 	local pid=""
-	if [ -f "$SOREN91_PID_FILE" ]; then
-		pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
-		case "$pid" in ''|*[!0-9]*) pid="" ;; esac
-	fi
+	pid=$(_soren91_read_alive_player_pid 2>/dev/null || true)
 
 	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
 		return 0
@@ -568,10 +580,7 @@ soren91_stop() {
 	touch "$SOREN91_STOPPING_FILE"
 
 	local pid=""
-	if [ -f "$SOREN91_PID_FILE" ]; then
-		pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
-		case "$pid" in ''|*[!0-9]*) pid="" ;; esac
-	fi
+	pid=$(_soren91_read_alive_player_pid 2>/dev/null || true)
 
 	if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
 		# プロセスが既に終了 → end_game だけ記録して終了
@@ -580,7 +589,7 @@ soren91_stop() {
 		eg=$(_soren91_record_end_game)
 		_clear_meriken_time_state
 		_clear_soren91_mode_flag
-		rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
+		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
 	fi
@@ -627,7 +636,7 @@ soren91_stop() {
 	local eg
 	eg=$(_soren91_record_end_game)
 
-	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
+	rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 	_clear_meriken_time_state
 	_clear_soren91_mode_flag
 	# 中華AI側のBGMをアンミュート（改善終了・復帰）
@@ -750,6 +759,7 @@ soren91_cleanup() {
 	# ファイルクリーンアップ
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_IMPROVE_PID_FILE" \
 		"$SOREN91_IMPROVE_LOCK" "$SOREN91_STOP_FILE" \
+		"$SOREN91_MAIN_PID_FILE" \
 		"$SOREN91_DIR/tmp/in_game" \
 		"$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_clear_meriken_time_state

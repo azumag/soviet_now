@@ -287,7 +287,12 @@ while true; do
 	fi
 	if _is_improve_running; then
 		log "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
-		sleep 10
+		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+		continue
+	fi
+	if command -v _soren91_stop_in_progress >/dev/null 2>&1 && _soren91_stop_in_progress; then
+		log "[PAUSE] soren91停止中: 完全停止までメインゲーム再開を待機"
+		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi
 

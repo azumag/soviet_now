@@ -43,6 +43,7 @@ const DEFAULT_SHARED_CDP_PORT = 9222;
 const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
 const SOREN91_MODE_FLAG_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.soren91_mode_active');
+const SOREN91_MAIN_PID_FILE = 'tmp/main.pid';
 
 // ディレクトリ確保
 [SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots'].forEach(dir => {
@@ -53,6 +54,43 @@ function clearSoren91ModeFlag() {
   try {
     unlinkSync(SOREN91_MODE_FLAG_FILE);
   } catch {}
+}
+
+function isSoren91GameUrl(url) {
+  return typeof url === 'string' && url.includes('sorengame91');
+}
+
+async function closeSharedSoren91Pages(browser, preferredPage = null) {
+  const pagesToClose = [];
+  const seen = new Set();
+
+  if (preferredPage) {
+    pagesToClose.push(preferredPage);
+    seen.add(preferredPage);
+  }
+
+  for (const ctx of browser.contexts()) {
+    for (const page of ctx.pages()) {
+      if (seen.has(page)) continue;
+      let url = '';
+      try {
+        url = page.url();
+      } catch {}
+      if (!isSoren91GameUrl(url)) continue;
+      pagesToClose.push(page);
+      seen.add(page);
+    }
+  }
+
+  for (const page of pagesToClose) {
+    try {
+      if (!page.isClosed()) {
+        await page.close({ runBeforeUnload: false });
+      }
+    } catch (err) {
+      console.log(`[main] Failed to close soren91 shared tab: ${err.message}`);
+    }
+  }
 }
 
 // --- ゲーム番号管理 ---
@@ -325,6 +363,11 @@ async function main() {
   console.log('[main] 同志AI 起動...');
   const audioGainMultiplier = loadAudioGainMultiplier();
   console.log(`[main] soren91 audio gain multiplier=${audioGainMultiplier}`);
+  try {
+    writeFileSync(SOREN91_MAIN_PID_FILE, String(process.pid));
+  } catch (err) {
+    console.log(`[main] Failed to write main pid file: ${err.message}`);
+  }
 
   // soren91 モード開始フラグを立てる
   // say_enqueue.sh はこのフラグがある場合、古い soren91:ranking_comment の再生をスキップする
@@ -452,6 +495,7 @@ async function main() {
     console.error('[main] Fatal error:', err.message);
   } finally {
     try { unlinkSync('tmp/in_game'); } catch {}
+    try { unlinkSync(SOREN91_MAIN_PID_FILE); } catch {}
     clearSoren91ModeFlag();
     if (isSharedMode) {
       // 共有モード: 既存 context を再利用した場合は context 全体を閉じない。
@@ -460,10 +504,17 @@ async function main() {
       if (!ownsContext && gamePage && !gamePage.isClosed()) {
         try {
           await gamePage.close();
-        } catch {}
+        } catch (err) {
+          console.log(`[main] Preferred game tab close failed: ${err.message}`);
+        }
       }
+      await closeSharedSoren91Pages(browser, gamePage);
       if (ownsContext) {
-        await context.close();
+        try {
+          await context.close();
+        } catch (err) {
+          console.log(`[main] Shared context close failed: ${err.message}`);
+        }
       }
       // soviet_local のページを前面に戻す
       try {
