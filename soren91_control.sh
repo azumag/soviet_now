@@ -633,6 +633,22 @@ soren91_stop() {
 		_stop_pid_with_fallback "$pid" "soren91"
 	fi
 
+	# Phase 4: run_player_loop.sh (runner) の確実な終了を待つ
+	local runner_pid=""
+	[ -f "$SOREN91_PID_FILE" ] && runner_pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
+	case "$runner_pid" in ''|*[!0-9]*) runner_pid="" ;; esac
+	if [ -n "$runner_pid" ] && kill -0 "$runner_pid" 2>/dev/null; then
+		local runner_waited=0
+		while kill -0 "$runner_pid" 2>/dev/null && [ "$runner_waited" -lt 10 ]; do
+			sleep 1
+			runner_waited=$((runner_waited + 1))
+		done
+		if kill -0 "$runner_pid" 2>/dev/null; then
+			log "[SOREN91] Killing stray runner process (PID=$runner_pid)"
+			kill "$runner_pid" 2>/dev/null || true
+		fi
+	fi
+
 	local eg
 	eg=$(_soren91_record_end_game)
 
