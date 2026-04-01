@@ -19,7 +19,7 @@ Game Overview:
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
            5.6. Growth center proximity - v458: reduced magnitude per postmortem (base 60, congestion 0.08, cap 2.0)
-            6. Chain merge bonus - Evaluate possibility of further merges after merge
+            6. Chain merge bonus - Evaluate possibility of further merges after merge (v460: NEAR suppressed at extreme congestion)
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
@@ -63,6 +63,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v460: re-apply v451 CHAIN_MERGE suppression for NEAR at extreme congestion (pc>=35+deadline)
+     # v451 was originally at Game#11731 but rolled back as collateral in v449 branch at Game#11744.
+     # CHAIN_MERGE bonus (multiplier up to 1110 at high y, bonus up to ~5300) overwhelms NEAR
+     # risk penalties (~3469 at pc=43, deadline, y=2.55), causing risky NEAR selection at extreme
+     # congestion. Worst T67-69: NEAR fails x2 at pc=43-45, game over. DIRECT retains CHAIN_MERGE.
+     # Fixes v451 collateral rollback: CHAIN_MERGE overrides NEAR risk at extreme congestion
+     # refs: game_history/20260401_211324_score0729.jsonl T67-69, tmp/batch_summary.txt,
+     #       tmp/change_log.txt (v451 at Game#11731, rollback at Game#11744), strategy.py.staging (v459)
      # v459: remove axis 9.5 +300 SAME_TYPE_STACK_MERGE_PRIORITY bonus
      # Batch: avg delta=0.8 (worse than HEIGHT_CONTROL 2.8), selected 4.6% in low-score games.
      # With axis 9.6b providing proximity guidance (~120-540), the +300 was redundant
@@ -1456,14 +1464,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v195のchain_bonus_multiplier動的設定では初期段階(landing_y=-3.0)でchain_bonus_multiplier=45.0,ほぼゼロ。
         # 初期段階でのCHAIN_MERGE選択を有効化するためにchain_bonus_multiplierの初期値を495.0に固定し、着地高による動的調整を開始地点から行うようにする。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
+            # v460: re-apply v451 CHAIN_MERGE suppression for NEAR at extreme congestion
+            # v451 was originally applied at Game#11731 but rolled back as collateral in the
+            # v449 branch rollback at Game#11744. The rollback was caused by v449's 9.6b removal,
+            # not v451. The current strategy (v459) still lacks this suppression.
+            # At pc>=35 + deadline_crossed, NEAR merge (68.5% success) has catastrophic failure
+            # cost: adds piece without reducing pc. CHAIN_MERGE bonus (multiplier up to 1110 at
+            # high y, bonus up to ~5300) overwhelms NEAR penalties (~3469 at pc=43, deadline, y=2.55),
+            # causing the strategy to select risky NEAR. Worst T67-69: NEAR fails x2, pc 43→45.
+            # DIRECT (95.7%) retains CHAIN_MERGE — only NEAR is suppressed. NEAR base bonus
+            # still applies; just de-prioritized vs HEIGHT_CONTROL at critical pc.
+            # Fixes v451 collateral rollback: CHAIN_MERGE overrides NEAR risk at extreme congestion
+            chain_suppressed = (merge_grade == "NEAR" and piece_count >= 35 and deadline_crossed)
             merges = result["merges"]
-            if merges:
+            if merges and not chain_suppressed:
                 # get best merge target (closest distance)
                 best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
                 # v196: 初期段階CHAIN_MERGE有効化 - 初期段階でのCHAIN_MERGE選択を有効化
+                # v460: NEAR at pc>=35+deadline is suppressed above (chain_suppressed)
                 # v155成功パラメータ: chain_distance_max=5.0, chain_bonus_multiplier初期値450.0
                 # 着地高による動的調整: landing_y*0.6で距離、landing_y*150.0でボーナスを調整
                 # 例: landing_y=-3.0 → distance_max=3.2, multiplier=495.0（初期段階、有効なボーナス）
