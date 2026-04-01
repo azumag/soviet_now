@@ -443,7 +443,7 @@ soren91_start() {
 	fi
 
 	log "[SOREN91] Starting soren91 (メリケンAI)..."
-	rm -f "$SOREN91_STOP_FILE"
+	rm -f "$SOREN91_STOP_FILE" "$SOREN91_MAIN_PID_FILE"
 	mkdir -p "$SOREN91_DIR/tmp" 2>/dev/null || true
 
 	# 前回の soren91 improve がまだ実行中なら session_games.json を上書きしない

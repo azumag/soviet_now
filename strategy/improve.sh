@@ -215,13 +215,11 @@ with open(rs_file, 'w') as f:
 				date +%s > "$TMP_STATE_DIR/last_improve_failed_at"
 			fi
 
-			local _stop_soren91_after_improve=0
 			if command -v manual_meriken_mode_is_enabled >/dev/null 2>&1 && manual_meriken_mode_is_enabled; then
-				_stop_soren91_after_improve=0
+				:
 			elif [ "$(date +%H)" = "20" ]; then
-				_stop_soren91_after_improve=0
+				:
 			else
-				_stop_soren91_after_improve=1
 				if [ -n "${SOREN91_STOPPING_FILE:-}" ]; then
 					touch "$SOREN91_STOPPING_FILE" 2>/dev/null || true
 				fi
