@@ -63,16 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v455: type-relevance filter on axis 5.6 growth center — suppress noise from irrelevant clustering
-     # Axis 5.6 pulled pieces toward max_type regardless of type relevance. Worst game T1-10:
-     # type-5/3/1 guided toward type-11 (diff=6-10), forming dense non-reactive cluster, 0 merges.
-     # Filter: only fire when |max_type - next_type| <= 4 (plausible merge pipeline range).
-     # Fixes postmortem failure mode: additive bonus accumulation masking height differentiation
-     # refs: game_history/20260401_132216_score0381.jsonl T1-10 (irrelevant clustering, 0 merges),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no axis 5.6),
-     #       tmp/batch_summary.txt (HEIGHT_CONTROL 18.7% low vs 13.5% high),
-     #       tmp/state/last_rollback_postmortem.md (additive noise warning),
-     #       strategy_versions/best_score4999_strategy.py (simple 7-axis design, no 5.6)
      # v454: flatten deadline_crossed NO-merge penalty to flat -4500 — fix v432 sign error
      # v432 formula -3000 + landing_y*2000 had wrong sign: at y>=1.5 "penalty" became 0 or positive,
      # rewarding high placement at deadline. Flattened to -4500 matching protected strategy (median 12789)
@@ -1416,17 +1406,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: type scattering → piece_count accumulation
         # v407: removed russia_phase guard — growth center guidance now active in ALL phases
         max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
-        # v455: type-relevance filter — only guide toward growth center when current type is
-        # in the merge pipeline (within ±4 levels of max_type). Without this, axis 5.6 pulls
-        # pieces toward high-type pieces regardless of type relevance, creating non-reactive
-        # clusters. Worst game (score0381) T1-10: axis 5.6 was the only guidance, pulled
-        # type-5/3/1 toward type-11 (diff=6-10), forming dense but useless cluster — 10 turns
-        # zero merges. Protected strategy (median 12789) has NO axis 5.6, proving noise-free
-        # is viable. Threshold 4: within ±4 of max_type is plausible pipeline (e.g., max=11,
-        # next=8 diff=3 → allowed; max=11, next=5 diff=6 → filtered). Reduces additive
-        # noise (up to ~268 at pc=40) that postmortem warns can overwhelm height diffs.
-        # Fixes postmortem failure mode: additive bonus accumulation masking height differentiation
-        if max_type_on_board >= 6 and abs(max_type_on_board - next_type) <= 4:
+        if max_type_on_board >= 6:
             # Find the deepest (lowest y) highest-type piece as growth center
             growth_center = min(
                 (p for p in pieces if p.get("type") == max_type_on_board),
