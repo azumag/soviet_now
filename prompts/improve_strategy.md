@@ -67,7 +67,7 @@
 - 戻り値は常に `{"x": float, "reason": str}`。`x` は実質 `[-3.0, 3.0]` に収まるようにすること
 - `tmp/state/last_rollback_postmortem.md` がある場合、そこで特定された Failure Modes と Constraints For Next Improve に逆行する変更は禁止
 - `tmp/state/last_rollback_analysis.md` がある場合、そこに書かれた敗因と `Next Improve Focus` に逆行する変更は禁止
-- 数値の微調整だけの変更は禁止
+- 数値の微調整だけの変更も可。ただし `batch_summary`、ゲームログ、rollback分析、`advice.md` の複数根拠で裏づけられる場合に限る。思いつきの閾値いじりは禁止
 - `strategy.py.staging` は既存ファイルとしてその場で編集すること。新規 `Write` / 全面再生成より、既存コードへの `Edit` を優先すること
 - `Edit` / `Write` の失敗時は、新規ファイル作成へ逃げず、同じ方針のまま `strategy.py.staging` への編集だけをやり直すこと
 - 編集コンテキストは常に `strategy.py.staging` を基準にすること。`strategy.py` を読んでも、その内容を patch の oldString 根拠にしてはいけない
@@ -122,13 +122,14 @@ gameover画像がある場合は、終盤ログの補助証拠として使って
 2. 構造変更（新しい評価軸・新しい選択ロジック。ただし即時併合機会と盤面余裕を優先）
 3. 無効ロジック削除（データで効果が薄いもの）
 4. 既存の整理・簡素化
-5. パラメータ調整（構造変更に付随する最小限のみ）
+5. パラメータ調整（単独でも可。ただしログ根拠が明確な場合に限る）
 6. 成熟ランキング上位に残れる見込みの改善
 
 ## 禁止パターン（再発防止）
-- `height_mult`, `merge_mult`, `balance_strength`, フェーズ閾値などの値をいじるだけ
+- `height_mult`, `merge_mult`, `balance_strength`, フェーズ閾値などを、ログ根拠なしに思いつきでいじるだけ
 - 条件分岐のON/OFFを往復させるだけ
 - コメント追加や命名変更だけ
+- `reason` 文言や文字列定数だけを変えること
 - 同一方向の変更を `change_log` で確認できるのに再実施すること
 - `CHAIN_MERGE` を直接強化する変更、chain bonus / chain distance の拡大、連鎖前提の待ち判断
 - 目先の `merge_available` を捨ててまで将来連鎖を追う変更
@@ -187,7 +188,7 @@ gameover画像がある場合は、終盤ログの補助証拠として使って
 - typeNの上にtypeN-1をのせるのはいいが、typeN-2などを載せてしまうと、単純に邪魔になる。その次にtypeNが来た場合、併合機会を逃す
 
 ## 事前セルフチェック（書き込み前）
-- 数値変更だけになっていないか
+- 数値変更だけの場合、その変更量を支持するログ根拠があるか
 - `decide` の戻り値契約を全分岐で満たすか
 - `__main__` を壊していないか
 - 既存の有効ロジックを誤って消していないか

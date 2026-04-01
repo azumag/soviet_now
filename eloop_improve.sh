@@ -76,7 +76,7 @@ _launch_detached_strategy_radio() {
 	return 0
 }
 
-_strategy_change_is_numeric_only() {
+_strategy_change_is_string_only() {
 	local before_file="$1" after_file="$2"
 	python3 - "$before_file" "$after_file" <<'PY' 2>/dev/null
 import ast
@@ -90,8 +90,6 @@ def load_tree(path: str):
 
 class Normalize(ast.NodeTransformer):
     def visit_Constant(self, node):
-        if isinstance(node.value, (int, float, complex)):
-            return ast.copy_location(ast.Constant(value=0), node)
         if isinstance(node.value, str):
             return ast.copy_location(ast.Constant(value=""), node)
         return node
@@ -956,8 +954,8 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				continue
 			fi
 
-			if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_numeric_only "strategy.py" "$STAGING_FILE"; then
-				VALIDATE_ERROR="数値・文字列の微調整だけの変更は不可。構造変更、ロジック削除/置換、未活用情報の活用を含む変更にせよ。"
+			if [ "$staging_changed" = true ] && [ "$helper_changed" != true ] && _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
+				VALIDATE_ERROR="文字列・reason文言だけの変更は不可。ロジック変更または根拠ある数値調整を含む変更にせよ。"
 				_improve_note "validation failed (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES}, continue ${continue_retry}/${IMPROVE_CONTINUE_MAX}): ${VALIDATE_ERROR}"
 				if [ "$continue_retry" -lt "$IMPROVE_CONTINUE_MAX" ]; then
 					continue_retry=$((continue_retry + 1))
