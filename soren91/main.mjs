@@ -42,11 +42,18 @@ const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const DEFAULT_SHARED_CDP_PORT = 9222;
 const ENV_PATH = '.env';
 const RUNTIME_CONFIG_PATH = 'runtime_config.json';
+const SOREN91_MODE_FLAG_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.soren91_mode_active');
 
 // ディレクトリ確保
 [SCREENSHOT_DIR, HISTORY_DIR, 'tmp/summaries', 'strategy_versions', 'tmp/strategy_snapshots', 'tmp/state', 'tmp/game_screenshots'].forEach(dir => {
   mkdirSync(dir, { recursive: true });
 });
+
+function clearSoren91ModeFlag() {
+  try {
+    unlinkSync(SOREN91_MODE_FLAG_FILE);
+  } catch {}
+}
 
 // --- ゲーム番号管理 ---
 function getNextGameNumber() {
@@ -322,8 +329,7 @@ async function main() {
   // soren91 モード開始フラグを立てる
   // say_enqueue.sh はこのフラグがある場合、古い soren91:ranking_comment の再生をスキップする
   try {
-    const flagFile = join(dirname(fileURLToPath(import.meta.url)), '..', 'tmp', '.soren91_mode_active');
-    writeFileSync(flagFile, String(Date.now()));
+    writeFileSync(SOREN91_MODE_FLAG_FILE, String(Date.now()));
     console.log('[main] soren91 mode flag set');
   } catch (err) {
     console.log(`[main] Failed to set soren91 mode flag: ${err.message}`);
@@ -446,6 +452,7 @@ async function main() {
     console.error('[main] Fatal error:', err.message);
   } finally {
     try { unlinkSync('tmp/in_game'); } catch {}
+    clearSoren91ModeFlag();
     if (isSharedMode) {
       // 共有モード: 既存 context を再利用した場合は context 全体を閉じない。
       // browser.close() on a CDP-connected browser only disconnects

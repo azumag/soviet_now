@@ -37,6 +37,7 @@ SOREN91_CAPITALISM_CORNER_ENABLED="${SOREN91_CAPITALISM_CORNER_ENABLED:-1}"
 MERIKEN_TIME_START_HOUR="${MERIKEN_TIME_START_HOUR:-20}"
 MERIKEN_TIME_END_HOUR="${MERIKEN_TIME_END_HOUR:-21}"
 MERIKEN_TIME_STATE_FILE="${MERIKEN_TIME_STATE_FILE:-$TMP_STATE_DIR/meriken_time_state.json}"
+SOREN91_MODE_FLAG_FILE="${SOREN91_MODE_FLAG_FILE:-$ELOOP_LIB_DIR/tmp/.soren91_mode_active}"
 
 _soren91_switch_obs_layout() {
 	local mode="${1:-}"
@@ -56,6 +57,10 @@ _soren91_switch_obs_layout() {
 
 _soren91_enabled() {
 	[ "${SOREN91_ENABLED:-0}" = "1" ]
+}
+
+_clear_soren91_mode_flag() {
+	rm -f "$SOREN91_MODE_FLAG_FILE" 2>/dev/null || true
 }
 
 _write_manual_meriken_mode_state() {
@@ -574,6 +579,7 @@ soren91_stop() {
 		local eg
 		eg=$(_soren91_record_end_game)
 		_clear_meriken_time_state
+		_clear_soren91_mode_flag
 		rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
@@ -619,6 +625,7 @@ soren91_stop() {
 
 	rm -f "$SOREN91_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
 	_clear_meriken_time_state
+	_clear_soren91_mode_flag
 	# 中華AI側のBGMをアンミュート（改善終了・復帰）
 	rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
 	_soren91_switch_obs_layout china || true

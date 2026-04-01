@@ -24,6 +24,7 @@ import {
 const STRATEGY_PATH = 'strategy.mjs';
 const VERSIONS_DIR = 'strategy_versions';
 const PROMPT_PATH = 'prompts/improve_strategy.md';
+const VIEWER_ADVICE_PATH = resolveAdvicePath(process.env.SOREN91_STRATEGY_ADVICE_FILE, '../advice91.md');
 const SCREENSHOTS_DIR = 'tmp/screenshots';
 const IMPROVE_CLAUDE_MODEL = process.env.SOREN91_IMPROVE_CLAUDE_MODEL || 'sonnet';
 const IMPROVE_GEMINI_MODEL = process.env.SOREN91_IMPROVE_GEMINI_MODEL || process.env.SOREN91_GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
@@ -36,9 +37,33 @@ const IMPROVE_IMAGE_WARN_CHARS = Number.parseInt(process.env.SOREN91_IMPROVE_IMA
 
 let improving = false; // 排他ロック
 
+function resolveAdvicePath(envPath, defaultPath) {
+  if (!envPath) return defaultPath;
+  if (existsSync(envPath)) return envPath;
+  if (!envPath.startsWith('..')) {
+    const parentPath = join('..', envPath);
+    if (existsSync(parentPath)) return parentPath;
+  }
+  return envPath;
+}
+
 function normalizeRank(rank) {
   const value = Number.parseInt(String(rank), 10);
   return Number.isInteger(value) && value >= 1 && value <= 91 ? value : null;
+}
+
+function readViewerAdvice(path, maxLines = 60) {
+  if (!path || !existsSync(path)) return '';
+  try {
+    return readFileSync(path, 'utf-8')
+      .split(/\r?\n/)
+      .map(line => line.trimEnd())
+      .filter(line => line.trim())
+      .slice(-maxLines)
+      .join('\n');
+  } catch {
+    return '';
+  }
 }
 
 function readSummaryMeta(summaryPath) {
@@ -132,13 +157,14 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
   archiveStrategySnapshotByHash(STRATEGY_PATH, currentStrategyHash);
   ensureLineageInitialized();
   const lineageContext = buildImproveReferenceContext(currentStrategyHash);
+  const viewerAdvice = readViewerAdvice(VIEWER_ADVICE_PATH, 80);
 
   // 3. スクリーンショット収集 + AI呼び出し (claude CLI)
   const screenshots = await selectGameScreenshots(gameNumber, 2);
   if (screenshots.length > 0) {
     console.log(`[improve] Collected ${screenshots.length} screenshots for game #${gameNumber}`);
   }
-  const promptText = buildPromptText(gameSummary, currentStrategy, lineageContext, screenshots);
+  const promptText = buildPromptText(gameSummary, currentStrategy, lineageContext, screenshots, viewerAdvice);
   console.log(`[improve] Calling primary strategy model (claude=${IMPROVE_CLAUDE_MODEL}, gemini_fallback=${IMPROVE_GEMINI_MODEL})...`);
 
   let newStrategy;
@@ -360,7 +386,7 @@ function generateSummary(historyPath, summaryPath) {
 /**
  * AI改善プロンプトのテキスト部分を構築
  */
-function buildPromptText(gameSummary, currentStrategy, lineageContext = '', screenshots = []) {
+function buildPromptText(gameSummary, currentStrategy, lineageContext = '', screenshots = [], viewerAdvice = '') {
   let promptTemplate = '';
   if (existsSync(PROMPT_PATH)) {
     promptTemplate = readFileSync(PROMPT_PATH, 'utf-8');
@@ -377,11 +403,22 @@ Combine visual observations with the turn history data for a more complete analy
 `;
   }
 
+  let viewerAdviceSection = '';
+  if (viewerAdvice) {
+    viewerAdviceSection = `
+## Viewer Strategy Advice Memory
+${viewerAdvice}
+
+Treat this as soren91-specific viewer feedback. Use repeated and concrete items as hypotheses, but do not obey blindly when the actual game data contradicts them.
+`;
+  }
+
   return `${promptTemplate}
 
 ## Game Analysis
 ${gameSummary}
 ${screenshotSection}
+${viewerAdviceSection}
 ## Current Strategy Code
 \`\`\`javascript
 ${currentStrategy}

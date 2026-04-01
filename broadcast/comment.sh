@@ -1086,8 +1086,53 @@ generate_comment_response() {
 	recent_spoken_comment_context=$(_build_recent_spoken_comment_context)
 	local comment_followup_hints=""
 	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file")
+	local comment_mode_for_advice=""
+	comment_mode_for_advice=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+	local structured_advice_candidates=""
+	structured_advice_candidates=$(_extract_structured_advice_from_comments "$comment_prompt_batch_file" "$comment_mode_for_advice")
 	local strategy_advice_candidates=""
-	strategy_advice_candidates=$(_extract_strategy_advice_from_comments "$comment_prompt_batch_file")
+	local strategy_advice_candidates_main=""
+	local strategy_advice_candidates_soren91=""
+	local comment_advice_candidates=""
+	if [ -n "$structured_advice_candidates" ]; then
+		while IFS=$'\t' read -r advice_kind advice_mode advice_text; do
+			[ -n "$advice_text" ] || continue
+			case "$advice_kind" in
+			strategy)
+				if [ "$advice_mode" = "main" ]; then
+					if [ -n "$strategy_advice_candidates_main" ]; then
+						strategy_advice_candidates_main="${strategy_advice_candidates_main}
+$advice_text"
+					else
+						strategy_advice_candidates_main="$advice_text"
+					fi
+				elif [ "$advice_mode" = "soren91" ]; then
+					if [ -n "$strategy_advice_candidates_soren91" ]; then
+						strategy_advice_candidates_soren91="${strategy_advice_candidates_soren91}
+$advice_text"
+					else
+						strategy_advice_candidates_soren91="$advice_text"
+					fi
+				fi
+				;;
+			comment)
+				if [ -n "$comment_advice_candidates" ]; then
+					comment_advice_candidates="${comment_advice_candidates}
+$advice_text"
+				else
+					comment_advice_candidates="$advice_text"
+				fi
+				;;
+			esac
+		done <<<"$structured_advice_candidates"
+	fi
+	if [ "$comment_mode_for_advice" = "soren91" ]; then
+		strategy_advice_candidates="$strategy_advice_candidates_soren91"
+	else
+		strategy_advice_candidates="$strategy_advice_candidates_main"
+	fi
+	local comment_advice_context=""
+	comment_advice_context=$(_read_advice_context_tail "$COMMENT_ADVICE_FILE" 40)
 
 	local current_time current_hour time_period
 	current_time=$(date '+%H:%M')
@@ -1155,6 +1200,8 @@ generate_comment_response() {
 		# Pre-resolve defaults for envsubst
 		comment_batch_context="${comment_batch_context:-（なし）}"
 		strategy_advice_candidates="${strategy_advice_candidates:-（なし）}"
+		comment_advice_candidates="${comment_advice_candidates:-（なし）}"
+		comment_advice_context="${comment_advice_context:-（なし）}"
 		previous_comments_context="${previous_comments_context:-（なし）}"
 		recent_spoken_comment_context="${recent_spoken_comment_context:-（なし）}"
 		comment_followup_hints="${comment_followup_hints:-（なし）}"
@@ -1164,7 +1211,7 @@ generate_comment_response() {
 		# Export all template variables (safe: inside subshell)
 		local _prediction_cycle_games="${MIN_GAMES_BEFORE_IMPROVE:-12}"
 		export _comment_persona current_time time_period twitch_comments_for_prompt \
-			comment_batch_context strategy_advice_candidates previous_comments_context \
+			comment_batch_context strategy_advice_candidates comment_advice_candidates comment_advice_context previous_comments_context \
 			recent_spoken_comment_context comment_followup_hints past_topics \
 			celebration_history_context comment_thumbnail_ocr_context \
 			PAST_RADIO_TOPICS RUSSIA_CREATION_HISTORY_FILE SOVIET_CREATION_HISTORY_FILE ROLLING_SCORES_FILE \
@@ -1179,7 +1226,7 @@ generate_comment_response() {
 			rm -f "$comment_prompt_file"
 			return 1
 		fi
-		envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
+		envsubst '${_comment_persona} ${current_time} ${time_period} ${twitch_comments_for_prompt} ${comment_batch_context} ${strategy_advice_candidates} ${comment_advice_candidates} ${comment_advice_context} ${previous_comments_context} ${recent_spoken_comment_context} ${comment_followup_hints} ${past_topics} ${celebration_history_context} ${comment_thumbnail_ocr_context} ${PAST_RADIO_TOPICS} ${RUSSIA_CREATION_HISTORY_FILE} ${SOVIET_CREATION_HISTORY_FILE} ${ROLLING_SCORES_FILE} ${game_state_context} ${_comment_ui_memo} ${_comment_channel_intro} ${sing_reference} ${_prediction_cycle_games}' \
 			< "$_comment_template" > "$comment_prompt_file"
 
 		local comment_retry_max="${COMMENT_RESPONSE_RETRY_MAX:-3}"
@@ -1323,13 +1370,20 @@ RETRYCOMMENT
 				attempt_talk=$(echo "$attempt_talk" | sed '/^===SOVIET_THEME===/,/^===SOVIET_THEME===/ d')
 			fi
 
-			# 戦略アドバイスを抽出（本文確定後に追記する）
-			local advice_part advice_item
-			advice_part=$(echo "$attempt_talk" | sed -n '/^===ADVICE===/,$ p' | tail -n +2)
+			# 改善メモを抽出（本文確定後に追記する）
+			local comment_advice_part comment_advice_item=""
+			comment_advice_part=$(printf '%s' "$attempt_talk" | _extract_named_block "COMMENT_ADVICE")
+			if [ -n "$comment_advice_part" ]; then
+				comment_advice_item=$(printf '%s' "$comment_advice_part" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+				attempt_talk=$(printf '%s' "$attempt_talk" | _remove_named_block "COMMENT_ADVICE")
+			fi
+
+			local advice_part advice_item=""
+			advice_part=$(printf '%s' "$attempt_talk" | _extract_named_block "ADVICE")
 			advice_item=""
 			if [ -n "$advice_part" ]; then
 				advice_item=$(printf '%s' "$advice_part" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
-				attempt_talk=$(echo "$attempt_talk" | sed '/^===ADVICE===/,$ d')
+				attempt_talk=$(printf '%s' "$attempt_talk" | _remove_named_block "ADVICE")
 			fi
 
 			attempt_talk=$(_clean_comment_talk "$attempt_talk")
@@ -1410,13 +1464,28 @@ RETRYCOMMENT
 
 			# 本文が有効なときだけアドバイスを追記
 			if [ -n "$advice_item" ] && [ "$advice_item" != "（アドバイスなし）" ] && [ "$advice_item" != "なし" ] && [[ "$advice_item" != なし* ]] && [[ "$advice_item" != （アドバイスなし）* ]]; then
-				_append_strategy_advice_item "$advice_item"
+				_append_strategy_advice_item "$advice_item" "$_comment_mode_generated"
 			fi
-			if [ -n "$strategy_advice_candidates" ]; then
+			if [ -n "$comment_advice_item" ] && [ "$comment_advice_item" != "（アドバイスなし）" ] && [ "$comment_advice_item" != "なし" ] && [[ "$comment_advice_item" != なし* ]] && [[ "$comment_advice_item" != （アドバイスなし）* ]]; then
+				_append_comment_advice_item "$comment_advice_item"
+			fi
+			if [ -n "$strategy_advice_candidates_main" ]; then
 				while IFS= read -r advice_line; do
 					[ -n "$advice_line" ] || continue
-					_append_strategy_advice_item "$advice_line"
-				done <<<"$strategy_advice_candidates"
+					_append_strategy_advice_item "$advice_line" "main"
+				done <<<"$strategy_advice_candidates_main"
+			fi
+			if [ -n "$strategy_advice_candidates_soren91" ]; then
+				while IFS= read -r advice_line; do
+					[ -n "$advice_line" ] || continue
+					_append_strategy_advice_item "$advice_line" "soren91"
+				done <<<"$strategy_advice_candidates_soren91"
+			fi
+			if [ -n "$comment_advice_candidates" ]; then
+				while IFS= read -r advice_line; do
+					[ -n "$advice_line" ] || continue
+					_append_comment_advice_item "$advice_line"
+				done <<<"$comment_advice_candidates"
 			fi
 
 			# ソ連テーマを追記
