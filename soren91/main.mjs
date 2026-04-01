@@ -88,7 +88,10 @@ function clearSoren91ModeFlag() {
 }
 
 function isSoren91GameUrl(url) {
-  return typeof url === 'string' && url.includes('sorengame91');
+  return typeof url === 'string' && (
+    url.includes('sorengame91') ||
+    url.includes('play.unityroom.com')
+  );
 }
 
 async function closeSharedSoren91Pages(browser, preferredPage = null) {
@@ -725,6 +728,12 @@ async function gameLoop(page, calibration, gameNumber) {
 
   while (true) {
     try {
+      if (existsSync('tmp/stop')) {
+        if (pendingGameOver) await pendingGameOver;
+        console.log('[game] Stop requested, exiting main loop');
+        return;
+      }
+
       // ドロップクールダウン
       const elapsed = Date.now() - lastDropTime;
       if (elapsed < DROP_COOLDOWN_MS) {
@@ -953,6 +962,12 @@ async function gameLoop(page, calibration, gameNumber) {
       turn++;
       try { writeFileSync('tmp/in_game', String(gameNumber)); } catch {}
       consecutiveErrors = 0;
+
+      if (existsSync('tmp/stop')) {
+        if (pendingGameOver) await pendingGameOver;
+        console.log('[game] Stop requested after move, exiting');
+        return;
+      }
 
       // 試合中コメント: 1試合1回、20ターン到達後に生成 (非同期、ゲームをブロックしない)
       // pieces < 3 はマッチング画面の誤検出の可能性が高いためスキップ
