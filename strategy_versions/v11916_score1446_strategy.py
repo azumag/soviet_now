@@ -23,7 +23,7 @@ Game Overview:
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
-             8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
+             8.6. Reactive pairs immediate merge bonus - v464: NEAR bonus 60% reduction at pc>=28+deadline (endgame NEAR risk)
               8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
               # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼす
               # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
@@ -1620,19 +1620,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 300.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v321: 即時併合ボーナス維持) -----
+        # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v464: NEAR 60% reduction at pc>=28+deadline) -----
         # v317: reactive_pairs数に応じた即時併合ボーナスを維持
-        # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
-        # reactive_pairs==1: +600.0, reactive_pairs>=2: +1000.0
-        # 未活用情報：reactive_pairsの段階的ボーナス
-        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+        # v464: NEAR併合は68.5%成功率で高pc下では失敗コストが致命的。pc>=28+deadlineでNEARボーナスを60%削減。
+        #   DIRECT(95.7%成功率)は変更なし。NEARは240/400(従来の40%)にスケールダウン。
+        #   これによりNEARがNO-merge(-4500)に対して依然有利だが、高pc下のheight_penalty等の影響を受けやすくなる。
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/change_log.txt (v463),
+        #       game_history/20260402_015932_score0680.jsonl (T58: NEAR fail, pc=32),
+        #       game_history/20260402_021836_score0828.jsonl (T60: NEAR fail, pc=34)
 
         if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
-            # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
-            if reactive_pair_count >= 2:
-                score += 1000.0
+            if merge_grade == "NEAR" and piece_count >= 28 and deadline_crossed:
+                # v464: NEAR at high pc+deadline — 60% bonus reduction to reduce catastrophic fail rate
+                bonus = 400.0 if reactive_pair_count >= 2 else 240.0
             else:
-                score += 600.0
+                bonus = 1000.0 if reactive_pair_count >= 2 else 600.0
+            score += bonus
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
