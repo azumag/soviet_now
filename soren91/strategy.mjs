@@ -1,34 +1,24 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v139)
+ * strategy.mjs - ドロップ位置決定戦略 (v140)
  *
- * v139: v138をベースに、ゲーム分析から見られた「max_yがDEADLINE_Yを超過しているケースが多い」という課題に対し、
- *       高さペナルティのトリガーをより保守的にし、おじゃまブロック存在時の高所への配置ペナルティ、
- *       および大型ピースの片側集約戦略をさらに強化します。
- *       これにより、エージェントがより低い位置にピースを配置するように強く誘導し、デッドライン到達のリスクを一層低減します。
+ * v140: v139をベースに、ゲーム分析から見られた「非常に短いターン数でゲームが終了するケースが多い」という課題、
+ *       特に序盤の小型ピースの配置が適切でない可能性に対応します。
+ *       これにより、エージェントがゲーム序盤に強固なマージ基盤を構築し、デッドライン到達のリスクを一層低減しつつ、
+ *       より長く生存できる戦略を目指します。
  *
- *      主な改善点 (v138からの調整点):
- *      1.  **高さ管理戦略のさらなる強化と保守的な予測**:
- *          - `settlingBuffer` を `1.3` から `1.4` へ増加。
- *            （物理エンジンの不確実性や凸ポリゴン形状による実際の着地Y座標が予測よりも高くなる傾向に対応するため、
- *            シミュレートされる着地Y座標をより保守的に（高く）見積もります。これにより、高さペナルティが早期に適用され、
- *            エージェントはより低い位置への配置を強く推奨されます。）
- *          - デッドライン近傍での極端なペナルティトリガーを `DEADLINE_Y - 0.05` から `DEADLINE_Y - 0.1` へ変更。
- *            （デッドラインに到達する可能性のある危険な高所への配置に対する警告を、より早い段階で発動させることで、
- *            ゲームオーバーのリスクを積極的に回避します。）
- *      2.  **おじゃまブロック存在時の高所配置ペナルティのさらなる強化**:
- *          - `boardState.garbage.ratio > 0.1` かつ `simulatedY > -1.0` の場合のベースペナルティを
- *            `(2000 + (simulatedY + 1.0) * 400)` から `(2500 + (simulatedY + 1.0) * 500)` に増加。
- *          - 緊急おじゃまモード時の追加ペナルティを `(simulatedY + 1.0) * 800` から `(simulatedY + 1.0) * 1000` に増加。
- *            （おじゃまブロックが存在する状況での高所へのピース配置は非常に危険であるため、そのペナルティを一層強化し、
- *            盤面を常に低く保つことを最優先させます。）
- *      3.  **大型ピースの片側集約戦略のさらなる調整**:
- *          - 大型ピースを既存の大型ピースの反対側に配置する場合のペナルティを `-1000` から `-1200` に強化。
- *          - 大型ピースを既存の大型ピースと同じ側に配置する場合のボーナスを `1000` から `1200` に強化。
- *            （「大型ピースの片側集約」原則をより強力に適用し、大型ピースが盤面全体に散らばるのを一層防ぎ、
- *            安定したマージ基盤の構築を促進します。）
- *      4.  **パイプライン維持ボーナスの強化**:
- *          - `calculatePipelineBonus` のベース倍率を `100` から `120` に増加。
- *            （typeの階段配置による連鎖設計の重要性をさらに評価し、長期的なスコア効率の向上を目指します。）
+ *      主な改善点 (v139からの調整点):
+ *      1.  **序盤の小型ピースの中央配置ボーナスの導入**:
+ *          - `boardState.pieces.length` が少ない（例: 5未満）場合、小型ピース (type <= 3) を盤面中央付近
+ *            （X座標が-1.0から1.0の範囲）に配置する際に強力なボーナスを追加。
+ *            これにより、ゲーム開始直後に小型ピースがボードの端に無意味に積み上がってしまう「最悪のゲーム」のような
+ *            状況を防ぎ、将来的なマージに繋がりやすい基盤の構築を促します。
+ *      2.  **小型ピースのクラスタリングボーナスの強化（密度ベース）**:
+ *          - `calculateClusterBonus` において、`existingPieces.length` が少ない場合に
+ *            `densityMultiplier` を適用し、クラスタリングボーナスを強化します。
+ *            これにより、ゲーム序盤における同種ピースの集約（濃度管理）の重要性を高め、
+ *            効率的なマージ連鎖の発生を促進します。
+ *
+ *      これらの変更により、初期の盤面形成をより戦略的に行い、生存ターン数の改善を図ります。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -157,6 +147,14 @@ function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, ga
 // Calculate small piece clustering bonus (for concentration management and catalyst effect)
 function calculateClusterBonus(droppingPiece, targetX, targetY, existingPieces) {
   let clusterBonus = 0;
+  // v140: Added dynamic scaling for early game
+  let densityMultiplier = 1.0;
+  if (existingPieces.length < 5) { // If board is relatively empty
+      densityMultiplier = 1.5; // Give more weight to clustering
+  } else if (existingPieces.length < 10) {
+      densityMultiplier = 1.2;
+  }
+
   if (droppingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
     for (const existingPiece of existingPieces) {
       const dist = distance({ x: targetX, y: targetY }, existingPiece);
@@ -164,12 +162,14 @@ function calculateClusterBonus(droppingPiece, targetX, targetY, existingPieces) 
       if (dist < droppingPiece.r + existingPiece.r + MERGE_BUFFER * 1.5) {
         // Stronger bonus for same-type small piece clustering ("濃度管理")
         // v132: Increased multiplier from 650 to 700 (maintained in v133)
+        // v140: Applied densityMultiplier
         if (existingPiece.type === droppingPiece.type && existingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
-          clusterBonus += SMALL_PIECE_CLUSTER_BONUS * 2;
+          clusterBonus += SMALL_PIECE_CLUSTER_BONUS * 2 * densityMultiplier;
         }
         // Weaker bonus for general small piece proximity ("触媒利用")
+        // v140: Applied densityMultiplier
         else if (existingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
-          clusterBonus += SMALL_PIECE_CLUSTER_BONUS * 0.5;
+          clusterBonus += SMALL_PIECE_CLUSTER_BONUS * 0.5 * densityMultiplier;
         }
       }
     }
@@ -262,6 +262,16 @@ export function decide(boardState) {
 
         // v130: Bonus for pipeline maintenance
         currentPlacementScore += calculatePipelineBonus(pieceToDrop, x, simulatedY, boardState.pieces);
+
+        // v140: Early Game Central Small Piece Bonus
+        // Encourages small pieces (type 1-3) to be placed centrally when the board is relatively empty
+        if (boardState.pieces.length < 5 && pieceToDrop.type <= 3) {
+            if (Math.abs(x) < 1.0) { // Central area
+                currentPlacementScore += 700; // Strong bonus for early central small piece
+            } else if (Math.abs(x) < 2.0) { // Slightly off-center but still good
+                currentPlacementScore += 300;
+            }
+        }
 
         // Refined in v123, v126 & v128: Enhanced Large Piece Aggregation
         // This helps with "大型ピースの片側集約" principle.
