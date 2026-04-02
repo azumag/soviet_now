@@ -103,6 +103,7 @@ def explain_reasons(reason_text):
         "depth": "branch depth 上限に到達した。",
         "games": "branch games 上限に到達した。",
         "patience": "branch best が更新されない状態が続いた。",
+        "soft_fail": "anchor 比の通常回帰閾値に達した。",
         "hard_fail": "anchor 比で明確な悪化が出て即時停止条件に触れた。",
         "branch": "単一戦略ではなく branch 全体の失敗として判定した。",
         "anchor_direct": "branch 状態なしで anchor 比の即時悪化として判定した。",
@@ -1713,7 +1714,8 @@ if current["n"] < min_games_current:
     raise SystemExit
 
 if not branch_active:
-    if hard_breach >= hard_min_breach_count and current_hash != anchor_hash:
+    if curr_breach >= min_breach_count and current_hash != anchor_hash:
+        direct_reason = "hard_fail+soft_fail+anchor_direct" if hard_breach >= hard_min_breach_count else "soft_fail+anchor_direct"
         print(
             "REGRESSION:"
             f"mode=anchor_direct,rollback_hash={anchor_hash},anchor_hash={anchor_hash},"
@@ -1724,7 +1726,7 @@ if not branch_active:
             "best_hash=,best_comp=0.0,best_p50=0.0,best_p25=0.0,best_n=0,"
             f"best_comp_gap={curr_comp_gap:.1f},best_p50_gap={curr_p50_gap:.1f},best_p25_gap={curr_p25_gap:.1f},best_breach_count={curr_breach},"
             "branch_depth=0,branch_games=0,branch_patience=0,"
-            "reasons=hard_fail+anchor_direct"
+            f"reasons={direct_reason}"
         )
         raise SystemExit
     print("OK")
