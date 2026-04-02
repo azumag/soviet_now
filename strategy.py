@@ -63,6 +63,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v480: suppress additive guidance bonuses at rp>=3+NO — extend postmortem constraint to axes 5.6/9.6b
+     # Postmortem: "additive bonus (stacking, proximity, growth_center) は rp>=3+NO では抑制すること"
+     # Axis 9.6 stacking already suppressed at rp>=3 by v465 guard. But axes 5.6 (base 60,
+     # max ~120 w/ congestion) and 9.6b (base 120, max ~360 w/ congestion) still fire at
+     # rp>=3+NO, creating ~480 additive noise vs ~180-360 height differentiation — noise
+     # overwhelms height signal, causing scatter. Worst games die at rp=5-8+NO with max
+     # type stuck at 12. Best game Russia phase at rp=0-1 — completely unaffected.
+     # Protected strategy (median 12789) has no axes 5.6/9.6b at all.
+     # Fixes rollback failure mode: additive_bonus_overwhelms_height_differentiation
+     # refs: tmp/state/last_rollback_postmortem.md (additive noise, rp>=3+NO suppression),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 16.7% low vs 13.5% high, avg_delta=1.2),
+     #       game_history/20260402_212755_score0761.jsonl T55-62 (rp=5-8, NO, max type=12),
+     #       game_history/20260402_213540_score0996.jsonl T73-80 (rp=3, NO, max type=12),
+     #       game_history/20260402_212050_score3866.jsonl T99-143 (rp=0-1, unaffected),
+     #       protected_e6f534c37e28_median12789_strategy.py (no axes 5.6/9.6b)
      # v479: extend AVOID_BLOCK suppression at congested deadline — fix edge scatter gap
      # Worst T58/T60: deadline+rp=5/6+pc=28/30+max_y<2.5 — AVOID_BLOCK pushed to x=3.0 edge.
      # Protected (median 12789) has no AVOID_BLOCK at all. New condition covers this gap.
@@ -1167,7 +1182,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260328_151437_score3261.jsonl T112-119,
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
         # Fixes postmortem failure mode: type scattering → piece_count accumulation
-        if merge_grade == "NO" and same_type_stack_top is not None:
+        # v480: suppress at rp>=3+NO — extends postmortem constraint to axis 9.6b.
+        # Same-type proximity (max ~360 at pc=40) creates noise that overwhelms height
+        # differentiation at rp>=3+NO. Height penalty should be sole differentiator per postmortem.
+        if merge_grade == "NO" and same_type_stack_top is not None and not (reactive_pair_count >= 3):
             if not (current_type_has_reactive or current_type_has_near):
                 # v371: Find same-type piece closest to merged_type(N+1) for chain building.
                 # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
@@ -1515,8 +1533,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
         # Fixes rollback failure mode: type scattering → piece_count accumulation
         # v407: removed russia_phase guard — growth center guidance now active in ALL phases
+        # v480: suppress growth center guidance at rp>=3+NO — postmortem constraint
+        # At rp>=3+NO, additive bonuses create noise that overwhelms height differentiation.
+        # Growth center guidance (max ~120 at pc=40) is counterproductive: it directs pieces
+        # toward the highest-type piece, but that position may not be the lowest available.
+        # Height penalty should be the sole differentiator at rp>=3+NO per postmortem.
+        guidance_suppressed_by_rp = (reactive_pair_count >= 3 and merge_grade == "NO")
         max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
-        if max_type_on_board >= 6:
+        if max_type_on_board >= 6 and not guidance_suppressed_by_rp:
             # Find the deepest (lowest y) highest-type piece as growth center
             growth_center = min(
                 (p for p in pieces if p.get("type") == max_type_on_board),
