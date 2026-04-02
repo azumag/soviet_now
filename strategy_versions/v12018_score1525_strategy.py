@@ -18,7 +18,7 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-           5.6. Growth center proximity - v471: base 90→100 final postmortem step — unconditional activation maintained
+           5.6. Growth center proximity - v458: reduced magnitude per postmortem (base 60, congestion 0.08, cap 2.0)
             6. Chain merge bonus - Evaluate possibility of further merges after merge (v466: NEAR suppressed at pc>=32+deadline)
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
@@ -41,7 +41,7 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v465: v357ガード復元(rp>=3+NOで抑制) + v408: pc混雑スケーリング(9.6b同一)
-             9.6b. Same-type proximity guidance - v468: base 120→160 per v459 removal gap vs protected
+             9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
@@ -63,61 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v471: finalize axis 5.6 growth center proximity base 90→100 — reaching postmortem target (base 100)
-     # Postmortem v455: original base 100 was effective; v458 reduced to 60 (too aggressive); v469 restored to
-     # 80; v470 raised to 90. v470 still left HEIGHT_CONTROL gap: 20.1% low vs 14.3% high in batch. At HIGH
-     # phase (height_mult=1.8, height_diff~90), base 90*1.08=97.2 barely exceeds height diff. Base 100*1.08=108
-     # provides clearer 20% margin. At MEDIUM (height_diff~70): 100*1.08=108 vs 90*1.08=97.2 (both exceed).
-     # At LOW (height_diff~60): both already exceed. No activation filter change — unconditional when
-     # max_type>=6 per postmortem constraint. congestion cap 2.0 limits max to 200 << axis 8.8 (-4500).
-     # gc_y decay prevents high growth centers from overriding height control. This completes the
-     # postmortem trajectory: 100→60→80→90→100. Fixes rollback failure mode: HEIGHT_CONTROL scatter
-     # from weak growth center guidance at HIGH/MEDIUM phase transitions.
-     # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 16.7% low gap, low 20.1% vs high 14.3%),
-     #       tmp/state/last_rollback_postmortem.md (v455 target base 100, magnitude allowance),
-     #       game_history/20260402_084504_score0369.jsonl (worst, early scatter T1-T4, rp=6 NO merge T42-50),
-     #       game_history/20260402_082216_score2822.jsonl (best, concentrated type 14 at x≈0.7),
-     #       tmp/change_log.txt (v458→v469→v470 trajectory), strategy.py.staging (v470)
-     # v469: increase axis 5.6 growth center proximity base 60→80 per v455 postmortem magnitude allowance
-     # Postmortem v455: axis 5.6 at base 235(pc=40) was effective; current base 60 yields only 118(pc=40).
-     # Gap: protected strategy (median 12789) has no 5.6 but strong flat guidance; current 5.6 too weak to
-     # redirect scattered HEIGHT_CONTROL placements toward max_type cluster. Worst game T30-T40: type 6-7
-     # cluster at x≈0 but pieces placed at x=±3.0 (proximity 60 < height diff 180+).
-     # At pc=40, horiz_dist=0: old 60*2.48=148.8; new 80*2.48=198.4 (closer to height_penalty 180).
-     # At pc=33, horiz_dist=0: old 60*1.60=96; new 80*1.60=128 (still < height, not overriding).
-     # This is moderate step toward postmortem target of 100 — no 5.6 activation filter changes.
-     # refs: tmp/improve_brief.md, tmp/batch_summary.txt (HEIGHT_CONTROL 21.1% low vs 16.5% high),
-     #       game_history/20260402_064613_score0701.jsonl (worst, T30-T40 scatter),
-     #       tmp/state/last_rollback_postmortem.md (v455, magnitude allowance),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-     # v468: increase axis 9.6b base proximity bonus 120→160 — close guidance gap from v459 9.5 removal
-     # v459 removed axis 9.5 (+300 SAME_TYPE_STACK) keeping only 9.6b (~120), weakening net
-     # same-type proximity guidance vs protected strategy (median 12789, retains +300, no 9.6b).
-     # At pc=30, horiz_dist=0: old 120*1.24=148.8 < height_penalty(180); new 160*1.24=198.4 ≈ height.
-     # At pc=33, horiz_dist=0: old 120*1.60=192; new 160*1.60=256 > height, enabling proximity
-     # to win at moderate congestion where worst games accumulate scattered pieces.
-     # Batch: HEIGHT_CONTROL 19.2% low vs 16.8% high — the 2.4pp gap indicates insufficient guidance.
-     # Worst game T50: type 1 at x=0.97-1.2, placement at x=-2.8 (proximity ~120 < height diff).
-     # Advice: "同タイプが来たらその上に置く" + "孤立配置を避けて中央集約を優先する" (kbb246).
-     # rp_guidance_suppressed still zeros bonus in extreme danger; target_y decay penalizes high targets.
-     # 160 is moderate increase (33%) — well below protected's +300 and axis 8.8 (-4500).
-     # Fixes: piece_count accumulation from scattered NO-merge placement (HEIGHT_CONTROL gap)
-     # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 19.2% low vs 16.8% high),
-     #       advice.md (Pitman_live, kbb246), tmp/improve_brief.md (p25 focus),
-     #       game_history/20260402_053905_score0541.jsonl T50 (type 1 at x=0.97, placed x=-2.8),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (axis 9.5 +300),
-     #       tmp/change_log.txt (v459: axis 9.5 +300 removed), strategy.py.staging (v459)
-     # v467: extend axis 9.6b proximity guidance to rp>=3+reactive gap (0.4x reduced bonus)
-     # At rp>=3+NO merge+current_type has reactive, neither axis 9.6 (v465 guard) nor 9.6b
-     # (requires no reactive) fires → no guidance → HEIGHT_CONTROL/AVOID_BLOCK scatter. Worst game
-     # T72-T76: rp=4, merge_available=false, AVOID_BLOCK pushes to x=3.0 edges, pc 25→29, 0 merges.
-     # Extra-low game T72-T79: rp=4, merge_available=false 6/8 turns, pc 31→36, 1 merge succeeded.
-     # Extension fills gap with small bonus (~50-120) that provides tie-breaking for same-type
-     # proximity without offsetting axis 8.8 (-4500). v465 noise concern respected: 0.4x reduction.
-     # Fixes failure mode: piece_count accumulation from no guidance at rp>=3+reactive+NO
-     # refs: game_history/20260402_051532_score1143.jsonl (T72-T76), game_history/20260402_050854_score1354.jsonl (T72-T79),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py, tmp/batch_summary.txt,
-     #       tmp/state/last_rollback_postmortem.md (v465 guard, axis 9.6 gap), strategy.py.staging (v466)
      # v466: raise NEAR suppression threshold pc>=28→pc>=32 — restore NEAR merge at medium pc
      # v463/v464 suppressed NEAR CHAIN_MERGE and NEAR bonus at pc>=28+deadline to prevent
      # catastrophic NEAR fails. But analysis shows worst games die at pc=29-34 where the
@@ -1206,10 +1151,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
         # Fixes postmortem failure mode: type scattering → piece_count accumulation
         if merge_grade == "NO" and same_type_stack_top is not None:
-            # v467: extend to rp>=3 — fills guidance gap where neither 9.6 (v465 guard)
-            # nor original 9.6b (requires no reactive) fires. At rp<3+reactive, axis 9.6
-            # handles stacking; at rp>=3+reactive, this extension provides proximity tie-breaking.
-            if not (current_type_has_reactive or current_type_has_near) or reactive_pair_count >= 3:
+            if not (current_type_has_reactive or current_type_has_near):
                 # v371: Find same-type piece closest to merged_type(N+1) for chain building.
                 # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
                 merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
@@ -1238,12 +1180,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Postmortem: piece_count is the key predictor of final score.
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                    proximity_bonus = max(0, 160.0 - horiz_dist * 50.0)
-                    # v467: at rp>=3+current_type has reactive (extension case), reduce bonus
-                    # by 60% to respect v465 noise concern. Max ~50-120 vs axis 8.8 (-4500).
-                    # Original 9.6b (no reactive) keeps full bonus for stronger guidance.
-                    if reactive_pair_count >= 3 and (current_type_has_reactive or current_type_has_near):
-                        proximity_bonus *= 0.4
+                    proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
                     if piece_count >= 28:
                         # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                         # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
@@ -1545,8 +1482,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 gc_y = growth_center.get("y", -10)
                 horiz_dist = abs(x - gc_x)
                 if horiz_dist < 2.5:
-                    # v471: base 90→100 — final postmortem step to target magnitude
-                    proximity = max(0, 100.0 - horiz_dist * 40.0)
+                    # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
+                    proximity = max(0, 60.0 - horiz_dist * 40.0)
                     # Decay if growth center is high — don't override height control
                     if gc_y > 0:
                         proximity *= max(0.0, 1.0 - gc_y * 0.4)
