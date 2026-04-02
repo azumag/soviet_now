@@ -63,6 +63,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v475: merge drought critical — suppress height_mult relaxation at pc>=35+NO merge
+     # Re-applies v472 height_mult suppression (rolled back as collateral of v466 NEAR suppression).
+     # Protected strategy (median 12789) has NO relaxation gates — validates suppression at high pc.
+     # Worst game (773): pc=44→49, relaxation gates active, NEAR fails at T71/T74, double penalty.
+     # Best game (2750): pc=30→34, only single DEADLINE_CROSSED penalty, clean recovery.
+     # Adds merge_drought_critical guard: piece_count>=35 and merge_grade=="NO" disables all 3 gates.
+     # Does NOT change NEAR suppression threshold (postmortem hard constraint: no NEAR changes below pc>=35).
+     # Does NOT include reactor urgency amplifier (v472b, impact unknown per postmortem).
+     # Fixes failure mode: height_mult relaxation at high pc enabling scatter → runaway max_y
+     # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       game_history/20260402_132552_score0773.jsonl T65-T78 (pc=44-49, NEAR fails, double penalty)
      # v474: restore axis 5.6 growth center proximity base 60→100 — re-apply v471 per postmortem
      # v471 (base 100) was individually validated in v469→v470→v471 progression but rolled back as
      # cascade collateral of v466 NEAR suppression. Postmortem explicitly identified v466 (NEAR at pc>=32)
@@ -1279,9 +1290,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_010847_score0651.jsonl turns 44-47, game_history/20260324_010300_score2461.jsonl
         # Fixes rollback failure mode: deadline_crossed時の危険ピース存在下での即時併合取りこぼし（axis 2 danger_piece_count条件追加）
 
+        # v475: merge drought critical — suppress all height_mult relaxation gates at high pc+NO merge
+        merge_drought_critical = piece_count >= 35 and merge_grade == "NO"
+
         # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
         # danger_piece_count==0の場合に限りheight_multを0.2に緩和して、盤面圧縮（tighter board）を優先し、即時併合機会を確保
-        if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
+        if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0 and not merge_drought_critical:
             # v431: only relax when current type has reactive/near guidance
             # Without guidance for current type, relaxation enables HEIGHT_CONTROL scatter (worst T55-62)
             # With guidance, relaxation allows axis 9.6 stacking to compete with height penalty
@@ -1303,7 +1317,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133,
         #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
+        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and not merge_drought_critical:
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 0.8
@@ -1324,7 +1338,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127,
         #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
+        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and not merge_drought_critical:
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
