@@ -260,6 +260,7 @@ export async function calibrate(screenshotPath) {
     pixelsPerUnit,
     confidence,
     method,
+    isFallback: method === 'fallback',
     timestamp: new Date().toISOString(),
   };
 
@@ -277,7 +278,12 @@ export async function calibrate(screenshotPath) {
  */
 export function loadCalibration() {
   if (existsSync(CALIBRATION_PATH)) {
-    return JSON.parse(readFileSync(CALIBRATION_PATH, 'utf-8'));
+    const calibration = JSON.parse(readFileSync(CALIBRATION_PATH, 'utf-8'));
+    if (calibration?.isFallback) {
+      console.log('[calibration] Ignoring cached fallback calibration; recalibration required');
+      return null;
+    }
+    return calibration;
   }
   return null;
 }

@@ -346,6 +346,68 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
  *   GAMEOVER: ゲームオーバー
  */
 function detectGameState(data, width, height, board) {
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+  if (board && Number.isFinite(board.left) && Number.isFinite(board.right) && Number.isFinite(board.top) && Number.isFinite(board.bottom)) {
+    const boardLeft = clamp(Math.floor(board.left), 0, Math.max(0, width - 1));
+    const boardRight = clamp(Math.ceil(board.right), boardLeft + 1, width);
+    const boardTop = clamp(Math.floor(board.top), 0, Math.max(0, height - 1));
+    const boardBottom = clamp(Math.ceil(board.bottom), boardTop + 1, height);
+    const boardWidth = Math.max(1, boardRight - boardLeft);
+    const boardHeight = Math.max(1, boardBottom - boardTop);
+
+    let boardDark = 0;
+    let titleBright = 0;
+    let buttonWarm = 0;
+    let boardSamples = 0;
+    let titleSamples = 0;
+    let buttonSamples = 0;
+
+    const boardStep = 6;
+    const titleLeft = boardLeft + Math.floor(boardWidth * 0.22);
+    const titleRight = boardLeft + Math.floor(boardWidth * 0.78);
+    const titleTop = boardTop + Math.floor(boardHeight * 0.12);
+    const titleBottom = boardTop + Math.floor(boardHeight * 0.44);
+    const buttonLeft = boardLeft + Math.floor(boardWidth * 0.18);
+    const buttonRight = boardLeft + Math.floor(boardWidth * 0.82);
+    const buttonTop = boardTop + Math.floor(boardHeight * 0.58);
+    const buttonBottom = boardTop + Math.floor(boardHeight * 0.88);
+
+    for (let y = boardTop; y < boardBottom; y += boardStep) {
+      for (let x = boardLeft; x < boardRight; x += boardStep) {
+        const idx = (y * width + x) * 4;
+        const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+        const brightness = (r + g + b) / 3;
+        const saturation = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
+        boardSamples++;
+        if (brightness < 120) boardDark++;
+
+        if (x >= titleLeft && x < titleRight && y >= titleTop && y < titleBottom) {
+          titleSamples++;
+          if (brightness > 180 && saturation < 0.28) titleBright++;
+        }
+
+        if (x >= buttonLeft && x < buttonRight && y >= buttonTop && y < buttonBottom) {
+          buttonSamples++;
+          if (r > 170 && g > 70 && g < 210 && b < 160 && brightness > 120) buttonWarm++;
+        }
+      }
+    }
+
+    const boardDarkRatio = boardSamples > 0 ? boardDark / boardSamples : 0;
+    const titleBrightRatio = titleSamples > 0 ? titleBright / titleSamples : 0;
+    const buttonWarmRatio = buttonSamples > 0 ? buttonWarm / buttonSamples : 0;
+
+    if (
+      boardDarkRatio > 0.28 &&
+      titleBrightRatio > 0.010 &&
+      buttonWarmRatio > 0.018 &&
+      (titleBrightRatio + buttonWarmRatio) > 0.040
+    ) {
+      return 'GAMEOVER';
+    }
+  }
+
   // 画面中央列 (自分のプレイエリア) のみ分析
   // ゲームボード: 中央30-70%が暗い背景
   const centerLeft = Math.floor(width * 0.35);
