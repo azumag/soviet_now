@@ -50,7 +50,12 @@ update_best() {
 		best_total=$(ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py 2>/dev/null | wc -l | tr -d ' ')
 		local best_delete=$((best_total - 10))
 		if [ "$best_delete" -gt 0 ]; then
-			ls -1 "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py | sort | head -n "$best_delete" | while read -r f; do
+			for f in "$STRATEGY_VERSIONS_DIR"/best_score*_strategy.py; do
+				[ -f "$f" ] || continue
+				score_part=$(basename "$f" | sed -En 's/^best_score([0-9]+)_strategy\.py$/\1/p')
+				[ -n "$score_part" ] || continue
+				printf '%s|%s\n' "$score_part" "$f"
+			done | sort -t'|' -k1,1n | head -n "$best_delete" | cut -d'|' -f2- | while read -r f; do
 				rm -f "$f"
 				log "[HALL OF FAME] pruned: $(basename "$f")"
 			done
