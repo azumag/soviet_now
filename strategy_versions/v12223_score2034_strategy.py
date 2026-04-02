@@ -64,6 +64,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v484: reduce axis 1.5 NEAR deadline risk penalty scaling 300→200 — align with protected strategy
+     # Protected strategy (median 12789) has NO axis 1.5 and achieves better eval median than
+     # current (12176.5 vs 12789). Postmortem "prioritize": evaluate NEAR penalty risk vs reward.
+     # NEAR success rate 68.5%, avg_delta=36-47 at height → positive expected value (~27/attempt).
+     # At deadline+y=2.0+pc=30: old penalty=600 made NEAR net zero; new penalty=400 makes NEAR
+     # net +200, enabling recovery attempts. At pc>=33+deadline+y>=1.0: axis 1.7 (-600) dominates,
+     # so this change has negligible effect there. Fixes rollback failure mode: NEAR penalty
+     # over-deterrence at moderate height (postmortem: penalty is recovery impediment)
+     # refs: tmp/state/last_rollback_postmortem.md, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/batch_summary.txt (NEAR avg_delta=36-47), game_history/20260403_013401_score1111.jsonl T71-T74,
+     #       game_history/20260403_013056_score2718.jsonl T121-T124, tmp/change_log.txt, tmp/improve_brief.md
      # v483: axis 9.7 pipeline guidance congestion scaling — match axis 9.6b formula
      # Adds piece_count congestion scaling (0.12 from pc>=28, cap 3.0) to pipeline-aware placement.
      # This is the ONLY guidance axis missing congestion scaling, making its ~80 bonus negligible in
@@ -923,7 +934,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
             else:
                 pc_risk_scale = 1.0
-            near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
+            # v484: reduce scaling 300→200 — NEAR at deadline has positive expected value
+            # Postmortem "prioritize": "成功した時の平均 score_delta が failure 時の pc 増加コスト
+            # を上回るなら、penalty は回復を阻害する". NEAR 68.5% success, avg_delta=36-47.
+            # Protected strategy (median 12789) has NO axis 1.5, validating less suppression.
+            # At pc>=33+deadline+y>=1.0: axis 1.7 (-600) dominates, so effect is negligible.
+            near_risk_penalty = landing_y * 200.0 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
