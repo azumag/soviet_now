@@ -307,7 +307,7 @@ PROMPT
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 	printf '%s' "$talk" > "$talk_file"
 	log "[RADIO:rollback] 生成完了 (${#talk}字)"
-	SAY_CONTEXT_LABEL="radio:rollback" ./say_enqueue.sh "$talk_file" "${RADIO_SAY_RATE:-150}" 0 || {
+	SAY_VOICEVOX_SPEAKER_OVERRIDE=13 SAY_CONTEXT_LABEL="radio:rollback" ./say_enqueue.sh "$talk_file" "${RADIO_SAY_RATE:-150}" 0 || {
 		log "[RADIO:rollback] 再生失敗"
 		rm -f "$talk_file"
 		return 1
