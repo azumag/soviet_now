@@ -9,7 +9,7 @@ Game Overview:
 
       Decision Logic (14 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-         1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
+         (axis 1.5 NEAR merge deadline risk removed in v485 — aligned with protected strategy)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
@@ -64,17 +64,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v484: reduce axis 1.5 NEAR deadline risk penalty scaling 300→200 — align with protected strategy
+     # v485: remove axis 1.5 (NEAR deadline risk penalty) — align with protected strategy
      # Protected strategy (median 12789) has NO axis 1.5 and achieves better eval median than
-     # current (12176.5 vs 12789). Postmortem "prioritize": evaluate NEAR penalty risk vs reward.
-     # NEAR success rate 68.5%, avg_delta=36-47 at height → positive expected value (~27/attempt).
-     # At deadline+y=2.0+pc=30: old penalty=600 made NEAR net zero; new penalty=400 makes NEAR
-     # net +200, enabling recovery attempts. At pc>=33+deadline+y>=1.0: axis 1.7 (-600) dominates,
-     # so this change has negligible effect there. Fixes rollback failure mode: NEAR penalty
-     # over-deterrence at moderate height (postmortem: penalty is recovery impediment)
-     # refs: tmp/state/last_rollback_postmortem.md, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
-     #       tmp/batch_summary.txt (NEAR avg_delta=36-47), game_history/20260403_013401_score1111.jsonl T71-T74,
-     #       game_history/20260403_013056_score2718.jsonl T121-T124, tmp/change_log.txt, tmp/improve_brief.md
+     # current (12682.5 vs 12789). v484 already weakened axis 1.5 (300→200) but cumulative NEAR
+     # suppression (axis 1.7 + axis 8.6 reduction + chain_suppressed) still over-deters recovery
+     # NEAR attempts. Postmortem "prioritize": "成功した時の平均 score_delta が failure 時の pc
+     # 増加コストを上回るなら、penalty は回復を阻害する". NEAR EV≈30/attempt (68.5%
+     # success, avg_delta=36-47). Protected strategy validates removal: it recovers at deadline via NEAR
+     # (log 0780 T46-47: pc=31 NEAR chain +36, +121). At pc>=33+deadline+y>=1.0:
+     # axis 1.7 (-600) still dominates so effect is negligible there. Fixes rollback failure mode:
+     # NEAR penalty over-deterrence at moderate height prevented recovery attempts in pc=28-32 zone
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no axis 1.5),
+     #       tmp/batch_summary.txt (NEAR avg_delta=36-47, HIGH_CONTROL 15.8% low vs 12.3% high),
+     #       game_history/20260402_172550_score0780.jsonl T46-T47 (pc=31 NEAR chain recovery),
+     #       tmp/state/last_rollback_postmortem.md (NEAR chain recovery critical zone pc=28-32),
+     #       tmp/change_log.txt (v484 reduction was step in right direction)
      # v483: axis 9.7 pipeline guidance congestion scaling — match axis 9.6b formula
      # Adds piece_count congestion scaling (0.12 from pc>=28, cap 3.0) to pipeline-aware placement.
      # This is the ONLY guidance axis missing congestion scaling, making its ~80 bonus negligible in
@@ -925,23 +929,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       analyze_board.py (reactor deadline_margin field)
         # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
-        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
-            risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
-            # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
-            # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
-            # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
-            if piece_count >= 33:
-                pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
-            else:
-                pc_risk_scale = 1.0
-            # v484: reduce scaling 300→200 — NEAR at deadline has positive expected value
-            # Postmortem "prioritize": "成功した時の平均 score_delta が failure 時の pc 増加コスト
-            # を上回るなら、penalty は回復を阻害する". NEAR 68.5% success, avg_delta=36-47.
-            # Protected strategy (median 12789) has NO axis 1.5, validating less suppression.
-            # At pc>=33+deadline+y>=1.0: axis 1.7 (-600) dominates, so effect is negligible.
-            near_risk_penalty = landing_y * 200.0 * risk_factor * pc_risk_scale
-            score -= near_risk_penalty
-            reasons.append("NEAR_DEADLINE_RISK")
+        # v485: axis 1.5 NEAR deadline risk penalty REMOVED — aligned with protected strategy
+        # (median 12789). NEAR EV≈30/attempt is positive; axis 1.7 (-600) still guards
+        # pc>=33+deadline+y>=1.0 zone. Does not violate postmortem constraints.
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
