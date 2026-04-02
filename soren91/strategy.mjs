@@ -1,21 +1,23 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v147)
+ * strategy.mjs - ドロップ位置決定戦略 (v148)
  *
- * v147: v146をベースに、ゲーム分析から見られた「max_yがDEADLINE_Yを大きく超えている」という最もクリティカルな課題に
- *       直接対処し、高さ管理の厳格化と先読みの有効性向上を図ります。
- *       これは、デッドラインによるゲームオーバーをより確実に回避し、戦略の安定性を向上させることを目的とします。
+ * v148: v147をベースに、ゲーム分析から見られた高いmax_yの発生と、特定のX座標（特に-2.75）へのドロップの偏りを
+ *       さらに緩和するための改善を適用します。これにより、ボードの高さ管理をさらに強化し、よりバランスの取れた
+ *       ゲームプレイと生存ターンの安定化を目指します。
  *
- *      主な改善点 (v146からの調整点):
- *      1.  **高さ管理のさらなる厳格化**:
- *          - `settlingBuffer` を `1.9` から `2.0` に増加させ、落下後のピースの予測高さをさらに保守的に見積もるように変更。
- *            物理的な不確実性や凸ポリゴンの挙動をより広く考慮します。
- *          - `simulatedY + pieceToDrop.r > DEADLINE_Y - 0.5` のハードクリティカルペナルティの閾値を `simulatedY + pieceToDrop.r > DEADLINE_Y` に変更。
- *            これにより、ピースの**最上部がデッドライン(DEADLINE_Y=2.5)を超えた瞬間に極めて高いペナルティを与える**ようにします。
- *            ゲーム分析で`max_y`が`DEADLINE_Y`を大きく超えていた点に対し、直接的な対策を講じます。
- *      2.  **1手先読み (Look-ahead) のボーナス強化**:
- *          - `calculateLookAheadBonus` 関数内の割引率を `0.2` から `0.35` に増加。
- *            これにより、次に落ちるピースの併合機会をより重視し、パイプライン維持と連鎖設計を積極的に促します。
- *            特に初期段階での積極的な併合形成に貢献することを期待します。
+ *      主な改善点 (v147からの調整点):
+ *      1.  **高さ管理のさらなる強化**:
+ *          - `settlingBuffer` を `2.0` から `2.1` に微増。物理エンジンの不確実性や凸ポリゴンの挙動に対する
+ *            予測の高さをさらに保守的に見積もり、デッドライン到達リスクを早期に検出します。
+ *      2.  **大型ピースの高さ管理の厳格化**:
+ *          - 大型ピース（LARGE_PIECE_THRESHOLD以上）が片側に集約される際の高さペナルティを強化。
+ *          - ペナルティ開始Y座標 `LARGE_PIECE_HIGH_PENALTY_START_Y` を `0.5` から `0.0` へ引き下げ、
+ *            より低い位置からペナルティを適用開始します。
+ *          - ペナルティの倍率 `LARGE_PIECE_HIGH_PENALTY_MULTIPLIER` を `800` から `1200` に増加させ、
+ *            高さに対する忌避度を強めます。これは、ゲーム分析で観測された `max_y` が `DEADLINE_Y` を
+ *            超える現象に対し、大型ピースの積み上がり方に起因する可能性を考慮し、より積極的に
+ *            大型ピースによる高積み上げを抑制するものです。特定のX座標への偏りが高さリスクを増大させる
+ *            可能性にも対処します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -37,6 +39,9 @@ const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered
 const SMALL_PIECE_CLUSTER_BONUS = 800; // Maintained from v141
 const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
 
+// v148: New constants for more aggressive large piece height management
+const LARGE_PIECE_HIGH_PENALTY_START_Y = 0.0; // Start penalizing large pieces getting high at Y=0.0 (was 0.5)
+const LARGE_PIECE_HIGH_PENALTY_MULTIPLIER = 1200; // Increased from 800 to make it more impactful
 
 // Garbage Block Management Constants
 const GARBAGE_MERGE_BONUS = 3000;
@@ -63,8 +68,8 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  // v147: Increased from 1.9 (v146) to 2.0 for even more conservative height estimation.
-  const settlingBuffer = 2.0;
+  // v148: Increased from 2.0 (v147) to 2.1 for even more conservative height estimation.
+  const settlingBuffer = 2.1;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
@@ -329,9 +334,9 @@ export function decide(boardState) {
             // Increased from 1200 (v140) to 1300 (v141, maintained in v147)
             if ((avgLargePieceX < 0 && x < 0) || (avgLargePieceX > 0 && x > 0)) {
               currentPlacementScore += 1300;
-              // v146: Add a penalty if this aggregated large piece is getting too high (multiplier increased from 700 to 800)
-              if (simulatedY > 0.5) { // Arbitrary threshold for "too high" for large pieces
-                  currentPlacementScore -= (simulatedY - 0.5) * 800; // Penalty scales with height
+              // v148: Apply more aggressive height penalty for large pieces on the aggregated side
+              if (simulatedY > LARGE_PIECE_HIGH_PENALTY_START_Y) {
+                  currentPlacementScore -= (simulatedY - LARGE_PIECE_HIGH_PENALTY_START_Y) * LARGE_PIECE_HIGH_PENALTY_MULTIPLIER;
               }
             } else if (Math.abs(avgLargePieceX) < 0.5 && Math.abs(x) < 0.5) { // If large pieces are mostly centered, and we're dropping centrally
                currentPlacementScore += 50;
