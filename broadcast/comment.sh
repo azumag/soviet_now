@@ -877,6 +877,70 @@ sys.stdout.write(updated)
 PY
 }
 
+_extract_sing_score() {
+	python3 - <<'PY'
+import json
+import re
+import sys
+
+text = sys.stdin.read()
+lines = text.splitlines(keepends=True)
+marker_re = re.compile(r'^[ \t]*===SING===[ \t]*$')
+
+for start_idx, line in enumerate(lines):
+    if not marker_re.match(line.rstrip('\n')):
+        continue
+    for end_idx in range(start_idx + 1, len(lines) + 1):
+        candidate = ''.join(lines[start_idx + 1:end_idx]).strip()
+        if not candidate:
+            continue
+        try:
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(payload, dict) and "notes" in payload:
+            sys.stdout.write(candidate)
+            raise SystemExit(0)
+    raise SystemExit(1)
+
+raise SystemExit(1)
+PY
+}
+
+_remove_sing_score_block() {
+	python3 - <<'PY'
+import json
+import re
+import sys
+
+text = sys.stdin.read()
+lines = text.splitlines(keepends=True)
+marker_re = re.compile(r'^[ \t]*===SING===[ \t]*$')
+
+for start_idx, line in enumerate(lines):
+    if not marker_re.match(line.rstrip('\n')):
+        continue
+    for end_idx in range(start_idx + 1, len(lines) + 1):
+        candidate = ''.join(lines[start_idx + 1:end_idx]).strip()
+        if not candidate:
+            continue
+        try:
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(payload, dict) and "notes" in payload:
+            remove_until = end_idx
+            if remove_until < len(lines) and marker_re.match(lines[remove_until].rstrip('\n')):
+                remove_until += 1
+            updated = ''.join(lines[:start_idx] + lines[remove_until:])
+            sys.stdout.write(updated)
+            raise SystemExit(0)
+    raise SystemExit(1)
+
+sys.stdout.write(text)
+PY
+}
+
 _resolve_strategy_advice_file() {
 	local mode="${1:-main}"
 	if [ "$mode" = "soren91" ]; then
@@ -1364,8 +1428,13 @@ RETRYCOMMENT
 			# ===SING=== セクションを抽出（===ADVICE=== より先に処理）
 			local sing_score=""
 			if echo "$attempt_talk" | grep -q '^===SING==='; then
-				sing_score=$(echo "$attempt_talk" | sed -n '/^===SING===/,/^===SING===/ p' | sed '1d;$d')
-				attempt_talk=$(echo "$attempt_talk" | sed '/^===SING===/,/^===SING===/ d')
+				sing_score=$(printf '%s' "$attempt_talk" | _extract_sing_score || true)
+				if [ -n "$sing_score" ]; then
+					attempt_talk=$(printf '%s' "$attempt_talk" | _remove_sing_score_block)
+				else
+					log "[COMMENT] malformed ===SING=== block ignored"
+					attempt_talk=$(printf '%s' "$attempt_talk" | sed '/^[[:space:]]*===SING===[[:space:]]*$/d')
+				fi
 			fi
 			# 歌唱宣言ありだが ===SING=== なし → デフォルト楽譜（きらきら星）で補完
 			if [ -z "$sing_score" ] && echo "$attempt_talk" | grep -Eq '歌います|歌ってみます|歌いましょう|歌をお届け|歌声をお届け|をどうぞ。$|うたいます'; then
