@@ -63,6 +63,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v478: HIGH_PC_NEAR_PENALTY threshold pc>=33→pc>=28 — align with CHAIN_MERGE NEAR suppression
+     # Worst game (score0780) T42(pc=29) and T45(pc=31): NEAR at deadline+landing_y>=1.0 failed
+     # (delta=0), adding pieces without merge → scatter → CROSSES_DEADLINE → death spiral.
+     # v422 gap: threshold pc>=33 misses the critical pc=28-32 zone. v463 CHAIN_MERGE NEAR
+     # suppression is validated at pc>=28; this change aligns axis 1.7 to same threshold.
+     # At pc=28+deadline+landing_y>=1.0: cancels base NEAR bonus (600*merge_mult). Other
+     # bonuses (reactive, danger_zone) still apply → NEAR not blocked, only deterred.
+     # DIRECT merges unaffected. No postmortem constraint violated (change is to axis 1.7,
+     # not CHAIN_MERGE NEAR suppression which stays at pc>=28).
+     # refs: game_history/20260402_172550_score0780.jsonl T42,T45 (NEAR fail at pc=29,31),
+     #       game_history/20260402_172351_score5190.jsonl T187 (NEAR fail at pc=30, survived),
+     #       tmp/batch_summary.txt (NEAR avg_delta=29.5 but failure rate 31.5% at deadline),
+     #       strategy.py.staging L928 (v422 threshold), tmp/state/last_rollback_postmortem.md
+     # Fixes: NEAR failures at pc=28-32+deadline adding pieces without merge benefit
      # v477: merge drought critical — lower threshold pc>=35→pc>=30 per protected strategy
      # Protected strategy (median 12789) has NO relaxation gates. Previous pc>=35 left a
      # 5-turn gap (pc=30-34) where relaxation weakened height penalty → scatter. Batch:
@@ -906,7 +920,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
-        # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
+        # ----- evaluation axis 1.7: high pc NEAR merge penalty (v478: threshold pc>=33→pc>=28) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
         # landing_y < 0 の安全なものに限定するロジック"
         # v421 added gradual pc_risk_scale but net NEAR still positive at pc=35, deadline,
@@ -914,18 +928,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # accelerating piece_count accumulation → max_y runaway → game over.
         # Worst: pc=36, NEAR at high y fails ×2, pc→36. Best: pc=33, NEAR at y<0 (landing
         # below board surface) succeeds with chain (+267, pc 33→28, recovery).
-        # New axis: at pc>=33, deadline risk (margin<1.0), landing_y>=1.0, cancel base NEAR
-        # bonus (600*merge_mult). Other axes (danger, reactive, chain) still provide NEAR
-        # incentive if warranted. Combined with v421 NEAR_DEADLINE_RISK, net NEAR at
-        # pc=35, deadline, y=1.0: +75 → -525. At pc=33, y=1.5: +337 → -562.
-        # NEAR at y<1.0 still positive — preserves safe recovery path (best game T82).
-        # Structurally similar to v411 (crosses_deadline penalty) and russia_phase fork (axis 8.7).
+        # v422: at pc>=33, deadline risk (margin<1.0), landing_y>=1.0, cancel base NEAR bonus.
+        # v478: lower threshold to pc>=28 — aligns with v463 CHAIN_MERGE NEAR suppression
+        # (validated at pc>=28). Worst game NEAR failures at pc=29,31 were unprotected.
+        # Other axes (danger, reactive, chain) still provide NEAR incentive if warranted.
+        # Combined with v421 NEAR_DEADLINE_RISK, net NEAR at pc=28, deadline, y=1.0:
+        # +75 → -525. NEAR at y<1.0 still positive — preserves safe recovery path.
         # Fixes postmortem failure mode: piece_count accumulation from failed NEAR at high pc
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-        #       tmp/batch_summary.txt, strategy.py.staging (v421),
+        #       tmp/batch_summary.txt, strategy.py.staging (v421, v422, v463),
         #       game_history/20260331_031009_score1030.jsonl T76-83,
-        #       game_history/20260331_025511_score2317.jsonl T82-83
-        if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
+        #       game_history/20260331_025511_score2317.jsonl T82-83,
+        #       game_history/20260402_172550_score0780.jsonl T42,T45 (pc=29,31 NEAR fail)
+        if merge_grade == "NEAR" and piece_count >= 28 and reactor_margin < 1.0 and landing_y >= 1.0:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
 
