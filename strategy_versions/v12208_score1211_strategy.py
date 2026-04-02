@@ -42,7 +42,8 @@ Game Overview:
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v465: v357ガード復元(rp>=3+NOで抑制) + v408: pc混雑スケーリング(9.6b同一)
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
-             9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+             9.7. Pipeline-aware placement guidance - v483: congestion scaling added (match 9.6b formula)
+                  v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -63,6 +64,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v483: axis 9.7 pipeline guidance congestion scaling — match axis 9.6b formula
+     # Adds piece_count congestion scaling (0.12 from pc>=28, cap 3.0) to pipeline-aware placement.
+     # This is the ONLY guidance axis missing congestion scaling, making its ~80 bonus negligible in
+     # HIGH phase (height penalty gradient ~270). Batch analysis: HEIGHT_CONTROL 19.7% low-score vs
+     # 12.3% high-score. Worst games (0444, 1140) show repeated NEAR failures at pc=37-42 with no
+     # same_type pieces, falling through to height-only scatter. Best game (3022) recovers via
+     # unpredictable chain events (T125 delta=+321), not strategy guidance.
+     # At pc=35/40/45: bonus rises from ~80 → ~100/140/180, making pipeline guidance competitive
+     # with height differentiation and reducing HEIGHT_CONTROL fallbacks when no same-type exists.
+     # Same formula as axis 9.6b (congestion_scale 0.12, cap 3.0) and axis 5.6 (0.08, cap 2.0).
+     # No postmortem constraint violations: does not touch rp>=3+NO, HIGH_PC_NEAR threshold, or AVOID_BLOCK.
+     # refs: game_history/20260403_004115_score0444.jsonl T53-T60, 20260403_010346_score1140.jsonl T67-T70,
+     #       20260403_010052_score3022.jsonl T123-T125, protected_e6f534c37e28 (no axis 9.7, no 9.6b, no 5.6),
+     #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt, strategy.py.staging v482 L1135-L1137
      # v482: raise merge_drought_critical pc>=30→pc>=33 — align with HIGH_PC_NEAR_PENALTY
      # Fixes: HEIGHT_CONTROL edge scatter at pc=30-32 by restoring 9.6b guidance competition
      # Fixes rollback failure mode: height_mult relaxation scatter at pc=30-34 (v477 overcorrection)
@@ -1134,6 +1149,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         best_adjacent_target = p
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
+                # v483: add piece_count congestion scaling — match axis 9.6b formula
+                # At high pc, pipeline guidance needs to be stronger to compete with height
+                # penalty gradient. Previously fixed at ~80 regardless of congestion,
+                # making it negligible in HIGH phase (height penalty gradient ~270).
+                # Matches axis 9.6b formula (0.12 scaling from pc>=28, cap 3.0).
+                if piece_count >= 28:
+                    congestion_scale = 1.0 + (piece_count - 28) * 0.12
+                    pipeline_bonus *= min(congestion_scale, 3.0)
                 score += pipeline_bonus
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
