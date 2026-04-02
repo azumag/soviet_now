@@ -346,6 +346,66 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
  *   GAMEOVER: ゲームオーバー
  */
 function detectGameState(data, width, height, board) {
+  // calibration 前でも MATCHING / Starting 画面は全画面ベースで弾く。
+  {
+    const overlayCenterX = width * 0.5;
+    const overlayCenterY = height * 0.52;
+    const overlayOuterRx = width * 0.11;
+    const overlayOuterRy = height * 0.13;
+    const overlayInnerRx = width * 0.05;
+    const overlayInnerRy = height * 0.06;
+    const buttonLeft = Math.floor(width * 0.38);
+    const buttonRight = Math.ceil(width * 0.62);
+    const buttonTop = Math.floor(height * 0.66);
+    const buttonBottom = Math.ceil(height * 0.80);
+    let overlayRingGray = 0;
+    let overlayRingSamples = 0;
+    let overlayCoreDark = 0;
+    let overlayCoreSamples = 0;
+    let overlayButtonWarm = 0;
+    let overlayButtonSamples = 0;
+
+    for (let y = 0; y < height; y += 8) {
+      for (let x = 0; x < width; x += 8) {
+        const idx = (y * width + x) * 4;
+        const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+        const brightness = (r + g + b) / 3;
+        const saturation = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
+
+        const outerDx = (x - overlayCenterX) / Math.max(1, overlayOuterRx);
+        const outerDy = (y - overlayCenterY) / Math.max(1, overlayOuterRy);
+        const inOverlayOuter = outerDx * outerDx + outerDy * outerDy <= 1;
+        const innerDx = (x - overlayCenterX) / Math.max(1, overlayInnerRx);
+        const innerDy = (y - overlayCenterY) / Math.max(1, overlayInnerRy);
+        const inOverlayInner = innerDx * innerDx + innerDy * innerDy <= 1;
+        if (inOverlayOuter && !inOverlayInner) {
+          overlayRingSamples++;
+          if (brightness > 85 && brightness < 190 && saturation < 0.18) overlayRingGray++;
+        }
+        if (inOverlayInner) {
+          overlayCoreSamples++;
+          if (brightness < 110) overlayCoreDark++;
+        }
+        if (x >= buttonLeft && x < buttonRight && y >= buttonTop && y < buttonBottom) {
+          overlayButtonSamples++;
+          if (r > 170 && g > 60 && g < 220 && b < 170 && brightness > 110) overlayButtonWarm++;
+        }
+      }
+    }
+
+    const overlayRingGrayRatio = overlayRingSamples > 0 ? overlayRingGray / overlayRingSamples : 0;
+    const overlayCoreDarkRatio = overlayCoreSamples > 0 ? overlayCoreDark / overlayCoreSamples : 0;
+    const overlayButtonWarmRatio = overlayButtonSamples > 0 ? overlayButtonWarm / overlayButtonSamples : 0;
+
+    if (
+      overlayRingGrayRatio > 0.30 &&
+      overlayCoreDarkRatio > 0.70 &&
+      overlayButtonWarmRatio > 0.20
+    ) {
+      return 'WAITING';
+    }
+  }
+
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
   if (board && Number.isFinite(board.left) && Number.isFinite(board.right) && Number.isFinite(board.top) && Number.isFinite(board.bottom)) {
@@ -359,6 +419,10 @@ function detectGameState(data, width, height, board) {
     let boardDark = 0;
     let titleBright = 0;
     let buttonWarm = 0;
+    let spinnerRingGray = 0;
+    let spinnerRingSamples = 0;
+    let spinnerCoreDark = 0;
+    let spinnerCoreSamples = 0;
     let boardSamples = 0;
     let titleSamples = 0;
     let buttonSamples = 0;
@@ -372,6 +436,12 @@ function detectGameState(data, width, height, board) {
     const buttonRight = boardLeft + Math.floor(boardWidth * 0.82);
     const buttonTop = boardTop + Math.floor(boardHeight * 0.58);
     const buttonBottom = boardTop + Math.floor(boardHeight * 0.88);
+    const spinnerCenterX = boardLeft + boardWidth * 0.5;
+    const spinnerCenterY = boardTop + boardHeight * 0.47;
+    const spinnerOuterRx = boardWidth * 0.19;
+    const spinnerOuterRy = boardHeight * 0.17;
+    const spinnerInnerRx = boardWidth * 0.10;
+    const spinnerInnerRy = boardHeight * 0.09;
 
     for (let y = boardTop; y < boardBottom; y += boardStep) {
       for (let x = boardLeft; x < boardRight; x += boardStep) {
@@ -381,6 +451,21 @@ function detectGameState(data, width, height, board) {
         const saturation = Math.max(r, g, b) > 0 ? (Math.max(r, g, b) - Math.min(r, g, b)) / Math.max(r, g, b) : 0;
         boardSamples++;
         if (brightness < 120) boardDark++;
+
+        const outerDx = (x - spinnerCenterX) / Math.max(1, spinnerOuterRx);
+        const outerDy = (y - spinnerCenterY) / Math.max(1, spinnerOuterRy);
+        const inSpinnerOuter = outerDx * outerDx + outerDy * outerDy <= 1;
+        const innerDx = (x - spinnerCenterX) / Math.max(1, spinnerInnerRx);
+        const innerDy = (y - spinnerCenterY) / Math.max(1, spinnerInnerRy);
+        const inSpinnerInner = innerDx * innerDx + innerDy * innerDy <= 1;
+        if (inSpinnerOuter && !inSpinnerInner) {
+          spinnerRingSamples++;
+          if (brightness > 85 && brightness < 190 && saturation < 0.18) spinnerRingGray++;
+        }
+        if (inSpinnerInner) {
+          spinnerCoreSamples++;
+          if (brightness < 110) spinnerCoreDark++;
+        }
 
         if (x >= titleLeft && x < titleRight && y >= titleTop && y < titleBottom) {
           titleSamples++;
@@ -397,6 +482,17 @@ function detectGameState(data, width, height, board) {
     const boardDarkRatio = boardSamples > 0 ? boardDark / boardSamples : 0;
     const titleBrightRatio = titleSamples > 0 ? titleBright / titleSamples : 0;
     const buttonWarmRatio = buttonSamples > 0 ? buttonWarm / buttonSamples : 0;
+    const spinnerRingGrayRatio = spinnerRingSamples > 0 ? spinnerRingGray / spinnerRingSamples : 0;
+    const spinnerCoreDarkRatio = spinnerCoreSamples > 0 ? spinnerCoreDark / spinnerCoreSamples : 0;
+
+    if (
+      boardDarkRatio > 0.70 &&
+      buttonWarmRatio > 0.18 &&
+      spinnerRingGrayRatio > 0.35 &&
+      spinnerCoreDarkRatio > 0.72
+    ) {
+      return 'WAITING';
+    }
 
     if (
       boardDarkRatio > 0.28 &&

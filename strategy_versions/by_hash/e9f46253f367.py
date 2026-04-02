@@ -18,7 +18,7 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-           5.6. Growth center proximity - v458: reduced magnitude per postmortem (base 60, congestion 0.08, cap 2.0)
+           5.6. Growth center proximity - v474: base 60→100 restored per postmortem (congestion 0.08, cap 2.0)
             6. Chain merge bonus - Evaluate possibility of further merges after merge (v460: NEAR suppressed at extreme congestion)
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
@@ -63,22 +63,24 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v473: re-apply v468 axis 9.6b base proximity bonus 120→160 — close guidance gap vs protected
-     # v468 was validated at Game#11949 (median=14880) but lost in rollback cascade (v469-v471 caused rollback, not v468).
-     # Current batch: HEIGHT_CONTROL 21.1% low vs 17.7% high — 3.4pp scatter gap. At pc=35, horiz_dist=0:
-     #   old 120*1.84=221 < height(180-360). new 160*1.84=294 ≈ height(HIGH) — competitive redirect.
-     # target_y decay (max 0.7 at y=1.0, 0.4 at y=2.0) prevents high-target override. rp_guidance_suppressed
-     # zeros bonus in extreme danger. Safe vs axis 8.8 (-4500). No NEAR suppression changes (postmortem constraint).
-     # Advice: "孤立配置を避けて中央集約を優先する" (kbb246). Fixes: HEIGHT_CONTROL scatter at merge drought.
-     # Fixes rollback failure mode: piece_count accumulation from scattered NO-merge placement (v468 re-apply)
-     # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 21.1% low vs 17.7% high),
-     #       tmp/state/last_rollback_postmortem.md (piece_count predictor, NEAR suppression constraints),
-     #       tmp/state/last_rollback_analysis.md (anchor comp=12881.4),
-     #       advice.md (kbb246: 中央集約), tmp/improve_brief.md,
-     #       game_history/20260402_115621_score0657.jsonl (worst: T63-T70 HEIGHT_CONTROL scatter),
-     #       game_history/20260402_115905_score0764.jsonl (extra_low: T58-T67 HEIGHT_CONTROL scatter),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
-     #       tmp/change_log.txt (v468: base 120→160, validated; v469-v471: caused rollback)
+     # v474: restore axis 5.6 growth center proximity base 60→100 — re-apply v471 per postmortem
+     # v471 (base 100) was individually validated in v469→v470→v471 progression but rolled back as
+     # cascade collateral of v466 NEAR suppression. Postmortem explicitly identified v466 (NEAR at pc>=32)
+     # as root cause, stating v471's contribution was "unknown/secondary." v473 (9.6b base 160) was
+     # re-applied without issue, confirming the strategy can accept individual re-applies from the branch.
+     # Current batch: HEIGHT_CONTROL 16.0% (low-score 18.8% vs high-score 13.8%) — 5pp gap indicates
+     # insufficient guidance. Worst game (715): type 12,11×3 scattered across 3.5+ units, no merge path.
+     # Extra-low (758): type 12×2 at 3.5 units apart. Base 60*1.84=110 at pc=35 — too weak vs
+     # height diffs (~180-360). Base 100*1.84=184 — competitive tie-breaking for near-center candidates.
+     # Safe: gc_y decay zeros bonus at gc_y>=2.5, rp_guidance_suppressed zeros in extreme danger.
+     # Does NOT change NEAR suppression (postmortem hard constraint). Single axis change.
+     # Fixes failure mode: piece_count accumulation from type scattering (weak growth center guidance)
+     # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 18.8% low vs 13.8% high, 5pp gap),
+     #       tmp/state/last_rollback_postmortem.md (v466 root cause, v471 secondary/unknown),
+     #       game_history/20260402_125522_score0715.jsonl T57-T64 (scattered types 12,11×3),
+     #       game_history/20260402_122912_score0758.jsonl T64-T70 (type 12×2 at 3.5u apart),
+     #       tmp/change_log.txt (v469: base 80 validated, v470: base 90 validated, v471: base 100 rolled back),
+     #       strategy.py.staging (v458, v469, v470, v471 change_log entries)
      # v462: fix v458 incomplete apply — axis 5.6 congestion 0.14→0.08, cap 3.5→2.0
      # v458 change_log documents "congestion 0.14→0.08, cap 3.5→2.0" but only base bonus (100→60) was
      # applied to code. At pc=40: current bonus ~431 vs intended ~235 (83% oversized). Docstring at line 21
@@ -1479,7 +1481,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 horiz_dist = abs(x - gc_x)
                 if horiz_dist < 2.5:
                     # v370: base bonus 100 (from 50) — matches axis 9.6b magnitude
-                    proximity = max(0, 60.0 - horiz_dist * 40.0)
+                    proximity = max(0, 100.0 - horiz_dist * 40.0)
                     # Decay if growth center is high — don't override height control
                     if gc_y > 0:
                         proximity *= max(0.0, 1.0 - gc_y * 0.4)

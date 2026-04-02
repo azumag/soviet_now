@@ -61,6 +61,8 @@ const HISTORY_DIR = 'game_history';
 const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲーム側クールダウン≈1秒)
 const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
+const CALIBRATION_MIN_CONFIDENCE = 0.62;
+const CALIBRATION_MIN_PIECES = 3;
 const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
 const DEFAULT_SHARED_CDP_PORT = 9222;
@@ -914,8 +916,12 @@ async function gameLoop(page, calibration, gameNumber) {
 
       // MOVE状態が安定してからキャリブレーション (初回のみ)
       if (!calibrated) {
-        moveCount++;
-        if (moveCount >= 3) { // 3回連続MOVEで安定と判断
+        if ((boardState.confidence ?? 0) >= CALIBRATION_MIN_CONFIDENCE && (boardState.pieces?.length ?? 0) >= CALIBRATION_MIN_PIECES) {
+          moveCount++;
+        } else {
+          moveCount = 0;
+        }
+        if (moveCount >= 3) { // 十分な信頼度と盤面密度で3回連続MOVEなら安定と判断
           console.log('[game] Game board stable, running calibration...');
           const calScreenshot = join(SCREENSHOT_DIR, 'calibration.png');
           await page.screenshot({ path: calScreenshot });
