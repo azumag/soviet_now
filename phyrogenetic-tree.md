@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-03 07:17:32 JST`
-- Nodes: `885`
-- Edges: `1212`
-- Current: `d3c026afa6d2`
+- Updated: `2026-04-03 08:12:09 JST`
+- Nodes: `886`
+- Edges: `1213`
+- Current: `0c78453df396`
 - Anchor: `f4545d36f678`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_5b1ed9feee39["5b1ed9feee39<br/>g=12 n=12<br/>comp=11233.4"]
     h_35a31ad32371["35a31ad32371<br/>g=24 n=20<br/>comp=10937.4"]
     h_ec180f35c7e5["ec180f35c7e5<br/>g=12 n=12<br/>comp=10577.5"]
     h_4f5e73275eeb["4f5e73275eeb<br/>g=12 n=12<br/>comp=9729.5"]
@@ -72,11 +71,11 @@ flowchart TD
     h_15f86b7062ff["15f86b7062ff<br/>g=12 n=12<br/>comp=10651.3"]
     h_8b764b56c6f3["8b764b56c6f3<br/>g=12 n=12<br/>comp=11218.9"]
     h_0c165b88e34f["0c165b88e34f<br/>g=12 n=12<br/>comp=10318.5"]
+    h_d3c026afa6d2["d3c026afa6d2<br/>g=12 n=12<br/>comp=11615.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_d3c026afa6d2["d3c026afa6d2<br/>CURRENT"]
+    h_0c78453df396["0c78453df396<br/>CURRENT"]
 
-    h_5b1ed9feee39 -->|improve| h_35a31ad32371
     h_35a31ad32371 -->|improve| h_ec180f35c7e5
     h_ec180f35c7e5 -->|improve| h_4f5e73275eeb
     h_4f5e73275eeb -. rollback .-> h_35a31ad32371
@@ -141,13 +140,13 @@ flowchart TD
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_0c165b88e34f -. rollback .-> h_0ff7f425d879
     h_0ff7f425d879 -->|improve| h_d3c026afa6d2
+    h_d3c026afa6d2 -->|improve| h_0c78453df396
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_5b1ed9feee39 plain;
     class h_35a31ad32371 plain;
     class h_ec180f35c7e5 plain;
     class h_4f5e73275eeb plain;
@@ -204,9 +203,10 @@ flowchart TD
     class h_15f86b7062ff plain;
     class h_8b764b56c6f3 plain;
     class h_0c165b88e34f plain;
+    class h_d3c026afa6d2 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_d3c026afa6d2 current;
+    class h_0c78453df396 current;
 ```
 
 ## Detail 1/12
@@ -3337,25 +3337,27 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `d3c026afa6d2`
-- Nodes in this diagram: `5`
-- Internal edges in this diagram: `1`
+- Range: `8b764b56c6f3` .. `0c78453df396`
+- Nodes in this diagram: `6`
+- Internal edges in this diagram: `2`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
+- Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
 
 ```mermaid
 flowchart TD
     h_8b764b56c6f3["8b764b56c6f3<br/>g=12 n=12<br/>comp=11218.9"]
     h_0c165b88e34f["0c165b88e34f<br/>g=12 n=12<br/>comp=10318.5"]
+    h_d3c026afa6d2["d3c026afa6d2<br/>g=12 n=12<br/>comp=11615.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_d3c026afa6d2["d3c026afa6d2<br/>CURRENT"]
+    h_0c78453df396["0c78453df396<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
+    h_d3c026afa6d2 -->|improve| h_0c78453df396
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3364,12 +3366,23 @@ flowchart TD
 
     class h_8b764b56c6f3 plain;
     class h_0c165b88e34f plain;
+    class h_d3c026afa6d2 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_d3c026afa6d2 current;
+    class h_0c78453df396 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#12297 `d3c026af -> 0c78453d`
+
+- scores: `11671 10518 13652 9757 7076 13893 13788 9844 14069 13845 19524 9951`
+- ----- evaluation axis 9.6c: rp>=3 reactive guidance gap fill (v489) -----
+- At rp>=3+NO+same_type+current_type_has_reactive, axes 9.6 (v465 guard rp<3)
+- and 9.6b (current_type_has_reactive guard) both suppress, leaving no
+- stacking/proximity guidance. Only axis 5.6 (~24-94 with gc_y decay) remains,
+- insufficient vs height differentiation (~50-150 between edge and center).
+- Result: HEIGHT_CONTROL edge scatter (x=±3.0) -> pieces never merge -> death.
 
 ### Improve Game#12285 `0ff7f425 -> d3c026af`
 
