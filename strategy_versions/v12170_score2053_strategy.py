@@ -63,6 +63,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v481: extend AVOID_BLOCK suppression at deadline from rp>=5 to rp>=3 — fix edge scatter gap
+     # Worst game T56-64: deadline=true, rp=3-5, AVOID_BLOCK fires and pushes to x=3.0 edge.
+     # Isolated edge pieces never merge → pc grows 30→38, max_y→3.28, death in 9 turns.
+     # v479 added suppression at rp>=5+deadline, but gap at rp=3-4+deadline remained.
+     # Protected strategy (median 12789) has NO AVOID_BLOCK at all, validating wider suppression.
+     # At deadline+rp>=3: board is critically congested — blocking avoidance pushes to isolated
+     # edge positions that can never contribute to merges. Suppressing allows height penalty
+     # and stacking/proximity guidance to work, preserving merge paths.
+     # Fixes rollback failure mode: AVOID_BLOCK edge scatter at deadline when rp=3-4
+     # refs: game_history/20260402_223907_score0751.jsonl T56-64 (AVOID_BLOCK at deadline, rp=3-5),
+     #       game_history/20260402_220332_score0988.jsonl T57-61 (AVOID_BLOCK at deadline, rp=3),
+     #       protected_e6f534c37e28_median12789 (no AVOID_BLOCK), tmp/batch_summary.txt,
+     #       tmp/state/last_rollback_postmortem.md, strategy.py.staging L1272 (v479 condition)
      # v480: suppress additive guidance bonuses at rp>=3+NO — extend postmortem constraint to axes 5.6/9.6b
      # Postmortem: "additive bonus (stacking, proximity, growth_center) は rp>=3+NO では抑制すること"
      # Axis 9.6 stacking already suppressed at rp>=3 by v465 guard. But axes 5.6 (base 60,
@@ -1267,12 +1280,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Worst T58/T60: deadline=true, rp=5/6, pc=28/30, max_y=1.74/1.75 — AVOID_BLOCK
             # pushed to x=3.0 edge. Isolated pieces never merge → pc grows → death. Protected
             # strategy (median 12789) has NO AVOID_BLOCK at all, validating suppression here.
-            # refs: game_history/20260402_203545_score0894.jsonl T58/T60,
+            # v481: extend deadline suppression from rp>=5 to rp>=3 — covers the rp=3-4 gap
+            # Worst game T56-64: deadline=true, rp=3-5, AVOID_BLOCK fires → edge scatter → death.
+            # At deadline+rp>=3, blocking avoidance is counterproductive — guidance axes should work.
+            # refs: game_history/20260402_223907_score0751.jsonl T56-64,
+            #       game_history/20260402_203545_score0894.jsonl T58/T60,
             #       protected_e6f534c37e28_median12789, tmp/batch_summary.txt
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
-                or (deadline_crossed and reactive_pair_count >= 5 and piece_count >= 28)
+                or (deadline_crossed and reactive_pair_count >= 3 and piece_count >= 28)
             )
             if not board_congested:
                 blocking_penalty = 0.0
