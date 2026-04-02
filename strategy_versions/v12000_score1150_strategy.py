@@ -18,7 +18,7 @@ Game Overview:
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
-           5.6. Growth center proximity - v470: base 80→90 incremental strengthening toward target (base 100) per postmortem
+           5.6. Growth center proximity - v471: base 90→100 final postmortem step — unconditional activation maintained
             6. Chain merge bonus - Evaluate possibility of further merges after merge (v466: NEAR suppressed at pc>=32+deadline)
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
@@ -63,18 +63,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v470: increase axis 5.6 growth center proximity base 80→90 — incremental step toward postmortem target (100)
-     # v469 (80) improved guidance but worst game still shows HEIGHT_CONTROL 15.3% scatter at T30-T40 where
-     # proximity (80*congestion=148.8 at pc=40) barely competes with height_penalty (180). At base 90:
-     # pc=40, horiz_dist=0: 90*2.48=223.2 (exceeds height 180, can redirect near-center candidates).
-     # pc=33, horiz_dist=0: 90*1.60=144 (still < height 180, no override risk at medium congestion).
-     # gc_y decay ensures high growth centers don't override height control. congestion cap 2.0 limits
-     # maximum amplification. Single 12.5% step — conservative per rollback postmortem constraint.
-     # refs: game_history/20260402_072312_score0501.jsonl (worst, T30-T40 scatter x=±3.0),
-     #       game_history/20260402_080453_score3038.jsonl (best, concentrated type 14 cluster),
-     #       tmp/batch_summary.txt, tmp/improve_brief.md, advice.md,
-     #       tmp/state/last_rollback_postmortem.md (magnitude allowance, no activation filter changes),
-     #       strategy.py.staging (v469)
+     # v471: finalize axis 5.6 growth center proximity base 90→100 — reaching postmortem target (base 100)
+     # Postmortem v455: original base 100 was effective; v458 reduced to 60 (too aggressive); v469 restored to
+     # 80; v470 raised to 90. v470 still left HEIGHT_CONTROL gap: 20.1% low vs 14.3% high in batch. At HIGH
+     # phase (height_mult=1.8, height_diff~90), base 90*1.08=97.2 barely exceeds height diff. Base 100*1.08=108
+     # provides clearer 20% margin. At MEDIUM (height_diff~70): 100*1.08=108 vs 90*1.08=97.2 (both exceed).
+     # At LOW (height_diff~60): both already exceed. No activation filter change — unconditional when
+     # max_type>=6 per postmortem constraint. congestion cap 2.0 limits max to 200 << axis 8.8 (-4500).
+     # gc_y decay prevents high growth centers from overriding height control. This completes the
+     # postmortem trajectory: 100→60→80→90→100. Fixes rollback failure mode: HEIGHT_CONTROL scatter
+     # from weak growth center guidance at HIGH/MEDIUM phase transitions.
+     # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 16.7% low gap, low 20.1% vs high 14.3%),
+     #       tmp/state/last_rollback_postmortem.md (v455 target base 100, magnitude allowance),
+     #       game_history/20260402_084504_score0369.jsonl (worst, early scatter T1-T4, rp=6 NO merge T42-50),
+     #       game_history/20260402_082216_score2822.jsonl (best, concentrated type 14 at x≈0.7),
+     #       tmp/change_log.txt (v458→v469→v470 trajectory), strategy.py.staging (v470)
      # v469: increase axis 5.6 growth center proximity base 60→80 per v455 postmortem magnitude allowance
      # Postmortem v455: axis 5.6 at base 235(pc=40) was effective; current base 60 yields only 118(pc=40).
      # Gap: protected strategy (median 12789) has no 5.6 but strong flat guidance; current 5.6 too weak to
@@ -1542,8 +1545,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 gc_y = growth_center.get("y", -10)
                 horiz_dist = abs(x - gc_x)
                 if horiz_dist < 2.5:
-                    # v470: base 80→90 incremental strengthening toward target (base 100) per postmortem
-                    proximity = max(0, 90.0 - horiz_dist * 40.0)
+                    # v471: base 90→100 — final postmortem step to target magnitude
+                    proximity = max(0, 100.0 - horiz_dist * 40.0)
                     # Decay if growth center is high — don't override height control
                     if gc_y > 0:
                         proximity *= max(0.0, 1.0 - gc_y * 0.4)
