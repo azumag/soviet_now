@@ -63,6 +63,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v479: extend AVOID_BLOCK suppression at congested deadline — fix edge scatter gap
+     # Worst T58/T60: deadline+rp=5/6+pc=28/30+max_y<2.5 — AVOID_BLOCK pushed to x=3.0 edge.
+     # Protected (median 12789) has no AVOID_BLOCK at all. New condition covers this gap.
+     # Fixes rollback failure mode: AVOID_BLOCK edge scatter at deadline when rp high but max_y < 2.5
+     # refs: game_history/20260402_203545_score0894.jsonl, protected_e6f534c37e28,
+     #       game_history/20260402_201913_score3022.jsonl, tmp/batch_summary.txt, advice.md
      # v478: HIGH_PC_NEAR_PENALTY threshold pc>=33→pc>=28 — align with CHAIN_MERGE NEAR suppression
      # Worst game (score0780) T42(pc=29) and T45(pc=31): NEAR at deadline+landing_y>=1.0 failed
      # (delta=0), adding pieces without merge → scatter → CROSSES_DEADLINE → death spiral.
@@ -1239,9 +1245,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
             # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
             # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
+            # v479: add deadline+rp+pc condition — fix edge scatter when max_y<2.5 but deadline crossed
+            # Worst T58/T60: deadline=true, rp=5/6, pc=28/30, max_y=1.74/1.75 — AVOID_BLOCK
+            # pushed to x=3.0 edge. Isolated pieces never merge → pc grows → death. Protected
+            # strategy (median 12789) has NO AVOID_BLOCK at all, validating suppression here.
+            # refs: game_history/20260402_203545_score0894.jsonl T58/T60,
+            #       protected_e6f534c37e28_median12789, tmp/batch_summary.txt
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or (deadline_crossed and reactive_pair_count >= 5 and piece_count >= 28)
             )
             if not board_congested:
                 blocking_penalty = 0.0
