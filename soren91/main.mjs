@@ -753,32 +753,11 @@ async function gameLoop(page, calibration, gameNumber) {
       if (boardState.rank != null) lastKnownRank = boardState.rank;
       console.log(`[game] Turn ${turn}: state=${boardState.state}, pieces=${boardState.pieces.length}, rank=${boardState.rank ?? lastKnownRank ?? '?'}, conf=${boardState.confidence.toFixed(2)}`);
 
-      // ゲームオーバー処理 — ランキング画面を待ってから終了
+      // soren91 では GAMEOVER を独立終了イベントにせず、
+      // WAITING/ランキング遷移として既存のラウンド終了ロジックに流す。
       if (boardState.state === 'GAMEOVER') {
-        console.log(`[game] GAMEOVER at turn ${turn}, waiting for ranking screen...`);
-        // ランキング画面が表示されるまで最大15秒待つ
-        for (let rk = 0; rk < 12; rk++) {
-          await sleep(1200);
-          const rkScreenshot = join(SCREENSHOT_DIR, `ranking_wait_${rk}.png`);
-          try {
-            await page.screenshot({ path: rkScreenshot });
-            const { detectRankingScreen } = await loadModule('./screenshot_analyzer.mjs');
-            const rkResult = await detectRankingScreen(rkScreenshot);
-            if (rkResult != null) {
-              const rkPath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
-              const { copyFileSync } = await import('fs');
-              try { copyFileSync(rkScreenshot, rkPath); } catch {}
-              if (rkResult > 0) lastKnownRank = rkResult;
-              console.log(`[game] RANKING screen detected after GAMEOVER! rank=${rkResult > 0 ? rkResult : 'pending OCR'}`);
-              break;
-            }
-          } catch {}
-        }
-        if (!boardState.rank && lastKnownRank) boardState.rank = lastKnownRank;
-        console.log(`[game] Final rank=${boardState.rank ?? '?'}`);
-        await handleGameOver(page, gameNumber, turn, boardState, historyFile, currentStrategySnapshot);
-        try { unlinkSync('tmp/in_game'); } catch {}
-        return;
+        console.log(`[game] GAMEOVER detected at turn ${turn}, treating as WAITING transition`);
+        boardState.state = 'WAITING';
       }
 
       // 待機画面 (ランキング/接続中/タイトル画面)

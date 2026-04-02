@@ -2,7 +2,7 @@
  * screenshot_analyzer.mjs - スクリーンショット → 盤面状態抽出
  *
  * Sharp でスクリーンショットを処理し、ゲーム状態を推定する。
- * - ゲーム状態検出: MOVE / GAMEOVER / DROP
+ * - ゲーム状態検出: MOVE / WAITING / DROP
  * - ピース検出: 色セグメンテーション + サイズ分類
  * - 次のピース検出
  * - スコア検出
@@ -343,7 +343,6 @@ export async function analyzeScreenshot(screenshotPath, calibration) {
  * 状態:
  *   MOVE: ゲームボード表示中（ドロップ操作可能）
  *   WAITING: ランキング/接続/マッチング画面
- *   GAMEOVER: ゲームオーバー
  */
 function detectGameState(data, width, height, board) {
   // calibration 前でも MATCHING / Starting 画面は全画面ベースで弾く。
@@ -417,21 +416,15 @@ function detectGameState(data, width, height, board) {
     const boardHeight = Math.max(1, boardBottom - boardTop);
 
     let boardDark = 0;
-    let titleBright = 0;
     let buttonWarm = 0;
     let spinnerRingGray = 0;
     let spinnerRingSamples = 0;
     let spinnerCoreDark = 0;
     let spinnerCoreSamples = 0;
     let boardSamples = 0;
-    let titleSamples = 0;
     let buttonSamples = 0;
 
     const boardStep = 6;
-    const titleLeft = boardLeft + Math.floor(boardWidth * 0.22);
-    const titleRight = boardLeft + Math.floor(boardWidth * 0.78);
-    const titleTop = boardTop + Math.floor(boardHeight * 0.12);
-    const titleBottom = boardTop + Math.floor(boardHeight * 0.44);
     const buttonLeft = boardLeft + Math.floor(boardWidth * 0.18);
     const buttonRight = boardLeft + Math.floor(boardWidth * 0.82);
     const buttonTop = boardTop + Math.floor(boardHeight * 0.58);
@@ -467,11 +460,6 @@ function detectGameState(data, width, height, board) {
           if (brightness < 110) spinnerCoreDark++;
         }
 
-        if (x >= titleLeft && x < titleRight && y >= titleTop && y < titleBottom) {
-          titleSamples++;
-          if (brightness > 180 && saturation < 0.28) titleBright++;
-        }
-
         if (x >= buttonLeft && x < buttonRight && y >= buttonTop && y < buttonBottom) {
           buttonSamples++;
           if (r > 170 && g > 70 && g < 210 && b < 160 && brightness > 120) buttonWarm++;
@@ -480,7 +468,6 @@ function detectGameState(data, width, height, board) {
     }
 
     const boardDarkRatio = boardSamples > 0 ? boardDark / boardSamples : 0;
-    const titleBrightRatio = titleSamples > 0 ? titleBright / titleSamples : 0;
     const buttonWarmRatio = buttonSamples > 0 ? buttonWarm / buttonSamples : 0;
     const spinnerRingGrayRatio = spinnerRingSamples > 0 ? spinnerRingGray / spinnerRingSamples : 0;
     const spinnerCoreDarkRatio = spinnerCoreSamples > 0 ? spinnerCoreDark / spinnerCoreSamples : 0;
@@ -492,15 +479,6 @@ function detectGameState(data, width, height, board) {
       spinnerCoreDarkRatio > 0.72
     ) {
       return 'WAITING';
-    }
-
-    if (
-      boardDarkRatio > 0.28 &&
-      titleBrightRatio > 0.010 &&
-      buttonWarmRatio > 0.018 &&
-      (titleBrightRatio + buttonWarmRatio) > 0.040
-    ) {
-      return 'GAMEOVER';
     }
   }
 
