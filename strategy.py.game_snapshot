@@ -41,7 +41,7 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
-             9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
+             9.6b. Same-type proximity guidance - v473: base 120→160 per v468 re-apply (validated Game#11949 median=14880)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
@@ -63,6 +63,22 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v473: re-apply v468 axis 9.6b base proximity bonus 120→160 — close guidance gap vs protected
+     # v468 was validated at Game#11949 (median=14880) but lost in rollback cascade (v469-v471 caused rollback, not v468).
+     # Current batch: HEIGHT_CONTROL 21.1% low vs 17.7% high — 3.4pp scatter gap. At pc=35, horiz_dist=0:
+     #   old 120*1.84=221 < height(180-360). new 160*1.84=294 ≈ height(HIGH) — competitive redirect.
+     # target_y decay (max 0.7 at y=1.0, 0.4 at y=2.0) prevents high-target override. rp_guidance_suppressed
+     # zeros bonus in extreme danger. Safe vs axis 8.8 (-4500). No NEAR suppression changes (postmortem constraint).
+     # Advice: "孤立配置を避けて中央集約を優先する" (kbb246). Fixes: HEIGHT_CONTROL scatter at merge drought.
+     # Fixes rollback failure mode: piece_count accumulation from scattered NO-merge placement (v468 re-apply)
+     # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 21.1% low vs 17.7% high),
+     #       tmp/state/last_rollback_postmortem.md (piece_count predictor, NEAR suppression constraints),
+     #       tmp/state/last_rollback_analysis.md (anchor comp=12881.4),
+     #       advice.md (kbb246: 中央集約), tmp/improve_brief.md,
+     #       game_history/20260402_115621_score0657.jsonl (worst: T63-T70 HEIGHT_CONTROL scatter),
+     #       game_history/20260402_115905_score0764.jsonl (extra_low: T58-T67 HEIGHT_CONTROL scatter),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/change_log.txt (v468: base 120→160, validated; v469-v471: caused rollback)
      # v462: fix v458 incomplete apply — axis 5.6 congestion 0.14→0.08, cap 3.5→2.0
      # v458 change_log documents "congestion 0.14→0.08, cap 3.5→2.0" but only base bonus (100→60) was
      # applied to code. At pc=40: current bonus ~431 vs intended ~235 (83% oversized). Docstring at line 21
@@ -1157,7 +1173,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Postmortem: piece_count is the key predictor of final score.
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                    proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
+                    # v473: base 120→160 — re-apply v468 (validated Game#11949 median=14880)
+                    # At pc=35, horiz_dist=0: 160*1.84=294 vs height ~180-360. Competitive redirect.
+                    # target_y decay and rp_guidance_suppressed provide safety margins.
+                    proximity_bonus = max(0, 160.0 - horiz_dist * 50.0)
                     if piece_count >= 28:
                         # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                         # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
