@@ -63,6 +63,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v476: merge drought critical — suppress height_mult relaxation at pc>=35+NO merge
+     # Re-applies v472/v475 guard (lost as collateral in last rollback). Protected strategy
+     # (median 12789) has NO relaxation gates, validating suppression. At pc>=35+NO, height
+     # penalty must remain strong to prevent scatter. Worst game T48-T59: pc=27→35, gates
+     # active, scattered placement → game over. Fixes: height_mult relaxation scatter
+     # refs: tmp/state/last_rollback_postmortem.md, game_history/20260402_151753_score0811.jsonl
+     #       T48-T59, game_history/20260402_150756_score1055.jsonl T58-T70, protected_e6f534c37e28,
+     #       tmp/batch_summary.txt, tmp/change_log.txt, tmp/state/last_rollback_analysis.md
      # v465: suppress axis 9.6 stacking at rp>=3+NO — restore v357 guard per protected strategy
      # Protected strategy (median 12789) suppresses stacking at rp>=3; v363 removed guard after
      # stacking formula changed to proximity-based. Worst game: REACTIVE_PAIRS_STACKING×6 in
@@ -1269,9 +1277,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_010847_score0651.jsonl turns 44-47, game_history/20260324_010300_score2461.jsonl
         # Fixes rollback failure mode: deadline_crossed時の危険ピース存在下での即時併合取りこぼし（axis 2 danger_piece_count条件追加）
 
+        # v476: merge drought critical — suppress all height_mult relaxation gates at high pc+NO merge
+        # Re-applies v472/v475 merge_drought_critical guard (lost as collateral in last rollback).
+        # Protected strategy (median 12789) has NO relaxation gates at all, validating suppression.
+        # At pc>=35+NO merge, there is no room for strategic positioning — height penalty must
+        # remain strong to prevent HEIGHT_CONTROL scatter. Worst game (score0811) T48-T59:
+        # pc=27→35, relaxation gates active, 10 consecutive NO-merge turns with scattered
+        # placement (x=±3.0, x=2.4) → pc grows → deadline → game over. The 3 relaxation
+        # gates compound to floor 0.5 (v362), but even 0.5x is enough to allow scatter when
+        # additive bonuses compete. Best games maintain height discipline during droughts.
+        # Does NOT change NEAR suppression thresholds (postmortem hard constraint: pc>=28).
+        # Does NOT change additive bonus magnitudes (postmortem hard constraint: 5.6≤60, 9.6b≤120).
+        # refs: tmp/state/last_rollback_postmortem.md (piece_count predictor, height_mult compounding),
+        #       tmp/state/last_rollback_analysis.md (anchor comp=12642.3),
+        #       game_history/20260402_151753_score0811.jsonl T48-T59 (pc=27→35, scatter, game over),
+        #       game_history/20260402_150756_score1055.jsonl T58-T70 (similar scatter pattern),
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+        #       tmp/change_log.txt (v472, v475 merge_drought_critical entries),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 15.8% scatter indicator)
+        # Fixes rollback failure mode: height_mult relaxation at high pc enabling scatter → runaway max_y
+        merge_drought_critical = piece_count >= 35 and merge_grade == "NO"
+
         # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
         # danger_piece_count==0の場合に限りheight_multを0.2に緩和して、盤面圧縮（tighter board）を優先し、即時併合機会を確保
-        if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
+        if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0 and not merge_drought_critical:
             # v431: only relax when current type has reactive/near guidance
             # Without guidance for current type, relaxation enables HEIGHT_CONTROL scatter (worst T55-62)
             # With guidance, relaxation allows axis 9.6 stacking to compete with height penalty
@@ -1293,9 +1322,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133,
         #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
+        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and not merge_drought_critical:
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
+            # v476: merge_drought_critical also suppresses at high pc+NO merge
             height_mult *= 0.8
 
         # v288: deadline_crossed時戦略的配置強化版 - 即時併合機会取りこぼし削減
@@ -1314,10 +1344,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127,
         #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
+        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and not merge_drought_critical:
             # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
             # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
+            # v476: merge_drought_critical also suppresses at high pc+NO merge
             height_mult *= 0.3
 
         # v362: height_mult floor — prevent compounding nullification
