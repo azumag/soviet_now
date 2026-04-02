@@ -63,6 +63,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v486: re-add AVOID_BLOCK suppression at deadline+rp>=3+pc>=28 (v481 collateral restoration)
+     # v481 was validated in Game#12153 (no extreme lows) but lost as collateral in v477-v485 rollback.
+     # Worst game T55: AVOID_BLOCK fires at deadline+rp=8+pc=31+max_y=2.34, pushing placement to
+     # suboptimal position. max_y spikes 1.69→2.34→2.93 in 2 turns. Current suppression (v479:
+     # rp>=5+max_y>=2.5) doesn't fire because max_y=2.34<2.5. v481 condition (deadline+rp>=3
+     # +pc>=28) would fire, letting height penalty be sole differentiator. Protected strategy
+     # (median 12789) has NO AVOID_BLOCK at all, validating suppression at extreme congestion.
+     # At deadline+rp>=3+pc>=28, the board is critically congested — blocking avoidance forces
+     # placement to positions that avoid pairs but are higher/isolated, which is worse than
+     # consistent low placement. Fixes: AVOID_BLOCK edge scatter at deadline when rp=3-4+max_y<2.5
+     # refs: game_history/20260403_041751_score0763.jsonl T55 (AVOID_BLOCK at deadline, rp=8),
+     #       game_history/20260403_041149_score2602.jsonl T108-111 (AVOID_BLOCK at deadline, rp=2),
+     #       tmp/change_log.txt (v479/v481 entries, rollback at Game#12177 as collateral),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789 (no AVOID_BLOCK),
+     #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
      # v482: raise merge_drought_critical pc>=30→pc>=33 — align with HIGH_PC_NEAR_PENALTY
      # Fixes: HEIGHT_CONTROL edge scatter at pc=30-32 by restoring 9.6b guidance competition
      # Fixes rollback failure mode: height_mult relaxation scatter at pc=30-34 (v477 overcorrection)
@@ -1233,6 +1248,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or (deadline_crossed and reactive_pair_count >= 3 and piece_count >= 28)
             )
             if not board_congested:
                 blocking_penalty = 0.0
