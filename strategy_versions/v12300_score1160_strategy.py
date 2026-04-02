@@ -1246,6 +1246,37 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
+        # ----- evaluation axis 9.6c: rp>=3 reactive guidance gap fill (v489) -----
+        # At rp>=3+NO+same_type+current_type_has_reactive, axes 9.6 (v465 guard rp<3)
+        # and 9.6b (current_type_has_reactive guard) both suppress, leaving no
+        # stacking/proximity guidance. Only axis 5.6 (~24-94 with gc_y decay) remains,
+        # insufficient vs height differentiation (~50-150 between edge and center).
+        # Result: HEIGHT_CONTROL edge scatter (x=±3.0) -> pieces never merge -> death.
+        # Worst game (score0450) T64-76: rp=3-4, NEAR fails T67/T72/T74,
+        # edge scatter x=±3.0 dominates, dies at pc=50, max_type=12.
+        # Fills the gap with gentle pull toward LOWEST same-type piece (height-priority).
+        # Bonus capped at 60 — provides direction but doesn't override height penalty
+        # (step ~50-90 per landing_y unit in HIGH/MEDIUM/CRITICAL phases).
+        # No congestion scaling — prevents additive accumulation risk.
+        # Suppressed when board extremely congested (same conditions as AVOID_BLOCK).
+        # Postmortem constraints preserved: does not change axis 1.7 threshold (pc>=28),
+        # merge_drought threshold (pc>=30), axis 7 NEAR reduction, or AVOID_BLOCK.
+        # refs: game_history/20260403_073334_score0450.jsonl T64-76,
+        #       tmp/state/last_rollback_postmortem.md,
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        if (reactive_pair_count >= 3 and merge_grade == "NO"
+                and same_type_stack_top is not None
+                and current_type_has_reactive
+                and not ((max_y >= 3.0 and deadline_crossed)
+                         or (reactive_pair_count >= 5 and max_y >= 2.5)
+                         or (deadline_crossed and reactive_pair_count >= 5 and piece_count >= 28))):
+            lowest_same = min(same_type_pieces, key=lambda p: p.get("y", 10))
+            target_x = lowest_same.get("x", 0)
+            horiz_dist = abs(x - target_x)
+            if horiz_dist < 2.0:
+                gap_bonus = max(0, 60.0 - horiz_dist * 25.0)
+                score += gap_bonus
+
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
         # Placing a piece between reactive pairs of different types can physically block
