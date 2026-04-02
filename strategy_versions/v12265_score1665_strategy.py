@@ -63,6 +63,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v487: align axis 7 NEAR bonus with axis 8.6 at pc>=28+deadline — fix NEAR risk penalty overwhelmed
      # v486: re-add AVOID_BLOCK suppression at deadline+rp>=3+pc>=28 (v481 collateral restoration)
      # v481 was validated in Game#12153 (no extreme lows) but lost as collateral in v477-v485 rollback.
      # Worst game T55: AVOID_BLOCK fires at deadline+rp=8+pc=31+max_y=2.34, pushing placement to
@@ -1641,18 +1642,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactor情報のreactive_pairs（反応性のあるペア）を活用し、即時併合を優先する評価軸を強化。
         # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを+800.0から+1000.0に強化。
         # v206: reactive_pairs>=3で即時併合なし（NO）の場合、盤面密度ボーナスを+300.0から+50.0に削減。
+        # v487: NEAR reduction at high pc+deadline — align axis 7 with axis 8.6 suppression pattern.
+        # Worst T65/T67: pc=38/39, deadline, rp=5, NEAR selected despite axis 1.5+1.7 penalties,
+        # fails (sd=0) both times. Root cause: axis 7 gives +1000 NEAR regardless of pc/deadline
+        # while axis 8.6 reduces its own NEAR bonus to +400 at pc>=28+deadline. Combined
+        # +1400 overwhelms risk penalties (~1043 at y=1.0, pc=38). Fix: reduce axis 7 NEAR
+        # bonus at pc>=28+deadline to match axis 8.6. DIRECT unchanged (95.7% success).
+        # Fixes rollback failure mode: NEAR deadline risk penalty overwhelmed by unbalanced bonus
+        # refs: 20260403_053835_score0962.jsonl T65,T67, 20260403_053231_score2902.jsonl T128,
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
+        near_risk_reduction = (merge_grade == "NEAR" and piece_count >= 28 and deadline_crossed)
         if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
-            # reactive_pairs==1の場合も即時併合を優先し、機会取りこぼし削減
-            score += 400.0
+            rp_bonus = 240.0 if near_risk_reduction else 400.0
+            score += rp_bonus
             reasons.append("REACTIVE_MERGE_PRIORITY")
         elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"]:
-            #2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
-            score += 800.0
+            rp_bonus = 300.0 if near_risk_reduction else 800.0
+            score += rp_bonus
             reasons.append("REACTIVE_MERGE_PRIORITY")
         elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
-            # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0）
-            # reactive_pairsが3以上ある場合、即時併合機会を最優先
-            score += 1000.0
+            rp_bonus = 400.0 if near_risk_reduction else 1000.0
+            score += rp_bonus
             reasons.append("REACTIVE_MERGE_PRIORITY")
         # v209: reactive_pairs>=3で即時併合なしの場合のcompression_bonusロジックを削除
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
