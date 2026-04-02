@@ -63,6 +63,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v482: raise merge_drought_critical pc>=30→pc>=33 — align with HIGH_PC_NEAR_PENALTY
+     # Fixes: HEIGHT_CONTROL edge scatter at pc=30-32 by restoring 9.6b guidance competition
+     # Fixes rollback failure mode: height_mult relaxation scatter at pc=30-34 (v477 overcorrection)
+     # refs: protected_e6f534c37e28 (no gates), last_rollback_postmortem.md (v477 not failure mode),
+     #       last_rollback_analysis.md, 20260403_001258_score0658 T59-66, 20260403_000458_score2187 T93-100,
+     #       20260403_000719_score0711 T58-65, batch_summary.txt, change_log.txt
      # v477: merge drought critical — lower threshold pc>=35→pc>=30 per protected strategy
      # Protected strategy (median 12789) has NO relaxation gates. Previous pc>=35 left a
      # 5-turn gap (pc=30-34) where relaxation weakened height penalty → scatter. Batch:
@@ -1277,25 +1283,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_010847_score0651.jsonl turns 44-47, game_history/20260324_010300_score2461.jsonl
         # Fixes rollback failure mode: deadline_crossed時の危険ピース存在下での即時併合取りこぼし（axis 2 danger_piece_count条件追加）
 
-        # v477: merge drought critical — lower threshold from pc>=35 to pc>=30 per protected strategy
-        # Protected strategy (median 12789) has NO relaxation gates at any pc, validating suppression.
-        # Previous threshold of 35 left a 5-turn gap (pc=30-34) where height_mult relaxation
-        # (0.8x/0.3x/0.2x compounding to floor 0.5x) weakened height penalty, enabling
-        # additive bonuses to cause scatter. Worst games accumulate pieces at pc=30-34 during
-        # merge droughts, then cannot recover. Batch: HEIGHT_CONTROL 19.9% low vs 13.9% high.
-        # At pc=30+NO: 3 relaxation gates (v271 0.2x, v270 0.8x, v288 0.3x) suppressed →
-        # height_mult stays at phase value, height penalty becomes sole differentiator.
-        # At pc<30+NO: gates still fire for strategic positioning (preserves type concentration).
-        # Does NOT change NEAR suppression thresholds (postmortem hard constraint: pc>=28).
-        # Does NOT change additive bonus magnitudes (postmortem hard constraint: 5.6≤60, 9.6b≤120).
+        # v482: raise merge_drought_critical from pc>=30 to pc>=33 — align with HIGH_PC_NEAR_PENALTY
+        # v477 (pc>=30) created a gap where protected strategy allows relaxation but current doesn't:
+        # at pc=30-32 with rp=1-2, suppression removed 9.6b proximity guidance's ability to compete
+        # with height penalty, falling through to HEIGHT_CONTROL scatter. Protected strategy
+        # (median 12789) has NO merge_drought_critical — relaxation fires at ALL pc when rp<3.
+        # Batch: HEIGHT_CONTROL 19.0% low vs 16.6% high (5.7pp gap). At pc=30-32, low-score games
+        # accumulate pieces via edge scatter with no directional guidance (9.6b suppressed by
+        # merge_drought_critical). Worst game T62: pc=39, x=3.0 edge. Best game T93: NEAR chain
+        # +242 at pc=36 recovered from similar position — but recovery requires type concentration.
+        # Threshold pc>=33 aligns with HIGH_PC_NEAR_PENALTY (postmortem: "pc>=33 で DIRECT merge
+        # のみを積極的に狙い"). At pc=30-32: relaxation allows 9.6b (~120-360) to guide
+        # placement toward same-type clusters, reducing edge scatter. At pc>=33: suppression
+        # keeps height penalty strong for survival. Does NOT change NEAR suppression (pc>=28).
+        # Does NOT suppress guidance axes (postmortem: forbid 一括抑制). v477 was NOT identified
+        # as a failure mode in postmortem — it was collateral in v478-v481 rollback cascade.
         # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no gates),
-        #       tmp/state/last_rollback_analysis.md (anchor comp=12642.3),
-        #       game_history/20260402_151753_score0811.jsonl T48-T59 (pc=27→35, scatter, game over),
-        #       game_history/20260402_161048_score1080.jsonl T74-83 (pc=30→48, no recovery),
-        #       game_history/20260402_154922_score0677.jsonl T56-T63 (pc=27→31, death spiral),
-        #       tmp/change_log.txt (v472/v475/v476 merge_drought_critical at pc>=35)
-        # Fixes rollback failure mode: height_mult relaxation scatter at pc=30-34 → piece_count accumulation
-        merge_drought_critical = piece_count >= 30 and merge_grade == "NO"
+        #       tmp/state/last_rollback_postmortem.md (v477 not in failure modes, v480 was),
+        #       tmp/state/last_rollback_analysis.md (anchor comp=12757.2, current comp=11041.7),
+        #       game_history/20260403_001258_score0658.jsonl T59-66 (pc=39-42, edge scatter),
+        #       game_history/20260403_000719_score0711.jsonl T58-65 (pc=39-42, edge scatter),
+        #       game_history/20260403_000458_score2187.jsonl T93-100 (NEAR chain recovery),
+        #       tmp/change_log.txt (v472-v476 at pc>=35 successful, v477 at pc>=30)
+        # Fixes: HEIGHT_CONTROL edge scatter at pc=30-32 by restoring 9.6b guidance competition
+        merge_drought_critical = piece_count >= 33 and merge_grade == "NO"
 
         # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
         # danger_piece_count==0の場合に限りheight_multを0.2に緩和して、盤面圧縮（tighter board）を優先し、即時併合機会を確保
