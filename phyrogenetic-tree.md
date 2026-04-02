@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-02 23:33:24 JST`
-- Nodes: `878`
-- Edges: `1203`
-- Current: `63f2c2c1d31e`
-- Anchor: `63f2c2c1d31e`
+- Updated: `2026-04-03 00:21:51 JST`
+- Nodes: `879`
+- Edges: `1204`
+- Current: `2fdb9d0f5370`
+- Anchor: `0ff7f425d879`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_72c100d9f15f["72c100d9f15f<br/>g=12 n=12<br/>comp=10264.0"]
     h_83703f8c4c67["83703f8c4c67<br/>g=24 n=20<br/>comp=11441.3"]
     h_854dd86604da["854dd86604da<br/>g=12 n=12<br/>comp=9886.7"]
     h_5a79c70f09fb["5a79c70f09fb<br/>g=12 n=12<br/>comp=8970.9"]
@@ -68,15 +67,15 @@ flowchart TD
     h_e9f46253f367["e9f46253f367<br/>g=12 n=12<br/>comp=11641.4"]
     h_750e181c1242["750e181c1242<br/>g=12 n=12<br/>comp=10453.7"]
     h_cf84496e4523["cf84496e4523<br/>g=12 n=12<br/>comp=10743.3"]
-    h_63f2c2c1d31e["63f2c2c1d31e<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12757.2"]
+    h_63f2c2c1d31e["63f2c2c1d31e<br/>g=24 n=20<br/>comp=11720.1"]
     h_2df66e5a3e28["2df66e5a3e28<br/>g=24 n=20<br/>comp=11709.0"]
-    h_0ff7f425d879["0ff7f425d879<br/>g=12 n=12<br/>comp=12535.2"]
+    h_0ff7f425d879["0ff7f425d879<br/>ANCHOR<br/>g=12 n=12<br/>comp=12535.2"]
     h_ccf68dc4eeeb["ccf68dc4eeeb<br/>g=12 n=12<br/>comp=11471.8"]
     h_bb2eb7e82db6["bb2eb7e82db6<br/>g=12 n=12<br/>comp=11446.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_2fdb9d0f5370["2fdb9d0f5370<br/>CURRENT"]
 
-    h_72c100d9f15f -->|improve| h_83703f8c4c67
     h_83703f8c4c67 -->|improve| h_854dd86604da
     h_854dd86604da -->|improve| h_5a79c70f09fb
     h_5a79c70f09fb -. rollback .-> h_83703f8c4c67
@@ -144,13 +143,13 @@ flowchart TD
     h_0ff7f425d879 -->|improve| h_ccf68dc4eeeb
     h_ccf68dc4eeeb -->|improve| h_bb2eb7e82db6
     h_bb2eb7e82db6 -. rollback .-> h_63f2c2c1d31e
+    h_63f2c2c1d31e -->|improve| h_2fdb9d0f5370
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_72c100d9f15f plain;
     class h_83703f8c4c67 plain;
     class h_854dd86604da plain;
     class h_5a79c70f09fb plain;
@@ -203,13 +202,14 @@ flowchart TD
     class h_e9f46253f367 plain;
     class h_750e181c1242 plain;
     class h_cf84496e4523 plain;
-    class h_63f2c2c1d31e current_anchor;
+    class h_63f2c2c1d31e plain;
     class h_2df66e5a3e28 plain;
-    class h_0ff7f425d879 plain;
+    class h_0ff7f425d879 anchor;
     class h_ccf68dc4eeeb plain;
     class h_bb2eb7e82db6 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_2fdb9d0f5370 current;
 ```
 
 ## Detail 1/11
@@ -3064,9 +3064,9 @@ flowchart TD
 
 ## Detail 11/11
 
-- Range: `422188c46bb8` .. `a3aae72a4e37`
-- Nodes in this diagram: `78`
-- Internal edges in this diagram: `86`
+- Range: `422188c46bb8` .. `2fdb9d0f5370`
+- Nodes in this diagram: `79`
+- Internal edges in this diagram: `87`
 - Cross-chunk link: `58a2f66626b3 --improve--> 422188c46bb8`
 - Cross-chunk link: `1197192c2b10 -.rollback.-> 58a2f66626b3`
 - Cross-chunk link: `58a2f66626b3 --improve--> 3e8d0e52a172`
@@ -3149,13 +3149,14 @@ flowchart TD
     h_e9f46253f367["e9f46253f367<br/>g=12 n=12<br/>comp=11641.4"]
     h_750e181c1242["750e181c1242<br/>g=12 n=12<br/>comp=10453.7"]
     h_cf84496e4523["cf84496e4523<br/>g=12 n=12<br/>comp=10743.3"]
-    h_63f2c2c1d31e["63f2c2c1d31e<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12757.2"]
+    h_63f2c2c1d31e["63f2c2c1d31e<br/>g=24 n=20<br/>comp=11720.1"]
     h_2df66e5a3e28["2df66e5a3e28<br/>g=24 n=20<br/>comp=11709.0"]
-    h_0ff7f425d879["0ff7f425d879<br/>g=12 n=12<br/>comp=12535.2"]
+    h_0ff7f425d879["0ff7f425d879<br/>ANCHOR<br/>g=12 n=12<br/>comp=12535.2"]
     h_ccf68dc4eeeb["ccf68dc4eeeb<br/>g=12 n=12<br/>comp=11471.8"]
     h_bb2eb7e82db6["bb2eb7e82db6<br/>g=12 n=12<br/>comp=11446.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_2fdb9d0f5370["2fdb9d0f5370<br/>CURRENT"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
     h_a3e3965087ab -->|improve| h_1197192c2b10
@@ -3243,6 +3244,7 @@ flowchart TD
     h_0ff7f425d879 -->|improve| h_ccf68dc4eeeb
     h_ccf68dc4eeeb -->|improve| h_bb2eb7e82db6
     h_bb2eb7e82db6 -. rollback .-> h_63f2c2c1d31e
+    h_63f2c2c1d31e -->|improve| h_2fdb9d0f5370
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3320,16 +3322,27 @@ flowchart TD
     class h_e9f46253f367 plain;
     class h_750e181c1242 plain;
     class h_cf84496e4523 plain;
-    class h_63f2c2c1d31e current_anchor;
+    class h_63f2c2c1d31e plain;
     class h_2df66e5a3e28 plain;
-    class h_0ff7f425d879 plain;
+    class h_0ff7f425d879 anchor;
     class h_ccf68dc4eeeb plain;
     class h_bb2eb7e82db6 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_2fdb9d0f5370 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#12189 `63f2c2c1 -> 2fdb9d0f`
+
+- scores: `12249 11788 8209 12715 11477 8910 10609 11472 14589 9445 12860 8177`
+- v482: raise merge_drought_critical pc>=30→pc>=33 — align with HIGH_PC_NEAR_PENALTY
+- Fixes: HEIGHT_CONTROL edge scatter at pc=30-32 by restoring 9.6b guidance competition
+- Fixes rollback failure mode: height_mult relaxation scatter at pc=30-34 (v477 overcorrection)
+- last_rollback_analysis.md, 20260403_001258_score0658 T59-66, 20260403_000458_score2187 T93-100,
+- 20260403_000719_score0711 T58-65, batch_summary.txt, change_log.txt
+- v482: raise merge_drought_critical from pc>=30 to pc>=33 — align with HIGH_PC_NEAR_PENALTY
 
 ### Rollback Game#12177 `bb2eb7e8 -> 63f2c2c1`
 
