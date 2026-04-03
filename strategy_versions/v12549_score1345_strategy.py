@@ -63,6 +63,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v503: suppress AVOID_BLOCK_REACTIVE_PAIR at deadline — prevent edge scatter at NO-merge
+     # v417 suppression (max_y>=3.0+deadline, rp>=5+max_y>=2.5) missed the primary failure:
+     # worst game T50-T52 at max_y=1.77-1.8, rp=2, deadline=true, AVOID_BLOCK pushed pieces to
+     # x=2.4/3.0/3.0 edges where no future merges can happen. 3 consecutive zero-delta turns
+     # accumulated pieces without merges, triggering irreversible max_y runaway (1.68→3.45).
+     # At deadline without merge, axis 9.6 (-4500) makes all NO-merge equally bad; height penalty
+     # should be sole differentiator — AVOID_BLOCK's edge push is counterproductive. Protected
+     # strategy (median 12789) has no AVOID_BLOCK. Fixes: edge scatter → piece accumulation → p25 death
+     # refs: game_history/20260404_050847_score0655.jsonl T50-52, game_history/20260404_045754_score0792.jsonl T59-60,
+     #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+     # Fixes rollback failure mode: edge scatter from AVOID_BLOCK at deadline without merge
      # v502: revert congestion penalty to v470 levels (threshold 28→30, mult 35→30, offset 27→29)
      # v499 (threshold 28, mult 35) overwhelmed guidance bonuses at moderate pc: at pc=35, y=2.0,
      # congestion=700 > proximity 9.6b=333 and growth center 5.6=138. This prevented strategic
@@ -1366,6 +1377,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or deadline_crossed  # v503: suppress AVOID_BLOCK at deadline — edge scatter prevention
             )
             if not board_congested:
                 blocking_penalty = 0.0
