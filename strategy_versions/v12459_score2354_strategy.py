@@ -63,6 +63,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v470: increase congestion penalty multiplier 20→30 — reduce HEIGHT_CONTROL scatter at high pc
+     # Batch: HEIGHT_CONTROL 20.1% low vs 15.9% high — height penalty alone insufficient to prevent
+     # scattered placement at pc=30+. Worst game final 8 turns: 0 merges, CROSSES_DEADLINE_NO_MERGE×3.
+     # At pc=35, y=1.0: old 120, new 180. At pc=40, y=2.0: old 440, new 660. Still well below axis 8.8 (-4500).
+     # Advice: "盤面の高さ余裕を優先的に管理し、駒の積み上げペースを抑制する" (akai235).
+     # Fixes: HEIGHT_CONTROL overuse in low-score games → scattered accumulation → endgame death
+     # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 20.1% low vs 15.9% high), tmp/improve_brief.md,
+     #       game_history/20260403_204145_score0616.jsonl (worst, 0 merges final 8t),
+     #       advice.md (akai235, kbb246)
      # v469: increase axis 5.6 growth center proximity base 60→80 per v455 postmortem magnitude allowance
      # Postmortem v455: axis 5.6 at base 235(pc=40) was effective; current base 60 yields only 118(pc=40).
      # Gap: protected strategy (median 12789) has no 5.6 but strong flat guidance; current 5.6 too weak to
@@ -1415,7 +1424,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v365: increased multiplier 8→20 — old value was too weak to affect behavior
             # (piece_count=37, landing_y=1.0: 64 vs height diff ~140). New value provides
             # meaningful tie-breaking for axis 8.8 uniform penalty without overriding merges.
-            congestion_penalty = (piece_count - 29) * landing_y * 20.0
+            congestion_penalty = (piece_count - 29) * landing_y * 30.0  # v470: 20→30
             score -= congestion_penalty
 
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
