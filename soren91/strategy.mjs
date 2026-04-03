@@ -1,23 +1,20 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v148)
+ * strategy.mjs - ドロップ位置決定戦略 (v149)
  *
- * v148: v147をベースに、ゲーム分析から見られた高いmax_yの発生と、特定のX座標（特に-2.75）へのドロップの偏りを
+ * v149: v148をベースに、ゲーム分析から見られた高いmax_yの発生と、特定のX座標（特に-2.75）へのドロップの偏りを
  *       さらに緩和するための改善を適用します。これにより、ボードの高さ管理をさらに強化し、よりバランスの取れた
  *       ゲームプレイと生存ターンの安定化を目指します。
  *
- *      主な改善点 (v147からの調整点):
- *      1.  **高さ管理のさらなる強化**:
- *          - `settlingBuffer` を `2.0` から `2.1` に微増。物理エンジンの不確実性や凸ポリゴンの挙動に対する
- *            予測の高さをさらに保守的に見積もり、デッドライン到達リスクを早期に検出します。
- *      2.  **大型ピースの高さ管理の厳格化**:
- *          - 大型ピース（LARGE_PIECE_THRESHOLD以上）が片側に集約される際の高さペナルティを強化。
- *          - ペナルティ開始Y座標 `LARGE_PIECE_HIGH_PENALTY_START_Y` を `0.5` から `0.0` へ引き下げ、
- *            より低い位置からペナルティを適用開始します。
- *          - ペナルティの倍率 `LARGE_PIECE_HIGH_PENALTY_MULTIPLIER` を `800` から `1200` に増加させ、
- *            高さに対する忌避度を強めます。これは、ゲーム分析で観測された `max_y` が `DEADLINE_Y` を
- *            超える現象に対し、大型ピースの積み上がり方に起因する可能性を考慮し、より積極的に
- *            大型ピースによる高積み上げを抑制するものです。特定のX座標への偏りが高さリスクを増大させる
- *            可能性にも対処します。
+ *      主な改善点 (v148からの調整点):
+ *      1.  **大型ピースの高さ管理の厳格化のさらなる強化**:
+ *          - `LARGE_PIECE_HIGH_PENALTY_MULTIPLIER` を `1200` から `1800` に増加させ、
+ *            大型ピースが特定の側に集約される際の高さに対する忌避度をさらに強めます。
+ *            これは、ゲーム分析で観測された `max_y` が `DEADLINE_Y` を超える現象への対処と、
+ *            特に-2.75のような特定のX座標へのドロップ偏りが高さリスクを増大させている可能性を考慮したものです。
+ *      2.  **大型ピースの片側集約ボーナスの調整**:
+ *          - 大型ピースを既存の大型ピースが集約している側に配置する際のボーナスを `1300` から `1000` に減少。
+ *            これにより、集約のメリットを維持しつつ、高さ管理のペナルティとのバランスを取り、
+ *            過度な高積み上げを抑制する狙いです。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -41,7 +38,8 @@ const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are
 
 // v148: New constants for more aggressive large piece height management
 const LARGE_PIECE_HIGH_PENALTY_START_Y = 0.0; // Start penalizing large pieces getting high at Y=0.0 (was 0.5)
-const LARGE_PIECE_HIGH_PENALTY_MULTIPLIER = 1200; // Increased from 800 to make it more impactful
+// v149: Increased from 1200 to 1800 for even more impactful height management for large pieces
+const LARGE_PIECE_HIGH_PENALTY_MULTIPLIER = 1800;
 
 // Garbage Block Management Constants
 const GARBAGE_MERGE_BONUS = 3000;
@@ -331,10 +329,11 @@ export function decide(boardState) {
             const avgLargePieceX = largePieces.reduce((sum, p) => sum + p.x, 0) / largePieces.length;
 
             // If current X is on the same side as the average of existing large pieces, add a bonus
-            // Increased from 1200 (v140) to 1300 (v141, maintained in v147)
+            // v149: Reduced from 1300 to 1000 to balance with stronger height penalties
             if ((avgLargePieceX < 0 && x < 0) || (avgLargePieceX > 0 && x > 0)) {
-              currentPlacementScore += 1300;
+              currentPlacementScore += 1000;
               // v148: Apply more aggressive height penalty for large pieces on the aggregated side
+              // v149: Multiplier further increased from 1200 to 1800
               if (simulatedY > LARGE_PIECE_HIGH_PENALTY_START_Y) {
                   currentPlacementScore -= (simulatedY - LARGE_PIECE_HIGH_PENALTY_START_Y) * LARGE_PIECE_HIGH_PENALTY_MULTIPLIER;
               }
