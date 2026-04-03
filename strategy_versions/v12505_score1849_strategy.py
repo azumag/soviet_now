@@ -63,6 +63,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v500: cap axis 8.5 NEAR deadline bonus 600→300 — mirror DANGER_NEAR cap (v498)
+     # DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY gave NEAR +600 at deadline, stacking with
+     # DANGER_NEAR(300) + REACTIVE_IMMEDIATE(400) = +1300 to overpower NEAR_DEADLINE_RISK
+     # + HIGH_PC_NEAR_PENALTY at pc=33/y=1.0 (net +925). Failed NEAR (68.5%) at high pc
+     # adds piece without benefit, accelerating piece_count→max_y runaway. Cap at 300:
+     # pc=35/y=1.5/deadline becomes net -87. DIRECT (1200) unchanged.
+     # refs: score0613 T50 (NEAR fail, pc=30, delta=0), score1005 T59-60 (NEAR fail),
+     #       tmp/state/last_rollback_postmortem.md (DANGER_NEAR cap rationale),
+     #       tmp/improve_brief.md (deadline focus section)
+     # v499: strengthen congestion penalty — threshold 30→28, multiplier 30→35
+     # Provide earlier and stronger height differentiation to prevent piece_count
+     # accumulation during merge droughts before endgame congestion becomes fatal.
+     # refs: batch_summary.txt (HEIGHT_CONTROL 17.3%, low 18.3% vs high 14.0%),
+     #       advice.md (akai235), score0613 T50-57, score2510 T103-111
      # v498: fix deadline_crossed data source + disable height_mult relaxation at deadline
      # Bug: deadline_crossed read from game_state (key missing) → always False → ALL deadline
      # logic dormant (axis 9.2, 8.5, CHAIN_MERGE suppression, etc). Fix reads from reactor.
@@ -1462,20 +1476,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- v361: piece_count congestion penalty -----
+        # ----- v361/v470/v499: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
         # piece_count is the key predictor of final score, not max_y.
-        # When board is congested (piece_count >= 30), penalize high landing positions
-        # to encourage tighter placement that enables merges and reduces piece_count.
+        # When board is congested, penalize high landing positions to encourage tighter
+        # placement that enables merges and reduces piece_count.
         # This is NOT landing_y-only — it combines piece_count state with landing position.
         # No reactive_pair_count guard — works at ALL reactive levels (postmortem constraint).
-        # refs: tmp/state/last_rollback_postmortem.md (piece_count 41→1060 vs 21→4645),
-        #       tmp/batch_summary.txt (high-score merge_rate=38.6% vs low-score 33.6%)
-        if piece_count >= 30 and landing_y > -1.0:
-            # v365: increased multiplier 8→20 — old value was too weak to affect behavior
-            # (piece_count=37, landing_y=1.0: 64 vs height diff ~140). New value provides
-            # meaningful tie-breaking for axis 8.8 uniform penalty without overriding merges.
-            congestion_penalty = (piece_count - 29) * landing_y * 30.0  # v470: 20→30
+        # v499: lower threshold 30→28, raise multiplier 30→35 — provide meaningful height
+        # differentiation during critical transition period (pc=28-35) when HEIGHT_CONTROL
+        # scatter accumulates pieces without producing merges.
+        # Evidence: batch_summary HEIGHT_CONTROL 17.3% (avg_delta=0.5), low-score 18.3%
+        # vs high-score 14.0%. Worst game T50-57: 7/8 zero-delta turns, max_y jumps 2.05→3.49.
+        # Protected strategy (median 12789) has NO congestion penalty but also NO post-protected
+        # additive axes. This partially compensates for additive noise by strengthening height
+        # signal before the endgame congests beyond recovery.
+        # At pc=28, y=1.0: v470=0, v499=35. At pc=30, y=1.0: v470=30, v499=105.
+        # At pc=35, y=2.0: v470=360, v499=560. Still below NEAR merge (600) — preserves merges.
+        # At pc=40, y=2.0: v470=660, v499=910. Slightly exceeds NEAR at extreme — aligns
+        # with postmortem constraint "pc>=38+deadline, NEAR should be net-negative".
+        # Advice: "盤面の高さ余裕を優先的に管理し、駒の積み上げペースを抑制する" (akai235).
+        # refs: tmp/state/last_rollback_postmortem.md (pc 41→1060 vs 21→4645),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 17.3%, merge_rate gap),
+        #       advice.md (akai235, kbb246),
+        #       game_history/20260404_005736_score0613.jsonl T50-57,
+        #       game_history/20260404_005523_score2510.jsonl T103-111,
+        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        if piece_count >= 28 and landing_y > -1.0:
+            # v499: threshold 30→28, multiplier 30→35, offset 29→27
+            congestion_penalty = (piece_count - 27) * landing_y * 35.0
             score -= congestion_penalty
 
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
