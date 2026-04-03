@@ -1,28 +1,21 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v151)
+ * strategy.mjs - ドロップ位置決定戦略 (v152)
  *
- * v151: v150での高さ管理の強化にも関わらず、ゲーム分析でmax_yがDEADLINE_Y (2.5) を頻繁に超えている問題に対処します。
- *       物理エンジンの不確実性や凸ポリゴンによる「予想外の高さ」をより保守的に見積もり、
- *       クリティカルな高さを避けるためのペナルティをさらに早期かつ厳格化します。
+ * v152: v151での高さ管理の強化にも関わらず、ゲーム分析でmax_yがDEADLINE_Y (2.5) を頻繁に超えている問題に対し、
+ *       ピースの「中心Y座標」ではなく「ピースの最上部Y座標」を基準としたより厳格な高さ管理を導入します。
+ *       これにより、ピースのサイズ（半径）が高さペナルティに直接影響するようになり、特に大型ピースが高くなりすぎるのを早期に抑制します。
  *
- *      主な改善点 (v150からの調整点):
- *      1.  **落下Y座標シミュレーションの保守性のさらなる強化**:
- *          - `settlingBuffer` を `2.3` から `2.5` に増加させ、ピースの着地位置予測をより保守的にします。
- *            これにより、物理エンジンの不確実性や凸ポリゴンの形状による「予想外の高さ」をさらに広範に織り込み、
- *            デッドライン到達リスクを一層低減します。
- *      2.  **高さペナルティの適用開始位置の早期化**:
- *          - `TOP_Y_CRITICAL_PENALTY_START_RELATIVE` を `0.7` から `1.0` に増加。
- *            これにより、中心Y座標に対するクリティカルペナルティの開始Yが `1.8` から `1.5` へと低くなり、
- *            より低い位置からクリティカルな高積み上げを強く抑制します。
- *          - `TOP_Y_WARN_PENALTY_START_RELATIVE` を `1.5` から `2.0` に増加。
- *            これにより、中心Y座標に対する警告ペナルティの開始Yが `1.0` から `0.5` へと低くなり、
- *            ゲーム全体でより早くから高さを意識した配置を促します。
- *      3.  **全体的な高さペナルティのさらなる厳格化**:
- *          - `HEIGHT_PENALTY_WEIGHT` を `15000.0` から `20000.0` に増加。
- *            あらゆる状況での高さペナルティの影響を全体的に強化し、ボードが不必要に高くなるのをより強力に防ぎます。
- *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `1200` から `1800` に増加。
- *            デッドラインに近いクリティカルゾーンでのペナルティをさらに急峻にし、
- *            ゲームオーバーに直結する高積み上げを最大限に忌避させます。
+ *      主な改善点 (v151からの調整点):
+ *      1.  **高さペナルティ計算ロジックの抜本的変更**:
+ *          - `calculateHeightPenalty` 関数が `pieceRadius` を引数として受け取るように変更。
+ *          - ピースの「中心Y座標」ではなく「最上部Y座標 (`simulatedY + pieceRadius`)」を基準にペナルティを計算。
+ *          - 最上部Y座標に対する3段階の警告ゾーン（軽度、重度、極度）を設定し、デッドラインに近づくほどペナルティを指数関数的に増加させます。
+ *            これにより、ピースの大きさに関わらず、デッドラインまでの絶対的な距離に基づいてリスクを評価します。
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` はこの新しいペナルティ構造では使用しないため削除します。
+ *      2.  **大型ピースの高さペナルティ開始位置の調整**:
+ *          - `LARGE_PIECE_HIGH_PENALTY_START_Y` を `0.0` から `1.0` に変更。
+ *            大型ピースに対する高さペナルティの適用開始位置を調整し、初期の無理な低層配置を緩和しつつ、
+ *            ボード中層以上での大型ピースの高積み上げを抑制します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -37,8 +30,8 @@ const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Critical penalty starts at
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;     // Warning penalty starts at Y=0.5 (adjusted from 1.5 in v150)
 // v151: Increased from 15000.0 to 20000.0
 const HEIGHT_PENALTY_WEIGHT = 20000.0;
-// v151: Increased from 1200 to 1800
-const CRITICAL_Y_PENALTY_MULTIPLIER = 1800;
+// v152: CRITICAL_Y_PENALTY_MULTIPLIER is no longer used in the new penalty structure
+// const CRITICAL_Y_PENALTY_MULTIPLIER = 1800;
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -46,8 +39,8 @@ const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered
 const SMALL_PIECE_CLUSTER_BONUS = 800; // Maintained from v141
 const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are considered 'small' for density bonus.
 
-// v148: New constants for more aggressive large piece height management
-const LARGE_PIECE_HIGH_PENALTY_START_Y = 0.0; // Start penalizing large pieces getting high at Y=0.0 (was 0.5)
+// v152: Adjusted from 0.0 to 1.0
+const LARGE_PIECE_HIGH_PENALTY_START_Y = 1.0; // Start penalizing large pieces getting high at Y=1.0 (was 0.0)
 // v150: Multiplier increased to 3000
 const LARGE_PIECE_HIGH_PENALTY_MULTIPLIER = 3000;
 
@@ -92,23 +85,29 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
   return maxY;
 }
 
-// Calculate penalty based on the simulated Y position
-function calculateHeightPenalty(simulatedY) {
-  // Use DEADLINE_Y and relative offsets for consistency.
-  // v151: TOP_Y_CRITICAL_PENALTY_START_RELATIVE and TOP_Y_WARN_PENALTY_START_RELATIVE increased
-  const criticalY = DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE;
-  const warningY = DEADLINE_Y - TOP_Y_WARN_PENALTY_START_RELATIVE;
+// Calculate penalty based on the simulated Y position (v152: now based on piece's top Y)
+function calculateHeightPenalty(simulatedY_center, pieceRadius) {
+  const simulatedY_top = simulatedY_center + pieceRadius;
+
+  // Define penalty thresholds for the TOP of the piece
+  const TOP_Y_MILD_WARN_THRESHOLD = DEADLINE_Y - TOP_Y_WARN_PENALTY_START_RELATIVE;     // Top is 2.0 below deadline (i.e., Y=0.5)
+  const TOP_Y_SEVERE_WARN_THRESHOLD = DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE; // Top is 1.0 below deadline (i.e., Y=1.5)
+  const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.25;                               // Top is 0.25 below deadline (i.e., Y=2.25)
+
   let penalty = 0;
 
-  if (simulatedY > warningY) {
-    // Linear penalty increases as Y gets higher in the warning zone
-    // v151: HEIGHT_PENALTY_WEIGHT increased
-    penalty = (simulatedY - warningY) * HEIGHT_PENALTY_WEIGHT;
+  // Penalize getting close to the deadline. The absolute -1_000_000_000 penalty handles exceeding DEADLINE_Y.
+  if (simulatedY_top > TOP_Y_MILD_WARN_THRESHOLD) {
+    // Mild warning zone: Top is above Y=0.5
+    penalty += (simulatedY_top - TOP_Y_MILD_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 0.5;
   }
-  if (simulatedY > criticalY) {
-    // Exponentially higher penalty in the critical zone
-    // v151: CRITICAL_Y_PENALTY_MULTIPLIER increased
-    penalty += Math.pow((simulatedY - criticalY) / TOP_Y_CRITICAL_PENALTY_START_RELATIVE, 2) * HEIGHT_PENALTY_WEIGHT * CRITICAL_Y_PENALTY_MULTIPLIER;
+  if (simulatedY_top > TOP_Y_SEVERE_WARN_THRESHOLD) {
+    // Severe warning zone: Top is above Y=1.5
+    penalty += (simulatedY_top - TOP_Y_SEVERE_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 2;
+  }
+  if (simulatedY_top > TOP_Y_EXTREME_WARN_THRESHOLD) {
+    // Extreme warning zone: Top is above Y=2.25, very close to deadline
+    penalty += (simulatedY_top - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 10;
   }
   return penalty;
 }
@@ -283,9 +282,8 @@ export function decide(boardState) {
       } else {
         currentPlacementScore = 0; // Initialize for normal calculation
 
-        // Penalize height
-        // v151: HEIGHT_PENALTY_WEIGHT and CRITICAL_Y_PENALTY_MULTIPLIER increased, penalty start relative values adjusted.
-        currentPlacementScore -= calculateHeightPenalty(simulatedY);
+        // Penalize height (v152: now based on piece's top Y)
+        currentPlacementScore -= calculateHeightPenalty(simulatedY, pieceToDrop.r);
 
         // v141: Further increased additional penalty if placing high when a lot of garbage is present
         // (v142: values remain same as v141, unchanged in v147)
@@ -344,7 +342,7 @@ export function decide(boardState) {
             // v149: Reduced from 1300 to 1000 to balance with stronger height penalties (maintained in v150)
             if ((avgLargePieceX < 0 && x < 0) || (avgLargePieceX > 0 && x > 0)) {
               currentPlacementScore += 1000;
-              // v150: Multiplier increased to 3000
+              // v152: LARGE_PIECE_HIGH_PENALTY_START_Y adjusted to 1.0
               if (simulatedY > LARGE_PIECE_HIGH_PENALTY_START_Y) {
                   currentPlacementScore -= (simulatedY - LARGE_PIECE_HIGH_PENALTY_START_Y) * LARGE_PIECE_HIGH_PENALTY_MULTIPLIER;
               }
