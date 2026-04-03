@@ -1,21 +1,34 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v157)
+ * strategy.mjs - ドロップ位置決定戦略 (v158)
  *
- * v157: v156で導入された高さ管理の強化にも関わらず、依然としてmax_yがDEADLINE_Yを頻繁に超える問題に対処するため、
- *       物理エンジンの不確実性に対する安全マージンをさらに確保し、高すぎる配置に対するペナルティをより厳しく適用します。
- *       また、小ピースの過度な片側集中を抑制し、効率的な連鎖形成のためのパイプライン維持を促進する調整を行います。
+ * v158: v157での高さ管理強化にも関わらずmax_yがDEADLINE_Yを頻繁に超える問題は、
+ *       物理シミュレーションにおけるsettlingBufferの過度な悲観予測が、有効な併合機会を抑制し、
+ *       結果的に盤面全体の高さを上げてしまっている可能性を指摘しています。
+ *       このバージョンでは、より現実的な物理シミュレーション予測を採用し、
+ *       絶対的なデッドラインを超過する場合にのみ厳格なペナルティを課すよう調整します。
+ *       これにより、併合を積極的に狙いつつも、危険な高さには適切に反応できるバランスを目指します。
+ *       また、おじゃまブロック処理の優先度を若干向上させ、先読みの重要度も高めます。
  *
  *      主な改善点:
- *      1.  **シミュレーションの保守性強化 (settlingBufferの再調整)**:
- *          - `simulateDropY` 内の `settlingBuffer` を 3.5 から 4.0 へさらに増加。ピースの着地位置予測において、物理的な不確実性による上振れリスクをより厳しく織り込み、予測Y座標を確実に高く見積もることで、安全マージンを一層確保します。
- *      2.  **高さペナルティの重み付け強化**:
- *          - `HEIGHT_PENALTY_WEIGHT` を 50000.0 から 60000.0 へ増加。高さペナルティ全体を強化し、高すぎる位置への配置をより厳しく抑制します。
- *      3.  **致命的ペナルティの早期化**:
- *          - `CRITICAL_HEIGHT_MARGIN` を 0.25 から 0.75 へ変更。ピースの最上部が `DEADLINE_Y - 0.75` (Y=1.75) を超えた場合に極めて大きなペナルティを適用し、デッドライン到達リスクを大幅に低減します。
- *      4.  **警告ペナルティの早期化**:
- *          - `TOP_Y_EXTREME_WARN_THRESHOLD` を `DEADLINE_Y - 0.25` (Y=2.25) から `DEADLINE_Y - 1.0` (Y=1.5) へ変更。これにより、最も厳しい警告ペナルティがより低いY座標で早期に発動するようになります。
- *      5.  **小ピースのパイプラインボーナス強化**:
- *          - `calculatePipelineBonus` で、小型ピース (type 1〜4) に対して追加の固定ボーナス 200 を付与。これにより、小ピースの連鎖形成を促進し、過度な片側集中を緩和する効果を狙います。
+ *      1.  **シミュレーションの保守性緩和 (settlingBufferの再調整)**:
+ *          - `simulateDropY` 内の `settlingBuffer` を 4.0 から **0.5** へ大幅に減少。
+ *            物理エンジンの不確実性による上振れ予測を抑制し、より現実的な着地Y座標を予測することで、
+ *            過度な高さペナルティの適用を避けます。
+ *      2.  **致命的ペナルティの閾値調整 (CRITICAL_HEIGHT_MARGIN)**:
+ *          - `CRITICAL_HEIGHT_MARGIN` を 0.75 から **0.0** へ変更。
+ *            ピースの予測される最上部が `DEADLINE_Y` を**超えた場合のみ**、極めて大きなペナルティを適用するようにします。
+ *            これは、settlingBufferの減少に伴い、シミュレーションYが低くなるため、絶対的な上限に達した時のみ厳格に判断するためです。
+ *      3.  **警告ペナルティの早期化 (TOP_Y_EXTREME_WARN_THRESHOLD)**:
+ *          - `TOP_Y_EXTREME_WARN_THRESHOLD` を `DEADLINE_Y - 1.0` (Y=1.5) から `DEADLINE_Y - 0.5` (Y=2.0) へ変更。
+ *            シミュレーションYが現実的になるため、最も厳しい段階的な警告ペナルティをデッドラインにより近い位置 (Y=2.0) で発動させ、
+ *            実際の危険ゾーンへの接近に強く反応するようにします。
+ *      4.  **おじゃまブロック低Y併合ボーナス強化**:
+ *          - 低Yでの併合によるおじゃまブロッククリアボーナス `lowYGarbageBonus` の基礎値を `400` から `600` に、
+ *            piece.typeによるスケーリングを `50` から `75` に増加。
+ *            緊急時の追加ボーナスも `600` から `900` に増加。おじゃまブロックの積極的な処理を促します。
+ *      5.  **先読みボーナス強化**:
+ *          - `calculateLookAheadBonus` の割引率を 0.35 から **0.4** へ増加。
+ *            将来の併合機会により重みを持たせることで、長期的な連鎖形成を促進します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -31,8 +44,8 @@ const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.5;     // Warning penalty starts whe
 // v157: Increased from 50000.0 to 60000.0
 const HEIGHT_PENALTY_WEIGHT = 60000.0;
 
-// v157: Increased from 0.25 to 0.75
-const CRITICAL_HEIGHT_MARGIN = 0.75;
+// v158: Changed from 0.75 to 0.0
+const CRITICAL_HEIGHT_MARGIN = 0.0;
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -72,11 +85,8 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  // v154: Increased from 2.7 to 3.0 for even more conservative height estimation.
-  // v155: Further increased from 3.0 to 3.2.
-  // v156: Further increased from 3.2 to 3.5.
-  // v157: Further increased from 3.5 to 4.0.
-  const settlingBuffer = 4.0;
+  // v158: Reduced from 4.0 to 0.5.
+  const settlingBuffer = 0.5;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
@@ -99,8 +109,8 @@ function calculateHeightPenalty(simulatedY_center, pieceRadius) {
   // v156: Thresholds adjusted for earlier and more severe penalties
   const TOP_Y_MILD_WARN_THRESHOLD = DEADLINE_Y - TOP_Y_WARN_PENALTY_START_RELATIVE;     // Top is 2.5 below deadline (i.e., Y=0.0)
   const TOP_Y_SEVERE_WARN_THRESHOLD = DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE; // Top is 1.5 below deadline (i.e., Y=1.0)
-  // v157: Adjusted from DEADLINE_Y - 0.25 (Y=2.25) to DEADLINE_Y - 1.0 (Y=1.5)
-  const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.0;                               // Top is 1.0 below deadline (i.e., Y=1.5)
+  // v158: Adjusted from DEADLINE_Y - 1.0 (Y=1.5) to DEADLINE_Y - 0.5 (Y=2.0)
+  const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.5;                               // Top is 0.5 below deadline (i.e., Y=2.0)
 
   let penalty = 0;
 
@@ -115,7 +125,7 @@ function calculateHeightPenalty(simulatedY_center, pieceRadius) {
     penalty += (simulatedY_top - TOP_Y_SEVERE_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 8;
   }
   if (simulatedY_top > TOP_Y_EXTREME_WARN_THRESHOLD) {
-    // Extreme warning zone: Top is above Y=1.5
+    // Extreme warning zone: Top is above Y=2.0
     // v154: Multiplier increased from 20 to 40
     penalty += (simulatedY_top - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 40;
   }
@@ -154,10 +164,10 @@ function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, ga
         }
         // Additional bonus for merging near the bottom to clear garbage
         if (garbageState.ratio > 0.05 && targetY < -2.0) { // arbitrary low Y for "near bottom"
-          // v132: Increased lowYGarbageBonus base, urgent, and ojama additional bonuses (maintained in v146)
-          let lowYGarbageBonus = 400 + (droppingPiece.type * 50); // Scale with piece type
+          // v158: Increased lowYGarbageBonus base and scaled by piece type, and urgent additional bonus
+          let lowYGarbageBonus = 600 + (droppingPiece.type * 75); // Scale with piece type
           if (ojamaUrgentMode) {
-              lowYGarbageBonus += 600 * (1 + garbageState.gauge); // Additional bonus for urgent mode, also scaled by gauge
+              lowYGarbageBonus += 900 * (1 + garbageState.gauge); // Additional bonus for urgent mode, also scaled by gauge
           } else if (ojamaMode) {
               lowYGarbageBonus += 250 * garbageState.gauge; // Additional bonus for ojama mode, scaled by gauge
           }
@@ -225,7 +235,7 @@ function calculatePipelineBonus(droppingPiece, targetX, targetY, existingPieces)
   return pipelineBonus;
 }
 
-// v147: Adjusted look-ahead bonus multiplier
+// v158: Adjusted look-ahead bonus multiplier from 0.35 to 0.4
 function calculateLookAheadBonus(currentPiece, currentX, currentY, boardPieces, nextPiece) {
   if (!nextPiece) {
     return 0;
@@ -252,8 +262,8 @@ function calculateLookAheadBonus(currentPiece, currentX, currentY, boardPieces, 
     }
   }
   // Apply a discount factor as look-ahead is less certain than immediate outcomes
-  // v147: Increased from 0.2 to 0.35 for stronger weighting of future merges
-  return lookAheadMaxBonus * 0.35; // 35% value for look-ahead merges
+  // v158: Increased from 0.35 to 0.4 for stronger weighting of future merges
+  return lookAheadMaxBonus * 0.4;
 }
 
 
@@ -289,13 +299,13 @@ export function decide(boardState) {
 
       let currentPlacementScore; // Declare outside
 
-      // v157: If placing the piece would make its top significantly close to or above the deadline, assign a huge penalty.
+      // v158: If placing the piece would make its predicted top significantly close to or above the deadline, assign a huge penalty.
       if (simulatedY + pieceToDrop.r > DEADLINE_Y - CRITICAL_HEIGHT_MARGIN) {
           currentPlacementScore = -1_000_000_000; // Extremely high penalty for critical height
       } else {
         currentPlacementScore = 0; // Initialize for normal calculation
 
-        // Penalize height (v157: weight and multipliers further increased, thresholds adjusted)
+        // Penalize height (v158: thresholds adjusted for new settlingBuffer)
         currentPlacementScore -= calculateHeightPenalty(simulatedY, pieceToDrop.r);
 
         // v141: Further increased additional penalty if placing high when a lot of garbage is present
@@ -317,7 +327,7 @@ export function decide(boardState) {
         // v157: Bonus for pipeline maintenance, with stronger bonus for small pieces
         currentPlacementScore += calculatePipelineBonus(pieceToDrop, x, simulatedY, boardState.pieces);
 
-        // v147: Add look-ahead bonus for the next piece in queue (if available) - weight adjusted
+        // v158: Add look-ahead bonus for the next piece in queue (if available) - weight adjusted
         if (nextPieceForLookAhead) {
             currentPlacementScore += calculateLookAheadBonus(pieceToDrop, x, simulatedY, boardState.pieces, nextPieceForLookAhead);
         }
