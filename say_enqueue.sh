@@ -15,7 +15,8 @@
 
 set -uo pipefail
 cd "$(dirname "$0")"
-[ -z "${VOICEVOX_URL:-}" ] && [ -f .env ] && . ./.env
+# .env を毎回読み込んで、リアルタイムに VOICEVOX_URL 等の設定を反映させる
+[ -f .env ] && . ./.env
 
 # フラグ処理
 NO_PREEMPT=false
