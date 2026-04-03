@@ -63,6 +63,25 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v490: suppress NEAR merge at pc>=28+deadline — postmortem hard constraint
+     # NEAR failure (31.5%) at high pc+deadline catastrophic: adds piece without reducing pc,
+     # triggers irrecoverable cascade (3-5 turns to game over). Previous attempts (v463 chain
+     # suppression at pc>=35, v464 bonus reduction at pc>=28) insufficient — remaining axes
+     # (7 reactive 300-1000, 8.5 danger 300-600, 8.6 reactive immediate 600-1000) still
+     # provide ~1900 net bonus, overcoming risk penalties (~1400). CHAIN_MERGE alone adds
+     # 3000-5000 at landing_y=1.5. Only complete suppression eliminates all additive paths.
+     # DIRECT (95.7% success) unaffected. Protected strategy (median 12789) achieves better
+     # results without any NEAR bonuses at this zone, validating suppression safety.
+     # Worst T52: NEAR at pc=33/rp=5 fails → cascade 4 turns to game over. Best T128: NEAR
+     # at pc=36 fails but survives — however NO_MERGE at low y achieves similar outcome
+     # without cascade risk (existing reactive pairs merge on their own via physics).
+     # Fixes rollback failure mode: NEAR merge at medium pc (28-32) with deadline crossed
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       game_history/20260403_101251_score0842.jsonl T52-T56,
+     #       game_history/20260403_094710_score1055.jsonl T70-T83,
+     #       game_history/20260403_100413_score3234.jsonl T125-T129,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/batch_summary.txt, tmp/change_log.txt, tmp/improve_brief.md
      # v460: re-apply v451 CHAIN_MERGE suppression for NEAR at extreme congestion (pc>=35+deadline)
      # v451 was originally at Game#11731 but rolled back as collateral in v449 branch at Game#11744.
      # CHAIN_MERGE bonus (multiplier up to 1110 at high y, bonus up to ~5300) overwhelms NEAR
@@ -823,6 +842,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score = 0.0
         reasons = []
+
+        # v490: suppress NEAR merge at pc>=28+deadline — postmortem hard constraint
+        # NEAR failure (31.5%) at this zone triggers irrecoverable cascade.
+        # DIRECT (95.7%) still available; NO_MERGE HEIGHT_CONTROL handles remaining.
+        # Protected strategy (median 12789) validates safety of NEAR suppression.
+        if merge_grade == "NEAR" and piece_count >= 28 and deadline_crossed:
+            continue
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
@@ -1788,6 +1814,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
 
     # clip to drop range [-3.0, +3.0]
+    if not best_reason:
+        best_reason = "HEIGHT_CONTROL"
     best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
 
