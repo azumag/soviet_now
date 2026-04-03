@@ -63,6 +63,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v503: suppress AVOID_BLOCK_REACTIVE_PAIR at deadline — prevent edge scatter at NO-merge
+     # v417 suppression (max_y>=3.0+deadline, rp>=5+max_y>=2.5) missed the primary failure:
+     # worst game T50-T52 at max_y=1.77-1.8, rp=2, deadline=true, AVOID_BLOCK pushed pieces to
+     # x=2.4/3.0/3.0 edges where no future merges can happen. 3 consecutive zero-delta turns
+     # accumulated pieces without merges, triggering irreversible max_y runaway (1.68→3.45).
+     # At deadline without merge, axis 9.6 (-4500) makes all NO-merge equally bad; height penalty
+     # should be sole differentiator — AVOID_BLOCK's edge push is counterproductive. Protected
+     # strategy (median 12789) has no AVOID_BLOCK. Fixes: edge scatter → piece accumulation → p25 death
+     # refs: game_history/20260404_050847_score0655.jsonl T50-52, game_history/20260404_045754_score0792.jsonl T59-60,
+     #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+     # Fixes rollback failure mode: edge scatter from AVOID_BLOCK at deadline without merge
      # v502: revert congestion penalty to v470 levels (threshold 28→30, mult 35→30, offset 27→29)
      # v499 (threshold 28, mult 35) overwhelmed guidance bonuses at moderate pc: at pc=35, y=2.0,
      # congestion=700 > proximity 9.6b=333 and growth center 5.6=138. This prevented strategic
@@ -717,7 +728,7 @@ Phases (determined by board max Y):
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
   #
-# v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
+# [BEST:5737] v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
 # batch_summaryでHEIGHT_CONTROLが13.8%選択(avg_score_delta=0.3)と過剰であり、終盤高危険域(max_y>=2.0)での即時併合優先が弱いことを確認。
@@ -1366,6 +1377,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or deadline_crossed  # v503: suppress AVOID_BLOCK at deadline — edge scatter prevention
             )
             if not board_congested:
                 blocking_penalty = 0.0
