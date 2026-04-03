@@ -63,24 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v493: restore rp<3 guard for axis 9.6 stacking — align with protected strategy
-     # v363 removed guard; v408 congestion scaling (up to 3x) amplifies stacking to ~688 at pc=34,
-     # exceeding height diff (~450). Protected strategy (median 12789) has rp<3 guard, no congestion.
-     # Worst score0417: rp=5 stacking override → max_y 2.47→3.60 in 8 turns.
-     # Fixes: REACTIVE_PAIRS_STACKING overriding height at rp>=3+mg=NO
-     # refs: protected_e6f534c37e28, last_rollback_postmortem.md, score0417 T47-54,
-     #       score0837 T66, batch_summary.txt, strategy.py.staging v363/v408, change_log.txt
-     # v492: fix deadline_crossed data source — read from reactor (analysis) not game_state
-     # game_state lacks "deadline_crossed" key; game_state.get() returned False permanently.
-     # This disabled v490 (NEAR suppression at pc>=28+deadline) and all deadline axes
-     # (8.5, 8.8, 9.2, 9.6, axis 2 relaxation). Evidence: worst T45 JSONL
-     # deadline_crossed=true but DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY absent from reason.
-     # Fix: reactor.get("deadline_crossed", reactor_margin < 0) enables all deadline logic.
-     # Fixes rollback failure mode: NEAR merge at medium pc (28-32) with deadline crossed
-     # refs: game_history/20260403_113304_score0708.jsonl T44-T47 (NEAR at deadline, pc=29-31),
-     #       game_history/20260403_115345_score0857.jsonl T57-T64 (NEAR at deadline, pc=32-38),
-     #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-     #       analyze_board.py (calc_reactor_state returns deadline_crossed), strategy.py.staging v490
      # v490: suppress NEAR merge at pc>=28+deadline — postmortem hard constraint
      # NEAR failure (31.5%) at high pc+deadline catastrophic: adds piece without reducing pc,
      # triggers irrecoverable cascade (3-5 turns to game over). Previous attempts (v463 chain
@@ -771,6 +753,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
     
+    # --- deadline information ---
+    deadline_crossed = game_state.get("deadline_crossed", False)
+
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
@@ -778,19 +763,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
-
-    # --- deadline information ---
-    # v492 BUG FIX: read deadline_crossed from reactor (analysis), not game_state.
-    # game_state does NOT contain "deadline_crossed" key — game_state.get() always
-    # returned False, making deadline_crossed permanently False. This disabled v490
-    # (NEAR suppression at pc>=28+deadline) and all deadline-dependent axes (8.5,
-    # 8.8, 9.2, 9.6, axis 2 relaxation), causing NEAR merges at catastrophic
-    # pc+deadline combos — the PRIMARY postmortem failure mode.
-    # Evidence: worst T45 (deadline_crossed=true in JSONL, mg=NO, rp=5) —
-    # DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY not in reason → deadline_crossed was False.
-    # calc_reactor_state returns "deadline_crossed" in the reactor dict.
-    # Fallback to reactor_margin < 0 for robustness.
-    deadline_crossed = reactor.get("deadline_crossed", reactor_margin < 0)
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
@@ -856,14 +828,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     )
     current_type_has_near = any(
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
-    )
-
-    # v491: pre-compute whether any candidate has DIRECT merge available
-    # Used by axis 9.6 guard: stacking without DIRECT merge at high max_y pushes pieces upward
-    # without reducing piece_count, triggering cascade. When DIRECT exists, +1200 dominates
-    # stacking (~100-400), so guard has no effect — only changes outcome when NO DIRECT available.
-    has_any_direct_merge = any(
-        r.get("merge_grade") == "DIRECT" for r in results
     )
 
     # =======================================================================
@@ -1048,27 +1012,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
         # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
-        # v491: suppress at rp<3+max_y>=1.3+NO_DIRECT — postmortem constraint from rollback analysis:
-        # "REACTIVE_PAIRS_STACKING at rp=2 should not fire when merge_grade is NO and max_y>=1.3 —
-        # stacking guidance without merge opportunity just pushes pieces upward"
-        # At rp<3, reactive path is weak; stacking bonus (~100-400) can override height differentiation
-        # (~50-150), causing upward placement without merge. Guard only when NO DIRECT available
-        # (DIRECT +1200 dominates stacking). Evidence: score0814 T62-T69 (rp=2, max_y=1.88, stacking
-        # fires without merges → 7-turn merge drought), score0785 T57 (rp=2, pc=34, stacking cascade).
-        # refs: game_history/20260403_102754_score0814.jsonl T62-T69,
-        #       game_history/20260403_103022_score0785.jsonl T57-T60,
-        #       tmp/state/last_rollback_postmortem.md (rp=2 max_y>=1.3 constraint)
-        stacking_guarded = (
-            reactive_pair_count < 3
-            and max_y >= 1.3
-            and not has_any_direct_merge
-        )
-        # v493: restore rp<3 guard (align with protected strategy median 12789).
-        # At rp>=3, axis 8.8 (-4500) dominates — stacking would override height
-        # differentiation via congestion-scaled bonus (~688 at pc=34 > height diff ~450).
-        # Protected strategy never stacks at rp>=3; height penalty provides sole differentiation.
-        if (reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None
-                and not stacking_guarded):
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
