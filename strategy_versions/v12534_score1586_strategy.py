@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v501: fix v500 missed apply — axis 8.5 NEAR deadline bonus cap 600→300
+     # v500 documented capping axis 8.5 NEAR deadline bonus from 600 to 300 but the code
+     # change was never applied (only comments added). The value remained 600.
+     # At pc=35/y=1.5/deadline (no danger target): NEAR net was +213 instead of intended -87.
+     # This caused NEAR merge cascade at high pc+deadline: extra_low score1047 T68/T70/T72
+     # all failed NEAR (delta=0), adding pieces at dangerous height without benefit.
+     # Fixes: near_merge_cascade_at_high_pc_deadline (postmortem constraint violation)
+     # refs: tmp/change_log.txt (v500 documented but not applied), tmp/state/last_rollback_postmortem.md,
+     #       game_history/20260404_034601_score1047.jsonl T68-72, tmp/batch_summary.txt,
+     #       strategy.py.staging line 1788 (code has 600, should be 300), strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v500: cap axis 8.5 NEAR deadline bonus 600→300 — mirror DANGER_NEAR cap (v498)
      # DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY gave NEAR +600 at deadline, stacking with
      # DANGER_NEAR(300) + REACTIVE_IMMEDIATE(400) = +1300 to overpower NEAR_DEADLINE_RISK
@@ -1783,9 +1793,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             else:
-                # v331: deadline_crossed時はボーナスを強化（300.0→600.0）
+                # v331/v500: deadline_crossed時はボーナス強化 — v501 caps at 300 (v500 missed apply)
+                # v331 originally raised 300→600. v500 intended to cap back to 300 per postmortem:
+                # DANGER_ZONE_IMMEDIATE(600)+DANGER_NEAR(300)+REACTIVE_IMMEDIATE(400)=+1300
+                # overpowers NEAR_DEADLINE_RISK+HIGH_PC_NEAR_PENALTY at pc=33/y=1.0 (net +925).
+                # Failed NEAR (31.5%) adds piece without benefit, accelerating pc→max_y runaway.
                 if deadline_crossed:
-                    score += 600.0
+                    score += 300.0
                 else:
                     score += 300.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
