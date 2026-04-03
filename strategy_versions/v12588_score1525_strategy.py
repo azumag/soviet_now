@@ -63,6 +63,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v506: suppress RUSSIA_PHASE_BOARD_COMPRESSION at deadline — postmortem constraint alignment
+     # At deadline+NO-merge, axis 9.6 (-4500) and axis 8.8 (-4500 at rp>=3) create uniform
+     # penalty that lets height penalty be sole differentiator. Russia BOARD_COMPRESSION bonuses
+     # (+400/+800/+900) partially offset these penalties, creating relative position preferences
+     # that lead to additive scatter — same failure mode postmortem identifies as "deadline-dependent
+     # additive noise". Protected strategy (median 12789, +20% better) has NO Russia NO-merge bonuses.
+     # At deadline, priority must be "merge or place low" not "compress the board". DIRECT/NEAR merge
+     # bonuses untouched — only NO-merge compression suppressed at deadline.
+     # Fixes rollback failure mode: deadline additive noise from Russia compression
+     # refs: tmp/state/last_rollback_postmortem.md, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       game_history/20260404_081722_score4387.jsonl (best, Russia+deadline final 8t),
+     #       tmp/batch_summary.txt, tmp/improve_brief.md, advice.md, strategy.py.staging (v505)
      # v505: suppress NEAR reactive bonuses (axis 8, axis 8.6) at pc>=38+deadline — postmortem constraint
      # Postmortem constraint: "at pc>=38+deadline, NEAR merge should be net-negative
      # regardless of danger/reactive bonuses." Current axis 8 (+1000 at rp>=3) and axis
@@ -1947,7 +1959,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
              elif merge_grade == "NO":
                  # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
                  # v336: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
-                 if reactive_pair_count >= 3:
+                 # v506: suppress BOARD_COMPRESSION at deadline — postmortem constraint alignment
+                 # At deadline+NO-merge, axis 9.6 (-4500) and axis 8.8 (-4500 if rp>=3) create
+                 # uniform penalty that lets height penalty be the sole differentiator. Russia
+                 # BOARD_COMPRESSION bonuses (+400/+800/+900) partially offset these penalties,
+                 # creating relative position preferences that lead to additive scatter — the
+                 # same failure mode the postmortem identifies as "deadline-dependent additive
+                 # noise". Protected strategy (median 12789) achieves +20% better median WITHOUT
+                 # any Russia-specific NO-merge bonuses. At deadline, the priority must be
+                 # "merge or place low" not "compress the board". DIRECT/NEAR merge bonuses
+                 # above are untouched — only NO-merge compression is suppressed at deadline.
+                 # Evidence: worst game T55-60 NO-merge cascade with RUSSIA_PHASE_BOARD_COMPRESSION
+                 # in reasons; best game final 8t uses RUSSIA_PHASE_BOARD_COMPRESSION only in
+                 # non-deadline turns where scatter risk is lower.
+                 # Fixes rollback failure mode: deadline additive noise from Russia compression
+                 if deadline_crossed:
+                     # At deadline, let axis 9.6/8.8 uniform penalties dominate without
+                     # Russia compression offset. Height penalty provides sole differentiation.
+                     pass
+                 elif reactive_pair_count >= 3:
                      # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
                      # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
                      score += 900.0
