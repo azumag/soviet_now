@@ -288,13 +288,6 @@ post_game_bookkeeping() {
 
 	local game_num_display=$((GAME_NUM + 1))
 
-	# ハイスコア判定を先行実行（クリップは早いほど良い）
-	local _best_for_clip
-	_best_for_clip=$(cat best_score.txt 2>/dev/null || echo 0)
-	if [ "${LAST_SCORE:-0}" -gt "${_best_for_clip:-0}" ]; then
-		_create_twitch_clip "🏆 NEW HIGH SCORE: ${LAST_SCORE}! (Game #${game_num_display})" "$game_num_display"
-	fi
-
 	# チャネルポイント予想: 今回の結果を best_outcome に蓄積（リセット前に判定）
 	# ※cleanup前に実行し、建国イベントが確実に記録されるようにする
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
@@ -371,7 +364,7 @@ json.dump(d,open(f,'w'))
 
 	# バージョン保存・ベスト判定・履歴アーカイブ
 	save_strategy_version "$LAST_SCORE"
-	update_best "$LAST_SCORE"
+	update_best "$LAST_SCORE" && _create_twitch_clip "🏆 NEW HIGH SCORE: ${LAST_SCORE}! (Game #${game_num_display})" "$game_num_display"
 	archive_history "$LAST_SCORE"
 
 	# アーカイブファイル名を記録

@@ -479,6 +479,23 @@ function runTesseractText(imagePath, options = {}) {
   }
 }
 
+function usefulGameplayLine(line) {
+  const text = normalizeLine(line);
+  if (!text || text.length < 2) return false;
+  if (/^(assistant|analysis|final|tool_call|tool_result)$/i.test(text)) return false;
+  if (/^[=*_#>|[\]{}()]+$/.test(text)) return false;
+  if (/^https?:\/\//i.test(text)) return false;
+
+  const signal = (text.match(/[A-Za-z0-9ぁ-んァ-ヶー一-龠々%:+-]/g) || []).length;
+  if (signal < 2) return false;
+  if (signal / text.length < 0.4) return false;
+
+  if (/[ぁ-んァ-ヶー一-龠々]/.test(text)) return true;
+  if (/(WAIT|MOVE|DROP|HOLD|NEXT|RANK|K\.?O\.?|READY|TURN|PIECE|YOUR|AREA|DANGER|GAME OVER)/i.test(text)) return true;
+  if (/\b\d{1,2}(?:位|\/91|TURN|%|x)\b/i.test(text)) return true;
+  return /[A-Za-z]{4,}/.test(text);
+}
+
 async function writeVariant(sourcePath, tempDir, name, transform) {
   const outPath = join(tempDir, `${name}.png`);
   let pipeline = sharp(sourcePath);
@@ -709,6 +726,113 @@ export async function analyzeResultScreen(imagePath) {
       rankCandidates: [...new Set(rankCandidates.map(item => item.value))].sort((a, b) => a - b),
       lines,
       playerNames,
+    };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+export async function analyzeGameplayScreenshotText(imagePath) {
+  if (!imagePath || !existsSync(imagePath)) {
+    return {
+      imagePath,
+      detected: false,
+      lines: [],
+    };
+  }
+
+  maybeWarnMissingJapanese();
+
+  const meta = await sharp(imagePath).metadata();
+  const width = meta.width || 1280;
+  const height = meta.height || 720;
+  const tempDir = mkdtempSync(join(tmpdir(), 'soren91_gameplay_ocr_'));
+
+  try {
+    const variants = [
+      {
+        name: 'full_gray',
+        path: await writeVariant(imagePath, tempDir, 'full_gray', img =>
+          img
+            .resize({ width: Math.max(960, Math.floor(width * 1.4)) })
+            .grayscale()
+            .normalize()
+            .sharpen()
+        ),
+        languages: ['jpn', 'eng'],
+        psm: 6,
+      },
+      {
+        name: 'full_threshold',
+        path: await writeVariant(imagePath, tempDir, 'full_threshold', img =>
+          img
+            .resize({ width: Math.max(960, Math.floor(width * 1.4)) })
+            .grayscale()
+            .normalize()
+            .sharpen()
+            .threshold(160)
+        ),
+        languages: ['jpn', 'eng'],
+        psm: 6,
+      },
+      {
+        name: 'top_band',
+        path: await writeVariant(imagePath, tempDir, 'top_band', img =>
+          img
+            .extract({
+              left: 0,
+              top: 0,
+              width,
+              height: Math.max(1, Math.floor(height * 0.24)),
+            })
+            .resize({ width: Math.max(960, Math.floor(width * 1.8)) })
+            .grayscale()
+            .normalize()
+            .sharpen()
+            .threshold(155)
+        ),
+        languages: ['jpn', 'eng'],
+        psm: 6,
+      },
+      {
+        name: 'right_panel',
+        path: await writeVariant(imagePath, tempDir, 'right_panel', img =>
+          img
+            .extract({
+              left: Math.floor(width * 0.68),
+              top: Math.floor(height * 0.05),
+              width: Math.max(1, Math.floor(width * 0.29)),
+              height: Math.max(1, Math.floor(height * 0.62)),
+            })
+            .resize({ width: Math.max(720, Math.floor(width * 0.9)) })
+            .grayscale()
+            .normalize()
+            .sharpen()
+            .threshold(155)
+        ),
+        languages: ['jpn', 'eng'],
+        psm: 6,
+      },
+    ];
+
+    const lines = [];
+    for (const variant of variants) {
+      const text = runTesseractText(variant.path, {
+        languages: variant.languages,
+        psm: variant.psm,
+      });
+      if (!text) continue;
+      for (const rawLine of String(text).split(/\r?\n/)) {
+        const line = normalizeLine(rawLine);
+        if (!usefulGameplayLine(line)) continue;
+        lines.push(line);
+      }
+    }
+
+    return {
+      imagePath: basename(imagePath),
+      detected: lines.length > 0,
+      lines: dedupeTextList(lines, 8),
     };
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

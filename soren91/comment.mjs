@@ -10,7 +10,7 @@
 import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { execFile } from 'child_process';
 import { join } from 'path';
-import { analyzeResultScreen } from './result_screen_ocr.mjs';
+import { analyzeGameplayScreenshotText, analyzeResultScreen } from './result_screen_ocr.mjs';
 import { generateTextWithFallbacks, stripAnsi } from './text_ai.mjs';
 
 const PROMPTS_DIR = join(import.meta.dirname || '.', 'prompts');
@@ -43,6 +43,11 @@ const META_LINE_PATTERNS = [
   /スクリーンショットをお送りいただければ/u,
   /順位情報に基づいてコメントを生成/u,
   /情報が不足している|情報を教えてほしい/u,
+  /実況コメントを生成するには|以下の情報が必要/u,
+  /このメッセージは指示書/u,
+  /具体的なゲーム画面|プレイ状況をお知らせ/u,
+  /AIアシスタント|Meriken/u,
+  /Google DeepMind|大規模言語モデル|オープンウェイトモデル/u,
   /コメント本文のみ/u,
   /ですます調|敬語/u,
   /ペルソナ|OCRメモ|順位情報/u,
@@ -60,7 +65,24 @@ const META_SENTENCE_PATTERNS = [
   /何を(返答|返信|回答)す(れば|るか)/u,
   /どのコメントに(返答|返信|回答)/u,
   /ご指示ください|教えてください|送ってください/u,
+  /実況コメントを生成するには|以下の情報が必要/u,
+  /このメッセージは指示書/u,
+  /具体的なゲーム画面|プレイ状況をお知らせ/u,
+  /AIアシスタント|Meriken/u,
+  /Google DeepMind|大規模言語モデル|オープンウェイトモデル/u,
   /コメント本文のみ|ですます調|絶対ルール|ペルソナ|OCRメモ|順位情報/u,
+];
+
+const INVALID_ANYWHERE_PATTERNS = [
+  /私はGemini\b|Gemini 4/u,
+  /Google DeepMind|大規模言語モデル|オープンウェイトモデル/u,
+  /AIアシスタント|Meriken/u,
+  /このメッセージは指示書/u,
+  /実況コメントを生成するには|以下の情報が必要/u,
+  /具体的なゲーム画面|プレイ状況をお知らせ/u,
+  /スクリーンショットを(教えて|送って|お送り)|画像があると/u,
+  /どのようなゲームのシチュエーション|どのような「?コメント/u,
+  /追加情報|情報提供|添付されていない/u,
 ];
 
 function splitSentences(text) {
@@ -87,6 +109,7 @@ function isValidGeneratedComment(text) {
   const normalized = String(text || '').replace(/\s+/g, ' ').trim();
   if (normalized.length < 24) return false;
   if (!/[。！？!?]/u.test(normalized)) return false;
+  if (INVALID_ANYWHERE_PATTERNS.some(pattern => pattern.test(normalized))) return false;
 
   const head = splitSentences(normalized).slice(0, 4).join(' ');
   if (META_SENTENCE_PATTERNS.some(pattern => pattern.test(head))) return false;
@@ -192,6 +215,23 @@ function extractCommentOnly(raw, tag = 'comment') {
   const preview = stripAnsi(raw).replace(/\s+/g, ' ').slice(0, 220);
   console.log(`[${tag}] rejected generated comment preview: ${preview}`);
   return null;
+}
+
+async function buildMidgameScreenshotTextInfo(screenshotPath) {
+  if (!screenshotPath || !existsSync(screenshotPath)) {
+    return '（OCR補助メモなし）';
+  }
+
+  try {
+    const ocr = await analyzeGameplayScreenshotText(screenshotPath);
+    if (ocr?.lines?.length) {
+      return ocr.lines.slice(0, 8).map(line => `- ${line}`).join('\n');
+    }
+  } catch {
+    return '（OCR補助メモなし）';
+  }
+
+  return '（OCR補助メモなし）';
 }
 
 async function buildRankingTextPrompt(rankingImagePath, myRank) {
@@ -321,16 +361,20 @@ function summarizeHoldPiece(hold) {
  * @param {object} boardState - 盤面状態
  * @param {string} [_screenshotPath] - 後方互換のため残す未使用引数
  */
-export async function generateMidgameComment(gameNumber, turn, boardState, _screenshotPath) {
+export async function generateMidgameComment(gameNumber, turn, boardState, screenshotPath) {
   if (!boardState || !boardState.pieces || boardState.pieces.length === 0) {
     console.log('[midgame_comment] No board state or empty pieces');
     return null;
   }
 
   try {
-    const comment = await callClaudeForMidgame(gameNumber, turn, boardState);
+    const comment = await callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath);
     if (!comment) {
       console.log('[midgame_comment] No comment generated');
+      return null;
+    }
+    if (!isValidGeneratedComment(comment)) {
+      console.log('[midgame_comment] Invalid comment after parsing, skip');
       return null;
     }
 
@@ -407,9 +451,10 @@ function formatBoardStateForPrompt(boardState, turn) {
   return info;
 }
 
-async function callClaudeForMidgame(gameNumber, turn, boardState) {
+async function callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath) {
   const boardInfo = formatBoardStateForPrompt(boardState, turn);
-  const promptText = loadPrompt('midgame_comment.md', { boardInfo });
+  const screenTextInfo = await buildMidgameScreenshotTextInfo(screenshotPath);
+  const promptText = loadPrompt('midgame_comment.md', { boardInfo, screenTextInfo });
 
   return generateTextWithFallbacks('midgame_comment', promptText, {
     parseOutput: raw => extractCommentOnly(raw, 'midgame_comment'),
