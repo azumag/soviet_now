@@ -1,34 +1,31 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v158)
+ * strategy.mjs - ドロップ位置決定戦略 (v159)
  *
- * v158: v157での高さ管理強化にも関わらずmax_yがDEADLINE_Yを頻繁に超える問題は、
- *       物理シミュレーションにおけるsettlingBufferの過度な悲観予測が、有効な併合機会を抑制し、
- *       結果的に盤面全体の高さを上げてしまっている可能性を指摘しています。
- *       このバージョンでは、より現実的な物理シミュレーション予測を採用し、
- *       絶対的なデッドラインを超過する場合にのみ厳格なペナルティを課すよう調整します。
- *       これにより、併合を積極的に狙いつつも、危険な高さには適切に反応できるバランスを目指します。
- *       また、おじゃまブロック処理の優先度を若干向上させ、先読みの重要度も高めます。
+ * v159: v158でのsettlingBufferとCRITICAL_HEIGHT_MARGINの調整にも関わらず、
+ *       実測のmax_yがDEADLINE_Y (2.5) を頻繁に超える傾向が見られます。
+ *       これは、物理シミュレーションにおけるsettlingBufferがまだ楽観的すぎるか、
+ *       CRITICAL_HEIGHT_MARGINがデッドラインへの反応として遅すぎる可能性を指摘しています。
+ *       このバージョンでは、より現実的な物理シミュレーション予測と、
+ *       デッドライン接近に対するより早期かつ厳格なペナルティを再導入し、
+ *       高すぎる積み上がりを未然に防ぐことを目指します。
  *
  *      主な改善点:
- *      1.  **シミュレーションの保守性緩和 (settlingBufferの再調整)**:
- *          - `simulateDropY` 内の `settlingBuffer` を 4.0 から **0.5** へ大幅に減少。
- *            物理エンジンの不確実性による上振れ予測を抑制し、より現実的な着地Y座標を予測することで、
- *            過度な高さペナルティの適用を避けます。
- *      2.  **致命的ペナルティの閾値調整 (CRITICAL_HEIGHT_MARGIN)**:
- *          - `CRITICAL_HEIGHT_MARGIN` を 0.75 から **0.0** へ変更。
- *            ピースの予測される最上部が `DEADLINE_Y` を**超えた場合のみ**、極めて大きなペナルティを適用するようにします。
- *            これは、settlingBufferの減少に伴い、シミュレーションYが低くなるため、絶対的な上限に達した時のみ厳格に判断するためです。
- *      3.  **警告ペナルティの早期化 (TOP_Y_EXTREME_WARN_THRESHOLD)**:
- *          - `TOP_Y_EXTREME_WARN_THRESHOLD` を `DEADLINE_Y - 1.0` (Y=1.5) から `DEADLINE_Y - 0.5` (Y=2.0) へ変更。
- *            シミュレーションYが現実的になるため、最も厳しい段階的な警告ペナルティをデッドラインにより近い位置 (Y=2.0) で発動させ、
- *            実際の危険ゾーンへの接近に強く反応するようにします。
- *      4.  **おじゃまブロック低Y併合ボーナス強化**:
- *          - 低Yでの併合によるおじゃまブロッククリアボーナス `lowYGarbageBonus` の基礎値を `400` から `600` に、
- *            piece.typeによるスケーリングを `50` から `75` に増加。
- *            緊急時の追加ボーナスも `600` から `900` に増加。おじゃまブロックの積極的な処理を促します。
- *      5.  **先読みボーナス強化**:
- *          - `calculateLookAheadBonus` の割引率を 0.35 から **0.4** へ増加。
- *            将来の併合機会により重みを持たせることで、長期的な連鎖形成を促進します。
+ *      1.  **シミュレーションの保守性再調整 (settlingBufferの増加)**:
+ *          - `simulateDropY` 内の `settlingBuffer` を **0.5 から 1.0 へ増加**。
+ *            物理エンジンの不確実性による上振れ予測を、より現実的に織り込み、
+ *            シミュレートされる着地Y座標をやや高くすることで、危険な高さを早期に認識できるようにします。
+ *            v158の0.5では実際のmax_yがデッドラインを超えるケースが散見されたため、
+ *            過度な楽観予測を是正します。
+ *      2.  **致命的ペナルティの閾値再調整 (CRITICAL_HEIGHT_MARGINの再導入)**:
+ *          - `CRITICAL_HEIGHT_MARGIN` を **0.0 から 0.25 へ変更**。
+ *            ピースの予測される最上部が `DEADLINE_Y` の0.25手前で極めて大きなペナルティを適用するようにします。
+ *            これにより、デッドラインに到達する前に、より早期に危険を回避する行動を促します。
+ *            v158の0.0では、デッドライン到達時までペナルティが発動せず手遅れになるケースがあったため、
+ *            安全マージンを設けます。
+ *      3.  **TOP_Y_EXTREME_WARN_THRESHOLD の見直し**:
+ *          - settlingBufferとCRITICAL_HEIGHT_MARGINの調整により、既存のwarn/criticalゾーンが相対的に適切に機能するはずなので、
+ *            この閾値は変更しません。新しいsettlingBufferとCRITICAL_HEIGHT_MARGINの効果を優先して検証します。
+ *      4.  その他v158の変更点 (おじゃまボーナス、先読みボーナス強化) は維持します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -44,8 +41,8 @@ const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.5;     // Warning penalty starts whe
 // v157: Increased from 50000.0 to 60000.0
 const HEIGHT_PENALTY_WEIGHT = 60000.0;
 
-// v158: Changed from 0.75 to 0.0
-const CRITICAL_HEIGHT_MARGIN = 0.0;
+// v159: Changed from 0.0 to 0.25
+const CRITICAL_HEIGHT_MARGIN = 0.25;
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -85,8 +82,8 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  // v158: Reduced from 4.0 to 0.5.
-  const settlingBuffer = 0.5;
+  // v159: Increased from 0.5 to 1.0.
+  const settlingBuffer = 1.0;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
@@ -299,7 +296,7 @@ export function decide(boardState) {
 
       let currentPlacementScore; // Declare outside
 
-      // v158: If placing the piece would make its predicted top significantly close to or above the deadline, assign a huge penalty.
+      // v159: If placing the piece would make its predicted top significantly close to or above the deadline, assign a huge penalty.
       if (simulatedY + pieceToDrop.r > DEADLINE_Y - CRITICAL_HEIGHT_MARGIN) {
           currentPlacementScore = -1_000_000_000; // Extremely high penalty for critical height
       } else {
