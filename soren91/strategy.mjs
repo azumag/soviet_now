@@ -1,23 +1,17 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v153)
+ * strategy.mjs - ドロップ位置決定戦略 (v154)
  *
- * v153: v152での厳格な高さ管理にも関わらず、ゲーム分析でmax_yがDEADLINE_Y (2.5) を頻繁に超えている問題に対し、
- *       「シミュレートされるY座標の信頼性」と「デッドライン到達に対する許容度」の乖離を解消するため、
- *       高さペナルティのロジックと強度をさらに強化します。
- *       これは、物理エンジンの不確実性（回転・転がり）により、シミュレーションが実際よりも低いY座標を予測する可能性を考慮し、
- *       より保守的な配置選択を促すための変更です。
+ * v154: v153での厳格な高さ管理強化にも関わらず、ゲーム分析でmax_yがDEADLINE_Y (2.5) を頻繁に大きく超えている問題に対し、
+ *       物理エンジンの不確実性（回転・転がり、国土形状の凸ポリゴン）によってシミュレーションが実際よりも低いY座標を予測する可能性をさらに強く考慮し、
+ *       高さペナルティのロジックと強度を再々強化します。
+ *       これは、より保守的な配置選択を促し、デッドライン到達リスクを極限まで低減するための変更です。
  *
- *      主な改善点 (v152からの調整点):
- *      1.  **高さペナルティのウェイトと閾値の再調整**:
- *          - `HEIGHT_PENALTY_WEIGHT` を 20000.0 から 30000.0 へ増加させ、高さに対する総合的なペナルティを強化。
- *          - `TOP_Y_CRITICAL_PENALTY_START_RELATIVE` を 1.0 から 1.25 へ調整。これにより、ピースの最上部がY=1.5 (旧) から Y=1.25 (新) に達した時点で、より重いペナルティが開始されます。つまり、危険領域を低く設定し、早期警戒を促します。
- *          - `TOP_Y_WARN_PENALTY_START_RELATIVE` を 2.0 から 2.25 へ調整。同様に、ピースの最上部がY=0.5 (旧) から Y=0.25 (新) に達した時点で、警告ペナルティが開始されます。
- *      2.  **高さペナルティ乗数の大幅な引き上げ**:
- *          - `calculateHeightPenalty` 内の`TOP_Y_SEVERE_WARN_THRESHOLD`に対するペナルティ乗数を2から4へ、`TOP_Y_EXTREME_WARN_THRESHOLD`に対するペナルティ乗数を10から20へと大幅に引き上げます。これにより、デッドラインに近づくほど指数関数的にペナルティが急増し、危険な高所へのピース配置を厳しく抑制します。
- *      3.  **シミュレーションの保守性強化**:
- *          - `simulateDropY` 内の `settlingBuffer` を 2.5 から 2.7 へ微増。ピースの着地位置予測において、物理的な不確実性による上振れリスクをより織り込み、予測Y座標をわずかに高く見積もることで、安全マージンを確保します。
- *      4.  **大型ピース高所ペナルティの強化**:
- *          - `LARGE_PIECE_HIGH_PENALTY_MULTIPLIER` を 3000 から 5000 へ増加。大型ピースが高所に置かれることへのペナルティを強化し、「大型ピースの片側集約」戦略において、高さ管理をより重視するよう促します。
+ *      主な改善点 (v153からの調整点):
+ *      1.  **シミュレーションの保守性強化 (settlingBufferの再調整)**:
+ *          - `simulateDropY` 内の `settlingBuffer` を 2.7 から 3.0 へさらに増加。ピースの着地位置予測において、物理的な不確実性による上振れリスクをより厳しく織り込み、予測Y座標を確実に高く見積もることで、安全マージンを一層確保します。
+ *      2.  **高さペナルティのウェイトと閾値乗数の再調整**:
+ *          - `HEIGHT_PENALTY_WEIGHT` を 30000.0 から 40000.0 へ増加させ、高さに対する総合的なペナルティの重要性をさらに高めます。
+ *          - `calculateHeightPenalty` 内の`TOP_Y_SEVERE_WARN_THRESHOLD`に対するペナルティ乗数を4から8へ、`TOP_Y_EXTREME_WARN_THRESHOLD`に対するペナルティ乗数を20から40へと大幅に引き上げます。これにより、デッドラインに近づくほどペナルティが指数関数的に急増し、危険な高所へのピース配置をより厳しく抑制します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -30,8 +24,8 @@ const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 // Adjusted relative values to make penalties start earlier (lower Y) - v153
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.25; // Critical penalty starts when top is 1.25 below deadline (i.e., Y=1.25)
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.25;     // Warning penalty starts when top is 2.25 below deadline (i.e., Y=0.25)
-// v153: Increased from 20000.0 to 30000.0
-const HEIGHT_PENALTY_WEIGHT = 30000.0;
+// v154: Increased from 30000.0 to 40000.0
+const HEIGHT_PENALTY_WEIGHT = 40000.0;
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -69,8 +63,9 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  // v153: Increased from 2.5 to 2.7 for even more conservative height estimation.
-  const settlingBuffer = 2.7;
+  // v154: Increased from 2.7 to 3.0 for even more conservative height estimation,
+  // to directly address the observed max_y values consistently exceeding DEADLINE_Y.
+  const settlingBuffer = 3.0;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
@@ -104,13 +99,13 @@ function calculateHeightPenalty(simulatedY_center, pieceRadius) {
   }
   if (simulatedY_top > TOP_Y_SEVERE_WARN_THRESHOLD) {
     // Severe warning zone: Top is above Y=1.25
-    // v153: Multiplier increased from 2 to 4
-    penalty += (simulatedY_top - TOP_Y_SEVERE_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 4;
+    // v154: Multiplier increased from 4 to 8
+    penalty += (simulatedY_top - TOP_Y_SEVERE_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 8;
   }
   if (simulatedY_top > TOP_Y_EXTREME_WARN_THRESHOLD) {
     // Extreme warning zone: Top is above Y=2.25, very close to deadline
-    // v153: Multiplier increased from 10 to 20
-    penalty += (simulatedY_top - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 20;
+    // v154: Multiplier increased from 20 to 40
+    penalty += (simulatedY_top - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 40;
   }
   return penalty;
 }
@@ -285,7 +280,7 @@ export function decide(boardState) {
       } else {
         currentPlacementScore = 0; // Initialize for normal calculation
 
-        // Penalize height (v153: weight and multipliers further increased)
+        // Penalize height (v154: weight and multipliers further increased)
         currentPlacementScore -= calculateHeightPenalty(simulatedY, pieceToDrop.r);
 
         // v141: Further increased additional penalty if placing high when a lot of garbage is present
