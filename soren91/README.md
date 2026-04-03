@@ -21,7 +21,7 @@ main.mjs                 # エントリポイント: ブラウザ制御 + ゲー
 screenshot_analyzer.mjs  # スクリーンショット → 盤面状態 (Sharp)
 calibration.mjs          # ゲームボード壁検出 + 座標変換
 strategy.mjs             # ドロップ位置決定 (AI改変対象)
-improve.mjs              # ラウンド後AI改善ループ (claude CLI)
+improve.mjs              # ラウンド後AI改善ループ (Gemini優先、Claude fallback)
 comment.mjs              # コメント生成 (ランキング画面 + 試合中盤面)
 text_ai.mjs              # メリケンAIの共通テキスト生成設定 + fallback
 radio_bridge.sh          # 親プロジェクトの定時ラジオを呼び出すブリッジ
@@ -79,13 +79,13 @@ node backfill_result_ranks.mjs
 [ラウンドループ]
   Matching待ち → ゲームプレイ → ランキング
   → 履歴保存 (game_NNNN.jsonl)
-  → 12ゲームごとにAI改善 (claude -p --model haiku で strategy.mjs 更新)
+  → 12ゲームごとにAI改善 (Gemini優先、失敗時はClaude fallbackで strategy.mjs 更新)
   → 次ラウンドへ (自動)
 ```
 
 ## AI自動改善
 
-12ゲームごとに `claude -p --model haiku` で戦略を改善する:
+12ゲームごとに Gemini 優先、失敗時は Claude fallback で戦略を改善する:
 
 1. ゲーム履歴からテキストサマリー (順位、ターン数、ドロップ分布、理由分布) を生成
 2. 現在の `strategy.mjs` + サマリーを Claude に送信

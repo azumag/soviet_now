@@ -159,13 +159,13 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
   const lineageContext = buildImproveReferenceContext(currentStrategyHash);
   const viewerAdvice = readViewerAdvice(VIEWER_ADVICE_PATH, 80);
 
-  // 3. スクリーンショット収集 + AI呼び出し (claude CLI)
+  // 3. スクリーンショット収集 + AI呼び出し
   const screenshots = await selectGameScreenshots(gameNumber, 2);
   if (screenshots.length > 0) {
     console.log(`[improve] Collected ${screenshots.length} screenshots for game #${gameNumber}`);
   }
   const promptText = buildPromptText(gameSummary, currentStrategy, lineageContext, screenshots, viewerAdvice);
-  console.log(`[improve] Calling primary strategy model (claude=${IMPROVE_CLAUDE_MODEL}, gemini_fallback=${IMPROVE_GEMINI_MODEL})...`);
+  console.log(`[improve] Calling primary strategy model (gemini=${IMPROVE_GEMINI_MODEL}, claude_fallback=${IMPROVE_CLAUDE_MODEL})...`);
 
   let newStrategy;
   try {
@@ -491,7 +491,7 @@ async function selectGameScreenshots(gameNumber, maxShots = 2) {
 }
 
 /**
- * claude CLI レスポンスからstrategy.mjsコードを抽出
+ * AI CLI レスポンスからstrategy.mjsコードを抽出
  */
 function extractStrategyFromResponse(text) {
   const trimmed = text.trim();
@@ -644,14 +644,14 @@ async function callGemini(promptText, screenshots = [], tag = 'improve') {
 
 async function callStrategyModelWithFallback(promptText, screenshots = [], tag = 'improve') {
   try {
-    const result = await callClaude(promptText, screenshots, tag);
+    const result = await callGemini(promptText, screenshots, tag);
     if (result) return result;
-    throw makeProviderError('claude returned no strategy code');
+    throw makeProviderError('gemini returned no strategy code');
   } catch (err) {
-    console.warn(`[${tag}] Claude failed -> Gemini fallback (${err.message})`);
-    const fallbackResult = await callGemini(promptText, screenshots, tag);
+    console.warn(`[${tag}] Gemini failed -> Claude fallback (${err.message})`);
+    const fallbackResult = await callClaude(promptText, screenshots, tag);
     if (!fallbackResult) {
-      throw makeProviderError('gemini returned no strategy code');
+      throw makeProviderError('claude returned no strategy code');
     }
     return fallbackResult;
   }
@@ -962,7 +962,7 @@ async function runStandaloneImprovement(startGame, endGame) {
   }
   const promptText = buildPromptText(combinedSummary, currentStrategy, lineageContext, allScreenshots, viewerAdvice);
 
-  console.log(`[improve] Calling primary strategy model (standalone, claude=${IMPROVE_CLAUDE_MODEL}, gemini_fallback=${IMPROVE_GEMINI_MODEL})...`);
+  console.log(`[improve] Calling primary strategy model (standalone, gemini=${IMPROVE_GEMINI_MODEL}, claude_fallback=${IMPROVE_CLAUDE_MODEL})...`);
   let newStrategy;
   try {
     newStrategy = await callStrategyModelWithFallback(promptText, allScreenshots, 'improve_standalone');
