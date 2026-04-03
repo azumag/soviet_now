@@ -63,6 +63,27 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v504: remove v270 height_mult *= 0.8 relaxation at rp=1-2+NO merge
+     # v270 was designed to allow strategic placement during merge droughts (rp=1-2+NO),
+     # reducing height_mult by 20% to let stacking guidance override height differentiation.
+     # Protected strategy (median 12789) also has v270 but deadline_crossed=always False,
+     # meaning fewer additive axes compete with height — the 20% reduction had less impact.
+     # In current strategy, deadline_crossed=correct activates ~10 additive guidance axes
+     # (9.6b, 5.6, 9.7, congestion) that compete with height penalty. The 20% reduction
+     # amplifies their collective effect, allowing stacking bonuses to override height and
+     # push pieces to edges where no merge path exists.
+     # Worst game T37: rp=2, NO merge, REACTIVE_PAIRS_STACKING guides to x=3.0 (right
+     # edge), creating an isolated tower that max_y jumps 1.14→2.18 by T40. With v270
+     # removed, height differentiation increases 20%: at HIGH phase y=2.0, penalty goes
+     # from 288 (1.44x) to 360 (1.8x), a 72pt increase that overcomes stacking bonus (~100).
+     # v270 removal is safe because: (1) axis 8.8 (-4500 at rp>=3) still provides merge
+     # urgency at high rp, (2) height_mult floor (0.5) prevents compounding, (3) protected
+     # achieves median 12789 with simpler additive environment where v270 has less impact.
+     # Fixes rollback failure mode: edge scatter from stacking override at rp=1-2+NO
+     # refs: game_history/20260404_055006_score1005.jsonl T37-40 (edge placement → tower),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 18.1% low vs 12.7% high),
+     #       tmp/state/last_rollback_postmortem.md (additive noise concern)
      # v503: suppress AVOID_BLOCK_REACTIVE_PAIR at deadline — prevent edge scatter at NO-merge
      # v417 suppression (max_y>=3.0+deadline, rp>=5+max_y>=2.5) missed the primary failure:
      # worst game T50-T52 at max_y=1.77-1.8, rp=2, deadline=true, AVOID_BLOCK pushed pieces to
@@ -1458,10 +1479,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260319_023107_score0797.jsonl turns 46-53, game_history/20260319_020802_score2945.jsonl turns 126-133,
         #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
-            # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
-            # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
-            height_mult *= 0.8
+        # v504: DISABLED — v270 height_mult *= 0.8 relaxation removed
+        # See change history v504 for rationale.
+        # Original v270 reduced height_mult by 20% at rp=1-2+NO to allow stacking
+        # guidance to override height differentiation. In current additive bonus environment
+        # (~10 competing guidance axes), this reduction causes stacking to override height
+        # in edge cases, pushing pieces to board edges where no merge path exists.
+        # Worst game T37: x=3.0 placement at rp=2+NO created isolated tower (max_y 1.14→2.18).
+        # if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
+        #     height_mult *= 0.8
 
         # v288: deadline_crossed時戦略的配置強化版 - 即時併合機会取りこぼし削減
         # ワーストゲーム(score0877)終盤turns 67-69でdeadline_crossed=true, reactive_pairs=4あるのに即時併合不可、
