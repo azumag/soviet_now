@@ -63,16 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v497: fix deadline_crossed data source — read from reactor (analysis) not game_state
-     # Bug: game_state lacks "deadline_crossed" key → always False → ALL deadline logic disabled
-     # (axis 9.2 -4500, axis 8.5 bonus, axis 8.6 NEAR reduction, CHAIN_MERGE NEAR suppression,
-     # axis 1.7 NEAR suppression, height_mult relaxation, DANGER_NEAR suppression).
-     # Worst T61-62: deadline_crossed=true in JSONL but axis 9.2 absent from reason → scatter.
-     # Same fix as v492/v494, lost in rollback cascade. Restores all deadline-dependent behavior.
-     # Fixes rollback failure mode: deadline data source + deadline-dependent logic re-enabled
-     # refs: analyze_board.py L240, game_history/20260403_220026_score1286.jsonl T61-62,
-     #       game_history/20260403_223229_score1315.jsonl T68-76, tmp/change_log.txt (v492/v494),
-     #       tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt
      # v470: increase congestion penalty multiplier 20→30 — reduce HEIGHT_CONTROL scatter at high pc
      # Batch: HEIGHT_CONTROL 20.1% low vs 15.9% high — height penalty alone insufficient to prevent
      # scattered placement at pc=30+. Worst game final 8 turns: 0 merges, CROSSES_DEADLINE_NO_MERGE×3.
@@ -828,6 +818,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
+    
+    # --- deadline information ---
+    deadline_crossed = game_state.get("deadline_crossed", False)
 
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
@@ -836,28 +829,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
-
-    # --- deadline information ---
-    # v497 BUG FIX: read deadline_crossed from reactor (analysis), not game_state.
-    # game_state does NOT contain "deadline_crossed" key — game_state.get() always
-    # returned False, disabling ALL deadline logic: axis 9.2 (-4500 NO-merge penalty),
-    # axis 8.5 deadline bonus, axis 8.6 NEAR reduction, axis 1.7 NEAR suppression,
-    # CHAIN_MERGE NEAR suppression (pc>=32), height_mult relaxation, DANGER_NEAR
-    # suppression. reactor.get() reads the correct value from analyze_board.py
-    # calc_reactor_state(). Fallback reactor_margin < 0 handles edge case.
-    # Same fix as v492/v494, which was lost in subsequent rollback cascade
-    # (Game#12420/12422/12440 rolled back past v492).
-    # Evidence: worst game T61-62 deadline_crossed=true in JSONL but axis 9.2
-    # (-4500) absent from decision_reason. axis 9.2 only fires when rp>=3 (8.8),
-    # leaving rp=1-2 at deadline with NO penalty → piece scatter → game over.
-    # Fixes rollback failure mode: deadline data source + all deadline-dependent logic
-    # refs: analyze_board.py L240 (deadline_crossed in reactor),
-    #       game_history/20260403_220026_score1286.jsonl T61-62 (deadline but no axis 9.2),
-    #       game_history/20260403_223229_score1315.jsonl T68-76 (deadline scatter),
-    #       tmp/change_log.txt (v492, v494 original fix entries),
-    #       strategy.py.staging v492/v494, tmp/state/last_rollback_analysis.md,
-    #       tmp/batch_summary.txt
-    deadline_crossed = reactor.get("deadline_crossed", reactor_margin < 0)
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
