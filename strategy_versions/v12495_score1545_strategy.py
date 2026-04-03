@@ -63,6 +63,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v498: fix deadline_crossed data source + disable height_mult relaxation at deadline
+     # Bug: deadline_crossed read from game_state (key missing) → always False → ALL deadline
+     # logic dormant (axis 9.2, 8.5, CHAIN_MERGE suppression, etc). Fix reads from reactor.
+     # Postmortem HARD CONSTRAINT: even with correct data, height_mult relaxation at deadline
+     # is FORBIDDEN — v497 rollback proved this causes catastrophic max_y runaway (height_mult
+     # 0.2x allows 5x higher placement at deadline). Disabled axis 2 (0.2x) and v288 (0.3x).
+     # Also cap DANGER_NEAR at 300 (was 600 at deadline) — postmortem constraint preventing
+     # NEAR cascade at high pc+deadline (3/4 NEAR attempts failed at pc=40-43).
+     # Fixes rollback failure mode: deadline_height_relaxation_catastrophe + near_merge_cascade
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       analyze_board.py, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       game_history/20260403_232317_score0650.jsonl, tmp/batch_summary.txt, tmp/improve_brief.md
      # v470: increase congestion penalty multiplier 20→30 — reduce HEIGHT_CONTROL scatter at high pc
      # Batch: HEIGHT_CONTROL 20.1% low vs 15.9% high — height penalty alone insufficient to prevent
      # scattered placement at pc=30+. Worst game final 8 turns: 0 merges, CROSSES_DEADLINE_NO_MERGE×3.
@@ -820,8 +832,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
     piece_count = len(pieces)
     
     # --- deadline information ---
-    deadline_crossed = game_state.get("deadline_crossed", False)
-
+    # v498: fix deadline_crossed data source — read from reactor (analysis) not game_state.
+    # game_state does NOT contain "deadline_crossed" key — game_state.get() always
+    # returned False, making ALL deadline logic permanently dormant. This disabled:
+    # axis 2 height_mult*=0.2, v288 height_mult*=0.3, DANGER_NEAR 600 bonus,
+    # axis 9.2 -4500, CHAIN_MERGE NEAR suppression, and ~10 other deadline axes.
+    # reactor.get() reads the correct value from analyze_board.py calc_reactor_state().
+    # Fallback reactor_margin < 0 handles edge case where reactor lacks the key.
+    # Postmortem HARD CONSTRAINT: height_mult relaxation at deadline is FORBIDDEN —
+    # disabling those blocks below even though deadline data is now correct.
+    # Fixes rollback failure mode: deadline data source (all deadline logic dormant)
+    # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+    #       analyze_board.py (calc_reactor_state returns deadline_crossed), strategy.py.staging v497
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
@@ -829,6 +851,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
+
+    # v498: fix deadline_crossed data source — read from reactor (analysis) not game_state.
+    # game_state does NOT contain "deadline_crossed" key — game_state.get() always
+    # returned False, making ALL deadline logic permanently dormant. This disabled:
+    # axis 2 height_mult*=0.2, v288 height_mult*=0.3, DANGER_NEAR 600 bonus,
+    # axis 9.2 -4500, CHAIN_MERGE NEAR suppression, and ~10 other deadline axes.
+    # reactor.get() reads the correct value from analyze_board.py calc_reactor_state().
+    # Fallback reactor_margin < 0 handles edge case where reactor lacks the key.
+    # Postmortem HARD CONSTRAINT: height_mult relaxation at deadline is FORBIDDEN —
+    # disabling those blocks below even though deadline data is now correct.
+    # Fixes rollback failure mode: deadline data source (all deadline logic dormant)
+    # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+    #       analyze_board.py (calc_reactor_state returns deadline_crossed), strategy.py.staging v497
+    deadline_crossed = reactor.get("deadline_crossed", reactor_margin < 0)
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
@@ -1029,10 +1065,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # DANGER_NEAR_MERGE_PRIORITY を無効化するか NEAR_DEADLINE_RISK を増強すること"
             # At pc>=33, deadline, landing_y>=1.5: danger NEAR at high y adds piece if fails
             # (31.5% rate) with no benefit. Suppress bonus to let enhanced risk penalty work.
+            # v498: cap DANGER_NEAR at 300 regardless of deadline — postmortem constraint:
+            # "DANGER_NEAR_MERGE_PRIORITY bonus of 600 at deadline overpowers NEAR_DEADLINE_RISK
+            # + HIGH_PC_NEAR_PENALTY at pc>=33+deadline, causing failed NEAR selection"
+            # Flat 300 matches protected strategy behavior. Previously 600 at deadline enabled
+            # near_merge_cascade_at_high_pc_deadline (3 of 4 NEAR attempts failed).
             if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
                 bonus = 0.0
             else:
-                bonus = 600.0 if deadline_crossed else 300.0
+                bonus = 300.0
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
@@ -1340,12 +1381,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # deadline_crossed時、reactive_pairsが多数ある即時併合不可時に、戦略的配置の余地を確保
         # danger_piece_count==0の場合に限りheight_multを0.2に緩和して、盤面圧縮（tighter board）を優先し、即時併合機会を確保
-        if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
-            # v431: only relax when current type has reactive/near guidance
-            # Without guidance for current type, relaxation enables HEIGHT_CONTROL scatter (worst T55-62)
-            # With guidance, relaxation allows axis 9.6 stacking to compete with height penalty
-            if current_type_has_reactive or current_type_has_near:
-                height_mult *= 0.2
+        # v498: DISABLED — postmortem constraint: "height_mult relaxation at deadline is FORBIDDEN".
+        # Original v294 reduced height_mult to 0.2x at deadline, removing primary defense against
+        # max_y runaway at the most dangerous moment. When deadline_crossed was always False (bug),
+        # this never fired and the strategy accidentally worked better. Now that deadline_crossed
+        # is correctly sourced from reactor, this would activate and cause catastrophic runaway.
+        # Evidence: v497 rollback — height_mult 0.2 allowed pieces to land 5x higher than normal
+        # at deadline, compounding NEAR merge failures into irreversible cascade.
+        # The deadline NO-merge penalty (axis 9.6, -4500 at line 1445) provides sufficient
+        # incentive to avoid NO-merge at deadline without weakening height control.
+        # if deadline_crossed and reactive_pair_count >= 2 and merge_grade == "NO" and danger_piece_count == 0:
+        #     if current_type_has_reactive or current_type_has_near:
+        #         height_mult *= 0.2
 
         # v270 fix: reactive_pairsあり時の非併合heightペナルティ緩和版 - 危険域での戦略的配置余地を確保
         # ワーストゲーム(score0797)終盤turns 47-52でreactive_pairs=3あるのにmerge_available=falseが続き、
@@ -1383,11 +1430,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
         #       game_history/20260320_222520_score0877.jsonl turns 64-71, game_history/20260320_221810_score2693.jsonl turns 120-127,
         #       game_history/20260324_065958_score0754.jsonl turns 58-65, game_history/20260324_072048_score0831.jsonl turns 51-63
-        if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
-            # deadline_crossed時、reactive_pairs>=1で即時併合不可の場合、戦略的配置の余地を更に確保
-            # reactive_pairs>=3の場合はaxis 8.8ペナルティを有効にするためheight_mult緩和をスキップ
-            # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
-            height_mult *= 0.3
+        # v498: DISABLED — postmortem constraint: "height_mult relaxation at deadline is FORBIDDEN".
+        # Original v288 reduced height_mult to 0.3x at deadline, compounding with axis 2 (0.2x)
+        # and v270 (0.8x) to floor 0.048x — effectively nullifying height penalty at the
+        # most dangerous moment. Postmortem evidence: this enabled REACTIVE_PAIRS_STACKING
+        # at HIGH_TOWER without merge opportunity (7 consecutive zero-delta turns).
+        # The deadline NO-merge penalty (axis 9.6, -4500) and NEAR risk penalties provide
+        # sufficient deadline-specific behavior without weakening height control.
+        # if deadline_crossed and reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO":
+        #     height_mult *= 0.3
 
         # v362: height_mult floor — prevent compounding nullification
         # 3 gates (0.2x/0.8x/0.3x) compound to 0.048x, nullifying height penalty.
