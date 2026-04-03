@@ -63,6 +63,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v492: fix deadline_crossed data source — read from reactor (analysis) not game_state
+     # game_state lacks "deadline_crossed" key; game_state.get() returned False permanently.
+     # This disabled v490 (NEAR suppression at pc>=28+deadline) and all deadline axes
+     # (8.5, 8.8, 9.2, 9.6, axis 2 relaxation). Evidence: worst T45 JSONL
+     # deadline_crossed=true but DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY absent from reason.
+     # Fix: reactor.get("deadline_crossed", reactor_margin < 0) enables all deadline logic.
+     # Fixes rollback failure mode: NEAR merge at medium pc (28-32) with deadline crossed
+     # refs: game_history/20260403_113304_score0708.jsonl T44-T47 (NEAR at deadline, pc=29-31),
+     #       game_history/20260403_115345_score0857.jsonl T57-T64 (NEAR at deadline, pc=32-38),
+     #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
+     #       analyze_board.py (calc_reactor_state returns deadline_crossed), strategy.py.staging v490
      # v490: suppress NEAR merge at pc>=28+deadline — postmortem hard constraint
      # NEAR failure (31.5%) at high pc+deadline catastrophic: adds piece without reducing pc,
      # triggers irrecoverable cascade (3-5 turns to game over). Previous attempts (v463 chain
@@ -753,9 +764,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
     
-    # --- deadline information ---
-    deadline_crossed = game_state.get("deadline_crossed", False)
-
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
@@ -763,6 +771,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
+
+    # --- deadline information ---
+    # v492 BUG FIX: read deadline_crossed from reactor (analysis), not game_state.
+    # game_state does NOT contain "deadline_crossed" key — game_state.get() always
+    # returned False, making deadline_crossed permanently False. This disabled v490
+    # (NEAR suppression at pc>=28+deadline) and all deadline-dependent axes (8.5,
+    # 8.8, 9.2, 9.6, axis 2 relaxation), causing NEAR merges at catastrophic
+    # pc+deadline combos — the PRIMARY postmortem failure mode.
+    # Evidence: worst T45 (deadline_crossed=true in JSONL, mg=NO, rp=5) —
+    # DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY not in reason → deadline_crossed was False.
+    # calc_reactor_state returns "deadline_crossed" in the reactor dict.
+    # Fallback to reactor_margin < 0 for robustness.
+    deadline_crossed = reactor.get("deadline_crossed", reactor_margin < 0)
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
