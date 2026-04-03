@@ -830,6 +830,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
 
+    # v491: pre-compute whether any candidate has DIRECT merge available
+    # Used by axis 9.6 guard: stacking without DIRECT merge at high max_y pushes pieces upward
+    # without reducing piece_count, triggering cascade. When DIRECT exists, +1200 dominates
+    # stacking (~100-400), so guard has no effect — only changes outcome when NO DIRECT available.
+    has_any_direct_merge = any(
+        r.get("merge_grade") == "DIRECT" for r in results
+    )
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -1012,7 +1020,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
         # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+        # v491: suppress at rp<3+max_y>=1.3+NO_DIRECT — postmortem constraint from rollback analysis:
+        # "REACTIVE_PAIRS_STACKING at rp=2 should not fire when merge_grade is NO and max_y>=1.3 —
+        # stacking guidance without merge opportunity just pushes pieces upward"
+        # At rp<3, reactive path is weak; stacking bonus (~100-400) can override height differentiation
+        # (~50-150), causing upward placement without merge. Guard only when NO DIRECT available
+        # (DIRECT +1200 dominates stacking). Evidence: score0814 T62-T69 (rp=2, max_y=1.88, stacking
+        # fires without merges → 7-turn merge drought), score0785 T57 (rp=2, pc=34, stacking cascade).
+        # refs: game_history/20260403_102754_score0814.jsonl T62-T69,
+        #       game_history/20260403_103022_score0785.jsonl T57-T60,
+        #       tmp/state/last_rollback_postmortem.md (rp=2 max_y>=1.3 constraint)
+        stacking_guarded = (
+            reactive_pair_count < 3
+            and max_y >= 1.3
+            and not has_any_direct_merge
+        )
+        if (reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None
+                and not stacking_guarded):
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
