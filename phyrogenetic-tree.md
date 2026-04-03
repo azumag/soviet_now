@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-03 11:19:24 JST`
-- Nodes: `888`
-- Edges: `1217`
-- Current: `44324046b2a1`
+- Updated: `2026-04-03 12:16:58 JST`
+- Nodes: `889`
+- Edges: `1218`
+- Current: `1a8122f8cd5b`
 - Anchor: `3a3987c92448`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_4f5e73275eeb["4f5e73275eeb<br/>g=12 n=12<br/>comp=9729.5"]
     h_10a880b3f1ee["10a880b3f1ee<br/>g=12 n=12<br/>comp=9009.6"]
     h_0923a69d1f67["0923a69d1f67<br/>g=12 n=12<br/>comp=11745.1"]
     h_fe57fa24fbe2["fe57fa24fbe2<br/>g=25 n=20<br/>comp=10568.5"]
@@ -72,9 +71,10 @@ flowchart TD
     h_d3c026afa6d2["d3c026afa6d2<br/>g=12 n=12<br/>comp=11615.7"]
     h_0c78453df396["0c78453df396<br/>g=12 n=12<br/>comp=10217.5"]
     h_3a3987c92448["3a3987c92448<br/>ANCHOR<br/>g=12 n=12<br/>comp=12600.5"]
+    h_44324046b2a1["44324046b2a1<br/>g=12 n=12<br/>comp=11030.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_44324046b2a1["44324046b2a1<br/>CURRENT"]
+    h_1a8122f8cd5b["1a8122f8cd5b<br/>CURRENT"]
 
     h_0923a69d1f67 -->|improve| h_fe57fa24fbe2
     h_fe57fa24fbe2 -->|improve| h_4d15e051ad7a
@@ -141,13 +141,13 @@ flowchart TD
     h_f4545d36f678 -. rollback .-> h_294aa2554fbf
     h_294aa2554fbf -->|improve| h_3a3987c92448
     h_3a3987c92448 -->|improve| h_44324046b2a1
+    h_44324046b2a1 -->|improve| h_1a8122f8cd5b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_4f5e73275eeb plain;
     class h_10a880b3f1ee plain;
     class h_0923a69d1f67 plain;
     class h_fe57fa24fbe2 plain;
@@ -204,9 +204,10 @@ flowchart TD
     class h_d3c026afa6d2 plain;
     class h_0c78453df396 plain;
     class h_3a3987c92448 anchor;
+    class h_44324046b2a1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_44324046b2a1 current;
+    class h_1a8122f8cd5b current;
 ```
 
 ## Detail 1/12
@@ -3340,9 +3341,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `44324046b2a1`
-- Nodes in this diagram: `8`
-- Internal edges in this diagram: `3`
+- Range: `8b764b56c6f3` .. `1a8122f8cd5b`
+- Nodes in this diagram: `9`
+- Internal edges in this diagram: `4`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3359,13 +3360,15 @@ flowchart TD
     h_d3c026afa6d2["d3c026afa6d2<br/>g=12 n=12<br/>comp=11615.7"]
     h_0c78453df396["0c78453df396<br/>g=12 n=12<br/>comp=10217.5"]
     h_3a3987c92448["3a3987c92448<br/>ANCHOR<br/>g=12 n=12<br/>comp=12600.5"]
+    h_44324046b2a1["44324046b2a1<br/>g=12 n=12<br/>comp=11030.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_44324046b2a1["44324046b2a1<br/>CURRENT"]
+    h_1a8122f8cd5b["1a8122f8cd5b<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
     h_3a3987c92448 -->|improve| h_44324046b2a1
+    h_44324046b2a1 -->|improve| h_1a8122f8cd5b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3377,12 +3380,23 @@ flowchart TD
     class h_d3c026afa6d2 plain;
     class h_0c78453df396 plain;
     class h_3a3987c92448 anchor;
+    class h_44324046b2a1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_44324046b2a1 current;
+    class h_1a8122f8cd5b current;
 ```
 
 ## Transition Notes
+
+### Improve Game#12355 `44324046 -> 1a8122f8`
+
+- scores: `13288 10325 10980 10591 10717 13665 11177 18585 21933 8466 27102 9772`
+- v492: fix deadline_crossed data source — read from reactor (analysis) not game_state
+- game_state lacks "deadline_crossed" key; game_state.get() returned False permanently.
+- This disabled v490 (NEAR suppression at pc>=28+deadline) and all deadline axes
+- (8.5, 8.8, 9.2, 9.6, axis 2 relaxation). Evidence: worst T45 JSONL
+- deadline_crossed=true but DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY absent from reason.
+- Fix: reactor.get("deadline_crossed", reactor_margin < 0) enables all deadline logic.
 
 ### Improve Game#12343 `3a3987c9 -> 44324046`
 
