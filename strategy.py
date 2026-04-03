@@ -9,7 +9,7 @@ Game Overview:
 
       Decision Logic (14 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
-         1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
+         1.5. (removed v495: NEAR risk penalty — aligned with protected strategy)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
@@ -63,6 +63,8 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v495: remove axis 1.5 NEAR risk penalty entirely — align with protected strategy
+     # refs: protected_e6f534c37e28, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md, tmp/change_log.txt, strategy.py.staging v409
      # v494: fix deadline_crossed data source + remove v490 NEAR suppression
      # Bug: game_state lacks "deadline_crossed" key → always False → ALL deadline logic
      # disabled (v324 -4500, v288 relaxation, v416 stacking redirect, v460 chain suppression).
@@ -878,40 +880,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
-        # postmortem: piece_count accumulation is the key failure predictor.
-        # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail
-        # (score_delta=0), piece_count grows 32->35. Best game succeeds with merges.
-        # NEAR merge success rate is 68.5%. At deadline, failed NEAR adds a high piece
-        # with no benefit, worsening the already dangerous board state.
-        # v409: Replace binary deadline_crossed with continuous reactor deadline_margin.
-        # reactor deadline_margin: <0 means deadline crossed, 0-1 means approaching.
-        # Graduated risk_factor = (1.0 - reactor_margin) when margin < 1.0.
-        # This avoids the cliff where pieces just before deadline get 0 penalty but
-        # pieces just after get full penalty. Provides partial protection when
-        # approaching deadline (margin 0-1), reducing p25 early-death rate.
-        # Does NOT affect: DIRECT merges, NEAR when margin >= 1.0, or NO merge.
-        # NOT v388 crosses_deadline per-candidate (different field/mechanism, no chain suppression).
-        # postmortem constraint: combines landing_y with deadline proximity (not landing_y-only).
-        # refs: game_history/20260330_115102_score0447.jsonl (margin cliff early death),
-        #       game_history/20260330_115755_score0839.jsonl,
-        #       tmp/state/last_rollback_postmortem.md (piece_count predictor),
-        #       tmp/batch_summary.txt (low-score 5.4% NEAR_HIGH_LAYER vs high-score 3.9%),
-        #       analyze_board.py (reactor deadline_margin field)
-        # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
-        # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
-        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
-            risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
-            # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
-            # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
-            # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
-            if piece_count >= 33:
-                pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
-            else:
-                pc_risk_scale = 1.0
-            near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
-            score -= near_risk_penalty
-            reasons.append("NEAR_DEADLINE_RISK")
+        # v495: remove axis 1.5 NEAR risk penalty entirely — align with protected strategy
+        # Protected strategy (median 12789) has NO axis 1.5 and achieves higher scores.
+        # NEAR at deadline has positive expected value: 68.5% success, avg_delta=36-47.
+        # Expected value: 0.685*42 - 0.315*1 ≈ 27 points per attempt.
+        # Previous reductions (v366→v409→v421→v488: 300→graduated→pc-aware→200) all
+        # moved in this direction. Full removal eliminates the last suppression layer.
+        # NEAR at extreme pc+deadline still controlled by axis 1.7 (pc>=33+y>=1.0: -600),
+        # CHAIN_MERGE suppression (pc>=35+deadline), and axis 8.8 (rp>=3 NO-merge: -4500).
+        # Batch: NEAR reasons avg_delta=47.8 (highest), selected 4.1%. Removing suppression
+        # increases NEAR frequency with positive EV, reducing HEIGHT_CONTROL (15.9%, delta=2.3).
+        # Fixes rollback failure mode: NEAR penalty over-deterrence at all pc levels
+        # refs: protected_e6f534c37e28 (no axis 1.5, median 12789),
+        #       tmp/batch_summary.txt (NEAR avg_delta=47.8, HEIGHT_CONTROL 19.0% low vs 13.4% high),
+        #       tmp/state/last_rollback_postmortem.md (NEAR 68.5% success, positive EV),
+        #       tmp/change_log.txt (v488: 300→200 direction), strategy.py.staging v409/v421/v488
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
