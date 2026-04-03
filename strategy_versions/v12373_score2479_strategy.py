@@ -63,6 +63,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v493: restore rp<3 guard for axis 9.6 stacking — align with protected strategy
+     # v363 removed guard; v408 congestion scaling (up to 3x) amplifies stacking to ~688 at pc=34,
+     # exceeding height diff (~450). Protected strategy (median 12789) has rp<3 guard, no congestion.
+     # Worst score0417: rp=5 stacking override → max_y 2.47→3.60 in 8 turns.
+     # Fixes: REACTIVE_PAIRS_STACKING overriding height at rp>=3+mg=NO
+     # refs: protected_e6f534c37e28, last_rollback_postmortem.md, score0417 T47-54,
+     #       score0837 T66, batch_summary.txt, strategy.py.staging v363/v408, change_log.txt
      # v492: fix deadline_crossed data source — read from reactor (analysis) not game_state
      # game_state lacks "deadline_crossed" key; game_state.get() returned False permanently.
      # This disabled v490 (NEAR suppression at pc>=28+deadline) and all deadline axes
@@ -1056,7 +1063,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and max_y >= 1.3
             and not has_any_direct_merge
         )
-        if (reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None
+        # v493: restore rp<3 guard (align with protected strategy median 12789).
+        # At rp>=3, axis 8.8 (-4500) dominates — stacking would override height
+        # differentiation via congestion-scaled bonus (~688 at pc=34 > height diff ~450).
+        # Protected strategy never stacks at rp>=3; height penalty provides sole differentiation.
+        if (reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None
                 and not stacking_guarded):
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
