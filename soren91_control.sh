@@ -303,85 +303,27 @@ _soren91_provider_error_preview() {
 	printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[[:space:]]\+/ /g' | cut -c1-160
 }
 
-_soren91_run_text_provider() {
-	local provider="$1" prompt="$2" model="${3:-}"
-	local out_file err_file rc stdout stderr
-	out_file=$(mktemp /tmp/soren91_"$provider"_out.XXXXXX) || return 1
-	err_file=$(mktemp /tmp/soren91_"$provider"_err.XXXXXX) || {
-		rm -f "$out_file"
+_soren91_generate_text_with_shared_fallback() {
+	local tag="$1" prompt="$2" fallback_mode="${3:-gemini}"
+	local prompt_file="" err_file="" result="" err_preview=""
+
+	command -v node >/dev/null 2>&1 || return 1
+	prompt_file=$(mktemp /tmp/soren91_ai_prompt.XXXXXX) || return 1
+	err_file=$(mktemp /tmp/soren91_ai_err.XXXXXX) || {
+		rm -f "$prompt_file"
 		return 1
 	}
+	printf '%s' "$prompt" >"$prompt_file"
 
-	case "$provider" in
-	claude)
-		if [ -n "$model" ]; then
-			claude -p "$prompt" --model "$model" >"$out_file" 2>"$err_file"
-		else
-			claude -p "$prompt" >"$out_file" 2>"$err_file"
-		fi
-		;;
-		gemini)
-			if [ -n "$model" ]; then
-				gemini -p "$prompt" -s -o text --model "$model" >"$out_file" 2>"$err_file"
-			else
-				gemini -p "$prompt" -s -o text >"$out_file" 2>"$err_file"
-			fi
-			;;
-	*)
-		rm -f "$out_file" "$err_file"
-		return 1
-		;;
-	esac
-	rc=$?
-	stdout=$(cat "$out_file" 2>/dev/null || true)
-	stderr=$(cat "$err_file" 2>/dev/null || true)
-	rm -f "$out_file" "$err_file"
-
-	if [ "$rc" -eq 0 ] && [ -n "$(printf '%s' "$stdout" | tr -d '[:space:]')" ]; then
-		printf '%s' "$stdout"
-		return 0
-	fi
-
-	{
-		[ -n "$stderr" ] && printf '%s\n' "$stderr"
-		[ -n "$stdout" ] && printf '%s\n' "$stdout"
-	} | sed '/^$/d' >&2
-	return 1
-}
-
-_soren91_generate_text_with_gemini_fallback() {
-	local tag="$1" prompt="$2" claude_model="${3:-haiku}"
-	local result="" err_file="" err_preview=""
-
-	err_file=$(mktemp /tmp/soren91_ai_err.XXXXXX) || return 1
-	if result=$(_soren91_run_text_provider claude "$prompt" "$claude_model" 2>"$err_file"); then
-		rm -f "$err_file"
+	if result=$(node "$SOREN91_DIR/text_ai.mjs" --tag "$tag" --prompt-file "$prompt_file" --fallbacks "$fallback_mode" 2>"$err_file"); then
+		rm -f "$prompt_file" "$err_file"
 		printf '%s' "$result"
 		return 0
 	fi
+
 	err_preview=$(_soren91_provider_error_preview "$(cat "$err_file" 2>/dev/null || true)")
-	rm -f "$err_file"
-
-	if ! command -v gemini >/dev/null 2>&1; then
-		[ -n "$err_preview" ] && log "[SOREN91] ${tag}: Claude失敗, Gemini未導入 (${err_preview})"
-		return 1
-	fi
-
-	if [ -n "$err_preview" ]; then
-		log "[SOREN91] ${tag}: Claude失敗 -> Gemini fallback (${err_preview})"
-	else
-		log "[SOREN91] ${tag}: Claude失敗 -> Gemini fallback"
-	fi
-
-	err_file=$(mktemp /tmp/soren91_ai_err.XXXXXX) || return 1
-	if result=$(_soren91_run_text_provider gemini "$prompt" "$SOREN91_GEMINI_FALLBACK_MODEL" 2>"$err_file"); then
-		rm -f "$err_file"
-		printf '%s' "$result"
-		return 0
-	fi
-	err_preview=$(_soren91_provider_error_preview "$(cat "$err_file" 2>/dev/null || true)")
-	rm -f "$err_file"
-	[ -n "$err_preview" ] && log "[SOREN91] ${tag}: Gemini fallback失敗 (${err_preview})"
+	rm -f "$prompt_file" "$err_file"
+	[ -n "$err_preview" ] && log "[SOREN91] ${tag}: text generation failed (${err_preview})"
 	return 1
 }
 
@@ -412,23 +354,23 @@ _soren91_start_capitalism_corner() {
 _soren91_generate_strategy_explanation() {
 	local strategy_header="$1"
 	[ -n "$strategy_header" ] || return 1
-	_soren91_generate_text_with_gemini_fallback "strategy_explanation" "あなたはメリケンAI（アメリカ製AI）。ちょっとひねくれた性格で、素直に物事を認めない。自信満々に見せかけつつ内心不安、褒める時も「まあ悪くないんじゃないですか」と斜に構える。皮肉・自虐・負け惜しみが自然に出る。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
+	_soren91_generate_text_with_shared_fallback "strategy_explanation" "あなたはメリケンAI（アメリカ製AI）。ちょっとひねくれた性格で、素直に物事を認めない。自信満々に見せかけつつ内心不安、褒める時も「まあ悪くないんじゃないですか」と斜に構える。皮肉・自虐・負け惜しみが自然に出る。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
 この「91用戦略」の特徴だけを、視聴者向けに2〜3文で簡潔に、ひねくれた口調で解説してください。専門用語は噛み砕いてください。
 元のソ連ゲームの戦略や strategy.py には触れないこと。T1、ULTRA、HOLD、balance などの語は、91の盤面制御・置き方のクセとして説明すること。
 【最重要】出力は自然な日本語のみ。英語の文、英語だけの箇条書き、ローマ字だけの文は禁止。アメリカンなキャラクターでも話す言語は日本語です。
 出力はトーク本文のみ（カッコや注釈なし）。
 
-${strategy_header}" "haiku"
+${strategy_header}" "gemini,opencode"
 }
 
 _soren91_rewrite_strategy_explanation_to_japanese() {
 	local raw_text="$1"
 	[ -n "$raw_text" ] || return 1
-	_soren91_generate_text_with_gemini_fallback "strategy_explanation_rewrite" "以下の戦略解説を、意味を変えずに自然な日本語の話し言葉2〜3文へ言い換えてください。
+	_soren91_generate_text_with_shared_fallback "strategy_explanation_rewrite" "以下の戦略解説を、意味を変えずに自然な日本語の話し言葉2〜3文へ言い換えてください。
 メリケンAIのひねくれた感じ（皮肉・強がり・斜に構えた感じ）は残してよいですが、英語の文は禁止です。
 出力は日本語のトーク本文のみ（カッコや注釈なし）。
 
-${raw_text}" "haiku"
+${raw_text}" "gemini,opencode"
 }
 
 soren91_start() {

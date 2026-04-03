@@ -23,6 +23,7 @@ calibration.mjs          # ゲームボード壁検出 + 座標変換
 strategy.mjs             # ドロップ位置決定 (AI改変対象)
 improve.mjs              # ラウンド後AI改善ループ (claude CLI)
 comment.mjs              # コメント生成 (ランキング画面 + 試合中盤面)
+text_ai.mjs              # メリケンAIの共通テキスト生成設定 + fallback
 radio_bridge.sh          # 親プロジェクトの定時ラジオを呼び出すブリッジ
 prompts/
   improve_strategy.md    # AI改善プロンプト
@@ -102,9 +103,32 @@ IMPROVEMENT_INTERVAL_GAMES=12
 `runtime_config.json`:
 ```json
 {
-  "improvementIntervalGames": 12
+  "improvementIntervalGames": 12,
+  "merikenTextGeneration": {
+    "claudePreset": "haiku",
+    "geminiFallbackModel": "gemini-2.5-flash",
+    "opencodeFallbackAgent": "glmflash",
+    "ollamaBaseUrl": "http://192.168.11.3:11434"
+  }
 }
 ```
+
+メリケンAIのコメント生成と戦略説明は `merikenTextGeneration` を共通利用する。`claudePreset` は次の4つを切り替え可能:
+
+- `haiku` - Claude CLI の `--model haiku`
+- `sonnet` - Claude CLI の `--model sonnet`
+- `gemma4e` - LAN 上の Ollama に対して `--model gemma4:latest`
+- `qwen35e` - LAN 上の Ollama に対して `--model qwen3.5:9b`
+
+`gemma4e` / `qwen35e` は内部的に次の env を付けて Claude CLI を呼ぶ:
+
+```env
+ANTHROPIC_AUTH_TOKEN=ollama
+ANTHROPIC_BASE_URL=http://192.168.11.3:11434
+ANTHROPIC_API_KEY=
+```
+
+必要なら環境変数でも上書きできる。優先順は `SOREN91_TEXT_*` / 既存の `SOREN91_COMMENT_*` 系 env → `runtime_config.json` → デフォルト値。
 
 ## ホットリロード
 

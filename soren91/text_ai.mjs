@@ -27,7 +27,7 @@ function readTextConfig() {
   return runtimeConfig?.merikenTextGeneration ?? {};
 }
 
-function stripAnsi(text) {
+export function stripAnsi(text) {
   return String(text || '')
     .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '')
     .replace(/[\x00-\x09\x0b-\x0d\x0e-\x1f]/g, '')
@@ -195,7 +195,7 @@ export function runClaudeText(tag, promptText, options = {}) {
       const stderrPreview = String(stderr || '').slice(0, 500);
       const combined = `${stdout || ''}\n${stderr || ''}`;
       if (containsClaudeLoginErrorText(combined)) {
-        console.log(`[${tag}] claude unavailable: not logged in`);
+        console.error(`[${tag}] claude unavailable: not logged in`);
       }
       if (containsProviderErrorText(combined)) {
         if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
@@ -301,14 +301,14 @@ export async function generateTextWithFallbacks(tag, promptText, options = {}) {
   try {
     return await runClaudeText(tag, promptText, options);
   } catch (err) {
-    console.log(`[${tag}] claude failed -> gemini fallback (${err.message})`);
+    console.error(`[${tag}] claude failed -> gemini fallback (${err.message})`);
     try {
       return await runGeminiText(tag, promptText, options);
     } catch (geminiErr) {
       if (options.includeOpencodeFallback === false) {
         throw geminiErr;
       }
-      console.log(`[${tag}] gemini failed -> opencode fallback (${geminiErr.message})`);
+      console.error(`[${tag}] gemini failed -> opencode fallback (${geminiErr.message})`);
       return runOpencodeText(tag, promptText, options);
     }
   }

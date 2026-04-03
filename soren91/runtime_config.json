@@ -1,3 +1,9 @@
 {
-  "improvementIntervalGames": 12
+  "improvementIntervalGames": 12,
+  "merikenTextGeneration": {
+    "claudePreset": "haiku",
+    "geminiFallbackModel": "gemini-2.5-flash",
+    "opencodeFallbackAgent": "glmflash",
+    "ollamaBaseUrl": "http://192.168.11.3:11434"
+  }
 }
