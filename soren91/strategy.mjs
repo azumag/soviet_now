@@ -1,17 +1,18 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v155)
+ * strategy.mjs - ドロップ位置決定戦略 (v156)
  *
- * v155: v154で強化された高さ管理にも関わらず、ゲーム分析でmax_yがDEADLINE_Y (2.5) を頻繁に大きく超えている問題に対し、
+ * v156: v155で強化された高さ管理にも関わらず、ゲーム分析でmax_yがDEADLINE_Y (2.5) を頻繁に大きく超えている問題に対し、
  *       物理エンジンの不確実性（回転・転がり、国土形状の凸ポリゴン）をより厳しく考慮し、安全マージンを一層確保するための変更です。
  *       これは、より保守的な配置選択を促し、デッドライン到達リスクを極限まで低減することを目的としています。
  *
- *      主な改善点 (v154からの調整点):
+ *      主な改善点 (v155からの調整点):
  *      1.  **シミュレーションの保守性強化 (settlingBufferの再調整)**:
- *          - `simulateDropY` 内の `settlingBuffer` を 3.0 から 3.2 へさらに増加。ピースの着地位置予測において、物理的な不確実性による上振れリスクをより厳しく織り込み、予測Y座標を確実に高く見積もることで、安全マージンを一層確保します。
- *      2.  **simulateDropYのベースライン修正**:
- *          - ピースが床に直接落ちる場合の初期 `maxY_center` 計算を `BOARD_FLOOR_Y` ではなく `BOARD_FLOOR_Y + droppingPiece.r` に修正。これにより、落下予測の物理的整合性を向上させます。
- *      3.  **デッドライン到達の厳格化 (CRITICAL_HEIGHT_MARGINの導入)**:
- *          - ピースの最上部が `DEADLINE_Y` に到達する手前で即死ペナルティを適用する `CRITICAL_HEIGHT_MARGIN` を導入。これにより、デッドラインへの接近をより早期に厳しく罰し、ゲームオーバーを回避する行動を促します。
+ *          - `simulateDropY` 内の `settlingBuffer` を 3.2 から 3.5 へさらに増加。ピースの着地位置予測において、物理的な不確実性による上振れリスクをより厳しく織り込み、予測Y座標を確実に高く見積もることで、安全マージンを一層確保します。
+ *      2.  **高さペナルティの重み付け強化**:
+ *          - `HEIGHT_PENALTY_WEIGHT` を 40000.0 から 50000.0 へ増加。高さペナルティ全体を強化し、高すぎる位置への配置をより厳しく抑制します。
+ *      3.  **警告ペナルティの早期化**:
+ *          - `TOP_Y_CRITICAL_PENALTY_START_RELATIVE` を 1.25 から 1.5 へ、`TOP_Y_WARN_PENALTY_START_RELATIVE` を 2.25 から 2.5 へそれぞれ変更。これにより、ピースの最上部がデッドラインに接近する際の警告ペナルティが、より低いY座標で早期に発動するようになります。
+ *          - 具体的には、Severe警告はY=1.0から、Mild警告はY=0.0から発動するように調整され、より広い範囲で高さ管理を強化します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -21,11 +22,11 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
-// Adjusted relative values to make penalties start earlier (lower Y) - v153
-const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.25; // Critical penalty starts when top is 1.25 below deadline (i.e., Y=1.25)
-const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.25;     // Warning penalty starts when top is 2.25 below deadline (i.e., Y=0.25)
-// v154: Increased from 30000.0 to 40000.0
-const HEIGHT_PENALTY_WEIGHT = 40000.0;
+// Adjusted relative values to make penalties start earlier (lower Y) - v156
+const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.5; // Critical penalty starts when top is 1.5 below deadline (i.e., Y=1.0)
+const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.5;     // Warning penalty starts when top is 2.5 below deadline (i.e., Y=0.0)
+// v156: Increased from 40000.0 to 50000.0
+const HEIGHT_PENALTY_WEIGHT = 50000.0;
 
 // v155: Introduced to make the hard death penalty more conservative
 const CRITICAL_HEIGHT_MARGIN = 0.25;
@@ -70,7 +71,8 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
   // Pieces might settle slightly higher than a perfect circular stack.
   // v154: Increased from 2.7 to 3.0 for even more conservative height estimation.
   // v155: Further increased from 3.0 to 3.2.
-  const settlingBuffer = 3.2;
+  // v156: Further increased from 3.2 to 3.5.
+  const settlingBuffer = 3.5;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
@@ -90,20 +92,20 @@ function calculateHeightPenalty(simulatedY_center, pieceRadius) {
   const simulatedY_top = simulatedY_center + pieceRadius;
 
   // Define penalty thresholds for the TOP of the piece
-  // v153: Thresholds adjusted for earlier and more severe penalties
-  const TOP_Y_MILD_WARN_THRESHOLD = DEADLINE_Y - TOP_Y_WARN_PENALTY_START_RELATIVE;     // Top is 2.25 below deadline (i.e., Y=0.25)
-  const TOP_Y_SEVERE_WARN_THRESHOLD = DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE; // Top is 1.25 below deadline (i.e., Y=1.25)
+  // v156: Thresholds adjusted for earlier and more severe penalties
+  const TOP_Y_MILD_WARN_THRESHOLD = DEADLINE_Y - TOP_Y_WARN_PENALTY_START_RELATIVE;     // Top is 2.5 below deadline (i.e., Y=0.0)
+  const TOP_Y_SEVERE_WARN_THRESHOLD = DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE; // Top is 1.5 below deadline (i.e., Y=1.0)
   const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.25;                               // Top is 0.25 below deadline (i.e., Y=2.25)
 
   let penalty = 0;
 
   // Penalize getting close to the deadline. The absolute -1_000_000_000 penalty handles exceeding DEADLINE_Y.
   if (simulatedY_top > TOP_Y_MILD_WARN_THRESHOLD) {
-    // Mild warning zone: Top is above Y=0.25
+    // Mild warning zone: Top is above Y=0.0
     penalty += (simulatedY_top - TOP_Y_MILD_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 0.5;
   }
   if (simulatedY_top > TOP_Y_SEVERE_WARN_THRESHOLD) {
-    // Severe warning zone: Top is above Y=1.25
+    // Severe warning zone: Top is above Y=1.0
     // v154: Multiplier increased from 4 to 8
     penalty += (simulatedY_top - TOP_Y_SEVERE_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 8;
   }
@@ -284,7 +286,7 @@ export function decide(boardState) {
       } else {
         currentPlacementScore = 0; // Initialize for normal calculation
 
-        // Penalize height (v154: weight and multipliers further increased)
+        // Penalize height (v156: weight and multipliers further increased, thresholds adjusted)
         currentPlacementScore -= calculateHeightPenalty(simulatedY, pieceToDrop.r);
 
         // v141: Further increased additional penalty if placing high when a lot of garbage is present
