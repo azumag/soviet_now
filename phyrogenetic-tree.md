@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-03 09:30:15 JST`
-- Nodes: `886`
-- Edges: `1215`
-- Current: `294aa2554fbf`
-- Anchor: `294aa2554fbf`
+- Updated: `2026-04-03 10:24:32 JST`
+- Nodes: `887`
+- Edges: `1216`
+- Current: `3a3987c92448`
+- Anchor: `ade59a9a5025`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_35a31ad32371["35a31ad32371<br/>g=24 n=20<br/>comp=10937.4"]
     h_ec180f35c7e5["ec180f35c7e5<br/>g=12 n=12<br/>comp=10577.5"]
     h_4f5e73275eeb["4f5e73275eeb<br/>g=12 n=12<br/>comp=9729.5"]
     h_10a880b3f1ee["10a880b3f1ee<br/>g=12 n=12<br/>comp=9009.6"]
@@ -43,8 +42,8 @@ flowchart TD
     h_aea48ffce72f["aea48ffce72f<br/>g=12 n=12<br/>comp=9655.7"]
     h_734c56523254["734c56523254<br/>g=24 n=20<br/>comp=10952.7"]
     h_98b57969e9e1["98b57969e9e1<br/>g=12 n=12<br/>comp=11869.6"]
-    h_294aa2554fbf["294aa2554fbf<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12423.4"]
-    h_ade59a9a5025["ade59a9a5025<br/>g=12 n=12<br/>comp=12394.4"]
+    h_294aa2554fbf["294aa2554fbf<br/>g=24 n=20<br/>comp=11709.5"]
+    h_ade59a9a5025["ade59a9a5025<br/>ANCHOR<br/>g=12 n=12<br/>comp=12394.4"]
     h_358c1f400dc9["358c1f400dc9<br/>g=24 n=20<br/>comp=10784.9"]
     h_eeb1660bbcdb["eeb1660bbcdb<br/>g=12 n=12<br/>comp=11847.3"]
     h_8f3bea72b931["8f3bea72b931<br/>g=12 n=12<br/>comp=11310.3"]
@@ -75,11 +74,9 @@ flowchart TD
     h_0c78453df396["0c78453df396<br/>g=12 n=12<br/>comp=10217.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_3a3987c92448["3a3987c92448<br/>CURRENT"]
 
-    h_35a31ad32371 -->|improve| h_ec180f35c7e5
     h_ec180f35c7e5 -->|improve| h_4f5e73275eeb
-    h_4f5e73275eeb -. rollback .-> h_35a31ad32371
-    h_35a31ad32371 -->|improve| h_10a880b3f1ee
     h_0923a69d1f67 -->|improve| h_fe57fa24fbe2
     h_fe57fa24fbe2 -->|improve| h_4d15e051ad7a
     h_4d15e051ad7a -->|improve| h_152efdf4068b
@@ -143,13 +140,13 @@ flowchart TD
     h_d3c026afa6d2 -->|improve| h_0c78453df396
     h_0c78453df396 -. rollback .-> h_f4545d36f678
     h_f4545d36f678 -. rollback .-> h_294aa2554fbf
+    h_294aa2554fbf -->|improve| h_3a3987c92448
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_35a31ad32371 plain;
     class h_ec180f35c7e5 plain;
     class h_4f5e73275eeb plain;
     class h_10a880b3f1ee plain;
@@ -177,8 +174,8 @@ flowchart TD
     class h_aea48ffce72f plain;
     class h_734c56523254 plain;
     class h_98b57969e9e1 plain;
-    class h_294aa2554fbf current_anchor;
-    class h_ade59a9a5025 plain;
+    class h_294aa2554fbf plain;
+    class h_ade59a9a5025 anchor;
     class h_358c1f400dc9 plain;
     class h_eeb1660bbcdb plain;
     class h_8f3bea72b931 plain;
@@ -209,6 +206,7 @@ flowchart TD
     class h_0c78453df396 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_3a3987c92448 current;
 ```
 
 ## Detail 1/12
@@ -3075,6 +3073,7 @@ flowchart TD
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
 - Cross-chunk link: `0c78453df396 -.rollback.-> f4545d36f678`
+- Cross-chunk link: `294aa2554fbf --improve--> 3a3987c92448`
 
 ```mermaid
 flowchart TD
@@ -3132,8 +3131,8 @@ flowchart TD
     h_aea48ffce72f["aea48ffce72f<br/>g=12 n=12<br/>comp=9655.7"]
     h_734c56523254["734c56523254<br/>g=24 n=20<br/>comp=10952.7"]
     h_98b57969e9e1["98b57969e9e1<br/>g=12 n=12<br/>comp=11869.6"]
-    h_294aa2554fbf["294aa2554fbf<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12423.4"]
-    h_ade59a9a5025["ade59a9a5025<br/>g=12 n=12<br/>comp=12394.4"]
+    h_294aa2554fbf["294aa2554fbf<br/>g=24 n=20<br/>comp=11709.5"]
+    h_ade59a9a5025["ade59a9a5025<br/>ANCHOR<br/>g=12 n=12<br/>comp=12394.4"]
     h_358c1f400dc9["358c1f400dc9<br/>g=24 n=20<br/>comp=10784.9"]
     h_eeb1660bbcdb["eeb1660bbcdb<br/>g=12 n=12<br/>comp=11847.3"]
     h_8f3bea72b931["8f3bea72b931<br/>g=12 n=12<br/>comp=11310.3"]
@@ -3311,8 +3310,8 @@ flowchart TD
     class h_aea48ffce72f plain;
     class h_734c56523254 plain;
     class h_98b57969e9e1 plain;
-    class h_294aa2554fbf current_anchor;
-    class h_ade59a9a5025 plain;
+    class h_294aa2554fbf plain;
+    class h_ade59a9a5025 anchor;
     class h_358c1f400dc9 plain;
     class h_eeb1660bbcdb plain;
     class h_8f3bea72b931 plain;
@@ -3341,8 +3340,8 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `a3aae72a4e37`
-- Nodes in this diagram: `6`
+- Range: `8b764b56c6f3` .. `3a3987c92448`
+- Nodes in this diagram: `7`
 - Internal edges in this diagram: `2`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
@@ -3351,6 +3350,7 @@ flowchart TD
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
+- Cross-chunk link: `294aa2554fbf --improve--> 3a3987c92448`
 
 ```mermaid
 flowchart TD
@@ -3360,6 +3360,7 @@ flowchart TD
     h_0c78453df396["0c78453df396<br/>g=12 n=12<br/>comp=10217.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_3a3987c92448["3a3987c92448<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3375,9 +3376,20 @@ flowchart TD
     class h_0c78453df396 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_3a3987c92448 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#12331 `294aa255 -> 3a3987c9`
+
+- scores: `12274 13988 13039 10852 9710 17762 13267 14725 24732 9456 9884 8042`
+- v490: suppress NEAR merge at pc>=28+deadline — postmortem hard constraint
+- NEAR failure (31.5%) at high pc+deadline catastrophic: adds piece without reducing pc,
+- triggers irrecoverable cascade (3-5 turns to game over). Previous attempts (v463 chain
+- suppression at pc>=35, v464 bonus reduction at pc>=28) insufficient — remaining axes
+- (7 reactive 300-1000, 8.5 danger 300-600, 8.6 reactive immediate 600-1000) still
+- provide ~1900 net bonus, overcoming risk penalties (~1400). CHAIN_MERGE alone adds
 
 ### Rollback Game#12319 `f4545d36 -> 294aa255`
 
