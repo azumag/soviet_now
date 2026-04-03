@@ -1,20 +1,25 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v149)
+ * strategy.mjs - ドロップ位置決定戦略 (v150)
  *
- * v149: v148をベースに、ゲーム分析から見られた高いmax_yの発生と、特定のX座標（特に-2.75）へのドロップの偏りを
- *       さらに緩和するための改善を適用します。これにより、ボードの高さ管理をさらに強化し、よりバランスの取れた
- *       ゲームプレイと生存ターンの安定化を目指します。
+ * v150: v149での高さ管理の強化をさらに進め、ゲーム分析で繰り返し見られたmax_yがDEADLINE_Yを超える問題に対処します。
+ *       特に大型ピースが高く積み上がる傾向と、全体的なボードの高さがゲームオーバーに繋がるパターンを抑制するため、
+ *       既存の高さ関連ペナルティをより厳格化します。
  *
- *      主な改善点 (v148からの調整点):
- *      1.  **大型ピースの高さ管理の厳格化のさらなる強化**:
- *          - `LARGE_PIECE_HIGH_PENALTY_MULTIPLIER` を `1200` から `1800` に増加させ、
- *            大型ピースが特定の側に集約される際の高さに対する忌避度をさらに強めます。
- *            これは、ゲーム分析で観測された `max_y` が `DEADLINE_Y` を超える現象への対処と、
- *            特に-2.75のような特定のX座標へのドロップ偏りが高さリスクを増大させている可能性を考慮したものです。
- *      2.  **大型ピースの片側集約ボーナスの調整**:
- *          - 大型ピースを既存の大型ピースが集約している側に配置する際のボーナスを `1300` から `1000` に減少。
- *            これにより、集約のメリットを維持しつつ、高さ管理のペナルティとのバランスを取り、
- *            過度な高積み上げを抑制する狙いです。
+ *      主な改善点 (v149からの調整点):
+ *      1.  **落下Y座標シミュレーションの保守性の強化**:
+ *          - `settlingBuffer` を `2.1` から `2.3` に増加させ、ピースの着地位置予測をより保守的にします。
+ *            これにより、物理エンジンの不確実性や凸ポリゴンの形状による「予想外の高さ」を事前に織り込み、
+ *            デッドライン到達リスクを低減します。
+ *      2.  **全体的な高さペナルティの厳格化**:
+ *          - `HEIGHT_PENALTY_WEIGHT` を `10000.0` から `15000.0` に増加。
+ *            あらゆる状況での高さペナルティの影響を全体的に強化し、ボードが不必要に高くなるのを防ぎます。
+ *          - `CRITICAL_Y_PENALTY_MULTIPLIER` を `800` から `1200` に増加。
+ *            デッドラインに近いクリティカルゾーンでのペナルティをさらに急峻にし、
+ *            ゲームオーバーに直結する高積み上げを強く忌避させます。
+ *      3.  **大型ピースの高さペナルティの大幅強化**:
+ *          - `LARGE_PIECE_HIGH_PENALTY_MULTIPLIER` を `1800` から `3000` に大幅増加。
+ *            大型ピース（type 9+）が特定側に集約される際に、その高さに対する忌避度を飛躍的に高めます。
+ *            これは、分析で確認された大型ピースが絡む高積み上げパターンを直接的に解決するための最重要調整です。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -27,8 +32,10 @@ const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 // Adjusted relative values to make penalties start earlier (lower Y) - v144
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 0.7; // Critical penalty starts at Y=1.8 (adjusted from 1.1 in v143)
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 1.5;     // Warning penalty starts at Y=1.0 (unchanged from v128)
-const HEIGHT_PENALTY_WEIGHT = 10000.0; // Maintained from v146
-const CRITICAL_Y_PENALTY_MULTIPLIER = 800; // Maintained from v146
+// v150: Increased from 10000.0 to 15000.0
+const HEIGHT_PENALTY_WEIGHT = 15000.0;
+// v150: Increased from 800 to 1200
+const CRITICAL_Y_PENALTY_MULTIPLIER = 1200;
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -38,8 +45,8 @@ const SMALL_PIECE_THRESHOLD_FOR_DENSITY = 4; // Pieces of this type or lower are
 
 // v148: New constants for more aggressive large piece height management
 const LARGE_PIECE_HIGH_PENALTY_START_Y = 0.0; // Start penalizing large pieces getting high at Y=0.0 (was 0.5)
-// v149: Increased from 1200 to 1800 for even more impactful height management for large pieces
-const LARGE_PIECE_HIGH_PENALTY_MULTIPLIER = 1800;
+// v150: Increased from 1800 to 3000 for even more impactful height management for large pieces
+const LARGE_PIECE_HIGH_PENALTY_MULTIPLIER = 3000;
 
 // Garbage Block Management Constants
 const GARBAGE_MERGE_BONUS = 3000;
@@ -66,8 +73,8 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  // v148: Increased from 2.0 (v147) to 2.1 for even more conservative height estimation.
-  const settlingBuffer = 2.1;
+  // v150: Increased from 2.1 (v148) to 2.3 for even more conservative height estimation.
+  const settlingBuffer = 2.3;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
@@ -91,11 +98,12 @@ function calculateHeightPenalty(simulatedY) {
 
   if (simulatedY > warningY) {
     // Linear penalty increases as Y gets higher in the warning zone
+    // v150: HEIGHT_PENALTY_WEIGHT increased
     penalty = (simulatedY - warningY) * HEIGHT_PENALTY_WEIGHT;
   }
   if (simulatedY > criticalY) {
     // Exponentially higher penalty in the critical zone
-    // v146: CRITICAL_Y_PENALTY_MULTIPLIER increased from 650 to 800
+    // v150: CRITICAL_Y_PENALTY_MULTIPLIER increased
     penalty += Math.pow((simulatedY - criticalY) / TOP_Y_CRITICAL_PENALTY_START_RELATIVE, 2) * HEIGHT_PENALTY_WEIGHT * CRITICAL_Y_PENALTY_MULTIPLIER;
   }
   return penalty;
@@ -272,7 +280,7 @@ export function decide(boardState) {
         currentPlacementScore = 0; // Initialize for normal calculation
 
         // Penalize height
-        // v146: HEIGHT_PENALTY_WEIGHT and CRITICAL_Y_PENALTY_MULTIPLIER increased
+        // v150: HEIGHT_PENALTY_WEIGHT and CRITICAL_Y_PENALTY_MULTIPLIER increased
         currentPlacementScore -= calculateHeightPenalty(simulatedY);
 
         // v141: Further increased additional penalty if placing high when a lot of garbage is present
@@ -329,11 +337,10 @@ export function decide(boardState) {
             const avgLargePieceX = largePieces.reduce((sum, p) => sum + p.x, 0) / largePieces.length;
 
             // If current X is on the same side as the average of existing large pieces, add a bonus
-            // v149: Reduced from 1300 to 1000 to balance with stronger height penalties
+            // v149: Reduced from 1300 to 1000 to balance with stronger height penalties (maintained in v150)
             if ((avgLargePieceX < 0 && x < 0) || (avgLargePieceX > 0 && x > 0)) {
               currentPlacementScore += 1000;
-              // v148: Apply more aggressive height penalty for large pieces on the aggregated side
-              // v149: Multiplier further increased from 1200 to 1800
+              // v150: Multiplier further increased from 1800 to 3000
               if (simulatedY > LARGE_PIECE_HIGH_PENALTY_START_Y) {
                   currentPlacementScore -= (simulatedY - LARGE_PIECE_HIGH_PENALTY_START_Y) * LARGE_PIECE_HIGH_PENALTY_MULTIPLIER;
               }
