@@ -7,11 +7,11 @@
  * 3. TTS読み上げ + Twitchチャット投稿
  */
 
-import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdtempSync, rmSync } from 'fs';
+import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { execFile } from 'child_process';
 import { join } from 'path';
-import { tmpdir } from 'os';
 import { analyzeResultScreen } from './result_screen_ocr.mjs';
+import { generateTextWithFallbacks, stripAnsi } from './text_ai.mjs';
 
 const PROMPTS_DIR = join(import.meta.dirname || '.', 'prompts');
 
@@ -32,66 +32,6 @@ const PARENT_DIR = join(import.meta.dirname || '.', '..');
 const SAY_ENQUEUE_SCRIPT = join(PARENT_DIR, 'say_enqueue.sh');
 const TWITCH_CHAT_SCRIPT = join(PARENT_DIR, 'twitch_chat.sh');
 const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
-const DEFAULT_CLAUDE_MODEL = process.env.SOREN91_COMMENT_CLAUDE_MODEL || 'haiku';
-const DEFAULT_GEMINI_MODEL = process.env.SOREN91_COMMENT_GEMINI_MODEL || process.env.SOREN91_GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
-const DEFAULT_OPENCODE_AGENT = process.env.SOREN91_COMMENT_OPENCODE_AGENT || process.env.RADIO_FALLBACK || 'glmflash';
-const DEFAULT_CLAUDE_TIMEOUT_MS = 30000;
-const DEFAULT_GEMINI_TIMEOUT_MS = Math.max(
-  1000,
-  Number.parseInt(process.env.SOREN91_COMMENT_GEMINI_TIMEOUT || process.env.COMMENT_GEMINI_TIMEOUT || '30', 10) * 1000,
-);
-const DEFAULT_OPENCODE_TIMEOUT_MS = Math.max(
-  1000,
-  Number.parseInt(process.env.SOREN91_COMMENT_OPENCODE_TIMEOUT || process.env.COMMENT_OPENCODE_TIMEOUT || '30', 10) * 1000,
-);
-const DEFAULT_OPENCODE_PERMISSION = process.env.SOREN91_COMMENT_OPENCODE_PERMISSION
-  || process.env.COMMENT_OPENCODE_PERMISSION
-  || '{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","web":"allow","web-search":"allow"}';
-
-function stripAnsi(text) {
-  return String(text || '')
-    .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '')
-    .replace(/[\x00-\x09\x0b-\x0d\x0e-\x1f]/g, '')
-    .replace(/\r/g, '');
-}
-
-function containsProviderErrorText(text) {
-  return /invalid bearer token|authentication_error|failed to authenticat(?:e|ed)|api error[: ]|request_id|invalid error token|invalid token|not logged in|please run \/login|potentially unsafe or sensitive content|avoid using prompts that may generate sensitive content|unsafe or sensitive content in input or generation|content policy|safety policy|rate limit|rate_limit|too many requests|429\b|overloaded_error|quota/i.test(String(text || ''));
-}
-
-function containsClaudeLoginErrorText(text) {
-  return /not logged in|please run \/login/i.test(String(text || ''));
-}
-
-function shellSingleQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
-
-function cleanOpencodeOutput(raw) {
-  const lines = stripAnsi(raw).split('\n');
-  const kept = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (trimmed.startsWith('>')) continue;
-    if (trimmed === '^D') continue;
-    if (trimmed.startsWith('Script started on ')) continue;
-    if (trimmed.startsWith('Script done on ')) continue;
-    if (/^\/[^ ]*$/.test(trimmed)) continue;
-    if (/^\/Users\//.test(trimmed)) continue;
-    if (/^⚙/.test(trimmed)) continue;
-    if (/^\{\s*"query"/.test(trimmed)) continue;
-    if (/^[✗✕×].*\b(read|glob|grep|ls|edit|write|multiedit)\b.*\bfailed\b/i.test(trimmed)) continue;
-    if (/^[✱→►▸]\s*(read|glob|grep|ls|edit|write|multiedit)\b/i.test(trimmed)) continue;
-    if (/^(read|glob|grep|ls|edit|write|multiedit)\b/i.test(trimmed)) continue;
-    if (/^(error|warning)\s*:/i.test(trimmed)) continue;
-    if (/file not found:|no such file or directory|permission denied|invalid arguments/i.test(trimmed)) continue;
-    kept.push(
-      line.replace(/<\/?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>/g, '').trim(),
-    );
-  }
-  return kept.filter(Boolean).join('\n').trim();
-}
 
 const META_LINE_PATTERNS = [
   /^(assistant|analysis|final|tool_call|tool_result)$/i,
@@ -157,137 +97,6 @@ function isValidGeneratedComment(text) {
     return false;
   }
   return true;
-}
-
-function makeProviderError(message, detail = '') {
-  const err = new Error(detail ? `${message}: ${detail}` : message);
-  err.providerFailure = true;
-  return err;
-}
-
-function runClaudeTextComment(tag, promptText) {
-  return new Promise((resolve, reject) => {
-    const child = execFile('claude', [
-      '-p', '--model', DEFAULT_CLAUDE_MODEL,
-      '--verbose',
-    ], {
-      encoding: 'utf-8',
-      maxBuffer: 2 * 1024 * 1024,
-      timeout: DEFAULT_CLAUDE_TIMEOUT_MS,
-      cwd: '/tmp',
-    }, (err, stdout, stderr) => {
-      const stderrPreview = String(stderr || '').slice(0, 500);
-      const combined = `${stdout || ''}\n${stderr || ''}`;
-      if (containsClaudeLoginErrorText(combined)) {
-        console.log(`[${tag}] claude unavailable: not logged in`);
-      }
-      if (containsProviderErrorText(combined)) {
-        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
-        return reject(makeProviderError('claude provider/rate-limit failure', stderrPreview || String(stdout || '').slice(0, 300)));
-      }
-      if (err) {
-        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
-        return reject(err);
-      }
-      const comment = extractCommentOnly(String(stdout || '').trim(), tag);
-      if (!comment) {
-        return reject(new Error('claude returned empty comment'));
-      }
-      resolve(comment);
-    });
-    child.stdin.on('error', () => {});
-    child.stdin.write(promptText);
-    child.stdin.end();
-  });
-}
-
-function runOpencodeComment(tag, promptText, agent = DEFAULT_OPENCODE_AGENT) {
-  const tempDir = mkdtempSync(join(tmpdir(), 'soren91_opencode_comment_'));
-  const promptFile = join(tempDir, 'prompt.txt');
-  const rawFile = join(tempDir, 'raw.txt');
-  writeFileSync(promptFile, promptText, 'utf-8');
-
-  return new Promise((resolve, reject) => {
-    const command = `LC_ALL=en_US.UTF-8 opencode run --agent ${shellSingleQuote(agent)} "$(cat ${shellSingleQuote(promptFile)})" 2>&1`;
-    execFile('script', ['-q', rawFile, 'bash', '-lc', command], {
-      encoding: 'utf-8',
-      timeout: DEFAULT_OPENCODE_TIMEOUT_MS,
-      env: {
-        ...process.env,
-        OPENCODE_PERMISSION: DEFAULT_OPENCODE_PERMISSION,
-      },
-      maxBuffer: 2 * 1024 * 1024,
-    }, (err) => {
-      try {
-        const raw = existsSync(rawFile) ? readFileSync(rawFile, 'utf-8') : '';
-        const cleaned = cleanOpencodeOutput(raw);
-        if (containsProviderErrorText(cleaned)) {
-          return reject(makeProviderError(`opencode provider failure (${agent})`, cleaned.slice(0, 300)));
-        }
-        if (err) {
-          if (cleaned) console.error(`[${tag}] opencode raw:`, cleaned.slice(0, 500));
-          return reject(err);
-        }
-        const comment = extractCommentOnly(cleaned, tag);
-        if (!comment) {
-          return reject(new Error(`opencode returned empty comment (${agent})`));
-        }
-        resolve(comment);
-      } finally {
-        try { unlinkSync(promptFile); } catch {}
-        try { unlinkSync(rawFile); } catch {}
-        try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
-      }
-    });
-  });
-}
-
-function runGeminiTextComment(tag, promptText) {
-  const args = ['-p', '', '-s', '-o', 'text'];
-  if (DEFAULT_GEMINI_MODEL) {
-    args.push('--model', DEFAULT_GEMINI_MODEL);
-  }
-  return new Promise((resolve, reject) => {
-    const child = execFile('gemini', args, {
-      encoding: 'utf-8',
-      maxBuffer: 2 * 1024 * 1024,
-      timeout: DEFAULT_GEMINI_TIMEOUT_MS,
-      cwd: '/tmp',
-    }, (err, stdout, stderr) => {
-      const stderrPreview = String(stderr || '').slice(0, 500);
-      const combined = `${stdout || ''}\n${stderr || ''}`;
-      if (containsProviderErrorText(combined)) {
-        if (stderrPreview) console.error(`[${tag}] gemini stderr:`, stderrPreview);
-        return reject(makeProviderError('gemini provider/rate-limit failure', stderrPreview || String(stdout || '').slice(0, 300)));
-      }
-      if (err) {
-        if (stderrPreview) console.error(`[${tag}] gemini stderr:`, stderrPreview);
-        return reject(err);
-      }
-      const comment = extractCommentOnly(String(stdout || '').trim(), tag);
-      if (!comment) {
-        return reject(new Error('gemini returned empty comment'));
-      }
-      resolve(comment);
-    });
-    child.stdin.on('error', () => {});
-    child.stdin.write(promptText);
-    child.stdin.end();
-  });
-}
-
-async function withTextFallbacks(tag, promptText, claudeRunner) {
-  try {
-    return await claudeRunner();
-  } catch (err) {
-    console.log(`[${tag}] claude failed -> gemini fallback (${err.message})`);
-    try {
-      return await runGeminiTextComment(tag, promptText);
-    } catch (geminiErr) {
-      console.log(`[${tag}] gemini failed -> opencode fallback (${geminiErr.message})`);
-      return runOpencodeComment(tag, promptText);
-    }
-  }
 }
 
 /**
@@ -410,11 +219,10 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
 }
 
 function callClaudeForComment(promptText) {
-  return withTextFallbacks(
-    'ranking_comment',
-    promptText,
-    () => runClaudeTextComment('ranking_comment', promptText),
-  );
+  return generateTextWithFallbacks('ranking_comment', promptText, {
+    parseOutput: raw => extractCommentOnly(raw, 'ranking_comment'),
+    includeOpencodeFallback: true,
+  });
 }
 
 /**
@@ -603,11 +411,10 @@ async function callClaudeForMidgame(gameNumber, turn, boardState) {
   const boardInfo = formatBoardStateForPrompt(boardState, turn);
   const promptText = loadPrompt('midgame_comment.md', { boardInfo });
 
-  return withTextFallbacks(
-    'midgame_comment',
-    promptText,
-    () => runClaudeTextComment('midgame_comment', promptText),
-  );
+  return generateTextWithFallbacks('midgame_comment', promptText, {
+    parseOutput: raw => extractCommentOnly(raw, 'midgame_comment'),
+    includeOpencodeFallback: true,
+  });
 }
 
 // CLI: node comment.mjs <ranking_image_path> [gameNumber] [rank]
