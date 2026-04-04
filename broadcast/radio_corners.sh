@@ -245,76 +245,42 @@ PROMPT
 }
 
 start_radio_corner_rollback() {
-	local analysis_file="$1" game_num="$2" from_hash="$3" to_hash="$4"
-	[ -f "$analysis_file" ] || return 1
-	_radio_time_context
-	local past_topics analysis_text
-	past_topics=$(_radio_past_topics_block)
-	analysis_text=$(cat "$analysis_file" 2>/dev/null)
+local analysis_file="$1" game_num="$2" from_hash="$3" to_hash="$4"
+[ -f "$analysis_file" ] || return 1
+_radio_time_context
+local past_topics analysis_text
+past_topics=$(_radio_past_topics_block)
+analysis_text=$(cat "$analysis_file" 2>/dev/null)
 
-	local prompt_file
-	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
-	cat >"$prompt_file" <<PROMPT
-$(_radio_persona_block)
+local prompt_file
+prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
+export persona_block
+persona_block=$(_radio_rollback_persona_block)
+export output_rules
+output_rules=$(_radio_output_rules 900 1600)
+export _rc_time_spoken past_topics analysis_text game_num from_hash to_hash
+envsubst < "$ELOOP_LIB_DIR/prompts/radio_rollback.md" > "$prompt_file"
+unset persona_block output_rules _rc_time_spoken past_topics analysis_text
 
-【現在時刻】${_rc_time_spoken}
-【コーナー名】粛清ラジオ
-
-【状況】ゲーム${game_num}回目付近で戦略の粛清が発生。
-低スコアだった戦略 ${from_hash} は粛清され、以前の成績が良かった戦略 ${to_hash} にすげ替えられた。
-
-【スコアの説明ルール（重要）】
-- 分析メモのスコアは内部評価スコア（画面表示スコア＋建国ボーナス）
-- 視聴者が配信画面で見ているのは画面表示スコアの方。こちらを基本に語ること
-- 「評価スコア」を初めて使うときは「画面のスコアに建国ボーナスを足した評価スコア」と一度説明すること
-- 「評価スコアが○○点」だけで語るのは禁止。画面表示スコアを先に言うこと
-
-【rollback分析メモ】
-${analysis_text}
-
-【トーク構成】
-1. 冒頭で「粛清ラジオ」と言い、${from_hash} が低スコアで粛清され ${to_hash} にすげ替えられた事実を短く伝える
-2. 敗因分析を語る
-   - current と rollback_target の comp / p50 / p25 / Defeat Delta / recent12 を比較する
-   - 典型性能の弱さなのか、下振れ耐性の欠如なのか、直近の崩れなのかを切り分ける
-3. 次の改善で何を直すべきかを1-3点だけ具体的に話す
-   - 低スコア回の終盤8ターン、deadline 接近、merge 取りこぼしなど、分析メモに沿って述べる
-4. 成績の良い旧戦略へ戻した意味を一言で締める
-
-【ルール】
-- 「rollback された」より「低スコアだったので粛清された」「成績の良い旧戦略にすげ替えられた」という表現を優先すること
-- 単なる謝罪だけで終わらず、失敗の知見として整理すること
-- 敗因を運や雰囲気で流さず、分析メモにある current と rollback_target の差で説明すること
-- 数値は分析メモにあるものだけを使うこと
-- 前向きすぎるごまかしは禁止。どこが弱かったかを具体的に言うこと
-- 次の戦略改善プロセスに渡せる、再発防止の観点を必ず残すこと
-- Web検索は使わないこと。分析メモの情報だけで語ること
-
-$(_radio_output_rules 900 1600)
-PROMPT
-	# rollbackはopencode不安定のため、claude CLIで直接生成してからplay
-	local talk=""
-	talk=$(timeout 45 claude -p --model haiku < "$prompt_file" 2>/dev/null | _sanitize_onair_text | _normalize_radio_tone)
-	rm -f "$prompt_file"
-	if [ -z "$talk" ]; then
-		log "[RADIO:rollback] claude生成失敗"
-		return 1
-	fi
-	local talk_file
-	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
-	printf '%s' "$talk" > "$talk_file"
-	log "[RADIO:rollback] 生成完了 (${#talk}字)"
-	SAY_VOICEVOX_SPEAKER_OVERRIDE=13 SAY_CONTEXT_LABEL="radio:rollback" ./say_enqueue.sh "$talk_file" "${RADIO_SAY_RATE:-150}" 0 || {
-		log "[RADIO:rollback] 再生失敗"
-		rm -f "$talk_file"
-		return 1
-	}
-	rm -f "$talk_file"
+# rollbackはopencode不安定のため、claude CLIで直接生成してからplay
+local talk=""
+talk=$(timeout 45 claude -p --model haiku < "$prompt_file" 2>/dev/null | _sanitize_onair_text | _normalize_radio_tone)
+rm -f "$prompt_file"
+if [ -z "$talk" ]; then
+log "[RADIO:rollback] claude生成失敗"
+return 1
+fi
+local talk_file
+talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
+printf '%s' "$talk" > "$talk_file"
+log "[RADIO:rollback] 生成完了 (${#talk}字)"
+SAY_VOICEVOX_SPEAKER_OVERRIDE=13 SAY_CONTEXT_LABEL="radio:rollback" ./say_enqueue.sh "$talk_file" "${RADIO_SAY_RATE:-150}" 0 || {
+log "[RADIO:rollback] 再生失敗"
+rm -f "$talk_file"
+return 1
 }
-
-#=== 時間帯コーナー ===
-
-start_radio_corner_weather() {
+rm -f "$talk_file"
+}
 	local game_num="$1" score="$2"
 	_radio_time_context
 	local past_topics
