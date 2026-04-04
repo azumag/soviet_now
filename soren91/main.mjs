@@ -1137,16 +1137,16 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
   console.log(`[game] Summary: turns=${turns}, rank=${summary.rank}, hash=${strategyHash}`);
 
   // ランキング画面コメント生成 (非同期、ゲームループをブロックしない)
-  if (existsSync(rankingImagePath)) {
-    (async () => {
-      try {
-        const { generateRankingComment } = await loadModule('./comment.mjs');
-        await generateRankingComment(rankingImagePath, gameNumber, detectedRank);
-      } catch (err) {
-        console.log(`[game] Ranking comment error: ${err.message}`);
-      }
-    })();
-  }
+  // ranking 画像がなくても、ゲーム終了を示す情報があればコメント生成を試みる
+  (async () => {
+    try {
+      const { generateRankingComment } = await loadModule('./comment.mjs');
+      const imagePath = existsSync(rankingImagePath) ? rankingImagePath : null;
+      await generateRankingComment(imagePath, gameNumber, detectedRank);
+    } catch (err) {
+      console.log(`[game] Ranking comment error: ${err.message}`);
+    }
+  })();
 
   try {
     const lineageResult = recordCompletedGame({

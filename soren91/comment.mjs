@@ -129,11 +129,6 @@ function isValidGeneratedComment(text) {
  * @param {number|null} myRank - 自分の順位
  */
 export async function generateRankingComment(rankingImagePath, gameNumber, myRank) {
-  if (!rankingImagePath || !existsSync(rankingImagePath)) {
-    console.log('[ranking_comment] No ranking image available');
-    return null;
-  }
-
   try {
     const promptText = await buildRankingTextPrompt(rankingImagePath, myRank);
     const comment = await callClaudeForComment(promptText);
@@ -236,25 +231,29 @@ async function buildMidgameScreenshotTextInfo(screenshotPath) {
 
 async function buildRankingTextPrompt(rankingImagePath, myRank) {
   const rankInfo = myRank != null ? `自分の順位: ${myRank}位/91人中。` : '';
-  let ocrInfo = '- OCR抽出テキストは十分に得られませんでした。';
-  try {
-    const ocr = await analyzeResultScreen(rankingImagePath);
-    const lines = [];
-    if (ocr?.rank != null) {
-      lines.push(`- OCR推定順位: ${ocr.rank}位/91人中。`);
+  let ocrInfo = '- OCR画像が利用できません（ランキング画面キャプチャ失敗）。';
+  
+  if (rankingImagePath) {
+    try {
+      const ocr = await analyzeResultScreen(rankingImagePath);
+      const lines = [];
+      if (ocr?.rank != null) {
+        lines.push(`- OCR推定順位: ${ocr.rank}位/91人中。`);
+      }
+      if (ocr?.playerNames?.length) {
+        lines.push(`- OCRプレイヤー名候補: ${ocr.playerNames.slice(0, 8).join(' / ')}`);
+      }
+      if (ocr?.lines?.length) {
+        lines.push(...ocr.lines.slice(0, 8).map(line => `- ${line}`));
+      }
+      if (lines.length > 0) {
+        ocrInfo = lines.join('\n');
+      }
+    } catch (err) {
+      ocrInfo = `- OCR補助情報の取得失敗: ${err.message}`;
     }
-    if (ocr?.playerNames?.length) {
-      lines.push(`- OCRプレイヤー名候補: ${ocr.playerNames.slice(0, 8).join(' / ')}`);
-    }
-    if (ocr?.lines?.length) {
-      lines.push(...ocr.lines.slice(0, 8).map(line => `- ${line}`));
-    }
-    if (lines.length > 0) {
-      ocrInfo = lines.join('\n');
-    }
-  } catch (err) {
-    ocrInfo = `- OCR補助情報の取得失敗: ${err.message}`;
   }
+  
   return loadPrompt('ranking_comment.md', { rankInfo, ocrInfo });
 }
 
