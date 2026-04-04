@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v516: replace flat Russia phase board compression (rp==0, +800) with Russia piece proximity guidance
+     # Russia phase with NO merge and rp==0: flat +800 provides no directional guidance for 2nd
+     # Russia growth. Replace with proximity bonus toward deepest Russia piece: max(0, 800-dist*200).
+     # Same max at distance 0, decays to 0 at distance 4.0. Concentrates type 13-14 growth near
+     # existing Russia for 2nd Russia pipeline. Best game (2695): Russia at T107, 23 turns of
+     # undirected HEIGHT_CONTROL, died without 2nd Russia. Only fires at rp==0 + non-deadline.
+     # Fixes rollback failure mode: Russia 1つ止まり — no 2nd Russia growth guidance
+     # refs: game_history/20260404_211424_score2695.jsonl, tmp/improve_brief.md, tmp/batch_summary.txt,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       advice.md, prompts/game_theory.md
      # v515: remove axis 1.5b (DANGER_NEAR_MERGE_PRIORITY) — match protected strategy
      # Protected strategy (median 12789, +4% better) does NOT have DANGER_NEAR bonus. The +300 bonus
      # at deadline+high_pc overrode NEAR suppression penalties (HIGH_PC_NEAR_PENALTY cancels base NEAR),
@@ -996,6 +1006,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
+
+    # v516: pre-compute deepest Russia piece for proximity guidance in Russia phase
+    # Used by Russia NO-merge bonus to guide pieces toward 2nd Russia growth area.
+    # Deepest Russia is the most accessible target for type 13-14 growth pipeline.
+    russia_pieces = [p for p in pieces if p.get("type") == 15]
+    russia_ref = min(russia_pieces, key=lambda p: p.get("y", 10)) if russia_pieces else None
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -2016,9 +2032,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
                      score += 400.0
                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                  else:
-                      # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
-                      # 盤面圧縮を優先しつつ、type 15保護を徹底
-                      score += 800.0
+                      # v516: replace flat +800 with Russia proximity guidance for 2nd Russia growth
+                      # Flat compression doesn't differentiate positions — same bonus for x=-3.0
+                      # and x=0.0 provides no directional guidance for 2nd Russia growth.
+                      # Best game (2695): Russia at T107, 23 turns of HEIGHT_CONTROL without
+                      # direction, died without 2nd Russia. Russia piece was at (-0.26, -2.12).
+                      # Proximity-based bonus guides pieces toward Russia piece, concentrating
+                      # type 13-14 growth near the existing Russia for 2nd Russia pipeline.
+                      # Same max bonus (800) at distance 0 maintains existing behavior for
+                      # near-Russia placements. Decays to 0 at distance 4.0, removing incentive
+                      # for far-from-Russia placements. Only fires at rp==0 + non-deadline.
+                      # Fixes: Russia phase flat compression noise — no directional guidance
+                      # refs: game_history/20260404_211424_score2695.jsonl (Russia T107, died T130),
+                      #       tmp/improve_brief.md (Russia phase #1 priority), tmp/batch_summary.txt,
+                      #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+                      #       advice.md, prompts/game_theory.md (concentration principle)
+                      # Fixes rollback failure mode: Russia 1つ止まり — no 2nd Russia growth guidance
+                      if russia_ref:
+                          rx = russia_ref.get("x", 0)
+                          ry = russia_ref.get("y", -10)
+                          russia_dist = ((x - rx) ** 2 + (landing_y - ry) ** 2) ** 0.5
+                          score += max(0.0, 800.0 - russia_dist * 200.0)
+                      else:
+                          score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
