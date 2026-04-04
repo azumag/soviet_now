@@ -63,6 +63,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v508: restore AVOID_BLOCK at deadline — fix reactive pair blocking
+     # v503 fully suppressed AVOID_BLOCK at deadline to prevent edge scatter (postmortem:
+     # "AVOID_BLOCK's edge push is counterproductive"). However, this also removed blocking
+     # protection for reactive pairs at deadline — pieces placed between adjacent reactive
+     # pairs block their future merges. advice.md: "併合できるtypeが隣接しているとき、その間に
+     # ピースを配置してしまうと、併合しづらくなる" (もやしちゃん). Worst game T70-T77:
+     # 4 consecutive CROSSES_DEADLINE_NO_MERGE at deadline, rp=4-7. Partially caused by
+     # unblocked reactive pair placement. Fix: keep congestion suppression (rp>=5, max_y>=2.5,
+     # max_y>=3.0+deadline) that prevents edge push, but remove blanket deadline suppression
+     # so blocking protection remains active. Penalty capped at 400 (was 500) to reduce
+     # edge-push risk while maintaining merge path protection.
+     # Fixes rollback failure mode: edge scatter from AVOID_BLOCK at deadline without merge
+     # refs: advice.md (もやしちゃん), tmp/state/last_rollback_postmortem.md (AVOID_BLOCK),
+     #       game_history/20260404_101950_score1279.jsonl T70-T77, tmp/batch_summary.txt
      # v507: fix v336 oversight — suppress Russia BOARD_COMPRESSION at rp==0 (800→0)
      # v336 reduced rp<3 BOARD_COMPRESSION from 800→400 but missed the else branch (rp==0).
      # At rp==0+Russia+NO+not-deadline, the +800 bonus overrides height penalty diffs
@@ -1435,7 +1449,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
-                or deadline_crossed  # v503: suppress AVOID_BLOCK at deadline — edge scatter prevention
+                # v503 removed full deadline suppression; v508: restore at reduced penalty.
+                # v503 suppressed ALL AVOID_BLOCK at deadline to prevent edge scatter (postmortem:
+                # "AVOID_BLOCK's edge push is counterproductive at deadline"). But this also removed
+                # blocking protection for reactive pairs — pieces placed between reactive pairs
+                # block their future merges. advice.md: "併合できるtypeが隣接しているとき、その間に
+                # ピースを配置してしまうと、併合しづらくなる". Worst game T70-T77: 4 consecutive
+                # CROSSES_DEADLINE_NO_MERGE with deadline=true, rp=4-7. Partially caused by
+                # unblocked reactive pair placement. Fix: keep max_y>=3.0+deadline and rp>=5
+                # congestion suppression (prevents edge push) but remove blanket deadline suppression.
+                # refs: advice.md (もやしちゃん), game_history/20260404_101950_score1279.jsonl T70-T77
             )
             if not board_congested:
                 blocking_penalty = 0.0
@@ -1457,7 +1480,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                     if landing_y >= pair_min_y:
                                         blocking_penalty += 200.0
                 if blocking_penalty > 0:
-                    score -= min(blocking_penalty, 500.0)
+                    score -= min(blocking_penalty, 400.0)  # v508: cap 500→400 (reduce edge-push risk)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
 
         # ----- evaluation axis 2: height penalty -----
