@@ -35,7 +35,7 @@ export function stripAnsi(text) {
 }
 
 function containsProviderErrorText(text) {
-  return /invalid bearer token|authentication_error|failed to authenticat(?:e|ed)|api error[: ]|request_id|invalid error token|invalid token|not logged in|please run \/login|potentially unsafe or sensitive content|avoid using prompts that may generate sensitive content|unsafe or sensitive content in input or generation|content policy|safety policy|rate limit|rate_limit|too many requests|429\b|overloaded_error|quota/i.test(String(text || ''));
+  return /invalid bearer token|authentication_error|failed to authenticat(?:e|ed)|api error[: ]|request_id|invalid error token|invalid token|not logged in|please run \/login|potentially unsafe or sensitive content|avoid using prompts that may generate sensitive content|unsafe or sensitive content in input or generation|content policy|safety policy|rate limit|rate_limit|too many requests|429\b|overloaded_error|quota|usage limit/i.test(String(text || ''));
 }
 
 function containsClaudeLoginErrorText(text) {
@@ -301,6 +301,16 @@ export async function generateTextWithFallbacks(tag, promptText, options = {}) {
   try {
     return await runClaudeText(tag, promptText, options);
   } catch (err) {
+    // "Usage limit reached for 5 hour" のようなrate-limitエラーの場合は、Gemini をスキップして直接 Opencode にフォールバック
+    const isHardRateLimit = /usage limit reached for [0-9]+ hours?|rate limit.*hour|quota.*hour/i.test(err.message || '');
+    if (isHardRateLimit) {
+      console.error(`[${tag}] claude hit hard rate limit -> opencode (skipping gemini)`);
+      if (options.includeOpencodeFallback === false) {
+        throw err;
+      }
+      return runOpencodeText(tag, promptText, options);
+    }
+    
     console.error(`[${tag}] claude failed -> gemini fallback (${err.message})`);
     try {
       return await runGeminiText(tag, promptText, options);
