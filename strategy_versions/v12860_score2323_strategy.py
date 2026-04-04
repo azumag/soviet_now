@@ -63,6 +63,22 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v471: restore +300 SAME_TYPE_STACK_MERGE_PRIORITY — match protected strategy (median 12789)
+     # Protected strategy achieves +4% better median with +300 flat bonus at rp==0, danger==0.
+     # v459 removed +300 claiming 9.6b made it redundant, But batch data shows HEIGHT_CONTROL 19.6%
+     # low-score vs 13.3% high-score (6.3pp gap). The +300 flat bonus provides stronger
+     # directional guidance than proximity-only 9.6b at rp==0. Combined with
+     # 9.6b (~120-360) the total reaches ~420-660, competing with height
+     # diffs (~200-450). Worst game T44-T50: merge drought with HEIGHT_CONTROL
+     # selected despite same-type pieces existing — 9.6b proximity too weak
+     # to redirect. Best game shows structured stacking via DIRECT/NEAR merges.
+     # Advice: "同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する" (Pitman_live).
+     # Protected strategy (median 12789, +4% better) has +300 at axis 9.5.
+     # Fixes: HEIGHT_CONTROL overuse when same-type exists but guidance too weak
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.6% low vs 13.3% high),
+     #       game_history/20260405_055855_score0842.jsonl T44-T50 (merge drought),
+     #       game_history/20260405_061450_score2578.jsonl (best game, structured stacking)
      # v470: increase congestion penalty multiplier 20→30 — reduce HEIGHT_CONTROL scatter at high pc
      # Batch: HEIGHT_CONTROL 20.1% low vs 15.9% high — height penalty alone insufficient to prevent
      # scattered placement at pc=30+. Worst game final 8 turns: 0 merges, CROSSES_DEADLINE_NO_MERGE×3.
@@ -1854,12 +1870,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pass
             else:
                 if danger_piece_count == 0 and reactive_pair_count == 0:
-                    # v459: +300 bonus removed — axis 9.6b already provides proximity guidance
-                    # toward same-type pieces (~120-540). The +300 was redundant additive
-                    # noise that overrode height differentiation when combined with 9.6b's
-                    # bonus (total 420-840 > typical height diffs ~200-450). avg_delta=0.8
-                    # confirmed this axis produced negligible merges vs HEIGHT_CONTROL (2.8).
-                    pass
+                    # v471: restored +300 — matches protected strategy (median 12789, +4% better).
+                    # Protected strategy has +300 flat bonus at axis 9.5 without 9.6b.
+                    # Current strategy has 9.6b (base 160 proximity) but removed +300 in v459.
+                    # HEIGHT_CONTROL overuse gap: 19.6% low-score vs 13.3% high-score.
+                    # At rp==0, danger==0: +300 provides directional pull toward same-type
+                    # when no merge is available, reducing HEIGHT_CONTROL default.
+                    # Combined with 9.6b proximity: pieces near same-type get +300 flat
+                    # + proximity (~120-360) = ~420-660, competitive with height diffs.
+                    # At rp>0 or danger>0: doesn't fire (same guard as protected).
+                    # Fixes: HEIGHT_CONTROL overuse when same-type exists at rp==0
+                    score += 300.0
+                    if "SAME_TYPE_STACK_MERGE_PRIORITY" not in "_".join(reasons):
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             # v327: danger_piece_count > 0 の場合のボーナスブロックを削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のボーナスブロックを追加 - axis 9.2のペナルティを優先
             # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ボーナスブロックを適用 - axis 8.7即時併合優先
