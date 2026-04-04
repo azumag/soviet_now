@@ -63,6 +63,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v514: restore AVOID_BLOCK at deadline (fix rollback-lost bug) — re-apply v511
+     # Game#12693 rollback to 87a00400960f lost v510/v511/v512 fixes. Current code had v503's
+     # unconditional `or deadline_crossed` at L1426, suppressing ALL AVOID_BLOCK at deadline.
+     # This allows pieces to land between reactive pairs of different types, blocking future merges.
+     # advice.md: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、
+     # 併合しづらくなる" (もやしちゃん). Worst game T64-T66: deadline+rp=3-5, 3 consecutive
+     # NO/failed-merge with pieces placed between reactive pairs, max_y 1.57→2.50 cascade.
+     # Fix: restore v511 condition — suppress AVOID_BLOCK only when piece matches a reactive pair
+     # OR rp>=4 (too many pairs for individual blocking to matter). At rp<4+deadline without
+     # matching reactive, AVOID_BLOCK fires to protect merge paths between reactive pairs.
+     # Protected strategy (median 12789) has NO AVOID_BLOCK because it has stronger guidance via
+     # relaxed height_mult; current strategy needs AVOID_BLOCK to prevent deadline scatter.
+     # Fixes rollback failure mode: rollback-lost AVOID_BLOCK deadline suppression causing merge path blocking
+     # refs: tmp/state/last_rollback_analysis.md (Game#12693 rollback lost v511),
+     #       game_history/20260404_191302_score0939.jsonl T64-T66 (worst, deadline scatter),
+     #       advice.md (もやしちゃん), tmp/change_log.txt (v503/v510/v511 entries),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no AVOID_BLOCK)
      # v506: suppress RUSSIA_PHASE_BOARD_COMPRESSION at deadline — postmortem constraint alignment
      # At deadline+NO-merge, axis 9.6 (-4500) and axis 8.8 (-4500 at rp>=3) create uniform
      # penalty that lets height penalty be sole differentiator. Russia BOARD_COMPRESSION bonuses
@@ -1423,7 +1440,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
-                or deadline_crossed  # v503: suppress AVOID_BLOCK at deadline — edge scatter prevention
+                or (deadline_crossed and (current_type_has_reactive or reactive_pair_count >= 4))  # v514: restore v511 — fix rollback-lost AVOID_BLOCK suppression
             )
             if not board_congested:
                 blocking_penalty = 0.0
