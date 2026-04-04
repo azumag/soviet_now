@@ -1,29 +1,26 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v166)
+ * strategy.mjs - ドロップ位置決定戦略 (v167)
  *
- * v166: v165の改善点をベースに、ゲーム分析からの洞察と物理挙動の再評価に基づいた戦略の強化を行います。
+ * v167: v166の改善点をベースに、さらなるゲーム分析からの洞察と物理挙動の再評価に基づいた戦略の強化を行います。
  *
  *       主な改善点:
- *       1.  **CRITICAL FIX: simulateDropYの修正**:
- *           - 物理エンジンのピースのY座標計算ロジックを再評価。`simulateDropY` 関数がピースの「頂点Y座標」を
- *             正確に予測するように修正しました。これまでのバージョンでは、ピースの半径分だけ頂点Y座標が低く見積もられており、
- *             高さペナルティが十分に機能していなかった可能性があります。
- *             修正前: `maxY + piece.r + SETTLING_BUFFER` (ピース中心Y + バッファ)
- *             修正後: `maxY + (2 * piece.r) + SETTLING_BUFFER` (ピース頂点Y + バッファ)
- *             この修正により、高さ管理がより正確かつ厳密になり、早期ゲームオーバーの削減に寄与すると考えられます。
- *       2.  **HEIGHT_PENALTY_WEIGHTの強化**:
+ *       1.  **HEIGHT_PENALTY_WEIGHTのさらなる強化**:
  *           - ゲーム分析で一貫して高いY座標がゲームオーバーの一因となっていることが示唆されたため、
- *             `HEIGHT_PENALTY_WEIGHT` を `90000.0` から `120000.0` に増加。
- *             より積極的に高さを抑える動きを奨励します。
- *       3.  **Garbage Penaltyの強化**:
- *           - `GBG_URGENT` モード（`garbage.ratio > 0.4`）における基本的なペナルティを
- *             `2000` から `3000` に増加。おじゃまブロックが非常に危険な状態での高リスク行動を抑制します。
- *       4.  **Small Piece Catalyst Bonusの強化**:
- *           - 「小ピースの触媒利用」原則の効果をより高めるため、`SMALL_PIECE_CATALYST_BONUS` を
- *             `500` から `750` に増加。小さなピースを高密度エリアに落とすことの戦略的価値を高めます。
- *       5.  **Pipeline Bonusの強化**:
- *           - `currentPiece` が既存のピースとタイプが1つ違いで隣接する場合のボーナスを
- *             `150` から `200` に増加。直接的な併合パイプラインの構築をさらに奨励します。
+ *             `CRITICAL_HEIGHT_MARGIN` と `TOP_Y_EXTREME_WARN_THRESHOLD` のゾーンにおけるペナルティ乗数をさらに強化しました。
+ *             これにより、デッドラインに近づく行動をより強く抑制し、生存率の向上を目指します。
+ *             - `CRITICAL_HEIGHT_MARGIN` の乗数を `10` から `20` に増加。
+ *             - `TOP_Y_EXTREME_WARN_THRESHOLD` の乗数を `75` から `100` に増加。
+ *       2.  **大型ピースの片側集約ロジックの導入**:
+ *           - 大型ピース（type 9以上）がボード全体に散らばるのを防ぎ、「大型ピースの片側集約」原則を強化するため、
+ *             大型ピースの配置にボーナス/ペナルティを導入しました。
+ *             - 既存の大型ピースが多い側に新しい大型ピースを配置するとボーナス。
+ *             - 少ない側に配置するとペナルティ。
+ *             - `LARGE_PIECE_AGGREGATION_BONUS`, `LARGE_PIECE_AGGREGATION_PENALTY`, `LARGE_PIECE_DOMINANCE_THRESHOLD` を導入。
+ *       3.  **おじゃまブロック除去のための低Y位置マージボーナス**:
+ *           - 「 merging near the bottom of the board is more effective for clearing garbage」という原則に基づき、
+ *             おじゃまブロックがボードにある、または迫っている状況で、Y座標の低い位置でマージを達成した場合に
+ *             追加のボーナスを与えます。
+ *             - `calculateMergeBonus` 関数を修正し、`GARBAGE_CLEAR_MERGE_BONUS_LOW_Y` と `LOW_Y_MERGE_THRESHOLD` を導入。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -32,9 +29,7 @@ const BOARD_FLOOR_Y = -5.0; // The lowest Y coordinate for pieces.
 const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center* can be at is 3.5 - pieceRadius.
 
 // Strategy-specific constants (Height Management)
-// v165: Corrected DEADLINE_Y based on game rules (+3.32)
 const DEADLINE_Y = 3.32;                  // Actual game over Y coordinate
-// v165: Adjusted relative values to be closer to actual DEADLINE_Y
 const CRITICAL_HEIGHT_MARGIN = 0.5; // Critical penalty starts when top is 0.5 below deadline
 const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.75; // Extreme warning when top is 0.75 below deadline
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Severe warning when top is 1.0 below deadline
@@ -52,6 +47,14 @@ const DENSITY_CHECK_RADIUS = 1.5; // Radius to check for piece density for catal
 
 // v165: Adjusted settlingBuffer from 4.0 to 2.0
 const SETTLING_BUFFER = 2.0;
+
+// v167: New Strategy-specific constants
+const LARGE_PIECE_AGGREGATION_BONUS = 500; // Bonus for placing large pieces on the dominant side.
+const LARGE_PIECE_AGGREGATION_PENALTY = 750; // Penalty for placing large pieces on the non-dominant side.
+const LARGE_PIECE_DOMINANCE_THRESHOLD = 3; // How many more large pieces on one side to establish dominance.
+const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 300; // Bonus for merges at low Y when garbage is present.
+const LOW_Y_MERGE_THRESHOLD = 0.0; // Y-coordinate below which a merge is considered "low" for garbage clearing.
+
 
 // Function to simulate dropping a piece and calculate its final Y position (top of the piece).
 function simulateDropY(boardState, piece, x) {
@@ -78,10 +81,12 @@ function calculateHeightPenalty(predictedTopY) {
 
     if (currentTopY > DEADLINE_Y - CRITICAL_HEIGHT_MARGIN) {
         // Critical penalty zone
-        penalty += (currentTopY - (DEADLINE_Y - CRITICAL_HEIGHT_MARGIN)) * HEIGHT_PENALTY_WEIGHT * 10; // Very severe
+        // v167: Increased multiplier from 10 to 20
+        penalty += (currentTopY - (DEADLINE_Y - CRITICAL_HEIGHT_MARGIN)) * HEIGHT_PENALTY_WEIGHT * 20; // Very severe
     } else if (currentTopY > TOP_Y_EXTREME_WARN_THRESHOLD) {
         // Extreme warning zone
-        penalty += (currentTopY - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 75;
+        // v167: Increased multiplier from 75 to 100
+        penalty += (currentTopY - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 100;
     } else if (currentTopY > DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE) {
         // Severe warning zone
         penalty += (currentTopY - (DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE)) * HEIGHT_PENALTY_WEIGHT * 15;
@@ -117,7 +122,7 @@ function findPotentialMerges(boardState, droppingPiece, dropX, dropY) {
 }
 
 // Calculate bonus for potential merges
-function calculateMergeBonus(potentialMerges, garbageState) {
+function calculateMergeBonus(potentialMerges, simulatedPieceYCenter, garbageState) {
     let bonus = 0;
     if (potentialMerges.length > 0) {
         // Reward higher type merges more
@@ -131,6 +136,11 @@ function calculateMergeBonus(potentialMerges, garbageState) {
             bonus *= 3; // Aggressively prioritize merges
         } else if (garbageState.gauge >= 0.3 || garbageState.ratio > 0.15) { // OJAMA_MERGE
             bonus *= 1.5; // Prepare for incoming garbage
+        }
+
+        // v167: Bonus for merges at low Y when garbage is present
+        if ((garbageState.gauge > 0.15 || garbageState.ratio > 0) && simulatedPieceYCenter < LOW_Y_MERGE_THRESHOLD) {
+            bonus += GARBAGE_CLEAR_MERGE_BONUS_LOW_Y;
         }
     }
     return bonus;
@@ -283,6 +293,25 @@ export function decide(boardState) {
         return { x: 0, reason: "Error: No current piece available.", hold: false };
     }
 
+    // v167: Calculate large piece distribution for aggregation logic
+    let largePiecesLeft = 0;
+    let largePiecesRight = 0;
+    for (const piece of boardState.pieces) {
+        if (piece.type >= LARGE_PIECE_THRESHOLD) {
+            if (piece.x < 0) {
+                largePiecesLeft++;
+            } else if (piece.x > 0) {
+                largePiecesRight++;
+            }
+        }
+    }
+    let dominantSide = 'none';
+    if (largePiecesRight - largePiecesLeft >= LARGE_PIECE_DOMINANCE_THRESHOLD) {
+        dominantSide = 'right';
+    } else if (largePiecesLeft - largePiecesRight >= LARGE_PIECE_DOMINANCE_THRESHOLD) {
+        dominantSide = 'left';
+    }
+
 
     for (const x of FINE_COLS) {
         // Skip if dropping outside the board limits
@@ -292,6 +321,8 @@ export function decide(boardState) {
 
         // Simulate dropping current piece
         const predictedTopY = simulateDropY(boardState, currentPiece, x);
+        // Calculate the simulated piece's center Y for use in bonuses
+        const simulatedPieceYCenter = predictedTopY - currentPiece.r;
         let score = 0;
         let reason = `X=${x.toFixed(2)}`;
 
@@ -335,8 +366,26 @@ export function decide(boardState) {
             }
         }
 
+        // v167: Large Piece Aggregation Logic
+        if (currentPiece.type >= LARGE_PIECE_THRESHOLD && dominantSide !== 'none') {
+            if (x < 0 && dominantSide === 'left') {
+                score += LARGE_PIECE_AGGREGATION_BONUS;
+                reason += " (LPA-B)";
+            } else if (x > 0 && dominantSide === 'right') {
+                score += LARGE_PIECE_AGGREGATION_BONUS;
+                reason += " (LPA-B)";
+            } else if (x < 0 && dominantSide === 'right') { // Penalize dropping left if right is dominant
+                score -= LARGE_PIECE_AGGREGATION_PENALTY;
+                reason += " (LPA-P)";
+            } else if (x > 0 && dominantSide === 'left') { // Penalize dropping right if left is dominant
+                score -= LARGE_PIECE_AGGREGATION_PENALTY;
+                reason += " (LPA-P)";
+            }
+        }
+
+
         // Calculate and apply Merge Bonus
-        const mergeBonus = calculateMergeBonus(findPotentialMerges(boardState, currentPiece, x, predictedTopY), boardState.garbage);
+        const mergeBonus = calculateMergeBonus(findPotentialMerges(boardState, currentPiece, x, predictedTopY), simulatedPieceYCenter, boardState.garbage);
         score += mergeBonus;
         if (mergeBonus > 0) reason += ` (M+:${mergeBonus.toFixed(0)})`;
 
