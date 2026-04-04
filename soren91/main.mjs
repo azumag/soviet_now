@@ -1093,20 +1093,11 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
   const strategyHash = strategySnapshot?.strategyHash
     || computeStrategyHashFromFile(strategySnapshot?.snapshotPath || 'strategy.mjs');
 
-  const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
-  let resultScreenOcr = null;
-  if (existsSync(rankingImagePath)) {
-    try {
-      const { analyzeResultScreen } = await loadModule('./result_screen_ocr.mjs');
-      resultScreenOcr = await analyzeResultScreen(rankingImagePath);
-    } catch (err) {
-      console.log(`[game] Result OCR failed: ${err.message}`);
-    }
-  }
-
-  const detectedRank = (finalState.rank && finalState.rank > 0)
-    ? finalState.rank
-    : (resultScreenOcr?.rank && resultScreenOcr.rank > 0 ? resultScreenOcr.rank : null);
+  const {
+    rankingImagePath,
+    resultScreenOcr,
+    detectedRank,
+  } = await waitForRankingCommentContext(gameNumber, finalState.rank);
 
   // ゲームサマリー保存
   const summary = {
@@ -1142,6 +1133,10 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
     try {
       const { generateRankingComment } = await loadModule('./comment.mjs');
       const imagePath = existsSync(rankingImagePath) ? rankingImagePath : null;
+      if (!imagePath && detectedRank == null) {
+        console.log(`[game] Ranking comment skipped: no ranking context for game #${gameNumber}`);
+        return;
+      }
       await generateRankingComment(imagePath, gameNumber, detectedRank);
     } catch (err) {
       console.log(`[game] Ranking comment error: ${err.message}`);
@@ -1181,6 +1176,45 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
   } catch (err) {
     console.error('[game] Improvement loop error:', err.message);
   }
+}
+
+async function waitForRankingCommentContext(gameNumber, initialRank) {
+  const rankingImagePath = join('tmp/summaries', `ranking_${String(gameNumber).padStart(4, '0')}.png`);
+  let detectedRank = (initialRank && initialRank > 0) ? initialRank : null;
+  let resultScreenOcr = null;
+
+  if (!detectedRank && !existsSync(rankingImagePath)) {
+    const timeoutMs = 10000;
+    const pollMs = 500;
+    const deadline = Date.now() + timeoutMs;
+    console.log(`[game] Waiting for ranking context for game #${gameNumber} (up to ${timeoutMs}ms)`);
+    while (Date.now() < deadline) {
+      if (existsSync(rankingImagePath)) break;
+      await sleep(pollMs);
+    }
+  }
+
+  if (existsSync(rankingImagePath)) {
+    try {
+      const { analyzeResultScreen } = await loadModule('./result_screen_ocr.mjs');
+      resultScreenOcr = await analyzeResultScreen(rankingImagePath);
+      if (!detectedRank && resultScreenOcr?.rank && resultScreenOcr.rank > 0) {
+        detectedRank = resultScreenOcr.rank;
+      }
+    } catch (err) {
+      console.log(`[game] Result OCR failed: ${err.message}`);
+    }
+  }
+
+  if (!existsSync(rankingImagePath) && detectedRank == null) {
+    console.log(`[game] Ranking context unavailable for game #${gameNumber}`);
+  }
+
+  return {
+    rankingImagePath,
+    resultScreenOcr,
+    detectedRank,
+  };
 }
 
 /**
