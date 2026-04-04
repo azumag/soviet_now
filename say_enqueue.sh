@@ -1009,13 +1009,13 @@ _launch_say() {
 		local device_index
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
-			nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
+			nohup bash -c 'trap \"\" INT TERM; say -a \"${SAY_AUDIO_DEVICE:-}\" -r \"$1\" -f \"$2\"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
 			LAUNCH_MODE="say"
 			LAUNCHED_SAY_PID="$!"
 			return
 		}
 		local aiff_file="${MY_CONTENT%.txt}.aiff"
-		if ! say -r "$RATE" -o "$aiff_file" -f "$MY_CONTENT" >/dev/null 2>&1; then
+		if ! say -a "${SAY_AUDIO_DEVICE:-}" -r "$RATE" -o "$aiff_file" -f "$MY_CONTENT" >/dev/null 2>&1; then
 			_log "say音声生成失敗 (rc!=0)"
 			LAUNCHED_SAY_PID=""
 			return
@@ -1031,7 +1031,7 @@ _launch_say() {
 			_ "$aiff_file" "$device_index" >/dev/null 2>&1 &
 		LAUNCH_MODE="ffmpeg"
 	else
-		nohup bash -c 'trap "" INT TERM; say -r "$1" -f "$2"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
+		nohup bash -c 'trap \"\" INT TERM; say -a \"${SAY_AUDIO_DEVICE:-}\" -r \"$1\" -f \"$2\"' _ "$RATE" "$MY_CONTENT" >/dev/null 2>&1 &
 		LAUNCH_MODE="say"
 		LAUNCHED_EXPECTED_SEC=$(_estimate_text_duration_sec "$MY_CONTENT" "$RATE")
 	fi
