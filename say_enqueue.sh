@@ -682,7 +682,20 @@ _stream_voicevox_play() {
 
 	# チャンク0（事前合成済み）を再生開始
 	local play_pid="" current_wav="$PRE_SYNTH_WAV"
-	nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$current_wav" >/dev/null 2>&1 &
+	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
+		local device_index
+		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
+			nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$current_wav" >/dev/null 2>&1 &
+			play_pid=$!
+			echo "$play_pid" >"$PID_FILE"
+			LAST_SAY_PID="$play_pid"
+			return
+		}
+		nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""' \
+			_ "$current_wav" "$device_index" >/dev/null 2>&1 &
+	else
+		nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$current_wav" >/dev/null 2>&1 &
+	fi
 	play_pid=$!
 	echo "$play_pid" >"$PID_FILE"
 	LAST_SAY_PID="$play_pid"
@@ -784,7 +797,20 @@ _launch_say() {
 	# --- 事前合成済みWAV ---
 	if [ -n "${PRE_SYNTH_WAV:-}" ] && [ -s "$PRE_SYNTH_WAV" ]; then
 		LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$PRE_SYNTH_WAV")
-		nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$PRE_SYNTH_WAV" >/dev/null 2>&1 &
+		if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
+			local device_index
+			device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
+				nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$PRE_SYNTH_WAV" >/dev/null 2>&1 &
+				LAUNCH_MODE="voicevox_pre"
+				LAUNCHED_SAY_PID="$!"
+				_log "事前合成WAV再生 (device=default)"
+				return
+			}
+			nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; rm -f "$1"; exit $rc' \
+				_ "$PRE_SYNTH_WAV" "$device_index" >/dev/null 2>&1 &
+		else
+			nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$PRE_SYNTH_WAV" >/dev/null 2>&1 &
+		fi
 		LAUNCH_MODE="voicevox_pre"
 		LAUNCHED_SAY_PID="$!"
 		_log "事前合成WAV再生 ($PRE_SYNTH_WAV)"
