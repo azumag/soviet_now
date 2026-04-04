@@ -63,6 +63,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v507: fix v336 oversight — suppress Russia BOARD_COMPRESSION at rp==0 (800→0)
+     # v336 reduced rp<3 BOARD_COMPRESSION from 800→400 but missed the else branch (rp==0).
+     # At rp==0+Russia+NO+not-deadline, the +800 bonus overrides height penalty diffs
+     # (~180-450) and guidance (~340-780), pushing pieces to suboptimal positions.
+     # v337 already suppresses axis 9.5 at rp<3+Russia for the same reason; this completes
+     # v336's intent for axis 8.7. Protected strategy (median 12789) has the same bug
+     # (rp==0 gives +800) but is less affected because deadline_crossed=always False prevents
+     # axis 9.6 (-4500) from firing, so the +800 doesn't offset deadline penalties.
+     # Fixes: Russia phase additive noise from incomplete v336 rp<3 reduction
+     # refs: strategy.py.staging (v336 rp<3 intent L1986, v337 axis 9.5 rp<3 suppression),
+     #       tmp/change_log.txt (v336 entry), strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (same bug L956-959),
+     #       tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_postmortem.md
      # v506: suppress RUSSIA_PHASE_BOARD_COMPRESSION at deadline — postmortem constraint alignment
      # At deadline+NO-merge, axis 9.6 (-4500) and axis 8.8 (-4500 at rp>=3) create uniform
      # penalty that lets height penalty be sole differentiator. Russia BOARD_COMPRESSION bonuses
@@ -1988,10 +2000,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                      score += 400.0
                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                  else:
-                      # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
-                      # 盤面圧縮を優先しつつ、type 15保護を徹底
-                      score += 800.0
-                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                      # v507: suppress BOARD_COMPRESSION at rp==0 — v336 oversight fix
+                      # v336 reduced rp<3 from 800→400 (see L2003 rp=1-2 branch) but
+                      # missed this else branch (rp==0). v337 suppressed axis 9.5 at
+                      # rp<3+Russia for the same reason: at low rp, compression bonuses
+                      # override height penalty (~180-450) and guidance (~340-780),
+                      # pushing pieces to suboptimal positions. At rp==0: no reactive
+                      # pairs → no merge urgency → height penalty alone should
+                      # differentiate. Protected strategy (median 12789) has no
+                      # Russia NO-merge bonuses at all. Completes v336 intent.
+                      pass
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
