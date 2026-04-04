@@ -11,7 +11,7 @@ import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { execFile } from 'child_process';
 import { join } from 'path';
 import { analyzeGameplayScreenshotText, analyzeResultScreen } from './result_screen_ocr.mjs';
-import { generateTextWithFallbacks, stripAnsi } from './text_ai.mjs';
+import { generateTextWithFallbacks, stripAnsi, resolveTextAiConfig } from './text_ai.mjs';
 
 const PROMPTS_DIR = join(import.meta.dirname || '.', 'prompts');
 
@@ -32,6 +32,8 @@ const PARENT_DIR = join(import.meta.dirname || '.', '..');
 const SAY_ENQUEUE_SCRIPT = join(PARENT_DIR, 'say_enqueue.sh');
 const TWITCH_CHAT_SCRIPT = join(PARENT_DIR, 'twitch_chat.sh');
 const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
+const RANKING_COMMENT_LAST_PROMPT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_prompt.txt');
+const RANKING_COMMENT_LAST_INPUT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_input.json');
 
 const META_LINE_PATTERNS = [
   /^(assistant|analysis|final|tool_call|tool_result)$/i,
@@ -43,6 +45,11 @@ const META_LINE_PATTERNS = [
   /スクリーンショットをお送りいただければ/u,
   /順位情報に基づいてコメントを生成/u,
   /情報が不足している|情報を教えてほしい/u,
+  /どのようなコメントを(生成|作成|用意)すればいい/u,
+  /どのようなこめんとを(せいせい|さくせい)すればいい/u,
+  /何をコメントすればいい/u,
+  /どういうコメントを(生成|作成)すればいい/u,
+  /コメントを生成すればいいでしょうか/u,
   /実況コメントを生成するには|以下の情報が必要/u,
   /このメッセージは指示書/u,
   /具体的なゲーム画面|プレイ状況をお知らせ/u,
@@ -62,6 +69,11 @@ const META_SENTENCE_PATTERNS = [
   /スクリーンショットをお送りいただければ/u,
   /順位情報に基づいてコメントを生成/u,
   /情報が不足している|情報を教えてほしい/u,
+  /どのようなコメントを(生成|作成|用意)すればいい/u,
+  /どのようなこめんとを(せいせい|さくせい)すればいい/u,
+  /何をコメントすればいい/u,
+  /どういうコメントを(生成|作成)すればいい/u,
+  /コメントを生成すればいいでしょうか/u,
   /何を(返答|返信|回答)す(れば|るか)/u,
   /どのコメントに(返答|返信|回答)/u,
   /ご指示ください|教えてください|送ってください/u,
@@ -82,6 +94,11 @@ const INVALID_ANYWHERE_PATTERNS = [
   /具体的なゲーム画面|プレイ状況をお知らせ/u,
   /スクリーンショットを(教えて|送って|お送り)|画像があると/u,
   /どのようなゲームのシチュエーション|どのような「?コメント/u,
+  /どのようなコメントを(生成|作成|用意)すればいい/u,
+  /どのようなこめんとを(せいせい|さくせい)すればいい/u,
+  /何をコメントすればいい/u,
+  /どういうコメントを(生成|作成)すればいい/u,
+  /コメントを生成すればいいでしょうか/u,
   /追加情報|情報提供|添付されていない/u,
 ];
 
@@ -113,7 +130,7 @@ function isValidGeneratedComment(text) {
 
   const head = splitSentences(normalized).slice(0, 4).join(' ');
   if (META_SENTENCE_PATTERNS.some(pattern => pattern.test(head))) return false;
-  if (/(何を(返答|返信|回答)す(れば|るか)|どのコメントに(返答|返信|回答)|ご指示ください|教えてください|お送りいただければ|送ってください)/u.test(normalized)) {
+  if (/(何を(返答|返信|回答|コメント)す(れば|るか)|どのコメントに(返答|返信|回答)|どのようなコメントを(生成|作成|用意)すればいい|どのようなこめんとを(せいせい|さくせい)すればいい|どういうコメントを(生成|作成)すればいい|コメントを生成すればいいでしょうか|ご指示ください|教えてください|お送りいただければ|送ってください)/u.test(normalized)) {
     return false;
   }
   if (/(コメント本文のみ|ですます調|絶対ルール|ペルソナ|OCRメモ|順位情報)/u.test(head)) {
@@ -131,6 +148,12 @@ function isValidGeneratedComment(text) {
 export async function generateRankingComment(rankingImagePath, gameNumber, myRank) {
   try {
     const promptText = await buildRankingTextPrompt(rankingImagePath, myRank);
+    writeRankingCommentDebugSnapshot({
+      rankingImagePath,
+      gameNumber,
+      myRank,
+      promptText,
+    });
     const comment = await callClaudeForComment(promptText);
     if (!comment) {
       console.log('[ranking_comment] No comment generated');
@@ -154,6 +177,28 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
   } catch (err) {
     console.error(`[ranking_comment] Error: ${err.message}`);
     return null;
+  }
+}
+
+function writeRankingCommentDebugSnapshot({ rankingImagePath, gameNumber, myRank, promptText }) {
+  try {
+    const textConfig = resolveTextAiConfig();
+    writeFileSync(RANKING_COMMENT_LAST_PROMPT_PATH, String(promptText || ''), 'utf-8');
+    writeFileSync(RANKING_COMMENT_LAST_INPUT_PATH, JSON.stringify({
+      timestamp: new Date().toISOString(),
+      gameNumber: gameNumber ?? null,
+      myRank: myRank ?? null,
+      rankingImagePath: rankingImagePath || null,
+      rankingImageExists: Boolean(rankingImagePath && existsSync(rankingImagePath)),
+      textGeneration: {
+        claudePreset: textConfig.claudePreset,
+        geminiModel: textConfig.geminiModel,
+        opencodeAgent: textConfig.opencodeAgent,
+        ollamaBaseUrl: textConfig.ollamaBaseUrl,
+      },
+    }, null, 2), 'utf-8');
+  } catch (err) {
+    console.log(`[ranking_comment] debug snapshot error: ${err.message}`);
   }
 }
 
