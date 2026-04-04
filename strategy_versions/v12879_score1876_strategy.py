@@ -1658,16 +1658,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     reasons.append("CHAIN_MERGE")
 
         # ----- evaluation axis 7: early game merge priority -----
-        # 初期12ターンでマージ機会がある場合、強力なボーナスを付与
-        # batch_summaryでHEIGHT_CONTROLが28.7%選択(avg_score_delta=1.8)と過剰であり、
-        # ワーストゲーム(score0826)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している。
-        # ベストゲーム(score2330)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア2330を出していることを確認。
-        # v194のearly_game判定(max_y < -2.5)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
-        # マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
-        # 初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
-        if piece_count <= 12 and merge_grade == "NEAR":
+        # v524: extend EARLY_MERGE_PRIORITY from pc<=12 to pc<=16 — strengthen early merge foundation
+        # Current batch: low-score HEIGHT_CONTROL 19.2% vs high-score 13.8% (5.4pp gap).
+        # Low-score games die at turns 61-83, suggesting poor early type-level foundation.
+        # NEAR_MERGE_EARLY_MERGE_PRIORITY avg_score_delta=24.2 (high value per occurrence).
+        # NEAR success rate 68.5%, and at pc<=16 board is typically LOW phase (max_y<0.8)
+        # where failed NEAR has low risk — board still has recovery room.
+        # Extending from pc=12 to pc=16 covers ~4 more turns of strong NEAR encouragement
+        # during the critical LOW→MEDIUM transition, building higher type levels earlier.
+        # At pc=16: 8 pair-merges produce type 5+ pieces vs type 3+ at pc=12 only,
+        # giving stronger mid-game merge pipeline. Evidence: worst game (score=600, 61 turns)
+        # had reactive_avg=6.4 in final 8 turns but only 4 merge_hits — type levels too low.
+        # Best game (score=4116, 156 turns) had structured stacking from early NEAR merges.
+        # Safe: +1000 at pc=13-16 doesn't override DIRECT merge (+1200) or axis 8.8 (-4500).
+        # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 19.2% low, NEAR avg_delta=24.2),
+        #       game_history/20260405_071656_score0600.jsonl (worst, 61t, poor foundation),
+        #       game_history/20260405_073630_score4116.jsonl (best, 156t, structured early merges),
+        #       tmp/improve_brief.md (p25 focus, early foundation → mid-game survival)
+        # Fixes: HEIGHT_CONTROL overuse in early-to-mid transition → poor type foundation → early death
+        if piece_count <= 16 and merge_grade == "NEAR":
             # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
-            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
+            # これにより初期16ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
