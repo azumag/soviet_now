@@ -41,7 +41,7 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v465: v357ガード復元(rp>=3+NOで抑制) + v408: pc混雑スケーリング(9.6b同一)
-             9.6b. Same-type proximity guidance - v468: base 120→160 per v459 removal gap vs protected
+             9.6b. Same-type proximity guidance - v512: v412 suppression 0→0.3x fix no_merge_cascade scatter
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
@@ -1364,12 +1364,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # the postmortem warning about "additive bonus accumulation masking height
                     # differentiation" that occurred when rp_density_scale went up to 2.5x.
                     # rp_guidance_suppressed still used for congestion state detection:
+                    # v512: change from 0.0 to 0.3x — fix no_merge_cascade edge scatter
+                    # v412 originally zeroed proximity_bonus at rp>=5+max_y>=2.5 or max_y>=3.0+deadline.
+                    # This prevented all directional guidance, causing edge scatter (x=±3.0) where
+                    # pieces land far from same-type targets, preventing future reactive pair creation.
+                    # Worst game (score0654) T59-60: rp=7+max_y~2.7+deadline, pieces at x=±3.0 edges.
+                    # Postmortem priority: "piece placement を reactive pair target に近づけるガイダンスを強化"
+                    # 0.3x keeps max bonus (~47-117) below typical height diffs (~90-270), so height
+                    # still dominates while providing directional tie-breaking between similar-height
+                    # positions. At pc=40, horiz_dist=0, target_y=2.0: 160*2.44*0.4*0.3=46.8 vs height
+                    # diff of ~90-270. NextNext (1.5x): 70.2 — still safe. Complies with postmortem
+                    # constraint "forbid: 9.6b の無効化" (reduction, not full disable).
+                    # refs: tmp/state/last_rollback_postmortem.md (no_merge_cascade priority),
+                    #       game_history/20260404_144001_score0654.jsonl T59-T61 (edge scatter→game over),
+                    #       game_history/20260404_145307_score1992.jsonl T72-T79 (consistent merges→survival)
                     rp_guidance_suppressed = (
                         (max_y >= 3.0 and deadline_crossed)
                         or (reactive_pair_count >= 5 and max_y >= 2.5)
                     )
                     if rp_guidance_suppressed:
-                        proximity_bonus = 0.0
+                        proximity_bonus *= 0.3
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
