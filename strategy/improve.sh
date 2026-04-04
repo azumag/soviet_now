@@ -434,10 +434,23 @@ PY
 
 #=== サイクル頭ラジオ (改善結果 or 粛清) のペンディング管理 ===
 
+_enqueue_pending_cycle_radio_json() {
+	local radio_type="$1"
+	local queue_file=""
+	mkdir -p "$PENDING_CYCLE_RADIO_DIR" 2>/dev/null || true
+	queue_file=$(mktemp "$PENDING_CYCLE_RADIO_DIR/pending_${radio_type}_XXXXXX.json") || return 1
+	printf '%s\n' "$2" >"$queue_file" || {
+		rm -f "$queue_file" 2>/dev/null || true
+		return 1
+	}
+	printf '%s\n' "$queue_file"
+}
+
 # 改善結果をペンディング保存 (即座にラジオを鳴らさず、次サイクル1試合目に流す)
 _save_pending_cycle_radio_improvement() {
 	local diff_file="$1" scores="$2" game_num="$3" best_score="$4"
-	python3 -c "
+	local payload queue_file
+	payload=$(python3 -c "
 import json
 data = {
     'type': 'improvement',
@@ -446,16 +459,16 @@ data = {
     'game_num': '$game_num',
     'best_score': '$best_score',
 }
-with open('$PENDING_CYCLE_RADIO_FILE', 'w') as f:
-    json.dump(data, f)
-" 2>/dev/null
-	log "[CYCLE_RADIO] Pending improvement radio saved"
+" 2>/dev/null) || return 1
+	queue_file=$(_enqueue_pending_cycle_radio_json "improvement" "$payload") || return 1
+	log "[CYCLE_RADIO] Pending improvement radio saved: $(basename "$queue_file")"
 }
 
 # 粛清をペンディング保存
 _save_pending_cycle_radio_rollback() {
 	local analysis_file="$1" game_num="$2" from_hash="$3" to_hash="$4"
-	python3 -c "
+	local payload queue_file
+	payload=$(python3 -c "
 import json
 data = {
     'type': 'rollback',
@@ -464,19 +477,18 @@ data = {
     'from_hash': '$from_hash',
     'to_hash': '$to_hash',
 }
-with open('$PENDING_CYCLE_RADIO_FILE', 'w') as f:
-    json.dump(data, f)
-" 2>/dev/null
-	log "[CYCLE_RADIO] Pending rollback radio saved"
+" 2>/dev/null) || return 1
+	queue_file=$(_enqueue_pending_cycle_radio_json "rollback" "$payload") || return 1
+	log "[CYCLE_RADIO] Pending rollback radio saved: $(basename "$queue_file")"
 }
 
-# サイクル1試合目: ペンディングラジオを消化
-fire_pending_cycle_radio() {
-	[ -f "$PENDING_CYCLE_RADIO_FILE" ] || return 0
+_fire_pending_cycle_radio_entry() {
+	local entry_file="$1"
+	[ -f "$entry_file" ] || return 0
 	local radio_type diff_file scores game_num best_score analysis_file from_hash to_hash
 	eval "$(python3 -c "
 import json, shlex
-with open('$PENDING_CYCLE_RADIO_FILE') as f:
+with open('$entry_file') as f:
     d = json.load(f)
 t = d.get('type', '')
 print(f'radio_type={shlex.quote(t)}')
@@ -492,27 +504,72 @@ elif t == 'rollback':
     print(f'to_hash={shlex.quote(d.get(\"to_hash\",\"\"))}')
 " 2>/dev/null)"
 
-	rm -f "$PENDING_CYCLE_RADIO_FILE"
-
 	case "$radio_type" in
 	improvement)
 		if [ -n "$diff_file" ] && [ -f "$diff_file" ]; then
-			local strategy_diff
-			strategy_diff=$(cat "$diff_file" 2>/dev/null)
-			rm -f "$diff_file" 2>/dev/null || true
-			if [ -n "$strategy_diff" ]; then
-				log "[CYCLE_RADIO] Firing improvement radio (game_num=$game_num)"
-				start_radio_corner_strategy "$strategy_diff" "$scores" "$game_num" "$best_score" &
-			fi
+			(
+				local strategy_diff
+				strategy_diff=$(cat "$diff_file" 2>/dev/null)
+				if [ -z "$strategy_diff" ]; then
+					log "[CYCLE_RADIO] Drop improvement radio: empty diff ($(basename "$entry_file"))"
+					rm -f "$entry_file" "$diff_file" 2>/dev/null || true
+					exit 0
+				fi
+				log "[CYCLE_RADIO] Firing improvement radio (game_num=$game_num, entry=$(basename "$entry_file"))"
+				if start_radio_corner_strategy "$strategy_diff" "$scores" "$game_num" "$best_score"; then
+					rm -f "$entry_file" "$diff_file" 2>/dev/null || true
+				else
+					log "[CYCLE_RADIO] improvement radio failed; keep pending ($(basename "$entry_file"))"
+				fi
+			) &
+		else
+			log "[CYCLE_RADIO] Drop improvement radio: missing diff ($(basename "$entry_file"))"
+			rm -f "$entry_file" "$diff_file" 2>/dev/null || true
 		fi
 		;;
 	rollback)
 		if [ -n "$analysis_file" ] && [ -f "$analysis_file" ]; then
-			log "[CYCLE_RADIO] Firing rollback radio (game_num=$game_num)"
-			start_radio_corner_rollback "$analysis_file" "$game_num" "$from_hash" "$to_hash" &
+			(
+				log "[CYCLE_RADIO] Firing rollback radio (game_num=$game_num, entry=$(basename "$entry_file"))"
+				if start_radio_corner_rollback "$analysis_file" "$game_num" "$from_hash" "$to_hash"; then
+					rm -f "$entry_file" 2>/dev/null || true
+				else
+					log "[CYCLE_RADIO] rollback radio failed; keep pending ($(basename "$entry_file"))"
+				fi
+			) &
+		else
+			log "[CYCLE_RADIO] Drop rollback radio: missing analysis ($(basename "$entry_file"))"
+			rm -f "$entry_file" 2>/dev/null || true
 		fi
 		;;
+	*)
+		log "[CYCLE_RADIO] Drop unknown pending radio type: ${radio_type:-unknown} ($(basename "$entry_file"))"
+		rm -f "$entry_file" 2>/dev/null || true
+		;;
 	esac
+}
+
+# サイクル1試合目: ペンディングラジオを消化
+fire_pending_cycle_radio() {
+	local pending_entries=()
+	local legacy_entry=""
+	if [ -f "$PENDING_CYCLE_RADIO_FILE" ]; then
+		legacy_entry=$(mktemp "$PENDING_CYCLE_RADIO_DIR/legacy_pending_cycle_radio_XXXXXX.json") || legacy_entry=""
+		if [ -n "$legacy_entry" ]; then
+			mv "$PENDING_CYCLE_RADIO_FILE" "$legacy_entry" 2>/dev/null || {
+				rm -f "$legacy_entry" 2>/dev/null || true
+				legacy_entry=""
+			}
+		fi
+	fi
+	while IFS= read -r _entry; do
+		[ -n "$_entry" ] && pending_entries+=("$_entry")
+	done < <(find "$PENDING_CYCLE_RADIO_DIR" -maxdepth 1 -type f -name '*.json' | sort 2>/dev/null)
+	[ "${#pending_entries[@]}" -gt 0 ] || return 0
+	local entry_file
+	for entry_file in "${pending_entries[@]}"; do
+		_fire_pending_cycle_radio_entry "$entry_file"
+	done
 }
 
 record_completed_game_for_adaptive_improvement() {
