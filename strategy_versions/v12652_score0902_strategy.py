@@ -1377,7 +1377,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
-                or deadline_crossed  # v503: suppress AVOID_BLOCK at deadline — edge scatter prevention
+                or (deadline_crossed and current_type_has_reactive)  # v510: suppress only when piece matches a reactive pair — fixes no_merge_cascade
             )
             if not board_congested:
                 blocking_penalty = 0.0
