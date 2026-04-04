@@ -1,31 +1,27 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v159)
+ * strategy.mjs - ドロップ位置決定戦略 (v160)
  *
- * v159: v158でのsettlingBufferとCRITICAL_HEIGHT_MARGINの調整にも関わらず、
- *       実測のmax_yがDEADLINE_Y (2.5) を頻繁に超える傾向が見られます。
- *       これは、物理シミュレーションにおけるsettlingBufferがまだ楽観的すぎるか、
- *       CRITICAL_HEIGHT_MARGINがデッドラインへの反応として遅すぎる可能性を指摘しています。
- *       このバージョンでは、より現実的な物理シミュレーション予測と、
- *       デッドライン接近に対するより早期かつ厳格なペナルティを再導入し、
- *       高すぎる積み上がりを未然に防ぐことを目指します。
+ * v160: v159でのsettlingBufferとCRITICAL_HEIGHT_MARGINの調整後も、
+ *       実測のmax_yがDEADLINE_Y (2.5) を頻繁に超える傾向が分析結果から示されました。
+ *       これは、物理シミュレーションの予測が依然として楽観的すぎることを意味します。
+ *       また、大型ピースの片側集約ロジックが、過度なX座標バイアスを生み出している可能性も考慮します。
+ *       このバージョンでは、より保守的な高さ予測と、大型ピース配置の柔軟性向上を目指します。
  *
  *      主な改善点:
- *      1.  **シミュレーションの保守性再調整 (settlingBufferの増加)**:
- *          - `simulateDropY` 内の `settlingBuffer` を **0.5 から 1.0 へ増加**。
- *            物理エンジンの不確実性による上振れ予測を、より現実的に織り込み、
- *            シミュレートされる着地Y座標をやや高くすることで、危険な高さを早期に認識できるようにします。
- *            v158の0.5では実際のmax_yがデッドラインを超えるケースが散見されたため、
- *            過度な楽観予測を是正します。
- *      2.  **致命的ペナルティの閾値再調整 (CRITICAL_HEIGHT_MARGINの再導入)**:
- *          - `CRITICAL_HEIGHT_MARGIN` を **0.0 から 0.25 へ変更**。
- *            ピースの予測される最上部が `DEADLINE_Y` の0.25手前で極めて大きなペナルティを適用するようにします。
- *            これにより、デッドラインに到達する前に、より早期に危険を回避する行動を促します。
- *            v158の0.0では、デッドライン到達時までペナルティが発動せず手遅れになるケースがあったため、
- *            安全マージンを設けます。
- *      3.  **TOP_Y_EXTREME_WARN_THRESHOLD の見直し**:
- *          - settlingBufferとCRITICAL_HEIGHT_MARGINの調整により、既存のwarn/criticalゾーンが相対的に適切に機能するはずなので、
- *            この閾値は変更しません。新しいsettlingBufferとCRITICAL_HEIGHT_MARGINの効果を優先して検証します。
- *      4.  その他v158の変更点 (おじゃまボーナス、先読みボーナス強化) は維持します。
+ *      1.  **シミュレーションの保守性再調整 (settlingBufferのさらなる増加)**:
+ *          - `simulateDropY` 内の `settlingBuffer` を **1.0 から 2.0 へ増加**。
+ *            物理エンジンの不確実性や凸ポリゴン形状による上振れを、より現実的に織り込み、
+ *            シミュレートされる着地Y座標を大幅に高くすることで、危険な高さを早期に認識できるようにします。
+ *            v159の1.0でも実際のmax_yがデッドラインを超えるケースが散見されたため、
+ *            過度な楽観予測をさらに是正し、高さ管理を厳格化します。
+ *      2.  **大型ピースの片側集約ロジックの調整**:
+ *          - **初回大型ピースのオフセンターボーナスを緩和** (700 -> 500)。
+ *            最初の大型ピースが極端な位置に置かれることを抑制し、中央付近での柔軟な積み上げも考慮できるようにします。
+ *          - **既存大型ピースと逆側への配置ペナルティを緩和** (1300 -> 1000)。
+ *            既存の大型ピース群と反対側にドロップする場合のペナルティを減らし、
+ *            片側が過度に高くなった際などに、戦略がより柔軟に反対側を利用できるようにします。
+ *            これにより、片側への過度な集中を避け、盤面のバランスを取りやすくします。
+ *      3.  その他のv158/v159の変更点 (CRITICAL_HEIGHT_MARGIN、おじゃまボーナス、先読みボーナス強化) は維持します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -38,6 +34,9 @@ const DEADLINE_Y = 2.5;                  // Actual game over Y coordinate
 // Adjusted relative values to make penalties start earlier (lower Y) - v156
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.5; // Critical penalty starts when top is 1.5 below deadline (i.e., Y=1.0)
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.5;     // Warning penalty starts when top is 2.5 below deadline (i.e., Y=0.0)
+// v158: Adjusted from DEADLINE_Y - 1.0 (Y=1.5) to DEADLINE_Y - 0.5 (Y=2.0)
+const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.5;                               // Top is 0.5 below deadline (i.e., Y=2.0)
+
 // v157: Increased from 50000.0 to 60000.0
 const HEIGHT_PENALTY_WEIGHT = 60000.0;
 
@@ -82,8 +81,8 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  // v159: Increased from 0.5 to 1.0.
-  const settlingBuffer = 1.0;
+  // v160: Increased from 1.0 to 2.0 to more conservatively predict maximum height.
+  const settlingBuffer = 2.0;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
@@ -370,14 +369,14 @@ export function decide(boardState) {
             } else if (Math.abs(avgLargePieceX) < 0.5 && Math.abs(x) < 0.5) { // If large pieces are mostly centered, and we're dropping centrally
                currentPlacementScore += 50;
             } else { // If we're dropping a large piece on the opposite side of existing large pieces
-               // Increased from -1200 (v140) to -1300 (v141, maintained in v147)
-               currentPlacementScore -= 1300;
+               // v160: Reduced from 1300 to 1000 to allow more flexibility for balancing the board
+               currentPlacementScore -= 1000;
             }
           } else {
               // If this is the first large piece, try to place it significantly off-center to encourage starting a stack
-              // v145: Increased bonus from 400 to 700 (maintained in v147)
+              // v160: Reduced bonus from 700 to 500 to encourage less extreme initial placement.
               if (x < -1.0 || x > 1.0) {
-                  currentPlacementScore += 700;
+                  currentPlacementScore += 500;
               }
           }
         }
