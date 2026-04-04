@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-04 20:31:29 JST`
-- Nodes: `911`
-- Edges: `1248`
-- Current: `7448a3adf70e`
+- Updated: `2026-04-04 21:58:30 JST`
+- Nodes: `912`
+- Edges: `1249`
+- Current: `da884416b6bd`
 - Anchor: `cf849ee79b14`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_aea48ffce72f["aea48ffce72f<br/>g=12 n=12<br/>comp=9655.7"]
     h_734c56523254["734c56523254<br/>g=24 n=20<br/>comp=10952.7"]
     h_98b57969e9e1["98b57969e9e1<br/>g=12 n=12<br/>comp=11869.6"]
     h_294aa2554fbf["294aa2554fbf<br/>g=24 n=20<br/>comp=11709.5"]
@@ -72,9 +71,10 @@ flowchart TD
     h_d147c7d6dedf["d147c7d6dedf<br/>g=20 n=20<br/>comp=10766.3"]
     h_cf849ee79b14["cf849ee79b14<br/>ANCHOR<br/>g=12 n=12<br/>comp=12033.7"]
     h_e9fbde8802e7["e9fbde8802e7<br/>g=12 n=12<br/>comp=11250.9"]
+    h_7448a3adf70e["7448a3adf70e<br/>g=12 n=12<br/>comp=11485.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_7448a3adf70e["7448a3adf70e<br/>CURRENT"]
+    h_da884416b6bd["da884416b6bd<br/>CURRENT"]
 
     h_734c56523254 -->|improve| h_98b57969e9e1
     h_98b57969e9e1 -->|improve| h_294aa2554fbf
@@ -148,13 +148,13 @@ flowchart TD
     h_87a00400960f -->|improve| h_cf849ee79b14
     h_cf849ee79b14 -->|improve| h_e9fbde8802e7
     h_e9fbde8802e7 -->|improve| h_7448a3adf70e
+    h_7448a3adf70e -->|improve| h_da884416b6bd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_aea48ffce72f plain;
     class h_734c56523254 plain;
     class h_98b57969e9e1 plain;
     class h_294aa2554fbf plain;
@@ -211,9 +211,10 @@ flowchart TD
     class h_d147c7d6dedf plain;
     class h_cf849ee79b14 anchor;
     class h_e9fbde8802e7 plain;
+    class h_7448a3adf70e plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_7448a3adf70e current;
+    class h_da884416b6bd current;
 ```
 
 ## Detail 1/12
@@ -3351,9 +3352,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `7448a3adf70e`
-- Nodes in this diagram: `31`
-- Internal edges in this diagram: `30`
+- Range: `8b764b56c6f3` .. `da884416b6bd`
+- Nodes in this diagram: `32`
+- Internal edges in this diagram: `31`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3395,9 +3396,10 @@ flowchart TD
     h_d147c7d6dedf["d147c7d6dedf<br/>g=20 n=20<br/>comp=10766.3"]
     h_cf849ee79b14["cf849ee79b14<br/>ANCHOR<br/>g=12 n=12<br/>comp=12033.7"]
     h_e9fbde8802e7["e9fbde8802e7<br/>g=12 n=12<br/>comp=11250.9"]
+    h_7448a3adf70e["7448a3adf70e<br/>g=12 n=12<br/>comp=11485.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_7448a3adf70e["7448a3adf70e<br/>CURRENT"]
+    h_da884416b6bd["da884416b6bd<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3429,6 +3431,7 @@ flowchart TD
     h_87a00400960f -->|improve| h_cf849ee79b14
     h_cf849ee79b14 -->|improve| h_e9fbde8802e7
     h_e9fbde8802e7 -->|improve| h_7448a3adf70e
+    h_7448a3adf70e -->|improve| h_da884416b6bd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3463,12 +3466,23 @@ flowchart TD
     class h_d147c7d6dedf plain;
     class h_cf849ee79b14 anchor;
     class h_e9fbde8802e7 plain;
+    class h_7448a3adf70e plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_7448a3adf70e current;
+    class h_da884416b6bd current;
 ```
 
 ## Transition Notes
+
+### Improve Game#12741 `7448a3ad -> da884416`
+
+- scores: `14801 11602 10313 20250 15244 15173 16715 11657 10337 11189 11270 9104`
+- v516: replace flat Russia phase board compression (rp==0, +800) with Russia piece proximity guidance
+- Russia phase with NO merge and rp==0: flat +800 provides no directional guidance for 2nd
+- Russia growth. Replace with proximity bonus toward deepest Russia piece: max(0, 800-dist*200).
+- Same max at distance 0, decays to 0 at distance 4.0. Concentrates type 13-14 growth near
+- existing Russia for 2nd Russia pipeline. Best game (2695): Russia at T107, 23 turns of
+- undirected HEIGHT_CONTROL, died without 2nd Russia. Only fires at rp==0 + non-deadline.
 
 ### Improve Game#12729 `e9fbde88 -> 7448a3ad`
 
