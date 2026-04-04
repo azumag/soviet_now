@@ -1288,6 +1288,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or (reactive_pair_count >= 3 and max_y >= 1.8)  # v523: suppress AVOID_BLOCK scatter at rp>=3+HIGH phase
             )
             if not board_congested:
                 blocking_penalty = 0.0
