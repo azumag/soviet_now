@@ -63,6 +63,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v511: widen AVOID_BLOCK suppression at deadline to rp>=4 — fix no_merge_cascade edge scatter
+     # v510 suppressed only when current_type_has_reactive, but worst game T50-T51: rp=6,
+     # deadline, AVOID_BLOCK still pushed to x=±3.0 edges because incoming types (5,3) had
+     # no reactive pair. Edge pieces become "dead" — too far from any reactive pair cluster
+     # to ever participate in merges. Protected strategy (median 12789) has NO general
+     # AVOID_BLOCK at all. Hall-of-fame (score 4999) also has no AVOID_BLOCK. Adding
+     # rp>=4 to deadline suppression: at high rp, too many reactive pairs for individual
+     # blocking protection to matter; edge scatter is more harmful. The -500 AVOID_BLOCK
+     # penalty is dwarfed by -9000 (axis 8.8 + deadline) but shifts the winner from
+     # center (lower-y, between rpairs) to edge (lower-y, no rpair blocking). At rp<4
+     # + deadline without matching reactive, AVOID_BLOCK still fires (blocking matters
+     # when fewer pairs exist). Non-deadline: AVOID_BLOCK unchanged.
+     # Fixes rollback failure mode: no_merge_cascade edge scatter at deadline (postmortem priority)
+     # refs: game_history/20260404_134751_score0581.jsonl T49-T51 (rp=6, x=±3.0 edges),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no AVOID_BLOCK),
+     #       strategy_versions/best_score4999_strategy.py (no AVOID_BLOCK), tmp/state/last_rollback_postmortem.md,
+     #       tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt, advice.md, tmp/improve_brief.md
      # v503: suppress AVOID_BLOCK_REACTIVE_PAIR at deadline — prevent edge scatter at NO-merge
      # v417 suppression (max_y>=3.0+deadline, rp>=5+max_y>=2.5) missed the primary failure:
      # worst game T50-T52 at max_y=1.77-1.8, rp=2, deadline=true, AVOID_BLOCK pushed pieces to
@@ -1377,7 +1394,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
-                or (deadline_crossed and current_type_has_reactive)  # v510: suppress only when piece matches a reactive pair — fixes no_merge_cascade
+                or (deadline_crossed and (current_type_has_reactive or reactive_pair_count >= 4))  # v511: widen to rp>=4 — fixes no_merge_cascade edge scatter
             )
             if not board_congested:
                 blocking_penalty = 0.0
