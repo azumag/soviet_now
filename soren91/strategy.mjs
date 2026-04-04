@@ -1,35 +1,29 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v165)
+ * strategy.mjs - ドロップ位置決定戦略 (v166)
  *
- * v165: v164の改善点をベースに、ゲームルールの再解釈と物理挙動の調整、
- *       およびゲーム分析からの洞察に基づいた戦略の強化を行います。
+ * v166: v165の改善点をベースに、ゲーム分析からの洞察と物理挙動の再評価に基づいた戦略の強化を行います。
  *
  *       主な改善点:
- *       1.  **DEADLINE_Yの修正**:
- *           - ゲームルールで示された実際のデッドライン `3.32` に `DEADLINE_Y` 定数を修正。
- *             これにより、高さ管理ペナルティがより正確な基準で適用されるようになります。
- *       2.  **settlingBufferの調整**:
- *           - 高すぎた `settlingBuffer` を `2.0` に調整。これにより、ピースの予測到達高が現実的になり、
- *             高さペナルティが過度に厳しくなるのを防ぎます。
- *       3.  **高さペナルティ閾値の調整**:
- *           - 新しい `DEADLINE_Y` と `settlingBuffer` に合わせて、
- *             `CRITICAL_HEIGHT_MARGIN`, `TOP_Y_EXTREME_WARN_THRESHOLD` 等の閾値を調整。
- *             デッドラインに近い範囲でペナルティが効果的に機能するようにします。
- *       4.  **初期盤面ボーナスの改良 (片側集約原則の導入)**:
- *           - 「大型ピースの片側集約」原則に基づき、初期盤面における中央へのドロップボーナスを細分化。
- *             - 小ピース (type <= 4) の中央付近ドロップはボーナスを維持。
- *             - 大型ピース (type >= 9) の中央付近ドロップはペナルティを導入し、片側への誘導を強化。
- *             - 中型ピース (type 5-8) はボーナスなし。
- *       5.  **小ピースの攪拌・触媒ボーナス導入**:
- *           - 「小ピースの触媒利用」原則に基づき、小ピース (type <= 4) を高密度エリアにドロップする際にボーナスを付与。
- *             併合を誘発する攪拌効果をスコアリングに反映します。
- *       6.  **HOLDロジックの調整**:
- *           - HOLD条件に、「現在ピースが小さく、HOLDピースが大きく、かつそのHOLDピースにマージ機会がある場合」
- *             を追加。これにより、HOLDの活用範囲を広げ、より戦略的なピース選択を可能にします。
- *             ただし、これ以上複雑なHOLDロジック（シミュレーション）は将来のバージョンに持ち越します。
- *       7.  **パイプラインボーナスの調整**:
- *           - `nextNextPiece`だけでなく、`currentPiece`が既存のピースとタイプが1つ違いで隣接する場合にも
- *             ボーナスを追加。より直接的なパイプライン形成を奨励します。
+ *       1.  **CRITICAL FIX: simulateDropYの修正**:
+ *           - 物理エンジンのピースのY座標計算ロジックを再評価。`simulateDropY` 関数がピースの「頂点Y座標」を
+ *             正確に予測するように修正しました。これまでのバージョンでは、ピースの半径分だけ頂点Y座標が低く見積もられており、
+ *             高さペナルティが十分に機能していなかった可能性があります。
+ *             修正前: `maxY + piece.r + SETTLING_BUFFER` (ピース中心Y + バッファ)
+ *             修正後: `maxY + (2 * piece.r) + SETTLING_BUFFER` (ピース頂点Y + バッファ)
+ *             この修正により、高さ管理がより正確かつ厳密になり、早期ゲームオーバーの削減に寄与すると考えられます。
+ *       2.  **HEIGHT_PENALTY_WEIGHTの強化**:
+ *           - ゲーム分析で一貫して高いY座標がゲームオーバーの一因となっていることが示唆されたため、
+ *             `HEIGHT_PENALTY_WEIGHT` を `90000.0` から `120000.0` に増加。
+ *             より積極的に高さを抑える動きを奨励します。
+ *       3.  **Garbage Penaltyの強化**:
+ *           - `GBG_URGENT` モード（`garbage.ratio > 0.4`）における基本的なペナルティを
+ *             `2000` から `3000` に増加。おじゃまブロックが非常に危険な状態での高リスク行動を抑制します。
+ *       4.  **Small Piece Catalyst Bonusの強化**:
+ *           - 「小ピースの触媒利用」原則の効果をより高めるため、`SMALL_PIECE_CATALYST_BONUS` を
+ *             `500` から `750` に増加。小さなピースを高密度エリアに落とすことの戦略的価値を高めます。
+ *       5.  **Pipeline Bonusの強化**:
+ *           - `currentPiece` が既存のピースとタイプが1つ違いで隣接する場合のボーナスを
+ *             `150` から `200` に増加。直接的な併合パイプラインの構築をさらに奨励します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -46,14 +40,14 @@ const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.75; // Extreme warning when 
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Severe warning when top is 1.0 below deadline
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;     // Warning penalty when top is 2.0 below deadline
 
-// v162: Increased from 75000.0 to 90000.0
-const HEIGHT_PENALTY_WEIGHT = 90000.0;
+// v166: Increased from 90000.0 to 120000.0
+const HEIGHT_PENALTY_WEIGHT = 120000.0;
 
 // Strategy-specific constants (General)
 const MERGE_PROXIMITY_THRESHOLD = 0.1; // Small buffer for "touching" pieces for merge detection
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const SMALL_PIECE_THRESHOLD = 4; // Pieces of this type or lower are considered 'small'. (v165: Changed from 3 to 4)
-const SMALL_PIECE_CATALYST_BONUS = 500; // Bonus for dropping small pieces into dense areas. (v165: New)
+const SMALL_PIECE_CATALYST_BONUS = 750; // Bonus for dropping small pieces into dense areas. (v166: Increased from 500)
 const DENSITY_CHECK_RADIUS = 1.5; // Radius to check for piece density for catalyst bonus. (v165: New)
 
 // v165: Adjusted settlingBuffer from 4.0 to 2.0
@@ -72,21 +66,15 @@ function simulateDropY(boardState, piece, x) {
             maxY = Math.max(maxY, existingPiece.y + existingPiece.r);
         }
     }
-    // The predicted top Y of the dropping piece:
-    // maxY (surface) + piece.r (to get center) + piece.r (to get top) + SETTLING_BUFFER
-    // simplifies to maxY + (2 * piece.r) + SETTLING_BUFFER, however, the original code
-    // was effectively `maxY + pieceRadius + settlingBuffer`, where pieceRadius was for the dropping piece.
-    // Let's interpret `simulateDropY` as returning `(center Y) + piece.r + SETTLING_BUFFER`
-    // where `center Y` would be `maxY + piece.r` if it rested perfectly.
-    // So, `maxY + piece.r + SETTLING_BUFFER` means `(top of stacked piece) + SETTLING_BUFFER`.
-    // We'll stick to the interpretation that `simulateDropY` returns the predicted `currentTopY`.
-    return maxY + piece.r + SETTLING_BUFFER;
+    // v166 CRITICAL FIX: The predicted top Y of the dropping piece:
+    // maxY (surface) + piece.r (to get center) + piece.r (to get top) + SETTLING_BUFFER (for bounce/settling)
+    return maxY + (2 * piece.r) + SETTLING_BUFFER;
 }
 
 // Function to calculate height-based penalties
 function calculateHeightPenalty(predictedTopY) {
     let penalty = 0;
-    const currentTopY = predictedTopY; // predictedTopY is already piece.y + piece.r + buffer
+    const currentTopY = predictedTopY;
 
     if (currentTopY > DEADLINE_Y - CRITICAL_HEIGHT_MARGIN) {
         // Critical penalty zone
@@ -162,7 +150,7 @@ function calculatePipelineBonus(boardState, droppingPiece, dropX, dropY, nextNex
                 Math.pow(simulatedPiece.y - existingPiece.y, 2)
             );
             if (distance <= simulatedPiece.r + existingPiece.r + MERGE_PROXIMITY_THRESHOLD) {
-                bonus += 150; // Stronger bonus for direct chain building
+                bonus += 200; // v166: Stronger bonus for direct chain building (increased from 150)
             }
         }
     }
@@ -197,7 +185,7 @@ function calculateGarbagePenalty(boardState, predictedTopY) {
         if (predictedTopY > garbage.height) {
             penalty += (predictedTopY - garbage.height) * 500;
         }
-        penalty += 2000; // General severe penalty for being in urgent garbage state (increased from 1000)
+        penalty += 3000; // v166: General severe penalty for being in urgent garbage state (increased from 2000)
     } else if (garbage.ratio > 0.15) { // OJAMA_MERGE mode
         if (predictedTopY > garbage.height + 0.5) { // Mild penalty for increasing height
             penalty += (predictedTopY - (garbage.height + 0.5)) * 200; // Increased multiplier

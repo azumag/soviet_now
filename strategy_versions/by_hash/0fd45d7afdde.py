@@ -65,6 +65,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v519: reduce 9.6b proximity bonus to 0.3x at rp>=3 — match v412 calibration
+     # At rp>=3+deadline, incoming type often has NO reactive pair. Full proximity bonus
+     # (~275 at pc=34) overrides height penalty (~90-180), causing edge scatter near
+     # same-type targets. 0.3x max bonus (~83) stays below min height diff (~90),
+     # restoring height dominance. Protected strategy (median 12789, +4% better) has NO 9.6b.
+     # Fixes rollback failure mode: edge scatter from proximity guidance at rp>=3+deadline
+     # refs: tmp/batch_summary.txt, game_history/20260405_001803_score0719.jsonl T54-T61,
+     #       game_history/20260405_005604_score0730.jsonl T59-T60, protected_e6f534c37e28,
+     #       last_rollback_analysis.md
      # v518: remove piece_count congestion penalty — match protected strategy (median 12789)
      # Protected strategy achieves +4% better median without any congestion penalty.
      # Penalty overwhelmed guidance at moderate pc, causing HEIGHT_CONTROL scatter.
@@ -1436,11 +1445,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
                     proximity_bonus = max(0, 160.0 - horiz_dist * 50.0)
-                    # v467: at rp>=3+current_type has reactive (extension case), reduce bonus
-                    # by 60% to respect v465 noise concern. Max ~50-120 vs axis 8.8 (-4500).
-                    # Original 9.6b (no reactive) keeps full bonus for stronger guidance.
-                    if reactive_pair_count >= 3 and (current_type_has_reactive or current_type_has_near):
-                        proximity_bonus *= 0.4
+                    # v519: extend v412 proximity reduction to rp>=3 regardless of current_type
+                    # reactive. v412 calibrated 0.3x for extreme danger. v512 narrowed guard to
+                    # current_type_has_reactive, but at rp>=3+deadline the incoming type often has
+                    # NO reactive pair — full proximity bonus (~275 at pc=34) overrides height
+                    # penalty (~90-180), causing edge scatter. Worst game T54-T61: rp=3-4,
+                    # deadline, type 1 incoming with no reactive, proximity pushes to x=3.0 edge.
+                    # 0.3x max bonus (~83) stays below min height diff (~90), restoring height
+                    # dominance. Protected strategy (median 12789, +4% better) has NO 9.6b.
+                    # Fixes rollback failure mode: edge scatter from proximity guidance at rp>=3+deadline
+                    # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 15.9% low vs 15.3% high),
+                    #       game_history/20260405_001803_score0719.jsonl T54-T61 (edge scatter),
+                    #       game_history/20260405_005604_score0730.jsonl T59-T60 (edge scatter),
+                    #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no 9.6b)
+                    if reactive_pair_count >= 3:
+                        proximity_bonus *= 0.3
                     if piece_count >= 28:
                         # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                         # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
