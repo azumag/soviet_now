@@ -1100,7 +1100,8 @@ generate_comment_response() {
 	fi
 
 	local comment_force_claude_manual=false
-	local twitch_comments_for_prompt="$twitch_comments"
+	local twitch_comments_for_prompt
+	twitch_comments_for_prompt=$(printf '%s' "$twitch_comments" | sed 's|https\?://[^ \t]*||g')
 	if _comment_has_manual_claude_trigger "$twitch_comments"; then
 		comment_force_claude_manual=true
 		twitch_comments_for_prompt=$(_strip_comment_control_prefixes "$twitch_comments")

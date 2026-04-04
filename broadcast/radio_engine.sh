@@ -756,6 +756,7 @@ import sys
 
 text = sys.stdin.read()
 drop_line_patterns = [
+    r'^\s*https?://\S*\s*$',
     r'failed to authenticat(?:e|ed)',
     r'api error[: ]',
     r'authentication_error',
@@ -801,6 +802,7 @@ patterns = [
     (r'誰もいない', 'みなさんがいる'),
     (r'マージ', '併合'),
     (r'合体', '併合'),
+    (r'https?://\S+', ''),
 ]
 filtered_lines = []
 for raw_line in text.splitlines():
