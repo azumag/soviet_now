@@ -10,7 +10,7 @@ Game Overview:
       Decision Logic (14 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
-         1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
+         13. ~~1.5b. Danger NEAR merge priority~~ v515: REMOVED — protected strategy (median 12789) doesn't have it
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
@@ -63,6 +63,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v515: remove axis 1.5b (DANGER_NEAR_MERGE_PRIORITY) — match protected strategy
+     # Protected strategy (median 12789, +4% better) does NOT have DANGER_NEAR bonus. The +300 bonus
+     # at deadline+high_pc overrode NEAR suppression penalties (HIGH_PC_NEAR_PENALTY cancels base NEAR),
+     # causing failed NEAR attempts (31.5% fail rate) that add pieces without benefit at critical positions.
+     # Worst game T63: pc=38, deadline, DANGER_NEAR bonus overrides HIGH_PC_NEAR_PENALTY → NEAR fails →
+     # piece stays at y≈2.3. Extra_low T70: DANGER_NEAR at pc=35 overrides NEAR risk → fail → game over.
+     # DIRECT merge priority preserved via axis 1.6 (95.7% success vs NEAR 68.5%). danger_merge_available
+     # still utilized by axis 1.6 for DIRECT merges. This removes one source of additive noise at deadline.
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no axis 1.5b),
+     #       game_history/20260404_195128_score0895.jsonl T63 (DANGER_NEAR NEAR fail at pc=38 deadline),
+     #       game_history/20260404_202022_score1056.jsonl T70 (DANGER_NEAR NEAR fail at pc=35),
+     #       tmp/batch_summary.txt (NEAR avg_delta=47.7), tmp/improve_brief.md, advice.md
+     # Fixes rollback failure mode: failed NEAR cascade at deadline+high_pc (DANGER_NEAR removal)
      # v514: restore AVOID_BLOCK at deadline (fix rollback-lost bug) — re-apply v511
      # Game#12693 rollback to 87a00400960f lost v510/v511/v512 fixes. Current code had v503's
      # unconditional `or deadline_crossed` at L1426, suppressing ALL AVOID_BLOCK at deadline.
@@ -1155,37 +1168,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 800.0
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
 
-        # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
-        # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
-        # danger_merge_available covers NEAR merges targeting danger pieces. Removing a danger piece
-        # (redLineTime>0 or past deadline) prevents game over. Currently unutilized — strategy only
-        # reads danger_direct_merge_available.
-        # Worst game T58/T68/T74: NEAR+danger selected but failed (delta=0). Best game T170: NEAR+danger
-        # succeeded (+144). The bonus makes danger NEAR more decisive when multiple NEAR candidates exist.
-        # NEAR deadline risk penalty (landing_y*300) still discourages high-risk NEAR: at y=2.0 with
-        # deadline bonus, net = 0+600-600 = 0 (marginal). At y=1.0: net = 600+600-300 = 900 (encouraged).
-        # Below DIRECT merge (1200) — priority ordering maintained. Purely additive, no suppression.
-        # Fixes rollback failure mode: endgame scoring starvation (danger NEAR merge undervalued)
-        # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md,
-        #       tmp/batch_summary.txt, analyze_board.py (danger_merge_available L398-404),
-        #       game_history/20260329_081450_score0774.jsonl, game_history/20260329_080000_score3902.jsonl,
-        #       game_history/20260329_080456_score2801.jsonl, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+        # ----- evaluation axis 1.5b: danger NEAR merge priority (v515: REMOVED — match protected strategy) -----
+        # v383 added +600 bonus for NEAR merges targeting danger pieces (danger_merge_available).
+        # Protected strategy (median 12789, +4%) does NOT have this axis. The bonus overrode
+        # NEAR suppression penalties at deadline+high_pc: HIGH_PC_NEAR_PENALTY cancels base NEAR
+        # (score -= 600*merge_mult), but DANGER_NEAR (+300) + REACTIVE_IMMEDIATE (+600-1000)
+        # still push NEAR net-positive at dangerous height. Failed NEAR (31.5% rate) adds piece
+        # without benefit, accelerating piece_count → max_y runaway → game over.
+        # Worst T63: pc=38, deadline, DANGER_NEAR overrides suppression → NEAR fails → max_y 2.09→2.30.
+        # Extra_low T70: pc=35, deadline, DANGER_NEAR overrides NEAR risk → fail → game over.
+        # DIRECT merge priority preserved via axis 1.6 (95.7% success). danger_merge_available
+        # still utilized by axis 1.6 for DIRECT merges. This removal reduces one source of
+        # additive noise at deadline without affecting DIRECT merge decisions.
+        # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no axis 1.5b),
+        #       game_history/20260404_195128_score0895.jsonl T63, tmp/batch_summary.txt
+        # Fixes rollback failure mode: failed NEAR cascade at deadline+high_pc (DANGER_NEAR removal)
         if result.get("danger_merge_available", False) and merge_grade == "NEAR":
-            # v421: suppress DANGER_NEAR bonus at high pc + high landing_y + deadline
-            # Postmortem: "landing_y >= 1.5 かつ deadline_crossed 時の NEAR merge は
-            # DANGER_NEAR_MERGE_PRIORITY を無効化するか NEAR_DEADLINE_RISK を増強すること"
-            # At pc>=33, deadline, landing_y>=1.5: danger NEAR at high y adds piece if fails
-            # (31.5% rate) with no benefit. Suppress bonus to let enhanced risk penalty work.
-            # v498: cap DANGER_NEAR at 300 regardless of deadline — postmortem constraint:
-            # "DANGER_NEAR_MERGE_PRIORITY bonus of 600 at deadline overpowers NEAR_DEADLINE_RISK
-            # + HIGH_PC_NEAR_PENALTY at pc>=33+deadline, causing failed NEAR selection"
-            # Flat 300 matches protected strategy behavior. Previously 600 at deadline enabled
-            # near_merge_cascade_at_high_pc_deadline (3 of 4 NEAR attempts failed).
-            if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
-                bonus = 0.0
-            else:
-                bonus = 300.0
-            score += bonus
+            # v515: removed bonus — protected strategy achieves +4% better median without it
+            score += 0.0
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
