@@ -42,7 +42,8 @@ Game Overview:
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v465: v357ガード復元(rp>=3+NOで抑制) + v408: pc混雑スケーリング(9.6b同一)
-             9.6b. Same-type proximity guidance - v468: base 120→160 per v459 removal gap vs protected
+             9.6b. Same-type proximity guidance - v520: full at non-deadline, 0.3x at deadline (v468 base 160)
+             9.3. Danger zone reactive penalty - v324: deadline_crossed対応強化版 — v521: suppress at MEDIUM phase
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
@@ -65,6 +66,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v521: suppress AVOID_BLOCK at MEDIUM phase (max_y<2.0) non-deadline — prevent pre-deadline scatter
+     # At MEDIUM height with no deadline, AVOID_BLOCK (-500) overrides 9.6b guidance (~256), pushing
+     # pieces to edges (x=±3.0) where they never merge. Worst game T50-T54: max_y=1.21-1.47, rp=4-5,
+     # deadline=false, 5 consecutive NO-merge with edge scatter → pc 33→37 → deadline cascade.
+     # Protected strategy (median 12789, +17% better) has NO AVOID_BLOCK. MEDIUM phase has room;
+     # blocking risk is low, scatter risk is high. AVOID_BLOCK still active at HIGH phase and deadline.
+     # Fixes rollback failure mode: pre-deadline MEDIUM scatter from AVOID_BLOCK override
+     # refs: game_history/20260405_013613_score0448.jsonl T50-T54, game_history/20260405_014934_score0845.jsonl,
+     #       protected_e6f534c37e28, tmp/batch_summary.txt, advice.md, tmp/improve_brief.md
+     # v520: restore 9.6b full guidance at rp>=3 non-deadline — fix v519 over-suppression
+     # v519 reduced 9.6b to 0.3x at ALL rp>=3, weakening non-deadline guidance. Worst T50-T51:
+     # rp=4, deadline=false, AVOID_BLOCK pushes to x=-3.0 because 9.6b (~77) can't compete.
+     # With full 9.6b (~256), guidance prevents edge scatter of "dead" pieces before deadline.
+     # At deadline, 0.3x kept — height must dominate for survival.
+     # Fixes rollback failure mode: non-deadline edge scatter from 9.6b over-suppression
+     # refs: game_history/20260405_013613_score0448.jsonl, game_history/20260405_014934_score0845.jsonl,
+     #       protected_e6f534c37e28, tmp/batch_summary.txt, tmp/change_log.txt, advice.md, tmp/improve_brief.md
      # v519: reduce 9.6b proximity bonus to 0.3x at rp>=3 — match v412 calibration
      # At rp>=3+deadline, incoming type often has NO reactive pair. Full proximity bonus
      # (~275 at pc=34) overrides height penalty (~90-180), causing edge scatter near
@@ -1445,20 +1463,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
                     proximity_bonus = max(0, 160.0 - horiz_dist * 50.0)
-                    # v519: extend v412 proximity reduction to rp>=3 regardless of current_type
-                    # reactive. v412 calibrated 0.3x for extreme danger. v512 narrowed guard to
-                    # current_type_has_reactive, but at rp>=3+deadline the incoming type often has
-                    # NO reactive pair — full proximity bonus (~275 at pc=34) overrides height
-                    # penalty (~90-180), causing edge scatter. Worst game T54-T61: rp=3-4,
-                    # deadline, type 1 incoming with no reactive, proximity pushes to x=3.0 edge.
-                    # 0.3x max bonus (~83) stays below min height diff (~90), restoring height
-                    # dominance. Protected strategy (median 12789, +4% better) has NO 9.6b.
-                    # Fixes rollback failure mode: edge scatter from proximity guidance at rp>=3+deadline
-                    # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 15.9% low vs 15.3% high),
-                    #       game_history/20260405_001803_score0719.jsonl T54-T61 (edge scatter),
-                    #       game_history/20260405_005604_score0730.jsonl T59-T60 (edge scatter),
-                    #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no 9.6b)
-                    if reactive_pair_count >= 3:
+                    # v520: restore 9.6b full guidance at rp>=3 non-deadline — fix v519 over-suppression
+                    # v519 reduced 9.6b to 0.3x at ALL rp>=3, but this also weakened guidance
+                    # BEFORE deadline where scatter prevention is critical. Worst game T50-T51:
+                    # rp=4, deadline=false, AVOID_BLOCK pushes to x=-3.0 because 9.6b (~77)
+                    # can't compete. With full 9.6b (~256), guidance pulls toward same-type
+                    # targets, preventing edge placement of "dead" pieces that accumulate
+                    # without merge potential. At deadline, 0.3x kept — height must dominate
+                    # for survival. Non-deadline scatter is the p25 killer: pieces placed at
+                    # edges become isolated, never participating in merges, accelerating pc
+                    # accumulation until deadline is reached with no recovery path.
+                    # Fixes rollback failure mode: non-deadline edge scatter from 9.6b over-suppression
+                    # refs: game_history/20260405_013613_score0448.jsonl T50-T51 (rp=4, no deadline, edge scatter),
+                    #       game_history/20260405_014934_score0845.jsonl T55-T56 (same pattern),
+                    #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no 9.6b, axis 9.5 +300),
+                    #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.0% low vs 17.8% high),
+                    #       tmp/change_log.txt (v519 entry), advice.md, tmp/improve_brief.md
+                    if reactive_pair_count >= 3 and deadline_crossed:
                         proximity_bonus *= 0.3
                     if piece_count >= 28:
                         # Scale proportionally with congestion: at pc=35, bonus *= 1.84
@@ -1503,14 +1524,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_090616_score0296.jsonl T37-47,
         #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
         if merge_grade == "NO" and reactive_pair_count >= 1:
-            # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
-            # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
-            # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
-            # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
+            # v417/v521: suppress AVOID_BLOCK in safe or congested states to prevent edge scatter.
+            # v521: at MEDIUM phase (max_y<2.0) non-deadline, board has room — AVOID_BLOCK (-500)
+            # overrides 9.6b guidance (~256 at pc=33), pushing pieces to x=±3.0 edges where they
+            # never participate in merges. Worst game T50-T54: max_y=1.21-1.47, rp=4-5, deadline=false,
+            # AVOID_BLOCK fires → x=-3.04/2.48 scatter → pc 33→37 → deadline at T55 → death in 4 turns.
+            # Protected strategy (median 12789) has NO AVOID_BLOCK at all. At MEDIUM height, proximity
+            # guidance keeps pieces centralized near reactive pairs, enabling future NEAR merges.
+            # AVOID_BLOCK still active at HIGH phase (max_y>=2.0) where blocking avoidance matters,
+            # and at deadline per v514 condition. Original v417 congested endgame suppression kept.
+            # Fixes rollback failure mode: pre-deadline MEDIUM phase scatter from AVOID_BLOCK override
+            # refs: game_history/20260405_013613_score0448.jsonl T50-T54 (rp=4-5, MEDIUM, edge scatter),
+            #       game_history/20260405_014934_score0845.jsonl T60-62 (same pattern),
+            #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no AVOID_BLOCK),
+            #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.0% low vs 17.8% high),
+            #       advice.md (kbb246: 中央集約を優先する), tmp/improve_brief.md
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
                 or (deadline_crossed and (current_type_has_reactive or reactive_pair_count >= 4))  # v514: restore v511 — fix rollback-lost AVOID_BLOCK suppression
+                or (max_y < 2.0 and not deadline_crossed)  # v521: suppress at MEDIUM phase — pre-deadline scatter prevention
             )
             if not board_congested:
                 blocking_penalty = 0.0
