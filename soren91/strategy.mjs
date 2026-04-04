@@ -1,27 +1,47 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v160)
+ * strategy.mjs - ドロップ位置決定戦略 (v161)
  *
- * v160: v159でのsettlingBufferとCRITICAL_HEIGHT_MARGINの調整後も、
+ * v161: v160でのsettlingBufferとCRITICAL_HEIGHT_MARGINの調整後も、
  *       実測のmax_yがDEADLINE_Y (2.5) を頻繁に超える傾向が分析結果から示されました。
  *       これは、物理シミュレーションの予測が依然として楽観的すぎることを意味します。
  *       また、大型ピースの片側集約ロジックが、過度なX座標バイアスを生み出している可能性も考慮します。
  *       このバージョンでは、より保守的な高さ予測と、大型ピース配置の柔軟性向上を目指します。
+ *       さらに、ランク獲得につながるマージとパイプラインのボーナスを強化し、ゲーム進行を促進します。
  *
  *      主な改善点:
  *      1.  **シミュレーションの保守性再調整 (settlingBufferのさらなる増加)**:
- *          - `simulateDropY` 内の `settlingBuffer` を **1.0 から 2.0 へ増加**。
+ *          - `simulateDropY` 内の `settlingBuffer` を **2.0 から 3.0 へ増加**。
  *            物理エンジンの不確実性や凸ポリゴン形状による上振れを、より現実的に織り込み、
  *            シミュレートされる着地Y座標を大幅に高くすることで、危険な高さを早期に認識できるようにします。
- *            v159の1.0でも実際のmax_yがデッドラインを超えるケースが散見されたため、
+ *            v160の2.0でも実際のmax_yがデッドラインを超えるケースが散見されたため、
  *            過度な楽観予測をさらに是正し、高さ管理を厳格化します。
- *      2.  **大型ピースの片側集約ロジックの調整**:
- *          - **初回大型ピースのオフセンターボーナスを緩和** (700 -> 500)。
- *            最初の大型ピースが極端な位置に置かれることを抑制し、中央付近での柔軟な積み上げも考慮できるようにします。
- *          - **既存大型ピースと逆側への配置ペナルティを緩和** (1300 -> 1000)。
- *            既存の大型ピース群と反対側にドロップする場合のペナルティを減らし、
- *            片側が過度に高くなった際などに、戦略がより柔軟に反対側を利用できるようにします。
- *            これにより、片側への過度な集中を避け、盤面のバランスを取りやすくします。
- *      3.  その他のv158/v159の変更点 (CRITICAL_HEIGHT_MARGIN、おじゃまボーナス、先読みボーナス強化) は維持します。
+ *      2.  **クリティカル高さマージンの厳格化**:
+ *          - `CRITICAL_HEIGHT_MARGIN` を **0.25 から 0.5 へ増加**。
+ *            これにより、デッドラインに到達する前の、より低い段階で致命的ペナルティが発動し、
+ *            危険な高所へのピース配置を強く抑制します。
+ *      3.  **高さペナルティの強化**:
+ *          - `HEIGHT_PENALTY_WEIGHT` を **60000.0 から 75000.0 へ増加**。
+ *          - `calculateHeightPenalty` 内の severe/extreme warning zone の乗数をそれぞれ **8から10**、**40から50へ増加**。
+ *            全体的な高さに対する戦略の保守性を高め、高所にピースを置くことに対するペナルティを強化します。
+ *      4.  **マージボーナスの強化**:
+ *          - `calculateMergeBonus` 内の基本ボーナスを `droppingPiece.type * 100` から `droppingPiece.type * 150` へ増加。
+ *            併合によるスコア獲得と盤面整理を積極的に促します。
+ *          - `GARBAGE_MERGE_BONUS` を **3000 から 4000 へ増加**。
+ *          - `GARBAGE_URGENT_MERGE_BONUS` を **15000 から 20000 へ増加**。
+ *            おじゃま発生時のマージをより強く奨励します。
+ *      5.  **パイプラインボーナスの強化**:
+ *          - `calculatePipelineBonus` 内の基本ボーナスを `120 * (droppingPiece.type)` から `180 * (droppingPiece.type)` へ増加。
+ *          - 小型ピースへの追加ボーナスを `200` から `300` へ増加。
+ *            連鎖設計の原則に基づき、将来的な併合の繋がりを重視します。
+ *      6.  **大型ピースの片側集約ロジックの調整**:
+ *          - 既存大型ピースと逆側への配置ペナルティを **1000 から 700 へ緩和**。
+ *            片側集中によるデッドライン接近リスクを考慮し、盤面の高さバランスを取るために、
+ *            より柔軟に反対側への配置を許容します。
+ *      7.  **早期ゲームにおける中央小型ピースボーナスの強化**:
+ *          - `boardState.pieces.length < 5` の中央ボーナスを **900 から 1200**、周辺を **300 から 500** へ。
+ *          - `boardState.pieces.length < 15` の中央ボーナスを **500 から 700**、周辺を **100 から 200** へ。
+ *            序盤における極端なX座標バイアスを緩和し、よりバランスの取れた中央へのピース配置を促進します。
+ *      8.  その他のv158/v159/v160の変更点 (look-aheadボーナス、おじゃまボーナス、初期大型ピースオフセンターボーナス緩和) は維持します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -37,11 +57,11 @@ const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.5;     // Warning penalty starts whe
 // v158: Adjusted from DEADLINE_Y - 1.0 (Y=1.5) to DEADLINE_Y - 0.5 (Y=2.0)
 const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.5;                               // Top is 0.5 below deadline (i.e., Y=2.0)
 
-// v157: Increased from 50000.0 to 60000.0
-const HEIGHT_PENALTY_WEIGHT = 60000.0;
+// v161: Increased from 60000.0 to 75000.0
+const HEIGHT_PENALTY_WEIGHT = 75000.0;
 
-// v159: Changed from 0.0 to 0.25
-const CRITICAL_HEIGHT_MARGIN = 0.25;
+// v161: Changed from 0.25 to 0.5
+const CRITICAL_HEIGHT_MARGIN = 0.5;
 
 // Strategy-specific constants (General)
 const MERGE_BUFFER = 0.6; // Maintained from v114
@@ -55,8 +75,10 @@ const LARGE_PIECE_HIGH_PENALTY_START_Y = 1.0; // Start penalizing large pieces g
 const LARGE_PIECE_HIGH_PENALTY_MULTIPLIER = 5000;
 
 // Garbage Block Management Constants
-const GARBAGE_MERGE_BONUS = 3000;
-const GARBAGE_URGENT_MERGE_BONUS = 15000; // Maintained from v128
+// v161: Increased from 3000 to 4000
+const GARBAGE_MERGE_BONUS = 4000;
+// v161: Increased from 15000 to 20000
+const GARBAGE_URGENT_MERGE_BONUS = 20000; // Maintained from v128
 // Updated to match prompt (v134 -> v135)
 const GARBAGE_RATIO_OJAMA_MERGE = 0.15;
 const OJAMA_GAUGE_OJAMA_MERGE = 0.3;
@@ -81,8 +103,8 @@ function simulateDropY(droppingPiece, targetX, existingPieces) {
 
   // The settling buffer accounts for physical uncertainties and convex polygon shapes.
   // Pieces might settle slightly higher than a perfect circular stack.
-  // v160: Increased from 1.0 to 2.0 to more conservatively predict maximum height.
-  const settlingBuffer = 2.0;
+  // v161: Increased from 2.0 to 3.0 to more conservatively predict maximum height.
+  const settlingBuffer = 3.0;
 
   for (const existingPiece of existingPieces) {
     // Check for horizontal overlap, using a slightly expanded radius to account for convex shapes.
@@ -117,13 +139,13 @@ function calculateHeightPenalty(simulatedY_center, pieceRadius) {
   }
   if (simulatedY_top > TOP_Y_SEVERE_WARN_THRESHOLD) {
     // Severe warning zone: Top is above Y=1.0
-    // v154: Multiplier increased from 4 to 8
-    penalty += (simulatedY_top - TOP_Y_SEVERE_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 8;
+    // v161: Multiplier increased from 8 to 10
+    penalty += (simulatedY_top - TOP_Y_SEVERE_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 10;
   }
   if (simulatedY_top > TOP_Y_EXTREME_WARN_THRESHOLD) {
     // Extreme warning zone: Top is above Y=2.0
-    // v154: Multiplier increased from 20 to 40
-    penalty += (simulatedY_top - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 40;
+    // v161: Multiplier increased from 40 to 50
+    penalty += (simulatedY_top - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 50;
   }
   return penalty;
 }
@@ -145,7 +167,8 @@ function calculateMergeBonus(droppingPiece, targetX, targetY, existingPieces, ga
       // MERGE_BUFFER accounts for shockwave and imperfect detection
       if (dist < droppingPiece.r + existingPiece.r + MERGE_BUFFER) {
         // Higher type merges get more bonus
-        bonus += droppingPiece.type * 100; // Base bonus
+        // v161: Increased from 100 to 150
+        bonus += droppingPiece.type * 150; // Base bonus
 
         // v142: Additional bonus for merging type 1 pieces (unchanged in v146)
         if (droppingPiece.type === 1) {
@@ -218,11 +241,11 @@ function calculatePipelineBonus(droppingPiece, targetX, targetY, existingPieces)
         // If an adjacent type is close, give a bonus.
         // Use a generous buffer as this is about "spatial proximity" for pipeline, not immediate merge.
         if (dist < droppingPiece.r + existingPiece.r + MERGE_BUFFER * 2) {
-          // v139: Increased base multiplier from 100 to 120 (unchanged in v146)
-          pipelineBonus += 120 * (droppingPiece.type); // Higher types benefit more from pipeline maintenance
-          // v157: Additional bonus for small pieces to promote pipeline
+          // v161: Increased base multiplier from 120 to 180
+          pipelineBonus += 180 * (droppingPiece.type); // Higher types benefit more from pipeline maintenance
+          // v161: Increased additional bonus for small pieces from 200 to 300
           if (droppingPiece.type <= SMALL_PIECE_THRESHOLD_FOR_DENSITY) {
-              pipelineBonus += 200;
+              pipelineBonus += 300;
           }
         }
       }
@@ -295,7 +318,7 @@ export function decide(boardState) {
 
       let currentPlacementScore; // Declare outside
 
-      // v159: If placing the piece would make its predicted top significantly close to or above the deadline, assign a huge penalty.
+      // v161: If placing the piece would make its predicted top significantly close to or above the deadline, assign a huge penalty.
       if (simulatedY + pieceToDrop.r > DEADLINE_Y - CRITICAL_HEIGHT_MARGIN) {
           currentPlacementScore = -1_000_000_000; // Extremely high penalty for critical height
       } else {
@@ -328,21 +351,21 @@ export function decide(boardState) {
             currentPlacementScore += calculateLookAheadBonus(pieceToDrop, x, simulatedY, boardState.pieces, nextPieceForLookAhead);
         }
 
-        // v144: Early Game Central Small Piece Bonus (unchanged in v147)
+        // v161: Early Game Central Small Piece Bonus
         // Encourages small pieces (type 1-3) to be placed centrally when the board is relatively empty
         if (boardState.pieces.length < 5 && pieceToDrop.type <= 3) {
             if (Math.abs(x) < 1.0) { // Central area
-                currentPlacementScore += 900;
+                currentPlacementScore += 1200; // Increased from 900
             } else if (Math.abs(x) < 2.0) { // Slightly off-center but still good
-                currentPlacementScore += 300;
+                currentPlacementScore += 500; // Increased from 300
             }
         }
-        // v144: Added a second tier for early game central small piece bonus (unchanged in v147)
+        // v161: Added a second tier for early game central small piece bonus
         else if (boardState.pieces.length < 15 && pieceToDrop.type <= 3) {
             if (Math.abs(x) < 1.0) {
-                currentPlacementScore += 500;
+                currentPlacementScore += 700; // Increased from 500
             } else if (Math.abs(x) < 2.0) {
-                currentPlacementScore += 100;
+                currentPlacementScore += 200; // Increased from 100
             }
         }
 
@@ -369,8 +392,8 @@ export function decide(boardState) {
             } else if (Math.abs(avgLargePieceX) < 0.5 && Math.abs(x) < 0.5) { // If large pieces are mostly centered, and we're dropping centrally
                currentPlacementScore += 50;
             } else { // If we're dropping a large piece on the opposite side of existing large pieces
-               // v160: Reduced from 1300 to 1000 to allow more flexibility for balancing the board
-               currentPlacementScore -= 1000;
+               // v161: Reduced from 1000 to 700 to allow more flexibility for balancing the board
+               currentPlacementScore -= 700;
             }
           } else {
               // If this is the first large piece, try to place it significantly off-center to encourage starting a stack
