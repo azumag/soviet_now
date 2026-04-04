@@ -10,6 +10,7 @@ Game Overview:
       Decision Logic (14 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
+         1.5c. NEAR cross-deadline penalty - v517: -600 for NEAR that crosses deadline (unutilized crosses_deadline)
          13. ~~1.5b. Danger NEAR merge priority~~ v515: REMOVED — protected strategy (median 12789) doesn't have it
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
@@ -63,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v517: add NEAR merge cross-deadline penalty (-600) — utilize unutilized crosses_deadline for NEAR
+     # Per-candidate crosses_deadline was only used for NO-merge. NEAR at deadline that crosses
+     # deadline has 31.5% failure risk leaving piece at deadline height. Penalty differentiates
+     # safe NEAR from risky NEAR without changing NEAR > NO preference.
+     # refs: game_history/20260404_221853_score0722.jsonl T54-T61, game_history/20260404_222316_score2636.jsonl,
+     #       analyze_board.py, tmp/batch_summary.txt, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+     # Fixes rollback failure mode: failed NEAR at deadline leaves piece at dangerous height
      # v516: replace flat Russia phase board compression (rp==0, +800) with Russia piece proximity guidance
      # Russia phase with NO merge and rp==0: flat +800 provides no directional guidance for 2nd
      # Russia growth. Replace with proximity bonus toward deepest Russia piece: max(0, 800-dist*200).
@@ -1134,6 +1142,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
             near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
+
+        # ----- v517: NEAR merge cross-deadline penalty (unutilized crosses_deadline for NEAR) -----
+        # Per-candidate crosses_deadline (top_after_drop >= DEADLINE_Y) from analyze_board.py
+        # is only used by CROSSES_DEADLINE_NO_MERGE (merge_grade==NO). NEAR merges that cross
+        # deadline carry the same catastrophic risk: 31.5% NEAR failure leaves a piece at/past
+        # deadline height, accelerating piece_count → max_y runaway. Even successful NEAR at
+        # deadline produces a merged piece at dangerous height. Penalty differentiates between
+        # safe NEAR (below deadline) and risky NEAR (crossing deadline) without changing NEAR > NO.
+        # At moderate max_y, some NEAR candidates don't cross deadline — penalty shifts to safer.
+        # At extreme max_y where all NEAR crosses deadline, penalty is uniform (no effect).
+        # Worst T54: NEAR at x=-3.0, crosses_deadline=true, delta=0 (FAIL, piece at deadline).
+        # Worst T57,T59: similar pattern. Best T106: NEAR at x=-0.06, crosses=true, delta=15 (OK).
+        # Net NEAR crossing deadline at pc=34: ~-1200 vs not crossing: ~-600. Both >> NO-merge -6500.
+        # refs: game_history/20260404_221853_score0722.jsonl T54-T61 (worst, edge NEAR fails),
+        #       game_history/20260404_222316_score2636.jsonl T106-T113 (best, NEAR succeeds),
+        #       analyze_board.py (crosses_deadline per-candidate), tmp/batch_summary.txt
+        # Fixes rollback failure mode: failed NEAR at deadline leaves piece at dangerous height
+        if merge_grade == "NEAR" and result.get("crosses_deadline", False):
+            score -= 600.0
+            reasons.append("NEAR_CROSSES_DEADLINE")
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
