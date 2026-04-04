@@ -281,6 +281,8 @@ return 1
 }
 rm -f "$talk_file"
 }
+
+start_radio_corner_weather() {
 	local game_num="$1" score="$2"
 	_radio_time_context
 	local past_topics

@@ -664,6 +664,23 @@ _synthesize_chunk() {
 		./voicevox_tts.sh -o "$output" "$text" 2>/dev/null && [ -s "$output" ]
 }
 
+_launch_stream_wav() {
+	local wav_file="$1"
+	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
+		local device_index
+		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
+			_log "audio device解決失敗 (${SAY_AUDIO_DEVICE}) → デフォルト出力にフォールバック"
+			nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$wav_file" >/dev/null 2>&1 &
+			return 0
+		}
+		nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""' \
+			_ "$wav_file" "$device_index" >/dev/null 2>&1 &
+	else
+		nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$wav_file" >/dev/null 2>&1 &
+	fi
+	return 0
+}
+
 # ストリーミング再生: チャンク0再生中に次チャンクを合成→逐次再生
 # 呼び出し時点で再生ロック(LOCK_DIR)を保持済みであること
 _stream_voicevox_play() {
@@ -682,20 +699,7 @@ _stream_voicevox_play() {
 
 	# チャンク0（事前合成済み）を再生開始
 	local play_pid="" current_wav="$PRE_SYNTH_WAV"
-	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
-		local device_index
-		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-			nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"' _ \"$current_wav\" >/dev/null 2>&1 &
-			play_pid=$!
-			echo "$play_pid" >"$PID_FILE"
-			LAST_SAY_PID="$play_pid"
-			return
-		}
-		nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""' \
-			_ "$current_wav" "$device_index" >/dev/null 2>&1 &
-	else
-		nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"' _ \"$current_wav\" >/dev/null 2>&1 &
-	fi
+	_launch_stream_wav "$current_wav"
 	play_pid=$!
 	echo "$play_pid" >"$PID_FILE"
 	LAST_SAY_PID="$play_pid"
@@ -746,7 +750,7 @@ _stream_voicevox_play() {
 
 		# 次チャンク再生（合成失敗なら中断）
 		if [ "$synth_ok" -eq 0 ] && [ -s "$next_wav" ]; then
-			nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"' _ \"$next_wav\" >/dev/null 2>&1 &
+			_launch_stream_wav "$next_wav"
 			play_pid=$!
 			echo "$play_pid" >"$PID_FILE"
 			LAST_SAY_PID="$play_pid"

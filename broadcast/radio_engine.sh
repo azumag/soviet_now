@@ -923,15 +923,34 @@ _radio_generate_and_play() {
 	done
 
 	# 同一 game_num + corner の二重生成/二重再生を防止
-	local done_marker="$TMP_MARKERS_DIR/.radio_done_${game_num}_${corner_name}"
-	if [ -f "$done_marker" ]; then
-		log "[RADIO:${corner_name}] duplicate skip: already done for game=${game_num}"
-		_write_radio_corner_status "duplicate_done" "$corner_name" "$game_num" "$score" "$topic" "already_done" "$selected_news"
-		return 0
+	local marker_game_num=""
+	case "$game_num" in
+	'' | *[!0-9]* | 0) marker_game_num="" ;;
+	*) marker_game_num="$game_num" ;;
+	esac
+
+	local done_marker=""
+	if [ -n "$marker_game_num" ]; then
+		done_marker="$TMP_MARKERS_DIR/.radio_done_${marker_game_num}_${corner_name}"
+		if [ -f "$done_marker" ]; then
+			log "[RADIO:${corner_name}] duplicate skip: already done for game=${marker_game_num}"
+			_write_radio_corner_status "duplicate_done" "$corner_name" "$game_num" "$score" "$topic" "already_done" "$selected_news"
+			return 0
+		fi
 	fi
-	local inflight_dir="$TMP_MARKERS_DIR/.radio_inflight_${game_num}_${corner_name}"
+
+	local inflight_dir=""
+	if [ -n "$marker_game_num" ]; then
+		inflight_dir="$TMP_MARKERS_DIR/.radio_inflight_${marker_game_num}_${corner_name}"
+	else
+		inflight_dir="$TMP_MARKERS_DIR/.radio_inflight_nogame_${corner_name}"
+	fi
 	if ! mkdir "$inflight_dir" 2>/dev/null; then
-		log "[RADIO:${corner_name}] duplicate skip: in-flight for game=${game_num}"
+		if [ -n "$marker_game_num" ]; then
+			log "[RADIO:${corner_name}] duplicate skip: in-flight for game=${marker_game_num}"
+		else
+			log "[RADIO:${corner_name}] duplicate skip: in-flight without game_num"
+		fi
 		_write_radio_corner_status "duplicate_inflight" "$corner_name" "$game_num" "$score" "$topic" "already_inflight" "$selected_news"
 		return 0
 	fi
