@@ -922,7 +922,19 @@ _launch_say() {
 				) &
 			fi
 			LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$vo_wav")
-			nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
+			if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
+				local device_index
+				device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
+					nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
+					LAUNCH_MODE="voicevox"
+					LAUNCHED_SAY_PID="$!"
+					return
+				}
+				nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; rm -f "$1"; exit $rc' \
+					_ "$vo_wav" "$device_index" >/dev/null 2>&1 &
+			else
+				nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
+			fi
 			LAUNCH_MODE="voicevox"
 			LAUNCHED_SAY_PID="$!"
 			return
