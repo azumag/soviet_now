@@ -1835,7 +1835,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # refs: tmp/state/last_rollback_postmortem.md, game_history/20260404_072551_score0505.jsonl T64,
             #       tmp/batch_summary.txt (NEAR avg_delta=47.7, selection 4.1%)
             # Fixes rollback failure mode: near_merge_cascade_at_high_pc_deadline (NEAR at pc>=38)
-            if merge_grade == "NEAR" and piece_count >= 38 and deadline_crossed:
+            # v513: lower NEAR suppression from pc>=38 to pc>=33 — align with HIGH_PC_NEAR threshold
+            # At pc>=33+deadline+landing_y>=1.0, axis 8 (+400/+800/+1000) overrides NEAR risk
+            # penalties, keeping NEAR net-positive at dangerous height. Failed NEAR (31.5%) adds
+            # piece without benefit. Suppressing at pc>=33 prefers lower-y NEAR positions.
+            # DIRECT unaffected. Axis 8.6 partial bonus at pc=32 still active for safe NEAR.
+            # refs: game_history/20260404_181847_score0535.jsonl T51 (NEAR fail pc=34 deadline y=1.64),
+            #       tmp/batch_summary.txt (NEAR avg_delta=47.7, LOW group 4.7% vs HIGH 3.0%),
+            #       tmp/improve_brief.md (deadline focus, worst game T51 cascade)
+            if merge_grade == "NEAR" and piece_count >= 33 and deadline_crossed:
                 score += 0.0
             else:
                 score += 400.0
@@ -1843,7 +1851,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"]:
             #2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
             # v505: same NEAR suppression as rp=1 branch
-            if merge_grade == "NEAR" and piece_count >= 38 and deadline_crossed:
+            # v513: same threshold alignment
+            if merge_grade == "NEAR" and piece_count >= 33 and deadline_crossed:
                 score += 0.0
             else:
                 score += 800.0
@@ -1852,7 +1861,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0）
             # reactive_pairsが3以上ある場合、即時併合機会を最優先
             # v505: same NEAR suppression
-            if merge_grade == "NEAR" and piece_count >= 38 and deadline_crossed:
+            # v513: same threshold alignment
+            if merge_grade == "NEAR" and piece_count >= 33 and deadline_crossed:
                 score += 0.0
             else:
                 score += 1000.0
@@ -1912,8 +1922,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Adding full suppression tier at pc>=38 ensures postmortem compliance.
             # At pc=32-37, v466 60% reduction remains (NEAR still viable at moderate pc).
             # DIRECT merges completely unaffected.
+            # v513: lower threshold from 38→33 — align with HIGH_PC_NEAR and axis 8 suppression
             # refs: tmp/state/last_rollback_postmortem.md, game_history/20260404_072551_score0505.jsonl T64
-            if merge_grade == "NEAR" and piece_count >= 38 and deadline_crossed:
+            if merge_grade == "NEAR" and piece_count >= 33 and deadline_crossed:
                 bonus = 0.0
             elif merge_grade == "NEAR" and piece_count >= 32 and deadline_crossed:
                 # v466: raise threshold from pc>=28 to pc>=32 (match CHAIN_MERGE NEAR suppression)
