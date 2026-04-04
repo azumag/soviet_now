@@ -685,7 +685,7 @@ _stream_voicevox_play() {
 	if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 		local device_index
 		device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-			nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$current_wav" >/dev/null 2>&1 &
+			nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"' _ \"$current_wav\" >/dev/null 2>&1 &
 			play_pid=$!
 			echo "$play_pid" >"$PID_FILE"
 			LAST_SAY_PID="$play_pid"
@@ -694,7 +694,7 @@ _stream_voicevox_play() {
 		nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""' \
 			_ "$current_wav" "$device_index" >/dev/null 2>&1 &
 	else
-		nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$current_wav" >/dev/null 2>&1 &
+		nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"' _ \"$current_wav\" >/dev/null 2>&1 &
 	fi
 	play_pid=$!
 	echo "$play_pid" >"$PID_FILE"
@@ -746,7 +746,7 @@ _stream_voicevox_play() {
 
 		# 次チャンク再生（合成失敗なら中断）
 		if [ "$synth_ok" -eq 0 ] && [ -s "$next_wav" ]; then
-			nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$next_wav" >/dev/null 2>&1 &
+			nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"' _ \"$next_wav\" >/dev/null 2>&1 &
 			play_pid=$!
 			echo "$play_pid" >"$PID_FILE"
 			LAST_SAY_PID="$play_pid"
@@ -788,7 +788,7 @@ _launch_say() {
 	# --- Pre-synthesized WAV (--wav mode) ---
 	if [ "$WAV_MODE" = "true" ] && [ -s "$MY_CONTENT" ]; then
 		LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$MY_CONTENT")
-		nohup bash -c 'trap "" INT TERM; afplay "$1"' _ "$MY_CONTENT" >/dev/null 2>&1 &
+		nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"' _ \"$MY_CONTENT\" >/dev/null 2>&1 &
 		LAUNCH_MODE="wav"
 		LAUNCHED_SAY_PID="$!"
 		return
@@ -800,7 +800,7 @@ _launch_say() {
 		if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 			local device_index
 			device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-				nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$PRE_SYNTH_WAV" >/dev/null 2>&1 &
+				nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$PRE_SYNTH_WAV\" >/dev/null 2>&1 &
 				LAUNCH_MODE="voicevox_pre"
 				LAUNCHED_SAY_PID="$!"
 				_log "事前合成WAV再生 (device=default)"
@@ -809,7 +809,7 @@ _launch_say() {
 			nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; rm -f "$1"; exit $rc' \
 				_ "$PRE_SYNTH_WAV" "$device_index" >/dev/null 2>&1 &
 		else
-			nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$PRE_SYNTH_WAV" >/dev/null 2>&1 &
+			nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$PRE_SYNTH_WAV\" >/dev/null 2>&1 &
 		fi
 		LAUNCH_MODE="voicevox_pre"
 		LAUNCHED_SAY_PID="$!"
@@ -925,7 +925,7 @@ _launch_say() {
 			if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
 				local device_index
 				device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
-					nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
+					nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$vo_wav\" >/dev/null 2>&1 &
 					LAUNCH_MODE="voicevox"
 					LAUNCHED_SAY_PID="$!"
 					return
@@ -933,7 +933,7 @@ _launch_say() {
 				nohup bash -c 'trap "" INT TERM; ffmpeg -y -loglevel error -i "$1" -f audiotoolbox -audio_device_index "$2" ""; rc=$?; rm -f "$1"; exit $rc' \
 					_ "$vo_wav" "$device_index" >/dev/null 2>&1 &
 			else
-				nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$vo_wav" >/dev/null 2>&1 &
+				nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$vo_wav\" >/dev/null 2>&1 &
 			fi
 			LAUNCH_MODE="voicevox"
 			LAUNCHED_SAY_PID="$!"
@@ -953,7 +953,7 @@ _launch_say() {
 		if SPEAKER_UUID="$COEIROINK_SPEAKER_UUID" STYLE_ID="$COEIROINK_STYLE_ID" \
 			./coeiroink_tts.sh -o "$coe_wav" "$coe_text" >/dev/null 2>&1 && [ -s "$coe_wav" ]; then
 			LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$coe_wav")
-			nohup bash -c 'trap "" INT TERM; afplay "$1"; rc=$?; rm -f "$1"; exit $rc' _ "$coe_wav" >/dev/null 2>&1 &
+			nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rc=$?; rm -f "$1"; exit $rc' _ \"$coe_wav\" >/dev/null 2>&1 &
 			LAUNCH_MODE="coeiroink"
 			LAUNCHED_SAY_PID="$!"
 			return
@@ -982,7 +982,7 @@ _launch_say() {
 					local device_index
 					device_index=$(_resolve_audio_device_index "$SAY_AUDIO_DEVICE") || {
 						_log "audio device解決失敗 → afplayフォールバック"
-						nohup bash -c 'trap "" INT TERM; afplay "$1"; rm -f "$1"' _ "$gtts_mp3" >/dev/null 2>&1 &
+						nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rm -f "$1"' _ \"$gtts_mp3\" >/dev/null 2>&1 &
 						LAUNCH_MODE="google_tts"
 						LAUNCHED_SAY_PID="$!"
 						return
@@ -991,7 +991,7 @@ _launch_say() {
 						_ "$gtts_mp3" "$device_index" >/dev/null 2>&1 &
 					LAUNCH_MODE="ffmpeg"
 				else
-					nohup bash -c 'trap "" INT TERM; afplay "$1"; rm -f "$1"' _ "$gtts_mp3" >/dev/null 2>&1 &
+					nohup bash -c 'trap \"\" INT TERM; afplay -d \"${SAY_AUDIO_DEVICE:-}\" \"$1\"; rm -f "$1"' _ \"$gtts_mp3\" >/dev/null 2>&1 &
 					LAUNCH_MODE="google_tts"
 				fi
 				LAUNCHED_SAY_PID="$!"

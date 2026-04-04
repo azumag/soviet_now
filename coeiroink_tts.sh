@@ -84,7 +84,7 @@ case "${1:-}" in
         TEXT="テスト音声です。COEIROINKが正常に動作しています。"
         synthesize "$TEXT" "$OUTPUT" || exit 1
         echo "Playing: $OUTPUT"
-        afplay "$OUTPUT"
+        afplay -d "${SAY_AUDIO_DEVICE:-}" "$OUTPUT"
         exit 0
         ;;
     -o)
@@ -119,7 +119,7 @@ fi
 synthesize "$TEXT" "$OUTPUT" || exit 1
 
 if [ "$OUTPUT" = "/tmp/coeiroink_$$.wav" ]; then
-    afplay "$OUTPUT"
+    afplay -d "${SAY_AUDIO_DEVICE:-}" "$OUTPUT"
     rm -f "$OUTPUT"
 else
     echo "Saved: $OUTPUT"
