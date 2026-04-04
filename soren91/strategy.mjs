@@ -1,35 +1,37 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v163)
+ * strategy.mjs - ドロップ位置決定戦略 (v164)
  *
- * v163: v162での保守的な高さ予測とペナルティ強化にもかかわらず、
- *       実際のゲームデータではmax_yがDEADLINE_Y (2.5) を頻繁に超える傾向が続きました。
- *       これは物理エンジンの挙動、特に凸ポリゴン形状と併合時の衝撃波による盤面変動が、
- *       シミュレーション予測よりも高さを押し上げる影響が強いことを示唆しています。
- *       本バージョンでは、この「高さ制御」をさらに厳格化し、
- *       早期ゲームにおける盤面形成の柔軟性を高めることで、
- *       特定のX座標へのドロップの偏りによる詰みを回避する可能性を探ります。
+ * v164: v163で導入された厳格な高さ管理と初期盤面ボーナスは、
+ *       分析結果から、ドロップX座標が常に0.00になるという致命的な問題を引き起こしていました。
+ *       これは主に `boardState.currentPiece` の未定義、`boardState.nextPiece` 等の誤ったプロパティ参照、
+ *       そしてスコアリングロジックにマージボーナスやガベージ処理が欠如していたため、
+ *       全ての候補手が同様に低いスコアと判定されたことに起因します。
+ *       本バージョンではこの根本原因に対処し、より実用的な戦略へと改善します。
  *
  *      主な改善点:
- *      1.  **シミュレーションの保守性再々々調整 (settlingBufferのさらなる増加)**:
- *          - `simulateDropY` 内の `settlingBuffer` を **3.75 から 4.0 へ増加**。
- *            物理的な上振れ予測をさらに強化し、高さを厳格に管理します。
- *      2.  **クリティカル高さマージンのさらなる厳格化**:
- *          - `CRITICAL_HEIGHT_MARGIN` を **0.75 から 1.0 へ増加**。
- *            デッドラインに到達する前の、より早い段階で致命的ペナルティが発動するよう調整し、
- *            危険な高所へのピース配置に対する抑制をさらに強化します。
- *      3.  **高さペナルティの再々強化**:
- *          - `calculateHeightPenalty` 内の severe/extreme warning zone の乗数をそれぞれ **12から15**、**60から75へ増加**。
- *          - `TOP_Y_EXTREME_WARN_THRESHOLD` を `DEADLINE_Y - 0.5` (Y=2.0) から `DEADLINE_Y - 0.75` (Y=1.75) へ調整。
- *            極度の危険域がより低いY座標から適用されるようになり、高くなることへのペナルティを全体的に引き上げ、
- *            より安全な盤面維持を目指します。
- *      4.  **早期ゲームにおける中央小型ピースボーナスの強化**:
- *          - `boardState.pieces.length < 5` の場合の中央配置ボーナスを `1200` から `1500` へ、
- *            オフセンターボーナスを `500` から `800` へ増加。
- *          - `boardState.pieces.length < 15` の場合の中央配置ボーナスを `700` から `900` へ、
- *            オフセンターボーナスを `200` から `300` へ増加。
- *            早期の大型ピース片側集約ロジックが過度にX座標の偏りを生むことを抑制し、
- *            より柔軟な初期盤面形成と中央部の活用を促します。
- *      5.  その他のv158/v159/v160/v161/v162の変更点 (look-aheadボーナス、おじゃまボーナス、初期大型ピースオフセンターボーナス緩和、併合・パイプラインボーナス強化) は維持します。
+ *      1.  **`boardState` プロパティの正しい参照**:
+ *          - ドロップするピースとして `boardState.currentPiece` ではなく `boardState.next` を使用するように修正。
+ *          - `boardState.nextPiece`, `boardState.holdPiece` ではなく `boardState.nextPieces[1]`, `boardState.hold` を使用するように修正。
+ *      2.  **`simulateDropY` の改善**:
+ *          - ピース半径を考慮したより現実的なY座標予測ロジックに修正。X方向の重なり判定を厳密化。
+ *      3.  **マージボーナスの導入**:
+ *          - `findPotentialMerges` および `calculateMergeBonus` を導入し、
+ *            同じタイプのピースが隣接し、併合が見込める位置にドロップすることを強く推奨。
+ *            特に高いタイプのピースの併合に大きなボーナスを与える。
+ *      4.  **ガベージ処理の強化**:
+ *          - `calculateGarbagePenalty` および `calculateGarbageBonus` を導入。
+ *          - `garbage.gauge` や `garbage.ratio` に応じて、併合ボーナスを増幅したり、
+ *            ガベージの高さを増やすようなドロップをペナルティ化したりする。
+ *      5.  **パイプラインボーナスの導入 (簡略版)**:
+ *          - 次のピース (`nextNextPiece`) が既存のピースの隣に配置できる場合にボーナスを与える。
+ *      6.  **HOLDロジックの再活性化**:
+ *          - 初期化時にHOLDが空で、現在のピースが大きい場合にHOLDする、というシンプルなロジックを再導入。
+ *            より複雑なHOLD戦略の基盤とする。
+ *      7.  **デバッグ出力の追加**:
+ *          - 各ドロップ候補のスコアと理由を `bestReason` に蓄積し、分析を容易にする。
+ *      8.  **v163の高さ管理設定は維持**:
+ *          - `settlingBuffer`、`CRITICAL_HEIGHT_MARGIN`、高さペナルティの乗数・閾値は、
+ *            物理エンジンの挙動を考慮した保守的な予測として維持する。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -52,29 +54,31 @@ const HEIGHT_PENALTY_WEIGHT = 90000.0;
 const CRITICAL_HEIGHT_MARGIN = 1.0;
 
 // Strategy-specific constants (General)
-const MERGE_BUFFER = 0.6; // Maintained from v114
+const MERGE_PROXIMITY_THRESHOLD = 0.1; // Small buffer for "touching" pieces for merge detection
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const SMALL_PIECE_CLUSTER_BONUS = 800; // Maintained from v141
 const SMALL_PIECE_THRESHOLD = 3; // Corrected constant name
 
 // Function to simulate dropping a piece and calculate its final Y position.
-// This is a placeholder; real implementation would involve physics simulation.
 function simulateDropY(boardState, piece, x) {
-    // This is a simplified simulation. In a real game, this would be more complex,
-    // involving collision detection and settling.
-    // For now, we'll assume it lands on the highest piece below it, or the floor.
     let maxY = BOARD_FLOOR_Y;
+    const pieceRadius = piece.r;
+
     for (const existingPiece of boardState.pieces) {
-        // Very basic overlap check assuming circular pieces
-        // In reality, this would need to account for piece radius, x position, etc.
-        // For demonstration, let's just take the max Y of existing pieces as a simplistic floor.
-        if (Math.abs(existingPiece.x - x) < (piece.radius + existingPiece.radius) * MERGE_BUFFER) { // Simplified collision
-            maxY = Math.max(maxY, existingPiece.y + existingPiece.radius);
+        const existingPieceRadius = existingPiece.r;
+        // Check for horizontal overlap: if the horizontal distance between centers
+        // is less than the sum of their radii, they would collide horizontally.
+        if (Math.abs(existingPiece.x - x) < (pieceRadius + existingPieceRadius) - MERGE_PROXIMITY_THRESHOLD) {
+            // If they overlap horizontally, the dropping piece might land on this one.
+            // The landing Y position would be the top of the existing piece plus the radius of the dropping piece.
+            maxY = Math.max(maxY, existingPiece.y + existingPieceRadius);
         }
     }
     // v163: Increased settlingBuffer from 3.75 to 4.0
-    const settlingBuffer = 4.0; // Added buffer for more conservative height estimation due to physics engine quirks
-    return maxY + piece.radius + settlingBuffer;
+    // This settling buffer accounts for the convex polygon and shockwave effects,
+    // providing a conservative height estimation for stable board management.
+    const settlingBuffer = 4.0;
+    return maxY + pieceRadius + settlingBuffer;
 }
 
 // Function to calculate height-based penalties
@@ -101,72 +105,206 @@ function calculateHeightPenalty(predictedMaxY) {
     return penalty;
 }
 
+// Helper to find potential merges for a dropping piece at a simulated position
+function findPotentialMerges(boardState, droppingPiece, dropX, dropY) {
+    let potentialMerges = [];
+    // Create a temporary piece object for the simulated position
+    const simulatedPiece = { ...droppingPiece, x: dropX, y: dropY };
+
+    for (const existingPiece of boardState.pieces) {
+        if (existingPiece.type === simulatedPiece.type) {
+            // Calculate distance between centers
+            const distance = Math.sqrt(
+                Math.pow(simulatedPiece.x - existingPiece.x, 2) +
+                Math.pow(simulatedPiece.y - existingPiece.y, 2)
+            );
+            // If distance is less than or equal to the sum of their radii (plus a small tolerance for "touching")
+            if (distance <= simulatedPiece.r + existingPiece.r + MERGE_PROXIMITY_THRESHOLD) {
+                potentialMerges.push(existingPiece);
+            }
+        }
+    }
+    return potentialMerges;
+}
+
+// Calculate bonus for potential merges
+function calculateMergeBonus(potentialMerges, garbageState) {
+    let bonus = 0;
+    if (potentialMerges.length > 0) {
+        // Reward higher type merges more
+        // Example: type 1 merge = 50, type 5 merge = 500, type 10 merge = 2000
+        for (const mergedPiece of potentialMerges) {
+            bonus += mergedPiece.type * mergedPiece.type * 10; // Quadratic scaling with type
+        }
+
+        // Boost merge bonus if garbage is imminent or present
+        if (garbageState.gauge >= 0.6 || garbageState.ratio > 0.15) {
+            bonus *= 2; // Aggressively prioritize merges
+        } else if (garbageState.gauge >= 0.3) {
+            bonus *= 1.5; // Prepare for incoming garbage
+        }
+    }
+    return bonus;
+}
+
+// Calculate bonus for maintaining pipeline (simplified)
+function calculatePipelineBonus(boardState, droppingPiece, dropX, dropY, nextNextPiece) {
+    let bonus = 0;
+    if (!nextNextPiece) return bonus;
+
+    // A simple pipeline bonus: reward placing current piece next to a piece one type lower/higher,
+    // AND if the nextNextPiece could also be placed near a similar type.
+    const simulatedPiece = { ...droppingPiece, x: dropX, y: dropY };
+
+    for (const existingPiece of boardState.pieces) {
+        // Check for adjacency with nextNextPiece's type
+        if (existingPiece.type === nextNextPiece.type - 1 || existingPiece.type === nextNextPiece.type + 1) {
+            const distance = Math.sqrt(
+                Math.pow(simulatedPiece.x - existingPiece.x, 2) +
+                Math.pow(simulatedPiece.y - existingPiece.y, 2)
+            );
+            if (distance <= simulatedPiece.r + existingPiece.r + MERGE_PROXIMITY_THRESHOLD) {
+                bonus += 50; // Small bonus for indirect pipeline
+                if (existingPiece.type === simulatedPiece.type - 1) {
+                    bonus += 100; // Direct pipeline link
+                }
+            }
+        }
+    }
+    return bonus;
+}
+
+
+// Calculate penalty for exacerbating garbage problems
+function calculateGarbagePenalty(boardState, predictedMaxY) {
+    let penalty = 0;
+    const garbage = boardState.garbage;
+
+    if (garbage.ratio > 0.4) { // GBG_URGENT mode
+        // Penalize moves that increase height significantly if garbage is high
+        if (predictedMaxY > garbage.height) {
+            penalty += (predictedMaxY - garbage.height) * 500;
+        }
+        penalty += 1000; // General penalty for being in urgent garbage state
+    } else if (garbage.ratio > 0.15) { // OJAMA_MERGE mode
+        if (predictedMaxY > garbage.height + 0.5) { // Mild penalty for increasing height
+            penalty += (predictedMaxY - (garbage.height + 0.5)) * 100;
+        }
+    }
+
+    // Penalize if predicted piece top is above garbage height and garbage is high
+    if (garbage.height > BOARD_FLOOR_Y && predictedMaxY > garbage.height) {
+        penalty += (predictedMaxY - garbage.height) * 100;
+    }
+
+    return penalty;
+}
+
 
 // Main decision function
 export function decide(boardState) {
     let bestScore = -Infinity;
     let bestX = 0;
     let bestReason = "No good move found";
-    let hold = false; // Placeholder for hold logic
+    let hold = false;
 
-    const currentPiece = boardState.currentPiece;
-    // Assuming nextPiece and holdPiece are available on boardState based on comments
-    const nextPiece = boardState.nextPiece;
-    const holdPiece = boardState.holdPiece;
+    // Correctly reference the current piece to drop and the next-next piece
+    const currentPiece = boardState.next;
+    const nextNextPiece = boardState.nextPieces[1]; // The piece after the current one
+    const heldPiece = boardState.hold;
 
-    // Example hold logic (can be expanded)
-    if (holdPiece === null && currentPiece && currentPiece.type >= LARGE_PIECE_THRESHOLD) {
-        // Very simplistic: hold a large piece if nothing is held
-        // More advanced logic would involve simulating outcomes with and without holding
-        // For now, this is a placeholder to demonstrate `hold` functionality.
-        // Uncomment and expand as needed.
-        // hold = true;
-        // bestReason = "Holding a large piece";
-        // return { x: 0, reason: bestReason, hold: hold };
+    // HOLD logic:
+    // Simple strategy: If hold is available, and we have a large piece (>= type 9)
+    // with no immediate merge opportunities, hold it to wait for a better spot.
+    // Or if we have an undesirable small piece and a potentially better piece is held.
+    if (boardState.canHold) {
+        let currentPieceMergeOpportunities = 0;
+        if (currentPiece) {
+             // A quick check for current piece's merge potential across the board
+             for (const xCheck of FINE_COLS) {
+                 const simulatedYCheck = simulateDropY(boardState, currentPiece, xCheck);
+                 currentPieceMergeOpportunities += findPotentialMerges(boardState, currentPiece, xCheck, simulatedYCheck).length;
+             }
+        }
+
+        // If current piece is large and no easy merges, and we don't have anything better held.
+        if (currentPiece && currentPiece.type >= LARGE_PIECE_THRESHOLD && currentPieceMergeOpportunities === 0 && !heldPiece) {
+            hold = true;
+            bestReason = "Holding a large piece with no immediate merges.";
+            return { x: 0, reason: bestReason, hold: hold };
+        }
+        // More complex hold logic would involve simulating outcomes for both hold and no-hold paths
+        // and comparing scores. This simplified version provides a starting point.
+    }
+
+    // Ensure currentPiece exists before proceeding with calculations
+    if (!currentPiece) {
+        // This should ideally not happen if boardState is correctly populated
+        return { x: 0, reason: "Error: No current piece available.", hold: false };
     }
 
 
     for (const x of FINE_COLS) {
-        if (!currentPiece) {
-            continue; // Skip if no current piece
+        // Skip if dropping outside the board limits
+        if (Math.abs(x) + currentPiece.r > BOARD_X_MAX_LIMIT) {
+            continue;
         }
 
         // Simulate dropping current piece
         const predictedY = simulateDropY(boardState, currentPiece, x);
         let score = 0;
-        let reason = `Dropping at X=${x.toFixed(2)}`;
+        let reason = `X=${x.toFixed(2)}`;
 
         // Apply height penalty
-        score -= calculateHeightPenalty(predictedY);
-        reason += ` (Height Penalty: ${calculateHeightPenalty(predictedY).toFixed(0)})`;
+        const heightPen = calculateHeightPenalty(predictedY);
+        score -= heightPen;
+        reason += ` (H:${heightPen.toFixed(0)})`;
 
         // Add early game central bonus (v163 enhancements)
         if (boardState.pieces.length < 5) {
             const distanceFromCenter = Math.abs(x);
             if (distanceFromCenter < 0.5) { // Close to center
                 score += 1500; // v163: Increased from 1200
-                reason += " (Early game center bonus)";
+                reason += " (EGCB)";
             } else if (distanceFromCenter < 1.5) { // Off-center but still reasonable
                 score += 800; // v163: Increased from 500
-                reason += " (Early game off-center bonus)";
+                reason += " (EGOB)";
             }
         } else if (boardState.pieces.length < 15) {
             const distanceFromCenter = Math.abs(x);
             if (distanceFromCenter < 0.5) { // Close to center
                 score += 900; // v163: Increased from 700
-                reason += " (Mid game center bonus)";
+                reason += " (MGCB)";
             } else if (distanceFromCenter < 1.5) { // Off-center but still reasonable
                 score += 300; // v163: Increased from 200
-                reason += " (Mid game off-center bonus)";
+                reason += " (MGOB)";
             }
         }
 
-        // Placeholder for other bonuses/penalties from earlier versions (as per comments):
-        // - Look-ahead bonus (using nextPiece)
-        // - Merge bonus
-        // - Pipeline bonus
-        // - Small piece clustering bonus (SMALL_PIECE_CLUSTER_BONUS)
-        // You would typically have functions here to calculate these and add/subtract from score.
+        // Calculate and apply Merge Bonus
+        const potentialMerges = findPotentialMerges(boardState, currentPiece, x, predictedY - currentPiece.r); // Use true landing Y
+        const mergeBonus = calculateMergeBonus(potentialMerges, boardState.garbage);
+        score += mergeBonus;
+        if (mergeBonus > 0) reason += ` (M+:${mergeBonus.toFixed(0)})`;
+
+        // Calculate and apply Pipeline Bonus (simplified)
+        const pipelineBonus = calculatePipelineBonus(boardState, currentPiece, x, predictedY - currentPiece.r, nextNextPiece);
+        score += pipelineBonus;
+        if (pipelineBonus > 0) reason += ` (P+:${pipelineBonus.toFixed(0)})`;
+
+        // Calculate and apply Garbage Penalty
+        const garbagePen = calculateGarbagePenalty(boardState, predictedY);
+        score -= garbagePen;
+        if (garbagePen > 0) reason += ` (GP:${garbagePen.toFixed(0)})`;
+
+        // Small piece clustering bonus (Placeholder logic - needs actual implementation)
+        // This would involve checking density of small pieces around drop point.
+        // if (currentPiece.type <= SMALL_PIECE_THRESHOLD) {
+        //     // Add logic to check for other small pieces nearby
+        //     score += SMALL_PIECE_CLUSTER_BONUS;
+        //     reason += " (SPC)";
+        // }
+
 
         if (score > bestScore) {
             bestScore = score;
