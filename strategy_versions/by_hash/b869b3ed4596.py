@@ -47,6 +47,7 @@ Game Overview:
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
+             ~~piece_count congestion penalty~~ v518: REMOVED — protected strategy (median 12789) achieves better without
 
 
 Phases (determined by board max Y):
@@ -64,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v518: remove piece_count congestion penalty — match protected strategy (median 12789)
+     # Protected strategy achieves +4% better median without any congestion penalty.
+     # Penalty overwhelmed guidance at moderate pc, causing HEIGHT_CONTROL scatter.
+     # Fixes rollback failure mode: HEIGHT_CONTROL scatter from congestion noise
+     # refs: protected_e6f534c37e28, batch_summary.txt (HEIGHT_CONTROL 20.2% low),
+     #       game_history/20260404_234441_score1126.jsonl, last_rollback_analysis.md
      # v517: add NEAR merge cross-deadline penalty (-600) — utilize unutilized crosses_deadline for NEAR
      # Per-candidate crosses_deadline was only used for NO-merge. NEAR at deadline that crosses
      # deadline has 31.5% failure risk leaving piece at deadline height. Penalty differentiates
@@ -1623,30 +1630,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- v361/v470: piece_count congestion penalty -----
-        # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
-        # piece_count is the key predictor of final score, not max_y.
-        # When board is congested, penalize high landing positions to encourage tighter
-        # placement that enables merges and reduces piece_count.
-        # This is NOT landing_y-only — it combines piece_count state with landing position.
-        # No reactive_pair_count guard — works at ALL reactive levels (postmortem constraint).
-        # v502: revert from v499 levels (threshold 28, mult 35, offset 27) back to v470
-        # (threshold 30, mult 30, offset 29). v499 was too aggressive: at pc=35, y=2.0,
-        # congestion=490 overwhelmed proximity guidance (9.6b ~333, 5.6 ~138), preventing
-        # strategic NO-merge placement. Protected strategy (median 12789) has NO congestion
-        # penalty — guidance alone is sufficient when not overwhelmed by penalty noise.
-        # Evidence: worst game T53-60 pc=37→44 with all guidance suppressed by congestion.
-        # At pc=30, y=1.0: v470=30 (threshold). At pc=35, y=2.0: 360. At pc=40, y=2.0: 660.
-        # Still below NEAR merge (600) at moderate pc — preserves merges.
-        # Advice: "盤面の高さ余裕を優先的に管理し、駒の積み上げペースを抑制する" (akai235).
-        # refs: tmp/state/last_rollback_postmortem.md (pc 41→1060 vs 21→4645),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 17.3%, merge_rate gap),
-        #       advice.md (akai235, kbb246), strategy_versions/protected/protected_e6f534c37e28,
-        #       game_history/20260404_042431_score0571.jsonl T53-60, tmp/change_log.txt (v470, v499)
-        if piece_count >= 30 and landing_y > -1.0:
-            # v470: threshold 30, multiplier 30, offset 29. v502 reverts from v499.
-            congestion_penalty = (piece_count - 29) * landing_y * 30.0
-            score -= congestion_penalty
+        # ----- v518: piece_count congestion penalty REMOVED — match protected strategy (median 12789) -----
+        # Protected strategy (median 12789, +4% better) achieves better performance WITHOUT any
+        # piece_count-based congestion penalty. The penalty overwhelmed guidance bonuses at
+        # moderate pc (30-38), preventing strategic NO-merge placement and forcing HEIGHT_CONTROL
+        # scatter. At pc=35, y=2.0: congestion was 360, overwhelming ALL guidance (~200-300 max),
+        # including axis 9.6b proximity (~294), axis 5.6 growth center (~198), axis 9.7 pipeline (~80).
+        # This caused HEIGHT_CONTROL overuse: 20.2% in low-score games vs 15.0% in high-score.
+        # At extreme danger (deadline + rp>=3), the -9000 NO-merge penalties (axis 9.6 + 8.8)
+        # dominate regardless — congestion was irrelevant there. Removal only affects moderate
+        # danger where guidance CAN compete, redirecting pieces to strategic positions that
+        # enable future merges and reduce piece_count organically.
+        # Height penalty alone provides sufficient height differentiation: at HIGH phase,
+        # y=2.0→y=1.0 diff = 90pt (below guidance ~200). At CRITICAL, height_mult relaxations
+        # (v498 disabled) are dormant anyway — NO-merge penalties dominate.
+        # v499 strengthening caused rollback. v502 partial revert didn't fix the core issue.
+        # Full removal aligns with the validated protected strategy approach.
+        # Fixes rollback failure mode: HEIGHT_CONTROL scatter from congestion overwhelming guidance
+        # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no congestion),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.2% low vs 15.0% high, avg_delta=0.8),
+        #       game_history/20260404_234441_score1126.jsonl T77-84 (rp=7.8 avg, 0 merges in 7t),
+        #       game_history/20260404_235511_score1044.jsonl T76 (pc=44, no merge path),
+        #       game_history/20260404_235919_score2381.jsonl T102-107 (5t NO-merge cascade),
+        #       tmp/state/last_rollback_analysis.md (anchor comp=12012.2, current comp=10766.3),
+        #       tmp/change_log.txt (v499→v502 congestion history, v504 relaxation removal),
+        #       strategy.py.staging (v470 congestion values), advice.md (akai235)
 
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
         # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
