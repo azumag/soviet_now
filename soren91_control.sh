@@ -354,23 +354,29 @@ _soren91_start_capitalism_corner() {
 _soren91_generate_strategy_explanation() {
 	local strategy_header="$1"
 	[ -n "$strategy_header" ] || return 1
-	_soren91_generate_text_with_shared_fallback "strategy_explanation" "あなたはメリケンAI（アメリカ製AI）。ちょっとひねくれた性格で、素直に物事を認めない。自信満々に見せかけつつ内心不安、褒める時も「まあ悪くないんじゃないですか」と斜に構える。皮肉・自虐・負け惜しみが自然に出る。以下は、元のソ連ゲーム用 strategy.py ではなく、ソ連ゲーム91（対戦版）専用の soren91/strategy.mjs のヘッダーコメントです。
-この「91用戦略」の特徴だけを、視聴者向けに2〜3文で簡潔に、ひねくれた口調で解説してください。専門用語は噛み砕いてください。
-元のソ連ゲームの戦略や strategy.py には触れないこと。T1、ULTRA、HOLD、balance などの語は、91の盤面制御・置き方のクセとして説明すること。
-【最重要】出力は自然な日本語のみ。英語の文、英語だけの箇条書き、ローマ字だけの文は禁止。アメリカンなキャラクターでも話す言語は日本語です。
-出力はトーク本文のみ（カッコや注釈なし）。
-
-${strategy_header}" "gemini,opencode"
+	local prompt_file="$SOREN91_DIR/prompts/explain_strategy.md"
+	if [ ! -f "$prompt_file" ]; then
+		log "[SOREN91] Warning: prompt file not found: $prompt_file"
+		return 1
+	fi
+	local prompt_text
+	prompt_text=$(cat "$prompt_file")
+	prompt_text="${prompt_text//\{\{STRATEGY_HEADER\}\}/$strategy_header}"
+	_soren91_generate_text_with_shared_fallback "strategy_explanation" "$prompt_text" "gemini,opencode"
 }
 
 _soren91_rewrite_strategy_explanation_to_japanese() {
 	local raw_text="$1"
 	[ -n "$raw_text" ] || return 1
-	_soren91_generate_text_with_shared_fallback "strategy_explanation_rewrite" "以下の戦略解説を、意味を変えずに自然な日本語の話し言葉2〜3文へ言い換えてください。
-メリケンAIのひねくれた感じ（皮肉・強がり・斜に構えた感じ）は残してよいですが、英語の文は禁止です。
-出力は日本語のトーク本文のみ（カッコや注釈なし）。
-
-${raw_text}" "gemini,opencode"
+	local prompt_file="$SOREN91_DIR/prompts/explain_strategy_japanese.md"
+	if [ ! -f "$prompt_file" ]; then
+		log "[SOREN91] Warning: prompt file not found: $prompt_file"
+		return 1
+	fi
+	local prompt_text
+	prompt_text=$(cat "$prompt_file")
+	prompt_text="${prompt_text//\{\{STRATEGY_EXPLANATION\}\}/$raw_text}"
+	_soren91_generate_text_with_shared_fallback "strategy_explanation_rewrite" "$prompt_text" "gemini,opencode"
 }
 
 soren91_start() {

@@ -34,6 +34,7 @@ const TWITCH_CHAT_SCRIPT = join(PARENT_DIR, 'twitch_chat.sh');
 const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
 const RANKING_COMMENT_LAST_PROMPT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_prompt.txt');
 const RANKING_COMMENT_LAST_INPUT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_input.json');
+const TTS_TIMEOUT_MS = 180000;
 
 const META_LINE_PATTERNS = [
   /^(assistant|analysis|final|tool_call|tool_result)$/i,
@@ -330,7 +331,7 @@ function speakComment(comment, contextLabel = 'soren91:comment') {
         SAY_VOICEVOX_SPEAKER_OVERRIDE: voicevoxSpeaker,
         SAY_CONTEXT_LABEL: contextLabel,
       },
-      timeout: 10000,
+      timeout: TTS_TIMEOUT_MS,
     }, (err) => {
       if (err) console.log(`[ranking_comment] TTS error: ${err.message}`);
       try { unlinkSync(tmpFile); } catch {}
