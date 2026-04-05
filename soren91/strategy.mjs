@@ -1,39 +1,32 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v178)
+ * strategy.mjs - ドロップ位置決定戦略 (v179)
  *
- * v178: v177の改善方針を引き継ぎつつ、ゲーム分析で示された「Rankスコアの低さ」と
- *       「生存ターン数とRankの乖離」という課題に対し、より積極的に併合を促進する調整を行います。
- *       特に、併合ボーナスとパイプラインボーナス、小ピースの触媒ボーナスを強化し、
- *       大型ピースの片側集約をさらに強く推奨します。
- *       また、盤面混雑度ペナルティはv177の調整を維持し、高さ管理ペナルティを強化して、
- *       デッドライン到達によるゲームオーバーをより厳しく回避するようにします。
+ * v179: v178の改善方針（併合促進、大型ピース集約）を維持しつつ、ゲーム分析で頻繁に発生していた
+ *       「No valid move found, defaulting to center (critical error).」の問題に対処します。
+ *       このエラーは、高さ管理のペナルティが過度に厳しいため、全ての有効なドロップ位置が
+ *       「無限大のペナルティ」として評価され、選択肢がなくなることで発生していました。
+ *       これにより、ゲームオーバーを避けるための保守的な判断が、かえってゲームの早期終了を招く可能性があります。
  *
  *       主な改善点:
- *       1.  **高さ管理ペナルティの強化**:
- *           - `SETTLING_BUFFER` を `0.35` から `0.40` に微増。
- *             物理エンジンの不確実性（着地後の回転、衝撃波）を考慮し、シミュレーション上の最高Y座標が
- *             実際よりもやや高めに出るように調整し、早めの高さ警戒を促します。
- *           - `CRITICAL_HEIGHT_MARGIN` を `0.7` から `0.8` に変更。
- *             デッドラインに近い領域でのペナルティ発生をさらに前倒しし、より安全な高さ維持を優先します。
- *           - `HEIGHT_PENALTY_WEIGHT` を `500000.0` から `750000.0` に増額。
- *             高さペナルティ全体の重みを強化し、高すぎる位置へのドロップをより厳しく抑制します。
- *       2.  **併合判定の緩和とボーナスの強化**:
- *           - `MERGE_PROXIMITY_THRESHOLD` はv177の`0.15`を維持。
- *           - `calculateMergeBonus` 内の二次関数スケール乗数 `30` から `40` に増額。
- *             高いtypeの併合をさらに強く推奨し、積極的なスコア獲得を促します。
- *           - `calculatePipelineBonus` 内の直接チェーンボーナスを `750` から `1000` に、
- *             間接パイプラインボーナスを `250` から `350` に増額。
- *             将来の併合連鎖を意識した配置に強力なインセンティブを与えます。
- *           - `GARBAGE_CLEAR_MERGE_BONUS_LOW_Y` はv177の`1000`を維持。
- *       3.  **小ピースの触媒利用ボーナスの強化**:
- *           - `SMALL_PIECE_CATALYST_BONUS` を `700` から `850` に増額。
- *             小ピースが盤面を攪拌し、既存ピースの併合機会を創出する効果をより高く評価します。
- *       4.  **盤面混雑度ペナルティの調整**:
- *           - `CROWDING_PENALTY_START_THRESHOLD` と `CROWDING_PENALTY_PER_PIECE` はv177の調整を維持。
- *       5.  **大型ピース片側集約の強化**:
- *           - `LARGE_PIECE_AGGREGATION_BONUS` と `LARGE_PIECE_AGGREGATION_PENALTY` はv177の調整を維持。
- *       6.  **既存ロジックの維持**:
- *           - HOLDメカニクス、おじゃまブロック対策などは維持されます。
+ *       1.  **高さ管理ペナルティの緩和（優先度高）**:
+ *           - `DEADLINE_ABSOLUTE_AVOID_THRESHOLD` に到達しても `Infinity` ではなく、
+ *             非常に大きな負のスコアを返すように変更。これにより、選択肢が全くなくなる状況を避け、
+ *             致命的だが「あり得る」選択肢を常に残します。
+ *           - `SETTLING_BUFFER` を `0.40` から `0.35` に戻す。
+ *             物理エンジンの不確実性に対するバッファをわずかに減らし、過剰な高さ評価を抑制します。
+ *           - `CRITICAL_HEIGHT_MARGIN` を `0.8` から `0.7` に戻す。
+ *             クリティカルな高さペナルティの発生をデッドラインにより近づけ、選択肢の幅を広げます。
+ *           - `HEIGHT_PENALTY_WEIGHT` を `750000.0` から `500000.0` に戻す。
+ *             高さペナルティ全体の重みを調整し、他のボーナスとのバランスを取ります。
+ *       2.  **併合判定、パイプライン、小ピース触媒、大型ピース集約ボーナス**:
+ *           - v178で強化されたこれらのボーナスは維持し、積極的なスコア獲得と高type併合を継続して推奨します。
+ *       3.  **おじゃまブロック対策**:
+ *           - v178のロジックを維持。
+ *       4.  **既存ロジックの維持**:
+ *           - HOLDメカニクスなどは維持されます。
+ *
+ *       これらの調整により、高さ管理によるゲームオーバー回避と、より積極的な併合による高スコア獲得のバランスを改善し、
+ *       安定した生存ターン数とRankスコアの向上を目指します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -43,35 +36,35 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 3.32;                  // Actual game over Y coordinate
-const CRITICAL_HEIGHT_MARGIN = 0.8; // v178: Increased from 0.7. Critical penalty starts when top is 0.8 below deadline
-const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.0; // v175: Changed from DEADLINE_Y - 0.75. Extreme warning when top is 1.0 below deadline
-const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Severe warning when top is 1.0 below deadline
-const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;     // Warning penalty when top is 2.0 below deadline
+const CRITICAL_HEIGHT_MARGIN = 0.7; // v179: Reverted from 0.8 to 0.7.
+const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.0;
+const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0;
+const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;
 
-const HEIGHT_PENALTY_WEIGHT = 750000.0; // v178: Increased from 500000.0
-const SETTLING_BUFFER = 0.40; // v178: Increased from 0.35. Accounts for physics uncertainty.
+const HEIGHT_PENALTY_WEIGHT = 500000.0; // v179: Reverted from 750000.0.
+const SETTLING_BUFFER = 0.35; // v179: Reverted from 0.40 to 0.35.
 
-// v172: Absolute avoid threshold, further tightened from 0.4 to 0.1
-const DEADLINE_ABSOLUTE_AVOID_THRESHOLD = DEADLINE_Y - 0.1; // If predictedTopY (with small settling buffer) is above this, virtually GUARANTEES a game over.
+// v179: Changed from absolute avoidance (Infinity) to a very large penalty.
+const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000; // Very large penalty instead of Infinity
 
-// Merge and Pipeline Bonuses
-const MERGE_PROXIMITY_THRESHOLD = 0.15; // v177 maintained
-const MERGE_BONUS_SCALE_FACTOR = 40; // v178: Increased from 30.
-const PIPELINE_BONUS_DIRECT_CHAIN = 1000; // v178: Increased from 750.
-const PIPELINE_BONUS_INDIRECT_CHAIN = 350; // v178: Increased from 250.
-const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 1000; // v177 maintained
+// Merge and Pipeline Bonuses (v178 maintained)
+const MERGE_PROXIMITY_THRESHOLD = 0.15;
+const MERGE_BONUS_SCALE_FACTOR = 40;
+const PIPELINE_BONUS_DIRECT_CHAIN = 1000;
+const PIPELINE_BONUS_INDIRECT_CHAIN = 350;
+const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 1000;
 
-// Small Piece Catalyst
-const SMALL_PIECE_CATALYST_BONUS = 850; // v178: Increased from 700.
+// Small Piece Catalyst (v178 maintained)
+const SMALL_PIECE_CATALYST_BONUS = 850;
 
-// Crowding Penalty
-const CROWDING_PENALTY_START_THRESHOLD = 20; // Example value, adjust as needed
-const CROWDING_PENALTY_PER_PIECE = 50; // Example value, adjust as needed
+// Crowding Penalty (v177 maintained)
+const CROWDING_PENALTY_START_THRESHOLD = 20;
+const CROWDING_PENALTY_PER_PIECE = 50;
 
-// Large Piece Aggregation
-const LARGE_PIECE_AGGREGATION_BONUS = 1500; // Example value, adjust as needed
-const LARGE_PIECE_AGGREGATION_PENALTY = 1000; // Example value, adjust as needed
-const LARGE_PIECE_TYPE_THRESHOLD = 9; // Type 9+ are considered large
+// Large Piece Aggregation (v177 maintained)
+const LARGE_PIECE_AGGREGATION_BONUS = 1500;
+const LARGE_PIECE_AGGREGATION_PENALTY = 1000;
+const LARGE_PIECE_TYPE_THRESHOLD = 9;
 
 /**
  * Helper to get piece radius based on type. (Approximation)
@@ -220,9 +213,9 @@ function calculateHeightPenalty(predictedY, pieceR) {
     const topOfPiece = predictedY + pieceR;
     let penalty = 0;
 
-    if (topOfPiece >= DEADLINE_ABSOLUTE_AVOID_THRESHOLD) {
-        // Absolute avoidance
-        return Infinity;
+    // v179: Replaced absolute avoidance with a very large penalty
+    if (topOfPiece >= (DEADLINE_Y - 0.1)) { // This threshold corresponds to DEADLINE_ABSOLUTE_AVOID_THRESHOLD implicitly
+        return DEADLINE_ABSOLUTE_AVOID_PENALTY;
     }
 
     const heightFromDeadline = DEADLINE_Y - topOfPiece;
@@ -354,20 +347,25 @@ export function decide(boardState) {
 
 
     for (const { piece: pieceToDrop, isHeld } of candidatePieces) {
+        // Radius of the piece to be dropped. Using approximation from getPieceRadius.
+        const pieceR = getPieceRadius(pieceToDrop.type);
+
         for (const x of FINE_COLS) {
             // Check if piece would be outside bounds
-            if (x - pieceToDrop.r < -BOARD_X_MAX_LIMIT || x + pieceToDrop.r > BOARD_X_MAX_LIMIT) {
+            if (x - pieceR < -BOARD_X_MAX_LIMIT || x + pieceR > BOARD_X_MAX_LIMIT) {
                 continue; // Skip if piece would be outside walls
             }
 
             const predictedY = predictLandingY(boardState, x, pieceToDrop);
             let currentScore = 0;
 
-            const heightPenalty = calculateHeightPenalty(predictedY, pieceToDrop.r);
-            if (heightPenalty === Infinity) {
-                continue; // Absolutely avoid this position
+            const heightPenalty = calculateHeightPenalty(predictedY, pieceR);
+            // v179: Instead of `if (heightPenalty === Infinity)`, check for the new penalty value
+            if (heightPenalty === DEADLINE_ABSOLUTE_AVOID_PENALTY) {
+                currentScore += heightPenalty; // Add the large negative penalty
+            } else {
+                currentScore -= heightPenalty;
             }
-            currentScore -= heightPenalty;
 
             currentScore += calculateMergeBonus(boardState, x, pieceToDrop, predictedY);
             currentScore += calculatePipelineBonus(boardState, x, pieceToDrop, predictedY);
@@ -389,8 +387,11 @@ export function decide(boardState) {
         }
     }
 
-    // Fallback if no good move found (shouldn't happen with the constant score addition)
-    if (bestScore === -Infinity) {
+    // Fallback if no good move found (shouldn't happen with the constant score addition
+    // AND the change to DEADLINE_ABSOLUTE_AVOID_PENALTY ensuring a path is always found,
+    // even if it's a very bad one).
+    // The "critical error" reason should now ideally disappear from logs unless something else is very wrong.
+    if (bestScore === -Infinity) { // This condition should theoretically not be hit anymore if logic is sound.
         reason = "No valid move found, defaulting to center (critical error).";
         bestX = 0.0;
         useHold = false;
