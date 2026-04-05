@@ -438,7 +438,8 @@ _enqueue_pending_cycle_radio_json() {
 	local radio_type="$1"
 	local queue_file=""
 	mkdir -p "$PENDING_CYCLE_RADIO_DIR" 2>/dev/null || true
-	queue_file=$(mktemp "$PENDING_CYCLE_RADIO_DIR/pending_${radio_type}_XXXXXX.json") || return 1
+	queue_file=$(mktemp "$PENDING_CYCLE_RADIO_DIR/pending_${radio_type}_XXXXXX") || return 1
+	mv "$queue_file" "${queue_file}.json" && queue_file="${queue_file}.json"
 	printf '%s\n' "$2" >"$queue_file" || {
 		rm -f "$queue_file" 2>/dev/null || true
 		return 1
@@ -459,6 +460,7 @@ data = {
     'game_num': '$game_num',
     'best_score': '$best_score',
 }
+print(json.dumps(data))
 " 2>/dev/null) || return 1
 	queue_file=$(_enqueue_pending_cycle_radio_json "improvement" "$payload") || return 1
 	log "[CYCLE_RADIO] Pending improvement radio saved: $(basename "$queue_file")"
@@ -477,6 +479,7 @@ data = {
     'from_hash': '$from_hash',
     'to_hash': '$to_hash',
 }
+print(json.dumps(data))
 " 2>/dev/null) || return 1
 	queue_file=$(_enqueue_pending_cycle_radio_json "rollback" "$payload") || return 1
 	log "[CYCLE_RADIO] Pending rollback radio saved: $(basename "$queue_file")"
