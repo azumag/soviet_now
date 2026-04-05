@@ -63,41 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v527: suppress non-height guidance at rp>=3+NO (death spiral mode) — match protected strategy
-     # Protected strategy (median 12789) has no axes 5.5, 5.6, 9.6b — height is sole differentiator at rp>=3+NO.
-     # Worst game (score 790) T56-T63: rp=3-5, merge_grade=NO, max_y 0.94→3.64, 0 merges in 8 turns.
-     # T59: AVOID_BLOCK_NEXTNEXT (-400) pushed piece to x=-3.0 (edge scatter) during death spiral.
-     # At rp>=3+NO, axis 8.8 (-4500 flat) dominates all candidates equally. Height penalty is the
-     # only meaningful differentiator, but additive bonuses (proximity ~100-160, growth center ~80-160,
-     # AVOID_BLOCK_NEXTNEXT -400) override small height differences (~90/unit in HIGH phase).
-     # Fix: suppress axes 5.5, 5.6, 9.6b at rp>=3+NO. Only height penalty differentiates candidates.
-     # Fixes rollback failure mode: additive bonus noise overriding height differentiation in death spiral
-     # refs: game_history/20260405_104511_score0911.jsonl T56-T63 (death spiral, AVOID_BLOCK edge scatter),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no 5.5/5.6/9.6b),
-     #       tmp/batch_summary.txt (HEIGHT_CONTROL 17.2%), tmp/improve_brief.md (p25 focus),
-     #       tmp/state/last_rollback_postmortem.md (v518 validated: guidance without congestion noise)
-     # v526: early-game center concentration — prevent edge scatter in building phase
-     # Worst game (score=753): pieces scattered to x=±3.0 from turn 1 (type 11 at x=-3.0, type 9 at x=-3.0 T11).
-     # Edge placements create scattered reactive pairs that never merge. Best game (score=2718) concentrates center.
-     # When pc<=12 and merge_grade=NO, add 60*(1-abs(x)/2.0) center bonus. Weaker than merge (600-1200)
-     # but overcomes LOW height diffs (~20pt/unit at mult=0.4). At x=0 vs x=3: +60 diff.
-     # advice: "孤立配置を避けて中央集約を優先する" (kbb246)
-     # Fixes: edge scatter in early building → scattered reactive pairs → merge drought → early death
-     # refs: game_history/20260405_093922_score0753.jsonl T1/T11/T18, game_history/20260405_094424_score2718.jsonl,
-     #       tmp/batch_summary.txt (HEIGHT_CONTROL 17.3% low vs 14.6% high), advice.md (kbb246),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-     # v525: remove piece_count congestion penalty — match protected strategy (median 12789, no congestion)
-     # Protected strategy achieves +4% better median WITHOUT any congestion penalty. At pc=33, landing_y=1.5:
-     # congestion=(33-29)*1.5*30=180 overwhelms stacking bonus (~200), causing HEIGHT_CONTROL to win over
-     # strategic stacking/proximity placement. Without congestion, stacking (~200) > height penalty (~126) →
-     # pipeline guidance works. Current batch HEIGHT_CONTROL: 20.1% low-score vs 14.0% high-score (6.1pp gap).
-     # v518 previously removed this and was validated, but got rolled back as collateral in v522 cascade.
-     # Fixes rollback failure mode: HEIGHT_CONTROL scatter from congestion penalty overwhelming guidance at moderate pc
-     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no congestion),
-     #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.1% low vs 14.0% high),
-     #       tmp/state/last_rollback_postmortem.md (v518 was correct, collateral rollback),
-     #       tmp/change_log.txt (v518 validated: "Penalty overwhelmed guidance at moderate pc"),
-     #       game_history/20260405_083325_score0814.jsonl (worst game, mid-game scatter at pc=33+)
      # v471: restore +300 SAME_TYPE_STACK_MERGE_PRIORITY — match protected strategy (median 12789)
      # Protected strategy achieves +4% better median with +300 flat bonus at rp==0, danger==0.
      # v459 removed +300 claiming 9.6b made it redundant, But batch data shows HEIGHT_CONTROL 19.6%
@@ -1309,11 +1274,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # the postmortem warning about "additive bonus accumulation masking height
                     # differentiation" that occurred when rp_density_scale went up to 2.5x.
                     # rp_guidance_suppressed still used for congestion state detection:
-                    # v527: added rp>=3+NO — at death spiral, height is sole differentiator
                     rp_guidance_suppressed = (
                         (max_y >= 3.0 and deadline_crossed)
                         or (reactive_pair_count >= 5 and max_y >= 2.5)
-                        or (reactive_pair_count >= 3 and merge_grade == "NO")  # v527
                     )
                     if rp_guidance_suppressed:
                         proximity_bonus = 0.0
@@ -1465,16 +1428,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- v361: piece_count congestion penalty (v525: REMOVED) -----
-        # v525: removed — protected strategy (median 12789, +4% better) has no congestion penalty.
-        # At pc=33, landing_y=1.5: congestion=(33-29)*1.5*30=180 overwhelmed stacking bonus (~200),
-        # causing HEIGHT_CONTROL to win over strategic stacking/proximity placement.
-        # Current batch: HEIGHT_CONTROL 20.1% low-score vs 14.0% high-score (6.1pp gap).
-        # Without congestion, stacking (~200) > height penalty (~126) → pipeline guidance works.
-        # v518 previously removed this and was validated, but got rolled back as collateral in v522 cascade.
-        # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no congestion),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.1% low vs 14.0% high),
-        #       tmp/state/last_rollback_postmortem.md (v518 was correct, collateral rollback)
+        # ----- v361: piece_count congestion penalty -----
+        # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
+        # piece_count is the key predictor of final score, not max_y.
+        # When board is congested (piece_count >= 30), penalize high landing positions
+        # to encourage tighter placement that enables merges and reduces piece_count.
+        # This is NOT landing_y-only — it combines piece_count state with landing position.
+        # No reactive_pair_count guard — works at ALL reactive levels (postmortem constraint).
+        # refs: tmp/state/last_rollback_postmortem.md (piece_count 41→1060 vs 21→4645),
+        #       tmp/batch_summary.txt (high-score merge_rate=38.6% vs low-score 33.6%)
+        if piece_count >= 30 and landing_y > -1.0:
+            # v365: increased multiplier 8→20 — old value was too weak to affect behavior
+            # (piece_count=37, landing_y=1.0: 64 vs height diff ~140). New value provides
+            # meaningful tie-breaking for axis 8.8 uniform penalty without overriding merges.
+            congestion_penalty = (piece_count - 29) * landing_y * 30.0  # v470: 20→30
+            score -= congestion_penalty
 
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
         # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
@@ -1529,17 +1497,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # ----- v526: early-game center concentration (prevent edge scatter) -----
-        # Worst game T1: type 11 at x=-3.0 (no center preference existed). With empty board,
-        # all positions have same height in LOW phase (mult=0.4), so height doesn't differentiate.
-        # Add center bonus only when pc<=12 and merge_grade=NO (building phase, no merge to override).
-        # Magnitude: 60*(1-abs(x)/2.0). At x=0: +60, x=1: +30, x=2: 0, x=3: 0.
-        # Below merge bonuses (600-1200) but above LOW height diffs (~20pt per unit y).
-        # Best game concentrates center from start; worst scatters to edges.
-        if piece_count <= 12 and piece_count > 0 and merge_grade == "NO":
-            center_concentration = max(0, 1.0 - abs(x) / 2.0) * 60.0
-            score += center_concentration
-
         # ----- evaluation axis 5: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
@@ -1561,12 +1518,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # 着地位置がnextNext typeのピースの上になる場合
                     horiz_dist = abs(x - p["x"])
                     if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                        # v527: suppress at rp>=3+NO — in death spiral, height management
-                        # is more important than preserving future merge opportunities.
-                        # T59 worst game: AVOID_BLOCK pushed to x=-3.0 during death spiral.
-                        if not (reactive_pair_count >= 3 and merge_grade == "NO"):
-                            score -= 400.0  # 未来の併合機会を潰すためのペナルティ
-                            reasons.append("AVOID_BLOCK_NEXTNEXT")
+                        score -= 400.0  # 未来の併合機会を潰すためのペナルティ
+                        reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
@@ -1615,10 +1568,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         congestion_scale = 1.0 + (piece_count - 28) * 0.08
                         proximity *= min(congestion_scale, 2.0)
                     if proximity > 0:
-                        # v527: suppress at rp>=3+NO — in death spiral, height management
-                        # overrides growth center guidance. Protected strategy has no 5.6.
-                        if not (reactive_pair_count >= 3 and merge_grade == "NO"):
-                            score += proximity
+                        score += proximity
 
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
@@ -1708,27 +1658,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     reasons.append("CHAIN_MERGE")
 
         # ----- evaluation axis 7: early game merge priority -----
-        # v524: extend EARLY_MERGE_PRIORITY from pc<=12 to pc<=16 — strengthen early merge foundation
-        # Current batch: low-score HEIGHT_CONTROL 19.2% vs high-score 13.8% (5.4pp gap).
-        # Low-score games die at turns 61-83, suggesting poor early type-level foundation.
-        # NEAR_MERGE_EARLY_MERGE_PRIORITY avg_score_delta=24.2 (high value per occurrence).
-        # NEAR success rate 68.5%, and at pc<=16 board is typically LOW phase (max_y<0.8)
-        # where failed NEAR has low risk — board still has recovery room.
-        # Extending from pc=12 to pc=16 covers ~4 more turns of strong NEAR encouragement
-        # during the critical LOW→MEDIUM transition, building higher type levels earlier.
-        # At pc=16: 8 pair-merges produce type 5+ pieces vs type 3+ at pc=12 only,
-        # giving stronger mid-game merge pipeline. Evidence: worst game (score=600, 61 turns)
-        # had reactive_avg=6.4 in final 8 turns but only 4 merge_hits — type levels too low.
-        # Best game (score=4116, 156 turns) had structured stacking from early NEAR merges.
-        # Safe: +1000 at pc=13-16 doesn't override DIRECT merge (+1200) or axis 8.8 (-4500).
-        # refs: tmp/batch_summary.txt (HEIGHT_CONTROL 19.2% low, NEAR avg_delta=24.2),
-        #       game_history/20260405_071656_score0600.jsonl (worst, 61t, poor foundation),
-        #       game_history/20260405_073630_score4116.jsonl (best, 156t, structured early merges),
-        #       tmp/improve_brief.md (p25 focus, early foundation → mid-game survival)
-        # Fixes: HEIGHT_CONTROL overuse in early-to-mid transition → poor type foundation → early death
-        if piece_count <= 16 and merge_grade == "NEAR":
+        # 初期12ターンでマージ機会がある場合、強力なボーナスを付与
+        # batch_summaryでHEIGHT_CONTROLが28.7%選択(avg_score_delta=1.8)と過剰であり、
+        # ワーストゲーム(score0826)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している。
+        # ベストゲーム(score2330)では初期段階から積極的にNEAR_MERGE_EARLY_MERGE_PRIORITYを選択し、スコア2330を出していることを確認。
+        # v194のearly_game判定(max_y < -2.5)では抑制が強すぎ、gapがある間のマージ機会を見逃している問題を解決。
+        # マージ機会がある場合の優先配置を高めるため、early_gameをmax_y < -2.5に緩和し、初期段階でのHEIGHT_CONTROL選択を抑制しつつマージ優先を強化。
+        # 初期8ターンまででEARLY_MERGE_PRIORITY条件を緩和し、全体的にマージ機会を優先する戦略へ転換。
+        if piece_count <= 12 and merge_grade == "NEAR":
             # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
-            # これにより初期16ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
+            # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
