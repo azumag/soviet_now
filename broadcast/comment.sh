@@ -1365,6 +1365,31 @@ RETRYCOMMENT
 						comment_claude_only=false
 						comment_skip_claude=true
 					fi
+				elif [ "$comment_ollama_improving_only" = "true" ]; then
+					attempt_talk=$(_run_ollama_comment "$prompt_for_attempt" "$COMMENT_OLLAMA_MODEL_IMPROVING")
+					attempt_model="ollama:${COMMENT_OLLAMA_MODEL_IMPROVING}"
+					attempt_talk=$(_clean_comment_talk "$attempt_talk")
+					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+						log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
+						attempt_talk=""
+						attempt_model=""
+					fi
+					if [ -z "$attempt_talk" ]; then
+						log "[COMMENT] ollama improving専用モード失敗 -> fallbackへ退避 (attempt ${attempt}/${comment_retry_max})"
+						comment_ollama_improving_only=false
+					fi
+				fi
+				if [ -z "$attempt_talk" ]; then
+					attempt_talk=$(_run_ollama_comment "$prompt_for_attempt")
+					attempt_model="ollama:${COMMENT_OLLAMA_MODEL}"
+					attempt_talk=$(_clean_comment_talk "$attempt_talk")
+					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+						log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL} 出力が不正/短文のため破棄 → ${RADIO_AGENT} fallback (attempt ${attempt}/${comment_retry_max})"
+						attempt_talk=""
+						attempt_model=""
+					fi
 				fi
 				if [ -z "$attempt_talk" ]; then
 					attempt_talk=$(_run_opencode_comment "$RADIO_AGENT" "$prompt_for_attempt")
