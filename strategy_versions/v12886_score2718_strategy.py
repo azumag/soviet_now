@@ -63,6 +63,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v525: remove piece_count congestion penalty — match protected strategy (median 12789, no congestion)
+     # Protected strategy achieves +4% better median WITHOUT any congestion penalty. At pc=33, landing_y=1.5:
+     # congestion=(33-29)*1.5*30=180 overwhelms stacking bonus (~200), causing HEIGHT_CONTROL to win over
+     # strategic stacking/proximity placement. Without congestion, stacking (~200) > height penalty (~126) →
+     # pipeline guidance works. Current batch HEIGHT_CONTROL: 20.1% low-score vs 14.0% high-score (6.1pp gap).
+     # v518 previously removed this and was validated, but got rolled back as collateral in v522 cascade.
+     # Fixes rollback failure mode: HEIGHT_CONTROL scatter from congestion penalty overwhelming guidance at moderate pc
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no congestion),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.1% low vs 14.0% high),
+     #       tmp/state/last_rollback_postmortem.md (v518 was correct, collateral rollback),
+     #       tmp/change_log.txt (v518 validated: "Penalty overwhelmed guidance at moderate pc"),
+     #       game_history/20260405_083325_score0814.jsonl (worst game, mid-game scatter at pc=33+)
      # v471: restore +300 SAME_TYPE_STACK_MERGE_PRIORITY — match protected strategy (median 12789)
      # Protected strategy achieves +4% better median with +300 flat bonus at rp==0, danger==0.
      # v459 removed +300 claiming 9.6b made it redundant, But batch data shows HEIGHT_CONTROL 19.6%
@@ -1428,21 +1440,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- v361: piece_count congestion penalty -----
-        # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
-        # piece_count is the key predictor of final score, not max_y.
-        # When board is congested (piece_count >= 30), penalize high landing positions
-        # to encourage tighter placement that enables merges and reduces piece_count.
-        # This is NOT landing_y-only — it combines piece_count state with landing position.
-        # No reactive_pair_count guard — works at ALL reactive levels (postmortem constraint).
-        # refs: tmp/state/last_rollback_postmortem.md (piece_count 41→1060 vs 21→4645),
-        #       tmp/batch_summary.txt (high-score merge_rate=38.6% vs low-score 33.6%)
-        if piece_count >= 30 and landing_y > -1.0:
-            # v365: increased multiplier 8→20 — old value was too weak to affect behavior
-            # (piece_count=37, landing_y=1.0: 64 vs height diff ~140). New value provides
-            # meaningful tie-breaking for axis 8.8 uniform penalty without overriding merges.
-            congestion_penalty = (piece_count - 29) * landing_y * 30.0  # v470: 20→30
-            score -= congestion_penalty
+        # ----- v361: piece_count congestion penalty (v525: REMOVED) -----
+        # v525: removed — protected strategy (median 12789, +4% better) has no congestion penalty.
+        # At pc=33, landing_y=1.5: congestion=(33-29)*1.5*30=180 overwhelmed stacking bonus (~200),
+        # causing HEIGHT_CONTROL to win over strategic stacking/proximity placement.
+        # Current batch: HEIGHT_CONTROL 20.1% low-score vs 14.0% high-score (6.1pp gap).
+        # Without congestion, stacking (~200) > height penalty (~126) → pipeline guidance works.
+        # v518 previously removed this and was validated, but got rolled back as collateral in v522 cascade.
+        # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no congestion),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.1% low vs 14.0% high),
+        #       tmp/state/last_rollback_postmortem.md (v518 was correct, collateral rollback)
 
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
         # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
