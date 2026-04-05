@@ -63,6 +63,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v528: suppress axis 9.6 stacking at rp>=3+NO — let axis 8.8 (-4500) and height penalty be sole differentiators
+     # Protected strategy (median 12789, +20%) suppresses stacking at rp>=3. At rp>=3+NO,
+     # axis 8.8 (-4500) dominates all candidates. Stacking bonus (~100-400 with congestion scaling)
+     # creates noise that overrides height differentiation (~450 between y=-1 and y=2 in HIGH phase),
+     # pushing to non-lowest positions. Worst game T65-T67: rp=5, NO merge, REACTIVE_PAIRS_STACKING
+     # selected 3 consecutive turns, pieces at x=-0.8→x=-2.68→x=-0.09, max_y 1.66→3.09 in 3 turns.
+     # Extra-low game T71: stacking at rp=3, x=3.0 lands at y=3.05 → death spiral.
+     # advice: "危機局面では小さいピースは併合を狙わないほうがいい" (azumag)
+     # Fixes rollback failure mode: p25 collapse from stacking noise at rp>=3+NO death spiral
+     # refs: game_history/20260405_133552_score1020.jsonl T65-T67,
+     #       game_history/20260405_140859_score1192.jsonl T71,
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 17.1% low vs 13.3% high),
+     #       tmp/state/last_rollback_analysis.md, advice.md
      # v452: flatten axis 8.8 reactive_pairs NO-merge penalty to flat -4500 — match protected strategy
      # Postmortem constraint: "axis 8.8の低位置ペナルティを-4500未満に下げること。y<=0での-3000（v432）
      # は低位置散布を許容し、pc急増の主因となる。-4500以上を維持。" The v432 gradient (-3000 at
@@ -934,8 +948,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v363: v340 guard(reactive<3)を除去。旧スタッキング公式の高さインセンティブはv360で解消済み。
         # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
-        # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+        # v528: restore rp<3 guard — at rp>=3+NO, stacking bonus (~100-400) overrides height differentiation (~450),
+        # causing non-lowest placement during death spiral. Protected strategy (median 12789) suppresses at rp>=3.
+        # Worst game T65-T67: rp=5, stacking selected 3 turns, max_y 1.66→3.09.
+        if reactive_pair_count >= 1 and reactive_pair_count < 3 and merge_grade == "NO" and same_type_stack_top is not None:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
