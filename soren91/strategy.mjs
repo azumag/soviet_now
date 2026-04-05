@@ -1,28 +1,27 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v174)
+ * strategy.mjs - ドロップ位置決定戦略 (v175)
  *
- * v174: v173の改善点を踏まえ、ゲーム分析から見られる「高さがデッドライン付近まで到達しやすい」
- *       「盤面ピース数が多い」という課題に対し、高さペナルティの更なる強化と、
- *       盤面ピース数に応じたペナルティを導入し、より積極的に盤面をクリアする戦略を採ります。
- *       また、高得点・高順位に繋がるマージとパイプライン維持のボーナスも強化します。
+ * v175: v174のゲーム分析から、特に「高さがデッドライン付近まで到達しやすい」という課題に対し、
+ *       高さペナルティをさらに早期かつ厳しく適用するように調整します。
+ *       また、「盤面ピース数が多い」という課題に対しては、混雑度ペナルティの閾値を下げてより早く発動させ、
+ *       ピースごとのペナルティも強化することで、積極的な盤面クリアを促します。
+ *       小ピースの触媒ボーナスは、高さ管理や併合の優先度を確保するため、若干調整します。
  *
  *       主な改善点:
- *       1.  **高さペナルティの勾配と重み付けの強化**:
- *           - `HEIGHT_PENALTY_WEIGHT` を `250000.0` から `500000.0` に増額し、高さに対する総体的なペナルティを強化。
- *           - `calculateHeightPenalty` 関数内の `CRITICAL_HEIGHT_MARGIN` 及び `TOP_Y_EXTREME_WARN_THRESHOLD`
- *             におけるペナルティ倍率をさらに引き上げ、デッドライン付近の危険領域への落下をより厳しく制限。
- *             これにより、高さを低く保つインセンティブを大幅に強化します。
- *       2.  **盤面混雑度ペナルティの導入**:
- *           - `calculateCrowdingPenalty` 関数を新設。盤面上のピース数が一定の閾値（`CROWDING_PENALTY_START_THRESHOLD`）を
- *             超えた場合に、ピース数に応じてペナルティを課します。これにより、ピースが過剰に積み上がることを抑制し、
- *             併合による盤面クリアを促します。
- *       3.  **マージボーナスとパイプラインボーナスの強化**:
- *           - `calculateMergeBonus` 内の基本ボーナス乗数（`mergedPiece.type * mergedPiece.type * 10`）を `20` に倍増。
- *             これにより、特に高typeピースの併合がより魅力的な選択肢となり、スコア向上に繋げます。
- *           - `calculatePipelineBonus` 内の直接的なパイプラインボーナスを `200` から `500` に、
- *             間接的なボーナスを `50` から `150` に増額。連鎖構築のインセンティブを強化し、効率的なスコア獲得を目指します。
+ *       1.  **高さペナルティの早期化と勾配強化**:
+ *           - `CRITICAL_HEIGHT_MARGIN` を `0.5` から `0.7` に拡大し、よりデッドラインから離れた位置でクリティカルペナルティが開始されるように調整。
+ *             これにより、危険な高さに達する前に戦略的な修正を促します。
+ *           - `TOP_Y_EXTREME_WARN_THRESHOLD` を `DEADLINE_Y - 0.75` から `DEADLINE_Y - 1.0` に変更し、
+ *             極端な警告ゾーンをデッドラインから少し離れた位置に設定し直し、その上にあるクリティカルゾーンの範囲を拡張します。
+ *       2.  **盤面混雑度ペナルティの強化**:
+ *           - `CROWDING_PENALTY_START_THRESHOLD` を `30` から `25` に減らし、より少ないピース数で混雑度ペナルティが開始されるようにします。
+ *           - `CROWDING_PENALTY_PER_PIECE` を `50` から `75` に増額し、閾値を超えた際のピースごとのペナルティを強化。
+ *             これにより、盤面のピース数が過剰に増えることを積極的に抑制します。
+ *       3.  **小ピース触媒ボーナスの調整**:
+ *           - `SMALL_PIECE_CATALYST_BONUS` を `750` から `600` に減額。
+ *             高さ管理や直接的な併合の優先度を相対的に高めるため、触媒ボーナスの影響度を微調整します。
  *       4.  **既存ロジックの維持**:
- *           - HOLDメカニクス、大型ピースの片側集約、おじゃまブロック対策、小ピースの触媒利用などはv173のまま維持されます。
+ *           - HOLDメカニクス、大型ピースの片側集約、おじゃまブロック対策、マージ・パイプラインボーナスなどはv174のまま維持されます。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -32,8 +31,8 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 3.32;                  // Actual game over Y coordinate
-const CRITICAL_HEIGHT_MARGIN = 0.5; // Critical penalty starts when top is 0.5 below deadline
-const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.75; // Extreme warning when top is 0.75 below deadline
+const CRITICAL_HEIGHT_MARGIN = 0.7; // v175: Increased from 0.5. Critical penalty starts when top is 0.7 below deadline
+const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.0; // v175: Changed from DEADLINE_Y - 0.75. Extreme warning when top is 1.0 below deadline
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Severe warning when top is 1.0 below deadline
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;     // Warning penalty when top is 2.0 below deadline
 
@@ -49,7 +48,7 @@ const SETTLING_BUFFER = 0.2;
 const MERGE_PROXIMITY_THRESHOLD = 0.1; // Small buffer for "touching" pieces for merge detection
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const SMALL_PIECE_THRESHOLD = 4; // Pieces of this type or lower are considered 'small'. (v165: Changed from 3 to 4)
-const SMALL_PIECE_CATALYST_BONUS = 750; // Bonus for dropping small pieces into dense areas. (v166: Increased from 500)
+const SMALL_PIECE_CATALYST_BONUS = 600; // v175: Reduced from 750. Bonus for dropping small pieces into dense areas.
 const DENSITY_CHECK_RADIUS = 1.5; // Radius to check for piece density for catalyst bonus. (v165: New)
 
 const LARGE_PIECE_AGGREGATION_BONUS = 750; // Bonus for placing large pieces on the dominant side.
@@ -61,8 +60,8 @@ const GARBAGE_STACKING_PENALTY = 1500; // v170: Penalty for dropping a piece on 
 const GARBAGE_IMMINENT_MERGE_BONUS = 100; // v171: Small bonus for any merge when garbage is imminent.
 
 // v174: Crowding Penalty constants
-const CROWDING_PENALTY_START_THRESHOLD = 30; // Start penalizing when total pieces exceed this
-const CROWDING_PENALTY_PER_PIECE = 50;       // Penalty per piece above the threshold
+const CROWDING_PENALTY_START_THRESHOLD = 25; // v175: Reduced from 30. Start penalizing when total pieces exceed this
+const CROWDING_PENALTY_PER_PIECE = 75;       // v175: Increased from 50. Penalty per piece above the threshold
 
 // Function to simulate dropping a piece and calculate its final Y position (top of the piece).
 // This now returns the predicted static top Y of the piece plus a small settling buffer.
@@ -94,10 +93,11 @@ function calculateHeightPenalty(predictedTopY) {
     }
 
     // v174: Adjusted multipliers to further increase penalty gradient towards deadline
-    if (currentTopY > DEADLINE_Y - CRITICAL_HEIGHT_MARGIN) { // > 2.82
+    // v175: CRITICAL_HEIGHT_MARGIN adjusted to start penalty earlier
+    if (currentTopY > DEADLINE_Y - CRITICAL_HEIGHT_MARGIN) { // > DEADLINE_Y - 0.7
         // Critical penalty zone - very severe
         penalty += (currentTopY - (DEADLINE_Y - CRITICAL_HEIGHT_MARGIN)) * HEIGHT_PENALTY_WEIGHT * 2000; // v174: Increased from 1000
-    } else if (currentTopY > TOP_Y_EXTREME_WARN_THRESHOLD) { // > 2.57
+    } else if (currentTopY > TOP_Y_EXTREME_WARN_THRESHOLD) { // > DEADLINE_Y - 1.0 (v175: Changed from DEADLINE_Y - 0.75)
         // Extreme warning zone
         penalty += (currentTopY - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 400; // v174: Increased from 200
     } else if (currentTopY > DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE) { // > 2.32
@@ -272,6 +272,7 @@ function calculateSmallPieceCatalystBonus(boardState, droppingPiece, dropX, drop
 }
 
 // v174: New function to calculate penalty based on the number of pieces on the board.
+// v175: Threshold and per-piece penalty increased.
 function calculateCrowdingPenalty(boardState) {
     let penalty = 0;
     const pieceCount = boardState.pieces.length;
