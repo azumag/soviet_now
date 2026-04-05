@@ -1,27 +1,30 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v175)
+ * strategy.mjs - ドロップ位置決定戦略 (v176)
  *
- * v175: v174のゲーム分析から、特に「高さがデッドライン付近まで到達しやすい」という課題に対し、
- *       高さペナルティをさらに早期かつ厳しく適用するように調整します。
- *       また、「盤面ピース数が多い」という課題に対しては、混雑度ペナルティの閾値を下げてより早く発動させ、
- *       ピースごとのペナルティも強化することで、積極的な盤面クリアを促します。
- *       小ピースの触媒ボーナスは、高さ管理や併合の優先度を確保するため、若干調整します。
+ * v176: v175の改善を引き継ぎつつ、ゲーム分析で示された「高さがデッドライン付近まで到達しやすい」
+ *       「盤面ピース数が多い」という課題に対し、さらに精密な調整を行います。
+ *       特に、物理エンジンの挙動（凸ポリゴン、爆発衝撃波）を考慮し、ピースの最終的なY座標予測をより慎重に行うため、
+ *       SETTLING_BUFFERを調整します。また、盤面混雑をさらに積極的に解消するため、混雑度ペナルティを強化し、
+ *       小ピースの触媒効果も再評価します。
  *
  *       主な改善点:
- *       1.  **高さペナルティの早期化と勾配強化**:
- *           - `CRITICAL_HEIGHT_MARGIN` を `0.5` から `0.7` に拡大し、よりデッドラインから離れた位置でクリティカルペナルティが開始されるように調整。
- *             これにより、危険な高さに達する前に戦略的な修正を促します。
- *           - `TOP_Y_EXTREME_WARN_THRESHOLD` を `DEADLINE_Y - 0.75` から `DEADLINE_Y - 1.0` に変更し、
- *             極端な警告ゾーンをデッドラインから少し離れた位置に設定し直し、その上にあるクリティカルゾーンの範囲を拡張します。
- *       2.  **盤面混雑度ペナルティの強化**:
- *           - `CROWDING_PENALTY_START_THRESHOLD` を `30` から `25` に減らし、より少ないピース数で混雑度ペナルティが開始されるようにします。
- *           - `CROWDING_PENALTY_PER_PIECE` を `50` から `75` に増額し、閾値を超えた際のピースごとのペナルティを強化。
- *             これにより、盤面のピース数が過剰に増えることを積極的に抑制します。
+ *       1.  **SETTLING_BUFFERの調整**:
+ *           - `SETTLING_BUFFER` を `0.2` から `0.35` に変更。
+ *             「国土形状の凸ポリゴン」「併合時の爆発衝撃波」による物理エンジンの不確定性を考慮し、
+ *             ピースの最終的なY座標予測をより保守的に（高く）見積もることで、
+ *             デッドラインへの接近を早期に検知し、高さ管理のペナルティをより効果的に機能させます。
+ *       2.  **盤面混雑度ペナルティのさらなる強化**:
+ *           - `CROWDING_PENALTY_PER_PIECE` を `75` から `100` に増額。
+ *             盤面のピース数が閾値を超えた際のペナルティをさらに強化し、
+ *             積極的なマージによる盤面クリアを促します。
  *       3.  **小ピース触媒ボーナスの調整**:
- *           - `SMALL_PIECE_CATALYST_BONUS` を `750` から `600` に減額。
- *             高さ管理や直接的な併合の優先度を相対的に高めるため、触媒ボーナスの影響度を微調整します。
+ *           - `SMALL_PIECE_CATALYST_BONUS` を `600` から `700` に増額。
+ *             ボードが混雑している状況下で、小ピースによる「攪拌効果」が併合を誘発し、
+ *             盤面クリアに貢献する可能性を再評価し、そのボーナスを若干強化します。
+ *             これにより、特に低タイプのピースが有効活用されやすくなります。
  *       4.  **既存ロジックの維持**:
- *           - HOLDメカニクス、大型ピースの片側集約、おじゃまブロック対策、マージ・パイプラインボーナスなどはv174のまま維持されます。
+ *           - HOLDメカニクス、大型ピースの片側集約、おじゃまブロック対策、マージ・パイプラインボーナス、
+ *             およびv175で調整された高さペナルティの早期化と勾配強化などは維持されます。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -41,14 +44,14 @@ const HEIGHT_PENALTY_WEIGHT = 500000.0; // v174: Increased from 250000.0
 // v172: Absolute avoid threshold, further tightened from 0.4 to 0.1
 const DEADLINE_ABSOLUTE_AVOID_THRESHOLD = DEADLINE_Y - 0.1; // If predictedTopY (with small settling buffer) is above this, virtually disqualify the move.
 
-// v172: Reduced from 4.0 to a more realistic 0.2
-const SETTLING_BUFFER = 0.2;
+// v176: Increased from 0.2 to 0.35 to account for more realistic settling after physics and shockwaves.
+const SETTLING_BUFFER = 0.35;
 
 // Strategy-specific constants (General)
 const MERGE_PROXIMITY_THRESHOLD = 0.1; // Small buffer for "touching" pieces for merge detection
 const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered 'large'.
 const SMALL_PIECE_THRESHOLD = 4; // Pieces of this type or lower are considered 'small'. (v165: Changed from 3 to 4)
-const SMALL_PIECE_CATALYST_BONUS = 600; // v175: Reduced from 750. Bonus for dropping small pieces into dense areas.
+const SMALL_PIECE_CATALYST_BONUS = 700; // v176: Increased from 600. Re-evaluating catalyst effect in crowded situations.
 const DENSITY_CHECK_RADIUS = 1.5; // Radius to check for piece density for catalyst bonus. (v165: New)
 
 const LARGE_PIECE_AGGREGATION_BONUS = 750; // Bonus for placing large pieces on the dominant side.
@@ -61,7 +64,7 @@ const GARBAGE_IMMINENT_MERGE_BONUS = 100; // v171: Small bonus for any merge whe
 
 // v174: Crowding Penalty constants
 const CROWDING_PENALTY_START_THRESHOLD = 25; // v175: Reduced from 30. Start penalizing when total pieces exceed this
-const CROWDING_PENALTY_PER_PIECE = 75;       // v175: Increased from 50. Penalty per piece above the threshold
+const CROWDING_PENALTY_PER_PIECE = 100;       // v176: Increased from 75. Penalty per piece above the threshold
 
 // Function to simulate dropping a piece and calculate its final Y position (top of the piece).
 // This now returns the predicted static top Y of the piece plus a small settling buffer.
