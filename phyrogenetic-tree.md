@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-05 22:51:16 JST`
-- Nodes: `928`
-- Edges: `1271`
-- Current: `301434b90c7a`
-- Anchor: `301434b90c7a`
+- Updated: `2026-04-05 23:52:05 JST`
+- Nodes: `929`
+- Edges: `1272`
+- Current: `751f8b70ddb5`
+- Anchor: `89af10322292`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_e9f46253f367["e9f46253f367<br/>g=12 n=12<br/>comp=11641.4"]
     h_750e181c1242["750e181c1242<br/>g=12 n=12<br/>comp=10453.7"]
     h_cf84496e4523["cf84496e4523<br/>g=12 n=12<br/>comp=10743.3"]
     h_63f2c2c1d31e["63f2c2c1d31e<br/>g=24 n=20<br/>comp=11720.1"]
@@ -68,15 +67,15 @@ flowchart TD
     h_defe4ad4eeaf["defe4ad4eeaf<br/>g=12 n=12<br/>comp=10806.3"]
     h_f3726bcc9fc1["f3726bcc9fc1<br/>g=12 n=12<br/>comp=10186.6"]
     h_e4ac98cdecdb["e4ac98cdecdb<br/>g=12 n=12<br/>comp=10851.0"]
-    h_301434b90c7a["301434b90c7a<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12428.5"]
+    h_301434b90c7a["301434b90c7a<br/>g=24 n=20<br/>comp=11553.0"]
     h_b1c15fe57b34["b1c15fe57b34<br/>g=24 n=20<br/>comp=10847.6"]
-    h_89af10322292["89af10322292<br/>g=12 n=12<br/>comp=12086.6"]
+    h_89af10322292["89af10322292<br/>ANCHOR<br/>g=12 n=12<br/>comp=12086.6"]
     h_5209b0724d36["5209b0724d36<br/>g=12 n=12<br/>comp=11777.8"]
     h_c1cc8b0c07be["c1cc8b0c07be<br/>g=12 n=12<br/>comp=11176.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_751f8b70ddb5["751f8b70ddb5<br/>CURRENT"]
 
-    h_e9f46253f367 -->|improve| h_750e181c1242
     h_cf84496e4523 -->|improve| h_63f2c2c1d31e
     h_63f2c2c1d31e -->|improve| h_2df66e5a3e28
     h_2df66e5a3e28 -->|improve| h_0ff7f425d879
@@ -142,13 +141,13 @@ flowchart TD
     h_89af10322292 -->|improve| h_5209b0724d36
     h_5209b0724d36 -->|improve| h_c1cc8b0c07be
     h_c1cc8b0c07be -. rollback .-> h_301434b90c7a
+    h_301434b90c7a -->|improve| h_751f8b70ddb5
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_e9f46253f367 plain;
     class h_750e181c1242 plain;
     class h_cf84496e4523 plain;
     class h_63f2c2c1d31e plain;
@@ -201,13 +200,14 @@ flowchart TD
     class h_defe4ad4eeaf plain;
     class h_f3726bcc9fc1 plain;
     class h_e4ac98cdecdb plain;
-    class h_301434b90c7a current_anchor;
+    class h_301434b90c7a plain;
     class h_b1c15fe57b34 plain;
-    class h_89af10322292 plain;
+    class h_89af10322292 anchor;
     class h_5209b0724d36 plain;
     class h_c1cc8b0c07be plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_751f8b70ddb5 current;
 ```
 
 ## Detail 1/12
@@ -3346,9 +3346,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `a3aae72a4e37`
-- Nodes in this diagram: `48`
-- Internal edges in this diagram: `51`
+- Range: `8b764b56c6f3` .. `751f8b70ddb5`
+- Nodes in this diagram: `49`
+- Internal edges in this diagram: `52`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3405,13 +3405,14 @@ flowchart TD
     h_defe4ad4eeaf["defe4ad4eeaf<br/>g=12 n=12<br/>comp=10806.3"]
     h_f3726bcc9fc1["f3726bcc9fc1<br/>g=12 n=12<br/>comp=10186.6"]
     h_e4ac98cdecdb["e4ac98cdecdb<br/>g=12 n=12<br/>comp=10851.0"]
-    h_301434b90c7a["301434b90c7a<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12428.5"]
+    h_301434b90c7a["301434b90c7a<br/>g=24 n=20<br/>comp=11553.0"]
     h_b1c15fe57b34["b1c15fe57b34<br/>g=24 n=20<br/>comp=10847.6"]
-    h_89af10322292["89af10322292<br/>g=12 n=12<br/>comp=12086.6"]
+    h_89af10322292["89af10322292<br/>ANCHOR<br/>g=12 n=12<br/>comp=12086.6"]
     h_5209b0724d36["5209b0724d36<br/>g=12 n=12<br/>comp=11777.8"]
     h_c1cc8b0c07be["c1cc8b0c07be<br/>g=12 n=12<br/>comp=11176.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_751f8b70ddb5["751f8b70ddb5<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3464,6 +3465,7 @@ flowchart TD
     h_89af10322292 -->|improve| h_5209b0724d36
     h_5209b0724d36 -->|improve| h_c1cc8b0c07be
     h_c1cc8b0c07be -. rollback .-> h_301434b90c7a
+    h_301434b90c7a -->|improve| h_751f8b70ddb5
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3511,16 +3513,27 @@ flowchart TD
     class h_defe4ad4eeaf plain;
     class h_f3726bcc9fc1 plain;
     class h_e4ac98cdecdb plain;
-    class h_301434b90c7a current_anchor;
+    class h_301434b90c7a plain;
     class h_b1c15fe57b34 plain;
-    class h_89af10322292 plain;
+    class h_89af10322292 anchor;
     class h_5209b0724d36 plain;
     class h_c1cc8b0c07be plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_751f8b70ddb5 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#13024 `301434b9 -> 751f8b70`
+
+- scores: `13464 8075 9482 11820 11764 15690 16359 11055 10890 17741 11174 9674`
+- v534: dangerous_situation candidate filtering + FAR merge boost — match protected strategy (median 12789)
+- Protected strategy's key structural advantage: when max_y>=1.8 AND rp>=2, only merge candidates
+- are evaluated. Worst games show death spirals of non-merge placements (HIGH_TOWER,
+- CROSSES_DEADLINE_NO_MERGE) while reactive_pairs grow unresolved. Filtering forces merge
+- attempts in dangerous situations, falling back to all candidates if none available.
+- FAR merge bonus boosted from 200 to 1200 in dangerous situations (matching protected strategy).
 
 ### Rollback Game#13012 `c1cc8b0c -> 301434b9`
 
