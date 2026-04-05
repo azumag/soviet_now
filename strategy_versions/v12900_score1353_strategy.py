@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v526: early-game center concentration — prevent edge scatter in building phase
+     # Worst game (score=753): pieces scattered to x=±3.0 from turn 1 (type 11 at x=-3.0, type 9 at x=-3.0 T11).
+     # Edge placements create scattered reactive pairs that never merge. Best game (score=2718) concentrates center.
+     # When pc<=12 and merge_grade=NO, add 60*(1-abs(x)/2.0) center bonus. Weaker than merge (600-1200)
+     # but overcomes LOW height diffs (~20pt/unit at mult=0.4). At x=0 vs x=3: +60 diff.
+     # advice: "孤立配置を避けて中央集約を優先する" (kbb246)
+     # Fixes: edge scatter in early building → scattered reactive pairs → merge drought → early death
+     # refs: game_history/20260405_093922_score0753.jsonl T1/T11/T18, game_history/20260405_094424_score2718.jsonl,
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 17.3% low vs 14.6% high), advice.md (kbb246),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v525: remove piece_count congestion penalty — match protected strategy (median 12789, no congestion)
      # Protected strategy achieves +4% better median WITHOUT any congestion penalty. At pc=33, landing_y=1.5:
      # congestion=(33-29)*1.5*30=180 overwhelms stacking bonus (~200), causing HEIGHT_CONTROL to win over
@@ -1503,6 +1513,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
+
+        # ----- v526: early-game center concentration (prevent edge scatter) -----
+        # Worst game T1: type 11 at x=-3.0 (no center preference existed). With empty board,
+        # all positions have same height in LOW phase (mult=0.4), so height doesn't differentiate.
+        # Add center bonus only when pc<=12 and merge_grade=NO (building phase, no merge to override).
+        # Magnitude: 60*(1-abs(x)/2.0). At x=0: +60, x=1: +30, x=2: 0, x=3: 0.
+        # Below merge bonuses (600-1200) but above LOW height diffs (~20pt per unit y).
+        # Best game concentrates center from start; worst scatters to edges.
+        if piece_count <= 12 and piece_count > 0 and merge_grade == "NO":
+            center_concentration = max(0, 1.0 - abs(x) / 2.0) * 60.0
+            score += center_concentration
 
         # ----- evaluation axis 5: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
