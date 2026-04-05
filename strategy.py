@@ -23,7 +23,7 @@ Game Overview:
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
-             8.6. Reactive pairs immediate merge bonus - v321: 即時併合ボーナス維持
+             8.6. REMOVED in v533 — double-counted with axis 8, caused NEAR over-selection at high pc
               8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
               # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼす
               # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
@@ -63,6 +63,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+      # v533: remove axis 8.6 (REACTIVE_IMMEDIATE_MERGE_PRIORITY) + reduce axis 8 rp>=3 bonus 1400→1000
+      # Fixes rollback failure mode: NEAR merge over-selection at high pc + deadline → failed NEAR → pc growth → death spiral
+      # Protected strategy (median 12789, +4% better) has NO axis 8.6 and uses +1000 for rp>=3 (vs current +1400+1000=+2400)
+      # Worst game T82-87: 4/5 NEAR merges fail at deadline (delta=0), pc grows 42→44, max_y runaway to 3.24
+      # Root cause: axis 8 + axis 8.6 double-count reactive pairs bonus. At rp>=3 NEAR: base 600 + axis8 1400 + axis8.6 1000 = +3000
+      # This overwhelms NEAR_DEADLINE_RISK (-2100 at high pc) + HIGH_PC_NEAR_PENALTY (-600), making risky NEAR always selected
+      # After fix: rp>=3 NEAR bonus = 600 base + 1000 axis8 = 1600, vs penalties ~2700 → net -1100 → NEAR correctly rejected
+      # DIRECT merges preserved: 1200 base + 1000 = 2200, still strongly preferred (95.7% success rate justifies this)
+      # advice.md: "コンボを狙うあまり盤面が積み上がる問題：盤面高度とコンボ確度のバランス判定を重視する" (nimdavirus)
+      # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no axis 8.6, rp>=3=1000),
+      #       tmp/batch_summary.txt (NEAR_MERGE...REACTIVE_IMMEDIATE 6.6% low-score vs 0% high-score top-5),
+      #       game_history/20260405_212534_score1177.jsonl T82-87 (4/5 NEAR fail at deadline),
+      #       tmp/change_log.txt (v531 speculative increase), tmp/state/last_rollback_analysis.md
       # v530: ロシア建国後の2つ目ロシア育成戦略強化 - russia_phase_count>=2で戦略を切り替え
       # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
       # type 15(ロシア)が1つある場合と2つある場合で戦略を分岐させる:
@@ -1519,9 +1532,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
         elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
-            # v531: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0 → +1400.0）
-            # reactive_pairsが3以上ある場合、即時併合機会を最優先
-            score += 1400.0
+            # v533: reduced from +1400 to +1000 — matching protected strategy (median 12789)
+            # v531's +1400 was speculative. Combined with axis 8.6 (+1000), total was +2400 for rp>=3
+            # which caused NEAR over-selection at high pc + deadline (see v533 change history)
+            score += 1000.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
         # v209: reactive_pairs>=3で即時併合なしの場合のcompression_bonusロジックを削除
         # avg_score_delta=2.3と低効果であり、即時併合優先ボーナス(+1000.0)と競合して不整合を招いていた
@@ -1557,20 +1571,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 300.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v321: 即時併合ボーナス維持) -----
-        # v317: reactive_pairs数に応じた即時併合ボーナスを維持
-        # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
-        # reactive_pairs==1: +600.0, reactive_pairs>=2: +1000.0
-        # 未活用情報：reactive_pairsの段階的ボーナス
-        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
-
-        if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
-            # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
-            if reactive_pair_count >= 2:
-                score += 1000.0
-            else:
-                score += 600.0
-            reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+        # ----- evaluation axis 8.6: REMOVED in v533 -----
+        # Axis 8.6 (REACTIVE_IMMEDIATE_MERGE_PRIORITY) double-counted with axis 8.
+        # Protected strategy (median 12789) has no axis 8.6 and achieves better results.
+        # At rp>=3 NEAR, axis8(1400)+axis8.6(1000)=+2400 overwhelmed NEAR deadline penalties,
+        # causing failed NEAR merges that grew piece_count and accelerated death spirals.
+        # See v533 change history for detailed evidence.
+        # ----- evaluation axis 8.6 removed -----
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v530: 2つ目のロシア育成戦略強化版) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
