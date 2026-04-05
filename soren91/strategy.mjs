@@ -1,25 +1,25 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v171)
+ * strategy.mjs - ドロップ位置決定戦略 (v172)
  *
- * v171: v170の改善点をベースに、ゲーム分析で示された「高さ」の問題と「おじゃまブロック」へのさらなる対応を強化します。
- *       特に、デッドラインに近づくリスクを極力回避し、おじゃまブロックがある状況でのマージをより強力に推進します。
- *       シミュレーションの不確実性に対応するため、落下位置予測の安全バッファをさらに拡大します。
+ * v172: v171の改善点をベースに、ゲーム分析で示された高さ管理の根本的な問題を解決し、
+ *       おじゃまゲージの挙動に対応したマージボーナスを調整します。
+ *       特に、SETTLING_BUFFERの意図と実装の乖離を修正し、デッドライン回避ロジックをより正確にします。
  *
  *       主な改善点:
- *       1.  **HEIGHT_PENALTY_WEIGHTとペナルティ乗数のさらなる強化**:
- *           - ゲーム分析で示された高いY座標が依然としてゲームオーバーの一因となっているため、デッドライン付近の挙動をさらに抑制します。
- *           - `HEIGHT_PENALTY_WEIGHT` を `200000.0` から `250000.0` へ増加し、全体的な高さペナルティを強化。
- *           - `SETTLING_BUFFER` を `3.5` から `4.0` へ増加させ、物理エンジン予測の不確実性により保守的に対応します。
- *           - `DEADLINE_ABSOLUTE_AVOID_THRESHOLD` を `DEADLINE_Y - 0.3` から `DEADLINE_Y - 0.4` へ引き下げ（絶対回避閾値をより低く設定し、より早期に発動）。
- *       2.  **おじゃまブロック関連のペナルティ・ボーナスのさらなる強化**:
- *           - おじゃまブロックの上でマージが発生しない場合のペナルティ `GARBAGE_STACKING_PENALTY` はv170で強化済みのため現状維持。
- *           - おじゃまブロック高さ増加に対するペナルティ乗数をさらに増加させ、おじゃまの山を高くする行為を強く抑制。
- *             - `GBG_URGENT` モードでのペナルティ乗数を `800` から `1000` へ増加。
- *             - `OJAMA_MERGE` モードでのペナルティ乗数を `400` から `500` へ増加。
- *           - `GBG_URGENT` モードでのベースペナルティを `5000` から `7500` へ増加し、このモードでの危険性を強調。
- *           - おじゃまゲージが高い (`garbage.gauge >= 0.6`) 時に、Y座標に関わらずマージに小さなボーナスを追加し、積極的なマージを奨励。
- *       3.  **大型ピースの片側集約インセンティブは現状維持**: v170で強化済み。
- *       4.  **早期/中期ゲームの中央配置ボーナスは現状維持**: v169/v170で調整済み。
+ *       1.  **SETTLING_BUFFERの修正と高さペナルティの再調整**:
+ *           - ゲーム分析で報告された`max_y`と`DEADLINE_Y`の乖離、および`SETTLING_BUFFER=4.0`の不自然さを修正。
+ *           - `SETTLING_BUFFER`を`4.0`からより現実的な`0.2`へ変更。これにより`simulateDropY`が返す`predictedTopY`は、
+ *             ピースの静止予測位置に物理エンジンの不確実性（バウンドなど）を考慮した小さな安全マージンを加えた値となります。
+ *             この修正により、高さペナルティの閾値がより意味のあるものとなります。
+ *           - `DEADLINE_ABSOLUTE_AVOID_THRESHOLD`を`DEADLINE_Y - 0.4`から`DEADLINE_Y - 0.1`へ引き上げ（よりデッドラインに近い位置を絶対回避）。
+ *             `predictedTopY`がこの閾値を超えた場合、その手は事実上選択されなくなります。
+ *           - HEIGHT_PENALTY_WEIGHTはv171で強化済みのため現状維持。
+ *       2.  **おじゃまゲージボーナスの調整**:
+ *           - ゲーム分析で`garbage.gauge`が常に`0.00`と報告されていることから、`gauge >= 0.6`の条件がほとんど発動していない可能性が高いです。
+ *             したがって、このボーナスを`garbage.gauge >= 0.3`（OJAMA_MERGEモード）でも発動するようにし、より早い段階でおじゃま対策を促します。
+ *           - `GARBAGE_IMMINENT_MERGE_BONUS`を`OJAMA_MERGE`モードでも適用。
+ *           - v171で強化されたおじゃまブロック関連のペナルティ・ボーナスは現状維持。
+ *       3.  **大型ピースの片側集約インセンティブ、早期/中期ゲームの中央配置ボーナスは現状維持**: v170/v171で調整済み。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -34,11 +34,13 @@ const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.75; // Extreme warning when 
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Severe warning when top is 1.0 below deadline
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;     // Warning penalty when top is 2.0 below deadline
 
-// v171: Further increased from 200000.0 to 250000.0
 const HEIGHT_PENALTY_WEIGHT = 250000.0;
 
-// v171: Absolute avoid threshold, further tightened from 0.3 to 0.4
-const DEADLINE_ABSOLUTE_AVOID_THRESHOLD = DEADLINE_Y - 0.4; // If predictedTopY is above this, virtually disqualify the move.
+// v172: Absolute avoid threshold, further tightened from 0.4 to 0.1
+const DEADLINE_ABSOLUTE_AVOID_THRESHOLD = DEADLINE_Y - 0.1; // If predictedTopY (with small settling buffer) is above this, virtually disqualify the move.
+
+// v172: Reduced from 4.0 to a more realistic 0.2
+const SETTLING_BUFFER = 0.2;
 
 // Strategy-specific constants (General)
 const MERGE_PROXIMITY_THRESHOLD = 0.1; // Small buffer for "touching" pieces for merge detection
@@ -46,9 +48,6 @@ const LARGE_PIECE_THRESHOLD = 9; // Pieces of this type or higher are considered
 const SMALL_PIECE_THRESHOLD = 4; // Pieces of this type or lower are considered 'small'. (v165: Changed from 3 to 4)
 const SMALL_PIECE_CATALYST_BONUS = 750; // Bonus for dropping small pieces into dense areas. (v166: Increased from 500)
 const DENSITY_CHECK_RADIUS = 1.5; // Radius to check for piece density for catalyst bonus. (v165: New)
-
-// v171: Further increased settling buffer from 3.5 to 4.0
-const SETTLING_BUFFER = 4.0;
 
 const LARGE_PIECE_AGGREGATION_BONUS = 750; // Bonus for placing large pieces on the dominant side.
 const LARGE_PIECE_AGGREGATION_PENALTY = 1000; // Penalty for placing large pieces on the non-dominant side.
@@ -60,6 +59,7 @@ const GARBAGE_IMMINENT_MERGE_BONUS = 100; // v171: Small bonus for any merge whe
 
 
 // Function to simulate dropping a piece and calculate its final Y position (top of the piece).
+// This now returns the predicted static top Y of the piece plus a small settling buffer.
 function simulateDropY(boardState, piece, x) {
     let maxY = BOARD_FLOOR_Y; // This will track the highest Y coordinate of a surface a piece could land on.
 
@@ -72,7 +72,7 @@ function simulateDropY(boardState, piece, x) {
             maxY = Math.max(maxY, existingPiece.y + existingPiece.r);
         }
     }
-    // v166 CRITICAL FIX: The predicted top Y of the dropping piece:
+    // v172: The predicted top Y of the dropping piece:
     // maxY (surface) + piece.r (to get center) + piece.r (to get top) + SETTLING_BUFFER (for bounce/settling)
     return maxY + (2 * piece.r) + SETTLING_BUFFER;
 }
@@ -82,18 +82,16 @@ function calculateHeightPenalty(predictedTopY) {
     let penalty = 0;
     const currentTopY = predictedTopY;
 
-    // v171: Absolute avoid threshold.
+    // v172: Absolute avoid threshold, adjusted due to SETTLING_BUFFER change.
     if (currentTopY >= DEADLINE_ABSOLUTE_AVOID_THRESHOLD) {
         return 1000000000; // Effectively disqualifies the move with a very large penalty
     }
 
     if (currentTopY > DEADLINE_Y - CRITICAL_HEIGHT_MARGIN) {
         // Critical penalty zone
-        // v170: Increased multiplier from 40 to 50.
         penalty += (currentTopY - (DEADLINE_Y - CRITICAL_HEIGHT_MARGIN)) * HEIGHT_PENALTY_WEIGHT * 50; // Very severe
     } else if (currentTopY > TOP_Y_EXTREME_WARN_THRESHOLD) {
         // Extreme warning zone
-        // v170: Increased multiplier from 200 to 250.
         penalty += (currentTopY - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 250;
     } else if (currentTopY > DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE) {
         // Severe warning zone
@@ -140,15 +138,16 @@ function calculateMergeBonus(potentialMerges, simulatedPieceYCenter, garbageStat
         }
 
         // Boost merge bonus if garbage is imminent or present
-        // v170: Further increased multipliers from (4 -> 5) and (2 -> 3)
+        // v172: GARBAGE_IMMINENT_MERGE_BONUS now applies in OJAMA_MERGE mode too.
         if (garbageState.gauge >= 0.6 || garbageState.ratio > 0.4) { // GBG_URGENT
             bonus *= 5;
-            bonus += GARBAGE_IMMINENT_MERGE_BONUS; // v171: Added bonus for any merge when garbage is imminent
+            bonus += GARBAGE_IMMINENT_MERGE_BONUS;
         } else if (garbageState.gauge >= 0.3 || garbageState.ratio > 0.15) { // OJAMA_MERGE
             bonus *= 3;
+            bonus += GARBAGE_IMMINENT_MERGE_BONUS; // v172: Added bonus for any merge when garbage is imminent (OJAMA_MERGE)
         }
 
-        // v167: Bonus for merges at low Y when garbage is present
+        // Bonus for merges at low Y when garbage is present
         if ((garbageState.gauge > 0.15 || garbageState.ratio > 0) && simulatedPieceYCenter < LOW_Y_MERGE_THRESHOLD) {
             bonus += GARBAGE_CLEAR_MERGE_BONUS_LOW_Y;
         }
@@ -170,7 +169,7 @@ function calculatePipelineBonus(boardState, droppingPiece, dropX, dropY, nextNex
                 Math.pow(simulatedPiece.y - existingPiece.y, 2)
             );
             if (distance <= simulatedPiece.r + existingPiece.r + MERGE_PROXIMITY_THRESHOLD) {
-                bonus += 200; // v166: Stronger bonus for direct chain building (increased from 150)
+                bonus += 200; // Stronger bonus for direct chain building
             }
         }
     }
@@ -320,7 +319,7 @@ export function decide(boardState) {
         return { x: 0, reason: "Error: No current piece available.", hold: false };
     }
 
-    // v167: Calculate large piece distribution for aggregation logic
+    // Calculate large piece distribution for aggregation logic
     let largePiecesLeft = 0;
     let largePiecesRight = 0;
     for (const piece of boardState.pieces) {
@@ -359,7 +358,7 @@ export function decide(boardState) {
         if (heightPen > 0) reason += ` (H:${heightPen.toFixed(0)})`;
 
 
-        // Early/Mid game central management (v165: Refined based on Large Piece Consolidation)
+        // Early/Mid game central management
         // v169: Reduced central bonuses to encourage more flexible layouts for large piece aggregation.
         if (boardState.pieces.length < 5) { // Very early game
             const distanceFromCenter = Math.abs(x);
@@ -420,17 +419,17 @@ export function decide(boardState) {
         score += mergeBonus;
         if (mergeBonus > 0) reason += ` (M+:${mergeBonus.toFixed(0)})`;
 
-        // Calculate and apply Pipeline Bonus (v165: Improved)
+        // Calculate and apply Pipeline Bonus
         const pipelineBonus = calculatePipelineBonus(boardState, currentPiece, x, predictedTopY, nextNextPiece);
         score += pipelineBonus;
         if (pipelineBonus > 0) reason += ` (P+:${pipelineBonus.toFixed(0)})`;
 
         // Calculate and apply Garbage Penalty
-        const garbagePen = calculateGarbagePenalty(boardState, predictedTopY, x, currentPiece, hasMerge); // Pass currentPiece and hasMerge for new penalty
+        const garbagePen = calculateGarbagePenalty(boardState, predictedTopY, x, currentPiece, hasMerge);
         score -= garbagePen;
         if (garbagePen > 0) reason += ` (GP:${garbagePen.toFixed(0)})`;
 
-        // Small piece clustering bonus (Catalyst effect) (v165: Implemented)
+        // Small piece clustering bonus (Catalyst effect)
         const catalystBonus = calculateSmallPieceCatalystBonus(boardState, currentPiece, x, predictedTopY);
         score += catalystBonus;
         if (catalystBonus > 0) reason += ` (CAT+:${catalystBonus.toFixed(0)})`;
