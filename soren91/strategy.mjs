@@ -1,21 +1,28 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v173)
+ * strategy.mjs - ドロップ位置決定戦略 (v174)
  *
- * v173: v172の改善点を踏まえ、ゲーム分析から見られる高さ管理の課題と、おじゃまブロック対策を強化します。
- *       特に、デッドライン付近での高さペナルティの勾配を急にし、下層部でのおじゃまブロッククリアをより強く奨励します。
+ * v174: v173の改善点を踏まえ、ゲーム分析から見られる「高さがデッドライン付近まで到達しやすい」
+ *       「盤面ピース数が多い」という課題に対し、高さペナルティの更なる強化と、
+ *       盤面ピース数に応じたペナルティを導入し、より積極的に盤面をクリアする戦略を採ります。
+ *       また、高得点・高順位に繋がるマージとパイプライン維持のボーナスも強化します。
  *
  *       主な改善点:
- *       1.  **高さペナルティの勾配強化**:
- *           - `calculateHeightPenalty`関数内の各高さ閾値に対するペナルティ倍率を調整。
- *           - デッドラインに近づくほどペナルティが急激に増加するように見直し、より積極的な高さ回避を促します。
- *             これにより、`max_y`がデッドラインに近づく傾向を抑制し、ゲームオーバーを遠ざけることを目指します。
- *       2.  **おじゃまクリアボーナスの強化**:
- *           - `GARBAGE_CLEAR_MERGE_BONUS_LOW_Y`を`300`から`750`に増額。
- *             ボード下層部（`LOW_Y_MERGE_THRESHOLD`以下）での併合によるおじゃまブロッククリアを強く奨励します。
- *             これにより、おじゃまブロックが積み上がる前に効率的に処理し、危険な状況を回避しやすくなります。
- *       3.  **既存ロジックの維持**:
- *           - `SETTLING_BUFFER`の修正、おじゃまゲージボーナスの調整、大型ピースの片側集約インセンティブ、
- *             早期/中期ゲームの中央配置ボーナス、小ピースの触媒利用などはv172のまま維持されます。
+ *       1.  **高さペナルティの勾配と重み付けの強化**:
+ *           - `HEIGHT_PENALTY_WEIGHT` を `250000.0` から `500000.0` に増額し、高さに対する総体的なペナルティを強化。
+ *           - `calculateHeightPenalty` 関数内の `CRITICAL_HEIGHT_MARGIN` 及び `TOP_Y_EXTREME_WARN_THRESHOLD`
+ *             におけるペナルティ倍率をさらに引き上げ、デッドライン付近の危険領域への落下をより厳しく制限。
+ *             これにより、高さを低く保つインセンティブを大幅に強化します。
+ *       2.  **盤面混雑度ペナルティの導入**:
+ *           - `calculateCrowdingPenalty` 関数を新設。盤面上のピース数が一定の閾値（`CROWDING_PENALTY_START_THRESHOLD`）を
+ *             超えた場合に、ピース数に応じてペナルティを課します。これにより、ピースが過剰に積み上がることを抑制し、
+ *             併合による盤面クリアを促します。
+ *       3.  **マージボーナスとパイプラインボーナスの強化**:
+ *           - `calculateMergeBonus` 内の基本ボーナス乗数（`mergedPiece.type * mergedPiece.type * 10`）を `20` に倍増。
+ *             これにより、特に高typeピースの併合がより魅力的な選択肢となり、スコア向上に繋げます。
+ *           - `calculatePipelineBonus` 内の直接的なパイプラインボーナスを `200` から `500` に、
+ *             間接的なボーナスを `50` から `150` に増額。連鎖構築のインセンティブを強化し、効率的なスコア獲得を目指します。
+ *       4.  **既存ロジックの維持**:
+ *           - HOLDメカニクス、大型ピースの片側集約、おじゃまブロック対策、小ピースの触媒利用などはv173のまま維持されます。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -30,7 +37,7 @@ const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 0.75; // Extreme warning when 
 const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Severe warning when top is 1.0 below deadline
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;     // Warning penalty when top is 2.0 below deadline
 
-const HEIGHT_PENALTY_WEIGHT = 250000.0;
+const HEIGHT_PENALTY_WEIGHT = 500000.0; // v174: Increased from 250000.0
 
 // v172: Absolute avoid threshold, further tightened from 0.4 to 0.1
 const DEADLINE_ABSOLUTE_AVOID_THRESHOLD = DEADLINE_Y - 0.1; // If predictedTopY (with small settling buffer) is above this, virtually disqualify the move.
@@ -53,6 +60,9 @@ const LOW_Y_MERGE_THRESHOLD = 0.0; // Y-coordinate below which a merge is consid
 const GARBAGE_STACKING_PENALTY = 1500; // v170: Penalty for dropping a piece on garbage without merging.
 const GARBAGE_IMMINENT_MERGE_BONUS = 100; // v171: Small bonus for any merge when garbage is imminent.
 
+// v174: Crowding Penalty constants
+const CROWDING_PENALTY_START_THRESHOLD = 30; // Start penalizing when total pieces exceed this
+const CROWDING_PENALTY_PER_PIECE = 50;       // Penalty per piece above the threshold
 
 // Function to simulate dropping a piece and calculate its final Y position (top of the piece).
 // This now returns the predicted static top Y of the piece plus a small settling buffer.
@@ -83,13 +93,13 @@ function calculateHeightPenalty(predictedTopY) {
         return 1000000000; // Effectively disqualifies the move with a very large penalty
     }
 
-    // v173: Adjusted multipliers to increase penalty gradient towards deadline
+    // v174: Adjusted multipliers to further increase penalty gradient towards deadline
     if (currentTopY > DEADLINE_Y - CRITICAL_HEIGHT_MARGIN) { // > 2.82
         // Critical penalty zone - very severe
-        penalty += (currentTopY - (DEADLINE_Y - CRITICAL_HEIGHT_MARGIN)) * HEIGHT_PENALTY_WEIGHT * 1000;
+        penalty += (currentTopY - (DEADLINE_Y - CRITICAL_HEIGHT_MARGIN)) * HEIGHT_PENALTY_WEIGHT * 2000; // v174: Increased from 1000
     } else if (currentTopY > TOP_Y_EXTREME_WARN_THRESHOLD) { // > 2.57
         // Extreme warning zone
-        penalty += (currentTopY - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 200;
+        penalty += (currentTopY - TOP_Y_EXTREME_WARN_THRESHOLD) * HEIGHT_PENALTY_WEIGHT * 400; // v174: Increased from 200
     } else if (currentTopY > DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE) { // > 2.32
         // Severe warning zone
         penalty += (currentTopY - (DEADLINE_Y - TOP_Y_CRITICAL_PENALTY_START_RELATIVE)) * HEIGHT_PENALTY_WEIGHT * 50;
@@ -131,7 +141,7 @@ function calculateMergeBonus(potentialMerges, simulatedPieceYCenter, garbageStat
         // Reward higher type merges more
         // Example: type 1 merge = 50, type 5 merge = 500, type 10 merge = 2000
         for (const mergedPiece of potentialMerges) {
-            bonus += mergedPiece.type * mergedPiece.type * 10; // Quadratic scaling with type
+            bonus += mergedPiece.type * mergedPiece.type * 20; // v174: Quadratic scaling multiplier increased from 10 to 20
         }
 
         // Boost merge bonus if garbage is imminent or present
@@ -166,7 +176,7 @@ function calculatePipelineBonus(boardState, droppingPiece, dropX, dropY, nextNex
                 Math.pow(simulatedPiece.y - existingPiece.y, 2)
             );
             if (distance <= simulatedPiece.r + existingPiece.r + MERGE_PROXIMITY_THRESHOLD) {
-                bonus += 200; // Stronger bonus for direct chain building
+                bonus += 500; // v174: Stronger bonus for direct chain building (Increased from 200)
             }
         }
     }
@@ -183,7 +193,7 @@ function calculatePipelineBonus(boardState, droppingPiece, dropX, dropY, nextNex
                 Math.pow(simulatedPiece.y - existingPiece.y, 2)
             );
             if (distance <= simulatedPiece.r + existingPiece.r + MERGE_PROXIMITY_THRESHOLD) {
-                bonus += 50; // Small bonus for indirect pipeline
+                bonus += 150; // v174: Small bonus for indirect pipeline (Increased from 50)
             }
         }
     }
@@ -259,6 +269,17 @@ function calculateSmallPieceCatalystBonus(boardState, droppingPiece, dropX, drop
         return SMALL_PIECE_CATALYST_BONUS * denseNeighbors; // Bonus scales with density
     }
     return 0;
+}
+
+// v174: New function to calculate penalty based on the number of pieces on the board.
+function calculateCrowdingPenalty(boardState) {
+    let penalty = 0;
+    const pieceCount = boardState.pieces.length;
+
+    if (pieceCount > CROWDING_PENALTY_START_THRESHOLD) {
+        penalty = (pieceCount - CROWDING_PENALTY_START_THRESHOLD) * CROWDING_PENALTY_PER_PIECE;
+    }
+    return penalty;
 }
 
 
@@ -354,6 +375,10 @@ export function decide(boardState) {
         score -= heightPen;
         if (heightPen > 0) reason += ` (H:${heightPen.toFixed(0)})`;
 
+        // v174: Apply crowding penalty
+        const crowdingPen = calculateCrowdingPenalty(boardState);
+        score -= crowdingPen;
+        if (crowdingPen > 0) reason += ` (CP:${crowdingPen.toFixed(0)})`;
 
         // Early/Mid game central management
         // v169: Reduced central bonuses to encourage more flexible layouts for large piece aggregation.
