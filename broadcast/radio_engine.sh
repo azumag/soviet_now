@@ -274,46 +274,25 @@ _run_ollama_comment() {
 	local prompt_file="$1"
 	local model="${2:-$COMMENT_OLLAMA_MODEL}"
 	local timeout_sec="${3:-$COMMENT_OLLAMA_TIMEOUT}"
-	local sandbox_dir sandbox_prompt output
-	sandbox_dir=$(create_sandbox \
-		"README.md" \
-		"strategy.py" \
-		"prompts/comment_response.md" \
-		"$COMMENT_SPOKEN_HISTORY_DIR" \
-		"$PAST_RADIO_TOPICS" \
-		"score_history.txt" \
-		"$RUSSIA_CREATION_HISTORY_FILE" \
-		"$SOVIET_CREATION_HISTORY_FILE" \
-		"$ROLLING_SCORES_FILE" \
-		"show_status.sh" \
-		"show_status_g.sh" \
-		"status_dashboard.py")
-	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
-		log "[COMMENT] sandbox作成失敗 -> direct ollama" >&2
-		_run_ollama_radio "$prompt_file" "$model" "$timeout_sec"
-		return
-	fi
-	sandbox_prompt="$sandbox_dir/tmp/comment_prompt.txt"
-	mkdir -p "$(dirname "$sandbox_prompt")"
-	cp "$prompt_file" "$sandbox_prompt" 2>/dev/null || {
-		destroy_sandbox "$sandbox_dir"
+	local prompt output
+	if [ ! -s "$prompt_file" ]; then
 		return 1
-	}
+	fi
+	prompt=$(cat "$prompt_file")
+	log "[COMMENT] ollama call (model=$model, prompt=$(printf '%s' "$prompt" | wc -c | tr -d ' ')B)" >&2
 	local stderr_file
 	stderr_file=$(mktemp /tmp/eloop_ollama_comment_stderr_XXXXXXXX)
 	output=$(
-		cd "$sandbox_dir" &&
-			ANTHROPIC_AUTH_TOKEN="ollama" \
-				ANTHROPIC_BASE_URL="$OLLAMA_BASE_URL" \
-				ANTHROPIC_API_KEY="" \
-				timeout "$timeout_sec" claude -p --model "$model" --permission-mode=acceptEdits <'tmp/comment_prompt.txt' 2>"$stderr_file"
+		ANTHROPIC_AUTH_TOKEN="ollama" \
+			ANTHROPIC_BASE_URL="$OLLAMA_BASE_URL" \
+			ANTHROPIC_API_KEY="" \
+			timeout "$timeout_sec" claude -p "$prompt" --model="$model" --permission-mode=acceptEdits 2>"$stderr_file"
 	)
 	local rc=$?
 	if [ -s "$stderr_file" ]; then
 		log "[COMMENT] ollama stderr: $(head -c 500 "$stderr_file")" >&2
 	fi
 	rm -f "$stderr_file"
-	destroy_sandbox "$sandbox_dir"
 	if [ $rc -eq 124 ]; then
 		log "[COMMENT] ollama timeout (${timeout_sec}s, model=$model)" >&2
 		return 1
