@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-05 15:54:41 JST`
-- Nodes: `925`
-- Edges: `1267`
-- Current: `b1c15fe57b34`
+- Updated: `2026-04-05 19:25:29 JST`
+- Nodes: `926`
+- Edges: `1268`
+- Current: `89af10322292`
 - Anchor: `301434b90c7a`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_7fb34a9574aa["7fb34a9574aa<br/>g=12 n=12<br/>comp=11093.3"]
     h_f9c3495541b4["f9c3495541b4<br/>g=12 n=12<br/>comp=9956.8"]
     h_f452a0a4c9f9["f452a0a4c9f9<br/>g=12 n=12<br/>comp=10499.1"]
     h_e9f46253f367["e9f46253f367<br/>g=12 n=12<br/>comp=11641.4"]
@@ -72,9 +71,10 @@ flowchart TD
     h_f3726bcc9fc1["f3726bcc9fc1<br/>g=12 n=12<br/>comp=10186.6"]
     h_e4ac98cdecdb["e4ac98cdecdb<br/>g=12 n=12<br/>comp=10851.0"]
     h_301434b90c7a["301434b90c7a<br/>ANCHOR<br/>g=12 n=12<br/>comp=12428.5"]
+    h_b1c15fe57b34["b1c15fe57b34<br/>g=24 n=20<br/>comp=10847.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_b1c15fe57b34["b1c15fe57b34<br/>CURRENT"]
+    h_89af10322292["89af10322292<br/>CURRENT"]
 
     h_f452a0a4c9f9 -->|improve| h_e9f46253f367
     h_e9f46253f367 -->|improve| h_750e181c1242
@@ -139,13 +139,13 @@ flowchart TD
     h_f3726bcc9fc1 -->|improve| h_e4ac98cdecdb
     h_e4ac98cdecdb -. rollback .-> h_da9419588c26
     h_301434b90c7a -->|improve| h_b1c15fe57b34
+    h_b1c15fe57b34 -->|improve| h_89af10322292
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_7fb34a9574aa plain;
     class h_f9c3495541b4 plain;
     class h_f452a0a4c9f9 plain;
     class h_e9f46253f367 plain;
@@ -202,9 +202,10 @@ flowchart TD
     class h_f3726bcc9fc1 plain;
     class h_e4ac98cdecdb plain;
     class h_301434b90c7a anchor;
+    class h_b1c15fe57b34 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_b1c15fe57b34 current;
+    class h_89af10322292 current;
 ```
 
 ## Detail 1/12
@@ -3343,9 +3344,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `b1c15fe57b34`
-- Nodes in this diagram: `45`
-- Internal edges in this diagram: `47`
+- Range: `8b764b56c6f3` .. `89af10322292`
+- Nodes in this diagram: `46`
+- Internal edges in this diagram: `48`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3403,9 +3404,10 @@ flowchart TD
     h_f3726bcc9fc1["f3726bcc9fc1<br/>g=12 n=12<br/>comp=10186.6"]
     h_e4ac98cdecdb["e4ac98cdecdb<br/>g=12 n=12<br/>comp=10851.0"]
     h_301434b90c7a["301434b90c7a<br/>ANCHOR<br/>g=12 n=12<br/>comp=12428.5"]
+    h_b1c15fe57b34["b1c15fe57b34<br/>g=24 n=20<br/>comp=10847.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_b1c15fe57b34["b1c15fe57b34<br/>CURRENT"]
+    h_89af10322292["89af10322292<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3454,6 +3456,7 @@ flowchart TD
     h_f3726bcc9fc1 -->|improve| h_e4ac98cdecdb
     h_e4ac98cdecdb -. rollback .-> h_da9419588c26
     h_301434b90c7a -->|improve| h_b1c15fe57b34
+    h_b1c15fe57b34 -->|improve| h_89af10322292
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3502,12 +3505,23 @@ flowchart TD
     class h_f3726bcc9fc1 plain;
     class h_e4ac98cdecdb plain;
     class h_301434b90c7a anchor;
+    class h_b1c15fe57b34 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_b1c15fe57b34 current;
+    class h_89af10322292 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#12976 `b1c15fe5 -> 89af1032`
+
+- scores: `8692 7668 14616 8609 13690 10438 13234 9824 6913 14487 15023 10568`
+- v530: ロシア建国後の2つ目ロシア育成戦略強化 - russia_phase_count>=2で戦略を切り替え
+- ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
+- type 15(ロシア)が1つある場合と2つある場合で戦略を分岐させる:
+- - type 15が1つの場合: 既存のロシア(type 15)の位置を保護しつつ、2つ目のロシアへの成長パイプラインを確保
+- - type 15が2つ以上の場合: ロシア同士が併合可能な距離に来るよう、2つ目の成長位置を意識した配置をする
+- batch_summaryでロシア建国後にゲームオーバーになるケースが多いことを確認
 
 ### Improve Game#12952 `301434b9 -> b1c15fe5`
 
