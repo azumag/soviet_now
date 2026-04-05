@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v529: suppress axes 5.5+5.6 at rp>=3+NO — re-apply v527 lost in rollback cascade
+     # At rp>=3+NO (death spiral), axis 8.8 (-4500 flat) dominates all candidates equally.
+     # Height penalty is the sole meaningful differentiator, but AVOID_BLOCK_NEXTNEXT (-400)
+     # and growth center proximity (~80-268) override small height differences (~90/unit in HIGH),
+     # causing non-lowest placement and edge scatter. Protected strategy (median 12789) has
+     # neither axis. Worst game T56-T66: rp=4-7, NO merge, repeated x=±3.0 edge scatter.
+     # Fixes rollback failure mode: additive bonus noise overriding height differentiation in death spiral
+     # refs: game_history/20260405_151305_score0886.jsonl T56-T66, tmp/batch_summary.txt,
+     #       tmp/state/last_rollback_analysis.md, tmp/change_log.txt (v527 validated at Game#12905),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
      # v528: suppress axis 9.6 stacking at rp>=3+NO — let axis 8.8 (-4500) and height penalty be sole differentiators
      # Protected strategy (median 12789, +20%) suppresses stacking at rp>=3. At rp>=3+NO,
      # axis 8.8 (-4500) dominates all candidates. Stacking bonus (~100-400 with congestion scaling)
@@ -1355,17 +1365,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
         # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
         # refs: advice.md (Pitman_live, azumag), batch_summary.txt
-        for p in pieces:
-            if p.get("type") == next_next_type:
-                piece_y = p.get("y", -10)
-                landing_y = result.get("landing_y", 0)
-                if landing_y > piece_y:
-                    # 着地位置がnextNext typeのピースの上になる場合
-                    horiz_dist = abs(x - p["x"])
-                    if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                        score -= 400.0  # 未来の併合機会を潰すためのペナルティ
-                        reasons.append("AVOID_BLOCK_NEXTNEXT")
-                        break
+        # v527 re-apply: suppress AVOID_BLOCK_NEXTNEXT at rp>=3+NO (death spiral mode)
+        # At rp>=3+NO, axis 8.8 (-4500 flat) dominates. Height penalty (~90/unit in HIGH)
+        # is the only meaningful differentiator, but AVOID_BLOCK_NEXTNEXT (-400) overrides
+        # small height diffs, pushing pieces to edges during death spiral.
+        # Worst game T63: AVOID_BLOCK_NEXTNEXT at rp=6 pushed to x=-3.0 during spiral.
+        # Protected strategy (median 12789) has no AVOID_BLOCK_NEXTNEXT at all.
+        if not (reactive_pair_count >= 3 and merge_grade == "NO"):
+            for p in pieces:
+                if p.get("type") == next_next_type:
+                    piece_y = p.get("y", -10)
+                    landing_y = result.get("landing_y", 0)
+                    if landing_y > piece_y:
+                        horiz_dist = abs(x - p["x"])
+                        if horiz_dist < 1.0:
+                            score -= 400.0
+                            reasons.append("AVOID_BLOCK_NEXTNEXT")
+                            break
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
         # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
@@ -1388,8 +1404,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
         # Fixes rollback failure mode: type scattering → piece_count accumulation
         # v407: removed russia_phase guard — growth center guidance now active in ALL phases
+        # v527 re-apply: suppress growth center at rp>=3+NO — during death spiral,
+        # height is sole differentiator; proximity bonus (~80-268) overrides small
+        # height differences (~90/unit in HIGH), causing non-lowest placement.
+        # Protected strategy (median 12789) has no growth center proximity at all.
         max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
-        if max_type_on_board >= 6:
+        if max_type_on_board >= 6 and not (reactive_pair_count >= 3 and merge_grade == "NO"):
             # Find the deepest (lowest y) highest-type piece as growth center
             growth_center = min(
                 (p for p in pieces if p.get("type") == max_type_on_board),
