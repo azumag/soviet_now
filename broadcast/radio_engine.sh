@@ -1,6 +1,5 @@
 # broadcast/radio_engine.sh - AI実行ラッパー, パース, サニタイズ, 生成&再生
 
-
 #=== opencode run を疑似TTY付きで実行 ===
 
 _run_opencode_radio() {
@@ -194,7 +193,7 @@ _run_claude_radio_with_model() {
 		return 1
 	fi
 	# command substitution に混ざらないよう stderr に出す
-	log "[RADIO] claude call (model=$model, prompt=$(wc -c < "$prompt_file" | tr -d ' ')B)" >&2
+	log "[RADIO] claude call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
 	local stderr_file
 	stderr_file=$(mktemp /tmp/eloop_claude_stderr_XXXXXXXX)
 	local stderr_preview="" provider_error=false login_error=false
@@ -229,6 +228,105 @@ _run_claude_radio_with_model() {
 
 _run_claude_radio() {
 	_run_claude_radio_with_model "$1" "$RADIO_CLAUDE_MODEL"
+}
+
+_run_ollama_radio() {
+	local prompt_file="$1"
+	local model="${2:-$RADIO_OLLAMA_MODEL}"
+	local timeout_sec="${3:-$RADIO_OLLAMA_TIMEOUT}"
+	local prompt output
+	if [ ! -s "$prompt_file" ]; then
+		return 1
+	fi
+	log "[RADIO] ollama call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	prompt=$(cat "$prompt_file")
+	local stderr_file
+	stderr_file=$(mktemp /tmp/eloop_ollama_stderr_XXXXXXXX)
+	output=$(
+		ANTHROPIC_AUTH_TOKEN="ollama" \
+			ANTHROPIC_BASE_URL="$OLLAMA_BASE_URL" \
+			ANTHROPIC_API_KEY="" \
+			timeout "$timeout_sec" claude -p "$prompt" --model="$model" --permission-mode=acceptEdits 2>"$stderr_file"
+	)
+	local rc=$?
+	local stderr_preview=""
+	if [ -s "$stderr_file" ]; then
+		stderr_preview=$(head -c 500 "$stderr_file")
+		log "[RADIO] ollama stderr: $stderr_preview" >&2
+	fi
+	rm -f "$stderr_file"
+	if [ $rc -eq 124 ]; then
+		log "[RADIO] ollama timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[RADIO] ollama failed (rc=$rc, model=$model)" >&2
+		return 1
+	fi
+	if _contains_provider_error_text "$output"; then
+		log "[RADIO] ollama provider error treated as failure (model=$model)" >&2
+		return 1
+	fi
+	printf '%s' "$output"
+}
+
+_run_ollama_comment() {
+	local prompt_file="$1"
+	local model="${2:-$COMMENT_OLLAMA_MODEL}"
+	local timeout_sec="${3:-$COMMENT_OLLAMA_TIMEOUT}"
+	local sandbox_dir sandbox_prompt output
+	sandbox_dir=$(create_sandbox \
+		"README.md" \
+		"strategy.py" \
+		"prompts/comment_response.md" \
+		"$COMMENT_SPOKEN_HISTORY_DIR" \
+		"$PAST_RADIO_TOPICS" \
+		"score_history.txt" \
+		"$RUSSIA_CREATION_HISTORY_FILE" \
+		"$SOVIET_CREATION_HISTORY_FILE" \
+		"$ROLLING_SCORES_FILE" \
+		"show_status.sh" \
+		"show_status_g.sh" \
+		"status_dashboard.py")
+	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
+		log "[COMMENT] sandbox作成失敗 -> direct ollama" >&2
+		_run_ollama_radio "$prompt_file" "$model" "$timeout_sec"
+		return
+	fi
+	sandbox_prompt="$sandbox_dir/tmp/comment_prompt.txt"
+	mkdir -p "$(dirname "$sandbox_prompt")"
+	cp "$prompt_file" "$sandbox_prompt" 2>/dev/null || {
+		destroy_sandbox "$sandbox_dir"
+		return 1
+	}
+	local stderr_file
+	stderr_file=$(mktemp /tmp/eloop_ollama_comment_stderr_XXXXXXXX)
+	output=$(
+		cd "$sandbox_dir" &&
+			ANTHROPIC_AUTH_TOKEN="ollama" \
+				ANTHROPIC_BASE_URL="$OLLAMA_BASE_URL" \
+				ANTHROPIC_API_KEY="" \
+				timeout "$timeout_sec" claude -p --model "$model" --permission-mode=acceptEdits <'tmp/comment_prompt.txt' 2>"$stderr_file"
+	)
+	local rc=$?
+	if [ -s "$stderr_file" ]; then
+		log "[COMMENT] ollama stderr: $(head -c 500 "$stderr_file")" >&2
+	fi
+	rm -f "$stderr_file"
+	destroy_sandbox "$sandbox_dir"
+	if [ $rc -eq 124 ]; then
+		log "[COMMENT] ollama timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[COMMENT] ollama failed (rc=$rc, model=$model)" >&2
+		return 1
+	fi
+	if _contains_provider_error_text "$output"; then
+		log "[COMMENT] ollama provider error treated as failure (model=$model)" >&2
+		return 1
+	fi
+	printf '%s' "$output"
 }
 
 _write_radio_corner_status() {
@@ -272,7 +370,8 @@ PY
 }
 
 _clean_comment_talk() {
-	printf '%s\n' "$1" | python3 -c "$(cat <<'PY'
+	printf '%s\n' "$1" | python3 -c "$(
+		cat <<'PY'
 import re
 import sys
 
@@ -319,7 +418,7 @@ text = "\n".join(line for line in clean if line.strip()).strip()
 text = re.sub(r'\n{3,}', '\n\n', text)
 print(text, end='')
 PY
-)"
+	)"
 }
 
 _is_valid_comment_talk() {
@@ -340,7 +439,7 @@ _is_valid_comment_talk() {
 	if printf '%s' "$talk" | grep -Eiq '(^|[[:space:]])(read|glob|grep|ls|edit|write|multiedit)[[:space:]]+["./]'; then
 		return 1
 	fi
-	if printf '%s' "$talk" | grep -Eiq '^[[:space:]]*[✗✕×✱→►▸]' ; then
+	if printf '%s' "$talk" | grep -Eiq '^[[:space:]]*[✗✕×✱→►▸]'; then
 		return 1
 	fi
 	# 「検索できない」「データがない」系の拒否応答を検出 → 無効にしてfallbackさせる
@@ -470,7 +569,8 @@ _radio_compact_fact_check_context() {
 	case "$corner_name" in
 	news)
 		block=$(_radio_extract_prompt_section_block "【最新ニュース - 実際の本日のニュース】" "$prompt_context")
-		compact=$(cat <<EOF
+		compact=$(
+			cat <<EOF
 【現在時刻】
 ${current_time}
 【時間帯の雰囲気】
@@ -480,11 +580,12 @@ ${situation}
 【最新ニュース】
 ${block}
 EOF
-)
+		)
 		;;
 	theme)
 		block=$(_radio_extract_prompt_section_block "【今回の脱線テーマ指定】" "$prompt_context")
-		compact=$(cat <<EOF
+		compact=$(
+			cat <<EOF
 【現在時刻】
 ${current_time}
 【時間帯の雰囲気】
@@ -494,11 +595,12 @@ ${situation}
 【今回の脱線テーマ指定】
 ${block}
 EOF
-)
+		)
 		;;
 	soviet)
 		block=$(_radio_extract_prompt_section_block "【今回の脱線テーマ指定】" "$prompt_context")
-		compact=$(cat <<EOF
+		compact=$(
+			cat <<EOF
 【現在時刻】
 ${current_time}
 【時間帯の雰囲気】
@@ -508,10 +610,11 @@ ${situation}
 【今回の脱線テーマ指定】
 ${block}
 EOF
-)
+		)
 		;;
-	weather|fortune|market|dinner|deals|survival)
-		compact=$(cat <<EOF
+	weather | fortune | market | dinner | deals | survival)
+		compact=$(
+			cat <<EOF
 【現在時刻】
 ${current_time}
 【時間帯の雰囲気】
@@ -519,11 +622,12 @@ ${mood}
 【状況】
 ${situation}
 EOF
-)
+		)
 		;;
 	strategy)
 		block=$(_radio_extract_prompt_section_block "【作戦変更の差分】" "$prompt_context")
-		compact=$(cat <<EOF
+		compact=$(
+			cat <<EOF
 【現在時刻】
 ${current_time}
 【時間帯の雰囲気】
@@ -533,7 +637,7 @@ ${situation}
 【作戦変更の差分】
 ${block}
 EOF
-)
+		)
 		;;
 	*)
 		compact="$prompt_context"
@@ -750,7 +854,8 @@ print(result, end='')
 }
 
 _sanitize_onair_text() {
-	python3 -c "$(cat <<'PY'
+	python3 -c "$(
+		cat <<'PY'
 import re
 import sys
 
@@ -819,7 +924,7 @@ out = re.sub(r'[#＃]', '', out)
 out = re.sub(r'\n{3,}', '\n\n', out).strip()
 sys.stdout.write(out)
 PY
-)"
+	)"
 }
 
 _normalize_radio_tone() {
@@ -853,23 +958,26 @@ _ensure_corner_announce() {
 	local text="$1" corner_name="$2"
 	local announce=""
 	case "$corner_name" in
-		soviet)   announce="ソ連共産主義ネタコーナーです。" ;;
-		news)     announce="本日のニュースです。" ;;
-		weather)  announce="ソ連天気予報コーナーです。" ;;
-		fortune)  announce="今日のソ連占いコーナーです。" ;;
-		market)   announce="本日の株価・経済動向コーナーです。" ;;
-		dinner)   announce="今日の夕飯の献立を考えようコーナーです。" ;;
-		deals)    announce="お得情報コーナーです。" ;;
-		survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
-		jiji)     announce="時事ニュースコーナーです。" ;;
-		rollback) announce="粛清ラジオです。" ;;
-		rakugo) announce="深夜の落語創作コーナーです。" ;;
-		finance) announce="金融の仕組みコーナーです。" ;;
-		music_knowledge) announce="音楽知識コーナーです。" ;;
-		ai_knowledge) announce="AI知識・最新AIツール紹介コーナーです。" ;;
-		*)        announce="" ;;
+	soviet) announce="ソ連共産主義ネタコーナーです。" ;;
+	news) announce="本日のニュースです。" ;;
+	weather) announce="ソ連天気予報コーナーです。" ;;
+	fortune) announce="今日のソ連占いコーナーです。" ;;
+	market) announce="本日の株価・経済動向コーナーです。" ;;
+	dinner) announce="今日の夕飯の献立を考えようコーナーです。" ;;
+	deals) announce="お得情報コーナーです。" ;;
+	survival) announce="明日を生き延びるサバイバル知識コーナーです。" ;;
+	jiji) announce="時事ニュースコーナーです。" ;;
+	rollback) announce="粛清ラジオです。" ;;
+	rakugo) announce="深夜の落語創作コーナーです。" ;;
+	finance) announce="金融の仕組みコーナーです。" ;;
+	music_knowledge) announce="音楽知識コーナーです。" ;;
+	ai_knowledge) announce="AI知識・最新AIツール紹介コーナーです。" ;;
+	*) announce="" ;;
 	esac
-	[ -z "$announce" ] && { printf '%s' "$text"; return 0; }
+	[ -z "$announce" ] && {
+		printf '%s' "$text"
+		return 0
+	}
 	# 既に含まれていたら二重挿入しない
 	if printf '%s\n' "$text" | head -n 5 | grep -qF "$announce"; then
 		printf '%s' "$text"
@@ -918,8 +1026,14 @@ _radio_generate_and_play() {
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--no-preempt) no_preempt=true ;;
-		--selected-news) shift; selected_news="$1" ;;
-		--topic) shift; topic="$1" ;;
+		--selected-news)
+			shift
+			selected_news="$1"
+			;;
+		--topic)
+			shift
+			topic="$1"
+			;;
 		esac
 		shift
 	done
@@ -1177,10 +1291,10 @@ _radio_generate_and_play() {
 		deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "$corner_name" "$host_mode_generated" "$history_line" || true)
 		# deferred再生時のCC投稿用にニュースタイトルを保存
 		if [ -n "$deferred_file" ] && [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
-			echo "$selected_news" > "${deferred_file%.txt}.news_title"
+			echo "$selected_news" >"${deferred_file%.txt}.news_title"
 			local deferred_cc_text=""
 			deferred_cc_text=$(_build_cc_attribution_text "$selected_news")
-			[ -n "$deferred_cc_text" ] && printf '%s' "$deferred_cc_text" > "${deferred_file%.txt}.cc_text"
+			[ -n "$deferred_cc_text" ] && printf '%s' "$deferred_cc_text" >"${deferred_file%.txt}.cc_text"
 		fi
 		if [ -n "$deferred_file" ]; then
 			_radio_set_state "queued" "$corner_name"
@@ -1194,42 +1308,42 @@ _radio_generate_and_play() {
 			rmdir "$inflight_dir" 2>/dev/null || true
 			return 1
 		fi
-		else
-			_radio_set_state "playing" "$corner_name"
-			_write_radio_corner_status "playing" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
-			# CC表記は say_enqueue.sh の再生開始時に投稿（SAY_CC_TEXT 経由）
-			local immediate_cc_text=""
-			if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
-				immediate_cc_text=$(_build_cc_attribution_text "$selected_news")
-			fi
-			local radio_vo_speaker=""
-			radio_vo_speaker=$(_radio_voicevox_speaker_override "$corner_name" 2>/dev/null || true)
-			_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
-			if [ "$no_preempt" = true ]; then
-				SAY_CC_TEXT="$immediate_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
-			else
-				SAY_CC_TEXT="$immediate_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
-			fi
-			if [ "$play_rc" -ne 0 ]; then
-				debug_dump="$TMP_DEBUG_DIR/radio_play_failed_${corner_name}_$(date +%s).txt"
-				{
-					echo "reason=play_failed"
-					echo "corner=${corner_name}"
-					echo "game=${game_num}"
-					echo "score=${score}"
-					echo "play_rc=${play_rc}"
-					echo
-					printf '%s\n' "$talk_body"
-				} >"$debug_dump"
-				log "[RADIO:${corner_name}] 再生失敗 rc=${play_rc} (dump: $debug_dump)"
-				_write_radio_corner_status "play_failed" "$corner_name" "$game_num" "$score" "$topic" "play_failed" "$selected_news" "{\"play_rc\": ${play_rc:-1}}"
-				rm -f "$talk_file"
-				_radio_clear_state "$corner_name" "play_failed"
-				rmdir "$inflight_dir" 2>/dev/null || true
-				return 1
-			fi
-			_radio_append_spoken_history_line "$history_line"
+	else
+		_radio_set_state "playing" "$corner_name"
+		_write_radio_corner_status "playing" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
+		# CC表記は say_enqueue.sh の再生開始時に投稿（SAY_CC_TEXT 経由）
+		local immediate_cc_text=""
+		if [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then
+			immediate_cc_text=$(_build_cc_attribution_text "$selected_news")
 		fi
+		local radio_vo_speaker=""
+		radio_vo_speaker=$(_radio_voicevox_speaker_override "$corner_name" 2>/dev/null || true)
+		_refresh_radio_intro_for_playback_file "$talk_file" "$corner_name"
+		if [ "$no_preempt" = true ]; then
+			SAY_CC_TEXT="$immediate_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh --no-preempt "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
+		else
+			SAY_CC_TEXT="$immediate_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
+		fi
+		if [ "$play_rc" -ne 0 ]; then
+			debug_dump="$TMP_DEBUG_DIR/radio_play_failed_${corner_name}_$(date +%s).txt"
+			{
+				echo "reason=play_failed"
+				echo "corner=${corner_name}"
+				echo "game=${game_num}"
+				echo "score=${score}"
+				echo "play_rc=${play_rc}"
+				echo
+				printf '%s\n' "$talk_body"
+			} >"$debug_dump"
+			log "[RADIO:${corner_name}] 再生失敗 rc=${play_rc} (dump: $debug_dump)"
+			_write_radio_corner_status "play_failed" "$corner_name" "$game_num" "$score" "$topic" "play_failed" "$selected_news" "{\"play_rc\": ${play_rc:-1}}"
+			rm -f "$talk_file"
+			_radio_clear_state "$corner_name" "play_failed"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 1
+		fi
+		_radio_append_spoken_history_line "$history_line"
+	fi
 	rm -f "$talk_file"
 	_radio_mark_done "$done_marker"
 	_radio_clear_state "$corner_name" "completed"
