@@ -158,3 +158,4 @@
 {"eventType":"improve","fromHash":"837fdc718eca","toHash":"8aab9f3538ed","note":"standalone improve 1918-1929","gameStart":1918,"gameEnd":1929,"bestGame":1926,"recordedAt":"2026-04-05T20:43:26.059Z"}
 {"eventType":"improve","fromHash":"8aab9f3538ed","toHash":"12c9cd89a3e5","note":"standalone improve 1930-1933","gameStart":1930,"gameEnd":1933,"bestGame":1931,"recordedAt":"2026-04-05T21:43:30.260Z"}
 {"eventType":"improve","fromHash":"12c9cd89a3e5","toHash":"7954600e9e52","note":"standalone improve 1934-1934","gameStart":1934,"gameEnd":1934,"bestGame":1934,"recordedAt":"2026-04-05T22:34:36.953Z"}
+{"eventType":"improve","fromHash":"7954600e9e52","toHash":"e2b1ed426977","note":"standalone improve 1935-1938","gameStart":1935,"gameEnd":1938,"bestGame":1936,"recordedAt":"2026-04-05T23:37:20.673Z"}
