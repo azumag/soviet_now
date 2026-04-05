@@ -1,33 +1,29 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v180)
+ * strategy.mjs - ドロップ位置決定戦略 (v181)
  *
- * v180: v179の高さ管理緩和方針を維持しつつ、ゲーム分析で示された「高生存ターン数にも関わらずRankに貢献していない」
- *       という課題に対処するため、併合・パイプラインボーナスと大型ピース集約ボーナスをさらに強化します。
- *       これは、生存ターンを伸ばすだけでなく、積極的に高スコアを狙い、盤面をクリアする動きを促進するためです。
- *       また、`calculateLargePieceAggregationBonus`関数におけるグローバル変数の使用を廃止し、
- *       `decide`関数内での純粋な計算に修正し、関数の副作用をなくします。
+ * v181: v180で示された「高生存ターン数にも関わらずRankに貢献していない」という課題に対し、
+ *       併合・パイプライン・大型ピース集約、および小ピースの触媒利用やゴミ除去のボーナスをさらに強化し、
+ *       より積極的な高スコア獲得と盤面整理を促進します。また、併合判定の物理的実情を考慮し、
+ *       併合可能距離を微調整します。
  *
  *       主な改善点:
- *       1.  **高さ管理ペナルティのさらなる緩和**:
- *           - `HEIGHT_PENALTY_WEIGHT` を `500000.0` から `400000.0` にさらに減らし、
- *             高さによる過度な選択肢の制限を避け、他の行動（併合など）を推奨します。
- *       2.  **併合・パイプラインボーナスの強化**:
- *           - `MERGE_BONUS_SCALE_FACTOR` を `40` から `50` に増強。
- *           - `PIPELINE_BONUS_DIRECT_CHAIN` を `1000` から `1200` に増強。
- *           - `PIPELINE_BONUS_INDIRECT_CHAIN` を `350` から `450` に増強。
- *             これにより、ピースの併合と連鎖形成の優先度を向上させ、スコア獲得と盤面整理を促進します。
- *       3.  **大型ピース集約ボーナスの強化**:
- *           - `LARGE_PIECE_AGGREGATION_BONUS` を `1500` から `1800` に増強。
+ *       1.  **併合・パイプラインボーナスのさらなる強化**:
+ *           - `MERGE_PROXIMITY_THRESHOLD` を `0.15` から `0.20` に微増。凸ポリゴンの衝突・回転を考慮。
+ *           - `MERGE_BONUS_SCALE_FACTOR` を `50` から `70` に増強。
+ *           - `PIPELINE_BONUS_DIRECT_CHAIN` を `1200` から `1500` に増強。
+ *           - `PIPELINE_BONUS_INDIRECT_CHAIN` を `450` から `600` に増強。
+ *             これにより、ピースの併合と連鎖形成の優先度をさらに高め、スコア獲得と盤面整理を促進します。
+ *       2.  **大型ピース集約ボーナスのさらなる強化**:
+ *           - `LARGE_PIECE_AGGREGATION_BONUS` を `1800` から `2000` に増強。
  *             大型ピースを一箇所に集めることの重要性を高め、後の高タイプ併合を容易にします。
- *       4.  **おじゃまブロック対策の強化**:
- *           - `GARBAGE_CLEAR_MERGE_BONUS_LOW_Y` を `1000` から `2000` に増強。
+ *       3.  **おじゃまブロック対策のさらなる強化**:
+ *           - `GARBAGE_CLEAR_MERGE_BONUS_LOW_Y` を `2000` から `2500` に増強。
  *             おじゃまブロックが多い状況下で、低い位置での併合によるクリアを強く推奨します。
- *       5.  **`calculateLargePieceAggregationBonus`の純粋化**:
- *           - グローバル変数 `dominantLargePieceSide` の使用を廃止し、`decide` 関数内で
- *             現在の盤面から決定した値を引数として渡すように変更。これにより、`decide` 関数が
- *             純粋な関数として動作し、予測可能性とデバッグ容易性を向上させます。
- *       6.  **既存ロジックの維持**:
- *           - HOLDメカニクス、その他のロジックは維持されます。
+ *       4.  **小ピース触媒ボーナスの強化**:
+ *           - `SMALL_PIECE_CATALYST_BONUS` を `850` から `1000` に増強。
+ *             高密度エリアでの小ピース利用を促進し、盤面活性化を狙います。
+ *       5.  **既存ロジックの維持**:
+ *           - 高さ管理ペナルティの重み、HOLDメカニクス、その他のロジックはv180の方針を維持します。
  *
  *       これらの調整により、ゲームオーバーを回避しつつ、より積極的な併合と大型ピース管理によって高スコアを目指し、
  *       安定したRank獲得と生存ターン数のさらなる向上を目指します。
@@ -40,33 +36,31 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 3.32;                  // Actual game over Y coordinate
-const CRITICAL_HEIGHT_MARGIN = 0.7; // v179: Reverted from 0.8 to 0.7.
+const CRITICAL_HEIGHT_MARGIN = 0.7;
 const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.0;
-// TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Not directly used in v179 code, keep for context
-// TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;     // Not directly used in v179 code, keep for context
 
-const HEIGHT_PENALTY_WEIGHT = 400000.0; // v180: Further reduced from 500000.0.
-const SETTLING_BUFFER = 0.35; // v179: Reverted from 0.40 to 0.35.
+const HEIGHT_PENALTY_WEIGHT = 400000.0; // v180: Maintained from 400000.0.
+const SETTLING_BUFFER = 0.35;
 
 // v179: Changed from absolute avoidance (Infinity) to a very large penalty.
 const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000; // Very large penalty instead of Infinity
 
-// Merge and Pipeline Bonuses (v180: further increased)
-const MERGE_PROXIMITY_THRESHOLD = 0.15;
-const MERGE_BONUS_SCALE_FACTOR = 50; // v180: Increased from 40
-const PIPELINE_BONUS_DIRECT_CHAIN = 1200; // v180: Increased from 1000
-const PIPELINE_BONUS_INDIRECT_CHAIN = 450; // v180: Increased from 350
-const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 2000; // v180: Increased from 1000
+// Merge and Pipeline Bonuses (v181: further increased)
+const MERGE_PROXIMITY_THRESHOLD = 0.20; // v181: Increased from 0.15
+const MERGE_BONUS_SCALE_FACTOR = 70; // v181: Increased from 50
+const PIPELINE_BONUS_DIRECT_CHAIN = 1500; // v181: Increased from 1200
+const PIPELINE_BONUS_INDIRECT_CHAIN = 600; // v181: Increased from 450
+const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 2500; // v181: Increased from 2000
 
-// Small Piece Catalyst (v178 maintained)
-const SMALL_PIECE_CATALYST_BONUS = 850;
+// Small Piece Catalyst (v181: increased)
+const SMALL_PIECE_CATALYST_BONUS = 1000; // v181: Increased from 850
 
 // Crowding Penalty (v177 maintained)
 const CROWDING_PENALTY_START_THRESHOLD = 20;
 const CROWDING_PENALTY_PER_PIECE = 50;
 
-// Large Piece Aggregation (v180: further increased)
-const LARGE_PIECE_AGGREGATION_BONUS = 1800; // v180: Increased from 1500
+// Large Piece Aggregation (v181: further increased)
+const LARGE_PIECE_AGGREGATION_BONUS = 2000; // v181: Increased from 1800
 const LARGE_PIECE_AGGREGATION_PENALTY = 1000;
 const LARGE_PIECE_TYPE_THRESHOLD = 9;
 
