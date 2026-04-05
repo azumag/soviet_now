@@ -5,6 +5,14 @@ The strategy scores each candidate drop position using merge potential,
 board safety, and setup value for future merges.
 """
 
+# --- Change History ---
+# v538: strengthen CROSSES_DEADLINE_MERGE_RISK for NEAR (-2000→-4000) — prevent risky deadline-crossing NEAR merges
+# Worst game (633) final 8 turns: all NEAR+CROSSES_DEADLINE_MERGE_RISK, chain+reactive bonuses overwhelmed -2000
+# NEAR 68.5% success rate at deadline is catastrophic on failure; DIRECT 95.7% justified at -2000
+# Fixes rollback failure mode: NEAR merge at deadline crossing → failed → piece accumulation → max_y runaway → game over
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md,
+#       game_history/20260406_024406_score0633.jsonl, strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
+
 # Fixed interface:
 # decide(game_state: dict, analysis: dict) -> dict
 # Returns: {"x": float, "reason": str}
@@ -736,7 +744,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if merge_grade == "NO":
                 score -= 5000.0
                 reasons.append("CROSSES_DEADLINE_NO_MERGE")
+            elif merge_grade == "NEAR":
+                # v538: NEAR 68.5% success — failure at deadline is catastrophic (piece at deadline height)
+                # Worst game (633) final 8 turns: all NEAR+CROSSES_DEADLINE, chain+reactive bonuses overcame -2000
+                score -= 4000.0
+                reasons.append("CROSSES_DEADLINE_MERGE_RISK")
             else:
+                # DIRECT 95.7% success justifies crossing deadline at moderate penalty
                 score -= 2000.0
                 reasons.append("CROSSES_DEADLINE_MERGE_RISK")
 
