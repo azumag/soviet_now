@@ -63,6 +63,22 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v534: dangerous_situation candidate filtering + FAR merge boost — match protected strategy (median 12789)
+     # Protected strategy's key structural advantage: when max_y>=1.8 AND rp>=2, only merge candidates
+     # are evaluated. Worst games show death spirals of non-merge placements (HIGH_TOWER,
+     # CROSSES_DEADLINE_NO_MERGE) while reactive_pairs grow unresolved. Filtering forces merge
+     # attempts in dangerous situations, falling back to all candidates if none available.
+     # FAR merge bonus boosted from 200 to 1200 in dangerous situations (matching protected strategy).
+     # advice: "盤面状態に関わらず即時併合を最優先する" (あずまぐ, Pitman_live, nimdavirus)
+     # Worst game T47-55: max_y=1.93-2.74, rp=6-7, 6/9 turns NO merge → death spiral.
+     # Best game T95-98: merges every 3-4 turns → survival to T122.
+     # Fixes rollback failure mode: death spiral from non-merge placements during high max_y + reactive_pairs
+     # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       strategy_versions/best_score5694_strategy.py (v160 FAR boost),
+     #       game_history/20260405_225710_score0590.jsonl T47-55,
+     #       game_history/20260405_232628_score2466.jsonl T95-98,
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 18.7% low vs 14.8% high),
+     #       advice.md, tmp/state/last_rollback_analysis.md
      # v528: suppress axis 9.6 stacking at rp>=3+NO — let axis 8.8 (-4500) and height penalty be sole differentiators
      # Protected strategy (median 12789, +20%) suppresses stacking at rp>=3. At rp>=3+NO,
      # axis 8.8 (-4500) dominates all candidates. Stacking bonus (~100-400 with congestion scaling)
@@ -775,9 +791,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
     )
 
     # =======================================================================
+    # v534: dangerous situation candidate filtering — match protected strategy (median 12789)
+    # Protected strategy's key advantage: when board is dangerous (max_y>=1.8 AND rp>=2),
+    # only merge candidates (DIRECT/NEAR/FAR) are evaluated. This prevents non-merge
+    # placements during death spirals where HIGH_TOWER/CROSSES_DEADLINE_NO_MERGE selections
+    # accumulate pieces without reducing count. Worst game T47-55: 6/9 turns NO merge.
+    # Falls back to all candidates if no merge candidates exist.
+    # advice: "盤面状態に関わらず即時併合を最優先する" (あずまぐ, Pitman_live, nimdavirus)
+    # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+    #       game_history/20260405_225710_score0590.jsonl T47-55
+    # =======================================================================
+    dangerous_situation = max_y >= 1.8 and reactive_pair_count >= 2
+    if dangerous_situation:
+        filtered_results = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR", "FAR"]]
+        if not filtered_results:
+            filtered_results = results
+    else:
+        filtered_results = results
+
+    # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
-    for result in results:
+    for result in filtered_results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
@@ -799,7 +834,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            # v534: boost FAR in dangerous situations (matching protected strategy median 12789)
+            # In dangerous situations, FAR merges are survival-critical — even partial merge
+            # attempts can reduce piece count. Protected strategy uses 1200 (same as DIRECT base).
+            far_bonus = 1200.0 if dangerous_situation else 200.0
+            score += far_bonus * merge_mult
             reasons.append("FAR_MERGE")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
