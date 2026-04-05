@@ -63,6 +63,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v527: suppress non-height guidance at rp>=3+NO (death spiral mode) — match protected strategy
+     # Protected strategy (median 12789) has no axes 5.5, 5.6, 9.6b — height is sole differentiator at rp>=3+NO.
+     # Worst game (score 790) T56-T63: rp=3-5, merge_grade=NO, max_y 0.94→3.64, 0 merges in 8 turns.
+     # T59: AVOID_BLOCK_NEXTNEXT (-400) pushed piece to x=-3.0 (edge scatter) during death spiral.
+     # At rp>=3+NO, axis 8.8 (-4500 flat) dominates all candidates equally. Height penalty is the
+     # only meaningful differentiator, but additive bonuses (proximity ~100-160, growth center ~80-160,
+     # AVOID_BLOCK_NEXTNEXT -400) override small height differences (~90/unit in HIGH phase).
+     # Fix: suppress axes 5.5, 5.6, 9.6b at rp>=3+NO. Only height penalty differentiates candidates.
+     # Fixes rollback failure mode: additive bonus noise overriding height differentiation in death spiral
+     # refs: game_history/20260405_104511_score0911.jsonl T56-T63 (death spiral, AVOID_BLOCK edge scatter),
+     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no 5.5/5.6/9.6b),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 17.2%), tmp/improve_brief.md (p25 focus),
+     #       tmp/state/last_rollback_postmortem.md (v518 validated: guidance without congestion noise)
      # v526: early-game center concentration — prevent edge scatter in building phase
      # Worst game (score=753): pieces scattered to x=±3.0 from turn 1 (type 11 at x=-3.0, type 9 at x=-3.0 T11).
      # Edge placements create scattered reactive pairs that never merge. Best game (score=2718) concentrates center.
@@ -1296,9 +1309,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # the postmortem warning about "additive bonus accumulation masking height
                     # differentiation" that occurred when rp_density_scale went up to 2.5x.
                     # rp_guidance_suppressed still used for congestion state detection:
+                    # v527: added rp>=3+NO — at death spiral, height is sole differentiator
                     rp_guidance_suppressed = (
                         (max_y >= 3.0 and deadline_crossed)
                         or (reactive_pair_count >= 5 and max_y >= 2.5)
+                        or (reactive_pair_count >= 3 and merge_grade == "NO")  # v527
                     )
                     if rp_guidance_suppressed:
                         proximity_bonus = 0.0
@@ -1546,8 +1561,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # 着地位置がnextNext typeのピースの上になる場合
                     horiz_dist = abs(x - p["x"])
                     if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                        score -= 400.0  # 未来の併合機会を潰すためのペナルティ
-                        reasons.append("AVOID_BLOCK_NEXTNEXT")
+                        # v527: suppress at rp>=3+NO — in death spiral, height management
+                        # is more important than preserving future merge opportunities.
+                        # T59 worst game: AVOID_BLOCK pushed to x=-3.0 during death spiral.
+                        if not (reactive_pair_count >= 3 and merge_grade == "NO"):
+                            score -= 400.0  # 未来の併合機会を潰すためのペナルティ
+                            reasons.append("AVOID_BLOCK_NEXTNEXT")
                         break
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
@@ -1596,7 +1615,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         congestion_scale = 1.0 + (piece_count - 28) * 0.08
                         proximity *= min(congestion_scale, 2.0)
                     if proximity > 0:
-                        score += proximity
+                        # v527: suppress at rp>=3+NO — in death spiral, height management
+                        # overrides growth center guidance. Protected strategy has no 5.6.
+                        if not (reactive_pair_count >= 3 and merge_grade == "NO"):
+                            score += proximity
 
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
