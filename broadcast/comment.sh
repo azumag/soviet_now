@@ -1367,6 +1367,7 @@ RETRYCOMMENT
 					fi
 				elif [ "$comment_ollama_improving_only" = "true" ]; then
 					attempt_talk=$(_run_ollama_comment "$prompt_for_attempt" "$COMMENT_OLLAMA_MODEL_IMPROVING")
+					log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} improving call done (attempt ${attempt}/${comment_retry_max})"
 					attempt_model="ollama:${COMMENT_OLLAMA_MODEL_IMPROVING}"
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
 					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
@@ -1382,6 +1383,7 @@ RETRYCOMMENT
 				fi
 				if [ -z "$attempt_talk" ]; then
 					attempt_talk=$(_run_ollama_comment "$prompt_for_attempt")
+					log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL} normal call done (attempt ${attempt}/${comment_retry_max})"
 					attempt_model="ollama:${COMMENT_OLLAMA_MODEL}"
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
 					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)

@@ -1,32 +1,36 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v179)
+ * strategy.mjs - ドロップ位置決定戦略 (v180)
  *
- * v179: v178の改善方針（併合促進、大型ピース集約）を維持しつつ、ゲーム分析で頻繁に発生していた
- *       「No valid move found, defaulting to center (critical error).」の問題に対処します。
- *       このエラーは、高さ管理のペナルティが過度に厳しいため、全ての有効なドロップ位置が
- *       「無限大のペナルティ」として評価され、選択肢がなくなることで発生していました。
- *       これにより、ゲームオーバーを避けるための保守的な判断が、かえってゲームの早期終了を招く可能性があります。
+ * v180: v179の高さ管理緩和方針を維持しつつ、ゲーム分析で示された「高生存ターン数にも関わらずRankに貢献していない」
+ *       という課題に対処するため、併合・パイプラインボーナスと大型ピース集約ボーナスをさらに強化します。
+ *       これは、生存ターンを伸ばすだけでなく、積極的に高スコアを狙い、盤面をクリアする動きを促進するためです。
+ *       また、`calculateLargePieceAggregationBonus`関数におけるグローバル変数の使用を廃止し、
+ *       `decide`関数内での純粋な計算に修正し、関数の副作用をなくします。
  *
  *       主な改善点:
- *       1.  **高さ管理ペナルティの緩和（優先度高）**:
- *           - `DEADLINE_ABSOLUTE_AVOID_THRESHOLD` に到達しても `Infinity` ではなく、
- *             非常に大きな負のスコアを返すように変更。これにより、選択肢が全くなくなる状況を避け、
- *             致命的だが「あり得る」選択肢を常に残します。
- *           - `SETTLING_BUFFER` を `0.40` から `0.35` に戻す。
- *             物理エンジンの不確実性に対するバッファをわずかに減らし、過剰な高さ評価を抑制します。
- *           - `CRITICAL_HEIGHT_MARGIN` を `0.8` から `0.7` に戻す。
- *             クリティカルな高さペナルティの発生をデッドラインにより近づけ、選択肢の幅を広げます。
- *           - `HEIGHT_PENALTY_WEIGHT` を `750000.0` から `500000.0` に戻す。
- *             高さペナルティ全体の重みを調整し、他のボーナスとのバランスを取ります。
- *       2.  **併合判定、パイプライン、小ピース触媒、大型ピース集約ボーナス**:
- *           - v178で強化されたこれらのボーナスは維持し、積極的なスコア獲得と高type併合を継続して推奨します。
- *       3.  **おじゃまブロック対策**:
- *           - v178のロジックを維持。
- *       4.  **既存ロジックの維持**:
- *           - HOLDメカニクスなどは維持されます。
+ *       1.  **高さ管理ペナルティのさらなる緩和**:
+ *           - `HEIGHT_PENALTY_WEIGHT` を `500000.0` から `400000.0` にさらに減らし、
+ *             高さによる過度な選択肢の制限を避け、他の行動（併合など）を推奨します。
+ *       2.  **併合・パイプラインボーナスの強化**:
+ *           - `MERGE_BONUS_SCALE_FACTOR` を `40` から `50` に増強。
+ *           - `PIPELINE_BONUS_DIRECT_CHAIN` を `1000` から `1200` に増強。
+ *           - `PIPELINE_BONUS_INDIRECT_CHAIN` を `350` から `450` に増強。
+ *             これにより、ピースの併合と連鎖形成の優先度を向上させ、スコア獲得と盤面整理を促進します。
+ *       3.  **大型ピース集約ボーナスの強化**:
+ *           - `LARGE_PIECE_AGGREGATION_BONUS` を `1500` から `1800` に増強。
+ *             大型ピースを一箇所に集めることの重要性を高め、後の高タイプ併合を容易にします。
+ *       4.  **おじゃまブロック対策の強化**:
+ *           - `GARBAGE_CLEAR_MERGE_BONUS_LOW_Y` を `1000` から `2000` に増強。
+ *             おじゃまブロックが多い状況下で、低い位置での併合によるクリアを強く推奨します。
+ *       5.  **`calculateLargePieceAggregationBonus`の純粋化**:
+ *           - グローバル変数 `dominantLargePieceSide` の使用を廃止し、`decide` 関数内で
+ *             現在の盤面から決定した値を引数として渡すように変更。これにより、`decide` 関数が
+ *             純粋な関数として動作し、予測可能性とデバッグ容易性を向上させます。
+ *       6.  **既存ロジックの維持**:
+ *           - HOLDメカニクス、その他のロジックは維持されます。
  *
- *       これらの調整により、高さ管理によるゲームオーバー回避と、より積極的な併合による高スコア獲得のバランスを改善し、
- *       安定した生存ターン数とRankスコアの向上を目指します。
+ *       これらの調整により、ゲームオーバーを回避しつつ、より積極的な併合と大型ピース管理によって高スコアを目指し、
+ *       安定したRank獲得と生存ターン数のさらなる向上を目指します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -38,21 +42,21 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 const DEADLINE_Y = 3.32;                  // Actual game over Y coordinate
 const CRITICAL_HEIGHT_MARGIN = 0.7; // v179: Reverted from 0.8 to 0.7.
 const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.0;
-const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0;
-const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;
+// TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Not directly used in v179 code, keep for context
+// TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;     // Not directly used in v179 code, keep for context
 
-const HEIGHT_PENALTY_WEIGHT = 500000.0; // v179: Reverted from 750000.0.
+const HEIGHT_PENALTY_WEIGHT = 400000.0; // v180: Further reduced from 500000.0.
 const SETTLING_BUFFER = 0.35; // v179: Reverted from 0.40 to 0.35.
 
 // v179: Changed from absolute avoidance (Infinity) to a very large penalty.
 const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000; // Very large penalty instead of Infinity
 
-// Merge and Pipeline Bonuses (v178 maintained)
+// Merge and Pipeline Bonuses (v180: further increased)
 const MERGE_PROXIMITY_THRESHOLD = 0.15;
-const MERGE_BONUS_SCALE_FACTOR = 40;
-const PIPELINE_BONUS_DIRECT_CHAIN = 1000;
-const PIPELINE_BONUS_INDIRECT_CHAIN = 350;
-const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 1000;
+const MERGE_BONUS_SCALE_FACTOR = 50; // v180: Increased from 40
+const PIPELINE_BONUS_DIRECT_CHAIN = 1200; // v180: Increased from 1000
+const PIPELINE_BONUS_INDIRECT_CHAIN = 450; // v180: Increased from 350
+const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 2000; // v180: Increased from 1000
 
 // Small Piece Catalyst (v178 maintained)
 const SMALL_PIECE_CATALYST_BONUS = 850;
@@ -61,8 +65,8 @@ const SMALL_PIECE_CATALYST_BONUS = 850;
 const CROWDING_PENALTY_START_THRESHOLD = 20;
 const CROWDING_PENALTY_PER_PIECE = 50;
 
-// Large Piece Aggregation (v177 maintained)
-const LARGE_PIECE_AGGREGATION_BONUS = 1500;
+// Large Piece Aggregation (v180: further increased)
+const LARGE_PIECE_AGGREGATION_BONUS = 1800; // v180: Increased from 1500
 const LARGE_PIECE_AGGREGATION_PENALTY = 1000;
 const LARGE_PIECE_TYPE_THRESHOLD = 9;
 
@@ -93,7 +97,8 @@ function predictLandingY(boardState, dropX, piece) {
         if (xDistance < combinedRadius) { // There's X-axis overlap
             // Check if dropping piece would land on top of existing piece
             // This is a very rough approximation, ignoring complex shapes and rotations.
-            if (existingPiece.y + existingPiece.r > predictedY - piece.r) {
+            // Also considers a small vertical buffer to prevent immediate re-collision logic in simulation.
+            if (existingPiece.y + existingPiece.r - piece.r > predictedY - piece.r - 0.01) { // Adjusted comparison
                 predictedY = existingPiece.y + existingPiece.r + piece.r;
             }
         }
@@ -158,47 +163,24 @@ function calculatePipelineBonus(boardState, dropX, piece, predictedY) {
 /**
  * Calculates penalty/bonus for large piece aggregation.
  * Tries to keep large pieces (type >= LARGE_PIECE_TYPE_THRESHOLD) on one side.
- * This function needs to determine the "dominant" side for large pieces first.
+ * This function now takes the pre-calculated dominant side as an argument.
  */
-let dominantLargePieceSide = null; // null: no dominant side, -1: left, 1: right
-
-function calculateLargePieceAggregationBonus(boardState, dropX, piece) {
+function calculateLargePieceAggregationBonus(dropX, piece, currentDominantSide) {
     if (piece.type < LARGE_PIECE_TYPE_THRESHOLD) {
         return 0; // Only applies to large pieces
     }
 
-    // Recalculate dominant side if not set or if board state changes significantly
-    // (simplified: just recalculate every time for now, or add a debounce/state check)
-    let leftLargePieces = 0;
-    let rightLargePieces = 0;
-    for (const existingPiece of boardState.pieces) {
-        if (existingPiece.type >= LARGE_PIECE_TYPE_THRESHOLD) {
-            if (existingPiece.x < 0) leftLargePieces++;
-            else if (existingPiece.x > 0) rightLargePieces++;
-        }
+    if (currentDominantSide === 0) { // No clear dominant side or balanced
+        return 0; // Don't apply bonus/penalty yet
     }
 
-    if (leftLargePieces > rightLargePieces + 1) { // +1 to prevent rapid flip-flopping
-        dominantLargePieceSide = -1; // Left side
-    } else if (rightLargePieces > leftLargePieces + 1) {
-        dominantLargePieceSide = 1; // Right side
-    } else {
-        dominantLargePieceSide = null; // No clear dominant side
-    }
-
-    if (dominantLargePieceSide === null) {
-        // If no dominant side yet, try to favor the side with more small pieces or the side that is lower
-        // For now, if no dominant side, don't apply bonus/penalty
-        return 0;
-    }
-
-    if (dominantLargePieceSide === -1 && dropX < 0) {
+    if (currentDominantSide === -1 && dropX < 0) { // Dominant left, dropping left
         return LARGE_PIECE_AGGREGATION_BONUS;
-    } else if (dominantLargePieceSide === 1 && dropX > 0) {
+    } else if (currentDominantSide === 1 && dropX > 0) { // Dominant right, dropping right
         return LARGE_PIECE_AGGREGATION_BONUS;
-    } else if (dominantLargePieceSide === -1 && dropX > 0) {
+    } else if (currentDominantSide === -1 && dropX > 0) { // Dominant left, dropping right
         return -LARGE_PIECE_AGGREGATION_PENALTY;
-    } else if (dominantLargePieceSide === 1 && dropX < 0) {
+    } else if (currentDominantSide === 1 && dropX < 0) { // Dominant right, dropping left
         return -LARGE_PIECE_AGGREGATION_PENALTY;
     }
     return 0;
@@ -226,7 +208,7 @@ function calculateHeightPenalty(predictedY, pieceR) {
     }
     if (topOfPiece >= TOP_Y_EXTREME_WARN_THRESHOLD) {
         penalty += HEIGHT_PENALTY_WEIGHT / 2; // Additional penalty for extreme warning
-    } else if (topOfPiece >= DEADLINE_Y - TOP_Y_WARN_PENALTY_START_RELATIVE) {
+    } else if (topOfPiece >= DEADLINE_Y - 2.0) { // Using 2.0 as a general warning threshold
         penalty += HEIGHT_PENALTY_WEIGHT / 4; // Additional penalty for general warning
     }
 
@@ -326,23 +308,29 @@ export function decide(boardState) {
     let reason = "No optimal move found, defaulting to center.";
     let useHold = false;
 
+    // Determine the dominant side for large pieces once per turn
+    let dominantLargePieceSide = 0; // 0: no clear dominant side, -1: left, 1: right
+    let leftLargePiecesCount = 0;
+    let rightLargePiecesCount = 0;
+    for (const existingPiece of boardState.pieces) {
+        if (existingPiece.type >= LARGE_PIECE_TYPE_THRESHOLD) {
+            if (existingPiece.x < 0) leftLargePiecesCount++;
+            else if (existingPiece.x > 0) rightLargePiecesCount++;
+        }
+    }
+    // Apply a hysteresis to prevent frequent switching of the dominant side
+    if (leftLargePiecesCount > rightLargePiecesCount + 1) {
+        dominantLargePieceSide = -1; // Left side has significantly more
+    } else if (rightLargePiecesCount > leftLargePiecesCount + 1) {
+        dominantLargePieceSide = 1; // Right side has significantly more
+    }
+
     // --- HOLD Logic ---
-    let currentPiece = boardState.next;
     let candidatePieces = [{ piece: boardState.next, isHeld: false }];
 
-    if (boardState.canHold) {
-        // Evaluate dropping the current piece and then holding
-        // Evaluate holding the current piece and dropping the held piece (if any)
-        // For simplicity now, let's just consider swapping if hold is not empty
-        // A more sophisticated bot would simulate both paths.
-
-        if (boardState.hold) {
-            // Option 1: Drop currentPiece, then consider swapping for next turn
-            // Option 2: Swap currentPiece with heldPiece, then drop heldPiece
-            // For now, let's evaluate dropping the held piece immediately if it exists and canHold is true.
-            // This is a simplified HOLD strategy, a full implementation would involve lookahead.
-            candidatePieces.push({ piece: boardState.hold, isHeld: true });
-        }
+    if (boardState.canHold && boardState.hold) {
+        // Evaluate dropping the held piece as an alternative
+        candidatePieces.push({ piece: boardState.hold, isHeld: true });
     }
 
 
@@ -369,7 +357,8 @@ export function decide(boardState) {
 
             currentScore += calculateMergeBonus(boardState, x, pieceToDrop, predictedY);
             currentScore += calculatePipelineBonus(boardState, x, pieceToDrop, predictedY);
-            currentScore += calculateLargePieceAggregationBonus(boardState, x, pieceToDrop);
+            // Pass the pre-calculated dominantLargePieceSide
+            currentScore += calculateLargePieceAggregationBonus(x, pieceToDrop, dominantLargePieceSide);
             currentScore -= calculateCrowdingPenalty(boardState, x, pieceToDrop, predictedY);
             currentScore += calculateSmallPieceCatalystBonus(boardState, x, pieceToDrop, predictedY);
             currentScore += calculateGarbageAwarenessBonus(boardState, x, pieceToDrop, predictedY);

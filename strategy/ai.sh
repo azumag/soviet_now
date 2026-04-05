@@ -447,6 +447,11 @@ run_cmd() {
 		log "[CMD] コンテキスト上限検出 → セッションクリア"
 		ret=77
 	fi
+	# レートリミット/残高不足エラー検出 → 即フォールバック (rc=79)
+	if [ "$ret" -ne 77 ] && [ -n "$cmd_log_file" ] && tail -20 "$cmd_log_file" 2>/dev/null | grep -qiE '"code":"1113"|Insufficient balance|no resource package|HTTP 429|status: 429|rate.?limit' 2>/dev/null; then
+		log "[CMD] レートリミット/残高不足検出 → 即フォールバック (rc=79)"
+		ret=79
+	fi
 	# 空応答検出: 10秒以内に rc=0 で完了 → モデルが実質的な応答を返していない
 	# (実際の改善作業は最低30秒以上かかる)
 	if [ "$ret" -eq 0 ] && [ "${_cmd_elapsed:-999}" -le 10 ]; then
@@ -553,8 +558,9 @@ run_ai() {
 		primary_ret=$?
 		log "[$label] run_cmd returned rc=$primary_ret (attempt ${attempt}/${primary_attempts})"
 		# トークン超過 or 空応答: セッションが汚染されている → primary ループ打ち切り
-		if [ "$primary_ret" -eq 77 ] || [ "$primary_ret" -eq 78 ]; then
-			log "[$label] session poisoned (rc=$primary_ret) → skip remaining primary attempts"
+		# rc=79: レートリミット/残高不足 → 即フォールバック
+		if [ "$primary_ret" -eq 77 ] || [ "$primary_ret" -eq 78 ] || [ "$primary_ret" -eq 79 ]; then
+			log "[$label] session poisoned or rate-limited (rc=$primary_ret) → skip remaining primary attempts"
 			break
 		fi
 		if [ -n "$expect" ]; then
@@ -597,8 +603,8 @@ run_ai() {
 	RUN_CMD_LOG_TAG="${label}:fallback"
 	run_cmd "$fallback" "$prompt"
 	local fallback_ret=$?
-	if [ "$fallback_ret" -eq 77 ] || [ "$fallback_ret" -eq 78 ]; then
-		log "[$label] fallback session poisoned (rc=$fallback_ret) → skip last_resort"
+	if [ "$fallback_ret" -eq 77 ] || [ "$fallback_ret" -eq 78 ] || [ "$fallback_ret" -eq 79 ]; then
+		log "[$label] fallback session poisoned or rate-limited (rc=$fallback_ret) → skip last_resort"
 		rm -f "$expect_snapshot" 2>/dev/null || true
 		if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 		return 1
@@ -622,8 +628,8 @@ run_ai() {
 				RUN_CMD_LOG_TAG="${label}:last_resort"
 				run_cmd "$last_resort" "$prompt"
 				local last_resort_ret=$?
-				if [ "$last_resort_ret" -eq 77 ] || [ "$last_resort_ret" -eq 78 ]; then
-					log "[$label] last_resort session poisoned (rc=$last_resort_ret) → abort"
+				if [ "$last_resort_ret" -eq 77 ] || [ "$last_resort_ret" -eq 78 ] || [ "$last_resort_ret" -eq 79 ]; then
+					log "[$label] last_resort session poisoned or rate-limited (rc=$last_resort_ret) → abort"
 					rm -f "$expect_snapshot" 2>/dev/null || true
 					if [ -n "$prev_cmd_log_tag" ]; then RUN_CMD_LOG_TAG="$prev_cmd_log_tag"; else unset RUN_CMD_LOG_TAG; fi
 					return 1

@@ -305,6 +305,7 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
 
 function callClaudeForComment(promptText) {
   return generateTextWithFallbacks('ranking_comment', promptText, {
+    claudePreset: 'gemma4e',
     parseOutput: raw => extractCommentOnly(raw, 'ranking_comment'),
     includeOpencodeFallback: true,
   });
@@ -502,6 +503,7 @@ async function callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath
   const promptText = loadPrompt('midgame_comment.md', { boardInfo, screenTextInfo });
 
   return generateTextWithFallbacks('midgame_comment', promptText, {
+    claudePreset: 'gemma4e',
     parseOutput: raw => extractCommentOnly(raw, 'midgame_comment'),
     includeOpencodeFallback: true,
   });
