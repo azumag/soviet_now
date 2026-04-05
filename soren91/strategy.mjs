@@ -49,32 +49,352 @@ const TOP_Y_CRITICAL_PENALTY_START_RELATIVE = 1.0; // Severe warning when top is
 const TOP_Y_WARN_PENALTY_START_RELATIVE = 2.0;     // Warning penalty when top is 2.0 below deadline
 
 const HEIGHT_PENALTY_WEIGHT = 750000.0; // v178: Increased from 500000.0
+const SETTLING_BUFFER = 0.40; // v178: Increased from 0.35. Accounts for physics uncertainty.
 
 // v172: Absolute avoid threshold, further tightened from 0.4 to 0.1
 const DEADLINE_ABSOLUTE_AVOID_THRESHOLD = DEADLINE_Y - 0.1; // If predictedTopY (with small settling buffer) is above this, virtually GUARANTEES a game over.
 
+// Merge and Pipeline Bonuses
+const MERGE_PROXIMITY_THRESHOLD = 0.15; // v177 maintained
+const MERGE_BONUS_SCALE_FACTOR = 40; // v178: Increased from 30.
+const PIPELINE_BONUS_DIRECT_CHAIN = 1000; // v178: Increased from 750.
+const PIPELINE_BONUS_INDIRECT_CHAIN = 350; // v178: Increased from 250.
+const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 1000; // v177 maintained
+
+// Small Piece Catalyst
+const SMALL_PIECE_CATALYST_BONUS = 850; // v178: Increased from 700.
+
+// Crowding Penalty
+const CROWDING_PENALTY_START_THRESHOLD = 20; // Example value, adjust as needed
+const CROWDING_PENALTY_PER_PIECE = 50; // Example value, adjust as needed
+
+// Large Piece Aggregation
+const LARGE_PIECE_AGGREGATION_BONUS = 1500; // Example value, adjust as needed
+const LARGE_PIECE_AGGREGATION_PENALTY = 1000; // Example value, adjust as needed
+const LARGE_PIECE_TYPE_THRESHOLD = 9; // Type 9+ are considered large
+
+/**
+ * Helper to get piece radius based on type. (Approximation)
+ * In a real game, this would be a lookup table.
+ */
+function getPieceRadius(type) {
+    // This is a simplified approximation. Actual radii would be in game config.
+    // Assuming radius increases with type.
+    return 0.15 + (type - 1) * 0.08; // Example scaling
+}
+
+/**
+ * Predicts the landing Y coordinate for a piece.
+ * This is a highly simplified model. Real physics engines are complex.
+ * It assumes the piece falls straight down and rests on the first thing it hits (floor or another piece).
+ */
+function predictLandingY(boardState, dropX, piece) {
+    let predictedY = BOARD_FLOOR_Y + piece.r; // Start assuming it lands on the floor
+
+    // Iterate through existing pieces to find if it lands on one of them
+    for (const existingPiece of boardState.pieces) {
+        // Simple 1D collision check for X-axis overlap
+        const combinedRadius = piece.r + existingPiece.r;
+        const xDistance = Math.abs(dropX - existingPiece.x);
+
+        if (xDistance < combinedRadius) { // There's X-axis overlap
+            // Check if dropping piece would land on top of existing piece
+            // This is a very rough approximation, ignoring complex shapes and rotations.
+            if (existingPiece.y + existingPiece.r > predictedY - piece.r) {
+                predictedY = existingPiece.y + existingPiece.r + piece.r;
+            }
+        }
+    }
+    return predictedY + SETTLING_BUFFER; // Add a buffer for physical settling
+}
+
+/**
+ * Calculates bonus for potential merges.
+ * Finds pieces of the same type within proximity.
+ */
+function calculateMergeBonus(boardState, dropX, piece, predictedY) {
+    let bonus = 0;
+    const currentPiecePos = { x: dropX, y: predictedY };
+
+    for (const existingPiece of boardState.pieces) {
+        if (existingPiece.type === piece.type) {
+            const distance = Math.sqrt(
+                Math.pow(currentPiecePos.x - existingPiece.x, 2) +
+                Math.pow(currentPiecePos.y - existingPiece.y, 2)
+            );
+            if (distance < (piece.r + existingPiece.r + MERGE_PROXIMITY_THRESHOLD)) {
+                // Closer pieces get higher bonus, and higher types get higher bonus
+                const distanceFactor = 1 - (distance / (piece.r + existingPiece.r + MERGE_PROXIMITY_THRESHOLD));
+                bonus += MERGE_BONUS_SCALE_FACTOR * piece.type * distanceFactor * distanceFactor;
+            }
+        }
+    }
+    return bonus;
+}
+
+/**
+ * Calculates bonus for maintaining merge pipelines (chains).
+ * Encourages placing N-1 near N, and N near N+1.
+ */
+function calculatePipelineBonus(boardState, dropX, piece, predictedY) {
+    let bonus = 0;
+    const currentPiecePos = { x: dropX, y: predictedY };
+
+    for (const existingPiece of boardState.pieces) {
+        const distance = Math.sqrt(
+            Math.pow(currentPiecePos.x - existingPiece.x, 2) +
+            Math.pow(currentPiecePos.y - existingPiece.y, 2)
+        );
+        const combinedRadius = piece.r + existingPiece.r;
+
+        if (distance < combinedRadius * 1.5) { // Within a reasonable chain distance
+            // Direct chain: N-1 merging into N, or N merging into N+1
+            if (existingPiece.type === piece.type + 1 || existingPiece.type === piece.type - 1) {
+                bonus += PIPELINE_BONUS_DIRECT_CHAIN;
+            }
+            // Indirect pipeline: N-2 merging into N-1, and N-1 is near N, etc.
+            // This is a very simple heuristic and could be much more complex.
+            if (existingPiece.type === piece.type + 2 || existingPiece.type === piece.type - 2) {
+                bonus += PIPELINE_BONUS_INDIRECT_CHAIN;
+            }
+        }
+    }
+    return bonus;
+}
+
+/**
+ * Calculates penalty/bonus for large piece aggregation.
+ * Tries to keep large pieces (type >= LARGE_PIECE_TYPE_THRESHOLD) on one side.
+ * This function needs to determine the "dominant" side for large pieces first.
+ */
+let dominantLargePieceSide = null; // null: no dominant side, -1: left, 1: right
+
+function calculateLargePieceAggregationBonus(boardState, dropX, piece) {
+    if (piece.type < LARGE_PIECE_TYPE_THRESHOLD) {
+        return 0; // Only applies to large pieces
+    }
+
+    // Recalculate dominant side if not set or if board state changes significantly
+    // (simplified: just recalculate every time for now, or add a debounce/state check)
+    let leftLargePieces = 0;
+    let rightLargePieces = 0;
+    for (const existingPiece of boardState.pieces) {
+        if (existingPiece.type >= LARGE_PIECE_TYPE_THRESHOLD) {
+            if (existingPiece.x < 0) leftLargePieces++;
+            else if (existingPiece.x > 0) rightLargePieces++;
+        }
+    }
+
+    if (leftLargePieces > rightLargePieces + 1) { // +1 to prevent rapid flip-flopping
+        dominantLargePieceSide = -1; // Left side
+    } else if (rightLargePieces > leftLargePieces + 1) {
+        dominantLargePieceSide = 1; // Right side
+    } else {
+        dominantLargePieceSide = null; // No clear dominant side
+    }
+
+    if (dominantLargePieceSide === null) {
+        // If no dominant side yet, try to favor the side with more small pieces or the side that is lower
+        // For now, if no dominant side, don't apply bonus/penalty
+        return 0;
+    }
+
+    if (dominantLargePieceSide === -1 && dropX < 0) {
+        return LARGE_PIECE_AGGREGATION_BONUS;
+    } else if (dominantLargePieceSide === 1 && dropX > 0) {
+        return LARGE_PIECE_AGGREGATION_BONUS;
+    } else if (dominantLargePieceSide === -1 && dropX > 0) {
+        return -LARGE_PIECE_AGGREGATION_PENALTY;
+    } else if (dominantLargePieceSide === 1 && dropX < 0) {
+        return -LARGE_PIECE_AGGREGATION_PENALTY;
+    }
+    return 0;
+}
+
+
+/**
+ * Calculates penalty based on predicted height.
+ * Penalizes more heavily as predictedY approaches the deadline.
+ */
+function calculateHeightPenalty(predictedY, pieceR) {
+    const topOfPiece = predictedY + pieceR;
+    let penalty = 0;
+
+    if (topOfPiece >= DEADLINE_ABSOLUTE_AVOID_THRESHOLD) {
+        // Absolute avoidance
+        return Infinity;
+    }
+
+    const heightFromDeadline = DEADLINE_Y - topOfPiece;
+
+    if (heightFromDeadline < CRITICAL_HEIGHT_MARGIN) {
+        // Critical penalty: exponentially increasing as it gets closer
+        penalty += HEIGHT_PENALTY_WEIGHT * Math.pow((CRITICAL_HEIGHT_MARGIN - heightFromDeadline) / CRITICAL_HEIGHT_MARGIN, 2);
+    }
+    if (topOfPiece >= TOP_Y_EXTREME_WARN_THRESHOLD) {
+        penalty += HEIGHT_PENALTY_WEIGHT / 2; // Additional penalty for extreme warning
+    } else if (topOfPiece >= DEADLINE_Y - TOP_Y_WARN_PENALTY_START_RELATIVE) {
+        penalty += HEIGHT_PENALTY_WEIGHT / 4; // Additional penalty for general warning
+    }
+
+    return penalty;
+}
+
+/**
+ * Calculates penalty for dropping into an overly crowded area without merge potential.
+ * (Simplified: counts pieces in a cylinder below the drop point)
+ */
+function calculateCrowdingPenalty(boardState, dropX, piece, predictedY) {
+    let crowdedCount = 0;
+    for (const existingPiece of boardState.pieces) {
+        const xDistance = Math.abs(dropX - existingPiece.x);
+        // Consider pieces directly below or very close horizontally
+        if (xDistance < piece.r * 2 && existingPiece.y < predictedY) {
+            crowdedCount++;
+        }
+    }
+    if (crowdedCount > CROWDING_PENALTY_START_THRESHOLD) {
+        return (crowdedCount - CROWDING_PENALTY_START_THRESHOLD) * CROWDING_PENALTY_PER_PIECE;
+    }
+    return 0;
+}
+
+/**
+ * Calculates bonus for using small pieces as catalysts to agitate the board.
+ * Assumes small pieces (type 1-4) can be used to shake things up if dropped in a dense area.
+ */
+function calculateSmallPieceCatalystBonus(boardState, dropX, piece, predictedY) {
+    if (piece.type > 4) { // Only small pieces
+        return 0;
+    }
+
+    let denseAreaPieces = 0;
+    const searchRadius = piece.r * 3; // Check for density around the drop point
+    const currentPiecePos = { x: dropX, y: predictedY };
+
+    for (const existingPiece of boardState.pieces) {
+        const distance = Math.sqrt(
+            Math.pow(currentPiecePos.x - existingPiece.x, 2) +
+            Math.pow(currentPiecePos.y - existingPiece.y, 2)
+        );
+        if (distance < searchRadius) {
+            denseAreaPieces++;
+        }
+    }
+
+    // If it's a small piece and it's dropping into a reasonably dense area, give bonus
+    if (denseAreaPieces > 5) { // Arbitrary density threshold
+        return SMALL_PIECE_CATALYST_BONUS;
+    }
+    return 0;
+}
+
+/**
+ * Adjusts strategy based on garbage block information.
+ * Prioritizes merges, especially near the bottom, when garbage is present or imminent.
+ */
+function calculateGarbageAwarenessBonus(boardState, dropX, piece, predictedY) {
+    let bonus = 0;
+
+    // Aggressively prioritize merges if garbage is high or ratio is high
+    if (boardState.garbage.ratio > 0.15) { // OJAMA_MERGE mode
+        bonus += piece.type * 50; // Boost merge priority
+        if (boardState.garbage.ratio > 0.4) { // GBG_URGENT mode
+            bonus += piece.type * 100; // Even more aggressive
+        }
+    }
+
+    if (boardState.garbage.gauge >= 0.3) { // Prepare for incoming ojama
+        bonus += piece.type * 25;
+    }
+    if (boardState.garbage.gauge >= 0.6) { // Ojama imminent
+        bonus += piece.type * 75;
+    }
+
+    // Bonus for merging near the bottom when garbage is present (clears more effectively)
+    if (boardState.garbage.ratio > 0 && predictedY < boardState.garbage.height * 0.5) { // Arbitrary low Y
+         // Check if this drop creates a merge (very simplified check here, ideally integrate with merge bonus)
+         const potentialMergeBonus = calculateMergeBonus(boardState, dropX, piece, predictedY);
+         if (potentialMergeBonus > 0) {
+            bonus += GARBAGE_CLEAR_MERGE_BONUS_LOW_Y;
+         }
+    }
+
+    return bonus;
+}
+
+
 /**
  * Decides the next move based on the current board state.
- * @param {object} boardState - The current state of the game board.
- * @returns {{ x: number, reason: string, hold?: boolean }} - The chosen x coordinate, a reason, and an optional hold instruction.
  */
 export function decide(boardState) {
-    // This is a placeholder implementation.
-    // In a real scenario, this function would analyze `boardState`
-    // to determine the optimal `x` position and whether to `hold`.
+    let bestX = 0.0;
+    let bestScore = -Infinity;
+    let reason = "No optimal move found, defaulting to center.";
+    let useHold = false;
 
-    // For demonstration purposes, we'll choose a default x and reason.
-    // A more sophisticated strategy would evaluate scores for various
-    // `FINE_COLS` positions, considering height, potential merges,
-    // pipeline bonuses, and other factors as described in the comments above.
+    // --- HOLD Logic ---
+    let currentPiece = boardState.next;
+    let candidatePieces = [{ piece: boardState.next, isHeld: false }];
 
-    const chosenX = 0.0; // Example: always drop at the center
-    const reason = "Placeholder: Default centered drop.";
-    const hold = false; // Example: placeholder for hold logic
+    if (boardState.canHold) {
+        // Evaluate dropping the current piece and then holding
+        // Evaluate holding the current piece and dropping the held piece (if any)
+        // For simplicity now, let's just consider swapping if hold is not empty
+        // A more sophisticated bot would simulate both paths.
 
-    // The actual "HOLD logic" would be implemented here,
-    // potentially comparing the current piece with the held piece
-    // to decide if swapping is advantageous.
+        if (boardState.hold) {
+            // Option 1: Drop currentPiece, then consider swapping for next turn
+            // Option 2: Swap currentPiece with heldPiece, then drop heldPiece
+            // For now, let's evaluate dropping the held piece immediately if it exists and canHold is true.
+            // This is a simplified HOLD strategy, a full implementation would involve lookahead.
+            candidatePieces.push({ piece: boardState.hold, isHeld: true });
+        }
+    }
 
-    return { x: chosenX, reason: reason, hold: hold };
+
+    for (const { piece: pieceToDrop, isHeld } of candidatePieces) {
+        for (const x of FINE_COLS) {
+            // Check if piece would be outside bounds
+            if (x - pieceToDrop.r < -BOARD_X_MAX_LIMIT || x + pieceToDrop.r > BOARD_X_MAX_LIMIT) {
+                continue; // Skip if piece would be outside walls
+            }
+
+            const predictedY = predictLandingY(boardState, x, pieceToDrop);
+            let currentScore = 0;
+
+            const heightPenalty = calculateHeightPenalty(predictedY, pieceToDrop.r);
+            if (heightPenalty === Infinity) {
+                continue; // Absolutely avoid this position
+            }
+            currentScore -= heightPenalty;
+
+            currentScore += calculateMergeBonus(boardState, x, pieceToDrop, predictedY);
+            currentScore += calculatePipelineBonus(boardState, x, pieceToDrop, predictedY);
+            currentScore += calculateLargePieceAggregationBonus(boardState, x, pieceToDrop);
+            currentScore -= calculateCrowdingPenalty(boardState, x, pieceToDrop, predictedY);
+            currentScore += calculateSmallPieceCatalystBonus(boardState, x, pieceToDrop, predictedY);
+            currentScore += calculateGarbageAwarenessBonus(boardState, x, pieceToDrop, predictedY);
+
+            // Add a small constant to prefer drops, avoiding zero scores for valid moves
+            currentScore += 100;
+
+            if (currentScore > bestScore) {
+                bestScore = currentScore;
+                bestX = x;
+                useHold = isHeld;
+                reason = `Calculated strategy: Type ${pieceToDrop.type} at X=${x.toFixed(2)}, Score=${currentScore.toFixed(0)}`;
+                if (isHeld) reason += " (Used HOLD)";
+            }
+        }
+    }
+
+    // Fallback if no good move found (shouldn't happen with the constant score addition)
+    if (bestScore === -Infinity) {
+        reason = "No valid move found, defaulting to center (critical error).";
+        bestX = 0.0;
+        useHold = false;
+    }
+
+    return { x: bestX, reason: reason, hold: useHold };
 }
