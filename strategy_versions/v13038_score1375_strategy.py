@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v535: re-apply axes 5.5+5.6 suppression at rp>=3+NO — lost in rollback cascade (v527/v529 validated at Game#12905/12952)
+     # Protected strategy (median 12789) has neither axis 5.5 nor 5.6. At rp>=3+NO (death spiral), axis 8.8 (-4500 flat)
+     # dominates all candidates equally. Height penalty is sole meaningful differentiator (~90-450/unit), but AVOID_BLOCK_NEXTNEXT
+     # (-400) and growth center proximity (~80-268) override these small diffs, pushing to non-lowest positions and edge scatter.
+     # Worst game T56-T66: rp=4-7, NO merge, AVOID_BLOCK pushed x=±3.0 repeatedly during death spiral.
+     # Fixes rollback failure mode: p25 collapse from additive bonus noise overriding height differentiation in death spiral
+     # refs: tmp/change_log.txt (v527/v529 validated), strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 14.9% with avg_delta=0.8),
+     #       game_history/20260405_151305_score0886.jsonl T56-T66,
+     #       tmp/state/last_rollback_analysis.md, advice.md
      # v534: dangerous_situation candidate filtering + FAR merge boost — match protected strategy (median 12789)
      # Protected strategy's key structural advantage: when max_y>=1.8 AND rp>=2, only merge candidates
      # are evaluated. Worst games show death spirals of non-merge placements (HIGH_TOWER,
@@ -1393,9 +1403,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # batch_summary/adviceで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
         # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
         # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
-        # refs: advice.md (Pitman_live, azumag), batch_summary.txt
+        # v535: suppress at rp>=3+NO — in death spiral, height is sole differentiator (v527/v529 lost in rollback cascade).
+        # Protected strategy (median 12789) has no axis 5.5. AVOID_BLOCK (-400) overrides height diffs (~90/unit in HIGH).
+        # Worst game T56-T66: rp=4-7, AVOID_BLOCK pushed to x=±3.0 edge scatter during death spiral.
+        # refs: advice.md (Pitman_live, azumag), batch_summary.txt, tmp/change_log.txt (v527/v529 validated)
         for p in pieces:
-            if p.get("type") == next_next_type:
+            if p.get("type") == next_next_type and not (reactive_pair_count >= 3 and merge_grade == "NO"):
                 piece_y = p.get("y", -10)
                 landing_y = result.get("landing_y", 0)
                 if landing_y > piece_y:
@@ -1427,8 +1440,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/protected/protected_994de46c98dd_median11502_strategy.py
         # Fixes rollback failure mode: type scattering → piece_count accumulation
         # v407: removed russia_phase guard — growth center guidance now active in ALL phases
+        # v535: suppress at rp>=3+NO — in death spiral, height is sole differentiator (v527/v529 lost in rollback cascade).
+        # Protected strategy (median 12789) has no axis 5.6. Growth center bonus (~80-268) overrides height diffs.
+        # Worst game T56-T66: rp=4-7, growth center pulled to non-lowest position during death spiral.
         max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
-        if max_type_on_board >= 6:
+        if max_type_on_board >= 6 and not (reactive_pair_count >= 3 and merge_grade == "NO"):
             # Find the deepest (lowest y) highest-type piece as growth center
             growth_center = min(
                 (p for p in pieces if p.get("type") == max_type_on_board),
