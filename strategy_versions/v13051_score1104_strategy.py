@@ -722,23 +722,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
-        # ----- v537: deadline-crossing avoidance (strengthened from v411) -----
-        # Avoid placing pieces above the deadline in ALL cases, not just NO-merge.
-        # The deadline is the game-over boundary — pieces crossing it risk immediate loss.
-        # DIRECT/NEAR merges that cross the deadline still add a high piece that may not
-        # merge successfully (NEAR 68.5% success), and even successful merges leave the
-        # new piece near the deadline. Strong universal penalty makes deadline-crossing
-        # only chosen when no alternative exists.
-        # - NO merge + crosses deadline: -5000 (previous -1200 was insufficient)
-        # - DIRECT/NEAR merge + crosses deadline: -2000 (merge benefit may partially offset)
-        # Russia phase exempted: Russia growth strategy intentionally places near deadline.
-        if not russia_phase and result.get("crosses_deadline", False):
-            if merge_grade == "NO":
-                score -= 5000.0
-                reasons.append("CROSSES_DEADLINE_NO_MERGE")
-            else:
-                score -= 2000.0
-                reasons.append("CROSSES_DEADLINE_MERGE_RISK")
+        # ----- v411: deadline-crossing NO-merge penalty (unutilized crosses_deadline) -----
+        if (
+            merge_grade == "NO"
+            and not russia_phase
+            and result.get("crosses_deadline", False)
+        ):
+            score -= 1200.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- v536: type stacking compatibility penalty -----
         # advice: "typeNの上にtypeN-1をのせるのはいいが、typeN-2などを載せてしまうと、単純に邪魔になる。
