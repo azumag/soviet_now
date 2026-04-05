@@ -26,6 +26,8 @@ const VERSIONS_DIR = 'strategy_versions';
 const PROMPT_PATH = 'prompts/improve_strategy.md';
 const VIEWER_ADVICE_PATH = resolveAdvicePath(process.env.SOREN91_STRATEGY_ADVICE_FILE, '../advice91.md');
 const SCREENSHOTS_DIR = 'tmp/screenshots';
+const SUMMARIES_DIR = 'tmp/summaries';
+const SUMMARIES_KEEP_COUNT = 13;
 const IMPROVE_CLAUDE_MODEL = process.env.SOREN91_IMPROVE_CLAUDE_MODEL || 'sonnet';
 const IMPROVE_GEMINI_MODEL = process.env.SOREN91_IMPROVE_GEMINI_MODEL || process.env.SOREN91_GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
 const IMPROVE_GEMINI_TIMEOUT_MS = Math.max(
@@ -226,8 +228,9 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
   });
   console.log('[improve] New strategy applied!');
 
-  // 6. スクリーンショット削除
+  // 6. スクリーンショット・サマリー削除
   cleanupScreenshots();
+  cleanupSummaries();
   console.log('[improve] Improvement complete');
 }
 
@@ -826,6 +829,34 @@ function cleanupScreenshots() {
   }
   if (deleted > 0) {
     console.log(`[improve] Cleaned up ${deleted} screenshots`);
+  }
+}
+
+/**
+ * サマリーファイル削除 (容量削減) — 直近13試合を保持、それ以降を削除
+ */
+function cleanupSummaries() {
+  if (!existsSync(SUMMARIES_DIR)) return;
+  const files = readdirSync(SUMMARIES_DIR)
+    .filter(f => f.startsWith('game_') && f.endsWith('.json'))
+    .sort((a, b) => {
+      const numA = Number.parseInt(a.match(/\d+/)[0], 10);
+      const numB = Number.parseInt(b.match(/\d+/)[0], 10);
+      return numB - numA; // 最新順
+    });
+  
+  if (files.length > SUMMARIES_KEEP_COUNT) {
+    const toDelete = files.slice(SUMMARIES_KEEP_COUNT);
+    let deleted = 0;
+    for (const f of toDelete) {
+      try {
+        unlinkSync(join(SUMMARIES_DIR, f));
+        deleted++;
+      } catch {}
+    }
+    if (deleted > 0) {
+      console.log(`[improve] Cleaned up ${deleted} old summaries (kept ${SUMMARIES_KEEP_COUNT})`);
+    }
   }
 }
 
