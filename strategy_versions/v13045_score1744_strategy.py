@@ -1582,12 +1582,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # 初期段階で有効なCHAIN_MERGE評価のために、初期値を495.0に固定し、着地高による動的調整を開始地点から行う
                 chain_bonus_multiplier = 495.0 + max(0, landing_y + 1.5) * 150.0
 
-                # collect all merged_type pieces within chain_distance_max of merge target
+                # v536: use merge midpoint for chain merge evaluation
+                # When A+A→B, the new B appears at the midpoint between the two A pieces.
+                # Checking distance from midpoint (not just target) better predicts chain potential.
+                # advice: "A+A=B のとき、AとAの中間位置にBが生成される。Bの側に寄せると連鎖してくれる"
+                merge_mid_x = (target_x + x) / 2.0
+                merge_mid_y = (target_y + landing_y) / 2.0
                 nearby_pieces = []
                 for p in pieces:
                     if p.get("type") == merged_type:
                         dist = (
-                            (p["x"] - target_x) ** 2 + (p["y"] - target_y) ** 2
+                            (p["x"] - merge_mid_x) ** 2 + (p["y"] - merge_mid_y) ** 2
                         ) ** 0.5
                         if dist < chain_distance_max:
                             nearby_pieces.append((dist, p))

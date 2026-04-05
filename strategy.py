@@ -1623,6 +1623,36 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if nearby_pieces:
                     reasons.append("CHAIN_MERGE")
 
+        # ----- v536: push-together bonus for near pairs via merge explosion -----
+        # advice: "隣接しているピースの逆側にピースをドロップして、隣接ピースを反応の爆風や
+        # ドロップ時の押し出しによって近づける"
+        # When merging, the explosion pushes nearby pieces radially away from the merge point.
+        # If the merge point is on the far side of a near pair piece (outside their horizontal span),
+        # the explosion pushes that piece toward its partner, potentially enabling their merge.
+        if merge_grade in ["DIRECT", "NEAR"] and len(near_pairs) > 0:
+            for np_entry in near_pairs:
+                if isinstance(np_entry, (list, tuple)) and len(np_entry) >= 4:
+                    np_type = np_entry[2]
+                    if np_type == next_type:
+                        continue
+                    pos1 = piece_pos_by_id.get(np_entry[0])
+                    pos2 = piece_pos_by_id.get(np_entry[1])
+                    if pos1 and pos2:
+                        x1, y1 = pos1
+                        x2, y2 = pos2
+                        pair_center_x = (x1 + x2) / 2.0
+                        pair_center_y = (y1 + y2) / 2.0
+                        dist_to_pair = (
+                            (x - pair_center_x) ** 2 + (landing_y - pair_center_y) ** 2
+                        ) ** 0.5
+                        if dist_to_pair < 3.0:
+                            near_min_x = min(x1, x2)
+                            near_max_x = max(x1, x2)
+                            if x < near_min_x - 0.3 or x > near_max_x + 0.3:
+                                score += 80.0
+                                reasons.append("PUSH_NEAR_PAIR")
+                                break
+
         # ----- evaluation axis 7: early game merge priority -----
         # 初期12ターンでマージ機会がある場合、強力なボーナスを付与
         # batch_summaryでHEIGHT_CONTROLが28.7%選択(avg_score_delta=1.8)と過剰であり、
@@ -1890,6 +1920,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         ):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
+
+        # ----- v536: type stacking compatibility penalty -----
+        # advice: "typeNの上にtypeN-1をのせるのはいいが、typeN-2などを載せてしまうと、単純に邪魔になる。
+        # その次にtypeNが来た場合、併合機会を逃す"
+        # Placing type(K) on top of type(K+2+) blocks future merge: when type(K+2) arrives,
+        # it can't merge with the low-type piece sitting on top. Only type(K+1) on type(K+2)
+        # is useful (merge pipeline). Penalize incompatible stacking to preserve merge opportunities.
+        if merge_grade == "NO":
+            for p in pieces:
+                support_y = p["y"] + p["r"] + next_r
+                if (
+                    abs(landing_y - support_y) < 0.5
+                    and abs(x - p["x"]) < (p["r"] + next_r) * 1.2
+                ):
+                    type_gap = p["type"] - next_type
+                    if type_gap >= 2:
+                        score -= 200.0 * min(type_gap - 1, 3)
+                        reasons.append("TYPE_STACK_INCOMPATIBLE")
+                        break
 
         # ----- update best candidate -----
         if score > best_score:
