@@ -36,7 +36,10 @@ CELEBPROMPT
 	log "[RUSSIA] 生成中..."
 	local celebration_talk celebration_prompt_snapshot
 	celebration_prompt_snapshot=$(cat "$celebration_prompt_file" 2>/dev/null)
-	celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
+	celebration_talk=$(_run_ollama_radio "$celebration_prompt_file")
+	if [ -z "$celebration_talk" ]; then
+		celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
+	fi
 	if [ -z "$celebration_talk" ]; then
 		celebration_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$celebration_prompt_file")
 	fi
@@ -104,7 +107,10 @@ CELEBPROMPT
 	log "[CELEBRATION] 生成中..."
 	local celebration_talk celebration_prompt_snapshot
 	celebration_prompt_snapshot=$(cat "$celebration_prompt_file" 2>/dev/null)
-	celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
+	celebration_talk=$(_run_ollama_radio "$celebration_prompt_file")
+	if [ -z "$celebration_talk" ]; then
+		celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
+	fi
 	if [ -z "$celebration_talk" ]; then
 		celebration_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$celebration_prompt_file")
 	fi

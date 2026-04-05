@@ -1312,6 +1312,7 @@ $advice_text"
 
 		local attempt=1 generation_ok=false
 		local comment_claude_only=false
+			local comment_ollama_improving_only=false
 		local comment_skip_claude=false
 		local comment_try_claude_before_opencode_fallback="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
 		local comments_talk="" comment_model_used=""
@@ -1319,8 +1320,8 @@ $advice_text"
 			comment_claude_only=true
 			log "[COMMENT] !claude 指定のため claude ${RADIO_CLAUDE_MODEL} で生成"
 		elif _comment_should_use_claude_only; then
-			comment_claude_only=true
-			log "[COMMENT] improve実行中のため claude専用モードで生成"
+			comment_ollama_improving_only=true
+			log "[COMMENT] improve実行中のため ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 専用モードで生成"
 		fi
 		echo "generating:comment:$(date +%s)" > $COMMENT_GEN_STATE_FILE
 		log "[COMMENT] コメント返し生成中... (max_retry=${comment_retry_max})"

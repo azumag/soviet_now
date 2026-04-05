@@ -1078,8 +1078,12 @@ _radio_generate_and_play() {
 	local host_mode_generated=""
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
-	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
-	[ -n "$talk" ] && provider_used="$RADIO_AGENT"
+	talk=$(_run_ollama_radio "$prompt_file")
+	[ -n "$talk" ] && provider_used="ollama:${RADIO_OLLAMA_MODEL}"
+	if [ -z "$talk" ]; then
+		talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
+		[ -n "$talk" ] && provider_used="$RADIO_AGENT"
+	fi
 	if [ -z "$talk" ]; then
 		talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$prompt_file")
 		[ -n "$talk" ] && provider_used="$RADIO_FALLBACK"
