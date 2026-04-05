@@ -1058,18 +1058,21 @@ _radio_generate_and_play() {
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 	talk=$(_run_ollama_radio "$prompt_file")
-	[ -n "$talk" ] && provider_used="ollama:${RADIO_OLLAMA_MODEL}"
+	[ -n "$talk" ] && provider_used="ollama:${RADIO_OLLAMA_MODEL}" && log "[RADIO:${corner_name}] ollama:${RADIO_OLLAMA_MODEL} OK"
 	if [ -z "$talk" ]; then
+		log "[RADIO:${corner_name}] ollama:${RADIO_OLLAMA_MODEL} fail -> ${RADIO_AGENT}"
 		talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
-		[ -n "$talk" ] && provider_used="$RADIO_AGENT"
+		[ -n "$talk" ] && provider_used="$RADIO_AGENT" && log "[RADIO:${corner_name}] ${RADIO_AGENT} OK"
 	fi
 	if [ -z "$talk" ]; then
+		log "[RADIO:${corner_name}] ${RADIO_AGENT} fail -> ${RADIO_FALLBACK}"
 		talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$prompt_file")
-		[ -n "$talk" ] && provider_used="$RADIO_FALLBACK"
+		[ -n "$talk" ] && provider_used="$RADIO_FALLBACK" && log "[RADIO:${corner_name}] ${RADIO_FALLBACK} OK"
 	fi
 	if [ -z "$talk" ]; then
+		log "[RADIO:${corner_name}] ${RADIO_FALLBACK} fail -> claude:${RADIO_CLAUDE_MODEL}"
 		talk=$(_run_claude_radio "$prompt_file")
-		[ -n "$talk" ] && provider_used="claude:${RADIO_CLAUDE_MODEL}"
+		[ -n "$talk" ] && provider_used="claude:${RADIO_CLAUDE_MODEL}" && log "[RADIO:${corner_name}] claude:${RADIO_CLAUDE_MODEL} OK"
 	fi
 	rm -f "$prompt_file"
 
