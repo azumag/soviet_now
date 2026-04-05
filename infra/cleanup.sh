@@ -50,6 +50,14 @@ cleanup_tmp_files() {
 	# --- 古い .past_soviet_themes.txt を統合済みなので削除可 ---
 	# (テーマが radio_themes.txt に移動済み。ただし _pick_radio_theme の重複防止用は残す)
 
+	# --- game_history/ アーカイブ: 直近13試合を残して削除 ---
+	local history_count
+	history_count=$(ls -1 game_history/*_score*.jsonl 2>/dev/null | wc -l)
+	if [ "$history_count" -gt 13 ]; then
+		ls -1t game_history/*_score*.jsonl 2>/dev/null | tail -n +14 | xargs rm -f 2>/dev/null
+		cleaned=$((cleaned + history_count - 13))
+	fi
+
 	if [ "$cleaned" -gt 0 ]; then
 		log "[CLEANUP] tmp/ クリーンアップ完了: ${cleaned}ファイル削除"
 	fi

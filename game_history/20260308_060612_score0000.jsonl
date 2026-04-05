@@ -1,1 +1,0 @@
-{"turn": 1, "score": 0, "score_delta": 0, "piece_count": 0, "max_y": -5.0, "next_type": 10, "decision_x": -3.0, "decision_reason": "HEIGHT_CONTROL", "merge_available": false, "best_merge_grade": "NO", "reactor_reactive_pairs": 0, "strategy_hash": "73e69843", "state_snapshot": {"pieces": []}}
