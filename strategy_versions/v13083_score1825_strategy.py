@@ -6,6 +6,16 @@ board safety, and setup value for future merges.
 """
 
 # --- Change History ---
+# v539: suppress axes 9.3 + v536 (reactive/near pair blocking) at rp>=3+NO — death spiral edge scatter fix
+# Same class of noise as v527/v529/v535 (axes 5.5/5.6 suppression). At rp>=3+NO, axis 8.8 (-4500 flat)
+# dominates all candidates equally. AVOID_BLOCK_REACTIVE_PAIR (-500 max) and AVOID_BLOCK_NEAR_PAIR (-400 max)
+# create differential that pushes pieces to edges during death spiral when max_y < 2.5.
+# Worst game T57: AVOID_BLOCK_REACTIVE_PAIR pushed to x=-3.0 at rp=9, max_y=1.97. T61: x=2.6, rp=10.
+# Protected strategy (median 12789) has NO axis 9.3 or v536 — height penalty is sole differentiator at death spiral.
+# Fixes rollback failure mode: p25 collapse from AVOID_BLOCK noise overriding height differentiation at rp>=3+NO
+# refs: game_history/20260406_035350_score0824.jsonl T57-63, tmp/batch_summary.txt, tmp/change_log.txt (v527/v529/v535),
+#       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py, tmp/state/last_rollback_analysis.md
+#
 # v538: strengthen CROSSES_DEADLINE_MERGE_RISK for NEAR (-2000→-4000) — prevent risky deadline-crossing NEAR merges
 # Worst game (633) final 8 turns: all NEAR+CROSSES_DEADLINE_MERGE_RISK, chain+reactive bonuses overwhelmed -2000
 # NEAR 68.5% success rate at deadline is catastrophic on failure; DIRECT 95.7% justified at -2000
@@ -334,10 +344,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # Only fires when merge_grade=="NO" (no immediate merge to suppress).
         # Uses reactive_pairs position data from analyze_board.py (rp format: (id1, id2, type)).
+        # v539: suppress at rp>=3+NO — death spiral height-only differentiation (matching v527/v529/v535 pattern)
         if merge_grade == "NO" and reactive_pair_count >= 1 and piece_count >= 25:
             board_congested = (max_y >= 3.0 and deadline_crossed) or (
                 reactive_pair_count >= 5 and max_y >= 2.5
-            )
+            ) or (reactive_pair_count >= 3 and merge_grade == "NO")
             if not board_congested:
                 blocking_penalty = 0.0
                 for rp in reactive_pairs:
@@ -367,9 +378,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Placing between them physically separates them further, blocking their future merge.
         # Same structure as reactive pair blocking (axis 9.3) but for near_pairs.
         if merge_grade == "NO" and piece_count >= 20:
+            # v539: suppress at rp>=3+NO — same class of noise as v527/v529/v535 (axes 5.5/5.6 suppression)
+            # At rp>=3+NO, axis 8.8 (-4500 flat) dominates. Near pair blocking (-400 max) creates differential
+            # that pushes pieces to edges during death spiral, overriding height differentiation.
             np_board_congested = (max_y >= 3.0 and deadline_crossed) or (
                 reactive_pair_count >= 5 and max_y >= 2.5
-            )
+            ) or (reactive_pair_count >= 3 and merge_grade == "NO")
             if not np_board_congested:
                 near_blocking_penalty = 0.0
                 for np_entry in near_pairs:
