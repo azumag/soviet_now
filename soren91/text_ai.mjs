@@ -301,6 +301,18 @@ export async function generateTextWithFallbacks(tag, promptText, options = {}) {
   try {
     return await runClaudeText(tag, promptText, options);
   } catch (err) {
+    // claude fallbackとして haiku を試す
+    const claudeFallbackPreset = options.claudeFallbackPreset || 'haiku';
+    if (claudeFallbackPreset) {
+      console.error(`[${tag}] claude failed -> haiku fallback (${err.message})`);
+      try {
+        return await runClaudeText(tag, promptText, { ...options, claudePreset: claudeFallbackPreset });
+      } catch (haikuErr) {
+        console.error(`[${tag}] haiku also failed (${haikuErr.message})`);
+        throw haikuErr;
+      }
+    }
+
     // "Usage limit reached for 5 hour" のようなrate-limitエラーの場合は、Gemini をスキップして直接 Opencode にフォールバック
     const isHardRateLimit = /usage limit reached for [0-9]+ hours?|rate limit.*hour|quota.*hour/i.test(err.message || '');
     if (isHardRateLimit) {
@@ -310,7 +322,7 @@ export async function generateTextWithFallbacks(tag, promptText, options = {}) {
       }
       return runOpencodeText(tag, promptText, options);
     }
-    
+
     console.error(`[${tag}] claude failed -> gemini fallback (${err.message})`);
     try {
       return await runGeminiText(tag, promptText, options);
