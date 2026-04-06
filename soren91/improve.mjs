@@ -171,70 +171,69 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
   const promptText = buildPromptText(gameSummary, currentStrategy, lineageContext, screenshots, viewerAdvice);
   console.log(`[improve] Calling primary strategy model (gemini=${IMPROVE_GEMINI_MODEL}, claude_fallback=${IMPROVE_CLAUDE_MODEL})...`);
 
-  let newStrategy;
   try {
-    newStrategy = await callStrategyModelWithFallback(promptText, screenshots, 'improve');
-  } catch (err) {
-    console.error('[improve] API call failed:', err.message);
-    cleanupScreenshots();
-    return;
-  }
-
-  if (!newStrategy) {
-    console.log('[improve] No strategy improvement returned');
-    cleanupScreenshots();
-    return;
-  }
-
-  // 4. バリデーション (失敗時はリトライ)
-  let validationResult = await validateStrategy(newStrategy);
-  for (let retry = 1; !validationResult.valid && retry <= MAX_FIX_RETRIES; retry++) {
-    console.log(`[improve] Validation failed, retry ${retry}/${MAX_FIX_RETRIES}: ${validationResult.error}`);
+    let newStrategy;
     try {
-      const fixed = await callClaudeToFix(newStrategy, validationResult.error, screenshots);
-      if (fixed) {
-        newStrategy = fixed;
-        validationResult = await validateStrategy(newStrategy);
-      } else {
-        console.log(`[improve] Fix retry ${retry} returned no code`);
+      newStrategy = await callStrategyModelWithFallback(promptText, screenshots, 'improve');
+    } catch (err) {
+      console.error('[improve] API call failed:', err.message);
+      return;
+    }
+
+    if (!newStrategy) {
+      console.log('[improve] No strategy improvement returned');
+      return;
+    }
+
+    // 4. バリデーション (失敗時はリトライ)
+    let validationResult = await validateStrategy(newStrategy);
+    for (let retry = 1; !validationResult.valid && retry <= MAX_FIX_RETRIES; retry++) {
+      console.log(`[improve] Validation failed, retry ${retry}/${MAX_FIX_RETRIES}: ${validationResult.error}`);
+      try {
+        const fixed = await callClaudeToFix(newStrategy, validationResult.error, screenshots);
+        if (fixed) {
+          newStrategy = fixed;
+          validationResult = await validateStrategy(newStrategy);
+        } else {
+          console.log(`[improve] Fix retry ${retry} returned no code`);
+          break;
+        }
+      } catch (err) {
+        console.log(`[improve] Fix retry ${retry} failed: ${err.message}`);
         break;
       }
-    } catch (err) {
-      console.log(`[improve] Fix retry ${retry} failed: ${err.message}`);
-      break;
     }
-  }
-  if (!validationResult.valid) {
-    console.log('[improve] New strategy failed validation after retries, keeping current');
+    if (!validationResult.valid) {
+      console.log('[improve] New strategy failed validation after retries, keeping current');
+      return;
+    }
+
+    // 5. 現戦略をバックアップ + 新戦略を適用
+    const summaryMeta = readSummaryMeta(summaryPath);
+    const versionName = `v${gameNumber}_turns${String(summaryMeta.turns || 0).padStart(3, '0')}_rank${formatRankToken(summaryMeta.rank)}_strategy.mjs`;
+    const backupPath = join(VERSIONS_DIR, versionName);
+    writeFileSync(backupPath, currentStrategy);
+    console.log(`[improve] Backed up current strategy to ${backupPath}`);
+
+    writeFileSync(STRATEGY_PATH, newStrategy);
+    const newStrategyHash = computeStrategyHashFromSource(newStrategy);
+    archiveStrategySnapshotByHash(STRATEGY_PATH, newStrategyHash);
+    recordImprovementTransition({
+      fromHash: currentStrategyHash,
+      toHash: newStrategyHash,
+      note: `single-game improve #${gameNumber}`,
+      gameStart: gameNumber,
+      gameEnd: gameNumber,
+      bestGame: gameNumber,
+    });
+    console.log('[improve] New strategy applied!');
+  } finally {
+    // 成功・失敗問わず常にクリーンアップ
     cleanupScreenshots();
-    return;
+    cleanupSummaries();
+    cleanupGameHistory();
+    console.log('[improve] Improvement complete');
   }
-
-  // 5. 現戦略をバックアップ + 新戦略を適用
-  const summaryMeta = readSummaryMeta(summaryPath);
-  const versionName = `v${gameNumber}_turns${String(summaryMeta.turns || 0).padStart(3, '0')}_rank${formatRankToken(summaryMeta.rank)}_strategy.mjs`;
-  const backupPath = join(VERSIONS_DIR, versionName);
-  writeFileSync(backupPath, currentStrategy);
-  console.log(`[improve] Backed up current strategy to ${backupPath}`);
-
-  writeFileSync(STRATEGY_PATH, newStrategy);
-  const newStrategyHash = computeStrategyHashFromSource(newStrategy);
-  archiveStrategySnapshotByHash(STRATEGY_PATH, newStrategyHash);
-  recordImprovementTransition({
-    fromHash: currentStrategyHash,
-    toHash: newStrategyHash,
-    note: `single-game improve #${gameNumber}`,
-    gameStart: gameNumber,
-    gameEnd: gameNumber,
-    bestGame: gameNumber,
-  });
-  console.log('[improve] New strategy applied!');
-
-  // 6. スクリーンショット・サマリー・ゲーム履歴削除
-  cleanupScreenshots();
-  cleanupSummaries();
-  cleanupGameHistory();
-  console.log('[improve] Improvement complete');
 }
 
 function formatTurnDetail(t) {
@@ -840,26 +839,34 @@ function cleanupScreenshots() {
  */
 function cleanupSummaries() {
   if (!existsSync(SUMMARIES_DIR)) return;
-  const files = readdirSync(SUMMARIES_DIR)
+  // game_*.json の削除
+  const jsonFiles = readdirSync(SUMMARIES_DIR)
     .filter(f => f.startsWith('game_') && f.endsWith('.json'))
     .sort((a, b) => {
       const numA = Number.parseInt(a.match(/\d+/)[0], 10);
       const numB = Number.parseInt(b.match(/\d+/)[0], 10);
       return numB - numA; // 最新順
     });
-  
-  if (files.length > SUMMARIES_KEEP_COUNT) {
-    const toDelete = files.slice(SUMMARIES_KEEP_COUNT);
-    let deleted = 0;
-    for (const f of toDelete) {
-      try {
-        unlinkSync(join(SUMMARIES_DIR, f));
-        deleted++;
-      } catch {}
+  let deleted = 0;
+  if (jsonFiles.length > SUMMARIES_KEEP_COUNT) {
+    for (const f of jsonFiles.slice(SUMMARIES_KEEP_COUNT)) {
+      try { unlinkSync(join(SUMMARIES_DIR, f)); deleted++; } catch {}
     }
-    if (deleted > 0) {
-      console.log(`[improve] Cleaned up ${deleted} old summaries (kept ${SUMMARIES_KEEP_COUNT})`);
+  }
+  // ranking_*.png の削除 (対応する game_*.json が残っているものは保持)
+  const keepNums = new Set(
+    jsonFiles.slice(0, SUMMARIES_KEEP_COUNT).map(f => Number.parseInt(f.match(/\d+/)[0], 10))
+  );
+  const pngFiles = readdirSync(SUMMARIES_DIR)
+    .filter(f => f.startsWith('ranking_') && f.endsWith('.png'));
+  for (const f of pngFiles) {
+    const num = Number.parseInt(f.match(/\d+/)?.[0] || '0', 10);
+    if (!keepNums.has(num)) {
+      try { unlinkSync(join(SUMMARIES_DIR, f)); deleted++; } catch {}
     }
+  }
+  if (deleted > 0) {
+    console.log(`[improve] Cleaned up ${deleted} old summaries/rankings (kept ${SUMMARIES_KEEP_COUNT})`);
   }
 }
 
