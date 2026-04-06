@@ -418,15 +418,15 @@ run_cmd() {
 		)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
-				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			else
-				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
-				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits &
+				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits --no-session-persistence &
 			else
-				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits &
+				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits --no-session-persistence &
 			fi
 		fi
 		;;
