@@ -1387,24 +1387,9 @@ RETRYCOMMENT
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
 					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						if [ "$comment_try_claude_before_opencode_fallback" = "1" ] && [ "$comment_skip_claude" != "true" ]; then
-							log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
-						else
-							log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → ollama fallback (attempt ${attempt}/${comment_retry_max})"
-						fi
+						log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → ollama fallback (attempt ${attempt}/${comment_retry_max})"
 						attempt_talk=""
 						attempt_model=""
-					fi
-					if [ -z "$attempt_talk" ] && [ "$comment_skip_claude" != "true" ] && [ "$comment_try_claude_before_opencode_fallback" = "1" ]; then
-						attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
-						attempt_model="claude:${RADIO_CLAUDE_MODEL}"
-						attempt_talk=$(_clean_comment_talk "$attempt_talk")
-						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-							log "[COMMENT] claude 出力が不正/短文のため破棄 → ollama fallback (attempt ${attempt}/${comment_retry_max})"
-							attempt_talk=""
-							attempt_model=""
-						fi
 					fi
 					if [ -z "$attempt_talk" ]; then
 						attempt_talk=$(_run_ollama_comment "$prompt_for_attempt")
@@ -1424,16 +1409,12 @@ RETRYCOMMENT
 						attempt_talk=$(_clean_comment_talk "$attempt_talk")
 						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-							if [ "$comment_try_claude_before_opencode_fallback" = "1" ]; then
-								log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → retry (attempt ${attempt}/${comment_retry_max})"
-							else
-								log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
-							fi
+							log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
 							attempt_talk=""
 							attempt_model=""
 						fi
 					fi
-					if [ -z "$attempt_talk" ] && [ "$comment_skip_claude" != "true" ] && [ "$comment_try_claude_before_opencode_fallback" != "1" ]; then
+					if [ -z "$attempt_talk" ]; then
 						attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
 						attempt_model="claude:${RADIO_CLAUDE_MODEL}"
 						attempt_talk=$(_clean_comment_talk "$attempt_talk")
