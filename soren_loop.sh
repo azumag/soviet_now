@@ -362,6 +362,8 @@ while true; do
 	# 粛清チェック: improve_daemon とは独立して毎試合実行
 	# (daemon は改善中にブロックされるため、soren_loop 側で必ず走らせる)
 	if check_regression; then
+		# フラグを最初に書く: _clear_accumulated_data がレース時でも best_outcome=3 を保証
+		touch "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
 		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 			# best_outcome を粛清(3)に更新: resolve失敗時でも _clear_accumulated_data の
 			# cleanup が best_outcome=3 で resolve するようにする

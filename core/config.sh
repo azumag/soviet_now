@@ -17,7 +17,7 @@ PHYROGENETIC_TREE_URL="${PHYROGENETIC_TREE_URL:-https://github.com/azumag/soviet
 
 MODEL_PRIMARY="zai"
 MODEL_FALLBACK="haiku"
-MODEL_FALLBACK_IMPROVE="opencode:glmflash"
+MODEL_FALLBACK_IMPROVE="qwen36fflash"
 MODEL_LAST_RESORT="opencode:glmflash"
 
 GAME_COUNT_FILE="game_count.txt"

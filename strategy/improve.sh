@@ -381,7 +381,25 @@ _clear_accumulated_data() {
 	# 予想もサイクルに連動: 蓄積リセット時に現予想を確定し、次サイクルで新規作成させる
 	# (粛清やソ連建国で既にresolve済みの場合はファイルが消えているのでスキップされる)
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
+		# 粛清フラグがある場合は best_outcome=3 に強制（レース対策）
+		# soren_loop / improve.sh の粛清検出ブロックが check_regression 後に即書き込む
+		if [ -f "$TMP_STATE_DIR/regression_pending" ]; then
+			python3 -c "
+import json
+f='$TMP_STATE_DIR/current_prediction.json'
+try:
+    d=json.load(open(f))
+    if d.get('best_outcome',0) < 3:
+        d['best_outcome']=3
+        json.dump(d,open(f,'w'))
+except Exception:
+    pass
+" 2>/dev/null || true
+			rm -f "$TMP_STATE_DIR/regression_pending"
+		fi
 		./twitch_predictions.sh cleanup "999999" >>tmp/prediction.log 2>&1 || true
+	else
+		rm -f "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
 	fi
 }
 
@@ -781,6 +799,7 @@ trigger_adaptive_improvement() {
 	# soren_loop なし（旧構成互換）の場合のみここで実行。
 	if [ "${IMPROVE_DAEMON_MODE:-0}" != "1" ]; then
 		if check_regression; then
+			touch "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
 			if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 				python3 -c "
 import json
@@ -878,6 +897,7 @@ else:
 	# Step 5: idle → 改善開始
 	# リグレッション検知 (daemon モードでも改善開始直前にチェック)
 	if check_regression; then
+		touch "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
 		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 			python3 -c "
 import json

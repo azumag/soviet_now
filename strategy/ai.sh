@@ -410,6 +410,46 @@ run_cmd() {
 			fi
 		fi
 		;;
+	qwen36f)
+		local -a openrouter_env=(
+			ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+			ANTHROPIC_AUTH_TOKEN="${OPENROUTER_API_KEY:-}"
+			ANTHROPIC_API_KEY=""
+		)
+		if [ -n "$cmd_log_file" ]; then
+			if [ -n "$timeout_sec" ]; then
+				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			else
+				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			fi
+		else
+			if [ -n "$timeout_sec" ]; then
+				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits &
+			else
+				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=qwen/qwen3.6-plus:free --permission-mode=acceptEdits &
+			fi
+		fi
+		;;
+	qwen36fflash)
+		local -a openrouter_env=(
+			ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+			ANTHROPIC_AUTH_TOKEN="${OPENROUTER_API_KEY:-}"
+			ANTHROPIC_API_KEY=""
+		)
+		if [ -n "$cmd_log_file" ]; then
+			if [ -n "$timeout_sec" ]; then
+				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=zhipu/glm-4-flash:free --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			else
+				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=zhipu/glm-4-flash:free --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+			fi
+		else
+			if [ -n "$timeout_sec" ]; then
+				env "${openrouter_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=zhipu/glm-4-flash:free --permission-mode=acceptEdits &
+			else
+				env "${openrouter_env[@]}" claude -p "$prompt_body" --model=zhipu/glm-4-flash:free --permission-mode=acceptEdits &
+			fi
+		fi
+		;;
 	esac
 	local cmd_pid=$!
 	RUN_CMD_ACTIVE_PID=$cmd_pid
