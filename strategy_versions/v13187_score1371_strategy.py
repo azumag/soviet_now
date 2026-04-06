@@ -472,7 +472,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # v543: ロシアフェーズまたは盤面が狭い時はheight_multをさらに抑制してtype 15保護を優先
         # ロシア建国後の盤面狭小時はより厳格にheight_multを抑制（0.6→0.4）
-        if soren_phase or max_y >= 2.5:
+        if russia_phase or max_y >= 2.5:
             height_mult *= 0.4
 
         height_mult = max(height_mult, 0.5)
@@ -751,7 +751,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 3 and merge_grade == "NO":
             # v543: ロシア建国後の盤面狭小時はペナルティをさらに強化（6000→8000）
             # 盤面が狭い時は高配置を厳しく抑制し、type 15を保護して2つ目のロシアを作るための空間を確保
-            if soren_phase or max_y >= 2.5:
+            if russia_phase or max_y >= 2.5:
                 score -= 8000.0
             else:
                 score -= 6000.0
