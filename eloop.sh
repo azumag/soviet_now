@@ -169,8 +169,8 @@ play_one_game() {
 		log "[RUNNER] WARNING: strategy_runner が異常終了 (py_rc=$py_rc)"
 	fi
 
-	# 結果抽出
-	RESULT_JSON=$(sed -n '/^---RESULT---$/,$ p' "$runner_tmpfile" | tail -n 1)
+	# 結果抽出 (v542: tail -n 1 → grep -m1 '^{.*}$' で空行/追加ログ耐性)
+	RESULT_JSON=$(sed -n '/^---RESULT---$/,$ p' "$runner_tmpfile" | grep -m1 '^{.*}$' | head -c 10000)
 	rm -f "$runner_tmpfile"
 
 	if [ -z "$RESULT_JSON" ]; then

@@ -15,6 +15,8 @@ cd "$(dirname "$0")"
 
 _log() { echo "[twitch_predictions $(date '+%H:%M:%S')] $*" >&2; }
 
+TMP_STATE_DIR="${TMP_STATE_DIR:-tmp/state}"
+
 # --- 環境変数チェック ---
 if [ "${TWITCH_PREDICTIONS_ENABLED:-0}" != "1" ]; then
 	_log "SKIP: TWITCH_PREDICTIONS_ENABLED is not 1"
