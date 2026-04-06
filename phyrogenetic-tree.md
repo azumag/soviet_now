@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-06 16:08:23 JST`
-- Nodes: `941`
-- Edges: `1284`
-- Current: `f619d000fa07`
-- Anchor: `bf07db529883`
+- Updated: `2026-04-06 17:15:08 JST`
+- Nodes: `942`
+- Edges: `1285`
+- Current: `3d2fa276d6a4`
+- Anchor: `f619d000fa07`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_0c165b88e34f["0c165b88e34f<br/>g=12 n=12<br/>comp=10318.5"]
     h_d3c026afa6d2["d3c026afa6d2<br/>g=12 n=12<br/>comp=11615.7"]
     h_0c78453df396["0c78453df396<br/>g=12 n=12<br/>comp=10217.5"]
     h_3a3987c92448["3a3987c92448<br/>g=36 n=20<br/>comp=10980.4"]
@@ -70,11 +69,12 @@ flowchart TD
     h_48c0bcd760fa["48c0bcd760fa<br/>g=24 n=20<br/>comp=10439.1"]
     h_14798af73897["14798af73897<br/>g=12 n=12<br/>comp=11914.5"]
     h_9b678d87a207["9b678d87a207<br/>g=36 n=20<br/>comp=11099.7"]
-    h_bf07db529883["bf07db529883<br/>ANCHOR<br/>g=12 n=12<br/>comp=12478.3"]
+    h_bf07db529883["bf07db529883<br/>g=12 n=12<br/>comp=12478.3"]
     h_1e1496aefa66["1e1496aefa66<br/>g=24 n=20<br/>comp=10703.4"]
+    h_f619d000fa07["f619d000fa07<br/>ANCHOR<br/>g=12 n=12<br/>comp=13428.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_f619d000fa07["f619d000fa07<br/>CURRENT"]
+    h_3d2fa276d6a4["3d2fa276d6a4<br/>CURRENT"]
 
     h_d3c026afa6d2 -->|improve| h_0c78453df396
     h_3a3987c92448 -->|improve| h_44324046b2a1
@@ -139,13 +139,13 @@ flowchart TD
     h_9b678d87a207 -->|improve| h_bf07db529883
     h_bf07db529883 -->|improve| h_1e1496aefa66
     h_1e1496aefa66 -->|improve| h_f619d000fa07
+    h_f619d000fa07 -->|improve| h_3d2fa276d6a4
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_0c165b88e34f plain;
     class h_d3c026afa6d2 plain;
     class h_0c78453df396 plain;
     class h_3a3987c92448 plain;
@@ -200,11 +200,12 @@ flowchart TD
     class h_48c0bcd760fa plain;
     class h_14798af73897 plain;
     class h_9b678d87a207 plain;
-    class h_bf07db529883 anchor;
+    class h_bf07db529883 plain;
     class h_1e1496aefa66 plain;
+    class h_f619d000fa07 anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_f619d000fa07 current;
+    class h_3d2fa276d6a4 current;
 ```
 
 ## Detail 1/12
@@ -3343,9 +3344,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `f619d000fa07`
-- Nodes in this diagram: `61`
-- Internal edges in this diagram: `64`
+- Range: `8b764b56c6f3` .. `3d2fa276d6a4`
+- Nodes in this diagram: `62`
+- Internal edges in this diagram: `65`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3417,11 +3418,12 @@ flowchart TD
     h_48c0bcd760fa["48c0bcd760fa<br/>g=24 n=20<br/>comp=10439.1"]
     h_14798af73897["14798af73897<br/>g=12 n=12<br/>comp=11914.5"]
     h_9b678d87a207["9b678d87a207<br/>g=36 n=20<br/>comp=11099.7"]
-    h_bf07db529883["bf07db529883<br/>ANCHOR<br/>g=12 n=12<br/>comp=12478.3"]
+    h_bf07db529883["bf07db529883<br/>g=12 n=12<br/>comp=12478.3"]
     h_1e1496aefa66["1e1496aefa66<br/>g=24 n=20<br/>comp=10703.4"]
+    h_f619d000fa07["f619d000fa07<br/>ANCHOR<br/>g=12 n=12<br/>comp=13428.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_f619d000fa07["f619d000fa07<br/>CURRENT"]
+    h_3d2fa276d6a4["3d2fa276d6a4<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3487,6 +3489,7 @@ flowchart TD
     h_9b678d87a207 -->|improve| h_bf07db529883
     h_bf07db529883 -->|improve| h_1e1496aefa66
     h_1e1496aefa66 -->|improve| h_f619d000fa07
+    h_f619d000fa07 -->|improve| h_3d2fa276d6a4
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3549,14 +3552,25 @@ flowchart TD
     class h_48c0bcd760fa plain;
     class h_14798af73897 plain;
     class h_9b678d87a207 plain;
-    class h_bf07db529883 anchor;
+    class h_bf07db529883 plain;
     class h_1e1496aefa66 plain;
+    class h_f619d000fa07 anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_f619d000fa07 current;
+    class h_3d2fa276d6a4 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#13221 `f619d000 -> 3d2fa276`
+
+- scores: `15224 21473 15533 17440 7565 10383 9393 5518 13322 21616 24074 17907`
+- v545: 强化type 15保護とdeadline crossingペナルティ
+- - type 15の上にtype 13以下を載せるペナルティを追加（TYPE15_STACK_PROTECTION）
+- - reactive_pairs >= 3 NO merge ペナルティをさらに強化（10000 → 12000）
+- - deadline crossing NEAR merge ペナルティをさらに強化（7000 → 9000）
+- - deadline crossing DIRECT merge ペナルティをさらに強化（3000 → 4000）
+- ロシア建国後のフェーズ切り替えと盤面狭小時のtype 15保護強化
 
 ### Improve Game#13209 `1e1496ae -> f619d000`
 
