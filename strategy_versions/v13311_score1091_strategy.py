@@ -6,6 +6,10 @@ board safety, and setup value for future merges.
 """
 
 # --- Change History ---
+# v545: More aggressive height_mult reduction for Russia phase (0.4→0.3)
+# Allows better space management in Russia phase while protecting type 15 pieces
+# Fixes rollback failure mode: Russia phase height penalty too severe, limiting board placement flexibility
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/state/last_rollback_analysis.md
 # v543: Add deadline_crossed check to NEAR deadline risk penalty (400→400 penalty, increased risk scaling)
 # Prevents NEAR+CROSSES_DEADLINE pattern seen in worst game (633) final 8 turns
 # NEAR merge at deadline height is catastrophic because landing piece sits at danger zone
@@ -25,7 +29,7 @@ board safety, and setup value for future merges.
 # beyond just comments. The core improvement (v541) focuses on Russia phase strategy adjustment.
 # v543: ロシア建国後のフェーズ切り替えとtype 15保護強化
 # - soren_phase判定追加（type 15 >= 2でソ連建国への道）
-# - ロシア建国後の盤面狭小時のheight_mult調整（盤面狭小時×0.4）
+# - ロシア建国後の盤面狭小時のheight_mult調整（盤面狭小時×0.4→×0.3）
 # - type 15保護優先（reactive_pairs>=3の場合の盤面圧縮ボーナス抑制）
 # - deadline crossingペナルティ強化（盤面狭小時7000→8000）
 # - reactive pairs no mergeペナルティ強化（盤面狭小時4500→6000）
@@ -90,9 +94,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
     # --- v544: russia phase detection (type 15 pieces on board) ---
     # ロシア建国後のフェーズを明確に切り替える
+    # type 15 (Russia) pieces on board indicate Russia phase has begun
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
-    # ロシア2つ目のチェック（ソ連建国への道）
+    # ロシア2つ目のチェック（ソ連建国への道） - type 16 (Soviet Union) indicates Soren phase
     soren_count = sum(1 for p in pieces if p.get("type") == 16)
     soren_phase = soren_count >= 1
 
@@ -472,9 +477,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             height_mult *= 0.3
 
         # v543: ロシアフェーズまたは盤面が狭い時はheight_multをさらに抑制してtype 15保護を優先
-        # ロシア建国後の盤面狭小時はより厳格にheight_multを抑制（0.6→0.4）
+        # ロシア建国後の盤面狭小時はより厳格にheight_multを抑制（0.6→0.4→0.3）
         if soren_phase or max_y >= 2.5:
-            height_mult *= 0.4
+            height_mult *= 0.3  # More aggressive reduction for Russia phase space management
 
         height_mult = max(height_mult, 0.5)
 
