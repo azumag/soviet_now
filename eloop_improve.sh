@@ -823,7 +823,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				_improve_clear_retry_sessions
 			fi
 			_improve_reset_sandbox_targets
-			run_ai IMPROVE "$MODEL_PRIMARY" "$MODEL_FALLBACK_IMPROVE" \
+			run_ai IMPROVE "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
 				"prompts/improve_strategy.md" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
 			_run_ai_rc=$?
@@ -853,7 +853,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			fix_prompt_file=$(mktemp "$PWD/$TMP_STATE_DIR/eloop_fix_prompt.XXXXXX")
 			export VALIDATE_ERROR
 			envsubst '${VALIDATE_ERROR}' < "$ELOOP_LIB_DIR/prompts/fix_validation.md" > "$fix_prompt_file"
-			run_ai "FIX(${fresh_retry}.${continue_retry})" "$MODEL_PRIMARY" "$MODEL_FALLBACK_IMPROVE" \
+			run_ai "FIX(${fresh_retry}.${continue_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
 				"$fix_prompt_file" "$STAGING_FILE" \
 				"${improve_ref_files[@]}"
 			_fix_rc=$?
