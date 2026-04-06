@@ -1,24 +1,34 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v185)
+ * strategy.mjs - ドロップ位置決定戦略 (v186)
  *
- * v185: v184の「先読み」ロジックと厳格な高さ管理を維持しつつ、
- *       "No valid move found" の頻度低減と、より柔軟な高所での判断を可能にする調整。
- *       ゲーム分析で「No valid move found」が散見されたため、デッドライン回避ロジックの再調整を行う。
+ * v186: v185の調整にも関わらず見られた "No valid move found" エラーの頻度をさらに低減し、
+ *       デッドライン近くでの判断をより柔軟に行うための再調整。
+ *       ゲーム分析で「No valid move found」が依然として散見され、
+ *       特にゲーム終盤での生存ターン数に影響を与えている可能性が指摘されたため、
+ *       予測高に関するパラメータをさらに緩和し、実行可能な手札の選択肢を広げる。
  *
  *       主な改善点:
- *       1.  **SETTLING_BUFFER の微調整**:
- *           - `SETTLING_BUFFER` を `0.45` から `0.40` に戻す。これにより、物理的な着地後の「沈み込み」
- *             による予測高さを若干低く見積もり、デッドラインに対する余裕を持たせる。
- *             過度な予測高さの上昇が "No valid move found" の原因の一つである可能性を考慮。
- *       2.  **DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER の微調整**:
- *           - `DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER` を `0.2` から `0.15` に調整。
- *             この閾値は、ピースの最高到達Y座標がデッドラインにどれだけ近づいたら絶対回避ペナルティを
- *             課すかを決定する。値を小さくすることで、ピースがデッドラインにより接近するまで
- *             「ゲームオーバー」と判断しないようにし、有効な手の選択肢を増やす。
- *       3.  **既存ロジックの維持**:
- *           - 先読みロジック、HOLDメカニクス、その他のボーナス/ペナルティロジックはv184の方針を維持。
+ *       1.  **SETTLING_BUFFER のさらなる微調整**:
+ *           - `SETTLING_BUFFER` を `0.40` から `0.35` に調整。
+ *             物理的な着地後の「沈み込み」による予測高さをさらに低く見積もることで、
+ *             デッドラインに対する余裕をわずかに増やす。これにより、
+ *             予測Y座標がデッドラインに到達するまでの猶予が広がり、
+ *             "No valid move found" の発生頻度を抑えることを狙う。
+ *       2.  **DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER のさらなる微調整**:
+ *           - `DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER` を `0.15` から `0.05` に調整。
+ *             この閾値は、ピースの最高到達Y座標がデッドラインにどれだけ近づいたら
+ *             絶対回避ペナルティを課すかを決定する。値を小さくすることで、
+ *             ピースがデッドラインのより間際まで接近するまで「ゲームオーバー」と判断しないようにし、
+ *             特に高所での有効な手の選択肢を積極的に増やす。
+ *       3.  **HEIGHT_PENALTY_WEIGHT の微調整**:
+ *           - `HEIGHT_PENALTY_WEIGHT` を `500000.0` から `450000.0` に調整。
+ *             高さによるペナルティの全体的な重みをわずかに減らすことで、
+ *             高さが高くなることを過度に避け、他の良い手を見過ごすリスクを低減する。
+ *             これにより、デッドライン付近でもマージ機会などを追求するインセンティブをわずかに残す。
+ *       4.  **既存ロジックの維持**:
+ *           - 先読みロジック、HOLDメカニクス、その他のボーナス/ペナルティロジックはv185の方針を維持。
  *
- *       これらの調整により、デッドライン回避の堅牢性を保ちつつ、予測の柔軟性を高め、
+ *       これらの調整により、デッドライン回避の堅牢性を保ちつつ、予測の柔軟性を最大限に高め、
  *       「No valid move found」による早期のゲーム終了を減らし、生存ターン数の改善を目指します。
  */
 
@@ -32,12 +42,12 @@ const DEADLINE_Y = 3.32;                  // Actual game over Y coordinate
 const CRITICAL_HEIGHT_MARGIN = 0.9; // v183: Increased from 0.8
 const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.2; // v182: Maintained
 
-const HEIGHT_PENALTY_WEIGHT = 500000.0; // v182: Maintained
-const SETTLING_BUFFER = 0.40; // v185: Reverted from 0.45 (v183 increase)
+const HEIGHT_PENALTY_WEIGHT = 450000.0; // v186: Adjusted from 500000.0
+const SETTLING_BUFFER = 0.35; // v186: Adjusted from 0.40
 
 // v179: Changed from absolute avoidance (Infinity) to a very large penalty.
 const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000; // Very large penalty instead of Infinity
-const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.15; // v185: Adjusted from 0.2 (v184 increase)
+const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.05; // v186: Adjusted from 0.15
 
 // Merge and Pipeline Bonuses (v182: further increased)
 const MERGE_PROXIMITY_THRESHOLD = 0.20; // v181: Maintained from 0.20
@@ -188,7 +198,7 @@ function calculateHeightPenalty(predictedY, pieceR) {
     let penalty = 0;
 
     // If piece is predicted to be at or above the absolute avoidance threshold, return the absolute penalty.
-    if (topOfPiece >= (DEADLINE_Y - DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER)) { // v185: Modified buffer
+    if (topOfPiece >= (DEADLINE_Y - DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER)) { // v186: Modified buffer
         return DEADLINE_ABSOLUTE_AVOID_PENALTY;
     }
 
@@ -293,11 +303,11 @@ function calculateGarbageAwarenessBonus(boardState, dropX, piece, predictedY) {
 
 /**
  * Calculates the score for a potential move, excluding height penalty and look-ahead.
- * @param {object} piece The piece to drop.
- * @param {number} dropX The X coordinate for the drop.
- * @param {number} predictedY The predicted landing Y coordinate.
- * @param {object} currentBoardState The current board state or a hypothetical one (must have 'pieces' array and 'garbage' object).
- * @param {number} dominantLargePieceSide Pre-calculated dominant side for large pieces.
+ * @wellnessconnect-be-pr1748/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {object} piece The piece to drop.
+ * @wellnessconnect-be-pr1748/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {number} dropX The X coordinate for the drop.
+ * @wellnessconnect-be-pr1748/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {number} predictedY The predicted landing Y coordinate.
+ * @wellnessconnect-be-pr1748/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {object} currentBoardState The current board state or a hypothetical one (must have 'pieces' array and 'garbage' object).
+ * @wellnessconnect-be-pr1748/src/modules/game-mission/interfaces/handle-mission-attempt-params.interface.ts {number} dominantLargePieceSide Pre-calculated dominant side for large pieces.
  * @returns {number} The calculated score.
  */
 function calculateMoveScore(piece, dropX, predictedY, currentBoardState, dominantLargePieceSide) {
