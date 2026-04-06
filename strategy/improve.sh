@@ -4,6 +4,7 @@
 #=== 改善中判定 (soren_loop.sh のスキップ判定用) ===
 
 _is_improve_running() {
+	_sync_improve_state_with_live_process >/dev/null 2>&1 || true
 	[ -f "$IMPROVE_STATE_FILE" ] || return 1
 	local state imp_status pid
 	state=$(cat "$IMPROVE_STATE_FILE" 2>/dev/null) || return 1
@@ -89,8 +90,82 @@ with open(out_file, "w", encoding="utf-8") as f:
 PY
 }
 
+_is_live_improve_pid() {
+	local pid="$1"
+	case "$pid" in
+	''|0|*[!0-9]*) return 1 ;;
+	esac
+	local stat cmd
+	stat=$(ps -p "$pid" -o stat= 2>/dev/null | awk 'NR==1{print $1}')
+	cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+	[ -n "$stat" ] || return 1
+	case "$stat" in
+	Z*|*Z*) return 1 ;;
+	esac
+	echo "$cmd" | grep -q "eloop_improve\.sh"
+}
+
+_find_live_improve_pid() {
+	local candidate=""
+	if [ -f "$IMPROVE_STATE_FILE" ]; then
+		candidate=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('pid',0))" 2>/dev/null || echo 0)
+		if _is_live_improve_pid "$candidate"; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	fi
+	if _is_live_improve_pid "${IMPROVE_PID:-0}"; then
+		printf '%s\n' "${IMPROVE_PID:-0}"
+		return 0
+	fi
+	candidate=$(pgrep -f "eloop_improve\\.sh" 2>/dev/null | sort -n | tail -1)
+	if _is_live_improve_pid "$candidate"; then
+		printf '%s\n' "$candidate"
+		return 0
+	fi
+	return 1
+}
+
+_sync_improve_state_with_live_process() {
+	local live_pid=""
+	live_pid=$(_find_live_improve_pid 2>/dev/null || true)
+	case "$live_pid" in
+	''|0|*[!0-9]*) return 1 ;;
+	esac
+
+	local state current_status current_pid hash_before started_at
+	state=$(_read_improve_state)
+	current_status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
+	current_pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
+	hash_before=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null)
+	started_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('started_at',0) or 0))" 2>/dev/null || echo 0)
+	[ -n "$hash_before" ] || hash_before=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+
+	if [ "$current_status" != "running" ] || [ "${current_pid:-0}" != "$live_pid" ]; then
+		log "[IMPROVE] state self-heal: live PID=$live_pid を running に再同期 (was status=${current_status:-unknown}, pid=${current_pid:-0})"
+		_write_improve_state "running" "$live_pid" "$hash_before" "recovered" "1" "live_process_detected" "$started_at"
+	fi
+	IMPROVE_PID=$live_pid
+	return 0
+}
+
+_stop_improve_pid_if_running() {
+	local pid="$1" label="${2:-improve}"
+	if ! _is_live_improve_pid "$pid"; then
+		return 0
+	fi
+	_stop_loop_descendants "$pid"
+	_stop_pid_with_fallback "$pid" "$label"
+	wait "$pid" 2>/dev/null || true
+	if _is_live_improve_pid "$pid"; then
+		return 1
+	fi
+	return 0
+}
+
 check_and_harvest_improvement() {
 	local state
+	_sync_improve_state_with_live_process >/dev/null 2>&1 || true
 	state=$(_read_improve_state)
 	local status
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
@@ -688,6 +763,7 @@ trigger_adaptive_improvement() {
 		log "[HALT] trigger_adaptive_improvementをスキップ（建国後停止中）"
 		return
 	fi
+	_sync_improve_state_with_live_process >/dev/null 2>&1 || true
 
 	local current_hash=""
 	if [ -f "$STRATEGY_FILE" ]; then

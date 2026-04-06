@@ -193,11 +193,13 @@ cleanup_all() {
 
 	# 改善プロセス停止
 	if [ "${IMPROVE_PID:-0}" -ne 0 ] && kill -0 "$IMPROVE_PID" 2>/dev/null; then
-		pkill -P "$IMPROVE_PID" 2>/dev/null || true
-		_stop_pid_with_fallback "$IMPROVE_PID" "improve"
-		wait "$IMPROVE_PID" 2>/dev/null || true
+		_stop_improve_pid_if_running "$IMPROVE_PID" "improve" || true
 	fi
-	_write_improve_state "idle" "0" ""
+	if _find_live_improve_pid >/dev/null 2>&1; then
+		_sync_improve_state_with_live_process >/dev/null 2>&1 || true
+	else
+		_write_improve_state "idle" "0" ""
+	fi
 
 	local rollback_postmortem_pid=0
 	if [ -f "$ROLLBACK_POSTMORTEM_PID_FILE" ]; then

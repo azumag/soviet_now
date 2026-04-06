@@ -17,24 +17,19 @@ PLAY_RECOVERED_RETRY_RC=75
 
 _stop_improvement_for_runtime_recovery() {
 	local running_pid=0
-	if [ -f "$IMPROVE_STATE_FILE" ]; then
-		running_pid=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('pid',0))" 2>/dev/null || echo 0)
-	fi
-	if [ "${running_pid:-0}" -eq 0 ] && [ "${IMPROVE_PID:-0}" -ne 0 ]; then
-		running_pid="$IMPROVE_PID"
-	fi
-	if [ "${running_pid:-0}" -ne 0 ] && kill -0 "$running_pid" 2>/dev/null; then
-		local pid_cmd
-		pid_cmd=$(ps -p "$running_pid" -o command= 2>/dev/null || echo "")
-		if echo "$pid_cmd" | grep -q "eloop_improve"; then
-			log "[RECOVERY] 改善プロセス停止 (PID=$running_pid)"
-			pkill -P "$running_pid" 2>/dev/null || true
-			kill "$running_pid" 2>/dev/null || true
-			wait "$running_pid" 2>/dev/null || true
+	running_pid=$(_find_live_improve_pid 2>/dev/null || echo 0)
+	if [ "${running_pid:-0}" -ne 0 ]; then
+		log "[RECOVERY] 改善プロセス停止 (PID=$running_pid)"
+		if ! _stop_improve_pid_if_running "$running_pid" "runtime_recovery"; then
+			log "[RECOVERY] 改善プロセス停止失敗: PID=$running_pid がまだ生存"
 		fi
 	fi
-	IMPROVE_PID=0
-	_write_improve_state "idle" "0" "" "runtime_recovery" "0" "decide_exception"
+	if _find_live_improve_pid >/dev/null 2>&1; then
+		_sync_improve_state_with_live_process >/dev/null 2>&1 || true
+	else
+		IMPROVE_PID=0
+		_write_improve_state "idle" "0" "" "runtime_recovery" "0" "decide_exception"
+	fi
 }
 
 _pick_runtime_rollback_candidate() {
