@@ -1,25 +1,26 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v183)
+ * strategy.mjs - ドロップ位置決定戦略 (v184)
  *
- * v183: v182で強化された高さ管理にも関わらず、ゲームオーバーに繋がる高すぎるピース配置が散見されたため、
- *       デッドラインに極めて近い配置を厳密に回避するロジックを導入。
- *       また、物理予測の不確実性をさらに考慮し、保守的な着地予測バッファとクリティカルな高さペナルティの閾値を微調整。
+ * v184: v183の厳格な高さ管理と安定性向上に加え、
+ *       今後のピース配置を考慮した「先読み」ロジックを導入。
+ *       また、デッドライン回避の閾値を微調整し、"No valid move found" の頻度低減を目指す。
  *
  *       主な改善点:
- *       1.  **厳格なデッドライン回避ロジック**:
- *           - `decide` 関数内で、`calculateHeightPenalty` が `DEADLINE_ABSOLUTE_AVOID_PENALTY` を返した場合、
- *             そのドロップ位置候補を完全にスキップするよう変更。これにより、即座にゲームオーバーに繋がる
- *             と予測されるドロップを確実に避ける。
- *       2.  **高さ管理のさらなる強化と保守的予測**:
- *           - `SETTLING_BUFFER` を `0.40` から `0.45` に微増。予測着地Y座標をより安全側に見積もることで、
- *             物理エンジンの不確実性による予期せぬ高さ超過リスクを低減。
- *           - `CRITICAL_HEIGHT_MARGIN` を `0.8` から `0.9` に増強。二次曲線的な高さペナルティがより低い位置から
- *             発動するようになり、デッドライン到達前の早い段階から高さ管理の優先度を上げる。
- *       3.  **既存ロジックの維持**:
- *           - HOLDメカニクス、その他のボーナス/ペナルティロジックはv182の方針を維持します。
+ *       1.  **先読みロジックの導入**:
+ *           - `nextPieces[1]` (次にドロップするピースの次) を考慮した、1手先読み評価を追加。
+ *           - 現在のピースを置いた後の仮想的な盤面で、`nextPieces[1]` が得られるであろう
+ *             最大の併合・パイプラインボーナスを計算し、現在の手番のスコアに加算。
+ *             これにより、将来の有利な配置を促す。`LOOK_AHEAD_WEIGHT` で影響度を調整可能。
+ *       2.  **デッドライン絶対回避閾値の緩和**:
+ *           - `DEADLINE_ABSOLUTE_AVOID_PENALTY` が発動するY座標の閾値を `0.1` から `0.2` に緩和。
+ *             これにより、予測物理の不確実性と過度な保守性による "No valid move found" の発生を減らし、
+ *             より多くの選択肢をエージェントに提供する。
+ *       3.  **既存ロジックの維持とリファクタリング**:
+ *           - HOLDメカニクス、その他のボーナス/ペナルティロジックはv183の方針を維持。
+ *           - スコア計算ロジックを `calculateMoveScore` ヘルパー関数に集約し、可読性と先読みでの再利用性を向上。
  *
- *       これらの調整により、ゲームオーバー回避の堅牢性を高めつつ、安定した生存ターン数と高スコアのバランスを
- *       さらに改善することを目指します。
+ *       これらの調整により、より戦略的なピース配置を促進しつつ、ゲームオーバー回避の堅牢性を保ち、
+ *       生存ターン数と高スコアのバランスをさらに改善することを目指します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -37,6 +38,7 @@ const SETTLING_BUFFER = 0.45; // v183: Increased from 0.40
 
 // v179: Changed from absolute avoidance (Infinity) to a very large penalty.
 const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000; // Very large penalty instead of Infinity
+const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.2; // v184: Increased from 0.1 for more leeway
 
 // Merge and Pipeline Bonuses (v182: further increased)
 const MERGE_PROXIMITY_THRESHOLD = 0.20; // v181: Maintained from 0.20
@@ -57,6 +59,9 @@ const LARGE_PIECE_AGGREGATION_BONUS = 2300; // v182: Maintained
 const LARGE_PIECE_AGGREGATION_PENALTY = 1000;
 const LARGE_PIECE_TYPE_THRESHOLD = 9;
 
+// Look-ahead constants (v184: New)
+const LOOK_AHEAD_WEIGHT = 0.25; // Weight for the score of the next piece's best move
+
 /**
  * Helper to get piece radius based on type. (Approximation)
  * In a real game, this would be a lookup table.
@@ -71,6 +76,7 @@ function getPieceRadius(type) {
  * Predicts the landing Y coordinate for a piece.
  * This is a highly simplified model. Real physics engines are complex.
  * It assumes the piece falls straight down and rests on the first thing it hits (floor or another piece).
+ * boardState parameter can be a full boardState object or just an object with a 'pieces' array.
  */
 function predictLandingY(boardState, dropX, piece) {
     let predictedY = BOARD_FLOOR_Y + piece.r; // Start assuming it lands on the floor
@@ -97,11 +103,11 @@ function predictLandingY(boardState, dropX, piece) {
  * Calculates bonus for potential merges.
  * Finds pieces of the same type within proximity.
  */
-function calculateMergeBonus(boardState, dropX, piece, predictedY) {
+function calculateMergeBonus(boardStatePieces, dropX, piece, predictedY) {
     let bonus = 0;
     const currentPiecePos = { x: dropX, y: predictedY };
 
-    for (const existingPiece of boardState.pieces) {
+    for (const existingPiece of boardStatePieces) {
         if (existingPiece.type === piece.type) {
             const distance = Math.sqrt(
                 Math.pow(currentPiecePos.x - existingPiece.x, 2) +
@@ -121,11 +127,11 @@ function calculateMergeBonus(boardState, dropX, piece, predictedY) {
  * Calculates bonus for maintaining merge pipelines (chains).
  * Encourages placing N-1 near N, and N near N+1.
  */
-function calculatePipelineBonus(boardState, dropX, piece, predictedY) {
+function calculatePipelineBonus(boardStatePieces, dropX, piece, predictedY) {
     let bonus = 0;
     const currentPiecePos = { x: dropX, y: predictedY };
 
-    for (const existingPiece of boardState.pieces) {
+    for (const existingPiece of boardStatePieces) {
         const distance = Math.sqrt(
             Math.pow(currentPiecePos.x - existingPiece.x, 2) +
             Math.pow(currentPiecePos.y - existingPiece.y, 2)
@@ -183,7 +189,7 @@ function calculateHeightPenalty(predictedY, pieceR) {
     let penalty = 0;
 
     // If piece is predicted to be at or above the absolute avoidance threshold, return the absolute penalty.
-    if (topOfPiece >= (DEADLINE_Y - 0.1)) {
+    if (topOfPiece >= (DEADLINE_Y - DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER)) { // v184: Modified buffer
         return DEADLINE_ABSOLUTE_AVOID_PENALTY;
     }
 
@@ -206,9 +212,9 @@ function calculateHeightPenalty(predictedY, pieceR) {
  * Calculates penalty for dropping into an overly crowded area without merge potential.
  * (Simplified: counts pieces in a cylinder below the drop point)
  */
-function calculateCrowdingPenalty(boardState, dropX, piece, predictedY) {
+function calculateCrowdingPenalty(boardStatePieces, dropX, piece, predictedY) {
     let crowdedCount = 0;
-    for (const existingPiece of boardState.pieces) {
+    for (const existingPiece of boardStatePieces) {
         const xDistance = Math.abs(dropX - existingPiece.x);
         // Consider pieces directly below or very close horizontally
         if (xDistance < piece.r * 2 && existingPiece.y < predictedY) {
@@ -225,7 +231,7 @@ function calculateCrowdingPenalty(boardState, dropX, piece, predictedY) {
  * Calculates bonus for using small pieces as catalysts to agitate the board.
  * Assumes small pieces (type 1-4) can be used to shake things up if dropped in a dense area.
  */
-function calculateSmallPieceCatalystBonus(boardState, dropX, piece, predictedY) {
+function calculateSmallPieceCatalystBonus(boardStatePieces, dropX, piece, predictedY) {
     if (piece.type > 4) { // Only small pieces
         return 0;
     }
@@ -234,7 +240,7 @@ function calculateSmallPieceCatalystBonus(boardState, dropX, piece, predictedY) 
     const searchRadius = piece.r * 3; // Check for density around the drop point
     const currentPiecePos = { x: dropX, y: predictedY };
 
-    for (const existingPiece of boardState.pieces) {
+    for (const existingPiece of boardStatePieces) {
         const distance = Math.sqrt(
             Math.pow(currentPiecePos.x - existingPiece.x, 2) +
             Math.pow(currentPiecePos.y - existingPiece.y, 2)
@@ -254,6 +260,7 @@ function calculateSmallPieceCatalystBonus(boardState, dropX, piece, predictedY) 
 /**
  * Adjusts strategy based on garbage block information.
  * Prioritizes merges, especially near the bottom, when garbage is present or imminent.
+ * Note: This needs the full boardState to access garbage info.
  */
 function calculateGarbageAwarenessBonus(boardState, dropX, piece, predictedY) {
     let bonus = 0;
@@ -276,7 +283,7 @@ function calculateGarbageAwarenessBonus(boardState, dropX, piece, predictedY) {
     // Bonus for merging near the bottom when garbage is present (clears more effectively)
     if (boardState.garbage.ratio > 0 && predictedY < boardState.garbage.height * 0.5) { // Arbitrary low Y
          // Check if this drop creates a merge (very simplified check here, ideally integrate with merge bonus)
-         const potentialMergeBonus = calculateMergeBonus(boardState, dropX, piece, predictedY);
+         const potentialMergeBonus = calculateMergeBonus(boardState.pieces, dropX, piece, predictedY);
          if (potentialMergeBonus > 0) {
             bonus += GARBAGE_CLEAR_MERGE_BONUS_LOW_Y;
          }
@@ -285,6 +292,25 @@ function calculateGarbageAwarenessBonus(boardState, dropX, piece, predictedY) {
     return bonus;
 }
 
+/**
+ * Calculates the score for a potential move, excluding height penalty and look-ahead.
+ * @param {object} piece The piece to drop.
+ * @param {number} dropX The X coordinate for the drop.
+ * @param {number} predictedY The predicted landing Y coordinate.
+ * @param {object} currentBoardState The current board state or a hypothetical one (must have 'pieces' array and 'garbage' object).
+ * @param {number} dominantLargePieceSide Pre-calculated dominant side for large pieces.
+ * @returns {number} The calculated score.
+ */
+function calculateMoveScore(piece, dropX, predictedY, currentBoardState, dominantLargePieceSide) {
+    let score = 0;
+    score += calculateMergeBonus(currentBoardState.pieces, dropX, piece, predictedY);
+    score += calculatePipelineBonus(currentBoardState.pieces, dropX, piece, predictedY);
+    score += calculateLargePieceAggregationBonus(dropX, piece, dominantLargePieceSide);
+    score -= calculateCrowdingPenalty(currentBoardState.pieces, dropX, piece, predictedY);
+    score += calculateSmallPieceCatalystBonus(currentBoardState.pieces, dropX, piece, predictedY);
+    score += calculateGarbageAwarenessBonus(currentBoardState, dropX, piece, predictedY); // Garbage awareness needs full boardState for 'garbage' field
+    return score;
+}
 
 /**
  * Decides the next move based on the current board state.
@@ -335,20 +361,44 @@ export function decide(boardState) {
             let currentScore = 0;
 
             const heightPenalty = calculateHeightPenalty(predictedY, pieceR);
-            // v183: If this move leads to an immediate game over, skip it.
+            // If this move leads to an immediate game over, skip it.
             if (heightPenalty === DEADLINE_ABSOLUTE_AVOID_PENALTY) {
                 continue;
             }
             currentScore -= heightPenalty;
 
+            // Calculate base score for the current move
+            currentScore += calculateMoveScore(pieceToDrop, x, predictedY, boardState, dominantLargePieceSide);
 
-            currentScore += calculateMergeBonus(boardState, x, pieceToDrop, predictedY);
-            currentScore += calculatePipelineBonus(boardState, x, pieceToDrop, predictedY);
-            // Pass the pre-calculated dominantLargePieceSide
-            currentScore += calculateLargePieceAggregationBonus(x, pieceToDrop, dominantLargePieceSide);
-            currentScore -= calculateCrowdingPenalty(boardState, x, pieceToDrop, predictedY);
-            currentScore += calculateSmallPieceCatalystBonus(boardState, x, pieceToDrop, predictedY);
-            currentScore += calculateGarbageAwarenessBonus(boardState, x, pieceToDrop, predictedY);
+            // --- Look-ahead for nextPieces[1] (v184: New) ---
+            if (boardState.nextPieces.length > 1) {
+                const nextPiece = boardState.nextPieces[1];
+                const nextPieceR = getPieceRadius(nextPiece.type);
+
+                // Create a hypothetical board state after the current piece is dropped
+                const hypotheticalBoardStatePieces = [...boardState.pieces,
+                    {type: pieceToDrop.type, x: x, y: predictedY, r: pieceToDrop.r}];
+
+                let maxHypotheticalNextScore = 0;
+                // Only consider merge and pipeline bonuses for the next piece in a simplified manner
+                for (const hypoNextX of FINE_COLS) {
+                    // Check if next piece would be outside bounds in hypothetical state
+                    if (hypoNextX - nextPieceR < -BOARD_X_MAX_LIMIT || hypoNextX + nextPieceR > BOARD_X_MAX_LIMIT) {
+                        continue;
+                    }
+                    const hypoNextPredictedY = predictLandingY({pieces: hypotheticalBoardStatePieces}, hypoNextX, nextPiece);
+
+                    // Simplified score for the hypothetical next piece: merges and pipelines
+                    const hypoNextScore =
+                        calculateMergeBonus(hypotheticalBoardStatePieces, hypoNextX, nextPiece, hypoNextPredictedY) +
+                        calculatePipelineBonus(hypotheticalBoardStatePieces, hypoNextX, nextPiece, hypoNextPredictedY);
+
+                    maxHypotheticalNextScore = Math.max(maxHypotheticalNextScore, hypoNextScore);
+                }
+                currentScore += maxHypotheticalNextScore * LOOK_AHEAD_WEIGHT;
+            }
+            // --- End Look-ahead ---
+
 
             // Add a small constant to prefer drops, avoiding zero scores for valid moves
             currentScore += 100;
