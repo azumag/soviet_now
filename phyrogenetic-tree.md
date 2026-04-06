@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-06 18:58:45 JST`
-- Nodes: `943`
-- Edges: `1288`
-- Current: `3e3bcec53bef`
+- Updated: `2026-04-06 20:02:49 JST`
+- Nodes: `944`
+- Edges: `1289`
+- Current: `f749c5ca152c`
 - Anchor: `bf07db529883`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_0c78453df396["0c78453df396<br/>g=12 n=12<br/>comp=10217.5"]
     h_3a3987c92448["3a3987c92448<br/>g=36 n=20<br/>comp=10980.4"]
     h_44324046b2a1["44324046b2a1<br/>g=12 n=12<br/>comp=11030.5"]
     h_1a8122f8cd5b["1a8122f8cd5b<br/>g=12 n=12<br/>comp=11124.9"]
@@ -72,9 +71,10 @@ flowchart TD
     h_1e1496aefa66["1e1496aefa66<br/>g=24 n=20<br/>comp=10703.4"]
     h_f619d000fa07["f619d000fa07<br/>g=24 n=20<br/>comp=10506.6"]
     h_3d2fa276d6a4["3d2fa276d6a4<br/>g=0"]
+    h_3e3bcec53bef["3e3bcec53bef<br/>g=12 n=12<br/>comp=12012.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_3e3bcec53bef["3e3bcec53bef<br/>CURRENT"]
+    h_f749c5ca152c["f749c5ca152c<br/>CURRENT"]
 
     h_3a3987c92448 -->|improve| h_44324046b2a1
     h_44324046b2a1 -->|improve| h_1a8122f8cd5b
@@ -142,13 +142,13 @@ flowchart TD
     h_3d2fa276d6a4 -. rollback .-> h_f619d000fa07
     h_f619d000fa07 -. rollback .-> h_bf07db529883
     h_bf07db529883 -->|improve| h_3e3bcec53bef
+    h_3e3bcec53bef -->|improve| h_f749c5ca152c
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_0c78453df396 plain;
     class h_3a3987c92448 plain;
     class h_44324046b2a1 plain;
     class h_1a8122f8cd5b plain;
@@ -205,9 +205,10 @@ flowchart TD
     class h_1e1496aefa66 plain;
     class h_f619d000fa07 plain;
     class h_3d2fa276d6a4 plain;
+    class h_3e3bcec53bef plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_3e3bcec53bef current;
+    class h_f749c5ca152c current;
 ```
 
 ## Detail 1/12
@@ -3346,9 +3347,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `3e3bcec53bef`
-- Nodes in this diagram: `63`
-- Internal edges in this diagram: `68`
+- Range: `8b764b56c6f3` .. `f749c5ca152c`
+- Nodes in this diagram: `64`
+- Internal edges in this diagram: `69`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3424,9 +3425,10 @@ flowchart TD
     h_1e1496aefa66["1e1496aefa66<br/>g=24 n=20<br/>comp=10703.4"]
     h_f619d000fa07["f619d000fa07<br/>g=24 n=20<br/>comp=10506.6"]
     h_3d2fa276d6a4["3d2fa276d6a4<br/>g=0"]
+    h_3e3bcec53bef["3e3bcec53bef<br/>g=12 n=12<br/>comp=12012.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_3e3bcec53bef["3e3bcec53bef<br/>CURRENT"]
+    h_f749c5ca152c["f749c5ca152c<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3496,6 +3498,7 @@ flowchart TD
     h_3d2fa276d6a4 -. rollback .-> h_f619d000fa07
     h_f619d000fa07 -. rollback .-> h_bf07db529883
     h_bf07db529883 -->|improve| h_3e3bcec53bef
+    h_3e3bcec53bef -->|improve| h_f749c5ca152c
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3562,12 +3565,23 @@ flowchart TD
     class h_1e1496aefa66 plain;
     class h_f619d000fa07 plain;
     class h_3d2fa276d6a4 plain;
+    class h_3e3bcec53bef plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_3e3bcec53bef current;
+    class h_f749c5ca152c current;
 ```
 
 ## Transition Notes
+
+### Improve Game#13257 `3e3bcec5 -> f749c5ca`
+
+- scores: `18982 9282 8951 14238 13137 14524 14973 12853 10839 11755 17161 6666`
+- v547: Enhance Russia phase deadlock prevention for reactive_pairs >= 3
+- Fixes rollback failure mode: NEAR+CROSSES_DEADLINE_MERGE_RISK → chain+reactive bonuses overwhelmed -2000
+- v547: deadline_crossed時のペナルティ軽減を追加
+- if deadline_crossed:
+- score += 800.0
+- else:
 
 ### Improve Game#13245 `bf07db52 -> 3e3bcec5`
 
