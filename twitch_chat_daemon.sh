@@ -124,6 +124,15 @@ while true; do
                     bits_tag="[BITS] "
                 fi
             fi
+
+            # 管理者権限チェック: !pitch/!tempo 等の管理コマンド用
+            _is_mod_or_broadcaster=false
+            if [ -n "$tags" ]; then
+                _badges=$(printf '%s\n' "$tags" | tr ';' '\n' | sed -n 's/^badges=//p' | head -n1)
+                case ",${_badges}," in
+                *,broadcaster/*|*,moderator/*) _is_mod_or_broadcaster=true ;;
+                esac
+            fi
             clean_line="${bits_tag}${user}: ${msg}"
 
             # !clip コマンド検出（クールダウン付き、TWITCH_CLIP_CMD_ENABLED=1 で有効）
@@ -163,8 +172,9 @@ while true; do
             fi
 
 
-            # !pitch ID VALUE — スピーカーIDごとにピッチ設定 (例: !pitch 86 0.1, !pitch 3 -0.05)
+            # !pitch ID VALUE — スピーカーIDごとにピッチ設定 (mod/broadcaster専用)
             if [[ "$msg" =~ ^[[:space:]]*!pitch[[:space:]]+([0-9]+)[[:space:]]+([-]?[0-9]*\.?[0-9]+) ]]; then
+                if [ "$_is_mod_or_broadcaster" != "true" ]; then continue; fi
                 _pitch_id="${BASH_REMATCH[1]}"
                 _pitch_val="${BASH_REMATCH[2]}"
                 _pitch_file="config/voicevox_pitch_map.txt"
@@ -178,8 +188,9 @@ while true; do
                 continue
             fi
 
-            # !tempo ID VALUE — スピーカーIDごとにテンポ設定 (例: !tempo 16 1.2, !tempo 3 0.9)
+            # !tempo ID VALUE — スピーカーIDごとにテンポ設定 (mod/broadcaster専用)
             if [[ "$msg" =~ ^[[:space:]]*!tempo[[:space:]]+([0-9]+)[[:space:]]+([-]?[0-9]*\.?[0-9]+) ]]; then
+                if [ "$_is_mod_or_broadcaster" != "true" ]; then continue; fi
                 _tempo_id="${BASH_REMATCH[1]}"
                 _tempo_val="${BASH_REMATCH[2]}"
                 _tempo_file="config/voicevox_tempo_map.txt"
