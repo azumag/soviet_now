@@ -875,26 +875,24 @@ function cleanupSummaries() {
  */
 function cleanupGameHistory() {
   if (!existsSync(GAME_HISTORY_DIR)) return;
+  let deleted = 0;
+  // latest_*.jsonl は不要な残骸なので全削除
+  for (const f of readdirSync(GAME_HISTORY_DIR).filter(f => f.startsWith('latest_') && f.endsWith('.jsonl'))) {
+    try { unlinkSync(join(GAME_HISTORY_DIR, f)); deleted++; } catch {}
+  }
+  // game_*.jsonl は直近 GAME_HISTORY_KEEP_COUNT 件を保持
   const files = readdirSync(GAME_HISTORY_DIR)
-    .filter(f => f.endsWith('.jsonl'))
+    .filter(f => f.startsWith('game_') && f.endsWith('.jsonl'))
     .sort((a, b) => {
       const numA = Number.parseInt(a.match(/\d+/)?.[0] || '0', 10);
       const numB = Number.parseInt(b.match(/\d+/)?.[0] || '0', 10);
       return numB - numA; // 最新順
     });
-  
-  if (files.length > GAME_HISTORY_KEEP_COUNT) {
-    const toDelete = files.slice(GAME_HISTORY_KEEP_COUNT);
-    let deleted = 0;
-    for (const f of toDelete) {
-      try {
-        unlinkSync(join(GAME_HISTORY_DIR, f));
-        deleted++;
-      } catch {}
-    }
-    if (deleted > 0) {
-      console.log(`[improve] Cleaned up ${deleted} old game histories (kept ${GAME_HISTORY_KEEP_COUNT})`);
-    }
+  for (const f of files.slice(GAME_HISTORY_KEEP_COUNT)) {
+    try { unlinkSync(join(GAME_HISTORY_DIR, f)); deleted++; } catch {}
+  }
+  if (deleted > 0) {
+    console.log(`[improve] Cleaned up ${deleted} old game histories (kept ${GAME_HISTORY_KEEP_COUNT})`);
   }
 }
 

@@ -88,12 +88,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
 
-    # --- v541: russia phase detection (type 15 pieces on board) ---
+    # --- v544: russia phase detection (type 15 pieces on board) ---
     # ロシア建国後のフェーズを明確に切り替える
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
     # ロシア2つ目のチェック（ソ連建国への道）
-    soren_phase = russia_phase_count >= 2
+    soren_count = sum(1 for p in pieces if p.get("type") == 16)
+    soren_phase = soren_count >= 1
 
     # --- v540: validation fix — ensure staging file is modified ---
     # This change ensures the file is actually modified for validation purposes.
