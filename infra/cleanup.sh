@@ -29,6 +29,21 @@ cleanup_tmp_files() {
 
 	# --- サンドボックス孤児: 1時間以上古いものを削除 ---
 	find tmp -maxdepth 1 -name '.sandbox_harvest_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
+	find tmp -maxdepth 1 -name '.soren_sandbox_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
+
+	# --- say_queue: 再生済み/孤児WAVを削除 ---
+	# _pre.wav: 再生後にafplayがrm -fするが、プロセス中断時に残骸が溜まる → 1時間以上古いものを削除
+	find tmp/.say_queue -maxdepth 1 -name '*_pre.wav' -mmin +60 -delete 2>/dev/null
+	# stream_*: EXIT trapでrm -rfするが、強制終了時に残骸が残る → 1時間以上古いものを削除
+	find tmp/.say_queue -maxdepth 1 -name 'stream_*' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null
+
+	# --- gameover_screens: 直近100枚を保持 ---
+	local gameover_count
+	gameover_count=$(ls -1 tmp/history/gameover_screens/*.png 2>/dev/null | wc -l)
+	if [ "$gameover_count" -gt 100 ]; then
+		ls -1t tmp/history/gameover_screens/*.png 2>/dev/null | tail -n +101 | xargs rm -f 2>/dev/null
+		cleaned=$((cleaned + gameover_count - 100))
+	fi
 
 	# --- 履歴ファイル: キャップ適用 ---
 	# .past_news_titles.txt / .past_news_links.txt にもキャップ適用

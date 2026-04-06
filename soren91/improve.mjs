@@ -30,6 +30,8 @@ const SUMMARIES_DIR = 'tmp/summaries';
 const SUMMARIES_KEEP_COUNT = 13;
 const GAME_HISTORY_DIR = 'game_history';
 const GAME_HISTORY_KEEP_COUNT = 13;
+const STRATEGY_SNAPSHOTS_DIR = 'tmp/strategy_snapshots';
+const STRATEGY_SNAPSHOTS_KEEP_COUNT = 24;
 const IMPROVE_CLAUDE_MODEL = process.env.SOREN91_IMPROVE_CLAUDE_MODEL || 'sonnet';
 const IMPROVE_GEMINI_MODEL = process.env.SOREN91_IMPROVE_GEMINI_MODEL || process.env.SOREN91_GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
 const IMPROVE_GEMINI_TIMEOUT_MS = Math.max(
@@ -232,6 +234,7 @@ async function _runImprovement(gameNumber, historyPath, summaryPath) {
     cleanupScreenshots();
     cleanupSummaries();
     cleanupGameHistory();
+    cleanupStrategySnapshots();
     console.log('[improve] Improvement complete');
   }
 }
@@ -893,6 +896,27 @@ function cleanupGameHistory() {
   }
   if (deleted > 0) {
     console.log(`[improve] Cleaned up ${deleted} old game histories (kept ${GAME_HISTORY_KEEP_COUNT})`);
+  }
+}
+
+/**
+ * 戦略スナップショット削除 — 直近 STRATEGY_SNAPSHOTS_KEEP_COUNT 件を保持
+ */
+function cleanupStrategySnapshots() {
+  if (!existsSync(STRATEGY_SNAPSHOTS_DIR)) return;
+  const files = readdirSync(STRATEGY_SNAPSHOTS_DIR)
+    .filter(f => f.startsWith('game_') && f.endsWith('.mjs'))
+    .sort((a, b) => {
+      const numA = Number.parseInt(a.match(/\d+/)?.[0] || '0', 10);
+      const numB = Number.parseInt(b.match(/\d+/)?.[0] || '0', 10);
+      return numB - numA; // 最新順
+    });
+  let deleted = 0;
+  for (const f of files.slice(STRATEGY_SNAPSHOTS_KEEP_COUNT)) {
+    try { unlinkSync(join(STRATEGY_SNAPSHOTS_DIR, f)); deleted++; } catch {}
+  }
+  if (deleted > 0) {
+    console.log(`[improve] Cleaned up ${deleted} old strategy snapshots (kept ${STRATEGY_SNAPSHOTS_KEEP_COUNT})`);
   }
 }
 
