@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-06 09:30:31 JST`
-- Nodes: `938`
-- Edges: `1281`
-- Current: `9b678d87a207`
+- Updated: `2026-04-06 13:11:21 JST`
+- Nodes: `939`
+- Edges: `1282`
+- Current: `bf07db529883`
 - Anchor: `89af10322292`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_424708357a70["424708357a70<br/>g=12 n=12<br/>comp=11898.5"]
     h_15f86b7062ff["15f86b7062ff<br/>g=12 n=12<br/>comp=10651.3"]
     h_8b764b56c6f3["8b764b56c6f3<br/>g=12 n=12<br/>comp=11218.9"]
     h_0c165b88e34f["0c165b88e34f<br/>g=12 n=12<br/>comp=10318.5"]
@@ -72,11 +71,11 @@ flowchart TD
     h_ecfc830b59bd["ecfc830b59bd<br/>g=24 n=20<br/>comp=11103.9"]
     h_48c0bcd760fa["48c0bcd760fa<br/>g=24 n=20<br/>comp=10439.1"]
     h_14798af73897["14798af73897<br/>g=12 n=12<br/>comp=11914.5"]
+    h_9b678d87a207["9b678d87a207<br/>g=36 n=20<br/>comp=11099.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9b678d87a207["9b678d87a207<br/>CURRENT"]
+    h_bf07db529883["bf07db529883<br/>CURRENT"]
 
-    h_424708357a70 -->|improve| h_15f86b7062ff
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
     h_3a3987c92448 -->|improve| h_44324046b2a1
@@ -138,13 +137,13 @@ flowchart TD
     h_ecfc830b59bd -->|improve| h_48c0bcd760fa
     h_48c0bcd760fa -->|improve| h_14798af73897
     h_14798af73897 -->|improve| h_9b678d87a207
+    h_9b678d87a207 -->|improve| h_bf07db529883
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_424708357a70 plain;
     class h_15f86b7062ff plain;
     class h_8b764b56c6f3 plain;
     class h_0c165b88e34f plain;
@@ -201,9 +200,10 @@ flowchart TD
     class h_ecfc830b59bd plain;
     class h_48c0bcd760fa plain;
     class h_14798af73897 plain;
+    class h_9b678d87a207 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9b678d87a207 current;
+    class h_bf07db529883 current;
 ```
 
 ## Detail 1/12
@@ -3342,9 +3342,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `9b678d87a207`
-- Nodes in this diagram: `58`
-- Internal edges in this diagram: `61`
+- Range: `8b764b56c6f3` .. `bf07db529883`
+- Nodes in this diagram: `59`
+- Internal edges in this diagram: `62`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3415,9 +3415,10 @@ flowchart TD
     h_ecfc830b59bd["ecfc830b59bd<br/>g=24 n=20<br/>comp=11103.9"]
     h_48c0bcd760fa["48c0bcd760fa<br/>g=24 n=20<br/>comp=10439.1"]
     h_14798af73897["14798af73897<br/>g=12 n=12<br/>comp=11914.5"]
+    h_9b678d87a207["9b678d87a207<br/>g=36 n=20<br/>comp=11099.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9b678d87a207["9b678d87a207<br/>CURRENT"]
+    h_bf07db529883["bf07db529883<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3480,6 +3481,7 @@ flowchart TD
     h_ecfc830b59bd -->|improve| h_48c0bcd760fa
     h_48c0bcd760fa -->|improve| h_14798af73897
     h_14798af73897 -->|improve| h_9b678d87a207
+    h_9b678d87a207 -->|improve| h_bf07db529883
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3541,12 +3543,23 @@ flowchart TD
     class h_ecfc830b59bd plain;
     class h_48c0bcd760fa plain;
     class h_14798af73897 plain;
+    class h_9b678d87a207 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9b678d87a207 current;
+    class h_bf07db529883 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#13173 `9b678d87 -> bf07db52`
+
+- scores: `11850 9742 7710 16268 10704 10148 10287 13855 7757 10809 11708 11912`
+- v543: ロシア建国後のフェーズ切り替えとtype 15保護強化
+- - ロシア建国後の盤面狭小時のheight_mult調整（盤面狭小時×0.4）
+- - type 15保護優先（reactive_pairs>=3の場合の盤面圧縮ボーナス抑制）
+- - deadline crossingペナルティ強化（盤面狭小時7000→8000）
+- v543: ロシアフェーズまたは盤面が狭い時はheight_multをさらに抑制してtype 15保護を優先
+- ロシア建国後の盤面狭小時はより厳格にheight_multを抑制（0.6→0.4）
 
 ### Improve Game#13137 `14798af7 -> 9b678d87`
 
