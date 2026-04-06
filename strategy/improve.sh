@@ -9,6 +9,8 @@ _is_improve_running() {
 	local state imp_status pid
 	state=$(cat "$IMPROVE_STATE_FILE" 2>/dev/null) || return 1
 	imp_status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
+	# 手動改善モード: PIDチェック不要、常にrunning扱い
+	[ "$imp_status" = "manual" ] && return 0
 	[ "$imp_status" = "running" ] || return 1
 	# soren_loop はこのファイルを毎周回 source するため、ここで self-heal しておくと
 	# 既に動いているループでも stale/完了済み改善ジョブを即時に回収できる。
@@ -166,6 +168,9 @@ check_and_harvest_improvement() {
 	state=$(_read_improve_state)
 	local status
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
+
+	# 手動改善モード: 自動harvestしない (manual_improve_off.sh が処理する)
+	[ "$status" = "manual" ] && return 0
 
 	if [ "$status" = "running" ]; then
 		local pid
@@ -706,6 +711,19 @@ record_completed_game_for_adaptive_improvement() {
 
 _start_improvement_job() {
 	local all_history_files="$1" all_scores="$2" any_soviet="$3" acc_count="$4" reason="$5"
+
+	# 手動改善モード: プロセスを起動せず待機状態にする
+	if [[ -f "$TMP_STATE_DIR/manual_improve_mode" ]]; then
+		local strategy_hash
+		strategy_hash=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+		_write_improve_state "manual" "0" "$strategy_hash" "manual_wait" "0" "手動改善待ち" "$(date +%s)"
+		log "[IMPROVE] 手動改善モード: strategy.py を編集後 ./manual_improve_off.sh を実行してください"
+		# soren91は起動する（手動改善中の代打）
+		soren91_start
+		# OBS: 改善中コンソール表示
+		./obs_control.sh show soren console4 2>/dev/null &
+		return 0
+	fi
 
 	# 既存の eloop_improve プロセスが残っていないか確認
 	local stale_pids
