@@ -273,7 +273,7 @@ def get_landing_info(drop_x, drop_r, pieces):
         combined_r = drop_r + pr
         dx = drop_x - px
         if abs(dx) < combined_r:
-            collision_y = py + math.sqrt(combined_r ** 2 - dx ** 2)
+            collision_y = py + math.sqrt(max(0, combined_r ** 2 - dx ** 2))
             if collision_y > landing_y:
                 landing_y = collision_y
                 hit_id = p["id"]

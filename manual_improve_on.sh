@@ -3,6 +3,10 @@
 # 次の改善サイクル到達時に eloop_improve.sh を起動せず、手動編集待ちになる
 set -euo pipefail
 
+# .env をロード
+cd "$(dirname "${BASH_SOURCE[0]}")"
+[ -f .env ] && set -a && . ./.env && set +a
+
 STATE_DIR="tmp/state"
 FLAG_FILE="$STATE_DIR/manual_improve_mode"
 IMPROVE_STATE_FILE="$STATE_DIR/improve_state.json"
