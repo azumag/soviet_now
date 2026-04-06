@@ -235,11 +235,14 @@ AI ループ (`soren_loop.sh`, `jloop.sh`, `sloop.sh`) は複数の LLM CLI ツ�
 
 #### モデル変数
 
-`eloop_lib.sh` / `jloop.sh` の冒頭で使用モデルを設定:
-
 ```bash
-MODEL_PRIMARY="glm"              # 主要モデル
-MODEL_FALLBACK="opencode:glmflash"  # フォールバック
+MODEL_PRIMARY="zai"              # デフォルト（ラジオ改善用は MODEL_IMPROVE を参照）
+MODEL_FALLBACK="haiku"
+MODEL_IMPROVE="zai"              # 改善primary
+MODEL_FALLBACK_IMPROVE="qwen36f" # 改善fallback
+MODEL_LAST_RESORT="opencode:glmflash"
+ROLLBACK_POSTMORTEM_MODEL="qwen36f"
+ROLLBACK_POSTMORTEM_FALLBACK="opencode:glmflash"
 ```
 
 `run_ai()` は PRIMARY でまず実行し、期待出力が得られなければ FALLBACK に切り替える。
@@ -248,6 +251,36 @@ MODEL_FALLBACK="opencode:glmflash"  # フォールバック
 ```bash
 # 例: PRIMARYの試行回数を上書き
 RUN_AI_PRIMARY_RETRIES=5 ./soren_loop.sh
+```
+
+#### 各チャンネルのフォールバックチェーン
+
+| チャンネル | Primary | 2nd | 3rd | Last Resort |
+|-----------|---------|-----|-----|-------------|
+| **改善** | `zai` | `qwen36f` | `opencode:glmflash` | - |
+| **ラジオ生成** | `qwen36f` | `ollama` | `glmflash` | `haiku` |
+| **コメント返し** | `qwen36f` | `ollama` | `glmflash` | `haiku` |
+| **コメント(改善中)** | `ollama` (gemma4e) | →通常モードへ | - | - |
+| **コメント(!claude)** | `haiku` | →通常モードへ | - | - |
+| **粛清ポストモーテム** | `qwen36f` | `opencode:glmflash` | - | - |
+| **メリケンAI(全コメント)** | `ollama` (gemma4e) | `haiku` | - | - |
+
+#### スペック別詳細
+
+| スペック | 実装 | 説明 |
+|---------|------|------|
+| `zai` | `claude -p --model=haiku` (z.ai経由) | z.ai API (GLM-5.1) via Claude Code |
+| `qwen36f` | `claude -p --model=qwen/qwen3.6-plus:free` (OpenRouter経由) | OpenRouter free tier. `OPENROUTER_API_KEY` が必要 |
+| `glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash (軽量フォールバック) |
+| `opencode:glmflash` | `opencode run --agent="glmflash"` | GLM-4-Flash 同上 |
+| `ollama` | `claude -p --model=$RADIO_OLLAMA_MODEL` (OLLAMA_BASE_URL) | デフォルト `qwen3.5:9b`. ローカルOllama |
+| `gemma4e` | `claude -p --model=gemma4:latest` (OLLAMA_BASE_URL) | ローカルOllama Gemma4 |
+| `haiku` | `claude -p --model=haiku` | Claude Haiku 直実行 |
+
+#### 必要なAPIキー
+
+```bash
+OPENROUTER_API_KEY=sk-or-v1-...  # qwen36f用 (.env)
 ```
 
 #### モデルスペックと CLI マッピング
