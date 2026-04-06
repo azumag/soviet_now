@@ -165,7 +165,7 @@ _radio_fact_check_body() {
 	last_candidate=""
 	factcheck_dir=$(mktemp -d /tmp/eloop_radio_factcheck_XXXXXXXX) || return 1
 	prompt_file="$factcheck_dir/prompt.txt"
-	cat >"$prompt_file" <<PROMPT
+	cat >"$prompt_file" <<'EOF_RADIO_FACTCHECK'
 あなたは放送前のファクトチェック担当です。
 与えられた「元原稿」を、与えられた「材料」から支持できる範囲にだけ言い換えてください。
 目的は「誤情報を減らしつつ、面白さ・語り口・熱量をできるだけ保つこと」です。
