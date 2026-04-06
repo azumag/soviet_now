@@ -6,6 +6,11 @@ board safety, and setup value for future merges.
 """
 
 # --- Change History ---
+# v543: Add deadline_crossed check to NEAR deadline risk penalty (400→400 penalty, increased risk scaling)
+# Prevents NEAR+CROSSES_DEADLINE pattern seen in worst game (633) final 8 turns
+# NEAR merge at deadline height is catastrophic because landing piece sits at danger zone
+# Fixes rollback failure mode: NEAR+CROSSES_DEADLINE_MERGE_RISK → chain+reactive bonuses overwhelm -2000
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, game_history/20260406_024406_score0633.jsonl, advice.md
 # v539: suppress axes 9.3 + v536 (reactive/near pair blocking) at rp>=3+NO — death spiral edge scatter fix
 # Same class of noise as v527/v529/v535 (axes 5.5/5.6 suppression). At rp>=3+NO, axis 8.8 (-4500 flat)
 # dominates all candidates equally. AVOID_BLOCK_REACTIVE_PAIR (-500 max) and AVOID_BLOCK_NEAR_PAIR (-400 max)
@@ -195,13 +200,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("FAR_MERGE")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
-        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
+        # v543: Add deadline_crossed check to prevent NEAR+CROSSES_DEADLINE pattern (worst game failure mode)
+        # When deadline is crossed, NEAR merges become high-risk because landing piece sits at deadline height
+        if (
+            merge_grade == "NEAR"
+            and landing_y > 0
+            and reactor_margin < 1.0
+            and deadline_crossed
+        ):
             risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
             if piece_count >= 33:
                 pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
             else:
                 pc_risk_scale = 1.0
-            near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
+            near_risk_penalty = landing_y * 400.0 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
