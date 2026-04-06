@@ -1,26 +1,25 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v184)
+ * strategy.mjs - ドロップ位置決定戦略 (v185)
  *
- * v184: v183の厳格な高さ管理と安定性向上に加え、
- *       今後のピース配置を考慮した「先読み」ロジックを導入。
- *       また、デッドライン回避の閾値を微調整し、"No valid move found" の頻度低減を目指す。
+ * v185: v184の「先読み」ロジックと厳格な高さ管理を維持しつつ、
+ *       "No valid move found" の頻度低減と、より柔軟な高所での判断を可能にする調整。
+ *       ゲーム分析で「No valid move found」が散見されたため、デッドライン回避ロジックの再調整を行う。
  *
  *       主な改善点:
- *       1.  **先読みロジックの導入**:
- *           - `nextPieces[1]` (次にドロップするピースの次) を考慮した、1手先読み評価を追加。
- *           - 現在のピースを置いた後の仮想的な盤面で、`nextPieces[1]` が得られるであろう
- *             最大の併合・パイプラインボーナスを計算し、現在の手番のスコアに加算。
- *             これにより、将来の有利な配置を促す。`LOOK_AHEAD_WEIGHT` で影響度を調整可能。
- *       2.  **デッドライン絶対回避閾値の緩和**:
- *           - `DEADLINE_ABSOLUTE_AVOID_PENALTY` が発動するY座標の閾値を `0.1` から `0.2` に緩和。
- *             これにより、予測物理の不確実性と過度な保守性による "No valid move found" の発生を減らし、
- *             より多くの選択肢をエージェントに提供する。
- *       3.  **既存ロジックの維持とリファクタリング**:
- *           - HOLDメカニクス、その他のボーナス/ペナルティロジックはv183の方針を維持。
- *           - スコア計算ロジックを `calculateMoveScore` ヘルパー関数に集約し、可読性と先読みでの再利用性を向上。
+ *       1.  **SETTLING_BUFFER の微調整**:
+ *           - `SETTLING_BUFFER` を `0.45` から `0.40` に戻す。これにより、物理的な着地後の「沈み込み」
+ *             による予測高さを若干低く見積もり、デッドラインに対する余裕を持たせる。
+ *             過度な予測高さの上昇が "No valid move found" の原因の一つである可能性を考慮。
+ *       2.  **DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER の微調整**:
+ *           - `DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER` を `0.2` から `0.15` に調整。
+ *             この閾値は、ピースの最高到達Y座標がデッドラインにどれだけ近づいたら絶対回避ペナルティを
+ *             課すかを決定する。値を小さくすることで、ピースがデッドラインにより接近するまで
+ *             「ゲームオーバー」と判断しないようにし、有効な手の選択肢を増やす。
+ *       3.  **既存ロジックの維持**:
+ *           - 先読みロジック、HOLDメカニクス、その他のボーナス/ペナルティロジックはv184の方針を維持。
  *
- *       これらの調整により、より戦略的なピース配置を促進しつつ、ゲームオーバー回避の堅牢性を保ち、
- *       生存ターン数と高スコアのバランスをさらに改善することを目指します。
+ *       これらの調整により、デッドライン回避の堅牢性を保ちつつ、予測の柔軟性を高め、
+ *       「No valid move found」による早期のゲーム終了を減らし、生存ターン数の改善を目指します。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -34,11 +33,11 @@ const CRITICAL_HEIGHT_MARGIN = 0.9; // v183: Increased from 0.8
 const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.2; // v182: Maintained
 
 const HEIGHT_PENALTY_WEIGHT = 500000.0; // v182: Maintained
-const SETTLING_BUFFER = 0.45; // v183: Increased from 0.40
+const SETTLING_BUFFER = 0.40; // v185: Reverted from 0.45 (v183 increase)
 
 // v179: Changed from absolute avoidance (Infinity) to a very large penalty.
 const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000; // Very large penalty instead of Infinity
-const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.2; // v184: Increased from 0.1 for more leeway
+const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.15; // v185: Adjusted from 0.2 (v184 increase)
 
 // Merge and Pipeline Bonuses (v182: further increased)
 const MERGE_PROXIMITY_THRESHOLD = 0.20; // v181: Maintained from 0.20
@@ -189,7 +188,7 @@ function calculateHeightPenalty(predictedY, pieceR) {
     let penalty = 0;
 
     // If piece is predicted to be at or above the absolute avoidance threshold, return the absolute penalty.
-    if (topOfPiece >= (DEADLINE_Y - DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER)) { // v184: Modified buffer
+    if (topOfPiece >= (DEADLINE_Y - DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER)) { // v185: Modified buffer
         return DEADLINE_ABSOLUTE_AVOID_PENALTY;
     }
 
