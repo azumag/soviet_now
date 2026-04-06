@@ -582,19 +582,23 @@ elif t == 'rollback':
 	case "$radio_type" in
 	improvement)
 		if [ -n "$diff_file" ] && [ -f "$diff_file" ]; then
+			# バックグラウンド発火前にリネームして二重発火防止
+			local inprogress_file="${entry_file}.inprogress"
+			mv "$entry_file" "$inprogress_file" 2>/dev/null || return 0
 			(
 				local strategy_diff
 				strategy_diff=$(cat "$diff_file" 2>/dev/null)
 				if [ -z "$strategy_diff" ]; then
-					log "[CYCLE_RADIO] Drop improvement radio: empty diff ($(basename "$entry_file"))"
-					rm -f "$entry_file" "$diff_file" 2>/dev/null || true
+					log "[CYCLE_RADIO] Drop improvement radio: empty diff ($(basename "$inprogress_file"))"
+					rm -f "$inprogress_file" "$diff_file" 2>/dev/null || true
 					exit 0
 				fi
-				log "[CYCLE_RADIO] Firing improvement radio (game_num=$game_num, entry=$(basename "$entry_file"))"
+				log "[CYCLE_RADIO] Firing improvement radio (game_num=$game_num, entry=$(basename "$inprogress_file"))"
 				if start_radio_corner_strategy "$strategy_diff" "$scores" "$game_num" "$best_score"; then
-					rm -f "$entry_file" "$diff_file" 2>/dev/null || true
+					rm -f "$inprogress_file" "$diff_file" 2>/dev/null || true
 				else
-					log "[CYCLE_RADIO] improvement radio failed; keep pending ($(basename "$entry_file"))"
+					log "[CYCLE_RADIO] improvement radio failed; restore pending ($(basename "$inprogress_file"))"
+					mv "$inprogress_file" "$entry_file" 2>/dev/null || true
 				fi
 			) &
 		else
@@ -604,12 +608,16 @@ elif t == 'rollback':
 		;;
 	rollback)
 		if [ -n "$analysis_file" ] && [ -f "$analysis_file" ]; then
+			# バックグラウンド発火前にリネームして二重発火防止
+			local inprogress_file="${entry_file}.inprogress"
+			mv "$entry_file" "$inprogress_file" 2>/dev/null || return 0
 			(
-				log "[CYCLE_RADIO] Firing rollback radio (game_num=$game_num, entry=$(basename "$entry_file"))"
+				log "[CYCLE_RADIO] Firing rollback radio (game_num=$game_num, entry=$(basename "$inprogress_file"))"
 				if start_radio_corner_rollback "$analysis_file" "$game_num" "$from_hash" "$to_hash"; then
-					rm -f "$entry_file" 2>/dev/null || true
+					rm -f "$inprogress_file" 2>/dev/null || true
 				else
-					log "[CYCLE_RADIO] rollback radio failed; keep pending ($(basename "$entry_file"))"
+					log "[CYCLE_RADIO] rollback radio failed; restore pending ($(basename "$inprogress_file"))"
+					mv "$inprogress_file" "$entry_file" 2>/dev/null || true
 				fi
 			) &
 		else
