@@ -95,13 +95,10 @@ _is_live_improve_pid() {
 	case "$pid" in
 	''|0|*[!0-9]*) return 1 ;;
 	esac
-	local stat cmd
-	stat=$(ps -p "$pid" -o stat= 2>/dev/null | awk 'NR==1{print $1}')
+	kill -0 "$pid" 2>/dev/null || return 1
+	local cmd
 	cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-	[ -n "$stat" ] || return 1
-	case "$stat" in
-	Z*|*Z*) return 1 ;;
-	esac
+	[ -n "$cmd" ] || return 1
 	echo "$cmd" | grep -q "eloop_improve\.sh"
 }
 
