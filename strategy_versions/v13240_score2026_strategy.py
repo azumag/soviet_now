@@ -6,15 +6,10 @@ board safety, and setup value for future merges.
 """
 
 # --- Change History ---
-# v544: 强化即时併合优先级 - HEIGHT_CONTROL平均得点差仅2.6，而NEAR_MERGE_EARLY_MERGE_PRIORITY为27.3
-# 修复策略过于依赖HEIGHT_CONTROL的问题，增强即時併合和NEAR_MERGE的权重
-# 最差游戏（score=191）merge_hits=0，说明HIGH_TOWER和CROSSES_DEADLINE惩罚触发时策略完全失败
-# 确保策略在危险区域仍能获得併合机会，提高中位数和下振れ耐性
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, game_history/20260406_152719_score0191.jsonl
 # v543: Add deadline_crossed check to NEAR deadline risk penalty (400→400 penalty, increased risk scaling)
 # Prevents NEAR+CROSSES_DEADLINE pattern seen in worst game (633) final 8 turns
 # NEAR merge at deadline height is catastrophic because landing piece sits at danger zone
-# Fixes rollback failure mode: NEAR+CROSSES_DEADLINE_MERGE_RISK → chain+reactive bonuses overwhelmed -2000
+# Fixes rollback failure mode: NEAR+CROSSES_DEADLINE_MERGE_RISK → chain+reactive bonuses overwhelm -2000
 # refs: tmp/improve_brief.md, tmp/batch_summary.txt, game_history/20260406_024406_score0633.jsonl, advice.md
 # v539: suppress axes 9.3 + v536 (reactive/near pair blocking) at rp>=3+NO — death spiral edge scatter fix
 # Same class of noise as v527/v529/v535 (axes 5.5/5.6 suppression). At rp>=3+NO, axis 8.8 (-4500 flat)
@@ -194,16 +189,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # DIRECT: direct hit target (success rate 95.7%)
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
-        # v544: 强化即时併合优先级 - HEIGHT_CONTROL平均得点差仅2.6，而NEAR_MERGE_EARLY_MERGE_PRIORITY为27.3
-        # 增强NEAR和DIRECT的权重，确保在危险区域仍能获得併合机会
         if merge_grade == "DIRECT":
-            score += 1800.0 * merge_mult  # v544: 增强DIRECT权重 (1200→1800)
+            score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 900.0 * merge_mult  # v544: 增强NEAR权重 (600→900)
+            score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            far_bonus = 1800.0 if dangerous_situation else 200.0  # v544: 增强FAR权重 (1200→1800)
+            far_bonus = 1200.0 if dangerous_situation else 200.0
             score += far_bonus * merge_mult
             reasons.append("FAR_MERGE")
 
@@ -236,21 +229,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_PC_NEAR_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
-        # v544: 强化危险DIRECT併合优先级 - 确保在危险域获得併合机会
         if (
             result.get("danger_direct_merge_available", False)
             and merge_grade == "DIRECT"
         ):
-            score += 1200.0  # v544: 增强危险DIRECT併合权重 (800→1200)
+            score += 800.0
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
-        # v544: 强化危险NEAR併合优先级 - 确保在危险域获得併合机会
         if result.get("danger_merge_available", False) and merge_grade == "NEAR":
             if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
                 bonus = 0.0
             else:
-                bonus = 900.0 if deadline_crossed else 500.0  # v544: 增强危险NEAR併合权重 (600/300→900/500)
+                bonus = 600.0 if deadline_crossed else 300.0
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
@@ -481,7 +472,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # v543: ロシアフェーズまたは盤面が狭い時はheight_multをさらに抑制してtype 15保護を優先
         # ロシア建国後の盤面狭小時はより厳格にheight_multを抑制（0.6→0.4）
-        if russia_phase or max_y >= 2.5:
+        if soren_phase or max_y >= 2.5:
             height_mult *= 0.4
 
         height_mult = max(height_mult, 0.5)
@@ -489,13 +480,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
 
-        # v544: 降低HEIGHT_CONTROL的惩罚权重，使其不那么主导
-        # HEIGHT_CONTROL平均得点差仅2.6，说明当前惩罚过重
         if phase == "HIGH" and landing_y > 0.5:
-            height_penalty *= 1.3  # v544: 降低HIGH_TOWER惩罚 (1.5→1.3)
+            height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
         elif phase == "MEDIUM" and landing_y > 0.5:
-            height_penalty *= 1.0  # v544: 降低MEDIUM_TOWER惩罚 (1.2→1.0)
+            height_penalty *= 1.5
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
@@ -508,9 +497,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= congestion_penalty
 
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
-        # v544: 强化deadline crossing即时併合优先级 - 确保在deadline crossing时仍能获得併合机会
+
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            deadline_no_merge_penalty = -4000.0 + max(0.0, landing_y) * 2500.0  # v544: 增强deadline crossing即时併合权重 (-3000→-4000)
+            deadline_no_merge_penalty = -3000.0 + max(0.0, landing_y) * 2000.0
             score += deadline_no_merge_penalty
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
 
@@ -664,18 +653,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                                 break
 
         # ----- evaluation axis 7: early game merge priority -----
-        # v544: 强化早期併合优先级 - 提高初期併合权重，确保游戏初期获得併合机会
         if piece_count <= 12 and merge_grade == "NEAR":
             # 初期段階でNEAR_MERGE機会がある場合、強力なボーナスを付与
             # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
-            score += 1500.0  # v544: 增强早期併合权重 (1000→1500)
+            score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
         # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization, enhanced) -----
-        # v544: 强化反应对併合优先级 - 确保在危险区域仍能获得併合机会
         if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
             # reactive_pairs==1の場合も即時併合を優先し、機会取りこぼし削減
-            score += 600.0  # v544: 增强反应对併合权重 (400→600)
+            score += 400.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
         elif (
             reactive_pair_count >= 2
@@ -683,14 +670,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and merge_grade in ["DIRECT", "NEAR"]
         ):
             # 2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
-            score += 1200.0  # v544: 增强反应对併合权重 (800→1200)
+            score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
         elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
-            score += 1500.0  # v544: 增强反应对併合权重 (1000→1500)
+            score += 1000.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8.5: danger zone immediate merge bonus (v321: 危険域即時併合強化・axis 8.5削除版) -----
-        # v544: 强化危险域即时併合优先级 - 确保在max_y>=2.0时仍能获得併合机会
+
         danger_piece_count = reactor.get("danger_piece_count", 0)
 
         # 危険域での即時併合を強力に優先
@@ -701,29 +688,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
         ):
             if merge_grade == "DIRECT":
                 if deadline_crossed:
-                    score += 1800.0  # v544: 增强危险域DIRECT併合权重 (1200→1800)
+                    score += 1200.0
                 else:
-                    score += 800.0  # v544: 增强危险域DIRECT併合权重 (500→800)
+                    score += 500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             else:
                 if deadline_crossed:
-                    score += 900.0  # v544: 增强危险域NEAR併合权重 (600→900)
+                    score += 600.0
                 else:
-                    score += 500.0  # v544: 增强危险域NEAR併合权重 (300→500)
+                    score += 300.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v321: 即時併合ボーナス維持) -----
-        # v544: 强化反应对即时併合优先级 - 确保在反应对存在时仍能获得併合机会
+
         if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
             if reactive_pair_count >= 2:
-                score += 1500.0  # v544: 增强反应对即时併合权重 (1000→1500)
+                score += 1000.0
             else:
-                score += 900.0  # v544: 增强反应对即时併合权重 (600→900)
+                score += 600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
         # ----- v543: russia phase immediate merge priority (ロシアフェーズでの即時併合優先強化 - type 15保護版) -----
-        # v544: 强化俄罗斯阶段即时併合优先级 - 确保在俄罗斯阶段仍能获得併合机会
+
         if russia_phase:
             # ロシアフェーズでの即時併合優先
             # 即時併合候補がある場合、最優先（強力なボーナス）
@@ -731,44 +718,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if reactive_pair_count >= 1:
                     # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
                     if merge_grade == "DIRECT":
-                        score += 1800.0 if reactive_pair_count >= 3 else 1600.0  # v544: 增强俄罗斯阶段DIRECT併合权重 (1400/1200→1800/1600)
+                        score += 1400.0 if reactive_pair_count >= 3 else 1200.0
                     else:
-                        score += 1600.0 if reactive_pair_count >= 3 else 1400.0  # v544: 增强俄罗斯阶段NEAR併合权重 (1200/1000→1600/1400)
+                        score += 1200.0 if reactive_pair_count >= 3 else 1000.0
                 else:
                     if merge_grade == "DIRECT":
-                        score += 1800.0  # v544: 增强俄罗斯阶段DIRECT併合权重 (1400→1800)
+                        score += 1400.0
                     else:
-                        score += 1600.0  # v544: 增强俄罗斯阶段NEAR併合权重 (1200→1600)
+                        score += 1200.0
                 reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
                 # 即時併合がない場合、type 15保護を徹底
                 # v543: 盤面が狭い時は盤面圧縮ボーナスを抑制してtype 15保護を優先
                 if soren_phase or max_y >= 2.5:
                     # ロシア2つ目または盤面が高い時は、盤面圧縮ボーナスを抑制してtype 15保護を優先
-                    score += 600.0  # v544: 增强俄罗斯阶段NO併合併合权重 (500→600)
+                    score += 500.0
                     reasons.append("RUSSIA_PHASE_TYPE15_PROTECTION")
                 elif reactive_pair_count >= 3:
                     # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
                     # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
-                    score += 1200.0  # v544: 增强俄罗斯阶段NO併合併合权重 (900→1200)
+                    score += 900.0
                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                 elif reactive_pair_count >= 1:
-                    score += 800.0  # v544: 增强俄罗斯阶段NO併合併合权重 (400→800)
+                    score += 400.0
                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                 else:
-                    score += 1200.0  # v544: 增强俄罗斯阶段NO併合併合权重 (800→1200)
+                    score += 800.0
                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
 
         # ----- v543: reactive pairs >= 3 no merge penalty (type 15保護強化版) -----
-        # v544: 强化反应对NO併合惩罚 - 确保在危险域仍能获得併合机会
         # ロシアフェーズまたは盤面が高い時はペナルティを強化して、type 15保護を優先
         if reactive_pair_count >= 3 and merge_grade == "NO":
             # v543: ロシア建国後の盤面狭小時はペナルティをさらに強化（6000→8000）
             # 盤面が狭い時は高配置を厳しく抑制し、type 15を保護して2つ目のロシアを作るための空間を確保
-            if russia_phase or max_y >= 2.5:
-                score -= 10000.0  # v544: 增强反应对NO併合惩罚 (8000→10000)
+            if soren_phase or max_y >= 2.5:
+                score -= 8000.0
             else:
-                score -= 8000.0  # v544: 增强反应对NO併合惩罚 (6000→8000)
+                score -= 6000.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
@@ -809,7 +795,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             reasons.append("SAME_TYPE_STACK")
 
         # ----- v543: deadline-crossing avoidance (type 15保護強化版) -----
-        # v544: 强化deadline crossing惩罚 - 确保在deadline crossing时仍能获得併合机会
         # Avoid placing pieces above the deadline in ALL cases, not just NO-merge.
         # The deadline is the game-over boundary — pieces crossing it risk immediate loss.
         # DIRECT/NEAR merges that cross the deadline still add a high piece that may not
@@ -821,26 +806,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Russia phase exempted: type 15保護優先のため、ロシアフェーズで盤面が狭い場合はdeadline crossingを厳しく制限
         # v543: 盤面が狭い時はdeadline crossingを厳しく制限（7000→8000）
         # v542: NEAR deadline crossing penalty強化（4000→5000）— worst game (633) final 8 turns all NEAR+CROSSES_DEADLINE
-        # v544: 增强deadline crossing惩罚 - 确保在deadline crossing时仍能获得併合机会
         if result.get("crosses_deadline", False):
             if merge_grade == "NO":
                 # v543: ロシアフェーズで盤面が狭い場合は、deadline crossingをより厳しく制限
                 # NO merge deadline crossing penalty強化（7000→8000）
                 if soren_phase or max_y >= 2.5:
-                    score -= 10000.0  # v544: 增强NO merge deadline crossing惩罚 (8000→10000)
+                    score -= 8000.0
                 else:
-                    score -= 7000.0  # v544: 增强NO merge deadline crossing惩罚 (5000→7000)
+                    score -= 5000.0
                 reasons.append("CROSSES_DEADLINE_NO_MERGE")
             elif merge_grade == "NEAR":
                 # v538: NEAR 68.5% success — failure at deadline is catastrophic (piece at deadline height)
                 # Worst game (633) final 8 turns: all NEAR+CROSSES_DEADLINE, chain+reactive bonuses overcame -2000
                 # v542: NEAR deadline crossing penalty強化（4000→5000）
-                # v544: 增强NEAR deadline crossing惩罚 (5000→7000)
-                score -= 7000.0
+                score -= 5000.0
                 reasons.append("CROSSES_DEADLINE_MERGE_RISK")
             else:
                 # DIRECT 95.7% success justifies crossing deadline at moderate penalty
-                score -= 3000.0  # v544: 增强DIRECT deadline crossing惩罚 (2000→3000)
+                score -= 2000.0
                 reasons.append("CROSSES_DEADLINE_MERGE_RISK")
 
         # ----- v543: type stacking compatibility penalty (type 15保護強化版) -----
