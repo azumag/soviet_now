@@ -165,7 +165,7 @@ run_cmd() {
 	case "$type" in
 	zai)
 		local -a zai_claude_args
-		zai_claude_args=(--print -p "$prompt_body" --model=haiku --permission-mode=acceptEdits)
+		zai_claude_args=(--print -p "$prompt_body" --model=haiku --permission-mode=acceptEdits --no-session-persistence)
 		[ -n "$resume_session" ] && zai_claude_args+=(-c)
 		local -a zai_env=(
 			ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic"
@@ -338,15 +338,15 @@ run_cmd() {
 		)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits &
+				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits --no-session-persistence &
 			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits &
+				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:latest --permission-mode=acceptEdits --no-session-persistence &
 			fi
 		fi
 		;;
@@ -358,15 +358,15 @@ run_cmd() {
 		)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits &
+				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits --no-session-persistence &
 			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits &
+				env "${ollama_env[@]}" claude -p "$prompt_body" --model=gemma4:26b --permission-mode=acceptEdits --no-session-persistence &
 			fi
 		fi
 		;;
@@ -378,15 +378,15 @@ run_cmd() {
 		)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits &
+				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits --no-session-persistence &
 			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits &
+				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits --no-session-persistence &
 			fi
 		fi
 		;;
@@ -398,15 +398,15 @@ run_cmd() {
 		)
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits >>"$cmd_log_file" 2>&1 &
+				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
 			fi
 		else
 			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits &
+				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits --no-session-persistence &
 			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits &
+				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:27b --permission-mode=acceptEdits --no-session-persistence &
 			fi
 		fi
 		;;
