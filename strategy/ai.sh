@@ -139,7 +139,7 @@ run_cmd() {
 		fi
 	fi
 	[ -n "$timeout_sec" ] && timeout_label="${timeout_sec}s"
-	if [ "$type" = "glm" ] || [ "$type" = "opencode" ] || [ "$type" = "zai" ]; then
+	if [ "$type" = "glm" ] || [ "$type" = "opencode" ]; then
 		resume_session=$(_run_cmd_load_resume_session "$spec" 2>/dev/null || true)
 	fi
 
