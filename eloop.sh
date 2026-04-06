@@ -436,8 +436,13 @@ PY
 	start_comment_player
 	start_comment_watcher
 
-	# git commit
-	git add -A
+	# git commit (v542: セキュリティ/不要ファイル除外のため明示的ファイル指定)
+	git add \
+		game_count.txt score_history.txt eval_score_history.txt \
+		game_history/ strategy_versions/ score_dashboard.html \
+		game_state.json best_score.txt phyrogenetic-tree.md \
+		phyrogenetic-events.jsonl strategy.py \
+		tmp/state/rollout_scores.json 2>/dev/null || true
 	git commit -m "eloop Game #${game_num_display}: score=${LAST_SCORE}" 2>/dev/null &&
 		git push 2>/dev/null || true
 	_post_pending_phyrogenetic_tree_link_to_chat_if_any
