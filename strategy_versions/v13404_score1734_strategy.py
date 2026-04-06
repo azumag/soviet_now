@@ -178,6 +178,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
+        # ----- v542: Uzbekistan (type 12) left-edge safety penalty -----
+        # Uzbekistan is oblong and tends to orient vertically at the left edge,
+        # which easily pushes past the deadline. Penalize left-edge drops unless
+        # there's an existing type 12 on board for a direct/near merge.
+        if next_type == 12 and x <= -2.0:
+            uzbek_on_board = any(p.get("type") == 12 for p in pieces)
+            if not (uzbek_on_board and merge_grade in ("DIRECT", "NEAR")):
+                left_edge_penalty = 2000.0
+                score -= left_edge_penalty
+                reasons.append("UZBEK_LEFT_EDGE_PENALTY")
+
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
