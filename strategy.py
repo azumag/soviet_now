@@ -6,13 +6,6 @@ board safety, and setup value for future merges.
 """
 
 # --- Change History ---
-# v545: 强化type 15保護とdeadline crossingペナルティ
-# - type 15の上にtype 13以下を載せるペナルティを追加（TYPE15_STACK_PROTECTION）
-# - reactive_pairs >= 3 NO merge ペナルティをさらに強化（10000 → 12000）
-# - deadline crossing NEAR merge ペナルティをさらに強化（7000 → 9000）
-# - deadline crossing DIRECT merge ペナルティをさらに強化（3000 → 4000）
-# ロシア建国後のフェーズ切り替えと盤面狭小時のtype 15保護強化
-# refs: tmp/improve_brief.md, tmp/batch_summary.txt, game_history/20260406_165459_score4416.jsonl, advice.md
 # v544: 强化即时併合优先级 - HEIGHT_CONTROL平均得点差仅2.6，而NEAR_MERGE_EARLY_MERGE_PRIORITY为27.3
 # 修复策略过于依赖HEIGHT_CONTROL的问题，增强即時併合和NEAR_MERGE的权重
 # 最差游戏（score=191）merge_hits=0，说明HIGH_TOWER和CROSSES_DEADLINE惩罚触发时策略完全失败
@@ -769,14 +762,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- v543: reactive pairs >= 3 no merge penalty (type 15保護強化版) -----
         # v544: 强化反应对NO併合惩罚 - 确保在危险域仍能获得併合机会
         # ロシアフェーズまたは盤面が高い時はペナルティを強化して、type 15保護を優先
-        # v545: reactive_pairs >= 3 NO merge ペナルティをさらに強化（10000 → 12000）
         if reactive_pair_count >= 3 and merge_grade == "NO":
             # v543: ロシア建国後の盤面狭小時はペナルティをさらに強化（6000→8000）
             # 盤面が狭い時は高配置を厳しく抑制し、type 15を保護して2つ目のロシアを作るための空間を確保
             if russia_phase or max_y >= 2.5:
-                score -= 12000.0  # v545: 增强反应对NO併合惩罚 (10000 → 12000)
+                score -= 10000.0  # v544: 增强反应对NO併合惩罚 (8000→10000)
             else:
-                score -= 10000.0  # v545: 增强反应对NO併合惩罚 (8000 → 10000)
+                score -= 8000.0  # v544: 增强反应对NO併合惩罚 (6000→8000)
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
@@ -830,27 +822,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v543: 盤面が狭い時はdeadline crossingを厳しく制限（7000→8000）
         # v542: NEAR deadline crossing penalty強化（4000→5000）— worst game (633) final 8 turns all NEAR+CROSSES_DEADLINE
         # v544: 增强deadline crossing惩罚 - 确保在deadline crossing时仍能获得併合机会
-        # v545: NEAR deadline crossing penaltyをさらに強化（7000 → 9000）
         if result.get("crosses_deadline", False):
             if merge_grade == "NO":
                 # v543: ロシアフェーズで盤面が狭い場合は、deadline crossingをより厳しく制限
                 # NO merge deadline crossing penalty強化（7000→8000）
                 if soren_phase or max_y >= 2.5:
-                    score -= 12000.0  # v545: 增强NO merge deadline crossing惩罚 (10000 → 12000)
+                    score -= 10000.0  # v544: 增强NO merge deadline crossing惩罚 (8000→10000)
                 else:
-                    score -= 9000.0  # v545: 增强NO merge deadline crossing惩罚 (7000 → 9000)
+                    score -= 7000.0  # v544: 增强NO merge deadline crossing惩罚 (5000→7000)
                 reasons.append("CROSSES_DEADLINE_NO_MERGE")
             elif merge_grade == "NEAR":
                 # v538: NEAR 68.5% success — failure at deadline is catastrophic (piece at deadline height)
                 # Worst game (633) final 8 turns: all NEAR+CROSSES_DEADLINE, chain+reactive bonuses overcame -2000
                 # v542: NEAR deadline crossing penalty強化（4000→5000）
                 # v544: 增强NEAR deadline crossing惩罚 (5000→7000)
-                # v545: NEAR deadline crossing penaltyをさらに強化（7000 → 9000）
-                score -= 9000.0
+                score -= 7000.0
                 reasons.append("CROSSES_DEADLINE_MERGE_RISK")
             else:
                 # DIRECT 95.7% success justifies crossing deadline at moderate penalty
-                score -= 4000.0  # v545: 增强DIRECT deadline crossing惩罚 (3000 → 4000)
+                score -= 3000.0  # v544: 增强DIRECT deadline crossing惩罚 (2000→3000)
                 reasons.append("CROSSES_DEADLINE_MERGE_RISK")
 
         # ----- v543: type stacking compatibility penalty (type 15保護強化版) -----
@@ -860,7 +850,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # it can't merge with the low-type piece sitting on top. Only type(K+1) on type(K+2)
         # is useful (merge pipeline). Penalize incompatible stacking to preserve merge opportunities.
         # v543: type 15保護優先のため、type stacking compatibility penaltyを維持
-        # v545: type 15保護強化 - type 15の上にtype 13以下を載せるペナルティを追加
         if merge_grade == "NO":
             for p in pieces:
                 support_y = p["y"] + p["r"] + next_r
@@ -873,14 +862,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score -= 200.0 * min(type_gap - 1, 3)
                         reasons.append("TYPE_STACK_INCOMPATIBLE")
                         break
-            # v545: type 15の上にtype 13以下を載せるペナルティ強化
-            # type 15の位置が高い場合、その上にtype 13以下を載せるのを避ける
-            if p["type"] == 15 and p["y"] > 0.5:
-                type_gap = 15 - next_type
-                if type_gap >= 2:
-                    score -= 400.0 * min(type_gap - 1, 3)
-                    reasons.append("TYPE15_STACK_PROTECTION")
-                    break
 
         # ----- update best candidate -----
         if score > best_score:
