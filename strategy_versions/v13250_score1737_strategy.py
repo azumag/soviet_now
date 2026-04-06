@@ -6,6 +6,12 @@ board safety, and setup value for future merges.
 """
 
 # --- Change History ---
+# v546: Fix deadlock when reactive_pairs >= 3 and merge_available=true
+# Worst game (633) final 8 turns: all NEAR+CROSSES_DEADLINE_MERGE_RISK, reactive_pairs >= 3
+# When reactive_pairs >= 3, the no-merge penalty (-6000/-8000) is so strong it prevents any merge
+# even when merge_available=true, creating a deadlock. In russia phase, this is catastrophic.
+# Fixes: Prioritize getting merges when available (DIRECT/NEAR) even if it means incurring penalties
+# refs: tmp/improve_brief.md, tmp/batch_summary.txt, game_history/20260406_184342_score0652.jsonl, advice.md
 # v543: Add deadline_crossed check to NEAR deadline risk penalty (400→400 penalty, increased risk scaling)
 # Prevents NEAR+CROSSES_DEADLINE pattern seen in worst game (633) final 8 turns
 # NEAR merge at deadline height is catastrophic because landing piece sits at danger zone
@@ -729,16 +735,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
             elif merge_grade == "NO":
                 # 即時併合がない場合、type 15保護を徹底
-                # v543: 盤面が狭い時は盤面圧縮ボーナスを抑制してtype 15保護を優先
-                if soren_phase or max_y >= 2.5:
+                # v546: reactive_pairs >= 3時のdeadlock防止 — merge_available=trueの場合は即時併合を優先
+                # 同様のロジックをここでも適用。reactive_pairs >= 3でも併合機会を確保
+                if result.get("danger_direct_merge_available", False) or result.get("danger_merge_available", False):
+                    # 危険域での即時併合機会がある場合、type 15保護優先のためペナルティを適用せずに併合ボーナスを優先
+                    # これはv544/v545で強化された危険域即時併合ボーナスでカバーされる
+                    pass
+                elif reactive_pair_count >= 3:
+                    # v546: reactive_pairs >= 3の場合でも即時併合機会があれば優先
+                    # 盤面が狭いロシアフェーズでは、即時併合機会を逃すとゲームオーバーになるリスクが高い
+                    score += 500.0
+                    reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
+                elif soren_phase or max_y >= 2.5:
+                    # v543: 盤面が狭い時は盤面圧縮ボーナスを抑制してtype 15保護を優先
                     # ロシア2つ目または盤面が高い時は、盤面圧縮ボーナスを抑制してtype 15保護を優先
                     score += 500.0
                     reasons.append("RUSSIA_PHASE_TYPE15_PROTECTION")
-                elif reactive_pair_count >= 3:
-                    # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
-                    # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
-                    score += 900.0
-                    reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                 elif reactive_pair_count >= 1:
                     score += 400.0
                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
@@ -749,13 +761,34 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- v543: reactive pairs >= 3 no merge penalty (type 15保護強化版) -----
         # ロシアフェーズまたは盤面が高い時はペナルティを強化して、type 15保護を優先
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v543: ロシア建国後の盤面狭小時はペナルティをさらに強化（6000→8000）
-            # 盤面が狭い時は高配置を厳しく抑制し、type 15を保護して2つ目のロシアを作るための空間を確保
-            if soren_phase or max_y >= 2.5:
-                score -= 8000.0
+            # v546: reactive_pairs >= 3時のdeadlock防止 — merge_available=trueの場合は即時併合を優先
+            # Worst game (633) final 8 turns: all NEAR+CROSSES_DEADLINE_MERGE_RISK, reactive_pairs >= 3
+            # When reactive_pairs >= 3, the no-merge penalty (-6000/-8000) is so strong it prevents any merge
+            # even when merge_available=true, creating a deadlock. In russia phase, this is catastrophic.
+            # v546: 例外処理 — merge_available=trueの場合はペナルティを緩和して併合を優先
+            # これはロシアフェーズで特に重要。盤面が狭いので即時併合機会を逃してはならない
+            if result.get("danger_direct_merge_available", False) or result.get("danger_merge_available", False):
+                # 危険域での即時併合機会がある場合、ペナルティを適用せずに併合を優先
+                # これはv544/v545で強化された危険域即時併合ボーナスでカバーされる
+                pass
+            elif russia_phase and (max_y >= 2.5 or soren_phase):
+                # ロシアフェーズまたは盤面が高い時は、即時併合機会を優先
+                # 盤面が狭いので、reactive_pairs>=3でも併合できないとゲームオーバーになるリスクが高い
+                # ペナルティを大幅に緩和（-2000/-3000）して、併合機会を確保
+                if soren_phase or max_y >= 2.5:
+                    score -= 3000.0
+                else:
+                    score -= 2000.0
+                reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
             else:
-                score -= 6000.0
-            reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+                # 通常フェーズではペナルティを適用（v543のロジック）
+                # v543: ロシア建国後の盤面狭小時はペナルティをさらに強化（6000→8000）
+                # 盤面が狭い時は高配置を厳しく抑制し、type 15を保護して2つ目のロシアを作るための空間を確保
+                if soren_phase or max_y >= 2.5:
+                    score -= 8000.0
+                else:
+                    score -= 6000.0
+                reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
 
@@ -806,8 +839,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Russia phase exempted: type 15保護優先のため、ロシアフェーズで盤面が狭い場合はdeadline crossingを厳しく制限
         # v543: 盤面が狭い時はdeadline crossingを厳しく制限（7000→8000）
         # v542: NEAR deadline crossing penalty強化（4000→5000）— worst game (633) final 8 turns all NEAR+CROSSES_DEADLINE
+        # v546: reactive_pairs >= 3時のdeadlock防止 — 即時併合機会があればdeadline crossingを許容
         if result.get("crosses_deadline", False):
-            if merge_grade == "NO":
+            # v546: 即時併合機会がある場合はdeadline crossingを許容（ロシアフェーズで特に重要）
+            if merge_grade in ["DIRECT", "NEAR"]:
+                # 即時併合機会がある場合、deadline crossingペナルティを緩和
+                # ロシアフェーズでは、即時併合機会を逃すリスクの方がdeadline crossingペナルティより大きい
+                if russia_phase and (merge_grade == "DIRECT" or reactive_pair_count < 3):
+                    # ロシアフェーズかつreactive_pairs < 3の場合、DIRECT merge deadline crossingペナルティを軽減
+                    score -= 1000.0
+                    reasons.append("RUSSIA_PHASE_DEADLINE_CROSSING_MERGE")
+                else:
+                    # DIRECT 95.7% success justifies crossing deadline at moderate penalty
+                    score -= 2000.0
+                    reasons.append("CROSSES_DEADLINE_MERGE_RISK")
+            else:
+                # NO merge + crosses deadline
                 # v543: ロシアフェーズで盤面が狭い場合は、deadline crossingをより厳しく制限
                 # NO merge deadline crossing penalty強化（7000→8000）
                 if soren_phase or max_y >= 2.5:
@@ -815,16 +862,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 else:
                     score -= 5000.0
                 reasons.append("CROSSES_DEADLINE_NO_MERGE")
-            elif merge_grade == "NEAR":
-                # v538: NEAR 68.5% success — failure at deadline is catastrophic (piece at deadline height)
-                # Worst game (633) final 8 turns: all NEAR+CROSSES_DEADLINE, chain+reactive bonuses overcame -2000
-                # v542: NEAR deadline crossing penalty強化（4000→5000）
-                score -= 5000.0
-                reasons.append("CROSSES_DEADLINE_MERGE_RISK")
-            else:
-                # DIRECT 95.7% success justifies crossing deadline at moderate penalty
-                score -= 2000.0
-                reasons.append("CROSSES_DEADLINE_MERGE_RISK")
 
         # ----- v543: type stacking compatibility penalty (type 15保護強化版) -----
         # advice: "typeNの上にtypeN-1をのせるのはいいが、typeN-2などを載せてしまうと、単純に邪魔になる。
