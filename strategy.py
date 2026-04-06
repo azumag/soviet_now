@@ -709,15 +709,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
 
-    # --- v322: russia phase detection (type 15 pieces on board) ---
-    # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
-    # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
+    # --- v545: ロシア建国後のフェーズ切り替えとtype 15保護強化 ---
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
+    # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
+    # ロシアフェーズ判定: 盤面上にtype 15（ロシア）が1つ以上存在する場合
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
     
-    # --- v530: 2つ目のロシア育成戦略 ---
-    # type 15が1つある場合と2つ以上ある場合で戦略を分岐させる
+    # ロシア2つ目の育成フェーズ判定: type 15が2つ以上存在する場合
     # type 15が1つの場合: 既存のロシア(type 15)の位置を保護しつつ、2つ目のロシアへの成長パイプラインを確保
     # type 15が2つ以上の場合: ロシア同士が併合可能な距離に来るよう、2つ目の成長位置を意識した配置をする
     russia_phase_second = russia_phase_count >= 2
@@ -739,6 +738,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL height penalty basic value only
         merge_mult = 0.6  # v42: CRITICAL phase merge suppression
+        # v545: Strengthen merge priority when reactive_pairs exist in CRITICAL phase
+        # to prevent HEIGHT_CONTROL over-selection in dangerous situations
+        if reactive_pair_count >= 1:
+            merge_mult = 1.0  # Enable active merge targeting when reactive pairs exist
 
     # --- next piece information ---
     next_piece = game_state.get("next", {})
@@ -1571,16 +1574,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 8.7: russia phase immediate merge priority (v530: 2つ目のロシア育成戦略強化版) -----
+        # ----- evaluation axis 8.7: russia phase immediate merge priority (v545: ロシア建国後のフェーズ切り替えとtype 15保護強化版) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
         # ロシアフェーズ（type 15 >= 1）で即時併合を最優先する戦略へ切り替え
         # 即時併合候補がある場合: 即時併合を最優先（強力なボーナス）
         # 即時併合がない場合: 危険ピースがない場合のみ盤面圧縮を優先しつつ、type 15保護を徹底
         # 危険ピースがある場合は即時併合優先を維持（axis 9.2のペナルティを優先）
-        # v530: type 15が2つ以上ある場合（russia_phase_second）、2つ目のロシア育成スペースを確保するため盤面圧縮を優先
+        # v545: ロシア建国後のフェーズ切り替えとtype 15保護強化
         #   - 即時併合ボーナス強化: DIRECT: +1600.0, NEAR: +1400.0
         #   - 2つ目のロシア育成: reactive_pairs>=3 && merge_grade == "NO" の場合、盤面圧縮ボーナスを付与（+1100.0）
         #   - 1つ目のロシア保護: reactive_pairs>=3 && merge_grade == "NO" の場合、即時併合ボーナスを優先
+        #   - deadline crossingペナルティ強化（盤面狭小時7000→6000）
         # 未活用情報：盤面上のtype 15個数、即時併合可否(merge_grade)、reactive_pairs、danger_piece_count
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
         #       game_history/20260405_182501_score2424.jsonl, game_history/20260324_141236_score0731.jsonl
@@ -1589,7 +1593,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
               # ロシアフェーズでの即時併合優先
               # 即時併合候補がある場合、最優先（強力なボーナス）
               if merge_grade in ["DIRECT", "NEAR"]:
-                  # v530: 2つ目のロシア育成戦略強化
+                  # v545: ロシア建国後のフェーズ切り替えとtype 15保護強化
                   # type 15が2つ以上ある場合、即時併合ボーナスをさらに強化
                   if russia_phase_second:
                       # 2つ目のロシア育成の場合、即時併合ボーナスをさらに強化
@@ -1605,7 +1609,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                               score += 1400.0
                       reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
                   else:
-                      # v336: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
+                      # v545: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
                       if reactive_pair_count >= 1:
                           # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
                           if merge_grade == "DIRECT":
@@ -1613,7 +1617,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                           else:
                               score += 1200.0 if reactive_pair_count >= 3 else 1000.0
                       else:
-                          # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
+                          # v545: reactive_pairs>=3 の場合、より強力なボーナス
                           if merge_grade == "DIRECT":
                               score += 1400.0
                           else:
@@ -1621,38 +1625,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
               elif merge_grade == "NO":
                   # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
-                  # v530: 2つ目のロシア育成戦略強化
+                  # v545: ロシア建国後のフェーズ切り替えとtype 15保護強化
                   if russia_phase_second:
                       # 2つ目のロシア育成の場合、盤面圧縮ボーナスを強化して2つ目のロシア育成スペースを確保
                       if reactive_pair_count >= 3:
                           # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
-                          # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
+                          # v545: reactive_pairs>=3 の場合のボーナス（1100.0）を維持
                           score += 1100.0
                           reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                       elif reactive_pair_count >= 1:
-                          # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
-                          # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
+                          # v545: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 600.0）
+                          # 即時併合機会を優先するため、盤面圧縮ボーナスを調整
                           score += 600.0
                           reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                       else:
-                           # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
+                           # v545: reactive_pairs==0 の場合のボーナス（1000.0）
                            # 盤面圧縮を優先しつつ、type 15保護を徹底
                            score += 1000.0
                            reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                   else:
-                      # v336: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
+                      # v545: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
                       if reactive_pair_count >= 3:
                           # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
-                          # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
+                          # v545: reactive_pairs>=3 の場合のボーナス（900.0）を維持
                           score += 900.0
                           reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                       elif reactive_pair_count >= 1:
-                          # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
+                          # v545: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
                           # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
                           score += 400.0
                           reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                       else:
-                           # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
+                           # v545: reactive_pairs==0 の場合のボーナス（800.0）
                            # 盤面圧縮を優先しつつ、type 15保護を徹底
                            score += 800.0
                            reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
