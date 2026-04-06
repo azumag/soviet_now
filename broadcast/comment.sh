@@ -1382,18 +1382,6 @@ RETRYCOMMENT
 					fi
 				fi
 				if [ -z "$attempt_talk" ]; then
-					attempt_talk=$(_run_ollama_comment "$prompt_for_attempt")
-					log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL} normal call done (attempt ${attempt}/${comment_retry_max})"
-					attempt_model="ollama:${COMMENT_OLLAMA_MODEL}"
-					attempt_talk=$(_clean_comment_talk "$attempt_talk")
-					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL} 出力が不正/短文のため破棄 → ${RADIO_AGENT} fallback (attempt ${attempt}/${comment_retry_max})"
-						attempt_talk=""
-						attempt_model=""
-					fi
-				fi
-				if [ -z "$attempt_talk" ]; then
 					attempt_talk=$(_run_opencode_comment "$RADIO_AGENT" "$prompt_for_attempt")
 					attempt_model="$RADIO_AGENT"
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
@@ -1402,7 +1390,7 @@ RETRYCOMMENT
 						if [ "$comment_try_claude_before_opencode_fallback" = "1" ] && [ "$comment_skip_claude" != "true" ]; then
 							log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
 						else
-							log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → ${RADIO_FALLBACK} fallback (attempt ${attempt}/${comment_retry_max})"
+							log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → ollama fallback (attempt ${attempt}/${comment_retry_max})"
 						fi
 						attempt_talk=""
 						attempt_model=""
@@ -1413,7 +1401,19 @@ RETRYCOMMENT
 						attempt_talk=$(_clean_comment_talk "$attempt_talk")
 						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-							log "[COMMENT] claude 出力が不正/短文のため破棄 → ${RADIO_FALLBACK} fallback (attempt ${attempt}/${comment_retry_max})"
+							log "[COMMENT] claude 出力が不正/短文のため破棄 → ollama fallback (attempt ${attempt}/${comment_retry_max})"
+							attempt_talk=""
+							attempt_model=""
+						fi
+					fi
+					if [ -z "$attempt_talk" ]; then
+						attempt_talk=$(_run_ollama_comment "$prompt_for_attempt")
+						log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL} normal call done (attempt ${attempt}/${comment_retry_max})"
+						attempt_model="ollama:${COMMENT_OLLAMA_MODEL}"
+						attempt_talk=$(_clean_comment_talk "$attempt_talk")
+						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+							log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL} 出力が不正/短文のため破棄 → ${RADIO_FALLBACK} fallback (attempt ${attempt}/${comment_retry_max})"
 							attempt_talk=""
 							attempt_model=""
 						fi

@@ -1057,15 +1057,15 @@ _radio_generate_and_play() {
 	local host_mode_generated=""
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
-	talk=$(_run_ollama_radio "$prompt_file")
-	[ -n "$talk" ] && provider_used="ollama:${RADIO_OLLAMA_MODEL}" && log "[RADIO:${corner_name}] ollama:${RADIO_OLLAMA_MODEL} OK"
+	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
+	[ -n "$talk" ] && provider_used="$RADIO_AGENT" && log "[RADIO:${corner_name}] ${RADIO_AGENT} OK"
 	if [ -z "$talk" ]; then
-		log "[RADIO:${corner_name}] ollama:${RADIO_OLLAMA_MODEL} fail -> ${RADIO_AGENT}"
-		talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
-		[ -n "$talk" ] && provider_used="$RADIO_AGENT" && log "[RADIO:${corner_name}] ${RADIO_AGENT} OK"
+		log "[RADIO:${corner_name}] ${RADIO_AGENT} fail -> ollama:${RADIO_OLLAMA_MODEL}"
+		talk=$(_run_ollama_radio "$prompt_file")
+		[ -n "$talk" ] && provider_used="ollama:${RADIO_OLLAMA_MODEL}" && log "[RADIO:${corner_name}] ollama:${RADIO_OLLAMA_MODEL} OK"
 	fi
 	if [ -z "$talk" ]; then
-		log "[RADIO:${corner_name}] ${RADIO_AGENT} fail -> ${RADIO_FALLBACK}"
+		log "[RADIO:${corner_name}] ollama:${RADIO_OLLAMA_MODEL} fail -> ${RADIO_FALLBACK}"
 		talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$prompt_file")
 		[ -n "$talk" ] && provider_used="$RADIO_FALLBACK" && log "[RADIO:${corner_name}] ${RADIO_FALLBACK} OK"
 	fi
