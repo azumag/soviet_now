@@ -23,6 +23,7 @@ TURNS_SNAPSHOT="$5"
 # 進捗モニタリング用メタ情報
 # improve_state には、実際にバックグラウンドで管理されるトップレベル bash の PID を記録する。
 IMPROVE_SELF_PID="$$"
+IMPROVE_BIRTH_EPOCH=$(ps -p $$ -o lstart= 2>/dev/null | xargs -I{} date -j -f "%a %b %d %H:%M:%S %Y" "{}" +%s 2>/dev/null || echo 0)
 IMPROVE_STATE_JSON=$(_read_improve_state)
 IMPROVE_BASE_HASH=$(echo "$IMPROVE_STATE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null || echo "")
 [ -z "$IMPROVE_BASE_HASH" ] && IMPROVE_BASE_HASH=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
@@ -47,7 +48,7 @@ trap 'exit 130' INT TERM
 
 _improve_progress() {
 	local phase="$1" progress="$2" detail="$3"
-	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT"
+	_write_improve_state "running" "$IMPROVE_SELF_PID" "$IMPROVE_BASE_HASH" "$phase" "$progress" "$detail" "$IMPROVE_STARTED_AT" "$IMPROVE_BIRTH_EPOCH"
 }
 
 _improve_note() {
@@ -235,6 +236,8 @@ IMPROVE_BRIEF_FILE="tmp/improve_brief.md"
 ROLLBACK_ANALYSIS_FILE="tmp/state/last_rollback_analysis.md"
 ROLLBACK_POSTMORTEM_FILE="tmp/state/last_rollback_postmortem.md"
 SANDBOX_TOPLEVEL_PY_BASELINE=""
+ANALYSIS_RESULT_FILE="tmp/analysis_result.md"
+REVIEW_RESULT_FILE="tmp/review_result.md"
 SANDBOX_HELPERS_BASELINE_DIR=""
 
 # --- プロンプトに埋め込む参照データ（小さくて重要なもの） ---
@@ -619,7 +622,7 @@ improve_ref_files=("$batch_summary_file" "$IMPROVE_BRIEF_FILE")
 [ -f "$ROLLBACK_ANALYSIS_FILE" ] && [ -s "$ROLLBACK_ANALYSIS_FILE" ] && improve_ref_files+=("$ROLLBACK_ANALYSIS_FILE")
 
 # --- サンドボックスにコピーする全ファイル ---
-sandbox_ref_files=("prompts/improve_strategy.md" "prompts/game_theory.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}")
+sandbox_ref_files=("prompts/improve_strategy.md" "prompts/analyze_strategy.md" "prompts/implement_strategy.md" "prompts/review_strategy.md" "prompts/game_theory.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}")
 sandbox_ref_files+=("$GAME_STATE")
 [ -f "$CHANGE_LOG_FILE" ] && sandbox_ref_files+=("$CHANGE_LOG_FILE")
 [ -n "$worst_game_path" ] && [ -f "$worst_game_path" ] && sandbox_ref_files+=("$worst_game_path")
@@ -795,7 +798,45 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	_consecutive_empty=0
 	IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-2400}"
 	_improve_wall_start=$(date +%s)
-	while [ "$fresh_retry" -le "$IMPROVE_MAX_RETRIES" ]; do
+
+	# --- Stage 1: 分析フェーズ ---
+	# 全参照データを読み込み、改善仮説を立案して tmp/analysis_result.md に出力する
+	: > "$ANALYSIS_RESULT_FILE"
+	analysis_ok=false
+	ANALYSIS_MAX_RETRIES="${ANALYSIS_MAX_RETRIES:-2}"
+	for _analysis_retry in $(seq 1 "$ANALYSIS_MAX_RETRIES"); do
+		_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
+		if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
+			log "[IMPROVE] wall timeout before analysis phase"
+			break
+		fi
+		_improve_progress "analyze_retry${_analysis_retry}" "$(( 5 + (_analysis_retry - 1) * 5 ))" "analysis_phase"
+		log "[IMPROVE] Stage 1 分析フェーズ (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES})..."
+		_improve_note "Stage1: analyze retry ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}"
+		run_ai "ANALYZE(${_analysis_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
+			"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
+			"${improve_ref_files[@]}"
+		if [ -s "$ANALYSIS_RESULT_FILE" ]; then
+			log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
+			_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
+			analysis_ok=true
+			break
+		fi
+		log "[IMPROVE] Stage 1 分析失敗 (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}) → リトライ"
+		_improve_note "Stage1: analysis empty on retry ${_analysis_retry}"
+	done
+
+	if [ "$analysis_ok" != true ]; then
+		log "[IMPROVE] Stage 1 分析フェーズ失敗 → 改善中止"
+		_improve_note "Stage1: analysis failed after ${ANALYSIS_MAX_RETRIES} retries → abort"
+		VALIDATE_ERROR="分析フェーズ失敗: analysis_result.md が生成されなかった"
+		improve_ok=false
+	fi
+
+	# --- Stage 2: 実装フェーズ ---
+	# 分析結果に基づいて strategy.py.staging を編集する
+	# Stage 1 失敗時はこのループをスキップする
+	while [ "$analysis_ok" = true ] && [ "$fresh_retry" -le "$IMPROVE_MAX_RETRIES" ]; do
 		# ウォールタイム制限（デフォルト40分）
 		_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
 		if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
@@ -823,9 +864,9 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 				_improve_clear_retry_sessions
 			fi
 			_improve_reset_sandbox_targets
-			run_ai IMPROVE "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
-				"prompts/improve_strategy.md" "$STAGING_FILE" \
-				"${improve_ref_files[@]}"
+			run_ai "IMPLEMENT(${fresh_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
+				"prompts/implement_strategy.md" "$STAGING_FILE" \
+				"$ANALYSIS_RESULT_FILE" "${improve_ref_files[@]}"
 			_run_ai_rc=$?
 			_improve_note "run_ai returned rc=${_run_ai_rc} (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES})"
 			if [ "$_run_ai_rc" -ne 0 ]; then
@@ -1035,6 +1076,64 @@ ${helpers_diff}"
 			continue
 		fi
 	done
+
+	# --- Stage 3: レビューフェーズ ---
+	# Stage 2 成功時のみ実行。スナップショット保護付き
+	if $improve_ok; then
+		: > "$REVIEW_RESULT_FILE"
+		_pre_review_snapshot=$(mktemp "$PWD/$TMP_STATE_DIR/pre_review_staging.XXXXXX")
+		cp "$STAGING_FILE" "$_pre_review_snapshot"
+		_improve_progress "review" "75" "review_phase"
+		log "[IMPROVE] Stage 3 レビューフェーズ..."
+		_improve_note "Stage3: review start"
+		run_ai "REVIEW" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
+			"prompts/review_strategy.md" "$REVIEW_RESULT_FILE" \
+			"$ANALYSIS_RESULT_FILE" "$STAGING_FILE" "${improve_ref_files[@]}"
+		_improve_note "Stage3: review done"
+		# レビューがstagingを変更した場合、バリデーション再実行
+		if ! cmp -s "$_pre_review_snapshot" "$STAGING_FILE" 2>/dev/null; then
+			log "[IMPROVE] Stage 3 レビューにより staging が修正された → バリデーション再実行"
+			_improve_note "Stage3: review mutated staging → re-validate"
+			_review_validate_ok=false
+			# 既存バリデーション一式を再実行
+			if validate_strategy_with_helpers "$STAGING_FILE" "strategy_helpers"; then
+				_r_hash=$(python3 extract_decide_hash.py "$STAGING_FILE" 2>/dev/null || echo "")
+				_r_rejected=false
+				if [ -n "$_r_hash" ] && [ -f "$HOST_REJECTED_HASHES_FILE" ]; then
+					REJECTED_HASHES_FILE="$HOST_REJECTED_HASHES_FILE" REJECTED_HASH_META_FILE="$HOST_REJECTED_HASH_META_FILE" _is_recently_rejected_for_rollback "$_r_hash" && _r_rejected=true
+				fi
+				if [ "$_r_rejected" = true ]; then
+					log "[IMPROVE] Stage 3 レビュー修正: ハッシュ反復検出 → スナップショット復元"
+					_improve_note "Stage3: review mutation rejected (dup hash) → restore snapshot"
+					cp "$_pre_review_snapshot" "$STAGING_FILE"
+				elif [ -n "$_r_hash" ] && [ "$_r_hash" = "$HASH_BEFORE" ]; then
+					log "[IMPROVE] Stage 3 レビュー修正: decide()本体に変更なし → スナップショット復元"
+					_improve_note "Stage3: review mutation rejected (no logic change) → restore snapshot"
+					cp "$_pre_review_snapshot" "$STAGING_FILE"
+				elif _strategy_change_is_string_only "strategy.py" "$STAGING_FILE"; then
+					log "[IMPROVE] Stage 3 レビュー修正: 文字列のみ変更 → スナップショット復元"
+					_improve_note "Stage3: review mutation rejected (string-only) → restore snapshot"
+					cp "$_pre_review_snapshot" "$STAGING_FILE"
+				elif _strategy_change_introduces_fixed_turn_gate "strategy.py" "$STAGING_FILE"; then
+					log "[IMPROVE] Stage 3 レビュー修正: 固定ターンゲート検出 → スナップショット復元"
+					_improve_note "Stage3: review mutation rejected (fixed turn gate) → restore snapshot"
+					cp "$_pre_review_snapshot" "$STAGING_FILE"
+				else
+					log "[IMPROVE] Stage 3 レビュー修正: バリデーション成功"
+					_improve_note "Stage3: review mutation accepted"
+					_review_validate_ok=true
+				fi
+			else
+				log "[IMPROVE] Stage 3 レビュー修正: バリデーション失敗 → スナップショット復元"
+				_improve_note "Stage3: review mutation failed validation → restore snapshot"
+				cp "$_pre_review_snapshot" "$STAGING_FILE"
+			fi
+		else
+			log "[IMPROVE] Stage 3 レビュー: staging 変更なし (PASS)"
+			_improve_note "Stage3: review did not mutate staging"
+		fi
+		rm -f "$_pre_review_snapshot" 2>/dev/null || true
+	fi
 
 	if $improve_ok; then
 		HARVEST_DIR=$(harvest_sandbox "$SANDBOX_DIR")

@@ -19,14 +19,14 @@ _read_improve_state() {
 
 _write_improve_state() {
 	local status="$1" pid="$2" hash="$3"
-	local phase="${4:-}" progress="${5:-0}" detail="${6:-}" started_at="${7:-0}"
+	local phase="${4:-}" progress="${5:-0}" detail="${6:-}" started_at="${7:-0}" pid_birth_epoch="${8:-0}"
 	local now
 	now=$(date +%s)
-	python3 - "$IMPROVE_STATE_FILE" "$status" "${pid:-0}" "${hash:-}" "$phase" "$progress" "$detail" "$started_at" "$now" <<'PY'
+	python3 - "$IMPROVE_STATE_FILE" "$status" "${pid:-0}" "${hash:-}" "$phase" "$progress" "$detail" "$started_at" "$now" "${pid_birth_epoch:-0}" <<'PY'
 import json
 import sys
 
-out_file, status, pid_raw, hash_before, phase, progress_raw, detail, started_raw, now_raw = sys.argv[1:10]
+out_file, status, pid_raw, hash_before, phase, progress_raw, detail, started_raw, now_raw, pid_birth_raw = sys.argv[1:11]
 
 try:
     pid = int(pid_raw)
@@ -45,6 +45,10 @@ try:
     now = int(now_raw)
 except Exception:
     now = 0
+try:
+    pid_birth_epoch = int(pid_birth_raw)
+except Exception:
+    pid_birth_epoch = 0
 
 if started_at <= 0 and status == "running":
     started_at = now
@@ -58,6 +62,7 @@ data = {
     "detail": detail,
     "started_at": started_at,
     "updated_at": now,
+    "pid_birth_epoch": pid_birth_epoch,
 }
 
 with open(out_file, "w", encoding="utf-8") as f:
@@ -100,17 +105,22 @@ _sync_improve_state_with_live_process() {
 	''|0|*[!0-9]*) return 1 ;;
 	esac
 
-	local state current_status current_pid hash_before started_at
+	local state current_status current_pid hash_before started_at pid_birth_epoch
 	state=$(_read_improve_state)
 	current_status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
 	current_pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
 	hash_before=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('strategy_hash_before',''))" 2>/dev/null)
 	started_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('started_at',0) or 0))" 2>/dev/null || echo 0)
+	pid_birth_epoch=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('pid_birth_epoch',0) or 0))" 2>/dev/null || echo 0)
 	[ -n "$hash_before" ] || hash_before=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)
+	# PIDが変わった場合はbirth_epochを再計算
+	if [ "${current_pid:-0}" != "$live_pid" ] || [ "${pid_birth_epoch:-0}" -eq 0 ]; then
+		pid_birth_epoch=$(ps -p "$live_pid" -o lstart= 2>/dev/null | xargs -I{} date -j -f "%a %b %d %H:%M:%S %Y" "{}" +%s 2>/dev/null || echo 0)
+	fi
 
 	if [ "$current_status" != "running" ] || [ "${current_pid:-0}" != "$live_pid" ]; then
 		log "[IMPROVE] state self-heal: live PID=$live_pid を running に再同期 (was status=${current_status:-unknown}, pid=${current_pid:-0})"
-		_write_improve_state "running" "$live_pid" "$hash_before" "recovered" "1" "live_process_detected" "$started_at"
+		_write_improve_state "running" "$live_pid" "$hash_before" "recovered" "1" "live_process_detected" "$started_at" "$pid_birth_epoch"
 	fi
 	IMPROVE_PID=$live_pid
 	return 0
@@ -233,14 +243,14 @@ json.dump(rs, open(rs_file, 'w'))
 			local pid_cmd
 			pid_cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
 			if echo "$pid_cmd" | grep -q "eloop_improve"; then
-				# v39: プロセス起動時刻と記録されたupdated_atの整合性チェック
-				# 記録時刻より後に起動したプロセスのみを有効とみなす（PID再利用対策）
-				local pid_start_epoch recorded_at
-				recorded_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('updated_at',0) or 0))" 2>/dev/null || echo 0)
+				# v40: 記録されたpid_birth_epochとプロセスlstartを直接照合してPID再利用を検出
+				# updated_atは_improve_progress()で更新され続けるため比較に使えない
+				local pid_start_epoch recorded_birth
+				recorded_birth=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('pid_birth_epoch',0) or 0))" 2>/dev/null || echo 0)
 				pid_start_epoch=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs -I{} date -j -f "%a %b %d %H:%M:%S %Y" "{}" +%s 2>/dev/null || echo 0)
-				if [ "${pid_start_epoch:-0}" -ne 0 ] && [ "${recorded_at:-0}" -ne 0 ] && [ "$pid_start_epoch" -lt "$recorded_at" ]; then
-					# PID存在するが、プロセス起動が記録時刻より前 → 古い別プロセスがPID再利用した可能性
-					log "[IMPROVE] PID=$pid はプロセス起動時刻($pid_start_epoch)が記録時刻($recorded_at)より前 → stale状態クリア"
+				if [ "${recorded_birth:-0}" -ne 0 ] && [ "${pid_start_epoch:-0}" -ne 0 ] && [ "$pid_start_epoch" -ne "$recorded_birth" ]; then
+					# PIDは生きているがlstartが記録値と異なる → PID再利用の可能性
+					log "[IMPROVE] PID=$pid はlstart($pid_start_epoch)が記録値($recorded_birth)と不一致 → PID再利用とみなしstale状態クリア"
 					pid_alive=false
 				else
 					pid_alive=true
@@ -827,11 +837,13 @@ _start_improvement_job() {
 	# バックグラウンド改善開始
 	RUN_CMD_LOG_FILE="$improve_ai_log" ./eloop_improve.sh "$all_history_files" "$all_scores" "$any_soviet" "$GAME_NUM" "$LAST_TURNS" &
 	IMPROVE_PID=$!
+	local _pid_birth_epoch
+	_pid_birth_epoch=$(ps -p "$IMPROVE_PID" -o lstart= 2>/dev/null | xargs -I{} date -j -f "%a %b %d %H:%M:%S %Y" "{}" +%s 2>/dev/null || echo 0)
 
 	# 起動成功を確認してから状態更新
 	if kill -0 "$IMPROVE_PID" 2>/dev/null; then
 		rm -f "$TMP_STATE_DIR/handover_announced" 2>/dev/null || true
-		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)"
+		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)" "$_pid_birth_epoch"
 		if [ "$reason" = "post_regression" ]; then
 			log "[IMPROVE] 回帰ロールバック後の改善開始 (PID=$IMPROVE_PID, base=${REGRESSION_ROLLBACK_HASH:-unknown})"
 		elif [ "${IMPROVE_DAEMON_MODE:-0}" = "1" ]; then
