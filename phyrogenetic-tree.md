@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-07 20:28:50 JST`
-- Nodes: `952`
-- Edges: `1309`
-- Current: `d417276684b4`
+- Updated: `2026-04-07 22:01:24 JST`
+- Nodes: `953`
+- Edges: `1310`
+- Current: `4adf1297f64a`
 - Anchor: `d7744a17c3fe`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_d7744a17c3fe["d7744a17c3fe<br/>ANCHOR<br/>g=24 n=20<br/>comp=11868.6"]
-    h_05d29166cb4e["05d29166cb4e<br/>g=12 n=12<br/>comp=10782.8"]
     h_4a37b8359fba["4a37b8359fba<br/>g=24 n=20<br/>comp=11630.1"]
     h_0d997f667104["0d997f667104<br/>g=12 n=12<br/>comp=10321.3"]
     h_89dc6fedf0d6["89dc6fedf0d6<br/>g=12 n=12<br/>comp=10910.1"]
@@ -73,11 +72,11 @@ flowchart TD
     h_db5969337a19["db5969337a19<br/>g=41 n=20<br/>comp=10548.2"]
     h_0e279ee4fb7c["0e279ee4fb7c<br/>g=42 n=20<br/>comp=10654.3"]
     h_22f99631bc6a["22f99631bc6a<br/>g=52 n=20<br/>comp=10527.9"]
+    h_d417276684b4["d417276684b4<br/>g=15 n=15<br/>comp=10370.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_d417276684b4["d417276684b4<br/>CURRENT"]
+    h_4adf1297f64a["4adf1297f64a<br/>CURRENT"]
 
-    h_05d29166cb4e -->|improve| h_4a37b8359fba
     h_4a37b8359fba -->|improve| h_0d997f667104
     h_0d997f667104 -->|improve| h_89dc6fedf0d6
     h_89dc6fedf0d6 -->|improve| h_7c64f33a9c1f
@@ -148,6 +147,7 @@ flowchart TD
     h_db5969337a19 -. rollback .-> h_a95d8b3c3cb1
     h_0e279ee4fb7c -->|improve| h_22f99631bc6a
     h_22f99631bc6a -. rollback .-> h_0e279ee4fb7c
+    h_d417276684b4 -->|improve| h_4adf1297f64a
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -155,7 +155,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_d7744a17c3fe anchor;
-    class h_05d29166cb4e plain;
     class h_4a37b8359fba plain;
     class h_0d997f667104 plain;
     class h_89dc6fedf0d6 plain;
@@ -212,9 +211,10 @@ flowchart TD
     class h_db5969337a19 plain;
     class h_0e279ee4fb7c plain;
     class h_22f99631bc6a plain;
+    class h_d417276684b4 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_d417276684b4 current;
+    class h_4adf1297f64a current;
 ```
 
 ## Detail 1/12
@@ -3353,9 +3353,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `d417276684b4`
-- Nodes in this diagram: `72`
-- Internal edges in this diagram: `84`
+- Range: `8b764b56c6f3` .. `4adf1297f64a`
+- Nodes in this diagram: `73`
+- Internal edges in this diagram: `85`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3441,9 +3441,10 @@ flowchart TD
     h_db5969337a19["db5969337a19<br/>g=41 n=20<br/>comp=10548.2"]
     h_0e279ee4fb7c["0e279ee4fb7c<br/>g=42 n=20<br/>comp=10654.3"]
     h_22f99631bc6a["22f99631bc6a<br/>g=52 n=20<br/>comp=10527.9"]
+    h_d417276684b4["d417276684b4<br/>g=15 n=15<br/>comp=10370.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_d417276684b4["d417276684b4<br/>CURRENT"]
+    h_4adf1297f64a["4adf1297f64a<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3529,6 +3530,7 @@ flowchart TD
     h_db5969337a19 -. rollback .-> h_a95d8b3c3cb1
     h_0e279ee4fb7c -->|improve| h_22f99631bc6a
     h_22f99631bc6a -. rollback .-> h_0e279ee4fb7c
+    h_d417276684b4 -->|improve| h_4adf1297f64a
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3604,12 +3606,23 @@ flowchart TD
     class h_db5969337a19 plain;
     class h_0e279ee4fb7c plain;
     class h_22f99631bc6a plain;
+    class h_d417276684b4 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_d417276684b4 current;
+    class h_4adf1297f64a current;
 ```
 
 ## Transition Notes
+
+### Improve Game#13608 `d4172766 -> 4adf1297`
+
+- scores: `10791 6742 12132 9645 22576 14366 12527 14698 10867 8935 9447 16150`
+- v461: death-spiral noise suppression — suppress 9.6b/5.6/9.3 when danger>0 && rp>=3 && NO && deadline
+- Worst game T62: rp=6, NO, deadline, danger=3 → x=3.0 edge scatter at pc=40, game over in 3 turns.
+- Flat -4500 axis 8.8 is correct but proximity/growth/AVOID_BLOCK noise overrides height penalty.
+- Fixes rollback failure mode: death-spiral edge scatter from bonus noise overriding height penalty
+- tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md
+- v461: death-spiral noise suppression — when rp>=3, NO merge, deadline crossed, danger>0
 
 ### Improve Game#13596 `98b57969 -> d4172766`
 
