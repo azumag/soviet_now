@@ -707,7 +707,7 @@ async function fetchGameUrl() {
  * メインゲームループ
  */
 async function gameLoop(page, calibration, gameNumber) {
-  const historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
+  let historyFile = join(HISTORY_DIR, `latest_${String(gameNumber).padStart(4, '0')}.jsonl`);
   let currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
   let turn = 0;
   let lastDropTime = 0;
@@ -805,7 +805,10 @@ async function gameLoop(page, calibration, gameNumber) {
             .catch(e => console.error('[game] Post-game error:', e.message))
             .finally(() => { pendingGameOver = null; });
           // 次ラウンド用にリセット
+          // historyFileを新ゲーム番号で作成 (handleGameOverと競合しないよう)
+          const nextHistoryFile = join(HISTORY_DIR, `latest_${String(gameNumber + 1).padStart(4, '0')}.jsonl`);
           gameNumber++;
+          historyFile = nextHistoryFile;
           currentStrategySnapshot = snapshotCurrentStrategyForGame(gameNumber);
           console.log(`[game] Next round strategy fixed: game=#${gameNumber}, hash=${currentStrategySnapshot.strategyHash}`);
           turn = 0;

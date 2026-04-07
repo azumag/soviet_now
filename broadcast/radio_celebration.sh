@@ -72,6 +72,7 @@ CELEBPROMPT
 	else
 		_radio_clear_state "russia_celebration" "generation_failed"
 		log "[RUSSIA] 祝賀トーク生成失敗"
+		return 1
 	fi
 }
 
@@ -140,11 +141,12 @@ CELEBPROMPT
 			log "[CELEBRATION] fact-check後の本文が不正/短文"
 			return 1
 		fi
-		echo "$celebration_talk" >tmp/radio_celebration.txt
+		echo "$celebration_talk" >"$TMP_DEBUG_DIR/radio_soviet_celebration.txt"
 		_radio_set_state "playing" "celebration"
 		log "[CELEBRATION] ${#celebration_talk}字 生成完了（再生は呼び出し側で）"
 	else
 		_radio_clear_state "celebration" "generation_failed"
 		log "[CELEBRATION] 祝賀トーク生成失敗"
+		return 1
 	fi
 }

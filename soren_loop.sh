@@ -56,17 +56,20 @@ if [ -t 0 ]; then
 	fi
 fi
 
-# --- 多重起動防止 ---
-LOCKFILE="tmp/soren_loop.lock"
+# --- 多重起動防止 (mkdir-based アトミックロック) ---
+LOCKDIR="tmp/.soren_loop.lock"
 mkdir -p tmp
-if [ -f "$LOCKFILE" ]; then
-	old_pid=$(cat "$LOCKFILE" 2>/dev/null)
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+	old_pid=$(cat "$LOCKDIR/pid" 2>/dev/null)
 	if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
 		echo "ERROR: soren_loop.sh is already running (PID=$old_pid). Aborting."
 		exit 1
 	fi
+	# stale lock — force acquire
+	rm -rf "$LOCKDIR"
+	mkdir "$LOCKDIR" || { echo "ERROR: failed to acquire lock."; exit 1; }
 fi
-echo $$ > "$LOCKFILE"
+echo $$ > "$LOCKDIR/pid"
 rm -f tmp/stop
 
 # --- 環境変数読み込み ---
@@ -155,43 +158,6 @@ _run_scheduled_meriken_time_window() {
 	return 0
 }
 
-_wait_for_cycle_boundary() {
-	[ -f "$ACCUMULATED_GAMES_FILE" ] || return 0
-
-	local wait_acc_count=0
-	wait_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
-	if [ "${wait_acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then
-		return 0
-	fi
-
-	log "[CYCLE] ${wait_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 → 改善起動待ち"
-	local wait_max="${CYCLE_BOUNDARY_WAIT_MAX_SEC:-60}"
-	case "$wait_max" in
-	''|*[!0-9]*) wait_max=60 ;;
-	esac
-	local waited=0
-	while [ "$waited" -lt "$wait_max" ]; do
-		if _is_improve_running; then
-			log "[CYCLE] 改善起動確認 (${waited}s) → 次ゲーム準備を保留"
-			return 1
-		fi
-
-		local current_acc_count=0
-		if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
-			current_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
-		fi
-		if [ "${current_acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then
-			log "[CYCLE] サイクル境界処理完了 (${waited}s, acc=${current_acc_count:-0})"
-			return 0
-		fi
-
-		sleep 3
-		waited=$((waited + 3))
-	done
-
-	log "[CYCLE] 改善起動タイムアウト (${wait_max}s)"
-	return 0
-}
 
 # --- 初期化 ---
 log "=== Soren Evolution Loop ==="
@@ -377,24 +343,40 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 		_clear_accumulated_data
 	fi
 
-	# 予想サイクル管理: improve_daemon が動いていない場合のフォールバック
-	# improve_daemon 起動中はデーモン側に完全委任
-	_improve_daemon_alive=false
-	if [ -f "tmp/state/improve_daemon.pid" ]; then
-		_daemon_pid=$(cat "tmp/state/improve_daemon.pid" 2>/dev/null)
-		if [ -n "$_daemon_pid" ] && kill -0 "$_daemon_pid" 2>/dev/null; then
-			_improve_daemon_alive=true
-		fi
-	fi
-	if [ "$_improve_daemon_alive" = false ] && ! _is_improve_running && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+	# 改善サイクル管理: 12試合蓄積時にロックファイルを作成してdeamonに通知
+	# improve_daemon が動いていない場合は蓄積リセットのみ行い次サイクルへ
+	if [ -f "$ACCUMULATED_GAMES_FILE" ] && ! _is_improve_running; then
 		_cycle_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
 		if [ "${_cycle_acc_count:-0}" -ge "$MIN_GAMES_BEFORE_IMPROVE" ]; then
-			log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 (デーモンなし) → 予想resolve+蓄積リセット"
+			# デーモンの存在確認
+			_improve_daemon_alive=false
+			if [ -f "$IMPROVE_DAEMON_PID_FILE" ]; then
+				_daemon_pid=$(cat "$IMPROVE_DAEMON_PID_FILE" 2>/dev/null)
+				if [ -n "$_daemon_pid" ] && kill -0 "$_daemon_pid" 2>/dev/null; then
+					_improve_daemon_alive=true
+				fi
+			fi
+			# 予想サイクル終了 (daemon有無によらず resolve)
 			if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
 				_cycle_pred_best=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
 				./twitch_predictions.sh resolve "$_cycle_pred_best" >>tmp/prediction.log 2>&1 || true
 			fi
-			_clear_accumulated_data
+			if [ "$_improve_daemon_alive" = true ]; then
+				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 → ロックファイル作成 (デーモンが改善開始予定)"
+				# accumulated_games.json をロックファイルとしてコピーしてデーモンに渡す
+				cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+				python3 -c "
+import json, time
+f='$IMPROVE_LOCK_FILE'
+d=json.load(open(f))
+d['started_at']=int(time.time())
+json.dump(d,open(f,'w'))
+" 2>/dev/null || true
+				_clear_accumulated_data
+			else
+				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 (デーモンなし) → 蓄積リセット、次サイクルへ"
+				_clear_accumulated_data
+			fi
 		fi
 	fi
 
@@ -421,18 +403,9 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 		fi
 	fi
 
-	# サイクル到達時: 改善開始が見えたら次ゲーム準備を保留し、
-	# 改善完了後に改めて retry する。
-	if _wait_for_cycle_boundary; then
-		:
-	else
-		DEFER_NEXT_GAME_PREP=1
-		sleep 2
-		continue
-	fi
-
+	# ロックファイル作成直後: 改善中なら次ゲーム準備を保留
 	if _is_improve_running; then
-		log "[CYCLE] 改善開始を直前検出 → 次ゲーム準備を保留"
+		log "[CYCLE] 改善ロック検出 → 次ゲーム準備を保留"
 		DEFER_NEXT_GAME_PREP=1
 		sleep 2
 		continue

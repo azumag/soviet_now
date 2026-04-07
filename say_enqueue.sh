@@ -241,6 +241,10 @@ _infer_source_label() {
 		echo "radio"
 		return 0
 		;;
+	*"tmp/debug/radio_soviet_celebration.txt")
+		echo "radio:celebration"
+		return 0
+		;;
 	*"tmp/radio_celebration.txt")
 		echo "radio:celebration"
 		return 0

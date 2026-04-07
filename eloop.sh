@@ -260,8 +260,8 @@ handle_soviet_celebration() {
 	sleep 30
 
 	# 祝賀トーク再生
-	if [ -f "tmp/radio_celebration.txt" ] && [ -s "tmp/radio_celebration.txt" ]; then
-		_play_priority_audio_file "tmp/radio_celebration.txt" "celebration"
+	if [ -f "$TMP_DEBUG_DIR/radio_soviet_celebration.txt" ] && [ -s "$TMP_DEBUG_DIR/radio_soviet_celebration.txt" ]; then
+		_play_priority_audio_file "$TMP_DEBUG_DIR/radio_soviet_celebration.txt" "celebration"
 	fi
 	_radio_clear_state "celebration"
 	rm -f "$TMP_MARKERS_DIR/.soviet_created"

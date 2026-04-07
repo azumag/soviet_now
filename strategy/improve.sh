@@ -4,34 +4,7 @@
 #=== 改善中判定 (soren_loop.sh のスキップ判定用) ===
 
 _is_improve_running() {
-	_sync_improve_state_with_live_process >/dev/null 2>&1 || true
-	[ -f "$IMPROVE_STATE_FILE" ] || return 1
-	local state imp_status pid
-	state=$(cat "$IMPROVE_STATE_FILE" 2>/dev/null) || return 1
-	imp_status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
-	# 手動改善モード: PIDチェック不要、常にrunning扱い
-	[ "$imp_status" = "manual" ] && return 0
-	[ "$imp_status" = "running" ] || return 1
-	# soren_loop はこのファイルを毎周回 source するため、ここで self-heal しておくと
-	# 既に動いているループでも stale/完了済み改善ジョブを即時に回収できる。
-	if command -v check_and_harvest_improvement >/dev/null 2>&1; then
-		check_and_harvest_improvement
-		state=$(cat "$IMPROVE_STATE_FILE" 2>/dev/null) || return 1
-		imp_status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
-		[ "$imp_status" = "running" ] || return 1
-	fi
-	pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
-	case "$pid" in
-	''|0|*[!0-9]*) return 1 ;;
-	esac
-	if kill -0 "$pid" 2>/dev/null; then
-		local cmd
-		cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-		if echo "$cmd" | grep -q "eloop_improve"; then
-			return 0
-		fi
-	fi
-	return 1
+	[ -f "$IMPROVE_LOCK_FILE" ]
 }
 
 #=== 改善ステート管理 ===
@@ -164,6 +137,17 @@ check_and_harvest_improvement() {
 	local status
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
 
+	# 孤立ロックファイル検出: idle状態でロックファイルが30秒以上残っている場合は削除
+	if [ "$status" = "idle" ] && [ -f "$IMPROVE_LOCK_FILE" ]; then
+		local _lock_age _lock_mtime
+		_lock_mtime=$(stat -f '%m' "$IMPROVE_LOCK_FILE" 2>/dev/null || echo 0)
+		_lock_age=$(( $(date +%s) - ${_lock_mtime:-0} ))
+		if [ "${_lock_age:-0}" -gt 30 ]; then
+			log "[IMPROVE] 孤立ロックファイル検出 (age=${_lock_age}s, status=idle) → 削除"
+			rm -f "$IMPROVE_LOCK_FILE"
+		fi
+	fi
+
 	# 手動改善モード
 	if [ "$status" = "manual" ]; then
 		# フラグが存在する間は待機
@@ -213,6 +197,7 @@ json.dump(rs, open(rs_file, 'w'))
 			date +%s > "$TMP_STATE_DIR/last_improve_failed_at"
 			_write_improve_state "idle" "0" "" "failed_no_apply" "100" "manual_no_change"
 		fi
+		rm -f "$IMPROVE_LOCK_FILE"
 		IMPROVE_PID=0
 		log "[IMPROVE][MANUAL] 手動改善完了 → idle"
 		./obs_control.sh hide soren console4 2>/dev/null &
@@ -377,6 +362,7 @@ with open(rs_file, 'w') as f:
 			else
 				_write_improve_state "idle" "0" "" "failed_no_apply" "100" "${prev_detail:-process_exited_without_apply}"
 			fi
+			rm -f "$IMPROVE_LOCK_FILE"
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
 			# OBS: 改善中コンソール非表示
@@ -886,93 +872,25 @@ trigger_adaptive_improvement() {
 		log "[HALT] trigger_adaptive_improvementをスキップ（建国後停止中）"
 		return
 	fi
-	_sync_improve_state_with_live_process >/dev/null 2>&1 || true
 
-	local current_hash=""
-	if [ -f "$STRATEGY_FILE" ]; then
-		current_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
-	fi
+	# ロックファイルが存在しない場合は何もしない（メインループが作成する）
+	[ -f "$IMPROVE_LOCK_FILE" ] || return 0
 
-	# Step 2: リグレッション検知
-	# soren_loop.sh 側で毎試合 check_regression を呼んでいるため、
-	# daemon モードでは重複実行を避けてスキップ。
-	# soren_loop なし（旧構成互換）の場合のみここで実行。
-	if [ "${IMPROVE_DAEMON_MODE:-0}" != "1" ]; then
-		if check_regression; then
-			touch "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
-			if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-				python3 -c "
-import json
-f='$TMP_STATE_DIR/current_prediction.json'
-d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
-" 2>/dev/null || true
-				./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
-			fi
-			_clear_accumulated_data
-			return
-		fi
-	fi
-
-	# Step 3: 改善プロセス実行中?
-	local state
+	# 既に改善プロセス中（状態ファイルで確認）
+	local state status
 	state=$(_read_improve_state)
-	local status
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
-
-	if [ "$status" = "running" ]; then
-		# PIDが本当に生きているか確認 (stale検出)
-		local running_pid
-		running_pid=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pid',0))" 2>/dev/null)
-		local still_alive=false
-		if [ "${running_pid:-0}" -ne 0 ] && kill -0 "$running_pid" 2>/dev/null; then
-			local pid_cmd
-			pid_cmd=$(ps -p "$running_pid" -o command= 2>/dev/null || echo "")
-			if echo "$pid_cmd" | grep -q "eloop_improve"; then
-				still_alive=true
-			fi
-		fi
-		if [ "$still_alive" = true ]; then
-			log "[IMPROVE] 改善中 (PID=$running_pid), データ蓄積済み"
-			return
-		else
-			log "[IMPROVE] stale検出: PID=$running_pid は既に終了 → harvest & 続行"
-			check_and_harvest_improvement
-		fi
+	if [ "$status" = "running" ] || [ "$status" = "manual" ]; then
+		log "[IMPROVE] 改善中 (status=$status) → スキップ"
+		return 0
 	fi
 
-	# Step 3.5: failed_no_apply 後のクールダウン (連続再試行防止)
-	# 改善が戦略変更なしで終了した場合、同じ蓄積データですぐ再試行しても
-	# 同じ結果になる。新しいゲームデータが追加されるまで待つ。
-	if [ -f "$TMP_STATE_DIR/last_improve_failed_at" ]; then
-		local _fail_ts _now_ts _fail_acc_count
-		_fail_ts=$(cat "$TMP_STATE_DIR/last_improve_failed_at" 2>/dev/null || echo 0)
-		_now_ts=$(date +%s)
-		# 蓄積数が失敗時から増えたか確認（新データが追加されたらリトライOK）
-		_fail_acc_count=$(python3 -c "
-import json, os
-f='$ACCUMULATED_GAMES_FILE'
-if os.path.exists(f):
-    print(json.load(open(f)).get('count',0))
-else:
-    print(0)
-" 2>/dev/null || echo 0)
-		local _fail_cooldown=${IMPROVE_FAIL_COOLDOWN:-600}  # デフォルト10分
-		if [ $((_now_ts - _fail_ts)) -lt "$_fail_cooldown" ]; then
-			log "[IMPROVE] failed_no_apply クールダウン中 (残$(((_fail_cooldown - (_now_ts - _fail_ts))))秒)"
-			return
-		else
-			log "[IMPROVE] failed_no_apply クールダウン終了 → 再試行許可"
-			rm -f "$TMP_STATE_DIR/last_improve_failed_at"
-		fi
-	fi
-
-	# Step 3.6: レートリミット指数バックオフ
+	# レートリミット指数バックオフ
 	if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
 		local _rl_count _rl_ts _rl_now _rl_wait _rl_exp
 		_rl_count=$(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 1)
 		_rl_ts=$(sed -n '2p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 0)
 		_rl_now=$(date +%s)
-		# 指数バックオフ: 5min * 2^(count-1), 上限60min
 		_rl_exp=$((_rl_count - 1 > 5 ? 5 : _rl_count - 1))
 		_rl_wait=$((300 * (1 << _rl_exp)))
 		if [ $((_rl_now - _rl_ts)) -lt "$_rl_wait" ]; then
@@ -984,63 +902,19 @@ else:
 		fi
 	fi
 
-	# Step 4: 最低10試合ゲート
-	local acc_data
-	acc_data=$(_read_accumulated_data)
-	local acc_hash
-	acc_hash=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hash',''))" 2>/dev/null)
-	local acc_count
-	acc_count=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null)
-	if [ "${acc_count:-0}" -gt 0 ] && [ -n "$current_hash" ] && [ -z "$acc_hash" ]; then
-		log "[IMPROVE] 旧形式queuedデータを検出（hashなし）→ 破棄"
-		_clear_accumulated_data
-		acc_data=$(_read_accumulated_data)
-		acc_hash=""
-		acc_count=0
-	fi
-	if [ -n "$acc_hash" ] && [ -n "$current_hash" ] && [ "$acc_hash" != "$current_hash" ]; then
-		log "[IMPROVE] queuedデータの戦略が現行と不一致: queued=${acc_hash:0:8} current=${current_hash:0:8} → 破棄"
-		_clear_accumulated_data
-		acc_data=$(_read_accumulated_data)
-		acc_hash=""
-		acc_count=0
-	fi
-	acc_count=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null)
+	# ロックファイルから蓄積データを読む
+	local lock_data acc_count all_history_files all_scores any_soviet
+	lock_data=$(cat "$IMPROVE_LOCK_FILE" 2>/dev/null) || {
+		log "[IMPROVE] ロックファイル読み込み失敗 → スキップ"
+		rm -f "$IMPROVE_LOCK_FILE"
+		return 1
+	}
+	acc_count=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo 0)
+	all_history_files=$(echo "$lock_data" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('files',[])))" 2>/dev/null)
+	all_scores=$(echo "$lock_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('scores',''))" 2>/dev/null)
+	any_soviet=$(echo "$lock_data" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet',False) else 'false')" 2>/dev/null)
 
-	if [ "${acc_count:-0}" -lt "$MIN_GAMES_BEFORE_IMPROVE" ]; then
-		log "[IMPROVE] 蓄積 ${acc_count:-0}/${MIN_GAMES_BEFORE_IMPROVE} 試合 → 待機"
-		return
-	fi
-
-	# Step 5: idle → 改善開始
-	# リグレッション検知 (daemon モードでも改善開始直前にチェック)
-	if check_regression; then
-		touch "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
-		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-			python3 -c "
-import json
-f='$TMP_STATE_DIR/current_prediction.json'
-d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
-" 2>/dev/null || true
-			./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
-		fi
-		_clear_accumulated_data
-		return
-	fi
-	# チャネルポイント予想: サイクル終了 → best_outcome で解決
-	if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-		local pred_best=0
-		pred_best=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
-		./twitch_predictions.sh resolve "$pred_best" >>tmp/prediction.log 2>&1 || true
-	fi
-	# 蓄積データから履歴ファイル・スコアを統合
-	local all_history_files all_scores any_soviet
-	all_history_files=$(echo "$acc_data" | python3 -c "import json,sys; print(' '.join(json.load(sys.stdin).get('files',[])))" 2>/dev/null)
-	all_scores=$(echo "$acc_data" | python3 -c "import json,sys; print(json.load(sys.stdin).get('scores',''))" 2>/dev/null)
-	any_soviet=$(echo "$acc_data" | python3 -c "import json,sys; print('true' if json.load(sys.stdin).get('soviet',False) else 'false')" 2>/dev/null)
 	if _start_improvement_job "$all_history_files" "$all_scores" "$any_soviet" "$acc_count" "normal"; then
-		# 通常改善のみ、起動成功後に蓄積をクリア (即死時は保持)
-		_clear_accumulated_data
 		rm -f "$TMP_STATE_DIR/last_improve_failed_at"
 	fi
 }

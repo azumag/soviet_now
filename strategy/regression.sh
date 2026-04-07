@@ -1921,8 +1921,16 @@ PY
 		local rollback_game_num rollback_analysis_summary
 		rollback_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 
-		cp "$rollback_file" "$STRATEGY_FILE"
-		cp "$STRATEGY_FILE" "tmp/revert_strategy.py" 2>/dev/null || true
+		# 先に現在の戦略をバックアップ（失敗時はロールバック中止）
+		cp "$STRATEGY_FILE" "${STRATEGY_FILE}.bak" || {
+			log "[REGRESSION] CRITICAL: バックアップ失敗、ロールバック中止"
+			return 1
+		}
+		if ! cp "$rollback_file" "$STRATEGY_FILE"; then
+			log "[REGRESSION] CRITICAL: ロールバックファイルコピー失敗、復元中"
+			cp "${STRATEGY_FILE}.bak" "$STRATEGY_FILE" 2>/dev/null || true
+			return 1
+		fi
 		local rolled_hash
 		rolled_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "")
 		_archive_strategy_snapshot_by_hash "$STRATEGY_FILE" "$rolled_hash"

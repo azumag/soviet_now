@@ -294,6 +294,12 @@ schedule_nonessential_audio_jobs() {
 	fi
 	local cycle_pos=$(( acc_count % improve_cycle ))
 
+	# 改善直前判定: サイクル末の2ゲームは jiji と改善起動の競合を避ける
+	local near_improve=false
+	if [ "$acc_count" -ge $(( improve_cycle - 2 )) ]; then
+		near_improve=true
+	fi
+
 	local comment_queued=0 comment_playing=0 comment_total=0
 	local comment_backlog_high=false
 	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"

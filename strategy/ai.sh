@@ -472,11 +472,20 @@ run_cmd() {
 		log "[CMD] レートリミット/残高不足検出 → 即フォールバック (rc=79)"
 		ret=79
 	fi
-	# 空応答検出: 10秒以内に rc=0 で完了 → モデルが実質的な応答を返していない
-	# (実際の改善作業は最低30秒以上かかる)
-	if [ "$ret" -eq 0 ] && [ "${_cmd_elapsed:-999}" -le 10 ]; then
-		log "[CMD] 空応答検出 (${_cmd_elapsed}s) → セッションクリア"
-		ret=78
+	# 空応答検出: 極短時間かつログが空 → モデルが実質的な応答を返していない
+	# (ファイル変更の有無ではなくログ内容で判定 — バリデーション等の短時間タスクを誤検出しない)
+	if [ "$ret" -eq 0 ] && [ "${_cmd_elapsed:-999}" -le 3 ]; then
+		_log_has_content=false
+		if [ -n "$cmd_log_file" ] && [ -s "$cmd_log_file" ]; then
+			_log_bytes=$(wc -c < "$cmd_log_file" 2>/dev/null || echo 0)
+			if [ "$_log_bytes" -gt 200 ]; then
+				_log_has_content=true
+			fi
+		fi
+		if [ "$_log_has_content" = "false" ]; then
+			log "[CMD] 空応答検出 (${_cmd_elapsed}s, $(wc -c < "$cmd_log_file" 2>/dev/null || echo 0)B) → セッションクリア"
+			ret=78
+		fi
 	fi
 	if [ "$type" = "glm" ] || [ "$type" = "opencode" ] || [ "$type" = "zai" ]; then
 		if [ "$ret" -eq 77 ] || [ "$ret" -eq 78 ]; then

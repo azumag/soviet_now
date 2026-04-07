@@ -181,10 +181,10 @@ cleanup_all() {
 
 	local loop_pid
 	loop_pid=$(_my_pid)
-	if [ -f "tmp/soren_loop.lock" ]; then
+	if [ -f "tmp/.soren_loop.lock/pid" ]; then
 		local lock_pid
 		local lock_cmd
-		lock_pid=$(cat "tmp/soren_loop.lock" 2>/dev/null || echo "")
+		lock_pid=$(cat "tmp/.soren_loop.lock/pid" 2>/dev/null || echo "")
 		case "$lock_pid" in
 		''|*[!0-9]*) lock_pid="" ;;
 		esac
@@ -215,6 +215,7 @@ cleanup_all() {
 	else
 		_write_improve_state "idle" "0" ""
 	fi
+	rm -f "$IMPROVE_LOCK_FILE"
 
 	local rollback_postmortem_pid=0
 	if [ -f "$ROLLBACK_POSTMORTEM_PID_FILE" ]; then
@@ -247,6 +248,6 @@ cleanup_all() {
 	# /tmp/eloop_* 一時ファイル一括削除
 	rm -f /tmp/eloop_prompt.* /tmp/eloop_runner.* /tmp/eloop_radio_* /tmp/eloop_comment_* /tmp/eloop_fix_* /tmp/eloop_celebration_* /tmp/eloop_news_*
 	# ロックファイル削除
-	rm -f tmp/soren_loop.lock
+	rm -rf tmp/.soren_loop.lock
 	log "クリーンアップ完了"
 }

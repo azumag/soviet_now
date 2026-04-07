@@ -331,8 +331,8 @@ END { printf "%s", block }
 
 	# --- soren_loop 状態 ---
 	local loop_running=false loop_pid=""
-	if [[ -f tmp/soren_loop.lock ]]; then
-		loop_pid=$(cat tmp/soren_loop.lock 2>/dev/null)
+	if [[ -f tmp/.soren_loop.lock/pid ]]; then
+		loop_pid=$(cat tmp/.soren_loop.lock/pid 2>/dev/null)
 		if [[ -n "$loop_pid" ]] && kill -0 "$loop_pid" 2>/dev/null; then
 			loop_running=true
 		fi
@@ -844,7 +844,7 @@ PY
 			;;
 		esac
 		case "$say_source" in
-		*"/tmp/eloop_radio_talk_"*|*"tmp/.radio_deferred_queue/radio_"*|*"tmp/radio_celebration.txt"*)
+		*"/tmp/eloop_radio_talk_"*|*"tmp/.radio_deferred_queue/radio_"*|*"radio_soviet_celebration.txt"*)
 			say_source_is_radio=true
 			;;
 		*"tmp/.comment_queue/comment_"*)

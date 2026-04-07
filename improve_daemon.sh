@@ -21,7 +21,6 @@ export IMPROVE_DAEMON_MODE=1
 source ./eloop_lib.sh
 
 POLL_INTERVAL=${IMPROVE_DAEMON_POLL_INTERVAL:-30}
-IMPROVE_DAEMON_PID_FILE="tmp/state/improve_daemon.pid"
 echo "[$(date '+%H:%M:%S')] [improve_daemon] 起動 (poll=${POLL_INTERVAL}s)"
 echo $$ > "$IMPROVE_DAEMON_PID_FILE"
 
@@ -45,9 +44,11 @@ while true; do
 	GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	LAST_TURNS=$(cat "tmp/state/last_turns.txt" 2>/dev/null || echo 0)
 
-	# harvest → trigger
+	# harvest → ロックファイルがあれば trigger
 	check_and_harvest_improvement
-	trigger_adaptive_improvement
+	if [ -f "$IMPROVE_LOCK_FILE" ]; then
+		trigger_adaptive_improvement
+	fi
 
 	sleep "$POLL_INTERVAL"
 done

@@ -42,8 +42,19 @@ def metrics(scores, lcb_z, w_p50, w_p25, w_lcb):
     return composite, p50, p25, lcb, n
 
 
+def _require_args(subcmd, args, expected):
+    """Require exactly `expected` positional args for `subcmd`."""
+    if len(args) < expected:
+        print(
+            f"Error: '{subcmd}' requires {expected} arg(s), got {len(args)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 # ---- Subcommand: rank ----
 def cmd_rank(args):
+    _require_args("rank", args, 7)
     rs_file = args[0]
     current_hash = args[1]
     min_games = int(args[2])
@@ -177,9 +188,16 @@ def cmd_check(args):
 
 # ---- Subcommand: update_scores ----
 def cmd_update_scores(args):
+    _require_args("update_scores", args, 4)
     rs_file = args[0]
     h = args[1]
     score = int(args[2])
+    if not (0 <= score <= 1_000_000):
+        print(
+            f"Error: score {score} out of valid range [0, 1000000]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     max_window = int(args[3])
 
     if os.path.exists(rs_file):

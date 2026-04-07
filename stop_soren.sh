@@ -7,7 +7,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-LOCKFILE="tmp/soren_loop.lock"
+LOCKFILE="tmp/.soren_loop.lock/pid"
 STOP_FILE="tmp/stop"
 
 # stop-file 作成 (strategy_runner.py が次のループで検知)
