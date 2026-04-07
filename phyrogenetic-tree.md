@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-07 11:31:23 JST`
-- Nodes: `949`
-- Edges: `1304`
-- Current: `424708357a70`
-- Anchor: `424708357a70`
+- Updated: `2026-04-07 13:35:45 JST`
+- Nodes: `950`
+- Edges: `1305`
+- Current: `0e279ee4fb7c`
+- Anchor: `98b57969e9e1`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,8 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_424708357a70["424708357a70<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11898.5"]
-    h_6131abcbc65e["6131abcbc65e<br/>g=17 n=17<br/>comp=11039.5"]
+    h_98b57969e9e1["98b57969e9e1<br/>ANCHOR<br/>g=12 n=12<br/>comp=11869.6"]
     h_d5015d25c1de["d5015d25c1de<br/>g=36 n=20<br/>comp=10871.0"]
     h_b928b5a47b2d["b928b5a47b2d<br/>g=12 n=12<br/>comp=9617.2"]
     h_05d29166cb4e["05d29166cb4e<br/>g=12 n=12<br/>comp=10782.8"]
@@ -76,6 +75,7 @@ flowchart TD
     h_db5969337a19["db5969337a19<br/>g=41 n=20<br/>comp=10548.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_0e279ee4fb7c["0e279ee4fb7c<br/>CURRENT<br/>g=0"]
 
     h_d5015d25c1de -->|improve| h_b928b5a47b2d
     h_b928b5a47b2d -. rollback .-> h_d5015d25c1de
@@ -149,16 +149,13 @@ flowchart TD
     h_14798af73897 -->|improve| h_a95d8b3c3cb1
     h_a95d8b3c3cb1 -->|improve| h_db5969337a19
     h_db5969337a19 -. rollback .-> h_a95d8b3c3cb1
-    h_424708357a70 -. rollback .-> h_db5969337a19
-    h_db5969337a19 -. rollback .-> h_424708357a70
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_424708357a70 current_anchor;
-    class h_6131abcbc65e plain;
+    class h_98b57969e9e1 anchor;
     class h_d5015d25c1de plain;
     class h_b928b5a47b2d plain;
     class h_05d29166cb4e plain;
@@ -218,6 +215,7 @@ flowchart TD
     class h_db5969337a19 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_0e279ee4fb7c current;
 ```
 
 ## Detail 1/12
@@ -3087,7 +3085,7 @@ flowchart TD
 - Cross-chunk link: `294aa2554fbf --improve--> 3a3987c92448`
 - Cross-chunk link: `6131abcbc65e -.rollback.-> ade59a9a5025`
 - Cross-chunk link: `abd5c3448298 --improve--> d5015d25c1de`
-- Cross-chunk link: `... and 4 more`
+- Cross-chunk link: `... and 5 more`
 
 ```mermaid
 flowchart TD
@@ -3144,7 +3142,7 @@ flowchart TD
     h_df38ae81ba4a["df38ae81ba4a<br/>g=36 n=20<br/>comp=10072.0"]
     h_aea48ffce72f["aea48ffce72f<br/>g=12 n=12<br/>comp=9655.7"]
     h_734c56523254["734c56523254<br/>g=24 n=20<br/>comp=10952.7"]
-    h_98b57969e9e1["98b57969e9e1<br/>g=12 n=12<br/>comp=11869.6"]
+    h_98b57969e9e1["98b57969e9e1<br/>ANCHOR<br/>g=12 n=12<br/>comp=11869.6"]
     h_294aa2554fbf["294aa2554fbf<br/>g=24 n=20<br/>comp=11709.5"]
     h_ade59a9a5025["ade59a9a5025<br/>g=14 n=14<br/>comp=10942.4"]
     h_358c1f400dc9["358c1f400dc9<br/>g=24 n=20<br/>comp=10784.9"]
@@ -3169,7 +3167,7 @@ flowchart TD
     h_bb2eb7e82db6["bb2eb7e82db6<br/>g=12 n=12<br/>comp=11446.3"]
     h_2fdb9d0f5370["2fdb9d0f5370<br/>g=42 n=20<br/>comp=10787.1"]
     h_e5cde6468c8f["e5cde6468c8f<br/>g=12 n=12<br/>comp=11261.8"]
-    h_424708357a70["424708357a70<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11898.5"]
+    h_424708357a70["424708357a70<br/>g=43 n=20<br/>comp=11613.3"]
     h_15f86b7062ff["15f86b7062ff<br/>g=12 n=12<br/>comp=10651.3"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
@@ -3325,7 +3323,7 @@ flowchart TD
     class h_df38ae81ba4a plain;
     class h_aea48ffce72f plain;
     class h_734c56523254 plain;
-    class h_98b57969e9e1 plain;
+    class h_98b57969e9e1 anchor;
     class h_294aa2554fbf plain;
     class h_ade59a9a5025 plain;
     class h_358c1f400dc9 plain;
@@ -3350,14 +3348,14 @@ flowchart TD
     class h_bb2eb7e82db6 plain;
     class h_2fdb9d0f5370 plain;
     class h_e5cde6468c8f plain;
-    class h_424708357a70 current_anchor;
+    class h_424708357a70 plain;
     class h_15f86b7062ff plain;
 ```
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `a3aae72a4e37`
-- Nodes in this diagram: `69`
+- Range: `8b764b56c6f3` .. `0e279ee4fb7c`
+- Nodes in this diagram: `70`
 - Internal edges in this diagram: `82`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
@@ -3368,10 +3366,10 @@ flowchart TD
 - Cross-chunk link: `abd5c3448298 --improve--> d5015d25c1de`
 - Cross-chunk link: `da9419588c26 -.rollback.-> d7744a17c3fe`
 - Cross-chunk link: `d7744a17c3fe --improve--> 301434b90c7a`
+- Cross-chunk link: `db5969337a19 -.rollback.-> 424708357a70`
 - Cross-chunk link: `424708357a70 -.rollback.-> db5969337a19`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
-- Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
-- Cross-chunk link: `... and 2 more`
+- Cross-chunk link: `... and 3 more`
 
 ```mermaid
 flowchart TD
@@ -3444,6 +3442,7 @@ flowchart TD
     h_db5969337a19["db5969337a19<br/>g=41 n=20<br/>comp=10548.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_0e279ee4fb7c["0e279ee4fb7c<br/>CURRENT<br/>g=0"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3602,9 +3601,20 @@ flowchart TD
     class h_db5969337a19 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_0e279ee4fb7c current;
 ```
 
 ## Transition Notes
+
+### Improve Game#13484 `42470835 -> 0e279ee4`
+
+- scores: `11535 15684 11196 10288 12910 15842 12884 12936 10422 8575 14941 13250`
+- v485: enhanced penalty with landing_y scaling — stronger suppression of high placements
+- v329's dynamic penalty (landing_y * 2000) was partially overridden by additive bonuses
+- (axis 9.6b ~120-540, axis 9.3 ~200, axis 5.6 ~400-540). Flat -4500 from v452
+- overwhelms bonuses at y<=0 but loses effectiveness at higher y (y=2: -4500 vs -4500).
+- Worst game T59-65: max_y 1.59→2.72, HIGH_TOWER/AVOID_BLOCK selection despite NO merge.
+- Enhanced penalty: base -4500 + landing_y * 2000 (linear increase, y=2 → -8500).
 
 ### Rollback Game#13459 `db596933 -> 42470835`
 

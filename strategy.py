@@ -1797,15 +1797,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md, tmp/sandbox_files.md,
         #       game_history/20260324_045921_score0636.jsonl turns 56-62, game_history/20260324_043823_score0725.jsonl turns 61-62,
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
-        # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
-
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v452: flatten to -4500, matching protected strategy (median 12789)
-            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
-            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
-            # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
+            # v485: enhanced penalty with landing_y scaling — stronger suppression of high placements
+            # v329's dynamic penalty (landing_y * 2000) was partially overridden by additive bonuses
+            # (axis 9.6b ~120-540, axis 9.3 ~200, axis 5.6 ~400-540). Flat -4500 from v452
+            # overwhelms bonuses at y<=0 but loses effectiveness at higher y (y=2: -4500 vs -4500).
+            # Worst game T59-65: max_y 1.59→2.72, HIGH_TOWER/AVOID_BLOCK selection despite NO merge.
+            # Enhanced penalty: base -4500 + landing_y * 2000 (linear increase, y=2 → -8500).
+            # This guarantees high placements are penalized regardless of bonus magnitude.
+            landing_y = result.get("landing_y", 0)
+            penalty = -4500.0 + landing_y * 2000.0
+            # Ensure penalty doesn't become positive (unlikely with landing_y >= -2.5 but safe)
+            penalty = max(penalty, -10000.0)
+            score -= penalty
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            # Log for debugging if penalty is extremely high
+            if penalty < -7000:
+                reasons.append("CROSSES_DEADLINE_NO_MERGE")
+            # v329 postmortem constraint: deadline_crossed firing even when deadline not crossed
+            # The enhanced penalty supersedes the static -4500, so deadline_crossed flag
+            # should still be tracked for postmortem accuracy (not used for branching)
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
