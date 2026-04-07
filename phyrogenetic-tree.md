@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-08 00:03:23 JST`
-- Nodes: `954`
-- Edges: `1314`
-- Current: `eeb1660bbcdb`
-- Anchor: `eeb1660bbcdb`
+- Updated: `2026-04-08 00:13:16 JST`
+- Nodes: `955`
+- Edges: `1315`
+- Current: `8bb16b7dbe3b`
+- Anchor: `87a00400960f`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,13 +15,11 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_eeb1660bbcdb["eeb1660bbcdb<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11847.3"]
-    h_0d997f667104["0d997f667104<br/>g=12 n=12<br/>comp=10321.3"]
     h_89dc6fedf0d6["89dc6fedf0d6<br/>g=12 n=12<br/>comp=10910.1"]
     h_7c64f33a9c1f["7c64f33a9c1f<br/>g=24 n=20<br/>comp=11117.5"]
     h_8c58c37f49fc["8c58c37f49fc<br/>g=12 n=12<br/>comp=10851.6"]
     h_491c4ff85064["491c4ff85064<br/>g=12 n=12<br/>comp=10795.8"]
-    h_87a00400960f["87a00400960f<br/>g=24 n=20<br/>comp=11798.6"]
+    h_87a00400960f["87a00400960f<br/>ANCHOR<br/>g=24 n=20<br/>comp=11798.6"]
     h_11c426792c0e["11c426792c0e<br/>g=16 n=16<br/>comp=11123.9"]
     h_5399f0247342["5399f0247342<br/>g=12 n=12<br/>comp=11311.9"]
     h_4b0efa3ca7af["4b0efa3ca7af<br/>g=12 n=12<br/>comp=8937.7"]
@@ -76,8 +74,8 @@ flowchart TD
     h_49fedb9cb8f8["49fedb9cb8f8<br/>g=15 n=15<br/>comp=10428.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_8bb16b7dbe3b["8bb16b7dbe3b<br/>CURRENT"]
 
-    h_0d997f667104 -->|improve| h_89dc6fedf0d6
     h_89dc6fedf0d6 -->|improve| h_7c64f33a9c1f
     h_7c64f33a9c1f -->|improve| h_8c58c37f49fc
     h_8c58c37f49fc -->|improve| h_491c4ff85064
@@ -146,20 +144,18 @@ flowchart TD
     h_22f99631bc6a -. rollback .-> h_0e279ee4fb7c
     h_d417276684b4 -->|improve| h_4adf1297f64a
     h_4adf1297f64a -->|improve| h_49fedb9cb8f8
-    h_49fedb9cb8f8 -. rollback .-> h_eeb1660bbcdb
+    h_49fedb9cb8f8 -->|improve| h_8bb16b7dbe3b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_eeb1660bbcdb current_anchor;
-    class h_0d997f667104 plain;
     class h_89dc6fedf0d6 plain;
     class h_7c64f33a9c1f plain;
     class h_8c58c37f49fc plain;
     class h_491c4ff85064 plain;
-    class h_87a00400960f plain;
+    class h_87a00400960f anchor;
     class h_11c426792c0e plain;
     class h_5399f0247342 plain;
     class h_4b0efa3ca7af plain;
@@ -214,6 +210,7 @@ flowchart TD
     class h_49fedb9cb8f8 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_8bb16b7dbe3b current;
 ```
 
 ## Detail 1/12
@@ -3144,7 +3141,7 @@ flowchart TD
     h_294aa2554fbf["294aa2554fbf<br/>g=24 n=20<br/>comp=11709.5"]
     h_ade59a9a5025["ade59a9a5025<br/>g=14 n=14<br/>comp=10942.4"]
     h_358c1f400dc9["358c1f400dc9<br/>g=24 n=20<br/>comp=10784.9"]
-    h_eeb1660bbcdb["eeb1660bbcdb<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11847.3"]
+    h_eeb1660bbcdb["eeb1660bbcdb<br/>g=14 n=14<br/>comp=11541.5"]
     h_8f3bea72b931["8f3bea72b931<br/>g=12 n=12<br/>comp=11310.3"]
     h_f4545d36f678["f4545d36f678<br/>g=34 n=20<br/>comp=11153.1"]
     h_e7cf27aac00e["e7cf27aac00e<br/>g=24 n=20<br/>comp=11166.7"]
@@ -3325,7 +3322,7 @@ flowchart TD
     class h_294aa2554fbf plain;
     class h_ade59a9a5025 plain;
     class h_358c1f400dc9 plain;
-    class h_eeb1660bbcdb current_anchor;
+    class h_eeb1660bbcdb plain;
     class h_8f3bea72b931 plain;
     class h_f4545d36f678 plain;
     class h_e7cf27aac00e plain;
@@ -3352,9 +3349,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `a3aae72a4e37`
-- Nodes in this diagram: `74`
-- Internal edges in this diagram: `86`
+- Range: `8b764b56c6f3` .. `8bb16b7dbe3b`
+- Nodes in this diagram: `75`
+- Internal edges in this diagram: `87`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3390,7 +3387,7 @@ flowchart TD
     h_7c64f33a9c1f["7c64f33a9c1f<br/>g=24 n=20<br/>comp=11117.5"]
     h_8c58c37f49fc["8c58c37f49fc<br/>g=12 n=12<br/>comp=10851.6"]
     h_491c4ff85064["491c4ff85064<br/>g=12 n=12<br/>comp=10795.8"]
-    h_87a00400960f["87a00400960f<br/>g=24 n=20<br/>comp=11798.6"]
+    h_87a00400960f["87a00400960f<br/>ANCHOR<br/>g=24 n=20<br/>comp=11798.6"]
     h_11c426792c0e["11c426792c0e<br/>g=16 n=16<br/>comp=11123.9"]
     h_5399f0247342["5399f0247342<br/>g=12 n=12<br/>comp=11311.9"]
     h_4b0efa3ca7af["4b0efa3ca7af<br/>g=12 n=12<br/>comp=8937.7"]
@@ -3445,6 +3442,7 @@ flowchart TD
     h_49fedb9cb8f8["49fedb9cb8f8<br/>g=15 n=15<br/>comp=10428.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_8bb16b7dbe3b["8bb16b7dbe3b<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3532,6 +3530,7 @@ flowchart TD
     h_22f99631bc6a -. rollback .-> h_0e279ee4fb7c
     h_d417276684b4 -->|improve| h_4adf1297f64a
     h_4adf1297f64a -->|improve| h_49fedb9cb8f8
+    h_49fedb9cb8f8 -->|improve| h_8bb16b7dbe3b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3557,7 +3556,7 @@ flowchart TD
     class h_7c64f33a9c1f plain;
     class h_8c58c37f49fc plain;
     class h_491c4ff85064 plain;
-    class h_87a00400960f plain;
+    class h_87a00400960f anchor;
     class h_11c426792c0e plain;
     class h_5399f0247342 plain;
     class h_4b0efa3ca7af plain;
@@ -3612,9 +3611,20 @@ flowchart TD
     class h_49fedb9cb8f8 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_8bb16b7dbe3b current;
 ```
 
 ## Transition Notes
+
+### Improve Game#13641 `49fedb9c -> 8bb16b7d`
+
+- scores: `15031 14135 8648 17114 13128 13723 10862 14481 10255 10562 7475 16745`
+- v463: suppress axis 9.7 (pipeline guidance) in death_spiral — missing from v461/v462 suppression
+- Axis 9.7 fires when same_type_stack_top is None, giving ~80 bonus for adjacent-type proximity.
+- In death_spiral (danger>0 && rp>=3 && NO && deadline), this bonus can override height penalty
+- differentiation (~50-100 between y=0 and y=-2). All other guidance axes already suppressed;
+- 9.7 was the only gap. Fixes rollback failure mode: residual guidance noise in death spiral
+- game_history/20260407_232215_score2692.jsonl, tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md
 
 ### Rollback Game#13644 `49fedb9c -> eeb1660b`
 
