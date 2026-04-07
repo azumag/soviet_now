@@ -83,9 +83,14 @@ def get_state_field(gs):
     return gs.get("state", "")
 
 
-def is_board_settled(gs):
+SETTLE_FORCE_TIMEOUT = 30.0  # この秒数経過後は速度に関わらず settled 扱い
+
+def is_board_settled(gs, force_after: float = 0.0):
     """盤面が静止しているか (全ピースの速度が閾値以下)
-    vy=-5000 等の極端な速度はドロップ待機中のnextピースなので除外する。"""
+    vy=-5000 等の極端な速度はドロップ待機中のnextピースなので除外する。
+    force_after > 0 の場合、その時刻(time.time())を過ぎたら強制 settled 扱い。"""
+    if force_after > 0 and time.time() >= force_after:
+        return True
     if gs is None:
         return False
     pieces = gs.get("pieces", [])
@@ -321,6 +326,7 @@ def wait_for_move_state():
     """MOVE状態になるまで待つ。GAMEOVER/STOPならFalseを返す。"""
     settle_count = 0
     start = time.time()
+    settle_force_at = 0.0  # MOVE確認後に初めてセット
 
     while time.time() - start < MOVE_TIMEOUT:
         if os.path.exists(STOP_FILE):
@@ -338,11 +344,18 @@ def wait_for_move_state():
 
         if state != "MOVE":
             settle_count = 0
+            settle_force_at = 0.0
             time.sleep(POLL_INTERVAL)
             continue
 
-        # MOVE状態 → 静止確認
-        if is_board_settled(gs):
+        # MOVE状態に入った瞬間にタイムアウト時刻をセット
+        if settle_force_at == 0.0:
+            settle_force_at = time.time() + SETTLE_FORCE_TIMEOUT
+
+        # 静止確認（force_after を渡してグリッチ時も突破できるようにする）
+        if is_board_settled(gs, force_after=settle_force_at):
+            if time.time() >= settle_force_at:
+                log(f"WARN: board not settled after {SETTLE_FORCE_TIMEOUT}s, forcing drop")
             settle_count += 1
             if settle_count >= SETTLE_REQUIRED:
                 return gs, True
@@ -351,9 +364,9 @@ def wait_for_move_state():
 
         time.sleep(POLL_INTERVAL)
 
-    log("TIMEOUT: MOVE状態待ちタイムアウト")
+    log("TIMEOUT: MOVE状態待ちタイムアウト — 強制 settled 扱いで続行")
     gs = load_game_state()
-    return gs, False
+    return gs, True
 
 
 def run_game():

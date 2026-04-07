@@ -178,6 +178,10 @@ export function runClaudeText(tag, promptText, options = {}) {
   const config = resolveTextAiConfig();
   const target = resolveClaudePreset(options.claudePreset || config.claudePreset);
   const env = { ...process.env, ...target.env, ...(options.extraEnv || {}) };
+  if (!target.env.ANTHROPIC_BASE_URL) {
+    delete env.ANTHROPIC_BASE_URL;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+  }
   const timeoutMs = options.timeoutMs || config.claudeTimeoutMs;
   return new Promise((resolve, reject) => {
     const child = execFile('claude', [

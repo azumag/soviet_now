@@ -305,7 +305,7 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
 
 function callClaudeForComment(promptText) {
   return generateTextWithFallbacks('ranking_comment', promptText, {
-    claudePreset: 'gemma4e',
+    claudePreset: 'haiku',
     claudeFallbackPreset: 'haiku',
     parseOutput: raw => extractCommentOnly(raw, 'ranking_comment'),
     includeOpencodeFallback: true,

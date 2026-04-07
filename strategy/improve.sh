@@ -137,13 +137,16 @@ check_and_harvest_improvement() {
 	local status
 	status=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','idle'))" 2>/dev/null)
 
-	# 孤立ロックファイル検出: idle状態でロックファイルが30秒以上残っている場合は削除
+	# 孤立ロックファイル検出: idle状態でeloop_improveも動いていないのにロックが長時間残っている場合は削除
+	# ※ daemon poll間隔(デフォルト30s)より大幅に長い閾値にすること
+	#   (lock作成直後はstatus=idleのままdaemonが拾うまで最大poll間隔かかる)
 	if [ "$status" = "idle" ] && [ -f "$IMPROVE_LOCK_FILE" ]; then
-		local _lock_age _lock_mtime
+		local _lock_age _lock_mtime _orphan_threshold
+		_orphan_threshold="${IMPROVE_STALE_WATCHDOG_SEC:-600}"
 		_lock_mtime=$(stat -f '%m' "$IMPROVE_LOCK_FILE" 2>/dev/null || echo 0)
 		_lock_age=$(( $(date +%s) - ${_lock_mtime:-0} ))
-		if [ "${_lock_age:-0}" -gt 30 ]; then
-			log "[IMPROVE] 孤立ロックファイル検出 (age=${_lock_age}s, status=idle) → 削除"
+		if [ "${_lock_age:-0}" -gt "${_orphan_threshold}" ]; then
+			log "[IMPROVE] 孤立ロックファイル検出 (age=${_lock_age}s > ${_orphan_threshold}s, status=idle) → 削除"
 			rm -f "$IMPROVE_LOCK_FILE"
 		fi
 	fi
