@@ -63,6 +63,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v460: suppress REACTIVE_PAIRS_STACKING when danger_piece_count>0 && rp>=3 && NO merge
+     # Stacking bonus (~900 at high pc) differentiates candidates toward high same-type pieces,
+     # accelerating piece accumulation in danger zone. Suppressing lets height penalty be sole
+     # differentiator — consistent with axis 8.8 intent.
+     # Fixes rollback failure mode: stacking accelerates piece accumulation in danger zone (no merge)
+     # refs: game_history/20260407_200712_score0421.jsonl, game_history/20260407_201554_score0994.jsonl,
+     #       tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md
      # v459: remove axis 9.5 +300 SAME_TYPE_STACK_MERGE_PRIORITY bonus
      # Batch: avg delta=0.8 (worse than HEIGHT_CONTROL 2.8), selected 4.6% in low-score games.
      # With axis 9.6b providing proximity guidance (~120-540), the +300 was redundant
@@ -978,7 +985,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
         # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+        # v460: suppress stacking when danger_piece_count>0 && rp>=3 && NO merge
+        # Worst game T55-57: pc=39-41, rp=4-5, max_y=1.67-1.68, danger=1.
+        # stacking_congested guard (max_y>=3.0 or rp>=5+max_y>=2.5) doesn't fire,
+        # so chain-priority mode runs with congestion-scaled bonus (~900 at pc=39).
+        # This bonus differentiates candidates toward high same-type pieces,
+        # accelerating piece accumulation → death in 5-8 turns.
+        # When danger pieces exist and rp>=3 with no merge, chain-building is
+        # a luxury — survival via low placement (height penalty differentiation)
+        # is the only viable strategy. Suppress stacking to let height penalty
+        # be the sole differentiator, consistent with axis 8.8 intent.
+        # refs: game_history/20260407_200712_score0421.jsonl T55-57 (death spiral),
+        #       game_history/20260407_201554_score0994.jsonl T65-67 (rp=6, danger=4),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.5% low-score = guidance gap),
+        #       tmp/state/last_rollback_analysis.md (floor gap: 6874 vs 8645)
+        # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING accelerates piece
+        # accumulation in danger zone when no merge available
+        stacking_danger_suppressed = (
+            danger_piece_count > 0
+            and reactive_pair_count >= 3
+            and merge_grade == "NO"
+        )
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking

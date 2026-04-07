@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-07 19:40:46 JST`
-- Nodes: `951`
-- Edges: `1308`
-- Current: `98b57969e9e1`
-- Anchor: `98b57969e9e1`
+- Updated: `2026-04-07 20:28:50 JST`
+- Nodes: `952`
+- Edges: `1309`
+- Current: `d417276684b4`
+- Anchor: `d7744a17c3fe`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,8 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_98b57969e9e1["98b57969e9e1<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11869.6"]
-    h_b928b5a47b2d["b928b5a47b2d<br/>g=12 n=12<br/>comp=9617.2"]
+    h_d7744a17c3fe["d7744a17c3fe<br/>ANCHOR<br/>g=24 n=20<br/>comp=11868.6"]
     h_05d29166cb4e["05d29166cb4e<br/>g=12 n=12<br/>comp=10782.8"]
     h_4a37b8359fba["4a37b8359fba<br/>g=24 n=20<br/>comp=11630.1"]
     h_0d997f667104["0d997f667104<br/>g=12 n=12<br/>comp=10321.3"]
@@ -76,6 +75,7 @@ flowchart TD
     h_22f99631bc6a["22f99631bc6a<br/>g=52 n=20<br/>comp=10527.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_d417276684b4["d417276684b4<br/>CURRENT"]
 
     h_05d29166cb4e -->|improve| h_4a37b8359fba
     h_4a37b8359fba -->|improve| h_0d997f667104
@@ -108,6 +108,8 @@ flowchart TD
     h_defe4ad4eeaf -->|improve| h_f3726bcc9fc1
     h_f3726bcc9fc1 -->|improve| h_e4ac98cdecdb
     h_e4ac98cdecdb -. rollback .-> h_da9419588c26
+    h_da9419588c26 -. rollback .-> h_d7744a17c3fe
+    h_d7744a17c3fe -->|improve| h_301434b90c7a
     h_301434b90c7a -->|improve| h_b1c15fe57b34
     h_b1c15fe57b34 -->|improve| h_89af10322292
     h_89af10322292 -->|improve| h_5209b0724d36
@@ -146,15 +148,13 @@ flowchart TD
     h_db5969337a19 -. rollback .-> h_a95d8b3c3cb1
     h_0e279ee4fb7c -->|improve| h_22f99631bc6a
     h_22f99631bc6a -. rollback .-> h_0e279ee4fb7c
-    h_0e279ee4fb7c -. rollback .-> h_98b57969e9e1
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_98b57969e9e1 current_anchor;
-    class h_b928b5a47b2d plain;
+    class h_d7744a17c3fe anchor;
     class h_05d29166cb4e plain;
     class h_4a37b8359fba plain;
     class h_0d997f667104 plain;
@@ -214,6 +214,7 @@ flowchart TD
     class h_22f99631bc6a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_d417276684b4 current;
 ```
 
 ## Detail 1/12
@@ -3083,7 +3084,7 @@ flowchart TD
 - Cross-chunk link: `294aa2554fbf --improve--> 3a3987c92448`
 - Cross-chunk link: `6131abcbc65e -.rollback.-> ade59a9a5025`
 - Cross-chunk link: `abd5c3448298 --improve--> d5015d25c1de`
-- Cross-chunk link: `... and 6 more`
+- Cross-chunk link: `... and 7 more`
 
 ```mermaid
 flowchart TD
@@ -3135,12 +3136,12 @@ flowchart TD
     h_b32600722447["b32600722447<br/>g=12 n=12<br/>comp=11303.1"]
     h_5369a1d516af["5369a1d516af<br/>g=13 n=13<br/>comp=11623.4"]
     h_4d221bd60535["4d221bd60535<br/>g=12 n=12<br/>comp=9567.3"]
-    h_d7744a17c3fe["d7744a17c3fe<br/>g=24 n=20<br/>comp=11868.6"]
+    h_d7744a17c3fe["d7744a17c3fe<br/>ANCHOR<br/>g=24 n=20<br/>comp=11868.6"]
     h_626021cccd13["626021cccd13<br/>g=12 n=12<br/>comp=10512.5"]
     h_df38ae81ba4a["df38ae81ba4a<br/>g=36 n=20<br/>comp=10072.0"]
     h_aea48ffce72f["aea48ffce72f<br/>g=12 n=12<br/>comp=9655.7"]
     h_734c56523254["734c56523254<br/>g=24 n=20<br/>comp=10952.7"]
-    h_98b57969e9e1["98b57969e9e1<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=11869.6"]
+    h_98b57969e9e1["98b57969e9e1<br/>g=24 n=20<br/>comp=11754.2"]
     h_294aa2554fbf["294aa2554fbf<br/>g=24 n=20<br/>comp=11709.5"]
     h_ade59a9a5025["ade59a9a5025<br/>g=14 n=14<br/>comp=10942.4"]
     h_358c1f400dc9["358c1f400dc9<br/>g=24 n=20<br/>comp=10784.9"]
@@ -3316,12 +3317,12 @@ flowchart TD
     class h_b32600722447 plain;
     class h_5369a1d516af plain;
     class h_4d221bd60535 plain;
-    class h_d7744a17c3fe plain;
+    class h_d7744a17c3fe anchor;
     class h_626021cccd13 plain;
     class h_df38ae81ba4a plain;
     class h_aea48ffce72f plain;
     class h_734c56523254 plain;
-    class h_98b57969e9e1 current_anchor;
+    class h_98b57969e9e1 plain;
     class h_294aa2554fbf plain;
     class h_ade59a9a5025 plain;
     class h_358c1f400dc9 plain;
@@ -3352,8 +3353,8 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `a3aae72a4e37`
-- Nodes in this diagram: `71`
+- Range: `8b764b56c6f3` .. `d417276684b4`
+- Nodes in this diagram: `72`
 - Internal edges in this diagram: `84`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
@@ -3367,7 +3368,7 @@ flowchart TD
 - Cross-chunk link: `db5969337a19 -.rollback.-> 424708357a70`
 - Cross-chunk link: `424708357a70 -.rollback.-> db5969337a19`
 - Cross-chunk link: `424708357a70 --improve--> 0e279ee4fb7c`
-- Cross-chunk link: `... and 4 more`
+- Cross-chunk link: `... and 5 more`
 
 ```mermaid
 flowchart TD
@@ -3442,6 +3443,7 @@ flowchart TD
     h_22f99631bc6a["22f99631bc6a<br/>g=52 n=20<br/>comp=10527.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_d417276684b4["d417276684b4<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3604,9 +3606,20 @@ flowchart TD
     class h_22f99631bc6a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_d417276684b4 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#13596 `98b57969 -> d4172766`
+
+- scores: `11689 10138 12087 10771 16200 19025 13217 7179 11160 12751 10429 12499`
+- v460: suppress REACTIVE_PAIRS_STACKING when danger_piece_count>0 && rp>=3 && NO merge
+- Stacking bonus (~900 at high pc) differentiates candidates toward high same-type pieces,
+- accelerating piece accumulation in danger zone. Suppressing lets height penalty be sole
+- differentiator — consistent with axis 8.8 intent.
+- Fixes rollback failure mode: stacking accelerates piece accumulation in danger zone (no merge)
+- tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md
 
 ### Rollback Game#13584 `0e279ee4 -> 98b57969`
 
