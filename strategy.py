@@ -1739,46 +1739,123 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #   - 即時併合ボーナス強化: DIRECT: +1400.0, NEAR: +1200.0
         #   - 盤面圧縮ボーナス抑制: reactive_pairs>=3 && merge_grade == "NO" の場合、盤面圧縮ボーナスを付与しない
         #   - v337: russia_phase && reactive_pair_count < 3 の場合、axis 9.5のボーナス（+300.0）と軽減（+100.0）を削除し、即時併合を最優先
-        # 未活用情報：盤面上のtype 15個数、即時併合可否(merge_grade)、reactive_pairs、danger_piece_count
+        # v486: 2つ目のロシア育成パイプライン確保 — type 13/14 級ピースを既存ロシアに近づける配置ガイドを追加
+        # 改善の目的: ロシア建国後の盤面が狭くなり、高typeピースが場所を占有している状態で
+        # type 13, 14 級ピースをどこに育てるかの空間計画が不足している問題を解消
+        # 未活用情報：盤面上のtype 15個数、type 13/14個数、即時併合可否(merge_grade)、reactive_pairs、danger_piece_count
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
         #       game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl
+        # Fixes rollback failure mode: ロシア建国後の2つ目のロシア育成パイプライン確保（axis 8.7b追加）
 
         if russia_phase:
-             # ロシアフェーズでの即時併合優先
-             # 即時併合候補がある場合、最優先（強力なボーナス）
-             if merge_grade in ["DIRECT", "NEAR"]:
-                 # v336: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
-                 if reactive_pair_count >= 1:
-                     # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
-                     if merge_grade == "DIRECT":
-                         score += 1400.0 if reactive_pair_count >= 3 else 1200.0
-                     else:
-                         score += 1200.0 if reactive_pair_count >= 3 else 1000.0
-                 else:
-                     # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
-                     if merge_grade == "DIRECT":
-                         score += 1400.0
-                     else:
-                         score += 1200.0
-                 reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
-             elif merge_grade == "NO":
-                 # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
-                 # v336: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
-                 if reactive_pair_count >= 3:
-                     # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
-                     # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
-                     score += 900.0
-                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 elif reactive_pair_count >= 1:
-                     # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
-                     # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
-                     score += 400.0
-                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 else:
-                      # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
-                      # 盤面圧縮を優先しつつ、type 15保護を徹底
-                      score += 800.0
-                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+            # ロシアフェーズでの即時併合優先
+            # 即時併合候補がある場合、最優先（強力なボーナス）
+            if merge_grade in ["DIRECT", "NEAR"]:
+                # v336: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
+                if reactive_pair_count >= 1:
+                    # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
+                    if merge_grade == "DIRECT":
+                        score += 1400.0 if reactive_pair_count >= 3 else 1200.0
+                    else:
+                        score += 1200.0 if reactive_pair_count >= 3 else 1000.0
+                else:
+                    # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
+                    if merge_grade == "DIRECT":
+                        score += 1400.0
+                    else:
+                        score += 1200.0
+                reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
+            elif merge_grade == "NO":
+                # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
+                # v336: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
+                if reactive_pair_count >= 3:
+                    # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
+                    # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
+                    score += 900.0
+                    reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                elif reactive_pair_count >= 1:
+                    # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
+                    # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
+                    score += 400.0
+                    reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                else:
+                    # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
+                    # 盤面圧縮を優先しつつ、type 15保護を徹底
+                    score += 800.0
+                    reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+
+        # ----- evaluation axis 8.7b: russia phase pipeline development (v486: 2つ目のロシア育成パイプライン確保) -----
+        # 改善の目的: ロシア建国後の盤面が狭くなり、高typeピースが場所を占有している状態で
+        # type 13, 14 級ピースをどこに育てるかの空間計画が不足している問題を解消
+        # 既存のロシア(type 15)を保護しつつ、2つ目のロシアへの成長パイプラインを確保する
+        # 未活用情報: type 15個数、type 13個数、type 14個数、reactive_pairs、merge_grade
+        # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
+        # Fixes rollback failure mode: ロシア建国後の2つ目のロシア育成パイプライン確保
+
+        if russia_phase:
+            # 既存ロシアの位置を特定
+            existing_russias = [p for p in pieces if p.get("type") == 15]
+            if existing_russias:
+                # ロシアが1つ以上ある場合、その位置を保護
+                for russia in existing_russias:
+                    russia_x = russia.get("x", 0)
+                    russia_y = russia.get("y", -10)
+                    
+                    # type 13 と type 14 級ピースを検索
+                    type_13_pieces = [p for p in pieces if p.get("type") == 13]
+                    type_14_pieces = [p for p in pieces if p.get("type") == 14]
+                    
+                    # 2つ目のロシアへのパイプラインを確保
+                    # type 13 があれば、それを既存ロシアに近づける配置ボーナス
+                    if type_13_pieces:
+                        for t13 in type_13_pieces:
+                            t13_x = t13.get("x", 0)
+                            horiz_dist = abs(x - t13_x)
+                            
+                            # 既存ロシアとの水平距離も考慮
+                            russia_dist = abs(russia_x - t13_x)
+                            
+                            # type 13 を既存ロシアに近づける配置ボーナス
+                            # 目的: type 13 と既存ロシアが近づいて、将来的に type 13 + type 13 = type 14 を併合しやすくする
+                            pipeline_bonus = 0.0
+                            if horiz_dist < 2.0 and russia_dist < 3.0:
+                                # 既存ロシアとの距離が近く、自分とtype 13も近い配置ならボーナス
+                                pipeline_bonus = 80.0
+                                # 即時併合の機会がある場合は優先度を下げ（即時併合の方が重要）
+                                if merge_grade in ["DIRECT", "NEAR"]:
+                                    pipeline_bonus *= 0.3
+                                # reactive_pairsがある場合は即時併合を優先
+                                if reactive_pair_count >= 1:
+                                    pipeline_bonus *= 0.2
+                                score += pipeline_bonus
+                                if pipeline_bonus > 0:
+                                    reasons.append("RUSSIA_PHASE_PIPELINE_13")
+                    
+                    # type 14 があれば、それを既存ロシアに近づける配置ボーナス
+                    if type_14_pieces:
+                        for t14 in type_14_pieces:
+                            t14_x = t14.get("x", 0)
+                            horiz_dist = abs(x - t14_x)
+                            
+                            # 既存ロシアとの水平距離も考慮
+                            russia_dist = abs(russia_x - t14_x)
+                            
+                            # type 14 を既存ロシアに近づける配置ボーナス
+                            # 目的: type 14 と既存ロシアが近づいて、将来的に type 14 + type 14 = type 15(ロシア) を併合しやすくする
+                            pipeline_bonus = 0.0
+                            if horiz_dist < 2.0 and russia_dist < 3.0:
+                                # 既存ロシアとの距離が近く、自分とtype 14も近い配置ならボーナス
+                                # type 14 は重要度が高いのでボーナスを大きく
+                                pipeline_bonus = 120.0
+                                # 即時併合の機会がある場合は優先度を下げ（即時併合の方が重要）
+                                if merge_grade in ["DIRECT", "NEAR"]:
+                                    pipeline_bonus *= 0.3
+                                # reactive_pairsがある場合は即時併合を優先
+                                if reactive_pair_count >= 1:
+                                    pipeline_bonus *= 0.2
+                                score += pipeline_bonus
+                                if pipeline_bonus > 0:
+                                    reasons.append("RUSSIA_PHASE_PIPELINE_14")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
