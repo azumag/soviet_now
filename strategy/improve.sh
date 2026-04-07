@@ -117,11 +117,6 @@ _find_live_improve_pid() {
 		printf '%s\n' "${IMPROVE_PID:-0}"
 		return 0
 	fi
-	candidate=$(pgrep -f "eloop_improve\\.sh" 2>/dev/null | sort -n | tail -1)
-	if _is_live_improve_pid "$candidate"; then
-		printf '%s\n' "$candidate"
-		return 0
-	fi
 	return 1
 }
 
@@ -247,11 +242,21 @@ json.dump(rs, open(rs_file, 'w'))
 		# PID再利用チェック: eloop_improve.sh のプロセスかどうか確認
 		local pid_alive=false
 		if [ "${pid:-0}" -ne 0 ] && kill -0 "$pid" 2>/dev/null; then
-			# プロセスが存在する場合、eloop_improve.sh のプロセスか確認
 			local pid_cmd
 			pid_cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
 			if echo "$pid_cmd" | grep -q "eloop_improve"; then
-				pid_alive=true
+				# v39: プロセス起動時刻と記録されたupdated_atの整合性チェック
+				# 記録時刻より後に起動したプロセスのみを有効とみなす（PID再利用対策）
+				local pid_start_epoch recorded_at
+				recorded_at=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('updated_at',0) or 0))" 2>/dev/null || echo 0)
+				pid_start_epoch=$(ps -p "$pid" -o lstart= 2>/dev/null | xargs -I{} date -j -f "%a %b %d %H:%M:%S %Y" "{}" +%s 2>/dev/null || echo 0)
+				if [ "${pid_start_epoch:-0}" -ne 0 ] && [ "${recorded_at:-0}" -ne 0 ] && [ "$pid_start_epoch" -lt "$recorded_at" ]; then
+					# PID存在するが、プロセス起動が記録時刻より前 → 古い別プロセスがPID再利用した可能性
+					log "[IMPROVE] PID=$pid はプロセス起動時刻($pid_start_epoch)が記録時刻($recorded_at)より前 → stale状態クリア"
+					pid_alive=false
+				else
+					pid_alive=true
+				fi
 			else
 				log "[IMPROVE] PID=$pid は別プロセス ($pid_cmd) → stale状態クリア"
 			fi
@@ -368,6 +373,7 @@ with open(rs_file, 'w') as f:
 			if [ "$hash_before" != "$hash_now" ]; then
 				_write_improve_state "idle" "0" "" "" "0" ""
 				rm -f "$TMP_STATE_DIR/last_improve_failed_at"
+				rm -f "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || true
 			else
 				_write_improve_state "idle" "0" "" "failed_no_apply" "100" "${prev_detail:-process_exited_without_apply}"
 			fi
@@ -387,15 +393,21 @@ with open(rs_file, 'w') as f:
 				# soren91 (メリケンAI) を停止 → バックグラウンド改善開始
 				soren91_stop
 				soren91_improve
-				# 読み上げ + Twitch チャットに戦略改善終了を通知
-				{
-					local _end_file
-					_end_file=$(mktemp /tmp/eloop_soren91_end.XXXXXX)
-					printf '%s\n' "戦略改善終了。交代します" > "$_end_file"
-					VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$_end_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
-					rm -f "$_end_file"
-				} &
-				./twitch_chat.sh send "戦略改善終了。交代します" 2>/dev/null &
+				# 読み上げ + Twitch チャットに戦略改善終了を通知 (1サイクル1回のみ)
+				local _handover_guard="$TMP_STATE_DIR/handover_announced"
+				if [ ! -f "$_handover_guard" ]; then
+					touch "$_handover_guard"
+					{
+						local _end_file
+						_end_file=$(mktemp /tmp/eloop_soren91_end.XXXXXX)
+						printf '%s\n' "戦略改善終了。交代します" > "$_end_file"
+						VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$_end_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+						rm -f "$_end_file"
+					} &
+					./twitch_chat.sh send "戦略改善終了。交代します" 2>/dev/null &
+				else
+					log "[IMPROVE] 交代アナウンス重複スキップ (guard存在)"
+				fi
 			fi
 		fi
 	fi
@@ -789,11 +801,14 @@ _start_improvement_job() {
 	fi
 
 	# 既存の eloop_improve プロセスが残っていないか確認
+	# -f exact match + 自プロセス除外 (grep -v $$) で誤殺防止
 	local stale_pids
-	stale_pids=$(pgrep -f "eloop_improve" 2>/dev/null || true)
+	stale_pids=$(pgrep -f "eloop_improve\.sh" 2>/dev/null | grep -vw "$$" || true)
 	if [ -n "$stale_pids" ]; then
 		log "[IMPROVE] WARNING: 既存の eloop_improve プロセス検出 (PIDs: $stale_pids) → kill"
-		echo "$stale_pids" | xargs kill 2>/dev/null || true
+		echo "$stale_pids" | while read -r spid; do
+			kill "$spid" 2>/dev/null || true
+		done
 		sleep 1
 	fi
 
@@ -826,6 +841,7 @@ _start_improvement_job() {
 
 	# 起動成功を確認してから状態更新
 	if kill -0 "$IMPROVE_PID" 2>/dev/null; then
+		rm -f "$TMP_STATE_DIR/handover_announced" 2>/dev/null || true
 		_write_improve_state "running" "$IMPROVE_PID" "$strategy_hash" "boot" "1" "job_started" "$(date +%s)"
 		if [ "$reason" = "post_regression" ]; then
 			log "[IMPROVE] 回帰ロールバック後の改善開始 (PID=$IMPROVE_PID, base=${REGRESSION_ROLLBACK_HASH:-unknown})"
@@ -853,6 +869,9 @@ _start_improvement_job() {
 			wait "$IMPROVE_PID" || true
 			kill "$_tail_pid" 2>/dev/null; wait "$_tail_pid" 2>/dev/null || true
 			log "[IMPROVE] フォアグラウンド実行完了 (PID=$IMPROVE_PID)"
+			# daemon mode: wait 完了後に即 harvest して状態を idle に遷移
+			# (次の poll で "running"+死PID を拾って繰り返し発火するのを防ぐ)
+			check_and_harvest_improvement
 		fi
 		return 0
 	else
@@ -944,6 +963,24 @@ else:
 		else
 			log "[IMPROVE] failed_no_apply クールダウン終了 → 再試行許可"
 			rm -f "$TMP_STATE_DIR/last_improve_failed_at"
+		fi
+	fi
+
+	# Step 3.6: レートリミット指数バックオフ
+	if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+		local _rl_count _rl_ts _rl_now _rl_wait _rl_exp
+		_rl_count=$(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 1)
+		_rl_ts=$(sed -n '2p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 0)
+		_rl_now=$(date +%s)
+		# 指数バックオフ: 5min * 2^(count-1), 上限60min
+		_rl_exp=$((_rl_count - 1 > 5 ? 5 : _rl_count - 1))
+		_rl_wait=$((300 * (1 << _rl_exp)))
+		if [ $((_rl_now - _rl_ts)) -lt "$_rl_wait" ]; then
+			log "[IMPROVE] rate-limit backoff中 (残$((_rl_wait - (_rl_now - _rl_ts)))秒, count=${_rl_count})"
+			return
+		else
+			log "[IMPROVE] rate-limit backoff終了 → リトライ許可"
+			rm -f "$TMP_STATE_DIR/rate_limit_backoff"
 		fi
 	fi
 

@@ -830,6 +830,15 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 			_improve_note "run_ai returned rc=${_run_ai_rc} (fresh ${fresh_retry}/${IMPROVE_MAX_RETRIES})"
 			if [ "$_run_ai_rc" -ne 0 ]; then
 				_consecutive_empty=$((_consecutive_empty + 1))
+				# レートリミット検出: 全プロバイダーが rc=79 → バックオフファイルを記録
+				if grep -q "rate-limited (rc=79)" "${RUN_CMD_LOG_FILE:-/dev/null}" 2>/dev/null; then
+					local _rl_file="$TMP_STATE_DIR/rate_limit_backoff"
+					local _rl_count=0
+					[ -f "$_rl_file" ] && _rl_count=$(sed -n '1p' "$_rl_file" 2>/dev/null || echo 0)
+					_rl_count=$((_rl_count + 1))
+					printf '%s\n%s\n' "$_rl_count" "$(date +%s)" > "$_rl_file"
+					_improve_note "rate-limit detected → backoff count=${_rl_count}"
+				fi
 			else
 				_consecutive_empty=0
 			fi
