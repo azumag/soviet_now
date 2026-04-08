@@ -109,50 +109,6 @@ _cleanup_once() {
 	cleanup_all "$reason"
 }
 
-_ensure_improve_daemon_running() {
-	[ "${IMPROVE_DAEMON_AUTOSTART:-1}" = "1" ] || return 0
-
-	local daemon_pid="" daemon_cmd="" daemon_log=""
-	if [ -f "$IMPROVE_DAEMON_PID_FILE" ]; then
-		daemon_pid=$(cat "$IMPROVE_DAEMON_PID_FILE" 2>/dev/null || true)
-		case "$daemon_pid" in
-		''|*[!0-9]*) daemon_pid="" ;;
-		esac
-		if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
-			daemon_cmd=$(ps -p "$daemon_pid" -o command= 2>/dev/null || true)
-			if printf '%s' "$daemon_cmd" | grep -q "improve_daemon\.sh"; then
-				return 0
-			fi
-		fi
-	fi
-
-	daemon_pid=$(pgrep -fo "improve_daemon\\.sh" 2>/dev/null || true)
-	case "$daemon_pid" in
-	''|*[!0-9]*) daemon_pid="" ;;
-	esac
-	if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
-		daemon_cmd=$(ps -p "$daemon_pid" -o command= 2>/dev/null || true)
-		if printf '%s' "$daemon_cmd" | grep -q "improve_daemon\.sh"; then
-			printf '%s\n' "$daemon_pid" > "$IMPROVE_DAEMON_PID_FILE"
-			return 0
-		fi
-	fi
-
-	mkdir -p "$TMP_DEBUG_DIR" 2>/dev/null || true
-	daemon_log="$TMP_DEBUG_DIR/improve_daemon.log"
-	nohup /bin/bash ./improve_daemon.sh >>"$daemon_log" 2>&1 &
-	daemon_pid=$!
-	disown "$daemon_pid" 2>/dev/null || true
-	sleep 1
-	if kill -0 "$daemon_pid" 2>/dev/null; then
-		printf '%s\n' "$daemon_pid" > "$IMPROVE_DAEMON_PID_FILE"
-		log "[IMPROVE] improve_daemon を自動起動 (PID=$daemon_pid)"
-		return 0
-	fi
-	log "[IMPROVE] improve_daemon 自動起動失敗"
-	return 1
-}
-
 _handle_stop_signal() {
 	local sig="${1:-INT}"
 	STOP_REQUESTED=1
@@ -207,8 +163,6 @@ _run_scheduled_meriken_time_window() {
 	fi
 	while [ "$(date +%s)" -lt "$end_epoch" ]; do
 		[ -f tmp/stop ] && break
-		start_comment_player 2>/dev/null || true
-		start_comment_watcher 2>/dev/null || true
 		sleep 15
 	done
 	log "[MERIKEN_TIME] メリケンAIタイム終了"
@@ -221,19 +175,10 @@ _run_scheduled_meriken_time_window() {
 log "=== Soren Evolution Loop ==="
 log "strategy.py → 1game → adaptive improve → repeat"
 
-# Twitchチャットデーモン起動
-./twitch_chat.sh start azumagbanjo
-
 # クリーンアップ trap
 trap '_handle_exit' EXIT
 trap '_handle_stop_signal INT' INT
 trap '_handle_stop_signal TERM' TERM
-
-# 前回の孤児コメントプレイヤー/ウォッチャーを掃除してから起動
-stop_comment_player
-stop_comment_watcher
-start_comment_player
-start_comment_watcher
 
 # 前回中断時のリカバリ
 recover_strategy_backup
@@ -250,7 +195,6 @@ fi
 
 # 前回中断した改善プロセスの状態復元
 check_and_harvest_improvement
-_ensure_improve_daemon_running
 
 # MOVE状態待ち
 wait_for_move
@@ -280,7 +224,6 @@ while true; do
 	if ! source ./eloop.sh 2>/dev/null; then
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
-	_ensure_improve_daemon_running
 
 	# ゲーム番号を毎試合読み直す
 	GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
@@ -289,11 +232,6 @@ while true; do
 	# improve_daemon は改善開始後に wait でブロックするため、
 	# ここで watchdog/harvest を回さないと running 状態が残留しうる。
 	check_and_harvest_improvement
-
-	# コメント系ワーカーは壊れたPIDファイルからも自己回復させる
-	start_comment_player
-	start_comment_watcher
-	process_external_audio_triggers "$GAME_NUM" "$(_last_score)"
 
 	# ソ連建国後は strategy 実行を止め、コメント系のみ維持する
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
@@ -353,11 +291,6 @@ while true; do
 		DEFER_NEXT_GAME_PREP=0
 	fi
 
-	# 非同期ジョブに渡すため、試合開始時点の値を固定
-	SCHEDULE_GAME_NUM="$GAME_NUM"
-	SCHEDULE_SCORE=$(_last_score)
-	schedule_nonessential_audio_jobs "$SCHEDULE_GAME_NUM" "$SCHEDULE_SCORE"
-
 	# 1試合プレイ
 	play_one_game
 	play_rc=$?
@@ -391,14 +324,12 @@ while true; do
 		# フラグを最初に書く: _clear_accumulated_data がレース時でも best_outcome=3 を保証
 		touch "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
 		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-			# best_outcome を粛清(3)に更新: resolve失敗時でも _clear_accumulated_data の
-			# cleanup が best_outcome=3 で resolve するようにする
+			# best_outcome を粛清(3)に更新: prediction_worker が検知して resolve する
 			python3 -c "
 import json
 f='$TMP_STATE_DIR/current_prediction.json'
 d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 " 2>/dev/null || true
-			./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
 		fi
 		_clear_accumulated_data
 	fi
@@ -416,11 +347,7 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 					_improve_daemon_alive=true
 				fi
 			fi
-			# 予想サイクル終了 (daemon有無によらず resolve)
-			if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-				_cycle_pred_best=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
-				./twitch_predictions.sh resolve "$_cycle_pred_best" >>tmp/prediction.log 2>&1 || true
-			fi
+			# 予想サイクル終了: prediction_worker が acc_count >= threshold を検知して resolve する
 			# daemon 生死によらずロックファイルを作成する
 			# daemon が落ちていても再起動後に trigger_adaptive_improvement が拾えるようにする
 			if [ "$_improve_daemon_alive" = true ]; then

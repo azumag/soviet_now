@@ -246,8 +246,7 @@ handle_soviet_celebration() {
 	# 祝賀トーク生成
 	generate_soviet_celebration "$score" "$turns" "$game_num"
 
-	# コメント監視・生成停止
-	stop_comment_watcher
+	# コメント生成を一時停止（祝賀トーク優先）
 	_kill_comment_gen
 
 	# 既存の読み上げを停止して祝賀を優先 (say_enqueueごとkill)
@@ -266,9 +265,6 @@ handle_soviet_celebration() {
 	_radio_clear_state "celebration"
 	rm -f "$TMP_MARKERS_DIR/.soviet_created"
 
-	# コメントプレイヤー・ウォッチャー再開
-	start_comment_player
-	start_comment_watcher
 }
 
 #=== 試合後の後処理 ===
@@ -315,19 +311,7 @@ json.dump(d,open(f,'w'))
 		fi
 	fi
 
-	# チャネルポイント予想: 新サイクル初戦なら賭けを作成（改善中は待機）
-	./twitch_predictions.sh cleanup "$game_num_display" >>tmp/prediction.log 2>&1 || true
-	if [ ! -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-		local acc_count_for_pred=0
-		if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
-			acc_count_for_pred=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
-		fi
-		local improve_status=""
-		improve_status=$(python3 -c "import json; print(json.load(open('$IMPROVE_STATE_FILE')).get('status',''))" 2>/dev/null || echo "")
-		if [ "${acc_count_for_pred:-0}" -eq 0 ] && [ "$improve_status" != "running" ]; then
-			./twitch_predictions.sh create "$game_num_display" >>tmp/prediction.log 2>&1 || true
-		fi
-	fi
+	# チャネルポイント予想: prediction_worker が state file を監視して create/cleanup/resolve する
 
 	# 蓄積用にロシア建国フラグを保存（後でリセットされるため）
 	local _russia_for_acc="$LAST_RUSSIA"
@@ -335,10 +319,7 @@ json.dump(d,open(f,'w'))
 	# ソ連建国チェック
 	if [ "$LAST_SOVIET" = "true" ]; then
 		handle_soviet_celebration "$LAST_SCORE" "$LAST_TURNS" "$game_num_display"
-		# チャネルポイント予想: ソ連建国で即 resolve（HALT 後は trigger_adaptive_improvement が呼ばれないため）
-		if [ -f "$TMP_STATE_DIR/current_prediction.json" ]; then
-			./twitch_predictions.sh resolve 2 >>tmp/prediction.log 2>&1 || true
-		fi
+		# prediction_worker が best_outcome=2 を検知して resolve する
 		HALT_STRATEGY_AFTER_SOVIET=1
 		LAST_RUSSIA="false"
 		LAST_RUSSIA_ANNOUNCED="false"
@@ -431,10 +412,6 @@ PY
 		)
 		enqueue_chat_message "${pred_progress}" "eloop"
 	fi
-
-	# コメントプレイヤー・ウォッチャーが死んでいたら再起動
-	start_comment_player
-	start_comment_watcher
 
 	# git commit (v542: セキュリティ/不要ファイル除外のため明示的ファイル指定)
 	git add \
