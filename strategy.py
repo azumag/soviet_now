@@ -11,6 +11,7 @@ Game Overview:
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
+         1.5c. HIGH_MAX_Y_NEAR_PENALTY - v550: max_y>=2.5 NEAR penalty (-300) before v422 evaluation
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
@@ -63,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v550: add HIGH_MAX_Y_NEAR_PENALTY — max_y>=2.5 で NEAR merge 選択時に -300 ペナルティ
+     # worst ゲーム T71-76: max_y=2.74→2.87→3.43 で NEAR 選択されるが max_y 低下なし。
+     # v422 (landing_y>=1.0) は turn72 (landing_y=0.82) では発動しない。max_y>=2.5 条件なら
+     # v422 条件未達でも発動し、DIRECT merge への誘導を強化。
+     # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
+     # refs: tmp/analysis_result.md, tmp/improve_brief.md, game_history/20260408_113627_score1197.jsonl
      # v549: suppress REACTIVE_PAIRS_STACKING at high pc (>=35) without merge — prevents pc runaway
      # when rp drops to 1-2 and death_spiral doesn't fire. score1290 T86-91: rp=1, pc=38-47,
      # stacking bonus ~1200 overwhelms height diff ~100-150 → 10 pieces added → game over.
@@ -921,6 +928,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
+
+        # ----- v422 supplementary: max_y >= 2.5 NEAR merge penalty -----
+        # Worst game T71-76: max_y=2.74→2.87→3.43, NEAR selected but max_y doesn't decrease.
+        # Best game T131-138: max_y=2.74→2.05, NEAR succeeds (+57).
+        # max_y >= 2.5 is the boundary — v422 (landing_y >= 1.0) doesn't trigger at
+        # landing_y=0.82 (worst turn 72). This catches high max_y NEAR merges regardless
+        # of landing_y, suppressing max_y runaway when NEAR is selected at danger zone.
+        # Evaluated before v422 so it fires even when v422 conditions aren't met.
+        # refs: tmp/analysis_result.md (Hypothesis: max_y>=2.5 NEAR penalty)
+        # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
+        if merge_grade == "NEAR" and max_y >= 2.5:
+            score -= 300.0
+            reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
