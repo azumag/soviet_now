@@ -977,9 +977,56 @@ PY
 		say_queue_waiting=$(find tmp/.say_queue -maxdepth 1 -name 'content_*.txt' ! -name '*_chunks.txt' -mmin -5 2>/dev/null | wc -l | tr -d ' ')
 	fi
 
+	# --- Worker プロセス状態 ---
+	local chat_worker_running=false chat_worker_pid=""
+	if [[ -f tmp/state/chat_worker.pid ]]; then
+		chat_worker_pid=$(cat tmp/state/chat_worker.pid 2>/dev/null)
+		if [[ -n "$chat_worker_pid" ]] && kill -0 "$chat_worker_pid" 2>/dev/null; then
+			chat_worker_running=true
+		fi
+	fi
+	local audio_worker_running=false audio_worker_pid=""
+	if [[ -f tmp/state/audio_worker.pid ]]; then
+		audio_worker_pid=$(cat tmp/state/audio_worker.pid 2>/dev/null)
+		if [[ -n "$audio_worker_pid" ]] && kill -0 "$audio_worker_pid" 2>/dev/null; then
+			audio_worker_running=true
+		fi
+	fi
+	local radio_worker_running=false radio_worker_pid=""
+	if [[ -f tmp/state/radio_worker.pid ]]; then
+		radio_worker_pid=$(cat tmp/state/radio_worker.pid 2>/dev/null)
+		if [[ -n "$radio_worker_pid" ]] && kill -0 "$radio_worker_pid" 2>/dev/null; then
+			radio_worker_running=true
+		fi
+	fi
+	local prediction_worker_running=false prediction_worker_pid=""
+	if [[ -f tmp/state/prediction_worker.pid ]]; then
+		prediction_worker_pid=$(cat tmp/state/prediction_worker.pid 2>/dev/null)
+		if [[ -n "$prediction_worker_pid" ]] && kill -0 "$prediction_worker_pid" 2>/dev/null; then
+			prediction_worker_running=true
+		fi
+	fi
+	local improve_daemon_running=false improve_daemon_pid=""
+	if [[ -f tmp/state/improve_daemon.pid ]]; then
+		improve_daemon_pid=$(cat tmp/state/improve_daemon.pid 2>/dev/null)
+		if [[ -n "$improve_daemon_pid" ]] && kill -0 "$improve_daemon_pid" 2>/dev/null; then
+			improve_daemon_running=true
+		fi
+	fi
+
+	# --- Outbound chat queue ---
+	local outbound_pending=0
+	if [[ -d tmp/.outbound_chat_queue/pending ]]; then
+		outbound_pending=$(find tmp/.outbound_chat_queue/pending -name '*.msg' 2>/dev/null | wc -l | tr -d ' ')
+	fi
+
 	# --- Twitch チャット状態 ---
 	local twitch_running=false twitch_pid=""
-	if [[ -f tmp/.twitch_chat/daemon.pid ]]; then
+	# chat_worker が動いていればそちらを優先
+	if $chat_worker_running; then
+		twitch_running=true
+		twitch_pid="$chat_worker_pid"
+	elif [[ -f tmp/.twitch_chat/daemon.pid ]]; then
 		twitch_pid=$(cat tmp/.twitch_chat/daemon.pid 2>/dev/null)
 		if [[ -n "$twitch_pid" ]] && kill -0 "$twitch_pid" 2>/dev/null; then
 			twitch_running=true
@@ -1016,18 +1063,32 @@ PY
 		printf "    ${C_RED}○${C_RESET} Loop        ${C_DIM}STOPPED${C_RESET}\n"
 	fi
 
-	# ワーカー稼働メーター（show_status_g にはない運用系指標）
-	local workers_online=0
+	# Worker 個別状態
+	local _w_icon _w_color _w_label
+	for _w_name _w_running _w_pid in \
+		"ChatW" "$chat_worker_running" "$chat_worker_pid" \
+		"AudioW" "$audio_worker_running" "$audio_worker_pid" \
+		"RadioW" "$radio_worker_running" "$radio_worker_pid" \
+		"PredW" "$prediction_worker_running" "$prediction_worker_pid" \
+		"ImproveD" "$improve_daemon_running" "$improve_daemon_pid"; do
+		if [[ "$_w_running" == "true" ]]; then
+			printf "    ${C_GREEN}●${C_RESET} %-11s ${C_GREEN}RUNNING${C_RESET}  ${C_DIM}PID=%s${C_RESET}\n" "$_w_name" "$_w_pid"
+		else
+			printf "    ${C_RED}○${C_RESET} %-11s ${C_DIM}STOPPED${C_RESET}\n" "$_w_name"
+		fi
+	done
+
+	# ワーカー稼働メーター
+	local workers_online=0 workers_total=6
 	$loop_running && workers_online=$((workers_online + 1))
-	if [[ "$imp_status" == "running" ]] && $imp_alive; then
-		workers_online=$((workers_online + 1))
-	fi
-	$say_running && workers_online=$((workers_online + 1))
-	$twitch_running && workers_online=$((workers_online + 1))
-	$comment_gen_running && workers_online=$((workers_online + 1))
+	$chat_worker_running && workers_online=$((workers_online + 1))
+	$audio_worker_running && workers_online=$((workers_online + 1))
+	$radio_worker_running && workers_online=$((workers_online + 1))
+	$prediction_worker_running && workers_online=$((workers_online + 1))
+	$improve_daemon_running && workers_online=$((workers_online + 1))
 	local workers_bar
-	workers_bar=$(_bar_meter "$workers_online" 5 12)
-	printf "    ${C_WHITE}▸${C_RESET} Workers     ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/5 online${C_RESET}\n" "$workers_bar" "$workers_online"
+	workers_bar=$(_bar_meter "$workers_online" "$workers_total" 12)
+	printf "    ${C_WHITE}▸${C_RESET} Workers     ${C_DIM}[%s]${C_RESET}  ${C_DIM}%d/%d online${C_RESET}\n" "$workers_bar" "$workers_online" "$workers_total"
 
 		# 蓄積ゲーム (最低試合ゲート付き)
 		if (( acc_count > 0 )); then
@@ -1202,6 +1263,10 @@ PY
 
 	if (( twitch_pending > 0 )); then
 		printf "    ${C_MAGENTA}▸${C_RESET} Pending     ${C_MAGENTA}${twitch_pending} comments${C_RESET}\n"
+	fi
+
+	if (( outbound_pending > 0 )); then
+		printf "    ${C_CYAN}▸${C_RESET} OutboundQ   ${C_CYAN}${outbound_pending} messages${C_RESET}\n"
 	fi
 
 	if [[ -n "$twitch_latest" ]]; then
