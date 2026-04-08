@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v560: Remove v552 -900 CRITICAL escalation from HIGH_MAX_Y_NEAR_PENALTY
+     # v552's max_y>=3.0 penalty escalation to -900 was forbidden by rollback constraint
+     # Added reactor_margin <= 1.0 condition (matches constraint language "deadline_margin<=1.0")
+     # Allows beneficial NEAR at max_y>=3.0 when not near deadline
+     # Fixes rollback failure mode: aggressive_max_y_near_penalty_overrides_merge_bonus (p25 collapse 8819→11085)
+     # refs: tmp/analysis_result.md
      # v555: NO_MERGE height penalty multiplier — max_y>=2.5 && merge_grade==NOでheight_penaltyを2倍化
      # v550/v552はNEAR選択時のペナルティを行うが、NO merge選択時はheight指導がない問題を修正
      # worst T56 (max_y=2.31, rp=3, NO merge) → T57: max_y=3.30 (+0.99) で高所にpiece追加
@@ -81,12 +87,10 @@ Phases (determined by board max Y):
      # v422 条件未達でも発動し、DIRECT merge への誘導を強化。
      # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
      # refs: tmp/analysis_result.md, tmp/improve_brief.md, game_history/20260408_113627_score1197.jsonl
-# v561: NO-merge high-max_y positive guidance bonus — merge drought時に低配置・中央配置への正の誘導を追加
-# Hypothesis: worst T55-T59 (score1013) で4連続NO mergeターンがありedgeにpieceが蓄積
-# merge_grade==NO && max_y>=2.5 && deadline_crossed && reactive_pair_count>=3 でlow_y+centralボーナス
-# ペナルティではなく正の誘導がmerger drought時のpiece accumulationを抑制
-# refs: tmp/analysis_result.md (Adopted Hypothesis: merge opportunity preservation)
 # v552: double_russia_phase growth pipeline bonus — type13+type13→type14 and type14+type14→type15
+# Adds pipeline detection for second Russia creation when merge_grade==NO in double_russia_phase.
+# Fixes rollback failure mode: double_russia_phase merge pipeline starvation (type15x2 never achieved)
+# refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt
 
 def russia_growth_pipeline_bonus(pieces, x, next_type):
     """Bonus for double_russia_phase growth pipeline"""
@@ -989,12 +993,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # next_type=15 (Russia)時にRussia建国王免除を適用（piece14+とnext_type=15も免除）
         russia_merge_possible = next_type >= 15 and any(p["type"] >= 14 for p in pieces)
         global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
-        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
-            # v552: max_y>=3.0 CRITICAL領域ではpenaltyを-900に強化（worst T65 max_y=3.70でNEAR選択抑制強化）
-            if max_y >= 3.0:
-                score -= 900.0
-            else:
-                score -= 600.0
+        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible and reactor_margin <= 1.0:
+            # v560: Removed v552 -900 CRITICAL escalation — was forbidden by rollback constraint
+            # Rollback target survived with NEAR at max_y=2.80, danger=4 for 131 turns
+            # Best game T118: NEAR at max_y=3.12 succeeded (+55, reduced pieces)
+            score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
             # v551: additional penalty for high-type next when merge is globally available
             if next_type >= 10 and global_merge_available:
@@ -1023,51 +1026,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
-
-        # ----- v561: NO-merge high-max_y positive guidance bonus -----
-        # Hypothesis: worst game T55-T59 had 4+ consecutive NO merge turns despite reactive_pairs>=4-5.
-        # The axis 8.8 penalty (-4500) penalizes bad placement but provides no POSITIVE guidance
-        # toward good placement. When NO merge + high max_y + deadline crossed, we need to
-        # actively guide toward lower, central, non-deadline-crossing positions.
-        # Worst game T55: placed at x=-3.0 (edge, crosses_deadline) — no positive signal to avoid edge.
-        # Worst game T59: placed at x=3.0 (edge, max_y spiked to 3.37) — same pattern.
-        # Implementation Plan: ADD positive bonus (+300 to +500) for lowest landing_y, central
-        # placement, non-deadline-crossing — guidance only, does NOT override merge opportunities.
-        # Condition: merge_grade==NO && max_y>=2.5 && (deadline_crossed || reactor_margin<0) && reactive_pair_count>=3
-        # Rollback constraints respected: no NEAR suppression, no new penalties, purely additive.
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: merge drought with piece accumulation),
-        #       game_history/20260409_055130_score1013.jsonl T55-59 (worst game merge drought),
-        #       game_history/20260409_053843_score3064.jsonl T112-119 (best game controlled NEAR)
-        # Fixes rollback failure mode: merge drought at high max_y with no positive placement guidance
-        if (merge_grade == "NO" and max_y >= 2.5
-            and (deadline_crossed or reactor_margin < 0)
-            and reactive_pair_count >= 3):
-            # Prefer lower landing positions (lower is safer)
-            # Base bonus scaled inversely by landing_y — lower y = higher bonus
-            if landing_y <= -1.0:
-                low_y_bonus = 250.0
-            elif landing_y <= 0.0:
-                low_y_bonus = 180.0
-            elif landing_y <= 0.5:
-                low_y_bonus = 120.0
-            elif landing_y <= 1.0:
-                low_y_bonus = 60.0
-            else:
-                low_y_bonus = 0.0
-            score += low_y_bonus
-            if low_y_bonus > 0:
-                reasons.append("NO_MERGE_LOW_GUIDANCE")
-
-            # Prefer central placement (closer to x=0)
-            # Central positions avoid edge scatter that creates max_y runaway
-            central_bonus = max(0.0, 80.0 - abs(x) * 20.0)
-            score += central_bonus
-            if central_bonus > 0:
-                reasons.append("NO_MERGE_CENTRAL_GUIDANCE")
-
-            # Penalize deadline-crossing in NO-merge high-max_y situations
-            # (crosses_deadline already has -1200 at axis 8.8, but we want stronger signal here)
-            # Actually no — axis 8.8 already handles crosses_deadline. We add positive guidance only.
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
