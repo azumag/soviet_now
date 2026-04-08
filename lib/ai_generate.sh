@@ -1,0 +1,242 @@
+# lib/ai_generate.sh - AI生成の共通ディスパッチ
+#
+# コメント生成とラジオ生成の AI 呼び出しを統一するバックエンド。
+# モデル選択・フォールバック・タイムアウト・エラー検出を一箇所で管理する。
+#
+# 使い方:
+#   ai_generate "RADIO" "$prompt_file" "$primary_agent" "$fallback_agent"
+#   output は stdout に返る。呼び出し元がファイルに書くかキューに積むか判断する。
+
+# === 統一バックエンド ===
+
+# _ai_call_claude LABEL PROMPT_FILE [MODEL] [TIMEOUT]
+_ai_call_claude() {
+	local label="$1" prompt_file="$2"
+	local model="${3:-$RADIO_CLAUDE_MODEL}"
+	local timeout_sec="${4:-${RADIO_CLAUDE_TIMEOUT:-120}}"
+	local output stderr_file stderr_preview provider_error=false login_error=false
+
+	[ -s "$prompt_file" ] || return 1
+	log "[${label}] claude call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	stderr_file=$(mktemp /tmp/ai_claude_stderr_XXXXXXXX)
+	output=$(cat "$prompt_file" | timeout "$timeout_sec" claude -p --model "$model" 2>"$stderr_file")
+	local rc=$?
+	if [ -s "$stderr_file" ]; then
+		stderr_preview=$(head -c 500 "$stderr_file")
+		log "[${label}] claude stderr: $stderr_preview" >&2
+	fi
+	if _contains_provider_error_text "$output" || { [ -n "${stderr_preview:-}" ] && _contains_provider_error_text "$stderr_preview"; }; then
+		provider_error=true
+	fi
+	if _contains_claude_login_error_text "$output" || { [ -n "${stderr_preview:-}" ] && _contains_claude_login_error_text "$stderr_preview"; }; then
+		login_error=true
+	fi
+	[ "$login_error" = "true" ] && log "[${label}] claude unavailable: not logged in" >&2
+	rm -f "$stderr_file"
+	if [ $rc -eq 124 ]; then
+		log "[${label}] claude timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ "$provider_error" = "true" ]; then
+		log "[${label}] claude provider/auth error (model=$model)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[${label}] claude failed (rc=$rc, model=$model)" >&2
+		return 1
+	fi
+	printf '%s' "$output"
+}
+
+# _ai_call_minimax LABEL PROMPT_FILE [MODEL] [TIMEOUT]
+_ai_call_minimax() {
+	local label="$1" prompt_file="$2"
+	local model="${3:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
+	local timeout_sec="${4:-${RADIO_CLAUDE_TIMEOUT:-120}}"
+	local output_file output
+
+	[ -s "$prompt_file" ] || return 1
+	log "[${label}] minimax call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	output_file=$(mktemp /tmp/ai_minimax_output_XXXXXXXX)
+	_run_minimax_claude_prompt_file "$prompt_file" "$output_file" "$model" "$timeout_sec" "acceptEdits"
+	local rc=$?
+	local stderr_preview="${MINIMAX_CLAUDE_LAST_STDERR:-}"
+	local provider_error="${MINIMAX_CLAUDE_LAST_PROVIDER_ERROR:-false}"
+	local login_error="${MINIMAX_CLAUDE_LAST_LOGIN_ERROR:-false}"
+	[ -n "$stderr_preview" ] && log "[${label}] minimax stderr: $stderr_preview" >&2
+	[ "$login_error" = "true" ] && log "[${label}] minimax unavailable: not logged in" >&2
+	if [ $rc -eq 124 ]; then
+		rm -f "$output_file"
+		log "[${label}] minimax timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ "$provider_error" = "true" ]; then
+		rm -f "$output_file"
+		log "[${label}] minimax provider/auth error (model=$model)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		rm -f "$output_file"
+		log "[${label}] minimax failed (rc=$rc, model=$model)" >&2
+		return 1
+	fi
+	output=$(cat "$output_file" 2>/dev/null)
+	rm -f "$output_file"
+	printf '%s' "$output"
+}
+
+# _ai_call_ollama LABEL PROMPT_FILE [MODEL] [TIMEOUT]
+_ai_call_ollama() {
+	local label="$1" prompt_file="$2"
+	local model="${3:-${RADIO_OLLAMA_MODEL:-qwen3.5:9b}}"
+	local timeout_sec="${4:-${RADIO_OLLAMA_TIMEOUT:-180}}"
+	local prompt output stderr_file
+
+	[ -s "$prompt_file" ] || return 1
+	log "[${label}] ollama call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	prompt=$(cat "$prompt_file")
+	stderr_file=$(mktemp /tmp/ai_ollama_stderr_XXXXXXXX)
+	output=$(
+		ANTHROPIC_AUTH_TOKEN="ollama" \
+			ANTHROPIC_BASE_URL="$OLLAMA_BASE_URL" \
+			ANTHROPIC_API_KEY="" \
+			timeout "$timeout_sec" claude -p "$prompt" --model="$model" --permission-mode=acceptEdits 2>"$stderr_file"
+	)
+	local rc=$?
+	if [ -s "$stderr_file" ]; then
+		log "[${label}] ollama stderr: $(head -c 500 "$stderr_file")" >&2
+	fi
+	rm -f "$stderr_file"
+	if [ $rc -eq 124 ]; then
+		log "[${label}] ollama timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[${label}] ollama failed (rc=$rc, model=$model)" >&2
+		return 1
+	fi
+	if _contains_provider_error_text "$output"; then
+		log "[${label}] ollama provider error (model=$model)" >&2
+		return 1
+	fi
+	printf '%s' "$output"
+}
+
+# _ai_call_opencode LABEL AGENT PROMPT_FILE [TIMEOUT] [PERMISSION]
+_ai_call_opencode() {
+	local label="$1" agent="$2" prompt_file="$3"
+	local timeout_sec="${4:-${RADIO_OPENCODE_TIMEOUT:-180}}"
+	local permission="${5:-${RADIO_OPENCODE_PERMISSION:-}}"
+	local raw_file cleaned
+
+	[ -s "$prompt_file" ] || return 1
+	raw_file=$(mktemp /tmp/ai_opencode_raw_XXXXXXXX)
+	timeout "$timeout_sec" \
+		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$permission' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
+	local rc=$?
+	if [ $rc -eq 124 ]; then
+		log "[${label}] opencode timeout (${timeout_sec}s, agent=$agent)" >&2
+		rm -f "$raw_file"
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[${label}] opencode failed (rc=$rc, agent=$agent)" >&2
+		rm -f "$raw_file"
+		return 1
+	fi
+	cleaned=$(cat "$raw_file" |
+		_strip_ansi |
+		grep -v '^>' |
+		grep -v '^\^D' |
+		grep -v '^Script started on ' |
+		grep -v '^Script done on ' |
+		grep -v '^/[^ ]*$' |
+		grep -v '^[[:space:]]*/Users/' |
+		grep -v '^[[:space:]]*⚙' |
+		grep -v '^[[:space:]]*{[[:space:]]*"query"' |
+		sed -E 's#</?(arg_name|arg_value|think|analysis|final|assistant_response|tool_call|tool_result)[^>]*>##g' |
+		sed '/^[[:space:]]*$/d')
+	rm -f "$raw_file"
+	if _contains_provider_error_text "$cleaned"; then
+		log "[${label}] opencode provider error (agent=$agent)" >&2
+		return 1
+	fi
+	printf '%s' "$cleaned"
+}
+
+# === 統一ディスパッチャ ===
+
+# _ai_dispatch LABEL AGENT PROMPT_FILE [TIMEOUT]
+#   agent 識別子に基づいて適切なバックエンドを呼ぶ。
+#   stdout: 生成テキスト
+_ai_dispatch() {
+	local label="$1" agent="$2" prompt_file="$3"
+	local timeout_override="${4:-}"
+
+	case "$agent" in
+	'' )
+		return 1
+		;;
+	ollama:*)
+		_ai_call_ollama "$label" "$prompt_file" "${agent#ollama:}" "$timeout_override"
+		;;
+	minimax|ccmm)
+		_ai_call_minimax "$label" "$prompt_file" "" "$timeout_override"
+		;;
+	qwen35e)
+		_ai_call_ollama "$label" "$prompt_file" "qwen3.5:9b" "$timeout_override"
+		;;
+	gemma4e)
+		_ai_call_ollama "$label" "$prompt_file" "gemma4:latest" "$timeout_override"
+		;;
+	haiku|claude)
+		_ai_call_claude "$label" "$prompt_file" "$RADIO_CLAUDE_MODEL" "$timeout_override"
+		;;
+	opencode:*)
+		_ai_call_opencode "$label" "${agent#opencode:}" "$prompt_file" "$timeout_override"
+		;;
+	*)
+		# デフォルト: opencode agent として扱う
+		_ai_call_opencode "$label" "$agent" "$prompt_file" "$timeout_override"
+		;;
+	esac
+}
+
+# === フォールバック付き生成 ===
+
+# ai_generate LABEL PROMPT_FILE PRIMARY_AGENT [FALLBACK_AGENT] [TIMEOUT]
+#   PRIMARY_AGENT で生成を試み、失敗したら FALLBACK_AGENT にフォールバック。
+#   stdout: 生成テキスト
+#   メタデータ: AI_GENERATE_LAST_AGENT に実際に使用した agent を設定
+AI_GENERATE_LAST_AGENT=""
+
+ai_generate() {
+	local label="$1" prompt_file="$2" primary="$3"
+	local fallback="${4:-}"
+	local timeout_override="${5:-}"
+	local output
+
+	AI_GENERATE_LAST_AGENT=""
+
+	# Primary
+	output=$(_ai_dispatch "$label" "$primary" "$prompt_file" "$timeout_override")
+	if [ $? -eq 0 ] && [ -n "$output" ]; then
+		AI_GENERATE_LAST_AGENT="$primary"
+		printf '%s' "$output"
+		return 0
+	fi
+
+	# Fallback
+	if [ -n "$fallback" ]; then
+		log "[${label}] primary ($primary) failed → fallback ($fallback)" >&2
+		output=$(_ai_dispatch "$label" "$fallback" "$prompt_file" "$timeout_override")
+		if [ $? -eq 0 ] && [ -n "$output" ]; then
+			AI_GENERATE_LAST_AGENT="$fallback"
+			printf '%s' "$output"
+			return 0
+		fi
+	fi
+
+	log "[${label}] all agents failed (primary=$primary, fallback=${fallback:-none})" >&2
+	return 1
+}

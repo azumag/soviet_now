@@ -184,6 +184,85 @@ _run_claude_comment() {
 	_run_claude_comment_with_model "$1" "$RADIO_CLAUDE_MODEL"
 }
 
+_run_minimax_comment() {
+	local prompt_file="$1"
+	local model="${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
+	local timeout_sec="${3:-${COMMENT_CLAUDE_TIMEOUT:-180}}"
+	local sandbox_dir sandbox_prompt output_file output
+	sandbox_dir=$(create_sandbox \
+		"README.md" \
+		"strategy.py" \
+		"prompts/comment_response.md" \
+		"$COMMENT_SPOKEN_HISTORY_DIR" \
+		"$PAST_RADIO_TOPICS" \
+		"score_history.txt" \
+		"$RUSSIA_CREATION_HISTORY_FILE" \
+		"$SOVIET_CREATION_HISTORY_FILE" \
+		"$ROLLING_SCORES_FILE" \
+		"show_status.sh" \
+		"show_status_g.sh" \
+		"status_dashboard.py")
+	if [ -z "$sandbox_dir" ] || [ ! -d "$sandbox_dir" ]; then
+		log "[COMMENT] sandbox作成失敗 -> direct minimax" >&2
+		sandbox_prompt="$prompt_file"
+	else
+		sandbox_prompt="$sandbox_dir/tmp/comment_prompt.txt"
+		mkdir -p "$(dirname "$sandbox_prompt")"
+		cp "$prompt_file" "$sandbox_prompt" 2>/dev/null || {
+			destroy_sandbox "$sandbox_dir"
+			return 1
+		}
+	fi
+	output_file=$(mktemp /tmp/eloop_minimax_comment_output_XXXXXXXX)
+	_run_minimax_claude_prompt_file "$sandbox_prompt" "$output_file" "$model" "$timeout_sec" "acceptEdits"
+	local rc=$?
+	local stderr_preview="${MINIMAX_CLAUDE_LAST_STDERR:-}"
+	local provider_error="${MINIMAX_CLAUDE_LAST_PROVIDER_ERROR:-false}"
+	local login_error="${MINIMAX_CLAUDE_LAST_LOGIN_ERROR:-false}"
+	local stdout_preview="${MINIMAX_CLAUDE_LAST_STDOUT_PREVIEW:-}"
+	if [ -n "$stderr_preview" ] || [ "$provider_error" = "true" ]; then
+		mkdir -p "$(dirname "$COMMENT_CLAUDE_LOG_FILE")" 2>/dev/null || true
+		{
+			printf '[%s] rc=%s model=%s provider=minimax tools=%s\n' "$(date '+%F %T')" "$rc" "$model" "$COMMENT_CLAUDE_TOOLS"
+			if [ -n "$stderr_preview" ]; then
+				printf '[stderr]\n%s\n' "$stderr_preview"
+			fi
+			if [ "$provider_error" = "true" ]; then
+				printf '[stdout]\n'
+				printf '%s' "$stdout_preview"
+				printf '\n'
+			fi
+			printf '\n\n'
+		} >>"$COMMENT_CLAUDE_LOG_FILE" 2>/dev/null || true
+		[ -n "$stderr_preview" ] && log "[COMMENT] minimax stderr: $(printf '%s' "$stderr_preview" | head -c 500)" >&2
+	fi
+	[ "$login_error" = "true" ] && log "[COMMENT] minimax unavailable: not logged in" >&2
+	[ -n "$sandbox_dir" ] && destroy_sandbox "$sandbox_dir"
+	if [ $rc -eq 124 ]; then
+		rm -f "$output_file"
+		log "[COMMENT] minimax timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ "$provider_error" = "true" ]; then
+		rm -f "$output_file"
+		log "[COMMENT] minimax provider/auth error treated as failure (model=$model)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		rm -f "$output_file"
+		log "[COMMENT] minimax failed (rc=$rc, model=$model)" >&2
+		return 1
+	fi
+	output=$(cat "$output_file" 2>/dev/null)
+	rm -f "$output_file"
+	printf '%s' "$output"
+}
+
+_run_comment_agent() {
+	local agent="$1" prompt_file="$2"
+	_ai_dispatch "COMMENT" "$agent" "$prompt_file"
+}
+
 _run_claude_radio_with_model() {
 	local prompt_file="$1"
 	local model="${2:-$RADIO_CLAUDE_MODEL}"
@@ -227,7 +306,107 @@ _run_claude_radio_with_model() {
 }
 
 _run_claude_radio() {
-	_run_claude_radio_with_model "$1" "$RADIO_CLAUDE_MODEL"
+	_ai_call_claude "RADIO" "$1" "$RADIO_CLAUDE_MODEL"
+}
+
+_run_minimax_radio() {
+	local prompt_file="$1"
+	local model="${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
+	local timeout_sec="${3:-${RADIO_CLAUDE_TIMEOUT:-120}}"
+	local output_file output
+	if [ ! -s "$prompt_file" ]; then
+		return 1
+	fi
+	log "[RADIO] minimax call (model=$model, prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	output_file=$(mktemp /tmp/eloop_minimax_radio_output_XXXXXXXX)
+	_run_minimax_claude_prompt_file "$prompt_file" "$output_file" "$model" "$timeout_sec" "acceptEdits"
+	local rc=$?
+	local stderr_preview="${MINIMAX_CLAUDE_LAST_STDERR:-}"
+	local provider_error="${MINIMAX_CLAUDE_LAST_PROVIDER_ERROR:-false}"
+	local login_error="${MINIMAX_CLAUDE_LAST_LOGIN_ERROR:-false}"
+	if [ -n "$stderr_preview" ]; then
+		log "[RADIO] minimax stderr: $stderr_preview" >&2
+	fi
+	[ "$login_error" = "true" ] && log "[RADIO] minimax unavailable: not logged in" >&2
+	if [ $rc -eq 124 ]; then
+		rm -f "$output_file"
+		log "[RADIO] minimax timeout (${timeout_sec}s, model=$model)" >&2
+		return 1
+	fi
+	if [ "$provider_error" = "true" ]; then
+		rm -f "$output_file"
+		log "[RADIO] minimax provider/auth error treated as failure (model=$model)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		rm -f "$output_file"
+		log "[RADIO] minimax failed (rc=$rc, model=$model)" >&2
+		return 1
+	fi
+	output=$(cat "$output_file" 2>/dev/null)
+	rm -f "$output_file"
+	printf '%s' "$output"
+}
+
+_run_radio_agent() {
+	local agent="$1" prompt_file="$2"
+	_ai_dispatch "RADIO" "$agent" "$prompt_file"
+}
+
+# _radio_stage_research <corner_name> <topic> <raw_grounding_data>
+#   Webグラウンディングデータを軽量AIで2000字以内のブリーフィングに凝縮する。
+#   RADIO_BRIEFING_ENABLED=0(default) のときはパススルー(truncate only)。
+#   stdout: condensed briefing text
+_radio_stage_research() {
+	local corner_name="$1" topic="$2" raw_data="$3"
+
+	# データなし → 空を返す
+	[ -z "$raw_data" ] && return 0
+
+	local max_chars="${RADIO_BRIEFING_MAX_CHARS:-2000}"
+
+	# データが十分小さい場合はAI凝縮不要
+	if [ "${#raw_data}" -le "$max_chars" ]; then
+		printf '%s' "$raw_data"
+		return 0
+	fi
+
+	# RADIO_BRIEFING_ENABLED=0 のときはそのままtruncate
+	if [ "${RADIO_BRIEFING_ENABLED:-0}" != "1" ]; then
+		printf '%s' "${raw_data:0:$max_chars}"
+		return 0
+	fi
+
+	# 軽量AIで凝縮
+	local briefing_model="${RADIO_BRIEFING_MODEL:-${RADIO_CLAUDE_MODEL:-claude-haiku-4-5-20251001}}"
+	local briefing_prompt_file briefing
+	briefing_prompt_file=$(mktemp /tmp/eloop_radio_briefing_XXXXXXXX)
+	cat > "$briefing_prompt_file" <<BPROMPT
+以下はウェブ検索結果です。このデータから「${topic}」について放送に使える重要な事実・ポイントを日本語で${max_chars}字以内にまとめてください。
+
+ルール:
+- 事実のみ抽出（広告・SEOスパム・重複を除去）
+- 固有名詞・数値・日付を正確に保持
+- 放送DJ向けの簡潔な要約として書く
+- 「まとめ：」などの前置きなしで、要約内容をそのまま書き出すこと
+- 確認できた範囲で書き、不明な点は断定しないこと
+
+【検索結果】
+${raw_data}
+BPROMPT
+
+	log "[RADIO:${corner_name}] Stage1: グラウンディング凝縮 (${#raw_data}字 → ${max_chars}字以内, model=${briefing_model})" >&2
+	briefing=$(_run_claude_radio_with_model "$briefing_prompt_file" "$briefing_model" 2>/dev/null)
+	rm -f "$briefing_prompt_file"
+
+	if [ -n "$briefing" ] && [ "${#briefing}" -ge 50 ]; then
+		log "[RADIO:${corner_name}] Stage1: 凝縮完了 (${#briefing}字)" >&2
+		printf '%s' "$briefing"
+	else
+		# 凝縮失敗 → truncateにフォールバック
+		log "[RADIO:${corner_name}] Stage1: 凝縮失敗 → truncateフォールバック" >&2
+		printf '%s' "${raw_data:0:$max_chars}"
+	fi
 }
 
 _run_ollama_radio() {
@@ -715,6 +894,52 @@ def score_segment(seg):
     punct = len(re.findall(r"[。.!?！？]", txt))
     return len(txt) + punct * 80
 
+def normalize_compare_text(text):
+    return re.sub(r"[\W_]+", "", text)
+
+def looks_like_keyword_list(line):
+    stripped = line.strip()
+    if not stripped or len(stripped) > 220:
+        return False
+    if re.search(r"[。.!?！？]", stripped):
+        return False
+    return stripped.count(",") + stripped.count("、") >= 3
+
+summary_like_header = re.compile(
+    r"^(?:要約|まとめ|総括|要点|キーワード|一言要約|今回のまとめ|本日のまとめ)(?:\s*[:：]\s*.*)?$"
+)
+summary_like_short_lead = re.compile(
+    r"^(?:要するに|一言で言うと|ひとことで言うと|まとめると|結論だけ言うと|要点だけ言うと)"
+)
+summary_parts_normalized = [
+    normalize_compare_text(part) for part in summary.split(" / ") if normalize_compare_text(part)
+]
+
+def matches_summary_part(line):
+    norm = normalize_compare_text(line)
+    if len(norm) < 6:
+        return False
+    for part in summary_parts_normalized:
+        if len(part) < 6:
+            continue
+        if norm == part or norm in part or part in norm:
+            return True
+    return False
+
+def is_summaryish_edge_line(line):
+    stripped = line.strip(" \t\u3000-・*")
+    if not stripped:
+        return False
+    if summary_like_header.match(stripped):
+        return True
+    if looks_like_keyword_list(stripped):
+        return True
+    if len(stripped) <= 60 and summary_like_short_lead.match(stripped):
+        return True
+    if len(stripped) <= 120 and matches_summary_part(stripped):
+        return True
+    return False
+
 body_lines = []
 if segments:
     best = max(segments, key=score_segment)
@@ -769,6 +994,9 @@ while clean_body_lines:
     if head.startswith(meta_prefixes):
         clean_body_lines = clean_body_lines[1:]
         continue
+    if is_summaryish_edge_line(head):
+        clean_body_lines = clean_body_lines[1:]
+        continue
     break
 if clean_body_lines:
     head = clean_body_lines[0]
@@ -776,6 +1004,8 @@ if clean_body_lines:
         clean_body_lines = clean_body_lines[1:]
     elif head.count(",") + head.count("、") >= 4 and len(head) <= 180 and len(clean_body_lines) >= 2:
         clean_body_lines = clean_body_lines[1:]
+while clean_body_lines and is_summaryish_edge_line(clean_body_lines[-1]):
+    clean_body_lines = clean_body_lines[:-1]
 body = "\n".join(clean_body_lines).strip()
 
 body = re.sub(r"\n{3,}", "\n\n", body)
@@ -1053,28 +1283,60 @@ _radio_generate_and_play() {
 	_radio_set_state "generating" "$corner_name"
 	_write_radio_corner_status "generating" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
 	log "[RADIO:${corner_name}] トーク生成中..."
-	local talk prompt_snapshot debug_dump="" provider_used=""
+	local talk="" prompt_snapshot debug_dump="" provider_used=""
 	local host_mode_generated=""
+	local radio_primary_agent="${RADIO_AGENT}"
+	local radio_second_agent="ollama:${RADIO_OLLAMA_MODEL}"
+	local radio_third_agent="${RADIO_FALLBACK}"
+	local radio_allow_claude_fallback=true
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
+	if [ "$host_mode_generated" = "main" ]; then
+		radio_primary_agent="${RADIO_MAIN_AGENT:-minimax}"
+		radio_second_agent="${RADIO_MAIN_FALLBACK:-opencode:glmflash}"
+		radio_third_agent="${RADIO_MAIN_OLLAMA_FALLBACK:-qwen35e}"
+	elif [ "$host_mode_generated" = "soren91" ]; then
+		radio_primary_agent="${RADIO_SOREN91_AGENT:-haiku}"
+		radio_second_agent="${RADIO_SOREN91_FALLBACK:-gemma4e}"
+		radio_third_agent=""
+		radio_allow_claude_fallback=false
+	fi
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
-	talk=$(_run_opencode_radio "$RADIO_AGENT" "$prompt_file")
-	[ -n "$talk" ] && provider_used="$RADIO_AGENT" && log "[RADIO:${corner_name}] ${RADIO_AGENT} OK"
+
+	# --- attempt loop: 生成+パース+ノーマライズ を品質チェックのリライト分だけ繰り返す ---
+	# プロンプトファイルはループ内で削除。リライト用に保存コピーを保持する。
+	local _saved_prompt _current_prompt_file _radio_attempt _radio_max_attempts
+	local _quality_ok _quality_fail_reason
+	_saved_prompt=$(mktemp /tmp/eloop_radio_saved_XXXXXXXX)
+	cp "$prompt_file" "$_saved_prompt" 2>/dev/null || true
+	_current_prompt_file="$prompt_file"
+	_radio_max_attempts=$(( ${RADIO_MAX_RETRIES:-1} + 1 ))
+	_quality_ok=false
+	_quality_fail_reason=""
+	local talk_body="" talk_summary=""
+
+	for _radio_attempt in $(seq 1 "$_radio_max_attempts"); do
+
+	talk=""
+	provider_used=""
+	talk=$(_run_radio_agent "$radio_primary_agent" "$_current_prompt_file")
+	[ -n "$talk" ] && provider_used="$radio_primary_agent" && log "[RADIO:${corner_name}] ${radio_primary_agent} OK"
 	if [ -z "$talk" ]; then
-		log "[RADIO:${corner_name}] ${RADIO_AGENT} fail -> ollama:${RADIO_OLLAMA_MODEL}"
-		talk=$(_run_ollama_radio "$prompt_file")
-		[ -n "$talk" ] && provider_used="ollama:${RADIO_OLLAMA_MODEL}" && log "[RADIO:${corner_name}] ollama:${RADIO_OLLAMA_MODEL} OK"
+		log "[RADIO:${corner_name}] ${radio_primary_agent} fail -> ${radio_second_agent}"
+		talk=$(_run_radio_agent "$radio_second_agent" "$_current_prompt_file")
+		[ -n "$talk" ] && provider_used="$radio_second_agent" && log "[RADIO:${corner_name}] ${radio_second_agent} OK"
 	fi
 	if [ -z "$talk" ]; then
-		log "[RADIO:${corner_name}] ollama:${RADIO_OLLAMA_MODEL} fail -> ${RADIO_FALLBACK}"
-		talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$prompt_file")
-		[ -n "$talk" ] && provider_used="$RADIO_FALLBACK" && log "[RADIO:${corner_name}] ${RADIO_FALLBACK} OK"
+		log "[RADIO:${corner_name}] ${radio_second_agent} fail -> ${radio_third_agent}"
+		talk=$(_run_radio_agent "$radio_third_agent" "$_current_prompt_file")
+		[ -n "$talk" ] && provider_used="$radio_third_agent" && log "[RADIO:${corner_name}] ${radio_third_agent} OK"
 	fi
-	if [ -z "$talk" ]; then
-		log "[RADIO:${corner_name}] ${RADIO_FALLBACK} fail -> claude:${RADIO_CLAUDE_MODEL}"
-		talk=$(_run_claude_radio "$prompt_file")
+	if [ -z "$talk" ] && [ "$radio_allow_claude_fallback" = "true" ]; then
+		log "[RADIO:${corner_name}] ${radio_third_agent} fail -> claude:${RADIO_CLAUDE_MODEL}"
+		talk=$(_run_claude_radio "$_current_prompt_file")
 		[ -n "$talk" ] && provider_used="claude:${RADIO_CLAUDE_MODEL}" && log "[RADIO:${corner_name}] claude:${RADIO_CLAUDE_MODEL} OK"
 	fi
-	rm -f "$prompt_file"
+	# 使い終わったプロンプトを削除（保存コピーは除く）
+	[ "$_current_prompt_file" != "$_saved_prompt" ] && rm -f "$_current_prompt_file" 2>/dev/null || true
 
 	if [ -z "$talk" ]; then
 		debug_dump="$TMP_DEBUG_DIR/radio_failed_${corner_name}_$(date +%s).txt"
@@ -1089,14 +1351,15 @@ _radio_generate_and_play() {
 			printf '%s\n' "$prompt_snapshot"
 		} >"$debug_dump"
 		log "[RADIO:${corner_name}] トーク生成失敗: empty output (dump: $debug_dump)"
+		rm -f "$_saved_prompt" 2>/dev/null || true
 		_write_radio_corner_status "generation_failed" "$corner_name" "$game_num" "$score" "$topic" "generation_empty" "$selected_news"
 		_radio_clear_state "$corner_name" "generation_failed"
 		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
 	fi
-	log "[RADIO:${corner_name}] 生成プロバイダ: ${provider_used:-unknown}"
+	log "[RADIO:${corner_name}] 生成プロバイダ: ${provider_used:-unknown} (attempt=${_radio_attempt})"
 
-	local talk_body talk_summary parse_dir
+	local talk_body_parsed talk_body_sanitized talk_body_dedup parse_dir
 	parse_dir=$(mktemp -d /tmp/eloop_radio_parse_XXXXXXXX)
 	printf '%s' "$talk" | _radio_parse_output_to_files "$parse_dir/body.txt" "$parse_dir/summary.txt" "$parse_dir/selected_news.txt"
 	talk_body=$(cat "$parse_dir/body.txt" 2>/dev/null)
@@ -1113,7 +1376,6 @@ _radio_generate_and_play() {
 		fi
 	fi
 
-	local talk_body_parsed talk_body_sanitized talk_body_dedup
 	talk_body_parsed="$talk_body"
 	if _contains_provider_error_text "$talk" || _contains_provider_error_text "$talk_body_parsed"; then
 		debug_dump="$TMP_DEBUG_DIR/radio_failed_${corner_name}_$(date +%s).txt"
@@ -1131,6 +1393,7 @@ _radio_generate_and_play() {
 			printf '%s\n' "$talk_body_parsed"
 		} >"$debug_dump"
 		log "[RADIO:${corner_name}] provider error text detected in generated talk -> skip (dump: $debug_dump)"
+		rm -f "$_saved_prompt" 2>/dev/null || true
 		_write_radio_corner_status "generation_failed" "$corner_name" "$game_num" "$score" "$topic" "provider_error_text" "$selected_news"
 		_radio_clear_state "$corner_name" "generation_failed"
 		rmdir "$inflight_dir" 2>/dev/null || true
@@ -1190,8 +1453,53 @@ _radio_generate_and_play() {
 			printf '%s\n' "$talk_body_dedup"
 		} >"$debug_dump"
 		log "[RADIO:${corner_name}] WARNING: 本文が短すぎる raw=${#talk} parsed=${#talk_body_parsed} sanitized=${#talk_body_sanitized} dedup=${#talk_body_dedup} final=${#talk_body} -> skip (dump: $debug_dump)"
+		rm -f "$_saved_prompt" 2>/dev/null || true
 		_write_radio_corner_status "body_too_short" "$corner_name" "$game_num" "$score" "$topic" "body_too_short" "$selected_news"
 		_radio_clear_state "$corner_name" "body_too_short"
+		rmdir "$inflight_dir" 2>/dev/null || true
+		return 1
+	fi
+
+	# 品質チェック（中国語/非日本語/無限ループ/文字化け）
+	if [ "${RADIO_QUALITY_CHECK_ENABLED:-1}" = "1" ]; then
+		local _qr
+		_qr=$(_radio_quality_check "$talk_body" "$corner_name")
+		if [ "$_qr" = "OK" ]; then
+			_quality_ok=true
+			break
+		else
+			_quality_fail_reason="$_qr"
+			log "[RADIO:${corner_name}] 品質チェック失敗 attempt=${_radio_attempt}/${_radio_max_attempts}: ${_qr}"
+			if [ "$_radio_attempt" -lt "$_radio_max_attempts" ]; then
+				_current_prompt_file=$(_radio_build_rewrite_prompt "$_saved_prompt" "${talk_body:0:200}" "$_qr")
+				continue
+			fi
+		fi
+	else
+		_quality_ok=true
+		break
+	fi
+
+	done  # attempt loop end
+
+	rm -f "$_saved_prompt" 2>/dev/null || true
+
+	# 品質チェック最終失敗
+	if [ "${RADIO_QUALITY_CHECK_ENABLED:-1}" = "1" ] && [ "$_quality_ok" != "true" ]; then
+		debug_dump="$TMP_DEBUG_DIR/radio_quality_${corner_name}_$(date +%s).txt"
+		{
+			echo "reason=quality_check_failed"
+			echo "corner=${corner_name}"
+			echo "game=${game_num}"
+			echo "score=${score}"
+			echo "quality_fail_reason=${_quality_fail_reason}"
+			echo "body_chars=${#talk_body}"
+			echo
+			printf '%s\n' "$talk_body"
+		} >"$debug_dump"
+		log "[RADIO:${corner_name}] 品質チェック最終失敗 (${_quality_fail_reason}) → スキップ (dump: $debug_dump)"
+		_write_radio_corner_status "quality_check_failed" "$corner_name" "$game_num" "$score" "$topic" "$_quality_fail_reason" "$selected_news"
+		_radio_clear_state "$corner_name" "quality_check_failed"
 		rmdir "$inflight_dir" 2>/dev/null || true
 		return 1
 	fi
@@ -1254,17 +1562,31 @@ _radio_generate_and_play() {
 	local play_rc=0
 	talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 	echo "$talk_body" >"$talk_file"
+	_radio_store_generation_meta \
+		"$talk_file" \
+		"$corner_name" \
+		"$host_mode_generated" \
+		"${provider_used:-unknown}" \
+		"$game_num" \
+		"$score" \
+		"$_radio_attempt" \
+		"$topic" \
+		"$selected_news" \
+		"$radio_primary_agent" \
+		"$radio_second_agent" \
+		"$radio_third_agent"
 	history_line="[$(date '+%H:%M')] Game#${game_num} ${score}pts [${corner_name}]: ${talk_summary}"
 	log "[RADIO:${corner_name}] ${#talk_body}字"
 
 	local host_mode_now=""
 	host_mode_now=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-	if [ "$host_mode_now" != "$host_mode_generated" ]; then
-		log "[RADIO:${corner_name}] mode changed during generation (${host_mode_generated} -> ${host_mode_now}) -> discard"
-		_write_radio_corner_status "stale_mode_discarded" "$corner_name" "$game_num" "$score" "$topic" "mode_changed" "$selected_news" "{\"expected_mode\": \"${host_mode_generated}\", \"current_mode\": \"${host_mode_now}\"}"
-		rm -f "$talk_file"
-		_radio_clear_state "$corner_name" "stale_mode_discarded"
-		rmdir "$inflight_dir" 2>/dev/null || true
+		if [ "$host_mode_now" != "$host_mode_generated" ]; then
+			log "[RADIO:${corner_name}] mode changed during generation (${host_mode_generated} -> ${host_mode_now}) -> discard"
+			_write_radio_corner_status "stale_mode_discarded" "$corner_name" "$game_num" "$score" "$topic" "mode_changed" "$selected_news" "{\"expected_mode\": \"${host_mode_generated}\", \"current_mode\": \"${host_mode_now}\"}"
+			_radio_clear_generation_meta "$talk_file" 2>/dev/null || true
+			rm -f "$talk_file"
+			_radio_clear_state "$corner_name" "stale_mode_discarded"
+			rmdir "$inflight_dir" 2>/dev/null || true
 		return 0
 	fi
 
@@ -1286,13 +1608,14 @@ _radio_generate_and_play() {
 			_radio_set_state "queued" "$corner_name"
 			_write_radio_corner_status "queued" "$corner_name" "$game_num" "$score" "$topic" "comment_backlog" "$selected_news" "{\"comment_queued\": ${comment_queued:-0}, \"comment_playing\": ${comment_playing:-0}, \"deferred_file\": \"$(basename "$deferred_file")\"}"
 			log "[RADIO:${corner_name}] deferred: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}) -> $(basename "$deferred_file")"
-		else
-			log "[RADIO:${corner_name}] deferred enqueue失敗 (comment backlog=${comment_total})"
-			_write_radio_corner_status "deferred_enqueue_failed" "$corner_name" "$game_num" "$score" "$topic" "deferred_enqueue_failed" "$selected_news"
-			_radio_clear_state "$corner_name" "deferred_enqueue_failed"
-			rm -f "$talk_file" 2>/dev/null || true
-			rmdir "$inflight_dir" 2>/dev/null || true
-			return 1
+			else
+				log "[RADIO:${corner_name}] deferred enqueue失敗 (comment backlog=${comment_total})"
+				_write_radio_corner_status "deferred_enqueue_failed" "$corner_name" "$game_num" "$score" "$topic" "deferred_enqueue_failed" "$selected_news"
+				_radio_clear_state "$corner_name" "deferred_enqueue_failed"
+				_radio_clear_generation_meta "$talk_file" 2>/dev/null || true
+				rm -f "$talk_file" 2>/dev/null || true
+				rmdir "$inflight_dir" 2>/dev/null || true
+				return 1
 		fi
 	else
 		_radio_set_state "playing" "$corner_name"
@@ -1310,8 +1633,8 @@ _radio_generate_and_play() {
 		else
 			SAY_CC_TEXT="$immediate_cc_text" SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${corner_name}" ./say_enqueue.sh "$talk_file" "$RADIO_SAY_RATE" 0 || play_rc=$?
 		fi
-		if [ "$play_rc" -ne 0 ]; then
-			debug_dump="$TMP_DEBUG_DIR/radio_play_failed_${corner_name}_$(date +%s).txt"
+			if [ "$play_rc" -ne 0 ]; then
+				debug_dump="$TMP_DEBUG_DIR/radio_play_failed_${corner_name}_$(date +%s).txt"
 			{
 				echo "reason=play_failed"
 				echo "corner=${corner_name}"
@@ -1320,17 +1643,19 @@ _radio_generate_and_play() {
 				echo "play_rc=${play_rc}"
 				echo
 				printf '%s\n' "$talk_body"
-			} >"$debug_dump"
-			log "[RADIO:${corner_name}] 再生失敗 rc=${play_rc} (dump: $debug_dump)"
-			_write_radio_corner_status "play_failed" "$corner_name" "$game_num" "$score" "$topic" "play_failed" "$selected_news" "{\"play_rc\": ${play_rc:-1}}"
-			rm -f "$talk_file"
-			_radio_clear_state "$corner_name" "play_failed"
-			rmdir "$inflight_dir" 2>/dev/null || true
-			return 1
+				} >"$debug_dump"
+				log "[RADIO:${corner_name}] 再生失敗 rc=${play_rc} (dump: $debug_dump)"
+				_write_radio_corner_status "play_failed" "$corner_name" "$game_num" "$score" "$topic" "play_failed" "$selected_news" "{\"play_rc\": ${play_rc:-1}}"
+				_radio_clear_generation_meta "$talk_file" 2>/dev/null || true
+				rm -f "$talk_file"
+				_radio_clear_state "$corner_name" "play_failed"
+				rmdir "$inflight_dir" 2>/dev/null || true
+				return 1
+			fi
+			_radio_append_spoken_history_line "$history_line"
 		fi
-		_radio_append_spoken_history_line "$history_line"
-	fi
-	rm -f "$talk_file"
+		_radio_clear_generation_meta "$talk_file" 2>/dev/null || true
+		rm -f "$talk_file"
 	_radio_mark_done "$done_marker"
 	_radio_clear_state "$corner_name" "completed"
 	_write_radio_corner_status "completed" "$corner_name" "$game_num" "$score" "$topic" "" "$selected_news"
