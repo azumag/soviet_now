@@ -939,7 +939,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Hypothesis: max_y>=2.5 NEAR penalty)
         # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
         if merge_grade == "NEAR" and max_y >= 2.5:
-            score -= 300.0
+            score -= 600.0  # v550强化: -300→-600, NEAR選択時のmax_y runaway防止
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
