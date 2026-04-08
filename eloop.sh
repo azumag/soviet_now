@@ -429,7 +429,7 @@ raw_avg_str = f"raw_avg={raw_avg} " if raw_scores else ""
 print(f"[{count}/{cycle}] score={raw}{bonus_str} | {raw_avg_str}eval_avg={eval_avg}{russia_str} (あと{remain}試合)")
 PY
 		)
-		./twitch_chat.sh send "${pred_progress}" 2>/dev/null &
+		enqueue_chat_message "${pred_progress}" "eloop"
 	fi
 
 	# コメントプレイヤー・ウォッチャーが死んでいたら再起動

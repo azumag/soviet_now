@@ -70,6 +70,7 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 	mkdir "$LOCKDIR" || { echo "ERROR: failed to acquire lock."; exit 1; }
 fi
 echo $$ > "$LOCKDIR/pid"
+export SOREN_MAIN_PID="$$"
 rm -f tmp/stop
 
 # --- 環境変数読み込み ---
@@ -88,11 +89,68 @@ DEFER_NEXT_GAME_PREP=0
 
 _cleanup_once() {
 	local reason="${1:-unknown}"
+	local current_pid lock_pid
+	current_pid=$(_my_pid)
+	if [ -n "${SOREN_MAIN_PID:-}" ] && [ "$current_pid" != "${SOREN_MAIN_PID}" ]; then
+		return 0
+	fi
+	lock_pid=$(cat "$LOCKDIR/pid" 2>/dev/null || true)
+	case "$lock_pid" in
+	''|*[!0-9]*) lock_pid="" ;;
+	esac
+	if [ -n "$lock_pid" ] && [ "$lock_pid" != "${SOREN_MAIN_PID:-}" ]; then
+		log "[CLEANUP] lock owner changed (owner=${lock_pid}, self=${SOREN_MAIN_PID:-?}) -> skip global cleanup"
+		return 0
+	fi
 	if [ "${_SOREN_CLEANED_UP:-0}" -eq 1 ]; then
 		return 0
 	fi
 	_SOREN_CLEANED_UP=1
 	cleanup_all "$reason"
+}
+
+_ensure_improve_daemon_running() {
+	[ "${IMPROVE_DAEMON_AUTOSTART:-1}" = "1" ] || return 0
+
+	local daemon_pid="" daemon_cmd="" daemon_log=""
+	if [ -f "$IMPROVE_DAEMON_PID_FILE" ]; then
+		daemon_pid=$(cat "$IMPROVE_DAEMON_PID_FILE" 2>/dev/null || true)
+		case "$daemon_pid" in
+		''|*[!0-9]*) daemon_pid="" ;;
+		esac
+		if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
+			daemon_cmd=$(ps -p "$daemon_pid" -o command= 2>/dev/null || true)
+			if printf '%s' "$daemon_cmd" | grep -q "improve_daemon\.sh"; then
+				return 0
+			fi
+		fi
+	fi
+
+	daemon_pid=$(pgrep -fo "improve_daemon\\.sh" 2>/dev/null || true)
+	case "$daemon_pid" in
+	''|*[!0-9]*) daemon_pid="" ;;
+	esac
+	if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
+		daemon_cmd=$(ps -p "$daemon_pid" -o command= 2>/dev/null || true)
+		if printf '%s' "$daemon_cmd" | grep -q "improve_daemon\.sh"; then
+			printf '%s\n' "$daemon_pid" > "$IMPROVE_DAEMON_PID_FILE"
+			return 0
+		fi
+	fi
+
+	mkdir -p "$TMP_DEBUG_DIR" 2>/dev/null || true
+	daemon_log="$TMP_DEBUG_DIR/improve_daemon.log"
+	nohup /bin/bash ./improve_daemon.sh >>"$daemon_log" 2>&1 &
+	daemon_pid=$!
+	disown "$daemon_pid" 2>/dev/null || true
+	sleep 1
+	if kill -0 "$daemon_pid" 2>/dev/null; then
+		printf '%s\n' "$daemon_pid" > "$IMPROVE_DAEMON_PID_FILE"
+		log "[IMPROVE] improve_daemon を自動起動 (PID=$daemon_pid)"
+		return 0
+	fi
+	log "[IMPROVE] improve_daemon 自動起動失敗"
+	return 1
 }
 
 _handle_stop_signal() {
@@ -192,6 +250,7 @@ fi
 
 # 前回中断した改善プロセスの状態復元
 check_and_harvest_improvement
+_ensure_improve_daemon_running
 
 # MOVE状態待ち
 wait_for_move
@@ -221,6 +280,7 @@ while true; do
 	if ! source ./eloop.sh 2>/dev/null; then
 		log "WARNING: eloop.sh の読み込みに失敗 (前回の定義で続行)"
 	fi
+	_ensure_improve_daemon_running
 
 	# ゲーム番号を毎試合読み直す
 	GAME_NUM=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
@@ -278,7 +338,7 @@ while true; do
 				SAY_VOICEVOX_SPEAKER_OVERRIDE="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="meriken_time:announce" ./say_enqueue.sh "$_mt_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 				rm -f "$_mt_file"
 			} &
-			./twitch_chat.sh send "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
+			enqueue_chat_message "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" "soren_loop"
 			_run_scheduled_meriken_time_window \
 				"improve_complete" \
 				"[MERIKEN_TIME] 改善完了→20時台: メリケンAIタイム開始"
@@ -361,22 +421,22 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 				_cycle_pred_best=$(python3 -c "import json; print(json.load(open('$TMP_STATE_DIR/current_prediction.json')).get('best_outcome',0))" 2>/dev/null || echo 0)
 				./twitch_predictions.sh resolve "$_cycle_pred_best" >>tmp/prediction.log 2>&1 || true
 			fi
+			# daemon 生死によらずロックファイルを作成する
+			# daemon が落ちていても再起動後に trigger_adaptive_improvement が拾えるようにする
 			if [ "$_improve_daemon_alive" = true ]; then
 				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 → ロックファイル作成 (デーモンが改善開始予定)"
-				# accumulated_games.json をロックファイルとしてコピーしてデーモンに渡す
-				cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
-				python3 -c "
+			else
+				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 (デーモンなし) → ロックファイル作成、daemon再起動後に改善予定"
+			fi
+			cp "$ACCUMULATED_GAMES_FILE" "$IMPROVE_LOCK_FILE"
+			python3 -c "
 import json, time
 f='$IMPROVE_LOCK_FILE'
 d=json.load(open(f))
 d['started_at']=int(time.time())
 json.dump(d,open(f,'w'))
 " 2>/dev/null || true
-				_clear_accumulated_data
-			else
-				log "[CYCLE] ${_cycle_acc_count}/${MIN_GAMES_BEFORE_IMPROVE} 試合到達 (デーモンなし) → 蓄積リセット、次サイクルへ"
-				_clear_accumulated_data
-			fi
+			_clear_accumulated_data
 		fi
 	fi
 
@@ -396,7 +456,7 @@ json.dump(d,open(f,'w'))
 				SAY_VOICEVOX_SPEAKER_OVERRIDE="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="meriken_time:announce" ./say_enqueue.sh "$_mt_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 				rm -f "$_mt_file"
 			} &
-			./twitch_chat.sh send "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
+			enqueue_chat_message "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" "soren_loop"
 			_run_scheduled_meriken_time_window \
 				"cycle_boundary" \
 				"[MERIKEN_TIME] サイクル区切り+20時台: メリケンAIタイム開始"

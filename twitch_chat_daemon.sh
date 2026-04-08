@@ -241,5 +241,32 @@ while true; do
             fi
         fi
     done
+    # --- Outbound chat queue consumer ---
+    # IRC 再接続の合間に outbound queue を消化する
+    _outbound_dir="${OUTBOUND_CHAT_PENDING_DIR:-tmp/.outbound_chat_queue/pending}"
+    _outbound_sent="${OUTBOUND_CHAT_SENT_DIR:-tmp/.outbound_chat_queue/sent}"
+    _outbound_rate_sec=2
+    if [ -d "$_outbound_dir" ]; then
+        for _oq_file in $(ls -1t "$_outbound_dir"/*.msg 2>/dev/null | sort); do
+            [ -f "$_oq_file" ] || continue
+            _oq_msg=$(cat "$_oq_file" 2>/dev/null)
+            if [ -n "$_oq_msg" ]; then
+                if ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "$_oq_msg" >/dev/null 2>&1 ); then
+                    mkdir -p "$_outbound_sent" 2>/dev/null || true
+                    mv "$_oq_file" "$_outbound_sent/$(basename "$_oq_file")" 2>/dev/null || rm -f "$_oq_file"
+                fi
+            else
+                rm -f "$_oq_file"
+            fi
+            sleep "$_outbound_rate_sec"
+        done
+        # sent/ の古いファイルを削除 (1時間以上)
+        _oq_now=$(date +%s)
+        for _oq_sf in "$_outbound_sent"/*.msg 2>/dev/null; do
+            [ -f "$_oq_sf" ] || continue
+            _oq_mt=$(stat -f %m "$_oq_sf" 2>/dev/null || echo "$_oq_now")
+            [ $((  _oq_now - _oq_mt )) -gt 3600 ] && rm -f "$_oq_sf"
+        done
+    fi
     sleep 5
 done

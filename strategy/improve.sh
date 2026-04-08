@@ -4,7 +4,10 @@
 #=== 改善中判定 (soren_loop.sh のスキップ判定用) ===
 
 _is_improve_running() {
-	[ -f "$IMPROVE_LOCK_FILE" ]
+	# ロックファイルが存在し、かつ実際に改善プロセスが動いている(status=running/manual)時のみtrue
+	# ロックのみ存在(daemon待ち/failed後)ではfalseを返し、main loopがゲームを続行できるようにする
+	[ -f "$IMPROVE_LOCK_FILE" ] || return 1
+	grep -q '"status"[[:space:]]*:[[:space:]]*"running"\|"status"[[:space:]]*:[[:space:]]*"manual"' "$IMPROVE_STATE_FILE" 2>/dev/null
 }
 
 #=== 改善ステート管理 ===
@@ -372,10 +375,15 @@ with open(rs_file, 'w') as f:
 				_write_improve_state "idle" "0" "" "" "0" ""
 				rm -f "$TMP_STATE_DIR/last_improve_failed_at"
 				rm -f "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || true
+				rm -f "$IMPROVE_LOCK_FILE"
 			else
 				_write_improve_state "idle" "0" "" "failed_no_apply" "100" "${prev_detail:-process_exited_without_apply}"
+				# failed_no_apply: ロックファイルを残してtouchする
+				# → daemon再起動後にtrigger_adaptive_improvementが同じデータで再試行できる
+				# → _is_improve_running()はstatus=idleのためfalseを返しmain loopは止まらない
+				touch "$IMPROVE_LOCK_FILE" 2>/dev/null || true
+				log "[IMPROVE] ロックファイル保持 → daemon再試行待ち"
 			fi
-			rm -f "$IMPROVE_LOCK_FILE"
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
 			# OBS: 改善中コンソール非表示
@@ -403,7 +411,7 @@ with open(rs_file, 'w') as f:
 						VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$_end_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 						rm -f "$_end_file"
 					} &
-					./twitch_chat.sh send "戦略改善終了。交代します" 2>/dev/null &
+					enqueue_chat_message "戦略改善終了。交代します" "improve"
 				else
 					log "[IMPROVE] 交代アナウンス重複スキップ (guard存在)"
 				fi
@@ -857,7 +865,7 @@ _start_improvement_job() {
 		soren91_start
 		if command -v soren91_is_running >/dev/null 2>&1 && soren91_is_running 2>/dev/null; then
 			# Twitch チャットに戦略改善開始を通知
-			./twitch_chat.sh send "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" 2>/dev/null &
+			enqueue_chat_message "中華AIが戦略を改善中。その間、メリケンAIがソ連ゲーム91で同志を迎え撃ちます。挑戦お待ちしています ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" "improve"
 		else
 			log "[IMPROVE] soren91 は停止処理中のため起動通知をスキップ"
 		fi

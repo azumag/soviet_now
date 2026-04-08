@@ -272,19 +272,10 @@ EOF
 	else
 		chat_text="${action}${transition}。系統樹はこちら: ${tree_url}"
 	fi
-	(
-		local send_output rc
-		send_output=$(./twitch_chat.sh send "$chat_text" 2>&1)
-		rc=$?
-		if [ "$rc" -ne 0 ]; then
-			log "[PHYLO] Twitch chat投稿失敗: ${chat_text:0:120}"
-			_append_phyrogenetic_chat_post_log "FAIL" "rc=$rc commit=${head_commit:0:8} event=$event_type output=$(printf '%s' "$send_output" | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g')" "$chat_text"
-		else
-			mkdir -p "$(dirname "$LAST_PHYROGENETIC_CHAT_COMMIT_FILE")" 2>/dev/null || true
-			printf '%s\n' "$head_commit" >"$LAST_PHYROGENETIC_CHAT_COMMIT_FILE"
-			_append_phyrogenetic_chat_post_log "OK" "commit=${head_commit:0:8} event=$event_type" "$chat_text"
-		fi
-	) &
+	enqueue_chat_message "$chat_text" "phyrogenetic"
+	mkdir -p "$(dirname "$LAST_PHYROGENETIC_CHAT_COMMIT_FILE")" 2>/dev/null || true
+	printf '%s\n' "$head_commit" >"$LAST_PHYROGENETIC_CHAT_COMMIT_FILE"
+	_append_phyrogenetic_chat_post_log "QUEUED" "commit=${head_commit:0:8} event=$event_type" "$chat_text"
 }
 
 _post_pending_phyrogenetic_tree_link_to_chat_if_any() {
@@ -304,17 +295,8 @@ _post_pending_phyrogenetic_tree_link_to_chat_if_any() {
 _post_cc_text_to_chat() {
 	local cc_text="$1"
 	[ -n "$cc_text" ] || return 0
-	(
-		local send_output rc
-		send_output=$(./twitch_chat.sh send "$cc_text" 2>&1)
-		rc=$?
-		if [ "$rc" -ne 0 ]; then
-			log "[RADIO:news] CC表記投稿失敗: ${cc_text:0:80}"
-			_append_cc_post_log "FAIL" "rc=$rc output=$(printf '%s' "$send_output" | tr '\n' ' ' | sed 's/[[:space:]]\\+/ /g')" "$cc_text"
-		else
-			_append_cc_post_log "OK" "" "$cc_text"
-		fi
-	) &
+	enqueue_chat_message "$cc_text" "phyrogenetic_cc"
+	_append_cc_post_log "QUEUED" "" "$cc_text"
 }
 
 _post_cc_attribution_to_chat() {

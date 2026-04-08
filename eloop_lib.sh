@@ -9,6 +9,7 @@ cd "$ELOOP_LIB_DIR"
 
 # Layer 0: 定数・初期化
 source "$ELOOP_LIB_DIR/core/config.sh"
+source "$ELOOP_LIB_DIR/lib/outbound_queue.sh"
 # Layer 1: コアヘルパー
 source "$ELOOP_LIB_DIR/core/helpers.sh"
 source "$ELOOP_LIB_DIR/core/game_state.sh"
@@ -25,6 +26,7 @@ source "$ELOOP_LIB_DIR/broadcast/radio_engine.sh"
 source "$ELOOP_LIB_DIR/broadcast/radio_persona.sh"
 source "$ELOOP_LIB_DIR/broadcast/radio_themes.sh"
 source "$ELOOP_LIB_DIR/broadcast/radio_news.sh"
+source "$ELOOP_LIB_DIR/broadcast/radio_quality.sh"
 source "$ELOOP_LIB_DIR/broadcast/radio_factcheck.sh"
 source "$ELOOP_LIB_DIR/broadcast/radio_corners.sh"
 source "$ELOOP_LIB_DIR/broadcast/radio_celebration.sh"
