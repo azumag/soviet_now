@@ -484,7 +484,7 @@ except Exception:
 " 2>/dev/null || true
 			rm -f "$TMP_STATE_DIR/regression_pending"
 		fi
-		./twitch_predictions.sh cleanup "999999" >>tmp/prediction.log 2>&1 || true
+		# prediction_worker が state file を監視して cleanup する
 	else
 		rm -f "$TMP_STATE_DIR/regression_pending" 2>/dev/null || true
 	fi
