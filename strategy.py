@@ -11,6 +11,7 @@ Game Overview:
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
+         1.5d. HIGH_Y_MERGE_PRIORITY - new: max_y>=2.0 && danger_merge_available時にmerge candidateを積極奖励 (NEAR +300, DIRECT +400)
          1.5c. HIGH_MAX_Y_NEAR_PENALTY - v550: max_y>=2.5 NEAR penalty (-300) before v422 evaluation
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
@@ -64,13 +65,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v558: HIGH_MAX_Y_NEAR_PENALTY exemption for danger_*_merge_available — max_y>=2.5 && merge_grade==NEAR
-# でdanger_direct_merge_available || danger_merge_availableがTrueの場合はペナルティを適用しない
-# worst(1013) T57-59: danger_*_merge_available=falseでNO_MERGE続き、merge opportunity逃がす
-# best(3064) T117: max_y=2.71 NEAR選択→+144、DANGER_ZONE_IMMEDIATE/REACTIVE_IMMEDIATE_PRIORITY発火
-# Rollback postmortem: v557-style aggressive penaltyがNEAR→NO変換を強制しp25を8819→11085に悪化させた
-# Fixes rollback failure mode: aggressive_max_y_near_penalty_overrides_merge_bonus (p25 collapse)
-# refs: tmp/analysis_result.md
      # v555: NO_MERGE height penalty multiplier — max_y>=2.5 && merge_grade==NOでheight_penaltyを2倍化
      # v550/v552はNEAR選択時のペナルティを行うが、NO merge選択時はheight指導がない問題を修正
      # worst T56 (max_y=2.31, rp=3, NO merge) → T57: max_y=3.30 (+0.99) で高所にpiece追加
@@ -992,18 +986,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
         # v552: Russia-building exemption extended to next_type>=15 (v551 was >=14)
         # next_type=15 (Russia)時にRussia建国王免除を適用（piece14+とnext_type=15も免除）
-        # v558: danger_direct_merge_available exemption added — when danger_direct_merge is available
-        # on this or another candidate, the board has a safe DIRECT merge path, so NEAR penalty
-        # should not block potentially valuable NEAR merges at high max_y.
-        # Hypothesis: best(3064) T117 max_y=2.71 NEAR succeeded (+144) because board had safe merge path.
-        # worst(1013) T57-59 had no danger_*_merge_available and NO_MERGE throughout.
-        # Rollback postmortem priority: use danger_direct_merge_available/danger_merge_available to
-        # trigger high_y_merge_priority without penalizing NEAR.
-        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
         russia_merge_possible = next_type >= 15 and any(p["type"] >= 14 for p in pieces)
-        danger_safe_merge_available = result.get("danger_direct_merge_available", False) or result.get("danger_merge_available", False)
         global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
-        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible and not danger_safe_merge_available:
+        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
             # v552: max_y>=3.0 CRITICAL領域ではpenaltyを-900に強化（worst T65 max_y=3.70でNEAR選択抑制強化）
             if max_y >= 3.0:
                 score -= 900.0
@@ -1091,6 +1076,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 bonus = 600.0 if deadline_crossed else 300.0
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
+
+        # ----- evaluation axis 1.5d: high_y_merge_priority_bonus (new) -----
+        # Hypothesis: high_y_merge_priority bonus — max_y>=2.0 && danger_merge_available時にmerge candidateを積極奖励
+        # Worst game T58-64: max_y=2.95-3.37, merge_available=falseが6ターン持続, NO_MERGE選択でedgeにpieces放置
+        # Best game T105-114: max_y=0.62→2.11, NEAR merge with danger_merge_available=true, reactive_pairs 1→5
+        # Extra_high T89: max_y=2.0, NEAR merge with danger_merge_available=true, score_gain=+55
+        # batch_summary: NEAR_MERGE_HIGH_LAYER_CHAIN_MERGE系reasonのavg_score_delta=34.1
+        # worst_gameの失敗パターン: danger_merge_available=true && merge可用性ありでもNO_MERGE選択が継続
+        # →danger信号でmerge機会の活性化を促す（NEARを罰する代わりにpositive rewardで誘導）
+        # Rollback constraints compatible: NEAR penaltyではなくdanger信号でmerge priorityを上げる構造
+        # v560 penaltyとの重ねがけOK（+300はv560の打ち消し而非而是激励の叠加）
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+        if max_y >= 2.0 and result.get("danger_merge_available", False) and merge_grade in ("NEAR", "DIRECT"):
+            bonus = 300.0 if merge_grade == "NEAR" else 400.0
+            score += bonus
+            reasons.append("HIGH_Y_MERGE_PRIORITY")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
