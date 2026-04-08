@@ -937,12 +937,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ベスト(4202)T161: max_y=2.14→DIRECT選択は影響なし /  эквивалент
         # v422 (landing_y>=1.0) doesn't trigger at landing_y=0.82 (worst turn 72).
         # Evaluated before v422 so it fires even when v422 conditions aren't met.
+        # v550強化: max_y>=2.5 の黄信号でも NEAR を抑制。worst_game T56: v550(-300)+v421(-1080)=-1380でも
+        # direction bonuses(+1660)でNEAR選択が維持された。v550を-600に強化し-1680としてdirection bonusesと
+        # ほぼ拮抗させ、NO選択を可能にして max_y runaway を减缓する。
         if merge_grade == "NEAR" and max_y >= 2.5:
             if max_y >= 3.0:
                 score -= 600.0
                 reasons.append("HIGH_MAX_Y_NEAR_PENALTY_CRITICAL")
             else:
-                score -= 300.0
+                score -= 600.0  # v550強化: 300→600。v551(max_y>=3.0,-600)と統一
                 reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
