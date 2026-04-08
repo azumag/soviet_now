@@ -64,13 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v557: HARD NEAR SUPPRESSION at deadline_crossed + max_y >= 2.5 — convert NEAR→NO before merge bonus scoring
-     # deadline_margin < 0 && max_y >= 2.5 && not russia_merge_possible: NEAR is almost always catastrophic
-     # Worst T50: deadline_margin=-0.49, max_y=1.94→2.70 spike after NEAR; Extra_low T69: max_y=2.90→3.08
-     # v550/v552 penalties (-600/-900) applied AFTER merge bonuses, can be overcome by other positives
-     # Russia exemption preserved when russia_merge_possible (next_type>=15 && piece14+ on board)
-     # Fixes: catastrophic NEAR spike at deadline_crossed + max_y >= 2.5 (failure mode from analysis)
-     # refs: tmp/analysis_result.md
      # v555: NO_MERGE height penalty multiplier — max_y>=2.5 && merge_grade==NOでheight_penaltyを2倍化
      # v550/v552はNEAR選択時のペナルティを行うが、NO merge選択時はheight指導がない問題を修正
      # worst T56 (max_y=2.31, rp=3, NO merge) → T57: max_y=3.30 (+0.99) で高所にpiece追加
@@ -918,12 +911,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
 
-    # --- v557: HARD NEAR SUPPRESSION pre-computation ---
-    # Computed here so russia_merge_possible is available in the per-candidate loop
-    # deadline_margin < 0 means deadline already crossed
-    deadline_margin = analysis.get("reactor", {}).get("deadline_margin", 0)
-    russia_merge_possible = next_type >= 15 and any(p.get("type", 0) >= 14 for p in pieces)
-
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -933,28 +920,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
-        # v557: HARD NEAR SUPPRESSION at deadline_crossed + high max_y
-        # When deadline is already crossed (deadline_margin < 0) AND max_y >= 2.5,
-        # NEAR merge is almost always catastrophic — fails to reduce max_y, causes
-        # immediate spike, triggers death spiral where subsequent turns have NO merge.
-        # Worst T50: deadline_margin=-0.49, max_y=1.94→2.70 spike after NEAR
-        # Extra_low T69: deadline_margin=-0.96, max_y=2.90→3.08 after NEAR
-        # Extra_high T107: NEAR at max_y=3.26, deadline_margin=-1.67 → score_delta=0 (failed)
-        # v550/v552 penalties (-600/-900) are applied AFTER merge bonuses and can be
-        # overcome by other positive bonuses. A hard structural override is needed.
-        # Russia exemption: when russia_merge_possible, NEAR is allowed because Soviet
-        # founding justifies the risk.
-        # refs: tmp/analysis_result.md
-        # Fixes: catastrophic NEAR spike at deadline_crossed + max_y >= 2.5
-        suppressed_reason = ""
-        if merge_grade == "NEAR" and max_y >= 2.5 and deadline_margin < 0 and not russia_merge_possible:
-            merge_grade = "NO"
-            suppressed_reason = "NEAR_SUPPRESSED_DEADLINE_HIGH_MAX_Y"
 
         score = 0.0
         reasons = []
-        if suppressed_reason:
-            reasons.append(suppressed_reason)
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
@@ -1309,25 +1277,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260408_221620_score0837.jsonl (worst game reactive=5-6),
         #       game_history/20260408_222958_score3606.jsonl (best game reactive=1, merge available)
         # Fixes rollback failure mode: reactive_pairs>=3 accumulation when merge available but no same-type
-        # v554+v556: reactive_pairs cleanup guidance — lower threshold (>=2), stronger bonuses
-        # v556 changes: rp>=3→>=2, center_proximity cap 80→100, low_y_bonus 60→80/35 slope,
-        # and max_y>=2.5 && NEAR merge: cleanup_bonus *= 1.5 additional
-        # Worst game T53-56 (rp=1-2): v554 never fired (threshold>=3). rp=2 at T57 → if v554 had
-        # fired, additional low/center guidance would have helped. v556 fixes this by lowering to >=2.
-        # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt
-        # Fixes rollback failure mode: reactive_pairs cleanup guidance too weak at rp=2-3
-        if merge_grade != "NO" and same_type_stack_top is None and reactive_pair_count >= 2:
+        if merge_grade != "NO" and same_type_stack_top is None and reactive_pair_count >= 3:
             # Want low y (reduce piece accumulation) + proximity to growth center (x near 0)
-            center_proximity = max(0, 100.0 - abs(x) * 25.0)  # v556: 80→100 cap
-            low_y_bonus = max(0, 80.0 - landing_y * 35.0) if landing_y > 0 else 80.0  # v556: 60→80, 30→35 slope
+            center_proximity = max(0, 80.0 - abs(x) * 25.0)
+            low_y_bonus = max(0, 60.0 - landing_y * 30.0) if landing_y > 0 else 60.0
             cleanup_bonus = center_proximity + low_y_bonus
             if reactive_pair_count >= 5:
                 cleanup_bonus *= 1.3
             elif reactive_pair_count >= 4:
                 cleanup_bonus *= 1.15
-            # v556: extra boost when max_y>=2.5 and NEAR merge selected — suppress height runaway
-            if max_y >= 2.5 and merge_grade == "NEAR":
-                cleanup_bonus *= 1.5
             score += cleanup_bonus
             reasons.append("REACTIVE_PAIRS_CLEANUP")
 
