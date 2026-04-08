@@ -7,6 +7,7 @@
 #
 # 状態ファイル: tmp/state/current_prediction.json
 cd "$(dirname "$0")"
+source lib/outbound_queue.sh 2>/dev/null || true
 
 # 予想系は毎回の実行で最新の .env を読む。
 # 長寿命の親プロセスから古い exported env を引き継いでも、
@@ -142,7 +143,7 @@ _clear_stale_prediction_state_if_any() {
 	_log "STALE: resolving prediction with best_outcome before clearing (${stale_reason})"
 	if _resolve_prediction_with_best_outcome; then
 		_log "STALE: prediction resolved on Twitch"
-		./twitch_chat.sh send "予想結果が確定しました！" 2>/dev/null &
+		enqueue_chat_message "予想結果が確定しました！" "predictions"
 	else
 		_log "STALE: resolve failed, prediction may need manual cleanup"
 	fi
@@ -397,7 +398,7 @@ PY
 	else
 		_window_display="${PREDICTION_WINDOW_SEC}秒"
 	fi
-	./twitch_chat.sh send "チャネルポイント予想スタート！「${PREDICTION_MAX_GAMES}ゲーム中に建国できる？」投票受付中（${_window_display}） ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}ゲーム後にソ連不成立なら的中" 2>/dev/null &
+	enqueue_chat_message "チャネルポイント予想スタート！「${PREDICTION_MAX_GAMES}ゲーム中に建国できる？」投票受付中（${_window_display}） ※ソ連建国・粛清は即確定。ロシア建国は${PREDICTION_MAX_GAMES}ゲーム後にソ連不成立なら的中" "predictions"
 
 	# azumagdev ボットがランダムに1票入れる（GQL API）
 	# 独立した再実行可能なサブコマンドとして起動し、親シェル終了の影響を受けにくくする。
@@ -467,7 +468,7 @@ PY
 	OUTCOME_LABELS=("建国なし" "ロシア建国(ソ連不成立)" "ソ連建国" "粛清")
 	OUTCOME_LABEL="${OUTCOME_LABELS[$OUTCOME_INDEX]:-index=$OUTCOME_INDEX}"
 	_log "prediction resolved: $OUTCOME_LABEL"
-	./twitch_chat.sh send "予想結果：「${OUTCOME_LABEL}」でした！" 2>/dev/null &
+	enqueue_chat_message "予想結果：「${OUTCOME_LABEL}」でした！" "predictions"
 	rm -f "$PREDICTION_STATE_FILE"
 	;;
 

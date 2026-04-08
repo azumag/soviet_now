@@ -2,6 +2,7 @@
 # twitch_clip.sh - Twitchクリップ自動作成 + チャット投稿
 # Usage: ./twitch_clip.sh "イベントメッセージ"
 cd "$(dirname "$0")"
+source lib/outbound_queue.sh 2>/dev/null || true
 
 # 単体実行時にも.envを読めるようにする（ループ内ではsoren_loop.shが既にexport済み）
 [ -z "${TWITCH_CLIENT_ID:-}" ] && [ -f .env ] && set -a && . ./.env && set +a
@@ -69,5 +70,5 @@ fi
 
 # --- チャット投稿 ---
 chat_msg="${EVENT_MSG:+${EVENT_MSG} | }${clip_url}"
-./twitch_chat.sh send "$chat_msg" >/dev/null 2>&1 || _log "WARN: chat post failed"
+enqueue_chat_message "$chat_msg" "twitch_clip"
 _log "done: $clip_url"

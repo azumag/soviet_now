@@ -184,7 +184,7 @@ while true; do
                     mv "${_pitch_file}.tmp" "$_pitch_file"
                 fi
                 echo "${_pitch_id}|${_pitch_val}" >> "$_pitch_file"
-                ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "pitch [${_pitch_id}] → ${_pitch_val}" >/dev/null 2>&1 || true ) &
+                source lib/outbound_queue.sh 2>/dev/null || true; enqueue_chat_message "pitch [${_pitch_id}] → ${_pitch_val}" "chat_daemon"
                 continue
             fi
 
@@ -199,7 +199,7 @@ while true; do
                     mv "${_tempo_file}.tmp" "$_tempo_file"
                 fi
                 echo "${_tempo_id}|${_tempo_val}" >> "$_tempo_file"
-                ( [ -f .env ] && set -a && . ./.env && set +a; ./twitch_chat.sh send "tempo [${_tempo_id}] → ${_tempo_val}" >/dev/null 2>&1 || true ) &
+                source lib/outbound_queue.sh 2>/dev/null || true; enqueue_chat_message "tempo [${_tempo_id}] → ${_tempo_val}" "chat_daemon"
                 continue
             fi
 

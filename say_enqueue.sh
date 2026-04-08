@@ -17,6 +17,7 @@ set -uo pipefail
 cd "$(dirname "$0")"
 # .env を毎回読み込んで、リアルタイムに VOICEVOX_URL 等の設定を反映させる
 [ -f .env ] && . ./.env
+source lib/outbound_queue.sh 2>/dev/null || true
 
 # フラグ処理
 NO_PREEMPT=false
@@ -715,10 +716,7 @@ _stream_voicevox_play() {
 		[ -n "${PRE_SYNTH_PITCH:-}" ] && _chat_msg="$_chat_msg pitch=$PRE_SYNTH_PITCH"
 		[ -n "${PRE_SYNTH_TEMPO:-}" ] && _chat_msg="$_chat_msg tempo=$PRE_SYNTH_TEMPO"
 		case "$vo_voice_name" in *もち子*) _chat_msg="$_chat_msg [(cv 明日葉よもぎ)]" ;; esac
-		(
-			[ -f .env ] && set -a && . ./.env && set +a
-			./twitch_chat.sh send "$_chat_msg" >/dev/null 2>&1 || true
-		) &
+		enqueue_chat_message "$_chat_msg" "say_enqueue"
 	fi
 
 	# SYNTH_LOCK をストリーミングセッション全体で保持
@@ -829,10 +827,7 @@ _launch_say() {
 			[ -n "${PRE_SYNTH_PITCH:-}" ] && _chat_msg="$_chat_msg pitch=$PRE_SYNTH_PITCH"
 			[ -n "${PRE_SYNTH_TEMPO:-}" ] && _chat_msg="$_chat_msg tempo=$PRE_SYNTH_TEMPO"
 			case "$vo_voice_name" in *もち子*) _chat_msg="$_chat_msg [(cv 明日葉よもぎ)]" ;; esac
-			(
-				[ -f .env ] && set -a && . ./.env && set +a
-				./twitch_chat.sh send "$_chat_msg" >/dev/null 2>&1 || true
-			) &
+			enqueue_chat_message "$_chat_msg" "say_enqueue"
 		fi
 		return
 	fi
@@ -924,10 +919,7 @@ _launch_say() {
 				[ -n "$vo_pitch" ] && _chat_msg="$_chat_msg pitch=$vo_pitch"
 				[ -n "$vo_tempo" ] && _chat_msg="$_chat_msg tempo=$vo_tempo"
 				case "$vo_voice_name" in *もち子*) _chat_msg="$_chat_msg [(cv 明日葉よもぎ)]" ;; esac
-				(
-					[ -f .env ] && set -a && . ./.env && set +a
-					./twitch_chat.sh send "$_chat_msg" >/dev/null 2>&1 || true
-				) &
+				enqueue_chat_message "$_chat_msg" "say_enqueue"
 			fi
 			LAUNCHED_EXPECTED_SEC=$(_estimate_audio_duration_sec "$vo_wav")
 			if [ -n "${SAY_AUDIO_DEVICE:-}" ]; then
@@ -1073,10 +1065,7 @@ _play_with_retry() {
 			echo "$say_pid" >"$PID_FILE"
 			# 初回再生開始時にCC表記をTwitchチャットに投稿
 			if [ "$attempt" -eq 1 ] && [ -n "${SAY_CC_TEXT:-}" ]; then
-				(
-					[ -f .env ] && set -a && . ./.env && set +a
-					./twitch_chat.sh send "$SAY_CC_TEXT" >/dev/null 2>&1 || true
-				) &
+				enqueue_chat_message "$SAY_CC_TEXT" "say_enqueue"
 			fi
 		fi
 		local start_ts now_ts elapsed say_rc expected_sec max_wait_sec timed_out
@@ -1365,10 +1354,7 @@ if [ -n "${PRE_SYNTH_CHUNKS_FILE:-}" ] && [ -s "$PRE_SYNTH_CHUNKS_FILE" ] && [ -
 	# ストリーミングモード: チャンク逐次合成再生
 	# CC表記をTwitchチャットに投稿
 	if [ -n "${SAY_CC_TEXT:-}" ]; then
-		(
-			[ -f .env ] && set -a && . ./.env && set +a
-			./twitch_chat.sh send "$SAY_CC_TEXT" >/dev/null 2>&1 || true
-		) &
+		enqueue_chat_message "$SAY_CC_TEXT" "say_enqueue"
 	fi
 	if ! _stream_voicevox_play "$PRE_SYNTH_CHUNKS_FILE"; then
 		PLAYBACK_FAILED=1

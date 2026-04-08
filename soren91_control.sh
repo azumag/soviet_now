@@ -616,7 +616,7 @@ soren91_stop() {
 		SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:bye" ./say_enqueue.sh "$_bye_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
 		rm -f "$_bye_file"
 	} &
-	./twitch_chat.sh send "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" 2>/dev/null &
+	enqueue_chat_message "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" "soren91"
 
 	log "[SOREN91] Stopped (end_game=$eg)"
 	return 0

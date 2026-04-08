@@ -231,10 +231,8 @@ cleanup_all() {
 	fi
 	rm -f "$ROLLBACK_POSTMORTEM_PID_FILE"
 
-	# コメント関連停止
-	stop_comment_watcher
+	# コメント生成停止（workerは外部supervisor管理）
 	_kill_comment_gen
-	stop_comment_player
 
 	# soren91 完全停止
 	soren91_cleanup 2>/dev/null || true
