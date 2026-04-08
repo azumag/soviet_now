@@ -64,13 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v561: NO_MERGE reactive_pairs cleanup guidance — worst game T57-64: merge=NO, rp=4, max_y=2.5-3.0
-# 8 consecutive NO merge turns with no horizontal placement guidance.
-# All candidates get uniform -4500 + height multiplier ×2.0/×2.5 but no center/low preference.
-# Adding center_proximity + low_y_bonus guidance when merge_grade==NO && rp>=3 && max_y>=2.5.
-# NOT a penalty — additive guidance competing with height penalty.
-# Does NOT suppress NEAR merges — only fires when merge_grade == "NO".
-# Fixes rollback failure mode: NO merge with rp>=3 at high max_y has no horizontal guidance
+# v558: HIGH_MAX_Y_NEAR_PENALTY exemption for danger_*_merge_available — max_y>=2.5 && merge_grade==NEAR
+# でdanger_direct_merge_available || danger_merge_availableがTrueの場合はペナルティを適用しない
+# worst(1013) T57-59: danger_*_merge_available=falseでNO_MERGE続き、merge opportunity逃がす
+# best(3064) T117: max_y=2.71 NEAR選択→+144、DANGER_ZONE_IMMEDIATE/REACTIVE_IMMEDIATE_PRIORITY発火
+# Rollback postmortem: v557-style aggressive penaltyがNEAR→NO変換を強制しp25を8819→11085に悪化させた
+# Fixes rollback failure mode: aggressive_max_y_near_penalty_overrides_merge_bonus (p25 collapse)
 # refs: tmp/analysis_result.md
      # v555: NO_MERGE height penalty multiplier — max_y>=2.5 && merge_grade==NOでheight_penaltyを2倍化
      # v550/v552はNEAR選択時のペナルティを行うが、NO merge選択時はheight指導がない問題を修正
@@ -993,9 +992,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
         # v552: Russia-building exemption extended to next_type>=15 (v551 was >=14)
         # next_type=15 (Russia)時にRussia建国王免除を適用（piece14+とnext_type=15も免除）
+        # v558: danger_direct_merge_available exemption added — when danger_direct_merge is available
+        # on this or another candidate, the board has a safe DIRECT merge path, so NEAR penalty
+        # should not block potentially valuable NEAR merges at high max_y.
+        # Hypothesis: best(3064) T117 max_y=2.71 NEAR succeeded (+144) because board had safe merge path.
+        # worst(1013) T57-59 had no danger_*_merge_available and NO_MERGE throughout.
+        # Rollback postmortem priority: use danger_direct_merge_available/danger_merge_available to
+        # trigger high_y_merge_priority without penalizing NEAR.
+        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
         russia_merge_possible = next_type >= 15 and any(p["type"] >= 14 for p in pieces)
+        danger_safe_merge_available = result.get("danger_direct_merge_available", False) or result.get("danger_merge_available", False)
         global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
-        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
+        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible and not danger_safe_merge_available:
             # v552: max_y>=3.0 CRITICAL領域ではpenaltyを-900に強化（worst T65 max_y=3.70でNEAR選択抑制強化）
             if max_y >= 3.0:
                 score -= 900.0
@@ -1296,32 +1304,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 cleanup_bonus *= 1.15
             score += cleanup_bonus
             reasons.append("REACTIVE_PAIRS_CLEANUP")
-
-        # ----- v561: NO_MERGE reactive_pairs cleanup guidance -----
-        # Hypothesis: worst game T57-64: merge=NO, rp=4, max_y=2.5-3.0, deadline_crossed=true,
-        # 8 consecutive NO merge turns with no horizontal placement guidance.
-        # All candidates get uniform -4500 + height multiplier ×2.0/×2.5.
-        # Height differentiates vertically but provides NO horizontal guidance.
-        # Pieces scatter to edges without center/low preference.
-        # Adding cleanup guidance for NO_MERGE at high max_y + rp>=3:
-        # center_proximity + low_y_bonus similar to REACTIVE_PAIRS_CLEANUP
-        # but for the NO_MERGE case (same_type_stack_top guidance doesn't apply here).
-        # NOT a penalty — additive guidance competing with height penalty.
-        # Does NOT suppress NEAR merges — only fires when merge_grade == "NO".
-        # refs: tmp/analysis_result.md
-        # Fixes rollback failure mode: NO merge with rp>=3 at high max_y has no horizontal guidance
-        if merge_grade == "NO" and reactive_pair_count >= 3 and max_y >= 2.5:
-            center_proximity = max(0, 80.0 - abs(x) * 25.0)
-            low_y_bonus = max(0, 60.0 - landing_y * 30.0) if landing_y > 0 else 60.0
-            cleanup_bonus = center_proximity + low_y_bonus
-            if reactive_pair_count >= 5:
-                cleanup_bonus *= 1.3
-            elif reactive_pair_count >= 4:
-                cleanup_bonus *= 1.15
-            if max_y >= 3.0:
-                cleanup_bonus *= 1.5  # extra boost in CRITICAL zone
-            score += cleanup_bonus
-            reasons.append("NO_MERGE_REACTIVE_CLEANUP")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
