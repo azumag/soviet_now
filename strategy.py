@@ -938,9 +938,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Evaluated before v422 so it fires even when v422 conditions aren't met.
         # refs: tmp/analysis_result.md (Hypothesis: max_y>=2.5 NEAR penalty)
         # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
-        if merge_grade == "NEAR" and max_y >= 2.5:
-            score -= 600.0  # v550强化: -300→-600, NEAR選択時のmax_y runaway防止
+        # v551: Russia-building exemption + high-type next additional penalty
+        russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
+        global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
+        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
+            score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
+            # v551: additional penalty for high-type next when merge is globally available
+            if next_type >= 10 and global_merge_available:
+                score -= 200.0
+                reasons.append("HIGH_TYPE_NEXT_PENALTY")
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
