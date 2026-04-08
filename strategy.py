@@ -75,6 +75,40 @@ Phases (determined by board max Y):
      # v422 条件未達でも発動し、DIRECT merge への誘導を強化。
      # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
      # refs: tmp/analysis_result.md, tmp/improve_brief.md, game_history/20260408_113627_score1197.jsonl
+# v552: double_russia_phase growth pipeline bonus — type13+type13→type14 and type14+type14→type15
+# Adds pipeline detection for second Russia creation when merge_grade==NO in double_russia_phase.
+# Fixes rollback failure mode: double_russia_phase merge pipeline starvation (type15x2 never achieved)
+# refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt
+
+def russia_growth_pipeline_bonus(pieces, x, next_type):
+    """Bonus for double_russia_phase growth pipeline"""
+    bonus = 0.0
+    reason_suffix = ""
+    type14_pieces = [p for p in pieces if p.get("type") == 14]
+    if len(type14_pieces) >= 2:
+        for i, p1 in enumerate(type14_pieces):
+            for p2 in type14_pieces[i+1:]:
+                gap = abs(p1["x"] - p2["x"])
+                if 5.0 <= gap <= 9.0:
+                    mid = (p1["x"] + p2["x"]) / 2.0
+                    if abs(x - mid) < 1.0:
+                        bonus += 500.0
+                        reason_suffix += "_TYPE14_PIPELINE"
+    if next_type == 13:
+        type13_pieces = [p for p in pieces if p.get("type") == 13]
+        if len(type13_pieces) >= 1:
+            for p1 in type13_pieces:
+                gap = abs(p1["x"] - x)
+                if 5.0 <= gap <= 9.0:
+                    bonus += 250.0
+                    reason_suffix += "_TYPE13_PIPELINE"
+    return bonus, reason_suffix
+     # v550: add HIGH_MAX_Y_NEAR_PENALTY — max_y>=2.5 で NEAR merge 選択時に -300 ペナルティ
+     # worst ゲーム T71-76: max_y=2.74→2.87→3.43 で NEAR 選択されるが max_y 低下なし。
+     # v422 (landing_y>=1.0) は turn72 (landing_y=0.82) では発動しない。max_y>=2.5 条件なら
+     # v422 条件未達でも発動し、DIRECT merge への誘導を強化。
+     # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
+     # refs: tmp/analysis_result.md, tmp/improve_brief.md, game_history/20260408_113627_score1197.jsonl
      # v549: suppress REACTIVE_PAIRS_STACKING at high pc (>=35) without merge — prevents pc runaway
      # when rp drops to 1-2 and death_spiral doesn't fire. score1290 T86-91: rp=1, pc=38-47,
      # stacking bonus ~1200 overwhelms height diff ~100-150 → 10 pieces added → game over.
@@ -1789,8 +1823,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                      # 併合不可時は、盤面圧縮よりtype 15保護と低配置を優先
                      # ボーナスを抑制し、height penaltyが効くようにする
                      # type 13/14級ピースを既存ロシアの近くに配置する誘導はaxis 5.6に委ねる
-                     score += 200.0
-                     reasons.append("DOUBLE_RUSSIA_SURVIVAL")
+                     # v552: 成長パイプライン诱导を追加
+                     pipeline_bonus, pipeline_suffix = russia_growth_pipeline_bonus(pieces, x, next_type)
+                     score += 200.0 + pipeline_bonus
+                     reasons.append("DOUBLE_RUSSIA_SURVIVAL" + pipeline_suffix)
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
                  # 即時併合候補がある場合、最優先（強力なボーナス）
