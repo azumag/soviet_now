@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v552: HIGH_MAX_Y_NEAR_PENALTY强化 — max_y>=3.0 CRITICAL領域で -600→-900 penalty强化
+     # Russia建国王免除条件拡張: next_type>=14→>=15 (piece14+ && next_type=15で免除)
+     # worst T65 (max_y=3.70) でNEAR選択抑制强化、p25改善狙う
+     # Fixes rollback failure mode: max_y>=3.0 CRITICAL領域でのNEAR選択失敗パターン
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt
      # v550: add HIGH_MAX_Y_NEAR_PENALTY — max_y>=2.5 で NEAR merge 選択時に -300 ペナルティ
      # worst ゲーム T71-76: max_y=2.74→2.87→3.43 で NEAR 選択されるが max_y 低下なし。
      # v422 (landing_y>=1.0) は turn72 (landing_y=0.82) では発動しない。max_y>=2.5 条件なら
@@ -938,11 +943,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Evaluated before v422 so it fires even when v422 conditions aren't met.
         # refs: tmp/analysis_result.md (Hypothesis: max_y>=2.5 NEAR penalty)
         # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
-        # v551: Russia-building exemption + high-type next additional penalty
-        russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
+        # v552: Russia-building exemption extended to next_type>=15 (v551 was >=14)
+        # next_type=15 (Russia)時にRussia建国王免除を適用（piece14+とnext_type=15も免除）
+        russia_merge_possible = next_type >= 15 and any(p["type"] >= 14 for p in pieces)
         global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
         if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
-            score -= 600.0
+            # v552: max_y>=3.0 CRITICAL領域ではpenaltyを-900に強化（worst T65 max_y=3.70でNEAR選択抑制強化）
+            if max_y >= 3.0:
+                score -= 900.0
+            else:
+                score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
             # v551: additional penalty for high-type next when merge is globally available
             if next_type >= 10 and global_merge_available:
