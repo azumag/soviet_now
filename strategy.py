@@ -11,7 +11,7 @@ Game Overview:
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
-         1.5c. HIGH_MAX_Y_NEAR_PENALTY - v550: max_y>=2.5 NEAR penalty (-600), v551: next_type>=10 additional (-200)
+         1.5c. HIGH_MAX_Y_NEAR_PENALTY - v550: max_y>=2.5 NEAR penalty (-300) before v422 evaluation
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
@@ -64,12 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v551: extend HIGH_MAX_Y_NEAR_PENALTY — v550のペナルティを-600に統一基础上、next_type>=10 && max_y>=2.5 && merge_available=true時に追加ペナルティ-200付与
-     # worst T56: next_type=11, max_y=2.99, merge_available=true → NEAR選択だがmax_y減らず → ゲームオーバー
-     # 高type next(10+)はNEAR失敗時に次のmerge机会更难的特点を活用し、高typeによるmerge riskを高める
-     # v550 penalty -300→-600に統一（v551と整合）
-     # Fixes rollback failure mode: worst T56 max_y runaway from failed NEAR at high max_y with high-type next
-     # refs: tmp/analysis_result.md
      # v550: add HIGH_MAX_Y_NEAR_PENALTY — max_y>=2.5 で NEAR merge 選択時に -300 ペナルティ
      # worst ゲーム T71-76: max_y=2.74→2.87→3.43 で NEAR 選択されるが max_y 低下なし。
      # v422 (landing_y>=1.0) は turn72 (landing_y=0.82) では発動しない。max_y>=2.5 条件なら
@@ -872,10 +866,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
 
-    # --- v551: compute global merge availability for HIGH_MAX_Y_NEAR_PENALTY ---
-    # merge_available: any candidate has a merge (DIRECT/NEAR/FAR) available
-    global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
-
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -946,17 +936,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # landing_y=0.82 (worst turn 72). This catches high max_y NEAR merges regardless
         # of landing_y, suppressing max_y runaway when NEAR is selected at danger zone.
         # Evaluated before v422 so it fires even when v422 conditions aren't met.
-        # refs: tmp/analysis_result.md (Hypothesis: max_y>=2.5 NEAR penalty, v551: high type next penalty)
+        # refs: tmp/analysis_result.md (Hypothesis: max_y>=2.5 NEAR penalty)
         # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
         if merge_grade == "NEAR" and max_y >= 2.5:
-            score -= 600.0
+            score -= 300.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
-            # v551: additional penalty for high-type next piece when merge is globally available
-            # worst T56: next_type=11, max_y=2.99, merge_available=true → NEAR selected but max_y不减
-            # next_type>=10 means high type piece is coming, NEAR failure risk is higher
-            if next_type >= 10 and global_merge_available:
-                score -= 200.0
-                reasons.append("HIGH_TYPE_NEXT_NEAR_PENALTY")
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
