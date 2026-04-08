@@ -71,9 +71,12 @@ _play_comment_queue() {
 				# ハッシュファイルを最新50件に制限
 				tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
 					mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
-					# soren91 (メリケンAI) プレイ中は声を切り替え
+					# speaker override: サイドカーファイル > soren91判定
 				local _cw_vo_speaker=""
-				if soren91_is_running 2>/dev/null; then
+				if [ -f "${playing_file}.speaker" ]; then
+					_cw_vo_speaker=$(cat "${playing_file}.speaker" 2>/dev/null)
+					rm -f "${playing_file}.speaker"
+				elif soren91_is_running 2>/dev/null; then
 					_cw_vo_speaker="${SOREN91_VOICEVOX_SPEAKER:-46}"
 				fi
 				if SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="comment" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then

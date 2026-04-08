@@ -69,6 +69,62 @@ outbound_queue_consume_once() {
 # outbound_queue_cleanup_sent [MAX_AGE_SEC]
 #   sent/ 内の古いファイルを削除する。
 #   MAX_AGE_SEC: default 3600 (1時間)
+# === Audio playback queue ===
+# audio_worker が消化する comment queue にファイルを積む。
+# soren_loop / eloop / improve から直接 say_enqueue.sh を呼ばず、
+# この関数で queue に書いて audio_worker に再生を委譲する。
+
+# enqueue_audio_text TEXT [SOURCE] [SPEAKER_OVERRIDE]
+#   テキストを comment queue に積む。audio_worker の _play_comment_queue が再生する。
+enqueue_audio_text() {
+	local text="${1:-}"
+	local source="${2:-unknown}"
+	local speaker_override="${3:-}"
+	[ -n "$text" ] || return 1
+
+	local queue_dir="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
+	mkdir -p "$queue_dir" 2>/dev/null || true
+
+	local ts
+	ts=$(date +%s%N 2>/dev/null || echo "$(date +%s)${RANDOM}")
+	local filename="comment_announce_${ts}_${source}.txt"
+	local tmpfile="${queue_dir}/.${filename}.tmp"
+	local destfile="${queue_dir}/${filename}"
+
+	printf '%s\n' "$text" > "$tmpfile" 2>/dev/null || return 1
+	mv "$tmpfile" "$destfile" 2>/dev/null || return 1
+
+	# speaker override が指定されていたらサイドカーファイルに保存
+	if [ -n "$speaker_override" ]; then
+		printf '%s' "$speaker_override" > "${destfile}.speaker" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# enqueue_audio_file FILE [SOURCE] [SPEAKER_OVERRIDE]
+#   既存のテキストファイルを comment queue にコピーして積む。
+enqueue_audio_file() {
+	local file="${1:-}"
+	local source="${2:-unknown}"
+	local speaker_override="${3:-}"
+	[ -f "$file" ] && [ -s "$file" ] || return 1
+
+	local queue_dir="${COMMENT_QUEUE_DIR:-tmp/.comment_queue}"
+	mkdir -p "$queue_dir" 2>/dev/null || true
+
+	local ts
+	ts=$(date +%s%N 2>/dev/null || echo "$(date +%s)${RANDOM}")
+	local filename="comment_announce_${ts}_${source}.txt"
+	local destfile="${queue_dir}/${filename}"
+
+	cp "$file" "$destfile" 2>/dev/null || return 1
+
+	if [ -n "$speaker_override" ]; then
+		printf '%s' "$speaker_override" > "${destfile}.speaker" 2>/dev/null || true
+	fi
+	return 0
+}
+
 outbound_queue_cleanup_sent() {
 	local max_age="${1:-3600}"
 	local now

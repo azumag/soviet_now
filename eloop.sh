@@ -216,16 +216,10 @@ handle_russia_celebration() {
 
 	log "!!! RUSSIA CREATED !!!"
 
-	# 既存の読み上げを停止して祝賀を優先 (afplayのみ、say_enqueueはkill_flagでリトライ抑止)
-	echo "1" >tmp/.say_queue/kill_flag
-	pgrep -x 'afplay' 2>/dev/null | xargs kill -9 2>/dev/null || true
-	rm -f tmp/.say_queue/.lock/owner_pid tmp/.say_queue/.lock/heartbeat 2>/dev/null
-	rmdir tmp/.say_queue/.lock 2>/dev/null || true
-
 	generate_russia_celebration "$score" "$turns" "$game_num"
 	if [ -f "$TMP_DEBUG_DIR/radio_russia_celebration.txt" ] && [ -s "$TMP_DEBUG_DIR/radio_russia_celebration.txt" ]; then
 		_refresh_radio_intro_for_playback_file "$TMP_DEBUG_DIR/radio_russia_celebration.txt" "russia_celebration"
-		./say_enqueue.sh --no-preempt "$TMP_DEBUG_DIR/radio_russia_celebration.txt" "$RADIO_SAY_RATE" 0
+		enqueue_audio_file "$TMP_DEBUG_DIR/radio_russia_celebration.txt" "russia_celebration"
 	fi
 	_radio_clear_state "russia_celebration"
 	rm -f "$RUSSIA_CELEBRATION_WORKER_PID_FILE"
@@ -249,18 +243,9 @@ handle_soviet_celebration() {
 	# コメント生成を一時停止（祝賀トーク優先）
 	_kill_comment_gen
 
-	# 既存の読み上げを停止して祝賀を優先 (say_enqueueごとkill)
-	log "[CELEBRATION] 既存読み上げを停止"
-	echo "1" >tmp/.say_queue/kill_flag
-	pgrep -x 'afplay' 2>/dev/null | xargs kill -9 2>/dev/null || true
-	rm -f tmp/.say_queue/.lock/owner_pid tmp/.say_queue/.lock/heartbeat 2>/dev/null
-	rmdir tmp/.say_queue/.lock 2>/dev/null || true
-
-	sleep 30
-
-	# 祝賀トーク再生
+	# 祝賀トーク再生を audio_worker に委譲
 	if [ -f "$TMP_DEBUG_DIR/radio_soviet_celebration.txt" ] && [ -s "$TMP_DEBUG_DIR/radio_soviet_celebration.txt" ]; then
-		_play_priority_audio_file "$TMP_DEBUG_DIR/radio_soviet_celebration.txt" "celebration"
+		enqueue_audio_file "$TMP_DEBUG_DIR/radio_soviet_celebration.txt" "soviet_celebration"
 	fi
 	_radio_clear_state "celebration"
 	rm -f "$TMP_MARKERS_DIR/.soviet_created"

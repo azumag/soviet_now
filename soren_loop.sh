@@ -270,12 +270,7 @@ while true; do
 		MERIKEN_TIME_PENDING=0
 		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
 			# soren91は既に動いているのでstartは不要。アナウンスのみ
-			{
-				_mt_file=$(mktemp /tmp/eloop_meriken_time.XXXXXX)
-				printf '%s\n' "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" > "$_mt_file"
-				SAY_VOICEVOX_SPEAKER_OVERRIDE="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="meriken_time:announce" ./say_enqueue.sh "$_mt_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
-				rm -f "$_mt_file"
-			} &
+			enqueue_audio_text "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" "meriken_time" "${SOREN91_VOICEVOX_SPEAKER:-46}"
 			enqueue_chat_message "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" "soren_loop"
 			_run_scheduled_meriken_time_window \
 				"improve_complete" \
@@ -377,12 +372,7 @@ json.dump(d,open(f,'w'))
 		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
 			soren91_start 2>/dev/null || true
 			# メリケンAIタイム専用アナウンス (読み上げ + Twitch投稿)
-			{
-				_mt_file=$(mktemp /tmp/eloop_meriken_time.XXXXXX)
-				printf '%s\n' "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" > "$_mt_file"
-				SAY_VOICEVOX_SPEAKER_OVERRIDE="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="meriken_time:announce" ./say_enqueue.sh "$_mt_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
-				rm -f "$_mt_file"
-			} &
+			enqueue_audio_text "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" "meriken_time" "${SOREN91_VOICEVOX_SPEAKER:-46}"
 			enqueue_chat_message "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" "soren_loop"
 			_run_scheduled_meriken_time_window \
 				"cycle_boundary" \

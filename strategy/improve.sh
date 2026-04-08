@@ -404,13 +404,7 @@ with open(rs_file, 'w') as f:
 				local _handover_guard="$TMP_STATE_DIR/handover_announced"
 				if [ ! -f "$_handover_guard" ]; then
 					touch "$_handover_guard"
-					{
-						local _end_file
-						_end_file=$(mktemp /tmp/eloop_soren91_end.XXXXXX)
-						printf '%s\n' "戦略改善終了。交代します" > "$_end_file"
-						VOICEVOX_SPEAKER="${SOREN91_VOICEVOX_SPEAKER:-46}" SAY_CONTEXT_LABEL="soren91:announce" ./say_enqueue.sh "$_end_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
-						rm -f "$_end_file"
-					} &
+					enqueue_audio_text "戦略改善終了。交代します" "soren91_handover" "${SOREN91_VOICEVOX_SPEAKER:-46}"
 					enqueue_chat_message "戦略改善終了。交代します" "improve"
 				else
 					log "[IMPROVE] 交代アナウンス重複スキップ (guard存在)"
