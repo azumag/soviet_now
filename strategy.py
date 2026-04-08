@@ -1277,15 +1277,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260408_221620_score0837.jsonl (worst game reactive=5-6),
         #       game_history/20260408_222958_score3606.jsonl (best game reactive=1, merge available)
         # Fixes rollback failure mode: reactive_pairs>=3 accumulation when merge available but no same-type
-        if merge_grade != "NO" and same_type_stack_top is None and reactive_pair_count >= 3:
+        # v554+v556: reactive_pairs cleanup guidance — lower threshold (>=2), stronger bonuses
+        # v556 changes: rp>=3→>=2, center_proximity cap 80→100, low_y_bonus 60→80/35 slope,
+        # and max_y>=2.5 && NEAR merge: cleanup_bonus *= 1.5 additional
+        # Worst game T53-56 (rp=1-2): v554 never fired (threshold>=3). rp=2 at T57 → if v554 had
+        # fired, additional low/center guidance would have helped. v556 fixes this by lowering to >=2.
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt
+        # Fixes rollback failure mode: reactive_pairs cleanup guidance too weak at rp=2-3
+        if merge_grade != "NO" and same_type_stack_top is None and reactive_pair_count >= 2:
             # Want low y (reduce piece accumulation) + proximity to growth center (x near 0)
-            center_proximity = max(0, 80.0 - abs(x) * 25.0)
-            low_y_bonus = max(0, 60.0 - landing_y * 30.0) if landing_y > 0 else 60.0
+            center_proximity = max(0, 100.0 - abs(x) * 25.0)  # v556: 80→100 cap
+            low_y_bonus = max(0, 80.0 - landing_y * 35.0) if landing_y > 0 else 80.0  # v556: 60→80, 30→35 slope
             cleanup_bonus = center_proximity + low_y_bonus
             if reactive_pair_count >= 5:
                 cleanup_bonus *= 1.3
             elif reactive_pair_count >= 4:
                 cleanup_bonus *= 1.15
+            # v556: extra boost when max_y>=2.5 and NEAR merge selected — suppress height runaway
+            if max_y >= 2.5 and merge_grade == "NEAR":
+                cleanup_bonus *= 1.5
             score += cleanup_bonus
             reasons.append("REACTIVE_PAIRS_CLEANUP")
 
