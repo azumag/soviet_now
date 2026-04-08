@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v557: HARD NEAR SUPPRESSION at deadline_crossed + max_y >= 2.5 — convert NEAR→NO before merge bonus scoring
+     # deadline_margin < 0 && max_y >= 2.5 && not russia_merge_possible: NEAR is almost always catastrophic
+     # Worst T50: deadline_margin=-0.49, max_y=1.94→2.70 spike after NEAR; Extra_low T69: max_y=2.90→3.08
+     # v550/v552 penalties (-600/-900) applied AFTER merge bonuses, can be overcome by other positives
+     # Russia exemption preserved when russia_merge_possible (next_type>=15 && piece14+ on board)
+     # Fixes: catastrophic NEAR spike at deadline_crossed + max_y >= 2.5 (failure mode from analysis)
+     # refs: tmp/analysis_result.md
      # v555: NO_MERGE height penalty multiplier — max_y>=2.5 && merge_grade==NOでheight_penaltyを2倍化
      # v550/v552はNEAR選択時のペナルティを行うが、NO merge選択時はheight指導がない問題を修正
      # worst T56 (max_y=2.31, rp=3, NO merge) → T57: max_y=3.30 (+0.99) で高所にpiece追加
@@ -911,6 +918,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
 
+    # --- v557: HARD NEAR SUPPRESSION pre-computation ---
+    # Computed here so russia_merge_possible is available in the per-candidate loop
+    # deadline_margin < 0 means deadline already crossed
+    deadline_margin = analysis.get("reactor", {}).get("deadline_margin", 0)
+    russia_merge_possible = next_type >= 15 and any(p.get("type", 0) >= 14 for p in pieces)
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -920,9 +933,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
+        # v557: HARD NEAR SUPPRESSION at deadline_crossed + high max_y
+        # When deadline is already crossed (deadline_margin < 0) AND max_y >= 2.5,
+        # NEAR merge is almost always catastrophic — fails to reduce max_y, causes
+        # immediate spike, triggers death spiral where subsequent turns have NO merge.
+        # Worst T50: deadline_margin=-0.49, max_y=1.94→2.70 spike after NEAR
+        # Extra_low T69: deadline_margin=-0.96, max_y=2.90→3.08 after NEAR
+        # Extra_high T107: NEAR at max_y=3.26, deadline_margin=-1.67 → score_delta=0 (failed)
+        # v550/v552 penalties (-600/-900) are applied AFTER merge bonuses and can be
+        # overcome by other positive bonuses. A hard structural override is needed.
+        # Russia exemption: when russia_merge_possible, NEAR is allowed because Soviet
+        # founding justifies the risk.
+        # refs: tmp/analysis_result.md
+        # Fixes: catastrophic NEAR spike at deadline_crossed + max_y >= 2.5
+        suppressed_reason = ""
+        if merge_grade == "NEAR" and max_y >= 2.5 and deadline_margin < 0 and not russia_merge_possible:
+            merge_grade = "NO"
+            suppressed_reason = "NEAR_SUPPRESSED_DEADLINE_HIGH_MAX_Y"
 
         score = 0.0
         reasons = []
+        if suppressed_reason:
+            reasons.append(suppressed_reason)
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
