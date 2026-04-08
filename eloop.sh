@@ -374,17 +374,7 @@ print(d.get('score', 0) + bonus)
 	export LAST_RAW_SCORE="$LAST_SCORE"
 	record_completed_game_for_adaptive_improvement "$LAST_ARCHIVE_FILE" "$EVAL_SCORE" "$LAST_SOVIET" "$_russia_for_acc"
 
-	# サイクル序盤: 前サイクルの改善結果 or 粛清ラジオをここで発火
-	# acc_count <= 3 で発火を試みる (粛清直後のリトライスキップで acc_count=1 を逃すケース対策)
-	if [ -f "$PENDING_CYCLE_RADIO_FILE" ] || [ -n "$(ls -A "$PENDING_CYCLE_RADIO_DIR" 2>/dev/null)" ]; then
-		local _acc_count=0
-		if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
-			_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo 0)
-		fi
-		if [ "${_acc_count:-0}" -le 3 ]; then
-			fire_pending_cycle_radio
-		fi
-	fi
+	# サイクル序盤の改善結果/粛清ラジオは audio_worker が deferred queue から再生する
 
 	# 予想サイクル進捗をチャットに投稿
 	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
