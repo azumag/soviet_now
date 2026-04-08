@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-08 12:55:26 JST`
-- Nodes: `958`
-- Edges: `1325`
-- Current: `4f48cdc948a2`
-- Anchor: `9c479d3d7963`
+- Updated: `2026-04-08 13:57:28 JST`
+- Nodes: `959`
+- Edges: `1326`
+- Current: `b1dd545d0cc2`
+- Anchor: `4f48cdc948a2`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_491c4ff85064["491c4ff85064<br/>g=12 n=12<br/>comp=10795.8"]
     h_87a00400960f["87a00400960f<br/>g=27 n=20<br/>comp=10433.8"]
     h_11c426792c0e["11c426792c0e<br/>g=16 n=16<br/>comp=11123.9"]
     h_5399f0247342["5399f0247342<br/>g=12 n=12<br/>comp=11311.9"]
@@ -70,13 +69,13 @@ flowchart TD
     h_4adf1297f64a["4adf1297f64a<br/>g=14 n=14<br/>comp=10082.8"]
     h_49fedb9cb8f8["49fedb9cb8f8<br/>g=15 n=15<br/>comp=10428.8"]
     h_8bb16b7dbe3b["8bb16b7dbe3b<br/>g=29 n=20<br/>comp=11523.0"]
-    h_9c479d3d7963["9c479d3d7963<br/>ANCHOR<br/>g=12 n=12<br/>comp=12054.8"]
-    h_870a50c13e53["870a50c13e53<br/>g=72 n=20<br/>comp=11990.3"]
+    h_9c479d3d7963["9c479d3d7963<br/>g=12 n=12<br/>comp=12054.8"]
+    h_870a50c13e53["870a50c13e53<br/>g=73 n=20<br/>comp=12036.0"]
+    h_4f48cdc948a2["4f48cdc948a2<br/>ANCHOR<br/>g=12 n=12<br/>comp=12642.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_4f48cdc948a2["4f48cdc948a2<br/>CURRENT"]
+    h_b1dd545d0cc2["b1dd545d0cc2<br/>CURRENT"]
 
-    h_491c4ff85064 -->|improve| h_87a00400960f
     h_87a00400960f -->|improve| h_11c426792c0e
     h_11c426792c0e -->|improve| h_5399f0247342
     h_5399f0247342 -->|improve| h_4b0efa3ca7af
@@ -141,16 +140,16 @@ flowchart TD
     h_8bb16b7dbe3b -. rollback .-> h_87a00400960f
     h_8bb16b7dbe3b -->|improve| h_9c479d3d7963
     h_9c479d3d7963 -->|improve| h_870a50c13e53
+    h_870a50c13e53 -->|improve| h_4f48cdc948a2
     h_4adf1297f64a -->|improve| h_49fedb9cb8f8
     h_49fedb9cb8f8 -->|improve| h_8bb16b7dbe3b
-    h_870a50c13e53 -->|improve| h_4f48cdc948a2
+    h_4f48cdc948a2 -->|improve| h_b1dd545d0cc2
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_491c4ff85064 plain;
     class h_87a00400960f plain;
     class h_11c426792c0e plain;
     class h_5399f0247342 plain;
@@ -205,11 +204,12 @@ flowchart TD
     class h_4adf1297f64a plain;
     class h_49fedb9cb8f8 plain;
     class h_8bb16b7dbe3b plain;
-    class h_9c479d3d7963 anchor;
+    class h_9c479d3d7963 plain;
     class h_870a50c13e53 plain;
+    class h_4f48cdc948a2 anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_4f48cdc948a2 current;
+    class h_b1dd545d0cc2 current;
 ```
 
 ## Detail 1/12
@@ -3348,9 +3348,9 @@ flowchart TD
 
 ## Detail 12/12
 
-- Range: `8b764b56c6f3` .. `4f48cdc948a2`
-- Nodes in this diagram: `78`
-- Internal edges in this diagram: `91`
+- Range: `8b764b56c6f3` .. `b1dd545d0cc2`
+- Nodes in this diagram: `79`
+- Internal edges in this diagram: `92`
 - Cross-chunk link: `2fdb9d0f5370 --improve--> 8b764b56c6f3`
 - Cross-chunk link: `0c165b88e34f -.rollback.-> 0ff7f425d879`
 - Cross-chunk link: `0ff7f425d879 --improve--> d3c026afa6d2`
@@ -3440,11 +3440,12 @@ flowchart TD
     h_4adf1297f64a["4adf1297f64a<br/>g=14 n=14<br/>comp=10082.8"]
     h_49fedb9cb8f8["49fedb9cb8f8<br/>g=15 n=15<br/>comp=10428.8"]
     h_8bb16b7dbe3b["8bb16b7dbe3b<br/>g=29 n=20<br/>comp=11523.0"]
-    h_9c479d3d7963["9c479d3d7963<br/>ANCHOR<br/>g=12 n=12<br/>comp=12054.8"]
-    h_870a50c13e53["870a50c13e53<br/>g=72 n=20<br/>comp=11990.3"]
+    h_9c479d3d7963["9c479d3d7963<br/>g=12 n=12<br/>comp=12054.8"]
+    h_870a50c13e53["870a50c13e53<br/>g=73 n=20<br/>comp=12036.0"]
+    h_4f48cdc948a2["4f48cdc948a2<br/>ANCHOR<br/>g=12 n=12<br/>comp=12642.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_4f48cdc948a2["4f48cdc948a2<br/>CURRENT"]
+    h_b1dd545d0cc2["b1dd545d0cc2<br/>CURRENT"]
 
     h_8b764b56c6f3 -->|improve| h_0c165b88e34f
     h_d3c026afa6d2 -->|improve| h_0c78453df396
@@ -3534,9 +3535,10 @@ flowchart TD
     h_8bb16b7dbe3b -. rollback .-> h_87a00400960f
     h_8bb16b7dbe3b -->|improve| h_9c479d3d7963
     h_9c479d3d7963 -->|improve| h_870a50c13e53
+    h_870a50c13e53 -->|improve| h_4f48cdc948a2
     h_4adf1297f64a -->|improve| h_49fedb9cb8f8
     h_49fedb9cb8f8 -->|improve| h_8bb16b7dbe3b
-    h_870a50c13e53 -->|improve| h_4f48cdc948a2
+    h_4f48cdc948a2 -->|improve| h_b1dd545d0cc2
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3616,14 +3618,25 @@ flowchart TD
     class h_4adf1297f64a plain;
     class h_49fedb9cb8f8 plain;
     class h_8bb16b7dbe3b plain;
-    class h_9c479d3d7963 anchor;
+    class h_9c479d3d7963 plain;
     class h_870a50c13e53 plain;
+    class h_4f48cdc948a2 anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_4f48cdc948a2 current;
+    class h_b1dd545d0cc2 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#13789 `4f48cdc9 -> b1dd545d`
+
+- scores: `10944 17370 9980 9966 26661 15324 13378 13886 10163 15642 19731 11517`
+- v551: extend HIGH_MAX_Y_NEAR_PENALTY to max_y>=3.0 with -600 penalty (align with v422 -600*merge_mult)
+- Hypothesis: max_y>=3.0 NEAR merge failed → max_y continues rising → game over (worst 883 T57-64)
+- Fixes: CRITICAL phase NEAR selection suppression — force switch to DIRECT or lower placement
+- v551: max_y>=3.0 CRITICAL 時は penalty を -600 に強化 (v422 の -600*merge_mult と整合)
+- ベスト(4202)T161: max_y=2.14→DIRECT選択は影響なし / эквивалент
+- v422 (landing_y>=1.0) doesn't trigger at landing_y=0.82 (worst turn 72).
 
 ### Improve Game#13776 `870a50c1 -> 4f48cdc9`
 
