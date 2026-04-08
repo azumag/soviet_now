@@ -262,7 +262,7 @@ while true; do
         done
         # sent/ の古いファイルを削除 (1時間以上)
         _oq_now=$(date +%s)
-        for _oq_sf in "$_outbound_sent"/*.msg 2>/dev/null; do
+        for _oq_sf in "$_outbound_sent"/*.msg; do
             [ -f "$_oq_sf" ] || continue
             _oq_mt=$(stat -f %m "$_oq_sf" 2>/dev/null || echo "$_oq_now")
             [ $((  _oq_now - _oq_mt )) -gt 3600 ] && rm -f "$_oq_sf"
