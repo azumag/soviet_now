@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v142xx-null: Null Hypothesis — No Change. Gap zone (max_y 2.0-2.5, rp<4) identified but all fixes
+# are blocked by rollback constraints: v550 threshold lowering (3.0->2.5) forbidden as "v562閾値引下げ",
+# v560 magnitude increase forbidden as "v562/v564 style guidance". max_y>=2.0出現時のNEAR merge成功確保
+# (prioritize constraint) remains unaddressed at this time.
+# refs: tmp/analysis_result.md (Adopted Hypothesis: Null Hypothesis)
 # v142xx: suppress axis 9.6b at (deadline_crossed && rp>=5 && max_y>=2.5) — adds deadline_crossed to
 # rp_guidance_suppressed condition. Worst game T69 had deadline_crossed && rp=7 && max_y=2.64 but 9.6b
 # was NOT suppressed (needed deadline_crossed). Lets v560 reactive_pairs_cleanup be sole horizontal signal.
@@ -990,8 +995,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # to -600 at all max_y>=2.5, gated by reactor_margin<=1.0 (deadline proximity).
         # v563 change: raise threshold max_y>=2.5 → max_y>=3.0 to avoid NEAR→NO conversion
         # at max_y 2.5-3.0 range (postmortem constraint: only at max_y>=3.0).
+        # v564: use binary deadline_crossed instead of continuous reactor_margin per postmortem constraint.
         # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
-        if merge_grade == "NEAR" and max_y >= 3.0 and not russia_merge_possible and reactor_margin <= 1.0:
+        if merge_grade == "NEAR" and max_y >= 3.0 and not russia_merge_possible and deadline_crossed:
             score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
             if next_type >= 10 and global_merge_available:
