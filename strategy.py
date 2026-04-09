@@ -64,15 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v14168: [NO CHANGE] — Implementation Plan: 変更なし。現strategyを維持。
-# Analysis: v562閾値引下げはp25崩壊の歴史的証拠あり。worst game(T51) failure modeは閾値変更で解決不可。null hypothesis採用。
-# 変更予算0。新規ロジック追加禁止。v562/v564型の誘導追加禁止。HEIGHT_CONTROL直接強化禁止。
-# refs: tmp/analysis_result.md (Implementation Plan: 変更なし), tmp/improve_brief.md
-# v14121: DOUBLE_RUSSIA_SURVIVAL +200→+600 — fix too-weak NO_MERGE survival bonus in double_russia_phase
-# +200 was insufficient vs drift_penalty (~−90) + balance_penalty (~−370) = net −260, causing HIGH_TOWER
-# selection despite NO_MERGE in worst/extra_high games. +600 makes low/center placement competitive.
-# Fixes rollback failure mode: DOUBLE_RUSSIA_SURVIVAL too weak — max_y runaway in NO_MERGE situations
-# refs: tmp/analysis_result.md (Implementation Plan: DOUBLE_RUSSIA_SURVIVAL scalar change)
 # v14120: REVERT v562/v564 — restore v560 reactive_pairs_cleanup (rp>=4, max_y>=2.5, 80-25*|x|, 60-30*y, 1.3x)
 # Fixes rollback failure mode: conflicting guidance from v562x/v564 over-guidance caused p25 collapse
 # refs: tmp/analysis_result.md (Implementation Plan: v560 restoration)
@@ -1278,12 +1269,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
-        # v560: reactive_pairs_cleanup_bonus — rp>=3 && max_y>=2.0 && same_type_stack_top is None
+        # v560: reactive_pairs_cleanup_bonus — rp>=4 && max_y>=2.5 && same_type_stack_top is None
         # v562/v564 changes removed per analysis_result.md — caused conflicting guidance and p25 collapse
-        # v565: lower thresholds from rp>=4/rp>=2.5 per change_log (2026-04-09 11:45)
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback),
-        #       tmp/change_log.txt (Game#14031 line 80)
-        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 3 and max_y >= 2.0:
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)
+        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 4 and max_y >= 2.5:
             # Want low y (reduce piece accumulation) + proximity to growth center (x near 0)
             center_proximity = max(0, 80.0 - abs(x) * 25.0)
             low_y_bonus = max(0, 60.0 - landing_y * 30.0) if landing_y > 0 else 60.0
@@ -1837,12 +1826,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                      # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)
                      # pipeline_bonus, pipeline_suffix = russia_growth_pipeline_bonus(pieces, x, next_type)
                      # score += 200.0 + pipeline_bonus
-                     # v14121: +200→+600. DOUBLE_RUSSIA_SURVIVAL (+200) was too weak vs drift_penalty (~−90)
-                     # + balance_penalty (~−370) = net −260, causing edge/high placement in NO_MERGE.
-                     # Worst game final turns: HIGH_TOWER selected despite NO_MERGE — +200 can't overcome
-                     # height physics. +600 makes low/center placement competitive with drift/balance.
-                     # Refs: tmp/analysis_result.md (DOUBLE_RUSSIA_SURVIVAL too weak — max_y runaway evidence)
-                     score += 600.0
+                     score += 200.0
                      reasons.append("DOUBLE_RUSSIA_SURVIVAL")
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
