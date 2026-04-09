@@ -1297,8 +1297,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260408_221620_score0837.jsonl (worst game reactive=5-6),
         #       game_history/20260408_222958_score3606.jsonl (best game reactive=1, merge available),
         #       tmp/state/last_rollback_postmortem.md (forbid v557-style NEAR suppression)
-        # Fixes failure mode: edge placement (x=-3.0) at max_y>=2.5 + rp>=4 despite NO_MERGE
-        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 4 and max_y >= 2.5:
+        # Fixes failure mode: NO-merge at max_y=2.17-2.38 where v562 didn't fire (worst game pattern)
+        # Lowered thresholds: rp>=4→>=3, max_y>=2.5→>=2.0 per analysis_result.md hypothesis
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: lower v562 threshold)
+        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 3 and max_y >= 2.0:
             # Want low y (reduce piece accumulation) + proximity to growth center (x near 0)
             center_proximity = max(0, 120.0 - abs(x) * 30.0)
             low_y_bonus = max(0, 100.0 - landing_y * 40.0) if landing_y > 0 else 100.0
