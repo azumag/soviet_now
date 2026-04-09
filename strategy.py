@@ -64,6 +64,9 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v14120: REVERT v562/v564 — restore v560 reactive_pairs_cleanup (rp>=4, max_y>=2.5, 80-25*|x|, 60-30*y, 1.3x)
+# Fixes rollback failure mode: conflicting guidance from v562x/v564 over-guidance caused p25 collapse
+# refs: tmp/analysis_result.md (Implementation Plan: v560 restoration)
      # v556: REMOVE v555 NO_MERGE height penalty multiplier — v555 was counterproductive
      # v555 only penalized WHERE to place NO_MERGE, not WHETHER to choose NO_MERGE over NEAR
      # Worst game T71-77: v555 fires at max_y 1.85-4.03 but NO_MERGE still chosen
@@ -81,10 +84,6 @@ Phases (determined by board max Y):
      # v422 条件未達でも発動し、DIRECT merge への誘導を強化。
      # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
      # refs: tmp/analysis_result.md, tmp/improve_brief.md, game_history/20260408_113627_score1197.jsonl
-# v563: type15+type14 proximity bonus in double_russia_phase — when 2 Russias exist and next_type==14,
-# add bonus for placing type14 near existing type15 pieces to encourage type14+type15→type15 Soviet merge path.
-# Fixes rollback failure mode: double_russia_phase merge pipeline starvation after Russia creation
-# refs: tmp/analysis_result.md (Adopted Hypothesis: Merge Pipeline Starvation in Russia Phase)
 # v552: double_russia_phase growth pipeline bonus — type13+type13→type14 and type14+type14→type15
 
 def russia_growth_pipeline_bonus(pieces, x, next_type):
@@ -93,15 +92,8 @@ def russia_growth_pipeline_bonus(pieces, x, next_type):
     reason_suffix = ""
     type14_pieces = [p for p in pieces if p.get("type") == 14]
     type15_pieces = [p for p in pieces if p.get("type") == 15]
-    # v563: type15+type14 proximity bonus — when double_russia_phase (2x type15) is active,
-    # and next piece is type14, encourage placing type14 near existing type15 pieces.
-    # This creates the type14+type15→type15 merge path toward Soviet.
-    if next_type == 14 and len(type15_pieces) >= 1:
-        for p15 in type15_pieces:
-            gap = abs(p15["x"] - x)
-            if 5.0 <= gap <= 9.0:
-                bonus += 400.0
-                reason_suffix += "_TYPE15_TYPE14_PROXIMITY"
+    # v563 removed — conflicting guidance with axis 9.6 caused p25 collapse
+    # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)
     if len(type14_pieces) >= 2:
         for i, p1 in enumerate(type14_pieces):
             for p2 in type14_pieces[i+1:]:
@@ -1277,38 +1269,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
-        # ----- v554→v562: reactive_pairs_cleanup_bonus -----
-        # Hypothesis (tmp/analysis_result.md): reactive_pairs accumulation (>=5) is the PRIMARY
-        # failure mode — it prevents merges from becoming available at all.
-        # Worst game T51-55: reactive_pairs=5-6 with NO merge available. Best game T128-135: reactive=1.
-        # The gap: when merge_available=true but same_type_stack_top=None, no guidance exists.
-        # Axis 9.7 skips (requires merge_grade=="NO"). Axis 9.6b skips (requires same_type_stack_top!=None).
-        # New block fills this gap: when merge IS available but no same-type to stack on,
-        # prefer placements that reduce reactive_pairs (low y, growth-center proximity).
-        # NOT a penalty — additive bonus that competes with height penalty for tie-breaking.
-        # v562 changes:
-        #   - Remove deadline_crossed condition (was in v561 but limited effectiveness)
-        #   - Add max_y>=2.5 condition to target high-y danger zone specifically
-        #   - Raise reactive_pair_count threshold from 3→4 to avoid over-triggering
-        #   - Strengthen center_proximity: 80-25*|x| → 120-30*|x| for edge placement penalty
-        #   - Strengthen low_y_bonus: 60-30*y → 100-40*y for low placement incentive
-        #   - Raise rp>=5 multiplier: 1.3 → 1.5 for severe accumulation cases
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: NO_MERGE positive guidance reinforcement),
-        #       game_history/20260408_221620_score0837.jsonl (worst game reactive=5-6),
-        #       game_history/20260408_222958_score3606.jsonl (best game reactive=1, merge available),
-        #       tmp/state/last_rollback_postmortem.md (forbid v557-style NEAR suppression)
-        # Fixes failure mode: NO-merge at max_y=2.17-2.38 where v562 didn't fire (worst game pattern)
-        # Lowered thresholds: rp>=4→>=3, max_y>=2.5→>=2.0 per analysis_result.md hypothesis
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: lower v562 threshold)
-        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 3 and max_y >= 2.0:
+        # v560: reactive_pairs_cleanup_bonus — rp>=4 && max_y>=2.5 && same_type_stack_top is None
+        # v562/v564 changes removed per analysis_result.md — caused conflicting guidance and p25 collapse
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)
+        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 4 and max_y >= 2.5:
             # Want low y (reduce piece accumulation) + proximity to growth center (x near 0)
-            center_proximity = max(0, 120.0 - abs(x) * 30.0)
-            low_y_bonus = max(0, 100.0 - landing_y * 40.0) if landing_y > 0 else 100.0
+            center_proximity = max(0, 80.0 - abs(x) * 25.0)
+            low_y_bonus = max(0, 60.0 - landing_y * 30.0) if landing_y > 0 else 60.0
             cleanup_bonus = center_proximity + low_y_bonus
             if reactive_pair_count >= 5:
-                cleanup_bonus *= 1.5
-            elif reactive_pair_count >= 4:
-                cleanup_bonus *= 1.15
+                cleanup_bonus *= 1.3
             score += cleanup_bonus
             reasons.append("REACTIVE_PAIRS_CLEANUP")
 
@@ -1852,10 +1822,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                      # 併合不可時は、盤面圧縮よりtype 15保護と低配置を優先
                      # ボーナスを抑制し、height penaltyが効くようにする
                      # type 13/14級ピースを既存ロシアの近くに配置する誘導はaxis 5.6に委ねる
-                     # v552: 成長パイプライン诱导を追加
-                     pipeline_bonus, pipeline_suffix = russia_growth_pipeline_bonus(pieces, x, next_type)
-                     score += 200.0 + pipeline_bonus
-                     reasons.append("DOUBLE_RUSSIA_SURVIVAL" + pipeline_suffix)
+                     # v563 removed — caused conflicting guidance with axis 9.6 (p25 collapse)
+                     # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)
+                     # pipeline_bonus, pipeline_suffix = russia_growth_pipeline_bonus(pieces, x, next_type)
+                     # score += 200.0 + pipeline_bonus
+                     score += 200.0
+                     reasons.append("DOUBLE_RUSSIA_SURVIVAL")
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
                  # 即時併合候補がある場合、最優先（強力なボーナス）
