@@ -1324,6 +1324,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += cleanup_bonus
             reasons.append("REACTIVE_PAIRS_CLEANUP")
 
+        # ----- Russia phase NO_MERGE guidance (new v564) -----
+        # Hypothesis: Russia phase with NO_MERGE at max_y>=2.0 lacks positive guidance
+        # for center/low placement. v562x doesn't fire (requires rp>=3).
+        # Axis 8.7 RUSSIA_PHASE_BOARD_COMPRESSION adds only 400-900 without
+        # center/low direction. This allows edge scatter and max_y runaway,
+        # preventing 2nd Russia creation for Soren.
+        # Best game T146-149: russia_created=true, rp=1, NO_MERGE → +400 only.
+        # T150: max_y=3.33, pieces at y=3.33. No second Russia created.
+        # Solution: Add v562x-style guidance when russia_phase && NO_MERGE && max_y>=2.0
+        # WITHOUT same_type_stack_top requirement (Russia phase should guide regardless).
+        if russia_phase and merge_grade == "NO" and max_y >= 2.0:
+            # v564: same formulas as v562x but for Russia phase specifically
+            # Russia phase needs aggressive center+low guidance to prevent max_y runaway
+            # and create space for 2nd Russia pipeline
+            center_proximity = max(0, 180.0 - abs(x) * 35.0)
+            low_y_bonus = max(0, 160.0 - landing_y * 50.0) if landing_y > 0 else 160.0
+            cleanup_bonus = center_proximity + low_y_bonus
+            if reactive_pair_count >= 5:
+                cleanup_bonus *= 1.7
+            elif reactive_pair_count >= 4:
+                cleanup_bonus *= 1.4
+            elif reactive_pair_count >= 3:
+                cleanup_bonus *= 1.25
+            # rp 1-2: no multiplier, base bonus ~180-340
+            score += cleanup_bonus
+            reasons.append("RUSSIA_PHASE_CLEANUP")
+
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
         # advice.md "TypeN+1と隣接している方を優先してドロップする" (azumag, nimdavirus).
