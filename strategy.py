@@ -64,12 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v555: NO_MERGE height penalty multiplier — max_y>=2.5 && merge_grade==NOでheight_penaltyを2倍化
-     # v550/v552はNEAR選択時のペナルティを行うが、NO merge選択時はheight指導がない問題を修正
-     # worst T56 (max_y=2.31, rp=3, NO merge) → T57: max_y=3.30 (+0.99) で高所にpiece追加
-     # NO mergeで高max_y時にpiecesが積み重なるdeath spiralを抑制し、低配置誘導を強化
-     # Fixes rollback failure mode: NO merge selection at high max_y with no height guidance
-     # refs: tmp/analysis_result.md (Implementation Plan), game_history/20260409_004303_score0568.jsonl T55-58
+     # v556: REMOVE v555 NO_MERGE height penalty multiplier — v555 was counterproductive
+     # v555 only penalized WHERE to place NO_MERGE, not WHETHER to choose NO_MERGE over NEAR
+     # Worst game T71-77: v555 fires at max_y 1.85-4.03 but NO_MERGE still chosen
+     # Rollback target 1ad338c survived 131 turns with NEAR at max_y=2.80 WITHOUT v555
+     # Fixes rollback failure mode: NO_MERGE height penalty multiplier causing contradictory scoring
+     # refs: tmp/analysis_result.md (Implementation Plan)
      # v552: HIGH_MAX_Y_NEAR_PENALTY强化 — max_y>=3.0 CRITICAL領域で -600→-900 penalty强化
      # Russia建国王免除条件拡張: next_type>=14→>=15 (piece14+ && next_type=15で免除)
      # worst T65 (max_y=3.70) でNEAR選択抑制强化、p25改善狙う
@@ -1520,22 +1520,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
-
-        # v555: NO_MERGE height penalty multiplier — when merge unavailable and max_y high, force lower placement
-        # Hypothesis: worst T56 (score0568): max_y=2.31, next_type=11, rp=3, merge_grade=NO → T57: max_y=3.30 (+0.99)
-        # v550/v552 handle NEAR merge selection penalty, but NO merge + high max_y has no height guidance.
-        # When NO merge at high max_y, pieces stack higher without merge benefit → death spiral.
-        # NO merge at max_y>=2.5: multiply height_penalty by 2.0 to force lower placement.
-        # NO merge at max_y>=3.0: multiply by 2.5 additional (CRITICAL zone).
-        # This addresses "NO mergeで高所にpiece追加" failure mode where worst game fails despite existing reactive pairs.
-        # refs: tmp/analysis_result.md (Implementation Plan), game_history/20260409_004303_score0568.jsonl T55-58
-        # Fixes rollback failure mode: NO merge selection at high max_y with no height guidance
-        if merge_grade == "NO" and max_y >= 2.5:
-            height_penalty *= 2.0
-            reasons.append("HIGH_MAX_Y_NO_MERGE_HEIGHT_BOOST")
-        if merge_grade == "NO" and max_y >= 3.0:
-            height_penalty *= 2.5
-            reasons.append("CRITICAL_NO_MERGE_HEIGHT_BOOST")
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0

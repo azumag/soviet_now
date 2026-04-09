@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-09 17:43:40 JST`
-- Nodes: `981`
-- Edges: `1354`
-- Current: `1ad338ca58c4`
-- Anchor: `1ad338ca58c4`
+- Updated: `2026-04-09 19:03:02 JST`
+- Nodes: `982`
+- Edges: `1355`
+- Current: `6fc1f979a6a3`
+- Anchor: `9c479d3d7963`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_301434b90c7a["301434b90c7a<br/>g=24 n=20<br/>comp=11553.0"]
     h_b1c15fe57b34["b1c15fe57b34<br/>g=24 n=20<br/>comp=10847.6"]
     h_89af10322292["89af10322292<br/>g=24 n=20<br/>comp=11010.7"]
     h_5209b0724d36["5209b0724d36<br/>g=13 n=13<br/>comp=11350.4"]
@@ -47,7 +46,7 @@ flowchart TD
     h_4adf1297f64a["4adf1297f64a<br/>g=14 n=14<br/>comp=10082.8"]
     h_49fedb9cb8f8["49fedb9cb8f8<br/>g=15 n=15<br/>comp=10428.8"]
     h_8bb16b7dbe3b["8bb16b7dbe3b<br/>g=29 n=20<br/>comp=11523.0"]
-    h_9c479d3d7963["9c479d3d7963<br/>g=12 n=12<br/>comp=12054.8"]
+    h_9c479d3d7963["9c479d3d7963<br/>ANCHOR<br/>g=12 n=12<br/>comp=12054.8"]
     h_870a50c13e53["870a50c13e53<br/>g=73 n=20<br/>comp=12036.0"]
     h_4f48cdc948a2["4f48cdc948a2<br/>g=39 n=20<br/>comp=11132.9"]
     h_b1dd545d0cc2["b1dd545d0cc2<br/>g=13 n=13<br/>comp=10999.7"]
@@ -68,20 +67,18 @@ flowchart TD
     h_dac34bf46ed2["dac34bf46ed2"]
     h_efc4b6fe5f51["efc4b6fe5f51<br/>g=13 n=13<br/>comp=11695.4"]
     h_1b80b364988d["1b80b364988d<br/>g=13 n=13<br/>comp=11879.8"]
-    h_1ad338ca58c4["1ad338ca58c4<br/>CURRENT ANCHOR<br/>g=13 n=13<br/>comp=13179.4"]
+    h_1ad338ca58c4["1ad338ca58c4<br/>g=25 n=20<br/>comp=11378.5"]
     h_a64aa1f482ba["a64aa1f482ba<br/>g=13 n=13<br/>comp=11473.5"]
     h_636b223fc3c1["636b223fc3c1<br/>g=13 n=13<br/>comp=11642.3"]
     h_7a060bdfa8c2["7a060bdfa8c2<br/>g=12 n=12<br/>comp=11875.5"]
     h_2eb67f3364df["2eb67f3364df<br/>g=12 n=12<br/>comp=10336.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_6fc1f979a6a3["6fc1f979a6a3<br/>CURRENT"]
 
-    h_301434b90c7a -->|improve| h_b1c15fe57b34
     h_b1c15fe57b34 -->|improve| h_89af10322292
     h_89af10322292 -->|improve| h_5209b0724d36
     h_5209b0724d36 -->|improve| h_c1cc8b0c07be
-    h_c1cc8b0c07be -. rollback .-> h_301434b90c7a
-    h_301434b90c7a -->|improve| h_751f8b70ddb5
     h_751f8b70ddb5 -->|improve| h_937278c32a00
     h_937278c32a00 -->|improve| h_1638b77d8e1e
     h_1638b77d8e1e -->|improve| h_c95f44d8c448
@@ -145,17 +142,17 @@ flowchart TD
     h_a64aa1f482ba -->|improve| h_636b223fc3c1
     h_636b223fc3c1 -->|improve| h_7a060bdfa8c2
     h_7a060bdfa8c2 -->|improve| h_2eb67f3364df
+    h_2eb67f3364df -. rollback .-> h_1ad338ca58c4
     h_4adf1297f64a -->|improve| h_49fedb9cb8f8
     h_49fedb9cb8f8 -->|improve| h_8bb16b7dbe3b
     h_f776a41fae76 -->|improve| h_f945d31af9d5
-    h_2eb67f3364df -. rollback .-> h_1ad338ca58c4
+    h_1ad338ca58c4 -->|improve| h_6fc1f979a6a3
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_301434b90c7a plain;
     class h_b1c15fe57b34 plain;
     class h_89af10322292 plain;
     class h_5209b0724d36 plain;
@@ -187,7 +184,7 @@ flowchart TD
     class h_4adf1297f64a plain;
     class h_49fedb9cb8f8 plain;
     class h_8bb16b7dbe3b plain;
-    class h_9c479d3d7963 plain;
+    class h_9c479d3d7963 anchor;
     class h_870a50c13e53 plain;
     class h_4f48cdc948a2 plain;
     class h_b1dd545d0cc2 plain;
@@ -208,13 +205,14 @@ flowchart TD
     class h_dac34bf46ed2 plain;
     class h_efc4b6fe5f51 plain;
     class h_1b80b364988d plain;
-    class h_1ad338ca58c4 current_anchor;
+    class h_1ad338ca58c4 plain;
     class h_a64aa1f482ba plain;
     class h_636b223fc3c1 plain;
     class h_7a060bdfa8c2 plain;
     class h_2eb67f3364df plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_6fc1f979a6a3 current;
 ```
 
 ## Detail 1/13
@@ -3445,7 +3443,7 @@ flowchart TD
     h_4adf1297f64a["4adf1297f64a<br/>g=14 n=14<br/>comp=10082.8"]
     h_49fedb9cb8f8["49fedb9cb8f8<br/>g=15 n=15<br/>comp=10428.8"]
     h_8bb16b7dbe3b["8bb16b7dbe3b<br/>g=29 n=20<br/>comp=11523.0"]
-    h_9c479d3d7963["9c479d3d7963<br/>g=12 n=12<br/>comp=12054.8"]
+    h_9c479d3d7963["9c479d3d7963<br/>ANCHOR<br/>g=12 n=12<br/>comp=12054.8"]
     h_870a50c13e53["870a50c13e53<br/>g=73 n=20<br/>comp=12036.0"]
     h_4f48cdc948a2["4f48cdc948a2<br/>g=39 n=20<br/>comp=11132.9"]
     h_b1dd545d0cc2["b1dd545d0cc2<br/>g=13 n=13<br/>comp=10999.7"]
@@ -3629,7 +3627,7 @@ flowchart TD
     class h_4adf1297f64a plain;
     class h_49fedb9cb8f8 plain;
     class h_8bb16b7dbe3b plain;
-    class h_9c479d3d7963 plain;
+    class h_9c479d3d7963 anchor;
     class h_870a50c13e53 plain;
     class h_4f48cdc948a2 plain;
     class h_b1dd545d0cc2 plain;
@@ -3640,9 +3638,9 @@ flowchart TD
 
 ## Detail 13/13
 
-- Range: `425e0268f431` .. `a3aae72a4e37`
-- Nodes in this diagram: `21`
-- Internal edges in this diagram: `22`
+- Range: `425e0268f431` .. `6fc1f979a6a3`
+- Nodes in this diagram: `22`
+- Internal edges in this diagram: `23`
 - Cross-chunk link: `865e131b48a5 --improve--> 425e0268f431`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -3664,13 +3662,14 @@ flowchart TD
     h_dac34bf46ed2["dac34bf46ed2"]
     h_efc4b6fe5f51["efc4b6fe5f51<br/>g=13 n=13<br/>comp=11695.4"]
     h_1b80b364988d["1b80b364988d<br/>g=13 n=13<br/>comp=11879.8"]
-    h_1ad338ca58c4["1ad338ca58c4<br/>CURRENT ANCHOR<br/>g=13 n=13<br/>comp=13179.4"]
+    h_1ad338ca58c4["1ad338ca58c4<br/>g=25 n=20<br/>comp=11378.5"]
     h_a64aa1f482ba["a64aa1f482ba<br/>g=13 n=13<br/>comp=11473.5"]
     h_636b223fc3c1["636b223fc3c1<br/>g=13 n=13<br/>comp=11642.3"]
     h_7a060bdfa8c2["7a060bdfa8c2<br/>g=12 n=12<br/>comp=11875.5"]
     h_2eb67f3364df["2eb67f3364df<br/>g=12 n=12<br/>comp=10336.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_6fc1f979a6a3["6fc1f979a6a3<br/>CURRENT"]
 
     h_425e0268f431 -->|improve| h_5549155b4081
     h_5549155b4081 -->|improve| h_b8fd7e91b841
@@ -3692,8 +3691,9 @@ flowchart TD
     h_a64aa1f482ba -->|improve| h_636b223fc3c1
     h_636b223fc3c1 -->|improve| h_7a060bdfa8c2
     h_7a060bdfa8c2 -->|improve| h_2eb67f3364df
-    h_f776a41fae76 -->|improve| h_f945d31af9d5
     h_2eb67f3364df -. rollback .-> h_1ad338ca58c4
+    h_f776a41fae76 -->|improve| h_f945d31af9d5
+    h_1ad338ca58c4 -->|improve| h_6fc1f979a6a3
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3714,16 +3714,26 @@ flowchart TD
     class h_dac34bf46ed2 plain;
     class h_efc4b6fe5f51 plain;
     class h_1b80b364988d plain;
-    class h_1ad338ca58c4 current_anchor;
+    class h_1ad338ca58c4 plain;
     class h_a64aa1f482ba plain;
     class h_636b223fc3c1 plain;
     class h_7a060bdfa8c2 plain;
     class h_2eb67f3364df plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_6fc1f979a6a3 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#14107 `1ad338ca -> 6fc1f979`
+
+- scores: `13322 12644 9861 10211 11862 11168 13744 17708 12163 11350 10207 6332`
+- v556: REMOVE v555 NO_MERGE height penalty multiplier — v555 was counterproductive
+- v555 only penalized WHERE to place NO_MERGE, not WHETHER to choose NO_MERGE over NEAR
+- Worst game T71-77: v555 fires at max_y 1.85-4.03 but NO_MERGE still chosen
+- Rollback target 1ad338c survived 131 turns with NEAR at max_y=2.80 WITHOUT v555
+- Fixes rollback failure mode: NO_MERGE height penalty multiplier causing contradictory scoring
 
 ### Rollback Game#14095 `2eb67f33 -> 1ad338ca`
 
