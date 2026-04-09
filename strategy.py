@@ -1264,7 +1264,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
-        # ----- v554: reactive_pairs_cleanup_bonus -----
+        # ----- v554→v562: reactive_pairs_cleanup_bonus -----
         # Hypothesis (tmp/analysis_result.md): reactive_pairs accumulation (>=5) is the PRIMARY
         # failure mode — it prevents merges from becoming available at all.
         # Worst game T51-55: reactive_pairs=5-6 with NO merge available. Best game T128-135: reactive=1.
@@ -1273,17 +1273,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # New block fills this gap: when merge IS available but no same-type to stack on,
         # prefer placements that reduce reactive_pairs (low y, growth-center proximity).
         # NOT a penalty — additive bonus that competes with height penalty for tie-breaking.
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: reactive_pairs Accumulation Prevention),
+        # v562 changes:
+        #   - Remove deadline_crossed condition (was in v561 but limited effectiveness)
+        #   - Add max_y>=2.5 condition to target high-y danger zone specifically
+        #   - Raise reactive_pair_count threshold from 3→4 to avoid over-triggering
+        #   - Strengthen center_proximity: 80-25*|x| → 120-30*|x| for edge placement penalty
+        #   - Strengthen low_y_bonus: 60-30*y → 100-40*y for low placement incentive
+        #   - Raise rp>=5 multiplier: 1.3 → 1.5 for severe accumulation cases
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: NO_MERGE positive guidance reinforcement),
         #       game_history/20260408_221620_score0837.jsonl (worst game reactive=5-6),
-        #       game_history/20260408_222958_score3606.jsonl (best game reactive=1, merge available)
-        # Fixes rollback failure mode: reactive_pairs>=3 accumulation when merge available but no same-type
-        if merge_grade != "NO" and same_type_stack_top is None and reactive_pair_count >= 3:
+        #       game_history/20260408_222958_score3606.jsonl (best game reactive=1, merge available),
+        #       tmp/state/last_rollback_postmortem.md (forbid v557-style NEAR suppression)
+        # Fixes failure mode: edge placement (x=-3.0) at max_y>=2.5 + rp>=4 despite NO_MERGE
+        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 4 and max_y >= 2.5:
             # Want low y (reduce piece accumulation) + proximity to growth center (x near 0)
-            center_proximity = max(0, 80.0 - abs(x) * 25.0)
-            low_y_bonus = max(0, 60.0 - landing_y * 30.0) if landing_y > 0 else 60.0
+            center_proximity = max(0, 120.0 - abs(x) * 30.0)
+            low_y_bonus = max(0, 100.0 - landing_y * 40.0) if landing_y > 0 else 100.0
             cleanup_bonus = center_proximity + low_y_bonus
             if reactive_pair_count >= 5:
-                cleanup_bonus *= 1.3
+                cleanup_bonus *= 1.5
             elif reactive_pair_count >= 4:
                 cleanup_bonus *= 1.15
             score += cleanup_bonus
