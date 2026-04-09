@@ -1304,8 +1304,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md (forbid v557-style NEAR suppression)
         # Fixes failure mode: NO-merge at max_y=2.17-2.38 where v562 didn't fire (worst game pattern)
         # Lowered thresholds: rp>=4→>=3, max_y>=2.5→>=2.0 per analysis_result.md hypothesis
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: lower v562 threshold)
-        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 3 and max_y >= 2.0:
+        # Extended v562 to fire even when same_type_stack_top!=None (was: is None only)
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: extend v562 to same_type_stack_top!=None)
+        if merge_grade == "NO" and reactive_pair_count >= 3 and max_y >= 2.0:
             # v562x: strengthened bonuses to compete with v555 height boost at max_y>=2.5
             # At max_y>=2.5, v555 multiplies height_penalty by 2.0x; at >=3.0 by 2.5x
             # Original v562 bonuses (~200-495) are overwhelmed by v555 penalty amplification
