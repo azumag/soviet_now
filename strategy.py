@@ -1307,7 +1307,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             cleanup_bonus = center_proximity + low_y_bonus
             if reactive_pair_count >= 5:
                 cleanup_bonus *= 1.5
-            elif reactive_pair_count >= 4:
+            elif reactive_pair_count >= 3:
                 cleanup_bonus *= 1.15
             score += cleanup_bonus
             reasons.append("REACTIVE_PAIRS_CLEANUP")
