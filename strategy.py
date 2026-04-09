@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v14121: DOUBLE_RUSSIA_SURVIVAL +200→+600 — fix too-weak NO_MERGE survival bonus in double_russia_phase
+# +200 was insufficient vs drift_penalty (~−90) + balance_penalty (~−370) = net −260, causing HIGH_TOWER
+# selection despite NO_MERGE in worst/extra_high games. +600 makes low/center placement competitive.
+# Fixes rollback failure mode: DOUBLE_RUSSIA_SURVIVAL too weak — max_y runaway in NO_MERGE situations
+# refs: tmp/analysis_result.md (Implementation Plan: DOUBLE_RUSSIA_SURVIVAL scalar change)
 # v14120: REVERT v562/v564 — restore v560 reactive_pairs_cleanup (rp>=4, max_y>=2.5, 80-25*|x|, 60-30*y, 1.3x)
 # Fixes rollback failure mode: conflicting guidance from v562x/v564 over-guidance caused p25 collapse
 # refs: tmp/analysis_result.md (Implementation Plan: v560 restoration)
@@ -1826,7 +1831,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                      # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)
                      # pipeline_bonus, pipeline_suffix = russia_growth_pipeline_bonus(pieces, x, next_type)
                      # score += 200.0 + pipeline_bonus
-                     score += 200.0
+                     # v14121: +200→+600. DOUBLE_RUSSIA_SURVIVAL (+200) was too weak vs drift_penalty (~−90)
+                     # + balance_penalty (~−370) = net −260, causing edge/high placement in NO_MERGE.
+                     # Worst game final turns: HIGH_TOWER selected despite NO_MERGE — +200 can't overcome
+                     # height physics. +600 makes low/center placement competitive with drift/balance.
+                     # Refs: tmp/analysis_result.md (DOUBLE_RUSSIA_SURVIVAL too weak — max_y runaway evidence)
+                     score += 600.0
                      reasons.append("DOUBLE_RUSSIA_SURVIVAL")
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
