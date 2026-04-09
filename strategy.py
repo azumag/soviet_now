@@ -81,16 +81,27 @@ Phases (determined by board max Y):
      # v422 条件未達でも発動し、DIRECT merge への誘導を強化。
      # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
      # refs: tmp/analysis_result.md, tmp/improve_brief.md, game_history/20260408_113627_score1197.jsonl
+# v563: type15+type14 proximity bonus in double_russia_phase — when 2 Russias exist and next_type==14,
+# add bonus for placing type14 near existing type15 pieces to encourage type14+type15→type15 Soviet merge path.
+# Fixes rollback failure mode: double_russia_phase merge pipeline starvation after Russia creation
+# refs: tmp/analysis_result.md (Adopted Hypothesis: Merge Pipeline Starvation in Russia Phase)
 # v552: double_russia_phase growth pipeline bonus — type13+type13→type14 and type14+type14→type15
-# Adds pipeline detection for second Russia creation when merge_grade==NO in double_russia_phase.
-# Fixes rollback failure mode: double_russia_phase merge pipeline starvation (type15x2 never achieved)
-# refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt
 
 def russia_growth_pipeline_bonus(pieces, x, next_type):
     """Bonus for double_russia_phase growth pipeline"""
     bonus = 0.0
     reason_suffix = ""
     type14_pieces = [p for p in pieces if p.get("type") == 14]
+    type15_pieces = [p for p in pieces if p.get("type") == 15]
+    # v563: type15+type14 proximity bonus — when double_russia_phase (2x type15) is active,
+    # and next piece is type14, encourage placing type14 near existing type15 pieces.
+    # This creates the type14+type15→type15 merge path toward Soviet.
+    if next_type == 14 and len(type15_pieces) >= 1:
+        for p15 in type15_pieces:
+            gap = abs(p15["x"] - x)
+            if 5.0 <= gap <= 9.0:
+                bonus += 400.0
+                reason_suffix += "_TYPE15_TYPE14_PROXIMITY"
     if len(type14_pieces) >= 2:
         for i, p1 in enumerate(type14_pieces):
             for p2 in type14_pieces[i+1:]:
@@ -991,8 +1002,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NEAR→NO conversion before merge bonus scoring, collapsing p25 from 11085→8819.
         # Best game (3064) succeeded with NEAR at max_y=3.12 (delta=55). Now unified
         # to -600 at all max_y>=2.5, gated by reactor_margin<=1.0 (deadline proximity).
+        # v563 change: raise threshold max_y>=2.5 → max_y>=3.0 to avoid NEAR→NO conversion
+        # at max_y 2.5-3.0 range (postmortem constraint: only at max_y>=3.0).
         # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
-        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible and reactor_margin <= 1.0:
+        if merge_grade == "NEAR" and max_y >= 3.0 and not russia_merge_possible and reactor_margin <= 1.0:
             score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
             if next_type >= 10 and global_merge_available:
