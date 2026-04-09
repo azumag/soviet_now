@@ -249,7 +249,7 @@ while true; do
 		sleep 10
 		continue
 	fi
-	if _is_improve_running; then
+	if [ -f "$IMPROVE_LOCK_FILE" ] || _is_improve_running; then
 		log "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
@@ -380,9 +380,10 @@ json.dump(d,open(f,'w'))
 		fi
 	fi
 
-	# ロックファイル作成直後: 改善中なら次ゲーム準備を保留
-	if _is_improve_running; then
-		log "[CYCLE] 改善ロック検出 → 次ゲーム準備を保留"
+	# ロックファイル or 改善実行中: 次ゲーム準備を保留
+	# (ロックファイル作成直後は daemon がまだ拾っていない場合があるため両方チェック)
+	if [ -f "$IMPROVE_LOCK_FILE" ] || _is_improve_running; then
+		log "[CYCLE] 改善ロック/実行中検出 → 次ゲーム準備を保留"
 		DEFER_NEXT_GAME_PREP=1
 		sleep 2
 		continue

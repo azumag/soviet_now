@@ -22,7 +22,9 @@ start_radio_corner_theme() {
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
 
-	grounding_context=$(_radio_fetch_theme_grounding_context "$corner_name" "$theme")
+	local grounding_raw
+	grounding_raw=$(_radio_fetch_theme_grounding_context "$corner_name" "$theme")
+	grounding_context=$(_radio_stage_research "$corner_name" "$theme" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
 
 	if [ "$category" = "soviet" ]; then
@@ -727,17 +729,18 @@ start_radio_corner_ai_knowledge() {
 	local topics=("大規模言語モデル（LLM）の仕組み" "画像生成AI（Stable Diffusion・DALL-E・Midjourney）" "RAG（検索拡張生成）" "ファインチューニングとLoRA" "プロンプトエンジニアリング" "AIエージェント" "マルチモーダルAI" "音声合成・音声認識AI" "動画生成AI（Sora・Runway等）" "コード生成AI（Copilot・Claude Code・Cursor等）" "Transformer アーキテクチャ" "強化学習とRLHF" "拡散モデルの仕組み" "AI の安全性とアライメント" "オープンソースAIモデル" "AIと著作権" "エッジAI・オンデバイスAI" "AI検索エンジン（Perplexity等）" "音楽生成AI（Suno・Udio等）" "AIワークフロー自動化（n8n・Zapier AI等）" "3D生成AI" "AIデータ分析ツール" "ベクトルデータベースとEmbedding" "量子化と軽量化技術" "AI規制と各国の動き")
 	local topic="${topics[$((RANDOM % ${#topics[@]}))]}"
 
-	local grounding_context=""
-	grounding_context=$(_radio_fetch_theme_grounding_context "ai_knowledge" "${topic} AI 最新 ツール 2024 2025")
+	local grounding_context="" grounding_raw
+	grounding_raw=$(_radio_fetch_theme_grounding_context "ai_knowledge" "${topic} AI 最新 ツール 2024 2025")
+	grounding_context=$(_radio_stage_research "ai_knowledge" "$topic" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし）"
 
 	# 最新コーディングエージェント・最新モデル情報も追加取得
-	local coding_agent_context=""
-	coding_agent_context=$(_radio_fetch_theme_grounding_context "ai_knowledge_coding" "最新 AIコーディングエージェント Claude Code Cursor Copilot Devin OpenHands Codex 2025")
-	[ -n "$coding_agent_context" ] || coding_agent_context=""
-	local latest_model_context=""
-	latest_model_context=$(_radio_fetch_theme_grounding_context "ai_knowledge_models" "最新 AIモデル LLM GPT Claude Gemini Llama リリース 2025")
-	[ -n "$latest_model_context" ] || latest_model_context=""
+	local coding_agent_context="" coding_agent_raw
+	coding_agent_raw=$(_radio_fetch_theme_grounding_context "ai_knowledge_coding" "最新 AIコーディングエージェント Claude Code Cursor Copilot Devin OpenHands Codex 2025")
+	coding_agent_context=$(_radio_stage_research "ai_knowledge_coding" "AIコーディングエージェント" "$coding_agent_raw")
+	local latest_model_context="" latest_model_raw
+	latest_model_raw=$(_radio_fetch_theme_grounding_context "ai_knowledge_models" "最新 AIモデル LLM GPT Claude Gemini Llama リリース 2025")
+	latest_model_context=$(_radio_stage_research "ai_knowledge_models" "最新AIモデル" "$latest_model_raw")
 
 	local prompt_file
 	prompt_file=$(mktemp /tmp/eloop_radio_prompt_XXXXXXXX)
@@ -1043,8 +1046,9 @@ start_radio_corner_finance() {
 	local topics=("株式市場" "債券" "為替・FX" "中央銀行と金融政策" "保険の仕組み" "銀行の仕組み" "投資信託・ETF" "デリバティブ（先物・オプション）" "暗号資産・ブロックチェーン" "インフレとデフレ" "年金制度" "信用創造" "国債と財政" "ベンチャーキャピタル" "不動産金融（REIT等）" "マイクロファイナンス" "金本位制の歴史" "恐慌・バブルの歴史" "ソ連の計画経済と金融" "イスラム金融")
 	local topic="${topics[$((RANDOM % ${#topics[@]}))]}"
 
-	local grounding_context=""
-	grounding_context=$(_radio_fetch_theme_grounding_context "finance" "${topic} 金融 仕組み 解説")
+	local grounding_context="" grounding_raw
+	grounding_raw=$(_radio_fetch_theme_grounding_context "finance" "${topic} 金融 仕組み 解説")
+	grounding_context=$(_radio_stage_research "finance" "$topic" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
 
 	local prompt_file
@@ -1117,8 +1121,9 @@ start_radio_corner_capitalism() {
 	)
 	local topic="${topics[$((RANDOM % ${#topics[@]}))]}"
 
-	local grounding_context=""
-	grounding_context=$(_radio_fetch_theme_grounding_context "capitalism" "${topic} 資本主義 アメリカ 仕組み 歴史")
+	local grounding_context="" grounding_raw
+	grounding_raw=$(_radio_fetch_theme_grounding_context "capitalism" "${topic} 資本主義 アメリカ 仕組み 歴史")
+	grounding_context=$(_radio_stage_research "capitalism" "$topic" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
 
 	local prompt_file
@@ -1172,8 +1177,9 @@ start_radio_corner_music_knowledge() {
 	local topics=("ソナタ形式" "対位法とフーガ" "オーケストラの楽器配置" "調性と移調" "和声の基礎（三和音・七の和音）" "リズムと拍子の種類" "ブルースとペンタトニック" "ジャズの即興演奏" "電子音楽とシンセサイザー" "音律と平均律" "オペラの歴史" "ロシア五人組" "ソ連の音楽政策" "ショスタコーヴィチとソ連" "バロック音楽の特徴" "ロマン派の革新" "民族音楽と国民楽派" "音楽の記譜法の歴史" "レコードからストリーミングまで" "ワールドミュージックの潮流" "ラーガとマカーム" "ガムランとポリリズム" "映画音楽の技法" "音響心理学と協和音" "ミニマルミュージック")
 	local topic="${topics[$((RANDOM % ${#topics[@]}))]}"
 
-	local grounding_context=""
-	grounding_context=$(_radio_fetch_theme_grounding_context "music_knowledge" "${topic} 音楽 解説 歴史")
+	local grounding_context="" grounding_raw
+	grounding_raw=$(_radio_fetch_theme_grounding_context "music_knowledge" "${topic} 音楽 解説 歴史")
+	grounding_context=$(_radio_stage_research "music_knowledge" "$topic" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
 
 	local prompt_file
@@ -1225,8 +1231,9 @@ start_radio_corner_danger_zone() {
 	local regions=("アフリカ" "中東" "南米" "中央アジア" "東南アジア" "南アジア" "東欧" "中米・カリブ" "オセアニア" "北アフリカ")
 	local region="${regions[$((RANDOM % ${#regions[@]}))]}"
 
-	local grounding_context=""
-	grounding_context=$(_radio_fetch_theme_grounding_context "danger_zone" "${region} 危険地域 治安 紛争 旅行注意")
+	local grounding_context="" grounding_raw
+	grounding_raw=$(_radio_fetch_theme_grounding_context "danger_zone" "${region} 危険地域 治安 紛争 旅行注意")
+	grounding_context=$(_radio_stage_research "danger_zone" "$region" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
 
 	local prompt_file
@@ -1371,11 +1378,12 @@ start_radio_corner_sightseeing() {
 	local past_topics
 	past_topics=$(_radio_past_topics_block)
 
-	local grounding_context=""
+	local grounding_context="" grounding_raw
 	# ランダムに地域を選んで観光情報を取得
 	local regions=("北海道" "東北" "関東" "中部" "近畿" "中国" "四国" "九州" "沖縄" "ロシア" "中央アジア" "東欧" "北欧" "東南アジア" "南米" "アフリカ" "中東" "オセアニア")
 	local region="${regions[$((RANDOM % ${#regions[@]}))]}"
-	grounding_context=$(_radio_fetch_theme_grounding_context "sightseeing" "${region} おすすめ観光地")
+	grounding_raw=$(_radio_fetch_theme_grounding_context "sightseeing" "${region} おすすめ観光地")
+	grounding_context=$(_radio_stage_research "sightseeing" "$region" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
 
 	local prompt_file
@@ -1500,8 +1508,9 @@ start_radio_corner_local_japan() {
 	)
 	local pref="${prefectures[$((RANDOM % ${#prefectures[@]}))]}"
 
-	local grounding_context=""
-	grounding_context=$(_radio_fetch_theme_grounding_context "local_japan" "${pref} 市区町村 観光 名物 文化")
+	local grounding_context="" grounding_raw
+	grounding_raw=$(_radio_fetch_theme_grounding_context "local_japan" "${pref} 市区町村 観光 名物 文化")
+	grounding_context=$(_radio_stage_research "local_japan" "$pref" "$grounding_raw")
 	[ -n "$grounding_context" ] || grounding_context="（検索結果なし。確認できた範囲だけで話を組み立て、具体的な断定は増やさないこと）"
 
 	local prompt_file

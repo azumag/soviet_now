@@ -68,27 +68,31 @@ update_best() {
 	fi
 }
 
-# Twitch クリップ作成（バックグラウンド・ノンブロッキング）
+# Twitch クリップ作成（キュー書き込み → clip_worker が処理）
 # 同一ゲームで複数イベント発火時は最初の1回のみ
+CLIP_QUEUE_DIR="tmp/clip_queue"
+mkdir -p "$CLIP_QUEUE_DIR" 2>/dev/null || true
 _TWITCH_CLIP_GAME=""
 _create_twitch_clip() {
 	local event_msg="$1" game_id="${2:-}" delay="${3:-0}"
 	[ "${TWITCH_CLIP_ENABLED:-0}" = "1" ] || return 0
 	[ -n "${TWITCH_CLIENT_ID:-}" ] && [ -n "${TWITCH_BROADCASTER_ID:-}" ] || return 0
-	if [ -n "$game_id" ]; then
-		local clip_marker="$TMP_MARKERS_DIR/.twitch_clip_game_${game_id}"
-		if ! mkdir "$clip_marker" 2>/dev/null; then
-			log "[CLIP] skip: already claimed for game $game_id"
-			return 0
-		fi
-	fi
 	# 同一ゲーム内デデュプ（建国+ハイスコア同時発生時に2本作らない）
 	if [ -n "$game_id" ] && [ "$game_id" = "$_TWITCH_CLIP_GAME" ]; then
 		log "[CLIP] skip: already clipped for game $game_id"
 		return 0
 	fi
 	[ -n "$game_id" ] && _TWITCH_CLIP_GAME="$game_id"
-	( [ "$delay" -gt 0 ] 2>/dev/null && sleep "$delay"; ./twitch_clip.sh "$event_msg" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true ) &
+	# キューにイベントファイルを書き込み (clip_worker が消化)
+	local ts
+	ts=$(date '+%s%N' 2>/dev/null || date '+%s')
+	local queue_file="${CLIP_QUEUE_DIR}/${ts}_${game_id:-0}.json"
+	printf '{"event_msg":"%s","game_id":"%s","delay":%s}\n' \
+		"$(printf '%s' "$event_msg" | sed 's/"/\\"/g')" \
+		"${game_id:-}" \
+		"${delay:-0}" \
+		> "$queue_file"
+	log "[CLIP] enqueued: ${event_msg} (game=${game_id:-?}, delay=${delay}s)"
 }
 
 archive_history() {

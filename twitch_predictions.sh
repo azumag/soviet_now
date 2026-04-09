@@ -52,15 +52,14 @@ PREDICTION_STATE_MAX_AGE_SEC="${TWITCH_PREDICTION_STATE_MAX_AGE_SEC:-0}"
 AUTO_VOTE_POINTS="${TWITCH_AUTO_VOTE_POINTS:-10}"
 
 _prediction_state_stale_reason() {
-	local current_game_num="${1:-0}"
 	[ -f "$PREDICTION_STATE_FILE" ] || return 1
-	python3 - "$PREDICTION_STATE_FILE" "$current_game_num" "$PREDICTION_MAX_GAMES" "$PREDICTION_STATE_MAX_AGE_SEC" <<'PY' 2>/dev/null
+	local acc_file="${ACCUMULATED_GAMES_FILE:-tmp/state/accumulated_games.json}"
+	python3 - "$PREDICTION_STATE_FILE" "$acc_file" "$PREDICTION_MAX_GAMES" "$PREDICTION_STATE_MAX_AGE_SEC" <<'PY' 2>/dev/null
 import json
 import sys
 import time
 
-state_file, current_game_raw, max_games_raw, max_age_raw = sys.argv[1:5]
-current_game = int(current_game_raw or 0)
+state_file, acc_file, max_games_raw, max_age_raw = sys.argv[1:5]
 max_games = int(max_games_raw or 0)
 max_age_sec = int(max_age_raw or 0)
 
@@ -73,7 +72,6 @@ except Exception:
 prediction_id = str(state.get("prediction_id", "") or "")
 outcome_ids = state.get("outcome_ids", []) or []
 created_at = int(state.get("created_at", 0) or 0)
-start_game = int(state.get("game_num", 0) or 0)
 reasons = []
 
 if not prediction_id or len(outcome_ids) < 2:
@@ -84,10 +82,15 @@ if created_at > 0:
     if max_age_sec > 0 and age >= max_age_sec:
         reasons.append(f"age={age}s")
 
-if current_game > 0 and start_game > 0 and max_games > 0:
-    game_delta = current_game - start_game
-    if game_delta >= max_games:
-        reasons.append(f"games={game_delta}")
+# サイクル蓄積数 (acc_count) ベースで判定
+if max_games > 0:
+    try:
+        acc = json.load(open(acc_file))
+        acc_count = int(acc.get("count", 0) or 0)
+    except Exception:
+        acc_count = 0
+    if acc_count >= max_games:
+        reasons.append(f"acc_count={acc_count}")
 
 if reasons:
     print(",".join(reasons))
@@ -136,14 +139,25 @@ print(json.dumps({
 }
 
 _clear_stale_prediction_state_if_any() {
-	local current_game_num="${1:-0}"
 	local stale_reason=""
-	stale_reason=$(_prediction_state_stale_reason "$current_game_num" || true)
+	stale_reason=$(_prediction_state_stale_reason || true)
 	[ -n "$stale_reason" ] || return 1
 	_log "STALE: resolving prediction with best_outcome before clearing (${stale_reason})"
 	if _resolve_prediction_with_best_outcome; then
-		_log "STALE: prediction resolved on Twitch"
-		enqueue_chat_message "予想結果が確定しました！" "predictions"
+		local _stale_labels=("建国なし" "ロシア建国(ソ連不成立)" "ソ連建国" "粛清")
+		local _stale_best
+		_stale_best=$(python3 -c "
+import json
+try:
+    d = json.load(open('$TMP_STATE_DIR/current_prediction.json'))
+    o = d.get('best_outcome', 0)
+    if d.get('russia_created', False) and o < 1: o = 1
+    print(o)
+except Exception: print(0)
+" 2>/dev/null || echo 0)
+		local _stale_label="${_stale_labels[$_stale_best]:-index=$_stale_best}"
+		_log "STALE: prediction resolved on Twitch: $_stale_label"
+		enqueue_chat_message "予想結果：「${_stale_label}」でした！" "predictions"
 	else
 		_log "STALE: resolve failed, prediction may need manual cleanup"
 	fi
@@ -321,7 +335,7 @@ print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
 case "${1:-}" in
 create)
 	GAME_NUM="${2:-0}"
-	_clear_stale_prediction_state_if_any "$GAME_NUM" || true
+	_clear_stale_prediction_state_if_any || true
 	_sync_prediction_state_with_remote || true
 
 	# 既存の予想が残っていたらスキップ
@@ -457,7 +471,7 @@ PY
 			_log "WARN: prediction resolve failed, but remote sync cleared local state"
 			exit 0
 		fi
-		if _clear_stale_prediction_state_if_any 0; then
+		if _clear_stale_prediction_state_if_any; then
 			_log "WARN: prediction resolve failed, but stale local state was cleared"
 			exit 0
 		fi
@@ -511,7 +525,7 @@ PY
 			_log "WARN: prediction cancel failed, but remote sync cleared local state"
 			exit 0
 		fi
-		if _clear_stale_prediction_state_if_any 0; then
+		if _clear_stale_prediction_state_if_any; then
 			_log "WARN: prediction cancel failed, but stale local state was cleared"
 			exit 0
 		fi
@@ -534,7 +548,7 @@ autovote)
 	;;
 
 cleanup)
-	_clear_stale_prediction_state_if_any "${2:-0}" || true
+	_clear_stale_prediction_state_if_any || true
 	_sync_prediction_state_with_remote || true
 	;;
 

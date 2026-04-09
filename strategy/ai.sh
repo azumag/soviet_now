@@ -55,6 +55,67 @@ _run_cmd_timeout_bin() {
 	return 1
 }
 
+_prepare_minimax_claude_command() {
+	local prompt_body="$1"
+	local model="${2:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
+	local permission_mode="${3:-acceptEdits}"
+	MINIMAX_CLAUDE_ENV=(
+		ANTHROPIC_BASE_URL="${MINIMAX_BASE_URL:-https://api.minimax.io/anthropic}"
+		ANTHROPIC_AUTH_TOKEN="${MINIMAX_API_KEY:-}"
+		ANTHROPIC_API_KEY=""
+	)
+	MINIMAX_CLAUDE_CMD=(claude --print -p "$prompt_body" --model="$model" --permission-mode="$permission_mode" --no-session-persistence)
+}
+
+_run_minimax_claude_prompt_file() {
+	local prompt_file="$1"
+	local output_file="$2"
+	local model="${3:-${MINIMAX_MODEL:-MiniMax-M2.7}}"
+	local timeout_sec="${4:-}"
+	local permission_mode="${5:-acceptEdits}"
+	local prompt_body="" timeout_bin="" stderr_file="" output="" rc=1
+	MINIMAX_CLAUDE_LAST_RC=1
+	MINIMAX_CLAUDE_LAST_STDERR=""
+	MINIMAX_CLAUDE_LAST_STDOUT_PREVIEW=""
+	MINIMAX_CLAUDE_LAST_PROVIDER_ERROR=false
+	MINIMAX_CLAUDE_LAST_LOGIN_ERROR=false
+	[ -n "$output_file" ] && : >"$output_file"
+	[ -s "$prompt_file" ] || return 1
+	prompt_body=$(cat "$prompt_file" 2>/dev/null) || return 1
+	_prepare_minimax_claude_command "$prompt_body" "$model" "$permission_mode"
+	case "$timeout_sec" in
+	'' | *[!0-9]*) timeout_sec="" ;;
+	esac
+	if [ -n "$timeout_sec" ] && [ "$timeout_sec" -gt 0 ]; then
+		timeout_bin=$(_run_cmd_timeout_bin 2>/dev/null || true)
+	fi
+	stderr_file=$(mktemp /tmp/eloop_minimax_stderr_XXXXXXXX)
+	if [ -n "$timeout_sec" ] && [ -n "$timeout_bin" ]; then
+		output=$(env "${MINIMAX_CLAUDE_ENV[@]}" "$timeout_bin" "$timeout_sec" "${MINIMAX_CLAUDE_CMD[@]}" 2>"$stderr_file")
+		rc=$?
+	else
+		output=$(env "${MINIMAX_CLAUDE_ENV[@]}" "${MINIMAX_CLAUDE_CMD[@]}" 2>"$stderr_file")
+		rc=$?
+	fi
+	if [ -s "$stderr_file" ]; then
+		MINIMAX_CLAUDE_LAST_STDERR=$(head -c 4000 "$stderr_file")
+	fi
+	rm -f "$stderr_file"
+	if _contains_provider_error_text "$output" || { [ -n "$MINIMAX_CLAUDE_LAST_STDERR" ] && _contains_provider_error_text "$MINIMAX_CLAUDE_LAST_STDERR"; }; then
+		MINIMAX_CLAUDE_LAST_PROVIDER_ERROR=true
+		MINIMAX_CLAUDE_LAST_STDOUT_PREVIEW=$(printf '%s' "$output" | head -c 4000)
+	fi
+	if _contains_claude_login_error_text "$output" || { [ -n "$MINIMAX_CLAUDE_LAST_STDERR" ] && _contains_claude_login_error_text "$MINIMAX_CLAUDE_LAST_STDERR"; }; then
+		MINIMAX_CLAUDE_LAST_LOGIN_ERROR=true
+	fi
+	MINIMAX_CLAUDE_LAST_RC=$rc
+	if [ $rc -ne 0 ] || [ "$MINIMAX_CLAUDE_LAST_PROVIDER_ERROR" = "true" ]; then
+		return 1
+	fi
+	printf '%s' "$output" >"$output_file"
+	return 0
+}
+
 #=== コマンド実行 ===
 
 _opencode_latest_session_id_for_dir() {
@@ -187,6 +248,23 @@ run_cmd() {
 			fi
 		fi
 		;;
+	minimax|ccmm)
+		local minimax_model="${MINIMAX_MODEL:-MiniMax-M2.7}"
+		_prepare_minimax_claude_command "$prompt_body" "$minimax_model" "acceptEdits"
+		if [ -n "$cmd_log_file" ]; then
+			if [ -n "$timeout_sec" ]; then
+				env "${MINIMAX_CLAUDE_ENV[@]}" "$timeout_bin" "$timeout_sec" "${MINIMAX_CLAUDE_CMD[@]}" >>"$cmd_log_file" 2>&1 &
+			else
+				env "${MINIMAX_CLAUDE_ENV[@]}" "${MINIMAX_CLAUDE_CMD[@]}" >>"$cmd_log_file" 2>&1 &
+			fi
+		else
+			if [ -n "$timeout_sec" ]; then
+				env "${MINIMAX_CLAUDE_ENV[@]}" "$timeout_bin" "$timeout_sec" "${MINIMAX_CLAUDE_CMD[@]}" &
+			else
+				env "${MINIMAX_CLAUDE_ENV[@]}" "${MINIMAX_CLAUDE_CMD[@]}" &
+			fi
+		fi
+		;;
 	glm)
 		local -a glm_args
 		glm_args=(run "$prompt_body" --agent="zai")
@@ -297,8 +375,13 @@ run_cmd() {
 		fi
 		;;
 	opencode)
+		if [ -z "$agent" ]; then
+			log "[CMD] opencode spec requires explicit agent (e.g. opencode:glmflash)"
+			rm -f "$prompt_file"
+			return 2
+		fi
 		local -a opencode_args
-		opencode_args=(run "$prompt_body" --agent="${agent:-glmflash}")
+		opencode_args=(run "$prompt_body" --agent="$agent")
 		[ -n "$resume_session" ] && opencode_args+=(--continue --session "$resume_session")
 		if [ -n "$cmd_log_file" ]; then
 			if [ -n "${RUN_CMD_OPENCODE_PERMISSION:-}" ]; then

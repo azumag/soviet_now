@@ -124,6 +124,138 @@ _radio_history_sidecar_path() {
 	esac
 }
 
+_radio_meta_sidecar_path() {
+	local target="$1"
+	case "$target" in
+	*.playing) printf '%s.meta.json' "${target%.playing}" ;;
+	*.txt)     printf '%s.meta.json' "${target%.txt}" ;;
+	*)         printf '%s.meta.json' "$target" ;;
+	esac
+}
+
+_radio_clear_generation_meta() {
+	local target="$1"
+	[ -n "$target" ] || return 0
+	rm -f "$(_radio_meta_sidecar_path "$target")" 2>/dev/null || true
+}
+
+_radio_generation_debug_summary() {
+	local target="$1"
+	local sidecar
+	sidecar=$(_radio_meta_sidecar_path "$target")
+	[ -f "$sidecar" ] || return 1
+	python3 - "$sidecar" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    raise SystemExit(1)
+
+chain = data.get("chain") or {}
+parts = [
+    f"mode={data.get('mode') or '-'}",
+    f"model={data.get('model') or 'unknown'}",
+    f"attempt={data.get('attempt') or 0}",
+]
+if data.get("corner"):
+    parts.append(f"corner={data['corner']}")
+if chain.get("primary"):
+    parts.append(f"primary={chain['primary']}")
+if chain.get("secondary"):
+    parts.append(f"secondary={chain['secondary']}")
+if chain.get("tertiary"):
+    parts.append(f"tertiary={chain['tertiary']}")
+print(" ".join(parts))
+PY
+}
+
+_radio_copy_generation_meta() {
+	local src="$1" dst="$2"
+	[ -n "$src" ] || return 0
+	[ -n "$dst" ] || return 0
+	local src_meta dst_meta
+	src_meta=$(_radio_meta_sidecar_path "$src")
+	dst_meta=$(_radio_meta_sidecar_path "$dst")
+	[ -f "$src_meta" ] || return 0
+	cp "$src_meta" "$dst_meta" 2>/dev/null || true
+}
+
+_radio_store_generation_meta() {
+	local target="$1" corner="$2" mode="$3" model="$4" game_num="$5" score="$6" attempt="$7" topic="$8" selected_news="$9" primary="${10}" secondary="${11}" tertiary="${12}"
+	[ -n "$target" ] || return 0
+	local sidecar
+	sidecar=$(_radio_meta_sidecar_path "$target")
+	mkdir -p "$(dirname "$RADIO_GENERATION_HISTORY_FILE")" 2>/dev/null || true
+	python3 - "$sidecar" "$RADIO_GENERATION_HISTORY_FILE" "$RADIO_GENERATION_HISTORY_KEEP" "$target" "$corner" "$mode" "$model" "$game_num" "$score" "$attempt" "$topic" "$selected_news" "$primary" "$secondary" "$tertiary" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from collections import deque
+
+sidecar, history_file, keep_raw, target, corner, mode, model, game_num_raw, score_raw, attempt_raw, topic, selected_news, primary, secondary, tertiary = sys.argv[1:16]
+
+def to_int(raw: str) -> int:
+    try:
+        return int(raw)
+    except Exception:
+        return 0
+
+keep = max(1, to_int(keep_raw) or 500)
+
+now = datetime.now(timezone.utc).isoformat()
+payload = {
+    "generated_at": now,
+    "target_file": target,
+    "queue_file": os.path.basename(target),
+    "corner": corner or "",
+    "mode": mode or "",
+    "model": model or "unknown",
+    "game_num": to_int(game_num_raw),
+    "score": to_int(score_raw),
+    "attempt": to_int(attempt_raw),
+    "topic": topic or "",
+    "selected_news": selected_news or "",
+    "chain": {
+        "primary": primary or "",
+        "secondary": secondary or "",
+        "tertiary": tertiary or "",
+        "final": model or "unknown",
+    },
+}
+
+with open(sidecar, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+
+history_dir = os.path.dirname(history_file)
+if history_dir:
+    os.makedirs(history_dir, exist_ok=True)
+
+recent = deque(maxlen=max(0, keep - 1))
+if os.path.exists(history_file):
+    try:
+        with open(history_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if line:
+                    recent.append(line)
+    except Exception:
+        recent.clear()
+
+recent.append(json.dumps(payload, ensure_ascii=False))
+tmp_path = history_file + ".tmp"
+with open(tmp_path, "w", encoding="utf-8") as f:
+    for line in recent:
+        f.write(line + "\n")
+os.replace(tmp_path, history_file)
+PY
+}
+
 _radio_store_spoken_history_line() {
 	local target="$1" history_line="$2"
 	[ -n "$target" ] || return 1
@@ -168,6 +300,7 @@ _enqueue_deferred_radio_talk() {
 	local deferred_file
 	deferred_file="$RADIO_DEFERRED_QUEUE_DIR/radio_$(date +%s)_${game_num}_${corner_name}_${RANDOM}.txt"
 	cp "$talk_file" "$deferred_file" 2>/dev/null || return 1
+	_radio_copy_generation_meta "$talk_file" "$deferred_file" 2>/dev/null || true
 	_broadcast_mark_expected_mode "$deferred_file" "$expected_mode" 2>/dev/null || true
 	[ -n "$history_line" ] && _radio_store_spoken_history_line "$deferred_file" "$history_line" 2>/dev/null || true
 	echo "$deferred_file"
@@ -243,25 +376,27 @@ _play_deferred_radio_queue_once() {
 	local deferred_expected_mode="" deferred_current_mode=""
 	deferred_expected_mode=$(_broadcast_read_expected_mode "$qf" 2>/dev/null || true)
 	deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-	if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
-		log "[RADIO:deferred] mode不一致で破棄: $(basename "$qf") expected=${deferred_expected_mode} current=${deferred_current_mode}"
-		_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
-		_radio_clear_spoken_history_line "$qf" 2>/dev/null || true
-		rm -f "$qf" "${qf%.txt}.news_title" "${qf%.txt}.cc_text" "${qf%.txt}.voice"
-		return 0
-	fi
+		if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
+			log "[RADIO:deferred] mode不一致で破棄: $(basename "$qf") expected=${deferred_expected_mode} current=${deferred_current_mode}"
+			_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
+			_radio_clear_spoken_history_line "$qf" 2>/dev/null || true
+			_radio_clear_generation_meta "$qf" 2>/dev/null || true
+			rm -f "$qf" "${qf%.txt}.news_title" "${qf%.txt}.cc_text" "${qf%.txt}.voice"
+			return 0
+		fi
 
 	local playing_file="${qf%.txt}.playing"
 	if mv "$qf" "$playing_file" 2>/dev/null; then
 		deferred_expected_mode=$(_broadcast_read_expected_mode "$playing_file" 2>/dev/null || true)
 		deferred_current_mode=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-		if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
-			log "[RADIO:deferred] mode不一致で再生前破棄: $(basename "$playing_file") expected=${deferred_expected_mode} current=${deferred_current_mode}"
-			_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
-			_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
-			rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
-			return 0
-		fi
+			if [ -n "$deferred_expected_mode" ] && [ "$deferred_expected_mode" != "$deferred_current_mode" ]; then
+				log "[RADIO:deferred] mode不一致で再生前破棄: $(basename "$playing_file") expected=${deferred_expected_mode} current=${deferred_current_mode}"
+				_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+				_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
+				_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
+				rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
+				return 0
+			fi
 		local deferred_corner=""
 			deferred_corner=$(basename "$playing_file" | sed -E 's/^radio_[0-9]+_[0-9]+_([^_]+)_.*/\1/' )
 			# CC表記は say_enqueue.sh の再生開始時に投稿（SAY_CC_TEXT 経由）
@@ -275,21 +410,25 @@ _play_deferred_radio_queue_once() {
 				deferred_news_title=$(cat "$news_title_file" 2>/dev/null)
 				[ -n "$deferred_news_title" ] && deferred_cc_text=$(_build_cc_attribution_text "$deferred_news_title")
 			fi
-			local radio_vo_speaker=""
-			radio_vo_speaker=$(_radio_voicevox_speaker_override "$deferred_corner" 2>/dev/null || true)
-			_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
-			log "[RADIO:deferred] 再生開始: $(basename "$playing_file")"
+				local radio_vo_speaker=""
+				radio_vo_speaker=$(_radio_voicevox_speaker_override "$deferred_corner" 2>/dev/null || true)
+				_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
+				local radio_meta_summary=""
+				radio_meta_summary=$(_radio_generation_debug_summary "$playing_file" 2>/dev/null || true)
+				log "[RADIO:deferred] 再生開始: $(basename "$playing_file")${radio_meta_summary:+ ($radio_meta_summary)}"
 			# deferred radio is executed by the comment player itself, so it must not
 				# yield to comments queued after this point or playback deadlocks.
 				if SAY_CC_TEXT="$deferred_cc_text" SAY_DISABLE_COMMENT_YIELD=1 SAY_VOICEVOX_SPEAKER_OVERRIDE="$radio_vo_speaker" SAY_CONTEXT_LABEL="radio:${deferred_corner:-deferred}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
 					_radio_commit_spoken_history_for_file "$playing_file" 2>/dev/null || true
 					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+					_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
 					rm -f "$playing_file" "${playing_file%.playing}.news_title" "${playing_file%.playing}.cc_text" "${playing_file%.playing}.voice"
 					log "[RADIO:deferred] 再生完了: $(basename "$playing_file")"
 			else
 				if [ -f "tmp/.say_queue/kill_flag" ]; then
 					_radio_clear_spoken_history_line "$playing_file" 2>/dev/null || true
 					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
+					_radio_clear_generation_meta "$playing_file" 2>/dev/null || true
 					rm -f "tmp/.say_queue/kill_flag" "$playing_file" "${playing_file%.playing}.voice"
 					log "[RADIO:deferred] 外部killにより破棄: $(basename "$playing_file")"
 			else

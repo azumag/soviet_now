@@ -504,8 +504,8 @@ async function callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath
   const promptText = loadPrompt('midgame_comment.md', { boardInfo, screenTextInfo });
 
   return generateTextWithFallbacks('midgame_comment', promptText, {
-    claudePreset: 'gemma4e',
-    claudeFallbackPreset: 'haiku',
+    claudePreset: 'haiku',
+    claudeFallbackPreset: 'gemma4e',
     parseOutput: raw => extractCommentOnly(raw, 'midgame_comment'),
     includeOpencodeFallback: true,
   });

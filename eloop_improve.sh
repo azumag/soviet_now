@@ -786,7 +786,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	RUN_CMD_SESSION_DIR="$PWD/$TMP_STATE_DIR/.improve_retry_sessions"
 	RUN_CMD_TMP_DIR="$PWD/$TMP_STATE_DIR/.run_cmd_tmp"
 	RUN_CMD_OPENCODE_PERMISSION="${IMPROVE_OPENCODE_PERMISSION:-}"
-	RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-1100}"
+	RUN_CMD_TIMEOUT_SEC="${IMPROVE_RUN_CMD_TIMEOUT_SEC:-3600}"
 	export RUN_CMD_SESSION_DIR
 	export RUN_CMD_TMP_DIR
 	export RUN_CMD_OPENCODE_PERMISSION
@@ -796,7 +796,7 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	fresh_retry=1
 	continue_retry=0
 	_consecutive_empty=0
-	IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-2400}"
+	IMPROVE_WALL_TIMEOUT="${IMPROVE_WALL_TIMEOUT:-7200}"
 	_improve_wall_start=$(date +%s)
 
 	# --- Stage 1: 分析フェーズ ---

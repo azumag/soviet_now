@@ -47,7 +47,13 @@ _cleanup() {
 	_log "停止完了"
 }
 
-trap '_cleanup' EXIT INT TERM
+_handle_signal() {
+	_cleanup
+	trap - EXIT
+	exit 130
+}
+trap '_cleanup' EXIT
+trap '_handle_signal' INT TERM
 
 # --- 多重起動防止 ---
 if [ -f "$PID_FILE" ]; then
@@ -106,22 +112,7 @@ while true; do
 	current_game_num=$(cat "$GAME_COUNT_FILE" 2>/dev/null || echo 0)
 	current_acc_count=$(_get_acc_count)
 
-	# --- ゲーム番号変化時: cleanup ---
-	if [ "$current_game_num" != "$_LAST_GAME_NUM" ]; then
-		_LAST_GAME_NUM="$current_game_num"
-		./twitch_predictions.sh cleanup "$current_game_num" >>tmp/prediction.log 2>&1 || true
-	fi
-
-	# --- 予想作成: サイクル開始 (acc_count=0, 改善中でない, 予想なし) ---
-	if ! _has_prediction; then
-		improve_status=$(_get_improve_status)
-		if [ "${current_acc_count:-0}" -eq 0 ] && [ "$improve_status" != "running" ]; then
-			_log "予想作成: game=${current_game_num}, acc=0, improve=${improve_status}"
-			./twitch_predictions.sh create "$current_game_num" >>tmp/prediction.log 2>&1 || true
-		fi
-	fi
-
-	# --- 粛清 resolve: regression_pending フラグ ---
+	# --- 粛清 resolve: regression_pending フラグ (最優先) ---
 	if _has_prediction && [ -f "$TMP_STATE_DIR/regression_pending" ]; then
 		_log "粛清検知 → resolve outcome=3"
 		./twitch_predictions.sh resolve 3 >>tmp/prediction.log 2>&1 || true
@@ -132,8 +123,6 @@ while true; do
 	if _has_prediction; then
 		best=$(_get_best_outcome)
 		if [ "${best:-0}" -eq 2 ]; then
-			# best_outcome=2 がセットされた = eloop.sh がソ連建国を検知済み
-			# resolve がまだなら実行（twitch_predictions.sh 側で重複チェック済み）
 			_log "ソ連建国検知 → resolve outcome=2"
 			./twitch_predictions.sh resolve 2 >>tmp/prediction.log 2>&1 || true
 		fi
@@ -144,6 +133,21 @@ while true; do
 		best=$(_get_best_outcome)
 		_log "サイクル完了 (acc=${current_acc_count}) → resolve outcome=${best}"
 		./twitch_predictions.sh resolve "${best:-0}" >>tmp/prediction.log 2>&1 || true
+	fi
+
+	# --- ゲーム番号変化時: cleanup (resolve 後に実行して stale 先行を防止) ---
+	if [ "$current_game_num" != "$_LAST_GAME_NUM" ]; then
+		_LAST_GAME_NUM="$current_game_num"
+		./twitch_predictions.sh cleanup >>tmp/prediction.log 2>&1 || true
+	fi
+
+	# --- 予想作成: サイクル開始 (acc_count=0, 改善中でない, 予想なし) ---
+	if ! _has_prediction; then
+		improve_status=$(_get_improve_status)
+		if [ "${current_acc_count:-0}" -eq 0 ] && [ "$improve_status" != "running" ]; then
+			_log "予想作成: game=${current_game_num}, acc=0, improve=${improve_status}"
+			./twitch_predictions.sh create "$current_game_num" >>tmp/prediction.log 2>&1 || true
+		fi
 	fi
 
 	_LAST_ACC_COUNT="$current_acc_count"

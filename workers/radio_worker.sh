@@ -42,7 +42,13 @@ _cleanup() {
 	_log "停止完了"
 }
 
-trap '_cleanup' EXIT INT TERM
+_handle_signal() {
+	_cleanup
+	trap - EXIT
+	exit 130
+}
+trap '_cleanup' EXIT
+trap '_handle_signal' INT TERM
 
 # --- 多重起動防止 ---
 if [ -f "$PID_FILE" ]; then

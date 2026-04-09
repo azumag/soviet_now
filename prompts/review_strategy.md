@@ -38,7 +38,10 @@
 - **FAIL**: 1つ以上のチェックが失敗
 
 ## 出力指示（必須）
-- レビュー結果を **`tmp/review_result.md`** に `Write` ツールで書くこと
+- 作業ディレクトリは sandbox ルートであり、**`tmp/review_result.md` は既に存在し、書き込み可能** です
+- レビュー結果を **`tmp/review_result.md`** に書くこと
+- `Write` / `Edit` / `MultiEdit` のうち使える手段でよい。`Write` が権限エラーを返した場合は、**既存ファイル `tmp/review_result.md` を再読込してから `Edit` で更新** すること
+- `tmp/review_result.md` 以外の場所にレビュー結果を書いてはいけない
 - 以下の構造で書くこと:
 
 ```markdown

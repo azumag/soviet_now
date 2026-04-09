@@ -1,11 +1,12 @@
 #!/bin/bash
-# workers/chat_worker.sh - Twitch chat の受信・コメント生成・送信を統合する foreground worker
+# workers/chat_worker.sh - Twitch chat の受信・コメント生成・送信・クリップ作成を統合する foreground worker
 #
 # 責務:
 #   1. Twitch IRC ingest (twitch_chat_daemon.sh を子プロセスとして起動)
 #   2. コメント pending 管理 (twitch_chat.sh fetch/ack-batch)
 #   3. コメント生成 (generate_comment_response)
 #   4. Outbound chat queue 消化 (enqueue されたメッセージを Twitch に送信)
+#   5. Clip queue 消化 (tmp/clip_queue/ のイベントを処理して twitch_clip.sh を実行)
 #
 # 起動: ./workers/chat_worker.sh [channel]
 # 停止: touch tmp/stop  or  kill <PID>  or  Ctrl+C
@@ -27,6 +28,10 @@ PID_FILE="tmp/state/${WORKER_NAME}.pid"
 POLL_INTERVAL="${COMMENT_WATCHER_INTERVAL:-10}"
 OUTBOUND_CONSUME_MAX_PER_TICK=5
 OUTBOUND_RATE_SEC=2
+CLIP_QUEUE_DIR="tmp/clip_queue"
+CLIP_QUEUE_DONE_DIR="tmp/clip_queue/done"
+TMP_MARKERS_DIR="${TMP_MARKERS_DIR:-tmp/markers}"
+TMP_DEBUG_DIR="${TMP_DEBUG_DIR:-tmp/debug}"
 
 _DAEMON_PID=""
 _STOPPED=0
@@ -54,7 +59,13 @@ _cleanup() {
 	_log "停止完了"
 }
 
-trap '_cleanup' EXIT INT TERM
+_handle_signal() {
+	_cleanup
+	trap - EXIT
+	exit 130
+}
+trap '_cleanup' EXIT
+trap '_handle_signal' INT TERM
 
 # --- 多重起動防止 ---
 if [ -f "$PID_FILE" ]; then
@@ -65,7 +76,7 @@ if [ -f "$PID_FILE" ]; then
 	fi
 	rm -f "$PID_FILE"
 fi
-mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null || true
+mkdir -p "$(dirname "$PID_FILE")" "$CLIP_QUEUE_DIR" "$CLIP_QUEUE_DONE_DIR" "$TMP_MARKERS_DIR" "$TMP_DEBUG_DIR" 2>/dev/null || true
 echo $$ > "$PID_FILE"
 
 # --- IRC daemon 起動 (子プロセスとして直接起動、nohup なし) ---
@@ -114,6 +125,57 @@ _consume_outbound_queue() {
 	return 0
 }
 
+# --- Clip queue 消化 ---
+_process_clip_queue() {
+	local queue_file
+	for queue_file in "$CLIP_QUEUE_DIR"/*.json; do
+		[ -f "$queue_file" ] || continue
+
+		# JSON パース
+		local event_msg game_id delay
+		eval "$(python3 -c "
+import json, sys, shlex
+d = json.load(open(sys.argv[1]))
+print(f'event_msg={shlex.quote(d.get(\"event_msg\",\"\"))}')
+print(f'game_id={shlex.quote(d.get(\"game_id\",\"\"))}')
+print(f'delay={shlex.quote(str(d.get(\"delay\",0)))}')
+" "$queue_file" 2>/dev/null)" || {
+			_log "WARN: clip parse failed: $(basename "$queue_file") → skip"
+			mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
+			continue
+		}
+
+		# 同一ゲームのデデュプ (marker ベース)
+		if [ -n "$game_id" ]; then
+			local clip_marker="$TMP_MARKERS_DIR/.twitch_clip_game_${game_id}"
+			if ! mkdir "$clip_marker" 2>/dev/null; then
+				_log "clip skip: already claimed for game $game_id"
+				mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
+				continue
+			fi
+		fi
+
+		# delay 待機 (1秒単位で stop チェック)
+		if [ "${delay:-0}" -gt 0 ] 2>/dev/null; then
+			_log "clip waiting ${delay}s (game=${game_id:-?})"
+			local waited=0
+			while [ "$waited" -lt "$delay" ]; do
+				[ -f tmp/stop ] && return 0
+				sleep 1
+				waited=$((waited + 1))
+			done
+		fi
+
+		_log "clip creating: ${event_msg} (game=${game_id:-?})"
+		./twitch_clip.sh "$event_msg" 2>>"$TMP_DEBUG_DIR/twitch_clip.log" || true
+
+		mv "$queue_file" "$CLIP_QUEUE_DONE_DIR/" 2>/dev/null || rm -f "$queue_file"
+	done
+
+	# done/ クリーンアップ (1時間超)
+	find "$CLIP_QUEUE_DONE_DIR" -name '*.json' -mmin +60 -delete 2>/dev/null || true
+}
+
 # --- IRC daemon の死活監視 ---
 _ensure_irc_daemon() {
 	if [ -n "$_DAEMON_PID" ] && kill -0 "$_DAEMON_PID" 2>/dev/null; then
@@ -154,6 +216,9 @@ while true; do
 
 	# Outbound queue 消化
 	_consume_outbound_queue
+
+	# Clip queue 消化
+	_process_clip_queue
 
 	# sleep を1秒単位で分割し、tmp/stop を素早く検知できるようにする
 	_sleep_remaining="$POLL_INTERVAL"

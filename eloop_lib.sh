@@ -33,7 +33,7 @@ source "$ELOOP_LIB_DIR/broadcast/radio_factcheck.sh"
 source "$ELOOP_LIB_DIR/broadcast/radio_corners.sh"
 source "$ELOOP_LIB_DIR/broadcast/radio_celebration.sh"
 source "$ELOOP_LIB_DIR/broadcast/comment.sh"
-source "$ELOOP_LIB_DIR/broadcast/comment_worker.sh"
+source "$ELOOP_LIB_DIR/broadcast/comment_lib.sh"
 source "$ELOOP_LIB_DIR/broadcast/scheduler.sh"
 # Layer 4: インフラ
 source "$ELOOP_LIB_DIR/infra/cleanup.sh"

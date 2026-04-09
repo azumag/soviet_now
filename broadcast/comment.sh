@@ -39,6 +39,123 @@ _kill_comment_gen() {
 
 COMMENT_PLAYED_HASHES_FILE="tmp/.comment_queue/played_hashes.txt"
 
+_comment_meta_sidecar_path() {
+	local target="$1"
+	case "$target" in
+	*.playing) printf '%s.meta.json' "${target%.playing}" ;;
+	*.txt)     printf '%s.meta.json' "${target%.txt}" ;;
+	*)         printf '%s.meta.json' "$target" ;;
+	esac
+}
+
+_comment_clear_generation_meta() {
+	local target="$1"
+	[ -n "$target" ] || return 0
+	rm -f "$(_comment_meta_sidecar_path "$target")" 2>/dev/null || true
+}
+
+_comment_generation_debug_summary() {
+	local target="$1"
+	local sidecar
+	sidecar=$(_comment_meta_sidecar_path "$target")
+	[ -f "$sidecar" ] || return 1
+	python3 - "$sidecar" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    raise SystemExit(1)
+
+chain = data.get("chain") or {}
+parts = [
+    f"mode={data.get('mode') or '-'}",
+    f"model={data.get('model') or 'unknown'}",
+    f"attempt={data.get('attempt') or 0}",
+    f"chars={data.get('chars') or 0}",
+]
+if chain.get("primary"):
+    parts.append(f"primary={chain['primary']}")
+if chain.get("secondary"):
+    parts.append(f"secondary={chain['secondary']}")
+if chain.get("tertiary"):
+    parts.append(f"tertiary={chain['tertiary']}")
+print(" ".join(parts))
+PY
+}
+
+_comment_store_generation_meta() {
+	local target="$1" mode="$2" model="$3" batch_hash="$4" attempt="$5" chars="$6" primary="$7" secondary="$8" tertiary="$9"
+	[ -n "$target" ] || return 0
+	local sidecar
+	sidecar=$(_comment_meta_sidecar_path "$target")
+	mkdir -p "$(dirname "$COMMENT_GENERATION_HISTORY_FILE")" 2>/dev/null || true
+	python3 - "$sidecar" "$COMMENT_GENERATION_HISTORY_FILE" "$COMMENT_GENERATION_HISTORY_KEEP" "$target" "$mode" "$model" "$batch_hash" "$attempt" "$chars" "$primary" "$secondary" "$tertiary" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from collections import deque
+
+sidecar, history_file, keep_raw, target, mode, model, batch_hash, attempt_raw, chars_raw, primary, secondary, tertiary = sys.argv[1:13]
+
+def to_int(raw: str) -> int:
+    try:
+        return int(raw)
+    except Exception:
+        return 0
+
+keep = max(1, to_int(keep_raw) or 500)
+
+now = datetime.now(timezone.utc).isoformat()
+payload = {
+    "generated_at": now,
+    "target_file": target,
+    "queue_file": os.path.basename(target),
+    "mode": mode or "",
+    "model": model or "unknown",
+    "batch_hash": batch_hash or "",
+    "attempt": to_int(attempt_raw),
+    "chars": to_int(chars_raw),
+    "chain": {
+        "primary": primary or "",
+        "secondary": secondary or "",
+        "tertiary": tertiary or "",
+        "final": model or "unknown",
+    },
+}
+
+with open(sidecar, "w", encoding="utf-8") as f:
+    json.dump(payload, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+
+history_dir = os.path.dirname(history_file)
+if history_dir:
+    os.makedirs(history_dir, exist_ok=True)
+
+recent = deque(maxlen=max(0, keep - 1))
+if os.path.exists(history_file):
+    try:
+        with open(history_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if line:
+                    recent.append(line)
+    except Exception:
+        recent.clear()
+
+recent.append(json.dumps(payload, ensure_ascii=False))
+tmp_path = history_file + ".tmp"
+with open(tmp_path, "w", encoding="utf-8") as f:
+    for line in recent:
+        f.write(line + "\n")
+os.replace(tmp_path, history_file)
+PY
+}
+
 get_comment_backlog_counts() {
 	local queued playing
 	queued=$(ls -1 "$COMMENT_QUEUE_DIR"/comment_*.txt 2>/dev/null | wc -l | tr -d ' ')
@@ -140,7 +257,7 @@ print("\n".join(out), end="")
 PY
 }
 
-_comment_should_use_claude_only() {
+_is_improve_running() {
 	[ "${COMMENT_FORCE_CLAUDE_WHEN_IMPROVING:-1}" = "1" ] || return 1
 
 	local state status pid
@@ -1315,11 +1432,25 @@ $advice_text"
 			local comment_ollama_improving_only=false
 		local comment_skip_claude=false
 		local comment_try_claude_before_opencode_fallback="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
+		local comment_primary_agent="${RADIO_AGENT}"
+		local comment_second_agent="ollama:${COMMENT_OLLAMA_MODEL}"
+		local comment_third_agent="${RADIO_FALLBACK}"
+		local comment_allow_claude_fallback=true
+		if [ "$_comment_mode_generated" = "main" ]; then
+			comment_primary_agent="${COMMENT_MAIN_AGENT:-minimax}"
+			comment_second_agent="${COMMENT_MAIN_FALLBACK:-opencode:glmflash}"
+			comment_third_agent="${COMMENT_MAIN_OLLAMA_FALLBACK:-qwen35e}"
+		elif [ "$_comment_mode_generated" = "soren91" ]; then
+			comment_primary_agent="${COMMENT_SOREN91_AGENT:-haiku}"
+			comment_second_agent="${COMMENT_SOREN91_FALLBACK:-gemma4e}"
+			comment_third_agent=""
+			comment_allow_claude_fallback=false
+		fi
 		local comments_talk="" comment_model_used=""
 		if [ "$comment_force_claude_manual" = "true" ]; then
 			comment_claude_only=true
 			log "[COMMENT] !claude 指定のため claude ${RADIO_CLAUDE_MODEL} で生成"
-		elif _comment_should_use_claude_only; then
+		elif [ "$_comment_mode_generated" != "soren91" ] && _is_improve_running; then
 			comment_ollama_improving_only=true
 			log "[COMMENT] improve実行中のため ollama:${COMMENT_OLLAMA_MODEL_IMPROVING} 専用モードで生成"
 		fi
@@ -1382,42 +1513,43 @@ RETRYCOMMENT
 					fi
 				fi
 				if [ -z "$attempt_talk" ]; then
-					attempt_talk=$(_run_opencode_comment "$RADIO_AGENT" "$prompt_for_attempt")
-					attempt_model="$RADIO_AGENT"
+					attempt_talk=$(_run_comment_agent "$comment_primary_agent" "$prompt_for_attempt")
+					attempt_model="$comment_primary_agent"
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
 					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						log "[COMMENT] ${RADIO_AGENT} 出力が不正/短文のため破棄 → ollama fallback (attempt ${attempt}/${comment_retry_max})"
+						log "[COMMENT] ${comment_primary_agent} 出力が不正/短文のため破棄 → ${comment_second_agent} fallback (attempt ${attempt}/${comment_retry_max})"
 						attempt_talk=""
 						attempt_model=""
 					fi
 					if [ -z "$attempt_talk" ]; then
-						attempt_talk=$(_run_ollama_comment "$prompt_for_attempt")
-						log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL} normal call done (attempt ${attempt}/${comment_retry_max})"
-						attempt_model="ollama:${COMMENT_OLLAMA_MODEL}"
+						attempt_talk=$(_run_comment_agent "$comment_second_agent" "$prompt_for_attempt")
+						attempt_model="$comment_second_agent"
 						attempt_talk=$(_clean_comment_talk "$attempt_talk")
 						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-							log "[COMMENT] ollama:${COMMENT_OLLAMA_MODEL} 出力が不正/短文のため破棄 → ${RADIO_FALLBACK} fallback (attempt ${attempt}/${comment_retry_max})"
+							log "[COMMENT] ${comment_second_agent} 出力が不正/短文のため破棄 → ${comment_third_agent} fallback (attempt ${attempt}/${comment_retry_max})"
 							attempt_talk=""
 							attempt_model=""
 						fi
-					fi
-					if [ -z "$attempt_talk" ]; then
-						attempt_talk=$(_run_opencode_comment "$RADIO_FALLBACK" "$prompt_for_attempt")
-						attempt_model="$RADIO_FALLBACK"
-						attempt_talk=$(_clean_comment_talk "$attempt_talk")
-						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-							log "[COMMENT] ${RADIO_FALLBACK} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
-							attempt_talk=""
-							attempt_model=""
 						fi
-					fi
-					if [ -z "$attempt_talk" ]; then
-						attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
-						attempt_model="claude:${RADIO_CLAUDE_MODEL}"
-						attempt_talk=$(_clean_comment_talk "$attempt_talk")
+						if [ -z "$attempt_talk" ]; then
+							if [ -n "$comment_third_agent" ]; then
+								attempt_talk=$(_run_comment_agent "$comment_third_agent" "$prompt_for_attempt")
+								attempt_model="$comment_third_agent"
+								attempt_talk=$(_clean_comment_talk "$attempt_talk")
+								attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+								if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
+									log "[COMMENT] ${comment_third_agent} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
+									attempt_talk=""
+									attempt_model=""
+								fi
+							fi
+						fi
+						if [ -z "$attempt_talk" ] && [ "$comment_allow_claude_fallback" = "true" ]; then
+							attempt_talk=$(_run_claude_comment "$prompt_for_attempt")
+							attempt_model="claude:${RADIO_CLAUDE_MODEL}"
+							attempt_talk=$(_clean_comment_talk "$attempt_talk")
 						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
 							log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
@@ -1531,11 +1663,22 @@ RETRYCOMMENT
 			local queue_file="$COMMENT_QUEUE_DIR/comment_$(date +%s)_${RANDOM}.txt"
 			echo "$attempt_talk" >"$queue_file"
 			_broadcast_mark_expected_mode "$queue_file" "$_comment_mode_generated" 2>/dev/null || true
+			_comment_store_generation_meta \
+				"$queue_file" \
+				"$_comment_mode_generated" \
+				"${attempt_model:-unknown}" \
+				"${comment_batch_hash:-}" \
+				"$attempt" \
+				"${#attempt_talk}" \
+				"$comment_primary_agent" \
+				"$comment_second_agent" \
+				"$comment_third_agent"
 			local new_hash
 			new_hash=$(md5 -q "$queue_file" 2>/dev/null)
 			if [ -n "$new_hash" ] && grep -qF "$new_hash" "$COMMENT_QUEUE_DIR/played_hashes.txt" 2>/dev/null; then
 				log "[COMMENT] 重複コメント返し検出 → 再生成 (hash=$new_hash, attempt ${attempt}/${comment_retry_max})"
 				_broadcast_clear_expected_mode "$queue_file" 2>/dev/null || true
+				_comment_clear_generation_meta "$queue_file"
 				rm -f "$queue_file"
 				attempt=$((attempt + 1))
 				continue

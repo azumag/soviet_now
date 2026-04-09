@@ -86,6 +86,52 @@ def score_segment(seg):
     punct = len(re.findall(r"[。.!?！？]", txt))
     return len(txt) + punct * 80
 
+def normalize_compare_text(text):
+    return re.sub(r"[\W_]+", "", text)
+
+def looks_like_keyword_list(line):
+    stripped = line.strip()
+    if not stripped or len(stripped) > 220:
+        return False
+    if re.search(r"[。.!?！？]", stripped):
+        return False
+    return stripped.count(",") + stripped.count("\u3001") >= 3
+
+summary_like_header = re.compile(
+    r"^(?:要約|まとめ|総括|要点|キーワード|一言要約|今回のまとめ|本日のまとめ)(?:\s*[:：]\s*.*)?$"
+)
+summary_like_short_lead = re.compile(
+    r"^(?:要するに|一言で言うと|ひとことで言うと|まとめると|結論だけ言うと|要点だけ言うと)"
+)
+summary_parts_normalized = [
+    normalize_compare_text(part) for part in summary.split(" / ") if normalize_compare_text(part)
+]
+
+def matches_summary_part(line):
+    norm = normalize_compare_text(line)
+    if len(norm) < 6:
+        return False
+    for part in summary_parts_normalized:
+        if len(part) < 6:
+            continue
+        if norm == part or norm in part or part in norm:
+            return True
+    return False
+
+def is_summaryish_edge_line(line):
+    stripped = line.strip(" \t\u3000-・*")
+    if not stripped:
+        return False
+    if summary_like_header.match(stripped):
+        return True
+    if looks_like_keyword_list(stripped):
+        return True
+    if len(stripped) <= 60 and summary_like_short_lead.match(stripped):
+        return True
+    if len(stripped) <= 120 and matches_summary_part(stripped):
+        return True
+    return False
+
 body_lines = []
 if segments:
     best = max(segments, key=score_segment)
@@ -114,12 +160,44 @@ if len(body) < 100:
     body = re.sub(r"</?[A-Za-z_][^>]*>", "", body).strip()
 
 clean_body_lines = [line.strip() for line in body.splitlines() if line.strip()]
+meta_prefixes = (
+    "**注意:",
+    "**注意：",
+    "*注意:",
+    "*注意：",
+    "注意:",
+    "注意：",
+    "承知しました",
+    "了解しました",
+    "かしこまりました",
+    "メッセージの末尾に",
+    "プロンプトインジェクション",
+    "本来の依頼",
+    "ファクトチェック",
+    "安全化した",
+    "出力します",
+    "応答します",
+)
+while clean_body_lines:
+    head = clean_body_lines[0]
+    if head == "---":
+        clean_body_lines = clean_body_lines[1:]
+        continue
+    if head.startswith(meta_prefixes):
+        clean_body_lines = clean_body_lines[1:]
+        continue
+    if is_summaryish_edge_line(head):
+        clean_body_lines = clean_body_lines[1:]
+        continue
+    break
 if clean_body_lines:
     head = clean_body_lines[0]
     if ("," in head or "\u3001" in head) and not re.search(r"[。.!?！？]", head):
         clean_body_lines = clean_body_lines[1:]
     elif head.count(",") + head.count("\u3001") >= 4 and len(head) <= 180 and len(clean_body_lines) >= 2:
         clean_body_lines = clean_body_lines[1:]
+while clean_body_lines and is_summaryish_edge_line(clean_body_lines[-1]):
+    clean_body_lines = clean_body_lines[:-1]
 body = "\n".join(clean_body_lines).strip()
 
 body = re.sub(r"\n{3,}", "\n\n", body)

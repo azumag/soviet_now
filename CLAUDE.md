@@ -98,7 +98,7 @@ Soviet/Soren パズルゲーム（ソ連共和国）の AI 自動プレイプロ
 | `broadcast/radio_state.sh` | ラジオ状態管理 |
 | `broadcast/radio_celebration.sh` | 建国祝賀トーク生成 |
 | `broadcast/comment.sh` | コメント応答生成・コンテキスト構築・advice抽出 |
-| `broadcast/comment_worker.sh` | player/watcherデーモン管理 |
+| `broadcast/comment_lib.sh` | コメント再生・生成の関数ライブラリ |
 | `broadcast/scheduler.sh` | 非同期ジョブスケジュール |
 | `infra/cleanup.sh` | PID停止, cleanup_all, cleanup_tmp |
 
