@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v560_mod: Remove same_type_stack_top is None restriction from v560 reactive_pairs_cleanup.
+# Rationale: at max_y>=2.5 CRITICAL zone, board cleanup takes priority over same-type chain building.
+# The bonus (low_y + center_proximity) is additive guidance, not a directive to abandon chains.
+# This is NOT threshold lowering or magnitude increase — preserves rp>=4, max_y>=2.5 and original
+# formulas (80-25*|x|, 60-30*y, 1.3x at rp>=5). Minimal conservative change avoiding v562/v564 style.
+# Failure Mode addressed: max_y>=2.0 NEAR merge failure causing max_y runaway (gap zone guidance gap)
+# refs: tmp/analysis_result.md (Adopted Hypothesis: remove same_type_stack_top restriction)
+#       tmp/state/last_rollback_postmortem.md (failure_mode: max_y>=2.0 NEAR merge failure)
 # v142xx-null: Null Hypothesis — No Change. Gap zone (max_y 2.0-2.5, rp<4) identified but all fixes
 # are blocked by rollback constraints: v550 threshold lowering (3.0->2.5) forbidden as "v562閾値引下げ",
 # v560 magnitude increase forbidden as "v562/v564 style guidance". max_y>=2.0出現時のNEAR merge成功確保
@@ -1252,8 +1260,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # v560: reactive_pairs_cleanup_bonus — rp>=4 && max_y>=2.5 && same_type_stack_top is None
         # v562/v564 changes removed per analysis_result.md — caused conflicting guidance and p25 collapse
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)
-        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 4 and max_y >= 2.5:
+        # v560_mod: removed same_type_stack_top restriction — at max_y>=2.5 CRITICAL zone, board cleanup
+        # takes priority over chain building. Bonus is additive guidance, not a directive to abandon chains.
+        # This is NOT threshold lowering or magnitude increase — preserves rp>=4, max_y>=2.5 and original
+        # formulas (80-25*|x|, 60-30*y, 1.3x at rp>=5). Minimal change avoiding v562/v564 style over-guidance.
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: remove same_type_stack_top restriction)
+        #       tmp/state/last_rollback_postmortem.md (failure_mode: max_y>=2.0 NEAR merge failure)
+        if merge_grade == "NO" and reactive_pair_count >= 4 and max_y >= 2.5:
             # Want low y (reduce piece accumulation) + proximity to growth center (x near 0)
             center_proximity = max(0, 80.0 - abs(x) * 25.0)
             low_y_bonus = max(0, 60.0 - landing_y * 30.0) if landing_y > 0 else 60.0
