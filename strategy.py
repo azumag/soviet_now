@@ -68,6 +68,7 @@ Phases (determined by board max Y):
 # are blocked by rollback constraints: v550 threshold lowering (3.0->2.5) forbidden as "v562閾値引下げ",
 # v560 magnitude increase forbidden as "v562/v564 style guidance". max_y>=2.0出現時のNEAR merge成功確保
 # (prioritize constraint) remains unaddressed at this time.
+# Failure Mode addressed: NEAR merge failure at gap zone triggering NO merge cascade
 # refs: tmp/analysis_result.md (Adopted Hypothesis: Null Hypothesis)
 # v142xx: suppress axis 9.6b at (deadline_crossed && rp>=5 && max_y>=2.5) — adds deadline_crossed to
 # rp_guidance_suppressed condition. Worst game T69 had deadline_crossed && rp=7 && max_y=2.64 but 9.6b
@@ -97,31 +98,11 @@ Phases (determined by board max Y):
 # v552: double_russia_phase growth pipeline bonus — type13+type13→type14 and type14+type14→type15
 
 def russia_growth_pipeline_bonus(pieces, x, next_type):
-    """Bonus for double_russia_phase growth pipeline"""
-    bonus = 0.0
-    reason_suffix = ""
-    type14_pieces = [p for p in pieces if p.get("type") == 14]
-    type15_pieces = [p for p in pieces if p.get("type") == 15]
-    # v563 removed — conflicting guidance with axis 9.6 caused p25 collapse
-    # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)
-    if len(type14_pieces) >= 2:
-        for i, p1 in enumerate(type14_pieces):
-            for p2 in type14_pieces[i+1:]:
-                gap = abs(p1["x"] - p2["x"])
-                if 5.0 <= gap <= 9.0:
-                    mid = (p1["x"] + p2["x"]) / 2.0
-                    if abs(x - mid) < 1.0:
-                        bonus += 500.0
-                        reason_suffix += "_TYPE14_PIPELINE"
-    if next_type == 13:
-        type13_pieces = [p for p in pieces if p.get("type") == 13]
-        if len(type13_pieces) >= 1:
-            for p1 in type13_pieces:
-                gap = abs(p1["x"] - x)
-                if 5.0 <= gap <= 9.0:
-                    bonus += 250.0
-                    reason_suffix += "_TYPE13_PIPELINE"
-    return bonus, reason_suffix
+    """Bonus for double_russia_phase growth pipeline — v563 neutralized per rollback constraint.
+    v563 code (type14/type13 proximity bonus) caused conflicting guidance with axis 9.6,
+    leading to p25 collapse. Neutralized to return zero bonus as null hypothesis.
+    refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)"""
+    return 0.0, ""
 
 # v550: add HIGH_MAX_Y_NEAR_PENALTY — max_y>=2.5 で NEAR merge 選択時に -300 ペナルティ
 # worst ゲーム T71-76: max_y=2.74→2.87→3.43 で NEAR 選択されるが max_y 低下なし。
@@ -1828,11 +1809,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                      # 併合不可時は、盤面圧縮よりtype 15保護と低配置を優先
                      # ボーナスを抑制し、height penaltyが効くようにする
                      # type 13/14級ピースを既存ロシアの近くに配置する誘導はaxis 5.6に委ねる
-                     # v563 removed — caused conflicting guidance with axis 9.6 (p25 collapse)
-                     # refs: tmp/analysis_result.md (Adopted Hypothesis: v562/v564 over-guidance rollback)
-                     # pipeline_bonus, pipeline_suffix = russia_growth_pipeline_bonus(pieces, x, next_type)
-                     # score += 200.0 + pipeline_bonus
-                     score += 200.0
+                     # v563 neutralized (no pipeline bonus) per rollback constraint.
+                     # type 13/14級ピースを既存ロシアの近くに配置する誘導はaxis 5.6に委ねる
+                     pipeline_bonus, pipeline_suffix = russia_growth_pipeline_bonus(pieces, x, next_type)
+                     score += 200.0 + pipeline_bonus
                      reasons.append("DOUBLE_RUSSIA_SURVIVAL")
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
