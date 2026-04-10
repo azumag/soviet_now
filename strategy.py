@@ -72,6 +72,16 @@ Phases (determined by board max Y):
      # it should be suppressed, causing edge/high placement overriding -4500 penalty
      # refs: tmp/analysis_result.md (Adopted Hypothesis, Implementation Plan),
      #       game_history/20260411_024615_score0327.jsonl, game_history/20260411_024430_score0739.jsonl
+     # v570: death-spiral center-proximity tiebreaker — prevent edge scatter when height penalty
+     # alone differentiates candidates. In death_spiral, axis 8.8 is flat -4500 and all guidance
+     # is suppressed. Height penalty (landing_y * 25 * height_mult) is the ONLY differentiator,
+     # but the lowest-y candidate may be at x=±3.0 (edge), causing irreversible edge scatter.
+     # Small center bonus (max 30, much smaller than height diff ~45 between y=0 and y=-2) breaks
+     # ties between same-height candidates toward center positions for future merge potential.
+     # Fixes rollback failure mode: death-spiral edge scatter (x=±3.0) when height penalty alone
+     # cannot differentiate center from edge (worst game T72 x=-3.0, T75 x=-3.0)
+     # refs: tmp/analysis_result.md (Adopted Hypothesis, Implementation Plan),
+     #       game_history/20260411_043050_score1074.jsonl, tmp/state/last_rollback_postmortem.md
      # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
      # ロシア1つのままゲームオーバーは最も惜しい負けパターン。2つのロシアが盤面にある場合、
      # 盤面圧縮ボーナスを抑制し、既存type 15保護と低配置生存を最優先。
@@ -1933,6 +1943,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
+
+        # ----- v570: death-spiral center-proximity tiebreaker (NEW) -----
+        # In death_spiral (danger>0 && rp>=3 && NO && deadline), ALL guidance is suppressed
+        # and axis 8.8 is flat -4500. Height penalty (landing_y * 50 * height_mult) is the
+        # ONLY differentiator. When the lowest-y candidate is at an edge (|x|>2.5), this
+        # causes irreversible edge scatter — pieces at x=±3.0 can never contribute to merges.
+        # This tiebreaker slightly prefers center positions WITHOUT overriding height penalty.
+        # Bonus capped at 30 points — smaller than height diff between y=0 and y=-1
+        # (50 * height_mult(0.5) = 25), so it ONLY breaks ties between same-height candidates.
+        # NOT guidance restoration: does NOT change thresholds, magnitudes, or suppression logic.
+        # Purely additive, fires ONLY in death_spiral, does NOT suppress existing behavior.
+        # Specifically addresses worst game T72 (x=-3.0), T75 (x=-3.0) edge scatter pattern.
+        # refs: tmp/analysis_result.md (Implementation Plan: center tiebreaker),
+        #       game_history/20260411_043050_score1074.jsonl T72/T75 (x=-3.0 edge scatter)
+        if death_spiral:
+            center_tiebreak = max(0.0, 30.0 - abs(x) * 10.0)  # 30 at center, 0 at |x|>=3.0
+            score += center_tiebreak
 
         # ----- update best candidate -----
         if score > best_score:
