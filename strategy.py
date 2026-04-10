@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v568: extend death-spiral suppression to gap_zone (max_y >= 2.5 && deadline && NO && pc >= 33)
+     # Worst game T76: max_y=2.85, deadline_crossed=true, rp=6, piece_count=34, NO_MERGE → max_y runaway.
+     # Stacking guidance (+200-400) competed with axis 8.8 (-4500), but suppression lets height penalty dominate.
+     # Unlike death_spiral (requires danger > 0), gap_zone suppression fires at max_y >= 2.5 even with danger=0.
+     # Fixes rollback failure mode: gap-zone NO_MERGE selection causing max_y runaway (2.82→3.16)
+     # refs: tmp/analysis_result.md (Implementation Plan Option A), game_history/20260410_213320_score1068.jsonl
      # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
      # ロシア1つのままゲームオーバーは最も惜しい負けパターン。2つのロシアが盤面にある場合、
      # 盤面圧縮ボーナスを抑制し、既存type 15保護と低配置生存を最優先。
@@ -1081,7 +1087,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and merge_grade == "NO"
             and deadline_crossed
         )
-        stacking_danger_suppressed = death_spiral
+        # v568: extend death-spiral suppression to gap_zone (max_y >= 2.5 && deadline && NO && pc >= 33)
+        # Worst game T76: max_y=2.85, deadline_crossed=true, rp=6, piece_count=34, NO_MERGE selected →
+        # max_y runaway (2.82→3.16). Stacking guidance (+200-400) competed with axis 8.8 (-4500),
+        # but in gap zone where NO_MERGE penalty alone isn't enough to override stacking bonuses,
+        # suppressing stacking lets height penalty be the dominant signal.
+        # Unlike death_spiral (requires danger_piece_count > 0), gap_zone suppression fires when
+        # max_y >= 2.5 even without danger pieces (worst game T76 had danger=0).
+        # refs: tmp/analysis_result.md (Implementation Plan Option A), game_history/20260410_213320_score1068.jsonl T76
+        # Fixes rollback failure mode: gap-zone NO_MERGE selection causing max_y runaway
+        stacking_danger_suppressed = death_spiral or (
+            max_y >= 2.5
+            and deadline_crossed
+            and merge_grade == "NO"
+            and piece_count >= 33
+        )
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
