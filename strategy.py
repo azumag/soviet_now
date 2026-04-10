@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v569: explicit death_spiral guard on REACTIVE_PAIRS_STACKING — Option A fix
+     # Game logs (score0327 T44/T46, score0739 T69) show REACTIVE_PAIRS_STACKING firing
+     # in death_spiral conditions despite stacking_danger_suppressed=death_spiral.
+     # Fix: add `not death_spiral` as explicit outermost guard on stacking condition.
+     # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING fires in death_spiral when
+     # it should be suppressed, causing edge/high placement overriding -4500 penalty
+     # refs: tmp/analysis_result.md (Adopted Hypothesis, Implementation Plan),
+     #       game_history/20260411_024615_score0327.jsonl, game_history/20260411_024430_score0739.jsonl
      # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
      # ロシア1つのままゲームオーバーは最も惜しい負けパターン。2つのロシアが盤面にある場合、
      # 盤面圧縮ボーナスを抑制し、既存type 15保護と低配置生存を最優先。
@@ -1081,8 +1089,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and merge_grade == "NO"
             and deadline_crossed
         )
+        # v569: explicit death_spiral guard on stacking — game logs (score0327 T44/T46,
+        # score0739 T69) show REACTIVE_PAIRS_STACKING firing in death_spiral conditions
+        # despite stacking_danger_suppressed = death_spiral. The suppression variable copy
+        # should work, but logs prove the condition is not preventing stacking bonus.
+        # Fix: add `not death_spiral` as explicit outermost guard (Option A from analysis).
+        # This ensures death_spiral is checked BEFORE any stacking bonus calculation,
+        # eliminating the possibility of evaluation order or variable scoping issues.
+        # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING fires in death_spiral when
+        # it should be suppressed, causing edge/high placement overriding -4500 penalty
+        # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/20260411_024615_score0327.jsonl,
+        #       game_history/20260411_024430_score0739.jsonl
         stacking_danger_suppressed = death_spiral
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
+        if not death_spiral and reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
