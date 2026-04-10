@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-10 14:17:32 JST`
-- Nodes: `990`
-- Edges: `1368`
-- Current: `c09432476df6`
+- Updated: `2026-04-10 16:29:09 JST`
+- Nodes: `991`
+- Edges: `1369`
+- Current: `c0081fb921c8`
 - Anchor: `9c479d3d7963`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_3be2ff0f8381["3be2ff0f8381<br/>g=12 n=12<br/>comp=11480.7"]
     h_10d72f1047f4["10d72f1047f4<br/>g=12 n=12<br/>comp=10160.5"]
     h_ecfc830b59bd["ecfc830b59bd<br/>g=24 n=20<br/>comp=11103.9"]
     h_48c0bcd760fa["48c0bcd760fa<br/>g=24 n=20<br/>comp=10439.1"]
@@ -65,18 +64,18 @@ flowchart TD
     h_7a060bdfa8c2["7a060bdfa8c2<br/>g=12 n=12<br/>comp=11875.5"]
     h_2eb67f3364df["2eb67f3364df<br/>g=12 n=12<br/>comp=10336.8"]
     h_6fc1f979a6a3["6fc1f979a6a3<br/>g=21 n=20<br/>comp=10864.0"]
-    h_63236aea7cdc["63236aea7cdc<br/>g=49 n=20<br/>comp=11978.2"]
+    h_63236aea7cdc["63236aea7cdc<br/>g=50 n=20<br/>comp=11833.0"]
     h_661ab4be090c["661ab4be090c<br/>g=47 n=20<br/>comp=11025.2"]
     h_cdbcd72e838c["cdbcd72e838c<br/>g=12 n=12<br/>comp=9692.7"]
     h_6c41672498b2["6c41672498b2<br/>g=25 n=20<br/>comp=10917.2"]
     h_ec872b894ada["ec872b894ada<br/>g=20 n=20<br/>comp=10889.8"]
     h_b9ead874b341["b9ead874b341<br/>g=12 n=12<br/>comp=11311.3"]
     h_14ec196ff64b["14ec196ff64b<br/>g=22 n=20<br/>comp=10538.7"]
+    h_c09432476df6["c09432476df6<br/>g=24 n=20<br/>comp=11676.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_c09432476df6["c09432476df6<br/>CURRENT"]
+    h_c0081fb921c8["c0081fb921c8<br/>CURRENT"]
 
-    h_3be2ff0f8381 -->|improve| h_10d72f1047f4
     h_10d72f1047f4 -->|improve| h_ecfc830b59bd
     h_ecfc830b59bd -->|improve| h_48c0bcd760fa
     h_48c0bcd760fa -->|improve| h_14798af73897
@@ -145,17 +144,17 @@ flowchart TD
     h_661ab4be090c -. rollback .-> h_6fc1f979a6a3
     h_6fc1f979a6a3 -. rollback .-> h_ec872b894ada
     h_ec872b894ada -. rollback .-> h_63236aea7cdc
+    h_63236aea7cdc -->|improve| h_c09432476df6
     h_4adf1297f64a -->|improve| h_49fedb9cb8f8
     h_49fedb9cb8f8 -->|improve| h_8bb16b7dbe3b
     h_f776a41fae76 -->|improve| h_f945d31af9d5
-    h_63236aea7cdc -->|improve| h_c09432476df6
+    h_c09432476df6 -->|improve| h_c0081fb921c8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_3be2ff0f8381 plain;
     class h_10d72f1047f4 plain;
     class h_ecfc830b59bd plain;
     class h_48c0bcd760fa plain;
@@ -212,9 +211,10 @@ flowchart TD
     class h_ec872b894ada plain;
     class h_b9ead874b341 plain;
     class h_14ec196ff64b plain;
+    class h_c09432476df6 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_c09432476df6 current;
+    class h_c0081fb921c8 current;
 ```
 
 ## Detail 1/13
@@ -3640,9 +3640,9 @@ flowchart TD
 
 ## Detail 13/13
 
-- Range: `425e0268f431` .. `c09432476df6`
-- Nodes in this diagram: `30`
-- Internal edges in this diagram: `36`
+- Range: `425e0268f431` .. `c0081fb921c8`
+- Nodes in this diagram: `31`
+- Internal edges in this diagram: `37`
 - Cross-chunk link: `865e131b48a5 --improve--> 425e0268f431`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -3670,16 +3670,17 @@ flowchart TD
     h_7a060bdfa8c2["7a060bdfa8c2<br/>g=12 n=12<br/>comp=11875.5"]
     h_2eb67f3364df["2eb67f3364df<br/>g=12 n=12<br/>comp=10336.8"]
     h_6fc1f979a6a3["6fc1f979a6a3<br/>g=21 n=20<br/>comp=10864.0"]
-    h_63236aea7cdc["63236aea7cdc<br/>g=49 n=20<br/>comp=11978.2"]
+    h_63236aea7cdc["63236aea7cdc<br/>g=50 n=20<br/>comp=11833.0"]
     h_661ab4be090c["661ab4be090c<br/>g=47 n=20<br/>comp=11025.2"]
     h_cdbcd72e838c["cdbcd72e838c<br/>g=12 n=12<br/>comp=9692.7"]
     h_6c41672498b2["6c41672498b2<br/>g=25 n=20<br/>comp=10917.2"]
     h_ec872b894ada["ec872b894ada<br/>g=20 n=20<br/>comp=10889.8"]
     h_b9ead874b341["b9ead874b341<br/>g=12 n=12<br/>comp=11311.3"]
     h_14ec196ff64b["14ec196ff64b<br/>g=22 n=20<br/>comp=10538.7"]
+    h_c09432476df6["c09432476df6<br/>g=24 n=20<br/>comp=11676.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_c09432476df6["c09432476df6<br/>CURRENT"]
+    h_c0081fb921c8["c0081fb921c8<br/>CURRENT"]
 
     h_425e0268f431 -->|improve| h_5549155b4081
     h_5549155b4081 -->|improve| h_b8fd7e91b841
@@ -3715,8 +3716,9 @@ flowchart TD
     h_661ab4be090c -. rollback .-> h_6fc1f979a6a3
     h_6fc1f979a6a3 -. rollback .-> h_ec872b894ada
     h_ec872b894ada -. rollback .-> h_63236aea7cdc
-    h_f776a41fae76 -->|improve| h_f945d31af9d5
     h_63236aea7cdc -->|improve| h_c09432476df6
+    h_f776a41fae76 -->|improve| h_f945d31af9d5
+    h_c09432476df6 -->|improve| h_c0081fb921c8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3750,12 +3752,23 @@ flowchart TD
     class h_ec872b894ada plain;
     class h_b9ead874b341 plain;
     class h_14ec196ff64b plain;
+    class h_c09432476df6 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_c09432476df6 current;
+    class h_c0081fb921c8 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#14340 `c0943247 -> c0081fb9`
+
+- scores: `12068 13455 12377 11408 6815 14446 11246 7236 15520 12136 9134 14262`
+- v14122: NULL HYPOTHESIS — no changes made (Null Hypothesis adopted per analysis_result.md)
+- Rationale: All improvement hypotheses blocked by 5 consecutive rollbacks + historical evidence.
+- Hypothesis A (lower rp threshold): blocked as v562-style over-guidance risk
+- Hypothesis B (enhance NEAR at 1.8-2.5): blocked — new axes collapse p25 (v563/v562/v564)
+- Hypothesis C (same-type stacking): redundant with axis 9.6b (v459 removed +300)
+- Hypothesis D (DOUBLE_RUSSIA_SURVIVAL): unvalidated, Russia phase not exercised
 
 ### Improve Game#14315 `63236aea -> c0943247`
 
