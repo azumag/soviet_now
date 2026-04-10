@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v569: gap-zone NEAR merge type-differentiated penalty — small type stronger suppression
+     # Worst game T54: next_type=4, gap_zone (max_y=2.33), NEAR selected → piece_count increase → max_y runaway
+     # advice.md: "危機局面では大きいタイプは即時併合、小さいピースは併合を狙わないほうがいい"
+     # Small type (1-5) gap-zone NEAR: -500 → -800; Large type (6+): -500 → -300
+     # Fixes rollback failure mode: small type (next_type<=5) gap-zone NEAR merge causing max_y runaway
+     # refs: tmp/analysis_result.md (Implementation Plan), advice.md, tmp/batch_summary.txt,
+     #       game_history/20260410_222202_score0631.jsonl, game_history/20260410_224746_score2423.jsonl
      # v568: extend death-spiral suppression to gap_zone (max_y >= 2.5 && deadline && NO && pc >= 33)
      # Worst game T76: max_y=2.85, deadline_crossed=true, rp=6, piece_count=34, NO_MERGE → max_y runaway.
      # Stacking guidance (+200-400) competed with axis 8.8 (-4500), but suppression lets height penalty dominate.
@@ -959,8 +966,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260410_183623_score0841.jsonl (T53, T57 gap-zone NEAR failures)
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 17-19% in low-score games)
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
-            score -= 500.0
-            reasons.append("GAP_ZONE_NEAR_PENALTY")
+            # advice.md: "危機局面では、大きいタイプは即時併合、小さいピースは併合を狙わないほうがいい"
+            # small type (1-5) chasing NEAR in gap zone at deadline → board compression worse than skip
+            if next_type <= 5:
+                score -= 800.0  # -500 → -800: stronger suppression for small types
+                reasons.append("GAP_ZONE_NEAR_PENALTY_SMALL")
+            else:
+                score -= 300.0  # -500 → -300: large types can pursue NEAR
+                reasons.append("GAP_ZONE_NEAR_PENALTY_LARGE")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
