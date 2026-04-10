@@ -1270,6 +1270,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if proximity_bonus > 0:
                             score += proximity_bonus
 
+        # ----- gap-zone center-proximity guidance (new axis 9.8) -----
+        # worst game T60: max_y=2.52, deadline_crossed=true, rp=2, merge=NO
+        #   → HIGH_TOWER selected (height penalty only), edge placement → pc growth
+        # advice.md: "はみ出た位置へのドロップを減らし、中央集約を優先する" (kbb246)
+        # In gap zone (2.0<=max_y<2.5) with rp>=2, NO merge, deadline crossed:
+        #   center placement reduces drift edge scatter and maintains board accessibility.
+        #   Height penalty differentiates candidates; center bonus adds guidance for
+        #   reactive-aware low placement without suppressing height penalty.
+        # NOT a stacking bonus — purely horizontal center_proximity (max ~100).
+        # postmortem constraint: uses board position (not landing_y-only).
+        # Verifies: no conflict with axis 8.8 (-4500) which dominates all candidates equally.
+        # Failure Mode addressed: gap-zone NO_MERGE decisions using height-only,
+        #   causing edge scatter and piece_count accumulation (worst game T58-60 pattern).
+        # refs: tmp/state/last_rollback_postmortem.md (gap zone guidance gap),
+        #       tmp/batch_summary.txt (low-score reactive_avg=6.4),
+        #       advice.md (kbb246: center concentration),
+        #       game_history/20260411_012046_score0806.jsonl T58-62
+        if (2.0 <= max_y < 2.5
+            and reactive_pair_count >= 2
+            and merge_grade == "NO"
+            and deadline_crossed):
+            center_dist = abs(x)
+            if center_dist < 1.5:
+                center_bonus = max(0, 100.0 - center_dist * 60.0)
+                score += center_bonus
+                reasons.append("GAP_ZONE_CENTER_PROXIMITY")
+
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
         # Placing a piece between reactive pairs of different types can physically block

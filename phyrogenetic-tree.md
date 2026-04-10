@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-10 23:46:34 JST`
-- Nodes: `994`
-- Edges: `1374`
-- Current: `eb4bb8e05f86`
+- Updated: `2026-04-11 02:09:46 JST`
+- Nodes: `995`
+- Edges: `1375`
+- Current: `4f5cd2e8b7da`
 - Anchor: `eb4bb8e05f86`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_14798af73897["14798af73897<br/>g=36 n=20<br/>comp=10850.9"]
     h_9b678d87a207["9b678d87a207<br/>g=36 n=20<br/>comp=11099.7"]
     h_bf07db529883["bf07db529883<br/>g=36 n=20<br/>comp=11019.8"]
     h_1e1496aefa66["1e1496aefa66<br/>g=24 n=20<br/>comp=10703.4"]
@@ -70,13 +69,13 @@ flowchart TD
     h_14ec196ff64b["14ec196ff64b<br/>g=22 n=20<br/>comp=10538.7"]
     h_c09432476df6["c09432476df6<br/>g=25 n=20<br/>comp=11073.1"]
     h_c0081fb921c8["c0081fb921c8<br/>g=24 n=20<br/>comp=10853.1"]
-    h_eb4bb8e05f86["eb4bb8e05f86<br/>CURRENT ANCHOR<br/>g=25 n=20<br/>comp=12316.7"]
+    h_eb4bb8e05f86["eb4bb8e05f86<br/>ANCHOR<br/>g=49 n=20<br/>comp=12305.5"]
     h_2e9780eb6d5b["2e9780eb6d5b<br/>g=12 n=12<br/>comp=10288.8"]
     h_bec7c224776e["bec7c224776e<br/>g=12 n=12<br/>comp=9837.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_4f5cd2e8b7da["4f5cd2e8b7da<br/>CURRENT"]
 
-    h_14798af73897 -->|improve| h_9b678d87a207
     h_9b678d87a207 -->|improve| h_bf07db529883
     h_bf07db529883 -->|improve| h_1e1496aefa66
     h_1e1496aefa66 -->|improve| h_f619d000fa07
@@ -86,12 +85,9 @@ flowchart TD
     h_bf07db529883 -->|improve| h_3e3bcec53bef
     h_3e3bcec53bef -->|improve| h_f749c5ca152c
     h_f749c5ca152c -. rollback .-> h_bf07db529883
-    h_3e3bcec53bef -. rollback .-> h_14798af73897
-    h_14798af73897 -. rollback .-> h_bf07db529883
     h_bf07db529883 -->|improve| h_7ae3b6b8df55
     h_7ae3b6b8df55 -->|improve| h_6e70aac9583a
     h_00796808697b -. rollback .-> h_3e3bcec53bef
-    h_14798af73897 -->|improve| h_a95d8b3c3cb1
     h_a95d8b3c3cb1 -->|improve| h_db5969337a19
     h_db5969337a19 -. rollback .-> h_a95d8b3c3cb1
     h_0e279ee4fb7c -->|improve| h_22f99631bc6a
@@ -147,17 +143,17 @@ flowchart TD
     h_9c479d3d7963 -->|improve| h_eb4bb8e05f86
     h_eb4bb8e05f86 -->|improve| h_2e9780eb6d5b
     h_2e9780eb6d5b -->|improve| h_bec7c224776e
+    h_bec7c224776e -. rollback .-> h_eb4bb8e05f86
     h_4adf1297f64a -->|improve| h_49fedb9cb8f8
     h_49fedb9cb8f8 -->|improve| h_8bb16b7dbe3b
     h_f776a41fae76 -->|improve| h_f945d31af9d5
-    h_bec7c224776e -. rollback .-> h_eb4bb8e05f86
+    h_eb4bb8e05f86 -->|improve| h_4f5cd2e8b7da
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_14798af73897 plain;
     class h_9b678d87a207 plain;
     class h_bf07db529883 plain;
     class h_1e1496aefa66 plain;
@@ -212,11 +208,12 @@ flowchart TD
     class h_14ec196ff64b plain;
     class h_c09432476df6 plain;
     class h_c0081fb921c8 plain;
-    class h_eb4bb8e05f86 current_anchor;
+    class h_eb4bb8e05f86 anchor;
     class h_2e9780eb6d5b plain;
     class h_bec7c224776e plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_4f5cd2e8b7da current;
 ```
 
 ## Detail 1/13
@@ -3642,9 +3639,9 @@ flowchart TD
 
 ## Detail 13/13
 
-- Range: `425e0268f431` .. `a3aae72a4e37`
-- Nodes in this diagram: `34`
-- Internal edges in this diagram: `40`
+- Range: `425e0268f431` .. `4f5cd2e8b7da`
+- Nodes in this diagram: `35`
+- Internal edges in this diagram: `41`
 - Cross-chunk link: `865e131b48a5 --improve--> 425e0268f431`
 - Cross-chunk link: `c0081fb921c8 -.rollback.-> 9c479d3d7963`
 - Cross-chunk link: `9c479d3d7963 --improve--> eb4bb8e05f86`
@@ -3683,11 +3680,12 @@ flowchart TD
     h_14ec196ff64b["14ec196ff64b<br/>g=22 n=20<br/>comp=10538.7"]
     h_c09432476df6["c09432476df6<br/>g=25 n=20<br/>comp=11073.1"]
     h_c0081fb921c8["c0081fb921c8<br/>g=24 n=20<br/>comp=10853.1"]
-    h_eb4bb8e05f86["eb4bb8e05f86<br/>CURRENT ANCHOR<br/>g=25 n=20<br/>comp=12316.7"]
+    h_eb4bb8e05f86["eb4bb8e05f86<br/>ANCHOR<br/>g=49 n=20<br/>comp=12305.5"]
     h_2e9780eb6d5b["2e9780eb6d5b<br/>g=12 n=12<br/>comp=10288.8"]
     h_bec7c224776e["bec7c224776e<br/>g=12 n=12<br/>comp=9837.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
+    h_4f5cd2e8b7da["4f5cd2e8b7da<br/>CURRENT"]
 
     h_425e0268f431 -->|improve| h_5549155b4081
     h_5549155b4081 -->|improve| h_b8fd7e91b841
@@ -3727,8 +3725,9 @@ flowchart TD
     h_c09432476df6 -->|improve| h_c0081fb921c8
     h_eb4bb8e05f86 -->|improve| h_2e9780eb6d5b
     h_2e9780eb6d5b -->|improve| h_bec7c224776e
-    h_f776a41fae76 -->|improve| h_f945d31af9d5
     h_bec7c224776e -. rollback .-> h_eb4bb8e05f86
+    h_f776a41fae76 -->|improve| h_f945d31af9d5
+    h_eb4bb8e05f86 -->|improve| h_4f5cd2e8b7da
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3764,14 +3763,25 @@ flowchart TD
     class h_14ec196ff64b plain;
     class h_c09432476df6 plain;
     class h_c0081fb921c8 plain;
-    class h_eb4bb8e05f86 current_anchor;
+    class h_eb4bb8e05f86 anchor;
     class h_2e9780eb6d5b plain;
     class h_bec7c224776e plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
+    class h_4f5cd2e8b7da current;
 ```
 
 ## Transition Notes
+
+### Improve Game#14450 `eb4bb8e0 -> 4f5cd2e8`
+
+- scores: `13612 7616 11061 17492 11475 12814 14214 13497 16422 17649 12404 8010`
+- ----- gap-zone center-proximity guidance (new axis 9.8) -----
+- worst game T60: max_y=2.52, deadline_crossed=true, rp=2, merge=NO
+- → HIGH_TOWER selected (height penalty only), edge placement → pc growth
+- advice.md: "はみ出た位置へのドロップを減らし、中央集約を優先する" (kbb246)
+- In gap zone (2.0<=max_y<2.5) with rp>=2, NO merge, deadline crossed:
+- center placement reduces drift edge scatter and maintains board accessibility.
 
 ### Rollback Game#14426 `bec7c224 -> eb4bb8e0`
 
