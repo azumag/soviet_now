@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v571: merge drought edge scatter prevention — death_spiral + piece_count>=35 center bonus (+50 max)
+     # When death_spiral active AND piece_count>=35 (merge drought), v570's +30 tiebreaker is
+     # insufficient to prevent edge scatter. Adds +50 max center bonus to shift preference from
+     # |x|=3.0 to |x|<=1.5. Purely additive, does NOT modify death_spiral definition or suppression.
+     # Fixes rollback failure mode: death-spiral edge scatter during merge drought (piece_count accumulation)
+     # refs: tmp/analysis_result.md (Implementation Plan: merge drought edge scatter prevention),
+     #       game_history/20260411_050339_score0654.jsonl T66/T75 (x=-3.0, pc>=38)
      # v569: explicit death_spiral guard on REACTIVE_PAIRS_STACKING — Option A fix
      # Game logs (score0327 T44/T46, score0739 T69) show REACTIVE_PAIRS_STACKING firing
      # in death_spiral conditions despite stacking_danger_suppressed=death_spiral.
@@ -1943,6 +1950,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
+
+        # ----- v571: merge drought edge scatter prevention (NEW) -----
+        # When death_spiral is active AND piece_count >= 35, the board is in a merge drought
+        # (consecutive NO_MERGE turns causing piece accumulation). v570's center_tiebreaker
+        # (+30 max) is insufficient to prevent edge scatter when the lowest-y candidate is
+        # at |x|>=2.5. This adds a targeted center bonus (max +50) ONLY in severe drought.
+        # Total center bonus in drought: v570 (+30) + v571 (+50) = +80 max — still < height
+        # diff between y=0 and y=-2 (50 * height_mult * 2 = ~100-200), so height remains dominant.
+        # Does NOT modify death_spiral definition, stacking_danger_suppressed, height_mult, or
+        # any existing suppression logic — purely additive, orthogonal to v570.
+        # Worst game T66 (x=-3.0), T75 (x=-3.0): piece_count 38-40, death_spiral active.
+        # This bonus shifts preference from |x|=3.0 (bonus=0) to |x|<=1.5 (bonus>=26).
+        # refs: tmp/analysis_result.md (Implementation Plan: merge drought edge scatter prevention),
+        #       game_history/20260411_050339_score0654.jsonl T66/T75 (x=-3.0, pc>=38)
+        # Fixes rollback failure mode: death-spiral edge scatter during merge drought
+        if death_spiral and piece_count >= 35:
+            drought_center_bonus = max(0.0, 50.0 - abs(x) * 16.0)  # 50 at center, 0 at |x|>=3.0
+            score += drought_center_bonus
+            reasons.append("DROUGHT_CENTER_PREVENTION")
 
         # ----- v570: death-spiral center-proximity tiebreaker (NEW) -----
         # In death_spiral (danger>0 && rp>=3 && NO && deadline), ALL guidance is suppressed
