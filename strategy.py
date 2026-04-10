@@ -12,6 +12,7 @@ Game Overview:
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
+         1.7b. Gap-zone NEAR merge penalty - v567: penalty at NEAR+max_y>=2.0+deadline_crossed
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -938,6 +939,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
+
+        # ----- axis 1.7b: gap-zone NEAR merge penalty (v560_mod follow-up) -----
+        # worst_game T53 (max_y=1.88, deadline_crossed=true) and T57 (max_y=2.28, rp=9)
+        # selected NEAR merge despite deadline crossed, failing with only +21 score_delta.
+        # last_rollback_postmortem: "max_y>=2.0 NEAR merge failure causing max_y runaway".
+        # v560 reactive_pairs_cleanup requires max_y>=2.5, missing the 2.0-2.5 gap zone.
+        # When deadline is already crossed and max_y>=2.0, NEAR failure risk is highest —
+        # piece_count grows without merge benefit, accelerating game-over.
+        # Penalty -500 makes NO_MERGE low placement competitive vs NEAR when in gap zone.
+        # This is NOT a v550/v560 threshold change — it is a new axis with distinct condition.
+        # refs: tmp/state/last_rollback_postmortem.md (failure_mode: max_y>=2.0 NEAR merge failure)
+        #       game_history/20260410_183623_score0841.jsonl (T53, T57 gap-zone NEAR failures)
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 17-19% in low-score games)
+        if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
+            score -= 500.0
+            reasons.append("GAP_ZONE_NEAR_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
