@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v572: expand death_spiral to include max_y>=2.0 when danger==0 — closes guidance gap
+     # When rp>=3, NO merge, deadline crossed, but danger==0 and max_y>=2.0, death_spiral was
+     # NOT triggered, allowing stacking/proximity guidance to override height penalty.
+     # Fixes rollback failure mode: "deadline-crossed high-max_y NO-merge death spiral gap"
+     # refs: tmp/analysis_result.md (Implementation Plan: expand death_spiral definition),
+     #       game_history/20260411_070247_score0559.jsonl, game_history/20260411_071311_score0560.jsonl
      # v571: merge drought edge scatter prevention — death_spiral + piece_count>=35 center bonus (+50 max)
      # When death_spiral active AND piece_count>=35 (merge drought), v570's +30 tiebreaker is
      # insufficient to prevent edge scatter. Adds +50 max center bonus to shift preference from
@@ -1100,11 +1106,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 16.3% = default when all else suppressed),
         #       tmp/state/last_rollback_analysis.md (floor gap: 6874 vs 8645)
         # Fixes rollback failure mode: death-spiral edge scatter from bonus noise overriding height penalty
+        # v572: expand death_spiral to cover "deadline crossed + high board + no merge" regime
+        # even when danger_piece_count == 0. Game logs (score0559 T47-T49, score0560 T52-T54)
+        # show REACTIVE_PAIRS_STACKING placing at edges (x=±3.0) when rp>=3, NO merge, deadline,
+        # max_y >= 2.0, but danger==0 — death_spiral was NOT triggered, allowing stacking/proximity
+        # guidance to override height penalty. Expanding to (danger>0 OR max_y>=2.0) catches this gap.
+        # Fixes rollback failure mode: "deadline-crossed high-max_y NO-merge death spiral gap"
+        # refs: tmp/analysis_result.md (Implementation Plan: expand death_spiral definition),
+        #       game_history/20260411_070247_score0559.jsonl T47-T49, game_history/20260411_071311_score0560.jsonl T52-T54
         death_spiral = (
-            danger_piece_count > 0
-            and reactive_pair_count >= 3
+            reactive_pair_count >= 3
             and merge_grade == "NO"
             and deadline_crossed
+            and (danger_piece_count > 0 or max_y >= 2.0)
         )
         # v569: explicit death_spiral guard on stacking — game logs (score0327 T44/T46,
         # score0739 T69) show REACTIVE_PAIRS_STACKING firing in death_spiral conditions
