@@ -64,6 +64,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v573: death-spiral center anchor — replace flat -4500 axis 8.8 with height+center composite
+     # In death_spiral, flat -4500 made all candidates equally bad. Height penalty alone chose
+     # edge positions (x=±3.0) where pieces can never merge, causing irreversible edge scatter.
+     # Modifies axis 8.8 to add center-proximity penalty: max(0, abs(x)-1.0)*400 in death_spiral.
+     # At x=3.0: -5300 vs -4500 at center = 800 diff — redirects edge→center without overriding height.
+     # Fixes rollback failure mode: "death-spiral edge scatter — height penalty alone chooses edge
+     # positions (x=±3.0) where pieces can never contribute to merges" (analysis_result.md hypothesis)
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8 death-spiral center anchor),
+     #       game_history/20260411_080344_score0655.jsonl T53-58, game_history/20260411_081333_score0821.jsonl T60-66
      # v572: expand death_spiral to include max_y>=2.0 when danger==0 — closes guidance gap
      # When rp>=3, NO merge, deadline crossed, but danger==0 and max_y>=2.0, death_spiral was
      # NOT triggered, allowing stacking/proximity guidance to override height penalty.
@@ -1870,7 +1879,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
             # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
+            # v573: death-spiral center anchor — in death_spiral, flat -4500 made ALL candidates
+            # equally bad, and height penalty alone chose edge positions (x=±3.0) where pieces
+            # can NEVER merge. Adding center-proximity gradient to axis 8.8 redirects edge→center
+            # without overriding height priority. Magnitude: 400 per unit beyond |x|>1.0 →
+            # max -800 extra at |x|=3.0. Larger than v570(+30)+v571(+50)=+80 bonus approach
+            # because it modifies the penalty itself rather than adding competing bonuses.
+            # NOT guidance restoration — modifies the death-spiral penalty to include horizontal
+            # guidance, which was the specific failure mode in all worst-game logs.
+            # refs: tmp/analysis_result.md (Adopted Hypothesis: axis 8.8 center composite penalty)
+            base_penalty = 4500.0
+            if death_spiral:
+                center_penalty = max(0.0, abs(x) - 1.0) * 400.0
+                score -= (base_penalty + center_penalty)
+            else:
+                score -= base_penalty
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
