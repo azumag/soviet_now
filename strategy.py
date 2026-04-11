@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v590: axis 8.8 graduated penalty — merge drought height discrimination
+     # Flat -4500 → -4500 - max(0, landing_y)*1000. During reactive_pairs>=3 && NO merge,
+     # height penalty alone (~45pt/y) was too weak vs noise (~100-300pt), causing edge scatter.
+     # Graduated penalty adds 1000pt per y-unit, giving 1045pt spread between y=0 and y=1.
+     # Fixes failure mode: "merge drought時のheight penalty弱すぎ（edge scatter prevent）"
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_020646_score0938.jsonl
      # v589: death-spiral column ceiling bonus — active column reduction when board congested
      # When guidance_suppressed AND max_y>=2.0 AND median_y>1.0, height penalty alone cannot
      # differentiate between high positions. Column ceiling bonus (~600+ceiling_diff*100) rewards
@@ -2063,11 +2069,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v452: flatten to -4500, matching protected strategy (median 12789)
-            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
-            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
-            # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
+            # v590: graduated penalty — base -4500 + landing_y dependent component
+            # At y<=0: -4500 (same as v452-v589)
+            # At y=1: -5500 (stronger penalty for high placement)
+            # At y=2: -6500 (even stronger)
+            # During merge drought, flat -4500 was equal for all candidates, so only
+            # height penalty (landing_y*25*height_mult, ~45pt per y-unit at HIGH phase)
+            # differentiated candidates — too weak vs drift/balance/proximity noise (~100-300pt).
+            # With graduated penalty, y=0 vs y=1 gains 1000+45=1045pt spread,
+            # ensuring low-landing_y candidates always win during merge drought.
+            # This suppresses edge scatter (x=±3.0) and slows max_y runaway
+            # in the pre-death-spiral region (max_y 1.0-1.5) where guidance_suppressed
+            # isn't triggered yet. Does NOT change death_spiral detection thresholds.
+            # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
+            #       game_history/20260412_020646_score0938.jsonl T64-T69 (worst: edge scatter),
+            #       game_history/20260412_021654_score0927.jsonl T61-T65 (extra_low: x=3.0 scatter)
+            # Fixes failure mode: "merge drought時のheight penalty弱すぎ（edge scatter prevent）"
+            #   — axis 8.8 flat -4500 に landing_y 勾配を導入し、低landing_y候補を保護
+            base_penalty = 4500.0
+            height_component = max(0.0, landing_y) * 1000.0
+            score -= (base_penalty + height_component)
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 8.8b: high merge drought penalty (NEW: v581) -----
