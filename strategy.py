@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v588: axis 9.6 stacking height-based suppression + axis 9.8 comment update
+     # Height suppression on stacking bonus when same_type_stack_target.y > 0.5 and merge_grade=="NO":
+     # prevents stacking toward high towers that accelerate piece accumulation during merge droughts.
+     # Fixes failure mode: "stacking_bonus directs placement toward same-type pieces at dangerous heights (y>0.5),
+     # accelerating piece accumulation" (analysis_result.md adopted hypothesis)
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_003541_score0685.jsonl T63-T71
      # v587: death_spiral height_mult amplification 8.0 → 15.0 — ensure discrimination power
      # during merge_drought/death_spiral when board is full and "low positions" are scarce.
      # 15.0x gives ~187.5pt per y=0.5 diff, ~937.5pt for y=0.5 vs y=3.0, overriding drift/balance noise.
@@ -1270,6 +1276,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 horizontal_distance = abs(x - target_x)
                 if horizontal_distance < 2.0:
                     stacking_bonus = best_chain_score + max(0, 100.0 - horizontal_distance * 40.0)
+                    # v588: height-based suppression when merge_grade=="NO"
+                    # Analysis: when same_type_stack_top is at y>0.5, stacking toward it
+                    # accelerates piece accumulation at dangerous heights. Worst game T63-T67:
+                    # same_type pieces at y=2.0 (type 5, id 84) received full stacking bonus,
+                    # directing more pieces onto already-dangerous towers.
+                    # At y=0.5: 75% bonus. At y=1.0: 50%. At y=2.0: 0%.
+                    # Only applies when merge_grade=="NO" (no immediate merge path).
+                    # refs: tmp/analysis_result.md (axis 9.6 height filter plan),
+                    #       game_history/20260412_003541_score0685.jsonl T63-T67
+                    if merge_grade == "NO" and best_stack_target.get("y", 0) > 0.5:
+                        stacking_bonus *= max(0.0, 1.0 - best_stack_target["y"] * 0.5)
                     # v408: piece_count congestion scaling — match axis 9.6b formula
                     # At high pc, stacking must be stronger to compete with height penalty
                     # and prevent HEIGHT_CONTROL edge scatter during merge droughts.
@@ -1322,21 +1339,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
-        # ----- v583: axis 9.8 — merge drought horizontal guidance (extended) -----
+        # ----- v588: axis 9.8 — merge drought horizontal guidance (extended trigger) -----
         # When merge_grade=NO and no DIRECT/NEAR merge is available for current type,
         # and no reactive stacking (9.6) or same-type proximity (9.6b) guidance exists,
         # provide horizontal guidance based on mid-to-high-type piece cluster concentration.
         #
-        # v583 change: extend from type>=10 to type>=6 (same threshold as axis 5.6 growth center).
+        # v583: extend from type>=10 to type>=6 (same threshold as axis 5.6 growth center).
         # Non-Russia games (worst 0930 T43-T57, extra-low 0978 T55-T63) never get type 15,
         # so RUSSIA_PHASE_BOARD_COMPRESSION never fires. Without this guidance, HEIGHT_CONTROL
         # scatter dominates during merge droughts → piece accumulation → death spiral.
         # Bonus increased to ~400 (match Russia phase compression minimum of 400).
         #
+        # v588: extend trigger to fire when rp>=2 BUT current type has no reactive/near pairs.
+        # Analysis: worst game T63-T71: rp=5-8, NO merge, but current type (type 5) has no
+        # reactive/near pairs. Axis 9.6 fires (danger=0-2, not suppressed), giving ~900 stacking
+        # bonus toward same-type pieces at y=2.0. Axis 9.8 didn't fire because rp>=2 guard.
+        # Result: guidance points toward same-type towers at dangerous heights, no horizontal
+        # guidance toward high-type clusters. New condition: also fire when reactive pairs exist
+        # but NOT for current type — there is no useful merge guidance for current piece.
+        #
         # Trigger: merge_grade == "NO" AND
         #   NOT (current_type_has_reactive or current_type_has_near) AND
         #   same_type_stack_top is None
-        # (i.e., no guidance from axes 9.6 or 9.6b)
+        # (i.e., no guidance from axes 9.6 or 9.6b for current type)
         #
         # Target: position near the mid-to-high-type piece(s) on board (type >= 6)
         # Rationale: concentrating pieces near type>=6 clusters ensures horizontal guidance
@@ -1344,9 +1369,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #
         # Bonus: base ~400 (match Russia phase compression minimum)
         # Decay: scales with distance from target cluster center
-        # Safety: suppressed in death_spiral (height-only mode)
+        # Safety: suppressed in death_spiral/merge_drought (height-only mode)
         #
-        # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
+        # refs: tmp/analysis_result.md (axis 9.8 extended trigger plan),
+        #       tmp/batch_summary.txt,
+        #       game_history/20260412_003541_score0685.jsonl T63-T71 (rp=5-8, NO, no current-type guidance),
         #       game_history/20260411_172710_score0930.jsonl (worst: no type 15, no guidance),
         #       game_history/20260411_180215_score0978.jsonl (extra-low: same pattern),
         #       game_history/20260411_174117_score4328.jsonl (best: Russia compression fires 9x)
