@@ -65,28 +65,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v593: drift/balance noise suppression during severe merge drought (guidance_suppressed && rp>=5)
-     # 50% reduction on drift_penalty and balance_penalty to prevent edge scatter (x=±3.0)
-     # when height penalty differentiation (35x) is being overridden by drift+balance noise (~200-400pt).
-     # Fixes failure mode: "merge drought中のdrift/balanceノイズ抑制 — 高reactive_pairs && NO merge時のedge scatter防止"
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_045026_score0765.jsonl
-     # v592: death_spiral height_mult rp-based escalation — 15.0x → 25.0x at rp>=5, 35.0x at rp>=7
-     # Fixes failure mode: "rp=6-7超高密度 merge drought 局面での端scatter(x=±3.0)防止"
-     # (analysis_result.md: worst T59-T64, rp=6-7, height penalty diff ~50-200pt buried in ~200-450pt noise)
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_035345_score0672.jsonl
-     # v591: axis 8.8c — merge drought escalation via piece_count proxy
-     # When merge_grade=NO && pc>=35 && rp>=2, applies graduated penalty (-500/-1000/-2000)
-     # and escalates height_mult (1.3/1.5/2.0) to ensure lowest-y placement is selected.
-     # Uses piece_count as proxy for drought severity (stateless constraint).
-     # Fixes failure mode: "merge drought + 高pc局面でのheight penalty差別化不足（『ゆっくりした死』）"
-     # (analysis_result.md: pc=41-46 in worst game T69-76, all candidates y>1.0, differentiation ~50-200pt)
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_024217_score0845.jsonl
-     # v590: axis 8.8 graduated penalty — merge drought height discrimination
-     # Flat -4500 → -4500 - max(0, landing_y)*1000. During reactive_pairs>=3 && NO merge,
-     # height penalty alone (~45pt/y) was too weak vs noise (~100-300pt), causing edge scatter.
-     # Graduated penalty adds 1000pt per y-unit, giving 1045pt spread between y=0 and y=1.
-     # Fixes failure mode: "merge drought時のheight penalty弱すぎ（edge scatter prevent）"
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_020646_score0938.jsonl
      # v589: death-spiral column ceiling bonus — active column reduction when board congested
      # When guidance_suppressed AND max_y>=2.0 AND median_y>1.0, height penalty alone cannot
      # differentiate between high positions. Column ceiling bonus (~600+ceiling_diff*100) rewards
@@ -1205,19 +1183,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Normal phase height_mult values are preserved — only death_spiral/merge_drought regime affected.
         # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_225750_score0946.jsonl
         # Fixes failure mode: "merge drought時のheight penalty弱すぎ（edge scatter prevent）"
-        # v592: rp-based height_mult escalation — 15.0x → 25.0x at rp>=5, 35.0x at rp>=7
-        # Worst game T59-T64: rp=6-7, axis 8.8=-5500 all candidates, height penalty diff(~50-200pt)
-        # buried in drift+balance+proximity noise(~200-450pt) → edge scatter at x=±3.0.
-        # 25.0x: y=0 vs y=1 diff ~312.5pt, y=0 vs y=2 ~625pt — overcomes ~200-450pt noise at rp>=5.
-        # 35.0x: y=0 vs y=1 diff ~437.5pt, y=0 vs y=2 ~875pt — overwhelms noise at rp>=7.
-        # Caps at 35.0x (analysis constraint: 50.0x+ risks drift overflow).
-        # Normal(rp<5 or merge_available=true) height_mult unchanged — merge opportunities preserved.
-        # refs: tmp/analysis_result.md (Implementation Plan: rp-based height_mult escalation)
         death_spiral_height_mult = 15.0
-        if reactive_pair_count >= 7:
-            death_spiral_height_mult = 35.0
-        elif reactive_pair_count >= 5:
-            death_spiral_height_mult = 25.0
 
         # v586: merge drought early detection — lower rp threshold from >=2 to >=1
         # v585: merge drought detection — NO merge continues with elevated board and reactive pairs
@@ -1771,23 +1737,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
-
-        # v593: drift/balance noise suppression during severe merge drought
-        # When guidance_suppressed && rp>=5, drift/balance noise can override
-        # even 35x height penalty differentiation. Suppressing 50% ensures
-        # height penalty is truly the dominant signal.
-        # Evidence: worst T63 (x=3.0), T65 (x=-3.0), T68 (x=-3.0) at rp=6-7
-        # despite axis 8.8=-5500, 8.8c=-2000, height_mult=35x.
-        # Analysis: drift+balance combined ~200-400pt at edges, competing with
-        # height diff ~437.5pt (y=0 vs y=1 at 35x). 50% reduction ensures
-        # height penalty dominates, preventing edge scatter in merge droughts.
-        # Does NOT suppress drift entirely — normal turns still use it as tie-breaker.
-        # rp>=5 guard: rp<5 merge droughts are rare; drift/balance are useful there.
-        # refs: tmp/analysis_result.md (Implementation Plan: drift/balance noise suppression)
-        if guidance_suppressed and reactive_pair_count >= 5:
-            drift_penalty *= 0.5
-            reasons.append("DEATH_SPIRAL_DRIFT_SUPPRESSION")
-
         score -= drift_penalty
 
         # ----- evaluation axis 4: left-right balance correction (v42: simple) -----
@@ -1804,12 +1753,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
 
         balance_penalty = x * balance_bias * balance_strength
-        # v593: same drift suppression logic applies to balance penalty
-        # During severe merge drought (guidance_suppressed && rp>=5), balance noise
-        # can compete with height penalty at edge positions. 50% reduction ensures
-        # height penalty dominates, preventing edge scatter.
-        if guidance_suppressed and reactive_pair_count >= 5:
-            balance_penalty *= 0.5
         score -= abs(balance_penalty)
 
         # ----- evaluation axis 5: nextNext centering -----
@@ -2120,26 +2063,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v590: graduated penalty — base -4500 + landing_y dependent component
-            # At y<=0: -4500 (same as v452-v589)
-            # At y=1: -5500 (stronger penalty for high placement)
-            # At y=2: -6500 (even stronger)
-            # During merge drought, flat -4500 was equal for all candidates, so only
-            # height penalty (landing_y*25*height_mult, ~45pt per y-unit at HIGH phase)
-            # differentiated candidates — too weak vs drift/balance/proximity noise (~100-300pt).
-            # With graduated penalty, y=0 vs y=1 gains 1000+45=1045pt spread,
-            # ensuring low-landing_y candidates always win during merge drought.
-            # This suppresses edge scatter (x=±3.0) and slows max_y runaway
-            # in the pre-death-spiral region (max_y 1.0-1.5) where guidance_suppressed
-            # isn't triggered yet. Does NOT change death_spiral detection thresholds.
-            # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
-            #       game_history/20260412_020646_score0938.jsonl T64-T69 (worst: edge scatter),
-            #       game_history/20260412_021654_score0927.jsonl T61-T65 (extra_low: x=3.0 scatter)
-            # Fixes failure mode: "merge drought時のheight penalty弱すぎ（edge scatter prevent）"
-            #   — axis 8.8 flat -4500 に landing_y 勾配を導入し、低landing_y候補を保護
-            base_penalty = 4500.0
-            height_component = max(0.0, landing_y) * 1000.0
-            score -= (base_penalty + height_component)
+            # v452: flatten to -4500, matching protected strategy (median 12789)
+            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
+            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
+            # axis 2 height penalty be the only differentiator — consistent low placement.
+            score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 8.8b: high merge drought penalty (NEW: v581) -----
@@ -2158,57 +2086,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 3 and merge_grade == "NO" and max_y >= 1.8:
             score -= 1000.0  # 追加ペナルティ（axis 8.8と合計-5500）
             reasons.append("HIGH_MERGE_DROUGHT_PENALTY")
-
-        # ----- evaluation axis 8.8c: merge drought escalation (NEW: v591) -----
-        # analysis_result.md: merge_grade=NO の状況で piece_count が高いほど致命的なことを段階的に表現。
-        # ステートレス制約により「merge droughtの継続ターン数」は追跡できないため、
-        # piece_count（単調増加）を「深刻さ」の proxy として使用する。
-        #
-        # 根拠:
-        # 1. batch_summary: 低スコア群のHEIGHT_CONTROL選択率7.3% vs 高スコア群4.7%。
-        #    merge drought時に「低配置」が選択されているが、height penaltyだけでは差別化が不十分。
-        # 2. worst game T69-76: 8ターンのうち6ターンがmerge_grade=NO。pc=41-46。
-        #    axis 8.8=-5500は発火しているが、全候補がy>1.0で差別化不能。
-        # 3. extra_low T75-82: pc=36-40で同様の merge drought 失敗。
-        #
-        # 段階的エスカレーション:
-        #   pc>=40: -2000 + height_mult *= 2.0（y=1.0差で500pt→1000pt）
-        #   pc>=38: -1000 + height_mult *= 1.5
-        #   pc>=35:  -500 + height_mult *= 1.3
-        #
-        # 正常系（pc<35、merge_available=true、rp=0-1）には影響なし。
-        # rollback制約遵守: death_spiral/merge_droughtのmax_y閾値は変更しない。
-        # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
-        #       game_history/20260412_024217_score0845.jsonl T69-76,
-        #       game_history/20260412_031502_score1007.jsonl T75-82
-        # Fixes failure mode: merge drought + 高pc局面でのheight penalty差別化不足（「ゆっくりした死」）
-
-        if merge_grade == "NO" and piece_count >= 35 and reactive_pair_count >= 2:
-            if piece_count >= 40:
-                score -= 2000.0
-                escalation_mult = 2.0
-            elif piece_count >= 38:
-                score -= 1000.0
-                escalation_mult = 1.5
-            else:  # pc >= 35
-                score -= 500.0
-                escalation_mult = 1.3
-            reasons.append("MERGE_DROUGHT_ESCALATION")
-            # height penalty mult を上書き（phase値より優先し、最低y配置を確実に選ぶ）
-            height_mult = max(height_mult, escalation_mult)
-            # effective_height_mult も更新してheight penalty差分を適用
-            # height_penaltyは既に計算済み（effective_height_mult使用）のため、
-            # 増加分のみをscoreから追加減算する
-            new_effective = max(effective_height_mult, escalation_mult)
-            if new_effective > effective_height_mult:
-                hp_delta = landing_y * 50.0 * (new_effective - effective_height_mult)
-                if phase == "HIGH" and landing_y > 0.5:
-                    hp_delta *= 2.0
-                elif phase == "MEDIUM" and landing_y > 0.5:
-                    hp_delta *= 1.5
-                if hp_delta > 0:
-                    score -= hp_delta
-                    effective_height_mult = new_effective
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
