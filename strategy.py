@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v576: death-spiral expansion + axis 8.8 center anchor — prevent edge scatter at rp>=3 && NO merge
+     # (A) death_spiral: remove deadline_crossed, add max_y>=1.5. Triggers BEFORE board critical.
+     # (B) height_mult floor 1.0 in death_spiral — undo all relaxations, height penalty sole signal.
+     # (C) axis 8.8: center anchor at ALL rp>=3 && NO merge, not just death_spiral. Prevents x=±3.0.
+     # Fixes rollback failure mode: "reactive_pairs>=3 && merge_grade==NO での HIGH_LAYER 選択による max_y runaway"
+     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, strategy.py.staging
      # v574: axis 9.8 SAME_TYPE_PROXIMITY — merge drought recovery via same-type clustering
      # When merge_grade=NO && pc>=25 && 2+ same_type pieces exist, guide placement to cluster them.
      # Creates "3-piece cluster" state for future merge opportunities — addresses the primary
@@ -1092,11 +1098,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 16.3% = default when all else suppressed),
         #       tmp/state/last_rollback_analysis.md (floor gap: 6874 vs 8645)
         # Fixes rollback failure mode: death-spiral edge scatter from bonus noise overriding height penalty
+        # v576: death_spiral definition expanded — remove deadline_crossed requirement,
+        # lower max_y threshold to 1.5. Old definition required deadline_crossed, but
+        # worst game T54 (max_y=2.22, rp=3, NO, danger=0) was NOT death_spiral because
+        # deadline_crossed=false. Yet HIGH_TOWER at edge (x=±3.0) caused runaway.
+        # max_y>=1.5 && rp>=3 && NO merge is itself dangerous — board is congested with
+        # no merge outlets. Triggers suppression BEFORE board becomes critical.
+        # refs: tmp/analysis_result.md (adopted hypothesis: death_spiral expansion),
+        #       game_history/20260411_114531_score0601.jsonl T54 (max_y=2.22, rp=3, edge scatter),
+        #       game_history/20260411_113524_score0876.jsonl T65-T67 (max_y=1.91-2.76, rp=5-7)
+        # Fixes rollback failure mode: "reactive_pairs>=3 && merge_grade==NO での HIGH_LAYER 選択による max_y runaway"
         death_spiral = (
-            danger_piece_count > 0
-            and reactive_pair_count >= 3
+            reactive_pair_count >= 3
             and merge_grade == "NO"
-            and deadline_crossed
+            and (deadline_crossed or max_y >= 1.5)
         )
         # v575: pre-death-spiral suppression — catch stacking before danger appears.
         # Worst game T54: max_y=2.22, rp=3, NO, danger=0 → stacking → HIGH_TOWER → max_y=3.77.
@@ -1429,6 +1444,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
         #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
         height_mult = max(height_mult, 0.5)
+
+        # v576: death_spiral height_mult floor override — undo all relaxations in death spiral.
+        # death_spiral means rp>=3 && NO merge && (deadline or max_y>=1.5). Height penalty
+        # is the ONLY differentiator when no merge is available. Any relaxation (0.3x, 0.8x, etc.)
+        # weakens the signal that prevents edge scatter. Force floor to 1.0 (MEDIUM phase default
+        # baseline) regardless of phase or prior relaxations.
+        if death_spiral:
+            height_mult = max(height_mult, 1.0)
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
@@ -1821,11 +1844,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v452: flatten to -4500, matching protected strategy (median 12789)
-            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
-            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
-            # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
+            # v576: center anchor at ALL rp>=3 && NO merge, not just death_spiral.
+            # Worst game T54-T77: edge scatter (x=±3.0) dominates final turns when rp>=3 && NO.
+            # Flat -4500 equalizes all candidates, letting height penalty alone differentiate.
+            # But at similar low-y positions, center-vs-edge has no horizontal signal —
+            # so x=±3.0 edges get picked as easily as center. Center penalty fixes this.
+            # base=-4500 (postmortem constraint), center_penalty up to 800 at edges.
+            # Center penalty is orthogonal to height penalty (horizontal vs vertical),
+            # so they don't conflict — low+center naturally wins.
+            # refs: tmp/analysis_result.md (adopted hypothesis: axis 8.8 center anchor),
+            #       game_history/20260411_114531_score0601.jsonl T70 (rp=8, x=-3.0),
+            #       game_history/20260411_113524_score0876.jsonl T65-T67 (rp=5-7, x=±3.0)
+            # Fixes rollback failure mode: "reactive_pairs>=3 && merge_grade==NO での HIGH_LAYER 選択による max_y runaway"
+            base_penalty = 4500.0
+            center_penalty = max(0, abs(x) - 1.0) * 400
+            score -= (base_penalty + center_penalty)
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
