@@ -65,6 +65,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v591: axis 8.8c — merge drought escalation via piece_count proxy
+     # When merge_grade=NO && pc>=35 && rp>=2, applies graduated penalty (-500/-1000/-2000)
+     # and escalates height_mult (1.3/1.5/2.0) to ensure lowest-y placement is selected.
+     # Uses piece_count as proxy for drought severity (stateless constraint).
+     # Fixes failure mode: "merge drought + 高pc局面でのheight penalty差別化不足（『ゆっくりした死』）"
+     # (analysis_result.md: pc=41-46 in worst game T69-76, all candidates y>1.0, differentiation ~50-200pt)
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_024217_score0845.jsonl
      # v590: axis 8.8 graduated penalty — merge drought height discrimination
      # Flat -4500 → -4500 - max(0, landing_y)*1000. During reactive_pairs>=3 && NO merge,
      # height penalty alone (~45pt/y) was too weak vs noise (~100-300pt), causing edge scatter.
@@ -2107,6 +2114,57 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 3 and merge_grade == "NO" and max_y >= 1.8:
             score -= 1000.0  # 追加ペナルティ（axis 8.8と合計-5500）
             reasons.append("HIGH_MERGE_DROUGHT_PENALTY")
+
+        # ----- evaluation axis 8.8c: merge drought escalation (NEW: v591) -----
+        # analysis_result.md: merge_grade=NO の状況で piece_count が高いほど致命的なことを段階的に表現。
+        # ステートレス制約により「merge droughtの継続ターン数」は追跡できないため、
+        # piece_count（単調増加）を「深刻さ」の proxy として使用する。
+        #
+        # 根拠:
+        # 1. batch_summary: 低スコア群のHEIGHT_CONTROL選択率7.3% vs 高スコア群4.7%。
+        #    merge drought時に「低配置」が選択されているが、height penaltyだけでは差別化が不十分。
+        # 2. worst game T69-76: 8ターンのうち6ターンがmerge_grade=NO。pc=41-46。
+        #    axis 8.8=-5500は発火しているが、全候補がy>1.0で差別化不能。
+        # 3. extra_low T75-82: pc=36-40で同様の merge drought 失敗。
+        #
+        # 段階的エスカレーション:
+        #   pc>=40: -2000 + height_mult *= 2.0（y=1.0差で500pt→1000pt）
+        #   pc>=38: -1000 + height_mult *= 1.5
+        #   pc>=35:  -500 + height_mult *= 1.3
+        #
+        # 正常系（pc<35、merge_available=true、rp=0-1）には影響なし。
+        # rollback制約遵守: death_spiral/merge_droughtのmax_y閾値は変更しない。
+        # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
+        #       game_history/20260412_024217_score0845.jsonl T69-76,
+        #       game_history/20260412_031502_score1007.jsonl T75-82
+        # Fixes failure mode: merge drought + 高pc局面でのheight penalty差別化不足（「ゆっくりした死」）
+
+        if merge_grade == "NO" and piece_count >= 35 and reactive_pair_count >= 2:
+            if piece_count >= 40:
+                score -= 2000.0
+                escalation_mult = 2.0
+            elif piece_count >= 38:
+                score -= 1000.0
+                escalation_mult = 1.5
+            else:  # pc >= 35
+                score -= 500.0
+                escalation_mult = 1.3
+            reasons.append("MERGE_DROUGHT_ESCALATION")
+            # height penalty mult を上書き（phase値より優先し、最低y配置を確実に選ぶ）
+            height_mult = max(height_mult, escalation_mult)
+            # effective_height_mult も更新してheight penalty差分を適用
+            # height_penaltyは既に計算済み（effective_height_mult使用）のため、
+            # 増加分のみをscoreから追加減算する
+            new_effective = max(effective_height_mult, escalation_mult)
+            if new_effective > effective_height_mult:
+                hp_delta = landing_y * 50.0 * (new_effective - effective_height_mult)
+                if phase == "HIGH" and landing_y > 0.5:
+                    hp_delta *= 2.0
+                elif phase == "MEDIUM" and landing_y > 0.5:
+                    hp_delta *= 1.5
+                if hp_delta > 0:
+                    score -= hp_delta
+                    effective_height_mult = new_effective
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
