@@ -65,6 +65,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v589: death-spiral column ceiling bonus — active column reduction when board congested
+     # When guidance_suppressed AND max_y>=2.0 AND median_y>1.0, height penalty alone cannot
+     # differentiate between high positions. Column ceiling bonus (~600+ceiling_diff*100) rewards
+     # placing in column with lowest max_y, actively reducing the highest column.
+     # Fixes failure mode: "death_spiral/merge_drought発動後の「低位置が存在しない」状況での代替配置戦略"
+     # (analysis_result.md adopted hypothesis — merge drought resilience via column ceiling guidance)
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
+     #       game_history/20260412_012426_score0634.jsonl T56-T60, game_history/20260412_011119_score2306.jsonl T113-T116
      # v588: axis 9.6 stacking height-based suppression + axis 9.8 comment update
      # Height suppression on stacking bonus when same_type_stack_target.y > 0.5 and merge_grade=="NO":
      # prevents stacking toward high towers that accelerate piece accumulation during merge droughts.
@@ -1207,6 +1215,63 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # merge_drought fires earlier (max_y>=1.0 vs 1.5, rp>=1 vs 3) catching slow death sooner.
         # v586: rp>=1 (was >=2) — merge_drought now catches single reactive pair NO merge turns.
         guidance_suppressed = death_spiral or merge_drought
+
+        # ----- v589: death-spiral column ceiling bonus -----
+        # When guidance is suppressed AND board is congested (median_y > 1.0) AND max_y >= 2.0,
+        # height penalty alone cannot differentiate between high positions effectively.
+        # At y=1.0 vs y=1.5 with 15.0x mult: diff is only ~375pt, buried in drift/balance noise.
+        #
+        # This bonus actively rewards placing in the column with the lowest ceiling (max y),
+        # reducing the highest column rather than passively choosing "less high" positions.
+        # Pure survival strategy when board is full — not chain building or merge guidance.
+        #
+        # Only fires when ALL conditions are met:
+        # 1. guidance_suppressed (death_spiral OR merge_drought)
+        # 2. max_y >= 2.0 (high danger zone)
+        # 3. median_piece_y > 1.0 (board truly congested, no low positions exist)
+        #
+        # Implementation:
+        # - Bin pieces into columns (x rounded to nearest 1.2, ~5 columns across [-3, 3])
+        # - Find max_y per column (column ceiling)
+        # - Column with lowest ceiling gets bonus ~600 + ceiling_diff * 100
+        # - Suppressed if lowest ceiling < 0 (low positions still exist, height penalty suffices)
+        #
+        # Expected effect:
+        # - worst game T56-T60: all columns at y=1.5-3.0, lowest column (y=1.5) gets +600~750
+        # - Works in series with height penalty, suppressing y=1.5→y=2.0 rise
+        # - Extends survival by 1-2 turns, improves p25 (downside resilience)
+        #
+        # Does NOT affect non-suppressed turns (triple guard: guidance_suppressed AND max_y>=2.0 AND median_y>1.0)
+        # Does NOT cancel height penalty (600 < height penalty y=1.0 diff at 15.0x = ~750)
+        # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
+        #       game_history/20260412_012426_score0634.jsonl T56-T60 (death spiral, no low positions),
+        #       game_history/20260412_011119_score2306.jsonl T113-T116 (similar, survived longer at lower pc)
+        if guidance_suppressed and max_y >= 2.0:
+            piece_ys = [p.get("y", 0) for p in pieces]
+            if piece_ys:
+                median_y = sorted(piece_ys)[len(piece_ys) // 2]
+                if median_y > 1.0:
+                    # Find column ceilings
+                    column_width = 1.2  # ~5 columns across board [-3, 3]
+                    column_ceilings = {}
+                    for p in pieces:
+                        px = p.get("x", 0)
+                        col = round(px / column_width)
+                        py = p.get("y", 0)
+                        if col not in column_ceilings or py > column_ceilings[col]:
+                            column_ceilings[col] = py
+
+                    if column_ceilings:
+                        min_ceiling = min(column_ceilings.values())
+                        # Only fire if board is truly congested (no low positions)
+                        if min_ceiling > 0:
+                            decision_col = round(x / column_width)
+                            if decision_col in column_ceilings:
+                                ceiling_diff = min_ceiling - column_ceilings[decision_col]
+                                if ceiling_diff >= 0:  # Placing in lowest-ceiling column
+                                    column_bonus = 600.0 + ceiling_diff * 100.0
+                                    score += column_bonus
+                                    reasons.append("DEATH_SPIRAL_COLUMN_CEILING")
 
         stacking_danger_suppressed = guidance_suppressed
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
