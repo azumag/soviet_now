@@ -65,6 +65,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v592: death_spiral height_mult rp-based escalation — 15.0x → 25.0x at rp>=5, 35.0x at rp>=7
+     # Fixes failure mode: "rp=6-7超高密度 merge drought 局面での端scatter(x=±3.0)防止"
+     # (analysis_result.md: worst T59-T64, rp=6-7, height penalty diff ~50-200pt buried in ~200-450pt noise)
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_035345_score0672.jsonl
      # v591: axis 8.8c — merge drought escalation via piece_count proxy
      # When merge_grade=NO && pc>=35 && rp>=2, applies graduated penalty (-500/-1000/-2000)
      # and escalates height_mult (1.3/1.5/2.0) to ensure lowest-y placement is selected.
@@ -1196,7 +1200,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Normal phase height_mult values are preserved — only death_spiral/merge_drought regime affected.
         # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_225750_score0946.jsonl
         # Fixes failure mode: "merge drought時のheight penalty弱すぎ（edge scatter prevent）"
+        # v592: rp-based height_mult escalation — 15.0x → 25.0x at rp>=5, 35.0x at rp>=7
+        # Worst game T59-T64: rp=6-7, axis 8.8=-5500 all candidates, height penalty diff(~50-200pt)
+        # buried in drift+balance+proximity noise(~200-450pt) → edge scatter at x=±3.0.
+        # 25.0x: y=0 vs y=1 diff ~312.5pt, y=0 vs y=2 ~625pt — overcomes ~200-450pt noise at rp>=5.
+        # 35.0x: y=0 vs y=1 diff ~437.5pt, y=0 vs y=2 ~875pt — overwhelms noise at rp>=7.
+        # Caps at 35.0x (analysis constraint: 50.0x+ risks drift overflow).
+        # Normal(rp<5 or merge_available=true) height_mult unchanged — merge opportunities preserved.
+        # refs: tmp/analysis_result.md (Implementation Plan: rp-based height_mult escalation)
         death_spiral_height_mult = 15.0
+        if reactive_pair_count >= 7:
+            death_spiral_height_mult = 35.0
+        elif reactive_pair_count >= 5:
+            death_spiral_height_mult = 25.0
 
         # v586: merge drought early detection — lower rp threshold from >=2 to >=1
         # v585: merge drought detection — NO merge continues with elevated board and reactive pairs
