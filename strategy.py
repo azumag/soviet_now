@@ -45,11 +45,10 @@ Game Overview:
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
-             9.8. Merge drought horizontal guidance - v582: high-type cluster concentration when no guidance exists
+             9.8. Merge drought horizontal guidance - v583: extended to type>=6, bonus ~400 for non-Russia games
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
-
 
 Phases (determined by board max Y):
      LOW      (max_y < 0.8) : Early game. Merge priority (merge_mult=1.2)
@@ -66,6 +65,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v583: axis 9.8 — extend merge drought horizontal guidance to non-Russia games.
+     # Lower threshold from type>=10 to type>=6 (same as axis 5.6 growth center),
+     # increase bonus from ~150 to ~400 (match Russia phase compression minimum).
+     # Non-Russia games (worst 0930, extra-low 0978) died from lack of horizontal guidance
+     # during merge droughts — no type 15 means no RUSSIA_PHASE_BOARD_COMPRESSION.
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_172710_score0930.jsonl,
+     #       game_history/20260411_180215_score0978.jsonl, game_history/20260411_174117_score4328.jsonl
      # v582: axis 9.8 — merge drought horizontal guidance: when merge_grade=NO, no reactive/same-type
      # guidance exists, and not in death_spiral, guide placement toward highest-type piece clusters.
      # Fixes failure mode: "horizontal guidance void" → HEIGHT_CONTROL scatter during merge droughts
@@ -1253,41 +1259,48 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
-        # ----- v582: axis 9.8 — merge drought horizontal guidance -----
+        # ----- v583: axis 9.8 — merge drought horizontal guidance (extended) -----
         # When merge_grade=NO and no DIRECT/NEAR merge is available for current type,
         # and no reactive stacking (9.6) or same-type proximity (9.6b) guidance exists,
-        # provide horizontal guidance based on highest-type piece cluster concentration.
+        # provide horizontal guidance based on mid-to-high-type piece cluster concentration.
+        #
+        # v583 change: extend from type>=10 to type>=6 (same threshold as axis 5.6 growth center).
+        # Non-Russia games (worst 0930 T43-T57, extra-low 0978 T55-T63) never get type 15,
+        # so RUSSIA_PHASE_BOARD_COMPRESSION never fires. Without this guidance, HEIGHT_CONTROL
+        # scatter dominates during merge droughts → piece accumulation → death spiral.
+        # Bonus increased to ~400 (match Russia phase compression minimum of 400).
         #
         # Trigger: merge_grade == "NO" AND
         #   NOT (current_type_has_reactive or current_type_has_near) AND
         #   same_type_stack_top is None
         # (i.e., no guidance from axes 9.6 or 9.6b)
         #
-        # Target: position near the highest-type piece(s) on board (type >= 10)
-        # Rationale: concentrating pieces near high-type clusters increases the
-        # probability that future merges will chain efficiently. This addresses
-        # the "horizontal guidance void" seen in worst game T67-T70 where
-        # HEIGHT_CONTROL scatter dominated.
+        # Target: position near the mid-to-high-type piece(s) on board (type >= 6)
+        # Rationale: concentrating pieces near type>=6 clusters ensures horizontal guidance
+        # exists in mid-game when merge droughts are most lethal (pc=25-35 range).
         #
-        # Bonus: base ~150 (competitive with height diffs but won't override merges)
-        # Decay: scales with distance from target high-type cluster center
+        # Bonus: base ~400 (match Russia phase compression minimum)
+        # Decay: scales with distance from target cluster center
         # Safety: suppressed in death_spiral (height-only mode)
         #
         # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
-        #       game_history/20260411_170719_score0967.jsonl (worst T67-T70)
+        #       game_history/20260411_172710_score0930.jsonl (worst: no type 15, no guidance),
+        #       game_history/20260411_180215_score0978.jsonl (extra-low: same pattern),
+        #       game_history/20260411_174117_score4328.jsonl (best: Russia compression fires 9x)
         if (merge_grade == "NO"
                 and not (current_type_has_reactive or current_type_has_near)
                 and same_type_stack_top is None
                 and not death_spiral):
-            high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
-            if high_type_pieces:
-                centroid_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
-                centroid_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
+            target_pieces = [p for p in pieces if p.get("type", 0) >= 6]
+            if target_pieces:
+                centroid_x = sum(p.get("x", 0) for p in target_pieces) / len(target_pieces)
+                centroid_y = sum(p.get("y", -10) for p in target_pieces) / len(target_pieces)
                 dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
                 if dist < 3.0:
-                    drought_guidance = max(0, 150.0 - dist * 50.0)
+                    drought_guidance = max(0, 400.0 - dist * 100.0)
                     score += drought_guidance
-                    reasons.append("HIGH_TYPE_CONCENTRATION")
+                    if "HIGH_TYPE_CONCENTRATION" not in reasons:
+                        reasons.append("HIGH_TYPE_CONCENTRATION")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
