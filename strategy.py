@@ -72,6 +72,17 @@ Phases (determined by board max Y):
      # Fixes rollback failure mode: "merge drought piece accumulation from lack of future merge path creation"
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_095233_score0895.jsonl,
      #       game_history/20260411_100940_score0932.jsonl, strategy.py.staging
+     # v593: column ceiling bonus — horizontal guidance when no merge and board is elevated
+     # Worst game T57-T62: 6 consecutive NO-merge at rp=3-6, max_y=2.73-2.81, all candidates y>1.0.
+     # Strategy scatters to edges (x=±3.0) because HEIGHT_CONTROL is the only signal left.
+     # v589 column_ceiling_bonus required guidance_suppressed+max_y>=2.0+median_y>1.0 — too strict.
+     # Relaxed: merge_grade==NO + max_y>=1.5 + pc>=28. No median_y gate.
+     # Guides placement toward column with lowest ceiling, preventing edge scatter during NO-merge droughts.
+     # Fixes rollback failure mode: "column ceiling bonus didn't fire because median_y < 1.0 even at max_y=2.75"
+     # refs: tmp/analysis_result.md (v589 relax hypothesis), tmp/batch_summary.txt (HEIGHT_CONTROL 21.6% low),
+     #       game_history/20260412_074052_score0822.jsonl T57-T62 (edge scatter, 6-turn NO-merge drought),
+     #       game_history/20260412_072927_score0838.jsonl T53-T60 (max_y=2.17, pc=29, NO merge),
+     #       strategy.py.staging
      # v575: pre-death-spiral stacking suppression — expand stacking_danger_suppressed
      # Catch rp>=3 && merge_grade==NO && max_y>=1.0 even when danger_piece_count==0.
      # Worst game T54: max_y=2.22, rp=3, NO, danger=0 → stacking→HIGH_TOWER→max_y=3.77.
@@ -1827,6 +1838,59 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+
+        # ----- v593: column ceiling bonus — horizontal guidance when no merge and board is elevated -----
+        # Analysis: worst game T57-T62 had 6 consecutive NO-merge turns at max_y=2.73-2.81.
+        # v589 column_ceiling_bonus required guidance_suppressed AND max_y>=2.0 AND median_y>1.0.
+        # median_y stayed below 1.0 because many pieces were at the bottom, so v589 never fired.
+        # Without any horizontal guidance, HEIGHT_CONTROL scattered to edges (x=±3.0).
+        # Relaxed trigger: merge_grade==NO + max_y>=1.0 + pc>=25 (no median_y gate).
+        # Bonus guides placement toward the column with lowest max_y (lowest ceiling),
+        # providing ~400-700 differentiation that competes with HEIGHT_CONTROL but never
+        # overrides merge bonuses (DIRECT=1200, NEAR=600).
+        # NOT applied when merge is available — merge path always takes priority.
+        # refs: tmp/analysis_result.md (v589 relax hypothesis, Implementation Plan),
+        #       game_history/20260412_074052_score0822.jsonl T57-T62 (edge scatter at max_y=2.75),
+        #       game_history/20260412_072927_score0838.jsonl T53 (max_y=2.17, pc=29, NO merge),
+        #       game_history/20260412_074052_score0822.jsonl T45-T50 (max_y=1.2-1.8, pc=25-28, NO merge)
+        # Fixes rollback failure mode: "column ceiling bonus didn't fire because median_y < 1.0
+        #   even at max_y=2.75" (analysis_result.md adopted hypothesis)
+
+        if merge_grade == "NO" and max_y >= 1.0 and piece_count >= 25:
+            # Compute column ceiling: max_y of pieces in each 1.0-width column bucket
+            # Column buckets: -3.5..-2.5, -2.5..-1.5, -1.5..-0.5, -0.5..0.5, 0.5..1.5, 1.5..2.5, 2.5..3.5
+            col_max_y = {}
+            for p in pieces:
+                col_idx = int((p["x"] + 3.5) / 1.0)  # 0 to 6
+                col_idx = max(0, min(6, col_idx))
+                if col_idx not in col_max_y:
+                    col_max_y[col_idx] = p["y"]
+                else:
+                    col_max_y[col_idx] = max(col_max_y[col_idx], p["y"])
+
+            # Find the column with the lowest ceiling (lowest max_y)
+            if col_max_y:
+                min_col_ceiling = min(col_max_y.values())
+                # Determine which column this candidate's drop_x falls into
+                candidate_col = int((x + 3.5) / 1.0)
+                candidate_col = max(0, min(6, candidate_col))
+                candidate_ceiling = col_max_y.get(candidate_col, -4.0)
+
+                # ceiling_diff: how much higher this column is vs the best column
+                ceiling_diff = candidate_ceiling - min_col_ceiling
+
+                # Bonus: base 400 + 150 per unit ceiling diff, scaled by merge_mult
+                # At ceiling_diff=0: 400 (baseline for being in the best column)
+                # At ceiling_diff=1: 550, At ceiling_diff=2: 700
+                # merge_mult ensures bonus is relative (not overriding absolute merge bonuses)
+                ceiling_bonus = (400 + ceiling_diff * 150) * merge_mult
+                score += ceiling_bonus
+                if ceiling_diff <= 0.5:
+                    if "COLUMN_CEILING_BEST" not in "_".join(reasons):
+                        reasons.append("COLUMN_CEILING_BEST")
+                elif ceiling_diff <= 1.5:
+                    if "COLUMN_CEILING_GOOD" not in "_".join(reasons):
+                        reasons.append("COLUMN_CEILING_GOOD")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
