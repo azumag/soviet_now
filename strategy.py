@@ -64,46 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v573: death-spiral center anchor — replace flat -4500 axis 8.8 with height+center composite
-     # In death_spiral, flat -4500 made all candidates equally bad. Height penalty alone chose
-     # edge positions (x=±3.0) where pieces can never merge, causing irreversible edge scatter.
-     # Modifies axis 8.8 to add center-proximity penalty: max(0, abs(x)-1.0)*400 in death_spiral.
-     # At x=3.0: -5300 vs -4500 at center = 800 diff — redirects edge→center without overriding height.
-     # Fixes rollback failure mode: "death-spiral edge scatter — height penalty alone chooses edge
-     # positions (x=±3.0) where pieces can never contribute to merges" (analysis_result.md hypothesis)
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8 death-spiral center anchor),
-     #       game_history/20260411_080344_score0655.jsonl T53-58, game_history/20260411_081333_score0821.jsonl T60-66
-     # v572: expand death_spiral to include max_y>=2.0 when danger==0 — closes guidance gap
-     # When rp>=3, NO merge, deadline crossed, but danger==0 and max_y>=2.0, death_spiral was
-     # NOT triggered, allowing stacking/proximity guidance to override height penalty.
-     # Fixes rollback failure mode: "deadline-crossed high-max_y NO-merge death spiral gap"
-     # refs: tmp/analysis_result.md (Implementation Plan: expand death_spiral definition),
-     #       game_history/20260411_070247_score0559.jsonl, game_history/20260411_071311_score0560.jsonl
-     # v571: merge drought edge scatter prevention — death_spiral + piece_count>=35 center bonus (+50 max)
-     # When death_spiral active AND piece_count>=35 (merge drought), v570's +30 tiebreaker is
-     # insufficient to prevent edge scatter. Adds +50 max center bonus to shift preference from
-     # |x|=3.0 to |x|<=1.5. Purely additive, does NOT modify death_spiral definition or suppression.
-     # Fixes rollback failure mode: death-spiral edge scatter during merge drought (piece_count accumulation)
-     # refs: tmp/analysis_result.md (Implementation Plan: merge drought edge scatter prevention),
-     #       game_history/20260411_050339_score0654.jsonl T66/T75 (x=-3.0, pc>=38)
-     # v569: explicit death_spiral guard on REACTIVE_PAIRS_STACKING — Option A fix
-     # Game logs (score0327 T44/T46, score0739 T69) show REACTIVE_PAIRS_STACKING firing
-     # in death_spiral conditions despite stacking_danger_suppressed=death_spiral.
-     # Fix: add `not death_spiral` as explicit outermost guard on stacking condition.
-     # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING fires in death_spiral when
-     # it should be suppressed, causing edge/high placement overriding -4500 penalty
-     # refs: tmp/analysis_result.md (Adopted Hypothesis, Implementation Plan),
-     #       game_history/20260411_024615_score0327.jsonl, game_history/20260411_024430_score0739.jsonl
-     # v570: death-spiral center-proximity tiebreaker — prevent edge scatter when height penalty
-     # alone differentiates candidates. In death_spiral, axis 8.8 is flat -4500 and all guidance
-     # is suppressed. Height penalty (landing_y * 25 * height_mult) is the ONLY differentiator,
-     # but the lowest-y candidate may be at x=±3.0 (edge), causing irreversible edge scatter.
-     # Small center bonus (max 30, much smaller than height diff ~45 between y=0 and y=-2) breaks
-     # ties between same-height candidates toward center positions for future merge potential.
-     # Fixes rollback failure mode: death-spiral edge scatter (x=±3.0) when height penalty alone
-     # cannot differentiate center from edge (worst game T72 x=-3.0, T75 x=-3.0)
-     # refs: tmp/analysis_result.md (Adopted Hypothesis, Implementation Plan),
-     #       game_history/20260411_043050_score1074.jsonl, tmp/state/last_rollback_postmortem.md
      # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
      # ロシア1つのままゲームオーバーは最も惜しい負けパターン。2つのロシアが盤面にある場合、
      # 盤面圧縮ボーナスを抑制し、既存type 15保護と低配置生存を最優先。
@@ -1115,33 +1075,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 16.3% = default when all else suppressed),
         #       tmp/state/last_rollback_analysis.md (floor gap: 6874 vs 8645)
         # Fixes rollback failure mode: death-spiral edge scatter from bonus noise overriding height penalty
-        # v572: expand death_spiral to cover "deadline crossed + high board + no merge" regime
-        # even when danger_piece_count == 0. Game logs (score0559 T47-T49, score0560 T52-T54)
-        # show REACTIVE_PAIRS_STACKING placing at edges (x=±3.0) when rp>=3, NO merge, deadline,
-        # max_y >= 2.0, but danger==0 — death_spiral was NOT triggered, allowing stacking/proximity
-        # guidance to override height penalty. Expanding to (danger>0 OR max_y>=2.0) catches this gap.
-        # Fixes rollback failure mode: "deadline-crossed high-max_y NO-merge death spiral gap"
-        # refs: tmp/analysis_result.md (Implementation Plan: expand death_spiral definition),
-        #       game_history/20260411_070247_score0559.jsonl T47-T49, game_history/20260411_071311_score0560.jsonl T52-T54
         death_spiral = (
-            reactive_pair_count >= 3
+            danger_piece_count > 0
+            and reactive_pair_count >= 3
             and merge_grade == "NO"
             and deadline_crossed
-            and (danger_piece_count > 0 or max_y >= 2.0)
         )
-        # v569: explicit death_spiral guard on stacking — game logs (score0327 T44/T46,
-        # score0739 T69) show REACTIVE_PAIRS_STACKING firing in death_spiral conditions
-        # despite stacking_danger_suppressed = death_spiral. The suppression variable copy
-        # should work, but logs prove the condition is not preventing stacking bonus.
-        # Fix: add `not death_spiral` as explicit outermost guard (Option A from analysis).
-        # This ensures death_spiral is checked BEFORE any stacking bonus calculation,
-        # eliminating the possibility of evaluation order or variable scoping issues.
-        # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING fires in death_spiral when
-        # it should be suppressed, causing edge/high placement overriding -4500 penalty
-        # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/20260411_024615_score0327.jsonl,
-        #       game_history/20260411_024430_score0739.jsonl
         stacking_danger_suppressed = death_spiral
-        if not death_spiral and reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
@@ -1328,33 +1269,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
-
-        # ----- gap-zone center-proximity guidance (new axis 9.8) -----
-        # worst game T60: max_y=2.52, deadline_crossed=true, rp=2, merge=NO
-        #   → HIGH_TOWER selected (height penalty only), edge placement → pc growth
-        # advice.md: "はみ出た位置へのドロップを減らし、中央集約を優先する" (kbb246)
-        # In gap zone (2.0<=max_y<2.5) with rp>=2, NO merge, deadline crossed:
-        #   center placement reduces drift edge scatter and maintains board accessibility.
-        #   Height penalty differentiates candidates; center bonus adds guidance for
-        #   reactive-aware low placement without suppressing height penalty.
-        # NOT a stacking bonus — purely horizontal center_proximity (max ~100).
-        # postmortem constraint: uses board position (not landing_y-only).
-        # Verifies: no conflict with axis 8.8 (-4500) which dominates all candidates equally.
-        # Failure Mode addressed: gap-zone NO_MERGE decisions using height-only,
-        #   causing edge scatter and piece_count accumulation (worst game T58-60 pattern).
-        # refs: tmp/state/last_rollback_postmortem.md (gap zone guidance gap),
-        #       tmp/batch_summary.txt (low-score reactive_avg=6.4),
-        #       advice.md (kbb246: center concentration),
-        #       game_history/20260411_012046_score0806.jsonl T58-62
-        if (2.0 <= max_y < 2.5
-            and reactive_pair_count >= 2
-            and merge_grade == "NO"
-            and deadline_crossed):
-            center_dist = abs(x)
-            if center_dist < 1.5:
-                center_bonus = max(0, 100.0 - center_dist * 60.0)
-                score += center_bonus
-                reasons.append("GAP_ZONE_CENTER_PROXIMITY")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
@@ -1879,21 +1793,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
             # axis 2 height penalty be the only differentiator — consistent low placement.
-            # v573: death-spiral center anchor — in death_spiral, flat -4500 made ALL candidates
-            # equally bad, and height penalty alone chose edge positions (x=±3.0) where pieces
-            # can NEVER merge. Adding center-proximity gradient to axis 8.8 redirects edge→center
-            # without overriding height priority. Magnitude: 400 per unit beyond |x|>1.0 →
-            # max -800 extra at |x|=3.0. Larger than v570(+30)+v571(+50)=+80 bonus approach
-            # because it modifies the penalty itself rather than adding competing bonuses.
-            # NOT guidance restoration — modifies the death-spiral penalty to include horizontal
-            # guidance, which was the specific failure mode in all worst-game logs.
-            # refs: tmp/analysis_result.md (Adopted Hypothesis: axis 8.8 center composite penalty)
-            base_penalty = 4500.0
-            if death_spiral:
-                center_penalty = max(0.0, abs(x) - 1.0) * 400.0
-                score -= (base_penalty + center_penalty)
-            else:
-                score -= base_penalty
+            score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
@@ -1987,42 +1887,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
-
-        # ----- v571: merge drought edge scatter prevention (NEW) -----
-        # When death_spiral is active AND piece_count >= 35, the board is in a merge drought
-        # (consecutive NO_MERGE turns causing piece accumulation). v570's center_tiebreaker
-        # (+30 max) is insufficient to prevent edge scatter when the lowest-y candidate is
-        # at |x|>=2.5. This adds a targeted center bonus (max +50) ONLY in severe drought.
-        # Total center bonus in drought: v570 (+30) + v571 (+50) = +80 max — still < height
-        # diff between y=0 and y=-2 (50 * height_mult * 2 = ~100-200), so height remains dominant.
-        # Does NOT modify death_spiral definition, stacking_danger_suppressed, height_mult, or
-        # any existing suppression logic — purely additive, orthogonal to v570.
-        # Worst game T66 (x=-3.0), T75 (x=-3.0): piece_count 38-40, death_spiral active.
-        # This bonus shifts preference from |x|=3.0 (bonus=0) to |x|<=1.5 (bonus>=26).
-        # refs: tmp/analysis_result.md (Implementation Plan: merge drought edge scatter prevention),
-        #       game_history/20260411_050339_score0654.jsonl T66/T75 (x=-3.0, pc>=38)
-        # Fixes rollback failure mode: death-spiral edge scatter during merge drought
-        if death_spiral and piece_count >= 35:
-            drought_center_bonus = max(0.0, 50.0 - abs(x) * 16.0)  # 50 at center, 0 at |x|>=3.0
-            score += drought_center_bonus
-            reasons.append("DROUGHT_CENTER_PREVENTION")
-
-        # ----- v570: death-spiral center-proximity tiebreaker (NEW) -----
-        # In death_spiral (danger>0 && rp>=3 && NO && deadline), ALL guidance is suppressed
-        # and axis 8.8 is flat -4500. Height penalty (landing_y * 50 * height_mult) is the
-        # ONLY differentiator. When the lowest-y candidate is at an edge (|x|>2.5), this
-        # causes irreversible edge scatter — pieces at x=±3.0 can never contribute to merges.
-        # This tiebreaker slightly prefers center positions WITHOUT overriding height penalty.
-        # Bonus capped at 30 points — smaller than height diff between y=0 and y=-1
-        # (50 * height_mult(0.5) = 25), so it ONLY breaks ties between same-height candidates.
-        # NOT guidance restoration: does NOT change thresholds, magnitudes, or suppression logic.
-        # Purely additive, fires ONLY in death_spiral, does NOT suppress existing behavior.
-        # Specifically addresses worst game T72 (x=-3.0), T75 (x=-3.0) edge scatter pattern.
-        # refs: tmp/analysis_result.md (Implementation Plan: center tiebreaker),
-        #       game_history/20260411_043050_score1074.jsonl T72/T75 (x=-3.0 edge scatter)
-        if death_spiral:
-            center_tiebreak = max(0.0, 30.0 - abs(x) * 10.0)  # 30 at center, 0 at |x|>=3.0
-            score += center_tiebreak
 
         # ----- update best candidate -----
         if score > best_score:
