@@ -65,6 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v593: drift/balance noise suppression during severe merge drought (guidance_suppressed && rp>=5)
+     # 50% reduction on drift_penalty and balance_penalty to prevent edge scatter (x=±3.0)
+     # when height penalty differentiation (35x) is being overridden by drift+balance noise (~200-400pt).
+     # Fixes failure mode: "merge drought中のdrift/balanceノイズ抑制 — 高reactive_pairs && NO merge時のedge scatter防止"
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_045026_score0765.jsonl
      # v592: death_spiral height_mult rp-based escalation — 15.0x → 25.0x at rp>=5, 35.0x at rp>=7
      # Fixes failure mode: "rp=6-7超高密度 merge drought 局面での端scatter(x=±3.0)防止"
      # (analysis_result.md: worst T59-T64, rp=6-7, height penalty diff ~50-200pt buried in ~200-450pt noise)
@@ -1766,6 +1771,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
+
+        # v593: drift/balance noise suppression during severe merge drought
+        # When guidance_suppressed && rp>=5, drift/balance noise can override
+        # even 35x height penalty differentiation. Suppressing 50% ensures
+        # height penalty is truly the dominant signal.
+        # Evidence: worst T63 (x=3.0), T65 (x=-3.0), T68 (x=-3.0) at rp=6-7
+        # despite axis 8.8=-5500, 8.8c=-2000, height_mult=35x.
+        # Analysis: drift+balance combined ~200-400pt at edges, competing with
+        # height diff ~437.5pt (y=0 vs y=1 at 35x). 50% reduction ensures
+        # height penalty dominates, preventing edge scatter in merge droughts.
+        # Does NOT suppress drift entirely — normal turns still use it as tie-breaker.
+        # rp>=5 guard: rp<5 merge droughts are rare; drift/balance are useful there.
+        # refs: tmp/analysis_result.md (Implementation Plan: drift/balance noise suppression)
+        if guidance_suppressed and reactive_pair_count >= 5:
+            drift_penalty *= 0.5
+            reasons.append("DEATH_SPIRAL_DRIFT_SUPPRESSION")
+
         score -= drift_penalty
 
         # ----- evaluation axis 4: left-right balance correction (v42: simple) -----
@@ -1782,6 +1804,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_bias = (right_count - left_count) / (len(pieces) if pieces else 1)
 
         balance_penalty = x * balance_bias * balance_strength
+        # v593: same drift suppression logic applies to balance penalty
+        # During severe merge drought (guidance_suppressed && rp>=5), balance noise
+        # can compete with height penalty at edge positions. 50% reduction ensures
+        # height penalty dominates, preventing edge scatter.
+        if guidance_suppressed and reactive_pair_count >= 5:
+            balance_penalty *= 0.5
         score -= abs(balance_penalty)
 
         # ----- evaluation axis 5: nextNext centering -----
