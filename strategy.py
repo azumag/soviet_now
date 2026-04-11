@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v580: extend death_spiral to max_y>=1.5 — catch pre-death-spiral window where board
+     # is already dangerous but deadline not yet crossed. rp>=3, NO merge, max_y>=1.5 →
+     # suppress stacking/proximity/AVOID_BLOCK, let height penalty differentiate.
+     # Fixes rollback failure mode: max_y runaway when reactive_pairs>=3 and merge_available=false,
+     # even before deadline_crossed (postmortem: "extends death spiral detection to max_y>=1.5")
+     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
      # v579: death-spiral NEAR suppression — cancel base NEAR bonus (600*merge_mult) when
      # rp>=3, pc>=32, max_y>=1.5, landing_y>=1.0. Forces low-y NEAR or NO-merge low placement.
      # Fixes rollback failure mode: high-y NEAR in death-spiral window accelerates pc growth
@@ -1107,11 +1113,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 16.3% = default when all else suppressed),
         #       tmp/state/last_rollback_analysis.md (floor gap: 6874 vs 8645)
         # Fixes rollback failure mode: death-spiral edge scatter from bonus noise overriding height penalty
+        # v580: extend death_spiral to include max_y>=1.5 (OR condition) — catch pre-death-spiral
+        # where board is already dangerous but deadline not yet crossed. Rollback postmortem:
+        # "extends death spiral detection to max_y>=1.5 instead of requiring deadline_crossed"
         death_spiral = (
             danger_piece_count > 0
             and reactive_pair_count >= 3
             and merge_grade == "NO"
-            and deadline_crossed
+            and (deadline_crossed or max_y >= 1.5)
         )
         stacking_danger_suppressed = death_spiral
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
