@@ -65,6 +65,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v581: axis 8.8b — HIGH merge drought penalty: rp>=3, NO, max_y>=1.8 → extra -1000 (total -5500)
+     # Forces height penalty to dominate when stacking_bonus(~900)+proximity(~200) compete with axis 8.8.
+     # Fixes failure mode: "merge drought時の配置判断の甘さ（stacking_bonus+proximity_bonusがaxis 8.8と競合）"
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_160254_score0498.jsonl
      # v580: extend death_spiral to max_y>=1.5 — catch pre-death-spiral window where board
      # is already dangerous but deadline not yet crossed. rp>=3, NO merge, max_y>=1.5 →
      # suppress stacking/proximity/AVOID_BLOCK, let height penalty differentiate.
@@ -1845,6 +1849,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+
+        # ----- evaluation axis 8.8b: high merge drought penalty (NEW: v581) -----
+        # analysis_result.md: merge_grade=NO が3ターン以上継続且つ reactive_pairs>=3 の場合、
+        # axis 8.8のNO-mergeペナルティを段階的に強化し、height penaltyの差別化をさらに支配的にする。
+        # Worst game T56-62: merge_grade=NO が7ターン連続、axis 8.8の-4500は発火しているが
+        # stacking_bonus(~900)+proximity_bonus(~200)が競合し低配置への誘導が不十分。
+        # HIGH phase (max_y>=1.8) 且つ reactive_pairs>=3 且つ merge_grade=="NO" の場合、
+        # 追加-1000で合計-5500とし、stacking+proximityの合計~1100を上回ってheight penalty以外の実質的な
+        # 差別化要因を排除。これによりmerge drought時に低配置が確実に選ばれる。
+        # 正常系（merge_available=true、LOW/MEDIUM phase）には影響なし。
+        # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_160254_score0498.jsonl,
+        #       game_history/20260411_155310_score0560.jsonl
+        # Fixes failure mode: merge drought時の配置判断の甘さ（stacking_bonus+proximity_bonusがaxis 8.8と競合）
+
+        if reactive_pair_count >= 3 and merge_grade == "NO" and max_y >= 1.8:
+            score -= 1000.0  # 追加ペナルティ（axis 8.8と合計-5500）
+            reasons.append("HIGH_MERGE_DROUGHT_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
