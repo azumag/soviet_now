@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v574: axis 9.8 SAME_TYPE_PROXIMITY — merge drought recovery via same-type clustering
+     # When merge_grade=NO && pc>=25 && 2+ same_type pieces exist, guide placement to cluster them.
+     # Creates "3-piece cluster" state for future merge opportunities — addresses the primary
+     # failure mode in worst games (chronic merge drought: pc grows without merges).
+     # Worst game T71-79: 7 turns NO merge, pc 37→43. Extra_low T25-52: 27-turn drought.
+     # Fixes rollback failure mode: "merge drought piece accumulation from lack of future merge path creation"
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_095233_score0895.jsonl,
+     #       game_history/20260411_100940_score0932.jsonl, strategy.py.staging
      # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
      # ロシア1つのままゲームオーバーは最も惜しい負けパターン。2つのロシアが盤面にある場合、
      # 盤面圧縮ボーナスを抑制し、既存type 15保護と低配置生存を最優先。
@@ -1887,6 +1895,44 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
+
+        # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
+        # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
+        # Worst game T71-79: 9 turns, 7 with merge_grade=NO, pc 37→43. Extra_low T25-52: 27-turn drought.
+        # When merge_grade=NO and piece_count is high (>=25) and there are 2+ pieces of next_type on board,
+        # guide placement to bring same-type pieces closer together — creating future merge opportunities.
+        # This creates a "3-piece cluster" state: when next same-type arrives, immediate merge is likely.
+        # NOT guidance restoration — orthogonal to death_spiral suppression (axis 9.6b/5.6/9.3 suppressed).
+        # Fires ONLY when merge_grade=NO (no immediate merge possible) and NOT in death_spiral.
+        # Bonus magnitude: max ~150 (tie-breaking, safe vs axis 8.8 -4500).
+        # refs: tmp/analysis_result.md (adopted hypothesis: merge drought recovery),
+        #       game_history/20260411_095233_score0895.jsonl T71-79 (chronic NO merge),
+        #       game_history/20260411_100940_score0932.jsonl T25-52 (27-turn drought)
+        if (merge_grade == "NO" and piece_count >= 25 and len(same_type_pieces) >= 2
+                and not death_spiral):
+            # Find the pair of same_type pieces with smallest x-gap — target placement between them
+            same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
+            min_gap = float("inf")
+            target_x = 0.0
+            for i in range(len(same_type_sorted) - 1):
+                gap = abs(same_type_sorted[i + 1].get("x", 0) - same_type_sorted[i].get("x", 0))
+                if gap < min_gap:
+                    min_gap = gap
+                    target_x = (same_type_sorted[i].get("x", 0) + same_type_sorted[i + 1].get("x", 0)) / 2.0
+
+            # Only fire if pieces are reasonably close (merge potential exists)
+            if min_gap < 3.0:
+                dist_to_target = abs(x - target_x)
+                if dist_to_target < 1.5:
+                    proximity_bonus = max(0, 150.0 - dist_to_target * 80.0)
+                    # Reduce bonus if target area is high (don't override height penalty)
+                    avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
+                    if avg_target_y > 1.0:
+                        proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
+                    if proximity_bonus > 0:
+                        score += proximity_bonus
+                        if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
+                            reasons.append("SAME_TYPE_PROXIMITY")
 
         # ----- update best candidate -----
         if score > best_score:
