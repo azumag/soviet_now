@@ -13,6 +13,7 @@ Game Overview:
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.7b. Gap-zone NEAR merge penalty - v567: penalty at NEAR+max_y>=2.0+deadline_crossed
+         1.7c. Death-spiral NEAR suppression - v579: cancel NEAR bonus at rp>=3,pc>=32,max_y>=1.5,y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -64,6 +65,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v579: death-spiral NEAR suppression — cancel base NEAR bonus (600*merge_mult) when
+     # rp>=3, pc>=32, max_y>=1.5, landing_y>=1.0. Forces low-y NEAR or NO-merge low placement.
+     # Fixes rollback failure mode: high-y NEAR in death-spiral window accelerates pc growth
+     # refs: tmp/analysis_result.md, game_history/20260411_140730_score0589.jsonl, game_history/20260411_142110_score1089.jsonl
      # v578: expand stacking_congested threshold — catch pre-death-spiral window (rp>=3, max_y>=1.0, NO)
      # Failure mode: max_y runaway when reactive_pairs>=3 and merge_available=false, even before deadline_crossed
      # Adds third OR condition to stacking_congested guard, redirecting stacking to height-priority mode earlier.
@@ -960,6 +965,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
+
+        # ----- axis 1.7c: death-spiral NEAR suppression (v579) -----
+        # In the death-spiral window (rp>=3, pc>=32, max_y>=1.5), high-y NEAR merges
+        # (landing_y >= 1.0) that fail (31.5% rate) add a piece with zero score delta,
+        # accelerating irreversible piece_count growth. Evidence: worst0589 T55-T62,
+        # score1089 T69-T76 — NEAR merges succeeded but only reduced pc by 1-2, then
+        # NO-merge turns accumulated pieces to game-over threshold.
+        # This cancels the base NEAR bonus (600*merge_mult) for high-y candidates in
+        # this window, forcing the strategy to either find a low-y NEAR (safer) or fall
+        # through to NO-merge with height-only differentiation (low placement).
+        # NOT a general NEAR suppression: only fires when all 4 conditions are met.
+        # Does NOT affect: DIRECT merges, NEAR at landing_y < 1.0, or rp < 3.
+        # refs: game_history/20260411_140730_score0589.jsonl T55-T62,
+        #       game_history/20260411_142110_score1089.jsonl T69-T76,
+        #       tmp/analysis_result.md
+        if (merge_grade == "NEAR"
+            and reactive_pair_count >= 3
+            and piece_count >= 32
+            and max_y >= 1.5
+            and landing_y >= 1.0):
+            score -= 600.0 * merge_mult  # Cancel the base NEAR bonus
+            reasons.append("DEATH_SPIRAL_NEAR_SUPPRESSION")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
