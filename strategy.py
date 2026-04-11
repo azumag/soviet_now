@@ -65,6 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v585: merge drought detection — suppress all guidance when NO merge continues with elevated board.
+     # merge_grade=="NO" AND rp>=2 AND max_y>=1.0 AND pc>=30 → guidance_suppressed = death_spiral OR merge_drought.
+     # Catches "slow death" earlier than death_spiral alone (max_y>=1.0 vs 1.5). Forces height penalty only mode.
+     # Fixes failure mode: "merge drought 継続検知と強制リカバリー" (analysis_result.md adopted hypothesis)
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_211420_score1045.jsonl
      # v584: death_spiral height_mult amplification — override to 8.0 (from phase 1.8) during death spiral.
      # Fixes failure mode: death spiral時のheight penalty弱すぎ（edge scatter prevent, worst T73-80 x=3.0/-0.6 scatter).
      # Analysis: height penalty differentiation ~50-200 too weak vs identical -5500 axis 8.8/8.8b penalties.
@@ -1157,7 +1162,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes failure mode: death spiral時のheight penalty弱すぎ（edge scatter prevent）
         death_spiral_height_mult = 8.0
 
-        stacking_danger_suppressed = death_spiral
+        # v585: merge drought detection — NO merge continues with elevated board and reactive pairs
+        # Analysis: worst game T83-T88: 6 turns NO merge, rp=5, max_y=1.77-2.22, pc=39-44.
+        # death_spiral fires (rp>=3, NO, max_y>=1.5) but board compression is absent —
+        # height penalty differentiation (~50-200) is too weak vs -5500 axis 8.8/8.8b penalties.
+        # merge_drought catches this "slow death" earlier than death_spiral (max_y>=1.0 vs 1.5).
+        # When triggered, suppress all guidance noise + height penalty only → force lowest-y placement.
+        # Condition: merge_grade=="NO" AND rp>=2 AND max_y>=1.0 AND pc>=30
+        # This is independent from death_spiral — OR'd into suppression checks below.
+        # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
+        #       game_history/20260411_211420_score1045.jsonl T83-T88,
+        #       game_history/20260411_214313_score1077.jsonl T78-T83
+        # Fixes failure mode: "merge drought 継続検知と強制リカバリー" — guidance noise suppression
+        # during NO merge continuation with elevated board (analysis_result.md adopted hypothesis)
+        merge_drought = (
+            merge_grade == "NO"
+            and reactive_pair_count >= 2
+            and max_y >= 1.0
+            and piece_count >= 30
+        )
+
+        # Combined suppression flag: death_spiral OR merge_drought
+        # Both trigger guidance suppression + height penalty only mode.
+        # merge_drought fires earlier (max_y>=1.0 vs 1.5, rp>=2 vs 3) catching slow death sooner.
+        guidance_suppressed = death_spiral or merge_drought
+
+        stacking_danger_suppressed = guidance_suppressed
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
@@ -1257,8 +1287,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
         #       tmp/batch_summary.txt, advice.md (zoumotu3: growth concentration)
         # Fixes postmortem failure mode: no guidance when same_type_stack_top is None → piece_count accumulation
-        # v463: suppress in death_spiral — height must be sole differentiator (was missing from v461/v462 suppression set)
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None and not death_spiral:
+        # v463: suppress in death_spiral/merge_drought — height must be sole differentiator (was missing from v461/v462 suppression set)
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None and not guidance_suppressed:
             # Find nearest piece whose type is adjacent to current type (next_type ± 1)
             # Priority: next_type - 1 (merge up path) then next_type + 1 (if next_type-1 not found)
             best_adjacent_target = None
@@ -1308,7 +1338,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if (merge_grade == "NO"
                 and not (current_type_has_reactive or current_type_has_near)
                 and same_type_stack_top is None
-                and not death_spiral):
+                and not guidance_suppressed):
             target_pieces = [p for p in pieces if p.get("type", 0) >= 6]
             if target_pieces:
                 centroid_x = sum(p.get("x", 0) for p in target_pieces) / len(target_pieces)
@@ -1338,8 +1368,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes postmortem failure mode: type scattering → piece_count accumulation
         if merge_grade == "NO" and same_type_stack_top is not None:
             if not (current_type_has_reactive or current_type_has_near):
-                # v461: suppress proximity guidance in death spiral — height must be sole differentiator
-                if not death_spiral:
+                # v461: suppress proximity guidance in death spiral/merge_drought — height must be sole differentiator
+                if not guidance_suppressed:
                     # v371: Find same-type piece closest to merged_type(N+1) for chain building.
                     # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
                     merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
@@ -1418,7 +1448,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
             )
-            if not board_congested and not death_spiral:
+            if not board_congested and not guidance_suppressed:
                 blocking_penalty = 0.0
                 for rp in reactive_pairs:
                     if isinstance(rp, (list, tuple)) and len(rp) >= 3:
@@ -1531,8 +1561,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Without amplification, height penalty provides only ~50-200 point differentiation,
         # insufficient to prevent edge scatter. Override to 8.0 gives ~400 per y-unit spread.
         # This is applied AFTER the floor to ensure it overrides all phase/relaxation values.
+        # v585: also apply death_spiral_height_mult during merge_drought — same height-only mode
         effective_height_mult = height_mult
-        if death_spiral:
+        if death_spiral or merge_drought:
             effective_height_mult = death_spiral_height_mult
 
         # Calculate height penalty after all height_mult modifications
@@ -1621,8 +1652,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 5: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
-        # v462: suppress in death spiral — height must be sole differentiator
-        if next_next_type == next_type and not death_spiral:
+        # v462: suppress in death spiral/merge_drought — height must be sole differentiator
+        if next_next_type == next_type and not guidance_suppressed:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
@@ -1632,8 +1663,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
         # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
         # refs: advice.md (Pitman_live, azumag), batch_summary.txt
-        # v462: suppress in death spiral — height must be sole differentiator
-        if not death_spiral:
+        # v462: suppress in death spiral/merge_drought — height must be sole differentiator
+        if not guidance_suppressed:
             for p in pieces:
                 if p.get("type") == next_next_type:
                     piece_y = p.get("y", -10)
@@ -1668,8 +1699,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: type scattering → piece_count accumulation
         # v407: removed russia_phase guard — growth center guidance now active in ALL phases
         max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
-        # v461: suppress growth center in death spiral — height must be sole differentiator
-        if max_type_on_board >= 6 and not death_spiral:
+        # v461: suppress growth center in death spiral/merge_drought — height must be sole differentiator
+        if max_type_on_board >= 6 and not guidance_suppressed:
             # Find the deepest (lowest y) highest-type piece as growth center
             growth_center = min(
                 (p for p in pieces if p.get("type") == max_type_on_board),
