@@ -65,6 +65,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
+     # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
+     # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_221219_score0870.jsonl
      # v585: merge drought detection — suppress all guidance when NO merge continues with elevated board.
      # merge_grade=="NO" AND rp>=2 AND max_y>=1.0 AND pc>=30 → guidance_suppressed = death_spiral OR merge_drought.
      # Catches "slow death" earlier than death_spiral alone (max_y>=1.0 vs 1.5). Forces height penalty only mode.
@@ -1162,29 +1166,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes failure mode: death spiral時のheight penalty弱すぎ（edge scatter prevent）
         death_spiral_height_mult = 8.0
 
+        # v586: merge drought early detection — lower rp threshold from >=2 to >=1
         # v585: merge drought detection — NO merge continues with elevated board and reactive pairs
         # Analysis: worst game T83-T88: 6 turns NO merge, rp=5, max_y=1.77-2.22, pc=39-44.
         # death_spiral fires (rp>=3, NO, max_y>=1.5) but board compression is absent —
         # height penalty differentiation (~50-200) is too weak vs -5500 axis 8.8/8.8b penalties.
         # merge_drought catches this "slow death" earlier than death_spiral (max_y>=1.0 vs 1.5).
         # When triggered, suppress all guidance noise + height penalty only → force lowest-y placement.
-        # Condition: merge_grade=="NO" AND rp>=2 AND max_y>=1.0 AND pc>=30
+        # v586: lowered rp threshold from >=2 to >=1 — catches rp=1 NO merge turns immediately.
+        # Worst game 0870 T54-55: rp=2, max_y=1.78-2.17, NO merge. merge_drought didn't fire until T56.
+        # Those 2 turns of stacking/height competition let pc=34→36, accelerating death spiral.
+        # pc>=30 guard prevents early-game over-suppression (rp=1 NO merge is normal early on).
+        # Condition: merge_grade=="NO" AND rp>=1 AND max_y>=1.0 AND pc>=30
         # This is independent from death_spiral — OR'd into suppression checks below.
         # refs: tmp/analysis_result.md, tmp/batch_summary.txt,
+        #       game_history/20260411_221219_score0870.jsonl T54-57,
         #       game_history/20260411_211420_score1045.jsonl T83-T88,
         #       game_history/20260411_214313_score1077.jsonl T78-T83
-        # Fixes failure mode: "merge drought 継続検知と強制リカバリー" — guidance noise suppression
-        # during NO merge continuation with elevated board (analysis_result.md adopted hypothesis)
+        # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md adopted hypothesis)
         merge_drought = (
             merge_grade == "NO"
-            and reactive_pair_count >= 2
+            and reactive_pair_count >= 1
             and max_y >= 1.0
             and piece_count >= 30
         )
 
         # Combined suppression flag: death_spiral OR merge_drought
         # Both trigger guidance suppression + height penalty only mode.
-        # merge_drought fires earlier (max_y>=1.0 vs 1.5, rp>=2 vs 3) catching slow death sooner.
+        # merge_drought fires earlier (max_y>=1.0 vs 1.5, rp>=1 vs 3) catching slow death sooner.
+        # v586: rp>=1 (was >=2) — merge_drought now catches single reactive pair NO merge turns.
         guidance_suppressed = death_spiral or merge_drought
 
         stacking_danger_suppressed = guidance_suppressed
