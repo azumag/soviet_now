@@ -65,6 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v587: death_spiral height_mult amplification 8.0 → 15.0 — ensure discrimination power
+     # during merge_drought/death_spiral when board is full and "low positions" are scarce.
+     # 15.0x gives ~187.5pt per y=0.5 diff, ~937.5pt for y=0.5 vs y=3.0, overriding drift/balance noise.
+     # Fixes failure mode: "merge drought時のheight penalty弱すぎ（edge scatter prevent）" (analysis_result.md)
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_225750_score0946.jsonl
      # v586: merge drought early detection — lower rp threshold from >=2 to >=1.
      # rp=1, NO merge, max_y>=1.0, pc>=30 now triggers guidance_suppressed immediately.
      # Fixes failure mode: "rp=1のNO mergeターンを1ターンでも減らす" (analysis_result.md)
@@ -1153,18 +1158,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and merge_grade == "NO"
             and (deadline_crossed or max_y >= 1.5)
         )
+        # v587: death spiral height penalty amplification — 8.0 → 15.0
         # v584: death spiral height penalty amplification — override phase height_mult
-        # Analysis of worst games (score0856 T73-80, score0959 T63-70): death_spiral detection
-        # fires correctly but height penalty differentiation (~50-200 points) is too weak to
-        # prevent edge scatter when all candidates receive identical -5500 axis 8.8/8.8b penalties.
-        # At HIGH phase (height_mult=1.8), y=2.79 vs y=-3.0 gives only ~520 point spread —
-        # easily overridden by guidance noise. Amplifying to 8.0x gives ~400 per y-unit,
-        # producing ~2000+ spread between high and low candidates, ensuring lowest-y always wins.
-        # Normal phase height_mult values are preserved — only death_spiral regime is affected.
-        # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_183711_score0856.jsonl,
-        #       game_history/20260411_182236_score0959.jsonl
-        # Fixes failure mode: death spiral時のheight penalty弱すぎ（edge scatter prevent）
-        death_spiral_height_mult = 8.0
+        # Analysis of worst games (score0946 T68-75, score1064 T80-86): death_spiral/merge_drought
+        # detection fires but height penalty differentiation is too weak to prevent edge scatter
+        # when all candidates receive identical -5500 axis 8.8/8.8b penalties and "low positions"
+        # are scarce (board full at y=0.5-3.0). At 8.0x, y=0.5 vs y=1.0 gives only ~100pt diff —
+        # easily overridden by drift/balance noise (~10-50pt). 15.0x gives ~187.5pt per y=0.5,
+        # ~937.5pt for y=0.5 vs y=3.0, ensuring lowest-y candidate always wins.
+        # Normal phase height_mult values are preserved — only death_spiral/merge_drought regime affected.
+        # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_225750_score0946.jsonl
+        # Fixes failure mode: "merge drought時のheight penalty弱すぎ（edge scatter prevent）"
+        death_spiral_height_mult = 15.0
 
         # v586: merge drought early detection — lower rp threshold from >=2 to >=1
         # v585: merge drought detection — NO merge continues with elevated board and reactive pairs
@@ -1566,12 +1571,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
         height_mult = max(height_mult, 0.5)
 
-        # v584: death_spiral height_mult override — force height penalty to dominate
-        # When death_spiral detected, all candidates get identical -5500 axis 8.8/8.8b penalties.
-        # Without amplification, height penalty provides only ~50-200 point differentiation,
-        # insufficient to prevent edge scatter. Override to 8.0 gives ~400 per y-unit spread.
-        # This is applied AFTER the floor to ensure it overrides all phase/relaxation values.
-        # v585: also apply death_spiral_height_mult during merge_drought — same height-only mode
+        # v587: death_spiral height_mult override — 15.0x ensures discrimination power
+        # When death_spiral/merge_drought detected, all candidates get identical -5500 axis 8.8/8.8b
+        # penalties and "low positions" are scarce (board full at y=0.5-3.0). 15.0x gives ~187.5pt
+        # per y=0.5 diff, ~937.5pt for y=0.5 vs y=3.0, overriding drift/balance noise.
+        # v585: also apply during merge_drought — same height-only mode
         effective_height_mult = height_mult
         if death_spiral or merge_drought:
             effective_height_mult = death_spiral_height_mult
