@@ -65,6 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v584: death_spiral height_mult amplification — override to 8.0 (from phase 1.8) during death spiral.
+     # Fixes failure mode: death spiral時のheight penalty弱すぎ（edge scatter prevent, worst T73-80 x=3.0/-0.6 scatter).
+     # Analysis: height penalty differentiation ~50-200 too weak vs identical -5500 axis 8.8/8.8b penalties.
+     # 8.0x gives ~400 per y-unit → ~2000+ spread, ensuring lowest-y candidate always wins.
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_183711_score0856.jsonl
      # v583: axis 9.8 — extend merge drought horizontal guidance to non-Russia games.
      # Lower threshold from type>=10 to type>=6 (same as axis 5.6 growth center),
      # increase bonus from ~150 to ~400 (match Russia phase compression minimum).
@@ -1139,6 +1144,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and merge_grade == "NO"
             and (deadline_crossed or max_y >= 1.5)
         )
+        # v584: death spiral height penalty amplification — override phase height_mult
+        # Analysis of worst games (score0856 T73-80, score0959 T63-70): death_spiral detection
+        # fires correctly but height penalty differentiation (~50-200 points) is too weak to
+        # prevent edge scatter when all candidates receive identical -5500 axis 8.8/8.8b penalties.
+        # At HIGH phase (height_mult=1.8), y=2.79 vs y=-3.0 gives only ~520 point spread —
+        # easily overridden by guidance noise. Amplifying to 8.0x gives ~400 per y-unit,
+        # producing ~2000+ spread between high and low candidates, ensuring lowest-y always wins.
+        # Normal phase height_mult values are preserved — only death_spiral regime is affected.
+        # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_183711_score0856.jsonl,
+        #       game_history/20260411_182236_score0959.jsonl
+        # Fixes failure mode: death spiral時のheight penalty弱すぎ（edge scatter prevent）
+        death_spiral_height_mult = 8.0
+
         stacking_danger_suppressed = death_spiral
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
@@ -1508,8 +1526,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
         height_mult = max(height_mult, 0.5)
 
+        # v584: death_spiral height_mult override — force height penalty to dominate
+        # When death_spiral detected, all candidates get identical -5500 axis 8.8/8.8b penalties.
+        # Without amplification, height penalty provides only ~50-200 point differentiation,
+        # insufficient to prevent edge scatter. Override to 8.0 gives ~400 per y-unit spread.
+        # This is applied AFTER the floor to ensure it overrides all phase/relaxation values.
+        effective_height_mult = height_mult
+        if death_spiral:
+            effective_height_mult = death_spiral_height_mult
+
         # Calculate height penalty after all height_mult modifications
-        height_penalty = landing_y * 50.0 * height_mult
+        height_penalty = landing_y * 50.0 * effective_height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
