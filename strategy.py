@@ -72,6 +72,15 @@ Phases (determined by board max Y):
      # Fixes rollback failure mode: "merge drought piece accumulation from lack of future merge path creation"
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260411_095233_score0895.jsonl,
      #       game_history/20260411_100940_score0932.jsonl, strategy.py.staging
+     # v575: pre-death-spiral stacking suppression — expand stacking_danger_suppressed
+     # Catch rp>=3 && merge_grade==NO && max_y>=1.0 even when danger_piece_count==0.
+     # Worst game T54: max_y=2.22, rp=3, NO, danger=0 → stacking→HIGH_TOWER→max_y=3.77.
+     # Extra-low T56-T60: max_y=1.05-1.91, rp=4-5, NO, danger=0 → stacking→pc 31→35.
+     # Suppress stacking BEFORE danger appears, when board is already elevated.
+     # NOT a threshold change — adds max_y as an independent OR condition.
+     # refs: tmp/analysis_result.md (adopted hypothesis: pre-death-spiral stacking suppression),
+     #       game_history/20260411_103427_score0708.jsonl T54, game_history/20260411_110640_score0800.jsonl T56-T60,
+     #       tmp/state/last_rollback_postmortem.md (forbid: rp>=3 && NO → HIGH_LAYER/HIGH_TOWER)
      # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
      # ロシア1つのままゲームオーバーは最も惜しい負けパターン。2つのロシアが盤面にある場合、
      # 盤面圧縮ボーナスを抑制し、既存type 15保護と低配置生存を最優先。
@@ -1089,7 +1098,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and merge_grade == "NO"
             and deadline_crossed
         )
-        stacking_danger_suppressed = death_spiral
+        # v575: pre-death-spiral suppression — catch stacking before danger appears.
+        # Worst game T54: max_y=2.22, rp=3, NO, danger=0 → stacking → HIGH_TOWER → max_y=3.77.
+        # Extra-low T56-T60: max_y=1.05-1.91, rp=4-5, NO, danger=0 → stacking → pc 31→35.
+        # Suppress stacking when board is already elevated (max_y>=1.0) and rp>=3 with no merge,
+        # even if danger hasn't appeared yet. This is the window where board climbs INTO death spiral.
+        # NOT a threshold change on existing variables — adds max_y as an independent OR condition.
+        # refs: tmp/analysis_result.md (adopted hypothesis: pre-death-spiral stacking suppression),
+        #       game_history/20260411_103427_score0708.jsonl T54 (max_y=2.22, rp=3, stacking→HIGH_TOWER),
+        #       game_history/20260411_110640_score0800.jsonl T56-T60 (max_y=1.05-1.91, rp=4, stacking),
+        #       tmp/state/last_rollback_postmortem.md (forbid: rp>=3 && NO → HIGH_LAYER/HIGH_TOWER)
+        pre_death_spiral = (
+            reactive_pair_count >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.0
+        )
+        stacking_danger_suppressed = death_spiral or pre_death_spiral
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
