@@ -67,6 +67,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v602: axis 8.8 horizontal suppression — suppress horizontal guidance bonuses during merge drought rp>=3 && NO merge
+     # axis_88_horizontal_suppressionフラグ新設。発動時にcolumn_ceiling_bonus, MERGE_PATH_SETUP,
+     # SAME_TYPE_PROXIMITY(9.8), NEAR_MISS_CLUSTERING(9.65), REACTIVE_PAIRS_STACKING(9.6)をスキップ。
+     # height penaltyのみを区別軸とし、merge drought時の端配置(edge scatter)を防止。
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md
+     # Fixes rollback failure mode: "axis 8.8 (-4500)が全候補に均等 → column_ceiling_bonus と MERGE_PATH_SETUP が競合し端配置" (analysis_result.md adopted hypothesis)
      # v601: axis 9.9 Russia-phase next-Russia growth pipeline guidance
      # Russia建国後(russia_phase==true && double_russia_phase==false)、2つ目のロシア育成のための誘導。
      # merge_grade==NO時に限り、既存ロシアピースの下部への配置ボーナス(+150*merge_mult*russia_pipeline_mult)
@@ -1202,7 +1208,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and merge_grade == "NO"
             and max_y >= 1.0
         )
-        stacking_danger_suppressed = death_spiral or pre_death_spiral
+        # v602: axis 8.8 horizontal suppression flag — defined early since it is
+        # used by stacking_danger_suppressed, axis 9.65, and other guards below.
+        # axis 8.8発動時(rp>=3 && NO merge)に水平誘導ボーナスをゼロリセットし、
+        # height penaltyのみが区別軸となるようにする。
+        # death_spiralとは異なる: death_spiralはdanger>0 && rp>=3 && NO && deadline。
+        # このフラグはdeath_spiralに至る前の「merge drought rp>=3」で発動。
+        axis_88_horizontal_suppression = (
+            reactive_pair_count >= 3 and merge_grade == "NO"
+        )
+        # v602: also suppress stacking when axis_88_horizontal_suppression fires
+        # (rp>=3 && NO merge) — height must be sole differentiator even before
+        # board elevates. pre_death_spiral covers max_y>=1.0; this catches rp>=3
+        # && NO at lower max_y where horizontal noise can still override height.
+        stacking_danger_suppressed = death_spiral or pre_death_spiral or axis_88_horizontal_suppression
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
@@ -1422,7 +1441,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: "scattered board, no merges → death spiral" (analysis_result.md)
 
         if merge_grade == "NO" and reactive_pair_count >= 2 and piece_count >= 25:
-            if not death_spiral and not column_ceiling_dominant:
+            if not death_spiral and not column_ceiling_dominant and not axis_88_horizontal_suppression:
                 # Group pieces by type, excluding next_type (handled by 9.6b) and Soviet (type>=16)
                 _type_positions = {}
                 for p in pieces:
@@ -2008,6 +2027,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
+        # ----- v602: axis_88_horizontal_suppression flag (defined earlier in loop) -----
+        # Flag is already defined after pre_death_spiral (line ~1211).
+        # It suppresses: column_ceiling_bonus, MERGE_PATH_SETUP, SAME_TYPE_PROXIMITY (9.8),
+        # NEAR_MISS_CLUSTERING (9.65), REACTIVE_PAIRS_STACKING (9.6) during rp>=3 && NO merge.
+        # No reassignment needed — same value every candidate iteration.
+
         # ----- axis 8.8b: merge drought pressure at rp=1-2 (NEW v595) -----
         # Gap analysis: axis 8.8 fires at rp>=3 && NO merge (-4500 flat).
         # At rp=1-2 && NO merge, no merge drought pressure exists → HEIGHT_CONTROL default.
@@ -2044,7 +2069,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: "column ceiling bonus didn't fire because median_y < 1.0
         #   even at max_y=2.75" (analysis_result.md adopted hypothesis)
 
-        if merge_grade == "NO" and max_y >= 1.0 and piece_count >= 25:
+        if merge_grade == "NO" and max_y >= 1.0 and piece_count >= 25 and not axis_88_horizontal_suppression:
             # Compute column ceiling: max_y of pieces in each 1.0-width column bucket
             # Column buckets: -3.5..-2.5, -2.5..-1.5, -1.5..-0.5, -0.5..0.5, 0.5..1.5, 1.5..2.5, 2.5..3.5
             col_max_y = {}
@@ -2093,7 +2118,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # +200 * merge_mult at dist=0 — smaller than ceiling_bonus (~800-1250), pure tie-breaker.
                 # Does NOT override column_ceiling column selection; only differentiates within best column.
                 # Explicit death_spiral guard: already suppressed by column_ceiling_dominant condition.
-                if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral:
+                # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
+                if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral and not axis_88_horizontal_suppression:
                     # Find nearest current_type piece on board to this candidate position
                     nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
                     if nearest_dist < 1.5:
@@ -2208,13 +2234,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # clustering blocks merge paths (worst game T45-T51 pattern).
         # v598: also suppress when column_ceiling_dominant (merge_grade==NO && max_y>=1.0 && pc>=28)
         # — let column_ceiling guide placement to lowest-ceiling column during merge drought.
+        # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
         # refs: tmp/analysis_result.md (Implementation Plan: merge drought column_ceiling dominance),
         #       game_history/20260411_095233_score0895.jsonl T71-79 (chronic NO merge),
         #       game_history/20260411_100940_score0932.jsonl T25-52 (27-turn drought)
         if (merge_grade == "NO" and piece_count >= 25 and len(same_type_pieces) >= 2
                 and not death_spiral
                 and not (max_y >= 1.5 and reactive_pair_count >= 3)
-                and not column_ceiling_dominant):
+                and not column_ceiling_dominant
+                and not axis_88_horizontal_suppression):
             # Find the pair of same_type pieces with smallest x-gap — target placement between them
             same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
             min_gap = float("inf")
