@@ -67,6 +67,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v608: restore column_ceiling_bonus consistency during merge drought — remove v602 horizontal suppression conflict
+     # v602 added axis_88_horizontal_suppression to column_ceiling_bonus guard, but v598's column_ceiling_dominant
+     # already suppresses competing horizontal guides. When rp>=3 && NO merge && pc>=28 && max_y>=1.0, both v598
+     # and v602 fired → column_ceiling_bonus was suppressed, leaving NO horizontal guidance → edge scatter (x=±3.0).
+     # Now column_ceiling_bonus fires under v598's control only, becoming the sole horizontal guide during drought.
+     # refs: tmp/analysis_result.md (Implementation Plan: remove v602 column_ceiling suppression conflict)
+     # Fixes rollback failure mode: "merge drought時の端配置(root cause) — v598/v602競合でcolumn_ceilingが発動しない"
      # v607: axis 8.8c rp=2 merge drought early intervention — pre-death-spiral merge-path creation
      # When reactive_pairs==2 && NO merge && max_y>=1.0 && pc>=25, guide placement toward dormant
      # pair centroids (+200*merge_mult within 1.5u) + moderate height boost (base 50→75).
@@ -2247,7 +2254,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 rp2_height_penalty = landing_y * 25.0 * height_mult
                 score -= rp2_height_penalty
 
-        # ----- v593: column ceiling bonus — horizontal guidance when no merge and board is elevated -----
+        # v593: column ceiling bonus — horizontal guidance when no merge and board is elevated
         # Analysis: worst game T57-T62 had 6 consecutive NO-merge turns at max_y=2.73-2.81.
         # v589 column_ceiling_bonus required guidance_suppressed AND max_y>=2.0 AND median_y>1.0.
         # median_y stayed below 1.0 because many pieces were at the bottom, so v589 never fired.
@@ -2257,14 +2264,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # providing ~400-700 differentiation that competes with HEIGHT_CONTROL but never
         # overrides merge bonuses (DIRECT=1200, NEAR=600).
         # NOT applied when merge is available — merge path always takes priority.
-        # refs: tmp/analysis_result.md (v589 relax hypothesis, Implementation Plan),
-        #       game_history/20260412_074052_score0822.jsonl T57-T62 (edge scatter at max_y=2.75),
-        #       game_history/20260412_072927_score0838.jsonl T53 (max_y=2.17, pc=29, NO merge),
-        #       game_history/20260412_074052_score0822.jsonl T45-T50 (max_y=1.2-1.8, pc=25-28, NO merge)
-        # Fixes rollback failure mode: "column ceiling bonus didn't fire because median_y < 1.0
-        #   even at max_y=2.75" (analysis_result.md adopted hypothesis)
+        # v608: removed axis_88_horizontal_suppression from guard condition. v602's suppression
+        # conflicted with v598's column_ceiling_dominant — when both fired (rp>=3 && NO && pc>=28
+        # && max_y>=1.0), column_ceiling_bonus was suppressed entirely, leaving NO horizontal guide.
+        # Now column_ceiling_bonus is the sole horizontal guide during merge drought, controlled
+        # only by column_ceiling_dominant (which suppresses 9.65/9.8/9.6b to prevent competition).
+        # refs: tmp/analysis_result.md (Implementation Plan: remove v602 column_ceiling suppression),
+        #       game_history/20260412_233408_score0651.jsonl T49-T52 (edge scatter at rp=3-5, NO merge),
+        #       game_history/20260412_230237_score3074.jsonl T132-T139 (COLUMN_CEILING_GOOD, no edge scatter)
+        # Fixes rollback failure mode: "merge drought時の端配置(root cause) — v598/v602競合でcolumn_ceilingが発動しない"
 
-        if merge_grade == "NO" and max_y >= 1.0 and piece_count >= 25 and not axis_88_horizontal_suppression:
+        if merge_grade == "NO" and max_y >= 1.0 and piece_count >= 25:
             # Compute column ceiling: max_y of pieces in each 1.0-width column bucket
             # Column buckets: -3.5..-2.5, -2.5..-1.5, -1.5..-0.5, -0.5..0.5, 0.5..1.5, 1.5..2.5, 2.5..3.5
             col_max_y = {}
