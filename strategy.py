@@ -67,6 +67,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v605: axis 9.9a low-type under-placement bonus — prevent low-type pieces becoming "lids"
+     # Russia-phase merge drought (pc>=25, max_y>=1.0, NO merge): +100*merge_mult for placing
+     # below low-type pieces (type<=5). Creates future merge paths, suppresses pc growth.
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.9 low-type under bonus),
+     #       tmp/batch_summary.txt, advice.md (大きい国の下にスペース確保)
+     # Fixes rollback failure mode: "ロシア建国後のmerge droughtでBOARD_COMPRESSIONのみ消費、
+     #   低typeピースが蓋となり次ロシアへの併合パスが構築されない" (analysis_result.md adopted hypothesis)
      # v604: NEAR merge suppression in high-pressure death zone — state-dependent type_scale override
      # When max_y>=2.0 && deadline_crossed && rp>=3 && pc>=28, set type_scale=0.5 for NEAR merges.
      # Reduces NEAR bonus from ~480 to ~300, making DIRECT or NO merge (height priority) competitive.
@@ -2318,6 +2325,37 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += proximity_bonus
                         if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_PROXIMITY")
+
+        # ----- axis 9.9a: Low-type under-placement bonus (v605) -----
+        # ロシア建国後のmerge drought中、低typeピース(type<=5)が盤面上部に「蓋」として残るのを防ぐ。
+        # 低typeピースの真下(y < piece_y - 0.5)に配置することで、将来的にその低typeピースの上に
+        # 別のピースを乗せ、merge可能な状態を作る。piece_count増加を抑制し、max_yの急上昇を遅らせる。
+        # +100*merge_mult bonus — height penaltyの2ターン分に相当。十分に小さい。
+        # ガード: russia_phase && !double_russia_phase && merge_grade==NO && max_y>=1.0 && pc>=25 && !death_spiral
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.9 low-type under bonus),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.0% low-score, advice.md: 大きい国の下にスペース確保)
+        # Fixes rollback failure mode: "ロシア建国後のmerge droughtでBOARD_COMPRESSIONのみ消費、
+        #   低typeピースが蓋となり次ロシアへの併合パスが構築されない" (analysis_result.md adopted hypothesis)
+
+        if (russia_phase and not double_russia_phase
+                and merge_grade == "NO"
+                and max_y >= 1.0
+                and piece_count >= 25
+                and not death_spiral):
+            # Low-type piece (type<=5) under-placement bonus
+            for p in pieces:
+                p_type = p.get("type", 0)
+                if p_type <= 5:
+                    p_x = p.get("x", 0)
+                    p_y = p.get("y", 0)
+                    target_y = p_y - 0.5  # Piece's "true below" position
+                    if landing_y < target_y:  # Can place even lower than that
+                        dist = abs(x - p_x)
+                        if dist < 1.5:  # Also close horizontally
+                            low_type_under_bonus = 100.0 * merge_mult * (1.0 - dist / 1.5)
+                            score += low_type_under_bonus
+                            if "LOW_TYPE_UNDER" not in "_".join(reasons):
+                                reasons.append("LOW_TYPE_UNDER")
 
         # ----- axis 9.9: Russia-phase next-Russia growth pipeline guidance (NEW v601) -----
         # analysis_result.md adopted hypothesis: ロシア建国後フェーズ専用の「次ロシア成長パイプライン誘導」軸。
