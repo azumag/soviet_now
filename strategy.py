@@ -67,6 +67,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v606: extend NEAR merge suppression to pre-deadline elevated board states — close v604 trigger gap
+     # When max_y>=1.5 && rp>=3 && pc>=28 (WITHOUT deadline_crossed), apply graduated type_scale reduction.
+     # Catches death spiral 3-5 turns earlier than v604's deadline_crossed requirement.
+     # refs: tmp/analysis_result.md (Implementation Plan: graduated pre-deadline suppression),
+     #       tmp/batch_summary.txt, game_history/20260412_200055_score0655.jsonl (T51: max_y=2.14,rp=4,pc=32,deadline=false)
+     # Fixes rollback failure mode: "NEAR merge death spiral during merge droughts — v604 trigger gap
+     #   at max_y>=1.5 && rp>=3 && pc>=28 WITHOUT deadline_crossed" (analysis_result.md adopted hypothesis)
      # v605: axis 9.9a low-type under-placement bonus — prevent low-type pieces becoming "lids"
      # Russia-phase merge drought (pc>=25, max_y>=1.0, NO merge): +100*merge_mult for placing
      # below low-type pieces (type<=5). Creates future merge paths, suppresses pc growth.
@@ -985,6 +992,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         and piece_count >= 28
     )
 
+    # ----- v606: extend NEAR merge suppression to pre-deadline elevated board states -----
+    # analysis_result.md: v604's 4-condition AND gate (max_y>=2.0 && deadline_crossed && rp>=3 && pc>=28)
+    # is too strict. The deadline_crossed requirement means the strategy freely attempts NEAR merges
+    # during the most critical buildup phase (max_y 1.5-2.0, rp>=3, deadline not yet crossed).
+    # Worst game T51: max_y=2.14, rp=4, pc=32, deadline NOT crossed → full NEAR bonus → wasted turn.
+    # Extra_low game T53: max_y=2.12, rp=6, deadline crossed → v604 fires, but pc=29, too congested.
+    # v606 fires at max_y>=1.5 && rp>=3 && pc>=28 WITHOUT requiring deadline_crossed.
+    # Uses graduated suppression (not binary) to avoid suppressing legitimate high-type NEAR merges.
+    # At max_y=1.5: ~30% NEAR bonus reduction. At max_y=2.0: ~50% (matches v604 floor).
+    # Also scales by piece_count: pc=28 → 1.0x factor, pc=40 → 0.6x factor.
+    # refs: tmp/analysis_result.md (Implementation Plan: graduated pre-deadline suppression)
+    near_merge_elevated_suppression = (
+        max_y >= 1.5
+        and reactive_pair_count >= 3
+        and piece_count >= 28
+    )
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -1011,6 +1035,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v604: NEAR merge suppression in death zone — reduce type_scale below normal floor
             if near_merge_suppression and merge_grade == "NEAR":
                 type_scale = 0.5
+            # v606: pre-deadline elevated NEAR suppression — graduated reduction
+            # Fires when max_y>=1.5 && rp>=3 && pc>=28 but deadline NOT yet crossed.
+            # Graduated approach: avoids binary on/off, preserves legitimate high-type NEAR merges.
+            # elevation_factor: max_y=1.5 → 0.7 (30% reduction), max_y=2.0 → 0.5 (50%), max_y=2.5 → 0.3 (70%)
+            # pc_factor: pc=28 → 1.0x, pc=34 → 0.8x, pc=40 → 0.6x
+            # Only applies when v604 hasn't already fired (to not override v604's stronger suppression).
+            if near_merge_elevated_suppression and not near_merge_suppression and merge_grade == "NEAR":
+                elevation_factor = max(0.3, min(0.7, 1.0 - (max_y - 1.5) * 0.4))
+                pc_factor = max(0.6, 1.0 - (piece_count - 28) * 0.033)
+                type_scale *= elevation_factor * pc_factor
+                # Clamp to prevent going too low or exceeding normal range
+                type_scale = max(0.3, min(type_scale, 0.8))
         else:
             type_scale = 1.0  # NO merge — no scaling
 

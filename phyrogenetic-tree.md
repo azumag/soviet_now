@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-12 19:47:04 JST`
-- Nodes: `1032`
-- Edges: `1416`
-- Current: `9b3bfd039a3a`
+- Updated: `2026-04-12 20:45:05 JST`
+- Nodes: `1033`
+- Edges: `1417`
+- Current: `5ed660d88011`
 - Anchor: `870a50c13e53`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_870a50c13e53["870a50c13e53<br/>ANCHOR<br/>g=73 n=20<br/>comp=12036.0"]
-    h_efc4b6fe5f51["efc4b6fe5f51<br/>g=13 n=13<br/>comp=11695.4"]
     h_1b80b364988d["1b80b364988d<br/>g=13 n=13<br/>comp=11879.8"]
     h_1ad338ca58c4["1ad338ca58c4<br/>g=25 n=20<br/>comp=11378.5"]
     h_a64aa1f482ba["a64aa1f482ba<br/>g=13 n=13<br/>comp=11473.5"]
@@ -73,11 +72,11 @@ flowchart TD
     h_2fa04adcbfbd["2fa04adcbfbd<br/>g=12 n=12<br/>comp=10751.1"]
     h_9e57dabfcc55["9e57dabfcc55<br/>g=12 n=12<br/>comp=10402.8"]
     h_8876398ca6dc["8876398ca6dc<br/>g=12 n=12<br/>comp=11600.0"]
+    h_9b3bfd039a3a["9b3bfd039a3a<br/>g=12 n=12<br/>comp=10886.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9b3bfd039a3a["9b3bfd039a3a<br/>CURRENT"]
+    h_5ed660d88011["5ed660d88011<br/>CURRENT"]
 
-    h_efc4b6fe5f51 -->|improve| h_1b80b364988d
     h_1b80b364988d -->|improve| h_1ad338ca58c4
     h_1ad338ca58c4 -->|improve| h_a64aa1f482ba
     h_a64aa1f482ba -->|improve| h_636b223fc3c1
@@ -144,6 +143,7 @@ flowchart TD
     h_2fa04adcbfbd -->|improve| h_9e57dabfcc55
     h_9e57dabfcc55 -->|improve| h_8876398ca6dc
     h_8876398ca6dc -->|improve| h_9b3bfd039a3a
+    h_9b3bfd039a3a -->|improve| h_5ed660d88011
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -151,7 +151,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_870a50c13e53 anchor;
-    class h_efc4b6fe5f51 plain;
     class h_1b80b364988d plain;
     class h_1ad338ca58c4 plain;
     class h_a64aa1f482ba plain;
@@ -208,9 +207,10 @@ flowchart TD
     class h_2fa04adcbfbd plain;
     class h_9e57dabfcc55 plain;
     class h_8876398ca6dc plain;
+    class h_9b3bfd039a3a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9b3bfd039a3a current;
+    class h_5ed660d88011 current;
 ```
 
 ## Detail 1/13
@@ -3636,9 +3636,9 @@ flowchart TD
 
 ## Detail 13/13
 
-- Range: `425e0268f431` .. `9b3bfd039a3a`
-- Nodes in this diagram: `72`
-- Internal edges in this diagram: `82`
+- Range: `425e0268f431` .. `5ed660d88011`
+- Nodes in this diagram: `73`
+- Internal edges in this diagram: `83`
 - Cross-chunk link: `865e131b48a5 --improve--> 425e0268f431`
 - Cross-chunk link: `c0081fb921c8 -.rollback.-> 9c479d3d7963`
 - Cross-chunk link: `9c479d3d7963 --improve--> eb4bb8e05f86`
@@ -3717,9 +3717,10 @@ flowchart TD
     h_2fa04adcbfbd["2fa04adcbfbd<br/>g=12 n=12<br/>comp=10751.1"]
     h_9e57dabfcc55["9e57dabfcc55<br/>g=12 n=12<br/>comp=10402.8"]
     h_8876398ca6dc["8876398ca6dc<br/>g=12 n=12<br/>comp=11600.0"]
+    h_9b3bfd039a3a["9b3bfd039a3a<br/>g=12 n=12<br/>comp=10886.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_9b3bfd039a3a["9b3bfd039a3a<br/>CURRENT"]
+    h_5ed660d88011["5ed660d88011<br/>CURRENT"]
 
     h_425e0268f431 -->|improve| h_5549155b4081
     h_5549155b4081 -->|improve| h_b8fd7e91b841
@@ -3801,8 +3802,9 @@ flowchart TD
     h_5560cc7f707a -->|improve| h_2fa04adcbfbd
     h_2fa04adcbfbd -->|improve| h_9e57dabfcc55
     h_9e57dabfcc55 -->|improve| h_8876398ca6dc
-    h_f776a41fae76 -->|improve| h_f945d31af9d5
     h_8876398ca6dc -->|improve| h_9b3bfd039a3a
+    h_f776a41fae76 -->|improve| h_f945d31af9d5
+    h_9b3bfd039a3a -->|improve| h_5ed660d88011
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3878,12 +3880,23 @@ flowchart TD
     class h_2fa04adcbfbd plain;
     class h_9e57dabfcc55 plain;
     class h_8876398ca6dc plain;
+    class h_9b3bfd039a3a plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_9b3bfd039a3a current;
+    class h_5ed660d88011 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#15004 `9b3bfd03 -> 5ed660d8`
+
+- scores: `10714 10468 10106 8422 11400 14902 10782 17128 12891 9751 16570 12406`
+- v606: extend NEAR merge suppression to pre-deadline elevated board states — close v604 trigger gap
+- When max_y>=1.5 && rp>=3 && pc>=28 (WITHOUT deadline_crossed), apply graduated type_scale reduction.
+- Catches death spiral 3-5 turns earlier than v604's deadline_crossed requirement.
+- tmp/batch_summary.txt, game_history/20260412_200055_score0655.jsonl (T51: max_y=2.14,rp=4,pc=32,deadline=false)
+- Fixes rollback failure mode: "NEAR merge death spiral during merge droughts — v604 trigger gap
+- at max_y>=1.5 && rp>=3 && pc>=28 WITHOUT deadline_crossed" (analysis_result.md adopted hypothesis)
 
 ### Improve Game#14992 `8876398c -> 9b3bfd03`
 
