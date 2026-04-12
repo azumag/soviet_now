@@ -45,6 +45,7 @@ Game Overview:
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.65. Reactive near-miss type clustering - v597: merge_grade=NO時の散逸type集約
              9.10. High-type growth pipeline guidance - v609: NO merge時、type 8-12ピース重心誘導
+             9.11. High-type reactive proximity during merge drought - v616: rp>=3 NO merge時、type 10+ピース重心誘導
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
@@ -68,6 +69,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v616: axis 9.11 high-type reactive proximity during merge drought (rp>=3)
+     # When rp>=3 && NO merge && max_y>=1.5 && pc>=30, reactive pairs are dominated by low-type
+     # pieces. axis_88_horizontal_suppression removes low-type guidance, column_ceiling ignores type.
+     # This axis adds bonus for placing near centroid of type 10+ pieces (weighted by type).
+     # Bonus: max 200*merge_mult, falls off at 50/unit Manhattan distance.
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.11), tmp/batch_summary.txt,
+     #       game_history/20260413_071640_score0939.jsonl (worst: rp=7-8, type12 idle),
+     #       game_history/20260413_074242_score3244.jsonl (best: rp=0-1, 2xtype14 focused)
+     # Fixes rollback failure mode: "rp>=3 NO merge時、全reactive pairが低typeで高typeピースが
+     #   孤立 — 配置が低typeピースに誘導され、高typeパイプラインが構築されない"
      # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
      # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
      # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -1816,6 +1827,68 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if tier2_bonus > 20:
                     score += tier2_bonus
                     reasons.append("HIGH_TYPE_MERGE_PATH_SETUP")
+
+        # ----- evaluation axis 9.11: High-type reactive proximity during merge drought (NEW v616) -----
+        # analysis_result.md adopted hypothesis: rp>=3 && NO merge時、reactive pairは低typeに支配され、
+        # 高typeピース(type 10+)が孤立して併合パスが構築されない。
+        #
+        # 根拠:
+        # - worstゲーム T57-T64: rp=7-8, 全reactive pairがtype<=11, type12×4が孤立
+        # - worstゲーム T61: rp=7, NO merge, column_ceiling発動もtype考慮なし → 低type近傍に配置
+        # - bestゲーム T129-T141: rp=0-1, 2xtype14盤面に集中 → 高type併合でスコア駆動
+        # - batch相関: type14到達(7/12)は高スコア、type12-13停滞(5/12)は低スコア
+        #
+        # ロジック:
+        # (1) reactive_pair_count>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 で発動
+        # (2) 盤面のtype 10+ピースを収集（1つ以上必要）
+        # (3) typeで重み付けした重心(cx, cy)を計算: higher type = stronger pull
+        # (4) 候補xが重心に近いほどボーナス: max(0, 200 - dist*50)*merge_mult (Manhattan距離)
+        # (5) death_spiral時は抑制（height penalty唯一の信号であるべき）
+        # (6) double_russia_phase時は抑制（axis 9.9がロシアパイプライン担当）
+        #
+        # ボーナス設計: 200*merge_multはcolumn_ceiling(~800-1250)より小さくtie-breaker。
+        # 高typeピースが複数ある場合、type 10=100, type 11=120, type 12=140...の重みで重心計算。
+        # 距離減衰: dist=0 → 200, dist=1 → 150, dist=2 → 100, dist=4 → 0
+        #
+        # 禁止: rp<3には適用しない（axis 9.10/9.10 Tier 2がrp==1, rp==2をカバー）
+        #       death_spiralに適用しない（postmortem制約: height必須）
+        #       double_russia_phaseに適用しない（axis 9.9担当）
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.11),
+        #       game_history/20260413_071640_score0939.jsonl T57-T64 (rp=7-8, type12 idle),
+        #       game_history/20260413_074242_score3244.jsonl T129-T141 (rp=0-1, 2xtype14)
+        # Fixes rollback failure mode: "rp>=3 NO merge時、全reactive pairが低typeで高typeピースが
+        #   孤立 — 配置が低typeピースに誘導され、高typeパイプラインが構築されない"
+        high_type_drought_guidance = (
+            reactive_pair_count >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 30
+            and not death_spiral
+            and not double_russia_phase
+        )
+
+        if high_type_drought_guidance:
+            # Collect type 10+ pieces (the ones that could become type 13→14→15)
+            high_type_pieces_10plus = [p for p in pieces if p.get("type", 0) >= 10]
+
+            if len(high_type_pieces_10plus) >= 1:
+                # Weighted centroid: higher types exert more gravitational pull
+                total_weight = sum(p["type"] for p in high_type_pieces_10plus)
+                if total_weight > 0:
+                    centroid_x = sum(p["x"] * p["type"] for p in high_type_pieces_10plus) / total_weight
+                    centroid_y = sum(p["y"] * p["type"] for p in high_type_pieces_10plus) / total_weight
+
+                    # Manhattan distance for grid-aligned board
+                    dist = abs(x - centroid_x) + abs(landing_y - centroid_y)
+
+                    # Bonus: max 200 at centroid, falls off at 50/unit
+                    # dist=0 → 200, dist=1 → 150, dist=2 → 100, dist=4 → 0
+                    type_proximity_bonus = max(0.0, 200.0 - dist * 50.0) * merge_mult
+
+                    if type_proximity_bonus > 10:
+                        score += type_proximity_bonus
+                        reasons.append("HIGH_TYPE_PROXIMITY_DROUGHT")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
