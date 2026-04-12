@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v596: merge type scaling — high-type growth pipeline prioritization (analysis: "低type並合トラップ脱却")
+     # Low-score games merge frequently (39.1%) but merge low-type pieces; high-score games (34.8%) build high-type.
+     # Apply type_scale to merge bonuses (axis 1, 1.5b, 1.6, 8.7): type 1-4: 0.8x, type 5-8: 1.0x, type 9-12: 1.2-1.7x, type 13+: 1.8-2.0x.
+     # Fixes rollback failure mode: "low-type merge trap — merging frequently but not building high-type pieces"
+     # refs: tmp/analysis_result.md (Implementation Plan: merge type weighting), tmp/batch_summary.txt, advice.md
      # v595: axis 8.8b merge drought pressure at rp=1-2 — graduated penalty when NO merge and rp=1-2
      # At pc=28: -100. At pc=35: -800. At pc=40: -1300. Fills gap where axis 8.8 doesn't fire.
      # Fixes rollback failure mode: "rp=1-2 NO merge → HEIGHT_CONTROL → high placement → pc accumulation"
@@ -904,6 +909,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
 
+        # ----- v596: merge type scaling — high-type growth pipeline prioritization -----
+        # analysis_result.md: "低type並合トラップ脱却" — low-score games merge frequently (39.1%)
+        # but merge low-type pieces, while high-score games (34.8% merge_rate) build high-type pieces.
+        # type 3+3=4 bonus = +2, type 12+12=13 bonus = +78. Same merge, 75x score difference.
+        # Scale merge bonus by type to prioritize high-type merges within same merge grade.
+        # Formula: type_scale = 1.0 + 0.1 * max(0, next_type - 5), capped at 2.0
+        # type 1-4: 0.8x (slight deprioritization, floor 0.8 to not block board compression)
+        # type 5-8: 1.0x (neutral), type 9-12: 1.2x-1.7x, type 13+: 1.8x-2.0x
+        # Applies to axis 1, 1.5b, 1.6, 8.7 — NOT to axis 8.8 (penalty axis)
+        if merge_grade in ["DIRECT", "NEAR", "FAR"]:
+            type_scale = 1.0 + 0.1 * max(0, next_type - 5)
+            type_scale = max(0.8, min(type_scale, 2.0))  # floor 0.8, cap 2.0
+        else:
+            type_scale = 1.0  # NO merge — no scaling
+
         score = 0.0
         reasons = []
 
@@ -912,14 +932,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # DIRECT: direct hit target (success rate 95.7%)
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
+        # v596: apply type_scale to prioritize high-type merges (analysis: low-type merge trap)
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            score += 1200.0 * merge_mult * type_scale
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            score += 600.0 * merge_mult * type_scale
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
-            score += 200.0 * merge_mult
+            score += 200.0 * merge_mult * type_scale
             reasons.append("FAR_MERGE")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
@@ -1019,7 +1040,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
         # Fixes rollback failure mode: endgame scoring starvation at deadline
         if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT":
-            score += 800.0
+            # v596: apply type_scale to prioritize high-type danger merges
+            score += 800.0 * type_scale
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
@@ -1046,7 +1068,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
                 bonus = 0.0
             else:
-                bonus = 600.0 if deadline_crossed else 300.0
+                # v596: apply type_scale to prioritize high-type danger merges
+                bonus = (600.0 if deadline_crossed else 300.0) * type_scale
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
@@ -1780,10 +1803,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  # 盤面が最も狭く、高typeピースが場所を占有している状態
                  if merge_grade in ["DIRECT", "NEAR"]:
                      # 即時併合は常に最優先 — 盤面確保のため
+                     # v596: apply type_scale to prioritize high-type merges
                      if merge_grade == "DIRECT":
-                         score += 1600.0
+                         score += 1600.0 * type_scale
                      else:
-                         score += 1400.0
+                         score += 1400.0 * type_scale
                      reasons.append("DOUBLE_RUSSIA_IMMEDIATE_MERGE")
                  elif merge_grade == "NO":
                      # 併合不可時は、盤面圧縮よりtype 15保護と低配置を優先
@@ -1794,18 +1818,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
                  # 即時併合候補がある場合、最優先（強力なボーナス）
+                 # v596: apply type_scale to prioritize high-type merges
                  if reactive_pair_count >= 1:
                      # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
                      if merge_grade == "DIRECT":
-                         score += 1400.0 if reactive_pair_count >= 3 else 1200.0
+                         score += (1400.0 if reactive_pair_count >= 3 else 1200.0) * type_scale
                      else:
-                         score += 1200.0 if reactive_pair_count >= 3 else 1000.0
+                         score += (1200.0 if reactive_pair_count >= 3 else 1000.0) * type_scale
                  else:
                      # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
                      if merge_grade == "DIRECT":
-                         score += 1400.0
+                         score += 1400.0 * type_scale
                      else:
-                         score += 1200.0
+                         score += 1200.0 * type_scale
                  reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
              elif merge_grade == "NO":
                  # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
