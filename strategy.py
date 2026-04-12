@@ -44,6 +44,7 @@ Game Overview:
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.65. Reactive near-miss type clustering - v597: merge_grade=NO時の散逸type集約
+             9.10. High-type growth pipeline guidance - v609: NO merge時、type 8-12ピース重心誘導
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
@@ -67,6 +68,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v609: axis 9.10 high-type growth pipeline guidance — type 8-12 centroid attraction during NO merge
+     # When merge_grade==NO && max_y>=1.0 && pc>=20, guide placement toward centroid of type 8-12 pieces.
+     # Addresses "merge drought→low-type clustering→pc growth→death spiral" by attracting pieces to
+     # mid-type clusters, promoting type 8-12 merges (8+8=9, 9+9=10...) that build high-type pipeline.
+     # Bonus: max(0, 150-dist*50)*merge_mult — smaller than column_ceiling(800-1250), tie-breaker only.
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10), tmp/batch_summary.txt, advice.md
+     # Fixes rollback failure mode: "merge drought→低typeクラスタリング→pc増加→death spiral"
+     #   (analysis_result.md adopted hypothesis: high-type growth pipeline guidance)
      # v608: restore column_ceiling_bonus consistency during merge drought — remove v602 horizontal suppression conflict
      # v602 added axis_88_horizontal_suppression to column_ceiling_bonus guard, but v598's column_ceiling_dominant
      # already suppresses competing horizontal guides. When rp>=3 && NO merge && pc>=28 && max_y>=1.0, both v598
@@ -1590,6 +1599,71 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if _total_cluster_bonus > 50:
                         score += _total_cluster_bonus
                         reasons.append("NEAR_MISS_CLUSTERING")
+
+        # ----- evaluation axis 9.10: High-type growth pipeline guidance (NEW) -----
+        # analysis_result.md adopted hypothesis: merge drought時、高type(type 8-12)ピースの
+        # 成長パイプラインを誘導する配置ボーナス。type_scale(v596)は併合ボーナスにのみ適用されるため、
+        # NO merge時の配置誘導が欠落している。
+        #
+        # 根拠:
+        # - ベストゲーム(score2918): 盤面にtype 14×1, 13×1, 12×2, 11×2, 10×4 → 高スコア
+        # - ワーストゲーム(score0829): 盤面にtype 13×1, 12×2, 11×2, 10×4 → 高typeが1つ少ない
+        # - batch: 高スコア群merge_rate=36.7% vs 低スコア群=32.8%。高スコアは高type併合で成長
+        # - advice.md: 「大きい国の下にスペース確保」(zoumotu3)
+        #
+        # ロジック:
+        # (1) merge_grade==NO && max_y>=1.0 && piece_count>=20 で発動
+        # (2) 盤面のtype 8-12ピースを収集（Soviet type>=16除外, russia_phase時はaxis 9.9が担当）
+        # (3) type 8-12ピースの重心(cx, cy)を計算
+        # (4) 各candidateの(x, landing_y)から重心までの距離を計算
+        # (5) ボーナス = max(0, 150.0 - dist * 50.0) * merge_mult
+        #     dist=0で150, dist=1で100, dist=2で50, dist>=3で0
+        # (6) death_spiral, column_ceiling_dominant, axis_88_horizontal_suppression時は抑制
+        # (7) russia_phase時は抑制（axis 9.9が既にロシアパイプラインを誘導）
+        #
+        # ボーナス設計: 150*merge_multはheight penalty(50-100*height_mult)より小さく、
+        # column_ceiling_bonus(800-1250)より十分に小さい。配置を決定づける力ではなく、
+        # 同条件時のtie-breakerとして機能する。
+        #
+        # 禁止: type<=7, type>=13を対象に含めること。低typeは盤面圧縮の役に立たない。
+        #       type 13+は既に高価値ピースであり、誘導ではなく保護が優先。
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 high-type pipeline),
+        #       tmp/batch_summary.txt (high-score merge_rate=36.7% vs low=32.8%),
+        #       advice.md (zoumotu3: 大きい国の下にスペース確保)
+        # Fixes rollback failure mode: "merge drought→低typeクラスタリング→pc増加→death spiral"
+        #   を「merge drought→高typeクラスタリング→併合→pc減少→回復」に転換
+        if (
+            merge_grade == "NO"
+            and max_y >= 1.0
+            and piece_count >= 20
+            and not russia_phase
+            and not death_spiral
+            and not column_ceiling_dominant
+            and not axis_88_horizontal_suppression
+        ):
+            # Collect type 8-12 pieces (exclude Soviet type>=16)
+            high_type_pieces = []
+            for p in pieces:
+                t = p.get("type", 0)
+                if 8 <= t <= 12:
+                    high_type_pieces.append((p["x"], p["y"]))
+
+            if len(high_type_pieces) >= 2:
+                # Calculate centroid of type 8-12 pieces
+                centroid_x = sum(p[0] for p in high_type_pieces) / len(high_type_pieces)
+                centroid_y = sum(p[1] for p in high_type_pieces) / len(high_type_pieces)
+
+                # Calculate distance from candidate to centroid
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+
+                # Bonus: max 150 at dist=0, decreases by 50 per unit distance
+                # dist=0 → 150, dist=1 → 100, dist=2 → 50, dist>=3 → 0
+                pipeline_bonus = max(0.0, 150.0 - dist * 50.0) * merge_mult
+
+                if pipeline_bonus > 20:  # Only apply if meaningful
+                    score += pipeline_bonus
+                    reasons.append("HIGH_TYPE_PIPELINE_GUIDANCE")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
