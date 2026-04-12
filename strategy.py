@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v595: axis 8.8b merge drought pressure at rp=1-2 — graduated penalty when NO merge and rp=1-2
+     # At pc=28: -100. At pc=35: -800. At pc=40: -1300. Fills gap where axis 8.8 doesn't fire.
+     # Fixes rollback failure mode: "rp=1-2 NO merge → HEIGHT_CONTROL → high placement → pc accumulation"
+     # refs: tmp/analysis_result.md (Implementation Plan: merge drought axis), tmp/batch_summary.txt,
+     #       game_history/20260412_092313_score0872.jsonl, game_history/20260412_092027_score0948.jsonl
      # v594: column_ceiling_bonus magnitude boost + noise axis suppression during merge drought
      # (1) column_ceiling_bonus: 400+150*diff → 800+150*diff — dominates horizontal guidance when NO merge
      # (2) axis 5.5 AVOID_BLOCK_NEXTNEXT: suppressed at merge_grade==NO && max_y>=1.0 — prevents edge scatter
@@ -1847,6 +1852,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+
+        # ----- axis 8.8b: merge drought pressure at rp=1-2 (NEW v595) -----
+        # Gap analysis: axis 8.8 fires at rp>=3 && NO merge (-4500 flat).
+        # At rp=1-2 && NO merge, no merge drought pressure exists → HEIGHT_CONTROL default.
+        # Worst game T55-T74: ~6 of 12 NO-merge turns had rp=1-2, no axis 8.8 protection.
+        # Extra_low T62-T64: rp=2, NO merge → MEDIUM_TOWER at x=3.0 (edge scatter).
+        # Graduated penalty scales with piece_count (the key failure predictor).
+        # At pc=28: -100. At pc=35: -800. At pc=40: -1300.
+        # Flat penalty → axis 2 height penalty becomes sole differentiator.
+        # NOT applied at rp>=3 (axis 8.8 covers) or rp=0 (no reactive potential).
+        # refs: tmp/analysis_result.md (Implementation Plan: merge drought axis at rp=1-2),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.0% low vs 14.5% high),
+        #       game_history/20260412_092313_score0872.jsonl T55-T74,
+        #       game_history/20260412_092027_score0948.jsonl T62-T64
+
+        if merge_grade == "NO" and 1 <= reactive_pair_count < 3 and piece_count >= 28:
+            drought_penalty = (piece_count - 27) * 100.0 * merge_mult
+            score -= drought_penalty
+            reasons.append("MERGE_DROUGHT_PRESSURE")
 
         # ----- v593: column ceiling bonus — horizontal guidance when no merge and board is elevated -----
         # Analysis: worst game T57-T62 had 6 consecutive NO-merge turns at max_y=2.73-2.81.
