@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-13 05:14:41 JST`
-- Nodes: `1040`
-- Edges: `1424`
-- Current: `a1b28607d015`
+- Updated: `2026-04-13 06:06:25 JST`
+- Nodes: `1041`
+- Edges: `1425`
+- Current: `c10a4ca71357`
 - Anchor: `870a50c13e53`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_870a50c13e53["870a50c13e53<br/>ANCHOR<br/>g=73 n=20<br/>comp=12036.0"]
-    h_63236aea7cdc["63236aea7cdc<br/>g=50 n=20<br/>comp=11833.0"]
     h_661ab4be090c["661ab4be090c<br/>g=47 n=20<br/>comp=11025.2"]
     h_cdbcd72e838c["cdbcd72e838c<br/>g=12 n=12<br/>comp=9692.7"]
     h_6c41672498b2["6c41672498b2<br/>g=25 n=20<br/>comp=10917.2"]
@@ -73,20 +72,16 @@ flowchart TD
     h_6ea129504d93["6ea129504d93<br/>g=12 n=12<br/>comp=11032.2"]
     h_b550042090ea["b550042090ea<br/>g=25 n=20<br/>comp=10778.4"]
     h_0e22dd519bbf["0e22dd519bbf<br/>g=12 n=12<br/>comp=11980.3"]
+    h_a1b28607d015["a1b28607d015<br/>g=12 n=12<br/>comp=10570.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_a1b28607d015["a1b28607d015<br/>CURRENT"]
+    h_c10a4ca71357["c10a4ca71357<br/>CURRENT"]
 
-    h_63236aea7cdc -->|improve| h_661ab4be090c
     h_661ab4be090c -->|improve| h_cdbcd72e838c
-    h_cdbcd72e838c -. rollback .-> h_63236aea7cdc
-    h_63236aea7cdc -->|improve| h_6c41672498b2
     h_6c41672498b2 -->|improve| h_ec872b894ada
     h_ec872b894ada -->|improve| h_b9ead874b341
     h_b9ead874b341 -->|improve| h_14ec196ff64b
     h_14ec196ff64b -. rollback .-> h_661ab4be090c
-    h_ec872b894ada -. rollback .-> h_63236aea7cdc
-    h_63236aea7cdc -->|improve| h_c09432476df6
     h_c09432476df6 -->|improve| h_c0081fb921c8
     h_eb4bb8e05f86 -->|improve| h_2e9780eb6d5b
     h_2e9780eb6d5b -->|improve| h_bec7c224776e
@@ -141,6 +136,7 @@ flowchart TD
     h_6ea129504d93 -->|improve| h_b550042090ea
     h_b550042090ea -->|improve| h_0e22dd519bbf
     h_0e22dd519bbf -->|improve| h_a1b28607d015
+    h_a1b28607d015 -->|improve| h_c10a4ca71357
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -148,7 +144,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_870a50c13e53 anchor;
-    class h_63236aea7cdc plain;
     class h_661ab4be090c plain;
     class h_cdbcd72e838c plain;
     class h_6c41672498b2 plain;
@@ -205,12 +200,13 @@ flowchart TD
     class h_6ea129504d93 plain;
     class h_b550042090ea plain;
     class h_0e22dd519bbf plain;
+    class h_a1b28607d015 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_a1b28607d015 current;
+    class h_c10a4ca71357 current;
 ```
 
-## Detail 1/13
+## Detail 1/14
 
 - Range: `b0936e9e200b` .. `d3f6c63419da`
 - Nodes in this diagram: `80`
@@ -483,7 +479,7 @@ flowchart TD
     class h_d3f6c63419da plain;
 ```
 
-## Detail 2/13
+## Detail 2/14
 
 - Range: `155d2f3c99f8` .. `b5cd8a7be86d`
 - Nodes in this diagram: `80`
@@ -756,7 +752,7 @@ flowchart TD
     class h_b5cd8a7be86d plain;
 ```
 
-## Detail 3/13
+## Detail 3/14
 
 - Range: `e3676607049d` .. `e24d1084d5ef`
 - Nodes in this diagram: `80`
@@ -1023,7 +1019,7 @@ flowchart TD
     class h_e24d1084d5ef plain;
 ```
 
-## Detail 4/13
+## Detail 4/14
 
 - Range: `7daa4348391b` .. `57de365479a0`
 - Nodes in this diagram: `80`
@@ -1327,7 +1323,7 @@ flowchart TD
     class h_57de365479a0 plain;
 ```
 
-## Detail 5/13
+## Detail 5/14
 
 - Range: `1fa254eca81f` .. `d062adad419a`
 - Nodes in this diagram: `80`
@@ -1623,7 +1619,7 @@ flowchart TD
     class h_d062adad419a plain;
 ```
 
-## Detail 6/13
+## Detail 6/14
 
 - Range: `82d52dfb6031` .. `e2a889360de0`
 - Nodes in this diagram: `80`
@@ -1903,7 +1899,7 @@ flowchart TD
     class h_e2a889360de0 plain;
 ```
 
-## Detail 7/13
+## Detail 7/14
 
 - Range: `6d9586d182e0` .. `424c0fa79ba4`
 - Nodes in this diagram: `80`
@@ -2209,7 +2205,7 @@ flowchart TD
     class h_424c0fa79ba4 plain;
 ```
 
-## Detail 8/13
+## Detail 8/14
 
 - Range: `4e4943f7f65c` .. `9fe9a7007268`
 - Nodes in this diagram: `80`
@@ -2512,7 +2508,7 @@ flowchart TD
     class h_9fe9a7007268 plain;
 ```
 
-## Detail 9/13
+## Detail 9/14
 
 - Range: `0c0301a98e5f` .. `216f251b5089`
 - Nodes in this diagram: `80`
@@ -2791,7 +2787,7 @@ flowchart TD
     class h_216f251b5089 plain;
 ```
 
-## Detail 10/13
+## Detail 10/14
 
 - Range: `7bd6203f37b5` .. `58a2f66626b3`
 - Nodes in this diagram: `80`
@@ -3060,7 +3056,7 @@ flowchart TD
     class h_58a2f66626b3 plain;
 ```
 
-## Detail 11/13
+## Detail 11/14
 
 - Range: `422188c46bb8` .. `15f86b7062ff`
 - Nodes in this diagram: `80`
@@ -3344,7 +3340,7 @@ flowchart TD
     class h_15f86b7062ff plain;
 ```
 
-## Detail 12/13
+## Detail 12/14
 
 - Range: `8b764b56c6f3` .. `865e131b48a5`
 - Nodes in this diagram: `80`
@@ -3631,9 +3627,9 @@ flowchart TD
     class h_865e131b48a5 plain;
 ```
 
-## Detail 13/13
+## Detail 13/14
 
-- Range: `425e0268f431` .. `a1b28607d015`
+- Range: `425e0268f431` .. `a3aae72a4e37`
 - Nodes in this diagram: `80`
 - Internal edges in this diagram: `90`
 - Cross-chunk link: `865e131b48a5 --improve--> 425e0268f431`
@@ -3642,6 +3638,7 @@ flowchart TD
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
+- Cross-chunk link: `a1b28607d015 --improve--> c10a4ca71357`
 
 ```mermaid
 flowchart TD
@@ -3722,9 +3719,9 @@ flowchart TD
     h_6ea129504d93["6ea129504d93<br/>g=12 n=12<br/>comp=11032.2"]
     h_b550042090ea["b550042090ea<br/>g=25 n=20<br/>comp=10778.4"]
     h_0e22dd519bbf["0e22dd519bbf<br/>g=12 n=12<br/>comp=11980.3"]
+    h_a1b28607d015["a1b28607d015<br/>g=12 n=12<br/>comp=10570.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_a1b28607d015["a1b28607d015<br/>CURRENT"]
 
     h_425e0268f431 -->|improve| h_5549155b4081
     h_5549155b4081 -->|improve| h_b8fd7e91b841
@@ -3814,8 +3811,8 @@ flowchart TD
     h_c751d987401c -->|improve| h_6ea129504d93
     h_6ea129504d93 -->|improve| h_b550042090ea
     h_b550042090ea -->|improve| h_0e22dd519bbf
-    h_f776a41fae76 -->|improve| h_f945d31af9d5
     h_0e22dd519bbf -->|improve| h_a1b28607d015
+    h_f776a41fae76 -->|improve| h_f945d31af9d5
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3899,12 +3896,42 @@ flowchart TD
     class h_6ea129504d93 plain;
     class h_b550042090ea plain;
     class h_0e22dd519bbf plain;
+    class h_a1b28607d015 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_a1b28607d015 current;
+```
+
+## Detail 14/14
+
+- Range: `c10a4ca71357` .. `c10a4ca71357`
+- Nodes in this diagram: `1`
+- Internal edges in this diagram: `0`
+- Cross-chunk link: `a1b28607d015 --improve--> c10a4ca71357`
+
+```mermaid
+flowchart TD
+    h_c10a4ca71357["c10a4ca71357<br/>CURRENT"]
+
+
+    classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
+    classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
+    classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
+    classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
+
+    class h_c10a4ca71357 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#15125 `a1b28607 -> c10a4ca7`
+
+- scores: `18893 11933 14295 7624 17602 7968 9517 17230 12326 10316 9102 10043`
+- v614: Tier 1.5 height penalty (base=90) — rp==1 NO merge drought origin guard
+- rp==1 && NO merge && max_y>=1.0 && pc>=15 で base_height_coefficient=90.0。
+- rp=1はmerge droughtの起点だが、axis 8.8c(rp==2)/v599(rp>=3)/v612(rp>=2)のいずれにも捕捉されない盲点。
+- base=90によりy=0 vs y=1.5差=243pt(HIGH phase)、drift/balanceノイズ(~200pt)を凌駕。
+- game_history/20260413_053021_score0737.jsonl (worst: rp=1→death spiral),
+- game_history/20260413_053704_score0732.jsonl (extra-low: rp=1→escalation)
 
 ### Improve Game#15113 `0e22dd51 -> a1b28607`
 

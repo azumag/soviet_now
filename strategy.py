@@ -68,6 +68,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v614: Tier 1.5 height penalty (base=90) — rp==1 NO merge drought origin guard
+     # rp==1 && NO merge && max_y>=1.0 && pc>=15 で base_height_coefficient=90.0。
+     # rp=1はmerge droughtの起点だが、axis 8.8c(rp==2)/v599(rp>=3)/v612(rp>=2)のいずれにも捕捉されない盲点。
+     # base=90によりy=0 vs y=1.5差=243pt(HIGH phase)、drift/balanceノイズ(~200pt)を凌駕。
+     # refs: tmp/analysis_result.md (Implementation Plan: Tier 1.5 rp==1 guard), tmp/batch_summary.txt,
+     #       game_history/20260413_053021_score0737.jsonl (worst: rp=1→death spiral),
+     #       game_history/20260413_053704_score0732.jsonl (extra-low: rp=1→escalation)
+     # Fixes rollback failure mode: "NO merge時の低y配置の一貫性が、rp=1という「併合 droughtの起点」段階で既に崩れている"
      # v613: axis 9.10 Tier 2 — rp==2 high-type merge path creation
      # Extend type 10+ proximity guidance to rp==2 NO merge stage, catching drought 1-2 turns earlier.
      # Tier 2: rp==2 && NO merge && max_y>=1.0 && pc>=20 → +250*merge_mult near type 10+ centroid (1.5u)
@@ -1938,6 +1946,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and max_y >= 1.5
             and (deadline_crossed or piece_count >= 30)
         )
+        # v614: Tier 1.5 — rp==1 NO merge drought origin guard.
+        # analysis_result.md: rp=1 NO merge is the blind spot where drought begins, missed by
+        # axis 8.8c(rp==2), v599/v612/v608(rp>=2/3). At rp=1, height base=75 is too weak vs
+        # drift/balance/AVOID_BLOCK noise(~200pt). base=90 gives y=0 vs y=1.5 diff = 90*1.8*1.5 = 243pt
+        # in HIGH phase — exceeds noise floor, ensures low-y placement consistently.
+        # pc>=15 catches drought before board half-full; max_y>=1.0 avoids disrupting normal early play.
+        # death_spiral exclusion unnecessary (rp=1 can't satisfy death_spiral definition).
+        early_drought_height = (
+            merge_grade == "NO"
+            and reactive_pair_count == 1
+            and max_y >= 1.0
+            and piece_count >= 15
+        )
         moderate_drought = (
             merge_grade == "NO"
             and reactive_pair_count >= 3
@@ -1945,12 +1966,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not death_spiral
             and not critical_death_spiral  # don't double-count
             and not pre_death_spiral_height  # don't double-count
+            and not early_drought_height  # don't double-count
         )
 
         if critical_death_spiral:
             base_height_coefficient = 150.0
         elif pre_death_spiral_height:
             base_height_coefficient = 120.0
+        elif early_drought_height:
+            base_height_coefficient = 90.0
         elif moderate_drought:
             base_height_coefficient = 100.0
         else:
