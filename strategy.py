@@ -68,6 +68,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v610: critical death-spiral height penalty escalation — base coefficient 50→150
+     # When max_y>=2.0 && merge_grade==NO && rp>=2 && deadline_crossed, escalate height penalty
+     # to dominate horizontal guidance noise (column_ceiling ~800-1250, merge_drought ~-1300).
+     # At base 150, y=0 vs y=2.5 diff = 675pt — exceeds within-column noise, ensures lowest-y placement.
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history worst/extra-low games
+     # Fixes rollback failure mode: "Death-spiral height penalty too weak — horizontal guidance noise
+     #   (column_ceiling, merge_drought_pressure) dominates at max_y>=2.0, rp>=2, deadline_crossed"
      # v609: axis 9.10 high-type growth pipeline guidance — type 8-12 centroid attraction during NO merge
      # When merge_grade==NO && max_y>=1.0 && pc>=20, guide placement toward centroid of type 8-12 pieces.
      # Addresses "merge drought→low-type clustering→pc growth→death spiral" by attracting pieces to
@@ -1793,10 +1800,47 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
         height_mult = max(height_mult, 0.5)
 
+        # v610: critical death-spiral height penalty escalation — base coefficient 50→150
+        # When max_y>=2.0 && merge_grade==NO && rp>=2 && deadline_crossed, height penalty must
+        # dominate all horizontal guidance noise (column_ceiling ~800-1250, merge_drought ~-1300).
+        # At base 150, y=0 vs y=2.5 diff = 150*1.8*2.5 = 675pt — exceeds within-column noise.
+        # Worst game T64-69 (max_y>=2.27, rp=2-3, deadline_crossed, NO merge): pieces scattered to
+        # x=2.97, 2.44, -2.1 because height penalty (~200-300pt) was drowned out by horizontal bonuses.
+        # Tier 1: rp>=2, max_y>=2.0, deadline_crossed, NO merge — critical death spiral (base 150)
+        # Tier 2: rp>=3, max_y>=1.0, NO merge, not death_spiral — moderate escalation (base 100, v599)
+        # Tier 3: normal (base 50)
+        # refs: tmp/analysis_result.md (Implementation Plan: death-spiral height penalty escalation),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.7% low vs 15.7% high — low relies more but gets less),
+        #       game_history/20260413_005438_score0776.jsonl T64-69 (6 NO-merge turns, edge scatter),
+        #       game_history/20260413_005758_score1062.jsonl T77-84 (8 NO-merge turns, x=3.0 twice)
+        # Fixes rollback failure mode: "Death-spiral height penalty too weak — horizontal guidance noise
+        #   (column_ceiling, merge_drought_pressure) dominates at max_y>=2.0, rp>=2, deadline_crossed"
+        critical_death_spiral = (
+            merge_grade == "NO"
+            and reactive_pair_count >= 2
+            and max_y >= 2.0
+            and deadline_crossed
+        )
+        moderate_drought = (
+            merge_grade == "NO"
+            and reactive_pair_count >= 3
+            and max_y >= 1.0
+            and not death_spiral
+            and not critical_death_spiral  # don't double-count
+        )
+
+        if critical_death_spiral:
+            base_height_coefficient = 150.0
+        elif moderate_drought:
+            base_height_coefficient = 100.0
+        else:
+            base_height_coefficient = 50.0
+
         # v599: merge drought vertical guidance escalation — base coefficient 50→100 during NO merge + rp>=3
-        # When merge_grade==NO && rp>=3 && max_y>=1.0, the height penalty base coefficient (50) is too weak
+        # SUPERSEDED by v610's tiered escalation above. Kept for reference only.
+        # Previously: When merge_grade==NO && rp>=3 && max_y>=1.0, the height penalty base coefficient (50) was too weak
         # to overcome drift+balance noise (~200-400pt). At HIGH phase, y=0 vs y=1 diff = 50*1.8 = 90pt.
-        # Doubling base to 100 gives 100*1.8 = 180pt diff — competitive with noise.
+        # Doubling base to 100 gave 100*1.8 = 180pt diff — competitive with noise.
         # NOT using height_mult escalation (v591-v593 rollback cause) — this is the base constant.
         # Guard: only at rp>=3 && NO merge && max_y>=1.0 — not in death_spiral (already has escalation).
         # refs: tmp/analysis_result.md (Implementation Plan: merge drought vertical guidance),
@@ -1804,10 +1848,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260412_132331_score0892.jsonl T57-T62 (6-turn NO-merge drought, y>1.0),
         #       game_history/20260412_132046_score0899.jsonl T64-T69 (6 HIGH_TOWER turns, max_y 2.57→3.38)
         # Fixes rollback failure mode: "merge drought時に低y配置が選ばれず、端に散らばって即死"
-        if merge_grade == "NO" and reactive_pair_count >= 3 and max_y >= 1.0 and not death_spiral:
-            base_height_coefficient = 100.0
-        else:
-            base_height_coefficient = 50.0
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * base_height_coefficient * height_mult
