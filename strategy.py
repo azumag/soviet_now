@@ -68,6 +68,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v613: axis 9.10 Tier 2 — rp==2 high-type merge path creation
+     # Extend type 10+ proximity guidance to rp==2 NO merge stage, catching drought 1-2 turns earlier.
+     # Tier 2: rp==2 && NO merge && max_y>=1.0 && pc>=20 → +250*merge_mult near type 10+ centroid (1.5u)
+     #   + reactive pair bonus: +150*merge_mult if type 10+ has same-type reactive pair
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 Tier 2),
+     #       extra_high game T107 (rp=2, NO merge, type 14 present → T108 NEAR merge delta=247)
+     # Fixes rollback failure mode: "rp=2 NO merge is the blind spot where merge droughts begin
+     #   and high-type pieces scatter, missing the window to build merge paths before rp escalates to 3"
      # v612: pre-death-spiral height tier (base=120) — catch height runaway at max_y>=1.5, rp>=2, NO merge
      # NO+rp>=2+max_y>=1.5+(deadline_crossed|pc>=30)でbase=120。y=0 vs y=1.5差=324pt(HIGH phase)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt
@@ -1680,6 +1688,93 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if pipeline_bonus > 20:  # Only apply if meaningful
                     score += pipeline_bonus
                     reasons.append("HIGH_TYPE_PIPELINE_GUIDANCE")
+
+        # ----- evaluation axis 9.10 Tier 2: rp==2 high-type merge path creation (NEW v613) -----
+        # analysis_result.md adopted hypothesis: rp==2 NO mergeはmerge droughtの起点であり、
+        # 高typeピース(type 10+)が盤面に散在している時にそれらを近づける機会を逃している。
+        #
+        # 根拠:
+        # - extra_highゲーム T107: rp=2, NO merge, max_y=1.95, type 14存在 → T108でNEAR merge(delta=247)
+        # - worstゲーム T61-T66: rp=2→3に遷移しても高typeが散在したまま併合パスなし
+        # - 現行axis 9.10はrp>=3限定。rp=2でも高typeピースが2つ以上あれば誘導する価値がある
+        #
+        # ロジック:
+        # (1) reactive_pair_count==2 && merge_grade==NO && max_y>=1.0 && pc>=20 で発動
+        # (2) 盤面のtype 10+ピースを収集（2つ以上必要）
+        # (3) type 10+ピースの重心(cx, cy)を計算
+        # (4) 候補xが重心に近いほどボーナス: +250*merge_mult (距離1.5u以内で減衰)
+        # (5) type 10+の中にreactive pair(同じtype 10+が2つ)があれば、その重心を優先して+150*merge_mult追加
+        # (6) death_spiral時は抑制（height escalationが優先）
+        # (7) column_ceiling_dominant, axis_88_horizontal_suppression時も抑制
+        #
+        # ボーナス設計: 250*merge_multはtier 1(400)より小さく、tie-breakerレベル。
+        # height penaltyをoverrideせず、同条件時の配置品質を改善。
+        #
+        # 禁止: type 10未満のピースに適用しない（低typeクラスタリングはaxis 9.65/9.8/9.74が担当）
+        #       merge_gradeがNOでない時は適用しない（既存のmerge bonusesが優先）
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 Tier 2),
+        #       game_history/20260413_050025_score2311.jsonl T107 (rp=2, type 14 → T108 large merge)
+        # Fixes rollback failure mode: "rp=2 NO merge is the blind spot where merge droughts begin
+        #   and high-type pieces scatter, missing the window to build merge paths before rp escalates to 3"
+        if (
+            reactive_pair_count == 2
+            and merge_grade == "NO"
+            and max_y >= 1.0
+            and piece_count >= 20
+            and not death_spiral
+            and not column_ceiling_dominant
+            and not axis_88_horizontal_suppression
+        ):
+            # Collect type 10+ pieces
+            high_type_pieces_10plus = []
+            for p in pieces:
+                t = p.get("type", 0)
+                if t >= 10:
+                    high_type_pieces_10plus.append(p)
+
+            if len(high_type_pieces_10plus) >= 2:
+                # Calculate centroid of type 10+ pieces
+                centroid_x = sum(p.get("x", 0) for p in high_type_pieces_10plus) / len(high_type_pieces_10plus)
+                centroid_y = sum(p.get("y", -10) for p in high_type_pieces_10plus) / len(high_type_pieces_10plus)
+
+                # Calculate distance from candidate to centroid
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+
+                # Tier 2 bonus: max 250 at dist=0, decreases within 1.5u
+                # dist=0 → 250, dist=0.5 → 167, dist=1.0 → 83, dist>=1.5 → 0
+                tier2_bonus = max(0.0, 250.0 * (1.0 - dist / 1.5)) * merge_mult
+
+                # Check if type 10+ has reactive pair (same type 10+ appears 2+ times)
+                type_10plus_counts = {}
+                for p in high_type_pieces_10plus:
+                    t = p.get("type", 0)
+                    type_10plus_counts[t] = type_10plus_counts.get(t, 0) + 1
+
+                has_type_10plus_reactive_pair = any(count >= 2 for count in type_10plus_counts.values())
+
+                # If reactive pair exists, add extra bonus
+                if has_type_10plus_reactive_pair:
+                    # Find centroid of reactive pair types only
+                    reactive_type_pieces = []
+                    for p in high_type_pieces_10plus:
+                        if type_10plus_counts.get(p.get("type", 0), 0) >= 2:
+                            reactive_type_pieces.append(p)
+
+                    if reactive_type_pieces:
+                        rp_centroid_x = sum(p.get("x", 0) for p in reactive_type_pieces) / len(reactive_type_pieces)
+                        rp_centroid_y = sum(p.get("y", -10) for p in reactive_type_pieces) / len(reactive_type_pieces)
+
+                        rp_dist = ((x - rp_centroid_x) ** 2 + (landing_y - rp_centroid_y) ** 2) ** 0.5
+                        rp_bonus = max(0.0, 150.0 * (1.0 - rp_dist / 1.5)) * merge_mult
+
+                        if rp_bonus > 20:
+                            score += rp_bonus
+                            reasons.append("HIGH_TYPE_REACTIVE_PAIR_GUIDANCE")
+
+                if tier2_bonus > 20:
+                    score += tier2_bonus
+                    reasons.append("HIGH_TYPE_MERGE_PATH_SETUP")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
