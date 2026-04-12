@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v599: merge drought vertical guidance escalation — base height coefficient 50→100 during NO merge + rp>=3
+     # When merge_grade==NO && rp>=3 && max_y>=1.0, doubles height penalty base coefficient (50→100)
+     # to overcome drift+balance noise (~200-400pt). Excludes death_spiral (already has escalation).
+     # Fixes rollback failure mode: "merge drought時に低y配置が選ばれず、端に散らばって即死"
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_132331_score0892.jsonl,
+     #       game_history/20260412_132046_score0899.jsonl
      # v598: column_ceiling_dominant — suppress competing horizontal guides during merge drought
      # When merge_grade==NO && max_y>=1.0 && pc>=28, suppress axis 9.65 (near-miss clustering),
      # axis 9.8 (same-type proximity), axis 9.6b (same-type proximity non-reactive).
@@ -1562,8 +1568,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
         height_mult = max(height_mult, 0.5)
 
+        # v599: merge drought vertical guidance escalation — base coefficient 50→100 during NO merge + rp>=3
+        # When merge_grade==NO && rp>=3 && max_y>=1.0, the height penalty base coefficient (50) is too weak
+        # to overcome drift+balance noise (~200-400pt). At HIGH phase, y=0 vs y=1 diff = 50*1.8 = 90pt.
+        # Doubling base to 100 gives 100*1.8 = 180pt diff — competitive with noise.
+        # NOT using height_mult escalation (v591-v593 rollback cause) — this is the base constant.
+        # Guard: only at rp>=3 && NO merge && max_y>=1.0 — not in death_spiral (already has escalation).
+        # refs: tmp/analysis_result.md (Implementation Plan: merge drought vertical guidance),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 22.4% low vs 15.0% high),
+        #       game_history/20260412_132331_score0892.jsonl T57-T62 (6-turn NO-merge drought, y>1.0),
+        #       game_history/20260412_132046_score0899.jsonl T64-T69 (6 HIGH_TOWER turns, max_y 2.57→3.38)
+        # Fixes rollback failure mode: "merge drought時に低y配置が選ばれず、端に散らばって即死"
+        if merge_grade == "NO" and reactive_pair_count >= 3 and max_y >= 1.0 and not death_spiral:
+            base_height_coefficient = 100.0
+        else:
+            base_height_coefficient = 50.0
+
         # Calculate height penalty after all height_mult modifications
-        height_penalty = landing_y * 50.0 * height_mult
+        height_penalty = landing_y * base_height_coefficient * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
