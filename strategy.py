@@ -67,6 +67,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v604: NEAR merge suppression in high-pressure death zone — state-dependent type_scale override
+     # When max_y>=2.0 && deadline_crossed && rp>=3 && pc>=28, set type_scale=0.5 for NEAR merges.
+     # Reduces NEAR bonus from ~480 to ~300, making DIRECT or NO merge (height priority) competitive.
+     # refs: tmp/analysis_result.md, game_history/20260412_183258_score0618.jsonl
+     # Fixes rollback failure mode: "NEAR merge → fail → pc grow → NEAR merge → fail → runaway" death spiral
      # v603: axis 1.1 low-type NEAR merge penalty at high board + high pc — suppress low-type NEAR at max_y>=2.0 && pc>=30 && type<=5
      # -800*merge_mult penalty to override low-type NEAR bonus (~480 at type_scale=0.8), making net NEAR negative.
      # Induces DIRECT merge wait or NO merge low-y placement. Prevents "low-type NEAR → fail → pc grow" loop.
@@ -953,6 +958,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
 
+    # ----- v604: NEAR merge suppression in high-pressure death zone -----
+    # analysis_result.md adopted hypothesis: "NEAR merge attempt limit at high pressure"
+    # Worst game T50-57: 6 consecutive NEAR merge attempts at max_y>=2.0, deadline_crossed, rp>=3,
+    # most with score_delta=0. Total score gain: 84 over 8 turns. pc grew 31→33, game over.
+    # Since we don't have explicit per-turn history in decide(), use board state as proxy:
+    # max_y>=2.0 && deadline_crossed && rp>=3 && pc>=28 indicates the "repeated NEAR failure zone".
+    # When active, NEAR merges get type_scale=0.5 (instead of floor 0.8), reducing NEAR bonus
+    # from ~480 to ~300, making DIRECT merge or NO merge (height priority) more competitive.
+    # This prevents the "NEAR merge → fail → pc grow → NEAR merge → fail → runaway" death spiral.
+    # refs: tmp/analysis_result.md (Implementation Plan: NEAR merge suppression),
+    #       game_history/20260412_183258_score0618.jsonl (worst game T50-57, 6 failed NEAR attempts)
+    # Fixes rollback failure mode: "NEAR merge → fail → pc grow → NEAR merge → fail → runaway"
+    #   death spiral observed in worst games (analysis_result.md adopted hypothesis)
+    near_merge_suppression = (
+        max_y >= 2.0
+        and deadline_crossed
+        and reactive_pair_count >= 3
+        and piece_count >= 28
+    )
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -972,9 +997,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # type 1-4: 0.8x (slight deprioritization, floor 0.8 to not block board compression)
         # type 5-8: 1.0x (neutral), type 9-12: 1.2x-1.7x, type 13+: 1.8x-2.0x
         # Applies to axis 1, 1.5b, 1.6, 8.7 — NOT to axis 8.8 (penalty axis)
+        # v604: override type_scale=0.5 for NEAR merges when near_merge_suppression is active
         if merge_grade in ["DIRECT", "NEAR", "FAR"]:
             type_scale = 1.0 + 0.1 * max(0, next_type - 5)
             type_scale = max(0.8, min(type_scale, 2.0))  # floor 0.8, cap 2.0
+            # v604: NEAR merge suppression in death zone — reduce type_scale below normal floor
+            if near_merge_suppression and merge_grade == "NEAR":
+                type_scale = 0.5
         else:
             type_scale = 1.0  # NO merge — no scaling
 
