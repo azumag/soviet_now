@@ -65,6 +65,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v600: proactive merge-path creation within column_ceiling guidance — tie-breaker during merge drought
+     # analysis: at rp=2 NO merge (not caught by axis 8.8/v599), column_ceiling places at best column
+     # but doesn't create future merge opportunities. When current_type has 2+ pieces on board,
+     # prefer placement nearest to existing current_type piece (within 1.5u) to set up NEAR merge.
+     # +200 * merge_mult tie-breaker — smaller than ceiling_bonus (~800-1250), only breaks ties.
+     # Does NOT override column_ceiling basic logic; does NOT fire in death_spiral.
+     # refs: tmp/analysis_result.md (Implementation Plan: merge-path creation), tmp/batch_summary.txt,
+     #       game_history/20260412_141944_score0918.jsonl T61-T63 (rp=2 NO merge, column_ceiling edge),
+     #       game_history/20260412_140546_score0938.jsonl T56-T57 (rp=5-6 NO merge, edge scatter)
+     # Fixes rollback failure mode: "Merge drought vertical guidance escalation is too reactive —
+     #   add PROACTIVE merge-path creation during rp>=2 NO-merge turns at max_y>=1.0"
      # v599: merge drought vertical guidance escalation — base height coefficient 50→100 during NO merge + rp>=3
      # When merge_grade==NO && rp>=3 && max_y>=1.0, doubles height penalty base coefficient (50→100)
      # to overcome drift+balance noise (~200-400pt). Excludes death_spiral (already has escalation).
@@ -2061,6 +2072,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 elif ceiling_diff <= 1.5:
                     if "COLUMN_CEILING_GOOD" not in "_".join(reasons):
                         reasons.append("COLUMN_CEILING_GOOD")
+
+                # v600: proactive merge-path creation within column_ceiling guidance
+                # When column_ceiling_dominant fires AND current_type has 2+ pieces on board,
+                # add tie-breaker bonus for placing near existing current_type pieces.
+                # Creates "NEAR merge setup" state for next turn — addresses rp=2 NO merge gap
+                # where axis 8.8/v599 don't fire but column_ceiling places at edge without
+                # creating future merge opportunities.
+                # +200 * merge_mult at dist=0 — smaller than ceiling_bonus (~800-1250), pure tie-breaker.
+                # Does NOT override column_ceiling column selection; only differentiates within best column.
+                # Explicit death_spiral guard: already suppressed by column_ceiling_dominant condition.
+                if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral:
+                    # Find nearest current_type piece on board to this candidate position
+                    nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
+                    if nearest_dist < 1.5:
+                        # Tie-break: create NEAR-merge setup for next turn
+                        path_bonus = 200.0 * merge_mult * max(0.0, 1.0 - nearest_dist / 1.5)
+                        score += path_bonus
+                        if "MERGE_PATH_SETUP" not in "_".join(reasons):
+                            reasons.append("MERGE_PATH_SETUP")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
