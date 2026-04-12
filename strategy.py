@@ -67,6 +67,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v607: axis 8.8c rp=2 merge drought early intervention — pre-death-spiral merge-path creation
+     # When reactive_pairs==2 && NO merge && max_y>=1.0 && pc>=25, guide placement toward dormant
+     # pair centroids (+200*merge_mult within 1.5u) + moderate height boost (base 50→75).
+     # Catches merge droughts 2-3 turns earlier than rp>=3 triggers.
+     # refs: tmp/analysis_result.md (Implementation Plan: rp=2 early intervention),
+     #       game_history/20260412_211739_score0808.jsonl T55, game_history/20260412_213459_score1012.jsonl T65
+     # Fixes rollback failure mode: "rp=2 NO-merge is the blind spot where merge droughts begin
+     #   and go unchecked, leading to runaway pc growth and death spiral"
      # v606: extend NEAR merge suppression to pre-deadline elevated board states — close v604 trigger gap
      # When max_y>=1.5 && rp>=3 && pc>=28 (WITHOUT deadline_crossed), apply graduated type_scale reduction.
      # Catches death spiral 3-5 turns earlier than v604's deadline_crossed requirement.
@@ -2146,6 +2154,98 @@ def decide(game_state: dict, analysis: dict) -> dict:
             drought_penalty = (piece_count - 27) * 100.0 * merge_mult
             score -= drought_penalty
             reasons.append("MERGE_DROUGHT_PRESSURE")
+
+        # ----- axis 8.8c: rp=2 merge drought early intervention (NEW v607) -----
+        # Analysis adopted hypothesis: "Pre-death-spiral merge-path creation at rp=2, NO merge,
+        # max_y>=1.0, pc>=25" — The current strategy handles rp>=3 NO-merge well (axis 8.8,
+        # column_ceiling, drought escalation) but rp=2 NO-merge is the blind spot where merge
+        # droughts begin and go unchecked.
+        #
+        # Evidence:
+        # - Worst game T55: rp=2, NO merge, pc=28, max_y=1.12 → stacking on high piece.
+        #   This was the turn before runaway started. One turn later, death spiral was irreversible.
+        # - Extra-low game T65: rp=2, NO merge, pc=32, max_y=1.54 → again rp=2 was last chance
+        #   before rp=3 death spiral.
+        # - Current v600 has merge-path creation but only fires when current_type has 2+ pieces.
+        #   When current_type has 0-1 pieces (most common), NO guidance exists for rp=2 NO-merge.
+        #
+        # Logic:
+        # When reactive_pairs==2 AND merge_grade=="NO" AND max_y>=1.0 AND piece_count>=25:
+        # (1) Identify "dormant pair" types — types with exactly 2 pieces on board that aren't
+        #     in reactive pairs. These are merge opportunities one good piece placement away.
+        # (2) For each dormant pair type, calculate the centroid of existing pieces.
+        # (3) Add +200 * merge_mult bonus for placing within 1.5 units of a dormant pair centroid.
+        # (4) Apply moderate height coefficient boost (base 50→75) to ensure placement doesn't
+        #     stack too high while seeking merge paths.
+        #
+        # This creates a "3-piece cluster" setup: if the next piece matches the dormant type,
+        # the board will have 3 of that type close together, guaranteeing at least one future merge.
+        #
+        # Prohibited:
+        # - Do NOT fire at rp=1 (too aggressive) or rp>=3 (axis 8.8 covers)
+        # - Do NOT fire at pc<25 (early game merge drought is normal and recoverable)
+        # - Do NOT fire when merge_grade != "NO" (merge opportunities take priority)
+        # - Do NOT override height penalty — the +200 bonus stays below height differentiation
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: rp=2 merge drought early intervention),
+        #       game_history/20260412_211739_score0808.jsonl T55 (rp=2, pc=28, max_y=1.12, NO merge),
+        #       game_history/20260412_213459_score1012.jsonl T65 (rp=2, pc=32, max_y=1.54, NO merge),
+        #       tmp/batch_summary.txt, advice.md
+        # Fixes rollback failure mode: "rp=2 NO-merge is the blind spot where merge droughts begin
+        #   and go unchecked, leading to runaway pc growth and death spiral" (analysis_result.md)
+
+        if (reactive_pair_count == 2 and merge_grade == "NO"
+                and max_y >= 1.0 and piece_count >= 25 and not death_spiral):
+            # (1) Identify dormant pair types — types with exactly 2 pieces on board,
+            #     not currently in reactive pairs
+            type_counts = {}
+            type_pieces = {}
+            reactive_type_set = set()
+            for rp in reactive_pairs:
+                if isinstance(rp, (list, tuple)) and len(rp) >= 3:
+                    reactive_type_set.add(rp[2])
+
+            for p in pieces:
+                p_type = p.get("type", 0)
+                if p_type not in type_counts:
+                    type_counts[p_type] = 0
+                    type_pieces[p_type] = []
+                type_counts[p_type] += 1
+                type_pieces[p_type].append(p)
+
+            # Find dormant pairs: types with exactly 2 pieces, not in reactive pairs
+            dormant_pairs = []
+            for t, count in type_counts.items():
+                if count == 2 and t not in reactive_type_set:
+                    dormant_pairs.append((t, type_pieces[t]))
+
+            # (2) & (3) For each dormant pair, calculate centroid and add proximity bonus
+            for dormant_type, d_pieces in dormant_pairs:
+                dc_x = sum(p.get("x", 0) for p in d_pieces) / len(d_pieces)
+                dc_y = sum(p.get("y", -10) for p in d_pieces) / len(d_pieces)
+
+                # Distance from candidate position to dormant pair centroid
+                dist_to_centroid = ((x - dc_x) ** 2 + (landing_y - dc_y) ** 2) ** 0.5
+
+                # Bonus within 1.5 units: +200 * merge_mult at dist=0, fading to 0 at dist=1.5
+                if dist_to_centroid < 1.5:
+                    dormant_bonus = 200.0 * merge_mult * (1.0 - dist_to_centroid / 1.5)
+                    # Reduce bonus if centroid is too high (don't override height penalty)
+                    if dc_y > 1.0:
+                        dormant_bonus *= max(0.0, 1.0 - (dc_y - 1.0) * 0.3)
+                    if dormant_bonus > 10:
+                        score += dormant_bonus
+                        if "DORMANT_PAIR_CLUSTER" not in "_".join(reasons):
+                            reasons.append("DORMANT_PAIR_CLUSTER")
+
+            # (4) Moderate height coefficient boost — base 50→75 (not the 100x used at rp>=3)
+            # This ensures placement doesn't stack too high while seeking merge paths.
+            # Apply additional height penalty to discourage stacking on high pieces.
+            # Extra penalty = landing_y * (75 - 50) * height_mult = landing_y * 25 * height_mult
+            # Only applies when base is 50 (not when v599 already boosted to 100).
+            if base_height_coefficient == 50.0:
+                rp2_height_penalty = landing_y * 25.0 * height_mult
+                score -= rp2_height_penalty
 
         # ----- v593: column ceiling bonus — horizontal guidance when no merge and board is elevated -----
         # Analysis: worst game T57-T62 had 6 consecutive NO-merge turns at max_y=2.73-2.81.
