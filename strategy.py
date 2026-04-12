@@ -68,6 +68,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v611: base height coefficient 50→75 — improve NO-merge placement consistency
+     # NO merge時の低y配置一貫性向上。y=0 vs y=1.5差: 135pt→202pt (HIGH phase)
+     # death spiral前駆段階(max_y=1.5-2.0, deadline未突破)での配置品質を改善
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt
+     # Fixes rollback failure mode: "NO merge時のheight penalty基数不足 — death spiral前駆段階で低y配置が drift/balance ノイズに負ける"
      # v610: critical death-spiral height penalty escalation — base coefficient 50→150
      # When max_y>=2.0 && merge_grade==NO && rp>=2 && deadline_crossed, escalate height penalty
      # to dominate horizontal guidance noise (column_ceiling ~800-1250, merge_drought ~-1300).
@@ -1808,7 +1813,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # x=2.97, 2.44, -2.1 because height penalty (~200-300pt) was drowned out by horizontal bonuses.
         # Tier 1: rp>=2, max_y>=2.0, deadline_crossed, NO merge — critical death spiral (base 150)
         # Tier 2: rp>=3, max_y>=1.0, NO merge, not death_spiral — moderate escalation (base 100, v599)
-        # Tier 3: normal (base 50)
+        # Tier 3: normal (base 75, v611: 50→75)
         # refs: tmp/analysis_result.md (Implementation Plan: death-spiral height penalty escalation),
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 19.7% low vs 15.7% high — low relies more but gets less),
         #       game_history/20260413_005438_score0776.jsonl T64-69 (6 NO-merge turns, edge scatter),
@@ -1834,7 +1839,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif moderate_drought:
             base_height_coefficient = 100.0
         else:
-            base_height_coefficient = 50.0
+            base_height_coefficient = 75.0  # v611: 50→75, improve NO-merge placement consistency
 
         # v599: merge drought vertical guidance escalation — base coefficient 50→100 during NO merge + rp>=3
         # SUPERSEDED by v610's tiered escalation above. Kept for reference only.
