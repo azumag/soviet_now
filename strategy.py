@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v598: column_ceiling_dominant — suppress competing horizontal guides during merge drought
+     # When merge_grade==NO && max_y>=1.0 && pc>=28, suppress axis 9.65 (near-miss clustering),
+     # axis 9.8 (same-type proximity), axis 9.6b (same-type proximity non-reactive).
+     # Lets column_ceiling_bonus dominate → consistent placement to lowest-ceiling column.
+     # Fixes rollback failure mode: "merge drought中に低y配置が選ばれず、端に散らばって即死"
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_122518_score0730.jsonl
      # v597: axis 9.65 reactive near-miss type clustering — merge drought recovery via clustering
      # When merge_grade=NO && rp>=2 && pc>=25, guide placement toward centroids of scattered
      # same-type pieces (2+ on board). Addresses "scattered board, no merges → death spiral".
@@ -1279,6 +1285,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
+        # ----- v598: column_ceiling_dominant flag — suppress competing horizontal guides -----
+        # When merge_grade==NO && max_y>=1.0 && pc>=28, analysis shows edge scatter(x=±3.0)
+        # persists because axis 9.65/9.8/9.6b compete with column_ceiling_bonus.
+        # Suppressing them lets column_ceiling guide placement to the lowest-ceiling column.
+        # refs: tmp/analysis_result.md (Implementation Plan: merge drought column_ceiling dominance)
+        column_ceiling_dominant = (
+            merge_grade == "NO" and max_y >= 1.0 and piece_count >= 28
+        )
+
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
         # advice.md "TypeN+1と隣接している方を優先してドロップする" (azumag, nimdavirus).
@@ -1298,7 +1313,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and same_type_stack_top is not None:
             if not (current_type_has_reactive or current_type_has_near):
                 # v461: suppress proximity guidance in death spiral — height must be sole differentiator
-                if not death_spiral:
+                # v598: also suppress when column_ceiling_dominant — let column_ceiling guide placement
+                if not death_spiral and not column_ceiling_dominant:
                     # v371: Find same-type piece closest to merged_type(N+1) for chain building.
                     # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
                     merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
@@ -1378,7 +1394,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: "scattered board, no merges → death spiral" (analysis_result.md)
 
         if merge_grade == "NO" and reactive_pair_count >= 2 and piece_count >= 25:
-            if not death_spiral:
+            if not death_spiral and not column_ceiling_dominant:
                 # Group pieces by type, excluding next_type (handled by 9.6b) and Soviet (type>=16)
                 _type_positions = {}
                 for p in pieces:
@@ -2127,12 +2143,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Bonus magnitude: max ~150 (tie-breaking, safe vs axis 8.8 -4500).
         # v594: suppress when max_y>=1.5 && reactive_pair_count>=3 — at high rp and elevated board,
         # clustering blocks merge paths (worst game T45-T51 pattern).
-        # refs: tmp/analysis_result.md (adopted hypothesis: merge drought recovery),
+        # v598: also suppress when column_ceiling_dominant (merge_grade==NO && max_y>=1.0 && pc>=28)
+        # — let column_ceiling guide placement to lowest-ceiling column during merge drought.
+        # refs: tmp/analysis_result.md (Implementation Plan: merge drought column_ceiling dominance),
         #       game_history/20260411_095233_score0895.jsonl T71-79 (chronic NO merge),
         #       game_history/20260411_100940_score0932.jsonl T25-52 (27-turn drought)
         if (merge_grade == "NO" and piece_count >= 25 and len(same_type_pieces) >= 2
                 and not death_spiral
-                and not (max_y >= 1.5 and reactive_pair_count >= 3)):
+                and not (max_y >= 1.5 and reactive_pair_count >= 3)
+                and not column_ceiling_dominant):
             # Find the pair of same_type pieces with smallest x-gap — target placement between them
             same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
             min_gap = float("inf")
