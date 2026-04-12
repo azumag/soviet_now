@@ -45,6 +45,8 @@ Game Overview:
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.65. Reactive near-miss type clustering - v597: merge_grade=NO時の散逸type集約
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+             9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
+             9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -65,6 +67,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v601: axis 9.9 Russia-phase next-Russia growth pipeline guidance
+     # Russia建国後(russia_phase==true && double_russia_phase==false)、2つ目のロシア育成のための誘導。
+     # merge_grade==NO時に限り、既存ロシアピースの下部への配置ボーナス(+150*merge_mult*russia_pipeline_mult)
+     # と高typeピース(type>=10)の重心近接クラスタリング(+80*merge_mult*russia_pipeline_mult)を追加。
+     # Guards: russia_phase && !double_russia_phase && merge_grade==NO && max_y>=1.0 && !death_spiral.
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.9), tmp/batch_summary.txt,
+     #       game_history/20260412_152521_score4344.jsonl, game_history/20260412_150116_score2968.jsonl
+     # Fixes rollback failure mode: "ロシア建国後のmerge droughtでBOARD_COMPRESSIONのみ消費、
+     #   次ロシアへの併合パスが構築されない" (analysis_result.md adopted hypothesis)
      # v600: proactive merge-path creation within column_ceiling guidance — tie-breaker during merge drought
      # analysis: at rp=2 NO merge (not caught by axis 8.8/v599), column_ceiling places at best column
      # but doesn't create future merge opportunities. When current_type has 2+ pieces on board,
@@ -2227,6 +2238,90 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += proximity_bonus
                         if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_PROXIMITY")
+
+        # ----- axis 9.9: Russia-phase next-Russia growth pipeline guidance (NEW v601) -----
+        # analysis_result.md adopted hypothesis: ロシア建国後フェーズ専用の「次ロシア成長パイプライン誘導」軸。
+        # ゲームログ分析: ベストゲームもextra_highゲームも、ロシア建国後はBOARD_COMPRESSIONのみでターン消費。
+        # merge droughtに突入し、2つ目のロシアを育成するパイプラインが構築されていない。
+        # batch_summary: 高スコア群と低スコア群で終盤max_yに差がない(1.84) → 盤面の高さではなく、
+        # 盤面に残ったピースのtypeがスコアを分ける。
+        #
+        # ロジック:
+        # (1) 既存ロシアピース(type 15)の「真下または斜め下」に配置するボーナスポジション評価
+        #     各type 15ピースについて、その真下(y-1.0以内)または斜め下(y-0.5以内, |dx|<1.5)に
+        #     配置候補がある場合、+150 * merge_mult * russia_pipeline_mult
+        # (2) 高typeピース(type>=10)の近接クラスタリング
+        #     盤面上のtype>=10のピースの重心に近い配置候補に+80 * merge_mult * russia_pipeline_mult
+        #
+        # russia_pipeline_mult: 既存ロシアピースのy座標が深いほど大きい
+        #   (y=-4: 2.0x, y=0: 1.0x, y=2: 0.5x)
+        #
+        # ガード条件:
+        # - russia_phase == true かつ double_russia_phase == false (ロシアが1つの場合のみ)
+        # - merge_grade == "NO" (合併机会がない場合のみ。合併優先は既存軸に任せる)
+        # - max_y >= 1.0 (盤面がある程度上がっている場合のみ。LOWフェーズでは不要)
+        # - death_spiralではない (death_spiralでは高さ管理のみが正解)
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.9), tmp/batch_summary.txt,
+        #       game_history/20260412_152521_score4344.jsonl, game_history/20260412_150116_score2968.jsonl
+        # Fixes rollback failure mode: "ロシア建国後のmerge droughtでBOARD_COMPRESSIONのみ消費、
+        #   次ロシアへの併合パスが構築されない"
+
+        if (russia_phase and not double_russia_phase
+                and merge_grade == "NO"
+                and max_y >= 1.0
+                and not death_spiral):
+            # (1) Russia piece below-position bonus
+            # Find the deepest (lowest y) type 15 piece for priority targeting
+            russia_pieces = [p for p in pieces if p.get("type") == 15]
+            if russia_pieces:
+                deepest_russia = min(russia_pieces, key=lambda p: p.get("y", 10))
+                russia_y = deepest_russia.get("y", -10)
+                russia_x = deepest_russia.get("x", 0)
+
+                # russia_pipeline_mult: deeper Russia = higher multiplier
+                # y=-4: 2.0x, y=0: 1.0x, y=2: 0.5x, linear interpolation
+                russia_pipeline_mult = max(0.3, min(2.0, 1.0 - russia_y * 0.25))
+
+                # Check if candidate position is below or diagonally below the Russia piece
+                dx = abs(x - russia_x)
+                dy = landing_y - russia_y  # positive = candidate is below Russia
+
+                # "Below" means: within 1.0 y-units below Russia, and within 1.5 x-units horizontally
+                # This covers "directly below" and "diagonally below" positions
+                if dx < 1.5 and -0.5 <= dy <= 1.0:
+                    # Bonus stronger when closer to directly below (dx=0, dy=0.5)
+                    below_bonus = 150.0 * merge_mult * russia_pipeline_mult
+                    # Reduce for horizontal offset
+                    below_bonus *= max(0.0, 1.0 - dx / 1.5)
+                    # Reduce if too far below or above the ideal zone
+                    ideal_dy = 0.5
+                    dy_penalty = 1.0 - abs(dy - ideal_dy) * 0.5
+                    below_bonus *= max(0.0, dy_penalty)
+                    if below_bonus > 20:
+                        score += below_bonus
+                        if "RUSSIA_PIPELINE_BELOW" not in "_".join(reasons):
+                            reasons.append("RUSSIA_PIPELINE_BELOW")
+
+            # (2) High-type piece (type>=10) centroid clustering
+            # Cluster near high-type pieces to create merge pipeline for next Russia
+            high_type_pieces = [p for p in pieces if p.get("type") >= 10]
+            if len(high_type_pieces) >= 2:
+                hc_x = sum(p.get("x", 0) for p in high_type_pieces) / len(high_type_pieces)
+                hc_y = sum(p.get("y", -10) for p in high_type_pieces) / len(high_type_pieces)
+
+                # Use same russia_pipeline_mult (already computed above if russia_pieces exist)
+                # If no russia_pieces (shouldn't happen given guard), default to 1.0
+                _rpm = russia_pipeline_mult if russia_pieces else 1.0
+
+                dist_to_centroid = ((x - hc_x) ** 2 + (landing_y - hc_y) ** 2) ** 0.5
+                if dist_to_centroid < 3.0:
+                    cluster_bonus = 80.0 * merge_mult * _rpm
+                    cluster_bonus *= max(0.0, 1.0 - dist_to_centroid / 3.0)
+                    if cluster_bonus > 10:
+                        score += cluster_bonus
+                        if "HIGH_TYPE_CLUSTER" not in "_".join(reasons):
+                            reasons.append("HIGH_TYPE_CLUSTER")
 
         # ----- update best candidate -----
         if score > best_score:
