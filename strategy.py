@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v594: column_ceiling_bonus magnitude boost + noise axis suppression during merge drought
+     # (1) column_ceiling_bonus: 400+150*diff → 800+150*diff — dominates horizontal guidance when NO merge
+     # (2) axis 5.5 AVOID_BLOCK_NEXTNEXT: suppressed at merge_grade==NO && max_y>=1.0 — prevents edge scatter
+     # (3) axis 9.8 SAME_TYPE_PROXIMITY: suppressed at max_y>=1.5 && rp>=3 — prevents merge path blocking
+     # Fixes rollback failure mode: "edge scatter during rp>=3, NO merge, max_y>=1.0 pre-death-spiral phase"
+     # refs: tmp/analysis_result.md (Implementation Plan: column_ceiling magnitude, axis 5.5/9.8 guards),
+     #       tmp/batch_summary.txt, game_history/20260412_083708_score0605.jsonl, strategy.py.staging
      # v574: axis 9.8 SAME_TYPE_PROXIMITY — merge drought recovery via same-type clustering
      # When merge_grade=NO && pc>=25 && 2+ same_type pieces exist, guide placement to cluster them.
      # Creates "3-piece cluster" state for future merge opportunities — addresses the primary
@@ -1539,7 +1546,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
         # refs: advice.md (Pitman_live, azumag), batch_summary.txt
         # v462: suppress in death spiral — height must be sole differentiator
-        if not death_spiral:
+        # v594: further suppress when merge_grade==NO && max_y>=1.0 — at elevated boards with no merge,
+        # this -400 penalty pushes pieces toward edges (worst game T45: x=-3.0), fighting column_ceiling.
+        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0):
             for p in pieces:
                 if p.get("type") == next_next_type:
                     piece_y = p.get("y", -10)
@@ -1879,11 +1888,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # ceiling_diff: how much higher this column is vs the best column
                 ceiling_diff = candidate_ceiling - min_col_ceiling
 
-                # Bonus: base 400 + 150 per unit ceiling diff, scaled by merge_mult
-                # At ceiling_diff=0: 400 (baseline for being in the best column)
-                # At ceiling_diff=1: 550, At ceiling_diff=2: 700
+                # v594: strengthen magnitude — base 800 + 150 per unit ceiling_diff (was 400+150)
+                # Analysis: worst game T41-T51 had column_ceiling firing (~400-700) but overwhelmed
+                # by AVOID_BLOCK/NEXT_SAME/SAME_TYPE_PROXIMITY noise (~200-600 each).
+                # New range: ~800-1250 at typical ceiling_diff (1.0-3.0), competing effectively
+                # against axis 8.8's -4500 (which all candidates receive equally, cancels out).
+                # At ceiling_diff=0: 800 (baseline for being in the best column)
+                # At ceiling_diff=1: 950, At ceiling_diff=2: 1100
                 # merge_mult ensures bonus is relative (not overriding absolute merge bonuses)
-                ceiling_bonus = (400 + ceiling_diff * 150) * merge_mult
+                ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
@@ -1993,11 +2006,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NOT guidance restoration — orthogonal to death_spiral suppression (axis 9.6b/5.6/9.3 suppressed).
         # Fires ONLY when merge_grade=NO (no immediate merge possible) and NOT in death_spiral.
         # Bonus magnitude: max ~150 (tie-breaking, safe vs axis 8.8 -4500).
+        # v594: suppress when max_y>=1.5 && reactive_pair_count>=3 — at high rp and elevated board,
+        # clustering blocks merge paths (worst game T45-T51 pattern).
         # refs: tmp/analysis_result.md (adopted hypothesis: merge drought recovery),
         #       game_history/20260411_095233_score0895.jsonl T71-79 (chronic NO merge),
         #       game_history/20260411_100940_score0932.jsonl T25-52 (27-turn drought)
         if (merge_grade == "NO" and piece_count >= 25 and len(same_type_pieces) >= 2
-                and not death_spiral):
+                and not death_spiral
+                and not (max_y >= 1.5 and reactive_pair_count >= 3)):
             # Find the pair of same_type pieces with smallest x-gap — target placement between them
             same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
             min_gap = float("inf")
