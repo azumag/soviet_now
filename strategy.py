@@ -68,6 +68,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v612: pre-death-spiral height tier (base=120) — catch height runaway at max_y>=1.5, rp>=2, NO merge
+     # NO+rp>=2+max_y>=1.5+(deadline_crossed|pc>=30)でbase=120。y=0 vs y=1.5差=324pt(HIGH phase)
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt
+     # Fixes rollback failure mode: "merge drought時の低y配置一貫性不足 — max_y=1.5-2.0の前兆段階でheight penalty基数75/100がcolumn_ceiling/merge_droughtノイズに埋もれる"
      # v611: base height coefficient 50→75 — improve NO-merge placement consistency
      # NO merge時の低y配置一貫性向上。y=0 vs y=1.5差: 135pt→202pt (HIGH phase)
      # death spiral前駆段階(max_y=1.5-2.0, deadline未突破)での配置品質を改善
@@ -1826,16 +1830,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and max_y >= 2.0
             and deadline_crossed
         )
+        # v612: pre-death-spiral tier — catch height runaway BEFORE critical stage.
+        # Worst game T52-T59: 8 NO-merge turns, rp=3-5, max_y=1.16→1.56. At max_y>=1.5,
+        # base=100 was too weak to compete with column_ceiling(~800-1250) and merge_drought(~-1000).
+        # At base=120, HIGH phase y=0 vs y=1.5 diff = 120*1.8*1.5 = 324pt — 25-32% of column_ceiling,
+        # enough to differentiate low-y placement without killing horizontal guidance.
+        # Triggers at rp>=2 (not 3) to catch drought 2-3 turns earlier.
+        # Requires deadline_crossed OR pc>=30 — avoids disrupting normal early-game merge builds.
+        pre_death_spiral_height = (
+            merge_grade == "NO"
+            and reactive_pair_count >= 2
+            and max_y >= 1.5
+            and (deadline_crossed or piece_count >= 30)
+        )
         moderate_drought = (
             merge_grade == "NO"
             and reactive_pair_count >= 3
             and max_y >= 1.0
             and not death_spiral
             and not critical_death_spiral  # don't double-count
+            and not pre_death_spiral_height  # don't double-count
         )
 
         if critical_death_spiral:
             base_height_coefficient = 150.0
+        elif pre_death_spiral_height:
+            base_height_coefficient = 120.0
         elif moderate_drought:
             base_height_coefficient = 100.0
         else:
