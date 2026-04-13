@@ -68,6 +68,9 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v631: extend non-reactive-type column_ceiling suppression — remove same_type_pieces>=2, lower pc from 20 to 15
+     # Fixes rollback failure mode: non-reactive type scatter through column_ceiling at rp>=3 (worst game T29-T34)
+     # refs: tmp/analysis_result.md, game_history/20260414_063817_score0856.jsonl T29-T34
      # v630: non-reactive-type column_ceiling suppression during merge drought
      # When rp>=3 && merge_grade==NO && current_type has no reactive/near pair &&
      # same_type_pieces>=2 && pc>=20, set ceiling_bonus=0 so axis 9.6b/9.8
@@ -1552,18 +1555,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             merge_grade == "NO" and max_y >= 1.0 and piece_count >= 28
         )
 
-        # v630: non-reactive-type column_ceiling suppression during merge drought
-        # When rp>=3, merge_grade==NO, current type has no reactive/near pair on board,
-        # and same_type_pieces>=2 exist, column_ceiling scatters non-reactive pieces between
-        # reactive pairs of other types, blocking future merge paths. Suppress entirely
-        # so axis 9.6b/9.8 same_type proximity guides placement instead.
+        # v631: extended non-reactive-type column_ceiling suppression during merge drought
+        # v630 required same_type_pieces>=2 and pc>=20, but worst game (score856) shows scatter
+        # at T29-T34 where same_type_pieces<2 (type 8 at T29/T33 has only 1 piece) and pc=18.
+        # column_ceiling_bonus pushes non-reactive types toward other-type reactive pair clusters
+        # at x≈2.6, fragmenting the board permanently. Removing same_type_pieces>=2 constraint
+        # because same_type_pieces<2 is exactly when column_ceiling does the most damage —
+        # with 0 or 1 same-type piece, axis 9.6b/9.8 proximity guidance is too weak (~120-540)
+        # to counterbalance column_ceiling (~300-750 × rp_scale). Lowering pc threshold from
+        # 20 to 15 to cover T29 (pc=18) where scatter begins.
+        # Fixes rollback failure mode: "non-reactive type scatter through column_ceiling at rp>=3"
+        # refs: tmp/analysis_result.md, game_history/20260414_063817_score0856.jsonl T29-T34
         non_reactive_type_column_ceiling_suppress = (
             reactive_pair_count >= 3
             and merge_grade == "NO"
             and not current_type_has_reactive
             and not current_type_has_near
-            and len(same_type_pieces) >= 2
-            and piece_count >= 20
+            and piece_count >= 15
         )
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
