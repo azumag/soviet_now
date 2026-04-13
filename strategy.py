@@ -68,6 +68,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v622: axis 9.15 merge drought low-type digest priority — guide placement to low-type pair centroid
+     # When merge_grade==NO && rp>=3 && max_y>=1.5, scan reactive_pairs/near_pairs for type<=5 pairs.
+     # Add bonus = max(0, 600-dist*200)*merge_mult toward lowest-type pair's centroid.
+     # Fires EVEN IF column_ceiling_dominant / axis_88_horizontal_suppression active.
+     # Addresses "6-7 consecutive NO merge turns with 0 score_delta" death cascade pattern.
+     # refs: tmp/analysis_result.md, game_history/20260413_171737_score0618.jsonl,
+     #       game_history/20260413_170829_score0942.jsonl, tmp/state/last_rollback_analysis.md
+     # Fixes rollback failure mode: "6-7 consecutive NO merge turns with 0 score_delta"
+     #   → low-type pair digestion within 1-2 turns, reducing pc by 1 (analysis_result.md adopted hypothesis)
      # v617: axis 9.12 merge drought exit trigger — no_merge_streak + merge path creation
      # When no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30, add bonus for
      # placing current piece adjacent to type 10+ pieces (+500*merge_mult within 1.5u,
@@ -1536,6 +1545,92 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
+        # ----- evaluation axis 9.15: Merge drought low-type digest priority (NEW) -----
+        # analysis_result.md adopted hypothesis: "Merge drought recovery via low-type piece digestion priority"
+        #
+        # 根拠:
+        # - worst game T56-T61: 6連続NO merge, rp=2→3, max_y=1.41→1.69, pc=31→36。盤面にtype 2×4, 3×3, 4×3, 5×3
+        # - extra-low game T64-T70: 7連続NO merge, rp=5, max_y=1.94→2.89。column_ceilingがy>2.0に配置し続ける
+        # - 低スコア群はmerge_rate=36.8%と高いが、rp=4-8のdeath spiral中で「遅すぎる」併合ばかり
+        # - 高スコア群はrp=0-2を維持。低rp=column_ceilingが予測可能に動作
+        #
+        # 問題: 現行のaxis 9.65/9.8はcolumn_ceiling_dominant(v598)に抑制され、merge drought時に機能しない。
+        # column_ceiling_bonus(800-1250)がheight penaltyを凌駕し、y=1.5-2.9の高配置を招く。
+        #
+        # ロジック:
+        # (1) merge_grade==NO && reactive_pair_count>=3 && max_y>=1.5 で発動
+        # (2) reactive_pairsとnear_pairsからtype<=5のペアを走査
+        # (3) 最も低typeのペアの重心(cx,cy)を計算
+        # (4) 各candidateの重心までの距離を計算
+        # (5) ボーナス = max(0, 600.0 - dist * 200.0) * merge_mult
+        #     dist=0で600, dist=1で400, dist=2で200, dist>=3で0
+        # (6) column_ceiling_dominant / axis_88_horizontal_suppression をバイパスして発動
+        # (7) death_spiral時は抑制（v610/v616 escalationが優先）
+        #
+        # ボーナス設計: 600*merge_multはcolumn_ceiling(800-1250)と競合するが支配しない。
+        # height penaltyと組み合わさり、低typeペアの重心に近い低y配置を選ぶ。
+        #
+        # 禁止: type>5のペアを対象にしない（目的はpiece count削減、最小の盤面コストで）
+        #       rp<3では発動しない（通常のmerge path creationを阻害）
+        #       column_ceiling_bonusを抑制しない（低typeペアがない時はcolumn_ceilingが必要）
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.15),
+        #       game_history/20260413_171737_score0618.jsonl T56-T67 (death cascade),
+        #       game_history/20260413_170829_score0942.jsonl T64-T70 (NO merge streak),
+        #       tmp/state/last_rollback_analysis.md (p25 collapse)
+        # Fixes rollback failure mode: "6-7 consecutive NO merge turns with 0 score_delta"
+        #   → low-type pair digestion within 1-2 turns, reducing pc by 1
+
+        if (
+            merge_grade == "NO"
+            and reactive_pair_count >= 3
+            and max_y >= 1.5
+            and not death_spiral
+        ):
+            # Scan reactive_pairs and near_pairs for low-type (type<=5) pairs
+            _low_type_pairs = []
+
+            # reactive_pairs: list of (id1, id2, type)
+            for rp_entry in reactive_pairs:
+                if isinstance(rp_entry, (list, tuple)) and len(rp_entry) >= 3:
+                    _rtype = rp_entry[2]
+                    if _rtype <= 5:
+                        # Find the actual pieces
+                        _p1 = next((p for p in pieces if p["id"] == rp_entry[0]), None)
+                        _p2 = next((p for p in pieces if p["id"] == rp_entry[1]), None)
+                        if _p1 and _p2:
+                            _cx = (_p1["x"] + _p2["x"]) / 2.0
+                            _cy = (_p1["y"] + _p2["y"]) / 2.0
+                            _low_type_pairs.append((_rtype, _cx, _cy))
+
+            # near_pairs: list of (id1, id2, type, gap)
+            for np_entry in near_pairs:
+                if isinstance(np_entry, (list, tuple)) and len(np_entry) >= 3:
+                    _rtype = np_entry[2]
+                    if _rtype <= 5:
+                        _p1 = next((p for p in pieces if p["id"] == np_entry[0]), None)
+                        _p2 = next((p for p in pieces if p["id"] == np_entry[1]), None)
+                        if _p1 and _p2:
+                            _cx = (_p1["x"] + _p2["x"]) / 2.0
+                            _cy = (_p1["y"] + _p2["y"]) / 2.0
+                            _low_type_pairs.append((_rtype, _cx, _cy))
+
+            if _low_type_pairs:
+                # Find the lowest-type pair (smallest type number)
+                _low_type_pairs.sort(key=lambda t: t[0])
+                _best_type, _best_cx, _best_cy = _low_type_pairs[0]
+
+                # Calculate Manhattan distance from candidate to centroid
+                _dist = abs(x - _best_cx) + abs(landing_y - _best_cy)
+
+                # Bonus: max 600 at dist=0, decreases by 200 per unit distance
+                # dist=0 → 600, dist=1 → 400, dist=2 → 200, dist>=3 → 0
+                _digest_bonus = max(0.0, 600.0 - _dist * 200.0) * merge_mult
+
+                if _digest_bonus > 20:
+                    score += _digest_bonus
+                    reasons.append("LOW_TYPE_DIGEST_PRIORITY")
+
         # ----- v598: column_ceiling_dominant flag — suppress competing horizontal guides -----
         # When merge_grade==NO && max_y>=1.0 && pc>=28, analysis shows edge scatter(x=±3.0)
         # persists because axis 9.65/9.8/9.6b compete with column_ceiling_bonus.
@@ -2835,14 +2930,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # piece radius (top_y_after_drop = landing_y + radius). A piece at landing_y=2.8 with
         # radius=0.5 has top_y_after_drop=3.3, crossing deadline — but axis 2 penalty at y=2.8
         # is only moderate (~250 in HIGH phase). The crosses_deadline field captures this gap.
-        # Penalty (-1200) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
+        # Penalty (-2500) is calibrated to override column ceiling bonus (~1250) and
+        # stacking/proximity bonuses (~200-900 at high pc), fully suppressing deadline-crossing
         # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires only at
         # merge_grade=NO and not russia_phase (Russia growth intentionally crosses deadline).
         # refs: analyze_board.py L412 (crosses_deadline computation),
         #       game_history/20260330_144015_score0665.jsonl T60-61,
         #       game_history/20260330_143501_score0994.jsonl T74-75
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            score -= 1200.0
+            score -= 2500.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
