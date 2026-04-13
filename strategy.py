@@ -68,6 +68,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v629: NEAR merge bonus conditional on current_type_has_reactive/near — prevent "fake NEAR" from other types' reactive pairs
+     # Axis 1, 1.5b, 8.7 now require current_type_has_reactive or current_type_has_near for full NEAR bonus.
+     # Without this, merge_grade=NEAR triggers bonus even when current next_type has no reactive pairs,
+     # misleading strategy into failed NEAR attempts (worst game T56-T66: reactive_pairs=6-7, next_type mismatch).
+     # Fixes rollback failure mode: "他タイプreactive pairsに基づくNEAR merge試行→失敗→max_y上昇" (analysis_result.md adopted hypothesis)
+     # refs: tmp/analysis_result.md (Implementation Plan: NEAR merge bonus conditional), tmp/batch_summary.txt,
+     #       game_history/20260414_014527_score0658.jsonl (worst game T56-T66), strategy.py.staging
      # v625: column_ceiling_scale — dynamic scaling of column_ceiling_bonus by merge drought intensity
      # Replaces rp2_noise_reduction. Scaling: rp==0→1.0, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
      # Ensures height penalty wins over column_ceiling_bonus during merge drought (rp>=3: 320<364).
@@ -1169,8 +1176,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1200.0 * merge_mult * type_scale
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult * type_scale
-            reasons.append("NEAR_MERGE")
+            # v629: NEAR merge bonus requires current_type_has_reactive or current_type_has_near
+            # Prevents "fake NEAR" bonuses from other types' reactive pairs (analysis_result.md)
+            # Worst game T56-T66: reactive_pairs=6-7 but next_type mismatch → NEAR bonus wasted
+            if current_type_has_reactive:
+                score += 600.0 * merge_mult * type_scale
+                reasons.append("NEAR_MERGE")
+            elif current_type_has_near:
+                # Near pairs only (not reactive) — half bonus for lower certainty
+                score += 300.0 * merge_mult * type_scale
+                reasons.append("NEAR_MERGE_NEAR_ONLY")
+            else:
+                # merge_grade=NEAR but current type has no reactive/near pairs — bonus invalid
+                # Prevents strategy from being misled by other types' reactive pairs
+                reasons.append("NEAR_MERGE_NO_REACTIVE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult * type_scale
             reasons.append("FAR_MERGE")
@@ -1310,18 +1329,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_081450_score0774.jsonl, game_history/20260329_080000_score3902.jsonl,
         #       game_history/20260329_080456_score2801.jsonl, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
         if result.get("danger_merge_available", False) and merge_grade == "NEAR":
-            # v421: suppress DANGER_NEAR bonus at high pc + high landing_y + deadline
-            # Postmortem: "landing_y >= 1.5 かつ deadline_crossed 時の NEAR merge は
-            # DANGER_NEAR_MERGE_PRIORITY を無効化するか NEAR_DEADLINE_RISK を増強すること"
-            # At pc>=33, deadline, landing_y>=1.5: danger NEAR at high y adds piece if fails
-            # (31.5% rate) with no benefit. Suppress bonus to let enhanced risk penalty work.
-            if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
+            # v629: danger NEAR bonus also requires current_type_has_reactive or current_type_has_near
+            # Same logic as axis 1 — prevents invalid NEAR bonuses from other types' reactive pairs
+            if not (current_type_has_reactive or current_type_has_near):
                 bonus = 0.0
             else:
-                # v596: apply type_scale to prioritize high-type danger merges
-                bonus = (600.0 if deadline_crossed else 300.0) * type_scale
+                # v421: suppress DANGER_NEAR bonus at high pc + high landing_y + deadline
+                # Postmortem: "landing_y >= 1.5 かつ deadline_crossed 時の NEAR merge は
+                # DANGER_NEAR_MERGE_PRIORITY を無効化するか NEAR_DEADLINE_RISK を増強すること"
+                # At pc>=33, deadline, landing_y>=1.5: danger NEAR at high y adds piece if fails
+                # (31.5% rate) with no benefit. Suppress bonus to let enhanced risk penalty work.
+                if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
+                    bonus = 0.0
+                else:
+                    # v596: apply type_scale to prioritize high-type danger merges
+                    bonus = (600.0 if deadline_crossed else 300.0) * type_scale
             score += bonus
-            reasons.append("DANGER_NEAR_MERGE_PRIORITY")
+            if bonus > 0:
+                reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
@@ -2509,14 +2534,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
              if double_russia_phase:
                  # 2つのロシアが盤面にある — ソ連建国目前
                  # 盤面が最も狭く、高typeピースが場所を占有している状態
-                 if merge_grade in ["DIRECT", "NEAR"]:
-                     # 即時併合は常に最優先 — 盤面確保のため
-                     # v596: apply type_scale to prioritize high-type merges
-                     if merge_grade == "DIRECT":
-                         score += 1600.0 * type_scale
-                     else:
-                         score += 1400.0 * type_scale
+                 if merge_grade == "DIRECT":
+                     # DIRECT merge — always valid
+                     score += 1600.0 * type_scale
                      reasons.append("DOUBLE_RUSSIA_IMMEDIATE_MERGE")
+                 elif merge_grade == "NEAR":
+                     # v629: NEAR merge requires current_type_has_reactive or current_type_has_near
+                     if current_type_has_reactive or current_type_has_near:
+                         score += 1400.0 * type_scale
+                         reasons.append("DOUBLE_RUSSIA_IMMEDIATE_MERGE")
+                     else:
+                         # NEAR merge but no reactive/near pairs — weaker bonus
+                         score += 700.0 * type_scale
+                         reasons.append("DOUBLE_RUSSIA_NEAR_MERGE_WEAK")
                  elif merge_grade == "NO":
                      # 併合不可時は、盤面圧縮よりtype 15保護と低配置を優先
                      # ボーナスを抑制し、height penaltyが効くようにする
@@ -2527,18 +2557,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  # ロシアフェーズでの即時併合優先
                  # 即時併合候補がある場合、最優先（強力なボーナス）
                  # v596: apply type_scale to prioritize high-type merges
-                 if reactive_pair_count >= 1:
-                     # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
-                     if merge_grade == "DIRECT":
+                 # v629: NEAR merge bonus requires current_type_has_reactive or current_type_has_near
+                 #   Prevents invalid NEAR bonuses from other types' reactive pairs in Russia phase
+                 if merge_grade == "DIRECT":
+                     # DIRECT merge — always valid, geometric certainty
+                     if reactive_pair_count >= 1:
                          score += (1400.0 if reactive_pair_count >= 3 else 1200.0) * type_scale
                      else:
-                         score += (1200.0 if reactive_pair_count >= 3 else 1000.0) * type_scale
-                 else:
-                     # v333 baseline: reactive_pairs>=3 の場合、より強力なボーナス
-                     if merge_grade == "DIRECT":
                          score += 1400.0 * type_scale
+                 elif current_type_has_reactive or current_type_has_near:
+                     # NEAR merge with current type reactive/near pairs — valid bonus
+                     if reactive_pair_count >= 1:
+                         score += (1200.0 if reactive_pair_count >= 3 else 1000.0) * type_scale
                      else:
                          score += 1200.0 * type_scale
+                 else:
+                     # NEAR merge but current type has no reactive/near pairs — reduce to near-only level
+                     # Still provides some bonus but much weaker to prevent misleading guidance
+                     score += 600.0 * type_scale
                  reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
              elif merge_grade == "NO":
                  # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
