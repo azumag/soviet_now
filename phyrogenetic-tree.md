@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-13 11:25:06 JST`
-- Nodes: `1046`
-- Edges: `1431`
-- Current: `e3215795865e`
-- Anchor: `cfb684533fdb`
+- Updated: `2026-04-13 12:24:38 JST`
+- Nodes: `1047`
+- Edges: `1432`
+- Current: `3f85249e1f78`
+- Anchor: `e3215795865e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_14ec196ff64b["14ec196ff64b<br/>g=22 n=20<br/>comp=10538.7"]
     h_c09432476df6["c09432476df6<br/>g=25 n=20<br/>comp=11073.1"]
     h_c0081fb921c8["c0081fb921c8<br/>g=24 n=20<br/>comp=10853.1"]
     h_eb4bb8e05f86["eb4bb8e05f86<br/>g=74 n=20<br/>comp=11705.8"]
@@ -71,10 +70,11 @@ flowchart TD
     h_ea95bdde7a27["ea95bdde7a27<br/>g=24 n=20<br/>comp=12084.0"]
     h_c016461aeb9c["c016461aeb9c<br/>g=12 n=12<br/>comp=9311.2"]
     h_4fe3a8221f0d["4fe3a8221f0d<br/>g=12 n=12<br/>comp=12100.2"]
-    h_cfb684533fdb["cfb684533fdb<br/>ANCHOR<br/>g=12 n=12<br/>comp=12517.7"]
+    h_cfb684533fdb["cfb684533fdb<br/>g=12 n=12<br/>comp=12517.7"]
+    h_e3215795865e["e3215795865e<br/>ANCHOR<br/>g=12 n=12<br/>comp=12836.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_e3215795865e["e3215795865e<br/>CURRENT"]
+    h_3f85249e1f78["3f85249e1f78<br/>CURRENT"]
 
     h_c09432476df6 -->|improve| h_c0081fb921c8
     h_eb4bb8e05f86 -->|improve| h_2e9780eb6d5b
@@ -137,13 +137,13 @@ flowchart TD
     h_ea95bdde7a27 -->|improve| h_4fe3a8221f0d
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
+    h_e3215795865e -->|improve| h_3f85249e1f78
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_14ec196ff64b plain;
     class h_c09432476df6 plain;
     class h_c0081fb921c8 plain;
     class h_eb4bb8e05f86 plain;
@@ -199,10 +199,11 @@ flowchart TD
     class h_ea95bdde7a27 plain;
     class h_c016461aeb9c plain;
     class h_4fe3a8221f0d plain;
-    class h_cfb684533fdb anchor;
+    class h_cfb684533fdb plain;
+    class h_e3215795865e anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_e3215795865e current;
+    class h_3f85249e1f78 current;
 ```
 
 ## Detail 1/14
@@ -3903,9 +3904,9 @@ flowchart TD
 
 ## Detail 14/14
 
-- Range: `c016461aeb9c` .. `e3215795865e`
-- Nodes in this diagram: `6`
-- Internal edges in this diagram: `2`
+- Range: `c016461aeb9c` .. `3f85249e1f78`
+- Nodes in this diagram: `7`
+- Internal edges in this diagram: `3`
 - Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
@@ -3917,13 +3918,15 @@ flowchart TD
 flowchart TD
     h_c016461aeb9c["c016461aeb9c<br/>g=12 n=12<br/>comp=9311.2"]
     h_4fe3a8221f0d["4fe3a8221f0d<br/>g=12 n=12<br/>comp=12100.2"]
-    h_cfb684533fdb["cfb684533fdb<br/>ANCHOR<br/>g=12 n=12<br/>comp=12517.7"]
+    h_cfb684533fdb["cfb684533fdb<br/>g=12 n=12<br/>comp=12517.7"]
+    h_e3215795865e["e3215795865e<br/>ANCHOR<br/>g=12 n=12<br/>comp=12836.0"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_e3215795865e["e3215795865e<br/>CURRENT"]
+    h_3f85249e1f78["3f85249e1f78<br/>CURRENT"]
 
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
+    h_e3215795865e -->|improve| h_3f85249e1f78
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3932,13 +3935,24 @@ flowchart TD
 
     class h_c016461aeb9c plain;
     class h_4fe3a8221f0d plain;
-    class h_cfb684533fdb anchor;
+    class h_cfb684533fdb plain;
+    class h_e3215795865e anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_e3215795865e current;
+    class h_3f85249e1f78 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#15209 `e3215795 -> 3f85249e`
+
+- scores: `15916 15655 16207 13203 12239 22583 12759 18148 10885 8282 8113 13661`
+- 9.13. Russia-phase low-type cap prevention - v619: russia_phase時、低typeピースが高typeを蓋する抑制
+- v619: axis 9.10 russia_phase bonus boost + axis 9.13 russia_phase low-type cap guard
+- (1) axis 9.10: base_bonus 150→250 when russia_phase && merge_grade==NO && max_y>=1.0.
+- Strengthens high-type growth pipeline guidance during Russia phase.
+- (2) axis 9.13: -200*merge_mult penalty if next_type<=5 and candidate y > nearest high-type y.
+- Prevents low-type pieces from capping high-type growth paths (advice.md: zoumotu3).
 
 ### Improve Game#15197 `cfb68453 -> e3215795`
 

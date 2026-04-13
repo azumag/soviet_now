@@ -45,6 +45,7 @@ Game Overview:
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.65. Reactive near-miss type clustering - v597: merge_grade=NO時の散逸type集約
              9.10. High-type growth pipeline guidance - v609: NO merge時、type 8-12ピース重心誘導
+             9.13. Russia-phase low-type cap prevention - v619: russia_phase時、低typeピースが高typeを蓋する抑制
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
@@ -68,6 +69,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v619: axis 9.10 russia_phase bonus boost + axis 9.13 russia_phase low-type cap guard
+     # (1) axis 9.10: base_bonus 150→250 when russia_phase && merge_grade==NO && max_y>=1.0.
+     #     Strengthens high-type growth pipeline guidance during Russia phase.
+     # (2) axis 9.13: -200*merge_mult penalty if next_type<=5 and candidate y > nearest high-type y.
+     #     Prevents low-type pieces from capping high-type growth paths (advice.md: zoumotu3).
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 russia_phase bonus, axis 9.13),
+     #       advice.md (zoumotu3: 大きい国の下にスペース確保)
+     # Fixes rollback failure mode: "ロシア建国後の高typeピース成長促進の欠如 — 低typeピースが高typeを蓋して併合パス阻害"
      # v618: height penalty Tier 1.75 — rp==2 NO merge early height escalation (base=100)
      # Catches the blind spot between v614(rp==1, base=90) and v612(rp>=2/max_y>=1.5, base=120).
      # At rp==2 NO merge, base=75 height penalty (~202pt) loses to column_ceiling_bonus (~800-1250).
@@ -1709,17 +1718,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #
         # ロジック:
         # (1) merge_grade==NO && max_y>=1.0 && piece_count>=20 で発動
-        # (2) 盤面のtype 8-12ピースを収集（Soviet type>=16除外, russia_phase時はaxis 9.9が担当）
+        # (2) 盤面のtype 8-12ピースを収集（Soviet type>=16除外）
         # (3) type 8-12ピースの重心(cx, cy)を計算
         # (4) 各candidateの(x, landing_y)から重心までの距離を計算
-        # (5) ボーナス = max(0, 150.0 - dist * 50.0) * merge_mult
-        #     dist=0で150, dist=1で100, dist=2で50, dist>=3で0
+        # (5) ボーナス = max(0, base_bonus - dist * 50.0) * merge_mult
+        #     base_bonus: 250 (russia_phase時), 150 (通常)
+        #     russia_phase時は盤面が狭く高typeピースの位置が重要なため、bonusを強化
         # (6) death_spiral, column_ceiling_dominant, axis_88_horizontal_suppression時は抑制
-        # (7) russia_phase時は抑制（axis 9.9が既にロシアパイプラインを誘導）
         #
-        # ボーナス設計: 150*merge_multはheight penalty(50-100*height_mult)より小さく、
-        # column_ceiling_bonus(800-1250)より十分に小さい。配置を決定づける力ではなく、
-        # 同条件時のtie-breakerとして機能する。
+        # ボーナス設計: 250*merge_mult(russia_phase)はcolumn_ceiling_bonus(800-1250)の20-30%。
+        # tie-breakerを超えた誘導力を持つが、height penaltyやmerge bonusをoverrideしない。
+        # 150*merge_mult(通常)は従来通りtie-breakerレベル。
         #
         # 禁止: type<=7, type>=13を対象に含めること。低typeは盤面圧縮の役に立たない。
         #       type 13+は既に高価値ピースであり、誘導ではなく保護が優先。
@@ -1733,7 +1742,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             merge_grade == "NO"
             and max_y >= 1.0
             and piece_count >= 20
-            and not russia_phase
             and not death_spiral
             and not column_ceiling_dominant
             and not axis_88_horizontal_suppression
@@ -1753,9 +1761,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Calculate distance from candidate to centroid
                 dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
 
-                # Bonus: max 150 at dist=0, decreases by 50 per unit distance
-                # dist=0 → 150, dist=1 → 100, dist=2 → 50, dist>=3 → 0
-                pipeline_bonus = max(0.0, 150.0 - dist * 50.0) * merge_mult
+                # v619: russia_phase時はbase_bonusを250に強化（通常150）
+                # ロシア建国後は盤面が狭く、高typeピースの位置が重要。
+                # 250にすることでcolumn_ceiling_bonus(800-1250)の20-30%レベルになり、
+                # tie-breakerを超えた誘導力を持つ。
+                base_bonus = 250.0 if russia_phase else 150.0
+                pipeline_bonus = max(0.0, base_bonus - dist * 50.0) * merge_mult
 
                 if pipeline_bonus > 20:  # Only apply if meaningful
                     score += pipeline_bonus
@@ -3034,6 +3045,66 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += cluster_bonus
                         if "HIGH_TYPE_CLUSTER" not in "_".join(reasons):
                             reasons.append("HIGH_TYPE_CLUSTER")
+
+        # ----- evaluation axis 9.13: russia_phase low-type cap prevention (NEW v619) -----
+        # analysis_result.md adopted hypothesis: ロシア建国後フェーズで、低typeピース(type<=5)が
+        # 高typeピース(type>=10)の上に置かれると、高typeピースの成長パスが塞がれる。
+        #
+        # 根拠:
+        # - advice.md: 「大きい国の下にスペースを先確保してから小さい国を入れる配置順序」(zoumotu3)
+        # - ベストゲーム T99-T149: ロシア建国後49ターン生存。高typeピースを盤面に残しつつ成長。
+        # - バッチ統計: type 15到達(7/12)は高スコア、type 12-13停滞(5/12)は低スコア。
+        # - 建国ボーナス: type 15=12096点, type 14=5760点。高typeピースを盤面に残すことが重要。
+        #
+        # ロジック:
+        # (1) russia_phase && merge_grade==NO && max_y>=1.0 の局面で発動
+        # (2) next_type <= 5 のピースの場合のみ適用（低typeピースのみ）
+        # (3) 盤面のtype>=10ピースの中で、候補xに最も近い高typeピースを探す（水平距離1.5u以内）
+        # (4) candidateのlanding_yがその高typeピースのyより大きい（上）場合、penalty適用
+        # (5) penalty = -200.0 * merge_mult
+        #
+        # ガード条件:
+        # - russia_phase == true
+        # - merge_grade == "NO"
+        # - max_y >= 1.0
+        # - next_type <= 5
+        # - death_spiralではない（death_spiralでは高さ管理のみ優先）
+        #
+        # penalty設計: -200*merge_multはheight penaltyと同等レベル。
+        # 低typeピースが高typeピースの上に載る明確な配置を抑制するが、
+        # merge bonusやcolumn_ceiling_bonusをoverrideしない。
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.13),
+        #       advice.md (zoumotu3: 大きい国の下にスペース確保),
+        #       game_history/20260413_115126_score3662.jsonl (ベストゲーム: ロシア建国後49ターン)
+        # Fixes rollback failure mode: "ロシア建国後の高typeピース成長促進の欠如 —
+        #   低typeピースが高typeを蓋して併合パス阻害"
+        if (
+            russia_phase
+            and merge_grade == "NO"
+            and max_y >= 1.0
+            and next_type <= 5
+            and not death_spiral
+        ):
+            # Find nearest high-type piece (type>=10) within horizontal range
+            high_type_nearby = None
+            min_h_dist = float("inf")
+            for p in pieces:
+                p_type = p.get("type", 0)
+                if p_type >= 10:
+                    h_dist = abs(x - p.get("x", 0))
+                    if h_dist < 1.5 and h_dist < min_h_dist:
+                        min_h_dist = h_dist
+                        high_type_nearby = p
+
+            if high_type_nearby is not None:
+                high_type_y = high_type_nearby.get("y", -10)
+                # If candidate lands above the high-type piece, apply penalty
+                if landing_y > high_type_y:
+                    cap_penalty = -200.0 * merge_mult
+                    score += cap_penalty
+                    if "LOW_TYPE_CAP_PREVENTION" not in "_".join(reasons):
+                        reasons.append("LOW_TYPE_CAP_PREVENTION")
 
         # ----- update best candidate -----
         if score > best_score:
