@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-13 23:56:38 JST`
-- Nodes: `1056`
-- Edges: `1446`
-- Current: `634d0b4d44d1`
+- Updated: `2026-04-14 00:50:49 JST`
+- Nodes: `1057`
+- Edges: `1447`
+- Current: `c5151fa8423c`
 - Anchor: `634d0b4d44d1`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_5d2c56483b91["5d2c56483b91<br/>g=12 n=12<br/>comp=11303.9"]
     h_fde270efc768["fde270efc768<br/>g=12 n=12<br/>comp=9755.7"]
     h_3e054a962eda["3e054a962eda<br/>g=12 n=12<br/>comp=11015.7"]
     h_66b8976a784c["66b8976a784c<br/>g=25 n=20<br/>comp=11843.6"]
@@ -69,14 +68,14 @@ flowchart TD
     h_71413461e56e["71413461e56e<br/>g=12 n=12<br/>comp=9939.6"]
     h_7a9bba424462["7a9bba424462<br/>g=12 n=12<br/>comp=11632.7"]
     h_0ffb1e00fba1["0ffb1e00fba1<br/>g=12 n=12<br/>comp=8755.9"]
-    h_634d0b4d44d1["634d0b4d44d1<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=13256.8"]
+    h_634d0b4d44d1["634d0b4d44d1<br/>ANCHOR<br/>g=24 n=20<br/>comp=13203.7"]
     h_4a56ffd588bd["4a56ffd588bd<br/>g=12 n=12<br/>comp=12013.8"]
     h_05851eb12718["05851eb12718<br/>g=12 n=12<br/>comp=10296.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
+    h_c5151fa8423c["c5151fa8423c<br/>CURRENT"]
 
-    h_5d2c56483b91 -->|improve| h_fde270efc768
     h_3e054a962eda -->|improve| h_66b8976a784c
     h_66b8976a784c -->|improve| h_78ad861401ee
     h_f599d83e5e62 -->|improve| h_919c76d38172
@@ -135,17 +134,17 @@ flowchart TD
     h_e3215795865e -->|improve| h_634d0b4d44d1
     h_634d0b4d44d1 -->|improve| h_4a56ffd588bd
     h_4a56ffd588bd -->|improve| h_05851eb12718
+    h_05851eb12718 -. rollback .-> h_634d0b4d44d1
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
-    h_05851eb12718 -. rollback .-> h_634d0b4d44d1
+    h_634d0b4d44d1 -->|improve| h_c5151fa8423c
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_5d2c56483b91 plain;
     class h_fde270efc768 plain;
     class h_3e054a962eda plain;
     class h_66b8976a784c plain;
@@ -199,12 +198,13 @@ flowchart TD
     class h_71413461e56e plain;
     class h_7a9bba424462 plain;
     class h_0ffb1e00fba1 plain;
-    class h_634d0b4d44d1 current_anchor;
+    class h_634d0b4d44d1 anchor;
     class h_4a56ffd588bd plain;
     class h_05851eb12718 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
+    class h_c5151fa8423c current;
 ```
 
 ## Detail 1/14
@@ -3905,9 +3905,9 @@ flowchart TD
 
 ## Detail 14/14
 
-- Range: `c016461aeb9c` .. `355868eaf8ab`
-- Nodes in this diagram: `16`
-- Internal edges in this diagram: `17`
+- Range: `c016461aeb9c` .. `c5151fa8423c`
+- Nodes in this diagram: `17`
+- Internal edges in this diagram: `18`
 - Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
@@ -3927,12 +3927,13 @@ flowchart TD
     h_71413461e56e["71413461e56e<br/>g=12 n=12<br/>comp=9939.6"]
     h_7a9bba424462["7a9bba424462<br/>g=12 n=12<br/>comp=11632.7"]
     h_0ffb1e00fba1["0ffb1e00fba1<br/>g=12 n=12<br/>comp=8755.9"]
-    h_634d0b4d44d1["634d0b4d44d1<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=13256.8"]
+    h_634d0b4d44d1["634d0b4d44d1<br/>ANCHOR<br/>g=24 n=20<br/>comp=13203.7"]
     h_4a56ffd588bd["4a56ffd588bd<br/>g=12 n=12<br/>comp=12013.8"]
     h_05851eb12718["05851eb12718<br/>g=12 n=12<br/>comp=10296.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
+    h_c5151fa8423c["c5151fa8423c<br/>CURRENT"]
 
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
@@ -3947,10 +3948,11 @@ flowchart TD
     h_e3215795865e -->|improve| h_634d0b4d44d1
     h_634d0b4d44d1 -->|improve| h_4a56ffd588bd
     h_4a56ffd588bd -->|improve| h_05851eb12718
+    h_05851eb12718 -. rollback .-> h_634d0b4d44d1
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
-    h_05851eb12718 -. rollback .-> h_634d0b4d44d1
+    h_634d0b4d44d1 -->|improve| h_c5151fa8423c
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3967,15 +3969,26 @@ flowchart TD
     class h_71413461e56e plain;
     class h_7a9bba424462 plain;
     class h_0ffb1e00fba1 plain;
-    class h_634d0b4d44d1 current_anchor;
+    class h_634d0b4d44d1 anchor;
     class h_4a56ffd588bd plain;
     class h_05851eb12718 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
+    class h_c5151fa8423c current;
 ```
 
 ## Transition Notes
+
+### Improve Game#15379 `634d0b4d -> c5151fa8`
+
+- scores: `15320 12286 11413 10899 13233 12107 8391 16824 14936 14755 12976 14244`
+- v628: axis 9.13 merge drought low-type digest priority — no_merge_streak>=4 forces guidance to low-type (type<=6) centroid
+- When merge drought persists (no_merge_streak>=4), switch from high-type guidance to low-type digestion.
+- Bonus: max(0, 400-dist*200)*merge_mult within low-type centroid. Suppresses axis 9.10 when active.
+- Bypasses column_ceiling_dominant and axis_88_horizontal_suppression suppression.
+- Fixes rollback failure mode: "merge drought時に高type誘導が機能せず、低y配置の強制力が不足し、max_y runaway"
+- and no_merge_streak < 4 # suppressed when low-type digest mode (axis 9.13) active
 
 ### Rollback Game#15367 `05851eb1 -> 634d0b4d`
 

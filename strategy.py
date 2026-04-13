@@ -68,6 +68,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v628: axis 9.13 merge drought low-type digest priority — no_merge_streak>=4 forces guidance to low-type (type<=6) centroid
+     # When merge drought persists (no_merge_streak>=4), switch from high-type guidance to low-type digestion.
+     # Bonus: max(0, 400-dist*200)*merge_mult within low-type centroid. Suppresses axis 9.10 when active.
+     # Bypasses column_ceiling_dominant and axis_88_horizontal_suppression suppression.
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history worst/best games
+     # Fixes rollback failure mode: "merge drought時に高type誘導が機能せず、低y配置の強制力が不足し、max_y runaway"
      # v625: column_ceiling_scale — dynamic scaling of column_ceiling_bonus by merge drought intensity
      # Replaces rp2_noise_reduction. Scaling: rp==0→1.0, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
      # Ensures height penalty wins over column_ceiling_bonus during merge drought (rp>=3: 320<364).
@@ -1743,6 +1749,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             merge_grade == "NO"
             and max_y >= 1.0
             and piece_count >= 20
+            and no_merge_streak < 4  # suppressed when low-type digest mode (axis 9.13) active
             and not russia_phase
             and not death_spiral
             and not column_ceiling_dominant
@@ -1940,6 +1947,81 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if pair_bonus > 20:
                             score += pair_bonus
                             reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
+
+        # ----- evaluation axis 9.13: Merge drought low-type digest priority (NEW v628) -----
+        # analysis_result.md adopted hypothesis: "merge drought exit trigger — no_merge_streak
+        # カウントに基づく低type消化強制モード"
+        #
+        # 問題の核心:
+        # 現行戦略はmerge drought時に高typeピース(type 10+)への誘導(axis 9.10/9.12)を行うが、
+        # 盤面に高typeピースが十分にない場合、または中層(y > -1.0)に散在している場合に有効な
+        # 誘導先が存在しない。worst game T70-T76ではtype 10+ピースが5個存在したが、それらは
+        # 中層(y=-1.7〜1.29)に散在しており、誘導しても高配置になる。
+        #
+        # データ:
+        # - worst game T70-T76: 7ターン中merge成功はT69の1回のみ。実質6連続NO merge
+        # - extra-low game T71-T78: 8ターン中merge成功はT73の1回のみ(delta=244)
+        # - extra-high game T87-T94: 8連続NO merge。max_y 2.54→3.79 (runaway!)
+        # - batch_summary: HEIGHT_CONTROLのavg_score_delta=1.4。NEAR_MERGE系=20-46
+        #
+        # ロジック:
+        # (1) no_merge_streak >= 4 && merge_grade == "NO" && max_y >= 1.5 && !death_spiral で発動
+        # (2) 盤面の低type(type <= 6)ピースを収集（3つ以上必要）
+        # (3) 低typeピースの重心(cx, cy)を計算
+        # (4) 各candidateの(x, landing_y)から重心までの距離を計算
+        # (5) ボーナス = max(0, 400 - dist*200) * merge_mult（距離減衰、1.5u以内で効果的）
+        #     dist=0 → 400, dist=0.5 → 300, dist=1.0 → 200, dist=1.5 → 100, dist>=2.0 → 0
+        # (6) column_ceiling_dominantとaxis_88_horizontal_suppressionの抑制を**迂回**して発動
+        #     — 低type消化はmerge drought脱出のために水平誘導抑制より優先される
+        # (7) axis 9.10(高typeパイプライン)はno_merge_streak>=4で抑制される（上記guard参照）
+        #
+        # 理由:
+        # 1. 低typeピースは数が多く(通常15-25個)、必ず誘導先が存在する
+        # 2. 低typeを併合してtype 7-8に成長させることは、次の高typeへのパイプラインになる
+        # 3. 低typeを消化することでpc増加を抑制し、death spiral進入を遅らせる
+        # 4. advice.md「小さいピースは盤面を圧迫しないし、併合することで大きくなって盤面が苦しくなる」
+        #    — これは「小さいピースの併合タイミングを誤るな」という意味
+        # 5. 高スコア群はmerge drought中でも「次に併合可能なピース」を盤面上に作り続けている
+        #
+        # ボーナス設計: 400*merge_multはaxis 9.10(150)より大きく、column_ceiling_bonus(800-1250)
+        # と競合するレベル。merge drought脱出のために垂直方向（低y配置）の強制力を確保。
+        #
+        # 禁止: 低typeのthresholdをtype<=5以下に下げない（ピース数が不足し誘導先が不安定）
+        #       no_merge_streak閾値を3以下に下げない（通常のNO mergeターンまで誤誘導）
+        #       death_spiral時に発動しない（v610/v616のheight escalationと競合）
+        #       merge_gradeがNOでない時に発動しない（既存のmerge bonusが優先）
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.13),
+        #       game_history/20260414_002146_score1008.jsonl (worst: T70-T76, 5連続0 score_delta),
+        #       game_history/20260414_001847_score2266.jsonl (best: DIRECT mergeを2回捉えた)
+        # Fixes rollback failure mode: "merge drought時に高type誘導が機能せず、低y配置の強制力が不足し、
+        #   max_y runawayでゲームオーバー" (analysis_result.md adopted hypothesis)
+        if (
+            no_merge_streak >= 4
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and not death_spiral
+        ):
+            # Collect low-type pieces (type <= 6) — always abundant (15-25 on board)
+            low_type_pieces = []
+            for p in pieces:
+                t = p.get("type", 0)
+                if 1 <= t <= 6:
+                    low_type_pieces.append((p["x"], p["y"]))
+
+            if len(low_type_pieces) >= 3:  # Need at least 3 for meaningful centroid
+                centroid_x = sum(p[0] for p in low_type_pieces) / len(low_type_pieces)
+                centroid_y = sum(p[1] for p in low_type_pieces) / len(low_type_pieces)
+
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+
+                # Bonus: max 400 at dist=0, decreases by 200 per unit distance
+                # dist=0 → 400, dist=0.5 → 300, dist=1.0 → 200, dist=1.5 → 100, dist>=2.0 → 0
+                low_type_bonus = max(0.0, 400.0 - dist * 200.0) * merge_mult
+
+                if low_type_bonus > 30:
+                    score += low_type_bonus
+                    reasons.append("LOW_TYPE_DIGEST_PRIORITY")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
