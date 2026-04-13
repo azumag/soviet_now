@@ -68,6 +68,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v630: non-reactive-type column_ceiling suppression during merge drought
+     # When rp>=3 && merge_grade==NO && current_type has no reactive/near pair &&
+     # same_type_pieces>=2 && pc>=20, set ceiling_bonus=0 so axis 9.6b/9.8
+     # same_type proximity guides placement instead of scattering between other-type reactive pairs.
+     # Fixes rollback failure mode: "column_ceilingがnon-reactive typeを他typeのreactive pair間に
+     #   散らし、future merge pathをblockする" (analysis_result.md adopted hypothesis)
+     # refs: tmp/analysis_result.md, game_history/20260414_042658_score0714.jsonl T35-T38
      # v617: axis 9.12 merge drought exit trigger — no_merge_streak + merge path creation
      # When no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30, add bonus for
      # placing current piece adjacent to type 10+ pieces (+500*merge_mult within 1.5u,
@@ -1545,6 +1552,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             merge_grade == "NO" and max_y >= 1.0 and piece_count >= 28
         )
 
+        # v630: non-reactive-type column_ceiling suppression during merge drought
+        # When rp>=3, merge_grade==NO, current type has no reactive/near pair on board,
+        # and same_type_pieces>=2 exist, column_ceiling scatters non-reactive pieces between
+        # reactive pairs of other types, blocking future merge paths. Suppress entirely
+        # so axis 9.6b/9.8 same_type proximity guides placement instead.
+        non_reactive_type_column_ceiling_suppress = (
+            reactive_pair_count >= 3
+            and merge_grade == "NO"
+            and not current_type_has_reactive
+            and not current_type_has_near
+            and len(same_type_pieces) >= 2
+            and piece_count >= 20
+        )
+
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
         # advice.md "TypeN+1と隣接している方を優先してドロップする" (azumag, nimdavirus).
@@ -2725,6 +2746,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult
                 if rp2_noise_reduction:
                     ceiling_bonus *= 0.5
+                if non_reactive_type_column_ceiling_suppress:
+                    ceiling_bonus = 0.0
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
