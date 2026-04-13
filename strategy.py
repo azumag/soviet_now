@@ -68,6 +68,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v624: axis 9.10 lowest high-type anchor mode — guide placement to lowest type 10+ piece
+     # When merge_grade==NO && max_y>=1.0 && pc>=20, find lowest type 10+ piece as "anchor".
+     # Bonus = max(0, 300 - dist*150)*merge_mult within 1.5u of anchor.
+     # Both anchor and existing centroid modes computed; larger bonus applied.
+     # Fixes rollback failure mode: "高typeピースが散在してmerge pathが構築されない"
+     # refs: tmp/analysis_result.md (Implementation Plan: lowest high-type anchor mode),
+     #       game_history/20260413_190543_score2894.jsonl, game_history/20260413_191120_score1016.jsonl, advice.md
      # v623: axis 8.8d rp=1 merge drought column_ceiling prioritization — suppress competing horizontal guides
      # When rp=1 && NO merge && max_y>=1.5 && pc>=25, suppress axis 9.6b and 9.8 to let column_ceiling dominate.
      # Fixes rollback failure mode: "rp=1 merge drought時の水平誘導分散 — column_ceilingがaxis 9.6b/9.8と競合し端配置"
@@ -1804,39 +1811,45 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += _total_cluster_bonus
                         reasons.append("NEAR_MISS_CLUSTERING")
 
-        # ----- evaluation axis 9.10: High-type growth pipeline guidance (NEW) -----
+        # ----- evaluation axis 9.10: High-type growth pipeline guidance (v609 + v624 anchor mode) -----
         # analysis_result.md adopted hypothesis: merge drought時、高type(type 8-12)ピースの
         # 成長パイプラインを誘導する配置ボーナス。type_scale(v596)は併合ボーナスにのみ適用されるため、
         # NO merge時の配置誘導が欠落している。
         #
+        # v624 improvement: "lowest high-type anchor mode" — 複数の高typeピースが散在している場合、
+        # 最も低い位置のtype 10+ピースをanchorに選び、その周囲に集約する。
+        # 既存のcentroid mode(全type 8-12の重心)と両方計算し、大きい方を適用。
+        #
         # 根拠:
-        # - ベストゲーム(score2918): 盤面にtype 14×1, 13×1, 12×2, 11×2, 10×4 → 高スコア
-        # - ワーストゲーム(score0829): 盤面にtype 13×1, 12×2, 11×2, 10×4 → 高typeが1つ少ない
-        # - batch: 高スコア群merge_rate=36.7% vs 低スコア群=32.8%。高スコアは高type併合で成長
-        # - advice.md: 「大きい国の下にスペース確保」(zoumotu3)
+        # - ベストゲーム(score2894): type14 at y=-2.35 (deep bottom)がanchor機能し、以降のピースが
+        #   y=2.0以下に収まり続け130ターン生存。ワーストゲーム: type12がy=-0.51/y=-0.19と高い位置。
+        # - advice.md (zoumotu3): 「大きい国の下にスペース確保してから小さい国を入れる」
+        # - 現状の問題点: axis 9.10はtype 8-12の全重心に誘導するため、type8(y=2.0)とtype12(y=-1.0)
+        #   が混在すると重心はy=0.5程度になり、type12の成長パスを活かせない。
         #
-        # ロジック:
-        # (1) merge_grade==NO && max_y>=1.0 && piece_count>=20 で発動
-        # (2) 盤面のtype 8-12ピースを収集（Soviet type>=16除外, russia_phase時はaxis 9.9が担当）
-        # (3) type 8-12ピースの重心(cx, cy)を計算
-        # (4) 各candidateの(x, landing_y)から重心までの距離を計算
-        # (5) ボーナス = max(0, 150.0 - dist * 50.0) * merge_mult
-        #     dist=0で150, dist=1で100, dist=2で50, dist>=3で0
-        # (6) death_spiral, column_ceiling_dominant, axis_88_horizontal_suppression時は抑制
-        # (7) russia_phase時は抑制（axis 9.9が既にロシアパイプラインを誘導）
+        # Mode A (NEW v624): Lowest high-type anchor
+        #   (1) merge_grade==NO && max_y>=1.0 && pc>=20 で発動
+        #   (2) 盤面のtype 10+ピースから最もyが低いものをanchorに選定
+        #   (3) ボーナス = max(0, 300.0 - dist*150.0) * merge_mult (dist<=1.5u)
+        #   (4) base=300はcolumn_ceiling_bonus(800-1250)より小さく、height penalty(y=0 vs y=1.5
+        #       diff=202pt at base=75)より大きい → 同列内tie-breakerとして機能
         #
-        # ボーナス設計: 150*merge_multはheight penalty(50-100*height_mult)より小さく、
-        # column_ceiling_bonus(800-1250)より十分に小さい。配置を決定づける力ではなく、
-        # 同条件時のtie-breakerとして機能する。
+        # Mode B (existing v609): Centroid guidance
+        #   (1) type 8-12ピースの重心を計算
+        #   (2) ボーナス = max(0, 150.0 - dist*50.0) * merge_mult
         #
-        # 禁止: type<=7, type>=13を対象に含めること。低typeは盤面圧縮の役に立たない。
-        #       type 13+は既に高価値ピースであり、誘導ではなく保護が優先。
+        # 両方計算して大きい方を適用（排他的ではない）
         #
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 high-type pipeline),
-        #       tmp/batch_summary.txt (high-score merge_rate=36.7% vs low=32.8%),
+        # 禁止: death_spiral, column_ceiling_dominant, axis_88_horizontal_suppression時は抑制
+        #       russia_phase時は抑制（axis 9.9が既にロシアパイプラインを誘導）
+        #       type<=7, type>=13を対象に含めない（低typeはaxis 9.65/9.8、type13+は保護優先）
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: lowest high-type anchor mode),
+        #       game_history/20260413_190543_score2894.jsonl (best: type14 y=-2.35 anchor),
+        #       game_history/20260413_191120_score1016.jsonl (worst: type12 y=-0.51 scattered),
         #       advice.md (zoumotu3: 大きい国の下にスペース確保)
-        # Fixes rollback failure mode: "merge drought→低typeクラスタリング→pc増加→death spiral"
-        #   を「merge drought→高typeクラスタリング→併合→pc減少→回復」に転換
+        # Fixes rollback failure mode: "高typeピースが散在してmerge pathが構築されない —
+        #   最も低い高typeピースをanchorに選んで集約するロジックがない" (analysis_result.md adopted hypothesis)
         if (
             merge_grade == "NO"
             and max_y >= 1.0
@@ -1846,6 +1859,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not column_ceiling_dominant
             and not axis_88_horizontal_suppression
         ):
+            # --- Mode A (NEW v624): Lowest high-type anchor ---
+            # Find the type 10+ piece with the lowest y position
+            anchor_piece = None
+            anchor_y = None
+            for p in pieces:
+                t = p.get("type", 0)
+                if t >= 10:
+                    py = p.get("y", 0)
+                    if anchor_y is None or py < anchor_y:
+                        anchor_y = py
+                        anchor_piece = p
+
+            anchor_bonus = 0.0
+            if anchor_piece is not None:
+                ax = anchor_piece.get("x", 0)
+                ay = anchor_piece.get("y", 0)
+                dist_to_anchor = ((x - ax) ** 2 + (landing_y - ay) ** 2) ** 0.5
+                # base=300, decay=150/u, within 1.5u: dist=0→300, dist=1→150, dist=1.5→75
+                # Smaller than column_ceiling(800-1250), larger than height penalty diff(y=0 vs 1.5 = ~202)
+                if dist_to_anchor <= 1.5:
+                    anchor_bonus = max(0.0, 300.0 - dist_to_anchor * 150.0) * merge_mult
+
+            # --- Mode B (existing v609): Centroid guidance ---
             # Collect type 8-12 pieces (exclude Soviet type>=16)
             high_type_pieces = []
             for p in pieces:
@@ -1853,6 +1889,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if 8 <= t <= 12:
                     high_type_pieces.append((p["x"], p["y"]))
 
+            centroid_bonus = 0.0
             if len(high_type_pieces) >= 2:
                 # Calculate centroid of type 8-12 pieces
                 centroid_x = sum(p[0] for p in high_type_pieces) / len(high_type_pieces)
@@ -1862,11 +1899,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
 
                 # Bonus: max 150 at dist=0, decreases by 50 per unit distance
-                # dist=0 → 150, dist=1 → 100, dist=2 → 50, dist>=3 → 0
-                pipeline_bonus = max(0.0, 150.0 - dist * 50.0) * merge_mult
+                centroid_bonus = max(0.0, 150.0 - dist * 50.0) * merge_mult
 
-                if pipeline_bonus > 20:  # Only apply if meaningful
-                    score += pipeline_bonus
+            # Apply the LARGER of anchor_bonus and centroid_bonus
+            # This ensures: single high-type → anchor surrounds it
+            #               multiple high-types → lowest one's surroundings (board bottom preserved)
+            #               no type 10+ → centroid mode still works with type 8-9
+            pipeline_bonus = max(anchor_bonus, centroid_bonus)
+
+            if pipeline_bonus > 20:  # Only apply if meaningful
+                score += pipeline_bonus
+                if anchor_bonus >= centroid_bonus and anchor_bonus > 0:
+                    reasons.append("HIGH_TYPE_ANCHOR_GUIDANCE")
+                else:
                     reasons.append("HIGH_TYPE_PIPELINE_GUIDANCE")
 
         # ----- evaluation axis 9.10 Tier 2: rp==2 high-type merge path creation (NEW v613) -----
