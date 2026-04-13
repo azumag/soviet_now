@@ -68,6 +68,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v632: phantom reactive pair column_ceiling suppression — reduce to 25% when rp>0 for OTHER types but not current type
+     # Analysis: worst game T55-T62 shows column_ceiling_bonus(800-1250) overriding same-type proximity(120-540)
+     # during phantom reactive states (rp>0 for other types, no merge for current type).
+     # Existing v631 suppression zeros ceiling_bonus only when rp>=3 && not current_type_has_reactive/near && pc>=15.
+     # New elif: rp>=1 && not current_type_has_reactive (already inside merge_grade==NO block) → multiply by 0.25.
+     # Preserves some height equalization (prevents cascading) while letting same-type proximity guide placement.
+     # Fixes rollback failure mode: "merge_available/danger_direct_merge_available missed at max_y>=2.0"
+     # refs: tmp/analysis_result.md, game_history/20260414_072642_score0921.jsonl T55-T62,
+     #       game_history/20260414_074837_score0988.jsonl T45-T69, tmp/batch_summary.txt
      # v631: extend non-reactive-type column_ceiling suppression — remove same_type_pieces>=2, lower pc from 20 to 15
      # Fixes rollback failure mode: non-reactive type scatter through column_ceiling at rp>=3 (worst game T29-T34)
      # refs: tmp/analysis_result.md, game_history/20260414_063817_score0856.jsonl T29-T34
@@ -2756,6 +2765,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     ceiling_bonus *= 0.5
                 if non_reactive_type_column_ceiling_suppress:
                     ceiling_bonus = 0.0
+                elif reactive_pair_count >= 1 and not current_type_has_reactive:
+                    # v632: phantom reactive pair suppression — when reactive_pairs exist for OTHER types
+                    # but current type has none, column_ceiling(~800-1250) overrides same-type proximity(~120-540),
+                    # scattering pieces away from their type cluster (worst game T55-T62).
+                    # Reduce to 25%: preserves some height equalization while letting proximity guide.
+                    ceiling_bonus *= 0.25
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
