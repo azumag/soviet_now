@@ -68,6 +68,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v625: column_ceiling_scale — dynamic scaling of column_ceiling_bonus by merge drought intensity
+     # Replaces rp2_noise_reduction. Scaling: rp==0→1.0, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
+     # Ensures height penalty wins over column_ceiling_bonus during merge drought (rp>=3: 320<364).
+     # refs: tmp/analysis_result.md, tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt
+     # Fixes rollback failure mode: "NO merge時の低y配置の一貫性が崩れた。特にmax_y=1.5-2.0の
+     #   前兆段階でheight penaltyがcolumn_ceiling/merge_droughtノイズに埋もれた"
      # v618: height penalty Tier 1.75 — rp==2 NO merge early height escalation (base=100)
      # Catches the blind spot between v614(rp==1, base=90) and v612(rp>=2/max_y>=1.5, base=120).
      # At rp==2 NO merge, base=75 height penalty (~202pt) loses to column_ceiling_bonus (~800-1250).
@@ -1413,21 +1419,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reactive_pair_count >= 3 and merge_grade == "NO"
         )
 
-        # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
-        # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
-        # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
-        # near_miss_clustering 9.65) by 50% to let height penalty differentiate candidates.
-        # Unlike rp>=3 (v602 full suppression), rp==2 still needs some horizontal guidance
-        # to avoid edge scatter. 50% reduction makes height penalty competitive while
-        # preserving merge-path creation intent.
-        # refs: tmp/analysis_result.md (Implementation Plan: rp==2 noise reduction),
-        #       game_history/20260413_061938_score0661.jsonl T53-T56 (rp=2 runaway to y=3.50)
-        rp2_noise_reduction = (
-            reactive_pair_count == 2
-            and merge_grade == "NO"
-            and max_y >= 1.5
-            and piece_count >= 25
-        )
+        # v625: column_ceiling_scale — dynamic scaling of column_ceiling_bonus by merge drought intensity
+        # Replaces rp2_noise_reduction (v615). Analysis: even at 50% reduction, column_ceiling_bonus
+        # (400-625) still overwhelms height penalty (y=0 vs y=2.0 diff=270pt HIGH phase).
+        # Scaling: rp==0→1.0, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
+        # At rp>=3: 800*0.4=320 < height_penalty(y=0 vs y=1.5)=364(HIGH) — height wins.
+        # refs: tmp/analysis_result.md (Implementation Plan: column_ceiling_scale),
+        #       game_history/20260413_202622_score0597.jsonl T46-T53 (rp>=3, column_ceiling overrides height)
+        # Fixes rollback failure mode: "NO merge時の低y配置の一貫性が崩れた。特にmax_y=1.5-2.0の
+        #   前兆段階でheight penaltyがcolumn_ceiling/merge_droughtノイズに埋もれた" (last_rollback_analysis.md)
+        if merge_grade == "NO" and max_y >= 1.5 and piece_count >= 25:
+            if reactive_pair_count == 0:
+                column_ceiling_scale = 1.0
+            elif reactive_pair_count == 1:
+                column_ceiling_scale = 0.75  # merge drought origin point
+            elif reactive_pair_count == 2:
+                column_ceiling_scale = 0.50  # merge drought escalation
+            else:  # rp >= 3
+                column_ceiling_scale = 0.40  # NEW: suppress height competition even more
+        else:
+            column_ceiling_scale = 1.0
 
         # v602: also suppress stacking when axis_88_horizontal_suppression fires
         # (rp>=3 && NO merge) — height must be sole differentiator even before
@@ -1689,9 +1700,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                     # Cap total cluster bonus to ~500 to not override height penalty
                     _total_cluster_bonus = min(_total_cluster_bonus, 500.0)
-                    # v615: 50% reduction during rp==2 merge drought to let height penalty compete
-                    if rp2_noise_reduction:
-                        _total_cluster_bonus *= 0.5
+                    # v625: scale by column_ceiling_scale (was rp2_noise_reduction)
+                    _total_cluster_bonus *= column_ceiling_scale
                     if _total_cluster_bonus > 50:
                         score += _total_cluster_bonus
                         reasons.append("NEAR_MISS_CLUSTERING")
@@ -2598,8 +2608,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         if merge_grade == "NO" and 1 <= reactive_pair_count < 3 and piece_count >= 28:
             drought_penalty = (piece_count - 27) * 100.0 * merge_mult
-            # v615: 50% reduction during rp==2 merge drought to let height penalty compete
-            if rp2_noise_reduction:
+            # v625: use column_ceiling_scale <= 0.50 (was rp2_noise_reduction)
+            if column_ceiling_scale <= 0.50:
                 drought_penalty *= 0.5
             score -= drought_penalty
             reasons.append("MERGE_DROUGHT_PRESSURE")
@@ -2747,10 +2757,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # At ceiling_diff=0: 800 (baseline for being in the best column)
                 # At ceiling_diff=1: 950, At ceiling_diff=2: 1100
                 # merge_mult ensures bonus is relative (not overriding absolute merge bonuses)
-                # v615: 50% reduction during rp==2 merge drought to let height penalty compete
-                ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult
-                if rp2_noise_reduction:
-                    ceiling_bonus *= 0.5
+                # v625: column_ceiling_scale applied — dynamic reduction by merge drought intensity
+                # (rp==0→1.0, rp==1→0.75, rp==2→0.50, rp>=3→0.40)
+                ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult * column_ceiling_scale
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
@@ -2912,9 +2921,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
                     if avg_target_y > 1.0:
                         proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
-                    # v615: 50% reduction during rp==2 merge drought to let height penalty compete
-                    if rp2_noise_reduction:
-                        proximity_bonus *= 0.5
+                    # v625: scale by column_ceiling_scale (was rp2_noise_reduction)
+                    proximity_bonus *= column_ceiling_scale
                     if proximity_bonus > 0:
                         score += proximity_bonus
                         if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
