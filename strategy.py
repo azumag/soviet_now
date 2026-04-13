@@ -68,6 +68,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v623: axis 8.8d rp=1 merge drought column_ceiling prioritization — suppress competing horizontal guides
+     # When rp=1 && NO merge && max_y>=1.5 && pc>=25, suppress axis 9.6b and 9.8 to let column_ceiling dominate.
+     # Fixes rollback failure mode: "rp=1 merge drought時の水平誘導分散 — column_ceilingがaxis 9.6b/9.8と競合し端配置"
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8d), tmp/batch_summary.txt
      # v622: axis 9.15 merge drought low-type digest priority — guide placement to low-type pair centroid
      # When merge_grade==NO && rp>=3 && max_y>=1.5, scan reactive_pairs/near_pairs for type<=5 pairs.
      # Add bonus = max(0, 600-dist*200)*merge_mult toward lowest-type pair's centroid.
@@ -1414,6 +1418,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reactive_pair_count >= 3 and merge_grade == "NO"
         )
 
+        # v623: axis 8.8d rp=1 merge drought column_ceiling prioritization
+        # When reactive_pairs==1 && NO merge && max_y>=1.5 && pc>=25:
+        # Suppress axis 9.6b (same_type proximity non-reactive) and axis 9.8 (same_type proximity)
+        # to let column_ceiling_bonus dominate horizontal guidance.
+        # Unlike rp>=3 (full -4500 suppression), this is a selective suppression of
+        # competing horizontal guides only — column_ceiling becomes the primary horizontal signal.
+        # rp=1 means there IS one reactive pair on board, so same-type proximity guidance
+        # for non-reactive types is low-value and competes with column_ceiling.
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8d)
+        rp1_drought_suppress_horizontal = (
+            reactive_pair_count == 1
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 25
+        )
+
         # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
         # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
         # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -1660,7 +1680,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if not (current_type_has_reactive or current_type_has_near):
                 # v461: suppress proximity guidance in death spiral — height must be sole differentiator
                 # v598: also suppress when column_ceiling_dominant — let column_ceiling guide placement
-                if not death_spiral and not column_ceiling_dominant:
+                # v623: also suppress when rp1_drought_suppress_horizontal — let column_ceiling dominate
+                if not death_spiral and not column_ceiling_dominant and not rp1_drought_suppress_horizontal:
                     # v371: Find same-type piece closest to merged_type(N+1) for chain building.
                     # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
                     merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
@@ -2955,6 +2976,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v598: also suppress when column_ceiling_dominant (merge_grade==NO && max_y>=1.0 && pc>=28)
         # — let column_ceiling guide placement to lowest-ceiling column during merge drought.
         # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
+        # v623: also suppress when rp1_drought_suppress_horizontal — let column_ceiling dominate at rp=1
         # refs: tmp/analysis_result.md (Implementation Plan: merge drought column_ceiling dominance),
         #       game_history/20260411_095233_score0895.jsonl T71-79 (chronic NO merge),
         #       game_history/20260411_100940_score0932.jsonl T25-52 (27-turn drought)
@@ -2962,7 +2984,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and not death_spiral
                 and not (max_y >= 1.5 and reactive_pair_count >= 3)
                 and not column_ceiling_dominant
-                and not axis_88_horizontal_suppression):
+                and not axis_88_horizontal_suppression
+                and not rp1_drought_suppress_horizontal):
             # Find the pair of same_type pieces with smallest x-gap — target placement between them
             same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
             min_gap = float("inf")
