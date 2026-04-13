@@ -68,6 +68,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v616: axis 5/5.5 max_y>=1.5 NO-merge suppression — prevent height runaway
+     # Suppress NEXT_SAME centering and AVOID_BLOCK_NEXTNEXT penalty when max_y>=1.5 && merge_grade==NO.
+     # Fixes: "max_y>=1.5 かつ merge_grade==NO 時の NEXT_SAME/AVOID_BLOCK_NEXTNEXT が height penaltyをoverrideし、
+     #   max_y runawayを引き起こす" (analysis_result.md adopted hypothesis)
+     # refs: tmp/analysis_result.md, game_history/20260413_084830_score0936.jsonl, tmp/batch_summary.txt
      # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
      # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
      # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -2109,11 +2114,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
+        # v616: axis 5/5.5 max_y>=1.5 NO-merge suppression — prevent height runaway at elevated board
+        # Worst game T63: max_y=1.46, NEXT_SAME/AVOID_BLOCK_NEXTNEXT override height penalty,
+        # max_y jumps to 2.07 → game over. batch_summary: low-score群でNEXT_SAME(3.5%)と
+        # SAME_TYPE_STACK(3.8%)が上位、高スコア群では該当なし。
+        # max_y>=1.5 && merge_grade==NO は盤面がalready elevatedで即時併合不可。
+        # この局面で将来のnext/nextNextのために高配置を許すのはリスクが大きすぎる。
+        # 既存v462 death_spiral抑制はその「前兆段階」をカバーする（death_spiralはdanger>0 && rp>=3 && NO && deadline）。
+        # 条件が重複しても二重抑制にならないよう、suppressフラグでまとめて制御する。
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 5/5.5 max_y>=1.5 NO-merge suppression),
+        #       game_history/20260413_084830_score0936.jsonl T63 (max_y=1.46→2.07),
+        #       tmp/batch_summary.txt (low-score: NEXT_SAME 3.5%, SAME_TYPE_STACK 3.8%)
+        # Fixes rollback failure mode: "max_y>=1.5 かつ merge_grade==NO 時の NEXT_SAME/AVOID_BLOCK_NEXTNEXT が
+        #   height penaltyをoverrideし、max_y runawayを引き起こす"
         # ----- evaluation axis 5: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
         # v462: suppress in death spiral — height must be sole differentiator
-        if next_next_type == next_type and not death_spiral:
+        # v616: also suppress when max_y>=1.5 && merge_grade==NO — pre-death-spiral height runaway guard
+        suppress_axis5_high_nomerger = (max_y >= 1.5 and merge_grade == "NO")
+        if next_next_type == next_type and not death_spiral and not suppress_axis5_high_nomerger:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
@@ -2126,7 +2146,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v462: suppress in death spiral — height must be sole differentiator
         # v594: further suppress when merge_grade==NO && max_y>=1.0 — at elevated boards with no merge,
         # this -400 penalty pushes pieces toward edges (worst game T45: x=-3.0), fighting column_ceiling.
-        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0):
+        # v616: also suppress when max_y>=1.5 && merge_grade==NO — same pre-death-spiral guard as axis 5
+        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0) and not suppress_axis5_high_nomerger:
             for p in pieces:
                 if p.get("type") == next_next_type:
                     piece_y = p.get("y", -10)
