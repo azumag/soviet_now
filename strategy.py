@@ -68,6 +68,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v618: height penalty Tier 1.75 — rp==2 NO merge early height escalation (base=100)
+     # Catches the blind spot between v614(rp==1, base=90) and v612(rp>=2/max_y>=1.5, base=120).
+     # At rp==2 NO merge, base=75 height penalty (~202pt) loses to column_ceiling_bonus (~800-1250).
+     # base=100 gives y=0 vs y=1.5 diff = 270pt (HIGH phase) — competitive enough to reduce runaway.
+     # refs: tmp/analysis_result.md (Implementation Plan: early_rp2_height),
+     #       game_history/20260413_061938_score0661.jsonl T53-T56, game_history/20260413_064908_score0781.jsonl T59-T61
+     # Fixes rollback failure mode: "rp==2 NO merge is the blind spot where height penalty loses to
+     #   column_ceiling/merge_drought noise, causing runaway before rp=3 guards fire"
      # v617: axis 9.12 merge drought exit trigger — no_merge_streak + merge path creation
      # When no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30, add bonus for
      # placing current piece adjacent to type 10+ pieces (+500*merge_mult within 1.5u,
@@ -2098,6 +2106,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and max_y >= 1.0
             and piece_count >= 15
         )
+        # v618: Tier 1.75 — rp==2 NO merge early height escalation
+        # analysis_result.md adopted hypothesis: rp==2 NO merge is the blind spot where height penalty
+        # base=75 loses to column_ceiling_bonus (~800-1250). At base=75, y=0 vs y=1.5 diff = 202pt —
+        # too weak to differentiate low-y placement. base=100 gives diff = 270pt (HIGH phase) —
+        # competitive enough to reduce high-y placements that escalate to runaway.
+        # Catches the gap between v614(rp==1, base=90) and v612(rp>=2/max_y>=1.5, base=120).
+        # pc>=20 catches drought before board half-full; max_y>=1.0 avoids disrupting early play.
+        # This targets the T53-T56 pattern in score0661 and T58-T62 in score0778.
+        early_rp2_height = (
+            merge_grade == "NO"
+            and reactive_pair_count == 2
+            and max_y >= 1.0
+            and piece_count >= 20
+        )
         moderate_drought = (
             merge_grade == "NO"
             and reactive_pair_count >= 3
@@ -2106,6 +2128,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not critical_death_spiral  # don't double-count
             and not pre_death_spiral_height  # don't double-count
             and not early_drought_height  # don't double-count
+            and not early_rp2_height  # don't double-count
         )
 
         if critical_death_spiral:
@@ -2114,6 +2137,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             base_height_coefficient = 120.0
         elif early_drought_height:
             base_height_coefficient = 90.0
+        elif early_rp2_height:
+            # v618: rp==2 NO merge — catch height runaway 1-2 turns before rp=3 escalation
+            base_height_coefficient = 100.0
         elif moderate_drought:
             base_height_coefficient = 100.0
         else:
