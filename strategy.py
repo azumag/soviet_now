@@ -68,8 +68,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v626: rp=0 merge drought guard — height escalation (base=80) + column_ceiling_scale reduction (1.0→0.60)
+     # When reactive_pairs==0 && NO merge && max_y>=1.0 && pc>=20, apply horizontal guidance suppression
+     # and height penalty escalation to prevent unconstrained placement during the most dangerous drought state.
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260413_212837_score0934.jsonl,
+     #       game_history/20260413_215927_score1095.jsonl
+     # Fixes rollback failure mode: "rp=0 → unconstrained placement → 6+ turns NO merge → instant death"
      # v625: column_ceiling_scale — dynamic scaling of column_ceiling_bonus by merge drought intensity
-     # Replaces rp2_noise_reduction. Scaling: rp==0→1.0, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
+     # v626 updated: rp==0→0.60 (was 1.0). Scaling: rp==0→0.60, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
      # Ensures height penalty wins over column_ceiling_bonus during merge drought (rp>=3: 320<364).
      # refs: tmp/analysis_result.md, tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt
      # Fixes rollback failure mode: "NO merge時の低y配置の一貫性が崩れた。特にmax_y=1.5-2.0の
@@ -1422,15 +1428,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v625: column_ceiling_scale — dynamic scaling of column_ceiling_bonus by merge drought intensity
         # Replaces rp2_noise_reduction (v615). Analysis: even at 50% reduction, column_ceiling_bonus
         # (400-625) still overwhelms height penalty (y=0 vs y=2.0 diff=270pt HIGH phase).
-        # Scaling: rp==0→1.0, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
+        # v626: rp==0→0.60 (was 1.0). At rp=0 NO merge, column_ceiling at full strength (1.0)
+        # dominates height penalty completely. Reducing to 0.60 makes column_ceiling_bonus ~480-750,
+        # competitive with height_penalty escalation (base=80, ~216pt diff at HIGH phase for y=0 vs y=1.5).
+        # Scaling: rp==0→0.60, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
         # At rp>=3: 800*0.4=320 < height_penalty(y=0 vs y=1.5)=364(HIGH) — height wins.
         # refs: tmp/analysis_result.md (Implementation Plan: column_ceiling_scale),
-        #       game_history/20260413_202622_score0597.jsonl T46-T53 (rp>=3, column_ceiling overrides height)
-        # Fixes rollback failure mode: "NO merge時の低y配置の一貫性が崩れた。特にmax_y=1.5-2.0の
-        #   前兆段階でheight penaltyがcolumn_ceiling/merge_droughtノイズに埋もれた" (last_rollback_analysis.md)
+        #       game_history/20260413_212837_score0934.jsonl T56-T66 (rp=0→3, NO merge 11 turns, 0 score gain),
+        #       game_history/20260413_215927_score1095.jsonl T56-T59 (rp=0, NO merge, deadline crossed)
+        # Fixes rollback failure mode: "rp=0 → unconstrained placement → 6+ turns NO merge → instant death"
         if merge_grade == "NO" and max_y >= 1.5 and piece_count >= 25:
+            # v626: rp==0 NO merge drought — most dangerous state (no reactive pairs, no merge opportunities)
             if reactive_pair_count == 0:
-                column_ceiling_scale = 1.0
+                column_ceiling_scale = 0.60  # v626: was 1.0, suppress to let height penalty compete
             elif reactive_pair_count == 1:
                 column_ceiling_scale = 0.75  # merge drought origin point
             elif reactive_pair_count == 2:
@@ -2130,6 +2140,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and max_y >= 1.0
             and piece_count >= 20
         )
+        # v626: Tier 0.5 — rp==0 NO merge height escalation (the most dangerous drought state)
+        # At rp=0, no reactive pairs exist → no merge opportunities visible on board.
+        # column_ceiling_scale=1.0 (full strength) means column_ceiling(~800-1250) dominates
+        # over height_penalty(~75*height_mult). This leads to unconstrained horizontal placement
+        # with no merge-path creation intent. base=80 gives y=0 vs y=1.5 diff = 216pt (HIGH phase),
+        # competitive with drift/balance noise (~200pt).
+        # Existing guards (v599 rp>=3, v607/v618 rp=2, v614 rp=1) all require rp>=1.
+        # At rp=0, column_ceiling_scale=1.0 (full strength) means column_ceiling_bonus(~800-1250)
+        # completely dominates height_penalty(~75*1.8=135 for y=1.0 in HIGH phase).
+        # Evidence: score0934 T56-T60 (rp=0→1, NO merge, max_y 0.71→1.51, 0 score gain 11 turns).
+        # score1095 T56 (rp=0, pc=31, max_y=1.94, NO merge) → column_ceiling full scale → deadline crossed.
+        rp0_drought = (
+            reactive_pair_count == 0
+            and merge_grade == "NO"
+            and max_y >= 1.0
+            and piece_count >= 20
+        )
         moderate_drought = (
             merge_grade == "NO"
             and reactive_pair_count >= 3
@@ -2139,6 +2166,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not pre_death_spiral_height  # don't double-count
             and not early_drought_height  # don't double-count
             and not early_rp2_height  # don't double-count
+            and not rp0_drought  # don't double-count
         )
 
         if critical_death_spiral:
@@ -2150,6 +2178,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif early_rp2_height:
             # v618: rp==2 NO merge — catch height runaway 1-2 turns before rp=3 escalation
             base_height_coefficient = 100.0
+        elif rp0_drought:
+            # v626: Tier 0.5 — rp==0 NO merge height escalation (the most dangerous drought state)
+            # At rp=0, no reactive pairs exist → no merge opportunities visible on board.
+            # column_ceiling_scale=1.0 (full strength) means column_ceiling(~800-1250) dominates
+            # over height_penalty(~75*height_mult). This leads to unconstrained horizontal placement
+            # with no merge-path creation intent. base=80 gives y=0 vs y=1.5 diff = 216pt (HIGH phase),
+            # competitive with drift/balance noise (~200pt).
+            # Evidence: score0934 T56 (rp=0, pc=25, max_y=0.71) no drought guard fired → arbitrary x=-1.21.
+            # score1095 T56 (rp=0, pc=31, max_y=1.94) column_ceiling at full scale → x=0.11, crossed deadline.
+            base_height_coefficient = 80.0
         elif moderate_drought:
             base_height_coefficient = 100.0
         else:
@@ -2758,7 +2796,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # At ceiling_diff=1: 950, At ceiling_diff=2: 1100
                 # merge_mult ensures bonus is relative (not overriding absolute merge bonuses)
                 # v625: column_ceiling_scale applied — dynamic reduction by merge drought intensity
-                # (rp==0→1.0, rp==1→0.75, rp==2→0.50, rp>=3→0.40)
+                # (rp==0→0.60, rp==1→0.75, rp==2→0.50, rp>=3→0.40)
                 ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult * column_ceiling_scale
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
