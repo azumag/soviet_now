@@ -20,6 +20,74 @@ _recover_orphan_comment_playing_files() {
 	done
 }
 
+_comment_speaker_sidecar_candidates() {
+	local target="$1" original="${2:-}" base=""
+	[ -n "$target" ] || return 0
+	printf '%s\n' "${target}.speaker"
+	case "$target" in
+	*.playing)
+		base="${target%.playing}"
+		printf '%s\n' "${base}.speaker" "${base}.txt.speaker"
+		;;
+	*.txt)
+		base="${target%.txt}"
+		printf '%s\n' "${base}.speaker"
+		;;
+	esac
+	if [ -n "$original" ] && [ "$original" != "$target" ]; then
+		printf '%s\n' "${original}.speaker"
+		case "$original" in
+		*.txt) printf '%s\n' "${original%.txt}.speaker" ;;
+		esac
+	fi
+}
+
+_comment_read_speaker_override() {
+	local target="$1" original="${2:-}" sidecar value
+	while IFS= read -r sidecar; do
+		[ -n "$sidecar" ] || continue
+		[ -f "$sidecar" ] || continue
+		value=$(cat "$sidecar" 2>/dev/null | tr -d '[:space:]')
+		[ -n "$value" ] || continue
+		printf '%s' "$value"
+		return 0
+	done < <(_comment_speaker_sidecar_candidates "$target" "$original" | awk '!seen[$0]++')
+	return 1
+}
+
+_comment_clear_speaker_sidecars() {
+	local target="$1" original="${2:-}" sidecar
+	while IFS= read -r sidecar; do
+		[ -n "$sidecar" ] || continue
+		rm -f "$sidecar" 2>/dev/null || true
+	done < <(_comment_speaker_sidecar_candidates "$target" "$original" | awk '!seen[$0]++')
+}
+
+_comment_playback_context_label() {
+	local target="$1" sidecar label base
+	sidecar=$(_comment_meta_sidecar_path "$target")
+	if [ -f "$sidecar" ]; then
+		label=$(python3 - "$sidecar" <<'PY' 2>/dev/null
+import json
+import sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    data = {}
+print(data.get("contextLabel") or data.get("sourceLabel") or "", end="")
+PY
+)
+		[ -n "$label" ] && { printf '%s' "$label"; return 0; }
+	fi
+	base=$(basename "$target")
+	case "$base" in
+	*soren91_ranking_comment*) printf '%s' "soren91:ranking_comment" ;;
+	*soren91_midgame_comment*)  printf '%s' "soren91:midgame_comment" ;;
+	*)                         printf '%s' "comment" ;;
+	esac
+}
+
 _play_comment_queue() {
 	# debug.log ローテーション (500行超→200行に切り詰め)
 	local dbg="tmp/.say_queue/debug.log"
@@ -36,6 +104,7 @@ _play_comment_queue() {
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] mode不一致で破棄: $qf expected=$expected_mode current=$current_mode" >> tmp/.say_queue/debug.log
 					_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
 					_comment_clear_generation_meta "$qf" 2>/dev/null || true
+					_comment_clear_speaker_sidecars "$qf" 2>/dev/null || true
 					rm -f "$qf"
 					continue
 				fi
@@ -47,6 +116,7 @@ _play_comment_queue() {
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 重複スキップ: $qf (hash=$file_hash)" >> tmp/.say_queue/debug.log
 					_broadcast_clear_expected_mode "$qf" 2>/dev/null || true
 					_comment_clear_generation_meta "$qf" 2>/dev/null || true
+					_comment_clear_speaker_sidecars "$qf" 2>/dev/null || true
 					rm -f "$qf"
 					continue
 				fi
@@ -60,6 +130,7 @@ _play_comment_queue() {
 						echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] mode不一致で再生前破棄: $playing_file expected=$expected_mode current=$current_mode" >> tmp/.say_queue/debug.log
 						_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 						_comment_clear_generation_meta "$playing_file" 2>/dev/null || true
+						_comment_clear_speaker_sidecars "$playing_file" "$qf" 2>/dev/null || true
 							rm -f "$playing_file"
 							continue
 						fi
@@ -71,27 +142,27 @@ _play_comment_queue() {
 				# ハッシュファイルを最新50件に制限
 				tail -50 "$COMMENT_PLAYED_HASHES_FILE" > "${COMMENT_PLAYED_HASHES_FILE}.tmp" 2>/dev/null && \
 					mv "${COMMENT_PLAYED_HASHES_FILE}.tmp" "$COMMENT_PLAYED_HASHES_FILE" 2>/dev/null
-					# speaker override: サイドカーファイル > soren91判定
+					# speaker/context override: サイドカーファイル > soren91判定
 				local _cw_vo_speaker=""
-				if [ -f "${playing_file}.speaker" ]; then
-					_cw_vo_speaker=$(cat "${playing_file}.speaker" 2>/dev/null)
-					rm -f "${playing_file}.speaker"
-				elif soren91_is_running 2>/dev/null; then
+				_cw_vo_speaker=$(_comment_read_speaker_override "$playing_file" "$qf" 2>/dev/null || true)
+				if [ -z "$_cw_vo_speaker" ] && soren91_is_running 2>/dev/null; then
 					_cw_vo_speaker="${SOREN91_VOICEVOX_SPEAKER:-46}"
 				fi
-				if SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="comment" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
+				local _cw_context_label=""
+				_cw_context_label=$(_comment_playback_context_label "$playing_file" 2>/dev/null || printf '%s' "comment")
+				if SAY_VOICEVOX_SPEAKER_OVERRIDE="${_cw_vo_speaker:-}" SAY_CONTEXT_LABEL="${_cw_context_label:-comment}" ./say_enqueue.sh --no-preempt "$playing_file" "$RADIO_SAY_RATE" 0; then
 						_remember_spoken_comment "$playing_file"
 					fi
 					echo "[_play_comment_queue $(date '+%H:%M:%S') PID=$_cp_my_pid] 再生完了: $playing_file" >> tmp/.say_queue/debug.log
 					_broadcast_clear_expected_mode "$playing_file" 2>/dev/null || true
 					_comment_clear_generation_meta "$playing_file" 2>/dev/null || true
+					_comment_clear_speaker_sidecars "$playing_file" "$qf" 2>/dev/null || true
 					rm -f "$playing_file"
 				fi
 			fi
 	done
 
 	# コメントが空のタイミングで deferred ラジオを1本だけ流す
-	process_external_audio_triggers
 	_play_deferred_radio_queue_once
 }
 

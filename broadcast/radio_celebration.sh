@@ -40,14 +40,14 @@ CELEBPROMPT
 	if [ -n "$celebration_talk" ]; then
 		log "[RUSSIA] provider=claude:${RADIO_CLAUDE_MODEL}"
 	else
-		log "[RUSSIA] claude fail -> ${RADIO_AGENT}"
-		celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
-		if [ -n "$celebration_talk" ]; then log "[RUSSIA] provider=${RADIO_AGENT}"; fi
+		log "[RUSSIA] claude fail -> ${RADIO_MAIN_AGENT}"
+		celebration_talk=$(_run_opencode_radio "$RADIO_MAIN_AGENT" "$celebration_prompt_file")
+		if [ -n "$celebration_talk" ]; then log "[RUSSIA] provider=${RADIO_MAIN_AGENT}"; fi
 	fi
 	if [ -z "$celebration_talk" ]; then
-		log "[RUSSIA] ${RADIO_AGENT} fail -> ${RADIO_FALLBACK}"
-		celebration_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$celebration_prompt_file")
-		if [ -n "$celebration_talk" ]; then log "[RUSSIA] provider=${RADIO_FALLBACK}"; fi
+		log "[RUSSIA] ${RADIO_MAIN_AGENT} fail -> ${RADIO_MAIN_FALLBACK}"
+		celebration_talk=$(_run_opencode_radio "$RADIO_MAIN_FALLBACK" "$celebration_prompt_file")
+		if [ -n "$celebration_talk" ]; then log "[RUSSIA] provider=${RADIO_MAIN_FALLBACK}"; fi
 	fi
 	rm -f "$celebration_prompt_file"
 
@@ -115,14 +115,14 @@ CELEBPROMPT
 		if [ -n "$celebration_talk" ]; then
 			log "[CELEBRATION] provider=claude:${RADIO_CLAUDE_MODEL}"
 		else
-			log "[CELEBRATION] claude fail -> ${RADIO_AGENT}"
-			celebration_talk=$(_run_opencode_radio "$RADIO_AGENT" "$celebration_prompt_file")
-			if [ -n "$celebration_talk" ]; then log "[CELEBRATION] provider=${RADIO_AGENT}"; fi
+			log "[CELEBRATION] claude fail -> ${RADIO_MAIN_AGENT}"
+			celebration_talk=$(_run_opencode_radio "$RADIO_MAIN_AGENT" "$celebration_prompt_file")
+			if [ -n "$celebration_talk" ]; then log "[CELEBRATION] provider=${RADIO_MAIN_AGENT}"; fi
 		fi
 		if [ -z "$celebration_talk" ]; then
-			log "[CELEBRATION] ${RADIO_AGENT} fail -> ${RADIO_FALLBACK}"
-			celebration_talk=$(_run_opencode_radio "$RADIO_FALLBACK" "$celebration_prompt_file")
-			if [ -n "$celebration_talk" ]; then log "[CELEBRATION] provider=${RADIO_FALLBACK}"; fi
+			log "[CELEBRATION] ${RADIO_MAIN_AGENT} fail -> ${RADIO_MAIN_FALLBACK}"
+			celebration_talk=$(_run_opencode_radio "$RADIO_MAIN_FALLBACK" "$celebration_prompt_file")
+			if [ -n "$celebration_talk" ]; then log "[CELEBRATION] provider=${RADIO_MAIN_FALLBACK}"; fi
 		fi
 	rm -f "$celebration_prompt_file"
 

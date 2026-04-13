@@ -122,6 +122,32 @@ _ai_call_ollama() {
 	printf '%s' "$output"
 }
 
+# _ai_call_qwencode LABEL PROMPT_FILE [TIMEOUT]
+_ai_call_qwencode() {
+	local label="$1" prompt_file="$2"
+	local timeout_sec="${3:-${RADIO_QWENCODE_TIMEOUT:-120}}"
+	local output
+
+	[ -s "$prompt_file" ] || return 1
+	log "[${label}] qwencode call (prompt=$(wc -c <"$prompt_file" | tr -d ' ')B)" >&2
+	output=$(timeout "$timeout_sec" qwen -p "$(cat "$prompt_file")" -y 2>/dev/null)
+	local rc=$?
+	if [ $rc -eq 124 ]; then
+		log "[${label}] qwencode timeout (${timeout_sec}s)" >&2
+		return 1
+	fi
+	if [ $rc -ne 0 ]; then
+		log "[${label}] qwencode failed (rc=$rc)" >&2
+		return 1
+	fi
+	if [ -z "$output" ]; then
+		log "[${label}] qwencode empty output" >&2
+		return 1
+	fi
+	printf '%s' "$output"
+}
+
+
 # _ai_call_opencode LABEL AGENT PROMPT_FILE [TIMEOUT] [PERMISSION]
 _ai_call_opencode() {
 	local label="$1" agent="$2" prompt_file="$3"
@@ -173,33 +199,52 @@ _ai_dispatch() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_override="${4:-}"
 
+	# プロンプトと生成結果をログディレクトリに保存
+	local _dispatch_log_dir="tmp/debug/ai_dispatch"
+	mkdir -p "$_dispatch_log_dir" 2>/dev/null || true
+	local _dispatch_ts
+	_dispatch_ts=$(date +%Y%m%d_%H%M%S)
+	local _dispatch_tag="${_dispatch_ts}_${label}_${agent}"
+	_dispatch_tag=$(printf '%s' "$_dispatch_tag" | tr '/:' '_')
+	if [ -s "$prompt_file" ]; then
+		cp "$prompt_file" "$_dispatch_log_dir/${_dispatch_tag}_prompt.txt" 2>/dev/null || true
+	fi
+
+	local _dispatch_output_file="$_dispatch_log_dir/${_dispatch_tag}_output.txt"
+
 	case "$agent" in
 	'' )
 		return 1
 		;;
 	ollama:*)
-		_ai_call_ollama "$label" "$prompt_file" "${agent#ollama:}" "$timeout_override"
+		_ai_call_ollama "$label" "$prompt_file" "${agent#ollama:}" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	minimax|ccmm)
-		_ai_call_minimax "$label" "$prompt_file" "" "$timeout_override"
+		_ai_call_minimax "$label" "$prompt_file" "" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	qwen35e)
-		_ai_call_ollama "$label" "$prompt_file" "qwen3.5:9b" "$timeout_override"
+		_ai_call_ollama "$label" "$prompt_file" "qwen3.5:9b" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	gemma4e)
-		_ai_call_ollama "$label" "$prompt_file" "gemma4:latest" "$timeout_override"
+		_ai_call_ollama "$label" "$prompt_file" "gemma4:latest" "$timeout_override" | tee "$_dispatch_output_file"
+		;;
+	qwencode)
+		_ai_call_qwencode "$label" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	haiku|claude)
-		_ai_call_claude "$label" "$prompt_file" "$RADIO_CLAUDE_MODEL" "$timeout_override"
+		_ai_call_claude "$label" "$prompt_file" "$RADIO_CLAUDE_MODEL" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	opencode:*)
-		_ai_call_opencode "$label" "${agent#opencode:}" "$prompt_file" "$timeout_override"
+		_ai_call_opencode "$label" "${agent#opencode:}" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	*)
-		# デフォルト: opencode agent として扱う
-		_ai_call_opencode "$label" "$agent" "$prompt_file" "$timeout_override"
+		_ai_call_opencode "$label" "$agent" "$prompt_file" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	esac
+	local _dispatch_rc=${PIPESTATUS[0]}
+	# 空出力ならログファイル削除
+	[ -s "$_dispatch_output_file" ] || rm -f "$_dispatch_output_file" 2>/dev/null
+	return "$_dispatch_rc"
 }
 
 # === フォールバック付き生成 ===

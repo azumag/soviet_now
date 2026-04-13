@@ -316,6 +316,9 @@ _run_jiji_corner_guarded() {
 		return 0
 	fi
 
+	# 異常終了時も確実にロック解放
+	trap 'rmdir "$jiji_lock_dir" 2>/dev/null || true' EXIT
+
 	if start_radio_corner_jiji "$game_num" "$score"; then
 		echo "$(date +%s)" >"$jiji_last_file"
 		log "[JIJI] completed: next interval starts now"
@@ -324,6 +327,7 @@ _run_jiji_corner_guarded() {
 	fi
 
 	rmdir "$jiji_lock_dir" 2>/dev/null || true
+	trap - EXIT
 }
 
 _play_deferred_radio_queue_once() {

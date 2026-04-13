@@ -47,12 +47,25 @@ if not text.strip():
 # 1. 中国語テキスト検出
 # CJK Unified Ideographs: U+4E00-U+9FFF は日中共通だが、
 # ひらがな/カタカナが全くなく漢字ばかりの場合は中国語と判定
-# 保守的閾値: 市場/天気コーナーの数値多用に対応するため高め
 cjk = re.findall(r'[\u4e00-\u9fff]', text)
 kana = re.findall(r'[\u3040-\u30ff]', text)  # ひらがな + カタカナ
+# 全体が中国語
 if len(cjk) > 100 and len(kana) < 10:
     print("FAIL:chinese_text")
     sys.exit(0)
+# 文レベルの中国語混入検出: 句点区切りの文でCJK漢字のみ(かな無し)の文が多い場合
+sents = re.split(r'[。！？\n]', text)
+sents = [s.strip() for s in sents if len(s.strip()) >= 4]
+if len(sents) >= 3:
+    cn_sents = 0
+    for s in sents:
+        s_cjk = len(re.findall(r'[\u4e00-\u9fff]', s))
+        s_kana = len(re.findall(r'[\u3040-\u30ff]', s))
+        if s_cjk >= 4 and s_kana == 0:
+            cn_sents += 1
+    if cn_sents >= 2 or (len(sents) >= 4 and cn_sents / len(sents) >= 0.3):
+        print("FAIL:chinese_text")
+        sys.exit(0)
 
 # 2. 非日本語検出（英語/韓国語など）
 # 数値・記号・固有名詞が多いコーナー向けに緩めの閾値

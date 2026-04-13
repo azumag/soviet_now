@@ -81,6 +81,7 @@
 - `CHAIN_MERGE` を直接強化する仮説、chain bonus / chain distance の拡大
 - `turns >= 77` のような固定ターン数で「終盤8ターン」を近似する仮説
 - height penalty の強化を「スコアアップ手段」として扱う仮説
+- **Null Hypothesis（変更なし）の採用は禁止**。過去の rollback 履歴で「全てブロックされている」と感じても、必ず1つの改善仮説を立案して Implementation Plan を書くこと。過去に rollback された方向と全く同じ変更は避けるべきだが、同じ問題領域への別アプローチは許可される。「変えられない」ではなく「別の角度から変える」を考えること
 
 ## 実行手順（必ずこの順）
 1. `tmp/improve_brief.md` を読み、今回の改善テーマと再発防止項目を把握する

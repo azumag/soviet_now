@@ -361,8 +361,8 @@ print(d.get('score', 0) + bonus)
 
 	# サイクル序盤の改善結果/粛清ラジオは audio_worker が deferred queue から再生する
 
-	# 予想サイクル進捗をチャットに投稿
-	if [ -f "$TMP_STATE_DIR/current_prediction.json" ] && [ -f "$ACCUMULATED_GAMES_FILE" ]; then
+	# サイクル進捗をチャットに投稿
+	if [ -f "$ACCUMULATED_GAMES_FILE" ]; then
 		local pred_progress
 		pred_progress=$(
 			python3 - "$ACCUMULATED_GAMES_FILE" "$LAST_SCORE" "$EVAL_SCORE" "$MIN_GAMES_BEFORE_IMPROVE" <<'PY'

@@ -141,10 +141,18 @@ while true; do
 		./twitch_predictions.sh cleanup >>tmp/prediction.log 2>&1 || true
 	fi
 
-	# --- 予想作成: サイクル開始 (acc_count=0, 改善中でない, 予想なし) ---
-	if ! _has_prediction; then
+	# --- サイクル先頭: 前サイクルの予想を resolve ---
+	# acc_count が非0→0 に変わった瞬間のみ resolve（毎ループ発火を防止）
+	if [ "${current_acc_count:-0}" -eq 0 ] && [ "${_LAST_ACC_COUNT:-0}" -ne 0 ] && _has_prediction; then
+		best=$(_get_best_outcome)
+		_log "サイクル先頭: 前サイクルの予想を resolve (outcome=${best})"
+		./twitch_predictions.sh resolve "${best:-0}" >>tmp/prediction.log 2>&1 || true
+	fi
+
+	# --- 予想作成: サイクル開始 (acc_count=0, 改善完了後, 予想なし) ---
+	if [ "${current_acc_count:-0}" -eq 0 ] && ! _has_prediction; then
 		improve_status=$(_get_improve_status)
-		if [ "${current_acc_count:-0}" -eq 0 ] && [ "$improve_status" != "running" ]; then
+		if [ "$improve_status" != "running" ] && [ ! -f "$IMPROVE_LOCK_FILE" ]; then
 			_log "予想作成: game=${current_game_num}, acc=0, improve=${improve_status}"
 			./twitch_predictions.sh create "$current_game_num" >>tmp/prediction.log 2>&1 || true
 		fi

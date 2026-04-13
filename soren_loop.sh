@@ -197,8 +197,21 @@ fi
 check_and_harvest_improvement
 
 # MOVE状態待ち
-wait_for_move
-wait_rc=$?
+# 起動直後に前回試合の STOP/GAMEOVER が残っている場合は、ただ MOVE を待つと
+# retry が送られず停止したように見えるため、明示的に次ゲームへ進める。
+if is_game_over; then
+	log "[STARTUP] GAMEOVER/STOP 検出 → retry送信"
+	send_retry
+	wait_rc=$?
+else
+	wait_for_move
+	wait_rc=$?
+	if [ "$wait_rc" -ne 0 ] && is_game_over; then
+		log "[STARTUP] MOVE待機中に GAMEOVER/STOP 検出 → retry送信"
+		send_retry
+		wait_rc=$?
+	fi
+fi
 _abort_if_interrupted "$wait_rc" "wait_for_move(initial)"
 if [ "$wait_rc" -ne 0 ]; then
 	log "ゲームが起動していません"
@@ -249,8 +262,13 @@ while true; do
 		sleep 10
 		continue
 	fi
-	if [ -f "$IMPROVE_LOCK_FILE" ] || _is_improve_running; then
+	if _is_improve_running; then
 		log "[PAUSE] 改善中: ゲームプレイ一時停止 (メリケンAIが代打中)"
+		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
+		continue
+	fi
+	if [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+		log "[PAUSE] 改善ロック待ち: ゲームプレイ一時停止"
 		sleep "${SOREN_IMPROVE_PAUSE_SEC:-3}"
 		continue
 	fi
@@ -380,10 +398,15 @@ json.dump(d,open(f,'w'))
 		fi
 	fi
 
-	# ロックファイル or 改善実行中: 次ゲーム準備を保留
-	# (ロックファイル作成直後は daemon がまだ拾っていない場合があるため両方チェック)
-	if [ -f "$IMPROVE_LOCK_FILE" ] || _is_improve_running; then
-		log "[CYCLE] 改善ロック/実行中検出 → 次ゲーム準備を保留"
+	# 改善実行中 or ロック待ち(バックオフ中でない): 次ゲーム準備を保留
+	if _is_improve_running; then
+		log "[CYCLE] 改善実行中 → 次ゲーム準備を保留"
+		DEFER_NEXT_GAME_PREP=1
+		sleep 2
+		continue
+	fi
+	if [ -f "$IMPROVE_LOCK_FILE" ] && [ ! -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+		log "[CYCLE] 改善ロック待ち → 次ゲーム準備を保留"
 		DEFER_NEXT_GAME_PREP=1
 		sleep 2
 		continue

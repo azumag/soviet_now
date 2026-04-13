@@ -276,12 +276,28 @@ local talk_file
 talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
 printf '%s' "$talk" > "$talk_file"
 log "[RADIO:rollback] 生成完了 (${#talk}字)"
-SAY_VOICEVOX_SPEAKER_OVERRIDE=13 SAY_CONTEXT_LABEL="radio:rollback" ./say_enqueue.sh "$talk_file" "${RADIO_SAY_RATE:-150}" 0 || {
-log "[RADIO:rollback] 再生失敗"
-rm -f "$talk_file"
-return 1
-}
-rm -f "$talk_file"
+# RADIO_FORCE_DEFERRED=1 なら deferred queue に積んで audio_worker に委譲
+if [ "${RADIO_FORCE_DEFERRED:-0}" = "1" ]; then
+	local deferred_file=""
+	deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "rollback" "" "" || true)
+	if [ -n "$deferred_file" ]; then
+		# rollback用のvoice指定を保存
+		echo "13" > "${deferred_file%.txt}.voice"
+		log "[RADIO:rollback] deferred queue投入: $(basename "$deferred_file")"
+	else
+		log "[RADIO:rollback] deferred enqueue失敗"
+		rm -f "$talk_file"
+		return 1
+	fi
+	rm -f "$talk_file"
+else
+	SAY_VOICEVOX_SPEAKER_OVERRIDE=13 SAY_CONTEXT_LABEL="radio:rollback" ./say_enqueue.sh "$talk_file" "${RADIO_SAY_RATE:-150}" 0 || {
+		log "[RADIO:rollback] 再生失敗"
+		rm -f "$talk_file"
+		return 1
+	}
+	rm -f "$talk_file"
+fi
 }
 
 start_radio_corner_weather() {
@@ -1683,10 +1699,10 @@ start_radio_corner_jiji() {
 	envsubst < "$ELOOP_LIB_DIR/prompts/radio_jiji_research.md" > "$research_prompt_file"
 	# headline は後段の本番プロンプトと既読記録でも使うので保持する
 
-	grounding_context=$(_run_opencode_jiji_research "$RADIO_AGENT" "$research_prompt_file")
+	grounding_context=$(_run_opencode_jiji_research "minimax" "$research_prompt_file")
 	if [ -z "$grounding_context" ]; then
 		log "[JIJI] AI調査失敗、fallbackエージェントで再試行..."
-		grounding_context=$(_run_opencode_jiji_research "$RADIO_FALLBACK" "$research_prompt_file")
+		grounding_context=$(_run_opencode_jiji_research "${RADIO_MAIN_FALLBACK}" "$research_prompt_file")
 	fi
 	rm -f "$research_prompt_file"
 

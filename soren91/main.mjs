@@ -61,7 +61,7 @@ const HISTORY_DIR = 'game_history';
 const DROP_COOLDOWN_MS = 1200; // ドロップ間の最低待機時間 (ゲーム側クールダウン≈1秒)
 const POLL_INTERVAL_MS = 200;  // 状態チェック間隔
 const MOVE_TIMEOUT_MS = 30000; // MOVE待ちタイムアウト
-const CALIBRATION_MIN_CONFIDENCE = 0.62;
+const CALIBRATION_MIN_CONFIDENCE = 0.55;
 const CALIBRATION_MIN_PIECES = 3;
 const DEFAULT_IMPROVEMENT_INTERVAL_GAMES = 12;
 const DEFAULT_AUDIO_GAIN_MULTIPLIER = 0.70;
@@ -593,6 +593,7 @@ async function main() {
         board: { left: 0, right: 1279, top: 0, bottom: 719, width: 1279, height: 719 },
         dropArea: { pixelLeft: 91, pixelRight: 1188 },
         timestamp: new Date().toISOString(),
+        provisional: true,
       };
       console.log('[main] Using provisional calibration (full screen)');
     }
@@ -898,7 +899,13 @@ async function gameLoop(page, calibration, gameNumber) {
 
       // MOVE状態が安定してからキャリブレーション (初回のみ)
       if (!calibrated) {
-        if ((boardState.confidence ?? 0) >= CALIBRATION_MIN_CONFIDENCE && (boardState.pieces?.length ?? 0) >= CALIBRATION_MIN_PIECES) {
+        const shouldAcceptForCalibration =
+          (boardState.pieces?.length ?? 0) >= CALIBRATION_MIN_PIECES &&
+          (
+            (boardState.confidence ?? 0) >= CALIBRATION_MIN_CONFIDENCE ||
+            calibration?.provisional === true
+          );
+        if (shouldAcceptForCalibration) {
           moveCount++;
         } else {
           moveCount = 0;
@@ -1009,9 +1016,9 @@ async function executeDrop(page, gameX, calibration) {
   const { dropXToPixel } = await loadModule('./calibration.mjs');
   const pixelX = dropXToPixel(gameX, calibration);
 
-  // ドロップ: まずマウスをX位置に移動し、ボード中央付近でクリック
+  // ドロップ: まずマウスをX位置に移動し、ボード上部寄りでクリック
   const { board } = calibration;
-  const pixelY = board.top + Math.floor(board.height * 0.3); // ボード上部30%あたり
+  const pixelY = board.top + Math.floor(board.height * 0.18);
 
   // canvas要素を取得
   const canvas = await page.$('canvas');
@@ -1024,8 +1031,11 @@ async function executeDrop(page, gameX, calibration) {
     throw new Error('Canvas bounding box not available');
   }
 
-  const clickX = pixelX;
-  const clickY = pixelY;
+  const clickX = Math.max(box.x + 4, Math.min(box.x + box.width - 4, pixelX));
+  const clickY = Math.max(box.y + 4, Math.min(box.y + box.height - 4, pixelY));
+  if (process.env.SOREN91_DEBUG_DROP === '1') {
+    console.log(`[game] Drop click: gameX=${gameX.toFixed(2)} pixel=(${clickX.toFixed(0)},${clickY.toFixed(0)}) cal=${calibration.method || 'provisional'}${calibration.provisional ? ':provisional' : ''}`);
+  }
 
   // マウスをX位置に移動 (ゲームがマウス位置でドロップ先を決定)
   await page.mouse.move(clickX, clickY);
@@ -1136,10 +1146,6 @@ async function handleGameOver(page, gameNumber, turns, finalState, historyFile, 
     try {
       const { generateRankingComment } = await loadModule('./comment.mjs');
       const imagePath = existsSync(rankingImagePath) ? rankingImagePath : null;
-      if (!imagePath && detectedRank == null) {
-        console.log(`[game] Ranking comment skipped: no ranking context for game #${gameNumber}`);
-        return;
-      }
       await generateRankingComment(imagePath, gameNumber, detectedRank);
     } catch (err) {
       console.log(`[game] Ranking comment error: ${err.message}`);

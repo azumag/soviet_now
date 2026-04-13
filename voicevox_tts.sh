@@ -40,6 +40,13 @@ _synthesize_one() {
     # VOICEVOXクラッシュ防止: 推論を壊す文字を除去
     text=$(printf '%s' "$text" | tr -d '#＃')
 
+    # 読み替え辞書: VOICEVOXが誤読する単語を修正
+    if [ -f "$SCRIPT_DIR/config/voicevox_word_replace.txt" ]; then
+        while IFS=$'\t' read -r from to; do
+            [ -n "$from" ] && [ "${from#\#}" = "$from" ] && text=$(printf '%s' "$text" | sed "s|${from}|${to}|g")
+        done < "$SCRIPT_DIR/config/voicevox_word_replace.txt"
+    fi
+
     # Step 1: audio_query
     local query_json http_code
     query_json=$(curl -s --max-time "$VOICEVOX_TIMEOUT" \

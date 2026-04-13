@@ -335,7 +335,6 @@ print(labels[idx] if 0 <= idx < len(labels) else 'unknown')
 case "${1:-}" in
 create)
 	GAME_NUM="${2:-0}"
-	_clear_stale_prediction_state_if_any || true
 	_sync_prediction_state_with_remote || true
 
 	# 既存の予想が残っていたらスキップ

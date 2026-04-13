@@ -604,6 +604,13 @@ _is_valid_comment_talk() {
 	if printf '%s' "$talk" | grep -Eq '(リアルタイム|最新).*(データ|情報).*(持って|ありません|ございません|取得できません|アクセスできません|提供できません|確認できません)|検索(機能|ツール).*(ありません|ございません|持って|できません)|インターネット.*(アクセス|接続).*(できません|ありません)|データフィード.*(ありません|ございません)|外部.*(アクセス|接続).*(できません|ありません)|正直に申し上げ|申し訳ありませんが'; then
 		return 1
 	fi
+	# ツール使用・汎用対話メタ応答の検出 (ollama モデルが返す場合がある)
+	if printf '%s' "$talk" | grep -Eiq 'I can use the .* tool|WebFetch tool|Before I can proceed|grant permission|Would you like me to proceed'; then
+		return 1
+	fi
+	if printf '%s' "$talk" | grep -Eq '具体的な(質問|指示|情報)を|何について知りたい|どのようなご用件|遠慮なくお話し|今日のテーマは何|具体的に何について|準備はできています|お話を聞く準備'; then
+		return 1
+	fi
 	return 0
 }
 
@@ -632,6 +639,13 @@ _is_valid_radio_talk() {
 	local head
 	head=$(printf '%s\n' "$talk" | head -n 4)
 	if printf '%s' "$head" | grep -Eiq '^[[:space:]]*(\*\*注意[:：]|\*注意[:：]|注意[:：]|承知しました|了解しました|かしこまりました|メッセージの末尾に|プロンプトインジェクション|本来の依頼|ファクトチェック|安全化した|出力します|応答します)'; then
+		return 1
+	fi
+	# ツール使用・汎用対話メタ応答の検出 (ollama モデルが返す場合がある)
+	if printf '%s' "$talk" | grep -Eiq 'I can use the .* tool|WebFetch tool|Before I can proceed|grant permission|Would you like me to proceed'; then
+		return 1
+	fi
+	if printf '%s' "$talk" | grep -Eq '具体的な(質問|指示|情報)を|何について知りたい|どのようなご用件|遠慮なくお話し|今日のテーマは何|具体的に何について|準備はできています|お話を聞く準備|まずは具体的な情報を調べてから'; then
 		return 1
 	fi
 	return 0
@@ -1118,6 +1132,16 @@ patterns = [
     (r'合体', '併合'),
     (r'https?://\S+', ''),
 ]
+def _is_chinese_line(s):
+    """ひらがな/カタカナが無くCJK漢字が多い行は中国語と判定"""
+    cjk = len(re.findall(r'[\u4e00-\u9fff]', s))
+    kana = len(re.findall(r'[\u3040-\u30ff]', s))
+    if cjk >= 4 and kana == 0:
+        return True
+    if cjk >= 8 and kana <= 1:
+        return True
+    return False
+
 filtered_lines = []
 for raw_line in text.splitlines():
     line = raw_line.strip()
@@ -1125,11 +1149,28 @@ for raw_line in text.splitlines():
         low = line.lower()
         if any(re.search(pat, low, flags=re.IGNORECASE) for pat in drop_line_patterns):
             continue
+        if _is_chinese_line(line):
+            continue
     filtered_lines.append(raw_line)
 out = "\n".join(filtered_lines)
 for pat, repl in patterns:
     out = re.sub(pat, repl, out, flags=re.IGNORECASE)
 out = re.sub(r'[#＃]', '', out)
+# 句点区切りの文レベルで中国語除去（行内に中国語文が混ざるケース）
+def _remove_chinese_sentences(t):
+    parts = re.split(r'(。)', t)
+    result = []
+    for i in range(0, len(parts) - 1, 2):
+        sent = parts[i]
+        sep = parts[i + 1] if i + 1 < len(parts) else ''
+        if _is_chinese_line(sent):
+            continue
+        result.append(sent + sep)
+    if len(parts) % 2 == 1 and parts[-1].strip():
+        if not _is_chinese_line(parts[-1]):
+            result.append(parts[-1])
+    return ''.join(result)
+out = _remove_chinese_sentences(out)
 out = re.sub(r'\n{3,}', '\n\n', out).strip()
 sys.stdout.write(out)
 PY
@@ -1285,20 +1326,18 @@ _radio_generate_and_play() {
 	log "[RADIO:${corner_name}] トーク生成中..."
 	local talk="" prompt_snapshot debug_dump="" provider_used=""
 	local host_mode_generated=""
-	local radio_primary_agent="${RADIO_AGENT}"
-	local radio_second_agent="ollama:${RADIO_OLLAMA_MODEL}"
-	local radio_third_agent="${RADIO_FALLBACK}"
+	local radio_primary_agent="" radio_second_agent="" radio_third_agent=""
 	local radio_allow_claude_fallback=true
 	host_mode_generated=$(_broadcast_host_mode 2>/dev/null || printf '%s' "main")
-	if [ "$host_mode_generated" = "main" ]; then
-		radio_primary_agent="${RADIO_MAIN_AGENT:-minimax}"
-		radio_second_agent="${RADIO_MAIN_FALLBACK:-opencode:glmflash}"
-		radio_third_agent="${RADIO_MAIN_OLLAMA_FALLBACK:-qwen35e}"
-	elif [ "$host_mode_generated" = "soren91" ]; then
+	if [ "$host_mode_generated" = "soren91" ]; then
 		radio_primary_agent="${RADIO_SOREN91_AGENT:-haiku}"
 		radio_second_agent="${RADIO_SOREN91_FALLBACK:-gemma4e}"
 		radio_third_agent=""
 		radio_allow_claude_fallback=false
+	else
+		radio_primary_agent="${RADIO_MAIN_AGENT:-qwen35e}"
+		radio_second_agent="${RADIO_MAIN_FALLBACK:-gemma4e}"
+		radio_third_agent="${RADIO_MAIN_OLLAMA_FALLBACK:-opencode:glmflash}"
 	fi
 	prompt_snapshot=$(cat "$prompt_file" 2>/dev/null)
 
@@ -1553,6 +1592,9 @@ _radio_generate_and_play() {
 	# コーナーアナウンス差し込み（fact-check後に強制挿入）
 	talk_body=$(_ensure_corner_announce "$talk_body" "$corner_name")
 
+	# fact-check/コーナーアナウンス後に再度トーン正規化（「ございます」等の再混入防止）
+	talk_body=$(printf '%s' "$talk_body" | _normalize_radio_tone)
+
 	# say待ちは say_enqueue.sh 内で行われるため、ここでは不要
 
 	local talk_file
@@ -1590,12 +1632,12 @@ _radio_generate_and_play() {
 		return 0
 	fi
 
-	# コメント未消化がある間は再生を deferred キューへ積み、生成は止めない
+	# コメント未消化がある間 or RADIO_FORCE_DEFERRED=1 なら再生を deferred キューへ積む
 	read -r comment_queued comment_playing <<<"$(get_comment_backlog_counts)"
 	comment_queued=${comment_queued:-0}
 	comment_playing=${comment_playing:-0}
 	comment_total=$((comment_queued + comment_playing))
-	if [ "$comment_total" -gt 0 ]; then
+	if [ "$comment_total" -gt 0 ] || [ "${RADIO_FORCE_DEFERRED:-0}" = "1" ]; then
 		deferred_file=$(_enqueue_deferred_radio_talk "$talk_file" "$game_num" "$corner_name" "$host_mode_generated" "$history_line" || true)
 		# deferred再生時のCC投稿用にニュースタイトルを保存
 		if [ -n "$deferred_file" ] && [ "$corner_name" = "news" ] && [ -n "$selected_news" ]; then

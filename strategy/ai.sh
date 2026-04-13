@@ -493,6 +493,21 @@ run_cmd() {
 			fi
 		fi
 		;;
+	qwencode)
+		if [ -n "$cmd_log_file" ]; then
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" qwen -p "$prompt_body" -y >>"$cmd_log_file" 2>&1 &
+			else
+				qwen -p "$prompt_body" -y >>"$cmd_log_file" 2>&1 &
+			fi
+		else
+			if [ -n "$timeout_sec" ]; then
+				"$timeout_bin" "$timeout_sec" qwen -p "$prompt_body" -y &
+			else
+				qwen -p "$prompt_body" -y &
+			fi
+		fi
+		;;
 	qwen36f)
 		local -a openrouter_env=(
 			ANTHROPIC_BASE_URL="https://openrouter.ai/api"

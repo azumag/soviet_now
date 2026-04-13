@@ -829,7 +829,9 @@ directive_terms = (
     "改善して", "直して", "変えて", "分けて", "保存して", "参照して",
     "読んで", "増やして", "減らして", "別にして", "統一して", "変換して",
     "長くして", "短くして", "伸ばして", "抑えて", "残して", "今まで通り",
-    "ほうがいい", "方がいい", "べき"
+    "ほうがいい", "方がいい", "べき",
+    "いかん", "だめ", "ダメ", "するな", "しないで", "するといかん", "するとだめ",
+    "よくない", "まずい", "やばい", "危ない", "注意", "気をつけ",
 )
 noise_terms = (
     "レイド", "nightbot", "show-status", "show_status", "dashboard", "blackhole",
@@ -1432,19 +1434,17 @@ $advice_text"
 			local comment_ollama_improving_only=false
 		local comment_skip_claude=false
 		local comment_try_claude_before_opencode_fallback="${COMMENT_TRY_CLAUDE_BEFORE_OPENCODE_FALLBACK:-1}"
-		local comment_primary_agent="${RADIO_AGENT}"
-		local comment_second_agent="ollama:${COMMENT_OLLAMA_MODEL}"
-		local comment_third_agent="${RADIO_FALLBACK}"
+		local comment_primary_agent="" comment_second_agent="" comment_third_agent=""
 		local comment_allow_claude_fallback=true
-		if [ "$_comment_mode_generated" = "main" ]; then
-			comment_primary_agent="${COMMENT_MAIN_AGENT:-minimax}"
-			comment_second_agent="${COMMENT_MAIN_FALLBACK:-opencode:glmflash}"
-			comment_third_agent="${COMMENT_MAIN_OLLAMA_FALLBACK:-qwen35e}"
-		elif [ "$_comment_mode_generated" = "soren91" ]; then
+		if [ "$_comment_mode_generated" = "soren91" ]; then
 			comment_primary_agent="${COMMENT_SOREN91_AGENT:-haiku}"
 			comment_second_agent="${COMMENT_SOREN91_FALLBACK:-gemma4e}"
 			comment_third_agent=""
 			comment_allow_claude_fallback=false
+		else
+			comment_primary_agent="${COMMENT_MAIN_AGENT:-qwen35e}"
+			comment_second_agent="${COMMENT_MAIN_FALLBACK:-gemma4e}"
+			comment_third_agent="${COMMENT_MAIN_OLLAMA_FALLBACK:-opencode:glmflash}"
 		fi
 		local comments_talk="" comment_model_used=""
 		if [ "$comment_force_claude_manual" = "true" ]; then
@@ -1517,11 +1517,10 @@ RETRYCOMMENT
 					attempt_model="$comment_primary_agent"
 					attempt_talk=$(_clean_comment_talk "$attempt_talk")
 					attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
-					if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
-						log "[COMMENT] ${comment_primary_agent} 出力が不正/短文のため破棄 → ${comment_second_agent} fallback (attempt ${attempt}/${comment_retry_max})"
-						attempt_talk=""
-						attempt_model=""
+					if [ -z "$attempt_talk" ]; then
+						log "[COMMENT] ${comment_primary_agent} 空応答 → ${comment_second_agent} fallback (attempt ${attempt}/${comment_retry_max})"
 					fi
+					# minimax はcleanup済みなのでバリデーションスキップ（空応答チェックのみ）
 					if [ -z "$attempt_talk" ]; then
 						attempt_talk=$(_run_comment_agent "$comment_second_agent" "$prompt_for_attempt")
 						attempt_model="$comment_second_agent"
@@ -1529,6 +1528,7 @@ RETRYCOMMENT
 						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
 							log "[COMMENT] ${comment_second_agent} 出力が不正/短文のため破棄 → ${comment_third_agent} fallback (attempt ${attempt}/${comment_retry_max})"
+							log "[COMMENT] 破棄された生成文 (${comment_second_agent}): $(printf '%s' "$attempt_talk" | head -c 500)"
 							attempt_talk=""
 							attempt_model=""
 						fi
@@ -1541,6 +1541,7 @@ RETRYCOMMENT
 								attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 								if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
 									log "[COMMENT] ${comment_third_agent} 出力が不正/短文のため破棄 → claude fallback (attempt ${attempt}/${comment_retry_max})"
+									log "[COMMENT] 破棄された生成文 (${comment_third_agent}): $(printf '%s' "$attempt_talk" | head -c 500)"
 									attempt_talk=""
 									attempt_model=""
 								fi
@@ -1553,6 +1554,7 @@ RETRYCOMMENT
 						attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
 						if [ -n "$attempt_talk" ] && ! _is_valid_comment_talk "$attempt_talk"; then
 							log "[COMMENT] claude 出力が不正/短文のため破棄 (attempt ${attempt}/${comment_retry_max})"
+							log "[COMMENT] 破棄された生成文 (claude): $(printf '%s' "$attempt_talk" | head -c 500)"
 							attempt_talk=""
 							attempt_model=""
 						fi
@@ -1609,6 +1611,7 @@ RETRYCOMMENT
 
 			attempt_talk=$(_clean_comment_talk "$attempt_talk")
 			attempt_talk=$(printf '%s' "$attempt_talk" | _sanitize_onair_text)
+			attempt_talk=$(printf '%s' "$attempt_talk" | _normalize_radio_tone)
 			if ! _is_valid_comment_talk "$attempt_talk"; then
 				log "[COMMENT] 最終本文が不正/短文のため再生成 (attempt ${attempt}/${comment_retry_max})"
 				attempt=$((attempt + 1))

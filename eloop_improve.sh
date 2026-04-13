@@ -43,8 +43,16 @@ _improve_cleanup_active_ai() {
 	_stop_pid_with_fallback "$active_pid" "improve_ai_child"
 }
 
+_improve_handle_signal() {
+	local sig="$1" rc=143
+	[ "$sig" = "INT" ] && rc=130
+	_improve_note "signal received: sig=${sig} self_pid=${IMPROVE_SELF_PID} ppid=${PPID} active_ai_pid=${RUN_CMD_ACTIVE_PID:-0}"
+	exit "$rc"
+}
+
 trap '_improve_cleanup_active_ai' EXIT
-trap 'exit 130' INT TERM
+trap '_improve_handle_signal INT' INT
+trap '_improve_handle_signal TERM' TERM
 
 _improve_progress() {
 	local phase="$1" progress="$2" detail="$3"
@@ -56,26 +64,7 @@ _improve_note() {
 	printf '[%s] [IMPROVE] %s\n' "$(date '+%H:%M:%S')" "$msg" >>"$RUN_CMD_LOG_FILE" 2>/dev/null || true
 }
 
-_launch_detached_strategy_radio() {
-	local strategy_diff="$1" scores="$2" game_num="$3" best_score="$4"
-	local diff_file
-	diff_file=$(mktemp "$TMP_STATE_DIR/strategy_commentary_diff.XXXXXX") || return 1
-	printf '%s\n' "$strategy_diff" >"$diff_file" || {
-		rm -f "$diff_file" 2>/dev/null || true
-		return 1
-	}
 
-	nohup bash -lc '
-		cd "$1" || exit 1
-		source ./eloop_lib.sh
-		local_diff=$(cat "$2" 2>/dev/null || true)
-		rm -f "$2" 2>/dev/null || true
-		[ -n "$local_diff" ] || exit 0
-		start_radio_corner_strategy "$local_diff" "$3" "$4" "$5"
-	' _ "$SCRIPT_DIR" "$diff_file" "$scores" "$game_num" "$best_score" >/dev/null 2>&1 </dev/null &
-	disown || true
-	return 0
-}
 
 _strategy_change_is_string_only() {
 	local before_file="$1" after_file="$2"
@@ -1163,6 +1152,7 @@ if $improve_ok; then
 	_improve_progress "apply" "80" "apply_validated_strategy"
 	if [ -f "$HARVEST_DIR/strategy.py.staging" ]; then
 		cp "$HARVEST_DIR/strategy.py.staging" "$STRATEGY_FILE"
+		rm -f "$STAGING_FILE" 2>/dev/null || true
 	else
 		VALIDATE_ERROR="harvestに strategy.py.staging がない"
 		log "[IMPROVE] $VALIDATE_ERROR"
@@ -1220,16 +1210,15 @@ if $improve_ok; then
 		_post_phyrogenetic_tree_link_to_chat "improve" "$HASH_BEFORE" "$HASH_AFTER"
 	fi
 
-	# --- Phase D: 戦略解説ラジオをペンディング保存 (次サイクル1試合目に発火) ---
+	# --- Phase D: 戦略解説ラジオを生成し deferred queue に投入 ---
 	if [ -n "$strategy_diff" ]; then
-		_improve_progress "radio" "95" "strategy_commentary_pending"
+		_improve_progress "radio" "95" "strategy_commentary_generating"
 		best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
-		_pending_diff_file=""
-		_pending_diff_file=$(mktemp "$TMP_STATE_DIR/pending_strategy_diff.XXXXXX") || true
-		if [ -n "$_pending_diff_file" ]; then
-			printf '%s\n' "$strategy_diff" > "$_pending_diff_file"
-			_save_pending_cycle_radio_improvement "$_pending_diff_file" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now"
-			_improve_note "strategy commentary pending for next cycle"
+		_improve_note "generating strategy commentary radio"
+		if RADIO_FORCE_DEFERRED=1 start_radio_corner_strategy "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now"; then
+			_improve_note "strategy commentary queued to deferred radio"
+		else
+			_improve_note "strategy commentary generation failed"
 		fi
 	fi
 	_improve_progress "done" "100" "awaiting_harvest"

@@ -134,10 +134,20 @@ _stop_improve_pid_if_running() {
 	if ! _is_live_improve_pid "$pid"; then
 		return 0
 	fi
+	local state phase detail progress pid_cmd
+	state=$(_read_improve_state)
+	phase=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',''))" 2>/dev/null)
+	detail=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('detail',''))" 2>/dev/null)
+	progress=$(echo "$state" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('progress',0) or 0))" 2>/dev/null || echo 0)
+	pid_cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+	log "[IMPROVE] stop request: label=${label} pid=${pid} phase=${phase:-?} detail=${detail:-?} progress=${progress:-0} cmd=${pid_cmd:-unknown}"
 	_stop_loop_descendants "$pid"
 	_stop_pid_with_fallback "$pid" "$label"
-	wait "$pid" 2>/dev/null || true
+	wait "$pid" 2>/dev/null
+	local wait_rc=$?
+	log "[IMPROVE] stop result: label=${label} pid=${pid} wait_rc=${wait_rc}"
 	if _is_live_improve_pid "$pid"; then
+		log "[IMPROVE] stop result: label=${label} pid=${pid} still_alive=1"
 		return 1
 	fi
 	return 0
@@ -283,9 +293,7 @@ json.dump(rs, open(rs_file, 'w'))
 			fi
 			if [ "$updated_age" -ge "$watchdog_sec" ] && [ "$log_age" -ge "$watchdog_sec" ]; then
 				log "[IMPROVE] watchdog発火: ${updated_age}s 状態更新なし / ${log_age}s ログ更新なし → 停止 (PID=$pid, phase=${prev_phase:-?}, detail=${prev_detail:-})"
-				_stop_loop_descendants "$pid"
-				_stop_pid_with_fallback "$pid" "improve_watchdog"
-				if kill -0 "$pid" 2>/dev/null; then
+				if ! _stop_improve_pid_if_running "$pid" "improve_watchdog"; then
 					log "[IMPROVE] watchdog停止失敗: PID=$pid がまだ生存"
 				else
 					pid_alive=false
@@ -382,7 +390,13 @@ with open(rs_file, 'w') as f:
 				# → daemon再起動後にtrigger_adaptive_improvementが同じデータで再試行できる
 				# → _is_improve_running()はstatus=idleのためfalseを返しmain loopは止まらない
 				touch "$IMPROVE_LOCK_FILE" 2>/dev/null || true
-				log "[IMPROVE] ロックファイル保持 → daemon再試行待ち"
+				# バックオフを設定して即座にリトライしない (soren91 stop→start ループ防止)
+				local _backoff_count=1
+				if [ -f "$TMP_STATE_DIR/rate_limit_backoff" ]; then
+					_backoff_count=$(( $(sed -n '1p' "$TMP_STATE_DIR/rate_limit_backoff" 2>/dev/null || echo 0) + 1 ))
+				fi
+				printf '%d\n%d\n' "$_backoff_count" "$(date +%s)" > "$TMP_STATE_DIR/rate_limit_backoff"
+				log "[IMPROVE] ロックファイル保持 → daemon再試行待ち (backoff count=${_backoff_count})"
 			fi
 			IMPROVE_PID=0
 			log "[IMPROVE] 改善完了 → idle"
@@ -603,156 +617,6 @@ PY
 	fi
 }
 
-#=== サイクル頭ラジオ (改善結果 or 粛清) のペンディング管理 ===
-
-_enqueue_pending_cycle_radio_json() {
-	local radio_type="$1"
-	local queue_file=""
-	mkdir -p "$PENDING_CYCLE_RADIO_DIR" 2>/dev/null || true
-	queue_file=$(mktemp "$PENDING_CYCLE_RADIO_DIR/pending_${radio_type}_XXXXXX") || return 1
-	mv "$queue_file" "${queue_file}.json" && queue_file="${queue_file}.json"
-	printf '%s\n' "$2" >"$queue_file" || {
-		rm -f "$queue_file" 2>/dev/null || true
-		return 1
-	}
-	printf '%s\n' "$queue_file"
-}
-
-# 改善結果をペンディング保存 (即座にラジオを鳴らさず、次サイクル1試合目に流す)
-_save_pending_cycle_radio_improvement() {
-	local diff_file="$1" scores="$2" game_num="$3" best_score="$4"
-	local payload queue_file
-	payload=$(python3 -c "
-import json
-data = {
-    'type': 'improvement',
-    'diff_file': '$diff_file',
-    'scores': '$scores',
-    'game_num': '$game_num',
-    'best_score': '$best_score',
-}
-print(json.dumps(data))
-" 2>/dev/null) || return 1
-	queue_file=$(_enqueue_pending_cycle_radio_json "improvement" "$payload") || return 1
-	log "[CYCLE_RADIO] Pending improvement radio saved: $(basename "$queue_file")"
-}
-
-# 粛清をペンディング保存
-_save_pending_cycle_radio_rollback() {
-	local analysis_file="$1" game_num="$2" from_hash="$3" to_hash="$4"
-	local payload queue_file
-	payload=$(python3 -c "
-import json
-data = {
-    'type': 'rollback',
-    'analysis_file': '$analysis_file',
-    'game_num': '$game_num',
-    'from_hash': '$from_hash',
-    'to_hash': '$to_hash',
-}
-print(json.dumps(data))
-" 2>/dev/null) || return 1
-	queue_file=$(_enqueue_pending_cycle_radio_json "rollback" "$payload") || return 1
-	log "[CYCLE_RADIO] Pending rollback radio saved: $(basename "$queue_file")"
-}
-
-_fire_pending_cycle_radio_entry() {
-	local entry_file="$1"
-	[ -f "$entry_file" ] || return 0
-	local radio_type diff_file scores game_num best_score analysis_file from_hash to_hash
-	eval "$(python3 -c "
-import json, shlex
-with open('$entry_file') as f:
-    d = json.load(f)
-t = d.get('type', '')
-print(f'radio_type={shlex.quote(t)}')
-if t == 'improvement':
-    print(f'diff_file={shlex.quote(d.get(\"diff_file\",\"\"))}')
-    print(f'scores={shlex.quote(d.get(\"scores\",\"\"))}')
-    print(f'game_num={shlex.quote(str(d.get(\"game_num\",\"0\")))}')
-    print(f'best_score={shlex.quote(str(d.get(\"best_score\",\"0\")))}')
-elif t == 'rollback':
-    print(f'analysis_file={shlex.quote(d.get(\"analysis_file\",\"\"))}')
-    print(f'game_num={shlex.quote(str(d.get(\"game_num\",\"0\")))}')
-    print(f'from_hash={shlex.quote(d.get(\"from_hash\",\"\"))}')
-    print(f'to_hash={shlex.quote(d.get(\"to_hash\",\"\"))}')
-" 2>/dev/null)"
-
-	case "$radio_type" in
-	improvement)
-		if [ -n "$diff_file" ] && [ -f "$diff_file" ]; then
-			# バックグラウンド発火前にリネームして二重発火防止
-			local inprogress_file="${entry_file}.inprogress"
-			mv "$entry_file" "$inprogress_file" 2>/dev/null || return 0
-			(
-				local strategy_diff
-				strategy_diff=$(cat "$diff_file" 2>/dev/null)
-				if [ -z "$strategy_diff" ]; then
-					log "[CYCLE_RADIO] Drop improvement radio: empty diff ($(basename "$inprogress_file"))"
-					rm -f "$inprogress_file" "$diff_file" 2>/dev/null || true
-					exit 0
-				fi
-				log "[CYCLE_RADIO] Firing improvement radio (game_num=$game_num, entry=$(basename "$inprogress_file"))"
-				if start_radio_corner_strategy "$strategy_diff" "$scores" "$game_num" "$best_score"; then
-					rm -f "$inprogress_file" "$diff_file" 2>/dev/null || true
-				else
-					log "[CYCLE_RADIO] improvement radio failed; restore pending ($(basename "$inprogress_file"))"
-					mv "$inprogress_file" "$entry_file" 2>/dev/null || true
-				fi
-			) &
-		else
-			log "[CYCLE_RADIO] Drop improvement radio: missing diff ($(basename "$entry_file"))"
-			rm -f "$entry_file" "$diff_file" 2>/dev/null || true
-		fi
-		;;
-	rollback)
-		if [ -n "$analysis_file" ] && [ -f "$analysis_file" ]; then
-			# バックグラウンド発火前にリネームして二重発火防止
-			local inprogress_file="${entry_file}.inprogress"
-			mv "$entry_file" "$inprogress_file" 2>/dev/null || return 0
-			(
-				log "[CYCLE_RADIO] Firing rollback radio (game_num=$game_num, entry=$(basename "$inprogress_file"))"
-				if start_radio_corner_rollback "$analysis_file" "$game_num" "$from_hash" "$to_hash"; then
-					rm -f "$inprogress_file" 2>/dev/null || true
-				else
-					log "[CYCLE_RADIO] rollback radio failed; restore pending ($(basename "$inprogress_file"))"
-					mv "$inprogress_file" "$entry_file" 2>/dev/null || true
-				fi
-			) &
-		else
-			log "[CYCLE_RADIO] Drop rollback radio: missing analysis ($(basename "$entry_file"))"
-			rm -f "$entry_file" 2>/dev/null || true
-		fi
-		;;
-	*)
-		log "[CYCLE_RADIO] Drop unknown pending radio type: ${radio_type:-unknown} ($(basename "$entry_file"))"
-		rm -f "$entry_file" 2>/dev/null || true
-		;;
-	esac
-}
-
-# サイクル1試合目: ペンディングラジオを消化
-fire_pending_cycle_radio() {
-	local pending_entries=()
-	local legacy_entry=""
-	if [ -f "$PENDING_CYCLE_RADIO_FILE" ]; then
-		legacy_entry=$(mktemp "$PENDING_CYCLE_RADIO_DIR/legacy_pending_cycle_radio_XXXXXX.json") || legacy_entry=""
-		if [ -n "$legacy_entry" ]; then
-			mv "$PENDING_CYCLE_RADIO_FILE" "$legacy_entry" 2>/dev/null || {
-				rm -f "$legacy_entry" 2>/dev/null || true
-				legacy_entry=""
-			}
-		fi
-	fi
-	while IFS= read -r _entry; do
-		[ -n "$_entry" ] && pending_entries+=("$_entry")
-	done < <(find "$PENDING_CYCLE_RADIO_DIR" -maxdepth 1 -type f -name '*.json' | sort 2>/dev/null)
-	[ "${#pending_entries[@]}" -gt 0 ] || return 0
-	local entry_file
-	for entry_file in "${pending_entries[@]}"; do
-		_fire_pending_cycle_radio_entry "$entry_file"
-	done
-}
 
 record_completed_game_for_adaptive_improvement() {
 	local archive_file="$1" score="$2" soviet="$3" russia="${4:-false}"
@@ -869,9 +733,10 @@ _start_improvement_job() {
 		if [ "${IMPROVE_DAEMON_MODE:-0}" = "1" ]; then
 			tail -n +1 -f "$improve_ai_log" &
 			local _tail_pid=$!
-			wait "$IMPROVE_PID" || true
+			wait "$IMPROVE_PID"
+			local _wait_rc=$?
 			kill "$_tail_pid" 2>/dev/null; wait "$_tail_pid" 2>/dev/null || true
-			log "[IMPROVE] フォアグラウンド実行完了 (PID=$IMPROVE_PID)"
+			log "[IMPROVE] フォアグラウンド実行完了 (PID=$IMPROVE_PID, rc=${_wait_rc})"
 			# daemon mode: wait 完了後に即 harvest して状態を idle に遷移
 			# (次の poll で "running"+死PID を拾って繰り返し発火するのを防ぐ)
 			check_and_harvest_improvement

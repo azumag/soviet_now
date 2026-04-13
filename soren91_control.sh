@@ -64,6 +64,26 @@ _clear_soren91_mode_flag() {
 	rm -f "$SOREN91_MODE_FLAG_FILE" 2>/dev/null || true
 }
 
+_soren91_scan_alive_runner_pids() {
+	local line="" pid="" cmd=""
+	while IFS= read -r line; do
+		pid=$(printf '%s\n' "$line" | awk '{print $1}')
+		cmd=$(printf '%s\n' "$line" | cut -d' ' -f2-)
+		case "$pid" in
+		''|*[!0-9]*) continue ;;
+		esac
+		[ "$pid" = "$$" ] && continue
+		case "$cmd" in
+		*"$SOREN91_RUNNER_SCRIPT"*|*"$SOREN91_DIR/run_player_loop.sh"*|*"soren91/run_player_loop.sh"*)
+			kill -0 "$pid" 2>/dev/null || continue
+			printf '%s\n' "$pid"
+			;;
+		esac
+	done <<EOF
+$(ps -Ao pid=,command= 2>/dev/null || true)
+EOF
+}
+
 _soren91_read_alive_player_pid() {
 	local pid="" f="" cmd=""
 	for f in "$SOREN91_MAIN_PID_FILE" "$SOREN91_PID_FILE"; do
@@ -81,6 +101,14 @@ _soren91_read_alive_player_pid() {
 		printf '%s' "$pid"
 		return 0
 	done
+
+	# PIDファイルは停止処理の途中で消えることがある。実プロセスが残っていると
+	# "Not running" と誤判定して stop file を出せないため、runnerをプロセス表から復旧する。
+	pid=$(_soren91_scan_alive_runner_pids | head -n 1)
+	if [ -n "$pid" ]; then
+		printf '%s' "$pid"
+		return 0
+	fi
 	return 1
 }
 
@@ -391,7 +419,7 @@ soren91_start() {
 	fi
 
 	log "[SOREN91] Starting soren91 (メリケンAI)..."
-	rm -f "$SOREN91_STOP_FILE" "$SOREN91_MAIN_PID_FILE"
+	rm -f "$SOREN91_STOP_FILE" "$SOREN91_MAIN_PID_FILE" "$TMP_STATE_DIR/.soren91_bye_sent"
 	mkdir -p "$SOREN91_DIR/tmp" 2>/dev/null || true
 
 	# 前回の soren91 improve がまだ実行中なら session_games.json を上書きしない
@@ -538,6 +566,9 @@ soren91_stop() {
 		_clear_meriken_time_state
 		_clear_soren91_mode_flag
 		rm -f "$SOREN91_PID_FILE" "$SOREN91_MAIN_PID_FILE" "$SOREN91_STOP_FILE" "$SOREN91_STOPPING_FILE" "$SOREN91_DIR/tmp/in_game"
+		rm -f "$ELOOP_LIB_DIR/tmp/mute_local_bgm"
+		_soren91_switch_obs_layout china || true
+		log "[SOREN91] Unmuted local game BGM (flag file removed)"
 		log "[SOREN91] Stopped (already exited, end_game=$eg)"
 		return 0
 	fi
@@ -608,15 +639,19 @@ soren91_stop() {
 	_soren91_switch_obs_layout china || true
 	log "[SOREN91] Unmuted local game BGM (flag file removed)"
 
-	# メリケンAI終了あいさつ (TTS + Twitch)
-	{
-		local _bye_file
-		_bye_file=$(mktemp /tmp/eloop_soren91_bye.XXXXXX)
-		printf '%s\n' "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" > "$_bye_file"
-		SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:bye" ./say_enqueue.sh "$_bye_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
-		rm -f "$_bye_file"
-	} &
-	enqueue_chat_message "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" "soren91"
+	# メリケンAI終了あいさつ (TTS + Twitch) — 重複防止
+	local _bye_guard="$TMP_STATE_DIR/.soren91_bye_sent"
+	if [ ! -f "$_bye_guard" ]; then
+		touch "$_bye_guard"
+		{
+			local _bye_file
+			_bye_file=$(mktemp /tmp/eloop_soren91_bye.XXXXXX)
+			printf '%s\n' "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" > "$_bye_file"
+			SAY_VOICEVOX_SPEAKER_OVERRIDE="$SOREN91_VOICEVOX_SPEAKER" SAY_CONTEXT_LABEL="soren91:bye" ./say_enqueue.sh "$_bye_file" "$RADIO_SAY_RATE" 0 2>/dev/null || true
+			rm -f "$_bye_file"
+		} &
+		enqueue_chat_message "対戦ありがとうございました。メリケンAIはここで退場しますね、またね！" "soren91"
+	fi
 
 	log "[SOREN91] Stopped (end_game=$eg)"
 	return 0
@@ -677,26 +712,31 @@ soren91_cleanup() {
 	_soren91_enabled || return 0
 
 	# プレイヤープロセス停止 (コマンド名を検証して誤kill防止)
+	local player_pids="" pid=""
 	if [ -f "$SOREN91_PID_FILE" ]; then
-		local pid
 		pid=$(cat "$SOREN91_PID_FILE" 2>/dev/null)
 		case "$pid" in
 		''|*[!0-9]*) ;;
-		*)
-			if kill -0 "$pid" 2>/dev/null; then
-				local cmd
-				cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
-				if echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh|soren_loop\.sh'; then
-					log "[SOREN91] Cleanup: stopping player (PID=$pid)"
-					_stop_loop_descendants "$pid"
-					_stop_pid_with_fallback "$pid" "soren91_player"
-				else
-					log "[SOREN91] Cleanup: PID=$pid is not soren91 player ($cmd), skipping"
-				fi
-			fi
-			;;
+		*) player_pids="$player_pids $pid" ;;
 		esac
 	fi
+	player_pids="$player_pids $(_soren91_scan_alive_runner_pids 2>/dev/null | tr '\n' ' ')"
+	for pid in $player_pids; do
+		case "$pid" in
+		''|*[!0-9]*) continue ;;
+		esac
+		if kill -0 "$pid" 2>/dev/null; then
+			local cmd
+			cmd=$(ps -p "$pid" -o command= 2>/dev/null || echo "")
+			if echo "$cmd" | grep -Eq 'main\.mjs|run_player_loop\.sh|soren_loop\.sh'; then
+				log "[SOREN91] Cleanup: stopping player (PID=$pid)"
+				_stop_loop_descendants "$pid"
+				_stop_pid_with_fallback "$pid" "soren91_player"
+			else
+				log "[SOREN91] Cleanup: PID=$pid is not soren91 player ($cmd), skipping"
+			fi
+		fi
+	done
 
 	# 改善プロセス停止 (コマンド名を検証)
 	if [ -f "$SOREN91_IMPROVE_PID_FILE" ]; then

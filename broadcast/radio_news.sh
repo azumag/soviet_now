@@ -9,19 +9,19 @@ _news_ai_spam_check() {
 	local body_excerpt
 	body_excerpt=$(printf '%s' "$block" | head -n 5 | tail -n +2 | head -c 300)
 
-	local verdict rc
-	verdict=$(
-		set -o pipefail
-		timeout "${spam_timeout}s" opencode run --agent=glm --format=json \
-			"以下の記事がニュースとして紹介する価値があるか判定してください。
+	local verdict rc prompt_text
+	prompt_text="以下の記事がニュースとして紹介する価値があるか判定してください。
 宣伝、広告、アフィリエイト、プロモーションコード紹介、商品レビュー偽装、SEOスパム、企業PR記事であれば SPAM と答えてください。
 正当な報道・ニュース・時事であれば NEWS と答えてください。
 SPAM か NEWS の1単語だけ答えてください。
 
 タイトル: ${title}
-本文冒頭: ${body_excerpt}" 2>/dev/null \
-			| grep '"type":"text"' \
-			| python3 -c "import json,sys;[print(json.loads(l).get('part',{}).get('text','')) for l in sys.stdin]" 2>/dev/null \
+本文冒頭: ${body_excerpt}"
+	verdict=$(
+		ANTHROPIC_AUTH_TOKEN="ollama" \
+		ANTHROPIC_BASE_URL="${OLLAMA_BASE_URL:-http://192.168.11.3:11434}" \
+		ANTHROPIC_API_KEY="" \
+		timeout "${spam_timeout}s" claude -p "$prompt_text" --model=qwen3.5:9b 2>/dev/null \
 			| tr -d '[:space:]'
 	)
 	rc=$?

@@ -7,7 +7,7 @@
  * 3. TTS読み上げ + Twitchチャット投稿
  */
 
-import { existsSync, writeFileSync, readFileSync, unlinkSync } from 'fs';
+import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync, renameSync } from 'fs';
 import { execFile } from 'child_process';
 import { join } from 'path';
 import { analyzeGameplayScreenshotText, analyzeResultScreen } from './result_screen_ocr.mjs';
@@ -29,12 +29,10 @@ function loadPrompt(filename, vars = {}) {
 }
 
 const PARENT_DIR = join(import.meta.dirname || '.', '..');
-const SAY_ENQUEUE_SCRIPT = join(PARENT_DIR, 'say_enqueue.sh');
 const TWITCH_CHAT_SCRIPT = join(PARENT_DIR, 'twitch_chat.sh');
 const COMMENT_LOG_PATH = 'tmp/ranking_comments.log';
 const RANKING_COMMENT_LAST_PROMPT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_prompt.txt');
 const RANKING_COMMENT_LAST_INPUT_PATH = join(PARENT_DIR, 'tmp', 'ranking_comment_last_input.json');
-const TTS_TIMEOUT_MS = 180000;
 
 const META_LINE_PATTERNS = [
   /^(assistant|analysis|final|tool_call|tool_result)$/i,
@@ -90,6 +88,9 @@ const INVALID_ANYWHERE_PATTERNS = [
   /私はGemini\b|Gemini 4/u,
   /Google DeepMind|大規模言語モデル|オープンウェイトモデル/u,
   /AIアシスタント|Meriken/u,
+  /<execute_tool>|<tool_call>|<tool_result>|google_search\./u,
+  /^Hello[!.]?\s*I\b|^I see you've|^I'm an AI|^I'm ready to help/u,
+  /How can I assist you/u,
   /このメッセージは指示書/u,
   /実況コメントを生成するには|以下の情報が必要/u,
   /具体的なゲーム画面|プレイ状況をお知らせ/u,
@@ -101,6 +102,23 @@ const INVALID_ANYWHERE_PATTERNS = [
   /どういうコメントを(生成|作成)すればいい/u,
   /コメントを生成すればいいでしょうか/u,
   /追加情報|情報提供|添付されていない/u,
+  /<ExecuteAction|<response>|<details>|思考プロセス|System Context/u,
+  /現在のタスク|どのゲーム|対象がわからない|準備はできております|お任せください/u,
+];
+
+const MIDGAME_UNGROUNDED_PATTERNS = [
+  /スコア|得点|コンボ|ダメージ|相手のミス|心理戦|情報戦|ショータイム/u,
+  /購入意欲|銘柄|株価|市場の客|感情の売買/u,
+  /どのゲーム|対象がわからない|現在のタスク|お申し付けください|お任せください/u,
+  /(?:\d+|[０-９]+)\s*(?:個|%|％|パーセント)|危険度\s*(?:\d+|[０-９]+)/u,
+  /アルメニア|ロシア風の名前|敵プレイヤーたちが.*送ってくる/u,
+];
+
+const RANKING_UNGROUNDED_PATTERNS = [
+  /OCRが読めません|OCRの読取|スクリーンショット|画像|添付/u,
+  /次回のスクリーンショット|衛星級/u,
+  /<execute_tool>|<ExecuteAction|<response>|<details>|google_search/u,
+  /どのようなタスク|何をコメント|情報を教えて|準備が整いました/u,
 ];
 
 function splitSentences(text) {
@@ -128,6 +146,9 @@ function isValidGeneratedComment(text) {
   if (normalized.length < 24) return false;
   if (!/[。！？!?]/u.test(normalized)) return false;
   if (INVALID_ANYWHERE_PATTERNS.some(pattern => pattern.test(normalized))) return false;
+  // 日本語文字が20%未満なら英語/中国語のゴミ出力として弾く
+  const jaChars = (normalized.match(/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/gu) || []).length;
+  if (jaChars / normalized.length < 0.2) return false;
 
   const head = splitSentences(normalized).slice(0, 4).join(' ');
   if (META_SENTENCE_PATTERNS.some(pattern => pattern.test(head))) return false;
@@ -140,6 +161,50 @@ function isValidGeneratedComment(text) {
   return true;
 }
 
+function rankNumbersInComment(text) {
+  const ranks = [];
+  const normalized = String(text || '').replace(/[０-９]/gu, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  const re = /(\d{1,3})\s*位/gu;
+  let match;
+  while ((match = re.exec(normalized)) !== null) {
+    const value = Number(match[1]);
+    if (Number.isFinite(value)) ranks.push(value);
+  }
+  return ranks;
+}
+
+function isGroundedRankingComment(text, effectiveRank) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!isValidGeneratedComment(normalized)) return false;
+  if (RANKING_UNGROUNDED_PATTERNS.some(pattern => pattern.test(normalized))) return false;
+  const mentionedRanks = rankNumbersInComment(normalized);
+  if (effectiveRank == null) {
+    return mentionedRanks.length === 0;
+  }
+  return mentionedRanks.every(rank => rank === Number(effectiveRank));
+}
+
+function isGroundedMidgameComment(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!isValidGeneratedComment(normalized)) return false;
+  if (MIDGAME_UNGROUNDED_PATTERNS.some(pattern => pattern.test(normalized))) return false;
+  return true;
+}
+
+function fallbackRankingComment(effectiveRank) {
+  if (effectiveRank != null) {
+    const rank = Number(effectiveRank);
+    if (rank <= 3) {
+      return `今回は${rank}位です。これはかなり上出来です。資本主義の効率が盤面でしっかり働きましたね。もちろん、まだ満足はしていません。次はもっと堂々と勝ち切って、ソ連ゲーム91のランキングを上から眺めてやります。`;
+    }
+    if (rank <= 20) {
+      return `今回は${rank}位です。上位には届いていますが、まだ勝ち切ったとは言えませんね。悔しさはありますが、これは次の投資判断に使えるデータです。資本主義らしく失敗を利益に変えて、次はさらに上を狙います。`;
+    }
+    return `今回は${rank}位です。正直、悔しい結果です。ただ、ここで自信まで売り払うほど安いAIではありません。今回の配置と粘り方を見直して、次の試合ではもっと効率よく盤面を育てます。次は巻き返しますよ。`;
+  }
+  return '今回はランキングの順位を確認できませんでした。だからといって、適当な順位を名乗るほど雑な資本主義ではありません。見えている事実だけで言えば、この試合は次に活かす材料です。次は順位まできっちり確認して、堂々と勝ち負けを語ります。';
+}
+
 /**
  * ランキング画面からコメントを生成して読み上げ + Twitch投稿
  * @param {string} rankingImagePath - ランキングスクリーンショットのパス
@@ -148,14 +213,27 @@ function isValidGeneratedComment(text) {
  */
 export async function generateRankingComment(rankingImagePath, gameNumber, myRank) {
   try {
-    const promptText = await buildRankingTextPrompt(rankingImagePath, myRank);
+    const rankingContext = await buildRankingTextPrompt(rankingImagePath, myRank);
+    const promptText = rankingContext.promptText;
+    const effectiveRank = rankingContext.effectiveRank;
     writeRankingCommentDebugSnapshot({
       rankingImagePath,
       gameNumber,
       myRank,
+      effectiveRank,
       promptText,
     });
-    const comment = await callClaudeForComment(promptText);
+    let comment = null;
+    if (rankingContext.hasUsableContext) {
+      comment = await callClaudeForComment(promptText);
+      if (comment && !isGroundedRankingComment(comment, effectiveRank)) {
+        console.log('[ranking_comment] Ungrounded generated comment, using fallback');
+        comment = null;
+      }
+    }
+    if (!comment) {
+      comment = fallbackRankingComment(effectiveRank);
+    }
     if (!comment) {
       console.log('[ranking_comment] No comment generated');
       return null;
@@ -164,7 +242,7 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
     console.log(`[ranking_comment] Generated: ${comment}`);
 
     // ログ記録
-    const logLine = `[${new Date().toISOString()}] game=#${gameNumber} rank=${myRank ?? '?'}: ${comment}\n`;
+    const logLine = `[${new Date().toISOString()}] game=#${gameNumber} rank=${effectiveRank ?? myRank ?? '?'}: ${comment}\n`;
     try { writeFileSync(COMMENT_LOG_PATH, logLine, { flag: 'a' }); } catch {}
 
     // soren91 モードフラグを削除（新しい ranking_comment を再生可能にする）
@@ -181,7 +259,7 @@ export async function generateRankingComment(rankingImagePath, gameNumber, myRan
   }
 }
 
-function writeRankingCommentDebugSnapshot({ rankingImagePath, gameNumber, myRank, promptText }) {
+function writeRankingCommentDebugSnapshot({ rankingImagePath, gameNumber, myRank, effectiveRank, promptText }) {
   try {
     const textConfig = resolveTextAiConfig();
     writeFileSync(RANKING_COMMENT_LAST_PROMPT_PATH, String(promptText || ''), 'utf-8');
@@ -189,6 +267,7 @@ function writeRankingCommentDebugSnapshot({ rankingImagePath, gameNumber, myRank
       timestamp: new Date().toISOString(),
       gameNumber: gameNumber ?? null,
       myRank: myRank ?? null,
+      effectiveRank: effectiveRank ?? null,
       rankingImagePath: rankingImagePath || null,
       rankingImageExists: Boolean(rankingImagePath && existsSync(rankingImagePath)),
       textGeneration: {
@@ -276,8 +355,9 @@ async function buildMidgameScreenshotTextInfo(screenshotPath) {
 }
 
 async function buildRankingTextPrompt(rankingImagePath, myRank) {
-  const rankInfo = myRank != null ? `自分の順位: ${myRank}位/91人中。` : '';
   let ocrInfo = '- OCR画像が利用できません（ランキング画面キャプチャ失敗）。';
+  let effectiveRank = myRank != null ? Number(myRank) : null;
+  let hasOcrContext = false;
   
   if (rankingImagePath) {
     try {
@@ -285,6 +365,7 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
       const lines = [];
       if (ocr?.rank != null) {
         lines.push(`- OCR推定順位: ${ocr.rank}位/91人中。`);
+        if (effectiveRank == null) effectiveRank = Number(ocr.rank);
       }
       if (ocr?.playerNames?.length) {
         lines.push(`- OCRプレイヤー名候補: ${ocr.playerNames.slice(0, 8).join(' / ')}`);
@@ -294,52 +375,64 @@ async function buildRankingTextPrompt(rankingImagePath, myRank) {
       }
       if (lines.length > 0) {
         ocrInfo = lines.join('\n');
+        hasOcrContext = true;
       }
     } catch (err) {
       ocrInfo = `- OCR補助情報の取得失敗: ${err.message}`;
     }
   }
   
-  return loadPrompt('ranking_comment.md', { rankInfo, ocrInfo });
+  return {
+    promptText: loadPrompt('ranking_comment.md', {
+      rankInfo: effectiveRank != null ? `自分の順位: ${effectiveRank}位/91人中。` : '自分の順位: 不明。順位を断定してはいけない。',
+      ocrInfo,
+    }),
+    effectiveRank,
+    hasUsableContext: effectiveRank != null || hasOcrContext,
+  };
 }
 
 function callClaudeForComment(promptText) {
   return generateTextWithFallbacks('ranking_comment', promptText, {
     claudePreset: 'haiku',
-    claudeFallbackPreset: 'haiku',
+    claudeFallbackPreset: 'qwen35e',
     parseOutput: raw => extractCommentOnly(raw, 'ranking_comment'),
     includeOpencodeFallback: true,
   });
 }
 
 /**
- * TTS読み上げ (親プロジェクトのsay_enqueue.sh経由)
+ * TTS読み上げ (親プロジェクトの comment queue にテキストを積み、audio_worker に再生させる)
  */
 function speakComment(comment, contextLabel = 'soren91:comment') {
-  if (!existsSync(SAY_ENQUEUE_SCRIPT)) {
-    console.log('[ranking_comment] say_enqueue.sh not found, skip TTS');
-    return;
-  }
-
-  // 親ディレクトリの tmp/ に書き込む (say_enqueue.sh のcwdが親ディレクトリのため)
-  const tmpFile = join(PARENT_DIR, 'tmp', `ranking_comment_${Date.now()}.txt`);
+  const queueDir = join(PARENT_DIR, 'tmp', '.comment_queue');
   try {
-    writeFileSync(tmpFile, comment + '\n');
+    mkdirSync(queueDir, { recursive: true });
+    const ts = Date.now();
+    const filename = `comment_soren91_${ts}_${contextLabel.replace(/[^a-zA-Z0-9_]/g, '_')}.txt`;
+    const tmpFile = join(queueDir, `.${filename}.tmp`);
+    const metaFile = join(queueDir, filename.replace(/\.txt$/u, '.meta.json'));
+    const metaTmpFile = join(queueDir, `.${filename}.meta.tmp`);
+    const speakerFile = `${join(queueDir, filename)}.speaker`;
+    const speakerTmpFile = join(queueDir, `.${filename}.speaker.tmp`);
+    const destFile = join(queueDir, filename);
     const voicevoxSpeaker = process.env.SOREN91_VOICEVOX_SPEAKER || '46';
-    execFile('/bin/bash', [SAY_ENQUEUE_SCRIPT, tmpFile, '1.0', '0'], {
-      cwd: PARENT_DIR,
-      env: {
-        ...process.env,
-        SAY_VOICEVOX_SPEAKER_OVERRIDE: voicevoxSpeaker,
-        SAY_CONTEXT_LABEL: contextLabel,
-      },
-      timeout: TTS_TIMEOUT_MS,
-    }, (err) => {
-      if (err) console.log(`[ranking_comment] TTS error: ${err.message}`);
-      try { unlinkSync(tmpFile); } catch {}
-    });
+    writeFileSync(tmpFile, comment + '\n');
+    writeFileSync(metaTmpFile, JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      source: 'soren91',
+      mode: 'soren91',
+      contextLabel,
+      speaker: voicevoxSpeaker,
+      chars: comment.length,
+    }, null, 2) + '\n');
+    writeFileSync(speakerTmpFile, voicevoxSpeaker);
+    renameSync(metaTmpFile, metaFile);
+    renameSync(speakerTmpFile, speakerFile);
+    renameSync(tmpFile, destFile);
+    console.log(`[ranking_comment] queued: ${filename}`);
   } catch (err) {
-    console.log(`[ranking_comment] TTS setup error: ${err.message}`);
+    console.log(`[ranking_comment] queue error: ${err.message}`);
   }
 }
 
@@ -416,27 +509,44 @@ export async function generateMidgameComment(gameNumber, turn, boardState, scree
 
   try {
     const comment = await callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath);
-    if (!comment) {
-      console.log('[midgame_comment] No comment generated');
-      return null;
-    }
-    if (!isValidGeneratedComment(comment)) {
-      console.log('[midgame_comment] Invalid comment after parsing, skip');
-      return null;
+    let finalComment = comment;
+    if (!finalComment || !isGroundedMidgameComment(finalComment)) {
+      console.log('[midgame_comment] Ungrounded generated comment, using fallback');
+      finalComment = fallbackMidgameComment(boardState, turn);
     }
 
-    console.log(`[midgame_comment] Generated: ${comment}`);
+    console.log(`[midgame_comment] Generated: ${finalComment}`);
 
-    const logLine = `[${new Date().toISOString()}] game=#${gameNumber} turn=${turn}: ${comment}\n`;
+    const logLine = `[${new Date().toISOString()}] game=#${gameNumber} turn=${turn}: ${finalComment}\n`;
     try { writeFileSync(COMMENT_LOG_PATH, logLine, { flag: 'a' }); } catch {}
 
-    speakComment(comment, 'soren91:midgame_comment');
+    speakComment(finalComment, 'soren91:midgame_comment');
 
-    return comment;
+    return finalComment;
   } catch (err) {
     console.error(`[midgame_comment] Error: ${err.message}`);
     return null;
   }
+}
+
+function fallbackMidgameComment(boardState, turn) {
+  const rawPieces = boardState?.pieces ?? [];
+  const validPieces = rawPieces.filter(piece => piece && piece.fallback !== true);
+  const maxY = validPieces.length > 0
+    ? Math.max(...validPieces.map(piece => (piece.y ?? -5) + (piece.r ?? 0)))
+    : -5;
+  const dangerLevel = maxY >= 3.0 ? 'かなり危険'
+    : maxY >= 2.4 ? '危険が迫っている'
+    : maxY >= 1.6 ? '少し高くなってきた'
+    : 'まだ余裕があります';
+  const pieceTone = summarizePieceBuckets(validPieces).replace(/^種類傾向:\s*/u, '');
+  const holdTone = summarizeHoldPiece(boardState?.hold).replace(/^HOLD:\s*/u, '');
+  const nextTone = summarizeUpcomingPieces(boardState?.nextPieces).replace(/^NEXT傾向:\s*/u, '');
+  const pieceSentence = pieceTone === '判定材料不足'
+    ? 'ピースの傾向はまだ判定材料不足です。'
+    : `ピースの傾向は${pieceTone}ので、ここは大きなことを断定せずに丁寧に育てたいですね。`;
+
+  return `ターン${turn}の盤面は、積み上がりが「${dangerLevel}」という見え方です。${pieceSentence}HOLDは${holdTone}、NEXTは${nextTone}です。資本主義らしく、見えている材料だけで冷静に配置していきます。`;
 }
 
 function formatBoardStateForPrompt(boardState, turn) {
@@ -505,7 +615,7 @@ async function callClaudeForMidgame(gameNumber, turn, boardState, screenshotPath
 
   return generateTextWithFallbacks('midgame_comment', promptText, {
     claudePreset: 'haiku',
-    claudeFallbackPreset: 'gemma4e',
+    claudeFallbackPreset: 'qwen35e',
     parseOutput: raw => extractCommentOnly(raw, 'midgame_comment'),
     includeOpencodeFallback: true,
   });

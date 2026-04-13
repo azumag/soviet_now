@@ -206,7 +206,7 @@ export function runClaudeText(tag, promptText, options = {}) {
         return reject(makeProviderError(`claude provider/rate-limit failure (${target.preset})`, stderrPreview || String(stdout || '').slice(0, 300)));
       }
       if (err) {
-        if (stderrPreview) console.error(`[${tag}] claude stderr:`, stderrPreview);
+        console.error(`[${tag}] claude error: code=${err.code} signal=${err.signal} killed=${err.killed} preset=${target.preset} stderr=${stderrPreview || '(empty)'} stdout_preview=${String(stdout || '').slice(0, 200)}`);
         return reject(err);
       }
       try {

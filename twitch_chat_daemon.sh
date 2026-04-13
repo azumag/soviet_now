@@ -12,6 +12,12 @@ RECENT_LINE_HASH_TTL_SEC="${TWITCH_RECENT_LINE_HASH_TTL_SEC:-60}"
 RECENT_DEDUP_MAX="${TWITCH_RECENT_DEDUP_MAX:-4000}"
 CLIP_COOLDOWN_FILE="$CHAT_DIR/clip_cooldown"
 CLIP_COOLDOWN_SEC=30
+WAVE_LINK_REPAIR_COOLDOWN_FILE="$CHAT_DIR/wave_link_repair_cooldown"
+WAVE_LINK_REPAIR_COOLDOWN_SEC="${WAVE_LINK_REPAIR_COOLDOWN_SEC:-3600}"
+WAVE_LINK_REPAIR_SCRIPT="${WAVE_LINK_REPAIR_SCRIPT:-./repair_wave_link.sh}"
+case "$WAVE_LINK_REPAIR_COOLDOWN_SEC" in
+    ''|*[!0-9]*) WAVE_LINK_REPAIR_COOLDOWN_SEC=3600 ;;
+esac
 
 cd "$(dirname "$0")"
 mkdir -p "$CHAT_DIR"
@@ -145,6 +151,42 @@ while true; do
                     echo "$now_ts" > "$CLIP_COOLDOWN_FILE"
                     ( ./twitch_clip.sh "📎 Clip by ${user}" 2>>"tmp/debug/twitch_clip.log" || true ) &
                 fi
+            fi
+
+            # !音声修復 — Elgato Wave Link を通常終了→再起動（1時間クールダウン）
+            if [[ "$msg" =~ ^[[:space:]]*!音声修復([[:space:]]|$) ]]; then
+                now_ts=0; last_repair_ts=0; repair_age=0
+                now_ts=$(date +%s)
+                last_repair_ts=$(cat "$WAVE_LINK_REPAIR_COOLDOWN_FILE" 2>/dev/null || echo 0)
+                case "$last_repair_ts" in
+                    ''|*[!0-9]*) last_repair_ts=0 ;;
+                esac
+                repair_age=$((now_ts - last_repair_ts))
+                if [ "$repair_age" -ge "$WAVE_LINK_REPAIR_COOLDOWN_SEC" ]; then
+                    if [ ! -x "$WAVE_LINK_REPAIR_SCRIPT" ]; then
+                        source lib/outbound_queue.sh 2>/dev/null || true
+                        enqueue_chat_message "音声修復スクリプトが見つからないため実行できませんでした。" "chat_daemon"
+                        continue
+                    fi
+                    echo "$now_ts" > "$WAVE_LINK_REPAIR_COOLDOWN_FILE"
+                    source lib/outbound_queue.sh 2>/dev/null || true
+                    enqueue_chat_message "音声修復を開始します。Elgato Wave Link を通常再起動します。" "chat_daemon"
+                    (
+                        if "$WAVE_LINK_REPAIR_SCRIPT" >>"tmp/debug/wave_link_repair.log" 2>&1; then
+                            source lib/outbound_queue.sh 2>/dev/null || true
+                            enqueue_chat_message "音声修復が完了しました。" "chat_daemon"
+                        else
+                            source lib/outbound_queue.sh 2>/dev/null || true
+                            enqueue_chat_message "音声修復に失敗しました。配信者側で確認します。" "chat_daemon"
+                        fi
+                    ) &
+                else
+                    remaining=$((WAVE_LINK_REPAIR_COOLDOWN_SEC - repair_age))
+                    remaining_min=$(((remaining + 59) / 60))
+                    source lib/outbound_queue.sh 2>/dev/null || true
+                    enqueue_chat_message "音声修復はクールダウン中です。あと約${remaining_min}分待ってください。" "chat_daemon"
+                fi
+                continue
             fi
 
             # !ASMR — このコメントへの応答をささやき系ボイスで再生

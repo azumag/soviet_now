@@ -94,6 +94,10 @@ while true; do
 		schedule_nonessential_audio_jobs "$current_game_num" "$score" 2>/dev/null || true
 	fi
 
+	# 手動トリガー消化 (毎ループ)
+	score=$(_last_score 2>/dev/null || echo 0)
+	process_external_audio_triggers "$current_game_num" "$score" 2>/dev/null || true
+
 	# sleep を1秒単位で分割
 	_sleep_remaining="$POLL_INTERVAL"
 	while [ "${_sleep_remaining:-0}" -gt 0 ]; do
