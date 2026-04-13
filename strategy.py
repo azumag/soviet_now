@@ -44,7 +44,7 @@ Game Overview:
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.65. Reactive near-miss type clustering - v597: merge_grade=NO時の散逸type集約
-             9.10. High-type growth pipeline guidance - v609: NO merge時、type 8-12ピース重心誘導
+             9.10. High-type merge path creation - v620: two-mode (centroid tie-breaker + cluster creation)
              9.13. Russia-phase low-type cap prevention - v619: russia_phase時、低typeピースが高typeを蓋する抑制
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
@@ -69,6 +69,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v620: axis 9.10 two-mode high-type merge path creation — Mode 2 during column_ceiling_dominant
+     # Mode 1 (existing): centroid tie-breaker (base=150) when column_ceiling_dominant NOT active.
+     # Mode 2 (NEW): when merge_grade==NO && pc>=28 && max_y>=1.0, add type 10+ cluster bonus:
+     #   3+ type 10+: closest-pair cluster bonus max(0, 400-dist*200)*merge_mult
+     #   1-2 type 10+: guide toward them with max 200*merge_mult
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 two-mode system),
+     #       game_history/20260413_124502_score0562.jsonl, game_history/20260413_124219_score2300.jsonl
+     # Fixes rollback failure mode: "high-type pieces scatter and never merge during merge droughts —
+     #   axis 9.10 too weak to compete with column_ceiling_bonus, preventing type 12→13→14 progression"
      # v619: axis 9.10 russia_phase bonus boost + axis 9.13 russia_phase low-type cap guard
      # (1) axis 9.10: base_bonus 150→250 when russia_phase && merge_grade==NO && max_y>=1.0.
      #     Strengthens high-type growth pipeline guidance during Russia phase.
@@ -1705,39 +1714,39 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += _total_cluster_bonus
                         reasons.append("NEAR_MISS_CLUSTERING")
 
-        # ----- evaluation axis 9.10: High-type growth pipeline guidance (NEW) -----
-        # analysis_result.md adopted hypothesis: merge drought時、高type(type 8-12)ピースの
-        # 成長パイプラインを誘導する配置ボーナス。type_scale(v596)は併合ボーナスにのみ適用されるため、
-        # NO merge時の配置誘導が欠落している。
+        # ----- evaluation axis 9.10: High-type merge path creation — two-mode system (v620) -----
+        # analysis_result.md adopted hypothesis:
+        # "High-type pipeline creation during NO-merge turns needs to be elevated from tie-breaker
+        #  to survival mechanism. Axis 9.10 (base=150/250) is too weak to compete with
+        #  column_ceiling_bonus (800-1250) during merge droughts."
+        #
+        # Mode 1 (existing, weakened): When column_ceiling_dominant is NOT active,
+        #   keep centroid-guidance as tie-breaker (base=150) for type 8-12 pieces.
+        # Mode 2 (NEW v620): When column_ceiling_dominant IS active (merge_grade==NO && pc>=28 && max_y>=1.0),
+        #   add stronger high-type merge path creation bonus for type 10+ pieces:
+        #   - 3+ type 10+ pieces: find closest pair cluster, bonus = max(0, 400 - dist*200)*merge_mult
+        #   - 1-2 type 10+ pieces: guide toward them with reduced bonus (max 200)
+        #   - This overrides column_ceiling_dominant suppression for high-type pieces only
         #
         # 根拠:
-        # - ベストゲーム(score2918): 盤面にtype 14×1, 13×1, 12×2, 11×2, 10×4 → 高スコア
-        # - ワーストゲーム(score0829): 盤面にtype 13×1, 12×2, 11×2, 10×4 → 高typeが1つ少ない
-        # - batch: 高スコア群merge_rate=36.7% vs 低スコア群=32.8%。高スコアは高type併合で成長
-        # - advice.md: 「大きい国の下にスペース確保」(zoumotu3)
+        # - worst game: type 10-12 scattered across x=-3 to x=3, never merge (score0562)
+        # - best game: type 14 preserved at low y, endgame bonus=2743 (score2300)
+        # - batch: no games reach type 15. Gap between type 12 and type 14 is where strategy fails
+        # - type 10+ threshold: type 10 appears in ~70% of games at pc>=28. Type 8-12 too broad.
         #
-        # ロジック:
-        # (1) merge_grade==NO && max_y>=1.0 && piece_count>=20 で発動
-        # (2) 盤面のtype 8-12ピースを収集（Soviet type>=16除外）
-        # (3) type 8-12ピースの重心(cx, cy)を計算
-        # (4) 各candidateの(x, landing_y)から重心までの距離を計算
-        # (5) ボーナス = max(0, base_bonus - dist * 50.0) * merge_mult
-        #     base_bonus: 250 (russia_phase時), 150 (通常)
-        #     russia_phase時は盤面が狭く高typeピースの位置が重要なため、bonusを強化
-        # (6) death_spiral, column_ceiling_dominant, axis_88_horizontal_suppression時は抑制
+        # Bonus numbers: base=400 is ~50% of column_ceiling_bonus(800), competitive but not dominant.
+        #   dist*200: at dist=1.0 bonus=200, at dist=2.0 bonus=0 — requires actual proximity.
         #
-        # ボーナス設計: 250*merge_mult(russia_phase)はcolumn_ceiling_bonus(800-1250)の20-30%。
-        # tie-breakerを超えた誘導力を持つが、height penaltyやmerge bonusをoverrideしない。
-        # 150*merge_mult(通常)は従来通りtie-breakerレベル。
+        # 禁止: column_ceiling_bonus magnitude変更, Russia-phaseロジック変更,
+        #       axis 8.8抑制, merge streakカウント導入
         #
-        # 禁止: type<=7, type>=13を対象に含めること。低typeは盤面圧縮の役に立たない。
-        #       type 13+は既に高価値ピースであり、誘導ではなく保護が優先。
-        #
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 high-type pipeline),
-        #       tmp/batch_summary.txt (high-score merge_rate=36.7% vs low=32.8%),
-        #       advice.md (zoumotu3: 大きい国の下にスペース確保)
-        # Fixes rollback failure mode: "merge drought→低typeクラスタリング→pc増加→death spiral"
-        #   を「merge drought→高typeクラスタリング→併合→pc減少→回復」に転換
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 two-mode system),
+        #       game_history/20260413_124502_score0562.jsonl (worst: type 10-12 scattered),
+        #       game_history/20260413_124219_score2300.jsonl (best: type 14 preserved)
+        # Fixes rollback failure mode: "high-type pieces scatter and never merge during merge droughts —
+        #   axis 9.10 too weak to compete with column_ceiling_bonus, preventing type 12→13→14 progression"
+
+        # --- Mode 1: column_ceiling_dominant NOT active — centroid tie-breaker (base=150) ---
         if (
             merge_grade == "NO"
             and max_y >= 1.0
@@ -1754,23 +1763,66 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     high_type_pieces.append((p["x"], p["y"]))
 
             if len(high_type_pieces) >= 2:
-                # Calculate centroid of type 8-12 pieces
                 centroid_x = sum(p[0] for p in high_type_pieces) / len(high_type_pieces)
                 centroid_y = sum(p[1] for p in high_type_pieces) / len(high_type_pieces)
-
-                # Calculate distance from candidate to centroid
                 dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
-
-                # v619: russia_phase時はbase_bonusを250に強化（通常150）
-                # ロシア建国後は盤面が狭く、高typeピースの位置が重要。
-                # 250にすることでcolumn_ceiling_bonus(800-1250)の20-30%レベルになり、
-                # tie-breakerを超えた誘導力を持つ。
                 base_bonus = 250.0 if russia_phase else 150.0
                 pipeline_bonus = max(0.0, base_bonus - dist * 50.0) * merge_mult
-
-                if pipeline_bonus > 20:  # Only apply if meaningful
+                if pipeline_bonus > 20:
                     score += pipeline_bonus
                     reasons.append("HIGH_TYPE_PIPELINE_GUIDANCE")
+
+        # --- Mode 2 (NEW v620): column_ceiling_dominant IS active — high-type cluster creation ---
+        # When merge_grade==NO && pc>=28 && max_y>=1.0, column_ceiling_bonus(800-1250) dominates.
+        # Axis 9.10 Mode 1 is suppressed. Add stronger type 10+ cluster bonus that competes.
+        if (
+            merge_grade == "NO"
+            and max_y >= 1.0
+            and piece_count >= 28
+            and not death_spiral
+            and not axis_88_horizontal_suppression
+        ):
+            # Collect type 10+ pieces on the board
+            high_type_10plus = []
+            for p in pieces:
+                t = p.get("type", 0)
+                if t >= 10:
+                    high_type_10plus.append(p)
+
+            if len(high_type_10plus) >= 3:
+                # Mode 2a: 3+ type 10+ pieces — find closest pair cluster
+                # Find the pair of type 10+ pieces with shortest distance
+                min_pair_dist = float("inf")
+                cluster_cx = 0.0
+                cluster_cy = 0.0
+                for i in range(len(high_type_10plus)):
+                    for j in range(i + 1, len(high_type_10plus)):
+                        p1 = high_type_10plus[i]
+                        p2 = high_type_10plus[j]
+                        d = ((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2) ** 0.5
+                        if d < min_pair_dist:
+                            min_pair_dist = d
+                            cluster_cx = (p1["x"] + p2["x"]) / 2.0
+                            cluster_cy = (p1["y"] + p2["y"]) / 2.0
+
+                # Bonus for placing adjacent to this cluster (within 1.0u)
+                dist_to_cluster = ((x - cluster_cx) ** 2 + (landing_y - cluster_cy) ** 2) ** 0.5
+                # max(0, 400 - dist*200)*merge_mult: dist=0→400, dist=1.0→200, dist=2.0→0
+                cluster_bonus = max(0.0, 400.0 - dist_to_cluster * 200.0) * merge_mult
+                if cluster_bonus > 30:
+                    score += cluster_bonus
+                    reasons.append("HIGH_TYPE_CLUSTER_CREATION")
+
+            elif len(high_type_10plus) >= 1:
+                # Mode 2b: 1-2 type 10+ pieces — guide toward them (create "third piece")
+                centroid_x = sum(p.get("x", 0) for p in high_type_10plus) / len(high_type_10plus)
+                centroid_y = sum(p.get("y", -10) for p in high_type_10plus) / len(high_type_10plus)
+                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+                # Reduced bonus: max 200 at dist=0, decreasing
+                create_bonus = max(0.0, 200.0 - dist * 100.0) * merge_mult
+                if create_bonus > 20:
+                    score += create_bonus
+                    reasons.append("HIGH_TYPE_CLUSTER_CREATION")
 
         # ----- evaluation axis 9.10 Tier 2: rp==2 high-type merge path creation (NEW v613) -----
         # analysis_result.md adopted hypothesis: rp==2 NO mergeはmerge droughtの起点であり、

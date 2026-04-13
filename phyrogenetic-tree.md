@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-13 12:24:38 JST`
-- Nodes: `1047`
-- Edges: `1432`
-- Current: `3f85249e1f78`
+- Updated: `2026-04-13 13:24:10 JST`
+- Nodes: `1048`
+- Edges: `1433`
+- Current: `6f3aa922b64a`
 - Anchor: `e3215795865e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_c09432476df6["c09432476df6<br/>g=25 n=20<br/>comp=11073.1"]
     h_c0081fb921c8["c0081fb921c8<br/>g=24 n=20<br/>comp=10853.1"]
     h_eb4bb8e05f86["eb4bb8e05f86<br/>g=74 n=20<br/>comp=11705.8"]
     h_2e9780eb6d5b["2e9780eb6d5b<br/>g=12 n=12<br/>comp=10288.8"]
@@ -72,11 +71,11 @@ flowchart TD
     h_4fe3a8221f0d["4fe3a8221f0d<br/>g=12 n=12<br/>comp=12100.2"]
     h_cfb684533fdb["cfb684533fdb<br/>g=12 n=12<br/>comp=12517.7"]
     h_e3215795865e["e3215795865e<br/>ANCHOR<br/>g=12 n=12<br/>comp=12836.0"]
+    h_3f85249e1f78["3f85249e1f78<br/>g=12 n=12<br/>comp=11453.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_3f85249e1f78["3f85249e1f78<br/>CURRENT"]
+    h_6f3aa922b64a["6f3aa922b64a<br/>CURRENT"]
 
-    h_c09432476df6 -->|improve| h_c0081fb921c8
     h_eb4bb8e05f86 -->|improve| h_2e9780eb6d5b
     h_2e9780eb6d5b -->|improve| h_bec7c224776e
     h_bec7c224776e -. rollback .-> h_eb4bb8e05f86
@@ -138,13 +137,13 @@ flowchart TD
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
     h_e3215795865e -->|improve| h_3f85249e1f78
+    h_3f85249e1f78 -->|improve| h_6f3aa922b64a
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_c09432476df6 plain;
     class h_c0081fb921c8 plain;
     class h_eb4bb8e05f86 plain;
     class h_2e9780eb6d5b plain;
@@ -201,9 +200,10 @@ flowchart TD
     class h_4fe3a8221f0d plain;
     class h_cfb684533fdb plain;
     class h_e3215795865e anchor;
+    class h_3f85249e1f78 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_3f85249e1f78 current;
+    class h_6f3aa922b64a current;
 ```
 
 ## Detail 1/14
@@ -3904,9 +3904,9 @@ flowchart TD
 
 ## Detail 14/14
 
-- Range: `c016461aeb9c` .. `3f85249e1f78`
-- Nodes in this diagram: `7`
-- Internal edges in this diagram: `3`
+- Range: `c016461aeb9c` .. `6f3aa922b64a`
+- Nodes in this diagram: `8`
+- Internal edges in this diagram: `4`
 - Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
@@ -3920,13 +3920,15 @@ flowchart TD
     h_4fe3a8221f0d["4fe3a8221f0d<br/>g=12 n=12<br/>comp=12100.2"]
     h_cfb684533fdb["cfb684533fdb<br/>g=12 n=12<br/>comp=12517.7"]
     h_e3215795865e["e3215795865e<br/>ANCHOR<br/>g=12 n=12<br/>comp=12836.0"]
+    h_3f85249e1f78["3f85249e1f78<br/>g=12 n=12<br/>comp=11453.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
-    h_3f85249e1f78["3f85249e1f78<br/>CURRENT"]
+    h_6f3aa922b64a["6f3aa922b64a<br/>CURRENT"]
 
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
     h_e3215795865e -->|improve| h_3f85249e1f78
+    h_3f85249e1f78 -->|improve| h_6f3aa922b64a
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -3937,12 +3939,23 @@ flowchart TD
     class h_4fe3a8221f0d plain;
     class h_cfb684533fdb plain;
     class h_e3215795865e anchor;
+    class h_3f85249e1f78 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
-    class h_3f85249e1f78 current;
+    class h_6f3aa922b64a current;
 ```
 
 ## Transition Notes
+
+### Improve Game#15221 `3f85249e -> 6f3aa922`
+
+- scores: `13661 13661 13839 15333 8245 14722 10665 12523 11272 8324 12117 8377`
+- 9.10. High-type merge path creation - v620: two-mode (centroid tie-breaker + cluster creation)
+- v620: axis 9.10 two-mode high-type merge path creation — Mode 2 during column_ceiling_dominant
+- Mode 1 (existing): centroid tie-breaker (base=150) when column_ceiling_dominant NOT active.
+- Mode 2 (NEW): when merge_grade==NO && pc>=28 && max_y>=1.0, add type 10+ cluster bonus:
+- 3+ type 10+: closest-pair cluster bonus max(0, 400-dist*200)*merge_mult
+- 1-2 type 10+: guide toward them with max 200*merge_mult
 
 ### Improve Game#15209 `e3215795 -> 3f85249e`
 
