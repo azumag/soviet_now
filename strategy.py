@@ -68,6 +68,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v637: phantom reactive pair merged_type proximity guidance — fill axis 9.6 activation gap
+     # When phantom_rp_state (!current_type_has_reactive && !current_type_has_near && merge_grade=="NO"),
+     # axis 9.6 produces zero horizontal guidance. column_ceiling dominates (800-1250pt), scattering
+     # pieces away from productive clusters. HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY appears 7.5%
+     # in low-score games vs 0% in high-score — strongest reason-code differentiator.
+     # Instead of suppressing column_ceiling (v632/v633, rolled back), this adds a POSITIVE directional
+     # signal: guide the current piece toward clusters of the reactive pair's merged_type (K+1).
+     # If type K has a reactive pair, those K pieces will merge to K+1. Placing near K+1 pieces
+     # creates pipeline connectivity for future cascading merges.
+     # Condition: phantom_rp_state && reactive_pair_count >= 1
+     # Not applied during death_spiral, column_ceiling_dominant, or axis_88_horizontal_suppression.
+     # Moderate base bonus (300) with congestion scaling — avoids v632/v633 overcorrection pattern.
+     # Fixes rollback failure mode: "phantom reactive pair散逸 — axis 9.6 activation gap"
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/change_log.txt,
+     #       tmp/state/last_rollback_analysis.md, game_history/20260414_160412_score0850.jsonl T27-57
      # v636: rp>=3 NO-merge same-type proximity amplification — 2.0x multiplier at max_y>=1.0
      # rp>=3 NO-merge時のsame-type proximity bonus増幅。低スコアゲームでrp>=3 NO-mergeの
      # HIGH_LAYER/HIGH_TOWER選択が盤面散逸を加速(piece_count蓄積→即死)。
@@ -1646,6 +1661,64 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
+
+        # ----- axis 9.6c: phantom reactive pair merged_type proximity guidance (NEW v637) -----
+        # analysis_result.md adopted hypothesis: "Extending axis 9.6 merged_type proximity guidance
+        # to phantom_rp_state will reduce phantom reactive pair scatter and improve downside scores."
+        #
+        # When phantom_rp_state (!current_type_has_reactive && !current_type_has_near && merge_grade=="NO"),
+        # axis 9.6 produces zero horizontal guidance. column_ceiling dominates (800-1250pt), scattering
+        # pieces away from productive clusters. v632/v633 suppressed column_ceiling (rolled back) but
+        # suppression alone doesn't tell pieces WHERE to go. This axis fills the guidance gap with a
+        # POSITIVE directional signal: guide toward clusters of type K+1 where type K has a reactive pair.
+        # 
+        # Evidence: HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY appears 7.5% in low-score games
+        # vs 0% in high-score games — the strongest reason-code differentiator.
+        # Worst game T27-43: phantom_rp_state repeats, pieces scattered to edges.
+        # Best game: no phantom_rp_state states arise; productive guidance throughout.
+        #
+        # Condition: phantom_rp_state && reactive_pair_count >= 1 (other types have reactive pairs)
+        # Not applied during death_spiral, column_ceiling_dominant, or axis_88_horizontal_suppression.
+        # Base bonus 300pt with congestion scaling at pc>=28 — competitive with column_ceiling
+        # residual (~200-310pt at 25% suppression) and same_type_proximity (~120-1080pt at 2.0x).
+        # Refs: tmp/analysis_result.md, tmp/batch_summary.txt,
+        #       game_history/20260414_160412_score0850.jsonl T27-57,
+        #       tmp/state/last_rollback_analysis.md, tmp/change_log.txt
+        # Fixes rollback failure mode: "phantom reactive pair散逸 — axis 9.6 activation gap"
+        if (phantom_rp_state and reactive_pair_count >= 1
+                and not death_spiral and not column_ceiling_dominant
+                and not axis_88_horizontal_suppression):
+            # Find merged_type (K+1) of reactive pairs — these are pieces that will exist
+            # after reactive pairs merge, creating pipeline connectivity for future cascading.
+            rp_target_types = set()
+            for rp in reactive_pairs:
+                if isinstance(rp, (list, tuple)) and len(rp) >= 3:
+                    rp_target_types.add(rp[2] + 1)
+
+            rp_target_pieces = [p for p in pieces if p.get("type", 0) in rp_target_types]
+
+            if len(rp_target_pieces) >= 1:
+                centroid_x = sum(p.get("x", 0) for p in rp_target_pieces) / len(rp_target_pieces)
+                centroid_y = sum(p.get("y", -10) for p in rp_target_pieces) / len(rp_target_pieces)
+
+                dist_to_centroid = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
+
+                # Base bonus 300pt — competitive with column_ceiling residual (200-310pt at 25%)
+                # and same_type_proximity (120-1080pt at 2.0x/2.5u in phantom_rp_state)
+                phantom_mt_bonus = max(0, 300.0 - dist_to_centroid * 100.0)
+
+                # Decay if centroid is high — don't override height control
+                if centroid_y > 0:
+                    phantom_mt_bonus *= max(0.0, 1.0 - centroid_y * 0.3)
+
+                # Congestion scaling — stronger at high pc where scatter is most damaging
+                if piece_count >= 28:
+                    congestion_scale = 1.0 + (piece_count - 28) * 0.10
+                    phantom_mt_bonus *= min(congestion_scale, 2.5)
+
+                if phantom_mt_bonus > 20:
+                    score += phantom_mt_bonus
+                    reasons.append("PHANTOM_RP_MERGED_TYPE_PROXIMITY")
 
         # ----- evaluation axis 9.65: reactive near-miss type clustering (NEW v597) -----
         # analysis_result.md adopted hypothesis: "reactive near-miss guidance" axis.
