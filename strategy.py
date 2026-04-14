@@ -68,6 +68,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v636: rp>=3 NO-merge same-type proximity amplification — 2.0x multiplier at max_y>=1.0
+     # rp>=3 NO-merge時のsame-type proximity bonus増幅。低スコアゲームでrp>=3 NO-mergeの
+     # HIGH_LAYER/HIGH_TOWER選択が盤面散逸を加速(piece_count蓄積→即死)。
+     # batch_summary: SAME_TYPE_PROXIMITY低スコア2.6% vs 高スコア4.7%。
+     # worst game T36-40: rp=3-5で5連続NO-merge、column_ceiling(~800-1250)がproximity(~120-150)を圧倒。
+     # 2.0xでproximity(~240-300)がcolumn_ceilingと競合可能になりtype集約を改善。
+     # Not applied during death_spiral (v461/v462 suppression).
+     # Fixes rollback failure mode: "rp>=3 NO-merge時のtype散逸 — same-type proximityがcolumn_ceilingに敗北"
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/change_log.txt,
+     #       tmp/state/last_rollback_analysis.md, game_history/20260414_141834_score0397.jsonl
      # v635: near-but-can't-merge state protection — column_ceiling suppression (50%),
      # same_type_proximity boost (2.5u threshold, 2.0x multiplier), axes 5/5.5 suppression (50%)
      # When current_type_has_near=True but merge_grade="NO" and not current_type_has_reactive,
@@ -2789,6 +2799,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NOT guidance restoration — orthogonal to death_spiral suppression (axis 9.6b/5.6/9.3 suppressed).
         # Fires ONLY when merge_grade=NO (no immediate merge possible) and NOT in death_spiral.
         # Bonus magnitude: max ~150 (tie-breaking, safe vs axis 8.8 -4500).
+        # v636: 2.0x amplification when rp>=3 && merge_grade==NO && max_y>=1.0 — column_ceiling
+        #   (800-1250) overwhelms proximity (~120-150) during rp>=3 NO-merge drought; boost lets
+        #   clustering compete. Not applied during death_spiral (excluded by outer guard).
         # v594: suppress when max_y>=1.5 && reactive_pair_count>=3 — at high rp and elevated board,
         # clustering blocks merge paths (worst game T45-T51 pattern).
         # v598: also suppress when column_ceiling_dominant (merge_grade==NO && max_y>=1.0 && pc>=28)
@@ -2834,6 +2847,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
                         if rp2_noise_reduction:
                             proximity_bonus *= 0.5
+                        # v636: amplify same_type_proximity during rp>=3 NO-merge drought
+                        # Worst games show rp>=3 NO-merge states where column_ceiling (800-1250)
+                        # overwhelms proximity (~120-150). 2.0x boost lets clustering compete.
+                        if reactive_pair_count >= 3 and max_y >= 1.0:
+                            proximity_bonus *= 2.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
                             if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
@@ -2849,6 +2867,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity_bonus *= max(0.0, 1.0 - (single_y - 1.0) * 0.3)
                     if rp2_noise_reduction:
                         proximity_bonus *= 0.5
+                    # v636: amplify same_type_proximity during rp>=3 NO-merge drought
+                    if reactive_pair_count >= 3 and max_y >= 1.0:
+                        proximity_bonus *= 2.0
                     if proximity_bonus > 0:
                         score += proximity_bonus
                         if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
