@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-14 12:05:44 JST`
-- Nodes: `1063`
-- Edges: `1458`
-- Current: `ea95bdde7a27`
+- Updated: `2026-04-14 13:06:59 JST`
+- Nodes: `1064`
+- Edges: `1459`
+- Current: `48ad45cab2c2`
 - Anchor: `ea95bdde7a27`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_426bdf83097f["426bdf83097f<br/>g=12 n=12<br/>comp=10537.2"]
     h_b970b9abce0b["b970b9abce0b<br/>g=12 n=12<br/>comp=11146.0"]
     h_10b331a30057["10b331a30057<br/>g=12 n=12<br/>comp=11249.4"]
     h_bcf2f7a414bd["bcf2f7a414bd<br/>g=12 n=12<br/>comp=11747.3"]
@@ -51,7 +50,7 @@ flowchart TD
     h_0e22dd519bbf["0e22dd519bbf<br/>g=12 n=12<br/>comp=11980.3"]
     h_a1b28607d015["a1b28607d015<br/>g=12 n=12<br/>comp=10570.9"]
     h_c10a4ca71357["c10a4ca71357<br/>g=12 n=12<br/>comp=10432.0"]
-    h_ea95bdde7a27["ea95bdde7a27<br/>CURRENT ANCHOR<br/>g=36 n=20<br/>comp=12281.1"]
+    h_ea95bdde7a27["ea95bdde7a27<br/>ANCHOR<br/>g=48 n=20<br/>comp=12047.3"]
     h_c016461aeb9c["c016461aeb9c<br/>g=12 n=12<br/>comp=9311.2"]
     h_4fe3a8221f0d["4fe3a8221f0d<br/>g=29 n=20<br/>comp=10860.5"]
     h_cfb684533fdb["cfb684533fdb<br/>g=49 n=20<br/>comp=10872.6"]
@@ -75,8 +74,8 @@ flowchart TD
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
+    h_48ad45cab2c2["48ad45cab2c2<br/>CURRENT"]
 
-    h_426bdf83097f -->|improve| h_b970b9abce0b
     h_b970b9abce0b -->|improve| h_10b331a30057
     h_10b331a30057 -->|improve| h_bcf2f7a414bd
     h_bcf2f7a414bd -->|improve| h_8c14e0d519c9
@@ -140,17 +139,17 @@ flowchart TD
     h_e069f1a6e3a6 -. rollback .-> h_cfb684533fdb
     h_cfb684533fdb -. rollback .-> h_ea95bdde7a27
     h_ea95bdde7a27 -->|improve| h_b6b219118e3c
+    h_b6b219118e3c -. rollback .-> h_ea95bdde7a27
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
-    h_b6b219118e3c -. rollback .-> h_ea95bdde7a27
+    h_ea95bdde7a27 -->|improve| h_48ad45cab2c2
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_426bdf83097f plain;
     class h_b970b9abce0b plain;
     class h_10b331a30057 plain;
     class h_bcf2f7a414bd plain;
@@ -186,7 +185,7 @@ flowchart TD
     class h_0e22dd519bbf plain;
     class h_a1b28607d015 plain;
     class h_c10a4ca71357 plain;
-    class h_ea95bdde7a27 current_anchor;
+    class h_ea95bdde7a27 anchor;
     class h_c016461aeb9c plain;
     class h_4fe3a8221f0d plain;
     class h_cfb684533fdb plain;
@@ -210,6 +209,7 @@ flowchart TD
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
+    class h_48ad45cab2c2 current;
 ```
 
 ## Detail 1/14
@@ -3647,6 +3647,7 @@ flowchart TD
 - Cross-chunk link: `cfb684533fdb -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> b6b219118e3c`
 - Cross-chunk link: `b6b219118e3c -.rollback.-> ea95bdde7a27`
+- Cross-chunk link: `ea95bdde7a27 --improve--> 48ad45cab2c2`
 
 ```mermaid
 flowchart TD
@@ -3729,7 +3730,7 @@ flowchart TD
     h_0e22dd519bbf["0e22dd519bbf<br/>g=12 n=12<br/>comp=11980.3"]
     h_a1b28607d015["a1b28607d015<br/>g=12 n=12<br/>comp=10570.9"]
     h_c10a4ca71357["c10a4ca71357<br/>g=12 n=12<br/>comp=10432.0"]
-    h_ea95bdde7a27["ea95bdde7a27<br/>CURRENT ANCHOR<br/>g=36 n=20<br/>comp=12281.1"]
+    h_ea95bdde7a27["ea95bdde7a27<br/>ANCHOR<br/>g=48 n=20<br/>comp=12047.3"]
 
     h_425e0268f431 -->|improve| h_5549155b4081
     h_5549155b4081 -->|improve| h_b8fd7e91b841
@@ -3908,23 +3909,24 @@ flowchart TD
     class h_0e22dd519bbf plain;
     class h_a1b28607d015 plain;
     class h_c10a4ca71357 plain;
-    class h_ea95bdde7a27 current_anchor;
+    class h_ea95bdde7a27 anchor;
 ```
 
 ## Detail 14/14
 
-- Range: `c016461aeb9c` .. `355868eaf8ab`
-- Nodes in this diagram: `23`
+- Range: `c016461aeb9c` .. `48ad45cab2c2`
+- Nodes in this diagram: `24`
 - Internal edges in this diagram: `26`
 - Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
 - Cross-chunk link: `cfb684533fdb -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> b6b219118e3c`
+- Cross-chunk link: `b6b219118e3c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `b6b219118e3c -.rollback.-> ea95bdde7a27`
+- Cross-chunk link: `ea95bdde7a27 --improve--> 48ad45cab2c2`
 
 ```mermaid
 flowchart TD
@@ -3951,6 +3953,7 @@ flowchart TD
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
+    h_48ad45cab2c2["48ad45cab2c2<br/>CURRENT"]
 
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
@@ -4007,9 +4010,20 @@ flowchart TD
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
+    class h_48ad45cab2c2 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#15553 `ea95bdde -> 48ad45ca`
+
+- scores: `16515 11388 12897 16426 8419 8181 10765 14739 16873 12480 10322 8363`
+- 9.8. Same-type proximity (merge drought + build-phase) - v634: pc>=8, same_type>=1で早期発火
+- v634: axis 9.8 early activation — close build-phase same-type concentration gap
+- Lowered pc>=25 to pc>=8 and same_type_pieces>=2 to >=1 so SAME_TYPE_PROXIMITY
+- fires during build phase (turns 5-20, pc 8-25). With only 1 same-type piece on
+- board, targets placement near that piece. With 2+, uses existing pair-gap logic.
+- This fills the gap where HEIGHT_CONTROL scatters pieces during early game because
 
 ### Rollback Game#15541 `b6b21911 -> ea95bdde`
 

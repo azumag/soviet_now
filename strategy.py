@@ -46,7 +46,7 @@ Game Overview:
              9.65. Reactive near-miss type clustering - v597: merge_grade=NO時の散逸type集約
              9.10. High-type growth pipeline guidance - v609: NO merge時、type 8-12ピース重心誘導
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
-             9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
+             9.8. Same-type proximity (merge drought + build-phase) - v634: pc>=8, same_type>=1で早期発火
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
@@ -68,6 +68,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v634: axis 9.8 early activation — close build-phase same-type concentration gap
+     # Lowered pc>=25 to pc>=8 and same_type_pieces>=2 to >=1 so SAME_TYPE_PROXIMITY
+     # fires during build phase (turns 5-20, pc 8-25). With only 1 same-type piece on
+     # board, targets placement near that piece. With 2+, uses existing pair-gap logic.
+     # This fills the gap where HEIGHT_CONTROL scatters pieces during early game because
+     # no evaluation axis provides same-type clustering guidance below pc=25.
+     # Fixes rollback failure mode: "Early-game same-type concentration gap (axis 9.8 pc>=25)"
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md
      # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
      # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
      # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -2723,12 +2731,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
-        # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
+        # ----- axis 9.8: same-type proximity for merge drought recovery + build-phase clustering -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
         # Worst game T71-79: 9 turns, 7 with merge_grade=NO, pc 37→43. Extra_low T25-52: 27-turn drought.
-        # When merge_grade=NO and piece_count is high (>=25) and there are 2+ pieces of next_type on board,
-        # guide placement to bring same-type pieces closer together — creating future merge opportunities.
-        # This creates a "3-piece cluster" state: when next same-type arrives, immediate merge is likely.
+        # Also covers build-phase gap: during turns 5-20 (pc 8-25), when same-type pieces exist but no
+        # reactive/near pairs are available, NO evaluation axis provides same-type clustering guidance.
+        # HEIGHT_CONTROL dominates and scatters pieces horizontally (22.9% in low-score vs 14.8% in high-score).
+        # v634: lowered pc>=25→pc>=8 and same_type_pieces>=2→>=1 to fill this gap.
+        # With 1 same-type piece, targets placement near that piece (build-phase concentration).
+        # With 2+ same-type pieces, uses existing pair-gap logic (merge drought recovery).
         # NOT guidance restoration — orthogonal to death_spiral suppression (axis 9.6b/5.6/9.3 suppressed).
         # Fires ONLY when merge_grade=NO (no immediate merge possible) and NOT in death_spiral.
         # Bonus magnitude: max ~150 (tie-breaking, safe vs axis 8.8 -4500).
@@ -2737,34 +2748,50 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v598: also suppress when column_ceiling_dominant (merge_grade==NO && max_y>=1.0 && pc>=28)
         # — let column_ceiling guide placement to lowest-ceiling column during merge drought.
         # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
-        # refs: tmp/analysis_result.md (Implementation Plan: merge drought column_ceiling dominance),
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.8 early activation),
         #       game_history/20260411_095233_score0895.jsonl T71-79 (chronic NO merge),
         #       game_history/20260411_100940_score0932.jsonl T25-52 (27-turn drought)
-        if (merge_grade == "NO" and piece_count >= 25 and len(same_type_pieces) >= 2
+        if (merge_grade == "NO" and piece_count >= 8 and len(same_type_pieces) >= 1
                 and not death_spiral
                 and not (max_y >= 1.5 and reactive_pair_count >= 3)
                 and not column_ceiling_dominant
                 and not axis_88_horizontal_suppression):
-            # Find the pair of same_type pieces with smallest x-gap — target placement between them
-            same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
-            min_gap = float("inf")
-            target_x = 0.0
-            for i in range(len(same_type_sorted) - 1):
-                gap = abs(same_type_sorted[i + 1].get("x", 0) - same_type_sorted[i].get("x", 0))
-                if gap < min_gap:
-                    min_gap = gap
-                    target_x = (same_type_sorted[i].get("x", 0) + same_type_sorted[i + 1].get("x", 0)) / 2.0
+            # v634: single-piece proximity for build-phase same-type concentration
+            # When only 1 same-type piece exists, target placement near it for future merge opportunities.
+            # This fills the gap where HEIGHT_CONTROL scatters early-game pieces because no clustering
+            # axis activates below pc=25 (analysis: "early-game same-type concentration gap").
+            if len(same_type_pieces) >= 2:
+                same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
+                min_gap = float("inf")
+                target_x = 0.0
+                for i in range(len(same_type_sorted) - 1):
+                    gap = abs(same_type_sorted[i + 1].get("x", 0) - same_type_sorted[i].get("x", 0))
+                    if gap < min_gap:
+                        min_gap = gap
+                        target_x = (same_type_sorted[i].get("x", 0) + same_type_sorted[i + 1].get("x", 0)) / 2.0
 
-            # Only fire if pieces are reasonably close (merge potential exists)
-            if min_gap < 3.0:
-                dist_to_target = abs(x - target_x)
-                if dist_to_target < 1.5:
-                    proximity_bonus = max(0, 150.0 - dist_to_target * 80.0)
-                    # Reduce bonus if target area is high (don't override height penalty)
-                    avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
-                    if avg_target_y > 1.0:
-                        proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
-                    # v615: 50% reduction during rp==2 merge drought to let height penalty compete
+                if min_gap < 3.0:
+                    dist_to_target = abs(x - target_x)
+                    if dist_to_target < 1.5:
+                        proximity_bonus = max(0, 150.0 - dist_to_target * 80.0)
+                        avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
+                        if avg_target_y > 1.0:
+                            proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
+                        if rp2_noise_reduction:
+                            proximity_bonus *= 0.5
+                        if proximity_bonus > 0:
+                            score += proximity_bonus
+                            if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
+                                reasons.append("SAME_TYPE_PROXIMITY")
+            else:
+                single_piece = same_type_pieces[0]
+                single_x = single_piece.get("x", 0)
+                single_y = single_piece.get("y", -10)
+                dist_to_piece = abs(x - single_x)
+                if dist_to_piece < 2.0:
+                    proximity_bonus = max(0, 120.0 - dist_to_piece * 50.0)
+                    if single_y > 1.0:
+                        proximity_bonus *= max(0.0, 1.0 - (single_y - 1.0) * 0.3)
                     if rp2_noise_reduction:
                         proximity_bonus *= 0.5
                     if proximity_bonus > 0:
