@@ -68,6 +68,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v638: Axis 5.6 GROWTH_CENTER_PROXIMITY early activation + Axis 9.6b same-type proximity early boost
+     # Early game (pc 3-15, merge_grade=="NO"): HEIGHT_CONTROL scatters pieces with no competing
+     # guidance, causing board fragmentation (worst game T5-T8: type11→x=3.0). Two changes:
+     # (1) Axis 5.6 fires for max_type<6 with base=80, congestion=0.10, cap=2.5 during pc 3-15.
+     # (2) Axis 9.6b applies 1.3x multiplier during pc 3-15 (separate from v634 pc threshold change).
+     # Fixes rollback failure mode: early-game board fragmentation (HEIGHT_CONTROL scattering, no clustering)
+     # refs: tmp/analysis_result.md (Adopted hypothesis: GROWTH_CENTER_PROXIMITY early activation)
      # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
      # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
      # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -1587,6 +1594,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # refs: advice.md (Pitman_live), tmp/batch_summary.txt
                         if next_type == next_next_type:
                             proximity_bonus *= 1.5
+                        # v638: early-game same-type proximity boost — 1.3x multiplier during pc 3-15
+                        # When piece_count < 15 and no reactive/near (already guarded above),
+                        # same-type clustering is critical for building merge pipelines.
+                        # 1.3x boost strengthens guidance to compete with HEIGHT_CONTROL during
+                        # early-game board shaping (base ~156→203 at pc 10).
+                        # NOT a pc threshold change (forbidden: v634 axis 9.8 threshold change) —
+                        # this is an additive boost coefficient, different mechanism entirely.
+                        # Fixes rollback failure mode: early-game board fragmentation (no clustering guidance)
+                        if piece_count >= 3 and piece_count < 15:
+                            proximity_bonus *= 1.3
                         # v453: v418 rp_density_scaling NOT restored — was part of accumulation problem.
                         # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
                         # the postmortem warning about "additive bonus accumulation masking height
@@ -2187,6 +2204,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity *= min(congestion_scale, 3.5)
                     if proximity > 0:
                         score += proximity
+
+        # v638: Axis 5.6 early-game activation — growth center proximity during pc 3-15
+        # Worst game T5-T8: HEIGHT_CONTROL dominates 4/4 decisions, type11→x=3.0 (extreme edge).
+        # When max_type < 6, existing axis 5.6 (type>=6 guard) never fires, leaving no
+        # same-type clustering guidance competing with HEIGHT_CONTROL. Early activation uses
+        # base=80 (stronger than existing base=60) to overcome HEIGHT_CONTROL during this
+        # critical board-shaping period. Congestion rate=0.10, cap=2.5 (moderate scaling).
+        # Only fires when max_type_on_board < 6 (no overlap with existing type>=6 logic).
+        # Fixes rollback failure mode: early-game fragmentation, type scatter to edges
+        if piece_count >= 3 and piece_count <= 15 and merge_grade == "NO" and max_type_on_board < 6 and not death_spiral:
+            early_growth_center = min(
+                (p for p in pieces if p.get("type") == max_type_on_board),
+                key=lambda p: p.get("y", 10),
+                default=None,
+            )
+            if early_growth_center:
+                v638_egc_x = early_growth_center.get("x", 0)
+                v638_egc_y = early_growth_center.get("y", -10)
+                v638_h_dist = abs(x - v638_egc_x)
+                if v638_h_dist < 2.5:
+                    v638_prox = max(0, 80.0 - v638_h_dist * 40.0)
+                    if v638_egc_y > 0:
+                        v638_prox *= max(0.0, 1.0 - v638_egc_y * 0.4)
+                    v638_cscale = 1.0 + (piece_count - 3) * 0.10
+                    v638_prox *= min(v638_cscale, 2.5)
+                    if v638_prox > 0:
+                        score += v638_prox
+                        if "GROWTH_CENTER_EARLY" not in "_".join(reasons):
+                            reasons.append("GROWTH_CENTER_EARLY")
 
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
