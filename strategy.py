@@ -68,6 +68,9 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v643: low-type NEAR merge pipeline trap penalty — early-phase v603 extension (max_y>=0.8, max_type>=8)
+     # Fixes rollback failure mode: 低type NEAR merge pipeline trap — early scatter prevents pipeline construction
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md
      # v642: rp>=3 NO-merge same-type proximity amplification — 3.5x multiplier at max_y>=1.0
      # v636's 2.0x was insufficient: proximity(~240-540) < column_ceiling(~800-1500). 3.5x→~539-1890 competitive.
      # Fixes rollback failure mode: rp>=3 NO-merge時のtype散逸 — proximityがcolumn_ceilingに敗北
@@ -972,6 +975,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
+    max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
     
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
@@ -1151,6 +1155,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult * type_scale
             reasons.append("FAR_MERGE")
+
+        # ----- v643: low-type NEAR merge pipeline trap penalty (early-phase v603 extension) -----
+        # analysis_result.md hypothesis: v603 fires too late (max_y>=2.0, pc>=30). By then, low-type
+        # NEAR merges have already scattered the board. Low-type NEAR bonus (~480=600*0.8) overwhelms
+        # same-type proximity (~120-190), pulling pieces away from type clusters toward NEAR positions.
+        # In worst games (score 527/689), high-type pieces scatter early (pc=25-30), making pipeline
+        # construction impossible before drought begins. Low-score games have HIGHER merge_rate (38.4%)
+        # than high-score (36.5%), confirming low-type merges are frequent but unproductive.
+        # Extension: fire at max_y>=0.8 when high-type pipeline exists (max_type>=8). Penalty -300*merge_mult
+        # reduces effective NEAR bonus from ~480 to ~180, below proximity guidance (~120-190).
+        # When max_type<8 (no pipeline yet), penalty does NOT fire — low-type merges are pipeline base.
+        # Existing v603 (max_y>=2.0, pc>=30) kept as reinforcement for late-phase crisis.
+        # Fixes rollback failure mode: 低type NEAR merge pipeline trap — early scatter prevents pipeline construction
+        # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md (あずまぐ: 小さいピースは併合を狙わないほうがいい)
+        if merge_grade == "NEAR" and next_type <= 5 and max_y >= 0.8 and max_type_on_board >= 8:
+            score -= 300.0 * merge_mult
+            reasons.append("LOW_TYPE_NEAR_PIPELINE_TRAP")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ
