@@ -68,6 +68,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v642: rp>=3 NO-merge same-type proximity amplification — 3.5x multiplier at max_y>=1.0
+     # v636's 2.0x was insufficient: proximity(~240-540) < column_ceiling(~800-1500). 3.5x→~539-1890 competitive.
+     # Fixes rollback failure mode: rp>=3 NO-merge時のtype散逸 — proximityがcolumn_ceilingに敗北
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt
      # v639: column_ceiling_bonus center-proximity damping during merge drought (pre_death_spiral)
      # Fixes rollback failure mode: merge drought時の端配置によるpiece_count蓄積
      # refs: tmp/analysis_result.md, game_history/20260414_221242_score0876.jsonl, tmp/batch_summary.txt, advice.md
@@ -1607,6 +1611,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # Fixes rollback failure mode: early-game board fragmentation (no clustering guidance)
                         if piece_count >= 3 and piece_count < 15:
                             proximity_bonus *= 1.3
+                        # v642: rp>=3 NO-merge same-type proximity amplification — 3.5x multiplier at max_y>=1.0
+                        # v636's 2.0x was insufficient: proximity(~240-540) < column_ceiling(~800-1500).
+                        # 3.5x raises proximity to ~539-1890, competitive with column_ceiling bonus.
+                        # Worst game: rp>=3 NO merge → same-type scatter → type断絶 → death spiral.
+                        # v641's rp<=1 boost and HIGH_TYPE_NEAR_RESCUE NOT restored (different problem space).
+                        # Fixes: rp>=3 NO-merge時のtype散逸 — proximityがcolumn_ceilingに敗北
+                        # refs: tmp/analysis_result.md, tmp/batch_summary.txt
+                        if reactive_pair_count >= 3 and max_y >= 1.0:
+                            proximity_bonus *= 3.5
                         # v453: v418 rp_density_scaling NOT restored — was part of accumulation problem.
                         # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
                         # the postmortem warning about "additive bonus accumulation masking height
