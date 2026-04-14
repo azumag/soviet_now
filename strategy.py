@@ -68,17 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v616: merge drought noise suppression — suppress axes 5/5.5 during merge drought
-     # When max_y>=1.5 && merge_grade=="NO", NEXT_SAME centering (~+50) and
-     # AVOID_BLOCK_NEXTNEXT (~-400) override height penalty differentiation (~100-200),
-     # scattering pieces away from type clusters. Suppress both so height penalty and
-     # same-type proximity are sole differentiators during merge drought.
-     # Extends v462 death_spiral suppression (danger>0 && rp>=3 && deadline) to the
-     # broader merge drought condition (max_y>=1.5 && NO merge).
-     # Worst game T55-58: 4 consecutive NO merge, pieces at x=-1.6/-1.0/-2.2/-2.4.
-     # refs: tmp/analysis_result.md (adopted hypothesis: axis 5/5.5 suppression),
-     #       game_history/20260414_103114_score0856.jsonl T55-T58,
-     #       tmp/state/last_rollback_postmortem.md (v616 prioritized)
      # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
      # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
      # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -1392,22 +1381,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         axis_88_horizontal_suppression = (
             reactive_pair_count >= 3 and merge_grade == "NO"
         )
-        # v616: merge drought noise suppression — suppress axes 5/5.5 during merge drought
-        # Rollback analysis constraint: "prioritize v616 axis 5/5.5 max_y>=1.5 NO-merge suppression"
-        # During merge drought (max_y>=1.5, merge_grade=="NO"), NEXT_SAME centering (~+50)
-        # and AVOID_BLOCK_NEXTNEXT (~-400) override height penalty differentiation (~100-200),
-        # creating placement noise that scatters pieces away from type clusters.
-        # Suppressing these ensures height penalty and same-type proximity are the sole
-        # differentiators during merge drought, promoting consistent low placement that
-        # preserves future merge opportunities.
-        # Worst game T55-58: 4 consecutive NO merge, score_delta=0, pieces scattered to
-        # x=-1.6/-1.0/-2.2/-2.4 without creating merge paths.
-        # Existing death_spiral suppression (v462) covers only danger_piece_count>0 && rp>=3
-        # && deadline_crossed. This extends to the broader merge drought condition.
-        merge_drought_noise_suppression = (
-            max_y >= 1.5
-            and merge_grade == "NO"
-        )
 
         # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
         # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
@@ -2140,7 +2113,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
         # v462: suppress in death spiral — height must be sole differentiator
-        if next_next_type == next_type and not (death_spiral or merge_drought_noise_suppression):
+        if next_next_type == next_type and not death_spiral:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
@@ -2153,7 +2126,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v462: suppress in death spiral — height must be sole differentiator
         # v594: further suppress when merge_grade==NO && max_y>=1.0 — at elevated boards with no merge,
         # this -400 penalty pushes pieces toward edges (worst game T45: x=-3.0), fighting column_ceiling.
-        if not (death_spiral or merge_drought_noise_suppression) and not (merge_grade == "NO" and max_y >= 1.0):
+        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0):
             for p in pieces:
                 if p.get("type") == next_next_type:
                     piece_y = p.get("y", -10)
