@@ -68,6 +68,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v647: simplify rp-dependent height tier escalation during NON-deadline rp<=2 states
+     # Disable early_drought_height (rp==1, base=90) and tier escalation at rp<=2 during normal play.
+     # Tier escalation (90/120/150) created discontinuities causing HEIGHT_CONTROL scatter (19.6% low vs 16.6% high).
+     # v128 (score 3689) uses simple base 50 with no rp-based tiers. Crisis handling preserved
+     # (deadline_crossed OR rp>=3). Fixes rollback failure mode: rp-dependent tier escalationによるHEIGHT_CONTROL散漫
+     # refs: tmp/analysis_result.md (Adopted Hypothesis: Simplify rp-dependent height tier escalation)
      # v643: low-type NEAR merge pipeline trap penalty — early-phase v603 extension (max_y>=0.8, max_type>=8)
      # Fixes rollback failure mode: 低type NEAR merge pipeline trap — early scatter prevents pipeline construction
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md
@@ -2040,12 +2046,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # in HIGH phase — exceeds noise floor, ensures low-y placement consistently.
         # pc>=15 catches drought before board half-full; max_y>=1.0 avoids disrupting normal early play.
         # death_spiral exclusion unnecessary (rp=1 can't satisfy death_spiral definition).
-        early_drought_height = (
-            merge_grade == "NO"
-            and reactive_pair_count == 1
-            and max_y >= 1.0
-            and piece_count >= 15
-        )
+        # v647: SUPERSEDED early_drought_height. NON-deadline rp<=2 uses base 75 without tier escalation.
+        # v128 (score 3689) uses simple base 50 with no rp-based tiers — tier escalation (90/120/150)
+        # created discontinuities causing HEIGHT_CONTROL scatter. Crisis handling preserved:
+        # deadline_crossed catches rp=1 via pre_death_spiral_height; rp>=3 caught via moderate_drought.
+        # early_drought_height = (
+        #     merge_grade == "NO"
+        #     and reactive_pair_count == 1
+        #     and max_y >= 1.0
+        #     and piece_count >= 15
+        # )
+
         moderate_drought = (
             merge_grade == "NO"
             and reactive_pair_count >= 3
@@ -2053,19 +2064,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not death_spiral
             and not critical_death_spiral  # don't double-count
             and not pre_death_spiral_height  # don't double-count
-            and not early_drought_height  # don't double-count
         )
 
         if critical_death_spiral:
             base_height_coefficient = 150.0
         elif pre_death_spiral_height:
             base_height_coefficient = 120.0
-        elif early_drought_height:
-            base_height_coefficient = 90.0
         elif moderate_drought:
             base_height_coefficient = 100.0
         else:
-            base_height_coefficient = 75.0  # v611: 50→75, improve NO-merge placement consistency
+            base_height_coefficient = 75.0  # v611: 50→75; v647: simplified for NON-deadline rp<=2
 
         # v599: merge drought vertical guidance escalation — base coefficient 50→100 during NO merge + rp>=3
         # SUPERSEDED by v610's tiered escalation above. Kept for reference only.
