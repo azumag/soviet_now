@@ -683,10 +683,6 @@ _start_improvement_job() {
 		log "[IMPROVE] ${acc_count}試合分のデータで改善開始"
 	fi
 
-	# Twitchコメント処理は comment watcher 側に一本化
-	log "[NEWS] ニュース取得..."
-	./fetch_news.sh
-
 	# 戦略ハッシュ記録
 	local strategy_hash
 	strategy_hash=$(md5 -q "$STRATEGY_FILE" 2>/dev/null | cut -c1-8)

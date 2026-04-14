@@ -862,6 +862,61 @@ def load_game_state():
         return {}
 
 
+def load_latest_drop():
+    p = Path("game_history/latest.jsonl")
+    if not p.exists():
+        return ""
+
+    last = ""
+    try:
+        with p.open(encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    last = line
+    except Exception:
+        return ""
+
+    if not last:
+        return ""
+
+    try:
+        d = json.loads(last)
+    except Exception:
+        return ""
+
+    def number(value, digits=2, signed=False):
+        try:
+            x = float(value)
+        except Exception:
+            return "?"
+        if abs(x - round(x)) < 1e-9:
+            return f"{int(round(x)):+d}" if signed else str(int(round(x)))
+        sign = "+" if signed else ""
+        return f"{x:{sign}.{digits}f}"
+
+    reason = re.sub(r"\s+", "_", str(d.get("decision_reason", "") or "")).strip("_")
+    labels = []
+    try:
+        src = Path("strategy.py").read_text(encoding="utf-8")
+        labels = re.findall(r"reasons\.append\(\s*['\"]([^'\"]+)['\"]\s*\)", src)
+    except Exception:
+        labels = []
+    labels = sorted(set(labels), key=len, reverse=True)
+
+    matches = [label for label in labels if label and label in reason]
+    noise_words = ("PENALTY", "CROSSES_DEADLINE_NO_MERGE")
+    decision = next((label for label in matches if not any(word in label for word in noise_words)), "")
+    if not decision:
+        decision = matches[0] if matches else (reason or "?")
+    turn_flag = "!" if (d.get("deadline_crossed") or d.get("decision_crosses_deadline")) else ""
+    parts = [
+        f"T{d.get('turn', '?')}{turn_flag}",
+        f"x={number(d.get('decision_x'), 2, signed=True)}",
+        f"D={decision}",
+    ]
+    return " ".join(parts)
+
+
 def get_strategy_hash():
     try:
         r = subprocess.run(
@@ -965,8 +1020,8 @@ def load_improve_state():
 
 # ── Panel renderers ───────────────────────────────────────────
 
-def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
-                  rejected, accumulated, improve, rolling):
+def render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
+                  strat_lines, rejected, accumulated, improve, rolling):
     game_count = len(scores)
     best = max(scores) if scores else 0
     avg_all = int(sum(scores) / len(scores)) if scores else 0
@@ -1050,6 +1105,14 @@ def render_header(scores, game_state, strat_hash, strat_ver, strat_lines,
     r4_display = f" Live: {state_color}{state}{RST}  score={gscore}  pieces={gpieces}{live_extra}"
     pad4 = inner - len(r4_raw_nocolor)
     lines.append(f"{C_CYAN}│{RST}{r4_display}{' ' * max(pad4, 0)} {C_CYAN}│{RST}")
+
+    if latest_drop:
+        label = " LastDrop: "
+        drop_text = compact_regpreview_text(str(latest_drop), inner - len(label))
+        drop_raw = f"{label}{drop_text}"
+        drop_display = f"{label}{DIM}{drop_text}{RST}"
+        pad_drop = inner - len(drop_raw)
+        lines.append(f"{C_CYAN}│{RST}{drop_display}{' ' * max(pad_drop, 0)} {C_CYAN}│{RST}")
 
     anchor = load_best_anchor()
     ranked = []
@@ -1481,6 +1544,7 @@ def main():
     scores = load_scores()
     rolling = load_rolling()
     game_state = load_game_state()
+    latest_drop = load_latest_drop() or "(no drop log)"
     strat_hash = get_strategy_hash()
     strat_ver = get_strategy_version()
     strat_lines = get_strategy_lines()
@@ -1491,7 +1555,7 @@ def main():
 
     output = []
 
-    output += render_header(scores, game_state, strat_hash, strat_ver,
+    output += render_header(scores, game_state, latest_drop, strat_hash, strat_ver,
                             strat_lines, rejected, accumulated, improve, rolling)
     output.append("")
     output += render_score_timeline(scores)

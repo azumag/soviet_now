@@ -8,13 +8,20 @@ SCRIPT_DIR="${0:a:h}"
 cd "$SCRIPT_DIR"
 
 WATCH_INTERVAL=${1:-10}
-FULLSCREEN_ENABLED=${FULLSCREEN_ENABLED:-1}
+DROP_REFRESH_INTERVAL=${SHOW_STATUS_DROP_REFRESH_INTERVAL:-0.25}
+SHOW_STATUS_NO_FLICKER=${SHOW_STATUS_NO_FLICKER:-1}
+if [[ "$SHOW_STATUS_NO_FLICKER" == "1" && -z "${FULLSCREEN_ENABLED+x}" ]]; then
+	FULLSCREEN_ENABLED=0
+else
+	FULLSCREEN_ENABLED=${FULLSCREEN_ENABLED:-1}
+fi
 FULLSCREEN_RARE_N=${FULLSCREEN_RARE_N:-30}
 FULLSCREEN_MIN_GAP_SEC=${FULLSCREEN_MIN_GAP_SEC:-180}
 TMP_STATE_DIR="tmp/state"
 TMP_MARKERS_DIR="tmp/markers"
 TMP_HISTORY_DIR="tmp/history"
 TMP_DEBUG_DIR="tmp/debug"
+LATEST_DROP_LOG="game_history/latest.jsonl"
 CURRENT_STRATEGY_RUN_FILE="$TMP_STATE_DIR/current_strategy_run.json"
 ACTIVE_BRANCH_FILE="$TMP_STATE_DIR/active_branch.json"
 FULLSCREEN_LAST_FILE="$TMP_STATE_DIR/.status_fullscreen_last"
@@ -38,6 +45,14 @@ BRANCH_HARD_P25_GAP=${BRANCH_HARD_P25_GAP:-2600}
 BRANCH_HARD_MIN_BREACH_COUNT=${BRANCH_HARD_MIN_BREACH_COUNT:-2}
 REJECTED_REEVALUATE_TTL_SEC=${REJECTED_REEVALUATE_TTL_SEC:-21600}
 RADIO_STATE_STALE_SEC=${RADIO_STATE_STALE_SEC:-600}
+
+case "$WATCH_INTERVAL" in
+''|*[!0-9]*) WATCH_INTERVAL=10 ;;
+esac
+[[ "$DROP_REFRESH_INTERVAL" =~ '^[0-9]+([.][0-9]+)?$' ]] || DROP_REFRESH_INTERVAL=0.25
+(( WATCH_INTERVAL < 1 )) && WATCH_INTERVAL=10
+(( DROP_REFRESH_INTERVAL <= 0 )) && DROP_REFRESH_INTERVAL=0.25
+(( DROP_REFRESH_INTERVAL > WATCH_INTERVAL )) && DROP_REFRESH_INTERVAL=$WATCH_INTERVAL
 
 #=== レイアウト幅 (タイトル罫線に合わせる) ===
 W=57
@@ -201,6 +216,86 @@ _print_ai_output_lines() {
 			printf "    ${C_WHITE}│${C_RESET}             ${C_DIM}%s${C_RESET}\n" "$ai_line"
 		fi
 	done <<<"$ai_block"
+}
+
+_latest_drop_signature() {
+	[[ -f "$LATEST_DROP_LOG" ]] || {
+		printf 'missing'
+		return
+	}
+	local stat_sig last_turn
+	stat_sig=$(stat -f '%m:%z' "$LATEST_DROP_LOG" 2>/dev/null || printf 'unknown')
+	last_turn=$(tail -n 1 "$LATEST_DROP_LOG" 2>/dev/null | sed -nE 's/.*"turn"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p')
+	printf '%s:%s' "$stat_sig" "$last_turn"
+}
+
+_latest_drop_summary() {
+	[[ -f "$LATEST_DROP_LOG" ]] || return
+	python3 - "$LATEST_DROP_LOG" <<'PY' 2>/dev/null
+import json
+import re
+import sys
+
+path = sys.argv[1]
+
+last = ""
+try:
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                last = line
+except Exception:
+    raise SystemExit(0)
+
+if not last:
+    raise SystemExit(0)
+
+try:
+    d = json.loads(last)
+except Exception:
+    raise SystemExit(0)
+
+def number(value, digits=2, signed=False):
+    try:
+        x = float(value)
+    except Exception:
+        return "?"
+    if abs(x - round(x)) < 1e-9:
+        return f"{int(round(x)):+d}" if signed else str(int(round(x)))
+    sign = "+" if signed else ""
+    return f"{x:{sign}.{digits}f}"
+
+turn_flag = "!" if (d.get("deadline_crossed") or d.get("decision_crosses_deadline")) else ""
+turn = f"{d.get('turn', '?')}{turn_flag}"
+x = number(d.get("decision_x"), 2, signed=True)
+score = number(d.get("score"), 0)
+delta = number(d.get("score_delta"), 0, signed=True)
+pieces = number(d.get("piece_count"), 0)
+next_type = d.get("next_type", "?")
+reason = re.sub(r"\s+", "_", str(d.get("decision_reason", "") or "")).strip("_")
+labels = []
+try:
+    with open("strategy.py", encoding="utf-8") as sf:
+        src = sf.read()
+    labels = re.findall(r"reasons\.append\(\s*['\"]([^'\"]+)['\"]\s*\)", src)
+except Exception:
+    labels = []
+labels = sorted(set(labels), key=len, reverse=True)
+
+matches = [label for label in labels if label and label in reason]
+noise_words = ("PENALTY", "CROSSES_DEADLINE_NO_MERGE")
+decision = next((label for label in matches if not any(word in label for word in noise_words)), "")
+if not decision:
+    decision = matches[0] if matches else (reason or "?")
+
+parts = [
+    f"T{turn}",
+    f"x={x}",
+    f"D={decision}",
+]
+
+print(" ".join(parts))
+PY
 }
 
 _fullscreen_commands() {
@@ -1048,6 +1143,11 @@ PY
 		(( ${#twitch_latest} > max_tw )) && twitch_latest="${twitch_latest[1,$((max_tw-3))]}..."
 	fi
 
+	# 最新ドロップ
+	local latest_drop=""
+	latest_drop=$(_latest_drop_summary)
+	[[ -n "$latest_drop" ]] || latest_drop="(no drop log)"
+
 	# ========== 描画 ==========
 	echo ""
 	printf "${C_BOLD}${C_CYAN}━━━ SOREN STATUS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
@@ -1107,6 +1207,10 @@ PY
 	queue_bar=$(_bar_meter "$queue_total" 30 12)
 	printf "    ${C_BLUE}▸${C_RESET} QueueMeter  ${C_DIM}[%s]${C_RESET}  ${C_DIM}A=%d C=%d T=%d${C_RESET}\n" \
 		"$queue_bar" "$acc_count" "$comment_queue_count" "$twitch_pending"
+
+	local max_drop=$(( W - 18 ))
+	latest_drop=$(_truncate_display_width "$latest_drop" "$max_drop")
+	printf "    ${C_CYAN}▾${C_RESET} LastDrop   ${C_DIM}%s${C_RESET}\n" "$latest_drop"
 
 	# リバート・リジェクト情報
 	if $revert_available || (( rejected_count > 0 )); then
@@ -1390,14 +1494,32 @@ render() {
 	printf '\033[H%s\033[J' "$buf"
 }
 
+_render_status_once() {
+	show_status | render
+}
+
+_wait_for_status_update() {
+	local last_drop_sig="$1"
+	local deadline=$(( $(date +%s) + WATCH_INTERVAL ))
+	local current_drop_sig=""
+
+	while (( $(date +%s) < deadline )); do
+		sleep "$DROP_REFRESH_INTERVAL"
+		current_drop_sig=$(_latest_drop_signature)
+		[[ "$current_drop_sig" != "$last_drop_sig" ]] && return 0
+	done
+	return 0
+}
+
 #=== 実行 ===
 printf '\033[?25l'          # カーソル非表示
 trap 'printf "\033[?25h\033[0m"; exit' EXIT INT TERM
 printf '\033[2J'            # 初回だけ画面クリア
 while true; do
-	show_status | render
+	current_drop_sig=$(_latest_drop_signature)
+	_render_status_once
 	if _maybe_run_fullscreen_random; then
 		continue
 	fi
-	sleep "$WATCH_INTERVAL"
+	_wait_for_status_update "$current_drop_sig"
 done

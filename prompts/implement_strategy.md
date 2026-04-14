@@ -43,6 +43,11 @@
 - `random` や時刻依存など非決定的要素は導入しない
 - `strategy_helpers/` へ分離する場合、`strategy.py.staging` から import できる最小構成にすること
 
+## Refactoring and Bug Fixes
+- **Refactoring**: If you encounter structural problems or obvious bugs in existing code during implementation, you may fix them on the spot without returning to the analysis phase. However, refactoring alone does not warrant a change log entry — pair it with a feature change when recording.
+- **Bug fixes**: You may fix existing bugs unrelated to the hypothesis identified in the analysis phase. Record each bug fix as a single line in the change log. Limit to one bug per improvement pass.
+- **Constraint**: Refactoring and bug fixes must not change the external contract of `decide()` (return value structure).
+
 ## 事前セルフチェック（書き込み前）
 - 分析の `Implementation Plan` と実装が一致しているか
 - 数値変更だけの場合、その変更量を支持するログ根拠があるか
@@ -50,14 +55,16 @@
 - `__main__` を壊していないか
 - 既存の有効ロジックを誤って消していないか
 - 触った周辺に明確な既存バグや partial edit 崩れを残していないか
+- 触ったコードに明らかなバグが残っていないか
+- リファクタリングした箇所が以前と同じ動作をするか
 - 例外時にも `{"x": float, "reason": str}` を返せるか
 
 ## 出力指示（必須）
 - 改善後のコードは `strategy.py.staging` を直接編集して反映すること
 - `strategy.py.staging` は既存ファイルなので、可能な限り `Edit` で差分適用すること。新規 `Write` での全文置換は避けること
 - `strategy.py.staging` 以外のトップレベル `.py` は作成しないこと
-- 冒頭の変更履歴は簡潔に追記（2〜4行以内）
-- 変更履歴内に、今回つぶす rollback failure mode を1行で明記すること（analysis_result.md の仮説から引用）
+- 冒頭の変更履歴は簡潔に追記（2〜4行以内）。リファクタリングやバグ修正を含める場合は機能変更と別の行として記録すること
+- 変更履歴内に，本次つぶす rollback failure mode を1行で明記すること（analysis_result.md の仮説から引用）
 - 変更履歴内に `refs:` 行を1行入れ、参照した主要ファイル名を列挙する（analysis_result.md を必ず含める）
 - コードにはなぜそうするに至ったかコメントを記載する
 - `Edit` が2回連続で失敗したら、`strategy.py.staging` の該当箇所だけを狭い範囲で再読込し、より小さい patch へ分割してやり直す

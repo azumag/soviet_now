@@ -13,8 +13,31 @@ const CALIBRATION_PATH = 'tmp/calibration.json';
 // ゲーム座標定数
 const GAME_X_MIN = -3.0;
 const GAME_X_MAX = 3.0;
+const BOARD_X_MIN = -3.5;
+const BOARD_X_MAX = 3.5;
 const GAME_Y_MIN = -5.0;  // floor
 const GAME_Y_MAX = 3.32;  // deadline area top
+
+function getBoardGameWidth() {
+  return BOARD_X_MAX - BOARD_X_MIN;
+}
+
+function gameXToBoardPixel(gameX, board) {
+  return Math.round(
+    board.left + ((gameX - BOARD_X_MIN) / getBoardGameWidth()) * board.width
+  );
+}
+
+function withBoardDerivedDropArea(calibration) {
+  if (!calibration?.board) return calibration;
+  return {
+    ...calibration,
+    dropArea: {
+      pixelLeft: gameXToBoardPixel(GAME_X_MIN, calibration.board),
+      pixelRight: gameXToBoardPixel(GAME_X_MAX, calibration.board),
+    },
+  };
+}
 
 function pixelBrightness(data, width, x, y) {
   const idx = (y * width + x) * 4;
@@ -231,10 +254,10 @@ export async function calibrate(screenshotPath) {
   const boardWidth = boardRight - boardLeft;
   const boardHeight = boardBottom - boardTop;
 
-  // 壁間距離がゲーム座標 7.0 単位 (-3.5 ~ +3.5) に対応
-  // ドロップ可能範囲は -3.0 ~ +3.0
-  const wallWidth = rightWallOuter - leftWallOuter; // 壁外側間 = 7.0単位
-  const pixelsPerUnit = wallWidth / 7.0;
+  // 盤面解析の座標系と同じく、壁の内側をゲーム座標 7.0 単位 (-3.5 ~ +3.5) に対応させる。
+  // ドロップ可能範囲はその内側の -3.0 ~ +3.0。
+  const boardGameWidth = getBoardGameWidth();
+  const pixelsPerUnit = boardWidth / boardGameWidth;
 
   const calibration = {
     screen: { width, height },
@@ -254,8 +277,8 @@ export async function calibrate(screenshotPath) {
     },
     dropArea: {
       // -3.0 ~ +3.0 のピクセル範囲
-      pixelLeft: leftWallOuter + Math.floor(pixelsPerUnit * 0.5),
-      pixelRight: leftWallOuter + Math.floor(pixelsPerUnit * 6.5),
+      pixelLeft: gameXToBoardPixel(GAME_X_MIN, { left: boardLeft, width: boardWidth }),
+      pixelRight: gameXToBoardPixel(GAME_X_MAX, { left: boardLeft, width: boardWidth }),
     },
     pixelsPerUnit,
     confidence,
@@ -283,7 +306,7 @@ export function loadCalibration() {
       console.log('[calibration] Ignoring cached fallback calibration; recalibration required');
       return null;
     }
-    return calibration;
+    return withBoardDerivedDropArea(calibration);
   }
   return null;
 }
@@ -299,7 +322,7 @@ export function gameToPixel(gameX, gameY, cal) {
   const { board } = cal;
 
   // ゲーム座標系: X [-3.5, +3.5] → ピクセル [board.left, board.right]
-  const normalizedX = (gameX - (-3.5)) / 7.0; // 0..1
+  const normalizedX = (gameX - BOARD_X_MIN) / (BOARD_X_MAX - BOARD_X_MIN); // 0..1
   const px = board.left + normalizedX * board.width;
 
   // ゲーム座標系: Y [-5.0, +3.32] → ピクセル [board.bottom, board.top] (Y反転)
@@ -321,7 +344,7 @@ export function pixelToGame(px, py, cal) {
   const { board } = cal;
 
   const normalizedX = (px - board.left) / board.width;
-  const gameX = -3.5 + normalizedX * 7.0;
+  const gameX = BOARD_X_MIN + normalizedX * (BOARD_X_MAX - BOARD_X_MIN);
 
   const normalizedY = (board.bottom - py) / board.height;
   const gameY = GAME_Y_MIN + normalizedY * (GAME_Y_MAX - GAME_Y_MIN);
