@@ -68,6 +68,9 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v641: axis 1.5c high-type NEAR merge rescue bonus — offset cumulative NEAR penalty over-suppression for type>=10
+     # Fixes rollback failure mode: type 10+ merge_available見逃し (rollback_postmortem highest priority)
+     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md
      # v639: column_ceiling_bonus center-proximity damping during merge drought (pre_death_spiral)
      # Fixes rollback failure mode: merge drought時の端配置によるpiece_count蓄積
      # refs: tmp/analysis_result.md, game_history/20260414_221242_score0876.jsonl, tmp/batch_summary.txt, advice.md
@@ -1111,6 +1114,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade in ["DIRECT", "NEAR", "FAR"]:
             type_scale = 1.0 + 0.1 * max(0, next_type - 5)
             type_scale = max(0.8, min(type_scale, 2.0))  # floor 0.8, cap 2.0
+            type_scale_base = type_scale  # v641: save pre-override value for rescue bonus
             # v604: NEAR merge suppression in death zone — reduce type_scale below normal floor
             if near_merge_suppression and merge_grade == "NEAR":
                 type_scale = 0.5
@@ -1239,6 +1243,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
+
+        # ----- axis 1.5c: high-type NEAR merge rescue bonus (v641) -----
+        # High-type (>=10) NEAR merges have avg_score_delta=42.7 but are suppressed
+        # by cumulative NEAR penalties (NEAR_DEADLINE_RISK + HIGH_PC_NEAR_PENALTY
+        # + GAP_ZONE_NEAR_PENALTY = up to -2000). type_scale=1.2 at type 10 yields
+        # only +720, making net negative. This rescue bonus offsets the over-suppression
+        # for high-type NEAR merges in danger phases where merge opportunity is critical.
+        # rollback_postmortem: "type 10+ merge_available見逃し" (highest priority)
+        # batch_summary: NEAR_MERGE_HIGH_LAYER avg_score_delta=42.7
+        # worst_game T55-66: type 10×4, type 12×3散在、merge_grade="NO"連続
+        if merge_grade == "NEAR" and next_type >= 10 and max_y >= 1.8:
+            type_scale_for_rescue = type_scale_base
+            score += 400.0 * merge_mult * type_scale_for_rescue
+            reasons.append("HIGH_TYPE_NEAR_RESCUE")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
