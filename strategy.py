@@ -68,38 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v633: phantom reactive state same-type proximity dominance — expand threshold and amplify bonus
-     # Analysis: phantom reactive state (!current_type_has_reactive && !current_type_has_near && merge_grade=="NO")
-     # — v632 reduced column_ceiling to 25% but residual 25% (200-310pt) still overrides same_type_proximity
-     # when closest same-type piece is beyond 1.5u (bonus=0). Worst game T58: type 7 at x=-2.04 but placed
-     # at x=0.2 (2.2u away, proximity=0). Extra-low game T64-69: 7 consecutive NO-merges with rp=8 but
-     # current_type has no reactive pair. column_ceiling scatters pieces away from their type cluster.
-     # Fix: in phantom_rp_state, expand axis 9.6b/9.8 same_type proximity threshold from 1.5u to 2.5u
-     # and multiply bonus by 2.0x. This ensures proximity bonus (~320-1080pt) exceeds column_ceiling residual
-     # (~200-310pt), pulling pieces toward their type cluster instead of the lowest-ceiling column.
-     # Also boost axis 9.10 (high-type growth pipeline) by 1.5x when phantom_rp_state and no same-type pieces.
-     # Fixes rollback failure mode: "phantom reactive state での same-type clustering が column_ceiling に敗北"
-     # refs: tmp/analysis_result.md, game_history/20260414_085244_score0608.jsonl T58-64,
-     #       game_history/20260414_083120_score0759.jsonl T64-69, tmp/batch_summary.txt
-     # v632: phantom reactive pair column_ceiling suppression — reduce to 25% when rp>0 for OTHER types but not current type
-     # Analysis: worst game T55-T62 shows column_ceiling_bonus(800-1250) overriding same-type proximity(120-540)
-     # during phantom reactive states (rp>0 for other types, no merge for current type).
-     # Existing v631 suppression zeros ceiling_bonus only when rp>=3 && not current_type_has_reactive/near && pc>=15.
-     # New elif: rp>=1 && not current_type_has_reactive (already inside merge_grade==NO block) → multiply by 0.25.
-     # Preserves some height equalization (prevents cascading) while letting same-type proximity guide placement.
-     # Fixes rollback failure mode: "merge_available/danger_direct_merge_available missed at max_y>=2.0"
-     # refs: tmp/analysis_result.md, game_history/20260414_072642_score0921.jsonl T55-T62,
-     #       game_history/20260414_074837_score0988.jsonl T45-T69, tmp/batch_summary.txt
-     # v631: extend non-reactive-type column_ceiling suppression — remove same_type_pieces>=2, lower pc from 20 to 15
-     # Fixes rollback failure mode: non-reactive type scatter through column_ceiling at rp>=3 (worst game T29-T34)
-     # refs: tmp/analysis_result.md, game_history/20260414_063817_score0856.jsonl T29-T34
-     # v630: non-reactive-type column_ceiling suppression during merge drought
-     # When rp>=3 && merge_grade==NO && current_type has no reactive/near pair &&
-     # same_type_pieces>=2 && pc>=20, set ceiling_bonus=0 so axis 9.6b/9.8
-     # same_type proximity guides placement instead of scattering between other-type reactive pairs.
-     # Fixes rollback failure mode: "column_ceilingがnon-reactive typeを他typeのreactive pair間に
-     #   散らし、future merge pathをblockする" (analysis_result.md adopted hypothesis)
-     # refs: tmp/analysis_result.md, game_history/20260414_042658_score0714.jsonl T35-T38
      # v617: axis 9.12 merge drought exit trigger — no_merge_streak + merge path creation
      # When no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30, add bonus for
      # placing current piece adjacent to type 10+ pieces (+500*merge_mult within 1.5u,
@@ -1143,15 +1111,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
 
-        # v633: phantom reactive state flag
-        # When merge_grade=NO and current_type has no reactive or near pairs on the board,
-        # column_ceiling dominates horizontal placement, scattering pieces away from same-type clusters.
-        phantom_rp_state = (
-            merge_grade == "NO"
-            and not current_type_has_reactive
-            and not current_type_has_near
-        )
-
         # ----- v596: merge type scaling — high-type growth pipeline prioritization -----
         # analysis_result.md: "低type並合トラップ脱却" — low-score games merge frequently (39.1%)
         # but merge low-type pieces, while high-score games (34.8% merge_rate) build high-type pieces.
@@ -1586,25 +1545,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             merge_grade == "NO" and max_y >= 1.0 and piece_count >= 28
         )
 
-        # v631: extended non-reactive-type column_ceiling suppression during merge drought
-        # v630 required same_type_pieces>=2 and pc>=20, but worst game (score856) shows scatter
-        # at T29-T34 where same_type_pieces<2 (type 8 at T29/T33 has only 1 piece) and pc=18.
-        # column_ceiling_bonus pushes non-reactive types toward other-type reactive pair clusters
-        # at x≈2.6, fragmenting the board permanently. Removing same_type_pieces>=2 constraint
-        # because same_type_pieces<2 is exactly when column_ceiling does the most damage —
-        # with 0 or 1 same-type piece, axis 9.6b/9.8 proximity guidance is too weak (~120-540)
-        # to counterbalance column_ceiling (~300-750 × rp_scale). Lowering pc threshold from
-        # 20 to 15 to cover T29 (pc=18) where scatter begins.
-        # Fixes rollback failure mode: "non-reactive type scatter through column_ceiling at rp>=3"
-        # refs: tmp/analysis_result.md, game_history/20260414_063817_score0856.jsonl T29-T34
-        non_reactive_type_column_ceiling_suppress = (
-            reactive_pair_count >= 3
-            and merge_grade == "NO"
-            and not current_type_has_reactive
-            and not current_type_has_near
-            and piece_count >= 15
-        )
-
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
         # advice.md "TypeN+1と隣接している方を優先してドロップする" (azumag, nimdavirus).
@@ -1649,10 +1589,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     target_x = best_proximity_target.get("x", 0)
                     target_y = best_proximity_target.get("y", -10)
                     horiz_dist = abs(x - target_x)
-                    # v633: expand threshold from 2.0 to 2.5 in phantom_rp_state
-                    # to reach same-type pieces beyond old 2.0u radius
-                    prox_threshold = 2.5 if (phantom_rp_state and len(same_type_pieces) >= 1) else 2.0
-                    if horiz_dist < prox_threshold:
+                    if horiz_dist < 2.0:
                         # v369 congestion-aware proximity — no reactive level split
                         # Postmortem: piece_count is the key predictor of final score.
                         # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
@@ -1673,10 +1610,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         # refs: advice.md (Pitman_live), tmp/batch_summary.txt
                         if next_type == next_next_type:
                             proximity_bonus *= 1.5
-                        # v633: 2.0x multiplier in phantom_rp_state to override
-                        # column_ceiling 25% residual (~200-310pt)
-                        if phantom_rp_state and len(same_type_pieces) >= 1:
-                            proximity_bonus *= 2.0
                         # v453: v418 rp_density_scaling NOT restored — was part of accumulation problem.
                         # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
                         # the postmortem warning about "additive bonus accumulation masking height
@@ -1815,11 +1748,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Bonus: max 150 at dist=0, decreases by 50 per unit distance
                 # dist=0 → 150, dist=1 → 100, dist=2 → 50, dist>=3 → 0
                 pipeline_bonus = max(0.0, 150.0 - dist * 50.0) * merge_mult
-
-                # v633: strengthen high-type pipeline when phantom_rp_state and no same-type pieces
-                # guides placement toward high-type centroid when same-type proximity can't fire
-                if phantom_rp_state and len(same_type_pieces) == 0:
-                    pipeline_bonus *= 1.5
 
                 if pipeline_bonus > 20:  # Only apply if meaningful
                     score += pipeline_bonus
@@ -2797,14 +2725,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult
                 if rp2_noise_reduction:
                     ceiling_bonus *= 0.5
-                if non_reactive_type_column_ceiling_suppress:
-                    ceiling_bonus = 0.0
-                elif reactive_pair_count >= 1 and not current_type_has_reactive:
-                    # v632: phantom reactive pair suppression — when reactive_pairs exist for OTHER types
-                    # but current type has none, column_ceiling(~800-1250) overrides same-type proximity(~120-540),
-                    # scattering pieces away from their type cluster (worst game T55-T62).
-                    # Reduce to 25%: preserves some height equalization while letting proximity guide.
-                    ceiling_bonus *= 0.25
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
@@ -2960,14 +2880,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Only fire if pieces are reasonably close (merge potential exists)
             if min_gap < 3.0:
                 dist_to_target = abs(x - target_x)
-                # v633: expand threshold from 1.5 to 2.5 in phantom_rp_state
-                prox_98_threshold = 2.5 if phantom_rp_state else 1.5
-                if dist_to_target < prox_98_threshold:
+                if dist_to_target < 1.5:
                     proximity_bonus = max(0, 150.0 - dist_to_target * 80.0)
-                    # v633: 2.0x multiplier in phantom_rp_state to override
-                    # column_ceiling 25% residual (~200-310pt)
-                    if phantom_rp_state:
-                        proximity_bonus *= 2.0
                     # Reduce bonus if target area is high (don't override height penalty)
                     avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
                     if avg_target_y > 1.0:
