@@ -68,6 +68,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v640: Extend center_proximity_damping to MEDIUM phase merge drought
+     # Condition expanded: pre_death_spiral OR (merge_grade=="NO" && rp>=2 && max_y>=0.5 && pc>=10)
+     # Worst game T34-46: COLUMN_CEILING guides pieces to edges (x=±3.0) while same_type_proximity
+     # can't compete. Extending damping to MEDIUM phase lets proximity pull pieces toward type clusters.
+     # Fixes rollback failure mode: MEDIUMフェーズmerge drought時の端配置によるpiece_count蓄積
+     # refs: tmp/analysis_result.md, game_history/20260415_014905_score0827.jsonl, tmp/batch_summary.txt, advice.md
      # v639: column_ceiling_bonus center-proximity damping during merge drought (pre_death_spiral)
      # Fixes rollback failure mode: merge drought時の端配置によるpiece_count蓄積
      # refs: tmp/analysis_result.md, game_history/20260414_221242_score0876.jsonl, tmp/batch_summary.txt, advice.md
@@ -2652,14 +2658,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult
                 if rp2_noise_reduction:
                     ceiling_bonus *= 0.5
-                # v639: center-proximity damping on column_ceiling_bonus during merge drought
-                # When pre_death_spiral (rp>=3 && NO merge && max_y>=1.0), column_ceiling directs
+                # v639+v640: center-proximity damping on column_ceiling_bonus during merge drought
+                # v639: When pre_death_spiral (rp>=3 && NO merge && max_y>=1.0), column_ceiling directs
                 # to the lowest-ceiling column which is often at edges (x=±3.0). Edges have fewer
                 # neighbors so their ceiling stays low, but pieces placed there never contribute to
                 # future merges. Damp bonus toward edges: x=0→1.0, x=1.5→0.65, x=3.0→0.3.
-                # advice.md: "孤立配置を避けて中央集約を優先する"(kbb246). Worst T62: x=3.0 COLUMN_CEILING_BEST.
-                # Fixes rollback failure mode: merge drought時の端配置によるpiece_count蓄積
-                if pre_death_spiral:
+                # v640: Extend to MEDIUM phase merge drought (rp>=2, NO merge, max_y>=0.5, pc>=10).
+                # Worst game T34-46: pc=15-26, max_y=-0.78→1.14, rp=2-4, merge=NO. COLUMN_CEILING
+                # guides to x=2.8 while same_type_proximity (~120-360) can't compete (~800-1250).
+                # Pieces scatter to edges, type clustering is destroyed, and future merge chains become
+                # impossible. Extending center_damping to this phase reduces edge attraction so
+                # same_type_proximity can pull pieces toward their type clusters for future merges.
+                # advice.md: "孤立配置を避けて中央集約を優先する"(kbb246). Worst T43: x=2.8 COLUMN_CEILING_GOOD.
+                # Fixes rollback failure mode: MEDIUMフェーズmerge drought時の端配置によるpiece_count蓄積
+                if pre_death_spiral or (merge_grade == "NO" and reactive_pair_count >= 2 and max_y >= 0.5 and piece_count >= 10):
                     center_damping = max(0.3, 1.0 - abs(x) / 3.0 * 0.7)
                     ceiling_bonus *= center_damping
                 score += ceiling_bonus
