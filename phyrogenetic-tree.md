@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-14 10:27:27 JST`
-- Nodes: `1062`
-- Edges: `1456`
-- Current: `ea95bdde7a27`
+- Updated: `2026-04-14 11:25:32 JST`
+- Nodes: `1063`
+- Edges: `1457`
+- Current: `b6b219118e3c`
 - Anchor: `ea95bdde7a27`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_919c76d38172["919c76d38172<br/>g=12 n=12<br/>comp=11689.0"]
     h_426bdf83097f["426bdf83097f<br/>g=12 n=12<br/>comp=10537.2"]
     h_b970b9abce0b["b970b9abce0b<br/>g=12 n=12<br/>comp=11146.0"]
     h_10b331a30057["10b331a30057<br/>g=12 n=12<br/>comp=11249.4"]
@@ -52,7 +51,7 @@ flowchart TD
     h_0e22dd519bbf["0e22dd519bbf<br/>g=12 n=12<br/>comp=11980.3"]
     h_a1b28607d015["a1b28607d015<br/>g=12 n=12<br/>comp=10570.9"]
     h_c10a4ca71357["c10a4ca71357<br/>g=12 n=12<br/>comp=10432.0"]
-    h_ea95bdde7a27["ea95bdde7a27<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=12084.0"]
+    h_ea95bdde7a27["ea95bdde7a27<br/>ANCHOR<br/>g=36 n=20<br/>comp=12281.1"]
     h_c016461aeb9c["c016461aeb9c<br/>g=12 n=12<br/>comp=9311.2"]
     h_4fe3a8221f0d["4fe3a8221f0d<br/>g=29 n=20<br/>comp=10860.5"]
     h_cfb684533fdb["cfb684533fdb<br/>g=49 n=20<br/>comp=10872.6"]
@@ -75,8 +74,8 @@ flowchart TD
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
+    h_b6b219118e3c["b6b219118e3c<br/>CURRENT"]
 
-    h_919c76d38172 -->|improve| h_426bdf83097f
     h_426bdf83097f -->|improve| h_b970b9abce0b
     h_b970b9abce0b -->|improve| h_10b331a30057
     h_10b331a30057 -->|improve| h_bcf2f7a414bd
@@ -139,17 +138,17 @@ flowchart TD
     h_b525689d8af7 -->|improve| h_f99b8965474d
     h_f99b8965474d -->|improve| h_e069f1a6e3a6
     h_e069f1a6e3a6 -. rollback .-> h_cfb684533fdb
+    h_cfb684533fdb -. rollback .-> h_ea95bdde7a27
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
-    h_cfb684533fdb -. rollback .-> h_ea95bdde7a27
+    h_ea95bdde7a27 -->|improve| h_b6b219118e3c
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_919c76d38172 plain;
     class h_426bdf83097f plain;
     class h_b970b9abce0b plain;
     class h_10b331a30057 plain;
@@ -186,7 +185,7 @@ flowchart TD
     class h_0e22dd519bbf plain;
     class h_a1b28607d015 plain;
     class h_c10a4ca71357 plain;
-    class h_ea95bdde7a27 current_anchor;
+    class h_ea95bdde7a27 anchor;
     class h_c016461aeb9c plain;
     class h_4fe3a8221f0d plain;
     class h_cfb684533fdb plain;
@@ -209,6 +208,7 @@ flowchart TD
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
+    class h_b6b219118e3c current;
 ```
 
 ## Detail 1/14
@@ -3644,6 +3644,7 @@ flowchart TD
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
 - Cross-chunk link: `cfb684533fdb -.rollback.-> ea95bdde7a27`
+- Cross-chunk link: `ea95bdde7a27 --improve--> b6b219118e3c`
 
 ```mermaid
 flowchart TD
@@ -3726,7 +3727,7 @@ flowchart TD
     h_0e22dd519bbf["0e22dd519bbf<br/>g=12 n=12<br/>comp=11980.3"]
     h_a1b28607d015["a1b28607d015<br/>g=12 n=12<br/>comp=10570.9"]
     h_c10a4ca71357["c10a4ca71357<br/>g=12 n=12<br/>comp=10432.0"]
-    h_ea95bdde7a27["ea95bdde7a27<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=12084.0"]
+    h_ea95bdde7a27["ea95bdde7a27<br/>ANCHOR<br/>g=36 n=20<br/>comp=12281.1"]
 
     h_425e0268f431 -->|improve| h_5549155b4081
     h_5549155b4081 -->|improve| h_b8fd7e91b841
@@ -3905,21 +3906,22 @@ flowchart TD
     class h_0e22dd519bbf plain;
     class h_a1b28607d015 plain;
     class h_c10a4ca71357 plain;
-    class h_ea95bdde7a27 current_anchor;
+    class h_ea95bdde7a27 anchor;
 ```
 
 ## Detail 14/14
 
-- Range: `c016461aeb9c` .. `355868eaf8ab`
-- Nodes in this diagram: `22`
+- Range: `c016461aeb9c` .. `b6b219118e3c`
+- Nodes in this diagram: `23`
 - Internal edges in this diagram: `26`
 - Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
+- Cross-chunk link: `cfb684533fdb -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `cfb684533fdb -.rollback.-> ea95bdde7a27`
+- Cross-chunk link: `ea95bdde7a27 --improve--> b6b219118e3c`
 
 ```mermaid
 flowchart TD
@@ -3945,6 +3947,7 @@ flowchart TD
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
+    h_b6b219118e3c["b6b219118e3c<br/>CURRENT"]
 
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
@@ -4000,9 +4003,20 @@ flowchart TD
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
+    class h_b6b219118e3c current;
 ```
 
 ## Transition Notes
+
+### Improve Game#15529 `ea95bdde -> b6b21911`
+
+- scores: `8756 10585 9125 13529 13656 14838 8896 17065 13722 12727 12404 16886`
+- v616: merge drought noise suppression — suppress axes 5/5.5 during merge drought
+- When max_y>=1.5 && merge_grade=="NO", NEXT_SAME centering (~+50) and
+- AVOID_BLOCK_NEXTNEXT (~-400) override height penalty differentiation (~100-200),
+- scattering pieces away from type clusters. Suppress both so height penalty and
+- same-type proximity are sole differentiators during merge drought.
+- Extends v462 death_spiral suppression (danger>0 && rp>=3 && deadline) to the
 
 ### Rollback Game#15517 `cfb68453 -> ea95bdde`
 
