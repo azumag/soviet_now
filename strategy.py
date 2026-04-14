@@ -68,6 +68,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v635: near-but-can't-merge state protection — column_ceiling suppression (50%),
+     # same_type_proximity boost (2.5u threshold, 2.0x multiplier), axes 5/5.5 suppression (50%)
+     # When current_type_has_near=True but merge_grade="NO" and not current_type_has_reactive,
+     # column_ceiling_bonus(~800-1250) overrides same_type_proximity(~120-540), scattering pieces
+     # away from type cluster. Worst game T29-40: 7/12 NO merge turns, pieces scattered x=-3 to x=3.
+     # phantom_rp_state (v633, rolled back) only covered !current_type_has_near, leaving this gap.
+     # Rollback failure mode: same behavior as v632/v633 phantom_rp_state but for near-but-can't-merge.
+     # refs: tmp/analysis_result.md, game_history/20260414_135112_score0772.jsonl T29-40,
+     #       tmp/change_log.txt (v632/v633 history), tmp/batch_summary.txt
      # v634: axis 9.8 early activation — close build-phase same-type concentration gap
      # Lowered pc>=25 to pc>=8 and same_type_pieces>=2 to >=1 so SAME_TYPE_PROXIMITY
      # fires during build phase (turns 5-20, pc 8-25). With only 1 same-type piece on
@@ -1130,6 +1139,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
+        # v635: near-but-can't-merge state — same-type pieces exist nearby but no merge position found
+        # When current_type has near pairs on the board but merge_grade="NO" for all candidates,
+        # column_ceiling dominates (1000-1200pt) overriding same_type_proximity (320-640pt),
+        # scattering pieces away from their type cluster. This extends the merge drought by
+        # preventing future same-type concentration. Worst game T29-40: 12 consecutive turns
+        # with rp=4-7, 7 NO merge, pieces scattered x=-3 to x=3.
+        # phantom_rp_state covers the case where !current_type_has_near AND !current_type_has_reactive.
+        # near_but_cant_merge covers the gap: current_type_has_near=True but merge_grade="NO".
+        phantom_rp_state = (
+            merge_grade == "NO"
+            and not current_type_has_reactive
+            and not current_type_has_near
+        )
+        near_but_cant_merge = (
+            merge_grade == "NO"
+            and not current_type_has_reactive
+            and current_type_has_near
+        )
+
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
@@ -2123,6 +2151,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v462: suppress in death spiral — height must be sole differentiator
         if next_next_type == next_type and not death_spiral:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            # v616/v635: suppress during merge drought or near-but-can't-merge state
+            # to let same_type_proximity dominate over NEXT_SAME centering noise
+            if (merge_grade == "NO" and max_y >= 1.5 and piece_count >= 15) or near_but_cant_merge:
+                center_bonus *= 0.5
             score += center_bonus
             reasons.append("NEXT_SAME")
 
@@ -2134,7 +2166,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v462: suppress in death spiral — height must be sole differentiator
         # v594: further suppress when merge_grade==NO && max_y>=1.0 — at elevated boards with no merge,
         # this -400 penalty pushes pieces toward edges (worst game T45: x=-3.0), fighting column_ceiling.
-        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0):
+        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0) and not near_but_cant_merge:
             for p in pieces:
                 if p.get("type") == next_next_type:
                     piece_y = p.get("y", -10)
@@ -2611,6 +2643,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult
                 if rp2_noise_reduction:
                     ceiling_bonus *= 0.5
+                elif phantom_rp_state:
+                    # v632/v633: phantom reactive pair column_ceiling suppression
+                    # When current_type has no reactive or near pairs but merge_grade="NO",
+                    # column_ceiling(~800-1250) overrides same_type_proximity(~120-540).
+                    # Reduce to 25%: preserves some height equalization while letting proximity guide.
+                    ceiling_bonus *= 0.25
+                elif near_but_cant_merge:
+                    # v635: near-but-can't-merge column_ceiling suppression
+                    # current_type has near pairs but merge_grade="NO" — pieces exist nearby but
+                    # no landing position creates a merge. Reduce column_ceiling to 50%
+                    # (less aggressive than phantom_rp's 25% since near pairs provide some guidance,
+                    # but more aggressive than no suppression). Boost axis 9.8 same_type_proximity
+                    # threshold to 2.5u and multiply by 2.0x (same as v633 phantom_rp_state).
+                    ceiling_bonus *= 0.5
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
@@ -2772,8 +2818,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                 if min_gap < 3.0:
                     dist_to_target = abs(x - target_x)
-                    if dist_to_target < 1.5:
-                        proximity_bonus = max(0, 150.0 - dist_to_target * 80.0)
+                    # v633/v635: expanded threshold and boosted multiplier for
+                    # phantom_rp_state and near_but_cant_merge — pieces exist
+                    # nearby but no merge, proximity must override column_ceiling
+                    if phantom_rp_state or near_but_cant_merge:
+                        proximity_threshold = 2.5
+                        proximity_multiplier = 2.0
+                    else:
+                        proximity_threshold = 1.5
+                        proximity_multiplier = 1.0
+                    if dist_to_target < proximity_threshold:
+                        proximity_bonus = max(0, 150.0 - dist_to_target * 80.0) * proximity_multiplier
                         avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
                         if avg_target_y > 1.0:
                             proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
