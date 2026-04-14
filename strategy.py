@@ -68,6 +68,9 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v639: column_ceiling_bonus center-proximity damping during merge drought (pre_death_spiral)
+     # Fixes rollback failure mode: merge drought時の端配置によるpiece_count蓄積
+     # refs: tmp/analysis_result.md, game_history/20260414_221242_score0876.jsonl, tmp/batch_summary.txt, advice.md
      # v638: Axis 5.6 GROWTH_CENTER_PROXIMITY early activation + Axis 9.6b same-type proximity early boost
      # Early game (pc 3-15, merge_grade=="NO"): HEIGHT_CONTROL scatters pieces with no competing
      # guidance, causing board fragmentation (worst game T5-T8: type11→x=3.0). Two changes:
@@ -2649,6 +2652,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult
                 if rp2_noise_reduction:
                     ceiling_bonus *= 0.5
+                # v639: center-proximity damping on column_ceiling_bonus during merge drought
+                # When pre_death_spiral (rp>=3 && NO merge && max_y>=1.0), column_ceiling directs
+                # to the lowest-ceiling column which is often at edges (x=±3.0). Edges have fewer
+                # neighbors so their ceiling stays low, but pieces placed there never contribute to
+                # future merges. Damp bonus toward edges: x=0→1.0, x=1.5→0.65, x=3.0→0.3.
+                # advice.md: "孤立配置を避けて中央集約を優先する"(kbb246). Worst T62: x=3.0 COLUMN_CEILING_BEST.
+                # Fixes rollback failure mode: merge drought時の端配置によるpiece_count蓄積
+                if pre_death_spiral:
+                    center_damping = max(0.3, 1.0 - abs(x) / 3.0 * 0.7)
+                    ceiling_bonus *= center_damping
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
