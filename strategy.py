@@ -46,7 +46,7 @@ Game Overview:
              9.65. Reactive near-miss type clustering - v597: merge_grade=NO時の散逸type集約
              9.10. High-type growth pipeline guidance - v609: NO merge時、type 8-12ピース重心誘導
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
-             9.8. Same-type proximity (merge drought + build-phase) - v634: pc>=8, same_type>=1で早期発火
+             9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
@@ -68,48 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v637: phantom reactive pair merged_type proximity guidance — fill axis 9.6 activation gap
-     # When phantom_rp_state (!current_type_has_reactive && !current_type_has_near && merge_grade=="NO"),
-     # axis 9.6 produces zero horizontal guidance. column_ceiling dominates (800-1250pt), scattering
-     # pieces away from productive clusters. HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY appears 7.5%
-     # in low-score games vs 0% in high-score — strongest reason-code differentiator.
-     # Instead of suppressing column_ceiling (v632/v633, rolled back), this adds a POSITIVE directional
-     # signal: guide the current piece toward clusters of the reactive pair's merged_type (K+1).
-     # If type K has a reactive pair, those K pieces will merge to K+1. Placing near K+1 pieces
-     # creates pipeline connectivity for future cascading merges.
-     # Condition: phantom_rp_state && reactive_pair_count >= 1
-     # Not applied during death_spiral, column_ceiling_dominant, or axis_88_horizontal_suppression.
-     # Moderate base bonus (300) with congestion scaling — avoids v632/v633 overcorrection pattern.
-     # Fixes rollback failure mode: "phantom reactive pair散逸 — axis 9.6 activation gap"
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/change_log.txt,
-     #       tmp/state/last_rollback_analysis.md, game_history/20260414_160412_score0850.jsonl T27-57
-     # v636: rp>=3 NO-merge same-type proximity amplification — 2.0x multiplier at max_y>=1.0
-     # rp>=3 NO-merge時のsame-type proximity bonus増幅。低スコアゲームでrp>=3 NO-mergeの
-     # HIGH_LAYER/HIGH_TOWER選択が盤面散逸を加速(piece_count蓄積→即死)。
-     # batch_summary: SAME_TYPE_PROXIMITY低スコア2.6% vs 高スコア4.7%。
-     # worst game T36-40: rp=3-5で5連続NO-merge、column_ceiling(~800-1250)がproximity(~120-150)を圧倒。
-     # 2.0xでproximity(~240-300)がcolumn_ceilingと競合可能になりtype集約を改善。
-     # Not applied during death_spiral (v461/v462 suppression).
-     # Fixes rollback failure mode: "rp>=3 NO-merge時のtype散逸 — same-type proximityがcolumn_ceilingに敗北"
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/change_log.txt,
-     #       tmp/state/last_rollback_analysis.md, game_history/20260414_141834_score0397.jsonl
-     # v635: near-but-can't-merge state protection — column_ceiling suppression (50%),
-     # same_type_proximity boost (2.5u threshold, 2.0x multiplier), axes 5/5.5 suppression (50%)
-     # When current_type_has_near=True but merge_grade="NO" and not current_type_has_reactive,
-     # column_ceiling_bonus(~800-1250) overrides same_type_proximity(~120-540), scattering pieces
-     # away from type cluster. Worst game T29-40: 7/12 NO merge turns, pieces scattered x=-3 to x=3.
-     # phantom_rp_state (v633, rolled back) only covered !current_type_has_near, leaving this gap.
-     # Rollback failure mode: same behavior as v632/v633 phantom_rp_state but for near-but-can't-merge.
-     # refs: tmp/analysis_result.md, game_history/20260414_135112_score0772.jsonl T29-40,
-     #       tmp/change_log.txt (v632/v633 history), tmp/batch_summary.txt
-     # v634: axis 9.8 early activation — close build-phase same-type concentration gap
-     # Lowered pc>=25 to pc>=8 and same_type_pieces>=2 to >=1 so SAME_TYPE_PROXIMITY
-     # fires during build phase (turns 5-20, pc 8-25). With only 1 same-type piece on
-     # board, targets placement near that piece. With 2+, uses existing pair-gap logic.
-     # This fills the gap where HEIGHT_CONTROL scatters pieces during early game because
-     # no evaluation axis provides same-type clustering guidance below pc=25.
-     # Fixes rollback failure mode: "Early-game same-type concentration gap (axis 9.8 pc>=25)"
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md
      # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
      # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
      # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -1164,25 +1122,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # v635: near-but-can't-merge state — same-type pieces exist nearby but no merge position found
-        # When current_type has near pairs on the board but merge_grade="NO" for all candidates,
-        # column_ceiling dominates (1000-1200pt) overriding same_type_proximity (320-640pt),
-        # scattering pieces away from their type cluster. This extends the merge drought by
-        # preventing future same-type concentration. Worst game T29-40: 12 consecutive turns
-        # with rp=4-7, 7 NO merge, pieces scattered x=-3 to x=3.
-        # phantom_rp_state covers the case where !current_type_has_near AND !current_type_has_reactive.
-        # near_but_cant_merge covers the gap: current_type_has_near=True but merge_grade="NO".
-        phantom_rp_state = (
-            merge_grade == "NO"
-            and not current_type_has_reactive
-            and not current_type_has_near
-        )
-        near_but_cant_merge = (
-            merge_grade == "NO"
-            and not current_type_has_reactive
-            and current_type_has_near
-        )
-
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
@@ -1661,64 +1600,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                             proximity_bonus = 0.0
                         if proximity_bonus > 0:
                             score += proximity_bonus
-
-        # ----- axis 9.6c: phantom reactive pair merged_type proximity guidance (NEW v637) -----
-        # analysis_result.md adopted hypothesis: "Extending axis 9.6 merged_type proximity guidance
-        # to phantom_rp_state will reduce phantom reactive pair scatter and improve downside scores."
-        #
-        # When phantom_rp_state (!current_type_has_reactive && !current_type_has_near && merge_grade=="NO"),
-        # axis 9.6 produces zero horizontal guidance. column_ceiling dominates (800-1250pt), scattering
-        # pieces away from productive clusters. v632/v633 suppressed column_ceiling (rolled back) but
-        # suppression alone doesn't tell pieces WHERE to go. This axis fills the guidance gap with a
-        # POSITIVE directional signal: guide toward clusters of type K+1 where type K has a reactive pair.
-        # 
-        # Evidence: HIGH_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY appears 7.5% in low-score games
-        # vs 0% in high-score games — the strongest reason-code differentiator.
-        # Worst game T27-43: phantom_rp_state repeats, pieces scattered to edges.
-        # Best game: no phantom_rp_state states arise; productive guidance throughout.
-        #
-        # Condition: phantom_rp_state && reactive_pair_count >= 1 (other types have reactive pairs)
-        # Not applied during death_spiral, column_ceiling_dominant, or axis_88_horizontal_suppression.
-        # Base bonus 300pt with congestion scaling at pc>=28 — competitive with column_ceiling
-        # residual (~200-310pt at 25% suppression) and same_type_proximity (~120-1080pt at 2.0x).
-        # Refs: tmp/analysis_result.md, tmp/batch_summary.txt,
-        #       game_history/20260414_160412_score0850.jsonl T27-57,
-        #       tmp/state/last_rollback_analysis.md, tmp/change_log.txt
-        # Fixes rollback failure mode: "phantom reactive pair散逸 — axis 9.6 activation gap"
-        if (phantom_rp_state and reactive_pair_count >= 1
-                and not death_spiral and not column_ceiling_dominant
-                and not axis_88_horizontal_suppression):
-            # Find merged_type (K+1) of reactive pairs — these are pieces that will exist
-            # after reactive pairs merge, creating pipeline connectivity for future cascading.
-            rp_target_types = set()
-            for rp in reactive_pairs:
-                if isinstance(rp, (list, tuple)) and len(rp) >= 3:
-                    rp_target_types.add(rp[2] + 1)
-
-            rp_target_pieces = [p for p in pieces if p.get("type", 0) in rp_target_types]
-
-            if len(rp_target_pieces) >= 1:
-                centroid_x = sum(p.get("x", 0) for p in rp_target_pieces) / len(rp_target_pieces)
-                centroid_y = sum(p.get("y", -10) for p in rp_target_pieces) / len(rp_target_pieces)
-
-                dist_to_centroid = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
-
-                # Base bonus 300pt — competitive with column_ceiling residual (200-310pt at 25%)
-                # and same_type_proximity (120-1080pt at 2.0x/2.5u in phantom_rp_state)
-                phantom_mt_bonus = max(0, 300.0 - dist_to_centroid * 100.0)
-
-                # Decay if centroid is high — don't override height control
-                if centroid_y > 0:
-                    phantom_mt_bonus *= max(0.0, 1.0 - centroid_y * 0.3)
-
-                # Congestion scaling — stronger at high pc where scatter is most damaging
-                if piece_count >= 28:
-                    congestion_scale = 1.0 + (piece_count - 28) * 0.10
-                    phantom_mt_bonus *= min(congestion_scale, 2.5)
-
-                if phantom_mt_bonus > 20:
-                    score += phantom_mt_bonus
-                    reasons.append("PHANTOM_RP_MERGED_TYPE_PROXIMITY")
 
         # ----- evaluation axis 9.65: reactive near-miss type clustering (NEW v597) -----
         # analysis_result.md adopted hypothesis: "reactive near-miss guidance" axis.
@@ -2234,10 +2115,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v462: suppress in death spiral — height must be sole differentiator
         if next_next_type == next_type and not death_spiral:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
-            # v616/v635: suppress during merge drought or near-but-can't-merge state
-            # to let same_type_proximity dominate over NEXT_SAME centering noise
-            if (merge_grade == "NO" and max_y >= 1.5 and piece_count >= 15) or near_but_cant_merge:
-                center_bonus *= 0.5
             score += center_bonus
             reasons.append("NEXT_SAME")
 
@@ -2249,7 +2126,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v462: suppress in death spiral — height must be sole differentiator
         # v594: further suppress when merge_grade==NO && max_y>=1.0 — at elevated boards with no merge,
         # this -400 penalty pushes pieces toward edges (worst game T45: x=-3.0), fighting column_ceiling.
-        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0) and not near_but_cant_merge:
+        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0):
             for p in pieces:
                 if p.get("type") == next_next_type:
                     piece_y = p.get("y", -10)
@@ -2726,20 +2603,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult
                 if rp2_noise_reduction:
                     ceiling_bonus *= 0.5
-                elif phantom_rp_state:
-                    # v632/v633: phantom reactive pair column_ceiling suppression
-                    # When current_type has no reactive or near pairs but merge_grade="NO",
-                    # column_ceiling(~800-1250) overrides same_type_proximity(~120-540).
-                    # Reduce to 25%: preserves some height equalization while letting proximity guide.
-                    ceiling_bonus *= 0.25
-                elif near_but_cant_merge:
-                    # v635: near-but-can't-merge column_ceiling suppression
-                    # current_type has near pairs but merge_grade="NO" — pieces exist nearby but
-                    # no landing position creates a merge. Reduce column_ceiling to 50%
-                    # (less aggressive than phantom_rp's 25% since near pairs provide some guidance,
-                    # but more aggressive than no suppression). Boost axis 9.8 same_type_proximity
-                    # threshold to 2.5u and multiply by 2.0x (same as v633 phantom_rp_state).
-                    ceiling_bonus *= 0.5
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
@@ -2860,89 +2723,50 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
-        # ----- axis 9.8: same-type proximity for merge drought recovery + build-phase clustering -----
+        # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
         # Worst game T71-79: 9 turns, 7 with merge_grade=NO, pc 37→43. Extra_low T25-52: 27-turn drought.
-        # Also covers build-phase gap: during turns 5-20 (pc 8-25), when same-type pieces exist but no
-        # reactive/near pairs are available, NO evaluation axis provides same-type clustering guidance.
-        # HEIGHT_CONTROL dominates and scatters pieces horizontally (22.9% in low-score vs 14.8% in high-score).
-        # v634: lowered pc>=25→pc>=8 and same_type_pieces>=2→>=1 to fill this gap.
-        # With 1 same-type piece, targets placement near that piece (build-phase concentration).
-        # With 2+ same-type pieces, uses existing pair-gap logic (merge drought recovery).
+        # When merge_grade=NO and piece_count is high (>=25) and there are 2+ pieces of next_type on board,
+        # guide placement to bring same-type pieces closer together — creating future merge opportunities.
+        # This creates a "3-piece cluster" state: when next same-type arrives, immediate merge is likely.
         # NOT guidance restoration — orthogonal to death_spiral suppression (axis 9.6b/5.6/9.3 suppressed).
         # Fires ONLY when merge_grade=NO (no immediate merge possible) and NOT in death_spiral.
         # Bonus magnitude: max ~150 (tie-breaking, safe vs axis 8.8 -4500).
-        # v636: 2.0x amplification when rp>=3 && merge_grade==NO && max_y>=1.0 — column_ceiling
-        #   (800-1250) overwhelms proximity (~120-150) during rp>=3 NO-merge drought; boost lets
-        #   clustering compete. Not applied during death_spiral (excluded by outer guard).
         # v594: suppress when max_y>=1.5 && reactive_pair_count>=3 — at high rp and elevated board,
         # clustering blocks merge paths (worst game T45-T51 pattern).
         # v598: also suppress when column_ceiling_dominant (merge_grade==NO && max_y>=1.0 && pc>=28)
         # — let column_ceiling guide placement to lowest-ceiling column during merge drought.
         # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.8 early activation),
+        # refs: tmp/analysis_result.md (Implementation Plan: merge drought column_ceiling dominance),
         #       game_history/20260411_095233_score0895.jsonl T71-79 (chronic NO merge),
         #       game_history/20260411_100940_score0932.jsonl T25-52 (27-turn drought)
-        if (merge_grade == "NO" and piece_count >= 8 and len(same_type_pieces) >= 1
+        if (merge_grade == "NO" and piece_count >= 25 and len(same_type_pieces) >= 2
                 and not death_spiral
                 and not (max_y >= 1.5 and reactive_pair_count >= 3)
                 and not column_ceiling_dominant
                 and not axis_88_horizontal_suppression):
-            # v634: single-piece proximity for build-phase same-type concentration
-            # When only 1 same-type piece exists, target placement near it for future merge opportunities.
-            # This fills the gap where HEIGHT_CONTROL scatters early-game pieces because no clustering
-            # axis activates below pc=25 (analysis: "early-game same-type concentration gap").
-            if len(same_type_pieces) >= 2:
-                same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
-                min_gap = float("inf")
-                target_x = 0.0
-                for i in range(len(same_type_sorted) - 1):
-                    gap = abs(same_type_sorted[i + 1].get("x", 0) - same_type_sorted[i].get("x", 0))
-                    if gap < min_gap:
-                        min_gap = gap
-                        target_x = (same_type_sorted[i].get("x", 0) + same_type_sorted[i + 1].get("x", 0)) / 2.0
+            # Find the pair of same_type pieces with smallest x-gap — target placement between them
+            same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
+            min_gap = float("inf")
+            target_x = 0.0
+            for i in range(len(same_type_sorted) - 1):
+                gap = abs(same_type_sorted[i + 1].get("x", 0) - same_type_sorted[i].get("x", 0))
+                if gap < min_gap:
+                    min_gap = gap
+                    target_x = (same_type_sorted[i].get("x", 0) + same_type_sorted[i + 1].get("x", 0)) / 2.0
 
-                if min_gap < 3.0:
-                    dist_to_target = abs(x - target_x)
-                    # v633/v635: expanded threshold and boosted multiplier for
-                    # phantom_rp_state and near_but_cant_merge — pieces exist
-                    # nearby but no merge, proximity must override column_ceiling
-                    if phantom_rp_state or near_but_cant_merge:
-                        proximity_threshold = 2.5
-                        proximity_multiplier = 2.0
-                    else:
-                        proximity_threshold = 1.5
-                        proximity_multiplier = 1.0
-                    if dist_to_target < proximity_threshold:
-                        proximity_bonus = max(0, 150.0 - dist_to_target * 80.0) * proximity_multiplier
-                        avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
-                        if avg_target_y > 1.0:
-                            proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
-                        if rp2_noise_reduction:
-                            proximity_bonus *= 0.5
-                        # v636: amplify same_type_proximity during rp>=3 NO-merge drought
-                        # Worst games show rp>=3 NO-merge states where column_ceiling (800-1250)
-                        # overwhelms proximity (~120-150). 2.0x boost lets clustering compete.
-                        if reactive_pair_count >= 3 and max_y >= 1.0:
-                            proximity_bonus *= 2.0
-                        if proximity_bonus > 0:
-                            score += proximity_bonus
-                            if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
-                                reasons.append("SAME_TYPE_PROXIMITY")
-            else:
-                single_piece = same_type_pieces[0]
-                single_x = single_piece.get("x", 0)
-                single_y = single_piece.get("y", -10)
-                dist_to_piece = abs(x - single_x)
-                if dist_to_piece < 2.0:
-                    proximity_bonus = max(0, 120.0 - dist_to_piece * 50.0)
-                    if single_y > 1.0:
-                        proximity_bonus *= max(0.0, 1.0 - (single_y - 1.0) * 0.3)
+            # Only fire if pieces are reasonably close (merge potential exists)
+            if min_gap < 3.0:
+                dist_to_target = abs(x - target_x)
+                if dist_to_target < 1.5:
+                    proximity_bonus = max(0, 150.0 - dist_to_target * 80.0)
+                    # Reduce bonus if target area is high (don't override height penalty)
+                    avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
+                    if avg_target_y > 1.0:
+                        proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
+                    # v615: 50% reduction during rp==2 merge drought to let height penalty compete
                     if rp2_noise_reduction:
                         proximity_bonus *= 0.5
-                    # v636: amplify same_type_proximity during rp>=3 NO-merge drought
-                    if reactive_pair_count >= 3 and max_y >= 1.0:
-                        proximity_bonus *= 2.0
                     if proximity_bonus > 0:
                         score += proximity_bonus
                         if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
