@@ -96,6 +96,11 @@ Phases (determined by board max Y):
      # cannot differentiate center from edge (worst game T72 x=-3.0, T75 x=-3.0)
      # refs: tmp/analysis_result.md (Adopted Hypothesis, Implementation Plan),
      #       game_history/20260411_043050_score1074.jsonl, tmp/state/last_rollback_postmortem.md
+     # v573: explicit max_y < 2.5 guard on REACTIVE_PAIRS_STACKING — analysis constraint forbids
+     # stacking when max_y > 2.5 with rp >= 5 and merge_available=false. Worst game T58
+     # (max_y=3.22, rp=5, merge_available=false) violated this constraint.
+     # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING violates max_y > 2.5 constraint
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
      # ロシア1つのままゲームオーバーは最も惜しい負けパターン。2つのロシアが盤面にある場合、
      # 盤面圧縮ボーナスを抑制し、既存type 15保護と低配置生存を最優先。
@@ -1135,7 +1140,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # extra_high T140 preserved (max_y<2.0 ✗), best T164 preserved (rp<4 ✗)
         # Fixes rollback failure mode: max_y runaway in rp>=4 scenarios
         # refs: tmp/analysis_result.md (Adopted Hypothesis)
-        if not death_spiral and reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not (reactive_pair_count >= 4 and max_y >= 2.0):
+        # v573: explicit max_y < 2.5 guard — analysis constraint forbids REACTIVE_PAIRS_STACKING
+        # firing when max_y > 2.5 with rp >= 5 and merge_available=false. Worst game T58
+        # (max_y=3.22, rp=5, merge_available=false) violated this constraint. Adding explicit
+        # max_y < 2.5 ensures the guard fires for all dangerous max_y >= 2.5 cases.
+        # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING violates max_y > 2.5 constraint
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+        if not death_spiral and reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not (reactive_pair_count >= 4 and max_y >= 2.0) and max_y < 2.5:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
