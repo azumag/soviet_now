@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-15 17:58:59 JST`
+- Updated: `2026-04-15 18:29:18 JST`
 - Nodes: `1080`
-- Edges: `1481`
-- Current: `666764fa0f05`
-- Anchor: `666764fa0f05`
+- Edges: `1482`
+- Current: `4a56ffd588bd`
+- Anchor: `4a56ffd588bd`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_666764fa0f05["666764fa0f05<br/>CURRENT ANCHOR<br/>g=50 n=20<br/>comp=12639.4"]
     h_28517835a26d["28517835a26d<br/>g=12 n=12<br/>comp=10459.1"]
     h_415bc89e4920["415bc89e4920<br/>g=12 n=12<br/>comp=11317.8"]
     h_5a6b33f2ae40["5a6b33f2ae40<br/>g=12 n=12<br/>comp=10793.2"]
@@ -47,7 +46,7 @@ flowchart TD
     h_7a9bba424462["7a9bba424462<br/>g=12 n=12<br/>comp=11632.7"]
     h_0ffb1e00fba1["0ffb1e00fba1<br/>g=12 n=12<br/>comp=8755.9"]
     h_634d0b4d44d1["634d0b4d44d1<br/>g=36 n=20<br/>comp=11156.1"]
-    h_4a56ffd588bd["4a56ffd588bd<br/>g=12 n=12<br/>comp=12013.8"]
+    h_4a56ffd588bd["4a56ffd588bd<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12013.8"]
     h_05851eb12718["05851eb12718<br/>g=12 n=12<br/>comp=10296.8"]
     h_c5151fa8423c["c5151fa8423c<br/>g=12 n=12<br/>comp=10113.0"]
     h_775063d943a2["775063d943a2<br/>g=12 n=12<br/>comp=9382.6"]
@@ -141,21 +140,18 @@ flowchart TD
     h_85f72a2b31b4 -->|improve| h_ab775c0c3399
     h_ab775c0c3399 -->|improve| h_fcc3fd0c8d7e
     h_fcc3fd0c8d7e -->|improve| h_07233caa484c
-    h_666764fa0f05 -->|improve| h_653e161694b4
     h_653e161694b4 -->|improve| h_9c7adfd81c15
     h_9c7adfd81c15 -->|improve| h_f74dc9206fb8
     h_f74dc9206fb8 -->|improve| h_41bb0d5baa24
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
-    h_41bb0d5baa24 -. rollback .-> h_666764fa0f05
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_666764fa0f05 current_anchor;
     class h_28517835a26d plain;
     class h_415bc89e4920 plain;
     class h_5a6b33f2ae40 plain;
@@ -187,7 +183,7 @@ flowchart TD
     class h_7a9bba424462 plain;
     class h_0ffb1e00fba1 plain;
     class h_634d0b4d44d1 plain;
-    class h_4a56ffd588bd plain;
+    class h_4a56ffd588bd current_anchor;
     class h_05851eb12718 plain;
     class h_c5151fa8423c plain;
     class h_775063d943a2 plain;
@@ -3656,7 +3652,7 @@ flowchart TD
 - Cross-chunk link: `ea95bdde7a27 --improve--> 48ad45cab2c2`
 - Cross-chunk link: `23f6298575f2 -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 23c0ac0a5fa6`
-- Cross-chunk link: `... and 3 more`
+- Cross-chunk link: `... and 4 more`
 
 ```mermaid
 flowchart TD
@@ -3695,7 +3691,7 @@ flowchart TD
     h_4f5cd2e8b7da["4f5cd2e8b7da<br/>g=12 n=12<br/>comp=10239.0"]
     h_5b4b74f31384["5b4b74f31384<br/>g=25 n=20<br/>comp=11502.9"]
     h_8922930171fc["8922930171fc<br/>g=12 n=12<br/>comp=11354.0"]
-    h_666764fa0f05["666764fa0f05<br/>CURRENT ANCHOR<br/>g=50 n=20<br/>comp=12639.4"]
+    h_666764fa0f05["666764fa0f05<br/>g=59 n=20<br/>comp=10801.7"]
     h_5d2c56483b91["5d2c56483b91<br/>g=12 n=12<br/>comp=11303.9"]
     h_fde270efc768["fde270efc768<br/>g=12 n=12<br/>comp=9755.7"]
     h_3e054a962eda["3e054a962eda<br/>g=12 n=12<br/>comp=11015.7"]
@@ -3874,7 +3870,7 @@ flowchart TD
     class h_4f5cd2e8b7da plain;
     class h_5b4b74f31384 plain;
     class h_8922930171fc plain;
-    class h_666764fa0f05 current_anchor;
+    class h_666764fa0f05 plain;
     class h_5d2c56483b91 plain;
     class h_fde270efc768 plain;
     class h_3e054a962eda plain;
@@ -3937,8 +3933,8 @@ flowchart TD
 - Cross-chunk link: `ea95bdde7a27 --improve--> 23c0ac0a5fa6`
 - Cross-chunk link: `07233caa484c -.rollback.-> 870a50c13e53`
 - Cross-chunk link: `666764fa0f05 --improve--> 653e161694b4`
-- Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
-- Cross-chunk link: `... and 3 more`
+- Cross-chunk link: `41bb0d5baa24 -.rollback.-> 666764fa0f05`
+- Cross-chunk link: `... and 4 more`
 
 ```mermaid
 flowchart TD
@@ -3953,7 +3949,7 @@ flowchart TD
     h_7a9bba424462["7a9bba424462<br/>g=12 n=12<br/>comp=11632.7"]
     h_0ffb1e00fba1["0ffb1e00fba1<br/>g=12 n=12<br/>comp=8755.9"]
     h_634d0b4d44d1["634d0b4d44d1<br/>g=36 n=20<br/>comp=11156.1"]
-    h_4a56ffd588bd["4a56ffd588bd<br/>g=12 n=12<br/>comp=12013.8"]
+    h_4a56ffd588bd["4a56ffd588bd<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12013.8"]
     h_05851eb12718["05851eb12718<br/>g=12 n=12<br/>comp=10296.8"]
     h_c5151fa8423c["c5151fa8423c<br/>g=12 n=12<br/>comp=10113.0"]
     h_775063d943a2["775063d943a2<br/>g=12 n=12<br/>comp=9382.6"]
@@ -4042,7 +4038,7 @@ flowchart TD
     class h_7a9bba424462 plain;
     class h_0ffb1e00fba1 plain;
     class h_634d0b4d44d1 plain;
-    class h_4a56ffd588bd plain;
+    class h_4a56ffd588bd current_anchor;
     class h_05851eb12718 plain;
     class h_c5151fa8423c plain;
     class h_775063d943a2 plain;
@@ -4074,6 +4070,21 @@ flowchart TD
 ```
 
 ## Transition Notes
+
+### Rollback Game#15889 `666764fa -> 4a56ffd5`
+
+- - rollback from 666764fa0f05 to 4a56ffd588bd at game 15889
+- - reasons: soft_fail+anchor_direct
+- - current comp/p50/p25=10801.7/11486.5/9453.0 vs target 12013.8/12345.0/11419.2
+- - bad recent scores: 9720 8726 16965 12320 10354 11399 6139 8203
+- anchor 比の通常回帰閾値に達した。
+- branch 状態なしで anchor 比の即時悪化として判定した。
+- current: comp=10801.7 p50=11486.5 p25=9453.0 mean=12003.7 n=20
+- rollback_target: comp=12013.8 p50=12345.0 p25=11419.2 mean=13192.4 n=12
+- metric_gap_vs_target: comp=-1212.1 p50=-858.5 p25=-1966.2 mean=-1188.7
+- recent12_avg: bad=11049.4 target=13192.4
+- recent12_floor: bad=6139 target=7748
+- rollback の直前12試合と rollback 先の直近12試合を比較して、再発理由を特定すること。
 
 ### Rollback Game#15880 `41bb0d5b -> 666764fa`
 
