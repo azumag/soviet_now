@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v650: early game DIRECT merge priority (axis 7b) — missing early-game bonus for DIRECT merges
+     # Existing axis 7 only covers NEAR (+1000 at piece_count<=12). DIRECT merges have 95.7%
+     # success rate vs NEAR's 68.5%, making them highest-value opportunities. Adding +1500
+     # DIRECT bonus ensures these are selected over NEAR when both are available early game.
+     # Fixes rollback failure mode: early-game under-selection of highest-value DIRECT merges
+     # refs: tmp/analysis_result.md (Adopted Hypothesis: Early-Game DIRECT Merge Bonus Enhancement),
+     #       advice.md (azumag: "盤面状態に関わらず即時併合を最優先する"),
+     #       tmp/state/last_rollback_postmortem.md
      # v649: double_russia NO_merge center clustering — raise survival bonus from +200 to +500
      # When 2x type 15 exist with merge_grade=NO, +200 was insufficient vs height_penalty (~180-400),
      # causing edge scatter (worst game x=-2.8, extra_low x=-2.0/2.6). +500 provides meaningful
@@ -1718,6 +1726,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
+
+        # ----- evaluation axis 7b: early game DIRECT merge priority (new) -----
+        # Existing axis 7 only covers NEAR merges (+1000 at piece_count<=12).
+        # DIRECT merges have 95.7% success rate vs NEAR's 68.5% - highest value opportunities.
+        # Early game (piece_count<=12) is the "planting" phase where chain building potential is highest.
+        # Adding equivalent bonus for DIRECT merges ensures these highest-value opportunities
+        # are selected over NEAR when both are available.
+        # Height penalty is minimal in early game (height_mult=0.4), so this bonus won't
+        # override height safety - only provides additional incentive when merge is safe.
+        # refs: advice.md (azumag: "盤面状態に関わらず即時併合を最優先する"),
+        #       batch_summary NEAR_MERGE avg_score_delta=42.4, tmp/state/last_rollback_postmortem.md
+        if piece_count <= 12 and merge_grade == "DIRECT":
+            score += 1500.0
+            reasons.append("EARLY_DIRECT_MERGE_PRIORITY")
 
         # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization, enhanced) -----
         # batch_summaryでHEIGHT_CONTROLが23.8%選択(avg_score_delta=1.2)と過剰であることを確認。
