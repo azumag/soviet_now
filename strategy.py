@@ -68,6 +68,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v655: axis 8.8a HIGH phase intermediate NO_MERGE penalty at rp=1-2 — fills gap where
+     # axis 8.8 (rp>=3) and axis 8.8b (pc>=28) both fail to fire at rp=1-2 during HIGH phase.
+     # At max_y=1.8-2.5: -500 to -1000 (interpolated). At max_y=2.5-3.0: -1000 to -2000 (escalated).
+     # Worst game T45-47: rp=1, pc~25, max_y 1.88→2.45, NO_MERGE for 3 consecutive turns.
+     # Without axis 8.8a protection, HEIGHT_LAYER dominated with avg_score_delta=0.4.
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8a)
+     # Fixes rollback failure mode: "HEIGHT_LAYER/HEIGHT_CONTROL dominance at rp=1 during HIGH phase causes max_y runaway"
      # v613: REMOVED axis_88_horizontal_suppression from stacking_danger_suppressed
      # axis 9.6b same-type proximity guidance must remain active during merge drought
      # (rp>=3 && NO && pc>=28) to prevent piece scattering. The within-axis
@@ -2319,6 +2326,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
             drought_penalty = (piece_count - 27) * 100.0 * merge_mult
             score -= drought_penalty
             reasons.append("MERGE_DROUGHT_PRESSURE")
+
+        # ----- axis 8.8a: HIGH phase intermediate NO_MERGE penalty at rp=1-2 (NEW v655) -----
+        # Gap analysis: axis 8.8 fires at rp>=3 (-4500 flat). axis 8.8b fires at rp=1-2 and pc>=28.
+        # At rp=1-2 and pc<28 during HIGH phase (max_y>=1.8), NO_MERGE situations are unprotected.
+        # Worst game T45-47: rp=1, pc~25, max_y 1.88→2.45, NO_MERGE for 3 consecutive turns.
+        # Without any NO_MERGE penalty, HEIGHT_LAYER reasoning dominated with avg_score_delta=0.4.
+        # New axis 8.8a fills this gap: graduated penalty at rp=1-2, NO_MERGE, during HIGH phase.
+        # At max_y=1.8-2.5: -500 to -1000 (interpolated)
+        # At max_y=2.5-3.0: -1000 to -2000 (escalated)
+        # This is weaker than axis 8.8 (-4500) to avoid overriding other mechanisms.
+        # NOT applied at rp>=3 (axis 8.8 covers) or rp=0 (no reactive potential).
+        # NOT applied in Russia phase (axis 8.7 handles Russia NO_MERGE).
+        # refs: batch_summary HEIGHT_LAYER avg_score_delta=0.4, worst_game T45-47 analysis
+        if merge_grade == "NO" and 1 <= reactive_pair_count < 3 and max_y >= 1.8 and not russia_phase:
+            if max_y < 2.5:
+                penalty = -500.0 - (max_y - 1.8) * 500.0  # -500 at y=1.8, -850 at y=2.5
+            else:
+                penalty = -1000.0 - (max_y - 2.5) * 666.0  # -1000 at y=2.5, -2000 at y=3.0
+            score += penalty
+            reasons.append("HIGH_PHASE_NO_MERGE_PENALTY")
 
         # ----- axis 8.8c: rp=2 merge drought early intervention (NEW v607) -----
         # Analysis adopted hypothesis: "Pre-death-spiral merge-path creation at rp=2, NO merge,
