@@ -68,6 +68,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v652: axis 8.8 type-aware compression — NO merge with rp>=3, pc>=30 時にtype proximity bonus
+     #   flat -4500 penalty を base として、type 8+ pieces への近接度で最大200の減算reliefを付与
+     #   効果: worst/extra_low game の最終盤面NO mergeターンで、height安全性と共存しつつ
+     #   より高typeピース了近くに配置し、万一のmerge時に高value併合を実現
+     #   Fixes rollback failure mode: "reactive_pairs>=3 NO merge時のflat penaltyがheightonly起因低type mergeを誘発"
+     #   refs: tmp/analysis_result.md (Implementation Plan)
      # v651: Russia phase NEAR merge suppression threshold relaxed (2.3 vs non-Russia 1.5)
      #   Russia phase (type 15>=1) の場合、near_merge_elevated_suppression の max_y 閾値を 1.5→2.3 に引下げ
      #   worst (score 900): T52-58 で max_y 2.63-2.75 でも NEAR merge suppression が継続し merge opportunity 逃失
@@ -2642,12 +2648,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
-        if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v452: flatten to -4500, matching protected strategy (median 12789)
-            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
-            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
-            # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
+        if reactive_pair_count >= 3 and merge_grade == "NO" and piece_count >= 30:
+            base_penalty = 4500.0
+            # v652: type-aware compression guidance during NO merge with high rp
+            # Instead of flat -4500, provide slight preference toward positions
+            # near higher-type pieces — if a merge happens, it should be valuable
+            type_proximity_bonus = 0.0
+            for p in pieces:
+                if p.get("type", 0) >= 8:  # type 8+ pieces
+                    dist = abs(x - p["x"])
+                    # proximity bonus: max 200 at dist=0, decays to 0 at dist=2.5
+                    type_proximity_bonus = max(type_proximity_bonus, max(0, 200 - dist * 100))
+            score -= (base_penalty - type_proximity_bonus)
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- v602: axis_88_horizontal_suppression flag (defined earlier in loop) -----
