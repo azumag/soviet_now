@@ -67,8 +67,21 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
-     # v652: axis 8.8 type-aware compression — NO merge with rp>=3, pc>=30 時にtype proximity bonus
+ # --- Change History ---
+      # v653: NO-merge continuation detection + fallback height enforcement — prevent height runaway when merge_available=FALSE
+      # When merge_grade=="NO" && rp>=3 && deadline_crossed && max_y>=2.5, add extra height penalty
+      # to prevent "merge_available=FALSE → HEIGHT_CONTROL → max_y runaway" failure mode.
+      # Worst game T55-58: merge_available=FALSE発生時、rp=4, deadline_crossed=true
+      # HEIGHT_CONTROL理由が続き、max_y=2.9→3.72に暴走。edge scatter (x=2.8, 1.2, 3.0, -1.8)
+      # Extra penalty: landing_y > -1.0 → penalty = (landing_y + 1.0) * 250.0
+      # At max_y=2.5, landing_y=-1.0→0 penalty, landing_y=0→250 penalty
+      # This addresses: NO merge recovery detection + fallback height enforcement
+      # Fixes rollback failure mode: "merge_available=FALSE → HEIGHT_CONTROL → max_y runaway"
+      #   (analysis_result.md adopted hypothesis)
+      # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE_RECOVERY_FORCE_LOW),
+      #       game_history/20260415_235018_score0806.jsonl T55-58,
+      #       game_history/20260416_000334_score0923.jsonl T65-69
+      # v652: axis 8.8 type-aware compression — NO merge with rp>=3, pc>=30 時にtype proximity bonus
      #   flat -4500 penalty を base として、type 8+ pieces への近接度で最大200の減算reliefを付与
      #   効果: worst/extra_low game の最終盤面NO mergeターンで、height安全性と共存しつつ
      #   より高typeピース了近くに配置し、万一のmerge時に高value併合を実現
@@ -969,7 +982,10 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v340: reactive_pairs>=3時deadline_crossed併合最優先版 - v339 failure mode潰し
+    """v653: NO-merge continuation detection + fallback height enforcement — prevent height runaway when merge_available=FALSE
+    When merge_grade=="NO" && rp>=3 && deadline_crossed && max_y>=2.5, add extra height penalty
+    to prevent "merge_available=FALSE → HEIGHT_CONTROL → max_y runaway" failure mode.
+    Fixes: merge_available=FALSE発生時のheight control理由によるmax_y runaway (worst T55-58: max_y 2.9→3.72)
 
     v339 failure: reactive_pairs>=3 && deadline_crossed && merge_grade=="NO"の超危険域でaxis 9.6が強力に機能し、高配置 runawayでゲームオーバー
     ワーストゲーム(score0638)終盤turns 55-61: reactive_pairs=7-8, deadline_crossed=true, merge_available=false続きで
@@ -2251,6 +2267,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
+
+        # ----- NEW: NO-merge continuation detection + forced low placement (v653) -----
+        # analysis_result.md adopted hypothesis: "NO merge recovery detection + fallback height enforcement"
+        # When merge_available just became FALSE with rp>=3 && deadline_crossed,
+        # AND max_y >= 2.0, apply extra height pressure to prevent height runaway.
+        # This addresses: merge_available=FALSE → continue height control → max_y 2.9→3.72
+        # Worst game T55-58: merge_available=FALSE発生時、しかしrp=4, deadline_crossed=true
+        # HEIGHT_CONTROL理由が続き、max_y=2.9→3.72に暴走。edge scatter (x=2.8, 1.2, 3.0, -1.8)
+        # v610 death-spiral height escalation (base=150) already applies at max_y>=2.0.
+        # At max_y>=2.5, we need even stronger differentiation to prevent runaway.
+        # Extra height penalty for candidates with landing_y > -1.0 (meaning not extremely low)
+        if merge_grade == "NO" and reactive_pair_count >= 3 and deadline_crossed and max_y >= 2.5:
+            # Add -200 to -400 extra penalty to candidates with landing_y > -1.0
+            # At max_y=2.5, landing_y=-1.0 → penalty=0, landing_y=0 → penalty=250
+            # At max_y=3.0, landing_y=-1.0 → penalty=0, landing_y=0 → penalty=250
+            extra_height_penalty = max(0.0, landing_y + 1.0) * 250.0
+            score -= extra_height_penalty
+            reasons.append("NO_MERGE_RECOVERY_FORCE_LOW")
+        # Fixes rollback failure mode: "merge_available=FALSE → HEIGHT_CONTROL → max_y runaway"
+        #   (analysis_result.md adopted hypothesis: NO-merge continuation detection)
+        # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE_RECOVERY_FORCE_LOW),
+        #       game_history/20260415_235018_score0806.jsonl T55-58 (merge_available=FALSE, rp=4, max_y 2.9→3.72)
+        #       game_history/20260416_000334_score0923.jsonl T65-69 (NO merge, rp=7-9, max_y 2.39→3.23)
 
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
