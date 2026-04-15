@@ -68,6 +68,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
  # --- Change History ---
+      # v654: graduated horizontal_guidance_scale (rp>=3→0.20, rp==2→0.50, rp==1→0.75) + axis 2.5 NO merge height priority boost (1.5x)
+      # Replaces binary axis_88 suppression with smooth degradation. Applies scale to column_ceiling_bonus,
+      # merge_drought_pressure, merge_path_setup, same_type_proximity (9.8), near_miss_clustering (9.65), reactive_pairs_stacking (9.6).
+      # Axis 2.5: when merge_grade==NO && max_y>=0.8 && pc>=20, height_mult *= 1.5 (global, rp-independent).
+      # Fixes rollback failure mode: "NO merge連続ターン → max_y runaway → game over" during MEDIUM→HIGH transition (max_y 0.8→2.0)
+      #   where horizontal guidance noise (~800-1250pt) drowned out height penalty (~202pt diff)
+      # Refactoring: v602 binary axis_88_horizontal_suppression → graduated horizontal_guidance_scale (same suppression intent, smoother scale)
+      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, advice.md
       # v653: NO-merge continuation detection + fallback height enforcement — prevent height runaway when merge_available=FALSE
       # When merge_grade=="NO" && rp>=3 && deadline_crossed && max_y>=2.5, add extra height penalty
       # to prevent "merge_available=FALSE → HEIGHT_CONTROL → max_y runaway" failure mode.
@@ -1470,6 +1478,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reactive_pair_count >= 3 and merge_grade == "NO"
         )
 
+        # v654: graduated horizontal_guidance_scale — replaces binary axis_88 suppression
+        # with smooth degradation. analysis_result.md adopted hypothesis:
+        # "When axis_88 fires (rp>=3 && NO && max_y>=1.0 && pc>=28), REDUCE horizontal
+        # guidance bonuses by 80% (not binary on/off)."
+        # Additionally graduated by rp level to replace oscillating v602/v615/v608 pattern.
+        # Scale values: rp>=3→0.20 (80% cut), rp==2→0.50 (50% cut, keeps v615),
+        # rp==1→0.75 (25% cut, new), rp==0→1.0 (no cut — column_ceiling_scale handles).
+        # Applied to: column_ceiling_bonus, merge_drought_pressure, merge_path_setup,
+        # same_type_proximity (9.8), near_miss_clustering (9.65), reactive_pairs_stacking (9.6).
+        # This addresses the MEDIUM→HIGH transition (max_y 0.8→2.0) where height penalty
+        # was drowned out by horizontal guidance noise (~800-1250pt vs ~202pt height diff).
+        # refs: tmp/analysis_result.md (Implementation Plan: graduated horizontal_guidance_scale)
+        if merge_grade == "NO" and max_y >= 1.0:
+            if reactive_pair_count >= 3 and piece_count >= 28:
+                horizontal_guidance_scale = 0.20  # 80% reduction — strongest suppression
+            elif reactive_pair_count == 2 and piece_count >= 25:
+                horizontal_guidance_scale = 0.50  # 50% reduction — keep v615 behavior
+            elif reactive_pair_count == 1 and piece_count >= 15:
+                horizontal_guidance_scale = 0.75  # 25% reduction — new, catches rp=1 origin
+            else:
+                horizontal_guidance_scale = 1.0
+        else:
+            horizontal_guidance_scale = 1.0
+
         # v625: column_ceiling_scale — dynamic scaling of column_ceiling_bonus by merge drought intensity
         # Replaces rp2_noise_reduction (v615). Analysis: even at 50% reduction, column_ceiling_bonus
         # (400-625) still overwhelms height penalty (y=0 vs y=2.0 diff=270pt HIGH phase).
@@ -1499,6 +1531,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # (rp>=3 && NO merge) — height must be sole differentiator even before
         # board elevates. pre_death_spiral covers max_y>=1.0; this catches rp>=3
         # && NO at lower max_y where horizontal noise can still override height.
+        # v654: additionally scale by horizontal_guidance_scale — graduated suppression
         stacking_danger_suppressed = death_spiral or pre_death_spiral or axis_88_horizontal_suppression
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
@@ -1566,6 +1599,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if piece_count >= 28:
                         congestion_scale = 1.0 + (piece_count - 28) * 0.12
                         stacking_bonus *= min(congestion_scale, 3.0)
+                    # v654: apply horizontal_guidance_scale — graduated suppression for NO merge
+                    stacking_bonus *= horizontal_guidance_scale
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
@@ -1756,7 +1791,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Cap total cluster bonus to ~500 to not override height penalty
                     _total_cluster_bonus = min(_total_cluster_bonus, 500.0)
                     # v625: scale by column_ceiling_scale (was rp2_noise_reduction)
-                    _total_cluster_bonus *= column_ceiling_scale
+                    # v654: additionally scale by horizontal_guidance_scale
+                    _total_cluster_bonus *= column_ceiling_scale * horizontal_guidance_scale
                     if _total_cluster_bonus > 50:
                         score += _total_cluster_bonus
                         reasons.append("NEAR_MISS_CLUSTERING")
@@ -2254,6 +2290,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260412_132046_score0899.jsonl T64-T69 (6 HIGH_TOWER turns, max_y 2.57→3.38)
         # Fixes rollback failure mode: "merge drought時に低y配置が選ばれず、端に散らばって即死"
 
+        # ----- axis 2.5: NO merge height priority boost (NEW v654) -----
+        # analysis_result.md adopted hypothesis: "When merge_grade==NO && max_y>=0.8 && pc>=20,
+        # apply a multiplicative height penalty boost of 1.5x that is independent of the rp tier system."
+        # This catches edge cases (rp=0, rp=1) that individual tier guards partially address.
+        # Works across all rp levels — a global boost that ensures height penalty is the PRIMARY
+        # differentiator during NO merge states, addressing the "horizontal guidance noise drowning
+        # out height penalty" root cause identified in analysis.
+        # The 1.5x boost applies multiplicatively to height_mult, AFTER all tier gates.
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 2.5 NO merge height priority boost)
+        no_merge_height_boost = (
+            merge_grade == "NO"
+            and max_y >= 0.8
+            and piece_count >= 20
+        )
+        if no_merge_height_boost:
+            height_mult *= 1.5
+
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * base_height_coefficient * height_mult
 
@@ -2726,6 +2779,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v625: use column_ceiling_scale <= 0.50 (was rp2_noise_reduction)
             if column_ceiling_scale <= 0.50:
                 drought_penalty *= 0.5
+            # v654: apply horizontal_guidance_scale — graduated suppression
+            drought_penalty *= horizontal_guidance_scale
             score -= drought_penalty
             reasons.append("MERGE_DROUGHT_PRESSURE")
 
@@ -2874,7 +2929,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # merge_mult ensures bonus is relative (not overriding absolute merge bonuses)
                 # v625: column_ceiling_scale applied — dynamic reduction by merge drought intensity
                 # (rp==0→0.60, rp==1→0.75, rp==2→0.50, rp>=3→0.40)
-                ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult * column_ceiling_scale
+                # v654: additionally scale by horizontal_guidance_scale — graduated NO merge suppression
+                ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult * column_ceiling_scale * horizontal_guidance_scale
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
@@ -2898,7 +2954,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
                     if nearest_dist < 1.5:
                         # Tie-break: create NEAR-merge setup for next turn
-                        path_bonus = 200.0 * merge_mult * max(0.0, 1.0 - nearest_dist / 1.5)
+                        # v654: apply horizontal_guidance_scale
+                        path_bonus = 200.0 * merge_mult * max(0.0, 1.0 - nearest_dist / 1.5) * horizontal_guidance_scale
                         score += path_bonus
                         if "MERGE_PATH_SETUP" not in "_".join(reasons):
                             reasons.append("MERGE_PATH_SETUP")
@@ -3037,7 +3094,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if avg_target_y > 1.0:
                         proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
                     # v625: scale by column_ceiling_scale (was rp2_noise_reduction)
-                    proximity_bonus *= column_ceiling_scale
+                    # v654: additionally scale by horizontal_guidance_scale
+                    proximity_bonus *= column_ceiling_scale * horizontal_guidance_scale
                     if proximity_bonus > 0:
                         score += proximity_bonus
                         if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
