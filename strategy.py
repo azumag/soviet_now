@@ -2617,12 +2617,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: analysis_result.md (Implementation Plan: continuous deadline penalty)
         #       user_review.md [MUST FIX], mandatory_themes.txt
         margin = result.get("deadline_margin", 99)
-        if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            # Continuous penalty: margin < 0.1 -> increasingly severe; margin >= 0.1 -> no penalty
-            penalty = max(0.0, (0.1 - margin)) * (3000.0 / 0.1)
-            if penalty > 0:
-                score -= penalty
-                reasons.append("CROSSES_DEADLINE_NO_MERGE")
+        if merge_grade == "NO" and not russia_phase and margin < 0.5:
+            # Continuous penalty: margin < 0.5 -> increasingly severe; margin >= 0.5 -> no penalty
+            # Removed binary crosses_deadline guard — use margin-based continuous judgment only
+            # threshold: 0.1->0.5, coeff: 3000->5000 (margin=0 -> -2500, margin=-0.5 -> -5000)
+            score -= max(0, (0.5 - margin)) * 5000
+            reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
