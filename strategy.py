@@ -64,21 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v650: early game DIRECT merge priority (axis 7b) — missing early-game bonus for DIRECT merges
-     # Existing axis 7 only covers NEAR (+1000 at piece_count<=12). DIRECT merges have 95.7%
-     # success rate vs NEAR's 68.5%, making them highest-value opportunities. Adding +1500
-     # DIRECT bonus ensures these are selected over NEAR when both are available early game.
-     # Fixes rollback failure mode: early-game under-selection of highest-value DIRECT merges
-     # refs: tmp/analysis_result.md (Adopted Hypothesis: Early-Game DIRECT Merge Bonus Enhancement),
-     #       advice.md (azumag: "盤面状態に関わらず即時併合を最優先する"),
-     #       tmp/state/last_rollback_postmortem.md
-     # v649: double_russia NO_merge center clustering — raise survival bonus from +200 to +500
-     # When 2x type 15 exist with merge_grade=NO, +200 was insufficient vs height_penalty (~180-400),
-     # causing edge scatter (worst game x=-2.8, extra_low x=-2.0/2.6). +500 provides meaningful
-     # incentive for center placement. Added explicit type 15 proximity bonus (max +100) for
-     # growth pipeline toward 2nd Russia. Fixes rollback failure mode: double_russia NO_merge edge
-     # scatter causing Russia 1つのままゲームオーバー (worst score 899, extra_low score 1088).
-     # refs: tmp/analysis_result.md
      # v571: merge drought edge scatter prevention — death_spiral + piece_count>=35 center bonus (+50 max)
      # When death_spiral active AND piece_count>=35 (merge drought), v570's +30 tiebreaker is
      # insufficient to prevent edge scatter. Adds +50 max center bonus to shift preference from
@@ -104,11 +89,6 @@ Phases (determined by board max Y):
      # cannot differentiate center from edge (worst game T72 x=-3.0, T75 x=-3.0)
      # refs: tmp/analysis_result.md (Adopted Hypothesis, Implementation Plan),
      #       game_history/20260411_043050_score1074.jsonl, tmp/state/last_rollback_postmortem.md
-     # v573: explicit max_y < 2.5 guard on REACTIVE_PAIRS_STACKING — analysis constraint forbids
-     # stacking when max_y > 2.5 with rp >= 5 and merge_available=false. Worst game T58
-     # (max_y=3.22, rp=5, merge_available=false) violated this constraint.
-     # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING violates max_y > 2.5 constraint
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のソ連建国目前フェーズ切替
      # ロシア1つのままゲームオーバーは最も惜しい負けパターン。2つのロシアが盤面にある場合、
      # 盤面圧縮ボーナスを抑制し、既存type 15保護と低配置生存を最優先。
@@ -1138,23 +1118,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/20260411_024615_score0327.jsonl,
         #       game_history/20260411_024430_score0739.jsonl
         stacking_danger_suppressed = death_spiral
-        # v572: additional guard for rp>=4 + max_y>=2.0 — catches death-spiral-like
-        # conditions even when danger_piece_count=0 (death_spiral=False). Worst game
-        # T78 (rp=7, max_y=2.65, merge_available=false) shows REACTIVE_PAIRS_STACKING
-        # firing despite v569 explicit death_spiral guard. The root cause: max_y=2.65
-        # is already dangerous but danger_piece_count hasn't accumulated to trigger
-        # death_spiral yet. This guard suppresses stacking BEFORE the runaway starts.
-        # Validation: worst T78 suppressed (rp>=4 ✓, max_y>=2.0 ✓),
-        # extra_high T140 preserved (max_y<2.0 ✗), best T164 preserved (rp<4 ✗)
-        # Fixes rollback failure mode: max_y runaway in rp>=4 scenarios
-        # refs: tmp/analysis_result.md (Adopted Hypothesis)
-        # v573: explicit max_y < 2.5 guard — analysis constraint forbids REACTIVE_PAIRS_STACKING
-        # firing when max_y > 2.5 with rp >= 5 and merge_available=false. Worst game T58
-        # (max_y=3.22, rp=5, merge_available=false) violated this constraint. Adding explicit
-        # max_y < 2.5 ensures the guard fires for all dangerous max_y >= 2.5 cases.
-        # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING violates max_y > 2.5 constraint
-        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-        if not death_spiral and reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not (reactive_pair_count >= 4 and max_y >= 2.0) and max_y < 2.5:
+        if not death_spiral and reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
@@ -1727,20 +1691,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- evaluation axis 7b: early game DIRECT merge priority (new) -----
-        # Existing axis 7 only covers NEAR merges (+1000 at piece_count<=12).
-        # DIRECT merges have 95.7% success rate vs NEAR's 68.5% - highest value opportunities.
-        # Early game (piece_count<=12) is the "planting" phase where chain building potential is highest.
-        # Adding equivalent bonus for DIRECT merges ensures these highest-value opportunities
-        # are selected over NEAR when both are available.
-        # Height penalty is minimal in early game (height_mult=0.4), so this bonus won't
-        # override height safety - only provides additional incentive when merge is safe.
-        # refs: advice.md (azumag: "盤面状態に関わらず即時併合を最優先する"),
-        #       batch_summary NEAR_MERGE avg_score_delta=42.4, tmp/state/last_rollback_postmortem.md
-        if piece_count <= 12 and merge_grade == "DIRECT":
-            score += 1500.0
-            reasons.append("EARLY_DIRECT_MERGE_PRIORITY")
-
         # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization, enhanced) -----
         # batch_summaryでHEIGHT_CONTROLが23.8%選択(avg_score_delta=1.2)と過剰であることを確認。
         # NEAR_MERGE系reasonsがavg_score_delta=28-57（高価値）だが選択率が3.8-9.2%と低いことを確認。
@@ -1842,22 +1792,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                          score += 1400.0
                      reasons.append("DOUBLE_RUSSIA_IMMEDIATE_MERGE")
                  elif merge_grade == "NO":
-                     # v649: double_russia NO_merge center clustering — raise survival bonus from +200 to +500
-                     # to compete with height_penalty at critical phase. When 2x type 15 exist, losing one Russia
-                     # to game_over is the worst outcome. +200 was insufficient vs height_penalty (~180-400),
-                     # causing edge scatter. +500 provides meaningful incentive for center placement.
-                     # Additional: explicit type 15 proximity for growth pipeline (2nd Russia must be built).
-                     type_15_pieces = [p for p in pieces if p.get("type") == 15]
-                     if type_15_pieces:
-                         # Find nearest type 15 to candidate position
-                         for p15 in type_15_pieces:
-                             dist = abs(x - p15.get("x", 0))
-                             if dist < 2.0:
-                                 proximity_bonus = max(0, 100.0 * (1.0 - dist / 2.0))
-                                 score += proximity_bonus
-                                 reasons.append("DOUBLE_RUSSIA_CENTER_PROXIMITY")
-                                 break
-                     score += 500.0
+                     # 併合不可時は、盤面圧縮よりtype 15保護と低配置を優先
+                     # ボーナスを抑制し、height penaltyが効くようにする
+                     # type 13/14級ピースを既存ロシアの近くに配置する誘導はaxis 5.6に委ねる
+                     score += 200.0
                      reasons.append("DOUBLE_RUSSIA_SURVIVAL")
              elif merge_grade in ["DIRECT", "NEAR"]:
                  # ロシアフェーズでの即時併合優先
