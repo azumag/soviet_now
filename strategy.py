@@ -2614,9 +2614,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260330_143501_score0994.jsonl T74-75,
         #       mandatory_themes.txt: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
         #       analysis_result.md hypothesis: -1200 insufficient vs column_ceiling+800 + stacking+400 + proximity; raised to -3000
+        # refs: analysis_result.md (Implementation Plan: continuous deadline penalty)
+        #       user_review.md [MUST FIX], mandatory_themes.txt
+        margin = result.get("deadline_margin", 99)
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            score -= 3000.0
-            reasons.append("CROSSES_DEADLINE_NO_MERGE")
+            # Continuous penalty: margin < 0.1 -> increasingly severe; margin >= 0.1 -> no penalty
+            penalty = max(0.0, (0.1 - margin)) * (3000.0 / 0.1)
+            if penalty > 0:
+                score -= penalty
+                reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
