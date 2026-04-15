@@ -68,6 +68,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v651: Russia phase NEAR merge suppression threshold relaxed (2.3 vs non-Russia 1.5)
+     #   Russia phase (type 15>=1) の場合、near_merge_elevated_suppression の max_y 閾値を 1.5→2.3 に引下げ
+     #   worst (score 900): T52-58 で max_y 2.63-2.75 でも NEAR merge suppression が継続し merge opportunity 逃失
+     #   extra_high (score 2758): Russia phase NEAR merges at max_y 2.30-2.42 で score_delta=21-28 全て成功
+     #   rp>=3, pc>=28 条件は維持。deadline_crossed+max_y>=3.0 の catastrophe guard (v604) も維持
+     #   Fixes rollback failure mode: "Russia phase NEAR merge suppression at max_y 2.0-2.5 blocks legitimate merges"
+     #   refs: tmp/analysis_result.md (Implementation Plan)
      # v627: axis 9.12 merge drought early fire — MEDIUM phase (max_y>=0.8, pc>=25) で発火
      #   no_merge_streak>=3 条件削除、閾値を max_y>=1.5/pc>=30 から max_y>=0.8/pc>=25 に引下げ
      #   Worst game T49: type 10×3 scattered で merge_available=FALSE、merge drought 早期準備で解決
@@ -1123,8 +1130,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # At max_y=1.5: ~30% NEAR bonus reduction. At max_y=2.0: ~50% (matches v604 floor).
     # Also scales by piece_count: pc=28 → 1.0x factor, pc=40 → 0.6x factor.
     # refs: tmp/analysis_result.md (Implementation Plan: graduated pre-deadline suppression)
+    # v606 + Russia relax: Russia phase NEAR suppression threshold relaxed from 1.5 to 2.3
+    # analysis_result.md hypothesis: "Russia phase NEAR merge suppression relaxation at max_y 2.0-2.5"
+    # worst game (score 900): suppressed NEAR at max_y 2.63-2.75, only 1 merge in final 8 turns
+    # extra_high (score 2758): Russia phase NEAR merges at max_y 2.3-2.42 all succeeded (score_delta=21-28)
+    # extra_high game T110-T112: russia_phase=true, max_y 2.30-2.42, NEAR merges succeeded
+    # Russia phase (type 15 >= 1) reduces suppression threshold: 2.3 vs non-Russia 1.5
+    # Keeps rp>=3, pc>=28 guardrails; keeps deadline_crossed+max_y>=3.0 catastrophic guard (v604 near_merge_suppression)
+    # Russia phase non-NEAR merge (FAR, NO) suppression unchanged
     near_merge_elevated_suppression = (
-        max_y >= 1.5
+        max_y >= (2.3 if russia_phase else 1.5)
         and reactive_pair_count >= 3
         and piece_count >= 28
     )
