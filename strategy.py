@@ -1118,7 +1118,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/20260411_024615_score0327.jsonl,
         #       game_history/20260411_024430_score0739.jsonl
         stacking_danger_suppressed = death_spiral
-        if not death_spiral and reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
+        # v572: additional guard for rp>=4 + max_y>=2.0 — catches death-spiral-like
+        # conditions even when danger_piece_count=0 (death_spiral=False). Worst game
+        # T78 (rp=7, max_y=2.65, merge_available=false) shows REACTIVE_PAIRS_STACKING
+        # firing despite v569 explicit death_spiral guard. The root cause: max_y=2.65
+        # is already dangerous but danger_piece_count hasn't accumulated to trigger
+        # death_spiral yet. This guard suppresses stacking BEFORE the runaway starts.
+        # Validation: worst T78 suppressed (rp>=4 ✓, max_y>=2.0 ✓),
+        # extra_high T140 preserved (max_y<2.0 ✗), best T164 preserved (rp<4 ✗)
+        # Fixes rollback failure mode: max_y runaway in rp>=4 scenarios
+        # refs: tmp/analysis_result.md (Adopted Hypothesis)
+        if not death_spiral and reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not (reactive_pair_count >= 4 and max_y >= 2.0):
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking

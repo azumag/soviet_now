@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-15 11:13:19 JST`
-- Nodes: `1076`
-- Edges: `1476`
-- Current: `666764fa0f05`
+- Updated: `2026-04-15 13:24:05 JST`
+- Nodes: `1077`
+- Edges: `1477`
+- Current: `653e161694b4`
 - Anchor: `666764fa0f05`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,8 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_666764fa0f05["666764fa0f05<br/>CURRENT ANCHOR<br/>g=25 n=20<br/>comp=12024.2"]
-    h_0eef7efabe9a["0eef7efabe9a<br/>g=23 n=20<br/>comp=10111.3"]
+    h_666764fa0f05["666764fa0f05<br/>ANCHOR<br/>g=49 n=20<br/>comp=12073.2"]
     h_52b8716f748b["52b8716f748b<br/>g=12 n=12<br/>comp=10472.6"]
     h_85a9826dd728["85a9826dd728<br/>g=12 n=12<br/>comp=11174.3"]
     h_cfdeecd74b57["cfdeecd74b57<br/>g=12 n=12<br/>comp=10405.9"]
@@ -76,6 +75,7 @@ flowchart TD
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
+    h_653e161694b4["653e161694b4<br/>CURRENT"]
 
     h_52b8716f748b -->|improve| h_85a9826dd728
     h_85a9826dd728 -->|improve| h_cfdeecd74b57
@@ -147,14 +147,14 @@ flowchart TD
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
+    h_666764fa0f05 -->|improve| h_653e161694b4
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_666764fa0f05 current_anchor;
-    class h_0eef7efabe9a plain;
+    class h_666764fa0f05 anchor;
     class h_52b8716f748b plain;
     class h_85a9826dd728 plain;
     class h_cfdeecd74b57 plain;
@@ -214,6 +214,7 @@ flowchart TD
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
+    class h_653e161694b4 current;
 ```
 
 ## Detail 1/14
@@ -3654,7 +3655,7 @@ flowchart TD
 - Cross-chunk link: `ea95bdde7a27 --improve--> 48ad45cab2c2`
 - Cross-chunk link: `23f6298575f2 -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 23c0ac0a5fa6`
-- Cross-chunk link: `... and 1 more`
+- Cross-chunk link: `... and 2 more`
 
 ```mermaid
 flowchart TD
@@ -3693,7 +3694,7 @@ flowchart TD
     h_4f5cd2e8b7da["4f5cd2e8b7da<br/>g=12 n=12<br/>comp=10239.0"]
     h_5b4b74f31384["5b4b74f31384<br/>g=25 n=20<br/>comp=11502.9"]
     h_8922930171fc["8922930171fc<br/>g=12 n=12<br/>comp=11354.0"]
-    h_666764fa0f05["666764fa0f05<br/>CURRENT ANCHOR<br/>g=25 n=20<br/>comp=12024.2"]
+    h_666764fa0f05["666764fa0f05<br/>ANCHOR<br/>g=49 n=20<br/>comp=12073.2"]
     h_5d2c56483b91["5d2c56483b91<br/>g=12 n=12<br/>comp=11303.9"]
     h_fde270efc768["fde270efc768<br/>g=12 n=12<br/>comp=9755.7"]
     h_3e054a962eda["3e054a962eda<br/>g=12 n=12<br/>comp=11015.7"]
@@ -3872,7 +3873,7 @@ flowchart TD
     class h_4f5cd2e8b7da plain;
     class h_5b4b74f31384 plain;
     class h_8922930171fc plain;
-    class h_666764fa0f05 current_anchor;
+    class h_666764fa0f05 anchor;
     class h_5d2c56483b91 plain;
     class h_fde270efc768 plain;
     class h_3e054a962eda plain;
@@ -3921,8 +3922,8 @@ flowchart TD
 
 ## Detail 14/14
 
-- Range: `c016461aeb9c` .. `355868eaf8ab`
-- Nodes in this diagram: `36`
+- Range: `c016461aeb9c` .. `653e161694b4`
+- Nodes in this diagram: `37`
 - Internal edges in this diagram: `39`
 - Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
@@ -3936,7 +3937,7 @@ flowchart TD
 - Cross-chunk link: `07233caa484c -.rollback.-> 870a50c13e53`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
-- Cross-chunk link: `... and 1 more`
+- Cross-chunk link: `... and 2 more`
 
 ```mermaid
 flowchart TD
@@ -3976,6 +3977,7 @@ flowchart TD
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
+    h_653e161694b4["653e161694b4<br/>CURRENT"]
 
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
@@ -4058,9 +4060,20 @@ flowchart TD
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
+    class h_653e161694b4 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#15824 `666764fa -> 653e1616`
+
+- scores: `20006 18725 11574 11338 15787 9216 8527 21303 15191 14545 11696 9532`
+- v572: additional guard for rp>=4 + max_y>=2.0 — catches death-spiral-like
+- conditions even when danger_piece_count=0 (death_spiral=False). Worst game
+- T78 (rp=7, max_y=2.65, merge_available=false) shows REACTIVE_PAIRS_STACKING
+- firing despite v569 explicit death_spiral guard. The root cause: max_y=2.65
+- is already dangerous but danger_piece_count hasn't accumulated to trigger
+- death_spiral yet. This guard suppresses stacking BEFORE the runaway starts.
 
 ### Rollback Game#15800 `870a50c1 -> 666764fa`
 
