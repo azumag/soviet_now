@@ -68,6 +68,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v613: REMOVED axis_88_horizontal_suppression from stacking_danger_suppressed
+     # axis 9.6b same-type proximity guidance must remain active during merge drought
+     # (rp>=3 && NO && pc>=28) to prevent piece scattering. The within-axis
+     # rp_guidance_suppressed check (lines 1549-1554) already provides targeted
+     # suppression for proximity_bonus in congestion states, making the broader
+     # axis_88_horizontal_suppression redundant for axis 9.6b.
+     # Postmortem constraint: "axis 9.6b の無効化禁止" (tmp/state/last_rollback_postmortem.md)
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt,
+     #       game_history/20260416_020737_score0814.jsonl (worst game T77: scattered pieces, NO merge),
+     #       game_history/20260416_023849_score4533.jsonl (best game T166-173: same-type clustering)
+     # Fixes rollback failure mode: "merge drought→piece scattering→NO merge→pc explosion→game over"
+     #   (worst game T77: types 8/10/11/12 scattered x=±2.3-2.5, never clustered, game over pc=51)
      # v612: pre-death-spiral height tier (base=120) — catch height runaway at max_y>=1.5, rp>=2, NO merge
      # NO+rp>=2+max_y>=1.5+(deadline_crossed|pc>=30)でbase=120。y=0 vs y=1.5差=324pt(HIGH phase)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt
@@ -1356,7 +1368,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # (rp>=3 && NO merge) — height must be sole differentiator even before
         # board elevates. pre_death_spiral covers max_y>=1.0; this catches rp>=3
         # && NO at lower max_y where horizontal noise can still override height.
-        stacking_danger_suppressed = death_spiral or pre_death_spiral or axis_88_horizontal_suppression
+        # v606: REMOVED axis_88_horizontal_suppression from stacking_danger_suppressed.
+        # axis 9.6b same-type proximity guidance must remain active during merge drought
+        # (rp>=3 && NO && pc>=28) to prevent piece scattering. Postmortem constraint:
+        # "axis 9.6b の無効化禁止" — the within-axis rp_guidance_suppressed check
+        # (lines 1549-1554) already provides targeted suppression for proximity_bonus
+        # in congestion states, making the broader axis_88_horizontal_suppression
+        # redundant for axis 9.6b specifically.
+        stacking_danger_suppressed = death_spiral or pre_death_spiral
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
