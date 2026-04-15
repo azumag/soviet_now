@@ -68,6 +68,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v648: Russia-phase NO-merge clustering incentive — guide pieces toward type 10+ clusters
+     # during merge drought to improve pipeline toward second Russia. Target: p25 improvement.
+     # Failure mode: best/extra_high games had Russia/China scattered despite proximity axes.
+     # refs: tmp/analysis_result.md (Russia-Phase Clustering Enhancement)
      # v647: simplify rp-dependent height tier escalation during NON-deadline rp<=2 states
      # Disable early_drought_height (rp==1, base=90) and tier escalation at rp<=2 during normal play.
      # Tier escalation (90/120/150) created discontinuities causing HEIGHT_CONTROL scatter (19.6% low vs 16.6% high).
@@ -2491,6 +2495,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       # 盤面圧縮を優先しつつ、type 15保護を徹底
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                  # v648: Russia-phase NO-merge clustering incentive — guide pieces toward type 10+ clusters
+                  # to reduce scatter during merge drought, improving pipeline toward second Russia.
+                  # Failure mode: best/extra_high games had Russia/China scattered despite proximity axes.
+                  # Guard: must be smaller than height penalty so survival takes priority.
+                  if not death_spiral:
+                      high_type_pieces_10plus = [p for p in pieces if p.get("type", 0) >= 10]
+                      if len(high_type_pieces_10plus) >= 2:
+                          cent_x = sum(p.get("x", 0) for p in high_type_pieces_10plus) / len(high_type_pieces_10plus)
+                          cent_y = sum(p.get("y", -10) for p in high_type_pieces_10plus) / len(high_type_pieces_10plus)
+                          dist = ((x - cent_x) ** 2 + (landing_y - cent_y) ** 2) ** 0.5
+                          # base ~100 at dist=0, decays to 0 at dist=2.5 — tie-breaker only
+                          cluster_bonus = max(0.0, 100.0 * (1.0 - dist / 2.5))
+                          if cluster_bonus > 10:
+                              score += cluster_bonus
+                              reasons.append("RUSSIA_PHASE_CLUSTER_GUIDANCE")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
