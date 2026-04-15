@@ -68,6 +68,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v627: axis 9.12 merge drought early fire — MEDIUM phase (max_y>=0.8, pc>=25) で発火
+     #   no_merge_streak>=3 条件削除、閾値を max_y>=1.5/pc>=30 から max_y>=0.8/pc>=25 に引下げ
+     #   Worst game T49: type 10×3 scattered で merge_available=FALSE、merge drought 早期準備で解決
+     #   Fixes rollback failure mode: "NO merge連続ターンの区別がない"
+     #   refs: tmp/analysis_result.md (Implementation Plan: axis 9.12 early fire)
      # v626: rp=0 merge drought guard — height escalation (base=80) + column_ceiling_scale reduction (1.0→0.60)
      # When reactive_pairs==0 && NO merge && max_y>=1.0 && pc>=20, apply horizontal guidance suppression
      # and height penalty escalation to prevent unconstrained placement during the most dangerous drought state.
@@ -88,13 +93,16 @@ Phases (determined by board max Y):
      #       game_history/20260413_061938_score0661.jsonl T53-T56, game_history/20260413_064908_score0781.jsonl T59-T61
      # Fixes rollback failure mode: "rp==2 NO merge is the blind spot where height penalty loses to
      #   column_ceiling/merge_drought noise, causing runaway before rp=3 guards fire"
-     # v617: axis 9.12 merge drought exit trigger — no_merge_streak + merge path creation
-     # When no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30, add bonus for
-     # placing current piece adjacent to type 10+ pieces (+500*merge_mult within 1.5u,
+     # v617: axis 9.12 merge drought early fire — MEDIUM phase merge path creation
+     # When merge_grade==NO && max_y>=0.8 && pc>=25, add bonus for placing current piece
+     # adjacent to type 10+ pieces (+500*merge_mult within 1.5u,
      # +200*merge_mult extra if type 10+ has same-type reactive pair).
      # Creates NEAR merge opportunities during merge drought escape, addressing the
      # "zero merges in 5 turns" failure mode in worst games (score0720 T70-T74).
      # NOT active in death_spiral (v610/v616 escalation already handles).
+     # Threshold lowered from (max_y>=1.5, pc>=30) to (max_y>=0.8, pc>=25) per analysis_result.md
+     # hypothesis: MEDIUM phase (0.8<=max_y<1.8) からcluster形成を始めていれば、High/Criticalでも
+     # merge_availableが維持できる。no_merge_streak>=3 は drought exit 用途として残す。
      # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
      #       game_history/20260413_094619_score0720.jsonl (worst: 5-turn NO merge, 0 score gain),
      #       game_history/20260413_093939_score0746.jsonl (extra-low: 5-turn NO merge)
@@ -1897,15 +1905,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       death_spiral時は発動しない（v610/v616が処理中、二重ボーナスは予測不能）
         #       no_merge_streakの自前カウントは行わない（game_state存在チェックのみ）
         #
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12 early fire),
         #       game_history/20260413_094619_score0720.jsonl T70-T74 (5-turn NO merge, 0 score)
         # Fixes rollback failure mode: "NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを
         #   区別せず、3-4ターン継続時点で通常とは異なる配置優先順位に切り替えない"
+        # Hypothesis adopted (analysis_result.md): MEDIUM phase (max_y>=0.8, pc>=25) から
+        #   merge path creationを開始することで、High/Critical でも merge_available を維持する。
+        #   現行閾値 (max_y>=1.5, pc>=30) より早期発火。no_merge_streak>=3 は drought exit
+        #   用途として残すが、merge path creation 自体は merge_grade==NO && max_y>=0.8 && pc>=25 で発火。
         if (
-            no_merge_streak >= 3
-            and merge_grade == "NO"
-            and max_y >= 1.5
-            and piece_count >= 30
+            merge_grade == "NO"
+            and max_y >= 0.8
+            and piece_count >= 25
             and not death_spiral
         ):
             # Collect all type 10+ pieces on the board
