@@ -67,115 +67,7 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
- # --- Change History ---
-      # v654: graduated horizontal_guidance_scale (rp>=3→0.20, rp==2→0.50, rp==1→0.75) + axis 2.5 NO merge height priority boost (1.5x)
-      # Replaces binary axis_88 suppression with smooth degradation. Applies scale to column_ceiling_bonus,
-      # merge_drought_pressure, merge_path_setup, same_type_proximity (9.8), near_miss_clustering (9.65), reactive_pairs_stacking (9.6).
-      # Axis 2.5: when merge_grade==NO && max_y>=0.8 && pc>=20, height_mult *= 1.5 (global, rp-independent).
-      # Fixes rollback failure mode: "NO merge連続ターン → max_y runaway → game over" during MEDIUM→HIGH transition (max_y 0.8→2.0)
-      #   where horizontal guidance noise (~800-1250pt) drowned out height penalty (~202pt diff)
-      # Refactoring: v602 binary axis_88_horizontal_suppression → graduated horizontal_guidance_scale (same suppression intent, smoother scale)
-      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/improve_brief.md, tmp/state/last_rollback_analysis.md, advice.md
-      # v653: NO-merge continuation detection + fallback height enforcement — prevent height runaway when merge_available=FALSE
-      # When merge_grade=="NO" && rp>=3 && deadline_crossed && max_y>=2.5, add extra height penalty
-      # to prevent "merge_available=FALSE → HEIGHT_CONTROL → max_y runaway" failure mode.
-      # Worst game T55-58: merge_available=FALSE発生時、rp=4, deadline_crossed=true
-      # HEIGHT_CONTROL理由が続き、max_y=2.9→3.72に暴走。edge scatter (x=2.8, 1.2, 3.0, -1.8)
-      # Extra penalty: landing_y > -1.0 → penalty = (landing_y + 1.0) * 250.0
-      # At max_y=2.5, landing_y=-1.0→0 penalty, landing_y=0→250 penalty
-      # This addresses: NO merge recovery detection + fallback height enforcement
-      # Fixes rollback failure mode: "merge_available=FALSE → HEIGHT_CONTROL → max_y runaway"
-      #   (analysis_result.md adopted hypothesis)
-      # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE_RECOVERY_FORCE_LOW),
-      #       game_history/20260415_235018_score0806.jsonl T55-58,
-      #       game_history/20260416_000334_score0923.jsonl T65-69
-      # v652: axis 8.8 type-aware compression — NO merge with rp>=3, pc>=30 時にtype proximity bonus
-     #   flat -4500 penalty を base として、type 8+ pieces への近接度で最大200の減算reliefを付与
-     #   効果: worst/extra_low game の最終盤面NO mergeターンで、height安全性と共存しつつ
-     #   より高typeピース了近くに配置し、万一のmerge時に高value併合を実現
-     #   Fixes rollback failure mode: "reactive_pairs>=3 NO merge時のflat penaltyがheightonly起因低type mergeを誘発"
-     #   refs: tmp/analysis_result.md (Implementation Plan)
-     # v651: Russia phase NEAR merge suppression threshold relaxed (2.3 vs non-Russia 1.5)
-     #   Russia phase (type 15>=1) の場合、near_merge_elevated_suppression の max_y 閾値を 1.5→2.3 に引下げ
-     #   worst (score 900): T52-58 で max_y 2.63-2.75 でも NEAR merge suppression が継続し merge opportunity 逃失
-     #   extra_high (score 2758): Russia phase NEAR merges at max_y 2.30-2.42 で score_delta=21-28 全て成功
-     #   rp>=3, pc>=28 条件は維持。deadline_crossed+max_y>=3.0 の catastrophe guard (v604) も維持
-     #   Fixes rollback failure mode: "Russia phase NEAR merge suppression at max_y 2.0-2.5 blocks legitimate merges"
-     #   refs: tmp/analysis_result.md (Implementation Plan)
-     # v627: axis 9.12 merge drought early fire — MEDIUM phase (max_y>=0.8, pc>=25) で発火
-     #   no_merge_streak>=3 条件削除、閾値を max_y>=1.5/pc>=30 から max_y>=0.8/pc>=25 に引下げ
-     #   Worst game T49: type 10×3 scattered で merge_available=FALSE、merge drought 早期準備で解決
-     #   Fixes rollback failure mode: "NO merge連続ターンの区別がない"
-     #   refs: tmp/analysis_result.md (Implementation Plan: axis 9.12 early fire)
-     # v626: rp=0 merge drought guard — height escalation (base=80) + column_ceiling_scale reduction (1.0→0.60)
-     # When reactive_pairs==0 && NO merge && max_y>=1.0 && pc>=20, apply horizontal guidance suppression
-     # and height penalty escalation to prevent unconstrained placement during the most dangerous drought state.
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260413_212837_score0934.jsonl,
-     #       game_history/20260413_215927_score1095.jsonl
-     # Fixes rollback failure mode: "rp=0 → unconstrained placement → 6+ turns NO merge → instant death"
-     # v625: column_ceiling_scale — dynamic scaling of column_ceiling_bonus by merge drought intensity
-     # v626 updated: rp==0→0.60 (was 1.0). Scaling: rp==0→0.60, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
-     # Ensures height penalty wins over column_ceiling_bonus during merge drought (rp>=3: 320<364).
-     # refs: tmp/analysis_result.md, tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt
-     # Fixes rollback failure mode: "NO merge時の低y配置の一貫性が崩れた。特にmax_y=1.5-2.0の
-     #   前兆段階でheight penaltyがcolumn_ceiling/merge_droughtノイズに埋もれた"
-     # v618: height penalty Tier 1.75 — rp==2 NO merge early height escalation (base=100)
-     # Catches the blind spot between v614(rp==1, base=90) and v612(rp>=2/max_y>=1.5, base=120).
-     # At rp==2 NO merge, base=75 height penalty (~202pt) loses to column_ceiling_bonus (~800-1250).
-     # base=100 gives y=0 vs y=1.5 diff = 270pt (HIGH phase) — competitive enough to reduce runaway.
-     # refs: tmp/analysis_result.md (Implementation Plan: early_rp2_height),
-     #       game_history/20260413_061938_score0661.jsonl T53-T56, game_history/20260413_064908_score0781.jsonl T59-T61
-     # Fixes rollback failure mode: "rp==2 NO merge is the blind spot where height penalty loses to
-     #   column_ceiling/merge_drought noise, causing runaway before rp=3 guards fire"
-     # v617: axis 9.12 merge drought early fire — MEDIUM phase merge path creation
-     # When merge_grade==NO && max_y>=0.8 && pc>=25, add bonus for placing current piece
-     # adjacent to type 10+ pieces (+500*merge_mult within 1.5u,
-     # +200*merge_mult extra if type 10+ has same-type reactive pair).
-     # Creates NEAR merge opportunities during merge drought escape, addressing the
-     # "zero merges in 5 turns" failure mode in worst games (score0720 T70-T74).
-     # NOT active in death_spiral (v610/v616 escalation already handles).
-     # Threshold lowered from (max_y>=1.5, pc>=30) to (max_y>=0.8, pc>=25) per analysis_result.md
-     # hypothesis: MEDIUM phase (0.8<=max_y<1.8) からcluster形成を始めていれば、High/Criticalでも
-     # merge_availableが維持できる。no_merge_streak>=3 は drought exit 用途として残す。
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
-     #       game_history/20260413_094619_score0720.jsonl (worst: 5-turn NO merge, 0 score gain),
-     #       game_history/20260413_093939_score0746.jsonl (extra-low: 5-turn NO merge)
-     # Fixes rollback failure mode: "NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを
-     #   区別せず、3-4ターン継続時点で通常とは異なる配置優先順位に切り替えない" (analysis_result.md adopted hypothesis)
-     # v616: axis 5/5.5 max_y>=1.5 NO-merge suppression — prevent height runaway
-     # Suppress NEXT_SAME centering and AVOID_BLOCK_NEXTNEXT penalty when max_y>=1.5 && merge_grade==NO.
-     # Fixes: "max_y>=1.5 かつ merge_grade==NO 時の NEXT_SAME/AVOID_BLOCK_NEXTNEXT が height penaltyをoverrideし、
-     #   max_y runawayを引き起こす" (analysis_result.md adopted hypothesis)
-     # refs: tmp/analysis_result.md, game_history/20260413_084830_score0936.jsonl, tmp/batch_summary.txt
-     # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
-     # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
-     # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
-     # near_miss_clustering 9.65) by 50% to let height penalty differentiate candidates.
-     # Unlike rp>=3 (v602 full suppression), rp==2 still needs some horizontal guidance
-     # to avoid edge scatter. 50% reduction makes height penalty competitive while
-     # preserving merge-path creation intent.
-     # refs: tmp/analysis_result.md (Implementation Plan: rp==2 noise reduction),
-     #       game_history/20260413_061938_score0661.jsonl T53-T56 (rp=2, column_ceiling
-     #       overrides height, runaway to y=3.50),
-     #       game_history/20260413_064908_score0781.jsonl T59-T61 (rp=3 escalation from rp=2)
-     # Fixes: "rp=2 NO merge is the blind spot where height penalty loses to
-     #   column_ceiling/merge_drought noise, causing runaway before rp=3 guards fire"
-     # v614: Tier 1.5 height penalty (base=90) — rp==1 NO merge drought origin guard
-     # rp==1 && NO merge && max_y>=1.0 && pc>=15 で base_height_coefficient=90.0。
-     # rp=1はmerge droughtの起点だが、axis 8.8c(rp==2)/v599(rp>=3)/v612(rp>=2)のいずれにも捕捉されない盲点。
-     # base=90によりy=0 vs y=1.5差=243pt(HIGH phase)、drift/balanceノイズ(~200pt)を凌駕。
-     # refs: tmp/analysis_result.md (Implementation Plan: Tier 1.5 rp==1 guard), tmp/batch_summary.txt,
-     #       game_history/20260413_053021_score0737.jsonl (worst: rp=1→death spiral),
-     #       game_history/20260413_053704_score0732.jsonl (extra-low: rp=1→escalation)
-     # Fixes rollback failure mode: "NO merge時の低y配置の一貫性が、rp=1という「併合 droughtの起点」段階で既に崩れている"
-     # v613: axis 9.10 Tier 2 — rp==2 high-type merge path creation
-     # Extend type 10+ proximity guidance to rp==2 NO merge stage, catching drought 1-2 turns earlier.
-     # Tier 2: rp==2 && NO merge && max_y>=1.0 && pc>=20 → +250*merge_mult near type 10+ centroid (1.5u)
-     #   + reactive pair bonus: +150*merge_mult if type 10+ has same-type reactive pair
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 Tier 2),
-     #       extra_high game T107 (rp=2, NO merge, type 14 present → T108 NEAR merge delta=247)
-     # Fixes rollback failure mode: "rp=2 NO merge is the blind spot where merge droughts begin
-     #   and high-type pieces scatter, missing the window to build merge paths before rp escalates to 3"
+# --- Change History ---
      # v612: pre-death-spiral height tier (base=120) — catch height runaway at max_y>=1.5, rp>=2, NO merge
      # NO+rp>=2+max_y>=1.5+(deadline_crossed|pc>=30)でbase=120。y=0 vs y=1.5差=324pt(HIGH phase)
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt
@@ -990,10 +882,7 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v653: NO-merge continuation detection + fallback height enforcement — prevent height runaway when merge_available=FALSE
-    When merge_grade=="NO" && rp>=3 && deadline_crossed && max_y>=2.5, add extra height penalty
-    to prevent "merge_available=FALSE → HEIGHT_CONTROL → max_y runaway" failure mode.
-    Fixes: merge_available=FALSE発生時のheight control理由によるmax_y runaway (worst T55-58: max_y 2.9→3.72)
+    """v340: reactive_pairs>=3時deadline_crossed併合最優先版 - v339 failure mode潰し
 
     v339 failure: reactive_pairs>=3 && deadline_crossed && merge_grade=="NO"の超危険域でaxis 9.6が強力に機能し、高配置 runawayでゲームオーバー
     ワーストゲーム(score0638)終盤turns 55-61: reactive_pairs=7-8, deadline_crossed=true, merge_available=false続きで
@@ -1051,12 +940,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     reactive_pair_count = len(reactive_pairs) if isinstance(reactive_pairs, list) else 0
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
-
-    # --- v617: no_merge_streak — consecutive turns with merge_grade==NO ---
-    # analysis_result.md adopted hypothesis: NO merge連続ターン数が3-4ターン継続時点で
-    # 通常とは異なる配置優先順位に切り替えるべき。game_stateに存在すれば使用、
-    # 存在しない場合は0（既存動作維持、安全側）。
-    no_merge_streak = game_state.get("no_merge_streak", 0)
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
@@ -1160,16 +1043,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # At max_y=1.5: ~30% NEAR bonus reduction. At max_y=2.0: ~50% (matches v604 floor).
     # Also scales by piece_count: pc=28 → 1.0x factor, pc=40 → 0.6x factor.
     # refs: tmp/analysis_result.md (Implementation Plan: graduated pre-deadline suppression)
-    # v606 + Russia relax: Russia phase NEAR suppression threshold relaxed from 1.5 to 2.3
-    # analysis_result.md hypothesis: "Russia phase NEAR merge suppression relaxation at max_y 2.0-2.5"
-    # worst game (score 900): suppressed NEAR at max_y 2.63-2.75, only 1 merge in final 8 turns
-    # extra_high (score 2758): Russia phase NEAR merges at max_y 2.3-2.42 all succeeded (score_delta=21-28)
-    # extra_high game T110-T112: russia_phase=true, max_y 2.30-2.42, NEAR merges succeeded
-    # Russia phase (type 15 >= 1) reduces suppression threshold: 2.3 vs non-Russia 1.5
-    # Keeps rp>=3, pc>=28 guardrails; keeps deadline_crossed+max_y>=3.0 catastrophic guard (v604 near_merge_suppression)
-    # Russia phase non-NEAR merge (FAR, NO) suppression unchanged
     near_merge_elevated_suppression = (
-        max_y >= (2.3 if russia_phase else 1.5)
+        max_y >= 1.5
         and reactive_pair_count >= 3
         and piece_count >= 28
     )
@@ -1477,61 +1352,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         axis_88_horizontal_suppression = (
             reactive_pair_count >= 3 and merge_grade == "NO"
         )
-
-        # v654: graduated horizontal_guidance_scale — replaces binary axis_88 suppression
-        # with smooth degradation. analysis_result.md adopted hypothesis:
-        # "When axis_88 fires (rp>=3 && NO && max_y>=1.0 && pc>=28), REDUCE horizontal
-        # guidance bonuses by 80% (not binary on/off)."
-        # Additionally graduated by rp level to replace oscillating v602/v615/v608 pattern.
-        # Scale values: rp>=3→0.20 (80% cut), rp==2→0.50 (50% cut, keeps v615),
-        # rp==1→0.75 (25% cut, new), rp==0→1.0 (no cut — column_ceiling_scale handles).
-        # Applied to: column_ceiling_bonus, merge_drought_pressure, merge_path_setup,
-        # same_type_proximity (9.8), near_miss_clustering (9.65), reactive_pairs_stacking (9.6).
-        # This addresses the MEDIUM→HIGH transition (max_y 0.8→2.0) where height penalty
-        # was drowned out by horizontal guidance noise (~800-1250pt vs ~202pt height diff).
-        # refs: tmp/analysis_result.md (Implementation Plan: graduated horizontal_guidance_scale)
-        if merge_grade == "NO" and max_y >= 1.0:
-            if reactive_pair_count >= 3 and piece_count >= 28:
-                horizontal_guidance_scale = 0.20  # 80% reduction — strongest suppression
-            elif reactive_pair_count == 2 and piece_count >= 25:
-                horizontal_guidance_scale = 0.50  # 50% reduction — keep v615 behavior
-            elif reactive_pair_count == 1 and piece_count >= 15:
-                horizontal_guidance_scale = 0.75  # 25% reduction — new, catches rp=1 origin
-            else:
-                horizontal_guidance_scale = 1.0
-        else:
-            horizontal_guidance_scale = 1.0
-
-        # v625: column_ceiling_scale — dynamic scaling of column_ceiling_bonus by merge drought intensity
-        # Replaces rp2_noise_reduction (v615). Analysis: even at 50% reduction, column_ceiling_bonus
-        # (400-625) still overwhelms height penalty (y=0 vs y=2.0 diff=270pt HIGH phase).
-        # v626: rp==0→0.60 (was 1.0). At rp=0 NO merge, column_ceiling at full strength (1.0)
-        # dominates height penalty completely. Reducing to 0.60 makes column_ceiling_bonus ~480-750,
-        # competitive with height_penalty escalation (base=80, ~216pt diff at HIGH phase for y=0 vs y=1.5).
-        # Scaling: rp==0→0.60, rp==1→0.75, rp==2→0.50, rp>=3→0.40.
-        # At rp>=3: 800*0.4=320 < height_penalty(y=0 vs y=1.5)=364(HIGH) — height wins.
-        # refs: tmp/analysis_result.md (Implementation Plan: column_ceiling_scale),
-        #       game_history/20260413_212837_score0934.jsonl T56-T66 (rp=0→3, NO merge 11 turns, 0 score gain),
-        #       game_history/20260413_215927_score1095.jsonl T56-T59 (rp=0, NO merge, deadline crossed)
-        # Fixes rollback failure mode: "rp=0 → unconstrained placement → 6+ turns NO merge → instant death"
-        if merge_grade == "NO" and max_y >= 1.5 and piece_count >= 25:
-            # v626: rp==0 NO merge drought — most dangerous state (no reactive pairs, no merge opportunities)
-            if reactive_pair_count == 0:
-                column_ceiling_scale = 0.60  # v626: was 1.0, suppress to let height penalty compete
-            elif reactive_pair_count == 1:
-                column_ceiling_scale = 0.75  # merge drought origin point
-            elif reactive_pair_count == 2:
-                column_ceiling_scale = 0.50  # merge drought escalation
-            else:  # rp >= 3
-                column_ceiling_scale = 0.40  # NEW: suppress height competition even more
-        else:
-            column_ceiling_scale = 1.0
-
         # v602: also suppress stacking when axis_88_horizontal_suppression fires
         # (rp>=3 && NO merge) — height must be sole differentiator even before
         # board elevates. pre_death_spiral covers max_y>=1.0; this catches rp>=3
         # && NO at lower max_y where horizontal noise can still override height.
-        # v654: additionally scale by horizontal_guidance_scale — graduated suppression
         stacking_danger_suppressed = death_spiral or pre_death_spiral or axis_88_horizontal_suppression
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
@@ -1599,8 +1423,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if piece_count >= 28:
                         congestion_scale = 1.0 + (piece_count - 28) * 0.12
                         stacking_bonus *= min(congestion_scale, 3.0)
-                    # v654: apply horizontal_guidance_scale — graduated suppression for NO merge
-                    stacking_bonus *= horizontal_guidance_scale
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
 
@@ -1790,9 +1612,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
                     # Cap total cluster bonus to ~500 to not override height penalty
                     _total_cluster_bonus = min(_total_cluster_bonus, 500.0)
-                    # v625: scale by column_ceiling_scale (was rp2_noise_reduction)
-                    # v654: additionally scale by horizontal_guidance_scale
-                    _total_cluster_bonus *= column_ceiling_scale * horizontal_guidance_scale
                     if _total_cluster_bonus > 50:
                         score += _total_cluster_bonus
                         reasons.append("NEAR_MISS_CLUSTERING")
@@ -1861,179 +1680,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if pipeline_bonus > 20:  # Only apply if meaningful
                     score += pipeline_bonus
                     reasons.append("HIGH_TYPE_PIPELINE_GUIDANCE")
-
-        # ----- evaluation axis 9.10 Tier 2: rp==2 high-type merge path creation (NEW v613) -----
-        # analysis_result.md adopted hypothesis: rp==2 NO mergeはmerge droughtの起点であり、
-        # 高typeピース(type 10+)が盤面に散在している時にそれらを近づける機会を逃している。
-        #
-        # 根拠:
-        # - extra_highゲーム T107: rp=2, NO merge, max_y=1.95, type 14存在 → T108でNEAR merge(delta=247)
-        # - worstゲーム T61-T66: rp=2→3に遷移しても高typeが散在したまま併合パスなし
-        # - 現行axis 9.10はrp>=3限定。rp=2でも高typeピースが2つ以上あれば誘導する価値がある
-        #
-        # ロジック:
-        # (1) reactive_pair_count==2 && merge_grade==NO && max_y>=1.0 && pc>=20 で発動
-        # (2) 盤面のtype 10+ピースを収集（2つ以上必要）
-        # (3) type 10+ピースの重心(cx, cy)を計算
-        # (4) 候補xが重心に近いほどボーナス: +250*merge_mult (距離1.5u以内で減衰)
-        # (5) type 10+の中にreactive pair(同じtype 10+が2つ)があれば、その重心を優先して+150*merge_mult追加
-        # (6) death_spiral時は抑制（height escalationが優先）
-        # (7) column_ceiling_dominant, axis_88_horizontal_suppression時も抑制
-        #
-        # ボーナス設計: 250*merge_multはtier 1(400)より小さく、tie-breakerレベル。
-        # height penaltyをoverrideせず、同条件時の配置品質を改善。
-        #
-        # 禁止: type 10未満のピースに適用しない（低typeクラスタリングはaxis 9.65/9.8/9.74が担当）
-        #       merge_gradeがNOでない時は適用しない（既存のmerge bonusesが優先）
-        #
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 Tier 2),
-        #       game_history/20260413_050025_score2311.jsonl T107 (rp=2, type 14 → T108 large merge)
-        # Fixes rollback failure mode: "rp=2 NO merge is the blind spot where merge droughts begin
-        #   and high-type pieces scatter, missing the window to build merge paths before rp escalates to 3"
-        if (
-            reactive_pair_count == 2
-            and merge_grade == "NO"
-            and max_y >= 1.0
-            and piece_count >= 20
-            and not death_spiral
-            and not column_ceiling_dominant
-            and not axis_88_horizontal_suppression
-        ):
-            # Collect type 10+ pieces
-            high_type_pieces_10plus = []
-            for p in pieces:
-                t = p.get("type", 0)
-                if t >= 10:
-                    high_type_pieces_10plus.append(p)
-
-            if len(high_type_pieces_10plus) >= 2:
-                # Calculate centroid of type 10+ pieces
-                centroid_x = sum(p.get("x", 0) for p in high_type_pieces_10plus) / len(high_type_pieces_10plus)
-                centroid_y = sum(p.get("y", -10) for p in high_type_pieces_10plus) / len(high_type_pieces_10plus)
-
-                # Calculate distance from candidate to centroid
-                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
-
-                # Tier 2 bonus: max 250 at dist=0, decreases within 1.5u
-                # dist=0 → 250, dist=0.5 → 167, dist=1.0 → 83, dist>=1.5 → 0
-                tier2_bonus = max(0.0, 250.0 * (1.0 - dist / 1.5)) * merge_mult
-
-                # Check if type 10+ has reactive pair (same type 10+ appears 2+ times)
-                type_10plus_counts = {}
-                for p in high_type_pieces_10plus:
-                    t = p.get("type", 0)
-                    type_10plus_counts[t] = type_10plus_counts.get(t, 0) + 1
-
-                has_type_10plus_reactive_pair = any(count >= 2 for count in type_10plus_counts.values())
-
-                # If reactive pair exists, add extra bonus
-                if has_type_10plus_reactive_pair:
-                    # Find centroid of reactive pair types only
-                    reactive_type_pieces = []
-                    for p in high_type_pieces_10plus:
-                        if type_10plus_counts.get(p.get("type", 0), 0) >= 2:
-                            reactive_type_pieces.append(p)
-
-                    if reactive_type_pieces:
-                        rp_centroid_x = sum(p.get("x", 0) for p in reactive_type_pieces) / len(reactive_type_pieces)
-                        rp_centroid_y = sum(p.get("y", -10) for p in reactive_type_pieces) / len(reactive_type_pieces)
-
-                        rp_dist = ((x - rp_centroid_x) ** 2 + (landing_y - rp_centroid_y) ** 2) ** 0.5
-                        rp_bonus = max(0.0, 150.0 * (1.0 - rp_dist / 1.5)) * merge_mult
-
-                        if rp_bonus > 20:
-                            score += rp_bonus
-                            reasons.append("HIGH_TYPE_REACTIVE_PAIR_GUIDANCE")
-
-                if tier2_bonus > 20:
-                    score += tier2_bonus
-                    reasons.append("HIGH_TYPE_MERGE_PATH_SETUP")
-
-        # ----- evaluation axis 9.12: Merge drought exit — merge path creation (NEW v617) -----
-        # analysis_result.md adopted hypothesis: "Merge drought exit trigger" —
-        # NO merge連続ターン数(no_merge_streak)が3以上に達した局面で、高typeピース(type>=10)
-        # との隣接配置を優先し、次ターン以降のNEAR merge機会を創出する。
-        #
-        # 根拠 (analysis_result.md):
-        # - worst game T70-T74: 5連続NO merge, max_y=2.64→3.28, pc=40→43, score_delta=0
-        #   column_ceiling_bonusは全列の天井が高く機能せず、drift/balanceノイズが勝者決定
-        # - best game T127-T131: 5連続NO merge同样だが、高typeピースが下部に集中し
-        #   column_ceilingに明確な差。type 14×2が盤面にありendgameボーナスが高い
-        # - 高スコア群はNO merge中でも次ターン併合の布石を打っている（merge_rate 35.1% vs 34.6%）
-        #
-        # ロジック:
-        # (1) no_merge_streak>=3 && merge_grade==NO && max_y>=1.5 && pc>=30 で発動
-        # (2) 盤面のtype 10+ピースを列挙
-        # (3) 各candidateについて、type 10+ピースとのManhattan距離を計算
-        # (4) 距離<=1.5uなら +500*merge_mult ボーナス（merge path creation）
-        # (5) type 10+ピースがsame-type reactive pairを持っていれば +200*merge_mult追加
-        #     (併合でtype 11+が生まれ、パイプラインが前進)
-        # (6) death_spiral時は抑制（v610/v616 height escalationが既に処理中）
-        #
-        # ボーナス設計: +500*merge_multはcolumn_ceiling_bonus(~800-1250)より小さく、
-        # height penalty(base=75-150)*height_mult(1.8)*y=1.5差=202-405pt と競合しないレベル。
-        # type 10+限定: 低type(type<=9)に適用すると数が多すぎ、軸が常に発動してheight penaltyを侵食。
-        #
-        # 禁止: merge_grade!=NO時は発動しない（既存のmerge axisが最優先）
-        #       death_spiral時は発動しない（v610/v616が処理中、二重ボーナスは予測不能）
-        #       no_merge_streakの自前カウントは行わない（game_state存在チェックのみ）
-        #
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12 early fire),
-        #       game_history/20260413_094619_score0720.jsonl T70-T74 (5-turn NO merge, 0 score)
-        # Fixes rollback failure mode: "NO merge連続ターン数の区別がない — T70のNO mergeとT74のNO mergeを
-        #   区別せず、3-4ターン継続時点で通常とは異なる配置優先順位に切り替えない"
-        # Hypothesis adopted (analysis_result.md): MEDIUM phase (max_y>=0.8, pc>=25) から
-        #   merge path creationを開始することで、High/Critical でも merge_available を維持する。
-        #   現行閾値 (max_y>=1.5, pc>=30) より早期発火。no_merge_streak>=3 は drought exit
-        #   用途として残すが、merge path creation 自体は merge_grade==NO && max_y>=0.8 && pc>=25 で発火。
-        if (
-            merge_grade == "NO"
-            and max_y >= 0.8
-            and piece_count >= 25
-            and not death_spiral
-        ):
-            # Collect all type 10+ pieces on the board
-            high_type_pieces = []
-            for p in pieces:
-                t = p.get("type", 0)
-                if t >= 10:
-                    high_type_pieces.append(p)
-
-            if len(high_type_pieces) >= 1:
-                # For each type 10+ piece, compute Manhattan distance from candidate landing pos
-                # Manhattan distance = |landing_x - piece_x| + |landing_y - piece_y|
-                # We use Manhattan because it's simpler and correlates well with adjacency
-                min_dist = float("inf")
-                best_piece_type = 0
-                for ht in high_type_pieces:
-                    hx = ht.get("x", 0)
-                    hy = ht.get("y", -10)
-                    manhattan = abs(x - hx) + abs(landing_y - hy)
-                    if manhattan < min_dist:
-                        min_dist = manhattan
-                        best_piece_type = ht.get("type", 0)
-
-                # If within 1.5 units, add merge path creation bonus
-                if min_dist <= 1.5:
-                    # Bonus scales with proximity: max 500 at dist=0, 0 at dist=1.5
-                    path_bonus = 500.0 * (1.0 - min_dist / 1.5) * merge_mult
-                    if path_bonus > 30:
-                        score += path_bonus
-                        reasons.append("MERGE_PATH_CREATION")
-
-                    # Extra bonus if the nearest type 10+ piece has a same-type reactive pair
-                    # (i.e., merging this pair would create type 11+, advancing the pipeline)
-                    type_counts_on_board = {}
-                    for p in pieces:
-                        pt = p.get("type", 0)
-                        type_counts_on_board[pt] = type_counts_on_board.get(pt, 0) + 1
-
-                    if type_counts_on_board.get(best_piece_type, 0) >= 2:
-                        # This type has a reactive pair — extra bonus for proximity to pair
-                        pair_bonus = 200.0 * (1.0 - min_dist / 1.5) * merge_mult
-                        if pair_bonus > 20:
-                            score += pair_bonus
-                            reasons.append("HIGH_TYPE_PAIR_MERGE_PATH")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
@@ -2197,50 +1843,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and max_y >= 1.5
             and (deadline_crossed or piece_count >= 30)
         )
-        # v614: Tier 1.5 — rp==1 NO merge drought origin guard.
-        # analysis_result.md: rp=1 NO merge is the blind spot where drought begins, missed by
-        # axis 8.8c(rp==2), v599/v612/v608(rp>=2/3). At rp=1, height base=75 is too weak vs
-        # drift/balance/AVOID_BLOCK noise(~200pt). base=90 gives y=0 vs y=1.5 diff = 90*1.8*1.5 = 243pt
-        # in HIGH phase — exceeds noise floor, ensures low-y placement consistently.
-        # pc>=15 catches drought before board half-full; max_y>=1.0 avoids disrupting normal early play.
-        # death_spiral exclusion unnecessary (rp=1 can't satisfy death_spiral definition).
-        early_drought_height = (
-            merge_grade == "NO"
-            and reactive_pair_count == 1
-            and max_y >= 1.0
-            and piece_count >= 15
-        )
-        # v618: Tier 1.75 — rp==2 NO merge early height escalation
-        # analysis_result.md adopted hypothesis: rp==2 NO merge is the blind spot where height penalty
-        # base=75 loses to column_ceiling_bonus (~800-1250). At base=75, y=0 vs y=1.5 diff = 202pt —
-        # too weak to differentiate low-y placement. base=100 gives diff = 270pt (HIGH phase) —
-        # competitive enough to reduce high-y placements that escalate to runaway.
-        # Catches the gap between v614(rp==1, base=90) and v612(rp>=2/max_y>=1.5, base=120).
-        # pc>=20 catches drought before board half-full; max_y>=1.0 avoids disrupting early play.
-        # This targets the T53-T56 pattern in score0661 and T58-T62 in score0778.
-        early_rp2_height = (
-            merge_grade == "NO"
-            and reactive_pair_count == 2
-            and max_y >= 1.0
-            and piece_count >= 20
-        )
-        # v626: Tier 0.5 — rp==0 NO merge height escalation (the most dangerous drought state)
-        # At rp=0, no reactive pairs exist → no merge opportunities visible on board.
-        # column_ceiling_scale=1.0 (full strength) means column_ceiling(~800-1250) dominates
-        # over height_penalty(~75*height_mult). This leads to unconstrained horizontal placement
-        # with no merge-path creation intent. base=80 gives y=0 vs y=1.5 diff = 216pt (HIGH phase),
-        # competitive with drift/balance noise (~200pt).
-        # Existing guards (v599 rp>=3, v607/v618 rp=2, v614 rp=1) all require rp>=1.
-        # At rp=0, column_ceiling_scale=1.0 (full strength) means column_ceiling_bonus(~800-1250)
-        # completely dominates height_penalty(~75*1.8=135 for y=1.0 in HIGH phase).
-        # Evidence: score0934 T56-T60 (rp=0→1, NO merge, max_y 0.71→1.51, 0 score gain 11 turns).
-        # score1095 T56 (rp=0, pc=31, max_y=1.94, NO merge) → column_ceiling full scale → deadline crossed.
-        rp0_drought = (
-            reactive_pair_count == 0
-            and merge_grade == "NO"
-            and max_y >= 1.0
-            and piece_count >= 20
-        )
         moderate_drought = (
             merge_grade == "NO"
             and reactive_pair_count >= 3
@@ -2248,30 +1850,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and not death_spiral
             and not critical_death_spiral  # don't double-count
             and not pre_death_spiral_height  # don't double-count
-            and not early_drought_height  # don't double-count
-            and not early_rp2_height  # don't double-count
-            and not rp0_drought  # don't double-count
         )
 
         if critical_death_spiral:
             base_height_coefficient = 150.0
         elif pre_death_spiral_height:
             base_height_coefficient = 120.0
-        elif early_drought_height:
-            base_height_coefficient = 90.0
-        elif early_rp2_height:
-            # v618: rp==2 NO merge — catch height runaway 1-2 turns before rp=3 escalation
-            base_height_coefficient = 100.0
-        elif rp0_drought:
-            # v626: Tier 0.5 — rp==0 NO merge height escalation (the most dangerous drought state)
-            # At rp=0, no reactive pairs exist → no merge opportunities visible on board.
-            # column_ceiling_scale=1.0 (full strength) means column_ceiling(~800-1250) dominates
-            # over height_penalty(~75*height_mult). This leads to unconstrained horizontal placement
-            # with no merge-path creation intent. base=80 gives y=0 vs y=1.5 diff = 216pt (HIGH phase),
-            # competitive with drift/balance noise (~200pt).
-            # Evidence: score0934 T56 (rp=0, pc=25, max_y=0.71) no drought guard fired → arbitrary x=-1.21.
-            # score1095 T56 (rp=0, pc=31, max_y=1.94) column_ceiling at full scale → x=0.11, crossed deadline.
-            base_height_coefficient = 80.0
         elif moderate_drought:
             base_height_coefficient = 100.0
         else:
@@ -2290,23 +1874,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260412_132046_score0899.jsonl T64-T69 (6 HIGH_TOWER turns, max_y 2.57→3.38)
         # Fixes rollback failure mode: "merge drought時に低y配置が選ばれず、端に散らばって即死"
 
-        # ----- axis 2.5: NO merge height priority boost (NEW v654) -----
-        # analysis_result.md adopted hypothesis: "When merge_grade==NO && max_y>=0.8 && pc>=20,
-        # apply a multiplicative height penalty boost of 1.5x that is independent of the rp tier system."
-        # This catches edge cases (rp=0, rp=1) that individual tier guards partially address.
-        # Works across all rp levels — a global boost that ensures height penalty is the PRIMARY
-        # differentiator during NO merge states, addressing the "horizontal guidance noise drowning
-        # out height penalty" root cause identified in analysis.
-        # The 1.5x boost applies multiplicatively to height_mult, AFTER all tier gates.
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 2.5 NO merge height priority boost)
-        no_merge_height_boost = (
-            merge_grade == "NO"
-            and max_y >= 0.8
-            and piece_count >= 20
-        )
-        if no_merge_height_boost:
-            height_mult *= 1.5
-
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * base_height_coefficient * height_mult
 
@@ -2320,29 +1887,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
-
-        # ----- NEW: NO-merge continuation detection + forced low placement (v653) -----
-        # analysis_result.md adopted hypothesis: "NO merge recovery detection + fallback height enforcement"
-        # When merge_available just became FALSE with rp>=3 && deadline_crossed,
-        # AND max_y >= 2.0, apply extra height pressure to prevent height runaway.
-        # This addresses: merge_available=FALSE → continue height control → max_y 2.9→3.72
-        # Worst game T55-58: merge_available=FALSE発生時、しかしrp=4, deadline_crossed=true
-        # HEIGHT_CONTROL理由が続き、max_y=2.9→3.72に暴走。edge scatter (x=2.8, 1.2, 3.0, -1.8)
-        # v610 death-spiral height escalation (base=150) already applies at max_y>=2.0.
-        # At max_y>=2.5, we need even stronger differentiation to prevent runaway.
-        # Extra height penalty for candidates with landing_y > -1.0 (meaning not extremely low)
-        if merge_grade == "NO" and reactive_pair_count >= 3 and deadline_crossed and max_y >= 2.5:
-            # Add -200 to -400 extra penalty to candidates with landing_y > -1.0
-            # At max_y=2.5, landing_y=-1.0 → penalty=0, landing_y=0 → penalty=250
-            # At max_y=3.0, landing_y=-1.0 → penalty=0, landing_y=0 → penalty=250
-            extra_height_penalty = max(0.0, landing_y + 1.0) * 250.0
-            score -= extra_height_penalty
-            reasons.append("NO_MERGE_RECOVERY_FORCE_LOW")
-        # Fixes rollback failure mode: "merge_available=FALSE → HEIGHT_CONTROL → max_y runaway"
-        #   (analysis_result.md adopted hypothesis: NO-merge continuation detection)
-        # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE_RECOVERY_FORCE_LOW),
-        #       game_history/20260415_235018_score0806.jsonl T55-58 (merge_available=FALSE, rp=4, max_y 2.9→3.72)
-        #       game_history/20260416_000334_score0923.jsonl T65-69 (NO merge, rp=7-9, max_y 2.39→3.23)
 
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
@@ -2413,26 +1957,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         balance_penalty = x * balance_bias * balance_strength
         score -= abs(balance_penalty)
 
-        # v616: axis 5/5.5 max_y>=1.5 NO-merge suppression — prevent height runaway at elevated board
-        # Worst game T63: max_y=1.46, NEXT_SAME/AVOID_BLOCK_NEXTNEXT override height penalty,
-        # max_y jumps to 2.07 → game over. batch_summary: low-score群でNEXT_SAME(3.5%)と
-        # SAME_TYPE_STACK(3.8%)が上位、高スコア群では該当なし。
-        # max_y>=1.5 && merge_grade==NO は盤面がalready elevatedで即時併合不可。
-        # この局面で将来のnext/nextNextのために高配置を許すのはリスクが大きすぎる。
-        # 既存v462 death_spiral抑制はその「前兆段階」をカバーする（death_spiralはdanger>0 && rp>=3 && NO && deadline）。
-        # 条件が重複しても二重抑制にならないよう、suppressフラグでまとめて制御する。
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 5/5.5 max_y>=1.5 NO-merge suppression),
-        #       game_history/20260413_084830_score0936.jsonl T63 (max_y=1.46→2.07),
-        #       tmp/batch_summary.txt (low-score: NEXT_SAME 3.5%, SAME_TYPE_STACK 3.8%)
-        # Fixes rollback failure mode: "max_y>=1.5 かつ merge_grade==NO 時の NEXT_SAME/AVOID_BLOCK_NEXTNEXT が
-        #   height penaltyをoverrideし、max_y runawayを引き起こす"
         # ----- evaluation axis 5: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
         # v462: suppress in death spiral — height must be sole differentiator
-        # v616: also suppress when max_y>=1.5 && merge_grade==NO — pre-death-spiral height runaway guard
-        suppress_axis5_high_nomerger = (max_y >= 1.5 and merge_grade == "NO")
-        if next_next_type == next_type and not death_spiral and not suppress_axis5_high_nomerger:
+        if next_next_type == next_type and not death_spiral:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
@@ -2445,8 +1974,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v462: suppress in death spiral — height must be sole differentiator
         # v594: further suppress when merge_grade==NO && max_y>=1.0 — at elevated boards with no merge,
         # this -400 penalty pushes pieces toward edges (worst game T45: x=-3.0), fighting column_ceiling.
-        # v616: also suppress when max_y>=1.5 && merge_grade==NO — same pre-death-spiral guard as axis 5
-        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0) and not suppress_axis5_high_nomerger:
+        if not death_spiral and not (merge_grade == "NO" and max_y >= 1.0):
             for p in pieces:
                 if p.get("type") == next_next_type:
                     piece_y = p.get("y", -10)
@@ -2740,18 +2268,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
-        if reactive_pair_count >= 3 and merge_grade == "NO" and piece_count >= 30:
-            base_penalty = 4500.0
-            # v652: type-aware compression guidance during NO merge with high rp
-            # Instead of flat -4500, provide slight preference toward positions
-            # near higher-type pieces — if a merge happens, it should be valuable
-            type_proximity_bonus = 0.0
-            for p in pieces:
-                if p.get("type", 0) >= 8:  # type 8+ pieces
-                    dist = abs(x - p["x"])
-                    # proximity bonus: max 200 at dist=0, decays to 0 at dist=2.5
-                    type_proximity_bonus = max(type_proximity_bonus, max(0, 200 - dist * 100))
-            score -= (base_penalty - type_proximity_bonus)
+        if reactive_pair_count >= 3 and merge_grade == "NO":
+            # v452: flatten to -4500, matching protected strategy (median 12789)
+            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
+            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
+            # axis 2 height penalty be the only differentiator — consistent low placement.
+            score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- v602: axis_88_horizontal_suppression flag (defined earlier in loop) -----
@@ -2776,11 +2298,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         if merge_grade == "NO" and 1 <= reactive_pair_count < 3 and piece_count >= 28:
             drought_penalty = (piece_count - 27) * 100.0 * merge_mult
-            # v625: use column_ceiling_scale <= 0.50 (was rp2_noise_reduction)
-            if column_ceiling_scale <= 0.50:
-                drought_penalty *= 0.5
-            # v654: apply horizontal_guidance_scale — graduated suppression
-            drought_penalty *= horizontal_guidance_scale
             score -= drought_penalty
             reasons.append("MERGE_DROUGHT_PRESSURE")
 
@@ -2927,10 +2444,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # At ceiling_diff=0: 800 (baseline for being in the best column)
                 # At ceiling_diff=1: 950, At ceiling_diff=2: 1100
                 # merge_mult ensures bonus is relative (not overriding absolute merge bonuses)
-                # v625: column_ceiling_scale applied — dynamic reduction by merge drought intensity
-                # (rp==0→0.60, rp==1→0.75, rp==2→0.50, rp>=3→0.40)
-                # v654: additionally scale by horizontal_guidance_scale — graduated NO merge suppression
-                ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult * column_ceiling_scale * horizontal_guidance_scale
+                ceiling_bonus = (800 + ceiling_diff * 150) * merge_mult
                 score += ceiling_bonus
                 if ceiling_diff <= 0.5:
                     if "COLUMN_CEILING_BEST" not in "_".join(reasons):
@@ -2954,8 +2468,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
                     if nearest_dist < 1.5:
                         # Tie-break: create NEAR-merge setup for next turn
-                        # v654: apply horizontal_guidance_scale
-                        path_bonus = 200.0 * merge_mult * max(0.0, 1.0 - nearest_dist / 1.5) * horizontal_guidance_scale
+                        path_bonus = 200.0 * merge_mult * max(0.0, 1.0 - nearest_dist / 1.5)
                         score += path_bonus
                         if "MERGE_PATH_SETUP" not in "_".join(reasons):
                             reasons.append("MERGE_PATH_SETUP")
@@ -3093,9 +2606,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
                     if avg_target_y > 1.0:
                         proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
-                    # v625: scale by column_ceiling_scale (was rp2_noise_reduction)
-                    # v654: additionally scale by horizontal_guidance_scale
-                    proximity_bonus *= column_ceiling_scale * horizontal_guidance_scale
                     if proximity_bonus > 0:
                         score += proximity_bonus
                         if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
