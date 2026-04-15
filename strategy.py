@@ -796,6 +796,11 @@ Phases (determined by board max Y):
   # 未活用情報：盤面上のtype 15個数、即時併合可否(merge_grade)、danger_piece_count
   # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
+  # v655: CROSSES_DEADLINE_NO_MERGE penalty -1200→-3000
+  # mandatory_themes.txt: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+  # analysis_result.md hypothesis: -1200 insufficient vs column_ceiling+800 + stacking+400 + proximity bonuses offset it
+  # Worst game T61-T67: 7 consecutive NO_MERGE + deadline_crossed, penalty -1200 insufficient to prevent x=±3.0 placement
+  # refs: tmp/analysis_result.md, data/mandatory_themes.txt, tmp/batch_summary.txt
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
   #
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
@@ -2601,14 +2606,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # piece radius (top_y_after_drop = landing_y + radius). A piece at landing_y=2.8 with
         # radius=0.5 has top_y_after_drop=3.3, crossing deadline — but axis 2 penalty at y=2.8
         # is only moderate (~250 in HIGH phase). The crosses_deadline field captures this gap.
-        # Penalty (-1200) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
+        # Penalty (-3000) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
         # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires only at
         # merge_grade=NO and not russia_phase (Russia growth intentionally crosses deadline).
         # refs: analyze_board.py L412 (crosses_deadline computation),
         #       game_history/20260330_144015_score0665.jsonl T60-61,
-        #       game_history/20260330_143501_score0994.jsonl T74-75
+        #       game_history/20260330_143501_score0994.jsonl T74-75,
+        #       mandatory_themes.txt: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        #       analysis_result.md hypothesis: -1200 insufficient vs column_ceiling+800 + stacking+400 + proximity; raised to -3000
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            score -= 1200.0
+            score -= 3000.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
