@@ -266,11 +266,11 @@ unset persona_block output_rules _rc_time_spoken past_topics analysis_text
 
 # rollbackはopencode不安定のため、claude CLIで直接生成してからplay
 local talk=""
-talk=$(timeout 45 claude -p --model haiku < "$prompt_file" 2>/dev/null | _sanitize_onair_text | _normalize_radio_tone)
+talk=$(_run_claude_radio "$prompt_file" 2>/dev/null | _sanitize_onair_text | _normalize_radio_tone)
 rm -f "$prompt_file"
 if [ -z "$talk" ]; then
-log "[RADIO:rollback] claude生成失敗"
-return 1
+	log "[RADIO:rollback] claude生成失敗 → フォールバックテキスト使用"
+	talk="ただいま、粛清が執行されました。現行戦略に回帰が検出されたため、アンカー戦略へ巻き戻しました。革命は続きます。引き続き、ソ連ゲームをお楽しみください。"
 fi
 local talk_file
 talk_file=$(mktemp /tmp/eloop_radio_talk_XXXXXXXX)
@@ -1134,6 +1134,53 @@ start_radio_corner_capitalism() {
 		"スーパーの安売り合戦"
 		"価格比較サイト"
 		"会員ランク制度"
+		"医療チェーンのビジネスモデル"
+		"学資ローンの罠"
+		"車はローンで買うもの"
+		"不良品リコール文化"
+		"patent trolling"
+		"告発者制度"
+		"軍事産業の利益率"
+		"チケット転売ビジネス"
+		"ブランド価値とマークアップ"
+		"ファブレス製造"
+		"コストの外部化"
+		"税金回避と保険会社"
+		"フリーランスの不安定さ"
+		"企業城下町"
+		"行動経済学の応用"
+		"ロックドイン方式"
+		"チップ経済"
+		"デビットカードの明細"
+		"哭了笑える価格戦略"
+		"ブランド信仰とステータス消費"
+		"景品付き契約のからくり"
+		"ポイント切り捨て"
+		"年会費無料のクレジット"
+		"最安値保証"
+		"タイムシェア"
+		"解雇通知は突然に"
+		"成果報酬制の光と影"
+		"代理店網の構図"
+		"初回限定無料のからくり"
+		"配送サブスクの便利さ"
+		"自動更新のからくり"
+		"ネズミ講とMLM"
+		"高薪者減税剖当"
+		"法人税ゼロの州"
+		"競売と入札"
+		"天気予報で左右する株価"
+		"CEOの報酬が従業員の平均数百倍"
+		"金融サービスと消耗品"
+		"得多割り套餐"
+		"得多割りサービス"
+		"インディペンデント店の生き残り"
+		"テレビショッピングの実演販売"
+		"ホームショッピングチャンネル"
+		"ファストファッションの速さ"
+		"バーゲンマニアの心理"
+		"越多Clauseを設ける契約"
+		"仲裁Clauseと消費者"
 	)
 	local topic="${topics[$((RANDOM % ${#topics[@]}))]}"
 
@@ -1618,20 +1665,29 @@ _filter_unread_jiji_blocks() {
 
 _run_opencode_jiji_research() {
 	local agent="$1" prompt_file="$2"
-	local raw_file permission cleaned
+	local raw_file permission cleaned wrapper_script
 	raw_file=$(mktemp /tmp/eloop_jiji_research_raw_XXXXXXXX)
 	# bash許可 + web-searchプラグインでAIにWeb検索させる
 	permission='{"*":"deny","read":"allow","glob":"allow","grep":"allow","list":"allow","bash":"allow","web-search":"allow"}'
+	wrapper_script=$(mktemp /tmp/eloop_jiji_wrapper_XXXXXXXX.sh)
+	{
+		echo '#!/bin/bash'
+		echo 'LC_ALL=en_US.UTF-8'
+		echo "export OPENCODE_PERMISSION='$permission'"
+		printf 'exec opencode run --agent %q "$(cat %q)" 2>&1\n' "$agent" "$prompt_file"
+	} > "$wrapper_script"
+	chmod +x "$wrapper_script"
 	timeout "${RADIO_OPENCODE_TIMEOUT}" \
-		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$permission' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
+		script -q "$raw_file" "$wrapper_script" >/dev/null 2>&1
 	local rc=$?
+	rm -f "$wrapper_script"
 	if [ $rc -eq 124 ]; then
 		log "[JIJI] opencode research timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
-	if [ $rc -ne 0 ]; then
-		log "[JIJI] opencode research failed (rc=$rc, agent=$agent)" >&2
+	if [ $rc -ne 0 ] && [ ! -s "$raw_file" ]; then
+		log "[JIJI] opencode research failed (rc=$rc, no output, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi

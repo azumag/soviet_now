@@ -1272,7 +1272,7 @@ generate_comment_response() {
 	local comment_batch_context=""
 	comment_batch_context=$(printf '%s\n' "$twitch_comments_for_prompt" | _format_comment_batch_context)
 	local recent_spoken_comment_context=""
-	recent_spoken_comment_context=$(_build_recent_spoken_comment_context)
+	# spoken history は外部ファイル参照に移行済み（プロンプト埋め込み不要）
 	local comment_followup_hints=""
 	comment_followup_hints=$(_build_comment_followup_hints "$comment_prompt_batch_file")
 	local comment_mode_for_advice=""
@@ -1363,9 +1363,7 @@ $advice_text"
 		trap '_cleanup_comment_gen_worker' EXIT
 
 		local sing_reference=""
-		if [ -f "$ELOOP_LIB_DIR/data/voicevox_sing_reference.md" ]; then
-			sing_reference=$(cat "$ELOOP_LIB_DIR/data/voicevox_sing_reference.md" 2>/dev/null)
-		fi
+		# sing_reference は外部ファイル参照に移行済み（プロンプト埋め込み不要）
 
 		# soren91 (メリケンAI) プレイ中はペルソナ・UI説明を切り替え
 		local _comment_mode_generated=""
@@ -1442,7 +1440,7 @@ $advice_text"
 			comment_third_agent=""
 			comment_allow_claude_fallback=false
 		else
-			comment_primary_agent="${COMMENT_MAIN_AGENT:-qwen35e}"
+			comment_primary_agent="${COMMENT_MAIN_AGENT:-opencode:nvglm47}"
 			comment_second_agent="${COMMENT_MAIN_FALLBACK:-gemma4e}"
 			comment_third_agent="${COMMENT_MAIN_OLLAMA_FALLBACK:-opencode:glmflash}"
 		fi

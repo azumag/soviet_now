@@ -262,17 +262,48 @@ def load_game_state(path):
         return json.load(f)
 
 
-def get_landing_info(drop_x, drop_r, pieces):
+def calc_effective_radii(shapes):
+    """shapes (type→頂点リスト) から各typeのポリゴン実効半径を計算。
+    r (bbox半幅) はスプライトバウンディングボックスの外接円相当だが、
+    実際の PolygonCollider2D はこれより小さい。
+    着地判定用に水平半幅 (horiz) と上端高さ (top) を返す。"""
+    radii = {}
+    for type_str, verts in shapes.items():
+        t = int(type_str)
+        if not verts:
+            continue
+        horiz = max(abs(v[0]) for v in verts)
+        top = max(v[1] for v in verts)
+        radii[t] = {"horiz": horiz, "top": top}
+    return radii
+
+
+def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
     """drop_x に半径 drop_r のピースを落とした時の着地Y と最初に衝突するピースIDを返す。
-    円-円衝突と床衝突の最大値を取る。"""
+    r はスプライトバウンディングボックス半幅（外接円相当）だが、
+    実際のコライダーは PolygonCollider2D で外接円より小さい。
+    shapes から計算した実効半径で衝突範囲を補正する。"""
+    POLY_FACTOR = 0.75  # ポリゴン形状補正（shapes分析: avg/bbox比 = 0.58-0.78）
     landing_y = FLOOR_Y + drop_r  # 床
     hit_id = None  # None = 床に着地
 
+    # ドロップピースの実効半径
+    if eff_radii and drop_type in eff_radii:
+        drop_eff_r = eff_radii[drop_type]["horiz"]
+    else:
+        drop_eff_r = drop_r * POLY_FACTOR
+
     for p in pieces:
         px, py, pr = p["x"], p["y"], p["r"]
-        combined_r = drop_r + pr
+        p_type = p.get("type", 0)
+        if eff_radii and p_type in eff_radii:
+            p_eff_r = eff_radii[p_type]["horiz"]
+        else:
+            p_eff_r = pr * POLY_FACTOR
+        combined_r = drop_eff_r + p_eff_r
         dx = drop_x - px
         if abs(dx) < combined_r:
+            # 円の衝突公式を実効半径で適用
             collision_y = py + math.sqrt(max(0, combined_r ** 2 - dx ** 2))
             if collision_y > landing_y:
                 landing_y = collision_y
@@ -310,16 +341,22 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
     """
     if shapes is None:
         shapes = {}
+    eff_radii = calc_effective_radii(shapes) if shapes else {}
     same_type = [p for p in pieces if p["type"] == next_type]
     target_ids = {p["id"] for p in same_type}
     sample_xs = build_sample_xs(pieces, next_type)
+    # ドロップピースの上端高さ（ポリゴン実効値）
+    if eff_radii and next_type in eff_radii:
+        next_top_r = eff_radii[next_type]["top"]
+    else:
+        next_top_r = next_r
     results = []
 
     for x in sample_xs:
         if x < DROP_X_MIN - 0.01 or x > DROP_X_MAX + 0.01:
             continue
 
-        ly, hit_id = get_landing_info(x, next_r, pieces)
+        ly, hit_id = get_landing_info(x, next_r, pieces, eff_radii, next_type)
 
         # ポリゴン形状によるドリフト推定
         drift_x, drift_unc = estimate_polygon_drift(
@@ -387,7 +424,7 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
                     best_merge_dist = m["dist"]
 
         has_merge = best_grade in ("DIRECT", "NEAR")
-        top_after_drop = ly + next_r
+        top_after_drop = ly + next_top_r
         danger_direct_merge_available = any(
             m["grade"] == "DIRECT" and (
                 float(next((p.get("redLineTime", 0) for p in same_type if p["id"] == m["id"]), 0) or 0) > 0

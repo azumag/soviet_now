@@ -286,7 +286,7 @@ while true; do
 	fi
 	if [ "${MERIKEN_TIME_PENDING:-0}" -eq 1 ]; then
 		MERIKEN_TIME_PENDING=0
-		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
+		if [ "${MERIKEN_SCHEDULED_TIME_ENABLED:-1}" = "1" ] && command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
 			# soren91は既に動いているのでstartは不要。アナウンスのみ
 			enqueue_audio_text "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" "meriken_time" "${SOREN91_VOICEVOX_SPEAKER:-46}"
 			enqueue_chat_message "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております 【91人対戦】ソ連ゲーム91 - たアケイク https://unityroom.com/games/sorengame91" "soren_loop"
@@ -387,7 +387,7 @@ json.dump(d,open(f,'w'))
 		_meriken_acc_count=$(python3 -c "import json; print(json.load(open('$ACCUMULATED_GAMES_FILE')).get('count',0))" 2>/dev/null || echo -1)
 	fi
 	if [ "${_meriken_acc_count}" -eq 0 ] && [ "$(date +%H)" = "20" ]; then
-		if command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
+		if [ "${MERIKEN_SCHEDULED_TIME_ENABLED:-1}" = "1" ] && command -v _soren91_enabled >/dev/null 2>&1 && _soren91_enabled; then
 			soren91_start 2>/dev/null || true
 			# メリケンAIタイム専用アナウンス (読み上げ + Twitch投稿)
 			enqueue_audio_text "20時から21時はメリケンAIによるソ連91対戦部門になりました。皆様の挑戦お待ちしております" "meriken_time" "${SOREN91_VOICEVOX_SPEAKER:-46}"

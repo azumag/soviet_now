@@ -61,6 +61,16 @@
 - したがって改善案は「単発の見栄え」ではなく、「成熟ランキング上位と比べて12試合窓で残れるか」「rollback されにくいか」を意識して設計すること
 - 必要なら `show_status_g.sh`, `status_dashboard.py`, `show_status.sh`, `strategy/regression.sh` の rollback / ranking ロジックを読んで前提を確認すること
 
+## ユーザーレビュー（user_review.md）
+- `data/user_review.md` が参照データに含まれている場合、これは人間が現行戦略をレビューして書いた修正指示である
+- **レビューで指摘された問題は必ず修正すること**。他の改善テーマよりも優先度が高い
+- レビューの指摘事項を最優先の改善候補として扱い、実装すること
+
+## 絶対遵守テーマ（mandatory_themes.txt）
+- `data/mandatory_themes.txt` が参照データに含まれている場合、そこに記載された全テーマを **絶対に遵守** すること
+- これらのテーマに反する変更は禁止。既存コードがテーマに違反している場合は、そのテーマを満たすよう修正すること
+- 他の改善テーマより優先度が高い。mandatory_themes に記載されたテーマが未対応なら、まずそれを対応すること
+
 ## ハード制約（破ったら失敗）
 - 変更対象は `strategy.py.staging` と `strategy_helpers/` のみ。他ファイル変更禁止
 - `strategy_helpers/` を使う場合は `strategy_helpers/__init__.py` を維持すること

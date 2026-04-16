@@ -4,18 +4,27 @@
 
 _run_opencode_radio() {
 	local agent="$1" prompt_file="$2"
-	local raw_file cleaned
+	local raw_file cleaned wrapper_script
 	raw_file=$(mktemp /tmp/eloop_radio_raw_XXXXXXXX)
+	wrapper_script=$(mktemp /tmp/eloop_radio_wrapper_XXXXXXXX.sh)
+	{
+		echo '#!/bin/bash'
+		echo 'LC_ALL=en_US.UTF-8'
+		echo "export OPENCODE_PERMISSION='$RADIO_OPENCODE_PERMISSION'"
+		printf 'exec opencode run --agent %q "$(cat %q)" 2>&1\n' "$agent" "$prompt_file"
+	} > "$wrapper_script"
+	chmod +x "$wrapper_script"
 	timeout "${RADIO_OPENCODE_TIMEOUT}" \
-		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$RADIO_OPENCODE_PERMISSION' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
+		script -q "$raw_file" "$wrapper_script" >/dev/null 2>&1
 	local rc=$?
+	rm -f "$wrapper_script"
 	if [ $rc -eq 124 ]; then
 		log "[RADIO] opencode timeout (${RADIO_OPENCODE_TIMEOUT}s, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
-	if [ $rc -ne 0 ]; then
-		log "[RADIO] opencode failed (rc=$rc, agent=$agent)" >&2
+	if [ $rc -ne 0 ] && [ ! -s "$raw_file" ]; then
+		log "[RADIO] opencode failed (rc=$rc, no output, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
@@ -70,20 +79,28 @@ _run_opencode_comment() {
 		rm -f "$raw_file"
 		return 1
 	}
-	(
-		cd "$sandbox_dir" || exit 1
-		timeout "$timeout_sec" \
-			script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$COMMENT_OPENCODE_PERMISSION' opencode run --agent \"$agent\" \"\$(cat 'tmp/comment_prompt.txt')\" 2>&1" >/dev/null 2>&1
-	)
+	local wrapper_script
+	wrapper_script=$(mktemp /tmp/eloop_comment_wrapper_XXXXXXXX.sh)
+	{
+		echo '#!/bin/bash'
+		echo "cd '$sandbox_dir' || exit 1"
+		echo 'LC_ALL=en_US.UTF-8'
+		echo "export OPENCODE_PERMISSION='$COMMENT_OPENCODE_PERMISSION'"
+		printf 'exec opencode run --agent %q "$(cat %q)" 2>&1\n' "$agent" "tmp/comment_prompt.txt"
+	} > "$wrapper_script"
+	chmod +x "$wrapper_script"
+	timeout "$timeout_sec" \
+		script -q "$raw_file" "$wrapper_script" >/dev/null 2>&1
 	local rc=$?
+	rm -f "$wrapper_script"
 	destroy_sandbox "$sandbox_dir"
 	if [ $rc -eq 124 ]; then
 		log "[COMMENT] opencode timeout (${timeout_sec}s, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
-	if [ $rc -ne 0 ]; then
-		log "[COMMENT] opencode failed (rc=$rc, agent=$agent)" >&2
+	if [ $rc -ne 0 ] && [ ! -s "$raw_file" ]; then
+		log "[COMMENT] opencode failed (rc=$rc, no output, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
@@ -1335,7 +1352,7 @@ _radio_generate_and_play() {
 		radio_third_agent=""
 		radio_allow_claude_fallback=false
 	else
-		radio_primary_agent="${RADIO_MAIN_AGENT:-qwen35e}"
+		radio_primary_agent="${RADIO_MAIN_AGENT:-opencode:nvglm47}"
 		radio_second_agent="${RADIO_MAIN_FALLBACK:-gemma4e}"
 		radio_third_agent="${RADIO_MAIN_OLLAMA_FALLBACK:-opencode:glmflash}"
 	fi
@@ -1650,6 +1667,8 @@ _radio_generate_and_play() {
 			_radio_set_state "queued" "$corner_name"
 			_write_radio_corner_status "queued" "$corner_name" "$game_num" "$score" "$topic" "comment_backlog" "$selected_news" "{\"comment_queued\": ${comment_queued:-0}, \"comment_playing\": ${comment_playing:-0}, \"deferred_file\": \"$(basename "$deferred_file")\"}"
 			log "[RADIO:${corner_name}] deferred: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}) -> $(basename "$deferred_file")"
+			rmdir "$inflight_dir" 2>/dev/null || true
+			return 0
 			else
 				log "[RADIO:${corner_name}] deferred enqueue失敗 (comment backlog=${comment_total})"
 				_write_radio_corner_status "deferred_enqueue_failed" "$corner_name" "$game_num" "$score" "$topic" "deferred_enqueue_failed" "$selected_news"

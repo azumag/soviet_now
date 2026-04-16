@@ -1545,6 +1545,12 @@ check_regression() {
 	# 単世代の揺らぎでは戻さず、branch の budget が尽きても anchor から明確に劣後する場合だけ rollback。
 	REGRESSION_ROLLBACK_DONE=0
 	REGRESSION_ROLLBACK_HASH=""
+	# --- 粛清一時無効化 ---
+	if [ "${REGRESSION_DISABLED:-0}" = "1" ]; then
+		log "[REGRESSION] disabled (REGRESSION_DISABLED=1)"
+		return 1
+	fi
+	# ------------------------
 	_prune_expired_rejected_hashes >/dev/null 2>&1 || true
 	local strategy_hash
 	strategy_hash=$(python3 extract_decide_hash.py "$STRATEGY_FILE" 2>/dev/null || echo "unknown")

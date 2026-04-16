@@ -609,6 +609,8 @@ improve_ref_files=("$batch_summary_file" "$IMPROVE_BRIEF_FILE")
 [ -f "$STRATEGY_ADVICE_FILE" ] && [ -s "$STRATEGY_ADVICE_FILE" ] && improve_ref_files+=("$STRATEGY_ADVICE_FILE")
 [ -f "$ROLLBACK_POSTMORTEM_FILE" ] && [ -s "$ROLLBACK_POSTMORTEM_FILE" ] && improve_ref_files+=("$ROLLBACK_POSTMORTEM_FILE")
 [ -f "$ROLLBACK_ANALYSIS_FILE" ] && [ -s "$ROLLBACK_ANALYSIS_FILE" ] && improve_ref_files+=("$ROLLBACK_ANALYSIS_FILE")
+[ -f "data/mandatory_themes.txt" ] && [ -s "data/mandatory_themes.txt" ] && improve_ref_files+=("data/mandatory_themes.txt")
+[ -f "data/user_review.md" ] && [ -s "data/user_review.md" ] && improve_ref_files+=("data/user_review.md")
 
 # --- サンドボックスにコピーする全ファイル ---
 sandbox_ref_files=("prompts/improve_strategy.md" "prompts/analyze_strategy.md" "prompts/implement_strategy.md" "prompts/review_strategy.md" "prompts/game_theory.md" "$STRATEGY_FILE" "analyze_board.py" "extract_decide_hash.py" "${improve_ref_files[@]}")
@@ -789,31 +791,40 @@ if [ "$sandbox_ready" = true ] && [ "$in_sandbox" = true ]; then
 	_improve_wall_start=$(date +%s)
 
 	# --- Stage 1: 分析フェーズ ---
-	# 全参照データを読み込み、改善仮説を立案して tmp/analysis_result.md に出力する
+	# ユーザーレビューが存在する場合は分析をスキップし、レビューを analysis_result として使用する
 	: > "$ANALYSIS_RESULT_FILE"
 	analysis_ok=false
-	ANALYSIS_MAX_RETRIES="${ANALYSIS_MAX_RETRIES:-2}"
-	for _analysis_retry in $(seq 1 "$ANALYSIS_MAX_RETRIES"); do
-		_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
-		if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
-			log "[IMPROVE] wall timeout before analysis phase"
-			break
-		fi
-		_improve_progress "analyze_retry${_analysis_retry}" "$(( 5 + (_analysis_retry - 1) * 5 ))" "analysis_phase"
-		log "[IMPROVE] Stage 1 分析フェーズ (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES})..."
-		_improve_note "Stage1: analyze retry ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}"
-		run_ai "ANALYZE(${_analysis_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
-			"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
-			"${improve_ref_files[@]}"
-		if [ -s "$ANALYSIS_RESULT_FILE" ]; then
-			log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
-			_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
-			analysis_ok=true
-			break
-		fi
-		log "[IMPROVE] Stage 1 分析失敗 (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}) → リトライ"
-		_improve_note "Stage1: analysis empty on retry ${_analysis_retry}"
-	done
+	USER_REVIEW_FILE="data/user_review.md"
+	if [ -f "$USER_REVIEW_FILE" ] && [ -s "$USER_REVIEW_FILE" ]; then
+		log "[IMPROVE] Stage 1 スキップ: ユーザーレビューを分析結果として使用"
+		_improve_note "Stage1: skipped — user_review.md used as analysis_result"
+		cp "$USER_REVIEW_FILE" "$ANALYSIS_RESULT_FILE"
+		analysis_ok=true
+	else
+		# 全参照データを読み込み、改善仮説を立案して tmp/analysis_result.md に出力する
+		ANALYSIS_MAX_RETRIES="${ANALYSIS_MAX_RETRIES:-2}"
+		for _analysis_retry in $(seq 1 "$ANALYSIS_MAX_RETRIES"); do
+			_improve_wall_elapsed=$(( $(date +%s) - _improve_wall_start ))
+			if [ "$_improve_wall_elapsed" -ge "$IMPROVE_WALL_TIMEOUT" ]; then
+				log "[IMPROVE] wall timeout before analysis phase"
+				break
+			fi
+			_improve_progress "analyze_retry${_analysis_retry}" "$(( 5 + (_analysis_retry - 1) * 5 ))" "analysis_phase"
+			log "[IMPROVE] Stage 1 分析フェーズ (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES})..."
+			_improve_note "Stage1: analyze retry ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}"
+			run_ai "ANALYZE(${_analysis_retry})" "$MODEL_IMPROVE" "$MODEL_FALLBACK_IMPROVE" \
+				"prompts/analyze_strategy.md" "$ANALYSIS_RESULT_FILE" \
+				"${improve_ref_files[@]}"
+			if [ -s "$ANALYSIS_RESULT_FILE" ]; then
+				log "[IMPROVE] Stage 1 分析完了 (${_analysis_retry}試行)"
+				_improve_note "Stage1: analysis OK retry=${_analysis_retry}"
+				analysis_ok=true
+				break
+			fi
+			log "[IMPROVE] Stage 1 分析失敗 (試行 ${_analysis_retry}/${ANALYSIS_MAX_RETRIES}) → リトライ"
+			_improve_note "Stage1: analysis empty on retry ${_analysis_retry}"
+		done
+	fi
 
 	if [ "$analysis_ok" != true ]; then
 		log "[IMPROVE] Stage 1 分析フェーズ失敗 → 改善中止"
@@ -1068,7 +1079,12 @@ ${helpers_diff}"
 
 	# --- Stage 3: レビューフェーズ ---
 	# Stage 2 成功時のみ実行。スナップショット保護付き
-	if $improve_ok; then
+	# ユーザーレビューが分析として使用された場合、レビューフェーズをスキップ
+	# （ユーザーが既にレビュー済みのため、AIレビューは不要）
+	if $improve_ok && [ -f "$USER_REVIEW_FILE" ] && [ -s "$USER_REVIEW_FILE" ]; then
+		log "[IMPROVE] Stage 3 スキップ: ユーザーレビューに基づく改善のためAIレビュー不要"
+		_improve_note "Stage3: skipped — user_review.md was used as analysis"
+	elif $improve_ok; then
 		: > "$REVIEW_RESULT_FILE"
 		_pre_review_snapshot=$(mktemp "$PWD/$TMP_STATE_DIR/pre_review_staging.XXXXXX")
 		cp "$STAGING_FILE" "$_pre_review_snapshot"
@@ -1170,6 +1186,8 @@ if $improve_ok; then
 		fi
 		[ -f "strategy_helpers/__init__.py" ] || : > "strategy_helpers/__init__.py"
 		python3 trim_changelog.py "$STRATEGY_FILE" 3 2>/dev/null
+		# ユーザーレビューは改善適用後に消去（1回限りの指示）
+		: > "data/user_review.md" 2>/dev/null || true
 	fi
 fi
 
@@ -1210,16 +1228,24 @@ if $improve_ok; then
 		_post_phyrogenetic_tree_link_to_chat "improve" "$HASH_BEFORE" "$HASH_AFTER"
 	fi
 
-	# --- Phase D: 戦略解説ラジオを生成し deferred queue に投入 ---
+	# --- Phase D: 戦略解説ラジオを pending ファイルに保存 → radio_worker が Picks up ---
+	# (radio_worker がゲーム変化時に pending を検出して generation をトリガーする)
 	if [ -n "$strategy_diff" ]; then
-		_improve_progress "radio" "95" "strategy_commentary_generating"
+		_improve_progress "radio" "95" "strategy_commentary_pending"
+		_improve_note "strategy commentary queued for radio_worker pickup"
 		best_score_now=$(cat best_score.txt 2>/dev/null || echo 0)
-		_improve_note "generating strategy commentary radio"
-		if RADIO_FORCE_DEFERRED=1 start_radio_corner_strategy "$strategy_diff" "$SCORES" "$GAME_NUM_SNAPSHOT" "$best_score_now"; then
-			_improve_note "strategy commentary queued to deferred radio"
-		else
-			_improve_note "strategy commentary generation failed"
-		fi
+		python3 -c "
+import json, sys
+data = {
+    'strategy_diff': sys.stdin.read(),
+    'game_num': $GAME_NUM_SNAPSHOT,
+    'best_score': '$best_score_now',
+    'scores': '$SCORES',
+    'created_at': $(date +%s)
+}
+with open('tmp/state/pending_strategy_radio.json', 'w') as f:
+    json.dump(data, f, ensure_ascii=False)
+" <<< "$strategy_diff" || true
 	fi
 	_improve_progress "done" "100" "awaiting_harvest"
 else

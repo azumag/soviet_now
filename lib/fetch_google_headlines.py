@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Google News トップ見出し取得スクリプト.
+"""Google News マルチソース見出し取得スクリプト.
 
-Google News RSS (日本語) からトップ見出しを取得し、
-tmp/google_headlines.txt に ■ プレフィックス形式で出力する。
+Google News RSS (11ソース: 世界/US/ビジネス/テクノロジー/科学/ヘルス/日本/日本ビジネス/日本世界/中国)
+からトップ見出しを取得し、tmp/google_headlines.txt に ■ プレフィックス形式で出力する。
 既読管理ファイルで重複排除。
 
 Usage:
@@ -17,7 +17,19 @@ import unicodedata
 import urllib.request
 import xml.etree.ElementTree as ET
 
-RSS_URL = "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
+RSS_URLS = {
+    "world":  "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
+    "us":     "https://news.google.com/rss/topics/CAAqIggKIhxDQkFTRHdvSkwyMHZNRGxqTjNjd0VnSmxiaWdBUAE?hl=en-US&gl=US&ceid=US:en",
+    "biz":    "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US%3Aen",
+    "sci":    "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRFp0Y1RjU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US%3Aen",
+    "health": "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNR3QwTlRFU0FtVnVLQUFQAQ?hl=en-US&gl=US&ceid=US%3Aen",
+    "jp":     "https://news.google.com/rss/topics/CAAqIQgKIhtDQkFTRGdvSUwyMHZNRE5mTTJRU0FtcGhLQUFQAQ?hl=ja&gl=JP&ceid=JP%3Aja",
+    "jp_biz": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
+    "jp_wrld":"https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtcGhHZ0pLVUNnQVAB?hl=ja&gl=JP&ceid=JP%3Aja",
+    "jp_sci": "https://news.google.com/rss/topics/CAAqKAgKIiJDQkFTRXdvSkwyMHZNR1ptZHpWbUVnSnFZUm9DU2xBb0FBUAE?hl=ja&gl=JP&ceid=JP%3Aja",
+    "china":  "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+}
+DEFAULT_RSS = "https://news.google.com/rss?hl=ja&gl=JP&ceid=JP:ja"
 OUTPUT_FILE = "tmp/google_headlines.txt"
 META_FILE = "tmp/google_headlines_meta.json"
 PAST_TITLES_FILE = "tmp/history/.past_jiji_titles.txt"
@@ -61,15 +73,21 @@ def load_past_keys() -> set:
 
 
 def fetch_headlines() -> list[tuple[str, str]]:
-    """Return list of (title, url) from Google News RSS."""
-    raw = http_get(RSS_URL)
-    root = ET.fromstring(raw)
+    """Return list of (title, url) from all configured Google News RSS feeds."""
     items = []
-    for item in root.findall("./channel/item"):
-        t = strip_tags(item.findtext("title", default=""))
-        link = (item.findtext("link", default="") or "").strip()
-        if t:
-            items.append((t, link))
+    for feed_url in RSS_URLS.values():
+        try:
+            raw = http_get(feed_url)
+            root = ET.fromstring(raw)
+            for item in root.findall("./channel/item"):
+                t = strip_tags(item.findtext("title", default=""))
+                link = (item.findtext("link", default="") or "").strip()
+                if t:
+                    items.append((t, link))
+                if len(items) >= MAX_HEADLINES:
+                    break
+        except Exception as e:
+            print(f"  [fetch_google_headlines] feed failed, continuing: {e}", file=sys.stderr)
         if len(items) >= MAX_HEADLINES:
             break
     return items

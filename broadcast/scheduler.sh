@@ -318,6 +318,39 @@ schedule_nonessential_audio_jobs() {
 		fetch_and_play_news "$game_num" "$score" &
 	fi
 
+	# --- 戦略改善ラジオ: pending ファイルがある場合に生成 ---
+	_handle_pending_strategy_radio() {
+		local pending_file="tmp/state/pending_strategy_radio.json"
+		[ -f "$pending_file" ] || return 0
+
+		# 既に生成済みかチェック（game_num で重複回避）
+		local pending_game_num
+		pending_game_num=$(python3 -c "import json; print(json.load(open('$pending_file')).get('game_num',0))" 2>/dev/null || echo 0)
+		local already_played=false
+		if [ -f "tmp/state/radio_talk_played" ]; then
+			if grep -q "|strategy|.*game_num.*${pending_game_num}" tmp/state/radio_talk_played 2>/dev/null; then
+				already_played=true
+			fi
+		fi
+		if [ "$already_played" = true ]; then
+			rm -f "$pending_file"
+			return 0
+		fi
+
+		log "[STRATEGY_RADIO] pending detected for game ${pending_game_num}"
+		local strategy_diff game_num best_score scores
+		strategy_diff=$(python3 -c "import json; print(json.load(open('$pending_file')).get('strategy_diff',''))" 2>/dev/null || echo "")
+		game_num=$(python3 -c "import json; print(json.load(open('$pending_file')).get('game_num',$game_num))" 2>/dev/null || echo "$game_num")
+		best_score=$(python3 -c "import json; print(json.load(open('$pending_file')).get('best_score',0))" 2>/dev/null || echo 0)
+		scores=$(python3 -c "import json; print(json.load(open('$pending_file')).get('scores',''))" 2>/dev/null || echo "")
+
+		[ -z "$strategy_diff" ] && return 0
+
+		start_radio_corner_strategy "$strategy_diff" "$scores" "$game_num" "$best_score" &
+		rm -f "$pending_file"
+	}
+	_handle_pending_strategy_radio
+
 	# --- 時間帯コーナー (1日1回、±15分ウィンドウ) ---
 	local current_hour current_min today timed_corner_fired=false
 	current_hour=$(date +%H)
@@ -327,15 +360,16 @@ schedule_nonessential_audio_jobs() {
 	_try_timed_corner() {
 		local name="$1" target_hh="$2" target_mm="$3"
 		local marker="$TMP_MARKERS_DIR/.timed_corner_done_${today}_${name}"
-		local inflight="$TMP_MARKERS_DIR/.timed_corner_inflight_${name}"
+		local inflight="$TMP_MARKERS_DIR/.timed_corner_inflight_${today}_${name}"
 		[ -f "$marker" ] && return 1
-		[ -f "$inflight" ] && return 1
+		if ! mkdir "$inflight" 2>/dev/null; then
+			return 1  # another scheduler beat us
+		fi
 		local target=$((target_hh * 60 + target_mm))
 		local now=$((10#$current_hour * 60 + 10#$current_min))
 		local diff=$((now - target))
 		[ "$diff" -lt 0 ] && diff=$((-diff))
-		[ "$diff" -le 15 ] || return 1
-		touch "$inflight"
+		[ "$diff" -le 15 ] || { rmdir "$inflight" 2>/dev/null; return 1; }
 		return 0
 	}
 
@@ -343,11 +377,21 @@ schedule_nonessential_audio_jobs() {
 	_run_timed_corner() {
 		local name="$1" func="$2"
 		shift 2
-		if "$func" "$@"; then
+		"$func" "$@" &
+		local _bg_pid=$!
+		wait "$_bg_pid"
+		local _exit_code=$?
+		if [ "$_exit_code" -eq 0 ]; then
 			touch "$TMP_MARKERS_DIR/.timed_corner_done_${today}_${name}"
 		fi
-		rm -f "$TMP_MARKERS_DIR/.timed_corner_inflight_${name}"
+		rmdir "$TMP_MARKERS_DIR/.timed_corner_inflight_${today}_${name}" 2>/dev/null
 	}
+
+	# stale inflight marker クリーンアップ (前日以前を一掃)
+	local _yesterday_marker_inf=$TMP_MARKERS_DIR/.timed_corner_inflight_$(date -v-1d +%Y%m%d)_*
+	rm -f $_yesterday_marker_inf 2>/dev/null
+	# 無日付の legacy marker も削除 (新方式への移行)
+	rm -f "$TMP_MARKERS_DIR"/.timed_corner_inflight_* 2>/dev/null
 
 	if _try_timed_corner "finance" 4 0; then
 		timed_corner_fired=true
@@ -466,9 +510,9 @@ schedule_nonessential_audio_jobs() {
 		start_random_radio_corner "$game_num" "$score" &
 	fi
 
-	# 時事ニュースコーナー: サイクル8ゲーム目
+	# 時事ニュースコーナー: サイクル4,8ゲーム目（2つで30分間隔相当）
 	# 改善タイミング付近はスキップ（メリケンAI起動との競合回避）
-	if [ "$near_improve" != true ] && [ "$cycle_pos" -eq 8 ]; then
+	if [ "$near_improve" != true ] && { [ "$cycle_pos" -eq 4 ] || [ "$cycle_pos" -eq 8 ]; }; then
 		if [ "$comment_backlog_high" = true ]; then
 			log "[JIJI] comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold}) -> generate + deferred再生"
 		fi
@@ -584,8 +628,8 @@ _legacy_schedule_nonessential_audio_jobs() {
 		fi
 	fi
 
-	# 時事ニュースコーナー: サイクル8ゲーム目
-	if (( game_num % ${MIN_GAMES_BEFORE_IMPROVE:-12} == 8 )); then
+	# 時事ニュースコーナー: サイクル4,8ゲーム目（2つで30分間隔相当）
+	if (( game_num % ${MIN_GAMES_BEFORE_IMPROVE:-12} == 4 || game_num % ${MIN_GAMES_BEFORE_IMPROVE:-12} == 8 )); then
 		if [ "$skip_nonessential_radio" = true ]; then
 			log "[JIJI] skip: comment backlog=${comment_total} (queued=${comment_queued}, playing=${comment_playing}, threshold=${comment_backlog_skip_threshold})"
 		else

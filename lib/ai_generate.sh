@@ -153,20 +153,35 @@ _ai_call_opencode() {
 	local label="$1" agent="$2" prompt_file="$3"
 	local timeout_sec="${4:-${RADIO_OPENCODE_TIMEOUT:-180}}"
 	local permission="${5:-${RADIO_OPENCODE_PERMISSION:-}}"
-	local raw_file cleaned
+	local raw_file cleaned wrapper_script
 
 	[ -s "$prompt_file" ] || return 1
 	raw_file=$(mktemp /tmp/ai_opencode_raw_XXXXXXXX)
+	# ラッパースクリプト経由で実行:
+	# 旧方式 script -q ... bash -c "... $(cat) ..." では $(cat) が script の引数として
+	# 展開され、macOS の script コマンドが ~30KB 超で失敗する。
+	# ラッパースクリプトにすると $(cat) は子プロセス内で展開されるため制限を回避できる。
+	wrapper_script=$(mktemp /tmp/ai_opencode_wrapper_XXXXXXXX.sh)
+	{
+		echo '#!/bin/bash'
+		echo 'LC_ALL=en_US.UTF-8'
+		echo "export OPENCODE_PERMISSION='$permission'"
+		printf 'exec opencode run --agent %q "$(cat %q)" 2>&1\n' "$agent" "$prompt_file"
+	} > "$wrapper_script"
+	chmod +x "$wrapper_script"
 	timeout "$timeout_sec" \
-		script -q "$raw_file" bash -c "LC_ALL=en_US.UTF-8 OPENCODE_PERMISSION='$permission' opencode run --agent \"$agent\" \"\$(cat '$prompt_file')\" 2>&1" >/dev/null 2>&1
+		script -q "$raw_file" "$wrapper_script" >/dev/null 2>&1
 	local rc=$?
+	rm -f "$wrapper_script"
 	if [ $rc -eq 124 ]; then
 		log "[${label}] opencode timeout (${timeout_sec}s, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
-	if [ $rc -ne 0 ]; then
-		log "[${label}] opencode failed (rc=$rc, agent=$agent)" >&2
+	# script コマンドの rc は子プロセスの終了コードと一致しないことがある。
+	# raw_file に出力があれば成功とみなし、rc != 0 でも続行する。
+	if [ $rc -ne 0 ] && [ ! -s "$raw_file" ]; then
+		log "[${label}] opencode failed (rc=$rc, no output, agent=$agent)" >&2
 		rm -f "$raw_file"
 		return 1
 	fi
@@ -221,9 +236,6 @@ _ai_dispatch() {
 		;;
 	minimax|ccmm)
 		_ai_call_minimax "$label" "$prompt_file" "" "$timeout_override" | tee "$_dispatch_output_file"
-		;;
-	qwen35e)
-		_ai_call_ollama "$label" "$prompt_file" "qwen3.5:9b" "$timeout_override" | tee "$_dispatch_output_file"
 		;;
 	gemma4e)
 		_ai_call_ollama "$label" "$prompt_file" "gemma4:latest" "$timeout_override" | tee "$_dispatch_output_file"

@@ -453,26 +453,6 @@ run_cmd() {
 			fi
 		fi
 		;;
-	qwen35e)
-		local -a ollama_env=(
-			ANTHROPIC_AUTH_TOKEN="ollama"
-			ANTHROPIC_BASE_URL="http://192.168.11.3:11434"
-			ANTHROPIC_API_KEY=""
-		)
-		if [ -n "$cmd_log_file" ]; then
-			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits --no-session-persistence >>"$cmd_log_file" 2>&1 &
-			fi
-		else
-			if [ -n "$timeout_sec" ]; then
-				env "${ollama_env[@]}" "$timeout_bin" "$timeout_sec" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits --no-session-persistence &
-			else
-				env "${ollama_env[@]}" claude -p "$prompt_body" --model=qwen3.5:9b --permission-mode=acceptEdits --no-session-persistence &
-			fi
-		fi
-		;;
 	qwen35)
 		local -a ollama_env=(
 			ANTHROPIC_AUTH_TOKEN="ollama"

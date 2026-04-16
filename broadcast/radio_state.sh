@@ -416,6 +416,11 @@ _play_deferred_radio_queue_once() {
 			fi
 				local radio_vo_speaker=""
 				radio_vo_speaker=$(_radio_voicevox_speaker_override "$deferred_corner" 2>/dev/null || true)
+				# .voice サイドカーが存在すればそちらを優先 (rollback 等の個別指定)
+				if [ -z "$radio_vo_speaker" ]; then
+					local _voice_sidecar="${playing_file%.playing}.voice"
+					[ -f "$_voice_sidecar" ] && radio_vo_speaker=$(cat "$_voice_sidecar" 2>/dev/null || true)
+				fi
 				_refresh_radio_intro_for_playback_file "$playing_file" "$deferred_corner"
 				local radio_meta_summary=""
 				radio_meta_summary=$(_radio_generation_debug_summary "$playing_file" 2>/dev/null || true)
