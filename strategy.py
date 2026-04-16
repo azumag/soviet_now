@@ -108,12 +108,12 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 # Fixes: worst game T56-59 (max_y 2.03-2.05, rp=6) height coeff 120 insufficient vs horizontal guidance noise
 # Refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt (deadline avoidance)
 
-# v661: Add EDGE_ZONE_NO_MERGE_PENALTY — suppress edge placement (x=±3.0) when merge=NO && deadline_margin<0.5 && max_y>=1.5
-# Fixes: worst game T61-T77 NO_MERGE edge placement cycle — deadline penalty insufficient vs column_ceiling+stacking+proximity bonuses
+# v661+v662: Add EDGE_ZONE_NO_MERGE_PENALTY — suppress edge placement (x=±3.0) when merge=NO && deadline_margin<0.5 && max_y>=1.5
+# v662: lower threshold to 2.0 and fix penalty to 3000 (was dynamic threshold 2.8, dynamic penalty *1000)
+# Fixes: worst game T60-T70 NO_MERGE edge placement at x=±2.0 with deadline violation
+#        mandatory_themes.txt: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+# Change: threshold 2.8→2.0, penalty 3000 (was max_y-based *1000)
 # Refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
-#       game_history/20260416_091418_score0906.jsonl (worst game T61-T77 edge placements)
-#       game_history/20260416_090327_score0935.jsonl (extra_low T57,59,60 edge placements)
-# Change: prevent "can't merge but place at edge" pattern that causes max_y runaway
 
 # Detailed version history: tmp/strategy_versions/CHANGELOG.md
 # See tmp/improve_brief.md for next improvement focus
@@ -2339,22 +2339,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= max(0, (0.5 - margin)) * 2500
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
-        # ----- v661: EDGE_ZONE_NO_MERGE edge suppression -----
-        # Worst game T61-T77: 17 consecutive NO_MERGE turns, 8+ edge placements (x=±3.0).
-        # CROSSES_DEADLINE_NO_MERGE penalty (max -5000) was applied but insufficient to
-        # prevent edge placement — column_ceiling (~800) + stacking (~400-600) +
-        # proximity (~200-400) bonuses collectively offset the deadline penalty.
-        # analysis_result.md: "When merge_grade=='NO' && deadline_margin < 0.5 && max_y >= 1.5,
-        # add an extra edge penalty to candidates at x=±3.0 (edge zone)."
+        # ----- v661+v662: EDGE_ZONE_NO_MERGE edge suppression -----
+        # Worst game T60-T70: x=-2.0 edge placement with NO_MERGE, margin=-0.95, pc 33→39.
+        # v661 threshold 2.8 was insufficient — x=±2.0 still causes deadline violations.
         # mandatory_themes.txt: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # Anti-patterns: Don't suppress ALL bonuses, don't increase CROSSES_DEADLINE_NO_MERGE coeff.
+        # v662: lower threshold to 2.0 and fix penalty to 3000 (was dynamic *1000).
         # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
         if merge_grade == "NO" and not russia_phase and margin < 0.5 and max_y >= 1.5:
-            if abs(x) >= 2.8:
-                edge_penalty = max(0, (max_y - 1.5)) * 1000
-                score -= edge_penalty
-                if edge_penalty > 0:
-                    reasons.append("EDGE_ZONE_NO_MERGE_PENALTY")
+            if abs(x) >= 2.0:
+                score -= 3000.0
+                reasons.append("EDGE_ZONE_NO_MERGE_PENALTY")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
