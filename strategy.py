@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v670: danger zone DIRECT merge overwhelming priority — when danger_direct_merge_available &&
+     #       merge_grade==DIRECT && crosses_deadline, add +5000 bonus. Analysis: worst T44 chose NEAR
+     #       (score_delta=0) while best T118 chose DIRECT (score_delta=21). DIRECT avg_score_delta=56.4
+     #       vs NEAR avg=15.2. Overwhelming bonus ensures DIRECT beats any NEAR/NO_MERGE competition.
+     #       Does NOT modify HEIGHT_CONTROL, NEAR suppression (v668), HARD GUARD (v665), or russia_phase.
+     #       refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/best T118
      # v669: HARD SUPPRESS fallback — count suppressed candidates; if all suppressed,
      #       fallback to lowest landing_y among all results. Fixes all-NEAR-suppress bug
      #       that returns x=0.0 with no reason. mandatory_themes compliant.
@@ -930,6 +936,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT":
             score += 800.0
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
+
+        # ----- NEW axis: danger zone DIRECT merge overwhelming priority (v670) -----
+        # Adopted hypothesis: STRENGTHEN DIRECT MERGE PRIORITY WHEN AVAILABLE IN DEADLINE DANGER
+        # The issue is not NEAR per se, but DIRECT vs NEAR decision at dangerous heights with deadline.
+        # Worst T44: merge_grade=NEAR, deadline_crossed=true, max_y=2.8 → chose NEAR, score_delta=0
+        # Best T118: merge_grade=DIRECT, deadline_crossed=true, max_y=2.11 → chose DIRECT, score_delta=21
+        # batch_summary: DIRECT_MERGE_HIGH_LAYER... avg_score_delta=56.4 (highest!), NEAR avg=15.2
+        # When DIRECT is available at dangerous heights with deadline_crossed, it should overwhelm
+        # any NEAR competition. The existing +800 bonus (v382) is additive but insufficient when
+        # NEAR gets other bonuses stacking. This override ensures DIRECT wins decisively.
+        # NOT modifying existing HEIGHT_CONTROL, NEAR suppression (v668), HARD GUARD (v665), or russia_phase.
+        # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/worst T44, game_history/best T118
+        # Fixes rollback failure mode: NEAR selected over available DIRECT at deadline danger (v670)
+        if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT" and result.get("crosses_deadline", False):
+            score += 5000.0
+            reasons.append("DANGER_DIRECT_OVERWHELMING")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
         # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
