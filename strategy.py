@@ -849,6 +849,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 200.0
                 reasons.append("HIGH_TYPE_NEXT_PENALTY")
 
+        # ----- NEW axis: suppress NEAR at dangerous max_y + high piece_count + deadline danger -----
+        # Worst game T58-T60: max_y=1.81-2.30, deadline_crossed, piece_count=38-40, NEAR fails 3x (delta=0)
+        # After 3 failures, piece_count grows to 40+ with no merge benefit, forcing NO_MERGE at high-y
+        # which violates mandatory_themes and leads to game over 3 turns later.
+        # Best game T140: max_y=0.24, NEAR succeeds (+166) — not affected (max_y < 2.0)
+        # NEAR success rate drops dramatically when max_y>=2.0 AND deadline approaching.
+        # Hard suppression (continue) — not a penalty adjustment.
+        # Russia merge candidates (russia_merge_possible) are exempt — Russia phase has its own axis 8.7 logic.
+        # refs: tmp/analysis_result.md (Hypothesis: NEAR Suppression at High max_y + High piece_count + Deadline Danger)
+        # Fixes rollback failure mode: NEAR at dangerous max_y + high pc → piece_count accumulation → game over
+        if merge_grade == "NEAR" and max_y >= 2.0 and piece_count >= 35 and reactor_margin < 0.5 and not russia_merge_possible:
+            continue  # hard suppress: NEAR success rate too low at this board state
+
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
         # landing_y < 0 の安全なものに限定するロジック"
