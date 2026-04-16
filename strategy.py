@@ -784,21 +784,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade in ["DIRECT", "NEAR", "FAR"]:
             type_scale = 1.0 + 0.1 * max(0, next_type - 5)
             type_scale = max(0.8, min(type_scale, 2.0))  # floor 0.8, cap 2.0
-            # v604: NEAR merge suppression in death zone — reduce type_scale below normal floor
+            # v604: NEAR merge suppression in death zone — COMPLETE suppression (type_scale=0.0)
+            # analysis_result.md adopted hypothesis: "NEAR merge attemptを完全に抑制する（type_scale = 0）"
+            # v606's graduated reduction (type_scale~0.5) still left NEAR bonus ~231>0, allowing NEAR to be chosen.
+            # With type_scale=0.0, NEAR bonus = 0, making NO_MERGE (-300) or DIRECT merge preferred.
+            # This breaks the "NEAR merge → fail → pc grow → NEAR merge → fail → runaway" death spiral.
             if near_merge_suppression and merge_grade == "NEAR":
-                type_scale = 0.5
+                type_scale = 0.0
             # v606: pre-deadline elevated NEAR suppression — graduated reduction
-            # Fires when max_y>=1.5 && rp>=3 && pc>=28 but deadline NOT yet crossed.
-            # Graduated approach: avoids binary on/off, preserves legitimate high-type NEAR merges.
-            # elevation_factor: max_y=1.5 → 0.7 (30% reduction), max_y=2.0 → 0.5 (50%), max_y=2.5 → 0.3 (70%)
+            # Fires when max_y>=1.5 && rp>=3 && pc>=28 but deadline NOT yet crossed (v604 doesn't fire).
+            # analysis_result.md: "v606のelevated_factor計算式のmax_y>=2.0での下限強化"
+            # New formula: 1.0 - (max_y - 1.5) * 2.0 gives elevation_factor=0.0 at max_y=2.0 (complete suppression).
+            # At max_y=1.5: elevation_factor=1.0 (no suppression). At max_y=1.75: 0.5. At max_y=2.0+: 0.0.
             # pc_factor: pc=28 → 1.0x, pc=34 → 0.8x, pc=40 → 0.6x
             # Only applies when v604 hasn't already fired (to not override v604's stronger suppression).
             if near_merge_elevated_suppression and not near_merge_suppression and merge_grade == "NEAR":
-                elevation_factor = max(0.3, min(0.7, 1.0 - (max_y - 1.5) * 0.4))
+                elevation_factor = max(0.0, 1.0 - (max_y - 1.5) * 2.0)
                 pc_factor = max(0.6, 1.0 - (piece_count - 28) * 0.033)
                 type_scale *= elevation_factor * pc_factor
-                # Clamp to prevent going too low or exceeding normal range
-                type_scale = max(0.3, min(type_scale, 0.8))
+                # Clamp to prevent going too low or exceeding normal range (floor=0.0 since new formula can reach 0)
+                type_scale = max(0.0, min(type_scale, 0.8))
         else:
             type_scale = 1.0  # NO merge — no scaling
 
@@ -817,6 +822,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "NEAR":
             score += MergeBonus.NEAR * merge_mult * type_scale
             reasons.append("NEAR_MERGE")
+            # Add suppression tag when NEAR is completely suppressed (type_scale=0.0 from v604)
+            if near_merge_suppression and type_scale == 0.0:
+                reasons.append("NEAR_SUPPRESSED_DEADLY")
         elif merge_grade == "FAR":
             score += MergeBonus.FAR * merge_mult * type_scale
             reasons.append("FAR_MERGE")
