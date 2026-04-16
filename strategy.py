@@ -104,6 +104,10 @@ class BaseScale:
 
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
+# v662: Elevated NO_MERGE height coefficient tiers — max_y>=2.5 && rp>=1 → 200, max_y>=2.0 && rp>=1 → 150
+# Fixes: worst game T56-59 (max_y 2.03-2.05, rp=6) height coeff 120 insufficient vs horizontal guidance noise
+# Refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt (deadline avoidance)
+
 # v661: Add EDGE_ZONE_NO_MERGE_PENALTY — suppress edge placement (x=±3.0) when merge=NO && deadline_margin<0.5 && max_y>=1.5
 # Fixes: worst game T61-T77 NO_MERGE edge placement cycle — deadline penalty insufficient vs column_ceiling+stacking+proximity bonuses
 # Refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
@@ -1585,6 +1589,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             base_height_coefficient = 120.0
         elif moderate_drought:
             base_height_coefficient = 100.0
+        elif merge_grade == "NO" and max_y >= 2.5 and reactive_pair_count >= 1:
+            # v662: Elevated NO_MERGE tier at very high max_y
+            # Worst game T56-59: max_y 2.03-2.05, rp=6, height coeff 120 insufficient
+            # Best game T107-110: max_y 2.72-2.94, survived due to board compression + low rp
+            # At max_y>=2.5, horizontal guidance (column_ceiling~800-1250, stacking~400) dominates height penalty
+            # Height coeff 200: y=0 vs y=2.5 = 200*1.8*2.5 = 900pt — competitive with horizontal noise
+            base_height_coefficient = 200.0
+        elif merge_grade == "NO" and max_y >= 2.0 and reactive_pair_count >= 1:
+            # v662: Elevated NO_MERGE tier at high max_y
+            # Height coeff 150: y=0 vs y=2.0 = 150*1.8*2.0 = 540pt
+            base_height_coefficient = 150.0
         else:
             base_height_coefficient = 75.0  # v611: 50→75, improve NO-merge placement consistency
 
