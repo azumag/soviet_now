@@ -108,11 +108,9 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 # Fixes: worst game T56-59 (max_y 2.03-2.05, rp=6) height coeff 120 insufficient vs horizontal guidance noise
 # Refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt (deadline avoidance)
 
-# v661+v662: Add EDGE_ZONE_NO_MERGE_PENALTY — suppress edge placement (x=±3.0) when merge=NO && deadline_margin<0.5 && max_y>=1.5
-# v662: lower threshold to 2.0 and fix penalty to 3000 (was dynamic threshold 2.8, dynamic penalty *1000)
-# Fixes: worst game T60-T70 NO_MERGE edge placement at x=±2.0 with deadline violation
-#        mandatory_themes.txt: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-# Change: threshold 2.8→2.0, penalty 3000 (was max_y-based *1000)
+# v663: Remove EDGE_ZONE_NO_MERGE_PENALTY — worst game T60-T70 pattern shows it逆機能.
+# Mandatory: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+# Change: EDGE_ZONE_NO_MERGE_PENALTY rule deleted (budget: 1 logic replacement only)
 # Refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
 
 # Detailed version history: tmp/strategy_versions/CHANGELOG.md
@@ -2339,16 +2337,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= max(0, (0.5 - margin)) * 2500
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
-        # ----- v661+v662: EDGE_ZONE_NO_MERGE edge suppression -----
-        # Worst game T60-T70: x=-2.0 edge placement with NO_MERGE, margin=-0.95, pc 33→39.
-        # v661 threshold 2.8 was insufficient — x=±2.0 still causes deadline violations.
-        # mandatory_themes.txt: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # v662: lower threshold to 2.0 and fix penalty to 3000 (was dynamic *1000).
         # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
-        if merge_grade == "NO" and not russia_phase and margin < 0.5 and max_y >= 1.5:
-            if abs(x) >= 2.0:
-                score -= 3000.0
-                reasons.append("EDGE_ZONE_NO_MERGE_PENALTY")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).

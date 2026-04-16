@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-16 12:23:27 JST`
-- Nodes: `1096`
-- Edges: `1499`
-- Current: `c762d4700a04`
+- Updated: `2026-04-16 14:09:05 JST`
+- Nodes: `1097`
+- Edges: `1500`
+- Current: `b83b36234046`
 - Anchor: `0e22dd519bbf`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -71,10 +71,11 @@ flowchart TD
     h_3b6eea04b24f["3b6eea04b24f<br/>g=12 n=12<br/>comp=10958.1"]
     h_8a8c451b7a96["8a8c451b7a96<br/>g=12 n=12<br/>comp=10490.8"]
     h_2bd87d0c19d1["2bd87d0c19d1<br/>g=12 n=12<br/>comp=10073.4"]
+    h_c762d4700a04["c762d4700a04<br/>g=24 n=20<br/>comp=10291.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
-    h_c762d4700a04["c762d4700a04<br/>CURRENT"]
+    h_b83b36234046["b83b36234046<br/>CURRENT"]
 
     h_0e22dd519bbf -->|improve| h_a1b28607d015
     h_a1b28607d015 -->|improve| h_c10a4ca71357
@@ -143,10 +144,11 @@ flowchart TD
     h_2434cfa6a923 -->|improve| h_3b6eea04b24f
     h_3b6eea04b24f -->|improve| h_8a8c451b7a96
     h_8a8c451b7a96 -->|improve| h_2bd87d0c19d1
+    h_2bd87d0c19d1 -->|improve| h_c762d4700a04
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
-    h_2bd87d0c19d1 -->|improve| h_c762d4700a04
+    h_c762d4700a04 -->|improve| h_b83b36234046
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -209,10 +211,11 @@ flowchart TD
     class h_3b6eea04b24f plain;
     class h_8a8c451b7a96 plain;
     class h_2bd87d0c19d1 plain;
+    class h_c762d4700a04 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
-    class h_c762d4700a04 current;
+    class h_b83b36234046 current;
 ```
 
 ## Detail 1/14
@@ -3920,9 +3923,9 @@ flowchart TD
 
 ## Detail 14/14
 
-- Range: `c016461aeb9c` .. `c762d4700a04`
-- Nodes in this diagram: `56`
-- Internal edges in this diagram: `57`
+- Range: `c016461aeb9c` .. `b83b36234046`
+- Nodes in this diagram: `57`
+- Internal edges in this diagram: `58`
 - Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
@@ -3991,10 +3994,11 @@ flowchart TD
     h_3b6eea04b24f["3b6eea04b24f<br/>g=12 n=12<br/>comp=10958.1"]
     h_8a8c451b7a96["8a8c451b7a96<br/>g=12 n=12<br/>comp=10490.8"]
     h_2bd87d0c19d1["2bd87d0c19d1<br/>g=12 n=12<br/>comp=10073.4"]
+    h_c762d4700a04["c762d4700a04<br/>g=24 n=20<br/>comp=10291.1"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
-    h_c762d4700a04["c762d4700a04<br/>CURRENT"]
+    h_b83b36234046["b83b36234046<br/>CURRENT"]
 
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
@@ -4049,10 +4053,11 @@ flowchart TD
     h_2434cfa6a923 -->|improve| h_3b6eea04b24f
     h_3b6eea04b24f -->|improve| h_8a8c451b7a96
     h_8a8c451b7a96 -->|improve| h_2bd87d0c19d1
+    h_2bd87d0c19d1 -->|improve| h_c762d4700a04
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
-    h_2bd87d0c19d1 -->|improve| h_c762d4700a04
+    h_c762d4700a04 -->|improve| h_b83b36234046
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4111,13 +4116,24 @@ flowchart TD
     class h_3b6eea04b24f plain;
     class h_8a8c451b7a96 plain;
     class h_2bd87d0c19d1 plain;
+    class h_c762d4700a04 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
-    class h_c762d4700a04 current;
+    class h_b83b36234046 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#16132 `c762d470 -> b83b3623`
+
+- scores: `11701 7180 11194 8917 8939 9728 10628 9546 18244 13182 9134 9216`
+- v663: Remove EDGE_ZONE_NO_MERGE_PENALTY — worst game T60-T70 pattern shows it逆機能.
+- Mandatory: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+- Change: EDGE_ZONE_NO_MERGE_PENALTY rule deleted (budget: 1 logic replacement only)
+- removed: v661+v662: Add EDGE_ZONE_NO_MERGE_PENALTY — suppress edge placement (x=±3.0) when merge=NO && deadline_margin<0.5 && max_y>=1.5
+- removed: v662: lower threshold to 2.0 and fix penalty to 3000 (was dynamic threshold 2.8, dynamic penalty *1000)
+- removed: Fixes: worst game T60-T70 NO_MERGE edge placement at x=±2.0 with deadline violation
 
 ### Improve Game#16108 `2bd87d0c -> c762d470`
 
