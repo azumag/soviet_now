@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v666: NEAR merge at dangerous height scale — height_mult *= 1.0+(max_y-2.5)*0.5 when
+     #       merge_grade=="NEAR" && max_y>=2.5 && danger_piece_count>=1 (make NO_MERGE competitive)
+     #       Fixes worst game T52-62: 9 consecutive NEAR selections all yielded score_delta=0 despite max_y 1.66→3.32
+     #       Rollback constraint: does NOT modify HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY logic
+     #       refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v665: safe NEAR/DIRECT bonus强化 — reactor_margin>=0.5时base bonus提高(+600→+1000 NEAR, +1200→+1500 DIRECT)
      #       v422条件修正: reactor_margin<0.5追加 (deadline接近時[=danger zone]のみ适用)
      #       v421 pc_risk_scale: reactor_margin>=0.5时1.0にリセット (安全区域内はリスク増幅度1.0)
@@ -1350,6 +1355,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # postmortem constraint: not landing_y-only (uses board state + danger count).
         if not death_spiral and danger_piece_count >= 1 and merge_grade == "NO" and max_y >= 1.8:
             height_mult *= 0.3  # very strong reduction — stay low when danger exists
+
+        # v666: NEAR merge at dangerous height — scale up height penalty to make NO_MERGE competitive
+        # NEAR at max_y>=2.5 with danger_pieces consistently yields score_delta=0 in logs,
+        # suggesting NEAR doesn't actually compress the board at high max_y.
+        # Scale height_mult when: NEAR selected && max_y >= 2.5 && danger_piece_count >= 1
+        # Rollback constraint: does NOT change HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY logic,
+        # only applies additional scale to height_mult for NEAR merges at dangerous heights.
+        # Mandatory themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+        if merge_grade == "NEAR" and max_y >= 2.5 and danger_piece_count >= 1:
+            height_scale = 1.0 + (max_y - 2.5) * 0.5
+            height_mult *= height_scale
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
