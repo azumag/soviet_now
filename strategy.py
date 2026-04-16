@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
+     #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
+     #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
+     #       mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+     #       refs: tmp/analysis_result.md (Hypothesis: NO_MERGE height强化)
      # v670: danger zone DIRECT merge overwhelming priority — when danger_direct_merge_available &&
      #       merge_grade==DIRECT && crosses_deadline, add +5000 bonus. Analysis: worst T44 chose NEAR
      #       (score_delta=0) while best T118 chose DIRECT (score_delta=21). DIRECT avg_score_delta=56.4
@@ -1386,6 +1391,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # postmortem constraint: not landing_y-only (uses board state + danger count).
         if not death_spiral and danger_piece_count >= 1 and merge_grade == "NO" and max_y >= 1.8:
             height_mult *= 0.3  # very strong reduction — stay low when danger exists
+
+        # v671: NO_MERGE height penalty强化 at high danger zone
+        # Worst T65: merge_available=false, pc=35, max_y=2.25, deadline_crossed → NO_MERGE selected, max_y→3.08
+        # Best T137: pc=34, max_y=2.65 → NO_MERGE survives to end
+        # Key diff: pc threshold 34 vs 35. At pc>=35 && max_y>=2.3, NO_MERGE height penalty *0.5
+        # Rollback constraint: does NOT modify NEAR suppression (v668), HARD GUARD (v665), or russia_phase
+        # Fixes: NO_MERGE at deadline with high pc+max_y → piece_count accumulation → game over
+        # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # refs: tmp/analysis_result.md (Hypothesis: NO_MERGE height强化),
+        #       game_history/worst T65 (NO_MERGE failure), game_history/best T137 (NO_MERGE survival)
+        if merge_grade == "NO" and max_y >= 2.3 and piece_count >= 35:
+            height_mult *= 0.5  # strongly prefer lower positions for NO_MERGE at danger zone
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
