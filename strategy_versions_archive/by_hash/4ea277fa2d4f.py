@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v665: safe NEAR/DIRECT bonus强化 — reactor_margin>=0.5时base bonus提高(+600→+1000 NEAR, +1200→+1500 DIRECT)
+     #       v422条件修正: reactor_margin<0.5追加 (deadline接近時[=danger zone]のみ适用)
+     #       v421 pc_risk_scale: reactor_margin>=0.5时1.0にリセット (安全区域内はリスク増幅度1.0)
+     #       Fixes rollback failure mode: HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY firing when NEAR available
+     #       refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
      # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
      #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
      #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
@@ -785,10 +790,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            # v665: safe DIRECT bonus强化 — reactor_margin>=0.5 is safe zone, promote DIRECT priority
+            if reactor_margin >= 0.5:
+                score += 1500.0 * merge_mult
+            else:
+                score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            # v665: safe NEAR bonus强化 — reactor_margin>=0.5 && danger_piece_count==0 is safe
+            # batch_summary: NEAR_MERGE_EARLY avg_score_delta=28.5 (highest!) but only 2.9% selection
+            # This fixes the imbalance where safe NEAR merges were being penalized out
+            if reactor_margin >= 0.5 and danger_piece_count == 0:
+                score += 1000.0 * merge_mult
+            else:
+                score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
@@ -821,7 +836,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
             # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
-            if piece_count >= 33:
+            # v665: reset pc_risk_scale when reactor_margin>=0.5 (safe zone) — no extra penalty
+            if reactor_margin >= 0.5:
+                pc_risk_scale = 1.0
+            elif piece_count >= 33:
                 pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
             else:
                 pc_risk_scale = 1.0
@@ -841,7 +859,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v551: Russia-building exemption + high-type next additional penalty
         russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
         global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
-        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
+        # v665: add reactor_margin<0.5 to v422 — only penalize when deadline is actually close (danger zone)
+        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible and reactor_margin < 0.5:
             score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
             # v551: additional penalty for high-type next when merge is globally available

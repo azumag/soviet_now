@@ -1,18 +1,17 @@
 /**
- * strategy.mjs - ドロップ位置決定戦略 (v191 - further refined height management and crowding)
+ * strategy.mjs - ドロップ位置決定戦略 (v192 - further increased height management and look-ahead impact)
  *
- * v190をベースに以下の点を改善：
- * - 高さ管理の厳格化をさらに強化 (生存性向上):
- *   - DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER をさらに増加させ、デッドライン際での絶対回避ラインをさらに安全側に設定。
- *     "No valid move found" によるゲームオーバーの頻発に対応するため、より早期に高すぎるドロップを排除する。
- *   - SETTLING_BUFFER をさらに増加させ、物理エンジンの「回転・転がり」による最終到達Y座標の不確実性に対してさらに余裕を持たせる。
- *     予期せぬ高着地によるゲームオーバーのリスクを低減する。
- *   - CRITICAL_HEIGHT_MARGIN をわずかに増加させ、クリティカルな高さペナルティがより低いY座標から緩やかに適用され始めるように調整。
- *     HEIGHT_PENALTY_WEIGHT も増加させ、全体として高さ管理の優先度を向上させる。
- * - 密度管理の改善:
- *   - CROWDING_PENALTY_START_THRESHOLD を減少させ、より少ないピース数から混雑ペナルティを適用開始。
- *     盤面が過密になるのを早期に防ぎ、落下スペースを確保しやすくする。
- * - その他の設定はv190の調整を維持し、全体的な戦略バランスを保つ。
+ * v191をベースに以下の点を改善：
+ * - 高さ管理のさらなる厳格化と早期回避:
+ *   - DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER をさらに増加させ、デッドライン際での絶対回避ラインをより早期に発動。
+ *     ゲームオーバーにつながる高すぎる配置をより積極的に避ける。
+ *   - SETTLING_BUFFER を微増させ、物理エンジンの「回転・転がり」による最終到達Y座標の不確実性に対する安全マージンをさらに確保。
+ *   - CRITICAL_HEIGHT_MARGIN をわずかに増加させ、クリティカルな高さペナルティがより低いY座標から適用開始するように調整。
+ *   - HEIGHT_PENALTY_WEIGHT を大幅に増加させ、高さペナルティの優先度を全体的に引き上げ、高積み状態を強く抑制する。
+ * - 先読みの強化:
+ *   - LOOK_AHEAD_WEIGHT を増加させ、次に来るピースの配置が現在の決定に与える影響を大きくする。
+ *     これにより、将来のボード状況を見据えた戦略的なピース配置を促す。
+ * - その他の設定はv191の調整を維持し、全体的な戦略バランスを保つ。
  */
 
 // Expanded FINE_COLS to increase granularity for X-axis placement
@@ -22,15 +21,15 @@ const BOARD_X_MAX_LIMIT = 3.5; // Actual wall boundary. Max X a piece's *center*
 
 // Strategy-specific constants (Height Management)
 const DEADLINE_Y = 3.32;                  // Actual game over Y coordinate
-const CRITICAL_HEIGHT_MARGIN = 1.2; // v191: Adjusted from 1.0 (v190)
+const CRITICAL_HEIGHT_MARGIN = 1.3; // v192: Adjusted from 1.2 (v191)
 const TOP_Y_EXTREME_WARN_THRESHOLD = DEADLINE_Y - 1.2; // v182: Maintained
 
-const HEIGHT_PENALTY_WEIGHT = 500000.0; // v191: Adjusted from 400000.0 (v190)
-const SETTLING_BUFFER = 0.35; // v191: Adjusted from 0.30 (v190)
+const HEIGHT_PENALTY_WEIGHT = 750000.0; // v192: Adjusted from 500000.0 (v191)
+const SETTLING_BUFFER = 0.40; // v192: Adjusted from 0.35 (v191)
 
-// v179: Changed from absolute avoidance (Infinity) to a very large penalty.
+// Changed from absolute avoidance (Infinity) to a very large penalty.
 const DEADLINE_ABSOLUTE_AVOID_PENALTY = -1_000_000_000; // Very large penalty instead of Infinity
-const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.15; // v191: Adjusted from 0.10 (v190)
+const DEADLINE_ABSOLUTE_AVOID_THRESHOLD_BUFFER = 0.20; // v192: Adjusted from 0.15 (v191)
 
 // Merge and Pipeline Bonuses (v182: further increased)
 const MERGE_PROXIMITY_THRESHOLD = 0.20; // v181: Maintained from 0.20
@@ -43,7 +42,7 @@ const GARBAGE_CLEAR_MERGE_BONUS_LOW_Y = 3000; // v182: Maintained
 const SMALL_PIECE_CATALYST_BONUS = 1200; // v182: Maintained
 
 // Crowding Penalty (v191: decreased further)
-const CROWDING_PENALTY_START_THRESHOLD = 12; // v191: Adjusted from 15 (v190)
+const CROWDING_PENALTY_START_THRESHOLD = 12; // v191: Maintained
 const CROWDING_PENALTY_PER_PIECE = 40; // v182: Maintained
 
 // Large Piece Aggregation (v182: further increased)
@@ -51,8 +50,8 @@ const LARGE_PIECE_AGGREGATION_BONUS = 2300; // v182: Maintained
 const LARGE_PIECE_AGGREGATION_PENALTY = 1000;
 const LARGE_PIECE_TYPE_THRESHOLD = 9;
 
-// Look-ahead constants (v184: New)
-const LOOK_AHEAD_WEIGHT = 0.25; // Weight for the score of the next piece's best move
+// Look-ahead constants (v192: Adjusted)
+const LOOK_AHEAD_WEIGHT = 0.40; // v192: Adjusted from 0.25 (v184)
 
 /**
  * Helper to get piece radius based on type. (Approximation)
@@ -361,18 +360,17 @@ export function decide(boardState) {
             // Calculate base score for the current move
             currentScore += calculateMoveScore(pieceToDrop, x, predictedY, boardState, dominantLargePieceSide);
 
-            // --- Look-ahead for nextPieces[1] (v189: Improved) ---
+            // --- Look-ahead for nextPieces[1] ---
             if ((boardState.nextPieces?.length ?? 0) > 1) {
                 const nextPiece = boardState.nextPieces[1];
                 const nextPieceR = nextPiece.r ?? getPieceRadius(nextPiece.type);
 
                 // Create a hypothetical board state after the current piece is dropped
-                // It needs 'garbage' property for calculateMoveScore, so deep copy it or create a mock.
                 // For now, assume garbage state remains the same for the immediate next turn.
                 const hypotheticalBoardState = {
                     pieces: [...boardState.pieces,
                         {type: pieceToDrop.type, x: x, y: predictedY, r: pieceToDrop.r}],
-                    garbage: boardState.garbage // Assume garbage state doesn't change from this drop for next piece evaluation
+                    garbage: boardState.garbage
                 };
 
                 let maxHypotheticalNextScore = 0;

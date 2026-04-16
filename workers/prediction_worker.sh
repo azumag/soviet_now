@@ -129,7 +129,11 @@ while true; do
 	fi
 
 	# --- サイクル完了 resolve: acc_count >= threshold ---
-	if _has_prediction && [ "${current_acc_count:-0}" -ge "${MIN_GAMES_BEFORE_IMPROVE:-12}" ]; then
+	# soren_loop の post_game_bookkeeping → check_regression 区間中は保留する。
+	# この区間で resolve すると、粛清判定前に best_outcome=0 (建国なし) で確定してしまう。
+	if _has_prediction \
+		&& [ "${current_acc_count:-0}" -ge "${MIN_GAMES_BEFORE_IMPROVE:-12}" ] \
+		&& [ ! -f "$TMP_STATE_DIR/regression_check_in_progress" ]; then
 		best=$(_get_best_outcome)
 		_log "サイクル完了 (acc=${current_acc_count}) → resolve outcome=${best}"
 		./twitch_predictions.sh resolve "${best:-0}" >>tmp/prediction.log 2>&1 || true

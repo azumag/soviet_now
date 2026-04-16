@@ -16,7 +16,7 @@ PHYROGENETIC_EVENTS_FILE="phyrogenetic-events.jsonl"
 PHYROGENETIC_TREE_URL="${PHYROGENETIC_TREE_URL:-https://github.com/azumag/soviet_now/blob/main/phyrogenetic-tree.md}"
 
 MODEL_IMPROVE="minimax"
-REGRESSION_DISABLED=1  # レビュー改善定着まで粛清一時停止
+REGRESSION_DISABLED=0
 MERIKEN_SCHEDULED_TIME_ENABLED=0  # 20-21時メリケンAIタイムを無効化
 MODEL_FALLBACK_IMPROVE="minimax"
 MODEL_LAST_RESORT="opencode:glmflash"

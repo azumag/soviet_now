@@ -1320,18 +1320,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
         height_mult = max(height_mult, 0.5)
 
-        # v664: danger-based height enforcement — when danger pieces exist with NO merge,
-        # strengthen height penalty to prevent piece accumulation that causes game over.
-        # Worst game T60-67: danger=0→7, max_y=1.9→3.10, piece_count=38→44.
-        # At max_y>=1.8 with danger pieces, height penalty diff (~100-200) is insufficient
-        # vs horizontal bonuses (~200-900), allowing HEIGHT_CONTROL selections that
-        # accelerate piece_count accumulation even when merge opportunities exist.
-        # Mandatory themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # Rollback constraint: NEAR_MERGE must be prioritized when merge_available=true.
-        # postmortem constraint: not landing_y-only (uses board state + danger count).
-        if not death_spiral and danger_piece_count >= 1 and merge_grade == "NO" and max_y >= 1.8:
-            height_mult *= 0.3  # very strong reduction — stay low when danger exists
-
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
 

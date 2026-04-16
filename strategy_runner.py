@@ -151,9 +151,14 @@ def load_strategy_module():
 
 
 def get_strategy_hash():
-    """strategy.py のMD5ハッシュ（先頭8文字）を返す"""
-    with open("strategy.py", "rb") as f:
-        return hashlib.md5(f.read()).hexdigest()[:8]
+    """strategy.py の decide() ASTハッシュを返す（extract_decide_hash.py と同一方式）"""
+    try:
+        from extract_decide_hash import compute_hash
+        h = compute_hash("strategy.py")
+        return h if h else hashlib.md5(open("strategy.py", "rb").read()).hexdigest()[:8]
+    except Exception:
+        with open("strategy.py", "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()[:8]
 
 
 def count_piece_type(game_state, piece_type):

@@ -23,6 +23,15 @@ FLOOR_Y = -5.0
 DROP_Y = 4.25
 DEADLINE_Y = 2.5
 
+# ポリゴン形状補正係数
+# 円モデルの衝突半径 = r * COLLISION_POLY_FACTOR
+# ピースの r はスプライトBBox外接円相当だが、実際の PolygonCollider2D はより小さい。
+# 旧値 0.75 では大型ピース（type10: r≈1.0, type11: r≈1.7）が隣接する場合に
+# 経路ブロック誤判定が多発し、DIRECT検出率が著しく低下（実測 0-33%成功率）。
+# 0.55 は shapes データの最小 horiz/r 比（type1: 0.62）に近く、
+# 落下経路のポリゴン間ギャップをより正確に反映する。
+COLLISION_POLY_FACTOR = 0.55
+
 # 物理定数（Unity 2D Physics準拠）
 GRAVITY = 9.81
 EXPLOSION_FORCE = 450.0
@@ -283,7 +292,6 @@ def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
     r はスプライトバウンディングボックス半幅（外接円相当）だが、
     実際のコライダーは PolygonCollider2D で外接円より小さい。
     shapes から計算した実効半径で衝突範囲を補正する。"""
-    POLY_FACTOR = 0.75  # ポリゴン形状補正（shapes分析: avg/bbox比 = 0.58-0.78）
     landing_y = FLOOR_Y + drop_r  # 床
     hit_id = None  # None = 床に着地
 
@@ -291,7 +299,7 @@ def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
     if eff_radii and drop_type in eff_radii:
         drop_eff_r = eff_radii[drop_type]["horiz"]
     else:
-        drop_eff_r = drop_r * POLY_FACTOR
+        drop_eff_r = drop_r * COLLISION_POLY_FACTOR
 
     for p in pieces:
         px, py, pr = p["x"], p["y"], p["r"]
@@ -299,7 +307,7 @@ def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
         if eff_radii and p_type in eff_radii:
             p_eff_r = eff_radii[p_type]["horiz"]
         else:
-            p_eff_r = pr * POLY_FACTOR
+            p_eff_r = pr * COLLISION_POLY_FACTOR
         combined_r = drop_eff_r + p_eff_r
         dx = drop_x - px
         if abs(dx) < combined_r:
@@ -314,17 +322,18 @@ def get_landing_info(drop_x, drop_r, pieces, eff_radii=None, drop_type=0):
 
 def has_obstruction(drop_x, drop_r, target, pieces):
     """DIRECT判定時に、ターゲットの上方にドロップ経路を妨害するピースがないか確認。
-    厳密な衝突判定では検出されないが、実際のゲームでは干渉する
-    ギリギリのピースを安全併合ン(20%)で検出する。"""
-    MARGIN = 1.2
+    ポリゴン形状を考慮した実効半径で判定し、5%の安全マージンを加算。
+    旧実装: 生r値 × 1.2 → 大型ピースで巨大な排除ゾーンが発生しDIRECT誤否定多発。
+    新実装: COLLISION_POLY_FACTOR適用後 × 1.05 → ポリゴン実効サイズに近い判定。"""
+    MARGIN = 1.05
     for p in pieces:
         if p["id"] == target["id"]:
             continue
         # ターゲットより上にあるピースのみチェック
         if p["y"] + p["r"] < target["y"]:
             continue
-        # ドロップ経路との干渉チェック（併合ン付き）
-        margin_r = (drop_r + p["r"]) * MARGIN
+        # ポリゴン補正後の実効半径で干渉チェック
+        margin_r = (drop_r * COLLISION_POLY_FACTOR + p["r"] * COLLISION_POLY_FACTOR) * MARGIN
         if abs(drop_x - p["x"]) < margin_r:
             return True
     return False
@@ -356,7 +365,10 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
         if x < DROP_X_MIN - 0.01 or x > DROP_X_MAX + 0.01:
             continue
 
-        ly, hit_id = get_landing_info(x, next_r, pieces, eff_radii, next_type)
+        # 併合判定用: 元の円モデルで着地予測（併合距離の精度を維持）
+        ly, hit_id = get_landing_info(x, next_r, pieces)
+        # デッドライン判定用: ポリゴン補正で着地予測（crosses_deadline の偽陽性を抑制）
+        ly_poly, _ = get_landing_info(x, next_r, pieces, eff_radii, next_type)
 
         # ポリゴン形状によるドリフト推定
         drift_x, drift_unc = estimate_polygon_drift(
@@ -365,7 +377,7 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
         # ドリフト後の推定最終X
         settled_x = x + drift_x
 
-        # 各同typeピースへの併合判定（ドリフト考慮）
+        # 各同typeピースへの併合判定（ドリフト考慮、元の円モデルの ly を使用）
         merges = []
         for t in same_type:
             contact_r = next_r + t["r"]  # 厳密接触距離
@@ -424,7 +436,8 @@ def analyze_drops(pieces, next_type, next_r, shapes=None):
                     best_merge_dist = m["dist"]
 
         has_merge = best_grade in ("DIRECT", "NEAR")
-        top_after_drop = ly + next_top_r
+        # デッドライン判定にはポリゴン補正版の着地予測を使用
+        top_after_drop = ly_poly + next_top_r
         danger_direct_merge_available = any(
             m["grade"] == "DIRECT" and (
                 float(next((p.get("redLineTime", 0) for p in same_type if p["id"] == m["id"]), 0) or 0) > 0

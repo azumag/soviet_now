@@ -315,6 +315,9 @@ while true; do
 	fi
 
 	# 後処理 (スコア記録, バージョン保存, git commit 等)
+	# 粛清判定が走る前に prediction_worker がサイクル完了 resolve を先行発火させないよう、
+	# post_game_bookkeeping (acc_count++) → check_regression の全区間をガードする。
+	touch "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 	post_game_bookkeeping
 	post_rc=$?
 	_abort_if_interrupted "$post_rc" "post_game_bookkeeping"
@@ -326,6 +329,7 @@ while true; do
 
 	# ソ連建国達成後は retry を含む次ゲーム操作を行わない
 	if [ "${HALT_STRATEGY_AFTER_SOVIET:-0}" -eq 1 ]; then
+		rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 		log "[HALT] retry・次ゲーム操作を停止"
 		sleep 5
 		continue
@@ -346,6 +350,7 @@ d=json.load(open(f)); d['best_outcome']=3; json.dump(d,open(f,'w'))
 		fi
 		_clear_accumulated_data
 	fi
+	rm -f "$TMP_STATE_DIR/regression_check_in_progress" 2>/dev/null || true
 
 	# 改善サイクル管理: 12試合蓄積時にロックファイルを作成してdeamonに通知
 	# improve_daemon が動いていない場合は蓄積リセットのみ行い次サイクルへ
