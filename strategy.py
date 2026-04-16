@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v667: v665+v666 conflict fix — add reactor_margin<0.5 to v666 height scale condition
+     #       v665: reactor_margin>=0.5 (safe zone) gives NEAR+1000 bonus, v666 scales height penalty
+     #       Conflict: same condition (NEAR && max_y>=2.5 && danger>=1) triggered both bonuses
+     #       Fix: only apply v666 height scale when reactor_margin<0.5 (danger zone)
+     #       Rollback failure mode fixed: NEAR available yet HEIGHT_LAYER selected
+     #       refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v666: NEAR merge at dangerous height scale — height_mult *= 1.0+(max_y-2.5)*0.5 when
      #       merge_grade=="NEAR" && max_y>=2.5 && danger_piece_count>=1 (make NO_MERGE competitive)
      #       Fixes worst game T52-62: 9 consecutive NEAR selections all yielded score_delta=0 despite max_y 1.66→3.32
@@ -1356,15 +1362,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if not death_spiral and danger_piece_count >= 1 and merge_grade == "NO" and max_y >= 1.8:
             height_mult *= 0.3  # very strong reduction — stay low when danger exists
 
-        # v666: NEAR merge at dangerous height — scale up height penalty to make NO_MERGE competitive
+        # v666+v665 fix: NEAR merge at dangerous height — scale up height penalty to make NO_MERGE competitive
         # NEAR at max_y>=2.5 with danger_pieces consistently yields score_delta=0 in logs,
         # suggesting NEAR doesn't actually compress the board at high max_y.
         # Scale height_mult when: NEAR selected && max_y >= 2.5 && danger_piece_count >= 1
+        # BUT: only in danger zone (reactor_margin < 0.5), not safe zone where v665 NEAR bonus applies
         # Rollback constraint: does NOT change HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY logic,
         # only applies additional scale to height_mult for NEAR merges at dangerous heights.
         # Mandatory themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
         # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-        if merge_grade == "NEAR" and max_y >= 2.5 and danger_piece_count >= 1:
+        if merge_grade == "NEAR" and max_y >= 2.5 and danger_piece_count >= 1 and reactor_margin < 0.5:
             height_scale = 1.0 + (max_y - 2.5) * 0.5
             height_mult *= height_scale
 
