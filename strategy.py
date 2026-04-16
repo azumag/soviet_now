@@ -64,22 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v667: v665+v666 conflict fix — add reactor_margin<0.5 to v666 height scale condition
-     #       v665: reactor_margin>=0.5 (safe zone) gives NEAR+1000 bonus, v666 scales height penalty
-     #       Conflict: same condition (NEAR && max_y>=2.5 && danger>=1) triggered both bonuses
-     #       Fix: only apply v666 height scale when reactor_margin<0.5 (danger zone)
-     #       Rollback failure mode fixed: NEAR available yet HEIGHT_LAYER selected
-     #       refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-     # v666: NEAR merge at dangerous height scale — height_mult *= 1.0+(max_y-2.5)*0.5 when
-     #       merge_grade=="NEAR" && max_y>=2.5 && danger_piece_count>=1 (make NO_MERGE competitive)
-     #       Fixes worst game T52-62: 9 consecutive NEAR selections all yielded score_delta=0 despite max_y 1.66→3.32
-     #       Rollback constraint: does NOT modify HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY logic
-     #       refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-     # v665: safe NEAR/DIRECT bonus强化 — reactor_margin>=0.5时base bonus提高(+600→+1000 NEAR, +1200→+1500 DIRECT)
-     #       v422条件修正: reactor_margin<0.5追加 (deadline接近時[=danger zone]のみ适用)
-     #       v421 pc_risk_scale: reactor_margin>=0.5时1.0にリセット (安全区域内はリスク増幅度1.0)
-     #       Fixes rollback failure mode: HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY firing when NEAR available
-     #       refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
      # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
      #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
      #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
@@ -801,20 +785,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
         if merge_grade == "DIRECT":
-            # v665: safe DIRECT bonus强化 — reactor_margin>=0.5 is safe zone, promote DIRECT priority
-            if reactor_margin >= 0.5:
-                score += 1500.0 * merge_mult
-            else:
-                score += 1200.0 * merge_mult
+            score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            # v665: safe NEAR bonus强化 — reactor_margin>=0.5 && danger_piece_count==0 is safe
-            # batch_summary: NEAR_MERGE_EARLY avg_score_delta=28.5 (highest!) but only 2.9% selection
-            # This fixes the imbalance where safe NEAR merges were being penalized out
-            if reactor_margin >= 0.5 and danger_piece_count == 0:
-                score += 1000.0 * merge_mult
-            else:
-                score += 600.0 * merge_mult
+            score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
@@ -847,10 +821,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
             # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
-            # v665: reset pc_risk_scale when reactor_margin>=0.5 (safe zone) — no extra penalty
-            if reactor_margin >= 0.5:
-                pc_risk_scale = 1.0
-            elif piece_count >= 33:
+            if piece_count >= 33:
                 pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
             else:
                 pc_risk_scale = 1.0
@@ -870,8 +841,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v551: Russia-building exemption + high-type next additional penalty
         russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
         global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
-        # v665: add reactor_margin<0.5 to v422 — only penalize when deadline is actually close (danger zone)
-        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible and reactor_margin < 0.5:
+        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
             score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
             # v551: additional penalty for high-type next when merge is globally available
@@ -1361,19 +1331,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # postmortem constraint: not landing_y-only (uses board state + danger count).
         if not death_spiral and danger_piece_count >= 1 and merge_grade == "NO" and max_y >= 1.8:
             height_mult *= 0.3  # very strong reduction — stay low when danger exists
-
-        # v666+v665 fix: NEAR merge at dangerous height — scale up height penalty to make NO_MERGE competitive
-        # NEAR at max_y>=2.5 with danger_pieces consistently yields score_delta=0 in logs,
-        # suggesting NEAR doesn't actually compress the board at high max_y.
-        # Scale height_mult when: NEAR selected && max_y >= 2.5 && danger_piece_count >= 1
-        # BUT: only in danger zone (reactor_margin < 0.5), not safe zone where v665 NEAR bonus applies
-        # Rollback constraint: does NOT change HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY logic,
-        # only applies additional scale to height_mult for NEAR merges at dangerous heights.
-        # Mandatory themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-        if merge_grade == "NEAR" and max_y >= 2.5 and danger_piece_count >= 1 and reactor_margin < 0.5:
-            height_scale = 1.0 + (max_y - 2.5) * 0.5
-            height_mult *= height_scale
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
