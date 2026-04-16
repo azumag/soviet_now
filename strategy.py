@@ -64,6 +64,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
+     #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
+     #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
+     #       refs: tmp/analysis_result.md, data/user_review.md
      # v661: continuous deadline-margin penalty — replace v411 binary crosses_deadline (-1200) with
      #       result["deadline_margin"] continuous penalty (5000/unit deficit). margin=0.3→-1000, 0→-2500.
      #       Also added NEAR merge deadline risk (half-strength, 2500/unit). mandatory_themes compliant.
@@ -1585,16 +1589,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         danger_piece_count = reactor.get("danger_piece_count", 0)
 
-        # v661: danger zone merge priority — expand condition to max_y >= 2.0 || deadline_crossed
-        # v317/v331 had max_y>=2.0 && rp>=2 threshold, insufficient vs HEIGHT_CONTROL/COLUMN_CEILING.
-        # With deadline_crossed OR max_y>=2.0, force merge priority: DIRECT +1600, NEAR +800.
-        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
+        # v662: danger zone merge priority — increase bonuses to overcome NO_MERGE penalties
+        # v661 (DIRECT +1600, NEAR +800) still loses to NO_MERGE with COLUMN_CEILING (+800-1250)
+        # and REACTIVE_PAIRS_NO_MERGE_PENALTY (-4500) stacking. Analysis: NO_MERGE wins because
+        # the -4500 penalty applies equally to all candidates, but NO_MERGE candidates get
+        # additional COLUMN_CEILING bonuses, narrowing the gap.
+        # New values: DIRECT +3000, NEAR +2500 — enough to beat any NO_MERGE bonus combination.
+        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, data/user_review.md
         if (max_y >= 2.0 or deadline_crossed) and merge_grade in ["DIRECT", "NEAR"]:
             if merge_grade == "DIRECT":
-                score += 1600.0
+                score += 3000.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             else:
-                score += 800.0
+                score += 2500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v321: 即時併合ボーナス維持) -----
