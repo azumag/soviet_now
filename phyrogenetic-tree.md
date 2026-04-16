@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-17 03:26:12 JST`
-- Nodes: `1107`
-- Edges: `1514`
-- Current: `891e238759b8`
+- Updated: `2026-04-17 04:16:33 JST`
+- Nodes: `1108`
+- Edges: `1515`
+- Current: `32ef1ca432b8`
 - Anchor: `891e238759b8`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_71413461e56e["71413461e56e<br/>g=12 n=12<br/>comp=9939.6"]
     h_7a9bba424462["7a9bba424462<br/>g=12 n=12<br/>comp=11632.7"]
     h_0ffb1e00fba1["0ffb1e00fba1<br/>g=12 n=12<br/>comp=8755.9"]
     h_634d0b4d44d1["634d0b4d44d1<br/>g=36 n=20<br/>comp=11156.1"]
@@ -64,7 +63,7 @@ flowchart TD
     h_b83b36234046["b83b36234046<br/>g=12 n=12<br/>comp=9451.9"]
     h_03a3722d0f51["03a3722d0f51<br/>g=12 n=12<br/>comp=11123.3"]
     h_1889b86f95bf["1889b86f95bf<br/>g=12 n=12<br/>comp=11082.4"]
-    h_891e238759b8["891e238759b8<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=14240.3"]
+    h_891e238759b8["891e238759b8<br/>ANCHOR<br/>g=36 n=20<br/>comp=9441.9"]
     h_4ea277fa2d4f["4ea277fa2d4f<br/>g=12 n=12<br/>comp=11247.4"]
     h_e7f9c9cfc8dd["e7f9c9cfc8dd<br/>g=24 n=20<br/>comp=10554.7"]
     h_be0bb29a80cd["be0bb29a80cd<br/>g=13 n=13<br/>comp=11630.3"]
@@ -75,8 +74,8 @@ flowchart TD
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e<br/>g=12 n=12<br/>comp=11990.2"]
+    h_32ef1ca432b8["32ef1ca432b8<br/>CURRENT"]
 
-    h_71413461e56e -->|improve| h_7a9bba424462
     h_7a9bba424462 -->|improve| h_0ffb1e00fba1
     h_634d0b4d44d1 -->|improve| h_4a56ffd588bd
     h_4a56ffd588bd -->|improve| h_05851eb12718
@@ -128,16 +127,15 @@ flowchart TD
     h_891e238759b8 -->|improve| h_004626cd4739
     h_004626cd4739 -. rollback .-> h_891e238759b8
     h_891e238759b8 -->|improve| h_44b8e69bf801
-    h_355868eaf8ab -->|improve| h_71413461e56e
-    h_2ad5850b541e -->|improve| h_891e238759b8
     h_44b8e69bf801 -. rollback .-> h_891e238759b8
+    h_2ad5850b541e -->|improve| h_891e238759b8
+    h_891e238759b8 -->|improve| h_32ef1ca432b8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_71413461e56e plain;
     class h_7a9bba424462 plain;
     class h_0ffb1e00fba1 plain;
     class h_634d0b4d44d1 plain;
@@ -186,7 +184,7 @@ flowchart TD
     class h_b83b36234046 plain;
     class h_03a3722d0f51 plain;
     class h_1889b86f95bf plain;
-    class h_891e238759b8 current_anchor;
+    class h_891e238759b8 anchor;
     class h_4ea277fa2d4f plain;
     class h_e7f9c9cfc8dd plain;
     class h_be0bb29a80cd plain;
@@ -197,6 +195,7 @@ flowchart TD
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
+    class h_32ef1ca432b8 current;
 ```
 
 ## Detail 1/14
@@ -3905,9 +3904,9 @@ flowchart TD
 
 ## Detail 14/14
 
-- Range: `c016461aeb9c` .. `2ad5850b541e`
-- Nodes in this diagram: `67`
-- Internal edges in this diagram: `69`
+- Range: `c016461aeb9c` .. `32ef1ca432b8`
+- Nodes in this diagram: `68`
+- Internal edges in this diagram: `70`
 - Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
@@ -3980,7 +3979,7 @@ flowchart TD
     h_b83b36234046["b83b36234046<br/>g=12 n=12<br/>comp=9451.9"]
     h_03a3722d0f51["03a3722d0f51<br/>g=12 n=12<br/>comp=11123.3"]
     h_1889b86f95bf["1889b86f95bf<br/>g=12 n=12<br/>comp=11082.4"]
-    h_891e238759b8["891e238759b8<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=14240.3"]
+    h_891e238759b8["891e238759b8<br/>ANCHOR<br/>g=36 n=20<br/>comp=9441.9"]
     h_4ea277fa2d4f["4ea277fa2d4f<br/>g=12 n=12<br/>comp=11247.4"]
     h_e7f9c9cfc8dd["e7f9c9cfc8dd<br/>g=24 n=20<br/>comp=10554.7"]
     h_be0bb29a80cd["be0bb29a80cd<br/>g=13 n=13<br/>comp=11630.3"]
@@ -3991,6 +3990,7 @@ flowchart TD
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e<br/>g=12 n=12<br/>comp=11990.2"]
+    h_32ef1ca432b8["32ef1ca432b8<br/>CURRENT"]
 
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
@@ -4056,11 +4056,12 @@ flowchart TD
     h_891e238759b8 -->|improve| h_004626cd4739
     h_004626cd4739 -. rollback .-> h_891e238759b8
     h_891e238759b8 -->|improve| h_44b8e69bf801
+    h_44b8e69bf801 -. rollback .-> h_891e238759b8
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
     h_2ad5850b541e -->|improve| h_891e238759b8
-    h_44b8e69bf801 -. rollback .-> h_891e238759b8
+    h_891e238759b8 -->|improve| h_32ef1ca432b8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4123,7 +4124,7 @@ flowchart TD
     class h_b83b36234046 plain;
     class h_03a3722d0f51 plain;
     class h_1889b86f95bf plain;
-    class h_891e238759b8 current_anchor;
+    class h_891e238759b8 anchor;
     class h_4ea277fa2d4f plain;
     class h_e7f9c9cfc8dd plain;
     class h_be0bb29a80cd plain;
@@ -4134,9 +4135,20 @@ flowchart TD
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
+    class h_32ef1ca432b8 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#16335 `891e2387 -> 32ef1ca4`
+
+- scores: `8931 10521 7216 11356 9988 5813 7897 15582 9098 6430 11044 10717`
+- v668: HARD SUPPRESS - NEAR merge抑止 at extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3)
+- worst T61-T63: NEAR at max_y=2.0+, pc=38+, danger=2+, reactor_margin<0.3 → all failures
+- extra_high T102-T106: NEAR at max_y=2.17-2.45, pc=44-47 → all score_delta=0
+- NEAR success rate 68.5%. At extreme danger conditions, failure rate 31.5% combined with piece_count
+- accumulation → max_y runaway → game over. HARD SUPPRESS prevents NEAR candidates from being
+- evaluated, forcing NO_MERGE with low placement which is safer for max_y control.
 
 ### Rollback Game#16323 `44b8e69b -> 891e2387`
 

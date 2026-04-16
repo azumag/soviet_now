@@ -533,6 +533,18 @@ Phases (determined by board max Y):
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
   #
+# v668: HARD SUPPRESS - NEAR merge抑止 at extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3)
+# worst T61-T63: NEAR at max_y=2.0+, pc=38+, danger=2+, reactor_margin<0.3 → all failures
+# extra_high T102-T106: NEAR at max_y=2.17-2.45, pc=44-47 → all score_delta=0
+# NEAR success rate 68.5%. At extreme danger conditions, failure rate 31.5% combined with piece_count
+# accumulation → max_y runaway → game over. HARD SUPPRESS prevents NEAR candidates from being
+# evaluated, forcing NO_MERGE with low placement which is safer for max_y control.
+# mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+# refs: tmp/analysis_result.md (Hypothesis: NEAR merge高危険域完全抑止),
+#       game_history/20260417_034623_score0662.jsonl T61-63 (worst NEAR failures),
+#       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
+# Fixes rollback failure mode: piece_count accumulation from failed NEAR at high max_y (v668)
+  #
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
@@ -775,6 +787,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
+
+        # ----- HARD SUPPRESS: NEAR merge at extreme danger with high piece_count -----
+        # worst T61-T63: NEAR at max_y=2.0+, pc=38+, danger=2+, reactor_margin<0.3 → all failures
+        # extra_high T102-T106: NEAR at max_y=2.17-2.45, pc=44-47 → all score_delta=0
+        # NEAR success rate is 68.5%. At extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3),
+        # failure rate 31.5% combined with piece_count accumulation → max_y runaway → game over.
+        # Even when NEAR succeeds, max_y stays high. When NEAR fails, board gets worse.
+        # NO_MERGE with low placement is safer: preserves piece_count, maintains max_y control.
+        # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # Rollback constraint: does NOT modify any existing height/merge bonus logic
+        # refs: game_history/20260417_034623_score0662.jsonl T61-63 (worst NEAR failures),
+        #       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
+        #       tmp/improve_brief.md (HEIGHT_CONTROL 18.5%, avg_score_delta=2.9)
+        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 38 and danger_piece_count >= 1 and reactor_margin < 0.3:
+            continue  # HARD SUPPRESS: this NEAR will likely fail and accelerate game over
 
         score = 0.0
         reasons = []
