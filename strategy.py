@@ -1320,6 +1320,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
         height_mult = max(height_mult, 0.5)
 
+        # v664: danger-based height enforcement — when danger pieces exist with NO merge,
+        # strengthen height penalty to prevent piece accumulation that causes game over.
+        # Worst game T60-67: danger=0→7, max_y=1.9→3.10, piece_count=38→44.
+        # At max_y>=1.8 with danger pieces, height penalty diff (~100-200) is insufficient
+        # vs horizontal bonuses (~200-900), allowing HEIGHT_CONTROL selections that
+        # accelerate piece_count accumulation even when merge opportunities exist.
+        # Mandatory themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # Rollback constraint: NEAR_MERGE must be prioritized when merge_available=true.
+        # postmortem constraint: not landing_y-only (uses board state + danger count).
+        if not death_spiral and danger_piece_count >= 1 and merge_grade == "NO" and max_y >= 1.8:
+            height_mult *= 0.3  # very strong reduction — stay low when danger exists
+
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
 
@@ -1589,20 +1601,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         danger_piece_count = reactor.get("danger_piece_count", 0)
 
-        # v662: danger zone merge priority — increase bonuses to overcome NO_MERGE penalties
-        # v661 (DIRECT +1600, NEAR +800) still loses to NO_MERGE with COLUMN_CEILING (+800-1250)
-        # and REACTIVE_PAIRS_NO_MERGE_PENALTY (-4500) stacking. Analysis: NO_MERGE wins because
-        # the -4500 penalty applies equally to all candidates, but NO_MERGE candidates get
-        # additional COLUMN_CEILING bonuses, narrowing the gap.
-        # New values: DIRECT +3000, NEAR +2500 — enough to beat any NO_MERGE bonus combination.
-        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, data/user_review.md
+        # v663: danger zone merge priority — NEAR bonus gated by deadline margin
+        # v662 NEAR +2500 overwhelmed deadline-crossing penalties, causing NEAR merges
+        # at deadline-crossing positions (T50/T63/T66: NEAR+cross beats NO-merge+low).
+        # NEAR success rate is only 26-47% — crossing deadline for a coin-flip merge
+        # is reckless. DIRECT remains full bonus (user confirmed acceptable).
+        # New: NEAR bonus suppressed when per-candidate margin < 0.3 (close to/past deadline).
+        # At margin=-0.1 (just crossed): NEAR gets 0 instead of +2500, letting
+        # CROSSES_DEADLINE_NEAR_RISK (-2400) and height penalty guide to lower position.
+        # refs: game_history/20260416_193206_score1203.jsonl T50/T63/T66,
+        #       tmp/analysis_result.md, data/user_review.md
         if (max_y >= 2.0 or deadline_crossed) and merge_grade in ["DIRECT", "NEAR"]:
             if merge_grade == "DIRECT":
                 score += 3000.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             else:
-                score += 2500.0
-                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
+                # NEAR: suppress bonus when this candidate crosses or nearly crosses deadline
+                candidate_margin = result.get("deadline_margin", 99)
+                if candidate_margin >= 0.3:
+                    score += 2500.0
+                    reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
+                else:
+                    # Too close to deadline for a NEAR merge (26-47% success rate)
+                    # Let deadline penalty and height penalty determine placement
+                    pass
 
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v321: 即時併合ボーナス維持) -----
         # v317: reactive_pairs数に応じた即時併合ボーナスを維持
@@ -1613,11 +1635,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
-            if reactive_pair_count >= 2:
-                score += 1000.0
-            else:
-                score += 600.0
-            reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+            # v663: NEAR bonus suppressed near deadline (same logic as axis 8.5)
+            candidate_margin_86 = result.get("deadline_margin", 99)
+            near_deadline_suppressed = (merge_grade == "NEAR" and candidate_margin_86 < 0.3)
+            if not near_deadline_suppressed:
+                if reactive_pair_count >= 2:
+                    score += 1000.0
+                else:
+                    score += 600.0
+                reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
@@ -1789,19 +1815,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
-        # ----- v661: continuous deadline-margin penalty (replace v411 binary crosses_deadline) -----
-        # v411 binary crosses_deadline was -1200 fixed: insufficient vs other bonuses, no diff when all candidates cross.
-        # New: result["deadline_margin"] = DEADLINE_Y - top_after_drop (continuous). margin < 0.5 → penalty scales
-        # with closeness to deadline (5000 per unit deficit). margin=0.3 → -1000, margin=0 → -2500.
+        # ----- v662: continuous deadline-margin penalty (enhanced from v661) -----
+        # v661 NEAR penalty was too weak: threshold 0.3 and 2500/unit let NEAR+deadline-cross
+        # beat NO-merge low positions. NEAR success rate is only 26-47% (measured), so
+        # crossing deadline for a NEAR is almost as bad as crossing for NO merge.
+        # v662: unified threshold 0.5 for both NO and NEAR, NEAR penalty raised to 4000/unit.
+        # DIRECT merges remain exempt (user confirmed: DIRECT crossing deadline is acceptable).
+        # Example at margin=-0.1: NO penalty=(0.5-(-0.1))*5000=3000, NEAR=(0.5-(-0.1))*4000=2400
         # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # refs: tmp/analysis_result.md, data/mandatory_themes.txt
+        # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
+        #       game_history/20260416_193206_score1203.jsonl T50/T63/T66 (NEAR crosses deadline)
         margin = result.get("deadline_margin", 99)
         if merge_grade == "NO" and not russia_phase and margin < 0.5:
             score -= max(0, (0.5 - margin)) * 5000
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
-        # v661: NEAR merge deadline risk — half-strength penalty when margin < 0.3
-        elif merge_grade == "NEAR" and not russia_phase and margin < 0.3:
-            score -= max(0, (0.3 - margin)) * 2500
+        elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
+            score -= max(0, (0.5 - margin)) * 4000
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
         # ----- update best candidate -----
