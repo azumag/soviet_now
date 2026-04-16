@@ -64,6 +64,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v669: HARD SUPPRESS fallback — count suppressed candidates; if all suppressed,
+     #       fallback to lowest landing_y among all results. Fixes all-NEAR-suppress bug
+     #       that returns x=0.0 with no reason. mandatory_themes compliant.
+     #       refs: tmp/analysis_result.md (Bug #1), data/user_review.md
      # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
      #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
      #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
@@ -781,6 +785,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
+    suppressed = 0
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -801,6 +806,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
         #       tmp/improve_brief.md (HEIGHT_CONTROL 18.5%, avg_score_delta=2.9)
         if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 38 and danger_piece_count >= 1 and reactor_margin < 0.3:
+            suppressed += 1
             continue  # HARD SUPPRESS: this NEAR will likely fail and accelerate game over
 
         score = 0.0
@@ -1865,6 +1871,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+
+    # ----- FALLBACK: if all non-suppressed candidates were suppressed, pick lowest landing_y -----
+    # Bug fix: HARD SUPPRESS can skip all candidates in extreme danger, returning best_x=0.0 with empty reason.
+    # When suppressed == len(results), fall back to the candidate with the lowest landing_y among NEAR candidates.
+    # This is a last-resort safety measure — in normal operation, non-suppressed candidates exist.
+    if suppressed == len(results):
+        safest = min(results, key=lambda r: r.get("landing_y", 0))
+        best_x = safest["x"]
+        best_reason = "FALLBACK_ALL_SUPPRESSED"
+        best_x = max(-3.0, min(3.0, best_x))
+        best_x = round(best_x, 2)
+        return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
