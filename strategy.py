@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v665: HARD GUARD — reject NO_MERGE candidates at edge-adjacent (abs(x)>=2.5) when
+     #       deadline_crossed && not russia_phase. Penalty (v661/v662) cannot override
+     #       stacking bonuses; hard rejection ensures catastrophic edge placements never win.
+     #       Fixes: worst T52 (x=3.0 NO_MERGE→max_y spike), extra_low T60 (x=2.0 NO_MERGE).
+     #       mandatory_themes compliant. Target: reduce HEIGHT_CONTROL 20.5%→~15%.
+     #       refs: tmp/analysis_result.md, data/mandatory_themes.txt
      # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
      #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
      #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
@@ -778,6 +784,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score = 0.0
         reasons = []
+
+        # ----- v665: HARD GUARD - reject NO_MERGE at edge-adjacent when deadline_crossed -----
+        # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # Worst game T52: NO_MERGE at x=3.0 with deadline_crossed → max_y spike 1.55→2.57
+        # Extra_low T60: NO_MERGE at x=2.0 (near-edge) with deadline_crossed
+        # Penalty-based approach (v661/v662) cannot override stacking/proximity bonuses (~400-600).
+        # Hard rejection ensures catastrophic NO_MERGE+edge+deadline candidates are never selected,
+        # regardless of other bonus magnitudes. Russia phase exempt (growth intentionally near deadline).
+        # refs: tmp/analysis_result.md (HARD GUARD hypothesis), data/mandatory_themes.txt
+        if merge_grade == "NO" and result.get("crosses_deadline", False) and abs(x) >= 2.5 and not russia_phase:
+            continue  # hard reject: this candidate cannot win
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus

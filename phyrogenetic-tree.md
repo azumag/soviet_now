@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-17 00:52:25 JST`
-- Nodes: `1105`
-- Edges: `1510`
-- Current: `891e238759b8`
+- Updated: `2026-04-17 01:02:42 JST`
+- Nodes: `1106`
+- Edges: `1511`
+- Current: `004626cd4739`
 - Anchor: `891e238759b8`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_6f3aa922b64a["6f3aa922b64a<br/>g=12 n=12<br/>comp=9590.8"]
     h_43cf836f04d5["43cf836f04d5<br/>g=12 n=12<br/>comp=10245.5"]
     h_71413461e56e["71413461e56e<br/>g=12 n=12<br/>comp=9939.6"]
     h_7a9bba424462["7a9bba424462<br/>g=12 n=12<br/>comp=11632.7"]
@@ -66,7 +65,7 @@ flowchart TD
     h_b83b36234046["b83b36234046<br/>g=12 n=12<br/>comp=9451.9"]
     h_03a3722d0f51["03a3722d0f51<br/>g=12 n=12<br/>comp=11123.3"]
     h_1889b86f95bf["1889b86f95bf<br/>g=12 n=12<br/>comp=11082.4"]
-    h_891e238759b8["891e238759b8<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=15982.0"]
+    h_891e238759b8["891e238759b8<br/>ANCHOR<br/>g=12 n=12<br/>comp=15982.0"]
     h_4ea277fa2d4f["4ea277fa2d4f<br/>g=12 n=12<br/>comp=11247.4"]
     h_e7f9c9cfc8dd["e7f9c9cfc8dd<br/>g=24 n=20<br/>comp=10554.7"]
     h_be0bb29a80cd["be0bb29a80cd<br/>g=13 n=13<br/>comp=11630.3"]
@@ -75,8 +74,8 @@ flowchart TD
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e<br/>g=12 n=12<br/>comp=11990.2"]
+    h_004626cd4739["004626cd4739<br/>CURRENT"]
 
-    h_6f3aa922b64a -->|improve| h_43cf836f04d5
     h_71413461e56e -->|improve| h_7a9bba424462
     h_7a9bba424462 -->|improve| h_0ffb1e00fba1
     h_634d0b4d44d1 -->|improve| h_4a56ffd588bd
@@ -125,16 +124,16 @@ flowchart TD
     h_891e238759b8 -->|improve| h_4ea277fa2d4f
     h_4ea277fa2d4f -->|improve| h_e7f9c9cfc8dd
     h_e7f9c9cfc8dd -->|improve| h_be0bb29a80cd
+    h_be0bb29a80cd -. rollback .-> h_891e238759b8
     h_355868eaf8ab -->|improve| h_71413461e56e
     h_2ad5850b541e -->|improve| h_891e238759b8
-    h_be0bb29a80cd -. rollback .-> h_891e238759b8
+    h_891e238759b8 -->|improve| h_004626cd4739
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_6f3aa922b64a plain;
     class h_43cf836f04d5 plain;
     class h_71413461e56e plain;
     class h_7a9bba424462 plain;
@@ -185,7 +184,7 @@ flowchart TD
     class h_b83b36234046 plain;
     class h_03a3722d0f51 plain;
     class h_1889b86f95bf plain;
-    class h_891e238759b8 current_anchor;
+    class h_891e238759b8 anchor;
     class h_4ea277fa2d4f plain;
     class h_e7f9c9cfc8dd plain;
     class h_be0bb29a80cd plain;
@@ -194,6 +193,7 @@ flowchart TD
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
+    class h_004626cd4739 current;
 ```
 
 ## Detail 1/14
@@ -3902,9 +3902,9 @@ flowchart TD
 
 ## Detail 14/14
 
-- Range: `c016461aeb9c` .. `2ad5850b541e`
-- Nodes in this diagram: `65`
-- Internal edges in this diagram: `65`
+- Range: `c016461aeb9c` .. `004626cd4739`
+- Nodes in this diagram: `66`
+- Internal edges in this diagram: `66`
 - Cross-chunk link: `ea95bdde7a27 --improve--> c016461aeb9c`
 - Cross-chunk link: `c016461aeb9c -.rollback.-> ea95bdde7a27`
 - Cross-chunk link: `ea95bdde7a27 --improve--> 4fe3a8221f0d`
@@ -3977,7 +3977,7 @@ flowchart TD
     h_b83b36234046["b83b36234046<br/>g=12 n=12<br/>comp=9451.9"]
     h_03a3722d0f51["03a3722d0f51<br/>g=12 n=12<br/>comp=11123.3"]
     h_1889b86f95bf["1889b86f95bf<br/>g=12 n=12<br/>comp=11082.4"]
-    h_891e238759b8["891e238759b8<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=15982.0"]
+    h_891e238759b8["891e238759b8<br/>ANCHOR<br/>g=12 n=12<br/>comp=15982.0"]
     h_4ea277fa2d4f["4ea277fa2d4f<br/>g=12 n=12<br/>comp=11247.4"]
     h_e7f9c9cfc8dd["e7f9c9cfc8dd<br/>g=24 n=20<br/>comp=10554.7"]
     h_be0bb29a80cd["be0bb29a80cd<br/>g=13 n=13<br/>comp=11630.3"]
@@ -3986,6 +3986,7 @@ flowchart TD
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e<br/>g=12 n=12<br/>comp=11990.2"]
+    h_004626cd4739["004626cd4739<br/>CURRENT"]
 
     h_4fe3a8221f0d -->|improve| h_cfb684533fdb
     h_cfb684533fdb -->|improve| h_e3215795865e
@@ -4047,11 +4048,12 @@ flowchart TD
     h_891e238759b8 -->|improve| h_4ea277fa2d4f
     h_4ea277fa2d4f -->|improve| h_e7f9c9cfc8dd
     h_e7f9c9cfc8dd -->|improve| h_be0bb29a80cd
+    h_be0bb29a80cd -. rollback .-> h_891e238759b8
     h_e3215795865e -->|improve| h_43cf836f04d5
     h_e3215795865e -->|improve| h_355868eaf8ab
     h_355868eaf8ab -->|improve| h_71413461e56e
     h_2ad5850b541e -->|improve| h_891e238759b8
-    h_be0bb29a80cd -. rollback .-> h_891e238759b8
+    h_891e238759b8 -->|improve| h_004626cd4739
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4114,7 +4116,7 @@ flowchart TD
     class h_b83b36234046 plain;
     class h_03a3722d0f51 plain;
     class h_1889b86f95bf plain;
-    class h_891e238759b8 current_anchor;
+    class h_891e238759b8 anchor;
     class h_4ea277fa2d4f plain;
     class h_e7f9c9cfc8dd plain;
     class h_be0bb29a80cd plain;
@@ -4123,9 +4125,20 @@ flowchart TD
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
+    class h_004626cd4739 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#16287 `891e2387 -> 004626cd`
+
+- scores: `10097 14097 8842 8894 12933 10732 17253 9657 18988 12438 15722 11369`
+- v665: HARD GUARD — reject NO_MERGE candidates at edge-adjacent (abs(x)>=2.5) when
+- deadline_crossed && not russia_phase. Penalty (v661/v662) cannot override
+- stacking bonuses; hard rejection ensures catastrophic edge placements never win.
+- Fixes: worst T52 (x=3.0 NO_MERGE→max_y spike), extra_low T60 (x=2.0 NO_MERGE).
+- mandatory_themes compliant. Target: reduce HEIGHT_CONTROL 20.5%→~15%.
+- ----- v665: HARD GUARD - reject NO_MERGE at edge-adjacent when deadline_crossed -----
 
 ### Rollback Game#16287 `be0bb29a -> 891e2387`
 
