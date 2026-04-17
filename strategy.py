@@ -64,21 +64,22 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
-     #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
-     #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
-     #       mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-     #       refs: tmp/analysis_result.md (Hypothesis: NO_MERGE height强化)
-     # v670: danger zone DIRECT merge overwhelming priority — when danger_direct_merge_available &&
-     #       merge_grade==DIRECT && crosses_deadline, add +5000 bonus. Analysis: worst T44 chose NEAR
-     #       (score_delta=0) while best T118 chose DIRECT (score_delta=21). DIRECT avg_score_delta=56.4
-     #       vs NEAR avg=15.2. Overwhelming bonus ensures DIRECT beats any NEAR/NO_MERGE competition.
-     #       Does NOT modify HEIGHT_CONTROL, NEAR suppression (v668), HARD GUARD (v665), or russia_phase.
-     #       refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/best T118
-     # v669: HARD SUPPRESS fallback — count suppressed candidates; if all suppressed,
-     #       fallback to lowest landing_y among all results. Fixes all-NEAR-suppress bug
-     #       that returns x=0.0 with no reason. mandatory_themes compliant.
-     #       refs: tmp/analysis_result.md (Bug #1), data/user_review.md
+     # v667: v665+v666 conflict fix — add reactor_margin<0.5 to v666 height scale condition
+     #       v665: reactor_margin>=0.5 (safe zone) gives NEAR+1000 bonus, v666 scales height penalty
+     #       Conflict: same condition (NEAR && max_y>=2.5 && danger>=1) triggered both bonuses
+     #       Fix: only apply v666 height scale when reactor_margin<0.5 (danger zone)
+     #       Rollback failure mode fixed: NEAR available yet HEIGHT_LAYER selected
+     #       refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+     # v666: NEAR merge at dangerous height scale — height_mult *= 1.0+(max_y-2.5)*0.5 when
+     #       merge_grade=="NEAR" && max_y>=2.5 && danger_piece_count>=1 (make NO_MERGE competitive)
+     #       Fixes worst game T52-62: 9 consecutive NEAR selections all yielded score_delta=0 despite max_y 1.66→3.32
+     #       Rollback constraint: does NOT modify HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY logic
+     #       refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+     # v665: safe NEAR/DIRECT bonus强化 — reactor_margin>=0.5时base bonus提高(+600→+1000 NEAR, +1200→+1500 DIRECT)
+     #       v422条件修正: reactor_margin<0.5追加 (deadline接近時[=danger zone]のみ适用)
+     #       v421 pc_risk_scale: reactor_margin>=0.5时1.0にリセット (安全区域内はリスク増幅度1.0)
+     #       Fixes rollback failure mode: HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY firing when NEAR available
+     #       refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
      # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
      #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
      #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
@@ -548,18 +549,6 @@ Phases (determined by board max Y):
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
   #
-# v668: HARD SUPPRESS - NEAR merge抑止 at extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3)
-# worst T61-T63: NEAR at max_y=2.0+, pc=38+, danger=2+, reactor_margin<0.3 → all failures
-# extra_high T102-T106: NEAR at max_y=2.17-2.45, pc=44-47 → all score_delta=0
-# NEAR success rate 68.5%. At extreme danger conditions, failure rate 31.5% combined with piece_count
-# accumulation → max_y runaway → game over. HARD SUPPRESS prevents NEAR candidates from being
-# evaluated, forcing NO_MERGE with low placement which is safer for max_y control.
-# mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-# refs: tmp/analysis_result.md (Hypothesis: NEAR merge高危険域完全抑止),
-#       game_history/20260417_034623_score0662.jsonl T61-63 (worst NEAR failures),
-#       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
-# Fixes rollback failure mode: piece_count accumulation from failed NEAR at high max_y (v668)
-  #
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
@@ -796,29 +785,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
-    suppressed = 0
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
-
-        # ----- HARD SUPPRESS: NEAR merge at extreme danger with high piece_count -----
-        # worst T61-T63: NEAR at max_y=2.0+, pc=38+, danger=2+, reactor_margin<0.3 → all failures
-        # extra_high T102-T106: NEAR at max_y=2.17-2.45, pc=44-47 → all score_delta=0
-        # NEAR success rate is 68.5%. At extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3),
-        # failure rate 31.5% combined with piece_count accumulation → max_y runaway → game over.
-        # Even when NEAR succeeds, max_y stays high. When NEAR fails, board gets worse.
-        # NO_MERGE with low placement is safer: preserves piece_count, maintains max_y control.
-        # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # Rollback constraint: does NOT modify any existing height/merge bonus logic
-        # refs: game_history/20260417_034623_score0662.jsonl T61-63 (worst NEAR failures),
-        #       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
-        #       tmp/improve_brief.md (HEIGHT_CONTROL 18.5%, avg_score_delta=2.9)
-        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 38 and danger_piece_count >= 1 and reactor_margin < 0.3:
-            suppressed += 1
-            continue  # HARD SUPPRESS: this NEAR will likely fail and accelerate game over
 
         score = 0.0
         reasons = []
@@ -829,10 +801,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            # v665: safe DIRECT bonus强化 — reactor_margin>=0.5 is safe zone, promote DIRECT priority
+            if reactor_margin >= 0.5:
+                score += 1500.0 * merge_mult
+            else:
+                score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            # v665: safe NEAR bonus强化 — reactor_margin>=0.5 && danger_piece_count==0 is safe
+            # batch_summary: NEAR_MERGE_EARLY avg_score_delta=28.5 (highest!) but only 2.9% selection
+            # This fixes the imbalance where safe NEAR merges were being penalized out
+            if reactor_margin >= 0.5 and danger_piece_count == 0:
+                score += 1000.0 * merge_mult
+            else:
+                score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
@@ -865,7 +847,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
             # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
-            if piece_count >= 33:
+            # v665: reset pc_risk_scale when reactor_margin>=0.5 (safe zone) — no extra penalty
+            if reactor_margin >= 0.5:
+                pc_risk_scale = 1.0
+            elif piece_count >= 33:
                 pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
             else:
                 pc_risk_scale = 1.0
@@ -885,7 +870,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v551: Russia-building exemption + high-type next additional penalty
         russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
         global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
-        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
+        # v665: add reactor_margin<0.5 to v422 — only penalize when deadline is actually close (danger zone)
+        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible and reactor_margin < 0.5:
             score -= 600.0
             reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
             # v551: additional penalty for high-type next when merge is globally available
@@ -941,22 +927,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT":
             score += 800.0
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
-
-        # ----- NEW axis: danger zone DIRECT merge overwhelming priority (v670) -----
-        # Adopted hypothesis: STRENGTHEN DIRECT MERGE PRIORITY WHEN AVAILABLE IN DEADLINE DANGER
-        # The issue is not NEAR per se, but DIRECT vs NEAR decision at dangerous heights with deadline.
-        # Worst T44: merge_grade=NEAR, deadline_crossed=true, max_y=2.8 → chose NEAR, score_delta=0
-        # Best T118: merge_grade=DIRECT, deadline_crossed=true, max_y=2.11 → chose DIRECT, score_delta=21
-        # batch_summary: DIRECT_MERGE_HIGH_LAYER... avg_score_delta=56.4 (highest!), NEAR avg=15.2
-        # When DIRECT is available at dangerous heights with deadline_crossed, it should overwhelm
-        # any NEAR competition. The existing +800 bonus (v382) is additive but insufficient when
-        # NEAR gets other bonuses stacking. This override ensures DIRECT wins decisively.
-        # NOT modifying existing HEIGHT_CONTROL, NEAR suppression (v668), HARD GUARD (v665), or russia_phase.
-        # refs: tmp/analysis_result.md (Adopted Hypothesis), game_history/worst T44, game_history/best T118
-        # Fixes rollback failure mode: NEAR selected over available DIRECT at deadline danger (v670)
-        if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT" and result.get("crosses_deadline", False):
-            score += 5000.0
-            reasons.append("DANGER_DIRECT_OVERWHELMING")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
         # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
@@ -1392,17 +1362,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if not death_spiral and danger_piece_count >= 1 and merge_grade == "NO" and max_y >= 1.8:
             height_mult *= 0.3  # very strong reduction — stay low when danger exists
 
-        # v671: NO_MERGE height penalty强化 at high danger zone
-        # Worst T65: merge_available=false, pc=35, max_y=2.25, deadline_crossed → NO_MERGE selected, max_y→3.08
-        # Best T137: pc=34, max_y=2.65 → NO_MERGE survives to end
-        # Key diff: pc threshold 34 vs 35. At pc>=35 && max_y>=2.3, NO_MERGE height penalty *0.5
-        # Rollback constraint: does NOT modify NEAR suppression (v668), HARD GUARD (v665), or russia_phase
-        # Fixes: NO_MERGE at deadline with high pc+max_y → piece_count accumulation → game over
-        # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # refs: tmp/analysis_result.md (Hypothesis: NO_MERGE height强化),
-        #       game_history/worst T65 (NO_MERGE failure), game_history/best T137 (NO_MERGE survival)
-        if merge_grade == "NO" and max_y >= 2.3 and piece_count >= 35:
-            height_mult *= 0.5  # strongly prefer lower positions for NO_MERGE at danger zone
+        # v666+v665 fix: NEAR merge at dangerous height — scale up height penalty to make NO_MERGE competitive
+        # NEAR at max_y>=2.5 with danger_pieces consistently yields score_delta=0 in logs,
+        # suggesting NEAR doesn't actually compress the board at high max_y.
+        # Scale height_mult when: NEAR selected && max_y >= 2.5 && danger_piece_count >= 1
+        # BUT: only in danger zone (reactor_margin < 0.5), not safe zone where v665 NEAR bonus applies
+        # Rollback constraint: does NOT change HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY logic,
+        # only applies additional scale to height_mult for NEAR merges at dangerous heights.
+        # Mandatory themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+        if merge_grade == "NEAR" and max_y >= 2.5 and danger_piece_count >= 1 and reactor_margin < 0.5:
+            height_scale = 1.0 + (max_y - 2.5) * 0.5
+            height_mult *= height_scale
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
@@ -1910,18 +1881,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
-
-    # ----- FALLBACK: if all non-suppressed candidates were suppressed, pick lowest landing_y -----
-    # Bug fix: HARD SUPPRESS can skip all candidates in extreme danger, returning best_x=0.0 with empty reason.
-    # When suppressed == len(results), fall back to the candidate with the lowest landing_y among NEAR candidates.
-    # This is a last-resort safety measure — in normal operation, non-suppressed candidates exist.
-    if suppressed == len(results):
-        safest = min(results, key=lambda r: r.get("landing_y", 0))
-        best_x = safest["x"]
-        best_reason = "FALLBACK_ALL_SUPPRESSED"
-        best_x = max(-3.0, min(3.0, best_x))
-        best_x = round(best_x, 2)
-        return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
