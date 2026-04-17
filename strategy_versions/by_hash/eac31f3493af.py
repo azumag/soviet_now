@@ -64,12 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v677: axis 1.5d NEAR_CROSSES_DEADLINE_PENALTY — merge_grade==NEAR && decision_crosses_deadline && !russia_phase で -1500 ペナルティ
-     #       Worst game T57: NEAR selected with decision_crosses_deadline=true, deadline_margin=0.03, succeeded (+85) but led to NO_MERGE spiral
-     #       既存の NEAR_DEADLINE_RISK (reactor_margin-based) と BOARD_MAX_Y_NEAR_SUPPRESSION (max_y>=2.5) では補足できなかった隙間を埋める
-     #       Russia phase除外: best game T104 (score2578) で russia_phase=true の NEAR が +28 貢献、建国後得很好
-     #       mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
-     #       refs: tmp/analysis_result.md (NEAR_CROSSES_DEADLINE_PENALTY仮説)
      # v676: axis 1.7b BOARD_MAX_Y_NEAR_SUPPRESSION — max_y>=2.5 && pc>=33 && NEAR && NOT russia_phase で -1000～-3000 ペナルティ
      #       v422(landing_y条件)では補足できない「盤面全体の高さが危険レベルに達した状態」でのNEAR選択を押さえる
      #       Fixes rollback failure mode: max_y>=2.5, pc>=33 でのNEAR選択が score_delta=0 を返しmax_y暴走→ゲームオーバー
@@ -961,24 +955,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             penalty = -1000.0 * (1.0 + (max_y - 2.5) * 2.0)
             score += penalty
             reasons.append("BOARD_MAX_Y_NEAR_SUPPRESSION")
-
-        # ----- axis 1.5d: NEAR merge crosses deadline penalty -----
-        # Worst game T57: NEAR selected with decision_crosses_deadline=true,
-        # deadline_margin=0.03 (essentially at deadline), succeeded (+85) but led to
-        # NO_MERGE spiral at T58 with max_y runaway.
-        # The existing NEAR_DEADLINE_RISK (reactor_margin-based) did not prevent this.
-        # BOARD_MAX_Y_NEAR_SUPPRESSION requires max_y>=2.5, which didn't fire (max_y=1.05).
-        # Gap: NEAR at almost-deadline without high max_y → allowed → board deterioration.
-        # Solution: explicit penalty for NEAR that crosses deadline (not just approaches it).
-        # Russia phase exempted: best game T104 showed russia_phase=true NEAR at deadline
-        # contributed to high score (+28). The russia_phase exemption is preserved.
-        # Postmortem constraint: not landing_y-only, combines deadline_crossed with merge_grade.
-        # refs: tmp/analysis_result.md (NEAR_CROSSES_DEADLINE_PENALTY仮説)
-        # Fixes rollback failure mode: NEAR at deadline → NO_MERGE spiral (worst game T57→T58)
-        decision_crosses = result.get("crosses_deadline", False)
-        if merge_grade == "NEAR" and decision_crosses and not russia_phase:
-            score -= 1500.0
-            reasons.append("NEAR_CROSSES_DEADLINE_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
