@@ -12,6 +12,7 @@ Game Overview:
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.5c. HIGH_MAX_Y_NEAR_PENALTY - v550: max_y>=2.5 NEAR penalty (-300) before v422 evaluation
+         1.6b. HEIGHT_GATED_NEARNOPHASE - targeted NEAR suppression at deadline危险域+merge unavailable
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
@@ -70,6 +71,12 @@ Phases (determined by board max Y):
      #       (score826 T62 chose NO_MERGE at rp=7-8, deadline_crossed=true, while NEAR existed).
      #       Constraint: forbids reactive_pairs_no_merge_penalty at rp>=3 && deadline && no merge.
      #       refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
+     # vXXX: add HEIGHT_GATED_NEARNOPHASE — targeted NEAR suppression (-1200) at max_y>=2.0 && rp>=3 &&
+     #       deadline_crossed && !global_merge_available. Suppresses NEAR selection when merge unavailable
+     #       in danger zone, directing to NO_MERGE + low placement. mandatory_themes compliant.
+     #       Fixes rollback failure mode: worst T62-T63 NEAR chosen at merge_available=false (score_delta=0)
+     #       refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt,
+     #            tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
      # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
      #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
      #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
@@ -900,6 +907,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if next_type >= 10 and global_merge_available:
                 score -= 200.0
                 reasons.append("HIGH_TYPE_NEXT_PENALTY")
+
+        # ----- evaluation axis 1.6b: HEIGHT_GATED_NEARNOPHASE (targeted NEAR suppression) -----
+        # Hypothesis: HEIGHT_GATED_NEARNOPHASE — deadline_crossed && max_y>=2.0 && rp>=3 の危険域で、
+        # merge_grade==NEAR && !global_merge_available（≈merge_available false）の時に NEAR に追加ペナルティを
+        # 適用し、NO_MERGE + 低配置選択로 전환
+        # Worst T62-T63: max_y=2.17-2.03, rp=9-10, merge_available=false, NEAR chosen → score_delta=0（失敗）
+        # extra_low T57-T58: max_y=2.56→2.9, rp=6, merge_available=false, NEAR chosen at high y → max_y runaway
+        # best T108: max_y=2.87, rp=3, merge_available=false → NO_MERGE chosen (score_delta=0, max_y 2.87→2.85)
+        # vXXX DEADLINE_MERGE_URGENCY +2000 は merge_available=true の DIRECT/NEAR を強制するが、
+        # merge_available=false の NEAR には適用されない → 逆に対象外 NEAR が選択され続ける
+        # mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
+        # merge_available=false での NEAR 選択はこの違反
+        # 禁止事項: merge_available=true の NEAR には適用しない（DEADLINE_MERGE_URGENCY 競合回避）
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt,
+        #       tmp/state/last_rollback_postmortem.md (Failure Modes),
+        #       game_history/20260417_165514_score0937.jsonl (worst T62-T63),
+        #       game_history/20260417_164550_score1046.jsonl (extra_low T57-T58),
+        #       game_history/20260417_170408_score2679.jsonl (best T108)
+        if merge_grade == "NEAR" and max_y >= 2.0 and reactive_pair_count >= 3 and deadline_crossed and not global_merge_available:
+            score -= 1200.0
+            reasons.append("HEIGHT_GATED_NEARNOPHASE")
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
