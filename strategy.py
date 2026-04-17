@@ -64,12 +64,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v669: HEIGHT_GATED_NO_MERGE_DANGER threshold fix — max_y 2.0→2.5, pc 35→30, penalty -3000→-5000
+     #       Fixes worst T54-T58: pc=31-35 still triggered NO_MERGE at x=3.0 edge despite deadline_crossed
+     #       Catches severe danger (max_y>=2.5) earlier with lower piece_count threshold
+     #       Rollback failure mode: HEIGHT_GATED_NO_MERGE_DANGER prevents edge placement at deadline
+     #       refs: tmp/analysis_result.md
      # v668: height-gated NO_MERGE penalty at extreme danger — add -3000 height penalty when
      #       merge_grade=="NO" && max_y>=2.0 && piece_count>=35 && deadline_crossed && !russia_phase
      #       Fixes worst T62-T66: NO_MERGE selected at x=3.0 (edge) despite high max_y+pc+danger
-     #       Rollback failure mode: HEIGHT_GATED_NO_MERGE_DANGER prevents edge placement at deadline
      #       mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-     #       refs: tmp/analysis_result.md, data/mandatory_themes.txt
      # v667: v665+v666 conflict fix — add reactor_margin<0.5 to v666 height scale condition
      #       v665: reactor_margin>=0.5 (safe zone) gives NEAR+1000 bonus, v666 scales height penalty
      #       Conflict: same condition (NEAR && max_y>=2.5 && danger>=1) triggered both bonuses
@@ -1864,18 +1867,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
-        # ----- NEW axis: height-gated NO_MERGE penalty at extreme danger -----
-        # Worst T62-T66: max_y=2.22-3.48, pc=33-37, deadline_crossed, NO_MERGE → edge placement at x=±3.0
-        # Existing penalties (axis 8.8 -4500, axis 9.2 -4500) don't prevent this specific combination.
-        # At max_y>=2.0 && pc>=35 && deadline_crossed && merge_grade==NO, add additional penalty
-        # to ensure NO_MERGE never wins over lower-y alternatives. The margin between safe and
-        # dangerous NO_MERGE positions must be large enough to prevent edge scatter at deadline.
-        # This complements mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # ----- v668 (updated): height-gated NO_MERGE penalty at extreme danger -----
+        # Worst T54-T58: max_y=2.34-3.01, pc=31-35, deadline_crossed, NO_MERGE at edge (x=3.0)
+        # v668 original: piece_count>=35 threshold was TOO HIGH - worst T54 had pc=31
+        # Update: max_y>=2.5 (severe danger threshold from v666) + pc>=30 to catch earlier
         # Rollback constraint: does NOT modify NEAR merge handling, only NO_MERGE at extreme danger
-        if merge_grade == "NO" and max_y >= 2.0 and piece_count >= 35 and deadline_crossed and not russia_phase:
-            # Additional penalty on top of existing -4500 (axis 8.8/9.2)
-            # At this state, any NO_MERGE is catastrophic — enforce minimum height preference
-            height_penalty -= 3000.0  # Additional penalty makes lower positions definitively preferred
+        if merge_grade == "NO" and max_y >= 2.5 and piece_count >= 30 and deadline_crossed and not russia_phase:
+            # At severe danger (max_y>=2.5), any NO_MERGE is catastrophic
+            height_penalty -= 5000.0  # Increased from 3000 to definitively override NO_MERGE
             reasons.append("HEIGHT_GATED_NO_MERGE_DANGER")
 
         # ----- v662: continuous deadline-margin penalty (enhanced from v661) -----
