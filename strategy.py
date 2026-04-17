@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # vXXX: deadline merge urgency — +2000 bonus for DIRECT/NEAR when deadline_crossed && rp>=3;
+     #       suppress axis 8.8 penalty when deadline_crossed && rp>=3 && !global_merge_available
+     #       Fixes: "merge_available but NO_MERGE chosen" death spiral at deadline with rp>=3
+     #       (score826 T62 chose NO_MERGE at rp=7-8, deadline_crossed=true, while NEAR existed).
+     #       Constraint: forbids reactive_pairs_no_merge_penalty at rp>=3 && deadline && no merge.
+     #       refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
      # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
      #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
      #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
@@ -1768,13 +1774,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
+        # vXXX: deadline merge urgency bonus — when deadline_crossed && rp>=3,
+        # add +2000 to DIRECT/NEAR candidates to ensure they win over NO_MERGE candidates.
+        # NO_MERGE candidate: -4500 (penalty) + other bonuses. Merge candidate: existing bonus
+        # +2000 -> wins over NO_MERGE. Fixes "merge_available but NO_MERGE chosen" death spiral.
+        # Refs: analysis shows score826 T62 chose NO_MERGE at rp=7-8, deadline_crossed=true
+        # while NEAR merge existed at y=2.71. score2019 T96-97 chose DANGER_DIRECT_MERGE
+        # at max_y=3.38 and scored 45+80.
+        if deadline_crossed and reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
+            score += 2000.0
+            reasons.append("DEADLINE_MERGE_URGENCY")
+
         if reactive_pair_count >= 3 and merge_grade == "NO":
             # v452: flatten to -4500, matching protected strategy (median 12789)
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
             # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
-            reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            # vXXX: suppress penalty when deadline_crossed && global_merge_available==false per
+            # rollback postmortem constraint: "reactive_pairs_no_merge_penalty firing at
+            # reactive_pairs>=3 when deadline_crossed=true and merge_available=false"
+            # This prevents the death spiral observed in score0547 turns 28-38 and
+            # score0975 turns 39-41 where penalty fired but no merge was actually available.
+            if not (deadline_crossed and reactive_pair_count >= 3 and not global_merge_available):
+                score -= 4500.0
+                reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
