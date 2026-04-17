@@ -64,6 +64,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v675: CROSSES_DEADLINE_EDGE_NO_MERGE — decision_crosses_deadline=true && NO_MERGE && |x|>=2.5 && NOT russia_phase で -1500 ペナルティ
+     #       mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
+     #       Fixes: extra_low(1112)T64-T70で7ターン連続の decision_crosses_deadline && NO_MERGE && |x|>=2.5 を抑制
+     #       Worst(641)T62: x=-3.0 に -1500 → 中央付近選択へ誘導、PC_EDGE_PENALTY未発動(pc=40)の隙間を補完
+     #       Russia_phase除外: best(4816)T159 x=-3.0 は russia_phase=True なので影響なし
+     #       refs: tmp/analysis_result.md (CROSSES_DEADLINE_EDGE_NO_MERGE仮説)
+     # v674: PIECE_COUNT_EDGE_BIAS 対策 — pc>=40 && deadline_crossed && NO_MERGE && |x|>=1.5 で
+     #       エッジ配置追加ペナルティ: -(pc-35)*400*(|x|/3.0)。pc=40,|x|=2でー1333、pc=45,|x|=3でー4000。
+     #       Fixes: worst T64-T66 pc=43,deadline_crossed,NO_MERGE時にx=-2.0が選択される問題を解消。
+     #       refs: tmp/analysis_result.md, game_history/20260417_193200_score0490.jsonl T64-66
      # vXXX: deadline merge urgency — +2000 bonus for DIRECT/NEAR when deadline_crossed && rp>=3;
      #       suppress axis 8.8 penalty when deadline_crossed && rp>=3 && !global_merge_available
      #       Fixes: "merge_available but NO_MERGE chosen" death spiral at deadline with rp>=3
@@ -1790,12 +1800,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
             # axis 2 height penalty be the only differentiator — consistent low placement.
-            # vXXX: suppress penalty when deadline_crossed && global_merge_available==false per
-            # rollback postmortem constraint: "reactive_pairs_no_merge_penalty firing at
-            # reactive_pairs>=3 when deadline_crossed=true and merge_available=false"
-            # This prevents the death spiral observed in score0547 turns 28-38 and
-            # score0975 turns 39-41 where penalty fired but no merge was actually available.
-            if not (deadline_crossed and reactive_pair_count >= 3 and not global_merge_available):
+            # v662: removed `and not global_merge_available` from suppression condition.
+            # Worst game T56: deadline_crossed=true, rp=3, merge_available=false → NO_MERGE selected,
+            # causing "deadline without merge" violation of mandatory theme.
+            # With `global_merge_available` in condition, penalty was suppressed exactly when needed most.
+            # Now penalty applies whenever deadline_crossed && rp>=3, forcing low landing_y choice.
+            # refs: tmp/analysis_result.md (Hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY suppression removal)
+            if not (deadline_crossed and reactive_pair_count >= 3):
                 score -= 4500.0
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
@@ -1889,6 +1900,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
             score -= max(0, (0.5 - margin)) * 4000
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
+
+        # ----- v674: edge placement penalty at high pc + deadline_crossed (v668 Extended) -----
+        # Failure mode: PIECE_COUNT_EDGE_BIAS — worst T64: pc=43, deadline_crossed=true, NO_MERGE
+        # → x=-2.0 (edge) selected despite CROSSES_DEADLINE_NO_MERGE penalty (~-2500).
+        # v661 penalty alone insufficient: HEIGHT_CONTROL + REACTIVE_PAIRS_STACKING bonuses
+        # at edge positions (~300-900 combined) create false parity vs. center (no stacking bonus).
+        # Extra penalty ∝ |x| * (pc-35) makes edge increasingly costly as board fills:
+        #   pc=40, |x|=2.0: -(5)*400*(2/3)=-1333;  pc=45, |x|=3.0: -(10)*400*1.0=-4000
+        # Combined with v661 (~-2500 at margin=0): edge is firmly rejected at pc>=40.
+        # Only fires at merge_grade==NO: DIRECT/NEAR merge positions are never suppressed.
+        # mandatory_themes compliant: redirects NO_MERGE edge → NO_MERGE center, not merge→no-merge.
+        # refs: tmp/analysis_result.md, game_history/20260417_193200_score0490.jsonl T64-66
+        if (piece_count >= 40 and deadline_crossed
+                and merge_grade == "NO" and abs(x) >= 1.5):
+            edge_penalty = -(piece_count - 35) * 400.0 * (abs(x) / 3.0)
+            score += edge_penalty
+            reasons.append("PC_EDGE_PENALTY")
+
+        # ----- v675: decision_crosses_deadline edge NO_MERGE penalty -----
+        # mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
+        # worst T62: decision_crosses_deadline=true, NO, x=-3.0 (PC_EDGE_PENALTY未発動, pc=40)
+        # extra_low T64-T70: decision_crosses_deadline=true, NO, x=±3.0 (pc=33-38)
+        # REACTIVE_PAIRS_NO_MERGE_PENALTY が rp>=3&&deadline_crossed で抑制されているため
+        # decision_crosses_deadline=True の検知で極端エッジ配置を補完抑制する
+        # |x|>=2.5 限定: 中央寄りNO_MERGE(T59-61のx=-2.0~-2.2)は許容
+        # russia_phase除外: T159のx=-3.0(RUSSIA_PHASE_BOARD_COMPRESSION)は正当配置
+        # refs: tmp/analysis_result.md (CROSSES_DEADLINE_EDGE_NO_MERGE仮説)
+        decision_crosses = result.get("crosses_deadline", False)
+        if (decision_crosses and merge_grade == "NO"
+                and abs(x) >= 2.5 and not russia_phase):
+            score -= 1500.0
+            reasons.append("CROSSES_DEADLINE_EDGE_NO_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:

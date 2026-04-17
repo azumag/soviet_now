@@ -43,7 +43,7 @@ Game Overview:
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
-             9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
+             9.7. [REMOVED: axis 9.7 forbidden by rollback postmortem]
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # vXXX: NEAR fallback at max_y>=2.0 when no DIRECT exists — +1500 bonus
+     #       Fixes rollback failure mode: worst T70 NO_MERGE at rp=3 despite NEAR available
+     #       refs: tmp/analysis_result.md (Implementation Plan Change 2),
+     #       tmp/state/last_rollback_postmortem.md (Failure Mode 1: max_y>=2.0 NEAR not selected)
+     # vXXX: Remove axis 9.7 — rollback postmortem forbids it
+     #       refs: tmp/analysis_result.md (Implementation Plan Change 1),
+     #       tmp/state/last_rollback_postmortem.md (axis 9.7 forbid constraint)
      # v675: CROSSES_DEADLINE_EDGE_NO_MERGE — decision_crosses_deadline=true && NO_MERGE && |x|>=2.5 && NOT russia_phase で -1500 ペナルティ
      #       mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
      #       Fixes: extra_low(1112)T64-T70で7ターン連続の decision_crosses_deadline && NO_MERGE && |x|>=2.5 を抑制
@@ -812,11 +819,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # near_pairs is list of (piece_id_1, piece_id_2, type, gap) tuples
     # Extract which types have reactive pairs for type-aware stacking decisions
     near_pairs = reactor.get("near_pairs", [])
-    # --- v367: pipeline extraction (unutilized reactor info) ---
-    # pipeline is list of (type, type+1, min_distance) tuples — adjacent-type proximity
-    # Used by axis 9.7 for placement guidance when no same-type on board
-    pipeline = reactor.get("pipeline", [])
-
     # --- v384: pre-compute piece positions for reactive pair blocking avoidance ---
     # Used by axis 9.3 to check if landing position is between reactive pair pieces.
     # Computed once before the candidate loop since pieces don't change between candidates.
@@ -878,19 +880,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       analyze_board.py (reactor deadline_margin field)
         # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
-        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
-            risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
-            # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
-            # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
-            # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
-            if piece_count >= 33:
-                pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
-            else:
-                pc_risk_scale = 1.0
-            near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
-            score -= near_risk_penalty
-            reasons.append("NEAR_DEADLINE_RISK")
-
         # ----- v422 supplementary: max_y >= 2.5 NEAR merge penalty -----
         # Worst game T71-76: max_y=2.74→2.87→3.43, NEAR selected but max_y doesn't decrease.
         # Best game T131-138: max_y=2.74→2.05, NEAR succeeds (+57).
@@ -933,6 +922,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
+
+        # ----- NEAR fallback: when board is dangerous and no DIRECT candidate exists -----
+        # rollback constraint: max_y>=2.0 where DIRECT not found → NEAR must be selected.
+        # refs: tmp/analysis_result.md (Implementation Plan Change 2),
+        #       tmp/state/last_rollback_postmortem.md (Failure Mode 1, Constraints For Next Improve)
+        if (merge_grade == "NEAR" and max_y >= 2.0
+                and not any(c.get("merge_grade") == "DIRECT" for c in results)
+                and not death_spiral):
+            score += 1500.0
+            reasons.append("NEAR_FALLBACK_AT_DANGER")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
@@ -1134,47 +1133,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         stacking_bonus *= min(congestion_scale, 3.0)
                     score += stacking_bonus
                     reasons.append("REACTIVE_PAIRS_STACKING")
-
-        # ----- v367: axis 9.7 pipeline-aware placement guidance (sibling to 9.6) -----
-        # Postmortem constraint: axis 9.7 should be a sibling of axis 9.6, not nested inside it.
-        # Fires when: same_type_stack_top is None (no same-type on board), reactive >= 1, merge_grade == "NO"
-        # This is the case that v359 (REACTIVE_PAIRS_COMPRESSION with landing_y-only bonus) tried to fix
-        # but failed due to landing_y-only approach and reactive < 3 guard.
-        # v359 rollback: "replaces HEIGHT_CONTROL with naive compression based solely on landing_y"
-        # This version uses reactor["pipeline"] (unutilized info): list of (type, type+1, min_distance) tuples.
-        # Finds nearest adjacent-type (next_type ± 1) piece on board via pipeline data.
-        # Bonus for proximity to adjacent-type piece guides placement toward merge pipeline,
-        # creating future merge opportunities instead of aimless low placement.
-        # Worst game T58: reactive=3, type=10, no same-type 10 → MEDIUM_TOWER (no guidance) → pc grows.
-        # If type 9 or type 11 pieces existed, this guidance would direct placement near them.
-        # Bonus magnitude: max ~80 (tie-breaking only, won't override axis 8.8 or height penalty).
-        # No reactive_pair_count < 3 guard (postmortem constraint: works at ALL reactive levels).
-        # Not landing_y-only (postmortem constraint: uses pipeline proximity to specific types).
-        # refs: tmp/state/last_rollback_postmortem.md (axis 9.7 nesting fix, piece_count predictor),
-        #       analyze_board.py (reactor["pipeline"] structure),
-        #       game_history/20260328_112219_score0613.jsonl T58 (reactive=3, no same-type, no guidance),
-        #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
-        #       tmp/batch_summary.txt, advice.md (zoumotu3: growth concentration)
-        # Fixes postmortem failure mode: no guidance when same_type_stack_top is None → piece_count accumulation
-        # v463: suppress in death_spiral — height must be sole differentiator (was missing from v461/v462 suppression set)
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None and not death_spiral:
-            # Find nearest piece whose type is adjacent to current type (next_type ± 1)
-            # Priority: next_type - 1 (merge up path) then next_type + 1 (if next_type-1 not found)
-            best_adjacent_target = None
-            best_adjacent_dist = float("inf")
-            for p in pieces:
-                p_type = p.get("type", 0)
-                if p_type == next_type - 1 or p_type == next_type + 1:
-                    p_x = p.get("x", 0)
-                    p_y = p.get("y", 10)
-                    # Prefer deeper (lower y) pieces — more accessible for future merges
-                    adj_dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
-                    if adj_dist < best_adjacent_dist:
-                        best_adjacent_dist = adj_dist
-                        best_adjacent_target = p
-            if best_adjacent_target is not None and best_adjacent_dist < 3.0:
-                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
-                score += pipeline_bonus
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
