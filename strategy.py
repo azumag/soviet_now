@@ -64,11 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v672: NO_MERGE deadline_crossed center seeking — deadline_crossed && merge_grade=="NO" &&
-     #       max_y>=2.0 && not russia_phase: center_bonus = max(0, 400 - abs(x)*200) to height_penalty.
-     #       mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-     #       Fixes worst T63 (x=3.0→center), extra_low T67/T69 (x=-3.0, x=1.76→center).
-     #       refs: tmp/analysis_result.md (Hypothesis: NO_MERGE center seeking)
      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -1420,19 +1415,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
-
-        # v672: NO_MERGE + deadline_crossed center seeking — mandatory theme "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # Worst T63: deadline_crossed=true, merge_grade=NO, x=3.0 → max_y 2.42→2.83
-        # Extra_low T67/T69: deadline_crossed=true, merge_grade=NO, x=-3.0, x=1.76 → max_y 2.17→3.76
-        # Best T158: deadline_crossed=true, merge_grade=NO → chooses lowest landing_y candidate
-        # Apply center seeking bonus for NO_MERGE + deadline_crossed + max_y >= 2.0 (not russia_phase)
-        if deadline_crossed and merge_grade == "NO" and max_y >= 2.0 and not russia_phase:
-            # x=0 distance-based bonus: closer to center = more bonus
-            # max bonus = 400 at x=0, linearly decreases to 0 at x=2.0
-            center_bonus = max(0.0, 400.0 - abs(x) * 200.0)
-            height_penalty -= center_bonus
-            if center_bonus > 0:
-                reasons.append("CENTER_SEEKING_NO_MERGE_DEADLINE")
 
         score -= height_penalty
 
