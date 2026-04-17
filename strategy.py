@@ -1790,12 +1790,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
             # axis 2 height penalty be the only differentiator — consistent low placement.
-            # vXXX: suppress penalty when deadline_crossed && global_merge_available==false per
-            # rollback postmortem constraint: "reactive_pairs_no_merge_penalty firing at
-            # reactive_pairs>=3 when deadline_crossed=true and merge_available=false"
-            # This prevents the death spiral observed in score0547 turns 28-38 and
-            # score0975 turns 39-41 where penalty fired but no merge was actually available.
-            if not (deadline_crossed and reactive_pair_count >= 3 and not global_merge_available):
+            # v662: removed `and not global_merge_available` from suppression condition.
+            # Worst game T56: deadline_crossed=true, rp=3, merge_available=false → NO_MERGE selected,
+            # causing "deadline without merge" violation of mandatory theme.
+            # With `global_merge_available` in condition, penalty was suppressed exactly when needed most.
+            # Now penalty applies whenever deadline_crossed && rp>=3, forcing low landing_y choice.
+            # refs: tmp/analysis_result.md (Hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY suppression removal)
+            if not (deadline_crossed and reactive_pair_count >= 3):
                 score -= 4500.0
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
