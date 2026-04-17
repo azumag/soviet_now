@@ -64,12 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v675: CROSSES_DEADLINE_EDGE_NO_MERGE — decision_crosses_deadline=true && NO_MERGE && |x|>=2.5 && NOT russia_phase で -1500 ペナルティ
-     #       mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
-     #       Fixes: extra_low(1112)T64-T70で7ターン連続の decision_crosses_deadline && NO_MERGE && |x|>=2.5 を抑制
-     #       Worst(641)T62: x=-3.0 に -1500 → 中央付近選択へ誘導、PC_EDGE_PENALTY未発動(pc=40)の隙間を補完
-     #       Russia_phase除外: best(4816)T159 x=-3.0 は russia_phase=True なので影響なし
-     #       refs: tmp/analysis_result.md (CROSSES_DEADLINE_EDGE_NO_MERGE仮説)
      # v674: PIECE_COUNT_EDGE_BIAS 対策 — pc>=40 && deadline_crossed && NO_MERGE && |x|>=1.5 で
      #       エッジ配置追加ペナルティ: -(pc-35)*400*(|x|/3.0)。pc=40,|x|=2でー1333、pc=45,|x|=3でー4000。
      #       Fixes: worst T64-T66 pc=43,deadline_crossed,NO_MERGE時にx=-2.0が選択される問題を解消。
@@ -1917,21 +1911,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             edge_penalty = -(piece_count - 35) * 400.0 * (abs(x) / 3.0)
             score += edge_penalty
             reasons.append("PC_EDGE_PENALTY")
-
-        # ----- v675: decision_crosses_deadline edge NO_MERGE penalty -----
-        # mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
-        # worst T62: decision_crosses_deadline=true, NO, x=-3.0 (PC_EDGE_PENALTY未発動, pc=40)
-        # extra_low T64-T70: decision_crosses_deadline=true, NO, x=±3.0 (pc=33-38)
-        # REACTIVE_PAIRS_NO_MERGE_PENALTY が rp>=3&&deadline_crossed で抑制されているため
-        # decision_crosses_deadline=True の検知で極端エッジ配置を補完抑制する
-        # |x|>=2.5 限定: 中央寄りNO_MERGE(T59-61のx=-2.0~-2.2)は許容
-        # russia_phase除外: T159のx=-3.0(RUSSIA_PHASE_BOARD_COMPRESSION)は正当配置
-        # refs: tmp/analysis_result.md (CROSSES_DEADLINE_EDGE_NO_MERGE仮説)
-        decision_crosses = result.get("crosses_deadline", False)
-        if (decision_crosses and merge_grade == "NO"
-                and abs(x) >= 2.5 and not russia_phase):
-            score -= 1500.0
-            reasons.append("CROSSES_DEADLINE_EDGE_NO_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:
