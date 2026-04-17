@@ -64,11 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v676: axis 1.7b BOARD_MAX_Y_NEAR_SUPPRESSION — max_y>=2.5 && pc>=33 && NEAR && NOT russia_phase で -1000～-3000 ペナルティ
-     #       v422(landing_y条件)では補足できない「盤面全体の高さが危険レベルに達した状態」でのNEAR選択を押さえる
-     #       Fixes rollback failure mode: max_y>=2.5, pc>=33 でのNEAR選択が score_delta=0 を返しmax_y暴走→ゲームオーバー
-     #       mandatory_themes: 盤面高さ管理強化で「デッドラインにおいてしまう」リスクを間接的に低減
-     #       refs: tmp/analysis_result.md
      # v675: CROSSES_DEADLINE_EDGE_NO_MERGE — decision_crosses_deadline=true && NO_MERGE && |x|>=2.5 && NOT russia_phase で -1500 ペナルティ
      #       mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
      #       Fixes: extra_low(1112)T64-T70で7ターン連続の decision_crosses_deadline && NO_MERGE && |x|>=2.5 を抑制
@@ -938,23 +933,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
-
-        # ----- axis 1.7b: board-level NEAR suppression at extreme max_y (v676) -----
-        # v422 uses per-candidate landing_y to gate suppression, but at max_y>=2.5
-        # even "low" landing positions (y<1.0) are dangerous relative to board state.
-        # This board-level check catches ALL NEAR candidates when the board is in
-        # extreme danger regardless of per-candidate landing_y.
-        # Penalty scales with max_y: at max_y=2.5 -> -1000, at max_y=3.0 -> -2000
-        # Combined with v422 (-720 at pc>=33, landing_y>=1.0), total suppression
-        # at high max_y is -1720 to -2720, sufficient to overcome NEAR bonuses.
-        # Best game turn 97 (max_y=0.95): not triggered.
-        # Worst game turn 59 (max_y=2.83): triggers, combined with v422 = -2380.
-        # Extra_low turn 72 (max_y=2.13 < 2.5): not triggered, NEAR allowed to proceed.
-        # refs: tmp/analysis_result.md
-        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 33 and not russia_phase:
-            penalty = -1000.0 * (1.0 + (max_y - 2.5) * 2.0)
-            score += penalty
-            reasons.append("BOARD_MAX_Y_NEAR_SUPPRESSION")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
