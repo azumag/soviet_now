@@ -64,14 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v677: REACTIVE bonus gated by merge_available — when merge_available=false (no merge on board),
-     #       REACTIVE_MERGE_PRIORITY and REACTIVE_IMMEDIATE_MERGE_PRIORITY bonuses no longer apply to
-     #       NEAR candidates. Worst T62: merge_available=false, rp=7, NEAR bonus +2000 inflated NEAR
-     #       score (-800) over NO_MERGE (-6600), causing dangerous NEAR at max_y=2.68. With gating,
-     #       NEAR bonus becomes 0 → NEAR score -2800, NO_MERGE wins correctly. Best T131: unchanged
-     #       (merge_available=true, bonus still applies). Fixes false-positive NEAR at dangerous heights
-     #       when no merge exists. Forbidden: axis 9.7, Russia phase bonuses, unrelated penalty changes.
-     #       refs: tmp/analysis_result.md (adopted hypothesis: REACTIVE bonus merge_available gate)
      # v676: NEAR_MERGE filtering at high max_y — when max_y>=2.0 and landing_y>=1.5, skip NEAR
      #       bonus (no merge bonus applied). Filters false-positive NEAR signals where vertical gap
      #       makes merge physically impossible. Worst T65: NEAR at y=1.87 vs target y=-2.43 (gap=4+).
@@ -1643,15 +1635,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # reactor情報のreactive_pairs（反応性のあるペア）を活用し、即時併合を優先する評価軸を強化。
         # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを+800.0から+1000.0に強化。
         # v206: reactive_pairs>=3で即時併合なし（NO）の場合、盤面密度ボーナスを+300.0から+50.0に削減。
-        if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"] and global_merge_available:
+        if reactive_pair_count == 1 and merge_grade in ["DIRECT", "NEAR"]:
             # reactive_pairs==1の場合も即時併合を優先し、機会取りこぼし削減
             score += 400.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"] and global_merge_available:
+        elif reactive_pair_count >= 2 and reactive_pair_count < 3 and merge_grade in ["DIRECT", "NEAR"]:
             #2つの反応可能ペアがある場合、強力なマージ優先ボーナス（v202: 500→800）
             score += 800.0
             reasons.append("REACTIVE_MERGE_PRIORITY")
-        elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"] and global_merge_available:
+        elif reactive_pair_count >= 3 and merge_grade in ["DIRECT", "NEAR"]:
             # v206: reactive_pairs>=3で即時併合（DIRECT/NEAR）の場合、ボーナスを強化（+1000.0）
             # reactive_pairsが3以上ある場合、即時併合機会を最優先
             score += 1000.0
@@ -1705,7 +1697,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 未活用情報：reactive_pairsの段階的ボーナス
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md
 
-        if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"] and global_merge_available:
+        if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
             # v663: NEAR bonus suppressed near deadline (same logic as axis 8.5)
             candidate_margin_86 = result.get("deadline_margin", 99)
