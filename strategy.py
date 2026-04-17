@@ -64,12 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v673: v668 NEAR suppression threshold extended — add OR trigger: max_y>=2.0, pc>=40
-     #       (instead of only max_y>=2.5, pc>=38). Catches NEAR failures at pc=41-43, max_y=2.0-2.5.
-     #       Preserves valid NEAR at pc<40 (extra_high T94 pc=36, best T122 pc=33).
-     #       Does NOT modify v665/v670/v671/v672 or russia_phase. Fixes pc=40-43 failure zone.
-     #       mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-     #       refs: tmp/analysis_result.md (Adopted Hypothesis: Lower NEAR Suppression Threshold)
      # v671: NO_MERGE height penalty强化 at high danger zone — merge_grade=="NO" && max_y>=2.3 &&
      #       piece_count>=35: height_mult *= 0.5. Fixes worst T65 (pc=35, max_y=2.25→3.08).
      #       Best T137 (pc=34, max_y=2.65) 不発 (pc<35). Does NOT modify v668/v665/v670/russia_phase.
@@ -798,8 +792,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     current_type_has_near = any(
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
-    # --- v668ext: pre-compute russia_merge_possible for HARD SUPPRESS extension ---
-    russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -813,21 +805,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
 
         # ----- HARD SUPPRESS: NEAR merge at extreme danger with high piece_count -----
-        # v668 primary: max_y>=2.5, pc>=38, danger>=1, margin<0.3
-        # v668 extended: max_y>=2.0, pc>=40, danger>=1, margin<0.3 — catches failure zone (pc=41-43)
-        # worst T61-T62: max_y=2.25-2.35, pc=41-43 → suppressed via extended trigger
-        # extra_high T94: max_y=2.4, pc=36 → NOT suppressed (pc<40)
-        # best T122: max_y=2.2, pc=33 → NOT suppressed (pc<40)
-        # Does NOT modify other axes (v665, v670, v671, v672) or russia_phase
+        # worst T61-T63: NEAR at max_y=2.0+, pc=38+, danger=2+, reactor_margin<0.3 → all failures
+        # extra_high T102-T106: NEAR at max_y=2.17-2.45, pc=44-47 → all score_delta=0
+        # NEAR success rate is 68.5%. At extreme danger (max_y>=2.5, pc>=38, danger>=1, margin<0.3),
+        # failure rate 31.5% combined with piece_count accumulation → max_y runaway → game over.
+        # Even when NEAR succeeds, max_y stays high. When NEAR fails, board gets worse.
+        # NO_MERGE with low placement is safer: preserves piece_count, maintains max_y control.
         # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # Fixes rollback failure mode: piece_count accumulation from failed NEAR at pc=40-43 (v668)
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: Lower NEAR Suppression Threshold)
-        if merge_grade == "NEAR" and not russia_merge_possible:
-            suppressed_extreme = (max_y >= 2.5 and piece_count >= 38 and danger_piece_count >= 1 and reactor_margin < 0.3)
-            suppressed_high_pc = (max_y >= 2.0 and piece_count >= 40 and danger_piece_count >= 1 and reactor_margin < 0.3)
-            if suppressed_extreme or suppressed_high_pc:
-                suppressed += 1
-                continue  # HARD SUPPRESS: this NEAR will likely fail and accelerate game over
+        # Rollback constraint: does NOT modify any existing height/merge bonus logic
+        # refs: game_history/20260417_034623_score0662.jsonl T61-63 (worst NEAR failures),
+        #       game_history/20260417_040205_score1695.jsonl T102-106 (extra_high NEAR failures),
+        #       tmp/improve_brief.md (HEIGHT_CONTROL 18.5%, avg_score_delta=2.9)
+        if merge_grade == "NEAR" and max_y >= 2.5 and piece_count >= 38 and danger_piece_count >= 1 and reactor_margin < 0.3:
+            suppressed += 1
+            continue  # HARD SUPPRESS: this NEAR will likely fail and accelerate game over
 
         score = 0.0
         reasons = []
@@ -892,7 +883,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Hypothesis: max_y>=2.5 NEAR penalty)
         # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
         # v551: Russia-building exemption + high-type next additional penalty
-        # (russia_merge_possible pre-computed at line 796 before loop)
+        russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
         global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
         if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible:
             score -= 600.0
