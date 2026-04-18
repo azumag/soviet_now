@@ -12,7 +12,7 @@ Game Overview:
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
-         1.7b. Gap-zone NEAR merge penalty - v567: penalty at NEAR+max_y>=2.0+deadline_crossed
+         1.7b. Gap-zone NEAR merge penalty - v569: penalty at NEAR+max_y>=1.0+deadline_crossed
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -68,6 +68,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v629: axis 9.13 Center Proximity for NO_MERGE at Deadline — +500 unconditional bonus
+     #   when merge_grade==NO && deadline_crossed && !russia_phase && candidate does NOT cross deadline.
+     #   Fixes worst_game T57-T59 pattern: edge placement (x=±3.0) with column_ceiling_bonus (~950)
+     #   overwhelms -1200 CROSSES_DEADLINE_NO_MERGE penalty, while center options also get -1200
+     #   with no compensating bonus. This adds a new positive signal without suppressing any existing
+     #   horizontal guidance (constraint-compliant per last_rollback_postmortem).
+     #   refs: tmp/analysis_result.md (Implementation Plan: axis 9.13),
+     #         mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
+     #         worst_game T57-T59 (x=±3.0, deadline_crossed, max_y 2.4→2.75)
+     #   Fixes rollback failure mode: "NO merge at deadline edge placement overwhelms penalty"
      # v627: axis 9.12 merge drought early fire — MEDIUM phase (max_y>=0.8, pc>=25) で発火
      #   no_merge_streak>=3 条件削除、閾値を max_y>=1.5/pc>=30 から max_y>=0.8/pc>=25 に引下げ
      #   Worst game T49: type 10×3 scattered で merge_available=FALSE、merge drought 早期準備で解決
@@ -534,6 +544,19 @@ Phases (determined by board max Y):
      # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
      #       game_history/20260330_115102_score0447.jsonl, game_history/20260330_115755_score0839.jsonl,
      #       analyze_board.py, advice.md
+     # v569: lower max_y threshold in axis 1.7b (GAP_ZONE_NEAR_PENALTY) from 2.0 to 1.0
+     # Hypothesis from analysis_result.md: worst game T57 (max_y=0.92) and T63 (max_y=1.18)
+     # both selected NEAR at deadline with danger_piece_count>=1 and score_delta=0.
+     # The old threshold (max_y>=2.0) was too high — these dangerous cases weren't caught.
+     # Lowering to 1.0 catches NEAR at deadline with elevated board earlier, making
+     # NO_MERGE (-1200) relatively more attractive than NEAR net (-200 with penalty).
+     # Worst T57: now penalized (wasn't before). Worst T63: now penalized (wasn't before).
+     # Best T87 (max_y=2.16) still penalized — merge failed anyway (score_delta=0).
+     # Mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+     # Constraint: no NO_MERGE guidance modification, no horizontal suppression for NO_MERGE.
+     # Fixes rollback failure mode: max_y runaway from failed NEAR at deadline with danger
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt,
+     #       game_history/20260418_164722_score0759.jsonl (worst T57,T63)
      # v408: axis 9.6 piece_count congestion scaling — match 9.6b formula for reactive stacking
      # Axis 9.6b (same-type proximity) has piece_count congestion scaling but axis 9.6
      # (reactive stacking) does not. At high pc (30+), stacking_bonus (~100-400) is
@@ -1323,7 +1346,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/state/last_rollback_postmortem.md (failure_mode: max_y>=2.0 NEAR merge failure)
         #       game_history/20260410_183623_score0841.jsonl (T53, T57 gap-zone NEAR failures)
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 17-19% in low-score games)
-        if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
+        # Worst T57: max_y=0.92, T63: max_y=1.18 — both below old threshold 2.0, NEAR selected
+        # with score_delta=0. Lowering to 1.0 catches these dangerous cases earlier.
+        if merge_grade == "NEAR" and max_y >= 1.0 and danger_piece_count >= 1 and deadline_crossed:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
 
@@ -2974,6 +2999,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
+
+        # ----- axis 9.13: Center Proximity for NO_MERGE at Deadline (NEW v629) -----
+        # worst_game T57-T59: NO_MERGE + deadline_crossed + edge placement (x=±3.0)
+        # The -1200 CROSSES_DEADLINE_NO_MERGE penalty is insufficient because
+        # column_ceiling_bonus (~950) overwhelms it at edge positions.
+        # v566 center bonuses (+200/+180) are gated by danger_piece_count>=1 and max_y>=2.0,
+        # making them conditional and too weak.
+        #
+        # This axis adds an unconditional center_proximity bonus for NO_MERGE at deadline:
+        # when merge_grade==NO && deadline_crossed==true && !russia_phase &&
+        # candidate does NOT cross deadline (landing_y < deadline_y),
+        # add center_proximity bonus. This makes center_non_deadline positions
+        # relatively more attractive vs edge_deadline positions.
+        #
+        # The bonus is calibrated: +500 should make center_non_deadline competitive
+        # against edge_deadline when all other factors are equal.
+        # refs: mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
+        #        worst_game T57 (x=-3.0, max_y=2.4, deadline_crossed=true),
+        #        worst_game T59 (x=3.0, max_y=2.75, deadline_crossed=true)
+        if merge_grade == "NO" and deadline_crossed and not russia_phase:
+            # Get deadline_y from reactor (fallback to DEADLINE_Y=3.32 constant)
+            reactor_deadline_y = reactor.get("deadline_y", 3.32)
+            candidate_landing_y = result.get("landing_y", 999)
+            if candidate_landing_y < reactor_deadline_y:
+                score += 500.0
+                reasons.append("CENTER_PROXIMITY_NO_MERGE_DEADLINE")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
