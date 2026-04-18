@@ -68,6 +68,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v683: MIDGAME_NO_MERGE_PENALTY — penalty for NO_MERGE before deadline when merge opportunity exists
+     # analysis_result.md adopted hypothesis: mid-game max_y 1.5-2.5 with merge_available=true
+     #   but choosing NO_MERGE causes gradual board compression failure (worst game turns 50-57).
+     # When NOT deadline_crossed, max_y 1.5-2.5, merge_available, rp>=2, danger>=1:
+     #   penalize NO_MERGE by -200*merge_mult to discourage board-compressing placements.
+     # Constraints: v681/v682 unchanged, HEIGHT_CONTROL unchanged, Russia bonuses unchanged.
+     # Fixed turn-number thresholds prohibited (use board state conditions, not turns>=N).
+     # refs: tmp/analysis_result.md (Implementation Plan: mid-game NO_MERGE penalty),
+     #       game_history/20260419_015027_score0804.jsonl (worst game turns 50-57),
+     #       game_history/20260419_021521_score2423.jsonl (best game turns 103-113)
+     # Fixes rollback failure mode: "mid-game merge_available=true 続きながらmax_yが緩やかに上昇して最終死亡"
      # v682: DEADLINE_MERGE_VIOLATION — penalty for NO_MERGE at deadline when merge opportunity exists
      # mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
      # worst game T49-T50: deadline_crossed=true, max_y=2.88-2.87, merge_available=true → NO_MERGE selected
@@ -1250,6 +1261,39 @@ def decide(game_state: dict, analysis: dict) -> dict:
             deadline_merge_violation_penalty = 800.0 * merge_mult
             score -= deadline_merge_violation_penalty
             reasons.append("DEADLINE_MERGE_VIOLATION")
+
+        # ----- v683: mid-game NO_MERGE penalty — suppress merge-opportunity waste before deadline -----
+        # analysis_result.md adopted hypothesis: mid-game max_y 1.5-2.5 (turns 45-57) with merge available
+        #   but choosing NO_MERGE causes gradual board compression failure.
+        # worst game turns 50-57: max_y 1.9→1.51→1.38→1.51→1.37→1.38→1.92, merge_available=true
+        #   throughout, yet NO_MERGE candidates kept being selected, max_y climbing to 2.92 at death.
+        # best game turns 103-113: max_y 2.17-2.49, merge_available=true, score gains continuing.
+        # Mechanism: when NOT deadline_crossed yet, max_y is 1.5-2.5, merge_available=true,
+        #   reactive_pair_count>=2, danger_piece_count>=1, penalize NO_MERGE by -200*merge_mult
+        #   to discourage board-compressing placements that waste merge opportunities.
+        # Unlike v682 (deadline_crossed=true), this targets the pre-deadline buildup phase where
+        #   the board can still be saved by prioritizing merge over height.
+        # Constraints (from analysis):
+        #   - v681 NEAR chain suppression unchanged (deadline_crossed=true path)
+        #   - v682 unchanged (deadline_crossed=true NO_MERGE penalty)
+        #   - HEIGHT_CONTROL unchanged
+        #   - Russia phase bonuses unchanged
+        #   - Fixed turn-number thresholds prohibited (use board state conditions, not turns>=N)
+        # Fixes rollback failure mode: "mid-game merge_available=true 続きながらmax_yが緩やかに上昇して最終死亡"
+        # refs: tmp/analysis_result.md (Implementation Plan: mid-game NO_MERGE penalty),
+        #       game_history/20260419_015027_score0804.jsonl (worst game turns 50-57),
+        #       game_history/20260419_021521_score2423.jsonl (best game turns 103-113),
+        #       data/mandatory_themes.txt ("併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける")
+        if (merge_grade == "NO"
+                and not deadline_crossed
+                and max_y >= 1.5
+                and max_y < 2.5
+                and has_merge_opportunity
+                and reactive_pair_count >= 2
+                and danger_piece_count >= 1):
+            midgame_no_merge_penalty = 200.0 * merge_mult
+            score -= midgame_no_merge_penalty
+            reasons.append("MIDGAME_NO_MERGE_PENALTY")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ
