@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-18 15:12:42 JST`
-- Nodes: `1139`
-- Edges: `1557`
-- Current: `a99ea2146f34`
+- Updated: `2026-04-18 17:12:19 JST`
+- Nodes: `1140`
+- Edges: `1558`
+- Current: `fa8cf0e84f36`
 - Anchor: `b4362aa4d1ef`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_afecd55b44e7["afecd55b44e7<br/>g=12 n=12<br/>comp=11397.8"]
     h_42a1425cf92d["42a1425cf92d<br/>g=12 n=12<br/>comp=10913.3"]
     h_e339da496dbd["e339da496dbd<br/>g=12 n=12<br/>comp=8274.7"]
     h_01d6aa2ac906["01d6aa2ac906"]
@@ -63,7 +62,8 @@ flowchart TD
     h_ac7deb27998d["ac7deb27998d<br/>g=12 n=12<br/>comp=9718.1"]
     h_255c307f96c7["255c307f96c7<br/>g=12 n=12<br/>comp=9616.2"]
     h_104a3a858261["104a3a858261<br/>g=35 n=20<br/>comp=10143.1"]
-    h_b4362aa4d1ef["b4362aa4d1ef<br/>ANCHOR<br/>g=38 n=20<br/>comp=12524.1"]
+    h_b4362aa4d1ef["b4362aa4d1ef<br/>ANCHOR<br/>g=39 n=20<br/>comp=12349.3"]
+    h_a99ea2146f34["a99ea2146f34<br/>g=24 n=20<br/>comp=11742.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -74,9 +74,8 @@ flowchart TD
     h_b26c2565971c["b26c2565971c<br/>g=12 n=12<br/>comp=11795.1"]
     h_415b0d640378["415b0d640378<br/>g=12 n=12<br/>comp=11745.1"]
     h_22ad2bcc59f1["22ad2bcc59f1<br/>g=12 n=12<br/>comp=11747.3"]
-    h_a99ea2146f34["a99ea2146f34<br/>CURRENT"]
+    h_fa8cf0e84f36["fa8cf0e84f36<br/>CURRENT"]
 
-    h_afecd55b44e7 -->|improve| h_42a1425cf92d
     h_42a1425cf92d -->|improve| h_e339da496dbd
     h_01d6aa2ac906 -->|improve| h_bfa4b71d598d
     h_bfa4b71d598d -->|improve| h_91c3f7017051
@@ -132,15 +131,15 @@ flowchart TD
     h_ac7deb27998d -->|improve| h_255c307f96c7
     h_255c307f96c7 -. rollback .-> h_104a3a858261
     h_104a3a858261 -. rollback .-> h_b4362aa4d1ef
-    h_2ad5850b541e -->|improve| h_891e238759b8
     h_b4362aa4d1ef -->|improve| h_a99ea2146f34
+    h_2ad5850b541e -->|improve| h_891e238759b8
+    h_a99ea2146f34 -->|improve| h_fa8cf0e84f36
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_afecd55b44e7 plain;
     class h_42a1425cf92d plain;
     class h_e339da496dbd plain;
     class h_01d6aa2ac906 plain;
@@ -189,6 +188,7 @@ flowchart TD
     class h_255c307f96c7 plain;
     class h_104a3a858261 plain;
     class h_b4362aa4d1ef anchor;
+    class h_a99ea2146f34 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -199,7 +199,7 @@ flowchart TD
     class h_b26c2565971c plain;
     class h_415b0d640378 plain;
     class h_22ad2bcc59f1 plain;
-    class h_a99ea2146f34 current;
+    class h_fa8cf0e84f36 current;
 ```
 
 ## Detail 1/15
@@ -4189,9 +4189,9 @@ flowchart TD
 
 ## Detail 15/15
 
-- Range: `646eea0bf18d` .. `a99ea2146f34`
-- Nodes in this diagram: `19`
-- Internal edges in this diagram: `8`
+- Range: `646eea0bf18d` .. `fa8cf0e84f36`
+- Nodes in this diagram: `20`
+- Internal edges in this diagram: `9`
 - Cross-chunk link: `94786eb2e0fc --improve--> 646eea0bf18d`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -4215,7 +4215,8 @@ flowchart TD
     h_ac7deb27998d["ac7deb27998d<br/>g=12 n=12<br/>comp=9718.1"]
     h_255c307f96c7["255c307f96c7<br/>g=12 n=12<br/>comp=9616.2"]
     h_104a3a858261["104a3a858261<br/>g=35 n=20<br/>comp=10143.1"]
-    h_b4362aa4d1ef["b4362aa4d1ef<br/>ANCHOR<br/>g=38 n=20<br/>comp=12524.1"]
+    h_b4362aa4d1ef["b4362aa4d1ef<br/>ANCHOR<br/>g=39 n=20<br/>comp=12349.3"]
+    h_a99ea2146f34["a99ea2146f34<br/>g=24 n=20<br/>comp=11742.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -4226,7 +4227,7 @@ flowchart TD
     h_b26c2565971c["b26c2565971c<br/>g=12 n=12<br/>comp=11795.1"]
     h_415b0d640378["415b0d640378<br/>g=12 n=12<br/>comp=11745.1"]
     h_22ad2bcc59f1["22ad2bcc59f1<br/>g=12 n=12<br/>comp=11747.3"]
-    h_a99ea2146f34["a99ea2146f34<br/>CURRENT"]
+    h_fa8cf0e84f36["fa8cf0e84f36<br/>CURRENT"]
 
     h_646eea0bf18d -->|improve| h_bced4c938139
     h_bced4c938139 -. rollback .-> h_a7b41f8f20ad
@@ -4236,6 +4237,7 @@ flowchart TD
     h_255c307f96c7 -. rollback .-> h_104a3a858261
     h_104a3a858261 -. rollback .-> h_b4362aa4d1ef
     h_b4362aa4d1ef -->|improve| h_a99ea2146f34
+    h_a99ea2146f34 -->|improve| h_fa8cf0e84f36
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4250,6 +4252,7 @@ flowchart TD
     class h_255c307f96c7 plain;
     class h_104a3a858261 plain;
     class h_b4362aa4d1ef anchor;
+    class h_a99ea2146f34 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -4260,10 +4263,20 @@ flowchart TD
     class h_b26c2565971c plain;
     class h_415b0d640378 plain;
     class h_22ad2bcc59f1 plain;
-    class h_a99ea2146f34 current;
+    class h_fa8cf0e84f36 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#16797 `a99ea214 -> fa8cf0e8`
+
+- scores: `13886 7546 11265 16068 11842 15973 9559 11945 14367 7461 13655 11092`
+- 1.7b. Gap-zone NEAR merge penalty - v569: penalty at NEAR+max_y>=1.0+deadline_crossed
+- v569: lower max_y threshold in axis 1.7b (GAP_ZONE_NEAR_PENALTY) from 2.0 to 1.0
+- Hypothesis from analysis_result.md: worst game T57 (max_y=0.92) and T63 (max_y=1.18)
+- both selected NEAR at deadline with danger_piece_count>=1 and score_delta=0.
+- The old threshold (max_y>=2.0) was too high — these dangerous cases weren't caught.
+- Lowering to 1.0 catches NEAR at deadline with elevated board earlier, making
 
 ### Improve Game#16772 `b4362aa4 -> a99ea214`
 

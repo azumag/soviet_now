@@ -68,6 +68,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v629: axis 9.13 Center Proximity for NO_MERGE at Deadline — +500 unconditional bonus
+     #   when merge_grade==NO && deadline_crossed && !russia_phase && candidate does NOT cross deadline.
+     #   Fixes worst_game T57-T59 pattern: edge placement (x=±3.0) with column_ceiling_bonus (~950)
+     #   overwhelms -1200 CROSSES_DEADLINE_NO_MERGE penalty, while center options also get -1200
+     #   with no compensating bonus. This adds a new positive signal without suppressing any existing
+     #   horizontal guidance (constraint-compliant per last_rollback_postmortem).
+     #   refs: tmp/analysis_result.md (Implementation Plan: axis 9.13),
+     #         mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
+     #         worst_game T57-T59 (x=±3.0, deadline_crossed, max_y 2.4→2.75)
+     #   Fixes rollback failure mode: "NO merge at deadline edge placement overwhelms penalty"
      # v627: axis 9.12 merge drought early fire — MEDIUM phase (max_y>=0.8, pc>=25) で発火
      #   no_merge_streak>=3 条件削除、閾値を max_y>=1.5/pc>=30 から max_y>=0.8/pc>=25 に引下げ
      #   Worst game T49: type 10×3 scattered で merge_available=FALSE、merge drought 早期準備で解決
@@ -2974,6 +2984,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
+
+        # ----- axis 9.13: Center Proximity for NO_MERGE at Deadline (NEW v629) -----
+        # worst_game T57-T59: NO_MERGE + deadline_crossed + edge placement (x=±3.0)
+        # The -1200 CROSSES_DEADLINE_NO_MERGE penalty is insufficient because
+        # column_ceiling_bonus (~950) overwhelms it at edge positions.
+        # v566 center bonuses (+200/+180) are gated by danger_piece_count>=1 and max_y>=2.0,
+        # making them conditional and too weak.
+        #
+        # This axis adds an unconditional center_proximity bonus for NO_MERGE at deadline:
+        # when merge_grade==NO && deadline_crossed==true && !russia_phase &&
+        # candidate does NOT cross deadline (landing_y < deadline_y),
+        # add center_proximity bonus. This makes center_non_deadline positions
+        # relatively more attractive vs edge_deadline positions.
+        #
+        # The bonus is calibrated: +500 should make center_non_deadline competitive
+        # against edge_deadline when all other factors are equal.
+        # refs: mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
+        #        worst_game T57 (x=-3.0, max_y=2.4, deadline_crossed=true),
+        #        worst_game T59 (x=3.0, max_y=2.75, deadline_crossed=true)
+        if merge_grade == "NO" and deadline_crossed and not russia_phase:
+            # Get deadline_y from reactor (fallback to DEADLINE_Y=3.32 constant)
+            reactor_deadline_y = reactor.get("deadline_y", 3.32)
+            candidate_landing_y = result.get("landing_y", 999)
+            if candidate_landing_y < reactor_deadline_y:
+                score += 500.0
+                reasons.append("CENTER_PROXIMITY_NO_MERGE_DEADLINE")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).

@@ -12,7 +12,7 @@ Game Overview:
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
-         1.7b. Gap-zone NEAR merge penalty - v569: penalty at NEAR+max_y>=1.0+deadline_crossed
+         1.7b. Gap-zone NEAR merge penalty - v567: penalty at NEAR+max_y>=2.0+deadline_crossed
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -544,19 +544,6 @@ Phases (determined by board max Y):
      # refs: tmp/improve_brief.md, tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
      #       game_history/20260330_115102_score0447.jsonl, game_history/20260330_115755_score0839.jsonl,
      #       analyze_board.py, advice.md
-     # v569: lower max_y threshold in axis 1.7b (GAP_ZONE_NEAR_PENALTY) from 2.0 to 1.0
-     # Hypothesis from analysis_result.md: worst game T57 (max_y=0.92) and T63 (max_y=1.18)
-     # both selected NEAR at deadline with danger_piece_count>=1 and score_delta=0.
-     # The old threshold (max_y>=2.0) was too high — these dangerous cases weren't caught.
-     # Lowering to 1.0 catches NEAR at deadline with elevated board earlier, making
-     # NO_MERGE (-1200) relatively more attractive than NEAR net (-200 with penalty).
-     # Worst T57: now penalized (wasn't before). Worst T63: now penalized (wasn't before).
-     # Best T87 (max_y=2.16) still penalized — merge failed anyway (score_delta=0).
-     # Mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-     # Constraint: no NO_MERGE guidance modification, no horizontal suppression for NO_MERGE.
-     # Fixes rollback failure mode: max_y runaway from failed NEAR at deadline with danger
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt,
-     #       game_history/20260418_164722_score0759.jsonl (worst T57,T63)
      # v408: axis 9.6 piece_count congestion scaling — match 9.6b formula for reactive stacking
      # Axis 9.6b (same-type proximity) has piece_count congestion scaling but axis 9.6
      # (reactive stacking) does not. At high pc (30+), stacking_bonus (~100-400) is
@@ -1346,9 +1333,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/state/last_rollback_postmortem.md (failure_mode: max_y>=2.0 NEAR merge failure)
         #       game_history/20260410_183623_score0841.jsonl (T53, T57 gap-zone NEAR failures)
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 17-19% in low-score games)
-        # Worst T57: max_y=0.92, T63: max_y=1.18 — both below old threshold 2.0, NEAR selected
-        # with score_delta=0. Lowering to 1.0 catches these dangerous cases earlier.
-        if merge_grade == "NEAR" and max_y >= 1.0 and danger_piece_count >= 1 and deadline_crossed:
+        if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
 
