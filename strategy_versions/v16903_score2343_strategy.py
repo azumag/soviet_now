@@ -68,14 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v681: NEAR chain suppression — block consecutive NEAR at deadline+danger
-     # worst_game T55-T61: 6 consecutive NEAR selections at deadline_crossed+danger, score_delta=0.
-     # v680's type_scale=0.5 reduction wasn't enough to prevent this chain.
-     # New mechanism: track if last turn selected NEAR under max_y>=2.0+deadline_crossed+danger>=1+rp>=2.
-     # Next turn in same condition: force NO_MERGE + lowest position to break the chain.
-     # refs: tmp/analysis_result.md (Implementation Plan: Gap-zone NEAR抑制の強化),
-     #       game_history/20260418_234845_score0781.jsonl (worst game T55-T61)
-     # Fixes rollback failure mode: "deadline+danger+elevated max_y継続時のNEAR選択連鎖"
      # v613: REMOVED axis_88_horizontal_suppression from stacking_danger_suppressed
      # axis 9.6b same-type proximity guidance must remain active during merge drought
      # (rp>=3 && NO && pc>=28) to prevent piece scattering. The within-axis
@@ -901,14 +893,7 @@ Phases (determined by board max Y):
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
-# --- v681: NEAR chain suppression state ---
-# Track if previous turn selected NEAR under dangerous deadline+danger conditions.
-# When active: forces NO_MERGE + lowest position to break consecutive NEAR chain.
-# Resets automatically when conditions clear or NO_MERGE is selected.
-_near_chain_suppression = False
-
 def decide(game_state: dict, analysis: dict) -> dict:
-    global _near_chain_suppression
     """v340: reactive_pairs>=3時deadline_crossed併合最優先版 - v339 failure mode潰し
 
     v339 failure: reactive_pairs>=3 && deadline_crossed && merge_grade=="NO"の超危険域でaxis 9.6が強力に機能し、高配置 runawayでゲームオーバー
@@ -1125,24 +1110,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
-    # ----- v681: NEAR chain suppression — block consecutive NEAR under dangerous conditions -----
-    # If last turn selected NEAR under max_y>=2.0 + deadline_crossed + danger>=1 + rp>=2,
-    # force NO_MERGE + lowest position to break the consecutive NEAR death spiral.
-    # worst_game T55-T61: 6 consecutive NEAR selections at deadline+danger, score_delta=0 each.
-    # v680's type_scale reduction alone wasn't enough to prevent this chain.
-    dangerous_condition = (
-        max_y >= 2.0
-        and deadline_crossed
-        and danger_piece_count >= 1
-        and reactive_pair_count >= 2
-    )
-    if _near_chain_suppression and dangerous_condition:
-        # Force NO_MERGE selection with lowest landing_y
-        no_merge_candidates = [r for r in results if r.get("merge_grade") == "NO"]
-        if no_merge_candidates:
-            forced = min(no_merge_candidates, key=lambda r: r.get("landing_y", 99))
-            _near_chain_suppression = False  # Reset after acting
-            return {"x": float(forced["x"]), "reason": "NEAR_CHAIN_SUPPRESSION"}
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -2833,12 +2800,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
-
-    # ----- v681: track NEAR selection under dangerous conditions for next turn -----
-    # If NEAR was selected under max_y>=2.0 + deadline_crossed + danger>=1 + rp>=2,
-    # suppress NEAR next turn to break the consecutive NEAR death spiral.
-    if "NEAR" in best_reason and dangerous_condition:
-        _near_chain_suppression = True
 
     return {"x": best_x, "reason": best_reason}
 
