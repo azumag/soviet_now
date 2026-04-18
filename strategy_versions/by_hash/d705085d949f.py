@@ -68,18 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v682: DEADLINE_MERGE_VIOLATION — penalty for NO_MERGE at deadline when merge opportunity exists
-     # mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-     # worst game T49-T50: deadline_crossed=true, max_y=2.88-2.87, merge_available=true → NO_MERGE selected
-     #   → board compression opportunity lost → game over next turn.
-     # best game T151-T152: same pattern at deadline_crossed=true, score_delta=0.
-     # When NO_MERGE candidate exists alongside DIRECT/NEAR candidates at deadline, penalize -800*merge_mult.
-     # Constraints: v681 NEAR chain suppression unchanged, HEIGHT_CONTROL unchanged, Russia bonuses unchanged.
-     # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_MERGE_VIOLATION axis),
-     #       data/mandatory_themes.txt,
-     #       game_history/20260419_011626_score0715.jsonl (worst game T49-T50),
-     #       game_history/20260419_012220_score3287.jsonl (best game T151-T152)
-     # Fixes rollback failure mode: "deadlineでmerge機会があるのにNO_MERGE選択→board compression失敗"
      # v681: NEAR chain suppression — block consecutive NEAR at deadline+danger
      # worst_game T55-T61: 6 consecutive NEAR selections at deadline_crossed+danger, score_delta=0.
      # v680's type_scale=0.5 reduction wasn't enough to prevent this chain.
@@ -1155,18 +1143,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             forced = min(no_merge_candidates, key=lambda r: r.get("landing_y", 99))
             _near_chain_suppression = False  # Reset after acting
             return {"x": float(forced["x"]), "reason": "NEAR_CHAIN_SUPPRESSION"}
-
-    # ----- v682: DEADLINE_MERGE_VIOLATION — penalty for NO_MERGE at deadline when merge opportunity exists -----
-    # analysis_result.md adopted hypothesis: "NO_MERGE at deadline violation penalty"
-    # mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-    # worst game T49-T50: NO_MERGE at deadline_crossed && elevated max_y with merge_available=true,
-    #   board compression opportunity lost. best game T151-T152 same pattern.
-    # Implementation: if NO_MERGE candidate exists when other candidates have DIRECT/NEAR merge opportunity,
-    #   apply -800*merge_mult penalty to force relative merge preference.
-    # Constraint: v681 NEAR chain suppression logic unchanged. Russia phase bonuses unchanged.
-    # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_MERGE_VIOLATION axis)
-    has_merge_opportunity = any(r.get("merge_grade") in ["DIRECT", "NEAR"] for r in results)
-
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -1223,33 +1199,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult * type_scale
             reasons.append("FAR_MERGE")
-
-        # ----- v682: DEADLINE_MERGE_VIOLATION — penalty for NO_MERGE at deadline when merge opportunity exists -----
-        # analysis_result.md adopted hypothesis: "NO_MERGE at deadline violation penalty"
-        # mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # worst game T49-T50: deadline_crossed=true, max_y=2.88-2.87, danger=2, merge_available=true
-        #   but NO_MERGE selected → board compression opportunity lost. game over next turn.
-        # best game T151-T152: deadline_crossed=true, max_y=2.98-2.85, NO_MERGE → score_delta=0
-        # Mechanism: when NO_MERGE candidate exists alongside DIRECT/NEAR candidates at deadline,
-        #   penalize NO_MERGE by -800*merge_mult to force relative merge preference.
-        # Constraints (from analysis):
-        #   - v681 NEAR chain suppression logic unchanged
-        #   - HEIGHT_CONTROL unchanged (not a height penalty increase)
-        #   - Russia phase bonuses unchanged
-        #   - merge_opportunity check (has_merge_opportunity) ensures penalty only when merge is actually available
-        #   - piece_count>=25 threshold: mid-game+ phase only (not early game)
-        # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_MERGE_VIOLATION axis),
-        #       data/mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
-        #       game_history/20260419_011626_score0715.jsonl (worst game T49-T50),
-        #       game_history/20260419_012220_score3287.jsonl (best game T151-T152)
-        # Fixes rollback failure mode: "deadlineでmerge機会があるのにNO_MERGE選択→board compression失敗"
-        if (merge_grade == "NO"
-                and deadline_crossed
-                and piece_count >= 25
-                and has_merge_opportunity):
-            deadline_merge_violation_penalty = 800.0 * merge_mult
-            score -= deadline_merge_violation_penalty
-            reasons.append("DEADLINE_MERGE_VIOLATION")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ
