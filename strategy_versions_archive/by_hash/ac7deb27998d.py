@@ -64,18 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v566: moderate max_y NO_MERGE guidance for deadline_crossed + danger
-     # When merge_grade=="NO" && deadline_crossed==true && max_y>=2.0 && danger_piece_count>=1,
-     # add center_proximity (+200) and low_placement guidance (+180). NOT modifying v555
-     # threshold (>=2.5) — adding guidance in the gap zone (2.0-2.5) where v555 doesn't apply.
-     # addresses mandatory theme: "avoid deadline placement without merge"
-     # Fixes rollback failure mode: deadline placement without merge at moderate max_y
-     # refs: tmp/analysis_result.md (Implementation Plan Change 2)
-     # v565: strengthen DANGER_DIRECT_MERGE_PRIORITY in HIGH phase (max_y>=1.8)
-     # At HIGH phase, taking a danger DIRECT merge also reduces max_y.
-     # Extra +400 bonus encourages this dual-benefit action (merge + height reduction).
-     # Fixes rollback failure mode: max_y runaway from failed NEAR at moderate max_y
-     # refs: tmp/analysis_result.md (Implementation Plan Change 1)
      # v555: NO_MERGE height penalty multiplier — max_y>=2.5 && merge_grade==NOでheight_penaltyを2倍化
      # v550/v552はNEAR選択時のペナルティを行うが、NO merge選択時はheight指導がない問題を修正
      # worst T56 (max_y=2.31, rp=3, NO merge) → T57: max_y=3.30 (+0.99) で高所にpiece追加
@@ -1150,17 +1138,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       analyze_board.py L391-397 (danger_direct_merge_available calculation),
         #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
         # Fixes rollback failure mode: endgame scoring starvation at deadline
-        # v565: strengthen DANGER_DIRECT_MERGE_PRIORITY in HIGH phase (max_y>=1.8)
-        # At HIGH phase, taking a danger DIRECT merge also reduces max_y.
-        # Extra bonus encourages this dual-benefit action.
-        # refs: tmp/analysis_result.md (Implementation Plan Change 1)
-        # Fixes rollback failure mode: max_y runaway from failed NEAR at moderate max_y
         if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT":
             score += 800.0
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
-            if max_y >= 1.8:  # HIGH phase — dual benefit (merge + height reduction)
-                score += 400.0
-                reasons.append("DANGER_DIRECT_HIGH_PHASE_BOOST")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
         # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
@@ -1419,20 +1399,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 cleanup_bonus *= 1.25  # was 1.15
             score += cleanup_bonus
             reasons.append("REACTIVE_PAIRS_CLEANUP")
-
-        # v566: moderate max_y NO_MERGE guidance for deadline_crossed + danger
-        # When merge_grade=="NO" && deadline_crossed==true && max_y>=2.0 && danger_piece_count>=1,
-        # add center_proximity and low_placement bonuses.
-        # This is NOT modifying v555 threshold (applies at >=2.5) — it's adding positive guidance
-        # in the gap zone (2.0-2.5) where v555 doesn't apply but danger is present.
-        # addresses mandatory theme: "avoid deadline placement without merge"
-        # refs: tmp/analysis_result.md (Implementation Plan Change 2)
-        # Fixes rollback failure mode: deadline placement without merge at moderate max_y
-        if merge_grade == "NO" and deadline_crossed and max_y >= 2.0 and danger_piece_count >= 1:
-            center_prox = max(0, 200.0 - abs(x) * 40.0)
-            low_y_guide = max(0, 180.0 - landing_y * 60.0) if landing_y > 0 else 180.0
-            score += center_prox + low_y_guide
-            reasons.append("MODERATE_MAX_Y_DEADLINE_GUIDANCE")
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.

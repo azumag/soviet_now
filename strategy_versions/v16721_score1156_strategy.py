@@ -81,6 +81,17 @@ Phases (determined by board max Y):
      # v422 条件未達でも発動し、DIRECT merge への誘導を強化。
      # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
      # refs: tmp/analysis_result.md, tmp/improve_brief.md, game_history/20260408_113627_score1197.jsonl
+# v564: NEAR_DEADLINE_DANGER_HIGH_MAX_Y_PENALTY — axis 8.9: deadline_crossed && danger_piece_count>=1
+# && merge_grade==NEAR && max_y>=2.0 で -800 ペナルティ。worst T63-66 (max_y=2.08→2.91,
+# deadline_crossed=true, danger_piece_count=1-3, merge_grade=NEAR) で NEAR 選択が続くが全 score_delta=0、
+# piece_count 34→44 累積してゲームオーバー。v555 height mult 2x (axis 1.7) は merge_grade==NO にのみ適用。
+# v563 閾値 (max_y>=3.0) は維持。この 8.9 は 2.0-3.0 ギャップを埋める。
+# NO_MERGE height penalty 閾値 (max_y>=2.5) は変更しない。
+# Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y + deadline
+# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
+#       tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt,
+#       game_history/20260418_102127_score0664.jsonl (worst T63-66),
+#       game_history/20260418_101811_score3330.jsonl (best T120)
 # v563: type15+type14 proximity bonus in double_russia_phase — when 2 Russias exist and next_type==14,
 # add bonus for placing type14 near existing type15 pieces to encourage type14+type15→type15 Soviet merge path.
 # Fixes rollback failure mode: double_russia_phase merge pipeline starvation after Russia creation
@@ -1085,6 +1096,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
+
+        # ----- evaluation axis 8.9: NEAR merge penalty at high max_y + deadline + danger (v564: deadline NEAR抑制) -----
+        # Hypothesis from analysis_result.md: worst T63-66 (max_y=2.08→2.91, deadline_crossed=true,
+        # danger_piece_count=1-3, merge_grade=NEAR) shows NEAR selection continues but all score_delta=0,
+        # piece_count 34→44 accumulates until game over. best T120 (max_y=3.01, deadline_crossed=true,
+        # danger_piece_count=3, merge_grade=DIRECT) chose danger_direct_merge with score_delta=+154.
+        # v555 height mult 2x (axis 1.7) only applies when merge_grade==NO, not NEAR.
+        # NEAR_DEADLINE_RISK + HIGH_PC_NEAR_PENALTY = -1400, but NEAR bonus +1200 = net -200 still allows NEAR.
+        # New axis: specifically penalize NEAR when deadline_crossed && danger_piece_count>=1 && max_y>=2.0.
+        # v563 threshold (max_y>=3.0) is preserved — this 8.9 axis covers the 2.0-3.0 gap.
+        # NO_MERGE height penalty threshold (max_y>=2.5) is NOT changed (forbidden by rollback constraints).
+        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md,
+        #       tmp/state/last_rollback_analysis.md, tmp/batch_summary.txt,
+        #       game_history/20260418_102127_score0664.jsonl (worst T63-66),
+        #       game_history/20260418_101811_score3330.jsonl (best T120)
+        # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y + deadline
+        if deadline_crossed and danger_piece_count >= 1 and merge_grade == "NEAR" and max_y >= 2.0:
+            score -= 800.0
+            reasons.append("NEAR_DEADLINE_DANGER_HIGH_MAX_Y_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
