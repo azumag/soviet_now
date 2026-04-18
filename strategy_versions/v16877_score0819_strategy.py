@@ -68,6 +68,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v680: NEAR_DEADLINE_DANGER_SUPPRESSED — axis 1.5c, evaluation-layer NEAR complete suppression
+     #   deadline_crossed && danger_piece_count>=1 && max_y>=2.0 && !double_russia_phase → score -= 2000.0
+     #   v569(-1200) + v677/v678/v679 suppressでも残余bonusesで-net仍正 → 評価层面完全除外
+     #   extra_low T55-T60, worst T39-46: NEAR at deadline+danger+elevated max_y, 全score_delta=0
+     #   best T145: DIRECT at same condition → success(+165)。抑制強化では不十分→完全除外
+     #   Fixes rollback failure mode: "NEAR bonus at deadline+danger bypasses v569/v677/v679"
+     #   refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt, tmp/state/last_rollback_postmortem.md,
+     #         game_history/20260418_220150_score0667.jsonl, game_history/20260418_213131_score0483.jsonl,
+     #         game_history/20260418_220744_score3481.jsonl
      # v679: Suppress base NEAR bonus at max_y>=1.5 + deadline_crossed + danger>=1
      #   worst/extra_low pattern: NEAR + max_y>=1.5 + deadline_crossed + danger>=1 → score_delta=0
      #   v569 penalty (-1200) + v677 DANGER_NEAR suppression leaves base NEAR 600 intact.
@@ -1455,6 +1464,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 bonus = (600.0 if deadline_crossed else 300.0) * type_scale
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
+
+        # ----- evaluation axis 1.5c: NEAR merge complete suppression at deadline danger (v680) -----
+        # analysis_result.md Implementation Plan: NEAR merge完全制止（v679強化版）
+        # deadline_crossed && danger_piece_count>=1 && max_y>=2.0ではNEARが失敗し続ける
+        # v569(-1200) + v677/v678 suppressでも残余bonusesで-net仍正 → 評価层面で完全除外
+        # extra_low T55-T60: NEAR selected at deadline_crossed+danger=3-5, max_y=2.44-3.34, 全score_delta=0
+        # v569 penalty(-1200) + v677 DANGER_NEAR suppress + v679 base NEAR suppressでもNEARが選択され続ける
+        # best T145: DIRECT at same condition → success(+165)。方向として正しいが、抑制強化では不十分
+        # 完全制止であればNO_MERGE(-320)가常に dominante
+        # NOT active in double_russia_phase (別のロジックが優先されるため)
+        # refs: tmp/analysis_result.md (Implementation Plan: NEAR_DEADLINE_DANGER_SUPPRESSED),
+        #       mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
+        #       tmp/state/last_rollback_postmortem.md (failure_mode: NEAR selection at deadline+danger),
+        #       game_history/20260418_220150_score0667.jsonl (extra_low T53-60, NEAR fails),
+        #       game_history/20260418_213131_score0483.jsonl (worst T39-46, NEAR fails),
+        #       game_history/20260418_220744_score3481.jsonl (best T145, DIRECT succeeds)
+        # Fixes rollback failure mode: "NEAR bonus at deadline+danger bypasses v569/v677/v679 suppression"
+        double_russia_phase = game_state.get("double_russia_phase", False)
+        if (merge_grade == "NEAR" and deadline_crossed and danger_piece_count >= 1
+                and max_y >= 2.0 and not double_russia_phase):
+            score -= 2000.0
+            reasons.append("NEAR_DEADLINE_DANGER_SUPPRESSED")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
