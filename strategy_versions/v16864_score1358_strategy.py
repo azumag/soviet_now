@@ -68,6 +68,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v679: Suppress base NEAR bonus at max_y>=1.5 + deadline_crossed + danger>=1
+     #   worst/extra_low pattern: NEAR + max_y>=1.5 + deadline_crossed + danger>=1 → score_delta=0
+     #   v569 penalty (-1200) + v677 DANGER_NEAR suppression leaves base NEAR 600 intact.
+     #   With suppression, NO_MERGE (-320 after bonuses) dominates over failing NEAR.
+     #   refs: tmp/analysis_result.md (Implementation Plan: base NEAR bonus suppression),
+     #         tmp/state/last_rollback_postmortem.md (failure_mode: NEAR selection at deadline+danger),
+     #         mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
+     #         game_history/20260418_211310_score0876.jsonl (worst T58, max_y=2.48, score_delta=0),
+     #         game_history/20260418_203842_score0946.jsonl (extra_low T56, max_y=2.3, score_delta=0)
+     #   Fixes rollback failure mode: "NEAR bonus at deadline+danger bypasses v569 penalty"
      # v678: axis 1.6 DANGER_DIRECT_NEAR_BOOST suppression at deadline_crossed && danger>=1
      #   v677 suppressed DANGER_NEAR (axis 1.5b) when deadline_crossed && danger_piece_count>=1,
      #   but DANGER_DIRECT_NEAR_BOOST (axis 1.6) was NOT suppressed, bypassing the fix.
@@ -1262,8 +1272,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1200.0 * merge_mult * type_scale
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult * type_scale
-            reasons.append("NEAR_MERGE")
+            # v679: Suppress base NEAR bonus at moderate max_y + deadline + danger
+            # When max_y >= 1.5 && deadline_crossed && danger_piece_count >= 1,
+            # NEAR bonus becomes 0 (v569 penalty still applies, -1200).
+            # This makes NO_MERGE (-320 after bonuses) dominate over failing NEAR.
+            # DANGER_NEAR bonus already suppressed by v677 when deadline_crossed && danger>=1.
+            suppress_neardanger_bonus = (
+                max_y >= 1.5
+                and deadline_crossed
+                and danger_piece_count >= 1
+            )
+            if not suppress_neardanger_bonus:
+                score += 600.0 * merge_mult * type_scale
+                reasons.append("NEAR_MERGE_BONUS")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult * type_scale
             reasons.append("FAR_MERGE")
