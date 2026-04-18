@@ -68,17 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v678: axis 1.6 DANGER_DIRECT_NEAR_BOOST suppression at deadline_crossed && danger>=1
-     #   v677 suppressed DANGER_NEAR (axis 1.5b) when deadline_crossed && danger_piece_count>=1,
-     #   but DANGER_DIRECT_NEAR_BOOST (axis 1.6) was NOT suppressed, bypassing the fix.
-     #   worst_game T63/T57: NEAR selected at deadline_crossed && danger=1, score_delta=0.
-     #   DANGER_NEAR suppressed but DANGER_DIRECT_NEAR_BOOST gave +500, letting risky NEAR win.
-     #   Suppress DANGER_DIRECT_NEAR_BOOST under same condition (deadline_crossed && danger>=1).
-     #   refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
-     #         mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
-     #         game_history/20260418_201734_score0956.jsonl (worst_game T63),
-     #         game_history/20260418_195115_score1025.jsonl (extra_low T55/T57)
-     #   Fixes rollback failure mode: "DANGER_DIRECT_NEAR_BOOST bypasses v677 NEAR suppression"
      # v630: axis 1.6 extension — NEAR with danger_direct gets +500 at max_y>=1.8 (HIGH phase)
      #   DANGER_DIRECT_NEAR_BOOST: when danger_direct_merge_available && merge_grade==NEAR
      #   and max_y>=1.8, NEAR is boosted to compete with DIRECT (extends v565 HIGH_PHASE_BOOST).
@@ -1391,12 +1380,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # v565 HIGH_PHASE_BOOST extension: NEAR with danger_direct available
                 # gets boosted to be competitive with DIRECT. At HIGH phase (max_y>=1.8),
                 # NEAR with danger_direct is still valuable (removes danger piece).
-                # v678 failure fix: suppress DANGER_DIRECT_NEAR_BOOST when
-                # deadline_crossed && danger_piece_count>=1 (same logic as v677 DANGER_NEAR suppression).
-                # worst_game T63: NEAR selected at deadline_crossed && danger=1, score_delta=0.
-                # DANGER_NEAR was suppressed but DANGER_DIRECT_NEAR_BOOST provided +500, allowing
-                # dangerous NEAR to win over NO_MERGE low placement.
-                if max_y >= 1.8 and not (deadline_crossed and danger_piece_count >= 1):
+                if max_y >= 1.8:
                     score += 500.0 * type_scale
                     reasons.append("DANGER_DIRECT_NEAR_BOOST")
 

@@ -68,6 +68,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v630: axis 1.6 extension — NEAR with danger_direct gets +500 at max_y>=1.8 (HIGH phase)
+     #   DANGER_DIRECT_NEAR_BOOST: when danger_direct_merge_available && merge_grade==NEAR
+     #   and max_y>=1.8, NEAR is boosted to compete with DIRECT (extends v565 HIGH_PHASE_BOOST).
+     #   Fixes best_game T117 pattern: DIRECT available → success, vs NEAR-only → failure.
+     # v630: axis 1.5b extension — deadline_crossed && danger_piece_count>=1 && NEAR → bonus=0
+     #   v677: suppress DANGER_NEAR bonus when deadline crossed AND danger exists.
+     #   Mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+     #   Fixes worst_game T55 pattern: NEAR selected at deadline_crossed && danger, score_delta=0.
+     #   refs: tmp/analysis_result.md (Implementation Plan: axis 1.6 extension + axis 1.5b extension),
+     #         mandatory_themes.txt, worst_game T55 (deadline_crossed, danger=3, NEAR selected),
+     #         best_game T117 (merge_grade=DIRECT, danger_direct=true, score_delta=+6)
+     #   Fixes rollback failure mode: "NEAR selection at deadline with active danger pieces"
      # v629: axis 9.13 Center Proximity for NO_MERGE at Deadline — +500 unconditional bonus
      #   when merge_grade==NO && deadline_crossed && !russia_phase && candidate does NOT cross deadline.
      #   Fixes worst_game T57-T59 pattern: edge placement (x=±3.0) with column_ceiling_bonus (~950)
@@ -1359,10 +1371,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       analyze_board.py L391-397 (danger_direct_merge_available calculation),
         #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
         # Fixes rollback failure mode: endgame scoring starvation at deadline
-        if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT":
-            # v596: apply type_scale to prioritize high-type danger merges
-            score += 800.0 * type_scale
-            reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
+        if result.get("danger_direct_merge_available", False):
+            if merge_grade == "DIRECT":
+                # v596: apply type_scale to prioritize high-type danger merges
+                score += 800.0 * type_scale
+                reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
+            elif merge_grade == "NEAR":
+                # v565 HIGH_PHASE_BOOST extension: NEAR with danger_direct available
+                # gets boosted to be competitive with DIRECT. At HIGH phase (max_y>=1.8),
+                # NEAR with danger_direct is still valuable (removes danger piece).
+                if max_y >= 1.8:
+                    score += 500.0 * type_scale
+                    reasons.append("DANGER_DIRECT_NEAR_BOOST")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
         # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
@@ -1386,6 +1406,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # At pc>=33, deadline, landing_y>=1.5: danger NEAR at high y adds piece if fails
             # (31.5% rate) with no benefit. Suppress bonus to let enhanced risk penalty work.
             if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
+                bonus = 0.0
+            elif deadline_crossed and danger_piece_count >= 1 and merge_grade == "NEAR":
+                # v677 failure fix: when deadline crossed AND danger pieces exist,
+                # NEAR selection is catastrophic (score_delta=0, pc grows, max_y jumps).
+                # Mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+                # Suppress DANGER_NEAR bonus to make NO_MERGE low placement win.
                 bonus = 0.0
             else:
                 # v596: apply type_scale to prioritize high-type danger merges
