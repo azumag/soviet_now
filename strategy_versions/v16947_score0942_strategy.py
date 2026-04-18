@@ -80,19 +80,6 @@ Phases (determined by board max Y):
      #       tmp/state/last_rollback_analysis.md,
      #       game_history/20260419_023103_score0664.jsonl (worst game turns 64-70)
      # Fixes rollback failure mode: NEAR at deadline+danger+high max_y with score_delta=0
-     # v684: ENHANCED_NEAR_SUPPRESSION — double suppression at pc>=37 && danger>=3
-     # analysis_result.md adopted hypothesis: base v680 suppression insufficient against stacked bonuses
-     #   (DANGER_NEAR+CHAIN+REACTIVE_IMMEDIATE ~1500-3200) at high congestion and danger.
-     #   worst_game turns 61-66: pc=37-40, danger=3-5, suppression=2400-2800 but bonuses~2500 net NEAR+.
-     # Mechanism: At pc>=37 && danger>=3, increase suppression to -3000 + (pc-35)*300 to overcome
-     #   stacked bonuses and ensure NO_MERGE low placement wins at deadline_crossed.
-     #   At pc=37, danger=3: suppression=3600 vs bonuses~2500 net → NO_MERGE preferred.
-     # Constraints: v681/v682 unchanged, Russia bonuses unchanged, HEIGHT_CONTROL unchanged.
-     # refs: tmp/analysis_result.md (Implementation Plan: v680 enhanced condition),
-     #       mandatory_themes.txt ("併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"),
-     #       tmp/state/last_rollback_analysis.md,
-     #       game_history/20260419_041143_score0897.jsonl (worst game turns 61-66)
-     # Fixes rollback failure mode: NEAR at pc>=37+danger>=3 with stacked bonuses exceeding suppression
      # v683: MIDGAME_NO_MERGE_PENALTY — penalty for NO_MERGE before deadline when merge opportunity exists
      # analysis_result.md adopted hypothesis: mid-game max_y 1.5-2.5 with merge_available=true
      #   but choosing NO_MERGE causes gradual board compression failure (worst game turns 50-57).
@@ -1412,7 +1399,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
 
-        # ----- v680+v684: NEAR_DEADLINE_DANGER_SUPPRESSED — enhanced NEAR suppression at deadline danger -----
+        # ----- v680: NEAR_DEADLINE_DANGER_SUPPRESSED — enhanced NEAR suppression at deadline danger -----
         # analysis_result.md adopted hypothesis: NEAR suppression strength at extreme max_y
         # Problem: Despite existing mechanisms, NEAR merges at deadline_crossed=true with
         #   max_y>=2.0 and danger>=3 consistently produce score_delta=0.
@@ -1422,9 +1409,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #   Increase suppression with piece_count scaling: -2000 to -3200+ at high pc.
         #   penalty = 2000 + max(0, (piece_count - 35)) * 200
         #   At pc=35: -2000. At pc=41+: -3200 or more.
-        # v684 enhancement: At pc>=37 && danger>=3, stacked bonuses (DANGER_NEAR+CHAIN+REACTIVE
-        #   _IMMEDIATE ~1500-3200) exceed base suppression. Further increase to -3000 + (pc-35)*300.
-        #   At pc=37 danger=3: suppression=3600 vs bonuses~2500 → NO_MERGE preferred.
         # Constraints (from analysis):
         #   - Russia phase bonuses unchanged (v548, axes 8.7, 9.9)
         #   - v681 NEAR chain suppression unchanged
@@ -1440,12 +1424,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and deadline_crossed
                 and danger_piece_count >= 1
                 and not double_russia_phase):
-            # At pc>=37 with danger>=3, base suppression insufficient against stacked bonuses
-            # (DANGER_NEAR+CHAIN+REACTIVE_IMMEDIATE ~1500-3200). Increase magnitude.
-            if piece_count >= 37 and danger_piece_count >= 3:
-                suppression = 3000.0 + max(0, (piece_count - 35)) * 300.0
-            else:
-                suppression = 2000.0 + max(0, (piece_count - 35)) * 200.0
+            suppression = 2000.0 + max(0, (piece_count - 35)) * 200.0
             score -= suppression
             reasons.append("NEAR_DEADLINE_DANGER_SUPPRESSED")
 
