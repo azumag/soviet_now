@@ -68,16 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v686: DEADLINE_DANGER_NEAR_BLOCK — block NEAR at deadline+danger+elevated_max_y even without prior NEAR
-     # analysis_result.md adopted hypothesis: block NEAR when deadline_crossed+max_y>=2.0+danger>=3+merge_available
-     # worst_game T61/T63: same conditions + NEAR best_merge_grade → NEAR selected, score_delta=0 each (failure)
-     # best_game T110: same conditions + DIRECT best_merge_grade → DIRECT selected, score_delta=285 (success)
-     # Mechanism: v681 extension — when deadline+danger+elevated_max_y+NEAR_merge_grade, force NO_MERGE regardless
-     #   of _near_chain_suppression state. Existing v681 chain suppression unchanged.
-     # Constraint: DIRECT > NEAR priority maintained. HEIGHT_CONTROL unchanged. v680/v681/v682 unchanged.
-     #   Does NOT apply when best_merge_grade=DIRECT (best game chose DIRECT and succeeded).
-     # Fixes: worst_game score_gain=16 → target 100+, reactive_avg 8.2 → 5-
-     # refs: tmp/analysis_result.md (Implementation Plan: v681 mechanism extension)
      # v685: DEADLINE_NO_MERGE_GLOBAL_BONUS — global NO_MERGE bonus at dangerous deadline
      # analysis_result.md adopted hypothesis: NO_MERGE global bonus at dangerous deadline
      # Problem: At pc=33-36,danger=1-2,deadline_crossed with merge_available, v680 suppression
@@ -1225,29 +1215,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             forced = min(no_merge_candidates, key=lambda r: r.get("landing_y", 99))
             _near_chain_suppression = False  # Reset after acting
             return {"x": float(forced["x"]), "reason": "NEAR_CHAIN_SUPPRESSION"}
-
-    # ----- v681 EXTENSION: deadline+danger NEAR block — block NEAR even without prior NEAR selection -----
-    # analysis_result.md adopted hypothesis: when deadline_crossed + max_y>=2.0 + danger>=3 +
-    # merge_available + best_merge_grade=NEAR, force NO_MERGE regardless of _near_chain_suppression.
-    # worst_game T61/T63: same conditions but NEAR selected → score_delta=0 (failure).
-    # best_game T110: same conditions but best_merge_grade=DIRECT → DIRECT selected → score_delta=285 (success).
-    # The outcome difference is MERGE_GRADE (DIRECT vs NEAR), not _near_chain_suppression state.
-    best_merge_grade = min(
-        [r.get("merge_grade", "NO") for r in results],
-        key=lambda g: {"DIRECT": 0, "NEAR": 1, "FAR": 2, "NO": 3}.get(g, 3)
-    )
-    deadline_dangerous_near = (
-        deadline_crossed
-        and max_y >= 2.0
-        and danger_piece_count >= 3
-        and best_merge_grade == "NEAR"
-    )
-    if deadline_dangerous_near:
-        # Force NO_MERGE with lowest landing_y to avoid score_delta=0 death spiral
-        no_merge_candidates = [r for r in results if r.get("merge_grade") == "NO"]
-        if no_merge_candidates:
-            forced = min(no_merge_candidates, key=lambda r: r.get("landing_y", 99))
-            return {"x": float(forced["x"]), "reason": "DEADLINE_DANGER_NEAR_BLOCK"}
 
     # ----- v682: DEADLINE_MERGE_VIOLATION — penalty for NO_MERGE at deadline when merge opportunity exists -----
     # analysis_result.md adopted hypothesis: "NO_MERGE at deadline violation penalty"
