@@ -85,11 +85,6 @@ Phases (determined by board max Y):
 # add bonus for placing type14 near existing type15 pieces to encourage type14+type15→type15 Soviet merge path.
 # Fixes rollback failure mode: double_russia_phase merge pipeline starvation after Russia creation
 # refs: tmp/analysis_result.md (Adopted Hypothesis: Merge Pipeline Starvation in Russia Phase)
-# v562x: reactive_pairs_cleanup_bonus strengthening — center_proximity 120-30*|x|→180-35*|x|,
-# low_y_bonus 100-40*y→160-50*y (else 100→160), rp>=5 multiplier 1.5→1.7, new rp>=4 tier (1.4x),
-# rp>=3 1.15→1.25. Competes with v555 height boost at max_y=2.5-3.0 for NO merge guidance.
-# Fixes failure mode: v562 guidance too weak at max_y=2.5-3.0 with rp>=3 NO merge sequences
-# refs: tmp/analysis_result.md (Adopted Hypothesis: v562 guidance strength insufficient)
 # v552: double_russia_phase growth pipeline bonus — type13+type13→type14 and type14+type14→type15
 
 def russia_growth_pipeline_bonus(pieces, x, next_type):
@@ -1348,25 +1343,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260408_221620_score0837.jsonl (worst game reactive=5-6),
         #       game_history/20260408_222958_score3606.jsonl (best game reactive=1, merge available),
         #       tmp/state/last_rollback_postmortem.md (forbid v557-style NEAR suppression)
-        # Fixes failure mode: NO-merge at max_y=2.17-2.38 where v562 didn't fire (worst game pattern)
-        # Lowered thresholds: rp>=4→>=3, max_y>=2.5→>=2.0 per analysis_result.md hypothesis
-        # Extended v562 to fire even when same_type_stack_top!=None (was: is None only)
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: extend v562 to same_type_stack_top!=None)
-        if merge_grade == "NO" and reactive_pair_count >= 3 and max_y >= 2.0:
-            # v562x: strengthened bonuses to compete with v555 height boost at max_y>=2.5
-            # At max_y>=2.5, v555 multiplies height_penalty by 2.0x; at >=3.0 by 2.5x
-            # Original v562 bonuses (~200-495) are overwhelmed by v555 penalty amplification
-            # New bonuses aim to create net-positive guidance for low placement when NO merge at high max_y
-            center_proximity = max(0, 180.0 - abs(x) * 35.0)  # was 120-30*|x|
-            # low_y_bonus: larger base, steeper slope to better differentiate low vs high placement
-            low_y_bonus = max(0, 160.0 - landing_y * 50.0) if landing_y > 0 else 160.0  # was 100-40*y, else 100
+        # Fixes failure mode: edge placement (x=-3.0) at max_y>=2.5 + rp>=4 despite NO_MERGE
+        if merge_grade == "NO" and same_type_stack_top is None and reactive_pair_count >= 4 and max_y >= 2.5:
+            # Want low y (reduce piece accumulation) + proximity to growth center (x near 0)
+            center_proximity = max(0, 120.0 - abs(x) * 30.0)
+            low_y_bonus = max(0, 100.0 - landing_y * 40.0) if landing_y > 0 else 100.0
             cleanup_bonus = center_proximity + low_y_bonus
             if reactive_pair_count >= 5:
-                cleanup_bonus *= 1.7  # was 1.5
+                cleanup_bonus *= 1.5
             elif reactive_pair_count >= 4:
-                cleanup_bonus *= 1.4  # new intermediate tier
-            elif reactive_pair_count >= 3:
-                cleanup_bonus *= 1.25  # was 1.15
+                cleanup_bonus *= 1.15
             score += cleanup_bonus
             reasons.append("REACTIVE_PAIRS_CLEANUP")
 
