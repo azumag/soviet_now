@@ -68,22 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v685: DEADLINE_NO_MERGE_GLOBAL_BONUS — global NO_MERGE bonus at dangerous deadline
-     # analysis_result.md adopted hypothesis: NO_MERGE global bonus at dangerous deadline
-     # Problem: At pc=33-36,danger=1-2,deadline_crossed with merge_available, v680 suppression
-     #   doesn't fire (requires max_y>=2.0) or isn't strong enough (~3000 vs NEAR bonuses ~1900).
-     #   worst T52: NO_MERGE=0 vs NEAR≈+984, NEAR selected → score_delta=0 → cascade to death.
-     # Mechanism: When deadline_crossed+max_y>=2.0+pc>=33+danger>=1+merge_opportunity exists,
-     #   add +1500 to NO_MERGE score (global, before per-candidate loop).
-     #   This makes NO_MERGE win over NEAR regardless of stacked NEAR bonuses.
-     # Constraints: v680/v681/v682/v683 unchanged. Russia bonuses unchanged. HEIGHT_CONTROL unchanged.
-     #   Does NOT suppress NEAR — only boosts NO_MERGE when it's the correct choice.
-     #   Not active in double_russia_phase.
-     # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE global bonus at dangerous deadline),
-     #       mandatory_themes.txt ("deadline placing" mandatory theme),
-     #       game_history/20260419_072301_score0653.jsonl (worst T52),
-     #       game_history/20260419_073612_score2343.jsonl (extra_high T102)
-     # Fixes: "NO_MERGE loses to NEAR by score at pc=33-36,danger=1-2,deadline"
      # v684: NEAR suppression gap-zone at pc>=33 && danger>=5 — closes pc=33-36 gap where stacked
      #   NEAR bonuses (~1900) exceeded old suppression (-2000), causing NEAR to be slightly preferred.
      #   New gap-zone tier: if pc>=33 && danger>=5: suppression=3500 (vs old -2000).
@@ -1227,32 +1211,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_MERGE_VIOLATION axis)
     has_merge_opportunity = any(r.get("merge_grade") in ["DIRECT", "NEAR"] for r in results)
 
-    # ----- v685: DEADLINE_NO_MERGE_GLOBAL_BONUS — global NO_MERGE bonus at dangerous deadline -----
-    # analysis_result.md adopted hypothesis: NO_MERGE global bonus at dangerous deadline
-    # Problem: At pc=33-36,danger=1-2,deadline_crossed, v680 suppression doesn't fire
-    #   (requires max_y>=2.0) and even when it does (-3000), NEAR bonuses (1500-2000)
-    #   offset it. NO_MERGE loses by score despite being the correct choice.
-    #   worst T52: NO_MERGE=0 vs NEAR≈+984, NEAR selected → score_delta=0 → cascade to death.
-    # Mechanism: When deadline_crossed, max_y>=2.0, piece_count>=33, danger>=1, and
-    #   ANY candidate (global has_merge_opportunity) is DIRECT/NEAR → add +1500 to NO_MERGE score.
-    #   This makes NO_MERGE win by +1500 (or +700 after v682 -800) vs NEAR -416.
-    # Constraints: v680/v681/v682/v683 unchanged. Russia bonuses unchanged. HEIGHT_CONTROL unchanged.
-    #   Does NOT suppress NEAR — only boosts NO_MERGE when it's the correct choice.
-    #   Not active in double_russia_phase.
-    # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE global bonus at dangerous deadline),
-    #       mandatory_themes.txt ("deadline placing" mandatory theme),
-    #       game_history/20260419_072301_score0653.jsonl (worst T52),
-    #       game_history/20260419_073612_score2343.jsonl (extra_high T102)
-    # Fixes: "NO_MERGE loses to NEAR by score at pc=33-36,danger=1-2,deadline"
-    _deadline_no_merge_bonus = 0.0
-    if (deadline_crossed
-            and max_y >= 2.0
-            and piece_count >= 33
-            and danger_piece_count >= 1
-            and not double_russia_phase
-            and has_merge_opportunity):
-        _deadline_no_merge_bonus = 1500.0
-
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -1369,15 +1327,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             midgame_no_merge_penalty = 200.0 * merge_mult
             score -= midgame_no_merge_penalty
             reasons.append("MIDGAME_NO_MERGE_PENALTY")
-
-        # ----- v685: DEADLINE_NO_MERGE_GLOBAL_BONUS — global NO_MERGE bonus at dangerous deadline -----
-        # v685: When deadline_crossed + max_y>=2.0 + pc>=33 + danger>=1 + merge_opportunity exists,
-        #   add +1500 to NO_MERGE score to push it above NEAR candidates.
-        #   This fires when v680's suppression doesn't (max_y<2.0 case) or isn't strong enough.
-        #   v683 (!deadline_crossed) does NOT apply here — deadline_crossed path only via v685.
-        if merge_grade == "NO" and _deadline_no_merge_bonus > 0:
-            score += _deadline_no_merge_bonus
-            reasons.append("DEADLINE_NO_MERGE_GLOBAL_BONUS")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ
