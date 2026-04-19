@@ -65,11 +65,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v693: DEADLINE_GUARD強化 — deadline接近時(margin<1.0+max_y>=2.5)でもEMERGENCY_DROP発動
-     # Analysis: worst_game turn 46-47 (max_y=2.96, rp=6, merge_available=false)でDEADLINE_GUARD未発動(閾値max_y>=3.0)、
-     # ピース累積→ゲームオーバー。margin<1.0+max_y>=2.5条件追加でdeadline近了でも最悪ケース軽減。
-     # Failure mode addressed: "deadline接近時に延命優先で回復戦略を放棄"
-     # refs: tmp/analysis_result.md
      # v692: axis 1.7d — HIGH_LAYER merge priority bonus (fix missed merge detection)
      # Analysis: worst_game turns 45,50,52 had type 11 pieces at y=0.70-0.83 with
      # merge_available=false, causing NO_MERGE selection and max_y runaway to 3.01.
@@ -831,10 +826,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     __dlg_cands = __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
-    # deadline接近中(margin 0-1区间)かつmax_y>=2.5では、danger mergeなくても最悪ケース軽減のためEMERGENCY_DROP発動
-    __dlg_near_deadline = __dlg_margin < 1.0 and __dlg_margin >= 0.0
-    __dlg_max_y = max([p["y"] for p in __dlg_game_state.get("pieces", [])]) if __dlg_game_state.get("pieces") else -4.0
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3 or (__dlg_near_deadline and __dlg_max_y >= 2.5)
+    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
     if __dlg_critical and __dlg_cands:
         __dlg_direct = [c for c in __dlg_cands if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"]
         if __dlg_direct:

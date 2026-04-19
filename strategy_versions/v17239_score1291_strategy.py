@@ -2102,6 +2102,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
+        # v696: 高域NO_MERGE低配置強制 — max_y>=2.0 && deadline_crossed && merge_grade==NO && russia_phase==false
+        # 且つ same_type_stack_top.y<1.5 で中間層配置ボーナス+300。rp<3高域mergeUnavailable情况进行補完。
+        # worst T55-64対策。refs: tmp/analysis_result.md
+        # 説明: rp<3ではaxis 8.8が機能しないため、高域max_y>=2.0+mergeUnavailableで高配置が選ばれる问题を缓和
+        if (max_y >= 2.0 and deadline_crossed and merge_grade == "NO"
+            and not russia_phase and same_type_stack_top is not None
+            and same_type_stack_top.get("y", 999) < 1.5):
+            score += 300.0
+            reasons.append("HIGH_LAYER_NO_MERGE_MID_PLACEMENT")
+
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
