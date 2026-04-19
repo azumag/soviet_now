@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-20 00:10:33 JST`
-- Nodes: `1163`
-- Edges: `1590`
-- Current: `4f82c1d82d32`
-- Anchor: `4f82c1d82d32`
+- Updated: `2026-04-20 01:09:57 JST`
+- Nodes: `1164`
+- Edges: `1591`
+- Current: `51229404551e`
+- Anchor: `415b0d640378`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_94e246b27b62["94e246b27b62<br/>g=25 n=20<br/>comp=9847.5"]
     h_5561ada7261c["5561ada7261c<br/>g=14 n=14<br/>comp=10049.9"]
     h_7b0ba5f60459["7b0ba5f60459<br/>g=48 n=20<br/>comp=10255.9"]
     h_a338f16586a2["a338f16586a2<br/>g=12 n=12<br/>comp=9630.2"]
@@ -64,7 +63,7 @@ flowchart TD
     h_2e07e65e84d8["2e07e65e84d8<br/>g=12 n=12<br/>comp=9766.6"]
     h_cd90234d4d73["cd90234d4d73<br/>g=12 n=12<br/>comp=9382.7"]
     h_22ad2bcc59f1["22ad2bcc59f1<br/>g=24 n=20<br/>comp=11199.4"]
-    h_4f82c1d82d32["4f82c1d82d32<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12022.2"]
+    h_4f82c1d82d32["4f82c1d82d32<br/>g=24 n=20<br/>comp=10609.1"]
     h_4afd9c0f4c34["4afd9c0f4c34<br/>g=12 n=12<br/>comp=10404.9"]
     h_bd3e3fcee54c["bd3e3fcee54c<br/>g=12 n=12<br/>comp=10477.8"]
     h_7248681301a1["7248681301a1<br/>g=13 n=13<br/>comp=11180.6"]
@@ -74,9 +73,9 @@ flowchart TD
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_415b0d640378["415b0d640378<br/>g=12 n=12<br/>comp=11745.1"]
+    h_415b0d640378["415b0d640378<br/>ANCHOR<br/>g=12 n=12<br/>comp=11745.1"]
+    h_51229404551e["51229404551e<br/>CURRENT"]
 
-    h_94e246b27b62 -->|improve| h_5561ada7261c
     h_5561ada7261c -->|improve| h_7b0ba5f60459
     h_7b0ba5f60459 -->|improve| h_a338f16586a2
     h_a338f16586a2 -. rollback .-> h_7b0ba5f60459
@@ -137,13 +136,13 @@ flowchart TD
     h_bd3e3fcee54c -->|improve| h_7248681301a1
     h_7248681301a1 -->|improve| h_a9408aac14bd
     h_a9408aac14bd -. rollback .-> h_4f82c1d82d32
+    h_4f82c1d82d32 -->|improve| h_51229404551e
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_94e246b27b62 plain;
     class h_5561ada7261c plain;
     class h_7b0ba5f60459 plain;
     class h_a338f16586a2 plain;
@@ -192,7 +191,7 @@ flowchart TD
     class h_2e07e65e84d8 plain;
     class h_cd90234d4d73 plain;
     class h_22ad2bcc59f1 plain;
-    class h_4f82c1d82d32 current_anchor;
+    class h_4f82c1d82d32 plain;
     class h_4afd9c0f4c34 plain;
     class h_bd3e3fcee54c plain;
     class h_7248681301a1 plain;
@@ -202,7 +201,8 @@ flowchart TD
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_415b0d640378 plain;
+    class h_415b0d640378 anchor;
+    class h_51229404551e current;
 ```
 
 ## Detail 1/15
@@ -4192,9 +4192,9 @@ flowchart TD
 
 ## Detail 15/15
 
-- Range: `646eea0bf18d` .. `415b0d640378`
-- Nodes in this diagram: `43`
-- Internal edges in this diagram: `39`
+- Range: `646eea0bf18d` .. `51229404551e`
+- Nodes in this diagram: `44`
+- Internal edges in this diagram: `40`
 - Cross-chunk link: `94786eb2e0fc --improve--> 646eea0bf18d`
 - Cross-chunk link: `cd90234d4d73 -.rollback.-> 98b57969e9e1`
 - Cross-chunk link: `98b57969e9e1 -.rollback.-> 22ad2bcc59f1`
@@ -4243,7 +4243,7 @@ flowchart TD
     h_2e07e65e84d8["2e07e65e84d8<br/>g=12 n=12<br/>comp=9766.6"]
     h_cd90234d4d73["cd90234d4d73<br/>g=12 n=12<br/>comp=9382.7"]
     h_22ad2bcc59f1["22ad2bcc59f1<br/>g=24 n=20<br/>comp=11199.4"]
-    h_4f82c1d82d32["4f82c1d82d32<br/>CURRENT ANCHOR<br/>g=12 n=12<br/>comp=12022.2"]
+    h_4f82c1d82d32["4f82c1d82d32<br/>g=24 n=20<br/>comp=10609.1"]
     h_4afd9c0f4c34["4afd9c0f4c34<br/>g=12 n=12<br/>comp=10404.9"]
     h_bd3e3fcee54c["bd3e3fcee54c<br/>g=12 n=12<br/>comp=10477.8"]
     h_7248681301a1["7248681301a1<br/>g=13 n=13<br/>comp=11180.6"]
@@ -4253,7 +4253,8 @@ flowchart TD
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_415b0d640378["415b0d640378<br/>g=12 n=12<br/>comp=11745.1"]
+    h_415b0d640378["415b0d640378<br/>ANCHOR<br/>g=12 n=12<br/>comp=11745.1"]
+    h_51229404551e["51229404551e<br/>CURRENT"]
 
     h_646eea0bf18d -->|improve| h_bced4c938139
     h_bced4c938139 -. rollback .-> h_a7b41f8f20ad
@@ -4294,6 +4295,7 @@ flowchart TD
     h_bd3e3fcee54c -->|improve| h_7248681301a1
     h_7248681301a1 -->|improve| h_a9408aac14bd
     h_a9408aac14bd -. rollback .-> h_4f82c1d82d32
+    h_4f82c1d82d32 -->|improve| h_51229404551e
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4332,7 +4334,7 @@ flowchart TD
     class h_2e07e65e84d8 plain;
     class h_cd90234d4d73 plain;
     class h_22ad2bcc59f1 plain;
-    class h_4f82c1d82d32 current_anchor;
+    class h_4f82c1d82d32 plain;
     class h_4afd9c0f4c34 plain;
     class h_bd3e3fcee54c plain;
     class h_7248681301a1 plain;
@@ -4342,10 +4344,21 @@ flowchart TD
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_415b0d640378 plain;
+    class h_415b0d640378 anchor;
+    class h_51229404551e current;
 ```
 
 ## Transition Notes
+
+### Improve Game#17218 `4f82c1d8 -> 51229404`
+
+- scores: `11377 9448 13577 5133 8879 15569 19453 7574 6352 20700 11639 8439`
+- v692: axis 1.7d — HIGH_LAYER merge priority bonus (fix missed merge detection)
+- Analysis: worst_game turns 45,50,52 had type 11 pieces at y=0.70-0.83 with
+- merge_available=false, causing NO_MERGE selection and max_y runaway to 3.01.
+- Root cause: merge scan misses high-layer (type>=11) pieces at certain heights.
+- Fix: when max_y>=2.0 + deadline_crossed + merge_available + next_type>=10,
+- add +500 bonus to override suppression and prioritize high-layer merges.
 
 ### Rollback Game#17206 `a9408aac -> 4f82c1d8`
 
