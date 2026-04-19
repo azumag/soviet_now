@@ -63,6 +63,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v440: axis 9.5 deadline_crossed guard — mandatory theme compliance
+     # Postmortem: worst_game T45 chose HIGH_LAYER_CROSSES_DEADLINE_NO_MERGE at deadline_crossed=true, merge_grade="NO".
+     # Axis 9.5 unconditional +300 stacking bonus when same_type_stack_top exists was encouraging deadline-crossing
+     # placement without merge benefit, directly violating mandatory theme "Never place at deadline when you can't merge".
+     # Fix: suppress +300 bonus when deadline_crossed=true (axis 8.8 penalty will dominate if applicable).
+     # Failure mode: deadline_crossed && merge_grade=="NO" での +300 stacking bonus によるdeadline-crossing placement
+     # refs: tmp/analysis_result.md, tmp/improve_brief.md, data/mandatory_themes.txt,
+     #       tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
      # v431: conditional height_mult relaxation — only relax when current type has reactive/near guidance
      # Postmortem: rp=1-2 height_mult relaxations (v271 0.8x, v288 0.3x, v294 0.2x) compound to
      # floor 0.5, enabling HEIGHT_CONTROL edge scatter when current type has no reactive/near pairs.
@@ -1676,9 +1684,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pass
             else:
                 if danger_piece_count == 0 and reactive_pair_count == 0:
-                    # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
-                    score += 300.0
-                    reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
+                    # v440: deadline_crossed check added — mandatory theme compliance
+                    # "Never place at deadline when you can't merge"
+                    # When deadline_crossed=true && merge_grade=="NO", stacking bonus is counterproductive
+                    # as it encourages deadline-crossing placement without merge benefit.
+                    # Suppress +300 bonus in this exact scenario; axis 8.8 penalty will dominate if applicable.
+                    if not deadline_crossed:
+                        score += 300.0
+                        reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
             # v327: danger_piece_count > 0 の場合のボーナスブロックを削除 - axis 9.2のペナルティを優先
             # v330: reactive_pairs >= 1 の場合のボーナスブロックを追加 - axis 9.2のペナルティを優先
             # v337: ロシアフェーズ && reactive_pair_count < 3 の場合、ボーナスブロックを適用 - axis 8.7即時併合優先

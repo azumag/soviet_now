@@ -63,17 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v697: CRITICAL phase russia compensation — fix v694 suppression gap at max_y>=2.5
-     # Postmortem: worst_game T54-62, v694 suppressed -4500 penalty for 8 turns (max_y 2.67→3.73),
-     # HEIGHT_CONTROL avg_score_delta≈0, max_y runaway → game over. v694 removes penalty but
-     # axis-2 bonuses (~100-250) are too weak to compensate (ratio ~1:20). When max_y>=2.5 in
-     # Russia phase with reactive_pairs>=2, apply +300 axis-2 compensation scaled by landing_y to
-     # reinforce downward placement, partially filling the control vacuum left by suppressed penalty.
-     # Constraint: russia_phase guard ensures we're within rollback constraints (v694 was designed
-     # to prevent REACTIVE_PAIRS_NO_MERGE_PENALTY feedback loop, not to create control vacuum).
-     # Forbidden: no height_mult floor change, no deadline_crossed conditions, no removal of v694.
-     # Failure mode: v694 suppression creates 8-turn control vacuum → max_y runaway → game over
-     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt
      # v440: axis 9.5 deadline_crossed guard — mandatory theme compliance
      # Postmortem: worst_game T45 chose HIGH_LAYER_CROSSES_DEADLINE_NO_MERGE at deadline_crossed=true, merge_grade="NO".
      # Axis 9.5 unconditional +300 stacking bonus when same_type_stack_top exists was encouraging deadline-crossing
@@ -1293,23 +1282,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
-
-        # ----- v697: CRITICAL phase russia compensation bonus (analysis_result.md) -----
-        # v694 suppression creates control vacuum at max_y>=2.5 where axis-8.7 penalty disappears
-        # without adequate axis-2 compensation, leading to max_y runaway over 8+ turns.
-        # When max_y>=2.5 (CRITICAL phase) in Russia phase with reactive_pairs>=2, apply
-        # axis-2 compensation bonus that scales with landing_y to reinforce downward placement.
-        # This partially compensates for the absent -4500 penalty with a smaller survival-oriented boost.
-        # Constraint: only fires in Russia phase (russia_phase guard) to stay within rollback constraints.
-        # Forbidden: do not modify height_mult floor (0.5), do not add deadline_crossed conditions.
-        # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
-        if max_y >= 2.5 and russia_phase and reactive_pair_count >= 2 and merge_grade == "NO":
-            # Compensate for suppressed penalty by rewarding lower landing positions
-            # +300 at landing_y <= 0, scales down for higher positions
-            compensation = max(0, 300.0 - landing_y * 100.0)
-            if compensation > 0:
-                score += compensation
-                reasons.append("CRITICAL_RUSSIA_COMPENSATION")
 
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
