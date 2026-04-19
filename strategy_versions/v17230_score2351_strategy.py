@@ -65,6 +65,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v692: axis 1.7d — HIGH_LAYER merge priority bonus (fix missed merge detection)
+     # Analysis: worst_game turns 45,50,52 had type 11 pieces at y=0.70-0.83 with
+     # merge_available=false, causing NO_MERGE selection and max_y runaway to 3.01.
+     # Root cause: merge scan misses high-layer (type>=11) pieces at certain heights.
+     # Fix: when max_y>=2.0 + deadline_crossed + merge_available + next_type>=10,
+     # add +500 bonus to override suppression and prioritize high-layer merges.
+     # Failure mode addressed: "高層(max_y>=2.0)のmergeを見落とす"
+     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
      # v691: axis 8.8 Russia phase penalty reduction — when russia_phase && global_merge_available,
      # reduce axis 8.8 penalty from -4500 to -2250 to allow immediate merge options.
      # Failure mode: best game T160 had rp=3, merge available, but NO_MERGE selected because
@@ -1065,6 +1073,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and landing_y >= 1.0):
             score -= 600.0 * merge_mult  # Cancel the base NEAR bonus
             reasons.append("DEATH_SPIRAL_NEAR_SUPPRESSION")
+
+        # ----- evaluation axis 1.7d: HIGH_LAYER merge priority (fix missed detection) -----
+        # Analysis: worst_game turns 45,50,52 had type 11 pieces at y=0.70-0.83 with
+        # merge_available=false, but turn 51 (similar conditions) had merge_available=true.
+        # Root cause: merge scan in analyze_board.py misses high-layer (type>=11) pieces
+        # at certain heights (y>0.5), causing false merge_available=false.
+        # Implementation plan alternative: add HIGH_LAYER merge bonus when max_y>=2.0 +
+        # deadline_crossed + merge_grade!=NO + layer>=10, overriding other suppressions.
+        # Rollback constraints respected:
+        #   - height_mult floor 0.5: not modified ✓
+        #   - merge_available scan: not modified ✓
+        #   - EMERGENCY_DROP at max_y>=2.5: not modified ✓
+        # next_type >= 10 means resulting merged piece would be type >= 11 (HIGH_LAYER)
+        if (merge_grade != "NO"
+            and max_y >= 2.0
+            and deadline_crossed
+            and next_type >= 10):
+            score += 500.0
+            reasons.append("HIGH_LAYER_MERGE_PRIORITY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
