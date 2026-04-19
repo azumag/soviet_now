@@ -68,21 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v684: DEADLINE_ELEVATED_NO_MERGE — extended NO_MERGE penalty at deadline with elevated board
-     # analysis_result.md adopted hypothesis: "NO_MERGE penalty at deadline when merge_opportunity exists with elevated max_y"
-     # mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-     # worst game T51-T54: NO_MERGE at deadline_crossed=true, max_y=2.05-2.78, score_delta=0-66, HEIGHT_CONTROL selected.
-     # HEIGHT_CONTROL selected 17.2% of turns with avg_score_delta=0.9 — produces almost no scoring.
-     # The existing v682 penalty only applies when NO_MERGE coexists with DIRECT/NEAR candidates.
-     # This extension covers NO_MERGE alone when board is elevated (max_y>=1.5) and deadline passed.
-     # When deadline_crossed=true AND max_y>=1.5 AND merge_opportunity=true AND merge_grade==NO,
-     #   apply -400*merge_mult penalty to discourage HEIGHT_CONTROL at deadline with elevated board.
-     # Constraints: v682 unchanged, v681 unchanged, HEIGHT_CONTROL unchanged, Russia bonuses unchanged.
-     # Fixed turn-number thresholds prohibited. merge_opportunity check ensures penalty only when available.
-     # refs: tmp/analysis_result.md (Implementation Plan: Extend DEADLINE_MERGE_VIOLATION),
-     #       data/mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
-     #       tmp/batch_summary.txt (HEIGHT_CONTROL avg_score_delta=0.9)
-     # Fixes rollback failure mode: "deadline+elevated max_y where HEIGHT_CONTROL produces zero score"
      # v683: MIDGAME_NO_MERGE_PENALTY — penalty for NO_MERGE before deadline when merge opportunity exists
      # analysis_result.md adopted hypothesis: mid-game max_y 1.5-2.5 with merge_available=true
      #   but choosing NO_MERGE causes gradual board compression failure (worst game turns 50-57).
@@ -1276,36 +1261,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             deadline_merge_violation_penalty = 800.0 * merge_mult
             score -= deadline_merge_violation_penalty
             reasons.append("DEADLINE_MERGE_VIOLATION")
-
-        # ----- v684: DEADLINE_ELEVATED_NO_MERGE — extended NO_MERGE penalty at deadline with elevated board -----
-        # analysis_result.md adopted hypothesis: "NO_MERGE penalty at deadline when merge_opportunity exists with elevated max_y"
-        # mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # worst game T51-T54: NO_MERGE at deadline_crossed=true, max_y=2.05-2.78, score_delta=0-66
-        #   HEIGHT_CONTROL selected 17.2% of turns with avg_score_delta=0.9 — produces almost no scoring
-        # The existing v682 penalty only applies when NO_MERGE coexists with DIRECT/NEAR candidates.
-        # This extension covers the case where NO_MERGE exists alone (no other merge candidates) but the board
-        #   is elevated (max_y>=1.5) and deadline has passed — HEIGHT_CONTROL placement here doesn't control
-        #   height (max_y still climbs) and prevents scoring opportunities.
-        # Mechanism: When deadline_crossed=true AND max_y>=1.5 AND merge_opportunity=true AND merge_grade==NO,
-        #   apply -400*merge_mult penalty to discourage HEIGHT_CONTROL at deadline with elevated board.
-        # Constraints (from analysis):
-        #   - v682 unchanged (coexisting merge case)
-        #   - v681 NEAR chain suppression unchanged
-        #   - HEIGHT_CONTROL unchanged (not a height penalty increase)
-        #   - Russia phase bonuses unchanged
-        #   - merge_opportunity check ensures penalty only when merge is actually available
-        #   - Fixed turn-number thresholds prohibited
-        # refs: tmp/analysis_result.md (Implementation Plan: Extend DEADLINE_MERGE_VIOLATION),
-        #       data/mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL avg_score_delta=0.9)
-        # Fixes rollback failure mode: "deadline+elevated max_y where HEIGHT_CONTROL produces zero score"
-        if (merge_grade == "NO"
-                and deadline_crossed
-                and max_y >= 1.5
-                and has_merge_opportunity):
-            deadline_elevated_no_merge_penalty = 400.0 * merge_mult
-            score -= deadline_elevated_no_merge_penalty
-            reasons.append("DEADLINE_ELEVATED_NO_MERGE")
 
         # ----- v683: mid-game NO_MERGE penalty — suppress merge-opportunity waste before deadline -----
         # analysis_result.md adopted hypothesis: mid-game max_y 1.5-2.5 (turns 45-57) with merge available
