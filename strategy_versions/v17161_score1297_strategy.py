@@ -14,6 +14,7 @@ Game Overview:
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.7b. Gap-zone NEAR merge penalty - v567: penalty at NEAR+max_y>=2.0+deadline_crossed
          1.7c. Death-spiral NEAR suppression - v579: cancel NEAR bonus at rp>=3,pc>=32,max_y>=1.5,y>=1.0
+         1.7d. Deadline-crossing NEAR stacking penalty - v692: additional -400*merge_mult when NEAR at crossing with non-crossing NO_MERGE available
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -65,6 +66,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v692: DEADLINE_CROSSING_NEAR stacking penalty — when best_merge_grade=NEAR &&
+     # decision_crosses_deadline=true && non-crossing NO_MERGE exists, additional -400*merge_mult.
+     # Fixes worst/extra_low pattern: T51-56 NEAR at crossing with non-crossing NO_MERGE available,
+     # existing penalties (v366/v409/v422/v579 ~1400-1500) insufficient at pc=32-34 where NEAR
+     # bonuses (~1500-2000) exceed suppression. Stacks on existing, not a new suppression.
+     # refs: tmp/analysis_result.md
      # v691: axis 8.8 Russia phase penalty reduction — when russia_phase && global_merge_available,
      # reduce axis 8.8 penalty from -4500 to -2250 to allow immediate merge options.
      # Failure mode: best game T160 had rp=3, merge available, but NO_MERGE selected because
@@ -941,6 +948,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # v691: global merge_available — any candidate has a merge option (merge_grade != "NO")
     # Used in axis 8.8 Russia phase penalty reduction. Computed once before candidate loop.
     global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
+
+    # --- v692: DEADLINE_CROSSING_NEAR stacking penalty tracking ---
+    # Track for stacking penalty when NEAR selected at crossing position with non-crossing NO_MERGE available
+    # worst/extra_low: T51-56 NEAR at crossing with score_delta=0 repeatedly, existing penalties insufficient
+    __non_crossing_no_merge_exists = False  # non-crossing NO_MERGE candidate exists
+    __near_crossing_selected = False        # NEAR candidate crosses deadline
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -2071,6 +2084,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: analyze_board.py L412 (crosses_deadline computation),
         #       game_history/20260330_144015_score0665.jsonl T60-61,
         #       game_history/20260330_143501_score0994.jsonl T74-75
+        # Track non-crossing NO_MERGE for v692 stacking penalty
+        if merge_grade == "NO" and not result.get("crosses_deadline", False):
+            __non_crossing_no_merge_exists = True
+
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
@@ -2080,6 +2097,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+            # Track if NEAR crossing deadline is selected (for v692 stacking penalty)
+            if merge_grade == "NEAR" and result.get("crosses_deadline", False):
+                __near_crossing_selected = True
+
+    # --- v692: DEADLINE_CROSSING_NEAR stacking penalty ---
+    # When deadline_crossed AND best candidate is NEAR crossing deadline AND non-crossing NO_MERGE exists,
+    # apply additional penalty on top of existing v366/v409/v422/v579 penalties.
+    # worst/extra_low: T51-56 NEAR at crossing with non-crossing NO_MERGE available → score_delta=0 repeatedly.
+    # Existing penalties (~1400-1500) insufficient when piece_count=32-34 and NEAR bonuses (~1500-2000) exceed suppression.
+    if (__near_crossing_selected
+        and __non_crossing_no_merge_exists
+        and deadline_crossed):
+        best_score -= 400.0 * merge_mult
+        best_reason = "NEAR_CROSSING_STACKING_PENALTY_" + best_reason
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))

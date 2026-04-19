@@ -15,7 +15,6 @@ Game Overview:
          1.7b. Gap-zone NEAR merge penalty - v567: penalty at NEAR+max_y>=2.0+deadline_crossed
          1.7c. Death-spiral NEAR suppression - v579: cancel NEAR bonus at rp>=3,pc>=32,max_y>=1.5,y>=1.0
          1.7d. Deadline-crossing NEAR stacking penalty - v692: additional -400*merge_mult when NEAR at crossing with non-crossing NO_MERGE available
-         1.7e. Accelerating board NEAR suppression - v693: cancel 50% NEAR bonus + -400*merge_mult at deadline_crossed+max_y>=1.5+acceleration
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -67,14 +66,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v693: ACCELERATING_BOARD_NEAR_SUPPRESSION — when deadline_crossed AND max_y>=1.5 AND
-     # (max_y_delta>=0.5 OR max_y>=2.0) AND merge_grade==NEAR: reduce NEAR bonus by 50% and
-     # apply -400*merge_mult. Catches worst_game T43-T44 pattern where board accelerates
-     # through 1.5-2.0 zone at deadline_crossed (max_y 0.85→1.4→1.43→2.4 over 3 turns).
-     # Existing v684 requires max_y>=2.0 (misses acceleration zone), v680 requires pc>=34.
-     # Stacks on existing v684/v692 without replacing them.
-     # Rollback failure mode: max_y>=2.0 NEAR merge failure causing max_y runaway.
-     # refs: tmp/analysis_result.md
      # v692: DEADLINE_CROSSING_NEAR stacking penalty — when best_merge_grade=NEAR &&
      # decision_crosses_deadline=true && non-crossing NO_MERGE exists, additional -400*merge_mult.
      # Fixes worst/extra_low pattern: T51-56 NEAR at crossing with non-crossing NO_MERGE available,
@@ -964,20 +955,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     __non_crossing_no_merge_exists = False  # non-crossing NO_MERGE candidate exists
     __near_crossing_selected = False        # NEAR candidate crosses deadline
 
-    # --- ACCELERATING_BOARD_NEAR_SUPPRESSION: track max_y delta ---
-    # worst_game T41-T44: max_y 0.85→1.4→1.43→2.4 (delta 0.55, 0.03, 0.97 over 3 turns)
-    # Used to detect board acceleration through 1.5-2.0 danger zone at deadline_crossed.
-    # Strategy versions have max_y_history. We need it to compute __max_y_delta.
-    __max_y_history = game_state.get("max_y_history", []) if isinstance(game_state, dict) else []
-    if not isinstance(__max_y_history, list):
-        __max_y_history = []
-    __max_y_history = __max_y_history[-3:] if len(__max_y_history) > 3 else __max_y_history
-    __max_y_delta = 0.0
-    if len(__max_y_history) >= 2:
-        __max_y_delta = max_y - (__max_y_history[-1] if __max_y_history else max_y)
-    elif len(__max_y_history) == 1:
-        __max_y_delta = max_y - __max_y_history[0]
-
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -1101,23 +1078,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             and landing_y >= 1.0):
             score -= 600.0 * merge_mult  # Cancel the base NEAR bonus
             reasons.append("DEATH_SPIRAL_NEAR_SUPPRESSION")
-
-        # ----- ACCELERATING_BOARD_NEAR_SUPPRESSION (new) -----
-        # worst_game T43-T44: board accelerates through 1.5-2.0 danger zone at deadline_crossed
-        # max_y 0.85→1.4→1.43→2.4 in 3 turns (delta >= 0.5/turn). Existing v684 gap-zone
-        # requires max_y>=2.0 (misses 1.5-2.0 acceleration zone). v680 base tier requires pc>=34
-        # (worst_game T43-T44: pc=25-26, never triggered). Suppress NEAR by 50% and add
-        # -400*merge_mult when deadline_crossed AND max_y>=1.5 AND accelerating (delta>=0.5 OR max_y>=2.0).
-        # Tracks max_y_delta via __max_y_history (rolling window, populated before candidate loop).
-        # refs: tmp/analysis_result.md (Hypothesis: ACCELERATING_BOARD_NEAR_SUPPRESSION)
-        if (merge_grade == "NEAR"
-            and deadline_crossed
-            and max_y >= 1.5
-            and (__max_y_delta >= 0.5 or max_y >= 2.0)
-            and not russia_phase):
-            score -= 300.0 * merge_mult  # 50% reduction of base NEAR bonus (600*merge_mult)
-            score -= 400.0 * merge_mult
-            reasons.append("ACCELERATING_BOARD_SUPPRESSION")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
