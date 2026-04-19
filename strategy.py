@@ -65,6 +65,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v691: axis 8.8 Russia phase penalty reduction — when russia_phase && global_merge_available,
+     # reduce axis 8.8 penalty from -4500 to -2250 to allow immediate merge options.
+     # Failure mode: best game T160 had rp=3, merge available, but NO_MERGE selected because
+     # axis 8.8 (-4500) + merge_drought (-1000) >> Russia bonuses (1200-1600).
+     # refs: tmp/analysis_result.md
      # v583: axis 9.8 — extend merge drought horizontal guidance to non-Russia games.
      # Lower threshold from type>=10 to type>=6 (same as axis 5.6 growth center),
      # increase bonus from ~150 to ~400 (match Russia phase compression minimum).
@@ -932,6 +937,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     current_type_has_near = any(
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
+
+    # v691: global merge_available — any candidate has a merge option (merge_grade != "NO")
+    # Used in axis 8.8 Russia phase penalty reduction. Computed once before candidate loop.
+    global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -1949,7 +1958,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
             # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
+            # v691: Russia phase with merge available — reduce penalty to encourage immediate merge.
+            # In Russia phase (type 15 >= 1), axis 8.8 penalty (-4500) combined with Russia bonuses
+            # (1200-1600) made NO_MERGE always optimal even when merges were available.
+            # Reducing to -2250 allows Russia bonuses to offset the penalty, making merge viable.
+            penalty = 2250.0 if (russia_phase and global_merge_available) else 4500.0
+            score -= penalty
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 8.8b: high merge drought penalty (NEW: v581) -----
