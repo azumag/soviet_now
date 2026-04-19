@@ -68,6 +68,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v688: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION scaled — piece_count-scaled NEAR suppression at deadline+high_board
+     # analysis_result.md adopted hypothesis: flat -2500 suppression insufficient at pc>=36 where bonuses exceed it
+     #   worst_game T75 (pc=36, danger=3): suppression -2500 + v680 -3600 = -6100 vs bonuses ~4000 → NEAR still wins
+     #   At pc=37-38 the gap worsens further. Suppression must scale with piece_count.
+     # Mechanism: suppression = 2500 + max(0, (pc-32)) * 250. At pc=32: -2500, pc=36: -3500, pc=40: -4500, pc=44: -5500.
+     #   At worst_game T75 (pc=36): total=-7100 vs bonuses≈4000 → NO_MERGE preferred. T76 (pc=37): total=-7350.
+     # Constraint: No danger dimension. v680/v682/v685/v686 unchanged. No turn-number thresholds.
+     # Fixes: "deadline+high_max_y+high_pc NEAR merge with score_delta=0 despite low danger" (v687 gap at pc>=36)
+     # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION scaled)
      # v687: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION — suppress NEAR at deadline+high_board regardless of danger
      # analysis_result.md adopted hypothesis: NEAR suppression axis at deadline with elevated board (pc>=32, max_y>=2.0)
      #   even when danger is low (danger>=3 required for v686, leaving gap at danger=1-2).
@@ -1387,15 +1396,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Problem: worst_game T64-T67 (danger=1-2) and extra_low T75-T81 (danger=1-3) selected NEAR
         #   repeatedly with score_delta=0, causing max_y to climb to 3.27 and 4.04 respectively.
         #   v686 (requires danger>=3) never fires in these cases, leaving NEAR unblocked.
-        # Mechanism: Apply -2500 penalty to NEAR when deadline_crossed && max_y>=2.0 && pc>=32.
+        # Mechanism: Apply piece_count-scaled penalty to NEAR when deadline_crossed && max_y>=2.0 && pc>=32.
+        #   suppression = 2500 + max(0, (pc-32)) * 250. At pc=32: -2500, pc=36: -3500, pc=40: -4500, pc=44: -5500.
         #   Does NOT require danger — targets the high-piece-count deadline zone regardless of danger level.
         #   This closes the gap where v686 doesn't fire (danger<3) but deadline+high_max_y+high_pc
-        #   still produces score_delta=0 NEAR merges.
+        #   still produces score_delta=0 NEAR merges. At pc>=36, bonuses grow to 4000-5000+,
+        #   overwhelming flat -2500, so suppression must scale with piece_count.
         # Expected effect:
-        #   - worst_game T64 (pc=32, max_y=2.27, deadline_crossed, danger=1): NEAR net ~+750 (bonuses 3250
-        #     - penalty 2500) vs NO_MERGE 0 → NO_MERGE wins
-        #   - extra_low T75 (pc=43, max_y=2.03): same effect
-        #   - best_game T131 (pc=37, max_y=3.17): NO_MERGE with lower landing_y preferred
+        #   - worst_game T75 (pc=36, max_y=2.98): suppression=-3500 + v680≈-3600 = -7100 vs bonuses≈4000 → NO_MERGE wins
+        #   - worst_game T76 (pc=37): suppression=-3750 + v680≈-3600 = -7350 vs bonuses≈4300 → NO_MERGE wins
+        #   - best_game T131 (pc=37, max_y=3.17): same mechanism, NO_MERGE with lower landing_y preferred
         # Constraints (from analysis):
         #   - Do NOT add danger dimension (defeats the purpose of covering the gap)
         #   - Do NOT modify v682 penalty or v680/v685 mechanisms
@@ -1411,7 +1421,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and deadline_crossed
                 and max_y >= 2.0
                 and piece_count >= 32):
-            score -= 2500.0
+            suppression = 2500.0 + max(0, (piece_count - 32)) * 250.0
+            score -= suppression
             reasons.append("DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION")
 
         # ----- v683: mid-game NO_MERGE penalty — suppress merge-opportunity waste before deadline -----

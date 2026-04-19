@@ -68,18 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v689: v680/v684 pc threshold extension — pc>=33→pc>=34, pc>=35→pc>=34
-     # analysis_result.md adopted hypothesis: NEAR suppression reinforcement (v680/v684 pc threshold extension)
-     # Problem: worst/extra_low T55-60 (pc=34-36, max_y=2.09-3.17, deadline_crossed=true) NEAR selected with score_delta=0.
-     #   v688 added piece_count scaling at pc>=32 but T55 (pc=34) still failed. Suppression at pc=34 insufficient.
-     # Mechanism: Extend v684 gap-zone threshold: pc>=33→pc>=34. Extend v680 base tier: pc>=35→pc>=34.
-     #   v684 gap-zone (pc>=34 && danger>=5): suppression=3500 (unchanged magnitude, shifted threshold).
-     #   v680 enhanced tier (pc>=37 && danger>=3): scale base changed to (pc-34).
-     #   v680 base tier (pc>=34 && danger>=1): scale base changed to (pc-34).
-     # Expected: worst/extra_low T55-60 (pc=34-36) NEAR selected→NO_MERGE, max_y runaway prevented.
-     # Constraints: v681/v682/v683/v685/v686/v687/v688 unchanged. axis 9.6b unchanged. No turn-number thresholds.
-     # refs: tmp/analysis_result.md (Implementation Plan: v680/v684 pc threshold extension)
-     # Fixes rollback failure mode: NEAR at pc=34-36+deadline_crossed with score_delta=0
      # v688: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION scaled — piece_count-scaled NEAR suppression at deadline+high_board
      # analysis_result.md adopted hypothesis: flat -2500 suppression insufficient at pc>=36 where bonuses exceed it
      #   worst_game T75 (pc=36, danger=3): suppression -2500 + v680 -3600 = -6100 vs bonuses ~4000 → NEAR still wins
@@ -126,20 +114,20 @@ Phases (determined by board max Y):
      #       game_history/20260419_072301_score0653.jsonl (worst T52),
      #       game_history/20260419_073612_score2343.jsonl (extra_high T102)
      # Fixes: "NO_MERGE loses to NEAR by score at pc=33-36,danger=1-2,deadline"
-     # v684: NEAR suppression gap-zone at pc>=34 && danger>=5 — closes pc=34-36 gap where stacked
+     # v684: NEAR suppression gap-zone at pc>=33 && danger>=5 — closes pc=33-36 gap where stacked
      #   NEAR bonuses (~1900) exceeded old suppression (-2000), causing NEAR to be slightly preferred.
-     #   New gap-zone tier: if pc>=34 && danger>=5: suppression=3500 (vs old -2000).
-     #   Also raised base suppression from 2000 to 3000 at pc>=34.
-     #   Fixes rollback failure mode: NEAR at pc=34-36+danger>=5 with stacked bonuses exceeding suppression.
+     #   New gap-zone tier: if pc>=33 && danger>=5: suppression=3500 (vs old -2000).
+     #   Also raised base suppression from 2000 to 3000 at pc=35.
+     #   Fixes rollback failure mode: NEAR at pc=33-36+danger>=5 with stacked bonuses exceeding suppression.
      #   Refs: tmp/analysis_result.md (Implementation Plan: v684 gap-zone + v680 formula raise)
      # v680: NEAR_DEADLINE_DANGER_SUPPRESSED — enhanced NEAR suppression at deadline danger + high congestion
      # analysis_result.md adopted hypothesis: NEAR suppression strength at extreme max_y
      # Problem: NEAR merges at deadline_crossed=true with max_y>=2.0 and danger>=3 produce score_delta=0.
      #   worst_game turns 64-70: max_y 2.12-3.0, danger 3-5, NEAR selected → score_delta=0 each.
-     # Mechanism: At pc>=34, increase suppression with piece_count scaling (base 3000, raised from 2000).
-     #   Base tier: suppression = 3000 + max(0, (pc-34)) * 200. At pc=34: -3000.
-     #   v684 adds gap-zone (pc>=34 && danger>=5): suppression = 3500.
-     #   v684 adds enhanced tier (pc>=37 && danger>=3): suppression = 3000 + max(0, (pc-34)) * 300.
+     # Mechanism: At pc>=35, increase suppression with piece_count scaling (base 3000, raised from 2000).
+     #   Base tier: suppression = 3000 + max(0, (pc-35)) * 200. At pc=35: -3000.
+     #   v684 adds gap-zone (pc>=33 && danger>=5): suppression = 3500.
+     #   v684 adds enhanced tier (pc>=37 && danger>=3): suppression = 3000 + max(0, (pc-35)) * 300.
      # Constraints: v681 chain suppression unchanged, Russia bonuses unchanged, HEIGHT_CONTROL unchanged.
      # refs: tmp/analysis_result.md (Implementation Plan: v680 penalty magnitude increase + v684 gap-zone),
      #       mandatory_themes.txt ("併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"),
@@ -1571,17 +1559,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
 
-        # ----- v680+v684+v689: NEAR_DEADLINE_DANGER_SUPPRESSED — enhanced NEAR suppression at deadline danger -----
-        # analysis_result.md adopted hypothesis: NEAR suppression gap at moderate piece_count (34-36)
-        # Problem: At pc=34-36, v680 suppression (2000-2200) too weak against stacked NEAR bonuses
+        # ----- v680+v684: NEAR_DEADLINE_DANGER_SUPPRESSED — enhanced NEAR suppression at deadline danger -----
+        # analysis_result.md adopted hypothesis: NEAR suppression gap at moderate piece_count (33-36)
+        # Problem: At pc=33-36, old suppression (2000-2200) too weak against stacked NEAR bonuses
         #   (~1900 net), leaving NEAR only slightly negative or neutral.
-        #   worst_game T55-60 (pc=34-36, danger=1-3): NEAR selected with score_delta=0.
-        # Mechanism (v689):
-        #   - Gap-zone (pc>=34 && danger>=5): suppression = 3500 (closes the pc=34-36 gap)
-        #   - Enhanced tier (pc>=37 && danger>=3): suppression = 3000 + max(0, (pc-34)) * 300
-        #   - Base tier (pc>=34 && danger>=1): suppression = 3000 + max(0, (pc-34)) * 200 (raised from 2000)
-        #   At pc=34 danger=5: suppression=-3500 vs bonuses~1900 net → NO_MERGE strongly preferred.
-        #   At pc=37 danger=3: suppression=3900 vs bonuses~2500 net → NO_MERGE preferred.
+        #   worst_game T59 (pc=33, danger=5): suppression=-2000 but bonuses~1900 net → NEAR slightly preferred.
+        #   worst_game T63 (pc=36, danger=8): suppression=-2200 but bonuses~1900 net → NEAR still slightly preferred.
+        # Mechanism:
+        #   - Gap-zone (pc>=33 && danger>=5): suppression = 3500 (closes the pc=33-36 gap)
+        #   - Enhanced tier (pc>=37 && danger>=3): suppression = 3000 + max(0, (pc-35)) * 300
+        #   - Base tier (pc>=35 && danger>=1): suppression = 3000 + max(0, (pc-35)) * 200 (raised from 2000)
+        #   At pc=33 danger=5: suppression=-3500 vs bonuses~1900 net → NO_MERGE strongly preferred.
+        #   At pc=37 danger=3: suppression=3600 vs bonuses~2500 net → NO_MERGE preferred.
         # Constraints (from analysis):
         #   - Russia phase bonuses unchanged (v548, axes 8.7, 9.9)
         #   - v681 NEAR chain suppression unchanged
@@ -1591,20 +1580,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       mandatory_themes.txt ("併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"),
         #       tmp/state/last_rollback_analysis.md,
         #       game_history/20260419_053237_score0851.jsonl (worst game T59,T63)
-        # Fixes rollback failure mode: NEAR at pc=34-36+danger>=5 with stacked bonuses exceeding suppression
+        # Fixes rollback failure mode: NEAR at pc=33-36+danger>=5 with stacked bonuses exceeding suppression
         if (merge_grade == "NEAR"
                 and max_y >= 2.0
                 and deadline_crossed
                 and danger_piece_count >= 1
                 and not double_russia_phase):
-            # New gap-zone tier: pc>=34 && danger>=5 triggers stronger suppression
+            # New gap-zone tier: pc>=33 && danger>=5 triggers stronger suppression
             # to close the gap where stacked NEAR bonuses (~1900) exceeded old suppression (-2000).
-            if piece_count >= 34 and danger_piece_count >= 5:
+            if piece_count >= 33 and danger_piece_count >= 5:
                 suppression = 3500.0
             elif piece_count >= 37 and danger_piece_count >= 3:
-                suppression = 3000.0 + max(0, (piece_count - 34)) * 300.0
+                suppression = 3000.0 + max(0, (piece_count - 35)) * 300.0
             else:
-                suppression = 3000.0 + max(0, (piece_count - 34)) * 200.0
+                suppression = 3000.0 + max(0, (piece_count - 35)) * 200.0
             score -= suppression
             reasons.append("NEAR_DEADLINE_DANGER_SUPPRESSED")
 
