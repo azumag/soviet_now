@@ -43,7 +43,7 @@ Game Overview:
               # refs: advice.md (あずまぐ), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, tmp/sandbox_files.md,
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
-             8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
+             8.8. Reactive pairs no merge penalty - v332: 即時併合最優先化版, v694: ceiling at max_y>=2.5
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
@@ -67,6 +67,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v694: REACTIVE_PAIRS_NO_MERGE_PENALTY ceiling at max_y>=2.5 — suppress penalty in CRITICAL phase
+     # When max_y >= 2.5 && merge_grade == "NO" && reactive_pair_count >= 1, suppress penalty and let
+     # height penalty dominate. Analysis shows feedback loop: penalty directs placement toward reactive
+     # pair targets → vertical stacking → max_y increase → more penalty. Extra_low (T50-61): penalty
+     # dominated for 11 turns while max_y grew 2.1→4.39. Worst (reactive_avg=7.0 vs Best's 1.0).
+     # At max_y >= 2.5, survival trumps reactive pair compression. Also lowered rp threshold to >=1.
+     # Fixes rollback failure mode: REACTIVE_PAIRS_NO_MERGE_PENALTY feedback loop at high max_y.
+     # refs: tmp/analysis_result.md
      # v693: ACCELERATING_BOARD_NEAR_SUPPRESSION — when deadline_crossed AND max_y>=1.5 AND
      # (max_y_delta>=0.5 OR max_y>=2.0) AND merge_grade==NEAR: reduce NEAR bonus by 50% and
      # apply -400*merge_mult. Catches worst_game T43-T44 pattern where board accelerates
@@ -2006,7 +2014,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
-        if reactive_pair_count >= 3 and merge_grade == "NO":
+        if reactive_pair_count >= 1 and merge_grade == "NO":
             # v452: flatten to -4500, matching protected strategy (median 12789)
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
@@ -2015,9 +2023,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # In Russia phase (type 15 >= 1), axis 8.8 penalty (-4500) combined with Russia bonuses
             # (1200-1600) made NO_MERGE always optimal even when merges were available.
             # Reducing to -2250 allows Russia bonuses to offset the penalty, making merge viable.
-            penalty = 2250.0 if (russia_phase and global_merge_available) else 4500.0
-            score -= penalty
-            reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            # v694: suppress REACTIVE_PAIRS_NO_MERGE_PENALTY at max_y >= 2.5 (CRITICAL phase)
+            # analysis_result.md: REACTIVE_PAIRS_NO_MERGE_PENALTY feedback loop at high max_y causes
+            # max_y runaway (Extra_low T50-61: penalty directs placement toward reactive pair targets
+            # → vertical stacking → max_y increase → more penalty). At max_y >= 2.5, survival trumps
+            # reactive pair compression. Redirect to height control by suppressing penalty.
+            if max_y >= 2.5:
+                # CRITICAL phase: suppress penalty, let height control dominate
+                pass
+            else:
+                penalty = 2250.0 if (russia_phase and global_merge_available) else 4500.0
+                score -= penalty
+                reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 8.8b: high merge drought penalty (NEW: v581) -----
         # analysis_result.md: merge_grade=NO が3ターン以上継続且つ reactive_pairs>=3 の場合、

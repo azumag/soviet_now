@@ -67,12 +67,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v695: ACCELERATING_BOARD_NEAR_SUPPRESSION強化 — penalty -400→-800*merge_mult, threshold 2.0→1.8
-     # When board accelerates through 1.8-2.0 zone at deadline_crossed, stronger suppression prevents
-     # NEAR selection that causes max_y runaway. worst T54: bonuses(+2100) > penalty(-720), net +1260.
-     # New -800 magnitude + 1.8 threshold catches acceleration earlier (max_y 1.8-2.0 zone).
-     # Rollback failure mode: max_y runaway from NEAR merge failure at high max_y.
-     # refs: tmp/analysis_result.md
      # v694: REACTIVE_PAIRS_NO_MERGE_PENALTY ceiling at max_y>=2.5 — suppress penalty in CRITICAL phase
      # When max_y >= 2.5 && merge_grade == "NO" && reactive_pair_count >= 1, suppress penalty and let
      # height penalty dominate. Analysis shows feedback loop: penalty directs placement toward reactive
@@ -1127,10 +1121,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if (merge_grade == "NEAR"
             and deadline_crossed
             and max_y >= 1.5
-            and (__max_y_delta >= 0.5 or max_y >= 1.8)
+            and (__max_y_delta >= 0.5 or max_y >= 2.0)
             and not russia_phase):
             score -= 300.0 * merge_mult  # 50% reduction of base NEAR bonus (600*merge_mult)
-            score -= 800.0 * merge_mult
+            score -= 400.0 * merge_mult
             reasons.append("ACCELERATING_BOARD_SUPPRESSION")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
