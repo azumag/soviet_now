@@ -91,19 +91,6 @@ Phases (determined by board max Y):
      #       game_history/20260419_011626_score0715.jsonl (worst game T49-T50),
      #       game_history/20260419_012220_score3287.jsonl (best game T151-T152)
      # Fixes rollback failure mode: "deadlineでmerge機会があるのにNO_MERGE選択→board compression失敗"
-     # v690: axis 9.6c — NEAR penalty when NO_MERGE non-crossing alternative exists at deadline
-     # Mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-     # worst game T57/T60/T61/T66: NEAR selected at crossing position, NO_MERGE non-crossing available,
-     #   score_delta=0 for 4 consecutive turns, max_y climbs 1.3→2.99, game over.
-     # v682 penalizes NO_MERGE at deadline when merge exists. This axis handles the symmetric error:
-     #   NEAR chosen at crossing position when NO_MERGE non-crossing alternative exists.
-     # When NEAR && deadline_crossed && crosses_deadline && NO_MERGE non-crossing exists:
-     #   apply -800*merge_mult to make NO_MERGE relatively preferred.
-     # Constraints: Do NOT apply when DIRECT (axis 1 handles), Do NOT apply when NO_MERGE also crosses.
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.6c),
-     #       data/mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
-     #       game_history/20260419_135725_score0643.jsonl (worst game T57/T60/T61/T66/T67)
-     # Fixes rollback failure mode: "deadline_crossed && merge_available but chosen position crosses deadline"
      # v681: NEAR chain suppression — block consecutive NEAR at deadline+danger
      # worst_game T55-T61: 6 consecutive NEAR selections at deadline_crossed+danger, score_delta=0.
      # v680's type_scale=0.5 reduction wasn't enough to prevent this chain.
@@ -1303,40 +1290,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 penalty = 600.0 * merge_mult
                 score -= penalty
                 reasons.append("DEADLINE_CROSSING_MERGE_POSITION")
-
-        # ----- axis 9.6c: NEAR penalty when NO_MERGE non-crossing alternative exists (v690) -----
-        # Mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # v682 (DEADLINE_MERGE_VIOLATION) penalizes NO_MERGE when merge exists at deadline.
-        # This axis handles the symmetric error: choosing NEAR at a crossing position
-        # when a NO_MERGE candidate exists that doesn't cross deadline.
-        # Worst game T57: NEAR selected at x=1.09, crosses_deadline=true, NO_MERGE available at x=-2.0
-        #   → max_y climbs 1.3→2.99, score_delta=0 for 4 consecutive turns, game over
-        # Worst game T60/T61/T66: same pattern repeats with score_delta=0
-        # Best game T97: DIRECT merge prioritized over crossing position
-        # Mechanism: when NEAR candidate crosses deadline AND NO_MERGE non-crossing exists,
-        #   apply -800*merge_mult to make NO_MERGE relatively preferred.
-        # Constraint: Do NOT apply when merge_grade=DIRECT (axis 1 handles this).
-        #             Do NOT apply when NO_MERGE also crosses deadline (no safe alternative).
-        #             Do NOT modify v681 NEAR chain suppression or v682 penalty magnitude.
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.6c),
-        #       data/mandatory_themes.txt ("デッドラインにおいてしまうのを絶対に避ける"),
-        #       game_history/20260419_135725_score0643.jsonl (worst game T57/T60/T61/T66/T67),
-        #       game_history/20260419_140158_score2163.jsonl (best game T97)
-        # Fixes rollback failure mode: "deadline_crossed && merge_available but chosen position crosses deadline"
-        if (merge_grade == "NEAR"
-                and deadline_crossed
-                and result.get("crosses_deadline", False)
-                and has_merge_opportunity):
-            # Check if a NO_MERGE non-crossing alternative exists
-            no_merge_non_crossing = any(
-                r.get("merge_grade") == "NO"
-                and not r.get("crosses_deadline", False)
-                for r in results
-            )
-            if no_merge_non_crossing:
-                penalty = 800.0 * merge_mult
-                score -= penalty
-                reasons.append("DEADLINE_NEAR_VS_SAFE_NO_MERGE")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ

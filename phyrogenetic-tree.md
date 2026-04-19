@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-19 13:42:55 JST`
-- Nodes: `1156`
-- Edges: `1579`
-- Current: `8407c9e63dae`
+- Updated: `2026-04-19 14:39:42 JST`
+- Nodes: `1157`
+- Edges: `1580`
+- Current: `2e07e65e84d8`
 - Anchor: `fd3d35ac8361`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_891e238759b8["891e238759b8<br/>g=36 n=20<br/>comp=9441.9"]
     h_4ea277fa2d4f["4ea277fa2d4f<br/>g=12 n=12<br/>comp=11247.4"]
     h_e7f9c9cfc8dd["e7f9c9cfc8dd<br/>g=24 n=20<br/>comp=10554.7"]
     h_be0bb29a80cd["be0bb29a80cd<br/>g=25 n=20<br/>comp=11616.5"]
@@ -67,6 +66,7 @@ flowchart TD
     h_bafc54d108f9["bafc54d108f9<br/>g=12 n=12<br/>comp=11344.3"]
     h_19c035bdd84a["19c035bdd84a<br/>g=14 n=14<br/>comp=11601.4"]
     h_6a20b35c5600["6a20b35c5600<br/>g=12 n=12<br/>comp=9571.5"]
+    h_8407c9e63dae["8407c9e63dae<br/>g=12 n=12<br/>comp=10472.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -74,17 +74,10 @@ flowchart TD
     h_2ad5850b541e["2ad5850b541e"]
     h_415b0d640378["415b0d640378<br/>g=12 n=12<br/>comp=11745.1"]
     h_22ad2bcc59f1["22ad2bcc59f1<br/>g=12 n=12<br/>comp=11747.3"]
-    h_8407c9e63dae["8407c9e63dae<br/>CURRENT"]
+    h_2e07e65e84d8["2e07e65e84d8<br/>CURRENT"]
 
-    h_891e238759b8 -->|improve| h_4ea277fa2d4f
     h_4ea277fa2d4f -->|improve| h_e7f9c9cfc8dd
     h_e7f9c9cfc8dd -->|improve| h_be0bb29a80cd
-    h_be0bb29a80cd -. rollback .-> h_891e238759b8
-    h_891e238759b8 -->|improve| h_004626cd4739
-    h_004626cd4739 -. rollback .-> h_891e238759b8
-    h_891e238759b8 -->|improve| h_44b8e69bf801
-    h_44b8e69bf801 -. rollback .-> h_891e238759b8
-    h_891e238759b8 -->|improve| h_32ef1ca432b8
     h_32ef1ca432b8 -->|improve| h_94e246b27b62
     h_94e246b27b62 -->|improve| h_5561ada7261c
     h_5561ada7261c -->|improve| h_7b0ba5f60459
@@ -139,15 +132,14 @@ flowchart TD
     h_bafc54d108f9 -->|improve| h_19c035bdd84a
     h_19c035bdd84a -->|improve| h_6a20b35c5600
     h_6a20b35c5600 -. rollback .-> h_fd3d35ac8361
-    h_2ad5850b541e -->|improve| h_891e238759b8
     h_fd3d35ac8361 -->|improve| h_8407c9e63dae
+    h_8407c9e63dae -->|improve| h_2e07e65e84d8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_891e238759b8 plain;
     class h_4ea277fa2d4f plain;
     class h_e7f9c9cfc8dd plain;
     class h_be0bb29a80cd plain;
@@ -199,6 +191,7 @@ flowchart TD
     class h_bafc54d108f9 plain;
     class h_19c035bdd84a plain;
     class h_6a20b35c5600 plain;
+    class h_8407c9e63dae plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -206,7 +199,7 @@ flowchart TD
     class h_2ad5850b541e plain;
     class h_415b0d640378 plain;
     class h_22ad2bcc59f1 plain;
-    class h_8407c9e63dae current;
+    class h_2e07e65e84d8 current;
 ```
 
 ## Detail 1/15
@@ -4196,9 +4189,9 @@ flowchart TD
 
 ## Detail 15/15
 
-- Range: `646eea0bf18d` .. `8407c9e63dae`
-- Nodes in this diagram: `36`
-- Internal edges in this diagram: `30`
+- Range: `646eea0bf18d` .. `2e07e65e84d8`
+- Nodes in this diagram: `37`
+- Internal edges in this diagram: `31`
 - Cross-chunk link: `94786eb2e0fc --improve--> 646eea0bf18d`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -4243,6 +4236,7 @@ flowchart TD
     h_bafc54d108f9["bafc54d108f9<br/>g=12 n=12<br/>comp=11344.3"]
     h_19c035bdd84a["19c035bdd84a<br/>g=14 n=14<br/>comp=11601.4"]
     h_6a20b35c5600["6a20b35c5600<br/>g=12 n=12<br/>comp=9571.5"]
+    h_8407c9e63dae["8407c9e63dae<br/>g=12 n=12<br/>comp=10472.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -4250,7 +4244,7 @@ flowchart TD
     h_2ad5850b541e["2ad5850b541e"]
     h_415b0d640378["415b0d640378<br/>g=12 n=12<br/>comp=11745.1"]
     h_22ad2bcc59f1["22ad2bcc59f1<br/>g=12 n=12<br/>comp=11747.3"]
-    h_8407c9e63dae["8407c9e63dae<br/>CURRENT"]
+    h_2e07e65e84d8["2e07e65e84d8<br/>CURRENT"]
 
     h_646eea0bf18d -->|improve| h_bced4c938139
     h_bced4c938139 -. rollback .-> h_a7b41f8f20ad
@@ -4282,6 +4276,7 @@ flowchart TD
     h_19c035bdd84a -->|improve| h_6a20b35c5600
     h_6a20b35c5600 -. rollback .-> h_fd3d35ac8361
     h_fd3d35ac8361 -->|improve| h_8407c9e63dae
+    h_8407c9e63dae -->|improve| h_2e07e65e84d8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4316,6 +4311,7 @@ flowchart TD
     class h_bafc54d108f9 plain;
     class h_19c035bdd84a plain;
     class h_6a20b35c5600 plain;
+    class h_8407c9e63dae plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -4323,10 +4319,20 @@ flowchart TD
     class h_2ad5850b541e plain;
     class h_415b0d640378 plain;
     class h_22ad2bcc59f1 plain;
-    class h_8407c9e63dae current;
+    class h_2e07e65e84d8 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#17078 `8407c9e6 -> 2e07e65e`
+
+- scores: `13142 7620 15015 8313 16700 13899 7988 10960 10873 15118 9864 10986`
+- v690: axis 9.6c — NEAR penalty when NO_MERGE non-crossing alternative exists at deadline
+- Mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+- worst game T57/T60/T61/T66: NEAR selected at crossing position, NO_MERGE non-crossing available,
+- score_delta=0 for 4 consecutive turns, max_y climbs 1.3→2.99, game over.
+- v682 penalizes NO_MERGE at deadline when merge exists. This axis handles the symmetric error:
+- NEAR chosen at crossing position when NO_MERGE non-crossing alternative exists.
 
 ### Improve Game#17066 `fd3d35ac -> 8407c9e6`
 
