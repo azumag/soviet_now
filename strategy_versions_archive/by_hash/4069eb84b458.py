@@ -63,14 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vNEW: ACCELERATING_BOARD_NEAR_SUPPRESSION — suppress NEAR merge during board acceleration
-     # worst_game T53-59: max_y 1.86→4.30 (delta 0.5-1.4/turn), NEAR選択6回中6回, score_delta=+45 (T57 only)
-     # acceleration detected when deadline_crossed && max_y>=1.8 && (max_y_delta>=0.5 or max_y>=2.0)
-     # Additional -400*merge_mult penalty when accelerating to suppress risky NEAR selection
-     # Fixes: NEAR選択が加速局面で失敗するパターン (mandatory theme violation)
-     # Constraint: axis 8.8閾値変更禁止, height_mult緩和撤去禁止, v422削除禁止, NEAR bonus単純削除禁止
-     # refs: tmp/analysis_result.md (Implementation Plan lines 850-861), tmp/batch_summary.txt,
-     #       tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt
      # v418: AVOID_BLOCK suppression at rp>=3 && dcross && merge_grade==NO
      # worst T70: rp=5, mg=NO, dcross=true, x=3.0 edge despite axis 8.8 penalty.
      # AVOID_BLOCK (-500 cap) over-evaluated in tie-breaking vs axis 8.8 (~-5600).
@@ -727,17 +719,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
-
-    # --- vNEW: max_y delta calculation for acceleration detection ---
-    # Used to detect accelerating board state (max_y growing rapidly)
-    # worst_game T53-59: max_y 1.86→4.30 (delta 0.5-1.4/turn), NEAR選択が続きmax_y runaway
-    __max_y_history = game_state.get("max_y_history", []) if isinstance(game_state, dict) else []
-    if not isinstance(__max_y_history, list):
-        __max_y_history = []
-    __max_y_history = __max_y_history[-3:] if len(__max_y_history) > 3 else __max_y_history
-    __max_y_delta = 0.0
-    if len(__max_y_history) >= 2:
-        __max_y_delta = max_y - __max_y_history[-1]
     
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
@@ -876,12 +857,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 pc_risk_scale = 1.0
             near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
-            # vNEW: ACCELERATING_BOARD_NEAR_SUPPRESSION — detect accelerating board state
-            # worst_game T53-59: max_y 1.86→4.30 (delta 0.5-1.4/turn), NEAR選択が続きmax_y runaway
-            # acceleration detection: deadline_crossed && max_y>=1.8 && (max_y_delta>=0.5 or max_y>=2.0)
-            if deadline_crossed and max_y >= 1.8 and (__max_y_delta >= 0.5 or max_y >= 2.0):
-                near_risk_penalty += 400.0 * merge_mult
-                reasons.append("ACCELERATING_BOARD_NEAR_SUPPRESSION")
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
