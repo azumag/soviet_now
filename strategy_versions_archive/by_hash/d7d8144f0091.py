@@ -68,17 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v687: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION — suppress NEAR at deadline+high_board regardless of danger
-     # analysis_result.md adopted hypothesis: NEAR suppression axis at deadline with elevated board (pc>=32, max_y>=2.0)
-     #   even when danger is low (danger>=3 required for v686, leaving gap at danger=1-2).
-     # worst_game T64-T67 (danger=1-2): NEAR selected with score_delta=0, max_y climbing 2.27→3.27
-     # extra_low T75-T81 (danger=1-3): NEAR selected with score_delta=0, max_y reached 4.04
-     # Mechanism: -2500 penalty to NEAR when deadline_crossed && max_y>=2.0 && pc>=32. Does NOT require danger.
-     #   This closes the gap where v686 doesn't fire but deadline+high_max_y+high_pc still causes score_delta=0 NEAR.
-     # Constraint: No danger dimension (defeats purpose). v680/v682/v685/v686 unchanged. No turn-number thresholds.
-     # Fixes: "deadline+high_max_y+high_pc NEAR merge with score_delta=0 despite low danger" (mandatory theme violation)
-     # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION),
-     #       data/mandatory_themes.txt
      # v686: DEADLINE_DANGER_NEAR_BLOCK — block NEAR at deadline+danger+elevated_max_y even without prior NEAR
      # analysis_result.md adopted hypothesis: block NEAR when deadline_crossed+max_y>=2.0+danger>=3+merge_available
      # worst_game T61/T63: same conditions + NEAR best_merge_grade → NEAR selected, score_delta=0 each (failure)
@@ -1380,39 +1369,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             deadline_merge_violation_penalty = 800.0 * merge_mult
             score -= deadline_merge_violation_penalty
             reasons.append("DEADLINE_MERGE_VIOLATION")
-
-        # ----- DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION: suppress NEAR at deadline+high_board regardless of danger -----
-        # analysis_result.md adopted hypothesis: NEAR suppression axis at deadline with elevated board
-        #   (pc>=32, max_y>=2.0) even when danger is low.
-        # Problem: worst_game T64-T67 (danger=1-2) and extra_low T75-T81 (danger=1-3) selected NEAR
-        #   repeatedly with score_delta=0, causing max_y to climb to 3.27 and 4.04 respectively.
-        #   v686 (requires danger>=3) never fires in these cases, leaving NEAR unblocked.
-        # Mechanism: Apply -2500 penalty to NEAR when deadline_crossed && max_y>=2.0 && pc>=32.
-        #   Does NOT require danger — targets the high-piece-count deadline zone regardless of danger level.
-        #   This closes the gap where v686 doesn't fire (danger<3) but deadline+high_max_y+high_pc
-        #   still produces score_delta=0 NEAR merges.
-        # Expected effect:
-        #   - worst_game T64 (pc=32, max_y=2.27, deadline_crossed, danger=1): NEAR net ~+750 (bonuses 3250
-        #     - penalty 2500) vs NO_MERGE 0 → NO_MERGE wins
-        #   - extra_low T75 (pc=43, max_y=2.03): same effect
-        #   - best_game T131 (pc=37, max_y=3.17): NO_MERGE with lower landing_y preferred
-        # Constraints (from analysis):
-        #   - Do NOT add danger dimension (defeats the purpose of covering the gap)
-        #   - Do NOT modify v682 penalty or v680/v685 mechanisms
-        #   - Do NOT add turn-number thresholds
-        #   - Russia phase bonuses unchanged, HEIGHT_CONTROL unchanged
-        # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION),
-        #       data/mandatory_themes.txt ("併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"),
-        #       game_history/20260419_091358_score0604.jsonl (worst game T64-T67),
-        #       game_history/20260419_093948_score0796.jsonl (extra_low game T75-T81),
-        #       game_history/20260419_093248_score3077.jsonl (best game T131)
-        # Fixes rollback failure mode: "deadline+high_max_y+high_pc NEAR merge with score_delta=0 despite low danger"
-        if (merge_grade == "NEAR"
-                and deadline_crossed
-                and max_y >= 2.0
-                and piece_count >= 32):
-            score -= 2500.0
-            reasons.append("DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION")
 
         # ----- v683: mid-game NO_MERGE penalty — suppress merge-opportunity waste before deadline -----
         # analysis_result.md adopted hypothesis: mid-game max_y 1.5-2.5 (turns 45-57) with merge available
