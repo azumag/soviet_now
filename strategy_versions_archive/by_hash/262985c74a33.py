@@ -63,13 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v418: AVOID_BLOCK suppression at rp>=3 && dcross && merge_grade==NO
-     # worst T70: rp=5, mg=NO, dcross=true, x=3.0 edge despite axis 8.8 penalty.
-     # AVOID_BLOCK (-500 cap) over-evaluated in tie-breaking vs axis 8.8 (~-5600).
-     # Fix: extend board_congested to suppress AVOID_BLOCK when rp>=3 && dcross,
-     # letting axis 8.8 penalty alone dominate placement decision.
-     # Constraint: merge_grade==NO already guaranteed inside block (line 1166).
-     # refs: tmp/analysis_result.md, tmp/improve_brief.md, tmp/batch_summary.txt
      # v697: CRITICAL phase russia compensation — fix v694 suppression gap at max_y>=2.5
      # Postmortem: worst_game T54-62, v694 suppressed -4500 penalty for 8 turns (max_y 2.67→3.73),
      # HEIGHT_CONTROL avg_score_delta≈0, max_y runaway → game over. v694 removes penalty but
@@ -1178,11 +1171,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
-                # v418: suppress AVOID_BLOCK when rp>=3 && dcross && merge_grade==NO
-                # to let axis 8.8 penalty alone dominate placement decision.
-                # worst T70: rp=5, mg=NO, dcross=true, x=3.0 edge selected despite axis 8.8 penalty.
-                # AVOID_BLOCK (-500 cap) was over-evaluated in tie-breaking range vs axis 8.8 (~-5600).
-                or (reactive_pair_count >= 3 and deadline_crossed)
             )
             if not board_congested:
                 blocking_penalty = 0.0
