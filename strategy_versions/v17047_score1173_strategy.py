@@ -68,6 +68,97 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v689: v680/v684 pc threshold extension — pc>=33→pc>=34, pc>=35→pc>=34
+     # analysis_result.md adopted hypothesis: NEAR suppression reinforcement (v680/v684 pc threshold extension)
+     # Problem: worst/extra_low T55-60 (pc=34-36, max_y=2.09-3.17, deadline_crossed=true) NEAR selected with score_delta=0.
+     #   v688 added piece_count scaling at pc>=32 but T55 (pc=34) still failed. Suppression at pc=34 insufficient.
+     # Mechanism: Extend v684 gap-zone threshold: pc>=33→pc>=34. Extend v680 base tier: pc>=35→pc>=34.
+     #   v684 gap-zone (pc>=34 && danger>=5): suppression=3500 (unchanged magnitude, shifted threshold).
+     #   v680 enhanced tier (pc>=37 && danger>=3): scale base changed to (pc-34).
+     #   v680 base tier (pc>=34 && danger>=1): scale base changed to (pc-34).
+     # Expected: worst/extra_low T55-60 (pc=34-36) NEAR selected→NO_MERGE, max_y runaway prevented.
+     # Constraints: v681/v682/v683/v685/v686/v687/v688 unchanged. axis 9.6b unchanged. No turn-number thresholds.
+     # refs: tmp/analysis_result.md (Implementation Plan: v680/v684 pc threshold extension)
+     # Fixes rollback failure mode: NEAR at pc=34-36+deadline_crossed with score_delta=0
+     # v688: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION scaled — piece_count-scaled NEAR suppression at deadline+high_board
+     # analysis_result.md adopted hypothesis: flat -2500 suppression insufficient at pc>=36 where bonuses exceed it
+     #   worst_game T75 (pc=36, danger=3): suppression -2500 + v680 -3600 = -6100 vs bonuses ~4000 → NEAR still wins
+     #   At pc=37-38 the gap worsens further. Suppression must scale with piece_count.
+     # Mechanism: suppression = 2500 + max(0, (pc-32)) * 250. At pc=32: -2500, pc=36: -3500, pc=40: -4500, pc=44: -5500.
+     #   At worst_game T75 (pc=36): total=-7100 vs bonuses≈4000 → NO_MERGE preferred. T76 (pc=37): total=-7350.
+     # Constraint: No danger dimension. v680/v682/v685/v686 unchanged. No turn-number thresholds.
+     # Fixes: "deadline+high_max_y+high_pc NEAR merge with score_delta=0 despite low danger" (v687 gap at pc>=36)
+     # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION scaled)
+     # v687: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION — suppress NEAR at deadline+high_board regardless of danger
+     # analysis_result.md adopted hypothesis: NEAR suppression axis at deadline with elevated board (pc>=32, max_y>=2.0)
+     #   even when danger is low (danger>=3 required for v686, leaving gap at danger=1-2).
+     # worst_game T64-T67 (danger=1-2): NEAR selected with score_delta=0, max_y climbing 2.27→3.27
+     # extra_low T75-T81 (danger=1-3): NEAR selected with score_delta=0, max_y reached 4.04
+     # Mechanism: -2500 penalty to NEAR when deadline_crossed && max_y>=2.0 && pc>=32. Does NOT require danger.
+     #   This closes the gap where v686 doesn't fire but deadline+high_max_y+high_pc still causes score_delta=0 NEAR.
+     # Constraint: No danger dimension (defeats purpose). v680/v682/v685/v686 unchanged. No turn-number thresholds.
+     # Fixes: "deadline+high_max_y+high_pc NEAR merge with score_delta=0 despite low danger" (mandatory theme violation)
+     # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION),
+     #       data/mandatory_themes.txt
+     # v686: DEADLINE_DANGER_NEAR_BLOCK — block NEAR at deadline+danger+elevated_max_y even without prior NEAR
+     # analysis_result.md adopted hypothesis: block NEAR when deadline_crossed+max_y>=2.0+danger>=3+merge_available
+     # worst_game T61/T63: same conditions + NEAR best_merge_grade → NEAR selected, score_delta=0 each (failure)
+     # best_game T110: same conditions + DIRECT best_merge_grade → DIRECT selected, score_delta=285 (success)
+     # Mechanism: v681 extension — when deadline+danger+elevated_max_y+NEAR_merge_grade, force NO_MERGE regardless
+     #   of _near_chain_suppression state. Existing v681 chain suppression unchanged.
+     # Constraint: DIRECT > NEAR priority maintained. HEIGHT_CONTROL unchanged. v680/v681/v682 unchanged.
+     #   Does NOT apply when best_merge_grade=DIRECT (best game chose DIRECT and succeeded).
+     # Fixes: worst_game score_gain=16 → target 100+, reactive_avg 8.2 → 5-
+     # refs: tmp/analysis_result.md (Implementation Plan: v681 mechanism extension)
+     # v685: DEADLINE_NO_MERGE_GLOBAL_BONUS — global NO_MERGE bonus at dangerous deadline
+     # analysis_result.md adopted hypothesis: NO_MERGE global bonus at dangerous deadline
+     # Problem: At pc=33-36,danger=1-2,deadline_crossed with merge_available, v680 suppression
+     #   doesn't fire (requires max_y>=2.0) or isn't strong enough (~3000 vs NEAR bonuses ~1900).
+     #   worst T52: NO_MERGE=0 vs NEAR≈+984, NEAR selected → score_delta=0 → cascade to death.
+     # Mechanism: When deadline_crossed+max_y>=2.0+pc>=33+danger>=1+merge_opportunity exists,
+     #   add +1500 to NO_MERGE score (global, before per-candidate loop).
+     #   This makes NO_MERGE win over NEAR regardless of stacked NEAR bonuses.
+     # Constraints: v680/v681/v682/v683 unchanged. Russia bonuses unchanged. HEIGHT_CONTROL unchanged.
+     #   Does NOT suppress NEAR — only boosts NO_MERGE when it's the correct choice.
+     #   Not active in double_russia_phase.
+     # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE global bonus at dangerous deadline),
+     #       mandatory_themes.txt ("deadline placing" mandatory theme),
+     #       game_history/20260419_072301_score0653.jsonl (worst T52),
+     #       game_history/20260419_073612_score2343.jsonl (extra_high T102)
+     # Fixes: "NO_MERGE loses to NEAR by score at pc=33-36,danger=1-2,deadline"
+     # v684: NEAR suppression gap-zone at pc>=34 && danger>=5 — closes pc=34-36 gap where stacked
+     #   NEAR bonuses (~1900) exceeded old suppression (-2000), causing NEAR to be slightly preferred.
+     #   New gap-zone tier: if pc>=34 && danger>=5: suppression=3500 (vs old -2000).
+     #   Also raised base suppression from 2000 to 3000 at pc>=34.
+     #   Fixes rollback failure mode: NEAR at pc=34-36+danger>=5 with stacked bonuses exceeding suppression.
+     #   Refs: tmp/analysis_result.md (Implementation Plan: v684 gap-zone + v680 formula raise)
+     # v680: NEAR_DEADLINE_DANGER_SUPPRESSED — enhanced NEAR suppression at deadline danger + high congestion
+     # analysis_result.md adopted hypothesis: NEAR suppression strength at extreme max_y
+     # Problem: NEAR merges at deadline_crossed=true with max_y>=2.0 and danger>=3 produce score_delta=0.
+     #   worst_game turns 64-70: max_y 2.12-3.0, danger 3-5, NEAR selected → score_delta=0 each.
+     # Mechanism: At pc>=34, increase suppression with piece_count scaling (base 3000, raised from 2000).
+     #   Base tier: suppression = 3000 + max(0, (pc-34)) * 200. At pc=34: -3000.
+     #   v684 adds gap-zone (pc>=34 && danger>=5): suppression = 3500.
+     #   v684 adds enhanced tier (pc>=37 && danger>=3): suppression = 3000 + max(0, (pc-34)) * 300.
+     # Constraints: v681 chain suppression unchanged, Russia bonuses unchanged, HEIGHT_CONTROL unchanged.
+     # refs: tmp/analysis_result.md (Implementation Plan: v680 penalty magnitude increase + v684 gap-zone),
+     #       mandatory_themes.txt ("併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"),
+     #       tmp/state/last_rollback_analysis.md,
+     #       game_history/20260419_023103_score0664.jsonl (worst game turns 64-70)
+     # Fixes rollback failure mode: NEAR at deadline+danger+high max_y with score_delta=0
+     # v684: ENHANCED_NEAR_SUPPRESSION — gap-zone suppression at pc>=33 && danger>=5
+     # analysis_result.md adopted hypothesis: NEAR suppression gap at moderate piece_count (33-36)
+     # Problem: At pc=33-36, v680 suppression (2000-2200) too weak vs stacked NEAR bonuses (~1900 net),
+     #   leaving NEAR only slightly negative. worst_game T59 (pc=33,danger=5): suppression=-2000 but net~-100.
+     # Mechanism: New gap-zone tier at pc>=33 && danger>=5: suppression=3500 closes the gap.
+     #   Enhanced tier (pc>=37 && danger>=3): suppression = 3000 + max(0, (pc-35)) * 300.
+     #   Base tier (pc>=35 && danger>=1): suppression = 3000 + max(0, (pc-35)) * 200 (raised from 2000).
+     # Constraints: v681/v682 unchanged, Russia bonuses unchanged, HEIGHT_CONTROL unchanged.
+     # refs: tmp/analysis_result.md (Implementation Plan: v684 gap-zone + v680 formula raise),
+     #       mandatory_themes.txt ("併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"),
+     #       tmp/state/last_rollback_analysis.md,
+     #       game_history/20260419_053237_score0851.jsonl (worst game T59,T63)
+     # Fixes rollback failure mode: NEAR at pc=33-36+danger>=5 with stacked bonuses exceeding suppression
      # v683: MIDGAME_NO_MERGE_PENALTY — penalty for NO_MERGE before deadline when merge opportunity exists
      # analysis_result.md adopted hypothesis: mid-game max_y 1.5-2.5 with merge_available=true
      #   but choosing NO_MERGE causes gradual board compression failure (worst game turns 50-57).
@@ -1167,6 +1258,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             _near_chain_suppression = False  # Reset after acting
             return {"x": float(forced["x"]), "reason": "NEAR_CHAIN_SUPPRESSION"}
 
+    # ----- v681 EXTENSION: deadline+danger NEAR block — block NEAR even without prior NEAR selection -----
+    # analysis_result.md adopted hypothesis: when deadline_crossed + max_y>=2.0 + danger>=3 +
+    # merge_available + best_merge_grade=NEAR, force NO_MERGE regardless of _near_chain_suppression.
+    # worst_game T61/T63: same conditions but NEAR selected → score_delta=0 (failure).
+    # best_game T110: same conditions but best_merge_grade=DIRECT → DIRECT selected → score_delta=285 (success).
+    # The outcome difference is MERGE_GRADE (DIRECT vs NEAR), not _near_chain_suppression state.
+    best_merge_grade = min(
+        [r.get("merge_grade", "NO") for r in results],
+        key=lambda g: {"DIRECT": 0, "NEAR": 1, "FAR": 2, "NO": 3}.get(g, 3)
+    )
+    deadline_dangerous_near = (
+        deadline_crossed
+        and max_y >= 2.0
+        and danger_piece_count >= 3
+        and best_merge_grade == "NEAR"
+    )
+    if deadline_dangerous_near:
+        # Force NO_MERGE with lowest landing_y to avoid score_delta=0 death spiral
+        no_merge_candidates = [r for r in results if r.get("merge_grade") == "NO"]
+        if no_merge_candidates:
+            forced = min(no_merge_candidates, key=lambda r: r.get("landing_y", 99))
+            return {"x": float(forced["x"]), "reason": "DEADLINE_DANGER_NEAR_BLOCK"}
+
     # ----- v682: DEADLINE_MERGE_VIOLATION — penalty for NO_MERGE at deadline when merge opportunity exists -----
     # analysis_result.md adopted hypothesis: "NO_MERGE at deadline violation penalty"
     # mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
@@ -1177,6 +1291,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # Constraint: v681 NEAR chain suppression logic unchanged. Russia phase bonuses unchanged.
     # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_MERGE_VIOLATION axis)
     has_merge_opportunity = any(r.get("merge_grade") in ["DIRECT", "NEAR"] for r in results)
+
+    # ----- v685: DEADLINE_NO_MERGE_GLOBAL_BONUS — global NO_MERGE bonus at dangerous deadline -----
+    # analysis_result.md adopted hypothesis: NO_MERGE global bonus at dangerous deadline
+    # Problem: At pc=33-36,danger=1-2,deadline_crossed, v680 suppression doesn't fire
+    #   (requires max_y>=2.0) and even when it does (-3000), NEAR bonuses (1500-2000)
+    #   offset it. NO_MERGE loses by score despite being the correct choice.
+    #   worst T52: NO_MERGE=0 vs NEAR≈+984, NEAR selected → score_delta=0 → cascade to death.
+    # Mechanism: When deadline_crossed, max_y>=2.0, piece_count>=33, danger>=1, and
+    #   ANY candidate (global has_merge_opportunity) is DIRECT/NEAR → add +1500 to NO_MERGE score.
+    #   This makes NO_MERGE win by +1500 (or +700 after v682 -800) vs NEAR -416.
+    # Constraints: v680/v681/v682/v683 unchanged. Russia bonuses unchanged. HEIGHT_CONTROL unchanged.
+    #   Does NOT suppress NEAR — only boosts NO_MERGE when it's the correct choice.
+    #   Not active in double_russia_phase.
+    # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE global bonus at dangerous deadline),
+    #       mandatory_themes.txt ("deadline placing" mandatory theme),
+    #       game_history/20260419_072301_score0653.jsonl (worst T52),
+    #       game_history/20260419_073612_score2343.jsonl (extra_high T102)
+    # Fixes: "NO_MERGE loses to NEAR by score at pc=33-36,danger=1-2,deadline"
+    _deadline_no_merge_bonus = 0.0
+    if (deadline_crossed
+            and max_y >= 2.0
+            and piece_count >= 33
+            and danger_piece_count >= 1
+            and not double_russia_phase
+            and has_merge_opportunity):
+        _deadline_no_merge_bonus = 1500.0
 
     for result in results:
         x = result["x"]
@@ -1262,6 +1402,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= deadline_merge_violation_penalty
             reasons.append("DEADLINE_MERGE_VIOLATION")
 
+        # ----- DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION: suppress NEAR at deadline+high_board regardless of danger -----
+        # analysis_result.md adopted hypothesis: NEAR suppression axis at deadline with elevated board
+        #   (pc>=32, max_y>=2.0) even when danger is low.
+        # Problem: worst_game T64-T67 (danger=1-2) and extra_low T75-T81 (danger=1-3) selected NEAR
+        #   repeatedly with score_delta=0, causing max_y to climb to 3.27 and 4.04 respectively.
+        #   v686 (requires danger>=3) never fires in these cases, leaving NEAR unblocked.
+        # Mechanism: Apply piece_count-scaled penalty to NEAR when deadline_crossed && max_y>=2.0 && pc>=32.
+        #   suppression = 2500 + max(0, (pc-32)) * 250. At pc=32: -2500, pc=36: -3500, pc=40: -4500, pc=44: -5500.
+        #   Does NOT require danger — targets the high-piece-count deadline zone regardless of danger level.
+        #   This closes the gap where v686 doesn't fire (danger<3) but deadline+high_max_y+high_pc
+        #   still produces score_delta=0 NEAR merges. At pc>=36, bonuses grow to 4000-5000+,
+        #   overwhelming flat -2500, so suppression must scale with piece_count.
+        # Expected effect:
+        #   - worst_game T75 (pc=36, max_y=2.98): suppression=-3500 + v680≈-3600 = -7100 vs bonuses≈4000 → NO_MERGE wins
+        #   - worst_game T76 (pc=37): suppression=-3750 + v680≈-3600 = -7350 vs bonuses≈4300 → NO_MERGE wins
+        #   - best_game T131 (pc=37, max_y=3.17): same mechanism, NO_MERGE with lower landing_y preferred
+        # Constraints (from analysis):
+        #   - Do NOT add danger dimension (defeats the purpose of covering the gap)
+        #   - Do NOT modify v682 penalty or v680/v685 mechanisms
+        #   - Do NOT add turn-number thresholds
+        #   - Russia phase bonuses unchanged, HEIGHT_CONTROL unchanged
+        # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION),
+        #       data/mandatory_themes.txt ("併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"),
+        #       game_history/20260419_091358_score0604.jsonl (worst game T64-T67),
+        #       game_history/20260419_093948_score0796.jsonl (extra_low game T75-T81),
+        #       game_history/20260419_093248_score3077.jsonl (best game T131)
+        # Fixes rollback failure mode: "deadline+high_max_y+high_pc NEAR merge with score_delta=0 despite low danger"
+        if (merge_grade == "NEAR"
+                and deadline_crossed
+                and max_y >= 2.0
+                and piece_count >= 32):
+            suppression = 2500.0 + max(0, (piece_count - 32)) * 250.0
+            score -= suppression
+            reasons.append("DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION")
+
         # ----- v683: mid-game NO_MERGE penalty — suppress merge-opportunity waste before deadline -----
         # analysis_result.md adopted hypothesis: mid-game max_y 1.5-2.5 (turns 45-57) with merge available
         #   but choosing NO_MERGE causes gradual board compression failure.
@@ -1294,6 +1469,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             midgame_no_merge_penalty = 200.0 * merge_mult
             score -= midgame_no_merge_penalty
             reasons.append("MIDGAME_NO_MERGE_PENALTY")
+
+        # ----- v685: DEADLINE_NO_MERGE_GLOBAL_BONUS — global NO_MERGE bonus at dangerous deadline -----
+        # v685: When deadline_crossed + max_y>=2.0 + pc>=33 + danger>=1 + merge_opportunity exists,
+        #   add +1500 to NO_MERGE score to push it above NEAR candidates.
+        #   This fires when v680's suppression doesn't (max_y<2.0 case) or isn't strong enough.
+        #   v683 (!deadline_crossed) does NOT apply here — deadline_crossed path only via v685.
+        if merge_grade == "NO" and _deadline_no_merge_bonus > 0:
+            score += _deadline_no_merge_bonus
+            reasons.append("DEADLINE_NO_MERGE_GLOBAL_BONUS")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ
@@ -1386,6 +1570,43 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
+
+        # ----- v680+v684+v689: NEAR_DEADLINE_DANGER_SUPPRESSED — enhanced NEAR suppression at deadline danger -----
+        # analysis_result.md adopted hypothesis: NEAR suppression gap at moderate piece_count (34-36)
+        # Problem: At pc=34-36, v680 suppression (2000-2200) too weak against stacked NEAR bonuses
+        #   (~1900 net), leaving NEAR only slightly negative or neutral.
+        #   worst_game T55-60 (pc=34-36, danger=1-3): NEAR selected with score_delta=0.
+        # Mechanism (v689):
+        #   - Gap-zone (pc>=34 && danger>=5): suppression = 3500 (closes the pc=34-36 gap)
+        #   - Enhanced tier (pc>=37 && danger>=3): suppression = 3000 + max(0, (pc-34)) * 300
+        #   - Base tier (pc>=34 && danger>=1): suppression = 3000 + max(0, (pc-34)) * 200 (raised from 2000)
+        #   At pc=34 danger=5: suppression=-3500 vs bonuses~1900 net → NO_MERGE strongly preferred.
+        #   At pc=37 danger=3: suppression=3900 vs bonuses~2500 net → NO_MERGE preferred.
+        # Constraints (from analysis):
+        #   - Russia phase bonuses unchanged (v548, axes 8.7, 9.9)
+        #   - v681 NEAR chain suppression unchanged
+        #   - HEIGHT_CONTROL unchanged
+        #   - Fixed turn-number thresholds prohibited (use board state conditions)
+        # refs: tmp/analysis_result.md (Implementation Plan: v684 gap-zone + v680 formula raise),
+        #       mandatory_themes.txt ("併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"),
+        #       tmp/state/last_rollback_analysis.md,
+        #       game_history/20260419_053237_score0851.jsonl (worst game T59,T63)
+        # Fixes rollback failure mode: NEAR at pc=34-36+danger>=5 with stacked bonuses exceeding suppression
+        if (merge_grade == "NEAR"
+                and max_y >= 2.0
+                and deadline_crossed
+                and danger_piece_count >= 1
+                and not double_russia_phase):
+            # New gap-zone tier: pc>=34 && danger>=5 triggers stronger suppression
+            # to close the gap where stacked NEAR bonuses (~1900) exceeded old suppression (-2000).
+            if piece_count >= 34 and danger_piece_count >= 5:
+                suppression = 3500.0
+            elif piece_count >= 37 and danger_piece_count >= 3:
+                suppression = 3000.0 + max(0, (piece_count - 34)) * 300.0
+            else:
+                suppression = 3000.0 + max(0, (piece_count - 34)) * 200.0
+            score -= suppression
+            reasons.append("NEAR_DEADLINE_DANGER_SUPPRESSED")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
