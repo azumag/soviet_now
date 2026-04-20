@@ -64,11 +64,23 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # vXXX: suppress HEIGHT_CONTROL/LAYER/MEDIUM_TOWER when max_y>=1.8 + rp>=3 + mg==NO + !global_merge
-     #       suppress_height_control guard prevents edge scatter in high-rp+NO_MERGE+HIGH phase
-     #       Fixes rollback failure mode: worst T47-T50 rp=6+NO_MERGE+HIGH_LAYER → max_y runaway 1.60→3.30
-     #       Constraint: axis 8.8 penalty values unchanged; height_mult基本値変更なし; v422削除なし
-     #       refs: tmp/analysis_result.md, tmp/batch_summary.txt, tmp/state/last_rollback_analysis.md
+     # vXXX: NEAR filter threshold relaxation + DANGER_ZONE_FORCE_MERGE strengthening
+     # Change 1: NEAR filter threshold -0.5 → -1.5 (allows safe NEAR merges at margin -1.0 to -1.5)
+     # Change 2: DANGER_ZONE_FORCE_MERGE layered penalties (extreme: -6000, high: -5000, std: -3000)
+     # Change 3: Removed suppression condition that blocked penalty at deadline
+     # Fixes: worst game T61 (max_y=3.2, rp=7) NEAR existed but NO_MERGE won due to bonus accumulation
+     # Fixes rollback failure mode: "併合できるわけでもないのにデッドラインにおいてしまう" violation
+     # Constraint: axis 8.8 penalty magnitude/threshold NOT modified (forbidden)
+     # refs: tmp/analysis_result.md (Hypothesis: NEAR Filter Recalibration + DANGER_ZONE_FORCE_MERGE Strengthening)
+     #       エッジ配置追加ペナルティ: -(pc-35)*400*(|x|/3.0)。pc=40,|x|=2でー1333、pc=45,|x|=3でー4000。
+     #       Fixes: worst T64-T66 pc=43,deadline_crossed,NO_MERGE時にx=-2.0が選択される問題を解消。
+     #       refs: tmp/analysis_result.md, game_history/20260417_193200_score0490.jsonl T64-66
+     # vXXX: deadline merge urgency — +2000 bonus for DIRECT/NEAR when deadline_crossed && rp>=3;
+     #       suppress axis 8.8 penalty when deadline_crossed && rp>=3 && !global_merge_available
+     #       Fixes: "merge_available but NO_MERGE chosen" death spiral at deadline with rp>=3
+     #       (score826 T62 chose NO_MERGE at rp=7-8, deadline_crossed=true, while NEAR existed).
+     #       Constraint: forbids reactive_pairs_no_merge_penalty at rp>=3 && deadline && no merge.
+     #       refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
      # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
      #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
      #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
@@ -743,17 +755,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     pieces = game_state.get("pieces", [])
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
-
-    # --- vNEW: max_y delta calculation for acceleration detection ---
-    # Used to detect accelerating board state (max_y growing rapidly)
-    # worst_game T53-59: max_y 1.86→4.30 (delta 0.5-1.4/turn), NEAR選択が続きmax_y runaway
-    max_y_history = game_state.get("max_y_history", []) if isinstance(game_state, dict) else []
-    if not isinstance(max_y_history, list):
-        max_y_history = []
-    max_y_delta = 0.0
-    if len(max_y_history) >= 2:
-        max_y_delta = max_y - max_y_history[-1]
-
+    
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
 
