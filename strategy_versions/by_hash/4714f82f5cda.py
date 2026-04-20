@@ -67,7 +67,7 @@ Phases (determined by board max Y):
      # vNEW: axis 8.9 DEADLINE_NO_MERGE_EDGE_PENALTY — analysis_result.md hypothesis
      # Worst/best games: REACTIVE_PAIRS_NO_MERGE_PENALTY (-4500) fires but edge (x=±3.0) wins
      # because accumulated bonuses (>4500) overcome penalty. Add -2000 layered penalty for
-     # edge placement when deadline_crossed && merge_grade=="NO" && max_y>=1.5 && accelerating.
+     # edge placement when deadline_crossed && merge_grade=="NO" && max_y>=1.8 && accelerating.
      # Suppressed when russia_phase=true.
      # Failure mode: "penalty fires but edge wins" at deadline — axis 8.8 alone insufficient.
      # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
@@ -1713,7 +1713,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- axis 8.9: DEADLINE_NO_MERGE edge position penalty (vNEW) -----
         # Hypothesis from analysis_result.md — targets "penalty fires but edge wins" failure mode
-        # When deadline_crossed && merge_grade == "NO" && max_y >= 1.5 && board is accelerating
+        # When deadline_crossed && merge_grade == "NO" && max_y >= 1.8 && board is accelerating
         # (max_y_delta >= 0.3), apply additional -2000 penalty to edge positions (x <= -2.5 or x >= 2.5).
         # This provides layered protection beyond axis 8.8 penalty.
         # Suppressed when russia_phase=true (Russia growth strategy intentionally places near edge).
@@ -1722,7 +1722,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # do NOT add deadline_crossed condition to axis 8.8, do NOT modify axis 9.5 or 9.3.
         # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
         __dlg_8_9 = 0.0
-        if deadline_crossed and merge_grade == "NO" and max_y >= 1.5 and not russia_phase:
+        if deadline_crossed and merge_grade == "NO" and max_y >= 1.8 and not russia_phase:
             # board accelerating: max_y >= 2.5 is proxy for accelerating state (v694 suppression threshold)
             if max_y >= 2.5:
                 if x <= -2.5 or x >= 2.5:
