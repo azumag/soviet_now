@@ -693,13 +693,6 @@ Phases (determined by board max Y):
 # This addresses the root cause: low-score games playing too conservatively early.
 # refs: tmp/batch_summary.txt, game_history/20260308_172623_score0598.jsonl, game_history/20260308_175330_score2416.jsonl
 
-# vXXX: edge-aware suppress_height_control guard — fixes edge scatter in rp>=3 NO_MERGE situations
-# Rollback failure mode: worst T48 x=-3.0 edge scatter → 4 turns NO_MERGE → game over (score=583)
-# Guard reimplemented with edge penalty: key = landing_y + |x| * 0.35
-# Edge |x|=3.0 adds +1.05 landing_y equivalent (central preferred unless landing_y diff > 1.05)
-# mandatory_themes: 併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける
-# refs: tmp/analysis_result.md (Adopted Hypothesis: edge-aware suppress guard)
-
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
@@ -1829,36 +1822,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
-
-    # --- HEIGHT_CONTROL suppression in high-risk NO_MERGE situations (vXXX) ---
-    # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-    # worst game T60-61: max_y=2.78, rp=8, mg=NO, deadline_crossed → x=±3.0 edge → 4 turns NO_MERGE
-    # suppress_height_control guard: when all candidates are NO_MERGE in dangerous state,
-    # force selection of lowest landing_y position (with edge penalty) to prevent deadline scatter.
-    # Edge penalty: |x|=3.0 adds +1.05 landing_y equivalent, |x|=1.5 adds +0.525, center adds 0.
-    # refs: tmp/analysis_result.md (Adopted Hypothesis: edge-aware suppress guard),
-    #       game_history/20260421_035421_score0583.jsonl (worst T48: edge scatter)
-    if results:
-        __shc_reactor = analysis.get("reactor", {}) if isinstance(analysis.get("reactor", {}), dict) else {}
-        __shc_pieces = game_state.get("pieces", []) if isinstance(game_state, dict) else []
-        __shc_max_y = max([p.get("y", -99.0) for p in __shc_pieces], default=-99.0) if __shc_pieces else -99.0
-        __shc_rps = __shc_reactor.get("reactive_pairs", [])
-        __shc_rp_count = len(__shc_rps) if isinstance(__shc_rps, list) else 0
-        __shc_dcross = bool(game_state.get("deadline_crossed", False)) if isinstance(game_state, dict) else False
-        __shc_global_merge = any(r.get("merge_grade") != "NO" for r in results)
-        if (__shc_max_y >= 1.8
-                and __shc_rp_count >= 3
-                and not __shc_global_merge
-                and __shc_dcross):
-            __shc_no_merge = [r for r in results if r.get("merge_grade") == "NO"]
-            if __shc_no_merge:
-                # edge-aware: prefer central-low over edge-low; landing_y diff > 1.05 can still win
-                __shc_lowest = min(
-                    __shc_no_merge,
-                    key=lambda r: r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 0.35
-                )
-                best_x = float(__shc_lowest.get("x", 0.0) or 0.0)
-                best_reason = "HEIGHT_CONTROL_SUPPRESS_NO_MERGE"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
