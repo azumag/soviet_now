@@ -857,24 +857,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # vXXX: danger zone near_merge force selection (fixes missed_near_merge_at_high_max_y)
-        # When max_y >= 2.0 and reactive_pairs >= 2 and near_merge exists globally,
-        # penalize NO_MERGE candidates to force near_merge selection over MEDIUM_TOWER.
-        # worst game turns=45: max_y=0.81, reactive_pairs=2, merges_available=true,
-        # decision_reason=NEAR_MERGE_MEDIUM_TOWER — chose tower over available merge.
-        # worst game turns=34-42: max_y=1.21-1.27, rp=2, direct merge at x=2.04 but
-        # MEDIUM_TOWER chosen instead, piece_count accumulation 18->25.
-        # batch_summary: HEIGHT_CONTROL avg_score_delta=1.3 (lowest), NEAR_MERGE avg=22-53.
-        # Rollback constraint: "forbid: choosing MEDIUM_TOWER over direct near merge at
-        # reactive_pairs>=2 and max_y>=2.0 when direct merge exists".
-        # Constraint: only fire when near_merge_locations exist (not normal boards).
-        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
-        global_near_or_direct_exists = any(r.get("merge_grade") in ["DIRECT", "NEAR"] for r in results)
-        if max_y >= 2.0 and reactive_pair_count >= 2 and global_near_or_direct_exists:
-            if merge_grade == "NO":
-                score -= 3000.0
-                reasons.append("DANGER_ZONE_FORCE_MERGE")
-
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
         # Worst game T50-52: 3 consecutive NEAR merges at deadline_crossed, all fail
