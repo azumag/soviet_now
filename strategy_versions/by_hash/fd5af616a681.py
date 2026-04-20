@@ -63,16 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: Lower rp threshold >=3→>=2 in 3 NO_MERGE protection mechanisms
-     # (1) REACTIVE_PAIRS_NO_MERGE_PENALTY (line ~1699), (2) NO_MERGE central bonus (line ~1718),
-     # (3) suppress_height_control guard (line ~1850)
-     # Catches extra_low T62 (rp=2) edge placement and strengthens rp=1-2 boundary protection.
-     # Rollback constraint: does NOT reproduce v647 tier escalation deletion — strengthens height
-     # differentiation at rp=2, does not simplify base coefficient.
-     # Fixes: merge_drought時のHEIGHT_CONTROL散布（edge scatter）failure mode at rp=1-2
-     # refs: tmp/analysis_result.md (Implementation Plan Steps 1-3),
-     #       tmp/state/last_rollback_postmortem.md (failure_mode: merge_drought edge scatter),
-     #       game_history/20260421_051915_score0621.jsonl (extra_low T62: rp=2 edge)
      # vXXX: NO_MERGE central placement bonus — suppress edge scatter at rp>=3, mg==NO
      # axis 8.8 flat -4500 makes all NO_MERGE equally penalized; remaining axes prefer edges
      # New: (1.5-abs(x))*600 central bonus + lower-landing preference for central positions
@@ -1706,14 +1696,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
-        # vXXX: Lower rp threshold to >=2 (from >=3) to catch extra_low T62 (rp=2)
-        # and provide stronger protection at the dangerous rp=1-2 boundary.
-        # Rollback constraint: does NOT reproduce v647's tier escalation deletion —
-        # this strengthens rather than weakens height differentiation at rp=2.
-        # refs: tmp/analysis_result.md (Implementation Plan Steps 1-3),
-        #       tmp/state/last_rollback_postmortem.md (failure_mode: merge_drought edge scatter),
-        #       game_history/20260421_051915_score0621.jsonl (extra_low T62: rp=2 edge placement)
-        if reactive_pair_count >= 2 and merge_grade == "NO":
+        if reactive_pair_count >= 3 and merge_grade == "NO":
             # v452: flatten to -4500, matching protected strategy (median 12789)
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
@@ -1722,7 +1705,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- NO_MERGE central placement bonus (vXXX) -----
-        # Hypothesis: NO_MERGE Central-Low Placement Override (Suppress Edge Scatter at rp>=2, mg==NO)
+        # Hypothesis: NO_MERGE Central-Low Placement Override (Suppress Edge Scatter at rp>=3, mg==NO)
         # Root cause: axis 8.8 flat -4500 makes all NO_MERGE candidates "equally bad" in terms
         # of the penalty. Remaining axes (MEDIUM_TOWER/HIGH_LAYER labels, stacking bonuses,
         # column_ceiling_bonus) systematically prefer edge/high positions. Worst game T48-T52:
@@ -1732,12 +1715,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260421_014501_score0826.jsonl (worst T48-T52: edge scatter),
         #       game_history/20260421_014951_score2547.jsonl (best: central NO_MERGE),
         #       tmp/improve_brief.md (mandatory theme: 併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける)
-        # vXXX: Lower rp threshold to >=2 (from >=3) — catches extra_low T62 (rp=2)
-        # and strengthens protection at the rp=1-2 boundary where v647's tier
-        # escalation deletion caused failures.
-        # refs: tmp/analysis_result.md (Implementation Plan Step 2),
-        #       game_history/20260421_051915_score0621.jsonl (extra_low T56: rp=3 edge)
-        if reactive_pair_count >= 2 and merge_grade == "NO":
+        if reactive_pair_count >= 3 and merge_grade == "NO":
             central_bonus = max(0.0, 1.5 - abs(x)) * 600.0
             score += central_bonus
             if central_bonus > 0:
@@ -1748,8 +1726,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # add a small landing_y bonus to prefer lower positions within center.
         # This ensures central-low beats central-high among NO_MERGE candidates.
         # refs: tmp/analysis_result.md (Implementation Plan Step 2)
-        # vXXX: Lower rp threshold to >=2 (from >=3) — consistent with central placement bonus
-        if reactive_pair_count >= 2 and merge_grade == "NO" and abs(x) < 1.5:
+        if reactive_pair_count >= 3 and merge_grade == "NO" and abs(x) < 1.5:
             if landing_y < 0:
                 score += 150.0  # bonus for underground center positions
             elif landing_y < 1.0:
@@ -1869,11 +1846,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         __shc_rp_count = len(__shc_rps) if isinstance(__shc_rps, list) else 0
         __shc_dcross = bool(game_state.get("deadline_crossed", False)) if isinstance(game_state, dict) else False
         __shc_global_merge = any(r.get("merge_grade") != "NO" for r in results)
-        # vXXX: Lower rp threshold to >=2 (from >=3) per Implementation Plan Step 3.
-        # Guard's edge-low preference should fire at rp>=2 as well.
-        # refs: tmp/analysis_result.md (Implementation Plan Step 3)
         if (__shc_max_y >= 1.8
-                and __shc_rp_count >= 2
+                and __shc_rp_count >= 3
                 and not __shc_global_merge
                 and __shc_dcross):
             __shc_no_merge = [r for r in results if r.get("merge_grade") == "NO"]
