@@ -64,14 +64,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # vXXX: NEAR filter threshold relaxation + DANGER_ZONE_FORCE_MERGE strengthening
-     # Change 1: NEAR filter threshold -0.5 → -1.5 (allows safe NEAR merges at margin -1.0 to -1.5)
-     # Change 2: DANGER_ZONE_FORCE_MERGE layered penalties (extreme: -6000, high: -5000, std: -3000)
-     # Change 3: Removed suppression condition that blocked penalty at deadline
-     # Fixes: worst game T61 (max_y=3.2, rp=7) NEAR existed but NO_MERGE won due to bonus accumulation
-     # Fixes rollback failure mode: "併合できるわけでもないのにデッドラインにおいてしまう" violation
-     # Constraint: axis 8.8 penalty magnitude/threshold NOT modified (forbidden)
-     # refs: tmp/analysis_result.md (Hypothesis: NEAR Filter Recalibration + DANGER_ZONE_FORCE_MERGE Strengthening)
+     # v674: PIECE_COUNT_EDGE_BIAS 対策 — pc>=40 && deadline_crossed && NO_MERGE && |x|>=1.5 で
      #       エッジ配置追加ペナルティ: -(pc-35)*400*(|x|/3.0)。pc=40,|x|=2でー1333、pc=45,|x|=3でー4000。
      #       Fixes: worst T64-T66 pc=43,deadline_crossed,NO_MERGE時にx=-2.0が選択される問題を解消。
      #       refs: tmp/analysis_result.md, game_history/20260417_193200_score0490.jsonl T64-66
@@ -713,12 +706,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __dlg_rp_count = int(__dlg_rps)
         except (TypeError, ValueError):
             __dlg_rp_count = 0
-    __dlg_pieces = __dlg_game_state.get("pieces", []) if isinstance(__dlg_game_state, dict) else []
-    __dlg_max_y = max([p.get("y", -99.0) for p in __dlg_pieces], default=-99.0) if __dlg_pieces else -99.0
     __dlg_cands = __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3 or (__dlg_max_y >= 2.5 and __dlg_margin < -1.5)
+    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
     if __dlg_critical and __dlg_cands:
         __dlg_direct = [c for c in __dlg_cands if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"]
         if __dlg_direct:
@@ -1819,25 +1810,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("DEADLINE_MERGE_URGENCY")
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # vXXX: DANGER_ZONE_FORCE_MERGE strengthening — layered penalties based on congestion
-            # Analysis: worst game T61 had max_y=3.2, rp=7, deadline_crossed=true, but penalty
-            # was suppressed, causing NO_MERGE to win over available NEAR merge.
-            # Strengthen penalties to make NO_MERGE less attractive when board is congested:
-            # - max_y>=3.0 && rp>=4: -6000 (extreme congestion — almost force merge)
-            # - max_y>=2.5 && rp>=3: -5000 (high congestion)
-            # - else: -3000 (standard danger zone)
-            # v452: flat -4500 was too weak at low positions but also suppressed at deadline.
-            # v662: removed `and not global_merge_available` — penalty now applies when needed.
-            # refs: tmp/analysis_result.md (Implementation Plan Change 2 & 3)
-            if max_y >= 3.0 and reactive_pair_count >= 4:
-                score -= 6000.0
-                reasons.append("DANGER_ZONE_FORCE_MERGE_EXTREME")
-            elif max_y >= 2.5 and reactive_pair_count >= 3:
-                score -= 5000.0
-                reasons.append("DANGER_ZONE_FORCE_MERGE_HIGH")
-            else:
-                score -= 3000.0
-                reasons.append("DANGER_ZONE_FORCE_MERGE")
+            # v452: flatten to -4500, matching protected strategy (median 12789)
+            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
+            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
+            # axis 2 height penalty be the only differentiator — consistent low placement.
+            # v662: removed `and not global_merge_available` from suppression condition.
+            # Worst game T56: deadline_crossed=true, rp=3, merge_available=false → NO_MERGE selected,
+            # causing "deadline without merge" violation of mandatory theme.
+            # With `global_merge_available` in condition, penalty was suppressed exactly when needed most.
+            # Now penalty applies whenever deadline_crossed && rp>=3, forcing low landing_y choice.
+            # refs: tmp/analysis_result.md (Hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY suppression removal)
+            if not (deadline_crossed and reactive_pair_count >= 3):
+                score -= 4500.0
+                reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
