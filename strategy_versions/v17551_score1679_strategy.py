@@ -63,11 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: NO_MERGE central placement bonus — suppress edge scatter at rp>=3, mg==NO
-     # axis 8.8 flat -4500 makes all NO_MERGE equally penalized; remaining axes prefer edges
-     # New: (1.5-abs(x))*600 central bonus + lower-landing preference for central positions
-     # Fixes: merge_drought時のHEIGHT_CONTROL散布（edge scatter）failure mode
-     # refs: tmp/analysis_result.md, tmp/improve_brief.md, tmp/batch_summary.txt
      # vXXX: layered deadline penalty — enhance to -6000 when reactor_margin < -0.3
      # worst game T57: deadline_margin=-0.57, merge_available=false, x=3.0 edge selected
      # mandatory theme「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
@@ -1366,10 +1361,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # extreme margin to create layered enforcement that axis 9.6 stacking (~400) cannot overcome.
             # deadline_margin < -0.3: extreme danger, suppress ALL edge placement with -6000
             # deadline_margin >= -0.3: standard -4500 matching protected strategy (v454)
-            # deadline_margin < -0.3: extreme danger — layered enforcement with axis 9.6 stacking
-            score -= 4500.0
-            reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-
+            if reactor_margin < -0.3:
+                score -= 6000.0
+                reasons.append("EXTREME_DEADLINE_NO_MERGE")
+            else:
+                score -= 4500.0
+                reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
+        
          # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
@@ -1696,34 +1694,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
-
-        # ----- NO_MERGE central placement bonus (vXXX) -----
-        # Hypothesis: NO_MERGE Central-Low Placement Override (Suppress Edge Scatter at rp>=3, mg==NO)
-        # Root cause: axis 8.8 flat -4500 makes all NO_MERGE candidates "equally bad" in terms
-        # of the penalty. Remaining axes (MEDIUM_TOWER/HIGH_LAYER labels, stacking bonuses,
-        # column_ceiling_bonus) systematically prefer edge/high positions. Worst game T48-T52:
-        # rp=4, NO_MERGE, x=±3.0 edges selected. Best game: same conditions, x≈0 center selected.
-        # This bonus differentiates NO_MERGE candidates by x-position, preferring center.
-        # refs: tmp/analysis_result.md (Implementation Plan Step 1),
-        #       game_history/20260421_014501_score0826.jsonl (worst T48-T52: edge scatter),
-        #       game_history/20260421_014951_score2547.jsonl (best: central NO_MERGE),
-        #       tmp/improve_brief.md (mandatory theme: 併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける)
-        if reactive_pair_count >= 3 and merge_grade == "NO":
-            central_bonus = max(0.0, 1.5 - abs(x)) * 600.0
-            score += central_bonus
-            if central_bonus > 0:
-                reasons.append("NO_MERGE_CENTER_PREFER")
-
-        # ----- NO_MERGE lower-landing preference for central positions (vXXX) -----
-        # When rp>=3 && mg==NO and candidate is near center (|x|<1.5),
-        # add a small landing_y bonus to prefer lower positions within center.
-        # This ensures central-low beats central-high among NO_MERGE candidates.
-        # refs: tmp/analysis_result.md (Implementation Plan Step 2)
-        if reactive_pair_count >= 3 and merge_grade == "NO" and abs(x) < 1.5:
-            if landing_y < 0:
-                score += 150.0  # bonus for underground center positions
-            elif landing_y < 1.0:
-                score += 80.0   # partial bonus for low center positions
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、

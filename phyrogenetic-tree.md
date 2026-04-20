@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-21 01:19:33 JST`
-- Nodes: `1181`
-- Edges: `1615`
-- Current: `344d7c0281f1`
+- Updated: `2026-04-21 03:06:46 JST`
+- Nodes: `1182`
+- Edges: `1616`
+- Current: `bf2d8db7bd14`
 - Anchor: `2df66e5a3e28`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_2df66e5a3e28["2df66e5a3e28<br/>ANCHOR<br/>g=24 n=20<br/>comp=11709.0"]
-    h_bced4c938139["bced4c938139<br/>g=12 n=12<br/>comp=9328.0"]
     h_a7b41f8f20ad["a7b41f8f20ad<br/>g=25 n=20<br/>comp=10441.9"]
     h_9d131d171cbf["9d131d171cbf<br/>g=24 n=20<br/>comp=11585.1"]
     h_ac7deb27998d["ac7deb27998d<br/>g=12 n=12<br/>comp=9718.1"]
@@ -70,14 +69,14 @@ flowchart TD
     h_819067c64ecd["819067c64ecd<br/>g=12 n=12<br/>comp=10790.8"]
     h_7765ed3c0b99["7765ed3c0b99<br/>g=25 n=20<br/>comp=10809.7"]
     h_a223ce2790aa["a223ce2790aa<br/>g=19 n=19<br/>comp=10291.5"]
+    h_344d7c0281f1["344d7c0281f1<br/>g=24 n=20<br/>comp=11210.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_344d7c0281f1["344d7c0281f1<br/>CURRENT"]
+    h_bf2d8db7bd14["bf2d8db7bd14<br/>CURRENT"]
 
-    h_bced4c938139 -. rollback .-> h_a7b41f8f20ad
     h_a7b41f8f20ad -. rollback .-> h_9d131d171cbf
     h_9d131d171cbf -->|improve| h_ac7deb27998d
     h_ac7deb27998d -->|improve| h_255c307f96c7
@@ -133,6 +132,7 @@ flowchart TD
     h_df8956f9eeb8 -->|improve| h_819067c64ecd
     h_819067c64ecd -->|improve| h_7765ed3c0b99
     h_7765ed3c0b99 -->|improve| h_a223ce2790aa
+    h_344d7c0281f1 -->|improve| h_bf2d8db7bd14
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -140,7 +140,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_2df66e5a3e28 anchor;
-    class h_bced4c938139 plain;
     class h_a7b41f8f20ad plain;
     class h_9d131d171cbf plain;
     class h_ac7deb27998d plain;
@@ -194,12 +193,13 @@ flowchart TD
     class h_819067c64ecd plain;
     class h_7765ed3c0b99 plain;
     class h_a223ce2790aa plain;
+    class h_344d7c0281f1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_344d7c0281f1 current;
+    class h_bf2d8db7bd14 current;
 ```
 
 ## Detail 1/15
@@ -4189,21 +4189,21 @@ flowchart TD
 
 ## Detail 15/15
 
-- Range: `646eea0bf18d` .. `344d7c0281f1`
-- Nodes in this diagram: `61`
-- Internal edges in this diagram: `57`
+- Range: `646eea0bf18d` .. `bf2d8db7bd14`
+- Nodes in this diagram: `62`
+- Internal edges in this diagram: `58`
 - Cross-chunk link: `94786eb2e0fc --improve--> 646eea0bf18d`
 - Cross-chunk link: `cd90234d4d73 -.rollback.-> 98b57969e9e1`
 - Cross-chunk link: `98b57969e9e1 -.rollback.-> 22ad2bcc59f1`
 - Cross-chunk link: `80ee7acf1100 -.rollback.-> 653e161694b4`
 - Cross-chunk link: `52ef4a8a1a2a --improve--> df8956f9eeb8`
 - Cross-chunk link: `a223ce2790aa -.rollback.-> fcc3fd0c8d7e`
+- Cross-chunk link: `294aa2554fbf --improve--> 344d7c0281f1`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
 - Cross-chunk link: `e3215795865e --improve--> 355868eaf8ab`
 - Cross-chunk link: `355868eaf8ab --improve--> 71413461e56e`
-- Cross-chunk link: `2ad5850b541e --improve--> 891e238759b8`
 - Cross-chunk link: `... and 10 more`
 
 ```mermaid
@@ -4263,12 +4263,13 @@ flowchart TD
     h_819067c64ecd["819067c64ecd<br/>g=12 n=12<br/>comp=10790.8"]
     h_7765ed3c0b99["7765ed3c0b99<br/>g=25 n=20<br/>comp=10809.7"]
     h_a223ce2790aa["a223ce2790aa<br/>g=19 n=19<br/>comp=10291.5"]
+    h_344d7c0281f1["344d7c0281f1<br/>g=24 n=20<br/>comp=11210.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_344d7c0281f1["344d7c0281f1<br/>CURRENT"]
+    h_bf2d8db7bd14["bf2d8db7bd14<br/>CURRENT"]
 
     h_646eea0bf18d -->|improve| h_bced4c938139
     h_bced4c938139 -. rollback .-> h_a7b41f8f20ad
@@ -4327,6 +4328,7 @@ flowchart TD
     h_df8956f9eeb8 -->|improve| h_819067c64ecd
     h_819067c64ecd -->|improve| h_7765ed3c0b99
     h_7765ed3c0b99 -->|improve| h_a223ce2790aa
+    h_344d7c0281f1 -->|improve| h_bf2d8db7bd14
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4388,15 +4390,26 @@ flowchart TD
     class h_819067c64ecd plain;
     class h_7765ed3c0b99 plain;
     class h_a223ce2790aa plain;
+    class h_344d7c0281f1 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_344d7c0281f1 current;
+    class h_bf2d8db7bd14 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#17557 `344d7c02 -> bf2d8db7`
+
+- scores: `8028 13710 13439 21131 11445 11170 8170 15042 12876 9984 11339 11843 13381 13684 12014 14989 10236 11022 10720 16145 10859 10472 10781 13606`
+- vXXX: NO_MERGE central placement bonus — suppress edge scatter at rp>=3, mg==NO
+- axis 8.8 flat -4500 makes all NO_MERGE equally penalized; remaining axes prefer edges
+- New: (1.5-abs(x))*600 central bonus + lower-landing preference for central positions
+- Fixes: merge_drought時のHEIGHT_CONTROL散布（edge scatter）failure mode
+- ----- NO_MERGE central placement bonus (vXXX) -----
+- Hypothesis: NO_MERGE Central-Low Placement Override (Suppress Edge Scatter at rp>=3, mg==NO)
 
 ### Improve Game#17533 `294aa255 -> 344d7c02`
 
