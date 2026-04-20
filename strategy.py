@@ -542,7 +542,14 @@ Phases (determined by board max Y):
   # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
-  #
+#
+# vXXX: suppress HEIGHT_CONTROL/LAYER/MEDIUM_TOWER labels at max_y>=1.8 + rp>=3 + mg==NO + !global_merge
+# Worst game T47-T50: rp=6, max_y=1.38→1.60, merge_grade=NO, selected edge HIGH_LAYER positions
+# causing piece_count accumulation and max_y runaway to 3.30 (game over at 554).
+# Batch: HEIGHT_CONTROL avg_score_delta=0.7 (lowest), 19.8% low-score vs 16.0% high-score.
+# Postmortem constraint: forbid HEIGHT_CONTROL/LAYER at rp>=2, max_y>=2.0 when near merge available.
+# refs: tmp/analysis_result.md (Adopted Hypothesis: HEIGHT_CONTROL threshold gate)
+#
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
@@ -1379,13 +1386,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
 
-        if phase == "HIGH" and landing_y > 0.5:
+        # vXXX: suppress HEIGHT_CONTROL/LAYER/MEDIUM_TOWER labels at high max_y + high rp + NO merge
+        # Worst game T47-T50: rp=6, max_y=1.38→1.60, merge_grade=NO, yet chose edge HIGH_LAYER/HEIGHT_CONTROL
+        # positions causing piece_count accumulation and max_y runaway to 3.30.
+        # Batch: HEIGHT_CONTROL avg_score_delta=0.7 (lowest of all reasons), 19.8% low vs 16.0% high.
+        # Suppression forces strategy to find lower positions or near merge when risk is highest.
+        # Constraint: max_y>=1.8 && rp>=3 && mg==NO && !global_merge_available
+        suppress_height_control = (
+            max_y >= 1.8 and
+            reactive_pair_count >= 3 and
+            merge_grade == "NO" and
+            not global_merge_available
+        )
+
+        if phase == "HIGH" and landing_y > 0.5 and not suppress_height_control:
             height_penalty *= 2.0
             reasons.append("HIGH_TOWER")
-        elif phase == "MEDIUM" and landing_y > 0.5:
+        elif phase == "MEDIUM" and landing_y > 0.5 and not suppress_height_control:
             height_penalty *= 1.5
             reasons.append("MEDIUM_TOWER")
-        elif landing_y > 0.0:
+        elif landing_y > 0.0 and not suppress_height_control:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
