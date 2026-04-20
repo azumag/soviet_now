@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v698: DEADLINE_GUARD NEAR filter強化 — max_y>=2.5 && margin<-0.5時NEARフィルタ通過を禁止
+     #       worst turn 58 (max_y=3.30, margin=-1.39) でNEAR選択→danger_merge_available=false→piece_count増加の問題を改善。
+     #       best turn 81 (max_y=2.17, margin=-1.13) は2.5閾値未達で現行動作維持。
+     #       Fixes: mandatory theme「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」違反。
+     #       Failure mode: NEAR選択がdeadline近接盤面でpiece_count肥大化させる问题 (analysis_result.md hypothesis採用)
+     #       refs: tmp/analysis_result.md (Implementation Plan lines 712-733), tmp/state/last_rollback_postmortem.md
      # v674: PIECE_COUNT_EDGE_BIAS 対策 — pc>=40 && deadline_crossed && NO_MERGE && |x|>=1.5 で
      #       エッジ配置追加ペナルティ: -(pc-35)*400*(|x|/3.0)。pc=40,|x|=2でー1333、pc=45,|x|=3でー4000。
      #       Fixes: worst T64-T66 pc=43,deadline_crossed,NO_MERGE時にx=-2.0が選択される問題を解消。
@@ -709,7 +715,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     __dlg_cands = __dlg_analysis.get("candidates", []) or []
     if not isinstance(__dlg_cands, list):
         __dlg_cands = []
-    __dlg_critical = __dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
+    # Compute max_y for board state assessment
+    __dlg_pieces = __dlg_game_state.get("pieces", [])
+    __dlg_max_y = max([p["y"] for p in __dlg_pieces]) if __dlg_pieces else -4.0
+    __dlg_critical = (__dlg_dcross or __dlg_margin < 0.3 or __dlg_rp_count >= 3
+                      or (__dlg_max_y >= 2.5 and __dlg_margin < -0.5))
     if __dlg_critical and __dlg_cands:
         __dlg_direct = [c for c in __dlg_cands if isinstance(c, dict) and c.get("merge_grade") == "DIRECT"]
         if __dlg_direct:
@@ -725,8 +735,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if isinstance(c, dict) and c.get("merge_grade") == "NEAR" and not c.get("crosses_deadline")
         ]
         if __dlg_near_safe:
-            __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-            return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
+            # At extreme board state (max_y>=2.5 && margin<-0.5), NEAR even without crosses_deadline is risky.
+            # Let NO_MERGE reach scoring loop where DANGER_ZONE_FORCE_MERGE applies proper penalty.
+            if not (__dlg_max_y >= 2.5 and __dlg_margin < -0.5):
+                __dlg_best = min(__dlg_near_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+                return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_NEAR_MERGE"}
         __dlg_safe = [c for c in __dlg_cands if isinstance(c, dict) and not c.get("crosses_deadline")]
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
@@ -856,6 +869,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # vXXX: danger zone near_merge force selection (fixes missed_near_merge_at_high_max_y)
+        # When max_y >= 2.0 and reactive_pairs >= 2 and near_merge exists globally,
+        # penalize NO_MERGE candidates to force near_merge selection over MEDIUM_TOWER.
+        # worst game turns=45: max_y=0.81, reactive_pairs=2, merges_available=true,
+        # decision_reason=NEAR_MERGE_MEDIUM_TOWER — chose tower over available merge.
+        # worst game turns=34-42: max_y=1.21-1.27, rp=2, direct merge at x=2.04 but
+        # MEDIUM_TOWER chosen instead, piece_count accumulation 18->25.
+        # batch_summary: HEIGHT_CONTROL avg_score_delta=1.3 (lowest), NEAR_MERGE avg=22-53.
+        # Rollback constraint: "forbid: choosing MEDIUM_TOWER over direct near merge at
+        # reactive_pairs>=2 and max_y>=2.0 when direct merge exists".
+        # Constraint: only fire when near_merge_locations exist (not normal boards).
+        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
+        global_near_or_direct_exists = any(r.get("merge_grade") in ["DIRECT", "NEAR"] for r in results)
+        if max_y >= 2.0 and reactive_pair_count >= 2 and global_near_or_direct_exists:
+            if merge_grade == "NO":
+                score -= 3000.0
+                reasons.append("DANGER_ZONE_FORCE_MERGE")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
