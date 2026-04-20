@@ -64,13 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v442: axis 9.6c suppression at rp>=3 && deadline_crossed && merge_grade==NO
-     # analysis_result.md hypothesis: worst_game T60 — rp=5, mg=NO, dcross=true で
-     # SAME_TYPE_ADJACENCY_GUIDANCE ボーナス (~300-600) が axis 8.8 ペナルティ (-4500) を上回り
-     # deadline-crossing placement を選択。抑制して axis 8.8 を支配させる。
-     # Fixes rollback failure mode: "axis 9.6c bonus overcomes axis 8.8 penalty at deadline"
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
-     #       game_history/20260420_103729_score0659.jsonl T60
      # vNEW: axis 8.9 DEADLINE_NO_MERGE_EDGE_PENALTY — analysis_result.md hypothesis
      # Worst/best games: REACTIVE_PAIRS_NO_MERGE_PENALTY (-4500) fires but edge (x=±3.0) wins
      # because accumulated bonuses (>4500) overcome penalty. Add -2000 layered penalty for
@@ -1106,19 +1099,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: merge_drought guidance void causing piece_count accumulation
         # Avoid: Lowering height_mult, removing reactive/near guard from height_mult relaxation
 
-        # ----- v442: axis 9.6c suppression at rp>=3 && deadline_crossed && merge_grade==NO -----
-        # Hypothesis: worst_game T60 analysis_result.md — at high rp (>=3) with deadline crossed and NO merge,
-        # axis 9.6c bonus (~300-600) overcomes axis 8.8 penalty (-4500), causing deadline-crossing placement.
-        # Fix: suppress SAME_TYPE_ADJACENCY_GUIDANCE when rp>=3 && dcross && mg=NO, letting axis 8.8 dominate.
-        # Complements v418 AVOID_BLOCK suppression (same conditions) — 9.6c now also suppressed.
-        # Evidence: worst_game T60 reason includes SAME_TYPE_ADJACENCY_GUIDANCE above REACTIVE_PAIRS_NO_MERGE_PENALTY.
-        # best_game T86/T92: mg=NO but rp=3-4, balanced — 9.6c suppression at rp>=5 only would preserve this.
-        # But analysis_result.md uses threshold rp>=3 (same as axis 8.8), so adopt rp>=3 consistently.
-        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
-        #       game_history/20260420_103729_score0659.jsonl T60
-        # Fixes rollback failure mode: "axis 9.6c bonus overcomes axis 8.8 penalty at deadline"
-        _suppress_9_6c = (reactive_pair_count >= 3 and deadline_crossed and merge_grade == "NO")
-
         if (merge_grade == "NO" and same_type_stack_top is not None and
             not (current_type_has_reactive or current_type_has_near) and
             piece_count >= 28):
@@ -1134,7 +1114,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if has_adjacent_same_type:
                     break
 
-            if not has_adjacent_same_type and not _suppress_9_6c:
+            if not has_adjacent_same_type:
                 # Merge drought: same-type pieces exist but are not adjacent
                 # Drive placement toward same-type adjacency to accelerate next merge
                 best_adj_bonus = 0
