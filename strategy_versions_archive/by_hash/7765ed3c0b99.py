@@ -730,29 +730,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
     # --- END DEADLINE GUARD ---
 
-    # --- HEIGHT_CONTROL suppression in high-risk NO_MERGE situations (vXXX) ---
-    # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-    # worst game T60-61: max_y=2.78, rp=8, mg=NO, deadline_crossed → x=±3.0 edge → 4 turns NO_MERGE
-    # suppress_height_control guard: when all candidates are NO_MERGE in dangerous state,
-    # force selection of lowest landing_y position to prevent deadline scatter
-    results = analysis.get("results", [])
-    if results:
-        __shc_reactor = analysis.get("reactor", {}) if isinstance(analysis.get("reactor", {}), dict) else {}
-        __shc_pieces = game_state.get("pieces", []) if isinstance(game_state, dict) else []
-        __shc_max_y = max([p.get("y", -99.0) for p in __shc_pieces], default=-99.0) if __shc_pieces else -99.0
-        __shc_rps = __shc_reactor.get("reactive_pairs", [])
-        __shc_rp_count = len(__shc_rps) if isinstance(__shc_rps, list) else 0
-        __shc_dcross = bool(game_state.get("deadline_crossed", False)) if isinstance(game_state, dict) else False
-        __shc_global_merge = any(r.get("merge_grade") != "NO" for r in results)
-        if (__shc_max_y >= 1.8
-                and __shc_rp_count >= 3
-                and not __shc_global_merge
-                and __shc_dcross):
-            __shc_no_merge = [r for r in results if r.get("merge_grade") == "NO"]
-            if __shc_no_merge:
-                __shc_lowest = min(__shc_no_merge, key=lambda r: r.get("landing_y", 99.0))
-                return {"x": float(__shc_lowest.get("x", 0.0)), "reason": "HEIGHT_CONTROL_SUPPRESSED_LOWEST_LANDING"}
-
     results = analysis.get("results", [])
 
     if not results:
