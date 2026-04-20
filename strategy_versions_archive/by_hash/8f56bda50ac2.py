@@ -40,7 +40,6 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             8.9. DEADLINE_NO_MERGE_EDGE_PENALTY - vNEW: deadline edge penalty (layered beyond 8.8)
              9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
              9.6b. Same-type proximity guidance - v371: merged_type-aware targeting + congestion-aware (replaces v369 lowest-only)
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
@@ -64,13 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vNEW: axis 8.9 DEADLINE_NO_MERGE_EDGE_PENALTY — analysis_result.md hypothesis
-     # Worst/best games: REACTIVE_PAIRS_NO_MERGE_PENALTY (-4500) fires but edge (x=±3.0) wins
-     # because accumulated bonuses (>4500) overcome penalty. Add -2000 layered penalty for
-     # edge placement when deadline_crossed && merge_grade=="NO" && max_y>=1.8 && accelerating.
-     # Suppressed when russia_phase=true.
-     # Failure mode: "penalty fires but edge wins" at deadline — axis 8.8 alone insufficient.
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # vNEW: axis 9.6c same-type adjacency guidance during merge drought — analysis_result.md hypothesis
      # worst_game T45-56: reactive>=3, mg=NO, same_type pieces not adjacent → max_y runaway 2.44
      # Fix: add same-type adjacency guidance when same_type pieces exist but not adjacent (merge drought)
@@ -1710,25 +1702,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 score -= 5000.0 + (landing_y - 1.0) * 2000.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
-
-        # ----- axis 8.9: DEADLINE_NO_MERGE edge position penalty (vNEW) -----
-        # Hypothesis from analysis_result.md — targets "penalty fires but edge wins" failure mode
-        # When deadline_crossed && merge_grade == "NO" && max_y >= 1.8 && board is accelerating
-        # (max_y_delta >= 0.3), apply additional -2000 penalty to edge positions (x <= -2.5 or x >= 2.5).
-        # This provides layered protection beyond axis 8.8 penalty.
-        # Suppressed when russia_phase=true (Russia growth strategy intentionally places near edge).
-        # Not a modification of axis 8.8 — independent bonus that layers additively.
-        # Forbidden: do NOT modify axis 8.8 penalty magnitude/threshold, do NOT modify height_mult floor,
-        # do NOT add deadline_crossed condition to axis 8.8, do NOT modify axis 9.5 or 9.3.
-        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-        __dlg_8_9 = 0.0
-        if deadline_crossed and merge_grade == "NO" and max_y >= 1.8 and not russia_phase:
-            # board accelerating: max_y >= 2.5 is proxy for accelerating state (v694 suppression threshold)
-            if max_y >= 2.5:
-                if x <= -2.5 or x >= 2.5:
-                    __dlg_8_9 = -2000.0
-                    reasons.append("DEADLINE_NO_MERGE_EDGE_PENALTY")
-        score += __dlg_8_9
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、

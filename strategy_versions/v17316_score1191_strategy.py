@@ -63,14 +63,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vNEW: ACCELERATING_BOARD_NEAR_SUPPRESSION — suppress NEAR merge during board acceleration
-     # worst_game T53-59: max_y 1.86→4.30 (delta 0.5-1.4/turn), NEAR選択6回中6回, score_delta=+45 (T57 only)
-     # acceleration detected when deadline_crossed && max_y>=1.8 && (max_y_delta>=0.5 or max_y>=2.0)
-     # Additional -400*merge_mult penalty when accelerating to suppress risky NEAR selection
-     # Fixes: NEAR選択が加速局面で失敗するパターン (mandatory theme violation)
-     # Constraint: axis 8.8閾値変更禁止, height_mult緩和撤去禁止, v422削除禁止, NEAR bonus単純削除禁止
-     # refs: tmp/analysis_result.md (Implementation Plan lines 850-861), tmp/batch_summary.txt,
-     #       tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt
+     # vNEW: axis 9.6c same-type adjacency guidance during merge drought — analysis_result.md hypothesis
+     # worst_game T45-56: reactive>=3, mg=NO, same_type pieces not adjacent → max_y runaway 2.44
+     # Fix: add same-type adjacency guidance when same_type pieces exist but not adjacent (merge drought)
+     # to drive placement toward same-type adjacency and accelerate next merge.
+     # Complements axis 8.8 REACTIVE_PAIRS_NO_MERGE_PENALTY (provides guidance when penalty alone insufficient)
+     # Failure mode: merge_drought guidance void causing piece_count accumulation (postmortem axis 9.6b absence)
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
+     #       data/mandatory_themes.txt, tmp/batch_summary.txt
      # v418: AVOID_BLOCK suppression at rp>=3 && dcross && merge_grade==NO
      # worst T70: rp=5, mg=NO, dcross=true, x=3.0 edge despite axis 8.8 penalty.
      # AVOID_BLOCK (-500 cap) over-evaluated in tie-breaking vs axis 8.8 (~-5600).
@@ -78,18 +78,7 @@ Phases (determined by board max Y):
      # letting axis 8.8 penalty alone dominate placement decision.
      # Constraint: merge_grade==NO already guaranteed inside block (line 1166).
      # refs: tmp/analysis_result.md, tmp/improve_brief.md, tmp/batch_summary.txt
-     # v697: CRITICAL phase russia compensation — fix v694 suppression gap at max_y>=2.5
-     # Postmortem: worst_game T54-62, v694 suppressed -4500 penalty for 8 turns (max_y 2.67→3.73),
-     # HEIGHT_CONTROL avg_score_delta≈0, max_y runaway → game over. v694 removes penalty but
-     # axis-2 bonuses (~100-250) are too weak to compensate (ratio ~1:20). When max_y>=2.5 in
-     # Russia phase with reactive_pairs>=2, apply +300 axis-2 compensation scaled by landing_y to
-     # reinforce downward placement, partially filling the control vacuum left by suppressed penalty.
-     # Constraint: russia_phase guard ensures we're within rollback constraints (v694 was designed
-     # to prevent REACTIVE_PAIRS_NO_MERGE_PENALTY feedback loop, not to create control vacuum).
-     # Forbidden: no height_mult floor change, no deadline_crossed conditions, no removal of v694.
-     # Failure mode: v694 suppression creates 8-turn control vacuum → max_y runaway → game over
-     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, data/mandatory_themes.txt
-     # v440: axis 9.5 deadline_crossed guard — mandatory theme compliance
+     # v440: axis 9.5 deadline_crossed guard — mandatory theme compliance (scope: not in analysis_result.md plan)
      # Postmortem: worst_game T45 chose HIGH_LAYER_CROSSES_DEADLINE_NO_MERGE at deadline_crossed=true, merge_grade="NO".
      # Axis 9.5 unconditional +300 stacking bonus when same_type_stack_top exists was encouraging deadline-crossing
      # placement without merge benefit, directly violating mandatory theme "Never place at deadline when you can't merge".
@@ -728,17 +717,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
 
-    # --- vNEW: max_y delta calculation for acceleration detection ---
-    # Used to detect accelerating board state (max_y growing rapidly)
-    # worst_game T53-59: max_y 1.86→4.30 (delta 0.5-1.4/turn), NEAR選択が続きmax_y runaway
-    __max_y_history = game_state.get("max_y_history", []) if isinstance(game_state, dict) else []
-    if not isinstance(__max_y_history, list):
-        __max_y_history = []
-    __max_y_history = __max_y_history[-3:] if len(__max_y_history) > 3 else __max_y_history
-    __max_y_delta = 0.0
-    if len(__max_y_history) >= 2:
-        __max_y_delta = max_y - __max_y_history[-1]
-    
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
 
@@ -876,12 +854,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 pc_risk_scale = 1.0
             near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
-            # vNEW: ACCELERATING_BOARD_NEAR_SUPPRESSION — detect accelerating board state
-            # worst_game T53-59: max_y 1.86→4.30 (delta 0.5-1.4/turn), NEAR選択が続きmax_y runaway
-            # acceleration detection: deadline_crossed && max_y>=1.8 && (max_y_delta>=0.5 or max_y>=2.0)
-            if deadline_crossed and max_y >= 1.8 and (__max_y_delta >= 0.5 or max_y >= 2.0):
-                near_risk_penalty += 400.0 * merge_mult
-                reasons.append("ACCELERATING_BOARD_NEAR_SUPPRESSION")
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
@@ -1105,6 +1077,51 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
+
+        # ----- vNEW: axis 9.6c same-type adjacency guidance during merge drought (analysis_result.md) -----
+        # Hypothesis adopted: Add axis 9.6c same-type proximity guidance during merge_drought to prevent
+        # piece_count accumulation that causes max_y runaway at deadline.
+        # Complements existing REACTIVE_PAIRS_NO_MERGE_PENALTY (axis 8.8) by providing guidance even
+        # when penalty alone is insufficient.
+        # Evidence: rollback postmortem identifies axis 9.6b absence causing merge_drought guidance void;
+        # mandatory_themes.txt forbids deadline without merge; worst game shows DIRECT_MERGE_DANGER
+        # and HIGH_TOWER_REACTIVE_PAIRS_NO_MERGE_PENALTY insufficient to prevent max_y=2.44 runaway.
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
+        #       data/mandatory_themes.txt, tmp/batch_summary.txt, tmp/improve_brief.md
+        # Fixes rollback failure mode: merge_drought guidance void causing piece_count accumulation
+        # Avoid: Lowering height_mult, removing reactive/near guard from height_mult relaxation
+
+        if (merge_grade == "NO" and same_type_stack_top is not None and
+            not (current_type_has_reactive or current_type_has_near) and
+            piece_count >= 28):
+            # Check for same-type adjacency (merge drought detection)
+            # Two same-type pieces are adjacent if horizontal distance < 2.5 units
+            has_adjacent_same_type = False
+            for i in range(len(same_type_pieces)):
+                for j in range(i + 1, len(same_type_pieces)):
+                    dist = abs(same_type_pieces[i].get("x", 0) - same_type_pieces[j].get("x", 0))
+                    if dist < 2.5:
+                        has_adjacent_same_type = True
+                        break
+                if has_adjacent_same_type:
+                    break
+
+            if not has_adjacent_same_type:
+                # Merge drought: same-type pieces exist but are not adjacent
+                # Drive placement toward same-type adjacency to accelerate next merge
+                best_adj_bonus = 0
+                for sp in same_type_pieces:
+                    sp_x = sp.get("x", 0)
+                    dist = abs(x - sp_x)
+                    if dist < 2.5:
+                        adj_bonus = max(0, 80.0 - dist * 30.0)
+                        if piece_count >= 28:
+                            adj_scale = 1.0 + (piece_count - 28) * 0.12
+                            adj_bonus *= min(adj_scale, 3.0)
+                        best_adj_bonus = max(best_adj_bonus, adj_bonus)
+                if best_adj_bonus > 0:
+                    score += best_adj_bonus
+                    reasons.append("SAME_TYPE_ADJACENCY_GUIDANCE")
 
         # ----- v362/v368 → v369 → v371: merged_type-aware targeting + congestion-aware proximity -----
         # v371: Prefer same-type piece closest to merged_type(N+1) for chain building, not just lowest.
@@ -1330,23 +1347,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
-
-        # ----- v697: CRITICAL phase russia compensation bonus (analysis_result.md) -----
-        # v694 suppression creates control vacuum at max_y>=2.5 where axis-8.7 penalty disappears
-        # without adequate axis-2 compensation, leading to max_y runaway over 8+ turns.
-        # When max_y>=2.5 (CRITICAL phase) in Russia phase with reactive_pairs>=2, apply
-        # axis-2 compensation bonus that scales with landing_y to reinforce downward placement.
-        # This partially compensates for the absent -4500 penalty with a smaller survival-oriented boost.
-        # Constraint: only fires in Russia phase (russia_phase guard) to stay within rollback constraints.
-        # Forbidden: do not modify height_mult floor (0.5), do not add deadline_crossed conditions.
-        # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
-        if max_y >= 2.5 and russia_phase and reactive_pair_count >= 2 and merge_grade == "NO":
-            # Compensate for suppressed penalty by rewarding lower landing positions
-            # +300 at landing_y <= 0, scales down for higher positions
-            compensation = max(0, 300.0 - landing_y * 100.0)
-            if compensation > 0:
-                score += compensation
-                reasons.append("CRITICAL_RUSSIA_COMPENSATION")
 
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
