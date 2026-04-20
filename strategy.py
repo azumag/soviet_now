@@ -63,6 +63,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: layered deadline penalty — enhance to -6000 when reactor_margin < -0.3
+     # worst game T57: deadline_margin=-0.57, merge_available=false, x=3.0 edge selected
+     # mandatory theme「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
+     # layered with v661 continuous -5000/unit deficit for extreme margin enforcement
+     # refs: tmp/analysis_result.md (deadline proximity强化 hypothesis),
+     #       game_history/20260421_002558_score0666.jsonl (worst T57),
+     #       tmp/improve_brief.md (mandatory theme)
      # v460: re-apply v451 CHAIN_MERGE suppression for NEAR at extreme congestion (pc>=35+deadline)
      # v451 was originally at Game#11731 but rolled back as collateral in v449 branch at Game#11744.
      # CHAIN_MERGE bonus (multiplier up to 1110 at high y, bonus up to ~5300) overwhelms NEAR
@@ -1347,20 +1354,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
 
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # v454: flatten to -4500 — fix v432 sign error + match protected strategy
-            # v432 formula was -3000 + landing_y * 2000 which has OPPOSITE sign to the
-            # documented intent. The comment said "y=2: -7000" but the formula produces
-            # +1000 (a BONUS for high placement). This inverted the penalty: at y>=1.5
-            # the "penalty" becomes zero or positive, incentivizing scatter to high-y
-            # positions at deadline — the exact failure mode the postmortem warns against.
-            # Evidence: worst T59 x=-3.0 at deadline → bounces to y=3.31. Extra_low T79-84
-            # pieces at x=2.6-3.0, y=2.7-3.5. Best game also shows edge scatter at deadline.
-            # Protected strategy (median 12789) uses flat -4500. Same as axis 8.8 (v452).
-            # Flat -4500 overwhelms all additive bonuses (~400-800), letting axis 2
-            # height penalty be the only position differentiator — consistent low placement.
-            # Fixes rollback failure mode: deadline scatter from v432 sign error
-            score -= 4500.0
-            reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
+            # vXXX: layered deadline penalty — enhance to -6000 when reactor_margin < -0.3
+            # worst game T57: deadline_margin=-0.57 with merge_available=false → x=3.0 edge selected
+            # mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+            # v661 continuous penalty (-5000/unit deficit) applies separately; this adds -1000 at
+            # extreme margin to create layered enforcement that axis 9.6 stacking (~400) cannot overcome.
+            # deadline_margin < -0.3: extreme danger, suppress ALL edge placement with -6000
+            # deadline_margin >= -0.3: standard -4500 matching protected strategy (v454)
+            if reactor_margin < -0.3:
+                score -= 6000.0
+                reasons.append("EXTREME_DEADLINE_NO_MERGE")
+            else:
+                score -= 4500.0
+                reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
         
          # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
