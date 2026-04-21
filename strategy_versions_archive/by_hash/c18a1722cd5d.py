@@ -1,21 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v662: Absolute edge block for NO-merge deadline scenario (mandatory theme enforcement)
-# mandatory_themes.txt: "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る"
-# When merge unavailable (global_merge_available=False) AND deadline_crossed=True,
-# edge placement (|x|>=2.5) gets -10000 score adjustment making it non-competitive.
-# worst game T46: x=3.0 edge with NO_MERGE, deadline_crossed, max_y=2.68 → game over
-# Fixes rollback failure mode: edge placement selected when merge unavailable at deadline
-# refs: tmp/analysis_result.md (Implementation Plan Change 2), data/mandatory_themes.txt
-
-# v661: Strengthen GAP_ZONE_NEAR_PENALTY -500→-1500
-# Worst game T47: NEAR at max_y=2.69, deadline_crossed, -500 penalty insufficient
-# Combined bonuses (NEAR+600, DANGER_NEAR+500, DANGER_ZONE+500, reactive) net positive despite gap zone
-# Making -1500 ensures NO_MERGE becomes preferred unless strong positive axes (DANGER_DIRECT, etc.) compensate
-# Fixes rollback failure mode: NEAR selected in gap zone (max_y>=2.0, deadline_crossed) with net positive score
-# refs: tmp/analysis_result.md (Implementation Plan Change 1), tmp/state/last_rollback_postmortem.md
-
 # v653: Close mandatory theme gap (decision_crosses_deadline) + remove Russia phase exception
 # Change 1: Add result.get("crosses_deadline") check parallel to deadline_crossed check
 #   Fixes best_game T141: deadline_crossed=false but decision_crosses_deadline=true → violation not caught
@@ -1354,14 +1339,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/state/last_rollback_postmortem.md (failure_mode: max_y>=2.0 NEAR merge failure)
         #       game_history/20260410_183623_score0841.jsonl (T53, T57 gap-zone NEAR failures)
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 17-19% in low-score games)
-        # v661: Strengthen GAP_ZONE_NEAR_PENALTY -500→-1500
-        # Worst game T47: NEAR at max_y=2.69, deadline_crossed, -500 penalty insufficient
-        # Combined bonuses (NEAR+600, DANGER_NEAR+500, DANGER_ZONE+500, reactive) > 500
-        # Making -1500 ensures NO_MERGE becomes preferred unless strong positive axes present
-        # Fixes rollback failure mode: NEAR selected in gap zone (max_y>=2.0, deadline_crossed)
-        # refs: tmp/analysis_result.md (Implementation Plan Change 1), tmp/state/last_rollback_postmortem.md
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
-            score -= 1500.0
+            score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
@@ -2360,19 +2339,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if edge_penalty < 0.0:
                     reasons.append("EDGE_PROHIBITION")
 
-        # --- v662: absolute edge block for NO-merge deadline (mandatory theme enforcement) ---
-        # mandatory_themes.txt: "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る"
-        # When NO merge globally available AND deadline is crossed, edge placement is forbidden.
-        # Edge prohibition as penalty (-1200/-600) can be offset by other bonuses — making it
-        # non-competitive with -10000 ensures absolute enforcement.
-        # Only applies when: global_merge_available=False AND deadline_crossed=True
-        # worst game T46: x=3.0 edge with NO_MERGE, deadline_crossed, max_y=2.68 → game over
-        # Refs: tmp/analysis_result.md (Implementation Plan Change 2), data/mandatory_themes.txt
-        if merge_grade == "NO" and not global_merge_available and deadline_crossed:
-            if abs(x) >= 2.5:
-                score -= 10000.0
-                reasons.append("ABSOLUTE_EDGE_BLOCK")
-
         # ----- mandatory theme: edge prohibition when merge unavailable at deadline -----
         # "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る。ロシア建国でさえこの原則は守れ"
         # When NO merge globally available AND deadline is crossed (deadline_crossed=true),
@@ -2386,7 +2352,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not global_merge_available and deadline_crossed:
             edge_penalty_approach = 0.0
             if abs(x) >= 2.5:
-                edge_penalty_approach = -600.0  # only for |x|>=2.5 when NOT caught by ABSOLUTE_EDGE_BLOCK (-10000)
+                edge_penalty_approach = -600.0
             elif abs(x) >= 2.0:
                 edge_penalty_approach = -300.0
             score += edge_penalty_approach
