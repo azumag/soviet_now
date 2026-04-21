@@ -5,8 +5,7 @@
 # Change 1 (v619): DANGER_ZONE_FORCE_MERGE layered penalties — deadline_crossed&&rp>=3:-5000, max_y>=3.0&&rp>=5:-6000
 # Change 2 (v620): NEAR filter relaxation — reactor_margin threshold <1.0 → <-1.5 (keeps NEAR viable at margin -1.5 to 1.0)
 # Change 3 (v623): suppress_height_control guard — rp>=3 && NO_MERGE && max_y>=1.8 && deadline_crossed → force lowest landing_y
-# Change 4 (v624): merge_available=false + max_y>=1.8 → extra height penalty + edge prohibition (|x|>=2.5:-800, |x|>=2.0:-400)
-# Fixes rollback failure mode: worst game T70 (merge_available=false, x=3.0 edge → max_y 2.66→3.18 death)
+# Fixes rollback failure mode: worst game T62-69 (max_y=3.31, rp>=3, deadline_crossed, NO merge → score 598)
 # Constraint: axis 8.8 penalty magnitude/threshold NOT modified
 # refs: tmp/analysis_result.md (Implementation Plan)
 
@@ -1036,10 +1035,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 通常とは異なる配置優先順位に切り替えるべき。game_stateに存在すれば使用、
     # 存在しない場合は0（既存動作維持、安全側）。
     no_merge_streak = game_state.get("no_merge_streak", 0)
-
-    # --- v624: global merge availability (used in candidate scoring) ---
-    # Computed once before candidate loop — any candidate with merge opportunity?
-    global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
 
     # --- v322: russia phase detection (type 15 pieces on board) ---
     # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
@@ -2262,28 +2257,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
-
-        # ----- v624: merge_available=false + max_y>=1.8 → height boost + edge prohibition -----
-        # worst game T70: merge_available=false, max_y=2.66, x=3.0 (edge) → max_y→3.18 death
-        # best game T128: merge_available=false, max_y=2.63, x=1.0 (center) → controlled
-        # When NO merge available globally AND board is elevated (max_y>=1.8),
-        # force lowest landing_y by boosting height coefficient AND prohibit edge placement.
-        # This targets worst game failure mode: edge scatter in NO-merge danger zone.
-        # Refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-        if merge_grade == "NO" and max_y >= 1.8 and not global_merge_available:
-            # height reinforcement: base_height_coefficient was already used for height_penalty,
-            # so apply additional height penalty now to catch the NO-merge danger case
-            extra_height_penalty = landing_y * 50.0 * height_mult
-            score -= extra_height_penalty
-            # edge prohibition: x=±3.0 → -800, x=±2.5 → -400
-            edge_penalty = 0.0
-            if abs(x) >= 2.5:
-                edge_penalty = -800.0
-            elif abs(x) >= 2.0:
-                edge_penalty = -400.0
-            score += edge_penalty
-            if edge_penalty < 0.0:
-                reasons.append("EDGE_PROHIBITION")
 
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.

@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
+# v621: DANGER_ZONE_FORCE_MERGE layered penalties + NEAR filter relaxation + suppress_height_control guard
+# Change 1 (v619): DANGER_ZONE_FORCE_MERGE layered penalties — deadline_crossed&&rp>=3:-5000, max_y>=3.0&&rp>=5:-6000
+# Change 2 (v620): NEAR filter relaxation — reactor_margin threshold <1.0 → <-1.5 (keeps NEAR viable at margin -1.5 to 1.0)
+# Change 3 (v623): suppress_height_control guard — rp>=3 && NO_MERGE && max_y>=1.8 && deadline_crossed → force lowest landing_y
+# Fixes rollback failure mode: worst game T62-69 (max_y=3.31, rp>=3, deadline_crossed, NO merge → score 598)
+# Constraint: axis 8.8 penalty magnitude/threshold NOT modified
+# refs: tmp/analysis_result.md (Implementation Plan)
+
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
 - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
@@ -1244,7 +1252,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       analyze_board.py (reactor deadline_margin field)
         # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
-        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
+        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < -1.5:
+            # v409: graduated NEAR deadline risk
+            # v620: relax threshold from <1.0 to <-1.5 per analysis_result.md
+            # "deadline_margin >= -1.5ならNEARを選択肢として残す"
+            # Keeps NEAR viable when margin in [-1.5, 1.0] range (approaching but not past danger)
             risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
@@ -2647,7 +2659,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
             # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
+            # v619: DANGER_ZONE_FORCE_MERGE layered penalties — mandatory_themes
+            # "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+            # worst game T62-69: max_y=3.31, deadline_crossed, rp>=3, NO merge → game over with score 598.
+            # Layered penalties structurally eliminate high-layer selection in danger zone:
+            # - deadline_crossed && rp>=3: -5000 (strong pressure even before max_y rises)
+            # - max_y>=3.0 && rp>=5: -6000 (catastrophic zone — worst game T66 max_y=3.31)
+            # Both conditions override axis 2 (height penalty ~180-450) making low placement mandatory.
+            penalty = 4500.0
+            if deadline_crossed and reactive_pair_count >= 3:
+                penalty = max(penalty, 5000.0)
+            if max_y >= 3.0 and reactive_pair_count >= 5:
+                penalty = max(penalty, 6000.0)
+            score -= penalty
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- v602: axis_88_horizontal_suppression flag (defined earlier in loop) -----
@@ -3112,6 +3136,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+
+    # --- v623: suppress_height_control guard ---
+    # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+    # worst game T60-61: max_y=2.78, rp=8, mg=NO, deadline_crossed → x=±3.0 edge → 4 turns NO_MERGE → game over
+    # When all candidates are NO_MERGE in dangerous state (rp>=3, max_y>=1.8, deadline_crossed),
+    # suppress edge scatter by forcing lowest landing_y position.
+    # Only activates when NO candidate has merge opportunity (global_merge_available=False).
+    if results:
+        __shc_reactor = analysis.get("reactor", {}) if isinstance(analysis.get("reactor", {}), dict) else {}
+        __shc_pieces = game_state.get("pieces", []) if isinstance(game_state, dict) else []
+        __shc_max_y = max([p.get("y", -99.0) for p in __shc_pieces], default=-99.0) if __shc_pieces else -99.0
+        __shc_rps = __shc_reactor.get("reactive_pairs", [])
+        __shc_rp_count = len(__shc_rps) if isinstance(__shc_rps, list) else 0
+        __shc_dcross = bool(game_state.get("deadline_crossed", False)) if isinstance(game_state, dict) else False
+        __shc_global_merge = any(r.get("merge_grade") != "NO" for r in results)
+        if (__shc_max_y >= 1.8
+                and __shc_rp_count >= 3
+                and not __shc_global_merge
+                and __shc_dcross):
+            __shc_no_merge = [r for r in results if r.get("merge_grade") == "NO"]
+            if __shc_no_merge:
+                __shc_lowest = min(__shc_no_merge, key=lambda r: r.get("landing_y", 99.0))
+                best_x = __shc_lowest.get("x", best_x)
+                best_reason = "HEIGHT_CONTROL_SUPPRESSED"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
