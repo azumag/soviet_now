@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v627: CROSSES_DEADLINE_NO_MERGE penalty -1200→-2500
-# Enforces mandatory theme: deadline crossing only when merge is possible
-# Rollback failure mode: worst T70/T73 (score 686) violated mandatory theme with NO_MERGE+deadline_crossed
-# Refs: tmp/analysis_result.md (Adopted Hypothesis: Strengthen CROSSES_DEADLINE_NO_MERGE penalty)
-# refs: tmp/analysis_result.md, tmp/improve_brief.md, tmp/batch_summary.txt, data/mandatory_themes.txt
-# Constraint: russia_phase exception and other penalty magnitudes NOT modified
+# v621: DANGER_ZONE_FORCE_MERGE layered penalties + NEAR filter relaxation + suppress_height_control guard
 # Change 1 (v619): DANGER_ZONE_FORCE_MERGE layered penalties — deadline_crossed&&rp>=3:-5000, max_y>=3.0&&rp>=5:-6000
 # Change 2 (v620): NEAR filter relaxation — reactor_margin threshold <1.0 → <-1.5 (keeps NEAR viable at margin -1.5 to 1.0)
 # Change 3 (v623): suppress_height_control guard — rp>=3 && NO_MERGE && max_y>=1.8 && deadline_crossed → force lowest landing_y
@@ -3036,7 +3031,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260330_144015_score0665.jsonl T60-61,
         #       game_history/20260330_143501_score0994.jsonl T74-75
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            score -= 2500.0  # Raised from -1200 to enforce mandatory theme (no deadline crossing without merge)
+            score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
