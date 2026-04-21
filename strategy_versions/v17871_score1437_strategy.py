@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v652: Strengthen DEADLINE_NO_MERGE_PENALTY -2500→-4000 + DANGER_CONFLICT_PENALTY for merge_available=false + danger flags
-# Fixes worst game T62: merge_available=false + deadline_crossed=true + DANGER_ZONE bonuses (+2800) exceeded -2500 penalty
-# Enforces mandatory theme: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-# Rollback failure mode: worst T62 (score 778) selected forbidden placement when DANGER_ZONE bonuses overrode NO_MERGE penalty
-# refs: tmp/analysis_result.md (Implementation Plan: DANGER_ZONE bonus conflict resolution), tmp/state/last_rollback_postmortem.md
-
 # v628: Add deadline_crossed alternative trigger to NO_MERGE edge prohibition
 # Fixes extra_low T51-T52: max_y=1.43/1.37 < 1.8 threshold, deadline_crossed=true, edge x=-3.0 → mandatory theme violation
 # "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る" — deadline_crossed triggers edge prohibition even when max_y < 1.8
@@ -2290,18 +2284,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NOT triggered when merge_available=true (best game uses DIRECT_MERGE+HIGH_TOWER successfully)
         # Refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (Constraints For Next Improve)
         if deadline_crossed and not global_merge_available and merge_grade == "NO":
-            # v652: Strengthen DEADLINE_NO_MERGE_PENALTY for DANGER_ZONE conflict
-            # When DANGER_ZONE bonuses are active (danger flags true) AND merge_available=false
-            # AND deadline_crossed=true, the DANGER_ZONE bonuses can exceed -2500 penalty.
-            # Increase to -4000 to ensure the mandatory theme is enforced.
-            extra_deadline_no_merge_penalty = -4000.0
+            extra_deadline_no_merge_penalty = -2500.0
             score += extra_deadline_no_merge_penalty
             reasons.append("DEADLINE_NO_MERGE_PENALTY")
-            # Additional: suppress DANGER_ZONE bonuses when merge_available=false
-            # (these bonuses assume merge is possible for immediate execution)
-            if result.get("danger_merge_available", False) or result.get("danger_direct_merge_available", False):
-                score -= 2000  # extra penalty for danger signal conflict
-                reasons.append("DANGER_CONFLICT_PENALTY")
 
         score -= height_penalty
 
