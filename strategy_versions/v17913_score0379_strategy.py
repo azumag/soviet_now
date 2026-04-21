@@ -1,15 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v653: Close mandatory theme gap (decision_crosses_deadline) + remove Russia phase exception
-# Change 1: Add result.get("crosses_deadline") check parallel to deadline_crossed check
-#   Fixes best_game T141: deadline_crossed=false but decision_crosses_deadline=true → violation not caught
-#   Edge prohibition for pre-deadline-crossing placements (|x|>=2.5:-800, |x|>=2.0:-400)
-# Change 2: Remove `not russia_phase` from CROSSES_DEADLINE_NO_MERGE condition
-#   mandatory_themes.txt: "even during Russia phase this principle must be upheld"
-# Rollback failure mode: best_game T141 mandatory theme gap + russia_phase exception conflict
-# refs: tmp/analysis_result.md (Implementation Plan Changes 1 & 2)
-
 # v652: Strengthen DEADLINE_NO_MERGE_PENALTY -2500→-4000 + DANGER_CONFLICT_PENALTY for merge_available=false + danger flags
 # Fixes worst game T62: merge_available=false + deadline_crossed=true + DANGER_ZONE bonuses (+2800) exceeded -2500 penalty
 # Enforces mandatory theme: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
@@ -2359,25 +2350,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if edge_penalty_approach < 0.0:
                 reasons.append("DEADLINE_CROSSED_EDGE_PROHIBITION")
 
-        # Mandatory theme gap closer (v653): catch placements that cross deadline
-        # even before deadline_crossed flag becomes true.
-        # best_game turn 141: deadline_crossed=false but decision_crosses_deadline=true
-        # → mandatory theme check didn't fire. Now using placement-level result.crosses_deadline.
-        # "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る"
-        # Even during Russia phase this principle must be upheld (mandatory_themes.txt)
-        # refs: tmp/analysis_result.md (Implementation Plan Change 1)
-        if (result.get("crosses_deadline", False) and
-            merge_grade == "NO" and
-            not global_merge_available):
-            deadline_approach_penalty = 0.0
-            if abs(x) >= 2.5:
-                deadline_approach_penalty = -800.0  # stronger for edge positions
-            elif abs(x) >= 2.0:
-                deadline_approach_penalty = -400.0
-            score += deadline_approach_penalty
-            if deadline_approach_penalty < 0.0:
-                reasons.append("DEADLINE_APPROACH_MANDATORY")
-
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
         # piece_count is the key predictor of final score, not max_y.
@@ -3084,10 +3056,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: analyze_board.py L412 (crosses_deadline computation),
         #       game_history/20260330_144015_score0665.jsonl T60-61,
         #       game_history/20260330_143501_score0994.jsonl T74-75
-        if merge_grade == "NO" and result.get("crosses_deadline", False):
-            # Russia phase exception removed per mandatory_themes.txt:
-            # "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る。
-            #  ロシア建国時でもこの原則は守れ"
+        if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 2500.0  # Raised from -1200 to enforce mandatory theme (no deadline crossing without merge)
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
