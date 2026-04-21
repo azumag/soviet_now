@@ -7,6 +7,8 @@
 # Change 3 (v623): suppress_height_control guard — rp>=3 && NO_MERGE && max_y>=1.8 && deadline_crossed → force lowest landing_y
 # Change 4 (v624): merge_available=false + max_y>=1.8 → extra height penalty + edge prohibition (|x|>=2.5:-800, |x|>=2.0:-400)
 # Fixes rollback failure mode: worst game T70 (merge_available=false, x=3.0 edge → max_y 2.66→3.18 death)
+# v625 (amend): DEADLINE_NO_MERGE_PENALTY — deadline_crossed && !merge_available && merge_grade=="NO" → -2500 to suppress HIGH_LAYER path
+# Fixes rollback failure mode: worst T53-58 (score 605) NEAR_MERGE_HIGH_LAYER + deadline_crossed + NO merge = max_y 3.26 death
 # Constraint: axis 8.8 penalty magnitude/threshold NOT modified
 # refs: tmp/analysis_result.md (Implementation Plan)
 
@@ -2260,6 +2262,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("MEDIUM_TOWER")
         elif landing_y > 0.0:
             reasons.append("HIGH_LAYER")
+
+        # ----- v625 (amend): deadline_crossed + no merge + NO grade → HIGH_LAYER suppression -----
+        # worst game T53-58 (score 605): NEAR_MERGE_HIGH_LAYER at deadline_crossed with merge_available=false
+        # cause: HIGH_LAYER path selected despite deadline_crossed + NO merge, leading to max_y=3.26 death
+        # Fix: when deadline_crossed && !merge_available && merge_grade=="NO", suppress HIGH_LAYER by -2500
+        # This prevents the death spiral where NO-merge + deadline_crossed + HIGH_LAYER = catastrophic runaway
+        # NOT triggered when merge_available=true (best game uses DIRECT_MERGE+HIGH_TOWER successfully)
+        # Refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (Constraints For Next Improve)
+        if deadline_crossed and not global_merge_available and merge_grade == "NO":
+            extra_deadline_no_merge_penalty = -2500.0
+            score += extra_deadline_no_merge_penalty
+            reasons.append("DEADLINE_NO_MERGE_PENALTY")
 
         score -= height_penalty
 

@@ -2284,7 +2284,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # force lowest landing_y by boosting height coefficient AND prohibit edge placement.
         # This targets worst game failure mode: edge scatter in NO-merge danger zone.
         # Refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-        if merge_grade == "NO" and max_y >= 1.5 and not global_merge_available:
+        if merge_grade == "NO" and max_y >= 1.8 and not global_merge_available:
             # height reinforcement: base_height_coefficient was already used for height_penalty,
             # so apply additional height penalty now to catch the NO-merge danger case
             extra_height_penalty = landing_y * 50.0 * height_mult
@@ -2298,26 +2298,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += edge_penalty
             if edge_penalty < 0.0:
                 reasons.append("EDGE_PROHIBITION")
-
-        # ----- mandatory theme: edge prohibition when merge unavailable near deadline -----
-        # "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-        # When NO merge globally available AND deadline_margin < 0.5 (approaching deadline),
-        # prohibit edge placement to prevent deadline violations.
-        # This extends v624/v625 coverage to the pre-deadline danger zone.
-        # extra_low turns 51-53: deadline_margin=0.64-0.69, deadline_crossed=false, merge_available=false → edge x=3.0/-3.0
-        # worst turn 52: deadline_margin=-0.03, deadline_crossed=false (just before crossing), merge_available=false → edge x=3.0
-        # Refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
-        if merge_grade == "NO" and not global_merge_available:
-            deadline_margin_val = game_state.get("deadline_margin", 99.0) if isinstance(game_state, dict) else 99.0
-            if deadline_margin_val < 0.5:
-                edge_penalty_approach = 0.0
-                if abs(x) >= 2.5:
-                    edge_penalty_approach = -600.0
-                elif abs(x) >= 2.0:
-                    edge_penalty_approach = -300.0
-                score += edge_penalty_approach
-                if edge_penalty_approach < 0.0:
-                    reasons.append("DEADLINE_APPROACH_EDGE_PROHIBITION")
 
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
