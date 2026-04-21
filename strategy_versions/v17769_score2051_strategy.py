@@ -9,11 +9,8 @@
 # Fixes rollback failure mode: worst game T70 (merge_available=false, x=3.0 edge → max_y 2.66→3.18 death)
 # v625 (amend): DEADLINE_NO_MERGE_PENALTY — deadline_crossed && !merge_available && merge_grade=="NO" → -2500 to suppress HIGH_LAYER path
 # Fixes rollback failure mode: worst T53-58 (score 605) NEAR_MERGE_HIGH_LAYER + deadline_crossed + NO merge = max_y 3.26 death
-# v626: Strengthen v624 edge prohibition — |x|>=2.5:-800→-1200, |x|>=2.0:-400→-600
-# Fixes worst T50: merge_available=false, max_y=2.79, x=3.0 edge selected (column_ceiling bonus exceeded -800 penalty)
-# Refs: tmp/analysis_result.md (Edge Prohibition Strengthen for NO_MERGE + Elevated Board)
-# refs: data/mandatory_themes.txt (デッドラインにおけるedge placement禁止)
 # Constraint: axis 8.8 penalty magnitude/threshold NOT modified
+# refs: tmp/analysis_result.md (Implementation Plan)
 
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
@@ -2292,14 +2289,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # so apply additional height penalty now to catch the NO-merge danger case
             extra_height_penalty = landing_y * 50.0 * height_mult
             score -= extra_height_penalty
-            # edge prohibition: x=±3.0 → -1200, x=±2.5 → -600 (strengthened from -800/-400)
-            # worst turn 50: x=3.0 edge selected despite merge_available=false, max_y=2.79
-            # column_ceiling bonus was insufficiently countered by -800 penalty → increased to -1200
+            # edge prohibition: x=±3.0 → -800, x=±2.5 → -400
             edge_penalty = 0.0
             if abs(x) >= 2.5:
-                edge_penalty = -1200.0
+                edge_penalty = -800.0
             elif abs(x) >= 2.0:
-                edge_penalty = -600.0
+                edge_penalty = -400.0
             score += edge_penalty
             if edge_penalty < 0.0:
                 reasons.append("EDGE_PROHIBITION")
