@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v628: Add deadline_crossed alternative trigger to NO_MERGE edge prohibition
-# Fixes extra_low T51-T52: max_y=1.43/1.37 < 1.8 threshold, deadline_crossed=true, edge x=-3.0 → mandatory theme violation
-# "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る" — deadline_crossed triggers edge prohibition even when max_y < 1.8
-# refs: tmp/analysis_result.md (Implementation Plan: deadline_crossed alternative trigger for edge prohibition)
-
 # v627: CROSSES_DEADLINE_NO_MERGE penalty -1200→-2500
 # Enforces mandatory theme: deadline crossing only when merge is possible
 # Rollback failure mode: worst T70/T73 (score 686) violated mandatory theme with NO_MERGE+deadline_crossed
@@ -2293,47 +2288,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- v624: merge_available=false + max_y>=1.8 → height boost + edge prohibition -----
         # worst game T70: merge_available=false, max_y=2.66, x=3.0 (edge) → max_y→3.18 death
         # best game T128: merge_available=false, max_y=2.63, x=1.0 (center) → controlled
-        # When NO merge available globally AND board is elevated (max_y>=1.8) OR deadline crossed,
+        # When NO merge available globally AND board is elevated (max_y>=1.8),
         # force lowest landing_y by boosting height coefficient AND prohibit edge placement.
         # This targets worst game failure mode: edge scatter in NO-merge danger zone.
         # Refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-        if merge_grade == "NO" and not global_merge_available:
-            if max_y >= 1.5 or deadline_crossed:
-                # height reinforcement: base_height_coefficient was already used for height_penalty,
-                # so apply additional height penalty now to catch the NO-merge danger case
-                extra_height_penalty = landing_y * 50.0 * height_mult
-                score -= extra_height_penalty
-                # edge prohibition: x=±3.0 → -1200, x=±2.5 → -600 (strengthened from -800/-400)
-                # worst turn 50: x=3.0 edge selected despite merge_available=false, max_y=2.79
-                # column_ceiling bonus was insufficiently countered by -800 penalty → increased to -1200
-                edge_penalty = 0.0
-                if abs(x) >= 2.5:
-                    edge_penalty = -1200.0
-                elif abs(x) >= 2.0:
-                    edge_penalty = -600.0
-                score += edge_penalty
-                if edge_penalty < 0.0:
-                    reasons.append("EDGE_PROHIBITION")
-
-        # ----- mandatory theme: edge prohibition when merge unavailable at deadline -----
-        # "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る。ロシア建国でさえこの原則は守れ"
-        # When NO merge globally available AND deadline is crossed (deadline_crossed=true),
-        # prohibit edge placement regardless of max_y height.
-        # This extends v624/v625 coverage to the pre-elevated danger zone (max_y < 1.5).
-        # extra_low T51: max_y=1.43, deadline_crossed=true, merge_available=false → edge x=-3.0 selected
-        # extra_low T52: max_y=1.37, deadline_crossed=true, merge_available=false → edge x=-3.0 selected
-        # mandatory_themes: "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る"
-        # Refs: tmp/analysis_result.md (Implementation Plan: deadline_crossed alternative trigger),
-        #       data/mandatory_themes.txt
-        if merge_grade == "NO" and not global_merge_available and deadline_crossed:
-            edge_penalty_approach = 0.0
+        if merge_grade == "NO" and max_y >= 1.5 and not global_merge_available:
+            # height reinforcement: base_height_coefficient was already used for height_penalty,
+            # so apply additional height penalty now to catch the NO-merge danger case
+            extra_height_penalty = landing_y * 50.0 * height_mult
+            score -= extra_height_penalty
+            # edge prohibition: x=±3.0 → -1200, x=±2.5 → -600 (strengthened from -800/-400)
+            # worst turn 50: x=3.0 edge selected despite merge_available=false, max_y=2.79
+            # column_ceiling bonus was insufficiently countered by -800 penalty → increased to -1200
+            edge_penalty = 0.0
             if abs(x) >= 2.5:
-                edge_penalty_approach = -600.0
+                edge_penalty = -1200.0
             elif abs(x) >= 2.0:
-                edge_penalty_approach = -300.0
-            score += edge_penalty_approach
-            if edge_penalty_approach < 0.0:
-                reasons.append("DEADLINE_CROSSED_EDGE_PROHIBITION")
+                edge_penalty = -600.0
+            score += edge_penalty
+            if edge_penalty < 0.0:
+                reasons.append("EDGE_PROHIBITION")
+
+        # ----- mandatory theme: edge prohibition when merge unavailable near deadline -----
+        # "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # When NO merge globally available AND deadline_margin < 0.5 (approaching deadline),
+        # prohibit edge placement to prevent deadline violations.
+        # This extends v624/v625 coverage to the pre-deadline danger zone.
+        # extra_low turns 51-53: deadline_margin=0.64-0.69, deadline_crossed=false, merge_available=false → edge x=3.0/-3.0
+        # worst turn 52: deadline_margin=-0.03, deadline_crossed=false (just before crossing), merge_available=false → edge x=3.0
+        # Refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
+        if merge_grade == "NO" and not global_merge_available:
+            deadline_margin_val = game_state.get("deadline_margin", 99.0) if isinstance(game_state, dict) else 99.0
+            if deadline_margin_val < 0.5:
+                edge_penalty_approach = 0.0
+                if abs(x) >= 2.5:
+                    edge_penalty_approach = -600.0
+                elif abs(x) >= 2.0:
+                    edge_penalty_approach = -300.0
+                score += edge_penalty_approach
+                if edge_penalty_approach < 0.0:
+                    reasons.append("DEADLINE_APPROACH_EDGE_PROHIBITION")
 
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
