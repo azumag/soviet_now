@@ -16,11 +16,6 @@
 # Fixes rollback failure mode: edge placement selected when merge unavailable at deadline
 # refs: tmp/analysis_result.md (Implementation Plan Change 2), data/mandatory_themes.txt
 
-# v667: Relax GAP_ZONE_NEAR_PENALTY to -800/+300 (total 800/1100)
-# Analysis shows penalty too strong, suppressing NEAR merges that prevent
-# NO_MERGE→EDGE→gameover cascade. Rollback constraints forbid NO_MERGE, not NEAR.
-# refs: tmp/analysis_result.md (Adopted Hypothesis: Relax GAP_ZONE_NEAR_PENALTY)
-
 # v666: Extra congestion penalty for NEAR in gap zone
 # GAP_ZONE_NEAR_PENALTY -1500→-2000 when piece_count>=35
 # At high congestion (piece_count>=35), even successful NEAR is costly
@@ -1395,15 +1390,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Making -1500 ensures NO_MERGE becomes preferred unless strong positive axes present
         # Fixes rollback failure mode: NEAR selected in gap zone (max_y>=2.0, deadline_crossed)
         # refs: tmp/analysis_result.md (Implementation Plan Change 1), tmp/state/last_rollback_postmortem.md
-        # v667: Relax to -800/+300 (total 800/1100) — analysis shows penalty too strong,
-        # suppressing NEAR merges that prevent NO_MERGE→EDGE→gameover cascade.
-        # Rollback constraints forbid NO_MERGE selection, NOT NEAR — this change is safe.
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: Relax GAP_ZONE_NEAR_PENALTY)
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
-            penalty = 800.0
+            penalty = 1500.0
             # v666: extra congestion penalty — at high piece_count, even successful NEAR is costly
             if piece_count >= 35:
-                penalty += 300.0
+                penalty += 500.0
             score -= penalty
             reasons.append("GAP_ZONE_NEAR_PENALTY")
 
