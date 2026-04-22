@@ -1,16 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v674: Replace Gap Zone NEAR Suppression with Severe Height Penalty
-# Gap Zone NEAR Suppression (v672/v673) forced NO_MERGE when conditions met,
-# but NO_MERGE position was also dangerous (edge placement) → same game over
-# Solution: apply severe height penalty to NEAR (landing_y * 200.0) instead of suppressing
-# worst T45: NEAR at x=1.8 → max_y jumped 1.57→2.78; worst T46: NO_MERGE at x=3.0 → game over
-# Preserves NEAR for actual merge execution while penalizing dangerous high-y positions
-# Fixes rollback failure mode: suppression converts dangerous NEAR to dangerous NO_MERGE, not safe
-# Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty
-# refs: tmp/analysis_result.md (Gap Zone NEAR Height Fallback)
-
 # v673: Lower v672 reactive_pair_count threshold 4→2 to catch dangerous NEAR earlier
 # worst T51 (max_y=2.13, rp=2, pc=30): NEAR NOT suppressed (rp<4) → failed, max_y jumped 1.07→2.13
 # worst T57 (max_y=2.48, rp=3, pc=35): NEAR NOT suppressed (rp<4) → failed
@@ -2477,32 +2467,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # v674: Replace Gap Zone NEAR Suppression with Severe Height Penalty
-        # Instead of forcing NO_MERGE (which converts dangerous NEAR to dangerous NO_MERGE),
-        # apply severe height penalty to NEAR to force lowest-y selection via natural scoring.
-        # worst T43-T46: suppression caused NO_MERGE edge placement → game over
-        # worst T45: NEAR at x=1.8 caused max_y jump 1.57→2.78 (NEAR was dangerous)
-        # worst T46: NO_MERGE at x=3.0 caused game over (NO_MERGE was dangerous)
-        # Solution: keep NEAR available but penalize high-y positions heavily
-        # This preserves merge_available=true → NEAR execution while discouraging dangerous positions
-        # Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty - safe
-        # Constraint: mandatory_themes.txt - deadline position only if mergeable (NEAR still available)
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: Gap Zone NEAR Height Fallback)
-        gap_zone_near_severe_penalty = (
+        # NEW: Gap Zone NEAR Suppression (conditional on board congestion)
+        # When in gap zone (max_y >= 2.0, deadline_crossed=true) with high congestion
+        # and high reactive complexity, suppress NEAR entirely to prevent dangerous selections.
+        # worst T41: rp=6, pc=32, NEAR failed (delta=0, max_y jumped 1.91→2.89)
+        # worst T42: rp=6, pc=32, NEAR failed (delta=0)
+        # best T154: rp=2, pc=28, NEAR succeeded (+122) — NOT suppressed
+        # extra_low T53: rp=5, pc=37, NEAR failed — suppressed
+        # Constraint: rollback forbids merge_available=false && HIGH_LAYER (not applicable here)
+        # Constraint: rollback forbids NO_MERGE penalty modification (this doesn't touch NO_MERGE)
+        # refs: tmp/analysis_result.md (Adopted Hypothesis: Gap Zone NEAR Merge Suppression)
+        gap_zone_near_suppressed = (
             max_y >= 2.0 and
             deadline_crossed and
             piece_count >= 30 and
-            reactive_pair_count >= 2 and
-            merge_grade == "NEAR"
+            reactive_pair_count >= 2
         )
-        if gap_zone_near_severe_penalty:
-            # Apply severe height penalty: landing_y * 200.0 * height_mult
-            # ~2.5x stronger than CRITICAL phase NEAR penalty (80.0) at v671
-            # Forces NEAR to select very low y to compete; if no low-y NEAR exists,
-            # NO_MERGE with good position scores higher naturally
-            severe_penalty = abs(landing_y) * 200.0 * height_mult
-            score -= severe_penalty
-            reasons.append(f"GAP_ZONE_NEAR_SEVERE_PENALTY:{severe_penalty:.0f}")
+        if gap_zone_near_suppressed:
+            # Suppress NEAR by making it non-competitive
+            # Fall through to NO_MERGE path with forced lowest landing_y
+            merge_grade = "NO"  # Force NO_MERGE evaluation
+            nearmax_y = float('inf')  # Invalidate NEAR candidates
 
         # v671: Lower threshold 2.5→2.0 to catch height escalation earlier
         # Extend to DIRECT to catch DIRECT edge placement at worst T52 (max_y=2.07)
