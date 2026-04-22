@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v676: Gap Zone DIRECT Merge Preference — when NEAR selected but DIRECT available in gap zone
-# Apply -150 penalty to NEAR to encourage DIRECT (95.7% success vs NEAR 68.5%)
-# worst T52-T54: NEAR selected at merge_available=true, delta=0, max_y jumped 0.72
-# best T101: DIRECT selected at same conditions, delta>0, max_y controlled
-# Fixes rollback failure mode: NEAR→DIRECT switch in gap zone for more reliable merge
-# Constraint: rollback forbids NO_MERGE penalty, not NEAR→DIRECT preference (safe)
-# refs: tmp/analysis_result.md (Adopted Hypothesis: DIRECT Merge Preference in Gap Zone)
-
 # v675: Lower Gap Zone NEAR Height Fallback threshold 2.0→1.5 (catch max_y=1.98 early)
 # worst T55 (max_y=1.98→2.71): v674 threshold 2.0 did NOT fire → NEAR selected, max_y runaway
 # best T95 (max_y=2.33→2.16): height penalty worked (abs(landing_y)≈2.7 > threshold)
@@ -1460,24 +1452,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 penalty += 300.0
             score -= penalty
             reasons.append("GAP_ZONE_NEAR_PENALTY")
-
-        # ----- axis 1.7c: Gap Zone DIRECT Merge Preference (v676) -----
-        # When in gap zone (max_y >= 2.0, deadline_crossed, piece_count >= 30)
-        # with NEAR selected but DIRECT also available, apply penalty to NEAR
-        # to encourage the more reliable DIRECT merge over NEAR.
-        # worst T52-T54: NEAR selected, merge_available=true, delta=0, max_y jumped 0.72
-        # best T101: DIRECT selected at same conditions, delta>0, max_y controlled
-        # Constraint: rollback forbids NO_MERGE penalty, not NEAR→DIRECT preference (safe)
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: DIRECT Merge Preference in Gap Zone)
-        if (deadline_crossed and
-            max_y >= 2.0 and
-            piece_count >= 30 and
-            global_merge_available and
-            merge_grade == "NEAR" and
-            result.get("direct_merge_available")):
-            # Apply small penalty to NEAR to make DIRECT more attractive in gap zone
-            score -= 150.0
-            reasons.append("GAP_ZONE_DIRECT_PREFERENCE")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。

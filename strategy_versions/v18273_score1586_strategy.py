@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
+# v675: Lower Gap Zone NEAR Height Fallback threshold 2.0→1.5 (catch max_y=1.98 early)
+# worst T55 (max_y=1.98→2.71): v674 threshold 2.0 did NOT fire → NEAR selected, max_y runaway
+# best T95 (max_y=2.33→2.16): height penalty worked (abs(landing_y)≈2.7 > threshold)
+# Lowering to 1.5 ensures penalty fires before dangerous height escalation
+# Fixes rollback failure mode: Gap Zone NEAR Height Penalty不十分でmax_y runaway
+# refs: tmp/analysis_result.md (Implementation Plan: Gap Zone NEAR Height Fallback threshold)
+
 # v674: Replace Gap Zone NEAR Suppression with Severe Height Penalty
 # Gap Zone NEAR Suppression (v672/v673) forced NO_MERGE when conditions met,
 # but NO_MERGE position was also dangerous (edge placement) → same game over
@@ -2485,11 +2492,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # worst T46: NO_MERGE at x=3.0 caused game over (NO_MERGE was dangerous)
         # Solution: keep NEAR available but penalize high-y positions heavily
         # This preserves merge_available=true → NEAR execution while discouraging dangerous positions
+        # v675: Lower Gap Zone NEAR Height Fallback threshold 2.0→1.5 (catch max_y=1.98 early)
+        # worst T55 (max_y=1.98→2.71): v674 threshold 2.0 did NOT fire → NEAR selected, max_y runaway
+        # best T95 (max_y=2.33→2.16): height penalty worked (abs(landing_y)≈2.7 > threshold)
+        # Lowering to 1.5 ensures penalty fires before dangerous height escalation
         # Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty - safe
         # Constraint: mandatory_themes.txt - deadline position only if mergeable (NEAR still available)
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: Gap Zone NEAR Height Fallback)
+        # refs: tmp/analysis_result.md (Implementation Plan: Gap Zone NEAR Height Fallback threshold)
         gap_zone_near_severe_penalty = (
-            max_y >= 2.0 and
+            max_y >= 1.5 and
             deadline_crossed and
             piece_count >= 30 and
             reactive_pair_count >= 2 and
