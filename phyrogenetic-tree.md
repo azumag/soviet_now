@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-22 08:46:16 JST`
-- Nodes: `1195`
-- Edges: `1632`
-- Current: `1325437f1dee`
+- Updated: `2026-04-22 10:42:00 JST`
+- Nodes: `1196`
+- Edges: `1633`
+- Current: `f54a0a232b44`
 - Anchor: `bc1b4cd5b7e7`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_bc1b4cd5b7e7["bc1b4cd5b7e7<br/>ANCHOR<br/>g=12 n=12<br/>comp=11696.1"]
-    h_d41cd826ff74["d41cd826ff74<br/>g=58 n=20<br/>comp=10582.5"]
     h_b26c2565971c["b26c2565971c<br/>g=24 n=20<br/>comp=11262.9"]
     h_d705085d949f["d705085d949f<br/>g=12 n=12<br/>comp=11069.2"]
     h_9b3aefa52b47["9b3aefa52b47<br/>g=12 n=12<br/>comp=9663.8"]
@@ -70,14 +69,14 @@ flowchart TD
     h_a149084ef6b5["a149084ef6b5<br/>g=49 n=20<br/>comp=10820.3"]
     h_c18a1722cd5d["c18a1722cd5d<br/>g=24 n=20<br/>comp=10987.2"]
     h_fc5cc56e73c1["fc5cc56e73c1<br/>g=24 n=20<br/>comp=10699.6"]
+    h_1325437f1dee["1325437f1dee<br/>g=24 n=20<br/>comp=10168.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_1325437f1dee["1325437f1dee<br/>CURRENT"]
+    h_f54a0a232b44["f54a0a232b44<br/>CURRENT"]
 
-    h_d41cd826ff74 -. rollback .-> h_b26c2565971c
     h_b26c2565971c -->|improve| h_d705085d949f
     h_d705085d949f -->|improve| h_9b3aefa52b47
     h_9b3aefa52b47 -->|improve| h_fd3d35ac8361
@@ -131,6 +130,7 @@ flowchart TD
     h_a149084ef6b5 -->|improve| h_c18a1722cd5d
     h_c18a1722cd5d -->|improve| h_fc5cc56e73c1
     h_fc5cc56e73c1 -->|improve| h_1325437f1dee
+    h_1325437f1dee -->|improve| h_f54a0a232b44
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -138,7 +138,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_bc1b4cd5b7e7 anchor;
-    class h_d41cd826ff74 plain;
     class h_b26c2565971c plain;
     class h_d705085d949f plain;
     class h_9b3aefa52b47 plain;
@@ -192,12 +191,13 @@ flowchart TD
     class h_a149084ef6b5 plain;
     class h_c18a1722cd5d plain;
     class h_fc5cc56e73c1 plain;
+    class h_1325437f1dee plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_1325437f1dee current;
+    class h_f54a0a232b44 current;
 ```
 
 ## Detail 1/15
@@ -4187,9 +4187,9 @@ flowchart TD
 
 ## Detail 15/15
 
-- Range: `646eea0bf18d` .. `1325437f1dee`
-- Nodes in this diagram: `75`
-- Internal edges in this diagram: `70`
+- Range: `646eea0bf18d` .. `f54a0a232b44`
+- Nodes in this diagram: `76`
+- Internal edges in this diagram: `71`
 - Cross-chunk link: `94786eb2e0fc --improve--> 646eea0bf18d`
 - Cross-chunk link: `cd90234d4d73 -.rollback.-> 98b57969e9e1`
 - Cross-chunk link: `98b57969e9e1 -.rollback.-> 22ad2bcc59f1`
@@ -4275,12 +4275,13 @@ flowchart TD
     h_a149084ef6b5["a149084ef6b5<br/>g=49 n=20<br/>comp=10820.3"]
     h_c18a1722cd5d["c18a1722cd5d<br/>g=24 n=20<br/>comp=10987.2"]
     h_fc5cc56e73c1["fc5cc56e73c1<br/>g=24 n=20<br/>comp=10699.6"]
+    h_1325437f1dee["1325437f1dee<br/>g=24 n=20<br/>comp=10168.8"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_1325437f1dee["1325437f1dee<br/>CURRENT"]
+    h_f54a0a232b44["f54a0a232b44<br/>CURRENT"]
 
     h_646eea0bf18d -->|improve| h_bced4c938139
     h_bced4c938139 -. rollback .-> h_a7b41f8f20ad
@@ -4352,6 +4353,7 @@ flowchart TD
     h_a149084ef6b5 -->|improve| h_c18a1722cd5d
     h_c18a1722cd5d -->|improve| h_fc5cc56e73c1
     h_fc5cc56e73c1 -->|improve| h_1325437f1dee
+    h_1325437f1dee -->|improve| h_f54a0a232b44
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4427,15 +4429,26 @@ flowchart TD
     class h_a149084ef6b5 plain;
     class h_c18a1722cd5d plain;
     class h_fc5cc56e73c1 plain;
+    class h_1325437f1dee plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_1325437f1dee current;
+    class h_f54a0a232b44 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#17993 `1325437f -> f54a0a23`
+
+- scores: `7847 13087 11699 6804 7050 9909 9633 7746 15966 11427 9198 15849 6281 14750 9967 15738 15138 10872 9803 9961 12060 8293 16347 12735`
+- v664: MERGE_AVAILABILITY_AUDIT - merge_available vs candidate merge_grade mismatch detection
+- worst game T41-T44: reason shows HIGH_LAYER while merge_available=true, best_merge_grade="NEAR"
+- The contradiction suggests that global_merge_available computed from analysis results
+- may not match the actual merge_grade available per candidate.
+- This change adds debug logging to detect: merge_available=true but non-merge selected,
+- merge_grade != "NO" but reason doesn't reflect merge priority, NEAR selected but reason
 
 ### Improve Game#17969 `fc5cc56e -> 1325437f`
 

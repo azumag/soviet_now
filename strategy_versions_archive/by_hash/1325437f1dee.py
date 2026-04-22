@@ -62,16 +62,6 @@
 # refs: data/mandatory_themes.txt (デッドラインにおけるedge placement禁止)
 # Constraint: axis 8.8 penalty magnitude/threshold NOT modified
 
-# v664: MERGE_AVAILABILITY_AUDIT - merge_available vs candidate merge_grade mismatch detection
-# worst game T41-T44: reason shows HIGH_LAYER while merge_available=true, best_merge_grade="NEAR"
-# The contradiction suggests that global_merge_available computed from analysis results
-# may not match the actual merge_grade available per candidate.
-# This change adds debug logging to detect: merge_available=true but non-merge selected,
-# merge_grade != "NO" but reason doesn't reflect merge priority, NEAR selected but reason
-# shows HIGH_LAYER/NO_MERGE label.
-# No logic changes — purely diagnostic to identify root cause of "merge available but not selected".
-# refs: tmp/analysis_result.md (Implementation Plan), game_history/20260422_092649_score0258.jsonl (worst)
-
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
 - Score table: type1=1, type2=3, type3=6, ..., typeN = N*(N+1)/2
@@ -3360,37 +3350,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
-
-    # --- v664: MERGE_AVAILABILITY_AUDIT - merge mismatch detection ---
-    # Detect: merge_available=true but non-merge selected (e.g., HIGH_LAYER when NEAR exists)
-    # Detect: reason shows HIGH_LAYER but merge_grade != "NO"
-    # Detect: merge candidates bypassed for non-merge with higher score
-    try:
-        import os as _os
-        _debug_log_path = _os.environ.get("MERGE_DEBUG_LOG", "tmp/merge_debug.log")
-        _debug_log_dir = str(_os.path.dirname(_debug_log_path)) or "."
-        if _debug_log_dir and _debug_log_dir != ".":
-            _os.makedirs(_debug_log_dir, exist_ok=True)
-        _selected_mg = ""
-        for r in results:
-            if abs(r.get("x", 999) - best_x) < 0.05:
-                _selected_mg = r.get("merge_grade", "NO")
-                break
-        _global_ma = global_merge_available
-        _all_mg = [r.get("merge_grade", "NO") for r in results]
-        _mg_candidates = [(r.get("x"), r.get("merge_grade", "NO")) for r in results if r.get("merge_grade", "NO") != "NO"]
-        import time as _time
-        _ts = _time.strftime("%Y-%m-%d %H:%M:%S")
-        _entry = f"MERGE_AUDIT|{_ts}|best_x={best_x:.2f}|best_reason={best_reason}|selected_merge={_selected_mg}|global_merge={_global_ma}|all_grades={_all_mg}|mg_candidates={_mg_candidates}\n"
-        with open(_debug_log_path, "a") as _f:
-            _f.write(_entry)
-        # Extra detail when merge bypass detected
-        if _global_ma and _selected_mg == "NO" and best_score > 0:
-            _detail = f"MERGE_BYPASS|{_ts}|max_y={max_y}|pc={piece_count}|rp={reactive_pair_count}|deadline={deadline_crossed}|best_score={best_score:.1f}|merge_candidates={_mg_candidates}\n"
-            with open(_debug_log_path, "a") as _f:
-                _f.write(_detail)
-    except Exception:
-        pass  # Never let debug logging break decision logic
 
     return {"x": best_x, "reason": best_reason}
 
