@@ -1,16 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v668: axis 9.10 extension — Merge Path Proximity Bonus (merge drought recovery)
-# analysis_result.md adopted hypothesis: Merge Drought Recovery Enhancement
-# When merge_grade=="NO" && max_y>=0.8 && pc>=25 && rp>=2 && !death_spiral &&
-# next_type!=next_next_type && same_type_count>=2: +250*merge_mult for placing
-# current piece closer to existing same-type pieces on board.
-# worst game T38-T53: merge_available=false持続16ターン, rp=4-6, max_y runaway死亡
-# 本bonusで次ターンmerge可用性を回復させる配置誘導を追加。
-# Refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 extension)
-# Fixes rollback failure mode: merge_available=false時の配置品質低下 → merge drought長期化
-
 # v663: SCATTER_ZONE_EDGE_PROHIBITION - edge prohibition in scatter zone (max_y >= 0.0)
 # worst game T23-T25: merge_available=false, max_y=-1.19, edge x=3.0/-2.86 → pieces scattered
 # → merge drought → max_y runaway → game over score 500
@@ -2011,66 +2001,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if tier2_bonus > 20:
                     score += tier2_bonus
                     reasons.append("HIGH_TYPE_MERGE_PATH_SETUP")
-
-        # ----- evaluation axis 9.10 extension: Merge Path Proximity Bonus (NEW) -----
-        # analysis_result.md adopted hypothesis: Merge Drought Recovery Enhancement
-        #
-        # 本質的問題: merge_available=false時、current pieceをmerge path creation配置させる
-        # 激励机制が弱すぎる。current pieceとtarget pieceの位置関係を最適化して
-        # 次ターンmerge可用性を高める明示的ボーナスがない。
-        #
-        # 根拠:
-        # - worst game T38-T53: merge_available=false持続16ターン、rp=4-6維持ながらheight penaltyだけで生存
-        #   → max_y 0.41→1.89で死亡
-        # - best game T127: merge compressでpiece_count 36→28, max_y 2.59→1.38まで回復 → 生存の分岐点
-        # - advice.md: 「2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る」
-        #
-        # ロジック:
-        # (1) merge_grade=="NO" && max_y>=0.8 && pc>=25 && rp>=2 && !death_spiral で発動
-        # (2) 盤面上的next_type(count of current piece type)のピース数を計算
-        # (3) next_type>=2 && next_typeとnext_next_typeが違う(非同类型が次にくる)時にbonus発動
-        #     ※非同类型が次なら「今置いたpieceの同typeとの併合」は次ターン以降に先送りされる
-        # (4) ボーナス: +250*merge_mult — column_ceiling(800-1250)のtie-breakerになる弱めの値
-        # (5) current pieceを盤面上的next_typeピース群の重心に近づける配置にボーナス
-        #
-        # 禁止:
-        # - death_spiral (danger_piece_count>0 && rp>=3 && deadline)時はactivation禁止
-        #   (v610/v616 height escalationが優先するため)
-        # - rp==0の時はcolumn_ceiling guideが機能するため本bonusは不必要
-        # - 同type(next_type==next_next_type)の時はaxis 1のmerge bonusが既に処理
-        #
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 extension)
-        # Fixes rollback failure mode: "merge_available=false時の配置品質低下 → merge drought長期化 → max_y runaway"
-        if (
-            merge_grade == "NO"
-            and max_y >= 0.8
-            and piece_count >= 25
-            and reactive_pair_count >= 2
-            and not death_spiral
-            and next_type != next_next_type  # next piece differs from current — no immediate same-type merge
-        ):
-            # Count how many pieces of next_type (current piece type) exist on board
-            same_type_count = sum(1 for p in pieces if p.get("type") == next_type)
-
-            if same_type_count >= 2:
-                # Collect positions of same-type pieces on board
-                same_type_positions = [(p["x"], p["y"]) for p in pieces if p.get("type") == next_type]
-
-                # Calculate centroid of same-type pieces
-                centroid_x = sum(p[0] for p in same_type_positions) / len(same_type_positions)
-                centroid_y = sum(p[1] for p in same_type_positions) / len(same_type_positions)
-
-                # Calculate distance from candidate landing position to centroid
-                dist = ((x - centroid_x) ** 2 + (landing_y - centroid_y) ** 2) ** 0.5
-
-                # Bonus: +250*merge_mult, ties into column_ceiling guide range (800-1250)
-                # Smaller than column_ceiling, acts as tie-breaker for same-type clustering
-                # dist=0 → 250, dist=1 → 200, dist=2 → 150, dist>=3 → 0
-                merge_path_proximity_bonus = max(0.0, 250.0 - dist * 50.0) * merge_mult
-
-                if merge_path_proximity_bonus > 20:
-                    score += merge_path_proximity_bonus
-                    reasons.append("MERGE_PATH_PROXIMITY")
 
         # ----- evaluation axis 9.12: Merge drought exit — merge path creation (NEW v617) -----
         # analysis_result.md adopted hypothesis: "Merge drought exit trigger" —
