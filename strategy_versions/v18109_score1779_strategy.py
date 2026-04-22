@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v669: CRITICAL phase NEAR height penalty enhancement
-# extra_low T71-T72: NEAR選択でもmax_y=2.95→4.07ジャンプ死亡
-# deadline_crossed && max_y>=2.5 && reactive_pairs>=5 && merge_grade==NEAR 时に
-# 追加height penalty (landing_y * 30.0 * height_mult) を適用して最下層配置を誘導
-# Constraint: rollback禁止はNO_MERGE penalty、NEAR height penaltyは許容
-# Refs: tmp/analysis_result.md (Implementation Plan: CRITICAL phase NEAR height enhancement)
-# Fixes rollback failure mode: NEAR選択時のmax_yジャンプアウト
-
 # v668: axis 9.10 extension — Merge Path Proximity Bonus (merge drought recovery)
 # analysis_result.md adopted hypothesis: Merge Drought Recovery Enhancement
 # When merge_grade=="NO" && max_y>=0.8 && pc>=25 && rp>=2 && !death_spiral &&
@@ -2455,22 +2447,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("DANGER_CONFLICT_PENALTY")
 
         score -= height_penalty
-
-        # v669: CRITICAL phase NEAR height penalty enhancement
-        # extra_low T71-T72: max_y=2.95→4.07 jump death despite NEAR merge
-        # At extreme CRITICAL (max_y>=2.5, rp>=5), NEAR can increase max_y
-        # Adding extra height penalty when NEAR selected in this state
-        # Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty
-        # refs: tmp/analysis_result.md (Implementation Plan: CRITICAL phase NEAR height enhancement)
-        #       game_history/20260422_185638_score0595.jsonl (extra_low T71-T72 failure mode)
-        if (deadline_crossed and
-            max_y >= 2.5 and
-            reactive_pair_count >= 5 and
-            merge_grade == "NEAR"):
-            # NEAR in extreme critical: height penalty x1.5 to encourage lowest y
-            extra_critical_near_penalty = abs(landing_y) * 30.0 * height_mult
-            score -= extra_critical_near_penalty
-            reasons.append(f"CRITICAL_NEAR_HEIGHT_PENALTY:{extra_critical_near_penalty:.0f}")
 
         # ----- v624: merge_available=false + max_y>=1.8 → height boost + edge prohibition -----
         # worst game T70: merge_available=false, max_y=2.66, x=3.0 (edge) → max_y→3.18 death
