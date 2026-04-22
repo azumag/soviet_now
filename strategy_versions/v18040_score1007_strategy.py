@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v663: SCATTER_ZONE_EDGE_PROHIBITION - edge prohibition in scatter zone (max_y >= -1.0)
+# v663: SCATTER_ZONE_EDGE_PROHIBITION - edge prohibition in scatter zone (max_y >= 0.0)
 # worst game T23-T25: merge_available=false, max_y=-1.19, edge x=3.0/-2.86 → pieces scattered
 # → merge drought → max_y runaway → game over score 500
 # When NO merge globally available AND board is still low (max_y >= -1.0),
@@ -61,6 +61,13 @@
 # Refs: tmp/analysis_result.md (Edge Prohibition Strengthen for NO_MERGE + Elevated Board)
 # refs: data/mandatory_themes.txt (デッドラインにおけるedge placement禁止)
 # Constraint: axis 8.8 penalty magnitude/threshold NOT modified
+
+# v665: SCATTER_ZONE_EDGE_PROHIBITION threshold -1.0→0.0
+# v663 threshold fires too aggressively (max_y >= -1.0 near board floor at game start max_y=-5.0)
+# Early-mid game edge placement should be allowed when board is still low (max_y < 0.0)
+# v624 (max_y>=1.5) still catches elevated board edge restriction
+# Adopted from analysis_result.md: reduces board congestion, enables type growth
+# refs: tmp/analysis_result.md (Implementation Plan)
 
 # v664: MERGE_AVAILABILITY_AUDIT - merge_available vs candidate merge_grade mismatch detection
 # worst game T41-T44: reason shows HIGH_LAYER while merge_available=true, best_merge_grade="NEAR"
@@ -2380,15 +2387,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v663: SCATTER_ZONE_EDGE_PROHIBITION - edge prohibition before board elevates
         # worst game T23-T25: merge_available=false, max_y=-1.19, edge x=3.0/-2.86 selected
         # → pieces scattered → merge drought → max_y runaway → game over score 500
-        # When NO merge globally available AND board is still low (max_y >= -1.0),
+        # When NO merge globally available AND board is still low (max_y >= 0.0),
         # prohibit edge placement to prevent scatter that amplifies future merge drought.
         # This catches the failure mode that v624/v628 (max_y>=1.5 OR deadline_crossed) miss.
-        # Constraint: max_y < -1.0 → allowed (low enough that central placement is natural)
+        # Constraint: max_y < 0.0 → allowed (low enough that central placement is natural)
         # Constraint: merge_available=true → NEVER fires (don't obstruct merge capture)
         # Constraint: deadline_crossed → v662/v624 handle with stronger penalties
         # Refs: tmp/analysis_result.md, game_history/20260422_072935_score0500.jsonl
         if merge_grade == "NO" and not global_merge_available:
-            if max_y >= -1.0:
+            if max_y >= 0.0:
                 # lighter than v624 (max_y>=1.5): -400/-200 vs -1200/-600
                 edge_penalty = 0.0
                 if abs(x) >= 2.5:

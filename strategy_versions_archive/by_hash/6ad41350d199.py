@@ -16,12 +16,6 @@
 # Fixes rollback failure mode: edge placement selected when merge unavailable at deadline
 # refs: tmp/analysis_result.md (Implementation Plan Change 2), data/mandatory_themes.txt
 
-# v666: Extra congestion penalty for NEAR in gap zone
-# GAP_ZONE_NEAR_PENALTY -1500→-2000 when piece_count>=35
-# At high congestion (piece_count>=35), even successful NEAR is costly
-# worst game T52-T53: piece_count>=35, NEAR selected → max_y increase → game over
-# refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt
-
 # v661: Strengthen GAP_ZONE_NEAR_PENALTY -500→-1500
 # Worst game T47: NEAR at max_y=2.69, deadline_crossed, -500 penalty insufficient
 # Combined bonuses (NEAR+600, DANGER_NEAR+500, DANGER_ZONE+500, reactive) net positive despite gap zone
@@ -1391,11 +1385,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: NEAR selected in gap zone (max_y>=2.0, deadline_crossed)
         # refs: tmp/analysis_result.md (Implementation Plan Change 1), tmp/state/last_rollback_postmortem.md
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
-            penalty = 1500.0
-            # v666: extra congestion penalty — at high piece_count, even successful NEAR is costly
-            if piece_count >= 35:
-                penalty += 500.0
-            score -= penalty
+            score -= 1500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
