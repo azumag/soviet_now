@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v673: Lower v672 reactive_pair_count threshold 4→2 to catch dangerous NEAR earlier
-# worst T51 (max_y=2.13, rp=2, pc=30): NEAR NOT suppressed (rp<4) → failed, max_y jumped 1.07→2.13
-# worst T57 (max_y=2.48, rp=3, pc=35): NEAR NOT suppressed (rp<4) → failed
-# Analysis: rp>=2 in gap zone is already dangerous; lowering threshold strengthens merge priority
-# Fixes rollback failure mode: dangerous NEAR selection in gap zone causing height runaway
-# refs: tmp/analysis_result.md (Gap Zone NEAR Suppression Threshold Lowering)
-
 # v672: Gap Zone NEAR Merge Suppression — suppress NEAR when gap zone (max_y>=2.0, deadline_crossed)
 # with high congestion (piece_count>=30) AND high reactive complexity (reactive_pair_count>=4)
 # worst T41/T42: rp=6, pc=32 → NEAR suppressed, NO_MERGE forced (score_delta=0 failure mode)
@@ -2481,7 +2474,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             max_y >= 2.0 and
             deadline_crossed and
             piece_count >= 30 and
-            reactive_pair_count >= 2
+            reactive_pair_count >= 4
         )
         if gap_zone_near_suppressed:
             # Suppress NEAR by making it non-competitive
