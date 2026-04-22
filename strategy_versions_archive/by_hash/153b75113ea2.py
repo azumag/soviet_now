@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v670: Strengthen CRITICAL phase NEAR height penalty (30.0→60.0, 2x)
-# worst T68: NEAR selected at max_y=1.85, landed y=2.57, penalty 139 insufficient vs NEAR bonus ~400+
-# 2x strengthening → penalty ~278, closer to overcoming NEAR bonus
-# Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty (safe)
-# Refs: tmp/analysis_result.md (Hypothesis: CRITICAL Phase NEAR Height Penalty Strengthening)
-#       game_history/20260422_210047_score0757.jsonl (worst T68 failure mode)
-
 # v669: CRITICAL phase NEAR height penalty enhancement
+# extra_low T71-T72: NEAR選択でもmax_y=2.95→4.07ジャンプ死亡
+# deadline_crossed && max_y>=2.5 && reactive_pairs>=5 && merge_grade==NEAR 时に
+# 追加height penalty (landing_y * 30.0 * height_mult) を適用して最下層配置を誘導
+# Constraint: rollback禁止はNO_MERGE penalty、NEAR height penaltyは許容
+# Refs: tmp/analysis_result.md (Implementation Plan: CRITICAL phase NEAR height enhancement)
+# Fixes rollback failure mode: NEAR選択時のmax_yジャンプアウト
 
 # v668: axis 9.10 extension — Merge Path Proximity Bonus (merge drought recovery)
 # analysis_result.md adopted hypothesis: Merge Drought Recovery Enhancement
@@ -2468,9 +2467,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             max_y >= 2.5 and
             reactive_pair_count >= 5 and
             merge_grade == "NEAR"):
-            # v670: Strengthen from 30.0→60.0 (2x) to overcome NEAR bonus ~400+
-            # worst T68: penalty 139→278, now closer to competing with NEAR bonus
-            extra_critical_near_penalty = landing_y * 60.0 * height_mult
+            # NEAR in extreme critical: height penalty x1.5 to encourage lowest y
+            extra_critical_near_penalty = abs(landing_y) * 30.0 * height_mult
             score -= extra_critical_near_penalty
             reasons.append(f"CRITICAL_NEAR_HEIGHT_PENALTY:{extra_critical_near_penalty:.0f}")
 

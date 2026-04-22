@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-22 19:34:32 JST`
-- Nodes: `1201`
-- Edges: `1638`
-- Current: `153b75113ea2`
+- Updated: `2026-04-22 21:33:17 JST`
+- Nodes: `1202`
+- Edges: `1639`
+- Current: `0cfa3526635b`
 - Anchor: `bc1b4cd5b7e7`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_bc1b4cd5b7e7["bc1b4cd5b7e7<br/>ANCHOR<br/>g=12 n=12<br/>comp=11696.1"]
-    h_dabe0d73be6e["dabe0d73be6e<br/>g=12 n=12<br/>comp=10052.4"]
     h_4ab4effee556["4ab4effee556<br/>g=25 n=20<br/>comp=10193.7"]
     h_b967cae67cc0["b967cae67cc0<br/>g=12 n=12<br/>comp=11291.0"]
     h_d7d8144f0091["d7d8144f0091<br/>g=12 n=12<br/>comp=10179.2"]
@@ -70,14 +69,14 @@ flowchart TD
     h_fb98ea45e664["fb98ea45e664<br/>g=24 n=20<br/>comp=9817.4"]
     h_3d47ee834ec4["3d47ee834ec4<br/>g=24 n=20<br/>comp=9637.5"]
     h_3f16df55898c["3f16df55898c<br/>g=24 n=20<br/>comp=9828.4"]
+    h_153b75113ea2["153b75113ea2<br/>g=24 n=20<br/>comp=10765.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_153b75113ea2["153b75113ea2<br/>CURRENT"]
+    h_0cfa3526635b["0cfa3526635b<br/>CURRENT"]
 
-    h_dabe0d73be6e -->|improve| h_4ab4effee556
     h_4ab4effee556 -->|improve| h_b967cae67cc0
     h_b967cae67cc0 -->|improve| h_d7d8144f0091
     h_d7d8144f0091 -->|improve| h_bafc54d108f9
@@ -127,6 +126,7 @@ flowchart TD
     h_fb98ea45e664 -->|improve| h_3d47ee834ec4
     h_3d47ee834ec4 -->|improve| h_3f16df55898c
     h_3f16df55898c -->|improve| h_153b75113ea2
+    h_153b75113ea2 -->|improve| h_0cfa3526635b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -134,7 +134,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_bc1b4cd5b7e7 anchor;
-    class h_dabe0d73be6e plain;
     class h_4ab4effee556 plain;
     class h_b967cae67cc0 plain;
     class h_d7d8144f0091 plain;
@@ -188,12 +187,13 @@ flowchart TD
     class h_fb98ea45e664 plain;
     class h_3d47ee834ec4 plain;
     class h_3f16df55898c plain;
+    class h_153b75113ea2 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_153b75113ea2 current;
+    class h_0cfa3526635b current;
 ```
 
 ## Detail 1/16
@@ -4183,9 +4183,9 @@ flowchart TD
 
 ## Detail 15/16
 
-- Range: `646eea0bf18d` .. `2ad5850b541e`
+- Range: `646eea0bf18d` .. `4504b0237b49`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `75`
+- Internal edges in this diagram: `76`
 - Cross-chunk link: `94786eb2e0fc --improve--> 646eea0bf18d`
 - Cross-chunk link: `cd90234d4d73 -.rollback.-> 98b57969e9e1`
 - Cross-chunk link: `98b57969e9e1 -.rollback.-> 22ad2bcc59f1`
@@ -4198,7 +4198,7 @@ flowchart TD
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
-- Cross-chunk link: `... and 13 more`
+- Cross-chunk link: `... and 12 more`
 
 ```mermaid
 flowchart TD
@@ -4277,11 +4277,11 @@ flowchart TD
     h_fb98ea45e664["fb98ea45e664<br/>g=24 n=20<br/>comp=9817.4"]
     h_3d47ee834ec4["3d47ee834ec4<br/>g=24 n=20<br/>comp=9637.5"]
     h_3f16df55898c["3f16df55898c<br/>g=24 n=20<br/>comp=9828.4"]
+    h_153b75113ea2["153b75113ea2<br/>g=24 n=20<br/>comp=10765.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
-    h_2ad5850b541e["2ad5850b541e"]
 
     h_646eea0bf18d -->|improve| h_bced4c938139
     h_bced4c938139 -. rollback .-> h_a7b41f8f20ad
@@ -4358,6 +4358,7 @@ flowchart TD
     h_6ad41350d199 -->|improve| h_fb98ea45e664
     h_fb98ea45e664 -->|improve| h_3d47ee834ec4
     h_3d47ee834ec4 -->|improve| h_3f16df55898c
+    h_3f16df55898c -->|improve| h_153b75113ea2
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4439,23 +4440,25 @@ flowchart TD
     class h_fb98ea45e664 plain;
     class h_3d47ee834ec4 plain;
     class h_3f16df55898c plain;
+    class h_153b75113ea2 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
-    class h_2ad5850b541e plain;
 ```
 
 ## Detail 16/16
 
-- Range: `153b75113ea2` .. `153b75113ea2`
-- Nodes in this diagram: `1`
+- Range: `2ad5850b541e` .. `0cfa3526635b`
+- Nodes in this diagram: `2`
 - Internal edges in this diagram: `0`
-- Cross-chunk link: `3f16df55898c --improve--> 153b75113ea2`
+- Cross-chunk link: `2ad5850b541e --improve--> 891e238759b8`
+- Cross-chunk link: `153b75113ea2 --improve--> 0cfa3526635b`
 
 ```mermaid
 flowchart TD
-    h_153b75113ea2["153b75113ea2<br/>CURRENT"]
+    h_2ad5850b541e["2ad5850b541e"]
+    h_0cfa3526635b["0cfa3526635b<br/>CURRENT"]
 
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
@@ -4463,10 +4466,21 @@ flowchart TD
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_153b75113ea2 current;
+    class h_2ad5850b541e plain;
+    class h_0cfa3526635b current;
 ```
 
 ## Transition Notes
+
+### Improve Game#18137 `153b7511 -> 0cfa3526`
+
+- scores: `16803 10058 13507 13724 9599 16893 9448 11005 13479 12190 14350 10350 14490 8724 9129 10919 8405 18551 11077 14410 11539 16125 7454 12460`
+- v670: Strengthen CRITICAL phase NEAR height penalty (30.0→60.0, 2x)
+- worst T68: NEAR selected at max_y=1.85, landed y=2.57, penalty 139 insufficient vs NEAR bonus ~400+
+- 2x strengthening → penalty ~278, closer to overcoming NEAR bonus
+- Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty (safe)
+- Refs: tmp/analysis_result.md (Hypothesis: CRITICAL Phase NEAR Height Penalty Strengthening)
+- game_history/20260422_210047_score0757.jsonl (worst T68 failure mode)
 
 ### Improve Game#18113 `3f16df55 -> 153b7511`
 
