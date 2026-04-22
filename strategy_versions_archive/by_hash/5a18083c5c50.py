@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v672: Gap Zone NEAR Merge Suppression — suppress NEAR when gap zone (max_y>=2.0, deadline_crossed)
-# with high congestion (piece_count>=30) AND high reactive complexity (reactive_pair_count>=4)
-# worst T41/T42: rp=6, pc=32 → NEAR suppressed, NO_MERGE forced (score_delta=0 failure mode)
-# best T154: rp=2, pc=28 → NOT suppressed (rp<4 threshold), NEAR succeeds (+122)
-# extra_low T53: rp=5, pc=37 → suppressed (pc>=30 and rp>=4), NEAR would fail
-# Constraint: rollback forbids NO_MERGE penalty modification (this only affects NEAR selection)
-# refs: tmp/analysis_result.md (Adopted Hypothesis: Gap Zone NEAR Merge Suppression)
-
 # v671: Lower v670 threshold 2.5→2.0, extend to DIRECT, increase multiplier 60→80
+# worst T50-T51 (max_y=2.03, 2.07): v670 didn't fire at <2.5, uncontrolled height escalation
+# Extends to DIRECT to catch worst T52 edge placement at max_y=2.07→3.09
+# Constraint: rollback forbids NO_MERGE penalty, not NEAR/DIRECT height penalty (safe)
+# Refs: tmp/analysis_result.md (Implementation Plan Change 1)
 
 # v670: Strengthen CRITICAL phase NEAR height penalty (30.0→60.0, 2x)
 
@@ -2459,28 +2455,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 reasons.append("DANGER_CONFLICT_PENALTY")
 
         score -= height_penalty
-
-        # NEW: Gap Zone NEAR Suppression (conditional on board congestion)
-        # When in gap zone (max_y >= 2.0, deadline_crossed=true) with high congestion
-        # and high reactive complexity, suppress NEAR entirely to prevent dangerous selections.
-        # worst T41: rp=6, pc=32, NEAR failed (delta=0, max_y jumped 1.91→2.89)
-        # worst T42: rp=6, pc=32, NEAR failed (delta=0)
-        # best T154: rp=2, pc=28, NEAR succeeded (+122) — NOT suppressed
-        # extra_low T53: rp=5, pc=37, NEAR failed — suppressed
-        # Constraint: rollback forbids merge_available=false && HIGH_LAYER (not applicable here)
-        # Constraint: rollback forbids NO_MERGE penalty modification (this doesn't touch NO_MERGE)
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: Gap Zone NEAR Merge Suppression)
-        gap_zone_near_suppressed = (
-            max_y >= 2.0 and
-            deadline_crossed and
-            piece_count >= 30 and
-            reactive_pair_count >= 4
-        )
-        if gap_zone_near_suppressed:
-            # Suppress NEAR by making it non-competitive
-            # Fall through to NO_MERGE path with forced lowest landing_y
-            merge_grade = "NO"  # Force NO_MERGE evaluation
-            nearmax_y = float('inf')  # Invalidate NEAR candidates
 
         # v671: Lower threshold 2.5→2.0 to catch height escalation earlier
         # Extend to DIRECT to catch DIRECT edge placement at worst T52 (max_y=2.07)

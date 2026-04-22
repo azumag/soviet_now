@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v670: Strengthen CRITICAL phase NEAR height penalty (30.0→60.0, 2x)
-# worst T68: NEAR selected at max_y=1.85, landed y=2.57, penalty 139 insufficient vs NEAR bonus ~400+
-# 2x strengthening → penalty ~278, closer to overcoming NEAR bonus
-# Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty (safe)
-# Refs: tmp/analysis_result.md (Hypothesis: CRITICAL Phase NEAR Height Penalty Strengthening)
-#       game_history/20260422_210047_score0757.jsonl (worst T68 failure mode)
+# v671: Lower v670 threshold 2.5→2.0, extend to DIRECT, increase multiplier 60→80
+# worst T50-T51 (max_y=2.03, 2.07): v670 didn't fire at <2.5, uncontrolled height escalation
+# Extends to DIRECT to catch worst T52 edge placement at max_y=2.07→3.09
+# Constraint: rollback forbids NO_MERGE penalty, not NEAR/DIRECT height penalty (safe)
+# Refs: tmp/analysis_result.md (Implementation Plan Change 1)
 
-# v669: CRITICAL phase NEAR height penalty enhancement
+# v670: Strengthen CRITICAL phase NEAR height penalty (30.0→60.0, 2x)
 
 # v668: axis 9.10 extension — Merge Path Proximity Bonus (merge drought recovery)
 # analysis_result.md adopted hypothesis: Merge Drought Recovery Enhancement
@@ -2457,22 +2456,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # v669: CRITICAL phase NEAR height penalty enhancement
-        # extra_low T71-T72: max_y=2.95→4.07 jump death despite NEAR merge
-        # At extreme CRITICAL (max_y>=2.5, rp>=5), NEAR can increase max_y
-        # Adding extra height penalty when NEAR selected in this state
-        # Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty
-        # refs: tmp/analysis_result.md (Implementation Plan: CRITICAL phase NEAR height enhancement)
-        #       game_history/20260422_185638_score0595.jsonl (extra_low T71-T72 failure mode)
+        # v671: Lower threshold 2.5→2.0 to catch height escalation earlier
+        # Extend to DIRECT to catch DIRECT edge placement at worst T52 (max_y=2.07)
+        # Increase multiplier 60→80 to better compete with merge bonus (~400-600)
+        # Worst T51 (max_y=2.07, NEAR): penalty ~120, worst T52 (max_y=2.07→3.09, DIRECT): penalty ~214
+        # Constraint: rollback forbids NO_MERGE penalty, not NEAR/DIRECT height penalty - safe
+        # refs: tmp/analysis_result.md (Implementation Plan Change 1)
         if (deadline_crossed and
-            max_y >= 2.5 and
+            max_y >= 2.0 and
             reactive_pair_count >= 5 and
-            merge_grade == "NEAR"):
-            # v670: Strengthen from 30.0→60.0 (2x) to overcome NEAR bonus ~400+
-            # worst T68: penalty 139→278, now closer to competing with NEAR bonus
-            extra_critical_near_penalty = landing_y * 60.0 * height_mult
-            score -= extra_critical_near_penalty
-            reasons.append(f"CRITICAL_NEAR_HEIGHT_PENALTY:{extra_critical_near_penalty:.0f}")
+            merge_grade in ("NEAR", "DIRECT")):
+            extra_critical_penalty = landing_y * 80.0 * height_mult
+            score -= extra_critical_penalty
+            reasons.append(f"CRITICAL_HEIGHT_PENALTY:{extra_critical_penalty:.0f}")
 
         # ----- v624: merge_available=false + max_y>=1.8 → height boost + edge prohibition -----
         # worst game T70: merge_available=false, max_y=2.66, x=3.0 (edge) → max_y→3.18 death
