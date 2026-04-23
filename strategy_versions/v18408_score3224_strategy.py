@@ -81,17 +81,6 @@ Phases (determined by board max Y):
      # v422 条件未達でも発動し、DIRECT merge への誘導を強化。
      # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
      # refs: tmp/analysis_result.md, tmp/improve_brief.md, game_history/20260408_113627_score1197.jsonl
-# v681: Gap Zone NEAR Height Fallback threshold 1.8 (catch max_y=1.77-1.89 range)
-# Hypothesis: worst T55-T57 (score0821): max_y=1.77-1.89, NEAR selected, delta=0,
-# then T58 max_y jumped to 2.83 (+1.06 height escalation in one turn).
-# v675 threshold 1.5 caught max_y=1.98 but NOT the 1.77-1.89 zone where NEAR begins to fail.
-# Raising to 1.8 catches the 1.77-1.89 range where NEAR starts causing height runaway.
-# Gap Zone NEAR Height Fallback = abs(landing_y) * 100.0 * height_mult (~360 in HIGH at y=2.0).
-# NOT a suppression — NEAR still available but height-penalized to prefer lower positions.
-# worst T55-T58: merge_available=true, NEAR selected at max_y=1.77, delta=0, then max_y=2.83
-# Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty (safe)
-# refs: tmp/analysis_result.md (Implementation Plan: Gap Zone threshold raise),
-#       game_history/20260423_164904_score0821.jsonl T55-T58 (worst game failure mode)
 # v552: double_russia_phase growth pipeline bonus — type13+type13→type14 and type14+type14→type15
 # Adds pipeline detection for second Russia creation when merge_grade==NO in double_russia_phase.
 # Fixes rollback failure mode: double_russia_phase merge pipeline starvation (type15x2 never achieved)
@@ -1032,25 +1021,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
-
-        # ----- v681: Gap Zone NEAR Height Fallback (threshold 1.8) -----
-        # Hypothesis: worst T55-T57 (score0821): max_y=1.77-1.89, NEAR selected, delta=0,
-        # then T58 max_y jumped to 2.83 (+1.06 height escalation in one turn).
-        # v675 threshold 1.5 caught max_y=1.98 but NOT the 1.77-1.89 zone where NEAR begins to fail.
-        # Raising to 1.8 catches the 1.77-1.89 range where NEAR starts causing height runaway.
-        # At max_y=1.8, gap_zone_near_severe_penalty = abs(landing_y) * 100.0 * height_mult
-        # In HIGH phase (height_mult=1.8), at landing_y=2.0: penalty = 2.0 * 100.0 * 1.8 = 360
-        # This is sufficient to push high-y NEAR candidates below NO merge candidates in gap zone.
-        # NOT a suppression — NEAR still available but height-penalized to prefer lower positions.
-        # worst T55: merge_available=true, NEAR selected at max_y=1.77, delta=0
-        # worst T57: max_y=1.89, NEAR selected, then T58 max_y=2.83
-        # Constraint: rollback forbids NO_MERGE penalty, not NEAR height penalty (safe)
-        # refs: tmp/analysis_result.md (Implementation Plan: Gap Zone threshold raise),
-        #       game_history/20260423_164904_score0821.jsonl T55-T58 (worst game failure mode)
-        if merge_grade == "NEAR" and max_y >= 1.8:
-            gap_zone_near_severe_penalty = abs(landing_y) * 100.0 * height_mult
-            score -= gap_zone_near_severe_penalty
-            reasons.append("GAP_ZONE_NEAR_HEIGHT_FALLBACK")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
