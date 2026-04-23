@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # vXXX: Russia phase detection expanded to type 14/15 — Russia appears = long-term perspective needed
+     #       Changed russia_phase_count from type==15 only to type in [14, 15]
+     #       Also added RUSSIA_DEADLINE_NO_MERGE_VIOLATION penalty: russia_phase && deadline_crossed && NO_MERGE && |x|>=1.5 → -5000
+     #       Fixes: worst T59 mandatory_themes violation (deadline_crossed && |x|=3.0 && NO merge)
+     #       mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る" — Russia phase NOT exempt
+     #       refs: tmp/analysis_result.md (Russia phase hypothesis)
      # v676: axis 1.7b BOARD_MAX_Y_NEAR_SUPPRESSION — max_y>=2.5 && pc>=33 && NEAR && NOT russia_phase で -1000～-3000 ペナルティ
      #       v422(landing_y条件)では補足できない「盤面全体の高さが危険レベルに達した状態」でのNEAR選択を押さえる
      #       Fixes rollback failure mode: max_y>=2.5, pc>=33 でのNEAR選択が score_delta=0 を返しmax_y暴走→ゲームオーバー
@@ -96,7 +102,7 @@ Phases (determined by board max Y):
      #       refs: tmp/analysis_result.md, data/mandatory_themes.txt, game_history/20260416_091418_score0906.jsonl
      # v550: add HIGH_MAX_Y_NEAR_PENALTY — max_y>=2.5 で NEAR merge 選択時に -300 ペナルティ
      # v549: suppress REACTIVE_PAIRS_STACKING at high pc (>=35) without merge
-     # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のフェーズ切替
+     # v548: double_russia_phase — 2つ目の(type 14/15)出現後のフェーズ切替
      # v461+v462: death-spiral noise suppression — suppress 9.6b/5.6/9.3/5/5.5 when danger>0 && rp>=3 && NO && deadline
      # v452+v454: flatten axis 8.8 NO-merge penalty to flat -4500 + fix v432 sign error
      # (older entries removed for brevity; see git log for full history)
@@ -762,13 +768,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     danger_piece_count = reactor.get("danger_piece_count", 0)
     reactor_margin = reactor.get("deadline_margin", 99.0)
 
-    # --- v322: russia phase detection (type 15 pieces on board) ---
-    # ロシアフェーズ: 盤面上にtype 15（ロシア）が1つ以上存在する場合
+    # --- vXXX: russia phase detection (type 14/15 pieces on board) ---
+    # ロシアフェーズ: 盤面上にtype 14（ロシア）またはtype 15（ソ連）が存在する場合
     # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」に基づく構造的改善
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
-    russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
+    russia_phase_count = sum(1 for p in pieces if p.get("type") in [14, 15])
     russia_phase = russia_phase_count >= 1
-    # v548: double_russia_phase — 2つ目のロシア(type 15)が盤面にある場合、
+    # v548: double_russia_phase — 2つ目の(type 14/15)が盤面にある場合、
     # ソ連建国(type 16)まであと1併合。この局面では盤面圧縮ボーナスより
     # 既存ロシアの保護と2つ目ロシアの成長パイプライン維持が最優先。
     # ロシア1つのままゲームオーバーになるのが最も惜しい負けパターン。
@@ -1732,7 +1738,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl
 
         if russia_phase:
-             # v548: double_russia_phase — 2つ目のロシアが盤面にある場合、
+             # v548: double_russia_phase — 2つ目の(type 14/15)在盘面
              # ソ連建国(type 16=136点)まであと1併合。この局面は特別扱い。
              # ロシア1つのままゲームオーバーは最も惜しい負けパターン。
              # 既存のtype 15を保護しつつ、type 13/14の成長パイプラインを維持する。
@@ -1922,6 +1928,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
             score -= max(0, (0.5 - margin)) * 4000
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
+
+        # ----- vXXX: Russia phase deadline cross penalty enhancement -----
+        # analysis: worst T59 deadline_crossed=true && |x|=3.0 && merge_available=false
+        # violates mandatory_themes (deadline crossing with NO merge). Russia phase is NOT exempt
+        # from mandatory_themes — the constraint applies in ALL phases.
+        # penalty is additive on top of existing deadline penalties:
+        #   deadline_crossed && NO_MERGE && |x|>=1.5: additional -5000 in russia_phase
+        #   (existing v661/v662 penalties remain, total becomes -5000 additional)
+        # mandatory_themes compliant: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # refs: tmp/analysis_result.md, data/mandatory_themes.txt
+        if russia_phase and deadline_crossed and merge_grade == "NO" and abs(x) >= 1.5:
+            score -= 5000.0
+            reasons.append("RUSSIA_DEADLINE_NO_MERGE_VIOLATION")
 
         # ----- v674: edge placement penalty at high pc + deadline_crossed (v668 Extended) -----
         # Failure mode: PIECE_COUNT_EDGE_BIAS — worst T64: pc=43, deadline_crossed=true, NO_MERGE
