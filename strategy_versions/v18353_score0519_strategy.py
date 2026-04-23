@@ -1,15 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v679: False NEAR Merge Detection and Cost — penalty when prev turn selected NEAR with merge_available=true but score_delta=0
-# worst T50-T54: 5 consecutive NEAR selections with merge_available=true but score_delta=0 each time (false NEAR)
-# max_y increased despite "merge available" — NEAR was selected but merge didn't execute
-# New axis: FALSE_NEAR_PENALTY -300*merge_mult when prev_reason contains NEAR AND prev_score_delta==0 AND prev_merge_available==True AND max_y>=1.5 AND merge_grade==NEAR
-# Penalty below NEAR break-even but accumulates with false NEAR history, preventing cascade
-# Fixes rollback failure mode: false NEAR selection causing height increase without merge benefit
-# Constraint: NOT a NO_MERGE penalty, only affects NEAR in gap zone; max_y < 1.5 does NOT fire
-# refs: tmp/analysis_result.md (Adopted Hypothesis: False NEAR Merge Detection and Cost)
-
 # v678: Gap Zone NO Merge Height Enforcement coefficient 150→250
 # worst T53: deadline_crossed + merge_available=false + max_y=1.89 + pc=32 → NO merge at x=1.8,
 #   height penalty insufficient → max_y runaway (1.89→2.72→3.14). Existing -4000 flat constrains
@@ -1496,34 +1487,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Apply small penalty to NEAR to make DIRECT more attractive in gap zone
             score -= 150.0
             reasons.append("GAP_ZONE_DIRECT_PREFERENCE")
-
-        # ----- axis 1.7d: False NEAR Merge Detection and Cost (v679) -----
-        # analysis_result.md adopted hypothesis: "False NEAR Merge Detection and Cost"
-        # worst game T50-T54: 5 consecutive NEAR selections with merge_available=true
-        # but score_delta=0 every time (no merge actually occurred). max_y still increased.
-        # This is a "false NEAR" — NEAR selected but merge failed to execute.
-        # Currently v676 penalizes NEAR→DIRECT preference in gap zone, but doesn't
-        # specifically penalize NEAR when it historically fails to execute.
-        # When prev turn selected NEAR with merge_available=true but score_delta=0,
-        # apply penalty to current NEAR selections in gap zone to prevent false NEAR cascade.
-        # Penalty value: -300 * merge_mult (below NEAR break-even but accumulates with history)
-        # Fires only when: prev_reason contains NEAR AND prev_score_delta == 0
-        # AND prev_merge_available == True AND max_y >= 1.5 AND merge_grade == "NEAR"
-        # Constraint: NOT a NO_MERGE penalty, only affects NEAR selection in gap zone
-        # Constraint: max_y < 1.5 does NOT fire (preserves normal NEAR selection outside gap)
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: False NEAR Merge Detection and Cost)
-        # Fixes rollback failure mode: false NEAR selection causing height increase without merge benefit
-        prev_turn_reason = game_state.get("prev_turn_reason", "")
-        prev_score_delta = game_state.get("prev_score_delta", None)
-        prev_merge_available = game_state.get("prev_merge_available", None)
-        if (prev_turn_reason is not None and "NEAR" in prev_turn_reason
-            and prev_score_delta == 0
-            and prev_merge_available is True
-            and max_y >= 1.5
-            and merge_grade == "NEAR"):
-            penalty = 300.0 * merge_mult
-            score -= penalty
-            reasons.append("FALSE_NEAR_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。

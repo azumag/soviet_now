@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-23 11:06:34 JST`
-- Nodes: `1210`
-- Edges: `1647`
-- Current: `d86543088bb5`
+- Updated: `2026-04-23 12:49:19 JST`
+- Nodes: `1211`
+- Edges: `1648`
+- Current: `9c573445b262`
 - Anchor: `bc1b4cd5b7e7`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_bc1b4cd5b7e7["bc1b4cd5b7e7<br/>ANCHOR<br/>g=12 n=12<br/>comp=11696.1"]
-    h_cd90234d4d73["cd90234d4d73<br/>g=12 n=12<br/>comp=9382.7"]
     h_22ad2bcc59f1["22ad2bcc59f1<br/>g=24 n=20<br/>comp=11199.4"]
     h_4f82c1d82d32["4f82c1d82d32<br/>g=24 n=20<br/>comp=10609.1"]
     h_4afd9c0f4c34["4afd9c0f4c34<br/>g=12 n=12<br/>comp=10404.9"]
@@ -70,12 +69,13 @@ flowchart TD
     h_313672506cb6["313672506cb6<br/>g=24 n=20<br/>comp=10020.3"]
     h_802caee8ec9a["802caee8ec9a<br/>g=24 n=20<br/>comp=10685.1"]
     h_eca5c4a98a8a["eca5c4a98a8a<br/>g=24 n=20<br/>comp=11497.7"]
+    h_d86543088bb5["d86543088bb5<br/>g=24 n=20<br/>comp=9643.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_d86543088bb5["d86543088bb5<br/>CURRENT"]
+    h_9c573445b262["9c573445b262<br/>CURRENT"]
 
     h_22ad2bcc59f1 -->|improve| h_4f82c1d82d32
     h_4f82c1d82d32 -->|improve| h_4afd9c0f4c34
@@ -129,6 +129,7 @@ flowchart TD
     h_313672506cb6 -->|improve| h_802caee8ec9a
     h_802caee8ec9a -->|improve| h_eca5c4a98a8a
     h_eca5c4a98a8a -->|improve| h_d86543088bb5
+    h_d86543088bb5 -->|improve| h_9c573445b262
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -136,7 +137,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_bc1b4cd5b7e7 anchor;
-    class h_cd90234d4d73 plain;
     class h_22ad2bcc59f1 plain;
     class h_4f82c1d82d32 plain;
     class h_4afd9c0f4c34 plain;
@@ -190,12 +190,13 @@ flowchart TD
     class h_313672506cb6 plain;
     class h_802caee8ec9a plain;
     class h_eca5c4a98a8a plain;
+    class h_d86543088bb5 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_d86543088bb5 current;
+    class h_9c573445b262 current;
 ```
 
 ## Detail 1/16
@@ -4455,9 +4456,9 @@ flowchart TD
 
 ## Detail 16/16
 
-- Range: `0b044788c9f1` .. `d86543088bb5`
-- Nodes in this diagram: `10`
-- Internal edges in this diagram: `4`
+- Range: `0b044788c9f1` .. `9c573445b262`
+- Nodes in this diagram: `11`
+- Internal edges in this diagram: `5`
 - Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -4472,17 +4473,19 @@ flowchart TD
     h_313672506cb6["313672506cb6<br/>g=24 n=20<br/>comp=10020.3"]
     h_802caee8ec9a["802caee8ec9a<br/>g=24 n=20<br/>comp=10685.1"]
     h_eca5c4a98a8a["eca5c4a98a8a<br/>g=24 n=20<br/>comp=11497.7"]
+    h_d86543088bb5["d86543088bb5<br/>g=24 n=20<br/>comp=9643.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_d86543088bb5["d86543088bb5<br/>CURRENT"]
+    h_9c573445b262["9c573445b262<br/>CURRENT"]
 
     h_0b044788c9f1 -->|improve| h_313672506cb6
     h_313672506cb6 -->|improve| h_802caee8ec9a
     h_802caee8ec9a -->|improve| h_eca5c4a98a8a
     h_eca5c4a98a8a -->|improve| h_d86543088bb5
+    h_d86543088bb5 -->|improve| h_9c573445b262
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4493,15 +4496,26 @@ flowchart TD
     class h_313672506cb6 plain;
     class h_802caee8ec9a plain;
     class h_eca5c4a98a8a plain;
+    class h_d86543088bb5 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_d86543088bb5 current;
+    class h_9c573445b262 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#18353 `d8654308 -> 9c573445`
+
+- scores: `8168 7671 6971 19528 7570 14930 9008 18240 6697 10470 9443 9472 9409 9247 12078 12174 17274 8831 13101 9779 9742 16900 12453 5364`
+- v679: False NEAR Merge Detection and Cost — penalty when prev turn selected NEAR with merge_available=true but score_delta=0
+- worst T50-T54: 5 consecutive NEAR selections with merge_available=true but score_delta=0 each time (false NEAR)
+- max_y increased despite "merge available" — NEAR was selected but merge didn't execute
+- New axis: FALSE_NEAR_PENALTY -300*merge_mult when prev_reason contains NEAR AND prev_score_delta==0 AND prev_merge_available==True AND max_y>=1.5 AND merge_grade==NEAR
+- Penalty below NEAR break-even but accumulates with false NEAR history, preventing cascade
+- Fixes rollback failure mode: false NEAR selection causing height increase without merge benefit
 
 ### Improve Game#18329 `eca5c4a9 -> d8654308`
 
