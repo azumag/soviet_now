@@ -1,15 +1,6 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v677: Gap Zone NO Merge Height Enforcement — force lowest-y NO merge in gap zone
-# worst T53: deadline_crossed + merge_available=false + max_y=1.89 + pc=32 → NO merge at x=1.8,
-#   height penalty insufficient → max_y runaway (1.89→2.72→3.14). Existing -4000 flat constrains
-#   position but not height. New penalty: abs(landing_y)*150*height_mult (~2x v671 CRITICAL base 80).
-#   Fires only at max_y>=1.8 && pc>=30 (gap zone entrance). NOT a suppression — NO merge stays available.
-# Fixes rollback failure mode: NO merge at deadline + gap zone causes max_y runaway
-# Constraint: rollback forbids NO_MERGE penalty, not height penalty on NO_MERGE (safe)
-# refs: tmp/analysis_result.md (Implementation Plan: Gap Zone NO Merge Height Enforcement)
-
 # v676: Gap Zone DIRECT Merge Preference — when NEAR selected but DIRECT available in gap zone
 # Apply -150 penalty to NEAR to encourage DIRECT (95.7% success vs NEAR 68.5%)
 # worst T52-T54: NEAR selected at merge_available=true, delta=0, max_y jumped 0.72
@@ -2549,44 +2540,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             severe_penalty = abs(landing_y) * 200.0 * height_mult
             score -= severe_penalty
             reasons.append(f"GAP_ZONE_NEAR_SEVERE_PENALTY:{severe_penalty:.0f}")
-
-        # ----- v677: Gap Zone NO Merge Height Enforcement (NEW) -----
-        # Gap Zone NO Merge Height Enforcement — force lowest-y NO merge placement in gap zone
-        #
-        # When deadline_crossed && merge_available=false && merge_grade="NO"
-        # && max_y>=1.8 && pc>=30: apply additional height penalty to push toward lowest placement.
-        #
-        # Root cause: worst game turn 53 (deadline_crossed + merge_available=false + max_y=1.89 + pc=32)
-        # selected NO merge at center (x=1.8, |x|<2.0), but height penalty was insufficient to
-        # prevent max_y runaway (1.89→2.72→3.14 in 8 turns).
-        # Existing DEADLINE_NO_MERGE_PENALTY (-4000 flat) constrains position but not height.
-        #
-        # Logic: landing_y * 150.0 * height_mult — similar magnitude to gap_zone_near_severe_penalty
-        # (~2.5x CRITICAL phase base 80) but for NO merge instead of NEAR.
-        # At landing_y=0.0: 0 penalty (best). At landing_y=2.0: 300 penalty (forces low placement).
-        # This combines with existing height penalty (base 150 * height_mult) for total ~450pt diff
-        # between y=0 and y=2, ensuring lowest-y candidate is selected.
-        #
-        # NOT a suppression: NO merge remains available, just penalized at high y.
-        # Only fires at max_y>=1.8 && pc>=30 (gap zone entrance conditions).
-        # Rollback constraint: forbids NO_MERGE penalty, not height penalty on NO_MERGE — safe.
-        # Mandatory theme: "デッドラインを超える位置上ピースを置く場合は、併合できる場合に限る"
-        #   — still enforced (|x|>=2.5 → -10000, |x|>=2.0 → -600 already present).
-        #   This change only adds height penalty, not position restriction.
-        #
-        # refs: tmp/analysis_result.md (Implementation Plan: Gap Zone NO Merge Height Enforcement)
-        # Fixes rollback failure mode: NO merge at deadline + gap zone causes max_y runaway
-        if (deadline_crossed and
-            not global_merge_available and
-            merge_grade == "NO" and
-            max_y >= 1.8 and
-            piece_count >= 30):
-            # Apply strong height penalty to force lowest-y placement in gap zone NO merge
-            # landing_y is negative when below board (good), positive when above board (dangerous)
-            # abs(landing_y) used since we want to penalize above-board heights, not below-board
-            gap_zone_no_merge_height_penalty = abs(landing_y) * 150.0 * height_mult
-            score -= gap_zone_no_merge_height_penalty
-            reasons.append(f"GAP_ZONE_NO_MERGE_HEIGHT:{gap_zone_no_merge_height_penalty:.0f}")
 
         # v671: Lower threshold 2.5→2.0 to catch height escalation earlier
         # Extend to DIRECT to catch DIRECT edge placement at worst T52 (max_y=2.07)
