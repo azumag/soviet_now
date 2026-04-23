@@ -66,6 +66,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v683: mandatory theme strict enforcement — deadline-crossing NO-merge penalty -10000
+     # mandatory_themes.txt requires NO merge at deadline position even in Russia phase.
+     # Changed: penalty -1200→-10000, removed `not russia_phase` condition.
+     # Fixes worst game failure mode: deadline_crossed + NO merge at deadline caused max_y runaway.
+     # refs: mandatory_themes.txt, tmp/analysis_result.md (Hypothesis: Mandatory theme strict enforcement)
      # v682: gap-zone bare NEAR strong penalty — when NEAR selected with merge_available=true
      # but score_delta=0 for 3+ consecutive turns (false NEAR cascade), max_y runaway occurs.
      # New axis 1.7e: penalty -400*merge_mult when merge_grade=="NEAR" AND max_y>=1.8 AND
@@ -1961,14 +1966,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # piece radius (top_y_after_drop = landing_y + radius). A piece at landing_y=2.8 with
         # radius=0.5 has top_y_after_drop=3.3, crossing deadline — but axis 2 penalty at y=2.8
         # is only moderate (~250 in HIGH phase). The crosses_deadline field captures this gap.
-        # Penalty (-1200) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
-        # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires only at
-        # merge_grade=NO and not russia_phase (Russia growth intentionally crosses deadline).
+        # Penalty (-10000) is overwhelming to override all other bonuses.
+        # Applies unconditionally — mandatory theme requires NO merge at deadline position
+        # even in Russia phase. No exceptions.
         # refs: analyze_board.py L412 (crosses_deadline computation),
-        #       game_history/20260330_144015_score0665.jsonl T60-61,
-        #       game_history/20260330_143501_score0994.jsonl T74-75
-        if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            score -= 1200.0
+        #       mandatory_themes.txt ("デッドラインを超える位置にピースを置く場合は、併合できる場合に限る。ロシア建国時でもこの原則は守れ"),
+        #       tmp/analysis_result.md (Hypothesis: Mandatory theme strict enforcement)
+        if merge_grade == "NO" and result.get("crosses_deadline", False):
+            score -= 10000.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- update best candidate -----
