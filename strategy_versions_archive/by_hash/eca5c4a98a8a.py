@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """strategy.py - Soviet Puzzle Game AI Drop Position Script
 
-# v678: Gap Zone NO Merge Height Enforcement coefficient 150→250
+# v677: Gap Zone NO Merge Height Enforcement — force lowest-y NO merge in gap zone
 # worst T53: deadline_crossed + merge_available=false + max_y=1.89 + pc=32 → NO merge at x=1.8,
 #   height penalty insufficient → max_y runaway (1.89→2.72→3.14). Existing -4000 flat constrains
-#   position but not height. New penalty: abs(landing_y)*250*height_mult (~2x v671 CRITICAL base 80).
+#   position but not height. New penalty: abs(landing_y)*150*height_mult (~2x v671 CRITICAL base 80).
 #   Fires only at max_y>=1.8 && pc>=30 (gap zone entrance). NOT a suppression — NO merge stays available.
 # Fixes rollback failure mode: NO merge at deadline + gap zone causes max_y runaway
 # Constraint: rollback forbids NO_MERGE penalty, not height penalty on NO_MERGE (safe)
@@ -2561,10 +2561,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # prevent max_y runaway (1.89→2.72→3.14 in 8 turns).
         # Existing DEADLINE_NO_MERGE_PENALTY (-4000 flat) constrains position but not height.
         #
-        # Logic: landing_y * 250.0 * height_mult — similar magnitude to gap_zone_near_severe_penalty
+        # Logic: landing_y * 150.0 * height_mult — similar magnitude to gap_zone_near_severe_penalty
         # (~2.5x CRITICAL phase base 80) but for NO merge instead of NEAR.
-        # At landing_y=0.0: 0 penalty (best). At landing_y=2.0: 500 penalty (forces low placement).
-        # This combines with existing height penalty (base 150 * height_mult) for total ~650pt diff
+        # At landing_y=0.0: 0 penalty (best). At landing_y=2.0: 300 penalty (forces low placement).
+        # This combines with existing height penalty (base 150 * height_mult) for total ~450pt diff
         # between y=0 and y=2, ensuring lowest-y candidate is selected.
         #
         # NOT a suppression: NO merge remains available, just penalized at high y.
@@ -2584,7 +2584,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Apply strong height penalty to force lowest-y placement in gap zone NO merge
             # landing_y is negative when below board (good), positive when above board (dangerous)
             # abs(landing_y) used since we want to penalize above-board heights, not below-board
-            gap_zone_no_merge_height_penalty = abs(landing_y) * 250.0 * height_mult
+            gap_zone_no_merge_height_penalty = abs(landing_y) * 150.0 * height_mult
             score -= gap_zone_no_merge_height_penalty
             reasons.append(f"GAP_ZONE_NO_MERGE_HEIGHT:{gap_zone_no_merge_height_penalty:.0f}")
 
