@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v680: Gap Zone DIRECT Merge Preference (strengthened v676)
+     # Old v676: -150 penalty to NEAR in gap zone was insufficient (NEAR bonus 600 > penalty 150)
+     # New v680: -250 penalty to NEAR +200 bonus to DIRECT in gap zone
+     # Gap zone: deadline_crossed, max_y>=2.0, piece_count>=30, merge_available
+     # worst T44: NEAR selected at max_y=2.24, deadline_crossed, pc=30, delta=0 (FAIL)
+     # best T133: DIRECT selected at same conditions with danger_direct_merge, delta=+45 (OK)
+     # Fixes rollback failure mode: NEAR→DIRECT gap zone switch for reliable merge
+     # refs: tmp/analysis_result.md (Implementation Plan: Gap Zone DIRECT Merge Preference)
      # v517: add NEAR merge cross-deadline penalty (-600) — utilize unutilized crosses_deadline for NEAR
      # Per-candidate crosses_deadline was only used for NO-merge. NEAR at deadline that crosses
      # deadline has 31.5% failure risk leaving piece at deadline height. Penalty differentiates
@@ -1083,6 +1091,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
+    # v680: compute merge_available globally — any candidate has DIRECT or NEAR merge
+    merge_available = any(r.get("merge_grade") in ("DIRECT", "NEAR") for r in results)
+
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -1107,6 +1118,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- v680: Gap Zone DIRECT Merge Preference (strengthened v676) -----
+        # analysis_result.md Implementation Plan: strengthen v676 gap zone DIRECT preference
+        # Old v676: -150 penalty to NEAR was insufficient (NEAR bonus 600 > penalty 150, NEAR won)
+        # New v680: -250 penalty to NEAR +200 bonus to DIRECT ensures DIRECT wins in gap zone
+        # Evidence:
+        #   - worst T44: NEAR selected at max_y=2.24, deadline_crossed, pc=30, delta=0 (FAIL)
+        #   - best T133: DIRECT selected at same conditions with danger_direct_merge, delta=+45 (OK)
+        # When in gap zone (deadline_crossed, max_y>=2.0, pc>=30) with merge available,
+        # DIRECT (95.7% success) is preferred over NEAR (68.5% success) to avoid failed merges.
+        # merge_available = any candidate has DIRECT or NEAR merge
+        # refs: tmp/analysis_result.md (Implementation Plan: Gap Zone DIRECT Merge Preference)
+        # Fixes rollback failure mode: NEAR→DIRECT gap zone switch for reliable merge
+        #       (v676 gap zone NEAR penalty -150 insufficient, strengthened to -250 + DIRECT +200)
+        if deadline_crossed and max_y >= 2.0 and piece_count >= 30:
+            if merge_available:
+                if merge_grade == "DIRECT":
+                    score += 200.0
+                    reasons.append("GAP_ZONE_DIRECT_BONUS")
+                elif merge_grade == "NEAR":
+                    score -= 250.0
+                    reasons.append("GAP_ZONE_NEAR_PENALTY")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
