@@ -14,6 +14,7 @@ Game Overview:
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.7b. Gap-zone NEAR merge penalty - v567: penalty at NEAR+max_y>=2.0+deadline_crossed
          1.7c. Death-spiral NEAR suppression - v579: cancel NEAR bonus at rp>=3,pc>=32,max_y>=1.5,y>=1.0
+         1.7e. Gap-zone bare NEAR strong penalty - v682: bare NEAR penalty at gap zone without danger/chain
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -65,6 +66,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v682: gap-zone bare NEAR strong penalty — when NEAR selected with merge_available=true
+     # but score_delta=0 for 3+ consecutive turns (false NEAR cascade), max_y runaway occurs.
+     # New axis 1.7e: penalty -400*merge_mult when merge_grade=="NEAR" AND max_y>=1.8 AND
+     # deadline_crossed AND piece_count>=30 AND danger_merge_available==false AND
+     # "CHAIN_MERGE"/"DANGER_ZONE"/"DANGER_NEAR" not in reasons. v680 already penalizes -250,
+     # so bare NEAR gets total -650, below NO_MERGE. DIRECT and danger/chaining NEAR unaffected.
+     # Fixes false NEAR cascade failure mode: worst T53-T55 (score0518) selected NEAR with
+     # merge_available but score_delta=0 for 3 turns; best T140/T143 used DIRECT and survived.
+     # refs: tmp/analysis_result.md (Hypothesis: Gap Zone NEAR without Danger or Chain)
      # v579: death-spiral NEAR suppression — cancel base NEAR bonus (600*merge_mult) when
      # rp>=3, pc>=32, max_y>=1.5, landing_y>=1.0. Forces low-y NEAR or NO-merge low placement.
      # Fixes rollback failure mode: high-y NEAR in death-spiral window accelerates pc growth
@@ -965,6 +975,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
+
+        # ----- axis 1.7e: gap-zone bare NEAR strong penalty (v682) -----
+        # worst T53-T55: NEAR selected with merge_available=true but score_delta=0
+        # for 3 consecutive turns (false NEAR cascade). max_y jumped 1.01→2.32 in
+        # one turn. best T140/T143: same gap zone conditions but DIRECT selected,
+        # delta>0, survived. The difference: best had danger_direct_merge or chain
+        # potential; worst had neither. When NEAR lacks both danger amplification
+        # and chain continuation, it's a "bare NEAR" — high risk of failure in gap zone.
+        # v680 already penalizes NEAR by -250 in gap zone, but bare NEAR in
+        # death-spiral conditions (rp>=8, pc>=32) with no danger/chaining needs
+        # stronger deterrent. Penalty -400*merge_mult on top of v680's -250 makes
+        # bare NEAR total -650, below NO_MERGE, while DIRECT and danger/chaining
+        # NEAR remain unaffected.
+        # Condition: merge_grade=="NEAR" AND max_y>=1.8 AND deadline_crossed AND
+        # piece_count>=30 AND danger_merge_available==false AND
+        # "CHAIN_MERGE" not in reasons AND "DANGER_ZONE" not in reasons AND
+        # "DANGER_NEAR" not in reasons.
+        # Does NOT fire when danger_merge_available=true (don't block danger piece removal)
+        # or when CHAIN_MERGE/DANGER_ZONE/DANGER_NEAR already in reasons (these have higher success rate).
+        # refs: tmp/analysis_result.md (Hypothesis: Gap Zone NEAR without Danger or Chain),
+        #       game_history/20260424_004647_score0518.jsonl (worst game T53-T55),
+        #       game_history/20260423_231907_score3767.jsonl (best game T140/T143)
+        if (merge_grade == "NEAR"
+            and max_y >= 1.8
+            and deadline_crossed
+            and piece_count >= 30
+            and not result.get("danger_merge_available", False)
+            and "CHAIN_MERGE" not in reasons
+            and "DANGER_ZONE" not in reasons
+            and "DANGER_NEAR" not in reasons):
+            score -= 400.0 * merge_mult
+            reasons.append("GAP_ZONE_BARE_NEAR_STRONG_PENALTY")
 
         # ----- axis 1.7c: death-spiral NEAR suppression (v579) -----
         # In the death-spiral window (rp>=3, pc>=32, max_y>=1.5), high-y NEAR merges
