@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-23 19:10:16 JST`
-- Nodes: `1214`
-- Edges: `1654`
-- Current: `ae06b037a7c5`
+- Updated: `2026-04-23 23:05:50 JST`
+- Nodes: `1215`
+- Edges: `1655`
+- Current: `25b49c2bfa9c`
 - Anchor: `919c76d38172`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -16,7 +16,6 @@
 ```mermaid
 flowchart TD
     h_919c76d38172["919c76d38172<br/>ANCHOR<br/>g=12 n=12<br/>comp=11689.0"]
-    h_bd3e3fcee54c["bd3e3fcee54c<br/>g=12 n=12<br/>comp=10477.8"]
     h_7248681301a1["7248681301a1<br/>g=13 n=13<br/>comp=11180.6"]
     h_a9408aac14bd["a9408aac14bd<br/>g=12 n=12<br/>comp=9676.4"]
     h_51229404551e["51229404551e<br/>g=12 n=12<br/>comp=10179.2"]
@@ -70,14 +69,14 @@ flowchart TD
     h_9c573445b262["9c573445b262<br/>g=10 n=10<br/>comp=8399.1"]
     h_d22b52f8b629["d22b52f8b629<br/>g=1 n=1<br/>comp=10065.0"]
     h_6dff28327c57["6dff28327c57<br/>g=1 n=1<br/>comp=8003.0"]
+    h_ae06b037a7c5["ae06b037a7c5<br/>g=25 n=20<br/>comp=10618.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_ae06b037a7c5["ae06b037a7c5<br/>CURRENT"]
+    h_25b49c2bfa9c["25b49c2bfa9c<br/>CURRENT"]
 
-    h_bd3e3fcee54c -->|improve| h_7248681301a1
     h_7248681301a1 -->|improve| h_a9408aac14bd
     h_51229404551e -->|improve| h_a008801e97bf
     h_a008801e97bf -->|improve| h_e412c8e16ea4
@@ -125,6 +124,7 @@ flowchart TD
     h_802caee8ec9a -->|improve| h_eca5c4a98a8a
     h_eca5c4a98a8a -->|improve| h_d86543088bb5
     h_d86543088bb5 -->|improve| h_9c573445b262
+    h_ae06b037a7c5 -->|improve| h_25b49c2bfa9c
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -132,7 +132,6 @@ flowchart TD
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
     class h_919c76d38172 anchor;
-    class h_bd3e3fcee54c plain;
     class h_7248681301a1 plain;
     class h_a9408aac14bd plain;
     class h_51229404551e plain;
@@ -186,12 +185,13 @@ flowchart TD
     class h_9c573445b262 plain;
     class h_d22b52f8b629 plain;
     class h_6dff28327c57 plain;
+    class h_ae06b037a7c5 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_ae06b037a7c5 current;
+    class h_25b49c2bfa9c current;
 ```
 
 ## Detail 1/16
@@ -4195,7 +4195,7 @@ flowchart TD
 - Cross-chunk link: `9b747bcfb2f7 --improve--> 84c1432d0191`
 - Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
 - Cross-chunk link: `6dff28327c57 -.rollback.-> 646eea0bf18d`
-- Cross-chunk link: `636b223fc3c1 --improve--> 9d131d171cbf`
+- Cross-chunk link: `646eea0bf18d --improve--> ae06b037a7c5`
 - Cross-chunk link: `... and 9 more`
 
 ```mermaid
@@ -4451,21 +4451,21 @@ flowchart TD
 
 ## Detail 16/16
 
-- Range: `0b044788c9f1` .. `ae06b037a7c5`
-- Nodes in this diagram: `14`
-- Internal edges in this diagram: `5`
+- Range: `0b044788c9f1` .. `25b49c2bfa9c`
+- Nodes in this diagram: `15`
+- Internal edges in this diagram: `6`
 - Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
 - Cross-chunk link: `9c573445b262 -.rollback.-> bc1b4cd5b7e7`
 - Cross-chunk link: `bc1b4cd5b7e7 --improve--> d22b52f8b629`
 - Cross-chunk link: `d22b52f8b629 -.rollback.-> efc4b6fe5f51`
 - Cross-chunk link: `efc4b6fe5f51 --improve--> 6dff28327c57`
 - Cross-chunk link: `6dff28327c57 -.rollback.-> 646eea0bf18d`
+- Cross-chunk link: `646eea0bf18d --improve--> ae06b037a7c5`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
 - Cross-chunk link: `e3215795865e --improve--> 355868eaf8ab`
 - Cross-chunk link: `355868eaf8ab --improve--> 71413461e56e`
-- Cross-chunk link: `2ad5850b541e --improve--> 891e238759b8`
 - Cross-chunk link: `... and 1 more`
 
 ```mermaid
@@ -4478,18 +4478,20 @@ flowchart TD
     h_9c573445b262["9c573445b262<br/>g=10 n=10<br/>comp=8399.1"]
     h_d22b52f8b629["d22b52f8b629<br/>g=1 n=1<br/>comp=10065.0"]
     h_6dff28327c57["6dff28327c57<br/>g=1 n=1<br/>comp=8003.0"]
+    h_ae06b037a7c5["ae06b037a7c5<br/>g=25 n=20<br/>comp=10618.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_ae06b037a7c5["ae06b037a7c5<br/>CURRENT"]
+    h_25b49c2bfa9c["25b49c2bfa9c<br/>CURRENT"]
 
     h_0b044788c9f1 -->|improve| h_313672506cb6
     h_313672506cb6 -->|improve| h_802caee8ec9a
     h_802caee8ec9a -->|improve| h_eca5c4a98a8a
     h_eca5c4a98a8a -->|improve| h_d86543088bb5
     h_d86543088bb5 -->|improve| h_9c573445b262
+    h_ae06b037a7c5 -->|improve| h_25b49c2bfa9c
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4504,15 +4506,26 @@ flowchart TD
     class h_9c573445b262 plain;
     class h_d22b52f8b629 plain;
     class h_6dff28327c57 plain;
+    class h_ae06b037a7c5 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_ae06b037a7c5 current;
+    class h_25b49c2bfa9c current;
 ```
 
 ## Transition Notes
+
+### Improve Game#18462 `ae06b037 -> 25b49c2b`
+
+- scores: `11092 10830 10993 9201 15532 14449 7610 13252 8335 12137 11380 11331 13093 13983 10961 10494 8397 9589 7961 23561 13629 13355 11012 9466`
+- v676: NEAR_MERGE filtering at high max_y — when max_y>=2.0 and landing_y>=0.5, skip NEAR
+- bonus (threshold lowered from 1.5 to 0.5). Filters false-positive NEAR signals where vertical
+- gap makes merge physically impossible. Worst T50: max_y=2.16, landing_y=0.47, merge_available=true
+- but score_delta=0 (false NEAR). Filter missed because 0.47<1.5. Lowered threshold catches
+- dangerous gap-zone NEAR before vertical gap becomes fatal. Fixes rollback failure mode: false
+- NEAR selection at gap zone (max_y 2.0-2.5, landing_y 0.5-1.5).
 
 ### Improve Game#18437 `646eea0b -> ae06b037`
 
