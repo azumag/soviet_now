@@ -72,11 +72,14 @@ Phases (determined by board max Y):
      #       (merge_available=true, bonus still applies). Fixes false-positive NEAR at dangerous heights
      #       when no merge exists. Forbidden: axis 9.7, Russia phase bonuses, unrelated penalty changes.
      #       refs: tmp/analysis_result.md (adopted hypothesis: REACTIVE bonus merge_available gate)
-     # v676: NEAR_MERGE filtering at high max_y — when max_y>=2.0 and landing_y>=1.5, skip NEAR
-     #       bonus (no merge bonus applied). Filters false-positive NEAR signals where vertical gap
-     #       makes merge physically impossible. Worst T65: NEAR at y=1.87 vs target y=-2.43 (gap=4+).
-     #       Best T117: NEAR at y=1.67 succeeded. Forbidden: axis 9.7, v422 penalty removal, blanket NEAR bonus.
-     #       refs: tmp/analysis_result.md (adopted hypothesis: NEAR_MERGE filtering at high max_y)
+     # v676: NEAR_MERGE filtering at high max_y — when max_y>=2.0 and landing_y>=0.5, skip NEAR
+     #       bonus (threshold lowered from 1.5 to 0.5). Filters false-positive NEAR signals where vertical
+     #       gap makes merge physically impossible. Worst T50: max_y=2.16, landing_y=0.47, merge_available=true
+     #       but score_delta=0 (false NEAR). Filter missed because 0.47<1.5. Lowered threshold catches
+     #       dangerous gap-zone NEAR before vertical gap becomes fatal. Fixes rollback failure mode: false
+     #       NEAR selection at gap zone (max_y 2.0-2.5, landing_y 0.5-1.5).
+     #       Forbidden: threshold above 1.5, axis 9.7, v422 penalty removal, blanket NEAR bonus removal.
+     #       refs: tmp/analysis_result.md (adopted hypothesis: v676 threshold adjustment 1.5→0.5)
      # v675: CROSSES_DEADLINE_EDGE_NO_MERGE — decision_crosses_deadline=true && NO_MERGE && |x|>=2.5 && NOT russia_phase で -1500 ペナルティ
      #       mandatory_themes: 「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
      #       Fixes: extra_low(1112)T64-T70で7ターン連続の decision_crosses_deadline && NO_MERGE && |x|>=2.5 を抑制
@@ -867,8 +870,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Worst game T65: NEAR selected at x=-0.99, landing_y=1.87 vs target y=-2.43
             # (4+ unit vertical gap) — merge physically impossible despite proximity signal.
             # Best game T117: same type, landing_y=1.67 (merge succeeded).
-            # Filter: reject NEAR when max_y>=2.0 AND landing_y>=1.5 (vertical gap too large).
-            if max_y >= 2.0 and landing_y >= 1.5:
+            # Filter: reject NEAR when max_y>=2.0 AND landing_y>=0.5 (vertical gap too large).
+            # v676 threshold lowered from 1.5 to 0.5: worst T50 had max_y=2.16, landing_y=0.47,
+            # merge_available=true but score_delta=0 (false NEAR). Filter missed because 0.47<1.5.
+            # Lowered threshold catches dangerous gap-zone NEAR before vertical gap becomes fatal.
+            if max_y >= 2.0 and landing_y >= 0.5:
                 # vertical separation makes merge impossible — skip NEAR bonus
                 pass
             else:
