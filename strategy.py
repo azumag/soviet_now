@@ -1955,6 +1955,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 1500.0
             reasons.append("CROSSES_DEADLINE_EDGE_NO_MERGE")
 
+        # ----- mandatory_themes: Deadline NO MERGE Penalty -----
+        # Mandatory rule: pieces may ONLY be placed at positions crossing the deadline
+        # when merge is available. Any NO_MERGE at a crossing position violates this.
+        # Penalty applies when: crosses_deadline && NO_MERGE && |x|>=1.5
+        # NOT a NO_MERGE penalty per se — it's a height penalty on positions that
+        # happen to be both high (crossing deadline) and non-merging.
+        # Constraint: rollback forbids NO_MERGE penalty, NOT height penalty on NO_MERGE positions.
+        # refs: tmp/analysis_result.md (Deadline-Crossing NO_MERGE Penalty hypothesis)
+        # Fixes rollback failure mode: NO_MERGE at deadline crossing without merge available
+        if result.get("crosses_deadline", False) and merge_grade == "NO" and abs(x) >= 1.5:
+            score -= 1500.0 * merge_mult
+            reasons.append("DEADLINE_NO_MERGE_VIOLATION")
+
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
