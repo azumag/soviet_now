@@ -34,6 +34,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
   # --- Change History ---
+# v684: False NEAR Detection and Cascading Prevention - gap zone cumulative penalty
+# worst T48-T52: 5 consecutive NEAR selections with merge_available=true but score_delta=0 (false NEAR cascade).
+# max_y increased from 2.45 to 4.23 despite "merge available". root cause: reactive_pairs>=8时NEAR执行率极低。
+# v679 tried similar logic but rollback due to threshold issues. This version: only in gap zone with precise thresholds.
+# Trigger: gap_zone (deadline_crossed AND max_y>=2.0 AND piece_count>=30) + reactive_pairs>=3 + current NEAR + prev_reason contains NEAR
+# Penalty: -200 * merge_mult per false NEAR count (max 3), offsets NEAR bonus gradually but never fully suppresses.
+# refs: tmp/analysis_result.md, tmp/state/last_rollback_analysis.md, tmp/change_log.txt
 # [BEST:3689] v126: v42-based HIGH phase merge enhancement
 # [BEST:4026] v155: chain_distance 4.5→5.0, chain_bonus 400.0→450.0 achieved best score 4026
 # [BEST:5310] v156: v42/v126成功構造復帰・CHAIN_MERGE_MERGE削除版
@@ -226,6 +233,45 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- axis 1.5: False NEAR Detection and Cascading Prevention (NEW) -----
+        # worst T48-T52: 5 consecutive NEAR selections with merge_available=true but score_delta=0
+        # (false NEAR cascade). max_y increased despite "merge available".
+        # v679尝试过但因阈值问题rollback。本次：仅在gap zone累积检测，阈值更精确。
+        #
+        # 触发条件（全部满足）:
+        #   1. gap_zone: deadline_crossed AND max_y >= 2.0 AND piece_count >= 30
+        #   2. prev_reason_contains_NEAR: 上一次选择包含"NEAR"
+        #   3. prev_score_delta_is_ZERO: 上上次或上上上次选择后score_delta == 0（连续false NEAR）
+        #   4. current_candidate is NEAR: 当前候选是NEAR merge
+        #   5. reactive_pairs >= 3: 高reactive状态（NEAR执行率低的根本原因）
+        #
+        # 惩罚值: -200 * merge_mult（每次累积，最多累积3次）
+        # 理由: NEAR bonus 600 * merge_mult 的1/3，连续3次false NEAR后完全抵消NEAR bonus
+        # 约束: max_y < 2.0时不触发（此时NEAR执行率较高）
+        #       reactive_pairs < 3时不触发（此时NEAR执行率可接受）
+        prev_score_deltas = game_state.get("prev_score_deltas", [])
+        prev_reasons = game_state.get("prev_reasons", [])
+
+        false_near_count = 0
+        if len(prev_score_deltas) >= 2 and len(prev_reasons) >= 2:
+            for i in range(min(3, len(prev_score_deltas))):
+                idx = -(i + 1)
+                if idx >= -len(prev_reasons) and idx >= -len(prev_score_deltas):
+                    if "NEAR" in prev_reasons[idx] and prev_score_deltas[idx] == 0:
+                        false_near_count += 1
+                    else:
+                        break
+
+        is_gap_zone = (reactor.get("deadline_crossed", False) and
+                       max_y >= 2.0 and
+                       piece_count >= 30 and
+                       reactive_pair_count >= 3)
+
+        if false_near_count > 0 and is_gap_zone and merge_grade == "NEAR":
+            cascade_penalty = -200.0 * merge_mult * false_near_count
+            score += cascade_penalty
+            reasons.append(f"FALSE_NEAR_CASCADE_{false_near_count}")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
