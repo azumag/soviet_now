@@ -68,6 +68,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v685: rp-dependent NEAR suppression — suppress NEAR bonus at rp>=5, high-board, deadline_crossed
+     # worst game T55: rp=5, max_y=2.39, deadline_crossed, merge_available=true → NEAR → score_delta=0.
+     # v684 rollback (rp>=8 threshold too high). New: rp>=5 && max_y>=2.0 && pc>=28 && danger_merge=false && !CHAIN_MERGE
+     # Fixes rollback failure mode: false NEAR cascade at rp=5-7 (v684 rollback target)
+     # refs: tmp/analysis_result.md (adopted hypothesis: rp-dependent NEAR suppression),
+     #       game_history/20260424_124149_score0573.jsonl T55-57 (false NEAR cascade)
      # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
      # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
      # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -1229,6 +1235,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
+
+        # ----- axis 1.7c: rp-dependent NEAR suppression (v685) -----
+        # analysis_result.md: worst game T55 (rp=5, max_y=2.39, deadline_crossed, merge_available=true)
+        # selected NEAR → score_delta=0 → pc 33→39 increased. T57 also NEAR → score_delta=0.
+        # v684 rollback: threshold rp>=8 was too high, didn't fire at rp=5-7.
+        # Key insight: rp=5-7 zone where deadline_crossed && max_y>=2.0 && pc>=28
+        # continues selecting NEAR merges that score 0, causing pc to grow to death.
+        # Implementation: when rp>=5 && merge_grade==NEAR && danger_merge_available==false
+        # && CHAIN_MERGE not in reasons, suppress NEAR bonus to 0.
+        # danger_merge_available excludes danger pieces (removal always prioritised).
+        # CHAIN_MERGE exclusion preserves chain potential merges which score higher
+        # than the risk of failing a non-chain NEAR at high rp.
+        # refs: tmp/analysis_result.md (adopted hypothesis: rp-dependent NEAR suppression),
+        #       game_history/20260424_124149_score0573.jsonl T55-57 (false NEAR cascade),
+        #       tmp/state/last_rollback_postmortem.md (forbid: NEAR at rp>=5 + gap-zone),
+        #       tmp/batch_summary.txt (rp 5-7 is the death zone gap)
+        # Fixes rollback failure mode: false NEAR cascade at rp=5-7 (v684 rollback target)
+        if (
+            merge_grade == "NEAR"
+            and reactive_pair_count >= 5
+            and not result.get("danger_merge_available", False)
+            and "CHAIN_MERGE" not in reasons
+            and deadline_crossed
+            and max_y >= 2.0
+            and piece_count >= 28
+        ):
+            # Suppress NEAR bonus — let height penalty or NO merge compete
+            score -= 600.0 * merge_mult * type_scale
+            reasons.append("RP_NEAR_SUPPRESSION")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
