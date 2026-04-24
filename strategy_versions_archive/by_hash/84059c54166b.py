@@ -46,7 +46,7 @@ Game Overview:
              9.65. Reactive near-miss type clustering - v597: merge_grade=NO時の散逸type集約
              9.10. High-type growth pipeline guidance - v609: NO merge時、type 8-12ピース重心誘導
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
-             9.8. Same-type proximity (merge drought + build-phase) - v634: pc>=8, same_type>=1で早期発火
+             9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
@@ -68,14 +68,30 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v634: axis 9.8 early activation — close build-phase same-type concentration gap
-     # Lowered pc>=25 to pc>=8 and same_type_pieces>=2 to >=1 so SAME_TYPE_PROXIMITY
-     # fires during build phase (turns 5-20, pc 8-25). With only 1 same-type piece on
-     # board, targets placement near that piece. With 2+, uses existing pair-gap logic.
-     # This fills the gap where HEIGHT_CONTROL scatters pieces during early game because
-     # no evaluation axis provides same-type clustering guidance below pc=25.
-     # Fixes rollback failure mode: "Early-game same-type concentration gap (axis 9.8 pc>=25)"
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md
+     # v685: NEAR suppression — lower gap_zone threshold (max_y >= 1.5, pc >= 28)
+     #   + danger-only fallback (deadline_crossed && !danger_merge && rp>=3, no cascade required)
+     # worst T47: deadline_crossed=true, max_y=1.16, danger_merge=false, rp=3 → NEAR suppressed
+     # worst T53: deadline_crossed=true, max_y=2.41, pc=30 → would be caught by new threshold
+     # best T116: danger_merge=true, so bypassed — NEAR bonus preserved for successful merge
+     # Fixes rollback failure mode: "danger NEAR at deadline when danger_merge=false causing cascade failure"
+     # Refs: tmp/analysis_result.md (Implementation Plan: lower threshold + danger-only fallback)
+     # v617: Late-Game Deadline MERGE-Bias Bonus — bias toward MERGE over NO_MERGE in gap-zone
+     # When deadline_crossed && max_y>=2.0 && merge_available && merge_grade==NO: +250*merge_mult penalty to NO
+     # Best game's T126-T130: MERGE worked (delta=21, pc 40→36), survived max_y=3.24
+     # Extra_high T114-T120: NEAR failed (delta=0), repeated → max_y=5.57 death
+     # Approach: add NO_MERGE penalty (not MERGE bonus), doesn't suppress MERGE selection
+     # Refs: tmp/analysis_result.md (Implementation Plan: Late-Game Deadline MERGE-Bias Bonus)
+     # Fixes rollback failure mode: "NEAR suppression approaches (v684/v685) failed — execution failure not selection"
+     # v616: DANGER_NEAR_MERGE_PRIORITY +600→+1200 at deadline — differentiate danger NEAR from non-danger NEAR
+     # NEAR success rate (68.5%) vs DIRECT (95.7%) — danger NEAR needs larger bonus to compete at deadline.
+     # worst T48-T52: danger_merge_available=false NEAR → delta=0 cascade → max_y jump
+     # best T130-T136: danger_direct_merge_available=true DIRECT → delta=55-66 sustained success
+     # Extra-low T52-T53: danger_merge_available=true NEAR → partial success, then max_y jump
+     # Fixes: "danger NEAR selected when danger_merge_available=false, causing cascade failure"
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt,
+     #       game_history/20260424_143952_score0430.jsonl (worst T48-T52),
+     #       game_history/20260424_142123_score3030.jsonl (best T130-T136),
+     #       game_history/20260424_150305_score0628.jsonl (extra_low T52-T53)
      # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
      # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
      # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -1063,7 +1079,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # Fixes rollback failure mode: "NEAR merge → fail → pc grow → NEAR merge → fail → runaway"
     #   death spiral observed in worst games (analysis_result.md adopted hypothesis)
     near_merge_suppression = (
-        max_y >= 2.0
+        max_y >= 1.5
         and deadline_crossed
         and reactive_pair_count >= 3
         and piece_count >= 28
@@ -1085,6 +1101,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         and reactive_pair_count >= 3
         and piece_count >= 28
     )
+
+    # ----- Late-Game Deadline MERGE-Bias Bonus (NEW) -----
+    # Pre-compute global merge_available flag: True if ANY candidate has merge_grade != "NO"
+    # Used by the MERGE-Bias bonus to determine if MERGE options exist on the board.
+    # refs: tmp/analysis_result.md (Implementation Plan)
+    merge_available = any(r.get("merge_grade", "NO") != "NO" for r in results)
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -1124,6 +1146,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 type_scale *= elevation_factor * pc_factor
                 # Clamp to prevent going too low or exceeding normal range
                 type_scale = max(0.3, min(type_scale, 0.8))
+            # ----- v685: DANGEROUS_NEAR_SUPPRESSED fallback (danger-only, no cascade required) -----
+            # worst T47: deadline_crossed=true, max_y=1.16, danger_merge=false, rp=3
+            #   - v604 cascade doesn't trigger (prev_reason was NO_MERGE, not NEAR)
+            #   - This fallback catches it: deadline_crossed AND danger_merge=false AND rp>=3
+            # best T116: danger_merge=true, so bypassed — NEAR bonus preserved for successful merge
+            # This is a danger-only fallback: only suppress NEAR when danger_merge is false,
+            # ensuring we don't suppress legitimate successful merges (best T116 case).
+            # Refs: tmp/analysis_result.md (Implementation Plan: danger-only fallback)
+            danger_merge = result.get("danger_merge_available", False)
+            if deadline_crossed and not danger_merge and reactive_pair_count >= 3:
+                if merge_grade == "NEAR":
+                    type_scale = 0.0
+                    reasons.append("DANGEROUS_NEAR_SUPPRESSED")
         else:
             type_scale = 1.0  # NO merge — no scaling
 
@@ -1289,8 +1324,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
                 bonus = 0.0
             else:
-                # v596: apply type_scale to prioritize high-type danger merges
-                bonus = (600.0 if deadline_crossed else 300.0) * type_scale
+                # vXXX: increase DANGER_NEAR bonus to properly differentiate from non-danger NEAR
+                # NEAR success rate (68.5%) is much lower than DIRECT (95.7%), so danger NEAR
+                # needs a larger bonus to compete with non-danger DIRECT at deadline.
+                # Direct comparison: DIRECT=1200, DANGER_DIRECT=+800=2000, current DANGER_NEAR=600-1200
+                # To make danger NEAR competitive with non-danger DIRECT: need +1200 at deadline
+                # (vs current +600, gap only +600 vs DIRECT's +1200)
+                bonus = (1200.0 if deadline_crossed else 600.0) * type_scale
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
@@ -2731,15 +2771,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
-        # ----- axis 9.8: same-type proximity for merge drought recovery + build-phase clustering -----
+        # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
         # Worst game T71-79: 9 turns, 7 with merge_grade=NO, pc 37→43. Extra_low T25-52: 27-turn drought.
-        # Also covers build-phase gap: during turns 5-20 (pc 8-25), when same-type pieces exist but no
-        # reactive/near pairs are available, NO evaluation axis provides same-type clustering guidance.
-        # HEIGHT_CONTROL dominates and scatters pieces horizontally (22.9% in low-score vs 14.8% in high-score).
-        # v634: lowered pc>=25→pc>=8 and same_type_pieces>=2→>=1 to fill this gap.
-        # With 1 same-type piece, targets placement near that piece (build-phase concentration).
-        # With 2+ same-type pieces, uses existing pair-gap logic (merge drought recovery).
+        # When merge_grade=NO and piece_count is high (>=25) and there are 2+ pieces of next_type on board,
+        # guide placement to bring same-type pieces closer together — creating future merge opportunities.
+        # This creates a "3-piece cluster" state: when next same-type arrives, immediate merge is likely.
         # NOT guidance restoration — orthogonal to death_spiral suppression (axis 9.6b/5.6/9.3 suppressed).
         # Fires ONLY when merge_grade=NO (no immediate merge possible) and NOT in death_spiral.
         # Bonus magnitude: max ~150 (tie-breaking, safe vs axis 8.8 -4500).
@@ -2748,50 +2785,34 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v598: also suppress when column_ceiling_dominant (merge_grade==NO && max_y>=1.0 && pc>=28)
         # — let column_ceiling guide placement to lowest-ceiling column during merge drought.
         # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.8 early activation),
+        # refs: tmp/analysis_result.md (Implementation Plan: merge drought column_ceiling dominance),
         #       game_history/20260411_095233_score0895.jsonl T71-79 (chronic NO merge),
         #       game_history/20260411_100940_score0932.jsonl T25-52 (27-turn drought)
-        if (merge_grade == "NO" and piece_count >= 8 and len(same_type_pieces) >= 1
+        if (merge_grade == "NO" and piece_count >= 25 and len(same_type_pieces) >= 2
                 and not death_spiral
                 and not (max_y >= 1.5 and reactive_pair_count >= 3)
                 and not column_ceiling_dominant
                 and not axis_88_horizontal_suppression):
-            # v634: single-piece proximity for build-phase same-type concentration
-            # When only 1 same-type piece exists, target placement near it for future merge opportunities.
-            # This fills the gap where HEIGHT_CONTROL scatters early-game pieces because no clustering
-            # axis activates below pc=25 (analysis: "early-game same-type concentration gap").
-            if len(same_type_pieces) >= 2:
-                same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
-                min_gap = float("inf")
-                target_x = 0.0
-                for i in range(len(same_type_sorted) - 1):
-                    gap = abs(same_type_sorted[i + 1].get("x", 0) - same_type_sorted[i].get("x", 0))
-                    if gap < min_gap:
-                        min_gap = gap
-                        target_x = (same_type_sorted[i].get("x", 0) + same_type_sorted[i + 1].get("x", 0)) / 2.0
+            # Find the pair of same_type pieces with smallest x-gap — target placement between them
+            same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
+            min_gap = float("inf")
+            target_x = 0.0
+            for i in range(len(same_type_sorted) - 1):
+                gap = abs(same_type_sorted[i + 1].get("x", 0) - same_type_sorted[i].get("x", 0))
+                if gap < min_gap:
+                    min_gap = gap
+                    target_x = (same_type_sorted[i].get("x", 0) + same_type_sorted[i + 1].get("x", 0)) / 2.0
 
-                if min_gap < 3.0:
-                    dist_to_target = abs(x - target_x)
-                    if dist_to_target < 1.5:
-                        proximity_bonus = max(0, 150.0 - dist_to_target * 80.0)
-                        avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
-                        if avg_target_y > 1.0:
-                            proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
-                        if rp2_noise_reduction:
-                            proximity_bonus *= 0.5
-                        if proximity_bonus > 0:
-                            score += proximity_bonus
-                            if "SAME_TYPE_PROXIMITY" not in "_".join(reasons):
-                                reasons.append("SAME_TYPE_PROXIMITY")
-            else:
-                single_piece = same_type_pieces[0]
-                single_x = single_piece.get("x", 0)
-                single_y = single_piece.get("y", -10)
-                dist_to_piece = abs(x - single_x)
-                if dist_to_piece < 2.0:
-                    proximity_bonus = max(0, 120.0 - dist_to_piece * 50.0)
-                    if single_y > 1.0:
-                        proximity_bonus *= max(0.0, 1.0 - (single_y - 1.0) * 0.3)
+            # Only fire if pieces are reasonably close (merge potential exists)
+            if min_gap < 3.0:
+                dist_to_target = abs(x - target_x)
+                if dist_to_target < 1.5:
+                    proximity_bonus = max(0, 150.0 - dist_to_target * 80.0)
+                    # Reduce bonus if target area is high (don't override height penalty)
+                    avg_target_y = sum(p.get("y", -10) for p in same_type_pieces) / len(same_type_pieces)
+                    if avg_target_y > 1.0:
+                        proximity_bonus *= max(0.0, 1.0 - (avg_target_y - 1.0) * 0.3)
+                    # v615: 50% reduction during rp==2 merge drought to let height penalty compete
                     if rp2_noise_reduction:
                         proximity_bonus *= 0.5
                     if proximity_bonus > 0:
@@ -2913,6 +2934,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += cluster_bonus
                         if "HIGH_TYPE_CLUSTER" not in "_".join(reasons):
                             reasons.append("HIGH_TYPE_CLUSTER")
+
+        # ----- Late-Game Deadline MERGE-Bias Bonus (NEW) -----
+        # When deadline is already crossed AND board is elevated (max_y>=2.0),
+        # prefer MERGE over NO_MERGE to achieve board compression.
+        # Best game T126-T130: MERGE execution in gap-zone worked (score_delta=21),
+        # alternated with NO to compress (pc 40→36→38→36). Survived max_y=3.24.
+        # Extra_high T114-T120: NEAR selected but failed (delta=0), repeated → max_y=5.57 death.
+        # Bonus = +250 * merge_mult when:
+        #   1. deadline_crossed == True (deadline already passed)
+        #   2. max_y >= 2.0 (elevated board)
+        #   3. merge_available == True (MERGE option exists)
+        #   4. candidate merge_grade == NO (this NO_MERGE candidate)
+        # This creates directional bias toward MERGE execution in the critical late-game zone.
+        # Does NOT suppress MERGE candidates — only adds bias for NO_MERGE penalty.
+        # refs: game_history/20260424_160543_score2456.jsonl (best T126-T130),
+        #       game_history/20260424_161531_score2273.jsonl (extra_high T114-T120),
+        #       game_history/20260424_164615_score0524.jsonl (worst T52-T53)
+        if (deadline_crossed and max_y >= 2.0
+                and merge_available and merge_grade == "NO"):
+            score += 250.0 * merge_mult
+            reasons.append("MERGE_BIAS_LATE_DEADLINE")
 
         # ----- update best candidate -----
         if score > best_score:
