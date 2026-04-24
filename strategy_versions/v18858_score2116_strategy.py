@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v556: MANDATORY_THEMES第一条遵守 — deadline_crossed && max_y >= 2.0 && merge_grade==NEAR && not russia_merge_possible → NEAR bonus 0
+     # worst T67-T70: deadline_crossed=false但max_y=1.71→NEAR選択→delta=0→pc増加→T68でmax_y=2.61に跳ね上がる
+     # worst T68: deadline_crossed=true, max_y=2.61>=2.0 → NEAR選択抑制、PC増加阻止
+     # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"を量化
+     # Fixes rollback failure mode: worst T67-T70 fail pattern (deadline超過+NEAR選択→delta=0×3+→max_y runaway)
+     # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
      # vXXX: MANDATORY_THEMES NEAR suppression — max_y>=2.5 + deadline_crossed + merge_grade==NEAR で -600 penalty
      # worst T54-56: max_y=2.87-2.89, deadline_crossed=true, merge_grade=NEAR, NEAR選択→delta=0→pc増加→max_y runaway
      # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る" の文字線遵守
@@ -933,6 +939,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
 
+    # --- russia_merge_possible: ロシア建国時のNEAR抑止免除判定 ---
+    # mandatory_themes第一条のロシア建国時免除条件
+    # ロシア建国(+4000点の大型合併近づいている状態)ではdeadline超過+高所NEARも許可
+    # next_type >= 15 (ロシア相当) 且つ 盤面に type >= 14 が存在する場合に免除
+    russia_merge_possible = next_type >= 15 and any(p["type"] >= 14 for p in pieces)
+    global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -955,8 +968,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
-            reasons.append("NEAR_MERGE")
+            # mandatory_themes第一条遵守: deadline超過時の高所NEARはpc増加リスクが高い
+            # deadline超過 && max_y >= 2.0 && NEAR merge → delta=0リスク31.5%
+            # この条件下ではNEARよりNO_MERGE+低配置の方が安全的（pc増加を回避）
+            if deadline_crossed and max_y >= 2.0 and not russia_merge_possible:
+                score += 0.0
+                reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
+            else:
+                score += 600.0 * merge_mult
+                reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
@@ -1007,8 +1027,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
         # v552: Russia-building exemption extended to next_type>=15 (v551 was >=14)
         # next_type=15 (Russia)時にRussia建国王免除を適用（piece14+とnext_type=15も免除）
-        russia_merge_possible = next_type >= 15 and any(p["type"] >= 14 for p in pieces)
-        global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
+        # v556 fix: russia_merge_possible moved to before for-loop to avoid ReferenceError
         # v552 CRITICAL escalation removed (v560 rollback): -900 at max_y>=3.0 caused
         # NEAR→NO conversion before merge bonus scoring, collapsing p25 from 11085→8819.
         # Best game (3064) succeeded with NEAR at max_y=3.12 (delta=55). Now unified
