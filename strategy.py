@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: MANDATORY_THEMES NEAR suppression — max_y>=2.5 + deadline_crossed + merge_grade==NEAR で -600 penalty
+     # worst T54-56: max_y=2.87-2.89, deadline_crossed=true, merge_grade=NEAR, NEAR選択→delta=0→pc増加→max_y runaway
+     # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る" の文字線遵守
+     # Simple conditional block (NOT cascade-style v604) — merge_grade==NEAR 单一条件のみ、per-candidate分析なし
+     # Fixes rollback failure mode: worst T54-56 fail pattern (NEAR選択 + merge可用=false + max_y runaway)
+     # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt, advice.md
      # v555: NO_MERGE height penalty multiplier — max_y>=2.5 && merge_grade==NOでheight_penaltyを2倍化
      # v550/v552はNEAR選択時のペナルティを行うが、NO merge選択時はheight指導がない問題を修正
      # worst T56 (max_y=2.31, rp=3, NO merge) → T57: max_y=3.30 (+0.99) で高所にpiece追加
@@ -125,7 +131,7 @@ def russia_growth_pipeline_bonus(pieces, x, next_type):
                     bonus += 250.0
                     reason_suffix += "_TYPE13_PIPELINE"
     return bonus, reason_suffix
-     # v550: add HIGH_MAX_Y_NEAR_PENALTY — max_y>=2.5 で NEAR merge 選択時に -300 ペナルティ
+    # v550: add HIGH_MAX_Y_NEAR_PENALTY — max_y>=2.5 で NEAR merge 選択時に -300 ペナルティ
      # worst ゲーム T71-76: max_y=2.74→2.87→3.43 で NEAR 選択されるが max_y 低下なし。
      # v422 (landing_y>=1.0) は turn72 (landing_y=0.82) では発動しない。max_y>=2.5 条件なら
      # v422 条件未達でも発動し、DIRECT merge への誘導を強化。
@@ -1547,6 +1553,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and max_y >= 3.0:
             height_penalty *= 2.5
             reasons.append("CRITICAL_NO_MERGE_HEIGHT_BOOST")
+
+        # ----- vXXX: mandatory_themes NEAR suppression at extreme height + deadline -----
+        # worst T54-56: max_y=2.87-2.89, deadline_crossed=true, merge_grade=NEAR,
+        # NEAR selected → score_delta=0 → piece_count 35→36 → max_y runaway.
+        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # At max_y>=2.5 with deadline_crossed and merge_grade==NEAR, NEAR failure is catastrophic.
+        # Simple conditional block (NOT cascade-style like v604):
+        # fires only for merge_grade==NEAR && max_y>=2.5 && deadline_crossed (no per-candidate analysis).
+        # mandatory_themes compliance — no exceptions including CHAIN_MERGE.
+        if max_y >= 2.5 and deadline_crossed and merge_grade == "NEAR":
+            score -= 600.0
+            reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
