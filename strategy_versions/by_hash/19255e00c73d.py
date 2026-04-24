@@ -68,13 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v617: Late-Game Deadline MERGE-Bias Bonus — bias toward MERGE over NO_MERGE in gap-zone
-     # When deadline_crossed && max_y>=2.0 && merge_available && merge_grade==NO: +250*merge_mult penalty to NO
-     # Best game's T126-T130: MERGE worked (delta=21, pc 40→36), survived max_y=3.24
-     # Extra_high T114-T120: NEAR failed (delta=0), repeated → max_y=5.57 death
-     # Approach: add NO_MERGE penalty (not MERGE bonus), doesn't suppress MERGE selection
-     # Refs: tmp/analysis_result.md (Implementation Plan: Late-Game Deadline MERGE-Bias Bonus)
-     # Fixes rollback failure mode: "NEAR suppression approaches (v684/v685) failed — execution failure not selection"
      # v616: DANGER_NEAR_MERGE_PRIORITY +600→+1200 at deadline — differentiate danger NEAR from non-danger NEAR
      # NEAR success rate (68.5%) vs DIRECT (95.7%) — danger NEAR needs larger bonus to compete at deadline.
      # worst T48-T52: danger_merge_available=false NEAR → delta=0 cascade → max_y jump
@@ -1094,12 +1087,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         and reactive_pair_count >= 3
         and piece_count >= 28
     )
-
-    # ----- Late-Game Deadline MERGE-Bias Bonus (NEW) -----
-    # Pre-compute global merge_available flag: True if ANY candidate has merge_grade != "NO"
-    # Used by the MERGE-Bias bonus to determine if MERGE options exist on the board.
-    # refs: tmp/analysis_result.md (Implementation Plan)
-    merge_available = any(r.get("merge_grade", "NO") != "NO" for r in results)
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -2914,27 +2901,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += cluster_bonus
                         if "HIGH_TYPE_CLUSTER" not in "_".join(reasons):
                             reasons.append("HIGH_TYPE_CLUSTER")
-
-        # ----- Late-Game Deadline MERGE-Bias Bonus (NEW) -----
-        # When deadline is already crossed AND board is elevated (max_y>=2.0),
-        # prefer MERGE over NO_MERGE to achieve board compression.
-        # Best game T126-T130: MERGE execution in gap-zone worked (score_delta=21),
-        # alternated with NO to compress (pc 40→36→38→36). Survived max_y=3.24.
-        # Extra_high T114-T120: NEAR selected but failed (delta=0), repeated → max_y=5.57 death.
-        # Bonus = +250 * merge_mult when:
-        #   1. deadline_crossed == True (deadline already passed)
-        #   2. max_y >= 2.0 (elevated board)
-        #   3. merge_available == True (MERGE option exists)
-        #   4. candidate merge_grade == NO (this NO_MERGE candidate)
-        # This creates directional bias toward MERGE execution in the critical late-game zone.
-        # Does NOT suppress MERGE candidates — only adds bias for NO_MERGE penalty.
-        # refs: game_history/20260424_160543_score2456.jsonl (best T126-T130),
-        #       game_history/20260424_161531_score2273.jsonl (extra_high T114-T120),
-        #       game_history/20260424_164615_score0524.jsonl (worst T52-T53)
-        if (deadline_crossed and max_y >= 2.0
-                and merge_available and merge_grade == "NO"):
-            score += 250.0 * merge_mult
-            reasons.append("MERGE_BIAS_LATE_DEADLINE")
 
         # ----- update best candidate -----
         if score > best_score:
