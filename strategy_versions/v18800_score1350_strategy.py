@@ -68,14 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: Hard NEAR suppression at max_y>=2.5 + deadline_crossed — mandatory_themes compliance
-     # worst_game T75-T77: NEAR at max_y=2.67-3.28 with deadline_crossed, score_delta=0, max_y runaway
-     # v604 type_scale=0.5 was insufficient to block NEAR. vXXX sets type_scale=0.0 (complete block).
-     # Applies ONLY when max_y>=2.5 AND deadline_crossed AND merge_grade==NEAR.
-     # CHAIN_MERGE exceptions NOT allowed at this height (danger outweighs chain potential).
-     # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-     # Fixes rollback failure mode: "max_y>=2.0 NEAR merge failure causing max_y runaway"
-     # refs: tmp/analysis_result.md
      # v634: axis 9.8 early activation — close build-phase same-type concentration gap
      # Lowered pc>=25 to pc>=8 and same_type_pieces>=2 to >=1 so SAME_TYPE_PROXIMITY
      # fires during build phase (turns 5-20, pc 8-25). With only 1 same-type piece on
@@ -1120,16 +1112,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v604: NEAR merge suppression in death zone — reduce type_scale below normal floor
             if near_merge_suppression and merge_grade == "NEAR":
                 type_scale = 0.5
-            # vXXX: Hard NEAR suppression at extreme height + deadline_crossed
-            # worst_game T75-T77: NEAR at max_y=2.67-3.28, deadline_crossed, score_delta=0
-            # v604 suppression (type_scale=0.5) reduced but didn't block NEAR.
-            # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-            # At max_y>=2.5 with deadline_crossed, NEAR failure risk is catastrophic.
-            # HARD suppression: type_scale=0.0, no exceptions (including CHAIN_MERGE).
-            # Below 2.5, keep v604's graduated suppression (type_scale=0.5).
-            if max_y >= 2.5 and deadline_crossed and merge_grade == "NEAR":
-                type_scale = 0.0
-                reasons.append("EXTREME_HEIGHT_NEAR_SUPPRESSED")
             # v606: pre-deadline elevated NEAR suppression — graduated reduction
             # Fires when max_y>=1.5 && rp>=3 && pc>=28 but deadline NOT yet crossed.
             # Graduated approach: avoids binary on/off, preserves legitimate high-type NEAR merges.
