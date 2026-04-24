@@ -68,6 +68,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v616: DANGER_NEAR_MERGE_PRIORITY +600→+1200 at deadline — differentiate danger NEAR from non-danger NEAR
+     # NEAR success rate (68.5%) vs DIRECT (95.7%) — danger NEAR needs larger bonus to compete at deadline.
+     # worst T48-T52: danger_merge_available=false NEAR → delta=0 cascade → max_y jump
+     # best T130-T136: danger_direct_merge_available=true DIRECT → delta=55-66 sustained success
+     # Extra-low T52-T53: danger_merge_available=true NEAR → partial success, then max_y jump
+     # Fixes: "danger NEAR selected when danger_merge_available=false, causing cascade failure"
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt,
+     #       game_history/20260424_143952_score0430.jsonl (worst T48-T52),
+     #       game_history/20260424_142123_score3030.jsonl (best T130-T136),
+     #       game_history/20260424_150305_score0628.jsonl (extra_low T52-T53)
      # v615: rp==2 merge drought horizontal noise reduction — catch before escalation
      # When rp==2 && NO merge && max_y>=1.5 && pc>=25, reduce horizontal guidance bonuses
      # (column_ceiling_bonus, merge_drought_pressure, same_type_proximity 9.8,
@@ -1281,8 +1291,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
                 bonus = 0.0
             else:
-                # v596: apply type_scale to prioritize high-type danger merges
-                bonus = (600.0 if deadline_crossed else 300.0) * type_scale
+                # vXXX: increase DANGER_NEAR bonus to properly differentiate from non-danger NEAR
+                # NEAR success rate (68.5%) is much lower than DIRECT (95.7%), so danger NEAR
+                # needs a larger bonus to compete with non-danger DIRECT at deadline.
+                # Direct comparison: DIRECT=1200, DANGER_DIRECT=+800=2000, current DANGER_NEAR=600-1200
+                # To make danger NEAR competitive with non-danger DIRECT: need +1200 at deadline
+                # (vs current +600, gap only +600 vs DIRECT's +1200)
+                bonus = (1200.0 if deadline_crossed else 600.0) * type_scale
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
