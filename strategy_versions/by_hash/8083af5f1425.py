@@ -1130,6 +1130,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
+        # ----- vXXX: Hard NEAR suppression at extreme height + deadline_crossed -----
+        # mandatory_themes compliance: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # NEAR merges at max_y >= 2.5 + deadline_crossed consistently fail (score_delta=0 in all observed cases).
+        # This includes CHAIN_MERGE NEAR — even with chain bonuses, NEAR fails at extreme height.
+        # At max_y >= 2.5 + deadline_crossed, only DIRECT merge or NO_MERGE (with height penalty) should be selected.
+        # This is NOT a type_scale modification — it is a complete block to ensure mandatory_themes compliance.
+        # refs: tmp/analysis_result.md (adopted hypothesis: Hard NEAR Suppression at Extreme Height + Deadline)
+        if max_y >= 2.5 and deadline_crossed and merge_grade == "NEAR":
+            type_scale = 0.0
+            reasons.append("EXTREME_HEIGHT_NEAR_SUPPRESSED")
+
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
         # DIRECT: direct hit target (success rate 95.7%)
