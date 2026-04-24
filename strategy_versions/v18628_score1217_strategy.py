@@ -1005,11 +1005,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_080456_score2801.jsonl, strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
         if result.get("danger_merge_available", False) and merge_grade == "NEAR":
             # v421: suppress DANGER_NEAR bonus at high pc + high landing_y + deadline
-            # Postmortem: "landing_y >= 1.5 かつ deadline_crossed 時の NEAR merge は
+            # Postmortem: "landing_y >= 0.5 かつ deadline_crossed 時の NEAR merge は
             # DANGER_NEAR_MERGE_PRIORITY を無効化するか NEAR_DEADLINE_RISK を増強すること"
-            # At pc>=33, deadline, landing_y>=1.5: danger NEAR at high y adds piece if fails
+            # At pc>=33, deadline, landing_y>=0.5: danger NEAR at high y adds piece if fails
             # (31.5% rate) with no benefit. Suppress bonus to let enhanced risk penalty work.
-            if deadline_crossed and piece_count >= 33 and landing_y >= 1.5:
+            if deadline_crossed and piece_count >= 33 and landing_y >= 0.5:
                 bonus = 0.0
             else:
                 bonus = 600.0 if deadline_crossed else 300.0
@@ -1823,20 +1823,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 2000.0
             reasons.append("DEADLINE_MERGE_URGENCY")
 
+        # v663: removed suppression condition — penalty now applies whenever rp>=3 && NO_MERGE
+        # v662 had "if not (deadline_crossed and reactive_pair_count >= 3)" which suppressed
+        # the -4500 penalty exactly when it was most needed: deadline_crossed && rp>=3.
+        # This caused HEIGHT_CONTROL to win in the worst death-spiral situations (worst T44-56:
+        # rp=3-4, deadline_crossed, merge_available=false → HEIGHT_CONTROL ×3, max_y runaway).
+        # Now penalty always fires at rp>=3 && NO_MERGE, forcing low landing_y placement.
+        # Postmortem constraint: "forbid HEIGHT_CONTROL at rp>=3 && merge_available=false" —
+        # this fix ensures NO_MERGE candidates lose to low-placed options.
+        # refs: tmp/analysis_result.md (Implementation Plan: 既存ロジック1個の置換),
+        #       tmp/state/last_rollback_postmortem.md (failure_mode: turn 35-37 HEIGHT_CONTROL)
+        # Fixes rollback failure mode: HEIGHT_CONTROL scatter at rp>=3 && merge_available=false
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v452: flatten to -4500, matching protected strategy (median 12789)
-            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
-            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
-            # axis 2 height penalty be the only differentiator — consistent low placement.
-            # v662: removed `and not global_merge_available` from suppression condition.
-            # Worst game T56: deadline_crossed=true, rp=3, merge_available=false → NO_MERGE selected,
-            # causing "deadline without merge" violation of mandatory theme.
-            # With `global_merge_available` in condition, penalty was suppressed exactly when needed most.
-            # Now penalty applies whenever deadline_crossed && rp>=3, forcing low landing_y choice.
-            # refs: tmp/analysis_result.md (Hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY suppression removal)
-            if not (deadline_crossed and reactive_pair_count >= 3):
-                score -= 4500.0
-                reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            score -= 4500.0
+            reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、

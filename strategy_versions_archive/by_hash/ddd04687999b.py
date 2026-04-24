@@ -1834,33 +1834,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Implementation Plan: 既存ロジック1個の置換),
         #       tmp/state/last_rollback_postmortem.md (failure_mode: turn 35-37 HEIGHT_CONTROL)
         # Fixes rollback failure mode: HEIGHT_CONTROL scatter at rp>=3 && merge_available=false
-        # v664: Low-Position Bonus for NO_MERGE Candidates at Reactive>=3
-        # analysis_result.md Hypothesis: "merge_available=false && reactive_pair_count >= 3 の場合、
-        # 最も低い着地位置（landing_y最小）に対して追加ボーナスを与える"
-        # v663's -4500.0 penalty makes all NO_MERGE candidates equally bad (no directional guidance).
-        # The worst game's T55-T57 selected x=3.0 (edge, high position) despite -4500 penalty
-        # because all NO_MERGE options were penalized equally - height became the tiebreaker.
-        # A BONUS for lowest position provides directional guidance: lower is better,
-        # without making all options equally bad.
-        # Bonus = (highest_NO_merge_landing_y - this_landing_y) * 200.0
-        #   - lowest candidate gets max bonus (if highest=2.0, lowest=-1.0: bonus=600)
-        #   - highest NO_MERGE candidate gets bonus=0
-        #   - preserves -4500 penalty structure, additive not replacement
-        # russia_phase excluded: axis 8.7 already handles Russia phase merge priority
-        # postmortem constraint: not landing_y-only — uses highest-lowest range
-        # refs: tmp/analysis_result.md (Hypothesis: Low-Position Bonus),
-        #       tmp/state/last_rollback_postmortem.md (failure_mode: T55-T57 height runaway)
-        if reactive_pair_count >= 3 and merge_grade == "NO" and not russia_phase:
-            # Compute highest and lowest landing_y among NO_MERGE candidates
-            no_merge_candidates = [r for r in results if r.get("merge_grade", "NO") == "NO"]
-            if no_merge_candidates:
-                no_merge_landing_ys = [r.get("landing_y", 0) for r in no_merge_candidates]
-                highest_no_merge_landing_y = max(no_merge_landing_ys)
-                lowest_no_merge_landing_y = min(no_merge_landing_ys)
-                if highest_no_merge_landing_y > lowest_no_merge_landing_y:
-                    lowest_position_bonus = (highest_no_merge_landing_y - landing_y) * 200.0
-                    score += lowest_position_bonus
-                    reasons.append("LOWEST_POSITION_BONUS")
         if reactive_pair_count >= 3 and merge_grade == "NO":
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
