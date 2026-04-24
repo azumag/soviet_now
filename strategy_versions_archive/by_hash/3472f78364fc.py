@@ -68,13 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v685: NEAR suppression — lower gap_zone threshold (max_y >= 1.5, pc >= 28)
-     #   + danger-only fallback (deadline_crossed && !danger_merge && rp>=3, no cascade required)
-     # worst T47: deadline_crossed=true, max_y=1.16, danger_merge=false, rp=3 → NEAR suppressed
-     # worst T53: deadline_crossed=true, max_y=2.41, pc=30 → would be caught by new threshold
-     # best T116: danger_merge=true, so bypassed — NEAR bonus preserved for successful merge
-     # Fixes rollback failure mode: "danger NEAR at deadline when danger_merge=false causing cascade failure"
-     # Refs: tmp/analysis_result.md (Implementation Plan: lower threshold + danger-only fallback)
      # v617: Late-Game Deadline MERGE-Bias Bonus — bias toward MERGE over NO_MERGE in gap-zone
      # When deadline_crossed && max_y>=2.0 && merge_available && merge_grade==NO: +250*merge_mult penalty to NO
      # Best game's T126-T130: MERGE worked (delta=21, pc 40→36), survived max_y=3.24
@@ -1079,7 +1072,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # Fixes rollback failure mode: "NEAR merge → fail → pc grow → NEAR merge → fail → runaway"
     #   death spiral observed in worst games (analysis_result.md adopted hypothesis)
     near_merge_suppression = (
-        max_y >= 1.5
+        max_y >= 2.0
         and deadline_crossed
         and reactive_pair_count >= 3
         and piece_count >= 28
@@ -1146,19 +1139,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 type_scale *= elevation_factor * pc_factor
                 # Clamp to prevent going too low or exceeding normal range
                 type_scale = max(0.3, min(type_scale, 0.8))
-            # ----- v685: DANGEROUS_NEAR_SUPPRESSED fallback (danger-only, no cascade required) -----
-            # worst T47: deadline_crossed=true, max_y=1.16, danger_merge=false, rp=3
-            #   - v604 cascade doesn't trigger (prev_reason was NO_MERGE, not NEAR)
-            #   - This fallback catches it: deadline_crossed AND danger_merge=false AND rp>=3
-            # best T116: danger_merge=true, so bypassed — NEAR bonus preserved for successful merge
-            # This is a danger-only fallback: only suppress NEAR when danger_merge is false,
-            # ensuring we don't suppress legitimate successful merges (best T116 case).
-            # Refs: tmp/analysis_result.md (Implementation Plan: danger-only fallback)
-            danger_merge = result.get("danger_merge_available", False)
-            if deadline_crossed and not danger_merge and reactive_pair_count >= 3:
-                if merge_grade == "NEAR":
-                    type_scale = 0.0
-                    reasons.append("DANGEROUS_NEAR_SUPPRESSED")
         else:
             type_scale = 1.0  # NO merge — no scaling
 
