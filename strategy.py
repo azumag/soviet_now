@@ -63,6 +63,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v557: MANDATORY_THEMES_NEAR_SUPPRESSED threshold lowered (max_y >= 2.0 → 1.5)
+     # Worst game T53: max_y=1.72, deadline_crossed=true, NEAR selected, FAILED (score_delta=0),
+     # max_y subsequently jumped to 2.83 causing cascade failure. At max_y=1.72, old threshold
+     # (>=2.0) did NOT suppress NEAR, but lowering to >=1.5 catches this dangerous state.
+     # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+     # NEAR merge success rate is 68.5% — at deadline with elevated max_y, failed NEAR adds a
+     # piece without merge benefit, accelerating piece_count accumulation → max_y runaway.
+     # russia_phase condition: when Russia exists, NEAR can disturb established Russia piece.
+     # Analysis evidence: worst_game T53 NEAR failed at max_y=1.72 (below old 2.0 threshold).
+     # Risk: best_game T130's successful NEAR at max_y=2.35 would be blocked, but mandatory_themes
+     # compliance (NEAR not guaranteed at deadline) justifies this trade-off for median/bottom improvement.
+     # refs: tmp/analysis_result.md (Adopted Hypothesis), tmp/improve_brief.md, tmp/batch_summary.txt,
+     #       game_history/20260425_050807_score0335.jsonl (worst_game T53 failure analysis)
      # v474: restore axis 5.6 growth center proximity base 60→100 — re-apply v471 per postmortem
      # v471 (base 100) was individually validated in v469→v470→v471 progression but rolled back as
      # cascade collateral of v466 NEAR suppression. Postmortem explicitly identified v466 (NEAR at pc>=32)
@@ -810,6 +823,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     next_type = next_piece.get("type", 0)
     next_next_type = next_next_piece.get("type", 0)
 
+    # v557: russia_merge_possible — next piece can complete Russia merge (type14+ on board, next_type >= 14)
+    russia_merge_possible = next_type >= 14 and any(p.get("type", 0) >= 14 for p in pieces)
+
     # --- v149: pre-calculate merged type (for chain judgment) ---
     merged_type = min(next_type + 1, 16)
     
@@ -867,8 +883,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
-            reasons.append("NEAR_MERGE")
+            # v557: MANDATORY_THEMES_NEAR_SUPPRESSED at max_y >= 1.5 (lowered from 2.0)
+            # Worst game T53: max_y=1.72, deadline_crossed=true, NEAR selected, FAILED
+            # (score_delta=0), max_y subsequently jumped to 2.83. Suppression at >=1.5
+            # would have caught this dangerous state earlier. mandatory_themes:
+            # "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+            # russia_merge_possible condition: when Russia merge (type14+next + type14+on_board)
+            # is possible with the next piece, NEAR suppression is NOT applied to allow
+            # the Russia merge opportunity to proceed.
+            if deadline_crossed and max_y >= 1.5 and not russia_merge_possible:
+                score += 0.0
+                reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
+            else:
+                score += 600.0 * merge_mult
+                reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
