@@ -68,6 +68,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: Active fallback routing for NEAR suppression (analysis_result.md adopted hypothesis)
+     # When max_y>=2.5 && deadline_crossed && suppressed NEAR becomes best candidate,
+     # if it crosses deadline without merge, actively select safest non-deadline-crossing or merge candidate.
+     # mandatory_themes第一条: deadline超越位置でのマージなし配置禁止
+     # refs: tmp/analysis_result.md (Implementation Plan: Active Fallback Selection),
+     #       game_history/20260425_181724_score0605.jsonl (worst game T57 fallback violation),
+     #       data/mandatory_themes.txt (第一条)
+     # Fixes rollback failure mode: NEAR suppression fallback selection (worst_game T57-T63 pattern)
      # vXXX: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
      # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
      # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -988,6 +996,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_x = 0.0
     best_score = -float("inf")
     best_reason = ""
+    best_result = None  # track result dict for post-loop fallback check
+
+    # --- fallback routing state (vXXX: mandatory_themes active fallback) ---
+    suppressed_near_was_best = False  # track if suppressed NEAR became best candidate
 
     # --- board information collection ---
     pieces = game_state.get("pieces", [])
@@ -1213,6 +1225,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # NEAR would land at or above current max_y — suppress (dangerous)
                 score -= 600.0
                 reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
+                suppressed_near_was_best = True
             # else: allow this NEAR — it lands below current max_y, will compress board
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
@@ -3156,6 +3169,45 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+            best_result = result
+
+    # ----- vXXX: active fallback routing when NEAR suppression fires (analysis_result.md) -----
+    # mandatory_themes第一条の精神: デッドライン超越位置でのマージなき配置を避ける
+    # 問題: max_y>=2.5 && deadline_crossed && NEAR抑制発動時、NEAR candidateに-600ペナルティを適用しても、
+    # fallback candidateがx=-3.0（deadline超越+マージなし）という最悪選択をする場合がある
+    # 解決: 抑制条件下でbest_candidateがdeadline超越+マージなしの場合、
+    # 非deadline超越またはマージありのcandidateを見つけて選択する
+    # refs: tmp/analysis_result.md (Implementation Plan: Active Fallback Selection),
+    #       game_history/20260425_181724_score0605.jsonl (worst game T57 fallback violation),
+    #       data/mandatory_themes.txt (第一条: デッドライン超越位置での併合なし配置禁止)
+    if suppressed_near_was_best and best_result is not None:
+        best_merges = best_result.get("merge_grade", "NO") != "NO"
+        best_crosses = best_result.get("crosses_deadline", False)
+        if best_crosses and not best_merges:
+            # best was suppressed NEAR that crosses deadline without merge — find safer fallback
+            # mandatory_themes第一条: deadline超越位置でのマージなし配置禁止
+            # Find the safest candidate: prefers !crosses_deadline > has_merge > crosses_deadline+!merge
+            fallback_bonus = 300.0
+            safe_candidates = []
+            merge_candidates = []
+            for result in results:
+                if result is best_result:
+                    continue
+                r_crosses = result.get("crosses_deadline", False)
+                r_merges = result.get("merge_grade", "NO") != "NO"
+                r_x = result["x"]
+                if not r_crosses:
+                    safe_candidates.append(r_x)
+                elif r_merges:
+                    merge_candidates.append(r_x)
+
+            # Prefer: (1) doesn't cross deadline, (2) has merge, (3) crosses deadline (fallback of last resort)
+            if safe_candidates:
+                best_x = safe_candidates[0]
+                best_reason = "MANDATORY_THEMES_FALLBACK_SAFE"
+            elif merge_candidates:
+                best_x = merge_candidates[0]
+                best_reason = "MANDATORY_THEMES_FALLBACK_MERGE"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
