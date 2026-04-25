@@ -68,6 +68,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
+     # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
+     # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
+     # refs: tmp/analysis_result.md (Implementation Plan: NEAR抑制safety valve)
+     # Fixes rollback failure mode: worst_game T64 NEAR抑制下でfallback x=-3.0が選択されmax_y跳ね上がり
      # v623: axis 8.8d rp=1 merge drought column_ceiling prioritization — suppress competing horizontal guides
      # When rp=1 && NO merge && max_y>=1.5 && pc>=25, suppress axis 9.6b and 9.8 to let column_ceiling dominate.
      # Fixes rollback failure mode: "rp=1 merge drought時の水平誘導分散 — column_ceilingがaxis 9.6b/9.8と競合し端配置"
@@ -1191,6 +1196,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
             low_type_high_pc_penalty = 800.0 * merge_mult
             score -= low_type_high_pc_penalty
             reasons.append("LOW_TYPE_NEAR_MERGE_HIGH_PC_PENALTY")
+
+        # vXXX: NEAR suppression with landing-height safety valve
+        # mandatory_themes第一条の精神: デッドライン超越位置でのマージなき配置を避ける
+        # しかし抑制されたNEAR optionsの中にlanding_yがcurrent max_yより低いものがある場合、
+        # そのNEARはboard compressionに貢献するため抑制を緩和
+        # Safety valve: NEAR candidates with landing_y well below current max_y are allowed
+        # even in the suppression zone (max_y >= 2.5 && deadline_crossed).
+        # Threshold 0.3u: provides meaningful distinction while avoiding edge cases.
+        # refs: tmp/analysis_result.md (Implementation Plan: NEAR抑制safety valve)
+        # Fixes rollback failure mode: worst_game T64 NEAR抑制下でfallback x=-3.0が選択されmax_y跳ね上がり
+        landing_height_below_board = landing_y < (max_y - 0.3)
+
+        if max_y >= 2.5 and deadline_crossed and merge_grade == "NEAR":
+            if not landing_height_below_board:
+                # NEAR would land at or above current max_y — suppress (dangerous)
+                score -= 600.0
+                reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
+            # else: allow this NEAR — it lands below current max_y, will compress board
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
