@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-25 09:21:26 JST`
-- Nodes: `1232`
-- Edges: `1682`
-- Current: `53e5170795f4`
-- Anchor: `5a5041d085a2`
+- Updated: `2026-04-25 11:16:37 JST`
+- Nodes: `1233`
+- Edges: `1683`
+- Current: `b273e6f834aa`
+- Anchor: `53e5170795f4`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,8 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_5a5041d085a2["5a5041d085a2<br/>ANCHOR<br/>g=24 n=20<br/>comp=11638.3"]
-    h_819067c64ecd["819067c64ecd<br/>g=12 n=12<br/>comp=10790.8"]
     h_7765ed3c0b99["7765ed3c0b99<br/>g=25 n=20<br/>comp=10809.7"]
     h_a223ce2790aa["a223ce2790aa<br/>g=19 n=19<br/>comp=10291.5"]
     h_344d7c0281f1["344d7c0281f1<br/>g=24 n=20<br/>comp=11210.8"]
@@ -70,14 +68,14 @@ flowchart TD
     h_658b142bc0a5["658b142bc0a5<br/>g=6 n=6<br/>comp=8910.8"]
     h_ba82d13208dc["ba82d13208dc<br/>g=24 n=20<br/>comp=10428.5"]
     h_f3542fcd01bf["f3542fcd01bf<br/>g=24 n=20<br/>comp=11059.7"]
+    h_53e5170795f4["53e5170795f4<br/>ANCHOR<br/>g=24 n=20<br/>comp=11667.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_53e5170795f4["53e5170795f4<br/>CURRENT"]
+    h_b273e6f834aa["b273e6f834aa<br/>CURRENT"]
 
-    h_819067c64ecd -->|improve| h_7765ed3c0b99
     h_7765ed3c0b99 -->|improve| h_a223ce2790aa
     h_344d7c0281f1 -->|improve| h_bf2d8db7bd14
     h_bf2d8db7bd14 -->|improve| h_fd5af616a681
@@ -117,14 +115,13 @@ flowchart TD
     h_127c12556064 -->|improve| h_658b142bc0a5
     h_ba82d13208dc -->|improve| h_f3542fcd01bf
     h_f3542fcd01bf -->|improve| h_53e5170795f4
+    h_53e5170795f4 -->|improve| h_b273e6f834aa
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_5a5041d085a2 anchor;
-    class h_819067c64ecd plain;
     class h_7765ed3c0b99 plain;
     class h_a223ce2790aa plain;
     class h_344d7c0281f1 plain;
@@ -178,12 +175,13 @@ flowchart TD
     class h_658b142bc0a5 plain;
     class h_ba82d13208dc plain;
     class h_f3542fcd01bf plain;
+    class h_53e5170795f4 anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_53e5170795f4 current;
+    class h_b273e6f834aa current;
 ```
 
 ## Detail 1/16
@@ -3079,7 +3077,7 @@ flowchart TD
     h_83703f8c4c67["83703f8c4c67<br/>g=24 n=20<br/>comp=11441.3"]
     h_854dd86604da["854dd86604da<br/>g=12 n=12<br/>comp=9886.7"]
     h_5a79c70f09fb["5a79c70f09fb<br/>g=12 n=12<br/>comp=8970.9"]
-    h_5a5041d085a2["5a5041d085a2<br/>ANCHOR<br/>g=24 n=20<br/>comp=11638.3"]
+    h_5a5041d085a2["5a5041d085a2<br/>g=24 n=20<br/>comp=11638.3"]
     h_97a63b4bac79["97a63b4bac79<br/>g=25 n=20<br/>comp=11258.1"]
     h_23cb1f623799["23cb1f623799<br/>g=12 n=12<br/>comp=10932.4"]
     h_5b1ed9feee39["5b1ed9feee39<br/>g=12 n=12<br/>comp=11233.4"]
@@ -3260,7 +3258,7 @@ flowchart TD
     class h_83703f8c4c67 plain;
     class h_854dd86604da plain;
     class h_5a79c70f09fb plain;
-    class h_5a5041d085a2 anchor;
+    class h_5a5041d085a2 plain;
     class h_97a63b4bac79 plain;
     class h_23cb1f623799 plain;
     class h_5b1ed9feee39 plain;
@@ -4443,9 +4441,9 @@ flowchart TD
 
 ## Detail 16/16
 
-- Range: `0b044788c9f1` .. `53e5170795f4`
-- Nodes in this diagram: `32`
-- Internal edges in this diagram: `14`
+- Range: `0b044788c9f1` .. `b273e6f834aa`
+- Nodes in this diagram: `33`
+- Internal edges in this diagram: `15`
 - Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
 - Cross-chunk link: `9c573445b262 -.rollback.-> bc1b4cd5b7e7`
 - Cross-chunk link: `bc1b4cd5b7e7 --improve--> d22b52f8b629`
@@ -4488,12 +4486,13 @@ flowchart TD
     h_658b142bc0a5["658b142bc0a5<br/>g=6 n=6<br/>comp=8910.8"]
     h_ba82d13208dc["ba82d13208dc<br/>g=24 n=20<br/>comp=10428.5"]
     h_f3542fcd01bf["f3542fcd01bf<br/>g=24 n=20<br/>comp=11059.7"]
+    h_53e5170795f4["53e5170795f4<br/>ANCHOR<br/>g=24 n=20<br/>comp=11667.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
-    h_53e5170795f4["53e5170795f4<br/>CURRENT"]
+    h_b273e6f834aa["b273e6f834aa<br/>CURRENT"]
 
     h_0b044788c9f1 -->|improve| h_313672506cb6
     h_313672506cb6 -->|improve| h_802caee8ec9a
@@ -4509,6 +4508,7 @@ flowchart TD
     h_127c12556064 -->|improve| h_658b142bc0a5
     h_ba82d13208dc -->|improve| h_f3542fcd01bf
     h_f3542fcd01bf -->|improve| h_53e5170795f4
+    h_53e5170795f4 -->|improve| h_b273e6f834aa
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4541,15 +4541,26 @@ flowchart TD
     class h_658b142bc0a5 plain;
     class h_ba82d13208dc plain;
     class h_f3542fcd01bf plain;
+    class h_53e5170795f4 anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
-    class h_53e5170795f4 current;
+    class h_b273e6f834aa current;
 ```
 
 ## Transition Notes
+
+### Improve Game#18957 `53e51707 -> b273e6f8`
+
+- scores: `14027 9484 9640 14047 10121 13029 8533 17174 13218 13389 13115 19071 15216 14868 10613 22071 7672 13743 10118 11884 10795 8429 11999 8761`
+- v560: Fix russia_phase NEAR override — require danger_merge OR russia_merge_possible
+- Problem (extra_high T108-T110): russia_phase unconditionally allowed NEAR even when
+- danger_merge=false and russia_merge_possible=false. max_y=3.71, deadline_crossed=true,
+- score_delta=0×3 → max_y runaway, game over. This violates mandatory_themes第一条.
+- Fix: russia_phase NEAR only allowed when danger_merge=true OR russia_merge_possible=true.
+- When neither, fall through to MANDATORY_THEMES_NEAR_SUPPRESSED (score=0).
 
 ### Improve Game#18933 `f3542fcd -> 53e51707`
 
