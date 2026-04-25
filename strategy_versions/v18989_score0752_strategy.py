@@ -69,6 +69,15 @@ Phases (determined by board max Y):
      # In russia_phase, Russia pieces are ASSETS for merging toward 2nd Russia — never suppress NEAR
      # Fixes rollback failure mode: russia_phase NEAR suppression preventing successful merges (best_game T130 pattern)
      # refs: tmp/analysis_result.md (Adopted Hypothesis: Fix russia_merge_possible condition)
+     # v561: Simplify russia_phase NEAR condition — remove danger_merge/russia_merge_possible requirement
+     # v560 attempt was over-complicated: requiring danger_merge OR russia_merge_possible caused suppression
+     # in safe NEAR scenarios (extra_high T108-T110: russia_phase && danger_merge=false -> score_delta=0x3 -> max_y runaway)
+     # v559 original intent: In russia_phase (type 15 exists), Russia is an ASSET for merging toward 2nd Russia.
+     # Allow NEAR when russia_phase and merge_grade==NEAR (geometric possibility already guaranteed by grade)
+     # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+     # Russia建国ボーナス+800的方向性を維持するため、danger_merge条件は使用しない
+     # Fixes rollback failure mode: russia_phase NEAR suppression preventing successful merges (extra_high T108-T110)
+     # refs: tmp/analysis_result.md (Adopted Hypothesis: Fix russia_merge_possible condition)
      # v558: NEAR suppression - max_y >= 1.5 requires danger_merge OR russia_phase, NO edge penalty
      # Worst game T52: NEAR at max_y=1.72, deadline_crossed=true, danger_merge=false → delta=0 cascade
      # Extra_high T115: NEAR at max_y=2.6, deadline_crossed=true, danger_merge=false → delta=0
@@ -909,12 +918,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
             if max_y >= 1.5 and deadline_crossed and not russia_merge_possible:
                 danger_merge = result.get("danger_merge_available", False)
-                # v559: Fix russia_phase logic — Russia piece is an asset for merging, not a danger
-                # In russia_phase, we WANT to merge toward Russia to create 2nd Russia.
-                # The russia_merge_possible flag is per-candidate; russia_phase is board state.
-                # When russia_phase, allow NEAR if merge is possible (not just danger_merge).
+                # v560 attempt was over-complicated: requiring danger_merge or russia_merge_possible
+                # caused suppression in safe NEAR scenarios (extra_high T108-T110: russia_phase && danger_merge=false -> score_delta=0x3 -> max_y runaway)
+                # v559 original intent: In russia_phase (type 15 exists), Russia is an ASSET for merging toward 2nd Russia.
+                # Allow NEAR when russia_phase and merge is geometrically possible (merge_grade==NEAR already).
+                # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+                # Russia建国ボーナス+800的方向性を維持するため、danger_merge条件は使用しない（merge_grade==NEARが幾何的可能性を保証）
                 if russia_phase:
-                    # In Russia phase: allow NEAR if this drop creates a merge with ANY piece
                     score += 600.0 * merge_mult
                     reasons.append("NEAR_MERGE")
                 elif danger_merge:
@@ -1079,7 +1089,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
         # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+        # v340 fix: 超危険域(reactive>=3 && deadline_crossed && merge_grade=="NO")ではaxis 9.6無効化
+        # → axis 8.8(-4500)の即時併合ペナルティを支配させ、高配置runawayを防止
+        if (reactive_pair_count >= 3 and deadline_crossed and merge_grade == "NO"):
+            pass  # suppress axis 9.6 stacking bonus in ultra-danger zone
+        elif reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
