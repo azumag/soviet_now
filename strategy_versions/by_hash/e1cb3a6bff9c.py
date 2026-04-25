@@ -1083,6 +1083,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score -= min(blocking_penalty, 500.0)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
 
+            # ----- v422: extra edge placement penalty when deadline crossed and high board -----
+            # worst T51: merge_available=false with x=3.0 edge placement (AVOID_BLOCK_REACTIVE_PAIR selected)
+            # worst T65-T67: deadline_crossed=true + max_y>=2.07 + NO_MERGE → piece_count 37→42→gameover
+            # Additional penalty for edge placement when board is already high and deadline is crossed.
+            # refs: tmp/analysis_result.md Implementation Plan item 2
+            if deadline_crossed and max_y >= 2.0 and merge_grade == "NO" and abs(x) >= 2.5:
+                score -= 400.0
+                reasons.append("EDGE_PLACEMENT_HIGH_BOARD_DEADLINE_CROSSED")
+
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
         # v197: LOW phase height_mult=0.6 enables early chain opportunities by allowing slightly higher placement
@@ -1620,9 +1629,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: analyze_board.py L412 (crosses_deadline computation),
         #       game_history/20260330_144015_score0665.jsonl T60-61,
         #       game_history/20260330_143501_score0994.jsonl T74-75
+        # Penalty phases (progressive strengthening per implementation plan):
+        # - deadline_crossed=false + crosses_deadline=true && merge_grade=NO: -1800.0 (was -1200.0, strengthened)
+        # - deadline_crossed=true + crosses_deadline=true && merge_grade=NO: -2800.0 (further strengthened)
+        # refs: tmp/analysis_result.md Implementation Plan
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            score -= 1200.0
-            reasons.append("CROSSES_DEADLINE_NO_MERGE")
+            if deadline_crossed:
+                score -= 2800.0
+                reasons.append("CROSSES_DEADLINE_NO_MERGE_DEADLINE_CROSSED")
+            else:
+                score -= 1800.0
+                reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:
