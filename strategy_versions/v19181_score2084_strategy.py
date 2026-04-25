@@ -66,6 +66,16 @@ Phases (determined by board max Y):
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
+# --- Change History ---
+# v500: cap axis 8.5 NEAR deadline bonus 600→300 — prevent additive cascade
+#   DANGER_ZONE NEAR + DANGER_NEAR(300) + REACTIVE_IMMEDIATE(400) = +1000
+#   at deadline overpowered NEAR risk penalties, causing failed NEAR selection
+#   at pc>=32+deadline. DIRECT (95.7%) unchanged, NEAR (68.5%) capped to 300.
+#   Fixes rollback failure mode: near_merge_cascade_at_high_pc_deadline (additive overconfidence)
+#   refs: tmp/analysis_result.md, tmp/improve_brief.md, tmp/batch_summary.txt,
+#         game_history/20260426_045928_score0379.jsonl,
+#         game_history/20260426_050920_score0596.jsonl,
+#         tmp/state/last_rollback_analysis.md
 
 def decide(game_state: dict, analysis: dict) -> dict:
     """v340: reactive_pairs>=3時deadline_crossed併合最優先版 - v339 failure mode潰し
@@ -1096,9 +1106,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     score += 500.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             else:
-                # v331: deadline_crossed時はボーナスを強化（300.0→600.0）
+                # v500: cap NEAR deadline bonus 600→300 — prevent additive cascade
+                # DANGER_ZONE NEAR + DANGER_NEAR(300) + REACTIVE_IMMEDIATE(400) = +1000
+                # at deadline overpowered NEAR risk penalties, causing failed NEAR
+                # selection at pc>=32+deadline. DIRECT (95.7%) unchanged.
                 if deadline_crossed:
-                    score += 600.0
+                    score += 300.0
                 else:
                     score += 300.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")

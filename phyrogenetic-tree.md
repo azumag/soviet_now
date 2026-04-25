@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-26 06:01:25 JST`
-- Nodes: `1239`
-- Edges: `1692`
-- Current: `0ac322bb0b01`
+- Updated: `2026-04-26 08:20:26 JST`
+- Nodes: `1240`
+- Edges: `1694`
+- Current: `2ec1eec32a77`
 - Anchor: `16e0ca9a82d5`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_84c1432d0191["84c1432d0191<br/>g=26 n=20<br/>comp=10446.3"]
     h_1c835dcc2ea2["1c835dcc2ea2<br/>g=24 n=20<br/>comp=10111.2"]
     h_eae1fd8033df["eae1fd8033df<br/>g=24 n=20<br/>comp=11251.7"]
     h_2b5c5a7c0f4e["2b5c5a7c0f4e<br/>g=49 n=20<br/>comp=10350.8"]
@@ -68,15 +67,15 @@ flowchart TD
     h_e1cb3a6bff9c["e1cb3a6bff9c<br/>g=6 n=6<br/>comp=10247.8"]
     h_16e0ca9a82d5["16e0ca9a82d5<br/>ANCHOR<br/>g=24 n=20<br/>comp=11845.9"]
     h_4c27915877ca["4c27915877ca<br/>g=12 n=12<br/>comp=10142.4"]
+    h_0ac322bb0b01["0ac322bb0b01<br/>g=24 n=20<br/>comp=11101.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_0ac322bb0b01["0ac322bb0b01<br/>CURRENT"]
+    h_2ec1eec32a77["2ec1eec32a77<br/>CURRENT"]
 
-    h_84c1432d0191 -->|improve| h_1c835dcc2ea2
     h_1c835dcc2ea2 -->|improve| h_eae1fd8033df
     h_eae1fd8033df -->|improve| h_2b5c5a7c0f4e
     h_2b5c5a7c0f4e -->|improve| h_22337984f747
@@ -116,13 +115,13 @@ flowchart TD
     h_53e5170795f4 -->|improve| h_24096e9d3c2e
     h_16e0ca9a82d5 -->|improve| h_4c27915877ca
     h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_0ac322bb0b01 -->|improve| h_2ec1eec32a77
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_84c1432d0191 plain;
     class h_1c835dcc2ea2 plain;
     class h_eae1fd8033df plain;
     class h_2b5c5a7c0f4e plain;
@@ -175,13 +174,14 @@ flowchart TD
     class h_e1cb3a6bff9c plain;
     class h_16e0ca9a82d5 anchor;
     class h_4c27915877ca plain;
+    class h_0ac322bb0b01 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_0ac322bb0b01 current;
+    class h_2ec1eec32a77 current;
 ```
 
 ## Detail 1/16
@@ -3335,7 +3335,7 @@ flowchart TD
 - Cross-chunk link: `db5969337a19 -.rollback.-> 424708357a70`
 - Cross-chunk link: `424708357a70 -.rollback.-> db5969337a19`
 - Cross-chunk link: `424708357a70 --improve--> 0e279ee4fb7c`
-- Cross-chunk link: `... and 21 more`
+- Cross-chunk link: `... and 22 more`
 
 ```mermaid
 flowchart TD
@@ -4441,9 +4441,9 @@ flowchart TD
 
 ## Detail 16/16
 
-- Range: `0b044788c9f1` .. `0ac322bb0b01`
-- Nodes in this diagram: `39`
-- Internal edges in this diagram: `19`
+- Range: `0b044788c9f1` .. `2ec1eec32a77`
+- Nodes in this diagram: `40`
+- Internal edges in this diagram: `20`
 - Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
 - Cross-chunk link: `9c573445b262 -.rollback.-> bc1b4cd5b7e7`
 - Cross-chunk link: `bc1b4cd5b7e7 --improve--> d22b52f8b629`
@@ -4456,7 +4456,7 @@ flowchart TD
 - Cross-chunk link: `b83fd223a409 -.rollback.-> 999fa1987f46`
 - Cross-chunk link: `999fa1987f46 --improve--> 86a9a57f17d7`
 - Cross-chunk link: `86a9a57f17d7 -.rollback.-> e39e346e6a36`
-- Cross-chunk link: `... and 24 more`
+- Cross-chunk link: `... and 25 more`
 
 ```mermaid
 flowchart TD
@@ -4492,13 +4492,14 @@ flowchart TD
     h_e1cb3a6bff9c["e1cb3a6bff9c<br/>g=6 n=6<br/>comp=10247.8"]
     h_16e0ca9a82d5["16e0ca9a82d5<br/>ANCHOR<br/>g=24 n=20<br/>comp=11845.9"]
     h_4c27915877ca["4c27915877ca<br/>g=12 n=12<br/>comp=10142.4"]
+    h_0ac322bb0b01["0ac322bb0b01<br/>g=24 n=20<br/>comp=11101.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_0ac322bb0b01["0ac322bb0b01<br/>CURRENT"]
+    h_2ec1eec32a77["2ec1eec32a77<br/>CURRENT"]
 
     h_0b044788c9f1 -->|improve| h_313672506cb6
     h_313672506cb6 -->|improve| h_802caee8ec9a
@@ -4519,6 +4520,7 @@ flowchart TD
     h_53e5170795f4 -->|improve| h_24096e9d3c2e
     h_16e0ca9a82d5 -->|improve| h_4c27915877ca
     h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_0ac322bb0b01 -->|improve| h_2ec1eec32a77
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4557,16 +4559,27 @@ flowchart TD
     class h_e1cb3a6bff9c plain;
     class h_16e0ca9a82d5 anchor;
     class h_4c27915877ca plain;
+    class h_0ac322bb0b01 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_0ac322bb0b01 current;
+    class h_2ec1eec32a77 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#19181 `0ac322bb -> 2ec1eec3`
+
+- scores: `15732 9036 14001 14767 12345 11954 16067 13853 10757 9294 13798 11704 10831 8451 7466 15209 10073 8801 9309 11803 13645 14283 11209 16568`
+- v502: raise NEAR CHAIN_MERGE suppression pc>=32→35 — halve multiplier at pc=32-34
+- pc=32-34+deadline: chain_bonus_multiplier *= 0.5 (partial guard against NEAR failure)
+- pc>=35+deadline: chain_suppressed=True (full suppression, unchanged)
+- DIRECT (95.7%) unaffected. pc<32 NEAR unaffected.
+- Fixes rollback failure mode: CHAIN_MERGE overrides NEAR risk at pc=32-34
+- v502: raise complete suppression from pc>=32 to pc>=35 — narrow the
 
 ### Improve Game#19157 `1d9b85a2 -> 0ac322bb`
 

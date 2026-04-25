@@ -67,12 +67,6 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # --- Change History ---
-# v502: raise NEAR CHAIN_MERGE suppression pc>=32→35 — halve multiplier at pc=32-34
-#   pc=32-34+deadline: chain_bonus_multiplier *= 0.5 (partial guard against NEAR failure)
-#   pc>=35+deadline: chain_suppressed=True (full suppression, unchanged)
-#   DIRECT (95.7%) unaffected. pc<32 NEAR unaffected.
-#   Fixes rollback failure mode: CHAIN_MERGE overrides NEAR risk at pc=32-34
-#   refs: tmp/analysis_result.md, game_history/20260426_060958_score0758.jsonl
 # v500: cap axis 8.5 NEAR deadline bonus 600→300 — prevent additive cascade
 #   DANGER_ZONE NEAR + DANGER_NEAR(300) + REACTIVE_IMMEDIATE(400) = +1000
 #   at deadline overpowered NEAR risk penalties, causing failed NEAR selection
@@ -982,24 +976,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             #       game_history/20260402_042732_score1179.jsonl T65-75 (CROSSES x5),
             #       game_history/20260402_042432_score4489.jsonl T167 (delta=+410),
             #       tmp/batch_summary.txt, tmp/change_log.txt (v463,v464)
-            # v502: raise complete suppression from pc>=32 to pc>=35 — narrow the
-            # zero-CHAIN_MERGE zone to the most critical regime. At pc=32-34, instead
-            # halve chain_bonus_multiplier to provide partial chain incentive while
-            # restoring balance against NEAR failure risk (68.5% success rate).
-            # Worst game T52-T56: NEAR+CHAIN_MERGE ~ +3000-5000 net vs NO merge
-            # -2500~-6500, NEAR always wins despite 31.5% failure. Halving at pc=32-34
-            # reduces chain_bonus ~2000-4000 -> ~1000-2000, competing with risk penalties.
-            # pc>=35: full suppression (chain_suppressed=True), chain never fires.
-            # Fixes rollback failure mode: CHAIN_MERGE overrides NEAR risk at pc=32-34
-            # refs: tmp/analysis_result.md, game_history/20260426_060958_score0758.jsonl
             chain_suppressed = (
-                merge_grade == "NEAR" and piece_count >= 35 and deadline_crossed
-            )
-            chain_mult_near_halved = (
-                merge_grade == "NEAR"
-                and piece_count >= 32
-                and piece_count < 35
-                and deadline_crossed
+                merge_grade == "NEAR" and piece_count >= 32 and deadline_crossed
             )
             merges = result["merges"]
             if merges and not chain_suppressed:
@@ -1020,8 +998,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # v196: 初期段階CHAIN_MERGE有効化 - 初期段階でのCHAIN_MERGE選択を有効化
                 # 初期段階で有効なCHAIN_MERGE評価のために、初期値を495.0に固定し、着地高による動的調整を開始地点から行う
                 chain_bonus_multiplier = 495.0 + max(0, landing_y + 1.5) * 150.0
-                if chain_mult_near_halved:
-                    chain_bonus_multiplier *= 0.5
 
                 # collect all merged_type pieces within chain_distance_max of merge target
                 nearby_pieces = []
