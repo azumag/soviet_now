@@ -63,6 +63,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v558: NEAR suppression - max_y >= 1.5 requires danger_merge OR russia_phase, NO edge penalty
+     # Worst game T52: NEAR at max_y=1.72, deadline_crossed=true, danger_merge=false → delta=0 cascade
+     # Extra_high T115: NEAR at max_y=2.6, deadline_crossed=true, danger_merge=false → delta=0
+     # Best game T115: NEAR at max_y=1.28 (< 1.5 threshold) → delta=144, preserved
+     # Change 1: NEAR suppression now requires danger_merge=true (guaranteed safe target) at >=1.5
+     # Change 2: NO_MERGE edge penalty at max_y >= 1.5 when merge_available=false
+     # Fixes rollback failure mode: NEAR suppression at elevated max_y with deadline crossed
+     # refs: tmp/analysis_result.md (Adopted Hypothesis), tmp/batch_summary.txt, mandatory_themes.txt
      # v557: MANDATORY_THEMES_NEAR_SUPPRESSED threshold lowered (max_y >= 2.0 → 1.5)
      # Worst game T53: max_y=1.72, deadline_crossed=true, NEAR selected, FAILED (score_delta=0),
      # max_y subsequently jumped to 2.83 causing cascade failure. At max_y=1.72, old threshold
@@ -861,12 +869,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
 
+    # Pre-compute merge_available for edge penalty logic
+    # v558: True if ANY candidate has merge_grade != "NO" (used by edge penalty)
+    merge_available = any(r.get("merge_grade", "NO") != "NO" for r in results)
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
+        landing_x = result.get("landing_x", x)  # v558: for edge penalty
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
@@ -883,17 +896,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            # v557: MANDATORY_THEMES_NEAR_SUPPRESSED at max_y >= 1.5 (lowered from 2.0)
-            # Worst game T53: max_y=1.72, deadline_crossed=true, NEAR selected, FAILED
-            # (score_delta=0), max_y subsequently jumped to 2.83. Suppression at >=1.5
-            # would have caught this dangerous state earlier. mandatory_themes:
-            # "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-            # russia_merge_possible condition: when Russia merge (type14+next + type14+on_board)
-            # is possible with the next piece, NEAR suppression is NOT applied to allow
-            # the Russia merge opportunity to proceed.
-            if deadline_crossed and max_y >= 1.5 and not russia_merge_possible:
-                score += 0.0
-                reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
+            # v558: Lower NEAR suppression threshold (max_y >= 1.5) + require danger_merge condition
+            # At elevated max_y (>=1.5) with deadline crossed, NEAR geometry becomes unreliable.
+            # When danger_merge=false, NEAR success rate drops significantly → piece_count growth.
+            # Only allow NEAR at 1.5-2.0 when danger_merge=true (guaranteed safe target) or russia_phase.
+            # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+            if max_y >= 1.5 and deadline_crossed and not russia_merge_possible:
+                danger_merge = result.get("danger_merge_available", False)
+                if danger_merge:
+                    # danger pieces present = guaranteed safe merge = allow NEAR
+                    score += 600.0 * merge_mult
+                    reasons.append("NEAR_MERGE")
+                else:
+                    # no danger = unreliable merge = suppress
+                    score += 0.0
+                    reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
             else:
                 score += 600.0 * merge_mult
                 reasons.append("NEAR_MERGE")
@@ -1395,6 +1412,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # meaningful tie-breaking for axis 8.8 uniform penalty without overriding merges.
             congestion_penalty = (piece_count - 29) * landing_y * 20.0
             score -= congestion_penalty
+
+        # v558: Edge position penalty at elevated max_y without merge
+        # When no merge available and max_y >= 1.5, edge positions cause max_y jumps.
+        # Force NO_MERGE to lowest center positions to buy time for future merges.
+        # worst_game T52: NEAR at x=-2.93 (edge), NEAR failed, piece added at y=2.12
+        # extra_high T107: NO_MERGE at x=2.45 (edge), max_y jumped 1.69→2.58
+        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        if merge_grade == "NO" and max_y >= 1.5 and not merge_available:
+            if abs(landing_x) >= 2.5:
+                score -= 500.0  # extra penalty for edge when board is congested
+                reasons.append("EDGE_NO_MERGE")
+            elif abs(landing_x) >= 2.0:
+                score -= 200.0  # moderate penalty for near-edge
+                reasons.append("NEAR_EDGE_NO_MERGE")
 
         # ----- evaluation axis 9.6: deadline_crossed immediate merge priority (NEW: v335: deadline_crossed時即時併合最優先強化版 - v334 failure mode潰し) -----
         # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"

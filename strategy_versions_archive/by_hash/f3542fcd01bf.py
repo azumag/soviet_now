@@ -63,12 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v559: Fix russia_phase logic in NEAR suppression — Russia piece is an asset, not a danger
-     # Problem: `not russia_merge_possible` suppressed NEAR even when russia_phase=true (type 15 on board)
-     # russia_merge_possible is per-candidate flag (next piece); russia_phase is board state (Russia exists)
-     # In russia_phase, Russia pieces are ASSETS for merging toward 2nd Russia — never suppress NEAR
-     # Fixes rollback failure mode: russia_phase NEAR suppression preventing successful merges (best_game T130 pattern)
-     # refs: tmp/analysis_result.md (Adopted Hypothesis: Fix russia_merge_possible condition)
      # v558: NEAR suppression - max_y >= 1.5 requires danger_merge OR russia_phase, NO edge penalty
      # Worst game T52: NEAR at max_y=1.72, deadline_crossed=true, danger_merge=false → delta=0 cascade
      # Extra_high T115: NEAR at max_y=2.6, deadline_crossed=true, danger_merge=false → delta=0
@@ -909,15 +903,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
             if max_y >= 1.5 and deadline_crossed and not russia_merge_possible:
                 danger_merge = result.get("danger_merge_available", False)
-                # v559: Fix russia_phase logic — Russia piece is an asset for merging, not a danger
-                # In russia_phase, we WANT to merge toward Russia to create 2nd Russia.
-                # The russia_merge_possible flag is per-candidate; russia_phase is board state.
-                # When russia_phase, allow NEAR if merge is possible (not just danger_merge).
-                if russia_phase:
-                    # In Russia phase: allow NEAR if this drop creates a merge with ANY piece
-                    score += 600.0 * merge_mult
-                    reasons.append("NEAR_MERGE")
-                elif danger_merge:
+                if danger_merge:
                     # danger pieces present = guaranteed safe merge = allow NEAR
                     score += 600.0 * merge_mult
                     reasons.append("NEAR_MERGE")
