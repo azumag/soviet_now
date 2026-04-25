@@ -63,6 +63,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v560: Fix russia_phase NEAR override — require danger_merge OR russia_merge_possible
+     # Problem (extra_high T108-T110): russia_phase unconditionally allowed NEAR even when
+     # danger_merge=false and russia_merge_possible=false. max_y=3.71, deadline_crossed=true,
+     # score_delta=0×3 → max_y runaway, game over. This violates mandatory_themes第一条.
+     # Fix: russia_phase NEAR only allowed when danger_merge=true OR russia_merge_possible=true.
+     # When neither, fall through to MANDATORY_THEMES_NEAR_SUPPRESSED (score=0).
+     # Best_game T108-T113 pattern preserved: russia_phase but DIRECT_MERGE with safe geometry.
+     # refs: tmp/analysis_result.md (Adopted Hypothesis), data/mandatory_themes.txt
      # v559: Fix russia_phase logic in NEAR suppression — Russia piece is an asset, not a danger
      # Problem: `not russia_merge_possible` suppressed NEAR even when russia_phase=true (type 15 on board)
      # russia_merge_possible is per-candidate flag (next piece); russia_phase is board state (Russia exists)
@@ -913,10 +921,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # In russia_phase, we WANT to merge toward Russia to create 2nd Russia.
                 # The russia_merge_possible flag is per-candidate; russia_phase is board state.
                 # When russia_phase, allow NEAR if merge is possible (not just danger_merge).
-                if russia_phase:
-                    # In Russia phase: allow NEAR if this drop creates a merge with ANY piece
+                if russia_phase and (danger_merge or russia_merge_possible):
+                    # russia_phase: allow NEAR only when merge is guaranteed safe
+                    # mandatory_themes第一条: "デッドライン超越位置では併合できる場合に限る"
+                    # When neither danger_merge nor russia_merge_possible, fall through to suppression
                     score += 600.0 * merge_mult
                     reasons.append("NEAR_MERGE")
+                elif russia_phase:
+                    # russia_phase but no guaranteed merge — suppress like non-russia case
+                    score += 0.0
+                    reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
                 elif danger_merge:
                     # danger pieces present = guaranteed safe merge = allow NEAR
                     score += 600.0 * merge_mult
