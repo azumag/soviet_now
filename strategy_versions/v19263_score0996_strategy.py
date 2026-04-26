@@ -68,11 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v624: russia phase deadline NEAR suppression — cancel NEAR base bonus at russia+deadline+max_y>=2.0
-     # NEAR merge (68.5%) at deadline with Russia on board is net negative: 8 of 13 turns in best game
-     # were NEAR attempts, 6 failed (delta=0). DIRECT merge (95.7%) is the only safe merge in this regime.
-     # refs: tmp/analysis_result.md (adopted hypothesis: russia phase deadline NEAR suppression)
-     # Fixes rollback failure mode: russia_phase_deadline_near_merge_chain_failure (analysis_result.md adopted hypothesis)
      # vXXX: NEAR suppression safety valve — allow NEAR when landing_y < max_y - 0.3
      # When max_y>=2.5 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless it lands below board.
      # Safety valve prevents suppressing NEAR candidates that would compress board (landing below current max_y).
@@ -1183,25 +1178,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult * type_scale
             reasons.append("FAR_MERGE")
-
-        # ----- v624: russia phase deadline NEAR suppression -----
-        # analysis_result.md adopted hypothesis: ロシア建国後フェーズ(russia_phase && deadline_crossed && max_y>=2.0)
-        # においてDIRECT mergeのみを許可しNEAR mergeを実質抑制する安全弁。
-        # NEAR merge success rate is 68.5%. At deadline with Russia on board (high-value pieces at risk),
-        # failed NEAR adds a piece with no benefit, accelerating the "NEAR fail → pc grow → NEAR fail → death" spiral.
-        # Best game T140-T154: 13 turns in russia phase, 8 NEAR attempts, 6 failures (delta=0).
-        # Worst game T58: rp=7, deadline, danger=3, NEAR still selected with crosses_deadline=true.
-        # Existing v604/v606 reduce type_scale but RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY(+1200) and
-        # REACTIVE_IMMEDIATE_MERGE_PRIORITY(+400) can still make NEAR net positive.
-        # Canceling the base NEAR bonus ensures DIRECT merge or low-y NO merge placement dominates.
-        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # DIRECT merge (95.7%) is "able to merge". NEAR merge (68.5%) is too risky.
-        # Does NOT affect: non-russia phases, max_y<2.0, deadline_crossed=false, DIRECT merge, FAR merge.
-        # refs: tmp/analysis_result.md (Implementation Plan: russia deadline NEAR suppression)
-        # Fixes rollback failure mode: russia_phase_deadline_near_merge_chain_failure
-        if russia_phase and deadline_crossed and max_y >= 2.0 and merge_grade == "NEAR":
-            score -= 600.0 * merge_mult * type_scale
-            reasons.append("RUSSIA_DEADLINE_NEAR_SUPPRESSED")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ
