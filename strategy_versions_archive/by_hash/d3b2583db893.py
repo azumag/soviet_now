@@ -68,14 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v626: axis 8.8e deadline NO-merge edge suppression at moderate-high pc
-     # worst T49: deadline_crossed && pc=26 && rp=3 && merge_grade==NO → x=-3.0 → max_y=2.72 death
-     # v625 fires at pc>=30, missing T49's pc=26. This axis fires at pc>=25 to catch this case.
-     # When deadline_crossed && !russia_phase && piece_count>=25 && merge_grade==NO
-     # && abs(landing_x)>=2.5 && max_y>=0.8: penalize edge placement -300*merge_mult.
-     # mandatory_themes第一条: デッドライン超越位置でのマージなき配置禁止。
-     # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
-     # Fixes rollback failure mode: worst T49 edge placement → max_y acceleration → death spiral
      # v625: non-russia_phase NEAR cancellation at high piece_count + deadline_crossed
      # Worst game T50-54: 5 consecutive NEAR failures at pc=30-34, deadline_crossed, !russia_phase.
      # v624 handles russia_phase case, but IMMEDIATE_MERGE_PRIORITY (+1200+400) and CHAIN_MERGE
@@ -1232,22 +1224,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if (not russia_phase) and deadline_crossed and piece_count >= 30 and merge_grade == "NEAR":
             score -= 600.0 * merge_mult * type_scale
             reasons.append("HIGH_PC_DEADLINE_NEAR_CANCELLED")
-
-        # ----- axis 8.8e: deadline NO-merge edge suppression at moderate-high pc (new) -----
-        # worst T49: deadline_crossed && pc=26 && rp=3 && merge_grade==NO → x=-3.0 selected
-        # v625 fires at pc>=30, but T49 pc=26 misses the window — 4 turns later max_y=2.72 → death
-        # Add suppression at pc>=25 (earlier than v625's pc>=30) for NO merge edge placement.
-        # Condition: deadline_crossed && !russia_phase && piece_count>=25 && merge_grade==NO
-        #           && abs(landing_x) >= 2.5 && max_y >= 0.8
-        # Penalty: -300 * merge_mult (makes center placement win over edge by ~150-250pt)
-        # This is narrower than v625 (pc>=25 vs pc>=30) and only affects NO merge edge placement,
-        # not NEAR merge selection. Does NOT conflict with v623/v614 (rp=1) or v624 (russia_phase).
-        # refs: tmp/analysis_result.md (Implementation Plan: deadline NO-merge edge suppression),
-        #       mandatory_themes.txt ("デッドラインを超える位置にピース置く場合は併合できる場合に限る")
-        # Fixes rollback failure mode: worst T49 edge placement → max_y acceleration → death spiral
-        if (not russia_phase) and deadline_crossed and piece_count >= 25 and merge_grade == "NO" and abs(landing_x) >= 2.5 and max_y >= 0.8:
-            score -= 300.0 * merge_mult
-            reasons.append("DEADLINE_NO_MERGE_EDGE_SUPPRESSED")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ
