@@ -68,14 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v625: non-russia_phase NEAR cancellation at high piece_count + deadline_crossed
-     # Worst game T50-54: 5 consecutive NEAR failures at pc=30-34, deadline_crossed, !russia_phase.
-     # v624 handles russia_phase case, but IMMEDIATE_MERGE_PRIORITY (+1200+400) and CHAIN_MERGE
-     # still make NEAR win in non-russia_phase. This axis cancels NEAR when !russia_phase &&
-     # deadline_crossed && piece_count >= 30, forcing NO-merge or DIRECT-merge choice.
-     # refs: tmp/analysis_result.md (Implementation Plan: non-russia_phase NEAR cancellation),
-     #       mandatory_themes.txt ("デッドラインを超える位置にピース置く場合は併合できる場合に限る")
-     # Fixes rollback failure mode: NEAR failure → piece_count accumulation → death spiral (worst game T50-54)
      # v624: russia phase deadline NEAR suppression — cancel NEAR base bonus at russia+deadline+max_y>=2.0
      # NEAR merge (68.5%) at deadline with Russia on board is net negative: 8 of 13 turns in best game
      # were NEAR attempts, 6 failed (delta=0). DIRECT merge (95.7%) is the only safe merge in this regime.
@@ -1210,20 +1202,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if russia_phase and deadline_crossed and max_y >= 2.0 and merge_grade == "NEAR":
             score -= 600.0 * merge_mult * type_scale
             reasons.append("RUSSIA_DEADLINE_NEAR_SUPPRESSED")
-
-        # ----- NEW AXIS: non-russia_phase NEAR cancellation at high piece_count + deadline -----
-        # Worst game T50-54: 5 consecutive NEAR failures at pc=30-34, deadline_crossed, !russia_phase.
-        # v604 reduces type_scale to 0.5, v624 cancels NEAR bonus only in russia_phase.
-        # But IMMEDIATE_MERGE_PRIORITY (+1200+400) and CHAIN_MERGE still make NEAR win.
-        # At piece_count >= 30 && deadline_crossed && !russia_phase, the risk of NEAR failure
-        # (31.5% rate, adds piece with no score) outweighs potential gains.
-        # Cancel NEAR entirely to force NO-merge or DIRECT-merge choice.
-        # Does NOT affect: russia_phase (v624 handles), non-deadline, pc<30, DIRECT/FAR/NO.
-        # refs: worst game T50-54 (5 failed NEAR), best game T220 (NEAR success mixed),
-        #       mandatory_themes.txt ("デッドラインを超える位置にピース置く場合は併合できる場合に限る")
-        if (not russia_phase) and deadline_crossed and piece_count >= 30 and merge_grade == "NEAR":
-            score -= 600.0 * merge_mult * type_scale
-            reasons.append("HIGH_PC_DEADLINE_NEAR_CANCELLED")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ
