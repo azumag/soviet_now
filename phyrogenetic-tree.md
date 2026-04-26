@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-26 15:32:39 JST`
-- Nodes: `1241`
-- Edges: `1695`
-- Current: `c73a56263561`
+- Updated: `2026-04-26 17:51:11 JST`
+- Nodes: `1242`
+- Edges: `1696`
+- Current: `1e4afdff9a16`
 - Anchor: `16e0ca9a82d5`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_eae1fd8033df["eae1fd8033df<br/>g=24 n=20<br/>comp=11251.7"]
     h_2b5c5a7c0f4e["2b5c5a7c0f4e<br/>g=49 n=20<br/>comp=10350.8"]
     h_22337984f747["22337984f747<br/>g=24 n=20<br/>comp=11598.7"]
     h_5e662dce2de5["5e662dce2de5<br/>g=24 n=20<br/>comp=9978.5"]
@@ -67,16 +66,16 @@ flowchart TD
     h_16e0ca9a82d5["16e0ca9a82d5<br/>ANCHOR<br/>g=24 n=20<br/>comp=11845.9"]
     h_4c27915877ca["4c27915877ca<br/>g=12 n=12<br/>comp=10142.4"]
     h_0ac322bb0b01["0ac322bb0b01<br/>g=24 n=20<br/>comp=11101.3"]
-    h_2ec1eec32a77["2ec1eec32a77<br/>g=26 n=20<br/>comp=9903.8"]
+    h_2ec1eec32a77["2ec1eec32a77<br/>g=27 n=20<br/>comp=9627.1"]
+    h_c73a56263561["c73a56263561<br/>g=24 n=20<br/>comp=10452.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_c73a56263561["c73a56263561<br/>CURRENT"]
+    h_1e4afdff9a16["1e4afdff9a16<br/>CURRENT"]
 
-    h_eae1fd8033df -->|improve| h_2b5c5a7c0f4e
     h_2b5c5a7c0f4e -->|improve| h_22337984f747
     h_22337984f747 -->|improve| h_5e662dce2de5
     h_5e662dce2de5 -->|improve| h_6efaed1f5174
@@ -114,15 +113,15 @@ flowchart TD
     h_53e5170795f4 -->|improve| h_24096e9d3c2e
     h_16e0ca9a82d5 -->|improve| h_4c27915877ca
     h_0ac322bb0b01 -->|improve| h_2ec1eec32a77
-    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
     h_2ec1eec32a77 -->|improve| h_c73a56263561
+    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_c73a56263561 -->|improve| h_1e4afdff9a16
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_eae1fd8033df plain;
     class h_2b5c5a7c0f4e plain;
     class h_22337984f747 plain;
     class h_5e662dce2de5 plain;
@@ -175,13 +174,14 @@ flowchart TD
     class h_4c27915877ca plain;
     class h_0ac322bb0b01 plain;
     class h_2ec1eec32a77 plain;
+    class h_c73a56263561 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_c73a56263561 current;
+    class h_1e4afdff9a16 current;
 ```
 
 ## Detail 1/16
@@ -4441,9 +4441,9 @@ flowchart TD
 
 ## Detail 16/16
 
-- Range: `0b044788c9f1` .. `c73a56263561`
-- Nodes in this diagram: `41`
-- Internal edges in this diagram: `21`
+- Range: `0b044788c9f1` .. `1e4afdff9a16`
+- Nodes in this diagram: `42`
+- Internal edges in this diagram: `22`
 - Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
 - Cross-chunk link: `9c573445b262 -.rollback.-> bc1b4cd5b7e7`
 - Cross-chunk link: `bc1b4cd5b7e7 --improve--> d22b52f8b629`
@@ -4493,14 +4493,15 @@ flowchart TD
     h_16e0ca9a82d5["16e0ca9a82d5<br/>ANCHOR<br/>g=24 n=20<br/>comp=11845.9"]
     h_4c27915877ca["4c27915877ca<br/>g=12 n=12<br/>comp=10142.4"]
     h_0ac322bb0b01["0ac322bb0b01<br/>g=24 n=20<br/>comp=11101.3"]
-    h_2ec1eec32a77["2ec1eec32a77<br/>g=26 n=20<br/>comp=9903.8"]
+    h_2ec1eec32a77["2ec1eec32a77<br/>g=27 n=20<br/>comp=9627.1"]
+    h_c73a56263561["c73a56263561<br/>g=24 n=20<br/>comp=10452.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_c73a56263561["c73a56263561<br/>CURRENT"]
+    h_1e4afdff9a16["1e4afdff9a16<br/>CURRENT"]
 
     h_0b044788c9f1 -->|improve| h_313672506cb6
     h_313672506cb6 -->|improve| h_802caee8ec9a
@@ -4521,8 +4522,9 @@ flowchart TD
     h_53e5170795f4 -->|improve| h_24096e9d3c2e
     h_16e0ca9a82d5 -->|improve| h_4c27915877ca
     h_0ac322bb0b01 -->|improve| h_2ec1eec32a77
-    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
     h_2ec1eec32a77 -->|improve| h_c73a56263561
+    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_c73a56263561 -->|improve| h_1e4afdff9a16
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4563,16 +4565,27 @@ flowchart TD
     class h_4c27915877ca plain;
     class h_0ac322bb0b01 plain;
     class h_2ec1eec32a77 plain;
+    class h_c73a56263561 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_c73a56263561 current;
+    class h_1e4afdff9a16 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#19232 `c73a5626 -> 1e4afdff`
+
+- scores: `12739 10231 5948 12446 9732 16930 15510 9569 9258 14898 8828 8372 14177 16805 16976 9591 10671 8008 10912 14728 13446 14296 10272 7798`
+- v504: axis 1.7b gap-zone NEAR merge penalty — -500*landing_y at max_y>=2.0+deadline_crossed+pc>=28
+- Suppresses risky NEAR (68.5%) in gap zone to avoid pc accumulation → CRITICAL → game over.
+- best game T80-93 uses DIRECT+danger_direct to recover; worst uses NEAR and fails.
+- Fixes rollback failure mode: gap-zone NEAR failure → piece_count accumulation → early game over
+- game_history/20260426_154439_score0493.jsonl,
+- game_history/20260426_165609_score0555.jsonl,
 
 ### Improve Game#19207 `2ec1eec3 -> c73a5626`
 

@@ -87,14 +87,6 @@ SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 #         game_history/20260426_045928_score0379.jsonl,
 #         game_history/20260426_050920_score0596.jsonl,
 #         tmp/state/last_rollback_analysis.md
-# v504: axis 1.7b gap-zone NEAR merge penalty — -500*landing_y at max_y>=2.0+deadline_crossed+pc>=28
-#   Suppresses risky NEAR (68.5%) in gap zone to avoid pc accumulation → CRITICAL → game over.
-#   best game T80-93 uses DIRECT+danger_direct to recover; worst uses NEAR and fails.
-#   Fixes rollback failure mode: gap-zone NEAR failure → piece_count accumulation → early game over
-#   refs: tmp/analysis_result.md, tmp/batch_summary.txt, data/mandatory_themes.txt,
-#         game_history/20260426_154439_score0493.jsonl,
-#         game_history/20260426_165609_score0555.jsonl,
-#         game_history/20260426_162242_score2571.jsonl
 
 def decide(game_state: dict, analysis: dict) -> dict:
     """v340: reactive_pairs>=3時deadline_crossed併合最優先版 - v339 failure mode潰し
@@ -351,28 +343,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         ):
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
-
-        # ----- evaluation axis 1.7b: gap-zone NEAR merge penalty (v504) -----
-        # worst(score0493) T48-50 + extra_low(score0555) T50-51: gap-zoneで
-        # NEAR merge選択 → delta=0, pc増加 → CRITICAL突入 → 早期game over.
-        # best(score2571) T80-93: gap-zoneでDIRECT優先, NO_MERGE時も段階的に耐える。
-        # max_y>=2.0: gap-zone開始（best T80で既に危険な高さ）
-        # deadline_crossed: デッドライン超過状態
-        # pc>=28: 高pc下ではNEAR失敗のコストが致命的
-        # penalty: 500*abs(landing_y)（landing_y=1.0で-500, y=2.0で-1000）
-        #   → NEAR base +600から引くと net +100〜-400 でNO_MERGE低配置と競合
-        # 禁止: height_mult緩和しない（postmortem hard constraint）
-        # 禁止: DIRECT mergeには適用しない
-        # 禁止: russia_phaseでは既にaxis 8.7が別扱いのため適用しない
-        if (
-            merge_grade == "NEAR"
-            and max_y >= 2.0
-            and deadline_crossed
-            and piece_count >= 28
-            and not russia_phase
-        ):
-            score -= abs(landing_y) * 500.0
-            reasons.append("GAP_ZONE_NEAR_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
