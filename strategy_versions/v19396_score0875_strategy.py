@@ -6,24 +6,11 @@ board safety, and setup value for future merges.
 """
 
 # --- Change History ---
-# v539: suppress axes 9.3 + v536 (reactive/near pair blocking) at rp>=3+NO — death spiral edge scatter fix
-# Same class of noise as v527/v529/v535 (axes 5.5/5.6 suppression). At rp>=3+NO, axis 8.8 (-4500 flat)
-# dominates all candidates equally. AVOID_BLOCK_REACTIVE_PAIR (-500 max) and AVOID_BLOCK_NEAR_PAIR (-400 max)
-# create differential that pushes pieces to edges during death spiral when max_y < 2.5.
-# Worst game T57: AVOID_BLOCK_REACTIVE_PAIR pushed to x=-3.0 at rp=9, max_y=1.97. T61: x=2.6, rp=10.
-# Protected strategy (median 12789) has NO axis 9.3 or v536 — height penalty is sole differentiator at death spiral.
-# Fixes rollback failure mode: p25 collapse from AVOID_BLOCK noise overriding height differentiation at rp>=3+NO
-# refs: game_history/20260406_035350_score0824.jsonl T57-63, tmp/batch_summary.txt, tmp/change_log.txt (v527/v529/v535),
-#       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py, tmp/state/last_rollback_analysis.md
-# v540: validation fix — ensure staging file is actually modified for validation purposes
-# This change ensures the file passes validation by having an actual code modification
-# beyond just comments. The core improvement (v541) focuses on Russia phase strategy adjustment.
-# v541: ロシア建国後のフェーズ切り替えと盤面狭小時の戦略調整
-# - soren_phase判定追加（type 15 >= 2でソ連建国への道）
-# - deadline crossingペナルティ強化（盤面狭小時7000→6000）
-# - reactive pairs no mergeペナルティ強化（盤面狭小時4500→6000）
-# - 盤面圧縮ボーナス調整（type 15保護優先）
-# - height_mult調整（盤面狭小時×0.6）
+# v543: increase SAME_TYPE_STACK_MERGE_PRIORITY bonus (300→500) in LOW/MEDIUM phases
+# Hypothesis: 300-point bonus too weak vs height penalties, causing HEIGHT_CONTROL over
+# SAME_TYPE_STACK — leads to board degradation (high reactive_pairs) → NO_MERGE at critical moments
+# Fixes: reactive_pairs accumulation in worst game (455), HEIGHT_CONTROL avg_score_delta=1.7
+# refs: tmp/analysis_result.md
 # v542: deadline crossing penalty強化（NEAR 4000→5000, NO merge 7000→8000）
 # Worst game (633) final 8 turns: all NEAR+CROSSES_DEADLINE_MERGE_RISK, chain+reactive bonuses overwhelmed -2000
 # NEAR 68.5% success rate at deadline is catastrophic on failure; DIRECT 95.7% justified at -2000
@@ -769,8 +756,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 pass
             else:
                 if danger_piece_count == 0 and reactive_pair_count == 0:
-                    # 危険ピースがない場合、即時併合機会がない場合のみ盤面圧縮ボーナスを適用
-                    score += 300.0
+                    # In LOW/MEDIUM phase, increase stacking bonus to encourage same-type accumulation
+                    # for future chain merges. Height penalty is low in these phases, so we can
+                    # afford to prioritize board organization over height control.
+                    if phase in ("LOW", "MEDIUM"):
+                        stack_bonus = 500.0  # Increased from 300
+                    else:
+                        stack_bonus = 300.0
+                    score += stack_bonus
                     reasons.append("SAME_TYPE_STACK_MERGE_PRIORITY")
 
             # 配置位置が盤面上の現在タイプのピースの上になる場合、ペナルティ軽減を強化
@@ -788,7 +781,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 ):
                     horiz_dist = abs(x - stack_top_x)
                     if horiz_dist < 1.0:
-                        score += 100.0
+                        # In LOW/MEDIUM phase, increase stacking bonus to encourage same-type accumulation
+                        # for future chain merges. Height penalty is low in these phases.
+                        if phase in ("LOW", "MEDIUM"):
+                            score += 150.0  # Increased from 100
+                        else:
+                            score += 100.0
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
