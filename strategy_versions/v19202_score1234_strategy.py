@@ -67,11 +67,6 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 # --- Change History ---
-# v503: pre-russia phase — type 14 detection + high-type merge priority + type 14 proximity guide
-#   When type 14 exists (no type 15), add +800/600 for type>=10 merges, +150 proximity near type 14.
-#   Disabled at deadline_crossed+NO per mandatory_themes.txt ("no placement past deadline without merge").
-#   Fixes rollback failure mode: type 14→type 15 pipeline starvation (zero type 15 in 18 games)
-#   refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md, data/mandatory_themes.txt
 # v502: raise NEAR CHAIN_MERGE suppression pc>=32→35 — halve multiplier at pc=32-34
 #   pc=32-34+deadline: chain_bonus_multiplier *= 0.5 (partial guard against NEAR failure)
 #   pc>=35+deadline: chain_suppressed=True (full suppression, unchanged)
@@ -178,17 +173,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
-
-    # v503: pre-russia phase detection — type 14 piece(s) on board, but no type 15 yet.
-    # When type 14 exists, prioritize building a second type 14 for type 15 merge.
-    # This is the PRE-RUSSIA phase: the board has a type 14, the goal is to make
-    # a second type 14, merge them into type 15 (Russia).
-    # Analysis found: all 18 batch games had ZERO type 15 appearances.
-    # russia_phase (axis 8.7) is dead code unless we reach type 15.
-    # This pre-phase creates the missing pipeline: type 14 → second type 14 → type 15.
-    # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md
-    pre_russia_phase = (not russia_phase) and russia_phase_count == 0 and \
-        max((p.get("type", 0) for p in pieces), default=0) >= 14
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -1188,33 +1172,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 未活用情報：盤面上のtype 15個数、即時併合可否(merge_grade)、reactive_pairs、danger_piece_count
         # refs: tmp/improve_brief.md, tmp/batch_summary.txt, advice.md,
         #       game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl
-
-        # ----- evaluation axis 8.7-pre: pre-russia phase merge priority / type 14 concentration (v503) -----
-        # analysis_result.md adopted hypothesis: type 14 detection phase.
-        # When type 14 exists but no type 15, prioritize building the second type 14
-        # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
-        # Disabled at deadline_crossed+NO merge per mandatory_themes.txt.
-        # Fixes rollback failure mode: type 14→type 15 pipeline starvation (zero type 15 in 18 games)
-        # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md, data/mandatory_themes.txt
-        if pre_russia_phase:
-            if merge_grade in ["DIRECT", "NEAR"]:
-                if next_type >= 10:
-                    if merge_grade == "DIRECT":
-                        score += 800.0
-                    else:
-                        score += 600.0
-                    reasons.append("PRE_RUSSIA_MERGE_PRIORITY")
-            elif merge_grade == "NO":
-                if not deadline_crossed:
-                    type14_pieces = [p for p in pieces if p.get("type") == 14]
-                    if type14_pieces:
-                        deepest_14 = min(type14_pieces, key=lambda p: p.get("y", 10))
-                        t14_x = deepest_14.get("x", 0)
-                        horiz_dist = abs(x - t14_x)
-                        if horiz_dist < 2.5:
-                            proximity_bonus = max(0, 150.0 - horiz_dist * 60.0)
-                            score += proximity_bonus
-                            reasons.append("PRE_RUSSIA_PROXIMITY")
 
         if russia_phase:
             # ロシアフェーズでの即時併合優先
