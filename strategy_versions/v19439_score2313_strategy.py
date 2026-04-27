@@ -68,6 +68,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v626: NO_MERGE_DEADLINE_PENALTY — mandatory_themes第一条 compliance
+     # worst_game T78-80: NO merge with deadline_crossed=true, placing at x=-3.0,
+     # max_y jumped 1.62→1.93→2.56, game over. HEIGHT_CONTROL avg_score_delta=0.9 because
+     # it fires when no merges available. This axis prevents deadline-crossing bad placements.
+     # base=-1200, applies ONLY when merge_grade==NO && deadline_crossed (not a height penalty increase).
+     # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE deadline-crossing penalty),
+     #       mandatory_themes.txt ("デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 17.4%, avg_score_delta=0.9)
+     # Fixes rollback failure mode: NO merge with deadline_crossed causing max_y jump (worst game T78-80)
      # v625: non-russia_phase NEAR cancellation at high piece_count + deadline_crossed
      # Worst game T50-54: 5 consecutive NEAR failures at pc=30-34, deadline_crossed, !russia_phase.
      # v624 handles russia_phase case, but IMMEDIATE_MERGE_PRIORITY (+1200+400) and CHAIN_MERGE
@@ -1334,6 +1343,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
+
+        # v626: NO_MERGE deadline-crossing penalty — mandatory_themes第一条 compliance
+        # worst_game T78-80: NO merge with deadline_crossed=true, placing at x=-3.0,
+        # max_y jumped 1.62→1.93→2.56, game over. mandatory_themes第一条 violation.
+        # When no merge available and crossing deadline, force lowest-y placement by
+        # applying large penalty that overrides all horizontal guides.
+        # NOT a height penalty increase — applies ONLY when deadline_crossed && !merge.
+        # base=-1200, comparable to CRITICAL phase height escalation (-1200 at v610).
+        # refs: tmp/analysis_result.md (Implementation Plan: NO_MERGE deadline-crossing penalty),
+        #       mandatory_themes.txt ("デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"),
+        #       game_history/20260427_092547_score0497.jsonl (worst game T78-80)
+        # Fixes rollback failure mode: NO merge with deadline_crossed causing max_y jump (worst game T78-80)
+        if merge_grade == "NO" and deadline_crossed:
+            score -= 1200.0
+            reasons.append("NO_MERGE_DEADLINE_PENALTY_V626")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
