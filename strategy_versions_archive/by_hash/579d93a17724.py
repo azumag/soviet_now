@@ -576,14 +576,6 @@ Phases (determined by board max Y):
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
   #
-# v668: height_mult=0.4 override for NO_MERGE at max_y>=0.8 — rollback constraint satisfaction
-# Analysis: worst game (score735) turns 67,70 had HEIGHT_CONTROL with NO_MERGE crossing deadline.
-# Rollback constraint: forbid MAX_Y>=0.8 with merge_available=false from choosing HEIGHT_CONTROL
-# (height_mult must be < 0.5). Set height_mult=0.4 when max_y>=0.8 and merge_grade=="NO".
-# Also lowered floor from 0.5 to 0.3 to satisfy constraint while allowing v664 multiplier.
-# Fixes rollback failure mode: NO_MERGE at high max_y causing deadline violations.
-# refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
-#
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
@@ -1428,14 +1420,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 0.3
 
-        # v362+v[xxx]: height_mult floor — prevent compounding nullification
+        # v362: height_mult floor — prevent compounding nullification
         # 3 gates (0.2x/0.8x/0.3x) compound to 0.048x, nullifying height penalty.
-        # Floor of 0.3 keeps height penalty meaningful while allowing strategic flexibility.
-        # Lowered from 0.5 to 0.3 to satisfy rollback constraint: height_mult < 0.5 for NO_MERGE.
+        # Floor of 0.5 keeps height penalty meaningful while allowing strategic flexibility.
         # Previously validated in v356 (protected strategy median 12789), lost in v359 rollback.
         # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
-        #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt, tmp/analysis_result.md
-        height_mult = max(height_mult, 0.3)
+        #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
+        height_mult = max(height_mult, 0.5)
 
         # v664: danger-based height enforcement — when danger pieces exist with NO merge,
         # strengthen height penalty to prevent piece accumulation that causes game over.
@@ -1461,16 +1452,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and max_y >= 2.5 and danger_piece_count >= 1 and reactor_margin < 0.5:
             height_scale = 1.0 + (max_y - 2.5) * 0.5
             height_mult *= height_scale
-
-        # v[xxx]: rollback constraint override — when max_y >= 0.8 and merge_grade == "NO",
-        # set height_mult = 0.4 to satisfy constraint "height_mult < 0.5".
-        # This ensures HEIGHT_CONTROL is NOT selected when merge is unavailable at high max_y.
-        # Rollback constraint: forbid MAX_Y >= 0.8 with merge_available=false from choosing HEIGHT_CONTROL
-        # (height_mult must be < 0.5 to prevent HEIGHT_CONTROL selection).
-        # refs: tmp/analysis_result.md (Implementation Plan),
-        #       tmp/state/last_rollback_postmortem.md (Constraints For Next Improve)
-        if max_y >= 0.8 and merge_grade == "NO":
-            height_mult = 0.4  # satisfies height_mult < 0.5 while >= 0.3 constraint
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
