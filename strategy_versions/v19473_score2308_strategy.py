@@ -62,19 +62,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v505: HEIGHT_CONTROL suppression in danger zone — force merge at deadline+rp>=2+max_y>=2.0
-     # Analysis: HEIGHT_CONTROL selected 20.5% with avg_delta=1.8 (essentially zero value).
-     # At rp>=2 (reactive pairs exist), selecting HEIGHT_CONTROL over MERGE risks losing merge
-     # window entirely — mandatory_themes.txt: "In danger zone near deadline, prioritize merge."
-     # Worst game T61-T68 (score0780): NO_MERGE due to HEIGHT_CONTROL → piece accumulation → game over.
-     # Worst game T61-T68 (score0795): same pattern at max_y=3.81, rp=4.
-     # Fix: At deadline_crossed AND rp >= 2 AND max_y >= 2.0, add -500 penalty to NO_MERGE
-     # candidates to suppress HEIGHT_CONTROL and force merge selection even at height cost.
-     # Best game T109-T116 (score2504) pattern unchanged — already uses DIRECT in gap-zone recovery.
-     # postmortem constraints respected: no height_mult change, merge path creation prioritized.
-     # refs: tmp/analysis_result.md, tmp/batch_summary.txt, data/mandatory_themes.txt,
-     #       game_history/20260427_135928_score0780.jsonl, game_history/20260427_141426_score2504.jsonl,
-     #       tmp/state/last_rollback_postmortem.md
      # v448: remove axis 5.6 (growth center proximity) — reduce additive noise, align with protected strategy
      # Protected strategy (median 12789, +21% better) has NO growth center guidance. The axis 5.6
      # bonus (base 100, pc congestion scaling up to ~250) targets the highest-type piece which is
@@ -1636,17 +1623,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
-
-        # ----- v505: HEIGHT_CONTROL suppression in danger zone -----
-        # Analysis: HEIGHT_CONTROL selected 20.5% with avg_delta=1.8 (essentially zero value).
-        # At rp>=2 (reactive pairs exist), selecting HEIGHT_CONTROL over MERGE risks losing merge
-        # window entirely. mandatory_themes.txt: "In danger zone near deadline, prioritize merge."
-        # Worst game T61-T68: NO_MERGE due to HEIGHT_CONTROL → piece accumulation → game over.
-        # At deadline_crossed AND rp >= 2 AND max_y >= 2.0, suppress HEIGHT_CONTROL by -500
-        # to force merge selection even at height cost. This respects mandatory_themes priority.
-        if merge_grade == "NO" and deadline_crossed and reactive_pair_count >= 2 and max_y >= 2.0:
-            score -= 500.0
-            reasons.append("HEIGHT_CONTROL_SUPPRESSION")
 
         # ----- update best candidate -----
         if score > best_score:
