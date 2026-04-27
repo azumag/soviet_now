@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v671: strengthen v411 deadline NO_MERGE penalty at max_y>=2.5
+     #       At max_y>=2.5, old -1200 was insufficient (NO_MERGE bonuses ~+800-1200 can overcome it)
+     #       -2500 makes NO_MERGE clearly uncompetitive at deadline_crossed, per mandatory_themes
+     #       Fixes worst game T59: NO_MERGE at max_y=2.51, deadline=true → max_y climb to 3.23 → game over
+     #       Rollback constraint: does NOT modify height_mult, v669/v670, or v550
+     #       refs: tmp/analysis_result.md (Hypothesis: Insufficient v411 deadline NO_MERGE penalty)
      # v670: mid-danger zone NEAR suppression (safety valve expansion, v669)
      #       max_y 2.0-2.5 && deadline_crossed && NEAR && pc>=35 && landing_y>=max_y-0.3 → -400 penalty
      #       Expands v669 safety valve to catch mid-danger zone where NEAR merge failure causes piece accumulation
@@ -2032,10 +2038,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
         # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
         #       game_history/20260416_193206_score1203.jsonl T50/T63/T66 (NEAR crosses deadline)
+        # v411 fix: At max_y>=2.5, v411=-1200 is insufficient (NO_MERGE bonuses ~+800-1200 can
+        # overcome it), causing max_y climb and game over. Increase to -2500 at max_y>=2.5.
+        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # refs: tmp/analysis_result.md (Hypothesis: Insufficient v411 deadline NO_MERGE penalty)
         margin = result.get("deadline_margin", 99)
         if merge_grade == "NO" and not russia_phase and margin < 0.5:
-            score -= max(0, (0.5 - margin)) * 5000
-            reasons.append("CROSSES_DEADLINE_NO_MERGE")
+            if max_y >= 2.5:
+                # v411: deadline NO_MERGE penalty strengthened for high max_y
+                # At max_y>=2.5, old -1200 was insufficient; -2500 makes NO_MERGE clearly uncompetitive
+                score -= 2500.0
+                reasons.append("CROSSES_DEADLINE")
+            else:
+                score -= max(0, (0.5 - margin)) * 5000
+                reasons.append("CROSSES_DEADLINE_NO_MERGE")
         elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
             score -= max(0, (0.5 - margin)) * 4000
             reasons.append("CROSSES_DEADLINE_NEAR_RISK")
