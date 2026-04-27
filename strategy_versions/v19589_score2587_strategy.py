@@ -12,6 +12,7 @@ Game Overview:
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.5c. HIGH_MAX_Y_NEAR_PENALTY - v550: max_y>=2.5 NEAR penalty (-300) before v422 evaluation
+         1.5d. Mid-danger NEAR suppression - v670: safety valve expansion for 2.0<=max_y<2.5, pc>=35
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
@@ -64,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v670: mid-danger zone NEAR suppression (safety valve expansion, v669)
+     #       max_y 2.0-2.5 && deadline_crossed && NEAR && pc>=35 && landing_y>=max_y-0.3 → -400 penalty
+     #       Expands v669 safety valve to catch mid-danger zone where NEAR merge failure causes piece accumulation
+     #       Fixes worst game T57-62: NEAR selected at max_y=2.30-2.69, pc=36-40, merge_available=false → score_delta=0, pc increases
+     #       Fixes rollback failure mode: NEAR merge failure in mid-danger zone (piece accumulation)
+     #       refs: tmp/analysis_result.md (Implementation Plan)
      # v669: russia phase deadline NEAR suppression (v624 port) + NEAR suppression safety valve
      #       russia_phase && deadline_crossed && max_y>=2.0 && merge_grade==NEAR → -600 penalty
      #       max_y>=2.5 && deadline_crossed && NEAR with landing_y>=max_y-0.3 → -600 penalty (safety valve allows compression path)
@@ -996,6 +1003,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 600.0
                 reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
             # else: allow — this NEAR lands below max_y, will compress board
+
+        # ----- v670: mid-danger zone NEAR suppression (safety valve expansion) -----
+        # v669 safety valve applies to max_y >= 2.5, deadline_crossed, NEAR.
+        # Expand to 2.0 <= max_y < 2.5, deadline_crossed, NEAR, piece_count >= 35.
+        # Worst game T57-62: max_y=2.30-2.69, piece_count=36-40, NEAR selected but
+        # merge_available=false (actual distance > NEAR threshold), score_delta=0 → pc increases.
+        # This mid-danger zone still has high failure risk even when v669 safety valve
+        # doesn't trigger (max_y < 2.5).
+        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # refs: tmp/analysis_result.md (Implementation Plan)
+        # Fixes rollback failure mode: NEAR merge failure in mid-danger zone (piece accumulation)
+        if max_y >= 2.0 and max_y < 2.5 and deadline_crossed and merge_grade == "NEAR" and piece_count >= 35:
+            if landing_y >= max_y - 0.3:
+                score -= 400.0
+                reasons.append("MID_DANGER_NEAR_SUPPRESSED")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
