@@ -65,6 +65,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
+     # v671: pre-gap-zone NEAR suppression for approaching danger threshold (analysis_result.md)
+     #       max_y 1.8-2.0 && reactor_pairs>=6 && pc>=26 && merge_grade==NEAR → -landing_y*300 penalty
+     #       Catches sub-threshold NEAR failures (e.g., T64 max_y=1.93) before they cascade to merge_available=false
+     #       Worst game T64: NEAR at max_y=1.93, rp=7, pc=28 failed → T65 merge_available=false → NO_MERGE at max_y=2.7 → game over
+     #       Fixes rollback failure mode: NEAR failure at sub-2.0 max_y → merge_available=false cascade
+     #       refs: tmp/analysis_result.md (Implementation Plan), game_history/20260428_014122_score0697.jsonl T64
      # v670: mid-danger zone NEAR suppression (safety valve expansion, v669)
      #       max_y 2.0-2.5 && deadline_crossed && NEAR && pc>=35 && landing_y>=max_y-0.3 → -400 penalty
      #       Expands v669 safety valve to catch mid-danger zone where NEAR merge failure causes piece accumulation
@@ -880,6 +886,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
             near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
+
+        # ----- pre-gap-zone NEAR suppression (v671: approaching danger threshold) -----
+        # Worst game T64: max_y=1.93 (below v504's 2.0 threshold), NEAR selected at
+        # reactor_pairs=7, pc=28, failed → pc accumulated to 32 → merge_available=false
+        # at T65 → forced NO_MERGE at max_y=2.7 → cascade to game over.
+        # v504 triggers at max_y>=2.0 but failure happens just below threshold.
+        # New pre-gap-zone detector: catch approaching danger while still sub-threshold.
+        # Condition: max_y 1.8-2.0 (approaching threshold) AND reactor_pairs>=6 (high
+        # opportunity cost of failure) AND pc>=26 (late enough that failure is catastrophic).
+        # Scaled penalty: landing_y * 300 (vs v504's 500) — proportional to proximity.
+        # Refs: tmp/analysis_result.md (Implementation Plan), game_history/20260428_014122_score0697.jsonl T64
+        # Fixes rollback failure mode: NEAR failure at sub-2.0 max_y → merge_available=false cascade
+        if merge_grade == "NEAR" and max_y >= 1.8 and max_y < 2.0 and reactive_pair_count >= 6 and piece_count >= 26:
+            pre_gap_penalty = landing_y * 300.0
+            score -= pre_gap_penalty
+            reasons.append("PRE_GAP_ZONE_NEAR_PENALTY")
 
         # ----- v422 supplementary: max_y >= 2.5 NEAR merge penalty -----
         # Worst game T71-76: max_y=2.74→2.87→3.43, NEAR selected but max_y doesn't decrease.
