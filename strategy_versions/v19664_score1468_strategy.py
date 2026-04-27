@@ -65,13 +65,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v671: pre-russia phase detection + axis 8.7-pre (type 14→type 15 pipeline missing)
-     #       pre_russia_phase: type 14 exists but no type 15 on board — prioritize second type 14 for Russia merge
-     #       When type 14 exists: +800/600 for type>=10 merges, +1200/1000 for type 14 merges (DIRECT/NEAR)
-     #       NO-merge placement near type 14 (prox bonus) but NOT when deadline_crossed (mandatory_themes)
-     #       Fixes all 24 batch games with ZERO type 15 appearances — missing type 14→type 15 pipeline
-     #       Fixes mandatory_themes violations: deadline_crossed && merge_grade==NO with type 14 placement
-     #       refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v503)
      # v670: mid-danger zone NEAR suppression (safety valve expansion, v669)
      #       max_y 2.0-2.5 && deadline_crossed && NEAR && pc>=35 && landing_y>=max_y-0.3 → -400 penalty
      #       Expands v669 safety valve to catch mid-danger zone where NEAR merge failure causes piece accumulation
@@ -752,14 +745,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 既存ロシアの保護と2つ目ロシアの成長パイプライン維持が最優先。
     # ロシア1つのままゲームオーバーになるのが最も惜しい負けパターン。
     double_russia_phase = russia_phase_count >= 2
-
-    # v503: pre-russia phase detection — type 14 piece(s) on board, but no type 15 yet.
-    # When type 14 exists, prioritize building a second type 14 for type 15 merge.
-    # This is the PRE-RUSSIA phase: the board has a type 14, the goal is to make
-    # a second type 14, merge them into type 15 (Russia).
-    # All 24 batch games had ZERO type 15 appearances — the pipeline is missing.
-    pre_russia_phase = (not russia_phase) and russia_phase_count == 0 and \
-        max((p.get("type", 0) for p in pieces), default=0) >= 14
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -1835,39 +1820,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       # 盤面圧縮を優先しつつ、type 15保護を徹底
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-
-        # ----- evaluation axis 8.7-pre: pre-russia phase merge priority / type 14 concentration (v503) -----
-        # When type 14 exists but no type 15, prioritize building the second type 14
-        # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
-        # mandatory_themes: deadline_crossed && merge_grade==NO → NO proximity bonus (dangerous placement)
-        # Fixes: all 24 batch games had ZERO type 15 — type 14→type 15 pipeline was missing.
-        # refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v503)
-        if pre_russia_phase:
-            # Count type 14 pieces on board
-            type14_pieces = [p for p in pieces if p.get("type") == 14]
-            type14_count = len(type14_pieces)
-
-            if merge_grade in ["DIRECT", "NEAR"]:
-                # High-type merge priority — type 14 needs another type 14 to build Russia
-                if next_type >= 10:
-                    score += 800.0 if merge_grade == "DIRECT" else 600.0
-                    reasons.append("PRE_RUSSIA_HIGH_TYPE_MERGE")
-                # Bonus for merging type 14 pieces (directly builds toward Russia)
-                if next_type == 14 and type14_count >= 1:
-                    score += 1200.0 if merge_grade == "DIRECT" else 1000.0
-                    reasons.append("PRE_RUSSIA_TYPE14_MERGE")
-
-            elif merge_grade == "NO" and not deadline_crossed:
-                # NO-merge placement: guide toward existing type 14 for future pipeline
-                # (deadline_crossed時はmandatory_themesにより抑制)
-                if type14_pieces:
-                    # Find lowest y type 14 piece
-                    type14_nearest = min(type14_pieces, key=lambda p: p.get("y", 10))
-                    dist = abs(x - type14_nearest["x"])
-                    if dist < 1.5:
-                        proximity_bonus = max(0, 150.0 - dist * 80.0)
-                        score += proximity_bonus
-                        reasons.append("PRE_RUSSIA_TYPE14_PROXIMITY")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
