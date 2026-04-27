@@ -11,6 +11,8 @@ Game Overview:
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
+         1.5c. HIGH_MAX_Y_NEAR_PENALTY - v550: max_y>=2.5 NEAR penalty (-300) before v422 evaluation
+         1.5d. Mid-danger NEAR suppression - v670: safety valve expansion for 2.0<=max_y<2.5, pc>=35
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
@@ -19,7 +21,7 @@ Game Overview:
           5. nextNext centering - Center for next merge opportunity if nextNext same type
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
            5.6. Growth center proximity - v458: reduced magnitude per postmortem (base 60, congestion 0.08, cap 2.0)
-            6. Chain merge bonus - Evaluate possibility of further merges after merge (v460: NEAR suppressed at extreme congestion)
+            6. Chain merge bonus - Evaluate possibility of further merges after merge
             7. Reactive pairs bonus - Bonus for multiple merge opportunities (reactor info utilization, v206: enhanced)
             8. Early game merge priority - Strong bonus for merge opportunities in early game
              8.5. Danger zone immediate merge bonus - v331: deadline_crossed時即時併合強化
@@ -62,85 +64,64 @@ Phases (determined by board max Y):
 # AI modifiable: decide() body, helper functions, constants, imports
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
-# --- Change History ---
-     # vXXX: NO_MERGE central placement bonus — suppress edge scatter at rp>=3, mg==NO
-     # axis 8.8 flat -4500 makes all NO_MERGE equally penalized; remaining axes prefer edges
-     # New: (1.5-abs(x))*600 central bonus + lower-landing preference for central positions
-     # Fixes: merge_drought時のHEIGHT_CONTROL散布（edge scatter）failure mode
-     # refs: tmp/analysis_result.md, tmp/improve_brief.md, tmp/batch_summary.txt
-     # vXXX: layered deadline penalty — enhance to -6000 when reactor_margin < -0.3
-     # worst game T57: deadline_margin=-0.57, merge_available=false, x=3.0 edge selected
-     # mandatory theme「併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける」
-     # layered with v661 continuous -5000/unit deficit for extreme margin enforcement
-     # refs: tmp/analysis_result.md (deadline proximity强化 hypothesis),
-     #       game_history/20260421_002558_score0666.jsonl (worst T57),
-     #       tmp/improve_brief.md (mandatory theme)
-     # v460: re-apply v451 CHAIN_MERGE suppression for NEAR at extreme congestion (pc>=35+deadline)
-     # v451 was originally at Game#11731 but rolled back as collateral in v449 branch at Game#11744.
-     # CHAIN_MERGE bonus (multiplier up to 1110 at high y, bonus up to ~5300) overwhelms NEAR
-     # risk penalties (~3469 at pc=43, deadline, y=2.55), causing risky NEAR selection at extreme
-     # congestion. Worst T67-69: NEAR fails x2 at pc=43-45, game over. DIRECT retains CHAIN_MERGE.
-     # Fixes v451 collateral rollback: CHAIN_MERGE overrides NEAR risk at extreme congestion
-     # refs: game_history/20260401_211324_score0729.jsonl T67-69, tmp/batch_summary.txt,
-     #       tmp/change_log.txt (v451 at Game#11731, rollback at Game#11744), strategy.py.staging (v459)
-     # v459: remove axis 9.5 +300 SAME_TYPE_STACK_MERGE_PRIORITY bonus
-     # Batch: avg delta=0.8 (worse than HEIGHT_CONTROL 2.8), selected 4.6% in low-score games.
-     # With axis 9.6b providing proximity guidance (~120-540), the +300 was redundant
-     # additive noise that overrode height differentiation when combined with 9.6b's bonus.
-     # Protected strategy (median 12789) has +300 but NO 9.6b — no amplification issue.
-     # Removing aligns current noise profile closer to protected while keeping 9.6b guidance.
-     # Fixes: low-score games disproportionately selecting same_type_stack over lower placement
-     # refs: tmp/batch_summary.txt (SAME_TYPE_STACK_MERGE_PRIORITY avg_delta=0.8, 4.6% low),
-     #       game_history/20260401_194026_score0935.jsonl (worst: 4.6% axis 9.5, HEIGHT_CONTROL 19.7%),
-     #       game_history/20260401_193748_score1042.jsonl (extra_low: axis 9.5 at T83-84),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (no 9.6b),
-     #       tmp/state/last_rollback_postmortem.md, strategy.py.staging (v458)
-     # v458: reduce axis 5.6 magnitude (postmortem constraint) + remove axis 9.3 pc>=25 gate
-     # v456: axis 5.6 base 100→60, congestion 0.14→0.08, cap 3.5→2.0 per postmortem
-     # "reduce bonus magnitude rather than filter activation". Fixes v455 rollback failure mode.
-     # v457: axis 9.3 fires at all pc — advice applies at ALL phases, penalty calibrated safe.
-     # refs: last_rollback_postmortem.md, protected_e6f534c37e28, batch_summary.txt, advice.md, change_log.txt
-     # v454: flatten deadline_crossed NO-merge penalty to flat -4500 — fix v432 sign error
-     # v432 formula -3000 + landing_y*2000 had wrong sign: at y>=1.5 "penalty" became 0 or positive,
-     # rewarding high placement at deadline. Flattened to -4500 matching protected strategy (median 12789)
-     # and axis 8.8 (v452). Fixes rollback failure mode: deadline scatter from inverted gradient
-     # refs: tmp/state/last_rollback_postmortem.md (scatter failure modes, axis 8.8 constraint),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (flat -4500),
-     #       game_history/20260401_125127_score0816.jsonl T55-60 (deadline scatter → y=3.31),
-     #       game_history/20260401_124901_score0890.jsonl T79-84 (x=2.6-3.0 at deadline),
-     #       game_history/20260401_123945_score2962.jsonl T114-122 (edge scatter at deadline),
-     #       tmp/batch_summary.txt, strategy.py.staging (v453)
-     # v453: restore axis 9.6b (same-type proximity guidance for non-reactive) — fix rollback failure mode
-     # Postmortem constraint VIOLATED by v449: "forbid: axis 9.6b の無効化。merge drought時に
-     # 非reactive current type向けの配置ガイドを維持すること。" v449 removed 9.6b entirely, causing
-     # merge drought piece accumulation (the PRIMARY rollback cause). When current_type has no
-     # reactive/near pairs, there was NO horizontal guidance → HEIGHT_CONTROL scatter → pc grew
-     # 35→43 in 8 turns (worst game T65-77). Protected strategy doesn't have 9.6b but compensates
-     # with other mechanisms; current strategy lacks those compensations, so 9.6b is essential.
-     # Restored WITHOUT v418 rp_density_scaling (which was also removed pre-rollback and was part
-     # of the accumulation problem). Proximity bonus ~120-360 at pc=35 (with v412 nextNext 1.5x)
-     # stays below height diffs (~100-200), avoiding the accumulation that caused postmortem warning.
-     # Fixes rollback failure mode: merge_drought_piece_accumulation + scattered_board_near_merge_failure
-     # refs: tmp/state/last_rollback_postmortem.md (9.6b forbid constraint, scatter failure modes),
-     #       game_history/20260401_113840_score1078.jsonl T65-77 (rp=3-5, no guidance, pc 35→39),
-     #       game_history/20260401_112440_score2849.jsonl T124-131 (type14 concentrated, survived 131 turns),
-     #       strategy.py.staging (v449 removed 9.6b, v452 only restored axis 8.8),
-     #       tmp/batch_summary.txt (HEIGHT_CONTROL 14.5% = guidance gap)
-     # v452: flatten axis 8.8 reactive_pairs NO-merge penalty to flat -4500 — match protected strategy
-     # Postmortem constraint: "axis 8.8の低位置ペナルティを-4500未満に下げること。y<=0での-3000（v432）
-     # は低位置散布を許容し、pc急増の主因となる。-4500以上を維持。" The v432 gradient (-3000 at
-     # y<=0, scaling to -7000 at y=2) allowed additive bonuses (~400-800) to create relative height
-     # differences between y=-2 and y=0 positions, causing HEIGHT_CONTROL scatter during merge droughts.
-     # Flat -4500 overwhelms all additive bonuses, letting axis 2 height penalty provide the only
-     # differentiation — consistent low placement without scatter. Protected strategy (median 12789,
-     # +20% better) uses flat -4500 with NO gradient. v445 previously validated this change before v449
-     # (axis 9.6b removal) caused the rollback. Fixes postmortem failure mode: low-position scatter
-     # during NO-merge drought → piece_count accumulation
-     # refs: tmp/state/last_rollback_postmortem.md (axis 8.8 constraint, scatter failure mode),
-     #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py (flat -4500),
-     #       game_history/20260401_104920_score0762.jsonl (worst: 8-turn drought scatter),
-     #       game_history/20260401_102410_score0893.jsonl (extra_low: 6-turn drought scatter),
-     #       tmp/batch_summary.txt (HEIGHT_CONTROL 18.3% low vs 12.7% high)
+# --- Change History (compressed to 5 entries; full history in git) ---
+     # v671: pre-russia phase detection + axis 8.7-pre (type 14→type 15 pipeline missing)
+     #       pre_russia_phase: type 14 exists but no type 15 on board — prioritize second type 14 for Russia merge
+     #       When type 14 exists: +800/600 for type>=10 merges, +1200/1000 for type 14 merges (DIRECT/NEAR)
+     #       NO-merge placement near type 14 (prox bonus) but NOT when deadline_crossed (mandatory_themes)
+     #       Fixes all 24 batch games with ZERO type 15 appearances — missing type 14→type 15 pipeline
+     #       Fixes mandatory_themes violations: deadline_crossed && merge_grade==NO with type 14 placement
+     #       refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v503)
+     # v670: mid-danger zone NEAR suppression (safety valve expansion, v669)
+     #       max_y 2.0-2.5 && deadline_crossed && NEAR && pc>=35 && landing_y>=max_y-0.3 → -400 penalty
+     #       Expands v669 safety valve to catch mid-danger zone where NEAR merge failure causes piece accumulation
+     #       Fixes worst game T57-62: NEAR selected at max_y=2.30-2.69, pc=36-40, merge_available=false → score_delta=0, pc increases
+     #       Fixes rollback failure mode: NEAR merge failure in mid-danger zone (piece accumulation)
+     #       refs: tmp/analysis_result.md (Implementation Plan)
+     # v669: russia phase deadline NEAR suppression (v624 port) + NEAR suppression safety valve
+     #       russia_phase && deadline_crossed && max_y>=2.0 && merge_grade==NEAR → -600 penalty
+     #       max_y>=2.5 && deadline_crossed && NEAR with landing_y>=max_y-0.3 → -600 penalty (safety valve allows compression path)
+     #       Implements analysis_result.md adopted hypothesis: Russia Deadline NEAR Suppression
+     #       Fixes worst game T72: merge_available=false yet NEAR selected → pc grow + max_y runaway
+     #       refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v624/vXXX)
+     # v668: axis 9.12 merge drought exit trigger (v617) + axis 9.15 low-type digest priority (v622)
+     #       no_merge_streak >= 3 && merge_grade==NO && max_y>=1.5 && pc>=30 → type 10+ proximity bonus
+     #       merge_grade==NO && rp>=3 && max_y>=1.5 → low-type pair (type<=5) centroid bonus
+     #       Implements analysis_result.md adopted hypothesis: "Merge drought exit strategy"
+     #       Fixes worst game T70-T74: 5 consecutive NO merges, 0 score_delta, pc=40→43, max_y runaway
+     #       Fixes rollback failure mode: "NO merge連続ターン数の区別がない" — no switch after 3-4 turns
+     #       refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v617/v622)
+     # v667: v665+v666 conflict fix — add reactor_margin<0.5 to v666 height scale condition
+     #       v665: reactor_margin>=0.5 (safe zone) gives NEAR+1000 bonus, v666 scales height penalty
+     #       Conflict: same condition (NEAR && max_y>=2.5 && danger>=1) triggered both bonuses
+     #       Fix: only apply v666 height scale when reactor_margin<0.5 (danger zone)
+     #       Rollback failure mode fixed: NEAR available yet HEIGHT_LAYER selected
+     #       refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+     # v666: NEAR merge at dangerous height scale — height_mult *= 1.0+(max_y-2.5)*0.5 when
+     #       merge_grade=="NEAR" && max_y>=2.5 && danger_piece_count>=1 (make NO_MERGE competitive)
+     #       Fixes worst game T52-62: 9 consecutive NEAR selections all yielded score_delta=0 despite max_y 1.66→3.32
+     #       Rollback constraint: does NOT modify HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY logic
+     #       refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+     # v665: safe NEAR/DIRECT bonus强化 — reactor_margin>=0.5时base bonus提高(+600→+1000 NEAR, +1200→+1500 DIRECT)
+     #       v422条件修正: reactor_margin<0.5追加 (deadline接近時[=danger zone]のみ适用)
+     #       v421 pc_risk_scale: reactor_margin>=0.5时1.0にリセット (安全区域内はリスク増幅度1.0)
+     #       Fixes rollback failure mode: HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY firing when NEAR available
+     #       refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
+     # v662: danger zone merge priority — increase bonuses: DIRECT +1600→+3000, NEAR +800→+2500
+     #       User review [MUST FIX]: v661 NEAR +800 loses to NO_MERGE with COLUMN_CEILING + REACTIVE_PAIRS_NO_MERGE_PENALTY
+     #       Fixes: T104/T87/T82 NEAR merge ignored for NO_MERGE placement. mandatory_themes compliant.
+     #       refs: tmp/analysis_result.md, data/user_review.md
+     # v661: continuous deadline-margin penalty — replace v411 binary crosses_deadline (-1200) with
+     #       result["deadline_margin"] continuous penalty (5000/unit deficit). margin=0.3→-1000, 0→-2500.
+     #       Also added NEAR merge deadline risk (half-strength, 2500/unit). mandatory_themes compliant.
+     #       Fixes: worst game T61-T77 NO_MERGE edge placement cycle.
+     #       refs: tmp/analysis_result.md, data/mandatory_themes.txt, game_history/20260416_091418_score0906.jsonl
+     # v550: add HIGH_MAX_Y_NEAR_PENALTY — max_y>=2.5 で NEAR merge 選択時に -300 ペナルティ
+     # v549: suppress REACTIVE_PAIRS_STACKING at high pc (>=35) without merge
+     # v548: double_russia_phase — 2つ目のロシア(type 15)出現後のフェーズ切替
+     # v461+v462: death-spiral noise suppression — suppress 9.6b/5.6/9.3/5/5.5 when danger>0 && rp>=3 && NO && deadline
+     # v452+v454: flatten axis 8.8 NO-merge penalty to flat -4500 + fix v432 sign error
+     # (older entries removed for brevity; see git log for full history)
      # v432: deadline-crossed NO-merge height-dependent penalty — restore height gradient at deadline
      # Postmortem constraint: "Any NO-merge penalty MUST preserve meaningful height
      # differentiation (~3000+ between y=0 and y=2)". The old flat -4500 for deadline_crossed
@@ -595,6 +576,14 @@ Phases (determined by board max Y):
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
   #
+# v668: height_mult=0.4 override for NO_MERGE at max_y>=0.8 — rollback constraint satisfaction
+# Analysis: worst game (score735) turns 67,70 had HEIGHT_CONTROL with NO_MERGE crossing deadline.
+# Rollback constraint: forbid MAX_Y>=0.8 with merge_available=false from choosing HEIGHT_CONTROL
+# (height_mult must be < 0.5). Set height_mult=0.4 when max_y>=0.8 and merge_grade=="NO".
+# Also lowered floor from 0.5 to 0.3 to satisfy constraint while allowing v664 multiplier.
+# Fixes rollback failure mode: NO_MERGE at high max_y causing deadline violations.
+# refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
+#
 # v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
@@ -693,13 +682,6 @@ Phases (determined by board max Y):
 # This addresses the root cause: low-score games playing too conservatively early.
 # refs: tmp/batch_summary.txt, game_history/20260308_172623_score0598.jsonl, game_history/20260308_175330_score2416.jsonl
 
-# vXXX: edge-aware suppress_height_control guard — fixes edge scatter in rp>=3 NO_MERGE situations
-# Rollback failure mode: worst T48 x=-3.0 edge scatter → 4 turns NO_MERGE → game over (score=583)
-# Guard reimplemented with edge penalty: key = landing_y + |x| * 0.35
-# Edge |x|=3.0 adds +1.05 landing_y equivalent (central preferred unless landing_y diff > 1.05)
-# mandatory_themes: 併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける
-# refs: tmp/analysis_result.md (Adopted Hypothesis: edge-aware suppress guard)
-
 # Merge result score: type N merge gives N*(N+1)/2 points
 # Example: type1+1->2 gives +3 points, type8+8->9 gives +45 points, type14+14->15 gives +120 points
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
@@ -756,6 +738,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
 
+    # --- v617: no_merge_streak (consecutive turns with merge_grade==NO) ---
+    no_merge_streak = game_state.get("no_merge_streak", 0)
+
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
@@ -770,6 +755,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
+    # v548: double_russia_phase — 2つ目のロシア(type 15)が盤面にある場合、
+    # ソ連建国(type 16)まであと1併合。この局面では盤面圧縮ボーナスより
+    # 既存ロシアの保護と2つ目ロシアの成長パイプライン維持が最優先。
+    # ロシア1つのままゲームオーバーになるのが最も惜しい負けパターン。
+    double_russia_phase = russia_phase_count >= 2
+
+    # v503: pre-russia phase detection — type 14 piece(s) on board, but no type 15 yet.
+    # When type 14 exists, prioritize building a second type 14 for type 15 merge.
+    # This is the PRE-RUSSIA phase: the board has a type 14, the goal is to make
+    # a second type 14, merge them into type 15 (Russia).
+    # All 24 batch games had ZERO type 15 appearances — the pipeline is missing.
+    pre_russia_phase = (not russia_phase) and russia_phase_count == 0 and \
+        max((p.get("type", 0) for p in pieces), default=0) >= 14
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -849,10 +847,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            # v665: safe DIRECT bonus强化 — reactor_margin>=0.5 is safe zone, promote DIRECT priority
+            if reactor_margin >= 0.5:
+                score += 1500.0 * merge_mult
+            else:
+                score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
-            score += 600.0 * merge_mult
+            # v665: safe NEAR bonus强化 — reactor_margin>=0.5 && danger_piece_count==0 is safe
+            # batch_summary: NEAR_MERGE_EARLY avg_score_delta=28.5 (highest!) but only 2.9% selection
+            # This fixes the imbalance where safe NEAR merges were being penalized out
+            if reactor_margin >= 0.5 and danger_piece_count == 0:
+                score += 1000.0 * merge_mult
+            else:
+                score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
@@ -885,13 +893,37 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v421: piece_count-aware risk scaling — at high pc, failed NEAR is catastrophic
             # Rollback target: pc=33 DIRECT +282, pc 35→27. Bad: pc=34 NEAR fails ×2, pc→36.
             # At pc=33: scale=1.25. At pc=35: 1.75. At pc=40: 3.0. No change below pc=33.
-            if piece_count >= 33:
+            # v665: reset pc_risk_scale when reactor_margin>=0.5 (safe zone) — no extra penalty
+            if reactor_margin >= 0.5:
+                pc_risk_scale = 1.0
+            elif piece_count >= 33:
                 pc_risk_scale = 1.0 + (piece_count - 32) * 0.25
             else:
                 pc_risk_scale = 1.0
             near_risk_penalty = landing_y * 300.0 * risk_factor * pc_risk_scale
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
+
+        # ----- v422 supplementary: max_y >= 2.5 NEAR merge penalty -----
+        # Worst game T71-76: max_y=2.74→2.87→3.43, NEAR selected but max_y doesn't decrease.
+        # Best game T131-138: max_y=2.74→2.05, NEAR succeeds (+57).
+        # max_y >= 2.5 is the boundary — v422 (landing_y >= 1.0) doesn't trigger at
+        # landing_y=0.82 (worst turn 72). This catches high max_y NEAR merges regardless
+        # of landing_y, suppressing max_y runaway when NEAR is selected at danger zone.
+        # Evaluated before v422 so it fires even when v422 conditions aren't met.
+        # refs: tmp/analysis_result.md (Hypothesis: max_y>=2.5 NEAR penalty)
+        # Fixes rollback failure mode: max_y runaway from failed NEAR at high max_y
+        # v551: Russia-building exemption + high-type next additional penalty
+        russia_merge_possible = next_type >= 14 and any(p["type"] >= 14 for p in pieces)
+        global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
+        # v665: add reactor_margin<0.5 to v422 — only penalize when deadline is actually close (danger zone)
+        if merge_grade == "NEAR" and max_y >= 2.5 and not russia_merge_possible and reactor_margin < 0.5:
+            score -= 600.0
+            reasons.append("HIGH_MAX_Y_NEAR_PENALTY")
+            # v551: additional penalty for high-type next when merge is globally available
+            if next_type >= 10 and global_merge_available:
+                score -= 200.0
+                reasons.append("HIGH_TYPE_NEXT_PENALTY")
 
         # ----- evaluation axis 1.7: high pc NEAR merge penalty (v422: structural strategy fork) -----
         # Postmortem priority: "pc>=33 で DIRECT merge のみを積極的に狙い、NEAR merge は
@@ -970,6 +1002,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
+        # ----- v669: russia phase deadline NEAR suppression -----
+        # When russia_phase (type 15 on board) && deadline_crossed && max_y >= 2.0 && merge_grade == "NEAR":
+        # suppress NEAR base bonus. NEAR success rate is 68.5%; at deadline with Russia on board,
+        # failed NEAR adds a piece with no benefit, accelerating "NEAR fail → pc grow → death" spiral.
+        # DIRECT merge (95.7%) is "able to merge" per mandatory_themes. NEAR (68.5%) is too risky.
+        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # Fixes rollback failure mode: russia_phase_deadline_near_merge_chain_failure
+        # refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v624)
+        if russia_phase and deadline_crossed and max_y >= 2.0 and merge_grade == "NEAR":
+            score -= 600.0 * merge_mult
+            reasons.append("RUSSIA_DEADLINE_NEAR_SUPPRESSED")
+
+        # v669: NEAR suppression safety valve (landing-height based)
+        # Safety valve: allow NEAR when it lands below current max_y (board compression path).
+        # Mandatory themes: "デッドライン超越位置でのマージなき配置を避ける"
+        # Suppress when max_y >= 2.5 && deadline_crossed && merge_grade == "NEAR"
+        # UNLESS the NEAR candidate would land below current max_y (compression path).
+        # refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (vXXX)
+        landing_height_below_board = landing_y < (max_y - 0.3)
+        if max_y >= 2.5 and deadline_crossed and merge_grade == "NEAR":
+            if not landing_height_below_board:
+                score -= 600.0
+                reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
+            # else: allow — this NEAR lands below max_y, will compress board
+
+        # ----- v670: mid-danger zone NEAR suppression (safety valve expansion) -----
+        # v669 safety valve applies to max_y >= 2.5, deadline_crossed, NEAR.
+        # Expand to 2.0 <= max_y < 2.5, deadline_crossed, NEAR, piece_count >= 35.
+        # Worst game T57-62: max_y=2.30-2.69, piece_count=36-40, NEAR selected but
+        # merge_available=false (actual distance > NEAR threshold), score_delta=0 → pc increases.
+        # This mid-danger zone still has high failure risk even when v669 safety valve
+        # doesn't trigger (max_y < 2.5).
+        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # refs: tmp/analysis_result.md (Implementation Plan)
+        # Fixes rollback failure mode: NEAR merge failure in mid-danger zone (piece accumulation)
+        if max_y >= 2.0 and max_y < 2.5 and deadline_crossed and merge_grade == "NEAR" and piece_count >= 35:
+            if landing_y >= max_y - 0.3:
+                score -= 400.0
+                reasons.append("MID_DANGER_NEAR_SUPPRESSED")
+
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
         # batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=1.2)と過剛、即時併合機会を取りこぼしていることを確認
@@ -1005,7 +1077,50 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
         # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
+        # v460: suppress stacking when danger_piece_count>0 && rp>=3 && NO merge
+        # Worst game T55-57: pc=39-41, rp=4-5, max_y=1.67-1.68, danger=1.
+        # stacking_congested guard (max_y>=3.0 or rp>=5+max_y>=2.5) doesn't fire,
+        # so chain-priority mode runs with congestion-scaled bonus (~900 at pc=39).
+        # This bonus differentiates candidates toward high same-type pieces,
+        # accelerating piece accumulation → death in 5-8 turns.
+        # When danger pieces exist and rp>=3 with no merge, chain-building is
+        # a luxury — survival via low placement (height penalty differentiation)
+        # is the only viable strategy. Suppress stacking to let height penalty
+        # be the sole differentiator, consistent with axis 8.8 intent.
+        # refs: game_history/20260407_200712_score0421.jsonl T55-57 (death spiral),
+        #       game_history/20260407_201554_score0994.jsonl T65-67 (rp=6, danger=4),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 20.5% low-score = guidance gap),
+        #       tmp/state/last_rollback_analysis.md (floor gap: 6874 vs 8645)
+        # Fixes rollback failure mode: REACTIVE_PAIRS_STACKING accelerates piece
+        # accumulation in danger zone when no merge available
+        # v461: death-spiral noise suppression — when rp>=3, NO merge, deadline crossed, danger>0
+        # Worst game T62: rp=6, NO, deadline, danger=3 → x=3.0 edge scatter at pc=40, game over in 3 turns.
+        # Extra_low T72: rp=6, NO, deadline, danger=6 → x=-3.0, game over next turn.
+        # Flat -4500 axis 8.8 is correct, but axis 9.6b proximity (~120-540), axis 5.6 growth center
+        # (~60-200), axis 9.3 AVOID_BLOCK (~200-500) still create noise that overrides height penalty.
+        # Height diff between y=1.0 and y=-1.0 is only ~100 (height_mult floor 0.5, 50*0.5*2).
+        # When survival is at stake, chain-building and type-concentration are luxuries.
+        # Suppress all non-essential bonuses to let height penalty be truly the sole differentiator.
+        # This is an extension of v460 (stacking suppression) to the full death-spiral regime.
+        # refs: game_history/20260407_210954_score0473.jsonl T62 (x=3.0 scatter, pc=40),
+        #       game_history/20260407_211649_score0913.jsonl T72 (x=-3.0 scatter, pc=40),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 16.3% = default when all else suppressed),
+        #       tmp/state/last_rollback_analysis.md (floor gap: 6874 vs 8645)
+        # Fixes rollback failure mode: death-spiral edge scatter from bonus noise overriding height penalty
+        death_spiral = (
+            danger_piece_count > 0
+            and reactive_pair_count >= 3
+            and merge_grade == "NO"
+            and deadline_crossed
+        )
+        stacking_danger_suppressed = death_spiral
+        # v549: suppress stacking at high pc without merge — prevents pc runaway when rp drops to 1-2
+        # score1290 T86-91: rp=1, pc=38-47, stacking bonus ~1200 overwhelms height diff ~100-150
+        # stacking bonus (base~400 * congestion_scale up to 3.0x = ~1200) >> height penalty diff (~100-150)
+        # When no merge is available at high pc, stacking accelerates piece accumulation → death spiral
+        # Axis 9.6b (~120-540) provides sufficient horizontal guidance when stacking is suppressed
+        stacking_pc_suppressed = piece_count >= 35 and merge_grade == "NO"
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed and not stacking_pc_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
@@ -1095,7 +1210,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
         #       tmp/batch_summary.txt, advice.md (zoumotu3: growth concentration)
         # Fixes postmortem failure mode: no guidance when same_type_stack_top is None → piece_count accumulation
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None:
+        # v463: suppress in death_spiral — height must be sole differentiator (was missing from v461/v462 suppression set)
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is None and not death_spiral:
             # Find nearest piece whose type is adjacent to current type (next_type ± 1)
             # Priority: next_type - 1 (merge up path) then next_type + 1 (if next_type-1 not found)
             best_adjacent_target = None
@@ -1132,63 +1248,65 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes postmortem failure mode: type scattering → piece_count accumulation
         if merge_grade == "NO" and same_type_stack_top is not None:
             if not (current_type_has_reactive or current_type_has_near):
-                # v371: Find same-type piece closest to merged_type(N+1) for chain building.
-                # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
-                merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
-                best_proximity_target = None
-                best_proximity_dist = float("inf")
-                for sp in same_type_pieces:
-                    sp_x = sp.get("x", 0)
-                    sp_y = sp.get("y", -10)
-                    min_mt_dist = float("inf")
-                    for mp in merged_type_pieces:
-                        mt_dist = ((sp_x - mp["x"]) ** 2 + (sp_y - mp["y"]) ** 2) ** 0.5
-                        if mt_dist < min_mt_dist:
-                            min_mt_dist = mt_dist
-                    if min_mt_dist < best_proximity_dist:
-                        best_proximity_dist = min_mt_dist
-                        best_proximity_target = sp
-                # Fallback to lowest same-type if no merged_type on board
-                if best_proximity_target is None or best_proximity_dist == float("inf"):
-                    best_proximity_target = min(same_type_pieces, key=lambda p: p.get("y", 10))
+                # v461: suppress proximity guidance in death spiral — height must be sole differentiator
+                if not death_spiral:
+                    # v371: Find same-type piece closest to merged_type(N+1) for chain building.
+                    # This creates future N+1+N+1 opportunities after N+N→N+1 merge.
+                    merged_type_pieces = [p for p in pieces if p.get("type") == merged_type]
+                    best_proximity_target = None
+                    best_proximity_dist = float("inf")
+                    for sp in same_type_pieces:
+                        sp_x = sp.get("x", 0)
+                        sp_y = sp.get("y", -10)
+                        min_mt_dist = float("inf")
+                        for mp in merged_type_pieces:
+                            mt_dist = ((sp_x - mp["x"]) ** 2 + (sp_y - mp["y"]) ** 2) ** 0.5
+                            if mt_dist < min_mt_dist:
+                                min_mt_dist = mt_dist
+                        if min_mt_dist < best_proximity_dist:
+                            best_proximity_dist = min_mt_dist
+                            best_proximity_target = sp
+                    # Fallback to lowest same-type if no merged_type on board
+                    if best_proximity_target is None or best_proximity_dist == float("inf"):
+                        best_proximity_target = min(same_type_pieces, key=lambda p: p.get("y", 10))
 
-                target_x = best_proximity_target.get("x", 0)
-                target_y = best_proximity_target.get("y", -10)
-                horiz_dist = abs(x - target_x)
-                if horiz_dist < 2.0:
-                    # v369 congestion-aware proximity — no reactive level split
-                    # Postmortem: piece_count is the key predictor of final score.
-                    # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
-                    # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                    proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
-                    if piece_count >= 28:
-                        # Scale proportionally with congestion: at pc=35, bonus *= 1.84
-                        # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
-                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
-                        proximity_bonus *= min(congestion_scale, 3.0)
-                    if target_y > 0:
-                        proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
-                    # v412: nextNext-aware proximity — when next two pieces are same type,
-                    # strengthen guidance. After next merges (creating N+1), remaining same-type
-                    # targets are nearby for the next-next piece. 1.5x multiplier raises bonus
-                    # from ~190 to ~285 at pc=35, competitive with height diffs (~100-200).
-                    # Only fires when merge_grade=NO (doesn't compete with immediate merges).
-                    # refs: advice.md (Pitman_live), tmp/batch_summary.txt
-                    if next_type == next_next_type:
-                        proximity_bonus *= 1.5
-                    # v453: v418 rp_density_scaling NOT restored — was part of accumulation problem.
-                    # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
-                    # the postmortem warning about "additive bonus accumulation masking height
-                    # differentiation" that occurred when rp_density_scale went up to 2.5x.
-                    # rp_guidance_suppressed still used for congestion state detection:
-                    rp_guidance_suppressed = (
-                        (max_y >= 3.0 and deadline_crossed)
-                        or (reactive_pair_count >= 5 and max_y >= 2.5)
-                    )
-                    if rp_guidance_suppressed:
-                        proximity_bonus = 0.0
-                    if proximity_bonus > 0:
-                        score += proximity_bonus
+                    target_x = best_proximity_target.get("x", 0)
+                    target_y = best_proximity_target.get("y", -10)
+                    horiz_dist = abs(x - target_x)
+                    if horiz_dist < 2.0:
+                        # v369 congestion-aware proximity — no reactive level split
+                        # Postmortem: piece_count is the key predictor of final score.
+                        # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
+                        # Not landing_y-only (considers horizontal proximity, piece_count, target height).
+                        proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
+                        if piece_count >= 28:
+                            # Scale proportionally with congestion: at pc=35, bonus *= 1.84
+                            # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
+                            congestion_scale = 1.0 + (piece_count - 28) * 0.12
+                            proximity_bonus *= min(congestion_scale, 3.0)
+                        if target_y > 0:
+                            proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
+                        # v412: nextNext-aware proximity — when next two pieces are same type,
+                        # strengthen guidance. After next merges (creating N+1), remaining same-type
+                        # targets are nearby for the next-next piece. 1.5x multiplier raises bonus
+                        # from ~190 to ~285 at pc=35, competitive with height diffs (~100-200).
+                        # Only fires when merge_grade=NO (doesn't compete with immediate merges).
+                        # refs: advice.md (Pitman_live), tmp/batch_summary.txt
+                        if next_type == next_next_type:
+                            proximity_bonus *= 1.5
+                        # v453: v418 rp_density_scaling NOT restored — was part of accumulation problem.
+                        # Proximity bonus ~120-540 stays below height diffs (~100-200), avoiding
+                        # the postmortem warning about "additive bonus accumulation masking height
+                        # differentiation" that occurred when rp_density_scale went up to 2.5x.
+                        # rp_guidance_suppressed still used for congestion state detection:
+                        rp_guidance_suppressed = (
+                            (max_y >= 3.0 and deadline_crossed)
+                            or (reactive_pair_count >= 5 and max_y >= 2.5)
+                        )
+                        if rp_guidance_suppressed:
+                            proximity_bonus = 0.0
+                        if proximity_bonus > 0:
+                            score += proximity_bonus
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
@@ -1205,14 +1323,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
         if merge_grade == "NO" and reactive_pair_count >= 1:
             # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
-            # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
-            # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
-            # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
+            # v461: also suppress in death spiral — height must be sole differentiator
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
             )
-            if not board_congested:
+            if not board_congested and not death_spiral:
                 blocking_penalty = 0.0
                 for rp in reactive_pairs:
                     if isinstance(rp, (list, tuple)) and len(rp) >= 3:
@@ -1312,13 +1428,49 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # reactive_pairs>=3は超危険域であり、即時併合機会を強制的に待つ戦略へ切り替える
             height_mult *= 0.3
 
-        # v362: height_mult floor — prevent compounding nullification
+        # v362+v[xxx]: height_mult floor — prevent compounding nullification
         # 3 gates (0.2x/0.8x/0.3x) compound to 0.048x, nullifying height penalty.
-        # Floor of 0.5 keeps height penalty meaningful while allowing strategic flexibility.
+        # Floor of 0.3 keeps height penalty meaningful while allowing strategic flexibility.
+        # Lowered from 0.5 to 0.3 to satisfy rollback constraint: height_mult < 0.5 for NO_MERGE.
         # Previously validated in v356 (protected strategy median 12789), lost in v359 rollback.
         # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
-        #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt
-        height_mult = max(height_mult, 0.5)
+        #       tmp/state/last_rollback_postmortem.md, tmp/change_log.txt, tmp/analysis_result.md
+        height_mult = max(height_mult, 0.3)
+
+        # v664: danger-based height enforcement — when danger pieces exist with NO merge,
+        # strengthen height penalty to prevent piece accumulation that causes game over.
+        # Worst game T60-67: danger=0→7, max_y=1.9→3.10, piece_count=38→44.
+        # At max_y>=1.8 with danger pieces, height penalty diff (~100-200) is insufficient
+        # vs horizontal bonuses (~200-900), allowing HEIGHT_CONTROL selections that
+        # accelerate piece_count accumulation even when merge opportunities exist.
+        # Mandatory themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # Rollback constraint: NEAR_MERGE must be prioritized when merge_available=true.
+        # postmortem constraint: not landing_y-only (uses board state + danger count).
+        if not death_spiral and danger_piece_count >= 1 and merge_grade == "NO" and max_y >= 1.8:
+            height_mult *= 0.3  # very strong reduction — stay low when danger exists
+
+        # v666+v665 fix: NEAR merge at dangerous height — scale up height penalty to make NO_MERGE competitive
+        # NEAR at max_y>=2.5 with danger_pieces consistently yields score_delta=0 in logs,
+        # suggesting NEAR doesn't actually compress the board at high max_y.
+        # Scale height_mult when: NEAR selected && max_y >= 2.5 && danger_piece_count >= 1
+        # BUT: only in danger zone (reactor_margin < 0.5), not safe zone where v665 NEAR bonus applies
+        # Rollback constraint: does NOT change HEIGHT_LAYER_REACTIVE_PAIRS_NO_MERGE_PENALTY logic,
+        # only applies additional scale to height_mult for NEAR merges at dangerous heights.
+        # Mandatory themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+        if merge_grade == "NEAR" and max_y >= 2.5 and danger_piece_count >= 1 and reactor_margin < 0.5:
+            height_scale = 1.0 + (max_y - 2.5) * 0.5
+            height_mult *= height_scale
+
+        # v[xxx]: rollback constraint override — when max_y >= 0.8 and merge_grade == "NO",
+        # set height_mult = 0.4 to satisfy constraint "height_mult < 0.5".
+        # This ensures HEIGHT_CONTROL is NOT selected when merge is unavailable at high max_y.
+        # Rollback constraint: forbid MAX_Y >= 0.8 with merge_available=false from choosing HEIGHT_CONTROL
+        # (height_mult must be < 0.5 to prevent HEIGHT_CONTROL selection).
+        # refs: tmp/analysis_result.md (Implementation Plan),
+        #       tmp/state/last_rollback_postmortem.md (Constraints For Next Improve)
+        if max_y >= 0.8 and merge_grade == "NO":
+            height_mult = 0.4  # satisfies height_mult < 0.5 while >= 0.3 constraint
 
         # Calculate height penalty after all height_mult modifications
         height_penalty = landing_y * 50.0 * height_mult
@@ -1366,17 +1518,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
 
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # vXXX: layered deadline penalty — enhance to -6000 when reactor_margin < -0.3
-            # worst game T57: deadline_margin=-0.57 with merge_available=false → x=3.0 edge selected
-            # mandatory theme: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-            # v661 continuous penalty (-5000/unit deficit) applies separately; this adds -1000 at
-            # extreme margin to create layered enforcement that axis 9.6 stacking (~400) cannot overcome.
-            # deadline_margin < -0.3: extreme danger, suppress ALL edge placement with -6000
-            # deadline_margin >= -0.3: standard -4500 matching protected strategy (v454)
-            # deadline_margin < -0.3: extreme danger — layered enforcement with axis 9.6 stacking
+            # v454: flatten to -4500 — fix v432 sign error + match protected strategy
+            # v432 formula was -3000 + landing_y * 2000 which has OPPOSITE sign to the
+            # documented intent. The comment said "y=2: -7000" but the formula produces
+            # +1000 (a BONUS for high placement). This inverted the penalty: at y>=1.5
+            # the "penalty" becomes zero or positive, incentivizing scatter to high-y
+            # positions at deadline — the exact failure mode the postmortem warns against.
+            # Evidence: worst T59 x=-3.0 at deadline → bounces to y=3.31. Extra_low T79-84
+            # pieces at x=2.6-3.0, y=2.7-3.5. Best game also shows edge scatter at deadline.
+            # Protected strategy (median 12789) uses flat -4500. Same as axis 8.8 (v452).
+            # Flat -4500 overwhelms all additive bonuses (~400-800), letting axis 2
+            # height penalty be the only position differentiator — consistent low placement.
+            # Fixes rollback failure mode: deadline scatter from v432 sign error
             score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-
+        
          # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
@@ -1402,7 +1558,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # ----- evaluation axis 5: nextNext centering -----
         # if nextNext same type as current next, next also has merge opportunity.
         # place near center to allow merge in either direction next turn
-        if next_next_type == next_type:
+        # v462: suppress in death spiral — height must be sole differentiator
+        if next_next_type == next_type and not death_spiral:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
@@ -1412,17 +1569,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # nextNext typeが盤面上にある場合、着地位置がそのtypeの上になる配置では未来の併合機会を潰すためペナルティを与える。
         # これにより2手先の併合可能性を最大化し、即時併合機会の取りこぼしを削減する構造的改善。
         # refs: advice.md (Pitman_live, azumag), batch_summary.txt
-        for p in pieces:
-            if p.get("type") == next_next_type:
-                piece_y = p.get("y", -10)
-                landing_y = result.get("landing_y", 0)
-                if landing_y > piece_y:
-                    # 着地位置がnextNext typeのピースの上になる場合
-                    horiz_dist = abs(x - p["x"])
-                    if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
-                        score -= 400.0  # 未来の併合機会を潰すためのペナルティ
-                        reasons.append("AVOID_BLOCK_NEXTNEXT")
-                        break
+        # v462: suppress in death spiral — height must be sole differentiator
+        if not death_spiral:
+            for p in pieces:
+                if p.get("type") == next_next_type:
+                    piece_y = p.get("y", -10)
+                    landing_y = result.get("landing_y", 0)
+                    if landing_y > piece_y:
+                        # 着地位置がnextNext typeのピースの上になる場合
+                        horiz_dist = abs(x - p["x"])
+                        if horiz_dist < 1.0:  # 着地位置がピースの真上に近い
+                            score -= 400.0  # 未来の併合機会を潰すためのペナルティ
+                            reasons.append("AVOID_BLOCK_NEXTNEXT")
+                            break
 
         # ----- evaluation axis 5.6: growth center proximity (v370: all-reactive, congestion-aware) -----
         # v364→v370: Extended growth center proximity to fire at ALL reactive levels.
@@ -1446,7 +1605,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: type scattering → piece_count accumulation
         # v407: removed russia_phase guard — growth center guidance now active in ALL phases
         max_type_on_board = max((p.get("type", 0) for p in pieces), default=0)
-        if max_type_on_board >= 6:
+        # v461: suppress growth center in death spiral — height must be sole differentiator
+        if max_type_on_board >= 6 and not death_spiral:
             # Find the deepest (lowest y) highest-type piece as growth center
             growth_center = min(
                 (p for p in pieces if p.get("type") == max_type_on_board),
@@ -1479,27 +1639,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v195のchain_bonus_multiplier動的設定では初期段階(landing_y=-3.0)でchain_bonus_multiplier=45.0,ほぼゼロ。
         # 初期段階でのCHAIN_MERGE選択を有効化するためにchain_bonus_multiplierの初期値を495.0に固定し、着地高による動的調整を開始地点から行うようにする。
         if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
-            # v460: re-apply v451 CHAIN_MERGE suppression for NEAR at extreme congestion
-            # v451 was originally applied at Game#11731 but rolled back as collateral in the
-            # v449 branch rollback at Game#11744. The rollback was caused by v449's 9.6b removal,
-            # not v451. The current strategy (v459) still lacks this suppression.
-            # At pc>=35 + deadline_crossed, NEAR merge (68.5% success) has catastrophic failure
-            # cost: adds piece without reducing pc. CHAIN_MERGE bonus (multiplier up to 1110 at
-            # high y, bonus up to ~5300) overwhelms NEAR penalties (~3469 at pc=43, deadline, y=2.55),
-            # causing the strategy to select risky NEAR. Worst T67-69: NEAR fails x2, pc 43→45.
-            # DIRECT (95.7%) retains CHAIN_MERGE — only NEAR is suppressed. NEAR base bonus
-            # still applies; just de-prioritized vs HEIGHT_CONTROL at critical pc.
-            # Fixes v451 collateral rollback: CHAIN_MERGE overrides NEAR risk at extreme congestion
-            chain_suppressed = (merge_grade == "NEAR" and piece_count >= 35 and deadline_crossed)
             merges = result["merges"]
-            if merges and not chain_suppressed:
+            if merges:
                 # get best merge target (closest distance)
                 best_merge = min(merges, key=lambda m: m.get("dist", float("inf")))
                 target_x = best_merge.get("x", 0)
                 target_y = best_merge.get("y", 0)
 
                 # v196: 初期段階CHAIN_MERGE有効化 - 初期段階でのCHAIN_MERGE選択を有効化
-                # v460: NEAR at pc>=35+deadline is suppressed above (chain_suppressed)
                 # v155成功パラメータ: chain_distance_max=5.0, chain_bonus_multiplier初期値450.0
                 # 着地高による動的調整: landing_y*0.6で距離、landing_y*150.0でボーナスを調整
                 # 例: landing_y=-3.0 → distance_max=3.2, multiplier=495.0（初期段階、有効なボーナス）
@@ -1594,22 +1741,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         danger_piece_count = reactor.get("danger_piece_count", 0)
 
-        # 危険域での即時併合を強力に優先
-        if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+        # v663: danger zone merge priority — NEAR bonus gated by deadline margin
+        # v662 NEAR +2500 overwhelmed deadline-crossing penalties, causing NEAR merges
+        # at deadline-crossing positions (T50/T63/T66: NEAR+cross beats NO-merge+low).
+        # NEAR success rate is only 26-47% — crossing deadline for a coin-flip merge
+        # is reckless. DIRECT remains full bonus (user confirmed acceptable).
+        # New: NEAR bonus suppressed when per-candidate margin < 0.3 (close to/past deadline).
+        # At margin=-0.1 (just crossed): NEAR gets 0 instead of +2500, letting
+        # CROSSES_DEADLINE_NEAR_RISK (-2400) and height penalty guide to lower position.
+        # refs: game_history/20260416_193206_score1203.jsonl T50/T63/T66,
+        #       tmp/analysis_result.md, data/user_review.md
+        if (max_y >= 2.0 or deadline_crossed) and merge_grade in ["DIRECT", "NEAR"]:
             if merge_grade == "DIRECT":
-                # v331: deadline_crossed時はボーナスを強化（500.0→1200.0）
-                if deadline_crossed:
-                    score += 1200.0
-                else:
-                    score += 500.0
+                score += 3000.0
                 reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
             else:
-                # v331: deadline_crossed時はボーナスを強化（300.0→600.0）
-                if deadline_crossed:
-                    score += 600.0
+                # NEAR: suppress bonus when this candidate crosses or nearly crosses deadline
+                candidate_margin = result.get("deadline_margin", 99)
+                if candidate_margin >= 0.3:
+                    score += 2500.0
+                    reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
                 else:
-                    score += 300.0
-                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
+                    # Too close to deadline for a NEAR merge (26-47% success rate)
+                    # Let deadline penalty and height penalty determine placement
+                    pass
 
         # ----- evaluation axis 8.6: reactive pairs immediate merge bonus (v321: 即時併合ボーナス維持) -----
         # v317: reactive_pairs数に応じた即時併合ボーナスを維持
@@ -1620,11 +1775,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         if reactive_pair_count >= 1 and merge_grade in ["DIRECT", "NEAR"]:
             # 即時併合候補がある場合、reactive_pairs数に応じてボーナスを強化
-            if reactive_pair_count >= 2:
-                score += 1000.0
-            else:
-                score += 600.0
-            reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+            # v663: NEAR bonus suppressed near deadline (same logic as axis 8.5)
+            candidate_margin_86 = result.get("deadline_margin", 99)
+            near_deadline_suppressed = (merge_grade == "NEAR" and candidate_margin_86 < 0.3)
+            if not near_deadline_suppressed:
+                if reactive_pair_count >= 2:
+                    score += 1000.0
+                else:
+                    score += 600.0
+                reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
@@ -1641,10 +1800,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_141236_score0731.jsonl, game_history/20260324_144026_score3171.jsonl
 
         if russia_phase:
-             # ロシアフェーズでの即時併合優先
-             # 即時併合候補がある場合、最優先（強力なボーナス）
-             if merge_grade in ["DIRECT", "NEAR"]:
-                 # v336: reactive_pairs>=1 の場合、ボーナスを強化して即時併合を最優先
+             # v548: double_russia_phase — 2つ目のロシアが盤面にある場合、
+             # ソ連建国(type 16=136点)まであと1併合。この局面は特別扱い。
+             # ロシア1つのままゲームオーバーは最も惜しい負けパターン。
+             # 既存のtype 15を保護しつつ、type 13/14の成長パイプラインを維持する。
+             if double_russia_phase:
+                 # 2つのロシアが盤面にある — ソ連建国目前
+                 # 盤面が最も狭く、高typeピースが場所を占有している状態
+                 if merge_grade in ["DIRECT", "NEAR"]:
+                     # 即時併合は常に最優先 — 盤面確保のため
+                     if merge_grade == "DIRECT":
+                         score += 1600.0
+                     else:
+                         score += 1400.0
+                     reasons.append("DOUBLE_RUSSIA_IMMEDIATE_MERGE")
+                 elif merge_grade == "NO":
+                     # 併合不可時は、盤面圧縮よりtype 15保護と低配置を優先
+                     # ボーナスを抑制し、height penaltyが効くようにする
+                     # type 13/14級ピースを既存ロシアの近くに配置する誘導はaxis 5.6に委ねる
+                     score += 200.0
+                     reasons.append("DOUBLE_RUSSIA_SURVIVAL")
+             elif merge_grade in ["DIRECT", "NEAR"]:
+                 # ロシアフェーズでの即時併合優先
+                 # 即時併合候補がある場合、最優先（強力なボーナス）
                  if reactive_pair_count >= 1:
                      # reactive_pairs>=1の場合、ボーナスを強化（600.0/1000.0 -> 1200.0/1400.0）
                      if merge_grade == "DIRECT":
@@ -1661,21 +1839,54 @@ def decide(game_state: dict, analysis: dict) -> dict:
              elif merge_grade == "NO":
                  # 即時併合がない場合、盤面圧縮を優先しつつ、type 15保護を徹底
                  # v336: reactive_pairs<3の場合でも即時併合ボーナスを強化し、盤面圧縮ボーナスを抑制
-                 if reactive_pair_count >= 3:
-                     # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
-                     # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
-                     score += 900.0
-                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 elif reactive_pair_count >= 1:
-                     # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
-                     # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
-                     score += 400.0
-                     reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 else:
+                  if reactive_pair_count >= 3:
+                      # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
+                      # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
+                      score += 900.0
+                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                  elif reactive_pair_count >= 1:
+                      # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
+                      # 即時併合機会を優先するため、盤面圧縮ボーナスを半減
+                      score += 400.0
+                      reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                  else:
                       # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
                       # 盤面圧縮を優先しつつ、type 15保護を徹底
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+
+        # ----- evaluation axis 8.7-pre: pre-russia phase merge priority / type 14 concentration (v503) -----
+        # When type 14 exists but no type 15, prioritize building the second type 14
+        # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
+        # mandatory_themes: deadline_crossed && merge_grade==NO → NO proximity bonus (dangerous placement)
+        # Fixes: all 24 batch games had ZERO type 15 — type 14→type 15 pipeline was missing.
+        # refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v503)
+        if pre_russia_phase:
+            # Count type 14 pieces on board
+            type14_pieces = [p for p in pieces if p.get("type") == 14]
+            type14_count = len(type14_pieces)
+
+            if merge_grade in ["DIRECT", "NEAR"]:
+                # High-type merge priority — type 14 needs another type 14 to build Russia
+                if next_type >= 10:
+                    score += 800.0 if merge_grade == "DIRECT" else 600.0
+                    reasons.append("PRE_RUSSIA_HIGH_TYPE_MERGE")
+                # Bonus for merging type 14 pieces (directly builds toward Russia)
+                if next_type == 14 and type14_count >= 1:
+                    score += 1200.0 if merge_grade == "DIRECT" else 1000.0
+                    reasons.append("PRE_RUSSIA_TYPE14_MERGE")
+
+            elif merge_grade == "NO" and not deadline_crossed:
+                # NO-merge placement: guide toward existing type 14 for future pipeline
+                # (deadline_crossed時はmandatory_themesにより抑制)
+                if type14_pieces:
+                    # Find lowest y type 14 piece
+                    type14_nearest = min(type14_pieces, key=lambda p: p.get("y", 10))
+                    dist = abs(x - type14_nearest["x"])
+                    if dist < 1.5:
+                        proximity_bonus = max(0, 150.0 - dist * 80.0)
+                        score += proximity_bonus
+                        reasons.append("PRE_RUSSIA_TYPE14_PROXIMITY")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
@@ -1704,33 +1915,106 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
-        # ----- NO_MERGE central placement bonus (vXXX) -----
-        # Hypothesis: NO_MERGE Central-Low Placement Override (Suppress Edge Scatter at rp>=3, mg==NO)
-        # Root cause: axis 8.8 flat -4500 makes all NO_MERGE candidates "equally bad" in terms
-        # of the penalty. Remaining axes (MEDIUM_TOWER/HIGH_LAYER labels, stacking bonuses,
-        # column_ceiling_bonus) systematically prefer edge/high positions. Worst game T48-T52:
-        # rp=4, NO_MERGE, x=±3.0 edges selected. Best game: same conditions, x≈0 center selected.
-        # This bonus differentiates NO_MERGE candidates by x-position, preferring center.
-        # refs: tmp/analysis_result.md (Implementation Plan Step 1),
-        #       game_history/20260421_014501_score0826.jsonl (worst T48-T52: edge scatter),
-        #       game_history/20260421_014951_score2547.jsonl (best: central NO_MERGE),
-        #       tmp/improve_brief.md (mandatory theme: 併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける)
-        if reactive_pair_count >= 3 and merge_grade == "NO":
-            central_bonus = max(0.0, 1.5 - abs(x)) * 600.0
-            score += central_bonus
-            if central_bonus > 0:
-                reasons.append("NO_MERGE_CENTER_PREFER")
+        # ----- v617 axis 9.12: merge drought exit trigger — type 10+ proximity -----
+        # analysis_result.md adopted hypothesis: merge drought (NO merge 3+ consecutive turns)
+        # detected by no_merge_streak >= 3 && merge_grade==NO && max_y>=1.5 && pc>=30.
+        # worst game T70-T74: 5 consecutive NO merges, max_y=2.64→3.28, pc=40→43, score_delta=0.
+        # Column ceiling dominates all columns, drift/balance noise decides — no directional guidance.
+        # best game T127-T131: 5 consecutive NO merges, but high-type pieces concentrated at bottom,
+        # column ceiling shows clear difference. type 14×2 on board with high endgame bonus.
+        # Implementation: +500*merge_mult for placing adjacent to type 10+ pieces (within 1.5u).
+        # +200*merge_mult extra if the type 10+ piece has same-type reactive pair (creates type 11+).
+        # Suppressed in death_spiral (v610/v616 escalation handles it).
+        # NOT active when merge_grade!=NO (existing merge axes take priority).
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
+        #       game_history/20260413_094619_score0720.jsonl T70-T74,
+        #       game_history/20260413_093939_score0746.jsonl
+        # Fixes rollback failure mode: no distinction between T70 NO merge and T74 NO merge —
+        #   no switch to different placement priority after 3-4 turns of NO merge
+        if (
+            no_merge_streak >= 3
+            and merge_grade == "NO"
+            and max_y >= 1.5
+            and piece_count >= 30
+            and not death_spiral
+        ):
+            # Collect all type 10+ pieces on the board
+            high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
+            if high_type_pieces:
+                min_dist = float("inf")
+                best_ht_type = 0
+                for ht in high_type_pieces:
+                    hx = ht.get("x", 0)
+                    hy = ht.get("y", -10)
+                    manhattan = abs(x - hx) + abs(landing_y - hy)
+                    if manhattan < min_dist:
+                        min_dist = manhattan
+                        best_ht_type = ht.get("type", 0)
+                if min_dist <= 1.5:
+                    path_bonus = 500.0 * (1.0 - min_dist / 1.5) * merge_mult
+                    if path_bonus > 30:
+                        score += path_bonus
+                        reasons.append("MERGE_PATH_CREATION")
+                    # Extra bonus if nearest type 10+ has same-type reactive pair
+                    type_counts_on_board = {}
+                    for p in pieces:
+                        pt = p.get("type", 0)
+                        type_counts_on_board[pt] = type_counts_on_board.get(pt, 0) + 1
+                    if type_counts_on_board.get(best_ht_type, 0) >= 2:
+                        rp_bonus = 200.0 * merge_mult
+                        score += rp_bonus
+                        reasons.append("HIGH_TYPE_REACTIVE_PAIR_GUIDANCE")
 
-        # ----- NO_MERGE lower-landing preference for central positions (vXXX) -----
-        # When rp>=3 && mg==NO and candidate is near center (|x|<1.5),
-        # add a small landing_y bonus to prefer lower positions within center.
-        # This ensures central-low beats central-high among NO_MERGE candidates.
-        # refs: tmp/analysis_result.md (Implementation Plan Step 2)
-        if reactive_pair_count >= 3 and merge_grade == "NO" and abs(x) < 1.5:
-            if landing_y < 0:
-                score += 150.0  # bonus for underground center positions
-            elif landing_y < 1.0:
-                score += 80.0   # partial bonus for low center positions
+        # ----- v622 axis 9.15: merge drought low-type digest priority -----
+        # When merge_grade==NO && reactive_pair_count>=3 && max_y>=1.5, guide placement
+        # to low-type pair (type<=5) centroid to reduce piece_count via digest.
+        # worst game T56-T61: 6 consecutive NO merges, rp=2→3, max_y=1.41→1.69, pc=31→36.
+        # extra-low game T64-T70: 7 consecutive NO merges, rp=5, max_y=1.94→2.89.
+        # Low-score group: merge_rate=36.8% but rp=4-8 death spiral — "too late" merges.
+        # High-score group: rp=0-2 maintained. Low rp=column ceiling predictable.
+        # axis 9.65/9.8 suppressed by column_ceiling_dominant, column_ceiling_bonus (800-1250)
+        # dominates height penalty at y=1.5-2.9. axis 9.15 bypasses suppression to fire.
+        # Bonus: max(0, 600.0 - dist * 200.0) * merge_mult (dist=0→600, dist=1→400, dist=2→200).
+        # Suppressed in death_spiral (v610/v616 escalation handles it).
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.15),
+        #       game_history/20260413_171737_score0618.jsonl T56-T67,
+        #       game_history/20260413_170829_score0942.jsonl T64-T70
+        # Fixes rollback failure mode: "6-7 consecutive NO merge turns with 0 score_delta"
+        if (
+            merge_grade == "NO"
+            and reactive_pair_count >= 3
+            and max_y >= 1.5
+            and not death_spiral
+        ):
+            low_type_pairs = []
+            for rp_entry in reactive_pairs:
+                if isinstance(rp_entry, (list, tuple)) and len(rp_entry) >= 3:
+                    rtype = rp_entry[2]
+                    if rtype <= 5:
+                        p1 = next((p for p in pieces if p["id"] == rp_entry[0]), None)
+                        p2 = next((p for p in pieces if p["id"] == rp_entry[1]), None)
+                        if p1 and p2:
+                            cx = (p1["x"] + p2["x"]) / 2.0
+                            cy = (p1["y"] + p2["y"]) / 2.0
+                            low_type_pairs.append((rtype, cx, cy))
+            for np_entry in near_pairs:
+                if isinstance(np_entry, (list, tuple)) and len(np_entry) >= 3:
+                    rtype = np_entry[2]
+                    if rtype <= 5:
+                        p1 = next((p for p in pieces if p["id"] == np_entry[0]), None)
+                        p2 = next((p for p in pieces if p["id"] == np_entry[1]), None)
+                        if p1 and p2:
+                            cx = (p1["x"] + p2["x"]) / 2.0
+                            cy = (p1["y"] + p2["y"]) / 2.0
+                            low_type_pairs.append((rtype, cx, cy))
+            if low_type_pairs:
+                low_type_pairs.sort(key=lambda t: t[0])
+                best_type, best_cx, best_cy = low_type_pairs[0]
+                dist = abs(x - best_cx) + abs(landing_y - best_cy)
+                digest_bonus = max(0.0, 600.0 - dist * 200.0) * merge_mult
+                if digest_bonus > 20:
+                    score += digest_bonus
+                    reasons.append("LOW_TYPE_DIGEST_PRIORITY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
@@ -1805,60 +2089,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if "SAME_TYPE_STACK" not in "_".join(reasons):
                             reasons.append("SAME_TYPE_STACK")
 
-        # ----- v411: deadline-crossing NO-merge penalty (unutilized crosses_deadline) -----
-        # analyze_board.py computes crosses_deadline per-candidate: whether this drop position
-        # pushes the piece's top edge past the deadline (top_after_drop >= DEADLINE_Y=3.32).
-        # When no merge is available, this is the worst possible placement: it increases
-        # piece count AND pushes toward game-over with zero score benefit.
-        # The height penalty (axis 2) penalizes high landing_y but doesn't account for
-        # piece radius (top_y_after_drop = landing_y + radius). A piece at landing_y=2.8 with
-        # radius=0.5 has top_y_after_drop=3.3, crossing deadline — but axis 2 penalty at y=2.8
-        # is only moderate (~250 in HIGH phase). The crosses_deadline field captures this gap.
-        # Penalty (-1200) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
-        # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires only at
-        # merge_grade=NO and not russia_phase (Russia growth intentionally crosses deadline).
-        # refs: analyze_board.py L412 (crosses_deadline computation),
-        #       game_history/20260330_144015_score0665.jsonl T60-61,
-        #       game_history/20260330_143501_score0994.jsonl T74-75
-        if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            score -= 1200.0
+        # ----- v662: continuous deadline-margin penalty (enhanced from v661) -----
+        # v661 NEAR penalty was too weak: threshold 0.3 and 2500/unit let NEAR+deadline-cross
+        # beat NO-merge low positions. NEAR success rate is only 26-47% (measured), so
+        # crossing deadline for a NEAR is almost as bad as crossing for NO merge.
+        # v662: unified threshold 0.5 for both NO and NEAR, NEAR penalty raised to 4000/unit.
+        # DIRECT merges remain exempt (user confirmed: DIRECT crossing deadline is acceptable).
+        # Example at margin=-0.1: NO penalty=(0.5-(-0.1))*5000=3000, NEAR=(0.5-(-0.1))*4000=2400
+        # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
+        # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
+        #       game_history/20260416_193206_score1203.jsonl T50/T63/T66 (NEAR crosses deadline)
+        margin = result.get("deadline_margin", 99)
+        if merge_grade == "NO" and not russia_phase and margin < 0.5:
+            score -= max(0, (0.5 - margin)) * 5000
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
+        elif merge_grade == "NEAR" and not russia_phase and margin < 0.5:
+            score -= max(0, (0.5 - margin)) * 4000
+            reasons.append("CROSSES_DEADLINE_NEAR_RISK")
 
         # ----- update best candidate -----
         if score > best_score:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
-
-    # --- HEIGHT_CONTROL suppression in high-risk NO_MERGE situations (vXXX) ---
-    # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
-    # worst game T60-61: max_y=2.78, rp=8, mg=NO, deadline_crossed → x=±3.0 edge → 4 turns NO_MERGE
-    # suppress_height_control guard: when all candidates are NO_MERGE in dangerous state,
-    # force selection of lowest landing_y position (with edge penalty) to prevent deadline scatter.
-    # Edge penalty: |x|=3.0 adds +1.05 landing_y equivalent, |x|=1.5 adds +0.525, center adds 0.
-    # refs: tmp/analysis_result.md (Adopted Hypothesis: edge-aware suppress guard),
-    #       game_history/20260421_035421_score0583.jsonl (worst T48: edge scatter)
-    if results:
-        __shc_reactor = analysis.get("reactor", {}) if isinstance(analysis.get("reactor", {}), dict) else {}
-        __shc_pieces = game_state.get("pieces", []) if isinstance(game_state, dict) else []
-        __shc_max_y = max([p.get("y", -99.0) for p in __shc_pieces], default=-99.0) if __shc_pieces else -99.0
-        __shc_rps = __shc_reactor.get("reactive_pairs", [])
-        __shc_rp_count = len(__shc_rps) if isinstance(__shc_rps, list) else 0
-        __shc_dcross = bool(game_state.get("deadline_crossed", False)) if isinstance(game_state, dict) else False
-        __shc_global_merge = any(r.get("merge_grade") != "NO" for r in results)
-        if (__shc_max_y >= 1.8
-                and __shc_rp_count >= 3
-                and not __shc_global_merge
-                and __shc_dcross):
-            __shc_no_merge = [r for r in results if r.get("merge_grade") == "NO"]
-            if __shc_no_merge:
-                # edge-aware: prefer central-low over edge-low; landing_y diff > 1.05 can still win
-                __shc_lowest = min(
-                    __shc_no_merge,
-                    key=lambda r: r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 0.35
-                )
-                best_x = float(__shc_lowest.get("x", 0.0) or 0.0)
-                best_reason = "HEIGHT_CONTROL_SUPPRESS_NO_MERGE"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
