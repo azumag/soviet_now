@@ -64,13 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v668: axis 9.12 merge drought exit trigger (v617) + axis 9.15 low-type digest priority (v622)
-     #       no_merge_streak >= 3 && merge_grade==NO && max_y>=1.5 && pc>=30 → type 10+ proximity bonus
-     #       merge_grade==NO && rp>=3 && max_y>=1.5 → low-type pair (type<=5) centroid bonus
-     #       Implements analysis_result.md adopted hypothesis: "Merge drought exit strategy"
-     #       Fixes worst game T70-T74: 5 consecutive NO merges, 0 score_delta, pc=40→43, max_y runaway
-     #       Fixes rollback failure mode: "NO merge連続ターン数の区別がない" — no switch after 3-4 turns
-     #       refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v617/v622)
      # v667: v665+v666 conflict fix — add reactor_margin<0.5 to v666 height scale condition
      #       v665: reactor_margin>=0.5 (safe zone) gives NEAR+1000 bonus, v666 scales height penalty
      #       Conflict: same condition (NEAR && max_y>=2.5 && danger>=1) triggered both bonuses
@@ -709,9 +702,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
-
-    # --- v617: no_merge_streak (consecutive turns with merge_grade==NO) ---
-    no_merge_streak = game_state.get("no_merge_streak", 0)
 
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
@@ -1794,107 +1784,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
-
-        # ----- v617 axis 9.12: merge drought exit trigger — type 10+ proximity -----
-        # analysis_result.md adopted hypothesis: merge drought (NO merge 3+ consecutive turns)
-        # detected by no_merge_streak >= 3 && merge_grade==NO && max_y>=1.5 && pc>=30.
-        # worst game T70-T74: 5 consecutive NO merges, max_y=2.64→3.28, pc=40→43, score_delta=0.
-        # Column ceiling dominates all columns, drift/balance noise decides — no directional guidance.
-        # best game T127-T131: 5 consecutive NO merges, but high-type pieces concentrated at bottom,
-        # column ceiling shows clear difference. type 14×2 on board with high endgame bonus.
-        # Implementation: +500*merge_mult for placing adjacent to type 10+ pieces (within 1.5u).
-        # +200*merge_mult extra if the type 10+ piece has same-type reactive pair (creates type 11+).
-        # Suppressed in death_spiral (v610/v616 escalation handles it).
-        # NOT active when merge_grade!=NO (existing merge axes take priority).
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.12),
-        #       game_history/20260413_094619_score0720.jsonl T70-T74,
-        #       game_history/20260413_093939_score0746.jsonl
-        # Fixes rollback failure mode: no distinction between T70 NO merge and T74 NO merge —
-        #   no switch to different placement priority after 3-4 turns of NO merge
-        if (
-            no_merge_streak >= 3
-            and merge_grade == "NO"
-            and max_y >= 1.5
-            and piece_count >= 30
-            and not death_spiral
-        ):
-            # Collect all type 10+ pieces on the board
-            high_type_pieces = [p for p in pieces if p.get("type", 0) >= 10]
-            if high_type_pieces:
-                min_dist = float("inf")
-                best_ht_type = 0
-                for ht in high_type_pieces:
-                    hx = ht.get("x", 0)
-                    hy = ht.get("y", -10)
-                    manhattan = abs(x - hx) + abs(landing_y - hy)
-                    if manhattan < min_dist:
-                        min_dist = manhattan
-                        best_ht_type = ht.get("type", 0)
-                if min_dist <= 1.5:
-                    path_bonus = 500.0 * (1.0 - min_dist / 1.5) * merge_mult
-                    if path_bonus > 30:
-                        score += path_bonus
-                        reasons.append("MERGE_PATH_CREATION")
-                    # Extra bonus if nearest type 10+ has same-type reactive pair
-                    type_counts_on_board = {}
-                    for p in pieces:
-                        pt = p.get("type", 0)
-                        type_counts_on_board[pt] = type_counts_on_board.get(pt, 0) + 1
-                    if type_counts_on_board.get(best_ht_type, 0) >= 2:
-                        rp_bonus = 200.0 * merge_mult
-                        score += rp_bonus
-                        reasons.append("HIGH_TYPE_REACTIVE_PAIR_GUIDANCE")
-
-        # ----- v622 axis 9.15: merge drought low-type digest priority -----
-        # When merge_grade==NO && reactive_pair_count>=3 && max_y>=1.5, guide placement
-        # to low-type pair (type<=5) centroid to reduce piece_count via digest.
-        # worst game T56-T61: 6 consecutive NO merges, rp=2→3, max_y=1.41→1.69, pc=31→36.
-        # extra-low game T64-T70: 7 consecutive NO merges, rp=5, max_y=1.94→2.89.
-        # Low-score group: merge_rate=36.8% but rp=4-8 death spiral — "too late" merges.
-        # High-score group: rp=0-2 maintained. Low rp=column ceiling predictable.
-        # axis 9.65/9.8 suppressed by column_ceiling_dominant, column_ceiling_bonus (800-1250)
-        # dominates height penalty at y=1.5-2.9. axis 9.15 bypasses suppression to fire.
-        # Bonus: max(0, 600.0 - dist * 200.0) * merge_mult (dist=0→600, dist=1→400, dist=2→200).
-        # Suppressed in death_spiral (v610/v616 escalation handles it).
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.15),
-        #       game_history/20260413_171737_score0618.jsonl T56-T67,
-        #       game_history/20260413_170829_score0942.jsonl T64-T70
-        # Fixes rollback failure mode: "6-7 consecutive NO merge turns with 0 score_delta"
-        if (
-            merge_grade == "NO"
-            and reactive_pair_count >= 3
-            and max_y >= 1.5
-            and not death_spiral
-        ):
-            low_type_pairs = []
-            for rp_entry in reactive_pairs:
-                if isinstance(rp_entry, (list, tuple)) and len(rp_entry) >= 3:
-                    rtype = rp_entry[2]
-                    if rtype <= 5:
-                        p1 = next((p for p in pieces if p["id"] == rp_entry[0]), None)
-                        p2 = next((p for p in pieces if p["id"] == rp_entry[1]), None)
-                        if p1 and p2:
-                            cx = (p1["x"] + p2["x"]) / 2.0
-                            cy = (p1["y"] + p2["y"]) / 2.0
-                            low_type_pairs.append((rtype, cx, cy))
-            for np_entry in near_pairs:
-                if isinstance(np_entry, (list, tuple)) and len(np_entry) >= 3:
-                    rtype = np_entry[2]
-                    if rtype <= 5:
-                        p1 = next((p for p in pieces if p["id"] == np_entry[0]), None)
-                        p2 = next((p for p in pieces if p["id"] == np_entry[1]), None)
-                        if p1 and p2:
-                            cx = (p1["x"] + p2["x"]) / 2.0
-                            cy = (p1["y"] + p2["y"]) / 2.0
-                            low_type_pairs.append((rtype, cx, cy))
-            if low_type_pairs:
-                low_type_pairs.sort(key=lambda t: t[0])
-                best_type, best_cx, best_cy = low_type_pairs[0]
-                dist = abs(x - best_cx) + abs(landing_y - best_cy)
-                digest_bonus = max(0.0, 600.0 - dist * 200.0) * merge_mult
-                if digest_bonus > 20:
-                    score += digest_bonus
-                    reasons.append("LOW_TYPE_DIGEST_PRIORITY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
