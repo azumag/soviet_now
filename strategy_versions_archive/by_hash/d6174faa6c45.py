@@ -64,12 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History (compressed to 5 entries; full history in git) ---
-     # v669: russia phase deadline NEAR suppression (v624 port) + NEAR suppression safety valve
-     #       russia_phase && deadline_crossed && max_y>=2.0 && merge_grade==NEAR → -600 penalty
-     #       max_y>=2.5 && deadline_crossed && NEAR with landing_y>=max_y-0.3 → -600 penalty (safety valve allows compression path)
-     #       Implements analysis_result.md adopted hypothesis: Russia Deadline NEAR Suppression
-     #       Fixes worst game T72: merge_available=false yet NEAR selected → pc grow + max_y runaway
-     #       refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v624/vXXX)
      # v668: axis 9.12 merge drought exit trigger (v617) + axis 9.15 low-type digest priority (v622)
      #       no_merge_streak >= 3 && merge_grade==NO && max_y>=1.5 && pc>=30 → type 10+ proximity bonus
      #       merge_grade==NO && rp>=3 && max_y>=1.5 → low-type pair (type<=5) centroid bonus
@@ -971,31 +965,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 bonus = 600.0 if deadline_crossed else 300.0
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
-
-        # ----- v669: russia phase deadline NEAR suppression -----
-        # When russia_phase (type 15 on board) && deadline_crossed && max_y >= 2.0 && merge_grade == "NEAR":
-        # suppress NEAR base bonus. NEAR success rate is 68.5%; at deadline with Russia on board,
-        # failed NEAR adds a piece with no benefit, accelerating "NEAR fail → pc grow → death" spiral.
-        # DIRECT merge (95.7%) is "able to merge" per mandatory_themes. NEAR (68.5%) is too risky.
-        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # Fixes rollback failure mode: russia_phase_deadline_near_merge_chain_failure
-        # refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (v624)
-        if russia_phase and deadline_crossed and max_y >= 2.0 and merge_grade == "NEAR":
-            score -= 600.0 * merge_mult
-            reasons.append("RUSSIA_DEADLINE_NEAR_SUPPRESSED")
-
-        # v669: NEAR suppression safety valve (landing-height based)
-        # Safety valve: allow NEAR when it lands below current max_y (board compression path).
-        # Mandatory themes: "デッドライン超越位置でのマージなき配置を避ける"
-        # Suppress when max_y >= 2.5 && deadline_crossed && merge_grade == "NEAR"
-        # UNLESS the NEAR candidate would land below current max_y (compression path).
-        # refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py (vXXX)
-        landing_height_below_board = landing_y < (max_y - 0.3)
-        if max_y >= 2.5 and deadline_crossed and merge_grade == "NEAR":
-            if not landing_height_below_board:
-                score -= 600.0
-                reasons.append("MANDATORY_THEMES_NEAR_SUPPRESSED")
-            # else: allow — this NEAR lands below max_y, will compress board
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
