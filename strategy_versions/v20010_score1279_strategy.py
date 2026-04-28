@@ -63,14 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: remove deadline_crossed gate from axis 8.8-pre type 14 proximity
-     # Hypothesis: type 14 proximity disabled EXACTLY when deadline_crossed=YES (most needed)
-     # mandatory_themes "no placement past deadline without merge" is unavoidably violated
-     # when game forces placement with NO merge available. In that case, still guide near type 14.
-     # Keep merge_grade=="NO" guard to avoid disrupting immediate merge opportunities.
-     # Fixes: type 14→type 15 Russia pipeline starvation (zero type 15 in 24 batch games)
-     # refs: tmp/analysis_result.md (Adopted Hypothesis: Pre-Russia Phase Type 14 Proximity)
-     #
      # vXXX: axis 8.8b HIGH_PC_REACTIVE_NO_MERGE_PENALTY — piece_count accumulation before rp>=3 threshold
      # Hypothesis: piece_count>=25 && max_y>=0.5 && rp>=2 && mg==NO causes accumulation before rp>=3
      # worst T42: pc=23, max_y=1.04, HEIGHT_CONTROL selected → pc grows 23→34, max_y 1.04→3.71
@@ -1515,7 +1507,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # analysis_result.md adopted hypothesis: type 14→type 15 pipeline starvation (zero type 15 in 24 games)
         # When type 14 exists but no type 15, prioritize building the second type 14
         # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
-        # vXXX: type 14 proximity now applies even when deadline_crossed=YES (unavoidable case)
+        # Disabled at deadline_crossed+NO per mandatory_themes.txt ("no placement past deadline without merge").
         if pre_russia_phase:
             # High-type merges (>=10) bonus — smaller than v503 original (+400 vs +800)
             candidate_merges = result.get("merges", [])
@@ -1525,10 +1517,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Type 14 proximity guide — smaller (+75 vs +150)
             # When no merge available but type 14 exists, guide placement near type 14 pieces
             # mandatory_themes.txt: no placement past deadline without merge
-            # vXXX: always apply when type 14 exists — deadline_crossed=YES is unavoidable case
-            # (mandatory_themes "when mergeable" has no choice when merge_grade==NO)
-            # Keep merge_grade=="NO" to avoid guiding toward type 14 when merges ARE available
-            if merge_grade == "NO":
+            if merge_grade == "NO" and not deadline_crossed:
                 same_type_14_count = sum(1 for p in pieces if p.get("type") == 14)
                 if same_type_14_count > 0:
                     for p in pieces:
