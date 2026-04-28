@@ -63,15 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v505: Strengthen NEAR deadline risk + chain suppression @ pc>=30
-     # Analysis: v502 halving (0.5x) at pc=32-34 still lets NEAR+CHAIN dominate
-     # risk penalties (+1625 combined vs -300). v421 0.5x merge_mult gives only
-     # -300 penalty at pc=33-34, easily overwhelmed. Change 1: full -600 at
-     # pc>=33+deadline+landing_y>=1.0 (no merge_mult). Change 2: chain_suppressed
-     # True at pc>=30+deadline+NEAR (complete suppression, not halving).
-     # Fixes rollback failure mode: NEAR merge failure at deadline causing piece
-     # accumulation (worst game T48, extra_low T60, worst T52-T53).
-     # refs: tmp/analysis_result.md, mandatory_themes.txt
      # v504: DEADLINE_NO_MERGE_FORBIDDEN hard constraint @ pc>=30 — mandatory_themes.txt enforcement
      # worst game turns 64-67 (pc=38-45, crosses_deadline=true, mg=NO) → hard rejection with -50000
      # v411 penalty (-1200) insufficient at pc>=30 — axis 8.8 bonuses (up to +8000) overwhelm it.
@@ -873,13 +864,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/batch_summary.txt, strategy.py.staging (v421),
         #       game_history/20260331_031009_score1030.jsonl T76-83,
         #       game_history/20260331_025511_score2317.jsonl T82-83
-        # v505: Strengthen NEAR deadline risk at pc>=30 — analysis found v502 halving
-        # insufficient at pc=33-34 where NEAR base+bonuses (+1625) easily overwhelm
-        # v421 penalty (-300 at 0.5x merge_mult). Full -600 penalty needed.
-        # Rollback failure mode: NEAR merge failure at deadline causing piece accumulation.
-        # refs: tmp/analysis_result.md, mandatory_themes.txt
         if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
-            score -= 600.0  # full penalty regardless of merge_mult phase value
+            score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
@@ -1432,23 +1418,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
-         # ----- v505: chain suppression at pc>=30+deadline+NEAR — analysis found
-        # v502's 0.5x halving at pc=32-34 still allows chain to combine with
-        # NEAR bonuses (+1625 total) to overcome risk penalties. Complete
-        # suppression at pc>=30 removes the escape hatch for stressed boards.
-        # Fixes rollback failure mode: CHAIN_MERGE overrides NEAR risk at deadline.
-        # refs: tmp/analysis_result.md
-        chain_suppressed = (
-            merge_grade == "NEAR" and piece_count >= 30 and deadline_crossed
-        )
-
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。
         # v195のchain_bonus_multiplier動的設定では初期段階(landing_y=-3.0)でchain_bonus_multiplier=45.0,ほぼゼロ。
         # 初期段階でのCHAIN_MERGE選択を有効化するためにchain_bonus_multiplierの初期値を495.0に固定し、着地高による動的調整を開始地点から行うようにする。
-        if merge_grade in ["DIRECT", "NEAR"] and result.get("merges") and not chain_suppressed:
+        if merge_grade in ["DIRECT", "NEAR"] and result.get("merges"):
             merges = result["merges"]
             if merges:
                 # get best merge target (closest distance)
