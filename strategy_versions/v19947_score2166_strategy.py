@@ -63,13 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v627: DEADLINE_GUARD_HIGH_CONGESTION hard constraint @ deadline_crossed && max_y>=2.0 && pc>=30 && mg=NO
-     # worst T52-59: pc=36→41, type10×2存在確認できるのにmerge_available=false、x=3.0へのはみ出し配置
-     # worst T57: max_y=3.36, pc=39, merge_available=false → 3連続HIGH_LAYER選択、max_y暴走
-     # v626 max_y>=2.5閾値はpc>=35前提。pc=30-34中間危険域を未ケア。v627でmax_y>=2.0 && pc>=30に拡張
-     # mandatory_themes.txt: "デッドラインを超える位置上ピース置く場合は併合できる場合に限る"
-     # Fixes rollback failure mode: worst T52-59 deadline_crossed && max_y 2.0-2.5 && pc 36-41-zoneでのheight選択强制停止
-     # refs: tmp/analysis_result.md (adopted hypothesis), mandatory_themes.txt
      # v626: all-phase NEAR complete suppression @ deadline_crossed && max_y>=2.5 && pc>=35 → -50000
      # worst T57: max_y=3.36, pc=39, merge_available=false → 3連続HIGH_LAYER, max_y暴走
      # worst T52-59: pc=36→41, merge_available=true(DIRECT)でもNO_MERGE選択続き max_y 2.04→3.35暴走
@@ -864,19 +857,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if deadline_crossed and max_y >= 2.5 and piece_count >= 35 and merge_grade == "NEAR":
             score -= 50000.0
             reasons.append("CRITICAL_NEAR_SUPPRESSION")
-        # ----- v627: deadline_guard hard constraint at high congestion (mandatory_themes enforcement) -----
-        # Implementation plan: deadline_crossed && max_y>=2.0 && piece_count>=30 && merge_grade=="NO" → hard rejection
-        # worst T52-59: pc=36→41, type10×2存在確認できるのにmerge_available=false、x=3.0へのはみ出し配置
-        # worst T57: max_y=3.36, pc=39, merge_available=false → 3連続HIGH_LAYER選択、max_y暴走
-        # v626 max_y>=2.5閾値はpc>=35前提。pc=30-34中間危険域を未ケア。
-        # mandatory_themes.txt: "デッドラインを超える位置上ピース置く場合は併合できる場合に限る"
-        # このconstraintはcrosses_deadline per-candidateではなくboard stateベースの判定。
-        # merge_grade==DIRECT/NEARの場合はこのconstraint対象外的。
-        # Fixes rollback failure mode: worst T52-59 deadline_crossed && max_y 2.0-2.5 && pc 36-41-zoneでのheight選択强制停止
-        # refs: tmp/analysis_result.md (adopted hypothesis), mandatory_themes.txt
-        if deadline_crossed and max_y >= 2.0 and piece_count >= 30 and merge_grade == "NO":
-            score -= 50000.0
-            reasons.append("DEADLINE_GUARD_HIGH_CONGESTION")
         # ----- evaluation axis 1.7b: Russia phase NEAR suppression (v625) -----
         # Russia phase + deadline_crossed + max_y>=2.0 + merge_grade==NEAR → suppress NEAR
         # Russia exists (type 15 on board), board is past deadline, high congestion (max_y>=2.0)
