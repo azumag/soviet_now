@@ -63,12 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v504: DEADLINE_NO_MERGE_FORBIDDEN hard constraint @ pc>=30 — mandatory_themes.txt enforcement
-     # worst game turns 64-67 (pc=38-45, crosses_deadline=true, mg=NO) → hard rejection with -50000
-     # v411 penalty (-1200) insufficient at pc>=30 — axis 8.8 bonuses (up to +8000) overwhelm it.
-     # mandatory_themes.txt: "デッドラインを超える位置上피스置く場合は併合できる場合に限る"
-     # Fixes rollback failure mode: deadline_crossing NO_MERGE placement at high pc causing death spiral
-     # refs: tmp/analysis_result.md, data/mandatory_themes.txt
      # v503: axis 8.8 penalty 2x强化 @ pc>=37 && rp>=3 && mg=NO — prevent piece_count 38→45 accumulation
      # worst game turns 63-67 (pc=41-45, rp=10-11, mg=NO) max_y 3.12→2.x抑制期待
      # Adopted hypothesis: pc>=37堆積はheight_mult不足ではなくmerge非捕獲による堆積差异
@@ -1731,15 +1725,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260330_144015_score0665.jsonl T60-61,
         #       game_history/20260330_143501_score0994.jsonl T74-75
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            # mandatory_themes.txt: "デッドラインを超える位置に피스置く場合は、併合できる場合に限る"
-            # v411 penalty (-1200) is insufficient at high pc — axis 8.8 bonuses overwhelm it.
-            # At pc>=30, this becomes a hard constraint violation: reject catastrophically.
-            if piece_count >= 30:
-                score -= 50000.0
-                reasons.append("DEADLINE_NO_MERGE_FORBIDDEN")
-            else:
-                score -= 1200.0
-                reasons.append("CROSSES_DEADLINE_NO_MERGE")
+            score -= 1200.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:
