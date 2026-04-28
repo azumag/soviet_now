@@ -63,10 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: deadline NO_MERGE central placement bonus — DEADLINE_NO_MERGE_CENTER_BONUS
-     # deadline_crossed && mg==NO && max_y>=2.5: (1.5-abs(x))*400 central bonus
-     # Fixes worst game T71-73 edge-scatter failure mode (x=0.6 deadline exceeded)
-     # refs: tmp/analysis_result.md
      # vXXX: v422+ NEAR suppression middle tier + pre-russia phase re-introduction (v503-pre)
      # v422+: at pc=33-34+deadline+landing_y>=1.0, NEAR base bonus halved (not full suppression)
      #   worst T54: NEAR bonuses +1500-2200 vs v422 penalty -1680 → net still positive (+20-540)
@@ -1212,19 +1208,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity_bonus = 0.0
                     if proximity_bonus > 0:
                         score += proximity_bonus
-
-        # ----- vXXX: deadline NO_MERGE central placement bonus -----
-        # When deadline_crossed && merge_grade==NO && max_y>=2.5, add central placement incentive.
-        # Without this, axis 8.8 flat -4500 penalty makes all candidates equally penalized,
-        # allowing HEIGHT_CONTROL to scatter across edges (x=±2.0-3.0) during merge drought.
-        # Central placement (|x| small) prevents edge accumulation that worsens piece_count.
-        # Only fires when deadline is crossed and NO merge available.
-        # Fixes: worst game T71-73 (x=0.6→deadline exceeded) failure mode
-        if merge_grade == "NO" and deadline_crossed and max_y >= 2.5:
-            central_bonus = (1.5 - abs(x)) * 400.0
-            if central_bonus > 0:
-                score += central_bonus
-                reasons.append("DEADLINE_NO_MERGE_CENTER_BONUS")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"

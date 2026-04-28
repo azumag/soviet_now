@@ -63,6 +63,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: v422+ NEAR suppression middle tier + pre-russia phase re-introduction (v503-pre)
+     # v422+: at pc=33-34+deadline+landing_y>=1.0, NEAR base bonus halved (not full suppression)
+     #   worst T54: NEAR bonuses +1500-2200 vs v422 penalty -1680 → net still positive (+20-540)
+     #   analysis_result.md: v422 penalty insufficient vs NEAR bonuses; middle tier added
+     # v503-pre: re-introduce pre-russia phase detection (type 14 on board, no type 15 yet)
+     #   axis 8.8-pre: +400 for merges to type>=10, +75/type14 proximity guide for NO-merge
+     #   Fixes: type 14→type 15 pipeline starvation (zero type 15 in 24 batch games)
+     #   Disabled at deadline_crossed+NO per mandatory_themes.txt
+     #   refs: tmp/analysis_result.md (Adopted Hypothesis: v422+NEAR + pre-russia)
      # vXXX: NO_MERGE central placement bonus — suppress edge scatter at rp>=3, mg==NO
      # axis 8.8 flat -4500 makes all NO_MERGE equally penalized; remaining axes prefer edges
      # New: (1.5-abs(x))*600 central bonus + lower-landing preference for central positions
@@ -771,6 +780,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
 
+    # v503-pre: pre-russia phase detection — type 14 piece(s) on board, but no type 15 yet.
+    # When type 14 exists, prioritize building a second type 14 for type 15 merge.
+    # This is the PRE-RUSSIA phase: the board has a type 14, the goal is to make
+    # a second type 14, merge them into type 15 (Russia).
+    # russia_phase (axis 8.7) is dead code unless we reach type 15.
+    # This pre-phase creates the missing pipeline: type 14 → second type 14 → type 15.
+    # analysis_result.md: type 14→type 15 pipeline starvation (zero type 15 in 24 games)
+    pre_russia_phase = (not russia_phase) and russia_phase_count == 0 and \
+        max((p.get("type", 0) for p in pieces), default=0) >= 14
+
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
         phase = "LOW"
@@ -1472,6 +1491,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
+         # ----- evaluation axis 8.8-pre: pre-russia phase merge priority / type 14 concentration (v503-pre) -----
+        # analysis_result.md adopted hypothesis: type 14→type 15 pipeline starvation (zero type 15 in 24 games)
+        # When type 14 exists but no type 15, prioritize building the second type 14
+        # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
+        # Disabled at deadline_crossed+NO per mandatory_themes.txt ("no placement past deadline without merge").
+        if pre_russia_phase:
+            # High-type merges (>=10) bonus — smaller than v503 original (+400 vs +800)
+            candidate_merges = result.get("merges", [])
+            for m in candidate_merges:
+                if m.get("merged_type", 0) >= 10:
+                    score += 400.0
+            # Type 14 proximity guide — smaller (+75 vs +150)
+            # When no merge available but type 14 exists, guide placement near type 14 pieces
+            # mandatory_themes.txt: no placement past deadline without merge
+            if merge_grade == "NO" and not deadline_crossed:
+                same_type_14_count = sum(1 for p in pieces if p.get("type") == 14)
+                if same_type_14_count > 0:
+                    for p in pieces:
+                        if p.get("type") == 14:
+                            score += 75.0 * (1.0 / (abs(x - p["x"]) + 0.5))
+
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
@@ -1490,7 +1530,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # DIRECT (95.7%) retains CHAIN_MERGE — only NEAR is suppressed. NEAR base bonus
             # still applies; just de-prioritized vs HEIGHT_CONTROL at critical pc.
             # Fixes v451 collateral rollback: CHAIN_MERGE overrides NEAR risk at extreme congestion
-            chain_suppressed = (merge_grade == "NEAR" and piece_count >= 35 and deadline_crossed)
+            # v422+: strengthen NEAR suppression at high pc
+            # At pc>=35+deadline: full chain suppression (existing behavior)
+            # At pc=33-34+deadline+landing_y>=1.0: NEAR base bonus reduced by half
+            if merge_grade == "NEAR" and deadline_crossed:
+                if piece_count >= 35:
+                    chain_suppressed = True
+                elif piece_count >= 33 and landing_y >= 1.0:
+                    # At pc=33-34, NEAR base bonus (600*merge_mult) reduced by half
+                    score -= 300.0 * merge_mult
+            else:
+                chain_suppressed = False
             merges = result["merges"]
             if merges and not chain_suppressed:
                 # get best merge target (closest distance)
