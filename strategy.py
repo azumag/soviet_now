@@ -63,6 +63,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v503: axis 8.8 penalty 2x强化 @ pc>=37 && rp>=3 && mg=NO — prevent piece_count 38→45 accumulation
+     # worst game turns 63-67 (pc=41-45, rp=10-11, mg=NO) max_y 3.12→2.x抑制期待
+     # Adopted hypothesis: pc>=37堆積はheight_mult不足ではなくmerge非捕獲による堆積差异
+     # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway
+     # refs: tmp/analysis_result.md
      # v431: conditional height_mult relaxation — only relax when current type has reactive/near guidance
      # Postmortem: rp=1-2 height_mult relaxations (v271 0.8x, v288 0.3x, v294 0.2x) compound to
      # floor 0.5, enabling HEIGHT_CONTROL edge scatter when current type has no reactive/near pairs.
@@ -1618,16 +1623,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
+        # v503: pc>=37 && rp>=3 && mg=NO の場合、piece_count堆積防止のためペナルティを2倍に強化
+        # worst game終盤(turns 63-67, pc=41-45, rp=10-11, mg=NO)でmax_y 3.12→2.x抑制期待
+        # 根拠: worst gameのpc=38→45累積 vs best gameのpc=33-35維持、merge非捕獲による堆積差异
+        # refs: tmp/analysis_result.md (adopted hypothesis)
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # reactive_pairs>=3で即時併合がない場合、deadline_crossedに関わらず強力なペナルティを適用
-            # landing_yに応じて動的にペナルティを強化し、高配置を積極的に抑制
-            # v329修正: landing_y > 1 の場合、(landing_y - 1.0) * 2000.0 を使用し、高配置ほどペナルティを強化
+            # pc>=37 && rp>=3 && mg=NO の場合、piece_count堆積防止のためペナルティを2倍に強化
+            # worst game turns 63-67 (pc=41-45, rp=10-11, mg=NO) で強制的に低位置選択されmax_y抑制期待
+            multiplier = 2.0 if piece_count >= 37 else 1.0
             if landing_y <= 0:
-                score -= 3000.0
+                score -= 6000.0 * multiplier
             elif landing_y <= 1:
-                score -= 3000.0 + landing_y * 2000.0
+                score -= (6000.0 + landing_y * 4000.0) * multiplier
             else:
-                score -= 5000.0 + (landing_y - 1.0) * 2000.0
+                score -= (8000.0 + (landing_y - 1.0) * 4000.0) * multiplier
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
