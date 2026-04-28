@@ -63,11 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v507: pre-russia phase detection extended to type>=13 (was type==14)
-     # worst game (score=476): type13 appeared turn 38, type14 never appeared, pre_russia_phase never activated
-     # causing deadline_crossed=true + max_y runaway (1.66→3.18) in type13-only phase
-     # Fixes rollback failure mode: type13-only stage missing height suppression (pre_russia_phase not triggered)
-     # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
      # v506: pre-russia phase height suppression @ deadline_crossed && merge_grade=NO && pre_russia_phase && pc>=30, landing_y>=1.5 → -800.0
      # extra_high (score=2825) T127-135: pre-russia phase (type14 exists, type15 doesn't) continued height selection, pc 40→47
      # pre-russia phase: type14→type15 pipeline is critical, height selection prevents it
@@ -742,12 +737,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
 
-    # --- v507: pre-russia phase detection (type>=14 exists, type15 does not) ---
-    # worst game (score=476): type13 appeared but type14 never did, pre_russia_phase never activated
-    # causing deadline_crossed=true + max_y runaway (1.66→3.18) in type13-only phase.
-    # Extended to type>=13 so height suppression activates during type13 stage before type14 appears.
+    # --- v506: pre-russia phase detection (type14 exists, type15 does not) ---
+    # extra_high (score=2825) analysis: type14 exists but type15 doesn't, height selection continued
+    # causing piece_count increase (40→47). In pre-russia phase, type14→type15 pipeline is critical.
     # ref: tmp/analysis_result.md (Implementation Plan)
-    pre_russia_phase_count = sum(1 for p in pieces if p.get("type") >= 13)
+    pre_russia_phase_count = sum(1 for p in pieces if p.get("type") == 14)
     pre_russia_phase = pre_russia_phase_count >= 1 and not russia_phase
 
     # --- phase judgment (v42 thresholds) ---
