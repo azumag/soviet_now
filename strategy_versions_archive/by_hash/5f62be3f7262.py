@@ -63,14 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v626: all-phase NEAR complete suppression @ deadline_crossed && max_y>=2.5 && pc>=35 → -50000
-     # worst T57: max_y=3.36, pc=39, merge_available=false → 3連続HIGH_LAYER, max_y暴走
-     # worst T52-59: pc=36→41, merge_available=true(DIRECT)でもNO_MERGE選択続き max_y 2.04→3.35暴走
-     # worst T55: type10×2が盤面上にあるのにmerge_available=false、x=3.0へのはみ出し配置
-     # Adopted hypothesis: deadline_crossed && max_y>=2.5 && pc>=35 && NEAR → systemic NEAR prohibition
-     # mandatory_themes.txt: "デッド라인を超える位置にピース置く場合は併合できる場合に限る"
-     # Fixes rollback failure mode: worst T57-59 NEAR merge at critical congestion causing max_y runaway
-     # refs: tmp/analysis_result.md (adopted hypothesis), mandatory_themes.txt
      # v625: Russia phase NEAR suppression — russia_phase && deadline_crossed && max_y>=2.0 && merge_grade==NEAR → suppress NEAR bonus
      # worst game T55-63: deadline_crossed + max_y=2.02-2.98 + merge_available=false→true急変 + NEAR選択でpc累積
      # best game T157: deadline_crossed + max_y=2.56 + merge_available=true → DIRECT選択で延命
@@ -844,29 +836,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
-        # ----- evaluation axis 1.7c: all-phase NEAR complete suppression at critical congestion (v626) -----
-        # Implementation plan: deadline_crossed ∧ max_y>=2.5 ∧ pc>=35 ∧ merge_grade==NEAR → -50000
-        # worst T57: max_y=3.36, pc=39, merge_available=false → 3連続HIGH_LAYER, max_y暴走
-        # best T126: pc=37, max_y=3.14, deadline_crossed → NEAR選択(+21)だが危険限界状態
-        # worst T52-59: pc=36→41, merge_available=true(DIRECT)でもNO_MERGE選択続き max_y 2.04→3.35暴走
-        # v625 Russia phase NEAR suppression (max_y>=2.0) is subsumed by this stricter all-phase rule.
-        # When both fire (Russia + max_y>=2.5 + pc>=35), -50000 supersedes Russia pass → same outcome.
-        # mandatory_themes.txt: "デッドラインを超える位置にピース置く場合は併合できる場合に限る"
-        # NEAR is not "併合できる" at critical congestion (31.5% fail rate, adds high piece with no benefit).
-        # refs: tmp/analysis_result.md (adopted hypothesis), mandatory_themes.txt
-        if deadline_crossed and max_y >= 2.5 and piece_count >= 35 and merge_grade == "NEAR":
-            score -= 50000.0
-            reasons.append("CRITICAL_NEAR_SUPPRESSION")
         # ----- evaluation axis 1.7b: Russia phase NEAR suppression (v625) -----
         # Russia phase + deadline_crossed + max_y>=2.0 + merge_grade==NEAR → suppress NEAR
         # Russia exists (type 15 on board), board is past deadline, high congestion (max_y>=2.0)
         # NEAR merge (68.5% success) at this regime is net negative:
         #   - Best game: 8 of 13 NEAR attempts at deadline_crossed, 6 failed (delta=0), pc accumulated
         #   - DIRECT (95.7%) is the only safe merge in Russia phase deadline
-        # mandatory_themes.txt: "デッドラインを超える位置上ピース置くの場合は併合できる場合に限る"
+        # mandatory_themes.txt: "デッドラインを超える位置上ピース置く場合は併合できる場合に限る"
         # refs: best game turn 153-161 analysis, v624 comment, mandatory_themes.txt,
         #       tmp/analysis_result.md (adopted hypothesis)
-        elif russia_phase and deadline_crossed and max_y >= 2.0 and merge_grade == "NEAR":
+        if russia_phase and deadline_crossed and max_y >= 2.0 and merge_grade == "NEAR":
             # Suppress NEAR bonus completely - only DIRECT or NO-MERGE allowed
             pass  # no bonus, effectively -infinity for NEAR candidates
         elif merge_grade == "NEAR":

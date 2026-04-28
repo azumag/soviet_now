@@ -63,6 +63,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v625: Russia phase NEAR suppression — russia_phase && deadline_crossed && max_y>=2.0 && merge_grade==NEAR → suppress NEAR bonus
+     # worst game T55-63: deadline_crossed + max_y=2.02-2.98 + merge_available=false→true急変 + NEAR選択でpc累積
+     # best game T157: deadline_crossed + max_y=2.56 + merge_available=true → DIRECT選択で延命
+     # mandatory_themes.txt: "デッドラインを超える位置上ピース置く場合は併合できる場合に限る"
+     # Fixes rollback failure mode: Russia phase deadline_crossed NEAR merge causing piece_count accumulation
+     # refs: tmp/analysis_result.md (adopted hypothesis), mandatory_themes.txt
      # v507: pre-russia phase detection extended to type>=13 (was type==14)
      # worst game (score=476): type13 appeared turn 38, type14 never appeared, pre_russia_phase never activated
      # causing deadline_crossed=true + max_y runaway (1.66→3.18) in type13-only phase
@@ -830,6 +836,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult
             reasons.append("DIRECT_MERGE")
+        # ----- evaluation axis 1.7b: Russia phase NEAR suppression (v625) -----
+        # Russia phase + deadline_crossed + max_y>=2.0 + merge_grade==NEAR → suppress NEAR
+        # Russia exists (type 15 on board), board is past deadline, high congestion (max_y>=2.0)
+        # NEAR merge (68.5% success) at this regime is net negative:
+        #   - Best game: 8 of 13 NEAR attempts at deadline_crossed, 6 failed (delta=0), pc accumulated
+        #   - DIRECT (95.7%) is the only safe merge in Russia phase deadline
+        # mandatory_themes.txt: "デッドラインを超える位置上ピース置く場合は併合できる場合に限る"
+        # refs: best game turn 153-161 analysis, v624 comment, mandatory_themes.txt,
+        #       tmp/analysis_result.md (adopted hypothesis)
+        if russia_phase and deadline_crossed and max_y >= 2.0 and merge_grade == "NEAR":
+            # Suppress NEAR bonus completely - only DIRECT or NO-MERGE allowed
+            pass  # no bonus, effectively -infinity for NEAR candidates
         elif merge_grade == "NEAR":
             score += 600.0 * merge_mult
             reasons.append("NEAR_MERGE")
