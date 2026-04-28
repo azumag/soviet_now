@@ -63,6 +63,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: axis 8.8b HIGH_PC_REACTIVE_NO_MERGE_PENALTY — piece_count accumulation before rp>=3 threshold
+     # Hypothesis: piece_count>=25 && max_y>=0.5 && rp>=2 && mg==NO causes accumulation before rp>=3
+     # worst T42: pc=23, max_y=1.04, HEIGHT_CONTROL selected → pc grows 23→34, max_y 1.04→3.71
+     # best T122: rp captures merge opportunities 4 times in 16 turns (worst: 1 time in 13 turns)
+     # New penalty -4500 for pc>=25 && max_y>=0.5 && rp>=2 && mg==NO catches early accumulation
+     # Existing axis 8.8 (rp>=3, mg==NO, -4500) remains unchanged
+     # Fixes rollback failure mode: piece_count accumulation before reactive_pairs>=3 threshold
+     # refs: tmp/analysis_result.md (Implementation Plan),
+     #       game_history/20260429_034434_score0610.jsonl (worst T42-55),
+     #       game_history/20260429_044501_score2966.jsonl (best T122-137),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 29.6% low vs 23.0% high)
+     #
      # vXXX: v422+ NEAR suppression middle tier + pre-russia phase re-introduction (v503-pre)
      # v422+: at pc=33-34+deadline+landing_y>=1.0, NEAR base bonus halved (not full suppression)
      #   worst T54: NEAR bonuses +1500-2200 vs v422 penalty -1680 → net still positive (+20-540)
@@ -1753,6 +1765,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+
+        # ----- evaluation axis 8.8b: high pc + medium height + reactive_pairs>=2 + NO_MERGE penalty -----
+        # Hypothesis: piece_count accumulation before reactive_pairs>=3 threshold
+        # worst_game turn 42: pc=23, max_y=1.04, HEIGHT_CONTROL selected → pc grows to 34
+        # Root cause: when pc>=25 && max_y>=0.5 && rp>=2 && mg==NO, existing axis 8.8
+        # (rp>=3) doesn't fire, allowing HEIGHT_CONTROL to accumulate pieces before crisis.
+        # worst T42-55: pc=23→34, max_y=1.04→3.71, 1 merge_hit in 13 turns
+        # best T122-137: pc=33→41, max_y=2.48→3.21, 4 merge_hits in 16 turns
+        # Additional -4500 penalty catches early accumulation before rp reaches 3.
+        # refs: tmp/analysis_result.md (Implementation Plan),
+        #       game_history/20260429_034434_score0610.jsonl (worst: T42-55 pc 23→34),
+        #       game_history/20260429_044501_score2966.jsonl (best: T122-137 merge capture),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 29.6% low vs 23.0% high)
+        # Fixes rollback failure mode: piece_count accumulation before rp>=3 threshold
+        if piece_count >= 25 and max_y >= 0.5 and reactive_pair_count >= 2 and merge_grade == "NO":
+            score -= 4500.0
+            reasons.append("HIGH_PC_REACTIVE_NO_MERGE_PENALTY")
 
         # ----- NO_MERGE central placement bonus (vXXX) -----
         # Hypothesis: NO_MERGE Central-Low Placement Override (Suppress Edge Scatter at rp>=3, mg==NO)
