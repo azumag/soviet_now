@@ -63,11 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v506: pre-russia phase height suppression @ deadline_crossed && merge_grade=NO && pre_russia_phase && pc>=30, landing_y>=1.5 → -800.0
-     # extra_high (score=2825) T127-135: pre-russia phase (type14 exists, type15 doesn't) continued height selection, pc 40→47
-     # pre-russia phase: type14→type15 pipeline is critical, height selection prevents it
-     # Fixes rollback failure mode: pre-russia phase height selection causing piece_count accumulation
-     # refs: tmp/analysis_result.md (Implementation Plan)
      # v505: Strengthen NEAR deadline risk + chain suppression @ pc>=30
      # Analysis: v502 halving (0.5x) at pc=32-34 still lets NEAR+CHAIN dominate
      # risk penalties (+1625 combined vs -300). v421 0.5x merge_mult gives only
@@ -736,13 +731,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
-
-    # --- v506: pre-russia phase detection (type14 exists, type15 does not) ---
-    # extra_high (score=2825) analysis: type14 exists but type15 doesn't, height selection continued
-    # causing piece_count increase (40→47). In pre-russia phase, type14→type15 pipeline is critical.
-    # ref: tmp/analysis_result.md (Implementation Plan)
-    pre_russia_phase_count = sum(1 for p in pieces if p.get("type") == 14)
-    pre_russia_phase = pre_russia_phase_count >= 1 and not russia_phase
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -1680,17 +1668,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 score -= (8000.0 + (landing_y - 1.0) * 4000.0) * multiplier
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
-
-        # ----- evaluation axis 8.8-pre: pre-russia phase height suppression (v506) -----
-        # extra_high (score=2825) T127-135: pre-russia phase (type14 exists, type15 doesn't)
-        # merge_grade=NO + deadline_crossed + height selection continued, pc 40→47
-        # pre-russia phase: type14→type15 pipeline is critical, height selection prevents it
-        # Implementation Plan: deadline_crossed && merge_grade=NO && pre_russia_phase && pc>=30, landing_y>=1.5 → -800.0
-        # refs: tmp/analysis_result.md (Implementation Plan)
-        if pre_russia_phase and merge_grade == "NO" and piece_count >= 30:
-            if deadline_crossed and landing_y >= 1.5:
-                score -= 800.0
-                reasons.append("PRE_RUSSIA_HEIGHT_SUPPRESSION")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
