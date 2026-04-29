@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-30 08:00:09 JST`
+- Updated: `2026-04-30 08:48:52 JST`
 - Nodes: `1280`
-- Edges: `1747`
-- Current: `a898938e03fe`
+- Edges: `1748`
+- Current: `1ed49b30fbf8`
 - Anchor: `1ed49b30fbf8`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -64,17 +64,17 @@ flowchart TD
     h_1e1d507e2bf2["1e1d507e2bf2<br/>g=24 n=20<br/>comp=10423.0"]
     h_007f02d1457f["007f02d1457f<br/>g=24 n=20<br/>comp=10701.2"]
     h_36f0c5af893a["36f0c5af893a<br/>g=12 n=12<br/>comp=9229.6"]
-    h_1ed49b30fbf8["1ed49b30fbf8<br/>ANCHOR<br/>g=48 n=20<br/>comp=12082.0"]
+    h_1ed49b30fbf8["1ed49b30fbf8<br/>CURRENT ANCHOR<br/>g=48 n=20<br/>comp=12082.0"]
     h_743cb35ea7ed["743cb35ea7ed<br/>g=24 n=20<br/>comp=11326.3"]
     h_4564a12567cf["4564a12567cf<br/>g=24 n=20<br/>comp=11093.3"]
     h_05b26ea8f969["05b26ea8f969<br/>g=16 n=16<br/>comp=10963.3"]
+    h_a898938e03fe["a898938e03fe<br/>g=12 n=12<br/>comp=10133.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_a898938e03fe["a898938e03fe<br/>CURRENT"]
 
     h_127c12556064 -->|improve| h_658b142bc0a5
     h_ba82d13208dc -->|improve| h_f3542fcd01bf
@@ -126,8 +126,9 @@ flowchart TD
     h_743cb35ea7ed -->|improve| h_4564a12567cf
     h_4564a12567cf -->|improve| h_05b26ea8f969
     h_05b26ea8f969 -. rollback .-> h_1ed49b30fbf8
-    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
     h_1ed49b30fbf8 -->|improve| h_a898938e03fe
+    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_a898938e03fe -. rollback .-> h_1ed49b30fbf8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -183,17 +184,17 @@ flowchart TD
     class h_1e1d507e2bf2 plain;
     class h_007f02d1457f plain;
     class h_36f0c5af893a plain;
-    class h_1ed49b30fbf8 anchor;
+    class h_1ed49b30fbf8 current_anchor;
     class h_743cb35ea7ed plain;
     class h_4564a12567cf plain;
     class h_05b26ea8f969 plain;
+    class h_a898938e03fe plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_a898938e03fe current;
 ```
 
 ## Detail 1/16
@@ -4453,9 +4454,9 @@ flowchart TD
 
 ## Detail 16/16
 
-- Range: `0b044788c9f1` .. `a898938e03fe`
+- Range: `0b044788c9f1` .. `1d9b85a22a22`
 - Nodes in this diagram: `80`
-- Internal edges in this diagram: `63`
+- Internal edges in this diagram: `64`
 - Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
 - Cross-chunk link: `9c573445b262 -.rollback.-> bc1b4cd5b7e7`
 - Cross-chunk link: `bc1b4cd5b7e7 --improve--> d22b52f8b629`
@@ -4541,17 +4542,17 @@ flowchart TD
     h_1e1d507e2bf2["1e1d507e2bf2<br/>g=24 n=20<br/>comp=10423.0"]
     h_007f02d1457f["007f02d1457f<br/>g=24 n=20<br/>comp=10701.2"]
     h_36f0c5af893a["36f0c5af893a<br/>g=12 n=12<br/>comp=9229.6"]
-    h_1ed49b30fbf8["1ed49b30fbf8<br/>ANCHOR<br/>g=48 n=20<br/>comp=12082.0"]
+    h_1ed49b30fbf8["1ed49b30fbf8<br/>CURRENT ANCHOR<br/>g=48 n=20<br/>comp=12082.0"]
     h_743cb35ea7ed["743cb35ea7ed<br/>g=24 n=20<br/>comp=11326.3"]
     h_4564a12567cf["4564a12567cf<br/>g=24 n=20<br/>comp=11093.3"]
     h_05b26ea8f969["05b26ea8f969<br/>g=16 n=16<br/>comp=10963.3"]
+    h_a898938e03fe["a898938e03fe<br/>g=12 n=12<br/>comp=10133.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_a898938e03fe["a898938e03fe<br/>CURRENT"]
 
     h_0b044788c9f1 -->|improve| h_313672506cb6
     h_313672506cb6 -->|improve| h_802caee8ec9a
@@ -4614,8 +4615,9 @@ flowchart TD
     h_743cb35ea7ed -->|improve| h_4564a12567cf
     h_4564a12567cf -->|improve| h_05b26ea8f969
     h_05b26ea8f969 -. rollback .-> h_1ed49b30fbf8
-    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
     h_1ed49b30fbf8 -->|improve| h_a898938e03fe
+    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_a898938e03fe -. rollback .-> h_1ed49b30fbf8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4691,20 +4693,35 @@ flowchart TD
     class h_1e1d507e2bf2 plain;
     class h_007f02d1457f plain;
     class h_36f0c5af893a plain;
-    class h_1ed49b30fbf8 anchor;
+    class h_1ed49b30fbf8 current_anchor;
     class h_743cb35ea7ed plain;
     class h_4564a12567cf plain;
     class h_05b26ea8f969 plain;
+    class h_a898938e03fe plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_a898938e03fe current;
 ```
 
 ## Transition Notes
+
+### Rollback Game#20355 `a898938e -> 1ed49b30`
+
+- - rollback from a898938e03fe to 1ed49b30fbf8 at game 20355
+- - reasons: early_branch_regression+curr_breach
+- - current comp/p50/p25=10133.7/10626.5/8971.2 vs target 12082.0/12509.5/11382.8
+- - bad recent scores: 9099 7485 10864 6796 15809 19737 15412 10389
+- early_branch_regression が悪化要因だった。
+- curr_breach が悪化要因だった。
+- current: comp=10133.7 p50=10626.5 p25=8971.2 mean=12993.5 n=12
+- rollback_target: comp=12082.0 p50=12509.5 p25=11382.8 mean=12739.5 n=20
+- metric_gap_vs_target: comp=-1948.3 p50=-1883.0 p25=-2411.5 mean=254.0
+- recent12_avg: bad=12993.5 target=12149.0
+- recent12_floor: bad=6796 target=7506
+- rollback の直前12試合と rollback 先の直近12試合を比較して、再発理由を特定すること。
 
 ### Improve Game#20343 `1ed49b30 -> a898938e`
 
