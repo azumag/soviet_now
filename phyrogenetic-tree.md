@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-04-29 08:52:15 JST`
-- Nodes: `1269`
-- Edges: `1733`
-- Current: `fd6956ec7e5e`
-- Anchor: `039e38921fb6`
+- Updated: `2026-04-29 10:46:36 JST`
+- Nodes: `1270`
+- Edges: `1734`
+- Current: `fe19954095cd`
+- Anchor: `fd6956ec7e5e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_25b49c2bfa9c["25b49c2bfa9c<br/>g=1 n=1<br/>comp=9631.0"]
     h_c3b78a7ddd11["c3b78a7ddd11<br/>g=24 n=20<br/>comp=11065.9"]
     h_b83fd223a409["b83fd223a409<br/>g=1 n=1<br/>comp=9603.0"]
     h_86a9a57f17d7["86a9a57f17d7<br/>g=1 n=1<br/>comp=8907.0"]
@@ -67,14 +66,15 @@ flowchart TD
     h_5d18fbadb2ae["5d18fbadb2ae<br/>g=24 n=20<br/>comp=11461.3"]
     h_c66580cb121c["c66580cb121c<br/>g=12 n=12<br/>comp=9565.3"]
     h_c8482579bf2a["c8482579bf2a<br/>g=24 n=20<br/>comp=11571.1"]
-    h_039e38921fb6["039e38921fb6<br/>ANCHOR<br/>g=24 n=20<br/>comp=12170.3"]
+    h_039e38921fb6["039e38921fb6<br/>g=24 n=20<br/>comp=12170.3"]
+    h_fd6956ec7e5e["fd6956ec7e5e<br/>ANCHOR<br/>g=24 n=20<br/>comp=12192.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_fd6956ec7e5e["fd6956ec7e5e<br/>CURRENT"]
+    h_fe19954095cd["fe19954095cd<br/>CURRENT"]
 
     h_c3b78a7ddd11 -->|improve| h_b83fd223a409
     h_0f5a89c3e696 -->|improve| h_ddd04687999b
@@ -117,15 +117,15 @@ flowchart TD
     h_c66580cb121c -. rollback .-> h_45ca4a5fa0e7
     h_45ca4a5fa0e7 -->|improve| h_c8482579bf2a
     h_c8482579bf2a -->|improve| h_039e38921fb6
-    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
     h_039e38921fb6 -->|improve| h_fd6956ec7e5e
+    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_fd6956ec7e5e -->|improve| h_fe19954095cd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_25b49c2bfa9c plain;
     class h_c3b78a7ddd11 plain;
     class h_b83fd223a409 plain;
     class h_86a9a57f17d7 plain;
@@ -177,14 +177,15 @@ flowchart TD
     class h_5d18fbadb2ae plain;
     class h_c66580cb121c plain;
     class h_c8482579bf2a plain;
-    class h_039e38921fb6 anchor;
+    class h_039e38921fb6 plain;
+    class h_fd6956ec7e5e anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_fd6956ec7e5e current;
+    class h_fe19954095cd current;
 ```
 
 ## Detail 1/16
@@ -4444,9 +4445,9 @@ flowchart TD
 
 ## Detail 16/16
 
-- Range: `0b044788c9f1` .. `fd6956ec7e5e`
-- Nodes in this diagram: `69`
-- Internal edges in this diagram: `49`
+- Range: `0b044788c9f1` .. `fe19954095cd`
+- Nodes in this diagram: `70`
+- Internal edges in this diagram: `50`
 - Cross-chunk link: `387030d5fa23 --improve--> 0b044788c9f1`
 - Cross-chunk link: `9c573445b262 -.rollback.-> bc1b4cd5b7e7`
 - Cross-chunk link: `bc1b4cd5b7e7 --improve--> d22b52f8b629`
@@ -4524,14 +4525,15 @@ flowchart TD
     h_5d18fbadb2ae["5d18fbadb2ae<br/>g=24 n=20<br/>comp=11461.3"]
     h_c66580cb121c["c66580cb121c<br/>g=12 n=12<br/>comp=9565.3"]
     h_c8482579bf2a["c8482579bf2a<br/>g=24 n=20<br/>comp=11571.1"]
-    h_039e38921fb6["039e38921fb6<br/>ANCHOR<br/>g=24 n=20<br/>comp=12170.3"]
+    h_039e38921fb6["039e38921fb6<br/>g=24 n=20<br/>comp=12170.3"]
+    h_fd6956ec7e5e["fd6956ec7e5e<br/>ANCHOR<br/>g=24 n=20<br/>comp=12192.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_fd6956ec7e5e["fd6956ec7e5e<br/>CURRENT"]
+    h_fe19954095cd["fe19954095cd<br/>CURRENT"]
 
     h_0b044788c9f1 -->|improve| h_313672506cb6
     h_313672506cb6 -->|improve| h_802caee8ec9a
@@ -4580,8 +4582,9 @@ flowchart TD
     h_c66580cb121c -. rollback .-> h_45ca4a5fa0e7
     h_45ca4a5fa0e7 -->|improve| h_c8482579bf2a
     h_c8482579bf2a -->|improve| h_039e38921fb6
-    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
     h_039e38921fb6 -->|improve| h_fd6956ec7e5e
+    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_fd6956ec7e5e -->|improve| h_fe19954095cd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4649,17 +4652,28 @@ flowchart TD
     class h_5d18fbadb2ae plain;
     class h_c66580cb121c plain;
     class h_c8482579bf2a plain;
-    class h_039e38921fb6 anchor;
+    class h_039e38921fb6 plain;
+    class h_fd6956ec7e5e anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_fd6956ec7e5e current;
+    class h_fe19954095cd current;
 ```
 
 ## Transition Notes
+
+### Improve Game#20063 `fd6956ec -> fe199540`
+
+- scores: `10930 13688 12709 22395 18779 8908 15251 12578 16696 13163 10818 9161 15140 15562 10370 13327 9902 14609 10130 7942 12076 14989 13441 15583`
+- v504: remove deadline_crossed gate from axis 8.8-pre type 14 proximity
+- mandatory_themes "no placement past deadline without merge" — when merge_grade==NO,
+- the game forces unavoidable NO-merge placement. In that unavoidable case, still guide near type 14.
+- New condition: apply type 14 proximity when (not deadline_crossed) OR (deadline_crossed && no merges available)
+- mandatory_themes compliant: deadline_crossed && has_merge → type 14 proximity SKIPPED
+- Fixes: type 14→type 15 Russia pipeline starvation (zero type 15 in 24 batch games)
 
 ### Improve Game#20039 `039e3892 -> fd6956ec`
 
