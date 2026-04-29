@@ -64,18 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: axis 1.7c NO_MERGE deadline escalation — mandatory theme compliance
-     # Hypothesis: worst_game T70-73 (score559) 4 consecutive NO_MERGE at center despite deadline_crossed && max_y>=2.0
-     #   max_y runaway: 1.97→2.36→3.21→3.19, mandatory themes violated
-     # Implementation: -6000 base penalty + max_y/rp scaling when merge_grade==NO && deadline_crossed && max_y>=2.0 && rp>=3
-     #   Overrides axis 8.8 (-4500) and forces lower-y placement even without clear merge path
-     # Fixes rollback failure mode: NO_MERGE deadline escalation (worst_game T70-73 mandatory theme violation)
-     # Mandatory themes: "デッドライン付近の危険盤面領域では、併合を優先するべき", "NEXTを考慮したドロップ"
-     # refs: tmp/analysis_result.md (Adopted Hypothesis: NO_MERGE deadline escalation),
-     #       game_history/20260429_203457_score0559.jsonl (worst_game T70-73 failure),
-     #       game_history/20260429_204117_score2715.jsonl (best_game T141 success),
-     #       data/mandatory_themes.txt
-     #
      # vXXX: v606 gap zone NEAR suppression + safety valve (analysis_result hypothesis implementation)
      # Hypothesis: gap zone (max_y>=1.5, rp>=3, pc>=28) NEAR suppression too aggressive without safety valve
      #   worst_game T67: NEAR at max_y=2.38, pc=37 → failed, max_y runaway → game over
@@ -1012,25 +1000,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 gap_zone_scale = max(0.2, 1.0 - (max_y - 1.5) * 0.6)
                 score -= 600.0 * merge_mult * (1.0 - gap_zone_scale)
                 reasons.append("GAP_ZONE_NEAR_SUPPRESSED")
-
-        # ----- evaluation axis 1.7c: NO_MERGE deadline escalation (vXXX) -----
-        # Mandatory themes: "デッドライン付近の危険盤面領域では、併合を優先するべき"
-        # worst_game T70-73: 4 consecutive NO_MERGE at center despite deadline_crossed && max_y>=2.0
-        #   max_y: 1.97→2.36→3.21→3.19, board uncontrolled
-        # best_game T141: NO_MERGE at max_y=2.53 but merge_available=true → DIRECT executed (+28)
-        # worst_game failure: NO_MERGE at max_y=2.36 && deadline_crossed with no merge path created
-        #   Mandatory theme violated: "デッドライン付近の危険盤面領域では、併合を優先するべき"
-        #   Second violation: "NEXTを考慮したドロップ" — T70 placed type 5 at center with no type 5 on board
-        # Solution: When NO_MERGE selected in deadline danger zone, force lower-y placement
-        #   Penalty -6000 base scales with max_y and reactive_pair_count
-        #   This overrides axis 8.8 (-4500) and forces lower-y even without a merge path
-        #   Complies with mandatory themes: deadline danger → board compression prioritized
-        if merge_grade == "NO" and deadline_crossed and max_y >= 2.0 and reactive_pair_count >= 3:
-            no_merge_penalty = -6000.0
-            no_merge_penalty += -1000.0 * ((max_y - 2.0) / 0.5)  # extra -1000 per 0.5 max_y above 2.0
-            no_merge_penalty += -500.0 * (reactive_pair_count - 3)  # extra -500 per rp above 3
-            score += no_merge_penalty
-            reasons.append("NO_MERGE_DEADLINE_ESCALATION")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
