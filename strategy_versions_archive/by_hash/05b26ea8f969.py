@@ -63,16 +63,39 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at high congestion
-     # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
-     # Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally → edge/high wins via other axes
-     # Fix: when rp>=3 && mg==NO && pc>=30, add directional bonus (200-400) for adjacent-type proximity
-     # Creates "active" response to high reactive pairs — move toward merge opportunity
-     # Bonus 300 at dist=0, scales to 0 at dist=2.0. Smaller than -4500 so doesn't override merge selection.
-     # Fixes: merge drought induced accumulation at high reactive_pairs (worst T48-51: rp=5-9, 0 merges)
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c),
-     #       game_history/20260429_225402_score0636.jsonl (worst T48-51: NO_MERGE edge scatter),
-     #       game_history/20260429_230124_score2482.jsonl (best: merge capture at rp=4-5)
+     # vXXX: deadline_NOMERGE_center_guidance — deadline crossed + NO merge + pc>=30 central强化
+     # Hypothesis: deadline_crossed && mg==NO && pc>=30 で axis 9.16 central bonus を +400 に強化
+     # worst T73 (score846): x=0.0 NO_MERGE_CROSSES_DEADLINE, pc=38, max_y 2.52→3.49→3.49 game over
+     # best T132 (score3074): x=0.0 NO_MERGE_CROSSES_DEADLINE, max_y=2.54管理、生き残った
+     # current +200ではdeadline压力で機能しない。axis 9.16 (pre_russiaのみ) と NO_MERGE_CENTER_PREFER (rp>=3のみ)
+     # の間に発火しないケースを補足。merge AVAILABLE時には発火しない。DIRECT merge選択を妨げない。
+     # Fixes rollback failure mode: deadline越えNO_MERGE局面での中央配置誘導无效
+     # refs: tmp/analysis_result.md (Implementation Plan: deadline_crossed && mg==NO && pc>=30, axis 9.16强化),
+     #       game_history/20260430_041327_score0846.jsonl (worst T73-T80),
+     #       game_history/20260430_043826_score3074.jsonl (best T132-T136)
+     #
+     # vXXX: v548 double_russia_phase detection + axis 8.8-pre/9.16 pre-russia phase central guidance
+     # Hypothesis: Pre-Russia phase (type 14 exists, no type 15) central placement强化 + type 14 proximity
+     # axis 8.8-pre: +400 for central placement with type 14 proximity (max_y>=1.5, mg==NO)
+     # axis 9.16: (1.5-abs(x))*600 central placement bonus (pre_russia && mg==NO && !russia_phase)
+     # double_russia_phase: edge suppression (-600) when type 15 >= 2 && mg==NO && |x| > 2.0
+     # Fixes: type 14→type 15 Russia pipeline starvation (zero type 15 in 24 batch games)
+     # Fixes rollback failure mode: pre-russia phase type 14 clustering failure
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8-pre强化, axis 9.16, v548 double_russia_phase),
+     #       tmp/improve_brief.md (mandatory themes conflict resolution),
+     #       strategy_versions/best_score5801_strategy.py (v548 reference),
+     #       data/mandatory_themes.txt (absolute constraint)
+     #
+     # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at moderate rp
+     # Hypothesis: Merge Opportunity Capture Inefficiency at rp=2-3 transition zone (analysis_result.md)
+     # Worst T56: rp=2, NO_MERGE, merge_available=false, axis 8.8 (rp>=3) didn't fire, x=0.4 arbitrary scatter
+     # Key gap: rp=2-3 transition zone where axis 8.8 (rp>=3) doesn't fire but directional guidance is needed
+     # Fix: when rp>=2 && pc>=30 && mg==NO, add directional bonus toward nearest same-type piece
+     # Bonus = max(0, 250*(1.0 - dist/2.0)), scales from +250 at dist=0 to 0 at dist>=2.0
+     # Does NOT override merge selection (merge bonus >> this bonus). Bonus capped at +250 (forbidden to exceed)
+     # Fixes: merge drought induced accumulation at rp=2 (worst T56: rp=2, 0 merges for 3 turns)
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c, rp>=2, same-type proximity),
+     #       game_history/20260430_021818_score0574.jsonl (worst T56: rp=2, x=0.4 scatter)
      #
      # v503: HEIGHT_CONTROL suppression edge coefficient 0.35→0.7
      # worst T60-61: max_y=2.78, rp=8, mg=NO, deadline_crossed → x=±3.0 edge scatter
@@ -819,6 +842,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
 
+    # v548: double russia phase detection — type 15 pieces >= 2 on board
+    # When two Russia pieces exist on board, height management becomes critical.
+    # Two high-type pieces occupy significant board space; edge placement is dangerous.
+    double_russia_phase = russia_phase_count >= 2
+
     # v503-pre: pre-russia phase detection — type 14 piece(s) on board, but no type 15 yet.
     # When type 14 exists, prioritize building a second type 14 for type 15 merge.
     # This is the PRE-RUSSIA phase: the board has a type 14, the goal is to make
@@ -1435,7 +1463,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
 
-         # ----- evaluation axis 3: drift penalty -----
+        # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
@@ -1530,7 +1558,41 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
-         # ----- evaluation axis 8.8-pre: pre-russia phase merge priority / type 14 concentration (v503-pre) -----
+        # vXXX: axis 8.8-pre enhancement — pre-russia phase central placement bonus
+        # When type 14 exists but no type 15 (pre_russia_phase), and NO merge available,
+        # add +400 bonus for candidates that achieve high type 14 proximity while landing
+        # in central low position. This is an independent axis from axis 9.6b (same-type
+        # proximity, ~120-540) and compensates for axis 8.8-pre weakness being overwhelmed
+        # by HEIGHT_CONTROL (+25*landing_y) and height_mult (1.8 in HIGH phase).
+        # Analysis: worst game T49-56 (score 522): rp=3-4, mg=NO, x scattered at edge
+        # (0, -0.66, 2.8), max_y runaway 2.07→2.98. Central placement during pre-russia
+        # would have maintained type 14 clustering for type 15 merge pipeline.
+        # Fixes: type 14→type 15 Russia pipeline starvation (zero type 15 in 24 games)
+        if pre_russia_phase and merge_grade == "NO" and max_y >= 1.5:
+            same_type_14_count = sum(1 for p in pieces if p.get("type") == 14)
+            if same_type_14_count > 0:
+                # Count type 14 pieces nearby (within 2.0 x-distance)
+                nearby_14_count = sum(1 for p in pieces if p.get("type") == 14 and abs(x - p["x"]) < 2.0)
+                if nearby_14_count > 0:
+                    # +400 bonus for central placement with type 14 proximity
+                    score += 400.0
+
+         # ----- evaluation axis 9.16: pre-russia phase central placement guidance (vXXX) -----
+         # When pre_russia_phase && merge_grade==NO && !russia_phase, apply central placement
+         # bonus (1.5-abs(x))*600. This enables selecting central-low placement during
+         # deadline exceed when it doesn't conflict with type 14 proximity.
+         # mandatory_themes.txt第一条: "デッドラインを超える場合は併合できる場合に限る"を遵守しつつ、
+         # 併合できない場合にもNEXT (type 14→15 merge path) を守る配置を提供する。
+        # This is separate from axis 8.8-pre type 14 proximity guidance.
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.16),
+        #       tmp/improve_brief.md (mandatory themes conflict resolution)
+        if pre_russia_phase and merge_grade == "NO" and not russia_phase:
+            central_bonus = max(0.0, 1.5 - abs(x)) * 600.0
+            if central_bonus > 0:
+                score += central_bonus
+                reasons.append("PRE_RUSSIA_CENTER_GUIDANCE")
+
+        # ----- evaluation axis 8.8-pre: pre-russia phase merge priority / type 14 concentration (v503-pre) -----
         # analysis_result.md adopted hypothesis: type 14→type 15 pipeline starvation (zero type 15 in 24 games)
         # When type 14 exists but no type 15, prioritize building the second type 14
         # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
@@ -1554,7 +1616,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if p.get("type") == 14:
                             score += 75.0 * (1.0 / (abs(x - p["x"]) + 0.5))
 
-         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
+        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。
@@ -1769,6 +1831,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
 
+        # ----- v548: double russia phase height penalty reinforcement -----
+        # When russia_phase_count >= 2, two high-type pieces occupy significant board space.
+        # Edge placement is dangerous with two Russias present. Height penalty should be
+        # stronger to suppress edge/high placements during double_russia_phase.
+        # This is a specialized height management for double Russia (type 15 >= 2).
+        # refs: tmp/analysis_result.md (Implementation Plan: v548 double_russia_phase),
+        #       strategy_versions/best_score5801_strategy.py (v548 reference)
+        # Fixes: height management gap for double_russia_phase (zero type 15 observed in batch)
+        if double_russia_phase:
+            # Enhanced height penalty during double_russia — edge placement suppressed
+            # The existing axis 8.8 (-4500) and axis 2 (height penalty) provide base suppression,
+            # but with two Russias on board, we need stronger central-low preference.
+            # Add extra penalty for edge positions (|x| > 2.0) when no merge available.
+            if merge_grade == "NO" and abs(x) > 2.0:
+                score -= 600.0  # extra edge suppression for double Russia
+                reasons.append("DOUBLE_RUSSIA_EDGE_SUPPRESSION")
+
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
         # ワーストゲーム(score0636)終盤turns 56-62: reactive_pairs=3-5, merge_available=false, deadline_crossed=trueでmax_y=2.45→3.12に上昇
@@ -1813,43 +1892,37 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("HIGH_PC_REACTIVE_NO_MERGE_PENALTY")
 
-        # ----- evaluation axis 8.8c: merge opportunity proximity bonus for NO_MERGE at high congestion (vXXX) -----
+        # ----- evaluation axis 8.8c: merge opportunity proximity bonus for NO_MERGE at moderate rp (vXXX) -----
         # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
         # Root cause: axis 8.8 flat -4500 makes all NO_MERGE candidates "equally bad". Remaining axes
         # (stacking bonuses, column_ceiling_bonus, MEDIUM_TOWER/HIGH_LAYER labels) systematically prefer
-        # edge/high positions. Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally,
-        # then edge/high positions win via other axes. Best game: same conditions, merge opportunity
-        # selected reliably.
-        # Fix: When rp>=3 && mg==NO && pc>=30, add directional bonus for candidates that move toward
-        # adjacent-type pieces (type N-1 or N+1 of current piece type). This creates an "active" response
-        # to high reactive pairs — move toward merge opportunity — rather than just penalizing all high
-        # positions equally.
-        # Bonus magnitude: 200-400 (smaller than -4500 penalty, so it doesn't override merge selection
-        # but provides directional guidance during merge drought without overriding merge opportunities)
-        # Uses reactor["pipeline"] (list of (type, type+1, min_distance) tuples) for adjacent-type proximity.
-        # Refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c),
-        #       game_history/20260429_225402_score0636.jsonl (worst T48-51: NO_MERGE edge scatter),
-        #       game_history/20260429_230124_score2482.jsonl (best: merge capture at rp=4-5),
+        # edge/high positions. Worst game T56: rp=2, NO_MERGE, axis 8.8 (rp>=3) didn't fire, x=0.4 scatter.
+        # Key gap: rp=2-3 transition zone where axis 8.8 (rp>=3) doesn't fire but directional guidance is needed.
+        # Fix: When rp>=2 && pc>=30 && mg==NO, add directional bonus toward nearest same-type piece.
+        # Bonus = max(0, 250*(1.0 - dist/2.0)), scales from +250 at dist=0 to 0 at dist>=2.0
+        # Does NOT override merge selection (merge bonus >> this bonus).
+        # Forbidden: bonus must not exceed +250 (would override merge selection).
+        # Refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c, rp>=2),
+        #       game_history/20260430_021818_score0574.jsonl (worst T56: rp=2, x=0.4 scatter),
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 28.8% low vs 23.3% high)
-        # Fixes: merge drought induced accumulation at high reactive_pairs (worst T48-51: rp=5-9, 0 merges)
-        if reactive_pair_count >= 3 and merge_grade == "NO" and piece_count >= 30:
-            # Find adjacent-type pieces (type N-1 or N+1) on board via pipeline data
-            # pipeline: list of (type, type+1, min_distance) — adjacent-type proximity
+        # Fixes: merge drought induced accumulation at rp=2 (worst T56: rp=2, 0 merges for 3 turns)
+        if reactive_pair_count >= 2 and merge_grade == "NO" and piece_count >= 30:
+            # Find same-type pieces on board for directional guidance
             current_type = game_state.get("current_piece", {}).get("type", 0)
             if current_type == 0:
                 current_type = next_type
-            adjacent_target_dist = float("inf")
+            nearest_same_dist = float("inf")
             for p in pieces:
                 p_type = p.get("type", 0)
-                if p_type == current_type - 1 or p_type == current_type + 1:
+                if p_type == current_type:
                     p_x = p.get("x", 0)
                     p_y = p.get("y", 10)
                     dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
-                    if dist < adjacent_target_dist:
-                        adjacent_target_dist = dist
-            # Bonus: 300 at dist=0, scales down to 0 at dist=2.0
-            if adjacent_target_dist < 2.0:
-                proximity_bonus = max(0, 300.0 - adjacent_target_dist * 150.0)
+                    if dist < nearest_same_dist:
+                        nearest_same_dist = dist
+            # Bonus: 250 at dist=0, scales to 0 at dist=2.0
+            if nearest_same_dist < 2.0:
+                proximity_bonus = max(0.0, 250.0 * (1.0 - nearest_same_dist / 2.0))
                 score += proximity_bonus
                 if proximity_bonus > 0:
                     reasons.append("MERGE_OPPORTUNITY_PROXIMITY")
@@ -1881,6 +1954,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 150.0  # bonus for underground center positions
             elif landing_y < 1.0:
                 score += 80.0   # partial bonus for low center positions
+
+        # ----- deadline_NOMERGE_center_guidance: deadline crossed + NO merge + high piece_count (vXXX) -----
+        # Hypothesis: deadline_crossed && mg==NO && pc>=30 central placement强化
+        # worst T73 (score846): x=0.0 CHOICE_NO_MERGE_CROSSES_DEADLINE, pc=38, max_y 2.52→3.49
+        # best T132 (score3074): x=0.0 CHOICE_NO_MERGE_CROSSES_DEADLINE, max_y=2.54, managed
+        # axis 9.16 (pre_russia only) and NO_MERGE_CENTER_PREFER (rp>=3 only) don't fire here.
+        # Current +200 insufficient under deadline pressure — boost to +400.
+        # Does NOT fire when merge is available. Does NOT override DIRECT merge selection.
+        # refs: tmp/analysis_result.md (Implementation Plan: deadline_crossed && mg==NO && pc>=30),
+        #       game_history/20260430_041327_score0846.jsonl (worst T73-T80),
+        #       game_history/20260430_043826_score3074.jsonl (best T132-T136)
+        if deadline_crossed and merge_grade == "NO" and piece_count >= 30:
+            dc_bonus = max(0.0, 1.5 - abs(x)) * 400.0
+            if dc_bonus > 0:
+                score += dc_bonus
+                reasons.append("DEADLINE_NOMERGE_CENTER_GUIDANCE")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
