@@ -64,19 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: v606 gap zone NEAR suppression + safety valve (analysis_result hypothesis implementation)
-     # Hypothesis: gap zone (max_y>=1.5, rp>=3, pc>=28) NEAR suppression too aggressive without safety valve
-     #   worst_game T67: NEAR at max_y=2.38, pc=37 → failed, max_y runaway → game over
-     #   best_game T206: safety valve preserved compressible NEAR, +21 delta, successful merge
-     # Implementation: safety valve for landing_y < max_y - 0.3 (board compressible NEAR)
-     #   Compressible NEAR: gentler suppression (scale*0.5) + GAP_ZONE_NEAR_COMPRESSIBLE reason
-     #   Non-compressible NEAR: full suppression + GAP_ZONE_NEAR_SUPPRESSED reason
-     # Fixes rollback failure mode: gap zone NEAR suppression over-suppression (v606 gap zone)
-     # refs: tmp/analysis_result.md (Adopted Hypothesis: v606 gap zone NEAR suppression + safety valve),
-     #       strategy_versions/best_score5801_strategy.py (v606 implementation reference),
-     #       game_history/20260429_154705_score0720.jsonl (worst_game T67 gap zone NEAR failure),
-     #       game_history/20260429_161300_score5071.jsonl (best_game T206 safety valve success)
-     #
      # vXXX: remove deadline_crossed gate from axis 8.8-pre type 14 proximity
      # Hypothesis: type 14 proximity disabled EXACTLY when deadline_crossed=YES (most needed)
      # mandatory_themes "no placement past deadline without merge" is unavoidably violated
@@ -984,22 +971,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       strategy_versions/best_score5801_strategy.py (v606 elevated suppression),
         #       tmp/improve_brief.md (gap zone analysis),
         #       data/mandatory_themes.txt (deadline merge constraint)
-        # v606 (gap zone NEAR suppression): elevated suppression at max_y 1.5-2.0+rp>=3+pc>=28
-        # WITHOUT deadline_crossed requirement — catches approach phase before deadline
-        # + safety valve: allow NEAR when landing_y < max_y - 0.3 (board compressible)
         if merge_grade == "NEAR" and max_y >= 1.5 and reactive_pair_count >= 3 and piece_count >= 28:
-            # Safety valve: allow NEAR if it would compress the board (landing below current max_y)
-            # This prevents over-suppression when NEAR placement would actually lower the board
-            if landing_y < max_y - 0.3:
-                # NEAR will compress the board - keep the bonus but apply slight reduction
-                gap_zone_scale = max(0.6, 1.0 - (max_y - 1.5) * 0.4)  # gentler suppression for compressible NEAR
-                score -= 600.0 * merge_mult * (1.0 - gap_zone_scale) * 0.5
-                reasons.append("GAP_ZONE_NEAR_COMPRESSIBLE")
-            else:
-                # NEAR would raise the board - apply full suppression
-                gap_zone_scale = max(0.2, 1.0 - (max_y - 1.5) * 0.6)
-                score -= 600.0 * merge_mult * (1.0 - gap_zone_scale)
-                reasons.append("GAP_ZONE_NEAR_SUPPRESSED")
+            # Graduated suppression: scale type 0.5 at max_y=1.5 → 0.2 at max_y=2.5+
+            # This reduces NEAR bonus (600*merge_mult) to effective 300 at 1.5, 120 at 2.5
+            # NEAR_DEADLINE_RISK (axis 1.5) still applies if reactor_margin < 1.0
+            gap_zone_scale = max(0.2, 1.0 - (max_y - 1.5) * 0.6)
+            score -= 600.0 * merge_mult * (1.0 - gap_zone_scale)
+            reasons.append("GAP_ZONE_NEAR_SUPPRESSED")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
