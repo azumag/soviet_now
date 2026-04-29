@@ -63,18 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: v548 double_russia_phase detection + axis 8.8-pre/9.16 pre-russia phase central guidance
-     # Hypothesis: Pre-Russia phase (type 14 exists, no type 15) central placement强化 + type 14 proximity
-     # axis 8.8-pre: +400 for central placement with type 14 proximity (max_y>=1.5, mg==NO)
-     # axis 9.16: (1.5-abs(x))*600 central placement bonus (pre_russia && mg==NO && !russia_phase)
-     # double_russia_phase: edge suppression (-600) when type 15 >= 2 && mg==NO && |x| > 2.0
-     # Fixes: type 14→type 15 Russia pipeline starvation (zero type 15 in 24 batch games)
-     # Fixes rollback failure mode: pre-russia phase type 14 clustering failure
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8-pre强化, axis 9.16, v548 double_russia_phase),
-     #       tmp/improve_brief.md (mandatory themes conflict resolution),
-     #       strategy_versions/best_score5801_strategy.py (v548 reference),
-     #       data/mandatory_themes.txt (absolute constraint)
-     #
      # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at high congestion
      # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
      # Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally → edge/high wins via other axes
@@ -831,11 +819,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
 
-    # v548: double russia phase detection — type 15 pieces >= 2 on board
-    # When two Russia pieces exist on board, height management becomes critical.
-    # Two high-type pieces occupy significant board space; edge placement is dangerous.
-    double_russia_phase = russia_phase_count >= 2
-
     # v503-pre: pre-russia phase detection — type 14 piece(s) on board, but no type 15 yet.
     # When type 14 exists, prioritize building a second type 14 for type 15 merge.
     # This is the PRE-RUSSIA phase: the board has a type 14, the goal is to make
@@ -1452,7 +1435,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
 
-        # ----- evaluation axis 3: drift penalty -----
+         # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
@@ -1547,41 +1530,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
-        # vXXX: axis 8.8-pre enhancement — pre-russia phase central placement bonus
-        # When type 14 exists but no type 15 (pre_russia_phase), and NO merge available,
-        # add +400 bonus for candidates that achieve high type 14 proximity while landing
-        # in central low position. This is an independent axis from axis 9.6b (same-type
-        # proximity, ~120-540) and compensates for axis 8.8-pre weakness being overwhelmed
-        # by HEIGHT_CONTROL (+25*landing_y) and height_mult (1.8 in HIGH phase).
-        # Analysis: worst game T49-56 (score 522): rp=3-4, mg=NO, x scattered at edge
-        # (0, -0.66, 2.8), max_y runaway 2.07→2.98. Central placement during pre-russia
-        # would have maintained type 14 clustering for type 15 merge pipeline.
-        # Fixes: type 14→type 15 Russia pipeline starvation (zero type 15 in 24 games)
-        if pre_russia_phase and merge_grade == "NO" and max_y >= 1.5:
-            same_type_14_count = sum(1 for p in pieces if p.get("type") == 14)
-            if same_type_14_count > 0:
-                # Count type 14 pieces nearby (within 2.0 x-distance)
-                nearby_14_count = sum(1 for p in pieces if p.get("type") == 14 and abs(x - p["x"]) < 2.0)
-                if nearby_14_count > 0:
-                    # +400 bonus for central placement with type 14 proximity
-                    score += 400.0
-
-         # ----- evaluation axis 9.16: pre-russia phase central placement guidance (vXXX) -----
-         # When pre_russia_phase && merge_grade==NO && !russia_phase, apply central placement
-         # bonus (1.5-abs(x))*600. This enables selecting central-low placement during
-         # deadline exceed when it doesn't conflict with type 14 proximity.
-         # mandatory_themes.txt第一条: "デッドラインを超える場合は併合できる場合に限る"を遵守しつつ、
-         # 併合できない場合にもNEXT (type 14→15 merge path) を守る配置を提供する。
-        # This is separate from axis 8.8-pre type 14 proximity guidance.
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.16),
-        #       tmp/improve_brief.md (mandatory themes conflict resolution)
-        if pre_russia_phase and merge_grade == "NO" and not russia_phase:
-            central_bonus = max(0.0, 1.5 - abs(x)) * 600.0
-            if central_bonus > 0:
-                score += central_bonus
-                reasons.append("PRE_RUSSIA_CENTER_GUIDANCE")
-
-        # ----- evaluation axis 8.8-pre: pre-russia phase merge priority / type 14 concentration (v503-pre) -----
+         # ----- evaluation axis 8.8-pre: pre-russia phase merge priority / type 14 concentration (v503-pre) -----
         # analysis_result.md adopted hypothesis: type 14→type 15 pipeline starvation (zero type 15 in 24 games)
         # When type 14 exists but no type 15, prioritize building the second type 14
         # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
@@ -1605,7 +1554,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         if p.get("type") == 14:
                             score += 75.0 * (1.0 / (abs(x - p["x"]) + 0.5))
 
-        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
+         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。
@@ -1819,23 +1768,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                       # 盤面圧縮を優先しつつ、type 15保護を徹底
                       score += 800.0
                       reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-
-        # ----- v548: double russia phase height penalty reinforcement -----
-        # When russia_phase_count >= 2, two high-type pieces occupy significant board space.
-        # Edge placement is dangerous with two Russias present. Height penalty should be
-        # stronger to suppress edge/high placements during double_russia_phase.
-        # This is a specialized height management for double Russia (type 15 >= 2).
-        # refs: tmp/analysis_result.md (Implementation Plan: v548 double_russia_phase),
-        #       strategy_versions/best_score5801_strategy.py (v548 reference)
-        # Fixes: height management gap for double_russia_phase (zero type 15 observed in batch)
-        if double_russia_phase:
-            # Enhanced height penalty during double_russia — edge placement suppressed
-            # The existing axis 8.8 (-4500) and axis 2 (height penalty) provide base suppression,
-            # but with two Russias on board, we need stronger central-low preference.
-            # Add extra penalty for edge positions (|x| > 2.0) when no merge available.
-            if merge_grade == "NO" and abs(x) > 2.0:
-                score -= 600.0  # extra edge suppression for double Russia
-                reasons.append("DOUBLE_RUSSIA_EDGE_SUPPRESSION")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"
