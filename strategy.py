@@ -63,6 +63,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: strengthen MERGE_OPPORTUNITY_PROXIMITY +800 dist<1.5 (was +300 dist<2.0) + NO_MERGE edge penalty |x|>2.0
+     # Worst T55-56: rp=5-6, mg=NO, all candidates -4500 → edge x=1.8, x=1.2 selected via stacking axes → max_y runaway 0.95→2.91
+     # Fix 1: proximity bonus +800 at dist=0, threshold dist<1.5 (was +300, <2.0) — 2.7x stronger/tighter guidance
+     # Fix 2: NO_MERGE edge penalty |x|>2.0 at rp>=3 → at |x|=3.0 penalty=600, discourages edge scatter during merge drought
+     # Combined: center(x=0,dist=1.0)=-3900 vs edge(x=2.5,dist=1.0)=-4200 → 300-point center advantage during NO_MERGE
+     # Fixes rollback failure mode: NO_MERGE directional guidance too weak at rp>=3 (worst T55-56 edge scatter → max_y runaway)
+     # refs: tmp/analysis_result.md (Implementation Plan: Change 1+2), tmp/state/last_rollback_postmortem.md
+     #
      # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at high congestion
      # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
      # Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally → edge/high wins via other axes
@@ -1832,6 +1840,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260429_230124_score2482.jsonl (best: merge capture at rp=4-5),
         #       tmp/batch_summary.txt (HEIGHT_CONTROL 28.8% low vs 23.3% high)
         # Fixes: merge drought induced accumulation at high reactive_pairs (worst T48-51: rp=5-9, 0 merges)
+        # Fixes rollback failure mode: NO_MERGE directional guidance too weak at rp>=3 (worst T55-56: x=1.8, x=1.2 selected → max_y runaway)
+        # Strengthen: +800 at dist=0 (was +300), threshold dist<1.5 (was <2.0). 2.7x stronger and tighter guidance.
+        # Combined effect: center candidate (x=0, dist=1.0) = -4500 + 600 = -3900; edge candidate (x=2.5, dist=1.0) = -4500 + 600 - 300 = -4200
         if reactive_pair_count >= 3 and merge_grade == "NO" and piece_count >= 30:
             # Find adjacent-type pieces (type N-1 or N+1) on board via pipeline data
             # pipeline: list of (type, type+1, min_distance) — adjacent-type proximity
@@ -1847,9 +1858,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
                     if dist < adjacent_target_dist:
                         adjacent_target_dist = dist
-            # Bonus: 300 at dist=0, scales down to 0 at dist=2.0
-            if adjacent_target_dist < 2.0:
-                proximity_bonus = max(0, 300.0 - adjacent_target_dist * 150.0)
+            # Bonus: 800 at dist=0, scales down to 0 at dist=1.5 (was: 300 at dist=0, 0 at dist=2.0)
+            if adjacent_target_dist < 1.5:
+                proximity_bonus = max(0, 800.0 - adjacent_target_dist * 200.0)
                 score += proximity_bonus
                 if proximity_bonus > 0:
                     reasons.append("MERGE_OPPORTUNITY_PROXIMITY")
@@ -1881,6 +1892,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 150.0  # bonus for underground center positions
             elif landing_y < 1.0:
                 score += 80.0   # partial bonus for low center positions
+
+        # NO_MERGE edge penalty for rp>=3 — worst game T55-56: x=1.8, x=1.2 selected despite NO_MERGE → max_y runaway to 2.91
+        # Edge positions scatter pieces and reduce probability of creating future merge opportunities.
+        # At |x|=2.5: penalty=300. At |x|=3.0: penalty=600.
+        # Combined with strengthened MERGE_OPPORTUNITY_PROXIMITY: center candidate (x=0, dist=1.0) = -3900 vs edge (x=2.5, dist=1.0) = -4200
+        if reactive_pair_count >= 3 and merge_grade == "NO":
+            edge_penalty = max(0, abs(x) - 2.0) * 600.0
+            if edge_penalty > 0:
+                score -= edge_penalty
+                reasons.append("NO_MERGE_EDGE_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
