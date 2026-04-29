@@ -12,7 +12,6 @@ Game Overview:
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
-         1.7b. Gap zone NEAR suppression - v606: elevated NEAR suppression at max_y 1.5-2.0+rp>=3+pc>=28
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -955,29 +954,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
-
-        # ----- evaluation axis 1.7b: gap zone NEAR suppression (vXXX) -----
-        # Hypothesis: NEAR merge at max_y 1.5-2.0 + rp>=3 + pc>=28 is dangerous
-        # worst_game T67: NEAR at max_y=2.38, piece_count~42 → delta=0 (failed)
-        # best_game: no NEAR failures in final turns, max_y stayed below 2.0
-        # Current suppression: pc>=33+deadline+y>=1.0 (axis 1.7) or pc>=35+deadline (v502)
-        # Gap: max_y 1.5-2.0 with rp>=3 and pc>=28 is unsuppressed despite approaching danger
-        # v606 (best_score5801): elevated suppression at max_y>=1.5 && rp>=3 && pc>=28
-        #   WITHOUT deadline_crossed requirement — catches approach phase before deadline
-        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # This suppression prevents NEAR at approaching-max_y (1.5-2.0), keeping board lower
-        # refs: game_history/20260429_142202_score0672.jsonl T67 (gap zone NEAR failure),
-        #       game_history/20260429_141222_score2201.jsonl (no NEAR failures in final 8T),
-        #       strategy_versions/best_score5801_strategy.py (v606 elevated suppression),
-        #       tmp/improve_brief.md (gap zone analysis),
-        #       data/mandatory_themes.txt (deadline merge constraint)
-        if merge_grade == "NEAR" and max_y >= 1.5 and reactive_pair_count >= 3 and piece_count >= 28:
-            # Graduated suppression: scale type 0.5 at max_y=1.5 → 0.2 at max_y=2.5+
-            # This reduces NEAR bonus (600*merge_mult) to effective 300 at 1.5, 120 at 2.5
-            # NEAR_DEADLINE_RISK (axis 1.5) still applies if reactor_margin < 1.0
-            gap_zone_scale = max(0.2, 1.0 - (max_y - 1.5) * 0.6)
-            score -= 600.0 * merge_mult * (1.0 - gap_zone_scale)
-            reasons.append("GAP_ZONE_NEAR_SUPPRESSED")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
