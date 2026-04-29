@@ -63,6 +63,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v505: HEIGHT_CONTROL suppression trigger expanded (rp>=2, max_y>=1.5, NO_MERGE)
+     # worst T61-64: rp=5-7, max_y=1.5-2.82, merge_available=false → suppression failed
+     # Old: required deadline_crossed AND rp>=3 AND max_y>=1.8
+     # New: rp>=2 AND max_y>=1.5, no deadline_crossed gate
+     # Catches merge drought earlier (pre_russia, early turns) before piece_count accumulates
+     # edge coefficient 0.70 unchanged (preserve merge opportunity selection)
+     # Fixes: merge_drought_piece_accumulation failure mode from last_rollback_postmortem
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+     #
      # v504: remove deadline_crossed gate from axis 8.8-pre type 14 proximity
      # mandatory_themes "no placement past deadline without merge" — when merge_grade==NO,
      # the game forces unavoidable NO-merge placement. In that unavoidable case, still guide near type 14.
@@ -1936,10 +1945,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         __shc_rp_count = len(__shc_rps) if isinstance(__shc_rps, list) else 0
         __shc_dcross = bool(game_state.get("deadline_crossed", False)) if isinstance(game_state, dict) else False
         __shc_global_merge = any(r.get("merge_grade") != "NO" for r in results)
-        if (__shc_max_y >= 1.8
-                and __shc_rp_count >= 3
-                and not __shc_global_merge
-                and __shc_dcross):
+        # Expanded suppression guard (v504): rp>=2 && max_y>=1.5 && NO_MERGE → suppress HEIGHT_CONTROL
+        # rationale: worst game T61-64 (rp=5-7) showed suppression failed due to weak edge penalty (0.70).
+        # But the trigger condition was too strict: required deadline_crossed AND rp>=3 AND max_y>=1.8.
+        # Expanded to rp>=2 AND max_y>=1.5 without deadline_crossed requirement.
+        # This catches merge drought earlier (pre_russia, early turns) before piece_count accumulates.
+        # edge coefficient 0.70 unchanged (avoid central-low over-selection that loses merge opportunities).
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (priority)
+        if (__shc_max_y >= 1.5
+                and __shc_rp_count >= 2
+                and not __shc_global_merge):
             __shc_no_merge = [r for r in results if r.get("merge_grade") == "NO"]
             if __shc_no_merge:
                 # edge-aware: prefer central-low over edge-low; landing_y diff > 2.1 can still win
