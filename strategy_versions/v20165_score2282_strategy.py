@@ -1816,19 +1816,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v607: layered deadline penalty — escalate at extreme deadline deficit
-            # flat -4500 lets edge scatter compete when deadline_margin is very negative
-            # layered -6000 (extra -1500 at reactor_margin < -0.3) makes low-y NO merge
-            # more decisively preferred, preventing piece accumulation at critical moments
-            # Refs: tmp/analysis_result.md (Implementation Plan), strategy_versions/best_score5801_strategy.py,
-            #       tmp/state/last_rollback_analysis.md
-            layered_penalty = -4500.0
-            if deadline_crossed:
-                if reactor_margin < -0.3:
-                    layered_penalty = -6000.0  # extra -1500 at extreme deficit
-                elif reactor_margin < 0.0:
-                    layered_penalty = -5000.0  # extra -500 at moderate deficit
-            score += layered_penalty
+            # v452: flatten to -4500, matching protected strategy (median 12789)
+            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
+            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
+            # axis 2 height penalty be the only differentiator — consistent low placement.
+            score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 8.8b: high pc + medium height + reactive_pairs>=2 + NO_MERGE penalty -----
