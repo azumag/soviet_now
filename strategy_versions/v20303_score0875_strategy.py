@@ -63,17 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: deadline_NOMERGE_center_guidance — deadline crossed + NO merge + pc>=30 central强化
-     # Hypothesis: deadline_crossed && mg==NO && pc>=30 で axis 9.16 central bonus を +400 に強化
-     # worst T73 (score846): x=0.0 NO_MERGE_CROSSES_DEADLINE, pc=38, max_y 2.52→3.49→3.49 game over
-     # best T132 (score3074): x=0.0 NO_MERGE_CROSSES_DEADLINE, max_y=2.54管理、生き残った
-     # current +200ではdeadline压力で機能しない。axis 9.16 (pre_russiaのみ) と NO_MERGE_CENTER_PREFER (rp>=3のみ)
-     # の間に発火しないケースを補足。merge AVAILABLE時には発火しない。DIRECT merge選択を妨げない。
-     # Fixes rollback failure mode: deadline越えNO_MERGE局面での中央配置誘導无效
-     # refs: tmp/analysis_result.md (Implementation Plan: deadline_crossed && mg==NO && pc>=30, axis 9.16强化),
-     #       game_history/20260430_041327_score0846.jsonl (worst T73-T80),
-     #       game_history/20260430_043826_score3074.jsonl (best T132-T136)
-     #
      # vXXX: v548 double_russia_phase detection + axis 8.8-pre/9.16 pre-russia phase central guidance
      # Hypothesis: Pre-Russia phase (type 14 exists, no type 15) central placement强化 + type 14 proximity
      # axis 8.8-pre: +400 for central placement with type 14 proximity (max_y>=1.5, mg==NO)
@@ -1954,22 +1943,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 150.0  # bonus for underground center positions
             elif landing_y < 1.0:
                 score += 80.0   # partial bonus for low center positions
-
-        # ----- deadline_NOMERGE_center_guidance: deadline crossed + NO merge + high piece_count (vXXX) -----
-        # Hypothesis: deadline_crossed && mg==NO && pc>=30 central placement强化
-        # worst T73 (score846): x=0.0 CHOICE_NO_MERGE_CROSSES_DEADLINE, pc=38, max_y 2.52→3.49
-        # best T132 (score3074): x=0.0 CHOICE_NO_MERGE_CROSSES_DEADLINE, max_y=2.54, managed
-        # axis 9.16 (pre_russia only) and NO_MERGE_CENTER_PREFER (rp>=3 only) don't fire here.
-        # Current +200 insufficient under deadline pressure — boost to +400.
-        # Does NOT fire when merge is available. Does NOT override DIRECT merge selection.
-        # refs: tmp/analysis_result.md (Implementation Plan: deadline_crossed && mg==NO && pc>=30),
-        #       game_history/20260430_041327_score0846.jsonl (worst T73-T80),
-        #       game_history/20260430_043826_score3074.jsonl (best T132-T136)
-        if deadline_crossed and merge_grade == "NO" and piece_count >= 30:
-            dc_bonus = max(0.0, 1.5 - abs(x)) * 400.0
-            if dc_bonus > 0:
-                score += dc_bonus
-                reasons.append("DEADLINE_NOMERGE_CENTER_GUIDANCE")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
