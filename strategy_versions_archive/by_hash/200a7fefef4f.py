@@ -63,15 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v509: DEADLINE_NO_MERGE_FORBIDDEN — add board-height-aware effective_top check @ pc>=30
-     # Adopted Hypothesis: crosses_deadline only checks new piece, not board top_y.
-     # Worst game turn 62: x=3.0 selected despite crosses_deadline=True (pc=32).
-     # The original -50000 penalty already fires for crosses_deadline=True, but this
-     # may not catch cases where board max_y is already near deadline and a "low" landing
-     # still raises effective_top above DEADLINE_Y. Added effective_top = max(board_max_y,
-     # landing_y+next_r) check to reject candidates that push board top past deadline.
-     # Fixes worst game failure: deadline crossing with NO merge @ pc>=30 (turn 62).
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v508: pre-russia type14 clustering bonus (+300~+500) when merge_grade=NO && type14 on board
      # Adopted Hypothesis: Pre-Russia Phase Guidance Gap — type14→type15 pipeline not completing
      # Both score2818 (type14 exists, NO type15) and score2792 (type14 exists, NO type15) confirm
@@ -1841,28 +1832,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v411 penalty (-1200) is insufficient at high pc — axis 8.8 bonuses overwhelm it.
             # At pc>=30, this becomes a hard constraint violation: reject catastrophically.
             if piece_count >= 30:
-                # v509 fix: crosses_deadline only checks if the NEW piece crosses deadline,
-                # but doesn't account for existing board height. When board max_y is already
-                # high (e.g., 2.54 at worst game turn 62), even a "low" landing (y≈0.1)
-                # results in effective_top = max(2.54, 0.1+0.5) = 2.54 — still below deadline
-                # but the EXISTING pieces at y=2.54 have top_edge_y=3.84 which exceeds
-                # DEADLINE_Y=3.32. The original -50000 for crosses_deadline=True catches this
-                # since analyze_board computes top_after_drop accounting for board pieces.
-                # This fix adds a second check: when board max_y is already near deadline,
-                # reject candidates that would raise the effective top further.
-                # Use local max_y (computed from pieces at line 742), not from analysis dict
-                board_max_y = max_y
-                landing_y = result.get("landing_y", 0)
-                next_r = analysis.get("next_piece", {}).get("r", 0.5)
-                effective_top = max(board_max_y, landing_y + next_r)
-                if effective_top > 3.32:
-                    # Board top (existing + new piece) exceeds deadline — hard reject
-                    score -= 50000.0
-                    reasons.append("DEADLINE_NO_MERGE_FORBIDDEN")
-                else:
-                    # Board top stays within deadline; apply standard penalty
-                    score -= 1200.0
-                    reasons.append("CROSSES_DEADLINE_NO_MERGE")
+                score -= 50000.0
+                reasons.append("DEADLINE_NO_MERGE_FORBIDDEN")
             else:
                 score -= 1200.0
                 reasons.append("CROSSES_DEADLINE_NO_MERGE")

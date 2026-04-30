@@ -63,6 +63,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v508: pre-russia type14 clustering bonus (+300~+500) when merge_grade=NO && type14 on board
+     # Adopted Hypothesis: Pre-Russia Phase Guidance Gap — type14→type15 pipeline not completing
+     # Both score2818 (type14 exists, NO type15) and score2792 (type14 exists, NO type15) confirm
+     # the pipeline fails at pre-russia phase. HEIGHT_CONTROL dominates low-score games (25.4% vs 22.1% high).
+     # Fix: axis 8.9-pre: when pre_russia_phase && merge_grade==NO && type14 exists, cluster near type14
+     # (+400 single, +350 gap-fill) to build second type14 for Russia merge completion.
+     # Also lowered pre-russia height suppression threshold landing_y>=1.5 → >=0.5 (Implementation Plan).
+     # Fixes rollback failure mode: pre-russia phase type14 scatter, type14→type15 pipeline stall
+     # refs: tmp/analysis_result.md (Implementation Plan), advice.md
      # v507: pre-russia phase detection extended to type>=13 (was type==14)
      # worst game (score=476): type13 appeared turn 38, type14 never appeared, pre_russia_phase never activated
      # causing deadline_crossed=true + max_y runaway (1.66→3.18) in type13-only phase
@@ -1687,16 +1696,51 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= (8000.0 + (landing_y - 1.0) * 4000.0) * multiplier
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
-        # ----- evaluation axis 8.8-pre: pre-russia phase height suppression (v506) -----
+        # ----- evaluation axis 8.8-pre: pre-russia phase height suppression (v508) -----
         # extra_high (score=2825) T127-135: pre-russia phase (type14 exists, type15 doesn't)
         # merge_grade=NO + deadline_crossed + height selection continued, pc 40→47
         # pre-russia phase: type14→type15 pipeline is critical, height selection prevents it
-        # Implementation Plan: deadline_crossed && merge_grade=NO && pre_russia_phase && pc>=30, landing_y>=1.5 → -800.0
+        # Implementation Plan: deadline_crossed && merge_grade=NO && pre_russia_phase && pc>=30, landing_y>=0.5 → -800.0
+        # Threshold lowered from 1.5 to 0.5 because pre-russia phase should prioritize ANY placement
+        # that brings a second type14 into existence rather than maintaining height.
         # refs: tmp/analysis_result.md (Implementation Plan)
         if pre_russia_phase and merge_grade == "NO" and piece_count >= 30:
-            if deadline_crossed and landing_y >= 1.5:
+            if deadline_crossed and landing_y >= 0.5:
                 score -= 800.0
                 reasons.append("PRE_RUSSIA_HEIGHT_SUPPRESSION")
+
+        # ----- evaluation axis 8.9-pre: pre-russia type14 clustering bonus (v508) -----
+        # Adopted Hypothesis: Pre-Russia Phase Guidance Gap — type14→type15 pipeline not completing
+        # Both score2818 and score2792 have type14 but NO type15 despite running 103-127 turns.
+        # Current pre_russia logic only adds height suppression, but does NOT redirect NO-merge
+        # placements toward building the second type14 for the merge.
+        # When pre_russia_phase && merge_grade==NO && type14 exists on board:
+        # - If only 1 type14 on board: bonus for placing near it (clustering for eventual pair)
+        # - If 2+ type14 on board with type14 still unmerged: prioritize filling the gap between them
+        # Bonus magnitude: +300 to +500 (competitive with height diffs at pre-russia when max_y moderate)
+        # refs: tmp/analysis_result.md (Implementation Plan), advice.md
+        if pre_russia_phase and merge_grade == "NO":
+            type14_pieces = [p for p in pieces if p.get("type") == 14]
+            if type14_pieces:
+                if len(type14_pieces) == 1:
+                    # Only 1 type14 on board: place near it to build toward second type14 pair
+                    t14 = type14_pieces[0]
+                    t14_x, t14_y = t14.get("x", 0), t14.get("y", -10)
+                    horiz_dist = abs(x - t14_x)
+                    if horiz_dist < 1.5:
+                        # Near type14 piece - bonus for clustering
+                        score += 400.0
+                        reasons.append("PRE_RUSSIA_TYPE14_CLUSTER")
+                else:
+                    # 2+ type14 pieces: find center and place near it to fill gap for merge
+                    t14_positions = [(p.get("x", 0), p.get("y", -10)) for p in type14_pieces]
+                    center_x = sum(p[0] for p in t14_positions) / len(t14_positions)
+                    center_y = sum(p[1] for p in t14_positions) / len(t14_positions)
+                    horiz_dist = abs(x - center_x)
+                    if horiz_dist < 1.0:
+                        # Near center of multiple type14 pieces
+                        score += 350.0
+                        reasons.append("PRE_RUSSIA_TYPE14_GAP_FILL")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
