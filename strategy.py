@@ -63,6 +63,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v504: axis 9.6b proximity bonus 120→200, threshold 28→25, scale 0.12→0.20, max 3.0→3.5
+     # Worst T57: same-type at y=-1.75 and y=-0.09 (vert_dist=1.66), MERGE_OPPORTUNITY but merge_available=false
+     # Best T147: same-type at y=-2.83 and y=-0.1 (vert_dist=0.21), merge succeeded
+     # vertical scatter of same-type pieces prevents merge even when proximity reason fires
+     # Fixes rollback failure mode: same-type vertical scatter → merge_available=false
+     # refs: tmp/analysis_result.md (Implementation Plan), batch_summary.txt (reason efficiency)
+     #
      # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at high congestion
      # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
      # Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally → edge/high wins via other axes
@@ -1218,12 +1225,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Postmortem: piece_count is the key predictor of final score.
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                    proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
-                    if piece_count >= 28:
-                        # Scale proportionally with congestion: at pc=35, bonus *= 1.84
-                        # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
-                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
-                        proximity_bonus *= min(congestion_scale, 3.0)
+                    proximity_bonus = max(0, 200.0 - horiz_dist * 50.0)
+                    if piece_count >= 25:
+                        # Scale proportionally with congestion: at pc=30, bonus *= 2.0
+                        # At pc=35, bonus *= 3.0 — significant for axis 8.8 tie-breaking
+                        # v455: lowered threshold from 28→25, increased scale 0.12→0.20, max 3.0→3.5
+                        # Worst game analysis: same-type vertical scatter prevents merge even when
+                        # MERGE_OPPORTUNITY_PROXIMITY fires. Must reinforce same-height placement.
+                        congestion_scale = 1.0 + (piece_count - 25) * 0.20
+                        proximity_bonus *= min(congestion_scale, 3.5)
                     if target_y > 0:
                         proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
                     # v412: nextNext-aware proximity — when next two pieces are same type,
