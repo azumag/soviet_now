@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-01 06:55:32 JST`
-- Nodes: `1290`
-- Edges: `1761`
-- Current: `508e4eb7d51a`
-- Anchor: `c7f8dc3c1b8b`
+- Updated: `2026-05-01 08:31:28 JST`
+- Nodes: `1291`
+- Edges: `1762`
+- Current: `4998c4e1de61`
+- Anchor: `508e4eb7d51a`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_16e0ca9a82d5["16e0ca9a82d5<br/>g=48 n=20<br/>comp=10343.1"]
     h_4c27915877ca["4c27915877ca<br/>g=12 n=12<br/>comp=10142.4"]
     h_0ac322bb0b01["0ac322bb0b01<br/>g=24 n=20<br/>comp=11101.3"]
     h_2ec1eec32a77["2ec1eec32a77<br/>g=27 n=20<br/>comp=9627.1"]
@@ -67,21 +66,19 @@ flowchart TD
     h_643ca0f56e6f["643ca0f56e6f<br/>g=22 n=20<br/>comp=9746.7"]
     h_200a7fefef4f["200a7fefef4f<br/>g=24 n=20<br/>comp=11242.6"]
     h_5ded74a6061e["5ded74a6061e<br/>g=24 n=20<br/>comp=11038.1"]
-    h_c7f8dc3c1b8b["c7f8dc3c1b8b<br/>ANCHOR<br/>g=24 n=20<br/>comp=11663.7"]
+    h_c7f8dc3c1b8b["c7f8dc3c1b8b<br/>g=24 n=20<br/>comp=11663.7"]
+    h_508e4eb7d51a["508e4eb7d51a<br/>ANCHOR<br/>g=24 n=20<br/>comp=12407.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_508e4eb7d51a["508e4eb7d51a<br/>CURRENT"]
+    h_4998c4e1de61["4998c4e1de61<br/>CURRENT"]
 
-    h_16e0ca9a82d5 -->|improve| h_4c27915877ca
     h_0ac322bb0b01 -->|improve| h_2ec1eec32a77
     h_2ec1eec32a77 -->|improve| h_c73a56263561
     h_c73a56263561 -->|improve| h_1e4afdff9a16
-    h_1e4afdff9a16 -. rollback .-> h_16e0ca9a82d5
-    h_16e0ca9a82d5 -->|improve| h_e9e4bffa01ae
     h_e9e4bffa01ae -->|improve| h_d3b2583db893
     h_d3b2583db893 -->|improve| h_3d807a7e1031
     h_01a417be820d -. rollback .-> h_d3b2583db893
@@ -134,15 +131,15 @@ flowchart TD
     h_0dc7d69854cc -->|improve| h_200a7fefef4f
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
-    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
     h_c7f8dc3c1b8b -->|improve| h_508e4eb7d51a
+    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_508e4eb7d51a -->|improve| h_4998c4e1de61
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_16e0ca9a82d5 plain;
     class h_4c27915877ca plain;
     class h_0ac322bb0b01 plain;
     class h_2ec1eec32a77 plain;
@@ -194,14 +191,15 @@ flowchart TD
     class h_643ca0f56e6f plain;
     class h_200a7fefef4f plain;
     class h_5ded74a6061e plain;
-    class h_c7f8dc3c1b8b anchor;
+    class h_c7f8dc3c1b8b plain;
+    class h_508e4eb7d51a anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_508e4eb7d51a current;
+    class h_4998c4e1de61 current;
 ```
 
 ## Detail 1/17
@@ -4723,9 +4721,9 @@ flowchart TD
 
 ## Detail 17/17
 
-- Range: `200a7fefef4f` .. `508e4eb7d51a`
-- Nodes in this diagram: `10`
-- Internal edges in this diagram: `3`
+- Range: `200a7fefef4f` .. `4998c4e1de61`
+- Nodes in this diagram: `11`
+- Internal edges in this diagram: `4`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -4739,18 +4737,20 @@ flowchart TD
 flowchart TD
     h_200a7fefef4f["200a7fefef4f<br/>g=24 n=20<br/>comp=11242.6"]
     h_5ded74a6061e["5ded74a6061e<br/>g=24 n=20<br/>comp=11038.1"]
-    h_c7f8dc3c1b8b["c7f8dc3c1b8b<br/>ANCHOR<br/>g=24 n=20<br/>comp=11663.7"]
+    h_c7f8dc3c1b8b["c7f8dc3c1b8b<br/>g=24 n=20<br/>comp=11663.7"]
+    h_508e4eb7d51a["508e4eb7d51a<br/>ANCHOR<br/>g=24 n=20<br/>comp=12407.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_508e4eb7d51a["508e4eb7d51a<br/>CURRENT"]
+    h_4998c4e1de61["4998c4e1de61<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
     h_c7f8dc3c1b8b -->|improve| h_508e4eb7d51a
+    h_508e4eb7d51a -->|improve| h_4998c4e1de61
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4759,17 +4759,28 @@ flowchart TD
 
     class h_200a7fefef4f plain;
     class h_5ded74a6061e plain;
-    class h_c7f8dc3c1b8b anchor;
+    class h_c7f8dc3c1b8b plain;
+    class h_508e4eb7d51a anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_508e4eb7d51a current;
+    class h_4998c4e1de61 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#20663 `508e4eb7 -> 4998c4e1`
+
+- scores: `8266 9417 10117 11530 9307 12959 15587 14613 10497 16233 7629 12167 17004 10161 8511 13151 12102 14239 17274 17141 15401 14287 9568 13925`
+- v513: DEADLINE_BOARD_EXCEEDED_FORBIDDEN — absolute board top_edge_y check BEFORE per-candidate evaluation
+- Adopted Hypothesis: worst_game T60 (pc=37, max_y=3.83, top_edge_y=4.87 >> DEADLINE_Y=3.32)
+- had DEADLINE_NO_MERGE_FORBIDDEN reason but per-candidate effective_top = max(3.83, 0.5+0.5)=3.83
+- < 3.32, so it passed. The per-candidate check only evaluates the NEW piece's landing position,
+- not the EXISTING board state. mandatory_themes.txt: "デッドラインを超える位置に피스置く場合は、
+- 併合できる場合に限る" — if the board ITSELF already exceeds deadline, ALL placements are
 
 ### Improve Game#20639 `c7f8dc3c -> 508e4eb7`
 
