@@ -1839,14 +1839,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             # mandatory_themes.txt: "デッドラインを超える位置に피스置く場合は、併合できる場合に限る"
             # v411 penalty (-1200) is insufficient at high pc — axis 8.8 bonuses overwhelm it.
-            # At pc>=25, this becomes a hard constraint violation: reject catastrophically.
-            # At pc>=25-29, the -1200 penalty was insufficient; HEIGHT_CONTROL/+200~400 bonuses
-            # overran it. Lowering threshold catches deadline crossing before catastrophic height
-            # growth (1.5→2.0+ in worst games). The -50000 hard reject and effective_top>3.32
-            # threshold remain unchanged; only the piece_count threshold drops from 30→25.
-            # v511: per analysis_result.md adopted hypothesis. Fixes rollback failure mode
-            # at pc=30-33 where worst game (score520) and extra_low (score658) both failed.
-            if piece_count >= 25:
+            # At pc>=30, this becomes a hard constraint violation: reject catastrophically.
+            if piece_count >= 30:
                 # v509 fix: crosses_deadline only checks if the NEW piece crosses deadline,
                 # but doesn't account for existing board height. When board max_y is already
                 # high (e.g., 2.54 at worst game turn 62), even a "low" landing (y≈0.1)
