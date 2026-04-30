@@ -63,13 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v512: pre_russia_height_suppression early fire — lower threshold pc>=30→22, add max_y>=0.8 check
-     # Adopted Hypothesis: pre_russia_height_suppression閾値降低 + 早期発火強化
-     # extra_low T64 (pc=35, max_y=1.79, deadline_crossed=true, merge_grade=NO) で発火せず。
-     # pre-russia段階でmax_yが1.79でも発火しなかったのは、landing_y条件を満たさなかった可能性。
-     # 閾値pc>=30→22に降低し、max_y>=0.8を追加して早期発火させる。
-     # Fixes rollback failure mode: pre-russia height suppression failure leading to max_y runaway
-     # refs: tmp/analysis_result.md (Implementation Plan)
      # v509: DEADLINE_NO_MERGE_FORBIDDEN — add board-height-aware effective_top check @ pc>=30
      # Adopted Hypothesis: crosses_deadline only checks new piece, not board top_y.
      # Worst game turn 62: x=3.0 selected despite crosses_deadline=True (pc=32).
@@ -1712,15 +1705,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= (8000.0 + (landing_y - 1.0) * 4000.0) * multiplier
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
-        # ----- evaluation axis 8.8-pre: pre-russia phase height suppression (v512) -----
-        # extra_low (score=842) T64: pc=35, max_y=1.79, deadline_crossed=true, merge_grade=NO
-        # but PRE_RUSSIA_HEIGHT_SUPPRESSION did NOT fire. max_y was below threshold.
-        # extra_low ended at max_y=3.42, showing pre-russia height suppression was insufficient.
-        # Hypothesis: early fire at pc>=22 + max_y>=0.8 to prevent pre-russia max_y runaway.
-        # Implementation Plan: pc>=22 + deadline_crossed + landing_y>=0.5 + max_y>=0.8 → -800.0
+        # ----- evaluation axis 8.8-pre: pre-russia phase height suppression (v508) -----
+        # extra_high (score=2825) T127-135: pre-russia phase (type14 exists, type15 doesn't)
+        # merge_grade=NO + deadline_crossed + height selection continued, pc 40→47
+        # pre-russia phase: type14→type15 pipeline is critical, height selection prevents it
+        # Implementation Plan: deadline_crossed && merge_grade=NO && pre_russia_phase && pc>=30, landing_y>=0.5 → -800.0
+        # Threshold lowered from 1.5 to 0.5 because pre-russia phase should prioritize ANY placement
+        # that brings a second type14 into existence rather than maintaining height.
         # refs: tmp/analysis_result.md (Implementation Plan)
-        if pre_russia_phase and merge_grade == "NO" and piece_count >= 22:
-            if deadline_crossed and landing_y >= 0.5 and max_y >= 0.8:
+        if pre_russia_phase and merge_grade == "NO" and piece_count >= 30:
+            if deadline_crossed and landing_y >= 0.5:
                 score -= 800.0
                 reasons.append("PRE_RUSSIA_HEIGHT_SUPPRESSION")
 

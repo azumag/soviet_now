@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-01 05:13:36 JST`
-- Nodes: `1289`
-- Edges: `1760`
-- Current: `c7f8dc3c1b8b`
-- Anchor: `d3c026afa6d2`
+- Updated: `2026-05-01 06:55:32 JST`
+- Nodes: `1290`
+- Edges: `1761`
+- Current: `508e4eb7d51a`
+- Anchor: `c7f8dc3c1b8b`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,8 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_d3c026afa6d2["d3c026afa6d2<br/>ANCHOR<br/>g=12 n=12<br/>comp=11615.7"]
-    h_e1cb3a6bff9c["e1cb3a6bff9c<br/>g=6 n=6<br/>comp=10247.8"]
     h_16e0ca9a82d5["16e0ca9a82d5<br/>g=48 n=20<br/>comp=10343.1"]
     h_4c27915877ca["4c27915877ca<br/>g=12 n=12<br/>comp=10142.4"]
     h_0ac322bb0b01["0ac322bb0b01<br/>g=24 n=20<br/>comp=11101.3"]
@@ -69,13 +67,14 @@ flowchart TD
     h_643ca0f56e6f["643ca0f56e6f<br/>g=22 n=20<br/>comp=9746.7"]
     h_200a7fefef4f["200a7fefef4f<br/>g=24 n=20<br/>comp=11242.6"]
     h_5ded74a6061e["5ded74a6061e<br/>g=24 n=20<br/>comp=11038.1"]
+    h_c7f8dc3c1b8b["c7f8dc3c1b8b<br/>ANCHOR<br/>g=24 n=20<br/>comp=11663.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_c7f8dc3c1b8b["c7f8dc3c1b8b<br/>CURRENT"]
+    h_508e4eb7d51a["508e4eb7d51a<br/>CURRENT"]
 
     h_16e0ca9a82d5 -->|improve| h_4c27915877ca
     h_0ac322bb0b01 -->|improve| h_2ec1eec32a77
@@ -134,16 +133,15 @@ flowchart TD
     h_643ca0f56e6f -. rollback .-> h_0dc7d69854cc
     h_0dc7d69854cc -->|improve| h_200a7fefef4f
     h_200a7fefef4f -->|improve| h_5ded74a6061e
-    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
+    h_1d9b85a22a22 -->|improve| h_0ac322bb0b01
+    h_c7f8dc3c1b8b -->|improve| h_508e4eb7d51a
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_d3c026afa6d2 anchor;
-    class h_e1cb3a6bff9c plain;
     class h_16e0ca9a82d5 plain;
     class h_4c27915877ca plain;
     class h_0ac322bb0b01 plain;
@@ -196,13 +194,14 @@ flowchart TD
     class h_643ca0f56e6f plain;
     class h_200a7fefef4f plain;
     class h_5ded74a6061e plain;
+    class h_c7f8dc3c1b8b anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_c7f8dc3c1b8b current;
+    class h_508e4eb7d51a current;
 ```
 
 ## Detail 1/17
@@ -3362,7 +3361,7 @@ flowchart TD
 flowchart TD
     h_8b764b56c6f3["8b764b56c6f3<br/>g=12 n=12<br/>comp=11218.9"]
     h_0c165b88e34f["0c165b88e34f<br/>g=12 n=12<br/>comp=10318.5"]
-    h_d3c026afa6d2["d3c026afa6d2<br/>ANCHOR<br/>g=12 n=12<br/>comp=11615.7"]
+    h_d3c026afa6d2["d3c026afa6d2<br/>g=12 n=12<br/>comp=11615.7"]
     h_0c78453df396["0c78453df396<br/>g=12 n=12<br/>comp=10217.5"]
     h_3a3987c92448["3a3987c92448<br/>g=36 n=20<br/>comp=10980.4"]
     h_44324046b2a1["44324046b2a1<br/>g=12 n=12<br/>comp=11030.5"]
@@ -3546,7 +3545,7 @@ flowchart TD
 
     class h_8b764b56c6f3 plain;
     class h_0c165b88e34f plain;
-    class h_d3c026afa6d2 anchor;
+    class h_d3c026afa6d2 plain;
     class h_0c78453df396 plain;
     class h_3a3987c92448 plain;
     class h_44324046b2a1 plain;
@@ -4724,9 +4723,9 @@ flowchart TD
 
 ## Detail 17/17
 
-- Range: `200a7fefef4f` .. `c7f8dc3c1b8b`
-- Nodes in this diagram: `9`
-- Internal edges in this diagram: `2`
+- Range: `200a7fefef4f` .. `508e4eb7d51a`
+- Nodes in this diagram: `10`
+- Internal edges in this diagram: `3`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
@@ -4740,16 +4739,18 @@ flowchart TD
 flowchart TD
     h_200a7fefef4f["200a7fefef4f<br/>g=24 n=20<br/>comp=11242.6"]
     h_5ded74a6061e["5ded74a6061e<br/>g=24 n=20<br/>comp=11038.1"]
+    h_c7f8dc3c1b8b["c7f8dc3c1b8b<br/>ANCHOR<br/>g=24 n=20<br/>comp=11663.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_c7f8dc3c1b8b["c7f8dc3c1b8b<br/>CURRENT"]
+    h_508e4eb7d51a["508e4eb7d51a<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
+    h_c7f8dc3c1b8b -->|improve| h_508e4eb7d51a
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4758,16 +4759,27 @@ flowchart TD
 
     class h_200a7fefef4f plain;
     class h_5ded74a6061e plain;
+    class h_c7f8dc3c1b8b anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_c7f8dc3c1b8b current;
+    class h_508e4eb7d51a current;
 ```
 
 ## Transition Notes
+
+### Improve Game#20639 `c7f8dc3c -> 508e4eb7`
+
+- scores: `7599 9446 24340 18706 11695 20288 12085 11705 15110 12274 13246 13266 10667 6538 14164 7474 18777 14986 10026 12809 14712 10233 12271 9080`
+- v512: pre_russia_height_suppression early fire — lower threshold pc>=30→22, add max_y>=0.8 check
+- Adopted Hypothesis: pre_russia_height_suppression閾値降低 + 早期発火強化
+- extra_low T64 (pc=35, max_y=1.79, deadline_crossed=true, merge_grade=NO) で発火せず。
+- pre-russia段階でmax_yが1.79でも発火しなかったのは、landing_y条件を満たさなかった可能性。
+- 閾値pc>=30→22に降低し、max_y>=0.8を追加して早期発火させる。
+- Fixes rollback failure mode: pre-russia height suppression failure leading to max_y runaway
 
 ### Improve Game#20615 `5ded74a6 -> c7f8dc3c`
 
