@@ -763,7 +763,14 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """v340: reactive_pairs>=3時deadline_crossed併合最優先版 - v339 failure mode潰し
+    """vXXX: reactive_pairs>=3時deadline_crossed併合最優先版 - v340 failure mode潰し
+
+    v340 failure: flat -4500 makes ALL NO_MERGE candidates "equally bad", then other axes
+    (stacking, column_ceiling, HIGH_LAYER) systematically prefer edge/high positions.
+    Worst game (score0536) T57: rp=3, NO_MERGE, x=3.0 edge at max_y=3.59 → game over.
+    vXXX fix: position-dependent penalty -3000+|x|*667 → center -3000, edge -5000.
+    Creates directional pressure toward center during merge droughts.
+   保留了 v340 の reactive_pairs>=3 && deadline_crossed && merge_grade=="NO" 無効化ロジックは維持
 
     v339 failure: reactive_pairs>=3 && deadline_crossed && merge_grade=="NO"の超危険域でaxis 9.6が強力に機能し、高配置 runawayでゲームオーバー
     ワーストゲーム(score0638)終盤turns 55-61: reactive_pairs=7-8, deadline_crossed=true, merge_available=false続きで
@@ -1810,11 +1817,19 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v452: flatten to -4500, matching protected strategy (median 12789)
-            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
-            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
-            # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
+            # vXXX: position-dependent NO_MERGE penalty — replace flat -4500 with x-aware penalty
+            # Root cause: flat -4500 makes ALL NO_MERGE candidates "equally bad", then other axes
+            # (stacking, column_ceiling, HIGH_LAYER) systematically prefer edge/high positions.
+            # Worst T57: rp=3, NO_MERGE, x=3.0 edge selected despite max_y=3.59.
+            # Position-dependent penalty: center (x=0) gets -3000, edge (x=3.0) gets -5000.
+            # The 2000 gradient creates directional pressure toward center during merge
+            # droughts, while preserving merge selection (DIRECT/NEAR always wins over NO_MERGE).
+            # Center NO_MERGE candidates compete: -3000 penalty + NO_MERGE_CENTER_PREFER bonus (~1800)
+            # = net -1200 at x=0, making center viable vs height diffs (~100-400).
+            # Edge NO_MERGE: -5000 penalty, no center bonus = -5000, edges always lose.
+            # Refs: tmp/analysis_result.md (Implementation Plan axis 8.8 position-dependent),
+            #       game_history/20260430_192442_score0536.jsonl (worst T57: edge at max_y=3.59)
+            score -= 3000.0 + abs(x) * 667.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 8.8b: high pc + medium height + reactive_pairs>=2 + NO_MERGE penalty -----
