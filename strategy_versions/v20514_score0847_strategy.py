@@ -751,19 +751,6 @@ Phases (determined by board max Y):
 # This addresses the root cause: low-score games playing too conservatively early.
 # refs: tmp/batch_summary.txt, game_history/20260308_172623_score0598.jsonl, game_history/20260308_175330_score2416.jsonl
 
-# vXXX: mandatory_themes deadline NO_MERGE hard filter — fixes worst-game 8-turn NO_MERGE past deadline pattern
-# Rollback failure mode: worst T47-54 score=474, 8 consecutive NO_MERGE decisions while deadline_crossed=true,
-#   all crossing deadline without merge. max_y runaway 3.78→2.64/game over.
-# mandatory_themes hard constraint: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-# Implementation: hard filter BEFORE score evaluation removes candidates that cross deadline
-#   with merge_grade==NO && max_y>=2.0 && deadline_crossed (lines ~925-927).
-#   Fallback added when all candidates filtered: select minimum landing_y candidate (~line 2022-2027).
-# Prohibitions followed: existing axis 8.8 penalty preserved, no height_mult/merge_mult change,
-#   no new evaluation axes added.
-# Fixes rollback failure mode: deadline NO_MERGE past-deadline 8-turn streak (mandatory_themes hard constraint)
-# refs: tmp/analysis_result.md (Implementation Plan: mandatory_themes hard constraint),
-#       game_history/20260430_211316_score0474.jsonl (worst T47-54, score=474)
-
 # vXXX: edge-aware suppress_height_control guard — fixes edge scatter in rp>=3 NO_MERGE situations
 # Rollback failure mode: worst T48 x=-3.0 edge scatter → 4 turns NO_MERGE → game over (score=583)
 # Guard reimplemented with edge penalty: key = landing_y + |x| * 0.35
@@ -776,16 +763,9 @@ Phases (determined by board max Y):
 SCORE_TABLE = {i: i * (i + 1) // 2 for i in range(1, 17)}
 
 def decide(game_state: dict, analysis: dict) -> dict:
-    """vXXX: mandatory_themes hard filter + fallback — fixes 8-turn NO_MERGE past deadline pattern
+    """vXXX: reactive_pairs>=3時deadline_crossed併合最優先版 - v340 failure mode潰し
 
-    vXXX (this change): mandatory_themes hard constraint filter added BEFORE score evaluation.
-    Filters candidates where deadline_crossed && merge_grade==NO && max_y>=2.0 && crosses_deadline.
-    When all candidates filtered, fallback selects minimum landing_y candidate.
-    Fixes worst game T47-54: 8 consecutive NO_MERGE decisions crossing deadline → score=474.
-
-    v340 (position-dependent penalty): -3000+|x|*667 creates directional pressure toward center.
-    v339 failure: axis 9.6 stacking bonus dominated axis 8.8 penalty → high placement runaway.
-    v338 failure: axis 9.6 stacking bonus too strong → high placement chosen.
+    v340 failure: flat -4500 makes ALL NO_MERGE candidates "equally bad", then other axes
     (stacking, column_ceiling, HIGH_LAYER) systematically prefer edge/high positions.
     Worst game (score0536) T57: rp=3, NO_MERGE, x=3.0 edge at max_y=3.59 → game over.
     vXXX fix: position-dependent penalty -3000+|x|*667 → center -3000, edge -5000.
@@ -944,9 +924,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260430_144643_score0713.jsonl (worst T57-61: edge scatter → gameover)
         if (deadline_crossed and merge_grade == "NO" and max_y >= 2.0
             and result.get("crosses_deadline", False)):
-            # If ALL candidates are filtered (all cross deadline with NO_MERGE),
-            # the fallback below (lines ~2036-2048 suppress mechanism) will select
-            # the least-bad option based on edge-aware landing_y formula.
             continue  # skip this candidate — violates mandatory_themes
 
         score = 0.0
@@ -2038,18 +2015,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
-
-    # --- fallback: all candidates filtered by mandatory_themes hard constraint ---
-    # When deadline_crossed && NO merge && max_y>=2.0 && all candidates cross deadline,
-    # every candidate was skipped at the filter (line ~927). best_score is still -inf.
-    # Fall back to the candidate with minimum landing_y (regardless of x/edge).
-    # This implements "least-bad option" when mandatory_themes eliminates all choices.
-    # refs: tmp/analysis_result.md (Implementation Plan: fallback when all filtered)
-    if best_score == -float("inf") and results:
-        __fallback = min(results, key=lambda r: r.get("landing_y", 99.0))
-        best_x = float(__fallback.get("x", 0.0) or 0.0)
-        best_reason = "MANDATORY_THEMES_FALLBACK"
-        best_score = 0.0  # mark as resolved
 
     # --- HEIGHT_CONTROL suppression in high-risk NO_MERGE situations (v503) ---
     # mandatory_themes: "併合できるわけでもないのにデッドラインにおいてしまうのを絶対に避ける"
