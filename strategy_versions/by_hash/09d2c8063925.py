@@ -836,14 +836,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # russia_phase (axis 8.7) is dead code unless we reach type 15.
     # This pre-phase creates the missing pipeline: type 14 → second type 14 → type 15.
     # analysis_result.md: type 14→type 15 pipeline starvation (zero type 15 in 24 games)
-    # v505: extend pre-russia phase detection to type-13→14 transition
-    # Current v503 activates only when type 14 exists (for type 14→15 pipeline).
-    # But the type 13→14 transition is never reached, so type 15 is never born.
-    # Extend to activate when next_type == 13 and no type 14 on board yet,
-    # guiding placement toward type 13 concentration for future type 14 merge.
     pre_russia_phase = (not russia_phase) and russia_phase_count == 0 and \
-        (max((p.get("type", 0) for p in pieces), default=0) >= 14
-         or (next_type == 13 and max((p.get("type", 0) for p in pieces), default=0) >= 13))
+        max((p.get("type", 0) for p in pieces), default=0) >= 14
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -1563,10 +1557,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
         # vXXX: type 14 proximity now applies even when deadline_crossed=YES (unavoidable case)
         if pre_russia_phase:
-            # High-type merges (>=13) bonus — v505: extend to type 13→14 transition
+            # High-type merges (>=10) bonus — smaller than v503 original (+400 vs +800)
             candidate_merges = result.get("merges", [])
             for m in candidate_merges:
-                if m.get("merged_type", 0) >= 13:
+                if m.get("merged_type", 0) >= 10:
                     score += 400.0
             # Type 14 proximity guide — smaller (+75 vs +150)
             # When no merge available but type 14 exists, guide placement near type 14 pieces
