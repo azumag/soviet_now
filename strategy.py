@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: mandatory_themes hard constraint — deadline NO_MERGE filter
+     # Hypothesis: worst T57-61 edge scatter → merge opportunity loss → max_y runaway (score=713)
+     # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+     # When deadline_crossed && merge_grade==NO && max_y>=2.0, hard-filter candidates that
+     # cross the deadline (crosses_deadline=true). Prevents edge scatter → merge opportunity
+     # disappearance → max_y runaway chain observed in worst games.
+     # Fixes rollback failure mode: rp>=3 NO_MERGE edge scatter at deadline (worst T57-61)
+     # refs: tmp/analysis_result.md (Implementation Plan: mandatory_themes hard constraint),
+     #       game_history/20260430_144643_score0713.jsonl (worst T57-61 edge scatter → gameover)
+     #
      # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at high congestion
      # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
      # Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally → edge/high wins via other axes
@@ -897,6 +907,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
+
+        # ----- mandatory_themes hard constraint: deadline NO_MERGE filter -----
+        # "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # When deadline_crossed AND NO merge available AND max_y>=2.0,
+        # hard-filter candidates that cross the deadline (mandatory_themes violation).
+        # This prevents edge scatter → merge opportunity loss → max_y runaway chain.
+        # refs: tmp/analysis_result.md (Implementation Plan: mandatory_themes hard constraint)
+        #       game_history/20260430_144643_score0713.jsonl (worst T57-61: edge scatter → gameover)
+        if (deadline_crossed and merge_grade == "NO" and max_y >= 2.0
+            and result.get("crosses_deadline", False)):
+            continue  # skip this candidate — violates mandatory_themes
 
         score = 0.0
         reasons = []

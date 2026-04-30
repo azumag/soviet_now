@@ -63,27 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: axis 8.8d deadline-crossing low position bonus for NO_MERGE at rp>=3
-     # Hypothesis: Deadline-Crossing LOW Position Bonus (analysis_result.md Adopted)
-     # worst T59: all 7 NO_MERGE candidates equally penalized -4500 → edge/high won via tie-breaker
-     # Fix: when crosses_deadline && mg==NO && rp>=3, prefer lowest landing_y among deadline-crossers
-     # Bonus: +400 at y=-1.0, +200 at y=0.0, 0 at y=1.0, -200 at y=2.0 (linear)
-     # Rationale: deadline-crossing without merge is unavoidable per mandatory_themes;
-     # in that case, choose least-damaging position (lowest) to minimize max_y damage
-     # and keep same-type pieces vertically closer for future merge pipeline.
-     # Bonus magnitude smaller than -4500 axis 8.8, does NOT override merge selection signal.
-     # Fixes: worst game T57-T66 (score=699, 9 turns NO_MERGE, max_y 1.82→3.26)
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8d),
-     #       game_history/20260430_115753_score0799.jsonl (worst T59: all -4500, edge won),
-     #       data/mandatory_themes.txt (deadline-crossing unavoidable case guidance)
-     #
-     # v504: axis 9.6b proximity bonus 120→200, threshold 28→25, scale 0.12→0.20, max 3.0→3.5
-     # Worst T57: same-type at y=-1.75 and y=-0.09 (vert_dist=1.66), MERGE_OPPORTUNITY but merge_available=false
-     # Best T147: same-type at y=-2.83 and y=-0.1 (vert_dist=0.21), merge succeeded
-     # vertical scatter of same-type pieces prevents merge even when proximity reason fires
-     # Fixes rollback failure mode: same-type vertical scatter → merge_available=false
-     # refs: tmp/analysis_result.md (Implementation Plan), batch_summary.txt (reason efficiency)
-     #
      # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at high congestion
      # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
      # Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally → edge/high wins via other axes
@@ -1239,15 +1218,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Postmortem: piece_count is the key predictor of final score.
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
-                    proximity_bonus = max(0, 200.0 - horiz_dist * 50.0)
-                    if piece_count >= 25:
-                        # Scale proportionally with congestion: at pc=30, bonus *= 2.0
-                        # At pc=35, bonus *= 3.0 — significant for axis 8.8 tie-breaking
-                        # v455: lowered threshold from 28→25, increased scale 0.12→0.20, max 3.0→3.5
-                        # Worst game analysis: same-type vertical scatter prevents merge even when
-                        # MERGE_OPPORTUNITY_PROXIMITY fires. Must reinforce same-height placement.
-                        congestion_scale = 1.0 + (piece_count - 25) * 0.20
-                        proximity_bonus *= min(congestion_scale, 3.5)
+                    proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
+                    if piece_count >= 28:
+                        # Scale proportionally with congestion: at pc=35, bonus *= 1.84
+                        # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
+                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
+                        proximity_bonus *= min(congestion_scale, 3.0)
                     if target_y > 0:
                         proximity_bonus *= max(0.0, 1.0 - target_y * 0.3)
                     # v412: nextNext-aware proximity — when next two pieces are same type,
@@ -1905,30 +1881,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 150.0  # bonus for underground center positions
             elif landing_y < 1.0:
                 score += 80.0   # partial bonus for low center positions
-
-        # ----- evaluation axis 8.8d: deadline-crossing low position bonus for NO_MERGE (vXXX) -----
-        # Hypothesis: Deadline-Crossing LOW Position Bonus (analysis_result.md Adopted)
-        # When placement crosses deadline AND merge_grade==NO AND rp>=3,
-        # prefer the lowest landing_y among candidates that cross deadline.
-        # Rationale: deadline-crossing without merge is sometimes unavoidable per mandatory_themes.
-        # In that case, choose the least-damaging position (lowest) to:
-        #   1. Minimize max_y damage
-        #   2. Keep same-type pieces vertically closer (future merge pipeline)
-        #   3. Reduce drift from polygon shape
-        # This does NOT override merge selection — only differentiates NO_MERGE candidates.
-        # Bonus: +400 at lowest (y=-1.0), +200 at y=0.0, 0 at y=1.0, -200 at y=2.0, linear.
-        # Does NOT apply: at rp<3, when merge_grade!=NO, or when russia_phase.
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8d),
-        #       game_history/20260430_115753_score0799.jsonl (worst T59: all -4500 equally, edge won),
-        #       data/mandatory_themes.txt (deadline-crossing unavoidable case guidance)
-        if reactive_pair_count >= 3 and merge_grade == "NO" and not russia_phase:
-            if result.get("crosses_deadline", False):
-                # Bonus: +400 at lowest position (y=-1.0), linearly decreasing to 0 at y=1.0
-                # Range: [-200, +400] — smaller than -4500 axis 8.8, does not override merge signal
-                deadline_low_bonus = max(-200.0, min(400.0, (1.0 - landing_y) * 200.0))
-                score += deadline_low_bonus
-                if deadline_low_bonus > 0:
-                    reasons.append("DEADLINE_CROSS_LOW_BONUS")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
