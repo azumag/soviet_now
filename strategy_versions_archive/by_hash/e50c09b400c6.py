@@ -63,27 +63,28 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v615: height penalty base 50→80 (+ escalation 80→120 @ deadline_crossed && merge_grade==NO && rp>=2 && not russia_phase && pc>=20)
-# Adopted Hypothesis: merge drought early exit + height penalty tier strengthening
-# Worst game (score0542) turns 65-69: rp=4, deadline_crossed=true, merge_grade=NO, axis 8.8 penalty(-6000) fires but HIGH_TOWER persists → death-spiral
-# Analysis: penalty magnitude is insufficient to override height choice; need base coefficient increase (50→80) + death-spiral escalation (80→120)
-# Forbid: reactive_pairs_no_merge_penalty severity increase (v503 2x failed), russia_phase height penalty escalation
-# Fixes rollback failure mode: height penalty insufficient to prevent HIGH_TOWER in NO merge + high rp scenarios
-# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
-# v514: merge position height-safety tie-breaker — penalize merge at effective_top >= DEADLINE_Y-0.3 (3.02)
-# Adopted Hypothesis: merge opportunity recognition refinement at high reactive pairs
-# Worst game (score0286): Turn 40-41 had DIRECT merge but placement pushed max_y to danger zone (y=2.03, 3.23)
-# extra_high (score2440): Turn 94-96 DIRECT MERGE with danger_piece_count, max_y=2.27-2.70, successful without runaway
-# Key insight: finding merge is correct, placement position matters for board stability
-# Tie-breaker: prefer candidates keeping effective_top < 3.02 even if merge bonus slightly lower
-# Does NOT suppress existing merge bonuses (forbidden by postmortem constraint)
-# Fixes rollback failure mode: merge placement at dangerous heights causing max_y runaway
-# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-# v513: DEADLINE_NO_MERGE_FORBIDDEN -3000→-3000 @ pre-russia+pc>=30 (from -50000), pre_russia_height_suppression强化 pc>=30+landing_y>=1.0→-1600
-# Hypothesis: worst game turn 79 DEADLINE_NO_MERGE_FORBIDDEN(-50000) blocks valid merges causing height runaway; relax to -3000 for pre-russia phase
-# Fixes rollback failure mode: DEADLINE_NO_MERGE_FORBIDDEN -50000 blocks valid merges at pc>=30
-# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-# v512: pre_russia_height_suppression early fire — lower threshold pc>=30→22, add max_y>=0.8 check
+     # v618: FUTURE_MERGE_PROXIMITY — +500 bonus for placing near same-type pieces when
+     #   merge_grade==NO && deadline_crossed && merge_available==false
+     # Adopted Hypothesis: merge_available=false時の配置がfuture merge機会を作れていない
+     # Worst game T64-70: 7 continuous NO_MERGE, piece_count +6, max_y runaway (2.03→2.95)
+     # Board has diverse type 2-12 pieces but merge_available=false persists — placement
+     # does not optimize relative positions to create future merge opportunities.
+     # Best game: merge_available=true maintained even at endgame, placement creates merges.
+     # Fix: when no merge available at deadline, select placement that creates next merge
+     #   opportunity by placing current piece near existing same-type pieces on board.
+     #   Safety valve: not if it crosses deadline (mandatory_themes compliance).
+     # Fixes rollback failure mode: 7-turn NO_MERGE drought → piece_count accumulation → MAXY_RUNAWAY
+     # refs: tmp/analysis_result.md (Implementation Plan, adopted hypothesis),
+     #       data/mandatory_themes.txt (NEXTを考慮したドロップ, デッドライン付近の危険盤面領域では併合優先)
+     # v617: DEADLINE_MERGE_OVERRIDE — +2000/+1500 fixed bonus when deadline_crossed && DIRECT/NEAR merge available
+     # Rollback failure mode: worst game T53-60 deadline_crossed=true, merge_available=true,
+     #   best_merge_grade=NEAR/DIRECT but NO_MERGE selected → max_y runaway (2.77→2.98)
+     # Fix: add fixed bonus for DIRECT (+2000) / NEAR (+1500) when deadline crossed && merge available,
+     #   overriding height penalty and axis 8.8 to guarantee merge selection
+     # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+     # Fixes rollback failure mode: deadline_crossed merge selection guarantee (MAXY_RUNAWAY prevention)
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/analysis_result.md (Hypothesis)
+     # v509: DEADLINE_NO_MERGE_FORBIDDEN — add board-height-aware effective_top check @ pc>=30
      # Adopted Hypothesis: crosses_deadline only checks new piece, not board top_y.
      # Worst game turn 62: x=3.0 selected despite crosses_deadline=True (pc=32).
      # The original -50000 penalty already fires for crosses_deadline=True, but this
@@ -850,6 +851,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
+    # v618: merge_available — whether any candidate has DIRECT/NEAR merge_grade
+    # Used by FUTURE_MERGE_PROXIMITY to detect when NO merge is available at deadline
+    merge_available = any(
+        c.get("merge_grade") in ("DIRECT", "NEAR")
+        for c in results if isinstance(c, dict)
+    )
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -875,37 +882,37 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
 
-        # ----- v514: merge position height-safety tie-breaker (Implementation Plan) -----
-        # Adopted Hypothesis: merge opportunity recognition refinement at high reactive pairs
-        # Worst game (score0286): Turn 40-41 had merge_available=true (DIRECT) but chose
-        # placement positions that pushed max_y into danger zone (y=2.03, 3.23).
-        # extra_high (score2440): Turn 94-96, DIRECT MERGE with danger_piece_count=2-3,
-        # max_y=2.27-2.70, successfully merged at dangerous heights without runaway.
-        # Key insight: finding merge is correct, but placement position matters for
-        # board stability. When effective_top >= DEADLINE_Y - 0.3 (3.02), the merge
-        # position itself is dangerous regardless of merge success.
-        # This acts as a tie-breaker: prefer candidates that keep effective_top below
-        # 3.02 even if merge bonus is slightly lower. Does NOT suppress existing merge
-        # bonuses (would reduce merge rate — forbidden by postmortem constraint).
-        # Refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
-        #       game_history/20260501_204018_score0286.jsonl (worst game turns 40-43),
-        #       game_history/20260501_201248_score2440.jsonl (extra_high turns 94-96)
-        DEADLINE_Y = 3.32
-        SAFETY_BUFFER = 0.3
-        if merge_grade in ("DIRECT", "NEAR") and piece_count >= 25:
-            # Use local max_y (computed from pieces, not analysis dict)
-            board_max_y_for_merge = max_y
-            landing_y_for_check = result.get("landing_y", 0)
-            next_r_for_check = analysis.get("next_piece", {}).get("r", 0.5)
-            effective_top_merge = max(board_max_y_for_merge, landing_y_for_check + next_r_for_check)
-            danger_threshold = DEADLINE_Y - SAFETY_BUFFER  # 3.02
-            if effective_top_merge >= danger_threshold:
+        # ----- DEADLINE_MERGE_OVERRIDE (v616 rollback target feature) -----
+        # postmortem: "deadline_crossed && merge_available=true && best_merge_grade in [DIRECT,NEAR]
+        #   の局面で DIRECT/NEAR merge を選択せず height penalty に負けて NO_MERGE が継続し、
+        #   max_y runaway" — worst game T40-41 (score803), T53-60 (score465)
+        # worst: deadline_crossed=true, merge_available=true, best_merge_grade=DIRECT,
+        #   but HEIGHT_CONTROL selected → merge not executed → max_y runaway
+        # Fix: add fixed bonus when deadline_crossed && merge_available && DIRECT/NEAR candidate,
+        #   overriding height penalty and axis 8.8 to guarantee merge selection
+        # merge_available check: any candidate with DIRECT/NEAR merge_grade means merge available
+        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # v617: Strengthen bonus to overcome height penalty at max_y>=2.2 danger zone.
+        #   +2000 was insufficient — worst game T53 still lost after merge selection.
+        #   max_y>=3.0 (CRITICAL): +4000 DIRECT, +3500 NEAR — force merge at extreme danger
+        #   max_y>=2.0 danger zone: +3000 DIRECT, +2500 NEAR — ensure HEIGHT_CONTROL override
+        # refs: tmp/state/last_rollback_postmortem.md (DEADLINE_MERGE_OVERRIDE 未実装),
+        #       mandatory_themes.txt, worst game T40-41 evidence,
+        #       tmp/analysis_result.md (Hypothesis: bond +2000→+4000 reinforcement)
+        critical_bonus = 4000.0 if max_y >= 3.0 else 3000.0
+        if deadline_crossed and merge_grade in ("DIRECT", "NEAR"):
+            # Check if any merge candidate exists on board (merge_available proxy)
+            board_has_merge = any(
+                c.get("merge_grade") in ("DIRECT", "NEAR")
+                for c in results if isinstance(c, dict)
+            )
+            if board_has_merge:
                 if merge_grade == "DIRECT":
-                    score -= 200.0
-                    reasons.append("MERGE_HEIGHT_SAFETY_CHECK")
-                elif merge_grade == "NEAR":
-                    score -= 400.0
-                    reasons.append("MERGE_HEIGHT_SAFETY_CHECK")
+                    score += critical_bonus  # +4000 at critical, +3000 otherwise
+                    reasons.append("DEADLINE_MERGE_OVERRIDE")
+                else:  # NEAR
+                    score += critical_bonus - 500  # +3500 at critical, +2500 otherwise
+                    reasons.append("DEADLINE_MERGE_OVERRIDE_NEAR")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
@@ -1244,6 +1251,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity_bonus > 0:
                         score += proximity_bonus
 
+        # ----- v618: future merge proximity guidance when deadline_crossed && no merge available -----
+        # Adopted Hypothesis: merge_available=false時の配置がfuture merge機会を作れていない
+        # Worst game T64-70: 7 continuous NO_MERGE with piece_count +6 and max_y runaway.
+        # Board has type 2-12 pieces scattered such that reactive_pairs exist but merge
+        # opportunities are not detected. Placement does not optimize relative positions
+        # of same-type pieces to create future merge opportunities.
+        # batch_summary: HEIGHT_CONTROL avg_score_delta=3.2 (minimum), selected 27.0% in low-score games.
+        # HEIGHT_CONTROL manages height without creating merge opportunities.
+        # Best game: merge_available=true state is maintained even at endgame.
+        # Placement selects positions that create future merge opportunities.
+        # Implementation Plan: when merge_grade==NO && deadline_crossed && merge_available==false,
+        # if current type pieces exist on board, give +500 bonus for placing near them
+        # (safety valve: not if it crosses deadline)
+        # This is mandatory_themes "NEXTを考慮したドロップ" and "デッドライン付近の危険盤面領域では、併合を優先"
+        # in practice: when no merge available, still select placement that creates next merge opportunity
+        # refs: tmp/analysis_result.md (Implementation Plan, adopted hypothesis),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 27.0% low-score),
+        #       game_history/20260502_065258_score0705.jsonl T64-70,
+        #       data/mandatory_themes.txt
+        # Fixes rollback failure mode: merge_available=false continuation → future merge drought
+        if merge_grade == "NO" and deadline_crossed and not merge_available:
+            if same_type_stack_top is not None:
+                # Current type pieces exist on board — place near them to create future merge
+                stack_x = same_type_stack_top.get("x", 0)
+                horiz_dist = abs(x - stack_x)
+                if horiz_dist < 2.5:
+                    # Safety valve: mandatory_themes "デッドラインを超える位置上피스置く場合は併合できる場合に限る"
+                    # Don't give this bonus if the placement would cross deadline
+                    if not result.get("crosses_deadline", False):
+                        score += 500.0
+                        reasons.append("FUTURE_MERGE_PROXIMITY")
+
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
         # Placing a piece between reactive pairs of different types can physically block
@@ -1375,13 +1414,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_mult = max(height_mult, 0.5)
 
         # Calculate height penalty after all height_mult modifications
-        # v615: base coefficient 50→80 — expand height diff between candidates to prefer low-y placement during NO merge
-        # v615: extra escalation when deadline_crossed && merge_grade==NO && reactive_pair_count>=2 && not russia_phase && pc>=20
-        #   base 80→120 — prevent death-spiral runaway in NO merge scenarios (worst game turn 65-69)
-        height_base = 80.0
-        if deadline_crossed and merge_grade == "NO" and reactive_pair_count >= 2 and not russia_phase and piece_count >= 20:
-            height_base = 120.0
-        height_penalty = landing_y * height_base * height_mult
+        height_penalty = landing_y * 50.0 * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
@@ -1763,18 +1796,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= (8000.0 + (landing_y - 1.0) * 4000.0) * multiplier
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
-        # ----- evaluation axis 8.8-pre: pre-russia phase height suppression (v512) -----
-        # extra_low (score=842) T64: pc=35, max_y=1.79, deadline_crossed=true, merge_grade=NO
-        # but PRE_RUSSIA_HEIGHT_SUPPRESSION did NOT fire. max_y was below threshold.
-        # extra_low ended at max_y=3.42, showing pre-russia height suppression was insufficient.
-        # Hypothesis: early fire at pc>=22 + max_y>=0.8 to prevent pre-russia max_y runaway.
-        # Implementation Plan: pc>=22 + deadline_crossed + landing_y>=0.5 + max_y>=0.8 → -800.0
+        # ----- evaluation axis 8.8-pre: pre-russia phase height suppression (v508) -----
+        # extra_high (score=2825) T127-135: pre-russia phase (type14 exists, type15 doesn't)
+        # merge_grade=NO + deadline_crossed + height selection continued, pc 40→47
+        # pre-russia phase: type14→type15 pipeline is critical, height selection prevents it
+        # Implementation Plan: deadline_crossed && merge_grade=NO && pre_russia_phase && pc>=30, landing_y>=0.5 → -800.0
+        # Threshold lowered from 1.5 to 0.5 because pre-russia phase should prioritize ANY placement
+        # that brings a second type14 into existence rather than maintaining height.
         # refs: tmp/analysis_result.md (Implementation Plan)
         if pre_russia_phase and merge_grade == "NO" and piece_count >= 30:
-            if deadline_crossed and landing_y >= 1.0 and max_y >= 0.8:
-                # pc>=30から発火、landing_y>=1.0でpostmortemの1.0上限に従う
-                # -1600に強化 (旧800の2倍)
-                score -= 1600.0
+            if deadline_crossed and landing_y >= 0.5:
+                score -= 800.0
                 reasons.append("PRE_RUSSIA_HEIGHT_SUPPRESSION")
 
         # ----- evaluation axis 8.9-pre: pre-russia type14 clustering bonus (v508) -----
@@ -1921,13 +1953,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 next_r = analysis.get("next_piece", {}).get("r", 0.5)
                 effective_top = max(board_max_y, landing_y + next_r)
                 if effective_top > 3.32:
-                    # Board top (existing + new piece) exceeds deadline
-                    if not russia_phase and piece_count >= 30 and pre_russia_phase:
-                        # pre-russia phaseではheight management更重要
-                        # ペナルティを緩和してheight controlに集中 (-50000→-3000)
-                        score -= 3000.0
-                    else:
-                        score -= 50000.0
+                    # Board top (existing + new piece) exceeds deadline — hard reject
+                    score -= 50000.0
                     reasons.append("DEADLINE_NO_MERGE_FORBIDDEN")
                 else:
                     # Board top stays within deadline; apply standard penalty
