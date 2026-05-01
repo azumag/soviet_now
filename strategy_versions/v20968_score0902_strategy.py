@@ -873,8 +873,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #   overriding height penalty and axis 8.8 to guarantee merge selection
         # merge_available check: any candidate with DIRECT/NEAR merge_grade means merge available
         # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # v617: Strengthen bonus to overcome height penalty at max_y>=2.2 danger zone.
+        #   +2000 was insufficient — worst game T53 still lost after merge selection.
+        #   max_y>=3.0 (CRITICAL): +4000 DIRECT, +3500 NEAR — force merge at extreme danger
+        #   max_y>=2.0 danger zone: +3000 DIRECT, +2500 NEAR — ensure HEIGHT_CONTROL override
         # refs: tmp/state/last_rollback_postmortem.md (DEADLINE_MERGE_OVERRIDE 未実装),
-        #       mandatory_themes.txt, worst game T40-41 evidence
+        #       mandatory_themes.txt, worst game T40-41 evidence,
+        #       tmp/analysis_result.md (Hypothesis: bond +2000→+4000 reinforcement)
+        critical_bonus = 4000.0 if max_y >= 3.0 else 3000.0
         if deadline_crossed and merge_grade in ("DIRECT", "NEAR"):
             # Check if any merge candidate exists on board (merge_available proxy)
             board_has_merge = any(
@@ -883,10 +889,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
             )
             if board_has_merge:
                 if merge_grade == "DIRECT":
-                    score += 2000.0  # Override HEIGHT_CONTROL at deadline
+                    score += critical_bonus  # +4000 at critical, +3000 otherwise
                     reasons.append("DEADLINE_MERGE_OVERRIDE")
                 else:  # NEAR
-                    score += 1500.0  # Strong incentive for NEAR at deadline
+                    score += critical_bonus - 500  # +3500 at critical, +2500 otherwise
                     reasons.append("DEADLINE_MERGE_OVERRIDE_NEAR")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----

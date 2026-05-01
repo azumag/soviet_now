@@ -63,19 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v618: FUTURE_MERGE_PROXIMITY — +500 bonus for placing near same-type pieces when
-     #   merge_grade==NO && deadline_crossed && merge_available==false
-     # Adopted Hypothesis: merge_available=false時の配置がfuture merge機会を作れていない
-     # Worst game T64-70: 7 continuous NO_MERGE, piece_count +6, max_y runaway (2.03→2.95)
-     # Board has diverse type 2-12 pieces but merge_available=false persists — placement
-     # does not optimize relative positions to create future merge opportunities.
-     # Best game: merge_available=true maintained even at endgame, placement creates merges.
-     # Fix: when no merge available at deadline, select placement that creates next merge
-     #   opportunity by placing current piece near existing same-type pieces on board.
-     #   Safety valve: not if it crosses deadline (mandatory_themes compliance).
-     # Fixes rollback failure mode: 7-turn NO_MERGE drought → piece_count accumulation → MAXY_RUNAWAY
-     # refs: tmp/analysis_result.md (Implementation Plan, adopted hypothesis),
-     #       data/mandatory_themes.txt (NEXTを考慮したドロップ, デッドライン付近の危険盤面領域では併合優先)
      # v617: DEADLINE_MERGE_OVERRIDE — +2000/+1500 fixed bonus when deadline_crossed && DIRECT/NEAR merge available
      # Rollback failure mode: worst game T53-60 deadline_crossed=true, merge_available=true,
      #   best_merge_grade=NEAR/DIRECT but NO_MERGE selected → max_y runaway (2.77→2.98)
@@ -851,12 +838,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
-    # v618: merge_available — whether any candidate has DIRECT/NEAR merge_grade
-    # Used by FUTURE_MERGE_PROXIMITY to detect when NO merge is available at deadline
-    merge_available = any(
-        c.get("merge_grade") in ("DIRECT", "NEAR")
-        for c in results if isinstance(c, dict)
-    )
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -1250,38 +1231,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity_bonus *= min(rp_density_scale, 2.5)
                     if proximity_bonus > 0:
                         score += proximity_bonus
-
-        # ----- v618: future merge proximity guidance when deadline_crossed && no merge available -----
-        # Adopted Hypothesis: merge_available=false時の配置がfuture merge機会を作れていない
-        # Worst game T64-70: 7 continuous NO_MERGE with piece_count +6 and max_y runaway.
-        # Board has type 2-12 pieces scattered such that reactive_pairs exist but merge
-        # opportunities are not detected. Placement does not optimize relative positions
-        # of same-type pieces to create future merge opportunities.
-        # batch_summary: HEIGHT_CONTROL avg_score_delta=3.2 (minimum), selected 27.0% in low-score games.
-        # HEIGHT_CONTROL manages height without creating merge opportunities.
-        # Best game: merge_available=true state is maintained even at endgame.
-        # Placement selects positions that create future merge opportunities.
-        # Implementation Plan: when merge_grade==NO && deadline_crossed && merge_available==false,
-        # if current type pieces exist on board, give +500 bonus for placing near them
-        # (safety valve: not if it crosses deadline)
-        # This is mandatory_themes "NEXTを考慮したドロップ" and "デッドライン付近の危険盤面領域では、併合を優先"
-        # in practice: when no merge available, still select placement that creates next merge opportunity
-        # refs: tmp/analysis_result.md (Implementation Plan, adopted hypothesis),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 27.0% low-score),
-        #       game_history/20260502_065258_score0705.jsonl T64-70,
-        #       data/mandatory_themes.txt
-        # Fixes rollback failure mode: merge_available=false continuation → future merge drought
-        if merge_grade == "NO" and deadline_crossed and not merge_available:
-            if same_type_stack_top is not None:
-                # Current type pieces exist on board — place near them to create future merge
-                stack_x = same_type_stack_top.get("x", 0)
-                horiz_dist = abs(x - stack_x)
-                if horiz_dist < 2.5:
-                    # Safety valve: mandatory_themes "デッドラインを超える位置上피스置く場合は併合できる場合に限る"
-                    # Don't give this bonus if the placement would cross deadline
-                    if not result.get("crosses_deadline", False):
-                        score += 500.0
-                        reasons.append("FUTURE_MERGE_PROXIMITY")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
