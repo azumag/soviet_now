@@ -63,11 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v514: pre_russia_height_suppression pc>=30→35 — rollback failure mode: early fire at pc>=30 blocks low placement during merge drought
-# Hypothesis: worst game T54 at pc=32 did DIRECT_MERGE with score_delta=0, then merge drought T55-58 caused height runaway
-# postmortem priority: "pre-russia phase height suppression at pc>=35 instead of pc>=22"
-# Fixes rollback failure mode: pre_russia_height_suppression fires too early at pc>=30, suppresses low placement guidance
-# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
 # v513: DEADLINE_NO_MERGE_FORBIDDEN -3000→-3000 @ pre-russia+pc>=30 (from -50000), pre_russia_height_suppression强化 pc>=30+landing_y>=1.0→-1600
 # Hypothesis: worst game turn 79 DEADLINE_NO_MERGE_FORBIDDEN(-50000) blocks valid merges causing height runaway; relax to -3000 for pre-russia phase
 # Fixes rollback failure mode: DEADLINE_NO_MERGE_FORBIDDEN -50000 blocks valid merges at pc>=30
@@ -1725,16 +1720,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # extra_low (score=842) T64: pc=35, max_y=1.79, deadline_crossed=true, merge_grade=NO
         # but PRE_RUSSIA_HEIGHT_SUPPRESSION did NOT fire. max_y was below threshold.
         # extra_low ended at max_y=3.42, showing pre-russia height suppression was insufficient.
-        # Hypothesis: Raise pre_russia_height_suppression threshold from pc>=30 to pc>=35
-        # Worst game (score=945) T54 at pc=32 did DIRECT_MERGE with score_delta=0, then merge drought
-        # pc>=30 fires too early - at this stage board already has difficulty completing merges,
-        # height suppression compounds the problem by blocking low placement guidance.
-        # Rollback target (508e4eb7d51a) used pc>=30 implicitly, but batch_summary shows
-        # low-score group has more HEIGHT_CONTROL (24.8% vs 18.9%) despite similar max_y late=-2.39
-        # postmortem priority: "pre-russia phase height suppression at pc>=35 instead of pc>=22"
-        # Implementation Plan: change piece_count >= 30 → piece_count >= 35
-        # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-        if pre_russia_phase and merge_grade == "NO" and piece_count >= 35:
+        # Hypothesis: early fire at pc>=22 + max_y>=0.8 to prevent pre-russia max_y runaway.
+        # Implementation Plan: pc>=22 + deadline_crossed + landing_y>=0.5 + max_y>=0.8 → -800.0
+        # refs: tmp/analysis_result.md (Implementation Plan)
+        if pre_russia_phase and merge_grade == "NO" and piece_count >= 30:
             if deadline_crossed and landing_y >= 1.0 and max_y >= 0.8:
                 # pc>=30から発火、landing_y>=1.0でpostmortemの1.0上限に従う
                 # -1600に強化 (旧800の2倍)
