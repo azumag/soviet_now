@@ -63,19 +63,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v616: DEADLINE_MERGE_OVERRIDE — deadline_crossed時merge可用でもmerge未選択問題の解消
-# Adopted Hypothesis: deadline_crossed時におけるDIRECT MERGE候補の選択確実性の強化
-# Worst game T67: merge_available=true, best_merge_grade=DIRECT, deadline_crossed=true,
-#   選択位置x=3.0(deadline crossing), score_delta=0 → merge未実行でmax_y runaway (2.29→2.78)
-# Best game T141: merge_available=trueでmerge実行→piece_count 35→32に圧縮
-# Implementation: deadline_crossed && board_has_merge_opportunity && DIRECT/NEAR candidateに
-#   固定bonus(+2000 DIRECT, +1500 NEAR)を付与し、height penaltyとの競合でmergeを必ず選択させる
-# Safety valve: landing_y > max_y + 0.5 の場合は適用しない（新pieceが新たな危険点を作らない）
-# Forbid: height penalty係数変更, reactive_pairs_no_merge_penalty強化, russia_phase以外でのheight escalation
-# Fixes rollback failure mode: deadline_crossed+merge_available=trueでもheight competingが勝る問題
-# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
-#       game_history/20260501_234813_score0792.jsonl (worst T67), game_history/20260502_003547_score3499.jsonl (best T141)
 # v615: height penalty base 50→80 (+ escalation 80→120 @ deadline_crossed && merge_grade==NO && rp>=2 && not russia_phase && pc>=20)
+# Adopted Hypothesis: merge drought early exit + height penalty tier strengthening
+# Worst game (score0542) turns 65-69: rp=4, deadline_crossed=true, merge_grade=NO, axis 8.8 penalty(-6000) fires but HIGH_TOWER persists → death-spiral
+# Analysis: penalty magnitude is insufficient to override height choice; need base coefficient increase (50→80) + death-spiral escalation (80→120)
+# Forbid: reactive_pairs_no_merge_penalty severity increase (v503 2x failed), russia_phase height penalty escalation
+# Fixes rollback failure mode: height penalty insufficient to prevent HIGH_TOWER in NO merge + high rp scenarios
+# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
 # v514: merge position height-safety tie-breaker — penalize merge at effective_top >= DEADLINE_Y-0.3 (3.02)
 # Adopted Hypothesis: merge opportunity recognition refinement at high reactive pairs
 # Worst game (score0286): Turn 40-41 had DIRECT merge but placement pushed max_y to danger zone (y=2.03, 3.23)
@@ -771,23 +765,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
 
-    # --- merge availability check (for deadline_crossed override) ---
-    # v616: deadline_crossed+merge_available時のDIRECT/NEAR選択確実性の強化
-    # Worst game T67: merge_available=true, best_merge_grade=DIRECT, deadline_crossed=true,
-    # 選択x=3.0 (deadline crossing), score_delta=0 → merge未実行でmax_y runaway
-    # Analysis: 評価関数のmerge bonus(+1200)よりheight penalty+competing axesが勝った
-    # Best game T141: merge_available=trueでmerge実行→piece_count 35→32に圧縮
-    # Postmortem priority: "deadline_crossed時におけるDIRECT MERGE候補の選擇確実性の強化"
-    # Implementation: deadline_crossed && merge_available && DIRECT/NEAR candidateに
-    # merge bonus(+1200*merge_mult or +600*merge_mult)を上書きする固定bonusを付与
-    # Safety valve: mergeによる新pieceのlanding_yがcurrent max_yを越える場合は適用しない
-    # Forbid: height penalty係数変更, reactive_pairs_no_merge_penalty強化, russia_phase以外でのheight escalation
-    # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
-    #       game_history/20260501_234813_score0792.jsonl (worst T67), game_history/20260502_003547_score3499.jsonl (best T141)
-    board_has_merge_opportunity = any(
-        r.get("merge_grade") in ("DIRECT", "NEAR") for r in results
-    )
-
     # --- reactor information (for reactive merge priority) ---
     reactor = analysis.get("reactor", {})
     reactive_pairs = reactor.get("reactive_pairs", [])
@@ -1018,19 +995,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if result.get("danger_direct_merge_available", False) and merge_grade == "DIRECT":
             score += 800.0
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
-
-        # ----- v616: deadline_crossed merge override -----
-        # If deadline_crossed && board has merge opportunity (DIRECT/NEAR exists anywhere),
-        # force DIRECT/NEAR candidates to be selected over competing height axes.
-        # Safety valve: skip if merge candidate's landing_y would exceed current max_y
-        # (merge candidate itself would create a new danger point).
-        # Large bonus: 2000 for DIRECT, 1500 for NEAR — ensures merge beats height choice.
-        if (deadline_crossed and board_has_merge_opportunity
-                and merge_grade in ("DIRECT", "NEAR")
-                and landing_y <= max_y + 0.5):  # safety: new piece stays within current top+buffer
-            override_bonus = 2000.0 if merge_grade == "DIRECT" else 1500.0
-            score += override_bonus
-            reasons.append("DEADLINE_MERGE_OVERRIDE")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
         # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.

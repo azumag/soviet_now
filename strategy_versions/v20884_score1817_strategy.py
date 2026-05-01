@@ -63,6 +63,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v615: height penalty base 50→80 (+ escalation 80→120 @ deadline_crossed && merge_grade==NO && rp>=2 && not russia_phase && pc>=20)
+# Adopted Hypothesis: merge drought early exit + height penalty tier strengthening
+# Worst game (score0542) turns 65-69: rp=4, deadline_crossed=true, merge_grade=NO, axis 8.8 penalty(-6000) fires but HIGH_TOWER persists → death-spiral
+# Analysis: penalty magnitude is insufficient to override height choice; need base coefficient increase (50→80) + death-spiral escalation (80→120)
+# Forbid: reactive_pairs_no_merge_penalty severity increase (v503 2x failed), russia_phase height penalty escalation
+# Fixes rollback failure mode: height penalty insufficient to prevent HIGH_TOWER in NO merge + high rp scenarios
+# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md
 # v514: merge position height-safety tie-breaker — penalize merge at effective_top >= DEADLINE_Y-0.3 (3.02)
 # Adopted Hypothesis: merge opportunity recognition refinement at high reactive pairs
 # Worst game (score0286): Turn 40-41 had DIRECT merge but placement pushed max_y to danger zone (y=2.03, 3.23)
@@ -1368,7 +1375,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         height_mult = max(height_mult, 0.5)
 
         # Calculate height penalty after all height_mult modifications
-        height_penalty = landing_y * 50.0 * height_mult
+        # v615: base coefficient 50→80 — expand height diff between candidates to prefer low-y placement during NO merge
+        # v615: extra escalation when deadline_crossed && merge_grade==NO && reactive_pair_count>=2 && not russia_phase && pc>=20
+        #   base 80→120 — prevent death-spiral runaway in NO merge scenarios (worst game turn 65-69)
+        height_base = 80.0
+        if deadline_crossed and merge_grade == "NO" and reactive_pair_count >= 2 and not russia_phase and piece_count >= 20:
+            height_base = 120.0
+        height_penalty = landing_y * height_base * height_mult
 
         if phase == "HIGH" and landing_y > 0.5:
             height_penalty *= 2.0
