@@ -63,7 +63,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v512: pre_russia_height_suppression early fire — lower threshold pc>=30→22, add max_y>=0.8 check
+# v513: DEADLINE_NO_MERGE_FORBIDDEN -3000→-3000 @ pre-russia+pc>=30 (from -50000), pre_russia_height_suppression强化 pc>=30+landing_y>=1.0→-1600
+# Hypothesis: worst game turn 79 DEADLINE_NO_MERGE_FORBIDDEN(-50000) blocks valid merges causing height runaway; relax to -3000 for pre-russia phase
+# Fixes rollback failure mode: DEADLINE_NO_MERGE_FORBIDDEN -50000 blocks valid merges at pc>=30
+# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
+# v512: pre_russia_height_suppression early fire — lower threshold pc>=30→22, add max_y>=0.8 check
      # Adopted Hypothesis: pre_russia_height_suppression閾値降低 + 早期発火強化
      # extra_low T64 (pc=35, max_y=1.79, deadline_crossed=true, merge_grade=NO) で発火せず。
      # pre-russia段階でmax_yが1.79でも発火しなかったのは、landing_y条件を満たさなかった可能性。
@@ -1719,9 +1723,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Hypothesis: early fire at pc>=22 + max_y>=0.8 to prevent pre-russia max_y runaway.
         # Implementation Plan: pc>=22 + deadline_crossed + landing_y>=0.5 + max_y>=0.8 → -800.0
         # refs: tmp/analysis_result.md (Implementation Plan)
-        if pre_russia_phase and merge_grade == "NO" and piece_count >= 22:
-            if deadline_crossed and landing_y >= 0.5 and max_y >= 0.8:
-                score -= 800.0
+        if pre_russia_phase and merge_grade == "NO" and piece_count >= 30:
+            if deadline_crossed and landing_y >= 1.0 and max_y >= 0.8:
+                # pc>=30から発火、landing_y>=1.0でpostmortemの1.0上限に従う
+                # -1600に強化 (旧800の2倍)
+                score -= 1600.0
                 reasons.append("PRE_RUSSIA_HEIGHT_SUPPRESSION")
 
         # ----- evaluation axis 8.9-pre: pre-russia type14 clustering bonus (v508) -----
@@ -1868,8 +1874,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 next_r = analysis.get("next_piece", {}).get("r", 0.5)
                 effective_top = max(board_max_y, landing_y + next_r)
                 if effective_top > 3.32:
-                    # Board top (existing + new piece) exceeds deadline — hard reject
-                    score -= 50000.0
+                    # Board top (existing + new piece) exceeds deadline
+                    if not russia_phase and piece_count >= 30 and pre_russia_phase:
+                        # pre-russia phaseではheight management更重要
+                        # ペナルティを緩和してheight controlに集中 (-50000→-3000)
+                        score -= 3000.0
+                    else:
+                        score -= 50000.0
                     reasons.append("DEADLINE_NO_MERGE_FORBIDDEN")
                 else:
                     # Board top stays within deadline; apply standard penalty
