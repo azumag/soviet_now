@@ -63,6 +63,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v624: DEADLINE_EDGE_PLACEMENT_PENALTY — edge position penalty when deadline_crossed && merge_grade=NO && pc>=30 && !russia_phase
+     # Adopted Hypothesis: deadline_crossed && merge_grade=NO 時のエッジ配置抑制不足
+     # worst_game T64 (pc=33, deadline_crossed=true, merge_grade=NO): x=3.0 selected despite NO merge — violates mandatory_themes.txt
+     # worst_game T73 (pc=41, deadline_crossed=true, merge_grade=NO): x=-3.0 selected despite NO merge — violates mandatory_themes.txt
+     # axis 8.8 (-3000~-9000) was insufficient to prevent edge placement from winning. Adding -2000 for |x|>=2.8 compounds penalty.
+     # Fixes rollback failure mode: deadline crossing edge placement with NO merge @ pc>=30
+     # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
      # v512: pre_russia_height_suppression early fire — lower threshold pc>=30→22, add max_y>=0.8 check
      # Adopted Hypothesis: pre_russia_height_suppression閾値降低 + 早期発火強化
      # extra_low T64 (pc=35, max_y=1.79, deadline_crossed=true, merge_grade=NO) で発火せず。
@@ -1723,6 +1730,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 score -= (8000.0 + (landing_y - 1.0) * 4000.0) * multiplier
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+
+        # ----- evaluation axis 8.8-edge: deadline crossing edge position penalty (v624) -----
+        # Adopted Hypothesis: deadline_crossed && merge_grade=NO 時のエッジ配置抑制不足
+        # worst_game T64: pc=33, deadline_crossed=true, merge_grade=NO. x=3.0 (edge) selected — violates mandatory_themes.txt
+        # worst_game T73: same conditions, x=-3.0 (edge) selected — violates mandatory_themes.txt
+        # best_game T130, T144: Russia phase edge placements are ACCEPTABLE (RUSSIA_PHASE reason differentiates)
+        # Analysis: axis 8.8 (-3000~-9000) was insufficient to prevent x=3.0 from winning at worst_game T64
+        # Adding -2000 for edge position makes penalty compounded and ensures edge placements lose
+        # This applies to ALL reactive_pairs levels (not just >=3) when conditions met
+        # Constraint: Russia phase edge placements are NOT affected (best_game T130, T144 keep RUSSIA_PHASE)
+        # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
+        if deadline_crossed and merge_grade == "NO" and piece_count >= 30 and not russia_phase:
+            if abs(x) >= 2.8:
+                score -= 2000.0
+                reasons.append("DEADLINE_EDGE_PLACEMENT_PENALTY")
 
         # ----- evaluation axis 8.8-pre: pre-russia phase height suppression (v512) -----
         # extra_low (score=842) T64: pc=35, max_y=1.79, deadline_crossed=true, merge_grade=NO
