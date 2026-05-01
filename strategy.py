@@ -63,6 +63,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v617: DEADLINE_MERGE_OVERRIDE — +2000/+1500 fixed bonus when deadline_crossed && DIRECT/NEAR merge available
+     # Rollback failure mode: worst game T53-60 deadline_crossed=true, merge_available=true,
+     #   best_merge_grade=NEAR/DIRECT but NO_MERGE selected → max_y runaway (2.77→2.98)
+     # Fix: add fixed bonus for DIRECT (+2000) / NEAR (+1500) when deadline crossed && merge available,
+     #   overriding height penalty and axis 8.8 to guarantee merge selection
+     # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+     # Fixes rollback failure mode: deadline_crossed merge selection guarantee (MAXY_RUNAWAY prevention)
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/analysis_result.md (Hypothesis)
      # v509: DEADLINE_NO_MERGE_FORBIDDEN — add board-height-aware effective_top check @ pc>=30
      # Adopted Hypothesis: crosses_deadline only checks new piece, not board top_y.
      # Worst game turn 62: x=3.0 selected despite crosses_deadline=True (pc=32).
@@ -854,6 +862,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- DEADLINE_MERGE_OVERRIDE (v616 rollback target feature) -----
+        # postmortem: "deadline_crossed && merge_available=true && best_merge_grade in [DIRECT,NEAR]
+        #   の局面で DIRECT/NEAR merge を選択せず height penalty に負けて NO_MERGE が継続し、
+        #   max_y runaway" — worst game T40-41 (score803), T53-60 (score465)
+        # worst: deadline_crossed=true, merge_available=true, best_merge_grade=DIRECT,
+        #   but HEIGHT_CONTROL selected → merge not executed → max_y runaway
+        # Fix: add fixed bonus when deadline_crossed && merge_available && DIRECT/NEAR candidate,
+        #   overriding height penalty and axis 8.8 to guarantee merge selection
+        # merge_available check: any candidate with DIRECT/NEAR merge_grade means merge available
+        # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # refs: tmp/state/last_rollback_postmortem.md (DEADLINE_MERGE_OVERRIDE 未実装),
+        #       mandatory_themes.txt, worst game T40-41 evidence
+        if deadline_crossed and merge_grade in ("DIRECT", "NEAR"):
+            # Check if any merge candidate exists on board (merge_available proxy)
+            board_has_merge = any(
+                c.get("merge_grade") in ("DIRECT", "NEAR")
+                for c in results if isinstance(c, dict)
+            )
+            if board_has_merge:
+                if merge_grade == "DIRECT":
+                    score += 2000.0  # Override HEIGHT_CONTROL at deadline
+                    reasons.append("DEADLINE_MERGE_OVERRIDE")
+                else:  # NEAR
+                    score += 1500.0  # Strong incentive for NEAR at deadline
+                    reasons.append("DEADLINE_MERGE_OVERRIDE_NEAR")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
