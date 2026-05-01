@@ -63,14 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v505: axis 8.9-pre pre-russia type14 clustering — fix type14→type15 pipeline starvation
-     # All 24 batch games had zero/near-zero type15. Best game (3721) created Russia at max_y=0.95.
-     # pre_russia_phase (type13/14 exists, type15 absent) && merge_grade==NO: guide placement
-     # near existing type14 (+350 single, +300 multi) or type13 (+200) to complete pipeline.
-     # Forbidden: don't apply at russia_phase, merge_available, or death_spiral.
-     # Fixes rollback failure mode: type14→type15 pipeline starvation (zero type15 in 18+ games).
-     # refs: tmp/analysis_result.md, strategy_versions/best_score5801_strategy.py (axis 8.9-pre),
-     #       tmp/batch_summary.txt, advice.md (large country placement priority)
      # v504: axis 9.7 pipeline_bonus early game boost — fix merge_drought_no_guidance
      # When same_type_stack_top is None AND reactive_pairs>=1 AND merge_grade=NO AND pc<=20,
      # increase pipeline_bonus from ~80 to ~150 to compete with height penalty at LOW phase.
@@ -827,18 +819,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
     russia_phase_count = sum(1 for p in pieces if p.get("type") == 15)
     russia_phase = russia_phase_count >= 1
-
-    # --- v505: pre-russia phase detection (type 13/14 exists, type 15 does not) ---
-    # When type 13 or 14 pieces exist but no type 15 yet, we're in the PRE-RUSSIA phase.
-    # The goal is to complete the pipeline: type 14 × 2 → type 15 (Russia).
-    # Current strategy has NO specialized guidance for this critical transition.
-    # ref: best_score5801_strategy.py axis 8.9-pre, hash c7f8dc3c1b8b.py axis 8.9-pre
-    pre_russia_type_count = sum(1 for p in pieces if p.get("type", 0) >= 13 and p.get("type", 0) < 15)
-    pre_russia_phase = russia_phase_count == 0 and pre_russia_type_count >= 1
-
-    # Collect type 13 and type 14 pieces separately for targeted guidance
-    type_14_pieces = [p for p in pieces if p.get("type") == 14]
-    type_13_pieces = [p for p in pieces if p.get("type") == 13]
 
     # --- phase judgment (v42 thresholds) ---
     if max_y < 0.8:
@@ -1597,55 +1577,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     if proximity > 0:
                         score += proximity
 
-        # ----- v505: axis 8.9-pre pre-russia type14 clustering bonus -----
-        # Adopted hypothesis: Pre-Russia Phase Pipeline Completion
-        # When type 14 exists (no type 15 yet), guide placement near existing type 14
-        # pieces to build toward the second type 14 needed for the type 14×2→15 merge.
-        #
-        # Logic:
-        # (1) pre_russia_phase && merge_grade==NO && type_14_pieces exists: fire
-        # (2) If 1 type 14: +350 bonus for placing within 1.5 horizontal units
-        # (3) If 2+ type 14: +300 bonus for placing near center gap (fill the merge gap)
-        # (4) If no type 14 but type 13 exists: +200 for placing near type 13 (build toward type 14)
-        #
-        # Bonus design: 300-350 range is competitive with height diffs (~100-200) at
-        # pre-russia when max_y is moderate (0.5-1.5), but won't override merge opportunities.
-        #
-        # Forbidden: Don't apply at russia_phase (axis 8.7 handles that).
-        #           Don't apply when merge is available (merge bonuses already dominate).
-        #           Don't apply when death_spiral (height survival is priority).
-        # refs: tmp/analysis_result.md (hypothesis: Pre-Russia Phase Pipeline Completion),
-        #       strategy_versions/best_score5801_strategy.py (axis 8.9-pre +400),
-        #       tmp/batch_summary.txt (best game 3721: Russia at turn 125, max_y=0.95)
-        if pre_russia_phase and merge_grade == "NO" and not russia_phase:
-            if type_14_pieces:
-                if len(type_14_pieces) == 1:
-                    # Only 1 type14: place near it to build toward pair
-                    t14 = type_14_pieces[0]
-                    horiz_dist = abs(x - t14.get("x", 0))
-                    if horiz_dist < 1.5:
-                        score += 350.0
-                        reasons.append("PRE_RUSSIA_TYPE14_CLUSTER")
-                else:
-                    # 2+ type14 pieces: place near center of them to fill gap for merge
-                    t14_x_positions = [p.get("x", 0) for p in type_14_pieces]
-                    center_x = sum(t14_x_positions) / len(t14_x_positions)
-                    horiz_dist = abs(x - center_x)
-                    if horiz_dist < 1.0:
-                        score += 300.0
-                        reasons.append("PRE_RUSSIA_TYPE14_GAP_FILL")
-            elif type_13_pieces and not type_14_pieces:
-                # No type14 yet but type13 exists: guide toward type13 to build toward type14
-                type_13_positions = [(p.get("x", 0), p.get("y", -10)) for p in type_13_pieces]
-                if len(type_13_positions) >= 2:
-                    # Multiple type13: cluster near their center
-                    cx = sum(p[0] for p in type_13_positions) / len(type_13_positions)
-                    horiz_dist = abs(x - cx)
-                    if horiz_dist < 1.5:
-                        score += 200.0
-                        reasons.append("PRE_RUSSIA_TYPE13_CLUSTER")
-
-        # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
+         # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。
         # ワーストゲーム(score0598)では初期8ターンのうち7ターンがHEIGHT_CONTROLを選択し、マージ機会を逃している失敗モードを特定。
         # ベストゲーム(score2416)では初期段階から積極的にNEAR_MERGEを選択し、スコア2416を出していることを確認。

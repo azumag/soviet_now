@@ -63,6 +63,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v504: axis 9.7 pipeline_bonus early game boost — fix merge_drought_no_guidance
+     # When same_type_stack_top is None AND reactive_pairs>=1 AND merge_grade=NO AND pc<=20,
+     # increase pipeline_bonus from ~80 to ~150 to compete with height penalty at LOW phase.
+     # Worst game T12-T55: 44-turn merge drought after early merges (turns 3,11), guidance gap
+     # when no same-type on board → HEIGHT_CONTROL scatter → piece_count accumulation.
+     # Forbidden: Don't add this bonus at pc>20 (mid-game congestion needs different handling).
+     # Fixes rollback postmortem failure mode: merge_drought_no_guidance.
+     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
      # v488: reduce axis 1.5 NEAR risk penalty 300→200 — align with protected strategy
      # NEAR at deadline has positive EV (~27/attempt: 68.5% success, avg_delta=36-47).
      # Current 300 penalty cancels base NEAR bonus at y≥2.0, suppressing recovery attempts.
@@ -1167,7 +1175,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         best_adjacent_dist = adj_dist
                         best_adjacent_target = p
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
-                pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
+                # v504: Early game (pc<=20) needs stronger signal to avoid HEIGHT_CONTROL scatter.
+                # Analysis: worst game had 44-turn merge drought after early merges, guidance gap
+                # when same_type_stack_top is None and reactive_pairs>=1. Increase bonus magnitude
+                # from ~80 to ~150 to compete with height penalty at LOW phase.
+                # Forbidden: Don't add this bonus at pc>20 (mid-game congestion needs different handling)
+                if piece_count <= 20:
+                    pipeline_bonus = max(0, 150.0 - best_adjacent_dist * 50.0)
+                else:
+                    pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
