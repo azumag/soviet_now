@@ -64,6 +64,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v485: axis 9.16 merge drought traction — no_merge_streak>=2 && rp>=4 && max_y>=1.5 && merge_grade==NO
+     # Adds +400*merge_mult traction bonus guiding placement toward nearest reactive pair centroid
+     # during merge drought (no_merge_streak>=2). Targets worst game failure mode: rp=7, NO merge 3x,
+     # max_y runaway (1.79→3.38→3.42→3.38). Bonus is smaller than height penalty differentiation
+     # (y=0 vs y=1.5 diff ~243-405pt in HIGH phase), providing tie-breaking pull without overriding
+     # height control. Does NOT disable axis 9.6b/9.8/axis 8.8 per postmortem constraints.
+     # Fixes rollback failure mode: NO merge drought early intervention (analysis_result.md hypothesis)
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.16),
+     #       game_history/20260502_173427_score0590.jsonl (worst: T47-T54, rp=7 NO merge 3x)
      # v484: reduce axis 1.5 NEAR deadline risk penalty scaling 300→200 — align with protected strategy
      # Protected strategy (median 12789) has NO axis 1.5 and achieves better eval median than
      # current (12176.5 vs 12789). Postmortem "prioritize": evaluate NEAR penalty risk vs reward.
@@ -798,6 +807,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     max_y = max([p["y"] for p in pieces]) if pieces else -4.0
     piece_count = len(pieces)
     
+    # --- v617: no_merge_streak — consecutive turns with merge_grade==NO (from game_state) ---
+    # game_state is updated externally by strategy_runner.py after each turn
+    no_merge_streak = game_state.get("no_merge_streak", 0)
+
     # --- deadline information ---
     deadline_crossed = game_state.get("deadline_crossed", False)
 
@@ -1295,6 +1308,54 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if blocking_penalty > 0:
                     score -= min(blocking_penalty, 500.0)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+
+        # ----- evaluation axis 9.16: merge drought traction — no_merge_streak>=2 (v617) -----
+        # analysis_result.md adopted hypothesis: "Merge drought時のNO merge連続に対する早期警戒・救済軸追加 (axis 9.16相当)"
+        #
+        # 根拠:
+        # - worst game T52-54: rp=7, NO merge連続3ターン, max_y跳ね上がり (1.79→3.38→3.42→3.38)
+        #   axis 8.8 (-4500) ペナルティが発動しているにもかかわらず、高配置が选中され続けている
+        # - best game T119-126: rp=3-4, NO mergeでもmerge機会を効率的に捕捉、max_y=2.91-2.92で安定維持
+        # - rp>=6超危険域への早期進入が大きく影響
+        # - mandatory_themes: "デッドラインを超える場合は併合できる場合に限る" — NEXT考慮したドロップ要求
+        #
+        # ロジック:
+        # (1) no_merge_streak>=2 && rp>=4 && max_y>=1.5 && merge_grade=="NO" で発動
+        # (2) ボーナス +400*merge_mult で直近のreactive pair位置に向けた配置に付与
+        # (3) これはheight penalty競争下でmerge path作成方向への索引力を提供
+        #
+        # 禁止: axis 9.6b/9.8完全なる無効化禁止（postmortem制約）
+        #       axis 8.8 (-4500) ペナルティの無効化も禁止
+        #       height penalty基本構造変更も禁止
+        #
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.16),
+        #       game_history/20260502_173427_score0590.jsonl (worst game T47-T54, rp=7 NO merge 3x)
+        #       game_history/20260502_180734_score3053.jsonl (best game T119-126, rp=3-4)
+        if (
+            no_merge_streak >= 2
+            and reactive_pair_count >= 4
+            and max_y >= 1.5
+            and merge_grade == "NO"
+        ):
+            # Find nearest reactive pair centroid and add traction bonus toward it
+            # — guides placement to create merge path during merge drought
+            min_rp_dist = float("inf")
+            for rp in reactive_pairs:
+                if isinstance(rp, (list, tuple)) and len(rp) >= 3:
+                    pos1 = piece_pos_by_id.get(rp[0])
+                    pos2 = piece_pos_by_id.get(rp[1])
+                    if pos1 and pos2:
+                        rp_x = (pos1[0] + pos2[0]) / 2.0
+                        rp_y = (pos1[1] + pos2[1]) / 2.0
+                        dist = abs(x - rp_x) + abs(landing_y - rp_y)
+                        if dist < min_rp_dist:
+                            min_rp_dist = dist
+            # Bonus scales with proximity: max 400 at dist=0, 0 at dist=2.0
+            if min_rp_dist <= 2.0:
+                traction_bonus = 400.0 * merge_mult * (1.0 - min_rp_dist / 2.0)
+                if traction_bonus > 20:
+                    score += traction_bonus
+                    reasons.append("MERGE_DROUGHT_TRACTION")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.

@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-02 16:59:57 JST`
-- Nodes: `1307`
-- Edges: `1784`
-- Current: `424708357a70`
-- Anchor: `424708357a70`
+- Updated: `2026-05-02 18:45:32 JST`
+- Nodes: `1308`
+- Edges: `1785`
+- Current: `492e39a6273a`
+- Anchor: `9efec03deebb`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,8 +15,7 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_424708357a70["424708357a70<br/>CURRENT ANCHOR<br/>g=43 n=20<br/>comp=11613.3"]
-    h_0c557aacb269["0c557aacb269<br/>g=12 n=12<br/>comp=9651.8"]
+    h_9efec03deebb["9efec03deebb<br/>ANCHOR<br/>g=24 n=20<br/>comp=11602.6"]
     h_579d93a17724["579d93a17724<br/>g=24 n=20<br/>comp=10966.6"]
     h_7fe16d532675["7fe16d532675<br/>g=12 n=12<br/>comp=9651.5"]
     h_45ca4a5fa0e7["45ca4a5fa0e7<br/>g=48 n=20<br/>comp=10906.6"]
@@ -76,6 +75,7 @@ flowchart TD
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
+    h_492e39a6273a["492e39a6273a<br/>CURRENT"]
 
     h_579d93a17724 -->|improve| h_7fe16d532675
     h_45ca4a5fa0e7 -->|improve| h_f5db11c74ac2
@@ -138,15 +138,13 @@ flowchart TD
     h_f9ec86a47478 -->|improve| h_38aed3eb1f4e
     h_38aed3eb1f4e -->|improve| h_4924898ae410
     h_4924898ae410 -->|improve| h_dfb8254392ce
-    h_dfb8254392ce -. rollback .-> h_424708357a70
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_424708357a70 current_anchor;
-    class h_0c557aacb269 plain;
+    class h_9efec03deebb anchor;
     class h_579d93a17724 plain;
     class h_7fe16d532675 plain;
     class h_45ca4a5fa0e7 plain;
@@ -206,6 +204,7 @@ flowchart TD
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
+    class h_492e39a6273a current;
 ```
 
 ## Detail 1/17
@@ -3075,7 +3074,7 @@ flowchart TD
 - Cross-chunk link: `294aa2554fbf --improve--> 3a3987c92448`
 - Cross-chunk link: `6131abcbc65e -.rollback.-> ade59a9a5025`
 - Cross-chunk link: `abd5c3448298 --improve--> d5015d25c1de`
-- Cross-chunk link: `... and 32 more`
+- Cross-chunk link: `... and 33 more`
 
 ```mermaid
 flowchart TD
@@ -3090,7 +3089,7 @@ flowchart TD
     h_a4c1fa9f26bd["a4c1fa9f26bd<br/>g=12 n=12<br/>comp=9201.4"]
     h_bf9bc74f22e1["bf9bc74f22e1<br/>g=12 n=12<br/>comp=11227.4"]
     h_f830ed5e32bd["f830ed5e32bd<br/>g=12 n=12<br/>comp=10313.9"]
-    h_9efec03deebb["9efec03deebb<br/>g=24 n=20<br/>comp=11602.6"]
+    h_9efec03deebb["9efec03deebb<br/>ANCHOR<br/>g=24 n=20<br/>comp=11602.6"]
     h_b0e0e0739f44["b0e0e0739f44<br/>g=12 n=12<br/>comp=9953.4"]
     h_1e00ebfbb96a["1e00ebfbb96a<br/>g=13 n=13<br/>comp=10632.4"]
     h_8a2c0083198b["8a2c0083198b<br/>g=24 n=20<br/>comp=11441.5"]
@@ -3157,7 +3156,7 @@ flowchart TD
     h_bb2eb7e82db6["bb2eb7e82db6<br/>g=12 n=12<br/>comp=11446.3"]
     h_2fdb9d0f5370["2fdb9d0f5370<br/>g=42 n=20<br/>comp=10787.1"]
     h_e5cde6468c8f["e5cde6468c8f<br/>g=12 n=12<br/>comp=11261.8"]
-    h_424708357a70["424708357a70<br/>CURRENT ANCHOR<br/>g=43 n=20<br/>comp=11613.3"]
+    h_424708357a70["424708357a70<br/>g=67 n=20<br/>comp=10675.8"]
     h_15f86b7062ff["15f86b7062ff<br/>g=12 n=12<br/>comp=10651.3"]
 
     h_422188c46bb8 -->|improve| h_a3e3965087ab
@@ -3271,7 +3270,7 @@ flowchart TD
     class h_a4c1fa9f26bd plain;
     class h_bf9bc74f22e1 plain;
     class h_f830ed5e32bd plain;
-    class h_9efec03deebb plain;
+    class h_9efec03deebb anchor;
     class h_b0e0e0739f44 plain;
     class h_1e00ebfbb96a plain;
     class h_8a2c0083198b plain;
@@ -3338,7 +3337,7 @@ flowchart TD
     class h_bb2eb7e82db6 plain;
     class h_2fdb9d0f5370 plain;
     class h_e5cde6468c8f plain;
-    class h_424708357a70 current_anchor;
+    class h_424708357a70 plain;
     class h_15f86b7062ff plain;
 ```
 
@@ -4727,12 +4726,13 @@ flowchart TD
 
 ## Detail 17/17
 
-- Range: `200a7fefef4f` .. `1d9b85a22a22`
-- Nodes in this diagram: `27`
+- Range: `200a7fefef4f` .. `492e39a6273a`
+- Nodes in this diagram: `28`
 - Internal edges in this diagram: `23`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
 - Cross-chunk link: `c5f91e3b3729 -.rollback.-> d3c026afa6d2`
 - Cross-chunk link: `d3c026afa6d2 --improve--> a2f57996c7a0`
+- Cross-chunk link: `dfb8254392ce -.rollback.-> 424708357a70`
 - Cross-chunk link: `80cc6a42986e --improve--> 389b56537573`
 - Cross-chunk link: `389b56537573 --improve--> 3d3038a910f5`
 - Cross-chunk link: `1b7384c61008 --improve--> a3aae72a4e37`
@@ -4740,7 +4740,7 @@ flowchart TD
 - Cross-chunk link: `355868eaf8ab --improve--> 71413461e56e`
 - Cross-chunk link: `2ad5850b541e --improve--> 891e238759b8`
 - Cross-chunk link: `1d9b85a22a22 --improve--> 0ac322bb0b01`
-- Cross-chunk link: `dfb8254392ce -.rollback.-> 424708357a70`
+- Cross-chunk link: `424708357a70 --improve--> 492e39a6273a`
 
 ```mermaid
 flowchart TD
@@ -4771,6 +4771,7 @@ flowchart TD
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
+    h_492e39a6273a["492e39a6273a<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
@@ -4828,9 +4829,20 @@ flowchart TD
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
+    class h_492e39a6273a current;
 ```
 
 ## Transition Notes
+
+### Improve Game#21144 `42470835 -> 492e39a6`
+
+- scores: `12456 16090 10521 16203 13044 16249 10375 12302 7524 10192 14605 7764 9644 14821 10766 11007 10560 10627 19238 9068 18330 13832 12093 9083`
+- v485: axis 9.16 merge drought traction — no_merge_streak>=2 && rp>=4 && max_y>=1.5 && merge_grade==NO
+- Adds +400*merge_mult traction bonus guiding placement toward nearest reactive pair centroid
+- during merge drought (no_merge_streak>=2). Targets worst game failure mode: rp=7, NO merge 3x,
+- max_y runaway (1.79→3.38→3.42→3.38). Bonus is smaller than height penalty differentiation
+- (y=0 vs y=1.5 diff ~243-405pt in HIGH phase), providing tie-breaking pull without overriding
+- height control. Does NOT disable axis 9.6b/9.8/axis 8.8 per postmortem constraints.
 
 ### Rollback Game#21120 `dfb82543 -> 42470835`
 
