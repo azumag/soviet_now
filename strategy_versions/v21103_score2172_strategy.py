@@ -63,15 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v620: axis 8.8 multiplier pc>=35 && rp>=4 && mg=NO → 1.0 (from 2.0)
-# Adopted Hypothesis: NO_MERGE penalty overwhelms clustering bonuses causing edge-scatter
-# Worst game turn 49: rp=5, deadline_margin=0.73, decision_x=3.0 crosses deadline WITHOUT merge
-# When penalty too severe at high congestion, strategy cannot build merge paths via clustering.
-# Reducing multiplier allows axis 9.65/9.8 clustering bonuses to function, guiding pieces
-# toward same-type clusters instead of edges. Fixes deadline violation by creating merge paths earlier.
-# Rollback constraint: forbid rp>=4 HEIGHT_CONTROL override of merge opportunities
-# Fixes rollback failure mode: rp>=4 NO_MERGE edge scatter + deadline violation (worst game turn 49)
-# refs: tmp/analysis_result.md (adopted hypothesis), tmp/state/last_rollback_postmortem.md
 # v619: add axis 9.65 (NEAR_MISS_CLUSTERING v597), 9.10 (HIGH_TYPE_PIPELINE v609), 9.8 (SAME_TYPE_PROXIMITY v574)
 #   Merge drought recovery axes from best_score5801 strategy: when merge_grade=NO, guide placement
 #   toward same-type centroids to create future merge opportunities. Suppressed at death_spiral
@@ -1803,18 +1794,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 根拠: worst gameのpc=38→45累積 vs best gameのpc=33-35維持、merge非捕獲による堆積差异
         # refs: tmp/analysis_result.md (adopted hypothesis)
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v617: At pc>=35 && rp>=4, reduce multiplier to 1.0 (from 2.0)
-            # At high congestion, NO_MERGE penalty overwhelms clustering bonuses (axes 9.65, 9.8),
-            # causing edge-scatter and deadline violations (worst game turn 49).
-            # Reducing penalty allows clustering to create future merge paths.
-            # Rollback constraint: forbid rp>=4 HEIGHT_CONTROL override of merge opportunities.
-            # This change addresses the constraint by enabling clustering-based merge path creation.
-            if piece_count >= 35 and reactive_pair_count >= 4:
-                multiplier = 1.0
-            elif piece_count >= 37:
-                multiplier = 2.0
-            else:
-                multiplier = 1.0
+            # pc>=37 && rp>=3 && mg=NO の場合、piece_count堆積防止のためペナルティを2倍に強化
+            # worst game turns 63-67 (pc=41-45, rp=10-11, mg=NO) で強制的に低位置選択されmax_y抑制期待
+            multiplier = 2.0 if piece_count >= 37 else 1.0
             if landing_y <= 0:
                 score -= 6000.0 * multiplier
             elif landing_y <= 1:
