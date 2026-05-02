@@ -74,14 +74,15 @@ Phases (determined by board max Y):
      # as the primary NO_MERGE deterrents. Magnitude: -300*merge_mult < DIRECT(1200), NEAR(600).
      # Fixes rollback failure mode: NO merge at deadline with high rp (rp=6-8) causing max_y runaway
      # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_analysis.md
-     # v618: axis 9.17 enhanced merge drought exit — escalate from +400 to +500, dist cap 2.0→2.5
-     # Worst game T56-61: rp=5-6, NO merge 6 consecutive turns, max_y spiked at T61 (2.14→2.66)
-     # Extends directional guidance toward reactive pair centroids during merge drought.
-     # Magnitude: +500*merge_mult exceeds axis 8.8 (-300*merge_mult) + height penalty (~200-300)
-     # providing clear directional incentive toward merge drought exit.
-     # Respects rollback constraints: does NOT modify axis 8.8 penalty, preserves axis 9.6b/9.8
-     # Fixes rollback failure mode: NO merge drought exit guidance (analysis_result.md hypothesis)
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.17)
+     # v485: axis 9.16 merge drought traction — no_merge_streak>=2 && rp>=4 && max_y>=1.5 && merge_grade==NO
+     # Adds +400*merge_mult traction bonus guiding placement toward nearest reactive pair centroid
+     # during merge drought (no_merge_streak>=2). Targets worst game failure mode: rp=7, NO merge 3x,
+     # max_y runaway (1.79→3.38→3.42→3.38). Bonus is smaller than height penalty differentiation
+     # (y=0 vs y=1.5 diff ~243-405pt in HIGH phase), providing tie-breaking pull without overriding
+     # height control. Does NOT disable axis 9.6b/9.8/axis 8.8 per postmortem constraints.
+     # Fixes rollback failure mode: NO merge drought early intervention (analysis_result.md hypothesis)
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.16),
+     #       game_history/20260502_173427_score0590.jsonl (worst: T47-T54, rp=7 NO merge 3x)
      # v484: reduce axis 1.5 NEAR deadline risk penalty scaling 300→200 — align with protected strategy
      # Protected strategy (median 12789) has NO axis 1.5 and achieves better eval median than
      # current (12176.5 vs 12789). Postmortem "prioritize": evaluate NEAR penalty risk vs reward.
@@ -1359,9 +1360,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         dist = abs(x - rp_x) + abs(landing_y - rp_y)
                         if dist < min_rp_dist:
                             min_rp_dist = dist
-            # Bonus scales with proximity: max 500 at dist=0, 0 at dist=2.5
-            if min_rp_dist <= 2.5:
-                traction_bonus = 500.0 * merge_mult * (1.0 - min_rp_dist / 2.5)
+            # Bonus scales with proximity: max 400 at dist=0, 0 at dist=2.0
+            if min_rp_dist <= 2.0:
+                traction_bonus = 400.0 * merge_mult * (1.0 - min_rp_dist / 2.0)
                 if traction_bonus > 20:
                     score += traction_bonus
                     reasons.append("MERGE_DROUGHT_TRACTION")

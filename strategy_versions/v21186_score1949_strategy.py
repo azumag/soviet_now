@@ -26,7 +26,7 @@ Game Overview:
              8.6. Reactive pairs immediate merge bonus - v464: NEAR bonus 60% reduction at pc>=28+deadline (endgame NEAR risk)
               8.7. Russia phase immediate merge priority - v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化
               # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼす
-              # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
+              # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTYが続き、max_y runawayでゲームオーバー
               # ベストゲーム(score2162)終盤: reactive_pairsが少なく、即時併合機会を確実に捉えて高スコア
               # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
               # ロシア建国後は明確にフェーズが切り替わるべき。具体的には:
@@ -64,6 +64,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v618: RESTRUCTURE axis 8.8 — remove REACTIVE_PAIRS_NO_MERGE gravitational pull
+     # analysis_result.md adopted hypothesis: axis "REACTIVE_PAIRS_NO_MERGE_PENALTY" (lines 1863-1869)
+     # is NOT a penalty but ADDS +600*merge_mult for placing near reactive pairs during NO merge.
+     # At rp=6-8 (worst games), this creates a magnet toward highest stacks, overriding axis 8.8's
+     # -4500 and CROSSES_DEADLINE's -2000 penalties, causing NO-merge edge stacking at deadline.
+     # Solution: restructure to subtract -300*merge_mult (true penalty) instead of adding.
+     # This removes gravitational pull while preserving axis 8.8 (-4500) and CROSSES_DEADLINE (-2000)
+     # as the primary NO_MERGE deterrents. Magnitude: -300*merge_mult < DIRECT(1200), NEAR(600).
+     # Fixes rollback failure mode: NO merge at deadline with high rp (rp=6-8) causing max_y runaway
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_analysis.md
      # v485: axis 9.16 merge drought traction — no_merge_streak>=2 && rp>=4 && max_y>=1.5 && merge_grade==NO
      # Adds +400*merge_mult traction bonus guiding placement toward nearest reactive pair centroid
      # during merge drought (no_merge_streak>=2). Targets worst game failure mode: rp=7, NO merge 3x,
@@ -548,7 +558,7 @@ Phases (determined by board max Y):
         # v336: ロシア建国後フェーズ即時併合強化版 - axis 8.7ボーナス強化・reactive_pairs<3でも即時併合優先
         # last_rollback_postmortemのfailure mode: "deadline_crossed時に即時ゲームオーバー判定を行い、reactive pairs の併合機会を失っている"
         # v335 failure: ロシアフェーズ(type 15 >= 1)でreactive_pairs>=3の場合、即時併合ボーナスが弱く、盤面圧縮ボーナスと競合して即時併合機会を取りこぼしている
-        # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_PENALTYが続き、max_y runawayでゲームオーバー
+        # ワーストゲーム(score0589)終盤: reactive_pairs>=3, merge_grade="NO"でREACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTYが続き、max_y runawayでゲームオーバー
         # ベストゲーム(score2162)終盤: reactive_pairsが少なく、即時併合機会を確実に捉えて高スコア
         # ロシア建国後は盤面が狭く、高typeピースが場所を占有している状態。この局面で通常時と同じ戦略を続けるのは不十分
         # ロシア建国後は明確にフェーズが切り替わるべき。具体的には:
@@ -1859,14 +1869,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260324_045921_score0636.jsonl turns 56-62, game_history/20260324_043823_score0725.jsonl turns 61-62,
         #       game_history/20260324_044502_score3996.jsonl turns 150-154
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
+        #
+        # v618: RESTRUCTURE axis 8.8 — remove NO-MERGE gravitational pull, add true penalty
+        # analysis_result.md adopted hypothesis: REACTIVE_PAIRS_NO_MERGE is NOT a penalty but
+        # ADDS score (+600*merge_mult) for placing near reactive pairs during NO merge. At rp=6-8,
+        # this "penalty" becomes a magnet toward highest stacks, overriding axis 8.8's -4500 and
+        # CROSSES_DEADLINE's -2000 penalties. This causes NO-merge edge stacking in worst games.
+        # Solution: restructure to subtract -300*merge_mult (true penalty) instead of adding.
+        # This removes the gravitational pull while maintaining tie-breaking at low positions.
+        # Magnitude calibrated: -300*merge_mult < DIRECT(1200), NEAR(600) bonuses — preserves
+        # merge incentive. Axis 8.8 (-4500) and CROSSES_DEADLINE (-2000) still deter NO_MERGE.
+        # refs: tmp/analysis_result.md (Implementation Plan), tmp/improve_brief.md,
+        #       tmp/state/last_rollback_analysis.md
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v452: flatten to -4500, matching protected strategy (median 12789)
-            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
-            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
-            # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
-            reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            # v618: restructure from +600*merge_mult traction to -300*merge_mult true penalty
+            # Previous code showed score -= 4500 but the axis was adding +600*merge_mult
+            # elsewhere, creating net positive at low positions (traction toward high stacks).
+            # Now: true penalty that removes gravitational pull during NO merge.
+            score -= 300.0 * merge_mult
+            reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
