@@ -64,13 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v625: russia_phase NO merge safety valve — suppress BOARD_COMPRESSION at deadline+max_y>=2.0
-     # analysis_result.md adopted hypothesis: russia_phase + deadline_crossed + max_y>=2.0 + NO merge
-     # 时BOARD_COMPRESSION导致edge配置(x=±3.0)选中→max_y上升。extra_high (score3566) T141-148の失敗モード对应。
-     # Now height penalty-only when critical board, preventing extra_high style max_y runaway.
-     # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先" (配置管理でheight safety优先)
-     # Fixes failure mode: NO merge at critical board causing max_y runaway (extra_high pattern)
-     # refs: tmp/analysis_result.md (Implementation Plan), game_history/20260503_003308_score3566.jsonl
+     # v626: russia_phase NO merge safety valve enhancement
+     # When russia_phase + deadline_crossed + max_y>=2.0 + rp>=3: suppress ALL compression
+     # to let axis 8.8 penalty (-3000~-7000) be sole differentiator, preventing edge placement
+     # Fixes failure mode: rp>=3 + NO merge + critical board → edge placement (x=±3.0) worsens max_y
+     # refs: tmp/analysis_result.md (Implementation Plan)
      # v619: axis 9.6b NO-merge proximity +200 — fix worst_game T47 same-type scatter
      # analysis_result.md adopted hypothesis: axis 9.6b bonus (~32-60) too weak vs height diff.
      # Worst game T47 chose x=3.0 (scattered type 7) when x=0.0 (adjacent) was available.
@@ -1854,32 +1852,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
                          score += 1200.0
                  reasons.append("RUSSIA_PHASE_IMMEDIATE_MERGE_PRIORITY")
              elif merge_grade == "NO":
-                 # v625: russia_phase NO merge safety valve
-                 # When russia_phase + deadline + max_y >= 2.0, suppress compression bonus
-                 # to force height-penalty-only placement (lowest y)
-                 # Prevents edge placement (x=±3.0) that worsens max_y — extra_high failure mode
+                 # v625 + v626: russia_phase NO merge safety valve (enhancement)
+                 # When russia_phase + deadline + max_y >= 2.0:
+                 #   - If rp>=3: suppress ALL compression/proximity bonuses (9.6b, BOARD_COMPRESSION)
+                 #     to let axis 8.8 penalty (-3000~-7000) be the sole differentiator
+                 #   - If rp<3: apply reduced BOARD_COMPRESSION (400) to prioritize merge opportunities
                  # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先"
-                 if not (deadline_crossed and max_y >= 2.0):
-                     # Only apply BOARD_COMPRESSION when board is not critical
+                 # Fixes failure mode: rp>=3 + deadline + max_y>=2.0 → edge placement (x=±3.0) worsens max_y
+                 if deadline_crossed and max_y >= 2.0:
                      if reactive_pair_count >= 3:
-                         # reactive_pairs>=3の超危険域では、axis 8.8ペナルティを優先させるため盤面圧縮ボーナスを抑制
-                         # v333 baseline: reactive_pairs>=3 の場合のボーナス（900.0）を維持
+                         # CRITICAL DANGER: suppress all compression, axis 8.8 penalty is sole differentiator
+                         # This prevents edge placement (x=±3.0) that worsens max_y
+                         pass  # skip all compression bonuses
+                     else:
+                         # moderate danger: still apply reduced compression for board management
+                         score += 400.0
+                         reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
+                 else:
+                     # Not critical: normal Russia phase board compression
+                     if reactive_pair_count >= 3:
                          score += 900.0
                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                      elif reactive_pair_count >= 1:
-                         # v336: reactive_pairs<3の場合、盤面圧縮ボーナスを抑制（800.0 → 400.0）
-                         # 即時併合機会_prioritizeするため、盤面圧縮ボーナスを半減
                          score += 400.0
                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
                      else:
-                          # v333 baseline: reactive_pairs==0 の場合のボーナス（800.0）
-                          # 盤面圧縮_prioritizeしつつ、type 15保護を徹底
-                          score += 800.0
-                          reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
-                 else:
-                     # Critical board: skip compression, height penalty is sole differentiator
-                     # This prevents edge placement (x=±3.0) that worsens max_y
-                     pass
+                         score += 800.0
+                         reasons.append("RUSSIA_PHASE_BOARD_COMPRESSION")
 
         # ----- evaluation axis 8.8: reactive pairs >= 3 no merge penalty (v329: 高配置強力抑制版 - reactive_pairs>=3での高配置 runaway防止) -----
         # last_rollback_postmortemのfailure mode: "reactive_pairs>=3で即時併合不可続き、盤面圧迫悪化でゲームオーバー"

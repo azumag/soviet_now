@@ -64,10 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v627: axis 8.8 rp>=4 + deadline_crossed penalty -600*merge_mult (2x)
-     # Fixes failure mode: rp>=4 + deadline_crossed edge placement → max_y runaway
-     # worst T64: rp=5, deadline_crossed, x=-2.8; 1911 T89: rp=4, deadline_crossed, x=-3.0
-     # refs: tmp/analysis_result.md
      # v626: russia_phase NO merge safety valve enhancement
      # When russia_phase + deadline_crossed + max_y>=2.0 + rp>=3: suppress ALL compression
      # to let axis 8.8 penalty (-3000~-7000) be sole differentiator, preventing edge placement
@@ -1920,16 +1916,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Previous code showed score -= 4500 but the axis was adding +600*merge_mult
             # elsewhere, creating net positive at low positions (traction toward high stacks).
             # Now: true penalty that removes gravitational pull during NO merge.
-            # v627: add extra penalty for rp>=4 + deadline_crossed to prevent edge placement
-            # worst game T64: rp=5, deadline_crossed, x=-2.8 → max_y 1.8→2.79
-            # 1911 game T89: rp=4, deadline_crossed, x=-3.0 → max_y 1.58→3.15
-            # Analysis: -300*merge_mult at rp>=4 ≈ -600 is insufficient vs axis 9.6b guidance (+200-500)
-            if reactive_pair_count >= 4 and deadline_crossed:
-                score -= 600.0 * merge_mult
-                reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
-            else:
-                score -= 300.0 * merge_mult
-                reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
+            score -= 300.0 * merge_mult
+            reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
