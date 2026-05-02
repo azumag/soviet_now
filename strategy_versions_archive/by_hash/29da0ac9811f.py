@@ -63,12 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v617: DEADLINE_GUARD edge scatter suppression for rp>=4 && deadline_crossed && mergegrade=NO
-# Adopted Hypothesis: rp>=4 && mergegrade=NO edge scatter causes merge opportunity loss (worst game turns 52-64)
-# When all of (DIRECT, NEAR, SAFE crossing_deadline) options exhausted, force center placement (|x|<1.5) with lowest landing_y
-# Does NOT suppress DIRECT/NEAR merge capture (forbidden: DIRECT merge capture rate 95.7% must not be degraded)
-# Fixes rollback failure mode: reactive_pairs>=4 NO_MERGE edge scatter at deadline_crossed
-# refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
 # v616: pre-russia second type14 urgency bonus +200 when pre_russia_phase && merge_grade==NO && max_type==14 && exactly 1 type14 piece on board
 # Adopted Hypothesis: Pre-Russia type14-to-type15 pipeline activation
 # Batch 24 games shows 0/24 type 15 appearances. Best game had two type14 pieces but they didn't merge.
@@ -759,18 +753,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
-        # v616: rp>=4 && mergegrade=NO && deadline_crossed -> suppress edge scatter by forcing center-low-landing_y
-        # Worst game turns 52-64: rp=4-5, mergegrade=NO, pieces accumulated at x=±3.0 edges causing merge opportunity loss
-        # This branch activates only when all DIRECT/NEAR/SAFE options are exhausted and rp>=4 with deadline_crossed
-        if __dlg_rp_count >= 4 and __dlg_dcross and __dlg_cands:
-            __dlg_center_low = [
-                c for c in __dlg_cands
-                if isinstance(c, dict)
-                and abs(float(c.get("x", 0.0) or 0.0)) < 1.5  # avoid edge (|x| >= 1.5 = scatter zone)
-            ]
-            if __dlg_center_low:
-                __dlg_best = min(__dlg_center_low, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
-                return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_CENTER_LOW_RP4"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])

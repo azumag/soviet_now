@@ -63,6 +63,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+# v616: pre-russia second type14 urgency bonus +200 when pre_russia_phase && merge_grade==NO && max_type==14 && exactly 1 type14 piece on board
+# Adopted Hypothesis: Pre-Russia type14-to-type15 pipeline activation
+# Batch 24 games shows 0/24 type 15 appearances. Best game had two type14 pieces but they didn't merge.
+# The second type14 is "starving" while other merges happen around it. Add urgency bonus for gap-fill near the single type14.
+# Does NOT suppress existing DIRECT/NEAR merge bonuses (forbidden by analysis constraint).
+# Fixes rollback failure mode: pre-russia phase type14→type15 pipeline stall (0/24 type15 in batch)
+# refs: tmp/analysis_result.md (Implementation Plan)
 # v615: height penalty base 50→80 (+ escalation 80→120 @ deadline_crossed && merge_grade==NO && rp>=2 && not russia_phase && pc>=20)
 # Adopted Hypothesis: merge drought early exit + height penalty tier strengthening
 # Worst game (score0542) turns 65-69: rp=4, deadline_crossed=true, merge_grade=NO, axis 8.8 penalty(-6000) fires but HIGH_TOWER persists → death-spiral
@@ -1776,6 +1783,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # -1600に強化 (旧800の2倍)
                 score -= 1600.0
                 reasons.append("PRE_RUSSIA_HEIGHT_SUPPRESSION")
+
+        # ----- evaluation axis 8.7-pre-b: pre-russia second type14 urgency bonus (v616) -----
+        # Adopted Hypothesis: Pre-Russia type14-to-type15 pipeline activation
+        # analysis_result.md: batch 24 games shows 0/24 type 15 appearances.
+        # Best game had two type 14 pieces but they didn't merge — the second type 14 is
+        # "starving" while other merges happen around it.
+        # Implementation Plan: when pre_russia_phase && merge_grade==NO && max_type==14
+        # && board has exactly 1 piece of type14, add +200 urgency bonus for placements
+        # that would create a gap-fill near existing type 14.
+        # This is additive — does NOT suppress existing DIRECT/NEAR merge bonuses.
+        # refs: tmp/analysis_result.md (Implementation Plan)
+        if pre_russia_phase and merge_grade == "NO" and max_type_on_board == 14:
+            type14_pieces = [p for p in pieces if p.get("type") == 14]
+            if len(type14_pieces) == 1:
+                # Exactly 1 type14 on board — second type14 is "starving"
+                # Bonus for placements near the gap-fill zone around this piece
+                t14 = type14_pieces[0]
+                t14_x = t14.get("x", 0)
+                horiz_dist = abs(x - t14_x)
+                if horiz_dist < 1.0:
+                    # Near the single type14 — encourage building second piece
+                    score += 200.0
+                    reasons.append("PRE_RUSSIA_SECOND_TYPE14_URGENCY")
 
         # ----- evaluation axis 8.9-pre: pre-russia type14 clustering bonus (v508) -----
         # Adopted Hypothesis: Pre-Russia Phase Guidance Gap — type14→type15 pipeline not completing
