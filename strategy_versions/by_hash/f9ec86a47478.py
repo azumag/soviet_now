@@ -63,12 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-# v618: DEADLINE_GUARD CENTER_LOW override - add board-level merge_available check
-# Fixes failure mode: worst game turn 75 had mergegrade=DIRECT (board merge_available=true) but CENTER_LOW
-# override suppressed merge in favor of NO_MERGE center placement. Now checks board merge_available to ensure
-# CENTER_LOW only forces NO_MERGE when board genuinely has NO merge opportunities.
-# mandatory_themes.txt: "デッドラインを超える位置上피스置く場合は併合できる場合に限る"
-# refs: tmp/analysis_result.md (Implementation Plan)
 # v617: DEADLINE_GUARD edge scatter suppression for rp>=4 && deadline_crossed && mergegrade=NO
 # Adopted Hypothesis: rp>=4 && mergegrade=NO edge scatter causes merge opportunity loss (worst game turns 52-64)
 # When all of (DIRECT, NEAR, SAFE crossing_deadline) options exhausted, force center placement (|x|<1.5) with lowest landing_y
@@ -768,12 +762,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v616: rp>=4 && mergegrade=NO && deadline_crossed -> suppress edge scatter by forcing center-low-landing_y
         # Worst game turns 52-64: rp=4-5, mergegrade=NO, pieces accumulated at x=±3.0 edges causing merge opportunity loss
         # This branch activates only when all DIRECT/NEAR/SAFE options are exhausted and rp>=4 with deadline_crossed
-        # FIX: only apply CENTER_LOW override when board has NO merge opportunities.
-        # When board_merge_available=True but no merge candidates were generated,
-        # the override incorrectly suppresses a valid merge in favor of NO_MERGE center placement.
-        # mandatory_themes.txt: "デッドラインを超える位置上피스置く場合は併合できる場合に限る"
-        __dlg_board_merge_available = __dlg_game_state.get("merge_available", False)
-        if __dlg_rp_count >= 4 and __dlg_dcross and __dlg_cands and not __dlg_board_merge_available:
+        if __dlg_rp_count >= 4 and __dlg_dcross and __dlg_cands:
             __dlg_center_low = [
                 c for c in __dlg_cands
                 if isinstance(c, dict)
