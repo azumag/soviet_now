@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v628: remove russia_phase exception from CROSSES_DEADLINE_NO_MERGE, -2000→-2500
+     # Fixes failure mode: worst games T59-T62 deadline_crossed+NO merge edge placement
+     # mandatory theme violation: "デッドラインを超える場合は併合できる場合に限る"
+     # Also: rp>=3→rp>=2 for axis 8.7 russia_phase safety valve (narrower board)
+     # refs: tmp/analysis_result.md
      # v627: axis 8.8 rp>=4 + deadline_crossed penalty -600*merge_mult (2x)
      # Fixes failure mode: rp>=4 + deadline_crossed edge placement → max_y runaway
      # worst T64: rp=5, deadline_crossed, x=-2.8; 1911 T89: rp=4, deadline_crossed, x=-3.0
@@ -1864,9 +1869,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                  # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先"
                  # Fixes failure mode: rp>=3 + deadline + max_y>=2.0 → edge placement (x=±3.0) worsens max_y
                  if deadline_crossed and max_y >= 2.0:
-                     if reactive_pair_count >= 3:
+                     if reactive_pair_count >= 2:  # rp>=3→rp>=2:より狭い盤面で即時併合優先強化
                          # CRITICAL DANGER: suppress all compression, axis 8.8 penalty is sole differentiator
                          # This prevents edge placement (x=±3.0) that worsens max_y
+                         # mandatory_themes: "デッドラインを超える場合は併合できる場合に限る"
                          pass  # skip all compression bonuses
                      else:
                          # moderate danger: still apply reduced compression for board management
@@ -2019,21 +2025,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: analyze_board.py L412 (crosses_deadline computation),
         #       game_history/20260330_144015_score0665.jsonl T60-61,
         #       game_history/20260330_143501_score0994.jsonl T74-75
-        if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
-            # v461: increase from -1200 to -2000 — account for accumulated additive bonus magnitudes
-            # v411 calibrated at ~200-900 additive bonus range, but subsequent axes restored
-            # (9.6b v453, 9.3 gate removed v457, 5.6 reduced v458) with congestion scaling
-            # push total additive to ~1000+ at pc=30+. Worst game T70: x=3.0 selected
-            # despite -1200 because stacking (~467) + proximity (~360) + growth (~96) bonuses
-            # partially overcame penalty. Best game never triggers this (avoids crossing).
-            # -2000 provides ~1000 margin above max possible additive combination, ensuring
-            # deadline-crossing without merge is always deterred. Protected strategy (median
-            # 12789) has no additive axes that could overcome this penalty.
-            # Fixes failure mode: deadline-crossing NO-merge placement in congested endgame
-            # refs: game_history/20260401_225426_score1094.jsonl T70-T71 (CROSSES_DEADLINE_NO_MERGE),
-            #       game_history/20260401_223053_score3734.jsonl T137-T144 (no CROSSES_DEADLINE),
-            #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-            score -= 2000.0
+        # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # ロシア建国時(this principle must be preserved even in Russia phase)
+        if merge_grade == "NO" and result.get("crosses_deadline", False):
+            # v628: remove russia_phase exception, increase -2000→-2500
+            # russia_phase exception caused worst games T59-T62 deadline NO-merge edge placement
+            # mandatory_themes violation: "デッドラインを超える場合は併合できる場合に限る"
+            # -2500 ensures axis 8.8 penalty (-1140 at rp=7) cannot overcome height advantage
+            score -= 2500.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- update best candidate -----
