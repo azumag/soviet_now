@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-03 05:19:47 JST`
-- Nodes: `1314`
-- Edges: `1791`
-- Current: `02114ebfe43e`
-- Anchor: `9efec03deebb`
+- Updated: `2026-05-03 06:54:42 JST`
+- Nodes: `1315`
+- Edges: `1792`
+- Current: `082208dcd71b`
+- Anchor: `02114ebfe43e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,8 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_9efec03deebb["9efec03deebb<br/>ANCHOR<br/>g=24 n=20<br/>comp=11602.6"]
-    h_e1ce44107b07["e1ce44107b07<br/>g=24 n=20<br/>comp=10398.9"]
     h_3ab5fc0e3461["3ab5fc0e3461<br/>g=24 n=20<br/>comp=10488.7"]
     h_0dc7d69854cc["0dc7d69854cc<br/>g=48 n=20<br/>comp=10285.7"]
     h_5f62be3f7262["5f62be3f7262<br/>g=24 n=20<br/>comp=11218.5"]
@@ -69,15 +67,15 @@ flowchart TD
     h_9753481bc205["9753481bc205<br/>g=24 n=20<br/>comp=11113.2"]
     h_68ff9c0f9b1c["68ff9c0f9b1c<br/>g=24 n=20<br/>comp=11599.0"]
     h_fa213104657c["fa213104657c<br/>g=24 n=20<br/>comp=10920.8"]
+    h_02114ebfe43e["02114ebfe43e<br/>ANCHOR<br/>g=24 n=20<br/>comp=11880.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_02114ebfe43e["02114ebfe43e<br/>CURRENT"]
+    h_082208dcd71b["082208dcd71b<br/>CURRENT"]
 
-    h_e1ce44107b07 -->|improve| h_3ab5fc0e3461
     h_3ab5fc0e3461 -->|improve| h_0dc7d69854cc
     h_0dc7d69854cc -->|improve| h_5f62be3f7262
     h_5f62be3f7262 -->|improve| h_5d18fbadb2ae
@@ -138,14 +136,13 @@ flowchart TD
     h_9753481bc205 -->|improve| h_68ff9c0f9b1c
     h_68ff9c0f9b1c -->|improve| h_fa213104657c
     h_fa213104657c -->|improve| h_02114ebfe43e
+    h_02114ebfe43e -->|improve| h_082208dcd71b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_9efec03deebb anchor;
-    class h_e1ce44107b07 plain;
     class h_3ab5fc0e3461 plain;
     class h_0dc7d69854cc plain;
     class h_5f62be3f7262 plain;
@@ -198,13 +195,14 @@ flowchart TD
     class h_9753481bc205 plain;
     class h_68ff9c0f9b1c plain;
     class h_fa213104657c plain;
+    class h_02114ebfe43e anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_02114ebfe43e current;
+    class h_082208dcd71b current;
 ```
 
 ## Detail 1/17
@@ -3089,7 +3087,7 @@ flowchart TD
     h_a4c1fa9f26bd["a4c1fa9f26bd<br/>g=12 n=12<br/>comp=9201.4"]
     h_bf9bc74f22e1["bf9bc74f22e1<br/>g=12 n=12<br/>comp=11227.4"]
     h_f830ed5e32bd["f830ed5e32bd<br/>g=12 n=12<br/>comp=10313.9"]
-    h_9efec03deebb["9efec03deebb<br/>ANCHOR<br/>g=24 n=20<br/>comp=11602.6"]
+    h_9efec03deebb["9efec03deebb<br/>g=24 n=20<br/>comp=11602.6"]
     h_b0e0e0739f44["b0e0e0739f44<br/>g=12 n=12<br/>comp=9953.4"]
     h_1e00ebfbb96a["1e00ebfbb96a<br/>g=13 n=13<br/>comp=10632.4"]
     h_8a2c0083198b["8a2c0083198b<br/>g=24 n=20<br/>comp=11441.5"]
@@ -3270,7 +3268,7 @@ flowchart TD
     class h_a4c1fa9f26bd plain;
     class h_bf9bc74f22e1 plain;
     class h_f830ed5e32bd plain;
-    class h_9efec03deebb anchor;
+    class h_9efec03deebb plain;
     class h_b0e0e0739f44 plain;
     class h_1e00ebfbb96a plain;
     class h_8a2c0083198b plain;
@@ -4726,9 +4724,9 @@ flowchart TD
 
 ## Detail 17/17
 
-- Range: `200a7fefef4f` .. `02114ebfe43e`
-- Nodes in this diagram: `34`
-- Internal edges in this diagram: `29`
+- Range: `200a7fefef4f` .. `082208dcd71b`
+- Nodes in this diagram: `35`
+- Internal edges in this diagram: `30`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
 - Cross-chunk link: `c5f91e3b3729 -.rollback.-> d3c026afa6d2`
 - Cross-chunk link: `d3c026afa6d2 --improve--> a2f57996c7a0`
@@ -4771,13 +4769,14 @@ flowchart TD
     h_9753481bc205["9753481bc205<br/>g=24 n=20<br/>comp=11113.2"]
     h_68ff9c0f9b1c["68ff9c0f9b1c<br/>g=24 n=20<br/>comp=11599.0"]
     h_fa213104657c["fa213104657c<br/>g=24 n=20<br/>comp=10920.8"]
+    h_02114ebfe43e["02114ebfe43e<br/>ANCHOR<br/>g=24 n=20<br/>comp=11880.7"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_02114ebfe43e["02114ebfe43e<br/>CURRENT"]
+    h_082208dcd71b["082208dcd71b<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
@@ -4808,6 +4807,7 @@ flowchart TD
     h_9753481bc205 -->|improve| h_68ff9c0f9b1c
     h_68ff9c0f9b1c -->|improve| h_fa213104657c
     h_fa213104657c -->|improve| h_02114ebfe43e
+    h_02114ebfe43e -->|improve| h_082208dcd71b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4841,16 +4841,27 @@ flowchart TD
     class h_9753481bc205 plain;
     class h_68ff9c0f9b1c plain;
     class h_fa213104657c plain;
+    class h_02114ebfe43e anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_02114ebfe43e current;
+    class h_082208dcd71b current;
 ```
 
 ## Transition Notes
+
+### Improve Game#21312 `02114ebf -> 082208dc`
+
+- scores: `16364 14269 11303 10897 14621 11340 21007 11311 19837 13652 13195 7107 13208 10636 11554 12134 9767 14224 8399 13278 15486 7033 10466 13222`
+- v628: remove russia_phase exception from CROSSES_DEADLINE_NO_MERGE, -2000→-2500
+- Fixes failure mode: worst games T59-T62 deadline_crossed+NO merge edge placement
+- mandatory theme violation: "デッドラインを超える場合は併合できる場合に限る"
+- Also: rp>=3→rp>=2 for axis 8.7 russia_phase safety valve (narrower board)
+- if reactive_pair_count >= 2: # rp>=3→rp>=2:より狭い盤面で即時併合優先強化
+- mandatory_themes: "デッドラインを超える場合は併合できる場合に限る"
 
 ### Improve Game#21288 `fa213104 -> 02114ebf`
 
