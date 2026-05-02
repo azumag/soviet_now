@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v619: axis 9.6b NO-merge proximity +200 — fix worst_game T47 same-type scatter
+     # analysis_result.md adopted hypothesis: axis 9.6b bonus (~32-60) too weak vs height diff.
+     # Worst game T47 chose x=3.0 (scattered type 7) when x=0.0 (adjacent) was available.
+     # +200 raises total bonus to ~260-360 at low distance, competitive with height diffs.
+     # Conditions: merge_grade=="NO" && reactive_pair_count>=2 (pieces exist for future merges).
+     # Respects rollback constraints: preserves axis 9.6b, does NOT suppress at rp>=3+NO.
+     # Fixes failure mode: same-type scatter → NO-merge streak → piece_count accumulation → max_y runaway
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt
      # v618: RESTRUCTURE axis 8.8 — remove REACTIVE_PAIRS_NO_MERGE gravitational pull
      # analysis_result.md adopted hypothesis: axis "REACTIVE_PAIRS_NO_MERGE_PENALTY" (lines 1863-1869)
      # is NOT a penalty but ADDS +600*merge_mult for placing near reactive pairs during NO merge.
@@ -1244,6 +1252,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # No reactive<3 guard (postmortem constraint: works at ALL reactive levels).
                     # Not landing_y-only (considers horizontal proximity, piece_count, target height).
                     proximity_bonus = max(0, 120.0 - horiz_dist * 50.0)
+                    # v619: strengthen same-type proximity during NO merge with rp>=2
+                    # Worst game T47 chose x=3.0 (scattered type 7) when x=0.0 (adjacent) was available.
+                    # Axis 9.6b fires but magnitude (~32-60) too weak vs height diff to prevent scatter.
+                    # +200 raises total bonus to ~260-360 at low distance, competitive with height diffs.
+                    # Postmortem constraint: preserve axis 9.6b, do NOT suppress at rp>=3+NO.
+                    if merge_grade == "NO" and reactive_pair_count >= 2:
+                        proximity_bonus += 200.0
                     if piece_count >= 28:
                         # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                         # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
