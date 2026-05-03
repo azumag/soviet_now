@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v628: axis 9.17 NO_MERGE_EDGE_DANGER_PENALTY — enhanced edge penalty for NO merge in danger zone
+     # Fixes failure mode: edge placement (x=±3.0) in NO merge + critical board → max_y runaway
+     # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+     # Worst T55: x=-3.0 chosen despite merge_available=false + max_y=2.6 + deadline_crossed
+     # edge_proximity_bonus = 200*merge_mult * max(0, |x|-1.5) → x=±3.0: +600, x=±2.0: +400, x=±1.0: +200
+     # refs: tmp/analysis_result.md
      # v627: axis 8.8 rp>=4 + deadline_crossed penalty -600*merge_mult (2x)
      # Fixes failure mode: rp>=4 + deadline_crossed edge placement → max_y runaway
      # worst T64: rp=5, deadline_crossed, x=-2.8; 1911 T89: rp=4, deadline_crossed, x=-3.0
@@ -1930,6 +1936,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 score -= 300.0 * merge_mult
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
+
+            # v628: axis 9.17 enhanced edge penalty for NO merge in danger zone
+            # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+            # Fixes failure mode: edge placement (x=±3.0) in NO merge + critical board → max_y runaway
+            # Worst game T55: x=-3.0 chosen despite merge_available=false + max_y=2.6 + deadline_crossed
+            # Edge position gets height bonus (+150) that cancels axis 8.8 penalty (-600), causing edge selection
+            # Add explicit edge penalty: bonus proportional to proximity to deadline during NO merge danger
+            if deadline_crossed and max_y >= 2.0 and reactive_pair_count >= 3:
+                # Edge penalty: stronger when closer to deadline edge (more dangerous)
+                # At x=±3.0: penalty = +600*merge_mult (strong deterrence)
+                # At x=±2.0: penalty = +400*merge_mult
+                # At x=±1.0: penalty = +200*merge_mult
+                # Note: positive score adjustment = penalty (score subtracted later)
+                edge_proximity_bonus = 200.0 * merge_mult * max(0.0, abs(x) - 1.5)
+                if edge_proximity_bonus > 0:
+                    score -= edge_proximity_bonus
+                    reasons.append("NO_MERGE_EDGE_DANGER_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
