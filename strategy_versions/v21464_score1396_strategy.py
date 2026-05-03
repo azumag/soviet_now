@@ -64,6 +64,10 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v629: axis 9.17 — removed max_y>=2.0 threshold, lowered rp>=3→2, increased 200→250
+     # Fixes T60-type violation: deadline_crossed+NO_MERGE+edge at max_y=1.16 missed by old threshold
+     # Catch deadline_crossed+NO_MERGE+edge at ANY height; reactive_pair_count>=2 enough
+     # refs: tmp/analysis_result.md
      # v628: axis 9.17 NO_MERGE_EDGE_DANGER_PENALTY — enhanced edge penalty for NO merge in danger zone
      # Fixes failure mode: edge placement (x=±3.0) in NO merge + critical board → max_y runaway
      # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
@@ -1937,19 +1941,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 300.0 * merge_mult
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
-            # v628: axis 9.17 enhanced edge penalty for NO merge in danger zone
+            # v629: axis 9.17 — removed max_y>=2.0 threshold
             # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-            # Fixes failure mode: edge placement (x=±3.0) in NO merge + critical board → max_y runaway
-            # Worst game T55: x=-3.0 chosen despite merge_available=false + max_y=2.6 + deadline_crossed
-            # Edge position gets height bonus (+150) that cancels axis 8.8 penalty (-600), causing edge selection
-            # Add explicit edge penalty: bonus proportional to proximity to deadline during NO merge danger
-            if deadline_crossed and max_y >= 2.0 and reactive_pair_count >= 3:
+            # T60-type violation: x=3.0 with deadline_crossed+NO_MERGE but max_y=1.16 (below 2.0 threshold)
+            # Catch deadline_crossed+NO_MERGE+edge at ANY height, not just max_y>=2.0
+            if deadline_crossed and reactive_pair_count >= 2:
                 # Edge penalty: stronger when closer to deadline edge (more dangerous)
-                # At x=±3.0: penalty = +600*merge_mult (strong deterrence)
-                # At x=±2.0: penalty = +400*merge_mult
-                # At x=±1.0: penalty = +200*merge_mult
-                # Note: positive score adjustment = penalty (score subtracted later)
-                edge_proximity_bonus = 200.0 * merge_mult * max(0.0, abs(x) - 1.5)
+                # At x=±3.0: penalty = +750*merge_mult (strong deterrence)
+                # At x=±2.0: penalty = +500*merge_mult
+                # At x=±1.0: penalty = +250*merge_mult
+                edge_proximity_bonus = 250.0 * merge_mult * max(0.0, abs(x) - 1.5)
                 if edge_proximity_bonus > 0:
                     score -= edge_proximity_bonus
                     reasons.append("NO_MERGE_EDGE_DANGER_PENALTY")
