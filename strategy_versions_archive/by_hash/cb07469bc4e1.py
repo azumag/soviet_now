@@ -62,15 +62,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v626: HEIGHT_CONTROL edge penalty when same_type exists at max_y>=1.5 (analysis hypothesis)
-     # worst game T56-T61: HEIGHT_CONTROL chose edge positions repeatedly (x=±3.0, ±2.6),
-     # causing max_y 1.07→2.77 runaway. HEIGHT_CONTROL only evaluates landing_y, ignoring x.
-     # Edge columns are dead-end paths — same type exists in interior but HEIGHT_CONTROL keeps
-     # selecting edge. Added -500.0*merge_mult penalty when max_y>=1.5 && same_type_pieces
-     # && !deadline_crossed && abs(x)>=2.5. Rollback constraints not violated (no height_mult
-     # change, no merge=false enforcement, v624/v625 unchanged).
-     # Fixes rollback failure mode: HEIGHT_CONTROL edge scatter at elevated max_y
-     # refs: tmp/analysis_result.md (Implementation Plan)
      # v625: Strengthen v624 safety valve fallback — when near_gap_suppressed and no safe NEAR,
      # prefer lowest_y candidate over edge position (x=±3.0). Edge fallback caused worst game
      # T55-T70: 8 consecutive NO_MERGE decisions → max_y runaway (2.0→3.33→deadline_crossed).
@@ -1066,19 +1057,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             reasons.append("HIGH_LAYER")
 
         score -= height_penalty
-
-        # v626: edge column penalty when same type exists at elevated max_y
-        # analysis: worst game T56-T61 chose edge positions (±3.0, ±2.6) repeatedly,
-        # causing max_y 1.07→2.77 runaway despite reactive pairs being available.
-        # HEIGHT_CONTROL only evaluates landing_y, ignoring x-position. Edge columns
-        # are dead-end paths — same type exists in interior but HEIGHT_CONTROL keeps
-        # selecting edge. Penalty discourages edge when same_type exists at max_y>=1.5.
-        # Does NOT violate rollback constraints: no height_mult change, no merge=false
-        # enforcement, v624/v625 suppression unchanged.
-        # refs: tmp/analysis_result.md (Implementation Plan)
-        if max_y >= 1.5 and same_type_pieces and not deadline_crossed and abs(x) >= 2.5:
-            score += -500.0 * merge_mult
-            reasons.append("EDGE_COLUMN_PENALTY")
 
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
