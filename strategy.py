@@ -62,6 +62,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v624: NEAR suppression in gap zone (deadline + max_y >= 2.0) — safety valve allows
+     # board-compression方向的NEAR only (landing_y < max_y - 0.3). Suppresses low-value NEAR
+     # at deadline with high max_y that caused worst game T55 (+21 delta) and T57 (delta=0).
+     # Does NOT affect: DIRECT merges, NEAR when safety valve applies, or NO merge.
+     # Fixes rollback failure mode: NEAR merge gap-zone suppression at deadline with high max_y
+     # refs: tmp/analysis_result.md
      # v409: graduated NEAR deadline risk — replace binary deadline_crossed with reactor deadline_margin
      # v366 used binary deadline_crossed: pieces just before deadline get 0 penalty, just after get full.
      # reactor deadline_margin is continuous (<0 crossed, 0-1 approaching). Graduated penalty provides
@@ -622,6 +628,22 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
+
+    # ----- v624: NEAR suppression in gap zone (deadline + max_y >= 2.0) -----
+    # worst game T55: NEAR selected at max_y=2.83, deadline_crossed=true, delta=+21 (low-value merge)
+    # worst game T57: NEAR selected, delta=+0 (failed)
+    # safety valve: allow NEAR only if it compresses board (landing_y < max_y - 0.3)
+    # Does NOT affect: DIRECT merges, NEAR when margin >= 1.0, or NO merge.
+    # refs: tmp/analysis_result.md (Implementation Plan v624)
+    # Fixes rollback failure mode: NEAR merge gap-zone suppression at deadline with high max_y
+    near_gap_suppressed = False
+    if deadline_crossed and max_y >= 2.0:
+        near_candidates = [c for c in results if c.get("merge_grade") == "NEAR"]
+        if near_candidates:
+            safe_near = [c for c in near_candidates if c.get("landing_y", 0) < max_y - 0.3]
+            if not safe_near:
+                near_gap_suppressed = True
+
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -669,7 +691,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       analyze_board.py (reactor deadline_margin field)
         # Fixes rollback failure mode: piece_count accumulation from failed NEAR at deadline (v366)
         # Fixes p25 collapse: binary cliff causes sudden behavior change at deadline crossing (v409)
-        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0:
+        # v624: gap-zone suppression — NEAR at deadline+max_y>=2.0 without safety valve is net negative
+        if merge_grade == "NEAR" and landing_y > 0 and reactor_margin < 1.0 and not near_gap_suppressed:
             risk_factor = min(1.0, max(0.0, 1.0 - reactor_margin))
             near_risk_penalty = landing_y * 300.0 * risk_factor
             score -= near_risk_penalty
