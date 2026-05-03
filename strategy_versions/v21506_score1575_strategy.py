@@ -62,13 +62,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v625: Strengthen v624 safety valve fallback — when near_gap_suppressed and no safe NEAR,
-     # prefer lowest_y candidate over edge position (x=±3.0). Edge fallback caused worst game
-     # T55-T70: 8 consecutive NO_MERGE decisions → max_y runaway (2.0→3.33→deadline_crossed).
-     # mandatory_themes.txt "NEXTを考慮したドロップ" — lowest_y is NEXT-aware (avoids high placement).
-     # Fallback only overrides edge positions (±3.0), preserving axis 8.8 NO_MERGE penalty.
-     # Fixes rollback failure mode: NEAR gap-zone suppression fallback → edge → max_y runaway
-     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, mandatory_themes.txt
      # v624: NEAR suppression in gap zone (deadline + max_y >= 2.0) — safety valve allows
      # board-compression方向的NEAR only (landing_y < max_y - 0.3). Suppresses low-value NEAR
      # at deadline with high max_y that caused worst game T55 (+21 delta) and T57 (delta=0).
@@ -644,15 +637,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # refs: tmp/analysis_result.md (Implementation Plan v624)
     # Fixes rollback failure mode: NEAR merge gap-zone suppression at deadline with high max_y
     near_gap_suppressed = False
-    near_gap_fallback_candidate = None  # v625: lowest_y fallback when near_gap_suppressed and no safe NEAR
     if deadline_crossed and max_y >= 2.0:
         near_candidates = [c for c in results if c.get("merge_grade") == "NEAR"]
         if near_candidates:
             safe_near = [c for c in near_candidates if c.get("landing_y", 0) < max_y - 0.3]
             if not safe_near:
                 near_gap_suppressed = True
-                # v625: store lowest landing_y candidate as fallback (NEXT-aware per mandatory_themes.txt)
-                near_gap_fallback_candidate = min(results, key=lambda c: c.get("landing_y", 99))
 
     for result in results:
         x = result["x"]
@@ -1491,17 +1481,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
-
-    # v625: When near_gap_suppressed and best is edge position, prefer lowest_y fallback.
-    # mandatory_themes.txt: "NEXTを考慮したドロップ" — use lowest_y candidate (NEXT-aware)
-    # worst game T55-T70: 8 consecutive NO_MERGE → edge fallback → max_y runaway
-    # Only override edge positions (±3.0), not intermediate positions.
-    if near_gap_suppressed and near_gap_fallback_candidate is not None:
-        if abs(best_x) >= 3.0:
-            best_x = near_gap_fallback_candidate["x"]
-            best_reason = "NEAR_GAP_SUPPRESSED_FALLBACK"
-            # If the fallback candidate had a reason from evaluation, prepend it
-            # (but edge positions never have merge_grade != NO, so reason stays as-is)
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
