@@ -64,6 +64,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v629: axis 1.7b GAP_ZONE_NEAR_PENALTY — penalty -500 for NEAR merge when max_y>=2.0+deadline_crossed
+     # Fixes failure mode: max_y>=2.0 NEAR merge failure causing max_y runaway (worst game T47-T56)
+     # gap-zone (max_y 2.0-2.5): existing HIGH_PC_NEAR_PENALTY (pc>=33) doesn't fire, NEAR risk unpenalized
+     # analysis_result.md Implementation Plan: best_score5801_strategy.py axis 1.7b (v567)移植
+     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
      # v628: axis 9.17 NO_MERGE_EDGE_DANGER_PENALTY — enhanced edge penalty for NO merge in danger zone
      # Fixes failure mode: edge placement (x=±3.0) in NO merge + critical board → max_y runaway
      # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
@@ -1064,6 +1069,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 bonus = 600.0 if deadline_crossed else 300.0
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
+
+        # ----- axis 1.7b: gap-zone NEAR merge penalty (v560_mod follow-up) -----
+        # When deadline is already crossed and max_y>=2.0, NEAR failure risk is highest —
+        # piece_count grows without merge benefit, accelerating game-over.
+        # Penalty -500 makes NO_MERGE low placement competitive vs NEAR when in gap zone.
+        # refs: game_history/20260410_183623_score0841.jsonl (T53, T57 gap-zone NEAR failures)
+        if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
+            score -= 500.0
+            reasons.append("GAP_ZONE_NEAR_PENALTY")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
