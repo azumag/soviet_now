@@ -62,6 +62,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v410: axis 9.7 congestion scaling — mandatory theme "NEXTを考慮したドロップをせよ"対応
+     # Axis 9.7 (pipeline-aware placement) gives 80pt bonus for NEXT merge opportunity but has no
+     # congestion scaling, unlike axis 9.6b. At piece_count>=28, height overwhelms merge opportunity,
+     # causing piece accumulation (worst: 36pc max_y=3.67, extra_low: 38→48pc reactive_pairs 5→9).
+     # Adding same formula as axis 9.6b: scale = min(1.0 + (pc-28)*0.12, 3.0), enhancing pipeline_bonus
+     # in congestion to prioritize NEXT-aware placement and prevent accumulation.
+     # Fixes mandatory theme violation: piece_count>=28領域でのNEXT考慮不足によるmerge機会消失
+     # refs: tmp/analysis_result.md, data/mandatory_themes.txt, tmp/batch_summary.txt
      # v409: graduated NEAR deadline risk — replace binary deadline_crossed with reactor deadline_margin
      # v366 used binary deadline_crossed: pieces just before deadline get 0 penalty, just after get full.
      # reactor deadline_margin is continuous (<0 crossed, 0-1 approaching). Graduated penalty provides
@@ -835,6 +843,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         best_adjacent_target = p
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
+                # axis 9.7 congestion scaling (mimics axis 9.6b behavior)
+                # mandatory theme "NEXTを考慮したドロップをせよ": piece_count>=28領域では高さ高さがmerge機会を圧倒するため、
+                # congestion時にpipeline_bonusを強化しNEXT-aware placementを促す
+                if piece_count >= 28:
+                    congestion_scale = min(1.0 + (piece_count - 28) * 0.12, 3.0)
+                    pipeline_bonus *= congestion_scale
                 score += pipeline_bonus
 
         # ----- v362/v368 → v369 → v371: merged_type-aware targeting + congestion-aware proximity -----
