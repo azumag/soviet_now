@@ -675,6 +675,27 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= near_risk_penalty
             reasons.append("NEAR_DEADLINE_RISK")
 
+        # ----- v500: HIGH_PC_NEAR_SUPPRESSION -----
+        # worst_game T59-T62: piece_count 36-42, deadline_crossed, NEAR selected but
+        # piece_count continued to grow (merge didn't reduce piece_count enough).
+        # Analysis: NEAR reason avg_score_delta=22.7 (vs DIRECT's 46.8), but this is average.
+        # At high piece_count (>=35) + deadline, NEAR failure is catastrophic because
+        # failed NEAR adds a high piece with no merge benefit, accelerating game over.
+        # The existing NEAR_DEADLINE_RISK (landing_y*300*risk_factor) doesn't capture
+        # piece_count growth risk — it only penalizes height, not board density.
+        # Additional penalty: (piece_count - 35) * 50 scales with board density.
+        # Example: pc=39, deadline_crossed, NEAR → extra penalty = (39-35)*50 = 200
+        # v500 change_log: "at deadline overpowered NEAR risk penalties, causing failed
+        #   NEAR selection at pc>=32+deadline" — v500 halved NEAR bonus to 300 but the
+        #   graduated penalty from reactor margin (axis 1.5) is still insufficient at high pc.
+        # refs: tmp/analysis_result.md (worst_game T59-T62 pattern),
+        #       tmp/batch_summary.txt (NEAR avg 22.7 vs DIRECT 46.8),
+        #       logs/change_log.txt (v500: NEAR deadline bonus 600→300)
+        # Fixes rollback failure mode: near_merge_cascade_at_high_pc_deadline
+        if deadline_crossed and piece_count >= 35 and merge_grade == "NEAR":
+            score -= (piece_count - 35) * 50.0
+            reasons.append("HIGH_PC_NEAR_SUPPRESSION")
+
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
         # targetのscore1359 T77(DIRECT_MERGE_HIGH_LAYER, +100)が示す通り、danger_direct_mergeは
