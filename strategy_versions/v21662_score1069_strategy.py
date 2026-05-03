@@ -81,17 +81,6 @@ Phases (determined by board max Y):
      #       tmp/improve_brief.md (type 15 starvation, n=24 batch),
      #       data/mandatory_themes.txt (NEXT考慮, 併合できる場合デッドライン超え禁止)
      #
-     # v464: axis 9.6 stacking suppression at reactive_pairs>=2 + deadline_crossed
-     # Hypothesis (analysis_result.md): rp=2 + deadline_crossed case lacks axis 9.6 suppression,
-     # causing uncontrolled stacking → high placement runaway → max_y 1.39→1.80 jump (T56)
-     # worst game T56: rp=2, deadline_crossed=true, merge_grade="NO" → MEDIUM_TOWER at x=2.8
-     # best game T131: rp=3, deadline_crossed=true, merge_grade="NO" → AVOID_BLOCK (low placement)
-     # At rp>=2 + deadline_crossed, axis 8.8 (-3000~-7000) should dominate all stacking bonuses.
-     # Change: wrap entire axis 9.6 block with "if not deadline_danger" guard
-     # Fixes rollback failure mode: rp=2 + deadline_crossedでの高配置runaway
-     # refs: tmp/analysis_result.md (worst game T56 failure analysis, Implementation Plan),
-     #       game_history/20260504_073458_score0713.jsonl (worst T56-57: max_y 1.39→1.80)
-     #
      # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at high congestion
      # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
      # Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally → edge/high wins via other axes
@@ -1092,86 +1081,74 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
         # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
         # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
-        # v463: extend axis 9.6 suppression to reactive_pairs>=2 in deadline danger zone
-        # worst game T56: rp=2, deadline_crossed=true, merge_grade="NO" →
-        #   MEDIUM_TOWER at x=2.8 (high landing_y) → max_y 1.39→1.80 jump
-        # best game T131: rp=3, deadline_crossed=true, merge_grade="NO" →
-        #   AVOID_BLOCK (low placement) → max_y=2.37 stable
-        # At rp>=2 + deadline_crossed, axis 8.8 (-3000~-7000) should dominate
-        # all stacking bonuses. current axis 9.6 suppression fires only at rp>=3,
-        # leaving rp=2 case with uncontrolled stacking → high placement runaway.
-        # Fixes rollback failure mode: rp=2 + deadline_crossedでの高配置runaway
-        # refs: tmp/analysis_result.md (worst game turn 56 failure analysis)
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
-            deadline_danger = deadline_crossed and (reactive_pair_count >= 2)
-            if not deadline_danger:
-                # v416: stacking target redirection — replace v414/v415 binary block with
-                # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
-                # way that doesn't also strengthen the alternative placement logic" — blocking
-                # stacking (v414/v415) removed guidance entirely, falling through to HEIGHT_CONTROL
-                # scatter which avg_score_delta=1.7. Now stacking ALWAYS fires, but the TARGET
-                # selection changes based on board congestion:
-                #   Normal: merged_type proximity (chain building, original algorithm)
-                #   Congested: lowest same-type piece (height-priority, natural height reduction)
-                # Congested conditions (from v414/v415 postmortem):
-                #   - max_y>=3.0 + deadline crossed: extreme danger, stacking at any height risky
-                #   - rp>=5 + max_y>=2.5: board congested, high stacking makes it worse
-                # In congested mode, stacking still pulls placement near a same-type piece (future
-                # merge potential) but chooses the LOWEST target, naturally reducing landing height.
-                # This is structurally different from blocking: stacking_bonus still competes with
-                # height penalty, providing a guided alternative to HEIGHT_CONTROL scatter.
-                # refs: game_history/20260330_200337_score0587.jsonl T67-73,
-                #       game_history/20260330_195749_score0574.jsonl T51-58,
-                #       tmp/state/last_rollback_postmortem.md (v413/v414/v415 failures)
-                stacking_congested = (
-                    (max_y >= 3.0 and deadline_crossed)
-                    or (reactive_pair_count >= 5 and max_y >= 2.5)
-                ) and merge_grade == "NO"
-                if current_type_has_reactive or current_type_has_near:
-                    if stacking_congested:
-                        # Height-priority: stack on lowest same-type piece
-                        # Preserves stacking incentive while naturally reducing height
-                        best_stack_target = min(
-                            same_type_pieces, key=lambda sp: sp.get("y", 10)
-                        )
-                        best_chain_score = 100.0
-                    else:
-                        # Chain-priority: merged_type proximity for chain building
-                        best_stack_target = same_type_stack_top
-                        best_chain_score = 0.0
-                        for sp in same_type_pieces:
-                            sp_x = sp.get("x", 0)
-                            sp_y = sp.get("y", -10)
-                            # merged_typeピースとの最短距離を計算
-                            min_merged_dist = float("inf")
-                            for p in pieces:
-                                if p.get("type") == merged_type:
-                                    dist = ((p["x"] - sp_x) ** 2 + (p["y"] - sp_y) ** 2) ** 0.5
-                                    if dist < min_merged_dist:
-                                        min_merged_dist = dist
-                            # 連鎖スコア: merged_typeに近いほど高く、高位すぎる場合は減衰
-                            if min_merged_dist < float("inf"):
-                                chain_score = max(0, 300.0 - min_merged_dist * 80.0)
-                                if sp_y > 1.0:
-                                    chain_score *= max(0, 1.0 - (sp_y - 1.0) * 0.5)
-                                if chain_score > best_chain_score:
-                                    best_chain_score = chain_score
-                                    best_stack_target = sp
-                    # best_stack_targetに近い配置にボーナス（高さに依存しない固定ボーナス）
-                    target_x = best_stack_target.get("x", 0)
-                    horizontal_distance = abs(x - target_x)
-                    if horizontal_distance < 2.0:
-                        stacking_bonus = best_chain_score + max(0, 100.0 - horizontal_distance * 40.0)
-                        # v408: piece_count congestion scaling — match axis 9.6b formula
-                        # At high pc, stacking must be stronger to compete with height penalty
-                        # and prevent HEIGHT_CONTROL edge scatter during merge droughts.
-                        # Axis 9.6b already uses this formula; 9.6 lacked it, creating an
-                        # asymmetry where reactive stacking was weaker than non-reactive proximity.
-                        if piece_count >= 28:
-                            congestion_scale = 1.0 + (piece_count - 28) * 0.12
-                            stacking_bonus *= min(congestion_scale, 3.0)
-                        score += stacking_bonus
-                        reasons.append("REACTIVE_PAIRS_STACKING")
+            # v416: stacking target redirection — replace v414/v415 binary block with
+            # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
+            # way that doesn't also strengthen the alternative placement logic" — blocking
+            # stacking (v414/v415) removed guidance entirely, falling through to HEIGHT_CONTROL
+            # scatter which avg_score_delta=1.7. Now stacking ALWAYS fires, but the TARGET
+            # selection changes based on board congestion:
+            #   Normal: merged_type proximity (chain building, original algorithm)
+            #   Congested: lowest same-type piece (height-priority, natural height reduction)
+            # Congested conditions (from v414/v415 postmortem):
+            #   - max_y>=3.0 + deadline crossed: extreme danger, stacking at any height risky
+            #   - rp>=5 + max_y>=2.5: board congested, high stacking makes it worse
+            # In congested mode, stacking still pulls placement near a same-type piece (future
+            # merge potential) but chooses the LOWEST target, naturally reducing landing height.
+            # This is structurally different from blocking: stacking_bonus still competes with
+            # height penalty, providing a guided alternative to HEIGHT_CONTROL scatter.
+            # refs: game_history/20260330_200337_score0587.jsonl T67-73,
+            #       game_history/20260330_195749_score0574.jsonl T51-58,
+            #       tmp/state/last_rollback_postmortem.md (v413/v414/v415 failures)
+            stacking_congested = (
+                (max_y >= 3.0 and deadline_crossed)
+                or (reactive_pair_count >= 5 and max_y >= 2.5)
+            ) and merge_grade == "NO"
+            if current_type_has_reactive or current_type_has_near:
+                if stacking_congested:
+                    # Height-priority: stack on lowest same-type piece
+                    # Preserves stacking incentive while naturally reducing height
+                    best_stack_target = min(
+                        same_type_pieces, key=lambda sp: sp.get("y", 10)
+                    )
+                    best_chain_score = 100.0
+                else:
+                    # Chain-priority: merged_type proximity for chain building
+                    best_stack_target = same_type_stack_top
+                    best_chain_score = 0.0
+                    for sp in same_type_pieces:
+                        sp_x = sp.get("x", 0)
+                        sp_y = sp.get("y", -10)
+                        # merged_typeピースとの最短距離を計算
+                        min_merged_dist = float("inf")
+                        for p in pieces:
+                            if p.get("type") == merged_type:
+                                dist = ((p["x"] - sp_x) ** 2 + (p["y"] - sp_y) ** 2) ** 0.5
+                                if dist < min_merged_dist:
+                                    min_merged_dist = dist
+                        # 連鎖スコア: merged_typeに近いほど高く、高位すぎる場合は減衰
+                        if min_merged_dist < float("inf"):
+                            chain_score = max(0, 300.0 - min_merged_dist * 80.0)
+                            if sp_y > 1.0:
+                                chain_score *= max(0, 1.0 - (sp_y - 1.0) * 0.5)
+                            if chain_score > best_chain_score:
+                                best_chain_score = chain_score
+                                best_stack_target = sp
+                # best_stack_targetに近い配置にボーナス（高さに依存しない固定ボーナス）
+                target_x = best_stack_target.get("x", 0)
+                horizontal_distance = abs(x - target_x)
+                if horizontal_distance < 2.0:
+                    stacking_bonus = best_chain_score + max(0, 100.0 - horizontal_distance * 40.0)
+                    # v408: piece_count congestion scaling — match axis 9.6b formula
+                    # At high pc, stacking must be stronger to compete with height penalty
+                    # and prevent HEIGHT_CONTROL edge scatter during merge droughts.
+                    # Axis 9.6b already uses this formula; 9.6 lacked it, creating an
+                    # asymmetry where reactive stacking was weaker than non-reactive proximity.
+                    if piece_count >= 28:
+                        congestion_scale = 1.0 + (piece_count - 28) * 0.12
+                        stacking_bonus *= min(congestion_scale, 3.0)
+                    score += stacking_bonus
+                    reasons.append("REACTIVE_PAIRS_STACKING")
 
         # ----- v367: axis 9.7 pipeline-aware placement guidance (sibling to 9.6) -----
         # Postmortem constraint: axis 9.7 should be a sibling of axis 9.6, not nested inside it.
