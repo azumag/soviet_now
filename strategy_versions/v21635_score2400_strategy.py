@@ -63,6 +63,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: axis 8.8-pre pre_russia_phase reinforcement — type 14→type 15 pipeline starvation fix
+     # Adopted Hypothesis (analysis_result.md): Pre-Russia Phase Type 14 Pipeline Reinforcement
+     # Zero type 15 across 24 batch games. Current +75 type14 proximity and +400 high-type merge
+     # too weak vs HEIGHT_CONTROL default. Changes:
+     #   1) Flat activation bonus: +350 when pre_russia_phase==True (signals pipeline mode switch)
+     #   2) High-type merge bonus: +400→+600 for merged_type>=10
+     #   3) Type 14 proximity: +75→+120 per piece (merge_grade=="NO" only)
+     #   4) Pipeline construction: +250 when next_type==14 && type14 already on board
+     # Fixes rollback failure mode: type 14→type 15 pipeline starvation (zero type 15 in 24 batch)
+     # refs: tmp/analysis_result.md (Implementation Plan),
+     #       tmp/improve_brief.md (type 15 starvation, n=24 batch),
+     #       data/mandatory_themes.txt (NEXT考慮, 併合できる場合デッドライン超え禁止)
+     #
      # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at high congestion
      # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
      # Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally → edge/high wins via other axes
@@ -1534,25 +1547,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # analysis_result.md adopted hypothesis: type 14→type 15 pipeline starvation (zero type 15 in 24 games)
         # When type 14 exists but no type 15, prioritize building the second type 14
         # pipeline. High-type merges (>=10) get bonus; NO-merge placement guided near type 14.
-        # vXXX: type 14 proximity now applies even when deadline_crossed=YES (unavoidable case)
+        # vXXX: pre_russia_phase reinforcement to address type 15 starvation across 24-game batch
         if pre_russia_phase:
-            # High-type merges (>=10) bonus — smaller than v503 original (+400 vs +800)
+            # 1) Flat activation bonus — signals strategic mode switch to pipeline building
+            score += 350.0
+            # 2) High-type merges (>=10) bonus — increased from +400 to +600
             candidate_merges = result.get("merges", [])
             for m in candidate_merges:
                 if m.get("merged_type", 0) >= 10:
-                    score += 400.0
-            # Type 14 proximity guide — smaller (+75 vs +150)
+                    score += 600.0
+            # 3) Type 14 proximity guide — increased from +75 to +120
             # When no merge available but type 14 exists, guide placement near type 14 pieces
             # mandatory_themes.txt: no placement past deadline without merge
-            # vXXX: always apply when type 14 exists — deadline_crossed=YES is unavoidable case
-            # (mandatory_themes "when mergeable" has no choice when merge_grade==NO)
             # Keep merge_grade=="NO" to avoid guiding toward type 14 when merges ARE available
             if merge_grade == "NO":
                 same_type_14_count = sum(1 for p in pieces if p.get("type") == 14)
                 if same_type_14_count > 0:
                     for p in pieces:
                         if p.get("type") == 14:
-                            score += 75.0 * (1.0 / (abs(x - p["x"]) + 0.5))
+                            score += 120.0 * (1.0 / (abs(x - p["x"]) + 0.5))
+                    # 4) Pipeline construction bonus — when next_type==14 and type 14 already on board,
+                    #    signal intent to build second type 14 for the merge pipeline
+                    #    mandatory_themes.txt: "NEXTを考慮したドロップをせよ"
+                    if next_type == 14:
+                        score += 250.0
 
          # ----- evaluation axis 6: chain merge bonus (v196: 初期段階CHAIN_MERGE有効化版)
         # batch_summaryでCHAIN_MERGE関連がavg_score_delta=50.7-61.0（高価値）だが選択率は5.8%以下と低いことを確認。

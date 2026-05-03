@@ -1,10 +1,10 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-04 04:56:20 JST`
-- Nodes: `1324`
-- Edges: `1807`
-- Current: `abc3d92b50b8`
-- Anchor: `19c035bdd84a`
+- Updated: `2026-05-04 06:32:27 JST`
+- Nodes: `1325`
+- Edges: `1808`
+- Current: `cb2d5442e4dd`
+- Anchor: `abc3d92b50b8`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
 - Older history is backfilled from `git log -- strategy.py` when local rolling data is incomplete.
@@ -15,8 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_19c035bdd84a["19c035bdd84a<br/>ANCHOR<br/>g=14 n=14<br/>comp=11601.4"]
-    h_9661c91af640["9661c91af640<br/>g=12 n=12<br/>comp=9744.6"]
     h_839930b44612["839930b44612<br/>g=24 n=20<br/>comp=11569.7"]
     h_1e1d507e2bf2["1e1d507e2bf2<br/>g=24 n=20<br/>comp=10423.0"]
     h_007f02d1457f["007f02d1457f<br/>g=24 n=20<br/>comp=10701.2"]
@@ -69,13 +67,14 @@ flowchart TD
     h_cb07469bc4e1["cb07469bc4e1<br/>g=24 n=20<br/>comp=11366.4"]
     h_e005862e2c1b["e005862e2c1b<br/>g=12 n=12<br/>comp=10183.3"]
     h_f4600e910800["f4600e910800<br/>g=17 n=17<br/>comp=10414.2"]
+    h_abc3d92b50b8["abc3d92b50b8<br/>ANCHOR<br/>g=24 n=20<br/>comp=11979.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_abc3d92b50b8["abc3d92b50b8<br/>CURRENT"]
+    h_cb2d5442e4dd["cb2d5442e4dd<br/>CURRENT"]
 
     h_839930b44612 -->|improve| h_1e1d507e2bf2
     h_1e1d507e2bf2 -->|improve| h_007f02d1457f
@@ -133,14 +132,13 @@ flowchart TD
     h_d191fa48a7db -->|improve| h_f4600e910800
     h_f4600e910800 -. rollback .-> h_1ed49b30fbf8
     h_1ed49b30fbf8 -->|improve| h_abc3d92b50b8
+    h_abc3d92b50b8 -->|improve| h_cb2d5442e4dd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_19c035bdd84a anchor;
-    class h_9661c91af640 plain;
     class h_839930b44612 plain;
     class h_1e1d507e2bf2 plain;
     class h_007f02d1457f plain;
@@ -193,13 +191,14 @@ flowchart TD
     class h_cb07469bc4e1 plain;
     class h_e005862e2c1b plain;
     class h_f4600e910800 plain;
+    class h_abc3d92b50b8 anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_abc3d92b50b8 current;
+    class h_cb2d5442e4dd current;
 ```
 
 ## Detail 1/17
@@ -4234,7 +4233,7 @@ flowchart TD
     h_b967cae67cc0["b967cae67cc0<br/>g=12 n=12<br/>comp=11291.0"]
     h_d7d8144f0091["d7d8144f0091<br/>g=12 n=12<br/>comp=10179.2"]
     h_bafc54d108f9["bafc54d108f9<br/>g=12 n=12<br/>comp=11344.3"]
-    h_19c035bdd84a["19c035bdd84a<br/>ANCHOR<br/>g=14 n=14<br/>comp=11601.4"]
+    h_19c035bdd84a["19c035bdd84a<br/>g=14 n=14<br/>comp=11601.4"]
     h_6a20b35c5600["6a20b35c5600<br/>g=12 n=12<br/>comp=9571.5"]
     h_8407c9e63dae["8407c9e63dae<br/>g=12 n=12<br/>comp=10472.7"]
     h_2e07e65e84d8["2e07e65e84d8<br/>g=12 n=12<br/>comp=9766.6"]
@@ -4401,7 +4400,7 @@ flowchart TD
     class h_b967cae67cc0 plain;
     class h_d7d8144f0091 plain;
     class h_bafc54d108f9 plain;
-    class h_19c035bdd84a anchor;
+    class h_19c035bdd84a plain;
     class h_6a20b35c5600 plain;
     class h_8407c9e63dae plain;
     class h_2e07e65e84d8 plain;
@@ -4721,9 +4720,9 @@ flowchart TD
 
 ## Detail 17/17
 
-- Range: `200a7fefef4f` .. `abc3d92b50b8`
-- Nodes in this diagram: `44`
-- Internal edges in this diagram: `37`
+- Range: `200a7fefef4f` .. `cb2d5442e4dd`
+- Nodes in this diagram: `45`
+- Internal edges in this diagram: `38`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
 - Cross-chunk link: `c5f91e3b3729 -.rollback.-> d3c026afa6d2`
 - Cross-chunk link: `d3c026afa6d2 --improve--> a2f57996c7a0`
@@ -4777,13 +4776,14 @@ flowchart TD
     h_cb07469bc4e1["cb07469bc4e1<br/>g=24 n=20<br/>comp=11366.4"]
     h_e005862e2c1b["e005862e2c1b<br/>g=12 n=12<br/>comp=10183.3"]
     h_f4600e910800["f4600e910800<br/>g=17 n=17<br/>comp=10414.2"]
+    h_abc3d92b50b8["abc3d92b50b8<br/>ANCHOR<br/>g=24 n=20<br/>comp=11979.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_abc3d92b50b8["abc3d92b50b8<br/>CURRENT"]
+    h_cb2d5442e4dd["cb2d5442e4dd<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
@@ -4822,6 +4822,7 @@ flowchart TD
     h_cb07469bc4e1 -->|improve| h_e005862e2c1b
     h_e005862e2c1b -. rollback .-> h_d191fa48a7db
     h_d191fa48a7db -->|improve| h_f4600e910800
+    h_abc3d92b50b8 -->|improve| h_cb2d5442e4dd
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4865,16 +4866,27 @@ flowchart TD
     class h_cb07469bc4e1 plain;
     class h_e005862e2c1b plain;
     class h_f4600e910800 plain;
+    class h_abc3d92b50b8 anchor;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_abc3d92b50b8 current;
+    class h_cb2d5442e4dd current;
 ```
 
 ## Transition Notes
+
+### Improve Game#21639 `abc3d92b -> cb2d5442`
+
+- scores: `9964 8385 10159 12823 12487 8765 13060 11492 13252 8365 15346 10820 16514 12699 9766 16069 8649 10649 11452 16351 11907 15251 23007 16672`
+- Changelog
+- 2026-05-04: HEIGHT_CONTROL_SUPPRESS edge coefficient 0.70 -> 1.00
+- - Rollback failure mode: edge scatter in rp>=3 && mg=NO && deadline_crossed
+- - refs: tmp/analysis_result.md
+- edge_coeff 1.0强化: edge placementへのコスト增加により、中央配置を促進
+- key=lambda r: r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 1.00
 
 ### Improve Game#21615 `1ed49b30 -> abc3d92b`
 

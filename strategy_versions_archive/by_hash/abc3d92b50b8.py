@@ -55,11 +55,6 @@ Phases (determined by board max Y):
      CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
-# Changelog
-# 2026-05-04: HEIGHT_CONTROL_SUPPRESS edge coefficient 0.70 -> 1.00
-#   - Rollback failure mode: edge scatter in rp>=3 && mg=NO && deadline_crossed
-#   - refs: tmp/analysis_result.md
-
 # Fixed interface:
 # decide(game_state: dict, analysis: dict) -> dict
 #    Returns: {"x": float, "reason": str}
@@ -2027,10 +2022,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
             __shc_no_merge = [r for r in results if r.get("merge_grade") == "NO"]
             if __shc_no_merge:
                 # edge-aware: prefer central-low over edge-low; landing_y diff > 2.1 can still win
-                # edge_coeff 1.0强化: edge placementへのコスト增加により、中央配置を促進
                 __shc_lowest = min(
                     __shc_no_merge,
-                    key=lambda r: r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 1.00
+                    key=lambda r: r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 0.70
                 )
                 best_x = float(__shc_lowest.get("x", 0.0) or 0.0)
                 best_reason = "HEIGHT_CONTROL_SUPPRESS_NO_MERGE"
