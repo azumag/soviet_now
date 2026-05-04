@@ -68,6 +68,21 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v690c: DEADLINE_NO_MERGE_HARD_GUARD — hard block deadline-crossing NO_MERGE when deadline_crossed && !merge_available
+     # analysis_result.md adopted hypothesis: DEADLINE_NO_MERGE_HARD_GUARD
+     # Problem: v689b(-500) + v411(-1200) = -1700 penalty still insufficient at pc>=35 where height penalty
+     #   differentials shrink and deadline-crossing candidates still win.
+     #   worst_game T60/T61-T63: deadline_crossed=true, merge_available=false, crosses_deadline=true selected
+     #   → mandatory_themes.txt violation: "デッドラインを超える位置上-pieceを置く場合は、併合できる場合に限る"
+     # Mechanism: When deadline_crossed=true AND global merge_available=false (no DIRECT/NEAR anywhere),
+     #   deadline-crossing NO_MERGE candidates are forcibly rejected via guard (before scoring).
+     #   Safe non-crossing NO_MERGE selected if available; fallback is lowest landing_y.
+     #   v689b/v411 penalty remains as failsafe for cases where guard doesn't fire.
+     # Constraint: Does NOT fire when merge_available=true (scoring handles it).
+     #   Does NOT fire when deadline_crossed=false. No turn-number threshold added.
+     # Fixes rollback failure mode: deadline_crossed && merge_available=false with crosses_deadline=true selection
+     # refs: tmp/analysis_result.md (Implementation Plan: DEADLINE_NO_MERGE_HARD_GUARD),
+     #       mandatory_themes.txt (deadline principle), game_history/20260504_223236_score0562.jsonl T60-63
      # v690: LOW phase merge priority — force merge over HEIGHT_CONTROL when merge_available
      # analysis_result.md adopted hypothesis: "Early game merge priority strengthening"
      # Problem: worst_game T1-7 shows 6/7 HEIGHT_CONTROL selections despite merge_available=true.
@@ -1120,6 +1135,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if __dlg_safe:
             __dlg_best = min(__dlg_safe, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
             return {"x": float(__dlg_best.get("x", 0.0) or 0.0), "reason": "DEADLINE_GUARD_SAFE_LANDING"}
+        # === DEADLINE_NO_MERGE_HARD_GUARD (v690c) ===
+        # mandatory_themes.txt: "デッドラインを超える位置上-pieceを置く場合は、併合できる場合に限る"
+        # When deadline_crossed && merge_available=false, deadline-crossing NO_MERGE
+        # candidates are forbidden regardless of other score components.
+        # v689b(-500) + v411(-1200) penalty was insufficient at pc>=35; hard guard catches what penalty cannot.
+        __dlg_no_merge_xing = [c for c in __dlg_cands
+                               if isinstance(c, dict) and c.get("merge_grade") == "NO"
+                               and c.get("crosses_deadline")]
+        if __dlg_no_merge_xing and game_state.get("deadline_crossed", False):
+            _has_merge_global = any(
+                isinstance(c, dict) and c.get("merge_grade") in ["DIRECT", "NEAR"]
+                for c in __dlg_cands
+            )
+            if not _has_merge_global:
+                # Force selection of non-crossing NO_MERGE candidate (lowest landing_y)
+                __dlg_safe_no = [c for c in __dlg_cands
+                                 if isinstance(c, dict) and c.get("merge_grade") == "NO"
+                                 and not c.get("crosses_deadline")]
+                if __dlg_safe_no:
+                    __dlg_best = min(__dlg_safe_no, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+                    return {"x": float(__dlg_best.get("x", 0.0) or 0.0),
+                            "reason": "DEADLINE_GUARD_NO_MERGE_SAFE"}
+                # Fallback: if ALL NO_MERGE candidates cross deadline, choose lowest landing_y
+                __dlg_worst = min(__dlg_cands, key=lambda c: float(c.get("landing_y", 99.0) or 99.0))
+                return {"x": float(__dlg_worst.get("x", 0.0) or 0.0),
+                        "reason": "DEADLINE_GUARD_NO_MERGE_FALLBACK"}
     # --- END DEADLINE GUARD ---
 
     results = analysis.get("results", [])
