@@ -92,21 +92,6 @@ Phases (determined by board max Y):
      # refs: tmp/analysis_result.md (worst game T56 failure analysis, Implementation Plan),
      #       game_history/20260504_073458_score0713.jsonl (worst T56-57: max_y 1.39→1.80)
      #
-     # v465: TWO-CONSTANT FIX Part A — extend axis 9.6 suppression to rp>=2 + max_y>1.5
-     # Hypothesis (analysis_result.md): worst game T56: rp=2, max_y=1.71 → HIGH_TOWER selected → max_y jumped 0.57
-     # Adding max_y>1.5 threshold catches this case and suppresses stacking at moderate height when merge potential exists.
-     # Change: deadline_danger = (reactive_pair_count>=2 and max_y>1.5) or deadline_crossed
-     # Fixes rollback failure mode: rp=2 + max_y>1.5での高配置runaway
-     # refs: tmp/analysis_result.md (Implementation Plan Part A)
-     #
-     # v466: TWO-CONSTANT FIX Part B — mandatory merge enforcement at rp>=4 + max_y>2.0
-     # Hypothesis (analysis_result.md): worst game T58: rp=5, max_y=3.33, merge_grade="NO" → NO_MERGE selected
-     # Mandatory theme: "デッドライン付近の危険盤面領域では、併合を優先するべき"
-     # Strong penalty prevents worst-game T58 pattern where abundant reactive pairs existed but NO_MERGE won.
-     # Change: Add axis 8.8d: if rp>=4 && max_y>2.0 && mg==NO, score -= 4000 (MANDATORY_MERGE_ENFORCEMENT)
-     # Fixes rollback failure mode: rp=5 + max_y=3.33 + NO_MERGE (worst game T58 collapse)
-     # refs: tmp/analysis_result.md (Implementation Plan Part B, mandatory_themes.txt)
-     #
      # vXXX: axis 8.8c merge opportunity proximity bonus for NO_MERGE at high congestion
      # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
      # Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally → edge/high wins via other axes
@@ -1117,13 +1102,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # leaving rp=2 case with uncontrolled stacking → high placement runaway.
         # Fixes rollback failure mode: rp=2 + deadline_crossedでの高配置runaway
         # refs: tmp/analysis_result.md (worst game turn 56 failure analysis)
-        # vXXX: Part A of TWO-CONSTANT FIX — extend suppression to rp>=2 + max_y>1.5
-        # Worst game T56: rp=2, max_y=1.71, merge_grade="NO" → HIGH_TOWER selected → max_y jumped 0.57
-        # Adding max_y>1.5 threshold catches this case and suppresses stacking at moderate height
-        # when merge potential exists (rp>=2). deadline_crossed still fires independently.
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
-            height_suppression = (reactive_pair_count >= 2 and max_y > 1.5) or deadline_crossed
-            if not height_suppression:
+            deadline_danger = deadline_crossed and (reactive_pair_count >= 2)
+            if not deadline_danger:
                 # v416: stacking target redirection — replace v414/v415 binary block with
                 # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
                 # way that doesn't also strengthen the alternative placement logic" — blocking
@@ -1946,19 +1927,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score += 150.0  # bonus for underground center positions
             elif landing_y < 1.0:
                 score += 80.0   # partial bonus for low center positions
-
-        # ----- evaluation axis 8.8d: mandatory merge enforcement at high rp + elevated height (vXXX) -----
-        # Part B of TWO-CONSTANT FIX — mandatory merge enforcement when rp>=4 && max_y>2.0
-        # Worst game T58: rp=5, max_y=3.33, merge_grade="NO" → NO_MERGE selected → 0 merges final 5 turns → score=465
-        # Mandatory theme: "デッドライン付近の危険盤面領域では、併合を優先するべき"
-        # At rp>=4 + max_y>2.0, board is in extreme danger — every NO_MERGE turn risks max_y runaway.
-        # Strong penalty prevents worst-game T58 pattern where abundant reactive pairs existed but NO_MERGE won.
-        # refs: tmp/analysis_result.md (Implementation Plan Part B),
-        #       game_history/20260504_094804_score0465.jsonl T58 (worst: rp=5, max_y=3.33, NO_MERGE),
-        #       mandatory_themes.txt (デッドライン付近の危険盤面では併合を優先)
-        if reactive_pair_count >= 4 and max_y > 2.0 and merge_grade == "NO":
-            score -= 4000.0
-            reasons.append("MANDATORY_MERGE_ENFORCEMENT")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
