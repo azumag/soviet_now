@@ -59,13 +59,6 @@ Phases (determined by board max Y):
 # 2026-05-04: HEIGHT_CONTROL_SUPPRESS edge coefficient 0.70 -> 1.00
 #   - Rollback failure mode: edge scatter in rp>=3 && mg=NO && deadline_crossed
 #   - refs: tmp/analysis_result.md
-# vXXX: suppress height_mult at NO_MERGE + deadline_crossed + pc>=25 + MEDIUM/HIGH phase
-# Worst game T52: height_mult=1.4 × height_penalty ≈ +261 > NO_MERGE penalty (-150)
-#   → height wins, max_y escalates to 2.05, game over at turn 57
-# Rollback constraint forbids strengthening axis 9.6b or adding merge bonuses,
-# but modifying height_mult is NOT a merge bonus — phase-specific adjustment only.
-# Fixes rollback failure mode: NO_MERGE penalty structurally insufficient vs height incentive
-# refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt (deadline merge rule)
 
 # Fixed interface:
 # decide(game_state: dict, analysis: dict) -> dict
@@ -882,19 +875,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         phase = "CRITICAL"
         height_mult = 1.0  # CRITICAL height penalty basic value only
         merge_mult = 0.6  # v42: CRITICAL phase merge suppression
-
-    # vXXX: suppress height incentive during NO_MERGE at deadline with high piece count
-    # Worst game T52: height_mult=1.4 × height_penalty ≈ +261 > NO_MERGE penalty (-150)
-    #   → height wins, max_y escalates to 2.05, game over at turn 57
-    # Best game T152: similar conditions but height_mult=0.8 would make +149 < -150
-    # Rollback constraint forbids strengthening axis 9.6b or adding merge bonuses,
-    # but modifying height_mult is NOT a merge bonus. Phase-specific adjustment only.
-    # Mandatory themes: deadline placement only when merge possible.
-    #   When merge_grade==NO and deadline_crossed, height selection violates this.
-    #   Reducing height_mult here makes the NO_MERGE penalty win the competition.
-    if piece_count >= 25 and deadline_crossed and merge_grade == "NO":
-        if phase in ("MEDIUM", "HIGH"):
-            height_mult = 0.8  # Suppress height to let NO_MERGE penalty win
 
     # --- next piece information ---
     next_piece = game_state.get("next", {})
