@@ -68,6 +68,37 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v690: LOW phase merge priority — force merge over HEIGHT_CONTROL when merge_available
+     # analysis_result.md adopted hypothesis: "Early game merge priority strengthening"
+     # Problem: worst_game T1-7 shows 6/7 HEIGHT_CONTROL selections despite merge_available=true.
+     #   During LOW phase (max_y < 0.8) with merge available, HEIGHT_CONTROL still wins too often
+     #   because merge bonus is too low relative to height penalty (height_mult=0.4).
+     #   batch_summary: HEIGHT_CONTROL 27.2% (low-score) vs 17.6% (high-score) — 1.5x difference.
+     #   DIRECT_MERGE avg_score_delta=39.4 vs HEIGHT_CONTROL avg_score_delta=2.1.
+     # Mechanism: When max_y < 0.8 (LOW phase) AND has_merge_opportunity AND
+     #   merge_grade in (DIRECT, NEAR), add +200*merge_mult to ensure merge wins over HEIGHT_CONTROL.
+     #   This is purely additive and does NOT suppress HEIGHT_CONTROL when merge_available=false.
+     # Constraint: Does NOT reduce height_mult in LOW phase. Does NOT add turn-number threshold.
+     #   Does NOT suppress HEIGHT_CONTROL when merge_available=false. Only additive bonus.
+     #   Fixes rollback failure mode: early-game HEIGHT_CONTROL over-selection (score_gap=-1000.1 comp)
+     #   Expected: rp=1-2 HEIGHT_CONTROL frequency <10% (target is 11.2%), low-type merge rate decrease.
+     # refs: tmp/analysis_result.md (Implementation Plan: LOW phase merge priority),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 27.2% low vs 17.6% high),
+     #       tmp/state/last_rollback_postmortem.md (failure_mode: early-game HEIGHT_CONTROL over-selection),
+     #       game_history/20260504_150755_score0327.jsonl (worst game T1-7)
+     # v689: DEADLINE_NO_MERGE_POSITIONAL_PENALTY — positional penalty for deadline_crossed+no_merge_available
+     # analysis_result.md adopted hypothesis: "deadline NO_MERGE position penalty"
+     # Problem: worst_game T48-67: deadline_crossed=true, merge_available=false, x=3.0 selected repeatedly
+     #   — positions that cross the deadline when no merge is available anywhere.
+     #   mandatory_themes.txt: "デッドラインを超える位置上-pieceを置く場合は、併合できる場合に限る"
+     # Mechanism: when deadline_crossed=True && has_merge_opportunity=False && merge_grade=NO &&
+     #   candidate crosses_deadline, apply extra -500 penalty (stacks with v411 -1200, total -1700).
+     #   Different from v411: v411 fires for any merge_grade=NO+crosses_deadline; v689b checks global
+     #   deadline_crossed state + global merge availability.
+     # Constraint: Does NOT suppress REACTIVE_PAIRS_NO_MERGE_PENALTY. Does NOT add turn-number threshold.
+     # Fixes rollback failure mode: deadline_crossed+merge_available=false positional scatter (mandatory theme violation)
+     # refs: tmp/analysis_result.md (Implementation Plan: deadline NO_MERGE position penalty),
+     #       mandatory_themes.txt, game_history/20260504_132550_score0735.jsonl T48-67
      # v688: DEADLINE_HIGH_BOARD_NEAR_SUPPRESSION scaled — piece_count-scaled NEAR suppression at deadline+high_board
      # analysis_result.md adopted hypothesis: flat -2500 suppression insufficient at pc>=36 where bonuses exceed it
      #   worst_game T75 (pc=36, danger=3): suppression -2500 + v680 -3600 = -6100 vs bonuses ~4000 → NEAR still wins
@@ -2509,6 +2540,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
+        # ----- v690: LOW phase merge priority — force merge over HEIGHT_CONTROL in early game -----
+        # analysis_result.md adopted hypothesis: "Early game merge priority strengthening"
+        # Problem: worst_game T1-7 shows 6/7 HEIGHT_CONTROL selections despite merge_available=true.
+        #   During LOW phase (max_y < 0.8) with merge available, HEIGHT_CONTROL still wins too often
+        #   because merge bonus is too low relative to height penalty.
+        #   batch_summary: HEIGHT_CONTROL 27.2% (low-score) vs 17.6% (high-score) — 1.5x difference.
+        #   DIRECT_MERGE avg_score_delta=39.4 vs HEIGHT_CONTROL avg_score_delta=2.1.
+        # Mechanism: When max_y < 0.8 (LOW phase) AND merge_available=true AND
+        #   merge_grade in (DIRECT, NEAR), add +200 * merge_mult to ensure merge candidate
+        #   wins over HEIGHT_CONTROL. This is purely additive and does not suppress
+        #   HEIGHT_CONTROL when merge_available=false.
+        # Constraint: Does NOT reduce height_mult in LOW phase. Does NOT add turn-number threshold.
+        #   Does NOT suppress HEIGHT_CONTROL when merge_available=false.
+        #   Only fires when this candidate's merge_grade is DIRECT or NEAR AND
+        #   there exists at least one DIRECT/NEAR candidate globally (has_merge_opportunity).
+        # Expected effect: Early game (turns 1-10) merge selections increase, preventing the
+        #   "6/7 HEIGHT_CONTROL despite merge_available" pattern.
+        #   Addresses rollback constraint: "forbid: early-game (turns 1-10) HEIGHT_CONTROL
+        #   over-selection when merge_available=true (score_gap=-1000.1 comp)"
+        # refs: tmp/analysis_result.md (Implementation Plan: LOW phase merge priority),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 27.2% low vs 17.6% high),
+        #       game_history/20260504_150755_score0327.jsonl (worst game T1-7)
+        # Fixes rollback failure mode: early-game HEIGHT_CONTROL over-selection when merge_available=true
+        if (max_y < 0.8
+                and has_merge_opportunity
+                and merge_grade in ["DIRECT", "NEAR"]):
+            score += 200.0 * merge_mult
+            reasons.append("LOW_PHASE_MERGE_PRIORITY")
+
         # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization, enhanced) -----
         # batch_summaryでHEIGHT_CONTROLが23.8%選択(avg_score_delta=1.2)と過剰であることを確認。
         # NEAR_MERGE系reasonsがavg_score_delta=28-57（高価値）だが選択率が3.8-9.2%と低いことを確認。
@@ -2967,6 +3027,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NO" and not russia_phase and result.get("crosses_deadline", False):
             score -= 1200.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE")
+
+        # ----- v411b: deadline-crossed NO-merge positional penalty (analysis_result.md adopted) -----
+        # analysis_result.md adopted hypothesis: "deadline NO_MERGE position penalty"
+        # Problem: Worst game T48-67: deadline_crossed=true, merge_available=false, yet x=3.0
+        #   selected repeatedly — positions that cross the deadline when no merge is available.
+        #   mandatory_themes.txt: "デッドラインを超える位置上-pieceを置く場合は、併合できる場合に限る"
+        #   v411 fires whenever merge_grade=NO && crosses_deadline=True, but does NOT check
+        #   whether deadline_crossed=True globally AND merge is available.
+        #   The worst game's fatal pattern: deadline_crossed=true with merge_available=false
+        #   (no DIRECT/NEAR anywhere), yet placing at x=±3.0 (deadline-crossing position).
+        # Mechanism: Add extra penalty when deadline_crossed=True && merge_available=False &&
+        #   candidate_crosses_deadline=True. This is a positional penalty specific to the
+        #   "deadline crossed + no merge available" danger zone — different from v411's general
+        #   deadline-crossing penalty.
+        #   Penalty (-500) stacks with v411 (-1200), total -1700 for deadline-crossing NO_MERGE
+        #   when deadline has been crossed and no merge is available anywhere.
+        #   Does NOT suppress REACTIVE_PAIRS_NO_MERGE_PENALTY — that mechanism is working;
+        #   the failure is positional (where the piece is placed, not whether to merge).
+        #   Does NOT add turn threshold — uses only board state conditions.
+        # refs: tmp/analysis_result.md (Implementation Plan: deadline NO_MERGE position penalty),
+        #       mandatory_themes.txt ("deadline placing" mandatory theme),
+        #       game_history/20260504_132550_score0735.jsonl T48-67 (worst game failure mode)
+        # Fixes rollback failure mode: deadline_crossed+merge_available=false positional scatter
+        if (deadline_crossed
+                and not has_merge_opportunity
+                and merge_grade == "NO"
+                and result.get("crosses_deadline", False)):
+            score -= 500.0
+            reasons.append("DEADLINE_NO_MERGE_POSITIONAL_PENALTY")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).

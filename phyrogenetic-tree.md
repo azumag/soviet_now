@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-04 15:48:30 JST`
-- Nodes: `1329`
-- Edges: `1813`
-- Current: `4c4760714b46`
+- Updated: `2026-05-04 17:47:10 JST`
+- Nodes: `1330`
+- Edges: `1814`
+- Current: `2f92abcd02ba`
 - Anchor: `fedb8705c35e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_1ed49b30fbf8["1ed49b30fbf8<br/>g=120 n=20<br/>comp=10560.9"]
     h_743cb35ea7ed["743cb35ea7ed<br/>g=24 n=20<br/>comp=11326.3"]
     h_4564a12567cf["4564a12567cf<br/>g=24 n=20<br/>comp=11093.3"]
     h_05b26ea8f969["05b26ea8f969<br/>g=16 n=16<br/>comp=10963.3"]
@@ -68,24 +67,18 @@ flowchart TD
     h_fedb8705c35e["fedb8705c35e<br/>ANCHOR<br/>g=24 n=20<br/>comp=12437.6"]
     h_1640d9113c4d["1640d9113c4d<br/>g=24 n=20<br/>comp=10601.3"]
     h_d9a3d4750350["d9a3d4750350<br/>g=24 n=20<br/>comp=11906.6"]
+    h_4c4760714b46["4c4760714b46<br/>g=24 n=20<br/>comp=12182.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_4c4760714b46["4c4760714b46<br/>CURRENT"]
+    h_2f92abcd02ba["2f92abcd02ba<br/>CURRENT"]
 
-    h_1ed49b30fbf8 -->|improve| h_743cb35ea7ed
     h_743cb35ea7ed -->|improve| h_4564a12567cf
     h_4564a12567cf -->|improve| h_05b26ea8f969
-    h_05b26ea8f969 -. rollback .-> h_1ed49b30fbf8
-    h_1ed49b30fbf8 -->|improve| h_a898938e03fe
-    h_a898938e03fe -. rollback .-> h_1ed49b30fbf8
-    h_1ed49b30fbf8 -->|improve| h_5c5e818b581d
     h_5c5e818b581d -->|improve| h_24569d8b2f96
-    h_24569d8b2f96 -. rollback .-> h_1ed49b30fbf8
-    h_1ed49b30fbf8 -->|improve| h_09d2c8063925
     h_09d2c8063925 -->|improve| h_7f8a8c7550fc
     h_7f8a8c7550fc -. rollback .-> h_09d2c8063925
     h_09d2c8063925 -->|improve| h_0d6f3ca799fe
@@ -127,19 +120,17 @@ flowchart TD
     h_cb07469bc4e1 -->|improve| h_e005862e2c1b
     h_e005862e2c1b -. rollback .-> h_d191fa48a7db
     h_d191fa48a7db -->|improve| h_f4600e910800
-    h_f4600e910800 -. rollback .-> h_1ed49b30fbf8
-    h_1ed49b30fbf8 -->|improve| h_abc3d92b50b8
     h_abc3d92b50b8 -->|improve| h_cb2d5442e4dd
     h_cb2d5442e4dd -->|improve| h_fedb8705c35e
     h_fedb8705c35e -->|improve| h_1640d9113c4d
     h_d9a3d4750350 -->|improve| h_4c4760714b46
+    h_4c4760714b46 -->|improve| h_2f92abcd02ba
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_1ed49b30fbf8 plain;
     class h_743cb35ea7ed plain;
     class h_4564a12567cf plain;
     class h_05b26ea8f969 plain;
@@ -192,13 +183,14 @@ flowchart TD
     class h_fedb8705c35e anchor;
     class h_1640d9113c4d plain;
     class h_d9a3d4750350 plain;
+    class h_4c4760714b46 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_4c4760714b46 current;
+    class h_2f92abcd02ba current;
 ```
 
 ## Detail 1/17
@@ -4720,9 +4712,9 @@ flowchart TD
 
 ## Detail 17/17
 
-- Range: `200a7fefef4f` .. `4c4760714b46`
-- Nodes in this diagram: `49`
-- Internal edges in this diagram: `41`
+- Range: `200a7fefef4f` .. `2f92abcd02ba`
+- Nodes in this diagram: `50`
+- Internal edges in this diagram: `42`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
 - Cross-chunk link: `c5f91e3b3729 -.rollback.-> d3c026afa6d2`
 - Cross-chunk link: `d3c026afa6d2 --improve--> a2f57996c7a0`
@@ -4781,13 +4773,14 @@ flowchart TD
     h_fedb8705c35e["fedb8705c35e<br/>ANCHOR<br/>g=24 n=20<br/>comp=12437.6"]
     h_1640d9113c4d["1640d9113c4d<br/>g=24 n=20<br/>comp=10601.3"]
     h_d9a3d4750350["d9a3d4750350<br/>g=24 n=20<br/>comp=11906.6"]
+    h_4c4760714b46["4c4760714b46<br/>g=24 n=20<br/>comp=12182.5"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_4c4760714b46["4c4760714b46<br/>CURRENT"]
+    h_2f92abcd02ba["2f92abcd02ba<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
@@ -4830,6 +4823,7 @@ flowchart TD
     h_cb2d5442e4dd -->|improve| h_fedb8705c35e
     h_fedb8705c35e -->|improve| h_1640d9113c4d
     h_d9a3d4750350 -->|improve| h_4c4760714b46
+    h_4c4760714b46 -->|improve| h_2f92abcd02ba
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4878,16 +4872,27 @@ flowchart TD
     class h_fedb8705c35e anchor;
     class h_1640d9113c4d plain;
     class h_d9a3d4750350 plain;
+    class h_4c4760714b46 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_4c4760714b46 current;
+    class h_2f92abcd02ba current;
 ```
 
 ## Transition Notes
+
+### Improve Game#21783 `4c476071 -> 2f92abcd`
+
+- scores: `13824 18847 15786 13799 14846 17587 11262 15983 9272 12075 16580 11196 9762 15230 12811 17767 8701 12844 4956 22295 12505 11485 20395 11926`
+- v691: LOW phase merge bonus strengthened for high piece_count (pc>=25)
+- analysis_result.md adopted hypothesis: "LOW phase merge bonus strengthening for high pc"
+- Problem: At pc>=25 with rp=1-2, axis 9.6b provides only ~62-68 bonus (base 60 + pc*0.08),
+- insufficient to overcome HEIGHT_CONTROL base (~300) during NO merge. This causes
+- edge scatter when rp=1-2 and piece_count grows, losing merge path setup.
+- Mechanism: When max_y < 0.8 AND has_merge_opportunity AND merge_grade in (DIRECT, NEAR)
 
 ### Improve Game#21759 `d9a3d475 -> 4c476071`
 

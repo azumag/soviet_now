@@ -68,6 +68,24 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v690: LOW phase merge priority — force merge over HEIGHT_CONTROL when merge_available
+     # analysis_result.md adopted hypothesis: "Early game merge priority strengthening"
+     # Problem: worst_game T1-7 shows 6/7 HEIGHT_CONTROL selections despite merge_available=true.
+     #   During LOW phase (max_y < 0.8) with merge available, HEIGHT_CONTROL still wins too often
+     #   because merge bonus is too low relative to height penalty (height_mult=0.4).
+     #   batch_summary: HEIGHT_CONTROL 27.2% (low-score) vs 17.6% (high-score) — 1.5x difference.
+     #   DIRECT_MERGE avg_score_delta=39.4 vs HEIGHT_CONTROL avg_score_delta=2.1.
+     # Mechanism: When max_y < 0.8 (LOW phase) AND has_merge_opportunity AND
+     #   merge_grade in (DIRECT, NEAR), add +200*merge_mult to ensure merge wins over HEIGHT_CONTROL.
+     #   This is purely additive and does NOT suppress HEIGHT_CONTROL when merge_available=false.
+     # Constraint: Does NOT reduce height_mult in LOW phase. Does NOT add turn-number threshold.
+     #   Does NOT suppress HEIGHT_CONTROL when merge_available=false. Only additive bonus.
+     #   Fixes rollback failure mode: early-game HEIGHT_CONTROL over-selection (score_gap=-1000.1 comp)
+     #   Expected: rp=1-2 HEIGHT_CONTROL frequency <10% (target is 11.2%), low-type merge rate decrease.
+     # refs: tmp/analysis_result.md (Implementation Plan: LOW phase merge priority),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 27.2% low vs 17.6% high),
+     #       tmp/state/last_rollback_postmortem.md (failure_mode: early-game HEIGHT_CONTROL over-selection),
+     #       game_history/20260504_150755_score0327.jsonl (worst game T1-7)
      # v689: DEADLINE_NO_MERGE_POSITIONAL_PENALTY — positional penalty for deadline_crossed+no_merge_available
      # analysis_result.md adopted hypothesis: "deadline NO_MERGE position penalty"
      # Problem: worst_game T48-67: deadline_crossed=true, merge_available=false, x=3.0 selected repeatedly
@@ -2521,6 +2539,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # これにより初期12ターン全体でマージ機会を最優先し、HEIGHT_CONTROL選択を抑制
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
+
+        # ----- v690: LOW phase merge priority — force merge over HEIGHT_CONTROL in early game -----
+        # analysis_result.md adopted hypothesis: "Early game merge priority strengthening"
+        # Problem: worst_game T1-7 shows 6/7 HEIGHT_CONTROL selections despite merge_available=true.
+        #   During LOW phase (max_y < 0.8) with merge available, HEIGHT_CONTROL still wins too often
+        #   because merge bonus is too low relative to height penalty.
+        #   batch_summary: HEIGHT_CONTROL 27.2% (low-score) vs 17.6% (high-score) — 1.5x difference.
+        #   DIRECT_MERGE avg_score_delta=39.4 vs HEIGHT_CONTROL avg_score_delta=2.1.
+        # Mechanism: When max_y < 0.8 (LOW phase) AND merge_available=true AND
+        #   merge_grade in (DIRECT, NEAR), add +200 * merge_mult to ensure merge candidate
+        #   wins over HEIGHT_CONTROL. This is purely additive and does not suppress
+        #   HEIGHT_CONTROL when merge_available=false.
+        # Constraint: Does NOT reduce height_mult in LOW phase. Does NOT add turn-number threshold.
+        #   Does NOT suppress HEIGHT_CONTROL when merge_available=false.
+        #   Only fires when this candidate's merge_grade is DIRECT or NEAR AND
+        #   there exists at least one DIRECT/NEAR candidate globally (has_merge_opportunity).
+        # Expected effect: Early game (turns 1-10) merge selections increase, preventing the
+        #   "6/7 HEIGHT_CONTROL despite merge_available" pattern.
+        #   Addresses rollback constraint: "forbid: early-game (turns 1-10) HEIGHT_CONTROL
+        #   over-selection when merge_available=true (score_gap=-1000.1 comp)"
+        # refs: tmp/analysis_result.md (Implementation Plan: LOW phase merge priority),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 27.2% low vs 17.6% high),
+        #       game_history/20260504_150755_score0327.jsonl (worst game T1-7)
+        # Fixes rollback failure mode: early-game HEIGHT_CONTROL over-selection when merge_available=true
+        if (max_y < 0.8
+                and has_merge_opportunity
+                and merge_grade in ["DIRECT", "NEAR"]):
+            score += 200.0 * merge_mult
+            reasons.append("LOW_PHASE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization, enhanced) -----
         # batch_summaryでHEIGHT_CONTROLが23.8%選択(avg_score_delta=1.2)と過剰であることを確認。

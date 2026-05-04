@@ -86,23 +86,6 @@ Phases (determined by board max Y):
      #       tmp/batch_summary.txt (HEIGHT_CONTROL 27.2% low vs 17.6% high),
      #       tmp/state/last_rollback_postmortem.md (failure_mode: early-game HEIGHT_CONTROL over-selection),
      #       game_history/20260504_150755_score0327.jsonl (worst game T1-7)
-     # v691: LOW phase merge bonus strengthened for high piece_count (pc>=25)
-     # analysis_result.md adopted hypothesis: "LOW phase merge bonus strengthening for high pc"
-     # Problem: At pc>=25 with rp=1-2, axis 9.6b provides only ~62-68 bonus (base 60 + pc*0.08),
-     #   insufficient to overcome HEIGHT_CONTROL base (~300) during NO merge. This causes
-     #   edge scatter when rp=1-2 and piece_count grows, losing merge path setup.
-     # Mechanism: When max_y < 0.8 AND has_merge_opportunity AND merge_grade in (DIRECT, NEAR)
-     #   AND piece_count >= 25, increase bonus from +200*merge_mult to +350*merge_mult.
-     #   At pc=25: merge bonus (800) + v691 (350*1.2=420) = 1220 vs HEIGHT_CONTROL (~300).
-     #   Also helps axis 8.8b "rp=1-2 merge drought penalty" by making merge candidates
-     #   score higher at elevated pc where drought penalty is largest (-100→-1300).
-     # Fixes rollback failure mode: rp=1-2 HEIGHT_CONTROL scatter at piece_count>=28.
-     # Constraint: Does NOT reduce height_mult in LOW phase. Does NOT add turn-number threshold.
-     #   Does NOT suppress HEIGHT_CONTROL when merge_available=false. Only additive bonus.
-     #   piece_count >= 25 gates this to avoid over-strengthening in early game.
-     # Expected: merge selection frequency increases at pc>=25, HEIGHT_CONTROL freq <10%.
-     # refs: tmp/analysis_result.md (Implementation Plan: LOW phase merge bonus strengthening),
-     #       tmp/batch_summary.txt (rp=1-2 HEIGHT_CONTROL 21-25% with avg_score_delta=4.1 lowest)
      # v689: DEADLINE_NO_MERGE_POSITIONAL_PENALTY — positional penalty for deadline_crossed+no_merge_available
      # analysis_result.md adopted hypothesis: "deadline NO_MERGE position penalty"
      # Problem: worst_game T48-67: deadline_crossed=true, merge_available=false, x=3.0 selected repeatedly
@@ -2557,26 +2540,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += 1000.0
             reasons.append("EARLY_MERGE_PRIORITY")
 
-        # ----- v691: LOW phase merge priority + v692 strengthened for pc>=25 -----
-        # v691 original mechanism: When max_y < 0.8 (LOW phase) AND has_merge_opportunity AND
+        # ----- v690: LOW phase merge priority — force merge over HEIGHT_CONTROL in early game -----
+        # analysis_result.md adopted hypothesis: "Early game merge priority strengthening"
+        # Problem: worst_game T1-7 shows 6/7 HEIGHT_CONTROL selections despite merge_available=true.
+        #   During LOW phase (max_y < 0.8) with merge available, HEIGHT_CONTROL still wins too often
+        #   because merge bonus is too low relative to height penalty.
+        #   batch_summary: HEIGHT_CONTROL 27.2% (low-score) vs 17.6% (high-score) — 1.5x difference.
+        #   DIRECT_MERGE avg_score_delta=39.4 vs HEIGHT_CONTROL avg_score_delta=2.1.
+        # Mechanism: When max_y < 0.8 (LOW phase) AND merge_available=true AND
         #   merge_grade in (DIRECT, NEAR), add +200 * merge_mult to ensure merge candidate
         #   wins over HEIGHT_CONTROL. This is purely additive and does not suppress
         #   HEIGHT_CONTROL when merge_available=false.
-        # v692 strengthening (this change): At piece_count >= 25, increase from +200 to +350*merge_mult.
-        #   Rationale: at pc>=25, axis 9.6b provides only ~62-68 bonus, insufficient vs HEIGHT_CONTROL (~300).
-        #   With +350*1.2=420 at pc=25: merge bonus (800) + v692 (420) = 1220 vs HEIGHT_CONTROL (~300).
         # Constraint: Does NOT reduce height_mult in LOW phase. Does NOT add turn-number threshold.
-        #   Does NOT suppress HEIGHT_CONTROL when merge_available=false. Only additive bonus.
-        #   Only fires when merge_grade is DIRECT or NEAR AND has_merge_opportunity=true.
-        #   piece_count >= 25 gates the strengthened bonus to avoid early-game over-strengthening.
-        # Fixes: rp=1-2 HEIGHT_CONTROL scatter at high piece_count (axis 8.8b gap from rollback target).
-        # Expected: merge selection frequency increases at pc>=25, HEIGHT_CONTROL freq <10%.
-        # refs: tmp/analysis_result.md (Implementation Plan: LOW phase merge bonus strengthening)
+        #   Does NOT suppress HEIGHT_CONTROL when merge_available=false.
+        #   Only fires when this candidate's merge_grade is DIRECT or NEAR AND
+        #   there exists at least one DIRECT/NEAR candidate globally (has_merge_opportunity).
+        # Expected effect: Early game (turns 1-10) merge selections increase, preventing the
+        #   "6/7 HEIGHT_CONTROL despite merge_available" pattern.
+        #   Addresses rollback constraint: "forbid: early-game (turns 1-10) HEIGHT_CONTROL
+        #   over-selection when merge_available=true (score_gap=-1000.1 comp)"
+        # refs: tmp/analysis_result.md (Implementation Plan: LOW phase merge priority),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 27.2% low vs 17.6% high),
+        #       game_history/20260504_150755_score0327.jsonl (worst game T1-7)
+        # Fixes rollback failure mode: early-game HEIGHT_CONTROL over-selection when merge_available=true
         if (max_y < 0.8
                 and has_merge_opportunity
-                and merge_grade in ["DIRECT", "NEAR"]
-                and piece_count >= 25):
-            score += 350.0 * merge_mult
+                and merge_grade in ["DIRECT", "NEAR"]):
+            score += 200.0 * merge_mult
             reasons.append("LOW_PHASE_MERGE_PRIORITY")
 
         # ----- evaluation axis 8: reactive pairs bonus (NEW: reactor info utilization, enhanced) -----
