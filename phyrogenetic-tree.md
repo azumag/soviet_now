@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-05 06:35:55 JST`
-- Nodes: `1335`
-- Edges: `1823`
-- Current: `9eb06546d67c`
+- Updated: `2026-05-05 08:23:51 JST`
+- Nodes: `1336`
+- Edges: `1824`
+- Current: `5dee220312d8`
 - Anchor: `d9a3d4750350`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_24569d8b2f96["24569d8b2f96<br/>g=22 n=20<br/>comp=9914.2"]
     h_09d2c8063925["09d2c8063925<br/>g=48 n=20<br/>comp=9712.4"]
     h_7f8a8c7550fc["7f8a8c7550fc<br/>g=0"]
     h_0d6f3ca799fe["0d6f3ca799fe<br/>g=24 n=20<br/>comp=11251.4"]
@@ -68,13 +67,14 @@ flowchart TD
     h_91fecb9595ce["91fecb9595ce<br/>g=12 n=12<br/>comp=10123.5"]
     h_7a530202926f["7a530202926f<br/>g=12 n=12<br/>comp=10766.2"]
     h_bc32bbc8712d["bc32bbc8712d<br/>g=24 n=20<br/>comp=11816.8"]
+    h_9eb06546d67c["9eb06546d67c<br/>g=24 n=20<br/>comp=11652.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_9eb06546d67c["9eb06546d67c<br/>CURRENT"]
+    h_5dee220312d8["5dee220312d8<br/>CURRENT"]
 
     h_09d2c8063925 -->|improve| h_7f8a8c7550fc
     h_7f8a8c7550fc -. rollback .-> h_09d2c8063925
@@ -131,13 +131,13 @@ flowchart TD
     h_7a530202926f -. rollback .-> h_abc3d92b50b8
     h_abc3d92b50b8 -->|improve| h_bc32bbc8712d
     h_bc32bbc8712d -->|improve| h_9eb06546d67c
+    h_9eb06546d67c -->|improve| h_5dee220312d8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_24569d8b2f96 plain;
     class h_09d2c8063925 plain;
     class h_7f8a8c7550fc plain;
     class h_0d6f3ca799fe plain;
@@ -190,13 +190,14 @@ flowchart TD
     class h_91fecb9595ce plain;
     class h_7a530202926f plain;
     class h_bc32bbc8712d plain;
+    class h_9eb06546d67c plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_9eb06546d67c current;
+    class h_5dee220312d8 current;
 ```
 
 ## Detail 1/17
@@ -4718,9 +4719,9 @@ flowchart TD
 
 ## Detail 17/17
 
-- Range: `200a7fefef4f` .. `9eb06546d67c`
-- Nodes in this diagram: `55`
-- Internal edges in this diagram: `51`
+- Range: `200a7fefef4f` .. `5dee220312d8`
+- Nodes in this diagram: `56`
+- Internal edges in this diagram: `52`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
 - Cross-chunk link: `c5f91e3b3729 -.rollback.-> d3c026afa6d2`
 - Cross-chunk link: `d3c026afa6d2 --improve--> a2f57996c7a0`
@@ -4785,13 +4786,14 @@ flowchart TD
     h_91fecb9595ce["91fecb9595ce<br/>g=12 n=12<br/>comp=10123.5"]
     h_7a530202926f["7a530202926f<br/>g=12 n=12<br/>comp=10766.2"]
     h_bc32bbc8712d["bc32bbc8712d<br/>g=24 n=20<br/>comp=11816.8"]
+    h_9eb06546d67c["9eb06546d67c<br/>g=24 n=20<br/>comp=11652.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_9eb06546d67c["9eb06546d67c<br/>CURRENT"]
+    h_5dee220312d8["5dee220312d8<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
@@ -4844,6 +4846,7 @@ flowchart TD
     h_7a530202926f -. rollback .-> h_abc3d92b50b8
     h_abc3d92b50b8 -->|improve| h_bc32bbc8712d
     h_bc32bbc8712d -->|improve| h_9eb06546d67c
+    h_9eb06546d67c -->|improve| h_5dee220312d8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4898,16 +4901,27 @@ flowchart TD
     class h_91fecb9595ce plain;
     class h_7a530202926f plain;
     class h_bc32bbc8712d plain;
+    class h_9eb06546d67c plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_9eb06546d67c current;
+    class h_5dee220312d8 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#21976 `9eb06546 -> 5dee2203`
+
+- scores: `4779 20181 13870 8757 12099 11536 12324 15011 9846 12412 16268 9820 14199 10561 9571 11825 17215 20453 14078 9291 10107 10742 13154 16621`
+- vXXX: axis 8.8 graduated NO_MERGE penalty via reactive pair centroid proximity
+- Adopted Hypothesis: Axis 8.8 NO_MERGE Penalty Graduation via Reactive Pair Centroid Proximity
+- Worst T46-55: rp=4-6, NO_MERGE, flat -4500 makes all candidates equally penalized → edge/high wins
+- Fix: penalty = max(-2250, -4500 + dist * 1125), dist = distance from reactive pair centroid
+- dist 0→2.0 maps to penalty -4500→-2250. Candidates near centroid get reduced penalty.
+- Pre-compute centroid before candidate loop (rp_pieces list + rp_centroid_x/y)
 
 ### Improve Game#21952 `bc32bbc8 -> 9eb06546`
 
