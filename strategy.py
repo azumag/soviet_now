@@ -1900,6 +1900,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
             elif landing_y < 1.0:
                 score += 80.0   # partial bonus for low center positions
 
+        # ----- axis 9.16: strong reactive pair centroid guidance at high congestion (v460) -----
+        # Hypothesis: Merge Opportunity Proximity Inefficiency at rp>=3 + NO_MERGE
+        # Root cause: worst T60 chose x=0.0 while type 4 piece existed at x=2.82 (dist=2.34).
+        # axis 9.6b only fires when current_type_has_reactive/near. At T60, type 4 had no reactive/near pairs.
+        # MERGE_OPPORTUNITY_PROXIMITY bonus (+200-400) was too weak vs -4500 NO_MERGE penalty.
+        # Solution: Compute centroid of all pieces in reactive pairs. Strong directional bonus
+        # (+600 at dist=0, scales to +200 at dist=1.5, 0 at dist>=2.0).
+        # refs: tmp/analysis_result.md (Implementation Plan), game_history/20260505_040256_score0682.jsonl (worst T60)
+        # refs: tmp/state/last_rollback_analysis.md (early_branch_regression+curr_breach constraints)
+        if reactive_pair_count >= 3 and merge_grade == "NO" and piece_count >= 30:
+            rp_pieces = []
+            for p in pieces:
+                for rp_pair in analysis.get("reactive_pairs", []):
+                    if p["id"] in rp_pair:
+                        rp_pieces.append(p)
+                        break
+            if rp_pieces:
+                cx = sum(p["x"] for p in rp_pieces) / len(rp_pieces)
+                cy = sum(p["y"] for p in rp_pieces) / len(rp_pieces)
+                dist = ((x - cx)**2 + (landing_y - cy)**2)**0.5
+                merge_proximity_bonus = max(0, 600 - dist * 400) * merge_mult
+                score += merge_proximity_bonus
+                if merge_proximity_bonus > 50:
+                    reasons.append("MERGE_PROXIMITY_GUIDANCE_9.16")
+
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
         # reactive_pairs活用で盤面圧縮を図る戦略的思考へ切り替える。
