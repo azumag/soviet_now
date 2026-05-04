@@ -40,7 +40,7 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9.6. Reactive pairs type-aware stacking - v464: middle danger zone抑制追加(v363拡張) + v408: pc混雑スケーリング(9.6b同一)
+             9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
@@ -1057,17 +1057,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt,
         #       game_history/20260324_210005_score0638.jsonl turns 55-61, game_history/20260324_210741_score2602.jsonl
         # Fixes rollback failure mode: reactive_pairs>=3 && deadline_crossedでの高配置 runaway（axis 9.6超危険域無効化）
-        # v363 update: suppress axis 9.6 when in "middle danger zone" — rp>=2, deadline_crossed, max_y>=2.0, merge_grade=="NO"
-        # The original v340 guard (reactive_pair_count >= 3) missed rp=2 cases like worst game T65
-        # where rp=2, deadline_crossed=true, max_y=2.31 led to high placement selection and max_y runaway.
-        # refs: tmp/analysis_result.md (Implementation Plan)
-        in_middle_danger_zone = (
-            reactive_pair_count >= 2 and deadline_crossed and max_y >= 2.0 and merge_grade == "NO"
-        )
-
+        
+        # ----- evaluation axis 9.6: reactive pairs stacking bonus - v363: stacking extension to reactive>=3 -----
+        # v339/v340 failure: vertical_bonus = (stack_y + 1.0) * 200.0 rewards high positions,
+        #   causing high-tower stacking when reactive pairs exist for other types but not current type
+        # Worst(score0653): turns 57-64 reactive=1-2, REACTIVE_PAIRS_STACKING_HIGH_TOWER at y=1.1-2.7
+        # Worst(score0853): reactive=5 but next_type=2 has no reactive_pairs → stacks at y=2.4 → game over
+        # v360: only fire stacking when current type has reactive/near pairs (unutilized reactor type info)
         # v357: suppress stacking when reactive>=3 (axis 8.8 -4500 should dominate all candidates equally)
-        # v363 update: also suppress when in_middle_danger_zone (rp>=2, deadline_crossed, max_y>=2.0, mg==NO)
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not in_middle_danger_zone:
+        # axis 9.7 (REACTIVE_PAIRS_COMPRESSION) removed: protected_e6f534c37e28 found it harmful (median 12789)
+        # Bonus based on proximity to merged_type(N+1), NOT on height — prevents high-tower incentive
+        # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+        #       game_history/20260328_051045_score0653.jsonl turns 57-64,
+        #       game_history/20260327_020329_score0853.jsonl turns 69-76
+        # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合の高位スタッキング
+        # v363: v340 guard(reactive<3)を除去。旧スタッキング公式の高さインセンティブはv360で解消済み。
+        # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
+        # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
+        # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
