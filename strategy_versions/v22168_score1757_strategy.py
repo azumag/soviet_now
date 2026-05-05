@@ -63,15 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: axis 8.8c adjacent-type proximity — next_type based immediate merge opportunity guidance
-     # Adopted Hypothesis (analysis_result.md): axis 8.8c adjacent-type proximity bonus
-     # Condition: next_type == current_type && boardにcurrent_typeが2つ以上存在（次手でimmediate merge完成）
-     # Bonus magnitude: 300 (unchanged). Existing adjacent search logic maintained.
-     # mandatory_themes: NEXTを考慮したドロップ, デッドライン付近の危険盤面では併合を優先
-     # Fixes rollback failure mode: worst T50-57 NO_MERGE edge scatter (merge_available=false突発発生)
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c),
-     #       data/mandatory_themes.txt (NEXTを考慮したドロップ)
-     #
      # vXXX: Pre-Deadline-Danger Central-Low Bonus — central +400, edge -300
      # Adopted Hypothesis (analysis_result.md): Pre-Deadline-Danger Central-Low Bonus
      # deadline_margin < 0.2 && merge_available=false && best_merge_grade=="NO" の危険な場面では、
@@ -1862,31 +1853,46 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("HIGH_PC_REACTIVE_NO_MERGE_PENALTY")
 
-        # Fixes rollback failure mode: merge drought NO_MERGE edge scatter at high rp (worst T50-57)
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c),
-        #       data/mandatory_themes.txt (NEXTを考慮したドロップ)
+        # ----- evaluation axis 8.8c: merge opportunity proximity bonus for NO_MERGE at high congestion (vXXX) -----
+        # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
+        # Root cause: axis 8.8 flat -4500 makes all NO_MERGE candidates "equally bad". Remaining axes
+        # (stacking bonuses, column_ceiling_bonus, MEDIUM_TOWER/HIGH_LAYER labels) systematically prefer
+        # edge/high positions. Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally,
+        # then edge/high positions win via other axes. Best game: same conditions, merge opportunity
+        # selected reliably.
+        # Fix: When rp>=3 && mg==NO && pc>=30, add directional bonus for candidates that move toward
+        # adjacent-type pieces (type N-1 or N+1 of current piece type). This creates an "active" response
+        # to high reactive pairs — move toward merge opportunity — rather than just penalizing all high
+        # positions equally.
+        # Bonus magnitude: 200-400 (smaller than -4500 penalty, so it doesn't override merge selection
+        # but provides directional guidance during merge drought without overriding merge opportunities)
+        # Uses reactor["pipeline"] (list of (type, type+1, min_distance) tuples) for adjacent-type proximity.
+        # Refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c),
+        #       game_history/20260429_225402_score0636.jsonl (worst T48-51: NO_MERGE edge scatter),
+        #       game_history/20260429_230124_score2482.jsonl (best: merge capture at rp=4-5),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 28.8% low vs 23.3% high)
+        # Fixes: merge drought induced accumulation at high reactive_pairs (worst T48-51: rp=5-9, 0 merges)
         if reactive_pair_count >= 3 and merge_grade == "NO" and piece_count >= 30:
-            # mandatory_themes: NEXTを考慮したドロップ
-            # Condition: next_type == current_type (次手でimmediate merge完成) && boardにcurrent_typeが2つ以上存在
-            current_piece_type = game_state.get("current_piece", {}).get("type", 0)
-            board_current_count = sum(1 for p in pieces if p.get("type") == current_piece_type)
-            # bonus trigger: 次手で current_piece_type のmergeが完成する状況
-            if next_type == current_piece_type and board_current_count >= 2:
-                adjacent_target_dist = float("inf")
-                for p in pieces:
-                    p_type = p.get("type", 0)
-                    if p_type == current_piece_type - 1 or p_type == current_piece_type + 1:
-                        p_x = p.get("x", 0)
-                        p_y = p.get("y", 10)
-                        dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
-                        if dist < adjacent_target_dist:
-                            adjacent_target_dist = dist
-                # Bonus: 300 at dist=0, scales down to 0 at dist=2.0
-                if adjacent_target_dist < 2.0:
-                    proximity_bonus = max(0, 300.0 - adjacent_target_dist * 150.0)
-                    score += proximity_bonus
-                    if proximity_bonus > 0:
-                        reasons.append("MERGE_OPPORTUNITY_PROXIMITY")
+            # Find adjacent-type pieces (type N-1 or N+1) on board via pipeline data
+            # pipeline: list of (type, type+1, min_distance) — adjacent-type proximity
+            current_type = game_state.get("current_piece", {}).get("type", 0)
+            if current_type == 0:
+                current_type = next_type
+            adjacent_target_dist = float("inf")
+            for p in pieces:
+                p_type = p.get("type", 0)
+                if p_type == current_type - 1 or p_type == current_type + 1:
+                    p_x = p.get("x", 0)
+                    p_y = p.get("y", 10)
+                    dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
+                    if dist < adjacent_target_dist:
+                        adjacent_target_dist = dist
+            # Bonus: 300 at dist=0, scales down to 0 at dist=2.0
+            if adjacent_target_dist < 2.0:
+                proximity_bonus = max(0, 300.0 - adjacent_target_dist * 150.0)
+                score += proximity_bonus
+                if proximity_bonus > 0:
+                    reasons.append("MERGE_OPPORTUNITY_PROXIMITY")
 
         # ----- NO_MERGE central placement bonus (vXXX) -----
         # Hypothesis: NO_MERGE Central-Low Placement Override (Suppress Edge Scatter at rp>=3, mg==NO)
