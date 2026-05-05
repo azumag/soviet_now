@@ -63,6 +63,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: axis 8.8 graduated NO_MERGE penalty via reactive pair centroid proximity
+     # Adopted Hypothesis: Axis 8.8 NO_MERGE Penalty Graduation via Reactive Pair Centroid Proximity
+     # Worst T46-55: rp=4-6, NO_MERGE, flat -4500 makes all candidates equally penalized → edge/high wins
+     # Fix: penalty = max(-2250, -4500 + dist * 1125), dist = distance from reactive pair centroid
+     #   dist 0→2.0 maps to penalty -4500→-2250. Candidates near centroid get reduced penalty.
+     #   Pre-compute centroid before candidate loop (rp_pieces list + rp_centroid_x/y)
+     #   axis 8.8b (-4500), central-low bonus (lines 1886-1891), axis 9.16 (+600) all preserved
+     # Fixes rollback failure mode: flat -4500 NO_MERGE penalty → edge scatter → max_y runaway
+     # refs: tmp/analysis_result.md (Implementation Plan)
+     #
      # vXXX: axis 8.8-pre pre_russia_phase reinforcement — type 14→type 15 pipeline starvation fix
      # Adopted Hypothesis (analysis_result.md): Pre-Russia Phase Type 14 Pipeline Reinforcement
      # Zero type 15 across 24 batch games. Current +75 type14 proximity and +400 high-type merge
@@ -900,6 +910,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
     current_type_has_near = any(
         np[2] == next_type for np in near_pairs if isinstance(np, (list, tuple)) and len(np) >= 3
     )
+
+    # --- vXXX: pre-compute reactive pair centroid for axis 8.8 graduated penalty ---
+    # Hypothesis: Axis 8.8 NO_MERGE Penalty Graduation via Reactive Pair Centroid Proximity
+    # Root cause: worst game T46-55 flat -4500 makes all NO_MERGE candidates equally penalized,
+    # remaining axes systematically prefer edge/high → max_y runaway.
+    # Solution: pre-compute centroid of all pieces in reactive pairs. In axis 8.8 block,
+    # graduated penalty: -4500 at dist>=2.0 → -2250 at dist=0 (penalty = max(-2250, -4500 + dist*1125))
+    # refs: tmp/analysis_result.md (Implementation Plan)
+    rp_pieces = []
+    for p in pieces:
+        for rp_pair in reactive_pairs:
+            if isinstance(rp_pair, (list, tuple)) and len(rp_pair) >= 3 and p["id"] in rp_pair:
+                rp_pieces.append(p)
+                break
+    rp_centroid_x = 0.0
+    rp_centroid_y = 0.0
+    if rp_pieces:
+        rp_centroid_x = sum(p["x"] for p in rp_pieces) / len(rp_pieces)
+        rp_centroid_y = sum(p["y"] for p in rp_pieces) / len(rp_pieces)
 
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
@@ -1798,11 +1827,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: reactive_pairs>=3での高配置 runaway（v328固定ペナルティ→v329動的ペナルティ→v329修正版）
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v452: flatten to -4500, matching protected strategy (median 12789)
-            # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
-            # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
-            # axis 2 height penalty be the only differentiator — consistent low placement.
-            score -= 4500.0
+            # vXXX: graduated penalty via centroid proximity (analysis_result.md)
+            # v452 flat -4500 made all candidates equally penalized → edge/high wins via other axes
+            # Solution: penalty = max(-2250, -4500 + dist * 1125), dist from reactive pair centroid
+            # dist 0→2.0 maps to penalty -4500→-2250. Candidates near centroid get reduced penalty.
+            if rp_pieces:
+                dist = ((x - rp_centroid_x)**2 + (landing_y - rp_centroid_y)**2)**0.5
+                no_merge_penalty = max(-2250.0, -4500.0 + dist * 1125.0)
+            else:
+                no_merge_penalty = -4500.0  # fallback: no reactive pair pieces
+            score += no_merge_penalty
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- evaluation axis 8.8b: high pc + medium height + reactive_pairs>=2 + NO_MERGE penalty -----
