@@ -68,12 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v606: axis 9.91 Russia-phase next-merge pipeline guidance — russia_phase && merge_grade==NO && !death_spiral
-     # When next_type pieces (2+) exist on board, add +200*merge_mult NEXT_CONSIDER bonus to guide placement
-     # toward positions where next same-type can merge. Addresses merge drought catch rate during Russia phase.
-     # Refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt (Theme 3: NEXT考慮),
-     #       game_history/20260506_074250_score3645.jsonl (best T123-138 Russia phase)
-     # Fixes rollback failure mode: "Russia建国後のmerge drought中(next_type同タイプが盤面にありながらmerge機会なし)"
      # v605: axis 9.16 deadline NO merge compression bonus — deadline_crossed && merge_grade==NO
      # When choosing NO_MERGE at deadline, require meaningful compression (landing_y < max_y - 0.3).
      # Bonus = (max_y - landing_y) * 800. Ensures NO_MERGE at deadline is not free — must compress.
@@ -2441,50 +2435,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += cluster_bonus
                         if "HIGH_TYPE_CLUSTER" not in "_".join(reasons):
                             reasons.append("HIGH_TYPE_CLUSTER")
-
-        # ----- axis 9.91: Russia-phase next-merge pipeline guidance (NEW v606) -----
-        # analysis_result.md adopted hypothesis: ロシアフェーズNO_MERGE時にnext_type考慮マージ誘導追加
-        #
-        # ゲームログ分析:
-        # - best T123-130: Russia建国後7ターンNO_MERGE(merge_grade=NO)、BOARD_COMPRESSIONのみ消費。
-        #   T130のNEAR mergeはnext_type=5でgrade=NEAR。next_typeが5→4に変わったturn129で、初めてNEAR merge発生。
-        # - mandatory_themes.txt Theme 3: "NEXTを考慮したドロップをせよ"
-        #   → next_typeはtype_scaleとreason生成にしか使われていなかった
-        #
-        # ロジック:
-        # russia_phase && merge_grade=="NO" && !death_spiral の条件下で、
-        # next_typeが盤面上に同タイプがあるかどうかをチェック。
-        # 同タイプがあれば(next_typeをimmediately mergeできる配置への近了誘導)、+200*merge_multボーナス。
-        # axis 9.16のcompression要件(compression_distance > 0.3)は維持。compressionできるならcompression優先。
-        #
-        # ガード:
-        # - russia_phase && !double_russia_phase && merge_grade=="NO" && !death_spiral
-        # - next_type pieces on board
-        # - compression_distance <= 0.3 (compression要件維持)
-        #
-        # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt,
-        #       game_history/20260506_074250_score3645.jsonl (best T123-138 Russia phase),
-        #       game_history/20260506_070602_score0957.jsonl (worst T56-71)
-        # Fixes rollback failure mode: "Russia建国後のmerge drought中(next_type同タイプが盤面にありながらmerge機会なし)、
-        #   次のマージ機会来临時のcatch率向上"
-
-        if (russia_phase and not double_russia_phase
-                and merge_grade == "NO"
-                and not death_spiral):
-            # Check if next_type pieces exist on board
-            next_type = game_state.get("next", {}).get("type", 0)
-            if next_type > 0:
-                next_type_count = sum(1 for p in pieces if p.get("type") == next_type)
-                # axis 9.16 compression要件: compression_distance <= 0.3 の場合のみNEXT_CONSIDERを適用
-                # compressionできるならcompression優先（ mandatory_themes.txt Theme 3 との整合）
-                compression_distance = max_y - landing_y
-                if next_type_count >= 2 and compression_distance <= 0.3:
-                    # next_type has 2+ pieces on board — can merge immediately if placed correctly
-                    # Bonus guides placement to positions where next same-type piece can merge
-                    next_consider_bonus = 200.0 * merge_mult
-                    score += next_consider_bonus
-                    if "NEXT_CONSIDER" not in "_".join(reasons):
-                        reasons.append("NEXT_CONSIDER")
 
         # ----- update best candidate -----
         if score > best_score:
