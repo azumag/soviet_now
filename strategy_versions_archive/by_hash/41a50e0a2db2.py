@@ -40,7 +40,7 @@ Game Overview:
               #       game_history/20260324_133153_score0854.jsonl turns 55-63 (ロシア出現後max_y runaway), game_history/20260324_135316_score2615.jsonl
               # Fixes rollback failure mode: ロシア建国後の即時併合機会取りこぼし（axis 8.7ボーナス強化）
              8.8. Reactive pairs >= 3 no merge penalty - v332: 即時併合最優先化版
-             9.6. Reactive pairs type-aware stacking - v464: middle danger zone抑制追加(v363拡張) + v408: pc混雑スケーリング(9.6b同一)
+             9.6. Reactive pairs type-aware stacking - v363: 全reactiveレベルでmerged_type近接スタッキング(v340ガード除去) + v408: pc混雑スケーリング(9.6b同一)
              9.6b. Same-type proximity guidance - v453: restored from v449 removal, without v418 rp_density
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
@@ -63,6 +63,37 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: axis 8.8c adjacent-type proximity — next_type based immediate merge opportunity guidance
+     # Adopted Hypothesis (analysis_result.md): axis 8.8c adjacent-type proximity bonus
+     # Condition: next_type == current_type && boardにcurrent_typeが2つ以上存在（次手でimmediate merge完成）
+     # Bonus magnitude: 300 (unchanged). Existing adjacent search logic maintained.
+     # mandatory_themes: NEXTを考慮したドロップ, デッドライン付近の危険盤面では併合を優先
+     # Fixes rollback failure mode: worst T50-57 NO_MERGE edge scatter (merge_available=false突発発生)
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c),
+     #       data/mandatory_themes.txt (NEXTを考慮したドロップ)
+     #
+     # vXXX: Pre-Deadline-Danger Central-Low Bonus — central +400, edge -300
+     # Adopted Hypothesis (analysis_result.md): Pre-Deadline-Danger Central-Low Bonus
+     # deadline_margin < 0.2 && merge_available=false && best_merge_grade=="NO" の危険な場面では、
+     # 中央/low 配置を明示的にボーナス化（+400）。edge位置は-300のペナルティで抑制。
+     # HEIGHT_CONTROL選択ブロック（search_and_score内）の条件付き中央優先ロジックとして実装。
+     # worst game T56-57: x=3.0→x=0.0付近へ変化、max_y暴走防止。
+     # Fixes rollback failure mode: NO_MERGE edge scatter at rp>=3, deadline_crossed, merge_available=false
+     # refs: tmp/analysis_result.md (Implementation Plan: HEIGHT_CONTROL選択ブロック,
+     #       data/mandatory_themes.txt (デッドライン原則)
+     #
+     # vXXX: HEIGHT_CONTROL suppression guard — mandatory_themes deadline constraint enforcement
+     # Adopted Hypothesis (analysis_result.md): Merge Drought Central-Low Override Enhancement
+     # Problem: worst T48/extra_low T61 selected edge positions when ALL candidates crossed deadline
+     #   with NO merge available (mandatory_themes violation)
+     # Fix: Filter out deadline-crossing candidates FIRST, then pick lowest + edge penalty
+     #   1) __shc_safe = NO_MERGE && not crosses_deadline → pick lowest(landing_y + |x|*0.70)
+     #   2) If ALL cross deadline → pick lowest landing_y only (minimize damage)
+     # Fixes rollback failure mode: NO_MERGE edge scatter at rp>=3, deadline_crossed, merge_available=false
+     # refs: tmp/analysis_result.md (Implementation Plan),
+     #       tmp/state/last_rollback_postmortem.md (failure_mode: edge scatter at merge drought),
+     #       data/mandatory_themes.txt (デッドライン超え禁止=併合できる場合に限る)
+     #
      # vXXX: axis 8.8-pre pre_russia_phase reinforcement — type 14→type 15 pipeline starvation fix
      # Adopted Hypothesis (analysis_result.md): Pre-Russia Phase Type 14 Pipeline Reinforcement
      # Zero type 15 across 24 batch games. Current +75 type14 proximity and +400 high-type merge
@@ -1057,17 +1088,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/state/last_rollback_postmortem.md, tmp/state/last_rollback_analysis.md, tmp/improve_brief.md, tmp/batch_summary.txt,
         #       game_history/20260324_210005_score0638.jsonl turns 55-61, game_history/20260324_210741_score2602.jsonl
         # Fixes rollback failure mode: reactive_pairs>=3 && deadline_crossedでの高配置 runaway（axis 9.6超危険域無効化）
-        # v363 update: suppress axis 9.6 when in "middle danger zone" — rp>=2, deadline_crossed, max_y>=2.0, merge_grade=="NO"
-        # The original v340 guard (reactive_pair_count >= 3) missed rp=2 cases like worst game T65
-        # where rp=2, deadline_crossed=true, max_y=2.31 led to high placement selection and max_y runaway.
-        # refs: tmp/analysis_result.md (Implementation Plan)
-        in_middle_danger_zone = (
-            reactive_pair_count >= 2 and deadline_crossed and max_y >= 2.0 and merge_grade == "NO"
-        )
-
+        
+        # ----- evaluation axis 9.6: reactive pairs stacking bonus - v363: stacking extension to reactive>=3 -----
+        # v339/v340 failure: vertical_bonus = (stack_y + 1.0) * 200.0 rewards high positions,
+        #   causing high-tower stacking when reactive pairs exist for other types but not current type
+        # Worst(score0653): turns 57-64 reactive=1-2, REACTIVE_PAIRS_STACKING_HIGH_TOWER at y=1.1-2.7
+        # Worst(score0853): reactive=5 but next_type=2 has no reactive_pairs → stacks at y=2.4 → game over
+        # v360: only fire stacking when current type has reactive/near pairs (unutilized reactor type info)
         # v357: suppress stacking when reactive>=3 (axis 8.8 -4500 should dominate all candidates equally)
-        # v363 update: also suppress when in_middle_danger_zone (rp>=2, deadline_crossed, max_y>=2.0, mg==NO)
-        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not in_middle_danger_zone:
+        # axis 9.7 (REACTIVE_PAIRS_COMPRESSION) removed: protected_e6f534c37e28 found it harmful (median 12789)
+        # Bonus based on proximity to merged_type(N+1), NOT on height — prevents high-tower incentive
+        # refs: strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py,
+        #       tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt,
+        #       game_history/20260328_051045_score0653.jsonl turns 57-64,
+        #       game_history/20260327_020329_score0853.jsonl turns 69-76
+        # Fixes rollback failure mode: reactive_pairsあるが現在タイプにreactive_pairsがない場合の高位スタッキング
+        # v363: v340 guard(reactive<3)を除去。旧スタッキング公式の高さインセンティブはv360で解消済み。
+        # v360 stackingはmerged_type近接度ベース(max~400, y>1で減衰)で高さに依存しないため、
+        # reactive>=3でもaxis 8.8(-3000~-7000)が支配し、スタッキングはtie-breakingに留まる。
+        # postmortem制約: reactive_pair_count<3ガードなし(全reactiveレベルで動作)。
+        if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
             # way that doesn't also strengthen the alternative placement logic" — blocking
@@ -1822,46 +1862,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("HIGH_PC_REACTIVE_NO_MERGE_PENALTY")
 
-        # ----- evaluation axis 8.8c: merge opportunity proximity bonus for NO_MERGE at high congestion (vXXX) -----
-        # Hypothesis: Merge Opportunity Capture Inefficiency at High reactive_pairs (analysis_result.md)
-        # Root cause: axis 8.8 flat -4500 makes all NO_MERGE candidates "equally bad". Remaining axes
-        # (stacking bonuses, column_ceiling_bonus, MEDIUM_TOWER/HIGH_LAYER labels) systematically prefer
-        # edge/high positions. Worst game T48-51: rp=5-9, NO_MERGE, all candidates penalized -4500 equally,
-        # then edge/high positions win via other axes. Best game: same conditions, merge opportunity
-        # selected reliably.
-        # Fix: When rp>=3 && mg==NO && pc>=30, add directional bonus for candidates that move toward
-        # adjacent-type pieces (type N-1 or N+1 of current piece type). This creates an "active" response
-        # to high reactive pairs — move toward merge opportunity — rather than just penalizing all high
-        # positions equally.
-        # Bonus magnitude: 200-400 (smaller than -4500 penalty, so it doesn't override merge selection
-        # but provides directional guidance during merge drought without overriding merge opportunities)
-        # Uses reactor["pipeline"] (list of (type, type+1, min_distance) tuples) for adjacent-type proximity.
-        # Refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c),
-        #       game_history/20260429_225402_score0636.jsonl (worst T48-51: NO_MERGE edge scatter),
-        #       game_history/20260429_230124_score2482.jsonl (best: merge capture at rp=4-5),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 28.8% low vs 23.3% high)
-        # Fixes: merge drought induced accumulation at high reactive_pairs (worst T48-51: rp=5-9, 0 merges)
+        # Fixes rollback failure mode: merge drought NO_MERGE edge scatter at high rp (worst T50-57)
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8c),
+        #       data/mandatory_themes.txt (NEXTを考慮したドロップ)
         if reactive_pair_count >= 3 and merge_grade == "NO" and piece_count >= 30:
-            # Find adjacent-type pieces (type N-1 or N+1) on board via pipeline data
-            # pipeline: list of (type, type+1, min_distance) — adjacent-type proximity
-            current_type = game_state.get("current_piece", {}).get("type", 0)
-            if current_type == 0:
-                current_type = next_type
-            adjacent_target_dist = float("inf")
-            for p in pieces:
-                p_type = p.get("type", 0)
-                if p_type == current_type - 1 or p_type == current_type + 1:
-                    p_x = p.get("x", 0)
-                    p_y = p.get("y", 10)
-                    dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
-                    if dist < adjacent_target_dist:
-                        adjacent_target_dist = dist
-            # Bonus: 300 at dist=0, scales down to 0 at dist=2.0
-            if adjacent_target_dist < 2.0:
-                proximity_bonus = max(0, 300.0 - adjacent_target_dist * 150.0)
-                score += proximity_bonus
-                if proximity_bonus > 0:
-                    reasons.append("MERGE_OPPORTUNITY_PROXIMITY")
+            # mandatory_themes: NEXTを考慮したドロップ
+            # Condition: next_type == current_type (次手でimmediate merge完成) && boardにcurrent_typeが2つ以上存在
+            current_piece_type = game_state.get("current_piece", {}).get("type", 0)
+            board_current_count = sum(1 for p in pieces if p.get("type") == current_piece_type)
+            # bonus trigger: 次手で current_piece_type のmergeが完成する状況
+            if next_type == current_piece_type and board_current_count >= 2:
+                adjacent_target_dist = float("inf")
+                for p in pieces:
+                    p_type = p.get("type", 0)
+                    if p_type == current_piece_type - 1 or p_type == current_piece_type + 1:
+                        p_x = p.get("x", 0)
+                        p_y = p.get("y", 10)
+                        dist = ((x - p_x) ** 2 + (landing_y - p_y) ** 2) ** 0.5
+                        if dist < adjacent_target_dist:
+                            adjacent_target_dist = dist
+                # Bonus: 300 at dist=0, scales down to 0 at dist=2.0
+                if adjacent_target_dist < 2.0:
+                    proximity_bonus = max(0, 300.0 - adjacent_target_dist * 150.0)
+                    score += proximity_bonus
+                    if proximity_bonus > 0:
+                        reasons.append("MERGE_OPPORTUNITY_PROXIMITY")
 
         # ----- NO_MERGE central placement bonus (vXXX) -----
         # Hypothesis: NO_MERGE Central-Low Placement Override (Suppress Edge Scatter at rp>=3, mg==NO)
@@ -2036,14 +2061,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and not __shc_global_merge
                 and __shc_dcross):
             __shc_no_merge = [r for r in results if r.get("merge_grade") == "NO"]
-            if __shc_no_merge:
-                # edge-aware: prefer central-low over edge-low; landing_y diff > 2.1 can still win
+            # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+            # Filter to candidates that do NOT cross the deadline
+            __shc_safe = [r for r in __shc_no_merge if not r.get("crosses_deadline", False)]
+            if __shc_safe:
+                # Pre-Deadline-Danger Central-Low Bonus (analysis_result.md vXXX)
+                # deadline_margin < 0.2 && merge_available=false && best_merge_grade=="NO"
+                # → add +400 central/low placement bonus to favor next-mergeable positions
+                __shc_reactor_margin = __shc_reactor.get("deadline_margin", 999.0)
+                __shc_has_bonus = (__shc_reactor_margin < 0.2 and not __shc_global_merge)
+                __shc_edge_penalty = 300.0  # penalty for |x| >= 2.5 to suppress edge scatter
+                def __shc_key(r):
+                    base = r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 0.70
+                    x_val = abs(float(r.get("x", 0.0) or 0.0))
+                    # Central/low bonus when in pre-deadline-danger state
+                    if __shc_has_bonus:
+                        base -= 400.0  # +400 bonus → subtract from key (lower is better)
+                    # Edge suppression for all positions
+                    if x_val >= 2.5:
+                        base += __shc_edge_penalty  # -300 penalty → add to key
+                    return base
+                __shc_best = min(__shc_safe, key=__shc_key)
+                best_x = float(__shc_best.get("x", 0.0) or 0.0)
+                best_reason = "HEIGHT_CONTROL_SUPPRESS_DEADLINE_DANGER_BONUS"
+            elif __shc_no_merge:
+                # ALL candidates cross deadline — mandatory_themes violation scenario
+                # Pick the LOWEST candidate (minimum landing_y) to minimize damage
                 __shc_lowest = min(
                     __shc_no_merge,
-                    key=lambda r: r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 0.70
+                    key=lambda r: r.get("landing_y", 99.0)
                 )
                 best_x = float(__shc_lowest.get("x", 0.0) or 0.0)
-                best_reason = "HEIGHT_CONTROL_SUPPRESS_NO_MERGE"
+                best_reason = "HEIGHT_CONTROL_SUPPRESS_DEADLINE_MANDATORY_VIOLATION"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
