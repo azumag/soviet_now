@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-05 16:37:52 JST`
+- Updated: `2026-05-05 17:20:16 JST`
 - Nodes: `1340`
-- Edges: `1830`
-- Current: `cfa17201289d`
+- Edges: `1831`
+- Current: `bc32bbc8712d`
 - Anchor: `bc32bbc8712d`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -62,19 +62,19 @@ flowchart TD
     h_9b916a630880["9b916a630880<br/>g=13 n=13<br/>comp=9368.1"]
     h_91fecb9595ce["91fecb9595ce<br/>g=12 n=12<br/>comp=10123.5"]
     h_7a530202926f["7a530202926f<br/>g=12 n=12<br/>comp=10766.2"]
-    h_bc32bbc8712d["bc32bbc8712d<br/>ANCHOR<br/>g=24 n=20<br/>comp=11816.8"]
+    h_bc32bbc8712d["bc32bbc8712d<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11816.8"]
     h_9eb06546d67c["9eb06546d67c<br/>g=24 n=20<br/>comp=11652.6"]
     h_5dee220312d8["5dee220312d8<br/>g=12 n=12<br/>comp=9652.5"]
     h_ff04cff2b678["ff04cff2b678<br/>g=48 n=20<br/>comp=10711.0"]
     h_8e6f1a8d013d["8e6f1a8d013d<br/>g=0"]
     h_5c3e0337f245["5c3e0337f245<br/>g=24 n=20<br/>comp=11009.6"]
+    h_cfa17201289d["cfa17201289d<br/>g=12 n=12<br/>comp=9910.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_cfa17201289d["cfa17201289d<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
@@ -134,6 +134,7 @@ flowchart TD
     h_8e6f1a8d013d -. rollback .-> h_ff04cff2b678
     h_ff04cff2b678 -->|improve| h_5c3e0337f245
     h_5c3e0337f245 -->|improve| h_cfa17201289d
+    h_cfa17201289d -. rollback .-> h_bc32bbc8712d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -187,19 +188,19 @@ flowchart TD
     class h_9b916a630880 plain;
     class h_91fecb9595ce plain;
     class h_7a530202926f plain;
-    class h_bc32bbc8712d anchor;
+    class h_bc32bbc8712d current_anchor;
     class h_9eb06546d67c plain;
     class h_5dee220312d8 plain;
     class h_ff04cff2b678 plain;
     class h_8e6f1a8d013d plain;
     class h_5c3e0337f245 plain;
+    class h_cfa17201289d plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_cfa17201289d current;
 ```
 
 ## Detail 1/17
@@ -4721,9 +4722,9 @@ flowchart TD
 
 ## Detail 17/17
 
-- Range: `200a7fefef4f` .. `cfa17201289d`
+- Range: `200a7fefef4f` .. `1d9b85a22a22`
 - Nodes in this diagram: `60`
-- Internal edges in this diagram: `58`
+- Internal edges in this diagram: `59`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
 - Cross-chunk link: `c5f91e3b3729 -.rollback.-> d3c026afa6d2`
 - Cross-chunk link: `d3c026afa6d2 --improve--> a2f57996c7a0`
@@ -4787,19 +4788,19 @@ flowchart TD
     h_9b916a630880["9b916a630880<br/>g=13 n=13<br/>comp=9368.1"]
     h_91fecb9595ce["91fecb9595ce<br/>g=12 n=12<br/>comp=10123.5"]
     h_7a530202926f["7a530202926f<br/>g=12 n=12<br/>comp=10766.2"]
-    h_bc32bbc8712d["bc32bbc8712d<br/>ANCHOR<br/>g=24 n=20<br/>comp=11816.8"]
+    h_bc32bbc8712d["bc32bbc8712d<br/>CURRENT ANCHOR<br/>g=24 n=20<br/>comp=11816.8"]
     h_9eb06546d67c["9eb06546d67c<br/>g=24 n=20<br/>comp=11652.6"]
     h_5dee220312d8["5dee220312d8<br/>g=12 n=12<br/>comp=9652.5"]
     h_ff04cff2b678["ff04cff2b678<br/>g=48 n=20<br/>comp=10711.0"]
     h_8e6f1a8d013d["8e6f1a8d013d<br/>g=0"]
     h_5c3e0337f245["5c3e0337f245<br/>g=24 n=20<br/>comp=11009.6"]
+    h_cfa17201289d["cfa17201289d<br/>g=12 n=12<br/>comp=9910.3"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_cfa17201289d["cfa17201289d<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
@@ -4859,6 +4860,7 @@ flowchart TD
     h_8e6f1a8d013d -. rollback .-> h_ff04cff2b678
     h_ff04cff2b678 -->|improve| h_5c3e0337f245
     h_5c3e0337f245 -->|improve| h_cfa17201289d
+    h_cfa17201289d -. rollback .-> h_bc32bbc8712d
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4912,22 +4914,37 @@ flowchart TD
     class h_9b916a630880 plain;
     class h_91fecb9595ce plain;
     class h_7a530202926f plain;
-    class h_bc32bbc8712d anchor;
+    class h_bc32bbc8712d current_anchor;
     class h_9eb06546d67c plain;
     class h_5dee220312d8 plain;
     class h_ff04cff2b678 plain;
     class h_8e6f1a8d013d plain;
     class h_5c3e0337f245 plain;
+    class h_cfa17201289d plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_cfa17201289d current;
 ```
 
 ## Transition Notes
+
+### Rollback Game#22096 `cfa17201 -> bc32bbc8`
+
+- - rollback from cfa17201289d to bc32bbc8712d at game 22096
+- - reasons: early_branch_regression+curr_breach
+- - current comp/p50/p25=9910.3/10603.5/8694.2 vs target 11816.8/12816.0/9971.8
+- - bad recent scores: 11262 8878 14851 7610 7986 10845 9420 14468
+- early_branch_regression が悪化要因だった。
+- curr_breach が悪化要因だった。
+- current: comp=9910.3 p50=10603.5 p25=8694.2 mean=10657.2 n=12
+- rollback_target: comp=11816.8 p50=12816.0 p25=9971.8 mean=12993.0 n=20
+- metric_gap_vs_target: comp=-1906.5 p50=-2212.5 p25=-1277.5 mean=-2335.8
+- recent12_avg: bad=10657.2 target=13105.8
+- recent12_floor: bad=7610 target=7765
+- rollback の直前12試合と rollback 先の直近12試合を比較して、再発理由を特定すること。
 
 ### Improve Game#22084 `5c3e0337 -> cfa17201`
 

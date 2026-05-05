@@ -68,6 +68,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v700: CONGESTION_ESCAPE_BONUS — non-edge preference at high congestion for rp>=3 + NO_MERGE
+     # analysis_result.md adopted hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY at rp>=3 makes all
+     #   candidates equally penalized (-4500), leaving height as sole differentiator → edge scatter.
+     #   At worst T55 (pc=37): all candidates scored -4500, height picked x=3.0 (rightmost edge),
+     #   which doesn't create future merge paths → no recovery for 9+ turns.
+     # Mechanism: At pc>=35 with rp>=3 && NO_MERGE, non-edge candidates (|x|<2.8) at low positions
+     #   (landing_y < max_y) get small +300*merge_mult bonus. Edge candidates (x=±3.0) don't qualify.
+     #   This doesn't suppress REACTIVE_PAIRS_NO_MERGE_PENALTY — keeps -4500 as primary penalty.
+     # Fixes rollback failure mode: rp>=3 && NO_MERGE edge scatter at high congestion (worst T53-T55)
+     # Constraint: Do NOT reduce the -4500 primary penalty. No turn-number thresholds. Russia phase unchanged.
+     # refs: tmp/analysis_result.md (Implementation Plan)
      # v689b: DEADLINE_MERGE_AVAILABLE_NO_DIRECT_PENALTY — penalty for deadline-crossing when merge exists but not DIRECT
      # analysis_result.md adopted hypothesis: DEADLINE_NO_MERGE位置規制の強制 (v689 positional penalty強化)
      # Problem: worst_game T62: deadline_crossed=true, merge_available=true, decision_crosses_deadline=true,
@@ -2703,6 +2714,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+            # v700: At high congestion (pc>=35), slightly prefer non-edge low positions
+            # to maintain future merge path potential. worst T55 (pc=37): x=3.0 (|x|=3.0)
+            # would NOT get +300 (|x|>=2.8), while x=-2.5 at similar height WOULD get it.
+            # The -4500 REACTIVE_PAIRS_NO_MERGE_PENALTY remains the primary penalty.
+            if piece_count >= 35 and abs(x) < 2.8 and landing_y < max_y:
+                score += 300.0 * merge_mult
+                reasons.append("CONGESTION_ESCAPE_BONUS")
 
         # ----- v602: axis_88_horizontal_suppression flag (defined earlier in loop) -----
         # Flag is already defined after pre_death_spiral (line ~1211).
