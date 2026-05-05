@@ -68,6 +68,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v689b: DEADLINE_MERGE_AVAILABLE_NO_DIRECT_PENALTY — penalty for deadline-crossing when merge exists but not DIRECT
+     # analysis_result.md adopted hypothesis: DEADLINE_NO_MERGE位置規制の強制 (v689 positional penalty強化)
+     # Problem: worst_game T62: deadline_crossed=true, merge_available=true, decision_crosses_deadline=true,
+     #   but selected x=-1.0 (NO_MERGE with NEAR merge_grade available) → mandatory theme violation.
+     #   mandatory_themes.txt: "デットラインを超える位置上-pieceを置く場合は、併合できる場合に限る"
+     # Mechanism: When deadline_crossed=True AND merge_available=True AND best_merge_grade!=DIRECT
+     #   AND candidate crosses_deadline, apply -300 penalty to NO_MERGE candidate.
+     #   Does NOT fire when best_merge_grade=DIRECT (best_game T120 is correct case).
+     # Fixes rollback failure mode: merge_available=true but NO_MERGE deadline-crossing with NEAR grade
+     # refs: tmp/analysis_result.md (Implementation Plan: v689強化), mandatory_themes.txt
      # v689: DEADLINE_NO_MERGE_POSITIONAL_PENALTY — positional penalty for deadline_crossed+no_merge_available
      # analysis_result.md adopted hypothesis: "deadline NO_MERGE position penalty"
      # Problem: worst_game T48-67: deadline_crossed=true, merge_available=false, x=3.0 selected repeatedly
@@ -3011,6 +3021,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and result.get("crosses_deadline", False)):
             score -= 500.0
             reasons.append("DEADLINE_NO_MERGE_POSITIONAL_PENALTY")
+
+        # ----- v689b: DEADLINE_MERGE_AVAILABLE_NO_DIRECT_PENALTY — penalty for deadline-crossing when merge exists but not DIRECT -----
+        # analysis_result.md adopted hypothesis: DEADLINE_NO_MERGE位置規制の強制 (v689 positional penalty強化)
+        # Problem: worst_game T62: deadline_crossed=true, merge_available=true, decision_crosses_deadline=true,
+        #   but selected x=-1.0 which is NO_MERGE (merge_grade=NEAR) → mandatory theme violation.
+        #   mandatory_themes.txt: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        #   This is different from v689: v689 handles deadline_crossed+merge_available=false case.
+        #   v689b handles deadline_crossed+merge_available=true+best_merge_grade!=DIRECT case.
+        # Mechanism: When deadline_crossed=True AND merge_available=True AND best_merge_grade!=DIRECT
+        #   AND candidate crosses_deadline, apply -300 penalty.
+        #   This penalizes deadline-crossing NO_MERGE candidates when DIRECT merge is available elsewhere.
+        #   Does NOT fire when best_merge_grade=DIRECT (best_game T120 is correct case, no penalty).
+        # Constraint: Does NOT affect candidates with merge_grade=DIRECT or NEAR — only NO_MERGE candidates
+        #   that cross the deadline when a better merge option exists.
+        # refs: tmp/analysis_result.md (Implementation Plan: v689強化, deadline NO_MERGE position penalty),
+        #       mandatory_themes.txt ("デットラインを超える位置上-pieceを置く場合は、併合できる場合に限る"),
+        #       game_history/20260505_133407_score0351.jsonl T62 (worst_game mandatory theme violation)
+        # Fixes rollback failure mode: merge_available=true but NO_MERGE deadline-crossing with NEAR grade
+        if (deadline_crossed
+                and has_merge_opportunity
+                and best_merge_grade != "DIRECT"
+                and merge_grade == "NO"
+                and result.get("crosses_deadline", False)):
+            score -= 300.0
+            reasons.append("DEADLINE_MERGE_AVAILABLE_NO_DIRECT_PENALTY")
 
         # ----- axis 9.8: same-type proximity for merge drought recovery (NEW) -----
         # Primary failure mode in worst games: chronic merge drought (piece_count grows without merges).
