@@ -1395,13 +1395,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260419_011626_score0715.jsonl (worst game T49-T50),
         #       game_history/20260419_012220_score3287.jsonl (best game T151-T152)
         # Fixes rollback failure mode: "deadlineでmerge機会があるのにNO_MERGE選択→board compression失敗"
-        # v682 penalty強化 — worst_game T60-67でNO_MERGEが選択され続けた問題に対応。-800→-1500.
-        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md, tmp/batch_summary.txt
         if (merge_grade == "NO"
                 and deadline_crossed
                 and piece_count >= 25
                 and has_merge_opportunity):
-            deadline_merge_violation_penalty = 1500.0 * merge_mult
+            deadline_merge_violation_penalty = 800.0 * merge_mult
             score -= deadline_merge_violation_penalty
             reasons.append("DEADLINE_MERGE_VIOLATION")
 
