@@ -63,6 +63,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: MERGE_AVAILABLE_FORCE — merge_available=true && max_y>=2.0强制キャプチャ強化
+     # Adopted Hypothesis (analysis_result.md): Merge-Available强制キャプチャ強化
+     # worst T58: merge_available=true, max_y=2.29, DIRECT but x=-1.53 (score_delta=0)
+     # extra_low T50: merge_available=true, max_y=1.83, NEAR fail → score_delta=0
+     # best T105: merge_available=true, max_y=1.36 → correctly DIRECT_MERGE, score_delta=285
+     # Root cause: merge bonus insufficient to override height axes at max_y>=2.0
+     # Fix: +500 guarantee bonus when merge_grade!=NO && max_y>=2.0
+     # Fixes rollback failure mode: merge_available=true局面での即時併合取りこぼし
+     # refs: tmp/analysis_result.md (Implementation Plan),
+     #       tmp/state/last_rollback_postmortem.md (merge_available=trueでもHEIGHT_CONTROL選択),
+     #       data/mandatory_themes.txt (デッドライン付近の危険盤面では併合優先),
+     #
      # vXXX: axis 8.8-pre pre_russia_phase reinforcement — type 14→type 15 pipeline starvation fix
      # Adopted Hypothesis (analysis_result.md): Pre-Russia Phase Type 14 Pipeline Reinforcement
      # Zero type 15 across 24 batch games. Current +75 type14 proximity and +400 high-type merge
@@ -928,6 +940,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # ----- vXXX: merge_available强制キャプチャ強化 (analysis_result.md Implementation Plan) -----
+        # Adopted Hypothesis: Merge-Available强制キャプチャ強化
+        # worst T58: merge_available=true, max_y=2.29, best_merge_grade=DIRECT,
+        #   reason=DIRECT_MERGE... but x=-1.53 (score_delta=0). Height risk axes won.
+        # extra_low T50: merge_available=true, max_y=1.83, NEAR→score_delta=0 (fail)
+        # best T105: merge_available=true, max_y=1.36 → correctly DIRECT_MERGE, score_delta=285
+        #
+        # Root cause: merge bonus (+1200/+600) is insufficient to override height axes
+        # when max_y >= 2.0. The +500 guarantee bonus ensures merge selection is not
+        # overridden by HEIGHT_CONTROL/MEDIUM_TOWER/HIGH_LAYER at dangerous max_y levels.
+        # mandatory_themes.txt: "デッドライン付近の危険盤面領域では、併合を優先するべき"
+        # merge_available computed by checking if any candidate has merge_grade != "NO"
+        if max_y >= 2.0 and merge_grade in ["DIRECT", "NEAR"]:
+            # analysis_result.md: merge_available=true && max_y >= 2.0 → +500 guarantee bonus
+            score += 500.0
+            reasons.append("MERGE_AVAILABLE_FORCE")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
