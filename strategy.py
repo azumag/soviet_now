@@ -63,6 +63,25 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # vXXX: axis 9.8 same-type proximity for merge drought + axis 9.65 reactive near-miss clustering
+     # Hypothesis (analysis_result.md): Type 15 starvation (zero type 15 in 24 batch games)
+     # and worst game T50-T58: 8 consecutive turns with zero score_delta despite rp=3-4
+     # Root cause: rp>=3 && mg==NO && max_y>=1.5 with no same-type on board → no horizontal
+     # guidance → HEIGHT_CONTROL defaults to extremes without clustering same-type pieces.
+     # axis 9.8: When merge drought (rp>=3 && mg==NO && max_y>=1.5 && same_type_stack_top is None),
+     # penalize extreme positions (x near -3.0 or +3.0) by 80 points. This prevents drift
+     # during merge drought when there's no merge opportunity to anchor placement.
+     # axis 9.65: When rp>=3 && mg==NO && max_y>=1.5 with same_type_stack_top present BUT
+     # current type has no reactive/near pairs, pieces scatter without guidance. Add
+     # directional bonus for positioning near same-type pieces to create future merges.
+     # mandatory_themes.txt: "NEXTを考慮したドロップをせよ" — guide placement toward
+     # pieces that can merge with next type for pipeline building.
+     # Fixes rollback failure mode: merge drought induced edge scatter at rp>=3 NO_MERGE
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.8, axis 9.65),
+     #       game_history/20260506_034756_score0680.jsonl (worst T50-T58: zero score_delta),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL 25.6%, avg_score_delta=3.3),
+     #       data/mandatory_themes.txt (NEXT考慮, 併合できる場合デッドライン超え禁止)
+     #
      # vXXX: axis 8.8-pre pre_russia_phase reinforcement — type 14→type 15 pipeline starvation fix
      # Adopted Hypothesis (analysis_result.md): Pre-Russia Phase Type 14 Pipeline Reinforcement
      # Zero type 15 across 24 batch games. Current +75 type14 proximity and +400 high-type merge
@@ -1251,6 +1270,65 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity_bonus = 0.0
                     if proximity_bonus > 0:
                         score += proximity_bonus
+
+        # ----- axis 9.8: same-type proximity for merge drought (vXXX) -----
+        # analysis_result.md: worst game T50-T58: 8 consecutive turns with zero score_delta
+        # despite rp=3-4 and mg==NO. Pieces at extremes without clustering.
+        # Pattern: rp>=3 with NO merge available — pieces go to extremes without clustering.
+        # When merge drought (rp>=3 && mg==NO && max_y>=1.5 && same_type_stack_top is None),
+        # penalize extreme positions (x near -3.0 or +3.0) to prevent drift during merge drought.
+        # This keeps pieces centralized so same-type proximity can develop for future merges.
+        # Bonus for positioning near next_type pieces (adjacent types) to create pipeline.
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.8),
+        #       game_history/20260506_034756_score0680.jsonl (worst T50-T58: zero score_delta),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 25.6%, avg_score_delta=3.3),
+        #       data/mandatory_themes.txt (NEXT考慮, 併合できる場合デッドライン超え禁止)
+        # Fixes rollback failure mode: merge drought edge scatter at rp>=3 NO_MERGE
+        if reactive_pair_count >= 3 and merge_grade == "NO" and max_y >= 1.5 and same_type_stack_top is None:
+            # Drift penalty: penalize extreme x positions by 80 points
+            # This prevents pieces from drifting to edges when no merge is available
+            if abs(x) > 2.0:
+                score -= 80.0
+            # Bonus for positioning near pieces of adjacent types (type N-1 or N+1)
+            # Creates future merge opportunities by keeping adjacent types close
+            # mandatory_themes.txt: "NEXTを考慮したドロップをせよ"
+            adjacent_types_on_board = any(
+                p.get("type") in [next_type - 1, next_type + 1] for p in pieces
+            )
+            if adjacent_types_on_board:
+                for p in pieces:
+                    p_type = p.get("type", 0)
+                    if p_type in [next_type - 1, next_type + 1]:
+                        p_x = p.get("x", 0)
+                        p_y = p.get("y", 10)
+                        horiz_dist = abs(x - p_x)
+                        if horiz_dist < 2.0:
+                            score += 40.0 * (1.0 - horiz_dist / 2.0)
+
+        # ----- axis 9.65: reactive near-miss type clustering (vXXX) -----
+        # analysis_result.md: when rp>=3 && mg==NO && max_y>=1.5 with same_type_stack_top
+        # present BUT current type has no reactive/near pairs, pieces scatter without guidance.
+        # Axis 9.6b provides guidance but only when current_type_has_reactive or current_type_has_near.
+        # This axis fills the gap: when same-type exists but no reactive guidance for current type,
+        # add directional bonus for positioning near same-type pieces to create future merges.
+        # This prevents "scatter during merge drought" failure mode from analysis_result.md.
+        # refs: tmp/analysis_result.md (Implementation Plan: axis 9.65),
+        #       game_history/20260506_034756_score0680.jsonl (worst T50-T58: rp>=3, no guidance),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL 25.6%, avg_score_delta=3.3)
+        # Fixes rollback failure mode: scatter during rp>=3 merge drought without reactive guidance
+        if reactive_pair_count >= 3 and merge_grade == "NO" and max_y >= 1.5 and same_type_stack_top is not None:
+            if not (current_type_has_reactive or current_type_has_near):
+                # Current type has same-type on board but no reactive/near pairs
+                # Guide placement toward same-type for potential clustering
+                stack_x = same_type_stack_top.get("x", 0)
+                stack_y = same_type_stack_top.get("y", -10)
+                horiz_dist = abs(x - stack_x)
+                if horiz_dist < 2.0:
+                    # Bonus for proximity to same-type when no reactive guidance exists
+                    clustering_bonus = max(0, 60.0 - horiz_dist * 30.0)
+                    if piece_count >= 28:
+                        clustering_bonus *= min(1.0 + (piece_count - 28) * 0.12, 3.0)
+                    score += clustering_bonus
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
