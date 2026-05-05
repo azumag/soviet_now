@@ -68,14 +68,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v412c: REACTIVE_PAIRS_NO_MERGE_PENALTY conditional reduction when merge_available
-#   analysis_result.md adopted hypothesis: REACTIVE_PAIRS_NO_MERGE_PENALTY (-4500) clobbers merge bonus
-#   when merge_available=true && best_merge_grade in (DIRECT, NEAR). Worst T61: penalty >> merge bonus.
-#   Mechanism: when merge_available && DIRECT/NEAR, reduce penalty from -4500 to -1500.
-#   Mandatory themes: "デッドライン付近の危険盤面領域では、併合を優先するべき" + "NEXT考慮"
-#   Fixes rollback failure mode: REACTIVE_PAIRS_NO_MERGE_PENALTY clobbering merge opportunity
-#   refs: tmp/analysis_result.md (Implementation Plan: REACTIVE_PAIRS_NO_MERGE_PENALTY conditional modifier)
-# v689: DEADLINE_NO_MERGE_POSITIONAL_PENALTY — positional penalty for deadline_crossed+no_merge_available
+     # v689: DEADLINE_NO_MERGE_POSITIONAL_PENALTY — positional penalty for deadline_crossed+no_merge_available
      # analysis_result.md adopted hypothesis: "deadline NO_MERGE position penalty"
      # Problem: worst_game T48-67: deadline_crossed=true, merge_available=false, x=3.0 selected repeatedly
      #   — positions that cross the deadline when no merge is available anywhere.
@@ -2698,14 +2691,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v432 gradient (-3000 at y<=0) was too weak at low positions, allowing additive
             # bonuses (~400-800) to create scatter. Flat -4500 overwhelms bonuses, letting
             # axis 2 height penalty be the only differentiator — consistent low placement.
-            # v412c (this change): When merge is actually available, reduce penalty to let
-            # merge win. Worst game T61: merge_available=true && DIRECT but -4500 clobbered
-            # merge bonus → NO MERGE selected. This conditional reduction preserves the
-            # deterrent when no merge path exists, but allows merge opportunity to win.
-            if merge_available and best_merge_grade in ("DIRECT", "NEAR"):
-                score -= 1500.0 * merge_mult  # 2/3 reduction — still meaningful, won't clobber merge bonus
-            else:
-                score -= 4500.0
+            score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
         # ----- v602: axis_88_horizontal_suppression flag (defined earlier in loop) -----
