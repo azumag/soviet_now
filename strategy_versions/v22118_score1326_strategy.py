@@ -63,18 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: HEIGHT_CONTROL suppression guard — mandatory_themes deadline constraint enforcement
-     # Adopted Hypothesis (analysis_result.md): Merge Drought Central-Low Override Enhancement
-     # Problem: worst T48/extra_low T61 selected edge positions when ALL candidates crossed deadline
-     #   with NO merge available (mandatory_themes violation)
-     # Fix: Filter out deadline-crossing candidates FIRST, then pick lowest + edge penalty
-     #   1) __shc_safe = NO_MERGE && not crosses_deadline → pick lowest(landing_y + |x|*0.70)
-     #   2) If ALL cross deadline → pick lowest landing_y only (minimize damage)
-     # Fixes rollback failure mode: NO_MERGE edge scatter at rp>=3, deadline_crossed, merge_available=false
-     # refs: tmp/analysis_result.md (Implementation Plan),
-     #       tmp/state/last_rollback_postmortem.md (failure_mode: edge scatter at merge drought),
-     #       data/mandatory_themes.txt (デッドライン超え禁止=併合できる場合に限る)
-     #
      # vXXX: axis 8.8-pre pre_russia_phase reinforcement — type 14→type 15 pipeline starvation fix
      # Adopted Hypothesis (analysis_result.md): Pre-Russia Phase Type 14 Pipeline Reinforcement
      # Zero type 15 across 24 batch games. Current +75 type14 proximity and +400 high-type merge
@@ -2057,26 +2045,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and not __shc_global_merge
                 and __shc_dcross):
             __shc_no_merge = [r for r in results if r.get("merge_grade") == "NO"]
-            # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-            # Filter to candidates that do NOT cross the deadline
-            __shc_safe = [r for r in __shc_no_merge if not r.get("crosses_deadline", False)]
-            if __shc_safe:
-                # Among non-deadline-crossing candidates, pick lowest key (central-low preferred)
-                __shc_best = min(
-                    __shc_safe,
-                    key=lambda r: r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 0.70
-                )
-                best_x = float(__shc_best.get("x", 0.0) or 0.0)
-                best_reason = "HEIGHT_CONTROL_SUPPRESS_NO_MERGE"
-            elif __shc_no_merge:
-                # ALL candidates cross deadline — mandatory_themes violation scenario
-                # Pick the LOWEST candidate (minimum landing_y) to minimize damage
+            if __shc_no_merge:
+                # edge-aware: prefer central-low over edge-low; landing_y diff > 2.1 can still win
                 __shc_lowest = min(
                     __shc_no_merge,
-                    key=lambda r: r.get("landing_y", 99.0)
+                    key=lambda r: r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 0.70
                 )
                 best_x = float(__shc_lowest.get("x", 0.0) or 0.0)
-                best_reason = "HEIGHT_CONTROL_SUPPRESS_DEADLINE_MANDATORY_VIOLATION"
+                best_reason = "HEIGHT_CONTROL_SUPPRESS_NO_MERGE"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
