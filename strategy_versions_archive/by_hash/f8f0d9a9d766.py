@@ -63,16 +63,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vXXX: Pre-Deadline-Danger Central-Low Bonus — central +400, edge -300
-     # Adopted Hypothesis (analysis_result.md): Pre-Deadline-Danger Central-Low Bonus
-     # deadline_margin < 0.2 && merge_available=false && best_merge_grade=="NO" の危険な場面では、
-     # 中央/low 配置を明示的にボーナス化（+400）。edge位置は-300のペナルティで抑制。
-     # HEIGHT_CONTROL選択ブロック（search_and_score内）の条件付き中央優先ロジックとして実装。
-     # worst game T56-57: x=3.0→x=0.0付近へ変化、max_y暴走防止。
-     # Fixes rollback failure mode: NO_MERGE edge scatter at rp>=3, deadline_crossed, merge_available=false
-     # refs: tmp/analysis_result.md (Implementation Plan: HEIGHT_CONTROL選択ブロック,
-     #       data/mandatory_themes.txt (デッドライン原則)
-     #
      # vXXX: HEIGHT_CONTROL suppression guard — mandatory_themes deadline constraint enforcement
      # Adopted Hypothesis (analysis_result.md): Merge Drought Central-Low Override Enhancement
      # Problem: worst T48/extra_low T61 selected edge positions when ALL candidates crossed deadline
@@ -2071,25 +2061,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Filter to candidates that do NOT cross the deadline
             __shc_safe = [r for r in __shc_no_merge if not r.get("crosses_deadline", False)]
             if __shc_safe:
-                # Pre-Deadline-Danger Central-Low Bonus (analysis_result.md vXXX)
-                # deadline_margin < 0.2 && merge_available=false && best_merge_grade=="NO"
-                # → add +400 central/low placement bonus to favor next-mergeable positions
-                __shc_reactor_margin = __shc_reactor.get("deadline_margin", 999.0)
-                __shc_has_bonus = (__shc_reactor_margin < 0.2 and not __shc_global_merge)
-                __shc_edge_penalty = 300.0  # penalty for |x| >= 2.5 to suppress edge scatter
-                def __shc_key(r):
-                    base = r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 0.70
-                    x_val = abs(float(r.get("x", 0.0) or 0.0))
-                    # Central/low bonus when in pre-deadline-danger state
-                    if __shc_has_bonus:
-                        base -= 400.0  # +400 bonus → subtract from key (lower is better)
-                    # Edge suppression for all positions
-                    if x_val >= 2.5:
-                        base += __shc_edge_penalty  # -300 penalty → add to key
-                    return base
-                __shc_best = min(__shc_safe, key=__shc_key)
+                # Among non-deadline-crossing candidates, pick lowest key (central-low preferred)
+                __shc_best = min(
+                    __shc_safe,
+                    key=lambda r: r.get("landing_y", 99.0) + abs(float(r.get("x", 0.0) or 0.0)) * 0.70
+                )
                 best_x = float(__shc_best.get("x", 0.0) or 0.0)
-                best_reason = "HEIGHT_CONTROL_SUPPRESS_DEADLINE_DANGER_BONUS"
+                best_reason = "HEIGHT_CONTROL_SUPPRESS_NO_MERGE"
             elif __shc_no_merge:
                 # ALL candidates cross deadline — mandatory_themes violation scenario
                 # Pick the LOWEST candidate (minimum landing_y) to minimize damage
