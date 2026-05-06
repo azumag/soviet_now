@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-06 15:06:04 JST`
-- Nodes: `1350`
-- Edges: `1845`
-- Current: `c92f94729520`
+- Updated: `2026-05-06 18:20:27 JST`
+- Nodes: `1351`
+- Edges: `1846`
+- Current: `4b45d149366f`
 - Anchor: `81897ed41734`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_b2e5e89d8082["b2e5e89d8082<br/>g=24 n=20<br/>comp=10461.5"]
     h_9c653055e1f4["9c653055e1f4<br/>g=48 n=20<br/>comp=10911.1"]
     h_3b3a70314f72["3b3a70314f72<br/>g=12 n=12<br/>comp=10184.3"]
     h_45d22a2c24d0["45d22a2c24d0<br/>g=24 n=20<br/>comp=10586.9"]
@@ -68,15 +67,15 @@ flowchart TD
     h_95c1994bf3bc["95c1994bf3bc<br/>g=12 n=12<br/>comp=9539.3"]
     h_21a90c8429a9["21a90c8429a9<br/>g=24 n=20<br/>comp=11496.0"]
     h_81897ed41734["81897ed41734<br/>ANCHOR<br/>g=24 n=20<br/>comp=12283.6"]
+    h_c92f94729520["c92f94729520<br/>g=24 n=20<br/>comp=11551.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_c92f94729520["c92f94729520<br/>CURRENT"]
+    h_4b45d149366f["4b45d149366f<br/>CURRENT"]
 
-    h_b2e5e89d8082 -->|improve| h_9c653055e1f4
     h_9c653055e1f4 -->|improve| h_3b3a70314f72
     h_45d22a2c24d0 -->|improve| h_83fffe6ad2d1
     h_83fffe6ad2d1 -->|improve| h_e50c09b400c6
@@ -132,13 +131,13 @@ flowchart TD
     h_ce951d0b4ef5 -->|improve| h_95c1994bf3bc
     h_21a90c8429a9 -->|improve| h_81897ed41734
     h_81897ed41734 -->|improve| h_c92f94729520
+    h_c92f94729520 -->|improve| h_4b45d149366f
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_b2e5e89d8082 plain;
     class h_9c653055e1f4 plain;
     class h_3b3a70314f72 plain;
     class h_45d22a2c24d0 plain;
@@ -191,13 +190,14 @@ flowchart TD
     class h_95c1994bf3bc plain;
     class h_21a90c8429a9 plain;
     class h_81897ed41734 anchor;
+    class h_c92f94729520 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_c92f94729520 current;
+    class h_4b45d149366f current;
 ```
 
 ## Detail 1/17
@@ -4719,9 +4719,9 @@ flowchart TD
 
 ## Detail 17/17
 
-- Range: `200a7fefef4f` .. `c92f94729520`
-- Nodes in this diagram: `70`
-- Internal edges in this diagram: `69`
+- Range: `200a7fefef4f` .. `4b45d149366f`
+- Nodes in this diagram: `71`
+- Internal edges in this diagram: `70`
 - Cross-chunk link: `0dc7d69854cc --improve--> 200a7fefef4f`
 - Cross-chunk link: `c5f91e3b3729 -.rollback.-> d3c026afa6d2`
 - Cross-chunk link: `d3c026afa6d2 --improve--> a2f57996c7a0`
@@ -4801,13 +4801,14 @@ flowchart TD
     h_95c1994bf3bc["95c1994bf3bc<br/>g=12 n=12<br/>comp=9539.3"]
     h_21a90c8429a9["21a90c8429a9<br/>g=24 n=20<br/>comp=11496.0"]
     h_81897ed41734["81897ed41734<br/>ANCHOR<br/>g=24 n=20<br/>comp=12283.6"]
+    h_c92f94729520["c92f94729520<br/>g=24 n=20<br/>comp=11551.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_c92f94729520["c92f94729520<br/>CURRENT"]
+    h_4b45d149366f["4b45d149366f<br/>CURRENT"]
 
     h_200a7fefef4f -->|improve| h_5ded74a6061e
     h_5ded74a6061e -->|improve| h_c7f8dc3c1b8b
@@ -4878,6 +4879,7 @@ flowchart TD
     h_ce951d0b4ef5 -->|improve| h_95c1994bf3bc
     h_21a90c8429a9 -->|improve| h_81897ed41734
     h_81897ed41734 -->|improve| h_c92f94729520
+    h_c92f94729520 -->|improve| h_4b45d149366f
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -4947,16 +4949,27 @@ flowchart TD
     class h_95c1994bf3bc plain;
     class h_21a90c8429a9 plain;
     class h_81897ed41734 anchor;
+    class h_c92f94729520 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_c92f94729520 current;
+    class h_4b45d149366f current;
 ```
 
 ## Transition Notes
+
+### Improve Game#22417 `c92f9472 -> 4b45d149`
+
+- scores: `12002 12585 12130 12433 10045 16593 12753 22410 10049 8712 11693 18277 12177 12941 10487 15890 10857 7059 15217 12077 10663 14953 8507 15128`
+- v607: height penalty amplification + guidance suppression on compression failure
+- During rp>=3+deadline+NO_MERGE states, HEIGHT_CONTROL avg_delta=2.0 (near-zero) but 22.3% selection.
+- Height penalty diff (~50-150) cannot overcome column_ceiling (~800-1250) + MERGE_PATH_SETUP (~200-500) noise.
+- (1) When compression requirement fails (landing_y >= max_y - 0.3 at deadline_crossed+NO), amplify
+- height penalty by 2x to make low-placement candidates more differentiated.
+- (2) Suppress column_ceiling_bonus and MERGE_PATH_SETUP on compression failure to reduce guidance noise.
 
 ### Improve Game#22393 `81897ed4 -> c92f9472`
 

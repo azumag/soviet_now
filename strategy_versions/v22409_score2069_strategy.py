@@ -67,15 +67,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v607: height penalty amplification + guidance suppression on compression failure
-     # During rp>=3+deadline+NO_MERGE states, HEIGHT_CONTROL avg_delta=2.0 (near-zero) but 22.3% selection.
-     # Height penalty diff (~50-150) cannot overcome column_ceiling (~800-1250) + MERGE_PATH_SETUP (~200-500) noise.
-     # (1) When compression requirement fails (landing_y >= max_y - 0.3 at deadline_crossed+NO), amplify
-     #     height penalty by 2x to make low-placement candidates more differentiated.
-     # (2) Suppress column_ceiling_bonus and MERGE_PATH_SETUP on compression failure to reduce guidance noise.
-     # Forbidden: Do NOT suppress during non-deadline or merge-available states.
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/batch_summary.txt (HEIGHT_CONTROL avg_delta=2.0, 22.3% usage)
-     # Fixes rollback failure mode: height penalty insufficient to differentiate during rp>=3 NO_MERGE cascade
      # v606: deadline NO_MERGE compression fallback — force lowest landing_y when all candidates fail compression
      # When deadline_crossed && merge_grade==NO && !merge_available && max_y >= 2.0,
      # if no candidate satisfies landing_y < max_y - 0.3, force select lowest landing_y.
@@ -1712,27 +1703,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score -= height_penalty
 
-        # ----- v607: height penalty amplification on compression failure -----
-        # analysis: HEIGHT_CONTROL avg_delta=2.0 (near-zero), yet 22.3% selection rate.
-        # During rp>=3+deadline+NO_MERGE states, height penalty diff (~50-150 between y=-2 and y=0)
-        # cannot overcome guidance axis noise (column_ceiling ~800-1250, merge_path_setup ~200-500).
-        # When compression requirement fails (landing_y >= max_y - 0.3 at deadline_crossed+NO),
-        # amplify height penalty by 2x to make low-placement candidates more differentiated.
-        # Current height penalty diff (~50-150) is insufficient; 2x amplification gives ~100-300.
-        # Does NOT suppress column_ceiling_bonus during non-deadline or merge-available states.
-        # refs: tmp/analysis_result.md (Implementation Plan),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL avg_delta=2.0, 22.3% usage)
-        # Fixes rollback failure mode: height penalty insufficient to differentiate during rp>=3 NO_MERGE
-        compression_failed = False  # Reset for this candidate
-        if deadline_crossed and reactive_pair_count >= 3 and merge_grade == "NO":
-            # Check if this candidate fails compression requirement
-            merge_avail = result.get("merge_available", False)
-            if not merge_avail and landing_y >= max_y - 0.3:
-                compression_failed = True
-                # Amplify height penalty by 2x to overwhelm guidance axis noise
-                extra_height_penalty = height_penalty  # Add equal amount = 2x total
-                score -= extra_height_penalty
-
         # ----- v361: piece_count congestion penalty -----
         # postmortem: bad strategy ends with 40-46 pieces, rollback target with 21-25.
         # piece_count is the key predictor of final score, not max_y.
@@ -1785,29 +1755,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Compression requirement not met — forbid this option with massive penalty
                 score -= 10000.0
                 reasons.append("DEADLINE_NO_MERGE_COMPRESSION_FORBIDDEN")
-                compression_failed = True
             else:
                 # v454: flatten to -4500 — fix v432 sign error + match protected strategy
                 score -= 4500.0
                 reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-
-        # ----- v607: guidance suppression on compression failure -----
-        # analysis: HEIGHT_CONTROL avg_delta=2.0 (near-zero), yet 22.3% selection rate.
-        # During rp>=3+deadline+NO_MERGE states, height penalty diff (~50-150 between y=-2 and y=0)
-        # cannot overcome guidance axis noise (column_ceiling ~800-1250, merge_path_setup ~200-500).
-        # When compression requirement fails (landing_y >= max_y - 0.3 at deadline_crossed+NO),
-        # suppress column_ceiling_bonus and MERGE_PATH_SETUP for this candidate to reduce noise.
-        # This makes height penalty the primary differentiator during merge drought.
-        # Forbidden: Do NOT suppress during non-deadline or merge-available states.
-        # refs: tmp/analysis_result.md (Implementation Plan),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL avg_delta=2.0, 22.3% usage)
-        # Fixes rollback failure mode: guidance axis noise prevents low-placement selection during rp>=3 NO_MERGE
-        suppress_guidance_bonus = False
-        if deadline_crossed and reactive_pair_count >= 3 and merge_grade == "NO":
-            merge_avail = result.get("merge_available", False)
-            if not merge_avail and landing_y >= max_y - 0.3:
-                suppress_guidance_bonus = True
-                reasons.append("COMPRESSION_FAILURE_GUIDANCE_SUPPRESS")
 
         # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
@@ -2191,10 +2142,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260412_074052_score0822.jsonl T45-T50 (max_y=1.2-1.8, pc=25-28, NO merge)
         # Fixes rollback failure mode: "column ceiling bonus didn't fire because median_y < 1.0
         #   even at max_y=2.75" (analysis_result.md adopted hypothesis)
-        # v607: suppress when compress failure to reduce guidance noise
-        # refs: tmp/analysis_result.md (Implementation Plan)
 
-        if merge_grade == "NO" and max_y >= 1.0 and piece_count >= 25 and not axis_88_horizontal_suppression and not suppress_guidance_bonus:
+        if merge_grade == "NO" and max_y >= 1.0 and piece_count >= 25 and not axis_88_horizontal_suppression:
             # Compute column ceiling: max_y of pieces in each 1.0-width column bucket
             # Column buckets: -3.5..-2.5, -2.5..-1.5, -1.5..-0.5, -0.5..0.5, 0.5..1.5, 1.5..2.5, 2.5..3.5
             col_max_y = {}
@@ -2244,8 +2193,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Does NOT override column_ceiling column selection; only differentiates within best column.
                 # Explicit death_spiral guard: already suppressed by column_ceiling_dominant condition.
                 # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
-                # v607: also suppress when suppress_guidance_bonus (compression failure)
-                if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral and not axis_88_horizontal_suppression and not suppress_guidance_bonus:
+                if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral and not axis_88_horizontal_suppression:
                     # Find nearest current_type piece on board to this candidate position
                     nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
                     if nearest_dist < 1.5:
