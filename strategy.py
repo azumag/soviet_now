@@ -67,6 +67,11 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v605: deadline NO_MERGE compression requirement — mandatory_themes hard constraint
+     # deadline_crossed && merge_grade==NO && !merge_available && landing_y >= max_y - 0.3 → score -= 10000 (forbid)
+     # Worst game (515) turns 48-55: 5 consecutive NO_MERGE at deadline with high placement → piece_count 35→40 → game over
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (axis 9.16)
+     # Fixes rollback failure mode: NO_MERGE high placement at deadline violating mandatory_themes
      # v604: NEAR merge suppression in high-pressure death zone — state-dependent type_scale override
      # When max_y>=2.0 && deadline_crossed && rp>=3 && pc>=28, set type_scale=0.5 for NEAR merges.
      # Reduces NEAR bonus from ~480 to ~300, making DIRECT or NO merge (height priority) competitive.
@@ -1723,22 +1728,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
 
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # v454: flatten to -4500 — fix v432 sign error + match protected strategy
-            # v432 formula was -3000 + landing_y * 2000 which has OPPOSITE sign to the
-            # documented intent. The comment said "y=2: -7000" but the formula produces
-            # +1000 (a BONUS for high placement). This inverted the penalty: at y>=1.5
-            # the "penalty" becomes zero or positive, incentivizing scatter to high-y
-            # positions at deadline — the exact failure mode the postmortem warns against.
-            # Evidence: worst T59 x=-3.0 at deadline → bounces to y=3.31. Extra_low T79-84
-            # pieces at x=2.6-3.0, y=2.7-3.5. Best game also shows edge scatter at deadline.
-            # Protected strategy (median 12789) uses flat -4500. Same as axis 8.8 (v452).
-            # Flat -4500 overwhelms all additive bonuses (~400-800), letting axis 2
-            # height penalty be the only position differentiator — consistent low placement.
-            # Fixes rollback failure mode: deadline scatter from v432 sign error
-            score -= 4500.0
-            reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-        
-         # ----- evaluation axis 3: drift penalty -----
+            # v605: compression requirement for deadline NO_MERGE — mandatory_themes hard constraint
+            # "デッドライン超出位置へのピースを置く場合は、併合できる場合に限る"
+            # When deadline crossed and NO merge, high placement (landing_y >= max_y - 0.3)
+            # violates mandatory_themes and causes piece_count accumulation → game over.
+            # Worst game (515) turns 48-55: 5 consecutive NO_MERGE at deadline_crossed,
+            # landing_y 1.0-1.5, max_y 2.52→3.00, piece_count 35→40 → game over.
+            # Best game (3912): deadline crossed but merge_available=true → DIRECT_MERGE → survival.
+            # Exception: merge_available=true means there's a merge opportunity, so skip
+            # compression check and let normal evaluation handle it.
+            # refs: tmp/analysis_result.md (Implementation Plan: deadline NO_MERGE compression check),
+            #       tmp/state/last_rollback_postmortem.md (axis 9.16 compression requirement),
+            #       tmp/state/last_rollback_analysis.md (Next Improve Focus),
+            #       data/mandatory_themes.txt (hard constraint),
+            #       game_history/20260506_102028_score0515.jsonl (worst game turns 48-55)
+            # Fixes rollback failure mode: NO_MERGE high placement at deadline violating mandatory_themes
+            merge_available = result.get("merge_available", False)
+            if not merge_available and landing_y >= max_y - 0.3:
+                # Compression requirement not met — forbid this option with massive penalty
+                score -= 10000.0
+                reasons.append("DEADLINE_NO_MERGE_COMPRESSION_FORBIDDEN")
+            else:
+                # v454: flatten to -4500 — fix v432 sign error + match protected strategy
+                score -= 4500.0
+                reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
+
+        # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
