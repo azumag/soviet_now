@@ -67,13 +67,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v608: critical phase stacking suppression — suppress stacking bonus when max_y>=3.0 && merge_grade==NO && rp>=3
-     # worst game T59-T62: max_y 3.77, rp=3, NO_MERGE, deadline_crossed. v607 (-8000) fired but HIGH_TOWER kept
-     # being selected because stacking bonus (~400-600) overpowered height penalty. CRITICAL phase board must
-     # use height penalty as sole differentiator. Fixes failure mode: stacking overpowered height at critical max_y.
-     # refs: tmp/analysis_result.md (adopted hypothesis: CRITICAL phase stacking suppression),
-     #       tmp/batch_summary.txt (worst game 13-turn NO_MERGE streak, max_y 3.77),
-     #       tmp/state/last_rollback_postmortem.md (stacking overpowered height penalty)
      # v607: axis 8.8c deadline-crossing NO-merge penalty at rp>=3 — prohibit CROSSES_DEADLINE_NO_MERGE selection
      # deadline_crossed && merge_grade=NO && crosses_deadline=true candidateに -8000.0 penaltyを追加。
      # worst game T57-T67で13ターンmerge_available=false持続する中、crosses_deadline=trueが4回選択されmax_y runawayでゲームオーバー。
@@ -1288,25 +1281,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # (rp>=3 && NO merge) — height must be sole differentiator even before
         # board elevates. pre_death_spiral covers max_y>=1.0; this catches rp>=3
         # && NO at lower max_y where horizontal noise can still override height.
-        # v607: critical phase stacking suppression — worst game T59-T62 had max_y 3.77,
-        # rp=3, NO_MERGE, deadline_crossed. v607 penalty (-8000) fired but HIGH_TOWER kept
-        # being selected because other bonuses (stacking ~400-600) overpowered height penalty.
-        # This condition suppresses stacking bonus entirely when board is already critical
-        # (max_y>=3.0) with no merge path — height penalty must be the sole differentiator.
-        # refs: tmp/analysis_result.md (adopted hypothesis: CRITICAL phase stacking suppression),
-        #       tmp/batch_summary.txt (worst game 13-turn NO_MERGE streak at max_y 3.77),
-        #       tmp/state/last_rollback_postmortem.md (failure mode: stacking overpowered height)
-        critical_phase_stacking_suppressed = (
-            max_y >= 3.0
-            and merge_grade == "NO"
-            and reactive_pair_count >= 3
-        )
-        stacking_danger_suppressed = (
-            death_spiral
-            or pre_death_spiral
-            or axis_88_horizontal_suppression
-            or critical_phase_stacking_suppressed
-        )
+        stacking_danger_suppressed = death_spiral or pre_death_spiral or axis_88_horizontal_suppression
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
