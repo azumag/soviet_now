@@ -67,6 +67,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v610: column_ceiling_dominant deadline_crossed抑制 — deadline超過済み状態でcolumn ceiling导向を抑制
+     # worst game T64-T65: deadline_crossed=true, rp=4, merge_grade=NO → column_ceiling_dominantが発動しx=2.92(高位置)を選択
+     # deadline超過時はheight penaltyが唯一の識別軸であるべき。column ceiling导向はこの原则に违反する。
+     # 変更: column_ceiling_dominant条件に`and not deadline_crossed`を追加
+     # Fixes failure mode: deadline超過時のcolumn ceiling导向によるedge scatter (mandatory_themes違反)
+     # refs: tmp/analysis_result.md (Implementation Plan: column_ceiling_dominant抑制)
      # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.5 with deadline_crossed
      # worst game T52-T56: max_y 1.38-2.77, deadline_crossed=true, rp=4, NO_MERGE, edge placement
      # v608 threshold (max_y>=3.0) too high — board critical at 2.5-2.8, v608 didn't fire at worst game
@@ -1427,9 +1433,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # When merge_grade==NO && max_y>=1.0 && pc>=28, analysis shows edge scatter(x=±3.0)
         # persists because axis 9.65/9.8/9.6b compete with column_ceiling_bonus.
         # Suppressing them lets column_ceiling guide placement to the lowest-ceiling column.
-        # refs: tmp/analysis_result.md (Implementation Plan: merge drought column_ceiling dominance)
+        # v610: When deadline_crossed, column_ceiling导向は危険 — deadline超過済み状態では
+        # height penaltyが唯一の識別軸であるべき。edge scatter(x=±3.0選択)を抑制し生存率向上。
+        # refs: tmp/analysis_result.md (Implementation Plan: deadline_crossed抑制)
         column_ceiling_dominant = (
             merge_grade == "NO" and max_y >= 1.0 and piece_count >= 28
+            and not deadline_crossed  # v610: suppress when deadline already crossed
         )
 
         # ----- v362/v368 → v369 → v371 → v453: merged_type-aware targeting + congestion-aware proximity -----
