@@ -2137,37 +2137,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if "DEADLINE_COMPRESSION_BONUS" not in "_".join(reasons):
                     reasons.append("DEADLINE_COMPRESSION_BONUS")
 
-        # ----- PRE_DEADLINE_COMPRESSION (extends v605 to pre-deadline zone) -----
-        # analysis_result.md adopted hypothesis: "Extend compression requirement to pre-deadline zone"
-        # Worst game T60: max_y=1.58, deadline_margin=0.16, piece_count=35, deadline_crossed=false.
-        # Placed at x=3.0 (edge) → no compression → max_y spiked to 3.04 next turn → game over.
-        # v605 only fires when deadline_crossed=true, but critical failure here was BEFORE crossing.
-        # When board is close to deadline (deadline_margin <= 0.5) and piece_count >= 30,
-        # NO_MERGE decisions must achieve meaningful compression even before deadline is crossed.
-        # Mandatory theme 1: "When placing a piece crossing the deadline, only if it can merge"
-        # This block enforces compression BEFORE crossing to prevent the spike.
-        # Russia phase exception: growth strategy intentionally places high (russia_phase=true skips).
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: Extend compression to pre-deadline zone),
-        #       tmp/state/last_rollback_postmortem.md (prioritize: v605 compression, verify: prevent runaway),
-        #       game_history/20260507_071647_score0655.jsonl T60 (worst game edge scatter at deadline_margin=0.16),
-        #       mandatory_themes.txt (theme 1: deadline merge requirement)
-        # Fixes rollback failure mode: "max_y runaway at deadline_crossed when reactive_pairs>=3"
-
-        if (merge_grade == "NO" and not russia_phase and
-            piece_count >= 30 and reactor_margin <= 0.5 and max_y >= 1.0 and not deadline_crossed):
-            compression_distance = max_y - landing_y
-            if compression_distance > 0.3:
-                compression_bonus = compression_distance * 600.0 * merge_mult
-                score += compression_bonus
-                if "PRE_DEADLINE_COMPRESSION_BONUS" not in "_".join(reasons):
-                    reasons.append("PRE_DEADLINE_COMPRESSION_BONUS")
-            else:
-                # Strong penalty for non-compressing placement near deadline
-                no_compression_penalty = 800.0 * merge_mult
-                score -= no_compression_penalty
-                if "PRE_DEADLINE_NO_COMPRESSION_PENALTY" not in "_".join(reasons):
-                    reasons.append("PRE_DEADLINE_NO_COMPRESSION_PENALTY")
-
         # ----- v593: column ceiling bonus — horizontal guidance when no merge and board is elevated -----
         # Analysis: worst game T57-T62 had 6 consecutive NO-merge turns at max_y=2.73-2.81.
         # v589 column_ceiling_bonus required guidance_suppressed AND max_y>=2.0 AND median_y>1.0.
