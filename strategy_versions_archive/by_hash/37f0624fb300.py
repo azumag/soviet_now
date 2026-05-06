@@ -67,6 +67,25 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v607: deadline NO_MERGE compression — replace scoring penalty with hard candidate rejection (continue)
+     # v605's -10000 scoring penalty was insufficient; candidates still competed after penalty.
+     # Turns 71-76 worst game: all 6 candidates violated mandatory_themes yet still selected (x=0.92-3.0).
+     # Now uses `continue` to reject bad candidates before scoring, making constraint a hard filter.
+     # v606 fallback (force lowest landing_y) naturally applies when all candidates are rejected.
+     # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt (hard constraint)
+     # Fixes rollback failure mode: NO_MERGE candidates at deadline competing despite mandatory_themes violation
+     # v606: deadline NO_MERGE compression fallback — force lowest landing_y when all candidates fail compression
+     # When deadline_crossed && merge_grade==NO && !merge_available && max_y >= 2.0,
+     # if no candidate satisfies landing_y < max_y - 0.3, force select lowest landing_y.
+     # Worst game turns 55-62: all NO_MERGE candidates land above compression threshold,
+     # max_y runs 2.01→3.26 → game over. This ensures compression even when no candidate passes.
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (Failure Mode)
+     # Fixes rollback failure mode: NO_MERGE at deadline with all candidates above compression threshold
+     # v605: deadline NO_MERGE compression requirement — mandatory_themes hard constraint
+     # deadline_crossed && merge_grade==NO && !merge_available && landing_y >= max_y - 0.3 → score -= 10000 (forbid)
+     # Worst game (515) turns 48-55: 5 consecutive NO_MERGE at deadline with high placement → piece_count 35→40 → game over
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (axis 9.16)
+     # Fixes rollback failure mode: NO_MERGE high placement at deadline violating mandatory_themes
      # v604: NEAR merge suppression in high-pressure death zone — state-dependent type_scale override
      # When max_y>=2.0 && deadline_crossed && rp>=3 && pc>=28, set type_scale=0.5 for NEAR merges.
      # Reduces NEAR bonus from ~480 to ~300, making DIRECT or NO merge (height priority) competitive.
@@ -1723,22 +1742,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Fixes rollback failure mode: deadline_crossed時の即時併合機会取りこぼし（axis 9.6追加・axis 9.2 deadline_crossed条件追加・axis 9.5条件追加・axis 2 danger_piece_count条件維持）
 
         if deadline_crossed and reactive_pair_count >= 1 and merge_grade == "NO":
-            # v454: flatten to -4500 — fix v432 sign error + match protected strategy
-            # v432 formula was -3000 + landing_y * 2000 which has OPPOSITE sign to the
-            # documented intent. The comment said "y=2: -7000" but the formula produces
-            # +1000 (a BONUS for high placement). This inverted the penalty: at y>=1.5
-            # the "penalty" becomes zero or positive, incentivizing scatter to high-y
-            # positions at deadline — the exact failure mode the postmortem warns against.
-            # Evidence: worst T59 x=-3.0 at deadline → bounces to y=3.31. Extra_low T79-84
-            # pieces at x=2.6-3.0, y=2.7-3.5. Best game also shows edge scatter at deadline.
-            # Protected strategy (median 12789) uses flat -4500. Same as axis 8.8 (v452).
-            # Flat -4500 overwhelms all additive bonuses (~400-800), letting axis 2
-            # height penalty be the only position differentiator — consistent low placement.
-            # Fixes rollback failure mode: deadline scatter from v432 sign error
-            score -= 4500.0
-            reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-        
-         # ----- evaluation axis 3: drift penalty -----
+            # v605: compression requirement for deadline NO_MERGE — mandatory_themes hard constraint
+            # "デッドライン超出位置へのピースを置く場合は、併合できる場合に限る"
+            # When deadline crossed and NO merge, high placement (landing_y >= max_y - 0.3)
+            # violates mandatory_themes and causes piece_count accumulation → game over.
+            # Worst game (515) turns 48-55: 5 consecutive NO_MERGE at deadline_crossed,
+            # landing_y 1.0-1.5, max_y 2.52→3.00, piece_count 35→40 → game over.
+            # Best game (3912): deadline crossed but merge_available=true → DIRECT_MERGE → survival.
+            # Exception: merge_available=true means there's a merge opportunity, so skip
+            # compression check and let normal evaluation handle it.
+            # refs: tmp/analysis_result.md (Implementation Plan: deadline NO_MERGE compression check),
+            #       tmp/state/last_rollback_postmortem.md (axis 9.16 compression requirement),
+            #       tmp/state/last_rollback_analysis.md (Next Improve Focus),
+            #       data/mandatory_themes.txt (hard constraint),
+            #       game_history/20260506_102028_score0515.jsonl (worst game turns 48-55)
+            # Fixes rollback failure mode: NO_MERGE high placement at deadline violating mandatory_themes
+            merge_available = result.get("merge_available", False)
+            if not merge_available and landing_y >= max_y - 0.3:
+                # mandatory_themes hard constraint: deadline crossing without merge is forbidden
+                # Reject this candidate entirely — do not let it compete in selection
+                # Worst game turns 71-76: all 6 candidates violated mandatory_themes yet
+                # still competed in selection; the highest-scoring bad candidate was chosen
+                # (x=0.92, 1.2, 1.0, 3.0, 1.6 — all high placements causing game over)
+                # A scoring penalty (-10000) is insufficient; only a hard filter works.
+                reasons.append("DEADLINE_NO_MERGE_COMPRESSION_FORBIDDEN")
+                continue  # skip to next candidate — v606 fallback handles all-rejected case
+            elif not merge_available:
+                # merge_available=false but compression requirement met (landing_y < max_y - 0.3)
+                # v454: flatten to -4500 — fix v432 sign error + match protected strategy
+                score -= 4500.0
+                reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
+
+        # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
         drift_penalty = (abs(drift_x) + drift_unc) * 30.0
@@ -2408,6 +2443,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
+
+    # ----- v606: deadline NO_MERGE compression fallback -----
+    # analysis_result.md adopted hypothesis: worst game has NO_MERGE candidates but ALL
+    # land above compression threshold (landing_y >= max_y - 0.3), causing max_y runaway
+    # from 2.01→3.26 over turns 55-62.
+    # When deadline_crossed && merge_grade==NO && !merge_available && max_y >= 2.0,
+    # if no candidate satisfies landing_y < max_y - 0.3, force select the candidate
+    # with the lowest landing_y (minimum y placement), even if non-center column.
+    # This ensures compression even when all candidates would violate mandatory_themes.
+    # refs: tmp/analysis_result.md (Implementation Plan: deadline NO_MERGE compression fallback),
+    #       tmp/state/last_rollback_postmortem.md (Failure Mode: piece_count accumulation at deadline)
+    # Fixes rollback failure mode: NO_MERGE at deadline with all candidates above compression threshold
+    compression_passed = False
+    if deadline_crossed and max_y >= 2.0:
+        # Check if any candidate passed compression requirement
+        for result in results:
+            if result.get("merge_grade") == "NO" and not result.get("merge_available", False):
+                if result.get("landing_y", 0) < max_y - 0.3:
+                    compression_passed = True
+                    break
+
+        # If no candidate passed compression, force select lowest landing_y candidate
+        if not compression_passed:
+            best_x = min(results, key=lambda r: r.get("landing_y", 0)).get("x", 0.0)
+            best_reason = "DEADLINE_COMPRESSION_FALLBACK"
+            # Clip to drop range
+            best_x = max(-3.0, min(3.0, best_x))
+            best_x = round(best_x, 2)
+            return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))

@@ -67,6 +67,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v607: deadline NO_MERGE compression — replace scoring penalty with hard candidate rejection (continue)
+     # v605's -10000 scoring penalty was insufficient; candidates still competed after penalty.
+     # Turns 71-76 worst game: all 6 candidates violated mandatory_themes yet still selected (x=0.92-3.0).
+     # Now uses `continue` to reject bad candidates before scoring, making constraint a hard filter.
+     # v606 fallback (force lowest landing_y) naturally applies when all candidates are rejected.
+     # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt (hard constraint)
+     # Fixes rollback failure mode: NO_MERGE candidates at deadline competing despite mandatory_themes violation
      # v606: deadline NO_MERGE compression fallback — force lowest landing_y when all candidates fail compression
      # When deadline_crossed && merge_grade==NO && !merge_available && max_y >= 2.0,
      # if no candidate satisfies landing_y < max_y - 0.3, force select lowest landing_y.
@@ -1752,10 +1759,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Fixes rollback failure mode: NO_MERGE high placement at deadline violating mandatory_themes
             merge_available = result.get("merge_available", False)
             if not merge_available and landing_y >= max_y - 0.3:
-                # Compression requirement not met — forbid this option with massive penalty
-                score -= 10000.0
+                # mandatory_themes hard constraint: deadline crossing without merge is forbidden
+                # Reject this candidate entirely — do not let it compete in selection
+                # Worst game turns 71-76: all 6 candidates violated mandatory_themes yet
+                # still competed in selection; the highest-scoring bad candidate was chosen
+                # (x=0.92, 1.2, 1.0, 3.0, 1.6 — all high placements causing game over)
+                # A scoring penalty (-10000) is insufficient; only a hard filter works.
                 reasons.append("DEADLINE_NO_MERGE_COMPRESSION_FORBIDDEN")
-            else:
+                continue  # skip to next candidate — v606 fallback handles all-rejected case
+            elif not merge_available:
+                # merge_available=false but compression requirement met (landing_y < max_y - 0.3)
                 # v454: flatten to -4500 — fix v432 sign error + match protected strategy
                 score -= 4500.0
                 reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
