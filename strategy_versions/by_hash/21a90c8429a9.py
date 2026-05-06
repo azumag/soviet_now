@@ -67,13 +67,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v606: deadline NO_MERGE compression fallback — force lowest landing_y when all candidates fail compression
-     # When deadline_crossed && merge_grade==NO && !merge_available && max_y >= 2.0,
-     # if no candidate satisfies landing_y < max_y - 0.3, force select lowest landing_y.
-     # Worst game turns 55-62: all NO_MERGE candidates land above compression threshold,
-     # max_y runs 2.01→3.26 → game over. This ensures compression even when no candidate passes.
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (Failure Mode)
-     # Fixes rollback failure mode: NO_MERGE at deadline with all candidates above compression threshold
      # v605: deadline NO_MERGE compression requirement — mandatory_themes hard constraint
      # deadline_crossed && merge_grade==NO && !merge_available && landing_y >= max_y - 0.3 → score -= 10000 (forbid)
      # Worst game (515) turns 48-55: 5 consecutive NO_MERGE at deadline with high placement → piece_count 35→40 → game over
@@ -2430,35 +2423,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             best_score = score
             best_x = x
             best_reason = "_".join(reasons) if reasons else "HEIGHT_CONTROL"
-
-    # ----- v606: deadline NO_MERGE compression fallback -----
-    # analysis_result.md adopted hypothesis: worst game has NO_MERGE candidates but ALL
-    # land above compression threshold (landing_y >= max_y - 0.3), causing max_y runaway
-    # from 2.01→3.26 over turns 55-62.
-    # When deadline_crossed && merge_grade==NO && !merge_available && max_y >= 2.0,
-    # if no candidate satisfies landing_y < max_y - 0.3, force select the candidate
-    # with the lowest landing_y (minimum y placement), even if non-center column.
-    # This ensures compression even when all candidates would violate mandatory_themes.
-    # refs: tmp/analysis_result.md (Implementation Plan: deadline NO_MERGE compression fallback),
-    #       tmp/state/last_rollback_postmortem.md (Failure Mode: piece_count accumulation at deadline)
-    # Fixes rollback failure mode: NO_MERGE at deadline with all candidates above compression threshold
-    compression_passed = False
-    if deadline_crossed and max_y >= 2.0:
-        # Check if any candidate passed compression requirement
-        for result in results:
-            if result.get("merge_grade") == "NO" and not result.get("merge_available", False):
-                if result.get("landing_y", 0) < max_y - 0.3:
-                    compression_passed = True
-                    break
-
-        # If no candidate passed compression, force select lowest landing_y candidate
-        if not compression_passed:
-            best_x = min(results, key=lambda r: r.get("landing_y", 0)).get("x", 0.0)
-            best_reason = "DEADLINE_COMPRESSION_FALLBACK"
-            # Clip to drop range
-            best_x = max(-3.0, min(3.0, best_x))
-            best_x = round(best_x, 2)
-            return {"x": best_x, "reason": best_reason}
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
