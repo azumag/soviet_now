@@ -67,6 +67,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v607: axis 8.8c deadline-crossing NO-merge penalty at rp>=3 — prohibit CROSSES_DEADLINE_NO_MERGE selection
+     # deadline_crossed && merge_grade=NO && crosses_deadline=true candidateに -8000.0 penaltyを追加。
+     # worst game T57-T67で13ターンmerge_available=false持続する中、crosses_deadline=trueが4回選択されmax_y runawayでゲームオーバー。
+     # best game T110ではdeadline超過でもcrosses_deadline=false位置に低配置し生存（score 2542）。
+     # mandatory_themes.txt「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」を制度的に補償。
+     # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt,
+     #       game_history/20260506_221158_score0742.jsonl T57-T67,
+     #       game_history/20260506_231333_score2542.jsonl T110
      # v604: NEAR merge suppression in high-pressure death zone — state-dependent type_scale override
      # When max_y>=2.0 && deadline_crossed && rp>=3 && pc>=28, set type_scale=0.5 for NEAR merges.
      # Reduces NEAR bonus from ~480 to ~300, making DIRECT or NO merge (height priority) competitive.
@@ -2078,6 +2086,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # axis 2 height penalty be the only differentiator — consistent low placement.
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
+
+        # ----- v607: axis 8.8c — deadline-crossing NO-merge at rp>=3 (CRITICAL) -----
+        # worst game T57-T67: 13 consecutive merge_available=false turns, yet
+        # decision_crosses_deadline=true was selected 4 times (T57, T59, T60, T66).
+        # max_y=2.96→3.09, deadline_crossed=true but merge_grade=NO → game over.
+        # best game T110: max_y=2.36, deadline_margin=-0.51, crosses_deadline=false
+        # → low placement selected, survived to score 2542.
+        # mandatory_themes.txt: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # Even with axis 8.8 (-4500) equalizing all NO-merge candidates, other bonuses
+        # (stacking, proximity ~200-900 each) were enough to override height penalty and
+        # select crosses_deadline candidates. We need a penalty that is LARGER than the
+        # combined height penalty differences to ensure no-crossing candidates are chosen.
+        # Penalty magnitude: -8000 — exceeds height penalty differential (~2000-4000)
+        # between y=0 and y=2.5, and exceeds combined bonuses (~1500) that could override.
+        # Only fires when: rp>=3 && merge_grade==NO && crosses_deadline==true.
+        # Does NOT fire for merge_available candidates (they don't reach this block).
+        # refs: tmp/analysis_result.md (Implementation Plan: deadline-crossing NO-merge
+        #       penalty at rp>=3, mandatory_themes.txt),
+        #       game_history/20260506_221158_score0742.jsonl T57-T67 (worst game failure mode),
+        #       game_history/20260506_231333_score2542.jsonl T110 (best game survival pattern)
+        if reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False):
+            score -= 8000.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
 
         # ----- v602: axis_88_horizontal_suppression flag (defined earlier in loop) -----
         # Flag is already defined after pre_death_spiral (line ~1211).
