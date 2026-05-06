@@ -2435,15 +2435,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # analysis_result.md adopted hypothesis: worst game has NO_MERGE candidates but ALL
     # land above compression threshold (landing_y >= max_y - 0.3), causing max_y runaway
     # from 2.01→3.26 over turns 55-62.
-    # When deadline_crossed && merge_grade==NO && !merge_available && max_y >= 1.5,
+    # When deadline_crossed && merge_grade==NO && !merge_available && max_y >= 2.0,
     # if no candidate satisfies landing_y < max_y - 0.3, force select the candidate
     # with the lowest landing_y (minimum y placement), even if non-center column.
     # This ensures compression even when all candidates would violate mandatory_themes.
-    # refs: tmp/analysis_result.md (Implementation Plan: lower threshold 2.0→1.5),
+    # refs: tmp/analysis_result.md (Implementation Plan: deadline NO_MERGE compression fallback),
     #       tmp/state/last_rollback_postmortem.md (Failure Mode: piece_count accumulation at deadline)
-    # Fixes rollback failure mode: NO_MERGE at deadline with cascade starting at max_y~1.5
+    # Fixes rollback failure mode: NO_MERGE at deadline with all candidates above compression threshold
     compression_passed = False
-    if deadline_crossed and max_y >= 1.5:
+    if deadline_crossed and max_y >= 2.0:
         # Check if any candidate passed compression requirement
         for result in results:
             if result.get("merge_grade") == "NO" and not result.get("merge_available", False):
