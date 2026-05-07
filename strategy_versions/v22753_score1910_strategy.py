@@ -68,25 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v613: axis 1.9 merge compression expectation value — reward board compression from merge
-     # analysis_result.md adopted hypothesis: "merge chainの3手以内完了による建国ボーナス込みスコア最大化"
-     # Best game T93-T96: 3 consecutive DIRECT merges reduced piece_count 40→27 (+392 score_delta).
-     # This compression effect (not just merge points) is the PRIMARY driver of high scores.
-     # Worst game T67-T78: merge_available=true but non-merge selection continued, max_y rose to 2.71.
-     # Core insight: merge bonus evaluation (axis 1, 1.6, 1.8) scores the merge opportunity, but
-     # does NOT evaluate the board compression effect — how many pieces will be reduced.
-     # Implementation: expected_reduction = 1.0×0.957(DIRECT), 1.0×0.685(NEAR), 0.1(FAR).
-     # compression_value_factor scales with piece_count (pc>=35: factor=1.5, pc>=40: factor=2.0).
-     # compression_bonus = reduction × factor × 300 × merge_mult — additive, not duplicating axis 1.8.
-     # Synergy with axis 1.8: axis 1.8 promotes merge, axis 1.9 scores compression as direct objective.
-     # Forbidden: penalty for piece_count reduction, excessive bonus (would duplicate axis 1.8).
-     # Does NOT require deadline_crossed — compression is valuable even before deadline.
-     # refs: tmp/analysis_result.md (Implementation Plan, adopted hypothesis),
-     #       tmp/batch_summary.txt (DIRECT_MERGE_CHAIN_MERGE avg_score_delta=71.6 highest),
-     #       game_history/20260507_181039_score2571.jsonl T93-T96 (3 consecutive merges, pc 40→27),
-     #       game_history/20260507_175205_score0880.jsonl T67-T78 (merge missed, max_y runaway)
-     # Fixes failure mode: worst-game "deferring merge until critical height" by scoring
-     # compression as a direct objective
      # v612: axis 1.8 elevated board merge forcing — strengthen merge-vs-no-merge differentiation at elevated board
      # analysis_result.md adopted hypothesis: "Stacking suppression correctly fires but fallback to
      # non-merge placement is undifferentiated" — HEIGHT_CONTROL avg_score_delta=2.8 selected 21-25%
@@ -1307,64 +1288,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             elevated_board_bonus = merge_bonus_base * 0.8
             score += elevated_board_bonus
             reasons.append("ELEVATED_BOARD_MERGE_FORCING")
-
-        # ----- v613: axis 1.9 merge compression expectation value (analysis: board compression from merge) -----
-        # analysis_result.md adopted hypothesis: "merge chainの3手以内完了による建国ボーナス込みスコア最大化"
-        # Best game T93-T96: 3 consecutive DIRECT merges reduced piece_count 40→27 (+392 score_delta).
-        # This compression effect (not just merge points) is the PRIMARY driver of high scores.
-        # Worst game T67-T78: merge_available=true but non-merge selection continued, max_y rose to 2.71.
-        # Core insight: current merge bonus evaluation (axis 1, 1.6, 1.8) scores the merge opportunity,
-        # but does NOT evaluate the board compression effect — how many pieces will be reduced.
-        #
-        # Implementation:
-        # - DIRECT merge: 1 piece reduced (2 pieces → 1 piece)
-        # - NEAR merge: 0.315 expected reduction (68.5% success rate × 1 piece)
-        # - FAR merge: 0.1 expected reduction (low probability)
-        # - bonus = reduction_count × compression_value_factor × merge_mult
-        # - compression_value_factor is larger when piece_count is high (pc>=35 -> higher compression effect)
-        #
-        # Synergy with axis 1.8: axis 1.8 promotes merge selection at elevated board, axis 1.9
-        # provides direct bonus for the compression benefit. Together they address worst-game
-        # pattern of "deferring merge until critical height" by making compression itself
-        # a scored objective, not just merge opportunity.
-        #
-        # Forbidden: penalty for piece_count reduction (compression is always positive).
-        # Forbidden: excessive bonus (would duplicate axis 1.8 boost).
-        # Does NOT require deadline_crossed — compression is valuable even before deadline.
-        # refs: tmp/analysis_result.md (Implementation Plan, adopted hypothesis),
-        #       tmp/batch_summary.txt (DIRECT_MERGE_CHAIN_MERGE avg_score_delta=71.6 highest),
-        #       game_history/20260507_181039_score2571.jsonl T93-T96 (3 consecutive merges, pc 40→27),
-        #       game_history/20260507_175205_score0880.jsonl T67-T78 (merge missed, max_y runaway)
-        # Fixes failure mode: worst-game "deferring merge until critical height" by scoring
-        # compression as a direct objective
-        if merge_grade != "NO" and piece_count >= 20:
-            # Estimate expected piece reduction from this merge
-            if merge_grade == "DIRECT":
-                # DIRECT merge success rate ~95.7%, reduces 2→1 = 1 piece
-                expected_reduction = 1.0 * 0.957
-            elif merge_grade == "NEAR":
-                # NEAR merge success rate ~68.5%, reduces 2→1 = 1 piece
-                expected_reduction = 1.0 * 0.685
-            else:  # FAR
-                # FAR merge low probability, rough estimate
-                expected_reduction = 0.1
-
-            # compression_value_factor: larger when pc is high (compression more valuable)
-            # At pc=20: factor=0.5 (minimal boost). At pc=35: factor=1.5. At pc=40+: factor=2.0+
-            if piece_count >= 40:
-                compression_value_factor = 2.0
-            elif piece_count >= 35:
-                compression_value_factor = 1.5
-            elif piece_count >= 28:
-                compression_value_factor = 1.0
-            else:
-                compression_value_factor = 0.5
-
-            # compression_bonus: reward expected piece reduction
-            compression_bonus = expected_reduction * compression_value_factor * 300.0 * merge_mult
-            if compression_bonus > 0:
-                score += compression_bonus
-                reasons.append("MERGE_COMPRESSION_EXPECTED")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
