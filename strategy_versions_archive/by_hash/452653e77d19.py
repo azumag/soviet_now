@@ -68,24 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v612: axis 1.8 elevated board merge forcing — strengthen merge-vs-no-merge differentiation at elevated board
-     # analysis_result.md adopted hypothesis: "Stacking suppression correctly fires but fallback to
-     # non-merge placement is undifferentiated" — HEIGHT_CONTROL avg_score_delta=2.8 selected 21-25%
-     # at elevated board states (max_y >= 2.0). When stacking is correctly suppressed, the fallback
-     # options produce scores too close together — height penalty (~200-400) competes with merge
-     # bonus (~480-960) allowing height to win over merge timing.
-     # Worst game T61: merge_available=true, best_merge_grade=DIRECT, yet HIGH_TOWER selected (score_delta=21).
-     # Best game T137: merge at max_y=2.77, DIRECT merge executed, max_y reduced to 2.28.
-     # Implementation: when max_y >= 2.0 and best_merge_grade != "NO" and candidate's own merge_grade != "NO",
-     # apply merge_bonus * 0.8 as additive bonus. Makes merge candidates score ~384 points higher than
-     # non-merge at elevated heights, overwhelming height penalty difference.
-     # NOT increasing existing merge bonus magnitudes (axes 1, 1.6, 8.7). Only ensures merge is chosen
-     # over height when board is elevated. Fixes worst-game pattern of deferring merge until critical height.
-     # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る" — axis 1.8 enforces.
-     # refs: tmp/analysis_result.md (adopted hypothesis, implementation plan),
-     #       tmp/batch_summary.txt (HEIGHT_CONTROL avg_score_delta=2.8 at elevated board),
-     #       game_history/20260507_163102_score0863.jsonl T61 (worst game),
-     #       game_history/20260507_165639_score3129.jsonl T137 (best game)
      # v611: critical_phase_stacking_suppressed uses reactor_margin<2.0 instead of deadline_crossed
      # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
      # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
@@ -1040,20 +1022,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         and piece_count >= 28
     )
 
-    # ----- v612: pre-compute best_merge_grade for elevated board merge forcing (axis 1.8) -----
-    # analysis_result.md: "worst game turn 61: merge_available=true, best_merge_grade=DIRECT"
-    # best_merge_grade is the best merge grade available across all candidates.
-    # Used by axis 1.8 to determine if ANY merge is available before forcing merge at elevated heights.
-    merge_grades = [r.get("merge_grade", "NO") for r in results]
-    if "DIRECT" in merge_grades:
-        best_merge_grade = "DIRECT"
-    elif "NEAR" in merge_grades:
-        best_merge_grade = "NEAR"
-    elif "FAR" in merge_grades:
-        best_merge_grade = "FAR"
-    else:
-        best_merge_grade = "NO"
-
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -1248,46 +1216,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 bonus = (600.0 if deadline_crossed else 300.0) * type_scale
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
-
-        # ----- v612: axis 1.8 elevated board merge forcing (analysis: merge-vs-no-merge differentiation) -----
-        # analysis_result.md adopted hypothesis: "Stacking suppression correctly fires but fallback to
-        # non-merge placement is undifferentiated" — HEIGHT_CONTROL avg_score_delta=2.8 but selected
-        # 21-25% at elevated board states, indicating evaluation does not clearly differentiate merge-
-        # worthy positions from non-merge during elevated board states (max_y >= 2.0).
-        #
-        # Worst game turn 61: merge_available=true, best_merge_grade=DIRECT, yet HIGH_TOWER selected
-        # with score_delta=21 (not full merge score). Best game turn 137: merge at max_y=2.77,
-        # DIRECT merge executed, max_y reduced to 2.28. The difference is merge timing not existence.
-        #
-        # Implementation: when max_y >= 2.0 and best_merge_grade != "NO" and candidate's own
-        # merge_grade != "NO", apply merge_bonus * 0.8 as additive bonus. This makes merge
-        # candidates score ~384 points higher (e.g., 480*0.8 for DIRECT) than non-merge at elevated
-        # heights, overwhelming the typical height penalty difference (~200-400 points).
-        #
-        # NOT increasing existing merge bonus magnitudes (axes 1, 1.6, 8.7) — they are already
-        # correctly sized. This axis only ensures merge is chosen over height when board is elevated.
-        #
-        # Mandatory themes compliance: "デッドラインを超える位置にピースを置く場合は、併合できる場合
-        # に限る" — axis 1.8 enforces this by making merge mandatory at elevated heights when available.
-        # refs: tmp/analysis_result.md (adopted hypothesis, implementation plan),
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL avg_score_delta=2.8 at elevated board),
-        #       game_history/20260507_163102_score0863.jsonl T61 (worst game turn 61),
-        #       game_history/20260507_165639_score3129.jsonl T137 (best game turn 137)
-        # Fixes rollback failure mode: worst-game pattern of deferring merge until critical height
-        if max_y >= 2.0 and best_merge_grade != "NO" and merge_grade != "NO":
-            # merge_bonus is the base axis 1 bonus for this candidate's merge_grade
-            if merge_grade == "DIRECT":
-                merge_bonus_base = 1200.0 * merge_mult * type_scale
-            elif merge_grade == "NEAR":
-                merge_bonus_base = 600.0 * merge_mult * type_scale
-            elif merge_grade == "FAR":
-                merge_bonus_base = 200.0 * merge_mult * type_scale
-            else:
-                merge_bonus_base = 0.0
-            # Apply elevated board override: merge_bonus * 0.8 ensures merge dominates height
-            elevated_board_bonus = merge_bonus_base * 0.8
-            score += elevated_board_bonus
-            reasons.append("ELEVATED_BOARD_MERGE_FORCING")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善

@@ -68,6 +68,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v611: critical_phase_stacking_suppressed uses reactor_margin<2.0 instead of deadline_crossed
+     # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
+     # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
+     # reactor_margin is continuous — use it to match actual constraint threshold
+     # Fixes rollback failure mode: stacking bonus overpowers height penalty at max_y>=2.0 when deadline_margin<2.0
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/analysis_result.md (implementation plan change 1)
+     # v611: GAP_ZONE_NEAR_PENALTY lowered to max_y>=0.5+reactive_pair_count==0 (was max_y>=2.0+deadline_crossed)
+     # Rollback constraint: "forbid: NEAR merge priority when reactive_pairs=0 and max_y>=0.5"
+     # Lower threshold catches danger earlier; reactive_pair_count==0 directly matches constraint
+     # refs: tmp/state/last_rollback_postmortem.md (failure_mode: NEAR at reactive_pairs=0 max_y>=0.5),
+     #       tmp/analysis_result.md (implementation plan change 2)
      # v610: axis 9.10 high-type growth pipeline guidance — suppress edge scatter during merge drought
      # Worst game T70-T78: 9 consecutive NO_MERGE, max_y 2.04→3.03, edge scatter at x=±3.0
      # Pieces type 8-12 existed but scattered, no guidance to centralize them
@@ -1137,17 +1148,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- axis 1.7b: gap-zone NEAR merge penalty (v560_mod follow-up) -----
         # worst_game T53 (max_y=1.88, deadline_crossed=true) and T57 (max_y=2.28, rp=9)
-        # selected NEAR merge despite deadline crossed, failing with only +21 score_delta.
-        # last_rollback_postmortem: "max_y>=2.0 NEAR merge failure causing max_y runaway".
-        # v560 reactive_pairs_cleanup requires max_y>=2.5, missing the 2.0-2.5 gap zone.
-        # When deadline is already crossed and max_y>=2.0, NEAR failure risk is highest —
-        # piece_count grows without merge benefit, accelerating game-over.
-        # Penalty -500 makes NO_MERGE low placement competitive vs NEAR when in gap zone.
-        # This is NOT a v550/v560 threshold change — it is a new axis with distinct condition.
-        # refs: tmp/state/last_rollback_postmortem.md (failure_mode: max_y>=2.0 NEAR merge failure)
-        #       game_history/20260410_183623_score0841.jsonl (T53, T57 gap-zone NEAR failures)
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 17-19% in low-score games)
-        if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
+        # Rollback constraint: "forbid: NEAR merge priority when reactive_pairs=0 and max_y>=0.5"
+        # When reactive_pairs=0 and board is elevated (max_y>=0.5), NEAR merge risks:
+        #   - No chain potential to compensate for merge failure
+        #   - Piece accumulation without merge benefit accelerates game-over
+        #   - Lower threshold from max_y>=2.0 to max_y>=0.5 catches danger earlier
+        #   - reactive_pair_count==0 directly matches constraint, no deadline_crossed needed
+        # Penalty -500 makes NO_MERGE low placement competitive vs NEAR when no chain potential.
+        # refs: tmp/state/last_rollback_postmortem.md (failure_mode: NEAR merge at reactive_pairs=0 max_y>=0.5),
+        #       tmp/analysis_result.md (implementation plan change 2)
+        if merge_grade == "NEAR" and max_y >= 0.5 and reactive_pair_count == 0:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
 
@@ -1309,13 +1319,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.0 with deadline_crossed
         # worst game T55: max_y=2.2, deadline_margin=-0.91, rp=6, NO_MERGE, edge placement → max_y runaway to 3.13
         # v608 threshold (max_y>=2.5) was too high — suppression didn't fire at max_y=2.2, stacking selected
-        # Fires at max_y>=2.0 with deadline_crossed (primary), OR max_y>=3.0 regardless (secondary guard)
+        # v609 lowered threshold to 2.0 but kept deadline_crossed instead of reactor_margin < 2.0
+        # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
+        # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
+        # reactor_margin is a continuous value — use it to match the actual constraint threshold
         # Height penalty must be sole differentiator when NO_MERGE at elevated board with deadline pressure
-        # refs: tmp/analysis_result.md (adopted hypothesis: lower v609 threshold to 2.0),
-        #       game_history/20260507_091054_score0623.jsonl T55-T57 (max_y 2.2→3.13 runaway),
-        #       game_history/20260507_100725_score2791.jsonl T100-T112 (max_y<=2.12 survival)
+        # refs: tmp/state/last_rollback_postmortem.md (failure_mode: stacking bonus overpowers height at max_y>=2.0),
+        #       tmp/analysis_result.md (adopted hypothesis: use reactor_margin < 2.0 instead of deadline_crossed)
         critical_phase_stacking_suppressed = (
-            (max_y >= 3.0 or (max_y >= 2.0 and deadline_crossed))
+            (max_y >= 3.0 or (max_y >= 2.0 and reactor_margin < 2.0))
             and merge_grade == "NO"
             and reactive_pair_count >= 3
         )
