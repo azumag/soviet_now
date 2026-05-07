@@ -50,7 +50,6 @@ Game Overview:
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
-            9.16. Deadline NO merge compression bonus - v605: deadline_crossed && NO merge requires compression
 
 
 Phases (determined by board max Y):
@@ -68,12 +67,27 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v605: axis 9.16 deadline NO merge compression bonus — deadline_crossed && merge_grade==NO
-     # When choosing NO_MERGE at deadline, require meaningful compression (landing_y < max_y - 0.3).
-     # Bonus = (max_y - landing_y) * 800. Ensures NO_MERGE at deadline is not free — must compress.
-     # refs: tmp/analysis_result.md (Hypothesis: Add Compression Requirement for Deadline NO Merge),
-     #       game_history/20260506_063407_score0286.jsonl (worst game T47-54, 7 consecutive NO_MERGE at deadline)
-     # Fixes rollback failure mode: "deadline NO_MERGE without compression — 7 consecutive turns zero compression"
+     # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.5 with deadline_crossed
+     # worst game T52-T56: max_y 1.38-2.77, deadline_crossed=true, rp=4, NO_MERGE, edge placement
+     # v608 threshold (max_y>=3.0) too high — board critical at 2.5-2.8, v608 didn't fire at worst game
+     # Now fires at max_y>=2.5+deadline_crossed (primary), OR max_y>=3.0 regardless (secondary guard)
+     # Fixes failure mode: edge scatter during elevated NO_MERGE with deadline_crossed
+     # refs: tmp/analysis_result.md (adopted hypothesis: v608 threshold too high)
+     # v608: critical phase stacking suppression — suppress stacking bonus when max_y>=3.0 && merge_grade==NO && rp>=3
+     # worst game T59-T62: max_y 3.77, rp=3, NO_MERGE, deadline_crossed. v607 (-8000) fired but HIGH_TOWER kept
+     # being selected because stacking bonus (~400-600) overpowered height penalty. CRITICAL phase board must
+     # use height penalty as sole differentiator. Fixes failure mode: stacking overpowered height at critical max_y.
+     # refs: tmp/analysis_result.md (adopted hypothesis: CRITICAL phase stacking suppression),
+     #       tmp/batch_summary.txt (worst game 13-turn NO_MERGE streak, max_y 3.77),
+     #       tmp/state/last_rollback_postmortem.md (stacking overpowered height penalty)
+     # v607: axis 8.8c deadline-crossing NO-merge penalty at rp>=3 — prohibit CROSSES_DEADLINE_NO_MERGE selection
+     # deadline_crossed && merge_grade=NO && crosses_deadline=true candidateに -8000.0 penaltyを追加。
+     # worst game T57-T67で13ターンmerge_available=false持続する中、crosses_deadline=trueが4回選択されmax_y runawayでゲームオーバー。
+     # best game T110ではdeadline超過でもcrosses_deadline=false位置に低配置し生存（score 2542）。
+     # mandatory_themes.txt「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」を制度的に補償。
+     # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt,
+     #       game_history/20260506_221158_score0742.jsonl T57-T67,
+     #       game_history/20260506_231333_score2542.jsonl T110
      # v604: NEAR merge suppression in high-pressure death zone — state-dependent type_scale override
      # When max_y>=2.0 && deadline_crossed && rp>=3 && pc>=28, set type_scale=0.5 for NEAR merges.
      # Reduces NEAR bonus from ~480 to ~300, making DIRECT or NO merge (height priority) competitive.
@@ -1280,7 +1294,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # (rp>=3 && NO merge) — height must be sole differentiator even before
         # board elevates. pre_death_spiral covers max_y>=1.0; this catches rp>=3
         # && NO at lower max_y where horizontal noise can still override height.
-        stacking_danger_suppressed = death_spiral or pre_death_spiral or axis_88_horizontal_suppression
+        # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.5 with deadline_crossed
+        # worst game T52-T56: max_y 1.38-2.77, deadline_crossed=true, rp=4, NO_MERGE, edge placement (x=-3.0, x=3.0)
+        # v608 threshold (max_y>=3.0) was too high — board already critical at 2.5-2.8, v608 didn't fire
+        # Fires at max_y>=2.5 with deadline_crossed (primary), OR max_y>=3.0 regardless of deadline (secondary guard)
+        # Height penalty must be sole differentiator when NO_MERGE at elevated board with deadline pressure
+        # refs: tmp/analysis_result.md (adopted hypothesis: v608 threshold too high),
+        #       game_history/20260507_015447_score0684.jsonl T52-T56 (edge scatter at max_y 2.77),
+        #       tmp/batch_summary.txt (worst game 13-turn NO_MERGE streak at max_y 1.38-2.77)
+        critical_phase_stacking_suppressed = (
+            (max_y >= 3.0 or (max_y >= 2.5 and deadline_crossed))
+            and merge_grade == "NO"
+            and reactive_pair_count >= 3
+        )
+        stacking_danger_suppressed = (
+            death_spiral
+            or pre_death_spiral
+            or axis_88_horizontal_suppression
+            or critical_phase_stacking_suppressed
+        )
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
             # state-dependent target selection. Postmortem: "Reducing stacking_bonus in a
@@ -2086,6 +2118,29 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
+        # ----- v607: axis 8.8c — deadline-crossing NO-merge at rp>=3 (CRITICAL) -----
+        # worst game T57-T67: 13 consecutive merge_available=false turns, yet
+        # decision_crosses_deadline=true was selected 4 times (T57, T59, T60, T66).
+        # max_y=2.96→3.09, deadline_crossed=true but merge_grade=NO → game over.
+        # best game T110: max_y=2.36, deadline_margin=-0.51, crosses_deadline=false
+        # → low placement selected, survived to score 2542.
+        # mandatory_themes.txt: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # Even with axis 8.8 (-4500) equalizing all NO-merge candidates, other bonuses
+        # (stacking, proximity ~200-900 each) were enough to override height penalty and
+        # select crosses_deadline candidates. We need a penalty that is LARGER than the
+        # combined height penalty differences to ensure no-crossing candidates are chosen.
+        # Penalty magnitude: -8000 — exceeds height penalty differential (~2000-4000)
+        # between y=0 and y=2.5, and exceeds combined bonuses (~1500) that could override.
+        # Only fires when: rp>=3 && merge_grade==NO && crosses_deadline==true.
+        # Does NOT fire for merge_available candidates (they don't reach this block).
+        # refs: tmp/analysis_result.md (Implementation Plan: deadline-crossing NO-merge
+        #       penalty at rp>=3, mandatory_themes.txt),
+        #       game_history/20260506_221158_score0742.jsonl T57-T67 (worst game failure mode),
+        #       game_history/20260506_231333_score2542.jsonl T110 (best game survival pattern)
+        if reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False):
+            score -= 8000.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
+
         # ----- v602: axis_88_horizontal_suppression flag (defined earlier in loop) -----
         # Flag is already defined after pre_death_spiral (line ~1211).
         # It suppresses: column_ceiling_bonus, MERGE_PATH_SETUP, SAME_TYPE_PROXIMITY (9.8),
@@ -2110,63 +2165,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             drought_penalty = (piece_count - 27) * 100.0 * merge_mult
             score -= drought_penalty
             reasons.append("MERGE_DROUGHT_PRESSURE")
-
-        # ----- axis 9.16: deadline NO merge compression bonus (NEW v605) -----
-        # analysis_result.md adopted hypothesis: "Add Compression Requirement for Deadline NO Merge"
-        # Worst game T47-54 (score=286): 7 consecutive NO_MERGE turns at deadline, max_y=2.83-2.96,
-        # ZERO compression — max_y never dropped below 2.83 during these 7 turns.
-        # Best game (score=3086): took merges, board actively compressed, max_y dropped 1.61→0.44.
-        # Mandatory theme: "When placing a piece crossing the deadline, only if it can merge"
-        # (Russia phase exception: growth strategy intentionally crosses deadline — handled by axis 8.7/9.9)
-        # When choosing NO_MERGE at deadline despite penalty, require meaningful compression.
-        # Bonus = (max_y - landing_y) * 800 when landing_y < max_y - 0.3.
-        # This ensures NO_MERGE at deadline is not free — must compress if not merging.
-        # Guard: not russia_phase — Russia growth strategy (RUSSIA_PHASE_BOARD_COMPRESSION) intentionally
-        # places at deadline; mandatory theme exception applies during Russia phase.
-        # refs: tmp/analysis_result.md (Hypothesis: Add Compression Requirement for Deadline NO Merge),
-        #       game_history/20260506_063407_score0286.jsonl (worst game T47-54, 7 turns NO_MERGE at deadline),
-        #       game_history/20260506_060038_score3086.jsonl (best game compression pattern),
-        #       data/mandatory_themes.txt (mandatory theme 1: deadline merge requirement)
-        # Fixes rollback failure mode: "deadline NO_MERGE without compression — 7 consecutive turns zero compression"
-
-        if deadline_crossed and merge_grade == "NO" and not russia_phase:
-            compression_distance = max_y - landing_y
-            if compression_distance > 0.3:
-                compression_bonus = compression_distance * 800.0 * merge_mult
-                score += compression_bonus
-                if "DEADLINE_COMPRESSION_BONUS" not in "_".join(reasons):
-                    reasons.append("DEADLINE_COMPRESSION_BONUS")
-
-        # ----- PRE_DEADLINE_COMPRESSION (extends v605 to pre-deadline zone) -----
-        # analysis_result.md adopted hypothesis: "Extend compression requirement to pre-deadline zone"
-        # Worst game T60: max_y=1.58, deadline_margin=0.16, piece_count=35, deadline_crossed=false.
-        # Placed at x=3.0 (edge) → no compression → max_y spiked to 3.04 next turn → game over.
-        # v605 only fires when deadline_crossed=true, but critical failure here was BEFORE crossing.
-        # When board is close to deadline (deadline_margin <= 0.5) and piece_count >= 30,
-        # NO_MERGE decisions must achieve meaningful compression even before deadline is crossed.
-        # Mandatory theme 1: "When placing a piece crossing the deadline, only if it can merge"
-        # This block enforces compression BEFORE crossing to prevent the spike.
-        # Russia phase exception: growth strategy intentionally places high (russia_phase=true skips).
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: Extend compression to pre-deadline zone),
-        #       tmp/state/last_rollback_postmortem.md (prioritize: v605 compression, verify: prevent runaway),
-        #       game_history/20260507_071647_score0655.jsonl T60 (worst game edge scatter at deadline_margin=0.16),
-        #       mandatory_themes.txt (theme 1: deadline merge requirement)
-        # Fixes rollback failure mode: "max_y runaway at deadline_crossed when reactive_pairs>=3"
-
-        if (merge_grade == "NO" and not russia_phase and
-            piece_count >= 30 and reactor_margin <= 0.5 and max_y >= 1.0 and not deadline_crossed):
-            compression_distance = max_y - landing_y
-            if compression_distance > 0.3:
-                compression_bonus = compression_distance * 600.0 * merge_mult
-                score += compression_bonus
-                if "PRE_DEADLINE_COMPRESSION_BONUS" not in "_".join(reasons):
-                    reasons.append("PRE_DEADLINE_COMPRESSION_BONUS")
-            else:
-                # Strong penalty for non-compressing placement near deadline
-                no_compression_penalty = 800.0 * merge_mult
-                score -= no_compression_penalty
-                if "PRE_DEADLINE_NO_COMPRESSION_PENALTY" not in "_".join(reasons):
-                    reasons.append("PRE_DEADLINE_NO_COMPRESSION_PENALTY")
 
         # ----- v593: column ceiling bonus — horizontal guidance when no merge and board is elevated -----
         # Analysis: worst game T57-T62 had 6 consecutive NO-merge turns at max_y=2.73-2.81.

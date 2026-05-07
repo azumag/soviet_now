@@ -67,12 +67,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.5 with deadline_crossed
-     # worst game T52-T56: max_y 1.38-2.77, deadline_crossed=true, rp=4, NO_MERGE, edge placement
-     # v608 threshold (max_y>=3.0) too high — board critical at 2.5-2.8, v608 didn't fire at worst game
-     # Now fires at max_y>=2.5+deadline_crossed (primary), OR max_y>=3.0 regardless (secondary guard)
-     # Fixes failure mode: edge scatter during elevated NO_MERGE with deadline_crossed
-     # refs: tmp/analysis_result.md (adopted hypothesis: v608 threshold too high)
+     # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.0 with deadline_crossed
+     # worst game T55: max_y=2.2, deadline_margin=-0.91, rp=6, NO_MERGE, edge placement → max_y runaway to 3.13
+     # v608 threshold (max_y>=2.5) was too high — suppression didn't fire at max_y=2.2, stacking selected
+     # Now fires at max_y>=2.0+deadline_crossed (primary), OR max_y>=3.0 regardless (secondary guard)
+     # Fixes failure mode: edge scatter during NO_MERGE with deadline_crossed at max_y 2.0-2.5 intermediate zone
+     # refs: tmp/analysis_result.md (adopted hypothesis: lower v609 threshold to 2.0)
      # v608: critical phase stacking suppression — suppress stacking bonus when max_y>=3.0 && merge_grade==NO && rp>=3
      # worst game T59-T62: max_y 3.77, rp=3, NO_MERGE, deadline_crossed. v607 (-8000) fired but HIGH_TOWER kept
      # being selected because stacking bonus (~400-600) overpowered height penalty. CRITICAL phase board must
@@ -1294,16 +1294,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # (rp>=3 && NO merge) — height must be sole differentiator even before
         # board elevates. pre_death_spiral covers max_y>=1.0; this catches rp>=3
         # && NO at lower max_y where horizontal noise can still override height.
-        # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.5 with deadline_crossed
-        # worst game T52-T56: max_y 1.38-2.77, deadline_crossed=true, rp=4, NO_MERGE, edge placement (x=-3.0, x=3.0)
-        # v608 threshold (max_y>=3.0) was too high — board already critical at 2.5-2.8, v608 didn't fire
-        # Fires at max_y>=2.5 with deadline_crossed (primary), OR max_y>=3.0 regardless of deadline (secondary guard)
+        # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.0 with deadline_crossed
+        # worst game T55: max_y=2.2, deadline_margin=-0.91, rp=6, NO_MERGE, edge placement → max_y runaway to 3.13
+        # v608 threshold (max_y>=2.5) was too high — suppression didn't fire at max_y=2.2, stacking selected
+        # Fires at max_y>=2.0 with deadline_crossed (primary), OR max_y>=3.0 regardless (secondary guard)
         # Height penalty must be sole differentiator when NO_MERGE at elevated board with deadline pressure
-        # refs: tmp/analysis_result.md (adopted hypothesis: v608 threshold too high),
-        #       game_history/20260507_015447_score0684.jsonl T52-T56 (edge scatter at max_y 2.77),
-        #       tmp/batch_summary.txt (worst game 13-turn NO_MERGE streak at max_y 1.38-2.77)
+        # refs: tmp/analysis_result.md (adopted hypothesis: lower v609 threshold to 2.0),
+        #       game_history/20260507_091054_score0623.jsonl T55-T57 (max_y 2.2→3.13 runaway),
+        #       game_history/20260507_100725_score2791.jsonl T100-T112 (max_y<=2.12 survival)
         critical_phase_stacking_suppressed = (
-            (max_y >= 3.0 or (max_y >= 2.5 and deadline_crossed))
+            (max_y >= 3.0 or (max_y >= 2.0 and deadline_crossed))
             and merge_grade == "NO"
             and reactive_pair_count >= 3
         )
