@@ -47,6 +47,7 @@ Game Overview:
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
+             9.10. High-type growth pipeline guidance - v610: type 8-12 centroid proximity during NO merge
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -67,6 +68,17 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v610: axis 9.10 high-type growth pipeline guidance — suppress edge scatter during merge drought
+     # Worst game T70-T78: 9 consecutive NO_MERGE, max_y 2.04→3.03, edge scatter at x=±3.0
+     # Pieces type 8-12 existed but scattered, no guidance to centralize them
+     # Hall-of-fame (best_score5801) has axis 9.10: centroid of type 8-12 pieces → proximity bonus
+     # Fires: merge_grade==NO && max_y>=1.5 && pc>=25 && !axis_88_horizontal_suppression && !death_spiral
+     # Suppress when: axis_88_horizontal_suppression or death_spiral (avoid duplicate with 9.65/9.8)
+     # Fixes failure mode: "merge drought中のedge scatter → max_y runaway → game over"
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 high-type growth pipeline)
+     #       game_history/20260507_123058_score0802.jsonl T70-T78 (worst game analysis)
+     #       strategy_versions/best_score5801_strategy.py (Hall-of-fame, axis 9.10 confirmed)
+     #       advice.md (zoumotu3: growth concentration)
      # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.0 with deadline_crossed
      # worst game T55: max_y=2.2, deadline_margin=-0.91, rp=6, NO_MERGE, edge placement → max_y runaway to 3.13
      # v608 threshold (max_y>=2.5) was too high — suppression didn't fire at max_y=2.2, stacking selected
@@ -1422,6 +1434,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
+
+        # === ADD: Axis 9.10 High-type growth pipeline guidance ===
+        # Worst game T70-T78: 9 consecutive NO_MERGE turns, max_y 2.04→3.03 runaway.
+        # Pieces type 8-12 existed but scattered, causing edge scatter at x=±3.0.
+        # Hall-of-fame strategy (best_score5801) implements this axis to maintain
+        # central clustering during merge droughts at elevated board.
+        # Fires when: merge_grade==NO && max_y>=1.5 && piece_count>=25
+        # Guides placement toward centroid of high-type pieces (type 8-12),
+        # building growth pipeline for next merge opportunity.
+        # Suppress when: axis_88_horizontal_suppression or death_spiral
+        # (avoid duplicate firing with axis 9.65 and axis 9.8).
+        # refs: tmp/analysis_result.md (Implementation Plan),
+        #       game_history/20260507_123058_score0802.jsonl T70-T78 (worst game analysis),
+        #       strategy_versions/best_score5801_strategy.py (Hall-of-fame, axis 9.10 confirmed),
+        #       advice.md (zoumotu3: growth concentration)
+        if (merge_grade == "NO" and max_y >= 1.5 and piece_count >= 25
+            and not axis_88_horizontal_suppression and not death_spiral):
+            high_type_pieces = [p for p in pieces if 8 <= p.get('type', 0) <= 12]
+            if len(high_type_pieces) >= 2:
+                # Calculate centroid of high-type pieces (type 8-12)
+                cx = sum(p.get('x', 0) for p in high_type_pieces) / len(high_type_pieces)
+                cy = sum(p.get('y', 0) for p in high_type_pieces) / len(high_type_pieces)
+                # Proximity bonus: closer to centroid = higher bonus
+                dist = ((x - cx) ** 2 + (landing_y - cy) ** 2) ** 0.5
+                if dist < 3.0:
+                    pipeline_bonus = max(0, 120.0 - dist * 40.0) * merge_mult
+                    score += pipeline_bonus
 
         # ----- v598: column_ceiling_dominant flag — suppress competing horizontal guides -----
         # When merge_grade==NO && max_y>=1.0 && pc>=28, analysis shows edge scatter(x=±3.0)
