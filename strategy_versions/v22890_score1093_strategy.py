@@ -68,6 +68,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v612: axis 1.6b DEADLINE_MERGE_FORCE — +3000 bonus when deadline_crossed && DIRECT merge
+     # Worst game turn 53: deadline_crossed=true, DIRECT merge available, chose HIGH_LAYER (1440) over merge
+     # +800 (axis 1.6) insufficient vs height penalty ~1440. +3000 ensures DIRECT always wins at deadline.
+     # Works even when danger_direct_merge_available=false — any DIRECT merge is critical at deadline.
+     # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
+     #       game_history/20260508_032057_score0854.jsonl (worst_game turn 53)
      # v611: critical_phase_stacking_suppressed uses reactor_margin<2.0 instead of deadline_crossed
      # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
      # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
@@ -1187,6 +1193,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v596: apply type_scale to prioritize high-type danger merges
             score += 800.0 * type_scale
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
+
+        # ----- evaluation axis 1.6b: DEADLINE_MERGE_FORCE (v607) -----
+        # Worst game turn 53: deadline_crossed=true, DIRECT merge available, but chose HIGH_LAYER
+        # (height_score=1440.0) over merge because danger_direct_merge_available=false.
+        # mandatory_themes: "デッドライン付近の危険盤面領域では、併合を優先"
+        # +800 bonus (axis 1.6) insufficient against height penalty (~1440 at max_y=2.0).
+        # +3000 * type_scale ensures DIRECT merge always wins over HEIGHT_CONTROL at deadline,
+        # while high-type DIRECT merges score proportionally higher (matching eval bonus structure).
+        # Works even when danger_direct_merge_available=false (merging any DIRECT is critical at deadline).
+        # +3000 * type_scale ensures high-type DIRECT merges score proportionally higher,
+        # matching eval scoring that includes type별 bonus at game over.
+        # best_game turn 142-143 and extra_high_game turn 130 confirm DIRECT merge success at deadline.
+        # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
+        #       game_history/20260508_032057_score0854.jsonl (worst_game turn 53)
+        if deadline_crossed and merge_grade == "DIRECT":
+            score += 3000.0 * type_scale
+            reasons.append("DEADLINE_MERGE_FORCE")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
         # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
