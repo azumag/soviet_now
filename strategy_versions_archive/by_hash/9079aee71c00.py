@@ -87,16 +87,6 @@ Phases (determined by board max Y):
      #       game_history/20260507_175205_score0880.jsonl T67-T78 (merge missed, max_y runaway)
      # Fixes failure mode: worst-game "deferring merge until critical height" by scoring
      # compression as a direct objective
-     # v614: critical_phase_stacking_suppressed threshold lowered from max_y>=2.0 to max_y>=1.5
-     # analysis_result.md adopted hypothesis: "Lower the stacking suppression threshold from max_y>=2.0 to 1.5"
-     # Turn 45 evidence: max_y=0.53, deadline_margin=0.83, reactive_pair_count=6 selected HIGH_TOWER
-     # with stacking despite deadline_margin<1.5 — stacking suppression didn't fire because max_y=0.53<2.0.
-     # Constraint: "prioritize: Height penalty differentiation > stacking bonus when deadline_margin<1.5"
-     # v609 lowered from 2.5 to 2.0, now lowering to 1.5 to cover intermediate zone.
-     # Critical phase protection maintained: max_y>=3.0 OR (max_y>=1.5 && reactor_margin<2.0).
-     # refs: tmp/analysis_result.md (Implementation Plan, adopted hypothesis),
-     #       tmp/state/last_rollback_postmortem.md (failure_mode: stacking bonus overpowers height at max_y>=2.0)
-     # Fixes rollback failure mode: intermediate zone (1.5 <= max_y < 2.0) not covered by stacking suppression
      # v612: axis 1.8 elevated board merge forcing — strengthen merge-vs-no-merge differentiation at elevated board
      # analysis_result.md adopted hypothesis: "Stacking suppression correctly fires but fallback to
      # non-merge placement is undifferentiated" — HEIGHT_CONTROL avg_score_delta=2.8 selected 21-25%
@@ -1477,14 +1467,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # && NO at lower max_y where horizontal noise can still override height.
         # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.0 with deadline_crossed
         # worst game T55: max_y=2.2, deadline_margin=-0.91, rp=6, NO_MERGE, edge placement → max_y runaway to 3.13
-        # v609: lowered threshold to 2.0, v612 further lowered to 1.5 to cover intermediate zone
-        # Turn 45 evidence: max_y=0.53, deadline_margin=0.83, reactive_pair_count=6 selected
-        # HIGH_TOWER with stacking despite deadline_margin<1.5 — stacking suppression didn't fire
-        # because max_y=0.53 < 2.0 threshold. Lowering to 1.5 catches this danger zone.
-        # Constraint: "prioritize: Height penalty differentiation > stacking bonus when deadline_margin<1.5"
-        # refs: tmp/analysis_result.md (adopted hypothesis), tmp/state/last_rollback_postmortem.md
+        # v608 threshold (max_y>=2.5) was too high — suppression didn't fire at max_y=2.2, stacking selected
+        # v609 lowered threshold to 2.0 but kept deadline_crossed instead of reactor_margin < 2.0
+        # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
+        # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
+        # reactor_margin is a continuous value — use it to match the actual constraint threshold
+        # Height penalty must be sole differentiator when NO_MERGE at elevated board with deadline pressure
+        # refs: tmp/state/last_rollback_postmortem.md (failure_mode: stacking bonus overpowers height at max_y>=2.0),
+        #       tmp/analysis_result.md (adopted hypothesis: use reactor_margin < 2.0 instead of deadline_crossed)
         critical_phase_stacking_suppressed = (
-            (max_y >= 3.0 or (max_y >= 1.5 and reactor_margin < 2.0))
+            (max_y >= 3.0 or (max_y >= 2.0 and reactor_margin < 2.0))
             and merge_grade == "NO"
             and reactive_pair_count >= 3
         )
