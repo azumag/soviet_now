@@ -67,14 +67,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v610: enhance v609 stacking suppression gap zone coverage — catch max_y 1.5-2.0 "gap zone"
-     # worst game T54: max_y=1.77, deadline_margin=-1.01, deadline_crossed=true, merge_available=false
-     #   but v609 required max_y>=2.0 — suppression didn't fire, edge placement caused 10+ turn NO_MERGE cascade
-     # mandatory_themes.txt: "デッドラインを超える位置にピース止める場合は、併合できる場合に限る" is absolute
-     #   with no max_y floor — suppression now fires at max_y>=1.5+deadline_margin<1.5 OR deadline_margin<1.0
-     # Failure mode fixed: stacking bonus firing when merge_available=false AND deadline_margin<2.0 (rollback constraint)
-     # refs: tmp/analysis_result.md (adopted hypothesis: enhance v609 gap zone coverage),
-     #       mandatory_themes.txt (hard constraint: deadline margin constraints with no max_y floor)
      # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.0 with deadline_crossed
      # worst game T55: max_y=2.2, deadline_margin=-0.91, rp=6, NO_MERGE, edge placement → max_y runaway to 3.13
      # v608 threshold (max_y>=2.5) was too high — suppression didn't fire at max_y=2.2, stacking selected
@@ -1305,18 +1297,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.0 with deadline_crossed
         # worst game T55: max_y=2.2, deadline_margin=-0.91, rp=6, NO_MERGE, edge placement → max_y runaway to 3.13
         # v608 threshold (max_y>=2.5) was too high — suppression didn't fire at max_y=2.2, stacking selected
-        # v610: enhanced stacking suppression — max_y>=1.5 gap zone + deadline_margin<1.0 catch-all
         # Fires at max_y>=2.0 with deadline_crossed (primary), OR max_y>=3.0 regardless (secondary guard)
         # Height penalty must be sole differentiator when NO_MERGE at elevated board with deadline pressure
-        # refs: tmp/analysis_result.md (adopted hypothesis: enhance v609 gap zone coverage),
-        #       mandatory_themes.txt (hard constraint: deadline margin constraints with no max_y floor)
+        # refs: tmp/analysis_result.md (adopted hypothesis: lower v609 threshold to 2.0),
+        #       game_history/20260507_091054_score0623.jsonl T55-T57 (max_y 2.2→3.13 runaway),
+        #       game_history/20260507_100725_score2791.jsonl T100-T112 (max_y<=2.12 survival)
         critical_phase_stacking_suppressed = (
-            (max_y >= 3.0)
-            or (max_y >= 2.0 and deadline_crossed)
-            or (max_y >= 1.5 and deadline_margin < 1.5)  # Gap zone: deadline danger at moderate height
-            or (deadline_margin < 1.0)  # Any NO_MERGE at deadline danger triggers suppression (mandatory_themes)
-        ) and merge_grade == "NO" and reactive_pair_count >= 3
-        # refs: tmp/analysis_result.md (adopted hypothesis: enhance v609 gap zone coverage)
+            (max_y >= 3.0 or (max_y >= 2.0 and deadline_crossed))
+            and merge_grade == "NO"
+            and reactive_pair_count >= 3
+        )
         stacking_danger_suppressed = (
             death_spiral
             or pre_death_spiral
