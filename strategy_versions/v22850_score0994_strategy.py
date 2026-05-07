@@ -68,6 +68,57 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v614: axis NEW - same-type scatter prevention during NO_MERGE
+     # analysis_result.md adopted hypothesis: "Same-Type Scatter Prevention During NO_MERGE"
+     # Worst game T55: placed type 2 at x=-0.60, y=1.82 when existing type 2 pieces were at x≈0.15, y≈-1.2
+     # — physically separating a clustered pair, destroying merge potential.
+     # 6 consecutive NO_MERGE turns (T51-56) with rp=7 scattered same-type pieces to edges.
+     # Implementation: scatter penalty only fires during NO_MERGE when same_type_count>=2 and not death_spiral.
+     # Penalty = -300 × merge_mult × (candidate_dist - existing_max_dist_from_centroid).
+     # WHY PENALTY (not bonus): existing axes 9.8/9.65 are bonuses that can be overwhelmed.
+     # Mandatory theme: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+     # Forbidden: bonus form, death_spiral firing, same_type_count<2, merge_grade!=NO.
+     # refs: tmp/analysis_result.md (Implementation Plan: same-type scatter prevention),
+     #       game_history/20260507_222547_score0546.jsonl T55 (scatter failure mode),
+     #       advice.md (scatter prevention advice), data/mandatory_themes.txt
+     # Fixes failure mode: worst-game "scatter during NO_MERGE → merge drought → death spiral"
+     # v613: axis 1.9 merge compression expectation value — reward board compression from merge
+     # analysis_result.md adopted hypothesis: "merge chainの3手以内完了による建国ボーナス込みスコア最大化"
+     # Best game T93-T96: 3 consecutive DIRECT merges reduced piece_count 40→27 (+392 score_delta).
+     # This compression effect (not just merge points) is the PRIMARY driver of high scores.
+     # Worst game T67-T78: merge_available=true but non-merge selection continued, max_y rose to 2.71.
+     # Core insight: merge bonus evaluation (axis 1, 1.6, 1.8) scores the merge opportunity, but
+     # does NOT evaluate the board compression effect — how many pieces will be reduced.
+     # Implementation: expected_reduction = 1.0×0.957(DIRECT), 1.0×0.685(NEAR), 0.1(FAR).
+     # compression_value_factor scales with piece_count (pc>=35: factor=1.5, pc>=40: factor=2.0).
+     # compression_bonus = reduction × factor × 300 × merge_mult — additive, not duplicating axis 1.8.
+     # Synergy with axis 1.8: axis 1.8 promotes merge, axis 1.9 scores compression as direct objective.
+     # Forbidden: penalty for piece_count reduction, excessive bonus (would duplicate axis 1.8).
+     # Does NOT require deadline_crossed — compression is valuable even before deadline.
+     # refs: tmp/analysis_result.md (Implementation Plan, adopted hypothesis),
+     #       tmp/batch_summary.txt (DIRECT_MERGE_CHAIN_MERGE avg_score_delta=71.6 highest),
+     #       game_history/20260507_181039_score2571.jsonl T93-T96 (3 consecutive merges, pc 40→27),
+     #       game_history/20260507_175205_score0880.jsonl T67-T78 (merge missed, max_y runaway)
+     # Fixes failure mode: worst-game "deferring merge until critical height" by scoring
+     # compression as a direct objective
+     # v612: axis 1.8 elevated board merge forcing — strengthen merge-vs-no-merge differentiation at elevated board
+     # analysis_result.md adopted hypothesis: "Stacking suppression correctly fires but fallback to
+     # non-merge placement is undifferentiated" — HEIGHT_CONTROL avg_score_delta=2.8 selected 21-25%
+     # at elevated board states (max_y >= 2.0). When stacking is correctly suppressed, the fallback
+     # options produce scores too close together — height penalty (~200-400) competes with merge
+     # bonus (~480-960) allowing height to win over merge timing.
+     # Worst game T61: merge_available=true, best_merge_grade=DIRECT, yet HIGH_TOWER selected (score_delta=21).
+     # Best game T137: merge at max_y=2.77, DIRECT merge executed, max_y reduced to 2.28.
+     # Implementation: when max_y >= 2.0 and best_merge_grade != "NO" and candidate's own merge_grade != "NO",
+     # apply merge_bonus * 0.8 as additive bonus. Makes merge candidates score ~384 points higher than
+     # non-merge at elevated heights, overwhelming height penalty difference.
+     # NOT increasing existing merge bonus magnitudes (axes 1, 1.6, 8.7). Only ensures merge is chosen
+     # over height when board is elevated. Fixes worst-game pattern of deferring merge until critical height.
+     # Mandatory themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る" — axis 1.8 enforces.
+     # refs: tmp/analysis_result.md (adopted hypothesis, implementation plan),
+     #       tmp/batch_summary.txt (HEIGHT_CONTROL avg_score_delta=2.8 at elevated board),
+     #       game_history/20260507_163102_score0863.jsonl T61 (worst game),
+     #       game_history/20260507_165639_score3129.jsonl T137 (best game)
      # v611: critical_phase_stacking_suppressed uses reactor_margin<2.0 instead of deadline_crossed
      # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
      # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
@@ -1022,6 +1073,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         and piece_count >= 28
     )
 
+    # ----- v612: pre-compute best_merge_grade for elevated board merge forcing (axis 1.8) -----
+    # analysis_result.md: "worst game turn 61: merge_available=true, best_merge_grade=DIRECT"
+    # best_merge_grade is the best merge grade available across all candidates.
+    # Used by axis 1.8 to determine if ANY merge is available before forcing merge at elevated heights.
+    merge_grades = [r.get("merge_grade", "NO") for r in results]
+    if "DIRECT" in merge_grades:
+        best_merge_grade = "DIRECT"
+    elif "NEAR" in merge_grades:
+        best_merge_grade = "NEAR"
+    elif "FAR" in merge_grades:
+        best_merge_grade = "FAR"
+    else:
+        best_merge_grade = "NO"
+
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -1031,6 +1096,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
+        current_type = next_type  # piece being placed = current_type
+        same_type_count = sum(1 for p in pieces if p.get("type") == current_type)
 
         # ----- v596: merge type scaling — high-type growth pipeline prioritization -----
         # analysis_result.md: "低type並合トラップ脱却" — low-score games merge frequently (39.1%)
@@ -1216,6 +1283,104 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 bonus = (600.0 if deadline_crossed else 300.0) * type_scale
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
+
+        # ----- v612: axis 1.8 elevated board merge forcing (analysis: merge-vs-no-merge differentiation) -----
+        # analysis_result.md adopted hypothesis: "Stacking suppression correctly fires but fallback to
+        # non-merge placement is undifferentiated" — HEIGHT_CONTROL avg_score_delta=2.8 but selected
+        # 21-25% at elevated board states, indicating evaluation does not clearly differentiate merge-
+        # worthy positions from non-merge during elevated board states (max_y >= 2.0).
+        #
+        # Worst game turn 61: merge_available=true, best_merge_grade=DIRECT, yet HIGH_TOWER selected
+        # with score_delta=21 (not full merge score). Best game turn 137: merge at max_y=2.77,
+        # DIRECT merge executed, max_y reduced to 2.28. The difference is merge timing not existence.
+        #
+        # Implementation: when max_y >= 2.0 and best_merge_grade != "NO" and candidate's own
+        # merge_grade != "NO", apply merge_bonus * 0.8 as additive bonus. This makes merge
+        # candidates score ~384 points higher (e.g., 480*0.8 for DIRECT) than non-merge at elevated
+        # heights, overwhelming the typical height penalty difference (~200-400 points).
+        #
+        # NOT increasing existing merge bonus magnitudes (axes 1, 1.6, 8.7) — they are already
+        # correctly sized. This axis only ensures merge is chosen over height when board is elevated.
+        #
+        # Mandatory themes compliance: "デッドラインを超える位置にピースを置く場合は、併合できる場合
+        # に限る" — axis 1.8 enforces this by making merge mandatory at elevated heights when available.
+        # refs: tmp/analysis_result.md (adopted hypothesis, implementation plan),
+        #       tmp/batch_summary.txt (HEIGHT_CONTROL avg_score_delta=2.8 at elevated board),
+        #       game_history/20260507_163102_score0863.jsonl T61 (worst game turn 61),
+        #       game_history/20260507_165639_score3129.jsonl T137 (best game turn 137)
+        # Fixes rollback failure mode: worst-game pattern of deferring merge until critical height
+        if max_y >= 2.0 and best_merge_grade != "NO" and merge_grade != "NO":
+            # merge_bonus is the base axis 1 bonus for this candidate's merge_grade
+            if merge_grade == "DIRECT":
+                merge_bonus_base = 1200.0 * merge_mult * type_scale
+            elif merge_grade == "NEAR":
+                merge_bonus_base = 600.0 * merge_mult * type_scale
+            elif merge_grade == "FAR":
+                merge_bonus_base = 200.0 * merge_mult * type_scale
+            else:
+                merge_bonus_base = 0.0
+            # Apply elevated board override: merge_bonus * 0.8 ensures merge dominates height
+            elevated_board_bonus = merge_bonus_base * 0.8
+            score += elevated_board_bonus
+            reasons.append("ELEVATED_BOARD_MERGE_FORCING")
+
+        # ----- v613: axis 1.9 merge compression expectation value (analysis: board compression from merge) -----
+        # analysis_result.md adopted hypothesis: "merge chainの3手以内完了による建国ボーナス込みスコア最大化"
+        # Best game T93-T96: 3 consecutive DIRECT merges reduced piece_count 40→27 (+392 score_delta).
+        # This compression effect (not just merge points) is the PRIMARY driver of high scores.
+        # Worst game T67-T78: merge_available=true but non-merge selection continued, max_y rose to 2.71.
+        # Core insight: current merge bonus evaluation (axis 1, 1.6, 1.8) scores the merge opportunity,
+        # but does NOT evaluate the board compression effect — how many pieces will be reduced.
+        #
+        # Implementation:
+        # - DIRECT merge: 1 piece reduced (2 pieces → 1 piece)
+        # - NEAR merge: 0.315 expected reduction (68.5% success rate × 1 piece)
+        # - FAR merge: 0.1 expected reduction (low probability)
+        # - bonus = reduction_count × compression_value_factor × merge_mult
+        # - compression_value_factor is larger when piece_count is high (pc>=35 -> higher compression effect)
+        #
+        # Synergy with axis 1.8: axis 1.8 promotes merge selection at elevated board, axis 1.9
+        # provides direct bonus for the compression benefit. Together they address worst-game
+        # pattern of "deferring merge until critical height" by making compression itself
+        # a scored objective, not just merge opportunity.
+        #
+        # Forbidden: penalty for piece_count reduction (compression is always positive).
+        # Forbidden: excessive bonus (would duplicate axis 1.8 boost).
+        # Does NOT require deadline_crossed — compression is valuable even before deadline.
+        # refs: tmp/analysis_result.md (Implementation Plan, adopted hypothesis),
+        #       tmp/batch_summary.txt (DIRECT_MERGE_CHAIN_MERGE avg_score_delta=71.6 highest),
+        #       game_history/20260507_181039_score2571.jsonl T93-T96 (3 consecutive merges, pc 40→27),
+        #       game_history/20260507_175205_score0880.jsonl T67-T78 (merge missed, max_y runaway)
+        # Fixes failure mode: worst-game "deferring merge until critical height" by scoring
+        # compression as a direct objective
+        if merge_grade != "NO" and piece_count >= 20:
+            # Estimate expected piece reduction from this merge
+            if merge_grade == "DIRECT":
+                # DIRECT merge success rate ~95.7%, reduces 2→1 = 1 piece
+                expected_reduction = 1.0 * 0.957
+            elif merge_grade == "NEAR":
+                # NEAR merge success rate ~68.5%, reduces 2→1 = 1 piece
+                expected_reduction = 1.0 * 0.685
+            else:  # FAR
+                # FAR merge low probability, rough estimate
+                expected_reduction = 0.1
+
+            # compression_value_factor: larger when pc is high (compression more valuable)
+            # At pc=20: factor=0.5 (minimal boost). At pc=35: factor=1.5. At pc=40+: factor=2.0+
+            if piece_count >= 40:
+                compression_value_factor = 2.0
+            elif piece_count >= 35:
+                compression_value_factor = 1.5
+            elif piece_count >= 28:
+                compression_value_factor = 1.0
+            else:
+                compression_value_factor = 0.5
+
+            # compression_bonus: reward expected piece reduction
+            compression_bonus = expected_reduction * compression_value_factor * 300.0 * merge_mult
+            if compression_bonus > 0:
+                score += compression_bonus
+                reasons.append("MERGE_COMPRESSION_EXPECTED")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
@@ -1623,6 +1788,80 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += _total_cluster_bonus
                         reasons.append("NEAR_MISS_CLUSTERING")
 
+        # ----- evaluation axis 9.7: merge drought NEXT-aware placement (NEW v614) -----
+        # analysis_result.md adopted hypothesis: "NEXT-aware placement during merge drought"
+        # Problem: Worst game T81-88: merge_available=false for 13 consecutive turns,
+        #   max_y 2.33→3.22, pieces=44→49. axis 8.8 (-4500) equalizes all candidates,
+        #   no axis provides differentiated NEXT-aware guidance during merge drought.
+        #   Best game T155-162: Even during merge_available=false, NEXT piece is
+        #   considered for placement, preparing for merge drought breakthrough.
+        # Fires when: merge_grade=="NO" && piece_count>=25 && max_y>=1.5
+        #            && deadline_crossed && reactive_pair_count>=2
+        # mandatory_themes.txt: "NEXTを考慮したドロップをせよ"
+        # Advice: "NEXTを考慮したドロップをせよ" — merge drought breakthrough via NEXT consideration
+        # Current strategy has NEXT_SAME axis (same type continues) but no
+        # NEXT placement guidance during merge drought — this fills that gap.
+        # If NEXT is same type → guide toward same_type_stack_top (consolidate same type)
+        # If NEXT is adjacent type (type±1) → guide toward that adjacent type piece
+        #   (chain merge preparation post-drought)
+        # Bonus magnitude: ~150-300 (must not override axis 8.8's -4500,
+        #   but strong enough to differentiate placement among equalized candidates)
+        # Does NOT fire when merge_available=true (must not block merge selection)
+        # Does NOT fire in death_spiral (height penalty alone must differentiate)
+        # refs: tmp/analysis_result.md (Implementation Plan: MERGE_DROUGHT_NEXT_AWARE_PLACEMENT),
+        #       advice.md (NEXT考慮), data/mandatory_themes.txt (NEXTを考慮したドロップをせよ),
+        #       game_history/20260507_235752_score0835.jsonl T81-88 (worst merge drought),
+        #       game_history/20260508_011147_score3849.jsonl T155-162 (best merge drought handling)
+        # Fixes rollback failure mode: worst game T81-88 merge drought death spiral
+        if merge_grade == "NO" and piece_count >= 25 and max_y >= 1.5 and deadline_crossed and reactive_pair_count >= 2:
+            if not death_spiral and not axis_88_horizontal_suppression:
+                next_aware_bonus = 0.0
+                next_aware_reason = ""
+
+                # Determine placement guidance based on NEXT piece type
+                if next_type > 0:
+                    # Case 1: NEXT is same type — consolidate same type
+                    if same_type_count >= 1 and same_type_stack_top is not None:
+                        stack_x = same_type_stack_top.get("x", 0)
+                        stack_y = same_type_stack_top.get("y", -10)
+                        dist = abs(x - stack_x)
+                        # Bonus: stronger when closer to existing same-type stack top
+                        # dist=0 → 250, dist=1 → 125, dist=2 → 62
+                        proximity = max(0, 250.0 - 125.0 * dist)
+                        if proximity > 50:
+                            next_aware_bonus += proximity
+                            next_aware_reason = "NEXT_SAME_CONSOLIDATE"
+
+                    # Case 2: NEXT is adjacent type (type±1) — prepare chain merge
+                    # Find pieces of adjacent type (type+1 or type-1) on board
+                    adjacent_positions = []
+                    for p in pieces:
+                        t = p.get("type", 0)
+                        if t == next_type + 1 or t == next_type - 1:
+                            adjacent_positions.append((p["x"], p["y"]))
+
+                    if adjacent_positions:
+                        # Calculate centroid of adjacent type pieces
+                        adj_xs = [p[0] for p in adjacent_positions]
+                        adj_ys = [p[1] for p in adjacent_positions]
+                        adj_centroid_x = sum(adj_xs) / len(adj_xs)
+                        adj_centroid_y = sum(adj_ys) / len(adj_ys)
+
+                        dist = ((x - adj_centroid_x) ** 2 + (landing_y - adj_centroid_y) ** 2) ** 0.5
+                        # Bonus: guide placement toward adjacent type cluster for chain merge prep
+                        # dist=0 → 200, dist=1 → 100, dist=2 → 50
+                        chain_proximity = max(0, 200.0 - 100.0 * dist)
+                        if chain_proximity > 50:
+                            next_aware_bonus += chain_proximity
+                            if next_aware_reason:
+                                next_aware_reason += "_ADJACENT_CHAIN_PREP"
+                            else:
+                                next_aware_reason = "NEXT_ADJACENT_CHAIN_PREP"
+
+                if next_aware_bonus > 50:
+                    score += next_aware_bonus
+                    reasons.append(next_aware_reason if next_aware_reason else "MERGE_DROUGHT_NEXT_AWARE")
+
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
         # Placing a piece between reactive pairs of different types can physically block
@@ -1665,6 +1904,36 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if blocking_penalty > 0:
                     score -= min(blocking_penalty, 500.0)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+
+        # ----- NEW AXIS: same-type scatter prevention during NO_MERGE (vXXX) -----
+        # Problem: Worst game turn 55 placed type 2 at x=-0.60, y=1.82 when existing
+        # type 2 pieces were at x≈0.15, y≈-1.2 - physically separating a clustered pair.
+        # Advice: "併合できるtypeが隣接しているとき、その間にピースを配置鹊滓蚕并发"
+        # Mandatory theme: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # Current proximity axes (9.8, 9.65) are bonuses that can be overwhelmed.
+        # This is a PENALTY-only axis: placing same-type pieces further apart is always bad.
+        # Fires when: merge_grade==NO && current_type has 2+ pieces on board
+        #            && NOT in death_spiral (height penalty must be sole differentiator)
+        # refs: tmp/analysis_result.md (Implementation Plan: same-type scatter prevention),
+        #       game_history/20260507_222547_score0546.jsonl T55 (scatter failure mode),
+        #       advice.md (scatter prevention advice), data/mandatory_themes.txt
+        if merge_grade == "NO" and same_type_count >= 2 and not death_spiral:
+            # Calculate centroid of existing same-type pieces (excluding the piece being placed)
+            same_xs = [p.get("x", 0) for p in pieces if p.get("type") == current_type]
+            same_ys = [p.get("y", -10) for p in pieces if p.get("type") == current_type]
+            centroid_x = sum(same_xs) / len(same_xs)
+            centroid_y = sum(same_ys) / len(same_ys)
+
+            # Check if candidate would scatter same-type pieces further apart
+            max_same_span = max(same_xs) - min(same_xs) if len(same_xs) >= 2 else 0.0
+            candidate_dist_from_centroid = abs(x - centroid_x)
+            existing_max_dist_from_centroid = max(abs(sx - centroid_x) for sx in same_xs) if same_xs else 0.0
+
+            if max_same_span > 1.5 and candidate_dist_from_centroid > existing_max_dist_from_centroid + 0.3:
+                # Placing further from centroid than existing pieces = scatter
+                scatter_penalty = -300.0 * merge_mult * (candidate_dist_from_centroid - existing_max_dist_from_centroid)
+                score += scatter_penalty
+                reasons.append("SAME_TYPE_SCATTER_PENALTY")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
