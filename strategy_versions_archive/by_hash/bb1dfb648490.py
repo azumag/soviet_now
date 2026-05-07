@@ -1096,8 +1096,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
-        current_type = next_type  # piece being placed = current_type
-        same_type_count = sum(1 for p in pieces if p.get("type") == current_type)
 
         # ----- v596: merge type scaling — high-type growth pipeline prioritization -----
         # analysis_result.md: "低type並合トラップ脱却" — low-score games merge frequently (39.1%)
@@ -1788,80 +1786,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += _total_cluster_bonus
                         reasons.append("NEAR_MISS_CLUSTERING")
 
-        # ----- evaluation axis 9.7: merge drought NEXT-aware placement (NEW v614) -----
-        # analysis_result.md adopted hypothesis: "NEXT-aware placement during merge drought"
-        # Problem: Worst game T81-88: merge_available=false for 13 consecutive turns,
-        #   max_y 2.33→3.22, pieces=44→49. axis 8.8 (-4500) equalizes all candidates,
-        #   no axis provides differentiated NEXT-aware guidance during merge drought.
-        #   Best game T155-162: Even during merge_available=false, NEXT piece is
-        #   considered for placement, preparing for merge drought breakthrough.
-        # Fires when: merge_grade=="NO" && piece_count>=25 && max_y>=1.5
-        #            && deadline_crossed && reactive_pair_count>=2
-        # mandatory_themes.txt: "NEXTを考慮したドロップをせよ"
-        # Advice: "NEXTを考慮したドロップをせよ" — merge drought breakthrough via NEXT consideration
-        # Current strategy has NEXT_SAME axis (same type continues) but no
-        # NEXT placement guidance during merge drought — this fills that gap.
-        # If NEXT is same type → guide toward same_type_stack_top (consolidate same type)
-        # If NEXT is adjacent type (type±1) → guide toward that adjacent type piece
-        #   (chain merge preparation post-drought)
-        # Bonus magnitude: ~150-300 (must not override axis 8.8's -4500,
-        #   but strong enough to differentiate placement among equalized candidates)
-        # Does NOT fire when merge_available=true (must not block merge selection)
-        # Does NOT fire in death_spiral (height penalty alone must differentiate)
-        # refs: tmp/analysis_result.md (Implementation Plan: MERGE_DROUGHT_NEXT_AWARE_PLACEMENT),
-        #       advice.md (NEXT考慮), data/mandatory_themes.txt (NEXTを考慮したドロップをせよ),
-        #       game_history/20260507_235752_score0835.jsonl T81-88 (worst merge drought),
-        #       game_history/20260508_011147_score3849.jsonl T155-162 (best merge drought handling)
-        # Fixes rollback failure mode: worst game T81-88 merge drought death spiral
-        if merge_grade == "NO" and piece_count >= 25 and max_y >= 1.5 and deadline_crossed and reactive_pair_count >= 2:
-            if not death_spiral and not axis_88_horizontal_suppression:
-                next_aware_bonus = 0.0
-                next_aware_reason = ""
-
-                # Determine placement guidance based on NEXT piece type
-                if next_type > 0:
-                    # Case 1: NEXT is same type — consolidate same type
-                    if same_type_count >= 1 and same_type_stack_top is not None:
-                        stack_x = same_type_stack_top.get("x", 0)
-                        stack_y = same_type_stack_top.get("y", -10)
-                        dist = abs(x - stack_x)
-                        # Bonus: stronger when closer to existing same-type stack top
-                        # dist=0 → 250, dist=1 → 125, dist=2 → 62
-                        proximity = max(0, 250.0 - 125.0 * dist)
-                        if proximity > 50:
-                            next_aware_bonus += proximity
-                            next_aware_reason = "NEXT_SAME_CONSOLIDATE"
-
-                    # Case 2: NEXT is adjacent type (type±1) — prepare chain merge
-                    # Find pieces of adjacent type (type+1 or type-1) on board
-                    adjacent_positions = []
-                    for p in pieces:
-                        t = p.get("type", 0)
-                        if t == next_type + 1 or t == next_type - 1:
-                            adjacent_positions.append((p["x"], p["y"]))
-
-                    if adjacent_positions:
-                        # Calculate centroid of adjacent type pieces
-                        adj_xs = [p[0] for p in adjacent_positions]
-                        adj_ys = [p[1] for p in adjacent_positions]
-                        adj_centroid_x = sum(adj_xs) / len(adj_xs)
-                        adj_centroid_y = sum(adj_ys) / len(adj_ys)
-
-                        dist = ((x - adj_centroid_x) ** 2 + (landing_y - adj_centroid_y) ** 2) ** 0.5
-                        # Bonus: guide placement toward adjacent type cluster for chain merge prep
-                        # dist=0 → 200, dist=1 → 100, dist=2 → 50
-                        chain_proximity = max(0, 200.0 - 100.0 * dist)
-                        if chain_proximity > 50:
-                            next_aware_bonus += chain_proximity
-                            if next_aware_reason:
-                                next_aware_reason += "_ADJACENT_CHAIN_PREP"
-                            else:
-                                next_aware_reason = "NEXT_ADJACENT_CHAIN_PREP"
-
-                if next_aware_bonus > 50:
-                    score += next_aware_bonus
-                    reasons.append(next_aware_reason if next_aware_reason else "MERGE_DROUGHT_NEXT_AWARE")
-
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
         # Placing a piece between reactive pairs of different types can physically block
@@ -1917,6 +1841,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Implementation Plan: same-type scatter prevention),
         #       game_history/20260507_222547_score0546.jsonl T55 (scatter failure mode),
         #       advice.md (scatter prevention advice), data/mandatory_themes.txt
+        current_type = next_type  # piece being placed = current_type
+        same_type_count = sum(1 for p in pieces if p.get("type") == current_type)
         if merge_grade == "NO" and same_type_count >= 2 and not death_spiral:
             # Calculate centroid of existing same-type pieces (excluding the piece being placed)
             same_xs = [p.get("x", 0) for p in pieces if p.get("type") == current_type]

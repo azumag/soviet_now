@@ -68,6 +68,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v614: axis NEW - same-type scatter prevention during NO_MERGE
+     # analysis_result.md adopted hypothesis: "Same-Type Scatter Prevention During NO_MERGE"
+     # Worst game T55: placed type 2 at x=-0.60, y=1.82 when existing type 2 pieces were at x≈0.15, y≈-1.2
+     # — physically separating a clustered pair, destroying merge potential.
+     # 6 consecutive NO_MERGE turns (T51-56) with rp=7 scattered same-type pieces to edges.
+     # Implementation: scatter penalty only fires during NO_MERGE when same_type_count>=2 and not death_spiral.
+     # Penalty = -300 × merge_mult × (candidate_dist - existing_max_dist_from_centroid).
+     # WHY PENALTY (not bonus): existing axes 9.8/9.65 are bonuses that can be overwhelmed.
+     # Mandatory theme: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+     # Forbidden: bonus form, death_spiral firing, same_type_count<2, merge_grade!=NO.
+     # refs: tmp/analysis_result.md (Implementation Plan: same-type scatter prevention),
+     #       game_history/20260507_222547_score0546.jsonl T55 (scatter failure mode),
+     #       advice.md (scatter prevention advice), data/mandatory_themes.txt
+     # Fixes failure mode: worst-game "scatter during NO_MERGE → merge drought → death spiral"
      # v613: axis 1.9 merge compression expectation value — reward board compression from merge
      # analysis_result.md adopted hypothesis: "merge chainの3手以内完了による建国ボーナス込みスコア最大化"
      # Best game T93-T96: 3 consecutive DIRECT merges reduced piece_count 40→27 (+392 score_delta).
@@ -1814,6 +1828,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if blocking_penalty > 0:
                     score -= min(blocking_penalty, 500.0)
                     reasons.append("AVOID_BLOCK_REACTIVE_PAIR")
+
+        # ----- NEW AXIS: same-type scatter prevention during NO_MERGE (vXXX) -----
+        # Problem: Worst game turn 55 placed type 2 at x=-0.60, y=1.82 when existing
+        # type 2 pieces were at x≈0.15, y≈-1.2 - physically separating a clustered pair.
+        # Advice: "併合できるtypeが隣接しているとき、その間にピースを配置鹊滓蚕并发"
+        # Mandatory theme: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+        # Current proximity axes (9.8, 9.65) are bonuses that can be overwhelmed.
+        # This is a PENALTY-only axis: placing same-type pieces further apart is always bad.
+        # Fires when: merge_grade==NO && current_type has 2+ pieces on board
+        #            && NOT in death_spiral (height penalty must be sole differentiator)
+        # refs: tmp/analysis_result.md (Implementation Plan: same-type scatter prevention),
+        #       game_history/20260507_222547_score0546.jsonl T55 (scatter failure mode),
+        #       advice.md (scatter prevention advice), data/mandatory_themes.txt
+        current_type = next_type  # piece being placed = current_type
+        same_type_count = sum(1 for p in pieces if p.get("type") == current_type)
+        if merge_grade == "NO" and same_type_count >= 2 and not death_spiral:
+            # Calculate centroid of existing same-type pieces (excluding the piece being placed)
+            same_xs = [p.get("x", 0) for p in pieces if p.get("type") == current_type]
+            same_ys = [p.get("y", -10) for p in pieces if p.get("type") == current_type]
+            centroid_x = sum(same_xs) / len(same_xs)
+            centroid_y = sum(same_ys) / len(same_ys)
+
+            # Check if candidate would scatter same-type pieces further apart
+            max_same_span = max(same_xs) - min(same_xs) if len(same_xs) >= 2 else 0.0
+            candidate_dist_from_centroid = abs(x - centroid_x)
+            existing_max_dist_from_centroid = max(abs(sx - centroid_x) for sx in same_xs) if same_xs else 0.0
+
+            if max_same_span > 1.5 and candidate_dist_from_centroid > existing_max_dist_from_centroid + 0.3:
+                # Placing further from centroid than existing pieces = scatter
+                scatter_penalty = -300.0 * merge_mult * (candidate_dist_from_centroid - existing_max_dist_from_centroid)
+                score += scatter_penalty
+                reasons.append("SAME_TYPE_SCATTER_PENALTY")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
