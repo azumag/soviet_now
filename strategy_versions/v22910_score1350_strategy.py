@@ -68,12 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v612: pre-critical height escalation — add base=150 at max_y 1.5-2.0 + deadline_crossed + rp>=3 + NO merge
-     # worst game T61: max_y=1.53, rp=8, NO merge, deadline_crossed — base 50*1.8=90pt height diff too weak vs AVOID_BLOCK
-     # base 150*1.8=270pt diff makes low placement competitive with edge scatter during pre-critical zone
-     # Different from v599 (base=100 at max_y>=1.0) — targets transition zone (1.5-2.0) with stronger escalation
-     # Fixes rollback failure mode: "pre-deadline piece accumulation (37-42 pieces) → max_y runaway → game over"
-     # refs: tmp/analysis_result.md (Implementation Plan: pre-deadline height escalation hypothesis)
      # v611: critical_phase_stacking_suppressed uses reactor_margin<2.0 instead of deadline_crossed
      # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
      # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
@@ -1768,13 +1762,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260412_132331_score0892.jsonl T57-T62 (6-turn NO-merge drought, y>1.0),
         #       game_history/20260412_132046_score0899.jsonl T64-T69 (6 HIGH_TOWER turns, max_y 2.57→3.38)
         # Fixes rollback failure mode: "merge drought時に低y配置が選ばれず、端に散らばって即死"
-        if merge_grade == "NO" and reactive_pair_count >= 3 and not death_spiral:
-            if max_y >= 2.0:
-                base_height_coefficient = 100.0  # v599 existing
-            elif max_y >= 1.5 and deadline_crossed:
-                base_height_coefficient = 150.0  # NEW: pre-critical escalation
-            else:
-                base_height_coefficient = 50.0
+        if merge_grade == "NO" and reactive_pair_count >= 3 and max_y >= 1.0 and not death_spiral:
+            base_height_coefficient = 100.0
         else:
             base_height_coefficient = 50.0
 
