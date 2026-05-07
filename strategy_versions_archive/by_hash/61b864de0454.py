@@ -68,15 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v613: deadline_crossed merge override — when deadline_crossed && same-type pieces on board
-     # for next_type && merge available (NEAR/DIRECT), override AVOID_BLOCK/SAME_TYPE_STACK with merge.
-     # Worst game T52-T53: deadline_crossed=true, same-type pieces on board (type 1),
-     # chose AVOID_BLOCK at x=2.67 instead of merge → 4-turn NO_MERGE streak → score 490.
-     # mandatory_themes requires: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-     # v604 NEAR suppression (type_scale=0.5) still applies — only overrides when net merge positive.
-     # Does NOT adjust v604 threshold — death spiral guard is valid per rollback constraint.
-     # Fixes rollback failure mode: "deadline_crossed merge override failure (T52-T53 AVOID_BLOCK choice)"
-     # refs: tmp/analysis_result.md (Implementation Plan: AVOID_BLOCK override hypothesis)
      # v612: pre-critical height escalation — add base=150 at max_y 1.5-2.0 + deadline_crossed + rp>=3 + NO merge
      # worst game T61: max_y=1.53, rp=8, NO merge, deadline_crossed — base 50*1.8=90pt height diff too weak vs AVOID_BLOCK
      # base 150*1.8=270pt diff makes low placement competitive with edge scatter during pre-critical zone
@@ -2535,43 +2526,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += cluster_bonus
                         if "HIGH_TYPE_CLUSTER" not in "_".join(reasons):
                             reasons.append("HIGH_TYPE_CLUSTER")
-
-        # ----- v613: deadline_crossed merge override -----
-        # When deadline_crossed AND same-type pieces exist on board for next_type,
-        # AND candidate would create a merge (NEAR or DIRECT), override reason to merge.
-        # This respects mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # Worst game T52-T53: deadline_crossed=true, same-type pieces on board (type 1),
-        # chose AVOID_BLOCK instead of merge → 4-turn NO_MERGE streak → game over at 490.
-        # Best game T141: deadline_crossed=true, merge_available=true → DIRECT_MERGE → +36 score.
-        # v604 NEAR suppression (type_scale=0.5) still applies — only override when merge creates
-        # net positive bonus after suppression. AVOID_BLOCK logic preserved for non-merge scenarios.
-        # Does NOT adjust v604 threshold — death spiral guard is valid per rollback constraint.
-        if deadline_crossed and merge_grade in ["NEAR", "DIRECT"]:
-            # Check if any piece on board has the same type as next_type
-            same_type_on_board = any(p.get("type") == next_type for p in pieces)
-            if same_type_on_board:
-                # Override AVOID_BLOCK/SAME_TYPE_STACK reason with merge reason
-                # This ensures mandatory merge priority at deadline when merge is available
-                has_merge_reason = any(
-                    r in reasons for r in ["NEAR_MERGE", "DIRECT_MERGE", "NEAR_MERGE_EARLY_MERGE_PRIORITY",
-                                          "DIRECT_MERGE_CHAIN_MERGE_REACTIVE_MERGE_PRIORITY",
-                                          "DIRECT_MERGE_HIGH_LAYER", "DIRECT_MERGE_MEDIUM_TOWER",
-                                          "DIRECT_MERGE_DANGER_DIRECT_MERGE_PRIORITY",
-                                          "NEAR_MERGE_EARLY_MERGE_PRIORITY", "DIRECT_MERGE_HIGH_TOWER"]
-                )
-                if has_merge_reason:
-                    # Reason already contains merge — keep it (no override needed)
-                    pass
-                elif "AVOID_BLOCK" in "_".join(reasons) or "SAME_TYPE_STACK" in "_".join(reasons):
-                    # Override AVOID_BLOCK/SAME_TYPE_STACK with merge reason
-                    reasons = [r for r in reasons if "AVOID_BLOCK" not in r and "SAME_TYPE_STACK" not in r]
-                    if merge_grade == "DIRECT":
-                        reasons.insert(0, "DIRECT_MERGE")
-                    else:
-                        reasons.insert(0, "NEAR_MERGE")
-                    # Recompose reason string
-                    best_reason_temp = "_".join(reasons) if reasons else merge_grade + "_MERGE"
-                    score += 0.001  # tiny boost to ensure selection (reason change alone won't change score ordering)
 
         # ----- update best candidate -----
         if score > best_score:
