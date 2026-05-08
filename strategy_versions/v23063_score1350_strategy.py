@@ -68,19 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v614: Fix A — refine Russia-phase NEAR suppression (analysis_result.md)
-     # v604 blanket suppression (type_scale=0.5 for all NEAR when max_y>=2.0+deadline_crossed+rp>=3+pc>=28)
-     # suppressed ALL NEAR even when danger_merge_available=true (best danger removal option).
-     # Now: (1) preserve NEAR when danger_merge_available=true, (2) safety valve when landing_y >= max_y - 0.5.
-     # Fixes failure mode: Russia-phase NEAR suppression too aggressive — forced worse alternatives at deadline.
-     # refs: tmp/analysis_result.md (Implementation Plan: Fix A),
-     #       data/mandatory_themes.txt, tmp/state/last_rollback_postmortem.md
-     # v614: Fix B — mandatory-theme lookahead in v613 fallback (analysis_result.md)
-     # Previous fallback only selected lowest-y non-crossing. Now prefers candidate with largest
-     # deadline_margin (clearance >= 0.5) to prevent NEXT-turn deadline cascade.
-     # Fixes failure mode: deadline cascade from non-crossing selection ignoring next-turn safety.
-     # refs: tmp/analysis_result.md (Implementation Plan: Fix B), data/mandatory_themes.txt,
-     #       game_history/20260508_183610_score0440.jsonl (worst game T49-T60 cascade)
      # v613: mandatory_themes enforcement — deadline_crossed && !merge_available fallback override
      # Worst game T58/T60: deadline_crossed=true, merge_available=false, chose crosses_deadline=true
      # despite axis 8.8c (-8000) penalty. Mandatory theme violation: "デッドラインを超える位置にピース置く場合は併合できる場合に限る"
@@ -1069,25 +1056,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # type 1-4: 0.8x (slight deprioritization, floor 0.8 to not block board compression)
         # type 5-8: 1.0x (neutral), type 9-12: 1.2x-1.7x, type 13+: 1.8x-2.0x
         # Applies to axis 1, 1.5b, 1.6, 8.7 — NOT to axis 8.8 (penalty axis)
-        # v614 Fix A: refine NEAR suppression in Russia-phase deadline zone
-        # v604 blanket suppression was too aggressive: suppressed ALL NEAR even when
-        # danger_merge_available=true (best available danger removal option).
-        # Now preserve NEAR when: (1) danger_merge_available=true, or (2) landing_y >= max_y - 0.5
-        # Rollback constraint: Fix A preserves NEAR without using danger_direct_merge_priority axis.
-        # refs: tmp/analysis_result.md (Implementation Plan: Fix A),
-        #       data/mandatory_themes.txt, tmp/state/last_rollback_postmortem.md
+        # v604: override type_scale=0.5 for NEAR merges when near_merge_suppression is active
         if merge_grade in ["DIRECT", "NEAR", "FAR"]:
             type_scale = 1.0 + 0.1 * max(0, next_type - 5)
-            type_scale = max(0.8, min(type_scale, 2.0))
-            # v614 Fix A: preserve NEAR when danger_merge_available or safety valve
-            danger_merge_available = result.get("danger_merge_available", False)
-            if merge_grade == "NEAR" and near_merge_suppression:
-                if danger_merge_available:
-                    type_scale = 1.0  # preserve: NEAR is best danger removal option
-                elif landing_y >= max_y - 0.5:
-                    type_scale = 1.0  # safety valve: close enough to optimal
-                else:
-                    type_scale = 0.5  # suppress clearly bad NEAR
+            type_scale = max(0.8, min(type_scale, 2.0))  # floor 0.8, cap 2.0
+            # v604: NEAR merge suppression in death zone — reduce type_scale below normal floor
+            if near_merge_suppression and merge_grade == "NEAR":
+                type_scale = 0.5
         else:
             type_scale = 1.0  # NO merge — no scaling
 
@@ -2583,49 +2558,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
 
-    # ----- v613 fallback with mandatory-theme lookahead -----
-    # Fix B: now considers next-turn deadline safety (analysis_result.md Implementation Plan)
-    # Worst game T49-T60: deadline_crossed=true, merge_available=false every turn,
-    # yet minimum-y selection still resulted in deadline cascade — board never decompressed.
-    # Mandatory theme "NEXTを考慮したドロップをせよ" requires selecting a position that
-    # doesn't push the NEXT deadline crossing into the following turn.
-    # Among non-crossing candidates, prefer the one with largest vertical clearance from deadline
-    # (largest deadline_margin), giving the next piece room to be placed without crossing.
-    # Only apply this when clearance >= 0.5 units (enough margin for next piece).
-    # If no candidate has sufficient margin, fall back to minimum landing_y.
-    # refs: tmp/analysis_result.md (Implementation Plan: Fix B — mandatory-theme lookahead),
-    #       data/mandatory_themes.txt (NEXTを考慮したドロップをせよ),
-    #       game_history/20260508_183610_score0440.jsonl (worst game T49-T60 cascade)
-    # Fixes rollback failure mode: deadline cascade from non-crossing selection ignoring next-turn safety
+    # ----- mandatory_themes enforcement: deadline_crossed && !merge_available -----
+    # analysis_result.md adopted hypothesis: worst game T58/T60 selected
+    # crosses_deadline=true with NO_MERGE despite axis 8.8c (-8000) penalty.
+    # This is a fallback override that fires after all axis scoring.
+    # When deadline_crossed && !merge_available: reject crossing candidates
+    # in favor of lowest-y non-crossing candidate.
+    # If ALL candidates cross deadline (extreme congestion), select min landing_y.
+    # merge_available = any DIRECT/NEAR merge across all candidates
+    # refs: tmp/analysis_result.md (Implementation Plan: mandatory_themes enforcement),
+    #       data/mandatory_themes.txt (デッドライン原則),
+    #       game_history/20260508_152910_score0471.jsonl (worst game T58/T60)
+    # Fixes rollback failure mode: crosses_deadline + NO_MERGE at deadline (mandatory theme violation)
     if deadline_crossed:
         merge_available = any(r.get("merge_grade") in ("DIRECT", "NEAR", "FAR") for r in results)
         if not merge_available:
             non_crossing = [c for c in results if not c.get("crosses_deadline", False)]
             if non_crossing:
-                # v614 Fix B: add next-turn safety to mandatory-theme fallback
-                # Among non-crossing candidates with sufficient deadline margin (>=0.5),
-                # prefer the one with the largest vertical clearance (most room for next turn).
-                # deadline_y=3.32, so clearance = deadline_y - landing_y.
-                candidates_with_margin = [
-                    c for c in non_crossing
-                    if (3.32 - c.get("landing_y", 999)) >= 0.5
-                ]
-                if candidates_with_margin:
-                    best_non_crossing = max(
-                        candidates_with_margin,
-                        key=lambda c: 3.32 - c.get("landing_y", 999)
-                    )
-                    best_result = next((c for c in results if c.get('x') == best_x), None)
-                    if best_result and best_result.get('crosses_deadline', False):
-                        best_x = best_non_crossing['x']
-                        best_reason = "MANDATORY_THEME_NEXT_SAFETY"
-                else:
-                    # No candidate has sufficient margin — fall back to min landing_y
-                    best_non_crossing = min(non_crossing, key=lambda c: c.get("landing_y", 999))
-                    best_result = next((c for c in results if c.get('x') == best_x), None)
-                    if best_result and best_result.get('crosses_deadline', False):
-                        best_x = best_non_crossing['x']
-                        best_reason = "AVOID_DEADLINE_CROSSING_MANDATORY_THEME"
+                best_non_crossing = min(non_crossing, key=lambda c: c.get("landing_y", 999))
+                best_result = next((c for c in results if c.get('x') == best_x), None)
+                if best_result and best_result.get('crosses_deadline', False):
+                    best_x = best_non_crossing['x']
+                    best_reason = "AVOID_DEADLINE_CROSSING_MANDATORY_THEME"
             else:
                 # All candidates cross deadline — select minimum landing_y
                 best_candidate = min(results, key=lambda c: c.get("landing_y", 999))
