@@ -66,10 +66,6 @@ Phases (determined by board max Y):
 # --- Change History ---
      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
-     # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
-     # Fixes: worst game T69-T72 edge placement (x=±3.0) despite high penalty — additional deterrence for edge NO-merge at critical board height
-     # rollback failure mode: high-rp + high-max_y + NO merge + edge placement combination causing max_y runaway
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # worst game T66-T69でx=±3.0選択された原因是axis 9.6(-4500)のrp>=1条件がrp=0状況で機能しない
      # 따라서 crosses_deadline candidate에는 독립したペナルティ 필요 (russia_phase除)
      # Fixes: worst game T66-T69 crosses_deadline NO-merge edge placement (x=±3.0)
@@ -2041,13 +2037,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
                 score -= 2000.0
                 reasons.append("CROSSES_DEADLINE_NO_MERGE")
-
-        # v628: edge NO-merge penalty at deadline with high rp + high max_y
-        # Worst game T69-T72: rp>=4, max_y>=2.0, merge_grade=NO, deadline_crossed, x=±3.0 placement
-        # axis 9.65 (-2000) insufficient at high rp; edge placement (|x|>=2.7) contributes to max_y runaway
-        if result.get("crosses_deadline", False) and merge_grade == "NO" and abs(x) >= 2.7 and max_y >= 2.0 and reactive_pair_count >= 4:
-            score -= 1500  # deters edge NO-merge placement at critical board height
-            reasons.append("EDGE_NO_MERGE_DEADLINE_HIGH_RP")
 
         # ----- update best candidate -----
         if score > best_score:
