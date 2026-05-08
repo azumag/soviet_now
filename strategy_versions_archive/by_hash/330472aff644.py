@@ -68,18 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v617: fix merge_drought_emergency deadline_crossed removal — suppress MERGE_PATH_SETUP
-     # whenever no_merge_streak>=3 && NO && max_y>=1.8, regardless of deadline_crossed.
-     # v616 added deadline_crossed to condition, but this was a mistake: the issue is edge
-     # placement during ANY merge drought (deadline_crossed=true OR false), not just deadline.
-     # When deadline_crossed && merge_available=true, merge bonuses already dominate over
-     # MERGE_PATH_SETUP, so suppression is unnecessary and would block legitimate merge creation.
-     # The PROHIBITION is correct: deadline_crossed=false && merge_available=true is OK to merge.
-     # analysis_result.md clearly states: "merge_available=true時はMERGE_PATH_SETUP抑制しない"
-     # Fixes rollback failure mode: "NO_MERGE streak death spiral from edge placement"
-     # (suppression now works in pre-deadline drought phases where v616 didn't fire)
-     # refs: tmp/analysis_result.md (Implementation Plan: merge_drought_emergency_exit),
-     #       mandatory_themes.txt (デッドライン超出時は併合できる場合に限る)
      # v616: merge_drought_emergency_exit — suppress MERGE_PATH_SETUP during 3+ NO_MERGE streak at deadline
      # Worst game T61-T65: 5 consecutive NO_MERGE turns chose x=-2.04, 2.00, -1.40 (NOT lowest-y)
      # because MERGE_PATH_SETUP guided toward edge columns during merge drought.
@@ -2350,18 +2338,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Does NOT override column_ceiling column selection; only differentiates within best column.
                 # Explicit death_spiral guard: already suppressed by column_ceiling_dominant condition.
                 # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
-                # v617: removed deadline_crossed from merge_drought_emergency — it fires for ANY merge drought
-                # (deadline_crossed=falseでもmerge_available=trueでもedge配置を防止)
-                # MERGE_PATH_SETUP is suppressed when drought is active (no_merge_streak>=3 && NO && max_y>=1.8).
-                # When deadline_crossed && merge_available=true, merge bonuses already dominate, so suppression
-                # of MERGE_PATH_SETUP is unnecessary and would block legitimate merge path creation.
+                # v616: also suppress MERGE_PATH_SETUP when merge_drought_emergency_exit fires
+                #       (no_merge_streak>=3 && NO && deadline_crossed && max_y>=1.8)
+                #       — during drought, height reduction is sole differentiator, merge path optimization is luxury
                 merge_drought_emergency = (
                     no_merge_streak >= 3 and merge_grade == "NO"
-                    and max_y >= 1.8
+                    and deadline_crossed and max_y >= 1.8
                 )
-                # v617: emergency height bonus during merge drought (no deadline_crossed required)
+                # v616: emergency height bonus during merge drought
                 # When merge_drought_emergency fires, add bonus for placing at minimum-y column.
-                # This forces strictly lowest-y placement during 3+ turn NO_MERGE streak.
+                # This forces strictly lowest-y placement during 3+ turn NO_MERGE streak at deadline.
                 # Worst game T61-T65 chose x=-2.04, 2.00, -1.40 (not lowest-y) because
                 # MERGE_PATH_SETUP guided toward edge columns. This bonus overrides that.
                 if merge_drought_emergency and ceiling_diff <= 0.0:
