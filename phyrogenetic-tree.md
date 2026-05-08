@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-08 12:38:46 JST`
-- Nodes: `1371`
-- Edges: `1874`
-- Current: `365cc261af05`
+- Updated: `2026-05-08 14:24:13 JST`
+- Nodes: `1372`
+- Edges: `1875`
+- Current: `e39fdf92f05b`
 - Anchor: `0d0fc4a9fde7`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_d191fa48a7db["d191fa48a7db<br/>g=48 n=20<br/>comp=11508.9"]
     h_3070cf77c494["3070cf77c494<br/>g=12 n=12<br/>comp=9614.0"]
     h_41fbc35e9189["41fbc35e9189<br/>g=24 n=20<br/>comp=11054.3"]
     h_cb07469bc4e1["cb07469bc4e1<br/>g=24 n=20<br/>comp=11366.4"]
@@ -68,19 +67,17 @@ flowchart TD
     h_61b864de0454["61b864de0454<br/>g=24 n=20<br/>comp=10003.1"]
     h_5e8e90b87178["5e8e90b87178<br/>g=24 n=20<br/>comp=10943.3"]
     h_330472aff644["330472aff644<br/>g=24 n=20<br/>comp=10633.3"]
+    h_365cc261af05["365cc261af05<br/>g=24 n=20<br/>comp=10981.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_365cc261af05["365cc261af05<br/>CURRENT"]
+    h_e39fdf92f05b["e39fdf92f05b<br/>CURRENT"]
 
-    h_d191fa48a7db -->|improve| h_3070cf77c494
     h_41fbc35e9189 -->|improve| h_cb07469bc4e1
     h_cb07469bc4e1 -->|improve| h_e005862e2c1b
-    h_e005862e2c1b -. rollback .-> h_d191fa48a7db
-    h_d191fa48a7db -->|improve| h_f4600e910800
     h_abc3d92b50b8 -->|improve| h_cb2d5442e4dd
     h_cb2d5442e4dd -->|improve| h_fedb8705c35e
     h_fedb8705c35e -->|improve| h_1640d9113c4d
@@ -140,13 +137,13 @@ flowchart TD
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
     h_330472aff644 -->|improve| h_365cc261af05
+    h_365cc261af05 -->|improve| h_e39fdf92f05b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_d191fa48a7db plain;
     class h_3070cf77c494 plain;
     class h_41fbc35e9189 plain;
     class h_cb07469bc4e1 plain;
@@ -199,13 +196,14 @@ flowchart TD
     class h_61b864de0454 plain;
     class h_5e8e90b87178 plain;
     class h_330472aff644 plain;
+    class h_365cc261af05 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_365cc261af05 current;
+    class h_e39fdf92f05b current;
 ```
 
 ## Detail 1/18
@@ -5007,9 +5005,9 @@ flowchart TD
 
 ## Detail 18/18
 
-- Range: `0d0fc4a9fde7` .. `365cc261af05`
-- Nodes in this diagram: `11`
-- Internal edges in this diagram: `3`
+- Range: `0d0fc4a9fde7` .. `e39fdf92f05b`
+- Nodes in this diagram: `12`
+- Internal edges in this diagram: `4`
 - Cross-chunk link: `452653e77d19 --improve--> 0d0fc4a9fde7`
 - Cross-chunk link: `0d0fc4a9fde7 -.rollback.-> 452653e77d19`
 - Cross-chunk link: `452653e77d19 --improve--> 61b864de0454`
@@ -5027,17 +5025,19 @@ flowchart TD
     h_61b864de0454["61b864de0454<br/>g=24 n=20<br/>comp=10003.1"]
     h_5e8e90b87178["5e8e90b87178<br/>g=24 n=20<br/>comp=10943.3"]
     h_330472aff644["330472aff644<br/>g=24 n=20<br/>comp=10633.3"]
+    h_365cc261af05["365cc261af05<br/>g=24 n=20<br/>comp=10981.2"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_365cc261af05["365cc261af05<br/>CURRENT"]
+    h_e39fdf92f05b["e39fdf92f05b<br/>CURRENT"]
 
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
     h_330472aff644 -->|improve| h_365cc261af05
+    h_365cc261af05 -->|improve| h_e39fdf92f05b
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5048,16 +5048,27 @@ flowchart TD
     class h_61b864de0454 plain;
     class h_5e8e90b87178 plain;
     class h_330472aff644 plain;
+    class h_365cc261af05 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_365cc261af05 current;
+    class h_e39fdf92f05b current;
 ```
 
 ## Transition Notes
+
+### Improve Game#23012 `365cc261 -> e39fdf92`
+
+- scores: `8464 8245 15558 17855 15591 8092 14637 9310 11459 34907 13866 11813 7975 11665 10032 8810 14783 12557 12853 17997 13792 11091 9444 8793`
+- 9.11. PRE_RUSSIA_GROWTH_GUIDANCE - v618: pre-Russia pipeline guidance (type 12-14 centroid)
+- v618: Add axis 9.11 PRE_RUSSIA_GROWTH_GUIDANCE — guide placement toward type 12-14
+- centroid during pre-Russia transition zone (not russia_phase && max_y>=1.5 && pc>=25 && merge_grade==NO)
+- to build pipeline before Russia phase activates. Fixes worst game T66 pattern where
+- board entered transition zone but pipeline wasn't started. Guidance not constraint,
+- avoids regression from new rules. Fixes rollback failure mode: "pre-Russia pipeline
 
 ### Improve Game#22988 `330472af -> 365cc261`
 
