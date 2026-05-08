@@ -48,6 +48,7 @@ Game Overview:
              9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
              9.10. High-type growth pipeline guidance - v610: type 8-12 centroid proximity during NO merge
+             9.11. PRE_RUSSIA_GROWTH_GUIDANCE - v618: pre-Russia pipeline guidance (type 12-14 centroid)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -68,6 +69,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v618: Add axis 9.11 PRE_RUSSIA_GROWTH_GUIDANCE — guide placement toward type 12-14
+     # centroid during pre-Russia transition zone (not russia_phase && max_y>=1.5 && pc>=25 && merge_grade==NO)
+     # to build pipeline before Russia phase activates. Fixes worst game T66 pattern where
+     # board entered transition zone but pipeline wasn't started. Guidance not constraint,
+     # avoids regression from new rules. Fixes rollback failure mode: "pre-Russia pipeline
+     # not started" (worst game T66-70 analysis).
+     # refs: tmp/analysis_result.md (hypothesis 4.1 adopted: PRE_RUSSIA_GROWTH_GUIDANCE)
      # v617: fix merge_drought_emergency deadline_crossed removal — suppress MERGE_PATH_SETUP
      # whenever no_merge_streak>=3 && NO && max_y>=1.8, regardless of deadline_crossed.
      # v616 added deadline_crossed to condition, but this was a mistake: the issue is edge
@@ -1534,6 +1542,38 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if dist < 3.0:
                     pipeline_bonus = max(0, 120.0 - dist * 40.0) * merge_mult
                     score += pipeline_bonus
+
+        # === ADD: Axis 9.11 PRE_RUSSIA_GROWTH_GUIDANCE ===
+        # Problem: Russia phase detection (type 15 exists) is too late. By the time type 15
+        # exists, the pipeline (type 13→14→15) should already be built. The game loses
+        # critical turns because current strategy has no guidance for "pre-Russia late-game".
+        # Worst game T66: max_y=1.56, type13 count=2, type14 count=1 — pipeline not started.
+        # Analysis: board enters transition zone (max_y>=1.5, piece_count>=25, merge_grade==NO)
+        # before Russia phase activates. Guidance needed here for type 12-14 pipeline building.
+        # Only activates when: not russia_phase && max_y >= 1.5 && piece_count >= 25 && merge_grade==NO
+        # This is guidance (bonus), not a constraint — avoids regression from new rules.
+        # refs: tmp/analysis_result.md (Implementation Plan hypothesis 4.1 adopted),
+        #       game_history/20260508_130044_score0718.jsonl (worst game T66 pipeline not started),
+        #       strategy_versions/best_score5801_strategy.py (v624 feature reference)
+        pre_russia_active = (
+            not russia_phase
+            and max_y >= 1.5
+            and piece_count >= 25
+            and merge_grade == "NO"
+        )
+        if pre_russia_active:
+            # Find centroid of type 12-14 pieces (pipeline components for Russia growth)
+            pre_russia_pieces = [p for p in pieces if 12 <= p.get('type', 0) <= 14]
+            if len(pre_russia_pieces) >= 2:
+                # Calculate centroid of type 12-14 pieces
+                cx = sum(p.get('x', 0) for p in pre_russia_pieces) / len(pre_russia_pieces)
+                cy = sum(p.get('y', 0) for p in pre_russia_pieces) / len(pre_russia_pieces)
+                dist = ((x - cx) ** 2 + (landing_y - cy) ** 2) ** 0.5
+                if dist < 3.0:
+                    # Closer to pipeline centroid = higher bonus
+                    # TBD value +200, scaled with merge_mult for phase consistency
+                    pre_russia_bonus = max(0, 200.0 - dist * 60.0) * merge_mult
+                    score += pre_russia_bonus
 
         # ----- v598: column_ceiling_dominant flag — suppress competing horizontal guides -----
         # When merge_grade==NO && max_y>=1.0 && pc>=28, analysis shows edge scatter(x=±3.0)
