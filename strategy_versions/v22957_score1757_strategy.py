@@ -68,13 +68,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v616: merge_drought_emergency_exit — suppress MERGE_PATH_SETUP during 3+ NO_MERGE streak at deadline
-     # Worst game T61-T65: 5 consecutive NO_MERGE turns chose x=-2.04, 2.00, -1.40 (NOT lowest-y)
-     # because MERGE_PATH_SETUP guided toward edge columns during merge drought.
-     # v616 adds: suppress MERGE_PATH_SETUP when no_merge_streak>=3 && NO && deadline_crossed && max_y>=1.8
-     # Also adds emergency height bonus (+500*merge_mult) for lowest-y column during drought.
-     # Fixes rollback failure mode: "NO_MERGE streak death spiral from edge placement" (analysis_result.md)
-     # refs: tmp/analysis_result.md (Implementation Plan: merge_drought_emergency_exit)
      # v613: deadline_crossed merge override — when deadline_crossed && same-type pieces on board
      # for next_type && merge available (NEAR/DIRECT), override AVOID_BLOCK/SAME_TYPE_STACK with merge.
      # Worst game T52-T53: deadline_crossed=true, same-type pieces on board (type 1),
@@ -1044,28 +1037,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         and piece_count >= 28
     )
 
-    # ----- v616: no_merge_streak — detect merge drought from board state -----
-    # analysis_result.md: worst game T61-T65 had 5 consecutive NO_MERGE turns with x values
-    # at non-minimal-y positions (-2.04, 2.00, -1.40) because MERGE_PATH_SETUP guided toward
-    # edge columns during merge drought.
-    # We don't have per-turn history in decide(), so detect drought from board state:
-    # same_type_pieces on board (2+) + rp>=3 + current candidate is merge_grade=NO
-    # This means: we want to merge but can't — classic merge drought pattern.
-    # v616: compute no_merge_streak inside candidate loop for per-candidate accuracy
-    # (computed after merge_grade is read from current candidate)
-    no_merge_streak = 0
-    _history = game_state.get("_decision_history", [])
-    if _history:
-        # Count recent consecutive NO merges from last N turns
-        _streak = 0
-        for _h in reversed(_history[-10:]):
-            if _h.get("merge_grade") == "NO":
-                _streak += 1
-            else:
-                break
-        no_merge_streak = _streak
-    # else: no_merge_streak stays 0 — drought detection done inside loop
-
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -1075,11 +1046,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
-
-        # v616: detect merge drought inside loop (per-candidate merge_grade now available)
-        # merge_grade=NO + same_type_pieces exist (2+) + rp>=3 = drought condition
-        if merge_grade == "NO" and len(same_type_pieces) >= 2 and reactive_pair_count >= 3:
-            no_merge_streak = 3
 
         # ----- v596: merge type scaling — high-type growth pipeline prioritization -----
         # analysis_result.md: "低type並合トラップ脱却" — low-score games merge frequently (39.1%)
@@ -2338,27 +2304,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Does NOT override column_ceiling column selection; only differentiates within best column.
                 # Explicit death_spiral guard: already suppressed by column_ceiling_dominant condition.
                 # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
-                # v616: also suppress MERGE_PATH_SETUP when merge_drought_emergency_exit fires
-                #       (no_merge_streak>=3 && NO && deadline_crossed && max_y>=1.8)
-                #       — during drought, height reduction is sole differentiator, merge path optimization is luxury
-                merge_drought_emergency = (
-                    no_merge_streak >= 3 and merge_grade == "NO"
-                    and deadline_crossed and max_y >= 1.8
-                )
-                # v616: emergency height bonus during merge drought
-                # When merge_drought_emergency fires, add bonus for placing at minimum-y column.
-                # This forces strictly lowest-y placement during 3+ turn NO_MERGE streak at deadline.
-                # Worst game T61-T65 chose x=-2.04, 2.00, -1.40 (not lowest-y) because
-                # MERGE_PATH_SETUP guided toward edge columns. This bonus overrides that.
-                if merge_drought_emergency and ceiling_diff <= 0.0:
-                    emergency_height_bonus = 500.0 * merge_mult
-                    score += emergency_height_bonus
-                    if "MERGE_DROUGHT_EMERGENCY" not in "_".join(reasons):
-                        reasons.append("MERGE_DROUGHT_EMERGENCY")
-
-                if (column_ceiling_dominant and len(same_type_pieces) >= 2
-                    and not death_spiral and not axis_88_horizontal_suppression
-                    and not merge_drought_emergency):
+                if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral and not axis_88_horizontal_suppression:
                     # Find nearest current_type piece on board to this candidate position
                     nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
                     if nearest_dist < 1.5:
