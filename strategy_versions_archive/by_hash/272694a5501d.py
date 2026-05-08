@@ -47,6 +47,7 @@ Game Overview:
              9.7. Pipeline-aware placement guidance - v367: same_type 없い時の隣接type配置誘導 (postmortem axis 9.7 nesting fix)
              9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
+             9.10. High-type growth pipeline guidance - v610: type 8-12 centroid proximity during NO merge
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -67,6 +68,62 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v614: Fix A — refine Russia-phase NEAR suppression (analysis_result.md)
+     # v604 blanket suppression (type_scale=0.5 for all NEAR when max_y>=2.0+deadline_crossed+rp>=3+pc>=28)
+     # suppressed ALL NEAR even when danger_merge_available=true (best danger removal option).
+     # Now: (1) preserve NEAR when danger_merge_available=true, (2) safety valve when landing_y >= max_y - 0.5.
+     # Fixes failure mode: Russia-phase NEAR suppression too aggressive — forced worse alternatives at deadline.
+     # refs: tmp/analysis_result.md (Implementation Plan: Fix A),
+     #       data/mandatory_themes.txt, tmp/state/last_rollback_postmortem.md
+     # v614: Fix B — mandatory-theme lookahead in v613 fallback (analysis_result.md)
+     # Previous fallback only selected lowest-y non-crossing. Now prefers candidate with largest
+     # deadline_margin (clearance >= 0.5) to prevent NEXT-turn deadline cascade.
+     # Fixes failure mode: deadline cascade from non-crossing selection ignoring next-turn safety.
+     # refs: tmp/analysis_result.md (Implementation Plan: Fix B), data/mandatory_themes.txt,
+     #       game_history/20260508_183610_score0440.jsonl (worst game T49-T60 cascade)
+     # v613: mandatory_themes enforcement — deadline_crossed && !merge_available fallback override
+     # Worst game T58/T60: deadline_crossed=true, merge_available=false, chose crosses_deadline=true
+     # despite axis 8.8c (-8000) penalty. Mandatory theme violation: "デッドラインを超える位置にピース置く場合は併合できる場合に限る"
+     # Fallback override: after axis scoring, if deadline_crossed && !merge_available && best crosses deadline,
+     # select lowest-y non-crossing candidate. If ALL candidates cross, select min landing_y.
+     # Refuses: DEADLINE_MERGE_FORCE handles merge_available=true case
+     # Fixes failure mode: crosses_deadline + NO_MERGE at deadline_crossed (mandatory theme violation)
+     # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt,
+     #       game_history/20260508_152910_score0471.jsonl (worst game T58/T60)
+     # v612: axis 1.6b DEADLINE_MERGE_FORCE — +3000 bonus when deadline_crossed && DIRECT merge
+     # Worst game turn 53: deadline_crossed=true, DIRECT merge available, chose HIGH_LAYER (1440) over merge
+     # +800 (axis 1.6) insufficient vs height penalty ~1440. +3000 ensures DIRECT always wins at deadline.
+     # Works even when danger_direct_merge_available=false — any DIRECT merge is critical at deadline.
+     # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
+     #       game_history/20260508_032057_score0854.jsonl (worst_game turn 53)
+     # v611: critical_phase_stacking_suppressed uses reactor_margin<2.0 instead of deadline_crossed
+     # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
+     # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
+     # reactor_margin is continuous — use it to match actual constraint threshold
+     # Fixes rollback failure mode: stacking bonus overpowers height penalty at max_y>=2.0 when deadline_margin<2.0
+     # refs: tmp/state/last_rollback_postmortem.md, tmp/analysis_result.md (implementation plan change 1)
+     # v611: GAP_ZONE_NEAR_PENALTY lowered to max_y>=0.5+reactive_pair_count==0 (was max_y>=2.0+deadline_crossed)
+     # Rollback constraint: "forbid: NEAR merge priority when reactive_pairs=0 and max_y>=0.5"
+     # Lower threshold catches danger earlier; reactive_pair_count==0 directly matches constraint
+     # refs: tmp/state/last_rollback_postmortem.md (failure_mode: NEAR at reactive_pairs=0 max_y>=0.5),
+     #       tmp/analysis_result.md (implementation plan change 2)
+     # v610: axis 9.10 high-type growth pipeline guidance — suppress edge scatter during merge drought
+     # Worst game T70-T78: 9 consecutive NO_MERGE, max_y 2.04→3.03, edge scatter at x=±3.0
+     # Pieces type 8-12 existed but scattered, no guidance to centralize them
+     # Hall-of-fame (best_score5801) has axis 9.10: centroid of type 8-12 pieces → proximity bonus
+     # Fires: merge_grade==NO && max_y>=1.5 && pc>=25 && !axis_88_horizontal_suppression && !death_spiral
+     # Suppress when: axis_88_horizontal_suppression or death_spiral (avoid duplicate with 9.65/9.8)
+     # Fixes failure mode: "merge drought中のedge scatter → max_y runaway → game over"
+     # refs: tmp/analysis_result.md (Implementation Plan: axis 9.10 high-type growth pipeline)
+     #       game_history/20260507_123058_score0802.jsonl T70-T78 (worst game analysis)
+     #       strategy_versions/best_score5801_strategy.py (Hall-of-fame, axis 9.10 confirmed)
+     #       advice.md (zoumotu3: growth concentration)
+     # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.0 with deadline_crossed
+     # worst game T55: max_y=2.2, deadline_margin=-0.91, rp=6, NO_MERGE, edge placement → max_y runaway to 3.13
+     # v608 threshold (max_y>=2.5) was too high — suppression didn't fire at max_y=2.2, stacking selected
+     # Now fires at max_y>=2.0+deadline_crossed (primary), OR max_y>=3.0 regardless (secondary guard)
+     # Fixes failure mode: edge scatter during NO_MERGE with deadline_crossed at max_y 2.0-2.5 intermediate zone
+     # refs: tmp/analysis_result.md (adopted hypothesis: lower v609 threshold to 2.0)
      # v608: critical phase stacking suppression — suppress stacking bonus when max_y>=3.0 && merge_grade==NO && rp>=3
      # worst game T59-T62: max_y 3.77, rp=3, NO_MERGE, deadline_crossed. v607 (-8000) fired but HIGH_TOWER kept
      # being selected because stacking bonus (~400-600) overpowered height penalty. CRITICAL phase board must
@@ -1012,13 +1069,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # type 1-4: 0.8x (slight deprioritization, floor 0.8 to not block board compression)
         # type 5-8: 1.0x (neutral), type 9-12: 1.2x-1.7x, type 13+: 1.8x-2.0x
         # Applies to axis 1, 1.5b, 1.6, 8.7 — NOT to axis 8.8 (penalty axis)
-        # v604: override type_scale=0.5 for NEAR merges when near_merge_suppression is active
+        # v614 Fix A: refine NEAR suppression in Russia-phase deadline zone
+        # v604 blanket suppression was too aggressive: suppressed ALL NEAR even when
+        # danger_merge_available=true (best available danger removal option).
+        # Now preserve NEAR when: (1) danger_merge_available=true, or (2) landing_y >= max_y - 0.5
+        # Rollback constraint: Fix A preserves NEAR without using danger_direct_merge_priority axis.
+        # refs: tmp/analysis_result.md (Implementation Plan: Fix A),
+        #       data/mandatory_themes.txt, tmp/state/last_rollback_postmortem.md
         if merge_grade in ["DIRECT", "NEAR", "FAR"]:
             type_scale = 1.0 + 0.1 * max(0, next_type - 5)
-            type_scale = max(0.8, min(type_scale, 2.0))  # floor 0.8, cap 2.0
-            # v604: NEAR merge suppression in death zone — reduce type_scale below normal floor
-            if near_merge_suppression and merge_grade == "NEAR":
-                type_scale = 0.5
+            type_scale = max(0.8, min(type_scale, 2.0))
+            # v614 Fix A: preserve NEAR when danger_merge_available or safety valve
+            danger_merge_available = result.get("danger_merge_available", False)
+            if merge_grade == "NEAR" and near_merge_suppression:
+                if danger_merge_available:
+                    type_scale = 1.0  # preserve: NEAR is best danger removal option
+                elif landing_y >= max_y - 0.5:
+                    type_scale = 1.0  # safety valve: close enough to optimal
+                else:
+                    type_scale = 0.5  # suppress clearly bad NEAR
         else:
             type_scale = 1.0  # NO merge — no scaling
 
@@ -1119,17 +1188,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         # ----- axis 1.7b: gap-zone NEAR merge penalty (v560_mod follow-up) -----
         # worst_game T53 (max_y=1.88, deadline_crossed=true) and T57 (max_y=2.28, rp=9)
-        # selected NEAR merge despite deadline crossed, failing with only +21 score_delta.
-        # last_rollback_postmortem: "max_y>=2.0 NEAR merge failure causing max_y runaway".
-        # v560 reactive_pairs_cleanup requires max_y>=2.5, missing the 2.0-2.5 gap zone.
-        # When deadline is already crossed and max_y>=2.0, NEAR failure risk is highest —
-        # piece_count grows without merge benefit, accelerating game-over.
-        # Penalty -500 makes NO_MERGE low placement competitive vs NEAR when in gap zone.
-        # This is NOT a v550/v560 threshold change — it is a new axis with distinct condition.
-        # refs: tmp/state/last_rollback_postmortem.md (failure_mode: max_y>=2.0 NEAR merge failure)
-        #       game_history/20260410_183623_score0841.jsonl (T53, T57 gap-zone NEAR failures)
-        #       tmp/batch_summary.txt (HEIGHT_CONTROL 17-19% in low-score games)
-        if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
+        # Rollback constraint: "forbid: NEAR merge priority when reactive_pairs=0 and max_y>=0.5"
+        # When reactive_pairs=0 and board is elevated (max_y>=0.5), NEAR merge risks:
+        #   - No chain potential to compensate for merge failure
+        #   - Piece accumulation without merge benefit accelerates game-over
+        #   - Lower threshold from max_y>=2.0 to max_y>=0.5 catches danger earlier
+        #   - reactive_pair_count==0 directly matches constraint, no deadline_crossed needed
+        # Penalty -500 makes NO_MERGE low placement competitive vs NEAR when no chain potential.
+        # refs: tmp/state/last_rollback_postmortem.md (failure_mode: NEAR merge at reactive_pairs=0 max_y>=0.5),
+        #       tmp/analysis_result.md (implementation plan change 2)
+        if merge_grade == "NEAR" and max_y >= 0.5 and reactive_pair_count == 0:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
 
@@ -1159,6 +1227,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v596: apply type_scale to prioritize high-type danger merges
             score += 800.0 * type_scale
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
+
+        # ----- evaluation axis 1.6b: DEADLINE_MERGE_FORCE (v607) -----
+        # Worst game turn 53: deadline_crossed=true, DIRECT merge available, but chose HIGH_LAYER
+        # (height_score=1440.0) over merge because danger_direct_merge_available=false.
+        # mandatory_themes: "デッドライン付近の危険盤面領域では、併合を優先"
+        # +800 bonus (axis 1.6) insufficient against height penalty (~1440 at max_y=2.0).
+        # +3000 * type_scale ensures DIRECT merge always wins over HEIGHT_CONTROL at deadline,
+        # while high-type DIRECT merges score proportionally higher (matching eval bonus structure).
+        # Works even when danger_direct_merge_available=false (merging any DIRECT is critical at deadline).
+        # +3000 * type_scale ensures high-type DIRECT merges score proportionally higher,
+        # matching eval scoring that includes type별 bonus at game over.
+        # best_game turn 142-143 and extra_high_game turn 130 confirm DIRECT merge success at deadline.
+        # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
+        #       game_history/20260508_032057_score0854.jsonl (worst_game turn 53)
+        if deadline_crossed and merge_grade == "DIRECT":
+            score += 3000.0 * type_scale
+            reasons.append("DEADLINE_MERGE_FORCE")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
         # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
@@ -1288,16 +1373,18 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # (rp>=3 && NO merge) — height must be sole differentiator even before
         # board elevates. pre_death_spiral covers max_y>=1.0; this catches rp>=3
         # && NO at lower max_y where horizontal noise can still override height.
-        # v607: critical phase stacking suppression — worst game T59-T62 had max_y 3.77,
-        # rp=3, NO_MERGE, deadline_crossed. v607 penalty (-8000) fired but HIGH_TOWER kept
-        # being selected because other bonuses (stacking ~400-600) overpowered height penalty.
-        # This condition suppresses stacking bonus entirely when board is already critical
-        # (max_y>=3.0) with no merge path — height penalty must be the sole differentiator.
-        # refs: tmp/analysis_result.md (adopted hypothesis: CRITICAL phase stacking suppression),
-        #       tmp/batch_summary.txt (worst game 13-turn NO_MERGE streak at max_y 3.77),
-        #       tmp/state/last_rollback_postmortem.md (failure mode: stacking overpowered height)
+        # v609: elevated NO_MERGE stacking suppression — lower threshold to max_y>=2.0 with deadline_crossed
+        # worst game T55: max_y=2.2, deadline_margin=-0.91, rp=6, NO_MERGE, edge placement → max_y runaway to 3.13
+        # v608 threshold (max_y>=2.5) was too high — suppression didn't fire at max_y=2.2, stacking selected
+        # v609 lowered threshold to 2.0 but kept deadline_crossed instead of reactor_margin < 2.0
+        # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
+        # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
+        # reactor_margin is a continuous value — use it to match the actual constraint threshold
+        # Height penalty must be sole differentiator when NO_MERGE at elevated board with deadline pressure
+        # refs: tmp/state/last_rollback_postmortem.md (failure_mode: stacking bonus overpowers height at max_y>=2.0),
+        #       tmp/analysis_result.md (adopted hypothesis: use reactor_margin < 2.0 instead of deadline_crossed)
         critical_phase_stacking_suppressed = (
-            max_y >= 3.0
+            (max_y >= 3.0 or (max_y >= 2.0 and reactor_margin < 2.0))
             and merge_grade == "NO"
             and reactive_pair_count >= 3
         )
@@ -1416,6 +1503,33 @@ def decide(game_state: dict, analysis: dict) -> dict:
             if best_adjacent_target is not None and best_adjacent_dist < 3.0:
                 pipeline_bonus = max(0, 80.0 - best_adjacent_dist * 30.0)
                 score += pipeline_bonus
+
+        # === ADD: Axis 9.10 High-type growth pipeline guidance ===
+        # Worst game T70-T78: 9 consecutive NO_MERGE turns, max_y 2.04→3.03 runaway.
+        # Pieces type 8-12 existed but scattered, causing edge scatter at x=±3.0.
+        # Hall-of-fame strategy (best_score5801) implements this axis to maintain
+        # central clustering during merge droughts at elevated board.
+        # Fires when: merge_grade==NO && max_y>=1.5 && piece_count>=25
+        # Guides placement toward centroid of high-type pieces (type 8-12),
+        # building growth pipeline for next merge opportunity.
+        # Suppress when: axis_88_horizontal_suppression or death_spiral
+        # (avoid duplicate firing with axis 9.65 and axis 9.8).
+        # refs: tmp/analysis_result.md (Implementation Plan),
+        #       game_history/20260507_123058_score0802.jsonl T70-T78 (worst game analysis),
+        #       strategy_versions/best_score5801_strategy.py (Hall-of-fame, axis 9.10 confirmed),
+        #       advice.md (zoumotu3: growth concentration)
+        if (merge_grade == "NO" and max_y >= 1.5 and piece_count >= 25
+            and not axis_88_horizontal_suppression and not death_spiral):
+            high_type_pieces = [p for p in pieces if 8 <= p.get('type', 0) <= 12]
+            if len(high_type_pieces) >= 2:
+                # Calculate centroid of high-type pieces (type 8-12)
+                cx = sum(p.get('x', 0) for p in high_type_pieces) / len(high_type_pieces)
+                cy = sum(p.get('y', 0) for p in high_type_pieces) / len(high_type_pieces)
+                # Proximity bonus: closer to centroid = higher bonus
+                dist = ((x - cx) ** 2 + (landing_y - cy) ** 2) ** 0.5
+                if dist < 3.0:
+                    pipeline_bonus = max(0, 120.0 - dist * 40.0) * merge_mult
+                    score += pipeline_bonus
 
         # ----- v598: column_ceiling_dominant flag — suppress competing horizontal guides -----
         # When merge_grade==NO && max_y>=1.0 && pc>=28, analysis shows edge scatter(x=±3.0)
@@ -2468,6 +2582,55 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
+
+    # ----- v613 fallback with mandatory-theme lookahead -----
+    # Fix B: now considers next-turn deadline safety (analysis_result.md Implementation Plan)
+    # Worst game T49-T60: deadline_crossed=true, merge_available=false every turn,
+    # yet minimum-y selection still resulted in deadline cascade — board never decompressed.
+    # Mandatory theme "NEXTを考慮したドロップをせよ" requires selecting a position that
+    # doesn't push the NEXT deadline crossing into the following turn.
+    # Among non-crossing candidates, prefer the one with largest vertical clearance from deadline
+    # (largest deadline_margin), giving the next piece room to be placed without crossing.
+    # Only apply this when clearance >= 0.5 units (enough margin for next piece).
+    # If no candidate has sufficient margin, fall back to minimum landing_y.
+    # refs: tmp/analysis_result.md (Implementation Plan: Fix B — mandatory-theme lookahead),
+    #       data/mandatory_themes.txt (NEXTを考慮したドロップをせよ),
+    #       game_history/20260508_183610_score0440.jsonl (worst game T49-T60 cascade)
+    # Fixes rollback failure mode: deadline cascade from non-crossing selection ignoring next-turn safety
+    if deadline_crossed:
+        merge_available = any(r.get("merge_grade") in ("DIRECT", "NEAR", "FAR") for r in results)
+        if not merge_available:
+            non_crossing = [c for c in results if not c.get("crosses_deadline", False)]
+            if non_crossing:
+                # v614 Fix B: add next-turn safety to mandatory-theme fallback
+                # Among non-crossing candidates with sufficient deadline margin (>=0.5),
+                # prefer the one with the largest vertical clearance (most room for next turn).
+                # deadline_y=3.32, so clearance = deadline_y - landing_y.
+                candidates_with_margin = [
+                    c for c in non_crossing
+                    if (3.32 - c.get("landing_y", 999)) >= 0.5
+                ]
+                if candidates_with_margin:
+                    best_non_crossing = max(
+                        candidates_with_margin,
+                        key=lambda c: 3.32 - c.get("landing_y", 999)
+                    )
+                    best_result = next((c for c in results if c.get('x') == best_x), None)
+                    if best_result and best_result.get('crosses_deadline', False):
+                        best_x = best_non_crossing['x']
+                        best_reason = "MANDATORY_THEME_NEXT_SAFETY"
+                else:
+                    # No candidate has sufficient margin — fall back to min landing_y
+                    best_non_crossing = min(non_crossing, key=lambda c: c.get("landing_y", 999))
+                    best_result = next((c for c in results if c.get('x') == best_x), None)
+                    if best_result and best_result.get('crosses_deadline', False):
+                        best_x = best_non_crossing['x']
+                        best_reason = "AVOID_DEADLINE_CROSSING_MANDATORY_THEME"
+            else:
+                # All candidates cross deadline — select minimum landing_y
+                best_candidate = min(results, key=lambda c: c.get("landing_y", 999))
+                best_x = best_candidate['x']
+                best_reason = "EXTREME_CONGESTION_MINIMIZE_Y"
 
     return {"x": best_x, "reason": best_reason}
 
