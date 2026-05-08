@@ -68,6 +68,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v613: mandatory_themes enforcement — deadline_crossed && !merge_available fallback override
+     # Worst game T58/T60: deadline_crossed=true, merge_available=false, chose crosses_deadline=true
+     # despite axis 8.8c (-8000) penalty. Mandatory theme violation: "デッドラインを超える位置にピース置く場合は併合できる場合に限る"
+     # Fallback override: after axis scoring, if deadline_crossed && !merge_available && best crosses deadline,
+     # select lowest-y non-crossing candidate. If ALL candidates cross, select min landing_y.
+     # Refuses: DEADLINE_MERGE_FORCE handles merge_available=true case
+     # Fixes failure mode: crosses_deadline + NO_MERGE at deadline_crossed (mandatory theme violation)
+     # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt,
+     #       game_history/20260508_152910_score0471.jsonl (worst game T58/T60)
      # v612: axis 1.6b DEADLINE_MERGE_FORCE — +3000 bonus when deadline_crossed && DIRECT merge
      # Worst game turn 53: deadline_crossed=true, DIRECT merge available, chose HIGH_LAYER (1440) over merge
      # +800 (axis 1.6) insufficient vs height penalty ~1440. +3000 ensures DIRECT always wins at deadline.
@@ -2548,6 +2557,34 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
     best_x = round(best_x, 2)
+
+    # ----- mandatory_themes enforcement: deadline_crossed && !merge_available -----
+    # analysis_result.md adopted hypothesis: worst game T58/T60 selected
+    # crosses_deadline=true with NO_MERGE despite axis 8.8c (-8000) penalty.
+    # This is a fallback override that fires after all axis scoring.
+    # When deadline_crossed && !merge_available: reject crossing candidates
+    # in favor of lowest-y non-crossing candidate.
+    # If ALL candidates cross deadline (extreme congestion), select min landing_y.
+    # merge_available = any DIRECT/NEAR merge across all candidates
+    # refs: tmp/analysis_result.md (Implementation Plan: mandatory_themes enforcement),
+    #       data/mandatory_themes.txt (デッドライン原則),
+    #       game_history/20260508_152910_score0471.jsonl (worst game T58/T60)
+    # Fixes rollback failure mode: crosses_deadline + NO_MERGE at deadline (mandatory theme violation)
+    if deadline_crossed:
+        merge_available = any(r.get("merge_grade") in ("DIRECT", "NEAR", "FAR") for r in results)
+        if not merge_available:
+            non_crossing = [c for c in results if not c.get("crosses_deadline", False)]
+            if non_crossing:
+                best_non_crossing = min(non_crossing, key=lambda c: c.get("landing_y", 999))
+                best_result = next((c for c in results if c.get('x') == best_x), None)
+                if best_result and best_result.get('crosses_deadline', False):
+                    best_x = best_non_crossing['x']
+                    best_reason = "AVOID_DEADLINE_CROSSING_MANDATORY_THEME"
+            else:
+                # All candidates cross deadline — select minimum landing_y
+                best_candidate = min(results, key=lambda c: c.get("landing_y", 999))
+                best_x = best_candidate['x']
+                best_reason = "EXTREME_CONGESTION_MINIMIZE_Y"
 
     return {"x": best_x, "reason": best_reason}
 

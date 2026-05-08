@@ -48,7 +48,6 @@ Game Overview:
              9.8. Same-type proximity for merge drought - v574: NO merge時、同typeピース間クラスタリング
              9.9. Russia-phase next-Russia pipeline - v601: ロシア建国後、次ロシア育成誘導
              9.10. High-type growth pipeline guidance - v610: type 8-12 centroid proximity during NO merge
-             9.11. PRE_RUSSIA_GROWTH_GUIDANCE - v618: pre-Russia pipeline guidance (type 12-14 centroid)
              9.2. Danger zone reactive penalty - v324: deadline_crossed対応強化版
              9.3. Reactive pair blocking avoidance - v384: landing between reactive pairs of different types
              9.5. Current type stack merge priority - v459: +300 bonus removed (9.6b provides guidance)
@@ -69,47 +68,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v618: Add axis 9.11 PRE_RUSSIA_GROWTH_GUIDANCE — guide placement toward type 12-14
-     # centroid during pre-Russia transition zone (not russia_phase && max_y>=1.5 && pc>=25 && merge_grade==NO)
-     # to build pipeline before Russia phase activates. Fixes worst game T66 pattern where
-     # board entered transition zone but pipeline wasn't started. Guidance not constraint,
-     # avoids regression from new rules. Fixes rollback failure mode: "pre-Russia pipeline
-     # not started" (worst game T66-70 analysis).
-     # refs: tmp/analysis_result.md (hypothesis 4.1 adopted: PRE_RUSSIA_GROWTH_GUIDANCE)
-     # v617: fix merge_drought_emergency deadline_crossed removal — suppress MERGE_PATH_SETUP
-     # whenever no_merge_streak>=3 && NO && max_y>=1.8, regardless of deadline_crossed.
-     # v616 added deadline_crossed to condition, but this was a mistake: the issue is edge
-     # placement during ANY merge drought (deadline_crossed=true OR false), not just deadline.
-     # When deadline_crossed && merge_available=true, merge bonuses already dominate over
-     # MERGE_PATH_SETUP, so suppression is unnecessary and would block legitimate merge creation.
-     # The PROHIBITION is correct: deadline_crossed=false && merge_available=true is OK to merge.
-     # analysis_result.md clearly states: "merge_available=true時はMERGE_PATH_SETUP抑制しない"
-     # Fixes rollback failure mode: "NO_MERGE streak death spiral from edge placement"
-     # (suppression now works in pre-deadline drought phases where v616 didn't fire)
-     # refs: tmp/analysis_result.md (Implementation Plan: merge_drought_emergency_exit),
-     #       mandatory_themes.txt (デッドライン超出時は併合できる場合に限る)
-     # v616: merge_drought_emergency_exit — suppress MERGE_PATH_SETUP during 3+ NO_MERGE streak at deadline
-     # Worst game T61-T65: 5 consecutive NO_MERGE turns chose x=-2.04, 2.00, -1.40 (NOT lowest-y)
-     # because MERGE_PATH_SETUP guided toward edge columns during merge drought.
-     # v616 adds: suppress MERGE_PATH_SETUP when no_merge_streak>=3 && NO && deadline_crossed && max_y>=1.8
-     # Also adds emergency height bonus (+500*merge_mult) for lowest-y column during drought.
-     # Fixes rollback failure mode: "NO_MERGE streak death spiral from edge placement" (analysis_result.md)
-     # refs: tmp/analysis_result.md (Implementation Plan: merge_drought_emergency_exit)
-     # v613: deadline_crossed merge override — when deadline_crossed && same-type pieces on board
-     # for next_type && merge available (NEAR/DIRECT), override AVOID_BLOCK/SAME_TYPE_STACK with merge.
-     # Worst game T52-T53: deadline_crossed=true, same-type pieces on board (type 1),
-     # chose AVOID_BLOCK at x=2.67 instead of merge → 4-turn NO_MERGE streak → score 490.
-     # mandatory_themes requires: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-     # v604 NEAR suppression (type_scale=0.5) still applies — only overrides when net merge positive.
-     # Does NOT adjust v604 threshold — death spiral guard is valid per rollback constraint.
-     # Fixes rollback failure mode: "deadline_crossed merge override failure (T52-T53 AVOID_BLOCK choice)"
-     # refs: tmp/analysis_result.md (Implementation Plan: AVOID_BLOCK override hypothesis)
-     # v612: pre-critical height escalation — add base=150 at max_y 1.5-2.0 + deadline_crossed + rp>=3 + NO merge
-     # worst game T61: max_y=1.53, rp=8, NO merge, deadline_crossed — base 50*1.8=90pt height diff too weak vs AVOID_BLOCK
-     # base 150*1.8=270pt diff makes low placement competitive with edge scatter during pre-critical zone
-     # Different from v599 (base=100 at max_y>=1.0) — targets transition zone (1.5-2.0) with stronger escalation
-     # Fixes rollback failure mode: "pre-deadline piece accumulation (37-42 pieces) → max_y runaway → game over"
-     # refs: tmp/analysis_result.md (Implementation Plan: pre-deadline height escalation hypothesis)
+     # v612: axis 1.6b DEADLINE_MERGE_FORCE — +3000 bonus when deadline_crossed && DIRECT merge
+     # Worst game turn 53: deadline_crossed=true, DIRECT merge available, chose HIGH_LAYER (1440) over merge
+     # +800 (axis 1.6) insufficient vs height penalty ~1440. +3000 ensures DIRECT always wins at deadline.
+     # Works even when danger_direct_merge_available=false — any DIRECT merge is critical at deadline.
+     # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
+     #       game_history/20260508_032057_score0854.jsonl (worst_game turn 53)
      # v611: critical_phase_stacking_suppressed uses reactor_margin<2.0 instead of deadline_crossed
      # Rollback constraint: "forbid: Stacking bonus firing when merge_available=false and deadline_margin<2.0"
      # deadline_crossed (binary) misses intermediate zone (deadline_margin 0.0-2.0) where stacking should suppress
@@ -811,7 +775,7 @@ Phases (determined by board max Y):
   #       game_history/20260323_150619_score0866.jsonl turns 53-60, game_history/20260323_151104_score3014.jsonl turns 114-121
   # Fixes rollback failure mode: ロシア建国後の即時併合取りこぼし（axis 8.7再導入）
   #
-# [BEST:6058] v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
+# v211: 危険域即時併合優先軸追加 - 危険域でのHIGH_TOWER回避（v201 rollback failure mode潰し）
 # ワーストゲーム(score0927)終盤turns 55-62でreactive_pairs=2-3あるのにmerge_available=falseでHIGH_TOWER/MEDIUM_TOWER選択が続きゲームオーバー。
 # ベストゲーム(score1933)終盤turns 97-100でmax_y=2.38-2.73の危険域でもDIRECT_MERGEを優先し、即時併合を確実に捉えている。
 # batch_summaryでHEIGHT_CONTROLが13.8%選択(avg_score_delta=0.3)と過剰であり、終盤高危険域(max_y>=2.0)での即時併合優先が弱いことを確認。
@@ -1064,28 +1028,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         and piece_count >= 28
     )
 
-    # ----- v616: no_merge_streak — detect merge drought from board state -----
-    # analysis_result.md: worst game T61-T65 had 5 consecutive NO_MERGE turns with x values
-    # at non-minimal-y positions (-2.04, 2.00, -1.40) because MERGE_PATH_SETUP guided toward
-    # edge columns during merge drought.
-    # We don't have per-turn history in decide(), so detect drought from board state:
-    # same_type_pieces on board (2+) + rp>=3 + current candidate is merge_grade=NO
-    # This means: we want to merge but can't — classic merge drought pattern.
-    # v616: compute no_merge_streak inside candidate loop for per-candidate accuracy
-    # (computed after merge_grade is read from current candidate)
-    no_merge_streak = 0
-    _history = game_state.get("_decision_history", [])
-    if _history:
-        # Count recent consecutive NO merges from last N turns
-        _streak = 0
-        for _h in reversed(_history[-10:]):
-            if _h.get("merge_grade") == "NO":
-                _streak += 1
-            else:
-                break
-        no_merge_streak = _streak
-    # else: no_merge_streak stays 0 — drought detection done inside loop
-
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
@@ -1095,11 +1037,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         drift_x = result.get("drift_x", 0)
         drift_unc = result.get("drift_unc", 0)
         merge_grade = result.get("merge_grade", "NO")  # DIRECT/NEAR/FAR/NO
-
-        # v616: detect merge drought inside loop (per-candidate merge_grade now available)
-        # merge_grade=NO + same_type_pieces exist (2+) + rp>=3 = drought condition
-        if merge_grade == "NO" and len(same_type_pieces) >= 2 and reactive_pair_count >= 3:
-            no_merge_streak = 3
 
         # ----- v596: merge type scaling — high-type growth pipeline prioritization -----
         # analysis_result.md: "低type並合トラップ脱却" — low-score games merge frequently (39.1%)
@@ -1256,6 +1193,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # v596: apply type_scale to prioritize high-type danger merges
             score += 800.0 * type_scale
             reasons.append("DANGER_DIRECT_MERGE_PRIORITY")
+
+        # ----- evaluation axis 1.6b: DEADLINE_MERGE_FORCE (v607) -----
+        # Worst game turn 53: deadline_crossed=true, DIRECT merge available, but chose HIGH_LAYER
+        # (height_score=1440.0) over merge because danger_direct_merge_available=false.
+        # mandatory_themes: "デッドライン付近の危険盤面領域では、併合を優先"
+        # +800 bonus (axis 1.6) insufficient against height penalty (~1440 at max_y=2.0).
+        # +3000 * type_scale ensures DIRECT merge always wins over HEIGHT_CONTROL at deadline,
+        # while high-type DIRECT merges score proportionally higher (matching eval bonus structure).
+        # Works even when danger_direct_merge_available=false (merging any DIRECT is critical at deadline).
+        # +3000 * type_scale ensures high-type DIRECT merges score proportionally higher,
+        # matching eval scoring that includes type별 bonus at game over.
+        # best_game turn 142-143 and extra_high_game turn 130 confirm DIRECT merge success at deadline.
+        # refs: tmp/analysis_result.md, data/mandatory_themes.txt,
+        #       game_history/20260508_032057_score0854.jsonl (worst_game turn 53)
+        if deadline_crossed and merge_grade == "DIRECT":
+            score += 3000.0 * type_scale
+            reasons.append("DEADLINE_MERGE_FORCE")
 
         # ----- evaluation axis 1.5b: danger NEAR merge priority (v383: unutilized danger_merge_available) -----
         # Postmortem: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化" — v382 addressed DIRECT.
@@ -1542,38 +1496,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if dist < 3.0:
                     pipeline_bonus = max(0, 120.0 - dist * 40.0) * merge_mult
                     score += pipeline_bonus
-
-        # === ADD: Axis 9.11 PRE_RUSSIA_GROWTH_GUIDANCE ===
-        # Problem: Russia phase detection (type 15 exists) is too late. By the time type 15
-        # exists, the pipeline (type 13→14→15) should already be built. The game loses
-        # critical turns because current strategy has no guidance for "pre-Russia late-game".
-        # Worst game T66: max_y=1.56, type13 count=2, type14 count=1 — pipeline not started.
-        # Analysis: board enters transition zone (max_y>=1.5, piece_count>=25, merge_grade==NO)
-        # before Russia phase activates. Guidance needed here for type 12-14 pipeline building.
-        # Only activates when: not russia_phase && max_y >= 1.5 && piece_count >= 25 && merge_grade==NO
-        # This is guidance (bonus), not a constraint — avoids regression from new rules.
-        # refs: tmp/analysis_result.md (Implementation Plan hypothesis 4.1 adopted),
-        #       game_history/20260508_130044_score0718.jsonl (worst game T66 pipeline not started),
-        #       strategy_versions/best_score5801_strategy.py (v624 feature reference)
-        pre_russia_active = (
-            not russia_phase
-            and max_y >= 1.5
-            and piece_count >= 25
-            and merge_grade == "NO"
-        )
-        if pre_russia_active:
-            # Find centroid of type 12-14 pieces (pipeline components for Russia growth)
-            pre_russia_pieces = [p for p in pieces if 12 <= p.get('type', 0) <= 14]
-            if len(pre_russia_pieces) >= 2:
-                # Calculate centroid of type 12-14 pieces
-                cx = sum(p.get('x', 0) for p in pre_russia_pieces) / len(pre_russia_pieces)
-                cy = sum(p.get('y', 0) for p in pre_russia_pieces) / len(pre_russia_pieces)
-                dist = ((x - cx) ** 2 + (landing_y - cy) ** 2) ** 0.5
-                if dist < 3.0:
-                    # Closer to pipeline centroid = higher bonus
-                    # TBD value +200, scaled with merge_mult for phase consistency
-                    pre_russia_bonus = max(0, 200.0 - dist * 60.0) * merge_mult
-                    score += pre_russia_bonus
 
         # ----- v598: column_ceiling_dominant flag — suppress competing horizontal guides -----
         # When merge_grade==NO && max_y>=1.0 && pc>=28, analysis shows edge scatter(x=±3.0)
@@ -1863,13 +1785,8 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260412_132331_score0892.jsonl T57-T62 (6-turn NO-merge drought, y>1.0),
         #       game_history/20260412_132046_score0899.jsonl T64-T69 (6 HIGH_TOWER turns, max_y 2.57→3.38)
         # Fixes rollback failure mode: "merge drought時に低y配置が選ばれず、端に散らばって即死"
-        if merge_grade == "NO" and reactive_pair_count >= 3 and not death_spiral:
-            if max_y >= 2.0:
-                base_height_coefficient = 100.0  # v599 existing
-            elif max_y >= 1.5 and deadline_crossed:
-                base_height_coefficient = 150.0  # NEW: pre-critical escalation
-            else:
-                base_height_coefficient = 50.0
+        if merge_grade == "NO" and reactive_pair_count >= 3 and max_y >= 1.0 and not death_spiral:
+            base_height_coefficient = 100.0
         else:
             base_height_coefficient = 50.0
 
@@ -2390,29 +2307,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Does NOT override column_ceiling column selection; only differentiates within best column.
                 # Explicit death_spiral guard: already suppressed by column_ceiling_dominant condition.
                 # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
-                # v617: removed deadline_crossed from merge_drought_emergency — it fires for ANY merge drought
-                # (deadline_crossed=falseでもmerge_available=trueでもedge配置を防止)
-                # MERGE_PATH_SETUP is suppressed when drought is active (no_merge_streak>=3 && NO && max_y>=1.8).
-                # When deadline_crossed && merge_available=true, merge bonuses already dominate, so suppression
-                # of MERGE_PATH_SETUP is unnecessary and would block legitimate merge path creation.
-                merge_drought_emergency = (
-                    no_merge_streak >= 3 and merge_grade == "NO"
-                    and max_y >= 1.8
-                )
-                # v617: emergency height bonus during merge drought (no deadline_crossed required)
-                # When merge_drought_emergency fires, add bonus for placing at minimum-y column.
-                # This forces strictly lowest-y placement during 3+ turn NO_MERGE streak.
-                # Worst game T61-T65 chose x=-2.04, 2.00, -1.40 (not lowest-y) because
-                # MERGE_PATH_SETUP guided toward edge columns. This bonus overrides that.
-                if merge_drought_emergency and ceiling_diff <= 0.0:
-                    emergency_height_bonus = 500.0 * merge_mult
-                    score += emergency_height_bonus
-                    if "MERGE_DROUGHT_EMERGENCY" not in "_".join(reasons):
-                        reasons.append("MERGE_DROUGHT_EMERGENCY")
-
-                if (column_ceiling_dominant and len(same_type_pieces) >= 2
-                    and not death_spiral and not axis_88_horizontal_suppression
-                    and not merge_drought_emergency):
+                if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral and not axis_88_horizontal_suppression:
                     # Find nearest current_type piece on board to this candidate position
                     nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
                     if nearest_dist < 1.5:
@@ -2643,43 +2538,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += cluster_bonus
                         if "HIGH_TYPE_CLUSTER" not in "_".join(reasons):
                             reasons.append("HIGH_TYPE_CLUSTER")
-
-        # ----- v613: deadline_crossed merge override -----
-        # When deadline_crossed AND same-type pieces exist on board for next_type,
-        # AND candidate would create a merge (NEAR or DIRECT), override reason to merge.
-        # This respects mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # Worst game T52-T53: deadline_crossed=true, same-type pieces on board (type 1),
-        # chose AVOID_BLOCK instead of merge → 4-turn NO_MERGE streak → game over at 490.
-        # Best game T141: deadline_crossed=true, merge_available=true → DIRECT_MERGE → +36 score.
-        # v604 NEAR suppression (type_scale=0.5) still applies — only override when merge creates
-        # net positive bonus after suppression. AVOID_BLOCK logic preserved for non-merge scenarios.
-        # Does NOT adjust v604 threshold — death spiral guard is valid per rollback constraint.
-        if deadline_crossed and merge_grade in ["NEAR", "DIRECT"]:
-            # Check if any piece on board has the same type as next_type
-            same_type_on_board = any(p.get("type") == next_type for p in pieces)
-            if same_type_on_board:
-                # Override AVOID_BLOCK/SAME_TYPE_STACK reason with merge reason
-                # This ensures mandatory merge priority at deadline when merge is available
-                has_merge_reason = any(
-                    r in reasons for r in ["NEAR_MERGE", "DIRECT_MERGE", "NEAR_MERGE_EARLY_MERGE_PRIORITY",
-                                          "DIRECT_MERGE_CHAIN_MERGE_REACTIVE_MERGE_PRIORITY",
-                                          "DIRECT_MERGE_HIGH_LAYER", "DIRECT_MERGE_MEDIUM_TOWER",
-                                          "DIRECT_MERGE_DANGER_DIRECT_MERGE_PRIORITY",
-                                          "NEAR_MERGE_EARLY_MERGE_PRIORITY", "DIRECT_MERGE_HIGH_TOWER"]
-                )
-                if has_merge_reason:
-                    # Reason already contains merge — keep it (no override needed)
-                    pass
-                elif "AVOID_BLOCK" in "_".join(reasons) or "SAME_TYPE_STACK" in "_".join(reasons):
-                    # Override AVOID_BLOCK/SAME_TYPE_STACK with merge reason
-                    reasons = [r for r in reasons if "AVOID_BLOCK" not in r and "SAME_TYPE_STACK" not in r]
-                    if merge_grade == "DIRECT":
-                        reasons.insert(0, "DIRECT_MERGE")
-                    else:
-                        reasons.insert(0, "NEAR_MERGE")
-                    # Recompose reason string
-                    best_reason_temp = "_".join(reasons) if reasons else merge_grade + "_MERGE"
-                    score += 0.001  # tiny boost to ensure selection (reason change alone won't change score ordering)
 
         # ----- update best candidate -----
         if score > best_score:
