@@ -64,6 +64,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v629: DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY graduated suppression by max_y
+     # analysis_result.md adopted hypothesis: DEADLINE_MERGE_FORCE(+3000) reduction for critical board
+     # worst game T63: deadline_crossed + DIRECT merge + max_y=2.0 → +3000 bonus支配 → max_y=2.66 game over
+     # Solution: suppress bonus at max_y>=2.0 (CRITICAL), reduce to +1500 at max_y>=1.5 (HIGH)
+     # This lets height penalty compete with merge bonus at high max_y, preventing max_y runaway after merge.
+     # mandatory_themes「デッドライン超出位置では併合できる場合に限る」— 抑制は許容、過度なboard expansion許さず
+     # Fixes: worst game T63 merge selection causing max_y runaway (DEADLINE_MERGE_FORCE reduction)
+     # rollback constraints respected: does NOT touch axis 8.8 (-4500), axis 9.65 (-2000), or axis 9.6b (+200)
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
      # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
@@ -1796,8 +1805,35 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         danger_piece_count = reactor.get("danger_piece_count", 0)
 
-        # 危険域での即時併合を強力に優先
+        # 危険域での即時併合を強力に優先（ただしmax_yに応じた段階的抑制）
+        # v629: analysis_result.md adopted hypothesis — DEADLINE_MERGE_FORCE(+3000相当)を段階的に抑制
+        # worst game T63 (score=758): deadline_crossed + DIRECT merge + max_y=2.0 → +3000 bonusが選択を支配し、
+        # merge結果max_y=2.66でゲームオーバー。best game T59: deadline_crossed=falseで同問題が回避。
+        # graduated reduction:
+        #   max_y >= 2.0: bonus 0 (mergeは評価されるが+3000 bonusで強制しない)
+        #   max_y >= 1.5: bonus +1500 (通常height penaltyと競合してMerge不利に)
+        #   max_y < 1.5: bonus +3000 (変更なし、deadline mergeを積極的に促進)
         if max_y >= 2.0 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            # max_y >= 2.0: CRITICAL phase — suppress bonus, let height penalty be sole differentiator
+            # This prevents max_y runaway after merge (the worst game T63 failure mode)
+            pass
+        elif max_y >= 1.5 and reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            # max_y >= 1.5: HEIGHt penalty operates at 1.4-1.8x — reduce bonus to +1500
+            # Merge still competitive but height differentiation can now dominate
+            if merge_grade == "DIRECT":
+                if deadline_crossed:
+                    score += 1500.0
+                else:
+                    score += 500.0
+                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
+            else:
+                if deadline_crossed:
+                    score += 750.0
+                else:
+                    score += 300.0
+                reasons.append("DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY")
+        elif reactive_pair_count >= 2 and merge_grade in ["DIRECT", "NEAR"]:
+            # max_y < 1.5: normal bonus (unchanged)
             if merge_grade == "DIRECT":
                 # v331: deadline_crossed時はボーナスを強化（500.0→1200.0）
                 if deadline_crossed:

@@ -17,7 +17,6 @@ Game Overview:
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
          4. Left-right balance correction - Bonus for correcting piece count bias
           5. nextNext centering - Center for next merge opportunity if nextNext same type
-           5.1. NEXT-aware placement - v631: reward central placement for future merge (NO merge only)
            5.5. Avoid blocking nextNext merge - Penalty for landing on same-type piece when nextNext matches
            5.6. Growth center proximity - v458: reduced magnitude per postmortem (base 60, congestion 0.08, cap 2.0)
             6. Chain merge bonus - Evaluate possibility of further merges after merge (v463: NEAR suppressed at pc>=28+deadline)
@@ -65,13 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v631: axis 5.1 NEXT-aware placement — fix worst_game T46-50 same-type scatter
-     # analysis_result.md adopted hypothesis: NEXT piece types affect current placement suitability
-     # Conditions: merge_grade=="NO" && piece_count>=15 && max_y>=0.5 && NOT deadline_crossed
-     # Logic: reward central placement (|x|<=1.5 +150*mm) / penalize edge (|x|>=2.5 -100*mm) when NEXT can merge
-     # mandatory_themes: "NEXTを考慮したドロップをせよ" — 新規axis追加、既存ロジック変更なし
-     # Fixes rollback failure mode: same-type scatter during NO-merge streak (v619 hypothesis)
-     # refs: tmp/analysis_result.md (Implementation Plan), data/mandatory_themes.txt
      # v629: DANGER_ZONE_IMMEDIATE_MERGE_PRIORITY graduated suppression by max_y
      # analysis_result.md adopted hypothesis: DEADLINE_MERGE_FORCE(+3000) reduction for critical board
      # worst game T63: deadline_crossed + DIRECT merge + max_y=2.0 → +3000 bonus支配 → max_y=2.66 game over
@@ -1617,45 +1609,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
             score += center_bonus
             reasons.append("NEXT_SAME")
-
-        # ----- evaluation axis 5.1: NEXT piece placement suitability (v631: NEXT-aware placement) -----
-        # analysis_result.md hypothesis: NEXT piece types affect current placement suitability.
-        # worst game T46-50: x=3.0/-2.4/-0.2/0.4 scattered, next pieces 7/5/2/11 ignored,
-        # causing merge opportunity loss. best game T102-109: x=1.4/0.6/1.75/1.4 central,
-        # next pieces 1/11/7/11 considered. mandatory_themes "NEXTを考慮したドロップをせよ" requires this.
-        # Conditions: merge_grade=="NO" && piece_count>=15 && max_y>=0.5 (post-launch board)
-        # Logic: When we can't merge NOW, evaluate if current x position is good for NEXT piece type.
-        # - Same type exists on board + same_type_stack_top exists → NEXT can merge via stack
-        # - Same type exists but NO same_type_stack_top → NEXT can merge via proximity (pipeline)
-        # - Central placement (|x|<=1.5) benefits most piece types for future merges
-        # - Edge placement (|x|>=2.5) disadvantages most piece types for future merges
-        # Magnitude: +150/-100*merge_mult — tie-breaking level, doesn't override height penalty
-        # Constraints: deadline_crossed 时 CROSSES_DEADLINE (-2000) still dominates,
-        #   height penalty unchanged, merge_mult capped at 1.5
-        # refs: tmp/analysis_result.md (hypothesis + implementation plan),
-        #       data/mandatory_themes.txt (NEXTを考慮したドロップをせよ),
-        #       advice.md (2手先の併合可能性を最大化するため、1手先で併合できない国を一時的に別の場所に配置して道を作る),
-        #       game_history/20260509_073209_score0605.jsonl (worst game T46-50 scatter),
-        #       game_history/20260509_065632_score2752.jsonl (best game T102-109 central)
-        # Fixes rollback failure mode: same-type scatter during NO-merge streak (v619 hypothesis)
-        if merge_grade == "NO" and piece_count >= 15 and max_y >= 0.5:
-            # Check if NEXT piece can merge (same type on board for stack or pipeline proximity)
-            next_can_merge = False
-            if same_type_stack_top is not None:
-                # Same type stack exists — NEXT can merge by stacking on it
-                next_can_merge = True
-            elif any(p.get("type") == next_type for p in pieces):
-                # Same type exists but not as stack top — NEXT can merge via proximity/pipeline
-                next_can_merge = True
-
-            if next_can_merge and not deadline_crossed:
-                # Next piece can merge — reward central placement, penalize edge placement
-                if abs(x) <= 1.5:
-                    score += 150.0 * merge_mult
-                    reasons.append("NEXT_AWARE_CENTER")
-                elif abs(x) >= 2.5:
-                    score -= 100.0 * merge_mult
-                    reasons.append("NEXT_AWARE_EDGE")
 
         # ----- evaluation axis 5.5: avoid blocking nextNext merge (NEW: nextNext info utilization) -----
         # batch_summary/adviceで「盤面A・nextB・nextNextAの状況で、A上にBを置くとnextNextの併合を逃す問題」が指摘されている。
