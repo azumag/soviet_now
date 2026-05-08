@@ -67,6 +67,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v412: RUSSIA_PHASE NO-merge low-y placement reinforcement — positive bonus for landing_y < 0.0
+     # when russia_phase && merge_grade==NO && reactive_pair_count>=3 && !death_spiral
+     # Problem: v607 (-8000) blocks deadline-crossing candidates, but RUSSIA_PHASE bonuses
+     # (+300-+500) dominate when all candidates have crosses_deadline=False, causing
+     # HIGH_TOWER/MEDIUM_TOWER selection over HEIGHT_CONTROL. This bonus (+200*merge_mult)
+     # provides competitive positive signal for low-y placement, making height differentiation
+     # work during merge drought with high rp. Rollback constraints respected (bonus, not penalty).
+     # Fixes worst_game T78: v607 fired but RUSSIA_PHASE bonus overwhelmed it → HIGH_TOWER selected.
+     # refs: tmp/analysis_result.md (Implementation Plan: v412 axis), tmp/state/last_rollback_postmortem.md,
+     #       tmp/batch_summary.txt (high/low late max_y: 1.57 vs 1.74), mandatory_themes.txt
      # v608: critical phase stacking suppression — suppress stacking bonus when max_y>=3.0 && merge_grade==NO && rp>=3
      # worst game T59-T62: max_y 3.77, rp=3, NO_MERGE, deadline_crossed. v607 (-8000) fired but HIGH_TOWER kept
      # being selected because stacking bonus (~400-600) overpowered height penalty. CRITICAL phase board must
@@ -2134,6 +2144,25 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False):
             score -= 8000.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
+
+        # ----- v412: RUSSIA_PHASE NO-merge low-y placement reinforcement -----
+        # When: russia_phase && merge_grade==NO && reactive_pair_count>=3 && !death_spiral
+        # Bonus for candidates with landing_y < 0.0
+        # Problem: v607 penalty (-8000) fires on deadline-crossing candidates, but when all
+        # candidates have crosses_deadline=False (landing below deadline), RUSSIA_PHASE bonuses
+        # (+300-+500) dominate and HIGH_TOWER/MEDIUM_TOWER gets selected without height control.
+        # This bonus provides positive signal for low-y placement, making height differentiation
+        # competitive with RUSSIA_PHASE bonuses during merge drought with high rp.
+        # Magnitude: +200*merge_mult — comparable to RUSSIA_PHASE bonuses, not overwhelming.
+        # Rollback constraints respected: this is a bonus, not a penalty — doesn't block any
+        # merge opportunities. Fires only in NO merge state (merge_available already checked).
+        # refs: tmp/state/last_rollback_postmortem.md (forbid: stacking at rp>=3 && NO && max_y<2.0),
+        #       tmp/batch_summary.txt (high/low gap in late max_y: 1.57 vs 1.74),
+        #       mandatory_themes.txt (NEXTを考慮したドロップをせよ)
+        if (russia_phase and merge_grade == "NO" and reactive_pair_count >= 3
+            and not death_spiral and result.get("landing_y", 99.0) < 0.0):
+            score += 200.0 * merge_mult
+            reasons.append("LOW_Y_RUSSIA_MERGE_DROUGHT_BONUS")
 
         # ----- v602: axis_88_horizontal_suppression flag (defined earlier in loop) -----
         # Flag is already defined after pre_death_spiral (line ~1211).

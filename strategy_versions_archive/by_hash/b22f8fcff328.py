@@ -59,13 +59,6 @@ Phases (determined by board max Y):
      CRITICAL (3.0 <= max_y) : Danger. DIRECT merge priority, board compression (NEAR carefully)
 """
 
-# Changelog
-# vNNNN: v607 penalty -8000 -> -10000. Suppress deadline-crossing NO-merge at rp>=3.
-#        Kills worst_game T66-72 failure mode (MEDIUM_TOWER over HEIGHT_CONTROL with
-#        crosses_deadline=true && merge_grade=NO). mandatory_themes.txt compliance.
-#        refs: tmp/analysis_result.md
-# v607: deadline-crossing NO-merge penalty at rp>=3 (v607 block)
-
 # Fixed interface:
 # decide(game_state: dict, analysis: dict) -> dict
 #    Returns: {"x": float, "reason": str}
@@ -2140,15 +2133,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # (stacking, proximity ~200-900 each) were enough to override height penalty and
         # select crosses_deadline candidates. We need a penalty that is LARGER than the
         # combined height penalty differences to ensure no-crossing candidates are chosen.
-        # Penalty magnitude: -10000 — exceeds height penalty differential (~2000-4000)
+        # Penalty magnitude: -8000 — exceeds height penalty differential (~2000-4000)
         # between y=0 and y=2.5, and exceeds combined bonuses (~1500) that could override.
         # Only fires when: rp>=3 && merge_grade==NO && crosses_deadline==true.
         # Does NOT fire for merge_available candidates (they don't reach this block).
         # refs: tmp/analysis_result.md (Implementation Plan: deadline-crossing NO-merge
         #       penalty at rp>=3, mandatory_themes.txt),
-        #       game_history/20260508_235625_score0685.jsonl T66-T72 (worst game failure mode)
+        #       game_history/20260506_221158_score0742.jsonl T57-T67 (worst game failure mode),
+        #       game_history/20260506_231333_score2542.jsonl T110 (best game survival pattern)
         if reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False):
-            score -= 10000.0
+            score -= 8000.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
 
         # ----- v412: RUSSIA_PHASE NO-merge low-y placement reinforcement -----
