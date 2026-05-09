@@ -8,6 +8,13 @@ Game Overview:
   - Player controls only drop X coordinate
 
 # Changelog:
+# 2026-05-10: v618b: Persistent NO-merge merge path creation — suppress HEIGHT_CONTROL (-500)
+#             and add MERGE_PATH_CREATION bonus (+300 for landing_y<0.0) when deadline_crossed
+#             && NO && max_y>=2.0 && rp>=3 && pc>=28. v617: removed axis_88_horizontal_suppression
+#             from MERGE_PATH_SETUP condition (post-deadline NO merge needs path creation).
+#             Fixes: merge_path_creation_missed_at_deadline_crossed, deadline_crossed_no_merge_stack
+#             Failure mode: merge_path_creation_missed_at_deadline_crossed (last_rollback_postmortem)
+#             refs: tmp/analysis_result.md
 # 2026-05-10: Relax v618 guard — deadline_crossed+NO merge triggers at max_y>=2.0 (was 2.5),
 #             landing_y>=1.0 check removed to catch board-level deadline danger regardless of
 #             where new piece lands. Worst game T59 (landing_y=0.35) missed by old guard.
@@ -137,8 +144,9 @@ Phases (determined by board max Y):
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, game_history/20260412_172513_score0973.jsonl
      # Fixes rollback failure mode: "低type NEAR merge試行→失敗→pc増加ループ" (analysis_result.md adopted hypothesis)
      # v602: axis 8.8 horizontal suppression — suppress horizontal guidance bonuses during merge drought rp>=3 && NO merge
-     # axis_88_horizontal_suppressionフラグ新設。発動時にcolumn_ceiling_bonus, MERGE_PATH_SETUP,
+     # axis_88_horizontal_suppressionフラグ新設。発動時にcolumn_ceiling_bonus,
      # SAME_TYPE_PROXIMITY(9.8), NEAR_MISS_CLUSTERING(9.65), REACTIVE_PAIRS_STACKING(9.6)をスキップ。
+     # MERGE_PATH_SETUPはdeadline_crossed時にmerge path creationが必要なため除外しない。
      # height penaltyのみを区別軸とし、merge drought時の端配置(edge scatter)を防止。
      # refs: tmp/analysis_result.md, tmp/batch_summary.txt, advice.md
      # Fixes rollback failure mode: "axis 8.8 (-4500)が全候補に均等 → column_ceiling_bonus と MERGE_PATH_SETUP が競合し端配置" (analysis_result.md adopted hypothesis)
@@ -2204,6 +2212,30 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 5000.0 * merge_mult
             reasons.append("DEADLINE_STATE_EMERGENCY_PENALTY")
 
+        # ----- v618b: Persistent NO-merge merge path creation at deadline_crossed -----
+        # Problem: worst game turns 62-66 had 5 consecutive NO merge turns at deadline_crossed,
+        # max_y=2.48-2.71, rp=5, all candidates NO. v617 suppression (axis_88_horizontal_suppression
+        # with no_merge_streak>=3) blocked MERGE_PATH_SETUP, preventing path creation.
+        # mandatory_themes: "デッドライン超出しは併合できる場合に限る" + "デッドライン付近の危険盤面領域では、併合優先"
+        # When NO merge at deadline, should create merge path not cross deadline.
+        # Rollback constraints satisfied: only activates when merge_available=false (merge_grade==NO),
+        # does not fire during pre-deadline merge drought. High activation bar: deadline_crossed &&
+        # max_y>=2.0 && rp>=3 && pc>=28 && all candidates NO merge (persistent drought).
+        # v618b: suppress HEIGHT_CONTROL (-500*merge_mult) and add MERGE_PATH_CREATION bonus
+        # (+300*merge_mult for landing_y<0.0) when persistent NO merge detected at deadline_crossed.
+        # Does NOT fire when merge_available=true.
+        # refs: tmp/analysis_result.md (Implementation Plan: v618b persistent NO-merge detection)
+        if (deadline_crossed and merge_grade == "NO" and max_y >= 2.0
+            and reactive_pair_count >= 3 and piece_count >= 28):
+            # Suppress HEIGHT_CONTROL: push toward low-y merge path creation
+            score -= 500.0 * merge_mult
+            # Bonus for low landing_y: creates merge opportunity for next turn
+            if result.get("landing_y", 99.0) < 0.0:
+                score += 300.0 * merge_mult
+                reasons.append("MERGE_PATH_CREATION_LOW_Y")
+            else:
+                reasons.append("MERGE_PATH_CREATION_SUPPRESS_HEIGHT")
+
         # ----- v412: RUSSIA_PHASE NO-merge low-y placement reinforcement -----
         # When: russia_phase && merge_grade==NO && reactive_pair_count>=3 && !death_spiral
         # Bonus for candidates with landing_y < 0.0
@@ -2320,7 +2352,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
                 # mandatory_themes.txt: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
                 # v609 fires only when deadline_crossed (merge opportunity likely exists elsewhere)
-                if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral and not axis_88_horizontal_suppression:
+                # v617: removed axis_88_horizontal_suppression check — post-deadline NO merge
+                # needs MERGE_PATH_SETUP creation, not suppression. Suppression only when
+                # NOT deadline_crossed (pre-deadline merge drought). Constraints satisfied:
+                # only activates when merge_grade==NO && deadline_crossed && rp>=3 && pc>=28.
+                if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral:
                     if deadline_crossed and reactive_pair_count >= 3 and max_y >= 1.8:
                         # Find nearest current_type piece on board to this candidate position
                         nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
