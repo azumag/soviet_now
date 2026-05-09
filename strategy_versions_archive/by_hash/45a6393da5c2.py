@@ -7,13 +7,6 @@ Game Overview:
 - Board: x in [-3.0, +3.0], floor y=-4.48, deadline y=3.32
   - Player controls only drop X coordinate
 
-# Changelog:
-# 2026-05-10: Relax v618 guard — deadline_crossed+NO merge triggers at max_y>=2.0 (was 2.5),
-#             landing_y>=1.0 check removed to catch board-level deadline danger regardless of
-#             where new piece lands. Worst game T59 (landing_y=0.35) missed by old guard.
-#             Failure mode: merge_path_creation_missed_at_deadline_crossed (last_rollback_postmortem)
-#             refs: tmp/analysis_result.md
-
       Decision Logic (14 evaluation axes):
          1. Merge bonus - High score for immediate merge (DIRECT > NEAR > FAR)
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
@@ -2195,12 +2188,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # discouragement because board is already non-survivable — but the specific
         # piece placement might have merit (e.g., setting up future merge).
         # Guard: Does NOT fire when merge_available=true (v607 handles that case).
-        # Does NOT fire when max_y < 2.0 (board is still recoverable).
-        # Landing_y check removed: when board is already above deadline, the board-level
-        # emergency dominates regardless of where the new piece lands (mandatory_themes Rule 1).
-        # refs: tmp/analysis_result.md (adopted hypothesis: relax_v618_guard_deadline_state_emergency),
-        #       game_history/20260510_010044_score0445.jsonl T59 (worst game: landing_y=0.35 missed by old guard)
-        if deadline_crossed and merge_grade == "NO" and max_y >= 2.0:
+        # Does NOT fire when max_y < 2.5 (board is still recoverable).
+        # Does NOT fire when landing_y < 1.0 (piece adds minimal height).
+        # refs: tmp/analysis_result.md (adopted hypothesis: deadline_state_emergency),
+        #       game_history/20260509_205320_score0513.jsonl T50-T52 (worst game failure mode),
+        #       game_history/20260509_204026_score2196.jsonl T86-T93 (extra game 2196 failure)
+        if deadline_crossed and merge_grade == "NO" and max_y >= 2.5 and result.get("landing_y", -99.0) >= 1.0:
             score -= 5000.0 * merge_mult
             reasons.append("DEADLINE_STATE_EMERGENCY_PENALTY")
 
