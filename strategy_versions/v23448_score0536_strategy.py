@@ -67,13 +67,7 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v607 ABSOLUTE DEADLINE VETO: deadline_crossed && merge_grade==NO && crosses_deadline
-     # → score = -8000 (zero out ALL other bonuses). Previously v607 only subtracted -8000
-     # but other bonuses (v609 +350 proximity) could offset it at high rp.
-     # Worst game T49/50/54/57: decision_crosses_deadline=true && merge_grade==NO
-     # selected 4 times despite -8000 penalty — v609 bonus made other candidates competitive.
-     # mandatory_themes.txt "デッドラインを超える位置上...併合できる場合に限る" を真的補償。
-     # v618 deadline_state_emergency_height_penalty — -5000 penalty when board max_y >= 2.5
+     # v618: deadline_state_emergency_height_penalty — -5000 penalty when board max_y >= 2.5
      # already exceeds deadline AND NO merge available AND new piece adds height (landing_y >= 1.0).
      # Problem: v607 only fires when new piece's landing position crosses deadline. It does NOT
      # catch board state already above deadline (max_y=2.67 at T51) because new piece landed at
@@ -2149,27 +2143,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 4500.0
             reasons.append("REACTIVE_PAIRS_NO_MERGE_PENALTY")
 
-        # ----- v607: ABSOLUTE DEADLINE VETO for NO-merge candidates -----
-        # adopted hypothesis: "Absolute deadline veto for NO_MERGE candidates"
-        # Problem: v607's -8000 penalty is NOT truly prohibitive because other bonuses
-        # (notably v609 +350 for current_type proximity) can offset it at high rp.
-        # Worst game turn 49: v607=-8000, but v609 bonus made candidate x=0.16
-        # competitive with x=-3.0 despite both receiving same v607 penalty.
-        # Worst game turns 49/50/54/57: decision_crosses_deadline=true && merge_grade==NO
-        # was selected 4 times despite v607 penalty — other bonuses overcame it.
+        # ----- v607: axis 8.8c — deadline-crossing NO-merge at rp>=3 (CRITICAL) -----
+        # worst game T57-T67: 13 consecutive merge_available=false turns, yet
+        # decision_crosses_deadline=true was selected 4 times (T57, T59, T60, T66).
+        # max_y=2.96→3.09, deadline_crossed=true but merge_grade=NO → game over.
+        # best game T110: max_y=2.36, deadline_margin=-0.51, crosses_deadline=false
+        # → low placement selected, survived to score 2542.
         # mandatory_themes.txt: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # This is an ABSOLUTE constraint — deadline-crossing with NO merge violates
-        # the mandatory theme regardless of other merits.
-        # Mechanism: When deadline_crossed && merge_grade=="NO" && crosses_deadline,
-        # zero out ALL other bonuses and set score to just -8000. This makes the
-        # deadline veto absolute, not just a larger penalty that can be offset.
-        # Does NOT fire for merge candidates (merge_grade!="NO") — they keep all bonuses.
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: Absolute deadline veto),
-        #       game_history/20260509_230554_score0473.jsonl (worst game T49/50/54/57),
-        #       mandatory_themes.txt ("デッドラインを超える位置上...併合できる場合に限る")
-        if deadline_crossed and merge_grade == "NO" and result.get("crosses_deadline", False):
-            score = -8000.0  # Absolute veto — zero out ALL other bonuses
-            reasons = ["CROSSES_DEADLINE_NO_MERGE_VETO"]  # Replace all previous reasons
+        # Even with axis 8.8 (-4500) equalizing all NO-merge candidates, other bonuses
+        # (stacking, proximity ~200-900 each) were enough to override height penalty and
+        # select crosses_deadline candidates. We need a penalty that is LARGER than the
+        # combined height penalty differences to ensure no-crossing candidates are chosen.
+        # Penalty magnitude: -8000 — exceeds height penalty differential (~2000-4000)
+        # between y=0 and y=2.5, and exceeds combined bonuses (~1500) that could override.
+        # Only fires when: rp>=3 && merge_grade==NO && crosses_deadline==true.
+        # Does NOT fire for merge_available candidates (they don't reach this block).
+        # refs: tmp/analysis_result.md (Implementation Plan: deadline-crossing NO-merge
+        #       penalty at rp>=3, mandatory_themes.txt),
+        #       game_history/20260506_221158_score0742.jsonl T57-T67 (worst game failure mode),
+        #       game_history/20260506_231333_score2542.jsonl T110 (best game survival pattern)
+        if reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False):
+            score -= 8000.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
 
         # ----- v618: deadline_state_emergency_height_penalty -----
         # Problem: v607 only fires when `decision_crosses_deadline=True` (new piece's
