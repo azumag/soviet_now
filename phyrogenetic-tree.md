@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-10 01:30:45 JST`
-- Nodes: `1388`
-- Edges: `1897`
-- Current: `1dc1a2cfda77`
+- Updated: `2026-05-10 03:43:42 JST`
+- Nodes: `1389`
+- Edges: `1898`
+- Current: `e0934b4a3e13`
 - Anchor: `814c4143ae4c`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_9eb06546d67c["9eb06546d67c<br/>g=72 n=20<br/>comp=10156.8"]
     h_5dee220312d8["5dee220312d8<br/>g=12 n=12<br/>comp=9652.5"]
     h_ff04cff2b678["ff04cff2b678<br/>g=48 n=20<br/>comp=10711.0"]
     h_8e6f1a8d013d["8e6f1a8d013d<br/>g=0"]
@@ -68,25 +67,21 @@ flowchart TD
     h_de61049454d1["de61049454d1<br/>g=14 n=14<br/>comp=10638.0"]
     h_c67506278f95["c67506278f95<br/>g=24 n=20<br/>comp=10293.0"]
     h_45a6393da5c2["45a6393da5c2<br/>g=24 n=20<br/>comp=11021.5"]
+    h_1dc1a2cfda77["1dc1a2cfda77<br/>g=24 n=20<br/>comp=11539.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_1dc1a2cfda77["1dc1a2cfda77<br/>CURRENT"]
+    h_e0934b4a3e13["e0934b4a3e13<br/>CURRENT"]
 
-    h_9eb06546d67c -->|improve| h_5dee220312d8
     h_ff04cff2b678 -->|improve| h_8e6f1a8d013d
     h_8e6f1a8d013d -. rollback .-> h_ff04cff2b678
     h_ff04cff2b678 -->|improve| h_5c3e0337f245
     h_5c3e0337f245 -->|improve| h_cfa17201289d
     h_f8f0d9a9d766 -->|improve| h_d08f4ff0f62f
     h_d08f4ff0f62f -->|improve| h_41a50e0a2db2
-    h_41a50e0a2db2 -. rollback .-> h_9eb06546d67c
-    h_9eb06546d67c -->|improve| h_603d1ee2d81d
-    h_603d1ee2d81d -. rollback .-> h_9eb06546d67c
-    h_9eb06546d67c -->|improve| h_54f1a95c978c
     h_ce951d0b4ef5 -->|improve| h_95c1994bf3bc
     h_21a90c8429a9 -->|improve| h_81897ed41734
     h_81897ed41734 -->|improve| h_c92f94729520
@@ -138,13 +133,13 @@ flowchart TD
     h_df62901dbf5e -->|improve| h_c67506278f95
     h_c67506278f95 -->|improve| h_45a6393da5c2
     h_45a6393da5c2 -->|improve| h_1dc1a2cfda77
+    h_1dc1a2cfda77 -->|improve| h_e0934b4a3e13
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_9eb06546d67c plain;
     class h_5dee220312d8 plain;
     class h_ff04cff2b678 plain;
     class h_8e6f1a8d013d plain;
@@ -197,13 +192,14 @@ flowchart TD
     class h_de61049454d1 plain;
     class h_c67506278f95 plain;
     class h_45a6393da5c2 plain;
+    class h_1dc1a2cfda77 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_1dc1a2cfda77 current;
+    class h_e0934b4a3e13 current;
 ```
 
 ## Detail 1/18
@@ -5005,9 +5001,9 @@ flowchart TD
 
 ## Detail 18/18
 
-- Range: `0d0fc4a9fde7` .. `1dc1a2cfda77`
-- Nodes in this diagram: `28`
-- Internal edges in this diagram: `22`
+- Range: `0d0fc4a9fde7` .. `e0934b4a3e13`
+- Nodes in this diagram: `29`
+- Internal edges in this diagram: `23`
 - Cross-chunk link: `452653e77d19 --improve--> 0d0fc4a9fde7`
 - Cross-chunk link: `0d0fc4a9fde7 -.rollback.-> 452653e77d19`
 - Cross-chunk link: `452653e77d19 --improve--> 61b864de0454`
@@ -5045,13 +5041,14 @@ flowchart TD
     h_de61049454d1["de61049454d1<br/>g=14 n=14<br/>comp=10638.0"]
     h_c67506278f95["c67506278f95<br/>g=24 n=20<br/>comp=10293.0"]
     h_45a6393da5c2["45a6393da5c2<br/>g=24 n=20<br/>comp=11021.5"]
+    h_1dc1a2cfda77["1dc1a2cfda77<br/>g=24 n=20<br/>comp=11539.9"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_1dc1a2cfda77["1dc1a2cfda77<br/>CURRENT"]
+    h_e0934b4a3e13["e0934b4a3e13<br/>CURRENT"]
 
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
@@ -5075,6 +5072,7 @@ flowchart TD
     h_df62901dbf5e -->|improve| h_c67506278f95
     h_c67506278f95 -->|improve| h_45a6393da5c2
     h_45a6393da5c2 -->|improve| h_1dc1a2cfda77
+    h_1dc1a2cfda77 -->|improve| h_e0934b4a3e13
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5102,16 +5100,27 @@ flowchart TD
     class h_de61049454d1 plain;
     class h_c67506278f95 plain;
     class h_45a6393da5c2 plain;
+    class h_1dc1a2cfda77 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_1dc1a2cfda77 current;
+    class h_e0934b4a3e13 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#23501 `1dc1a2cf -> e0934b4a`
+
+- scores: `9098 18941 11788 13075 12341 9648 10305 14172 14697 11398 14445 15304 10238 7564 13115 5662 16312 14609 10211 12653 5853 12830 8628 18548`
+- 2026-05-10: v618b: Persistent NO-merge merge path creation — suppress HEIGHT_CONTROL (-500)
+- and add MERGE_PATH_CREATION bonus (+300 for landing_y<0.0) when deadline_crossed
+- && NO && max_y>=2.0 && rp>=3 && pc>=28. v617: removed axis_88_horizontal_suppression
+- from MERGE_PATH_SETUP condition (post-deadline NO merge needs path creation).
+- Fixes: merge_path_creation_missed_at_deadline_crossed, deadline_crossed_no_merge_stack
+- Failure mode: merge_path_creation_missed_at_deadline_crossed (last_rollback_postmortem)
 
 ### Improve Game#23477 `45a6393d -> 1dc1a2cf`
 
