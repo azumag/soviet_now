@@ -67,6 +67,18 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v609: merge path creation bonus — NEXT type same-type clustering during merge drought
+     # When merge_grade==NO && deadline_crossed && max_y>=1.5 && rp>=2 && pc>=25 && same_type_pieces>=2 && next_type>=5
+     # && !death_spiral, bonus +400*merge_mult for placement near same_type centroid.
+     # Creates "3-piece cluster" → next same-type arrival = immediate merge opportunity.
+     # worst game turn43-47: 5 consecutive NO merge → v609 clusters pieces for next merge.
+     # extra_low turn69-75: 6 consecutive NO merge, max_y 2.32→3.20 → v609 prevents merge drought death spiral.
+     # best game turn145-147: next_type=6→10→7 pattern with merge_available=true at each step.
+     # mandatory_themes.txt "NEXTを考慮したドロップをせよ" を制度的に補償。
+     # Fixes rollback failure mode: merge_drought_no_merge_path_creation (last_rollback_postmortem.md).
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
+     #       mandatory_themes.txt, game_history/20260509_142030_score0218.jsonl (worst),
+     #       game_history/20260509_134423_score0658.jsonl (extra_low), game_history/20260509_144136_score3525.jsonl (best)
      # v412: RUSSIA_PHASE NO-merge low-y placement reinforcement — positive bonus for landing_y < 0.0
      # when russia_phase && merge_grade==NO && reactive_pair_count>=3 && !death_spiral
      # Problem: v607 (-8000) blocks deadline-crossing candidates, but RUSSIA_PHASE bonuses
@@ -2487,6 +2499,65 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         score += cluster_bonus
                         if "HIGH_TYPE_CLUSTER" not in "_".join(reasons):
                             reasons.append("HIGH_TYPE_CLUSTER")
+
+        # ----- v609: merge path creation bonus — NEXT type same-type clustering -----
+        # analysis_result.md adopted hypothesis: NEXT考慮済みmerge_path创建
+        # worst game turn43-47: 5 consecutive merge_available=false, rp=8, max_y 2.83→3.32
+        # extra_low turn69-75: 6 consecutive NO merge, max_y 2.32→3.20, score_delta=0×6
+        # best game turn145-147: next_type=6→10→7, each time merge_available=true→DIRECT MERGE (+55+21=76)
+        # extra_low turn64: next_type=3, DIRECT MERGE → score_delta=+6; turn66: next_type=7, DIRECT MERGE → +28
+        # turn69: next_type=3, merge_available=false ← NEXT type directly affects merge availability
+        # When next_type piece lands and same_type pieces exist on board at similar y-level,
+        # placing near their centroid creates "3-piece cluster" → next same-type arrival = immediate merge.
+        # Guards:
+        #   - deadline_crossed: only apply in high-pressure zone (not during normal placement freedom)
+        #   - max_y>=1.5: only when board is elevated (merge drought is dangerous at high max_y)
+        #   - rp>=2: only when merge opportunities are being tracked (reactive pairs exist)
+        #   - pc>=25: only when piece count is high enough that merge drought is costly
+        #   - next_type pieces on board: this bonus guides placement ONLY when there are same-type
+        #     pieces to cluster with — without them, there's no merge path to create
+        #   - type>=5: do NOT apply to low-type (type 1-4) pieces — score efficiency is low,
+        #     and low-type clustering doesn't contribute to high-type growth pipeline
+        # Bonus magnitude: +400*merge_mult — comparable to COLUMN_CEILING (~800+150*diff),
+        # strong enough to influence placement decisions during merge drought.
+        # NOT a penalty — positive bonus for strategic placement that creates future merges.
+        # refs: tmp/analysis_result.md (Implementation Plan: v609 axis, merge_path creation),
+        #       tmp/state/last_rollback_postmortem.md (forbid: v609 deletion → merge drought 4+ turns),
+        #       tmp/state/last_rollback_analysis.md (merge_drought failure mode),
+        #       game_history/20260509_142030_score0218.jsonl turn43-47 (5 consecutive NO merge),
+        #       game_history/20260509_134423_score0658.jsonl turn69-75 (6 consecutive NO merge),
+        #       game_history/20260509_144136_score3525.jsonl turn145-147 (next_type→merge_available pattern)
+        # Fixes rollback failure mode: "merge_drought_no_merge_path_creation" (v609 prevents turn 41-42 4-turn drought)
+        if (merge_grade == "NO"
+                and deadline_crossed
+                and max_y >= 1.5
+                and reactive_pair_count >= 2
+                and piece_count >= 25
+                and len(same_type_pieces) >= 2
+                and next_type >= 5
+                and not death_spiral):
+            # Find centroid of all same_type pieces on board
+            same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
+            centroid_x = sum(p.get("x", 0) for p in same_type_sorted) / len(same_type_sorted)
+            centroid_y = sum(p.get("y", -10) for p in same_type_sorted) / len(same_type_sorted)
+
+            # Distance from candidate position to centroid
+            dist_to_centroid = abs(x - centroid_x)
+
+            # Only fire when pieces are reasonably close (cluster potential exists)
+            if dist_to_centroid < 2.5:
+                # Bonus stronger when closer to centroid
+                merge_path_bonus = 400.0 * merge_mult
+                merge_path_bonus *= max(0.0, 1.0 - dist_to_centroid / 2.5)
+
+                # Reduce if centroid y is high (don't override height penalty at critical max_y)
+                if centroid_y > 1.5:
+                    merge_path_bonus *= max(0.0, 1.0 - (centroid_y - 1.5) * 0.4)
+
+                if merge_path_bonus > 20:
+                    score += merge_path_bonus
+                    if "MERGE_PATH_CREATION" not in "_".join(reasons):
+                        reasons.append("MERGE_PATH_CREATION")
 
         # ----- update best candidate -----
         if score > best_score:
