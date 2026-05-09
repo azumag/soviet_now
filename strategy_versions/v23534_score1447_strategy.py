@@ -8,6 +8,13 @@ Game Overview:
   - Player controls only drop X coordinate
 
 # Changelog:
+# 2026-05-10: v618c: Add proximity verification to MERGE_PATH_CREATION bonus — when giving
+#             +300 for landing_y<0.0, verify same-type piece within 1.8u horizontal distance;
+#             if not, suppress bonus and apply -100 penalty to discourage non-productive
+#             low-y placement during NO merge at CRITICAL phase (max_y>=2.0).
+#             Fixes worst-game pattern where merge_available=true but score_delta=0.
+#             Failure mode: merge_path_creation_missed_at_deadline_crossed (analysis_result.md)
+#             refs: tmp/analysis_result.md
 # 2026-05-10: v618b: Persistent NO-merge merge path creation — suppress HEIGHT_CONTROL (-500)
 #             and add MERGE_PATH_CREATION bonus (+300 for landing_y<0.0) when deadline_crossed
 #             && NO && max_y>=2.0 && rp>=3 && pc>=28. v617: removed axis_88_horizontal_suppression
@@ -2222,17 +2229,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # does not fire during pre-deadline merge drought. High activation bar: deadline_crossed &&
         # max_y>=2.0 && rp>=3 && pc>=28 && all candidates NO merge (persistent drought).
         # v618b: suppress HEIGHT_CONTROL (-500*merge_mult) and add MERGE_PATH_CREATION bonus
-        # (+300*merge_mult for landing_y<0.0) when persistent NO merge detected at deadline_crossed.
+        # (+300*merge_mult for landing_y<0.0 with proximity check) when persistent NO merge
+        # detected at deadline_crossed.
         # Does NOT fire when merge_available=true.
-        # refs: tmp/analysis_result.md (Implementation Plan: v618b persistent NO-merge detection)
+        # Implementation Plan: add proximity verification — when giving +300 for
+        # MERGE_PATH_CREATION (landing_y<0.0), verify that the chosen position has a
+        # same-type piece within 1.8u horizontal distance; if not, suppress bonus and
+        # apply -100 penalty to discourage non-productive low-y placement during NO merge
+        # at CRITICAL phase. Prevents worst-game pattern where merge_available=true but
+        # score_delta=0 (chosen position too far from same-type pieces to trigger merge).
+        # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
         if (deadline_crossed and merge_grade == "NO" and max_y >= 2.0
             and reactive_pair_count >= 3 and piece_count >= 28):
             # Suppress HEIGHT_CONTROL: push toward low-y merge path creation
             score -= 500.0 * merge_mult
             # Bonus for low landing_y: creates merge opportunity for next turn
             if result.get("landing_y", 99.0) < 0.0:
-                score += 300.0 * merge_mult
-                reasons.append("MERGE_PATH_CREATION_LOW_Y")
+                # Proximity verification: check if any same-type piece is within 1.8u
+                nearest_dist = min(abs(result["x"] - p.get("x", 0)) for p in same_type_pieces) if same_type_pieces else 99.0
+                if nearest_dist < 1.8:
+                    score += 300.0 * merge_mult
+                    reasons.append("MERGE_PATH_CREATION_LOW_Y")
+                else:
+                    # No same-type piece in proximity — suppress bonus, apply penalty
+                    # to discourage non-productive low-y placement at CRITICAL phase
+                    score -= 100.0 * merge_mult
+                    reasons.append("MERGE_PATH_CREATION_NO_PROXIMITY")
             else:
                 reasons.append("MERGE_PATH_CREATION_SUPPRESS_HEIGHT")
 
