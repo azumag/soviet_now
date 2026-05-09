@@ -67,6 +67,19 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v618: deadline_state_emergency_height_penalty — -5000 penalty when board max_y >= 2.5
+     # already exceeds deadline AND NO merge available AND new piece adds height (landing_y >= 1.0).
+     # Problem: v607 only fires when new piece's landing position crosses deadline. It does NOT
+     # catch board state already above deadline (max_y=2.67 at T51) because new piece landed at
+     # y=1.29 (below deadline), so decision_crosses_deadline=False → v607 silent → game over.
+     # Mechanism: -5000 penalty for landing_y >= 1.0 when board already non-survivable.
+     # -5000 vs v607's -8000: v607 is hard prohibition (piece physically crosses deadline).
+     # This is strong discouragement when board already non-survivable but piece has other merit.
+     # Guards: Does NOT fire when merge_available=true, max_y < 2.5, or landing_y < 1.0.
+     # Fixes worst game T50-T52 failure mode: board-state-exceeds-deadline without decision-crosses.
+     # Fixes extra game 2196 T86-T93: max_y escalates 1.84→3.04 with crosses_deadline=false.
+     # mandatory_themes.txt「デッドラインを超える位置上...併合できる場合に限る」を補完。
+     # refs: tmp/analysis_result.md (Implementation Plan: v618), game_history/20260509_205320_score0513.jsonl
      # v609: v600 merge-path creation bonus +350 (was +200) at merge drought with deadline_crossed
      # merge_grade==NO && deadline_crossed && max_y>=1.8 && rp>=3 && pc>=28 时、current_typeの既有ピースへの
      # 接近配置ボーナス强化(+350*merge_mult)。worst game T54-T61ではmerge_available=falseが8ターン持続し、
@@ -2152,6 +2165,32 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False):
             score -= 8000.0
             reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
+
+        # ----- v618: deadline_state_emergency_height_penalty -----
+        # Problem: v607 only fires when `decision_crosses_deadline=True` (new piece's
+        # landing position vs deadline). It does NOT fire when the board state ALREADY
+        # exceeds the deadline, because the new piece may land below the deadline even
+        # though the board is already in a non-survivable state.
+        # worst game T51: max_y=2.67 (board ALREADY above deadline_y=2.5),
+        # merge_available=false, deadline_crossed=true, new piece lands at y=1.29,
+        # decision_crosses_deadline=False → v607 silent → game over.
+        # extra game 2196 T86: max_y=1.84, deadline_crossed, merge_available=false,
+        # crosses_deadline=False → v607 silent → max_y escalates to 3.04.
+        # Mechanism: When board max_y >= 2.5 (already above deadline) AND NO merge
+        # available AND new piece adds height (landing_y >= 1.0), apply -5000 penalty.
+        # -5000 vs v607's -8000: v607 is a hard prohibition because physically placing
+        # a piece that crosses the deadline is the worst decision. This is a strong
+        # discouragement because board is already non-survivable — but the specific
+        # piece placement might have merit (e.g., setting up future merge).
+        # Guard: Does NOT fire when merge_available=true (v607 handles that case).
+        # Does NOT fire when max_y < 2.5 (board is still recoverable).
+        # Does NOT fire when landing_y < 1.0 (piece adds minimal height).
+        # refs: tmp/analysis_result.md (adopted hypothesis: deadline_state_emergency),
+        #       game_history/20260509_205320_score0513.jsonl T50-T52 (worst game failure mode),
+        #       game_history/20260509_204026_score2196.jsonl T86-T93 (extra game 2196 failure)
+        if deadline_crossed and merge_grade == "NO" and max_y >= 2.5 and result.get("landing_y", -99.0) >= 1.0:
+            score -= 5000.0 * merge_mult
+            reasons.append("DEADLINE_STATE_EMERGENCY_PENALTY")
 
         # ----- v412: RUSSIA_PHASE NO-merge low-y placement reinforcement -----
         # When: russia_phase && merge_grade==NO && reactive_pair_count>=3 && !death_spiral
