@@ -67,6 +67,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v611: v609 MERGE_PATH_CREATION condition — relax deadline_crossed requirement
+     # Added late_game_condition: rp>=3 && max_y>=2.0 && pc>=28 fires v609 without deadline_crossed
+     # Fixes rollback failure mode: merge_path_creation_missed_at_deadline_crossed (worst game turns 66-73)
+     # worst_game turn 66-73: v607 (-8000) equalized all candidates → edge placement selected
+     #   → v609 bonus (+400*merge_mult) would have guided centroid-adjacent placement if condition fired
+     # best_game turn 124-131: 4 consecutive merges at max_y>=2.0, confirming merge capture matters at high max_y
+     # No bonus value change (400*merge_mult preserves competition with height penalty)
+     # refs: tmp/analysis_result.md (Implementation Plan: relax deadline_crossed requirement),
+     #       tmp/state/last_rollback_postmortem.md (prioritize: v609 activation at max_y>=2.0),
+     #       game_history/20260510_063121_score0696.jsonl, game_history/20260510_062101_score2840.jsonl
      # v610: v609 — remove death_spiral guard from merge path creation bonus activation
      # v609 merge_path creation bonus fires even when death_spiral is active.
      # Rationale: v609 is merge DROUGHT PREVENTION (creates next-merge before drought occurs),
@@ -2519,16 +2529,17 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Bonus magnitude: +400*merge_mult — comparable to COLUMN_CEILING (~800+150*diff),
         # strong enough to influence placement decisions during merge drought.
         # NOT a penalty — positive bonus for strategic placement that creates future merges.
-        # refs: tmp/analysis_result.md (Implementation Plan: v609 axis, merge_path creation),
-        #       tmp/state/last_rollback_postmortem.md (forbid: v609 deletion → merge drought 4+ turns),
-        #       tmp/state/last_rollback_analysis.md (merge_drought failure mode),
-        #       game_history/20260509_142030_score0218.jsonl turn43-47 (5 consecutive NO merge),
-        #       game_history/20260509_134423_score0658.jsonl turn69-75 (6 consecutive NO merge),
-        #       game_history/20260509_144136_score3525.jsonl turn145-147 (next_type→merge_available pattern)
-        # Fixes rollback failure mode: "merge_drought_no_merge_path_creation" (v609 prevents turn 41-42 4-turn drought)
+        # refs: tmp/analysis_result.md (Implementation Plan: relax deadline_crossed requirement),
+        #       tmp/state/last_rollback_postmortem.md (prioritize: v609 activation at max_y>=2.0),
+        #       game_history/20260510_063121_score0696.jsonl turns 66-73 (v607 equalized candidates → edge selection),
+        #       game_history/20260510_062101_score2840.jsonl turn 124-131 (4 consecutive merges at max_y>=2.0)
+        # Condition A (original): deadline_crossed + max_y>=1.5 — covers deadline pressure
+        # Condition B (new): rp>=3 + max_y>=2.0 + pc>=28 — covers late-game merge drought before deadline
+        # No bonus value change (400*merge_mult preserves height penalty competition).
+        deadline_condition = (deadline_crossed and max_y >= 1.5)
+        late_game_condition = (reactive_pair_count >= 3 and max_y >= 2.0 and piece_count >= 28)
         if (merge_grade == "NO"
-                and deadline_crossed
-                and max_y >= 1.5
+                and (deadline_condition or late_game_condition)
                 and reactive_pair_count >= 2
                 and piece_count >= 25
                 and len(same_type_pieces) >= 2
