@@ -67,18 +67,16 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v610: v609 — remove death_spiral guard from merge path creation bonus activation
+     # v609 merge_path creation bonus fires even when death_spiral is active.
+     # Rationale: v609 is merge DROUGHT PREVENTION (creates next-merge before drought occurs),
+     # but death_spiral is a condition that triggers AFTER drought has already caused danger.
+     # v609 should fire BEFORE death spiral develops, not after.
+     # worst_game turn 47-53: 7 consecutive NO merge, death_spiral blocked v609 → max_y 1.67→3.08
+     # extra_low turn 40-54: same pattern, v609 blocked → score stagnation
+     # Rollback constraints preserved: v609 not deleted, NEAR suppression untouched.
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v609: merge path creation bonus — NEXT type same-type clustering during merge drought
-     # When merge_grade==NO && deadline_crossed && max_y>=1.5 && rp>=2 && pc>=25 && same_type_pieces>=2 && next_type>=5
-     # && !death_spiral, bonus +400*merge_mult for placement near same_type centroid.
-     # Creates "3-piece cluster" → next same-type arrival = immediate merge opportunity.
-     # worst game turn43-47: 5 consecutive NO merge → v609 clusters pieces for next merge.
-     # extra_low turn69-75: 6 consecutive NO merge, max_y 2.32→3.20 → v609 prevents merge drought death spiral.
-     # best game turn145-147: next_type=6→10→7 pattern with merge_available=true at each step.
-     # mandatory_themes.txt "NEXTを考慮したドロップをせよ" を制度的に補償。
-     # Fixes rollback failure mode: merge_drought_no_merge_path_creation (last_rollback_postmortem.md).
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
-     #       mandatory_themes.txt, game_history/20260509_142030_score0218.jsonl (worst),
-     #       game_history/20260509_134423_score0658.jsonl (extra_low), game_history/20260509_144136_score3525.jsonl (best)
      # v412: RUSSIA_PHASE NO-merge low-y placement reinforcement — positive bonus for landing_y < 0.0
      # when russia_phase && merge_grade==NO && reactive_pair_count>=3 && !death_spiral
      # Problem: v607 (-8000) blocks deadline-crossing candidates, but RUSSIA_PHASE bonuses
@@ -2534,8 +2532,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 and reactive_pair_count >= 2
                 and piece_count >= 25
                 and len(same_type_pieces) >= 2
-                and next_type >= 5
-                and not death_spiral):
+                and next_type >= 5):
             # Find centroid of all same_type pieces on board
             same_type_sorted = sorted(same_type_pieces, key=lambda p: p.get("x", 0))
             centroid_x = sum(p.get("x", 0) for p in same_type_sorted) / len(same_type_sorted)

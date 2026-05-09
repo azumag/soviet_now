@@ -67,12 +67,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v613: v607 penalty -12000 at max_y>=2.5 (vs -8000), suppress stacking when rp>=3 && NO && deadline && max_y>=2.5
-     # Hypothesis: worst game score575 (turns 50-59) had 7-piece growth in 9 turns with NO merge at max_y 2.11-2.51.
-     # Stacking/proximity bonuses (~200-900 each) partially offset -8000, allowing crossing positions.
-     # At max_y>=2.5, board is pre-death-spiral — deadline non-crossing must be absolute priority.
-     # Fixes rollback failure mode: NO-merge deadline crossing at extreme danger (mandatory theme violation).
-     # refs: tmp/analysis_result.md (Implementation Plan), mandatory_themes.txt
      # v610: v609 — remove death_spiral guard from merge path creation bonus activation
      # v609 merge_path creation bonus fires even when death_spiral is active.
      # Rationale: v609 is merge DROUGHT PREVENTION (creates next-merge before drought occurs),
@@ -1332,7 +1326,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             or pre_death_spiral
             or axis_88_horizontal_suppression
             or critical_phase_stacking_suppressed
-            or (reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False) and max_y >= 2.5)
         )
         if reactive_pair_count >= 1 and merge_grade == "NO" and same_type_stack_top is not None and not stacking_danger_suppressed:
             # v416: stacking target redirection — replace v414/v415 binary block with
@@ -2158,23 +2151,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       penalty at rp>=3, mandatory_themes.txt),
         #       game_history/20260506_221158_score0742.jsonl T57-T67 (worst game failure mode),
         #       game_history/20260506_231333_score2542.jsonl T110 (best game survival pattern)
-        # v607: NO-merge deadline-crossing penalty at rp>=3
-        # When: rp>=3 && merge_grade==NO && crosses_deadline && max_y>=2.5 → EXTREME danger
-        # Penalty: -12000 (vs -8000 at max_y < 2.5)
-        # Rationale: worst game (score575) had 7-piece growth in 9 turns with NO merge at
-        # max_y 2.11-2.51. Stacking/proximity bonuses (~200-900 each) partially offset -8000,
-        # allowing crossing positions to be selected. At max_y>=2.5, the board is in
-        # pre-death-spiral state — priority must be absolute deadline non-crossing.
-        # Mandatory theme: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-        # refs: tmp/analysis_result.md (Implementation Plan: v607 strength at max_y>=2.5),
-        #       game_history/20260509_183125_score0624.jsonl (worst game failure pattern)
         if reactive_pair_count >= 3 and merge_grade == "NO" and result.get("crosses_deadline", False):
-            if max_y >= 2.5:
-                score -= 12000.0
-                reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3_EXTREME")
-            else:
-                score -= 8000.0
-                reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
+            score -= 8000.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE_RP3")
 
         # ----- v412: RUSSIA_PHASE NO-merge low-y placement reinforcement -----
         # When: russia_phase && merge_grade==NO && reactive_pair_count>=3 && !death_spiral
