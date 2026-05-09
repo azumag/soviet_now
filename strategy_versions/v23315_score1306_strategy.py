@@ -67,6 +67,15 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v625: extended NEAR suppression at high max_y + deadline_crossed (non-Russia phase)
+     # merge_grade==NEAR && max_y>=2.0 && deadline_crossed && !russia_phase && landing_y>=max_y-0.5
+     # に追加ペナルティ -600*merge_mult*type_scale。worst_game T66 (max_y=2.99, deadline_crossed=true,
+     # best_merge_grade=NEAR) でNEARが選択されmax_yが3.0へ増加する問題に対処。v607はNO_MERGE専用なので
+     # NEAR candidatesはdeadline超過ペナルティをバイパスする。v625により高max_y+deadlineでのNEAR選択抑制。
+     # Safety valve: landing_y < max_y - 0.5 ならNEARを許可（盤面压缩ポテンシャル）
+     # Russia相位はv624で処理済みなので除外。
+     # Fixes rollback failure mode: NEAR_merge_failure_at_high_max_y (analysis_result.md adopted hypothesis)
+     # refs: tmp/analysis_result.md (Implementation Plan: v625 axis 1.5d追加), tmp/state/last_rollback_postmortem.md
      # v609: v600 merge-path creation bonus +350 (was +200) at merge drought with deadline_crossed
      # merge_grade==NO && deadline_crossed && max_y>=1.8 && rp>=3 && pc>=28 时、current_typeの既有ピースへの
      # 接近配置ボーナス强化(+350*merge_mult)。worst game T54-T61ではmerge_available=falseが8ターン持続し、
@@ -1150,6 +1159,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and max_y >= 2.0 and deadline_crossed:
             score -= 500.0
             reasons.append("GAP_ZONE_NEAR_PENALTY")
+
+        # ----- v625: extended NEAR suppression at high max_y + deadline_crossed (non-Russia phase) -----
+        # When max_y>=2.0 && deadline_crossed && merge_grade==NEAR: suppress NEAR unless landing_y < max_y - 0.5
+        # Addresses failure mode: NEAR at max_y=2.99+deadline_crossed pushes max_y higher despite merge
+        # v607 only blocks NO_MERGE candidates crossing deadline — NEAR candidates bypass this penalty
+        # Adding direct NEAR suppression at high max_y + deadline_crossed prevents height increase
+        # Safety valve: allow NEAR if it lands significantly below current max_y (compression potential)
+        # Russia phase excluded — v624 handles Russia phase NEAR suppression separately
+        # refs: tmp/analysis_result.md (Implementation Plan: v625 axis 1.5d追加),
+        #       game_history/20260509_115015_score0741.jsonl (worst_game T66: NEAR at max_y=2.99+deadline_crossed)
+        if not russia_phase and max_y >= 2.0 and deadline_crossed and merge_grade == "NEAR":
+            landing_y = result.get("landing_y", 0)
+            if landing_y >= max_y - 0.5:
+                score -= 600.0 * merge_mult * type_scale
+                reasons.append("NEAR_SUPPRESSED_HIGH_MAX_Y_DEADLINE")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
