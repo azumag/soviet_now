@@ -67,6 +67,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v609: v600 merge-path creation bonus +350 (was +200) at merge drought with deadline_crossed
+     # merge_grade==NO && deadline_crossed && max_y>=1.8 && rp>=3 && pc>=28 时、current_typeの既有ピースへの
+     # 接近配置ボーナス强化(+350*merge_mult)。worst game T54-T61ではmerge_available=falseが8ターン持続し、
+     # 同type接近配置缺失で危险ピースが累積。v609により次ターンmerge opportunity形成促进。
+     # v607(-8000)の内側で動作するためdeadline超過ペナルティ扩大なし。
+     # mandatory_themes.txt「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」を遵守。
+     # Fixes rollback failure mode: merge_drought_HIGH_LAYER_stacking (analysis_result.md adopted hypothesis)
+     # refs: tmp/analysis_result.md (Implementation Plan: v600小区変更), tmp/state/last_rollback_postmortem.md
      # v412: RUSSIA_PHASE NO-merge low-y placement reinforcement — positive bonus for landing_y < 0.0
      # when russia_phase && merge_grade==NO && reactive_pair_count>=3 && !death_spiral
      # Problem: v607 (-8000) blocks deadline-crossing candidates, but RUSSIA_PHASE bonuses
@@ -2252,19 +2260,26 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 # Creates "NEAR merge setup" state for next turn — addresses rp=2 NO merge gap
                 # where axis 8.8/v599 don't fire but column_ceiling places at edge without
                 # creating future merge opportunities.
-                # +200 * merge_mult at dist=0 — smaller than ceiling_bonus (~800-1250), pure tie-breaker.
+                # v609: increased from +200 to +350 * merge_mult to overcome height penalty pressure
+                # at deadline_crossed && max_y>=1.8 && rp>=3 && pc>=28 merge drought.
+                # worst game T54-T61: merge_available=false for 8 turns, pieces accumulated without
+                # clustering. This bonus creates same-type proximity for next-turn merge opportunity.
                 # Does NOT override column_ceiling column selection; only differentiates within best column.
                 # Explicit death_spiral guard: already suppressed by column_ceiling_dominant condition.
                 # v602: also suppress when axis_88_horizontal_suppression — height must be sole differentiator
+                # mandatory_themes.txt: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+                # v609 fires only when deadline_crossed (merge opportunity likely exists elsewhere)
                 if column_ceiling_dominant and len(same_type_pieces) >= 2 and not death_spiral and not axis_88_horizontal_suppression:
-                    # Find nearest current_type piece on board to this candidate position
-                    nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
-                    if nearest_dist < 1.5:
-                        # Tie-break: create NEAR-merge setup for next turn
-                        path_bonus = 200.0 * merge_mult * max(0.0, 1.0 - nearest_dist / 1.5)
-                        score += path_bonus
-                        if "MERGE_PATH_SETUP" not in "_".join(reasons):
-                            reasons.append("MERGE_PATH_SETUP")
+                    if deadline_crossed and reactive_pair_count >= 3 and max_y >= 1.8:
+                        # Find nearest current_type piece on board to this candidate position
+                        nearest_dist = min(abs(x - p.get("x", 0)) for p in same_type_pieces)
+                        if nearest_dist < 1.5:
+                            # Tie-break: create NEAR-merge setup for next turn
+                            # v609: +350 (up from +200) to overcome height penalty at critical max_y
+                            path_bonus = 350.0 * merge_mult * max(0.0, 1.0 - nearest_dist / 1.5)
+                            score += path_bonus
+                            if "MERGE_PATH_SETUP" not in "_".join(reasons):
+                                reasons.append("MERGE_PATH_SETUP")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
