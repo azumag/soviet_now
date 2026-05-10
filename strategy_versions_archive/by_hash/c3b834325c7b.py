@@ -8,9 +8,7 @@ Game Overview:
   - Player controls only drop X coordinate
 
 # Changelog:
-=== 2026-05-11: v626: Add DEADLINE_RP4_NO_MERGE_PENALTY (-1500) for rp=4 NO_MERGE selection in deadline danger zone. Fixes: worst T70-78 and extra_low T67-73 both had rp=4 with NO_MERGE selected for 7-8 consecutive turns despite deadline_crossed && max_y>=1.5. v618d (-2000) fires at rp>=5, missing rp=4 case.
-- Refactoring: rename v618c comment header to v618d to reflect final adopted version number
-- refs: tmp/analysis_result.md (Adopted Hypothesis: rp=4 NO_MERGE抑止強化), game_history/20260511_043514_score0954.jsonl, game_history/20260511_042520_score1077.jsonl
+# 2026-05-11: v625: Lower DEADLINE_NO_MERGE_EMERGENCY_PENALTY threshold 2.0→1.5
 #             Catches worst game T41-43: max_y=1.15-1.74 && deadline_crossed && rp=5 NO_MERGE
 #             ran for 3 turns before reaching max_y=2.0. Threshold 1.5 catches the danger zone
 #             before max_y climbs to 2.33 causing game over.
@@ -2239,30 +2237,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 5000.0 * merge_mult
             reasons.append("DEADLINE_STATE_EMERGENCY_PENALTY")
 
-        # ----- v626: rp=4 NO-MERGE penalty reinforcement -----
-        # Hypothesis: worst T70-78 (rp=2-4) and extra_low T67-73 (rp=4-5) both selected
-        # NO_MERGE for 7-8 consecutive turns despite deadline_crossed && max_y>=1.5.
-        # v618d's -2000 penalty fires at rp>=3, but the worst cases had rp=4 where
-        # the -2000 wasn't sufficient to override other positive bonuses (~400-600pt).
-        # Adding a -1500 penalty specifically at rp=4 to catch this gap.
-        # Does NOT change rp>=5 (keeps -2000) — differentiation must be maintained.
-        # Rollback constraints respected: no axis 8.8 removal, no deadline veto relaxation.
-        # refs: tmp/analysis_result.md (Adopted Hypothesis: rp=4 NO_MERGE抑止強化),
-        #       game_history/20260511_043514_score0954.jsonl T70-78 (rp=2-4, max_y 2.0-2.81),
-        #       game_history/20260511_042520_score1077.jsonl T67-73 (rp=4-5, max_y 2.84)
-        if (deadline_crossed and merge_grade == "NO" and max_y >= 1.5
-            and reactive_pair_count == 4 and piece_count >= 28):
-            score -= 1500.0 * merge_mult
-            reasons.append("DEADLINE_RP4_NO_MERGE_PENALTY")
-
-        # ----- v618d: Strengthen deadline NO-MERGE penalty — true veto, not offsettable -----
+        # ----- v618c: Strengthen deadline NO-MERGE penalty — true veto, not offsettable -----
         # Problem: v618b's +300 bonus for landing_y<0.0 created positive incentive for NO_MERGE
         # at deadline with high max_y. At worst game T59, this (+300) partially offset v618's -500
         # suppression, and with other positive bonuses (stacking ~400-600), NO_MERGE became
         # favorable over HEIGHT_CONTROL. This caused 8 consecutive NO_MERGE selections despite
         # max_y=2.28→3.87 runaway and deadline_crossed=true.
         # mandatory_themes: "デッドラインを超える位置上...併合できる場合に限る" +
-        # "デットライン付近の危険盤面領域では、併合を優先するべき"
+        # "デッドライン付近の危険盤面領域では、併合を優先するべき"
         # Fix: Remove the +300 bonus. When deadline_crossed && NO && max_y >= 2.0, apply
         # -800 penalty so height penalty is the sole differentiator.
         # Does NOT affect v607's -8000 hard veto (candidate-level crossing_deadline).
@@ -2270,7 +2252,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Hypothesis: lower threshold to catch worst game T41-43
         # max_y=1.15-1.74 with deadline_crossed && rp=5 NO_MERGE selection before reaching max_y=2.0)
         if (deadline_crossed and merge_grade == "NO" and max_y >= 1.5
-            and reactive_pair_count >= 5 and piece_count >= 28):
+            and reactive_pair_count >= 3 and piece_count >= 28):
             score -= 2000.0 * merge_mult
             reasons.append("DEADLINE_NO_MERGE_EMERGENCY_PENALTY")
 

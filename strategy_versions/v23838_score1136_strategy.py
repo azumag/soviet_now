@@ -8,7 +8,11 @@ Game Overview:
   - Player controls only drop X coordinate
 
 # Changelog:
-# 2026-05-11: v624_mod: Russia phase deadline DIRECT merge force (+800*type_scale)
+# 2026-05-11: v625: Lower DEADLINE_NO_MERGE_EMERGENCY_PENALTY threshold 2.0→1.5
+#             Catches worst game T41-43: max_y=1.15-1.74 && deadline_crossed && rp=5 NO_MERGE
+#             ran for 3 turns before reaching max_y=2.0. Threshold 1.5 catches the danger zone
+#             before max_y climbs to 2.33 causing game over.
+#             Refs: tmp/analysis_result.md (Hypothesis: worst game failure mode)
 #             When russia_phase && deadline_crossed && max_y>=2.0 && merge_grade==DIRECT:
 #             add +800*type_scale bonus to prevent merge postpone (extra_high T96 pattern).
 #             Fixes: russia_phase deadline merge postpone failure mode.
@@ -2245,8 +2249,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # -800 penalty so height penalty is the sole differentiator.
         # Does NOT affect v607's -8000 hard veto (candidate-level crossing_deadline).
         # Rollback constraints respected: does NOT suppress axis 9.6b at rp>=3+NO.
-        # refs: tmp/analysis_result.md (Implementation Plan: v618d DEADLINE_NO_MERGE_EMERGENCY_PENALTY -800→-2000)
-        if (deadline_crossed and merge_grade == "NO" and max_y >= 2.0
+        # refs: tmp/analysis_result.md (Hypothesis: lower threshold to catch worst game T41-43
+        # max_y=1.15-1.74 with deadline_crossed && rp=5 NO_MERGE selection before reaching max_y=2.0)
+        if (deadline_crossed and merge_grade == "NO" and max_y >= 1.5
             and reactive_pair_count >= 3 and piece_count >= 28):
             score -= 2000.0 * merge_mult
             reasons.append("DEADLINE_NO_MERGE_EMERGENCY_PENALTY")
