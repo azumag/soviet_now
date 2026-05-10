@@ -64,6 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v628: axis 9.6b NEXT-aware proximity strengthening at rp>=3+NO (non-deadline)
+     # Addresses failure mode: worst game T41 (rp=6, NO merge, next_type matches existing same-type)
+     # where x=3.0 scatter prevented next-turn merge opportunity → 6-turn NO-merge streak.
+     # mandatory_themes第一条violations (T45,T48,T52) preventable by preventing scatter before deadline_crossed.
+     # Strengthens same-type proximity by +150 when same_type_pieces exist on board (next-turn NEAR merge setup).
+     # Constraint: does NOT suppress axis 9.6b at deadline_crossed+NO+rp>=3 (forbidden by rollback).
+     # Fixes rollback failure mode: NO_merge_drought_without_proximity_guidance.
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v627: axis 9.6b deadline NO-merge suppression — suppress same-type proximity bonus at deadline_crossed+NO+rp>=3
      # Fixes failure mode: worst game T45-T55 (10 turns), extra_low T60-64 NO-merge edge scatter (x=±3.0)
      # analysis_result.md adopted hypothesis: axis 9.6b bonus (~200-350) > axis 8.8 penalty (-300) at deadline+NO+rp>=3
@@ -1279,6 +1287,28 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Postmortem constraint: preserve axis 9.6b, do NOT suppress at rp>=3+NO.
                     if merge_grade == "NO" and reactive_pair_count >= 2:
                         proximity_bonus += 200.0
+                    # v628: NEXT-aware proximity strengthening at rp>=3+NO (non-deadline)
+                    # Addresses failure mode: worst game T41 (rp=6, NO merge, next_type matches existing same-type)
+                    # where x=3.0 scatter prevented next-turn merge opportunity.
+                    # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+                    # By strengthening guidance BEFORE deadline is crossed, we prevent scatter that later
+                    # forces deadline_crossed+NO decisions (which would violate mandatory_themes).
+                    # Constraint: does NOT suppress axis 9.6b (forbidden at deadline_crossed+NO+rp>=3).
+                    # Uses same_type_pieces (pieces matching next_type) to detect merge setup opportunity.
+                    if merge_grade == "NO" and reactive_pair_count >= 3 and not deadline_crossed:
+                        if same_type_pieces:
+                            # next_type pieces are on board — placing current piece near them sets up next-turn merge
+                            # Adding +150 makes central placement significantly more attractive vs edge scatter
+                            proximity_bonus += 150.0
+                        elif next_type is not None:
+                            # No same-type pieces, but check if pieces of next_type exist on board
+                            # (placing near next_type pieces may enable future merges after current merges)
+                            for p in pieces:
+                                if p.get("type") == next_type:
+                                    horiz_dist_to_next = abs(x - p.get("x", 0))
+                                    if horiz_dist_to_next < 1.5:
+                                        proximity_bonus += 80.0
+                                    break
                     if piece_count >= 28:
                         # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                         # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
