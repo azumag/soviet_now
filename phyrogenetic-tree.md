@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-10 16:42:11 JST`
-- Nodes: `1395`
-- Edges: `1907`
-- Current: `65921dd7b040`
+- Updated: `2026-05-10 18:43:22 JST`
+- Nodes: `1396`
+- Edges: `1908`
+- Current: `1ecf941003a8`
 - Anchor: `61fedc5dd74e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_d08f4ff0f62f["d08f4ff0f62f<br/>g=24 n=20<br/>comp=11346.5"]
     h_41a50e0a2db2["41a50e0a2db2<br/>g=20 n=20<br/>comp=9771.6"]
     h_603d1ee2d81d["603d1ee2d81d<br/>g=13 n=13<br/>comp=10133.6"]
     h_54f1a95c978c["54f1a95c978c<br/>g=12 n=12<br/>comp=9842.1"]
@@ -68,15 +67,15 @@ flowchart TD
     h_795af029451e["795af029451e<br/>g=13 n=13<br/>comp=10133.2"]
     h_8f573d58de23["8f573d58de23<br/>g=24 n=20<br/>comp=10239.2"]
     h_61fedc5dd74e["61fedc5dd74e<br/>ANCHOR<br/>g=24 n=20<br/>comp=12025.3"]
+    h_65921dd7b040["65921dd7b040<br/>g=24 n=20<br/>comp=11190.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_65921dd7b040["65921dd7b040<br/>CURRENT"]
+    h_1ecf941003a8["1ecf941003a8<br/>CURRENT"]
 
-    h_d08f4ff0f62f -->|improve| h_41a50e0a2db2
     h_ce951d0b4ef5 -->|improve| h_95c1994bf3bc
     h_21a90c8429a9 -->|improve| h_81897ed41734
     h_81897ed41734 -->|improve| h_c92f94729520
@@ -138,13 +137,13 @@ flowchart TD
     h_7018e9053d55 -->|improve| h_8f573d58de23
     h_8f573d58de23 -->|improve| h_61fedc5dd74e
     h_61fedc5dd74e -->|improve| h_65921dd7b040
+    h_65921dd7b040 -->|improve| h_1ecf941003a8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_d08f4ff0f62f plain;
     class h_41a50e0a2db2 plain;
     class h_603d1ee2d81d plain;
     class h_54f1a95c978c plain;
@@ -197,13 +196,14 @@ flowchart TD
     class h_795af029451e plain;
     class h_8f573d58de23 plain;
     class h_61fedc5dd74e anchor;
+    class h_65921dd7b040 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_65921dd7b040 current;
+    class h_1ecf941003a8 current;
 ```
 
 ## Detail 1/18
@@ -5005,9 +5005,9 @@ flowchart TD
 
 ## Detail 18/18
 
-- Range: `0d0fc4a9fde7` .. `65921dd7b040`
-- Nodes in this diagram: `35`
-- Internal edges in this diagram: `32`
+- Range: `0d0fc4a9fde7` .. `1ecf941003a8`
+- Nodes in this diagram: `36`
+- Internal edges in this diagram: `33`
 - Cross-chunk link: `452653e77d19 --improve--> 0d0fc4a9fde7`
 - Cross-chunk link: `0d0fc4a9fde7 -.rollback.-> 452653e77d19`
 - Cross-chunk link: `452653e77d19 --improve--> 61b864de0454`
@@ -5052,13 +5052,14 @@ flowchart TD
     h_795af029451e["795af029451e<br/>g=13 n=13<br/>comp=10133.2"]
     h_8f573d58de23["8f573d58de23<br/>g=24 n=20<br/>comp=10239.2"]
     h_61fedc5dd74e["61fedc5dd74e<br/>ANCHOR<br/>g=24 n=20<br/>comp=12025.3"]
+    h_65921dd7b040["65921dd7b040<br/>g=24 n=20<br/>comp=11190.6"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
-    h_65921dd7b040["65921dd7b040<br/>CURRENT"]
+    h_1ecf941003a8["1ecf941003a8<br/>CURRENT"]
 
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
@@ -5092,6 +5093,7 @@ flowchart TD
     h_7018e9053d55 -->|improve| h_8f573d58de23
     h_8f573d58de23 -->|improve| h_61fedc5dd74e
     h_61fedc5dd74e -->|improve| h_65921dd7b040
+    h_65921dd7b040 -->|improve| h_1ecf941003a8
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5126,16 +5128,27 @@ flowchart TD
     class h_795af029451e plain;
     class h_8f573d58de23 plain;
     class h_61fedc5dd74e anchor;
+    class h_65921dd7b040 plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
-    class h_65921dd7b040 current;
+    class h_1ecf941003a8 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#23708 `65921dd7 -> 1ecf9410`
+
+- scores: `13570 8563 12666 11569 9626 10027 18392 13383 14993 15287 13688 13293 10621 11959 11337 9081 18188 12282 11664 9984 6915 7447 10015 15046`
+- v629: axis 14 NEXT_TYPE_MATCH_BONUS — next_type == current_type (same piece on board)
+- when NEAR merge available, give +300 bonus to encourage same-type placement
+- mandatory_themes.txt第三条「NEXTを考慮したドロップをせよ」
+- axis 7.3 DIRECT_MERGE_CHAIN_MERGE threshold relaxation — increase DIRECT base
+- bonus from 1200 to 1250 to lift selection rate from 3.2% toward 5-7%
+- Fixes failure mode: best_game turn 128, 5-turn merge_available=false streak after merge
 
 ### Improve Game#23684 `61fedc5d -> 65921dd7`
 
