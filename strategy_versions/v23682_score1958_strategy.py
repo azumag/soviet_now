@@ -64,6 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v627: axis 9.6b deadline NO-merge suppression — suppress same-type proximity bonus at deadline_crossed+NO+rp>=3
+     # Fixes failure mode: worst game T45-T55 (10 turns), extra_low T60-64 NO-merge edge scatter (x=±3.0)
+     # analysis_result.md adopted hypothesis: axis 9.6b bonus (~200-350) > axis 8.8 penalty (-300) at deadline+NO+rp>=3
+     # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
+     # Refuses axis 9.6b suppression at rp<3 (correctly preserves central placement for low rp scenarios)
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
      # worst game T66-T69でx=±3.0選択された原因是axis 9.6(-4500)のrp>=1条件がrp=0状況で機能しない
@@ -1123,6 +1129,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             stacking_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
+                or (deadline_crossed and reactive_pair_count >= 3)  # NEW: deadline NO-merge scatter prevention
             ) and merge_grade == "NO"
             if current_type_has_reactive or current_type_has_near:
                 if stacking_congested:

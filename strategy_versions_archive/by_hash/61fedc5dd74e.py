@@ -64,13 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v628: axis 8.8 max_y-linked NO_MERGE penalty — scale REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY with max_y
-     #       max_y=1.5: 300, max_y=2.0: 450, max_y=2.5: 600, max_y=3.0: 750
-     # Fixes failure mode: worst game T53-T58, 6-turn NO_MERGE streak causing max_y 1.87→3.56 runaway
-     # analysis_result.md adopted hypothesis: flat -300 penalty insufficient at high max_y, horizontal inducement
-     #       axes (9.6b/9.8) can offset it too easily, causing dangerous NO_MERGE edge stacking
-     # mandatory_themes: "デッドライン付近の危険盤面領域では、併合優先"
-     # refs: tmp/analysis_result.md (Implementation Plan §3)
      # v627: axis 9.6b deadline NO-merge suppression — suppress same-type proximity bonus at deadline_crossed+NO+rp>=3
      # Fixes failure mode: worst game T45-T55 (10 turns), extra_low T60-64 NO-merge edge scatter (x=±3.0)
      # analysis_result.md adopted hypothesis: axis 9.6b bonus (~200-350) > axis 8.8 penalty (-300) at deadline+NO+rp>=3
@@ -1937,12 +1930,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Previous code showed score -= 4500 but the axis was adding +600*merge_mult
             # elsewhere, creating net positive at low positions (traction toward high stacks).
             # Now: true penalty that removes gravitational pull during NO merge.
-            # v619: scale with max_y — max_y>=2.0 (danger zone) increases NO_MERGE penalty
-            #       so horizontal-inducement axes (9.6b/9.8) cannot offset it as easily,
-            #       pushing decisions toward merge when available.
-            #       max_y=1.5: 300, max_y=2.0: 450, max_y=2.5: 600, max_y=3.0: 750
-            # refs: tmp/analysis_result.md (Implementation Plan §3)
-            score -= (300.0 + max(0.0, (max_y - 1.5) * 300.0)) * merge_mult
+            score -= 300.0 * merge_mult
             reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
