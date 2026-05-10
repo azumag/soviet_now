@@ -8,12 +8,6 @@ Game Overview:
   - Player controls only drop X coordinate
 
 # Changelog:
-# 2026-05-11: v624_mod: Russia phase deadline DIRECT merge force (+800*type_scale)
-#             When russia_phase && deadline_crossed && max_y>=2.0 && merge_grade==DIRECT:
-#             add +800*type_scale bonus to prevent merge postpone (extra_high T96 pattern).
-#             Fixes: russia_phase deadline merge postpone failure mode.
-#             mandatory_themes.txt: deadline with merge available must merge.
-#             refs: tmp/analysis_result.md
 # 2026-05-10: v618d: Increase DEADLINE_NO_MERGE_EMERGENCY_PENALTY -800→-2000 (真のveto实现). Fixes: v618c penalty (-800) insufficient against other 200-400pt bonuses — NO merge still competitive at deadline with max_y>=2.0 && rp>=5
 #             (-800, no offsettable +300). Fixes: deadline_crossed_no_merge_runaway (worst game
 #             T56-T62: 8 consecutive NO_MERGE despite max_y=2.28→3.87). v618b's +300 for
@@ -1098,15 +1092,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "DIRECT":
             score += 1200.0 * merge_mult * type_scale
             reasons.append("DIRECT_MERGE")
-            # v624_mod: Russia phase deadline DIRECT merge reinforcement
-            # When Russia exists + deadline crossed + max_y >= 2.0:
-            # Force DIRECT merge selection over Russia-phase board compression delay.
-            # Addresses "merge postpone" failure in Russia phase (extra_high T96, T99 pattern).
-            # mandatory_themes.txt: deadline position with merge available must merge.
-            if russia_phase and deadline_crossed and max_y >= 2.0:
-                russia_deadline_direct_bonus = 800.0 * type_scale
-                score += russia_deadline_direct_bonus
-                reasons.append("RUSSIA_DEADLINE_DIRECT_FORCE")
         elif merge_grade == "NEAR":
             score += 600.0 * merge_mult * type_scale
             reasons.append("NEAR_MERGE")

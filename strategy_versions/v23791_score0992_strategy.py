@@ -8,7 +8,7 @@ Game Overview:
   - Player controls only drop X coordinate
 
 # Changelog:
-# 2026-05-10: v618c: Replace v618b MERGE_PATH_CREATION bonus with DEADLINE_NO_MERGE_EMERGENCY_PENALTY
+# 2026-05-10: v618d: Increase DEADLINE_NO_MERGE_EMERGENCY_PENALTY -800→-2000 (真のveto实现). Fixes: v618c penalty (-800) insufficient against other 200-400pt bonuses — NO merge still competitive at deadline with max_y>=2.0 && rp>=5
 #             (-800, no offsettable +300). Fixes: deadline_crossed_no_merge_runaway (worst game
 #             T56-T62: 8 consecutive NO_MERGE despite max_y=2.28→3.87). v618b's +300 for
 #             landing_y<0.0 created positive incentive making NO_MERGE competitive at deadline.
@@ -2230,10 +2230,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # -800 penalty so height penalty is the sole differentiator.
         # Does NOT affect v607's -8000 hard veto (candidate-level crossing_deadline).
         # Rollback constraints respected: does NOT suppress axis 9.6b at rp>=3+NO.
-        # refs: tmp/analysis_result.md (Implementation Plan: v618c DEADLINE_NO_MERGE_EMERGENCY_PENALTY)
+        # refs: tmp/analysis_result.md (Implementation Plan: v618d DEADLINE_NO_MERGE_EMERGENCY_PENALTY -800→-2000)
         if (deadline_crossed and merge_grade == "NO" and max_y >= 2.0
             and reactive_pair_count >= 3 and piece_count >= 28):
-            score -= 800.0 * merge_mult
+            score -= 2000.0 * merge_mult
             reasons.append("DEADLINE_NO_MERGE_EMERGENCY_PENALTY")
 
         # ----- v412: RUSSIA_PHASE NO-merge low-y placement reinforcement -----
