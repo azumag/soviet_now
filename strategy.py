@@ -8,6 +8,12 @@ Game Overview:
   - Player controls only drop X coordinate
 
 # Changelog:
+# 2026-05-10: v618c: Replace v618b MERGE_PATH_CREATION bonus with DEADLINE_NO_MERGE_EMERGENCY_PENALTY
+#             (-800, no offsettable +300). Fixes: deadline_crossed_no_merge_runaway (worst game
+#             T56-T62: 8 consecutive NO_MERGE despite max_y=2.28→3.87). v618b's +300 for
+#             landing_y<0.0 created positive incentive making NO_MERGE competitive at deadline.
+#             mandatory_themes: "デッドライン超·危険盤面領域では併合優先" respected.
+#             refs: tmp/analysis_result.md
 # 2026-05-10: v618b: Persistent NO-merge merge path creation — suppress HEIGHT_CONTROL (-500)
 #             and add MERGE_PATH_CREATION bonus (+300 for landing_y<0.0) when deadline_crossed
 #             && NO && max_y>=2.0 && rp>=3 && pc>=28. v617: removed axis_88_horizontal_suppression
@@ -2212,29 +2218,23 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 5000.0 * merge_mult
             reasons.append("DEADLINE_STATE_EMERGENCY_PENALTY")
 
-        # ----- v618b: Persistent NO-merge merge path creation at deadline_crossed -----
-        # Problem: worst game turns 62-66 had 5 consecutive NO merge turns at deadline_crossed,
-        # max_y=2.48-2.71, rp=5, all candidates NO. v617 suppression (axis_88_horizontal_suppression
-        # with no_merge_streak>=3) blocked MERGE_PATH_SETUP, preventing path creation.
-        # mandatory_themes: "デッドライン超出しは併合できる場合に限る" + "デッドライン付近の危険盤面領域では、併合優先"
-        # When NO merge at deadline, should create merge path not cross deadline.
-        # Rollback constraints satisfied: only activates when merge_available=false (merge_grade==NO),
-        # does not fire during pre-deadline merge drought. High activation bar: deadline_crossed &&
-        # max_y>=2.0 && rp>=3 && pc>=28 && all candidates NO merge (persistent drought).
-        # v618b: suppress HEIGHT_CONTROL (-500*merge_mult) and add MERGE_PATH_CREATION bonus
-        # (+300*merge_mult for landing_y<0.0) when persistent NO merge detected at deadline_crossed.
-        # Does NOT fire when merge_available=true.
-        # refs: tmp/analysis_result.md (Implementation Plan: v618b persistent NO-merge detection)
+        # ----- v618c: Strengthen deadline NO-MERGE penalty — true veto, not offsettable -----
+        # Problem: v618b's +300 bonus for landing_y<0.0 created positive incentive for NO_MERGE
+        # at deadline with high max_y. At worst game T59, this (+300) partially offset v618's -500
+        # suppression, and with other positive bonuses (stacking ~400-600), NO_MERGE became
+        # favorable over HEIGHT_CONTROL. This caused 8 consecutive NO_MERGE selections despite
+        # max_y=2.28→3.87 runaway and deadline_crossed=true.
+        # mandatory_themes: "デッドラインを超える位置上...併合できる場合に限る" +
+        # "デッドライン付近の危険盤面領域では、併合を優先するべき"
+        # Fix: Remove the +300 bonus. When deadline_crossed && NO && max_y >= 2.0, apply
+        # -800 penalty so height penalty is the sole differentiator.
+        # Does NOT affect v607's -8000 hard veto (candidate-level crossing_deadline).
+        # Rollback constraints respected: does NOT suppress axis 9.6b at rp>=3+NO.
+        # refs: tmp/analysis_result.md (Implementation Plan: v618c DEADLINE_NO_MERGE_EMERGENCY_PENALTY)
         if (deadline_crossed and merge_grade == "NO" and max_y >= 2.0
             and reactive_pair_count >= 3 and piece_count >= 28):
-            # Suppress HEIGHT_CONTROL: push toward low-y merge path creation
-            score -= 500.0 * merge_mult
-            # Bonus for low landing_y: creates merge opportunity for next turn
-            if result.get("landing_y", 99.0) < 0.0:
-                score += 300.0 * merge_mult
-                reasons.append("MERGE_PATH_CREATION_LOW_Y")
-            else:
-                reasons.append("MERGE_PATH_CREATION_SUPPRESS_HEIGHT")
+            score -= 800.0 * merge_mult
+            reasons.append("DEADLINE_NO_MERGE_EMERGENCY_PENALTY")
 
         # ----- v412: RUSSIA_PHASE NO-merge low-y placement reinforcement -----
         # When: russia_phase && merge_grade==NO && reactive_pair_count>=3 && !death_spiral
