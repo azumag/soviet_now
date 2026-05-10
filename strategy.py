@@ -8,6 +8,9 @@ Game Overview:
   - Player controls only drop X coordinate
 
 # Changelog:
+# 2026-05-10: v618c: merge_path_creation activation threshold lowered max_y>=2.0→1.5
+#             (fires earlier at 1.5-2.0 range before reaching critical danger zone)
+#             refs: tmp/analysis_result.md
 # 2026-05-10: v618b: Persistent NO-merge merge path creation — suppress HEIGHT_CONTROL (-500)
 #             and add MERGE_PATH_CREATION bonus (+300 for landing_y<0.0) when deadline_crossed
 #             && NO && max_y>=2.0 && rp>=3 && pc>=28. v617: removed axis_88_horizontal_suppression
@@ -2220,12 +2223,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # When NO merge at deadline, should create merge path not cross deadline.
         # Rollback constraints satisfied: only activates when merge_available=false (merge_grade==NO),
         # does not fire during pre-deadline merge drought. High activation bar: deadline_crossed &&
-        # max_y>=2.0 && rp>=3 && pc>=28 && all candidates NO merge (persistent drought).
-        # v618b: suppress HEIGHT_CONTROL (-500*merge_mult) and add MERGE_PATH_CREATION bonus
-        # (+300*merge_mult for landing_y<0.0) when persistent NO merge detected at deadline_crossed.
-        # Does NOT fire when merge_available=true.
-        # refs: tmp/analysis_result.md (Implementation Plan: v618b persistent NO-merge detection)
-        if (deadline_crossed and merge_grade == "NO" and max_y >= 2.0
+        # max_y>=1.5 && rp>=3 && pc>=28 && all candidates NO merge (persistent drought).
+        # v618c: threshold lowered max_y>=2.0→1.5 to fire earlier in 1.5-2.0 range.
+        # refs: tmp/analysis_result.md (Implementation Plan)
+        if (deadline_crossed and merge_grade == "NO" and max_y >= 1.5
             and reactive_pair_count >= 3 and piece_count >= 28):
             # Suppress HEIGHT_CONTROL: push toward low-y merge path creation
             score -= 500.0 * merge_mult
