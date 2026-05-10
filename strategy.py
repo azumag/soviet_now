@@ -2011,32 +2011,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Penalty (-2000) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
         # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires at
         # merge_grade=NO and crosses_deadline in non-russia phases.
-        # Russia phase intentionally allows growth crossings (safety valve axis 9.6).
-        # refs: analyze_board.py L412 (crosses_deadline computation),
-        #       game_history/20260330_144015_score0665.jsonl T60-61,
-        #       game_history/20260330_143501_score0994.jsonl T74-75
-        # v626: generalize to all phases — mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
-        # deadline_crossed + NO merge + crosses_deadline は最も悪い配置選択
-        # axis 9.6 (-4500) は rp>=1条件があり、rp=0では機能しない
-        # したがって crosses_deadline candidateには独立したペナルティが必要
-        # russia_phase時は既存のsafety valve（v625）が機能済みのため追加ペナルティ不要
+        # v626 fix: remove russia_phase exemption — mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る。ロシア建国時でもこの原則は守れ」
+        # v625 safety valve (BOARD_COMPRESSION抑制, lines 1862-1888) is independent mechanism, keeps height control
         if merge_grade == "NO" and result.get("crosses_deadline", False):
-            if not russia_phase:
-                # v461: increase from -1200 to -2000 — account for accumulated additive bonus magnitudes
-                # v411 calibrated at ~200-900 additive bonus range, but subsequent axes restored
-                # (9.6b v453, 9.3 gate removed v457, 5.6 reduced v458) with congestion scaling
-                # push total additive to ~1000+ at pc=30+. Worst game T70: x=3.0 selected
-                # despite -1200 because stacking (~467) + proximity (~360) + growth (~96) bonuses
-                # partially overcame penalty. Best game never triggers this (avoids crossing).
-                # -2000 provides ~1000 margin above max possible additive combination, ensuring
-                # deadline-crossing without merge is always deterred. Protected strategy (median
-                # 12789) has no additive axes that could overcome this penalty.
-                # Fixes failure mode: deadline-crossing NO-merge placement in congested endgame
-                # refs: game_history/20260401_225426_score1094.jsonl T70-T71 (CROSSES_DEADLINE_NO_MERGE),
-                #       game_history/20260401_223053_score3734.jsonl T137-T144 (no CROSSES_DEADLINE),
-                #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-                score -= 2000.0
-                reasons.append("CROSSES_DEADLINE_NO_MERGE")
+            # v461: increase from -1200 to -2000 — account for accumulated additive bonus magnitudes
+            # v411 calibrated at ~200-900 additive bonus range, but subsequent axes restored
+            # (9.6b v453, 9.3 gate removed v457, 5.6 reduced v458) with congestion scaling
+            # push total additive to ~1000+ at pc=30+. Worst game T70: x=3.0 selected
+            # despite -1200 because stacking (~467) + proximity (~360) + growth (~96) bonuses
+            # partially overcame penalty. Best game never triggers this (avoids crossing).
+            # -2000 provides ~1000 margin above max possible additive combination, ensuring
+            # deadline-crossing without merge is always deterred. Protected strategy (median
+            # 12789) has no additive axes that could overcome this penalty.
+            # Fixes failure mode: deadline-crossing NO-merge placement in congested endgame
+            # refs: game_history/20260401_225426_score1094.jsonl T70-T71 (CROSSES_DEADLINE_NO_MERGE),
+            #       game_history/20260401_223053_score3734.jsonl T137-T144 (no CROSSES_DEADLINE),
+            #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+            score -= 2000.0
+            reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
         # ----- update best candidate -----
         if score > best_score:
