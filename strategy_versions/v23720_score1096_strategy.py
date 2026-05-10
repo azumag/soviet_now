@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v629: axis 14 NEXT_TYPE_MATCH_BONUS — next_type == current_type (same piece on board)
+     #       when NEAR merge available, give +300 bonus to encourage same-type placement
+     #       mandatory_themes.txt第三条「NEXTを考慮したドロップをせよ」
+     #       axis 7.3 DIRECT_MERGE_CHAIN_MERGE threshold relaxation — increase DIRECT base
+     #       bonus from 1200 to 1250 to lift selection rate from 3.2% toward 5-7%
+     # Fixes failure mode: best_game turn 128, 5-turn merge_available=false streak after merge
+     # refs: tmp/analysis_result.md (Implementation Plan)
      # v628: axis 8.8 max_y-linked NO_MERGE penalty — scale REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY with max_y
      #       max_y=1.5: 300, max_y=2.0: 450, max_y=2.5: 600, max_y=3.0: 750
      # Fixes failure mode: worst game T53-T58, 6-turn NO_MERGE streak causing max_y 1.87→3.56 runaway
@@ -910,6 +917,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # 盤面上の現在タイプの最も高い位置のピースを見つける
         same_type_stack_top = max(same_type_pieces, key=lambda p: p.get("y", -10))
 
+    # v629: axis 14 NEXT_TYPE_MATCH_BONUS — current piece type (next_type) already on board
+    # used to check if next_type == current_type_on_board for NEXT_TYPE_MATCH_BONUS
+    current_type_on_board = next_type if same_type_pieces else 0
+
     # --- v360: per-type reactive/near pair extraction (unutilized reactor info) ---
     # reactive_pairs is list of (piece_id_1, piece_id_2, type) tuples
     # near_pairs is list of (piece_id_1, piece_id_2, type, gap) tuples
@@ -950,7 +961,9 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # NEAR:   contact zone after landing (success rate 68.5%)
         # FAR:    contact possibility by drift (low probability)
         if merge_grade == "DIRECT":
-            score += 1200.0 * merge_mult
+            # v629: axis 7.3 DIRECT_MERGE_CHAIN_MERGE threshold relaxation
+            # avg_delta=39.7-69.8 with 3.2% selection rate. Increase base to 1250 to lift toward 5-7%
+            score += 1250.0 * merge_mult
             reasons.append("DIRECT_MERGE")
         elif merge_grade == "NEAR":
             score += 600.0 * merge_mult
@@ -958,6 +971,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult
             reasons.append("FAR_MERGE")
+
+        # v629: axis 14 NEXT_TYPE_MATCH_BONUS — when next_type == current_type (same piece on board)
+        # mandatory_themes.txt第三条「NEXTを考慮したドロップをせよ」
+        # Place current piece near same-type pieces to set up next-turn merge
+        # next_type == type of piece that just arrived (current piece type)
+        # if current type already exists on board and next_type matches, NEAR merge available next turn
+        if merge_grade == "NEAR" and next_type == current_type_on_board:
+            score += 300.0
+            reasons.append("NEXT_TYPE_MATCH_BONUS")
 
         # ----- v366/v409: NEAR merge risk penalty at deadline (graduated via reactor margin) -----
         # postmortem: piece_count accumulation is the key failure predictor.
