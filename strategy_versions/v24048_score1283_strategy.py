@@ -942,10 +942,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
-    # vYYY: pre-compute merge_possible for hard deadline-merge override (Change 1)
-    # mandatory_themes: deadline_crossed=true && merge_available=true → must merge
-    # Worst game T64-69: 6 consecutive NO_MERGE despite merge_available=true, deadline_crossed=true
-    merge_possible = any(r.get("merge_grade") in ("DIRECT", "NEAR") for r in results)
+    # v636: Change 1 fix — use game_state["merge_available"] for mandatory constraint
+    # mandatory_themes: "deadline_crossed=true && merge_available=true → must merge"
+    # The constraint refers to the game engine's merge_available flag, not analysis-computed merge_possible.
+    # merge_available is authoritative: it reflects actual merge possibilities from the game engine.
+    # Worst game T63-64: decision_crosses_deadline with NO merge but merge_available=false,
+    # so technically no violation (but suboptimal outcome). Using gs flag ensures correct enforcement.
+    # Refs: data/mandatory_themes.txt, tmp/analysis_result.md
+    merge_available_gs = game_state.get("merge_available", False)
 
     for result in results:
         x = result["x"]
@@ -957,12 +961,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
         score = 0.0
         reasons = []
 
-        # ----- vYYY: Hard Deadline-Merge Override (mandatory_themes hard constraint) -----
-        # Change 1: deadline_crossed && merge_possible && merge_grade == "NO" → massive penalty
-        # This enforces: "deadline_crossed=true の場合、merge_available=true では NO_MERGE を選択してはならない"
-        # Worst game evidence: 6 consecutive NO_MERGE selections (T64-69) at deadline_crossed=true, merge_available=true
-        # refs: data/mandatory_themes.txt, tmp/analysis_result.md (Implementation Plan Change 1)
-        if deadline_crossed and merge_possible and merge_grade == "NO":
+        # ----- v636: Hard Deadline-Merge Override (mandatory_themes hard constraint) -----
+        # Change 1: deadline_crossed && merge_available_gs && merge_grade == "NO" → massive penalty
+        # mandatory_themes: "deadline_crossed=true && merge_available=true → must merge"
+        # Worst game T63-64: decision_crosses_deadline with NO merge but merge_available=false.
+        # Using game_state["merge_available"] (not analysis-computed merge_possible) ensures correct enforcement.
+        # refs: data/mandatory_themes.txt, tmp/analysis_result.md
+        if deadline_crossed and merge_available_gs and merge_grade == "NO":
             score -= 10000.0
             reasons.append("DEADLINE_MERGE_FORCED_OVERRIDE")
 
@@ -1953,14 +1958,16 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Implementation Plan), tmp/improve_brief.md,
         #       tmp/state/last_rollback_analysis.md
 
-        # vYYY: Change 2 - max_y danger cap for REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY
-        # Change 2: suppress penalty at max_y>=2.5 && deadline_crossed (danger zone override)
-        # Worst game T64-69: penalty fired 6x at max_y 2.33-2.78, deadline_crossed=true
-        # At max_y>=2.5 with deadline crossed, danger is too high for reactive-pair penalty to override merge.
-        # Rollback postmortem constraint (forbid at max_y<=0.5) extended to clearly-dangerous zone.
-        # Refs: tmp/analysis_result.md (Implementation Plan Change 2)
+        # v636: Change 2 enhancement — extend suppression to cover all high-max_y danger zone
+        # At max_y >= 2.5 with deadline_crossed OR with high landing_y, the -900 gravity penalty
+        # can override AVOID_BLOCK bonuses and cause suboptimal edge placement.
+        # Extended suppression: also suppress when landing_y >= 2.0 (very high placement)
+        # Rollback postmortem constraint (forbid at max_y<=0.5) still respected.
+        # Worst game T64: max_y=2.75, deadline_crossed=true, gravity penalty fired despite extreme danger.
+        # Refs: tmp/analysis_result.md
+        dangerously_high_placement = (deadline_crossed and max_y >= 2.5) or landing_y >= 2.0
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            if not (deadline_crossed and max_y >= 2.5):
+            if not dangerously_high_placement:
                 # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
                 # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
                 # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
