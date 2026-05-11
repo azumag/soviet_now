@@ -11,9 +11,9 @@
 # Fixes rollback failure mode: worst T53-58 (score 605) NEAR_MERGE_HIGH_LAYER + deadline_crossed + NO merge = max_y 3.26 death
 # v626: Strengthen v624 edge prohibition — |x|>=2.5:-800→-1200, |x|>=2.0:-400→-600
 # Fixes worst T50: merge_available=false, max_y=2.79, x=3.0 edge selected (column_ceiling bonus exceeded -800 penalty)
-# Refs: tmp/analysis_result.md (Edge Prohibition Strengthen for NO_MERGE + Elevated Board)
-# refs: data/mandatory_themes.txt (デッドラインにおけるedge placement禁止)
-# Constraint: axis 8.8 penalty magnitude/threshold NOT modified
+# v626: DEADLINE_MERGE_FORCE — deadline_crossed && DIRECT && max_y<3.0 → +2000*type_scale
+# Fixes rollback failure mode: worst T48-50 (score557) deadline_crossed && max_y=2.06 NO merge → mandatory theme violation
+# Refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_analysis.md, data/mandatory_themes.txt
 
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
@@ -2628,6 +2628,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             else:
                 score += 600.0
             reasons.append("REACTIVE_IMMEDIATE_MERGE_PRIORITY")
+
+        # ----- v626: DEADLINE_MERGE_FORCE — deadline_crossed && DIRECT merge bonus for non-CRITICAL -----
+        # worst game T48-50: deadline_crossed=true, max_y=2.06-2.09, merge_available=false, rp=3-5
+        #   chosen: HIGH_TOWER/REACTIVE_PAIRS_NO_MERGE_PENALTY (x=-1.8) → max_y=2.06, NO merge → score=0
+        #   mandatory_themes: "デッドライン超出時は併合できる場合に限る" → VIOLATION
+        # best game T151-152: deadline_crossed=true, max_y=2.27-2.32 (HIGH, not CRITICAL), DIRECT merge selected → success
+        # current strategy only强化merge bonus at CRITICAL (max_y>=3.0), missing HIGH phase deadline_crossed case
+        # change_log has DEADLINE_MERGE_FORCE (+3000 for DIRECT at deadline) but not implemented in v621
+        # Implementation: deadline_crossed && merge_grade=="DIRECT" && max_y < 3.0 → +2000*type_scale
+        # CRITICAL (max_y>=3.0) existing merge_mult=0.6 suppression is NOT changed
+        # Refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_analysis.md,
+        #       data/mandatory_themes.txt, logs/change_log.txt (DEADLINE_MERGE_FORCE)
+        if deadline_crossed and merge_grade == "DIRECT" and max_y < 3.0:
+            score += 2000.0 * type_scale
+            reasons.append("DEADLINE_MERGE_FORCE")
 
         # ----- evaluation axis 8.7: russia phase immediate merge priority (v337: ロシアフェーズでのaxis 9.5盤面圧縮ボーナス抑制版 - axis 8.7即時併合優先強化) -----
         # advice.md「ロシア建国後の死亡速度が早い。建国後はより慎重な盤面進行を検討すること」「ロシアのような大きいピースが盤面の上に出てきた時は、戦略モードを切り替えるべき」に基づく構造的改善
