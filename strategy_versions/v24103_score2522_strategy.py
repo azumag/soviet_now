@@ -64,13 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v652: axis 1.5c Russia phase deadline NEAR suppression — rollback forbidden threshold 2.3 (not below)
-     # Worst game T57 (score532): NEAR at max_y=2.34 + deadline_crossed + russia_phase selected NO merge instead
-     # Best game T152 (score3714): NEAR at max_y=2.42 + deadline_crossed + russia_phase caused game-over
-     # Safety valve: allow NEAR when landing_y < max_y - 0.3 (board compression path)
-     # Fixes: Russia phase NEAR merge at dangerous heights causing game-over (H5 adopted from analysis)
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
-     #       mandatory_themes.txt ("デッドラインを超える場合は併合できる場合に限る")
      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
      # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
@@ -1073,31 +1066,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 bonus = 600.0 if deadline_crossed else 300.0
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
-
-        # ----- evaluation axis 1.5c: Russia phase deadline NEAR suppression (v652) -----
-        # rollback postmortem constraint: "forbid: Russia phase NEAR merge threshold < 2.3"
-        # Set threshold at 2.3 (boundary compliance, not violation).
-        # Safety valve: allow NEAR when landing_y < max_y - 0.3 (board compression path).
-        # Worst game T57 (score532): NO merge at max_y=2.34, deadline_crossed, russia_phase
-        #   — should have been suppressed but wasn't. Now suppressed.
-        # Best game T152 (score3714): NEAR at max_y=2.42, russia_phase, deadline_crossed
-        #   — should have been suppressed, game ended. Now suppressed.
-        # v624 reference: best_score5801_strategy.py has similar logic (threshold 2.0,
-        #   but we use 2.3 per rollback constraint boundary).
-        # refs: tmp/state/last_rollback_postmortem.md (forbid constraint),
-        #       game_history/20260512_040233_score0532.jsonl T57,
-        #       game_history/20260512_032244_score3714.jsonl T152,
-        #       mandatory_themes.txt ("デッドラインを超える場合は併合できる場合に限る")
-        if (
-            russia_phase
-            and deadline_crossed
-            and max_y >= 2.3
-            and merge_grade == "NEAR"
-        ):
-            # Safety valve: allow NEAR if it lands below current max_y (board compression)
-            if not (landing_y < max_y - 0.3):
-                score -= 600.0 * merge_mult
-                reasons.append("RUSSIA_DEADLINE_NEAR_SUPPRESSION")
 
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
