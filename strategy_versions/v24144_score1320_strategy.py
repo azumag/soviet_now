@@ -64,6 +64,13 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v653: axis 9.17b edge NO-merge penalty at high max_y(>=2.0) + deadline_crossed + |x|>=2.7 — additional -1500
+     # Fixes worst game T68 (score0687): deadline_crossed + max_y=2.29 + NO merge + x=-3.0 → max_y runaway 3.53
+     # axis 8.8 (-4500) fires but stacking bonus (~300-500) partially offsets, edge candidate wins
+     # postmortem failure mode: "max_y>=2.0 && deadline_crossed && NO merge && |x|>=2.7 でのエッジ配置"
+     # additive to axis 8.8 (not replacement), does NOT affect non-edge or merge candidates
+     # rollback postmortem constraint: Russia phase NEAR threshold <2.3 forbidden — not violated
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (failure mode)
      # v652: axis 1.5c Russia phase deadline NEAR suppression — rollback forbidden threshold 2.3 (not below)
      # Worst game T57 (score532): NEAR at max_y=2.34 + deadline_crossed + russia_phase selected NO merge instead
      # Best game T152 (score3714): NEAR at max_y=2.42 + deadline_crossed + russia_phase caused game-over
@@ -1602,7 +1609,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Fixes rollback failure mode: deadline scatter from v432 sign error
             score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-        
+
+        # ----- evaluation axis 9.17b: edge NO-merge penalty at high max_y + deadline (vXXX) -----
+        # worst game T68: deadline_crossed + max_y=2.29 + NO merge + x=-3.0 → max_y runaway to 3.53
+        # axis 8.8 (-4500) fires but stacking bonus (~300-500) partially offsets it, edge candidate wins
+        # postmortem failure mode: "max_y>=2.0 && deadline_crossed && NO merge && |x|>=2.7 でのエッジ配置"
+        # Best game T129-T136 avoids edge at same conditions, achieving max_y<=2.81
+        # Add -1500 to ensure edge NO-merge never wins at critical board heights
+        # Safety: does NOT affect non-edge candidates (|x|<2.7)
+        # Relationship to axis 8.8: additive, not replacement (axis 8.8 -4500 stays)
+        # Does NOT conflict with Russia phase NEAR suppression (axis 1.5c uses merge_grade, not position)
+        # postmortem constraint: "forbid Russia phase NEAR merge threshold < 2.3" — not violated
+        # refs: tmp/state/last_rollback_postmortem.md (failure mode),
+        #       game_history/20260512_050520_score0687.jsonl T68,
+        #       game_history/20260512_060505_score3475.jsonl T129-136
+        if deadline_crossed and max_y >= 2.0 and merge_grade == "NO" and abs(x) >= 2.7:
+            score -= 1500.0
+            reasons.append("EDGE_NO_MERGE_DEADLINE_PENALTY")
+
          # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position

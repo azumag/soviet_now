@@ -64,6 +64,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v653: axis 9.17b edge NO-merge penalty at high max_y(>=2.0) + deadline_crossed + |x|>=2.7 — additional -1500
+     # Fixes worst game T68 (score0687): deadline_crossed + max_y=2.29 + NO merge + x=-3.0 → max_y runaway 3.53
+     # axis 8.8 (-4500) fires but stacking bonus (~300-500) partially offsets, edge candidate wins
+     # postmortem failure mode: "max_y>=2.0 && deadline_crossed && NO merge && |x|>=2.7 でのエッジ配置"
+     # additive to axis 8.8 (not replacement), does NOT affect non-edge or merge candidates
+     # rollback postmortem constraint: Russia phase NEAR threshold <2.3 forbidden — not violated
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (failure mode)
+     # v652: axis 1.5c Russia phase deadline NEAR suppression — rollback forbidden threshold 2.3 (not below)
+     # Worst game T57 (score532): NEAR at max_y=2.34 + deadline_crossed + russia_phase selected NO merge instead
+     # Best game T152 (score3714): NEAR at max_y=2.42 + deadline_crossed + russia_phase caused game-over
+     # Safety valve: allow NEAR when landing_y < max_y - 0.3 (board compression path)
+     # Fixes: Russia phase NEAR merge at dangerous heights causing game-over (H5 adopted from analysis)
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md,
+     #       mandatory_themes.txt ("デッドラインを超える場合は併合できる場合に限る")
      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
      # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
@@ -1067,6 +1081,31 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score += bonus
             reasons.append("DANGER_NEAR_MERGE_PRIORITY")
 
+        # ----- evaluation axis 1.5c: Russia phase deadline NEAR suppression (v652) -----
+        # rollback postmortem constraint: "forbid: Russia phase NEAR merge threshold < 2.3"
+        # Set threshold at 2.3 (boundary compliance, not violation).
+        # Safety valve: allow NEAR when landing_y < max_y - 0.3 (board compression path).
+        # Worst game T57 (score532): NO merge at max_y=2.34, deadline_crossed, russia_phase
+        #   — should have been suppressed but wasn't. Now suppressed.
+        # Best game T152 (score3714): NEAR at max_y=2.42, russia_phase, deadline_crossed
+        #   — should have been suppressed, game ended. Now suppressed.
+        # v624 reference: best_score5801_strategy.py has similar logic (threshold 2.0,
+        #   but we use 2.3 per rollback constraint boundary).
+        # refs: tmp/state/last_rollback_postmortem.md (forbid constraint),
+        #       game_history/20260512_040233_score0532.jsonl T57,
+        #       game_history/20260512_032244_score3714.jsonl T152,
+        #       mandatory_themes.txt ("デッドラインを超える場合は併合できる場合に限る")
+        if (
+            russia_phase
+            and deadline_crossed
+            and max_y >= 2.3
+            and merge_grade == "NEAR"
+        ):
+            # Safety valve: allow NEAR if it lands below current max_y (board compression)
+            if not (landing_y < max_y - 0.3):
+                score -= 600.0 * merge_mult
+                reasons.append("RUSSIA_DEADLINE_NEAR_SUPPRESSION")
+
         # ----- evaluation axis 9.6: reactive pairs stacking bonus (v340: reactive_pairs>=3時deadline_crossed併合最優先版) -----
         # advice.md「同じタイプが続いて来たらそのタイプの上に置き、併合チャンスを優先する」に基づく戦略的改善
         # batch_summaryでHEIGHT_CONTROLが19.9%選択(avg_score_delta=1.2)と過剛、即時併合機会を取りこぼしていることを確認
@@ -1570,7 +1609,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
             # Fixes rollback failure mode: deadline scatter from v432 sign error
             score -= 4500.0
             reasons.append("DEADLINE_CROSSED_IMMEDIATE_MERGE_PRIORITY")
-        
+
+        # ----- evaluation axis 9.17b: edge NO-merge penalty at high max_y + deadline (vXXX) -----
+        # worst game T68: deadline_crossed + max_y=2.29 + NO merge + x=-3.0 → max_y runaway to 3.53
+        # axis 8.8 (-4500) fires but stacking bonus (~300-500) partially offsets it, edge candidate wins
+        # postmortem failure mode: "max_y>=2.0 && deadline_crossed && NO merge && |x|>=2.7 でのエッジ配置"
+        # Best game T129-T136 avoids edge at same conditions, achieving max_y<=2.81
+        # Add -1500 to ensure edge NO-merge never wins at critical board heights
+        # Safety: does NOT affect non-edge candidates (|x|<2.7)
+        # Relationship to axis 8.8: additive, not replacement (axis 8.8 -4500 stays)
+        # Does NOT conflict with Russia phase NEAR suppression (axis 1.5c uses merge_grade, not position)
+        # postmortem constraint: "forbid Russia phase NEAR merge threshold < 2.3" — not violated
+        # refs: tmp/state/last_rollback_postmortem.md (failure mode),
+        #       game_history/20260512_050520_score0687.jsonl T68,
+        #       game_history/20260512_060505_score3475.jsonl T129-136
+        if deadline_crossed and max_y >= 2.0 and merge_grade == "NO" and abs(x) >= 2.7:
+            score -= 1500.0
+            reasons.append("EDGE_NO_MERGE_DEADLINE_PENALTY")
+
          # ----- evaluation axis 3: drift penalty -----
         # polygon shape pieces roll after landing. larger drift amount and uncertainty means
         # higher risk of deviation from targeted position
@@ -1923,12 +1979,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_analysis.md
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
-            # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+            # vXXX: increase penalty from -300 to -600 to overcome AVOID_BLOCK_REACTIVE_PAIR
+            # At rp>=3+NO, -300 was too weak vs AVOID_BLOCK (+400-600) at intermediate x,
             # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
-            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
-            # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
-            score -= 900.0 * merge_mult
+            # -600 overwhelms AVOID_BLOCK at intermediate positions, forcing true lowest placement.
+            score -= 600.0 * merge_mult
             reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
