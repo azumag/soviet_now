@@ -64,23 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vYYY: Hard Deadline-Merge Override — mandatory_themes hard constraint enforcement
-     # Change 1: deadline_crossed=true && merge_possible=true && merge_grade=="NO" → -10000 penalty
-     # Worst game T64-69: 6 consecutive NO_MERGE selections despite merge_available=true, deadline_crossed=true
-     # mandatory_themes: "deadline_crossed=true の場合、merge_available=true では NO_MERGE を選択してはならない"
-     # This was a hard constraint that the existing composite scoring architecture did not enforce.
-     # Fixes failure mode: 6-turn NO_MERGE streak at deadline_crossed=true + merge_available=true
-     # refs: tmp/analysis_result.md (Implementation Plan Change 1), data/mandatory_themes.txt
-     # vYYY: Change 2 - max_y danger cap for REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY
-     # Change 2: suppress penalty at max_y>=2.5 && deadline_crossed (danger zone override)
-     # Worst game T64-69: penalty fired 6x at max_y 2.33-2.78, deadline_crossed=true
-     # Rollback postmortem constraint (forbid at max_y<=0.5) extended to clearly-dangerous zone.
-     # refs: tmp/analysis_result.md (Implementation Plan Change 2)
-     # vYYY: Change 3 - Edge Placement Suppression During Deadline Cross
-     # When deadline_crossed=true && merge_grade=="NO" && |x|>2.0 → -800 penalty
-     # Worst game T64-69: edge placements x=-3.0, x=1.6, x=-2.65 during deadline_crossed
-     # Center-biased placement during deadline crossing reduces max_y growth.
-     # refs: tmp/analysis_result.md (Implementation Plan Change 3)
      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
      # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
@@ -942,11 +925,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # =======================================================================
     # score each drop candidate (x coordinate) with evaluation axes
     # =======================================================================
-    # vYYY: pre-compute merge_possible for hard deadline-merge override (Change 1)
-    # mandatory_themes: deadline_crossed=true && merge_available=true → must merge
-    # Worst game T64-69: 6 consecutive NO_MERGE despite merge_available=true, deadline_crossed=true
-    merge_possible = any(r.get("merge_grade") in ("DIRECT", "NEAR") for r in results)
-
     for result in results:
         x = result["x"]
         landing_y = result.get("landing_y", 0)
@@ -956,15 +934,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
 
         score = 0.0
         reasons = []
-
-        # ----- vYYY: Hard Deadline-Merge Override (mandatory_themes hard constraint) -----
-        # Change 1: deadline_crossed && merge_possible && merge_grade == "NO" → massive penalty
-        # This enforces: "deadline_crossed=true の場合、merge_available=true では NO_MERGE を選択してはならない"
-        # Worst game evidence: 6 consecutive NO_MERGE selections (T64-69) at deadline_crossed=true, merge_available=true
-        # refs: data/mandatory_themes.txt, tmp/analysis_result.md (Implementation Plan Change 1)
-        if deadline_crossed and merge_possible and merge_grade == "NO":
-            score -= 10000.0
-            reasons.append("DEADLINE_MERGE_FORCED_OVERRIDE")
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
@@ -1953,21 +1922,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # refs: tmp/analysis_result.md (Implementation Plan), tmp/improve_brief.md,
         #       tmp/state/last_rollback_analysis.md
 
-        # vYYY: Change 2 - max_y danger cap for REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY
-        # Change 2: suppress penalty at max_y>=2.5 && deadline_crossed (danger zone override)
-        # Worst game T64-69: penalty fired 6x at max_y 2.33-2.78, deadline_crossed=true
-        # At max_y>=2.5 with deadline crossed, danger is too high for reactive-pair penalty to override merge.
-        # Rollback postmortem constraint (forbid at max_y<=0.5) extended to clearly-dangerous zone.
-        # Refs: tmp/analysis_result.md (Implementation Plan Change 2)
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            if not (deadline_crossed and max_y >= 2.5):
-                # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
-                # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
-                # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
-                # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
-                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
-                score -= 900.0 * merge_mult
-                reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
+            # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+            # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+            # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
+            # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+            score -= 900.0 * merge_mult
+            reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----
         # batch_summaryでHEIGHT_CONTROLが22.8%選択(avg_score_delta=2.1)と過剰であり、reactive_pairsがある状況では「何もしない」HEIGHT_CONTROLではなく、
@@ -2087,15 +2049,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if result.get("crosses_deadline", False) and merge_grade == "NO" and abs(x) >= 2.7 and max_y >= 2.0 and reactive_pair_count >= 4:
             score -= 1500  # deters edge NO-merge placement at critical board height
             reasons.append("EDGE_NO_MERGE_DEADLINE_HIGH_RP")
-
-        # vYYY: Change 3 - Edge Placement Suppression During Deadline Cross
-        # When deadline_crossed=true and |x| > 2.0 and merge_grade=="NO", apply penalty.
-        # Worst game T64-69: edge placements x=-3.0, x=1.6, x=-2.65 during deadline_crossed
-        # Center-biased placement during deadline crossing reduces max_y growth.
-        # Refs: tmp/analysis_result.md (Implementation Plan Change 3)
-        if deadline_crossed and merge_grade == "NO" and abs(x) > 2.0:
-            score -= 800.0
-            reasons.append("EDGE_DEADLINE_SUPPRESSION")
 
         # ----- update best candidate -----
         if score > best_score:
