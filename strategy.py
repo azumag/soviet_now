@@ -1923,11 +1923,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_analysis.md
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # v618: restructure from +600*merge_mult traction to -300*merge_mult true penalty
-            # Previous code showed score -= 4500 but the axis was adding +600*merge_mult
-            # elsewhere, creating net positive at low positions (traction toward high stacks).
-            # Now: true penalty that removes gravitational pull during NO merge.
-            score -= 300.0 * merge_mult
+            # vXXX: increase penalty from -300 to -600 to overcome AVOID_BLOCK_REACTIVE_PAIR
+            # At rp>=3+NO, -300 was too weak vs AVOID_BLOCK (+400-600) at intermediate x,
+            # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+            # -600 overwhelms AVOID_BLOCK at intermediate positions, forcing true lowest placement.
+            score -= 600.0 * merge_mult
             reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----

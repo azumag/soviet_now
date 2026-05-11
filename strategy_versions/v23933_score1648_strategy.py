@@ -64,22 +64,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v628: axis 9.6b NEXT-aware proximity strengthening at rp>=3+NO (non-deadline)
-     # Addresses failure mode: worst game T41 (rp=6, NO merge, next_type matches existing same-type)
-     # where x=3.0 scatter prevented next-turn merge opportunity → 6-turn NO-merge streak.
-     # mandatory_themes第一条violations (T45,T48,T52) preventable by preventing scatter before deadline_crossed.
-     # Strengthens same-type proximity by +150 when same_type_pieces exist on board (next-turn NEAR merge setup).
-     # Constraint: does NOT suppress axis 9.6b at deadline_crossed+NO+rp>=3 (forbidden by rollback).
-     # Fixes rollback failure mode: NO_merge_drought_without_proximity_guidance.
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
-     # v627: axis 9.6b deadline NO-merge suppression — suppress same-type proximity bonus at deadline_crossed+NO+rp>=3
-     # Fixes failure mode: worst game T45-T55 (10 turns), extra_low T60-64 NO-merge edge scatter (x=±3.0)
-     # analysis_result.md adopted hypothesis: axis 9.6b bonus (~200-350) > axis 8.8 penalty (-300) at deadline+NO+rp>=3
-     # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
-     # Refuses axis 9.6b suppression at rp<3 (correctly preserves central placement for low rp scenarios)
-     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
+     # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
+     # Fixes: worst game T69-T72 edge placement (x=±3.0) despite high penalty — additional deterrence for edge NO-merge at critical board height
+     # rollback failure mode: high-rp + high-max_y + NO merge + edge placement combination causing max_y runaway
+     # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md
      # worst game T66-T69でx=±3.0選択された原因是axis 9.6(-4500)のrp>=1条件がrp=0状況で機能しない
      # 따라서 crosses_deadline candidate에는 독립したペナルティ 필요 (russia_phase除)
      # Fixes: worst game T66-T69 crosses_deadline NO-merge edge placement (x=±3.0)
@@ -1137,7 +1127,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
             stacking_congested = (
                 (max_y >= 3.0 and deadline_crossed)
                 or (reactive_pair_count >= 5 and max_y >= 2.5)
-                or (deadline_crossed and reactive_pair_count >= 3)  # NEW: deadline NO-merge scatter prevention
             ) and merge_grade == "NO"
             if current_type_has_reactive or current_type_has_near:
                 if stacking_congested:
@@ -1287,28 +1276,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                     # Postmortem constraint: preserve axis 9.6b, do NOT suppress at rp>=3+NO.
                     if merge_grade == "NO" and reactive_pair_count >= 2:
                         proximity_bonus += 200.0
-                    # v628: NEXT-aware proximity strengthening at rp>=3+NO (non-deadline)
-                    # Addresses failure mode: worst game T41 (rp=6, NO merge, next_type matches existing same-type)
-                    # where x=3.0 scatter prevented next-turn merge opportunity.
-                    # mandatory_themes第一条: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
-                    # By strengthening guidance BEFORE deadline is crossed, we prevent scatter that later
-                    # forces deadline_crossed+NO decisions (which would violate mandatory_themes).
-                    # Constraint: does NOT suppress axis 9.6b (forbidden at deadline_crossed+NO+rp>=3).
-                    # Uses same_type_pieces (pieces matching next_type) to detect merge setup opportunity.
-                    if merge_grade == "NO" and reactive_pair_count >= 3 and not deadline_crossed:
-                        if same_type_pieces:
-                            # next_type pieces are on board — placing current piece near them sets up next-turn merge
-                            # Adding +150 makes central placement significantly more attractive vs edge scatter
-                            proximity_bonus += 150.0
-                        elif next_type is not None:
-                            # No same-type pieces, but check if pieces of next_type exist on board
-                            # (placing near next_type pieces may enable future merges after current merges)
-                            for p in pieces:
-                                if p.get("type") == next_type:
-                                    horiz_dist_to_next = abs(x - p.get("x", 0))
-                                    if horiz_dist_to_next < 1.5:
-                                        proximity_bonus += 80.0
-                                    break
                     if piece_count >= 28:
                         # Scale proportionally with congestion: at pc=35, bonus *= 1.84
                         # At pc=40, bonus *= 2.48 — meaningful for axis 8.8 tie-breaking
@@ -2048,24 +2015,39 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # Penalty (-2000) is calibrated to override stacking/proximity bonuses (~200-900 at high pc)
         # without competing with merge bonuses (DIRECT=1200, NEAR=600). Fires at
         # merge_grade=NO and crosses_deadline in non-russia phases.
-        # v626 fix: remove russia_phase exemption — mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る。ロシア建国時でもこの原則は守れ」
-        # v625 safety valve (BOARD_COMPRESSION抑制, lines 1862-1888) is independent mechanism, keeps height control
+        # Russia phase intentionally allows growth crossings (safety valve axis 9.6).
+        # refs: analyze_board.py L412 (crosses_deadline computation),
+        #       game_history/20260330_144015_score0665.jsonl T60-61,
+        #       game_history/20260330_143501_score0994.jsonl T74-75
+        # v626: generalize to all phases — mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
+        # deadline_crossed + NO merge + crosses_deadline は最も悪い配置選択
+        # axis 9.6 (-4500) は rp>=1条件があり、rp=0では機能しない
+        # したがって crosses_deadline candidateには独立したペナルティが必要
+        # russia_phase時は既存のsafety valve（v625）が機能済みのため追加ペナルティ不要
         if merge_grade == "NO" and result.get("crosses_deadline", False):
-            # v461: increase from -1200 to -2000 — account for accumulated additive bonus magnitudes
-            # v411 calibrated at ~200-900 additive bonus range, but subsequent axes restored
-            # (9.6b v453, 9.3 gate removed v457, 5.6 reduced v458) with congestion scaling
-            # push total additive to ~1000+ at pc=30+. Worst game T70: x=3.0 selected
-            # despite -1200 because stacking (~467) + proximity (~360) + growth (~96) bonuses
-            # partially overcame penalty. Best game never triggers this (avoids crossing).
-            # -2000 provides ~1000 margin above max possible additive combination, ensuring
-            # deadline-crossing without merge is always deterred. Protected strategy (median
-            # 12789) has no additive axes that could overcome this penalty.
-            # Fixes failure mode: deadline-crossing NO-merge placement in congested endgame
-            # refs: game_history/20260401_225426_score1094.jsonl T70-T71 (CROSSES_DEADLINE_NO_MERGE),
-            #       game_history/20260401_223053_score3734.jsonl T137-T144 (no CROSSES_DEADLINE),
-            #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
-            score -= 2000.0
-            reasons.append("CROSSES_DEADLINE_NO_MERGE")
+            if not russia_phase:
+                # v461: increase from -1200 to -2000 — account for accumulated additive bonus magnitudes
+                # v411 calibrated at ~200-900 additive bonus range, but subsequent axes restored
+                # (9.6b v453, 9.3 gate removed v457, 5.6 reduced v458) with congestion scaling
+                # push total additive to ~1000+ at pc=30+. Worst game T70: x=3.0 selected
+                # despite -1200 because stacking (~467) + proximity (~360) + growth (~96) bonuses
+                # partially overcame penalty. Best game never triggers this (avoids crossing).
+                # -2000 provides ~1000 margin above max possible additive combination, ensuring
+                # deadline-crossing without merge is always deterred. Protected strategy (median
+                # 12789) has no additive axes that could overcome this penalty.
+                # Fixes failure mode: deadline-crossing NO-merge placement in congested endgame
+                # refs: game_history/20260401_225426_score1094.jsonl T70-T71 (CROSSES_DEADLINE_NO_MERGE),
+                #       game_history/20260401_223053_score3734.jsonl T137-T144 (no CROSSES_DEADLINE),
+                #       strategy_versions/protected/protected_e6f534c37e28_median12789_strategy.py
+                score -= 2000.0
+                reasons.append("CROSSES_DEADLINE_NO_MERGE")
+
+        # v628: edge NO-merge penalty at deadline with high rp + high max_y
+        # Worst game T69-T72: rp>=4, max_y>=2.0, merge_grade=NO, deadline_crossed, x=±3.0 placement
+        # axis 9.65 (-2000) insufficient at high rp; edge placement (|x|>=2.7) contributes to max_y runaway
+        if result.get("crosses_deadline", False) and merge_grade == "NO" and abs(x) >= 2.7 and max_y >= 2.0 and reactive_pair_count >= 4:
+            score -= 1500  # deters edge NO-merge placement at critical board height
+            reasons.append("EDGE_NO_MERGE_DEADLINE_HIGH_RP")
 
         # ----- update best candidate -----
         if score > best_score:
