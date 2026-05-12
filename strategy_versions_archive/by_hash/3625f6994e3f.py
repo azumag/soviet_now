@@ -64,16 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # vYYY: axis 9.11 merge candidate bonus — HEIGHT_CONTROL dominance prevention
-      # analysis_result.md hypothesis: "When current_type has NO same_type on board AND
-      # merge_grade != NO AND piece_count >= 20, add +500*merge_mult bonus to merge candidates"
-      # Worst game T22-T41: piece_count grew 20→31 without compression despite NEAR merge
-      # at x=-0.83 available. When current_type has no same-type AND merge_grade != NO,
-      # axis 9.6b provides no guidance. HEIGHT_CONTROL dominates (height penalty ~900 vs
-      # NEAR bonus ~600*merge_mult). +500*merge_mult makes merge candidates competitive.
-      # Fixes failure mode: HEIGHT_CONTROL dominance preventing compression at pc>=20
-      # refs: tmp/analysis_result.md (Hypothesis + Implementation Plan axis 9.11),
-      #       game_history/20260513_022310_score0389.jsonl (worst_game T22-T41)
       # vYYY: REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY requires merge_possible — fix rollback constraint violation
       # Rollback postmortem constraint: "forbid: REACTIVE_PAIRS_NO_MERGE_PENALTY without merge_available=true
       # requirement when max_y>=2.0 and deadline_crossed"
@@ -1363,45 +1353,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                         proximity_bonus = 0.0
                     if proximity_bonus > 0:
                         score += proximity_bonus
-
-        # ----- vYYY: axis 9.11 merge candidate bonus when no same-type on board (hypothesis) -----
-        # analysis_result.md hypothesis: "When current_type has NO same_type on board AND
-        # merge_grade != NO AND piece_count >= 20, add +500*merge_mult bonus to merge candidates.
-        # This makes compression-competitive with HEIGHT_CONTROL at moderate heights without
-        # modifying height penalty structure. Targets worst_game T22-T41 failure mode."
-        #
-        # Worst game T22-T41: piece_count grew 20→31 without compression despite NEAR merge
-        # at x=-0.83 (y~-1.92) being available. Root cause: axis 9.6b fires only when
-        # same_type_stack_top is not None, so when current type has no same-type on board and
-        # merge_grade != NO, there's no directional guidance for merge selection. HEIGHT_CONTROL
-        # (~80-900 points) dominates over axis 1 merge bonus (DIRECT 1200, NEAR 600).
-        # At piece_count >= 20, failing to merge allows piece accumulation without compression.
-        #
-        # Implementation: When same_type_stack_top is None (no same-type on board) and merge
-        # is available (merge_grade == DIRECT/NEAR) and piece_count >= 20, add bonus to make
-        # merge candidates more competitive with HEIGHT_CONTROL.
-        #
-        # Magnitude: +500*merge_mult at pc=20, scaled up at higher pc. At pc=30:
-        # 500*1.2=600, at pc=40: 500*1.2=600. This is additive to the base merge bonus,
-        # making DIRECT (1200*1.2+600=2040) and NEAR (600*1.2+600=1320) more decisive vs
-        # height penalty (~270 in HIGH phase at y=1.5 with height_mult=1.8).
-        #
-        # Rollback constraints respected:
-        # - Does NOT modify height_mult, merge_mult, balance_strength, or phase thresholds
-        # - Does NOT disable any existing axis (9.6b, 9.8, 8.8)
-        # - Purely additive bonus to merge candidates
-        #
-        # Fixes failure mode: HEIGHT_CONTROL dominance at pc>=20 when current type has no
-        # same-type on board but merge opportunity exists (worst_game T22-T41 pattern)
-        # refs: tmp/analysis_result.md (Hypothesis + Implementation Plan axis 9.11),
-        #       game_history/20260513_022310_score0389.jsonl (worst_game T22-T41)
-        if same_type_stack_top is None and merge_grade in ("DIRECT", "NEAR") and piece_count >= 20:
-            merge_candidate_bonus = 500.0 * merge_mult
-            if piece_count >= 28:
-                congestion_scale = 1.0 + (piece_count - 28) * 0.12
-                merge_candidate_bonus *= min(congestion_scale, 3.0)
-            score += merge_candidate_bonus
-            reasons.append("MERGE_CANDIDATE_BONUS")
 
         # ----- evaluation axis 9.3: reactive pair blocking avoidance (v384) -----
         # advice: "併合できるtypeが隣接しているとき、その間にピースを配置してしまうと、併合しづらくなる"
