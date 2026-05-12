@@ -64,7 +64,20 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v629: EDGE_NO_MERGE_DEADLINE penalty -1500 → -3500 (axis 9.17b in analysis_result.md)
+      # v631: axis 9.16 rp threshold 4→2 (analysis_result.md 仮説D)
+      # worst_game T56-T57: rp=2, no_merge_streak>=2, but axis 9.16 not triggered (rp>=4 required)
+      # worst_game T58-T59: rp=3, axis 9.16 still not triggered, edge placement → max_y runaway
+      # Lowering to rp>=2 activates guidance earlier during merge drought
+      # Fixes: worst_game merge drought exit failure from delayed axis 9.16 activation
+      # refs: tmp/analysis_result.md (仮説D), tmp/batch_summary.txt
+      # v630: axis 8.8 penalty -600→-900 (analysis_result.md 仮説B: AVOID_BLOCK dominance at rp=2-3)
+      # worst_game T56-T57: rp=2, axis 8.8 not triggered, AVOID_BLOCK dominated → x=-0.88 selected
+      # worst_game T58-T59: rp=3, axis 8.8(-600) insufficient vs AVOID_BLOCK → x=0.2, 0.8 edge
+      # -900 overwhelms AVOID_BLOCK (+600 max), ensures lowest placement during NO-merge at rp>=3
+      # Fixes: worst_game max_y runaway from edge placement during NO-merge at critical height
+      # Rollback constraint: axis 9.17b (|x|>=2.7, max_y>=2.0, deadline_crossed, rp>=4) forbidden
+      # refs: tmp/analysis_result.md (仮説B), tmp/batch_summary.txt
+      # v629: EDGE_NO_MERGE_DEADLINE penalty -1500 → -3500
      # Worst game T55-62: edge at x=±3.0 selected despite -1500 penalty, max_y runaway to 3.84
      # Fixes: edge placement with NO merge at critical height + deadline being insufficiently deterred
      # Rollback constraint: axis 9.17b (|x|>=2.7, max_y>=2.0, deadline_crossed, rp>=4) forbidden
@@ -1380,7 +1393,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260502_180734_score3053.jsonl (best game T119-126, rp=3-4)
         if (
             no_merge_streak >= 2
-            and reactive_pair_count >= 4
+            and reactive_pair_count >= 2
             and max_y >= 1.5
             and merge_grade == "NO"
         ):
@@ -1929,11 +1942,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       tmp/state/last_rollback_analysis.md
 
         if reactive_pair_count >= 3 and merge_grade == "NO":
-            # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
-            # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
-            # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
-            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
-            # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+            # v630: increase from -600 to -900 per analysis_result.md (仮説B)
+            # worst_game T56-T57: rp=2, axis 8.8 not triggered (rp<3), AVOID_BLOCK(+500) dominated
+            # worst_game T58: rp=3, axis 8.8(-600) insufficient vs AVOID_BLOCK, x=0.2 edge selected
+            # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures lowest placement at rp>=3
+            # Rollback constraint "forbid at max_y<=0.5" preserved: applies to max_y>=0.8+ territory
+            # refs: tmp/analysis_result.md (仮説B), tmp/batch_summary.txt
             score -= 900.0 * merge_mult
             reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 

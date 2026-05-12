@@ -1,5 +1,496 @@
-<!DOCTYPE html><html><head><meta charset="UTF-8">
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>Soren eloop Score Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html {
+    width: 1940px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+  }
+  body {
+    width: 1940px;
+    height: 1080px;
+    overflow: hidden;
+    background: transparent;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
+    padding: 18px 22px;
+  }
+  #dashboard {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .stats-bar {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    width: 100%;
+    flex: 0 0 auto;
+  }
+  .stat {
+    text-align: center;
+    background: rgba(17,17,39,0.95);
+    padding: 18px 24px;
+    border-radius: 10px;
+    border: 1px solid #333;
+    flex: 1;
+    min-width: 168px;
+    min-height: 150px;
+  }
+  .stat-label {
+    font-size: 1.05em;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .stat-value { font-size: 4.35em; font-weight: bold; line-height: 1.02; }
+  .stat-value.best { color: #ffd700; }
+  .stat-value.avg { color: #4ecdc4; }
+  .stat-value.games { color: #a78bfa; }
+  .stat-value.recent, .mini-value.recent { color: #f97316; }
+  .stat-value.trend, .mini-value.trend { font-size: 3.3em; line-height: 1.05; }
+  .stat-value.trend-up, .mini-value.trend-up { color: #86efac; }
+  .stat-value.trend-flat, .mini-value.trend-flat { color: #94a3b8; }
+  .stat-value.trend-down, .mini-value.trend-down { color: #fb923c; }
+  .stat-value.russia, .mini-value.russia { color: #facc15; }
+  .stat-value.hot, .mini-value.hot { color: #fb7185; }
+  .stat-value.cool, .mini-value.cool { color: #38bdf8; }
+  .rank-label { font-size: 0.6em; vertical-align: super; margin-right: 2px; }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(280px, 1fr));
+    gap: 12px;
+    width: 100%;
+    margin: 0 0 16px 0;
+    flex: 0 0 auto;
+  }
+  .mini-stat {
+    background: rgba(17,17,39,0.92);
+    border: 1px solid #2c2c45;
+    border-radius: 8px;
+    padding: 19px 22px;
+    min-height: 196px;
+  }
+  .mini-label {
+    color: #8b8fa3;
+    font-size: 1.12em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mini-value {
+    color: #e5e7eb;
+    font-size: 4.0em;
+    font-weight: 700;
+    line-height: 1.18;
+  }
+  .mini-sub {
+    color: #7c8197;
+    font-size: 1.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .metric-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+  }
+  .stat .metric-row { margin-top: 4px; }
+  .mini-stat .metric-row { margin-top: 2px; }
+  .donut {
+    --pct: 0%;
+    --ring: #94a3b8;
+    position: relative;
+    width: 70px;
+    height: 70px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at center, #111127 0 52%, transparent 53%),
+      conic-gradient(var(--ring) var(--pct), rgba(148,163,184,0.18) 0);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    box-shadow: 0 0 18px rgba(148, 163, 184, 0.22);
+  }
+  .stat .donut {
+    width: 82px;
+    height: 82px;
+  }
+  .donut span {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: #d7dde9;
+    font-size: 0.92em;
+    font-weight: 800;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .trend-badge {
+    width: 76px;
+    min-height: 64px;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(148, 163, 184, 0.10);
+    display: grid;
+    grid-template-rows: auto auto;
+    place-items: center;
+    padding: 7px 5px;
+  }
+  .trend-badge .arrow {
+    font-size: 2.35em;
+    line-height: 0.9;
+    font-weight: 900;
+  }
+  .trend-badge .delta {
+    margin-top: 4px;
+    font-size: 0.88em;
+    font-weight: 800;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #cbd5e1;
+  }
+  .trend-badge.up {
+    color: #86efac;
+    border-color: rgba(134, 239, 172, 0.34);
+    background: rgba(34, 197, 94, 0.14);
+    box-shadow: inset 0 0 18px rgba(34, 197, 94, 0.10);
+  }
+  .trend-badge.flat {
+    color: #cbd5e1;
+    background: rgba(148, 163, 184, 0.12);
+  }
+  .trend-badge.down {
+    color: #fb923c;
+    border-color: rgba(251, 146, 60, 0.34);
+    background: rgba(249, 115, 22, 0.14);
+    box-shadow: inset 0 0 18px rgba(249, 115, 22, 0.10);
+  }
+  @media (max-width: 900px) {
+    .stats-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+  }
+  .chart-container {
+    position: relative;
+    width: 100%;
+    height: 250px;
+    min-height: 0;
+    margin: 0;
+    background: rgba(17,17,39,0.95);
+    border-radius: 12px;
+    padding: 10px 18px;
+    border: 1px solid #333;
+    flex: 0 0 250px;
+    overflow: hidden;
+  }
+  canvas { width: 100%; display: block; }
+  .refresh-indicator {
+    position: fixed;
+    top: 10px;
+    right: 16px;
+    font-size: 0.7em;
+    color: #555;
+  }
+  .legend { display: none; }
+</style>
 </head>
-<body style="background:transparent">
-<script>setInterval(function(){location.reload();},3000);</script>
-</body></html>
+<body>
+
+<div id="dashboard">
+<div class="stats-bar">
+  <div class="stat"><div class="stat-label">All Best</div><div class="metric-row"><div class="stat-value best" id="best">-</div><div class="donut" id="bestDonut"><span>-</span></div></div></div>
+  <div class="stat"><div class="stat-label">All Games</div><div class="metric-row"><div class="stat-value games" id="games">-</div><div class="donut" id="gamesDonut"><span>-</span></div></div></div>
+  <div class="stat"><div class="stat-label">All Avg</div><div class="metric-row"><div class="stat-value avg" id="avg">-</div><div class="trend-badge" id="avgTrend"><div class="arrow">→</div><div class="delta">0</div></div></div></div>
+  <div class="stat"><div class="stat-label">All Russia</div><div class="metric-row"><div class="stat-value russia" id="russiaRate">-</div><div class="donut" id="russiaRateDonut"><span>-</span></div></div></div>
+</div>
+<div class="stats-grid">
+  <div class="mini-stat"><div class="mini-label">Recent 10 Avg</div><div class="metric-row"><div class="mini-value recent" id="recent10Avg">-</div><div class="trend-badge" id="recent10Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs recent 50</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent 50 Avg</div><div class="metric-row"><div class="mini-value recent" id="recent50Avg">-</div><div class="trend-badge" id="recent50Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs recent 100</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent 100 Avg</div><div class="metric-row"><div class="mini-value recent" id="recent100Avg">-</div><div class="trend-badge" id="recent100Trend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs all avg</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent Best</div><div class="metric-row"><div class="mini-value hot" id="recentBest">-</div><div class="donut" id="recentBestDonut"><span>-</span></div></div><div class="mini-sub">vs all best</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent Median</div><div class="metric-row"><div class="mini-value" id="recentMedian">-</div><div class="trend-badge" id="recentMedianTrend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub">vs recent 100 avg</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent P90</div><div class="metric-row"><div class="mini-value cool" id="recentP90">-</div><div class="donut" id="recentP90Donut"><span>-</span></div></div><div class="mini-sub">upper band</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent 3000+</div><div class="metric-row"><div class="mini-value hot" id="recent3000">-</div><div class="donut" id="recent3000Donut"><span>-</span></div></div><div class="mini-sub" id="recent3000Sub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent 2000+</div><div class="metric-row"><div class="mini-value cool" id="recent2000">-</div><div class="donut" id="recent2000Donut"><span>-</span></div></div><div class="mini-sub" id="recent2000Sub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaRecent100">-</div><div class="donut" id="russiaRecent100Donut"><span>-</span></div></div><div class="mini-sub" id="russiaRecent100Sub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Today Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaToday">-</div><div class="donut" id="russiaTodayDonut"><span>-</span></div></div><div class="mini-sub" id="russiaTodaySub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Last Russia</div><div class="metric-row"><div class="mini-value russia" id="russiaLast">-</div><div class="donut" id="russiaLastDonut"><span>-</span></div></div><div class="mini-sub" id="russiaLastSub">-</div></div>
+  <div class="mini-stat"><div class="mini-label">Recent Trend</div><div class="metric-row"><div class="mini-value trend" id="trend">-</div><div class="trend-badge" id="chartTrend"><div class="arrow">→</div><div class="delta">0</div></div></div><div class="mini-sub" id="trendSub">chart window</div></div>
+</div>
+<div class="chart-container">
+  <canvas id="chart"></canvas>
+</div>
+</div>
+
+<div class="refresh-indicator" id="refreshInfo">Generated: 17:15:08</div>
+<script>
+const DASHBOARD_DATA = {"chartLimit":300,"chartScores":[{"ts":"2026-05-11T13:01:12+09:00","game":23584,"score":2757},{"ts":"2026-05-11T13:05:39+09:00","game":23585,"score":1768},{"ts":"2026-05-11T13:09:02+09:00","game":23586,"score":1238},{"ts":"2026-05-11T13:14:16+09:00","game":23587,"score":2813},{"ts":"2026-05-11T13:19:06+09:00","game":23588,"score":3263},{"ts":"2026-05-11T13:23:44+09:00","game":23589,"score":2333},{"ts":"2026-05-11T13:27:36+09:00","game":23590,"score":1763},{"ts":"2026-05-11T13:33:55+09:00","game":23591,"score":3099},{"ts":"2026-05-11T13:37:49+09:00","game":23592,"score":1364},{"ts":"2026-05-11T13:41:24+09:00","game":23593,"score":1665},{"ts":"2026-05-11T13:45:31+09:00","game":23594,"score":2508},{"ts":"2026-05-11T13:49:09+09:00","game":23595,"score":1474},{"ts":"2026-05-11T13:52:01+09:00","game":23596,"score":1111},{"ts":"2026-05-11T13:56:31+09:00","game":23597,"score":2172},{"ts":"2026-05-11T13:59:46+09:00","game":23598,"score":1987},{"ts":"2026-05-11T14:03:54+09:00","game":23599,"score":2350},{"ts":"2026-05-11T14:34:03+09:00","game":23600,"score":1120},{"ts":"2026-05-11T14:38:29+09:00","game":23601,"score":2014},{"ts":"2026-05-11T14:41:22+09:00","game":23602,"score":809},{"ts":"2026-05-11T14:44:40+09:00","game":23603,"score":1349},{"ts":"2026-05-11T14:49:00+09:00","game":23604,"score":2034},{"ts":"2026-05-11T14:52:16+09:00","game":23605,"score":1874},{"ts":"2026-05-11T14:55:34+09:00","game":23606,"score":1252},{"ts":"2026-05-11T15:01:45+09:00","game":23607,"score":3777},{"ts":"2026-05-11T15:06:29+09:00","game":23608,"score":2233},{"ts":"2026-05-11T15:10:48+09:00","game":23609,"score":2020},{"ts":"2026-05-11T15:13:56+09:00","game":23610,"score":1636},{"ts":"2026-05-11T15:17:33+09:00","game":23611,"score":1860},{"ts":"2026-05-11T15:21:09+09:00","game":23612,"score":1379},{"ts":"2026-05-11T15:23:34+09:00","game":23613,"score":825},{"ts":"2026-05-11T15:28:14+09:00","game":23614,"score":2372},{"ts":"2026-05-11T15:31:15+09:00","game":23615,"score":1300},{"ts":"2026-05-11T15:34:09+09:00","game":23616,"score":823},{"ts":"2026-05-11T15:39:24+09:00","game":23617,"score":2449},{"ts":"2026-05-11T15:43:27+09:00","game":23618,"score":1460},{"ts":"2026-05-11T15:46:24+09:00","game":23619,"score":959},{"ts":"2026-05-11T15:50:47+09:00","game":23620,"score":2557},{"ts":"2026-05-11T15:56:05+09:00","game":23621,"score":2282},{"ts":"2026-05-11T15:58:57+09:00","game":23622,"score":1092},{"ts":"2026-05-11T16:02:54+09:00","game":23623,"score":1649},{"ts":"2026-05-11T16:35:27+09:00","game":23624,"score":624},{"ts":"2026-05-11T16:38:29+09:00","game":23625,"score":1242},{"ts":"2026-05-11T16:43:33+09:00","game":23626,"score":2877},{"ts":"2026-05-11T16:47:02+09:00","game":23627,"score":1268},{"ts":"2026-05-11T16:50:39+09:00","game":23628,"score":1727},{"ts":"2026-05-11T16:54:32+09:00","game":23629,"score":1687},{"ts":"2026-05-11T16:58:56+09:00","game":23630,"score":2139},{"ts":"2026-05-11T17:02:48+09:00","game":23631,"score":1533},{"ts":"2026-05-11T17:07:07+09:00","game":23632,"score":1993},{"ts":"2026-05-11T17:11:12+09:00","game":23633,"score":1469},{"ts":"2026-05-11T17:14:42+09:00","game":23634,"score":1465},{"ts":"2026-05-11T17:17:29+09:00","game":23635,"score":839},{"ts":"2026-05-11T17:21:55+09:00","game":23636,"score":2146},{"ts":"2026-05-11T17:27:03+09:00","game":23637,"score":3360},{"ts":"2026-05-11T17:30:55+09:00","game":23638,"score":1661},{"ts":"2026-05-11T17:36:02+09:00","game":23639,"score":2973},{"ts":"2026-05-11T17:41:55+09:00","game":23640,"score":3185},{"ts":"2026-05-11T17:45:38+09:00","game":23641,"score":1350},{"ts":"2026-05-11T17:49:19+09:00","game":23642,"score":1876},{"ts":"2026-05-11T17:52:32+09:00","game":23643,"score":1062},{"ts":"2026-05-11T17:55:34+09:00","game":23644,"score":855},{"ts":"2026-05-11T17:58:48+09:00","game":23645,"score":1309},{"ts":"2026-05-11T18:02:13+09:00","game":23646,"score":1192},{"ts":"2026-05-11T18:06:05+09:00","game":23647,"score":1404},{"ts":"2026-05-11T21:08:20+09:00","game":23648,"score":2963},{"ts":"2026-05-11T21:12:40+09:00","game":23649,"score":2037},{"ts":"2026-05-11T21:16:08+09:00","game":23650,"score":1044},{"ts":"2026-05-11T21:21:05+09:00","game":23651,"score":2690},{"ts":"2026-05-11T21:25:17+09:00","game":23652,"score":1918},{"ts":"2026-05-11T21:28:41+09:00","game":23653,"score":1652},{"ts":"2026-05-11T21:32:35+09:00","game":23654,"score":1298},{"ts":"2026-05-11T21:36:56+09:00","game":23655,"score":2010},{"ts":"2026-05-11T21:41:26+09:00","game":23656,"score":2015},{"ts":"2026-05-11T21:45:36+09:00","game":23657,"score":2134},{"ts":"2026-05-11T21:49:43+09:00","game":23658,"score":1991},{"ts":"2026-05-11T21:54:13+09:00","game":23659,"score":2298},{"ts":"2026-05-11T21:56:52+09:00","game":23660,"score":981},{"ts":"2026-05-11T22:00:56+09:00","game":23661,"score":1633},{"ts":"2026-05-11T22:04:32+09:00","game":23662,"score":1222},{"ts":"2026-05-11T22:08:35+09:00","game":23663,"score":2224},{"ts":"2026-05-11T22:12:54+09:00","game":23664,"score":2210},{"ts":"2026-05-11T22:16:13+09:00","game":23665,"score":1345},{"ts":"2026-05-11T22:20:39+09:00","game":23666,"score":2138},{"ts":"2026-05-11T22:25:15+09:00","game":23667,"score":2326},{"ts":"2026-05-11T22:28:19+09:00","game":23668,"score":1222},{"ts":"2026-05-11T22:32:27+09:00","game":23669,"score":1872},{"ts":"2026-05-11T22:39:04+09:00","game":23670,"score":3497},{"ts":"2026-05-11T22:42:44+09:00","game":23671,"score":1757},{"ts":"2026-05-11T23:17:24+09:00","game":23672,"score":1439},{"ts":"2026-05-11T23:19:48+09:00","game":23673,"score":451},{"ts":"2026-05-11T23:24:41+09:00","game":23674,"score":2354},{"ts":"2026-05-11T23:27:31+09:00","game":23675,"score":1088},{"ts":"2026-05-11T23:31:35+09:00","game":23676,"score":1593},{"ts":"2026-05-11T23:35:42+09:00","game":23677,"score":2159},{"ts":"2026-05-11T23:39:13+09:00","game":23678,"score":1312},{"ts":"2026-05-11T23:43:08+09:00","game":23679,"score":1911},{"ts":"2026-05-11T23:45:54+09:00","game":23680,"score":986},{"ts":"2026-05-11T23:48:17+09:00","game":23681,"score":691},{"ts":"2026-05-11T23:52:05+09:00","game":23682,"score":1833},{"ts":"2026-05-11T23:54:50+09:00","game":23683,"score":880},{"ts":"2026-05-11T23:58:58+09:00","game":23684,"score":1970},{"ts":"2026-05-12T00:02:14+09:00","game":23685,"score":965},{"ts":"2026-05-12T00:06:06+09:00","game":23686,"score":1384},{"ts":"2026-05-12T00:09:17+09:00","game":23687,"score":1534},{"ts":"2026-05-12T00:12:58+09:00","game":23688,"score":1283},{"ts":"2026-05-12T00:15:51+09:00","game":23689,"score":837},{"ts":"2026-05-12T00:19:47+09:00","game":23690,"score":1360},{"ts":"2026-05-12T00:26:42+09:00","game":23691,"score":1588},{"ts":"2026-05-12T00:30:39+09:00","game":23692,"score":1948},{"ts":"2026-05-12T00:35:06+09:00","game":23693,"score":2535},{"ts":"2026-05-12T00:39:08+09:00","game":23694,"score":2431},{"ts":"2026-05-12T00:42:16+09:00","game":23695,"score":1361},{"ts":"2026-05-12T00:46:08+09:00","game":23696,"score":2257},{"ts":"2026-05-12T00:51:09+09:00","game":23697,"score":2368},{"ts":"2026-05-12T00:54:00+09:00","game":23698,"score":1075},{"ts":"2026-05-12T00:56:59+09:00","game":23699,"score":770},{"ts":"2026-05-12T01:00:23+09:00","game":23700,"score":1172},{"ts":"2026-05-12T01:03:29+09:00","game":23701,"score":803},{"ts":"2026-05-12T01:05:40+09:00","game":23702,"score":557},{"ts":"2026-05-12T01:09:23+09:00","game":23703,"score":1763},{"ts":"2026-05-12T01:12:10+09:00","game":23704,"score":881},{"ts":"2026-05-12T01:15:38+09:00","game":23705,"score":1261},{"ts":"2026-05-12T01:20:36+09:00","game":23706,"score":2667},{"ts":"2026-05-12T01:24:38+09:00","game":23707,"score":1923},{"ts":"2026-05-12T01:29:34+09:00","game":23708,"score":2379},{"ts":"2026-05-12T01:32:09+09:00","game":23709,"score":808},{"ts":"2026-05-12T01:36:35+09:00","game":23710,"score":1584},{"ts":"2026-05-12T01:40:31+09:00","game":23711,"score":2169},{"ts":"2026-05-12T01:46:56+09:00","game":23712,"score":4082},{"ts":"2026-05-12T01:50:48+09:00","game":23713,"score":1596},{"ts":"2026-05-12T01:56:19+09:00","game":23714,"score":3199},{"ts":"2026-05-12T02:21:48+09:00","game":23715,"score":4296},{"ts":"2026-05-12T02:25:57+09:00","game":23716,"score":1583},{"ts":"2026-05-12T02:29:12+09:00","game":23717,"score":1337},{"ts":"2026-05-12T02:33:24+09:00","game":23718,"score":1813},{"ts":"2026-05-12T02:37:30+09:00","game":23719,"score":1884},{"ts":"2026-05-12T02:40:28+09:00","game":23720,"score":1318},{"ts":"2026-05-12T02:43:10+09:00","game":23721,"score":632},{"ts":"2026-05-12T02:46:35+09:00","game":23722,"score":1172},{"ts":"2026-05-12T02:49:03+09:00","game":23723,"score":435},{"ts":"2026-05-12T02:53:41+09:00","game":23724,"score":2400},{"ts":"2026-05-12T02:57:26+09:00","game":23725,"score":1475},{"ts":"2026-05-12T02:59:52+09:00","game":23726,"score":595},{"ts":"2026-05-12T03:03:12+09:00","game":23727,"score":1026},{"ts":"2026-05-12T03:10:14+09:00","game":23728,"score":2532},{"ts":"2026-05-12T03:14:06+09:00","game":23729,"score":1513},{"ts":"2026-05-12T03:16:31+09:00","game":23730,"score":899},{"ts":"2026-05-12T03:22:44+09:00","game":23731,"score":3714},{"ts":"2026-05-12T03:26:48+09:00","game":23732,"score":1954},{"ts":"2026-05-12T03:29:19+09:00","game":23733,"score":934},{"ts":"2026-05-12T03:33:01+09:00","game":23734,"score":1388},{"ts":"2026-05-12T03:35:59+09:00","game":23735,"score":839},{"ts":"2026-05-12T03:38:58+09:00","game":23736,"score":938},{"ts":"2026-05-12T03:43:35+09:00","game":23737,"score":2467},{"ts":"2026-05-12T03:47:46+09:00","game":23738,"score":1832},{"ts":"2026-05-12T03:52:25+09:00","game":23739,"score":2497},{"ts":"2026-05-12T03:57:04+09:00","game":23740,"score":2612},{"ts":"2026-05-12T04:00:06+09:00","game":23741,"score":965},{"ts":"2026-05-12T04:02:33+09:00","game":23742,"score":532},{"ts":"2026-05-12T04:07:23+09:00","game":23743,"score":2522},{"ts":"2026-05-12T04:10:19+09:00","game":23744,"score":944},{"ts":"2026-05-12T04:14:47+09:00","game":23745,"score":2183},{"ts":"2026-05-12T04:18:33+09:00","game":23746,"score":1336},{"ts":"2026-05-12T04:21:51+09:00","game":23747,"score":1243},{"ts":"2026-05-12T04:25:20+09:00","game":23748,"score":1621},{"ts":"2026-05-12T04:29:40+09:00","game":23749,"score":2086},{"ts":"2026-05-12T04:33:05+09:00","game":23750,"score":830},{"ts":"2026-05-12T04:37:27+09:00","game":23751,"score":2300},{"ts":"2026-05-12T04:51:35+09:00","game":23752,"score":717},{"ts":"2026-05-12T04:55:02+09:00","game":23753,"score":1383},{"ts":"2026-05-12T04:59:09+09:00","game":23754,"score":2284},{"ts":"2026-05-12T05:02:22+09:00","game":23755,"score":1166},{"ts":"2026-05-12T05:05:20+09:00","game":23756,"score":687},{"ts":"2026-05-12T05:08:42+09:00","game":23757,"score":812},{"ts":"2026-05-12T05:13:25+09:00","game":23758,"score":1864},{"ts":"2026-05-12T05:16:37+09:00","game":23759,"score":1156},{"ts":"2026-05-12T05:20:52+09:00","game":23760,"score":1952},{"ts":"2026-05-12T05:25:03+09:00","game":23761,"score":1675},{"ts":"2026-05-12T05:27:48+09:00","game":23762,"score":936},{"ts":"2026-05-12T05:31:23+09:00","game":23763,"score":999},{"ts":"2026-05-12T05:35:13+09:00","game":23764,"score":1579},{"ts":"2026-05-12T05:39:14+09:00","game":23765,"score":1368},{"ts":"2026-05-12T05:44:40+09:00","game":23766,"score":3138},{"ts":"2026-05-12T05:48:38+09:00","game":23767,"score":2017},{"ts":"2026-05-12T05:52:13+09:00","game":23768,"score":1408},{"ts":"2026-05-12T05:56:19+09:00","game":23769,"score":1617},{"ts":"2026-05-12T05:59:39+09:00","game":23770,"score":1405},{"ts":"2026-05-12T06:05:05+09:00","game":23771,"score":3475},{"ts":"2026-05-12T06:08:03+09:00","game":23772,"score":1411},{"ts":"2026-05-12T06:11:21+09:00","game":23773,"score":1514},{"ts":"2026-05-12T06:15:19+09:00","game":23774,"score":1972},{"ts":"2026-05-12T06:19:23+09:00","game":23775,"score":1908},{"ts":"2026-05-12T06:37:43+09:00","game":23776,"score":1416},{"ts":"2026-05-12T06:41:10+09:00","game":23777,"score":1840},{"ts":"2026-05-12T06:45:10+09:00","game":23778,"score":1444},{"ts":"2026-05-12T06:48:11+09:00","game":23779,"score":1096},{"ts":"2026-05-12T06:52:58+09:00","game":23780,"score":2035},{"ts":"2026-05-12T06:56:00+09:00","game":23781,"score":1111},{"ts":"2026-05-12T06:59:48+09:00","game":23782,"score":2007},{"ts":"2026-05-12T07:03:17+09:00","game":23783,"score":1345},{"ts":"2026-05-12T07:07:10+09:00","game":23784,"score":1320},{"ts":"2026-05-12T07:11:04+09:00","game":23785,"score":1719},{"ts":"2026-05-12T07:15:27+09:00","game":23786,"score":2218},{"ts":"2026-05-12T07:18:52+09:00","game":23787,"score":1157},{"ts":"2026-05-12T07:24:54+09:00","game":23788,"score":1178},{"ts":"2026-05-12T07:28:52+09:00","game":23789,"score":1487},{"ts":"2026-05-12T07:32:39+09:00","game":23790,"score":1345},{"ts":"2026-05-12T07:38:03+09:00","game":23791,"score":3353},{"ts":"2026-05-12T07:40:33+09:00","game":23792,"score":492},{"ts":"2026-05-12T07:44:34+09:00","game":23793,"score":2012},{"ts":"2026-05-12T07:50:03+09:00","game":23794,"score":2909},{"ts":"2026-05-12T07:53:35+09:00","game":23795,"score":1698},{"ts":"2026-05-12T07:57:38+09:00","game":23796,"score":1791},{"ts":"2026-05-12T08:00:37+09:00","game":23797,"score":775},{"ts":"2026-05-12T08:03:50+09:00","game":23798,"score":989},{"ts":"2026-05-12T08:07:20+09:00","game":23799,"score":1351},{"ts":"2026-05-12T08:10:52+09:00","game":23800,"score":1271},{"ts":"2026-05-12T08:15:41+09:00","game":23801,"score":2266},{"ts":"2026-05-12T08:20:24+09:00","game":23802,"score":2304},{"ts":"2026-05-12T08:23:13+09:00","game":23803,"score":668},{"ts":"2026-05-12T08:27:18+09:00","game":23804,"score":1555},{"ts":"2026-05-12T08:30:48+09:00","game":23805,"score":1450},{"ts":"2026-05-12T08:33:45+09:00","game":23806,"score":879},{"ts":"2026-05-12T08:37:03+09:00","game":23807,"score":960},{"ts":"2026-05-12T08:40:13+09:00","game":23808,"score":1018},{"ts":"2026-05-12T08:44:27+09:00","game":23809,"score":2037},{"ts":"2026-05-12T08:49:06+09:00","game":23810,"score":2459},{"ts":"2026-05-12T08:51:34+09:00","game":23811,"score":582},{"ts":"2026-05-12T09:47:24+09:00","game":23812,"score":1438},{"ts":"2026-05-12T09:50:55+09:00","game":23813,"score":1064},{"ts":"2026-05-12T09:54:57+09:00","game":23814,"score":2192},{"ts":"2026-05-12T09:59:14+09:00","game":23815,"score":1971},{"ts":"2026-05-12T10:02:41+09:00","game":23816,"score":1344},{"ts":"2026-05-12T10:05:58+09:00","game":23817,"score":1469},{"ts":"2026-05-12T10:11:15+09:00","game":23818,"score":2794},{"ts":"2026-05-12T10:15:37+09:00","game":23819,"score":2165},{"ts":"2026-05-12T10:18:25+09:00","game":23820,"score":1042},{"ts":"2026-05-12T10:21:57+09:00","game":23821,"score":1285},{"ts":"2026-05-12T10:27:17+09:00","game":23822,"score":2761},{"ts":"2026-05-12T10:31:41+09:00","game":23823,"score":1612},{"ts":"2026-05-12T10:35:43+09:00","game":23824,"score":2054},{"ts":"2026-05-12T10:39:45+09:00","game":23825,"score":1582},{"ts":"2026-05-12T10:44:22+09:00","game":23826,"score":1728},{"ts":"2026-05-12T10:49:02+09:00","game":23827,"score":2633},{"ts":"2026-05-12T10:53:10+09:00","game":23828,"score":1932},{"ts":"2026-05-12T10:57:49+09:00","game":23829,"score":1915},{"ts":"2026-05-12T11:01:10+09:00","game":23830,"score":1693},{"ts":"2026-05-12T11:06:52+09:00","game":23831,"score":2750},{"ts":"2026-05-12T11:12:36+09:00","game":23832,"score":3193},{"ts":"2026-05-12T11:15:43+09:00","game":23833,"score":731},{"ts":"2026-05-12T11:20:11+09:00","game":23834,"score":2291},{"ts":"2026-05-12T11:23:57+09:00","game":23835,"score":1837},{"ts":"2026-05-12T12:02:48+09:00","game":23836,"score":824},{"ts":"2026-05-12T12:06:38+09:00","game":23837,"score":1618},{"ts":"2026-05-12T12:10:01+09:00","game":23838,"score":1000},{"ts":"2026-05-12T12:15:08+09:00","game":23839,"score":1995},{"ts":"2026-05-12T12:18:17+09:00","game":23840,"score":1439},{"ts":"2026-05-12T12:22:30+09:00","game":23841,"score":1903},{"ts":"2026-05-12T12:26:59+09:00","game":23842,"score":1973},{"ts":"2026-05-12T12:30:50+09:00","game":23843,"score":2097},{"ts":"2026-05-12T12:34:45+09:00","game":23844,"score":1996},{"ts":"2026-05-12T12:38:31+09:00","game":23845,"score":1421},{"ts":"2026-05-12T12:41:04+09:00","game":23846,"score":835},{"ts":"2026-05-12T12:44:21+09:00","game":23847,"score":1306},{"ts":"2026-05-12T12:48:27+09:00","game":23848,"score":1701},{"ts":"2026-05-12T12:52:09+09:00","game":23849,"score":1067},{"ts":"2026-05-12T12:55:25+09:00","game":23850,"score":1299},{"ts":"2026-05-12T12:58:59+09:00","game":23851,"score":1335},{"ts":"2026-05-12T13:02:44+09:00","game":23852,"score":1516},{"ts":"2026-05-12T13:05:46+09:00","game":23853,"score":1137},{"ts":"2026-05-12T13:08:35+09:00","game":23854,"score":955},{"ts":"2026-05-12T13:11:26+09:00","game":23855,"score":936},{"ts":"2026-05-12T13:14:09+09:00","game":23856,"score":825},{"ts":"2026-05-12T13:18:14+09:00","game":23857,"score":2234},{"ts":"2026-05-12T13:21:48+09:00","game":23858,"score":2066},{"ts":"2026-05-12T13:25:14+09:00","game":23859,"score":1470},{"ts":"2026-05-12T15:45:34+09:00","game":23860,"score":838},{"ts":"2026-05-12T15:49:42+09:00","game":23861,"score":2316},{"ts":"2026-05-12T15:52:47+09:00","game":23862,"score":1350},{"ts":"2026-05-12T15:58:34+09:00","game":23863,"score":3006},{"ts":"2026-05-12T16:01:12+09:00","game":23864,"score":819},{"ts":"2026-05-12T16:05:01+09:00","game":23865,"score":1514},{"ts":"2026-05-12T16:08:30+09:00","game":23866,"score":1423},{"ts":"2026-05-12T16:12:49+09:00","game":23867,"score":2035},{"ts":"2026-05-12T16:16:10+09:00","game":23868,"score":1503},{"ts":"2026-05-12T16:20:45+09:00","game":23869,"score":2093},{"ts":"2026-05-12T16:24:14+09:00","game":23870,"score":1186},{"ts":"2026-05-12T16:29:05+09:00","game":23871,"score":2874},{"ts":"2026-05-12T16:32:42+09:00","game":23872,"score":1692},{"ts":"2026-05-12T16:36:10+09:00","game":23873,"score":1416},{"ts":"2026-05-12T16:39:49+09:00","game":23874,"score":1641},{"ts":"2026-05-12T16:43:27+09:00","game":23875,"score":1434},{"ts":"2026-05-12T16:47:19+09:00","game":23876,"score":1702},{"ts":"2026-05-12T16:53:47+09:00","game":23877,"score":4110},{"ts":"2026-05-12T16:56:28+09:00","game":23878,"score":781},{"ts":"2026-05-12T16:59:41+09:00","game":23879,"score":865},{"ts":"2026-05-12T17:03:11+09:00","game":23880,"score":1215},{"ts":"2026-05-12T17:07:45+09:00","game":23881,"score":1906},{"ts":"2026-05-12T17:11:48+09:00","game":23882,"score":1936},{"ts":"2026-05-12T17:15:08+09:00","game":23883,"score":1040}],"scoreStats":{"count":23883,"currentGame":24242,"best":6058,"second":5801,"third":5737,"average":1500,"recent10Average":1663,"recent50Average":1595,"recent50Best":4110,"recent100Average":1644,"recent100Best":4110,"recent100Median":1514,"recent100P90":2459,"recent100Score3000":4,"recent100Score3000Rate":4.0,"recent100Score2000":26,"recent100Score2000Rate":26.0,"median":1362,"p90":2420,"score3000":895,"score3000Rate":3.75,"score2000":4745,"score2000Rate":19.87,"bestGame":22638,"bestTs":"2026-05-08T13:19:49+09:00"},"russiaStats":{"count":200,"rate":0.83,"recent100":2,"recent100Rate":2.0,"today":7,"last24h":10,"last":{"ts":"2026-05-12T16:52:01+09:00","label":"2026-05-12 16:52 JST","game":24237,"score":2901,"turns":112},"averageScore":2941,"bestScore":4961,"averageTurns":112,"fastestTurns":75}};
+const SCORES = DASHBOARD_DATA.chartScores;
+const SCORE_STATS = DASHBOARD_DATA.scoreStats;
+const RUSSIA_STATS = DASHBOARD_DATA.russiaStats;
+const CURRENT_GAME = SCORE_STATS.currentGame;
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+
+function clampPct(value, max) {
+  if (!isFinite(value) || !isFinite(max) || max <= 0) return 0;
+  return Math.max(0, Math.min(100, (value / max) * 100));
+}
+
+function setDonut(id, value, max, color, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const pct = clampPct(value, max);
+  el.style.setProperty('--pct', pct.toFixed(1) + '%');
+  el.style.setProperty('--ring', color || '#94a3b8');
+  const span = el.querySelector('span');
+  if (span) span.textContent = label || Math.round(pct) + '%';
+}
+
+function setTrendBadge(id, delta, unit) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const arrow = el.querySelector('.arrow');
+  const deltaEl = el.querySelector('.delta');
+  const absDelta = Math.abs(Number(delta) || 0);
+  const dir = absDelta < 5 ? 'flat' : (delta > 0 ? 'up' : 'down');
+  el.classList.remove('up', 'flat', 'down');
+  el.classList.add(dir);
+  if (arrow) arrow.textContent = dir === 'up' ? '▲' : (dir === 'down' ? '▼' : '→');
+  if (deltaEl) {
+    const signed = dir === 'flat' ? '±' : (delta > 0 ? '+' : '-');
+    deltaEl.textContent = signed + Math.round(absDelta) + (unit || '');
+  }
+}
+
+function updateExtraStats(scores) {
+  const totalGames = CURRENT_GAME || scores.length;
+  const now = new Date();
+  const lastRussia = RUSSIA_STATS.last || null;
+  const gamesSinceRussia = lastRussia ? Math.max(0, totalGames - lastRussia.game) : 100;
+
+  document.getElementById('russiaRate').textContent = RUSSIA_STATS.rate.toFixed(2) + '%';
+  document.getElementById('russiaRecent100').textContent = RUSSIA_STATS.recent100Rate.toFixed(2) + '%';
+  document.getElementById('russiaRecent100Sub').textContent = RUSSIA_STATS.recent100 + ' in last 100';
+  document.getElementById('russiaToday').textContent = String(RUSSIA_STATS.today);
+  document.getElementById('russiaTodaySub').textContent = RUSSIA_STATS.last24h + ' in last 24h';
+  document.getElementById('russiaLast').textContent = lastRussia ? ('G' + lastRussia.game) : '-';
+  document.getElementById('russiaLastSub').textContent = lastRussia ? ((totalGames - lastRussia.game) + ' games ago / ' + lastRussia.score + 'pt') : '-';
+  document.getElementById('recent10Avg').textContent = SCORE_STATS.recent10Average;
+  document.getElementById('recent50Avg').textContent = SCORE_STATS.recent50Average;
+  document.getElementById('recent100Avg').textContent = SCORE_STATS.recent100Average;
+  document.getElementById('recentBest').textContent = SCORE_STATS.recent100Best || '-';
+  document.getElementById('recentMedian').textContent = SCORE_STATS.recent100Median;
+  document.getElementById('recentP90').textContent = SCORE_STATS.recent100P90;
+  document.getElementById('recent3000').textContent = SCORE_STATS.recent100Score3000Rate.toFixed(2) + '%';
+  document.getElementById('recent3000Sub').textContent = SCORE_STATS.recent100Score3000 + ' in last 100';
+  document.getElementById('recent2000').textContent = SCORE_STATS.recent100Score2000Rate.toFixed(2) + '%';
+  document.getElementById('recent2000Sub').textContent = SCORE_STATS.recent100Score2000 + ' in last 100';
+
+  setDonut('bestDonut', SCORE_STATS.best, 6000, '#ffd700');
+  setDonut('gamesDonut', SCORE_STATS.count % 1000, 1000, '#a78bfa', (SCORE_STATS.count % 1000) + '/1k');
+  setDonut('russiaRateDonut', RUSSIA_STATS.rate, 2, '#facc15', RUSSIA_STATS.rate.toFixed(1) + '%');
+  setTrendBadge('avgTrend', SCORE_STATS.recent100Average - SCORE_STATS.average, '');
+  setTrendBadge('recent10Trend', SCORE_STATS.recent10Average - SCORE_STATS.recent50Average, '');
+  setTrendBadge('recent50Trend', SCORE_STATS.recent50Average - SCORE_STATS.recent100Average, '');
+  setTrendBadge('recent100Trend', SCORE_STATS.recent100Average - SCORE_STATS.average, '');
+  setDonut('recentBestDonut', SCORE_STATS.recent100Best, SCORE_STATS.best || 1, '#fb7185');
+  setTrendBadge('recentMedianTrend', SCORE_STATS.recent100Median - SCORE_STATS.recent100Average, '');
+  setDonut('recentP90Donut', SCORE_STATS.recent100P90, 3500, '#38bdf8');
+  setDonut('recent3000Donut', SCORE_STATS.recent100Score3000Rate, 100, '#fb7185', SCORE_STATS.recent100Score3000 + '/100');
+  setDonut('recent2000Donut', SCORE_STATS.recent100Score2000Rate, 100, '#38bdf8', SCORE_STATS.recent100Score2000 + '/100');
+  setDonut('russiaRecent100Donut', RUSSIA_STATS.recent100Rate, 20, '#facc15', RUSSIA_STATS.recent100 + '/100');
+  setDonut('russiaTodayDonut', RUSSIA_STATS.today, 20, '#facc15', String(RUSSIA_STATS.today));
+  setDonut('russiaLastDonut', Math.max(0, 100 - gamesSinceRussia), 100, '#facc15', gamesSinceRussia + 'g');
+}
+
+function movingAvg(scores, w) {
+  return scores.map((_, i) => {
+    const sl = scores.slice(Math.max(0, i - w + 1), i + 1);
+    return sl.reduce((s, d) => s + d.score, 0) / sl.length;
+  });
+}
+
+function linearTrend(scores) {
+  const n = scores.length;
+  if (!n) return { slope: 0, intercept: 0, r2: 0, y0: 0, yN: 0, dir: 'flat' };
+  if (n === 1) {
+    const y = scores[0].score;
+    return { slope: 0, intercept: y, r2: 1, y0: y, yN: y, dir: 'flat' };
+  }
+
+  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0, sumYY = 0;
+  scores.forEach((d, i) => {
+    const x = i;
+    const y = d.score;
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+    sumYY += y * y;
+  });
+
+  const den = n * sumXX - sumX * sumX;
+  const slope = den === 0 ? 0 : (n * sumXY - sumX * sumY) / den;
+  const intercept = (sumY - slope * sumX) / n;
+
+  const corrDen = Math.sqrt(
+    Math.max(0, (n * sumXX - sumX * sumX) * (n * sumYY - sumY * sumY))
+  );
+  const corrNum = n * sumXY - sumX * sumY;
+  const r = corrDen === 0 ? 0 : corrNum / corrDen;
+  const r2 = Math.max(0, Math.min(1, r * r));
+
+  const y0 = intercept;
+  const yN = intercept + slope * (n - 1);
+  const absSlope = Math.abs(slope);
+  const dir = absSlope < 1.5 ? 'flat' : (slope > 0 ? 'up' : 'down');
+  return { slope, intercept, r2, y0, yN, dir };
+}
+
+function drawChart(scores) {
+  if (!scores.length) return;
+  updateExtraStats(scores);
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const W = rect.width - 36;
+  const H = Math.max(120, Math.floor(rect.height - 20));
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const sorted = scores.map(d => d.score).sort((a, b) => b - a);
+  const unique = [...new Set(sorted)];
+  const chartMaxScore = unique[0] || 0;
+  const chartSecondScore = unique[1] || '-';
+  const chartThirdScore = unique[2] || '-';
+  const avgScore = SCORE_STATS.average;
+  const ma = movingAvg(scores, 10);
+  const trend = linearTrend(scores);
+
+  document.getElementById('best').textContent = SCORE_STATS.best;
+  document.getElementById('avg').textContent = avgScore;
+  document.getElementById('games').textContent = SCORE_STATS.count;
+  document.getElementById('games').title = 'chart shows latest ' + scores.length + ' games';
+  const trendEl = document.getElementById('trend');
+  const slopeRounded = (Math.round(trend.slope * 10) / 10).toFixed(1);
+  const fitPct = Math.round(trend.r2 * 100);
+  if (trend.dir === 'up') {
+    trendEl.textContent = 'UP ' + '+' + slopeRounded + '/g';
+  } else if (trend.dir === 'down') {
+    trendEl.textContent = 'DOWN ' + slopeRounded + '/g';
+  } else {
+    trendEl.textContent = 'STABLE ' + slopeRounded + '/g';
+  }
+  trendEl.title = 'line fit=' + fitPct + '%';
+  document.getElementById('trendSub').textContent = 'last ' + scores.length + ' games / fit ' + fitPct + '%';
+  trendEl.classList.remove('trend-up', 'trend-flat', 'trend-down');
+  trendEl.classList.add(
+    trend.dir === 'up' ? 'trend-up' : (trend.dir === 'down' ? 'trend-down' : 'trend-flat')
+  );
+  setTrendBadge('chartTrend', trend.slope, '/g');
+
+  const padL = 58, padR = 20, padT = 12, padB = 28;
+  const cW = W - padL - padR, cH = H - padT - padB;
+  const yMax = Math.ceil(Math.max(chartMaxScore, avgScore) / 500) * 500 + 200;
+  const xRange = Math.max(1, scores.length - 1);
+  const xScale = i => padL + (i / xRange) * cW;
+  const yScale = v => padT + cH - (v / yMax) * cH;
+
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.strokeStyle = '#2a2b55'; ctx.lineWidth = 1;
+  ctx.font = '12px monospace'; ctx.fillStyle = '#8b93a7';
+  for (let i = 0; i <= 3; i++) {
+    const v = (yMax / 3) * i, y = yScale(v);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillText(Math.round(v), 4, y + 4);
+  }
+
+  const xi = Math.max(1, Math.ceil(scores.length / 8));
+  ctx.fillStyle = '#8b93a7';
+  for (let i = 0; i < scores.length; i += xi) {
+    const label = 'G' + scores[i].game;
+    ctx.fillText(label, xScale(i) - 20, H - 8);
+  }
+
+  ctx.fillStyle = 'rgba(78,205,196,0.08)';
+  ctx.beginPath();
+  scores.forEach((d, i) => {
+    const x = xScale(i), y = yScale(d.score);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.lineTo(xScale(scores.length - 1), yScale(0));
+  ctx.lineTo(xScale(0), yScale(0));
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(78,205,196,0.95)'; ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  scores.forEach((d, i) => {
+    const x = xScale(i), y = yScale(d.score);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(255,107,107,0.95)'; ctx.lineWidth = 2.6;
+  ctx.beginPath();
+  ma.forEach((v, i) => { const x = xScale(i), y = yScale(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.stroke();
+
+  const trendColor = trend.dir === 'up'
+    ? '#00ff85'
+    : (trend.dir === 'down' ? '#ff4d4f' : '#f8fafc');
+  const trendDash = trend.dir === 'flat' ? [4, 7] : [14, 8];
+  ctx.setLineDash(trendDash);
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(xScale(0), yScale(trend.y0));
+  ctx.lineTo(xScale(scores.length - 1), yScale(trend.yN));
+  ctx.stroke();
+  ctx.strokeStyle = trendColor;
+  ctx.lineWidth = 3.2;
+  ctx.beginPath();
+  ctx.moveTo(xScale(0), yScale(trend.y0));
+  ctx.lineTo(xScale(scores.length - 1), yScale(trend.yN));
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = trendColor;
+  ctx.font = '12px monospace';
+  const trendLabel = 'trend ' + trend.dir + ' ' +
+    (trend.slope >= 0 ? '+' : '') + slopeRounded + '/game fit=' + fitPct + '%';
+  const trendMidY = yScale((trend.y0 + trend.yN) / 2);
+  const trendLabelY = Math.max(padT + 12, Math.min(H - padB - 8, trendMidY - 8));
+  const trendLabelX = padL + 4;
+  const trendLabelW = ctx.measureText(trendLabel).width + 8;
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(trendLabelX - 4, trendLabelY - 12, trendLabelW, 18);
+  ctx.fillStyle = trendColor;
+  ctx.fillText(trendLabel, trendLabelX, trendLabelY);
+  ctx.fillStyle = '#ffd700';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText('best ' + chartMaxScore, padL + 4, padT + 12);
+}
+
+drawChart(SCORES);
+window.addEventListener('resize', () => drawChart(SCORES));
+
+// Auto-reload every 3 seconds (OBS CEF doesn't support meta refresh on file://)
+setInterval(function(){location.reload();},3000);
+</script>
+</body>
+</html>
