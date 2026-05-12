@@ -12,7 +12,6 @@ Game Overview:
          1.5. NEAR merge deadline risk - Graduated penalty using reactor deadline_margin (v366/v409)
          1.5b. Danger NEAR merge priority - v383: unutilized danger_merge_available for NEAR+danger
          1.7. High pc NEAR merge penalty - v422: structural fork cancels NEAR at pc>=33+deadline+y>=1.0
-1.7b. CRITICAL_HEIGHT_NEAR_SUPPRESSION - suppress NEAR at max_y>=2.0+rp>=4 (score0835 worst_game fix)
          1.6. Danger DIRECT merge priority - v382: unutilized danger_direct_merge_available from analysis
         2. Height penalty - Penalty for high landing position (varies by phase)
          3. Drift penalty - Penalty for post-landing drift due to polygon shape
@@ -1019,25 +1018,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if merge_grade == "NEAR" and piece_count >= 33 and reactor_margin < 1.0 and landing_y >= 1.0:
             score -= 600.0 * merge_mult
             reasons.append("HIGH_PC_NEAR_PENALTY")
-
-        # ----- evaluation axis 1.7b: CRITICAL_HEIGHT_NEAR_SUPPRESSION (score0835 worst_game fix) -----
-        # worst_game (score 0835) T53-T54: selected NEAR at max_y=2.22-2.41, rp=3-4, DIRECT unavailable
-        # → NEAR failed → T55 emergency DIRECT at non-optimal position (score_delta=72) → game over.
-        # best_game (score 2234) T85: selected DIRECT at max_y=2.14, rp=2 — rp was lower so issue didn't trigger.
-        # root cause: at max_y>=2.0 with rp>=4, the board is in a critical-height danger zone where NEAR
-        # merges have elevated failure risk. When rp>=4 and max_y>=2.0, the stack is high enough that
-        # NEAR placement failure leads to chain reactions and emergency DIRECT at suboptimal positions.
-        # Hypothesis: suppress NEAR when max_y>=2.0 AND rp>=4 to force wait-for-DIRECT or lowest-height placement.
-        # The suppression threshold (max_y>=2.0, rp>=4) is stricter than worst_game's actual values
-        # (max_y=2.22, rp=3-4) to account for variability in height measurement and reaction-pair counting.
-        # If DIRECT is unavailable at these heights, prefer placing NEAR at the absolute lowest available
-        # position rather than mid-height positions that risk failure → emergency → game over.
-        # Rollback constraints respected: no axis 9.17b, no axis 1.5c russia_phase, prioritize max_y>=2.0 merge.
-        # refs: tmp/analysis_result.md, game_history/20260512_124104_score0835.jsonl T53-T55,
-        #       game_history/20260512_131814_score2234.jsonl T85, tmp/state/last_rollback_postmortem.md
-        if max_y >= 2.0 and reactor_reactive_pairs >= 4 and merge_grade == "NEAR":
-            score -= 400.0 * merge_mult
-            reasons.append("CRITICAL_HEIGHT_NEAR_SUPPRESSION")
 
         # ----- evaluation axis 1.6: danger DIRECT merge priority (v382: unutilized analysis info) -----
         # Postmortem prioritize: "deadline_crossed下でのDIRECT_MERGEの優先度を最大化すること。
