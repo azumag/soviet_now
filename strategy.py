@@ -64,7 +64,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vYYY: Hard Deadline-Merge Override — mandatory_themes hard constraint enforcement
+      # vYYY: axis 9.17 NEXT_MERGE_SCOUT — proactive NEXT merge scouting
+      # Worst game T40-46: rp=6, NO merge, deadline_crossed for 13 turns, AVOID_BLOCK dominating
+      # Strategy only penalized bad placements, never scouted if NEXT piece could merge.
+      # Now checks NEXT via analyze_drops and adds +600*merge_mult for merge-enabling positions.
+      # mandatory_themes: "NEXTを考慮したドロップをせよ" — actively scout NEXT merge opportunity
+      # Fixes failure mode: reactive NO-merge streak at deadline without merge path scouting
+      # refs: tmp/analysis_result.md (hypothesis + Implementation Plan)
+      # vYYY: Hard Deadline-Merge Override — mandatory_themes hard constraint enforcement
      # Change 1: deadline_crossed=true && merge_possible=true && merge_grade=="NO" → -10000 penalty
      # Worst game T64-69: 6 consecutive NO_MERGE selections despite merge_available=true, deadline_crossed=true
      # mandatory_themes: "deadline_crossed=true の場合、merge_available=true では NO_MERGE を選択してはならない"
@@ -1428,6 +1435,54 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if traction_bonus > 20:
                     score += traction_bonus
                     reasons.append("MERGE_DROUGHT_TRACTION")
+
+        # ----- evaluation axis 9.17: next merge scout (vYYY) -----
+        # analysis_result.md hypothesis: "NEXT_MERGE_SCOUT"
+        #
+        # Problem: Worst game T40-46 has rp=6, merge_grade=NO, deadline_crossed=true for 13 turns.
+        # All axes penalize bad placements but nothing proactively searches for NEXT merge opportunity.
+        # Strategy is purely reactive — when merge is unavailable, it only applies penalties without
+        # scouting whether the NEXT piece can create a merge path.
+        #
+        # Mechanism: When rp>=4 && merge_grade==NO && deadline_crossed, simulate NEXT piece drop
+        # via analyze_drops to check if NEXT can merge. If yes, add +600*merge_mult to candidates
+        # that position current piece to enable that future NEXT merge.
+        #
+        # mandatory_themes:
+        # - "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る" — no mechanism
+        #   currently verifies if NEXT piece can merge after a deadline_crossing placement
+        # - "NEXTを考慮したドロップをせよ" — AVOID_BLOCK uses next_type only to avoid blocking,
+        #   not to scout merge opportunity
+        #
+        # Implementation: Check if next piece can merge with any board piece. If yes, find the
+        # board piece that would pair with NEXT and add bonus for positions within setup_x_dist.
+        # This transforms strategy from passive penalty application to active merge path creation.
+        #
+        # Constraints respected:
+        # - Does not remove/reduce AVOID_BLOCK_REACTIVE_PAIR cap
+        # - Does not disable REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY
+        # - Does not modify axis 8.8 penalty structure
+        # - Adds new axis only as additive bonus (no existing penalty removal)
+        # - merge_available=true at max_y>=2.0+deadline_crossed → existing axis 8.7/8.8 still fire
+        #
+        # refs: tmp/analysis_result.md (hypothesis + Implementation Plan),
+        #       tmp/batch_summary.txt, tmp/state/last_rollback_postmortem.md,
+        #       data/mandatory_themes.txt
+        if reactive_pair_count >= 4 and merge_grade == "NO" and deadline_crossed:
+            next_type = game_state.get("next", {}).get("type", 0)
+            next_r = game_state.get("next", {}).get("r", 0.5)
+            if next_type and next_r:
+                next_results, _ = analyze_drops(pieces, next_type, next_r, shapes)
+                next_merge_grades = [r.get("merge_grade", "NO") for r in next_results]
+                if any(g in ["DIRECT", "NEAR"] for g in next_merge_grades):
+                    setup_x_dist = 2.0
+                    for r in next_results:
+                        if r.get("merge_grade") in ["DIRECT", "NEAR"]:
+                            target_x = r.get("x", 0)
+                            if abs(x - target_x) <= setup_x_dist:
+                                score += 600.0 * merge_mult
+                                reasons.append("NEXT_MERGE_SCOUT")
+                                break
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.

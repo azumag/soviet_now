@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-12 22:35:56 JST`
-- Nodes: `1414`
-- Edges: `1935`
-- Current: `1fa4f1bdb308`
+- Updated: `2026-05-13 00:21:43 JST`
+- Nodes: `1415`
+- Edges: `1936`
+- Current: `e9242b4d9a93`
 - Anchor: `fc36b52375f9`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_452653e77d19["452653e77d19<br/>g=72 n=20<br/>comp=9701.9"]
     h_3f33e29a4133["3f33e29a4133<br/>g=24 n=20<br/>comp=11300.4"]
     h_9079aee71c00["9079aee71c00<br/>g=48 n=20<br/>comp=10727.5"]
     h_004df995a743["004df995a743<br/>g=12 n=12<br/>comp=10857.2"]
@@ -59,7 +58,7 @@ flowchart TD
     h_75e4eab65c4a["75e4eab65c4a<br/>g=23 n=20<br/>comp=10625.2"]
     h_71f71bc828fa["71f71bc828fa<br/>g=48 n=20<br/>comp=11049.7"]
     h_a2cf0ecbe2ba["a2cf0ecbe2ba<br/>g=48 n=20<br/>comp=9933.3"]
-    h_1fa4f1bdb308["1fa4f1bdb308<br/>CURRENT<br/>g=24 n=20<br/>comp=11642.2"]
+    h_1fa4f1bdb308["1fa4f1bdb308<br/>g=48 n=20<br/>comp=11642.9"]
     h_888a0e6a651f["888a0e6a651f<br/>g=43 n=20<br/>comp=10268.5"]
     h_7e184fae3207["7e184fae3207<br/>g=12 n=12<br/>comp=9890.0"]
     h_9476ed529771["9476ed529771<br/>g=24 n=20<br/>comp=11387.8"]
@@ -75,17 +74,13 @@ flowchart TD
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
+    h_e9242b4d9a93["e9242b4d9a93<br/>CURRENT"]
 
-    h_452653e77d19 -->|improve| h_3f33e29a4133
     h_3f33e29a4133 -->|improve| h_9079aee71c00
     h_9079aee71c00 -->|improve| h_004df995a743
     h_004df995a743 -. rollback .-> h_9079aee71c00
     h_9079aee71c00 -->|improve| h_bb1dfb648490
     h_bb1dfb648490 -->|improve| h_203a542d6347
-    h_203a542d6347 -. rollback .-> h_452653e77d19
-    h_452653e77d19 -->|improve| h_0d0fc4a9fde7
-    h_0d0fc4a9fde7 -. rollback .-> h_452653e77d19
-    h_452653e77d19 -->|improve| h_61b864de0454
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
     h_330472aff644 -->|improve| h_365cc261af05
@@ -142,13 +137,13 @@ flowchart TD
     h_bcce193758b3 -->|improve| h_7f746ab4e7eb
     h_fc36b52375f9 -->|improve| h_e964b94bb7bc
     h_e964b94bb7bc -. rollback .-> h_1fa4f1bdb308
+    h_1fa4f1bdb308 -->|improve| h_e9242b4d9a93
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_452653e77d19 plain;
     class h_3f33e29a4133 plain;
     class h_9079aee71c00 plain;
     class h_004df995a743 plain;
@@ -192,7 +187,7 @@ flowchart TD
     class h_75e4eab65c4a plain;
     class h_71f71bc828fa plain;
     class h_a2cf0ecbe2ba plain;
-    class h_1fa4f1bdb308 current;
+    class h_1fa4f1bdb308 plain;
     class h_888a0e6a651f plain;
     class h_7e184fae3207 plain;
     class h_9476ed529771 plain;
@@ -208,6 +203,7 @@ flowchart TD
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
+    class h_e9242b4d9a93 current;
 ```
 
 ## Detail 1/18
@@ -5009,9 +5005,9 @@ flowchart TD
 
 ## Detail 18/18
 
-- Range: `0d0fc4a9fde7` .. `1d9b85a22a22`
-- Nodes in this diagram: `54`
-- Internal edges in this diagram: `56`
+- Range: `0d0fc4a9fde7` .. `e9242b4d9a93`
+- Nodes in this diagram: `55`
+- Internal edges in this diagram: `57`
 - Cross-chunk link: `452653e77d19 --improve--> 0d0fc4a9fde7`
 - Cross-chunk link: `0d0fc4a9fde7 -.rollback.-> 452653e77d19`
 - Cross-chunk link: `452653e77d19 --improve--> 61b864de0454`
@@ -5066,7 +5062,7 @@ flowchart TD
     h_75e4eab65c4a["75e4eab65c4a<br/>g=23 n=20<br/>comp=10625.2"]
     h_71f71bc828fa["71f71bc828fa<br/>g=48 n=20<br/>comp=11049.7"]
     h_a2cf0ecbe2ba["a2cf0ecbe2ba<br/>g=48 n=20<br/>comp=9933.3"]
-    h_1fa4f1bdb308["1fa4f1bdb308<br/>CURRENT<br/>g=24 n=20<br/>comp=11642.2"]
+    h_1fa4f1bdb308["1fa4f1bdb308<br/>g=48 n=20<br/>comp=11642.9"]
     h_888a0e6a651f["888a0e6a651f<br/>g=43 n=20<br/>comp=10268.5"]
     h_7e184fae3207["7e184fae3207<br/>g=12 n=12<br/>comp=9890.0"]
     h_9476ed529771["9476ed529771<br/>g=24 n=20<br/>comp=11387.8"]
@@ -5082,6 +5078,7 @@ flowchart TD
     h_4504b0237b49["4504b0237b49<br/>g=1 n=1<br/>comp=10371.0"]
     h_2ad5850b541e["2ad5850b541e"]
     h_1d9b85a22a22["1d9b85a22a22<br/>g=48 n=20<br/>comp=9742.6"]
+    h_e9242b4d9a93["e9242b4d9a93<br/>CURRENT"]
 
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
@@ -5139,6 +5136,7 @@ flowchart TD
     h_bcce193758b3 -->|improve| h_7f746ab4e7eb
     h_fc36b52375f9 -->|improve| h_e964b94bb7bc
     h_e964b94bb7bc -. rollback .-> h_1fa4f1bdb308
+    h_1fa4f1bdb308 -->|improve| h_e9242b4d9a93
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5183,7 +5181,7 @@ flowchart TD
     class h_75e4eab65c4a plain;
     class h_71f71bc828fa plain;
     class h_a2cf0ecbe2ba plain;
-    class h_1fa4f1bdb308 current;
+    class h_1fa4f1bdb308 plain;
     class h_888a0e6a651f plain;
     class h_7e184fae3207 plain;
     class h_9476ed529771 plain;
@@ -5199,9 +5197,20 @@ flowchart TD
     class h_4504b0237b49 plain;
     class h_2ad5850b541e plain;
     class h_1d9b85a22a22 plain;
+    class h_e9242b4d9a93 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#24339 `1fa4f1bd -> e9242b4d`
+
+- scores: `6611 13702 13412 12608 13960 14747 10569 15449 5920 9506 25730 13159 9907 12072 11135 10065 11318 15087 23449 10851 17759 8581 12279 17079`
+- vYYY: axis 9.17 NEXT_MERGE_SCOUT — proactive NEXT merge scouting
+- Worst game T40-46: rp=6, NO merge, deadline_crossed for 13 turns, AVOID_BLOCK dominating
+- Strategy only penalized bad placements, never scouted if NEXT piece could merge.
+- Now checks NEXT via analyze_drops and adds +600*merge_mult for merge-enabling positions.
+- mandatory_themes: "NEXTを考慮したドロップをせよ" — actively scout NEXT merge opportunity
+- Fixes failure mode: reactive NO-merge streak at deadline without merge path scouting
 
 ### Rollback Game#24315 `e964b94b -> 1fa4f1bd`
 
