@@ -15,6 +15,10 @@
 # worst game T70 (score 417): deadline_crossed=true, merge_available=false, decision_crosses_deadline=true → max_y runaway
 # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
 # Refs: tmp/analysis_result.md (Implementation Plan: deadline NO merge force lowest y)
+# v652: DEADLINE_MERGE_ENFORCEMENT — pre-deadline checkpoint: deadline_margin<3.0 && rp>=3 &&
+# merge_available (direct query) && max_y>=1.5 → +150 bonus to merge candidates (grade >= NEAR)
+# Fixes rollback failure mode: merge_available false detection + deadline NO merge decisions
+# refs: tmp/analysis_result.md
 
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
@@ -83,6 +87,12 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v652: DEADLINE_MERGE_ENFORCEMENT — pre-deadline checkpoint (deadline_margin<3.0 && rp>=3 &&
+     #   direct merge query finds candidates && max_y>=1.5) applies +150 bonus to merge candidates.
+     #   Bypasses potentially-false merge_available flag by querying results directly.
+     #   Worst game T58-65: merge_available=false, HEIGHT_LAYER scatter, max_y 2.45→3.30.
+     #   Fixes rollback failure mode: merge_available false detection + deadline NO merge decisions.
+     #   refs: tmp/analysis_result.md (Implementation Plan: pre-deadline merge enforcement)
      # v651: Russia phase NEAR merge suppression threshold relaxed (2.3 vs non-Russia 1.5)
      #   Russia phase (type 15>=1) の場合、near_merge_elevated_suppression の max_y 閾値を 1.5→2.3 に引下げ
      #   worst (score 900): T52-58 で max_y 2.63-2.75 でも NEAR merge suppression が継続し merge opportunity 逃失
@@ -1043,6 +1053,13 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # 存在しない場合は0（既存動作維持、安全側）。
     no_merge_streak = game_state.get("no_merge_streak", 0)
 
+    # --- v652: DEADLINE_MERGE_ENFORCEMENT checkpoint ---
+    # Check if pre-deadline merge enforcement should fire
+    # (conditions checked inside helper to avoid polluting decide() scope)
+    _dm_enforcement_active, _dm_merge_candidates = _check_deadline_merge_enforcement(
+        game_state, analysis, max_y, reactive_pair_count
+    )
+
     # --- v624: global merge availability (used in candidate scoring) ---
     # Computed once before candidate loop — any candidate with merge opportunity?
     global_merge_available = any(r.get("merge_grade") != "NO" for r in results)
@@ -1222,6 +1239,15 @@ def decide(game_state: dict, analysis: dict) -> dict:
         elif merge_grade == "FAR":
             score += 200.0 * merge_mult * type_scale
             reasons.append("FAR_MERGE")
+
+        # ----- v652: DEADLINE_MERGE_ENFORCEMENT checkpoint bonus -----
+        # When pre-deadline checkpoint fires (deadline_margin < 3.0, rp >= 3,
+        # direct query finds merge candidates, max_y >= 1.5), apply +150 bonus
+        # to merge candidates (grade >= NEAR) to force merge selection.
+        # This bypasses potentially-false merge_available flag by querying directly.
+        if _dm_enforcement_active and merge_grade in ["DIRECT", "NEAR"]:
+            score += 150.0
+            reasons.append("DEADLINE_MERGE_ENFORCEMENT")
 
         # ----- axis 1.1: low-type NEAR merge penalty at high board + high pc (v603) -----
         # analysis_result.md: 高盤面(max_y>=2.0)かつ高pc(pc>=30)における低type(type<=5)のNEAR merge追加ペナルティ
@@ -3251,6 +3277,49 @@ def decide(game_state: dict, analysis: dict) -> dict:
     best_x = round(best_x, 2)
 
     return {"x": best_x, "reason": best_reason}
+
+
+# v652: DEADLINE_MERGE_ENFORCEMENT checkpoint — pre-deadline merge enforcement
+# analysis_result.md hypothesis: "pre-deadline merge enforcement checkpoint"
+# Worst game T58-65 (score 754): merge_available=false reported incorrectly, HEIGHT_LAYER
+# scatter dominated, max_y runaway 2.45→3.30. A checkpoint that queries merge availability
+# directly at decision time (bypassing the potentially-false merge_available flag) and
+# applies DEADLINE_MERGE_ENFORCEMENT_BONUS=+150 to merge candidates would catch this.
+# Conditions: deadline_margin < 3.0, rp >= 3, merge_available=true (queried directly),
+# max_y >= 1.5.
+# Refs: tmp/analysis_result.md (Implementation Plan: pre-deadline merge enforcement)
+# Fixes rollback failure mode: "merge_available false detection + deadline NO merge"
+# refs: tmp/analysis_result.md
+
+def _check_deadline_merge_enforcement(game_state, analysis, max_y, reactive_pair_count):
+    """Returns (enforcement_active, merge_candidates) if checkpoint fires, else (False, []).
+    
+    Pre-deadline merge enforcement: when deadline_margin < 3.0 AND rp >= 3 AND
+    merge_available = true (queried directly) AND max_y >= 1.5, force candidate
+    selection to prefer merge_executions with grade >= NEAR by applying +150 bonus.
+    """
+    results = analysis.get("results", [])
+    if not results:
+        return False, []
+    
+    deadline_margin = game_state.get("deadline_margin", 99.0)
+    if isinstance(deadline_margin, dict):
+        deadline_margin = 99.0
+    
+    # Condition check (skip if results list is empty)
+    if deadline_margin >= 3.0:
+        return False, []
+    if reactive_pair_count < 3:
+        return False, []
+    if max_y < 1.5:
+        return False, []
+    
+    # Direct merge availability check — query results directly instead of relying on flag
+    merge_candidates = [r for r in results if r.get("merge_grade") in ["DIRECT", "NEAR"]]
+    if not merge_candidates:
+        return False, []
+    
+    return True, merge_candidates
 
 
 # --- AI modification prohibited zone ---
