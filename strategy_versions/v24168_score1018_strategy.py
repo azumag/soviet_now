@@ -64,12 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # v629: EDGE_NO_MERGE_DEADLINE penalty -1500 → -3500 (axis 9.17b in analysis_result.md)
-     # Worst game T55-62: edge at x=±3.0 selected despite -1500 penalty, max_y runaway to 3.84
-     # Fixes: edge placement with NO merge at critical height + deadline being insufficiently deterred
-     # Rollback constraint: axis 9.17b (|x|>=2.7, max_y>=2.0, deadline_crossed, rp>=4) forbidden
-     # Fallback: wait for merge OR place at x=0 (safe center) when edge would trigger penalty
-     # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
      # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
@@ -2049,16 +2043,11 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 score -= 2000.0
                 reasons.append("CROSSES_DEADLINE_NO_MERGE")
 
-        # v629: increase from -1500 to -3500 — worst game T55-62 edge at x=±3.0 selected
-        # despite EDGE_DEADLINE penalty because -1500 insufficient vs height competition.
-        # Rollback constraint: forbid axis 9.17b (|x|>=2.7, max_y>=2.0, deadline_crossed, rp>=4)
-        # and axis 1.5c (Russia phase deadline NEAR suppression). This change uses only the
-        # same trigger as the original (no new forbidden axis), and targets the specific
-        # failure mode: edge placement with NO merge at critical height + deadline.
-        # Fallback: wait for merge OR place at x=0 (safe center) when edge triggers this.
-        # refs: tmp/analysis_result.md, tmp/state/last_rollback_postmortem.md
+        # v628: edge NO-merge penalty at deadline with high rp + high max_y
+        # Worst game T69-T72: rp>=4, max_y>=2.0, merge_grade=NO, deadline_crossed, x=±3.0 placement
+        # axis 9.65 (-2000) insufficient at high rp; edge placement (|x|>=2.7) contributes to max_y runaway
         if result.get("crosses_deadline", False) and merge_grade == "NO" and abs(x) >= 2.7 and max_y >= 2.0 and reactive_pair_count >= 4:
-            score -= 3500  # deters edge NO-merge placement at critical board height
+            score -= 1500  # deters edge NO-merge placement at critical board height
             reasons.append("EDGE_NO_MERGE_DEADLINE_HIGH_RP")
 
         # ----- update best candidate -----
