@@ -11,9 +11,10 @@
 # Fixes rollback failure mode: worst T53-58 (score 605) NEAR_MERGE_HIGH_LAYER + deadline_crossed + NO merge = max_y 3.26 death
 # v626: Strengthen v624 edge prohibition — |x|>=2.5:-800→-1200, |x|>=2.0:-400→-600
 # Fixes worst T50: merge_available=false, max_y=2.79, x=3.0 edge selected (column_ceiling bonus exceeded -800 penalty)
-# Refs: tmp/analysis_result.md (Edge Prohibition Strengthen for NO_MERGE + Elevated Board)
-# refs: data/mandatory_themes.txt (デッドラインにおけるedge placement禁止)
-# Constraint: axis 8.8 penalty magnitude/threshold NOT modified
+# v627: deadline_crossed + NO merge + crosses_deadline → force lowest landing_y
+# worst game T70 (score 417): deadline_crossed=true, merge_available=false, decision_crosses_deadline=true → max_y runaway
+# mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+# Refs: tmp/analysis_result.md (Implementation Plan: deadline NO merge force lowest y)
 
 Game Overview:
   - Drop pieces, merge same type pieces (N+N -> N+1)
@@ -3226,6 +3227,24 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 __shc_lowest = min(__shc_no_merge, key=lambda r: r.get("landing_y", 99.0))
                 best_x = __shc_lowest.get("x", best_x)
                 best_reason = "HEIGHT_CONTROL_SUPPRESSED"
+
+    # --- v627: deadline_crossed + NO merge + crosses_deadline → force lowest landing_y ---
+    # mandatory_themes: "デッドラインを超える位置にピースを置く場合は、併合できる場合に限る"
+    # worst game T70 (score 417): deadline_crossed=true, merge_available=false, rp=2,
+    # decision_crosses_deadline=true, x=-1.8 → max_y 2.93→2.98 (not edge, v624 edge prohibition didn't fire)
+    # Analysis: v623 guard requires rp>=3, so it missed this case where rp=2 but deadline_crossed.
+    # This guard fires when: deadline_crossed && !global_merge_available && best_candidate crosses deadline.
+    # Forces selection of lowest landing_y candidate to prevent pc increase during NO-merge drought.
+    # Refs: tmp/analysis_result.md (Implementation Plan: deadline NO merge force lowest y)
+    if results:
+        __dc_best = next((r for r in results if r.get("x") == best_x), None)
+        if (deadline_crossed
+                and not any(r.get("merge_grade") != "NO" for r in results)
+                and __dc_best is not None
+                and __dc_best.get("crosses_deadline", False)):
+            __dc_lowest = min(results, key=lambda r: r.get("landing_y", 99.0))
+            best_x = __dc_lowest.get("x", best_x)
+            best_reason = "DEADLINE_NO_MERGE_FORCED_LOWEST"
 
     # clip to drop range [-3.0, +3.0]
     best_x = max(-3.0, min(3.0, best_x))
