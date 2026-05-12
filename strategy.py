@@ -83,6 +83,14 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
+     # v652: deadline_proximity_early_warning — add center_bias when reactor deadline_margin in [0.5, 2.0]
+     #   analysis_result.md hypothesis: "deadline proximity warnings at T47-50 did not trigger height-aware
+     #   placement adjustments" — root cause is premature height panic before deadline proximity.
+     #   When margin in [0.5, 2.0] and max_y>=1.0, multiply NEXT_SAME center bonus by 4x.
+     #   Forces conservative center placement 5+ turns before deadline, reducing edge scatter.
+     #   Fixes rollback failure mode: "deadline proximity → premature height panic → max_y control collapse"
+     #   refs: tmp/analysis_result.md (Implementation Plan: deadline-proximity early-warning),
+     #         tmp/batch_summary.txt (HEIGHT_CONTROL 25.7% low vs 21.4% high)
      # v651: Russia phase NEAR merge suppression threshold relaxed (2.3 vs non-Russia 1.5)
      #   Russia phase (type 15>=1) の場合、near_merge_elevated_suppression の max_y 閾値を 1.5→2.3 に引下げ
      #   worst (score 900): T52-58 で max_y 2.63-2.75 でも NEAR merge suppression が継続し merge opportunity 逃失
@@ -1149,10 +1157,10 @@ def decide(game_state: dict, analysis: dict) -> dict:
     # At max_y=1.5: ~30% NEAR bonus reduction. At max_y=2.0: ~50% (matches v604 floor).
     # Also scales by piece_count: pc=28 → 1.0x factor, pc=40 → 0.6x factor.
     # refs: tmp/analysis_result.md (Implementation Plan: graduated pre-deadline suppression)
-    # v606 + Russia relax: Russia phase NEAR suppression threshold relaxed from 1.5 to 2.3
+# v606 + Russia relax: Russia phase NEAR suppression threshold relaxed from 1.5 to 2.3
     # analysis_result.md hypothesis: "Russia phase NEAR merge suppression relaxation at max_y 2.0-2.5"
     # worst game (score 900): suppressed NEAR at max_y 2.63-2.75, only 1 merge in final 8 turns
-    # extra_high (score 2758): Russia phase NEAR merges at max_y 2.3-2.42 all succeeded (score_delta=21-28)
+    # extra_high (score 2758): Russia phase NEAR merges at max_y 2.30-2.42 all succeeded (score_delta=21-28)
     # extra_high game T110-T112: russia_phase=true, max_y 2.30-2.42, NEAR merges succeeded
     # Russia phase (type 15 >= 1) reduces suppression threshold: 2.3 vs non-Russia 1.5
     # Keeps rp>=3, pc>=28 guardrails; keeps deadline_crossed+max_y>=3.0 catastrophic guard (v604 near_merge_suppression)
@@ -1161,6 +1169,20 @@ def decide(game_state: dict, analysis: dict) -> dict:
         max_y >= (2.3 if russia_phase else 1.5)
         and reactive_pair_count >= 3
         and piece_count >= 28
+    )
+
+    # v652: deadline_proximity_early_warning — analysis_result.md hypothesis
+    # "deadline proximity warnings at T47-50 did not trigger height-aware placement adjustments"
+    # The primary failure is NOT the NO-merge decisions (which were locally correct) but the
+    # earlier failure: deadline approaching but no conservative placement triggered.
+    # When reactor deadline_margin is in [0.5, 2.0] range (approaching deadline), trigger
+    # center_bias placement to prevent premature height panic from causing edge scatter.
+    # Constants: DEADLINE_EARLY_WARNING_MARGIN=2.0, HEIGHT_THRESHOLD_FOR_CONSERVATIVE=10
+    # Mandatory theme: "NEXTを考慮したドロップ" — this guide uses next_piece info.
+    deadline_proximity_early_warning = (
+        reactor_margin < 2.0
+        and reactor_margin >= 0.5
+        and not deadline_crossed
     )
 
     # =======================================================================
@@ -2415,6 +2437,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         suppress_axis5_high_nomerger = (max_y >= 1.5 and merge_grade == "NO")
         if next_next_type == next_type and not death_spiral and not suppress_axis5_high_nomerger:
             center_bonus = max(0, 1.0 - abs(x) / 2.0) * 50.0
+            # v652: deadline_proximity_early_warning — force center_bias when approaching deadline
+            # When reactor deadline_margin in [0.5, 2.0] and board is elevated (max_y>=1.0),
+            # center placement reduces edge scatter risk that causes deadline_crossed failure.
+            # Multiply center bonus by 4x to dominate horizontal guidance noise.
+            # refs: tmp/analysis_result.md (Implementation Plan: deadline-proximity early-warning)
+            if deadline_proximity_early_warning and max_y >= 1.0:
+                center_bonus *= 4.0
+                reasons.append("DEADLINE_PROXIMITY_CENTER_BIAS")
             score += center_bonus
             reasons.append("NEXT_SAME")
 
