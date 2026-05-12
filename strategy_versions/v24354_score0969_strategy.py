@@ -64,17 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-      # vYYY: REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY requires merge_possible — fix rollback constraint violation
-      # Rollback postmortem constraint: "forbid: REACTIVE_PAIRS_NO_MERGE_PENALTY without merge_available=true
-      # requirement when max_y>=2.0 and deadline_crossed"
-      # Worst game T51-54: 4 consecutive NO_MERGE with merge_available=false, edge placement x=2.88,
-      # max_y 1.38->4.06. REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY (-900) fired but couldn't force merge
-      # since no merge was available — it only pulled toward edge NO_MERGE, worsening max_y runaway.
-      # Adding merge_possible check: penalty only fires when at least one merge exists on board.
-      # This ensures the penalty guides toward mergeable positions only when merges are achievable.
-      # Fixes failure mode: REACTIVE_PAIRS_NO_MERGE gravity pulling edge NO_MERGE when merge unavailable
-      # refs: tmp/analysis_result.md (Implementation Plan), tmp/state/last_rollback_postmortem.md (constraint),
-      #       tmp/batch_summary.txt (worst game analysis)
       # vYYY: axis 9.17 NEXT_MERGE_SCOUT — proactive NEXT merge scouting
       # Worst game T40-46: rp=6, NO merge, deadline_crossed for 13 turns, AVOID_BLOCK dominating
       # Strategy only penalized bad placements, never scouted if NEXT piece could merge.
@@ -2025,13 +2014,7 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # At max_y>=2.5 with deadline crossed, danger is too high for reactive-pair penalty to override merge.
         # Rollback postmortem constraint (forbid at max_y<=0.5) extended to clearly-dangerous zone.
         # Refs: tmp/analysis_result.md (Implementation Plan Change 2)
-        #
-        # Constraint (rollback postmortem): REACTIVE_PAIRS_NO_MERGE_PENALTY requires merge_available=true
-        # when max_y>=2.0 && deadline_crossed. When merge is unavailable, the gravity penalty
-        # pulls toward edge NO_MERGE placements, worsening max_y runaway (worst T51-54: 4 consecutive
-        # edge NO_MERGE with merge_available=false, max_y 1.38->4.06).
-        # Adding merge_possible check ensures penalty only fires when merges actually exist on board.
-        if reactive_pair_count >= 3 and merge_grade == "NO" and merge_possible:
+        if reactive_pair_count >= 3 and merge_grade == "NO":
             if not (deadline_crossed and max_y >= 2.5):
                 # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
                 # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
