@@ -64,24 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vYYY: Change 6 - AVOID_BLOCK suppression threshold extension (analysis_result.md Hypothesis 1)
-     # Changed: rp>=5+max_y>=2.5 → rp>=4+max_y>=1.5 per analysis_result.md
-     # Worst game T56-T59 (rp=5, max_y 1.7-2.0): AVOID_BLOCK active despite low height,
-     # causing edge placement and NO merge despite merge opportunities.
-     # Best game (score2735) succeeded at max_y 1.45 by suppressing AVOID_BLOCK earlier.
-     # Fixes failure mode: edge scatter at moderate max_y (1.5-2.5) with high rp (>=4)
-     # refs: tmp/analysis_result.md (Hypothesis 1: AVOID_BLOCK抑制条件の拡張)
-     #
-     # vYYY: Change 7 - NEXT-aware deadline merge guidance (analysis_result.md Hypothesis 2)
-     # mandatory_themes: "デッドライン超出時にmergeできる場合のみ配置、NEXT考慮"
-     # When deadline_crossed && merge_grade==NO && next_type piece exists on board as same-type pair,
-     # apply bonus to guide toward creating a merge with next piece. This provides NEXT-aware
-     # placement guidance during deadline when merge opportunities are otherwise missed.
-     # Worst game T60-T64: deadline_crossed with no merge for 5 turns, max_y runaway.
-     # Best game (score2735) T66: DIRECT_MERGE with next piece consideration (+294 score_gain).
-     # refs: tmp/analysis_result.md (Hypothesis 2: deadline超出時のNEXT考慮),
-     #       data/mandatory_themes.txt
-     #
      # vYYY: Change 5 - axis 8.8 NO_MERGE penalty congestion scaling
      # analysis_result.md adopted hypothesis: axis 8.8 penalty is flat -900 but axis 9.6 stacking
      # with congestion scaling gives ~300-760 bonus at pc=35, overwhelming the penalty and causing
@@ -1600,16 +1582,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
         #       game_history/20260329_090011_score0811.jsonl T73-80, analyze_board.py
         if merge_grade == "NO" and reactive_pair_count >= 1:
             # v417: suppress AVOID_BLOCK in congested endgame to prevent edge scatter.
-            # In congested regime (rp>=4, max_y>=1.5 or max_y>=3.0+deadline), AVOID_BLOCK
+            # In congested regime (rp>=5, max_y>=2.5 or max_y>=3.0+deadline), AVOID_BLOCK
             # overwhelms stacking/proximity guidance (~500 penalty vs ~300 bonus), pushing
             # pieces to isolated edge positions (x=±3.0). Suppressing allows guidance to work.
-            # vXXX: Extended threshold from rp>=5+max_y>=2.5 to rp>=4+max_y>=1.5 per analysis_result.md.
-            # Worst game T56-T59 (rp=5, max_y 1.7-2.0) had AVOID_BLOCK active despite low height,
-            # causing edge placement and merge failure. Best game (score2735) succeeded with higher
-            # max_y (1.45) by suppressing AVOID_BLOCK at lower thresholds.
             board_congested = (
                 (max_y >= 3.0 and deadline_crossed)
-                or (reactive_pair_count >= 4 and max_y >= 1.5)
+                or (reactive_pair_count >= 5 and max_y >= 2.5)
             )
             if not board_congested:
                 blocking_penalty = 0.0
@@ -1681,41 +1659,6 @@ def decide(game_state: dict, analysis: dict) -> dict:
                 if traction_bonus > 20:
                     score += traction_bonus
                     reasons.append("MERGE_DROUGHT_TRACTION")
-
-        # ----- evaluation axis 9.18: NEXT-aware deadline merge guidance (vYYY) -----
-        # mandatory_themes: "デッドライン超出時にmergeできる場合のみ配置、NEXT考慮"
-        # When deadline_crossed && merge_grade==NO && next piece can create a same-type pair on board,
-        # apply bonus to guide toward creating a merge with next piece at deadline.
-        # This addresses the failure mode where deadline_crossed + NO merge for several turns leads
-        # to max_y runaway while merge opportunities with next piece existed but were not considered.
-        # Worst game T60-T64: 5 consecutive NO_MERGE at deadline_crossed, max_y 2.0→3.1→3.1→3.1.
-        # Best game (score2735) T66: next piece merge success (+294) → max_y recovery to 0.4.
-        # Mechanism: When next_type piece exists on board AND current placement creates proximity
-        # to that piece, the resulting position after next turn's merge is evaluated.
-        # This is NOT a suppression of other axes — purely additive guidance bonus.
-        # refs: tmp/analysis_result.md (Hypothesis 2: deadline超出時のNEXT考慮),
-        #       data/mandatory_themes.txt
-        if (
-            deadline_crossed
-            and merge_grade == "NO"
-            and next_type > 0
-        ):
-            # Check if next_type piece exists on board (potential merge target)
-            next_type_on_board = any(p.get("type") == next_type for p in pieces)
-            if next_type_on_board:
-                # Compute proximity bonus: closer to next_type pieces = better for next-turn merge
-                min_dist_to_next = float("inf")
-                for p in pieces:
-                    if p.get("type") == next_type:
-                        dist = abs(x - p["x"]) + abs(landing_y - p["y"])
-                        if dist < min_dist_to_next:
-                            min_dist_to_next = dist
-                # Bonus: max 600 at dist=0, linearly decreases to 0 at dist=3.0
-                if min_dist_to_next <= 3.0:
-                    next_merge_bonus = 600.0 * merge_mult * (1.0 - min_dist_to_next / 3.0)
-                    if next_merge_bonus > 50:
-                        score += next_merge_bonus
-                        reasons.append("NEXT_DEADLINE_MERGE_GUIDANCE")
 
         # ----- evaluation axis 2: height penalty -----
         # landing Y coordinate higher means larger penalty. phase height_mult adjusts weight.
