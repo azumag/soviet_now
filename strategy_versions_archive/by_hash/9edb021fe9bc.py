@@ -64,15 +64,6 @@ Phases (determined by board max Y):
 # AI prohibited: decide() signature, if __name__ == "__main__" block
 
 # --- Change History ---
-     # vYYY: Change 5 - axis 8.8 NO_MERGE penalty congestion scaling
-     # analysis_result.md adopted hypothesis: axis 8.8 penalty is flat -900 but axis 9.6 stacking
-     # with congestion scaling gives ~300-760 bonus at pc=35, overwhelming the penalty and causing
-     # edge scatter in worst games (T47-T51: 5 consecutive NO_MERGE despite rp=4-6, pc=32-39).
-     # Solution: add congestion scaling to axis 8.8 penalty. Formula: congestion_scale = 1.0 + 0.12 * (pc - 28), cap 3.0.
-     # At pc=28: scale=1.0. At pc=35: scale=1.84 (-1656). At pc=45: scale=3.0 (-2700).
-     # Rollback constraint "forbid below -4500" preserved: even at pc=45, penalty (-2700) > -4500.
-     # Fixes failure mode: edge scatter at high pc + rp>=3 + NO merge (worst game pattern)
-     # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8 congestion scaling)
      # vYYY: Hard Deadline-Merge Override — mandatory_themes hard constraint enforcement
      # Change 1: deadline_crossed=true && merge_possible=true && merge_grade=="NO" → -10000 penalty
      # Worst game T64-69: 6 consecutive NO_MERGE selections despite merge_available=true, deadline_crossed=true
@@ -2190,24 +2181,14 @@ def decide(game_state: dict, analysis: dict) -> dict:
         # At max_y>=2.5 with deadline crossed, danger is too high for reactive-pair penalty to override merge.
         # Rollback postmortem constraint (forbid at max_y<=0.5) extended to clearly-dangerous zone.
         # Refs: tmp/analysis_result.md (Implementation Plan Change 2)
-        # vYYY: Change 5 - axis 8.8 NO_MERGE penalty congestion scaling
-        # analysis_result.md adopted hypothesis: axis 8.8 penalty is flat -300*merge_mult(-900),
-        # but axis 9.6 stacking with v408 congestion scaling gives ~300-760 bonus at pc=35.
-        # The penalty is too weak to override stacking, causing edge scatter in worst games.
-        # Solution: add congestion scaling to make penalty compete with axis 9.6 stacking.
-        # congestion_scale = 1.0 + 0.12 * (piece_count - 28), cap 3.0
-        # At pc=28: scale=1.0 (no change). At pc=35: scale=1.84 (penalty -1656).
-        # Rollback constraint "forbid below -4500" preserved: -1656 > -4500.
-        # refs: tmp/analysis_result.md (Implementation Plan: axis 8.8 congestion scaling)
         if reactive_pair_count >= 3 and merge_grade == "NO":
             if not (deadline_crossed and max_y >= 2.5):
-                base_penalty = 900.0 * merge_mult
-                if piece_count >= 28:
-                    congestion_scale = 1.0 + (piece_count - 28) * 0.12
-                    congestion_scale = min(congestion_scale, 3.0)
-                else:
-                    congestion_scale = 1.0
-                score -= base_penalty * congestion_scale
+                # vYYY: increase penalty from -600 to -900 to further overcome AVOID_BLOCK_REACTIVE_PAIR
+                # vXXX: -600 was still insufficient vs AVOID_BLOCK (+400-600) at intermediate x,
+                # causing x=-0.8 selection (max_y jumped 1.9 in one turn in extra_high T128).
+                # -900 overwhelms full AVOID_BLOCK bonus (+600 max), ensures true lowest placement.
+                # Rollback constraint "forbid at max_y<=0.5" preserved: this applies to max_y>=0.8+ territory.
+                score -= 900.0 * merge_mult
                 reasons.append("REACTIVE_PAIRS_NO_MERGE_GRAVITY_PENALTY")
 
         # ----- evaluation axis 9: reactive pairs default (NEW: reactive_pairs fallback for "no action" situations) -----

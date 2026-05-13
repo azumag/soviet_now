@@ -1,9 +1,9 @@
 # Strategy Phyrogenetic Tree
 
-- Updated: `2026-05-13 17:06:11 JST`
-- Nodes: `1429`
-- Edges: `1945`
-- Current: `9edb021fe9bc`
+- Updated: `2026-05-13 18:26:29 JST`
+- Nodes: `1430`
+- Edges: `1947`
+- Current: `1ee78f712e54`
 - Anchor: `f9442ef7bd5e`
 - Solid edge: mutation/improvement
 - Dashed edge: rollback
@@ -15,7 +15,6 @@
 - Contains tagged nodes and the latest `60` nodes.
 ```mermaid
 flowchart TD
-    h_63f793b0623e["63f793b0623e<br/>g=12 n=12<br/>comp=9644.8"]
     h_7018e9053d55["7018e9053d55<br/>g=48 n=20<br/>comp=11395.1"]
     h_d4b80c24ca65["d4b80c24ca65<br/>g=48 n=20<br/>comp=11509.0"]
     h_b0c54b9d8f38["b0c54b9d8f38<br/>g=24 n=20<br/>comp=11253.2"]
@@ -61,6 +60,7 @@ flowchart TD
     h_6c5a2891cbd8["6c5a2891cbd8<br/>g=24 n=20<br/>comp=11385.1"]
     h_5e8e69043345["5e8e69043345<br/>g=13 n=13<br/>comp=9720.0"]
     h_5451741f330b["5451741f330b<br/>g=4 n=4<br/>comp=12136.6"]
+    h_9edb021fe9bc["9edb021fe9bc<br/>g=14 n=14<br/>comp=10664.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -73,8 +73,8 @@ flowchart TD
     h_9bada9f1385f["9bada9f1385f<br/>g=2 n=2<br/>comp=13237.3"]
     h_996646fb8173["996646fb8173<br/>g=3 n=3<br/>comp=9317.1"]
     h_967091db2b2d["967091db2b2d<br/>g=2 n=2<br/>comp=9227.2"]
-    h_26b781b24775["26b781b24775<br/>g=15 n=15<br/>comp=9117.6"]
-    h_9edb021fe9bc["9edb021fe9bc<br/>CURRENT"]
+    h_26b781b24775["26b781b24775<br/>g=16 n=16<br/>comp=9211.5"]
+    h_1ee78f712e54["1ee78f712e54<br/>CURRENT"]
 
     h_7018e9053d55 -->|improve| h_d4b80c24ca65
     h_d4b80c24ca65 -->|improve| h_b0c54b9d8f38
@@ -129,14 +129,15 @@ flowchart TD
     h_6c5a2891cbd8 -->|improve| h_5e8e69043345
     h_5e8e69043345 -. rollback .-> h_1fa4f1bdb308
     h_1fa4f1bdb308 -->|improve| h_5451741f330b
+    h_5451741f330b -->|improve| h_9edb021fe9bc
     h_26b781b24775 -->|improve| h_9edb021fe9bc
+    h_9edb021fe9bc -->|improve| h_1ee78f712e54
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
     classDef anchor fill:#d7f5dd,stroke:#1f6f43,stroke-width:3px,color:#222;
     classDef current_anchor fill:#f3e4a8,stroke:#1f6f43,stroke-width:4px,color:#222;
 
-    class h_63f793b0623e plain;
     class h_7018e9053d55 plain;
     class h_d4b80c24ca65 plain;
     class h_b0c54b9d8f38 plain;
@@ -182,6 +183,7 @@ flowchart TD
     class h_6c5a2891cbd8 plain;
     class h_5e8e69043345 plain;
     class h_5451741f330b plain;
+    class h_9edb021fe9bc plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -195,7 +197,7 @@ flowchart TD
     class h_996646fb8173 plain;
     class h_967091db2b2d plain;
     class h_26b781b24775 plain;
-    class h_9edb021fe9bc current;
+    class h_1ee78f712e54 current;
 ```
 
 ## Detail 1/18
@@ -4997,9 +4999,9 @@ flowchart TD
 
 ## Detail 18/18
 
-- Range: `0d0fc4a9fde7` .. `9edb021fe9bc`
-- Nodes in this diagram: `69`
-- Internal edges in this diagram: `66`
+- Range: `0d0fc4a9fde7` .. `1ee78f712e54`
+- Nodes in this diagram: `70`
+- Internal edges in this diagram: `68`
 - Cross-chunk link: `452653e77d19 --improve--> 0d0fc4a9fde7`
 - Cross-chunk link: `0d0fc4a9fde7 -.rollback.-> 452653e77d19`
 - Cross-chunk link: `452653e77d19 --improve--> 61b864de0454`
@@ -5071,6 +5073,7 @@ flowchart TD
     h_6c5a2891cbd8["6c5a2891cbd8<br/>g=24 n=20<br/>comp=11385.1"]
     h_5e8e69043345["5e8e69043345<br/>g=13 n=13<br/>comp=9720.0"]
     h_5451741f330b["5451741f330b<br/>g=4 n=4<br/>comp=12136.6"]
+    h_9edb021fe9bc["9edb021fe9bc<br/>g=14 n=14<br/>comp=10664.4"]
     h_389b56537573["389b56537573<br/>g=1 n=1<br/>comp=3279.0"]
     h_a3aae72a4e37["a3aae72a4e37<br/>g=1 n=1<br/>comp=689.0"]
     h_355868eaf8ab["355868eaf8ab<br/>g=12 n=12<br/>comp=10138.9"]
@@ -5083,8 +5086,8 @@ flowchart TD
     h_9bada9f1385f["9bada9f1385f<br/>g=2 n=2<br/>comp=13237.3"]
     h_996646fb8173["996646fb8173<br/>g=3 n=3<br/>comp=9317.1"]
     h_967091db2b2d["967091db2b2d<br/>g=2 n=2<br/>comp=9227.2"]
-    h_26b781b24775["26b781b24775<br/>g=15 n=15<br/>comp=9117.6"]
-    h_9edb021fe9bc["9edb021fe9bc<br/>CURRENT"]
+    h_26b781b24775["26b781b24775<br/>g=16 n=16<br/>comp=9211.5"]
+    h_1ee78f712e54["1ee78f712e54<br/>CURRENT"]
 
     h_61b864de0454 -->|improve| h_5e8e90b87178
     h_5e8e90b87178 -->|improve| h_330472aff644
@@ -5151,7 +5154,9 @@ flowchart TD
     h_6c5a2891cbd8 -->|improve| h_5e8e69043345
     h_5e8e69043345 -. rollback .-> h_1fa4f1bdb308
     h_1fa4f1bdb308 -->|improve| h_5451741f330b
+    h_5451741f330b -->|improve| h_9edb021fe9bc
     h_26b781b24775 -->|improve| h_9edb021fe9bc
+    h_9edb021fe9bc -->|improve| h_1ee78f712e54
 
     classDef plain fill:#f8f8f8,stroke:#666,stroke-width:1px,color:#222;
     classDef current fill:#ffe8a3,stroke:#9a6700,stroke-width:3px,color:#222;
@@ -5213,6 +5218,7 @@ flowchart TD
     class h_6c5a2891cbd8 plain;
     class h_5e8e69043345 plain;
     class h_5451741f330b plain;
+    class h_9edb021fe9bc plain;
     class h_389b56537573 plain;
     class h_a3aae72a4e37 plain;
     class h_355868eaf8ab plain;
@@ -5226,10 +5232,20 @@ flowchart TD
     class h_996646fb8173 plain;
     class h_967091db2b2d plain;
     class h_26b781b24775 plain;
-    class h_9edb021fe9bc current;
+    class h_1ee78f712e54 current;
 ```
 
 ## Transition Notes
+
+### Improve Game#24578 `9edb021f -> 1ee78f71`
+
+- scores: `17742 17742 7088 7088 8703 11418 11418 13337 13337 10370 10370 9452 12035 14366 14366 21747 21747 12520 12520 9186 11345 11345 9252 9252`
+- vYYY: Change 5 - axis 8.8 NO_MERGE penalty congestion scaling
+- analysis_result.md adopted hypothesis: axis 8.8 penalty is flat -900 but axis 9.6 stacking
+- with congestion scaling gives ~300-760 bonus at pc=35, overwhelming the penalty and causing
+- edge scatter in worst games (T47-T51: 5 consecutive NO_MERGE despite rp=4-6, pc=32-39).
+- Solution: add congestion scaling to axis 8.8 penalty. Formula: congestion_scale = 1.0 + 0.12 * (pc - 28), cap 3.0.
+- At pc=28: scale=1.0. At pc=35: scale=1.84 (-1656). At pc=45: scale=3.0 (-2700).
 
 ### Improve Game#24563 `26b781b2 -> 9edb021f`
 
