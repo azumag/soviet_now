@@ -115,14 +115,9 @@ Phases (determined by board max Y):
      # merge_possible=true; at T54 with merge_available=false, no deterrent existed.
      # Current axis 9.17b (-1200*merge_mult) is insufficient vs stacking(~400-600)+ceiling(~400-800).
      # -2500*merge_mult overwhelms guidance (~1400 combined) while preserving height differentiation.
-# Conditions: deadline_crossed && merge_grade=="NO" && |x|>=2.5
-      # refs: tmp/analysis_result.md (Implementation Plan Change 4)
-      # vYYY: Change 4 fix — merge_possible条件の追加 (axis 9.17c & Change 3)
-      # mandatory_themes第一条「デッドライン超出時はmergeできる場合に限る」の制度的補償
-      # merge_possible=true時に限定することで、deadline超出&&併合不可の状況ではペナルティ为空振り防止
-      # Fixes: deadline超出&&merge不可でもaxis 9.17c/-800が発動していた問題
-      # refs: tmp/analysis_result.md (Implementation Plan Change 4 fix)
-      # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
+     # Conditions: deadline_crossed && merge_grade=="NO" && |x|>=2.5
+     # refs: tmp/analysis_result.md (Implementation Plan Change 4)
+     # v626: axis 9.65 generalize to all phases — deadline_crossed+NO penalty regardless of russia_phase
      # mandatory_themes第一条「デッドラインを超える位置にピースを置く場合は、併合できる場合に限る」
      # v628: axis 9.17b edge NO-merge penalty at high rp(>=4) + high max_y(>=2.0) + deadline_crossed + |x|>=2.7
      # Fixes: worst game T69-T72 edge placement (x=±3.0) despite high penalty — additional deterrence for edge NO-merge at critical board height
@@ -2391,22 +2386,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
             score -= 1500  # deters edge NO-merge placement at critical board height
             reasons.append("EDGE_NO_MERGE_DEADLINE_HIGH_RP")
 
-        # vYYY: axis 9.17c — edge NO-MERGE penalty at deadline_crossed (merge_possible条件修正)
-        # mandatory_themes第一条: 「デッドライン超出時はmergeできる場合に限る」
-        # merge_possibleがfalseの時は配置禁止ではなくペナルティ抑制（候補除外ではなくペナルティで抑制）
-        # Change 1 (-10000) がmerge_possible=true時のみ発動するため、axis 9.17cもmerge_possible条件を統一
-        # refs: tmp/analysis_result.md (Implementation Plan Change 4)
-        if deadline_crossed and merge_grade == "NO" and merge_possible and abs(x) >= 2.5:
+        # vYYY: axis 9.17c — edge NO-MERGE penalty at deadline_crossed
+        # Worst game T54: edge placement (x=2.66) at deadline_crossed+merge_available=false caused max_y spike.
+        # mandatory_themes Change 1 (-10000) only fires when merge_possible=true, not when merge_available=false.
+        # Current edge penalty (9.17b: -1200*merge_mult) insufficient vs stacking(~400-600)+ceiling(~400-800).
+        # -2500*merge_mult overwhelms guidance (~1400 combined) while preserving height differentiation.
+        if deadline_crossed and merge_grade == "NO" and abs(x) >= 2.5:
             score -= 2500.0 * merge_mult
             reasons.append("EDGE_NO_MERGE_DEADLINE_9_17C")
 
         # vYYY: Change 3 - Edge Placement Suppression During Deadline Cross
-        # mandatory_themes第一条の制度的補償: merge_possible=true時にdeadline超出でNO mergeすると大幅ペナルティ
-        # merge_possible=falseの時はChange 1 (-10000)も発動しないため、axis 9.17cもmerge_possible条件を統一
+        # When deadline_crossed=true and |x| > 2.0 and merge_grade=="NO", apply penalty.
         # Worst game T64-69: edge placements x=-3.0, x=1.6, x=-2.65 during deadline_crossed
         # Center-biased placement during deadline crossing reduces max_y growth.
         # Refs: tmp/analysis_result.md (Implementation Plan Change 3)
-        if deadline_crossed and merge_grade == "NO" and merge_possible and abs(x) > 2.0:
+        if deadline_crossed and merge_grade == "NO" and abs(x) > 2.0:
             score -= 800.0
             reasons.append("EDGE_DEADLINE_SUPPRESSION")
 
