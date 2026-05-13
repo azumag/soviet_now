@@ -180,6 +180,26 @@ cascade_result = mod.decide(cascade_state, cascade_analysis)
 if float(cascade_result["x"]) != 0.0:
     raise AssertionError(f"cascade-direct: expected x=0.0 for A-1->A->A chain, got {cascade_result!r}")
 
+endgame_min_risk_state = {
+    "pieces": [{"id": i, "type": (i % 7) + 1, "x": -2.8 + (i % 8) * 0.8, "y": -3.8 + (i // 8) * 0.55, "r": 0.35} for i in range(40)],
+    "next": {"type": 1, "r": 0.207},
+    "nextNext": {"type": 5, "r": 0.414},
+    "score": 1000,
+    "deadline_crossed": False,
+}
+endgame_min_risk_analysis = {
+    "results": [
+        {"x": -1.3, "landing_y": -0.64, "top_y_after_drop": -0.43, "risk_top_y_after_drop": -0.43, "crosses_deadline": False, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+        {"x": 1.3, "landing_y": -0.25, "top_y_after_drop": -0.04, "risk_top_y_after_drop": -0.04, "crosses_deadline": False, "merge_grade": "NO", "has_merge": False, "merges": [], "danger_merge_available": False, "danger_direct_merge_available": False},
+    ],
+    "same_type": [],
+    "reactor": {"reactive_pairs": [], "deadline_margin": 0.8, "top_edge_y": 2.55, "danger_piece_count": 0},
+    "deadline": {"deadline_y": 3.32, "deadline_margin": 0.8, "deadline_crossed": False},
+}
+endgame_min_risk_result = mod.decide(endgame_min_risk_state, endgame_min_risk_analysis)
+if float(endgame_min_risk_result["x"]) != -1.3:
+    raise AssertionError(f"endgame-min-risk: expected lowest-risk NO x=-1.3, got {endgame_min_risk_result!r}")
+
 active_filter_state = {
     "pieces": [{"id": 1, "type": 5, "x": 0.0, "y": 2.8, "r": 0.6}],
     "next": {"type": 5, "r": 0.6},

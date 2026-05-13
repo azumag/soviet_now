@@ -1121,6 +1121,12 @@ def decide(game_state: dict, analysis: dict) -> dict:
     large_deadline_pressure = (
         int(next_type or 0) >= 9 and current_top_edge_y >= deadline_y - 1.15
     )
+    no_merge_min_risk_pressure = (
+        piece_count >= 38
+        or max_y >= 1.8
+        or current_top_edge_y >= deadline_y - 1.0
+        or reactive_pair_count >= 3
+    )
     immediate_direct_required = (
         safe_direct_merge_possible
         and (
@@ -1219,6 +1225,21 @@ def decide(game_state: dict, analysis: dict) -> dict:
         if large_deadline_pressure and top_y_after_drop > min_deadline_risk_top + 0.05:
             score -= 650000.0
             reasons.append("LARGE_DEADLINE_MIN_RISK_HARD_BLOCK")
+
+        # When there is no immediate merge available in a crowded endgame,
+        # horizontal guidance must not pull the move away from the lowest-risk
+        # landing band. This is the observed live failure: NO-merge edge/side
+        # placements keep the game technically below the red line but build the
+        # next tall shelf. Only applies when active candidates contain no
+        # DIRECT/NEAR path, so it does not suppress visible merge opportunities.
+        if (
+            no_merge_min_risk_pressure
+            and not merge_possible
+            and merge_grade == "NO"
+            and top_y_after_drop > min_deadline_risk_top + 0.05
+        ):
+            score -= 620000.0
+            reasons.append("NO_MERGE_ENDGAME_MIN_RISK_HARD_BLOCK")
 
         # ----- evaluation axis 1: merge bonus -----
         # analyze_board judged merge_grade gives bonus
